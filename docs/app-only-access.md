@@ -10,6 +10,14 @@ The important move is to stop treating "a browser that logged in" as the same
 thing as "the JawnOS app". A cookie or a user-agent string can be copied; a key
 held by the app's native process cannot.
 
+> **Status (v0.1.892):** the server gate (`app_access` = off / shadow /
+> enforce), the challenge/login routes, the open-in-the-app page, and the
+> desktop Ed25519 bridge all ship. The setting starts on **shadow**. Two steps
+> remain before switching it to **enforce**: restart the desktop app so it loads
+> the bridge and approve its key on the phone, and enroll a fingerprint on the
+> tablet under Security -> Padlock. The phone (`vgqQ…`) already has a Keystore
+> key, so it can sign in with or without a separate `app_pubkey`.
+
 ## Two surfaces
 
 | Surface | Examples | Who may use it |

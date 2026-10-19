@@ -58,6 +58,12 @@ $(document).on('change', '#padlock_gate', function() {
 	settingSetter({ 'app': '__president', 'setting': 'padlock_gate', 'value': $(this).val() });
 });
 
+// Off / shadow / enforce for the app-only manager gate. Shadow is the safe way
+// to see what a browser would lose before it is turned on for real.
+$(document).on('change', '#app_access', function() {
+	settingSetter({ 'app': '__president', 'setting': 'app_access', 'value': $(this).val() });
+});
+
 // The phone's own biometric unlock: the Android app makes a Keystore key that
 // the OS releases only after the fingerprint prompt, and registers its public
 // half here. The locked page can also enroll on the spot. An already-enrolled

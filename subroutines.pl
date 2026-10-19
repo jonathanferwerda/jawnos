@@ -4385,6 +4385,46 @@ sub embedded_operator_door() {
 	return $row ? $row->{'value'} : undef;
 }
 
+# The embedded devices' one authentication check: a watch, deck or alarmclock
+# presents the rotated Now Me pair from its own operator_door row. The pair is
+# the same one every route uses (edt + chip_id + authorization), and the token
+# is the encrypted secret the device was last handed. This lives here, not in
+# watch.pl, because the backup route is registered by Manager.pl and both
+# workers must check it the same way.
+sub embedded_authorizer {
+	my ($c) = @_;
+	my $edt = $c->param('edt');
+	my $chip_id = $c->param('chip_id');
+	my $watch_settings = eval { return decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
+	# Older firmware sent the token in the query; newer firmware can send it in
+	# this header so it does not land in access logs or referrers.
+	my $rauth = $c->req->headers->header('X-Jawn-Authorization') || $c->param('authorization') || '';
+	return undef unless $edt && $rauth;
+	my $remote_raw = eval { return decode_base64($rauth) } || '';
+	return undef unless length $remote_raw;
+	my @pairs = ( [ $watch_settings->{'__shutup'}->{'patience'}, $watch_settings->{'__specs'}->{'authorization'} ] );
+	my $prev = $watch_settings->{'__shutup'}->{'previous'};
+	if (ref $prev eq 'HASH' && $prev->{'patience'} && $prev->{'authorization'} && (time() - ($prev->{'at'} || 0)) <= 3600) {
+		push @pairs, [ $prev->{'patience'}, $prev->{'authorization'} ];
+	}
+	foreach my $pair ( @pairs ) {
+		my ($patience, $auth) = @{$pair};
+		next unless $patience && $auth;
+		# Never interpolate a request value into a shell; the old
+		# `echo $rauth | base64 --decode` let a crafted authorization run a
+		# command. MIME::Base64 decodes the same bytes in-process.
+		my $author_raw = eval { return decode_base64($auth) } || '';
+		next unless length $author_raw;
+		my $authorization = &subs::note_decrypter($patience, $author_raw);
+		my $remote_auth = &subs::note_decrypter($patience, $remote_raw);
+		if ($remote_auth && $authorization && secure_compare $remote_auth, $authorization) {
+			$watch_settings->{'__shutup'} = undef;
+			return $watch_settings;
+		}
+	}
+	return undef;
+}
+
 sub ble_device_specs() {
 	# A device's __specs from its operator_door (which syncs): the durable id of
 	# the machine it was paired to, and the address that machine last handed it.

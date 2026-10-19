@@ -42,6 +42,15 @@
 					<option value="enforce" <% if (($president->{'padlock_gate'} || 'enforce') eq 'enforce') { %>selected<% } %>>Enforce</option>
 				</select>
 			</span>
+			<% my $app_access = &subs::setting_grabber({ app => '__president', setting => 'app_access' }) || 'shadow'; %>
+			<span style="font-size:14px;margin-left:12px;" title="<%= &subs::ui('Off lets any browser in. Shadow logs what it would refuse. Enforce admits only the installed apps and the signed peer rail.') %>">
+				<%= &subs::ui('App access') %>
+				<select id="app_access">
+					<option value="off" <% if ($app_access eq 'off') { %>selected<% } %>><%= &subs::ui('Off (any browser)') %></option>
+					<option value="shadow" <% if ($app_access eq 'shadow') { %>selected<% } %>><%= &subs::ui('Shadow (log only)') %></option>
+					<option value="enforce" <% if ($app_access eq 'enforce') { %>selected<% } %>><%= &subs::ui('Enforce (app only)') %></option>
+				</select>
+			</span>
 			<% my $selected_contexts = $president->{'padlock_contexts'} || []; %>
 			<select id="padlock_contexts" multiple title="General is the whole house; the others are per-app." value="<%= join ',', @{$selected_contexts} %>" style="height:100px;min-width:150px;">
 				<% foreach my $context ( qw/general gallery music folders/ ) { %>

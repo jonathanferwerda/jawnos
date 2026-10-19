@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title><%= &subs::ui('JawnOS app required') %></title>
+		<script>
+			var bti = sessionStorage.getItem('browser_tab_id');
+			if (!bti) { bti = 'app-' + Math.random().toString(36).slice(2); sessionStorage.setItem('browser_tab_id', bti); }
+			var bt = localStorage.getItem('browser_tab');
+			if (!bt) { bt = bti; localStorage.setItem('browser_tab', bt); }
+			var signatorial = "<%= $c->stash('signatorial') || '' %>";
+			window.jawnLockedDevice = "<%= $device_uuid || '' %>";
+		</script>
+		<script src="/js/jquery.js"></script>
+		<script src="/js/numeral.min.js"></script>
+		<script src="/js/universal.js?string=<%= &subs::jawn_version() %>"></script>
+		<style>
+			html, body { margin: 0; height: 100%; background: #101010; color: #f4f4f4; font-family: sans-serif; }
+			#app_required { max-width: 620px; margin: 0 auto; padding: 9vh 20px; text-align: center; }
+			#app_required h1 { font-size: 26px; line-height: 1.25; margin-bottom: 14px; }
+			#app_required p { font-size: 16px; line-height: 1.5; color: #c9c9c9; }
+			#app_required a { color: #8fd; }
+			#app_required_status { min-height: 22px; margin-top: 14px; color: #ffd; }
+			#app_required .small { font-size: 13px; color: #888; margin-top: 26px; }
+		</style>
+	</head>
+	<body>
+		<div id="app_required">
+			<h1><%= &subs::ui('Open this in the JawnOS app') %></h1>
+			<p><%= &subs::ui('The manager is only available inside the installed JawnOS app. A browser cannot open it.') %></p>
+			<p><%= &subs::ui('The homepage and the store are still public.') %></p>
+			<p><a href="/"><%= &subs::ui('Homepage') %></a> &middot; <a href="/store"><%= &subs::ui('Store') %></a></p>
+			<div id="app_required_status"></div>
+			<p class="small"><%= &subs::ui('If this is the app, approve its key on a phone that is already signed in, then reload.') %></p>
+		</div>
+		<script>
+		(function () {
+			var polling = false;
+			function status(text) {
+				var el = document.getElementById('app_required_status');
+				if (el) { el.textContent = text || ''; }
+			}
+			function reloadSoon() {
+				status(<%== &subs::json_chars(&subs::ui('Signed in. Loading...')) %>);
+				setTimeout(function () { window.location.reload(); }, 400);
+			}
+			function poll() {
+				if (polling || !window.JawnDesktop) { return; }
+				polling = true;
+				setTimeout(function check() {
+					$.getJSON('/manager/device/app_status', { device_uuid: jawnDeviceUuid() }).then(function (s) {
+						if (s && s.has_app) {
+							polling = false;
+							jawnAppLogin(true).then(reloadSoon).catch(function () { status(<%== &subs::json_chars(&subs::ui('Could not sign in this app.')) %>); });
+							return;
+						}
+						setTimeout(check, 3000);
+					}).catch(function () { setTimeout(check, 5000); });
+				}, 3000);
+			}
+			document.addEventListener('DOMContentLoaded', function () {
+				if (typeof jawnAppLogin !== 'function') { return; }
+				if (!window.JawnBiometricKey && !window.JawnDesktop) { return; }
+				status(<%== &subs::json_chars(&subs::ui('Checking this app...')) %>);
+				jawnAppLogin().then(function (ok) {
+					if (ok) { reloadSoon(); }
+					else { status(<%== &subs::json_chars(&subs::ui('This app needs a key approved on a phone that is already signed in.')) %>); }
+				}).catch(function (err) {
+					var e = (err && err.error) || '';
+					if (window.JawnDesktop && (e === 'no app key' || e === 'pending')) {
+						status(<%== &subs::json_chars(&subs::ui('Waiting for approval on a signed-in phone.')) %>);
+						if (e !== 'pending' && typeof jawnAppEnrollDesktop === 'function') {
+							jawnAppEnrollDesktop().catch(function () {});
+						}
+						poll();
+						return;
+					}
+					status(e === 'pending' ? <%== &subs::json_chars(&subs::ui('Waiting for approval on a signed-in phone.')) %>
+						: e === 'no key' ? <%== &subs::json_chars(&subs::ui('No app key is enrolled. Approve this app on a signed-in phone.')) %>
+						: <%== &subs::json_chars(&subs::ui('Could not sign in this app.')) %>);
+				});
+			});
+		})();
+		</script>
+	</body>
+</html>

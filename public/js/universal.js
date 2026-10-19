@@ -514,6 +514,103 @@ function jawnDeviceUuid() {
 	return uuid;
 }
 
+// ---- app-only access ---------------------------------------------------------
+// The private manager needs a proof from a key the browser cannot hold: the
+// phone's Android Keystore biometric key, or the desktop app's Ed25519 key.
+// The server checks the signature and gives the session a 12-hour app window.
+function jawnDesktopCall(action, args) {
+	return new Promise(function (resolve, reject) {
+		if (!window.JawnDesktop || !window.webkit || !window.webkit.messageHandlers || !window.webkit.messageHandlers.jawnos) {
+			reject({ error: 'unavailable' }); return;
+		}
+		var id = 'app' + Date.now() + Math.random().toString(36).slice(2);
+		window.__jawnAppResult = function (rid, res) {
+			if (rid !== id) { return; }
+			window.__jawnAppResult = null;
+			if (res && res.ok) { resolve(res); } else { reject(res || { error: 'failed' }); }
+		};
+		try {
+			window.webkit.messageHandlers.jawnos.postMessage(JSON.stringify({ action: action, id: id, args: args || {} }));
+		}
+		catch (e) {
+			window.__jawnAppResult = null;
+			reject({ error: 'unavailable' });
+		}
+	});
+}
+
+var jawnAppLoginPending = null;
+function jawnAppLogin(force) {
+	if (jawnAppLoginPending) { return jawnAppLoginPending; }
+	var uuid = jawnDeviceUuid();
+	if (!uuid) { return Promise.resolve(false); }
+	var phone = !!window.JawnBiometricKey;
+	var desktop = !!window.JawnDesktop;
+	if (!phone && !desktop) { return Promise.resolve(false); }
+	if (!force) {
+		var until = 0;
+		try { until = parseInt(localStorage.getItem('jawn_app_until') || '0', 10) || 0; } catch (e) { until = 0; }
+		if (until > Date.now()) { return Promise.resolve(true); }
+	}
+	function sign(msg) {
+		if (phone) {
+			return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), 'Unlock the house']).then(function (res) {
+				if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
+				return res.signature;
+			});
+		}
+		return jawnDesktopCall('app_sign', { message: jawnosB64(new TextEncoder().encode(msg)) }).then(function (res) {
+			if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
+			return res.signature;
+		});
+	}
+	jawnAppLoginPending = $.post('/manager/device/app_challenge', { device_uuid: uuid, purpose: 'login' }).then(function (ch) {
+		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'challenge' }; }
+		return sign('app-login\n' + uuid + '\n' + ch.nonce).then(function (sig) {
+			return $.post('/manager/device/app_login', { device_uuid: uuid, nonce: ch.nonce, signature: sig, kind: (phone ? 'ec' : 'ed25519') });
+		});
+	}).then(function (res) {
+		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
+		try { localStorage.setItem('jawn_app_until', String(res.until || 0)); } catch (e) {}
+		return true;
+	}).catch(function (err) {
+		jawnAppLoginPending = null;
+		throw err;
+	});
+	return jawnAppLoginPending;
+}
+
+// A desktop app that has no key yet asks the house for one; the phone approves
+// the request before the key is accepted. A browser can make the same request,
+// but only the phone can approve it.
+function jawnAppEnrollDesktop() {
+	if (!window.JawnDesktop) { return Promise.resolve(false); }
+	var uuid = jawnDeviceUuid();
+	if (!uuid) { return Promise.resolve(false); }
+	return $.getJSON('/manager/device/app_status', { device_uuid: uuid }).then(function (s) {
+		if (!s || !s.ok || s.has_app) { return true; }
+		if (s.pending) { throw { error: 'pending' }; }
+		return jawnDesktopCall('app_pubkey', {}).then(function (res) {
+			if (!res || !res.ok || !res.pubkey) { throw { error: 'no key' }; }
+			return $.post('/manager/device/app_challenge', { device_uuid: uuid, purpose: 'enroll' }).then(function (ch) {
+				if (!ch || !ch.ok || !ch.nonce) { throw { error: 'challenge' }; }
+				return jawnosSha256Hex(res.pubkey).then(function (hash) {
+					var msg = 'app-request\n' + uuid + '\n' + ch.nonce + '\n' + hash;
+					return jawnosDeviceKeyGet().then(function (key) {
+						if (!key) { throw { error: 'not paired' }; }
+						return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+							return $.post('/manager/device/app_request', {
+								device_uuid: uuid, nonce: ch.nonce, app_pubkey: res.pubkey, app_kind: 'ed25519',
+								device_signature: jawnosB64(sig), name: 'Desktop app'
+							});
+						});
+					});
+				});
+			});
+		});
+	});
+}
+
 function padlockAskPhone(mode, target) {
 	mode = mode || 'locker';
 	if (typeof target === 'undefined') { target = jawnDeviceUuid(); }

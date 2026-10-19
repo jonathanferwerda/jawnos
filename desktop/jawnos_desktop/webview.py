@@ -22,7 +22,9 @@ with the ISP's coarse position, which the house disregards, so it is denied.
 If a site asks for something we do not recognise, we deny it by default.
 """
 
+import base64
 import glob
+import json
 import os
 from urllib.parse import urlparse
 
@@ -204,6 +206,67 @@ def _js_string(result):
         return result.to_string()
     except Exception:
         return ""
+
+
+# ---- the app's own identity -------------------------------------------------
+# The manager is app-only: a browser has no key, so it cannot prove it is the
+# installed app. This view holds an Ed25519 key of its own (0600 in the config
+# dir) and signs the server's challenge with it. The key never leaves this
+# process except as a public half, so the page -- and any script running in it
+# -- can ask for a signature but cannot copy the key.
+
+def _app_key_path():
+    return os.path.join(core.config_dir(), "app_ed25519.pem")
+
+
+def _app_private_key():
+    """Load the desktop app key, creating it at 0600 the first time."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    path = _app_key_path()
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+        key = serialization.load_pem_private_key(data, password=None)
+        if isinstance(key, Ed25519PrivateKey):
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            return key
+    except (OSError, ValueError, TypeError):
+        pass
+    key = Ed25519PrivateKey.generate()
+    data = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        # Another window won the race; read the key it wrote.
+        return _app_private_key()
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    return key
+
+
+def _app_public_pem():
+    from cryptography.hazmat.primitives import serialization
+
+    return _app_private_key().public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("ascii")
+
+
+def _app_sign_b64(message_b64):
+    """Sign the base64 message the page handed over; return base64(raw sig)."""
+    raw = base64.b64decode(message_b64 or "")
+    return base64.b64encode(_app_private_key().sign(raw)).decode("ascii")
 
 
 def ticket_url():
@@ -388,6 +451,15 @@ class WebViewPanel(Gtk.Box):
             content = view.get_user_content_manager()
             content.register_script_message_handler("jawnos")
             content.connect("script-message-received::jawnos", self._on_message)
+            # At document start the page can see that it is running inside the
+            # desktop app. universal.js keys its app login off this, the same
+            # way the phone keys off the Android bridge.
+            content.add_script(WebKit2.UserScript.new(
+                "window.JawnDesktop = window.JawnDesktop || {};",
+                WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.START,
+                None, None,
+            ))
         except Exception:
             pass
         view.connect("load-changed", self._on_load_changed)
@@ -473,8 +545,43 @@ class WebViewPanel(Gtk.Box):
     # ---- the page -> app channel ----
 
     def _on_message(self, _content, result):
-        if "admin" in _js_string(result) and self.on_admin:
+        raw = _js_string(result) or ""
+        if "admin" in raw and self.on_admin:
             self.on_admin()
+            return False
+        try:
+            message = json.loads(raw)
+        except (ValueError, TypeError):
+            message = None
+        if not isinstance(message, dict):
+            return False
+        action = message.get("action")
+        if action not in ("app_pubkey", "app_sign"):
+            return False
+        # Only answer our own origin. A link opened in this view (the public
+        # homepage) must not be able to borrow the app's key.
+        try:
+            host = urlparse(self.view.get_uri() or "").hostname or ""
+        except ValueError:
+            host = ""
+        if host not in (self._manager_host, "127.0.0.1", "localhost", "::1"):
+            return False
+        msg_id = message.get("id") or ""
+        if action == "app_pubkey":
+            reply = {"ok": True, "pubkey": _app_public_pem(), "kind": "ed25519"}
+        else:
+            args = message.get("args") or {}
+            try:
+                reply = {"ok": True, "signature": _app_sign_b64(args.get("message"))}
+            except Exception:
+                reply = {"ok": False, "error": "sign failed"}
+        try:
+            self.view.evaluate_javascript(
+                "window.__jawnAppResult && window.__jawnAppResult(%s, %s);"
+                % (json.dumps(msg_id), json.dumps(reply)),
+                -1, None, None, None, None, None)
+        except Exception:
+            pass
         return False
 
     def _on_tls_error(self, view, failing_uri, certificate, errors):

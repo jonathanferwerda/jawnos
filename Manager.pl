@@ -5963,6 +5963,12 @@ post '/sesh_check' => sub ($c) {
 		if ($authorized) {
 			app->sessions->samesite(undef);
 			$c->session('authentication' => 'approved');
+			# A peer logs in with the house password/filename over the signed
+			# rail; mark the session so the app gate lets remote_device_connect
+			# through without a browser app key.
+			if ($c->param('neighbour') || $c->param('president') || $c->param('backup') || $c->param('remote_timestamp')) {
+				$c->session('peer' => 1);
+			}
 			my $app_warranty = &subs::setting_grabber({ app => $c->param('app'), setting => 'warranty' });
 			my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ 'app' => 'me', 'setting' => 'login_warranty' } ) || '-3h',$server_time);
 			$c->session('database' => $database);
@@ -6813,6 +6819,12 @@ get '/manager/configure/backup_status' => sub($c) {
 # itself: the chip_id must be a device this machine holds, the same identification
 # every other embedded request carries (hardened in a later pass).
 get '/embedded/teletype/backup' => sub($c) {
+	# The deck has no browser session; it proves itself with the rotated Now Me
+	# pair exactly as its other routes do. A chip id alone is public, so it is
+	# no longer sufficient to hand out the encrypted vault.
+	unless (&subs::embedded_authorizer($c)) {
+		return $c->rendered(403);
+	}
 	my $chip_id = $c->param('chip_id');
 	my $known;
 	if ($chip_id) {
@@ -26788,6 +26800,114 @@ post '/manager/device/login' => sub($c) {
 	$c->render(json => { ok => 1, name => $device->{'name'} });
 };
 
+# --- app keys ----------------------------------------------------------------
+# The private manager is reachable only when the session carries a native app
+# key proof. A phone's key is its Android Keystore biometric key; a desktop's is
+# a key the desktop app holds and signs with. A browser has neither, so it can
+# pair and log in but never become an app session.
+post '/manager/device/app_challenge' => sub($c) {
+	&app_schema_ensure();
+	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	unless ($device) { return $c->render(json => { ok => 0, error => 'not paired' }); }
+	my $purpose = ($c->param('purpose') || '') eq 'enroll' ? 'enroll' : 'login';
+	my $ip = $c->tx->remote_address || '?';
+	my $now = &subs::rightNow();
+	my $recent = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'app_challenge', $ip . ':%', $now - 60000)->hash->{'n'} || 0;
+	if ($recent >= 30) { return $c->render(json => { ok => 0, error => 'too many' }); }
+	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'app_challenge', app => '__president', server_time => $now, timestamp => $now });
+	my $nonce = &subs::random_string_creator(40);
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'app_nonce', $now - 180000);
+	&subs::db_insert('cache', { uuid => $purpose . ':' . $device_uuid . ':' . $nonce, context => 'app_nonce', app => '__president', server_time => $now, timestamp => $now });
+	$c->render(json => { ok => 1, nonce => $nonce, seconds => 120 });
+};
+
+sub app_nonce_take {
+	my ($purpose, $device_uuid, $nonce, $ttl) = @_;
+	$ttl ||= 120000;
+	return 0 unless defined $nonce && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
+	my $stamp = $purpose . ':' . $device_uuid . ':' . $nonce;
+	my $seen = &subs::db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'app_nonce', $stamp)->hashes->[0];
+	return 0 unless $seen && $seen->{'server_time'} && $seen->{'server_time'} > &subs::rightNow() - $ttl;
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'app_nonce', $stamp);
+	return 1;
+}
+
+post '/manager/device/app_login' => sub($c) {
+	&app_schema_ensure();
+	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	unless ($device) { return $c->render(json => { ok => 0, error => 'not paired' }); }
+	my ($pubkey, $kind) = &app_key_for($device);
+	return $c->render(json => { ok => 0, error => 'no app key' }) unless $pubkey;
+	my $nonce = $c->param('nonce') || '';
+	return $c->render(json => { ok => 0, error => 'no challenge' }) unless &app_nonce_take('login', $device_uuid, $nonce);
+	my $msg = join("\n", 'app-login', $device_uuid, $nonce);
+	unless (&app_signature_ok($pubkey, $kind, $msg, $c->param('signature') || '')) {
+		$log->info('app gate: app login refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . ($c->tx->remote_address || '?'));
+		return $c->render(json => { ok => 0, error => 'not accepted' });
+	}
+	my $until = &subs::rightNow() + 43200000;
+	$c->session('app' => 1);
+	$c->session('app_until' => $until);
+	$c->session('app_device' => $device_uuid);
+	$log->info('app gate: app login ' . ($device->{'name'} || $device_uuid) . ' kind=' . $kind . ' until=' . $until);
+	$c->render(json => { ok => 1, until => $until, kind => $kind, name => $device->{'name'} });
+};
+
+get '/manager/device/app_status' => sub($c) {
+	&app_schema_ensure();
+	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device;
+	my ($pubkey, $kind) = &app_key_for($device);
+	my $pending = &subs::db_select('device_requests', undef, { device_uuid => $device_uuid, kind => 'app', status => 'pending' })->hashes->[0];
+	$c->render(json => {
+		ok => 1,
+		device => $device_uuid,
+		has_app => ($pubkey ? 1 : 0),
+		kind => ($kind || ''),
+		app_session => (&app_session_ok($c) ? 1 : 0),
+		pending => ($pending ? $pending->{'code'} : ''),
+	});
+};
+
+# A desktop app asks to add its native key to an already-paired device. It is
+# approved on a trusted app (the phone), so a browser that can reach this route
+# cannot mint an app identity for itself.
+post '/manager/device/app_request' => sub($c) {
+	&app_schema_ensure();
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
+	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device;
+	my ($existing) = &app_key_for($device);
+	return $c->render(json => { ok => 1, already => 1 }) if $existing;
+	my $nonce = $c->param('nonce') || '';
+	return $c->render(json => { ok => 0, error => 'no challenge' }) unless &app_nonce_take('enroll', $device_uuid, $nonce);
+	my $pubkey = $c->param('app_pubkey') || '';
+	my $kind = ($c->param('app_kind') || 'ed25519') eq 'ec' ? 'ec' : 'ed25519';
+	my $ok_key = $kind eq 'ec' ? &subs::ecdsa_public_key_ok($pubkey) : ($pubkey =~ /BEGIN PUBLIC KEY/ ? 1 : 0);
+	return $c->render(json => { ok => 0, error => 'bad key' }) unless $ok_key;
+	require Digest::SHA;
+	my $msg = join("\n", 'app-request', $device_uuid, $nonce, Digest::SHA::sha256_hex($pubkey));
+	unless (&subs::signature_verify($device->{'pubkey'}, $msg, $c->param('device_signature') || '')) {
+		return $c->render(json => { ok => 0, error => 'not accepted' });
+	}
+	my $name = substr($c->param('name') || 'Desktop app', 0, 60);
+	my $now = &subs::rightNow();
+	my $code = &subs::device_request_code();
+	my $uuid = &subs::random_string_creator(25);
+	&subs::db_insert('device_requests', {
+		uuid => $uuid, name => $name, pubkey => $device->{'pubkey'}, agent => substr($c->req->headers->user_agent // '', 0, 400),
+		code => $code, status => 'pending', device_uuid => $device_uuid, kind => 'app',
+		app_pubkey => $pubkey, app_kind => $kind, remote_address => ($c->tx->remote_address || ''),
+		timestamp => $now, server_time => $now,
+	});
+	&device_request_notify($c, $name, $code);
+	$c->render(json => { ok => 1, uuid => $uuid, code => $code });
+};
+
 post '/manager/security/device_revoke' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { html => '<p>citizen only</p>' });
@@ -26959,7 +27079,16 @@ post '/manager/security/device_request_decide' => sub($c) {
 	my $now = &subs::rightNow();
 	my $row = ($uuid && &subs::db_select('device_requests', undef, { uuid => $uuid, status => 'pending' })->hashes->[0]);
 	if ($row && $row->{'server_time'} > $now - 600000) {
-		if ($decision eq 'approve') {
+		if (($row->{'kind'} || '') eq 'app' && $decision eq 'approve') {
+			# An app key joins an existing paired device; it does not mint a new one.
+			my $target = $row->{'device_uuid'} || '';
+			my $device = ($target && &subs::db_select('paired_devices', undef, { uuid => $target, status => 'active' })->hashes->[0]);
+			if ($device && $row->{'app_pubkey'}) {
+				&subs::db_update('paired_devices', { app_pubkey => $row->{'app_pubkey'}, app_kind => $row->{'app_kind'} }, { uuid => $target });
+				&subs::db_update('device_requests', { status => 'approved', device_uuid => $target, server_time => $now }, { uuid => $uuid });
+			}
+		}
+		elsif ($decision eq 'approve') {
 			my $device_uuid = &device_store_pubkey($row->{'pubkey'}, $row->{'name'}, $row->{'agent'});
 			if ($device_uuid) {
 				&subs::db_update('device_requests', { status => 'approved', device_uuid => $device_uuid, server_time => $now }, { uuid => $uuid });
@@ -27091,6 +27220,87 @@ post '/manager/security/padlock_pull' => sub($c) {
 sub padlock_gate_mode {
 	my $mode = &subs::setting_grabber({ app => '__president', setting => 'padlock_gate' });
 	return (defined $mode && $mode eq 'shadow') ? 'shadow' : 'enforce';
+}
+
+# --- the app gate ----------------------------------------------------------
+# The installed apps are the only browser engines allowed to see /manager. A
+# browser may read the public homepage and store, and the embedded devices keep
+# their own rotated-token rail. 'shadow' logs what it would deny; 'enforce'
+# answers with the open-in-the-app page.
+sub app_access_mode {
+	my $mode = &subs::setting_grabber({ app => '__president', setting => 'app_access' });
+	return 'off' if defined $mode && $mode eq 'off';
+	return $mode eq 'enforce' ? 'enforce' : 'shadow';
+}
+
+sub app_public_path {
+	my ($path) = @_;
+	return 0 unless defined $path;
+	return 1 if $path eq '/' || $path eq '/homepage' || $path eq '/index.html';
+	return 1 if $path =~ m{^/store(?:/|$)};
+	return 1 if $path =~ m{^/(?:css|js|images|icons|sounds|fonts|public|i18n)/};
+	return 1 if $path =~ m{^/(?:favicon\.ico|manifest\.json|service_worker\.js|robots\.txt|privacy|mugshot|payment|play|file_open|denial)$};
+	return 1 if $path =~ m{^/(?:manager/)?box_office(?:/|$)};
+	return 1 if $path =~ m{^/public_view(?:/|$)};
+	return 1 if $path eq '/sesh_check' || $path eq '/gate';
+	return 1 if $path eq '/manager/health';
+	return 1 if $path eq '/manager/ws' || $path eq '/manager/tunnel/ws';
+	# The padlock is its own small protocol: a locked screen must still be able
+	# to ask another device for a print even when its app window has lapsed, and
+	# every one of these routes checks its own device key or pairing.
+	return 1 if $path =~ m{^/manager/security/(?:padlock_|fingerprint_unlock|biometric_)};
+	return 1 if $path =~ m{^/manager/device(?:/|$)};
+	return 1 if $path =~ m{^/manager/app_release(?:/|$)};
+	return 1 if $path =~ m{^/manager/app_download(?:/|$)};
+	# The embedded devices authenticate themselves with the rotated Now Me
+	# pair; they are not browsers and must keep their rail.
+	return 1 if $path =~ m{^/(?:watch|teletype|embedded)(?:/|$)};
+	return 0;
+}
+
+sub app_session_ok {
+	my ($c) = @_;
+	return 1 if ($c->session('peer') || '') eq '1';
+	my $until = $c->session('app_until') || 0;
+	return $until > &subs::rightNow() ? 1 : 0;
+}
+
+sub app_key_for {
+	my ($device) = @_;
+	return () unless $device;
+	if ($device->{'app_pubkey'}) {
+		my $kind = $device->{'app_kind'} || '';
+		$kind = 'ec' if !$kind && $device->{'app_pubkey'} !~ /BEGIN PUBLIC KEY/;
+		return ($device->{'app_pubkey'}, ($kind eq 'ec' ? 'ec' : 'ed25519'));
+	}
+	# A phone's already-enrolled Keystore fingerprint is its app key. The
+	# private half cannot leave Android Keystore, so it is genuinely app-only.
+	return ($device->{'bio_pubkey'}, 'ec') if $device->{'bio_pubkey'};
+	return ();
+}
+
+sub app_signature_ok {
+	my ($pubkey, $kind, $msg, $sig) = @_;
+	return 0 unless $pubkey && defined $msg && $sig;
+	return $kind eq 'ec'
+		? &subs::ecdsa_verify($pubkey, $msg, $sig)
+		: &subs::signature_verify($pubkey, $msg, $sig);
+}
+
+our $app_schema_done;
+sub app_schema_ensure {
+	return if $app_schema_done;
+	$app_schema_done = 1;
+	foreach my $spec (
+		[ 'paired_devices', 'app_pubkey', 'LONGTEXT' ],
+		[ 'paired_devices', 'app_kind', 'VARCHAR(16)' ],
+		[ 'device_requests', 'kind', 'VARCHAR(16)' ],
+		[ 'device_requests', 'app_pubkey', 'LONGTEXT' ],
+		[ 'device_requests', 'app_kind', 'VARCHAR(16)' ],
+	) {
+		my ($table, $column, $type) = @{$spec};
+		eval { &subs::db_query("ALTER TABLE $table ADD COLUMN $column $type") };
+	}
 }
 
 # A lock is local to the machine that saw it, but an explicit unlock request
@@ -29491,6 +29701,24 @@ sub notification_sender($m,$db) {
 
 sub authentication_passer($c) {
 	my $server_time = &subs::rightNow();
+
+	# The app gate runs before the login gate: a browser must not be handed the
+	# manager's login page or any private route at all. The public homepage,
+	# store and the embedded devices' own token rail are allowed through.
+	my $app_mode = &app_access_mode();
+	if ($app_mode ne 'off') {
+		&app_schema_ensure();
+		my $app_path = $c->req->url->path->to_string;
+		unless (&app_public_path($app_path) || &app_session_ok($c)) {
+			if ($app_mode eq 'enforce') {
+				$c->render(template => 'app_required', layout => undef,
+					device_uuid => ($c->session('device_uuid') || ''),
+					signatorial => &subs::signatorial_designer());
+				return;
+			}
+			$log->info('app gate shadow: would deny ' . $c->req->method . ' ' . $app_path . ' from ' . ($c->tx->remote_address || '?'));
+		}
+	}
 
 	my $authentication = $c->session('authentication') || 'revoked';
 	if ($c->session('authentication') eq 'denial' || $c->session('reject_count') > 3 || ($c->stash('no') && $c->stash('no') == 1)) {
