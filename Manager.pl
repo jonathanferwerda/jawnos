@@ -9012,16 +9012,16 @@ sub lock_session($c, $explicit = 0) {
 	my $now = &subs::rightNow();
 	my ($db) = &subs::database_grabber();
 
-	# The watcher and the phone key talk to the server while the padlock is up.
-	# Those calls are not a fresh lock: running the lock again would replace the
-	# screen (and the dial's progress) under the person's hand, and re-expire the
-	# session a screen that just turned it had already opened.
+	# The phone key talks to the server while the padlock is up. Those calls are
+	# not a fresh lock: running the lock again would replace the screen under the
+	# person's hand and re-expire the session a screen that just turned it had
+	# already opened.
 	my $path = $c->req->url->path;
-	return if ($path eq '/manager/security/padlock_watch' ||
+	return if ($path eq '/manager/security/padlock_phone_show' ||
 		$path eq '/manager/security/padlock_challenge' ||
 		$path eq '/manager/security/padlock_unlock' ||
 		$path eq '/manager/security/padlock_state' ||
-		$path =~ m{^/manager/security/padlock_key(?:/|$)});
+		$path eq '/manager/security/padlock_key');
 
 	# A request that started while the lock screen was up can reach here after
 	# another screen has already turned the lock. Re-read the stored time (the
@@ -9073,6 +9073,8 @@ sub lock_session($c, $explicit = 0) {
 		my $taunt_size = scalar @gb::taunts;
 		my $taunts = $gb::taunts[rand($taunt_size)];
 		&Websocket::send('server', { padlock => $pl, taunts => $taunts, attempts => $attempts, colour => $colour  });
+		# the phone opens its unlock page by itself; the page signs the nonce
+		&Websocket::send('server', { padlock_key_show => 1, mode => 'locker', timestamp => &subs::rightNow() });
 	#	$c->render(template => 'padlock', mode => 'locker');
 	#	my $path = $c->req->url->path;
 	#	unless $path eq '/manager/security/padlock_pull'
@@ -26709,10 +26711,46 @@ post '/manager/security/padlock/delete' => sub ($c) {
 	&subs::db_delete('security', { level => 'padlock' });
 	&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
 	&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
+	&Websocket::send('server', { padlock_open => 1, mode => 'locker', timestamp => &subs::rightNow() });
 	$c->render(text => 'ok');
 };
 
+# The gate is a row, not a combination any more: the dial and the camera key
+# are gone, so there is nothing to set. Enabling it makes the server deny
+# everything behind it; the phone's signed challenge (and the paper code) are
+# the ways in.
+post '/manager/security/gate/enable' => sub ($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		return $c->render(json => { ok => 0, error => 'citizen only' });
+	}
+	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	unless ($padlock) {
+		my $now = &subs::rightNow();
+		&subs::db_insert('security', { level => 'padlock', credential => '', timestamp => $now, server_time => $now, uuid => &subs::random_string_creator(30) });
+	}
+	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	unless (scalar @{$contexts}) {
+		&subs::setting_setter({ app => '__president', setting => 'padlock_contexts', value => '["general"]' });
+	}
+	my $sec = &security_initializer($c);
+	$c->render(json => { ok => 1, html => $sec->{'html'} });
+};
+
+post '/manager/security/gate/disable' => sub ($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		return $c->render(json => { ok => 0, error => 'citizen only' });
+	}
+	&subs::db_delete('security', { level => 'padlock' });
+	&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
+	&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });
+	&Websocket::send('server', { padlock_open => 1, mode => 'locker', timestamp => &subs::rightNow() });
+	my $sec = &security_initializer($c);
+	$c->render(json => { ok => 1, html => $sec->{'html'} });
+};
+
 post '/manager/security/padlock_pull' => sub($c) {
+	$c->render(json => { status => 'fail', error => 'the dial is disabled' });
+	return;
 	my $timestamp = $c->param('timestamp');
 	my $mode = $c->param('mode');
 	my $digits = eval { return decode_json $c->param('digits') } || [];
@@ -26809,122 +26847,9 @@ post '/manager/security/padlock_pull' => sub($c) {
 	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => $attempts });
 };
 
-# --- the phone key: a rolling code the computer's camera can read ----------
-# The dial is fussy with a mouse. A phone holding the key up to this machine's
-# webcam is not: the phone draws a QR code with the house logo at its centre,
-# the code turns every ten seconds, and zbar here reads it. The code is an HMAC
-# of the step under the house key, so only this house can mint or check one and
-# a photograph of an old code stops working when the step turns.
-sub padlock_camera_dir { return '/tmp/jawn_padlock_camera'; }
-sub padlock_visual_seconds { return 40; }
-sub padlock_visual_step_seconds { return 10; }
-
-sub padlock_visual_step {
-	return int(time / &padlock_visual_step_seconds());
-}
-
-sub padlock_visual_code {
-	my ($step) = @_;
-	require Digest::SHA;
-	return substr(Digest::SHA::hmac_sha256_hex('jawnos-padlock-visual|' . $step, &subs::house_key()), 0, 12);
-}
-
-sub padlock_visual_payload {
-	my ($step) = @_;
-	return 'JPL1:' . $step . ':' . &padlock_visual_code($step);
-}
-
-sub padlock_visual_valid {
-	my ($payload) = @_;
-	return 0 unless defined $payload && $payload =~ /^JPL1:(\d{1,12}):([0-9a-f]{12})$/;
-	my ($step, $code) = ($1, $2);
-	my $now = &padlock_visual_step();
-	# one step either side: a code read just as the clock turns is still its own
-	return 0 if $step < $now - 1 || $step > $now + 1;
-	return secure_compare($code, &padlock_visual_code($step)) ? 1 : 0;
-}
-
-sub padlock_camera_available {
-	return 0 unless &subs::device_setter() eq 'computer';
-	return 0 unless grep { $_ eq 'webcam' } @{ $gb::capabilities->{'computer'}->{'camera'} || [] };
-	return 0 unless -e '/dev/video0';
-	my $which = `command -v zbarcam 2>/dev/null`;
-	return ($which =~ /\S/) ? 1 : 0;
-}
-
-sub padlock_camera_is_reader {
-	my ($pid) = @_;
-	open my $cf, '<', "/proc/$pid/cmdline" or return 0;
-	local $/;
-	my $cmd = <$cf>;
-	close $cf;
-	return ($cmd && $cmd =~ /zbarcam/) ? 1 : 0;
-}
-
-sub padlock_camera_alive {
-	my $pidfile = &padlock_camera_dir() . '/pid';
-	return 0 unless -e $pidfile;
-	open my $pf, '<', $pidfile or return 0;
-	my $pid = <$pf>;
-	close $pf;
-	return ($pid && $pid =~ /^([0-9]+)/ && &padlock_camera_is_reader($1) && kill(0, $1)) ? 1 : 0;
-}
-
-sub padlock_camera_stop {
-	my $pidfile = &padlock_camera_dir() . '/pid';
-	return 0 unless -e $pidfile;
-	open my $pf, '<', $pidfile or return 0;
-	my $pid = <$pf>;
-	close $pf;
-	unlink $pidfile;
-	return 0 unless $pid && $pid =~ /^([0-9]+)/;
-	$pid = $1;
-	return 0 unless &padlock_camera_is_reader($pid);
-	# the child starts its own session, so the pid is also the process group;
-	# signalling the group takes `timeout` and the reader behind it together
-	kill('TERM', -$pid);
-	kill('TERM', $pid);
-	return 1;
-}
-
-# One reader for the whole machine. `timeout` gives the camera back even if
-# nobody ever polls, so a lock that is walked away from cannot watch forever.
-sub padlock_camera_start {
-	my ($mode) = @_;
-	$mode = 'locker' unless defined $mode && $mode =~ /^(?:locker|gallery|music|folders)$/;
-	my $dir = &padlock_camera_dir();
-	`mkdir -p $dir` unless -d $dir;
-	return 0 unless -d $dir;
-	open my $mf, '>', "$dir/mode"; print $mf $mode; close $mf;
-	my $started = -e "$dir/started" ? (stat("$dir/started"))[9] : 0;
-	if (&padlock_camera_alive() && $started && time - $started < &padlock_visual_seconds()) {
-		return 1;  # a lock opened a moment ago already has the camera
-	}
-	&padlock_camera_stop();
-	open my $codes, '>', "$dir/codes"; close $codes;
-	open my $log, '>', "$dir/log"; close $log;
-	my $pid = fork();
-	return 0 unless defined $pid;
-	if ($pid == 0) {
-		eval { POSIX::setsid(); };
-		$^F = 2;  # do not leak the manager's sockets into the reader
-		open STDOUT, '>>', "$dir/codes";
-		open STDERR, '>>', "$dir/log";
-		exec('timeout', &padlock_visual_seconds() . 's', 'zbarcam', '--raw', '--nodisplay', '/dev/video0');
-		exit 0;
-	}
-	open my $pf, '>', "$dir/pid"; print $pf $pid; close $pf;
-	open my $sf, '>', "$dir/started"; print $sf time; close $sf;
-	return 1;
-}
-
-sub padlock_camera_mode {
-	my $file = &padlock_camera_dir() . '/mode';
-	return 'locker' unless -e $file;
-	my $mode = `cat $file 2>/dev/null`;
-	$mode =~ s/\s+//g;
-	return ($mode =~ /^(?:locker|gallery|music|folders)$/) ? $mode : 'locker';
-}
+# The dial and the camera key were removed in v0.1.804: the signed challenge
+# is the only remote unlock, and the paper code is the emergency. Nothing here
+# starts a camera or accepts a combination any more.
 
 # --- the lock gate ---------------------------------------------------------
 # The padlock used to be a client overlay: every route still answered behind
@@ -26964,12 +26889,11 @@ sub padlock_gate_allows {
 	return 1 if $path =~ m{^/(?:manager/)?box_office(?:/|$)};
 	# the device rail authenticates itself and must reach the gate's recovery
 	return 1 if $path =~ m{^/manager/device(?:/|$)};
-	return 1 if $path eq '/manager/security/padlock_watch';
-	return 1 if $path eq '/manager/security/padlock_pull';
+	return 1 if $path eq '/manager/security/padlock_phone_show';
 	return 1 if $path eq '/manager/security/padlock_challenge';
 	return 1 if $path eq '/manager/security/padlock_unlock';
 	return 1 if $path eq '/manager/security/padlock_state';
-	return 1 if $path =~ m{^/manager/security/padlock_key(?:/|$)};
+	return 1 if $path eq '/manager/security/padlock_key';
 	return 0;
 }
 
@@ -27017,7 +26941,6 @@ sub padlock_mark_unlocked {
 	$mode ||= 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	return 0 if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
-	&padlock_camera_stop();
 	my $suds = &subs::session_suds($c) || $gb::suds;
 	return 0 unless $suds;
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
@@ -27051,79 +26974,20 @@ sub padlock_mark_unlocked {
 	return 1;
 }
 
-sub padlock_camera_codes {
-	my $file = &padlock_camera_dir() . '/codes';
-	return () unless -e $file;
-	open my $fh, '<', $file or return ();
-	my @codes;
-	while (my $line = <$fh>) {
-		chomp $line;
-		$line =~ s/^\s+|\s+$//g;
-		push @codes, $line if length $line;
-	}
-	close $fh;
-	return @codes;
-}
-
-# A code the camera read opens the same things a turned dial opens.
-sub padlock_visual_unlock {
-	my ($c, $mode) = @_;
-	return &padlock_mark_unlocked($c, $mode);
-}
-
+# The camera key is gone: the signed challenge is the only remote unlock.
+# Kept so an old tab gets a clear answer instead of a 404.
 post '/manager/security/padlock_watch' => sub ($c) {
-	my $action = $c->param('action') || 'poll';
+	$c->render(json => { ok => 0, error => 'the camera key is disabled' });
+};
+
+# An app that locks (gallery, music, folders) asks the house to show the
+# unlock page on a paired phone/tablet. The phone signs there; this route only
+# sends the message, so it cannot unlock anything by itself.
+post '/manager/security/padlock_phone_show' => sub ($c) {
 	my $mode = $c->param('mode') || 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
-	unless ($c->session('authentication') eq 'approved') {
-		return $c->render(json => { ok => 0, error => 'not signed in' });
-	}
-	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
-	unless ($padlock) {
-		&padlock_camera_stop();
-		return $c->render(json => { ok => 1, unlocked => 1 });
-	}
-	if ($action eq 'stop') {
-		&padlock_camera_stop();
-		return $c->render(json => { ok => 1 });
-	}
-	if ($action eq 'start') {
-		# only a screen on this machine may wake its camera
-		return $c->render(json => { ok => 1, camera => 0 })
-			unless &padlock_request_is_local($c);
-		return $c->render(json => { ok => 1, camera => 0 })
-			if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
-		return $c->render(json => { ok => 1, camera => 0 }) unless &padlock_camera_available();
-		my $watching = &padlock_camera_start($mode);
-		if ($watching) {
-			# the phone/tablet in the house shows the key by itself; every mobile
-			# tab that hears this goes to the key page (desktops ignore it)
-			&Websocket::send('server', {
-				padlock_key_show => 1,
-				mode => $mode,
-				timestamp => &subs::rightNow()
-			});
-		}
-		return $c->render(json => { ok => 1, camera => ($watching ? 1 : 0), seconds => &padlock_visual_seconds() });
-	}
-	if ($action eq 'poll') {
-		# another screen in the house may have turned it already; then this one
-		# is done too, and any camera still held is given back
-		my $already = &subs::decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'pl_time' })) || 0;
-		if ($already > &subs::rightNow()) {
-			&padlock_camera_stop();
-			return $c->render(json => { ok => 1, unlocked => 1 });
-		}
-	}
-	if (&padlock_camera_alive()) {
-		foreach my $code ( &padlock_camera_codes() ) {
-			if (&padlock_visual_valid($code) && &padlock_visual_unlock($c, $mode)) {
-				return $c->render(json => { ok => 1, unlocked => 1 });
-			}
-		}
-		return $c->render(json => { ok => 1, unlocked => 0 });
-	}
-	$c->render(json => { ok => 1, camera => 0, unlocked => 0 });
+	&Websocket::send('server', { padlock_key_show => 1, mode => $mode, timestamp => &subs::rightNow() });
+	$c->render(json => { ok => 1, mode => $mode });
 };
 
 # --- opening the lock with a paired device's signature ---------------------
@@ -27209,6 +27073,7 @@ get '/manager/security/padlock_key' => sub ($c) {
 };
 
 get '/manager/security/padlock_key/frame' => sub ($c) {
+	return $c->render(json => { error => 'the camera key is disabled' });
 	unless ($c->session('authentication') eq 'approved') {
 		return $c->render(json => { error => 'not signed in' });
 	}
@@ -27234,6 +27099,7 @@ get '/manager/security/padlock_key/frame' => sub ($c) {
 };
 
 get '/manager/security/padlock_key/active' => sub ($c) {
+	return $c->render(json => { watching => 0, disabled => 1 });
 	unless ($c->session('authentication') eq 'approved') {
 		return $c->render(json => { watching => 0 });
 	}

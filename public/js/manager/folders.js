@@ -15,15 +15,14 @@ $(document).on('click', '#folders_toggle', function() {
 	foldersOpener();
 });
 
-// the media padlock: a hidden app's files are not listed until it is turned, and
-// only at home. The lock icon shows the dial; the dial's own handler posts it.
+// the media padlock: a hidden app's files are not listed until a paired phone
+// signs the house open. The lock icon asks the house to show the unlock page.
 $(document).on('click', '.folders_lock', function () {
 	$('#folders_mainview').hide();
 	$('#folders_padlock').show();
-	if (typeof padlockVisualWatch === 'function') { padlockVisualWatch('folders'); }
+	if (typeof padlockAskPhone === 'function') { padlockAskPhone('folders'); }
 });
 $(document).on('click', '.folders_cancel_padlock', function () {
-	if (typeof padlockVisualStop === 'function') { padlockVisualStop(''); }
 	$('#folders_padlock').hide();
 	$('#folders_mainview').show();
 });

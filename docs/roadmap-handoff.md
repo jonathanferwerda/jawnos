@@ -148,11 +148,11 @@ The padlock is the **only** thing between a person sitting at an otherwise wide
 open desktop and every house record, so it cannot stay a browser overlay. Today
 it is one: `authentication_passer` notices that `pl_time` has expired and calls
 `lock_session`, but the request still returns its data underneath. Anything that
-can reach `/manager/...` or hold the websocket reads the house while the dial is
-on screen. The dial is 1,728 combinations and awkward with a mouse (it commits
-only once the pointer passes the digit, which is the "turn it past the number"
-complaint), and the phone QR is a bearer token on a screen — a photo of it works
-for 10–20 s. None of that is a gate.
+can reach `/manager/...` or hold the websocket reads the house behind the lock
+screen. The old dial was 1,728 combinations and awkward with a mouse (it
+committed only once the pointer passed the digit), and the phone QR was a bearer
+token on a screen — a photo of it worked for 10–20 s. **Both are gone**
+(v0.1.804): neither was a gate, so they were removed rather than polished.
 
 Decision: **the session is the gate**. JawnOS boots to a greeter, then a
 **Treeland (Wayland) session** whose lock screen is `ext-session-lock-v1`; jawn
@@ -161,7 +161,7 @@ with peer-credential checks. A locked session **denies data**; it does not
 decorate it. The camera/phone-image path the user likes stays as an **opt-in
 fallback**, never as the only way in.
 
-### Unlock: device signature first, camera and dial as fallbacks
+### Unlock: device signature only; the paper code is the emergency
 
 The primary unlock is the phone already in the person's hand: a paired device
 signs a nonce with the Ed25519 key it already has, and the server verifies it
@@ -178,12 +178,15 @@ against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
   a free oracle; the dial's `padlock_pulls` stays separate.
 - Only a **remote** device may sign: a request from this machine itself is
   refused (`padlock_request_is_local`), so the locked screen cannot open its own
-  door with the key it holds. The dial and the paper code are the lost-phone
-  paths.
-- The phone does not need to be touched beyond unlocking it: an unlock attempt
-  already broadcasts `padlock_key_show`, and a mobile tab jumps to the key page
-  by itself (v0.1.792). The signature path replaces the QR on that page; the QR
-  becomes the opt-in camera fallback.
+  door with the key it holds. The paper code is the lost-phone path.
+- The phone does not need to be touched beyond unlocking it: the house
+  broadcasts `padlock_key_show` when it locks, and a mobile tab jumps to the
+  unlock page by itself (v0.1.792) and signs the nonce at once.
+- **The dial and the camera/QR key were removed in v0.1.804.** The dial's
+  handler, the QR canvas, the rotation timer, the camera watch/poll and its
+  `/frame` and `/active` routes are gone (the routes answer "disabled").
+  `padlock_phone_show` only sends `padlock_key_show`; it cannot unlock. The
+  recovery code stays as the only other way in.
 
 ### Emergency: paper code **and** FDE (both)
 
@@ -218,16 +221,16 @@ before any compositor work, and it is small.
 - Recovery code, and **test that path first** — deploy the gate only after a
   deliberate "lock it, unlock it with paper" rehearsal, so a bug cannot lock the
   user out of a running machine.
-- Already done and kept: auto-show on the phone (v0.1.792), tap the padlock to
-  restart the 40 s watch (v0.1.792), back cancels (v0.1.792), rejoin after sleep
-  (v0.1.794), no re-expiry after a concurrent unlock (v0.1.793).
+- Already done and kept: auto-show on the phone (v0.1.792), rejoin after sleep
+  (v0.1.794), no re-expiry after a concurrent unlock (v0.1.793). The dial and
+  the camera watch (v0.1.792) were removed in v0.1.804.
 - **Landed in v0.1.802.** Shadow logged real requests and still served;
-  Enforce answered a document with `423` and the locked page; the dial unlocked;
-  the websocket drops data pushes while locked; a throwaway paired device
-  completed challenge/sign/login and its valid padlock signature was refused as
-  local. The default is **Shadow**. The last end-to-end check is the user's
-  phone (the remote signature); flip the security panel's Gate select to
-  **Enforce** after it passes. The paper-code success path stays unexercised
+  Enforce answered a document with `423` and the locked page; the dial (since
+  removed) unlocked; the websocket drops data pushes while locked; a throwaway
+  paired device completed challenge/sign/login and its valid padlock signature
+  was refused as local. The default is **Shadow**. The last end-to-end check is
+  the user's phone (the remote signature); flip the security panel's Gate select
+  to **Enforce** after it passes. The paper-code success path stays unexercised
   because the existing recovery code was left untouched.
 
 **P1 — greetd greeter.** Boot to **greetd** (no autologin) with a JawnOS greeter
@@ -251,10 +254,9 @@ lock API turns out to be awkward, Sway/wlroots is the fallback — the verifier
 and the service socket do not change.
 
 **P3 — custody and at rest.** Service-owned key + peer checks (P1), LUKS/TPM
-(above), camera becomes opt-in fallback only, and the dial is not accepted in
-strict mode. Fix the dial UX while it is still a fallback: commit on the digit
-under the pointer (or replace the three dials with a keypad) instead of
-committing when the pointer passes it.
+(above), and the signature as the only remote unlock. The dial and the camera/QR
+key were removed in v0.1.804, so there is no fallback to refine: the paper
+recovery code is the emergency, and the session gate itself is P1/P2.
 
 **P4 — the image.** An archiso overlay built from `desktop/wayland/`: greetd +
 Treeland + the jawn service + greeter/lock client, with FDE, the paper code, a
@@ -317,9 +319,10 @@ auto-unlock.
 ### Decision (settled, 2026-10-18)
 
 The strict model was confirmed: **server-side gate + paired-device signature as
-the primary + paper code and FDE for emergencies.** P0 is built and kept the
-dial and camera as fallbacks; refusing the dial in strict mode is P3. The gate
-ships in **Shadow** until the user's phone has opened it remotely.
+the primary + paper code and FDE for emergencies.** P0 is built. The dial and
+the camera/QR key were removed in v0.1.804; the signature is the only remote
+unlock. The gate ships in **Shadow** until the user's phone has opened it
+remotely.
 
 ## Data / records
 

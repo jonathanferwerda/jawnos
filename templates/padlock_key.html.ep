@@ -1,15 +1,14 @@
-% title 'Phone key';
+% title 'Unlock';
 <div id="padlock_key_wrap">
-	<div id="padlock_key_spin">
-		<canvas id="padlock_key_canvas" width="720" height="720"></canvas>
-	</div>
+	<div id="padlock_key_spinner"></div>
 	<div id="padlock_key_note">
 		<% if ($has_padlock) { %>
-			Hold this up to the computer's camera.<br>Turn the screen's brightness up.<br>Back cancels.
+			Unlocking...
 		<% } else { %>
 			No padlock is set on this house.
 		<% } %>
 	</div>
+	<button id="padlock_key_retry" type="button" style="display:none;">Try again</button>
 </div>
 
 <style>
@@ -21,74 +20,49 @@
 		width: 100%;
 		height: 100%;
 	}
-	#padlock_key_spin {
-		width: 100vmin;
-		height: 100vmin;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		overflow: hidden;
+	#padlock_key_spinner {
+		width: 64px;
+		height: 64px;
+		border: 6px solid rgba(255,255,255,0.15);
+		border-top-color: #f4f4f4;
+		border-radius: 50%;
+		animation: padlock_key_turn 900ms linear infinite;
 	}
-	#padlock_key_canvas {
-		width: 70vmin;
-		height: 70vmin;
-		background-color: #ffffff;
-		transition: transform 300ms ease-in-out;
+	#padlock_key_spinner.done {
+		animation: none;
+		border-color: #6f6;
 	}
 	#padlock_key_note {
-		position: fixed;
-		left: 0;
-		right: 0;
-		bottom: 3%;
+		margin-top: 24px;
 		text-align: center;
-		font-size: 17px;
+		font-size: 19px;
 		line-height: 1.35;
-		padding: 0 8px;
+		padding: 0 18px;
+	}
+	#padlock_key_retry {
+		margin-top: 22px;
+		font-size: 17px;
+		padding: 10px 18px;
+		border-radius: 8px;
+		border: 1px solid #666;
+		background-color: #222;
+		color: #f4f4f4;
+	}
+	@keyframes padlock_key_turn {
+		to { transform: rotate(360deg); }
 	}
 </style>
 
 <script>
-	try { sessionStorage.removeItem('jawn_padlock_key_cancelled'); } catch (e) { }
-	// The back button is the cancel: give the camera back as the page goes, and
-	// do not let the next socket connect bounce this tab straight back here.
-	window.addEventListener('pagehide', function () {
-		if (padlockKeyPoll) { clearInterval(padlockKeyPoll); padlockKeyPoll = null; }
-		try { sessionStorage.setItem('jawn_padlock_key_cancelled', String(Date.now())); } catch (e) { }
-		try {
-			var body = 'action=stop';
-			if (navigator.sendBeacon) {
-				navigator.sendBeacon('/manager/security/padlock_watch', new Blob([body], { type: 'application/x-www-form-urlencoded' }));
-			}
-			else {
-				var x = new XMLHttpRequest();
-				x.open('POST', '/manager/security/padlock_watch', false);
-				x.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-				x.send(body);
-			}
-		} catch (e) { }
-	});
-
-	var padlockKey = {
-		angle: 0,
-		timer: null,
-		fetching: false,
-		logo: null,
-		logo_url: '',
-		done: false
-	};
-	var padlockKeyPoll = null;
 	var padlockKeyMode = 'locker';
 	try {
 		var pk = (location.search || '').match(/[?&]mode=([^&]+)/);
 		if (pk) {
 			var pm = decodeURIComponent(pk[1]);
-			if (/^(locker|gallery|music|folders)$/.test(pm)) { padlockKeyMode = pm; }
+			if (/^(locker|gallery|music|folders|general)$/.test(pm)) { padlockKeyMode = pm; }
 		}
 	} catch (e) { }
 
-	// The phone is already paired, so the easy path is not the QR at all: ask
-	// for a nonce, sign it with the key in IndexedDB, and the house opens. The
-	// QR stays as the fallback for a phone with no key (or a borrowed tablet).
 	function padlockKeyB64(buf) {
 		var bytes = new Uint8Array(buf);
 		var s = '';
@@ -109,18 +83,51 @@
 			r.onerror = function () { rej(r.error); };
 		});
 	}
+
+	var padlockKeyDone = false;
+	function padlockKeySay(text, done) {
+		$('#padlock_key_note').text(text);
+		if (done) {
+			padlockKeyDone = true;
+			$('#padlock_key_spinner').addClass('done');
+			$('#padlock_key_retry').hide();
+		}
+	}
+	function padlockKeyRetry() {
+		if (padlockKeyDone) { return; }
+		$('#padlock_key_retry').hide();
+		padlockKeySay('Unlocking...', false);
+		padlockKeyDeviceUnlock();
+	}
+
 	function padlockKeyDeviceUnlock() {
-		if (!(window.crypto && crypto.subtle && crypto.subtle.importKey)) { return; }
+		if (padlockKeyDone) { return; }
+		if (!(window.crypto && crypto.subtle && crypto.subtle.importKey)) {
+			padlockKeySay('This browser cannot sign the unlock.', false);
+			return;
+		}
 		var uuid = localStorage.getItem('device_uuid');
-		if (!uuid) { return; }
+		if (!uuid) {
+			padlockKeySay('This phone is not paired.', false);
+			$('#padlock_key_retry').show();
+			return;
+		}
 		padlockKeyIdbGet('device_key').then(function (key) {
-			if (!key) { return; }
+			if (!key) {
+				padlockKeySay('This phone is not paired.', false);
+				$('#padlock_key_retry').show();
+				return;
+			}
 			return fetch('/manager/security/padlock_challenge', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
 				body: new URLSearchParams({ device_uuid: uuid })
 			}).then(function (r) { return r.json(); }).then(function (ch) {
-				if (!ch || !ch.ok || !ch.nonce) { return; }
+				if (!ch || !ch.ok || !ch.nonce) {
+					padlockKeySay('This phone is not paired.', false);
+					$('#padlock_key_retry').show();
+					return;
+				}
 				var msg = 'padlock-unlock\n' + uuid + '\n' + ch.nonce;
 				return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
 					return fetch('/manager/security/padlock_unlock', {
@@ -130,115 +137,22 @@
 					});
 				}).then(function (r) { return r.json(); }).then(function (res) {
 					if (res && res.ok) {
-						padlockKey.done = true;
-						if (padlockKeyPoll) { clearInterval(padlockKeyPoll); padlockKeyPoll = null; }
-						if (padlockKey.timer) { clearInterval(padlockKey.timer); padlockKey.timer = null; }
-						$('#padlock_key_note').html('Unlocked.');
+						padlockKeySay('Unlocked.', true);
+					}
+					else {
+						padlockKeySay('That key was not accepted.', false);
+						$('#padlock_key_retry').show();
 					}
 				});
 			});
-		}).catch(function () { });
-	}
-
-	function padlockKeyRoundRect(ctx, x, y, w, h, r) {
-		ctx.beginPath();
-		ctx.moveTo(x + r, y);
-		ctx.lineTo(x + w - r, y);
-		ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-		ctx.lineTo(x + w, y + h - r);
-		ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-		ctx.lineTo(x + r, y + h);
-		ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-		ctx.lineTo(x, y + r);
-		ctx.quadraticCurveTo(x, y, x + r, y);
-		ctx.closePath();
-		ctx.fill();
-	}
-
-	function padlockKeyDraw(frame) {
-		if (!frame || !frame.qr) {
-			if (!padlockKey.fetching) {
-				$('#padlock_key_note').html(frame && frame.error ? 'The key is not available.' : $('#padlock_key_note').html());
-			}
-			return;
-		}
-		var canvas = document.getElementById('padlock_key_canvas');
-		var ctx = canvas.getContext('2d');
-		var qr = new Image();
-		qr.onload = function () {
-			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-			ctx.drawImage(qr, 0, 0, canvas.width, canvas.height);
-			if (!frame.logo) { return; }
-			var paint = function (logo) {
-				// a white patch behind the mark keeps the modules next to it
-				// readable; the code is drawn with the strongest error correction,
-				// so a mark this size costs it nothing
-				var box = canvas.width * 0.24;
-				var x = (canvas.width - box) / 2;
-				padlockKeyRoundRect(ctx, x, x, box, box, box * 0.16);
-				var max = box * 0.78;
-				var scale = Math.min(max / logo.width, max / logo.height);
-				var w = logo.width * scale;
-				var h = logo.height * scale;
-				ctx.drawImage(logo, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
-			};
-			if (padlockKey.logo && padlockKey.logo_url === frame.logo && padlockKey.logo.complete) {
-				paint(padlockKey.logo);
-				return;
-			}
-			var logo = new Image();
-			logo.onload = function () {
-				padlockKey.logo = logo;
-				padlockKey.logo_url = frame.logo;
-				paint(logo);
-			};
-			logo.src = frame.logo;
-		};
-		qr.src = frame.qr;
-	}
-
-	function padlockKeyFrame() {
-		padlockKey.fetching = true;
-		$.ajax({
-			url: '/manager/security/padlock_key/frame',
-			type: 'GET',
-			dataType: 'json',
-			cache: false,
-			success: function (frame) {
-				padlockKey.fetching = false;
-				padlockKeyDraw(frame);
-				if (padlockKey.done) { return; }
-				var wait = (frame && frame.wait) ? frame.wait : 5;
-				setTimeout(padlockKeyFrame, Math.max(1000, wait * 1000 + 250));
-			},
-			error: function () {
-				padlockKey.fetching = false;
-				if (padlockKey.done) { return; }
-				setTimeout(padlockKeyFrame, 2000);
-			}
+		}).catch(function () {
+			padlockKeySay('Could not reach the house.', false);
+			$('#padlock_key_retry').show();
 		});
 	}
 
 	$(function () {
-		if (!document.getElementById('padlock_key_canvas')) { return; }
-		padlockKeyDeviceUnlock();
-		padlockKeyFrame();
-		// The key page also reads for itself: whichever tab opened it can be the
-		// one that turns the lock, so a phone alone in the house still works.
-		padlockKeyPoll = setInterval(function () {
-			$.post('/manager/security/padlock_watch', { action: 'poll', mode: padlockKeyMode }, function (r) {
-				if (r && r.unlocked) {
-					if (padlockKeyPoll) { clearInterval(padlockKeyPoll); padlockKeyPoll = null; }
-					padlockKey.done = true;
-					$('#padlock_key_note').html('Unlocked.');
-				}
-			});
-		}, 1300);
-		// turn in steps, not continuously: the camera needs a still frame to read
-		padlockKey.timer = setInterval(function () {
-			padlockKey.angle = (padlockKey.angle + 45) % 360;
-			document.getElementById('padlock_key_canvas').style.transform = 'rotate(' + padlockKey.angle + 'deg)';
-		}, 1600);
+		$('#padlock_key_retry').on('click', padlockKeyRetry);
+		<% if ($has_padlock) { %>padlockKeyDeviceUnlock();<% } else { %>$('#padlock_key_spinner').addClass('done');<% } %>
 	});
 </script>

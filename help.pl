@@ -34,7 +34,7 @@ our %topic = (
 	'folders' => {
 		title => 'Folders', category => 'apps', app => 'folders',
 		summary => 'Browse, manage, seal and play with your files.',
-		verified => '2026-10-13',
+		verified => '2026-10-18',
 		body => [
 			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
 			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
@@ -46,7 +46,7 @@ our %topic = (
 			'Click into a folder to descend; the breadcrumb along the top walks back up.',
 			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
 			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.',
-			'For a not-visible folder, press the lock on the toolbar, enter the combination, and it appears — at home.'
+			'For a not-visible folder, press the lock on the toolbar and unlock it on a paired phone, and it appears — at home.'
 		],
 		related => [ 'sealing_files', 'gallery', 'backup' ]
 	},
@@ -54,7 +54,7 @@ our %topic = (
 		title => 'Gallery', category => 'apps', app => 'gallery',
 		templates => [ 'templates/apps/gallery.html.ep', 'templates/apps/gallery_album.html.ep', 'templates/apps/gallery_home.html.ep' ],
 		controls => [ 'Previous', 'Next', 'Refresh', 'Repeat', 'Shuffle', 'File information', 'Fetch home', 'Set as main image', 'Albums', 'Home', 'Lock', 'Archives' ],
-		verified => '2026-10-14',
+		verified => '2026-10-18',
 		summary => 'Browse your photos by album or one at a time, and choose what each app shows.',
 		body => [
 			'Gallery is the photo browser. It gathers the photos and videos your apps have recorded and shows them three ways: **Home** (an album cover per app), **Album** (every photo in one scrollable grid) and **Photo** (a single shot, full-screen).',
@@ -68,7 +68,7 @@ our %topic = (
 			'Click any photo to open it full-screen. The toolbar gives Previous and Next, Refresh (reload the set), Shuffle (play them in a random order), Repeat (loop the slideshow), File information, Fetch home, and Set as main image.',
 			'Type in the Search box (top-left in Home and Album) and press Enter to find photos by app or file name.',
 			'In Album view, toggle Archives to include photos stored away, and use the arrow to flip the order between newest-first and oldest-first.',
-			'The lock covers the gallery when you want it out of the way; unlock it with the combination.'
+			'The lock covers the gallery when you want it out of the way; unlock it on a paired phone.'
 		],
 		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser — not a phone gallery and not a file manager. Its photos are the ones recorded by their apps, and which apps are shown are the "sources", which default to the apps they currently have open. Guide them in terms of the Home / Album / Photo views and the named buttons (Home, Albums, Previous, Next, Shuffle, Repeat, Refresh, File information, Set as main image, Archives, lock). If they say they see nothing, the likeliest cause is that no source app is open or marked visible — suggest opening an app that has photos. If you are unsure how a control starts or works, describe what its label means rather than inventing a sequence of clicks. Never describe or guess the content of their photos.',
 		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
@@ -610,8 +610,8 @@ our %topic = (
 		summary => 'Passwords, pseudonyms, QR codes, screen lock and secrets.',
 		body => [
 			'Security gathers the safety tools: password and pseudonym generation, QR codes, encryption helpers, screen locking and a keyring-style secret store.',
-			'The padlock can also be turned by phone. Open Phone key in the Padlock view on the phone, and hold the screen up to this computer\'s camera: the page draws a QR code with the house logo at its centre and turns it a quarter-turn at a time, and the camera watches for it for forty seconds after the padlock appears. A phone or tablet in the house that is already running the manager opens the key page by itself when the padlock comes up, so there is nothing to press; the back button gives the camera back and cancels. If the forty seconds pass, tap the middle of the dial to watch for another forty. The code rolls every ten seconds, so a photograph of the screen stops working almost at once. The dial still works exactly as before; the phone is simply the easier way from a mouse or a trackpad.',
-			'Gate decides what the lock does to the server. Shadow writes each request it would refuse to the log and still answers, so the list can be checked on a live machine; Enforce refuses every manager request behind the padlock except the ways in - a paired phone or tablet that signs the challenge, the dial, the camera key, and the paper recovery code. Use Shadow first, then Enforce. A paired phone opens the lock with its own key, with no QR and no press: the key page signs the nonce by itself as soon as it opens, and the locked screen follows within a couple of seconds. The gate only acts when General is one of the padlock\'s contexts; the others are per-app.',
+			'The Padlock view sets the screen lock. There is no dial and no camera key: the only ways in are a paired phone or tablet and the paper recovery code. When the house locks, a phone or tablet already running the manager opens the unlock page by itself and signs a one-time challenge - there is nothing to press. On the locked screen, Send the unlock page to my phone asks the house to send that page again; a desktop ignores the message, a phone or tablet opens it. The phone shows Unlocking... and then Unlocked., and the locked screen follows within a couple of seconds.',
+			'Gate decides what the lock does to the server. Shadow writes each request it would refuse to the log and still answers, so the list can be checked on a live machine; Enforce refuses every manager request behind the padlock except the ways in - the phone\'s signature, the unlock page, and the paper recovery code. Use Shadow first, then Enforce. Turn the gate on makes the lock exist; Turn the gate off removes it. The gate only acts when General is one of the padlock\'s contexts; the others are per-app. Phone unlock page opens the unlock page on this machine.',
 			'It also shows the neighbour links — which machines are trusted, and with what privilege.',
 			'The Devices view lists the browsers and phones paired to the house. A citizen session pairs its device once; from then on the device logs itself back in with its own key, with no ticket or password. Revoke a device here and its sessions die — it must be paired again. A new device can also ask to pair from the gate: its request waits at the top of this view with a short code, and Approve lets it in — but only when that code matches the one on the new device\'s screen.',
 			'The Recovery view holds the paper code that gets you back in when every ticket is lost and no paired device is at hand: make one and write it down. It is shown once and keeps working through password changes — only rotating the house key replaces it; enter it under Recovery Code at the gate and that device is paired on the spot. The house key itself works too: typed at the gate it opens the house in any vault state - a machine whose vault is gone heals it on the spot - so one long string written down is a complete backup.',

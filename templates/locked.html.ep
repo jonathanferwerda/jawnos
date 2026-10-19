@@ -30,6 +30,19 @@
 		padding: 0 8px;
 		z-index: 60002;
 	}
+	#locked_send_phone {
+		margin-top: 6px;
+		font-size: 15px;
+		padding: 6px 12px;
+		border-radius: 8px;
+		border: 1px solid #666;
+		background-color: #222;
+		color: #f4f4f4;
+	}
+	#locked_phone_status {
+		margin-top: 4px;
+		color: #ffd;
+	}
 	#locked_padlock {
 		position: fixed;
 		left: 50%;
@@ -73,8 +86,9 @@
 </div>
 
 <div id="locked_help">
-	Tap the padlock to use this screen's camera for forty seconds,
-	or open the phone key on a paired phone or tablet.
+	Unlock on your phone, or use the recovery code.
+	<button id="locked_send_phone" type="button">Send the unlock page to my phone</button>
+	<div id="locked_phone_status"></div>
 </div>
 
 <details id="locked_recovery">
@@ -124,6 +138,14 @@
 					}
 				});
 			}).catch(function () { status('That code was not accepted.'); });
+		});
+	}
+	var sendPhone = document.getElementById('locked_send_phone');
+	if (sendPhone) {
+		sendPhone.addEventListener('click', function () {
+			var note = document.getElementById('locked_phone_status');
+			if (typeof padlockAskPhone === 'function') { padlockAskPhone('locker'); }
+			if (note) { note.textContent = 'Sent. Open the unlock page on your phone.'; }
 		});
 	}
 	// the phone signs this machine open in the background; this page follows

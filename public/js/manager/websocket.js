@@ -566,9 +566,8 @@ function wsMessageHandler(event) {
 			jawnPadlockKeyShow(data['mode']);
 		}
 		if (data['padlock_open']) {
-			// the phone (or the paper code) turned it: give the camera back and
-			// drop the overlay without waiting for the page to be reloaded
-			if (typeof padlockVisualStop === 'function') { padlockVisualStop(''); }
+			// the phone (or the paper code) turned it: drop the overlay without
+			// waiting for the page to be reloaded
 			$('#padlock_frame').html('').hide();
 			$('#everything').show();
 			if (!document.getElementById('everything')) { window.location.reload(); }
@@ -597,7 +596,6 @@ function wsMessageHandler(event) {
 				$('#padlock_taunts').text(data['taunts']).css({ 'position':'fixed','max-width': width + 'px', 'width':'100%', 'height': '40%', 'left': '0px', 'top': '1%', 'text-align': 'centre', 'width': '120%'});
 			}
 			$('#everything').hide();
-			if (typeof padlockVisualWatch === 'function') { padlockVisualWatch('locker'); }
 
 		//	websocketStop();
 		}
@@ -859,7 +857,6 @@ function wsMessageHandler(event) {
 		}
 
 		if ( data['type'] == 'connect' ) {
-			if (data['app'] == 'server' && typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(); }
 		//	appointmentDetailsUpdater(app);
 		}
 		else if (data['window']) {

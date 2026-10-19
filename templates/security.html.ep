@@ -11,14 +11,28 @@
 	<br><br><br><br>
 	<div class="security_view" view="padlock" style="width:100%;position:absolute;bottom:0px;<% unless ( $president->{'security_view'} eq 'padlock' ) { %>display:none;<% } %>">
 		<% my $padlock = &subs::db_query('select * from security where level=? limit 1', 'padlock')->hashes->[0]; %>
-		<%= include 'padlock', mode => 'security' %>
+		<div style="max-width:640px;margin:0 auto 120px auto;text-align:center;">
+			<h2>The gate</h2>
+			<p style="line-height:1.4;">
+				A paired phone or tablet is the key. When the house locks it sends the unlock page to
+				your phone, and the phone signs a one-time challenge. The paper recovery code is the
+				emergency way in. There is no dial and no camera key.
+			</p>
+			<p id="padlock_set_status" status="<%= $padlock ? 'yes' : 'no' %>">
+				<b><%= $padlock ? 'The gate is on.' : 'The gate is off.' %></b>
+			</p>
+			<button id="padlock_gate_enable" type="button"<% if ($padlock) { %> style="display:none;"<% } %>>Turn the gate on</button>
+			<button id="padlock_gate_disable" type="button"<% unless ($padlock) { %> style="display:none;"<% } %>>Turn the gate off</button>
+			<br>
+			<a href="/manager/security/padlock_key" target="_blank" id="padlock_key_show"
+				style="display:inline-block;margin-top:10px;font-size:15px;">Phone unlock page</a>
+		</div>
 		<% my $selected_contexts = $president->{'padlock_contexts'} || []; %>
 		<select id="padlock_contexts" multiple title="General is the whole house; the others are per-app." value="<%= join ',', @{$selected_contexts} %>" style="position:absolute;right:0px;bottom:40px;height:100px;">
 			<% foreach my $context ( qw/general gallery music folders/ ) { %>
 				<option value="<%= $context %>" <% if (grep { $_ eq $context } @{$selected_contexts}) { %>selected<% } %>><%= &subs::format_name($context) %></option>
 			<% } %>
 		</select>
-		<span id="padlock_set_status" status="<%= $padlock ? 'yes' : 'no' %>"></span>
 		<span style="position:absolute;left:0px;bottom:0px;font-size:14px;" title="Shadow writes what the lock would refuse to the log; Enforce refuses it.">
 			Gate
 			<select id="padlock_gate">
@@ -26,10 +40,6 @@
 				<option value="enforce" <% if (($president->{'padlock_gate'} || '') eq 'enforce') { %>selected<% } %>>Enforce</option>
 			</select>
 		</span>
-		<a href="/manager/security/padlock_key" target="_blank" id="padlock_key_show"
-			style="position:absolute;right:0px;bottom:150px;font-size:15px;">Phone key</a>
-		<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb" id="padlock_delete" 
-			style="position:absolute;right:0px;bottom:0px;<% unless ($padlock) { %>display:none;<% } %>">
 	</div>
 
 	<div class="security_view" view="neighbour_link" style="overflow-x:auto;padding-right:8px;<% unless ( $president->{'security_view'} eq 'neighbour_link' ) { %>display:none;<% } %>">

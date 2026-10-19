@@ -1,21 +1,10 @@
 <div class="padlock_frame" mode="<%= $mode %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
-	<% if ($mode ne 'security') { %>
-		<h1 id="padlock_taunts"></h1>
-		<div class="padlock_visual_status"></div>
-		<a href="/manager/security/padlock_key?mode=<%= $mode %>" class="padlock_phone_key">Show the phone key</a>
-	<% } %>
+	<h1 id="padlock_taunts"></h1>
+	<div class="padlock_message">The house is locked.<br>Unlock on your phone or with the recovery code.</div>
 	<img class="padlock padlock_lock" src="/images/jbuttons/padlock lock.png" hint="Lock">
 	<img class="padlock padlock_unlock" src="/images/jbuttons/padlock unlock.png" hint="Unlock">
-	<span class="padlock_jog_wheel_frame">
-		<img class="padlock_jog_wheel jog_wheel" mode="<%= $mode %>" src="/images/jbuttons/padlock dial.png" hint="Lock">
-			<span class="padlock_jog_wheel_centre"></span>
-		</img>
-	</span>
-
-	
-	<% foreach my $light ( qw/yellow blue green red/ ) { %>
-		<img style="display:none;" class="little_thumb padlock_light <%= $light %>" src="/images/palette/<%= $light %>.png">
-		<span style="display:none;" class="padlock_digit <%= $light %>"></span>
+	<% if ($mode ne 'security') { %>
+		<a href="/manager/security/padlock_key?mode=<%= $mode %>" class="padlock_phone_key">Open the unlock page on this phone</a>
 	<% } %>
 
 	<style>
@@ -23,108 +12,30 @@
 			width: 300px;
 			bottom: 20%;
 			position:absolute;
+			text-align:center;
 		}
 		.padlock_unlock {
 			display:none;
 		}
-		.padlock_light {
-			position:fixed;
-			left: 0px;
-			height: 30px;
-			top: 100px;
-		}
-		.padlock_light.yellow {
-			top: 100px;
-			position:fixed;
-			left: 0px;
-		}
-		.padlock_light.red {
-			top:130px;
-			position:fixed;
-			left: 0px;
-		}
-		.padlock_light.green {
-			top: 160px;
-			position:fixed;
-			left: 0px;
-		}
-		.padlock_light.blue {
-			top: 190px;
-			position:fixed;
-			left: 0px;
-		}
-		.padlock_digit {
-			position:fixed;
-			left: 40px;
-			height: 30px;
-			font-size: 20px;
-		}
-		.padlock_digit.red {
-			top:130px;
-			background-color:pink;
-			position:fixed;
-			left: 40px;
-		}
-		.padlock_digit.green {
-			top: 160px;
-			background-color:lightgreen;
-			position:fixed;
-			left: 40px;
-		}
-		.padlock_digit.blue {
-			top: 190px;
-			background-color:lightblue;
-			position:fixed;
-			left: 40px;
-		}
-		.padlock_jog_wheel_frame {
-			position:absolute;
-			bottom: -3px;
-			width: 100%;
-		}
-		.padlock_jog_wheel {
-			width: 100%;
-		}
 		.padlock {
-			position:absolute;
-			bottom: 0px;
+			position:relative;
 			width: 100%;
 		}
-		.padlock_jog_wheel_centre {
-			width: 1px;
-			height: 1px;
-			position:absolute;
-			left: 50%;
-			bottom: 50%;
-		}
-		.padlock_visual_status {
-			display:none;
-			position:fixed;
-			left: 50%;
-			transform: translateX(-50%);
-			top: 4%;
-			text-align:center;
-			font-size:18px;
-			cursor:pointer;
-			padding:6px 12px;
-			border-radius:8px;
-			background-color:rgba(255,255,255,0.85);
-			color:#000;
-			z-index:60001;
+		.padlock_message {
+			font-size: 18px;
+			line-height: 1.4;
+			color: #111;
+			margin: 8px 0;
 		}
 		.padlock_phone_key {
 			display:none;
-			position:fixed;
-			left: 50%;
-			transform: translateX(-50%);
-			bottom: 2%;
-			text-align:center;
-			font-size:16px;
-			padding:8px 14px;
-			border-radius:8px;
-			background-color:rgba(255,255,255,0.9);
-			color:#000;
-			z-index:60001;
+			margin: 10px auto 0 auto;
+			font-size: 16px;
+			padding: 8px 14px;
+			border-radius: 8px;
+			background-color: rgba(255,255,255,0.9);
+			color: #000;
+			text-decoration: none;
 		}
 		@media screen and (max-width:900px) {
 			.padlock_phone_key { display:block; }

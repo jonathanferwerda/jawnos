@@ -12,33 +12,34 @@ $(document).on('click', '#security_toggle', function() {
 		success: function(response) {
 			windowMaker(response.html)
 		}, error: function (response) { 
-			padlockReset();
 		}
 	});
 });
 
-$(document).on('click', '#padlock_delete', function() {
-	var a = $(this);
-
-	if (a.attr('armed') == 'yes') {
-		$.ajax({
-			url: '/manager/security/padlock/delete',
-			type: 'POST',
-			success: function() {
-				$('#padlock_delete').hide();
-				$('#lock_session').hide();
+$(document).on('click', '#padlock_gate_enable, #padlock_gate_disable', function() {
+	var button = $(this);
+	var url = (button.attr('id') == 'padlock_gate_enable')
+		? '/manager/security/gate/enable'
+		: '/manager/security/gate/disable';
+	button.prop('disabled', true);
+	$.ajax({
+		url: url,
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			button.prop('disabled', false);
+			if (!response || !response.ok) {
+				$('#padlock_set_status').text(response && response.error ? response.error : 'The gate did not change.');
+				return;
 			}
-		});
-	}
-	else {
-		a.attr('armed', 'yes');
-		var bgcolor = a.css('background-color');
-		a.css({'background-color': 'red' });
-		setTimeout(function() {
-			a.css({'background-color': bgcolor });
-			a.attr('armed', 'no');			
-		},2000);
-	}
+			$('#security').html(response.html);
+			appointment_chron();
+		},
+		error: function() {
+			button.prop('disabled', false);
+			$('#padlock_set_status').text('The gate did not change.');
+		}
+	});
 });
 
 $(document).on('change', '#padlock_contexts', function() {
@@ -49,38 +50,6 @@ $(document).on('change', '#padlock_contexts', function() {
 
 $(document).on('change', '#padlock_gate', function() {
 	settingSetter({ 'app': '__president', 'setting': 'padlock_gate', 'value': $(this).val() });
-});
-
-
-$(document).on('click', '.padlock_jog_wheel',function(e) {
-	var timestamp = Date.now();
-
-
-	if (padlock_numbers.digits.length == 3 ) {
-		var combo = JSON.stringify(padlock_numbers.digits);
-		var pulled = JSON.stringify(padlock_numbers.pulled);
-
-		padlock_numbers.pulled = [];
-		$.ajax({
-			url: '/manager/security/padlock',
-			type: 'POST',
-			data: { timestamp: timestamp, combo: combo, pulled: pulled },
-			success: function(response) {
-
-				if (response.status == 'saved') {
-					$('.padlock_lock').hide();
-					$('.padlock_unlock').show();
-					$('.padlock_light').addClass('superactive');
-					$('#lock_session').show();
-					$('#padlock_delete').show();
-					setTimeout(function() {
-						$('.padlock_light').removeClass('superactive');
-						$('.padlock_light.yellow').hide();
-					},5000);
-				}
-			}
-		});
-	}
 });
 
 
@@ -108,7 +77,6 @@ $(document).on('click', '.security_view_select', function() {
 			$('#security').html(response.html);
 			appointment_chron();
 		}, error: function (response) { 
-			padlockReset();
 		}
 	});
 });

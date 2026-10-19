@@ -1238,7 +1238,7 @@ $(document).on('click', '.music_lock', function() {
 	else if ($('#music').is(':visible')) {
 		$('#music').hide();
 		$('#music_padlock').show();
-		if (typeof padlockVisualWatch === 'function') { padlockVisualWatch('music'); }
+		if (typeof padlockAskPhone === 'function') { padlockAskPhone('music'); }
 	}
 	else {
 		$('#music').show();
@@ -1247,7 +1247,6 @@ $(document).on('click', '.music_lock', function() {
 });
 
 $(document).on('click', '#music_cancel_padlock', function() {
-	if (typeof padlockVisualStop === 'function') { padlockVisualStop(''); }
 	$('#music').show();
 	$('#music_padlock').hide();
 });
