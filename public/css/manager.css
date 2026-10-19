@@ -632,6 +632,16 @@ input[type="checkbox"]:hover {
    theme's near-white ink unreadable */
 .notes { width:100%; background-color:var(--panel-2, #ffffff); color:var(--ink); }
 canvas { overflow: scroll; z-index: 99; }
+/* A background canvas is a control, not a document. It answers a drag with the
+   printer's own pan, so the browser must not start a selection there: a native
+   selection drag tints the whole canvas blue, and a touch's tap highlight
+   flashes the same blue over the screen. */
+canvas.background {
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-user-drag: none;
+	-webkit-tap-highlight-color: transparent;
+}
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}
 .little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: 10px; }
