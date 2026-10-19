@@ -15323,7 +15323,45 @@ sub lan_presence_send {
 		my $addr = Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($b));
 		$sock->send($lan_beacon->{'json'}, 0, $addr);
 	}
+	# Known peers on this LAN get the same notice by unicast. A phone that drops
+	# broadcast still receives unicast, so every machine's row and Dev panel stay
+	# current in both directions without waiting for the other side to broadcast.
+	foreach my $target ( @{ &lan_presence_targets(\@nics) } ) {
+		my $addr = Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($target));
+		$sock->send($lan_beacon->{'json'}, 0, $addr);
+	}
 	close $sock;
+}
+
+# The LAN addresses of every known peer that shares one of our current subnets.
+# Tries the row's ip first, then the NICs in its network report (including the
+# `lan` entry the presence notices keep fresh).
+sub lan_presence_targets {
+	my ($nics) = @_;
+	my @targets;
+	my %seen;
+	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
+		next if (($rm->{'signatorial'} // '') eq &signatorial_designer());
+		my @ips;
+		push @ips, $rm->{'ip'} if ($rm->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+		my $net = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
+		if (ref $net eq 'HASH') {
+			foreach my $k ( keys %{$net} ) {
+				next if $k eq 'public_address' || !ref $net->{$k};
+				push @ips, $net->{$k}->{'ip'} if ($net->{$k}->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+			}
+		}
+		my $ip = '';
+		foreach my $c ( @ips ) {
+			next unless &ip_is_private($c);
+			next unless grep { &same_net_test($_->{'ip'}, $c) eq 'yes' } @{$nics};
+			$ip = $c;
+			last;
+		}
+		next unless $ip && !$seen{$ip}++;
+		push @targets, $ip;
+	}
+	return \@targets;
 }
 
 sub lan_presence_listen {
