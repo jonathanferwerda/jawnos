@@ -200,6 +200,10 @@ against `paired_devices.pubkey`. No typing, no dial, nothing to photograph.
 
 **P0 — make the lock real (server-side).** This is the piece that matters even
 before any compositor work, and it is small.
+- Ship a **shadow gate** first (`padlock_gate=shadow`): compute the deny-list and
+  log what it *would* block, while still serving. Flip to enforcing only after
+  the log is clean and the paper unlock has been rehearsed. This is what makes
+  P0 testable on the live machine without risking a lockout.
 - Deny by default in `authentication_passer` / `hooks.pl` while `pl_time` is
   expired. Allow only: the lock page, the unlock endpoints, static assets
   (`/css`, `/js`, `/images`, `/icons`, `/sounds`, `/favicon`), `/manager/ws`,
@@ -261,6 +265,44 @@ from *Platforms & multi-user* below. Do not build it before P0–P2 are honest.
   Wayland/wlr/protocol set), so the standard lock client contract exists.
 - `treeland-debug` can inspect windows, inject input, and screenshot — enough to
   drive the lock/unlock path in tests.
+
+### Testing as it lands (and the ProDesk display)
+
+Each phase is testable without committing the machine to it:
+
+- **P0 is browser-only.** No boot or display change. Shadow gate first (above);
+  keep an SSH session open, use a second browser profile to lock and unlock, and
+  rehearse the paper code before enforcing.
+- **P1/P2 are an added session, not a replacement.** Register a
+  `jawnos-wayland.desktop` session and pick it at the display manager; keep the
+  current X11/autologin entry as the default until it passes. From a TTY,
+  `dbus-run-session treeland` (or `sway -c …`) is enough to try it.
+  Ctrl+Alt+F2 and SSH are the way out.
+- **`ext-session-lock-v1` is single-owner**: only the client that created the
+  lock can unlock it. If the lock client crashes the session stays locked, so
+  test with SSH open and be ready to restart the compositor.
+- **P4** goes on a spare disk/USB (or a VM for everything but the monitor),
+  never the only installed system.
+
+**The ProDesk monitor.** `xrandr -s 1366x768` is X11-only; under Treeland it does
+nothing. It also runs *after* login, so it cannot fix the greeter or the lock
+screen — those start before any user script. Put the mode at the layer that
+runs first:
+
+- **kernel/GRUB**: `video=<connector>:1366x768@60` on
+  `GRUB_CMDLINE_LINUX_DEFAULT` (find the connector with `ls /sys/class/drm/` on
+  the ProDesk), plus `GRUB_GFXMODE=1366x768x32` and
+  `GRUB_GFXPAYLOAD_LINUX=keep` for a clean console handoff. This reaches the
+  greeter and the compositor.
+- **compositor**: Sway `output <name> mode 1366x768`; Treeland's output config,
+  or `wlr-randr --output <name> --mode 1366x768` to try it live in a session.
+- If the monitor's EDID is wrong (the mode is missing rather than merely
+  unchosen), use `drm_kms_helper.edid_firmware=` or an EDID emulator. Do **not**
+  use `nomodeset` — Wayland needs KMS.
+
+The dev laptop is already LUKS-encrypted (`cryptdevice=` in `/proc/cmdline`);
+the ProDesk runbook (`docs/appliance-provisioning.md`) enables TPM 2.0 for
+auto-unlock.
 
 ### Open decision before P0
 
