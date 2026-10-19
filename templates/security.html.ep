@@ -29,8 +29,8 @@
 				style="display:inline-block;margin-top:10px;font-size:15px;">Phone unlock page</a>
 			<% if (&subs::device_setter() eq 'mobile') { %>
 				<div id="padlock_biometric_enroll" style="margin-top:14px;">
-					<button id="padlock_biometric_enroll_button" type="button">Enroll this phone's fingerprint</button>
-					<div id="padlock_biometric_status" style="font-size:14px;margin-top:6px;"></div>
+					<button id="padlock_biometric_enroll_button" type="button" data-enrolled="<%= $biometric_enrolled ? 1 : 0 %>"><%= $biometric_enrolled ? "Replace this phone's fingerprint" : "Enroll this phone's fingerprint" %></button>
+					<div id="padlock_biometric_status" style="font-size:14px;margin-top:6px;"><% if ($biometric_enrolled) { %>A fingerprint is enrolled. Confirm it to replace it.<% } %></div>
 				</div>
 			<% } %>
 		</div>

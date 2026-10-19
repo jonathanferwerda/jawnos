@@ -26453,6 +26453,11 @@ sub security_initializer($c) {
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $neighbour_link = &subs::db_select('neighbour_link')->hashes;
 	my $devices = &subs::db_select('paired_devices', undef, {})->hashes || [];
+	# Whether this phone already has a fingerprint: replacing it must pass the
+	# enrolled one first (biometric_enroll enforces the same rule server-side).
+	my $current_device_uuid = $c->session('device_uuid') || '';
+	my $current_device = $current_device_uuid ? &subs::db_select('paired_devices', undef, { uuid => $current_device_uuid, status => 'active' })->hashes->[0] : undef;
+	my $biometric_enrolled = ($current_device && $current_device->{'bio_pubkey'}) ? 1 : 0;
 	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
 	my $recovery_stale = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery_stale')->hashes->[0];
 	# pending device approvals: old ones go, ones whose key is already on the
@@ -26480,6 +26485,7 @@ sub security_initializer($c) {
 		window_maker => $c->param('window_maker'),
 		neighbour_link => $neighbour_link,
 		devices => $devices,
+		biometric_enrolled => $biometric_enrolled,
 		recovery => $recovery,
 		recovery_stale => $recovery_stale,
 		requests => $requests,
@@ -27220,18 +27226,19 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 # is the one signature a local request may present. It opens only the screen it
 # is on, never another device and never the whole house.
 sub biometric_nonce_take {
-	my ($purpose, $device_uuid, $nonce) = @_;
+	my ($purpose, $device_uuid, $nonce, $ttl) = @_;
+	$ttl ||= 60000;
 	return 0 unless defined $nonce && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
 	my $stamp = $purpose . ':' . $device_uuid . ':' . $nonce;
 	my $seen = &subs::db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'padlock_bio_nonce', $stamp)->hashes->[0];
-	return 0 unless $seen && $seen->{'server_time'} && $seen->{'server_time'} > &subs::rightNow() - 60000;
+	return 0 unless $seen && $seen->{'server_time'} && $seen->{'server_time'} > &subs::rightNow() - $ttl;
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_bio_nonce', $stamp);
 	return 1;
 }
 
 post '/manager/security/biometric_challenge' => sub ($c) {
 	my $purpose = $c->param('purpose') || 'unlock';
-	$purpose = 'unlock' unless $purpose =~ /^(?:enroll|unlock)$/;
+	$purpose = 'unlock' unless $purpose =~ /^(?:enroll|unlock|verify)$/;
 	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
 	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
 	unless ($device) { return $c->render(json => { ok => 0, error => 'not paired' }); }
@@ -27243,7 +27250,8 @@ post '/manager/security/biometric_challenge' => sub ($c) {
 	if ($recent >= 20) { return $c->render(json => { ok => 0, error => 'too many' }); }
 	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_challenge', app => '__president', server_time => $now, timestamp => $now });
 	my $nonce = &subs::random_string_creator(40);
-	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_bio_nonce', $now - 120000);
+	&subs::db_query('delete from cache where context = ? and server_time < ? and uuid not like ?', 'padlock_bio_nonce', $now - 120000, 'verify:%');
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_bio_nonce', $now - 900000);
 	&subs::db_insert('cache', { uuid => $purpose . ':' . $device_uuid . ':' . $nonce, context => 'padlock_bio_nonce', app => '__president', server_time => $now, timestamp => $now });
 	$c->render(json => { ok => 1, nonce => $nonce, seconds => 60 });
 };
@@ -27263,6 +27271,21 @@ post '/manager/security/biometric_enroll' => sub ($c) {
 	return $c->render(json => { ok => 0, error => 'bad key' }) unless &subs::ecdsa_public_key_ok($pubkey);
 	my $ip = $c->tx->remote_address || '?';
 	my $now = &subs::rightNow();
+	# An enrolled fingerprint is a second factor, so replacing it must present
+	# that factor: the old EC key signs a fresh verify challenge. Without this,
+	# the device's pairing key alone could swap the fingerprint behind the
+	# person's back.
+	if ($device->{'bio_pubkey'}) {
+		my $bio_nonce = $c->param('bio_nonce') || '';
+		my $bio_signature = $c->param('bio_signature') || '';
+		my $confirmed = &biometric_nonce_take('verify', $device_uuid, $bio_nonce, 600000)
+			&& &subs::ecdsa_verify($device->{'bio_pubkey'}, join("\n", 'padlock-bio-verify', $device_uuid, $bio_nonce), $bio_signature);
+		unless ($confirmed) {
+			&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_fail', app => '__president', server_time => $now, timestamp => $now });
+			$log->info('padlock: biometric replacement refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
+			return $c->render(json => { ok => 0, error => 'confirm fingerprint' });
+		}
+	}
 	my $fresh = &biometric_nonce_take('enroll', $device_uuid, $nonce);
 	unless ($fresh) { return $c->render(json => { ok => 0, error => 'no challenge' }); }
 	require Digest::SHA;

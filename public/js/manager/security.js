@@ -60,7 +60,8 @@ $(document).on('change', '#padlock_gate', function() {
 
 // The phone's own biometric unlock: the Android app makes a Keystore key that
 // the OS releases only after the fingerprint prompt, and registers its public
-// half here. The locked page can also enroll on the spot.
+// half here. The locked page can also enroll on the spot. An already-enrolled
+// fingerprint must pass before a new one can replace it.
 $(document).on('click', '#padlock_biometric_enroll_button', function() {
 	var button = $(this);
 	var status = $('#padlock_biometric_status');
@@ -68,11 +69,20 @@ $(document).on('click', '#padlock_biometric_enroll_button', function() {
 		status.text('Fingerprint unlock is not available in this app.');
 		return;
 	}
+	var enrolled = (button.attr('data-enrolled') === '1');
 	button.prop('disabled', true);
-	status.text('Waiting for your fingerprint...');
-	jawnosBiometricEnroll(function (text) { status.text(text); }).then(function() {
+	var confirmed = enrolled
+		? jawnosBiometricVerify(function (text) { status.text(text); })
+		: Promise.resolve(null);
+	confirmed.then(function (proof) {
+		return jawnosBiometricEnroll(function (text) { status.text(text); }, proof);
+	}).then(function() {
 		button.prop('disabled', false);
-		status.text('Enrolled. This phone can unlock its own screen with your fingerprint.');
+		button.attr('data-enrolled', '1');
+		button.text("Replace this phone's fingerprint");
+		status.text(enrolled
+			? 'Replaced. This phone unlocks with the new fingerprint.'
+			: 'Enrolled. This phone can unlock its own screen with your fingerprint.');
 	}).catch(function(err) {
 		button.prop('disabled', false);
 		status.text((typeof jawnosBiometricError === 'function') ? jawnosBiometricError(err) : 'Fingerprint enrollment failed.');

@@ -926,9 +926,12 @@ function jawnosBiometricKeyCall(method, args) {
 }
 // Make (or rotate) the phone's biometric key and register its public half with
 // the house. The enrollment message is signed by the device's existing pairing
-// key, so a page that merely knows a UUID cannot register a key.
-function jawnosBiometricEnroll(status) {
+// key, so a page that merely knows a UUID cannot register a key. When a key is
+// already enrolled, the caller must pass the proof returned by
+// jawnosBiometricVerify so the old fingerprint authorizes its replacement.
+function jawnosBiometricEnroll(status, proof) {
 	status = status || function () {};
+	proof = proof || {};
 	var uuid = localStorage.getItem('device_uuid') || '';
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
@@ -947,7 +950,8 @@ function jawnosBiometricEnroll(status) {
 					return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg));
 				}).then(function (sig) {
 					return $.post('/manager/security/biometric_enroll', {
-						device_uuid: uuid, nonce: ch.nonce, device_signature: jawnosB64(sig), pubkey: pubkey
+						device_uuid: uuid, nonce: ch.nonce, device_signature: jawnosB64(sig), pubkey: pubkey,
+						bio_nonce: proof.nonce || '', bio_signature: proof.signature || ''
 					});
 				});
 			});
@@ -955,6 +959,23 @@ function jawnosBiometricEnroll(status) {
 	}).then(function (res) {
 		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
 		return res;
+	});
+}
+// Prove the fingerprint already enrolled on this phone. Used before replacing
+// it, so a new fingerprint cannot be set without passing the old one.
+function jawnosBiometricVerify(status) {
+	status = status || function () {};
+	var uuid = localStorage.getItem('device_uuid') || '';
+	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
+	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
+	status('Touch the fingerprint reader to confirm it is you...');
+	return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'verify' }).then(function (ch) {
+		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
+		var msg = 'padlock-bio-verify\n' + uuid + '\n' + ch.nonce;
+		return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), 'Confirm your fingerprint']).then(function (res) {
+			if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
+			return { nonce: ch.nonce, signature: res.signature };
+		});
 	});
 }
 function jawnosBiometricUnlock(mode, target, status) {
@@ -991,6 +1012,7 @@ function jawnosBiometricError(err) {
 	if (e === 'too many' || e === 'locked') { return 'Too many attempts. Try again later.'; }
 	if (e === 'no challenge') { return 'The unlock challenge expired. Try again.'; }
 	if (e === 'bad key') { return "The phone's key could not be registered. Try again."; }
+	if (e === 'confirm fingerprint') { return 'Confirm the enrolled fingerprint before setting a new one.'; }
 	if (e === 'not signed in') { return 'Sign in, then enroll the fingerprint.'; }
 	// a failed request (a 500, or a dropped connection) has a status rather than
 	// an error word; saying "fingerprint not accepted" blamed the thumb for a
