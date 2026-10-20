@@ -579,7 +579,7 @@ function wsMessageHandler(event) {
 			// moves this page. Anything else is a legacy announcement and is
 			// ignored, so a lock cannot black out a phone that is in use.
 			if (data['prompt'] && typeof jawnPadlockPrompt === 'function') {
-				jawnPadlockPrompt(data['mode'], data['target'], data['request_id'], data['device_name'], data['source_device']);
+				jawnPadlockPrompt(data['mode'], data['target'], data['request_id'], data['device_name'], data['source_device'], data['source_hostname'], data['house']);
 			}
 			else if (typeof jawnPadlockKeyShow === 'function') {
 				jawnPadlockKeyShow(data['mode'], data['target'], data['show']);

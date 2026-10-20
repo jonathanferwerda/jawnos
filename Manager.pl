@@ -27574,7 +27574,7 @@ sub app_schema_ensure {
 # the person made on the locked screen (not a lock being announced), so only
 # that kind may put a confirmation in front of another device.
 sub padlock_key_show_relay {
-	my ($c, $mode, $target, $show, $prompt, $request_id, $device_name, $source_device) = @_;
+	my ($c, $mode, $target, $show, $prompt, $request_id, $device_name, $source_device, $source_hostname) = @_;
 	return unless $c;
 	my $signatorial = &subs::signatorial_designer();
 	my $relay_id = &subs::random_string_creator(30);
@@ -27595,6 +27595,9 @@ sub padlock_key_show_relay {
 				request_id => ($request_id || ''),
 				device_name => ($device_name || ''),
 				source_device => ($source_device || ''),
+				source_hostname => ($source_hostname || ''),
+				source => $signatorial,
+				house => (($target || '') eq '' ? 1 : 0),
 				dissemination => 'yes',
 				source_signatorial => $signatorial,
 				relay_from => $signatorial,
@@ -27613,7 +27616,7 @@ sub padlock_key_show_relay {
 # padlock_state, so a phone that was asleep when the button was pressed finds
 # it on its next connection.
 sub padlock_request_store {
-	my ($target, $mode, $source, $id, $device_name, $source_device) = @_;
+	my ($target, $mode, $source, $id, $device_name, $source_device, $source_hostname) = @_;
 	my $now = &subs::rightNow();
 	$id ||= &subs::random_string_creator(24);
 	my $data = encode_json({
@@ -27623,6 +27626,8 @@ sub padlock_request_store {
 		source => $source || '',
 		device_name => $device_name || '',
 		source_device => $source_device || '',
+		source_hostname => $source_hostname || '',
+		house => (($target || '') eq '' ? 1 : 0),
 		time => $now,
 	});
 	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_request', $now - 600000);
@@ -27945,12 +27950,19 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 	# the screen that pressed the button is not asked to confirm its own request
 	my $source_device = $c->param('device_uuid') || $c->session('device_uuid') || '';
 	$source_device = '' unless $source_device =~ /^[A-Za-z0-9]{8,64}$/;
-	my $request_id = &padlock_request_store($target, $mode, &subs::signatorial_designer(), undef, $device_name, $source_device);
-	$log->info('padlock: prompt asked for ' . ($target || 'house') . ($device_name ? ' (' . $device_name . ')' : '') . ' by ' . ($source_device || '?') . ' id=' . $request_id);
-	&Websocket::send('server', { padlock_key_show => 1, prompt => 1, request_id => $request_id, device_name => $device_name, source_device => $source_device, mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
+	my $source = &subs::signatorial_designer();
+	my $source_hostname = &subs::machine_name() || '';
+	my $host = `hostname`;
+	chomp $host;
+	$source_hostname .= ' (' . $host . ')' if $host && $host ne $source_hostname;
+	$source_hostname =~ s/[\r\n\t]//g;
+	$source_hostname = substr($source_hostname, 0, 120);
+	my $request_id = &padlock_request_store($target, $mode, $source, undef, $device_name, $source_device, $source_hostname);
+	$log->info('padlock: prompt asked for ' . ($target || 'house') . ($device_name ? ' (' . $device_name . ')' : '') . ' by ' . ($source_device || '?') . ' on ' . $source_hostname . ' id=' . $request_id);
+	&Websocket::send('server', { padlock_key_show => 1, prompt => 1, request_id => $request_id, device_name => $device_name, source_device => $source_device, source => $source, source_hostname => $source_hostname, house => (($target || '') eq '' ? 1 : 0), mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
 	# another machine's screens are part of the house too
 	unless (($c->param('remoted') || '') eq 'yes' || ($c->param('dissemination') || '') eq 'yes') {
-		&padlock_key_show_relay($c, $mode, $target, 1, 1, $request_id, $device_name, $source_device);
+		&padlock_key_show_relay($c, $mode, $target, 1, 1, $request_id, $device_name, $source_device, $source_hostname);
 	}
 	$c->render(json => { ok => 1, mode => $mode, target => $target, request_id => $request_id });
 };
@@ -28156,6 +28168,10 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 	# another. An empty target is the phone's own screen.
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
+	# An empty target is the house-wide lock (the locked screen had no device
+	# identity), not this phone's own screen. `house` binds that meaning into
+	# the signature and keeps the open from being applied to the phone instead.
+	my $house = $c->param('house') ? 1 : 0;
 	if ($target && !&subs::db_select('paired_devices', undef, { uuid => $target, status => 'active' })->hashes->[0]) {
 		return $c->render(json => { ok => 0, error => 'not paired' });
 	}
@@ -28163,22 +28179,24 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 	my $now = &subs::rightNow();
 	my $fresh = &biometric_nonce_take('unlock', $device_uuid, $nonce);
 	unless ($fresh) { return $c->render(json => { ok => 0, error => 'no challenge' }); }
-	my $msg = $target
-		? join("\n", 'padlock-bio-unlock', $device_uuid, $target, $nonce)
+	my $signed_target = $house ? 'house' : $target;
+	my $msg = $signed_target
+		? join("\n", 'padlock-bio-unlock', $device_uuid, $signed_target, $nonce)
 		: join("\n", 'padlock-bio-unlock', $device_uuid, $nonce);
 	# Older pages signed without the target. Accept that form too, for the one
 	# build in flight; the nonce is single-use and the key is still the phone's.
 	my $msg_legacy = join("\n", 'padlock-bio-unlock', $device_uuid, $nonce);
 	unless (&subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature)
-		|| ($target && &subs::ecdsa_verify($device->{'bio_pubkey'}, $msg_legacy, $signature))) {
+		|| ($target && !$house && &subs::ecdsa_verify($device->{'bio_pubkey'}, $msg_legacy, $signature))) {
 		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_fail', app => '__president', server_time => $now, timestamp => $now });
 		$log->info('padlock: biometric signature refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
 		return $c->render(json => { ok => 0, error => 'not accepted' });
 	}
 	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_bio_fail', $ip . ':%');
-	my $open_target = $target || $device_uuid;
+	my $open_target = $house ? '' : ($target || $device_uuid);
 	# A whole-house lock keeps the other screens locked on the house-wide stamp.
 	my $opened = &padlock_mark_unlocked($c, $mode, $open_target);
+	&padlock_request_clear($open_target);
 	# the authoritative lock may live on another peer: hand the open over the
 	# signed rail, the same way a phone-as-key unlock does
 	&subs::subprocessor(sub {
@@ -28188,7 +28206,12 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 			url => '/manager/security/padlock_open_peer',
 			type => 'get',
 			dissemination => 'yes',
-			params => { signatorial => &subs::signatorial_designer(), target => $open_target, mode => $mode },
+			params => {
+				signatorial => &subs::signatorial_designer(),
+				target => $open_target,
+				mode => $mode,
+				house => ($house ? 1 : 0),
+			},
 		});
 	}, { name => 'padlock biometric relay' });
 	$log->info('padlock: biometric open by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' target=' . ($target || 'self'));
@@ -28228,6 +28251,7 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
+	my $house = $c->param('house') ? 1 : 0;
 	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
 	unless ($device && $nonce =~ /^[A-Za-z0-9]{8,64}$/) { return $c->render(json => { ok => 0 }); }
 	my $ip = $c->tx->remote_address || '?';
@@ -28238,8 +28262,9 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_fail', app => '__president', server_time => $now, timestamp => $now });
 		return $c->render(json => { ok => 0 });
 	}
-	my $msg = $target
-		? join("\n", ('padlock-unlock', $device_uuid, $target, $nonce))
+	my $signed_target = $house ? 'house' : $target;
+	my $msg = $signed_target
+		? join("\n", ('padlock-unlock', $device_uuid, $signed_target, $nonce))
 		: join("\n", ('padlock-unlock', $device_uuid, $nonce));
 	unless (&subs::signature_verify($device->{'pubkey'}, $msg, $signature)) {
 		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_fail', app => '__president', server_time => $now, timestamp => $now });
@@ -28265,7 +28290,8 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 	}
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_nonce', $stamp);
 	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_fail', $ip . ':%');
-	my $locked = $target ? &padlock_target_locked($target, $c)
+	my $open_target = $house ? '' : $target;
+	my $locked = $open_target ? &padlock_target_locked($open_target, $c)
 		: (&padlock_locked_now($c) || &padlock_global_locked($c));
 	# A phone often talks to its own jawn, while the lock is authoritative on the
 	# machine that made it. Clearing it here alone leaves that screen locked (the
@@ -28279,16 +28305,17 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 			url => '/manager/security/padlock_open_peer',
 			type => 'get',
 			dissemination => 'yes',
-			params => { signatorial => &subs::signatorial_designer(), target => $target, mode => $mode },
+			params => { signatorial => &subs::signatorial_designer(), target => $open_target, mode => $mode, house => ($house ? 1 : 0) },
 		});
 	}, { name => 'padlock unlock relay' });
 	unless ($locked) {
-		&padlock_request_clear($target);
-		return $c->render(json => { ok => 1, unlocked => 1, already => 1, relayed => ($target ? 1 : 0), name => $device->{'name'} });
+		&padlock_request_clear($open_target);
+		return $c->render(json => { ok => 1, unlocked => 1, already => 1, relayed => ($open_target ? 1 : 0), name => $device->{'name'} });
 	}
-	my $opened = &padlock_mark_unlocked($c, $mode, $target);
-	$log->info('padlock: opened by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' mode=' . $mode . ($target ? ' target=' . $target : ''));
-	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $target });
+	my $opened = &padlock_mark_unlocked($c, $mode, $open_target);
+	&padlock_request_clear($open_target);
+	$log->info('padlock: opened by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' mode=' . $mode . ($open_target ? ' target=' . $open_target : ' house'));
+	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $open_target });
 };
 
 # The peer half of an unlock. A phone signs the challenge on whichever jawn it
@@ -28307,7 +28334,36 @@ get '/manager/security/padlock_open_peer' => sub ($c) {
 	my $mode = $c->param('mode') || 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	my $opened = &padlock_mark_unlocked($c, $mode, $target);
+	&padlock_request_clear($target);
 	$log->info('padlock: peer unlock from ' . ($rm->{'hostname'} || $signatorial) . ' mode=' . $mode . ($target ? ' target=' . $target : ' house'));
+	# A phone may reach the peer that holds the lock only through a machine in
+	# between (a phone's roster is small). Carry the open on once, so the
+	# machine that actually holds the lock hears it; relay_id stops a loop and
+	# the source is not handed its own open back.
+	my $relay_id = $c->param('relay_id') || '';
+	if ($relay_id) {
+		my $self = &subs::signatorial_designer();
+		my $origin = $c->param('source_signatorial') || $signatorial;
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&remote_relay_request($c, {
+				override => 'manual',
+				url => '/manager/security/padlock_open_peer',
+				type => 'get',
+				dissemination => 'yes',
+				params => {
+					signatorial => $self,
+					target => $target,
+					mode => $mode,
+					house => ($target ? 0 : 1),
+					dissemination => 'yes',
+					source_signatorial => $origin,
+					relay_from => $self,
+					relay_id => $relay_id,
+				},
+			});
+		}, { name => 'padlock open relay' });
+	}
 	$c->render(json => { ok => ($opened ? 1 : 0), target => $target });
 };
 
@@ -28335,13 +28391,19 @@ post '/manager/security/padlock_key_show_peer' => sub ($c) {
 	$device_name = substr($device_name, 0, 120);
 	my $source_device = $c->param('source_device') || '';
 	$source_device = '' unless $source_device =~ /^[A-Za-z0-9]{8,64}$/;
+	# the machine that actually holds the lock, not the peer relaying its prompt
+	my $source = $c->param('source') || $signatorial;
+	$source = '' unless $source =~ /^[A-Za-z0-9]{8,64}$/;
+	my $source_hostname = $c->param('source_hostname') || ($rm->{'hostname'} || '');
+	$source_hostname =~ s/[\r\n\t]//g;
+	$source_hostname = substr($source_hostname, 0, 120);
 	# keep the request readable on this machine too: a phone that is asleep
 	# when the button is pressed finds it in padlock_state on its next wake
 	if ($prompt) {
-		$request_id = &padlock_request_store($target, $mode, $signatorial, $request_id || undef, $device_name, $source_device);
-		$log->info('padlock: prompt received from ' . ($rm->{'hostname'} || $signatorial) . ' for ' . ($target || 'house') . ' id=' . $request_id);
+		$request_id = &padlock_request_store($target, $mode, $source, $request_id || undef, $device_name, $source_device, $source_hostname);
+		$log->info('padlock: prompt received from ' . ($source_hostname || $signatorial) . ' for ' . ($target || 'house') . ' id=' . $request_id);
 	}
-	&Websocket::send('server', { padlock_key_show => 1, prompt => $prompt, request_id => $request_id, device_name => $device_name, source_device => $source_device, mode => $mode, target => $target, show => $show, timestamp => &subs::rightNow() });
+	&Websocket::send('server', { padlock_key_show => 1, prompt => $prompt, request_id => $request_id, device_name => $device_name, source_device => $source_device, source => $source, source_hostname => $source_hostname, house => (($target || '') eq '' ? 1 : 0), mode => $mode, target => $target, show => $show, timestamp => &subs::rightNow() });
 	my $relay_id = $c->param('relay_id') || '';
 	if ($relay_id) {
 		my $self = &subs::signatorial_designer();
@@ -28361,6 +28423,9 @@ post '/manager/security/padlock_key_show_peer' => sub ($c) {
 					request_id => $request_id,
 					device_name => $device_name,
 					source_device => $source_device,
+					source_hostname => $source_hostname,
+					source => $source,
+					house => (($target || '') eq '' ? 1 : 0),
 					dissemination => 'yes',
 					source_signatorial => $self,
 					relay_from => $self,

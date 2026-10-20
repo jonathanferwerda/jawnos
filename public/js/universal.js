@@ -721,7 +721,7 @@ function jawnPadlockKeyCheck(force) {
 		}
 		var r = s.request;
 		if (r && r.id && typeof jawnPadlockPrompt === 'function') {
-			jawnPadlockPrompt(r.mode || 'locker', r.target || '', r.id, r.device_name || '', r.source_device || '');
+			jawnPadlockPrompt(r.mode || 'locker', r.target || '', r.id, r.device_name || '', r.source_device || '', r.source_hostname || '', r.house);
 		}
 	});
 }
@@ -748,7 +748,23 @@ function jawnPadlockPromptText(text, value) {
 	return (typeof value === 'undefined') ? text : text.replace('{0}', value);
 }
 
-function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
+// The padlock's own vocabulary: the Manager screen, or the app whose lock it is.
+function jawnPadlockContext(mode) {
+	if (mode === 'gallery') { return jawnPadlockPromptText('Gallery'); }
+	if (mode === 'music') { return jawnPadlockPromptText('Music'); }
+	if (mode === 'folders') { return jawnPadlockPromptText('Folders'); }
+	return jawnPadlockPromptText('Manager');
+}
+
+// What the person sees in the native fingerprint prompt: what is being opened,
+// where the request came from, and which context asked for it.
+function jawnPadlockUnlockLabel(mode, house, deviceName, sourceHost) {
+	var what = house ? jawnPadlockPromptText('the house') : (deviceName || jawnPadlockPromptText('the locked screen'));
+	var from = sourceHost ? (' — ' + sourceHost) : '';
+	return jawnPadlockPromptText('Unlock') + ' ' + what + from + ' · ' + jawnPadlockContext(mode);
+}
+
+function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, sourceHost, house) {
 	if ((location.pathname || '') == '/manager/security/padlock_key') { return; }
 	if (!document.getElementById('taskbar') && !document.getElementById('locked_screen')) { return; }
 	// A screen that is locked is not an approval terminal. It may show its own
@@ -769,6 +785,9 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 	jawnPadlockPromptOpen = true;
 	jawnPadlockPromptTarget = target || '';
 	mode = mode || 'locker';
+	house = (typeof house === 'undefined') ? !target : !!house;
+	var contextLabel = jawnPadlockContext(mode);
+	var unlockLabel = jawnPadlockUnlockLabel(mode, house, deviceName, sourceHost);
 
 	var box = document.createElement('div');
 	box.id = 'jawn_padlock_prompt';
@@ -777,10 +796,12 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 	box.style.cssText = 'position:fixed;z-index:71000;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,360px);background:#161616;color:#f4f4f4;border:1px solid #444;border-radius:14px;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.55);font-family:sans-serif;text-align:center;';
 	var title = document.createElement('div');
 	title.style.cssText = 'font-size:19px;line-height:1.35;margin-bottom:6px;';
-	title.textContent = deviceName ? jawnPadlockPromptText('Unlock {0}?', deviceName) : jawnPadlockPromptText('Unlock the locked screen?');
+	title.textContent = house ? jawnPadlockPromptText('Unlock the house?')
+		: (deviceName ? jawnPadlockPromptText('Unlock {0}?', deviceName) : jawnPadlockPromptText('Unlock the locked screen?'));
 	var note = document.createElement('div');
 	note.style.cssText = 'font-size:14px;color:#bbb;margin-bottom:14px;min-height:18px;';
-	note.textContent = jawnPadlockPromptText('Somebody pressed Unlock on the locked screen. Confirm with your fingerprint to open it.');
+	note.textContent = (sourceHost ? jawnPadlockPromptText('Requested by {0}', sourceHost) : jawnPadlockPromptText('Requested by another machine'))
+		+ ' · ' + contextLabel + '. ' + jawnPadlockPromptText('Confirm with your fingerprint to open it.');
 	var go = document.createElement('button');
 	go.type = 'button';
 	go.textContent = jawnPadlockPromptText('Unlock with fingerprint');
@@ -806,21 +827,21 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 		// the device's pairing signature.
 		var opened;
 		if (window.JawnBiometricKey && typeof jawnosBiometricUnlock === 'function') {
-			opened = jawnosBiometricUnlock(mode, target, function (t) { note.textContent = t; }, box).catch(function (err) {
+			opened = jawnosBiometricUnlock(mode, target, function (t) { note.textContent = t; }, box, house, sourceHost, deviceName).catch(function (err) {
 				var e = (err && err.error) || '';
 				if (e !== 'unavailable' && e !== 'no key' && e !== 'invalidated') { throw err; }
-				return jawnPadlockConfirm('Unlock the locked screen').then(function (ok) {
+				return jawnPadlockConfirm(unlockLabel).then(function (ok) {
 					if (!ok) { throw { error: 'cancelled' }; }
 					note.textContent = jawnPadlockPromptText('Unlocking...');
-					return jawnPadlockSignOpen(mode, target, note);
+					return jawnPadlockSignOpen(mode, target, note, house);
 				});
 			});
 		}
 		else {
-			opened = jawnPadlockConfirm('Unlock the locked screen').then(function (ok) {
+			opened = jawnPadlockConfirm(unlockLabel).then(function (ok) {
 				if (!ok) { throw { error: 'cancelled' }; }
 				note.textContent = jawnPadlockPromptText('Unlocking...');
-				return jawnPadlockSignOpen(mode, target, note);
+				return jawnPadlockSignOpen(mode, target, note, house);
 			});
 		}
 		opened.then(function (res) {
@@ -899,8 +920,10 @@ function jawnPadlockConfirm(text) {
 
 // Sign the one-time challenge with this device's pairing key and ask the house
 // to open the target screen (or the whole house when target is empty).
-function jawnPadlockSignOpen(mode, target, status) {
+function jawnPadlockSignOpen(mode, target, status, house) {
 	mode = mode || 'locker';
+	house = !!house;
+	var signedTarget = house ? 'house' : (target || '');
 	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!(window.crypto && crypto.subtle && crypto.subtle.sign)) { return Promise.reject({ error: 'unavailable' }); }
@@ -909,10 +932,11 @@ function jawnPadlockSignOpen(mode, target, status) {
 		return $.post('/manager/security/padlock_challenge', { device_uuid: uuid });
 	}).then(function (ch) {
 		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
-		var msg = 'padlock-unlock\n' + uuid + '\n' + (target ? target + '\n' : '') + ch.nonce;
+		var msg = 'padlock-unlock\n' + uuid + '\n' + (signedTarget ? signedTarget + '\n' : '') + ch.nonce;
 		return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
 			var body = { device_uuid: uuid, nonce: ch.nonce, signature: jawnosB64(sig), mode: mode };
-			if (target) { body.target = target; }
+			if (house) { body.house = 1; }
+			else if (target) { body.target = target; }
 			return $.post('/manager/security/padlock_unlock', body);
 		});
 	}).then(function (res) {
@@ -1395,26 +1419,29 @@ function jawnosBiometricVerify(status) {
 		});
 	});
 }
-function jawnosBiometricUnlock(mode, target, status, context) {
+function jawnosBiometricUnlock(mode, target, status, context, house, sourceHost, deviceName) {
 	status = status || function () {};
 	mode = mode || 'locker';
+	house = !!house;
 	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
-	// The target is bound into the signed message: a fingerprint confirmation
-	// made for one screen cannot be replayed to open another.
-	var signedTarget = target || '';
+	// The target (or the house) is bound into the signed message: a fingerprint
+	// confirmation made for one screen cannot be replayed to open another.
+	var signedTarget = house ? 'house' : (target || '');
+	var promptText = jawnPadlockUnlockLabel(mode, house, deviceName, sourceHost);
 	function once() {
 		return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'unlock' }).then(function (ch) {
 			if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'challenge' }; }
 			var msg = 'padlock-bio-unlock\n' + uuid + '\n' + (signedTarget ? signedTarget + '\n' : '') + ch.nonce;
-			return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), 'Unlock the house']).then(function (res) {
+			return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), promptText]).then(function (res) {
 				if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
 				// the thumb passed; the shackle opens while the house verifies the signature
 				if (typeof jawnPadlockArtUnlocking === 'function') { jawnPadlockArtUnlocking(context); }
-				return $.post('/manager/security/biometric_unlock', {
-					device_uuid: uuid, nonce: ch.nonce, signature: res.signature, mode: mode, target: signedTarget
-				});
+				var body = { device_uuid: uuid, nonce: ch.nonce, signature: res.signature, mode: mode };
+				if (house) { body.house = 1; }
+				else if (target) { body.target = target; }
+				return $.post('/manager/security/biometric_unlock', body);
 			});
 		});
 	}
