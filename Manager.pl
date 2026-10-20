@@ -5972,6 +5972,17 @@ post '/sesh_check' => sub ($c) {
 			# through without a browser app key.
 			if ($c->param('neighbour') || $c->param('president') || $c->param('backup') || $c->param('remote_timestamp')) {
 				$c->session('peer' => 1);
+				# The caller names itself when it logs in; keep the name with the
+				# session so a later action can be checked against the caller's lease,
+				# not merely the shared password. A browser cannot borrow this: it has
+				# no house password to open sesh_check at all.
+				my $peer_sig = lc($c->param('signatorial') || '');
+				if ($peer_sig =~ /^[0-9a-f]{16,64}$/) {
+					$c->session('peer_signatorial' => $peer_sig);
+				}
+				else {
+					$c->session('peer_signatorial' => undef);
+				}
 			}
 			my $app_warranty = &subs::setting_grabber({ app => $c->param('app'), setting => 'warranty' });
 			my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ 'app' => 'me', 'setting' => 'login_warranty' } ) || '-3h',$server_time);
@@ -8341,7 +8352,7 @@ sub remote_device_connect($rdata) {
 	my $bti;
 	my $ua = Mojo::UserAgent->new();
 	my $manager_file = &manager_file_maker($name);
-	my $url = $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id . '&numerics=' . $password . '&president=' . $filename . '&remote_timestamp=' . $timestamp . '&manager_file=' . $manager_file;
+	my $url = $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id . '&numerics=' . $password . '&president=' . $filename . '&remote_timestamp=' . $timestamp . '&manager_file=' . $manager_file . '&signatorial=' . $signatorial;
 	my $res = eval { return $ua->insecure(1)->post($url)->result };
 
 	$returner->{'body'} = eval { return decode_json $res->body };
@@ -8379,7 +8390,7 @@ sub remote_device_connect($rdata) {
 
 	if ($returner->{'body'}->{'authentication'} eq 'approved') {
 		$ua = Mojo::UserAgent->new();
-		$url = $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id . '&numerics=' . $password . '&president=' . $filename . '&remote_timestamp=' . $timestamp . '&manager_file=' . $manager_file;
+		$url = $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id . '&numerics=' . $password . '&president=' . $filename . '&remote_timestamp=' . $timestamp . '&manager_file=' . $manager_file . '&signatorial=' . $signatorial;
 		my $double_check = eval { return $ua->insecure(1)->post($url)->result };
 		$returner->{'body'} = eval { return decode_json $double_check->body } ;
 
@@ -12767,14 +12778,23 @@ sub remote_relay_request($c, $extra_params = {}) {
 # A peer's lease is enforced here: a signed peer call must carry the rung its
 # movement needs (start/stop and an app toggle are resident; a shell command is
 # trusted). A local session has no peer identity and is left to the session
-# gate. A peer session minted by sesh_check is not tied to a signatorial yet, so
-# it keeps its existing route-level gate until that is done.
+# gate. A peer session minted by sesh_check carries the caller's signatorial, so
+# a session-riding call is checked too; a session from before that change has no
+# name on it yet and keeps its existing gate until it logs in again.
 sub peer_action_gate {
 	my ($c, $action) = @_;
 	my $peer_key = $c->stash('peer_verified_key') || '';
 	if (!$peer_key) {
 		&app_peer_ok($c);
 		$peer_key = $c->stash('peer_verified_key') || '';
+	}
+	if (!$peer_key && ($c->session('peer') || '') eq '1') {
+		my $ssig = $c->session('peer_signatorial') || '';
+		my $srm = $ssig && &subs::db_select('remote_machines', undef, { signatorial => $ssig })->hash;
+		if ($srm) {
+			$peer_key = $srm->{'uuid'} || $srm->{'signatorial'};
+			$c->stash('peer_verified_key' => $peer_key) if $peer_key;
+		}
 	}
 	return 1 unless $peer_key;
 	my $rm = &subs::db_select('remote_machines', undef, { uuid => $peer_key })->hash
@@ -33659,10 +33679,41 @@ post '/mail/msg' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $local_door = $c->tx->remote_address eq $c->tx->local_address;
 	my $known_neighbour = $signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0];
-	unless ($local_door || $known_neighbour || $c->session('authentication') eq 'approved') {
+	my $approved = ($c->session('authentication') || '') eq 'approved';
+	# A hand-over that names a neighbour must be signed by that neighbour's pinned
+	# key: a signatorial is a name, and a name alone once let anyone insert a
+	# letter into this mailbox. A signed peer is then held to its lease: a reply
+	# to a thread this house already holds needs visitor; a conversation it starts
+	# needs resident.
+	my $signed_peer = 0;
+	if (!$local_door && $known_neighbour && $known_neighbour->{'pubkey'}) {
+		$signed_peer = &subs::peer_verify($c, $known_neighbour) ? 1 : 0;
+		unless ($signed_peer) {
+			$log->info('mail hand-over refused: ' . $signatorial . ' did not sign');
+			$c->render(json => { ok => 0, error => 'not signed' });
+			return;
+		}
+	}
+	unless ($local_door || $signed_peer || ($approved && !$known_neighbour)) {
 		$log->info('mail hand-over refused from ' . $c->tx->remote_address . ' signatorial=' . ($signatorial || 'none'));
 		$c->render(json => { ok => 0, error => 'unknown neighbour' });
 		return;
+	}
+	if ($signed_peer) {
+		my $thread = $msg->{'conversation_uuid'} || '';
+		my $is_reply = 0;
+		if ($thread ne '') {
+			$is_reply = 1 if &subs::db_query('select 1 from mailbox where conversation_uuid = ? limit 1', $thread)->hashes->[0];
+		}
+		if (!$is_reply && ($msg->{'in_reply_to'} || '') ne '') {
+			$is_reply = 1 if &subs::db_query('select 1 from mailbox where message_id = ? limit 1', $msg->{'in_reply_to'})->hashes->[0];
+		}
+		my $need = &subs::peer_action_scope($is_reply ? 'mail_reply' : 'mail_start') || 'resident';
+		unless (&subs::peer_allows($c, $known_neighbour, $need)) {
+			$log->info('mail hand-over refused: ' . $signatorial . ' holds no ' . $need . ' grant');
+			$c->render(json => { ok => 0, error => 'not permitted' });
+			return;
+		}
 	}
 	if ($msg->{'uuid'}) {
 		# an ephemeral letter is only ever heard live: the machine that catches
