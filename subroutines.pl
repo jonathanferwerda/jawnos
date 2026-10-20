@@ -15081,7 +15081,9 @@ sub tailnet_address {
 		return '';
 	};
 	foreach my $nic ( keys %{$network} ) {
-		my $ip = $tailnet->($network->{$nic}->{'ip'});
+		my $entry = $network->{$nic};
+		next unless ref $entry eq 'HASH';
+		my $ip = $tailnet->($entry->{'ip'});
 		return $ip if $ip;
 	}
 	return $tailnet->($rm->{'ip'});
