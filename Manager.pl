@@ -19992,6 +19992,9 @@ get '/manager/gallery' => sub ($c) {
 	# phone's unlock, lets sealed and hidden things through
 	my $permissive = media_unlock_open($c, 'gallery') ? 1 : 0;
 	my $unlock = $permissive ? $c->param('unlock') : '';
+	# sealed photos follow the padlock; the extra rule for a source marked
+	# not-visible still waits for home
+	my $revealed = ($permissive && help_at_home()) ? 1 : 0;
 	my $apps = eval { return decode_json $settings->{'apps'} } || [];
 	my $jfiles = $c->param('files');
 
@@ -20025,7 +20028,7 @@ get '/manager/gallery' => sub ($c) {
 	my $archive_lookup;
 	foreach my $app_name ( @{$apps} ) {
 		$asettings->{$app_name} = &subs::settings_grabber({ app => $app_name, settings => ['main_image', 'visible' ] }) unless $asettings->{$app_name};
-		next if $asettings->{$app_name}->{'visible'} ne 'checked' && $permissive == 0;
+		next if $asettings->{$app_name}->{'visible'} ne 'checked' && $revealed == 0;
 		my $files = [];
 		if ($app_name eq 'ide' && $jfiles) {
 			$files = decode_json $jfiles;
@@ -20148,6 +20151,7 @@ get '/manager/gallery' => sub ($c) {
 		view => $view,
 		unlock => $unlock,
 		permissive => $permissive,
+		revealed => $revealed,
 		asettings => $asettings,
 		apps => $apps,
 		count => $count,
@@ -20168,11 +20172,13 @@ get '/manager/gallery/scroll' => sub($c) {
 	my $first_count = $c->param('first_count');
 	my $returner = { apps => $apps, count => $count, count_timestamp => $count_timestamp };
 	my $permissive = media_unlock_open($c, 'gallery') ? 1 : 0;
+	my $revealed = ($permissive && help_at_home()) ? 1 : 0;
 	$returner->{'html'} = $c->render_to_string(
 		template => 'apps/gallery_album',
 		settings => $settings,
 		asettings => {},
 		permissive => $permissive,
+		revealed => $revealed,
 		pre_count => $count,
 		first_count => $first_count,
 		view => 'album',
@@ -24827,7 +24833,8 @@ sub help_media_revealed { return (help_media_unlocked() && help_at_home()) ? 1 :
 # carries no token and stays locked, even when the secret from an earlier open
 # is still in settings; the refresh after a phone signs carries the token that
 # unlock minted, so the refreshed window stays open. The stored secret is only
-# the validator, never proof by itself.
+# the validator, never proof by itself. The padlock itself is not location
+# gated; only the extra rule for items marked not-visible still waits for home.
 sub media_unlock_open($c, $app) {
 	return 0 unless ($c && defined $app && length $app);
 	my $token = $c->param('unlock');
@@ -24836,7 +24843,6 @@ sub media_unlock_open($c, $app) {
 	return 0 unless grep { $_ eq $app } @{$sightings};
 	my $stored = &subs::setting_grabber({ app => $app, setting => 'combo_unlock' });
 	return 0 unless (defined $stored && length $stored);
-	return 0 unless help_at_home();
 	my $suds = &subs::session_suds($c);
 	return 0 unless $suds;
 	my $given = &subs::note_decrypter($suds, $token);
@@ -27715,7 +27721,6 @@ sub padlock_mark_unlocked {
 	my ($c, $mode, $target) = @_;
 	$mode ||= 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
-	return 0 if $mode =~ /^(?:gallery|music|folders)$/ && !help_at_home();
 	my $suds = &subs::suds_grabber() || &subs::session_suds($c) || $gb::suds;
 	return 0 unless $suds;
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
@@ -27825,9 +27830,6 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	return $c->render(json => { ok => 0, error => 'no fingerprint' }) unless &fingerprint_available();
 	my $mode = $c->param('mode') || 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
-	if ($mode ne 'locker' && !&help_at_home()) {
-		return $c->render(json => { ok => 0, error => 'not at home' });
-	}
 	# the reader opens the screen it is attached to: an app padlock names that
 	# screen too, so the unlock never becomes a house-wide one
 	my $device = $c->session('device_uuid') || '';

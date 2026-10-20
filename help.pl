@@ -39,7 +39,7 @@ our %topic = (
 			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
 			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
 			'Moving, sealing, opening or deleting a file carries the appointments, mail attachments and store entries that named it along with it, so nothing is left pointing at a file that is no longer there.',
-			'A lock on the toolbar turns the media padlock. Anything you have marked not-visible is kept out of the listing until the padlock is open and you are at home, so a private folder stays out of sight out in public. The same padlock is what uncovers sealed files: a name ending .enc is not listed at all while it is shut, and appears - still sealed, and ready to open from the menu - only when it is open at home. Folders opens with that padlock shut, and the next open starts shut again. The house gate in Security has nothing to do with this; each media app has its own padlock.',
+			'A lock on the toolbar turns the media padlock. Anything you have marked not-visible is kept out of the listing until the padlock is open and you are at home, so a private folder stays out of sight out in public. The same padlock is what uncovers sealed files: a name ending .enc is not listed at all while it is shut, and appears - still sealed, and ready to open from the menu - only when it is open. Folders opens with that padlock shut, and the next open starts shut again. The house gate in Security has nothing to do with this; each media app has its own padlock.',
 		],
 		steps => [
 			'Open Folders from the start menu.',
@@ -47,7 +47,7 @@ our %topic = (
 			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
 			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.',
 			'For a not-visible folder, press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone, and it appears — at home.',
-			'Sealed names ending .enc stay out of the listing until that same Folders padlock is open at home; press an open padlock to shut it again and hide them.'
+			'Sealed names ending .enc stay out of the listing until that same Folders padlock is open; press an open padlock to shut it again and hide them.'
 		],
 		related => [ 'sealing_files', 'gallery', 'backup' ]
 	},
@@ -69,7 +69,7 @@ our %topic = (
 			'Click any photo to open it full-screen. The toolbar gives Previous and Next, Refresh (reload the set), Shuffle (play them in a random order), Repeat (loop the slideshow), File information, Fetch home, and Set as main image.',
 			'Type in the Search box (top-left in Home and Album) and press Enter to find photos by app or file name.',
 			'In Album view, toggle Archives to include photos stored away, and use the arrow to flip the order between newest-first and oldest-first.',
-			'The lock covers the gallery when you want it out of the way; unlock it with this computer\'s fingerprint or on a paired phone. Gallery opens with its lock shut, so sealed photos and albums you have marked not-visible stay hidden until the lock is open at home.',
+			'The lock covers the gallery when you want it out of the way; unlock it with this computer\'s fingerprint or on a paired phone. Gallery opens with its lock shut, so sealed photos stay hidden until the lock is open, and albums you have marked not-visible also wait until you are at home.',
 		],
 		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser — not a phone gallery and not a file manager. Its photos are the ones recorded by their apps, and which apps are shown are the "sources", which default to the apps they currently have open. Guide them in terms of the Home / Album / Photo views and the named buttons (Home, Albums, Previous, Next, Shuffle, Repeat, Refresh, File information, Set as main image, Archives, lock). If they say they see nothing, the likeliest cause is that no source app is open or marked visible — suggest opening an app that has photos. If you are unsure how a control starts or works, describe what its label means rather than inventing a sequence of clicks. Never describe or guess the content of their photos.',
 		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
@@ -135,7 +135,7 @@ our %topic = (
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
 			'Texture, in Appearance, dresses the window in the desk\'s material - the top interface bar, every track, the player bar at the foot and every other surface; Plain and Round leave them bare.',
-			'Music opens with its padlock shut: sealed tracks (a name ending .enc) are not listed until you press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone at home. The next fresh open starts locked again.',
+			'Music opens with its padlock shut: sealed tracks (a name ending .enc) are not listed until you press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone. The next fresh open starts locked again.',
 			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen.',
 			'An audio track has no picture of its own, so the player can draw the sound instead and play that drawing as its picture: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).',
 			'On a phone the window draws itself differently: the artists and albums become one line of pills each, scrolling sideways, and the tracks below them are cards — the picture, the title (up to two lines) and the time — with the list running right down to the player, so the time is always in reach.'

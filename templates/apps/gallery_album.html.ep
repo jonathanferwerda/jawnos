@@ -76,7 +76,7 @@
 	<% foreach my $a ( keys %{$ghome} ) {
 		<% foreach my $f ( @{$ghome->{$a}} ) { %>
 			<% my $aset = $asettings->{$f->{'app'}} || &subs::settings_grabber({ app => $f->{'app'}, settings => ['main_image','visible'] }); %>
-			<% next if $aset->{'visible'} ne 'checked' && $permissive == 0; %>
+			<% next if $aset->{'visible'} ne 'checked' && $revealed == 0; %>
 			<% unless (-e $f->{'f'} || $f->{'remote_uuid'}){ $subtractors++; next; } %>
 			<% next if grep { $_->{'uuid'} eq $f->{'uuid'} } @{$processed_files};	push @{$processed_files}, $f; %>
 			<table class="gallery_home_preview hover" app="<%= $app %>" file="<%= $f->{'f'} %>" id="<%= $f->{'uuid'} %>_album_thumb %>" app_uuid="<%= $f->{'app_uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" count="<%= $f->{'count'} - $subtractors %>" timestamp="<%= $f->{'app_timestamp'} %>" uuid="<%= $f->{'uuid'} %>" type="<%= $f->{'type'} %>" style="min-width:110px;display:<% if ($f->{'f'} eq 'template') { %>none;<% } else { %>inline-block<% } %>;border:solid;">

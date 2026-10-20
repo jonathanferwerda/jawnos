@@ -62,7 +62,7 @@
 					<% next unless scalar @{$ghome->{$app}}; %>
 					<% push @seen_and_sent, $app; %>
 					<% my $aset = $asettings->{$app} || &subs::settings_grabber({ app => $app, settings => ['main_image','visible'] }); %>
-					<% next if $aset->{'visible'} ne 'checked' && $permissive == 0; %>
+					<% next if $aset->{'visible'} ne 'checked' && $revealed == 0; %>
 
 					<% my $content = $c->render_to_string(
 						template => 'apps/gallery_home',
