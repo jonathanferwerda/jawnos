@@ -588,23 +588,31 @@ function jawnAppEnrollDesktop() {
 	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.resolve(false); }
 	return $.getJSON('/manager/device/app_status', { device_uuid: uuid }).then(function (s) {
-		if (!s || !s.ok || s.has_app) { return true; }
+		if (!s || !s.ok) { throw { error: 'not paired' }; }
+		if (s.has_app) { return true; }
 		if (s.pending) { throw { error: 'pending' }; }
 		return jawnDesktopCall('app_pubkey', {}).then(function (res) {
 			if (!res || !res.ok || !res.pubkey) { throw { error: 'no key' }; }
 			return $.post('/manager/device/app_challenge', { device_uuid: uuid, purpose: 'enroll' }).then(function (ch) {
 				if (!ch || !ch.ok || !ch.nonce) { throw { error: 'challenge' }; }
+				function send(sig) {
+					return $.post('/manager/device/app_request', {
+						device_uuid: uuid, nonce: ch.nonce, app_pubkey: res.pubkey, app_kind: 'ed25519',
+						device_signature: sig || '', name: 'Desktop app'
+					});
+				}
 				return jawnosSha256Hex(res.pubkey).then(function (hash) {
 					var msg = 'app-request\n' + uuid + '\n' + ch.nonce + '\n' + hash;
+					// The device pairing key signs when this app still has it. A
+					// migrated WebKit profile can have the uuid without the key; the
+					// request then goes unsigned and waits for approval on a trusted
+					// app, bound to this session's own device server-side.
 					return jawnosDeviceKeyGet().then(function (key) {
-						if (!key) { throw { error: 'not paired' }; }
+						if (!key) { return send(''); }
 						return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
-							return $.post('/manager/device/app_request', {
-								device_uuid: uuid, nonce: ch.nonce, app_pubkey: res.pubkey, app_kind: 'ed25519',
-								device_signature: jawnosB64(sig), name: 'Desktop app'
-							});
+							return send(jawnosB64(sig));
 						});
-					});
+					}).catch(function () { return send(''); });
 				});
 			});
 		});

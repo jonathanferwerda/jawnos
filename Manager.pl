@@ -26891,8 +26891,24 @@ post '/manager/device/app_request' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'bad key' }) unless $ok_key;
 	require Digest::SHA;
 	my $msg = join("\n", 'app-request', $device_uuid, $nonce, Digest::SHA::sha256_hex($pubkey));
-	unless (&subs::signature_verify($device->{'pubkey'}, $msg, $c->param('device_signature') || '')) {
-		return $c->render(json => { ok => 0, error => 'not accepted' });
+	# The pairing key signs the request when the app still has it. A desktop
+	# app whose key lived in an older WebKit profile has the device uuid in
+	# localStorage but no private key, so it cannot sign. It may still ASK, but
+	# only for the device its own session is bound to - never a uuid the caller
+	# picks - and the request still waits for a person to approve it on a
+	# trusted app. That approval, not the signature, is the trust boundary.
+	my $signed = 0;
+	if ($c->param('device_signature')) {
+		$signed = 1 if &subs::signature_verify($device->{'pubkey'}, $msg, $c->param('device_signature'));
+	}
+	unless ($signed) {
+		my $session_device = $c->session('device_uuid') || '';
+		unless ($session_device && $session_device eq $device_uuid) {
+			$log->info('app gate: app request refused unsigned for ' . $device_uuid
+				. ' (session device ' . ($session_device || 'none') . ')');
+			return $c->render(json => { ok => 0, error => 'not accepted' });
+		}
+		$log->info('app gate: unsigned app request for ' . $device_uuid . ' (waits for approval)');
 	}
 	my $name = substr($c->param('name') || 'Desktop app', 0, 60);
 	my $now = &subs::rightNow();
