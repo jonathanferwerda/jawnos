@@ -16787,6 +16787,12 @@ sub peer_sign_blob {
 sub peer_verify {
 	my ($c, $rm) = @_;
 	return 0 unless $rm && $rm->{'signatorial'};
+	# The app gate can verify the caller before the route does. Its success has
+	# already spent the nonce, so a second call for the same row answers from
+	# that result instead of refusing a request the house just accepted.
+	my $verified = $c->stash('peer_verified_key');
+	my $row_key = $rm->{'uuid'} || $rm->{'signatorial'};
+	return 1 if $verified && $row_key && $verified eq $row_key;
 	my $stored = $rm->{'pubkey'} // '';
 	my $ts = $c->req->headers->header('X-Peer-Timestamp');
 	my $nonce = $c->req->headers->header('X-Peer-Nonce');
@@ -16820,6 +16826,7 @@ sub peer_verify {
 	unless ($stored) {
 		&db_update('remote_machines', { pubkey => $pubkey }, { uuid => $rm->{'uuid'} });
 	}
+	$c->stash('peer_verified_key' => $row_key) if $row_key;
 	return 1;
 }
 

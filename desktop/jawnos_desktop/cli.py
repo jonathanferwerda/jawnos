@@ -119,9 +119,12 @@ def cmd_watch(args):
 
 
 def cmd_open(args):
-    if core.open_ui(core.load_settings()["jawn_dir"]):
+    # App access on Enforce refuses a plain browser. The installed app holds
+    # the key, so prefer it; a headless box has no GUI and falls back to the
+    # browser path (which is answered with the open-in-the-app page).
+    if core.open_ui(core.load_settings()["jawn_dir"], prefer_app=True):
         return 0
-    print("could not open a browser")
+    print("could not open the JawnOS app or a browser")
     return 1
 
 
@@ -281,7 +284,7 @@ def build_parser():
     p = sub.add_parser("watch", help="restart jawn when the running version is not the on-disk one")
     p.add_argument("--interval", type=int, default=60, help="seconds between checks (minimum 10)")
     p.set_defaults(func=cmd_watch)
-    sub.add_parser("open", help="open the JawnOS UI in a browser").set_defaults(func=cmd_open)
+    sub.add_parser("open", help="open the JawnOS UI (the app when installed, else a browser)").set_defaults(func=cmd_open)
 
     p = sub.add_parser("log", help="show jawn's log")
     p.add_argument("-n", "--lines", type=int, default=200)

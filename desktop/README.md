@@ -141,7 +141,7 @@ jawnosctl start               # start jawn (and the bridge, if tied)
 jawnosctl stop                # take the whole tree down
 jawnosctl restart             # restart jawn
 jawnosctl watch               # restart when the running version is not the disk version
-jawnosctl open                # open the JawnOS UI in a browser
+jawnosctl open                # open the JawnOS app (a browser on a headless box)
 jawnosctl log -n 200 -f       # tail ~/manager.log
 jawnosctl dir ~/jawnos        # point at a different jawn tree
 jawnosctl autostart enable    # start the BLE bridge at login

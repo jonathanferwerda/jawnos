@@ -70,7 +70,10 @@ approved by a device that is already trusted (see below).
 ## Gate
 
 `app_session_ok($c)` is true when `app_until > now` or the session is a verified
-peer. A private request without it is:
+peer. `app_peer_ok($c)` is the second door: a request carrying a real
+`X-Peer-Signature` from a roster row whose key is already pinned. It never uses
+the trust-on-first-contact path, so a browser that quotes a signatorial cannot
+ride it. A private request without either is:
 
 - **shadow** (the migration default): logged as `app gate: would deny …`, still
   answered. This is how the allowlist is checked on a live machine.
@@ -79,7 +82,24 @@ peer. A private request without it is:
 The peer rail is allowed by session, not by a URL allowlist: `sesh_check` (which
 already requires the peer password/signature) marks the session `peer=1`, and
 every later peer request rides that session. `remote_device_connect()` therefore
-keeps working with no app key.
+keeps working with no app key. If that cookie is lost after a restart or a
+profile change, the route's own signature check still gets the peer in, because
+the app gate now verifies the same pinned key instead of answering with the
+open-in-the-app page. Tunnels ride this rail: the peer dials
+`/manager/tunnel/ws` (a public route that verifies its own signature), and the
+forwarded HTTP calls carry the peer session or signature.
+
+A **browser opened through a tunnel is still a browser**. The tunnel is a raw
+TCP proxy, so the peer sees a local HTTPS connection with no app key and no peer
+signature and, under Enforce, answers it with the open-in-the-app page. Use the
+app on the peer (or its paired device) to read that peer's manager; the Dev
+panel's remote buttons and the peer rail itself are unaffected.
+
+`jawnosctl` is a supervisor, not an installed app: it holds no app key. Its
+`status`/`start`/`stop` commands read `/manager/health`, which stays public, and
+its `open` command starts the installed `jawnos-desktop` app when a graphical
+session is present. A headless server has no manager UI to open, which is
+intentional.
 
 ## Rollout
 

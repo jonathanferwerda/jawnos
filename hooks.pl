@@ -232,6 +232,13 @@ hook before_dispatch => sub {
 		# the tunnel websocket authorizes itself (signatorial vs remote_machines)
 		# and a websocket upgrade cannot carry the gate's session or ws_auth
 		$path eq '/manager/tunnel/ws' ||
+		# the tunnel control calls come from a peer's supervisor. A peer whose
+		# session cookie lapsed must still reserve and confirm its ports (the
+		# request would otherwise get the Gate page and the tunnel never form);
+		# each route verifies the caller's session or pinned peer signature.
+		$path eq '/manager/configure/remote_machine/tunnel/request' ||
+		$path eq '/manager/configure/remote_machine/tunnel/confirm' ||
+		$path eq '/manager/configure/remote_machine/tunnel/close' ||
 		$path eq '/payment' ||
 		$path eq '/box_office/ticket_request' ||
 		# a machine logs itself in before it has a session, and the script that

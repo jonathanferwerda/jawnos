@@ -696,13 +696,35 @@ def manager_host():
     return "127.0.0.1"
 
 
-def open_ui(jawn_dir):
-    """Open the manager in the user's browser.
+def desktop_launcher():
+    """The installed jawnos-desktop launcher, if there is one to run."""
+    for candidate in (os.path.join(DESKTOP_DIR, "jawnos-desktop"),
+                      shutil.which("jawnos-desktop")):
+        if candidate and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
-    Prefer the stored ticket: it is addressed on the machine's own domain and
-    mints the session cookie on the way, so the browser lands on the manager
-    instead of the gate on a host it has not logged in to. Fall back to the
-    manager on the ticket's host, then loopback."""
+
+def open_ui(jawn_dir, prefer_app=False):
+    """Open the manager: the desktop app when asked and available, else a browser.
+
+    With app access on Enforce a plain browser is answered with the
+    open-in-the-app page, because it has no key. The CLI therefore starts the
+    installed app (which holds one) when it can, and only falls back to the
+    browser on a headless box or when the app is not installed.
+
+    The browser path prefers the stored ticket: it is addressed on the
+    machine's own domain and mints the session cookie on the way, so the
+    browser lands on the manager instead of the gate on a host it has not
+    logged in to. Fall back to the manager on the ticket's host, then loopback."""
+    if prefer_app and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        launcher = desktop_launcher()
+        if launcher:
+            try:
+                spawn_detached([launcher], jawn_dir, jawn_stdout_log_path(), env=_perl_env())
+                return True
+            except OSError:
+                pass
     try:
         from . import secrets
         ticket = secrets.load()

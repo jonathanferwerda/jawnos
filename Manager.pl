@@ -8465,7 +8465,22 @@ get '/manager/configure/tunnel/list' => sub($c) {
 };
 
 
+# The tunnel control calls come from a peer's own supervisor, not a browser.
+# They sit on the gate-exempt rail (hooks.pl) because a peer whose session
+# cookie was lost must still be able to reserve its ports; the route checks the
+# caller itself - a session or a pinned, signed peer - like the rest of the
+# peer rail.
+sub tunnel_rail_allowed {
+	my ($c) = @_;
+	return 1 if $c->session('authentication') eq 'approved';
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
+	return 0;
+}
+
 post '/manager/configure/remote_machine/tunnel/request' => sub($c) {
+	unless (&tunnel_rail_allowed($c)) { $c->rendered(403); return; }
 	my $signatorial = $c->param('signatorial');
 	my $status = $c->param('status');
 	my $ports = eval { return decode_json $c->param('ports') } || {};
@@ -8514,6 +8529,7 @@ post '/manager/configure/remote_machine/tunnel/request' => sub($c) {
 
 
 post '/manager/configure/remote_machine/tunnel/confirm' => sub($c) {
+	unless (&tunnel_rail_allowed($c)) { $c->rendered(403); return; }
 	my $remote_address = $c->tx->remote_address;
 	my $tunnel = eval { return decode_json $c->param('tunnel') } || {};
 	my $signatorial = $c->param('signatorial');
@@ -8543,6 +8559,7 @@ post '/manager/configure/remote_machine/tunnel/confirm' => sub($c) {
 };
 
 post '/manager/configure/remote_machine/tunnel/close' => sub($c) {
+	unless (&tunnel_rail_allowed($c)) { $c->rendered(403); return; }
 	my $tunnel = eval { return decode_json $c->param('tunnel') } || {};
 	my $signatorial = $c->param('signatorial');
 	my $status = $c->param('status');
@@ -27385,6 +27402,31 @@ sub app_session_ok {
 	return $until > &subs::rightNow() ? 1 : 0;
 }
 
+# The other way in is the signed peer rail. A linked machine's request is not
+# a browser and has no app key; its proof is the pinned key on its roster row.
+# Some peer routes verify that themselves, but the app gate runs first, so a
+# peer whose session cookie was lost (or a tunnelled peer whose calls cross a
+# restart) was answered with the app-required page before its signature was
+# ever read. Require a real signature and an already-pinned key - not the
+# trust-on-first-contact path - so a browser quoting a signatorial cannot use
+# this door. peer_verify memoises its answer on the stash, so a route that
+# checks again after this does not fail on the already-spent nonce.
+sub app_peer_ok {
+	my ($c) = @_;
+	my $sig = $c->req->headers->header('X-Peer-Signature');
+	my $offered = $c->req->headers->header('X-Peer-Key');
+	return 0 unless $sig && $offered;
+	# The offered key names the caller; find the roster row that already pins it
+	# and verify against that. Looking the row up by the key (not by a
+	# signatorial the caller could quote) means a browser cannot borrow a
+	# linked machine's name, and a route's own request need not carry a name.
+	my $pub = eval { b64_decode($offered) } || '';
+	return 0 unless $pub && index($pub, '-----BEGIN PUBLIC KEY-----') == 0;
+	my $rm = &subs::db_select('remote_machines', undef, { pubkey => $pub })->hashes->[0];
+	return 0 unless $rm;
+	return &subs::peer_verify($c, $rm) ? 1 : 0;
+}
+
 sub app_key_for {
 	my ($device) = @_;
 	return () unless $device;
@@ -29844,7 +29886,7 @@ sub authentication_passer($c) {
 	if ($app_mode ne 'off') {
 		&app_schema_ensure();
 		my $app_path = $c->req->url->path->to_string;
-		unless (&app_public_path($app_path) || &app_session_ok($c)) {
+		unless (&app_public_path($app_path) || &app_session_ok($c) || &app_peer_ok($c)) {
 			if ($app_mode eq 'enforce') {
 				$c->render(template => 'app_required', layout => undef,
 					device_uuid => ($c->session('device_uuid') || ''),
