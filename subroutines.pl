@@ -16934,6 +16934,28 @@ sub peer_movement_action {
 	return 'appointment_start';
 }
 
+# A readable kind for a paired device. The stored kind is set when the row is
+# made or when an app/biometric key is added; an older row with no kind falls
+# back to its keys and agent. webview is the desktop's WebKit windows.
+sub device_kind_label {
+	my ($d) = @_;
+	return '' unless $d && ref $d eq 'HASH';
+	my $kind = lc($d->{'kind'} || '');
+	if (!$kind) {
+		$kind = 'phone' if ($d->{'bio_pubkey'} || '') ne '';
+		$kind = 'app' if !$kind && ($d->{'app_pubkey'} || '') ne '';
+		$kind = 'webview' if !$kind && ($d->{'agent'} || '') =~ /AppleWebKit\/605/;
+		$kind = 'browser' if !$kind;
+	}
+	my %key = (
+		app => 'device.kind_app',
+		phone => 'device.kind_phone',
+		webview => 'device.kind_window',
+		browser => 'device.kind_browser',
+	);
+	return &lang($key{$kind} || 'device.kind_browser');
+}
+
 # A sliding window per proved peer. The cache table is local and unsynced, so
 # these rows never travel; a race between workers can let a few extra through,
 # which is acceptable for a spam brake.

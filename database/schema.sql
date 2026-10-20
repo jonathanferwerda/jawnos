@@ -143,7 +143,8 @@ CREATE TABLE IF NOT EXISTS paired_devices (
 	server_time VARCHAR(25),
 	ost VARCHAR(25),
 	last_seen VARCHAR(25),
-	agent VARCHAR(500)
+	agent VARCHAR(500),
+	kind VARCHAR(25)
 );
 CREATE TABLE IF NOT EXISTS device_requests (
 	uuid VARCHAR(255) unique,

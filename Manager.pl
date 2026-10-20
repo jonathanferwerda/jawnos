@@ -27108,6 +27108,13 @@ sub device_store_pubkey($armor, $name, $agent) {
 	return unless $pem;
 	my $now = &subs::rightNow();
 	my $uuid = &subs::random_string_creator(25);
+	# The kind is a hint for the Security page: a phone, a browser, or the
+	# desktop's WebKit windows. An app key or a biometric added later promotes
+	# the row to app/phone.
+	my $ua = $agent // '';
+	my $kind = ($ua =~ /Android|iPhone|iPad|Mobile/i) ? 'phone'
+		: ($ua =~ /AppleWebKit\/605/ && $ua =~ /Linux|X11/) ? 'webview'
+		: 'browser';
 	&subs::db_insert('paired_devices', {
 		uuid => $uuid,
 		name => substr($name || 'Device', 0, 60),
@@ -27116,7 +27123,8 @@ sub device_store_pubkey($armor, $name, $agent) {
 		status => 'active',
 		timestamp => $now,
 		server_time => $now,
-		agent => substr($agent // '', 0, 400)
+		agent => substr($agent // '', 0, 400),
+		kind => $kind
 	});
 	return $uuid;
 }
@@ -27516,7 +27524,7 @@ post '/manager/security/device_request_decide' => sub($c) {
 			my $app_pubkey = $row->{'app_pubkey'} || '';
 			my $app_kind = ($row->{'app_kind'} || 'ed25519') eq 'ec' ? 'ec' : 'ed25519';
 			if ($device && $app_pubkey) {
-				&subs::db_update('paired_devices', { app_pubkey => $app_pubkey, app_kind => $app_kind, server_time => $now }, { uuid => $target });
+				&subs::db_update('paired_devices', { app_pubkey => $app_pubkey, app_kind => $app_kind, kind => 'app', server_time => $now }, { uuid => $target });
 				&subs::db_update('device_requests', { status => 'approved', device_uuid => $target, server_time => $now }, { uuid => $uuid });
 				$log->info('app gate: app key approved for ' . ($device->{'name'} || $target) . ' from ' . ($c->tx->remote_address || '?'));
 			}
@@ -27768,6 +27776,7 @@ sub app_schema_ensure {
 	foreach my $spec (
 		[ 'paired_devices', 'app_pubkey', 'LONGTEXT' ],
 		[ 'paired_devices', 'app_kind', 'VARCHAR(16)' ],
+		[ 'paired_devices', 'kind', 'VARCHAR(25)' ],
 		[ 'device_requests', 'kind', 'VARCHAR(16)' ],
 		[ 'device_requests', 'app_pubkey', 'LONGTEXT' ],
 		[ 'device_requests', 'app_kind', 'VARCHAR(16)' ],
@@ -27775,6 +27784,13 @@ sub app_schema_ensure {
 		my ($table, $column, $type) = @{$spec};
 		eval { &subs::db_query("ALTER TABLE $table ADD COLUMN $column $type") };
 	}
+	# Backfill the rows that predate the column. Idempotent: only blanks move.
+	eval { &subs::db_query("update paired_devices set kind = case
+		when bio_pubkey is not null and bio_pubkey != '' then 'phone'
+		when app_pubkey is not null and app_pubkey != '' then 'app'
+		when agent like '%AppleWebKit/605%' then 'webview'
+		else 'browser' end
+		where kind is null or kind = ''") };
 }
 
 # A lock is local to the machine that saw it, but an explicit unlock request
@@ -28357,7 +28373,7 @@ post '/manager/security/biometric_enroll' => sub ($c) {
 		$log->info('padlock: biometric enrollment refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
 		return $c->render(json => { ok => 0, error => 'not accepted' });
 	}
-	&subs::db_update('paired_devices', { bio_pubkey => $pubkey }, { uuid => $device_uuid });
+	&subs::db_update('paired_devices', { bio_pubkey => $pubkey, kind => 'phone' }, { uuid => $device_uuid });
 	&subs::db_query('delete from cache where context = ? and uuid like ?', 'padlock_bio_fail', $ip . ':%');
 	$log->info('padlock: biometric key enrolled for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
 	$c->render(json => { ok => 1, device_uuid => $device_uuid });
@@ -33057,6 +33073,9 @@ sub update_database($data) {
 		# a phone that has enrolled its biometric key: an EC P-256 key in the
 		# Android Keystore that the OS releases only after the person authenticates
 		'alter table paired_devices add column bio_pubkey LONGTEXT',
+		# a readable origin for the Security page: phone, app, browser or the
+		# desktop's WebKit windows
+		'alter table paired_devices add column kind VARCHAR(25)',
 		# device approvals: an ask that waits for a citizen, with the short code
 		# shown on both screens (merges like the roster it becomes)
 		'create table if not exists device_requests (uuid VARCHAR(255) unique, name VARCHAR(255), pubkey LONGTEXT, agent VARCHAR(500), code VARCHAR(25), status VARCHAR(25), device_uuid VARCHAR(255), remote_address VARCHAR(255), timestamp VARCHAR(25), server_time VARCHAR(25), ost VARCHAR(25))',
