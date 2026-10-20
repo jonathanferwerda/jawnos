@@ -128,6 +128,14 @@
 	</div>
 	<p class="cfg-note"><%= &subs::ui('How long the manager waits before its screensaver starts. Type a number of minutes (3 is three minutes), or a length such as 30s or 3m. Leave it blank for two minutes. The lock screen still shows its screensaver after fifteen seconds, and a playing video keeps it away.') %></p>
 	<div class="cfg-row">
+		<label><b><%= &subs::lang('configure.screensaver_style') %></b></label>
+		<% my $screensaver_style = &subs::setting_grabber({ app => 'misc', setting => 'screensaver_style', device => $dev }) || 'cartoon'; %>
+		<select class="misc_setting" setting="screensaver_style" device="<%= $dev %>">
+			<option value="cartoon" <% if ($screensaver_style eq 'cartoon') { %>selected="selected"<% } %>><%= &subs::lang('screensaver.cartoon') %></option>
+			<option value="art" <% if ($screensaver_style eq 'art') { %>selected="selected"<% } %>><%= &subs::lang('screensaver.art') %></option>
+		</select>
+	</div>
+	<div class="cfg-row">
 		<label><b>Font</b></label>
 		<select class="misc_setting" setting="title_font" device="<%= $dev %>">
 			<% my $current_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font', device => $dev }) || ''; %>

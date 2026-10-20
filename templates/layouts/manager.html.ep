@@ -172,6 +172,7 @@
 		<script src="/js/numeral.min.js"></script>
 		<script src="/js/moment.js"></script>
 		<script src="/js/manager/bundle.js?string=<%= $string %>"></script>
+		<script src="/js/screensaver.js?string=<%= $string %>"></script>
 	<!--	<script src="/js/paperboy.js?string=<%= $string %>"></script> -->
 		<div style="display:none;width:100%;height:100%;" id="padlock_frame">
 

@@ -18,6 +18,9 @@
 <%   my $translated = eval { &subs::time_abbrev_translator($manager_screensaver_setting, &subs::rightNow()) }; %>
 <%   $manager_screensaver_delay = int($translated) if defined $translated && $translated =~ /^[0-9]+$/ && $translated > 0; %>
 <% } %>
+<%# Cartoon world is the new look; art is the older drifting logo. %>
+<% my $screensaver_style = &subs::setting_grabber({ app => 'misc', setting => 'screensaver_style' }) || 'cartoon'; %>
+<% $screensaver_style = 'cartoon' unless $screensaver_style =~ /^(?:cartoon|art)$/; %>
 <div class="padlock_frame" mode="<%= $frame_mode %>" target="<%= $frame_target %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
 	<h1 id="padlock_taunts"></h1>
 	<% my $scope = $frame_target ? 'This screen is locked.' : 'The house is locked.'; %>
@@ -44,7 +47,10 @@
 		<a href="/manager/security/padlock_key?mode=<%= $frame_mode %>" class="padlock_phone_key">Open the unlock page on this phone</a>
 	<% } %>
 
-	<div class="padlock_screensaver">
+	<div class="padlock_screensaver"
+		data-style="<%= $screensaver_style %>"
+		data-manager-delay="<%= $manager_screensaver_delay %>"
+		data-logo="<%= $logo %>">
 		<canvas class="padlock_screensaver_canvas"></canvas>
 	</div>
 
@@ -154,212 +160,5 @@
 		}
 	</style>
 
-	<script>
-	(function () {
-		var frame = document.currentScript ? document.currentScript.closest('.padlock_frame') : null;
-		if (!frame) { frame = document.querySelector('.padlock_frame'); }
-		if (!frame) { return; }
-		var layer = frame.querySelector('.padlock_screensaver');
-		if (!layer) { return; }
-		var canvas = layer.querySelector('canvas');
-		var ctx = canvas.getContext('2d');
-		var logo = new Image();
-		// a stored logo is a data URI and can carry line breaks; a JSON string
-		// keeps them escaped instead of ending the JS string at the first one
-		logo.src = <%== &subs::json_chars($logo) %>;
-		var timer = null, raf = null, active = false, started = 0, last = 0;
-		var blobs = [];
-		var logoEvent = null, nextLogoAt = 0;
-		// The lock screen shows its screensaver quickly; a padlock inside Manager
-		// waits the delay set under Configure -> Misc.
-		var LOCK_DELAY = 15000;
-		var MANAGER_DELAY = <%= $manager_screensaver_delay %>;
-		function lockedContext() {
-			return !!(frame.closest('#locked_screen') || frame.closest('#padlock_frame'));
-		}
-		function delay() {
-			return lockedContext() ? LOCK_DELAY : MANAGER_DELAY;
-		}
-		// A frame inside a hidden window (music's lock tab before it is opened,
-		// say) has no boxes; the screensaver must not run there. The music app
-		// was covering the video with it while the padlock was not even shown.
-		function frameShown() {
-			return !!(frame.offsetWidth || frame.offsetHeight || frame.getClientRects().length);
-		}
-		function videoPlaying() {
-			var vids = document.querySelectorAll('video');
-			for (var i = 0; i < vids.length; i++) {
-				var v = vids[i];
-				if (v.paused || v.ended) { continue; }
-				if (!(v.offsetWidth || v.offsetHeight || v.getClientRects().length)) { continue; }
-				return true;
-			}
-			return false;
-		}
-
-		function resize() {
-			canvas.width = Math.max(1, window.innerWidth);
-			canvas.height = Math.max(1, window.innerHeight);
-		}
-		function newArt() {
-			var palette = [];
-			for (var i = 0; i < 7; i++) {
-				palette.push('hsl(' + Math.floor(Math.random() * 360) + ',' + (45 + Math.floor(Math.random() * 40)) + '%,' + (45 + Math.floor(Math.random() * 20)) + '%)');
-			}
-			blobs = [];
-			for (var j = 0; j < 10; j++) {
-				blobs.push({
-					x: Math.random(), y: Math.random(),
-					r: 0.05 + Math.random() * 0.22,
-					dx: (Math.random() - 0.5) * 0.02,
-					dy: (Math.random() - 0.5) * 0.02,
-					c: palette[j % palette.length]
-				});
-			}
-		}
-		// One logo at a time, at a fresh spot, easing in and out. The pause and
-		// the run length are both random so it never settles into a rhythm.
-		function startLogo(now) {
-			if (!logo.complete || !logo.naturalWidth) { return; }
-			var w = canvas.width, h = canvas.height;
-			var size = Math.min(w, h) * (0.10 + Math.random() * 0.16);
-			var scale = Math.min(size / logo.naturalWidth, size / logo.naturalHeight);
-			var lw = logo.naturalWidth * scale, lh = logo.naturalHeight * scale;
-			var margin = Math.min(w, h) * 0.08;
-			var roomX = Math.max(1, w - lw - margin * 2);
-			var roomY = Math.max(1, h - lh - margin * 2);
-			logoEvent = {
-				start: now,
-				duration: 4200 + Math.random() * 4200,
-				x: margin + Math.random() * roomX + lw / 2,
-				y: margin + Math.random() * roomY + lh / 2,
-				w: lw, h: lh,
-				rot: (Math.random() - 0.5) * 0.35
-			};
-		}
-		function drawLogo(now) {
-			if (!logo.complete || !logo.naturalWidth) { return; }
-			if (!logoEvent) {
-				if (!nextLogoAt) { nextLogoAt = now + 1000 + Math.random() * 2600; }
-				if (now < nextLogoAt) { return; }
-				startLogo(now);
-				if (!logoEvent) { return; }
-			}
-			var p = (now - logoEvent.start) / logoEvent.duration;
-			if (p >= 1) {
-				logoEvent = null;
-				nextLogoAt = now + 1800 + Math.random() * 6500;
-				return;
-			}
-			var alpha = 0.9 * (p < 0.25 ? p / 0.25 : (p > 0.75 ? (1 - p) / 0.25 : 1));
-			ctx.save();
-			ctx.globalAlpha = alpha;
-			ctx.shadowColor = 'rgba(255,255,255,0.55)';
-			ctx.shadowBlur = 26;
-			ctx.translate(logoEvent.x, logoEvent.y);
-			ctx.rotate(logoEvent.rot);
-			ctx.drawImage(logo, -logoEvent.w / 2, -logoEvent.h / 2, logoEvent.w, logoEvent.h);
-			ctx.restore();
-		}
-		function draw(now) {
-			if (!active) { return; }
-			if (!document.body.contains(frame) || !frameShown() || videoPlaying()) { hide(); return; }
-			raf = requestAnimationFrame(draw);
-			if (now - last < 33) { return; }
-			last = now;
-			var t = (now - started) / 1000;
-			var w = canvas.width, h = canvas.height;
-			ctx.globalCompositeOperation = 'source-over';
-			ctx.fillStyle = '#08080d';
-			ctx.fillRect(0, 0, w, h);
-			ctx.globalCompositeOperation = 'lighter';
-			for (var i = 0; i < blobs.length; i++) {
-				var b = blobs[i];
-				var x = (b.x + Math.sin(t * 0.08 + i) * 0.06 + b.dx * t) % 1;
-				var y = (b.y + Math.cos(t * 0.07 + i) * 0.06 + b.dy * t) % 1;
-				if (x < 0) { x += 1; }
-				if (y < 0) { y += 1; }
-				var r = b.r * Math.min(w, h);
-				var g = ctx.createRadialGradient(x * w, y * h, 0, x * w, y * h, r);
-				g.addColorStop(0, b.c);
-				g.addColorStop(1, 'rgba(0,0,0,0)');
-				ctx.fillStyle = g;
-				ctx.fillRect(0, 0, w, h);
-			}
-			ctx.globalCompositeOperation = 'source-over';
-			ctx.strokeStyle = 'rgba(255,255,255,0.10)';
-			ctx.lineWidth = 1;
-			for (var k = 0; k < 4; k++) {
-				ctx.beginPath();
-				ctx.arc(w * (0.2 + k * 0.2), h * 0.5, Math.min(w, h) * (0.2 + 0.1 * Math.sin(t * 0.1 + k)), 0, Math.PI * 2);
-				ctx.stroke();
-			}
-			drawLogo(now);
-		}
-		function show() {
-			if (active) { return; }
-			if (!document.body.contains(frame) || !frameShown() || videoPlaying()) { return; }
-			active = true;
-			// The layer is inside .padlock_frame, which is transformed; a fixed
-			// child of a transformed box is sized to that box, not the window.
-			// Move it to the body so it covers the whole screen, and drop any
-			// layer left behind by an earlier overlay.
-			var oldLayers = document.querySelectorAll('body > .padlock_screensaver');
-			for (var oi = 0; oi < oldLayers.length; oi++) {
-				if (oldLayers[oi] !== layer) { oldLayers[oi].parentNode.removeChild(oldLayers[oi]); }
-			}
-			if (layer.parentNode !== document.body) { document.body.appendChild(layer); }
-			newArt();
-			resize();
-			logoEvent = null;
-			nextLogoAt = 0;
-			layer.style.display = 'block';
-			started = performance.now();
-			last = 0;
-			if (raf) { cancelAnimationFrame(raf); }
-			raf = requestAnimationFrame(draw);
-		}
-		function hide() {
-			active = false;
-			layer.style.display = 'none';
-			if (raf) { cancelAnimationFrame(raf); raf = null; }
-		}
-		function restart() {
-			if (timer) { clearTimeout(timer); }
-			timer = null;
-			// Hidden padlock frames and playing videos do not get a countdown;
-			// watch() starts one when it is allowed again.
-			if (!frameShown() || videoPlaying()) { return; }
-			timer = setTimeout(show, delay());
-		}
-		['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) {
-			document.addEventListener(ev, function () {
-				if (active) { hide(); }
-				restart();
-			}, { passive: true });
-		});
-		window.addEventListener('resize', function () { if (active) { resize(); } });
-		// Watch the frame's visibility and any video: a padlock that just appeared
-		// (or a video that just ended) starts the countdown from that moment, while
-		// hiding it or playing a video stops the countdown and takes the layer down.
-		var shownBefore = null, videoBefore = null;
-		function watch() {
-			var shown = frameShown();
-			var playing = videoPlaying();
-			if (active && (!shown || playing)) { hide(); }
-			if (shown && !playing) {
-				if (shownBefore !== true || videoBefore === true) { restart(); }
-			}
-			else if (timer) {
-				clearTimeout(timer);
-				timer = null;
-			}
-			shownBefore = shown;
-			videoBefore = playing;
-		}
-		setInterval(watch, 500);
-		watch();
-	})();
-	</script>
 
 </div>

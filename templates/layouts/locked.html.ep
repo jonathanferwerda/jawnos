@@ -26,6 +26,7 @@
 		<script src="/js/jquery.js"></script>
 		<script src="/js/numeral.min.js"></script>
 		<script src="/js/universal.js?string=<%= &subs::jawn_version() %>"></script>
+		<script src="/js/screensaver.js?string=<%= &subs::jawn_version() %>"></script>
 		<style>
 			html, body {
 				width: 100%;
