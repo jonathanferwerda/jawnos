@@ -53,6 +53,29 @@ re-enrol a device. Phase 2 separates **authentication** from **key custody**.
   bootstrap.
 - Residents/guests: peer cards/tickets, never `K_house`.
 
+## Decision recorded (2026-10-20) — the wrap curve
+
+The device keys in `paired_devices` are not one kind:
+
+| Column | Format | Can agree (ECDH)? |
+| --- | --- | --- |
+| `pubkey`, `app_pubkey` | Ed25519, PEM | no — signing only |
+| `bio_pubkey` (phones) | P-256 SPKI, base64 DER | yes |
+
+This box has no libsodium, and `Crypt::PK::X25519` cannot import an Ed25519 key,
+so there is no Ed25519 -> X25519 conversion available here. Decision:
+
+- the wrap takes any CryptX key object that can agree: **X25519** (a key the
+  device generates for transport) or **P-256** (the phone's bio key);
+- an Ed25519 key is **refused**, never converted or guessed at;
+- the blob records the algorithm (`JHKY1`; alg 1 = X25519, alg 2 = P-256), so a
+  later route can add one without ambiguity.
+
+Implemented in `subroutines.pl` as `house_key_wrap` / `house_key_unwrap`, with
+`house_key_wrap_alg`. Every wrap mints a fresh sender key pair, so **nothing is
+stored: no wrapped copies and no `house_keys` table.** A leaked blob is useless
+once the throwaway half is gone.
+
 ## Migration order (do not reorder)
 
 1. **Prove recovery first.** Keep the current password-wrapped suds. Add the
@@ -84,8 +107,8 @@ re-enrol a device. Phase 2 separates **authentication** from **key custody**.
   `vault_read`, `note_encrypter` / `note_decrypter`, `seal_file` / `open_file`,
   `rotate_house_key`, `recovery_code_*`, `peer_*` lease helpers.
 - `database/schema.sql`: `paired_devices` (`pubkey`, `app_pubkey`, `bio_pubkey`,
-  `kind`). Add a wrapped-key table, e.g.
-  `house_keys(device_uuid, wrapped, alg, created, expires)`.
+  `kind`). **No wrapped-key table is needed** — wraps are ephemeral (see the
+  decision above).
 - Backup/sync: `backup_now`, `rsync_*`, `vault_share`, `key_push`, and the
   "newest wins" rule for the recovery blob.
 - Help: `security`, `devices_and_mesh`, `sealing_files`; add labels in all sixteen
@@ -103,8 +126,9 @@ re-enrol a device. Phase 2 separates **authentication** from **key custody**.
   its wrapped `K_house` copy.
 - Backups must include the wrapped keys and (offline) the recovery share; test a
   restore with no network.
-- Decide the Ed25519 -> X25519 route (libsodium vs. a device-generated X25519 key)
-  and record it.
+- ~~Decide the Ed25519 -> X25519 route~~ — **resolved 2026-10-20**: no
+  conversion here; the device supplies an X25519 key, or a phone uses its P-256
+  bio key. Ed25519 is refused.
 - The two **Desktop window** rows (keyless WebKit) are denied `/manager` under
   enforce. Add the app key bridge, or remove the rows, before Phase 2.
 

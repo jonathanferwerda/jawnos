@@ -16256,6 +16256,105 @@ sub house_key {
 	return $key;
 }
 
+# --- wrapping the house key to a device ---------------------------------------
+# A device never needs the house key in the clear. To hand it one, the server
+# mints a throwaway key pair, agrees a secret with the device's public key,
+# derives an AES-256 key from the agreement (SHA-256 over both public halves
+# and a context, so swapping either half changes the key), and seals the house
+# key with AES-GCM. The blob carries the throwaway public half, an IV and the
+# tag; the device repeats the agreement with its own private key.
+#
+# Two curves are accepted, and the blob says which one it is, because the
+# devices are not alike: an app key is Ed25519 (signing only - this machine has
+# no libsodium to convert it to X25519), while a phone's bio key is P-256 and
+# can agree. Ed25519 is refused rather than guessed at, so a caller has to give
+# the device a key that can actually do the agreement.
+#
+# Every wrap is fresh, so nothing is stored: there is no table of wrapped
+# copies, and a leaked blob is useless once the throwaway half is gone.
+
+our $house_key_wrap_magic = 'JHKY1';
+our $house_key_wrap_context = 'jawnos/house-key/v1';
+our %house_key_wrap_alg = ('Crypt::PK::X25519' => 1, 'Crypt::PK::ECC' => 2);
+
+sub house_key_wrap_alg {
+	my ($device) = @_;
+	return undef unless ref $device;
+	return $house_key_wrap_alg{ref $device};
+}
+
+# house_key_wrap($key, $device_public_key_object) -> base64 blob or undef
+sub house_key_wrap {
+	my ($K, $device) = @_;
+	return undef unless defined $K && length $K;
+	my $alg = &house_key_wrap_alg($device);
+	return undef unless $alg;
+	my $device_pub = eval { $device->export_key_der('public') };
+	return undef unless defined $device_pub && length $device_pub;
+	my $eph;
+	if ($alg == 1) {
+		require Crypt::PK::X25519;
+		$eph = Crypt::PK::X25519->new();
+		$eph->generate_key();
+	}
+	else {
+		$eph = Crypt::PK::ECC->new();
+		$eph->generate_key('secp256r1');
+	}
+	return undef unless $eph;
+	my $eph_pub = eval { $eph->export_key_der('public') };
+	return undef unless defined $eph_pub && length $eph_pub;
+	my $shared = eval { $eph->shared_secret($device) };
+	return undef unless defined $shared && length $shared;
+	require Crypt::AuthEnc::GCM;
+	require Crypt::PRNG;
+	my $aes = Digest::SHA::sha256($house_key_wrap_context . "\0" . $shared . "\0" . $eph_pub . "\0" . $device_pub);
+	my $iv = Crypt::PRNG::random_bytes(12);
+	my ($ct, $tag) = Crypt::AuthEnc::GCM::gcm_encrypt_authenticate('AES', $aes, $iv, $house_key_wrap_context, $K);
+	return undef unless defined $ct && defined $tag && length $tag == 16;
+	my $blob = $house_key_wrap_magic . pack('Cn', $alg, length $eph_pub) . $eph_pub . $iv . $tag . $ct;
+	return encode_base64($blob, '');
+}
+
+# house_key_unwrap($blob, $device_private_key_object) -> the key or undef
+sub house_key_unwrap {
+	my ($blob64, $device) = @_;
+	return undef unless defined $blob64 && length $blob64;
+	my $alg = &house_key_wrap_alg($device);
+	return undef unless $alg;
+	my $blob = eval { decode_base64($blob64) };
+	return undef unless defined $blob && length $blob;
+	my $head = 5 + 1 + 2;
+	return undef unless length($blob) > $head + 12 + 16;
+	return undef unless substr($blob, 0, 5) eq $house_key_wrap_magic;
+	return undef unless unpack('C', substr($blob, 5, 1)) == $alg;
+	my $len = unpack('n', substr($blob, 6, 2));
+	return undef unless $len >= 32 && length($blob) >= $head + $len + 12 + 16;
+	my $off = $head;
+	my $eph_pub = substr($blob, $off, $len); $off += $len;
+	my $iv = substr($blob, $off, 12); $off += 12;
+	my $tag = substr($blob, $off, 16); $off += 16;
+	my $ct = substr($blob, $off);
+	return undef unless length $ct;
+	my $eph;
+	if ($alg == 1) {
+		require Crypt::PK::X25519;
+		$eph = eval { Crypt::PK::X25519->new(\$eph_pub, 'DER') };
+	}
+	else {
+		$eph = eval { Crypt::PK::ECC->new(\$eph_pub, 'DER') };
+	}
+	return undef unless $eph;
+	my $shared = eval { $device->shared_secret($eph) };
+	return undef unless defined $shared && length $shared;
+	my $device_pub = eval { $device->export_key_der('public') };
+	return undef unless defined $device_pub && length $device_pub;
+	require Crypt::AuthEnc::GCM;
+	my $aes = Digest::SHA::sha256($house_key_wrap_context . "\0" . $shared . "\0" . $eph_pub . "\0" . $device_pub);
+	my $K = eval { Crypt::AuthEnc::GCM::gcm_decrypt_verify('AES', $aes, $iv, $house_key_wrap_context, $ct, $tag) };
+	return (defined $K && length $K) ? $K : undef;
+}
+
 sub vault_read {
 	my $device = &signatorial_designer();
 	my $q = &db_query('select value, server_time from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'vault', $device);
