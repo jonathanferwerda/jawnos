@@ -1260,6 +1260,36 @@ $(document).on('change', '.remote_machine_input', function() {
 	});
 });
 
+// A citizen sets what a peer house may do here. The select and the days box are
+// one lease: changing either sends both, and days blanks to no expiry.
+$(document).on('change', '.remote_machine_grant_scope, .remote_machine_grant_days', function() {
+	var field = $(this);
+	var row = field.closest('.remote_machine');
+	var box = field.closest('.device_grant');
+	var scope = row.find('.remote_machine_grant_scope').val();
+	var days = row.find('.remote_machine_grant_days').val();
+	var uuid = row.find('.remote_machine_grant_scope').attr('uuid') || field.attr('uuid');
+	var signatorial = row.find('.remote_machine_grant_scope').attr('signatorial') || field.attr('signatorial');
+	$.ajax({
+		url: '/manager/configure/remote_machine_grant',
+		type: 'POST',
+		data: { uuid: uuid, signatorial: signatorial, scope: scope, days: days, timestamp: Date.now() },
+		success: function(response) {
+			if (response && response.ok) {
+				box.attr('grant-scope', response.scope || scope);
+				box.attr('grant-expires', response.expires || '');
+				box.css({ 'background-color': 'lightgreen' });
+				setTimeout(function() { box.css({ 'background-color': '' }); }, 2000);
+			} else if (window.console && response && response.error) {
+				console.warn('grant: ' + response.error);
+			}
+		},
+		error: function() {
+			if (window.console) { console.warn('grant: the house did not answer'); }
+		}
+	});
+});
+
 $(document).on('click', '.remote_device_locker', function() {
 	var locker = $(this);
 	var timestamp = Date.now();

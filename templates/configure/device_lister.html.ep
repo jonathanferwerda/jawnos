@@ -147,7 +147,7 @@
 									</thead>
 									<tbody>
 									<% foreach my $n ( sort { $a->{'ip'} cmp $b->{'ip'} } @{$m->{'neigh'} || []} ) { %>
-										<% my $rm = &subs::db_query('select uuid,buttons from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
+										<% my $rm = &subs::db_query('select uuid,buttons,privilege,grant_scope,grant_expires from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
 										<% if ($n->{'mac'} || $n->{'signatorial'}) { %>
 											<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
 												<td>
@@ -184,6 +184,21 @@
 																<option <% if ($n->{'purpose'} eq $o) { %>selected<% } %> value="<%= $o %>"><%= &subs::format_name($o) %></option>
 															<% } %>
 														</select>
+														<% if ($rm && $rm->{'uuid'} && $n->{'signatorial'} && ($rm->{'privilege'} || '') ne 'citizen') { %>
+															<% my $grant = $rm->{'grant_scope'} || 'trusted'; %>
+															<% my $days_left = ''; if (($rm->{'grant_expires'} || '') =~ /^\d+$/ && $rm->{'grant_expires'} > &subs::rightNow()) { $days_left = int(($rm->{'grant_expires'} - &subs::rightNow() + 86399999) / 86400000); } %>
+															<span class="device_grant" hint="<%= &subs::ui('What this house may do here, and for how long') %>">
+																<select class="remote_machine_grant_scope" uuid="<%= $rm->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+																	<option value="none" <% if ($grant eq 'none' || $grant eq 'revoked') { %>selected<% } %>><%= &subs::lang('home.none') %></option>
+																	<option value="visitor" <% if ($grant eq 'visitor') { %>selected<% } %>><%= &subs::lang('home.guest') %></option>
+																	<option value="resident" <% if ($grant eq 'resident' || $grant eq 'member') { %>selected<% } %>><%= &subs::lang('home.resident') %></option>
+																	<option value="trusted" <% if ($grant eq 'trusted') { %>selected<% } %>><%= &subs::lang('home.trusted') %></option>
+																</select>
+																<input type="number" min="0" class="remote_machine_grant_days" uuid="<%= $rm->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" placeholder="<%= &subs::lang('home.days') %>" value="<%= $days_left %>">
+															</span>
+														<% } elsif ($rm && $rm->{'uuid'} && ($rm->{'privilege'} || '') eq 'citizen') { %>
+															<span class="pill"><%= &subs::lang('home.citizen') %></span>
+														<% } %>
 														<% if ($n->{'locked'} eq 'yes') { %>
 															<img src="/images/jbuttons/padlock lock.png" hint="Lock" class="little_thumb remote_device_locker hover" style="background-color:red" status="locked" nic="<%= $m->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $m->{'uuid'} %>">
 														<% } else { %>
