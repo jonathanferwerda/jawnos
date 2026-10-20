@@ -26636,6 +26636,13 @@ sub security_initializer($c) {
 	&subs::db_query('delete from device_requests where status = ? and server_time < ?', 'pending', $now - 3600000);
 	my $requests = &subs::db_select('device_requests', undef, { status => 'pending' })->hashes || [];
 	foreach my $r ( @{$requests} ) {
+		# An app request carries this device's *existing* pairing key in `pubkey`,
+		# so the roster matches it by design. Settling it here would mark it
+		# approved without ever attaching app_pubkey, and the row was filtered
+		# out before the Approve button could render - the table's key request
+		# could never be approved. Only the old pairing request is settled this
+		# way; an app request always waits for a person.
+		next if (($r->{'kind'} || '') eq 'app' || ($r->{'app_pubkey'} || '') ne '');
 		my $paired = &subs::db_select('paired_devices', undef, { pubkey => $r->{'pubkey'}, status => 'active' })->hashes->[0];
 		if ($paired) {
 			&subs::db_update('device_requests', { status => 'approved', device_uuid => $paired->{'uuid'}, server_time => $now }, { uuid => $r->{'uuid'} });
