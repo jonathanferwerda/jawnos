@@ -139,6 +139,58 @@ $(document).on('change', '#people_crest_verify_file', function() {
 	});
 });
 
+$(document).on('click', '#people_crest_import_button', function() {
+	$('#people_crest_import_file').trigger('click');
+});
+
+$(document).on('change', '#people_crest_import_file', function() {
+	var file = this.files && this.files[0];
+	if (!file) { return; }
+	var reader = new FileReader();
+	reader.onload = function() {
+		var card = reader.result || '';
+		peopleStatus(peopleT('Importing…'));
+		$.ajax({
+			url: '/manager/people/crest/import',
+			type: 'POST',
+			data: { card: card, timestamp: Date.now() },
+			dataType: 'json',
+			success: function(response) {
+				if (response && response.ok) {
+					peopleStatus(peopleT('Imported.'));
+					peopleOpener();
+				}
+				else {
+					peopleStatus((response && response.error) || peopleT('Could not import.'));
+				}
+			},
+			error: function() { peopleStatus(peopleT('Could not import.')); }
+		});
+	};
+	reader.readAsText(file);
+});
+
+$(document).on('click', '.people_peer_vouch', function() {
+	var uuid = $(this).attr('uuid') || '';
+	peopleStatus(peopleT('Saving…'));
+	$.ajax({
+		url: '/manager/people/crest/vouch',
+		type: 'POST',
+		data: { uuid: uuid, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) {
+				peopleStatus(peopleT('Saved.'));
+				peopleOpener();
+			}
+			else {
+				peopleStatus((response && response.error) || peopleT('Could not save.'));
+			}
+		},
+		error: function() { peopleStatus(peopleT('Could not save.')); }
+	});
+});
+
 $(document).on('click', '#people_house_name_save', function() {
 	var name = $('#people_house_name').val() || '';
 	peopleStatus(peopleT('Saving…'));

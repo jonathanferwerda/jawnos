@@ -18581,6 +18581,54 @@ get '/manager/people' => sub($c) {
 	unless (&people_citizen($c)) { $c->render(text => ''); return; }
 	my $crest = &subs::crest_record_read();
 	my $has_image = ($crest->{'uuid'} && &subs::crest_image_file($crest, 'image')) ? 1 : 0;
+	my $peer_list = &subs::crest_peer_list_read();
+	my @peers;
+	foreach my $entry ( @{$peer_list} ) {
+		next unless ref $entry eq 'HASH' && ref $entry->{'crest'} eq 'HASH';
+		my $incoming = $entry->{'crest'};
+		next unless ($incoming->{'uuid'} || '') ne '';
+		my $view = {
+			uuid => $incoming->{'uuid'},
+			crest => $incoming,
+			name => $incoming->{'name'} || '',
+			fingerprint => $incoming->{'fingerprint'} || '',
+			has_image => &subs::crest_peer_image_file($entry) ? 1 : 0,
+			met => 0,
+			met_at => '',
+			introduced_by => '',
+		};
+		if (ref $entry->{'vouch'} eq 'HASH'
+			&& &subs::crest_vouch_verify($entry->{'vouch'})
+			&& ($entry->{'vouch'}->{'from_uuid'} || '') eq ($crest->{'uuid'} || '')
+			&& ($entry->{'vouch'}->{'to_uuid'} || '') eq $incoming->{'uuid'}
+			&& ($entry->{'vouch'}->{'to_pubkey'} || '') eq ($incoming->{'pubkey'} || '')) {
+			$view->{'met'} = 1;
+			$view->{'met_at'} = $entry->{'vouch'}->{'at'} || $entry->{'met_at'} || '';
+		}
+		foreach my $vouch ( @{ $entry->{'vouches'} || [] } ) {
+			next unless ref $vouch eq 'HASH';
+			next unless ($vouch->{'to_uuid'} || '') eq $incoming->{'uuid'};
+			next unless ($vouch->{'to_pubkey'} || '') eq ($incoming->{'pubkey'} || '');
+			my $issuer = &subs::crest_vouch_introducer($vouch, $crest, $peer_list);
+			next unless $issuer;
+			next if ($issuer->{'uuid'} || '') eq ($crest->{'uuid'} || '');
+			$view->{'introduced_by'} = $issuer->{'name'} || '';
+			last;
+		}
+		push @peers, $view;
+	}
+	@peers = sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @peers;
+	my $crest_introduced_by = '';
+	foreach my $vouch ( @{ &subs::crest_incoming_vouch_list_read() } ) {
+		next unless ref $vouch eq 'HASH';
+		next unless ($vouch->{'to_uuid'} || '') eq ($crest->{'uuid'} || '');
+		next unless ($vouch->{'to_pubkey'} || '') eq ($crest->{'pubkey'} || '');
+		my $issuer = &subs::crest_vouch_introducer($vouch, $crest, $peer_list);
+		next unless $issuer;
+		next if ($issuer->{'uuid'} || '') eq ($crest->{'uuid'} || '');
+		$crest_introduced_by = $issuer->{'name'} || '';
+		last;
+	}
 	my $people = eval { &subs::db_select('people', undef, { status => 'active' })->hashes } || [];
 	@{$people} = sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @{$people};
 	my $feeds = &market_scan_feeds();
@@ -18593,6 +18641,8 @@ get '/manager/people' => sub($c) {
 		template => 'apps/people',
 		crest => $crest,
 		has_image => $has_image,
+		introduced_by => $crest_introduced_by,
+		peers => \@peers,
 		people => $people,
 		scanner => $scanner,
 		camera => $camera,
@@ -18600,6 +18650,42 @@ get '/manager/people' => sub($c) {
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'people', title => &subs::lang('people'), contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
+};
+
+get '/manager/people/crest/card' => sub($c) {
+	unless (&people_citizen($c)) { $c->rendered(403); return; }
+	my $suds = &subs::session_suds($c);
+	my $crest = &subs::crest_record_read();
+	unless ($crest->{'uuid'} && $suds) { $c->rendered(404); return; }
+	my $device = $crest->{'device'} || &subs::device_setter();
+	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
+	my $file = &subs::crest_image_file($crest, 'image');
+	my $image = $file ? &subs::crest_image_data_uri($file, $suds, $standard, 512) : undef;
+	my $peers = &subs::crest_peer_list_read();
+	my @vouches;
+	my %seen_vouch;
+	foreach my $vouch ( @{ &subs::crest_incoming_vouch_list_read() } ) {
+		next unless ref $vouch eq 'HASH' && &subs::crest_vouch_verify($vouch);
+		next unless ($vouch->{'to_uuid'} || '') eq ($crest->{'uuid'} || '');
+		next unless ($vouch->{'to_pubkey'} || '') eq ($crest->{'pubkey'} || '');
+		next if $seen_vouch{ $vouch->{'sig'} || '' }++;
+		push @vouches, $vouch;
+	}
+	foreach my $entry ( @{$peers} ) {
+		next unless ref $entry eq 'HASH' && ref $entry->{'vouch'} eq 'HASH';
+		my $vouch = $entry->{'vouch'};
+		next unless &subs::crest_vouch_verify($vouch);
+		next unless ($vouch->{'from_uuid'} || '') eq ($crest->{'uuid'} || '');
+		next if $seen_vouch{ $vouch->{'sig'} || '' }++;
+		push @vouches, $vouch;
+	}
+	my $card = { format => 'jawnos-crest-card', card_version => 1, crest => $crest, vouches => \@vouches };
+	$card->{'image'} = $image if defined $image;
+	my $name = $crest->{'name'} || 'crest';
+	$name =~ s/[^\w.\-]+/_/g;
+	$c->res->headers->content_type('application/json');
+	$c->res->headers->content_disposition('attachment; filename="crest-' . $name . '.json"');
+	$c->render(data => encode_json($card));
 };
 
 post '/manager/people/crest/scan' => sub($c) {
@@ -18674,6 +18760,130 @@ post '/manager/people/crest/verify' => sub($c) {
 	return $c->render(json => { ok => 1, distance => $distance, likely => ($distance <= 12 ? 1 : 0), threshold => 12 });
 };
 
+post '/manager/people/crest/import' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
+	my $fail = sub { return $c->render(json => { ok => 0, error => $_[0] }); };
+	my $raw = $c->param('card') // '';
+	unless (length $raw) {
+		my @uploads = @{ $c->req->uploads || [] };
+		$raw = $uploads[0]->asset->slurp if @uploads;
+	}
+	return $fail->('no card was supplied') unless length $raw;
+	return $fail->('that card is too large') if length $raw > 5_000_000;
+	my $card = eval { decode_json($raw) };
+	return $fail->('that card is not readable') unless ref $card eq 'HASH';
+	return $fail->('that is not a JawnOS crest card') unless (($card->{'format'} || '') eq 'jawnos-crest-card');
+	my $incoming = $card->{'crest'};
+	return $fail->('the card has no crest record') unless ref $incoming eq 'HASH';
+	return $fail->('the crest record does not verify') unless &subs::crest_verify_record($incoming);
+	my $own = &subs::crest_record_read();
+	return $fail->('that is this house\'s own crest') if $own->{'uuid'} && $incoming->{'uuid'} && $own->{'uuid'} eq $incoming->{'uuid'};
+	my $safe_uuid = $incoming->{'uuid'} || '';
+	$safe_uuid =~ s/[^A-Za-z0-9_-]//g;
+	return $fail->('the crest record has no usable id') unless length $safe_uuid;
+	my $suds = &subs::session_suds($c);
+	return $fail->('the house key is not available') unless $suds;
+	my $device = &subs::device_setter();
+	my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $device }) || 'Pictures';
+	my $dir = &subs::home($folder) . '/me';
+	unless (-d $dir) { eval { require File::Path; File::Path::make_path($dir) }; }
+	my $image_name;
+	if (defined $card->{'image'} && length $card->{'image'}) {
+		my $bytes = &subs::crest_data_uri_bytes($card->{'image'});
+		return $fail->('the card picture is not readable') unless $bytes;
+		require File::Temp;
+		my ($fh, $tmp) = File::Temp::tempfile('jawnos-crest-import-XXXXXX', TMPDIR => 1, UNLINK => 0);
+		return $fail->('no temporary file') unless $fh && $tmp;
+		binmode $fh;
+		print $fh $bytes;
+		close $fh;
+		my $ref = $tmp . '.ref.png';
+		unless (&subs::crest_normalize_image($tmp, $ref)) {
+			unlink $tmp; unlink $ref;
+			return $fail->('the card picture could not be read');
+		}
+		my $dhash = &subs::crest_dhash($ref);
+		my $distance = &subs::crest_hamming($incoming->{'dhash'}, $dhash);
+		unless (defined $distance && $distance <= 16) {
+			unlink $tmp; unlink $ref;
+			return $fail->('the card picture does not match its signed hash');
+		}
+		my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
+		$image_name = 'peer-crest.' . $safe_uuid . '.jpg.enc';
+		my $enc = "$dir/$image_name";
+		unless (&subs::openssl_file_crypt('e', $standard, $suds, $tmp, $enc, 0, 1)) {
+			unlink $tmp; unlink $ref;
+			return $fail->('the card picture could not be sealed');
+		}
+		unlink $tmp; unlink $ref;
+	}
+	my $existing = &subs::crest_peer_find($incoming->{'uuid'});
+	my $entry = {
+		crest => $incoming,
+		device => $device,
+		imported_at => &subs::rightNow(),
+		status => 'imported',
+		vouches => [],
+	};
+	if ($existing) {
+		$entry->{'imported_at'} = $existing->{'imported_at'} || $entry->{'imported_at'};
+		$entry->{'vouch'} = $existing->{'vouch'} if ref $existing->{'vouch'} eq 'HASH';
+		$entry->{'met_at'} = $existing->{'met_at'} if defined $existing->{'met_at'};
+		$entry->{'status'} = $existing->{'status'} if (($existing->{'status'} || '') eq 'met');
+		$entry->{'image_file'} = $existing->{'image_file'} if !$image_name && $existing->{'image_file'};
+	}
+	$entry->{'image_file'} = $image_name if $image_name;
+	my %seen_vouch;
+	foreach my $vouch ( @{ $card->{'vouches'} || [] } ) {
+		next unless ref $vouch eq 'HASH';
+		next unless &subs::crest_vouch_verify($vouch);
+		my $sig = $vouch->{'sig'} || '';
+		next unless length $sig;
+		if (($vouch->{'to_uuid'} || '') eq ($incoming->{'uuid'} || '')
+			&& ($vouch->{'to_pubkey'} || '') eq ($incoming->{'pubkey'} || '')) {
+			next if $seen_vouch{$sig}++;
+			push @{$entry->{'vouches'}}, $vouch if scalar @{$entry->{'vouches'}} < 100;
+		}
+		if ($own->{'uuid'}
+			&& ($vouch->{'from_uuid'} || '') eq ($incoming->{'uuid'} || '')
+			&& ($vouch->{'to_uuid'} || '') eq ($own->{'uuid'} || '')
+			&& ($vouch->{'to_pubkey'} || '') eq ($own->{'pubkey'} || '')) {
+			&subs::crest_incoming_vouch_add($vouch);
+		}
+	}
+	return $fail->('the card could not be stored') unless &subs::crest_peer_upsert($entry);
+	return $c->render(json => { ok => 1, crest => $incoming, entry => $entry });
+};
+
+post '/manager/people/crest/vouch' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
+	my $uuid = $c->param('uuid') || '';
+	my $peer = &subs::crest_peer_find($uuid);
+	return $c->render(json => { ok => 0, error => 'no such crest' }) unless $peer && ref $peer->{'crest'} eq 'HASH';
+	my $own = &subs::crest_record_read();
+	return $c->render(json => { ok => 0, error => 'this house has no crest yet' }) unless $own->{'uuid'} && $own->{'pubkey'};
+	my $suds = &subs::session_suds($c);
+	my $priv = &subs::crest_key_read($suds);
+	return $c->render(json => { ok => 0, error => 'the crest key is not available' }) unless $priv;
+	my $vouch = {
+		from_uuid => $own->{'uuid'},
+		from_pubkey => $own->{'pubkey'},
+		from_name => $own->{'name'} || '',
+		to_uuid => $peer->{'crest'}->{'uuid'} || '',
+		to_pubkey => $peer->{'crest'}->{'pubkey'} || '',
+		to_name => $peer->{'crest'}->{'name'} || '',
+		method => 'in person',
+		scope => 'communication',
+		at => &subs::rightNow(),
+	};
+	return $c->render(json => { ok => 0, error => 'the other crest has no key' }) unless length $vouch->{'to_pubkey'};
+	my $signed = &subs::crest_vouch_sign($vouch, $priv);
+	return $c->render(json => { ok => 0, error => 'the vouch could not be signed' }) unless $signed;
+	my $updated = &subs::crest_peer_update($uuid, { vouch => $signed, status => 'met', met_at => $signed->{'at'} });
+	return $c->render(json => { ok => 0, error => 'the vouch could not be stored' }) unless $updated;
+	return $c->render(json => { ok => 1, vouch => $signed });
+};
+
 post '/manager/people/house_name' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
 	my $name = $c->param('name') // '';
@@ -18700,13 +18910,23 @@ post '/manager/people/house_name' => sub($c) {
 
 get '/manager/people/crest_image' => sub($c) {
 	unless (&people_citizen($c)) { $c->rendered(403); return; }
-	my $record = &subs::crest_record_read();
-	my $kind = (($c->param('kind') || '') eq 'reference') ? 'reference' : 'image';
-	my $file = &subs::crest_image_file($record, $kind);
+	my $peer_uuid = $c->param('peer') || '';
+	my ($file, $device);
+	if ($peer_uuid) {
+		my $entry = &subs::crest_peer_find($peer_uuid);
+		unless ($entry) { $c->rendered(404); return; }
+		$file = &subs::crest_peer_image_file($entry);
+		$device = $entry->{'device'} || &subs::device_setter();
+	}
+	else {
+		my $record = &subs::crest_record_read();
+		my $kind = (($c->param('kind') || '') eq 'reference') ? 'reference' : 'image';
+		$file = &subs::crest_image_file($record, $kind);
+		$device = $record->{'device'} || &subs::device_setter();
+	}
 	unless ($file) { $c->rendered(404); return; }
 	my $suds = &subs::session_suds($c);
 	unless ($suds) { $c->rendered(403); return; }
-	my $device = $record->{'device'} || &subs::device_setter();
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
 	my $data = &subs::openssl_file_read($standard, $suds, $file, 0, 1);
 	unless (defined $data && length $data) { $c->rendered(404); return; }

@@ -18123,6 +18123,198 @@ sub crest_image_file {
 	return undef;
 }
 
+# A peer crest's picture is stored under the importing machine's photo location,
+# beside the house's own crest. The entry carries the file name and the device.
+sub crest_peer_image_file {
+	my ($entry) = @_;
+	return undef unless ref $entry eq 'HASH';
+	my $name = $entry->{'image_file'} || '';
+	return undef unless $name =~ /^[\w.\-]+$/;
+	my @devices = ($entry->{'device'}, &device_setter());
+	my %seen;
+	@devices = grep { defined $_ && length $_ && !$seen{$_}++ } @devices;
+	foreach my $dev (@devices) {
+		my $folder = &setting_grabber({ app => 'misc', setting => 'photo_location', device => $dev }) || 'Pictures';
+		my $file = &home($folder) . '/me/' . $name;
+		return $file if -e $file;
+	}
+	return undef;
+}
+
+# A vouch is a signed statement by one crest about another. It is the same
+# canonical JSON discipline as the crest record, and the signature is made by the
+# vouching house's K_crest. Verification proves the key signed it, not that the
+# key belongs to a house you know; the caller must match from_uuid/from_pubkey
+# against its own roster.
+sub crest_vouch_sign {
+	my ($vouch, $priv) = @_;
+	return undef unless ref $vouch eq 'HASH' && defined $priv && length $priv == 32;
+	my $json = &crest_canonical_json($vouch);
+	return undef unless defined $json;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($priv, 'private');
+	my $sig = $key->sign_message($json);
+	return undef unless defined $sig && length $sig == 64;
+	return { %$vouch, sig => encode_base64($sig, '') };
+}
+
+sub crest_vouch_verify {
+	my ($vouch) = @_;
+	return 0 unless ref $vouch eq 'HASH';
+	my $pub = eval { decode_base64($vouch->{'from_pubkey'} || '') };
+	my $sig = eval { decode_base64($vouch->{'sig'} || '') };
+	return 0 unless defined $pub && length $pub == 32 && defined $sig && length $sig == 64;
+	my $json = &crest_canonical_json($vouch);
+	return 0 unless defined $json;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($pub, 'public');
+	return $key->verify_message($sig, $json) ? 1 : 0;
+}
+
+# The crests this house has imported, kept as one settings array. Each entry is
+# { crest => the signed record, image_file => ..., device => ...,
+#   imported_at => ..., status => imported|met, met_at => ...,
+#   vouches => [ claims the other house presented ], vouch => our signed vouch }.
+sub crest_peer_list_read {
+	my $raw = &setting_grabber({ app => '__president', setting => 'peer_crests', device => 'all' });
+	return [] unless defined $raw && length $raw;
+	my $list = eval { decode_json($raw) };
+	return ref $list eq 'ARRAY' ? $list : [];
+}
+
+sub crest_peer_list_write {
+	my ($list) = @_;
+	return 0 unless ref $list eq 'ARRAY';
+	&setting_setter({ app => '__president', setting => 'peer_crests', device => 'all', value => encode_json($list) });
+	return 1;
+}
+
+sub crest_peer_find {
+	my ($uuid) = @_;
+	return undef unless defined $uuid && length $uuid;
+	foreach my $entry ( @{ &crest_peer_list_read() } ) {
+		next unless ref $entry eq 'HASH';
+		return $entry if (($entry->{'crest'}->{'uuid'} || '') eq $uuid);
+	}
+	return undef;
+}
+
+sub crest_peer_upsert {
+	my ($entry) = @_;
+	return 0 unless ref $entry eq 'HASH';
+	my $uuid = $entry->{'crest'}->{'uuid'} || '';
+	return 0 unless length $uuid;
+	my $list = &crest_peer_list_read();
+	my $replaced = 0;
+	for my $i ( 0 .. $#$list ) {
+		next unless ref $list->[$i] eq 'HASH';
+		next unless (($list->[$i]->{'crest'}->{'uuid'} || '') eq $uuid);
+		$list->[$i] = $entry;
+		$replaced = 1;
+		last;
+	}
+	push @$list, $entry unless $replaced;
+	return &crest_peer_list_write($list);
+}
+
+sub crest_peer_update {
+	my ($uuid, $changes) = @_;
+	return undef unless defined $uuid && length $uuid && ref $changes eq 'HASH';
+	my $list = &crest_peer_list_read();
+	foreach my $entry ( @$list ) {
+		next unless ref $entry eq 'HASH';
+		next unless (($entry->{'crest'}->{'uuid'} || '') eq $uuid);
+		$entry->{$_} = $changes->{$_} for keys %$changes;
+		return &crest_peer_list_write($list) ? $entry : undef;
+	}
+	return undef;
+}
+
+# Vouches this house has received: another crest's signed statement that this
+# house is the house it says it is. They travel on this house's card so a third
+# house can see who introduced it. Outgoing vouches stay on the peer entries.
+sub crest_incoming_vouch_list_read {
+	my $raw = &setting_grabber({ app => '__president', setting => 'crest_vouches', device => 'all' });
+	return [] unless defined $raw && length $raw;
+	my $list = eval { decode_json($raw) };
+	return ref $list eq 'ARRAY' ? $list : [];
+}
+
+sub crest_incoming_vouch_list_write {
+	my ($list) = @_;
+	return 0 unless ref $list eq 'ARRAY';
+	&setting_setter({ app => '__president', setting => 'crest_vouches', device => 'all', value => encode_json($list) });
+	return 1;
+}
+
+sub crest_incoming_vouch_add {
+	my ($vouch) = @_;
+	return 0 unless ref $vouch eq 'HASH';
+	my $sig = $vouch->{'sig'} || '';
+	return 0 unless length $sig;
+	my $list = &crest_incoming_vouch_list_read();
+	foreach my $existing ( @$list ) {
+		return 1 if (($existing->{'sig'} || '') eq $sig);
+	}
+	push @$list, $vouch;
+	return &crest_incoming_vouch_list_write($list);
+}
+
+# The house that issued a vouch, when its key matches a crest this house already
+# knows (its own or an imported one). Undef means the vouch is a claim, not an
+# introduction this house can stand behind.
+sub crest_vouch_introducer {
+	my ($vouch, $own, $peers) = @_;
+	return undef unless ref $vouch eq 'HASH' && &crest_vouch_verify($vouch);
+	my $from = $vouch->{'from_uuid'} || '';
+	my $pub = $vouch->{'from_pubkey'} || '';
+	return undef unless length $from && length $pub;
+	if (ref $own eq 'HASH' && $from eq ($own->{'uuid'} || '') && $pub eq ($own->{'pubkey'} || '')) {
+		return $own;
+	}
+	foreach my $entry ( @{ $peers || [] } ) {
+		next unless ref $entry eq 'HASH';
+		my $crest = $entry->{'crest'} || {};
+		next unless $from eq ($crest->{'uuid'} || '');
+		return $crest if $pub eq ($crest->{'pubkey'} || '');
+	}
+	return undef;
+}
+
+# A card carries a display copy of the drawing (a small JPEG) beside the signed
+# record. The JPEG is not the signature; the record's dhash is. Import normalizes
+# the JPEG and checks it against that dhash, so a swapped picture is caught.
+sub crest_data_uri_bytes {
+	my ($uri) = @_;
+	return undef unless defined $uri && $uri =~ /^data:image\/[A-Za-z0-9.+-]+;base64,(.*)$/s;
+	my $b64 = $1;
+	$b64 =~ s/\s+//g;
+	my $bytes = eval { decode_base64($b64) };
+	return (defined $bytes && length $bytes) ? $bytes : undef;
+}
+
+sub crest_image_data_uri {
+	my ($file, $suds, $standard, $max) = @_;
+	return undef unless $file && -e $file && defined $suds && length $suds;
+	my $bytes = &openssl_file_read($standard, $suds, $file, 0, 1);
+	return undef unless defined $bytes && length $bytes;
+	require File::Temp;
+	my ($fh, $tmp) = File::Temp::tempfile('jawnos-crest-card-XXXXXX', TMPDIR => 1, UNLINK => 0);
+	return undef unless $fh && $tmp;
+	binmode $fh;
+	print $fh $bytes;
+	close $fh;
+	$max ||= 512;
+	my $jpg = $tmp . '.jpg';
+	system('magick', $tmp, '-resize', "${max}x${max}>", '-quality', '86', $jpg);
+	my $out = (-e $jpg && -s $jpg > 0) ? read_file($jpg) : undef;
+	unlink $tmp; unlink $jpg;
+	return undef unless defined $out && length $out;
+	return 'data:image/jpeg;base64,' . encode_base64($out, '');
+}
+
 # Authorization beside authentication. peer_verify answers "is this who they
 # claim?", peer_allows answers "may this house do this, and is the lease still
 # alive?". Call it only after peer_verify has accepted the row for this request:

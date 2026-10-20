@@ -14,9 +14,13 @@
 		overflow-wrap:anywhere; }
 	.people_note { font-size:12px; color:var(--muted,#8e8e8e); margin-top:6px; }
 	.people_actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0; }
-	.people_actions button, .people_name_row button { padding:7px 12px; border:1px solid var(--line);
-		border-radius:8px; background:var(--panel); cursor:pointer; font-size:13px; }
-	.people_actions button:hover, .people_name_row button:hover { background:var(--line); }
+	.people_actions button, .people_actions a.people_button, .people_name_row button { padding:7px 12px; border:1px solid var(--line);
+		border-radius:8px; background:var(--panel); cursor:pointer; font-size:13px; text-decoration:none; color:inherit; }
+	.people_actions button:hover, .people_actions a.people_button:hover, .people_name_row button:hover { background:var(--line); }
+	.people_peer_thumb { width:56px; height:56px; flex:0 0 56px; object-fit:contain; border:1px solid var(--line);
+		border-radius:8px; background:var(--panel); }
+	.people_peer_vouch { padding:6px 10px; border:1px solid var(--line); border-radius:8px;
+		background:var(--panel); cursor:pointer; font-size:12px; }
 	.people_name_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
 	.people_name_row input { min-width:180px; padding:6px 8px; border:1px solid var(--line);
 		border-radius:8px; background:var(--panel); font-size:14px; }
@@ -50,6 +54,7 @@
 					<% if ($crest->{'uuid'}) { %>
 						<%= &subs::ui($signed ? 'Signed by this house' : 'Not signed yet') %>
 						<% if ($crest->{'version'}) { %> &middot; v<%= $crest->{'version'} %><% } %>
+						<% if ($introduced_by) { %> &middot; <%= &subs::ui('Introduced by') %> <%= $introduced_by %><% } %>
 					<% } else { %>
 						<%= &subs::ui('Scan the drawing you want the house to be known by.') %>
 					<% } %>
@@ -65,6 +70,9 @@
 			<% } %>
 			<button id="people_crest_upload_button" hint="Upload a photo"><%= &subs::ui('Upload a photo') %></button>
 			<input type="file" id="people_crest_file" accept="image/*" style="display:none">
+			<% if ($crest->{'uuid'}) { %>
+				<a class="people_button" id="people_crest_card" hint="Download card" href="/manager/people/crest/card" download><%= &subs::ui('Download card') %></a>
+			<% } %>
 			<button id="people_refresh" hint="Refresh"><%= &subs::ui('Refresh') %></button>
 		</div>
 	</div>
@@ -84,6 +92,41 @@
 		</div>
 		<div id="people_verify_result"></div>
 	<% } %>
+
+	<div class="people_section">
+		<h3><%= &subs::ui('Other houses') %></h3>
+		<div class="people_actions">
+			<button id="people_crest_import_button" hint="Import a crest card"><%= &subs::ui('Import a crest card') %></button>
+			<input type="file" id="people_crest_import_file" accept=".json,application/json" style="display:none">
+		</div>
+		<% if (@{$peers}) { %>
+			<div class="people_list">
+				<% foreach my $peer ( @{$peers} ) { %>
+					<div class="people_row peer_crest" uuid="<%= $peer->{'uuid'} %>">
+						<% if ($peer->{'has_image'}) { %>
+							<img class="people_peer_thumb" src="/manager/people/crest_image?peer=<%= $peer->{'uuid'} %>&stamp=<%= &subs::rightNow() %>" alt="<%= $peer->{'name'} %>">
+						<% } %>
+						<span class="people_row_name"><%= $peer->{'name'} %><br><span class="people_fp"><%= $peer->{'fingerprint'} %></span></span>
+						<span class="people_row_sub">
+							<% if ($peer->{'met'}) { %>
+								<%= &subs::ui('Met in person') %>
+								<% if ($peer->{'met_at'}) { %> <span class="time" timestamp="<%= $peer->{'met_at'} %>"></span><% } %>
+							<% } elsif ($peer->{'introduced_by'}) { %>
+								<%= &subs::ui('Introduced by') %> <%= $peer->{'introduced_by'} %>
+							<% } else { %>
+								<%= &subs::ui('Imported, not met') %>
+							<% } %>
+						</span>
+						<% unless ($peer->{'met'}) { %>
+							<button class="people_peer_vouch" uuid="<%= $peer->{'uuid'} %>" hint="I have met this crest"><%= &subs::ui('I have met this crest') %></button>
+						<% } %>
+					</div>
+				<% } %>
+			</div>
+		<% } else { %>
+			<div class="people_empty"><%= &subs::ui('No other houses yet. Import the card they give you.') %></div>
+		<% } %>
+	</div>
 
 	<div class="people_section">
 		<h3><%= &subs::lang('people') %></h3>
