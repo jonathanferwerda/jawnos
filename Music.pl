@@ -85,7 +85,12 @@ sub process_thumbfile() {
 get '/manager/music' => sub ($c) {
 	my $search = $c->param('search') || &subs::setting_grabber({ app => 'music', 'setting' => 'search' });
 	my $window_maker = $c->param('window_maker');
-	my $unlock = &subs::setting_grabber({ app => 'music', setting => 'combo_unlock' });
+	# an app opens locked: only the token this window holds, minted by the
+	# phone's unlock, may list a sealed track. A refresh after that unlock
+	# carries the token and stays open.
+	my $unlocked = &Manager::media_unlock_open($c, 'music') ? 1 : 0;
+	my $unlock = $unlocked ? $c->param('unlock') : '';
+	my $content_cache = &subs::jawn_version() . ($unlocked ? '-unlocked' : '-locked');
 	my $port = $c->req->url->base->port;
 	my $misses = eval { return decode_json $c->param('misses') } || {};
 	if (!$misses->{'video'}) {
@@ -111,7 +116,7 @@ get '/manager/music' => sub ($c) {
 	}
 	my $misc_settings = &Manager::misc_setting_list();
 	unless ($files) {
-		if (my $cache = &subs::cache_get({ app => 'music', context => 'content', subcontext => &subs::jawn_version() })) {
+		if (my $cache = &subs::cache_get({ app => 'music', context => 'content', subcontext => $content_cache })) {
 			if ($cache->{'contents'}) {
 				if ($c->param('window_maker')) {
 					my $website = &Manager::window_maker({ app => 'music', title => 'music', contents => $cache->{'contents'} }, &subs::rightNow());
@@ -124,15 +129,9 @@ get '/manager/music' => sub ($c) {
 			}
 		}
 	}
-	if ($unlock) {
-		if (&Manager::help_at_home() && secure_compare(&subs::note_decrypter(&subs::session_suds($c), $unlock), &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => 'music', setting => 'combo_unlock' })) ) ) {
-			my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
-			if (grep { $_ eq 'music' } @{$padlock_sighting}) {
-				$permissive = 1;
-			}
-		}
-	}
-	my $crate = &music_search({ settings => $settings, c => $c, search => $search, now_playing => {}, port => $port, misc_settings => $misc_settings, files => $files, same_order => $same_order });
+	my $crate = &music_search({ settings => $settings, c => $c, search => $search, now_playing => {}, port => $port, misc_settings => $misc_settings, files => $files, same_order => $same_order, permissive => $unlocked });
+	$crate->{'unlock'} = $unlock;
+	$crate->{'unlocked'} = $unlocked;
 	my $timestamp = &subs::rightNow();
 	my $jmao = &subs::setting_grabber({ app => 'music', setting => 'mao' });
 	my $player = &subs::cache_get({ app => 'music', context => 'player' });
@@ -173,7 +172,7 @@ get '/manager/music' => sub ($c) {
 		);
 		$c->render(text => $contents);
 	}
-	&subs::cache_set({ app => 'music', context => 'content', subcontext => &subs::jawn_version() }, { contents => $contents });
+	&subs::cache_set({ app => 'music', context => 'content', subcontext => $content_cache }, { contents => $contents });
 };
 
 
@@ -370,6 +369,8 @@ sub music_archive_entries($data) {
 			next unless ($type eq 'audio' || $type eq 'video');
 			my $relative = $row->{'relative'} || '';
 			next unless length $relative;
+			# a sealed track in the archive waits for the same padlock
+			next if (!$permissive && $relative =~ /\.enc$/i);
 			next if (length $lookup->{'prefix'} && index($relative, $lookup->{'prefix'}) != 0);
 			push @entries, {
 				path => (length $folder ? $folder . '/' . $relative : $relative),
@@ -401,10 +402,9 @@ sub music_search($data) {
 		$settings->{'artist'} = eval { return decode_json $settings->{'artist'} } || [];
 		$settings->{'album'} = eval { return decode_json $settings->{'album'} } || [];
 	}
-	my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
-	if (grep { $_ eq 'music' } @{$padlock_sighting}) {
-		$permissive = 1 if $settings->{'combo_unlock'} && &Manager::help_at_home();
-	}
+	# the window's token decides this, not the secret left in settings: a
+	# fresh open is locked even if an earlier window still holds one
+	$permissive = $data->{'permissive'} ? 1 : 0;
 
 	my @folders;
 	my %archive;
@@ -663,6 +663,10 @@ post '/music/search' => sub ($c) {
 	my $search = lc $c->param('search');
 	my $unlock = $c->param('unlock');
 	my $window_maker = $c->param('window_maker');
+	# the window's own unlock token, not the secret in settings: a fresh open
+	# has none and lists no sealed track; the refresh after a phone signs does
+	my $unlocked = &Manager::media_unlock_open($c, 'music') ? 1 : 0;
+	my $content_cache = &subs::jawn_version() . ($unlocked ? '-unlocked' : '-locked');
 	# the lit folder buttons from the window, by location name, so the machine
 	# that walks the folders looks in the ones the panel shows as on. No param
 	# at all means the stored toggles still decide; an empty list means nothing
@@ -688,15 +692,7 @@ post '/music/search' => sub ($c) {
 	my $artist = $c->param('artist');
 	my $album = $c->param('album');
 	my $misc_settings = &Manager::misc_setting_list();
-
-	if ($unlock) {
-		if (&Manager::help_at_home() && secure_compare(&subs::note_decrypter(&subs::session_suds($c), $unlock), &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
-			my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
-			if (grep { $_ eq 'music' } @{$padlock_sighting}) {
-				$permissive = 1;
-			}
-		}
-	}
+	$permissive = $unlocked;
 
 	
 	&subs::setting_setter({ app => 'music', setting => 'resizes', value => $resizes });
@@ -740,16 +736,13 @@ post '/music/search' => sub ($c) {
 	$settings->{'album'} = eval { return decode_json $settings->{'album'} } || [];
 	my $crate;
 	if (scalar @{$list} > 0) {
-		my $permissive = 0;
-		my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
-		if (grep { $_ eq 'music' } @{$padlock_sighting}) {
-			$permissive = 1 if $settings->{'combo_unlock'} && &Manager::help_at_home();
-		}
 		$crate = &song_maker({ c => $c, config => $config, port => $port, files => $list, settings => $settings, now_playing => $now_playing, same_order => $same_order, misc_settings => $misc_settings });
 	}
 	else {
-		$crate = &music_search({ c => $c, search => $search, now_playing => $now_playing, settings => $settings, port => $port, misc_settings => $misc_settings, folders => $folders });
+		$crate = &music_search({ c => $c, search => $search, now_playing => $now_playing, settings => $settings, port => $port, misc_settings => $misc_settings, folders => $folders, permissive => $unlocked });
 	}
+	$crate->{'unlock'} = $unlocked ? $unlock : '';
+	$crate->{'unlocked'} = $unlocked;
 	
 	my @interface_color= qw/yellow green blue orange black fuschia pink navy purple brown/;
 	my $random_number = rand(0..8);
@@ -787,7 +780,7 @@ post '/music/search' => sub ($c) {
 		);
 		$c->render(text => $contents);
 	}
-	&subs::cache_set({ app => 'music', context => 'content', subcontext => &subs::jawn_version() }, { contents => $contents });
+	&subs::cache_set({ app => 'music', context => 'content', subcontext => $content_cache }, { contents => $contents });
 };
 
 post '/music/folder_toggle' => sub($c) {

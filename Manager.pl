@@ -19988,11 +19988,10 @@ get '/manager/gallery' => sub ($c) {
 	$search = $settings->{'search'};
 	$view = $settings->{'view'};
 	$count = $settings->{'count'};
-	my $unlock = $c->param('unlock') || $settings->{'combo_unlock'};
-	my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
-	unless ( grep { $_ eq 'gallery' } @{$padlock_sighting} ) {
-		$unlock = undef;
-	}
+	# an app opens locked: only the token this window holds, minted by the
+	# phone's unlock, lets sealed and hidden things through
+	my $permissive = media_unlock_open($c, 'gallery') ? 1 : 0;
+	my $unlock = $permissive ? $c->param('unlock') : '';
 	my $apps = eval { return decode_json $settings->{'apps'} } || [];
 	my $jfiles = $c->param('files');
 
@@ -20008,12 +20007,6 @@ get '/manager/gallery' => sub ($c) {
 	if (!$view) { $view = 'photo';
 		if ($settings->{'home_toggled'} eq 'on') {
 			$view = 'home';
-		}
-	}
-	my $permissive = 0;
-	if ($unlock) {
-		if (help_at_home() && secure_compare(&subs::note_decrypter(&subs::session_suds($c), $unlock), &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
-			$permissive = 1;
 		}
 	}
 
@@ -20165,19 +20158,13 @@ get '/manager/gallery' => sub ($c) {
 get '/manager/gallery/scroll' => sub($c) {
 	my $settings = &subs::settings_grabber({ app => 'gallery' });
 	my $apps = eval { return decode_json $c->param('apps') } || [];
-	my $unlock = $c->param('unlock');
 	my $search = $c->param('search');
 	my $count = $c->param('count');
 	my $count_timestamp = $c->param('count_timestamp');
 	my $direction = $c->param('direction');
 	my $first_count = $c->param('first_count');
 	my $returner = { apps => $apps, count => $count, count_timestamp => $count_timestamp };
-	my $permissive = 0;
-	if ($unlock) {
-		if (help_at_home() && secure_compare(&subs::note_decrypter(&subs::session_suds($c), $unlock), &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) ) ) {
-			$permissive = 1;
-		}
-	}
+	my $permissive = media_unlock_open($c, 'gallery') ? 1 : 0;
 	$returner->{'html'} = $c->render_to_string(
 		template => 'apps/gallery_album',
 		settings => $settings,
@@ -20987,13 +20974,19 @@ post '/manager/folders' => sub($c) {
 	my $folder = $c->param('folder') || &subs::home('~');
 	my $command = $c->param('command');
 	my $settings = &subs::settings_grabber({ app => 'folders' });
+	# an app opens locked: only the token this window holds, minted by the
+	# phone's unlock, may list a sealed name
+	my $unlocked = media_unlock_open($c, 'folders') ? 1 : 0;
+	my $unlock = $unlocked ? $c->param('unlock') : '';
 
-	my $fo = &folders_opener({ folder => $folder, command => $command, c => $c });
+	my $fo = &folders_opener({ folder => $folder, command => $command, c => $c, unlocked => $unlocked });
 	my $contents = $c->render_to_string(
 		template => 'folders/folders',
 		settings => $settings,
 		fo => $fo,
 		folder => $folder,
+		unlocked => $unlocked,
+		unlock => $unlock,
 		machines => &subs::remote_machine_lister({ self => 'no' }),
 		remote_uuid => $c->param('remote_uuid')
 	);
@@ -21023,23 +21016,14 @@ sub folders_owning_app($path) {
 	return undef;
 }
 
-# Whether Folders may list sealed names: its own padlock is open (the app is a
-# padlock context and its unlock secret is held) and the person is at home. The
-# house gate's own state is deliberately not part of this - each media app's
-# padlock stands on its own, so turning Gate enforcement off does not uncover a
-# sealed file.
-sub folders_sealed_revealed {
-	my $contexts = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
-	return 0 unless grep { $_ eq 'folders' } @{$contexts};
-	my $combo = &subs::setting_grabber({ app => 'folders', setting => 'combo_unlock' });
-	return 0 unless (defined $combo && length $combo);
-	return help_at_home() ? 1 : 0;
-}
-
+# Whether Folders may list sealed names comes from the window's own unlock
+# token (media_unlock_open), never from the secret left in settings: a fresh
+# open is locked, while the refresh after an unlock carries the token.
 sub folders_opener($data) {
 	my $folder = $data->{'folder'};
 	my $command = $data->{'command'};
 	my $c = $data->{'c'};
+	my $unlocked = $data->{'unlocked'} ? 1 : 0;
 	if ($command eq 'up') {
 		my @folders = split '/', $folder;
 		pop @folders if scalar @folders;
@@ -21062,9 +21046,9 @@ sub folders_opener($data) {
 	# a thing the person hid (visible ne checked) is not listed unless a media
 	# padlock is open and we are at home - the same rule the gallery reads
 	my $revealed = help_media_revealed();
-	# a sealed name (.enc) belongs to the Folders padlock alone: it is listed
+	# a sealed name (.enc) belongs to this window's own padlock: it is listed
 	# only while that padlock is open at home, whatever the house gate does
-	my $sealed = folders_sealed_revealed();
+	my $sealed = $unlocked;
 	@{$files} = grep {
 		my $app = folders_owning_app($_->{'path'});
 		my $hidden = ($app && help_app_hidden($app) && !$revealed);
@@ -24836,6 +24820,28 @@ sub help_media_unlocked {
 # AND we are at home - so a hidden album can never be opened out in public.
 sub help_media_revealed { return (help_media_unlocked() && help_at_home()) ? 1 : 0; }
 
+# Whether one page's `unlock` token opens one media app's padlock. A fresh open
+# carries no token and stays locked, even when the secret from an earlier open
+# is still in settings; the refresh after a phone signs carries the token that
+# unlock minted, so the refreshed window stays open. The stored secret is only
+# the validator, never proof by itself.
+sub media_unlock_open($c, $app) {
+	return 0 unless ($c && defined $app && length $app);
+	my $token = $c->param('unlock');
+	return 0 unless (defined $token && length $token);
+	my $sightings = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	return 0 unless grep { $_ eq $app } @{$sightings};
+	my $stored = &subs::setting_grabber({ app => $app, setting => 'combo_unlock' });
+	return 0 unless (defined $stored && length $stored);
+	return 0 unless help_at_home();
+	my $suds = &subs::session_suds($c);
+	return 0 unless $suds;
+	my $given = &subs::note_decrypter($suds, $token);
+	my $known = &subs::note_decrypter($suds, $stored);
+	return 0 unless (defined $given && defined $known && length $given && length $known);
+	return secure_compare($given, $known) ? 1 : 0;
+}
+
 # An app is hidden when any device marks it not visible: a thing hidden anywhere
 # is hidden everywhere (the toggle syncs, so the phone gets it too).
 sub help_app_hidden($app) {
@@ -25071,7 +25077,7 @@ sub help_music_file($c, $q, $shuffle) {
 	my $device = &subs::device_setter();
 	my @every = sort grep { /_location$/ } keys %{ $misc->{$device} || {} };
 	my $port = $c->req->url->base->port;
-	my $res = &music_search({ settings => $settings, c => $c, now_playing => {}, port => $port, misc_settings => $misc, return_files => 1, folders => \@every });
+	my $res = &music_search({ settings => $settings, c => $c, now_playing => {}, port => $port, misc_settings => $misc, return_files => 1, folders => \@every, permissive => (&help_media_revealed() ? 1 : 0) });
 	my @files = @{ $res->{'files'} || [] };
 	my @words = grep { length } split /\s+/, lc $q;
 	my @hits;
@@ -27737,20 +27743,20 @@ sub padlock_mark_unlocked {
 	if ($mode eq 'gallery') {
 		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
 		&subs::setting_setter({ app => 'gallery', setting => 'combo_unlock', value => $combo_unlock });
-		&Websocket::send('server', { console => '$("#gallery").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
-		&Websocket::send('server', { console => 'imageViewer({ "view":"home" })', browser_tab_id => $c->param('browser_tab_id') });
+		# one message, so the window holds the token before its refresh runs
+		&Websocket::send('server', { console => '$("#gallery").attr("unlock", "' . $combo_unlock . '"); imageViewer({ "view":"home" });', browser_tab_id => $c->param('browser_tab_id') });
 	}
 	if ($mode eq 'music') {
 		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
 		&subs::setting_setter({ app => 'music', setting => 'combo_unlock', value => $combo_unlock });
-		&Websocket::send('server', { console => '$("#music").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
-		&Websocket::send('server', { console => 'searchMusic()', browser_tab_id => $c->param('browser_tab_id') });
+		# one message, so the window holds the token before its refresh runs
+		&Websocket::send('server', { console => '$("#music").attr("unlock", "' . $combo_unlock . '"); $("#music").show(); $("#music_padlock").hide(); if (typeof searchMusic === "function") { searchMusic(); }', browser_tab_id => $c->param('browser_tab_id') });
 	}
 	if ($mode eq 'folders') {
 		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
 		&subs::setting_setter({ app => 'folders', setting => 'combo_unlock', value => $combo_unlock });
-		&Websocket::send('server', { console => '$("#folders").attr("unlock", "' . $combo_unlock .'")', browser_tab_id => $c->param('browser_tab_id') });
-		&Websocket::send('server', { console => 'if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
+		# one message, so the window holds the token before its refresh runs
+		&Websocket::send('server', { console => '$("#folders").attr("unlock", "' . $combo_unlock . '"); if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
 	}
 	else {
 		&Websocket::send('server', { padlock_open => 1, mode => $mode, target => $target, timestamp => &subs::rightNow() });

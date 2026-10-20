@@ -22,7 +22,7 @@
 		$appts = &subs::db_query('select * from appointments where file is not null and (type=? or type=?) order by timestamp desc','image','video')->hashes; 
 	}
 }	%>
-<div id="gallery" unlock="<%= $settings->{'combo_unlock'} %>" view="<%= $view %>" apps="<%= eval { return encode_json $apps } || [] %>" style="text-align:center;display:block;width:105%;max-height:100%;height:100%;background-color:black;">
+<div id="gallery" unlock="<%= $unlock %>" view="<%= $view %>" apps="<%= eval { return encode_json $apps } || [] %>" style="text-align:center;display:block;width:105%;max-height:100%;height:100%;background-color:black;">
 	<% if ($view ne 'photo') { %>
 		<input id="gallery_search" value="<%= $settings->{'search'} %>" style="float:left;" placeholder="Search"><br>
 	<% } %>
@@ -78,7 +78,7 @@
 				<% } %>
 			<% }, { name => 'gallery home' }); %>
 			<% if (scalar @{$padlock_sighting} > 0) { %>
-				<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:40px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+				<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:40px;<% if ($permissive) { %>background-color:red;<% } %>">
 			<% } %>
 			<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
 		</div>
@@ -93,7 +93,7 @@
 				<img src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Descending order" direction="desc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">
 			<% } %>
 			<% if (scalar @{$padlock_sighting} > 0) { %>
-				<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+				<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($permissive) { %>background-color:red;<% } %>">
 			<% } %>
 			<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
 		</div>
@@ -111,7 +111,7 @@
 		<img class="hover little_thumb gallery main_image_selector"	app="" file="" style="position:absolute;top:35px;left:255px;" src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" hint="Set as main image">
 		<img src="<%= &subs::icon_for('/images/decipherable/handbook.png') %>" hint="Albums" class="hover tiny_thumb gallery gallery_home_album" style="position:absolute;top:35px;right:40px;">
 		<% if (scalar @{$padlock_sighting} > 0) { %>
-			<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($settings->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+			<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($permissive) { %>background-color:red;<% } %>">
 		<% } %>
 
 		<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">

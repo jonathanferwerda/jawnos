@@ -50,11 +50,14 @@ function foldersOpener(data) {
 	$.ajax({
 		url: '/manager/folders',
 		type: 'POST',
-		data: { 
+		data: {
 			timestamp: timestamp,
 			folder: data['folder'],
 			command: data['command'],
-			remote_uuid: remote_uuid
+			remote_uuid: remote_uuid,
+			// the window's own unlock token: a fresh open has none and stays
+			// locked; the refresh after a phone signs carries the one it minted
+			unlock: $('#folders').attr('unlock') || ''
 		},
 		success:function(response) {
 			windowMaker(response.html);

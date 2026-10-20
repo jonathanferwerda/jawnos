@@ -15,7 +15,7 @@
     navbar-relative tops answer to the navbar height setting, the same way the
     window's own contents do. %>
 <% my $phone_layout = (($device // '') eq 'mobile') ? 1 : 0; %>
-<div id="music" class="theme_surface" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" phone_layout="<%= $phone_layout ? 'yes' : 'no' %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'settings'}->{'combo_unlock'} %>">
+<div id="music" class="theme_surface" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" phone_layout="<%= $phone_layout ? 'yes' : 'no' %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'unlock'} || '' %>">
 	<%# left empty on purpose: the player is restored from the live cache, not a
 	    snapshot frozen into this cached window (see musicContentCache in music.js) %>
 	<div id="music_player_data" style="display:none;"></div>
@@ -33,7 +33,7 @@
 			</span>
 			<span id="music_interface_options">
 				<% if (scalar @{$padlock_sighting} > 0) { %>
-					<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="<% if ($crate->{'settings'}->{'combo_unlock'} =~ /[a-zA-Z0-9]/gi) { %>background-color:red;<% } %>">
+					<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="<% if ($crate->{'unlocked'}) { %>background-color:red;<% } %>">
 				<% } %>
 				<img src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="music_configuration_toggle">
 			</span>

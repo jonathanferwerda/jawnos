@@ -519,6 +519,9 @@ $(document).on('click', '.gallery_lock', function() {
 		if (typeof padlockAskPhone === 'function') { padlockAskPhone('gallery'); }
 	}
 	else {
+		// drop the window's token first: the refresh then reads as locked even
+		// if the stored secret is still on its way out
+		$('#gallery').attr('unlock', '');
 		settingSetter({ 'app': 'gallery', 'setting': 'combo_unlock', value: '' });
 		imageViewer({ 'view': view });
 	}
