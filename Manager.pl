@@ -8356,7 +8356,12 @@ sub remote_manager_ticket($c, $rm) {
 		return '' unless $peer->{'ua'};
 		my $name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || 'remote';
 		my $host = eval { Mojo::URL->new($rm->{'manager'})->host } || '';
-		my $url = $peer->{'manager'} . '/manager/qrcode_generator?nic=' . url_escape($host || 'lo')
+		# The ticket's host is the peer's own domain, not the address this
+		# house happened to dial it on. A tailnet address does not match the
+		# peer's config domain, and the ticket door refuses a ticket whose
+		# host is not the house's own domain.
+		my $ticket_host = $rm->{'fqdn'} || $host || '';
+		my $url = $peer->{'manager'} . '/manager/qrcode_generator?nic=' . url_escape($ticket_host || 'lo')
 			. '&privilege=citizen&keep_warranty=1'
 			. '&signatorial=' . url_escape(&subs::signatorial_designer())
 			. '&warranty=' . url_escape('-2h') . '&name=' . url_escape($name) . '&timestamp=' . $timestamp;
@@ -8366,7 +8371,7 @@ sub remote_manager_ticket($c, $rm) {
 		my $ticket = $data->{'url'} || '';
 		return '' unless $ticket;
 		my $dock = $rm->{'port_dock'} || $rm->{'dock_port'} || 3000;
-		$ticket =~ s{^https?://[^/]+}{https://$host:$dock} if $host;
+		$ticket =~ s{^https?://[^/]+}{https://$ticket_host:$dock} if $ticket_host;
 		return $ticket;
 	};
 	my $ticket = $mint->();
