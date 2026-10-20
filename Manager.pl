@@ -8238,10 +8238,21 @@ get '/manager/remote_manager' => sub ($c) {
 	return $c->render(text => 'no address for that machine', status => 404) unless $url =~ m{^https?://[^\s"'<>]+$}i;
 	$url .= '/manager';
 	my $name = $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'domain'} || $rm->{'ip'} || 'remote';
+	# The window must sign the peer in with the device this session's app key
+	# belongs to. The page's localStorage can hold an older (or a browser)
+	# device id, so the server is the authority on it.
+	# app_device is the row the app login just verified; device_uuid is the
+	# paired session's own. Prefer the former when it exists.
+	my $session_device_uuid = $c->session('app_device') || $c->session('device_uuid') || '';
+	my $session_device = $session_device_uuid
+		? &subs::db_select('paired_devices', [ 'uuid', 'app_pubkey' ], { uuid => $session_device_uuid, status => 'active' })->hash
+		: undef;
 	$c->render(json => {
 		manager => $url,
 		uuid => $rm->{'uuid'} || '',
-		name => $name
+		name => $name,
+		device_uuid => $session_device_uuid,
+		app_key => ($session_device && $session_device->{'app_pubkey'}) ? 1 : 0
 	});
 };
 
