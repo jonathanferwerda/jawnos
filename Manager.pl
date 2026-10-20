@@ -6476,7 +6476,7 @@ get '/manager/configure/misc_setting_list' => sub($c) {
 		photo_sizes => $gb::photo_sizes,
 		thumbnail_sizes => $gb::thumbnail_sizes,
 		folders => $config->{'folders'},
-		translation_languages => [ &subs::translation_languages() ],
+		translation_languages => &subs::translation_languages(),
 		translation_model => &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' }),
 		translation_model_fallback => &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' }),
 		config => &subs::config_reader()
