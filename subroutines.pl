@@ -15225,21 +15225,21 @@ sub lan_presence_accept {
 		&& defined $row_host && $row_host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/
 		&& $row_host !~ /^127\./
 		&& $port =~ /^\d+$/) {
-		my ($old_port) = (($rm->{'manager'} || '') =~ m{^https?://[^/:]+:(\d+)});
-		if ($row_host ne $peer_ip || !defined $old_port || $old_port ne $port) {
-			my $scheme = (($rm->{'manager'} || '') =~ m{^http:}) ? 'http' : 'https';
-			# Prefer the name the peer advertises when it resolves to the address
-			# this beacon came from. A name follows the machine when it moves; an
-			# ip is only true on the network it was learned on.
-			my $host = $peer_ip;
-			my $fqdn = $rm->{'fqdn'} || '';
-			if ($fqdn ne '') {
-				require Socket;
-				my $packed = gethostbyname($fqdn);
-				my $resolved = $packed ? Socket::inet_ntoa($packed) : '';
-				$host = $fqdn if $resolved eq $peer_ip;
-			}
-			$update->{'manager'} = $scheme . '://' . $host . ':' . $port;
+		my $scheme = (($rm->{'manager'} || '') =~ m{^http:}) ? 'http' : 'https';
+		# Prefer the name the peer advertises when it resolves to the address
+		# this beacon came from. A name follows the machine when it moves; an
+		# ip is only true on the network it was learned on.
+		my $host = $peer_ip;
+		my $fqdn = $rm->{'fqdn'} || '';
+		if ($fqdn ne '') {
+			require Socket;
+			my $packed = gethostbyname($fqdn);
+			my $resolved = $packed ? Socket::inet_ntoa($packed) : '';
+			$host = $fqdn if $resolved eq $peer_ip;
+		}
+		my $wanted = $scheme . '://' . $host . ':' . $port;
+		if ($wanted ne ($rm->{'manager'} || '')) {
+			$update->{'manager'} = $wanted;
 			$update->{'port'} = $port;
 			$changed = 1;
 		}
