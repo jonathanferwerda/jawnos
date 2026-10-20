@@ -27161,7 +27161,7 @@ sub device_pubkey_clean($armor) {
 	return;
 }
 
-sub device_store_pubkey($armor, $name, $agent) {
+sub device_store_pubkey($armor, $name, $agent, $person_uuid) {
 	my $pem = &device_pubkey_clean($armor);
 	return unless $pem;
 	my $now = &subs::rightNow();
@@ -27173,7 +27173,7 @@ sub device_store_pubkey($armor, $name, $agent) {
 	my $kind = ($ua =~ /Android|iPhone|iPad|Mobile/i) ? 'phone'
 		: ($ua =~ /AppleWebKit\/605/ && $ua =~ /Linux|X11/) ? 'webview'
 		: 'browser';
-	&subs::db_insert('paired_devices', {
+	my $data = {
 		uuid => $uuid,
 		name => substr($name || 'Device', 0, 60),
 		pubkey => $pem,
@@ -27183,7 +27183,9 @@ sub device_store_pubkey($armor, $name, $agent) {
 		server_time => $now,
 		agent => substr($agent // '', 0, 400),
 		kind => $kind
-	});
+	};
+	$data->{'person_uuid'} = $person_uuid if defined $person_uuid && length $person_uuid;
+	&subs::db_insert('paired_devices', $data);
 	return $uuid;
 }
 
@@ -27193,7 +27195,10 @@ sub device_session_mint($c, $device_uuid) {
 	my $now = &subs::rightNow();
 	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'login_warranty' }) || '-3h', $now);
 	my $person = &subs::person_for_device($device_uuid);
-	my $privilege = ($person && $person->{'privilege'}) ? $person->{'privilege'} : 'citizen';
+	# A device nobody has claimed is not a citizen: the person is the identity.
+	# The owner backfill attaches the devices that predate this rule; a device
+	# paired later waits, as guest, until a citizen assigns it.
+	my $privilege = &subs::person_privilege($person);
 	$c->session('authentication' => 'approved');
 	$c->session('database' => $database);
 	$c->session('suds_id' => &subs::suds_id(&subs::session_suds($c)));
@@ -27229,7 +27234,8 @@ post '/manager/device/pair' => sub($c) {
 		return;
 	}
 	my $name = substr($c->param('name') || 'Device', 0, 60);
-	my $uuid = &device_store_pubkey($c->param('pubkey'), $name, $c->req->headers->user_agent);
+	my $person_uuid = $c->session('person_uuid') || &subs::people_owner_ensure();
+	my $uuid = &device_store_pubkey($c->param('pubkey'), $name, $c->req->headers->user_agent, $person_uuid);
 	unless ($uuid) { $c->render(json => { ok => 0, error => 'no key' }); return; }
 	$c->session('device_uuid' => $uuid);
 	$c->render(json => { ok => 1, device_uuid => $uuid, name => $name });
@@ -27327,10 +27333,11 @@ post '/manager/device/app_login' => sub($c) {
 	# promoted here, or the citizen-only routes would still read guest.
 	# A person is the identity; the device is how they carry it. The session
 	# records the person when the device has one, and its privilege is the
-	# person's. A device nobody has claimed still enters as a citizen, which is
-	# exactly the behaviour before people existed.
+	# person's. An unclaimed device is a guest, never a citizen; the owner
+	# backfill attaches devices that predate the rule, and a later pairing
+	# waits for an assignment.
 	my $person = &subs::person_for_device($device_uuid);
-	my $privilege = ($person && $person->{'privilege'}) ? $person->{'privilege'} : 'citizen';
+	my $privilege = &subs::person_privilege($person);
 	$c->session('authentication' => 'approved');
 	$c->session('privilege' => $privilege);
 	$c->session('person_uuid' => ($person ? $person->{'uuid'} : undef));
@@ -27748,7 +27755,8 @@ post '/manager/device/recover' => sub($c) {
 	}
 	&subs::setting_setter({ app => '__president', setting => 'remote_duty', value => &subs::rightNow() });
 	my $name = substr($c->param('name') || 'Recovered Device', 0, 60);
-	my $uuid = &device_store_pubkey($c->param('pubkey'), $name, $c->req->headers->user_agent);
+	my $person_uuid = &subs::people_owner_ensure();
+	my $uuid = &device_store_pubkey($c->param('pubkey'), $name, $c->req->headers->user_agent, $person_uuid);
 	unless ($uuid) { $c->render(json => { ok => 0, error => 'no key' }); return; }
 	&device_session_mint($c, $uuid);
 	$c->render(json => { ok => 1, device_uuid => $uuid, name => $name });
@@ -27852,7 +27860,8 @@ post '/manager/security/device_request_decide' => sub($c) {
 			}
 		}
 		elsif ($decision eq 'approve') {
-			my $device_uuid = &device_store_pubkey($row->{'pubkey'}, $row->{'name'}, $row->{'agent'});
+			my $person_uuid = $c->session('person_uuid') || &subs::people_owner_ensure();
+			my $device_uuid = &device_store_pubkey($row->{'pubkey'}, $row->{'name'}, $row->{'agent'}, $person_uuid);
 			if ($device_uuid) {
 				&subs::db_update('device_requests', { status => 'approved', device_uuid => $device_uuid, server_time => $now }, { uuid => $uuid });
 			}

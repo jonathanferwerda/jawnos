@@ -18050,6 +18050,13 @@ sub person_for_device {
 	return $p || undef;
 }
 
+# The privilege a device's session wears: its person's, or guest when nobody
+# has claimed it. A device with no person is never a citizen.
+sub person_privilege {
+	my ($person) = @_;
+	return ($person && ref $person eq 'HASH' && $person->{'privilege'}) ? $person->{'privilege'} : 'guest';
+}
+
 # A revoked person is revoked for every session at once: the session carries
 # person_uuid and, for a device, device_uuid, so both are checked rather than
 # waiting for a cookie to expire.
@@ -22970,6 +22977,15 @@ sub backfills() {
 			# copy a previous version minted; three paper or device shares are
 			# the way back in when this machine's key file is gone.
 			&db_query('delete from settings where app = ? and setting = ?', '__president', 'password_share');
+			return 1;
+		},
+		'person_owner_devices' => sub {
+			# A device with no person is not a citizen. Attach the devices that
+			# were paired after the people table existed but before this rule,
+			# once; a device paired later waits for a citizen to assign it.
+			my $owner = &people_owner_ensure();
+			return 0 unless $owner;
+			&db_query('update paired_devices set person_uuid = ? where person_uuid is null or person_uuid = ?', $owner, '');
 			return 1;
 		},
 		'door_seed' => sub {

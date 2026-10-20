@@ -3,9 +3,10 @@
 **Status:** 2026-10-20 (v0.1.958). **Part 1:** the `people` table, the
 `paired_devices.person_uuid` link, the owner migration, person-aware app and
 recovered-device login, assignment in the Devices view, and ticket logins that
-mint or resume a person. Revoking a person revokes their devices, deletes the
-shares those devices hold, stops their invitations and ends their sessions at
-the next request. **Shamir:** the GF(256) split/combine core is implemented and
+mint or resume a person. A device with no person enters as a **guest**, never a
+citizen; a one-time backfill attached the devices that predated the rule.
+Revoking a person revokes their devices, deletes the shares those devices hold,
+stops their invitations and ends their sessions at the next request. **Shamir:** the GF(256) split/combine core is implemented and
 probed (`shamir_split`, `shamir_combine`, share encode/decode). Paper shares
 print once; device shares are wrapped to a device's X25519 key, stored in
 `house_key_shares`, released through the gate's share request, and combined by
@@ -97,6 +98,25 @@ The only real one: `app_login` currently promotes **any** active device to
 citizen. The moment person lookup lands, a device with no person stops being a
 citizen — so the migration must attach every current device first, and the code
 must refuse to start the strict path if `people` is empty.
+
+### Implemented 2026-10-20 — no person, no citizen
+
+- `device_session_mint` (browser/device login) and `app_login` now resolve the
+  device's person and wear that person's privilege; an unassigned device is a
+  **guest**, never a citizen. The old fallback made every active device a
+  citizen.
+- The pair, approval and recovery routes now write a person onto the new device:
+  the pairing session's person, the approver's person, or the owner for a
+  recovery. A device paired later without one waits as guest until a citizen
+  assigns it in Devices.
+- `person_owner_devices` is a one-time backfill: it attaches the devices that
+  were paired after the people table existed but before this rule (on the live
+  house, the two unassigned phones) to the owner. A device paired after the
+  backfill is not swept in.
+- The live session's privilege is still a snapshot: unassigning another device
+  takes effect at its next login, and revoking a person/device ends it at the
+  next request (the session check). This matches the existing demotion rule.
+- Probe: `.shots/person_strict_probe.pl` (15 checks).
 
 ### Implemented 2026-10-20 — person revoke
 
@@ -256,7 +276,9 @@ recovery route and UI (~6 h), distribution UI (~4 h), drill (~3 h).
 
 ## Definition of done
 
-- A device with no person cannot become a citizen.
+- ~~A device with no person cannot become a citizen.~~ Done: it enters as a
+  guest; the one-time owner backfill attached the devices that predated the
+  rule.
 - Revoking a person kills every session that person had.
 - Three shares rebuild the suds; any two do not.
 - A machine with no `~/.house.key` recovers with three shares and re-seeds.
