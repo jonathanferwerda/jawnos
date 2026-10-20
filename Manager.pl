@@ -27095,13 +27095,25 @@ post '/manager/security/device_request_decide' => sub($c) {
 	my $now = &subs::rightNow();
 	my $row = ($uuid && &subs::db_select('device_requests', undef, { uuid => $uuid, status => 'pending' })->hashes->[0]);
 	if ($row && $row->{'server_time'} > $now - 600000) {
-		if (($row->{'kind'} || '') eq 'app' && $decision eq 'approve') {
+		# A synced copy may reach an approving machine before the new columns do:
+		# the request's own app_pubkey is enough to recognise an app request even
+		# when `kind` is still blank there. Without this, the old pairing branch
+		# marked it approved and dropped the key.
+		my $is_app = ((($row->{'kind'} || '') eq 'app') || (($row->{'app_pubkey'} || '') ne '')) ? 1 : 0;
+		if ($is_app && $decision eq 'approve') {
 			# An app key joins an existing paired device; it does not mint a new one.
 			my $target = $row->{'device_uuid'} || '';
 			my $device = ($target && &subs::db_select('paired_devices', undef, { uuid => $target, status => 'active' })->hashes->[0]);
-			if ($device && $row->{'app_pubkey'}) {
-				&subs::db_update('paired_devices', { app_pubkey => $row->{'app_pubkey'}, app_kind => $row->{'app_kind'} }, { uuid => $target });
+			my $app_pubkey = $row->{'app_pubkey'} || '';
+			my $app_kind = ($row->{'app_kind'} || 'ed25519') eq 'ec' ? 'ec' : 'ed25519';
+			if ($device && $app_pubkey) {
+				&subs::db_update('paired_devices', { app_pubkey => $app_pubkey, app_kind => $app_kind, server_time => $now }, { uuid => $target });
 				&subs::db_update('device_requests', { status => 'approved', device_uuid => $target, server_time => $now }, { uuid => $uuid });
+				$log->info('app gate: app key approved for ' . ($device->{'name'} || $target) . ' from ' . ($c->tx->remote_address || '?'));
+			}
+			else {
+				$log->info('app gate: app approval incomplete for ' . ($target || '?')
+					. ' (device ' . ($device ? 1 : 0) . ', key ' . length($app_pubkey) . ')');
 			}
 		}
 		elsif ($decision eq 'approve') {
@@ -27112,8 +27124,7 @@ post '/manager/security/device_request_decide' => sub($c) {
 		}
 		else {
 			&subs::db_update('device_requests', { status => 'denied', server_time => $now }, { uuid => $uuid });
-		}
-	}
+		}	}
 	my $sec = &security_initializer($c);
 	$c->render(json => { ok => 1, html => $sec->{'html'} });
 };

@@ -55,6 +55,11 @@
 							jawnAppLogin(true).then(reloadSoon).catch(function () { status(<%== &subs::json_chars(&subs::ui('Could not sign in this app.')) %>); });
 							return;
 						}
+						// A request older than ten minutes is cleared on the server. Ask
+						// again instead of waiting forever on a request that no longer exists.
+						if (s && s.ok && !s.pending && typeof jawnAppEnrollDesktop === 'function') {
+							jawnAppEnrollDesktop().catch(function () {});
+						}
 						setTimeout(check, 3000);
 					}).catch(function () { setTimeout(check, 5000); });
 				}, 3000);
