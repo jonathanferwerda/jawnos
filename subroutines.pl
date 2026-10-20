@@ -15228,7 +15228,18 @@ sub lan_presence_accept {
 		my ($old_port) = (($rm->{'manager'} || '') =~ m{^https?://[^/:]+:(\d+)});
 		if ($row_host ne $peer_ip || !defined $old_port || $old_port ne $port) {
 			my $scheme = (($rm->{'manager'} || '') =~ m{^http:}) ? 'http' : 'https';
-			$update->{'manager'} = $scheme . '://' . $peer_ip . ':' . $port;
+			# Prefer the name the peer advertises when it resolves to the address
+			# this beacon came from. A name follows the machine when it moves; an
+			# ip is only true on the network it was learned on.
+			my $host = $peer_ip;
+			my $fqdn = $rm->{'fqdn'} || '';
+			if ($fqdn ne '') {
+				require Socket;
+				my $packed = gethostbyname($fqdn);
+				my $resolved = $packed ? Socket::inet_ntoa($packed) : '';
+				$host = $fqdn if $resolved eq $peer_ip;
+			}
+			$update->{'manager'} = $scheme . '://' . $host . ':' . $port;
 			$update->{'port'} = $port;
 			$changed = 1;
 		}

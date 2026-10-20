@@ -34253,12 +34253,31 @@ sub remote_machine_online($data) {
 			# two machines never meet on the new network. A candidate that is not a
 			# literal address uses the stored manager, which is also the tunnel on
 			# the hub.
-			my $manager = ($candidate =~ /^\d+\.\d+\.\d+\.\d+$/) ? 'https://' . $candidate . ':' . $port : $rm->{'manager'};
-			$manager .= '/?signatorial=' . url_escape $rs;
+			my $base;
+			if ($candidate =~ /^\d+\.\d+\.\d+\.\d+$/) {
+				$base = 'https://' . $candidate . ':' . $port;
+			}
+			elsif ($fqdn ne '' && $candidate eq $fqdn
+				&& ($rm->{'tunnel'} || '') ne 'yes'
+				&& ($rm->{'manager'} || '') =~ m{^https?://\d{1,3}(?:\.\d{1,3}){3}}
+				&& ($rm->{'manager'} || '') !~ m{^https?://127\.}) {
+				# The stored manager is a bare LAN address the peer has since left;
+				# the name is the only thing that can still reach it, so build the
+				# URL from the name rather than the stale manager.
+				$base = 'https://' . $fqdn . ':' . $port;
+			}
+			else {
+				$base = $rm->{'manager'};
+			}
+			my $url = $base . '/?signatorial=' . url_escape $rs;
 			my $user_agent = $remote_signatorial;
-			my $res = $ua->insecure(1)->get($manager => {user_agent => $user_agent});
+			my $res = $ua->insecure(1)->get($url => {user_agent => $user_agent});
 			if ( $res->result->is_success ) {
 				if ($res->result->body eq $remote_signatorial) {
+					# Keep the address that actually answered for the rest of this
+					# pass: the handshake that follows uses $rm->{manager}.
+					$rm->{'manager'} = $base;
+					$rm->{'port'} = $port if $port;
 					$success = 1;
 					last;
 				}
