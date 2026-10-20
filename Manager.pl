@@ -27228,7 +27228,9 @@ sub padlock_gate_mode {
 # their own rotated-token rail. 'shadow' logs what it would deny; 'enforce'
 # answers with the open-in-the-app page.
 sub app_access_mode {
-	my $mode = &subs::setting_grabber({ app => '__president', setting => 'app_access' });
+	# A house-wide policy, not a per-device preference: the row is shared as
+	# device 'all' so every machine and every device class reads one answer.
+	my $mode = &subs::setting_grabber({ app => '__president', setting => 'app_access', device => 'all' });
 	return 'off' if defined $mode && $mode eq 'off';
 	return $mode eq 'enforce' ? 'enforce' : 'shadow';
 }
