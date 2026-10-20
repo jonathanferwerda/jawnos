@@ -42,6 +42,15 @@
 				if (el) { el.textContent = text || ''; }
 			}
 			function reloadSoon() {
+				// A page that keeps landing back here must not spin: the app session
+				// may be gone while localStorage still remembers an old `until`.
+				var last = 0;
+				try { last = parseInt(sessionStorage.getItem('jawn_app_reload') || '0', 10) || 0; } catch (e) { last = 0; }
+				if (last && Date.now() - last < 5000) {
+					status(<%== &subs::json_chars(&subs::ui('Still signing in...')) %>);
+					return;
+				}
+				try { sessionStorage.setItem('jawn_app_reload', String(Date.now())); } catch (e) {}
 				status(<%== &subs::json_chars(&subs::ui('Signed in. Loading...')) %>);
 				setTimeout(function () { window.location.reload(); }, 400);
 			}
@@ -68,7 +77,7 @@
 				if (typeof jawnAppLogin !== 'function') { return; }
 				if (!window.JawnBiometricKey && !window.JawnDesktop) { return; }
 				status(<%== &subs::json_chars(&subs::ui('Checking this app...')) %>);
-				jawnAppLogin().then(function (ok) {
+				jawnAppLogin(true).then(function (ok) {
 					if (ok) { reloadSoon(); }
 					else { status(<%== &subs::json_chars(&subs::ui('This app needs a key approved on a phone that is already signed in.')) %>); }
 				}).catch(function (err) {

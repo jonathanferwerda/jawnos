@@ -575,6 +575,9 @@ function jawnAppLogin(force) {
 		return true;
 	}).catch(function (err) {
 		jawnAppLoginPending = null;
+		// The session window this cache describes is gone (or never took); do not
+		// let another page trust it and reload in a loop.
+		try { localStorage.removeItem('jawn_app_until'); } catch (e) {}
 		throw err;
 	});
 	return jawnAppLoginPending;
