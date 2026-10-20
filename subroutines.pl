@@ -17943,6 +17943,186 @@ sub peer_verify_strict {
 	return &peer_verify($c, $rm) ? 1 : 0;
 }
 
+# --- the house crest (People) ------------------------------------------------
+# A crest is the house's face: one hand-drawn picture that people recognise. The
+# picture is not the proof. A house key signs a record that names the drawing's
+# hashes, and the short fingerprint on that record is what another house compares.
+# Everything here is pure or settings-backed; nothing writes the live roster.
+
+sub crest_canonical_json {
+	my ($record) = @_;
+	return undef unless ref $record eq 'HASH';
+	my $copy = { %$record };
+	delete $copy->{'sig'};
+	return JSON::PP->new->canonical(1)->encode($copy);
+}
+
+sub crest_fingerprint {
+	my ($pub) = @_;
+	return undef unless defined $pub && length $pub;
+	my $hex = uc(&sha256_hex($pub));
+	$hex =~ s/(.{4})(?=.)/$1 /g;
+	return $hex;
+}
+
+sub crest_key_generate {
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new->generate_key;
+	return ($key->export_key_raw('public'), $key->export_key_raw('private'));
+}
+
+sub crest_public_from_private {
+	my ($priv) = @_;
+	return undef unless defined $priv && length $priv == 32;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($priv, 'private');
+	return $key->export_key_raw('public');
+}
+
+sub crest_sign_record {
+	my ($record, $priv) = @_;
+	return undef unless ref $record eq 'HASH' && defined $priv && length $priv == 32;
+	my $json = &crest_canonical_json($record);
+	return undef unless defined $json;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($priv, 'private');
+	my $sig = $key->sign_message($json);
+	return undef unless defined $sig && length $sig == 64;
+	return { %$record, sig => encode_base64($sig, '') };
+}
+
+sub crest_verify_record {
+	my ($record) = @_;
+	return 0 unless ref $record eq 'HASH';
+	my $pub = eval { decode_base64($record->{'pubkey'} || '') };
+	my $sig = eval { decode_base64($record->{'sig'} || '') };
+	return 0 unless defined $pub && length $pub == 32 && defined $sig && length $sig == 64;
+	my $json = &crest_canonical_json($record);
+	return 0 unless defined $json;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($pub, 'public');
+	return $key->verify_message($sig, $json) ? 1 : 0;
+}
+
+sub crest_record_read {
+	my $raw = &setting_grabber({ app => '__president', setting => 'crest', device => 'all' });
+	return {} unless defined $raw && length $raw;
+	my $record = eval { decode_json($raw) };
+	return ref $record eq 'HASH' ? $record : {};
+}
+
+sub crest_record_write {
+	my ($record) = @_;
+	return 0 unless ref $record eq 'HASH';
+	&setting_setter({ app => '__president', setting => 'crest', device => 'all', value => encode_json($record) });
+	return 1;
+}
+
+sub crest_key_read {
+	my ($suds) = @_;
+	return undef unless defined $suds && length $suds;
+	my $sealed = &setting_grabber({ app => '__president', setting => 'crest_key', device => 'all' });
+	return undef unless defined $sealed && length $sealed;
+	my $plain = &note_decrypter($suds, $sealed);
+	return undef unless defined $plain && length $plain;
+	my $raw = eval { decode_base64($plain) };
+	return (defined $raw && length $raw == 32) ? $raw : undef;
+}
+
+sub crest_key_write {
+	my ($suds, $priv) = @_;
+	return 0 unless defined $suds && length $suds && defined $priv && length $priv == 32;
+	my $sealed = &note_encrypter($suds, encode_base64($priv, ''));
+	return 0 unless defined $sealed && length $sealed;
+	&setting_setter({ app => '__president', setting => 'crest_key', device => 'all', value => $sealed });
+	return 1;
+}
+
+sub crest_house_name_read {
+	my $name = &setting_grabber({ app => '__president', setting => 'house_name', device => 'all' });
+	$name = &setting_grabber({ app => 'me', setting => 'my_name' }) unless defined $name && length $name;
+	$name = &machine_name() unless defined $name && length $name;
+	return (defined $name && length $name) ? $name : 'Home';
+}
+
+sub crest_sha256_file {
+	my ($file) = @_;
+	return undef unless $file && -e $file;
+	my $bytes = read_file($file);
+	return (defined $bytes && length $bytes) ? &sha256_hex($bytes) : undef;
+}
+
+# Normalize the drawing the same way every time: grayscale, level, deskew when
+# the paper allows it, trim to the ink, and cap the long side. The color original
+# is kept separately for the person to look at; this is the matching reference.
+sub crest_normalize_image {
+	my ($src, $dst) = @_;
+	return 0 unless $src && $dst && -e $src;
+	my @cmd = ('magick', $src, '-colorspace', 'Gray', '-normalize',
+		'-deskew', '40%', '-trim', '+repage', '-resize', '1024x1024>', $dst);
+	my $rc = system(@cmd);
+	if ($rc != 0 || !-e $dst || -s $dst == 0) {
+		@cmd = ('magick', $src, '-colorspace', 'Gray', '-normalize',
+			'-trim', '+repage', '-resize', '1024x1024>', $dst);
+		$rc = system(@cmd);
+	}
+	return ($rc == 0 && -e $dst && -s $dst > 0) ? 1 : 0;
+}
+
+# A 64-bit difference hash: resize to 9x8, compare each pixel to its right-hand
+# neighbour, one bit each. Small enough to store in the record, cheap to compare.
+sub crest_dhash {
+	my ($file) = @_;
+	return undef unless $file && -e $file;
+	open(my $fh, '-|', 'magick', $file, '-resize', '9x8!', '-colorspace', 'Gray', '-depth', '8', 'gray:-') or return undef;
+	binmode $fh;
+	my $raw = do { local $/; <$fh> };
+	close $fh;
+	return undef unless defined $raw && length $raw == 72;
+	my $bits = 0;
+	my $n = 0;
+	for my $y (0..7) {
+		for my $x (0..7) {
+			my $a = ord(substr($raw, $y * 9 + $x, 1));
+			my $b = ord(substr($raw, $y * 9 + $x + 1, 1));
+			$bits |= (1 << $n) if $a > $b;
+			$n++;
+		}
+	}
+	return sprintf('%016x', $bits);
+}
+
+sub crest_hamming {
+	my ($a, $b) = @_;
+	return undef unless defined $a && defined $b && $a =~ /^[0-9a-f]{16}$/i && $b =~ /^[0-9a-f]{16}$/i;
+	my $ba = unpack('B*', pack('H*', $a));
+	my $bb = unpack('B*', pack('H*', $b));
+	my $n = 0;
+	$n++ for grep { substr($ba, $_, 1) ne substr($bb, $_, 1) } 0..63;
+	return $n;
+}
+
+# Where a crest image lives. The record names the scanning device, but the app may
+# be opened on another machine; try both photo locations before giving up.
+sub crest_image_file {
+	my ($record, $kind) = @_;
+	return undef unless ref $record eq 'HASH';
+	my $name = $record->{$kind} || '';
+	return undef unless $name =~ /^[\w.\-]+$/;
+	my @devices = ($record->{'device'}, &device_setter());
+	my %seen;
+	@devices = grep { defined $_ && length $_ && !$seen{$_}++ } @devices;
+	foreach my $dev (@devices) {
+		my $folder = &setting_grabber({ app => 'misc', setting => 'photo_location', device => $dev }) || 'Pictures';
+		my $file = &home($folder) . '/me/' . $name;
+		return $file if -e $file;
+	}
+	return undef;
+}
+
 # Authorization beside authentication. peer_verify answers "is this who they
 # claim?", peer_allows answers "may this house do this, and is the lease still
 # alive?". Call it only after peer_verify has accepted the row for this request:

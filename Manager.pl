@@ -5747,6 +5747,7 @@ my @manager_bundle_files = qw(
 	/js/manager/agents.js
 	/js/manager/camera.js
 	/js/manager/phone.js
+	/js/manager/people.js
 );
 my $manager_bundle_cache;
 
@@ -18455,6 +18456,230 @@ get '/manager/phone' => sub($c) {
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'phone', title => 'Phone', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
+};
+
+# --- People: the house crest -------------------------------------------------
+# The first pass owns one crest: the house's own drawing. It is scanned or
+# uploaded, normalized and hashed, sealed like a picture, and signed by a house
+# key kept sealed under the house key. Other houses' crests and the vouches
+# between them come next; nothing here writes a peer row.
+
+sub people_citizen {
+	my ($c) = @_;
+	return (($c->session('privilege') || '') eq 'citizen') ? 1 : 0;
+}
+
+sub people_crest_scan_dir {
+	my $folder = &subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => &subs::device_setter() }) || 'Scans';
+	my $dir = &subs::home($folder) . '/people';
+	unless (-d $dir) { eval { require File::Path; File::Path::make_path($dir) }; }
+	return $dir;
+}
+
+sub people_crest_install {
+	my ($c, $src) = @_;
+	my $suds = &subs::session_suds($c);
+	return { ok => 0, error => 'the house key is not available' } unless $suds;
+	my $device = &subs::device_setter();
+	my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $device }) || 'Pictures';
+	my $dir = &subs::home($folder) . '/me';
+	unless (-d $dir) { eval { require File::Path; File::Path::make_path($dir) }; }
+	my $old = &subs::crest_record_read();
+	my $version = (($old->{'version'} || 0) + 1);
+	my $color_png = "$dir/crest.v$version.color.png";
+	my $ref_png = "$dir/crest.v$version.ref.png";
+	my $rc = system('magick', $src, $color_png);
+	unless ($rc == 0 && -e $color_png && -s $color_png > 0) {
+		unlink $color_png;
+		return { ok => 0, error => 'the picture could not be read' };
+	}
+	unless (&subs::crest_normalize_image($color_png, $ref_png)) {
+		unlink $color_png; unlink $ref_png;
+		return { ok => 0, error => 'the picture could not be normalized' };
+	}
+	my $dhash = &subs::crest_dhash($ref_png);
+	my $sha = &subs::crest_sha256_file($ref_png);
+	unless (defined $dhash && defined $sha) {
+		unlink $color_png; unlink $ref_png;
+		return { ok => 0, error => 'the picture could not be hashed' };
+	}
+	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
+	my $color_name = "crest.v$version.color.png.enc";
+	my $ref_name = "crest.v$version.ref.png.enc";
+	my $color_enc = "$dir/$color_name";
+	my $ref_enc = "$dir/$ref_name";
+	unless (&subs::openssl_file_crypt('e', $standard, $suds, $color_png, $color_enc, 0, 1)
+		&& &subs::openssl_file_crypt('e', $standard, $suds, $ref_png, $ref_enc, 0, 1)) {
+		unlink $color_png; unlink $ref_png; unlink $color_enc; unlink $ref_enc;
+		return { ok => 0, error => 'the picture could not be sealed' };
+	}
+	unlink $color_png; unlink $ref_png;
+	my $priv = &subs::crest_key_read($suds);
+	my $pub;
+	if (defined $priv && length $priv == 32) {
+		$pub = &subs::crest_public_from_private($priv);
+	}
+	else {
+		($pub, $priv) = &subs::crest_key_generate();
+		unless (defined $pub && defined $priv) {
+			return { ok => 0, error => 'the crest key could not be made' };
+		}
+		unless (&subs::crest_key_write($suds, $priv)) {
+			return { ok => 0, error => 'the crest key could not be stored' };
+		}
+	}
+	my $record = {
+		uuid => $old->{'uuid'} || &subs::random_string_creator(32),
+		house_id => $old->{'house_id'} || &subs::random_string_creator(24),
+		name => $old->{'name'} || &subs::crest_house_name_read(),
+		pubkey => encode_base64($pub, ''),
+		fingerprint => &subs::crest_fingerprint($pub),
+		dhash => $dhash,
+		sha256 => $sha,
+		image => $color_name,
+		reference => $ref_name,
+		version => $version,
+		issued => $old->{'issued'} || &subs::rightNow(),
+		server_time => &subs::rightNow(),
+		device => $device,
+		members => $old->{'members'} || [ { signatorial => &subs::signatorial_designer(), device => $device } ],
+	};
+	my $signed = &subs::crest_sign_record($record, $priv);
+	unless ($signed && $signed->{'sig'}) {
+		return { ok => 0, error => 'the crest could not be signed' };
+	}
+	unless (&subs::crest_record_write($signed)) {
+		return { ok => 0, error => 'the crest could not be saved' };
+	}
+	return { ok => 1, crest => $signed };
+}
+
+sub people_crest_upload_file {
+	my ($c) = @_;
+	my @uploads = @{ $c->req->uploads || [] };
+	return (undef, 'no picture') unless @uploads;
+	require File::Temp;
+	my ($fh, $path) = File::Temp::tempfile('jawnos-crest-XXXXXX', TMPDIR => 1, UNLINK => 0, SUFFIX => '.img');
+	return (undef, 'no temporary file') unless $fh && $path;
+	binmode $fh;
+	print $fh $uploads[0]->asset->slurp;
+	close $fh;
+	return ($path, undef);
+}
+
+get '/manager/people' => sub($c) {
+	unless (&people_citizen($c)) { $c->render(text => ''); return; }
+	my $crest = &subs::crest_record_read();
+	my $people = eval { &subs::db_select('people', undef, { status => 'active' })->hashes } || [];
+	@{$people} = sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @{$people};
+	my $feeds = &market_scan_feeds();
+	my $scanner = (grep { $_ eq 'flatbed' } @{ $feeds || [] }) ? 1 : 0;
+	my $content = $c->render_to_string(
+		template => 'apps/people',
+		crest => $crest,
+		people => $people,
+		scanner => $scanner,
+		device => &subs::device_setter(),
+	);
+	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'people', title => &subs::lang('people'), contents => $content }, $c->param('timestamp'));
+	$c->render(text => $contents);
+};
+
+post '/manager/people/crest/scan' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
+	my $feeds = &market_scan_feeds();
+	unless (grep { $_ eq 'flatbed' } @{ $feeds || [] }) {
+		return $c->render(json => { ok => 0, error => 'this device has no flatbed scanner' });
+	}
+	my $base = &people_crest_scan_dir() . '/crest_' . &subs::rightNow();
+	my $command = &scanner_scan_command('flatbed', $base);
+	unless ($command) {
+		return $c->render(json => { ok => 0, error => 'the scanner does not offer the flatbed' });
+	}
+	`timeout 60 $command 2> $base.log`;
+	my @pages = &scanner_page_list($base);
+	unless (@pages) {
+		my $why = &scanner_log_reason($base . '.log');
+		unlink glob("$base*");
+		return $c->render(json => { ok => 0, error => 'the scanner produced no page' . ($why ne '' ? ': ' . $why : '') });
+	}
+	my $result = &people_crest_install($c, $pages[0]);
+	unlink @pages;
+	unlink $base . '.log';
+	return $c->render(json => $result);
+};
+
+post '/manager/people/crest/upload' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
+	my ($path, $error) = &people_crest_upload_file($c);
+	return $c->render(json => { ok => 0, error => $error }) unless $path;
+	my $result = &people_crest_install($c, $path);
+	unlink $path;
+	return $c->render(json => $result);
+};
+
+post '/manager/people/crest/verify' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
+	my $record = &subs::crest_record_read();
+	return $c->render(json => { ok => 0, error => 'no crest yet' }) unless $record->{'uuid'};
+	my ($path, $error) = &people_crest_upload_file($c);
+	return $c->render(json => { ok => 0, error => $error }) unless $path;
+	my $ref = $path . '.ref.png';
+	unless (&subs::crest_normalize_image($path, $ref)) {
+		unlink $path; unlink $ref;
+		return $c->render(json => { ok => 0, error => 'the picture could not be read' });
+	}
+	my $dhash = &subs::crest_dhash($ref);
+	my $distance = &subs::crest_hamming($record->{'dhash'}, $dhash);
+	unlink $path; unlink $ref;
+	unless (defined $distance) {
+		return $c->render(json => { ok => 0, error => 'the picture could not be compared' });
+	}
+	return $c->render(json => { ok => 1, distance => $distance, likely => ($distance <= 12 ? 1 : 0), threshold => 12 });
+};
+
+post '/manager/people/house_name' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
+	my $name = $c->param('name') // '';
+	$name =~ s/^\s+|\s+$//g;
+	$name = substr($name, 0, 120);
+	return $c->render(json => { ok => 0, error => 'a name is needed' }) unless length $name;
+	my $record = &subs::crest_record_read();
+	if ($record->{'uuid'}) {
+		my $suds = &subs::session_suds($c);
+		my $priv = &subs::crest_key_read($suds);
+		return $c->render(json => { ok => 0, error => 'the crest key is not available' }) unless $priv;
+		$record->{'name'} = $name;
+		$record->{'version'} = ($record->{'version'} || 0) + 1;
+		$record->{'server_time'} = &subs::rightNow();
+		my $signed = &subs::crest_sign_record($record, $priv);
+		return $c->render(json => { ok => 0, error => 'the crest could not be signed' }) unless $signed;
+		return $c->render(json => { ok => 0, error => 'the crest could not be saved' }) unless &subs::crest_record_write($signed);
+	}
+	else {
+		&subs::setting_setter({ app => '__president', setting => 'house_name', device => 'all', value => $name });
+	}
+	return $c->render(json => { ok => 1, name => $name });
+};
+
+get '/manager/people/crest_image' => sub($c) {
+	unless (&people_citizen($c)) { $c->rendered(403); return; }
+	my $record = &subs::crest_record_read();
+	my $kind = (($c->param('kind') || '') eq 'reference') ? 'reference' : 'image';
+	my $file = &subs::crest_image_file($record, $kind);
+	unless ($file) { $c->rendered(404); return; }
+	my $suds = &subs::session_suds($c);
+	unless ($suds) { $c->rendered(403); return; }
+	my $device = $record->{'device'} || &subs::device_setter();
+	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
+	my $data = &subs::openssl_file_read($standard, $suds, $file, 0, 1);
+	unless (defined $data && length $data) { $c->rendered(404); return; }
+	my $type = $data =~ /^\x89PNG/ ? 'image/png'
+		: $data =~ /^\xFF\xD8\xFF/ ? 'image/jpeg'
+		: 'application/octet-stream';
+	$c->res->headers->content_type($type);
+	$c->res->headers->cache_control('private, max-age=60');
+	$c->render(data => $data);
 };
 
 post '/manager/phone/dial' => sub($c) {

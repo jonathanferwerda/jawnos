@@ -76,6 +76,7 @@ sub label {
 our %catalog = (
 	en => {
 		'person' => 'Person',
+		'people' => 'People',
 		'person.unassigned' => 'Unassigned',
 		'shares.device' => 'Device shares',
 		'shares.make.device' => 'Make device shares',
@@ -210,6 +211,7 @@ our %catalog = (
 	},
 	zh => {
 		'person' => '人员',
+		'people' => '人们',
 		'person.unassigned' => '未分配',
 		'shares.device' => '设备份额',
 		'shares.make.device' => '生成设备份额',
@@ -343,6 +345,7 @@ our %catalog = (
 	},
 	fr => {
 		'person' => 'Personne',
+		'people' => 'Personnes',
 		'person.unassigned' => 'Non attribué',
 		'shares.device' => 'Partages d\'appareil',
 		'shares.make.device' => 'Créer des partages d\'appareil',
@@ -476,6 +479,7 @@ our %catalog = (
 	},
 	es => {
 		'person' => 'Persona',
+		'people' => 'Personas',
 		'person.unassigned' => 'Sin asignar',
 		'shares.device' => 'Partes del dispositivo',
 		'shares.make.device' => 'Crear partes del dispositivo',
@@ -609,6 +613,7 @@ our %catalog = (
 	},
 	de => {
 		'person' => 'Person',
+		'people' => 'Personen',
 		'person.unassigned' => 'Nicht zugewiesen',
 		'shares.device' => 'Geräteanteile',
 		'shares.make.device' => 'Geräteanteile erstellen',
@@ -742,6 +747,7 @@ our %catalog = (
 	},
 	pt => {
 		'person' => 'Pessoa',
+		'people' => 'Pessoas',
 		'person.unassigned' => 'Não atribuído',
 		'shares.device' => 'Partes do dispositivo',
 		'shares.make.device' => 'Criar partes do dispositivo',
@@ -875,6 +881,7 @@ our %catalog = (
 	},
 	hi => {
 		'person' => 'व्यक्ति',
+		'people' => 'लोग',
 		'person.unassigned' => 'असाइन नहीं किया गया',
 		'shares.device' => 'डिवाइस हिस्से',
 		'shares.make.device' => 'डिवाइस हिस्से बनाएँ',
@@ -995,6 +1002,7 @@ our %catalog = (
 	},
 	ar => {
 		'person' => 'شخص',
+		'people' => 'الأشخاص',
 		'person.unassigned' => 'غير معيّن',
 		'shares.device' => 'حصص الأجهزة',
 		'shares.make.device' => 'إنشاء حصص الأجهزة',
@@ -1115,6 +1123,7 @@ our %catalog = (
 	},
 	bn => {
 		'person' => 'ব্যক্তি',
+		'people' => 'মানুষ',
 		'person.unassigned' => 'বরাদ্দহীন',
 		'shares.device' => 'ডিভাইসের অংশ',
 		'shares.make.device' => 'ডিভাইসের অংশ তৈরি করুন',
@@ -1235,6 +1244,7 @@ our %catalog = (
 	},
 	ru => {
 		'person' => 'Человек',
+		'people' => 'Люди',
 		'person.unassigned' => 'Не назначено',
 		'shares.device' => 'Доли устройств',
 		'shares.make.device' => 'Создать доли устройств',
@@ -1355,6 +1365,7 @@ our %catalog = (
 	},
 	ja => {
 		'person' => '人物',
+		'people' => '人々',
 		'person.unassigned' => '未割り当て',
 		'shares.device' => 'デバイスのシェア',
 		'shares.make.device' => 'デバイスのシェアを作成',
@@ -1475,6 +1486,7 @@ our %catalog = (
 	},
 	pa => {
 		'person' => 'ਵਿਅਕਤੀ',
+		'people' => 'ਲੋਕ',
 		'person.unassigned' => 'ਨਾ-ਸੌਂਪਿਆ',
 		'shares.device' => 'ਡਿਵਾਈਸ ਹਿੱਸੇ',
 		'shares.make.device' => 'ਡਿਵਾਈਸ ਹਿੱਸੇ ਬਣਾਓ',
@@ -1595,6 +1607,7 @@ our %catalog = (
 	},
 	id => {
 		'person' => 'Orang',
+		'people' => 'Orang',
 		'person.unassigned' => 'Belum ditetapkan',
 		'shares.device' => 'Bagian perangkat',
 		'shares.make.device' => 'Buat bagian perangkat',
@@ -1715,6 +1728,7 @@ our %catalog = (
 	},
 	ko => {
 		'person' => '사람',
+		'people' => '사람들',
 		'person.unassigned' => '미지정',
 		'shares.device' => '기기 몫',
 		'shares.make.device' => '기기 몫 만들기',
@@ -1835,6 +1849,7 @@ our %catalog = (
 	},
 	it => {
 		'person' => 'Persona',
+		'people' => 'Persone',
 		'person.unassigned' => 'Non assegnato',
 		'shares.device' => 'Parti del dispositivo',
 		'shares.make.device' => 'Crea parti del dispositivo',
@@ -1955,6 +1970,7 @@ our %catalog = (
 	},
 	tr => {
 		'person' => 'Kişi',
+		'people' => 'Kişiler',
 		'person.unassigned' => 'Atanmamış',
 		'shares.device' => 'Cihaz payları',
 		'shares.make.device' => 'Cihaz payları oluştur',

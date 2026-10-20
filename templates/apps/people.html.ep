@@ -1,0 +1,98 @@
+<% no warnings 'uninitialized'; %>
+<% my $signed = ($crest->{'uuid'} && &subs::crest_verify_record($crest)) ? 1 : 0; %>
+<style>
+	#people_app { width:100%; height:100%; box-sizing:border-box; padding:14px; overflow:auto; }
+	.people_head { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; }
+	.people_house { display:flex; gap:14px; align-items:center; flex:1 1 420px; min-width:280px; }
+	.people_crest_frame { width:160px; height:160px; flex:0 0 160px; border:1px solid var(--line); border-radius:10px;
+		background:var(--panel); display:flex; align-items:center; justify-content:center; overflow:hidden; }
+	.people_crest_frame img { max-width:100%; max-height:100%; object-fit:contain; }
+	.people_crest_empty { color:var(--muted,#8e8e8e); font-size:13px; text-align:center; padding:12px; }
+	.people_meta { min-width:0; }
+	.people_meta h2 { margin:0 0 6px; font-size:22px; }
+	.people_fp { font-family:monospace; font-size:12px; letter-spacing:1px; color:var(--muted,#8e8e8e);
+		overflow-wrap:anywhere; }
+	.people_note { font-size:12px; color:var(--muted,#8e8e8e); margin-top:6px; }
+	.people_actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0; }
+	.people_actions button, .people_name_row button { padding:7px 12px; border:1px solid var(--line);
+		border-radius:8px; background:var(--panel); cursor:pointer; font-size:13px; }
+	.people_actions button:hover, .people_name_row button:hover { background:var(--line); }
+	.people_name_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
+	.people_name_row input { min-width:180px; padding:6px 8px; border:1px solid var(--line);
+		border-radius:8px; background:var(--panel); font-size:14px; }
+	#people_status, #people_verify_result { min-height:20px; font-size:13px; color:var(--muted,#8e8e8e); margin:6px 0; }
+	.people_section { border-top:1px solid var(--line); margin-top:16px; padding-top:12px; }
+	.people_section h3 { margin:0 0 8px; font-size:16px; }
+	.people_list { max-height:300px; overflow:auto; }
+	.people_row { display:flex; align-items:center; gap:10px; padding:8px 6px; border-bottom:1px solid var(--line); }
+	.people_row_name { flex:1 1 auto; font-size:14px; }
+	.people_row_sub { font-size:12px; color:var(--muted,#8e8e8e); }
+	.people_empty { color:var(--muted,#8e8e8e); font-size:13px; padding:10px 0; }
+</style>
+<div id="people_app" class="people_app">
+	<div class="people_head">
+		<div class="people_house">
+			<div class="people_crest_frame">
+				<% if ($crest->{'uuid'}) { %>
+					<img id="people_crest_image" src="/manager/people/crest_image?kind=image&stamp=<%= &subs::rightNow() %>" alt="<%= &subs::lang('people') %>">
+				<% } else { %>
+					<div class="people_crest_empty"><%= &subs::ui('No crest yet') %></div>
+				<% } %>
+			</div>
+			<div class="people_meta">
+				<h2><%= $crest->{'name'} || &subs::crest_house_name_read() %></h2>
+				<% if ($crest->{'fingerprint'}) { %>
+					<div class="people_fp"><%= $crest->{'fingerprint'} %></div>
+				<% } %>
+				<div class="people_note">
+					<% if ($crest->{'uuid'}) { %>
+						<%= &subs::ui($signed ? 'Signed by this house' : 'Not signed yet') %>
+						<% if ($crest->{'version'}) { %> &middot; v<%= $crest->{'version'} %><% } %>
+					<% } else { %>
+						<%= &subs::ui('Scan the drawing you want the house to be known by.') %>
+					<% } %>
+				</div>
+			</div>
+		</div>
+		<div class="people_actions">
+			<% if ($scanner) { %>
+				<button id="people_crest_scan" hint="Scan my crest"><%= &subs::ui('Scan my crest') %></button>
+			<% } %>
+			<button id="people_crest_upload_button" hint="Upload a photo"><%= &subs::ui('Upload a photo') %></button>
+			<input type="file" id="people_crest_file" accept="image/*" style="display:none">
+			<button id="people_refresh" hint="Refresh"><%= &subs::ui('Refresh') %></button>
+		</div>
+	</div>
+
+	<div id="people_status"></div>
+
+	<div class="people_name_row">
+		<label for="people_house_name"><%= &subs::ui('House name') %></label>
+		<input id="people_house_name" value="<%= $crest->{'name'} || &subs::crest_house_name_read() %>">
+		<button id="people_house_name_save" hint="Save name"><%= &subs::ui('Save name') %></button>
+	</div>
+
+	<% if ($crest->{'uuid'}) { %>
+		<div class="people_actions">
+			<button id="people_crest_verify_button" hint="Verify a photo"><%= &subs::ui('Verify a photo') %></button>
+			<input type="file" id="people_crest_verify_file" accept="image/*" style="display:none">
+		</div>
+		<div id="people_verify_result"></div>
+	<% } %>
+
+	<div class="people_section">
+		<h3><%= &subs::lang('people') %></h3>
+		<% if (@{$people}) { %>
+			<div class="people_list">
+				<% foreach my $person ( @{$people} ) { %>
+					<div class="people_row" uuid="<%= $person->{'uuid'} %>">
+						<span class="people_row_name"><%= $person->{'name'} %></span>
+						<span class="people_row_sub"><%= &subs::format_name($person->{'privilege'} || '') %></span>
+					</div>
+				<% } %>
+			</div>
+		<% } else { %>
+			<div class="people_empty"><%= &subs::ui('No people yet. Add them in Security under Devices for now.') %></div>
+		<% } %>
+	</div>
+</div>

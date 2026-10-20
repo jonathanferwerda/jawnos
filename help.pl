@@ -271,6 +271,29 @@ our %topic = (
 		],
 		related => [ 'mailbox', 'box_office' ]
 	},
+	'people' => {
+		title => 'People', category => 'apps', app => 'people',
+		templates => [ 'templates/apps/people.html.ep', 'public/js/manager/people.js' ],
+		controls => [ 'Scan my crest', 'Upload a photo', 'Save name', 'Verify a photo', 'Refresh' ],
+		verified => '2026-10-20',
+		summary => 'The house crest, and the people the house knows.',
+		body => [
+			'People holds the house crest: the one hand-drawn picture that names it to other houses. The picture is what a person recognises; it is not the proof. A house key signs a record that pins the drawing\'s hashes, and the short fingerprint on the card is what another house compares. Keep the original drawing - the scan is a copy.',
+			'Scan your own crest on the flatbed, or upload a photograph from a device with no scanner. The scan is normalized, its hash is recorded, and both the colour original and the matching reference are sealed like a photo. Re-scan after the paper ages or creases: the same key signs the new reference, so the house does not change.',
+			'Verify a photo compares a fresh photograph with the stored reference and reports a distance; the person confirms. A photocopy still looks like the drawing - the signed record, not the paper, is what proves the house.',
+			'The list below the crest is the people the house knows. For now they are added and assigned under Security, in the Devices view; this window is where crests for other houses and the vouches between them will be kept.'
+		],
+		steps => [
+			'Open People from the start menu.',
+			'Place the drawing flat on the scanner, or choose Upload a photo.',
+			'Press Scan my crest; the flatbed reads one page.',
+			'Type the house name and press Save name.',
+			'Check the fingerprint under the crest; that is what another house compares.',
+			'After the paper ages, scan it again; the new reference is signed with the same key.',
+			'To check a photograph later, press Verify a photo and read the distance.'
+		],
+		related => [ 'security', 'scanning', 'mailbox' ]
+	},
 	'notes' => {
 		title => 'Notes', category => 'apps', app => 'notes',
 		verified => '2026-10-14',
