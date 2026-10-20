@@ -59,7 +59,7 @@ our %topic = (
 		summary => 'Browse your photos by album or one at a time, and choose what each app shows.',
 		body => [
 			'Gallery is the photo browser. It gathers the photos and videos your apps have recorded and shows them three ways: **Home** (an album cover per app), **Album** (every photo in one scrollable grid) and **Photo** (a single shot, full-screen).',
-			'Which photos appear is decided by the **sources** — the apps whose galleries are open. Open the apps you want to look through and their photos join the Gallery; a source app also has to be marked visible (or the gallery unlocked) to be shown.',
+			'Which photos appear is decided by the **sources** — the apps whose galleries are open. Open the apps you want to look through and their photos join the Gallery; a source app also has to be marked visible (or the gallery unlocked) to be shown. Sealed photos (a name ending .enc) are hidden while the gallery\'s lock is shut, and join the set only when it is open at home.',
 			'In the single-photo view you can walk the whole set, shuffle or loop it, read a photo\'s details, or make it the cover the app uses. In the Album view you can search, flip the order, and include photos whose local copy has moved to the archive.'
 		],
 		steps => [
@@ -69,7 +69,7 @@ our %topic = (
 			'Click any photo to open it full-screen. The toolbar gives Previous and Next, Refresh (reload the set), Shuffle (play them in a random order), Repeat (loop the slideshow), File information, Fetch home, and Set as main image.',
 			'Type in the Search box (top-left in Home and Album) and press Enter to find photos by app or file name.',
 			'In Album view, toggle Archives to include photos stored away, and use the arrow to flip the order between newest-first and oldest-first.',
-			'The lock covers the gallery when you want it out of the way; unlock it on a paired phone. Gallery opens with its lock shut, so albums you have marked not-visible stay hidden until the lock is open at home.',
+			'The lock covers the gallery when you want it out of the way; unlock it on a paired phone. Gallery opens with its lock shut, so sealed photos and albums you have marked not-visible stay hidden until the lock is open at home.',
 		],
 		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser — not a phone gallery and not a file manager. Its photos are the ones recorded by their apps, and which apps are shown are the "sources", which default to the apps they currently have open. Guide them in terms of the Home / Album / Photo views and the named buttons (Home, Albums, Previous, Next, Shuffle, Repeat, Refresh, File information, Set as main image, Archives, lock). If they say they see nothing, the likeliest cause is that no source app is open or marked visible — suggest opening an app that has photos. If you are unsure how a control starts or works, describe what its label means rather than inventing a sequence of clicks. Never describe or guess the content of their photos.',
 		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]

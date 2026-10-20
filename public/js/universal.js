@@ -1480,12 +1480,13 @@ function jawnPadlockArtUnlocking(el) {
 $(document).on('click', '.padlock_biometric, #locked_biometric', function () {
 	var button = $(this);
 	var frame = button.closest('.padlock_frame');
+	var mode = frame.length ? (frame.attr('mode') || 'locker') : 'locker';
 	var note = frame.length ? frame.find('.padlock_fingerprint_status') : $('#locked_phone_status');
 	button.prop('disabled', true);
 	jawnPadlockArtLocked(false, button);
 	if (note.length) { note.text('Touch the fingerprint reader...'); }
 	var mine = jawnDeviceUuid();
-	jawnosBiometricUnlock('locker', mine, function (t) {
+	jawnosBiometricUnlock(mode, mine, function (t) {
 		if (note.length) { note.text(t); }
 	}, button).catch(function (err) {
 		var e = (err && err.error) || '';
@@ -1495,18 +1496,74 @@ $(document).on('click', '.padlock_biometric, #locked_biometric', function () {
 			return jawnPadlockConfirm('Unlock the locked screen').then(function (ok) {
 				if (!ok) { throw { error: 'cancelled' }; }
 				if (note.length) { note.text('Unlocking...'); }
-				return jawnPadlockSignOpen('locker', mine, note);
+				return jawnPadlockSignOpen(mode, mine, note);
 			});
 		}
 		throw err;
 	}).then(function () {
 		if (note.length) { note.text('Unlocked. Loading...'); }
-		setTimeout(function () { window.location.reload(); }, 700);
+		// the gate repaints from the server; an app padlock is refreshed by the
+		// console message the unlock already sent
+		if (mode === 'locker') { setTimeout(function () { window.location.reload(); }, 700); }
 	}).catch(function (err) {
 		jawnPadlockArtLocked(true, button);
 		button.prop('disabled', false);
 		if (note.length) { note.text(jawnosBiometricError(err)); }
 	});
+});
+
+// The computer's own reader, for an in-app padlock as well as the lock screen.
+// The Gate's locked page has its own copy; this one lives with the partial so
+// the music, folders and gallery padlocks get the same way in.
+$(document).on('click', '.padlock_fingerprint', function () {
+	var button = $(this);
+	if (window.jawnos_local_fingerprint === 0) { return; }
+	var frame = button.closest('.padlock_frame');
+	if (!frame.length) { return; }
+	var mode = frame.attr('mode') || 'locker';
+	var note = frame.find('.padlock_fingerprint_status');
+	var t = function (text) { return (typeof jawnosT === 'function') ? jawnosT(text) : text; };
+	var say = function (text) { if (note.length) { note.text(text); } };
+	var finish = function (res) {
+		if (res && res.ok) {
+			// the accepted print mints the app's token and refreshes the window
+			say(t('Unlocked. Loading...'));
+			return;
+		}
+		button.prop('disabled', false);
+		if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(true, button); }
+		var e = (res && res.error) || '';
+		say((e === 'busy') ? t('A fingerprint is already being read.')
+			: (e === 'timeout') ? t('No fingerprint was read. Try again.')
+			: (e === 'local only') ? t('This reader only works on the computer it is attached to.')
+			: (e === 'no fingerprint') ? t('No fingerprint is enrolled on this computer.')
+			: (e === 'not signed in') ? t('Sign in again, then use the fingerprint.')
+			: (e === 'not at home') ? t('That padlock only opens at home.')
+			: (e === 'no device') ? t('That screen is not known to the house.')
+			: t('Fingerprint not accepted.'));
+	};
+	var poll = function (token, tries) {
+		tries = tries || 0;
+		$.ajax({ url: '/manager/security/fingerprint_unlock_status', type: 'GET', data: { token: token }, cache: false })
+			.then(function (res) {
+				if (res && res.pending) {
+					if (tries > 30) { finish({ ok: 0, error: 'timeout' }); return; }
+					setTimeout(function () { poll(token, tries + 1); }, 700);
+					return;
+				}
+				finish(res);
+			})
+			.catch(function () { finish({ ok: 0, error: 'unavailable' }); });
+	};
+	button.prop('disabled', true);
+	if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(false, button); }
+	say(t('Touch the fingerprint reader now...'));
+	$.ajax({ url: '/manager/security/fingerprint_unlock', type: 'POST', data: { mode: mode }, cache: false })
+		.then(function (res) {
+			if (res && res.pending && res.token) { poll(res.token, 0); return; }
+			finish(res);
+		})
+		.catch(function () { finish({ ok: 0, error: 'unavailable' }); });
 });
 
 // ---- icon hints: hover label on desktop, long-press label on touch ------------

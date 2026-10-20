@@ -34,7 +34,9 @@
 					if (!$ghome->{$appt->{'app'}}) { $ghome->{$appt->{'app'}} = []; } else {  }
 					my $files = eval { return decode_json $appt->{'file'} } || [];
 
-					foreach my $f ( @{$files} ) { 
+					foreach my $f ( @{$files} ) {
+						# a sealed photo waits for this window's padlock
+						next if (!$permissive && ($f->{'f'} || '') =~ /\.enc$/i);
 						$f->{'type'} = $appt->{'type'} unless $f->{'type'};
 						$f->{'app'} = $appt->{'app'};
 						$f->{'app_uuid'} = $appt->{'uuid'};
@@ -57,6 +59,7 @@
 				<% my @seen_and_sent; %>
 				<% foreach my $app ( sort keys %{$ghome} ) { %>
 					<% next if grep { $_ eq $app } @seen_and_sent; %>
+					<% next unless scalar @{$ghome->{$app}}; %>
 					<% push @seen_and_sent, $app; %>
 					<% my $aset = $asettings->{$app} || &subs::settings_grabber({ app => $app, settings => ['main_image','visible'] }); %>
 					<% next if $aset->{'visible'} ne 'checked' && $permissive == 0; %>
@@ -64,11 +67,12 @@
 					<% my $content = $c->render_to_string(
 						template => 'apps/gallery_home',
 						appts => $appts, 
-						aset => $aset, 
-						app => $app, 
-						ghome => $ghome, 
-						settings => $settings, 
-						asettings => $asettings, 
+						aset => $aset,
+						app => $app,
+						ghome => $ghome,
+						settings => $settings,
+						asettings => $asettings,
+						permissive => $permissive,
 						pre_count => $count, 
 						load => 'all', 
 						first_count => 0
@@ -118,7 +122,7 @@
 	<% } elsif ($view eq 'padlock') { %>
 		<div id="gallery_padlock" style="width:100%;height:100%;max-height:100%;top:60px;object-fit:contain;">
 			<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="little_thumb" id="gallery_cancel_padlock" style="position:absolute;top:35px;right:5px;">
-			<%= include 'padlock', mode => 'gallery' %>
+			<%= include 'padlock', mode => 'gallery', fingerprint => 1 %>
 		</div>
 	<% } %>
 </div>

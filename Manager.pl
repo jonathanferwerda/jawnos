@@ -20076,6 +20076,9 @@ get '/manager/gallery' => sub ($c) {
 						@{$filer} = sort { $b->{'server_time'} cmp $a->{'server_time'} } @{$filer};
 					}
 					foreach my $f ( @{$filer} ) {
+						# a sealed photo waits for this window's padlock; a list
+						# handed over by Folders was reached through that unlock
+						next if (!$permissive && !$skip_processing && ($f->{'f'} || '') =~ /\.enc$/i);
 						$total_files++;
 
 						$f->{'app'} = $fi->{'app'};
@@ -27805,7 +27808,9 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 
 # A local fingerprint is an alternative to the phone for the screen it is on.
 # The request must come from this machine and the session must be approved;
-# fprintd prompts the reader, and only the current screen is opened.
+# fprintd prompts the reader, and only the screen named (or the current one) is
+# opened. `mode` is the padlock being opened - an app's own padlock names that
+# mode so the print also mints that app's unlock token.
 #
 # fprintd-verify waits for a finger (up to 20 seconds), so it runs in a child
 # process: a blocking system() in the request froze the whole manager worker,
@@ -27818,6 +27823,18 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	}
 	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
 	return $c->render(json => { ok => 0, error => 'no fingerprint' }) unless &fingerprint_available();
+	my $mode = $c->param('mode') || 'locker';
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	if ($mode ne 'locker' && !&help_at_home()) {
+		return $c->render(json => { ok => 0, error => 'not at home' });
+	}
+	# the reader opens the screen it is attached to: an app padlock names that
+	# screen too, so the unlock never becomes a house-wide one
+	my $device = $c->session('device_uuid') || '';
+	my $target = ($mode ne 'locker') ? $device : '';
+	if ($mode ne 'locker' && !length $target) {
+		return $c->render(json => { ok => 0, error => 'no device' });
+	}
 	my $lockfile = '/tmp/jawnos_fingerprint.lock';
 	# a worker that died mid-read left the latch behind; it is not a reader that
 	# is still busy, and without this the button answered busy forever
@@ -27833,13 +27850,12 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	close $fh;
 	my $user = $ENV{USER} || getpwuid($<) || 'jawn';
 	$user =~ s/[^\w.-]//g;
-	my $device = $c->session('device_uuid') || '';
 	my $token = &subs::random_string_creator(24);
 	my $now = &subs::rightNow();
 	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_fingerprint', $now - 300000);
 	&subs::db_insert('cache', {
 		uuid => $token, context => 'padlock_fingerprint', app => '__president',
-		data => encode_json({ pending => 1, device => $device, ip => $ip }),
+		data => encode_json({ pending => 1, device => $device, ip => $ip, mode => $mode, target => $target }),
 		server_time => $now, timestamp => $now,
 	});
 	Mojo::IOLoop->subprocess(
@@ -27857,7 +27873,7 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 			my $ok = (!$child_error && defined $rc && $rc == 0) ? 1 : 0;
 			my $error = $ok ? '' : ($child_error ? 'reader error' : ((defined $rc && $rc == 31744) ? 'timeout' : 'not accepted'));
 			&subs::db_query('update cache set data = ?, server_time = ? where context = ? and uuid = ?',
-				encode_json({ pending => 0, ok => $ok, error => $error, device => $device, ip => $ip }),
+				encode_json({ pending => 0, ok => $ok, error => $error, device => $device, ip => $ip, mode => $mode, target => $target }),
 				&subs::rightNow(), 'padlock_fingerprint', $token);
 			eval { $log->info('padlock: local fingerprint ' . ($ok ? 'accepted' : 'refused') . ' from ' . $ip . ' rc=' . (defined $rc ? $rc : '?')) };
 		}
@@ -27883,10 +27899,16 @@ get '/manager/security/fingerprint_unlock_status' => sub ($c) {
 	}
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_fingerprint', $token);
 	unless ($d->{'ok'}) { return $c->render(json => { ok => 0, error => ($d->{'error'} || 'not accepted') }); }
-	# the print was accepted: open the screen this session belongs to
+	# the print was accepted: open the screen and padlock it was asked for
 	my $device = $c->session('device_uuid') || $d->{'device'} || '';
-	my $opened = &padlock_mark_unlocked($c, 'locker', $device);
-	$log->info('padlock: local fingerprint opened ' . ($device || 'this screen'));
+	my $mode = $d->{'mode'} || 'locker';
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	my $target = $d->{'target'} || $device;
+	if ($mode ne 'locker' && !length $target) {
+		return $c->render(json => { ok => 0, error => 'no device' });
+	}
+	my $opened = &padlock_mark_unlocked($c, $mode, $target);
+	$log->info('padlock: local fingerprint opened ' . ($mode ne 'locker' ? "$mode padlock on " : '') . ($target || 'this screen'));
 	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0) });
 };
 

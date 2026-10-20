@@ -83,7 +83,7 @@ function imageViewer(data) {
 				window_id = windowMaker(response.window);
 
 				if (response.view == 'photo') {
-					if (loadImages != 0 && response.images && response.images.length > 0) {
+					if (loadImages != 0 && response.images && (loadImages == 1 || response.images.length > 0)) {
 						images = response.images;
 					}
 					if (galleryTargetUuid != '') {
@@ -523,7 +523,9 @@ $(document).on('click', '.gallery_lock', function() {
 		// if the stored secret is still on its way out
 		$('#gallery').attr('unlock', '');
 		settingSetter({ 'app': 'gallery', 'setting': 'combo_unlock', value: '' });
-		imageViewer({ 'view': view });
+		// reload the list as well, so a sealed photo already held in `images`
+		// does not survive the lock
+		imageViewer({ 'view': view, 'loadImages': 1 });
 	}
 });
 

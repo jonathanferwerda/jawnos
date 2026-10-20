@@ -4,6 +4,8 @@
 	<tbody>
 		<tr><td>
 			<% my $main_img = $aset->{'main_image'}; %>
+			<%# a sealed cover is not shown while the gallery's padlock is shut %>
+			<% $main_img = '' if (!$permissive && ($main_img || '') =~ /\.enc$/i); %>
 				<% my ($destination,$asset) = &subs::file_device_renamer({ file => $main_img, app => $app, type => 'image' }); 								
 					my $main_image = $destination . $asset; %>
 			<% if ($main_img && -e $main_image) { %>

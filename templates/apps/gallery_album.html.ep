@@ -31,6 +31,8 @@
 	}
 	my $temp_files = [];
 	foreach my $f ( @{$files} ) {
+		# a sealed photo waits for this window's padlock
+		next if (!$permissive && ($f->{'f'} || '') =~ /\.enc$/i);
 		$f->{'type'} = $appt->{'type'} unless $f->{'type'};
 		$f->{'app'} = $appt->{'app'};
 		$f->{'app_timestamp'} = $appt->{'timestamp'};

@@ -23,8 +23,8 @@
 <% $screensaver_style = 'cartoon' unless $screensaver_style =~ /^(?:cartoon|art)$/; %>
 <div class="padlock_frame" mode="<%= $frame_mode %>" target="<%= $frame_target %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
 	<h1 id="padlock_taunts"></h1>
-	<% my $scope = $frame_target ? 'This screen is locked.' : 'The house is locked.'; %>
-	<div class="padlock_message"><%= $scope %><br>Unlock on your phone or with the recovery code.</div>
+	<% my $scope = $frame_mode =~ /^(?:gallery|music|folders)$/ ? 'This app is locked.' : ($frame_target ? 'This screen is locked.' : 'The house is locked.'); %>
+	<div class="padlock_message"><%= $scope %><br><%= &subs::ui('Unlock on your phone, with a fingerprint, or with the recovery code.') %></div>
 	<div class="padlock_emblem">
 		<%= include 'denial_image' %>
 		<div class="padlock_lock_art" style="display:none;">
@@ -125,6 +125,10 @@
 			color: #08110a;
 			font-weight: bold;
 		}
+		<%# the local reader belongs to the browser's own machine, not the one
+		    that may have rendered a remote listing, so the manager layout says
+		    whether it is here %>
+		.no_local_fingerprint .padlock_fingerprint { display: none !important; }
 		.padlock_fingerprint_status {
 			min-height: 18px;
 			margin-top: 4px;

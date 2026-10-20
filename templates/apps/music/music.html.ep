@@ -96,7 +96,7 @@
 </div>
 <div id="music_padlock" style="display:none;width:100%;background-color:black;height:100%;max-height:100%;top:60px;object-fit:contain;">
 	<img src="<%= &subs::icon_path('cancel_button', '/images/make believe/cancel_button.png') %>" hint="Close" class="little_thumb" id="music_cancel_padlock" style="position:absolute;top:35px;right:5px;">
-	<%= include 'padlock', mode => 'music' %>
+	<%= include 'padlock', mode => 'music', fingerprint => 1 %>
 </div>
 
 <script>

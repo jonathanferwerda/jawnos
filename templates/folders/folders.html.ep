@@ -52,7 +52,7 @@
 	</div>
 	<div id="folders_padlock" style="display:none;position:absolute;top:45px;left:0;width:100%;height:80%;z-index:7;">
 		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="little_thumb folders_cancel_padlock hover" style="position:absolute;top:0;right:5px;z-index:8;">
-		<%= include 'padlock', mode => 'folders' %>
+		<%= include 'padlock', mode => 'folders', fingerprint => 1 %>
 	</div>
 	% my $disk = $fo->{'disk'};
 	<div id="folders_bottom_bar" style="background-color:var(--panel-2);width:100%;height:25px;border:solid;font-size:24px;position:absolute;bottom:-5px;">
