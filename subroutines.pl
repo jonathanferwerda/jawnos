@@ -15212,13 +15212,23 @@ sub peer_lan_address() {
 	# direct LAN address is still the better route.
 	unless ($force) {
 		my $loopback = 0;
-		if ($host =~ /^127\./) { $loopback = 1; }
+		my $resolved = 0;
+		if ($host =~ /^127\./) { $loopback = 1; $resolved = 1; }
 		elsif ($host =~ /[a-zA-Z]/) {
 			require Socket;
 			my $packed = gethostbyname($host);
-			$loopback = 1 if $packed && Socket::inet_ntoa($packed) =~ /^127\./;
+			if ($packed) {
+				$resolved = 1;
+				$loopback = 1 if Socket::inet_ntoa($packed) =~ /^127\./;
+			}
 		}
-		return undef unless $loopback;
+		else { $resolved = 1; }
+		# A name that resolves somewhere else is the peer's real address; keep
+		# it. A name that no longer resolves at all (the machine hopped to a
+		# network where its old router or tailnet DNS is gone) falls through to
+		# the LAN address it advertised, so the presence notice still finds it
+		# instead of every call waiting on a dead lookup.
+		return undef if $resolved && !$loopback;
 	}
 	# a mirror arrives already decoded; a normal row is a JSON string
 	my $you = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
