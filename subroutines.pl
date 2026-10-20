@@ -15109,7 +15109,7 @@ sub remote_machine_tunnel_processor() {
 		if ($host) {
 			require Socket;
 			$resolved = 1 if $host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
-			$resolved = 1 if Socket::gethostbyname($host);
+			$resolved = 1 if gethostbyname($host);
 		}
 		if (!$resolved && !$lan) {
 			$rm->{'manager'} = $rm->{'tailnet_manager'};

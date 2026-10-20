@@ -115,12 +115,13 @@
 	<% if ($toggle eq 'remote_control') { %>
 		<span class="keyboard bc theme_surface" id="remote_control" style="background-color:<%= $config->{$device}->{'remote_control'}->{'background_colour'} %>">
 			<% $remote_control = $remote_control || &subs::setting_grabber({ app => 'me', setting => 'remote_control_machine' }); %>
-			<% $remote_machines = $remote_machines ? decode_json $remote_machines : &subs::remote_machine_lister(); %>
+			<% $remote_machines = ref $remote_machines eq 'ARRAY' ? $remote_machines
+				: ($remote_machines ? (eval { decode_json $remote_machines } || []) : &subs::remote_machine_lister()); %>
 			<% my ($selected_rm) = grep { ($_->{'uuid'} || '') eq ($remote_control || '') } @{$remote_machines}; %>
 
 			<select id="remote_control_machine_select" value="<%= $remote_control %>" onchange="settingSetter({ 'app': 'me', 'setting': 'remote_control_machine', 'value': this.value });keyboardManagerButton(this);keyboardMaker({ toggle: 'remote_control', state: 'on', remote_uuid: this.value })" style="vertical-align:top;">
 				<option value="" <% if ( $remote_control eq '' || !$remote_control || !grep { $_->{'ip'} eq $remote_control } @{$remote_machines}) { %>selected<% } %>>Me</option>
-				<% foreach my $rm ( @{$remote_machines} ) { %>
+				<% foreach my $rm ( grep { ($_->{'mirror'} || '') ne 'yes' && ($_->{'hostname'} || '') ne 'me' } @{$remote_machines} ) { %>
 					<option value="<%= $rm->{'uuid'} %>" manager="<%= $rm->{'manager'} %>" data-tailnet="<%= &subs::tailnet_address($rm) %>" <% if ( $rm->{'uuid'} eq $remote_control ) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'domain'} || $rm->{'ip'} %></option>
 				<% } %>
 			</select>

@@ -660,12 +660,6 @@ function pseudonymDraggableInitializer() {
 			var data = JSON.stringify(d);
 			jawnosWindowPlaceSet(p.target.id, data);
 
-			var now = Date.now();
-			if (now - pseudonyms[p.target.id] < 250) {
-
-				var toggle = p.target.id.replace('_toggle','');
-				keyboardMaker({ toggle: toggle });
-			}
 			pseudonymIntervals = Date.now();
 
 			setTimeout(function() {
@@ -901,7 +895,15 @@ async function keyboardMaker(data) {
 			}
 		}
 	}
-	if (css) { $('#' + toggle).css(css); }
+	if (css) {
+		// A panel restored from its saved spot can be above the clothesline; the
+		// drag clamps a moved one, so clamp the first paint too.
+		if (css.position == 'fixed' && css.top != null) {
+			var top = parseFloat(css.top);
+			if (isFinite(top) && top < panelTopLimit()) { css.top = panelTopLimit() + 'px'; }
+		}
+		$('#' + toggle).css(css);
+	}
 	if (!t.is(':visible') && !t.hasClass('keyboard') || state == 'on') {
 		var data = { 
 			timestamp: timestamp, 
@@ -1365,13 +1367,16 @@ $(document).on('click', '.magic_wand', function() {
 
 $(document).on('click','.pseudonym', function() {
 	var toggle = $(this).attr('toggle');
-	var s = jawnosDockIconGet(toggle);
-	if (s == 'off' || $('#' + toggle).length == 0) {
-		keyboardMaker({ toggle: toggle })
+	var panel = $('#' + toggle);
+	// A click is the open gesture. The dock's own state can lag the panel (the
+	// first click used to render and the click then remove it before it showed),
+	// so decide by what is actually on screen: open when it is hidden, close
+	// when it is visible.
+	if (panel.length && panel.is(':visible')) {
+		panel.remove();
 	}
 	else {
-		
-		$('#' + toggle).remove();
+		keyboardMaker({ toggle: toggle, state: 'on' });
 	}
 });
 
