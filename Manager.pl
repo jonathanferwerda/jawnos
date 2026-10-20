@@ -8277,7 +8277,7 @@ sub remote_manager_ticket($c, $rm) {
 		my $host = eval { Mojo::URL->new($rm->{'manager'})->host } || '';
 		my $url = $peer->{'manager'} . '/manager/qrcode_generator?nic=' . url_escape($host || 'lo')
 			. '&privilege=citizen&keep_warranty=1'
-			. '&warranty=' . url_escape('12h') . '&name=' . url_escape($name) . '&timestamp=' . $timestamp;
+			. '&warranty=' . url_escape('-12h') . '&name=' . url_escape($name) . '&timestamp=' . $timestamp;
 		my $res = eval { $peer->{'ua'}->inactivity_timeout(15)->get($url)->result };
 		return '' unless $res && $res->is_success;
 		my $data = eval { decode_json $res->body } || {};
