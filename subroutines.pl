@@ -17406,6 +17406,30 @@ sub person_for_device {
 	return $p || undef;
 }
 
+sub people_list {
+	my $q = eval { &db_select('people', undef, { status => 'active' }) };
+	my $rows = $q ? $q->hashes : [];
+	return [ sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @{$rows} ];
+}
+
+# Whether an assignment may be made. The device in the hand is the one thing an
+# assignment must not quietly demote: the live session keeps its privilege until
+# the next login, and the next login would read the lower one.
+sub person_assign_check {
+	my ($device_uuid, $person_uuid, $current_device_uuid) = @_;
+	return (0, 'no device') unless defined $device_uuid && length $device_uuid;
+	my $device = eval { &db_select('paired_devices', ['uuid'], { uuid => $device_uuid })->hash };
+	return (0, 'no device') unless $device;
+	if (defined $person_uuid && length $person_uuid) {
+		my $person = eval { &db_select('people', ['uuid', 'privilege'], { uuid => $person_uuid, status => 'active' })->hash };
+		return (0, 'no person') unless $person;
+		if (defined $current_device_uuid && length $current_device_uuid && $device_uuid eq $current_device_uuid) {
+			return (0, 'you cannot demote the device you are using') unless ($person->{'privilege'} || '') eq 'citizen';
+		}
+	}
+	return (1, '');
+}
+
 sub peer_allows {
 	my ($c, $rm, $required) = @_;
 	return 0 unless $rm && ref $rm eq 'HASH';

@@ -27067,6 +27067,8 @@ sub security_initializer($c) {
 		window_maker => $c->param('window_maker'),
 		neighbour_link => $neighbour_link,
 		devices => $devices,
+		people => &subs::people_list(),
+		current_device_uuid => $current_device_uuid,
 		biometric_enrolled => $biometric_enrolled,
 		recovery => $recovery,
 		recovery_stale => $recovery_stale,
@@ -27398,6 +27400,44 @@ post '/manager/security/device_revoke' => sub($c) {
 	&subs::db_delete('security', { level => 'padlock_device', uuid => $uuid }) if $uuid;
 	&subs::db_query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'padlock_device_time', $uuid) if $uuid;
 	$c->render(json => &security_initializer($c));
+};
+
+post '/manager/security/person_assign' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0, error => 'citizen only' });
+		return;
+	}
+	my $device_uuid = $c->param('device_uuid') // '';
+	my $person_uuid = $c->param('person_uuid') // '';
+	my ($ok, $why) = &subs::person_assign_check($device_uuid, $person_uuid, $c->session('device_uuid') || '');
+	unless ($ok) { $c->render(json => { ok => 0, error => $why }); return; }
+	&subs::db_update('paired_devices', { person_uuid => $person_uuid, server_time => &subs::rightNow() }, { uuid => $device_uuid });
+	my $sec = &security_initializer($c);
+	$c->render(json => { ok => 1, html => $sec->{'html'} });
+};
+
+post '/manager/security/person_create' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0, error => 'citizen only' });
+		return;
+	}
+	my $name = &subs::unformat_name($c->param('name') // '');
+	my $privilege = lc($c->param('privilege') // 'resident');
+	$privilege = 'resident' unless $privilege =~ /^(?:citizen|resident|guest)$/;
+	unless (length $name) { $c->render(json => { ok => 0, error => 'name' }); return; }
+	my $now = &subs::rightNow();
+	my $uuid = &subs::random_string_creator(25);
+	my $made = &subs::db_insert('people', {
+		uuid => $uuid,
+		name => $name,
+		privilege => $privilege,
+		status => 'active',
+		created => $now,
+		server_time => $now,
+	});
+	unless ($made) { $c->render(json => { ok => 0 }); return; }
+	my $sec = &security_initializer($c);
+	$c->render(json => { ok => 1, uuid => $uuid, html => $sec->{'html'} });
 };
 
 post '/manager/security/recovery/create' => sub($c) {

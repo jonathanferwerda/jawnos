@@ -202,6 +202,52 @@ $(document).on('click', '.device_revoke', function() {
 	});
 });
 
+// Who a device belongs to. The device in the hand may not be demoted below
+// citizen: the live session keeps its privilege until the next login, and that
+// login would read the lower one.
+$(document).on('change', '.device_person_select', function() {
+	var select = $(this);
+	$.ajax({
+		url: '/manager/security/person_assign',
+		type: 'POST',
+		data: { device_uuid: select.attr('device'), person_uuid: select.val() || '', security_view: 'devices' },
+		success: function(response) {
+			if (response && response.html) {
+				$('#security').replaceWith(response.html);
+				appointment_chron();
+			}
+			else {
+				$('#alert').html(response && response.error ? response.error : 'Could not assign that person').show();
+			}
+		},
+		error: function() {
+			$('#alert').html('Could not assign that person').show();
+		}
+	});
+});
+
+$(document).on('click', '#person_add_button', function() {
+	var name = ($('#person_new_name').val() || '').trim();
+	if (!name) { $('#alert').html('Type a name first').show(); return; }
+	$.ajax({
+		url: '/manager/security/person_create',
+		type: 'POST',
+		data: { name: name, privilege: $('#person_new_privilege').val() || 'resident', security_view: 'devices' },
+		success: function(response) {
+			if (response && response.html) {
+				$('#security').replaceWith(response.html);
+				appointment_chron();
+			}
+			else {
+				$('#alert').html('Could not add that person').show();
+			}
+		},
+		error: function() {
+			$('#alert').html('Could not add that person').show();
+		}
+	});
+});
+
 $(document).on('click', '#recovery_create', function() {
 	$.ajax({
 		url: '/manager/security/recovery/create',

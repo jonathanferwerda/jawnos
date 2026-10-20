@@ -138,14 +138,33 @@
 			</table>
 			<p style="font-size:14px;">Approve only when the code matches the one shown on the device that is asking.</p>
 		<% } %>
+		<div id="person_add_row" style="text-align:center;margin:8px 0;">
+			<input id="person_new_name" type="text" placeholder="<%= &subs::lang('person.name') %>" style="width:170px;">
+			<select id="person_new_privilege" title="<%= &subs::lang('person.privilege') %>">
+				<option value="resident" selected><%= &subs::ui('Resident') %></option>
+				<option value="citizen"><%= &subs::ui('Citizen') %></option>
+				<option value="guest"><%= &subs::ui('Guest') %></option>
+			</select>
+			<button id="person_add_button" type="button"><%= &subs::lang('person.add') %></button>
+		</div>
 		<table style="width:100%;text-align:center;">
 			<thead>
-				<tr><th>Name</th><th><%= &subs::lang('device.kind') %></th><th>Paired</th><th>Last Seen</th><th>Key</th><th>Revoke</th></tr>
+				<tr><th>Name</th><th><%= &subs::lang('person') %></th><th><%= &subs::lang('device.kind') %></th><th>Paired</th><th>Last Seen</th><th>Key</th><th>Revoke</th></tr>
 			</thead>
 			<tbody>
 				<% foreach my $d ( @{ $devices || [] } ) { %>
 					<tr class="paired_device" uuid="<%= $d->{'uuid'} %>">
 						<td><%= $d->{'name'} %></td>
+						<td>
+							<% my $dperson = $d->{'person_uuid'} || ''; %>
+							<select class="device_person_select" device="<%= $d->{'uuid'} %>" title="<%= &subs::ui('The person this device belongs to') %>">
+								<option value="" <% if (!$dperson) { %>selected<% } %>><%= &subs::lang('person.unassigned') %></option>
+								<% foreach my $p ( @{ $people || [] } ) { %>
+									<option value="<%= $p->{'uuid'} %>" <% if ($dperson eq $p->{'uuid'}) { %>selected<% } %>><%= $p->{'name'} %> (<%= &subs::ui(&subs::format_name($p->{'privilege'})) %>)</option>
+								<% } %>
+							</select>
+							<% if (($current_device_uuid || '') eq $d->{'uuid'}) { %><div style="font-size:11px;"><%= &subs::ui('This is the device you are using') %></div><% } %>
+						</td>
 						<td><%= &subs::device_kind_label($d) %></td>
 						<td class="time" timestamp="<%= $d->{'timestamp'} %>"></td>
 						<td class="time" timestamp="<%= $d->{'last_seen'} || $d->{'server_time'} %>"></td>
@@ -154,7 +173,7 @@
 					</tr>
 				<% } %>
 				<% if (scalar @{ $devices || [] } == 0) { %>
-					<tr><td colspan="6">No paired devices. A citizen session pairs its browser the first time the manager loads; after that it logs itself back in.</td></tr>
+					<tr><td colspan="7">No paired devices. A citizen session pairs its browser the first time the manager loads; after that it logs itself back in.</td></tr>
 				<% } %>
 			</tbody>
 		</table>
