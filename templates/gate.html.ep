@@ -66,14 +66,23 @@
 	<% } %>
 </div>
 <br>
-<div id="recovery_door" style="margin-top:10px;">
-	<button id="recovery_toggle">Recovery Code</button>
-	<div id="recovery_panel" style="display:none;margin-top:8px;">
-		<input type="text" id="recovery_code_input" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" style="width:90%;max-width:420px;text-transform:uppercase;">
-		<button id="recovery_submit">Enter</button>
-		<div id="recovery_status" style="min-height:22px;"></div>
+	<div id="recovery_door" style="margin-top:10px;">
+		<button id="recovery_toggle">Recovery Code</button>
+		<div id="recovery_panel" style="display:none;margin-top:8px;">
+			<input type="text" id="recovery_code_input" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" style="width:90%;max-width:420px;text-transform:uppercase;">
+			<button id="recovery_submit">Enter</button>
+			<div id="recovery_status" style="min-height:22px;"></div>
+		</div>
 	</div>
-</div>
+	<div id="share_door" style="margin-top:6px;">
+		<button id="share_recovery_toggle"><%= &subs::lang('shares.ask') %></button>
+		<div id="share_recovery_panel" style="display:none;margin-top:8px;">
+			<button id="share_recovery_start"><%= &subs::ui('Ask for shares') %></button>
+			<div id="share_recovery_code" style="font-family:monospace;font-size:28px;letter-spacing:4px;min-height:34px;"></div>
+			<div id="share_recovery_status" style="min-height:22px;max-width:520px;margin:0 auto;"></div>
+			<div style="font-size:13px;color:#777;max-width:520px;margin:6px auto 0;"><%= &subs::ui('On a device that holds a share, open Security → Recovery → Release a share. Any three shares rebuild the house key.') %></div>
+		</div>
+	</div>
 <div id="device_door" style="margin-top:6px;">
 	<button id="approval_toggle">Approve From My Device</button>
 	<div id="approval_panel" style="display:none;margin-top:8px;">

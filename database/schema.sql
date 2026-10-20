@@ -145,7 +145,8 @@ CREATE TABLE IF NOT EXISTS paired_devices (
 	last_seen VARCHAR(25),
 	agent VARCHAR(500),
 	kind VARCHAR(25),
-	person_uuid VARCHAR(255)
+	person_uuid VARCHAR(255),
+	share_pubkey VARCHAR(255)
 );
 CREATE TABLE IF NOT EXISTS people (
 	uuid VARCHAR(255) unique,
@@ -167,6 +168,43 @@ CREATE TABLE IF NOT EXISTS device_requests (
 	remote_address VARCHAR(255),
 	timestamp VARCHAR(25),
 	server_time VARCHAR(25),
+	ost VARCHAR(25)
+);
+CREATE TABLE IF NOT EXISTS house_key_shares (
+	uuid VARCHAR(255) unique,
+	set_id VARCHAR(255),
+	share_index INTEGER,
+	holder_person VARCHAR(255),
+	holder_device VARCHAR(255),
+	alg VARCHAR(25),
+	wrapped LONGTEXT,
+	status VARCHAR(25),
+	created VARCHAR(255),
+	server_time VARCHAR(255),
+	ost VARCHAR(25)
+);
+CREATE TABLE IF NOT EXISTS house_key_share_requests (
+	uuid VARCHAR(255) unique,
+	code VARCHAR(25),
+	asker_pubkey VARCHAR(255),
+	name VARCHAR(255),
+	need INTEGER,
+	available INTEGER,
+	set_id VARCHAR(255),
+	status VARCHAR(25),
+	created VARCHAR(255),
+	server_time VARCHAR(255),
+	ost VARCHAR(25)
+);
+CREATE TABLE IF NOT EXISTS house_key_share_releases (
+	uuid VARCHAR(255) unique,
+	request_uuid VARCHAR(255),
+	set_id VARCHAR(255),
+	share_index INTEGER,
+	holder_device VARCHAR(255),
+	wrapped LONGTEXT,
+	created VARCHAR(255),
+	server_time VARCHAR(255),
 	ost VARCHAR(25)
 );
 CREATE TABLE "security" (

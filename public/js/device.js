@@ -195,9 +195,87 @@
 		start.addEventListener('click', ask);
 	}
 
+	// the share door: a machine with no key asks for paper-less shares. It mints
+	// an ephemeral X25519 key, holder devices re-seal their shares to it, and
+	// this browser opens them and hands the codes to the same recovery route the
+	// paper shares use. The ephemeral private key never leaves the page.
+	function wireShareRecovery() {
+		var toggle = document.getElementById('share_recovery_toggle');
+		if (!toggle) { return; }
+		var panel = document.getElementById('share_recovery_panel');
+		var codeEl = document.getElementById('share_recovery_code');
+		var status = document.getElementById('share_recovery_status');
+		var start = document.getElementById('share_recovery_start');
+		var S = window.jawnosShareCrypto;
+		toggle.addEventListener('click', function () {
+			panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+		});
+		function finish(codes) {
+			if (!ed25519()) { status.textContent = 'This browser cannot hold a device key.'; start.disabled = false; return; }
+			status.textContent = 'Opening the house...';
+			return crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
+				return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
+					return post('/manager/device/recover', { code: codes, pubkey: b64(spki), name: deviceLabel() }).then(function (r) {
+						if (r && r.ok && r.device_uuid) {
+							return idbPut('device_key', pair.privateKey).then(function () {
+								localStorage.setItem('device_uuid', r.device_uuid);
+								status.textContent = 'Recovered. Loading...';
+								window.location.reload();
+							});
+						}
+						start.disabled = false;
+						status.textContent = (r && r.error === 'too many') ? 'Too many attempts. Try again later.' : 'The shares were not accepted.';
+					});
+				});
+			}).catch(function () { start.disabled = false; status.textContent = 'The shares were not accepted.'; });
+		}
+		function poll(pair, uuid, need, tries) {
+			if (tries > 400) { start.disabled = false; status.textContent = 'No answer. Make sure a holder device is signed in and releases a share.'; return; }
+			setTimeout(function () {
+				$.getJSON('/manager/device/shares/status', { uuid: uuid }).then(function (s) {
+					if (!s || !s.ok) { start.disabled = false; status.textContent = 'The request expired. Ask again.'; return; }
+					status.textContent = 'Waiting for shares: ' + s.have + ' of ' + need + '.';
+					if (s.have < need) { poll(pair, uuid, need, tries + 1); return; }
+					var picked = (s.releases || []).slice(0, need);
+					S.publicSpki(pair.publicKey).then(function (spki) {
+						return Promise.all(picked.map(function (rel) { return S.unwrap(rel.wrapped, pair.privateKey, spki); }));
+					}).then(function (shares) {
+						return finish(shares.map(function (raw) { return S.b64(raw); }).join('\n'));
+					}).catch(function () { start.disabled = false; status.textContent = 'A share did not open. Ask again.'; });
+				}, function () { poll(pair, uuid, need, tries + 1); });
+			}, 3000);
+		}
+		start.addEventListener('click', function () {
+			if (!S || !S.supported()) { status.textContent = 'This browser cannot ask for shares.'; return; }
+			start.disabled = true;
+			codeEl.textContent = '';
+			status.textContent = 'Asking...';
+			var pair;
+			S.generate().then(function (p) {
+				pair = p;
+				return S.publicRaw(p.publicKey);
+			}).then(function (raw) {
+				return post('/manager/device/shares/request', { pubkey: S.b64(raw), name: deviceLabel() });
+			}).then(function (r) {
+				if (!r || !r.ok) {
+					start.disabled = false;
+					status.textContent = (r && r.error === 'too many') ? 'Too many asks. Try again later.' : 'The house did not take the ask.';
+					return;
+				}
+				codeEl.textContent = r.code;
+				if (!r.enough) {
+					status.textContent = 'Only ' + r.have + ' device shares are available; ' + r.need + ' are needed. Use a paper share or the recovery code instead.';
+				}
+				else { status.textContent = 'Waiting for shares: 0 of ' + r.need + '.'; }
+				poll(pair, r.uuid, r.need, 0);
+			}).catch(function () { start.disabled = false; status.textContent = 'The house did not take the ask.'; });
+		});
+	}
+
 	if (onGate) {
 		wireRecovery();
 		wireApproval();
+		wireShareRecovery();
 		// at the gate: walk in on this device's own key, if it has one
 		var uuid = localStorage.getItem('device_uuid');
 		if (!uuid || !ed25519() || !crypto.subtle.importKey) { return; }

@@ -1,11 +1,14 @@
 # Roles (per-person keys) and Shamir recovery
 
-**Status:** 2026-10-20 (v0.1.952). **Part 1:** the `people` table, the
+**Status:** 2026-10-20 (v0.1.956). **Part 1:** the `people` table, the
 `paired_devices.person_uuid` link, the owner migration, person-aware app and
 recovered-device login, assignment in the Devices view, and ticket logins that
 mint or resume a person. **Shamir:** the GF(256) split/combine core is
 implemented and probed (`shamir_split`, `shamir_combine`, share encode/decode).
-Share distribution (paper and device-wrapped) and the recovery route remain.
+Paper shares print once; device shares are wrapped to a device's X25519 key,
+stored in `house_key_shares`, released through the gate's share request, and
+combined by the recovering machine. The 3-share drill is still to run on a
+machine with no `~/.house.key`, then the password share can be retired.
 **Read with:** `docs/house-key-phase2.md`, `docs/app-only-access.md`, `help.pl` → `security`.
 
 Phase 2 made the password a recovery share and stopped it resolving the data key.
@@ -114,6 +117,39 @@ a stolen phone would meet the threshold.
 Note the honest limit: with one person and one set of devices, Shamir does not
 add much over the paper code. It starts paying off with **two or more people**,
 or with paper kept off-site. Do Part 1 first for that reason.
+
+### Implemented 2026-10-20 — paper shares
+
+- `/manager/security/shares/create` splits the house key 3-of-5 and shows the
+  five codes once. The gate's recovery field accepts any three pasted on
+  separate lines, or separated by commas. Nothing is stored but the public
+  policy (`__president/shamir` = `3:5`).
+
+### Implemented 2026-10-20 — device shares
+
+- `paired_devices.share_pubkey` is an X25519 key the device generates for this
+  alone and keeps non-extractable. A browser's login key is Ed25519 and cannot
+  agree, so a separate key is not a convenience: it is the only way a browser
+  can hold a share.
+- `house_key_shares` stores each share wrapped to that key
+  (`house_key_share_wrap`). The server never sees a share in the clear; a copy
+  of the database carries only blobs.
+- `house_key_share_create_set` wraps one share per chosen device, at most one
+  per person, and returns the rest as paper codes. The older `/shares/create`
+  remains the paper-only path.
+- A keyless machine mints an ephemeral X25519 key, posts it to
+  `/manager/device/shares/request`, and shows a code. Holders see open requests
+  in Security → Recovery and press Release; the holder unwraps its share and
+  re-wraps it to the asker's key (`house_key_share_release_add` stores the
+  opaque blob). The asker polls `/manager/device/shares/status`, opens three
+  answers, and posts the three share codes to `/manager/device/recover`, which
+  checks `suds_current` and seeds the vault.
+- Rotation deletes every wrapped share and leaves `__president/shamir_stale`;
+  revoking a device deletes its share. Paper shares are untouched by both.
+- Probes: `.shots/device_shares_probe.pl` (33 checks: one per person, wrap and
+  unwrap, release, combine, revoke, rotation) and
+  `.shots/share_crosscheck.pl` (browser WebCrypto opens a Perl wrap and Perl
+  opens a browser wrap).
 
 ### The split
 

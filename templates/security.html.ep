@@ -1,6 +1,6 @@
 <% use Mojo::JSON qw/encode_json decode_json/; %>
 
-<div id="security" style="background-color:var(--panel);width:100%;height:100%;box-sizing:border-box;">
+<div id="security" device_uuid="<%= $current_device_uuid || '' %>" style="background-color:var(--panel);width:100%;height:100%;box-sizing:border-box;">
 	<div class="security_tabs">
 		<button class="security_view_select" view="padlock" style="<% if ($president->{'security_view'} eq 'padlock') { %>background-color:lightgreen;<% } %>">Padlock</button>
 		<button class="security_view_select" view="neighbour_link" style="<% if ($president->{'security_view'} eq 'neighbour_link') { %>background-color:lightgreen;<% } %>">Neighbour</button>
@@ -207,6 +207,69 @@
 			<p><b>Write these down now — they will not be shown again.</b></p>
 			<pre id="shares_value" style="display:inline-block;text-align:left;font-family:monospace;font-size:13px;background-color:var(--panel);border:solid;border-radius:8px;padding:12px;white-space:pre-wrap;"></pre>
 		</div>
+		<h3 style="margin-top:18px;"><%= &subs::lang('shares.device') %></h3>
+		<p style="max-width:640px;margin:0 auto;">
+			<%= &subs::ui('A share can live on a person\'s device instead of paper. The device makes a key just for this, this house seals one share to it, and the server never sees the share in the clear. One share per person. Any share that no device takes is still printed below.') %>
+		</p>
+		<% if ($share_stale) { %>
+			<p style="color:darkred;"><b><%= &subs::ui('The house key changed, so the device shares were cleared. Make a new set.') %></b></p>
+		<% } %>
+		<% my %share_person_name = map { ($_->{'uuid'} || '') => ($_->{'name'} || '') } @{ $people || [] }; %>
+		<% if (scalar @{ $share_set || [] } > 0) { %>
+			<p style="max-width:640px;margin:0 auto;">
+				<%= &subs::ui('Held by devices:') %>
+				<% foreach my $s ( @{ $share_set } ) { %>
+					<% my $pn = ($s->{'holder_person'} || '') ne '' ? ($share_person_name{$s->{'holder_person'}} || $s->{'holder_person'}) : ''; %>
+					<span style="display:inline-block;margin:2px 8px;padding:2px 8px;border:solid 1px;border-radius:6px;">
+						#<%= $s->{'share_index'} %> — <%= $pn ne '' ? $pn : &subs::ui('a device') %>
+					</span>
+				<% } %>
+				(<%= $share_k %>/<%= $share_n %>)
+			</p>
+		<% } %>
+		<div style="text-align:center;margin:8px 0;">
+			<% my %share_person_seen; %>
+			<% foreach my $d ( @{ $share_devices || [] } ) { %>
+				<% my $pkey = ($d->{'person_uuid'} || '') ne '' ? 'p:' . $d->{'person_uuid'} : 'd:' . $d->{'uuid'}; %>
+				<% my $checked = $share_person_seen{$pkey}++ ? '' : 'checked'; %>
+				<label style="display:inline-block;margin:4px 10px;font-size:14px;">
+					<input type="checkbox" class="share_device" device="<%= $d->{'uuid'} %>" <%= $checked %>
+						title="<%= &subs::ui('Give this device one share') %>">
+					<%= $d->{'name'} %><% my $dpn = ($d->{'person_uuid'} || '') ne '' ? ($share_person_name{$d->{'person_uuid'}} || '') : ''; %><% if ($dpn ne '') { %> (<%= $dpn %>)<% } %>
+				</label>
+			<% } %>
+		</div>
+		<button id="shares_wrap" type="button"><%= &subs::lang('shares.make.device') %></button>
+		<div id="shares_wrap_display" style="display:none;margin-top:14px;">
+			<p><b><%= &subs::ui('Write these down now — they will not be shown again.') %></b></p>
+			<pre id="shares_wrap_value" style="display:inline-block;text-align:left;font-family:monospace;font-size:13px;background-color:var(--panel);border:solid;border-radius:8px;padding:12px;white-space:pre-wrap;"></pre>
+			<div id="shares_wrap_assigned" style="font-size:13px;margin-top:6px;"></div>
+		</div>
+		<h4 style="margin-top:18px;"><%= &subs::lang('shares.release') %></h4>
+		<p style="max-width:640px;margin:0 auto;">
+			<%= &subs::ui('A machine with no key can ask this house for shares. If this device holds one, release it here: it is re-sealed to that machine and never shown to this server.') %>
+		</p>
+		<div id="share_requests_list" style="max-width:640px;margin:0 auto;">
+			<% if (scalar @{ $share_pending || [] } > 0) { %>
+				<table style="width:100%;text-align:center;">
+					<thead><tr><th><%= &subs::ui('Code') %></th><th><%= &subs::ui('Asking device') %></th><th><%= &subs::ui('Shares') %></th><th></th></tr></thead>
+					<tbody>
+						<% foreach my $r ( @{ $share_pending } ) { %>
+							<tr class="share_request" uuid="<%= $r->{'uuid'} %>" asker="<%= $r->{'asker_pubkey'} %>" set_id="<%= $r->{'set_id'} %>">
+								<td style="font-family:monospace;font-size:18px;letter-spacing:2px;"><%= $r->{'code'} %></td>
+								<td><%= $r->{'name'} %></td>
+								<td><%= $r->{'available'} || 0 %>/<%= $r->{'need'} || 0 %></td>
+								<td><button class="share_release" type="button"><%= &subs::lang('shares.release') %></button></td>
+							</tr>
+						<% } %>
+					</tbody>
+				</table>
+			<% } else { %>
+				<p><%= &subs::ui('No device is asking for shares right now.') %></p>
+			<% } %>
+		</div>
+		<button id="share_requests_refresh" type="button"><%= &subs::ui('Refresh') %></button>
+		<div id="share_release_note" style="min-height:22px;color:darkred;"></div>
 		<h3 style="margin-top:18px;">Sharing</h3>
 		<p style="max-width:640px;margin:0 auto;">
 			A linked machine that has lost its key can fetch this house key from here while this is ticked. The

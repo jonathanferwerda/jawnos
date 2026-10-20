@@ -6210,6 +6210,7 @@ get '/manager/configure/device_lister' => sub($c) {
 	my $devices = &subs::device_lister($timestamp,$load_type,$ip);
 	my $networks = &subs::network_groups($devices);
 	my $ble_devices = &subs::ble_device_listing();
+	my $routers = &subs::router_list();
 	my $ping = &subs::setting_grabber({ app => 'misc', setting => 'ping' });
 
 	$c->render(
@@ -6217,6 +6218,7 @@ get '/manager/configure/device_lister' => sub($c) {
 		devices => $devices,
 		networks => $networks,
 		ble_devices => $ble_devices,
+		routers => $routers,
 		ping => $ping,
 		ping_scan => $ping_scan,
 		ip => $ip,
@@ -10337,6 +10339,7 @@ sub ticket_request_pending_html() {
 sub ticket_request_mint($c, $request, $privilege, $warranty) {
 	my $info = eval { return decode_json $request->{'information'} } || {};
 	my $host = $c->req->url->base->host;
+	my $local = &subs::local_domain();
 	my $addresses = eval { &subs::device_lister(&subs::rightNow(), '')->[0]->{'address'} } || {};
 	my $nic;
 	foreach my $key ( sort keys %{$addresses} ) {
@@ -10354,6 +10357,7 @@ sub ticket_request_mint($c, $request, $privilege, $warranty) {
 		name => $request->{'name'},
 		privilege => $privilege,
 		project => $info->{'project'},
+		host => (($local ne '' && ($host eq $local || $host eq '127.0.0.1')) ? $local : undef),
 		nic => $nic,
 		warranty => $warranty,
 		keep_warranty => 1
@@ -10437,7 +10441,15 @@ sub qrcode_generator($params) {
 	my $uuid = $sj->{'uuid'};
 
 	my $domain;
-	unless ($params->{'db'}) {
+	if ($params->{'host'}) {
+		# an app or self ticket names the local alias, which resolves to this
+		# machine's loopback but keeps the wildcard certificate
+		$domain = $params->{'host'};
+	}
+	elsif ($params->{'db'}) {
+		$domain = '127.0.0.1';
+	}
+	else {
 		if ($nic eq &subs::config_reader()->{'domain'}) {
 			$domain = $nic;
 		}
@@ -10445,9 +10457,6 @@ sub qrcode_generator($params) {
 			my $x = &subs::device_lister($timestamp, '')->[0]->{'address'};
 			$domain = $x->{$nic}->{'ip'};
 		}
-	}
-	else {
-		$domain = '127.0.0.1';
 	}
 	my $port = $ENV{PORT_AHOY};
 	if ($device eq 'server') {
@@ -27035,6 +27044,15 @@ sub security_initializer($c) {
 	my $biometric_enrolled = ($current_device && $current_device->{'bio_pubkey'}) ? 1 : 0;
 	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
 	my $recovery_stale = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery_stale')->hashes->[0];
+	# Shares held by devices: the newest set, the devices that can take one, and
+	# the requests a recovering machine has left open.
+	my $share_stale = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'shamir_stale')->hashes->[0];
+	my $share_set_id = &subs::house_key_share_set_current();
+	my $share_set = length $share_set_id ? &subs::house_key_share_set_active($share_set_id) : [];
+	my ($share_k, $share_n) = &subs::shamir_policy();
+	my $share_devices = [ grep { ($_->{'share_pubkey'} || '') ne '' && ($_->{'status'} || '') eq 'active' } @{$devices} ];
+	my $share_pending = &subs::house_key_share_requests_open();
+	my $share_mine = $current_device_uuid ? &subs::house_key_share_for_device($current_device_uuid, $share_set_id) : [];
 	# pending device approvals: old ones go, ones whose key is already on the
 	# roster (approved on a peer) are settled, the rest wait with their code
 	my $now = &subs::rightNow();
@@ -27076,6 +27094,14 @@ sub security_initializer($c) {
 		biometric_enrolled => $biometric_enrolled,
 		recovery => $recovery,
 		recovery_stale => $recovery_stale,
+		share_stale => $share_stale,
+		share_set_id => $share_set_id,
+		share_set => $share_set,
+		share_devices => $share_devices,
+		share_k => $share_k,
+		share_n => $share_n,
+		share_pending => $share_pending,
+		share_mine => $share_mine,
 		requests => $requests,
 		config => $config
 	);
@@ -27401,6 +27427,7 @@ post '/manager/security/device_revoke' => sub($c) {
 	}
 	my $uuid = $c->param('uuid');
 	&subs::db_delete('paired_devices', { uuid => $uuid }) if $uuid;
+	&subs::house_key_share_revoke_device($uuid) if $uuid;
 	&subs::db_delete('security', { level => 'padlock_device', uuid => $uuid }) if $uuid;
 	&subs::db_query('delete from settings where app = ? and setting = ? and device = ?', '__president', 'padlock_device_time', $uuid) if $uuid;
 	$c->render(json => &security_initializer($c));
@@ -27463,6 +27490,117 @@ post '/manager/security/shares/create' => sub($c) {
 	$c->render(json => { ok => 1, k => $k, n => $n, shares => \@codes, html => $sec->{'html'} });
 };
 
+post '/manager/security/shares/key' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	my $device_uuid = $c->session('device_uuid') || '';
+	unless ($device_uuid) { $c->render(json => { ok => 0, error => 'no device' }); return; }
+	my $raw = eval { decode_base64($c->param('share_pubkey') // '') };
+	unless (defined $raw && length($raw) == 32) { $c->render(json => { ok => 0, error => 'bad key' }); return; }
+	&subs::db_update('paired_devices', { share_pubkey => encode_base64($raw, ''), server_time => &subs::rightNow() }, { uuid => $device_uuid });
+	$c->render(json => { ok => 1 });
+};
+
+# Split this house's key and wrap a share to each chosen device. The shares a
+# device takes are stored sealed to its own X25519 key; any share left is
+# returned once as paper. One wrapped share per person.
+post '/manager/security/shares/wrap' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	my $suds = &subs::session_suds($c);
+	unless ($suds && length $suds) { $c->render(json => { ok => 0 }); return; }
+	my @holders;
+	my $picked = $c->param('holders') // '';
+	if ($picked =~ /\S/) {
+		@holders = grep { /\S/ } split /[\s,]+/, $picked;
+	}
+	else {
+		# one device per person among the devices that registered a share key
+		my $rows = eval { &subs::db_query("select uuid, person_uuid from paired_devices where status = 'active' and share_pubkey is not null and share_pubkey != '' order by last_seen desc, server_time desc")->hashes } || [];
+		my %seen;
+		foreach my $d ( @{$rows} ) {
+			my $key = ($d->{'person_uuid'} || '') ne '' ? 'p:' . $d->{'person_uuid'} : 'd:' . $d->{'uuid'};
+			next if $seen{$key}++;
+			push @holders, $d->{'uuid'};
+		}
+	}
+	my $made = &subs::house_key_share_create_set($suds, \@holders);
+	unless ($made) { $c->render(json => { ok => 0 }); return; }
+	my $sec = &security_initializer($c);
+	$c->render(json => {
+		ok => 1,
+		set_id => $made->{'set_id'},
+		k => $made->{'k'},
+		n => $made->{'n'},
+		assigned => $made->{'assigned'},
+		paper => $made->{'paper'},
+		skipped => $made->{'skipped'},
+		html => $sec->{'html'},
+	});
+};
+
+# The wrapped shares this device holds. They are useless to any other device.
+post '/manager/security/shares/mine' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	my $device_uuid = $c->session('device_uuid') || '';
+	unless ($device_uuid) { $c->render(json => { ok => 0, error => 'no device' }); return; }
+	my $set_id = &subs::house_key_share_set_current();
+	my $rows = &subs::house_key_share_for_device($device_uuid, $set_id);
+	my ($k, $n) = &subs::shamir_policy();
+	$c->render(json => {
+		ok => 1,
+		set_id => $set_id,
+		k => $k,
+		n => $n,
+		shares => [ map { { set_id => $_->{'set_id'}, share_index => $_->{'share_index'}, wrapped => $_->{'wrapped'} } } @{$rows} ],
+	});
+};
+
+# A recovering machine is asking. Its public key is public; the holders answer
+# with blobs this server cannot open.
+post '/manager/security/shares/requests' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	&subs::house_key_share_cleanup();
+	my $rows = &subs::house_key_share_requests_open();
+	my $out = [];
+	foreach my $r ( @{$rows} ) {
+		push @{$out}, {
+			uuid => $r->{'uuid'},
+			code => $r->{'code'},
+			name => $r->{'name'},
+			need => $r->{'need'},
+			have => $r->{'available'},
+			set_id => $r->{'set_id'},
+			asker_pubkey => $r->{'asker_pubkey'},
+			created => $r->{'created'},
+		};
+	}
+	$c->render(json => { ok => 1, requests => $out });
+};
+
+post '/manager/security/shares/release' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0, error => 'citizen only' });
+		return;
+	}
+	my $device_uuid = $c->session('device_uuid') || '';
+	my $request_uuid = $c->param('request_uuid') // '';
+	my $share_index = $c->param('share_index');
+	my $wrapped = $c->param('wrapped') // '';
+	my ($ok, $why) = &subs::house_key_share_release_add($request_uuid, $device_uuid, $share_index, $wrapped);
+	$c->render(json => { ok => $ok ? 1 : 0, error => $why });
+};
+
 post '/manager/security/recovery/create' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { ok => 0 });
@@ -27510,6 +27648,50 @@ post '/manager/security/legacy_reseal' => sub($c) {
 	my $local = &subs::legacy_reseal();
 	my $mesh = &subs::legacy_reseal_mesh();
 	$c->render(json => { ok => $local->{'ok'} ? 1 : 0, local => $local, mesh => $mesh });
+};
+
+# A machine with no key asks the house for its shares. It posts an ephemeral
+# X25519 public key; holders re-wrap to it and the server only relays. The key
+# itself never reaches the server, and a request that nobody answers expires.
+post '/manager/device/shares/request' => sub($c) {
+	my $pubkey = $c->param('pubkey') // '';
+	my $raw = eval { decode_base64($pubkey) };
+	unless (defined $raw && length($raw) == 32) { $c->render(json => { ok => 0, error => 'bad key' }); return; }
+	my $ip = $c->tx->remote_address;
+	my $now = &subs::rightNow();
+	&subs::house_key_share_cleanup();
+	my $tries = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'share_ask', $ip . ':%', $now - 3600000)->hashes->[0]{'n'} || 0;
+	my $waiting = &subs::db_query('select count(*) as n from house_key_share_requests where status = ? and server_time >= ?', 'open', $now - 1800000)->hashes->[0]{'n'} || 0;
+	if ($tries >= 10 || $waiting >= 5) { $c->render(json => { ok => 0, error => 'too many' }); return; }
+	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'share_ask', app => '__president', server_time => $now, timestamp => $now });
+	my $made = &subs::house_key_share_request_create($pubkey, $c->param('name'));
+	unless ($made) { $c->render(json => { ok => 0, error => 'not made' }); return; }
+	$c->render(json => {
+		ok => 1,
+		uuid => $made->{'uuid'},
+		code => $made->{'code'},
+		need => $made->{'need'},
+		have => $made->{'have'},
+		enough => ($made->{'have'} >= $made->{'need'} ? 1 : 0),
+	});
+};
+
+# The asking machine polls this. The release blobs are sealed to the key it
+# minted, so the server's answer is opaque to everyone else.
+get '/manager/device/shares/status' => sub($c) {
+	my $uuid = $c->param('uuid') // '';
+	my $req = &subs::house_key_share_request_open($uuid);
+	unless ($req) { $c->render(json => { ok => 0, status => 'expired' }); return; }
+	my $releases = &subs::house_key_share_releases($uuid);
+	$c->render(json => {
+		ok => 1,
+		status => 'open',
+		need => $req->{'need'},
+		available => $req->{'available'},
+		set_id => $req->{'set_id'},
+		have => scalar(@{$releases}),
+		releases => [ map { { share_index => $_->{'share_index'}, wrapped => $_->{'wrapped'} } } @{$releases} ],
+	});
 };
 
 # The gate's recovery door: the paper code unwraps the sealed suds and the
@@ -32902,6 +33084,68 @@ sub update_database($data) {
 		'create index if not exists idx1_people on people (uuid)',
 		'alter table tickets add column person_uuid VARCHAR(255)',
 		'alter table paired_devices add column person_uuid VARCHAR(255)',
+		# A device can hold one wrapped Shamir share. The key is an X25519 key the
+		# device generates for this alone (its login key may be signing-only); the
+		# server wraps the share to it and never sees the share in the clear.
+		'alter table paired_devices add column share_pubkey VARCHAR(255)',
+		'create table if not exists house_key_shares (
+			uuid VARCHAR(255) unique,
+			set_id VARCHAR(255),
+			share_index INTEGER,
+			holder_person VARCHAR(255),
+			holder_device VARCHAR(255),
+			alg VARCHAR(25),
+			wrapped LONGTEXT,
+			status VARCHAR(25),
+			created VARCHAR(255),
+			server_time VARCHAR(255),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_house_key_shares on house_key_shares (set_id)',
+		'create index if not exists idx2_house_key_shares on house_key_shares (holder_device)',
+		# A machine with no vault asks for shares: only its ephemeral public key
+		# is stored, and the holders answer with blobs the server cannot open.
+		'create table if not exists house_key_share_requests (
+			uuid VARCHAR(255) unique,
+			code VARCHAR(25),
+			asker_pubkey VARCHAR(255),
+			name VARCHAR(255),
+			need INTEGER,
+			available INTEGER,
+			set_id VARCHAR(255),
+			status VARCHAR(25),
+			created VARCHAR(255),
+			server_time VARCHAR(255),
+			ost VARCHAR(25)
+		)',
+		'create table if not exists house_key_share_releases (
+			uuid VARCHAR(255) unique,
+			request_uuid VARCHAR(255),
+			set_id VARCHAR(255),
+			share_index INTEGER,
+			holder_device VARCHAR(255),
+			wrapped LONGTEXT,
+			created VARCHAR(255),
+			server_time VARCHAR(255),
+			ost VARCHAR(25)
+		)',
+		# A gateway is not a JawnOS peer: it has no manager and no session.
+		# Keeping it in its own table lets the Dev panel show it after the
+		# machine has left that network, with the last time it answered.
+		'create table if not exists routers (
+			uuid VARCHAR(255) unique,
+			ip VARCHAR(64),
+			mac VARCHAR(64),
+			nic VARCHAR(64),
+			name VARCHAR(255),
+			model VARCHAR(255),
+			manager VARCHAR(255),
+			last_seen VARCHAR(25),
+			timestamp VARCHAR(25),
+			server_time VARCHAR(25),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_routers on routers (ip)',
 		# Notes are their own store now, not appointments: one plain row per note.
 		# The server_time column is what puts it on the generic peer sync and backup,
 		# so a note still reaches every machine.

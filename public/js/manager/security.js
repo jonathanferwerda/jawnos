@@ -387,3 +387,174 @@ $(document).on('click', '.signatorial_selection', function() {
 
 
 });
+// --- device-held shares -------------------------------------------------------
+// A device makes one X25519 key for shares and keeps it non-extractable. The
+// server wraps a share to its public half; the device unwraps only when a
+// recovering machine asks, and re-seals the share to that machine's ephemeral
+// key. See docs/house-key-roles-and-shamir.md.
+(function () {
+	function idb() {
+		return new Promise(function (res, rej) {
+			var r = indexedDB.open('jawn_share', 1);
+			r.onupgradeneeded = function () { r.result.createObjectStore('keys'); };
+			r.onsuccess = function () { res(r.result); };
+			r.onerror = function () { rej(r.error); };
+		});
+	}
+	function idbGet(k) {
+		return idb().then(function (db) {
+			return new Promise(function (res, rej) {
+				var q = db.transaction('keys', 'readonly').objectStore('keys').get(k);
+				q.onsuccess = function () { res(q.result); };
+				q.onerror = function () { rej(q.error); };
+			});
+		});
+	}
+	function idbPut(k, v) {
+		return idb().then(function (db) {
+			return new Promise(function (res, rej) {
+				var tx = db.transaction('keys', 'readwrite');
+				tx.objectStore('keys').put(v, k);
+				tx.oncomplete = function () { res(); };
+				tx.onerror = function () { rej(tx.error); };
+			});
+		});
+	}
+
+	// Make (or load) this device's share key and tell the house its public half.
+	// The key is non-extractable; only the public half ever leaves the device.
+	function ensureShareKey() {
+		var S = window.jawnosShareCrypto;
+		if (!S || !S.supported()) { return Promise.reject(new Error('no x25519')); }
+		return idbGet('share_key').then(function (key) {
+			if (key) {
+				return Promise.all([idbGet('share_pub'), idbGet('share_spki')]).then(function (a) {
+					var pub = a[0];
+					var spki = a[1];
+					if (pub && spki) { return { key: key, pub: pub, spki: S.unb64(spki) }; }
+					// an old key with no recorded public half cannot be used for the
+					// key derivation; replace it rather than fail every release
+					return S.generate().then(function (pair) {
+						return Promise.all([S.publicRaw(pair.publicKey), S.publicSpki(pair.publicKey)]).then(function (b) {
+							var p = S.b64(b[0]);
+							return idbPut('share_key', pair.privateKey)
+								.then(function () { return idbPut('share_pub', p); })
+								.then(function () { return idbPut('share_spki', S.b64(b[1])); })
+								.then(function () { return { key: pair.privateKey, pub: p, spki: b[1], fresh: true }; });
+						});
+					});
+				});
+			}
+			return S.generate().then(function (pair) {
+				return Promise.all([S.publicRaw(pair.publicKey), S.publicSpki(pair.publicKey)]).then(function (a) {
+					var pub = S.b64(a[0]);
+					var spki = a[1];
+					return idbPut('share_key', pair.privateKey)
+						.then(function () { return idbPut('share_pub', pub); })
+						.then(function () { return idbPut('share_spki', S.b64(spki)); })
+						.then(function () { return { key: pair.privateKey, pub: pub, spki: spki, fresh: true }; });
+				});
+			});
+		}).then(function (got) {
+			return $.post('/manager/security/shares/key', { share_pubkey: got.pub }).then(function (r) {
+				got.registered = !!(r && r.ok);
+				return got;
+			}, function () { return got; });
+		});
+	}
+
+	$(document).on('click', '#shares_wrap', function () {
+		var button = $(this);
+		var holders = $('.share_device:checked').map(function () { return $(this).attr('device'); }).get().join(',');
+		button.prop('disabled', true);
+		// register this device's share key first, so an unlisted device can still
+		// take a share when nothing is ticked (the server picks one per person)
+		ensureShareKey().catch(function () {}).then(function () {
+			$.ajax({
+				url: '/manager/security/shares/wrap',
+				type: 'POST',
+				data: { holders: holders, security_view: 'recovery' },
+				success: function (r) {
+					button.prop('disabled', false);
+					if (!r || !r.ok) { $('#alert').html('Could not make device shares').show(); return; }
+					$('#security').replaceWith(r.html);
+					appointment_chron();
+					$('#shares_wrap_display').show();
+					var paper = r.paper || [];
+					$('#shares_wrap_value').text(paper.join('\n'));
+					var held = (r.assigned || []).map(function (a) {
+						return '#' + a.share_index + ' — ' + (a.device_name || a.device);
+					});
+					$('#shares_wrap_assigned').text(held.length
+						? 'Held by: ' + held.join(', ') + (paper.length ? '' : '. Every share is on a device — nothing to write down.')
+						: 'No device took a share.');
+					$('#shares_wrap_display p b').text(paper.length ? 'Write these down now — they will not be shown again.' : 'All shares are held by devices — nothing to write down.');
+				},
+				error: function () {
+					button.prop('disabled', false);
+					$('#alert').html('Could not make device shares').show();
+				}
+			});
+		});
+	});
+
+	// Release one share to the machine that asked: unwrap it with this device's
+	// key, seal it to the asker's ephemeral key, and hand over the opaque blob.
+	$(document).on('click', '.share_release', function () {
+		var button = $(this);
+		var row = button.closest('.share_request');
+		var request_uuid = row.attr('uuid');
+		var asker = row.attr('asker');
+		var note = $('#share_release_note');
+		button.prop('disabled', true);
+		note.css('color', 'darkred').text('');
+		ensureShareKey().then(function (got) {
+			return $.post('/manager/security/shares/mine', {}).then(function (r) {
+				if (!r || !r.ok || !r.shares || !r.shares.length) { throw new Error('no share'); }
+				var mine = r.shares[0];
+				return window.jawnosShareCrypto.unwrap(mine.wrapped, got.key, got.spki).then(function (raw) {
+					return window.jawnosShareCrypto.wrap(raw, asker).then(function (blob) {
+						return $.post('/manager/security/shares/release', {
+							request_uuid: request_uuid,
+							share_index: mine.share_index,
+							wrapped: blob
+						});
+					});
+				});
+			});
+		}).then(function (r) {
+			button.prop('disabled', false);
+			if (r && r.ok) {
+				note.css('color', 'green').text('Released. The asking machine has this share now.');
+			}
+			else {
+				note.text((r && r.error) ? r.error : 'Could not release it.');
+			}
+		}).catch(function (e) {
+			button.prop('disabled', false);
+			note.text((e && e.message === 'no share')
+				? 'This device holds no share in the current set.'
+				: 'Could not release it.');
+		});
+	});
+
+	$(document).on('click', '#share_requests_refresh', function () {
+		$.ajax({
+			url: '/manager/security',
+			type: 'GET',
+			data: { security_view: 'recovery', window_maker: 'yes' },
+			success: function (r) {
+				if (r && r.html) {
+					$('#security').replaceWith(r.html);
+					appointment_chron();
+				}
+			}
+		});
+	});
+
+	// register quietly when the Recovery view is opened, so this device can take
+	// a share the next time a set is made
+	$(document).on('click', '.security_view_select[view="recovery"], #security_toggle', function () {
+		ensureShareKey().catch(function () {});
+	});
+})();

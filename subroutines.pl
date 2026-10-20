@@ -3252,6 +3252,82 @@ sub ip_is_private() {
 	return 0;
 }
 
+# ---- routers on the network ------------------------------------------------
+# The gateway is the one device every network has, and the Dev panel should
+# name it without a person tagging it. Probe it once (the login page says which
+# firmware answers), keep the row when the machine later leaves that network,
+# and let the card show the last time it was seen. A router is not a JawnOS
+# peer, so it does not belong in remote_machines.
+sub router_probe() {
+	my ($ip) = @_;
+	return undef unless $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	return undef unless &ip_is_private($ip);
+	my $body = `timeout 4 curl -sk --max-time 4 http://$ip/ 2>/dev/null | head -c 20000`;
+	return undef unless $body;
+	my $name = '';
+	my $firmware = '';
+	if ($body =~ /DD-WRT/i) {
+		$name = 'DD-WRT';
+		$firmware = 'DD-WRT';
+	}
+	elsif ($body =~ /OpenWrt/i) {
+		$name = 'OpenWrt';
+		$firmware = 'OpenWrt';
+	}
+	if ($name eq '' && $body =~ /<title[^>]*>(.*?)<\/title>/is) {
+		$name = $1;
+		$name =~ s/<[^>]+>//g;
+		$name =~ s/\s+/ /g;
+		$name =~ s/^\s+|\s+$//g;
+	}
+	$name = 'Router' if $name eq '';
+	return { name => $name, firmware => $firmware, manager => "http://$ip/" };
+}
+
+sub router_discover() {
+	my $now = &rightNow();
+	my $last = &cache_get({ app => '__president', context => 'router', subcontext => 'discovery' });
+	return if $last && ($last->{'at'} || 0) > $now - 120000;
+	&cache_set({ app => '__president', context => 'router', subcontext => 'discovery', warranty => '-2m' }, { at => $now });
+	my $report = &network_interface_reporter();
+	foreach my $nic ( keys %{$report} ) {
+		my $gw = $report->{$nic}->{'gw'} || '';
+		next unless $gw =~ /^\d{1,3}(?:\.\d{1,3}){3}$/ && &ip_is_private($gw);
+		my $probe = &router_probe($gw) || { name => 'Router', firmware => '', manager => "http://$gw/" };
+		my $row = &db_select('routers', undef, { ip => $gw })->hashes->[0];
+		my %rec = (
+			ip => $gw, nic => $nic, name => $probe->{'name'},
+			model => $probe->{'firmware'}, manager => $probe->{'manager'},
+			mac => $report->{$nic}->{'gw_mac'} || '', last_seen => $now,
+			server_time => $now, ost => $now,
+		);
+		if ($row) {
+			&db_update('routers', \%rec, { uuid => $row->{'uuid'} });
+		}
+		else {
+			$rec{'uuid'} = &random_string_creator(25);
+			$rec{'timestamp'} = $now;
+			&db_insert('routers', \%rec);
+		}
+	}
+	return 1;
+}
+
+# Every router this machine has met, newest sighting first. online is a short
+# window so a router that is simply off the network still lists, greyed, with
+# the last time it answered.
+sub router_list() {
+	my @routers = @{ &db_select('routers')->hashes || [] };
+	my $now = &rightNow();
+	foreach my $r (@routers) {
+		my $seen = $r->{'last_seen'} || 0;
+		$r->{'online'} = ($seen && $now - $seen < 180000) ? 1 : 0;
+		$r->{'seen_display'} = $seen ? &subs::formatted_time($seen) : '';
+		$r->{'name'} ||= 'Router';
+	}
+	return \@routers;
+}
+
 # Resolve mDNS/DNS-SD services of one type on the local network, as a list of
 # records (avahi is the responder this house already has). Parsable output, one
 # `=` line per resolved instance:
@@ -3506,6 +3582,9 @@ sub mdns_merge_address() {
 # own device row, so a device plugged in is named within seconds without running
 # the whole interface scan. Writes only when something changed.
 sub device_mdns_sync() {
+	# The gateway is usually the one appliance that never runs jawn, so it is
+	# discovered here rather than by the peer mesh. Throttled inside.
+	eval { &router_discover(); };
 	my $hostname = `hostname`;
 	chomp $hostname;
 	my $row = &subs::db_select('devices', undef, { hostname => $hostname })->hashes->[0];
@@ -4038,6 +4117,9 @@ sub ensure_self_device() {
 sub device_lister() {
 	my ($timestamp,$load_type,$ip_range,$chip_id) = @_;
 	my ($dev,$devices);
+	# A plain listing and an explicit Scan both look at the gateway; a typed
+	# purpose lookup (printer, watch, ...) has no reason to probe it.
+	&router_discover() unless $load_type && $load_type ne 'scan';
 	my $remote_machines = &subs::db_query('select * from remote_machines')->hashes;
 	if ($load_type eq 'scan' || $load_type eq 'ping_scan') {
 		&device_scan($timestamp, $load_type, $ip_range);
@@ -15072,6 +15154,27 @@ sub tailnet_set_exit {
 
 # The tailnet address a roster row advertises, from its own network map first
 # (a peer's ip column is often the LAN address) and its ip column second.
+# The name this machine calls itself on. It is the configured domain with its
+# first label replaced by `local` (oldtop.jonathanferwerda.com reads as
+# local.jonathanferwerda.com), which the house's DNS points at 127.0.0.1: the
+# router does it on the home LAN and Headscale carries the same record for the
+# tailnet. The URL keeps the wildcard certificate, while the bytes never leave
+# the device - so the manager opens without a VPN and without a round trip to
+# another machine. `local_domain` in config.json overrides the derivation.
+sub local_domain {
+	my $config = eval { &config_reader() } || {};
+	my $explicit = $config->{'local_domain'} || '';
+	$explicit =~ s/^\s+|\s+$//g;
+	return $explicit if $explicit ne '';
+	my $domain = $config->{'domain'} || '';
+	$domain =~ s/^\s+|\s+$//g;
+	return '' if $domain eq '';
+	my @labels = split /\./, $domain;
+	return $domain if scalar @labels < 2;
+	shift @labels;
+	return 'local.' . join '.', @labels;
+}
+
 sub tailnet_address {
 	my ($rm) = @_;
 	my $network = ref($rm->{'network'}) eq 'HASH' ? $rm->{'network'} : (eval { decode_json($rm->{'network'} || '{}') } || {});
@@ -16768,6 +16871,231 @@ sub shamir_open_shares {
 	return $secret;
 }
 
+# --- device-held shares -------------------------------------------------------
+# A share can be stored sealed to a device instead of printed. The device makes
+# an X25519 key just for this (not its login key: the browser's Ed25519 key is
+# non-extractable and cannot agree), sends the public half here, and the server
+# wraps one share to it. The server never sees a share in the clear.
+#
+# Recovery is the other direction: a machine with no key mints an ephemeral
+# X25519 key, each holder unwraps its share and re-wraps it to that key, and the
+# recovering machine combines the answers itself. The server only relays opaque
+# blobs. At most one wrapped share is assigned per person, so one person with
+# five devices is not a threshold.
+
+sub house_key_share_wrap {
+	my ($share, $pubkey_b64) = @_;
+	return undef unless defined $share && length $share;
+	return undef unless defined $pubkey_b64 && length $pubkey_b64;
+	my $raw = eval { decode_base64($pubkey_b64) };
+	return undef unless defined $raw && length($raw) == 32;
+	require Crypt::PK::X25519;
+	my $pk = Crypt::PK::X25519->new();
+	return undef unless eval { $pk->import_key_raw($raw, 'public') };
+	return &house_key_wrap($share, $pk);
+}
+
+# The current set is the newest set with any active shares. A recovery request
+# names it, so a holder never releases a share from an older split (shares from
+# two different splits never combine).
+sub house_key_share_set_current {
+	my $row = eval { &db_query('select set_id from house_key_shares where status = ? order by server_time desc limit 1', 'active')->hashes->[0] };
+	return $row ? $row->{'set_id'} : '';
+}
+
+sub house_key_share_set_active {
+	my ($set_id) = @_;
+	return [] unless defined $set_id && length $set_id;
+	my $rows = eval { &db_query('select * from house_key_shares where set_id = ? and status = ? order by share_index', $set_id, 'active')->hashes };
+	return $rows || [];
+}
+
+sub house_key_share_set_count {
+	my ($set_id) = @_;
+	my $rows = &house_key_share_set_active($set_id);
+	return scalar @{$rows};
+}
+
+sub house_key_share_for_device {
+	my ($device_uuid, $set_id) = @_;
+	return [] unless defined $device_uuid && length $device_uuid;
+	my @args = ($device_uuid, 'active');
+	my $sql = 'select * from house_key_shares where holder_device = ? and status = ?';
+	if (defined $set_id && length $set_id) { $sql .= ' and set_id = ?'; push @args, $set_id; }
+	$sql .= ' order by server_time desc';
+	my $rows = eval { &db_query($sql, @args)->hashes };
+	return $rows || [];
+}
+
+# Split $suds and wrap as many shares as there are eligible holders. The rest
+# are returned as paper codes. Holders are device uuids; one per person (an
+# unassigned device counts as its own holder key).
+sub house_key_share_create_set {
+	my ($suds, $holders) = @_;
+	return undef unless defined $suds && length $suds;
+	$holders = [] unless $holders && ref $holders eq 'ARRAY';
+	my ($k, $n) = &shamir_policy();
+	my $shares = &shamir_split($suds, $k, $n);
+	return undef unless $shares;
+	my $set_id = &random_string_creator(25);
+	my $now = &rightNow();
+	my (@assigned, @paper, @skipped, %holder_used, %device_seen);
+	my $next = 0;
+	foreach my $device_uuid ( @{$holders} ) {
+		next unless defined $device_uuid && length $device_uuid;
+		next if $device_seen{$device_uuid}++;
+		my $device = eval { &db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0] };
+		unless ($device) { push @skipped, { device => $device_uuid, why => 'no device' }; next; }
+		my $pubkey = $device->{'share_pubkey'} || '';
+		unless (length $pubkey) { push @skipped, { device => $device_uuid, why => 'no share key' }; next; }
+		my $person = $device->{'person_uuid'} || '';
+		my $holder_key = length $person ? 'p:' . $person : 'd:' . $device_uuid;
+		if ($holder_used{$holder_key}) { push @skipped, { device => $device_uuid, why => 'person already holds one' }; next; }
+		last if $next >= scalar @{$shares};
+		my $share = $shares->[$next];
+		my $raw = pack('C', $share->{'x'}) . $share->{'y'};
+		my $wrapped = &house_key_share_wrap($raw, $pubkey);
+		unless ($wrapped) { push @skipped, { device => $device_uuid, why => 'wrap failed' }; next; }
+		my $made = eval {
+			&db_insert('house_key_shares', {
+				uuid => &random_string_creator(25),
+				set_id => $set_id,
+				share_index => $share->{'x'},
+				holder_person => $person,
+				holder_device => $device_uuid,
+				alg => 'x25519',
+				wrapped => $wrapped,
+				status => 'active',
+				created => $now,
+				server_time => $now,
+			});
+		};
+		unless ($made) { push @skipped, { device => $device_uuid, why => 'not stored' }; next; }
+		$holder_used{$holder_key} = 1;
+		$next++;
+		push @assigned, { device => $device_uuid, device_name => $device->{'name'}, person => $person, share_index => $share->{'x'} };
+	}
+	while ($next < scalar @{$shares}) {
+		push @paper, &shamir_share_encode($shares->[$next]);
+		$next++;
+	}
+	# the policy is public and syncs; the shares themselves never leave wrapped
+	&db_query('delete from settings where app = ? and setting = ?', '__president', 'shamir');
+	&db_insert('settings', { app => '__president', setting => 'shamir', device => 'all', value => "$k:$n", timestamp => $now, server_time => $now });
+	&db_query('delete from settings where app = ? and setting = ?', '__president', 'shamir_stale');
+	return { set_id => $set_id, k => $k, n => $n, assigned => \@assigned, paper => \@paper, skipped => \@skipped };
+}
+
+# A revocation is a deletion: a wrapped share the device can no longer open is
+# still a row a copy of the database carries.
+sub house_key_share_revoke_device {
+	my ($device_uuid) = @_;
+	return unless defined $device_uuid && length $device_uuid;
+	eval { &db_delete('house_key_shares', { holder_device => $device_uuid }) };
+}
+
+# Rotation makes every wrapped share useless (they open the old key) and leaves
+# a note so the Recovery view can ask for a new set.
+sub house_key_share_clear {
+	my $had = eval { &db_query('select count(*) as n from house_key_shares')->hashes->[0]{'n'} } || 0;
+	eval { &db_query('delete from house_key_shares') };
+	eval { &db_query('delete from house_key_share_releases') };
+	eval { &db_query('delete from house_key_share_requests') };
+	if ($had) {
+		my $now = &rightNow();
+		&db_query('delete from settings where app = ? and setting = ?', '__president', 'shamir_stale');
+		&db_insert('settings', { app => '__president', setting => 'shamir_stale', device => 'all', value => 'key_rotation', timestamp => $now, server_time => $now });
+	}
+	return $had;
+}
+
+# --- the recovery request -----------------------------------------------------
+# A machine with no vault asks for shares. Its ephemeral public key is the only
+# thing stored; holders re-wrap to it, and the server relays blobs it cannot
+# open. The request lives for half an hour.
+sub house_key_share_request_create {
+	my ($pubkey_b64, $name) = @_;
+	my $raw = eval { decode_base64($pubkey_b64 // '') };
+	return undef unless defined $raw && length($raw) == 32;
+	my ($k, $n) = &shamir_policy();
+	my $set_id = &house_key_share_set_current();
+	my $have = length $set_id ? &house_key_share_set_count($set_id) : 0;
+	my $uuid = &random_string_creator(25);
+	my $code = &code_chars_make(6);
+	my $now = &rightNow();
+	my $made = eval {
+		&db_insert('house_key_share_requests', {
+			uuid => $uuid,
+			code => $code,
+			asker_pubkey => encode_base64($raw, ''),
+			name => substr(($name // 'Recovering device'), 0, 60),
+			need => $k,
+			available => $have,
+			set_id => $set_id,
+			status => 'open',
+			created => $now,
+			server_time => $now,
+		});
+	};
+	return undef unless $made;
+	return { uuid => $uuid, code => $code, need => $k, have => $have, set_id => $set_id };
+}
+
+sub house_key_share_request_open {
+	my ($uuid) = @_;
+	return undef unless defined $uuid && length $uuid;
+	my $row = eval { &db_select('house_key_share_requests', undef, { uuid => $uuid })->hashes->[0] };
+	return undef unless $row;
+	return undef unless ($row->{'status'} || '') eq 'open';
+	return undef if (($row->{'server_time'} || 0) < &rightNow() - 1800000);
+	return $row;
+}
+
+sub house_key_share_requests_open {
+	my $rows = eval { &db_query('select * from house_key_share_requests where status = ? and server_time >= ? order by server_time desc', 'open', &rightNow() - 1800000)->hashes };
+	return $rows || [];
+}
+
+sub house_key_share_release_add {
+	my ($request_uuid, $device_uuid, $share_index, $wrapped) = @_;
+	my $req = &house_key_share_request_open($request_uuid);
+	return (0, 'no request') unless $req;
+	return (0, 'no device') unless defined $device_uuid && length $device_uuid;
+	return (0, 'no share') unless defined $share_index && $share_index =~ /^\d+$/;
+	return (0, 'no blob') unless defined $wrapped && length $wrapped;
+	# the signed-in device must actually hold that share in the request's set
+	my $row = eval { &db_select('house_key_shares', undef, { set_id => $req->{'set_id'}, holder_device => $device_uuid, share_index => $share_index, status => 'active' })->hashes->[0] };
+	return (0, 'not yours') unless $row;
+	my $exists = eval { &db_query('select uuid from house_key_share_releases where request_uuid = ? and share_index = ? limit 1', $request_uuid, $share_index)->hashes->[0] };
+	return (1, 'already') if $exists;
+	my $now = &rightNow();
+	my $made = eval {
+		&db_insert('house_key_share_releases', {
+			uuid => &random_string_creator(25),
+			request_uuid => $request_uuid,
+			set_id => $req->{'set_id'},
+			share_index => $share_index,
+			holder_device => $device_uuid,
+			wrapped => $wrapped,
+			created => $now,
+			server_time => $now,
+		});
+	};
+	return $made ? (1, '') : (0, 'not stored');
+}
+
+sub house_key_share_releases {
+	my ($request_uuid) = @_;
+	my $rows = eval { &db_query('select * from house_key_share_releases where request_uuid = ? order by share_index', $request_uuid)->hashes };
+	return $rows || [];
+}
+
+sub house_key_share_cleanup {
+	my $cutoff = &rightNow() - 3600000;
+	eval { &db_query('delete from house_key_share_releases where server_time < ?', $cutoff) };
+	eval { &db_query('delete from house_key_share_requests where server_time < ?', $cutoff) };
+}
+
 sub vault_read {
 	my $device = &signatorial_designer();
 	my $q = &db_query('select value, server_time from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'vault', $device);
@@ -17118,6 +17446,9 @@ sub rotate_house_key {
 		&db_delete('settings', { app => '__president', setting => 'recovery_stale' });
 		&db_insert('settings', { app => '__president', setting => 'recovery_stale', device => 'all', value => 'key_rotation', timestamp => $now, server_time => $now });
 	}
+	# every wrapped share opens the old key; a copy of the database must not keep
+	# one that still names it. Paper shares are not here to clear.
+	&house_key_share_clear();
 	return { ok => 1, at => $now, key_id => &suds_id($Knew), old_key_id => &suds_id($K), settings => $counts->{settings}, security => $counts->{security}, links => $counts->{links} };
 }
 
