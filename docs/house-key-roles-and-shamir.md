@@ -10,8 +10,8 @@ probed (`shamir_split`, `shamir_combine`, share encode/decode). Paper shares
 print once; device shares are wrapped to a device's X25519 key, stored in
 `house_key_shares`, released through the gate's share request, and combined by
 the recovering machine. A machine with no `~/.house.key` has been drilled on a
-scratch copy; the live spare-machine drill and retiring the password share
-remain.
+fresh live snapshot with a fresh machine key, and the password share is retired
+(v0.1.959). A physical spare-machine run remains.
 **Read with:** `docs/house-key-phase2.md`, `docs/app-only-access.md`, `help.pl` → `security`.
 
 Phase 2 made the password a recovery share and stopped it resolving the data key.
@@ -233,7 +233,9 @@ recovery route and UI (~6 h), distribution UI (~4 h), drill (~3 h).
 
 ## Guardrails
 
-- The password share and the paper code stay until a threshold drill passes.
+- The password share is retired (v0.1.959): the password is a login and never a
+  recovery share. The paper code stays until a rotation sets it aside; three
+  shares remain the threshold.
 - The server stores at most **one** share.
 - Revoking a person must remove their wrapped share and their devices.
 - Never print or log a share; paper codes are shown once.
@@ -245,3 +247,5 @@ recovery route and UI (~6 h), distribution UI (~4 h), drill (~3 h).
 - Revoking a person kills every session that person had.
 - Three shares rebuild the suds; any two do not.
 - A machine with no `~/.house.key` recovers with three shares and re-seeds.
+  *(Stand-in drill passes: fresh live snapshot, fresh `HOME`, three released
+  shares. A physical spare-machine run is still worth doing.)*

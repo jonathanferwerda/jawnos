@@ -214,7 +214,7 @@
 			status('Checking...');
 			crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
 				return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
-					var body = new URLSearchParams({ code: code, password: code, pubkey: b64(spki), name: 'Recovered Device' });
+					var body = new URLSearchParams({ code: code, pubkey: b64(spki), name: 'Recovered Device' });
 					return fetch('/manager/device/recover', {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

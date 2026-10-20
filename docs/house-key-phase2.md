@@ -1,12 +1,13 @@
 # Phase 2 — the house key (`K_house`) and the password as a recovery share
 
-**Status:** implemented and drilled 2026-10-20 (v0.1.940–v0.1.944). The
-password no longer resolves the data key; it seals a recovery share. The
-lost-key drill passes on a scratch copy (vault row removed, fresh machine key,
-the share opens the house and re-seeds the vault); only the real password is
-unexercised, and it calls the same code. Per-person roles and threshold
-recovery (steps 5 and 7) are the work that remains.
-**Read with:** `docs/app-only-access.md`, `docs/ticket-access-design.md`, `help.pl` → `security`.
+**Status:** implemented and drilled 2026-10-20 (v0.1.940–v0.1.959). The
+password no longer resolves the data key and, since v0.1.959, no longer seals a
+recovery share of it: the stored `__president/password_share` row is deleted by
+a backfill and no login or password change mints another. Threshold shares
+(paper or device) are the way back in. The lost-key drill passes on a scratch
+copy and on a stand-in spare machine (fresh `HOME`, fresh snapshot, no key
+file, three released shares, vault re-seeded).
+**Read with:** `docs/house-key-roles-and-shamir.md`, `docs/app-only-access.md`, `help.pl` → `security`.
 
 ## Why
 
@@ -53,6 +54,7 @@ re-enrol a device. Phase 2 separates **authentication** from **key custody**.
   `crypto_sign_ed25519_pk_to_curve25519`) or a device-generated X25519 key.
 - **Password = recovery share** — `wrap(K_house, Argon2id(password, salt))`, stored
   offline or as Shamir shares. It recovers the house; it does not log in.
+  **Retired (v0.1.959):** the password is a login; it is not a recovery share.
 - `session_suds` returns `K_house` (unwrapped for the session), not the password.
 - Citizen sessions: app/device key challenge (+ biometric on phones). Password-only:
   bootstrap.
@@ -98,10 +100,11 @@ once the throwaway half is gone.
   neither provider exists does a new share fall back to `scrypt`, then
   `pbkdf2,600000`; the descriptor and salt are stored in the blob, so a share
   sealed by an older machine still opens.
-- `password_share_store` — the first password login seals the share into
-  `settings` (`__president/password_share`) and a password change rewrites it.
-  `/manager/device/recover` accepts the paper code **or** the password, and the
-  gate's recovery field sends the value as both.
+- The password share (`settings` `__president/password_share`) was minted by the
+  first password login and rewritten on a password change. **v0.1.959 removes
+  it:** `password_share_store` is no longer called, the recovery route's
+  password branch is gone, and the `password_share_retired` backfill deletes the
+  stored row once per database. A lost key needs the paper code or three shares.
 - `session_suds` refuses a bootstrap session outright: a password login never
   resolves the data key, even when the worker already holds it in `$gb::suds`.
   Proved device/app sessions and internal work (no `$c`) are unchanged.
@@ -121,10 +124,11 @@ OpenSSL lacks Argon2, the seal records `scrypt` instead and still opens.
 3. **Unwrap at login.** After a successful app/device challenge, the device sends
    an ephemeral public key; the server wraps `K_house` to it; the session holds
    `K_house`. `session_suds` returns it.
-4. **Password becomes recovery only.** Re-wrap `K_house` under
+4. **Password becomes recovery only.** ~~Re-wrap `K_house` under
    `Argon2id(password)`; store the recovery blob. Change `/manager/device/recover`
    to unwrap `K_house` (not the suds), then require a device key challenge before
-   minting a citizen session.
+   minting a citizen session.~~ Retired in v0.1.959: the password is a login,
+   never a recovery share.
 5. **Per-person roles.** Citizens get their own credentials/keys; residents and
    guests get tickets/peer cards. Stop sharing the password.
 6. **KDF and attempts.** Argon2id, or PBKDF2 at >= 600k (the note KDF is 10k, too
@@ -141,8 +145,9 @@ OpenSSL lacks Argon2, the seal records `scrypt` instead and still opens.
   `vault_read`, `note_encrypter` / `note_decrypter`, `seal_file` / `open_file`,
   `rotate_house_key`, `recovery_code_*`, `peer_*` lease helpers.
 - `database/schema.sql`: `paired_devices` (`pubkey`, `app_pubkey`, `bio_pubkey`,
-  `kind`). **No wrapped-key table is needed** — wraps are ephemeral (see the
-  decision above).
+  `kind`, `share_pubkey`), and `house_key_shares` / `house_key_share_requests` /
+  `house_key_share_releases` for threshold recovery. A stored share is always
+  wrapped to a device's X25519 key; the server never holds one in the clear.
 - Backup/sync: `backup_now`, `rsync_*`, `vault_share`, `key_push`, and the
   "newest wins" rule for the recovery blob.
 - Help: `security`, `devices_and_mesh`, `sealing_files`; add labels in all sixteen
@@ -151,20 +156,21 @@ OpenSSL lacks Argon2, the seal records `scrypt` instead and still opens.
 ## Risks and guardrails
 
 - **Never demote the password before a tested `K_house` recovery path exists.** A
-  lost device must not mean a lost house.
-- Keep the old password-wrapped suds until the new path has been drilled on a spare
-  machine.
+  lost device must not mean a lost house. *Done in v0.1.959:* the threshold drill
+  passes and the password share is gone.
+- ~~Keep the old password-wrapped suds until the new path has been drilled on a
+  spare machine.~~ Done: the stand-in spare-machine drill passes.
 - **No loopback app-gate bypass.** A tunnel proxy can make a remote browser look
   local.
-- The database now carries a password-sealed copy of the house key. That is the
-  point — a stolen key file stops being fatal — but a stolen database plus a
-  guessable password now recovers the house. Argon2id at 64 MiB and the recovery
-  route's five-tries-an-hour limit are the mitigations; the paper code remains
-  the stronger factor, since its secret is 128 random bits.
-- Do not share app/device keys; they are per-device. Wraps are ephemeral, so
-  revoking a device needs only its row removed.
-- Backups carry the password share (it is a settings row). The paper code and
-  the password are the factors that must not live only beside the backup.
+- The database carries no password-sealed copy of the house key: v0.1.959 removed
+  the row and no login mints another. It carries the recovery code's sealed blob
+  and the shares wrapped to device X25519 keys; a copy of the database alone opens
+  neither.
+- Do not share app/device keys; they are per-device. A stored share is wrapped to
+  one device key, so revoking a device deletes its share as well as its row.
+- Backups carry the recovery blob and the wrapped device shares (they are settings
+  and table rows). The paper shares and the paper code are the pieces that must not
+  live only beside the backup.
 - ~~Decide the Ed25519 -> X25519 route~~ — **resolved 2026-10-20**: the
   conversion is pure Perl, checked against libsodium, so no native module is
   required on the server or on Termux.
@@ -173,15 +179,12 @@ OpenSSL lacks Argon2, the seal records `scrypt` instead and still opens.
 
 ## What remains
 
-Steps 1–4 and 6 of the migration order are done; the password is a recovery
-share and never the key. What is left is a different phase, not a finish of
-this one. The design for it is in **`docs/house-key-roles-and-shamir.md`**:
+Steps 1–7 of the migration order are done. The password is a login and never a
+recovery share; three paper or device shares recover the house. A stand-in
+spare-machine drill (fresh `HOME`, fresh snapshot, no key file) passes. What is
+left is operational, not a phase:
 
-1. **Per-person roles** (step 5): citizens get their own credentials/keys
-   instead of one shared password; residents and guests get tickets/peer cards.
-2. **Threshold recovery** (step 7): Shamir 3-of-5 for `K_house`, so no single
-   password recovers the house.
-3. The two **Desktop window** rows still hold no app key and are denied
+1. Run the same drill on a physical spare machine with three shares the person
+   actually holds, before relying on it.
+2. The two **Desktop window** rows still hold no app key and are denied
    `/manager` under enforce. Add the bridge or remove them.
-4. A live lost-key drill on a spare machine is still worth doing, even though
-   the scratch-copy drill passes; it is the one path with the real password.

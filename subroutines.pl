@@ -16697,8 +16697,9 @@ sub house_key_password_open {
 	return (defined $K && length $K) ? $K : undef;
 }
 
-# The stored copy of the share. A login fills in a missing one (so a normal
-# sign-in does not pay for Argon2 every time); a password change rewrites it.
+# Legacy (v0.1.959): the password is no longer a recovery share, so no login or
+# route calls this. The seal/open primitives remain for the old sealed blobs and
+# for their probe; nothing mints a new share.
 sub password_share_store {
 	my ($password, $suds, $force) = @_;
 	return 0 unless defined $password && length $password;
@@ -22810,6 +22811,13 @@ sub guide_message_warranty() {
 
 sub backfills() {
 	return {
+		'password_share_retired' => sub {
+			# The password is a login, not a recovery share. Delete the sealed
+			# copy a previous version minted; three paper or device shares are
+			# the way back in when this machine's key file is gone.
+			&db_query('delete from settings where app = ? and setting = ?', '__president', 'password_share');
+			return 1;
+		},
 		'door_seed' => sub {
 			# the login password gets its own row so the key can stay put when
 			# the password changes; on an existing machine the password and the
