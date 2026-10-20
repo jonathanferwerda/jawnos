@@ -46,7 +46,7 @@ our %topic = (
 			'Click into a folder to descend; the breadcrumb along the top walks back up.',
 			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
 			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.',
-			'For a not-visible folder, press the lock on the toolbar and unlock it on a paired phone, and it appears — at home.',
+			'For a not-visible folder, press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone, and it appears — at home.',
 			'Sealed names ending .enc stay out of the listing until that same Folders padlock is open at home; press an open padlock to shut it again and hide them.'
 		],
 		related => [ 'sealing_files', 'gallery', 'backup' ]
@@ -69,7 +69,7 @@ our %topic = (
 			'Click any photo to open it full-screen. The toolbar gives Previous and Next, Refresh (reload the set), Shuffle (play them in a random order), Repeat (loop the slideshow), File information, Fetch home, and Set as main image.',
 			'Type in the Search box (top-left in Home and Album) and press Enter to find photos by app or file name.',
 			'In Album view, toggle Archives to include photos stored away, and use the arrow to flip the order between newest-first and oldest-first.',
-			'The lock covers the gallery when you want it out of the way; unlock it on a paired phone. Gallery opens with its lock shut, so sealed photos and albums you have marked not-visible stay hidden until the lock is open at home.',
+			'The lock covers the gallery when you want it out of the way; unlock it with this computer\'s fingerprint or on a paired phone. Gallery opens with its lock shut, so sealed photos and albums you have marked not-visible stay hidden until the lock is open at home.',
 		],
 		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser — not a phone gallery and not a file manager. Its photos are the ones recorded by their apps, and which apps are shown are the "sources", which default to the apps they currently have open. Guide them in terms of the Home / Album / Photo views and the named buttons (Home, Albums, Previous, Next, Shuffle, Repeat, Refresh, File information, Set as main image, Archives, lock). If they say they see nothing, the likeliest cause is that no source app is open or marked visible — suggest opening an app that has photos. If you are unsure how a control starts or works, describe what its label means rather than inventing a sequence of clicks. Never describe or guess the content of their photos.',
 		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
@@ -135,7 +135,7 @@ our %topic = (
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
 			'Texture, in Appearance, dresses the window in the desk\'s material - the top interface bar, every track, the player bar at the foot and every other surface; Plain and Round leave them bare.',
-			'Music opens with its padlock shut: sealed tracks (a name ending .enc) are not listed until you press the lock on the toolbar and unlock it on a paired phone at home. The next fresh open starts locked again.',
+			'Music opens with its padlock shut: sealed tracks (a name ending .enc) are not listed until you press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone at home. The next fresh open starts locked again.',
 			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen.',
 			'An audio track has no picture of its own, so the player can draw the sound instead and play that drawing as its picture: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).',
 			'On a phone the window draws itself differently: the artists and albums become one line of pills each, scrolling sideways, and the tracks below them are cards — the picture, the title (up to two lines) and the time — with the list running right down to the player, so the time is always in reach.'
