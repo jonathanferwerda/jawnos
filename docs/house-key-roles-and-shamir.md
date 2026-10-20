@@ -1,6 +1,9 @@
 # Roles (per-person keys) and Shamir recovery
 
-**Status:** not started. Design note, 2026-10-20, after Phase 2 (v0.1.945).
+**Status:** Part 1 started 2026-10-20 (v0.1.947): the `people` table, the
+`paired_devices.person_uuid` link, the owner migration, and person-aware login
+for app and recovered devices. Assignment UI, ticket mapping and Shamir are
+still to do.
 **Read with:** `docs/house-key-phase2.md`, `docs/app-only-access.md`, `help.pl` → `security`.
 
 Phase 2 made the password a recovery share and stopped it resolving the data key.

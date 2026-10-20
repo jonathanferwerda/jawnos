@@ -17286,6 +17286,55 @@ sub peer_rate_ok {
 	return 1;
 }
 
+# --- people ------------------------------------------------------------------
+# A person is the identity; a device is how they carry it. Until now every
+# paired device was a citizen by itself, with no way to say whose it is. The
+# first person is the owner, at a fixed uuid so every machine in the mesh agrees
+# on the same identity.
+#
+# Existing devices are attached once, when the owner is first ensured, so an
+# older house migrates without anyone re-pairing. A device with no person still
+# enters as a citizen (the behaviour before this table existed); once assignment
+# lands, the lookup here is where the session's privilege comes from.
+
+sub people_owner_ensure {
+	my $uuid = 'owner';
+	my $known = eval { &db_query('select uuid from people where uuid = ? limit 1', $uuid)->hashes->[0] };
+	unless ($known) {
+		my $now = &rightNow();
+		my $name = &setting_grabber({ app => 'me', setting => 'name' }) || 'Owner';
+		my $made = eval {
+			&db_insert('people', {
+				uuid => $uuid,
+				name => $name,
+				privilege => 'citizen',
+				status => 'active',
+				created => $now,
+				server_time => $now,
+			});
+			1;
+		};
+		# the migration: every device that has never been assigned is the
+		# owner's. New devices paired later stay unassigned until someone says
+		# whose they are.
+		if ($made) {
+			eval { &db_query('update paired_devices set person_uuid = ? where person_uuid is null or person_uuid = ?', $uuid, '') };
+		}
+	}
+	return $uuid;
+}
+
+sub person_for_device {
+	my ($device_uuid) = @_;
+	return undef unless defined $device_uuid && length $device_uuid;
+	&people_owner_ensure();
+	my $d = eval { &db_select('paired_devices', ['person_uuid'], { uuid => $device_uuid })->hash };
+	my $person_uuid = ($d && $d->{'person_uuid'}) ? $d->{'person_uuid'} : '';
+	return undef unless $person_uuid;
+	my $p = eval { &db_select('people', undef, { uuid => $person_uuid, status => 'active' })->hash };
+	return $p || undef;
+}
+
 sub peer_allows {
 	my ($c, $rm, $required) = @_;
 	return 0 unless $rm && ref $rm eq 'HASH';

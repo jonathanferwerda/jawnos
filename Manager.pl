@@ -27154,13 +27154,16 @@ sub device_session_mint($c, $device_uuid) {
 	return unless $db;
 	my $now = &subs::rightNow();
 	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'login_warranty' }) || '-3h', $now);
+	my $person = &subs::person_for_device($device_uuid);
+	my $privilege = ($person && $person->{'privilege'}) ? $person->{'privilege'} : 'citizen';
 	$c->session('authentication' => 'approved');
 	$c->session('database' => $database);
 	$c->session('suds_id' => &subs::suds_id(&subs::session_suds($c)));
 	$c->session('warranty' => $warranty);
 	$c->session('string' => &subs::random_string_creator());
 	$c->session('name' => &subs::setting_grabber({ app => 'me', setting => 'name' }));
-	$c->session('privilege' => 'citizen');
+	$c->session('privilege' => $privilege);
+	$c->session('person_uuid' => ($person ? $person->{'uuid'} : undef));
 	$c->session('source' => 'device');
 	$c->session('device_uuid' => $device_uuid);
 	$c->session('server_time' => $now);
@@ -27284,10 +27287,18 @@ post '/manager/device/app_login' => sub($c) {
 	$c->session('app_device' => $device_uuid);
 	# The app key is the citizen door: a bootstrap session that pairs an app is
 	# promoted here, or the citizen-only routes would still read guest.
+	# A person is the identity; the device is how they carry it. The session
+	# records the person when the device has one, and its privilege is the
+	# person's. A device nobody has claimed still enters as a citizen, which is
+	# exactly the behaviour before people existed.
+	my $person = &subs::person_for_device($device_uuid);
+	my $privilege = ($person && $person->{'privilege'}) ? $person->{'privilege'} : 'citizen';
 	$c->session('authentication' => 'approved');
-	$c->session('privilege' => 'citizen');
+	$c->session('privilege' => $privilege);
+	$c->session('person_uuid' => ($person ? $person->{'uuid'} : undef));
 	$c->session('bootstrap' => undef);
-	$log->info('app gate: app login ' . ($device->{'name'} || $device_uuid) . ' kind=' . $kind . ' until=' . $until);
+	$log->info('app gate: app login ' . ($device->{'name'} || $device_uuid) . ' kind=' . $kind . ' until=' . $until
+		. ' person=' . ($person ? $person->{'uuid'} . '/' . $privilege : 'unassigned'));
 	$c->render(json => { ok => 1, until => $until, kind => $kind, name => $device->{'name'} });
 };
 
@@ -32797,6 +32808,18 @@ sub migration_already_applied($command) {
 sub update_database($data) {
 	&subs::cache_delete({ app => 'me', context => 'pseudonyms' });
 	my $commands = [
+		# People: a person is the identity, a device is how they carry it.
+		'create table if not exists people (
+			uuid VARCHAR(255) unique,
+			name VARCHAR(255),
+			privilege VARCHAR(25),
+			status VARCHAR(25),
+			created VARCHAR(255),
+			ost VARCHAR(25),
+			server_time VARCHAR(255)
+		)',
+		'create index if not exists idx1_people on people (uuid)',
+		'alter table paired_devices add column person_uuid VARCHAR(255)',
 		# Notes are their own store now, not appointments: one plain row per note.
 		# The server_time column is what puts it on the generic peer sync and backup,
 		# so a note still reaches every machine.
