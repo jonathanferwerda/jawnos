@@ -8274,14 +8274,15 @@ sub remote_manager_ticket($c, $rm) {
 		my $peer = &remote_useragent_maker({ rm => $rm });
 		return '' unless $peer->{'ua'};
 		my $name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || 'remote';
-		my $url = $peer->{'manager'} . '/manager/qrcode_generator?nic=lo&privilege=citizen&keep_warranty=1'
+		my $host = eval { Mojo::URL->new($rm->{'manager'})->host } || '';
+		my $url = $peer->{'manager'} . '/manager/qrcode_generator?nic=' . url_escape($host || 'lo')
+			. '&privilege=citizen&keep_warranty=1'
 			. '&warranty=' . url_escape('12h') . '&name=' . url_escape($name) . '&timestamp=' . $timestamp;
 		my $res = eval { $peer->{'ua'}->inactivity_timeout(15)->get($url)->result };
 		return '' unless $res && $res->is_success;
 		my $data = eval { decode_json $res->body } || {};
 		my $ticket = $data->{'url'} || '';
 		return '' unless $ticket;
-		my $host = eval { Mojo::URL->new($rm->{'manager'})->host } || '';
 		my $dock = $rm->{'port_dock'} || $rm->{'dock_port'} || 3000;
 		$ticket =~ s{^https?://[^/]+}{https://$host:$dock} if $host;
 		return $ticket;
