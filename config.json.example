@@ -11,6 +11,7 @@
 	"open_browser": "yes",
 	"ws_port": "3001",
 	"domain": "example.com",
+	"loopback_manager": false,
 	"logfile": "~/manager.log",
 	"folders": [
 		"~/Music",
