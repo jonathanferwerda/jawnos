@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-20
 
+- v0.1.933 - records audit: a derived child row is not a duplicate. One record fans out through model and option characteristics, and two children can legitimately share app/type/time while belonging to different parents (fructis saved once under shampoo and once under conditioner). DUPES now groups by `source_uuid` as well, so those children are not tombstoned as a repeated write; a true repeat copies the source uuid and is still caught.
 - v0.1.928 - sync: a peer with no stored port is still probed by its manager url. The reconnector's `remote_machine_online` required a port before it would call a peer, so a row that came back from pairing with `port` NULL (a tunnel-only server, or a re-paired row) answered 0 without ever trying - and the handshake that fills the port in from the peer's reply never ran. The probe now takes the port from the stored manager url (`https://host:45545`), so the local recovers by itself instead of sitting `inactive` with a valid key and a live tunnel.
 
 ## 2026-10-18

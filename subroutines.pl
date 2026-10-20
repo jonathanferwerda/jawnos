@@ -22869,8 +22869,14 @@ sub records_audit {
 		};
 	}
 
-	# DUPES - the same event written more than once
-	my $dupes = &db_query('select app, type, timestamp, stop_timestamp, count(*) c, group_concat(rowid) rowids from appointments where server_time > ? group by app, type, timestamp, stop_timestamp having c > 1 order by timestamp desc', $since)->hashes;
+	# DUPES - the same event written more than once. The source uuid is part of
+	# the event's identity: one record fans out into child rows through model and
+	# option characteristics, and two children can legitimately carry the same
+	# app/type/time (fructis saved under both shampoo and conditioner) while
+	# belonging to different parents. Grouping only by app/type/time called those
+	# duplicates and would tombstone a real consumption; a repeated write copies
+	# the source uuid too, so a true duplicate still groups.
+	my $dupes = &db_query('select app, type, timestamp, stop_timestamp, coalesce(source_uuid, \'\') source_uuid, count(*) c, group_concat(rowid) rowids from appointments where server_time > ? group by app, type, timestamp, stop_timestamp, coalesce(source_uuid, \'\') having c > 1 order by timestamp desc', $since)->hashes;
 	foreach my $g ( @{$dupes} ) {
 		next if $exempt->{ $g->{'app'} };
 		my @ids = sort { $a <=> $b } split /,/, ($g->{'rowids'} || '');
