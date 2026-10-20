@@ -178,6 +178,7 @@ const GLYPHS = {
 	tetris: '<g fill="{G}"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="9" y="3" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/><rect x="15" y="9" width="6" height="6" rx="1"/></g>',
 	thumbsup: '<path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73V10z" fill="{G}"/>',
 	person: '<circle cx="12" cy="7.6" r="4.1" fill="{G}"/><path d="M4 20.5c0-4.2 3.6-6.9 8-6.9s8 2.7 8 6.9z" fill="{G}"/><path d="M12 13.6l1.7 2.3-1.7 4.6-1.7-4.6z" fill="{D}"/>',
+	people_group: '<circle cx="8.6" cy="7.8" r="3.1" fill="{G}"/><path d="M3 19.5c0-3.3 2.5-5.4 5.6-5.4s5.6 2.1 5.6 5.4z" fill="{G}"/><circle cx="16.4" cy="8.8" r="2.6" fill="{D}"/><path d="M13.4 19.5c0-2.7 1.5-4.5 3.6-4.5 2.3 0 4 1.8 4 4.5z" fill="{D}"/>',
 	assistant: '<path d="M12 3.4c-3.6 0-6.5 2.9-6.5 6.5v6.4c0 .9.7 1.6 1.6 1.6h1.2v-7.7c0-.4.1-.7.3-1 .9.9 2.1 1.4 3.4 1.4s2.5-.5 3.4-1.4c.2.3.3.6.3 1v7.7h1.2c.9 0 1.6-.7 1.6-1.6V9.9c0-3.6-2.9-6.5-6.5-6.5z" fill="{G}"/><circle cx="12" cy="10.5" r="4.1" fill="{G}"/><circle cx="10.4" cy="10.2" r=".62" fill="{D}"/><circle cx="13.6" cy="10.2" r=".62" fill="{D}"/><path d="M10.4 12.2c1 .8 2.2.8 3.2 0" fill="none" stroke="{D}" stroke-width=".9" stroke-linecap="round"/><path d="M6.7 10.7a5.3 5.3 0 0 1 10.6 0" fill="none" stroke="{D}" stroke-width="1.3" stroke-linecap="round"/><rect x="5.8" y="9.5" width="1.9" height="3.2" rx=".9" fill="{D}"/><path d="M6.6 13.2v1c0 1 .8 1.8 1.8 1.8h1" fill="none" stroke="{D}" stroke-width="1.2" stroke-linecap="round"/><circle cx="9.9" cy="16" r=".85" fill="{D}"/><path d="M12 15.4c-3.1 0-5.6 1.9-5.6 4.2V22h11.2v-2.4c0-2.3-2.5-4.2-5.6-4.2z" fill="{G}"/>',
 	// the Guess-the-gaps button: a baseball cap, front on (the hand-drawn picture
 	// it falls back to is a blue cap wearing a badge)
@@ -312,6 +313,7 @@ const ICONS = {
 	'nightlight': 'moon',
 	'good': 'thumbsup',
 	'vendor': 'person',
+	'people': 'people_group',
 	'manufacturer': 'warehouse',
 	'shop': 'shop',
 	'home': 'house',

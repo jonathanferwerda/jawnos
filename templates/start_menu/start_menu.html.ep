@@ -67,7 +67,7 @@
 				<img class="jonathan" category="business" src="<%= &subs::icon_for('/images/decipherable/chart.png') %>" hint="Budget" id="budget"></img>
 				<img id="travel_toggle" category="business" src="<%= &subs::icon_for('/images/decipherable/aeroplane.png') %>" hint="Travel" class="jonathan gps"></img>
 				<img id="relational_toggle" category="business" src="<%= &subs::icon_for('/images/make believe/strawbeery.png') %>" hint="Contacts" class="jonathan relational">
-				<img id="people_toggle" category="business" src="<%= &subs::icon_for('/images/make believe/face.png') %>" hint="<%= &subs::lang('people') %>" class="jonathan people">
+				<img id="people_toggle" category="business" src="<%= &subs::icon_for('/images/make believe/people.png') %>" hint="<%= &subs::lang('people') %>" class="jonathan people">
 				<img id="mailbox_toggle" category="business" src="<%= &subs::icon_for('/images/make believe/mailbox.png') %>" hint="Mailbox" class="jonathan mail">
 								<img id="email_toggle" category="business" src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="Email" class="jonathan email">
 								<img id="chat_toggle" category="business" src="<%= &subs::icon_for('/images/make believe/phone_sms.png') %>" hint="Chat" class="jonathan chat">

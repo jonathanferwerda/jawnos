@@ -270,7 +270,7 @@ our $known_appts = {
 	library => { icon => '/images/decipherable/handbook.png' },
 	notes => { icon => '/images/decipherable/list.png' },
 	phone => { icon => '/images/decipherable/phone.png' },
-	people => { icon => '/images/make believe/face.png' },
+	people => { icon => '/images/make believe/people.png' },
 	email => { icon => '/images/decipherable/envelope.png' },
 	chat => { icon => '/images/make believe/phone_sms.png' },
 	pen => { icon => '/icons/edit.png' },

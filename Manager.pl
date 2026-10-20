@@ -773,8 +773,13 @@ sub take_picture($c,$data) {
 		eval { `ffmpeg -i /dev/video0 $filename` };
 	}
 	if (-e $filename) {
-		$ocr = &ocr_reader($c,$filename);
+		$ocr = &ocr_reader($c,$filename) unless $data->{'no_ocr'};
 		`magick $filename -resize $resolution $filename` unless lc $resolution eq 'raw';
+	}
+	# A caller that only wants the picture (the People app's crest capture) takes
+	# the raw file here; it is not filed as an appointment or sealed in place.
+	if ($data->{'capture_only'}) {
+		return ($filename, $ocr);
 	}
 	my $duration = $server_time - &subs::rightNow();
 	my $u_data = { thumb => $thumb, server_time => &subs::rightNow(), f => $filename, uuid => &subs::random_string_creator(9), type => 'image', ocr => $ocr };
@@ -18575,15 +18580,22 @@ sub people_crest_upload_file {
 get '/manager/people' => sub($c) {
 	unless (&people_citizen($c)) { $c->render(text => ''); return; }
 	my $crest = &subs::crest_record_read();
+	my $has_image = ($crest->{'uuid'} && &subs::crest_image_file($crest, 'image')) ? 1 : 0;
 	my $people = eval { &subs::db_select('people', undef, { status => 'active' })->hashes } || [];
 	@{$people} = sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @{$people};
 	my $feeds = &market_scan_feeds();
 	my $scanner = (grep { $_ eq 'flatbed' } @{ $feeds || [] }) ? 1 : 0;
+	my $camera = 0;
+	if (&subs::device_setter() eq 'mobile' && grep { defined $_ && $_ =~ /^[01]$/ } @{ $gb::capabilities->{'mobile'}->{'camera'} || [] }) {
+		$camera = 1;
+	}
 	my $content = $c->render_to_string(
 		template => 'apps/people',
 		crest => $crest,
+		has_image => $has_image,
 		people => $people,
 		scanner => $scanner,
+		camera => $camera,
 		device => &subs::device_setter(),
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'people', title => &subs::lang('people'), contents => $content }, $c->param('timestamp'));
@@ -18611,6 +18623,25 @@ post '/manager/people/crest/scan' => sub($c) {
 	my $result = &people_crest_install($c, $pages[0]);
 	unlink @pages;
 	unlink $base . '.log';
+	return $c->render(json => $result);
+};
+
+post '/manager/people/crest/capture' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
+	my $camera = $c->param('camera') // '0';
+	$camera = '0' unless $camera =~ /^[01]$/;
+	my ($file, $ocr) = &take_picture($c, {
+		app => 'people',
+		camera => $camera,
+		timestamp => &subs::rightNow(),
+		capture_only => 1,
+		no_ocr => 1,
+	});
+	unless (defined $file && $file ne 'denial' && -e $file) {
+		return $c->render(json => { ok => 0, error => (($file || '') eq 'denial') ? 'this device has no camera' : 'the camera did not return a picture' });
+	}
+	my $result = &people_crest_install($c, $file);
+	unlink $file;
 	return $c->render(json => $result);
 };
 
@@ -30907,13 +30938,23 @@ post '/manager/keyboard' => sub($c) {
 	my $remote_control = &subs::setting_grabber({ app => 'me', setting => $toggle . '_machine' });
 	my $remote_machines = &subs::remote_machine_lister();
 	my ($remote_kb,$kb);
-	if ($remote_uuid && !$remoted || $remote_control) {
+	# A relayed request must not relay again: the machine that asked wants this
+	# machine's own panel. It answers with its JSON envelope, so take the
+	# keyboard HTML out of it - the page used to receive the whole envelope and
+	# pass it to $(), which threw and left the panel hidden. An explicit empty
+	# pick (Me) must not fall back to the stored machine.
+	my $picked = defined $remote_uuid ? $remote_uuid : $remote_control;
+	if (!$remoted && defined $picked && $picked ne '') {
 
 
-		$remote_uuid = $remote_uuid && scalar @{$remote_machines} ? $remote_uuid : $remote_control;
+		my $target = ($picked && scalar @{$remote_machines}) ? $picked : $remote_control;
 		my $jremote = encode_json $remote_machines;
 
-		$remote_kb = eval { return &Manager::remote_relay_request($c, { remote_uuid => $remote_uuid }) };
+		my $relayed = eval { return &Manager::remote_relay_request($c, { remote_uuid => $target }) };
+		if ($relayed) {
+			my $parsed = eval { decode_json $relayed } || {};
+			$remote_kb = (ref $parsed eq 'HASH' && defined $parsed->{'keyboard'}) ? $parsed->{'keyboard'} : $relayed;
+		}
 	}
 	$kb = &keyboard_maker($c);
 

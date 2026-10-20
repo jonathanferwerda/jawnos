@@ -33,8 +33,10 @@
 	<div class="people_head">
 		<div class="people_house">
 			<div class="people_crest_frame">
-				<% if ($crest->{'uuid'}) { %>
+				<% if ($crest->{'uuid'} && $has_image) { %>
 					<img id="people_crest_image" src="/manager/people/crest_image?kind=image&stamp=<%= &subs::rightNow() %>" alt="<%= &subs::lang('people') %>">
+				<% } elsif ($crest->{'uuid'}) { %>
+					<div class="people_crest_empty"><%= &subs::ui('The drawing is on another machine. Capture it here to copy it.') %></div>
 				<% } else { %>
 					<div class="people_crest_empty"><%= &subs::ui('No crest yet') %></div>
 				<% } %>
@@ -57,6 +59,9 @@
 		<div class="people_actions">
 			<% if ($scanner) { %>
 				<button id="people_crest_scan" hint="Scan my crest"><%= &subs::ui('Scan my crest') %></button>
+			<% } %>
+			<% if ($camera) { %>
+				<button id="people_crest_capture" hint="Take picture"><%= &subs::ui('Take picture') %></button>
 			<% } %>
 			<button id="people_crest_upload_button" hint="Upload a photo"><%= &subs::ui('Upload a photo') %></button>
 			<input type="file" id="people_crest_file" accept="image/*" style="display:none">

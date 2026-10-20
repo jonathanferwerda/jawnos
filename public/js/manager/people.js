@@ -53,6 +53,28 @@ $(document).on('click', '#people_crest_scan', function() {
 	});
 });
 
+$(document).on('click', '#people_crest_capture', function() {
+	peopleStatus(peopleT('Taking the picture…'));
+	$.ajax({
+		url: '/manager/people/crest/capture',
+		type: 'POST',
+		data: { camera: 0, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) {
+				peopleStatus(peopleT('Saved.'));
+				peopleOpener();
+			}
+			else {
+				peopleStatus((response && response.error) || peopleT('Could not save.'));
+			}
+		},
+		error: function() {
+			peopleStatus(peopleT('Could not save.'));
+		}
+	});
+});
+
 $(document).on('click', '#people_crest_upload_button', function() {
 	$('#people_crest_file').trigger('click');
 });
