@@ -14,6 +14,10 @@
 #                                          # (Piper); run after a code update
 #   perl scripts/jawnos_deps.pl --no-extras # skip the optional apps
 #
+# It also reports which key-derivation features OpenSSL offers (Argon2id,
+# scrypt). Those are never fatal: a recovery share falls back and records the
+# KDF it used, so an older OpenSSL on a phone still works.
+#
 # Deliberately uses only core Perl so it runs before any CPAN module is present.
 
 use strict;
@@ -100,6 +104,13 @@ my @modules = qw(
 	Sereal::Decoder
 	Crypt::Simple
 	CryptX
+	Crypt::KeyDerivation
+	Crypt::AuthEnc::GCM
+	Crypt::PK::X25519
+	Crypt::PK::Ed25519
+	Crypt::PRNG
+	Digest::SHA
+	Math::BigInt
 	Net::SSLeay
 	WWW::Mechanize
 	Time::Piece
@@ -123,6 +134,40 @@ my @modules = qw(
 	Email::Stuffer
 	Authen::SASL
 );
+
+# --- capabilities (features, not packages) -----------------------------------
+# What the house-key work prefers is a feature of OpenSSL, not a new module or
+# another package to install. These are reported, never fatal: the recovery
+# share falls back to scrypt and then to PBKDF2, so an older Termux OpenSSL
+# still works, and the blob records the KDF that sealed it. Nothing here asks
+# for libsodium: the Ed25519 -> X25519 conversion is plain Perl on top of
+# CryptX, so it installs anywhere CryptX does.
+my @capabilities = (
+	{
+		id       => 'argon2id',
+		label    => 'Argon2id key derivation (OpenSSL 3.2+)',
+		check    => sub { perl_kdf('argon2id') },
+		fallback => 'scrypt, then PBKDF2 at 600k',
+	},
+	{
+		id       => 'scrypt',
+		label    => 'scrypt key derivation',
+		check    => sub { perl_kdf('scrypt') },
+		fallback => 'PBKDF2 at 600k',
+	},
+);
+
+	sub perl_kdf {
+	my ($kind) = @_;
+	return 0 unless have_module('Crypt::KeyDerivation');
+	# the smallest parameters that still exercise the KDF: this is a capability
+	# probe, not a password hash, and it must stay fast on a phone
+	my $call = $kind eq 'argon2id'
+		? 'Crypt::KeyDerivation::argon2_pbkdf("argon2id", "p", "s", 1, 8, 1, 8, "", "")'
+		: 'Crypt::KeyDerivation::scrypt_pbkdf("p", "s", 16, 1, 1, 8)';
+	my $out = `perl -MCrypt::KeyDerivation -e '$call; print "ok"' 2>/dev/null`;
+	return (defined $out && $out eq 'ok') ? 1 : 0;
+}
 
 # --- desktop extras (opt-in: --desktop) -------------------------------------
 # The Linux desktop app's embedded view needs WebKitGTK, and it decodes media
@@ -243,6 +288,7 @@ foreach my $t (@tools) {
 foreach my $m (@modules) {
 	push @missing_modules, $m unless have_module($m);
 }
+my @missing_caps = grep { !$_->{'check'}->() } @capabilities;
 if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
 	foreach my $d (@desktop) {
 		push @missing_desktop, $d unless $d->{'check'}->();
@@ -262,6 +308,7 @@ if ($json) {
 		missing_modules => [ @missing_modules ],
 		missing_desktop => [ map { { label => $_->{'label'}, package => pkg_for($_) } } @missing_desktop ],
 		missing_extras  => [ map { { id => $_->{'id'}, label => $_->{'label'} } } @missing_extras ],
+		capabilities    => { map { $_->{'id'} => ($_->{'check'}->() ? 1 : 0) } @capabilities },
 	};
 	print JSON::PP->new->canonical->pretty->encode($data);
 	exit((@missing_tools + @missing_modules == 0) ? 0 : 1);
@@ -292,6 +339,11 @@ else {
 	foreach my $m (@missing_modules) {
 		print "  - $m\n";
 	}
+}
+my @have_caps = grep { $_->{'check'}->() } @capabilities;
+print "key derivation: " . (@have_caps ? join(', ', map { $_->{'id'} } @have_caps) : 'none (PBKDF2 at 600k)') . "\n";
+foreach my $c (@missing_caps) {
+	print "  - " . $c->{'label'} . " unavailable; recovery shares use " . $c->{'fallback'} . "\n";
 }
 if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
 	if (!@missing_desktop) {
@@ -446,6 +498,13 @@ sub install_script {
 		my @cpanm = ( which('cpanm') || 'cpanm' );
 		unshift @cpanm, sudo() unless $platform eq 'termux';
 		push @lines, join(' ', @cpanm, '--notest', '--force', @missing_modules);
+		push @lines, '';
+	}
+
+	my @missing_caps_sh = grep { !$_->{'check'}->() } @capabilities;
+	if (@missing_caps_sh) {
+		push @lines, '# key derivation: no package to install -- these are OpenSSL features';
+		push @lines, '# missing: ' . join(', ', map { $_->{'id'} } @missing_caps_sh) . '; recovery shares fall back automatically';
 		push @lines, '';
 	}
 
