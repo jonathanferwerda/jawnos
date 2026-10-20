@@ -1,8 +1,11 @@
 # Phase 2 — the house key (`K_house`) and the password as a recovery share
 
-**Status:** implemented 2026-10-20 (v0.1.940–v0.1.944). The password no longer
-resolves the data key; it seals a recovery share. A drill on a machine that has
-actually lost `~/.house.key` is the one thing still outstanding.
+**Status:** implemented and drilled 2026-10-20 (v0.1.940–v0.1.944). The
+password no longer resolves the data key; it seals a recovery share. The
+lost-key drill passes on a scratch copy (vault row removed, fresh machine key,
+the share opens the house and re-seeds the vault); only the real password is
+unexercised, and it calls the same code. Per-person roles and threshold
+recovery (steps 5 and 7) are the work that remains.
 **Read with:** `docs/app-only-access.md`, `docs/ticket-access-design.md`, `help.pl` → `security`.
 
 ## Why
@@ -158,20 +161,27 @@ OpenSSL lacks Argon2, the seal records `scrypt` instead and still opens.
   guessable password now recovers the house. Argon2id at 64 MiB and the recovery
   route's five-tries-an-hour limit are the mitigations; the paper code remains
   the stronger factor, since its secret is 128 random bits.
-- Do not share app/device keys; they are per-device. Revoking a device must remove
-  its wrapped `K_house` copy.
-- Backups must include the wrapped keys and (offline) the recovery share; test a
-  restore with no network.
+- Do not share app/device keys; they are per-device. Wraps are ephemeral, so
+  revoking a device needs only its row removed.
+- Backups carry the password share (it is a settings row). The paper code and
+  the password are the factors that must not live only beside the backup.
 - ~~Decide the Ed25519 -> X25519 route~~ — **resolved 2026-10-20**: the
   conversion is pure Perl, checked against libsodium, so no native module is
   required on the server or on Termux.
-- The two **Desktop window** rows (keyless WebKit) are denied `/manager` under
-  enforce. Add the app key bridge, or remove the rows, before Phase 2.
+- ~~The two Desktop window rows~~ — still keyless and denied `/manager` under
+  enforce; they can pair but not open. Tracked under What remains.
 
-## First actions next time
+## What remains
 
-1. Read this file and `docs/app-only-access.md`.
-2. Capture a fresh backup and do a spare-machine restore drill.
-3. Write a **fixture-only** probe that mints a `K_house`, wraps it to two fixture
-   device keys, unwraps it, and re-seals one note — no live writes.
-4. Only then touch the live vault.
+Steps 1–4 and 6 of the migration order are done; the password is a recovery
+share and never the key. What is left is a different phase, not a finish of
+this one:
+
+1. **Per-person roles** (step 5): citizens get their own credentials/keys
+   instead of one shared password; residents and guests get tickets/peer cards.
+2. **Threshold recovery** (step 7): Shamir 3-of-5 for `K_house`, so no single
+   password recovers the house.
+3. The two **Desktop window** rows still hold no app key and are denied
+   `/manager` under enforce. Add the bridge or remove them.
+4. A live lost-key drill on a spare machine is still worth doing, even though
+   the scratch-copy drill passes; it is the one path with the real password.
