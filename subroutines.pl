@@ -12820,13 +12820,25 @@ sub signatorial_identity_file() {
 	return &home('~/.jawnos_signatorial_id');
 }
 
+# A second copy beside the database. The home copy is the traditional one, but
+# it depends on HOME, which a container, a `run-as` shell or a hand-run script
+# can have wrong - and a database restored from another machine must never be
+# able to change this machine's identity. The database directory is local, is
+# not replaced by a restore (only jawnos.db is), and is excluded from the code
+# sync, so this copy survives both.
+sub signatorial_identity_mirror() {
+	return './database/.jawnos_signatorial_id';
+}
+
 sub signatorial_identity_write {
 	my $id = shift;
-	my $file = &signatorial_identity_file();
-	if (open my $fh, '>', $file) {
-		chmod 0600, $file;
-		print $fh $id, "\n";
-		close $fh;
+	for my $file ( &signatorial_identity_file(), &signatorial_identity_mirror() ) {
+		next unless defined $file && length $file;
+		if (open my $fh, '>', $file) {
+			chmod 0600, $file;
+			print $fh $id, "\n";
+			close $fh;
+		}
 	}
 	return $id;
 }
@@ -12841,12 +12853,38 @@ sub signatorial_designer() {
 	# added or removed, and every container or clone must have its own. The
 	# file is written once - by setup for a new install, or by the legacy
 	# migration below for a machine that predates it - and is never recomputed.
-	my $file = &signatorial_identity_file();
-	if (-e $file) {
+	my @identity_files = ( &signatorial_identity_file(), &signatorial_identity_mirror() );
+	for my $file ( @identity_files ) {
+		next unless defined $file && length $file && -e $file;
 		my $id = `cat $file`;
 		chomp $id;
 		if ($id =~ /^[0-9a-f]{16,64}$/i) {
 			$gb::signatorial = lc $id;
+			# heal the other copy if it is missing (a wrong HOME, a new mirror)
+			&signatorial_identity_write($gb::signatorial);
+			return $gb::signatorial;
+		}
+	}
+
+	# A restored database arrives with the donor's settings, and the donor's
+	# remote_machines roster lists THIS machine as a peer. The most-used device
+	# id in those settings is then the donor's own identity, not ours (ours is
+	# excluded below because the roster names it as a peer). The configured
+	# domain is local - it lives in config.json, not the database - so it
+	# survives a restore and names exactly one roster row. Trust that first.
+	my $domain = $config->{'domain'} || '';
+	if ($domain) {
+		my $row = eval {
+			&db_query(
+				"select signatorial from remote_machines"
+				. " where fqdn = ? and signatorial is not null and signatorial != ''"
+				. " order by server_time desc limit 1", $domain
+			)->hash;
+		};
+		my $mine = ($row && $row->{'signatorial'}) ? lc $row->{'signatorial'} : '';
+		if ($mine =~ /^[0-9a-f]{16,64}$/) {
+			&signatorial_identity_write($mine);
+			$gb::signatorial = $mine;
 			return $gb::signatorial;
 		}
 	}
@@ -12855,15 +12893,37 @@ sub signatorial_designer() {
 	# already the key on its settings, continent and sync rows. Take the most
 	# used long device value that is not a peer's signatorial, and pin that -
 	# never recompute it, since the picture folder may have drifted since.
-	my $stored = eval {
-		my $row = &db_query(
+	#
+	# A database restored from another machine also has a most-used id - the
+	# donor's - and its vault row is sealed with the donor's house key, which
+	# this machine's key cannot open. So a candidate whose vault will not open
+	# is a foreign database's identity, not ours; skip it rather than adopt it.
+	my $candidates = eval {
+		&db_query(
 			"select device from settings"
 			. " where device is not null and length(device) >= 16"
 			. " and device not in (select signatorial from remote_machines where signatorial is not null)"
-			. " group by device order by count(*) desc limit 1"
-		)->hash;
-		( $row && $row->{'device'} && $row->{'device'} =~ /^[0-9a-f]{16,64}$/i ) ? lc $row->{'device'} : undef;
-	};
+			. " group by device order by count(*) desc limit 5"
+		)->hashes;
+	} || [];
+	my $stored;
+	for my $candidate ( @{$candidates} ) {
+		my $id = $candidate->{'device'} || '';
+		next unless $id =~ /^[0-9a-f]{16,64}$/i;
+		$id = lc $id;
+		my $vault = eval {
+			&db_query(
+				"select value from settings where app = ? and setting = ? and device = ?"
+				. " order by server_time desc limit 1", '__president', 'vault', $id
+			)->hash;
+		};
+		if ($vault && $vault->{'value'}) {
+			my $plain = eval { &note_decrypter(&house_key(), $vault->{'value'}) };
+			next unless defined $plain && length $plain;
+		}
+		$stored = $id;
+		last;
+	}
 	if ($stored) {
 		&signatorial_identity_write($stored);
 		$gb::signatorial = $stored;
