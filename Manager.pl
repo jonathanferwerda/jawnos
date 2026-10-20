@@ -1960,6 +1960,10 @@ post '/manager/appointment/writer' => sub ($c) {
 	unless (&peer_action_gate($c, &subs::peer_movement_action($movement))) {
 		return $c->rendered(403);
 	}
+	my $peer = &peer_row_for_request($c);
+	if ($peer && !&subs::peer_rate_ok($peer, 'action')) {
+		return $c->rendered(429);
+	}
 	&appointment_writer($c,$parameters);
 	$c->render(json => $parameters);
 };
@@ -5908,8 +5912,35 @@ sub password_maker($c) {
 	return $secret;
 }
 
+# The login body: the password and identity fields ride the POST body, and the
+# digest is appended to the query the peer signature covers. Length-prefixing
+# keeps the canonical form unambiguous even if a value contains & or =.
+sub sesh_body_digest {
+	my ($fields) = @_;
+	require Digest::SHA;
+	my $sha = Digest::SHA->new(256);
+	for my $k (qw(numerics president backup remote_timestamp manager_file)) {
+		my $v = $fields->{$k} // '';
+		$v = "$v";
+		utf8::encode($v);
+		$sha->add(length($v) . ':' . $v);
+	}
+	return $sha->hexdigest;
+}
+
 post '/sesh_check' => sub ($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();
+	# A peer login binds its body to the signed query with a digest; the browser
+	# Gate sends none, so only a login carrying one is checked.
+	my $body_sha = $c->param('body_sha256') || '';
+	if ($body_sha ne '') {
+		my %fields = map { $_ => ($c->param($_) // '') } qw(numerics president backup remote_timestamp manager_file);
+		unless (&sesh_body_digest(\%fields) eq $body_sha) {
+			$log->info('sesh_check refused: body digest mismatch');
+			$c->render(json => { authentication => 'denied', error => 'body digest mismatch' });
+			return;
+		}
+	}
 	my $secret = &password_maker($c);
 	my $reject_count = $c->session('reject_count');
 	my $start_time = &subs::rightNow();
@@ -5975,7 +6006,10 @@ post '/sesh_check' => sub ($c) {
 			my $peer_row;
 			if ($claimed =~ /^[0-9a-f]{16,64}$/) {
 				$peer_row = &subs::db_select('remote_machines', undef, { signatorial => $claimed })->hash;
-				if ($peer_row && !&subs::peer_verify_strict($c, $peer_row)) {
+				# Only the new body-bound login carries a digest. A caller from the
+				# previous version sends the name without one; it may still log in,
+				# but its name is not proved and is not kept below.
+				if ($peer_row && $body_sha ne '' && !&subs::peer_verify_strict($c, $peer_row)) {
 					$log->info('sesh_check peer login refused: ' . $claimed . ' did not sign');
 					$c->render(json => { authentication => 'denied', error => 'the peer did not sign' });
 					return;
@@ -5991,7 +6025,7 @@ post '/sesh_check' => sub ($c) {
 				# Keep a name only when it was proved against a roster row. A first
 				# contact has no row yet; the password opens the session but no name
 				# is trusted until a row pins one.
-				if ($peer_row) {
+				if ($peer_row && $body_sha ne '') {
 					$c->session('peer_signatorial' => $claimed);
 				}
 				else {
@@ -8329,6 +8363,16 @@ sub remote_manager_ticket($c, $rm) {
 	return $ticket || '';
 }
 
+# The login URL carries only the name and the body digest; the password and the
+# identity fields travel in the POST body. The peer signature covers the query,
+# so the digest binds the body to it without changing the signature format.
+sub sesh_login_url {
+	my ($manager, $browser_tab_id, $signatorial, $login) = @_;
+	return $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id
+		. '&signatorial=' . $signatorial
+		. '&body_sha256=' . &sesh_body_digest($login);
+}
+
 sub remote_device_connect($rdata) {
 	my $manager = $rdata->{'manager'};
 	my $filename = $rdata->{'filename'};
@@ -8369,8 +8413,15 @@ sub remote_device_connect($rdata) {
 	# offered key on first contact and verifies against it ever after.
 	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 	my $manager_file = &manager_file_maker($name);
-	my $url = $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id . '&numerics=' . $password . '&president=' . $filename . '&remote_timestamp=' . $timestamp . '&manager_file=' . $manager_file . '&signatorial=' . $signatorial;
-	my $res = eval { return $ua->insecure(1)->post($url)->result };
+	my $login = {
+		numerics => $password,
+		president => $filename,
+		backup => '',
+		remote_timestamp => $timestamp // '',
+		manager_file => $manager_file,
+	};
+	my $url = &sesh_login_url($manager, $browser_tab_id, $signatorial, $login);
+	my $res = eval { return $ua->insecure(1)->post($url => form => $login)->result };
 
 	$returner->{'body'} = eval { return decode_json $res->body };
 	$port = $tuns->{'PORT_AHOY'} || $returner->{'body'}->{'port'};
@@ -8408,8 +8459,8 @@ sub remote_device_connect($rdata) {
 	if ($returner->{'body'}->{'authentication'} eq 'approved') {
 		$ua = Mojo::UserAgent->new();
 		$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
-		$url = $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id . '&numerics=' . $password . '&president=' . $filename . '&remote_timestamp=' . $timestamp . '&manager_file=' . $manager_file . '&signatorial=' . $signatorial;
-		my $double_check = eval { return $ua->insecure(1)->post($url)->result };
+		$url = &sesh_login_url($manager, $browser_tab_id, $signatorial, $login);
+		my $double_check = eval { return $ua->insecure(1)->post($url => form => $login)->result };
 		$returner->{'body'} = eval { return decode_json $double_check->body } ;
 
 		my $signatorial = &subs::signatorial_designer();
@@ -12799,8 +12850,11 @@ sub remote_relay_request($c, $extra_params = {}) {
 # gate. A peer session minted by sesh_check carries the caller's signatorial, so
 # a session-riding call is checked too; a session from before that change has no
 # name on it yet and keeps its existing gate until it logs in again.
-sub peer_action_gate {
-	my ($c, $action) = @_;
+# The verified row for this request, or undef for a local session. A signed
+# request sets the stash through app_peer_ok/peer_verify; a peer session carries
+# its proved signatorial and is looked up here. Local calls have neither.
+sub peer_row_for_request {
+	my ($c) = @_;
 	my $peer_key = $c->stash('peer_verified_key') || '';
 	if (!$peer_key) {
 		&app_peer_ok($c);
@@ -12814,9 +12868,14 @@ sub peer_action_gate {
 			$c->stash('peer_verified_key' => $peer_key) if $peer_key;
 		}
 	}
-	return 1 unless $peer_key;
-	my $rm = &subs::db_select('remote_machines', undef, { uuid => $peer_key })->hash
+	return undef unless $peer_key;
+	return &subs::db_select('remote_machines', undef, { uuid => $peer_key })->hash
 		|| &subs::db_select('remote_machines', undef, { signatorial => $peer_key })->hash;
+}
+
+sub peer_action_gate {
+	my ($c, $action) = @_;
+	my $rm = &peer_row_for_request($c);
 	return 1 unless $rm;
 	my $need = &subs::peer_action_scope($action) || 'resident';
 	return &subs::peer_allows($c, $rm, $need) ? 1 : 0;
@@ -12825,6 +12884,10 @@ sub peer_action_gate {
 post '/manager/reset' => sub ($c) {
 	unless (&peer_action_gate($c, &subs::peer_movement_action($c->param('type')))) {
 		return $c->rendered(403);
+	}
+	my $peer = &peer_row_for_request($c);
+	if ($peer && !&subs::peer_rate_ok($peer, 'action')) {
+		return $c->rendered(429);
 	}
 	my $content = &manager_reset($c);
 	$c->render(json => $content );
@@ -33741,6 +33804,11 @@ post '/mail/msg' => sub($c) {
 		unless (&subs::peer_allows($c, $known_neighbour, $need)) {
 			$log->info('mail hand-over refused: ' . $signatorial . ' holds no ' . $need . ' grant');
 			$c->render(json => { ok => 0, error => 'not permitted' });
+			return;
+		}
+		unless (&subs::peer_rate_ok($known_neighbour, 'message')) {
+			$log->info('mail hand-over rate limited: ' . $signatorial);
+			$c->render(json => { ok => 0, error => 'rate limited' }, status => 429);
 			return;
 		}
 	}

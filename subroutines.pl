@@ -16934,6 +16934,45 @@ sub peer_movement_action {
 	return 'appointment_start';
 }
 
+# A sliding window per proved peer. The cache table is local and unsynced, so
+# these rows never travel; a race between workers can let a few extra through,
+# which is acceptable for a spam brake.
+sub peer_rate_limit {
+	my ($kind) = @_;
+	my %limit = (
+		message => [ 30,    60_000 ],   # 30 messages a minute
+		action  => [ 120, 3_600_000 ],  # 120 actions an hour
+	);
+	return $limit{$kind};
+}
+
+sub peer_rate_ok {
+	my ($rm, $kind) = @_;
+	return 1 unless $rm && ref $rm eq 'HASH' && $rm->{'signatorial'};
+	my $spec = &peer_rate_limit($kind);
+	return 1 unless $spec;
+	my ($limit, $window) = @{$spec};
+	my $now = &rightNow();
+	my $prefix = $rm->{'signatorial'} . ':' . $kind . ':';
+	my $row = &db_query(
+		'select count(*) as c from cache where context = ? and app = ? and uuid like ? and server_time > ?',
+		'peer_rate', $kind, $prefix . '%', $now - $window
+	)->hashes->[0];
+	return 0 if $row && ($row->{'c'} || 0) >= $limit;
+	&db_query(
+		'delete from cache where context = ? and app = ? and uuid like ? and server_time < ?',
+		'peer_rate', $kind, $prefix . '%', $now - $window
+	);
+	&db_insert('cache', {
+		uuid => $prefix . $now . ':' . &random_string_creator(8),
+		context => 'peer_rate',
+		app => $kind,
+		server_time => $now,
+		timestamp => $now,
+	});
+	return 1;
+}
+
 sub peer_allows {
 	my ($c, $rm, $required) = @_;
 	return 0 unless $rm && ref $rm eq 'HASH';
