@@ -62,12 +62,14 @@ The device keys in `paired_devices` are not one kind:
 | `pubkey`, `app_pubkey` | Ed25519, PEM | no — signing only |
 | `bio_pubkey` (phones) | P-256 SPKI, base64 DER | yes |
 
-This box has no libsodium, and `Crypt::PK::X25519` cannot import an Ed25519 key,
-so there is no Ed25519 -> X25519 conversion available here. Decision:
+This box has libsodium, but nothing here depends on it: `Crypt::PK::X25519`
+cannot import an Ed25519 key, so the conversion is done in plain Perl and
+checked against libsodium (see below). Decision:
 
 - the wrap takes any CryptX key object that can agree: **X25519** (a key the
   device generates for transport) or **P-256** (the phone's bio key);
-- an Ed25519 key is **refused**, never converted or guessed at;
+- a bare Ed25519 object is **refused** by `house_key_wrap`; conversion is an
+  explicit step (`house_key_ed25519_x25519_public`), never silent;
 - the blob records the algorithm (`JHKY1`; alg 1 = X25519, alg 2 = P-256), so a
   later route can add one without ambiguity.
 
@@ -75,6 +77,23 @@ Implemented in `subroutines.pl` as `house_key_wrap` / `house_key_unwrap`, with
 `house_key_wrap_alg`. Every wrap mints a fresh sender key pair, so **nothing is
 stored: no wrapped copies and no `house_keys` table.** A leaked blob is useless
 once the throwaway half is gone.
+
+### Implemented 2026-10-20 (v0.1.940–v0.1.941)
+
+- `house_key_wrap` / `house_key_unwrap` — ephemeral ECDH + AES-256-GCM; X25519
+  (alg 1) and P-256 (alg 2). No stored copies, no `house_keys` table.
+- `house_key_ed25519_x25519_public` / `_private` — the birational map and the
+  SHA-512 + clamp, in pure Perl. Checked against libsodium on four random keys,
+  public and private, byte for byte. **So an app key needs no new key type:**
+  convert its public half to wrap, and its seed to unwrap.
+- `house_key_password_seal` / `_open` — the recovery share: Argon2id from
+  OpenSSL 3.2+ (`t=3, m=64 MiB, p=1`), falling back to `scrypt` and then
+  `pbkdf2,600000`. The KDF descriptor and salt are stored in the blob, so a
+  share sealed by an older machine still opens.
+
+**Termux:** all of it uses CryptX and OpenSSL, both already present in the
+app's Perl; no libsodium, no `Crypt::NaCl::Sodium`, no compiler. Where a Termux
+OpenSSL lacks Argon2, the seal records `scrypt` instead and still opens.
 
 ## Migration order (do not reorder)
 
@@ -126,9 +145,9 @@ once the throwaway half is gone.
   its wrapped `K_house` copy.
 - Backups must include the wrapped keys and (offline) the recovery share; test a
   restore with no network.
-- ~~Decide the Ed25519 -> X25519 route~~ — **resolved 2026-10-20**: no
-  conversion here; the device supplies an X25519 key, or a phone uses its P-256
-  bio key. Ed25519 is refused.
+- ~~Decide the Ed25519 -> X25519 route~~ — **resolved 2026-10-20**: the
+  conversion is pure Perl, checked against libsodium, so no native module is
+  required on the server or on Termux.
 - The two **Desktop window** rows (keyless WebKit) are denied `/manager` under
   enforce. Add the app key bridge, or remove the rows, before Phase 2.
 

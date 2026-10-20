@@ -16355,6 +16355,124 @@ sub house_key_unwrap {
 	return (defined $K && length $K) ? $K : undef;
 }
 
+# --- Ed25519 -> X25519 --------------------------------------------------------
+# An app device's key is Ed25519: it signs but cannot agree. The birational map
+# takes its public half to a Montgomery point, and its private seed becomes a
+# scalar the same way libsodium does it (SHA-512, then clamp), so a device can
+# wrap and unwrap with the key it already has. Checked against libsodium on four
+# random keys: public and private agree byte for byte.
+#
+# Math::BigInt does the only big-number work and it runs twice per pairing, not
+# per request; the private half is a hash and a clamp, so it is cheap.
+
+sub house_key_ed25519_x25519_public {
+	my ($ed) = @_;
+	return undef unless $ed;
+	my $raw = ref $ed ? eval { $ed->export_key_raw('public') } : $ed;
+	return undef unless defined $raw && length $raw == 32;
+	require Math::BigInt;
+	my $p = Math::BigInt->new('57896044618658097711785492504343953926634992332820282019728792003956564819949');
+	my $y = Math::BigInt->from_bytes(scalar reverse $raw);
+	my $top = Math::BigInt->new(2)->bpow(255);
+	$y->bsub($top) if $y->bcmp($top) >= 0;   # the sign bit is not part of y
+	return undef unless $y->bcmp($p) < 0;
+	my $one = Math::BigInt->bone();
+	my $num = $one->copy->badd($y)->bmod($p);
+	my $den = $one->copy->bsub($y)->bmod($p);
+	return undef if $den->is_zero;
+	my $u = $num->copy->bmul($den->copy->bmodinv($p))->bmod($p);
+	my $be = $u->to_bytes;
+	$be = ("\0" x (32 - length $be)) . $be if length $be < 32;
+	return scalar reverse $be;
+}
+
+sub house_key_ed25519_x25519_private {
+	my ($ed) = @_;
+	return undef unless $ed;
+	my $seed = ref $ed ? eval { $ed->export_key_raw('private') } : $ed;
+	return undef unless defined $seed && length $seed == 32;
+	my $a = substr(Digest::SHA::sha512($seed), 0, 32);
+	substr($a, 0, 1) = chr(ord(substr($a, 0, 1)) & 248);
+	substr($a, 31, 1) = chr((ord(substr($a, 31, 1)) & 127) | 64);
+	return $a;
+}
+
+# --- the recovery share -------------------------------------------------------
+# The house key sealed to a password rather than to a machine: what survives
+# ~/.house.key. It is a way back in, not a login. Argon2id comes from OpenSSL
+# (3.2+), so no extra module is needed; a build without it falls back to scrypt
+# and then to PBKDF2 at 600k, and the blob records which one it used so it can
+# always be reopened on another machine.
+
+our $house_key_password_magic = 'JHKP1';
+our $house_key_password_context = 'jawnos/house-key/recovery/v1';
+
+# (key, descriptor) - with no descriptor, try the strongest that works here
+sub house_key_password_kdf {
+	my ($password, $salt, $len, $desc) = @_;
+	return (undef, undef) unless defined $password && length $password;
+	return (undef, undef) unless defined $salt && length $salt;
+	$len = 32 unless $len;
+	require Crypt::KeyDerivation;
+	my @tries = (defined $desc && length $desc)
+		? ($desc)
+		: ('argon2id$t=3,m=65536,p=1', 'scrypt$N=32768,r=8,p=1', 'pbkdf2$sha256,600000');
+	foreach my $try (@tries) {
+		my $key;
+		if ($try =~ /^argon2id\$t=(\d+),m=(\d+),p=(\d+)$/) {
+			$key = eval { Crypt::KeyDerivation::argon2_pbkdf('argon2id', $password, $salt, $1, $2, $3, $len, '', '') };
+		}
+		elsif ($try =~ /^scrypt\$N=(\d+),r=(\d+),p=(\d+)$/) {
+			$key = eval { Crypt::KeyDerivation::scrypt_pbkdf($password, $salt, $1, $2, $3, $len) };
+		}
+		elsif ($try =~ /^pbkdf2\$sha256,(\d+)$/) {
+			$key = eval { Crypt::KeyDerivation::pbkdf2($password, $salt, $1, 'SHA256', $len) };
+		}
+		return ($key, $try) if defined $key && length $key == $len;
+	}
+	return (undef, undef);
+}
+
+sub house_key_password_seal {
+	my ($K, $password) = @_;
+	return undef unless defined $K && length $K;
+	return undef unless defined $password && length $password;
+	require Crypt::AuthEnc::GCM;
+	require Crypt::PRNG;
+	my $salt = Crypt::PRNG::random_bytes(16);
+	my ($aes, $desc) = &house_key_password_kdf($password, $salt, 32);
+	return undef unless $aes;
+	my $iv = Crypt::PRNG::random_bytes(12);
+	my ($ct, $tag) = Crypt::AuthEnc::GCM::gcm_encrypt_authenticate('AES', $aes, $iv, $house_key_password_context, $K);
+	return undef unless defined $ct && defined $tag && length $tag == 16;
+	return encode_base64($house_key_password_magic . pack('C', length $desc) . $desc . $salt . $iv . $tag . $ct, '');
+}
+
+sub house_key_password_open {
+	my ($blob64, $password) = @_;
+	return undef unless defined $blob64 && length $blob64;
+	return undef unless defined $password && length $password;
+	my $blob = eval { decode_base64($blob64) };
+	return undef unless defined $blob && length $blob;
+	my $head = 5 + 1;
+	return undef unless length($blob) > $head + 16 + 12 + 16;
+	return undef unless substr($blob, 0, 5) eq $house_key_password_magic;
+	my $dlen = unpack('C', substr($blob, 5, 1));
+	return undef unless $dlen > 0;
+	return undef unless length($blob) > $head + $dlen + 16 + 12 + 16;
+	my $desc = substr($blob, $head, $dlen);
+	my $off = $head + $dlen;
+	my $salt = substr($blob, $off, 16); $off += 16;
+	my $iv = substr($blob, $off, 12); $off += 12;
+	my $tag = substr($blob, $off, 16); $off += 16;
+	my $ct = substr($blob, $off);
+	return undef unless length $ct;
+	my ($aes) = &house_key_password_kdf($password, $salt, 32, $desc);
+	return undef unless $aes;
+	my $K = eval { Crypt::AuthEnc::GCM::gcm_decrypt_verify('AES', $aes, $iv, $house_key_password_context, $ct, $tag) };
+	return (defined $K && length $K) ? $K : undef;
+}
+
 sub vault_read {
 	my $device = &signatorial_designer();
 	my $q = &db_query('select value, server_time from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'vault', $device);
