@@ -21023,6 +21023,19 @@ sub folders_owning_app($path) {
 	return undef;
 }
 
+# Whether Folders may list sealed names: its own padlock is open (the app is a
+# padlock context and its unlock secret is held) and the person is at home. The
+# house gate's own state is deliberately not part of this - each media app's
+# padlock stands on its own, so turning Gate enforcement off does not uncover a
+# sealed file.
+sub folders_sealed_revealed {
+	my $contexts = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	return 0 unless grep { $_ eq 'folders' } @{$contexts};
+	my $combo = &subs::setting_grabber({ app => 'folders', setting => 'combo_unlock' });
+	return 0 unless (defined $combo && length $combo);
+	return help_at_home() ? 1 : 0;
+}
+
 sub folders_opener($data) {
 	my $folder = $data->{'folder'};
 	my $command = $data->{'command'};
@@ -21046,12 +21059,17 @@ sub folders_opener($data) {
 		$total_size += $file->{'size'} unless $file->{'type'} eq 'folder';
 		push @{$files}, $file;
 	}
-	# a thing the person hid (visible ne checked) is not listed unless its padlock
-	# is open and we are at home - the same rule the gallery reads
+	# a thing the person hid (visible ne checked) is not listed unless a media
+	# padlock is open and we are at home - the same rule the gallery reads
 	my $revealed = help_media_revealed();
+	# a sealed name (.enc) belongs to the Folders padlock alone: it is listed
+	# only while that padlock is open at home, whatever the house gate does
+	my $sealed = folders_sealed_revealed();
 	@{$files} = grep {
 		my $app = folders_owning_app($_->{'path'});
-		!($app && help_app_hidden($app) && !$revealed);
+		my $hidden = ($app && help_app_hidden($app) && !$revealed);
+		my $sealed_name = (!$sealed && ($_->{'name'} // '') =~ /\.enc$/i);
+		!$hidden && !$sealed_name;
 	} @{$files};
 	my @folders = grep { $_->{'type'} eq 'folder' } @{$files};
 	@{$files} = grep { $_->{'type'} ne 'folder' } @{$files};

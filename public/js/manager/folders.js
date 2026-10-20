@@ -15,12 +15,21 @@ $(document).on('click', '#folders_toggle', function() {
 	foldersOpener();
 });
 
-// the media padlock: a hidden app's files are not listed until a paired phone
-// signs the house open. The lock icon asks the house to show the unlock page.
+// the media padlock: sealed names and a hidden app's files are not listed
+// until a paired phone signs the house open. An open padlock shuts again on a
+// press; a shut one asks the house to show the unlock page.
 $(document).on('click', '.folders_lock', function () {
-	$('#folders_mainview').hide();
-	$('#folders_padlock').show();
-	if (typeof padlockAskPhone === 'function') { padlockAskPhone('folders'); }
+	if ($('#folders').attr('unlock')) {
+		$('#folders').attr('unlock', '');
+		settingDeleter({ 'app': 'folders', 'setting': 'combo_unlock' }).then(function () {
+			foldersOpener();
+		});
+	}
+	else {
+		$('#folders_mainview').hide();
+		$('#folders_padlock').show();
+		if (typeof padlockAskPhone === 'function') { padlockAskPhone('folders'); }
+	}
 });
 $(document).on('click', '.folders_cancel_padlock', function () {
 	$('#folders_padlock').hide();

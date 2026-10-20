@@ -414,7 +414,7 @@ function settingDeleter(setter) {
 	var app = setter['app'];
 	var setting = setter['setting'];
 	var device = setter['device'];
-	$.ajax({
+	return $.ajax({
 		url: '/manager/setting_deleter',
 		type: 'POST',
 		data: { app: app, device:device, setting: setting},

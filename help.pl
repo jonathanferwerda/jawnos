@@ -34,19 +34,20 @@ our %topic = (
 	'folders' => {
 		title => 'Folders', category => 'apps', app => 'folders',
 		summary => 'Browse, manage, seal and play with your files.',
-		verified => '2026-10-18',
+		verified => '2026-10-19',
 		body => [
 			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
 			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
 			'Moving, sealing, opening or deleting a file carries the appointments, mail attachments and store entries that named it along with it, so nothing is left pointing at a file that is no longer there.',
-			'A lock on the toolbar turns the media padlock. Anything you have marked not-visible is kept out of the listing until the padlock is open and you are at home, so a private folder stays out of sight out in public.'
+			'A lock on the toolbar turns the media padlock. Anything you have marked not-visible is kept out of the listing until the padlock is open and you are at home, so a private folder stays out of sight out in public. The same padlock is what uncovers sealed files: a name ending .enc is not listed at all while it is shut, and appears - still sealed, and ready to open from the menu - only when it is open at home. The house gate in Security has nothing to do with this; each media app has its own padlock.',
 		],
 		steps => [
 			'Open Folders from the start menu.',
 			'Click into a folder to descend; the breadcrumb along the top walks back up.',
 			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
 			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.',
-			'For a not-visible folder, press the lock on the toolbar and unlock it on a paired phone, and it appears — at home.'
+			'For a not-visible folder, press the lock on the toolbar and unlock it on a paired phone, and it appears — at home.',
+			'Sealed names ending .enc stay out of the listing until that same Folders padlock is open at home; press an open padlock to shut it again and hide them.'
 		],
 		related => [ 'sealing_files', 'gallery', 'backup' ]
 	},
