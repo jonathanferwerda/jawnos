@@ -5,6 +5,14 @@ not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
 
+## House key (next up)
+
+The password is no longer a citizen login (v0.1.938), but it still unwraps the
+vault. Phase 2 — a random `K_house`, wrapped to device keys, with the password
+as a recovery share — is written up in
+[`docs/house-key-phase2.md`](house-key-phase2.md). Do not demote the password
+further until a `K_house` recovery drill passes.
+
 ## Phone — calling & messaging
 
 Done: native call screen (avatar, name over number, Answer/Decline, wake-on-ring);
