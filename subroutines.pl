@@ -16873,10 +16873,42 @@ sub peer_verify {
 # the stash is the proof that the row was verified, never the signatorial in a
 # query string (a name is public and quotable).
 #
-# Scopes are a ladder - visitor < member < trusted. A row with no scope is an
+# Scopes are a ladder - visitor < resident < trusted. A resident is the house's
+# word for a peer that may act here (start and stop appointments, toggle things,
+# press Go, open a Manager) but may not touch configuration; configuration stays
+# citizen-only at the session gate. member is the older spelling of that rung,
+# so a row written before this vocabulary still reads. A row with no scope is an
 # older peer and keeps exactly the trust it had before grants existed; an
 # unknown word is never a promotion. grant_expires is epoch milliseconds, the
 # same clock server_time uses; empty means no expiry (also grandfathered).
+sub peer_scope_rank {
+	return ( none => 0, revoked => 0, visitor => 1, resident => 2, member => 2, trusted => 3 );
+}
+
+# What a peer may ask for, and the rung each needs. config is absent on purpose:
+# configuration is session-citizen only, never a peer grant. A route gate calls
+# peer_allows with peer_action_scope($action), so this table is the one place the
+# policy lives. A resident may act in the house (start and stop appointments,
+# toggle things, press Go, open a Manager) but a visitor may only look and reply.
+sub peer_action_scope {
+	my ($action) = @_;
+	my %need = (
+		view              => 'visitor',
+		chat_reply        => 'visitor',
+		mail_reply        => 'visitor',
+		chat_start        => 'resident',
+		mail_start        => 'resident',
+		go                => 'resident',
+		appointment_start => 'resident',
+		appointment_stop  => 'resident',
+		toggle            => 'resident',
+		remote_control    => 'trusted',
+		relay             => 'trusted',
+		backup            => 'trusted',
+	);
+	return $need{lc($action // '')};
+}
+
 sub peer_allows {
 	my ($c, $rm, $required) = @_;
 	return 0 unless $rm && ref $rm eq 'HASH';
@@ -16884,7 +16916,7 @@ sub peer_allows {
 	return 0 unless $row_key;
 	my $verified = $c ? $c->stash('peer_verified_key') : undef;
 	return 0 unless $verified && $verified eq $row_key;
-	my %rank = ( none => 0, revoked => 0, visitor => 1, member => 2, trusted => 3 );
+	my %rank = &peer_scope_rank();
 	my $grant = lc($rm->{'grant_scope'} // '');
 	$grant = 'trusted' if $grant eq '';
 	$grant = 'none' unless exists $rank{$grant};
@@ -16907,9 +16939,11 @@ sub peer_allows {
 sub peer_grant_normalize {
 	my ($opts) = @_;
 	return undef unless $opts && ref $opts eq 'HASH';
-	my %rank = ( none => 0, revoked => 0, visitor => 1, member => 2, trusted => 3 );
+	my %rank = &peer_scope_rank();
 	my $scope = lc($opts->{'scope'} // '');
 	return undef unless exists $rank{$scope};
+	# write the house's word, not the older spelling
+	$scope = 'resident' if $scope eq 'member';
 	my $priv = lc($opts->{'privilege'} // '');
 	return undef if length $priv && $priv !~ /^(?:citizen|peer|visitor|guest)$/;
 	my $expires = $opts->{'expires'};

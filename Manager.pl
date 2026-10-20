@@ -8540,6 +8540,55 @@ post '/manager/configure/remote_machine_key_reset' => sub($c) {
 	$c->render(json => { ok => 1, cleared => ($pubkey eq '' ? 1 : 0) });
 };
 
+# A citizen sets what a peer house may do here: a lease, not a name. The ladder
+# is none < visitor < resident < trusted. A resident may start and stop
+# appointments, toggle things, press Go and open a Manager; configuration stays
+# citizen-only at the session gate and is never a peer grant. expires is epoch
+# milliseconds; days is a convenience for a lease in whole days. The route
+# refuses a citizen row, and refuses to grant citizenship to anyone.
+post '/manager/configure/remote_machine_grant' => sub($c) {
+	unless (($c->session('authentication') || '') eq 'approved' && ($c->session('privilege') || '') eq 'citizen') {
+		return $c->render(json => { ok => 0, error => 'citizen only' });
+	}
+	my $uuid = $c->param('uuid') || '';
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = $uuid ? &subs::db_select('remote_machines', undef, { uuid => $uuid })->hash
+		: $signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hash
+		: undef;
+	return $c->render(json => { ok => 0, error => 'no machine named' }) unless $rm;
+	return $c->render(json => { ok => 0, error => 'that machine is a citizen' }) if ($rm->{'privilege'} || '') eq 'citizen';
+	my $privilege = $c->param('privilege') || '';
+	return $c->render(json => { ok => 0, error => 'citizen is not a peer grant' }) if $privilege eq 'citizen';
+	# a peer that was never classified becomes a peer when it is granted a scope
+	$privilege = 'peer' if $privilege eq '' && ($rm->{'privilege'} || '') eq '';
+	my $expires = $c->param('expires') || '';
+	my $days = $c->param('days');
+	if (defined $days && $days ne '' && $days !~ /^\d+$/) {
+		return $c->render(json => { ok => 0, error => 'days must be a whole number' });
+	}
+	$expires = &subs::rightNow() + $days * 86400000 if $expires eq '' && defined $days && $days ne '';
+	if ($expires ne '' && $expires !~ /^\d+$/) {
+		return $c->render(json => { ok => 0, error => 'expires must be epoch milliseconds' });
+	}
+	my $ok = &subs::peer_grant_setter({
+		uuid => $rm->{'uuid'},
+		scope => $c->param('scope') || '',
+		privilege => ($privilege eq '' ? undef : $privilege),
+		expires => $expires,
+	});
+	return $c->render(json => { ok => 0, error => 'that is not a grant' }) unless $ok;
+	my $row = &subs::db_select('remote_machines', undef, { uuid => $rm->{'uuid'} })->hash || {};
+	return $c->render(json => {
+		ok => 1,
+		uuid => $row->{'uuid'},
+		signatorial => $row->{'signatorial'},
+		hostname => $row->{'hostname'},
+		privilege => $row->{'privilege'},
+		scope => $row->{'grant_scope'},
+		expires => $row->{'grant_expires'},
+	});
+};
+
 post '/manager/configure/remote_machine/tunnel/toggle' => sub($c) {
 	my $ssh_port = $c->param('ssh_port');
 	my $ip = $c->param('ip');
