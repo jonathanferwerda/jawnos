@@ -16867,6 +16867,16 @@ sub peer_verify {
 	return 1;
 }
 
+# A login must prove the name it claims. peer_verify's unsigned path exists for
+# a keyless row's first contact; a session that names a machine already on the
+# roster is never allowed to use it.
+sub peer_verify_strict {
+	my ($c, $rm) = @_;
+	return 0 unless $c && $rm;
+	return 0 unless $c->req->headers->header('X-Peer-Signature');
+	return &peer_verify($c, $rm) ? 1 : 0;
+}
+
 # Authorization beside authentication. peer_verify answers "is this who they
 # claim?", peer_allows answers "may this house do this, and is the lease still
 # alive?". Call it only after peer_verify has accepted the row for this request:

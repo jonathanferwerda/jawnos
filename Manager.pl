@@ -5965,6 +5965,22 @@ post '/sesh_check' => sub ($c) {
 		my ($authorized, $suds_key) = &subs::login_gate($secret);
 
 		if ($authorized) {
+			# A login that names a machine must prove the name with that machine's
+			# key before the session is minted. A name already on the roster is
+			# verified against its pinned key; a first contact is pinned from the key
+			# it offers (the password already opened the door). A name that does not
+			# verify refuses the login, so a password-holder cannot borrow another
+			# machine's lease.
+			my $claimed = lc($c->param('signatorial') || '');
+			my $peer_row;
+			if ($claimed =~ /^[0-9a-f]{16,64}$/) {
+				$peer_row = &subs::db_select('remote_machines', undef, { signatorial => $claimed })->hash;
+				if ($peer_row && !&subs::peer_verify_strict($c, $peer_row)) {
+					$log->info('sesh_check peer login refused: ' . $claimed . ' did not sign');
+					$c->render(json => { authentication => 'denied', error => 'the peer did not sign' });
+					return;
+				}
+			}
 			app->sessions->samesite(undef);
 			$c->session('authentication' => 'approved');
 			# A peer logs in with the house password/filename over the signed
@@ -5972,13 +5988,11 @@ post '/sesh_check' => sub ($c) {
 			# through without a browser app key.
 			if ($c->param('neighbour') || $c->param('president') || $c->param('backup') || $c->param('remote_timestamp')) {
 				$c->session('peer' => 1);
-				# The caller names itself when it logs in; keep the name with the
-				# session so a later action can be checked against the caller's lease,
-				# not merely the shared password. A browser cannot borrow this: it has
-				# no house password to open sesh_check at all.
-				my $peer_sig = lc($c->param('signatorial') || '');
-				if ($peer_sig =~ /^[0-9a-f]{16,64}$/) {
-					$c->session('peer_signatorial' => $peer_sig);
+				# Keep a name only when it was proved against a roster row. A first
+				# contact has no row yet; the password opens the session but no name
+				# is trusted until a row pins one.
+				if ($peer_row) {
+					$c->session('peer_signatorial' => $claimed);
 				}
 				else {
 					$c->session('peer_signatorial' => undef);
@@ -8351,6 +8365,9 @@ sub remote_device_connect($rdata) {
 	$manager =~ s/:$port/:$dock_port/gi;
 	my $bti;
 	my $ua = Mojo::UserAgent->new();
+	# The login names this machine, so it must sign it: the receiver pins the
+	# offered key on first contact and verifies against it ever after.
+	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 	my $manager_file = &manager_file_maker($name);
 	my $url = $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id . '&numerics=' . $password . '&president=' . $filename . '&remote_timestamp=' . $timestamp . '&manager_file=' . $manager_file . '&signatorial=' . $signatorial;
 	my $res = eval { return $ua->insecure(1)->post($url)->result };
@@ -8390,6 +8407,7 @@ sub remote_device_connect($rdata) {
 
 	if ($returner->{'body'}->{'authentication'} eq 'approved') {
 		$ua = Mojo::UserAgent->new();
+		$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
 		$url = $manager . '/sesh_check?silence=yes&neighbour=' . $browser_tab_id . '&numerics=' . $password . '&president=' . $filename . '&remote_timestamp=' . $timestamp . '&manager_file=' . $manager_file . '&signatorial=' . $signatorial;
 		my $double_check = eval { return $ua->insecure(1)->post($url)->result };
 		$returner->{'body'} = eval { return decode_json $double_check->body } ;
@@ -27617,7 +27635,18 @@ sub app_public_path {
 
 sub app_session_ok {
 	my ($c) = @_;
-	return 1 if ($c->session('peer') || '') eq '1';
+	if (($c->session('peer') || '') eq '1') {
+		my $ssig = $c->session('peer_signatorial') || '';
+		# A first-contact or pre-upgrade session carries no proved name; keep its
+		# existing access until it logs in again.
+		return 1 if $ssig eq '';
+		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $ssig })->hash;
+		# the row is gone: the session is revoked with it
+		return 0 unless $rm;
+		my $key = $rm->{'uuid'} || $rm->{'signatorial'};
+		$c->stash('peer_verified_key' => $key) if $key;
+		return &subs::peer_allows($c, $rm, 'visitor') ? 1 : 0;
+	}
 	my $until = $c->session('app_until') || 0;
 	return $until > &subs::rightNow() ? 1 : 0;
 }
