@@ -16690,6 +16690,11 @@ sub legacy_suds {
 # client holds can produce the key.
 sub session_suds {
 	my ($c) = @_;
+	# A bootstrap session is a password login that has not proved a device. It
+	# may pair, restore or recover, but it never resolves the data key: the
+	# password is a recovery share, not a way to read the house. Internal work
+	# (no session) and every proved session still get the key.
+	if ($c && ($c->session('bootstrap') || '') eq '1') { return undef; }
 	return $gb::suds if $gb::suds;
 	return eval { &suds_grabber() };
 }

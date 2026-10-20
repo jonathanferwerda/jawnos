@@ -1,6 +1,8 @@
 # Phase 2 — the house key (`K_house`) and the password as a recovery share
 
-**Status:** designed, not started. Deferred 2026-10-20 after **v0.1.938**.
+**Status:** implemented 2026-10-20 (v0.1.940–v0.1.944). The password no longer
+resolves the data key; it seals a recovery share. A drill on a machine that has
+actually lost `~/.house.key` is the one thing still outstanding.
 **Read with:** `docs/app-only-access.md`, `docs/ticket-access-design.md`, `help.pl` → `security`.
 
 ## Why
@@ -97,6 +99,9 @@ once the throwaway half is gone.
   `settings` (`__president/password_share`) and a password change rewrites it.
   `/manager/device/recover` accepts the paper code **or** the password, and the
   gate's recovery field sends the value as both.
+- `session_suds` refuses a bootstrap session outright: a password login never
+  resolves the data key, even when the worker already holds it in `$gb::suds`.
+  Proved device/app sessions and internal work (no `$c`) are unchanged.
 
 **Termux:** all of it uses CryptX and OpenSSL, both already present in the
 app's Perl; no libsodium, no `Crypt::NaCl::Sodium`, no compiler. Where a Termux
