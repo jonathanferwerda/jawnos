@@ -6017,10 +6017,13 @@ post '/sesh_check' => sub ($c) {
 			}
 			app->sessions->samesite(undef);
 			$c->session('authentication' => 'approved');
-			# A peer logs in with the house password/filename over the signed
-			# rail; mark the session so the app gate lets remote_device_connect
-			# through without a browser app key.
-			if ($c->param('neighbour') || $c->param('president') || $c->param('backup') || $c->param('remote_timestamp')) {
+			# A peer logs in with the house password over the signed rail; mark
+			# the session so the app gate lets remote_device_connect through
+			# without a browser app key. A browser Gate login also sends
+			# president/backup, so only neighbour/remote_timestamp (the peer rail)
+			# marks a peer.
+			my $peer_login = ($c->param('neighbour') || $c->param('remote_timestamp')) ? 1 : 0;
+			if ($peer_login) {
 				$c->session('peer' => 1);
 				# Keep a name only when it was proved against a roster row. A first
 				# contact has no row yet; the password opens the session but no name
@@ -6039,7 +6042,16 @@ post '/sesh_check' => sub ($c) {
 			$c->session('warranty' => $warranty);
 			$c->session('string' => &subs::random_string_creator());
 			$c->session('name') => &subs::setting_grabber({ app => 'me', setting => 'name' });
-			$c->session('privilege' => 'citizen');
+			$c->session('privilege' => ($peer_login ? 'resident' : 'guest'));
+			# A password-only login is bootstrap/recovery: it can pair a device,
+			# restore a backup or recover, never open the manager. The recovery
+			# code or the app key is the way in, on this console or another.
+			if ($peer_login) {
+				$c->session('bootstrap' => undef);
+			}
+			else {
+				$c->session('bootstrap' => 1);
+			}
 			$c->session('app' => $c->param('app'));
 
 
@@ -27262,6 +27274,11 @@ post '/manager/device/app_login' => sub($c) {
 	$c->session('app' => 1);
 	$c->session('app_until' => $until);
 	$c->session('app_device' => $device_uuid);
+	# The app key is the citizen door: a bootstrap session that pairs an app is
+	# promoted here, or the citizen-only routes would still read guest.
+	$c->session('authentication' => 'approved');
+	$c->session('privilege' => 'citizen');
+	$c->session('bootstrap' => undef);
 	$log->info('app gate: app login ' . ($device->{'name'} || $device_uuid) . ' kind=' . $kind . ' until=' . $until);
 	$c->render(json => { ok => 1, until => $until, kind => $kind, name => $device->{'name'} });
 };
@@ -27706,6 +27723,8 @@ sub app_public_path {
 
 sub app_session_ok {
 	my ($c) = @_;
+	# No loopback bypass here: a tunnel proxy can make a remote browser look
+	# local. The recovery code or the app key is the way back in.
 	if (($c->session('peer') || '') eq '1') {
 		my $ssig = $c->session('peer_signatorial') || '';
 		# A first-contact or pre-upgrade session carries no proved name; keep its
@@ -30288,6 +30307,20 @@ sub authentication_passer($c) {
 			}
 			$log->info('app gate shadow: would deny ' . $c->req->method . ' ' . $app_path . ' from ' . ($c->tx->remote_address || '?'));
 		}
+	}
+
+	# A password-only login from off the machine is a bootstrap session: it may
+	# pair a device, restore a backup or recover, but never open the manager.
+	# This holds even when app_access is off, so the password cannot reopen the
+	# door the app gate would otherwise leave open.
+	if (($c->session('bootstrap') || '') eq '1'
+		&& !&app_public_path($c->req->url->path->to_string)
+		&& !&app_session_ok($c)
+		&& !&app_peer_ok($c)) {
+		$c->render(template => 'app_required', layout => undef,
+			device_uuid => ($c->session('device_uuid') || ''),
+			signatorial => &subs::signatorial_designer());
+		return;
 	}
 
 	my $authentication = $c->session('authentication') || 'revoked';
