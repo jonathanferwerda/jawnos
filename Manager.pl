@@ -9430,7 +9430,7 @@ post '/manager/lock_session' => sub($c) {
 	my $html = $c->render_to_string(
 		template => 'locked_screen',
 		target => $target,
-		fingerprint => &fingerprint_available(),
+		fingerprint => (&fingerprint_available() && &padlock_request_is_local($c)) ? 1 : 0,
 		biometric => &biometric_enrolled_for($c->session('device_uuid') || $target)
 	);
 	$c->render(json => { ok => 1, target => $target, html => $html });
@@ -9558,7 +9558,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 
 	if (scalar @{$padlock} > 0 && $now > $c->session('last_padlock') + 5000) {
 		my $attempts = &subs::note_decrypter(&subs::session_suds($c), &subs::setting_grabber({ app => '__president', setting => 'padlock_pulls' }));
-		my $pl = $c->render_to_string(template => 'locked_screen', target => $overlay_target, fingerprint => &fingerprint_available(), biometric => &biometric_enrolled_for($overlay_target || $c->session('device_uuid')));
+		my $pl = $c->render_to_string(template => 'locked_screen', target => $overlay_target, fingerprint => (&fingerprint_available() && &padlock_request_is_local($c)) ? 1 : 0, biometric => &biometric_enrolled_for($overlay_target || $c->session('device_uuid')));
 		my $colour = &subs::random_colour_grabber();
 		my $taunt_size = scalar @gb::taunts;
 		my $taunts = $gb::taunts[rand($taunt_size)];
@@ -28401,7 +28401,7 @@ sub padlock_gate_answer {
 	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
 	$c->res->code(423);
 	$c->res->headers->cache_control('no-store, max-age=0');
-	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''), locked_device => ($c->session('device_uuid') || ''), fingerprint => &fingerprint_available(), biometric => &biometric_enrolled_for($c->session('device_uuid') || ''), signatorial => &subs::signatorial_designer());
+	$c->render(template => 'locked', layout => 'locked', has_padlock => ($padlock ? 1 : 0), target => ($c->session('device_uuid') || ''), locked_device => ($c->session('device_uuid') || ''), fingerprint => (&fingerprint_available() && &padlock_request_is_local($c)) ? 1 : 0, biometric => &biometric_enrolled_for($c->session('device_uuid') || ''), signatorial => &subs::signatorial_designer());
 	return;
 }
 
