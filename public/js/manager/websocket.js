@@ -1363,8 +1363,15 @@ function jawnosRevisionArrived(parts, version, was) {
 		if (parts) { sessionStorage.setItem('jawnos_revision_parts', JSON.stringify(parts)); }
 		if (version) { sessionStorage.setItem('jawnos_version', version); }
 	};
-	// the first sight of a revision for this tab: nothing to follow yet
-	if (!was || !parts || !stored || !stored.js) { remember(); return; }
+	// the first sight of a revision for this tab: nothing to follow yet, but a
+	// tab that never recorded the parts may still have loaded an older build.
+	// Its own version is in the page; when the house has moved on, one reload
+	// is what puts the current JS and templates in front of the person.
+	if (!was || !parts || !stored || !stored.js) {
+		var page_version = (typeof jawnos_version !== 'undefined') ? String(jawnos_version) : '';
+		if (version && page_version && String(version) !== page_version) { jawnosUpdateQuietReload(); return; }
+		remember(); return;
+	}
 	var moved = function (k) { return (parts[k] || '') !== (stored[k] || ''); };
 	var what = { js: moved('js'), shell: moved('shell'), css: moved('css'), views: moved('views'), server: moved('server') };
 	remember();
