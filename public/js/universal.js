@@ -587,7 +587,11 @@ function jawnAppEnrollDesktop() {
 	if (!window.JawnDesktop) { return Promise.resolve(false); }
 	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.resolve(false); }
-	return $.getJSON('/manager/device/app_status', { device_uuid: uuid }).then(function (s) {
+	// Bind this session to the app's device first: an unsigned request is
+	// accepted only for the device the session itself holds (see app_request).
+	return $.getJSON('/manager/security/padlock_state', { device_uuid: uuid }).then(function () {
+		return $.getJSON('/manager/device/app_status', { device_uuid: uuid });
+	}).then(function (s) {
 		if (!s || !s.ok) { throw { error: 'not paired' }; }
 		if (s.has_app) { return true; }
 		if (s.pending) { throw { error: 'pending' }; }
