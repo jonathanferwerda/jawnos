@@ -126,6 +126,7 @@
 				<% } %>
 			</select>
 			<button type="button" id="remote_control_manager" class="remote_manager_open" uuid="<%= $selected_rm ? $selected_rm->{'uuid'} : '' %>" manager="<%= $selected_rm ? $selected_rm->{'manager'} : '' %>" hint="<%= &subs::ui("Open this machine's Manager") %>" <% if (!$selected_rm) { %>style="display:none;"<% } %>><%= &subs::lang('common.manager') %></button>
+			<button type="button" id="remote_control_go" class="remote_manager_open" uuid="<%= $selected_rm ? $selected_rm->{'uuid'} : '' %>" manager="<%= $selected_rm ? $selected_rm->{'manager'} : '' %>" hint="<%= &subs::ui("Open this machine's Manager") %>" <% if (!$selected_rm) { %>style="display:none;"<% } %>><%= &subs::lang('common.go') %></button>
 			<button type="button" id="remote_control_vpn" class="hover" hint="<%= &subs::ui("Route this device's web traffic through the selected machine when it offers an exit node") %>" status="off" style="display:none;"><%= &subs::lang('vpn') %></button>
 			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('remote_control')" src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
 			<br>

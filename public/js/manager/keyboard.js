@@ -922,9 +922,12 @@ async function keyboardMaker(data) {
 			data: data,
 			success: function(response) {
 				$('#' + toggle).remove();
-				$('#keyboard_container').append(response.keyboard);
-				if ($(response.keyboard).find('#remote_control_view') && response.remote_keyboard) {
-					$('#keyboard_container').find('#remote_control_view').html($(response.remote_keyboard).find('#remote_control_view').html());
+				if (typeof response.keyboard === 'string') { $('#keyboard_container').append(response.keyboard); }
+				// A peer's panel is HTML; an older relay may still hand back its
+				// JSON envelope, which must never reach $() as a selector.
+				if (typeof response.remote_keyboard === 'string' && response.remote_keyboard) {
+					var remote_view = $(response.remote_keyboard).find('#remote_control_view').html();
+					if (remote_view) { $('#keyboard_container').find('#remote_control_view').html(remote_view); }
 				}
 				if (toggle == 'remote_control') {
 					// keep the picker on the machine that was just chosen, and take
@@ -1009,13 +1012,13 @@ async function keyboardMaker(data) {
 function keyboardManagerButton(select) {
 	var s = select ? $(select) : $('#remote_control_machine_select');
 	var picked = s.find('option:selected');
-	var button = $('#remote_control_manager');
-	if (!button.length) { return; }
+	var buttons = $('#remote_control_manager, #remote_control_go');
+	if (!buttons.length) { return; }
 	if (!picked.length || !picked.val()) {
-		button.hide().removeAttr('uuid').removeAttr('manager');
+		buttons.hide().removeAttr('uuid').removeAttr('manager');
 		return;
 	}
-	button.attr('uuid', picked.val()).attr('manager', picked.attr('manager') || '').show();
+	buttons.attr('uuid', picked.val()).attr('manager', picked.attr('manager') || '').show();
 }
 
 function keyboardConfigToggle(toggle) {
