@@ -16399,15 +16399,59 @@ sub house_key_ed25519_x25519_private {
 
 # --- the recovery share -------------------------------------------------------
 # The house key sealed to a password rather than to a machine: what survives
-# ~/.house.key. It is a way back in, not a login. Argon2id comes from OpenSSL
-# (3.2+), so no extra module is needed; a build without it falls back to scrypt
-# and then to PBKDF2 at 600k, and the blob records which one it used so it can
-# always be reopened on another machine.
+# ~/.house.key. It is a way back in, not a login.
+#
+# Argon2id everywhere: if the OpenSSL under this Perl predates 3.2, the
+# reference `argon2` tool performs the same derivation with the same
+# parameters and produces the same bytes (the probe asserts it). Only when
+# neither exists does a new share fall back to scrypt, then PBKDF2 at 600k.
+# The blob records the descriptor and the salt, so any machine can reopen it
+# with either provider.
+#
+# The salt is a printable base64 string, not raw bytes: the command line takes
+# its salt as an argument, and both providers must hash identical bytes.
 
-our $house_key_password_magic = 'JHKP1';
+our $house_key_password_magic = 'JHKP2';
 our $house_key_password_context = 'jawnos/house-key/recovery/v1';
 
-# (key, descriptor) - with no descriptor, try the strongest that works here
+sub house_key_argon2_salt {
+	require Crypt::PRNG;
+	return encode_base64(Crypt::PRNG::random_bytes(16), '');
+}
+
+# The reference tool, for an OpenSSL without Argon2. The password arrives on
+# stdin, never in argv; the salt is public and may ride the command line.
+sub house_key_argon2id_cli {
+	my ($password, $salt, $t, $m, $p, $len) = @_;
+	return undef unless defined $password && length $password;
+	return undef unless defined $salt && length $salt >= 8;
+	my $on_path = `command -v argon2 2>/dev/null`;
+	chomp $on_path;
+	return undef unless $on_path;
+	# the tool counts memory as 2^N KiB
+	my $bits = 0;
+	my $size = $m;
+	while ($size > 1) { return undef if $size % 2; $size /= 2; $bits++; }
+	return undef unless $bits >= 3;
+	require IPC::Open2;
+	my ($out, $in);
+	my $pid = eval { IPC::Open2::open2($out, $in, $on_path, $salt, '-id', '-t', $t, '-m', $bits, '-p', $p, '-l', $len, '-r') };
+	return undef unless $pid;
+	local $SIG{'PIPE'} = 'IGNORE';
+	eval { print $in $password; };
+	close $in;
+	my $res = do { local $/; <$out> };
+	close $out;
+	waitpid($pid, 0);
+	return undef unless $? == 0 && defined $res && length $res;
+	# builds differ: some print the digest as hex with -r, some as raw bytes
+	my $hexlen = 2 * $len;
+	if ($res =~ /^\s*([0-9a-fA-F]{$hexlen})\s*$/) { return pack('H*', $1); }
+	return $res if length $res == $len;
+	return undef;
+}
+
+# (key, descriptor) - with no descriptor, take the strongest that works here
 sub house_key_password_kdf {
 	my ($password, $salt, $len, $desc) = @_;
 	return (undef, undef) unless defined $password && length $password;
@@ -16420,7 +16464,10 @@ sub house_key_password_kdf {
 	foreach my $try (@tries) {
 		my $key;
 		if ($try =~ /^argon2id\$t=(\d+),m=(\d+),p=(\d+)$/) {
-			$key = eval { Crypt::KeyDerivation::argon2_pbkdf('argon2id', $password, $salt, $1, $2, $3, $len, '', '') };
+			my ($t, $m, $p) = ($1, $2, $3);
+			$key = eval { Crypt::KeyDerivation::argon2_pbkdf('argon2id', $password, $salt, $t, $m, $p, $len, '', '') };
+			$key = &house_key_argon2id_cli($password, $salt, $t, $m, $p, $len)
+				unless defined $key && length $key == $len;
 		}
 		elsif ($try =~ /^scrypt\$N=(\d+),r=(\d+),p=(\d+)$/) {
 			$key = eval { Crypt::KeyDerivation::scrypt_pbkdf($password, $salt, $1, $2, $3, $len) };
@@ -16439,13 +16486,14 @@ sub house_key_password_seal {
 	return undef unless defined $password && length $password;
 	require Crypt::AuthEnc::GCM;
 	require Crypt::PRNG;
-	my $salt = Crypt::PRNG::random_bytes(16);
+	my $salt = &house_key_argon2_salt();
 	my ($aes, $desc) = &house_key_password_kdf($password, $salt, 32);
 	return undef unless $aes;
 	my $iv = Crypt::PRNG::random_bytes(12);
 	my ($ct, $tag) = Crypt::AuthEnc::GCM::gcm_encrypt_authenticate('AES', $aes, $iv, $house_key_password_context, $K);
 	return undef unless defined $ct && defined $tag && length $tag == 16;
-	return encode_base64($house_key_password_magic . pack('C', length $desc) . $desc . $salt . $iv . $tag . $ct, '');
+	return encode_base64($house_key_password_magic . pack('C', length $desc) . $desc
+		. pack('C', length $salt) . $salt . $iv . $tag . $ct, '');
 }
 
 sub house_key_password_open {
@@ -16454,15 +16502,15 @@ sub house_key_password_open {
 	return undef unless defined $password && length $password;
 	my $blob = eval { decode_base64($blob64) };
 	return undef unless defined $blob && length $blob;
-	my $head = 5 + 1;
-	return undef unless length($blob) > $head + 16 + 12 + 16;
+	return undef unless length($blob) > 5 + 1 + 1 + 12 + 16;
 	return undef unless substr($blob, 0, 5) eq $house_key_password_magic;
 	my $dlen = unpack('C', substr($blob, 5, 1));
-	return undef unless $dlen > 0;
-	return undef unless length($blob) > $head + $dlen + 16 + 12 + 16;
-	my $desc = substr($blob, $head, $dlen);
-	my $off = $head + $dlen;
-	my $salt = substr($blob, $off, 16); $off += 16;
+	return undef unless $dlen > 0 && length($blob) > 6 + $dlen + 1 + 12 + 16;
+	my $desc = substr($blob, 6, $dlen);
+	my $off = 6 + $dlen;
+	my $slen = unpack('C', substr($blob, $off, 1)); $off += 1;
+	return undef unless $slen > 0 && length($blob) > $off + $slen + 12 + 16;
+	my $salt = substr($blob, $off, $slen); $off += $slen;
 	my $iv = substr($blob, $off, 12); $off += 12;
 	my $tag = substr($blob, $off, 16); $off += 16;
 	my $ct = substr($blob, $off);
@@ -16471,6 +16519,27 @@ sub house_key_password_open {
 	return undef unless $aes;
 	my $K = eval { Crypt::AuthEnc::GCM::gcm_decrypt_verify('AES', $aes, $iv, $house_key_password_context, $ct, $tag) };
 	return (defined $K && length $K) ? $K : undef;
+}
+
+# The stored copy of the share. A login fills in a missing one (so a normal
+# sign-in does not pay for Argon2 every time); a password change rewrites it.
+sub password_share_store {
+	my ($password, $suds, $force) = @_;
+	return 0 unless defined $password && length $password;
+	return 0 unless defined $suds && length $suds;
+	my $q = &db_query('select uuid, value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'password_share');
+	my $row = $q ? $q->hashes->[0] : undef;
+	return 1 if $row && $row->{'value'} && !$force;
+	my $sealed = &house_key_password_seal($suds, $password);
+	return 0 unless $sealed;
+	my $now = &rightNow();
+	if ($row) {
+		&db_update('settings', { value => $sealed, server_time => $now }, { uuid => $row->{'uuid'} });
+	}
+	else {
+		&db_insert('settings', { app => '__president', setting => 'password_share', device => 'all', value => $sealed, timestamp => $now, server_time => $now });
+	}
+	return 1;
 }
 
 sub vault_read {

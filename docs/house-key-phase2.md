@@ -87,9 +87,16 @@ once the throwaway half is gone.
   public and private, byte for byte. **So an app key needs no new key type:**
   convert its public half to wrap, and its seed to unwrap.
 - `house_key_password_seal` / `_open` — the recovery share: Argon2id from
-  OpenSSL 3.2+ (`t=3, m=64 MiB, p=1`), falling back to `scrypt` and then
-  `pbkdf2,600000`. The KDF descriptor and salt are stored in the blob, so a
-  share sealed by an older machine still opens.
+  OpenSSL 3.2+, or from the `argon2` tool with the same parameters and the
+  same bytes where OpenSSL is older (the probe asserts the two agree). The
+  salt is printable base64 so both providers hash identical bytes. Only when
+  neither provider exists does a new share fall back to `scrypt`, then
+  `pbkdf2,600000`; the descriptor and salt are stored in the blob, so a share
+  sealed by an older machine still opens.
+- `password_share_store` — the first password login seals the share into
+  `settings` (`__president/password_share`) and a password change rewrites it.
+  `/manager/device/recover` accepts the paper code **or** the password, and the
+  gate's recovery field sends the value as both.
 
 **Termux:** all of it uses CryptX and OpenSSL, both already present in the
 app's Perl; no libsodium, no `Crypt::NaCl::Sodium`, no compiler. Where a Termux
@@ -141,6 +148,11 @@ OpenSSL lacks Argon2, the seal records `scrypt` instead and still opens.
   machine.
 - **No loopback app-gate bypass.** A tunnel proxy can make a remote browser look
   local.
+- The database now carries a password-sealed copy of the house key. That is the
+  point — a stolen key file stops being fatal — but a stolen database plus a
+  guessable password now recovers the house. Argon2id at 64 MiB and the recovery
+  route's five-tries-an-hour limit are the mitigations; the paper code remains
+  the stronger factor, since its secret is 128 random bits.
 - Do not share app/device keys; they are per-device. Revoking a device must remove
   its wrapped `K_house` copy.
 - Backups must include the wrapped keys and (offline) the recovery share; test a

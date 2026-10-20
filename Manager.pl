@@ -6035,6 +6035,14 @@ post '/sesh_check' => sub ($c) {
 					$c->session('peer_signatorial' => undef);
 				}
 			}
+			# The password is also a recovery share: the first password login seals
+			# the house key to it, so a machine that loses ~/.house.key can still be
+			# opened with the password the person already knows. A password change
+			# rewrites it. A peer login is skipped (it would pay for the derivation
+			# on every sync for no benefit).
+			if (!$peer_login && &subs::door_check($secret)) {
+				eval { &subs::password_share_store($secret, $suds_key, 0) };
+			}
 			my $app_warranty = &subs::setting_grabber({ app => $c->param('app'), setting => 'warranty' });
 			my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ 'app' => 'me', 'setting' => 'login_warranty' } ) || '-3h',$server_time);
 			$c->session('database' => $database);
@@ -27424,15 +27432,24 @@ post '/manager/security/legacy_reseal' => sub($c) {
 # house key changed since it was made) is refused by the canary check.
 post '/manager/device/recover' => sub($c) {
 	my $code = &subs::recovery_code_clean($c->param('code'));
-	unless (length $code >= 20) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
+	my $password = $c->param('password') // '';
+	unless (length $code >= 20 || length $password) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
 	my $ip = $c->tx->remote_address;
 	my $now = &subs::rightNow();
 	my $tries = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'recovery_attempt', $ip . ':%', $now - 3600000)->hash->{'n'} || 0;
 	if ($tries >= 5) { $c->render(json => { ok => 0, error => 'too many' }); return; }
 	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'recovery_attempt', app => '__president', server_time => $now, timestamp => $now });
-	my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
-	unless ($row && $row->{'value'}) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
-	my $suds = eval { &subs::note_decrypter($code, $row->{'value'}) };
+	# Two doors: the paper code, or the house password. Either unwraps the same
+	# house key; the password share is only there when a password login minted it.
+	my $suds;
+	if (length $code >= 20) {
+		my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
+		$suds = eval { &subs::note_decrypter($code, $row->{'value'}) } if $row && $row->{'value'};
+	}
+	if (!(defined $suds && length $suds) && length $password) {
+		my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'password_share')->hashes->[0];
+		$suds = &subs::house_key_password_open($row->{'value'}, $password) if $row && $row->{'value'};
+	}
 	$suds =~ s/\s+$// if $suds;
 	unless ($suds && &subs::suds_current($suds)) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
 	&subs::vault_seed($suds, 1);
@@ -30538,6 +30555,9 @@ post '/manager/configure/password_update' => sub($c) {
 			&subs::db_update('security', { credential => $newjawntial }, { timestamp => $cr->{'timestamp'}, server_time => $cr->{'server_time'} });
 		}
 		$c->session('suds_id' => &subs::suds_id($K));
+		# the recovery share follows the password: the new one must open the
+		# house, and the old one must not
+		eval { &subs::password_share_store($numerics, $K, 1) };
 		&subs::db_delete('security', { level => 'padlock' });
 		&subs::db_delete('settings', { app => '__president', setting => 'pl_time' });
 		&subs::db_delete('settings', { app => '__president', setting => 'padlock_pulls' });

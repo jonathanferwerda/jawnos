@@ -543,8 +543,9 @@ On the first run — or any time `config.json` is missing — JawnOS walks you t
 1. **Dependencies.** `scripts/jawnos_deps.pl` checks for the required command-line tools and Perl
    modules and offers to install anything that is missing (using `apt`, `pacman` or Termux's
    `pkg`, plus `cpanm`). It also reports which key-derivation features OpenSSL offers: recovery
-   shares use Argon2id where OpenSSL provides it (3.2+), falling back to scrypt and then PBKDF2
-   on an older build, and the share records the one it used. No libsodium or compiler is needed —
+   shares use Argon2id (from OpenSSL 3.2+, or from the `argon2` tool with the same parameters
+   where OpenSSL is older), falling back to scrypt and then PBKDF2 only when neither provider is
+   present, and the share records the one it used. No libsodium or compiler is needed —
    the Ed25519 → X25519 conversion is plain Perl on top of CryptX.
 2. **`config.json`.** A web wizard opens at <http://127.0.0.1:3210/wizard> where you fill in your
    name, device, ports and media folders; it writes `config.json` for you. The

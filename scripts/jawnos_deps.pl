@@ -74,6 +74,7 @@ my @tools = (
 	{ cmd => 'perl',      apt => 'perl',             pacman => 'perl',           termux => 'perl',             label => 'Perl' },
 	{ cmd => 'openssl',   apt => 'openssl',          pacman => 'openssl',        termux => 'openssl',          label => 'OpenSSL' },
 	{ cmd => 'sqlite3',   apt => 'sqlite3',          pacman => 'sqlite',         termux => 'sqlite',           label => 'SQLite' },
+	{ cmd => 'argon2',    apt => 'argon2',           pacman => 'argon2',         termux => 'argon2',           label => 'argon2 (recovery KDF)' },
 	{ cmd => 'curl',      apt => 'curl',             pacman => 'curl',           termux => 'curl',             label => 'curl' },
 	{ cmd => 'ssh',       apt => 'openssh-client',   pacman => 'openssh',        termux => 'openssh',          label => 'OpenSSH' },
 	{ cmd => 'sshpass',   apt => 'sshpass',          pacman => 'sshpass',        termux => 'sshpass',          label => 'sshpass' },
@@ -145,7 +146,7 @@ my @modules = qw(
 my @capabilities = (
 	{
 		id       => 'argon2id',
-		label    => 'Argon2id key derivation (OpenSSL 3.2+)',
+		label    => 'Argon2id key derivation (OpenSSL 3.2+ or the argon2 tool)',
 		check    => sub { perl_kdf('argon2id') },
 		fallback => 'scrypt, then PBKDF2 at 600k',
 	},
@@ -158,16 +159,24 @@ my @capabilities = (
 );
 
 	sub perl_kdf {
-	my ($kind) = @_;
-	return 0 unless have_module('Crypt::KeyDerivation');
-	# the smallest parameters that still exercise the KDF: this is a capability
-	# probe, not a password hash, and it must stay fast on a phone
-	my $call = $kind eq 'argon2id'
-		? 'Crypt::KeyDerivation::argon2_pbkdf("argon2id", "p", "s", 1, 8, 1, 8, "", "")'
-		: 'Crypt::KeyDerivation::scrypt_pbkdf("p", "s", 16, 1, 1, 8)';
-	my $out = `perl -MCrypt::KeyDerivation -e '$call; print "ok"' 2>/dev/null`;
-	return (defined $out && $out eq 'ok') ? 1 : 0;
-}
+		my ($kind) = @_;
+		return 0 unless have_module('Crypt::KeyDerivation');
+		# the smallest parameters that still exercise the KDF: this is a capability
+		# probe, not a password hash, and it must stay fast on a phone
+		if ($kind eq 'argon2id') {
+			my $call = 'Crypt::KeyDerivation::argon2_pbkdf("argon2id", "p", "s", 1, 8, 1, 8, "", "")';
+			my $out = `perl -MCrypt::KeyDerivation -e '$call; print "ok"' 2>/dev/null`;
+			return 1 if defined $out && $out eq 'ok';
+			# the reference tool, for an OpenSSL older than 3.2: same parameters,
+			# same bytes (the app's probe asserts the two agree)
+			my $cli = which('argon2') ? `printf p | argon2 s -id -t 1 -m 3 -p 1 -l 8 -r 2>/dev/null` : '';
+			return 1 if defined $cli && length $cli;
+			return 0;
+		}
+		my $call = 'Crypt::KeyDerivation::scrypt_pbkdf("p", "s", 16, 1, 1, 8)';
+		my $out = `perl -MCrypt::KeyDerivation -e '$call; print "ok"' 2>/dev/null`;
+		return (defined $out && $out eq 'ok') ? 1 : 0;
+	}
 
 # --- desktop extras (opt-in: --desktop) -------------------------------------
 # The Linux desktop app's embedded view needs WebKitGTK, and it decodes media
