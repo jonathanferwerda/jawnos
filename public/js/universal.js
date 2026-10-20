@@ -797,6 +797,9 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 	// confirm for another screen; an unlocked device will pick the request up.
 	var lockLayer = document.getElementById('locked_screen');
 	if (lockLayer && (lockLayer.offsetWidth || lockLayer.offsetHeight || lockLayer.getClientRects().length)) { return; }
+	// The screen that pressed Go already shows its own approval dialog; it is
+	// never asked again through the padlock prompt while that dialog is up.
+	if (mode === 'go' && document.getElementById('jawnos_go_prompt')) { return; }
 	var mine = jawnDeviceUuid();
 	if (!mine) { return; }
 	// the locked screen is not asked to sign itself open, and the screen that
@@ -811,8 +814,11 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 	jawnPadlockPromptTarget = target || '';
 	mode = mode || 'locker';
 	house = (typeof house === 'undefined') ? !target : !!house;
-	var contextLabel = jawnPadlockContext(mode);
-	var unlockLabel = jawnPadlockUnlockLabel(mode, house, deviceName, sourceHost);
+	var is_go = (mode === 'go');
+	var contextLabel = is_go ? jawnPadlockPromptText('Go') : jawnPadlockContext(mode);
+	var unlockLabel = is_go
+		? jawnPadlockPromptText('Approve Go to {0}', deviceName || jawnPadlockPromptText('another machine'))
+		: jawnPadlockUnlockLabel(mode, house, deviceName, sourceHost);
 
 	var box = document.createElement('div');
 	box.id = 'jawn_padlock_prompt';
@@ -821,15 +827,20 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 	box.style.cssText = 'position:fixed;z-index:71000;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,360px);background:#161616;color:#f4f4f4;border:1px solid #444;border-radius:14px;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.55);font-family:sans-serif;text-align:center;';
 	var title = document.createElement('div');
 	title.style.cssText = 'font-size:19px;line-height:1.35;margin-bottom:6px;';
-	title.textContent = house ? jawnPadlockPromptText('Unlock the house?')
-		: (deviceName ? jawnPadlockPromptText('Unlock {0}?', deviceName) : jawnPadlockPromptText('Unlock the locked screen?'));
+	title.textContent = is_go
+		? jawnPadlockPromptText('Approve Go to {0}?', deviceName || jawnPadlockPromptText('another machine'))
+		: (house ? jawnPadlockPromptText('Unlock the house?')
+			: (deviceName ? jawnPadlockPromptText('Unlock {0}?', deviceName) : jawnPadlockPromptText('Unlock the locked screen?')));
 	var note = document.createElement('div');
 	note.style.cssText = 'font-size:14px;color:#bbb;margin-bottom:14px;min-height:18px;';
-	note.textContent = (sourceHost ? jawnPadlockPromptText('Requested by {0}', sourceHost) : jawnPadlockPromptText('Requested by another machine'))
-		+ ' · ' + contextLabel + '. ' + jawnPadlockPromptText('Confirm with your fingerprint to open it.');
+	note.textContent = is_go
+		? ((sourceHost ? jawnPadlockPromptText('Requested by {0}', sourceHost) : jawnPadlockPromptText('Requested by another machine'))
+			+ '. ' + jawnPadlockPromptText('Confirm with your fingerprint to open that machine.'))
+		: ((sourceHost ? jawnPadlockPromptText('Requested by {0}', sourceHost) : jawnPadlockPromptText('Requested by another machine'))
+			+ ' · ' + contextLabel + '. ' + jawnPadlockPromptText('Confirm with your fingerprint to open it.'));
 	var go = document.createElement('button');
 	go.type = 'button';
-	go.textContent = jawnPadlockPromptText('Unlock with fingerprint');
+	go.textContent = is_go ? jawnPadlockPromptText('Approve with fingerprint') : jawnPadlockPromptText('Unlock with fingerprint');
 	go.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:pointer;margin:0 4px 8px 4px;';
 	var no = document.createElement('button');
 	no.type = 'button';
@@ -851,7 +862,21 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 		// (or an app with no enrolled key) falls back to the local confirm and
 		// the device's pairing signature.
 		var opened;
-		if (window.JawnBiometricKey && typeof jawnosBiometricUnlock === 'function') {
+		if (is_go) {
+			// A Go approval is its own signature: it names the request, not a
+			// screen, and the server hands it to the machine that pressed Go.
+			if (window.JawnBiometricKey && typeof jawnosBiometricGo === 'function') {
+				opened = jawnosBiometricGo(requestId, deviceName, function (t) { note.textContent = t; });
+			}
+			else {
+				opened = jawnPadlockConfirm(unlockLabel).then(function (ok) {
+					if (!ok) { throw { error: 'cancelled' }; }
+					note.textContent = jawnPadlockPromptText('Approving...');
+					return jawnGoSignApproval(requestId, note);
+				});
+			}
+		}
+		else if (window.JawnBiometricKey && typeof jawnosBiometricUnlock === 'function') {
 			opened = jawnosBiometricUnlock(mode, target, function (t) { note.textContent = t; }, box, house, sourceHost, deviceName).catch(function (err) {
 				var e = (err && err.error) || '';
 				if (e !== 'unavailable' && e !== 'no key' && e !== 'invalidated') { throw err; }
@@ -872,7 +897,9 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 		opened.then(function (res) {
 			// an "already" answer with relayed=1 means this machine did not hold
 			// the row; the peer that does was just told to open it
-			note.textContent = (res && res.already && !res.relayed) ? jawnPadlockPromptText('That screen was already open.') : jawnPadlockPromptText('Unlocked.');
+			note.textContent = is_go
+				? jawnPadlockPromptText('Approved.')
+				: ((res && res.already && !res.relayed) ? jawnPadlockPromptText('That screen was already open.') : jawnPadlockPromptText('Unlocked.'));
 			setTimeout(function () { jawnPadlockPromptDismiss(); }, 1200);
 		}).catch(function (err) {
 			if (err && err.error === 'cancelled') { jawnPadlockPromptDismiss(); return; }
@@ -963,6 +990,51 @@ function jawnPadlockSignOpen(mode, target, status, house) {
 			if (house) { body.house = 1; }
 			else if (target) { body.target = target; }
 			return $.post('/manager/security/padlock_unlock', body);
+		});
+	}).then(function (res) {
+		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
+		return res;
+	});
+}
+
+// A Go approval names the request, not a screen. The phone's Keystore key is
+// the real factor: the OS fingerprint prompt releases it, and the house verifies
+// the signature against the device's bio_pubkey.
+function jawnosBiometricGo(requestId, deviceName, status) {
+	status = status || function () {};
+	var uuid = jawnDeviceUuid();
+	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
+	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
+	status(jawnPadlockPromptText('Confirm your fingerprint...'));
+	return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'go' }).then(function (ch) {
+		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
+		var msg = 'go-approve\n' + uuid + '\n' + requestId + '\n' + ch.nonce;
+		var label = jawnPadlockPromptText('Approve Go to {0}', deviceName || jawnPadlockPromptText('another machine'));
+		return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), label]).then(function (res) {
+			if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
+			return $.post('/manager/security/go_approve', { kind: 'bio', device_uuid: uuid, request_id: requestId, nonce: ch.nonce, signature: res.signature });
+		});
+	}).then(function (res) {
+		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
+		return res;
+	});
+}
+
+// A device that has the pairing key but no app bridge (a desktop window, or a
+// browser) confirms with the platform prompt and signs the same approval. The
+// server still verifies the paired key, so the finger is the gate, not a promise.
+function jawnGoSignApproval(requestId, status) {
+	var uuid = jawnDeviceUuid();
+	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
+	if (!(window.crypto && crypto.subtle && crypto.subtle.sign)) { return Promise.reject({ error: 'unavailable' }); }
+	return jawnosDeviceKeyGet().then(function (key) {
+		if (!key) { throw { error: 'not paired' }; }
+		return $.post('/manager/security/padlock_challenge', { device_uuid: uuid });
+	}).then(function (ch) {
+		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
+		var msg = 'go-approve\n' + uuid + '\n' + requestId + '\n' + ch.nonce;
+		return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+			return $.post('/manager/security/go_approve', { kind: 'pair', device_uuid: uuid, request_id: requestId, nonce: ch.nonce, signature: jawnosB64(sig) });
 		});
 	}).then(function (res) {
 		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }

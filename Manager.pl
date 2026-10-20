@@ -8334,7 +8334,8 @@ get '/manager/remote_manager' => sub ($c) {
 	# for a browser: a ticket that redeemed itself would sign the browser in
 	# behind the person's back. The installed apps are different: their session
 	# already proved this device's app key, and pressing Go there is the person's
-	# own deliberate step, so they get the ticket and go straight in.
+	# own deliberate step, so they may mint the ticket. If the house has a
+	# reader or a paired phone/tablet, the mint waits for that fingerprint first.
 	my $browse_host = $rm->{'fqdn'} || $rm->{'domain'} || '';
 	my $browse_port = eval { Mojo::URL->new($url)->port } || $rm->{'port'} || 443;
 	if ($browse_host) {
@@ -8343,10 +8344,35 @@ get '/manager/remote_manager' => sub ($c) {
 	# app_device is set only by app_login, which is the installed app proving
 	# its device key; a browser (even one opened by a ticket) never has it.
 	my $in_app = ($c->session('app_device') || '') ne '' ? 1 : 0;
-	my $ticket_url = $in_app ? (eval { &remote_manager_ticket($c, $rm) } || '') : '';
+	my $ticket_url = '';
+	my $need_approval = 0;
+	my $request_id = '';
+	my $fingerprint = 0;
+	my $phone_fingerprint = 0;
+	my $devices = [];
+	if ($in_app) {
+		my $source_device = $c->session('app_device') || $session_device_uuid;
+		my ($fp, $self_bio, $others) = &go_approvers($c, $source_device);
+		if (!$fp && !$self_bio && !scalar @{$others}) {
+			# nobody can provide a second factor here: the app key is the proof
+			$ticket_url = eval { &remote_manager_ticket($c, $rm) } || '';
+		}
+		else {
+			$request_id = &go_request_create($c, $rm, $source_device, $url, $name);
+			$need_approval = 1;
+			$fingerprint = $fp ? 1 : 0;
+			$phone_fingerprint = $self_bio ? 1 : 0;
+			$devices = [ map { $_->{'name'} || 'device' } @{$others} ];
+		}
+	}
 	$c->render(json => {
 		manager => $url,
 		ticket_url => $ticket_url,
+		need_approval => $need_approval,
+		request_id => $request_id,
+		fingerprint => $fingerprint,
+		phone_fingerprint => $phone_fingerprint,
+		devices => $devices,
 		uuid => $rm->{'uuid'} || '',
 		name => $name,
 		device_uuid => $session_device_uuid,
@@ -28270,8 +28296,15 @@ sub padlock_request_store {
 }
 
 sub padlock_request_get {
+	my ($id) = @_;
 	my $now = &subs::rightNow();
-	my $row = &subs::db_query('select uuid, data, server_time from cache where context = ? and server_time > ? order by server_time desc limit 1', 'padlock_request', $now - 300000)->hashes->[0];
+	my $row;
+	if (defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/) {
+		$row = &subs::db_query('select uuid, data, server_time from cache where context = ? and uuid = ? and server_time > ? limit 1', 'padlock_request', $id, $now - 300000)->hashes->[0];
+	}
+	else {
+		$row = &subs::db_query('select uuid, data, server_time from cache where context = ? and server_time > ? order by server_time desc limit 1', 'padlock_request', $now - 300000)->hashes->[0];
+	}
 	return {} unless $row;
 	my $d = eval { decode_json $row->{'data'} } || {};
 	$d->{'id'} ||= $row->{'uuid'};
@@ -28293,6 +28326,127 @@ sub padlock_request_clear {
 		my $d = eval { decode_json $r->{'data'} } || {};
 		&subs::db_query('delete from cache where uuid = ?', $r->{'uuid'}) if (($d->{'target'} || '') eq $target);
 	}
+}
+
+# --- Go approvals ---------------------------------------------------------
+# A Go pressed in the installed app is already authenticated by the app key,
+# but the person may ask for a second factor before the peer ticket is minted:
+# this machine's reader, the phone's own Keystore print, or another paired
+# device's print. The request itself stays local to this machine; only asking a
+# device puts it on the padlock prompt rail, so a laptop fingerprint does not
+# buzz every phone in the house.
+sub go_approvers {
+	my ($c, $source_device) = @_;
+	my $local = (&fingerprint_available() && &padlock_request_is_local($c)) ? 1 : 0;
+	my $self_bio = 0;
+	if ($source_device) {
+		my $d = &subs::db_select('paired_devices', undef, { uuid => $source_device, status => 'active' })->hashes->[0];
+		$self_bio = ($d && ($d->{'bio_pubkey'} || '') ne '') ? 1 : 0;
+	}
+	my @devices = grep { ($_->{'bio_pubkey'} || '') ne '' && ($_->{'uuid'} || '') ne ($source_device || '') }
+		@{ &subs::db_select('paired_devices', undef, { status => 'active' })->hashes || [] };
+	return ($local, $self_bio, \@devices);
+}
+
+sub go_hostname {
+	my $hostname = &subs::machine_name() || '';
+	my $host = `hostname`;
+	chomp $host;
+	$hostname .= ' (' . $host . ')' if $host && $host ne $hostname;
+	$hostname =~ s/[\r\n\t]//g;
+	return substr($hostname, 0, 120);
+}
+
+# One pending Go per session. The row carries the peer the ticket is for, so
+# go_status can mint it after the approval; the session names the request so a
+# second page cannot redeem someone else's approval.
+sub go_request_create {
+	my ($c, $rm, $source_device, $manager, $name) = @_;
+	my $now = &subs::rightNow();
+	my $id = &subs::random_string_creator(24);
+	my $peer_name = $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'domain'} || $rm->{'ip'} || 'remote';
+	my $data = encode_json({
+		id => $id,
+		peer_uuid => ($rm->{'uuid'} || ''),
+		peer_name => $peer_name,
+		source => &subs::signatorial_designer(),
+		source_device => ($source_device || ''),
+		source_hostname => &go_hostname(),
+		time => $now,
+	});
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'go_request', $now - 300000);
+	my $old = $c->session('go_request') || '';
+	if ($old =~ /^[A-Za-z0-9]{8,64}$/) {
+		&subs::db_query('delete from cache where context = ? and uuid = ?', 'go_request', 'gor' . $old);
+		&subs::db_query('delete from cache where context = ? and uuid = ?', 'go_approval', 'goa' . $old);
+		&padlock_request_clear($old);
+		&go_dismiss($old);
+	}
+	# cache.uuid is unique across contexts; the padlock prompt and the request
+	# both carry the public id, so only the stored rows take a prefix.
+	&subs::db_insert('cache', {
+		uuid => ('gor' . $id), context => 'go_request', app => '__president',
+		data => $data, timestamp => $now, server_time => $now,
+	});
+	$c->session('go_request' => $id);
+	$c->session('go_peer_uuid' => ($rm->{'uuid'} || ''));
+	$c->session('go_manager' => ($manager || ''));
+	$c->session('go_name' => ($name || ''));
+	return $id;
+}
+
+sub go_request_get {
+	my ($id) = @_;
+	return {} unless defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/;
+	my $row = &subs::db_query('select uuid, data, server_time from cache where context = ? and uuid = ? and server_time > ? limit 1', 'go_request', 'gor' . $id, &subs::rightNow() - 300000)->hashes->[0];
+	return {} unless $row;
+	my $d = eval { decode_json $row->{'data'} } || {};
+	$d->{'id'} ||= $id;
+	$d->{'time'} ||= $row->{'server_time'};
+	return $d;
+}
+
+sub go_request_clear {
+	my ($id) = @_;
+	return unless defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/;
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'go_request', 'gor' . $id);
+}
+
+sub go_approval_record {
+	my ($id, $by, $device_uuid, $name) = @_;
+	return unless defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/;
+	my $now = &subs::rightNow();
+	my $row_uuid = 'goa' . $id;
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'go_approval', $now - 120000);
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'go_approval', $row_uuid);
+	&subs::db_insert('cache', {
+		uuid => $row_uuid, context => 'go_approval', app => '__president',
+		data => encode_json({ approved => 1, by => ($by || ''), device => ($device_uuid || ''), name => ($name || ''), time => $now }),
+		timestamp => $now, server_time => $now,
+	});
+}
+
+sub go_approval_get {
+	my ($id) = @_;
+	return {} unless defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/;
+	my $row = &subs::db_query('select data, server_time from cache where context = ? and uuid = ? and server_time > ? limit 1', 'go_approval', 'goa' . $id, &subs::rightNow() - 120000)->hashes->[0];
+	return {} unless $row;
+	my $d = eval { decode_json $row->{'data'} } || {};
+	$d->{'time'} ||= $row->{'server_time'};
+	return $d;
+}
+
+sub go_approval_clear {
+	my ($id) = @_;
+	return unless defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/;
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'go_approval', 'goa' . $id);
+}
+
+# Dismiss any device prompt still showing this request (the target is the
+# request id, not a screen, so the padlock handler only dismisses and stops).
+sub go_dismiss {
+	my ($id) = @_;
+	&Websocket::send('server', { padlock_open => 1, mode => 'go', target => ($id || ''), timestamp => &subs::rightNow() });
 }
 
 # A request that came from this machine itself. The phone/tablet is remote, so
@@ -28605,14 +28759,33 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	}
 	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
 	return $c->render(json => { ok => 0, error => 'no fingerprint' }) unless &fingerprint_available();
-	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
-	# the reader opens the screen it is attached to: an app padlock names that
-	# screen too, so the unlock never becomes a house-wide one
-	my $device = $c->session('device_uuid') || '';
-	my $target = ($mode ne 'locker') ? $device : '';
-	if ($mode ne 'locker' && !length $target) {
-		return $c->render(json => { ok => 0, error => 'no device' });
+	# A Go approval uses the same reader but mints no padlock: the session must
+	# be the one that asked, and the print is the second factor for the ticket.
+	my $purpose = ($c->param('purpose') || '') eq 'go' ? 'go' : '';
+	my $go_request = '';
+	my $mode;
+	my $target;
+	my $device = $c->session('device_uuid') || $c->session('app_device') || '';
+	if ($purpose eq 'go') {
+		$go_request = $c->param('request_id') || '';
+		unless (($c->session('app_device') || '') ne ''
+			&& $go_request =~ /^[A-Za-z0-9]{8,64}$/
+			&& ($c->session('go_request') || '') eq $go_request
+			&& (&go_request_get($go_request))->{'id'}) {
+			return $c->render(json => { ok => 0, error => 'no request' });
+		}
+		$mode = 'go';
+		$target = $go_request;
+	}
+	else {
+		$mode = $c->param('mode') || 'locker';
+		$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+		# the reader opens the screen it is attached to: an app padlock names that
+		# screen too, so the unlock never becomes a house-wide one
+		$target = ($mode ne 'locker') ? $device : '';
+		if ($mode ne 'locker' && !length $target) {
+			return $c->render(json => { ok => 0, error => 'no device' });
+		}
 	}
 	my $lockfile = '/tmp/jawnos_fingerprint.lock';
 	# a worker that died mid-read left the latch behind; it is not a reader that
@@ -28631,10 +28804,13 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	$user =~ s/[^\w.-]//g;
 	my $token = &subs::random_string_creator(24);
 	my $now = &subs::rightNow();
+	my %fingerprint = (pending => 1, device => $device, ip => $ip, mode => $mode, target => $target);
+	$fingerprint{'purpose'} = 'go' if $purpose eq 'go';
+	$fingerprint{'request_id'} = $go_request if $purpose eq 'go';
 	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_fingerprint', $now - 300000);
 	&subs::db_insert('cache', {
 		uuid => $token, context => 'padlock_fingerprint', app => '__president',
-		data => encode_json({ pending => 1, device => $device, ip => $ip, mode => $mode, target => $target }),
+		data => encode_json(\%fingerprint),
 		server_time => $now, timestamp => $now,
 	});
 	Mojo::IOLoop->subprocess(
@@ -28651,8 +28827,11 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 			my $child_error = (defined $err && $err ne '') ? $err : '';
 			my $ok = (!$child_error && defined $rc && $rc == 0) ? 1 : 0;
 			my $error = $ok ? '' : ($child_error ? 'reader error' : ((defined $rc && $rc == 31744) ? 'timeout' : 'not accepted'));
+			my %result = (pending => 0, ok => $ok, error => $error, device => $device, ip => $ip, mode => $mode, target => $target);
+			$result{'purpose'} = 'go' if $purpose eq 'go';
+			$result{'request_id'} = $go_request if $purpose eq 'go';
 			&subs::db_query('update cache set data = ?, server_time = ? where context = ? and uuid = ?',
-				encode_json({ pending => 0, ok => $ok, error => $error, device => $device, ip => $ip, mode => $mode, target => $target }),
+				encode_json(\%result),
 				&subs::rightNow(), 'padlock_fingerprint', $token);
 			eval { $log->info('padlock: local fingerprint ' . ($ok ? 'accepted' : 'refused') . ' from ' . $ip . ' rc=' . (defined $rc ? $rc : '?')) };
 		}
@@ -28678,6 +28857,19 @@ get '/manager/security/fingerprint_unlock_status' => sub ($c) {
 	}
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_fingerprint', $token);
 	unless ($d->{'ok'}) { return $c->render(json => { ok => 0, error => ($d->{'error'} || 'not accepted') }); }
+	# A Go approval confirms the ticket, not a screen: record it and leave the
+	# mint to go_status, which is the session that asked.
+	if (($d->{'purpose'} || '') eq 'go') {
+		my $rid = $d->{'request_id'} || '';
+		unless ($rid =~ /^[A-Za-z0-9]{8,64}$/ && ($c->session('go_request') || '') eq $rid) {
+			return $c->render(json => { ok => 0, error => 'no request' });
+		}
+		&go_approval_record($rid, 'fingerprint', ($d->{'device'} || $c->session('device_uuid') || ''), 'this computer');
+		&padlock_request_clear($rid);
+		&go_dismiss($rid);
+		$log->info('go: local fingerprint approved request=' . $rid);
+		return $c->render(json => { ok => 1, approved => 1 });
+	}
 	# the print was accepted: open the screen and padlock it was asked for
 	my $device = $c->session('device_uuid') || $d->{'device'} || '';
 	my $mode = $d->{'mode'} || 'locker';
@@ -28689,6 +28881,188 @@ get '/manager/security/fingerprint_unlock_status' => sub ($c) {
 	my $opened = &padlock_mark_unlocked($c, $mode, $target);
 	$log->info('padlock: local fingerprint opened ' . ($mode ne 'locker' ? "$mode padlock on " : '') . ($target || 'this screen'));
 	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0) });
+};
+
+# --- Go approvals ----------------------------------------------------------
+# The installed app asks for a second factor before the peer ticket is minted.
+# go_status polls for the approval and mints the ticket once; go_ask puts the
+# request on the padlock prompt rail so a phone/tablet can answer it; go_approve
+# verifies the device's signature and hands the approval to the machine that
+# made the request (the phone often talks to a different jawn).
+get '/manager/security/go_status' => sub ($c) {
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless $c->session('authentication') eq 'approved';
+	my $id = $c->param('request_id') || '';
+	return $c->render(json => { ok => 0, error => 'no request' })
+		unless $id =~ /^[A-Za-z0-9]{8,64}$/ && ($c->session('go_request') || '') eq $id;
+	my $request = &go_request_get($id);
+	unless ($request->{'id'}) { return $c->render(json => { ok => 0, error => 'expired' }); }
+	my $approval = &go_approval_get($id);
+	unless ($approval->{'approved'}) { return $c->render(json => { ok => 1, pending => 1 }); }
+	my $rm = $request->{'peer_uuid'}
+		? &subs::remote_machine_lister({ uuid => $request->{'peer_uuid'}, self => 'no', limit => 1 })
+		: undef;
+	unless (ref $rm eq 'HASH' && $rm->{'manager'}) { return $c->render(json => { ok => 0, error => 'no machine' }); }
+	my $ticket = eval { &remote_manager_ticket($c, $rm) } || '';
+	unless ($ticket) {
+		$log->info('go: ticket mint failed for ' . ($request->{'peer_name'} || $request->{'peer_uuid'} || '?') . ' request=' . $id);
+		return $c->render(json => { ok => 0, error => 'ticket' });
+	}
+	&go_approval_clear($id);
+	&go_request_clear($id);
+	&padlock_request_clear($id);
+	my $manager = $c->session('go_manager') || '';
+	$c->session('go_request' => undef);
+	$c->session('go_peer_uuid' => undef);
+	$c->session('go_manager' => undef);
+	$c->session('go_name' => undef);
+	# Every machine that relayed the request may still be showing the prompt.
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&remote_relay_request($c, {
+			override => 'manual',
+			url => '/manager/security/go_clear_peer',
+			type => 'get',
+			dissemination => 'yes',
+			params => { signatorial => &subs::signatorial_designer(), request_id => $id },
+		});
+	}, { name => 'go approval clear relay' });
+	$log->info('go: approved (' . ($approval->{'by'} || '?') . ') and ticket minted for ' . ($request->{'peer_name'} || '?') . ' request=' . $id);
+	$c->render(json => {
+		ok => 1, approved => 1, ticket_url => $ticket,
+		manager => $manager, uuid => ($rm->{'uuid'} || ''), name => ($request->{'peer_name'} || ''),
+		device_uuid => ($c->session('app_device') || ''),
+	});
+};
+
+post '/manager/security/go_ask' => sub ($c) {
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('app_device') || '') ne '';
+	my $id = $c->param('request_id') || '';
+	return $c->render(json => { ok => 0, error => 'no request' })
+		unless $id =~ /^[A-Za-z0-9]{8,64}$/ && ($c->session('go_request') || '') eq $id;
+	my $request = &go_request_get($id);
+	unless ($request->{'id'}) { return $c->render(json => { ok => 0, error => 'expired' }); }
+	my $mode = 'go';
+	my $device_name = $request->{'peer_name'} || '';
+	my $source_device = $request->{'source_device'} || '';
+	my $source = $request->{'source'} || &subs::signatorial_designer();
+	my $source_hostname = $request->{'source_hostname'} || '';
+	&padlock_request_store($id, $mode, $source, $id, $device_name, $source_device, $source_hostname);
+	&Websocket::send('server', {
+		padlock_key_show => 1, prompt => 1, request_id => $id,
+		device_name => $device_name, source_device => $source_device, source => $source,
+		source_hostname => $source_hostname, house => 0, mode => $mode, target => $id, show => 0,
+		timestamp => &subs::rightNow(),
+	});
+	&padlock_key_show_relay($c, $mode, $id, 0, 1, $id, $device_name, $source_device, $source_hostname);
+	$log->info('go: asked the house to approve ' . ($device_name || '?') . ' request=' . $id);
+	$c->render(json => { ok => 1, request_id => $id });
+};
+
+post '/manager/security/go_approve' => sub ($c) {
+	my $device_uuid = $c->param('device_uuid') || '';
+	my $request_id = $c->param('request_id') || '';
+	my $nonce = $c->param('nonce') || '';
+	my $signature = $c->param('signature') || '';
+	my $kind = ($c->param('kind') || 'pair') eq 'bio' ? 'bio' : 'pair';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
+	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device;
+	return $c->render(json => { ok => 0, error => 'no request' })
+		unless $request_id =~ /^[A-Za-z0-9]{8,64}$/ && $nonce =~ /^[A-Za-z0-9]{8,64}$/;
+	my $request = &padlock_request_get($request_id);
+	unless (($request->{'id'} || '') eq $request_id && ($request->{'mode'} || '') eq 'go') {
+		# A phone approving its own Go (or this machine's live page) has no
+		# padlock prompt to read: the request it answers is go_request here.
+		my $own = &go_request_get($request_id);
+		$request = ($own->{'id'} && (($own->{'source'} || '') eq &subs::signatorial_designer())) ? $own : {};
+	}
+	unless ($request->{'id'}) {
+		return $c->render(json => { ok => 0, error => 'no request' });
+	}
+	my $msg = join("\n", 'go-approve', $device_uuid, $request_id, $nonce);
+	my $ok = 0;
+	if ($kind eq 'bio') {
+		$ok = (&biometric_nonce_take('go', $device_uuid, $nonce)
+			&& ($device->{'bio_pubkey'} || '') ne ''
+			&& &subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature)) ? 1 : 0;
+	}
+	else {
+		my $seen = &subs::db_query('select server_time from cache where context = ? and uuid = ? limit 1', 'padlock_nonce', $device_uuid . ':' . $nonce)->hashes->[0];
+		$ok = (($device->{'pubkey'} || '') ne ''
+			&& $seen && $seen->{'server_time'} && $seen->{'server_time'} > &subs::rightNow() - 60000
+			&& &subs::signature_verify($device->{'pubkey'}, $msg, $signature)) ? 1 : 0;
+		&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_nonce', $device_uuid . ':' . $nonce) if $ok;
+	}
+	unless ($ok) {
+		$log->info('go: approval refused for ' . ($device->{'name'} || $device_uuid) . ' request=' . $request_id);
+		return $c->render(json => { ok => 0, error => 'not accepted' });
+	}
+	my $source = $request->{'source'} || '';
+	my $self = &subs::signatorial_designer();
+	my $name = $device->{'name'} || '';
+	if ($source eq $self) {
+		&go_approval_record($request_id, $kind, $device_uuid, $name);
+	}
+	else {
+		my $rm = $source ? &subs::db_select('remote_machines', undef, { signatorial => $source })->hashes->[0] : undef;
+		unless ($rm && $rm->{'uuid'}) { return $c->render(json => { ok => 0, error => 'source' }); }
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&remote_relay_request($c, {
+				override => 'manual',
+				remote_uuid => $rm->{'uuid'},
+				url => '/manager/security/go_open_peer',
+				type => 'get',
+				params => {
+					signatorial => &subs::signatorial_designer(),
+					request_id => $request_id,
+					device_uuid => $device_uuid,
+					device_name => $name,
+					kind => $kind,
+				},
+			});
+		}, { name => 'go approval relay' });
+	}
+	&padlock_request_clear($request_id);
+	&go_dismiss($request_id);
+	$log->info('go: approved by ' . ($name || $device_uuid) . ' request=' . $request_id . ' kind=' . $kind);
+	$c->render(json => { ok => 1, approved => 1 });
+};
+
+get '/manager/security/go_open_peer' => sub ($c) {
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
+		$log->info('go: peer approval refused from ' . ($signatorial || '?') . ' at ' . ($c->tx->remote_address || '?'));
+		return $c->rendered(403);
+	}
+	my $request_id = $c->param('request_id') || '';
+	return $c->rendered(400) unless $request_id =~ /^[A-Za-z0-9]{8,64}$/;
+	my $device_uuid = $c->param('device_uuid') || '';
+	$device_uuid = '' unless $device_uuid =~ /^[A-Za-z0-9]{8,64}$/;
+	my $device_name = $c->param('device_name') || '';
+	$device_name =~ s/[\r\n\t]//g;
+	$device_name = substr($device_name, 0, 120);
+	my $kind = ($c->param('kind') || 'pair') eq 'bio' ? 'bio' : 'pair';
+	&go_approval_record($request_id, $kind, $device_uuid, $device_name);
+	&padlock_request_clear($request_id);
+	&go_dismiss($request_id);
+	$log->info('go: approval relayed from ' . ($rm->{'hostname'} || $signatorial) . ' request=' . $request_id . ' by ' . ($device_name || $device_uuid || '?'));
+	$c->render(json => { ok => 1 });
+};
+
+# The ticket is minted on the machine that pressed Go; every machine that
+# relayed the prompt drops it here, so the other devices stop asking.
+get '/manager/security/go_clear_peer' => sub ($c) {
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
+		return $c->rendered(403);
+	}
+	my $request_id = $c->param('request_id') || '';
+	return $c->rendered(400) unless $request_id =~ /^[A-Za-z0-9]{8,64}$/;
+	&padlock_request_clear($request_id);
+	&go_dismiss($request_id);
+	$c->render(json => { ok => 1 });
 };
 
 # --- local biometric unlock ------------------------------------------------
@@ -28711,7 +29085,7 @@ sub biometric_nonce_take {
 
 post '/manager/security/biometric_challenge' => sub ($c) {
 	my $purpose = $c->param('purpose') || 'unlock';
-	$purpose = 'unlock' unless $purpose =~ /^(?:enroll|unlock|verify)$/;
+	$purpose = 'unlock' unless $purpose =~ /^(?:enroll|unlock|verify|go)$/;
 	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
 	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
 	unless ($device) { return $c->render(json => { ok => 0, error => 'not paired' }); }
@@ -29000,7 +29374,7 @@ post '/manager/security/padlock_key_show_peer' => sub ($c) {
 		return $c->rendered(403);
 	}
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|go)$/;
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $show = $c->param('show') ? 1 : 0;

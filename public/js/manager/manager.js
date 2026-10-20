@@ -4599,7 +4599,9 @@ function jawnosRemoteManagerOpen(uuid, manager) {
 		data: data,
 		dataType: 'json',
 		success: function (r) {
-			if (r && r.manager) { jawnosRemoteManagerWindow(r.ticket_url || r.manager, r.uuid || uuid, r.name, r.device_uuid, r.manager); }
+			if (!r) { return; }
+			if (r.need_approval) { jawnosGoPrompt(r, uuid, manager); return; }
+			if (r.manager) { jawnosRemoteManagerWindow(r.ticket_url || r.manager, r.uuid || uuid, r.name, r.device_uuid, r.manager); }
 		},
 		fail: function () {
 			// an old stored Go link can name a machine the roster no longer matches;
@@ -4607,6 +4609,149 @@ function jawnosRemoteManagerOpen(uuid, manager) {
 			if (manager) { jawnosRemoteManagerWindow(manager, uuid); }
 		}
 	});
+}
+
+// A Go from the installed app asks for a second factor before the peer ticket
+// is minted. The server names what this house can provide: this computer's
+// reader, the phone's own Keystore print, or another paired device's print.
+// The request is short-lived and bound to this session; the approved poll mints
+// the ticket and opens the peer exactly as the direct path did.
+function jawnosGoPrompt(r, uuid, manager) {
+	var t = function (s, v) { return (typeof jawnosT === 'function') ? jawnosT(s, v) : s; };
+	var done = false;
+	var timer = null;
+	var fingerBtn = null;
+	var phoneBtn = null;
+	var askBtn = null;
+	var noBtn = null;
+	var box = $('<div>').attr('id', 'jawnos_go_prompt').attr('role', 'dialog').attr('aria-modal', 'true').css({
+		position: 'fixed', zIndex: 71000, left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
+		width: 'min(92vw,380px)', background: '#161616', color: '#f4f4f4', border: '1px solid #444',
+		borderRadius: '14px', padding: '18px', boxShadow: '0 12px 40px rgba(0,0,0,.55)',
+		fontFamily: 'sans-serif', textAlign: 'center'
+	});
+	var title = $('<div>').css({ fontSize: '19px', lineHeight: '1.35', marginBottom: '6px' }).text(t('Open {0}?', r.name || t('the machine')));
+	var note = $('<div>').css({ fontSize: '14px', color: '#bbb', marginBottom: '14px', minHeight: '18px' }).text(t('Confirm it is you before this window opens.'));
+	var row = $('<div>');
+	var btnCss = 'font-size:14px;padding:9px 14px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:pointer;margin:0 4px 8px 4px;';
+	function addButton(text, css, handler) {
+		var b = $('<button type="button">').text(text).css(css).on('click', handler);
+		row.append(b);
+		return b;
+	}
+	function enable(on) {
+		$(row).find('button').prop('disabled', !on);
+	}
+	function disable(keep) {
+		var keepers = keep || [];
+		$(row).find('button').each(function () {
+			if (this === noBtn || keepers.indexOf(this) >= 0) { return; }
+			$(this).prop('disabled', true);
+		});
+	}
+	if (r.fingerprint) {
+		fingerBtn = addButton(t("Use this computer's fingerprint"), btnCss + 'border-color:#2b6;background:#2b6;color:#08110a;font-weight:bold;', function () { startFingerprint(); });
+	}
+	if (r.phone_fingerprint && window.JawnBiometricKey && typeof jawnosBiometricGo === 'function') {
+		phoneBtn = addButton(t("Use this phone's fingerprint"), btnCss + 'border-color:#2b6;background:#2b6;color:#08110a;font-weight:bold;', function () { startPhone(); });
+	}
+	if (r.devices && r.devices.length) {
+		askBtn = addButton(t('Ask another device'), btnCss, function () { startAsk(); });
+	}
+	noBtn = addButton(t('Not now'), btnCss, function () { close(); });
+	box.append(title).append(note).append(row);
+	$('body').append(box);
+
+	function close() {
+		done = true;
+		if (timer) { clearInterval(timer); timer = null; }
+		box.remove();
+	}
+	function wait(text) { note.text(text); }
+	function open(res) {
+		close();
+		var url = (res && res.ticket_url) || r.manager;
+		if (!url) { return; }
+		jawnosRemoteManagerWindow(url, (res && res.uuid) || r.uuid || uuid, (res && res.name) || r.name,
+			(res && res.device_uuid) || r.device_uuid, (res && res.manager) || manager || r.manager);
+	}
+	function failed() {
+		if (done) { return; }
+		wait(t('That did not work. Try again.'));
+		enable(true);
+	}
+	function poll() {
+		if (done) { return; }
+		$.ajax({ url: '/manager/security/go_status', type: 'GET', data: { request_id: r.request_id, timestamp: Date.now() }, dataType: 'json', cache: false })
+			.done(function (res) {
+				if (done) { return; }
+				if (res && res.approved && res.ticket_url) { open(res); return; }
+				if (!res || !res.ok) {
+					wait(t('That did not work. Try again.'));
+					close();
+				}
+			})
+			.fail(function () { failed(); });
+	}
+	function startFingerprint() {
+		disable([askBtn]);
+		wait(t('Touch the fingerprint reader now...'));
+		$.ajax({ url: '/manager/security/fingerprint_unlock', type: 'POST', data: { purpose: 'go', request_id: r.request_id, timestamp: Date.now() }, dataType: 'json', cache: false })
+			.done(function (res) {
+				if (res && res.pending && res.token) { pollPrint(res.token, 0); return; }
+				failed();
+			})
+			.fail(function () { failed(); });
+	}
+	function pollPrint(token, tries) {
+		$.ajax({ url: '/manager/security/fingerprint_unlock_status', type: 'GET', data: { token: token, timestamp: Date.now() }, dataType: 'json', cache: false })
+			.done(function (res) {
+				if (done) { return; }
+				if (res && res.pending) {
+					if (tries > 30) { wait(t('The reader timed out.')); enable(true); return; }
+					setTimeout(function () { pollPrint(token, tries + 1); }, 700);
+					return;
+				}
+				if (res && res.ok) { wait(t('Approved. Opening...')); poll(); return; }
+				failed();
+			})
+			.fail(function () { failed(); });
+	}
+	function startPhone() {
+		disable([askBtn]);
+		wait(t('Confirm your fingerprint...'));
+		jawnosBiometricGo(r.request_id, r.name, function (s) { wait(s); }).then(function () {
+			wait(t('Approved. Opening...'));
+			poll();
+		}).catch(function (err) {
+			if (done) { return; }
+			wait((typeof jawnosBiometricError === 'function') ? jawnosBiometricError(err) : t('That did not work. Try again.'));
+			enable(true);
+		});
+	}
+	function startAsk() {
+		disable([fingerBtn, phoneBtn]);
+		wait(t('Waiting for another device...'));
+		$.ajax({ url: '/manager/security/go_ask', type: 'POST', data: { request_id: r.request_id, timestamp: Date.now() }, dataType: 'json', cache: false })
+			.done(function (res) {
+				if (res && res.ok) { wait(t('Waiting for another device...')); return; }
+				failed();
+			})
+			.fail(function () { failed(); });
+	}
+	// The preferred factor asks first (the laptop's reader, or the phone's own
+	// Keystore print); another device stays one tap away, and Not now is always
+	// live. A desktop with no reader falls through to asking the house.
+	timer = setInterval(poll, 1200);
+	if (r.fingerprint) {
+		startFingerprint();
+	}
+	else if (r.phone_fingerprint && window.JawnBiometricKey && typeof jawnosBiometricGo === 'function') {
+		startPhone();
+	}
+	else {
+		poll();
+	}
 }
 
 $(document).on('click', '.remote_manager_open', function (e) {
