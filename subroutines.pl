@@ -15095,6 +15095,28 @@ sub remote_machine_tunnel_processor() {
 		$rm->{'port'} = $lan->{'port'} || $rm->{'port'};
 		$rm->{'vip'} = $lan->{'ip'};
 	}
+	# The tailnet is the route between networks. Now that the app keeps the
+	# device's own DNS (CorpDNS=false), a peer's domain may not resolve away
+	# from its own LAN; its advertised 100.64.x address is the stable path.
+	# Use it only when the stored name does not resolve and no LAN address won.
+	my $tailnet = &subs::tailnet_address($rm);
+	if ($tailnet) {
+		$rm->{'tailnet_ip'} = $tailnet;
+		my $port = $rm->{'dock_port'} || $rm->{'port_dock'} || 3000;
+		$rm->{'tailnet_manager'} = 'https://' . $tailnet . ':' . $port . '/manager';
+		my ($host) = ($rm->{'manager'} || '') =~ m{^https?://([^/:]+)};
+		my $resolved = 0;
+		if ($host) {
+			require Socket;
+			$resolved = 1 if $host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+			$resolved = 1 if Socket::gethostbyname($host);
+		}
+		if (!$resolved && !$lan) {
+			$rm->{'manager'} = $rm->{'tailnet_manager'};
+			$rm->{'ip'} = $tailnet;
+			$rm->{'vip'} = $tailnet;
+		}
+	}
 	return $rm;
 }
 
