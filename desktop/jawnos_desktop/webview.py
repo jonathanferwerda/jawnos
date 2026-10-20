@@ -667,10 +667,14 @@ class WebViewPanel(Gtk.Box):
                 parsed = urlparse(url)
                 if parsed.scheme not in ("https", "http") or not parsed.netloc:
                     raise ValueError("not a manager url")
+                manager = args.get("manager") or url
+                mparsed = urlparse(manager)
+                if mparsed.scheme not in ("https", "http") or not mparsed.netloc:
+                    manager = url
                 win = WebViewWindow(
                     self.settings_data,
                     start_url=url,
-                    manager_url_override=url,
+                    manager_url_override=manager,
                     seed_device_uuid=args.get("device_uuid") or "",
                     title=args.get("name") or "JawnOS Machine",
                 )

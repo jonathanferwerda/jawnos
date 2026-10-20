@@ -4572,14 +4572,14 @@ function jawnosDesktopCall(action, args) {
 	});
 }
 
-function jawnosRemoteManagerWindow(url, uuid, name, device) {
+function jawnosRemoteManagerWindow(url, uuid, name, device, manager) {
 	if (!url) { return; }
 	var device_uuid = device || '';
 	if (!device_uuid) {
 		try { device_uuid = localStorage.getItem('device_uuid') || ''; } catch (e) { device_uuid = ''; }
 	}
 	if (window.JawnDesktop) {
-		jawnosDesktopCall('open_manager', { url: url, device_uuid: device_uuid, name: name || '' }).catch(function () {
+		jawnosDesktopCall('open_manager', { url: url, manager: manager || url, device_uuid: device_uuid, name: name || '' }).catch(function () {
 			// an older desktop app has no open_manager; a window is still right
 			window.open(url, '_blank', 'noopener');
 		});
@@ -4599,7 +4599,7 @@ function jawnosRemoteManagerOpen(uuid, manager) {
 		data: data,
 		dataType: 'json',
 		success: function (r) {
-			if (r && r.manager) { jawnosRemoteManagerWindow(r.manager, r.uuid || uuid, r.name, r.device_uuid); }
+			if (r && r.manager) { jawnosRemoteManagerWindow(r.ticket_url || r.manager, r.uuid || uuid, r.name, r.device_uuid, r.manager); }
 		},
 		fail: function () {
 			// an old stored Go link can name a machine the roster no longer matches;
