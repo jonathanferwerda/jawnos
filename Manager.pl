@@ -8328,13 +8328,18 @@ get '/manager/remote_manager' => sub ($c) {
 	my $session_device = $session_device_uuid
 		? &subs::db_select('paired_devices', [ 'uuid', 'app_pubkey' ], { uuid => $session_device_uuid, status => 'active' })->hash
 		: undef;
-	# The app key passes the peer's app gate; the peer still needs a session
-	# for its own login gate. Mint a short-lived ticket on the peer over the
-	# signed rail, so the browser never has to hold the house key.
-	my $ticket_url = eval { &remote_manager_ticket($c, $rm) } || '';
+	# The Go window is the peer's own manager, on the peer's own domain. The
+	# Gate there asks for a second factor - approve from one of the person's
+	# devices, or the laptop's fingerprint - and that confirmation is the point:
+	# a ticket that redeemed itself would sign the browser in behind the
+	# person's back. So no ticket is minted for this window.
+	my $browse_host = $rm->{'fqdn'} || $rm->{'domain'} || '';
+	my $browse_port = eval { Mojo::URL->new($url)->port } || $rm->{'port'} || 443;
+	if ($browse_host) {
+		$url = 'https://' . $browse_host . ':' . $browse_port . '/manager';
+	}
 	$c->render(json => {
 		manager => $url,
-		ticket_url => $ticket_url,
 		uuid => $rm->{'uuid'} || '',
 		name => $name,
 		device_uuid => $session_device_uuid,
@@ -8342,49 +8347,6 @@ get '/manager/remote_manager' => sub ($c) {
 	});
 };
 
-# A browser cannot carry the house key to a peer, and the peer's ticket desk
-# will not serve an expired session. Mint a ticket with the stored peer
-# session; if that session has lapsed, re-auth with the house key and try
-# once more. The URL keeps the peer's path/secret but is pointed at the
-# peer's own host and dock port, because qrcode_generator may compute a
-# loopback or tunnel-local origin.
-sub remote_manager_ticket($c, $rm) {
-	return '' unless ref $rm eq 'HASH' && $rm->{'manager'};
-	my $timestamp = &subs::rightNow();
-	my $mint = sub {
-		my $peer = &remote_useragent_maker({ rm => $rm });
-		return '' unless $peer->{'ua'};
-		my $name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || 'remote';
-		my $host = eval { Mojo::URL->new($rm->{'manager'})->host } || '';
-		# The ticket's host is the peer's own domain, not the address this
-		# house happened to dial it on. A tailnet address does not match the
-		# peer's config domain, and the ticket door refuses a ticket whose
-		# host is not the house's own domain.
-		my $ticket_host = $rm->{'fqdn'} || $host || '';
-		my $url = $peer->{'manager'} . '/manager/qrcode_generator?nic=' . url_escape($ticket_host || 'lo')
-			. '&privilege=citizen&keep_warranty=1'
-			. '&signatorial=' . url_escape(&subs::signatorial_designer())
-			. '&warranty=' . url_escape('-2h') . '&name=' . url_escape($name) . '&timestamp=' . $timestamp;
-		my $res = eval { $peer->{'ua'}->inactivity_timeout(15)->get($url)->result };
-		return '' unless $res && $res->is_success;
-		my $data = eval { decode_json $res->body } || {};
-		my $ticket = $data->{'url'} || '';
-		return '' unless $ticket;
-		my $dock = $rm->{'port_dock'} || $rm->{'dock_port'} || 3000;
-		$ticket =~ s{^https?://[^/]+}{https://$ticket_host:$dock} if $ticket_host;
-		return $ticket;
-	};
-	my $ticket = $mint->();
-	unless ($ticket) {
-		my $reauth = { %{$rm} };
-		$reauth->{'data'} = eval { decode_json $rm->{'data'} } || {};
-		eval { &remote_machine_reauth($c, $reauth, $timestamp, $rm->{'ip'}, '', '') };
-		my $fresh = &subs::remote_machine_lister({ uuid => $rm->{'uuid'}, self => 'no', limit => 1 });
-		$rm = $fresh if ref $fresh eq 'HASH';
-		$ticket = $mint->();
-	}
-	return $ticket || '';
-}
 
 # The login URL carries only the name and the body digest; the password and the
 # identity fields travel in the POST body. The peer signature covers the query,
@@ -28042,8 +28004,18 @@ sub padlock_gate_mode {
 # their own rotated-token rail. 'shadow' logs what it would deny; 'enforce'
 # answers with the open-in-the-app page.
 sub app_access_mode {
-	# A house-wide policy, not a per-device preference: the row is shared as
-	# device 'all' so every machine and every device class reads one answer.
+	# A machine that cannot enroll an app key may opt itself out: a row named by
+	# this machine's signatorial wins over the house-wide 'all' row, so one device
+	# being unable to set up its unlock does not open (or close) the rest of the
+	# house. Peers read their own signatorial, so this row never becomes their
+	# answer.
+	my $sig = &subs::signatorial_designer();
+	if ($sig) {
+		my $own = &subs::setting_grabber({ app => '__president', setting => 'app_access', device => $sig });
+		return $own if defined $own && $own =~ /^(?:off|enforce|shadow)$/;
+	}
+	# The house-wide policy, shared as device 'all' so every machine and every
+	# device class that has no row of its own reads one answer.
 	my $mode = &subs::setting_grabber({ app => '__president', setting => 'app_access', device => 'all' });
 	return 'off' if defined $mode && $mode eq 'off';
 	return $mode eq 'enforce' ? 'enforce' : 'shadow';
