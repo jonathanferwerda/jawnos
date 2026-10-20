@@ -15016,6 +15016,77 @@ sub remote_machine_tunnel_processor() {
 	return $rm;
 }
 
+# ---- the tailnet: exit-node status and selection ---------------------------
+# The remote_control panel's VPN button routes this machine's web traffic
+# through a peer that offers an exit node, so sites see this device at that
+# peer's address. A Linux peer drives its own tailscaled; the Android client
+# answers through its own bridge instead (there is no tailscale binary or
+# socket for the manager to call there).
+sub tailnet_status {
+	my $ttl = 3;
+	our ($_TAILNET_STATUS, $_TAILNET_STATUS_AT);
+	return $_TAILNET_STATUS if $_TAILNET_STATUS && ($_TAILNET_STATUS_AT || 0) > time() - $ttl;
+	my $bin = $ENV{'TAILSCALE_BIN'} || 'tailscale';
+	my $raw = `timeout 4 $bin status --json 2>/dev/null`;
+	my $status = eval { decode_json($raw) } || {};
+	my @peers;
+	my $exit = '';
+	foreach my $id ( keys %{ $status->{'Peer'} || {} } ) {
+		my $p = $status->{'Peer'}->{$id} || {};
+		# the tailnet is 100.64.0.0/10; skip the IPv6 line a peer also carries
+		my ($ip) = grep { defined $_ && $_ =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./ } @{ $p->{'TailscaleIPs'} || [] };
+		next unless $ip;
+		push @peers, {
+			ip => $ip,
+			name => $p->{'HostName'} || $p->{'DNSName'} || $id,
+			online => $p->{'Online'} ? 1 : 0,
+			exit => $p->{'ExitNodeOption'} ? 1 : 0,
+		};
+		$exit = $ip if $p->{'ExitNode'};
+	}
+	my $available = (scalar(keys %{ $status->{'Peer'} || {} }) || ($status->{'BackendState'} // '') ne '') ? 1 : 0;
+	my $result = { available => $available, exit => $exit, peers => \@peers };
+	$_TAILNET_STATUS = $result;
+	$_TAILNET_STATUS_AT = time();
+	return $result;
+}
+
+sub tailnet_set_exit {
+	my ($ip) = @_;
+	$ip = '' unless defined $ip;
+	if ($ip ne '' && $ip !~ /^[0-9a-fA-F:.]+$/) {
+		return { ok => 0, error => 'not a tailnet address' };
+	}
+	if ($ip ne '') {
+		my ($peer) = grep { $_->{'ip'} eq $ip && $_->{'exit'} } @{ &tailnet_status()->{'peers'} };
+		return { ok => 0, error => 'that machine does not offer an exit node' } unless $peer;
+	}
+	my $bin = $ENV{'TAILSCALE_BIN'} || 'tailscale';
+	my $cmd = $ip ne '' ? "$bin set --exit-node=$ip --exit-node-allow-lan-access" : "$bin set --exit-node=";
+	my $out = `timeout 15 $cmd 2>&1`;
+	my $rc = $? >> 8;
+	our $_TAILNET_STATUS;
+	undef $_TAILNET_STATUS;
+	return { ok => ($rc == 0 ? 1 : 0), exit => $ip, error => ($rc == 0 ? undef : ($out || 'tailscale set failed')) };
+}
+
+# The tailnet address a roster row advertises, from its own network map first
+# (a peer's ip column is often the LAN address) and its ip column second.
+sub tailnet_address {
+	my ($rm) = @_;
+	my $network = ref($rm->{'network'}) eq 'HASH' ? $rm->{'network'} : (eval { decode_json($rm->{'network'} || '{}') } || {});
+	my $tailnet = sub {
+		my $ip = shift;
+		return $ip if defined $ip && $ip =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+		return '';
+	};
+	foreach my $nic ( keys %{$network} ) {
+		my $ip = $tailnet->($network->{$nic}->{'ip'});
+		return $ip if $ip;
+	}
+	return $tailnet->($rm->{'ip'});
+}
+
 # A peer advertises its own name as its manager. On a machine whose dnsmasq or
 # hosts map that name back to itself - or when a hub-tunnel manager sits at
 # 127.0.0.1 while we are a peer, not the hub - reaching it that way loops home.

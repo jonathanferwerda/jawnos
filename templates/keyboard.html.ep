@@ -121,10 +121,11 @@
 			<select id="remote_control_machine_select" value="<%= $remote_control %>" onchange="settingSetter({ 'app': 'me', 'setting': 'remote_control_machine', 'value': this.value });keyboardManagerButton(this);keyboardMaker({ toggle: 'remote_control', state: 'on', remote_uuid: this.value })" style="vertical-align:top;">
 				<option value="" <% if ( $remote_control eq '' || !$remote_control || !grep { $_->{'ip'} eq $remote_control } @{$remote_machines}) { %>selected<% } %>>Me</option>
 				<% foreach my $rm ( @{$remote_machines} ) { %>
-					<option value="<%= $rm->{'uuid'} %>" manager="<%= $rm->{'manager'} %>" <% if ( $rm->{'uuid'} eq $remote_control ) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'domain'} || $rm->{'ip'} %></option>
+					<option value="<%= $rm->{'uuid'} %>" manager="<%= $rm->{'manager'} %>" data-tailnet="<%= &subs::tailnet_address($rm) %>" <% if ( $rm->{'uuid'} eq $remote_control ) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'domain'} || $rm->{'ip'} %></option>
 				<% } %>
 			</select>
 			<button type="button" id="remote_control_manager" class="remote_manager_open" uuid="<%= $selected_rm ? $selected_rm->{'uuid'} : '' %>" manager="<%= $selected_rm ? $selected_rm->{'manager'} : '' %>" hint="<%= &subs::ui("Open this machine's Manager") %>" <% if (!$selected_rm) { %>style="display:none;"<% } %>><%= &subs::lang('common.manager') %></button>
+			<button type="button" id="remote_control_vpn" class="hover" hint="<%= &subs::ui("Route this device's web traffic through the selected machine when it offers an exit node") %>" status="off" style="display:none;"><%= &subs::lang('vpn') %></button>
 			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('remote_control')" src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
 			<br>
 			<div id="remote_control_view" class="keyboard_content">

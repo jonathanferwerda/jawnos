@@ -25602,6 +25602,17 @@ post '/manager/remote_command/send' => sub($c) {
 	}));
 };
 
+# The remote_control panel's VPN button. The exit node is a property of this
+# machine's own tailnet client, so the route changes it here: Linux peers run
+# tailscale set, and the Android WebView uses its JawnVPN bridge instead.
+get '/manager/tailnet/status' => sub($c) {
+	$c->render(json => &subs::tailnet_status());
+};
+
+post '/manager/tailnet/exit' => sub($c) {
+	$c->render(json => &subs::tailnet_set_exit($c->param('ip')));
+};
+
 # ---- the Guide's write path: stage, then promote or drop ------------------
 # The Guide never writes an appointment straight in. It stages a proposal, the
 # person sees it, and only a promote turns it into a real appointment.

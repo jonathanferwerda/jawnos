@@ -930,6 +930,7 @@ async function keyboardMaker(data) {
 					// render, so the server's selected option may still be the old one)
 					if (typeof remote_uuid === 'string') { $('#remote_control_machine_select').val(remote_uuid); }
 					keyboardManagerButton();
+					jawnosVpnRefresh();
 				}
 
 
@@ -1985,5 +1986,76 @@ function jawnosRemoteCommand() {
 	$.post('/manager/remote_command/send', { remote_uuid: uuid, text: text }, function (r) {
 		reply.text((r && (r.observation || r.error)) || 'no reply');
 	}).fail(function () { reply.text('no reply'); });
+}
+
+// The remote_control panel's VPN button: set this device's tailnet exit node to
+// the machine picked above, so this device's web traffic leaves at that
+// machine's address. Android answers through the JawnVPN bridge (the embedded
+// client owns the VPN); a Linux peer asks its own manager, which drives the
+// local tailscale. The button only offers a machine that advertises an exit
+// node, and turning it off comes back to this device's own network.
+function jawnosVpnSelected() {
+	var opt = $('#remote_control_machine_select').find('option:selected');
+	return { uuid: opt.val() || '', ip: opt.attr('data-tailnet') || '' };
+}
+
+function jawnosVpnStatus(cb) {
+	if (window.JawnVPN && typeof window.JawnVPN.status === 'function') {
+		try { cb(JSON.parse(window.JawnVPN.status())); return; } catch (e) {}
+	}
+	$.getJSON('/manager/tailnet/status', function (s) { cb(s || {}); })
+		.fail(function () { cb({ available: 0, exit: '', peers: [] }); });
+}
+
+function jawnosVpnPaint(on, available) {
+	var b = $('#remote_control_vpn');
+	if (!b.length) { return; }
+	b.attr('status', on ? 'on' : (available ? 'off' : 'unavailable'));
+	b.prop('disabled', !on && !available);
+	b.css({
+		'opacity': (on || available) ? 1 : 0.45,
+		'background-color': on ? 'var(--jawnos-ok, #4caf50)' : ''
+	});
+	b.attr('hint', on ? jawnosT('Turn the VPN off') : jawnosT("Route this device's web traffic through the selected machine when it offers an exit node"));
+}
+
+function jawnosVpnRefresh() {
+	var b = $('#remote_control_vpn');
+	if (!b.length) { return; }
+	var picked = jawnosVpnSelected();
+	if (!picked.ip) { b.hide(); return; }
+	jawnosVpnStatus(function (s) {
+		var peers = (s && s.peers) || [];
+		var peer = null;
+		for (var i = 0; i < peers.length; i++) {
+			if (peers[i] && peers[i].ip === picked.ip) { peer = peers[i]; break; }
+		}
+		var on = !!(s && s.exit && s.exit === picked.ip);
+		var available = !!(peer && peer.exit && peer.online !== false);
+		b.show();
+		jawnosVpnPaint(on, available);
+		if (!available && !on) { b.attr('hint', jawnosT('That machine does not offer an exit node')); }
+	});
+}
+
+function jawnosVpnToggle() {
+	var picked = jawnosVpnSelected();
+	if (!picked.ip) { return; }
+	var b = $('#remote_control_vpn');
+	var on = b.attr('status') === 'on';
+	var target = on ? '' : picked.ip;
+	b.prop('disabled', true);
+	var finish = function (r) {
+		b.prop('disabled', false);
+		if (!r || r.ok === false || r.ok === 0) {
+			b.attr('hint', (r && r.error) || jawnosT('The VPN could not be changed'));
+			return;
+		}
+		jawnosVpnRefresh();
+	};
+	if (window.JawnVPN && typeof window.JawnVPN.setExitNode === 'function') {
+		try { finish(JSON.parse(window.JawnVPN.setExitNode(target))); return; } catch (e) { finish({ ok: false, error: '' + e }); return; }
+	}
+	$.post('/manager/tailnet/exit', { ip: target }, finish, 'json').fail(function () { finish({ ok: false }); });
 }
 $(document).on('click', '#remote_command_send', function () { jawnosRemoteCommand(); });
