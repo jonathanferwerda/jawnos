@@ -8188,6 +8188,7 @@ get '/manager/configure/remote_device_connect' => sub ($c) {
 		browser_tab => $browser_tab,
 		signatorial => $signatorial,
 		nic => $nic,
+		privilege => 'citizen',
 		tunnel => $tunnel
 	});
 	my $device = &subs::db_select('devices', undef, { uuid => $uuid })->hash;
@@ -8312,6 +8313,10 @@ sub remote_device_connect($rdata) {
 	my $password = $rdata->{'password'};
 	my $tunnel = $rdata->{'tunnel'};
 	my $nic = $rdata->{'nic'};
+	# The relationship to this house. The route that opens the shared house
+	# password marks the machine citizen; remote_machine_reauth passes nothing,
+	# so a re-auth preserves whatever privilege the row already carries.
+	my $privilege = $rdata->{'privilege'};
 	my $port = $rdata->{'port'} || $ENV{PORT_DOCK};
 	my $signatorial = &subs::signatorial_designer();
 	my $dock_port = $rdata->{'port_dock'} || 3000;
@@ -8469,10 +8474,27 @@ sub remote_device_connect($rdata) {
 					archive_dir => $returner->{'body'}->{'archive_dir'}
 				};
 
+				# A citizen's own machine carries full trust. A peer enrolled in
+				# future passes privilege => 'peer' and its own scope; an insert with
+				# no scope starts a peer at visitor, never at trusted.
+				if (defined $privilege && $privilege ne '') {
+					$remote_machine->{'privilege'} = $privilege;
+					$remote_machine->{'grant_scope'} = $rdata->{'grant_scope'} if defined $rdata->{'grant_scope'};
+					$remote_machine->{'grant_expires'} = $rdata->{'grant_expires'} if defined $rdata->{'grant_expires'};
+					if ($privilege eq 'citizen') {
+						$remote_machine->{'grant_scope'} = 'trusted';
+						$remote_machine->{'grant_expires'} = '';
+					}
+				}
+
 				if (scalar @{$nd} > 0 && $nd->[0]->{'uuid'}) {
 					&subs::db_update('remote_machines', $remote_machine, { signatorial => $returner->{'body'}->{'signatorial'} });
 				}
 				else {
+					my $fresh_scope = (($remote_machine->{'privilege'} || 'citizen') eq 'citizen') ? 'trusted' : 'visitor';
+					$remote_machine->{'privilege'} //= 'citizen';
+					$remote_machine->{'grant_scope'} //= $fresh_scope;
+					$remote_machine->{'grant_expires'} //= '';
 					&subs::db_insert('remote_machines', $remote_machine);
 				}
 			}
@@ -32836,6 +32858,10 @@ sub update_database($data) {
 		# a grant is a lease, not a name: the scope a house may act at here, and
 		# the epoch-ms instant it lapses. peer_allows reads them; an older row
 		# with no scope keeps the trust it already had, so this is additive.
+		# privilege is the relationship (citizen, peer, visitor, guest); scope is
+		# what it may do here. The citizen's own machines are marked on the
+		# remote_device_connect path, which only the shared house password opens.
+		'alter table remote_machines add column privilege VARCHAR(25)',
 		'alter table remote_machines add column grant_scope VARCHAR(25)',
 		'alter table remote_machines add column grant_expires VARCHAR(25)',
 		# paired devices: the browsers and phones a citizen has signed in once

@@ -16897,6 +16897,43 @@ sub peer_allows {
 	return $rank{$grant} >= $rank{$need} ? 1 : 0;
 }
 
+# Validate a grant before it is written. Kept pure so a probe can exercise the
+# policy without a database. Returns a normalized hashref, or undef when the
+# scope is missing or unknown (a typo must never become a permission).
+#
+# privilege is the relationship, not the capability: citizen is the owner's own
+# machine, peer is another house, visitor is an introduced house not yet a peer,
+# and guest is a one-off device. grant_scope still decides what the row may do.
+sub peer_grant_normalize {
+	my ($opts) = @_;
+	return undef unless $opts && ref $opts eq 'HASH';
+	my %rank = ( none => 0, revoked => 0, visitor => 1, member => 2, trusted => 3 );
+	my $scope = lc($opts->{'scope'} // '');
+	return undef unless exists $rank{$scope};
+	my $priv = lc($opts->{'privilege'} // '');
+	return undef if length $priv && $priv !~ /^(?:citizen|peer|visitor|guest)$/;
+	my $expires = $opts->{'expires'};
+	$expires = '' unless defined $expires && $expires =~ /^\d+$/;
+	return { scope => $scope, expires => $expires, privilege => (length $priv ? $priv : undef) };
+}
+
+# Write a grant to a roster row. The caller decides who may set one (a citizen
+# route, or a house acting on its own roster); this only refuses garbage and
+# keeps privilege untouched unless it was named.
+sub peer_grant_setter {
+	my ($opts) = @_;
+	my $grant = &peer_grant_normalize($opts);
+	return 0 unless $grant;
+	my $where = $opts->{'uuid'} ? { uuid => $opts->{'uuid'} }
+		: $opts->{'signatorial'} ? { signatorial => $opts->{'signatorial'} }
+		: undef;
+	return 0 unless $where;
+	my $update = { grant_scope => $grant->{'scope'}, grant_expires => $grant->{'expires'} };
+	$update->{'privilege'} = $grant->{'privilege'} if defined $grant->{'privilege'};
+	&db_update('remote_machines', $update, $where);
+	return 1;
+}
+
 # Verify an Ed25519 signature (base64) over a message against a PEM public key.
 # The shared primitive behind peer_verify and the paired-device challenge.
 sub signature_verify {
