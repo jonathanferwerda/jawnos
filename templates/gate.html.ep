@@ -80,6 +80,7 @@
 		<button id="approval_start">Ask to pair</button>
 		<div id="approval_code" style="font-family:monospace;font-size:28px;letter-spacing:4px;min-height:34px;"></div>
 		<div id="approval_status" style="min-height:22px;max-width:520px;margin:0 auto;"></div>
+		<div style="font-size:13px;color:#777;max-width:520px;margin:6px auto 0;"><%= &subs::ui('Pairing travels over the mesh: the approval can take a couple of minutes to reach this device. This page keeps checking and continues by itself.') %></div>
 	</div>
 </div>
 <div id="results_grabber" class="results_grabber">

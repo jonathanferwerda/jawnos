@@ -1,6 +1,12 @@
 $(document).ready(function() {
-	$('#president').focus();
-	$('#president').trigger('click');
+	// Do not pop the soft keyboard on a phone or tablet: the Gate is also the
+	// pairing page, and an auto-focus that keeps reopening the keyboard fights
+	// the person tapping the device door.
+	var touch = ('ontouchstart' in window) || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '');
+	if (!touch) {
+		$('#president').focus();
+		$('#president').trigger('click');
+	}
 });
 var directory;
 $(document).on('keyup click', '#president', function() {

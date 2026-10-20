@@ -64,6 +64,7 @@
 				a.textContent = <%== &subs::json_chars(&subs::ui('Pair this device')) %>;
 				a.style.cssText = 'display:inline-block;margin-top:10px;font-size:16px;padding:10px 16px;border:1px solid #8fd;border-radius:9px;color:#8fd;text-decoration:none;';
 				box.appendChild(a);
+				status(<%== &subs::json_chars(&subs::ui('Pairing can take a couple of minutes to reach this device. Keep this page open; it continues by itself.')) %>);
 			}
 			function showFingerprintSetup() {
 				var box = document.getElementById('app_required_actions');
@@ -71,7 +72,7 @@
 				box.setAttribute('data-fp', '1');
 				var b = document.createElement('button');
 				b.type = 'button';
-				b.textContent = <%== &subs::json_chars(&subs::ui('Set up this device\'s fingerprint')) %>;
+				b.textContent = <%== &subs::json_chars(&subs::ui('Set up this device\'s unlock')) %>;
 				b.style.cssText = 'margin-top:10px;font-size:16px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:pointer;';
 				b.onclick = function () {
 					if (typeof jawnosBiometricEnroll !== 'function') {
@@ -85,7 +86,7 @@
 						b.disabled = false;
 						var e2 = (err2 && err2.error) || '';
 						status(e2 === 'not paired' ? <%== &subs::json_chars(&subs::ui('Pair this device first, then set up the fingerprint.')) %>
-							: e2 === 'unavailable' ? <%== &subs::json_chars(&subs::ui('No fingerprint reader is available on this device.')) %>
+							: e2 === 'unavailable' ? <%== &subs::json_chars(&subs::ui('This device cannot create an unlock key.')) %>
 							: <%== &subs::json_chars(&subs::ui('Could not set up the fingerprint.')) %>);
 					});
 				};
@@ -134,7 +135,7 @@
 					}
 					status(e === 'pending' ? <%== &subs::json_chars(&subs::ui('Waiting for approval on a signed-in phone.')) %>
 						: e === 'not paired' ? <%== &subs::json_chars(&subs::ui('This device is not paired with the house yet.')) %>
-						: e === 'no app key' && window.JawnBiometricKey ? <%== &subs::json_chars(&subs::ui('This device has no fingerprint key yet.')) %>
+						: e === 'no app key' && window.JawnBiometricKey ? <%== &subs::json_chars(&subs::ui('This device has no unlock key yet.')) %>
 						: e === 'no key' ? <%== &subs::json_chars(&subs::ui('No app key is enrolled. Approve this app on a signed-in phone.')) %>
 						: <%== &subs::json_chars(&subs::ui('Could not sign in this app.')) %>);
 				if (e === 'not paired') { showPairLink(); }

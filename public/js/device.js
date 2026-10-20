@@ -97,7 +97,7 @@
 			return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
 				if (guard && !guard()) { return; }
 				return post('/manager/device/login', { device_uuid: uuid, nonce: r.nonce, signature: b64(sig) }).then(function (r2) {
-					if (r2 && r2.ok) { window.location.reload(); }
+					if (r2 && r2.ok) { window.location.href = '/manager'; }
 				});
 			});
 		});
@@ -166,7 +166,7 @@
 							return;
 						}
 						codeEl.textContent = r.code;
-						status.textContent = 'On a device that is already signed in: Security, then Devices, and approve this code.';
+						status.textContent = 'On a device that is already signed in: Security, then Devices, and approve this code. The approval can take a couple of minutes to reach this device; this page keeps checking and continues by itself.';
 						var tries = 0;
 						timer = setInterval(function () {
 							tries++;

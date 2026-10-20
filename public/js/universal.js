@@ -799,7 +799,7 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice) {
 	go.onclick = function () {
 		go.disabled = true;
 		no.disabled = true;
-		note.textContent = jawnPadlockPromptText('Touch the fingerprint reader...');
+		note.textContent = jawnPadlockPromptText('Authenticate to continue...');
 		// On the Android app the Keystore key is a real factor: the OS prompt is
 		// what releases it, and its signature opens the target screen. A browser
 		// (or an app with no enrolled key) falls back to the local confirm and
@@ -1333,7 +1333,7 @@ function jawnosBiometricKeyCall(method, args) {
 			resolve(res || { ok: false, error: 'failed' });
 		};
 		try {
-			if (method === 'enroll') { window.JawnBiometricKey.enroll(args[0] || 'Set up fingerprint unlock'); }
+			if (method === 'enroll') { window.JawnBiometricKey.enroll(args[0] || 'Set up this device\'s unlock'); }
 			else if (method === 'sign') { window.JawnBiometricKey.sign(args[0], args[1] || 'Unlock the house'); }
 			else if (method === 'hasKey') { window.JawnBiometricKey.hasKey(); }
 			else { done = true; reject({ error: 'unavailable' }); }
@@ -1352,10 +1352,10 @@ function jawnosBiometricEnroll(status, proof) {
 	var uuid = localStorage.getItem('device_uuid') || '';
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
-	status('Waiting for your fingerprint...');
+	status('Waiting for authentication...');
 	return jawnosDeviceKeyGet().then(function (key) {
 		if (!key) { throw { error: 'not paired' }; }
-		return jawnosBiometricKeyCall('enroll', ['Set up fingerprint unlock']);
+		return jawnosBiometricKeyCall('enroll', ['Set up this device\'s unlock']);
 	}).then(function (res) {
 		if (!res || !res.ok || !res.pubkey) { throw { error: (res && res.error) || 'unavailable' }; }
 		var pubkey = res.pubkey;
@@ -1385,7 +1385,7 @@ function jawnosBiometricVerify(status) {
 	var uuid = localStorage.getItem('device_uuid') || '';
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
-	status('Touch the fingerprint reader to confirm it is you...');
+	status('Confirm it is you...');
 	return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'verify' }).then(function (ch) {
 		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
 		var msg = 'padlock-bio-verify\n' + uuid + '\n' + ch.nonce;
@@ -1418,7 +1418,7 @@ function jawnosBiometricUnlock(mode, target, status, context) {
 			});
 		});
 	}
-	status('Touch the fingerprint reader...');
+	status('Authenticate to unlock...');
 	return once().then(function (res) {
 		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
 		return res;
