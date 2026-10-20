@@ -4,8 +4,11 @@
 # with the "forever" warranty the ticket never expires. The desktop installer
 # stores it for the embedded view; the phone and tablet open it once, which is
 # what puts the session on the fqdn origin their installed PWA (service worker,
-# full screen) lives on. The URL's host is config.json's domain when set, else
-# 127.0.0.1 - the desktop view trusts the house's certificate there.
+# full screen) lives on. The URL's host is config.json's domain, which the
+# house's DNS points at this machine itself - 127.0.0.1 in the laptop's hosts
+# file, its own LAN address from the router, its own tailnet address from
+# Headscale - so the link carries the wildcard certificate while reaching this
+# machine without a VPN. 127.0.0.1 is the fallback when there is no domain.
 #
 # Idempotent: an active forever ticket for the same client is reused, never
 # re-minted (the URL is rebuilt from the row, so a host change is picked up).

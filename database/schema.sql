@@ -132,6 +132,19 @@ CREATE TABLE "remote_machines" (
 			status VARCHAR(25),
 			log LONGTEXT
 		, port VARCHAR(19), buttons VARCHAR(500), manager VARCHAR(255), data LONGTEXT, signatorial VARCHAR(500), cookie LONGTEXT(500), connection VARCHAR(10), nic VARCHAR(25), deletions LONGTEXT, ws_port VARCHAR(10), fqdn VARCHAR(255), ws_auth VARCHAR(500), manager_file VARCHAR(255), additions LONGTEXT, edits LONGTEXT, device VARCHAR(20), ost VARCHAR(25), hostname VARCHAR(255), tunnel VARCHAR(25), mirrors LONGTEXT, network LONGTEXT, pseudonyms LONGTEXT, dock_port VARCHAR(15), archive_dir LONGTEXT, archive LONGTEXT, version VARCHAR(25), sync_cursor VARCHAR(50), pubkey LONGTEXT, privilege VARCHAR(25), grant_scope VARCHAR(25), grant_expires VARCHAR(25));
+CREATE TABLE IF NOT EXISTS routers (
+	uuid VARCHAR(255) unique,
+	ip VARCHAR(64),
+	mac VARCHAR(64),
+	nic VARCHAR(64),
+	name VARCHAR(255),
+	model VARCHAR(255),
+	manager VARCHAR(255),
+	last_seen VARCHAR(25),
+	timestamp VARCHAR(25),
+	server_time VARCHAR(25),
+	ost VARCHAR(25)
+);
 CREATE TABLE IF NOT EXISTS paired_devices (
 	uuid VARCHAR(255) unique,
 	name VARCHAR(255),

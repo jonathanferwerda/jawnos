@@ -78,6 +78,35 @@
 				<span id="sync_topology_status" class="device_when"></span>
 			</div>
 		</div>
+		<% if (scalar @{$routers || []}) { %>
+			<%# The gateway every network has. It is discovered from the default
+			    route and kept after the machine leaves that network, so it is still
+			    here (greyed, with its last sighting) when it is not connected. %>
+			<div class="device_card" id="router_card">
+				<div class="device_head">
+					<span class="network_cidr"><%= &subs::lang('router') %></span>
+				</div>
+				<div class="device_nic">
+					<div class="cfg-scroll">
+					<table>
+						<thead>
+							<tr><th><%= &subs::lang('common.name') %></th><th><%= &subs::lang('common.model') %></th><th><%= &subs::lang('home.last_update') %></th><th></th></tr>
+						</thead>
+						<tbody>
+						<% foreach my $r ( @{$routers} ) { %>
+							<tr class="router_row" ip="<%= $r->{'ip'} %>">
+								<td><b><%= $r->{'name'} %></b><br><span class="remote_ip"><%= $r->{'ip'} %></span> <span class="device_when"><%= $r->{'mac'} %></span></td>
+								<td><%= $r->{'model'} || '—' %></td>
+								<td><span class="pill" style="<%= $r->{'online'} ? 'background:#4caf50;color:#fff' : 'opacity:.6' %>"><%= $r->{'online'} ? &subs::lang('common.online') : &subs::lang('common.offline') %></span> <span class="device_when"><%= $r->{'seen_display'} %></span></td>
+								<td><a href="<%= $r->{'manager'} %>" target="_blank" rel="noopener"><%= &subs::lang('common.go') %></a></td>
+							</tr>
+						<% } %>
+						</tbody>
+					</table>
+					</div>
+				</div>
+			</div>
+		<% } %>
 		<% if (scalar @{$devices || []}) { %>
 			<%# the machines: one row each, so a machine's name and its removal are asked once, not once per network it appears on %>
 			<div class="device_machines">
