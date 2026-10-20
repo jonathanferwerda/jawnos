@@ -9126,6 +9126,8 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	$scope ||= '';
 	my $now = &subs::rightNow();
 	my $device_uuid = $c->session('device_uuid') || '';
+	# The screen that is locking, so a device lock closes only its own windows.
+	my $browser_tab_id = $c->session('browser_tab_id') || $c->param('browser_tab_id') || '';
 	# pl_time is a house-wide stamp, so it is sealed under the house key, not a
 	# session's copy: a fresh tab must be able to read the same timer.
 	my $suds = &subs::suds_grabber() || &subs::session_suds($c) || $gb::suds;
@@ -9160,10 +9162,20 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		return 0 if $fresh > $now;
 	}
 
+	# An inactivity lock on a screen with no device identity has no target. It
+	# used to be treated as a whole-house lock, which re-stamped pl_time on
+	# every request, deleted every device's unlock row, and closed the same app
+	# windows again and again. The page's own padlock_state adopts its device;
+	# until then, leave this request alone.
+	return 0 if (!$explicit && !$device_uuid);
+
 	# A single tap locks this device only. A double tap (scope=all) or the
 	# inactivity timeout is the whole-house lock. A screen opened after a
-	# whole-house lock carries its own timer, so the overlay skips it.
+	# whole-house lock carries its own timer, so the overlay skips it. (An
+	# inactivity lock from a screen with no identity returned above; without
+	# that, it re-locked the house, and closed windows, on every request.)
 	my $whole_house = (!$explicit || $scope eq 'all' || !$device_uuid) ? 1 : 0;
+	my $close_tab = $whole_house ? undef : $browser_tab_id;
 	my $overlay_target = '';
 	my @unlocked;
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
@@ -9195,28 +9207,33 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	}
 	if (&subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) {
 		&subs::setting_deleter({ app => 'gallery', setting => 'combo_unlock' });
-		&subs::window_closer('gallery');
+		&subs::window_closer('gallery', $close_tab);
 		&subs::setting_deleter({ app => 'music', setting => 'combo_unlock' });
 	}
 	if (&subs::setting_grabber({ app => 'folders', setting => 'combo_unlock' })) {
 		&subs::setting_deleter({ app => 'folders', setting => 'combo_unlock' });
-		&subs::window_closer('folders');
+		&subs::window_closer('folders', $close_tab);
 	}
 
 	my $player = &subs::cache_get({ app => 'music', context => 'player' });
 	if ($player->{'unlocked'} == 1) {
 		&subs::cache_delete({ app => 'music', context => 'player' });
 		&subs::cache_delete({ app => 'music', context => 'content' });
-		&subs::window_closer('music');
+		&subs::window_closer('music', $close_tab);
 	}
 	my $websockets = &subs::db_query('select * from websockets','stayingAlive')->hashes;
 	my $port = $c->req->url->base->port;
 
 	foreach my $ws ( @{$websockets} ) {
+		# A device lock closes only the locking screen's windows; a whole-house
+		# lock still closes them everywhere.
+		if (!$whole_house && (!$close_tab || ($ws->{'browser_tab_id'} || '') ne $close_tab)) {
+			next;
+		}
 		if ($ws->{'href'} =~ /\Q$port/gi) {
 			my $settings = &subs::settings_grabber({ app => $ws->{'app'}, settings => [ 'visibility' ] });
 			if ($settings->{'visible'} ne 'checked') {
-				&subs::window_closer($ws->{'app'});
+				&subs::window_closer($ws->{'app'}, $close_tab);
 			}
 		}
 		elsif (!$ws->{'room'}) {
@@ -29835,7 +29852,15 @@ sub authentication_passer($c) {
 			if ($server_time > $padlock_time) {
 				my $dev = $c->session('device_uuid') || '';
 				my $until = $dev ? &padlock_device_until($dev) : 0;
-				$did_lock = &lock_session($c) unless ($until && $until > $server_time);
+				# An unlocked screen has its own future stamp. A screen that is
+				# already locked (no stamp, or a past one) must not run the lock
+				# again: the whole-house branch re-stamps pl_time = now, so the
+				# very next request saw it expired and closed the same windows
+				# again - a table with no fingerprint, sitting on a manager
+				# page, did exactly that on every poll. Answer the gate; do not
+				# re-lock what is already locked.
+				my $already = ($until && $until > $server_time) ? 1 : (&padlock_locked_now($c, $dev) ? 1 : 0);
+				$did_lock = &lock_session($c) unless $already;
 			}
 			# The request that meets the expired timer is the one that locked:
 			# gate it now. lock_session stamps pl_time = now, so re-checking the
