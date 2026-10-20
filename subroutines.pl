@@ -2898,7 +2898,14 @@ sub house_levels_sync {
 		# (phone.jonathanferwerda.com); the OS hostname is often a bare "Fe" or
 		# "localhost". Prefer the URL label, and fall back to the hostname.
 		my ($pname) = (($rm->{'manager'} || ($p->{'manager'} || '')) =~ m{^https?://([^/:]+)});
-		$pname =~ s/\..*$// if defined $pname;
+		# Strip a domain only from a name. A dotted-decimal manager is an address,
+		# and cutting at its first dot turned every peer reached by ip into "192"
+		# on the System card. Keep the address whole, and prefer the name the peer
+		# reports when it has one.
+		my $host_is_ip = (defined $pname && $pname =~ /^\d{1,3}(?:\.\d{1,3}){3}$/);
+		$pname =~ s/\..*$// if defined $pname && $pname ne '' && !$host_is_ip && $pname !~ /:/;
+		my $named = $rm->{'hostname'} || '';
+		$pname = $named if $host_is_ip && $named ne '' && $named !~ /^(?:localhost|127\.0\.0\.1)$/i;
 		$pname = $rm->{'hostname'} || $rsig
 			if !defined $pname || $pname eq '' || $pname =~ /^(?:localhost|127\.0\.0\.1)$/i;
 		unless ($ua) {
@@ -15207,6 +15214,25 @@ sub lan_presence_accept {
 	};
 	$update->{'version'} = $version if $version;
 	$update->{'buttons'} = $buttons if $buttons ne ($rm->{'buttons'} // '');
+	# A peer that advertises a bare address - Termux has no hostname to give -
+	# has to keep that address current. After DHCP moved it, the stored manager
+	# still pointed at the old subnet, so every pull and health call timed out
+	# while its beacons (which carry the new source address) kept arriving. A
+	# name is left alone because DNS follows the machine, and a tunnel manager
+	# belongs to the hub; only an ip-literal manager is rewritten here.
+	my ($row_host) = (($rm->{'manager'} || '') =~ m{^https?://([^/:]+)});
+	if (($rm->{'tunnel'} // '') ne 'yes'
+		&& defined $row_host && $row_host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/
+		&& $row_host !~ /^127\./
+		&& $port =~ /^\d+$/) {
+		my ($old_port) = (($rm->{'manager'} || '') =~ m{^https?://[^/:]+:(\d+)});
+		if ($row_host ne $peer_ip || !defined $old_port || $old_port ne $port) {
+			my $scheme = (($rm->{'manager'} || '') =~ m{^http:}) ? 'http' : 'https';
+			$update->{'manager'} = $scheme . '://' . $peer_ip . ':' . $port;
+			$update->{'port'} = $port;
+			$changed = 1;
+		}
+	}
 	&db_update('remote_machines', $update, { signatorial => $sig }) if $changed;
 	# The Dev panel's neighbour table is this machine's devices row, not the
 	# remote_machines row; put the new address and version there too and refresh

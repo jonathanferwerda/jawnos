@@ -658,6 +658,7 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 			type: 'GET',
 			data: { timestamp: timestamp, load_type: load_type, host: host },
 			success: function(response) {
+				var keep = gimmeInputSnapshot($('#device_list'));
 				$('#device_list').html(response);
 				$('#ping_results').html(ping);
 				printerInkLoad($('#device_list'));
@@ -666,6 +667,7 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 				}
 				b.text(text);
 				deviceListerRestoreButtons($('#device_list'));
+				gimmeInputRestore($('#device_list'), keep);
 			}
 		}).fail(function(e) {
 			b.text(text);
@@ -718,6 +720,43 @@ function deviceListerRestoreButtons(scope) {
 	});
 }
 
+// The Dev listing is repainted in place whenever a peer appears (the server pushes
+// deviceLister()), and the gimme window is typed inside that HTML. Carry a
+// half-typed value - and the caret - across the repaint so a push cannot wipe it.
+function gimmeInputSnapshot(scope) {
+	var keep = { values: {}, focus: null };
+	$(scope).find('.gimme_input').each(function() {
+		var v = $(this).val();
+		if (v !== undefined && v !== null && v !== '') {
+			keep.values[$(this).attr('signatorial') + '|' + $(this).attr('uuid')] = v;
+		}
+	});
+	var active = document.activeElement;
+	if (active && scope && scope[0] && scope[0].contains(active) && $(active).hasClass('gimme_input')) {
+		keep.focus = {
+			key: $(active).attr('signatorial') + '|' + $(active).attr('uuid'),
+			start: active.selectionStart,
+			end: active.selectionEnd
+		};
+	}
+	return keep;
+}
+
+function gimmeInputRestore(scope, keep) {
+	if (!keep) { return; }
+	$(scope).find('.gimme_input').each(function() {
+		var el = this;
+		var key = $(el).attr('signatorial') + '|' + $(el).attr('uuid');
+		if (keep.values[key] !== undefined) { $(el).val(keep.values[key]); }
+		if (keep.focus && keep.focus.key === key) {
+			el.focus();
+			if (keep.focus.start !== null && el.setSelectionRange) {
+				try { el.setSelectionRange(keep.focus.start, keep.focus.end); } catch (e) {}
+			}
+		}
+	});
+}
+
 // Re-fetch the Dev listing in place. The server pushes this as the console command
 // deviceLister() when a tunnel comes up or goes down (and when a peer is
 // enrolled), so the Dev panel shows a machine dialling in without a manual Scan.
@@ -730,9 +769,11 @@ function deviceLister() {
 		type: 'GET',
 		data: { timestamp: Date.now(), load_type: 'list' },
 		success: function(response) {
+			var keep = gimmeInputSnapshot(c);
 			c.html(response);
 			printerInkLoad(c);
 			deviceListerRestoreButtons(c);
+			gimmeInputRestore(c, keep);
 		}
 	});
 }
