@@ -16899,7 +16899,7 @@ sub house_key_share_wrap {
 # names it, so a holder never releases a share from an older split (shares from
 # two different splits never combine).
 sub house_key_share_set_current {
-	my $row = eval { &db_query('select set_id from house_key_shares where status = ? order by server_time desc limit 1', 'active')->hashes->[0] };
+	my $row = eval { &db_query('select set_id from house_key_shares where status = ? order by server_time desc, rowid desc limit 1', 'active')->hashes->[0] };
 	return $row ? $row->{'set_id'} : '';
 }
 
@@ -16934,6 +16934,9 @@ sub house_key_share_create_set {
 	my ($suds, $holders) = @_;
 	return undef unless defined $suds && length $suds;
 	$holders = [] unless $holders && ref $holders eq 'ARRAY';
+	# the owner migration attaches devices that predate the people table; doing it
+	# here keeps the one-share-per-person rule honest on an older house
+	&people_owner_ensure();
 	my ($k, $n) = &shamir_policy();
 	my $shares = &shamir_split($suds, $k, $n);
 	return undef unless $shares;

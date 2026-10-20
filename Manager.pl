@@ -27551,7 +27551,9 @@ post '/manager/security/shares/mine' => sub($c) {
 	}
 	my $device_uuid = $c->session('device_uuid') || '';
 	unless ($device_uuid) { $c->render(json => { ok => 0, error => 'no device' }); return; }
-	my $set_id = &subs::house_key_share_set_current();
+	# a request names the set it was made against; a holder may hold shares in
+	# several sets, so let the caller name the one it means
+	my $set_id = $c->param('set_id') || &subs::house_key_share_set_current();
 	my $rows = &subs::house_key_share_for_device($device_uuid, $set_id);
 	my ($k, $n) = &subs::shamir_policy();
 	$c->render(json => {

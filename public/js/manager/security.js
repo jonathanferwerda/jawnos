@@ -509,7 +509,7 @@ $(document).on('click', '.signatorial_selection', function() {
 		button.prop('disabled', true);
 		note.css('color', 'darkred').text('');
 		ensureShareKey().then(function (got) {
-			return $.post('/manager/security/shares/mine', {}).then(function (r) {
+			return $.post('/manager/security/shares/mine', { set_id: row.attr('set_id') || '' }).then(function (r) {
 				if (!r || !r.ok || !r.shares || !r.shares.length) { throw new Error('no share'); }
 				var mine = r.shares[0];
 				return window.jawnosShareCrypto.unwrap(mine.wrapped, got.key, got.spki).then(function (raw) {
