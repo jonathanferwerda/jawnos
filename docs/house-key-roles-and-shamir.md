@@ -1,9 +1,11 @@
 # Roles (per-person keys) and Shamir recovery
 
-**Status:** Part 1 started 2026-10-20 (v0.1.947): the `people` table, the
-`paired_devices.person_uuid` link, the owner migration, and person-aware login
-for app and recovered devices. Assignment UI, ticket mapping and Shamir are
-still to do.
+**Status:** 2026-10-20 (v0.1.952). **Part 1:** the `people` table, the
+`paired_devices.person_uuid` link, the owner migration, person-aware app and
+recovered-device login, assignment in the Devices view, and ticket logins that
+mint or resume a person. **Shamir:** the GF(256) split/combine core is
+implemented and probed (`shamir_split`, `shamir_combine`, share encode/decode).
+Share distribution (paper and device-wrapped) and the recovery route remain.
 **Read with:** `docs/house-key-phase2.md`, `docs/app-only-access.md`, `help.pl` → `security`.
 
 Phase 2 made the password a recovery share and stopped it resolving the data key.

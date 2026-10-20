@@ -16615,6 +16615,120 @@ sub password_share_store {
 	return 1;
 }
 
+# --- Shamir over GF(256) ------------------------------------------------------
+# Splitting the house key so no one holder can unwrap it. The field is the one
+# AES uses (x^8 + x^4 + x^3 + x + 1); subtraction is XOR, and each byte of the
+# secret is split independently with a random polynomial of degree k-1.
+#
+# A share is { x => 1..255, y => the same length as the secret }. The field
+# arithmetic is checked against known AES vectors and an exhaustive inverse
+# sweep in the probe; three shares rebuild, two reveal nothing.
+
+sub shamir_gf_mul {
+	my ($a, $b) = @_;
+	my $p = 0;
+	for (1 .. 8) {
+		$p ^= $a if $b & 1;
+		my $carry = $a & 0x80;
+		$a = ($a << 1) & 0xff;
+		$a ^= 0x1b if $carry;
+		$b >>= 1;
+	}
+	return $p;
+}
+
+sub shamir_gf_pow {
+	my ($a, $n) = @_;
+	my $r = 1;
+	while ($n > 0) {
+		$r = &shamir_gf_mul($r, $a) if $n & 1;
+		$a = &shamir_gf_mul($a, $a);
+		$n >>= 1;
+	}
+	return $r;
+}
+
+sub shamir_gf_inv {
+	my ($a) = @_;
+	return 0 if $a == 0;
+	return &shamir_gf_pow($a, 254);
+}
+
+# shamir_split($secret, $k, $n) -> [ { x, y }, ... ]
+sub shamir_split {
+	my ($secret, $k, $n) = @_;
+	return undef unless defined $secret && length $secret;
+	$k ||= 3;
+	$n ||= 5;
+	return undef unless $k >= 2 && $k <= $n && $n <= 255;
+	require Crypt::PRNG;
+	my $len = length $secret;
+	my @coeff = ($secret);
+	push @coeff, Crypt::PRNG::random_bytes($len) for 2 .. $k;
+	my @shares;
+	foreach my $x (1 .. $n) {
+		my $y = "\0" x $len;
+		foreach my $b (0 .. $len - 1) {
+			my $v = 0;
+			foreach my $d (0 .. $k - 1) {
+				my $c = ord(substr($coeff[$d], $b, 1));
+				$v ^= &shamir_gf_mul($c, &shamir_gf_pow($x, $d)) if $c;
+			}
+			substr($y, $b, 1) = chr($v);
+		}
+		push @shares, { x => $x, y => $y };
+	}
+	return \@shares;
+}
+
+# shamir_combine([ { x, y }, ... ]) -> the secret, or undef
+sub shamir_combine {
+	my ($shares) = @_;
+	return undef unless $shares && ref $shares eq 'ARRAY' && @{$shares} >= 2;
+	my %seen;
+	foreach my $s (@{$shares}) {
+		return undef unless $s && ref $s eq 'HASH';
+		my $x = $s->{'x'};
+		my $y = $s->{'y'};
+		return undef unless defined $x && $x =~ /^\d+$/ && $x >= 1 && $x <= 255;
+		return undef if $seen{$x}++;
+		return undef unless defined $y && length $y;
+	}
+	my $len = length $shares->[0]{'y'};
+	foreach my $s (@{$shares}) { return undef unless length $s->{'y'} == $len; }
+	my $out = "\0" x $len;
+	foreach my $i (0 .. $#{$shares}) {
+		my $xi = $shares->[$i]{'x'};
+		my $li = 1;
+		foreach my $j (0 .. $#{$shares}) {
+			next if $i == $j;
+			my $xj = $shares->[$j]{'x'};
+			$li = &shamir_gf_mul($li, &shamir_gf_mul($xj, &shamir_gf_inv($xi ^ $xj)));
+		}
+		next if $li == 0;
+		my $y = $shares->[$i]{'y'};
+		foreach my $b (0 .. $len - 1) {
+			my $v = &shamir_gf_mul($li, ord(substr($y, $b, 1)));
+			substr($out, $b, 1) = chr(ord(substr($out, $b, 1)) ^ $v) if $v;
+		}
+	}
+	return $out;
+}
+
+sub shamir_share_encode {
+	my ($s) = @_;
+	return undef unless $s && defined $s->{'x'} && defined $s->{'y'};
+	return encode_base64(pack('C', $s->{'x'}) . $s->{'y'}, '');
+}
+
+sub shamir_share_decode {
+	my ($str) = @_;
+	return undef unless defined $str && length $str;
+	my $raw = eval { decode_base64($str) };
+	return undef unless defined $raw && length $raw >= 2;
+	return { x => unpack('C', substr($raw, 0, 1)), y => substr($raw, 1) };
+}
+
 sub vault_read {
 	my $device = &signatorial_designer();
 	my $q = &db_query('select value, server_time from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'vault', $device);
