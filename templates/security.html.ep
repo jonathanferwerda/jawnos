@@ -42,7 +42,7 @@
 					<option value="enforce" <% if (($president->{'padlock_gate'} || 'enforce') eq 'enforce') { %>selected<% } %>>Enforce</option>
 				</select>
 			</span>
-			<% my $app_access = &subs::setting_grabber({ app => '__president', setting => 'app_access' }) || 'shadow'; %>
+			<% my $app_access = &subs::setting_grabber({ app => '__president', setting => 'app_access', device => 'all' }) || 'shadow'; %>
 			<span style="font-size:14px;margin-left:12px;" title="<%= &subs::ui('Off lets any browser in. Shadow logs what it would refuse. Enforce admits only the installed apps and the signed peer rail.') %>">
 				<%= &subs::ui('App access') %>
 				<select id="app_access">
