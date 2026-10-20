@@ -130,7 +130,7 @@
     the Misc manager colour is the system theme %>
 <% my ($manager_bg, $manager_appt_theme) = &subs::active_manager_background(); %>
 <% my $theme_dark = &subs::theme_is_dark(); %>
-  <% my $body_class = join ' ', grep { length } (($theme_dark ? 'dark_theme' : ''), ((&fingerprint_available() && &padlock_request_is_local($c)) ? '' : 'no_local_fingerprint')); %>
+  <% my $body_class = join ' ', grep { length } (($theme_dark ? 'dark_theme' : ''), ((&Manager::fingerprint_available() && &Manager::padlock_request_is_local($c)) ? '' : 'no_local_fingerprint')); %>
   <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
   <% my $title_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
   <style>
