@@ -27490,6 +27490,20 @@ post '/manager/security/shares/create' => sub($c) {
 	$c->render(json => { ok => 1, k => $k, n => $n, shares => \@codes, html => $sec->{'html'} });
 };
 
+post '/manager/security/person_revoke' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0, error => 'citizen only' });
+		return;
+	}
+	my $person_uuid = $c->param('person_uuid') // '';
+	my ($ok, $why) = &subs::person_revoke_check($person_uuid, $c->session('device_uuid') || '');
+	unless ($ok) { $c->render(json => { ok => 0, error => $why }); return; }
+	my $result = &subs::person_revoke($person_uuid);
+	unless ($result) { $c->render(json => { ok => 0, error => 'not revoked' }); return; }
+	my $sec = &security_initializer($c);
+	$c->render(json => { ok => 1, revoked => $result, html => $sec->{'html'} });
+};
+
 post '/manager/security/shares/key' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { ok => 0 });
@@ -30625,6 +30639,7 @@ sub authentication_passer($c) {
 		return;
 	}
 	elsif ($authentication eq 'approved' && $c->session('server_time') > $server_time - 5100
+		&& &subs::session_principal_active($c->session('person_uuid'), $c->session('device_uuid'))
 		&& !&subs::db_select('security', undef, { level => 'padlock' })->hashes->[0]) {
 		# The fast path may skip the full auth pass, but never the padlock:
 		# every request refreshes session server_time, so a locked screen that
@@ -30672,6 +30687,11 @@ sub authentication_passer($c) {
 			my $device = &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0];
 			unless ($device) { $authentication = 'revoked'; }
 		}
+		# and a person session lives only while the person does; a revoked
+		# person's ticket or device session is refused here even if its cookie
+		# still names a live warranty
+		my $person_uuid = $c->session('person_uuid') || '';
+		if ($person_uuid && !&subs::person_active($person_uuid)) { $authentication = 'revoked'; }
 		my $pres_settings = &subs::settings_grabber({ app => '__president', settings => [ 'padlock_contexts', 'pl_time' ] });
 		my $padlock_sightings = eval { return decode_json $pres_settings->{'padlock_contexts'} } || [];
 		my $padlock = [];

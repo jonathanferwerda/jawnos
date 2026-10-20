@@ -248,6 +248,46 @@ $(document).on('click', '#person_add_button', function() {
 	});
 });
 
+$(document).on('click', '.person_revoke', function() {
+	var button = $(this);
+	var row = button.closest('.person_row');
+	var uuid = row.attr('uuid');
+	var original = button.text();
+	if (button.attr('armed') !== 'yes') {
+		button.attr('armed', 'yes');
+		button.css({ 'background-color': 'red' });
+		button.text(typeof jawnosT === 'function' ? jawnosT('Press again') : 'Press again');
+		setTimeout(function() {
+			button.attr('armed', 'no');
+			button.css({ 'background-color': '' });
+			button.text(original);
+		}, 3000);
+		return;
+	}
+	button.attr('armed', 'no');
+	button.prop('disabled', true);
+	$.ajax({
+		url: '/manager/security/person_revoke',
+		type: 'POST',
+		data: { person_uuid: uuid, security_view: 'devices' },
+		success: function(response) {
+			button.prop('disabled', false);
+			if (!response || !response.ok) {
+				$('#alert').html(response && response.error ? response.error : 'Could not revoke that person').show();
+				button.text(original);
+				return;
+			}
+			$('#security').replaceWith(response.html);
+			appointment_chron();
+		},
+		error: function() {
+			button.prop('disabled', false);
+			button.text(original);
+			$('#alert').html('Could not revoke that person').show();
+		}
+	});
+});
+
 $(document).on('click', '#recovery_create', function() {
 	$.ajax({
 		url: '/manager/security/recovery/create',

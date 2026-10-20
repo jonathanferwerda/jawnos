@@ -3321,7 +3321,7 @@ sub router_list() {
 	my $now = &rightNow();
 	foreach my $r (@routers) {
 		my $seen = $r->{'last_seen'} || 0;
-		$r->{'online'} = ($seen && $now - $seen < 180000) ? 1 : 0;
+		$r->{'online'} = ($seen && $now - $seen < 900000) ? 1 : 0;
 		$r->{'seen_display'} = $seen ? &subs::formatted_time($seen) : '';
 		$r->{'name'} ||= 'Router';
 	}
@@ -17893,6 +17893,68 @@ sub person_for_device {
 	return undef unless $person_uuid;
 	my $p = eval { &db_select('people', undef, { uuid => $person_uuid, status => 'active' })->hash };
 	return $p || undef;
+}
+
+# A revoked person is revoked for every session at once: the session carries
+# person_uuid and, for a device, device_uuid, so both are checked rather than
+# waiting for a cookie to expire.
+sub person_active {
+	my ($person_uuid) = @_;
+	return 0 unless defined $person_uuid && length $person_uuid;
+	my $p = eval { &db_select('people', ['status'], { uuid => $person_uuid })->hash };
+	return ($p && ($p->{'status'} || '') eq 'active') ? 1 : 0;
+}
+
+sub device_active {
+	my ($device_uuid) = @_;
+	return 0 unless defined $device_uuid && length $device_uuid;
+	my $d = eval { &db_select('paired_devices', ['status'], { uuid => $device_uuid })->hash };
+	return ($d && ($d->{'status'} || '') eq 'active') ? 1 : 0;
+}
+
+# Whether a session may still be trusted: its person and its device are both
+# active. A session with neither (a password bootstrap) is not the caller's
+# question - it is handled by the gate itself.
+sub session_principal_active {
+	my ($person_uuid, $device_uuid) = @_;
+	return 0 if defined $person_uuid && length $person_uuid && !&person_active($person_uuid);
+	return 0 if defined $device_uuid && length $device_uuid && !&device_active($device_uuid);
+	return 1;
+}
+
+# Revoking a person is one move: the person, every device they carry, every
+# wrapped share one of those devices holds, and the invitations written to them.
+# The owner is the house's own identity and cannot be revoked from here; the
+# person using the current device cannot revoke themselves out of the session.
+sub person_revoke_check {
+	my ($person_uuid, $current_device_uuid) = @_;
+	return (0, 'no person') unless defined $person_uuid && length $person_uuid;
+	my $person = eval { &db_select('people', undef, { uuid => $person_uuid })->hash };
+	return (0, 'no person') unless $person && ($person->{'status'} || '') eq 'active';
+	return (0, 'the owner cannot be revoked') if $person_uuid eq 'owner';
+	if (defined $current_device_uuid && length $current_device_uuid) {
+		my $d = eval { &db_select('paired_devices', ['person_uuid'], { uuid => $current_device_uuid })->hash };
+		return (0, 'you cannot revoke the person you are using') if $d && ($d->{'person_uuid'} || '') eq $person_uuid;
+	}
+	return (1, '');
+}
+
+sub person_revoke {
+	my ($person_uuid) = @_;
+	return undef unless defined $person_uuid && length $person_uuid;
+	my $now = &rightNow();
+	my $devices = eval { &db_select('paired_devices', ['uuid'], { person_uuid => $person_uuid })->hashes } || [];
+	foreach my $d ( @{$devices} ) {
+		&db_update('paired_devices', { status => 'revoked', server_time => $now }, { uuid => $d->{'uuid'} });
+		&house_key_share_revoke_device($d->{'uuid'});
+		&db_delete('security', { level => 'padlock_device', uuid => $d->{'uuid'} });
+	}
+	# a share row can name the person even after a device row moved
+	eval { &db_delete('house_key_shares', { holder_person => $person_uuid }) };
+	# an invitation is the person's; a revoked person's tickets stop at the door
+	eval { &db_query('update tickets set status = ? where person_uuid = ? and status = ?', 'revoked', $person_uuid, 'active') };
+	&db_update('people', { status => 'revoked', server_time => $now }, { uuid => $person_uuid });
+	return { person => $person_uuid, devices => scalar @{$devices} };
 }
 
 sub people_list {

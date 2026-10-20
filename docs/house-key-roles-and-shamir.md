@@ -1,14 +1,17 @@
 # Roles (per-person keys) and Shamir recovery
 
-**Status:** 2026-10-20 (v0.1.956). **Part 1:** the `people` table, the
+**Status:** 2026-10-20 (v0.1.958). **Part 1:** the `people` table, the
 `paired_devices.person_uuid` link, the owner migration, person-aware app and
 recovered-device login, assignment in the Devices view, and ticket logins that
-mint or resume a person. **Shamir:** the GF(256) split/combine core is
-implemented and probed (`shamir_split`, `shamir_combine`, share encode/decode).
-Paper shares print once; device shares are wrapped to a device's X25519 key,
-stored in `house_key_shares`, released through the gate's share request, and
-combined by the recovering machine. The 3-share drill is still to run on a
-machine with no `~/.house.key`, then the password share can be retired.
+mint or resume a person. Revoking a person revokes their devices, deletes the
+shares those devices hold, stops their invitations and ends their sessions at
+the next request. **Shamir:** the GF(256) split/combine core is implemented and
+probed (`shamir_split`, `shamir_combine`, share encode/decode). Paper shares
+print once; device shares are wrapped to a device's X25519 key, stored in
+`house_key_shares`, released through the gate's share request, and combined by
+the recovering machine. A machine with no `~/.house.key` has been drilled on a
+scratch copy; the live spare-machine drill and retiring the password share
+remain.
 **Read with:** `docs/house-key-phase2.md`, `docs/app-only-access.md`, `help.pl` → `security`.
 
 Phase 2 made the password a recovery share and stopped it resolving the data key.
@@ -94,6 +97,17 @@ The only real one: `app_login` currently promotes **any** active device to
 citizen. The moment person lookup lands, a device with no person stops being a
 citizen — so the migration must attach every current device first, and the code
 must refuse to start the strict path if `people` is empty.
+
+### Implemented 2026-10-20 — person revoke
+
+- Security → Devices now lists the people. Revoke (two presses) marks the person
+  revoked, revokes every device attached to them, deletes the wrapped shares
+  those devices hold (and any row naming the person), and revokes their active
+  tickets. The owner and the person using the current device cannot be revoked.
+- Sessions end at the next request, not at cookie expiry: the authentication
+  fast path now checks the session's person and device are still active, and the
+  full pass refuses a revoked person as well as a revoked device.
+- Probe: `.shots/person_revoke_probe.pl` (19 checks).
 
 ---
 

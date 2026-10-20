@@ -147,6 +147,31 @@
 			</select>
 			<button id="person_add_button" type="button"><%= &subs::lang('person.add') %></button>
 		</div>
+		<% my %device_person = map { ($_->{'uuid'} || '') => ($_->{'person_uuid'} || '') } @{ $devices || [] }; %>
+		<% my %person_devices; $person_devices{$_->{'person_uuid'}}++ for grep { ($_->{'person_uuid'} || '') ne '' } @{ $devices || [] }; %>
+		<% my $current_person = $device_person{$current_device_uuid} // ''; %>
+		<table style="width:100%;text-align:center;">
+			<thead><tr><th><%= &subs::lang('person') %></th><th><%= &subs::lang('person.privilege') %></th><th><%= &subs::ui('Devices') %></th><th></th></tr></thead>
+			<tbody>
+				<% foreach my $p ( @{ $people || [] } ) { %>
+					<tr class="person_row" uuid="<%= $p->{'uuid'} %>">
+						<td><%= $p->{'name'} %></td>
+						<td><%= &subs::ui(&subs::format_name($p->{'privilege'})) %></td>
+						<td><%= $person_devices{$p->{'uuid'}} || 0 %></td>
+						<td>
+							<% if (($p->{'uuid'} || '') eq ($current_person || '')) { %>
+								<span style="font-size:13px;"><%= &subs::ui('This is you') %></span>
+							<% } elsif (($p->{'uuid'} || '') eq 'owner') { %>
+								<span style="font-size:13px;"><%= &subs::ui('The owner') %></span>
+							<% } else { %>
+								<button class="person_revoke" type="button"><%= &subs::lang('person.revoke') %></button>
+							<% } %>
+						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+		<p style="font-size:13px;max-width:700px;margin:4px auto;"><%= &subs::ui('Revoking a person revokes every device they carry, deletes the house-key shares those devices hold, and stops their invitations. Their sessions end at the next request.') %></p>
 		<table style="width:100%;text-align:center;">
 			<thead>
 				<tr><th>Name</th><th><%= &subs::lang('person') %></th><th><%= &subs::lang('device.kind') %></th><th>Paired</th><th>Last Seen</th><th>Key</th><th>Revoke</th></tr>
