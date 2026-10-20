@@ -16857,12 +16857,134 @@ sub shamir_share_encode {
 	return encode_base64(pack('C', $s->{'x'}) . $s->{'y'}, '');
 }
 
+# --- paper shares -------------------------------------------------------------
+# A share meant for paper is Crockford base32, uppercase and grouped, because it
+# may be written by hand: no case, no +/=, and I/L/O read as 1/1/0. The PS1
+# prefix names the format; the gate still accepts the old base64 codes.
+our $shamir_paper_prefix = 'PS1';
+our $crockford_alphabet = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+sub crockford_encode {
+	my ($bytes) = @_;
+	return undef unless defined $bytes;
+	my ($out, $acc, $bits) = ('', 0, 0);
+	foreach my $b ( unpack('C*', $bytes) ) {
+		$acc = (($acc << 8) | $b) & 0xffffffff;
+		$bits += 8;
+		while ($bits >= 5) {
+			$bits -= 5;
+			$out .= substr($crockford_alphabet, ($acc >> $bits) & 31, 1);
+			$acc &= (1 << $bits) - 1;
+		}
+	}
+	$out .= substr($crockford_alphabet, ($acc << (5 - $bits)) & 31, 1) if $bits;
+	return $out;
+}
+
+sub crockford_decode {
+	my ($str) = @_;
+	return undef unless defined $str && length $str;
+	$str = uc $str;
+	$str =~ tr/ILO/110/;
+	$str =~ s/[^0-9A-Z]//g;
+	return undef unless length $str;
+	my ($out, $acc, $bits) = ('', 0, 0);
+	foreach my $ch ( split '', $str ) {
+		my $v = index($crockford_alphabet, $ch);
+		return undef if $v < 0;
+		$acc = (($acc << 5) | $v) & 0xffffffff;
+		$bits += 5;
+		while ($bits >= 8) {
+			$bits -= 8;
+			$out .= chr(($acc >> $bits) & 255);
+			$acc &= (1 << $bits) - 1;
+		}
+	}
+	# a valid code leaves only zero padding bits
+	return undef if $bits && $acc;
+	return $out;
+}
+
+sub shamir_share_encode_paper {
+	my ($s) = @_;
+	return undef unless $s && defined $s->{'x'} && defined $s->{'y'};
+	my $code = &crockford_encode(pack('C', $s->{'x'}) . $s->{'y'});
+	return undef unless defined $code && length $code;
+	$code =~ s/(.{5})/$1-/g;
+	$code =~ s/-$//;
+	return $shamir_paper_prefix . '-' . $code;
+}
+
 sub shamir_share_decode {
 	my ($str) = @_;
 	return undef unless defined $str && length $str;
+	my $s = $str;
+	$s =~ s/^\s+|\s+$//g;
+	if ($s =~ /^\Q$shamir_paper_prefix\E[- ]?/i) {
+		my $body = $s;
+		$body =~ s/^\Q$shamir_paper_prefix\E[- ]?//i;
+		my $raw = &crockford_decode($body);
+		return undef unless defined $raw && length $raw >= 2;
+		return { x => unpack('C', substr($raw, 0, 1)), y => substr($raw, 1) };
+	}
 	my $raw = eval { decode_base64($str) };
 	return undef unless defined $raw && length $raw >= 2;
 	return { x => unpack('C', substr($raw, 0, 1)), y => substr($raw, 1) };
+}
+
+# Save each paper code as a QR PNG under a private per-machine folder. The code
+# goes through a 0600 temp file, never the command line, and the PNG is 0600.
+# The data URI is for the one-time display; the file is what the person keeps.
+sub shamir_qr_save {
+	my ($codes, $label) = @_;
+	return undef unless $codes && ref $codes eq 'ARRAY' && @{$codes};
+	my $base = &home('~/.jawnos_paper_shares');
+	require File::Path;
+	eval { File::Path::make_path($base) };
+	return undef unless -d $base;
+	chmod 0700, $base;
+	my $dir = $base . '/' . &rightNow() . '-' . &random_string_creator(6);
+	eval { File::Path::make_path($dir) };
+	return undef unless -d $dir;
+	chmod 0700, $dir;
+	my @images;
+	my $n = 0;
+	foreach my $code ( @{$codes} ) {
+		next unless defined $code && length $code;
+		$n++;
+		my $tmp = "$dir/.text-$n";
+		my $png = "$dir/share-$n.png";
+		my $fh;
+		unless (open $fh, '>', $tmp) { next; }
+		print $fh $code;
+		close $fh;
+		chmod 0600, $tmp;
+		my $ok = system('qrencode', '-o', $png, '-s', '6', '-l', 'Q', '-r', $tmp) == 0;
+		unlink $tmp;
+		next unless $ok && -s $png;
+		chmod 0600, $png;
+		my $bytes = &read_file($png);
+		next unless defined $bytes && length $bytes;
+		push @images, {
+			index => $n,
+			file => $png,
+			data => 'data:image/png;base64,' . encode_base64($bytes, ''),
+		};
+	}
+	my $readme = "$dir/README.txt";
+	if (open my $rf, '>', $readme) {
+		print $rf "These are paper shares of the house key. Any three rebuild it.\n";
+		print $rf "Keep them apart, do not sync this folder, and print or copy them\n";
+		print $rf "to separate places. The QR codes carry the share text.\n";
+		close $rf;
+		chmod 0600, $readme;
+	}
+	return {
+		dir => $dir,
+		label => $label || 'paper shares',
+		images => \@images,
+		missing => scalar(@{$codes}) - scalar(@images),
+	};
 }
 
 # The threshold this house uses. The policy is not secret (3:5), so it sits in
@@ -17012,7 +17134,7 @@ sub house_key_share_create_set {
 		push @assigned, { device => $device_uuid, device_name => $device->{'name'}, person => $person, share_index => $share->{'x'} };
 	}
 	while ($next < scalar @{$shares}) {
-		push @paper, &shamir_share_encode($shares->[$next]);
+		push @paper, &shamir_share_encode_paper($shares->[$next]);
 		$next++;
 	}
 	# the policy is public and syncs; the shares themselves never leave wrapped

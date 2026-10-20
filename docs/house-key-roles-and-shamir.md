@@ -138,6 +138,19 @@ or with paper kept off-site. Do Part 1 first for that reason.
   five codes once. The gate's recovery field accepts any three pasted on
   separate lines, or separated by commas. Nothing is stored but the public
   policy (`__president/shamir` = `3:5`).
+- A paper share is a **PS1** Crockford base32 code: uppercase, grouped in fives,
+  with I/L/O read as 1/1/0. It is longer than the old base64 but can be written
+  without case or `+/=`; the gate still accepts the old base64 so an existing
+  set keeps working. Do not mix codes from different sets.
+- The view also writes a **QR image per share** under
+  `~/.jawnos_paper_shares/<stamp>/` (folder 0700, files 0600, README, not in the
+  repo and not synced). The QR carries the PS1 code. `scripts/paper_share_qr.pl
+  shares.txt` does the same for a set already written down. QR needs the
+  `qrencode` binary; the text codes still show if it is missing.
+- The share still carries the full 40-byte suds, so it is long; the QR is the
+  practical paper form. A 2-of-3 set would mean three codes instead of five,
+  and splitting the suds's 200-bit entropy rather than its 40 ASCII bytes would
+  shorten each code, but neither is done yet.
 
 ### Implemented 2026-10-20 — device shares
 

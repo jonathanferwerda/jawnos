@@ -27480,9 +27480,10 @@ post '/manager/security/shares/create' => sub($c) {
 	my $now = &subs::rightNow();
 	&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'shamir');
 	&subs::db_insert('settings', { app => '__president', setting => 'shamir', device => 'all', value => "$k:$n", timestamp => $now, server_time => $now });
-	my @codes = map { &subs::shamir_share_encode($_) } @$shares;
+	my @codes = map { &subs::shamir_share_encode_paper($_) } @$shares;
+	my $qr = &subs::shamir_qr_save(\@codes, 'paper shares');
 	my $sec = &security_initializer($c);
-	$c->render(json => { ok => 1, k => $k, n => $n, shares => \@codes, html => $sec->{'html'} });
+	$c->render(json => { ok => 1, k => $k, n => $n, shares => \@codes, qr => $qr, html => $sec->{'html'} });
 };
 
 post '/manager/security/person_revoke' => sub($c) {
@@ -27539,6 +27540,7 @@ post '/manager/security/shares/wrap' => sub($c) {
 	}
 	my $made = &subs::house_key_share_create_set($suds, \@holders);
 	unless ($made) { $c->render(json => { ok => 0 }); return; }
+	my $qr = (@{ $made->{'paper'} || [] }) ? &subs::shamir_qr_save($made->{'paper'}, 'paper shares') : undef;
 	my $sec = &security_initializer($c);
 	$c->render(json => {
 		ok => 1,
@@ -27547,6 +27549,7 @@ post '/manager/security/shares/wrap' => sub($c) {
 		n => $made->{'n'},
 		assigned => $made->{'assigned'},
 		paper => $made->{'paper'},
+		qr => $qr,
 		skipped => $made->{'skipped'},
 		html => $sec->{'html'},
 	});

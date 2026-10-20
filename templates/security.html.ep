@@ -231,6 +231,8 @@
 		<div id="shares_display" style="display:none;margin-top:14px;">
 			<p><b>Write these down now — they will not be shown again.</b></p>
 			<pre id="shares_value" style="display:inline-block;text-align:left;font-family:monospace;font-size:13px;background-color:var(--panel);border:solid;border-radius:8px;padding:12px;white-space:pre-wrap;"></pre>
+			<div id="shares_qr" style="margin-top:10px;"></div>
+			<div id="shares_qr_dir" style="font-size:12px;color:#777;"></div>
 		</div>
 		<h3 style="margin-top:18px;"><%= &subs::lang('shares.device') %></h3>
 		<p style="max-width:640px;margin:0 auto;">
@@ -269,6 +271,8 @@
 			<p><b><%= &subs::ui('Write these down now — they will not be shown again.') %></b></p>
 			<pre id="shares_wrap_value" style="display:inline-block;text-align:left;font-family:monospace;font-size:13px;background-color:var(--panel);border:solid;border-radius:8px;padding:12px;white-space:pre-wrap;"></pre>
 			<div id="shares_wrap_assigned" style="font-size:13px;margin-top:6px;"></div>
+			<div id="shares_wrap_qr" style="margin-top:10px;"></div>
+			<div id="shares_wrap_qr_dir" style="font-size:12px;color:#777;"></div>
 		</div>
 		<h4 style="margin-top:18px;"><%= &subs::lang('shares.release') %></h4>
 		<p style="max-width:640px;margin:0 auto;">

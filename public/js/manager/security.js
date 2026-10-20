@@ -1,5 +1,23 @@
 
 
+// The paper-share QR images come back as data URIs and are also saved under
+// ~/.jawnos_paper_shares/<stamp>/ on this machine. The page shows them once.
+function jawnosShareQr(target, dirTarget, qr) {
+	var $t = $(target).empty();
+	var $d = $(dirTarget).empty();
+	if (!qr || !qr.images || !qr.images.length) { return; }
+	var share = (typeof jawnosT === 'function') ? jawnosT('Share') : 'Share';
+	qr.images.forEach(function (img) {
+		var box = $('<div>').css({ display: 'inline-block', textAlign: 'center', margin: '6px' });
+		$('<img>').attr({ src: img.data, alt: share + ' ' + img.index, title: share + ' ' + img.index })
+			.css({ width: '160px', height: '160px' }).appendTo(box);
+		$('<div>').text(share + ' ' + img.index).css({ fontSize: '12px' }).appendTo(box);
+		box.appendTo($t);
+	});
+	var saved = (typeof jawnosT === 'function') ? jawnosT('Saved in') : 'Saved in';
+	$d.text(saved + ' ' + qr.dir + (qr.missing ? ' (' + qr.missing + ' not made)' : ''));
+}
+
 $(document).on('click', '#security_toggle', function() {
 
 	var url = '/manager/security';
@@ -323,6 +341,7 @@ $(document).on('click', '#shares_create', function() {
 			appointment_chron();
 			$('#shares_display').show();
 			$('#shares_value').text((response.shares || []).join('\n'));
+			jawnosShareQr('#shares_qr', '#shares_qr_dir', response.qr);
 		},
 		error: function() {
 			$('#alert').html('Could not make the shares').show();
@@ -529,6 +548,7 @@ $(document).on('click', '.signatorial_selection', function() {
 						? 'Held by: ' + held.join(', ') + (paper.length ? '' : '. Every share is on a device — nothing to write down.')
 						: 'No device took a share.');
 					$('#shares_wrap_display p b').text(paper.length ? 'Write these down now — they will not be shown again.' : 'All shares are held by devices — nothing to write down.');
+					jawnosShareQr('#shares_wrap_qr', '#shares_wrap_qr_dir', r.qr);
 				},
 				error: function () {
 					button.prop('disabled', false);
