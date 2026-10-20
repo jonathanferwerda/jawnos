@@ -8358,7 +8358,8 @@ sub remote_manager_ticket($c, $rm) {
 		my $host = eval { Mojo::URL->new($rm->{'manager'})->host } || '';
 		my $url = $peer->{'manager'} . '/manager/qrcode_generator?nic=' . url_escape($host || 'lo')
 			. '&privilege=citizen&keep_warranty=1'
-			. '&warranty=' . url_escape('-12h') . '&name=' . url_escape($name) . '&timestamp=' . $timestamp;
+			. '&signatorial=' . url_escape(&subs::signatorial_designer())
+			. '&warranty=' . url_escape('-2h') . '&name=' . url_escape($name) . '&timestamp=' . $timestamp;
 		my $res = eval { $peer->{'ua'}->inactivity_timeout(15)->get($url)->result };
 		return '' unless $res && $res->is_success;
 		my $data = eval { decode_json $res->body } || {};
@@ -10373,11 +10374,22 @@ sub ticket_request_notify($c, $request, $info) {
 	&notification_sender({ app => 'box_office', role => 'citizen', title => 'Ticket Request', message => $who . ' asks for a ticket', image => $gb::known_appts->{'box_office'}->{'icon'} }, $database);
 }
 
+sub ticket_peer_signatorial($c) {
+	my $sig = $c->param('signatorial') || '';
+	return '' unless length $sig;
+	my $rm = &subs::db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0];
+	return '' unless $rm && $rm->{'pubkey'};
+	# Only a request that proves the pinned peer key may mint a peer ticket.
+	# peer_verify memoises, so ticket_desk_allowed's check already covers this.
+	return &subs::peer_verify($c, $rm) ? $sig : '';
+}
+
 get '/manager/qrcode_generator' => sub($c) {
 	unless (&ticket_desk_allowed($c)) {
 		$c->render(json => { error => 'denied' });
 		return;
 	}
+	my $peer_signatorial = &ticket_peer_signatorial($c);
 	my $timestamp = $c->param('timestamp');
 	my $app = &subs::unformat_name($c->param('app'));
 	my $name = &subs::unformat_name($c->param('name') || 'visitor');
@@ -10397,7 +10409,8 @@ get '/manager/qrcode_generator' => sub($c) {
 		nic => $nic,
 		warranty => $warranty,
 		# a ticket minted by the peer window must not move the desk's default
-		keep_warranty => $c->param('keep_warranty')
+		keep_warranty => $c->param('keep_warranty'),
+		peer_signatorial => $peer_signatorial,
 	});
 	&subs::db_insert('tickets', $data);
 	&subs::setting_setter({ app => 'box_office', setting => 'last_privilege', value => $privilege });
@@ -10416,6 +10429,7 @@ sub qrcode_generator($params) {
 	my $suds = $params->{'suds'};
 	my $warranty = $params->{'warranty'};
 	my $privilege = $params->{'privilege'};
+	my $peer_signatorial = $params->{'peer_signatorial'} || '';
 	my $db = $params->{'db'};
 	my $database = $params->{'database'};
 	my $sql = $params->{'sql'};
@@ -10493,6 +10507,7 @@ sub qrcode_generator($params) {
 		suds => $suds,
 		debriefer => $debriefer
 	};
+	$data->{'peer_signatorial'} = $peer_signatorial if length $peer_signatorial;
 	return $data;
 }
 
@@ -10887,6 +10902,18 @@ get '/box_office/:uuid' => sub($c) {
 			$c->session('server_time' => $server_time);
 			$c->session('warranty' => $ticket->{'warranty'});
 			$c->session('source' => 'ticket');
+			# A ticket minted by a linked machine over the signed peer rail is
+			# that peer's vouch for this browser: it may pass the app gate as
+			# the peer, so a headless machine needs no local app key. A ticket
+			# minted at a box office carries no peer_signatorial and stays local.
+			if (($ticket->{'peer_signatorial'} || '') ne '') {
+				$c->session('peer' => 1);
+				$c->session('peer_signatorial' => $ticket->{'peer_signatorial'});
+			}
+			else {
+				$c->session('peer' => undef);
+				$c->session('peer_signatorial' => undef);
+			}
 			$c->session('ticket_uuid' => $ticket->{'uuid'});
 			# the ticket admits a person, not just a link: the first login mints
 			# the person and writes it back, so the same ticket keeps them
@@ -33105,6 +33132,7 @@ sub update_database($data) {
 		)',
 		'create index if not exists idx1_people on people (uuid)',
 		'alter table tickets add column person_uuid VARCHAR(255)',
+		'alter table tickets add column peer_signatorial VARCHAR(255)',
 		'alter table paired_devices add column person_uuid VARCHAR(255)',
 		# A device can hold one wrapped Shamir share. The key is an X25519 key the
 		# device generates for this alone (its login key may be signing-only); the

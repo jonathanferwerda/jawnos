@@ -89,11 +89,16 @@ open-in-the-app page. Tunnels ride this rail: the peer dials
 `/manager/tunnel/ws` (a public route that verifies its own signature), and the
 forwarded HTTP calls carry the peer session or signature.
 
-A **browser opened through a tunnel is still a browser**. The tunnel is a raw
+A **raw browser opened through a tunnel is still a browser**. The tunnel is a raw
 TCP proxy, so the peer sees a local HTTPS connection with no app key and no peer
-signature and, under Enforce, answers it with the open-in-the-app page. Use the
-app on the peer (or its paired device) to read that peer's manager; the Dev
-panel's remote buttons and the peer rail itself are unaffected.
+signature and, under Enforce, answers it with the open-in-the-app page. The Dev
+panel's **Go** is the exception: it mints a ticket on the peer over the signed
+peer rail, the ticket records the minting house's `signatorial`
+(`tickets.peer_signatorial`), and the ticket login sets the session `peer=1`
+with that signatorial. `app_session_ok` then accepts it as that peer (visitor
+scope), so a headless peer needs no local app key and no person of its own. A
+ticket minted at a box office carries no `peer_signatorial` and is still
+answered by the app gate under Enforce.
 
 `jawnosctl` is a supervisor, not an installed app: it holds no app key. Its
 `status`/`start`/`stop` commands read `/manager/health`, which stays public, and
