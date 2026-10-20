@@ -16902,11 +16902,26 @@ sub peer_action_scope {
 		appointment_start => 'resident',
 		appointment_stop  => 'resident',
 		toggle            => 'resident',
+		# command runs a shell command, not an app toggle: a resident may switch
+		# things, but running a command is the higher tier.
+		command           => 'trusted',
 		remote_control    => 'trusted',
 		relay             => 'trusted',
 		backup            => 'trusted',
 	);
 	return $need{lc($action // '')};
+}
+
+# The action a manager movement names, so /manager/reset and the appointment
+# writer share one mapping. Anything unrecognized is an appointment write and
+# needs a resident; a command is the higher tier.
+sub peer_movement_action {
+	my ($type) = @_;
+	$type = lc($type // '');
+	return 'command' if $type eq 'command';
+	return 'toggle' if $type eq 'toggle' || $type eq 'switch';
+	return 'appointment_stop' if $type =~ /^(?:stop|cancel|pause|delay)$/;
+	return 'appointment_start';
 }
 
 sub peer_allows {

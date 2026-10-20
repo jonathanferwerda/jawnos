@@ -1956,6 +1956,10 @@ sub appointment_writer($c,$app) {
 
 post '/manager/appointment/writer' => sub ($c) {
 	my $parameters = $c->req->body_params->to_hash;
+	my $movement = $parameters->{'type'} || $parameters->{'movement'} || '';
+	unless (&peer_action_gate($c, &subs::peer_movement_action($movement))) {
+		return $c->rendered(403);
+	}
 	&appointment_writer($c,$parameters);
 	$c->render(json => $parameters);
 };
@@ -12760,7 +12764,30 @@ sub remote_relay_request($c, $extra_params = {}) {
 }
 
 
+# A peer's lease is enforced here: a signed peer call must carry the rung its
+# movement needs (start/stop and an app toggle are resident; a shell command is
+# trusted). A local session has no peer identity and is left to the session
+# gate. A peer session minted by sesh_check is not tied to a signatorial yet, so
+# it keeps its existing route-level gate until that is done.
+sub peer_action_gate {
+	my ($c, $action) = @_;
+	my $peer_key = $c->stash('peer_verified_key') || '';
+	if (!$peer_key) {
+		&app_peer_ok($c);
+		$peer_key = $c->stash('peer_verified_key') || '';
+	}
+	return 1 unless $peer_key;
+	my $rm = &subs::db_select('remote_machines', undef, { uuid => $peer_key })->hash
+		|| &subs::db_select('remote_machines', undef, { signatorial => $peer_key })->hash;
+	return 1 unless $rm;
+	my $need = &subs::peer_action_scope($action) || 'resident';
+	return &subs::peer_allows($c, $rm, $need) ? 1 : 0;
+}
+
 post '/manager/reset' => sub ($c) {
+	unless (&peer_action_gate($c, &subs::peer_movement_action($c->param('type')))) {
+		return $c->rendered(403);
+	}
 	my $content = &manager_reset($c);
 	$c->render(json => $content );
 
