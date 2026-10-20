@@ -905,9 +905,10 @@
 
 		function draw3D(t, sceneT, u) {
 			var key = SCENES[scene].key;
-			var ease = u * u * (3 - 2 * u);
-			var yaw = ease * Math.PI * 2;
-			var camX = u * 14;
+			// A gentle look left and right, twenty degrees each way. A full turn
+			// across the same eight seconds was far too fast to watch.
+			var yaw = Math.sin(u * Math.PI * 2) * (20 * Math.PI / 180);
+			var camX = u * 6;
 			var camY = 1.55 + Math.sin(u * Math.PI * 8) * 0.025;
 			var horizon = h * 0.5 + Math.sin(t * 0.9) * h * 0.012;
 			horizon = draw3DBackground(key, yaw, camX, t);

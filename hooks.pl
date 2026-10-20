@@ -107,6 +107,7 @@ hook before_dispatch => sub {
 			'/js/jquery-ui.js',
 			'/js/jquery.ui.touch-punch.min.js',
 			'/js/universal.js',
+			'/js/screensaver.js',
 			'/js/homepage.js',
 			'/js/jquery.js',
 			'/js/numeral.min.js',
@@ -211,6 +212,7 @@ hook before_dispatch => sub {
 		$path eq '/js/jquery.js' ||
 		$path eq '/js/numeral.min.js' ||
 		$path eq '/js/universal.js' ||
+		$path eq '/js/screensaver.js' ||
 		$path eq '/manifest.json' ||
 		# the service worker script is fetched with no session cookie (the
 		# register fetch is not a document request), so gating it would answer
