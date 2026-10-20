@@ -10090,6 +10090,10 @@ post '/manager/configure/pseudonym_icon_changer' => sub ($c) {
 # yet completed a signed exchange must not reach it before its key is on file.
 sub ticket_desk_allowed($c) {
 	return 1 if $c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen';
+	# The Dev panel's Go rides a stored peer session (resident, not citizen). That
+	# session already passed the peer gate; let it mint the ticket, and the
+	# signatorial below is what makes the ticket a vouch.
+	return 1 if ($c->session('peer') || '') eq '1';
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
@@ -10375,6 +10379,13 @@ sub ticket_request_notify($c, $request, $info) {
 }
 
 sub ticket_peer_signatorial($c) {
+	# The remote Go normally rides the stored peer session (a cookie) rather than
+	# a fresh signature. That session already passed the peer gate; its
+	# signatorial is the vouch. A freshly signed request is the fallback.
+	if (($c->session('peer') || '') eq '1') {
+		my $ssig = $c->session('peer_signatorial') || '';
+		return $ssig if length $ssig;
+	}
 	my $sig = $c->param('signatorial') || '';
 	return '' unless length $sig;
 	my $rm = &subs::db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0];
