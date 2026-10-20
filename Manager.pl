@@ -26629,7 +26629,11 @@ sub security_initializer($c) {
 	# roster (approved on a peer) are settled, the rest wait with their code
 	my $now = &subs::rightNow();
 	&subs::db_query('delete from device_requests where status != ? and server_time < ?', 'pending', $now - 86400000);
-	&subs::db_query('delete from device_requests where status = ? and server_time < ?', 'pending', $now - 600000);
+	# A request is a person's to answer on another machine, and the mesh may only
+	# carry it on the next pull. Ten minutes was shorter than the sync itself in
+	# one case (the table's key request expired before the phone saw it), so the
+	# approval window is an hour.
+	&subs::db_query('delete from device_requests where status = ? and server_time < ?', 'pending', $now - 3600000);
 	my $requests = &subs::db_select('device_requests', undef, { status => 'pending' })->hashes || [];
 	foreach my $r ( @{$requests} ) {
 		my $paired = &subs::db_select('paired_devices', undef, { pubkey => $r->{'pubkey'}, status => 'active' })->hashes->[0];
@@ -26879,6 +26883,12 @@ get '/manager/device/app_status' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device;
 	my ($pubkey, $kind) = &app_key_for($device);
 	my $pending = &subs::db_select('device_requests', undef, { device_uuid => $device_uuid, kind => 'app', status => 'pending' })->hashes->[0];
+	if ($pending && ($pending->{'server_time'} || 0) < &subs::rightNow() - 3600000) {
+		# Too old for a person to still be looking at it. Expire it here so the
+		# app-required page asks again instead of waiting on a dead request.
+		&subs::db_update('device_requests', { status => 'expired', server_time => &subs::rightNow() }, { uuid => $pending->{'uuid'} });
+		$pending = undef;
+	}
 	$c->render(json => {
 		ok => 1,
 		device => $device_uuid,
@@ -27045,7 +27055,7 @@ post '/manager/device/request' => sub($c) {
 	my ($db) = &subs::database_grabber();
 	unless ($db) { $c->render(json => { ok => 0, error => 'no database' }); return; }
 	my $now = &subs::rightNow();
-	&subs::db_query('delete from device_requests where status = ? and server_time < ?', 'pending', $now - 600000);
+	&subs::db_query('delete from device_requests where status = ? and server_time < ?', 'pending', $now - 3600000);
 	my $open = &subs::db_select('device_requests', undef, { pubkey => $pem, status => 'pending' })->hashes->[0];
 	if ($open) { $c->render(json => { ok => 1, uuid => $open->{'uuid'}, code => $open->{'code'} }); return; }
 	# the door's throttle: ten asks per address per hour, five waiting at once
@@ -27111,7 +27121,7 @@ post '/manager/security/device_request_decide' => sub($c) {
 	my $decision = ($c->param('decision') || '') eq 'approve' ? 'approve' : 'deny';
 	my $now = &subs::rightNow();
 	my $row = ($uuid && &subs::db_select('device_requests', undef, { uuid => $uuid, status => 'pending' })->hashes->[0]);
-	if ($row && $row->{'server_time'} > $now - 600000) {
+	if ($row && $row->{'server_time'} > $now - 3600000) {
 		# A synced copy may reach an approving machine before the new columns do:
 		# the request's own app_pubkey is enough to recognise an app request even
 		# when `kind` is still blank there. Without this, the old pairing branch
@@ -33436,7 +33446,16 @@ get '/manager/remote_auth_test' => sub($c) {
 				# is how many of our appointments sit above it, so the caller can tell
 				# whether it is behind (and by how much) without pulling the export,
 				# and can check the two machines' pictures against each other.
-				my $pending = &subs::appointments_since($c->param('since'));
+				my $pending = &subs::appointments_since($c->param('since')) || { count => 0, max_server_time => 0 };
+				# A pending device request must also make the hub pull this machine.
+				# The table is a leaf and has no new appointment when its app asks for
+				# a key, so the digest alone left the request waiting for the next
+				# scheduled pass (and it nearly expired first).
+				my $dr_pending = &subs::db_query('select count(*) as n from device_requests where status = ? and kind = ?', 'pending', 'app')->hash->{'n'} || 0;
+				if ($dr_pending) {
+					$pending->{'count'} = ($pending->{'count'} || 0) + $dr_pending;
+					$pending->{'device_requests'} = $dr_pending;
+				}
 				# Everything deleted here above the caller's confirmed cursor; the
 				# caller applies these and reports its new cursor on the next request.
 				my $reader_cursor = $c->param('tombstone_cursor');
