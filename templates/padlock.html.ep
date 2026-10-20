@@ -8,6 +8,16 @@
 <% my $show_phone_key = defined $c->stash('phone_key') ? $c->stash('phone_key') : 1; %>
 <% my $show_biometric = (&subs::device_setter() eq 'mobile' && (defined $c->stash('biometric_button') ? $c->stash('biometric_button') : 1)) ? 1 : 0; %>
 <% my $logo = &subs::setting_grabber({ app => 'me', setting => 'logo' }) || '/images/jbuttons/logo1.png'; %>
+<%# How long a padlock living in Manager waits before its screensaver starts.
+    The lock screen keeps its own fifteen seconds; this covers the in-app
+    padlocks (music, folders, gallery). A bare number is minutes, so "3" is
+    three minutes (see subs::time_abbrev_translator). %>
+<% my $manager_screensaver_delay = 120000; %>
+<% my $manager_screensaver_setting = &subs::setting_grabber({ app => 'misc', setting => 'screensaver_timeout' }); %>
+<% if (defined $manager_screensaver_setting && !ref($manager_screensaver_setting) && $manager_screensaver_setting =~ /[0-9]/) { %>
+<%   my $translated = eval { &subs::time_abbrev_translator($manager_screensaver_setting, &subs::rightNow()) }; %>
+<%   $manager_screensaver_delay = int($translated) if defined $translated && $translated =~ /^[0-9]+$/ && $translated > 0; %>
+<% } %>
 <div class="padlock_frame" mode="<%= $frame_mode %>" target="<%= $frame_target %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
 	<h1 id="padlock_taunts"></h1>
 	<% my $scope = $frame_target ? 'This screen is locked.' : 'The house is locked.'; %>
@@ -160,6 +170,32 @@
 		var timer = null, raf = null, active = false, started = 0, last = 0;
 		var blobs = [];
 		var logoEvent = null, nextLogoAt = 0;
+		// The lock screen shows its screensaver quickly; a padlock inside Manager
+		// waits the delay set under Configure -> Misc.
+		var LOCK_DELAY = 15000;
+		var MANAGER_DELAY = <%= $manager_screensaver_delay %>;
+		function lockedContext() {
+			return !!(frame.closest('#locked_screen') || frame.closest('#padlock_frame'));
+		}
+		function delay() {
+			return lockedContext() ? LOCK_DELAY : MANAGER_DELAY;
+		}
+		// A frame inside a hidden window (music's lock tab before it is opened,
+		// say) has no boxes; the screensaver must not run there. The music app
+		// was covering the video with it while the padlock was not even shown.
+		function frameShown() {
+			return !!(frame.offsetWidth || frame.offsetHeight || frame.getClientRects().length);
+		}
+		function videoPlaying() {
+			var vids = document.querySelectorAll('video');
+			for (var i = 0; i < vids.length; i++) {
+				var v = vids[i];
+				if (v.paused || v.ended) { continue; }
+				if (!(v.offsetWidth || v.offsetHeight || v.getClientRects().length)) { continue; }
+				return true;
+			}
+			return false;
+		}
 
 		function resize() {
 			canvas.width = Math.max(1, window.innerWidth);
@@ -227,7 +263,7 @@
 		}
 		function draw(now) {
 			if (!active) { return; }
-			if (!document.body.contains(frame)) { active = false; return; }
+			if (!document.body.contains(frame) || !frameShown() || videoPlaying()) { hide(); return; }
 			raf = requestAnimationFrame(draw);
 			if (now - last < 33) { return; }
 			last = now;
@@ -262,7 +298,7 @@
 		}
 		function show() {
 			if (active) { return; }
-			if (!document.body.contains(frame)) { return; }
+			if (!document.body.contains(frame) || !frameShown() || videoPlaying()) { return; }
 			active = true;
 			// The layer is inside .padlock_frame, which is transformed; a fixed
 			// child of a transformed box is sized to that box, not the window.
@@ -287,20 +323,42 @@
 			active = false;
 			layer.style.display = 'none';
 			if (raf) { cancelAnimationFrame(raf); raf = null; }
-			restart();
 		}
 		function restart() {
 			if (timer) { clearTimeout(timer); }
-			timer = setTimeout(show, 15000);
+			timer = null;
+			// Hidden padlock frames and playing videos do not get a countdown;
+			// watch() starts one when it is allowed again.
+			if (!frameShown() || videoPlaying()) { return; }
+			timer = setTimeout(show, delay());
 		}
 		['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) {
 			document.addEventListener(ev, function () {
 				if (active) { hide(); }
-				else { restart(); }
+				restart();
 			}, { passive: true });
 		});
 		window.addEventListener('resize', function () { if (active) { resize(); } });
-		restart();
+		// Watch the frame's visibility and any video: a padlock that just appeared
+		// (or a video that just ended) starts the countdown from that moment, while
+		// hiding it or playing a video stops the countdown and takes the layer down.
+		var shownBefore = null, videoBefore = null;
+		function watch() {
+			var shown = frameShown();
+			var playing = videoPlaying();
+			if (active && (!shown || playing)) { hide(); }
+			if (shown && !playing) {
+				if (shownBefore !== true || videoBefore === true) { restart(); }
+			}
+			else if (timer) {
+				clearTimeout(timer);
+				timer = null;
+			}
+			shownBefore = shown;
+			videoBefore = playing;
+		}
+		setInterval(watch, 500);
+		watch();
 	})();
 	</script>
 

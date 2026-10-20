@@ -180,6 +180,7 @@ our %catalog = (
 		'configure.language' => 'Language',
 		'configure.language_note' => 'Choose the language for the interface. English is the default. The change applies everywhere after the page reloads.',
 		'configure.language_install_note' => 'Choose the language for the interface. You can change it later in Configure -> Misc.',
+		'configure.screensaver_timeout' => 'Screensaver in Manager',
 	},
 	zh => {
 		'common.close' => '关闭',
@@ -286,6 +287,7 @@ our %catalog = (
 		'configure.language' => '语言',
 		'configure.language_note' => '选择界面语言。默认是英语。页面重新加载后更改将在所有地方生效。',
 		'configure.language_install_note' => '选择界面语言。您稍后可以在“配置 -> 杂项”中更改。',
+		'configure.screensaver_timeout' => '管理器中的屏幕保护程序',
 	},
 	fr => {
 		'common.close' => 'Fermer',
@@ -392,6 +394,7 @@ our %catalog = (
 		'configure.language' => 'Langue',
 		'configure.language_note' => 'Choisissez la langue de l\'interface. L\'anglais est la langue par défaut. Le changement s\'applique partout après le rechargement de la page.',
 		'configure.language_install_note' => 'Choisissez la langue de l\'interface. Vous pourrez la modifier plus tard dans Configurer -> Divers.',
+		'configure.screensaver_timeout' => 'Économiseur d\'écran dans le gestionnaire',
 	},
 	es => {
 		'common.close' => 'Cerrar',
@@ -498,6 +501,7 @@ our %catalog = (
 		'configure.language' => 'Idioma',
 		'configure.language_note' => 'Elija el idioma de la interfaz. El inglés es el predeterminado. El cambio se aplica en todas partes al recargar la página.',
 		'configure.language_install_note' => 'Elija el idioma de la interfaz. Puede cambiarlo más tarde en Configurar -> Varios.',
+		'configure.screensaver_timeout' => 'Salvapantallas en el gestor',
 	},
 	de => {
 		'common.close' => 'Schließen',
@@ -604,6 +608,7 @@ our %catalog = (
 		'configure.language' => 'Sprache',
 		'configure.language_note' => 'Wählen Sie die Sprache der Oberfläche. Englisch ist die Standardsprache. Die Änderung gilt überall nach dem Neuladen der Seite.',
 		'configure.language_install_note' => 'Wählen Sie die Sprache der Oberfläche. Sie können sie später unter Einstellungen -> Sonstiges ändern.',
+		'configure.screensaver_timeout' => 'Bildschirmschoner im Manager',
 	},
 	pt => {
 		'common.close' => 'Fechar',
@@ -710,6 +715,7 @@ our %catalog = (
 		'configure.language' => 'Idioma',
 		'configure.language_note' => 'Escolha o idioma da interface. O inglês é o predefinido. A alteração aplica-se em todo o lado após recarregar a página.',
 		'configure.language_install_note' => 'Escolha o idioma da interface. Pode alterá-lo mais tarde em Configurar -> Diversos.',
+		'configure.screensaver_timeout' => 'Proteção de ecrã no gestor',
 	},
 	hi => {
 		'common.close' => 'बंद करें',
@@ -803,6 +809,7 @@ our %catalog = (
 		'configure.language' => 'भाषा',
 		'configure.language_note' => 'इंटरफ़ेस की भाषा चुनें। डिफ़ॉल्ट अंग्रेज़ी है। पृष्ठ पुनः लोड होने पर परिवर्तन सभी जगह लागू होगा।',
 		'configure.language_install_note' => 'इंटरफ़ेस की भाषा चुनें। आप इसे बाद में कॉन्फ़िगर -> विविध में बदल सकते हैं।',
+		'configure.screensaver_timeout' => 'मैनेजर में स्क्रीनसेवर',
 	},
 	ar => {
 		'common.close' => 'إغلاق',
@@ -896,6 +903,7 @@ our %catalog = (
 		'configure.language' => 'اللغة',
 		'configure.language_note' => 'اختر لغة الواجهة. الإنجليزية هي الافتراضية. يسري التغيير في كل مكان بعد إعادة تحميل الصفحة.',
 		'configure.language_install_note' => 'اختر لغة الواجهة. يمكنك تغييرها لاحقًا في إعدادات -> متفرقات.',
+		'configure.screensaver_timeout' => 'شاشة التوقف في المدير',
 	},
 	bn => {
 		'common.close' => 'বন্ধ করুন',
@@ -989,6 +997,7 @@ our %catalog = (
 		'configure.language' => 'ভাষা',
 		'configure.language_note' => 'ইন্টারফেসের ভাষা বেছে নিন। ডিফল্ট ইংরেজি। পৃষ্ঠা পুনরায় লোড হলে পরিবর্তন সব জায়গায় প্রযোজ্য হবে।',
 		'configure.language_install_note' => 'ইন্টারফেসের ভাষা বেছে নিন। পরে কনফিগার -> বিবিধ-এ পরিবর্তন করতে পারেন।',
+		'configure.screensaver_timeout' => 'ম্যানেজারে স্ক্রিনসেভার',
 	},
 	ru => {
 		'common.close' => 'Закрыть',
@@ -1082,6 +1091,7 @@ our %catalog = (
 		'configure.language' => 'Язык',
 		'configure.language_note' => 'Выберите язык интерфейса. По умолчанию английский. Изменение применяется везде после перезагрузки страницы.',
 		'configure.language_install_note' => 'Выберите язык интерфейса. Позже его можно изменить в Настройки -> Разное.',
+		'configure.screensaver_timeout' => 'Хранитель экрана в менеджере',
 	},
 	ja => {
 		'common.close' => '閉じる',
@@ -1175,6 +1185,7 @@ our %catalog = (
 		'configure.language' => '言語',
 		'configure.language_note' => 'インターフェースの言語を選択してください。既定は英語です。ページを再読み込みするとすべてに適用されます。',
 		'configure.language_install_note' => 'インターフェースの言語を選択してください。後で「設定 -> その他」で変更できます。',
+		'configure.screensaver_timeout' => 'マネージャーのスクリーンセーバー',
 	},
 	pa => {
 		'common.close' => 'ਬੰਦ ਕਰੋ',
@@ -1268,6 +1279,7 @@ our %catalog = (
 		'configure.language' => 'ਭਾਸ਼ਾ',
 		'configure.language_note' => 'ਇੰਟਰਫ਼ੇਸ ਦੀ ਭਾਸ਼ਾ ਚੁਣੋ। ਡਿਫ਼ਾਲਟ ਅੰਗਰੇਜ਼ੀ ਹੈ। ਪੰਨਾ ਮੁੜ ਲੋਡ ਹੋਣ ’ਤੇ ਤਬਦੀਲੀ ਹਰ ਜਗ੍ਹਾ ਲਾਗੂ ਹੁੰਦੀ ਹੈ।',
 		'configure.language_install_note' => 'ਇੰਟਰਫ਼ੇਸ ਦੀ ਭਾਸ਼ਾ ਚੁਣੋ। ਤੁਸੀਂ ਇਸਨੂੰ ਬਾਅਦ ਵਿੱਚ ਕਨਫਿਗਰ -> ਵਿਵਿਧ ਵਿੱਚ ਬਦਲ ਸਕਦੇ ਹੋ।',
+		'configure.screensaver_timeout' => 'ਮੈਨੇਜਰ ਵਿੱਚ ਸਕ੍ਰੀਨਸੇਵਰ',
 	},
 	id => {
 		'common.close' => 'Tutup',
@@ -1361,6 +1373,7 @@ our %catalog = (
 		'configure.language' => 'Bahasa',
 		'configure.language_note' => 'Pilih bahasa antarmuka. Bahasa Inggris adalah bawaan. Perubahan berlaku di mana-mana setelah halaman dimuat ulang.',
 		'configure.language_install_note' => 'Pilih bahasa antarmuka. Anda dapat mengubahnya nanti di Konfigurasi -> Lain-lain.',
+		'configure.screensaver_timeout' => 'Pengaman layar di Manajer',
 	},
 	ko => {
 		'common.close' => '닫기',
@@ -1454,6 +1467,7 @@ our %catalog = (
 		'configure.language' => '언어',
 		'configure.language_note' => '인터페이스 언어를 선택하십시오. 기본값은 영어입니다. 페이지를 새로 고치면 모든 곳에 적용됩니다.',
 		'configure.language_install_note' => '인터페이스 언어를 선택하십시오. 나중에 설정 -> 기타에서 변경할 수 있습니다.',
+		'configure.screensaver_timeout' => '관리자의 화면 보호기',
 	},
 	it => {
 		'common.close' => 'Chiudi',
@@ -1547,6 +1561,7 @@ our %catalog = (
 		'configure.language' => 'Lingua',
 		'configure.language_note' => 'Scegli la lingua dell\'interfaccia. L\'inglese è predefinito. La modifica si applica ovunque dopo il ricaricamento della pagina.',
 		'configure.language_install_note' => 'Scegli la lingua dell\'interfaccia. Puoi cambiarla in seguito in Configura -> Varie.',
+		'configure.screensaver_timeout' => 'Salvaschermo nel gestore',
 	},
 	tr => {
 		'common.close' => 'Kapat',
@@ -1640,6 +1655,7 @@ our %catalog = (
 		'configure.language' => 'Dil',
 		'configure.language_note' => 'Arayüz dilini seçin. Varsayılan İngilizcedir. Sayfa yenilendikten sonra değişiklik her yerde geçerli olur.',
 		'configure.language_install_note' => 'Arayüz dilini seçin. Daha sonra Yapılandır -> Diğer bölümünde değiştirebilirsiniz.',
+		'configure.screensaver_timeout' => 'Yöneticide ekran koruyucu',
 	},
 );
 

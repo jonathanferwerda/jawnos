@@ -56,6 +56,46 @@ _SKYLAKE_IDS = frozenset({
 })
 
 
+# Report whether the page is playing audio or video. WebKit's
+# is-playing-audio only covers sound, so a muted video (or one with a silent
+# track) left the desktop's own power manager to blank the display while it
+# played. The page posts this to the same `jawnos` handler the key bridge uses;
+# _on_message reconciles it with WebKit's own audio flag.
+_MEDIA_MONITOR_JS = """
+(function () {
+    var last = '';
+    function mediaState() {
+        var audio = false, video = false;
+        var els = document.querySelectorAll('audio,video');
+        for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el.paused || el.ended) { continue; }
+            if (el.tagName.toLowerCase() === 'video') { video = true; }
+            else { audio = true; }
+        }
+        return { audio: audio, video: video };
+    }
+    function report() {
+        var s = mediaState();
+        var key = (s.audio ? 'a' : '') + (s.video ? 'v' : '');
+        if (key === last) { return; }
+        last = key;
+        try {
+            window.webkit.messageHandlers.jawnos.postMessage(JSON.stringify({
+                action: 'media_state', audio: s.audio, video: s.video
+            }));
+        } catch (e) {}
+    }
+    setInterval(report, 2000);
+    ['play', 'playing', 'pause', 'ended', 'emptied'].forEach(function (ev) {
+        document.addEventListener(ev, report, true);
+    });
+    window.addEventListener('load', report);
+    report();
+})();
+"""
+
+
 def _is_skylake_x11():
     """True on an X11 session whose display is an Intel Skylake GPU.
 
@@ -313,6 +353,10 @@ class WebViewPanel(Gtk.Box):
         self.on_admin = None
         # Holds the screensaver off while this view is playing media.
         self._inhibitor = keepawake.ScreensaverInhibitor()
+        # Media state from the page's own monitor and from WebKit's audio
+        # property; either one holds the screen awake.
+        self._js_media = {}
+        self._webkit_audio = False
         self.connect("destroy", lambda *_: self._inhibitor.uninhibit())
 
         self.view = WebKit2.WebView.new_with_context(_context_get())
@@ -462,6 +506,13 @@ class WebViewPanel(Gtk.Box):
                 WebKit2.UserScriptInjectionTime.START,
                 None, None,
             ))
+            # Tell the app when a video plays, not only when it makes sound.
+            content.add_script(WebKit2.UserScript.new(
+                _MEDIA_MONITOR_JS,
+                WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.END,
+                None, None,
+            ))
         except Exception:
             pass
         view.connect("load-changed", self._on_load_changed)
@@ -479,10 +530,15 @@ class WebViewPanel(Gtk.Box):
 
     def _on_playing_audio(self, view, _param):
         try:
-            playing = bool(view.get_property("is-playing-audio"))
+            self._webkit_audio = bool(view.get_property("is-playing-audio"))
         except Exception:
-            playing = False
-        if playing:
+            self._webkit_audio = False
+        self._reconcile_inhibitor()
+
+    def _reconcile_inhibitor(self):
+        """Hold the screen awake while either the page or WebKit says media plays."""
+        media = self._js_media or {}
+        if self._webkit_audio or media.get("audio") or media.get("video"):
             self._inhibitor.inhibit("media playing")
         else:
             self._inhibitor.uninhibit()
@@ -558,7 +614,7 @@ class WebViewPanel(Gtk.Box):
         if not isinstance(message, dict):
             return False
         action = message.get("action")
-        if action not in ("app_pubkey", "app_sign"):
+        if action not in ("app_pubkey", "app_sign", "media_state"):
             return False
         # Only answer our own origin. A link opened in this view (the public
         # homepage) must not be able to borrow the app's key.
@@ -567,6 +623,13 @@ class WebViewPanel(Gtk.Box):
         except ValueError:
             host = ""
         if host not in (self._manager_host, "127.0.0.1", "localhost", "::1"):
+            return False
+        if action == "media_state":
+            self._js_media = {
+                "audio": bool(message.get("audio")),
+                "video": bool(message.get("video")),
+            }
+            self._reconcile_inhibitor()
             return False
         msg_id = message.get("id") or ""
         try:

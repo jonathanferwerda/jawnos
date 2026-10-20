@@ -2,12 +2,15 @@
 
 Cross-desktop: it tries the freedesktop ``org.freedesktop.ScreenSaver`` interface
 first (Xfce, GNOME, KDE, Cinnamon, MATE all provide it), then GNOME's
-``org.gnome.SessionManager`` as a fallback. When neither is present it quietly
-no-ops, so a bare session never breaks the app.
+``org.gnome.SessionManager``, then the power manager's own ``Inhibit`` interface
+and systemd-logind's idle block. When none is present it quietly no-ops, so a
+bare session never breaks the app.
 
 Like the WebKit env overrides, this is kept apart from the UI so it can be
 reasoned about (and tested) on its own.
 """
+
+import os
 
 import gi
 
@@ -21,13 +24,14 @@ _GNOME_IDLE = 8
 class ScreensaverInhibitor:
     """Holds the session's idle inhibitors; inhibit/uninhibit are idempotent.
 
-    Two independent mechanisms keep a desktop from going idle, and a session may
-    provide either, both, or (rarely) neither:
+    Four independent mechanisms keep a desktop from going idle, and a session may
+    provide one, some, or (rarely) none:
 
     * the screensaver/locker -- ``org.freedesktop.ScreenSaver`` (Xfce, MATE,
-      Cinnamon, KDE, ...) or GNOME's ``org.gnome.SessionManager``; and
-    * the power manager that blanks the display on idle --
-      ``org.freedesktop.PowerManagement`` (e.g. xfce4-power-manager).
+      Cinnamon, KDE, ...) or GNOME's ``org.gnome.SessionManager``;
+    * the power manager's own ``org.freedesktop.PowerManagement.Inhibit`` object
+      (e.g. xfce4-power-manager), which is what blanks the display on idle; and
+    * systemd-logind's ``Inhibit('idle', ...)``, honoured by every major desktop.
 
     Inhibiting only the screensaver left the screen blanking anyway on Xfce, so
     every interface that answers is taken; all of them are released together.
@@ -69,19 +73,45 @@ class ScreensaverInhibitor:
                 break
             except Exception:
                 continue
-        # The power manager, which is what actually blanks the display on idle.
-        # Additive to the screensaver inhibit above.
+        # The power manager's own inhibitor. The freedesktop spec puts it on a
+        # child object, not the core interface: asking the core object (as this
+        # did before) raised UnknownMethod and left Xfce blanking the display
+        # exactly as the person described.
         try:
             service = "org.freedesktop.PowerManagement"
-            path = "/org/freedesktop/PowerManagement"
-            cookie = self._call(service, path, service, "Inhibit",
-                                GLib.Variant("(s)", (reason,))).unpack()[0]
-            self._held.append((service, path, service, "UnInhibit", cookie))
+            path = "/org/freedesktop/PowerManagement/Inhibit"
+            interface = "org.freedesktop.PowerManagement.Inhibit"
+            cookie = self._call(service, path, interface, "Inhibit",
+                                GLib.Variant("(ss)", (self.app, reason))).unpack()[0]
+            self._held.append((service, path, interface, "UnInhibit", cookie))
+        except Exception:
+            pass
+        # systemd-logind's idle block is the portable last line: every major
+        # desktop's power manager honours it, including Xfce's. Inhibit returns a
+        # file descriptor that must stay open for the block to last.
+        try:
+            reply = self._call("org.freedesktop.login1", "/org/freedesktop/login1",
+                               "org.freedesktop.login1.Manager", "Inhibit",
+                               GLib.Variant("(ssss)", ("idle", self.app, reason, "block")))
+            fd = reply.unpack()[0]
+            # PyGObject normally unpacks a handle as an int; older builds hand
+            # back the GLib.Variant itself.
+            if hasattr(fd, "get_handle"):
+                fd = fd.get_handle()
+            fd = int(fd)
+            if fd >= 0:
+                self._held.append(("logind", fd, None, None, None))
         except Exception:
             pass
 
     def uninhibit(self):
         for service, path, interface, unmethod, cookie in self._held:
+            if service == "logind":
+                try:
+                    os.close(cookie)
+                except OSError:
+                    pass
+                continue
             try:
                 self._call(service, path, interface, unmethod, GLib.Variant("(u)", (cookie,)))
             except Exception:

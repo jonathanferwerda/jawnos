@@ -119,6 +119,15 @@
 		<input type="range" class="misc_setting" setting="ui_zoom" device="<%= $dev %>" min="20" max="200" step="10" value="<%= &subs::misc_setting('ui_zoom') || 100 %>" oninput="jawnosZoomApply(this.value); document.getElementById('ui_zoom_value').textContent = this.value;">
 	</div>
 	<div class="cfg-row">
+		<label><b><%= &subs::lang('configure.screensaver_timeout') %></b></label>
+		<%# a bare number is minutes, so "3" is three minutes; the lock screen keeps
+		    its own fifteen seconds and a playing video keeps the screensaver away %>
+		<input type="text" class="misc_setting" setting="screensaver_timeout" device="<%= $dev %>"
+			value="<%= &subs::setting_grabber({ app => 'misc', setting => 'screensaver_timeout', device => $dev }) || '' %>"
+			placeholder="2m">
+	</div>
+	<p class="cfg-note"><%= &subs::ui('How long the manager waits before its screensaver starts. Type a number of minutes (3 is three minutes), or a length such as 30s or 3m. Leave it blank for two minutes. The lock screen still shows its screensaver after fifteen seconds, and a playing video keeps it away.') %></p>
+	<div class="cfg-row">
 		<label><b>Font</b></label>
 		<select class="misc_setting" setting="title_font" device="<%= $dev %>">
 			<% my $current_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font', device => $dev }) || ''; %>
