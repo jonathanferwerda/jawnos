@@ -510,9 +510,34 @@ document.addEventListener('visibilitychange', function() {
 function jawnDeviceUuid() {
 	var uuid = '';
 	try { uuid = localStorage.getItem('device_uuid') || ''; } catch (e) { uuid = ''; }
+	// The Android app mirrors the id in SharedPreferences so the view can move
+	// to 127.0.0.1 (a different origin) without looking like an unpaired
+	// browser. A browser has no JawnAppStorage and is unchanged.
+	if (!uuid && window.JawnAppStorage) {
+		try { uuid = window.JawnAppStorage.get('device_uuid') || ''; } catch (e) { uuid = ''; }
+	}
 	if (!uuid && window.jawnLockedDevice) { uuid = window.jawnLockedDevice; }
 	return uuid;
 }
+
+// Keep the per-origin value and the app's mirror in step.
+function jawnDeviceUuidSave(uuid) {
+	uuid = uuid || '';
+	try { localStorage.setItem('device_uuid', uuid); } catch (e) {}
+	if (uuid && window.JawnAppStorage) {
+		try { window.JawnAppStorage.set('device_uuid', uuid); } catch (e) {}
+	}
+}
+// First load on the app's old origin: mirror what localStorage already holds,
+// so the next origin can restore it.
+(function () {
+	try {
+		var u = localStorage.getItem('device_uuid') || '';
+		if (u && window.JawnAppStorage && !window.JawnAppStorage.get('device_uuid')) {
+			window.JawnAppStorage.set('device_uuid', u);
+		}
+	} catch (e) {}
+})();
 
 // ---- app-only access ---------------------------------------------------------
 // The private manager needs a proof from a key the browser cannot hold: the
@@ -641,7 +666,7 @@ $(document).on('click', '.padlock_ask_phone', function () {
 	var button = $(this);
 	var frame = button.closest('.padlock_frame');
 	var mode = frame.attr('mode') || 'locker';
-	var target = frame.attr('target') || localStorage.getItem('device_uuid') || '';
+	var target = frame.attr('target') || jawnDeviceUuid() || '';
 	padlockAskPhone(mode, target);
 	button.text('Sent.');
 });
@@ -691,7 +716,7 @@ function jawnPadlockKeyCheck(force) {
 		// uuid (a webview wake, or a ticket that signed in without one). Keep the
 		// two in step so every later sign/open request names the same device.
 		if (s.device && /^[A-Za-z0-9]{8,64}$/.test(s.device)) {
-			try { localStorage.setItem('device_uuid', s.device); } catch (e) {}
+			jawnDeviceUuidSave(s.device);
 			window.jawnLockedDevice = s.device;
 		}
 		// the lock overlay may be shared HTML; this device's own enrollment is
@@ -1373,7 +1398,7 @@ function jawnosBiometricKeyCall(method, args) {
 function jawnosBiometricEnroll(status, proof) {
 	status = status || function () {};
 	proof = proof || {};
-	var uuid = localStorage.getItem('device_uuid') || '';
+	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
 	status('Waiting for authentication...');
@@ -1406,7 +1431,7 @@ function jawnosBiometricEnroll(status, proof) {
 // it, so a new fingerprint cannot be set without passing the old one.
 function jawnosBiometricVerify(status) {
 	status = status || function () {};
-	var uuid = localStorage.getItem('device_uuid') || '';
+	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
 	status('Confirm it is you...');
