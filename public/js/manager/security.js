@@ -269,6 +269,27 @@ $(document).on('click', '#recovery_create', function() {
 	});
 });
 
+$(document).on('click', '#shares_create', function() {
+	$.ajax({
+		url: '/manager/security/shares/create',
+		type: 'POST',
+		data: { security_view: 'recovery' },
+		success: function(response) {
+			if (!response || !response.ok || !response.shares) {
+				$('#alert').html('Could not make the shares').show();
+				return;
+			}
+			$('#security').replaceWith(response.html);
+			appointment_chron();
+			$('#shares_display').show();
+			$('#shares_value').text((response.shares || []).join('\n'));
+		},
+		error: function() {
+			$('#alert').html('Could not make the shares').show();
+		}
+	});
+});
+
 $(document).on('click', '.device_request_decide', function() {
 	var row = $(this).closest('.device_request');
 	var uuid = row.attr('uuid');

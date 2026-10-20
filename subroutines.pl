@@ -16729,6 +16729,45 @@ sub shamir_share_decode {
 	return { x => unpack('C', substr($raw, 0, 1)), y => substr($raw, 1) };
 }
 
+# The threshold this house uses. The policy is not secret (3:5), so it sits in
+# settings and syncs with everything else; the shares themselves never do.
+sub shamir_policy {
+	my $raw = eval { &setting_grabber({ app => '__president', setting => 'shamir' }) };
+	if (defined $raw && $raw =~ /^(\d+):(\d+)$/) {
+		my ($k, $n) = ($1, $2);
+		return ($k, $n) if $k >= 2 && $k <= $n && $n <= 255;
+	}
+	return (3, 5);
+}
+
+# The recovery door's share path: decode whatever codes were pasted, require at
+# least k, and hand back the combined secret. The caller still checks the
+# canary; a wrong or partial set yields a string it refuses.
+sub shamir_open_shares {
+	my ($codes) = @_;
+	return undef unless $codes && ref $codes eq 'ARRAY';
+	my ($k) = &shamir_policy();
+	my @decoded = grep { defined $_ } map { &shamir_share_decode($_) } @$codes;
+	return undef if @decoded < $k;
+	# shares of one split share a length; a stray code that decodes to another
+	# length is a typo or the wrong paper, not a share
+	my %by_len;
+	$by_len{ length $_->{'y'} }++ for @decoded;
+	my ($len) = sort { $by_len{$b} <=> $by_len{$a} } keys %by_len;
+	my (@shares, %seen);
+	foreach my $s (@decoded) {
+		next unless length $s->{'y'} == $len;
+		next unless $s->{'x'} >= 1 && $s->{'x'} <= 255;
+		next if $seen{$s->{'x'}}++;
+		push @shares, $s;
+	}
+	return undef if @shares < $k;
+	@shares = @shares[0 .. $k - 1];
+	my $secret = &shamir_combine(\@shares);
+	return undef unless defined $secret && length $secret;
+	return $secret;
+}
+
 sub vault_read {
 	my $device = &signatorial_designer();
 	my $q = &db_query('select value, server_time from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'vault', $device);

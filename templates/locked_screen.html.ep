@@ -29,7 +29,7 @@
 
 	<details id="locked_recovery">
 		<summary><%= &subs::ui('Recovery code or house password') %></summary>
-		<input id="locked_recovery_code" autocomplete="off" spellcheck="false" placeholder="<%= &subs::ui('paper code or house password') %>">
+		<input id="locked_recovery_code" autocomplete="off" spellcheck="false" placeholder="<%= &subs::ui('paper code, password, or three shares') %>">
 		<button id="locked_recovery_go">Unlock</button>
 		<div id="locked_status"></div>
 	</details>

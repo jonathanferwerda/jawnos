@@ -27444,6 +27444,25 @@ post '/manager/security/person_create' => sub($c) {
 	$c->render(json => { ok => 1, uuid => $uuid, html => $sec->{'html'} });
 };
 
+post '/manager/security/shares/create' => sub($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		$c->render(json => { ok => 0 });
+		return;
+	}
+	my $suds = &subs::session_suds($c);
+	unless ($suds && length $suds) { $c->render(json => { ok => 0 }); return; }
+	my ($k, $n) = &subs::shamir_policy();
+	my $shares = &subs::shamir_split($suds, $k, $n);
+	unless ($shares) { $c->render(json => { ok => 0 }); return; }
+	# the policy is public and syncs; the shares are shown once and stored nowhere
+	my $now = &subs::rightNow();
+	&subs::db_query('delete from settings where app = ? and setting = ?', '__president', 'shamir');
+	&subs::db_insert('settings', { app => '__president', setting => 'shamir', device => 'all', value => "$k:$n", timestamp => $now, server_time => $now });
+	my @codes = map { &subs::shamir_share_encode($_) } @$shares;
+	my $sec = &security_initializer($c);
+	$c->render(json => { ok => 1, k => $k, n => $n, shares => \@codes, html => $sec->{'html'} });
+};
+
 post '/manager/security/recovery/create' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { ok => 0 });
@@ -27498,8 +27517,12 @@ post '/manager/security/legacy_reseal' => sub($c) {
 # house key changed since it was made) is refused by the canary check.
 post '/manager/device/recover' => sub($c) {
 	my $code = &subs::recovery_code_clean($c->param('code'));
+	my $raw_code = $c->param('code') // '';
 	my $password = $c->param('password') // '';
-	unless (length $code >= 20 || length $password) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
+	# three shares pasted on separate lines (or separated by commas) are a third
+	# way in; base64 is case-sensitive, so these are read from the raw field
+	my @share_codes = grep { /\S/ } split /[\s,]+/, $raw_code;
+	unless (length $code >= 20 || length $password || @share_codes) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
 	my $ip = $c->tx->remote_address;
 	my $now = &subs::rightNow();
 	my $tries = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'recovery_attempt', $ip . ':%', $now - 3600000)->hash->{'n'} || 0;
@@ -27515,6 +27538,9 @@ post '/manager/device/recover' => sub($c) {
 	if (!(defined $suds && length $suds) && length $password) {
 		my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'password_share')->hashes->[0];
 		$suds = &subs::house_key_password_open($row->{'value'}, $password) if $row && $row->{'value'};
+	}
+	if (!(defined $suds && length $suds) && @share_codes) {
+		$suds = &subs::shamir_open_shares(\@share_codes);
 	}
 	$suds =~ s/\s+$// if $suds;
 	unless ($suds && &subs::suds_current($suds)) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }

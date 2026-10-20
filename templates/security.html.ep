@@ -198,6 +198,15 @@
 			<p><b>Write this down now — it will not be shown again.</b></p>
 			<div id="recovery_code_value" style="display:inline-block;font-family:monospace;font-size:26px;letter-spacing:3px;background-color:var(--panel);border:solid;border-radius:8px;padding:14px;"></div>
 		</div>
+		<h3 style="margin-top:18px;">Paper shares</h3>
+		<p style="max-width:640px;margin:0 auto;">
+			<%= &subs::ui('The house key can also be split into five shares: any three rebuild it, and any two reveal nothing. Write each one on a separate sheet and keep them apart.') %>
+		</p>
+		<button id="shares_create" type="button">Make paper shares</button>
+		<div id="shares_display" style="display:none;margin-top:14px;">
+			<p><b>Write these down now — they will not be shown again.</b></p>
+			<pre id="shares_value" style="display:inline-block;text-align:left;font-family:monospace;font-size:13px;background-color:var(--panel);border:solid;border-radius:8px;padding:12px;white-space:pre-wrap;"></pre>
+		</div>
 		<h3 style="margin-top:18px;">Sharing</h3>
 		<p style="max-width:640px;margin:0 auto;">
 			A linked machine that has lost its key can fetch this house key from here while this is ticked. The
