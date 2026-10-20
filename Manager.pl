@@ -9042,6 +9042,30 @@ post '/manager/leave' => sub($c) {
 	);
 };
 
+# A public Gate page. This is what an app with no key opens to pair itself:
+# the app gate lets /gate through, and this route deliberately does not run
+# authentication_passer, so the pairing door and the recovery door are reachable
+# before any session (and while the house is locked). Without it the app-required
+# page's "Pair this device" link was a Mojolicious 404.
+get '/gate' => sub($c) {
+	my ($db,$database) = &subs::database_grabber();
+	my $restore_list = [];
+	unless (-e $database) {
+		if ($c->param('restore_list')) {
+			my $list = $c->param('restore_list');
+			$restore_list = &subs::restore_list($list);
+			@{$restore_list} = grep { $_->{'filename'} =~ /enc$/gi } @{$restore_list};
+		}
+	}
+	$c->render(
+		template => 'gate',
+		layout => 'gate',
+		restore_list => $restore_list,
+		start_dir => '',
+		config => { 'gate' => { 'background_colour' => ($config->{'gate'}->{'background_colour'} || 'grey') } },
+	);
+};
+
 sub leave($c) {
 	if (!$c) {
 		$c = &subs::controller_builder();
