@@ -18519,6 +18519,11 @@ sub people_crest_install {
 	if (defined $priv && length $priv == 32) {
 		$pub = &subs::crest_public_from_private($priv);
 	}
+	elsif ($old->{'uuid'}) {
+		# A record already names a house key. Minting a new one here would turn
+		# the house into a stranger without anyone asking; refuse instead.
+		return { ok => 0, error => 'the crest key could not be opened; the house identity was left unchanged' };
+	}
 	else {
 		($pub, $priv) = &subs::crest_key_generate();
 		unless (defined $pub && defined $priv) {
