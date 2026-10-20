@@ -33458,7 +33458,7 @@ get '/manager/remote_auth_test' => sub($c) {
 				# The table is a leaf and has no new appointment when its app asks for
 				# a key, so the digest alone left the request waiting for the next
 				# scheduled pass (and it nearly expired first).
-				my $dr_pending = &subs::db_query('select count(*) as n from device_requests where status = ? and kind = ?', 'pending', 'app')->hash->{'n'} || 0;
+				my $dr_pending = &subs::db_query('select count(*) as n from device_requests where status = ? and server_time > ?', 'pending', &subs::rightNow() - 3600000)->hash->{'n'} || 0;
 				if ($dr_pending) {
 					$pending->{'count'} = ($pending->{'count'} || 0) + $dr_pending;
 					$pending->{'device_requests'} = $dr_pending;
