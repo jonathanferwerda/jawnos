@@ -3,6 +3,10 @@
 Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 (`v<version> - ...`) mark the points where `VERSION` was bumped.
 
+## 2026-10-20
+
+- v0.1.928 - sync: a peer with no stored port is still probed by its manager url. The reconnector's `remote_machine_online` required a port before it would call a peer, so a row that came back from pairing with `port` NULL (a tunnel-only server, or a re-paired row) answered 0 without ever trying - and the handshake that fills the port in from the peer's reply never ran. The probe now takes the port from the stored manager url (`https://host:45545`), so the local recovers by itself instead of sitting `inactive` with a valid key and a live tunnel.
+
 ## 2026-10-18
 
 - v0.1.725 - sync: remove the temporary container diagnostics (the per-export marker/`backup_serve` logs and the `failed_merge_*.enc` copy). The cause they found - a truncated tunnel download - is fixed by v0.1.721/724; the failure paths still log a missing marker or a short download, but a healthy pull leaves nothing behind.

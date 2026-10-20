@@ -34344,6 +34344,12 @@ sub remote_machine_online($data) {
 	my $rm = $data->{'rm'} || &subs::remote_machine_lister({ signatorial => $data->{'signatorial'}, mirror => $data->{'mirror'}, limit => 1 });
 	my $ip = $data->{'ip'} =~ /[0-9a-z]/ ? $data->{'ip'} : $rm->{'ip'};
 	my $port = $data->{'port'} =~ /[0-9]/ ? $data->{'port'} : $rm->{'port'};
+	# The manager url carries the port, so a peer reached only by its url - a
+	# tunnel-only server, or a row that was paired again and came back with no
+	# port - is still addressable. Without this fallback a NULL port returned 0
+	# before anything was tried, so the handshake that would have filled the port
+	# back in never ran (the local sat inactive with a working key and tunnel).
+	$port = $1 if ((!$port || $port !~ /[0-9]/) && ($rm->{'manager'} || '') =~ m{:([0-9]{1,5})/?$});
 	my $remote_signatorial = $data->{'signatorial'} =~ /[0-9a-zA-Z]/ ? $data->{'signatorial'} : $rm->{'signatorial'};
 	my $success = 0;
 	if ($ip && $port && $remote_signatorial) {
