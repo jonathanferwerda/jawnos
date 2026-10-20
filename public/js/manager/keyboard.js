@@ -924,6 +924,13 @@ async function keyboardMaker(data) {
 				if ($(response.keyboard).find('#remote_control_view') && response.remote_keyboard) {
 					$('#keyboard_container').find('#remote_control_view').html($(response.remote_keyboard).find('#remote_control_view').html());
 				}
+				if (toggle == 'remote_control') {
+					// keep the picker on the machine that was just chosen, and take
+					// the Manager button with it (the setting POST can land after this
+					// render, so the server's selected option may still be the old one)
+					if (typeof remote_uuid === 'string') { $('#remote_control_machine_select').val(remote_uuid); }
+					keyboardManagerButton();
+				}
 
 
 				var t = $('#' + toggle);
@@ -992,6 +999,20 @@ async function keyboardMaker(data) {
 			},1);
 		}
 	},100);
+}
+
+// The Manager button follows the machine picker at once, rather than waiting
+// for the setting POST and the next render.
+function keyboardManagerButton(select) {
+	var s = select ? $(select) : $('#remote_control_machine_select');
+	var picked = s.find('option:selected');
+	var button = $('#remote_control_manager');
+	if (!button.length) { return; }
+	if (!picked.length || !picked.val()) {
+		button.hide().removeAttr('uuid').removeAttr('manager');
+		return;
+	}
+	button.attr('uuid', picked.val()).attr('manager', picked.attr('manager') || '').show();
 }
 
 function keyboardConfigToggle(toggle) {

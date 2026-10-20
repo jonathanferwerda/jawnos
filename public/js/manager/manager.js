@@ -4535,22 +4535,94 @@ $(document).on('click','.enabler', function() {
 	});
 });
 
-$(document).on('click','.remote_manager',function() {
-	var m = $(this);
-	var ip = m.attr('id');
-	var mac = m.attr('mac');
-	var manager = m.attr('manager');
-	var timestamp = Date.now();
+// A machine's own Manager, in a window of its own, at that machine's origin.
+// It is deliberately not framed inside this page: the peer's localStorage and
+// cookies then belong to the peer's origin alone (and a framed peer would be
+// refused by the app gate, which admits installed apps, not nested browsers).
+// The desktop app opens a real window at the peer and lets its app-required
+// page sign in with this install's key; a plain browser gets a new tab.
+function jawnosDesktopCall(action, args) {
+	return new Promise(function (resolve, reject) {
+		if (!window.JawnDesktop || !window.webkit || !window.webkit.messageHandlers || !window.webkit.messageHandlers.jawnos) {
+			reject({ error: 'unavailable' }); return;
+		}
+		var id = 'app' + Date.now() + Math.random().toString(36).slice(2);
+		var done = false;
+		// an older desktop app ignores the action and never replies; do not hang
+		var timer = setTimeout(function () {
+			if (done) { return; }
+			done = true;
+			window.__jawnAppResult = null;
+			reject({ error: 'timeout' });
+		}, 2500);
+		window.__jawnAppResult = function (rid, res) {
+			if (rid !== id || done) { return; }
+			done = true;
+			clearTimeout(timer);
+			window.__jawnAppResult = null;
+			if (res && res.ok) { resolve(res); } else { reject(res || { error: 'failed' }); }
+		};
+		try {
+			window.webkit.messageHandlers.jawnos.postMessage(JSON.stringify({ action: action, id: id, args: args || {} }));
+		}
+		catch (e) {
+			window.__jawnAppResult = null;
+			reject({ error: 'unavailable' });
+		}
+	});
+}
 
-	if (manager) {
-			$('<iframe>', {
-				src: manager,
-				id:  'browser_' + timestamp,
-				frameborder: 0,
-				scrolling: 'yes',
-				style: "position:fixed;bottom:0;width:40%;height:40%"
-			}).appendTo('#remote_managers');
+function jawnosRemoteManagerWindow(url, uuid, name) {
+	if (!url) { return; }
+	var device_uuid = '';
+	try { device_uuid = localStorage.getItem('device_uuid') || ''; } catch (e) { device_uuid = ''; }
+	if (window.JawnDesktop) {
+		jawnosDesktopCall('open_manager', { url: url, device_uuid: device_uuid, name: name || '' }).catch(function () {
+			// an older desktop app has no open_manager; a window is still right
+			window.open(url, '_blank', 'noopener');
+		});
+		return;
 	}
+	window.open(url, '_blank', 'noopener');
+}
+
+function jawnosRemoteManagerOpen(uuid, manager) {
+	if (!uuid && !manager) { return; }
+	var data = { timestamp: Date.now() };
+	if (uuid) { data.uuid = uuid; }
+	else { data.manager = manager; }
+	$.ajax({
+		url: '/manager/remote_manager',
+		type: 'GET',
+		data: data,
+		dataType: 'json',
+		success: function (r) {
+			if (r && r.manager) { jawnosRemoteManagerWindow(r.manager, r.uuid || uuid, r.name); }
+		},
+		fail: function () {
+			// an old stored Go link can name a machine the roster no longer matches;
+			// keep the plain window as the fallback rather than going quiet
+			if (manager) { jawnosRemoteManagerWindow(manager, uuid); }
+		}
+	});
+}
+
+$(document).on('click', '.remote_manager_open', function (e) {
+	// a new tab is still a legitimate way to open it
+	if (e.ctrlKey || e.metaKey || e.shiftKey || e.which === 2) { return; }
+	e.preventDefault();
+	var b = $(this);
+	jawnosRemoteManagerOpen(b.attr('uuid'), b.attr('manager'));
+});
+
+// Go links filed in remote_machines.buttons before the button existed still
+// open the machine's window rather than a tab.
+$(document).on('click', '.remote_machine_buttons a[target="_blank"]', function (e) {
+	if (e.ctrlKey || e.metaKey || e.shiftKey || e.which === 2) { return; }
+	var href = $(this).attr('href') || '';
+	if (href.indexOf('/manager') < 0) { return; }
+	e.preventDefault();
+	jawnosRemoteManagerOpen('', href);
 });
 
 function cacheSet(params,data) {

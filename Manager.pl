@@ -8202,6 +8202,49 @@ get '/manager/configure/remote_device_connect' => sub ($c) {
 	$c->render(json => $returner);
 };
 
+# Resolve a peer's own Manager address for a window of its own. The window is
+# top-level (the desktop app's), never a frame served from this house: its
+# origin is the peer's, so localStorage and cookies stay that machine's own and
+# do not mix with the local manager's. A manager URL is accepted only when it
+# is one this house already knows from remote_machines.
+get '/manager/remote_manager' => sub ($c) {
+	my $uuid = $c->param('uuid');
+	my $manager = $c->param('manager') || '';
+	my $rm;
+	if ($uuid) {
+		$rm = &subs::remote_machine_lister({ uuid => $uuid, self => 'no', limit => 1 });
+	}
+	if (!(ref $rm eq 'HASH' && $rm->{'manager'}) && $manager ne '') {
+		my $want = $manager;
+		$want =~ s{/manager/?$}{}i;
+		$want =~ s{/+$}{};
+		my ($want_host) = $want =~ m{^https?://([^/:]+)}i;
+		foreach my $candidate ( @{ &subs::remote_machine_lister({ self => 'no' }) } ) {
+			next unless $candidate->{'manager'};
+			my $have = $candidate->{'manager'};
+			$have =~ s{/manager/?$}{}i;
+			$have =~ s{/+$}{};
+			# A stored Go link can name an address the row has since moved off
+			# (the LAN fallback, or a tunnel port): accept the row when the
+			# host is still one of its own.
+			my @hosts = grep { defined $_ && $_ ne '' } ($candidate->{'ip'}, $candidate->{'fqdn'}, $candidate->{'domain'}, $candidate->{'lan_ip'}, $candidate->{'vip'});
+			if ($have eq $want || ($want_host && grep { $_ eq $want_host } @hosts)) { $rm = $candidate; last; }
+		}
+	}
+	return $c->render(text => 'no such machine', status => 404) unless ref $rm eq 'HASH' && $rm->{'manager'};
+	my $url = $rm->{'manager'};
+	$url =~ s{/manager/?$}{}i;
+	$url =~ s{/+$}{};
+	return $c->render(text => 'no address for that machine', status => 404) unless $url =~ m{^https?://[^\s"'<>]+$}i;
+	$url .= '/manager';
+	my $name = $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'domain'} || $rm->{'ip'} || 'remote';
+	$c->render(json => {
+		manager => $url,
+		uuid => $rm->{'uuid'} || '',
+		name => $name
+	});
+};
+
 sub remote_device_connect($rdata) {
 	my $manager = $rdata->{'manager'};
 	my $filename = $rdata->{'filename'};
@@ -8298,7 +8341,10 @@ sub remote_device_connect($rdata) {
 				{ name => '-> Me', class => 'remote_rsync', direction => 'from' },
 				{ name => 'Me ->', class => 'remote_rsync', direction => 'to' }
 			];
-			$returner->{'button'} .= '<a target="_blank" href="' . $manager . '/manager"><button>Go</button></a> ';
+			my $manager_window = $manager;
+			$manager_window =~ s{/+$}{};
+			$manager_window .= '/manager';
+			$returner->{'button'} .= '<button type="button" class="remote_manager_open" uuid="' . &subs::html_text($uuid) . '" manager="' . &subs::html_text($manager_window) . '" hint="' . &subs::html_text(&subs::ui('Open this machine\'s Manager')) . '">' . &subs::lang('common.go') . '</button> ';
 			# the peer's self-reported version, so a neighbour that is behind is
 			# obvious in the panel instead of a guess.
 			$returner->{'button'} .= '<span class="neighbour_version" hint="their version" style="opacity:0.6;">v' . ($returner->{'body'}->{'version'} || '?') . '</span><br>';

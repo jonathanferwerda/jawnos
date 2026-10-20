@@ -341,9 +341,19 @@ class WebViewPanel(Gtk.Box):
     so there is no URL for the user to type or read.
     """
 
-    def __init__(self, settings, start_url=None):
+    def __init__(self, settings, start_url=None, manager_url_override=None, seed_device_uuid=None):
         super().__init__(orientation=Gtk.Orientation.VERTICAL)
         self.settings_data = settings
+        # A peer's Manager opens in a window of its own: the URL is already the
+        # manager, so it is not rebuilt from the local working port, and the
+        # device id is seeded into the peer's own localStorage so its app gate
+        # can sign this install in.
+        self._manager_url_override = manager_url_override
+        self._seed_device_uuid = seed_device_uuid
+        self._remote_windows = []
+        # Only this machine's own Manager may ask the app to open another
+        # machine's window; a peer's page cannot spawn windows of its own.
+        self._can_open_windows = manager_url_override is None
         self._fullscreen = False
         # True when the window's fullscreen was asked for by the page (a video),
         # so leaving the video restores it -- but an F11 fullscreen survives.
@@ -370,7 +380,7 @@ class WebViewPanel(Gtk.Box):
         # is kept so a gated landing can go through it again for a fresh session.
         login = None if start_url else ticket_url()
         self._login_url = login
-        self._manager_url = manager_url(settings["jawn_dir"], start_url or login)
+        self._manager_url = manager_url_override or manager_url(settings["jawn_dir"], start_url or login)
         self._manager_host = urlparse(self._manager_url).hostname or "127.0.0.1"
         # Geolocation is offered only where there is a real receiver (see _has_gps).
         self._gps = _has_gps(settings.get("jawn_dir"))
@@ -506,6 +516,20 @@ class WebViewPanel(Gtk.Box):
                 WebKit2.UserScriptInjectionTime.START,
                 None, None,
             ))
+            # A peer Manager's page has its own origin and therefore its own
+            # localStorage. Seed this install's device id there, so the peer's
+            # app-required page can ask this app to sign its login instead of
+            # sitting there with no device to name. This window is on this
+            # desktop, so this desktop is the client device, even when the
+            # Manager it shows belongs to a peer.
+            if self._seed_device_uuid:
+                content.add_script(WebKit2.UserScript.new(
+                    "try { localStorage.setItem('device_uuid', %s); } catch (e) {}"
+                    % json.dumps(self._seed_device_uuid),
+                    WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                    WebKit2.UserScriptInjectionTime.START,
+                    None, None,
+                ))
             # Tell the app when a video plays, not only when it makes sound.
             content.add_script(WebKit2.UserScript.new(
                 _MEDIA_MONITOR_JS,
@@ -614,7 +638,9 @@ class WebViewPanel(Gtk.Box):
         if not isinstance(message, dict):
             return False
         action = message.get("action")
-        if action not in ("app_pubkey", "app_sign", "media_state"):
+        if action not in ("app_pubkey", "app_sign", "media_state", "open_manager"):
+            return False
+        if action == "open_manager" and not self._can_open_windows:
             return False
         # Only answer our own origin. A link opened in this view (the public
         # homepage) must not be able to borrow the app's key.
@@ -635,6 +661,23 @@ class WebViewPanel(Gtk.Box):
         try:
             if action == "app_pubkey":
                 reply = {"ok": True, "pubkey": _app_public_pem(), "kind": "ed25519"}
+            elif action == "open_manager":
+                args = message.get("args") or {}
+                url = args.get("url") or ""
+                parsed = urlparse(url)
+                if parsed.scheme not in ("https", "http") or not parsed.netloc:
+                    raise ValueError("not a manager url")
+                win = WebViewWindow(
+                    self.settings_data,
+                    start_url=url,
+                    manager_url_override=url,
+                    seed_device_uuid=args.get("device_uuid") or "",
+                    title=args.get("name") or "JawnOS Machine",
+                )
+                self._remote_windows.append(win)
+                win.connect("destroy", self._remote_window_closed)
+                win.present()
+                reply = {"ok": True}
             else:
                 args = message.get("args") or {}
                 reply = {"ok": True, "signature": _app_sign_b64(args.get("message"))}
@@ -642,6 +685,8 @@ class WebViewPanel(Gtk.Box):
             # No cryptography on this machine, or an unreadable key file. The
             # page then falls back to the open-in-the-app explanation.
             reply = {"ok": False, "error": "unavailable"}
+        if action == "open_manager" and not reply.get("ok"):
+            reply = {"ok": False, "error": "could not open"}
         try:
             self.view.evaluate_javascript(
                 "window.__jawnAppResult && window.__jawnAppResult(%s, %s);"
@@ -650,6 +695,13 @@ class WebViewPanel(Gtk.Box):
         except Exception:
             pass
         return False
+
+    def _remote_window_closed(self, win):
+        try:
+            if win in self._remote_windows:
+                self._remote_windows.remove(win)
+        except Exception:
+            pass
 
     def _on_tls_error(self, view, failing_uri, certificate, errors):
         # jawn serves https with a self-signed certificate on 127.0.0.1; trust
@@ -701,10 +753,12 @@ class WebViewPanel(Gtk.Box):
 class WebViewWindow(Gtk.Window):
     """The embedded view on its own, for a one-off or a debug launch."""
 
-    def __init__(self, settings, start_url=None):
-        super().__init__(title="JawnOS")
+    def __init__(self, settings, start_url=None, manager_url_override=None, seed_device_uuid=None, title=None):
+        super().__init__(title=title or "JawnOS")
         self.set_default_size(1100, 820)
-        self.panel = WebViewPanel(settings, start_url=start_url)
+        self.panel = WebViewPanel(settings, start_url=start_url,
+                                   manager_url_override=manager_url_override,
+                                   seed_device_uuid=seed_device_uuid)
         self.add(self.panel)
         self.panel.attach_keys(self)
         self.show_all()
