@@ -2023,7 +2023,14 @@ function jawnosVpnRefresh() {
 	var b = $('#remote_control_vpn');
 	if (!b.length) { return; }
 	var picked = jawnosVpnSelected();
-	if (!picked.ip) { b.hide(); return; }
+	if (!picked.ip) {
+		// "Me" has no exit node to switch to, but keep the button in sight so
+		// the choice is discoverable; picking a machine enables it.
+		b.show();
+		jawnosVpnPaint(false, false);
+		b.attr('hint', jawnosT('Pick a machine that offers an exit node'));
+		return;
+	}
 	jawnosVpnStatus(function (s) {
 		var peers = (s && s.peers) || [];
 		var peer = null;
