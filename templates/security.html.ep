@@ -200,7 +200,7 @@
 		</div>
 		<h3 style="margin-top:18px;">Paper shares</h3>
 		<p style="max-width:640px;margin:0 auto;">
-			<%= &subs::ui('The house key can also be split into five shares: any three rebuild it, and any two reveal nothing. Write each one on a separate sheet and keep them apart.') %>
+			<%= &subs::ui('The house key can also be split into five shares: any three rebuild it, and any two reveal nothing. Write each one on a separate sheet and keep them apart. They stay good until the house key is rotated — making a new set does not cancel an older one.') %>
 		</p>
 		<button id="shares_create" type="button">Make paper shares</button>
 		<div id="shares_display" style="display:none;margin-top:14px;">
