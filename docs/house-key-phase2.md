@@ -175,7 +175,7 @@ OpenSSL lacks Argon2, the seal records `scrypt` instead and still opens.
 
 Steps 1–4 and 6 of the migration order are done; the password is a recovery
 share and never the key. What is left is a different phase, not a finish of
-this one:
+this one. The design for it is in **`docs/house-key-roles-and-shamir.md`**:
 
 1. **Per-person roles** (step 5): citizens get their own credentials/keys
    instead of one shared password; residents and guests get tickets/peer cards.
