@@ -202,7 +202,7 @@ CREATE TABLE "tickets" (
 			name VARCHAR(255),
 			projects LONGTEXT,
 			accounts LONGTEXT			
-		, timestamp VARCHAR(25), server_time VARCHAR(25), url VARCHAR(500), image LONGTEXT, privilege VARCHAR(10), status VARCHAR(25), verification VARCHAR(1000), duration VARCHAR(1000), app VARCHAR(1000), password VARCHAR(255), browser_tab_id VARCHAR(255), project VARCHAR(255), port VARCHAR(10), ip VARCHAR(255), secret VARCHAR(500), nic VARCHAR(255), suds VARCHAR(500), debriefer LONGTEXT, approval_rating VARCHAR(500), information VARCHAR(2500), ost VARCHAR(25), access_log LONG_TEXT);
+		, timestamp VARCHAR(25), server_time VARCHAR(25), url VARCHAR(500), image LONGTEXT, privilege VARCHAR(10), status VARCHAR(25), verification VARCHAR(1000), duration VARCHAR(1000), app VARCHAR(1000), password VARCHAR(255), browser_tab_id VARCHAR(255), project VARCHAR(255), port VARCHAR(10), ip VARCHAR(255), secret VARCHAR(500), nic VARCHAR(255), suds VARCHAR(500), debriefer LONGTEXT, approval_rating VARCHAR(500), information VARCHAR(2500), ost VARCHAR(25), access_log LONG_TEXT, person_uuid VARCHAR(255));
 CREATE TABLE "websites" (
 url VARCHAR(500),
 content LONGTEXT,

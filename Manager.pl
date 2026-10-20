@@ -10884,6 +10884,10 @@ get '/box_office/:uuid' => sub($c) {
 			$c->session('warranty' => $ticket->{'warranty'});
 			$c->session('source' => 'ticket');
 			$c->session('ticket_uuid' => $ticket->{'uuid'});
+			# the ticket admits a person, not just a link: the first login mints
+			# the person and writes it back, so the same ticket keeps them
+			my $ticket_person = eval { &subs::person_for_ticket($ticket) };
+			$c->session('person_uuid' => ($ticket_person ? $ticket_person->{'uuid'} : undef));
 			$c->session('name' => $ticket->{'name'});
 			$c->session('privilege' => $ticket->{'privilege'});
 			$c->session('project' => $ticket->{'project'});
@@ -32870,6 +32874,7 @@ sub update_database($data) {
 			server_time VARCHAR(255)
 		)',
 		'create index if not exists idx1_people on people (uuid)',
+		'alter table tickets add column person_uuid VARCHAR(255)',
 		'alter table paired_devices add column person_uuid VARCHAR(255)',
 		# Notes are their own store now, not appointments: one plain row per note.
 		# The server_time column is what puts it on the generic peer sync and backup,

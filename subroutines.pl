@@ -17432,6 +17432,43 @@ sub person_assign_check {
 	return (1, '');
 }
 
+# A ticket is an invitation; the person it admits is the identity that outlives
+# the link. The first login mints one from the ticket's name and privilege and
+# writes the link back, so a resumed ticket keeps the same person. The ticket's
+# own privilege remains the session's grant - this is attribution, not a second
+# source of privilege.
+sub person_for_ticket {
+	my ($ticket) = @_;
+	return undef unless $ticket && ref $ticket eq 'HASH';
+	my $uuid = $ticket->{'person_uuid'} || '';
+	if ($uuid) {
+		my $known = eval { &db_select('people', undef, { uuid => $uuid, status => 'active' })->hash };
+		return $known if $known;
+	}
+	# blacklisted is the deny, not a person
+	return undef if (($ticket->{'privilege'} || '') eq 'blacklisted');
+	my $name = $ticket->{'name'};
+	return undef unless defined $name && length $name;
+	my $privilege = $ticket->{'privilege'} || 'guest';
+	$privilege = 'guest' unless $privilege =~ /^(?:citizen|resident|guest)$/;
+	my $now = &rightNow();
+	my $new = &random_string_creator(25);
+	my $made = eval {
+		&db_insert('people', {
+			uuid => $new,
+			name => $name,
+			privilege => $privilege,
+			status => 'active',
+			created => $now,
+			server_time => $now,
+		});
+	};
+	return undef unless $made;
+	eval { &db_update('tickets', { person_uuid => $new }, { uuid => $ticket->{'uuid'} }) } if $ticket->{'uuid'};
+	$ticket->{'person_uuid'} = $new;
+	return { uuid => $new, name => $name, privilege => $privilege, status => 'active' };
+}
+
 sub peer_allows {
 	my ($c, $rm, $required) = @_;
 	return 0 unless $rm && ref $rm eq 'HASH';
