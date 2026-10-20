@@ -16867,6 +16867,36 @@ sub peer_verify {
 	return 1;
 }
 
+# Authorization beside authentication. peer_verify answers "is this who they
+# claim?", peer_allows answers "may this house do this, and is the lease still
+# alive?". Call it only after peer_verify has accepted the row for this request:
+# the stash is the proof that the row was verified, never the signatorial in a
+# query string (a name is public and quotable).
+#
+# Scopes are a ladder - visitor < member < trusted. A row with no scope is an
+# older peer and keeps exactly the trust it had before grants existed; an
+# unknown word is never a promotion. grant_expires is epoch milliseconds, the
+# same clock server_time uses; empty means no expiry (also grandfathered).
+sub peer_allows {
+	my ($c, $rm, $required) = @_;
+	return 0 unless $rm && ref $rm eq 'HASH';
+	my $row_key = $rm->{'uuid'} || $rm->{'signatorial'};
+	return 0 unless $row_key;
+	my $verified = $c ? $c->stash('peer_verified_key') : undef;
+	return 0 unless $verified && $verified eq $row_key;
+	my %rank = ( none => 0, revoked => 0, visitor => 1, member => 2, trusted => 3 );
+	my $grant = lc($rm->{'grant_scope'} // '');
+	$grant = 'trusted' if $grant eq '';
+	$grant = 'none' unless exists $rank{$grant};
+	my $need = lc($required // 'member');
+	$need = 'member' unless exists $rank{$need};
+	my $expires = $rm->{'grant_expires'};
+	if (defined $expires && $expires =~ /^\d+$/ && $expires > 0 && $expires < &rightNow()) {
+		return 0;
+	}
+	return $rank{$grant} >= $rank{$need} ? 1 : 0;
+}
+
 # Verify an Ed25519 signature (base64) over a message against a PEM public key.
 # The shared primitive behind peer_verify and the paired-device challenge.
 sub signature_verify {

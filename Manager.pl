@@ -32833,6 +32833,11 @@ sub update_database($data) {
 		# peers prove themselves with an Ed25519 signature now; the roster row
 		# carries the public key (schema.sql has it for a fresh database).
 		'alter table remote_machines add column pubkey LONGTEXT',
+		# a grant is a lease, not a name: the scope a house may act at here, and
+		# the epoch-ms instant it lapses. peer_allows reads them; an older row
+		# with no scope keeps the trust it already had, so this is additive.
+		'alter table remote_machines add column grant_scope VARCHAR(25)',
+		'alter table remote_machines add column grant_expires VARCHAR(25)',
 		# paired devices: the browsers and phones a citizen has signed in once
 		'create table if not exists paired_devices (uuid VARCHAR(255) unique, name VARCHAR(255), pubkey LONGTEXT, bio_pubkey LONGTEXT, privilege VARCHAR(25), status VARCHAR(25), timestamp VARCHAR(25), server_time VARCHAR(25), ost VARCHAR(25), last_seen VARCHAR(25), agent VARCHAR(500))',
 		# a phone that has enrolled its biometric key: an EC P-256 key in the
