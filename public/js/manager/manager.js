@@ -4606,7 +4606,19 @@ function jawnosRemoteManagerOpen(uuid, manager) {
 			if (r.need_approval) { jawnosGoPrompt(r, uuid, manager); return; }
 			if (r.manager) { jawnosRemoteManagerWindow(r.ticket_url || r.manager, r.uuid || uuid, r.name, r.device_uuid, r.manager); }
 		},
-		fail: function () {
+		fail: function (xhr) {
+			// The app gate answers a session that has not signed the installed
+			// app with the app-required page. The app can sign itself in and
+			// retry; a browser has no key, so it still gets the plain window.
+			if (xhr && xhr.responseText && xhr.responseText.indexOf('JawnOS app required') >= 0
+				&& typeof jawnAppLogin === 'function') {
+				jawnAppLogin(true).then(function () {
+					jawnosRemoteManagerOpen(uuid, manager);
+				}, function () {
+					if (manager) { jawnosRemoteManagerWindow(manager, uuid); }
+				});
+				return;
+			}
 			// an old stored Go link can name a machine the roster no longer matches;
 			// keep the plain window as the fallback rather than going quiet
 			if (manager) { jawnosRemoteManagerWindow(manager, uuid); }
