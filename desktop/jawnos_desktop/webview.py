@@ -433,6 +433,15 @@ class WebViewPanel(Gtk.Box):
         if event.keyval == Gdk.KEY_F11:
             self._toggle_fullscreen()
             return True
+        # Reload the embedded manager without restarting the whole app. The
+        # page keeps the bundle it loaded until it is reloaded, so a manager
+        # update (a .pl restart does not touch this view) needs this key.
+        if event.keyval == Gdk.KEY_F5 or (
+            event.keyval in (Gdk.KEY_r, Gdk.KEY_R)
+            and (event.state & Gdk.ModifierType.CONTROL_MASK)
+        ):
+            self.view_reload()
+            return True
         return False
 
     def _on_enter_fullscreen(self, _view):

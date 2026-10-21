@@ -49,6 +49,17 @@ Zed's agent panel can grow the editor process to several GB in minutes and die m
 - **Never open an appointment or centre view just to look** — it fans out to every tab and pops windows
   on the user's screen. Verify UI behaviour by asking, not by curling a route.
 - **Writes go through the app's routes**; standalone writes to `appointments` can be overwritten — re-read.
+- **The database is per device — never restore one machine's `jawnos.db` onto another.**
+  `devices`, `remote_machines`, `tunnels`, `tickets`, `backups`, the per-device `settings`, the sync
+  cursors and the session rows are that machine's own view, not shared house data. A cross-machine
+  restore leaves the target wearing the source's self row and peer list — on 2026-10-20 the phone was
+  restored from the laptop's database, so its `devices` table held the laptop's `vivotop` row with no
+  `localhost` row and its `remote_machines` was the laptop's list minus the laptop itself; Scan then
+  silently added nothing. Restore only onto the same machine. After a cross-machine restore, repair
+  the identity before trusting the panel: keep exactly the machine's own `devices` row, add every
+  other machine as a **direct** `remote_machines` peer from the target's own LAN view, drop the
+  source's stale rows, and review `tickets`, `backups` and `tunnels` for the source's paths. The
+  missing-self-row scan bug is fixed in v0.1.1006; the identity repair is still manual.
 - **Names accept every printable character**; use `subs::path_name()` for a filesystem component and
   `subs::html_name()`/`http_name()` for a DOM id/class or URL. See Languages and translation above.
 - **Translate help and UI text when you write it** — `subs::lang`/`subs::ui`/`jawnosT`, all sixteen core
