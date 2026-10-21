@@ -15,6 +15,10 @@
 	);
 	my $role_settings = &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @roles ] });
 	my $catalogue = &subs::ai_model_catalogue();
+	# the scheduled evaluation's preferred worker: the server dispatches the run,
+	# and this names the machine it should ask first when that machine is ready
+	my $machines = &subs::remote_machine_lister({ self => 'yes', mirrors => 'none' });
+	my $eval_machine = &subs::setting_grabber({ app => '__president', setting => 'evaluation_machine' }) || '';
 	my $providers = &subs::ai_providers();
 	my $key_values = &subs::settings_grabber({ app => 'mail', settings => [ &subs::ai_key_settings() ] });
 	# provider id -> its balance row, read from the report the ai balance loop keeps
@@ -155,6 +159,18 @@
 						<select class="configure_input" app="mail" setting="<%= $setting %>_thinking">
 							<% foreach my $lvl (qw/none low high max/) { %>
 								<option value="<%= $lvl %>" <% if ($think eq $lvl) { %>selected="selected"<% } %>><%= $lvl %></option>
+							<% } %>
+						</select>
+					</div>
+				<% } %>
+				<% if ($setting eq 'eval_assistant' && scalar @{$machines}) { %>
+					<div class="cfg-row">
+						<label><%= &subs::ui('Preferred worker') %></label>
+						<select class="evaluation_machine" app="__president" setting="evaluation_machine" hint="The worker the server prefers for scheduled evaluations when it is ready; otherwise the server chooses another ready worker. With no server, the house elects by quorum">
+							<option value=""><%= &subs::ui('Any worker') %></option>
+							<% foreach my $m ( @{$machines} ) { %>
+								<% next unless $m->{'signatorial'}; %>
+								<option value="<%= $m->{'signatorial'} %>" <% if ($eval_machine eq $m->{'signatorial'}) { %>selected="selected"<% } %>><%= ((($m->{'hostname'} || '') eq 'me') ? 'me (this machine)' : ($m->{'hostname'} || $m->{'signatorial'})) %></option>
 							<% } %>
 						</select>
 					</div>
