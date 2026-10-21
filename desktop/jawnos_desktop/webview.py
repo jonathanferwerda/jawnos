@@ -26,7 +26,7 @@ import base64
 import glob
 import json
 import os
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import gi
 
@@ -351,9 +351,11 @@ class WebViewPanel(Gtk.Box):
         self._manager_url_override = manager_url_override
         self._seed_device_uuid = seed_device_uuid
         self._remote_windows = []
-        # Only this machine's own Manager may ask the app to open another
-        # machine's window; a peer's page cannot spawn windows of its own.
-        self._can_open_windows = manager_url_override is None
+        # A JawnOS manager window may ask the app to open another machine's
+        # window. The page-origin check in _on_message keeps a public page from
+        # doing it; a peer's manager is still a JawnOS manager, so Go inside a
+        # peer window is a legitimate use.
+        self._can_open_windows = True
         self._fullscreen = False
         # True when the window's fullscreen was asked for by the page (a video),
         # so leaving the video restores it -- but an F11 fullscreen survives.
@@ -664,10 +666,15 @@ class WebViewPanel(Gtk.Box):
             elif action == "open_manager":
                 args = message.get("args") or {}
                 url = args.get("url") or ""
+                manager = args.get("manager") or url
+                # A ticket can arrive as a path; resolve it against the peer's
+                # manager before the new window is given it.
+                if url.startswith("/"):
+                    base = manager if urlparse(manager).scheme in ("http", "https") else self._manager_url
+                    url = urljoin(base, url)
                 parsed = urlparse(url)
                 if parsed.scheme not in ("https", "http") or not parsed.netloc:
                     raise ValueError("not a manager url")
-                manager = args.get("manager") or url
                 mparsed = urlparse(manager)
                 if mparsed.scheme not in ("https", "http") or not mparsed.netloc:
                     manager = url

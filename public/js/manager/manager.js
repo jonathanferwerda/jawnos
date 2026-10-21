@@ -4582,9 +4582,11 @@ function jawnosRemoteManagerWindow(url, uuid, name, device, manager) {
 		try { device_uuid = localStorage.getItem('device_uuid') || ''; } catch (e) { device_uuid = ''; }
 	}
 	if (window.JawnDesktop) {
-		jawnosDesktopCall('open_manager', { url: url, manager: manager || url, device_uuid: device_uuid, name: name || '' }).catch(function () {
-			// an older desktop app has no open_manager; a window is still right
-			window.open(url, '_blank', 'noopener');
+		jawnosDesktopCall('open_manager', { url: url, manager: manager || url, device_uuid: device_uuid, name: name || '' }).catch(function (err) {
+			// Only an older desktop app (no open_manager) needs the browser
+			// fallback. A refusal from this app must not open a tab at the
+			// local manager.
+			if (err && err.error === 'unavailable') { window.open(url, '_blank', 'noopener'); }
 		});
 		return;
 	}
@@ -4619,9 +4621,15 @@ function jawnosRemoteManagerOpen(uuid, manager) {
 				});
 				return;
 			}
-			// an old stored Go link can name a machine the roster no longer matches;
-			// keep the plain window as the fallback rather than going quiet
-			if (manager) { jawnosRemoteManagerWindow(manager, uuid); }
+			// An old stored Go link can name a machine the roster no longer
+			// matches. Open that address when it is a real host; never open this
+			// machine's own manager (the tunnel loopback) as if it were a peer.
+			if (manager && !/^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/i.test(manager)) {
+				jawnosRemoteManagerWindow(manager, uuid);
+			}
+			else if ($('#remote_control_go').length) {
+				$('#remote_control_go').attr('hint', jawnosT('That machine has no reachable address'));
+			}
 		}
 	});
 }

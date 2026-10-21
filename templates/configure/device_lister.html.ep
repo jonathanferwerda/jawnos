@@ -176,7 +176,20 @@
 									</thead>
 									<tbody>
 									<% foreach my $n ( sort { $a->{'ip'} cmp $b->{'ip'} } @{$m->{'neigh'} || []} ) { %>
-										<% my $rm = &subs::db_query('select uuid,buttons,privilege,grant_scope,grant_expires from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
+										<% my $rm = &subs::db_query('select uuid,buttons,privilege,grant_scope,grant_expires,port from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
+										<%# A peer reached through a tunnel stores a loopback manager (127.0.0.1)
+										    in its Go button. Point it at the peer's own name instead, so Go
+										    opens that machine and not this one's manager. %>
+										<% my $buttons_html = $rm->{'buttons'} || ''; %>
+										<% my $peer_manager = ''; %>
+										<% if (($n->{'fqdn'} || '') ne '') { %>
+											<% $peer_manager = 'https://' . $n->{'fqdn'} . ':' . ($rm->{'port'} || 45545) . '/manager'; %>
+										<% } elsif (($n->{'manager'} || '') !~ m{^https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::|/|$)}) { %>
+											<% $peer_manager = $n->{'manager'}; $peer_manager =~ s{/manager$}{}; $peer_manager .= '/manager'; %>
+										<% } %>
+										<% if ($peer_manager ne '') { %>
+											<% $buttons_html =~ s{manager="https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?/manager"}{manager="$peer_manager"}g; %>
+										<% } %>
 										<% if ($n->{'mac'} || $n->{'signatorial'}) { %>
 											<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
 												<td>
@@ -192,10 +205,10 @@
 													<% if ( $n->{'restore_list'} ) { %>
 														<span class="remote_restore_list" manager="<%= $n->{'manager'} %>" id="<%= $m->{'nic'} %>_<%= $m->{'machine_timestamp'} %>"><%= $n->{'restore_list'} %></span>
 														<br>
-														<span class="remote_machine_buttons"><%== $rm->{'buttons'} %></span>
+														<span class="remote_machine_buttons"><%== $buttons_html %></span>
 													<% } elsif ($rm->{'buttons'}) { %>
 														<%# a presence beacon does not know the backup list, but the machine is here and its buttons (with the live version) are still the right face for the row %>
-														<span class="remote_machine_buttons"><%== $rm->{'buttons'} %></span>
+														<span class="remote_machine_buttons"><%== $buttons_html %></span>
 													<% } elsif ($n->{'purpose'} eq 'mobile' || $n->{'purpose'} eq 'computer') { %>
 														<span style="opacity:.7;">Lost</span>
 													<% } %>

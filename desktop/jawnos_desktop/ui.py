@@ -547,6 +547,17 @@ class Dashboard(Gtk.Window):
         return False
 
     def _on_key(self, _widget, event):
+        # F11 toggles the whole app, including when the embedded view has focus.
+        # The view's own handler is also attached to this window; taking F11
+        # here returns True so the event is not toggled twice.
+        if event.keyval == Gdk.KEY_F11:
+            win = self.get_window()
+            fullscreen = bool(win and (win.get_state() & Gdk.WindowState.FULLSCREEN))
+            if fullscreen:
+                self.unfullscreen()
+            else:
+                self.fullscreen()
+            return True
         # With the tab strip hidden, Ctrl+Shift+D is the keyboard way back to the
         # control panel (e.g. if the view ever lands somewhere without its
         # start-menu admin icon).
