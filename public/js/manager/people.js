@@ -216,6 +216,55 @@ $(document).on('click', '.people_publish_toggle', function(e) {
 	});
 });
 
+// A construct can answer to more than one name. The chip's x forgets one; the
+// dashed field adds one. Both name the construct by its key, so the alias lands
+// on the row it was typed on even when the word is ambiguous today.
+function peopleAkaRefresh(app) {
+	peopleOpener();
+	if (app) { setTimeout(function() { peopleConstructOpen(app); }, 500); }
+}
+
+$(document).on('click', '.people_aka_remove', function(e) {
+	e.stopPropagation();
+	var app = $(this).attr('app') || '';
+	var name = $(this).attr('name') || '';
+	if (!app || !name) { return; }
+	peopleStatus(peopleT('Saving…'));
+	$.ajax({
+		url: '/manager/resolve/alias/remove',
+		type: 'POST',
+		data: { alias: name, app: app, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) { peopleStatus(peopleT('Saved.')); peopleAkaRefresh(app); }
+			else { peopleStatus((response && response.text) || peopleT('Could not save.')); }
+		},
+		error: function() { peopleStatus(peopleT('Could not save.')); }
+	});
+});
+
+$(document).on('keydown', '.people_aka_add', function(e) {
+	if (e.key !== 'Enter') { return; }
+	e.preventDefault();
+	e.stopPropagation();
+	var field = $(this);
+	var app = field.attr('app') || '';
+	var name = $.trim(field.val() || '');
+	if (!app || !name) { return; }
+	peopleStatus(peopleT('Saving…'));
+	$.ajax({
+		url: '/manager/resolve/alias',
+		type: 'POST',
+		data: { alias: name, app: app, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) { peopleStatus(peopleT('Saved.')); peopleAkaRefresh(app); }
+			else { peopleStatus((response && response.text) || peopleT('Could not save.')); }
+		},
+		error: function() { peopleStatus(peopleT('Could not save.')); }
+	});
+});
+
 function peopleConstructOpen(app) {
 	if (!app) { return; }
 	var tries = 0;

@@ -101,6 +101,15 @@
 	.people_member_row { cursor:pointer; padding:5px 4px; }
 	.people_crest_select { padding:6px 8px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); font-size:13px; max-width:240px; }
+	.people_aka { display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-top:6px; }
+	.people_aka_chip { display:inline-flex; align-items:center; gap:3px; padding:2px 5px 2px 8px;
+		border:1px solid var(--line); border-radius:999px; font-size:11px; background:var(--panel); }
+	.people_aka_remove { border:0; background:transparent; color:var(--muted,#8e8e8e); cursor:pointer;
+		font-size:13px; line-height:1; padding:0 2px; }
+	.people_aka_remove:hover { color:var(--text); }
+	.people_aka_add { border:1px dashed var(--line); border-radius:999px; background:transparent;
+		color:var(--text); font-size:11px; padding:2px 8px; min-width:100px; }
+	.people_aka_label { font-size:11px; color:var(--muted,#8e8e8e); }
 </style>
 <div id="people_app" class="people_app">
 	<div class="people_tabs">
@@ -308,6 +317,15 @@
 										<% } %>
 									<% } %>
 									<div class="people_construct_qr" app="<%= $row->{'app'} %>"></div>
+									<div class="people_aka" app="<%= $row->{'app'} %>">
+										<% if (@{ $row->{'aka'} || [] }) { %>
+											<span class="people_aka_label"><%= &subs::lang('people.aka') %></span>
+											<% foreach my $aka ( @{ $row->{'aka'} } ) { %>
+												<span class="people_aka_chip" app="<%= $row->{'app'} %>" name="<%= $aka %>"><%= $aka %><button class="people_aka_remove" app="<%= $row->{'app'} %>" name="<%= $aka %>" hint="Forget this name">&times;</button></span>
+											<% } %>
+										<% } %>
+										<input class="people_aka_add" app="<%= $row->{'app'} %>" placeholder="<%= &subs::lang('people.aka_add') %>" hint="Add another name">
+									</div>
 								<% } %>
 							</div>
 							<% if ($row->{'foreign'}) { %>

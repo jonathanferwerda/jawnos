@@ -284,7 +284,8 @@ function helpDoAction(a, cb) {
 		// the server reads the time the same way the clock does - dates, relative
 		// phrases and the guide's own fallback - so the raw words go across, not a
 		// client-side guess
-		$.post('/manager/help/stage', { app: a.app || '', title: a.title || '', notes: a.notes || '', timestamp: a.when || '', type: a.type || '', duration: a.duration || '' }, function (r) {
+		$.post('/manager/help/stage', { app: a.app || '', app_uuid: a.app_uuid || '', title: a.title || '', notes: a.notes || '', timestamp: a.when || '', type: a.type || '', duration: a.duration || '' }, function (r) {
+			if (r && r.ask) { cb(r.ask, r.ask); return; }
 			if (!r || !r.staged) { cb('I could not stage that.'); return; }
 			var when_text = r.timestamp ? (' for ' + new Date(parseInt(r.timestamp, 10)).toLocaleString()) : '';
 			var who = a.title || a.app || '';
@@ -329,7 +330,8 @@ function helpDoAction(a, cb) {
 	if (a.action === 'update') {
 		// a change to an appointment that already exists: the server resolves the
 		// appointment and the fields, and stages the change as a proposal
-		$.post('/manager/help/update', { app: a.app || '', title: a.title || '', delay: a.delay || '', when: a.when || '', duration: a.duration || '', notes: a.notes || '' }, function (r) {
+		$.post('/manager/help/update', { app: a.app || '', app_uuid: a.app_uuid || '', title: a.title || '', delay: a.delay || '', when: a.when || '', duration: a.duration || '', notes: a.notes || '' }, function (r) {
+			if (r && r.ask) { cb(r.ask, r.ask); return; }
 			if (!r || r.error) { cb('I could not change that: ' + ((r && r.error) || 'no such appointment') + '.', 'I could not make that change.'); return; }
 			var what = r.summary || ('change ' + (r.app || a.app || 'the appointment'));
 			if (typeof assistantConfirmRequired === 'function' && !assistantConfirmRequired()) {
@@ -353,14 +355,16 @@ function helpDoAction(a, cb) {
 	}
 	if (a.action === 'stop') {
 		// a stop acts at once (not staged): the server stops what the app has running
-		$.post('/manager/help/stop', { app: a.app || '', when: a.when || '', title: a.title || '' }, function (r) {
+		$.post('/manager/help/stop', { app: a.app || '', app_uuid: a.app_uuid || '', when: a.when || '', title: a.title || '' }, function (r) {
+			if (r && r.ask) { cb(r.ask, r.ask); return; }
 			if (!r || !r.ok) { cb((r && r.error) || 'There was nothing running to stop.', 'There is nothing running to stop.'); return; }
 			cb('Done - ' + (r.summary || 'stopped it') + '. Say "undo that" to put it back.', 'Done - ' + (r.summary || 'stopped it') + '.');
 		}).fail(function () { cb('I could not stop that.'); });
 		return;
 	}
 	if (a.action === 'delete') {
-		$.post('/manager/help/delete', { app: a.app || '', title: a.title || '', when: a.when || '', which: a.which || '' }, function (r) {
+		$.post('/manager/help/delete', { app: a.app || '', app_uuid: a.app_uuid || '', title: a.title || '', when: a.when || '', which: a.which || '' }, function (r) {
+			if (r && r.ask) { cb(r.ask, r.ask); return; }
 			if (!r || r.error) { cb('I could not find that appointment: ' + ((r && r.error) || 'not found') + '.', 'I could not find that one.'); return; }
 			var what = r.summary || ('delete the ' + (r.app || a.app || '') + ' appointment');
 			if (typeof assistantConfirmDeleteRequired === 'function' ? !assistantConfirmDeleteRequired() : (typeof assistantConfirmRequired === 'function' && !assistantConfirmRequired())) {

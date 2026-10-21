@@ -19304,8 +19304,12 @@ get '/manager/people' => sub($c) {
 	}
 	@people = sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @people;
 	my %people_by_app = map { ($_->{'app'} || '') => ($_->{'uuid'} || '') } @people;
+	# the words the Guide already knows this construct by, shown as chips on its
+	# row; a foreign construct's names are its own house's, so it gets none
+	my $aka_by_app = &guide_aka_read();
 	foreach my $construct ( @{ $index->{'constructs'} } ) {
 		foreach my $row ( @{ $construct->{'rows'} } ) {
+			$row->{'aka'} = $row->{'foreign'} ? [] : [ @{ $aka_by_app->{ $row->{'app'} } || [] } ];
 			$row->{'image'} = &people_crest_image($row->{'app'});
 			$row->{'public'} = $row->{'foreign'} ? 0 : &people_construct_public($row->{'app'});
 			$row->{'crest_uuid'} = '';
@@ -27422,22 +27426,14 @@ get '/manager/resolve' => sub($c) {
 	$c->render(json => $r);
 };
 
-get '/manager/resolve' => sub($c) {
-	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
-	my $r = &guide_resolve_target($c->param('q') || '', kind => ($c->param('kind') || ''));
-	$r->{'target'} = { %{ $r->{'target'} }, label => &guide_target_label($r->{'target'}) } if $r->{'target'};
-	$r->{'candidates'} = [ map { { %$_, label => &guide_target_label($_) } } @{ $r->{'candidates'} || [] } ];
-	$c->render(json => $r);
-};
-
 post '/manager/resolve/alias' => sub($c) {
 	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, text => 'citizen only' }); }
-	$c->render(json => &guide_alias_add($c->param('alias') || '', $c->param('target') || ''));
+	$c->render(json => &guide_alias_add($c->param('alias') || '', $c->param('target') || '', $c->param('app') || ''));
 };
 
 post '/manager/resolve/alias/remove' => sub($c) {
 	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, text => 'citizen only' }); }
-	$c->render(json => &guide_alias_remove($c->param('alias') || ''));
+	$c->render(json => &guide_alias_remove($c->param('alias') || '', $c->param('app') || ''));
 };
 
 # ---- the remote verb channel ------------------------------------------------
@@ -27488,6 +27484,9 @@ sub guide_target_label {
 	my $kind = $cand->{'kind'} || 'app';
 	my $label = $kind eq 'app' ? 'app' : $kind;
 	$label = $cand->{'construct'} if ($kind ne 'person' && ($cand->{'construct'} || '') ne '');
+	# an imported construct says whose it is, so two Gardens in different houses
+	# are told apart in the question rather than by an opaque local key
+	$label .= ' from ' . $cand->{'house_name'} if $cand->{'foreign'} && ($cand->{'house_name'} || '') ne '';
 	if ($cand->{'memberships'} && @{ $cand->{'memberships'} }) {
 		return $name . ' (' . $label . ': ' . join(', ', @{ $cand->{'memberships'} }) . ')';
 	}
@@ -27531,15 +27530,51 @@ sub guide_aka_read {
 }
 
 sub guide_alias_add {
-	my ($alias, $target) = @_;
+	my ($alias, $target, $app_key) = @_;
 	my $key = &guide_name_normalize($alias);
 	return { ok => 0, text => 'That alias is too short.' } unless length $key && length($key) >= 2;
-	my $r = &guide_resolve_target($target, kind => '');
-	unless ($r->{'ok'}) {
-		return { ok => 0, text => &guide_ask_candidates($target, $r->{'candidates'} || [])->{'text'} };
+	my $t;
+	if (defined $app_key && length $app_key) {
+		# the People window names a construct by its key, so nothing is resolved: a
+		# name that is ambiguous today cannot make the alias land on the wrong one
+		$app_key = &subs::unformat_name($app_key);
+		my $index = &people_index();
+		my $entry = $index->{'apps'}->{$app_key};
+		return { ok => 0, text => 'No such construct.' } unless $entry;
+		return { ok => 0, text => 'Another house keeps that construct; its names are theirs.' }
+			if ($entry->{'house_uuid'} || '') ne '';
+		$t = {
+			kind => ($entry->{'pos'} || $entry->{'mab'} || 'app'),
+			app => $app_key,
+			uuid => &subs::construct_uuid($app_key),
+			name => &subs::format_name($app_key),
+		};
 	}
-	my $t = $r->{'target'};
+	else {
+		my $r = &guide_resolve_target($target, kind => '');
+		unless ($r->{'ok'}) {
+			return { ok => 0, text => &guide_ask_candidates($target, $r->{'candidates'} || [])->{'text'} };
+		}
+		$t = $r->{'target'};
+	}
 	my $app = $t->{'app'} || '';
+	# A word another thing already answers to exactly is not an alias, it is a
+	# collision: exact wins over everything, so teaching it would silently take
+	# the word away. A prefix or fuzzy near-miss is not a collision - an alias is
+	# an exact answer, and the person is deliberately choosing it over the guess.
+	my $clash = &guide_resolve_target($alias, kind => '');
+	my @clash;
+	if ($clash->{'ok'} && ($clash->{'target'}->{'score'} || 0) >= 100) {
+		@clash = ($clash->{'target'}) if ($clash->{'target'}->{'app'} || '') ne $app;
+	}
+	elsif (($clash->{'reason'} || '') eq 'ambiguous') {
+		@clash = grep { ($_->{'score'} || 0) >= 100 && ($_->{'app'} || '') ne $app } @{ $clash->{'candidates'} || [] };
+	}
+	if (@clash) {
+		my @labels = map { &guide_target_label($_) } @clash;
+		@labels = @labels[0 .. 3] if scalar @labels > 4;
+		return { ok => 0, text => '"' . $alias . '" already means ' . join('; ', @labels) . '.' };
+	}
 	if (length $app && ($t->{'kind'} || '') ne 'machine' && ($t->{'kind'} || '') ne 'house') {
 		# An app or person: the aka row lives on the target itself, where the
 		# existing aka convention and setting_initializer already look for it.
@@ -27570,12 +27605,16 @@ sub guide_alias_add {
 }
 
 sub guide_alias_remove {
-	my ($alias) = @_;
+	my ($alias, $app_key) = @_;
 	my $key = &guide_name_normalize($alias);
 	return { ok => 0, text => 'No alias named.' } unless length $key;
 	my $found = 0;
+	# the People window removes a chip from one construct's row: only that row is
+	# touched, so the same word on another construct survives
+	my $only = (defined $app_key && length $app_key) ? &subs::unformat_name($app_key) : '';
 	my $aka = &guide_aka_read();
 	foreach my $app ( keys %{$aka} ) {
+		next if length $only && $app ne $only;
 		my @tokens = @{ $aka->{$app} || [] };
 		my @keep = grep { &guide_name_normalize($_) ne $key } @tokens;
 		next if scalar @keep == scalar @tokens;
@@ -27584,7 +27623,7 @@ sub guide_alias_remove {
 		&subs::setting_setter({ app => $app, setting => 'aka', device => 'all', value => join(',', @keep) }) if @keep;
 	}
 	my $map = &guide_aliases_read();
-	if (exists $map->{$key}) {
+	if (exists $map->{$key} && (!length $only || ($map->{$key}->{'app'} || '') eq $only)) {
 		delete $map->{$key};
 		&guide_aliases_write($map);
 		$found = 1;
@@ -27618,6 +27657,13 @@ sub guide_resolve_target {
 				last;
 			}
 		}
+	}
+	# A house narrows the name to that house's constructs: maple/john. It is the
+	# spoken form of a qualifier, so it is read before the name is normalized.
+	my $house_filter = '';
+	if ($text =~ m{^\s*([^/]+?)\s*/\s*(.+)$}s) {
+		$house_filter = &guide_name_normalize($1);
+		$text = $2;
 	}
 	# A short id pins the exact thing: john#7f3a.
 	my $id_prefix = '';
@@ -27681,13 +27727,23 @@ sub guide_resolve_target {
 	my $index = &people_index();
 	my %kind_of;
 	my %display_name;
+	my %house_of;
+	my %house_name_of;
 	foreach my $construct ( @{ $index->{'constructs'} || [] } ) {
 		foreach my $row ( @{ $construct->{'rows'} || [] } ) {
 			next unless defined $row->{'app'};
 			$kind_of{ $row->{'app'} } = $construct->{'sing'};
 			$display_name{ $row->{'app'} } = $row->{'name'} if $row->{'foreign'} && ($row->{'name'} || '') ne '';
+			if (($row->{'house_uuid'} || '') ne '') {
+				$house_of{ $row->{'app'} } = $row->{'house_uuid'};
+				$house_name_of{ $row->{'app'} } = $row->{'house_name'} || '';
+			}
 		}
 	}
+	# this house is the provenance of its own constructs
+	my $own_crest = &subs::crest_record_read();
+	my $own_house_uuid = $own_crest->{'uuid'} || '';
+	my $own_house_name = $own_crest->{'name'} || &subs::crest_house_name_read();
 	my %person;
 	my $people_rows = eval { &subs::db_select('people', undef, { status => 'active' })->hashes } || [];
 	foreach my $p ( @{$people_rows} ) {
@@ -27733,6 +27789,9 @@ sub guide_resolve_target {
 			name => $display_name{$app} || ($is_person ? ($person{$app}->{'name'} || &subs::format_name($app)) : &subs::format_name($app)),
 			uuid => $uuid,
 			construct => $construct,
+			foreign => (($house_of{$app} || '') ne '' ? 1 : 0),
+			house_uuid => $house_of{$app} || $own_house_uuid,
+			house_name => $house_name_of{$app} || $own_house_name,
 			memberships => \@memberships,
 			score => $score,
 			how => $how,
@@ -27786,6 +27845,12 @@ sub guide_resolve_target {
 			};
 		}
 	}
+	@candidates = grep {
+		my $hn = &guide_name_normalize($_->{'house_name'} || '');
+		my $hu = lc($_->{'house_uuid'} || '');
+		(length $hn && $hn eq $house_filter)
+			|| (length $hu && index($hu, lc $house_filter) == 0)
+	} @candidates if length $house_filter;
 	@candidates = grep { index(lc($_->{'uuid'} || ''), lc($id_prefix)) == 0 } @candidates if length $id_prefix;
 	@candidates = sort {
 		$b->{'score'} <=> $a->{'score'}
@@ -27835,6 +27900,44 @@ sub guide_resolve_action {
 	# simply does nothing, and an app may exist that the index does not list yet.
 	return $action if $a eq 'open_app' && $r->{'reason'} eq 'none';
 	return &guide_ask_candidates($text, $r->{'candidates'} || []);
+}
+
+# A name a write route was handed by our own client or by the model. An id wins
+# over a name, so a rename is not an identity change; a name that now means more
+# than one thing asks instead of acting on the wrong one. An exact app key the
+# client sent is trusted even when the name is ambiguous, because a key is not a
+# guess. A name nothing matches is handed back unchanged: stage may be naming an
+# app that does not exist yet.
+# exact => 1 is for a create: there a partial name is a new thing being named,
+# not a shorthand for an old one, so only the key itself (or an id) is accepted.
+sub guide_request_app {
+	my ($app, $app_uuid, $opts) = @_;
+	$opts = {} unless ref $opts eq 'HASH';
+	$app = '' unless defined $app;
+	$app_uuid = '' unless defined $app_uuid;
+	my $key = &subs::unformat_name($app);
+	if (length $app_uuid) {
+		my $row = eval { &subs::db_query("select app from settings where setting = 'construct_uuid' and value = ? limit 1", $app_uuid)->hash };
+		return { ok => 1, app => $row->{'app'}, uuid => $app_uuid } if $row && length($row->{'app'} || '');
+	}
+	my $r = &guide_resolve_target($app, kind => 'app');
+	if ($r->{'ok'}) {
+		my $score = $r->{'target'}->{'score'} || 0;
+		return { ok => 1, app => $r->{'target'}->{'app'}, uuid => $r->{'target'}->{'uuid'} || '' }
+			if !$opts->{'exact'} || $score >= 100;
+	}
+	my $cands = $r->{'candidates'} || [];
+	my $top = @{$cands} ? ($cands->[0]->{'score'} || 0) : 0;
+	if (length $key) {
+		my @exact = grep { ($_->{'app'} || '') eq $key && ($_->{'score'} || 0) >= 60 } @{$cands};
+		return { ok => 1, app => $key, uuid => $exact[0]->{'uuid'} || '' } if scalar @exact == 1;
+	}
+	# an exact tie is a question in both modes; a fuzzy or prefix tie is only a
+	# question when the route meant an existing construct
+	if (($r->{'reason'} || '') eq 'ambiguous' && (!$opts->{'exact'} || $top >= 100)) {
+		return { ok => 0, ask => &guide_ask_candidates($app, $cands)->{'text'} };
+	}
+	return { ok => 1, app => $key, uuid => '' };
 }
 
 sub guide_ask_candidates {
@@ -28074,30 +28177,42 @@ sub guide_promote_staged($c, $uuid) {
 # (the next one) or "last" (the most recent past one); "at" is a named moment
 # ("yesterday around 3:30pm", "a week from now") matched to the closest
 # appointment; "title" is a match on the note; the latest by default.
+# The WHERE that names one construct's appointments. The stable id is preferred
+# when the caller has it, so a rename is not an identity change; rows written
+# before app_uuid existed still match by name, but only when they carry no id of
+# their own, so one construct's rows never answer for another's.
+sub guide_appointment_identity {
+	my ($app, $app_uuid) = @_;
+	$app = &subs::unformat_name($app || '');
+	return ('app = ?', [ $app ]) unless defined $app_uuid && length $app_uuid;
+	return ("(app_uuid = ? or (app = ? and (app_uuid is null or app_uuid = '')))", [ $app_uuid, $app ]);
+}
+
 sub guide_find_target($app, $opts) {
 	$opts = {} unless ref $opts eq 'HASH';
 	$app = &subs::unformat_name($app || '');
-	return undef unless length $app;
+	my ($id_where, $id_args) = &guide_appointment_identity($app, $opts->{'app_uuid'});
+	return undef unless length $app || @{$id_args} > 1;
 	my $now = &subs::rightNow();
 	my $which = lc($opts->{'which'} // '');
 	if ($which =~ /^(?:upcoming|next|soon|future)$/) {
-		my $r = &subs::db_query('select * from appointments where app = ? and uuid is not null and timestamp >= ? order by timestamp asc limit 1', $app, $now)->hashes;
+		my $r = &subs::db_query("select * from appointments where $id_where and uuid is not null and timestamp >= ? order by timestamp asc limit 1", @{$id_args}, $now)->hashes;
 		return $r->[0] if scalar @{$r};
 	}
 	if ($which =~ /^(?:last|previous|past|latest)$/) {
-		my $r = &subs::db_query('select * from appointments where app = ? and uuid is not null and timestamp <= ? order by timestamp desc limit 1', $app, $now)->hashes;
+		my $r = &subs::db_query("select * from appointments where $id_where and uuid is not null and timestamp <= ? order by timestamp desc limit 1", @{$id_args}, $now)->hashes;
 		return $r->[0] if scalar @{$r};
 	}
 	if (defined $opts->{'at'} && $opts->{'at'} =~ /\S/) {
 		my $ms = &guide_when_ms($opts->{'at'});
-		my $r = &subs::db_query('select * from appointments where app = ? and uuid is not null order by abs(timestamp - ?) asc limit 1', $app, $ms)->hashes;
+		my $r = &subs::db_query("select * from appointments where $id_where and uuid is not null order by abs(timestamp - ?) asc limit 1", @{$id_args}, $ms)->hashes;
 		return $r->[0] if scalar @{$r};
 	}
 	if (defined $opts->{'title'} && $opts->{'title'} =~ /\S/) {
-		my $by_title = &subs::db_query('select * from appointments where app = ? and uuid is not null and notes like ? order by timestamp desc limit 1', $app, '%' . $opts->{'title'} . '%')->hashes;
+		my $by_title = &subs::db_query("select * from appointments where $id_where and uuid is not null and notes like ? order by timestamp desc limit 1", @{$id_args}, '%' . $opts->{'title'} . '%')->hashes;
 		return $by_title->[0] if scalar @{$by_title};
 	}
-	my $rows = &subs::db_query('select * from appointments where app = ? and uuid is not null order by timestamp desc limit 1', $app)->hashes;
+	my $rows = &subs::db_query("select * from appointments where $id_where and uuid is not null order by timestamp desc limit 1", @{$id_args})->hashes;
 	return $rows->[0];
 }
 
@@ -28172,7 +28287,7 @@ sub guide_stage_change($target, $changes, $summary) {
 
 sub guide_stage_update($c, $params) {
 	my $app = $params->{'app'} || '';
-	my $target = &guide_find_target($app, { title => $params->{'title'} });
+	my $target = &guide_find_target($app, { title => $params->{'title'}, app_uuid => $params->{'app_uuid'} });
 	return { error => 'I could not find "' . ($app || 'that') . '" to change' } unless $target;
 	my $changes = &guide_update_changes($target, $params);
 	return { error => 'nothing to change' } unless scalar keys %{$changes};
@@ -28182,10 +28297,11 @@ sub guide_stage_update($c, $params) {
 # The app's running appointment: a start (or a recording) that has begun and has not
 # been stopped. This is what "stop it" means - the newest such row, so a stale session
 # left open by a stop that never landed is not the one "stop it" reaches.
-sub guide_open_target($app) {
+sub guide_open_target($app, $app_uuid) {
 	$app = &subs::unformat_name($app || '');
-	return undef unless length $app;
-	my $rows = &subs::db_query('select * from appointments where app = ? and uuid is not null and type in (?,?,?,?,?) and timestamp <= ? and stop_seen is null order by timestamp desc limit 1', $app, 'start','record','video','audio','screen', &subs::rightNow())->hashes;
+	my ($id_where, $id_args) = &guide_appointment_identity($app, $app_uuid);
+	return undef unless length $app || @{$id_args} > 1;
+	my $rows = &subs::db_query("select * from appointments where $id_where and uuid is not null and type in (?,?,?,?,?) and timestamp <= ? and stop_seen is null order by timestamp desc limit 1", @{$id_args}, 'start','record','video','audio','screen', &subs::rightNow())->hashes;
 	return $rows->[0];
 }
 
@@ -28211,7 +28327,7 @@ sub guide_stop_when($when) {
 # clock fires when it comes.
 sub guide_stop_appointment($c, $params) {
 	my $app = $params->{'app'} || '';
-	my $target = &guide_open_target($app);
+	my $target = &guide_open_target($app, $params->{'app_uuid'});
 	return { error => 'nothing of "' . (&subs::format_name(&subs::unformat_name($app)) || $app) . '" is running to stop' } unless $target;
 	my $ts = &guide_stop_when($params->{'when'});
 	&guide_undo_push({
@@ -28240,7 +28356,7 @@ sub guide_stop_appointment($c, $params) {
 # the person confirms which one goes; promote removes it.
 sub guide_stage_delete($c, $params) {
 	my $app = $params->{'app'} || '';
-	my $target = &guide_find_target($app, { title => $params->{'title'}, at => $params->{'when'}, which => $params->{'which'} });
+	my $target = &guide_find_target($app, { title => $params->{'title'}, at => $params->{'when'}, which => $params->{'which'}, app_uuid => $params->{'app_uuid'} });
 	return { error => 'I could not find that appointment' } unless $target;
 	my $uuid = &subs::random_string_creator(40);
 	my $when_words = localtime(($target->{'timestamp'} + 0) / 1000)->strftime('%b %e, %I:%M%p');
@@ -28333,8 +28449,12 @@ sub guide_promote_delete($c, $row) {
 }
 
 post '/manager/help/stage' => sub($c) {
+	# the id the resolver gave the client wins over the name, and a name that now
+	# means more than one thing asks instead of staging onto the wrong one
+	my $r = &guide_request_app($c->param('app'), $c->param('app_uuid'), { exact => 1 });
+	return $c->render(json => { ask => $r->{'ask'} }) unless $r->{'ok'};
 	$c->render(json => guide_stage_appointment($c, {
-		app => $c->param('app'), type => $c->param('type'), timestamp => $c->param('timestamp'),
+		app => $r->{'app'}, type => $c->param('type'), timestamp => $c->param('timestamp'),
 		title => $c->param('title'), notes => $c->param('notes'), data => $c->param('data'),
 		duration => $c->param('duration'), source => $c->param('source')
 	}));
@@ -28353,8 +28473,10 @@ post '/manager/help/discard' => sub($c) {
 # The Guide changes an appointment that already exists: stage the change as a
 # proposal (promote applies it), the same shape a create uses.
 post '/manager/help/update' => sub($c) {
+	my $r = &guide_request_app($c->param('app'), $c->param('app_uuid'));
+	return $c->render(json => { ask => $r->{'ask'} }) unless $r->{'ok'};
 	$c->render(json => guide_stage_update($c, {
-		app => $c->param('app'), title => $c->param('title'), delay => $c->param('delay'),
+		app => $r->{'app'}, app_uuid => $r->{'uuid'}, title => $c->param('title'), delay => $c->param('delay'),
 		when => $c->param('when'), duration => $c->param('duration'), notes => $c->param('notes')
 	}));
 };
@@ -28362,14 +28484,18 @@ post '/manager/help/update' => sub($c) {
 # Stop the app's running appointment (now, or at a named moment). Not staged - a stop
 # acts at once, and the undo stack can put it back.
 post '/manager/help/stop' => sub($c) {
-	$c->render(json => guide_stop_appointment($c, { app => $c->param('app'), when => $c->param('when'), title => $c->param('title') }));
+	my $r = &guide_request_app($c->param('app'), $c->param('app_uuid'));
+	return $c->render(json => { ask => $r->{'ask'} }) unless $r->{'ok'};
+	$c->render(json => guide_stop_appointment($c, { app => $r->{'app'}, app_uuid => $r->{'uuid'}, when => $c->param('when'), title => $c->param('title') }));
 };
 
 # Delete one of the app's appointments: stage the delete as a proposal a promote
 # carries out.
 post '/manager/help/delete' => sub($c) {
+	my $r = &guide_request_app($c->param('app'), $c->param('app_uuid'));
+	return $c->render(json => { ask => $r->{'ask'} }) unless $r->{'ok'};
 	$c->render(json => guide_stage_delete($c, {
-		app => $c->param('app'), title => $c->param('title'), when => $c->param('when'), which => $c->param('which')
+		app => $r->{'app'}, app_uuid => $r->{'uuid'}, title => $c->param('title'), when => $c->param('when'), which => $c->param('which')
 	}));
 };
 
