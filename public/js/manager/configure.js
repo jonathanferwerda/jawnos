@@ -3176,3 +3176,39 @@ $(document).on('keydown', '.crypto_tracking_app_input', function(e) {
 $(document).on('blur', '.crypto_tracking_app_input', function() {
 	setTimeout(cryptoTrackHideResults, 160);
 });
+
+// ---- payment proof builder -------------------------------------------------
+// The payer signs what was sent, naming the seller's crest. The code travels as
+// PAY1Z: text (or its QR) and the seller verifies and countersigns it.
+$(document).on('click', '#crypto_proof_build', function() {
+	var status = $('#crypto_proof_status');
+	var data = {
+		payee: $.trim($('#crypto_proof_payee').val()),
+		ref: $.trim($('#crypto_proof_ref').val()),
+		asset: $('#crypto_proof_asset').val(),
+		amount: $('#crypto_proof_amount').val(),
+		address: $.trim($('#crypto_proof_address').val()),
+		txid: $.trim($('#crypto_proof_txid').val()),
+		memo: $('#crypto_proof_memo').val(),
+		timestamp: Date.now()
+	};
+	status.text('signing…');
+	$.post('/manager/crypto/proof_build', data, function(r) {
+		if (!r || !r.ok) { status.text((r && r.error) || 'could not sign'); return; }
+		$('#crypto_proof_code').val(r.code).show();
+		$('#crypto_proof_actions').show();
+		status.text('signed by ' + ((r.payer && r.payer.name) || 'this house') + (r.payee && r.payee.name ? ' for ' + r.payee.name : ''));
+		$('#crypto_proof_result').text((r.verified ? 'signature checks' : 'signature did not check') + ' · ' + r.code.length + ' characters');
+		var qr = $('#crypto_proof_qr');
+		if (r.code.length <= 1200) { qr.attr('src', '/manager/crypto/qr?text=' + encodeURIComponent(r.code)).show(); }
+		else { qr.removeAttr('src').hide(); }
+	}, 'json').fail(function() { status.text('could not sign'); });
+});
+
+$(document).on('click', '#crypto_proof_copy', function() {
+	var code = $('#crypto_proof_code').val();
+	if (!code) { return; }
+	$('#crypto_proof_code').trigger('focus').trigger('select');
+	try { document.execCommand('copy'); } catch (e) {}
+	$('#crypto_proof_result').text('copied');
+});

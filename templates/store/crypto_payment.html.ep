@@ -63,6 +63,15 @@
 			<label>Payment proof</label>
 			<textarea id="crypto_pay_proof" placeholder="PAY1Z:… (optional)" spellcheck="false" style="width:100%;height:58px;font-family:monospace;font-size:12px;"></textarea>
 		</div>
+		<% my $own_crest = &subs::crest_record_read(); %>
+		<% if ($own_crest->{'uuid'}) { %>
+			<div class="cfg-row">
+				<label>This house's crest</label>
+				<code id="crypto_pay_crest" style="font-size:12px;word-break:break-all;"><%= $own_crest->{'uuid'} %></code>
+				<button type="button" id="crypto_pay_crest_copy">Copy</button>
+			</div>
+			<p class="cfg-note" style="margin:0 0 8px;">Share this with the buyer so their proof names this house.</p>
+		<% } %>
 		<p class="cfg-note" style="margin:0 0 8px;">
 			<% if ($bio_mode eq 'self') { %>This device has a fingerprint enrolled: recording asks for it.<% } elsif ($bio_mode eq 'other') { %>This device has no fingerprint. Recording asks another device in the house for one.<% } else { %>No fingerprinted device is in the house, so the signed-in citizen records it.<% } %>
 			A proof is an attestation by the payer's crest; the chain is not checked here.

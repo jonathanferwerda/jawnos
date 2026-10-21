@@ -1139,3 +1139,11 @@ $(document).on('click', '#crypto_pay_record', function() {
 		postPayment();
 	}
 });
+
+$(document).on('click', '#crypto_pay_crest_copy', function() {
+	var text = $('#crypto_pay_crest').text();
+	if (!text) { return; }
+	var input = $('<input>').val(text).appendTo('body').trigger('select');
+	try { document.execCommand('copy'); } catch (e) {}
+	input.remove();
+});

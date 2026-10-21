@@ -6716,6 +6716,83 @@ get '/manager/crypto/payment_request' => sub($c) {
 	});
 };
 
+# The payer's half of a payment proof: this house signs what it sent, naming the
+# seller's crest (a UUID or a CREST1Z code). The seller's Store panel verifies
+# and countersigns it. A txid is carried, not chain-checked.
+post '/manager/crypto/proof_build' => sub($c) {
+	unless ($c->session('authentication') eq 'approved') {
+		return $c->render(json => { ok => 0, error => 'sign in first' });
+	}
+	my $own = &subs::crest_record_read();
+	my $suds = &subs::session_suds($c);
+	my $priv = $suds ? &subs::crest_key_read($suds) : undef;
+	unless (($own->{'uuid'} || '') ne '' && defined $priv && length $priv == 32) {
+		return $c->render(json => { ok => 0, error => 'this house has no crest key to sign with — unlock the house key first' });
+	}
+	my $asset = &subs::crypto_asset(uc($c->param('asset') || ''));
+	unless ($asset) { return $c->render(json => { ok => 0, error => 'choose a coin' }); }
+	my $amount = &subs::crypto_amount_number($c->param('amount'), $asset);
+	unless (defined $amount && $amount > 0) { return $c->render(json => { ok => 0, error => 'enter the amount that was sent' }); }
+	my $address = $c->param('address') || '';
+	my $txid = $c->param('txid') || '';
+	$txid =~ s/^\s+|\s+$//g;
+	my $ref = $c->param('ref') || '';
+	$ref =~ s/^\s+|\s+$//g;
+	my $memo = $c->param('memo') || '';
+	my $payee_value = $c->param('payee') || '';
+	$payee_value =~ s/^\s+|\s+$//g;
+	my ($payee_uuid, $payee_pubkey, $payee_name) = ('', '', '');
+	if ($payee_value =~ /^CREST1/i) {
+		my $rec = &subs::crest_code_parse($payee_value);
+		unless ($rec && &subs::crest_verify_record($rec)) {
+			return $c->render(json => { ok => 0, error => 'the seller\'s crest code did not verify' });
+		}
+		$payee_uuid = $rec->{'uuid'} || '';
+		$payee_pubkey = $rec->{'pubkey'} || '';
+		$payee_name = $rec->{'name'} || '';
+	}
+	else {
+		$payee_uuid = $payee_value;
+		unless ($payee_uuid =~ /^[A-Za-z0-9_-]{8,64}$/) {
+			return $c->render(json => { ok => 0, error => 'enter the seller\'s crest uuid (the seller\'s crypto panel shows it)' });
+		}
+		my $entry = &subs::crest_peer_find($payee_uuid);
+		if ($entry && ref $entry->{'crest'} eq 'HASH') {
+			$payee_pubkey = $entry->{'crest'}->{'pubkey'} || '';
+			$payee_name = $entry->{'crest'}->{'name'} || '';
+		}
+	}
+	my $record = {
+		format => 'jawnos-payment',
+		version => 1,
+		payer => {
+			uuid => $own->{'uuid'},
+			pubkey => $own->{'pubkey'},
+			name => $own->{'name'} || '',
+			fingerprint => $own->{'fingerprint'} || '',
+		},
+		payee => { uuid => $payee_uuid, pubkey => $payee_pubkey, name => $payee_name },
+		asset => $asset->{'code'},
+		amount => $amount,
+		address => $address,
+		txid => $txid,
+		ref => $ref,
+		at => &subs::rightNow(),
+		memo => $memo,
+	};
+	my $signed = &subs::payment_proof_build($record, $priv);
+	unless ($signed) { return $c->render(json => { ok => 0, error => 'the proof could not be signed' }); }
+	my $code = &subs::payment_proof_code($signed);
+	unless ($code) { return $c->render(json => { ok => 0, error => 'the proof could not be packed' }); }
+	$c->render(json => {
+		ok => 1,
+		code => $code,
+		payer => $record->{'payer'},
+		payee => $record->{'payee'},
+		verified => &subs::payment_proof_verify($signed) ? 1 : 0,
+	});
+};
+
 get '/manager/crypto/qr' => sub($c) {
 	my $text = $c->param('text') || '';
 	return $c->rendered(400) unless length $text && length $text <= 500;

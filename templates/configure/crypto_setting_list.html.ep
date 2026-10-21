@@ -135,4 +135,28 @@
 		<button type="button" class="crypto_open_apps">Open App configuration</button>
 		<span class="cfg-note" style="margin:0;">A wallet is an ordinary account, so it records transactions, transfers and statements like any other.</span>
 	</div>
+
+	<details class="cfg-details" style="margin-top:14px;">
+		<summary>Make a payment proof</summary>
+		<p class="cfg-note">Sign a statement of what this house sent, naming the seller's crest. The seller's crypto panel shows their crest uuid; paste it here, or paste their CREST1Z code. The seller verifies and countersigns the same bytes.</p>
+		<div class="cfg-grid">
+			<div class="cfg-row"><label>Seller crest</label><input id="crypto_proof_payee" placeholder="crest uuid or CREST1Z:…" autocomplete="off" spellcheck="false" style="width:100%;"></div>
+			<div class="cfg-row"><label>Invoice ref</label><input id="crypto_proof_ref" placeholder="2026-21-2026-3abc" style="width:100%;"></div>
+			<div class="cfg-row"><label>Coin</label><select id="crypto_proof_asset"><% foreach my $code ( @{$assets} ) { my $a = &subs::crypto_asset($code); next unless $a; %><option value="<%= $a->{'code'} %>"><%= $a->{'code'} %> — <%= $a->{'name'} %></option><% } %></select></div>
+			<div class="cfg-row"><label>Amount sent</label><input id="crypto_proof_amount" inputmode="decimal" placeholder="0.00120000" style="width:100%;"></div>
+			<div class="cfg-row"><label>Address</label><input id="crypto_proof_address" placeholder="the seller's address" style="width:100%;"></div>
+			<div class="cfg-row"><label>txid</label><input id="crypto_proof_txid" placeholder="transaction id" style="width:100%;"></div>
+			<div class="cfg-row"><label>Memo</label><input id="crypto_proof_memo" placeholder="optional" style="width:100%;"></div>
+		</div>
+		<div class="cfg-actions">
+			<button type="button" id="crypto_proof_build">Sign with this house's crest</button>
+			<span id="crypto_proof_status" class="cfg-note" style="margin:0;"></span>
+		</div>
+		<textarea id="crypto_proof_code" readonly spellcheck="false" placeholder="the PAY1Z code appears here" style="width:100%;box-sizing:border-box;min-height:90px;font-family:monospace;font-size:12px;display:none;"></textarea>
+		<div class="cfg-actions" id="crypto_proof_actions" style="display:none;">
+			<button type="button" id="crypto_proof_copy">Copy code</button>
+			<span id="crypto_proof_result" class="cfg-note" style="margin:0;"></span>
+		</div>
+		<div style="text-align:center;"><img id="crypto_proof_qr" alt="proof QR" style="display:none;width:180px;height:180px;background:#fff;padding:4px;border-radius:8px;"></div>
+	</details>
 </div>

@@ -496,6 +496,7 @@ our %topic = (
 			'In a transaction, a wallet account is read in its own coin: type the native amount and the form shows what it is worth, while the ledger stores the house\'s reporting-currency value so every budget and statement still sums one currency. A transfer between two wallets must stay in the same coin on both sides; moving between a wallet and a bank is a sale and a purchase, not a transfer, and the app will say so rather than write a wrong figure.',
 			'An invoice in the Store carries a crypto action when a wallet exists. It shows the coin, the amount for the balance, the receiving address and a QR; after the buyer sends the coin, type the amount and txid and press Verify & record. A payer\'s PAY1Z proof, when pasted, is checked against their crest and countersigned with this house\'s; the txid is carried, not checked against the chain. On a device with a fingerprint the record asks for it; a device without one (a laptop, or a tablet with only a PIN) asks another fingerprinted device in the house. Only when the house has no fingerprinted device does the signed-in citizen record it.',
 			'The coin list carries Bitcoin, Ethereum, USD Coin, Tether, Litecoin, Solana, Dogecoin, XRP, Cardano, BNB, TRON, Avalanche, Chainlink, Polkadot, Bitcoin Cash, Stellar, Cosmos and Toncoin. Only the ticked ones appear when a wallet or a payment picks a coin.',
+			'To pay another house, open Configure -> Plat -> Crypto -> Make a payment proof: paste the seller\'s crest uuid (their Store crypto panel shows it), the invoice ref, coin, amount, address and txid, then sign with this house\'s crest. Hand the PAY1Z code (or its QR) to the seller; their panel verifies it and countersigns the same bytes.',
 		],
 		steps => [
 			'Open Configure -> Plat -> Crypto and make sure the coins you want are ticked.',
@@ -506,6 +507,7 @@ our %topic = (
 			'Tick Currency tracking if you want rate history: it writes a point every six hours into the selected History app (Canadian Dollar or Markets by default), and the Measures app charts it.',
 			'Pick a different History app if the currency measures should live elsewhere; selecting one while tracking is on writes the first point there straight away.',
 			'To take a crypto payment, open the customer\'s invoices in the Store, press the wallet icon on the invoice, send the shown amount to the address, then fill in the amount and txid (and paste the buyer\'s PAY1Z proof if they gave one) and press Verify & record.',
+			'To pay another house, build a PAY1Z proof under Configure -> Plat -> Crypto -> Make a payment proof and give the seller the code; they verify and countersign it when they record the payment.',
 			'Stop the currency app\'s old updating appointment once tracking is on, so the history has one writer.'
 		],
 		related => [ 'budget', 'store', 'configure' ]
