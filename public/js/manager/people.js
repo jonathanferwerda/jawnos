@@ -7,6 +7,11 @@ function peopleT(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
 }
 
+// The window is re-fetched after a vouch, a link or a save. Keep the tab and
+// the person it was showing so those actions do not send the person back to Me.
+var peopleActiveTab = 'me';
+var peopleLastPerson = '';
+
 function peopleStatus(text) {
 	$('#people_status').text(text || '');
 }
@@ -19,6 +24,12 @@ function peopleOpener() {
 		data: { timestamp: timestamp },
 		success: function(response) {
 			windowMaker(response);
+			if (peopleActiveTab && peopleActiveTab !== 'me') {
+				setTimeout(function() {
+					peopleTabOpen(peopleActiveTab);
+					if (peopleActiveTab === 'people' && peopleLastPerson) { peoplePersonOpen(peopleLastPerson); }
+				}, 120);
+			}
 		}
 	});
 }
@@ -454,6 +465,7 @@ $(document).on('click', '#people_house_name_save', function() {
 
 function peopleTabOpen(tab) {
 	if (!tab) { return; }
+	peopleActiveTab = tab;
 	var app = $('#people_app');
 	if (!app.length) { return; }
 	app.find('.people_tab').removeClass('active').filter('[data-tab="' + tab + '"]').addClass('active');
@@ -462,6 +474,7 @@ function peopleTabOpen(tab) {
 
 function peoplePersonOpen(uuid) {
 	if (!uuid) { return; }
+	peopleLastPerson = uuid;
 	peopleTabOpen('people');
 	$.ajax({
 		url: '/manager/people/person',
@@ -517,6 +530,7 @@ $(document).on('click', '.people_chip', function(e) {
 });
 
 $(document).on('click', '.people_person_close', function() {
+	peopleLastPerson = '';
 	$('#people_person_card').hide().empty();
 });
 
