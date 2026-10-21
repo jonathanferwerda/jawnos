@@ -121,7 +121,7 @@
 		</div>
 		<table id="ticket_request_list" style="width:100%;">
 			<thead>
-				<th>Name</th><th>Contact</th><th>Description</th><th>Known</th><th>Asked</th><th>Age</th><th>Approve</th><th>Decide</th>
+				<th>Name</th><th>Contact</th><th>Description</th><th>Known</th><th><%= &subs::lang('crest') %></th><th>Asked</th><th>Age</th><th>Approve</th><th>Decide</th>
 			</thead>
 			<tbody>
 				<% foreach my $r ( @{$requests} ) { %>
@@ -130,6 +130,27 @@
 						<td><%= $r->{'info'}->{'email'} %><br><%= $r->{'info'}->{'phone'} %></td>
 						<td style="max-width:300px;overflow-wrap:break-word;"><%= $r->{'info'}->{'description'} %></td>
 						<td><%== join '<br>', map { &subs::format_name($_) } @{$r->{'known'}} %></td>
+						<td class="ticket_request_crest" style="max-width:220px;">
+							<% if ($r->{'crest'}) { %>
+								<% my $cr = $r->{'crest'}; %>
+								<% if ($cr->{'image'}) { %><img class="little_thumb" src="<%= $cr->{'image'} %>" alt=""><br><% } %>
+								<b><%= $cr->{'name'} || &subs::ui('Unknown crest') %></b><br>
+								<span style="font-family:monospace;font-size:10px;overflow-wrap:anywhere;display:block;" title="<%= $cr->{'fingerprint'} %>"><%= $cr->{'fingerprint'} %></span>
+								<span style="font-size:11px;">
+									<% if ($cr->{'met'}) { %><%= &subs::ui('Met in person') %>
+									<% } elsif ($cr->{'introduced_by'}) { %><%= &subs::ui('Introduced by') %> <%= $cr->{'introduced_by'} %>
+									<% } elsif ($cr->{'known'}) { %><%= &subs::ui('Imported, not met') %>
+									<% } else { %><%= &subs::ui('Not known yet') %><% } %>
+								</span>
+								<% if (scalar @{$cr->{'chips'} || []}) { %>
+									<div style="margin-top:3px;">
+										<% foreach my $chip (@{$cr->{'chips'}}) { %>
+											<span style="display:inline-block;padding:1px 6px;border:solid 1px;border-radius:999px;font-size:10px;margin:2px 2px 0 0;"><%= $chip->{'label'} %>: <%= $chip->{'name'} %></span>
+										<% } %>
+									</div>
+								<% } %>
+							<% } else { %>&mdash;<% } %>
+						</td>
 						<td><%= &subs::format_name($r->{'info'}->{'privilege'} || 'guest') %></td>
 						<td class="time" timestamp="<%= $r->{'timestamp'} %>"></td>
 						<td>

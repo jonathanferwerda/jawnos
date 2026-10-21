@@ -1,11 +1,20 @@
 <% no warnings 'uninitialized'; %>
 <div class="people_head">
 	<div class="people_house">
-		<div class="people_crest_frame">
-			<% if ($image) { %>
-				<img src="<%= $image %>" alt="<%= $crest->{'name'} %>">
-			<% } else { %>
-				<div class="people_crest_empty"><%= &subs::ui('No crest linked') %></div>
+		<div class="people_portraits">
+			<div class="people_crest_frame people_portrait_frame">
+				<% if ($main_image) { %>
+					<img src="<%= $main_image %>" alt="<%= $person->{'name'} %>">
+				<% } elsif ($image) { %>
+					<img src="<%= $image %>" alt="<%= $crest->{'name'} || $person->{'name'} %>">
+				<% } else { %>
+					<div class="people_crest_empty"><%= &subs::ui('No picture') %></div>
+				<% } %>
+			</div>
+			<% if ($main_image && $image) { %>
+				<div class="people_crest_frame people_crest_side" title="<%= &subs::ui('Crest') %>">
+					<img src="<%= $image %>" alt="<%= $crest->{'name'} || $person->{'name'} %>">
+				</div>
 			<% } %>
 		</div>
 		<div class="people_meta">
@@ -60,5 +69,5 @@
 		</select>
 		<button class="people_person_link_crest" app="<%= $app %>"><%= &subs::ui('Link') %></button>
 	<% } %>
-	<button class="people_person_relational"><%= &subs::ui('Open Relational') %></button>
+	<button class="people_person_relational" app="<%= $app %>"><%= &subs::ui('Open Relational') %></button>
 </div>

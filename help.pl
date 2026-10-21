@@ -287,7 +287,7 @@ our %topic = (
 			'Verify a photo compares a fresh photograph with the stored reference and reports a distance; the person confirms. A photocopy still looks like the drawing - the signed record, not the paper, is what proves the house.',
 			'The window is tabbed: Me is the house crest and its card; People is every person the house knows; then a tab for each social construct - Communities, Clubs, Teams, Projects and Accounts. The strip scrolls sideways, and each tab counts what it holds.',
 			'A person is a person construct in Relational. The moment one exists, its People row is made for it, and the row goes away when the construct is deleted; changing a construct from person to idea only hides it, so a mistaken change does not lose the identity behind it. A person\'s row shows their crest (when one is linked), the app name they are known by, and chips for the teams, clubs and communities they belong to. A chip opens that construct\'s tab on their row.',
-			'Clicking a person opens their card. It looks like the house card but carries only what belongs to them: their crest and fingerprint when one is linked, their constructs, Homepage, Store, Message, I have met this crest, and a control to link a known crest to them. Their crest is not edited here; the drawing belongs to their house, and linking only says which house this person is.',
+			'Clicking a person opens their card. Their own main picture is the portrait; when a crest is linked it sits beside it. The card carries no scan, upload, card, QR, NFC or rename controls - the drawing belongs to their house. It offers Homepage, Store, Message, I have met this crest, a control to link a known crest, and Open Relational, which starts Relational already focused on that person.',
 			'Each construct tab lists the constructs of that kind and their members. A row opens to show who belongs to it. Relational is where the structure itself is made and changed; People reads it.'
 		],
 		steps => [
@@ -387,16 +387,21 @@ our %topic = (
 	},
 	'relational' => {
 		title => 'Relational', category => 'apps', app => 'relational',
+		templates => [ 'templates/relational/workspace.html.ep', 'public/js/manager/relational.js' ],
+		verified => '2026-10-20',
 		summary => 'The social constructs, and the relationships between them.',
 		body => [
-			'Relational is where the house\'s social structure is made: people, teams, clubs, communities, projects and accounts. A construct is a named row with a kind (its pos, or its mab when it belongs to a second kind), and the rows are linked by dragging one onto another - a person onto a team, a team onto a club, a club onto a community.',
-			'A person construct is also a person in People: the window adds the People row for it and keeps their team, club and community chips up to date. Deleting the construct removes the person; changing its kind away from person only hides it, so an accidental change can be undone.'
+			'Relational is where the house\'s social structure is made: people, teams, clubs, communities, projects and accounts. The window is a workspace. The left column is the library of constructs, one tab per kind, with a search and a New name box; the right side is the construct you are working on, with one drop group for each kind it can belong to.',
+			'Adding is deliberately two ways. On a desk, drag a card from the library onto the matching group (a team card onto Teams); on a phone, press the + on the card. Either way the link is written both ways, so the team lists the person and the person wears the team. Remove a link with the x on the member, or drag the member to Drop here to remove.',
+			'A construct is a named row with a kind (its pos, or its mab when it belongs to a second kind). Details on the focused card changes that kind; the tree and calculator tools of the old matcher are not part of this board.',
+			'A person construct is also a person in People: the window adds the People row for it and keeps their team, club and community chips up to date. Deleting the construct removes the person; changing its kind away from person only hides it, so an accidental change can be undone. Opening Relational from a Person card focuses that person.'
 		],
 		steps => [
-			'Open Relational and add a person.',
-			'Record the people they connect to, and what the relationship is.',
-			'Drag a person onto a team, club or community to make them a member.',
-			'Use the measures panel to track how a connection is going over time.',
+			'Open Relational, or press Open Relational on a Person card to start focused on them.',
+			'Pick a construct in the library; its card fills the right side with one group per kind.',
+			'Drag a card onto its group, or press + on the card, to add the relationship.',
+			'Press x on a member, or drag it to Drop here to remove, to end the relationship.',
+			'Type in New name and press Add to make a construct without leaving the board.',
 			'Open People to see the same people with their crests and memberships.'
 		],
 		related => [ 'people', 'mailbox', 'travel' ]
@@ -724,12 +729,13 @@ our %topic = (
 	},
 	'box_office' => {
 		title => 'Box Office', category => 'apps', app => 'box_office',
-		templates => [ 'templates/box_office.html.ep', 'public/js/manager/manager.js' ],
-		verified => '2026-10-18',
+		templates => [ 'templates/box_office.html.ep', 'templates/store/ticket_request.html.ep', 'public/js/manager/manager.js', 'public/js/homepage.js' ],
+		verified => '2026-10-20',
 		summary => 'Issue, suspend, renew and revoke tickets.',
 		body => [
 			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it. The select in a ticket\'s row changes its privilege; the next time the link is opened the session wears the new chair.',
-			'The Requests view holds what the public page asked for: each request shows its name, contact, description and whether the house already knows the contact. Approve mints the ticket (the waiting page lets itself in), Decline forgets it, Blacklist remembers the identifiers so the door refuses them before a request is ever queued.',
+			'The Requests view holds what the public page asked for: each request shows its name, contact, description and whether the house already knows the contact. A request may also carry a crest — a compact signed code pasted from the visitor\'s QR or NFC tag. The Crest column shows that house, its fingerprint and whether this house has met it (Met in person), has an introduction to it (Introduced by ...), has imported it without meeting (Imported, not met), or has only the verified record (Not known yet). The crest is identity, not a grant: it never approves a request by itself.',
+			'Approve mints the ticket (the waiting page lets itself in), Decline forgets it, Blacklist remembers the identifiers so the door refuses them before a request is ever queued.',
 			'Issue guest tickets on request keeps the door open: a request is minted a guest ticket on the spot at the guest warranty. Leave it unticked and requests queue for approval instead.',
 			'A blacklisted ticket is the deny: its holder is shown the denial page and that browser is then locked out of the house — public pages included — with no redirect.',
 			'The tickets view also carries Blocked numbers: a number typed there — or added by the Phone app\'s Block button on a recent call — is turned away before it can ring, and the same list keeps that number (or a request from the same email) out at the door. Removing a number from the list lets it ring again.'
@@ -741,6 +747,7 @@ our %topic = (
 			'Suspend, renew or delete a ticket from the same list when it is no longer wanted.',
 			'Change a ticket\'s privilege from the select in its row; the next login wears it.',
 			'Open the Requests view to approve, decline or blacklist what the public page asked for.',
+			'Read the Crest column beside Known before deciding; it says who is asking, not what they may do.',
 			'Block a nuisance number under Blocked numbers — or from the Phone app\'s Recents — and remove it there when it is welcome again.'
 		],
 		related => [ 'tickets', 'security', 'phone' ]

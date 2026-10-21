@@ -75,6 +75,7 @@ sub label {
 # ---------------------------------------------------------------------------
 our %catalog = (
 	en => {
+		'crest' => 'Crest',
 		'people.me' => 'Me',
 		'construct.communities' => 'Communities',
 		'construct.clubs' => 'Clubs',
@@ -216,6 +217,7 @@ our %catalog = (
 		'screensaver.art' => 'Drifting logo',
 	},
 	zh => {
+		'crest' => '徽记',
 		'people.me' => '我',
 		'construct.communities' => '社区',
 		'construct.clubs' => '俱乐部',
@@ -356,6 +358,7 @@ our %catalog = (
 		'screensaver.art' => '漂浮标志',
 	},
 	fr => {
+		'crest' => 'Blason',
 		'people.me' => 'Moi',
 		'construct.communities' => 'Communautés',
 		'construct.clubs' => 'Clubs',
@@ -496,6 +499,7 @@ our %catalog = (
 		'screensaver.art' => 'Logo flottant',
 	},
 	es => {
+		'crest' => 'Blasón',
 		'people.me' => 'Yo',
 		'construct.communities' => 'Comunidades',
 		'construct.clubs' => 'Clubes',
@@ -636,6 +640,7 @@ our %catalog = (
 		'screensaver.art' => 'Logo flotante',
 	},
 	de => {
+		'crest' => 'Wappen',
 		'people.me' => 'Ich',
 		'construct.communities' => 'Gemeinschaften',
 		'construct.clubs' => 'Clubs',
@@ -776,6 +781,7 @@ our %catalog = (
 		'screensaver.art' => 'Schwebendes Logo',
 	},
 	pt => {
+		'crest' => 'Brasão',
 		'people.me' => 'Eu',
 		'construct.communities' => 'Comunidades',
 		'construct.clubs' => 'Clubes',
@@ -916,6 +922,7 @@ our %catalog = (
 		'screensaver.art' => 'Logótipo à deriva',
 	},
 	hi => {
+		'crest' => 'कुलचिह्न',
 		'people.me' => 'मैं',
 		'construct.communities' => 'समुदाय',
 		'construct.clubs' => 'क्लब',
@@ -1043,6 +1050,7 @@ our %catalog = (
 		'screensaver.art' => 'बहता लोगो',
 	},
 	ar => {
+		'crest' => 'شعار',
 		'people.me' => 'أنا',
 		'construct.communities' => 'المجتمعات',
 		'construct.clubs' => 'الأندية',
@@ -1170,6 +1178,7 @@ our %catalog = (
 		'screensaver.art' => 'شعار عائم',
 	},
 	bn => {
+		'crest' => 'ক্রেস্ট',
 		'people.me' => 'আমি',
 		'construct.communities' => 'সম্প্রদায়',
 		'construct.clubs' => 'ক্লাব',
@@ -1297,6 +1306,7 @@ our %catalog = (
 		'screensaver.art' => 'ভাসমান লোগো',
 	},
 	ru => {
+		'crest' => 'Герб',
 		'people.me' => 'Я',
 		'construct.communities' => 'Сообщества',
 		'construct.clubs' => 'Клубы',
@@ -1424,6 +1434,7 @@ our %catalog = (
 		'screensaver.art' => 'Парящий логотип',
 	},
 	ja => {
+		'crest' => '紋章',
 		'people.me' => '自分',
 		'construct.communities' => 'コミュニティ',
 		'construct.clubs' => 'クラブ',
@@ -1551,6 +1562,7 @@ our %catalog = (
 		'screensaver.art' => '漂うロゴ',
 	},
 	pa => {
+		'crest' => 'ਕ੍ਰੈਸਟ',
 		'people.me' => 'ਮੈਂ',
 		'construct.communities' => 'ਭਾਈਚਾਰੇ',
 		'construct.clubs' => 'ਕਲੱਬ',
@@ -1678,6 +1690,7 @@ our %catalog = (
 		'screensaver.art' => 'ਤੈਰਦਾ ਲੋਗੋ',
 	},
 	id => {
+		'crest' => 'Lambang',
 		'people.me' => 'Saya',
 		'construct.communities' => 'Komunitas',
 		'construct.clubs' => 'Klub',
@@ -1805,6 +1818,7 @@ our %catalog = (
 		'screensaver.art' => 'Logo melayang',
 	},
 	ko => {
+		'crest' => '문장',
 		'people.me' => '나',
 		'construct.communities' => '커뮤니티',
 		'construct.clubs' => '클럽',
@@ -1932,6 +1946,7 @@ our %catalog = (
 		'screensaver.art' => '떠다니는 로고',
 	},
 	it => {
+		'crest' => 'Stemma',
 		'people.me' => 'Io',
 		'construct.communities' => 'Comunità',
 		'construct.clubs' => 'Club',
@@ -2059,6 +2074,7 @@ our %catalog = (
 		'screensaver.art' => 'Logo fluttuante',
 	},
 	tr => {
+		'crest' => 'Arma',
 		'people.me' => 'Ben',
 		'construct.communities' => 'Topluluklar',
 		'construct.clubs' => 'Kulüpler',

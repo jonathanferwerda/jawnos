@@ -17,9 +17,17 @@
 <%= &subs::lang('common.name') %>: <input class="ticket_request_input" name="name"><br>
 <%= &subs::lang('common.email') %>: <input class="ticket_request_input" name="email" type="email"><br>
 <%= &subs::lang('home.phone') || 'Phone' %>: <input class="ticket_request_input" name="phone" type="phone"><br>
-<%= &subs::lang('home.describe') %><br>
-<textarea class="ticket_request_input" name="description"></textarea><br>
-<%= &subs::lang('home.privilege') %>:
+	<%= &subs::lang('home.describe') %><br>
+	<textarea class="ticket_request_input" name="description"></textarea><br>
+	<%= &subs::ui('Crest (optional)') %>:<br>
+	<textarea class="ticket_request_input" name="crest_code" rows="2" style="width:90%;font-family:monospace;font-size:11px;" placeholder="CREST1Z:..."></textarea><br>
+	<span style="font-size:12px;"><%= &subs::ui('Paste the code from their QR or NFC tag; leave it blank if they have none.') %></span><br>
+	<% if (($crest_error // 0) == 2) { %>
+		<p class="ticket_request_error" style="color:#a00;font-weight:bold;"><%= &subs::ui('That is this house\'s own crest.') %></p>
+	<% } elsif (($crest_error // 0)) { %>
+		<p class="ticket_request_error" style="color:#a00;font-weight:bold;"><%= &subs::ui('That crest code is not readable or does not verify.') %></p>
+	<% } %>
+	<%= &subs::lang('home.privilege') %>:
 	<select class="ticket_request_input ticket_request_allocater" id="ticket_request_privilege" name="privilege">
 		<% foreach my $p ( qw/guest resident citizen/ ) { %>
 			<option value="<%= $p %>"><%= &subs::lang('home.' . $p) %></option>

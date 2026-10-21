@@ -28,7 +28,8 @@
 	.people_actions button:hover, .people_actions a.people_button:hover, .people_name_row button:hover { background:var(--line); }
 	.people_peer_thumb { width:56px; height:56px; flex:0 0 56px; object-fit:contain; border:1px solid var(--line);
 		border-radius:8px; background:var(--panel); }
-	.people_peer_thumb_empty { display:block; }
+	.people_peer_thumb_empty { display:flex; align-items:center; justify-content:center; border-style:dashed;
+		background:transparent; font-size:18px; font-weight:bold; opacity:.55; color:var(--muted,#8e8e8e); }
 	.people_peer_vouch { padding:6px 10px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); cursor:pointer; font-size:12px; }
 	.people_qr_box { text-align:center; margin:8px 0; }
@@ -54,6 +55,11 @@
 	.people_person_card { display:none; position:relative; border:1px solid var(--line); border-radius:10px;
 		padding:12px; margin:0 0 12px; background:var(--panel); overflow:auto; }
 	.people_person_card .people_crest_frame { width:120px; height:120px; flex:0 0 120px; }
+	.people_person_card .people_portraits { display:flex; gap:8px; align-items:center; flex:0 0 auto; }
+	.people_person_card .people_portrait_frame { width:150px; height:150px; flex:0 0 150px; }
+	.people_person_card .people_crest_side { width:76px; height:76px; flex:0 0 76px; }
+	.people_person_card .people_portrait_frame img,
+	.people_person_card .people_crest_side img { max-width:100%; max-height:100%; object-fit:contain; }
 	.people_person_card .people_detail_close { position:static; float:right; }
 	.people_crest_row { cursor:pointer; }
 	.people_name_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
@@ -177,7 +183,7 @@
 							<% if ($peer->{'has_image'}) { %>
 								<img class="people_peer_thumb" src="<%= $peer->{'image_src'} %>" alt="<%= $peer->{'name'} %>">
 							<% } else { %>
-								<span class="people_peer_thumb people_peer_thumb_empty"></span>
+								<span class="people_peer_thumb people_peer_thumb_empty"><%= substr($peer->{'name'} || '?', 0, 1) %></span>
 							<% } %>
 							<span class="people_row_name"><%= $peer->{'name'} %><br><span class="people_fp"><%= $peer->{'fingerprint'} %></span></span>
 							<span class="people_row_sub">
@@ -211,7 +217,7 @@
 						<% if ($person->{'image'}) { %>
 							<img class="people_peer_thumb" src="<%= $person->{'image'} %>" alt="<%= $person->{'name'} %>">
 						<% } else { %>
-							<span class="people_peer_thumb people_peer_thumb_empty"></span>
+							<span class="people_peer_thumb people_peer_thumb_empty"><%= substr($person->{'name'} || '?', 0, 1) %></span>
 						<% } %>
 						<span class="people_row_name">
 							<%= $person->{'name'} %>
@@ -241,7 +247,7 @@
 							<% if ($row->{'image'}) { %>
 								<img class="people_peer_thumb" src="<%= $row->{'image'} %>" alt="<%= $row->{'name'} %>">
 							<% } else { %>
-								<span class="people_peer_thumb people_peer_thumb_empty"></span>
+								<span class="people_peer_thumb people_peer_thumb_empty"><%= substr($row->{'name'} || '?', 0, 1) %></span>
 							<% } %>
 							<span class="people_row_name"><%= $row->{'name'} %><br><span class="people_fp"><%= $row->{'app'} %></span></span>
 							<span class="people_row_sub"><%= $row->{'member_count'} %></span>
@@ -254,7 +260,7 @@
 										<% if ($member->{'image'}) { %>
 											<img class="people_peer_thumb" src="<%= $member->{'image'} %>" alt="<%= $member->{'name'} %>">
 										<% } else { %>
-											<span class="people_peer_thumb people_peer_thumb_empty"></span>
+											<span class="people_peer_thumb people_peer_thumb_empty"><%= substr($member->{'name'} || '?', 0, 1) %></span>
 										<% } %>
 										<span class="people_row_name"><%= $member->{'name'} %></span>
 									</div>

@@ -567,5 +567,7 @@ $(document).on('click', '.people_person_link_crest', function() {
 });
 
 $(document).on('click', '.people_person_relational', function() {
-	$('#relational_toggle').trigger('click');
+	var app = $(this).attr('app') || '';
+	if (typeof relationalOpener === 'function') { relationalOpener(app); }
+	else { $('#relational_toggle').trigger('click'); }
 });

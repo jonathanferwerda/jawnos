@@ -10425,6 +10425,7 @@ sub ticket_request_mint($c, $request, $privilege, $warranty) {
 	});
 	$data->{'browser_tab_id'} = $request->{'browser_tab_id'};
 	$data->{'information'} = $request->{'information'};
+	$data->{'crest_uuid'} = $request->{'crest_uuid'} if $request->{'crest_uuid'};
 	return $data;
 }
 
@@ -10643,10 +10644,42 @@ get '/manager/box_office' => sub($c) {
 	my $projects = $projs->hashes;
 	my $persons = &subs::db_query('select * from settings where (setting=? or setting=?) and value=? or value = ?', 'pos','mab','person', 'customer');
 	my $requests = [ grep { ($_->{'status'} || '') eq 'request' } @{$tickets} ];
+	my $crest_index;
 	foreach my $r ( @{$requests} ) {
 		$r->{'access_log'} = [];
 		$r->{'info'} = eval { return decode_json $r->{'information'} } || {};
 		$r->{'known'} = &ticket_request_known($r->{'info'});
+		# The crest the request carried: the desk sees who is asking, and
+		# whether this house has met them, without the crest granting anything.
+		my $crest = $r->{'info'}->{'crest'};
+		my $crest_uuid = (ref $crest eq 'HASH' ? ($crest->{'uuid'} || '') : '') || ($r->{'crest_uuid'} || '');
+		if (length $crest_uuid) {
+			my $entry = &subs::crest_peer_find($crest_uuid);
+			my $state = $entry ? &people_crest_state($entry) : { met => 0, introduced_by => '' };
+			my $name = ref $crest eq 'HASH' ? ($crest->{'name'} || '') : '';
+			my $fingerprint = ref $crest eq 'HASH' ? ($crest->{'fingerprint'} || '') : '';
+			if ($entry && ref $entry->{'crest'} eq 'HASH') {
+				$name ||= $entry->{'crest'}->{'name'} || '';
+				$fingerprint ||= $entry->{'crest'}->{'fingerprint'} || '';
+			}
+			my $app = &subs::crest_contact_app_for_uuid($crest_uuid) || '';
+			my $chips = [];
+			if ($app) {
+				$crest_index ||= &people_index();
+				$chips = &people_chips($crest_index, $app);
+			}
+			$r->{'crest'} = {
+				uuid => $crest_uuid,
+				name => $name,
+				fingerprint => $fingerprint,
+				known => $entry ? 1 : 0,
+				met => $state->{'met'} ? 1 : 0,
+				introduced_by => $state->{'introduced_by'} || '',
+				image => $entry ? &people_crest_entry_image($entry) : '',
+				app => $app,
+				chips => $chips,
+			};
+		}
 	}
 	foreach my $t ( @{$tickets} ) {
 		my $al = eval { return decode_json $t->{'access_log'} } || [];
@@ -10733,6 +10766,38 @@ any '/box_office/ticket_request' => sub($c) {
 			club => $data->{'club'},
 			community => $data->{'community'}
 		};
+		# A crest is a claim, not a permission: the code is verified here so an
+		# unreadable or tampered one never reaches the desk, and the verified
+		# record rides with the request. It does not approve anything.
+		my $crest_code = $data->{'crest_code'} || '';
+		$crest_code =~ s/^\s+|\s+$//g;
+		my $crest_record;
+		if (length $crest_code) {
+			if (length $crest_code > 4000) {
+				my $content = $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 1);
+				$c->render(json => { status => 'error', html => $content });
+				return;
+			}
+			$crest_record = &subs::crest_code_parse($crest_code);
+			unless ($crest_record && &subs::crest_verify_record($crest_record)) {
+				$c->render(json => { status => 'error', html => $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 1) });
+				return;
+			}
+			my $own_crest = &subs::crest_record_read();
+			if (($own_crest->{'uuid'} || '') ne '' && ($crest_record->{'uuid'} || '') eq $own_crest->{'uuid'}) {
+				$c->render(json => { status => 'error', html => $c->render_to_string(template => 'store/ticket_request', error => 0, crest_error => 2) });
+				return;
+			}
+			$info->{'crest'} = {
+				uuid => $crest_record->{'uuid'} || '',
+				name => $crest_record->{'name'} || '',
+				fingerprint => $crest_record->{'fingerprint'} || '',
+				pubkey => $crest_record->{'pubkey'} || '',
+				version => $crest_record->{'version'} || 1,
+				issued => $crest_record->{'issued'} || '',
+				sig => $crest_record->{'sig'} || '',
+			};
+		}
 		my $browser_tab_id = $c->param('browser_tab_id') || '';
 		my $policy = &ticket_policy();
 		# the door's rules: a blacklisted identifier and a flood both get the
@@ -10742,6 +10807,7 @@ any '/box_office/ticket_request' => sub($c) {
 			$c->render(json => { status => 'pending', html => &ticket_request_pending_html() });
 			return;
 		}
+		my $crest_for_request = $crest_record ? ($crest_record->{'uuid'} || '') : '';
 		my $request = {
 			uuid => &subs::random_string_creator(35),
 			name => $info->{'name'},
@@ -10751,18 +10817,24 @@ any '/box_office/ticket_request' => sub($c) {
 			privilege => 'guest',
 			browser_tab_id => $browser_tab_id,
 			ip => $c->tx->remote_address,
-			information => encode_json $info
+			information => encode_json $info,
+			crest_uuid => $crest_for_request,
 		};
 		if ($policy->{'issue_guest_on_request'}) {
 			# the house keeps the door open: a guest ticket is minted on the spot
 			my $minted = &ticket_request_mint($c, $request, 'guest', $policy->{'guest_warranty'});
 			if ($minted) {
 				&subs::db_insert('tickets', $minted);
+				&subs::db_update('tickets', { crest_uuid => $crest_for_request }, { uuid => $minted->{'uuid'} }) if length $crest_for_request;
 				$c->render(json => { status => 'approved', url => $minted->{'url'} });
 				return;
 			}
 		}
 		&subs::db_insert('tickets', $request);
+		# The crest column is written explicitly: the request row's own identity
+		# must carry it even when the insert is handed a hash assembled by an
+		# older code path.
+		&subs::db_update('tickets', { crest_uuid => $crest_for_request }, { uuid => $request->{'uuid'} }) if length $crest_for_request;
 		&ticket_request_notify($c, $request, $info);
 		$c->render(json => { status => 'pending', html => &ticket_request_pending_html() });
 	}
@@ -10808,6 +10880,7 @@ post '/manager/box_office/approve' => sub($c) {
 	}
 	&subs::db_delete('tickets', { uuid => $uuid });
 	&subs::db_insert('tickets', $minted);
+	&subs::db_update('tickets', { crest_uuid => $request->{'crest_uuid'} }, { uuid => $minted->{'uuid'} }) if $request->{'crest_uuid'};
 	&Websocket::send('server', { console => 'typeof ticket_list == "function" && ticket_list();' });
 	$c->render(json => { ticket => $minted->{'uuid'}, url => $minted->{'url'} });
 };
@@ -18508,6 +18581,10 @@ sub people_index {
 			my $uuid = $row->{'value'} // '';
 			next unless length $uuid;
 			$apps{$app}->{'uuids'}->{$uuid} = 1;
+			$apps{$app}->{'uuid_rows'}->{$uuid} = {
+				device => $row->{'device'} // '',
+				server_time => $row->{'server_time'} // '',
+			};
 			$uuid_app{$uuid} = $app;
 		}
 		elsif ($setting eq 'pos' || $setting eq 'mab') {
@@ -18543,6 +18620,20 @@ sub people_index {
 			}
 			$apps{$app}->{$setting} = $pick ? $pick->{'value'} : '';
 		}
+		# the row this machine writes to: its own device's copy when there is
+		# one, otherwise the newest copy another machine made
+		my $preferred = '';
+		my $newest = '';
+		my $newest_stamp = '';
+		foreach my $uuid ( keys %{ $apps{$app}->{'uuid_rows'} || {} } ) {
+			my $entry = $apps{$app}->{'uuid_rows'}->{$uuid};
+			if (($entry->{'device'} || '') eq $current) { $preferred = $uuid; last; }
+			if (!$newest || ($entry->{'server_time'} || '') gt $newest_stamp) {
+				$newest = $uuid;
+				$newest_stamp = $entry->{'server_time'} || '';
+			}
+		}
+		$apps{$app}->{'preferred_uuid'} = $preferred || $newest || '';
 	}
 	# a membership array names the uuid of the construct's settings row, so
 	# the reverse map is what turns "these uuids" into "these construct apps"
@@ -18668,12 +18759,29 @@ sub people_chips {
 # The peer crest linked to a contact app, as an image the window can show.
 sub people_crest_image {
 	my ($app) = @_;
-	my $entry = &subs::crest_contact_entry($app);
+	return &people_crest_entry_image(&subs::crest_contact_entry($app));
+}
+
+sub people_crest_entry_image {
+	my ($entry) = @_;
 	return '' unless $entry && ref $entry->{'crest'} eq 'HASH';
 	return $entry->{'image_data'} if defined $entry->{'image_data'} && length $entry->{'image_data'};
 	my $uuid = $entry->{'crest'}->{'uuid'} || '';
 	return '' unless length $uuid;
 	return &subs::crest_peer_image_file($entry) ? '/manager/people/crest_image?peer=' . $uuid . '&stamp=' . &subs::rightNow() : '';
+}
+
+# The person's own picture. The main_image setting is written per device and
+# may be a sealed path or (on a phone) a data URI; /file_open is what unfastens
+# a sealed picture for an <img>, and it takes the app alongside the path.
+sub people_main_image {
+	my ($app) = @_;
+	return '' unless defined $app && length $app;
+	my $row = eval { &subs::db_query("select value from settings where app=? and setting='main_image' and value<>'' order by server_time desc limit 1", $app)->hashes->[0] };
+	return '' unless $row && length($row->{'value'} || '');
+	my $value = $row->{'value'};
+	return $value if $value =~ /^data:image\//i;
+	return '/file_open?file=' . &subs::url_escape_utf8($value) . '&app=' . &subs::url_escape_utf8($app) . '&thumb=ya&timestamp=' . &subs::rightNow();
 }
 
 # Met / introduced state for a linked crest, read the same way the crest
@@ -19055,6 +19163,7 @@ get '/manager/people/person' => sub($c) {
 		introduced_by => $introduced_by,
 		phone => $phone,
 		email => $email,
+		main_image => &people_main_image($app),
 		peer_choices => \@peer_choices,
 	);
 	$c->render(json => { ok => 1, html => $html });
@@ -22098,29 +22207,263 @@ get '/manager/relational' => sub ($c) {
 	my $website = &relationalizer({
 		timestamp => $timestamp,
 		c => $c,
+		focus => $c->param('focus'),
 		cache => $cache
 	});
 	$c->render(text => $website->{'window'});
 };
 
+# --- Relational: the social-construct workspace ------------------------------
+# The workspace is built from the same index the People window uses. The old
+# matcher rendered each bucket through the relational cache; this one reads the
+# settings rows once and hands the client a single JSON board, so adding a link
+# is one request rather than a partial re-render per pane.
+
+sub relational_social_sing {
+	my ($entry) = @_;
+	return '' unless ref $entry eq 'HASH';
+	my %social = map { $_->{'sing'} => 1 } values %{$gb::social_constructs};
+	return $entry->{'pos'} if ($entry->{'pos'} || '') ne '' && $social{ $entry->{'pos'} };
+	return $entry->{'mab'} if ($entry->{'mab'} || '') ne '' && $social{ $entry->{'mab'} };
+	return '';
+}
+
+sub relational_colours {
+	my $rows = eval { &subs::db_query("select app, value from settings where setting='colour' and value<>''")->hashes } || [];
+	my %colours;
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} || '';
+		next unless length $app;
+		$colours{$app} ||= $row->{'value'};
+	}
+	return \%colours;
+}
+
+sub relational_workspace {
+	my ($focus) = @_;
+	my $index = &people_index();
+	my %apps = %{ $index->{'apps'} || {} };
+	$focus = '' unless defined $focus && length $focus && $apps{$focus};
+	my $colours = &relational_colours();
+	my %social_by_sing = map { $_->{'sing'} => $_ } values %{$gb::social_constructs};
+	my $type_label = sub {
+		my ($scons) = @_;
+		my $key = 'construct.' . $scons->{'name'};
+		my $label = &subs::lang($key);
+		return $label if defined $label && length $label && $label ne $key;
+		return &subs::format_name($scons->{'name'});
+	};
+	my @types;
+	foreach my $scons ( sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs} ) {
+		my @rows;
+		foreach my $app ( sort keys %apps ) {
+			my $entry = $apps{$app};
+			next unless (($entry->{'pos'} || '') eq $scons->{'sing'} || ($entry->{'mab'} || '') eq $scons->{'sing'});
+			push @rows, {
+				app => $app,
+				name => &subs::format_name($app),
+				type => $scons->{'name'},
+				sing => $scons->{'sing'},
+				colour => $colours->{$app} || '',
+				uuid => $entry->{'preferred_uuid'} || '',
+				focus => ($app eq $focus ? 1 : 0),
+			};
+		}
+		@rows = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @rows;
+		push @types, {
+			name => $scons->{'name'},
+			sing => $scons->{'sing'},
+			label => $type_label->($scons),
+			count => scalar @rows,
+			rows => \@rows,
+		};
+	}
+	my %memberships;
+	my $focus_data;
+	if ($focus) {
+		my $entry = $apps{$focus};
+		my $focus_sing = &relational_social_sing($entry);
+		my %focus_uuids = map { $_ => 1 } keys %{ $entry->{'uuids'} || {} };
+		my %candidate;
+		foreach my $sing ( keys %{ $entry->{'sc'} || {} } ) {
+			foreach my $uuid ( keys %{ $entry->{'sc'}->{$sing} } ) {
+				my $app = $index->{'uuid_app'}->{$uuid};
+				next unless defined $app && $app ne $focus;
+				$candidate{$app} = 1;
+			}
+		}
+		if ($focus_sing) {
+			foreach my $app ( keys %apps ) {
+				next if $app eq $focus;
+				foreach my $uuid ( keys %{ $apps{$app}->{'sc'}->{$focus_sing} || {} } ) {
+					if ($focus_uuids{$uuid}) { $candidate{$app} = 1; last; }
+				}
+			}
+		}
+		foreach my $app ( keys %candidate ) {
+			my $member = $apps{$app};
+			my $sing = &relational_social_sing($member);
+			next unless $sing;
+			my $scons = $social_by_sing{$sing};
+			next unless $scons;
+			push @{ $memberships{ $scons->{'name'} } }, {
+				app => $app,
+				name => &subs::format_name($app),
+				type => $scons->{'name'},
+				sing => $sing,
+				colour => $colours->{$app} || '',
+			};
+		}
+		foreach my $name ( keys %memberships ) {
+			@{ $memberships{$name} } = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @{ $memberships{$name} };
+		}
+		my $scons = $social_by_sing{$focus_sing};
+		my $people_row = eval { &subs::db_select('people', undef, { app => $focus, status => 'active' })->hashes->[0] };
+		$focus_data = {
+			app => $focus,
+			name => &subs::format_name($focus),
+			type => $scons ? $scons->{'name'} : '',
+			type_label => $scons ? $type_label->($scons) : '',
+			sing => $focus_sing,
+			pos => $entry->{'pos'} || '',
+			mab => $entry->{'mab'} || '',
+			colour => $colours->{$focus} || '',
+			uuid => $entry->{'preferred_uuid'} || '',
+			image => &people_main_image($focus),
+			people_uuid => $people_row ? ($people_row->{'uuid'} || '') : '',
+		};
+	}
+	my @pos_options = map { { value => $_, label => &subs::format_name($_) } } sort keys %{$gb::relationals};
+	return {
+		ok => 1,
+		focus => $focus_data,
+		memberships => \%memberships,
+		types => \@types,
+		pos_options => \@pos_options,
+		labels => {
+			library => &subs::ui('Constructs'),
+			search => &subs::ui('Search'),
+			add => &subs::ui('Add'),
+			add_placeholder => &subs::ui('New name'),
+			details => &subs::ui('Details'),
+			open_people => &subs::ui('Open People'),
+			drop_to_remove => &subs::ui('Drop here to remove'),
+			empty_members => &subs::ui('Nothing here yet'),
+			overview => &subs::ui('Choose a construct to work on'),
+			focus_hint => &subs::ui('Drag a construct from the left into one of these groups, or press + on a card.'),
+			all_constructs => &subs::ui('All constructs'),
+		},
+	};
+}
+
+# Write the membership array on every device copy of an app. The workspace
+# unions those copies, so changing only this device's row would leave the
+# member visible on the others.
+sub relational_sc_update_all {
+	my ($app, $sing, $add_uuid, $remove_uuids) = @_;
+	return 0 unless defined $app && length $app && defined $sing && length $sing;
+	my $setting = 'sc_' . $sing;
+	my $rows = eval { &subs::db_query('select uuid, value from settings where app=? and setting=?', $app, $setting)->hashes } || [];
+	my $found = 0;
+	foreach my $row ( @{$rows} ) {
+		my $list = eval { decode_json($row->{'value'} || '') } || [];
+		$list = [] unless ref $list eq 'ARRAY';
+		my %set;
+		foreach my $uuid ( @{$list} ) {
+			next unless defined $uuid && length $uuid && $uuid ne 'all';
+			$set{$uuid} = 1;
+		}
+		$set{$add_uuid} = 1 if defined $add_uuid && length $add_uuid;
+		delete $set{$_} for (ref $remove_uuids eq 'HASH' ? keys %{$remove_uuids} : ());
+		&subs::db_update('settings', {
+			value => encode_json([ sort keys %set ]),
+			server_time => &subs::rightNow(),
+		}, { uuid => $row->{'uuid'} });
+		$found++;
+	}
+	unless ($found) {
+		my %set;
+		$set{$add_uuid} = 1 if defined $add_uuid && length $add_uuid;
+		delete $set{$_} for (ref $remove_uuids eq 'HASH' ? keys %{$remove_uuids} : ());
+		if (scalar keys %set) {
+			&subs::setting_setter({ app => $app, setting => $setting, value => encode_json([ sort keys %set ]) });
+		}
+	}
+	return 1;
+}
+
+sub relational_link {
+	my ($focus, $member, $type, $movement) = @_;
+	return 0 unless defined $focus && length $focus && defined $member && length $member && defined $type && length $type;
+	return 0 if $focus eq $member;
+	my $index = &people_index();
+	my $f = $index->{'apps'}->{$focus};
+	my $m = $index->{'apps'}->{$member};
+	return 0 unless $f && $m;
+	my $scons = $gb::social_constructs->{$type};
+	unless ($scons) {
+		($scons) = grep { $_->{'sing'} eq $type } values %{$gb::social_constructs};
+	}
+	return 0 unless $scons;
+	my $sing = $scons->{'sing'};
+	my $focus_sing = &relational_social_sing($f);
+	return 0 unless $focus_sing;
+	my $f_uuid = $f->{'preferred_uuid'} || '';
+	my $m_uuid = $m->{'preferred_uuid'} || '';
+	return 0 unless $f_uuid && $m_uuid;
+	if ($movement eq 'delete') {
+		my %focus_uuids = map { $_ => 1 } keys %{ $f->{'uuids'} || {} };
+		my %member_uuids = map { $_ => 1 } keys %{ $m->{'uuids'} || {} };
+		&relational_sc_update_all($focus, $sing, undef, \%member_uuids);
+		&relational_sc_update_all($member, $focus_sing, undef, \%focus_uuids);
+	}
+	else {
+		&relational_sc_update_all($focus, $sing, $m_uuid, undef);
+		&relational_sc_update_all($member, $focus_sing, $f_uuid, undef);
+	}
+	return 1;
+}
+
 sub relationalizer($data) {
 	my $timestamp = $data->{'timestamp'};
 	my $c = $data->{'c'};
-	my $settings = $data->{'settings'} || &subs::settings_grabber({ app => 'relational' });
-	$settings->{'open_buckets'} = eval { return decode_json $settings->{'open_buckets'} } || {};
-	my $all_settings = {};
-
+	my $focus = defined $data->{'focus'} ? $data->{'focus'} : ($c ? ($c->param('focus') || '') : '');
+	my $settings = &subs::settings_grabber({ app => 'relational' });
+	my $dims = eval { decode_json($settings->{'dimensions'} || '') } || {};
+	$dims = {} unless ref $dims eq 'HASH';
+	# the two-pane matcher was happy at 500px; the board is not, and a window
+	# parked past the right edge of a 1280px screen looks broken. Grow it once,
+	# then leave whatever size the person chooses alone.
+	$dims->{'width'} = 980 if !($dims->{'width'} || 0) || $dims->{'width'} < 720;
+	$dims->{'height'} = 720 if !($dims->{'height'} || 0) || $dims->{'height'} < 560;
+	$dims->{'left'} = 80 if !defined $dims->{'left'} || $dims->{'left'} > 900;
+	$dims->{'top'} = 60 if !defined $dims->{'top'} || $dims->{'top'} > 200;
+	$settings->{'dimensions'} = encode_json($dims);
 	my $returner = {};
 	$returner->{'contents'} = $c->render_to_string(
-		settings => $settings,
-		template => 'relational/relational',
-		window_maker => $c->param('window_maker'),
-		category_search => $settings->{'category_search'},
-		contents_search => $settings->{'contents_search'},
+		template => 'relational/workspace',
+		focus => $focus,
 	);
-	$returner->{'window'} = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'relational', contents => $returner->{'contents'} }, $timestamp);
+	$returner->{'window'} = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'relational', settings => $settings, contents => $returner->{'contents'} }, $timestamp);
 	return $returner;
 }
+
+get '/manager/relational/workspace' => sub($c) {
+	my $focus = $c->param('focus') || '';
+	$c->render(json => &relational_workspace($focus));
+};
+
+post '/manager/relational/link' => sub($c) {
+	my $focus = $c->param('focus') || '';
+	my $member = $c->param('member') || '';
+	my $type = $c->param('type') || '';
+	my $movement = ($c->param('movement') || 'add') eq 'delete' ? 'delete' : 'add';
+	my $ok = &relational_link($focus, $member, $type, $movement);
+	my $workspace = &relational_workspace($focus);
+	$workspace->{'ok'} = $ok ? 1 : 0;
+	$workspace->{'error'} = $ok ? undef : 'could not link';
+	$c->render(json => $workspace);
+};
 
 get '/manager/relational/select' => sub($c) {
 	my $construct = $c->param('construct');
@@ -34535,6 +34878,9 @@ sub update_database($data) {
 		'create index if not exists idx2_people on people (app)',
 		'alter table tickets add column person_uuid VARCHAR(255)',
 		'alter table tickets add column peer_signatorial VARCHAR(255)',
+		# a request may carry the crest of the house asking; the desk reads it
+		# beside the known contacts, never as a grant
+		'alter table tickets add column crest_uuid VARCHAR(255)',
 		'alter table paired_devices add column person_uuid VARCHAR(255)',
 		# A device can hold one wrapped Shamir share. The key is an X25519 key the
 		# device generates for this alone (its login key may be signing-only); the
