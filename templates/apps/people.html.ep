@@ -35,6 +35,17 @@
 	.people_publish_toggle { padding:6px 10px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); cursor:pointer; font-size:12px; }
 	.people_publish_toggle.on { background:var(--line); font-weight:bold; }
+	.people_construct_crest { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+		margin:0 0 6px 28px; padding:8px 4px; border-left:1px solid var(--line); padding-left:8px; }
+	.people_construct_crest_thumb { width:44px; height:44px; object-fit:contain; border:1px solid var(--line);
+		border-radius:8px; background:var(--panel); }
+	.people_construct_crest button { padding:5px 9px; border:1px solid var(--line); border-radius:8px;
+		background:var(--panel); cursor:pointer; font-size:12px; }
+	.people_construct_qr { width:100%; text-align:center; }
+	.people_construct_qr img { width:180px; height:180px; image-rendering:pixelated; background:#fff;
+		padding:6px; border-radius:8px; }
+	.people_construct_qr textarea { width:100%; box-sizing:border-box; font-family:monospace;
+		font-size:10px; min-height:34px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
 	.people_qr_box { text-align:center; margin:8px 0; }
 	.people_qr_box img { width:220px; height:220px; image-rendering:pixelated; background:#fff; padding:6px; border-radius:8px; }
 	.people_qr_box textarea { width:100%; box-sizing:border-box; font-family:monospace; font-size:11px;
@@ -258,7 +269,9 @@
 				<div class="people_list">
 					<% foreach my $row ( @{$construct->{'rows'}} ) { %>
 						<div class="people_row people_construct_row" app="<%= $row->{'app'} %>">
-							<% if ($row->{'image'}) { %>
+							<% if ($row->{'crest_image'}) { %>
+								<img class="people_peer_thumb" src="<%= $row->{'crest_image'} %>" alt="<%= $row->{'name'} %>">
+							<% } elsif ($row->{'image'}) { %>
 								<img class="people_peer_thumb" src="<%= $row->{'image'} %>" alt="<%= $row->{'name'} %>">
 							<% } else { %>
 								<span class="people_peer_thumb people_peer_thumb_empty"><%= substr($row->{'name'} || '?', 0, 1) %></span>
@@ -273,6 +286,21 @@
 							<span class="people_chevron">&#9656;</span>
 						</div>
 						<div class="people_member_list">
+							<div class="people_construct_crest">
+								<% if ($row->{'crest_image'}) { %>
+									<img class="people_construct_crest_thumb" src="<%= $row->{'crest_image'} %>" alt="<%= $row->{'name'} %>">
+								<% } %>
+								<button class="people_construct_crest_upload" app="<%= $row->{'app'} %>" hint="Upload a logo"><%= &subs::ui('Upload a logo') %></button>
+								<input type="file" class="people_construct_crest_file" app="<%= $row->{'app'} %>" accept="image/*" style="display:none">
+								<% if ($row->{'crest_uuid'}) { %>
+									<button class="people_construct_crest_card" app="<%= $row->{'app'} %>" hint="Download card"><%= &subs::ui('Download card') %></button>
+									<button class="people_construct_crest_qr" app="<%= $row->{'app'} %>" hint="Show QR"><%= &subs::ui('Show QR') %></button>
+									<% if ($nfc) { %>
+										<button class="people_construct_crest_nfc" app="<%= $row->{'app'} %>" hint="Write to NFC tag"><%= &subs::ui('Write to NFC tag') %></button>
+									<% } %>
+								<% } %>
+								<div class="people_construct_qr" app="<%= $row->{'app'} %>"></div>
+							</div>
 							<% if (@{$row->{'members'}}) { %>
 								<% foreach my $member ( @{$row->{'members'}} ) { %>
 									<div class="people_row people_member_row" uuid="<%= $member->{'uuid'} %>" app="<%= $member->{'app'} %>">

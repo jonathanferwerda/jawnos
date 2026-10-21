@@ -18592,8 +18592,16 @@ sub crest_code_build {
 		dhash => $record->{'dhash'} || '',
 		version => $record->{'version'} || 1,
 		issued => $record->{'issued'} || '',
-		origin => $record->{'origin'} || &crest_origin(),
 	};
+	if (length($record->{'construct'} || '')) {
+		# A construct crest is written to a tag, not looked up, so it carries its
+		# kind instead of the house address; the address would not fit the code.
+		$compact->{'construct'} = $record->{'construct'};
+		$compact->{'construct_type'} = $record->{'construct_type'} || '';
+	}
+	else {
+		$compact->{'origin'} = $record->{'origin'} || &crest_origin();
+	}
 	my $signed = &crest_sign_record($compact, $priv);
 	return undef unless $signed && $signed->{'sig'};
 	my $json = JSON::PP->new->canonical(1)->encode($signed);
@@ -18696,11 +18704,11 @@ sub crest_image_sync_seed {
 # sync) writes the synced 512px copy into its own photo location, named the way
 # the record names it, after checking the picture against the record's dHash.
 sub crest_image_materialize {
-	my ($c) = @_;
-	my $crest = &crest_record_read();
+	my ($c, $crest, $sync) = @_;
+	$crest ||= &crest_record_read();
 	return 0 unless $crest->{'uuid'};
 	return 1 if &crest_image_file($crest, 'image');
-	my $sync = &crest_image_sync_read();
+	$sync ||= &crest_image_sync_read();
 	return 0 unless ($sync->{'uuid'} || '') eq ($crest->{'uuid'} || '');
 	my $bytes = &crest_data_uri_bytes($sync->{'image'});
 	return 0 unless $bytes;
@@ -18741,6 +18749,77 @@ sub crest_image_materialize {
 	}
 	unlink $tmp; unlink $ref;
 	return 1;
+}
+
+# --- construct crests --------------------------------------------------------
+# A construct's crest is the same scheme as the house crest - a signed record
+# pinning the drawing's hashes, a card and a compact code - but it is signed by
+# the house key and names the construct it belongs to. The house is the
+# authority for its own constructs; a separate key per construct would add a key
+# to guard and prove nothing more.
+sub construct_crest_record_read {
+	my ($app) = @_;
+	return {} unless defined $app && length $app;
+	my $raw = &setting_grabber({ app => $app, setting => 'crest', device => 'all' });
+	return {} unless defined $raw && length $raw;
+	my $record = eval { decode_json($raw) };
+	return ref $record eq 'HASH' ? $record : {};
+}
+
+sub construct_crest_record_write {
+	my ($app, $record) = @_;
+	return 0 unless defined $app && length $app && ref $record eq 'HASH';
+	&setting_setter({ app => $app, setting => 'crest', device => 'all', value => encode_json($record) });
+	return 1;
+}
+
+# The drawing identifies the construct, not the house key: uuid, construct name
+# and dHash are what make this fingerprint different from another construct's.
+sub construct_crest_fingerprint {
+	my ($record) = @_;
+	return undef unless ref $record eq 'HASH';
+	my $seed = join "\x1f", ($record->{'house_uuid'} || ''), ($record->{'construct'} || ''),
+		($record->{'uuid'} || ''), ($record->{'dhash'} || ''), ($record->{'pubkey'} || '');
+	my $hex = uc(&sha256_hex($seed));
+	$hex =~ s/(.{4})(?=.)/$1 /g;
+	return $hex;
+}
+
+sub construct_crest_image_sync_read {
+	my ($app) = @_;
+	return {} unless defined $app && length $app;
+	my $raw = &setting_grabber({ app => $app, setting => 'crest_image', device => 'all' });
+	return {} unless defined $raw && length $raw;
+	my $payload = eval { decode_json($raw) };
+	return ref $payload eq 'HASH' ? $payload : {};
+}
+
+sub construct_crest_image_sync_store {
+	my ($app, $crest, $uri) = @_;
+	return 0 unless defined $app && length $app && ref $crest eq 'HASH'
+		&& ($crest->{'uuid'} || '') ne '' && defined $uri && length $uri;
+	my $payload = encode_json({
+		uuid => $crest->{'uuid'},
+		dhash => $crest->{'dhash'} || '',
+		image => $uri,
+		at => &rightNow(),
+	});
+	&setting_setter({ app => $app, setting => 'crest_image', device => 'all', value => $payload });
+	return 1;
+}
+
+sub construct_crest_image_materialize {
+	my ($c, $app) = @_;
+	my $crest = &construct_crest_record_read($app);
+	return 0 unless $crest->{'uuid'};
+	return &crest_image_materialize($c, $crest, &construct_crest_image_sync_read($app));
+}
+
+sub construct_crest_image_src {
+	my ($app) = @_;
+	my $crest = &construct_crest_record_read($app);
+	return '' unless $crest->{'uuid'} && &crest_image_file($crest, 'image');
+	return '/manager/people/crest_image?app=' . &http_name($app) . '&stamp=' . &rightNow();
 }
 
 # Authorization beside authentication. peer_verify answers "is this who they

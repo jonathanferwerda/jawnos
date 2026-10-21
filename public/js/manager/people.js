@@ -212,6 +212,117 @@ $(document).on('click', '.people_publish_toggle', function(e) {
 	});
 });
 
+function peopleConstructOpen(app) {
+	if (!app) { return; }
+	var show = function() {
+		var row = $('#people_app .people_construct_row[app="' + app + '"]');
+		if (!row.length) { return; }
+		var panel = row.closest('.people_panel').attr('data-panel') || '';
+		if (panel) { peopleTabOpen(panel); }
+		row.addClass('open');
+		if (row[0] && row[0].scrollIntoView) { row[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+	};
+	if ($('.wind[app="people"]').length || $('#people_app').length) { show(); return; }
+	$.ajax({
+		url: '/manager/people',
+		type: 'GET',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			windowMaker(response);
+			setTimeout(show, 400);
+		}
+	});
+}
+
+// --- a construct's own crest -------------------------------------------------
+
+$(document).on('click', '.people_construct_crest_upload', function(e) {
+	e.stopPropagation();
+	var app = $(this).attr('app') || '';
+	if (!app) { return; }
+	$('.people_construct_crest_file[app="' + app + '"]').trigger('click');
+});
+
+$(document).on('change', '.people_construct_crest_file', function() {
+	var app = $(this).attr('app') || '';
+	var file = this.files && this.files[0];
+	if (!app || !file) { return; }
+	var form = new FormData();
+	form.append('app', app);
+	form.append('crest', file);
+	peopleStatus(peopleT('Saving…'));
+	$.ajax({
+		url: '/manager/people/construct/crest/upload',
+		type: 'POST',
+		data: form,
+		processData: false,
+		contentType: false,
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) {
+				peopleStatus(peopleT('Saved.'));
+				peopleOpener();
+			}
+			else {
+				peopleStatus((response && response.error) || peopleT('Could not save.'));
+			}
+		},
+		error: function() { peopleStatus(peopleT('Could not save.')); }
+	});
+	$(this).val('');
+});
+
+$(document).on('click', '.people_construct_crest_card', function(e) {
+	e.stopPropagation();
+	var app = $(this).attr('app') || '';
+	if (!app) { return; }
+	peopleCrestCardDownload('/manager/people/crest/card?app=' + encodeURIComponent(app), 'crest-' + app + '.json');
+});
+
+$(document).on('click', '.people_construct_crest_qr', function(e) {
+	e.stopPropagation();
+	var app = $(this).attr('app') || '';
+	if (!app) { return; }
+	var box = $('.people_construct_qr[app="' + app + '"]').empty().text(peopleT('Making the code…'));
+	$.ajax({
+		url: '/manager/people/crest/qr',
+		type: 'GET',
+		data: { app: app, format: 'json', timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			box.empty();
+			if (!response || !response.ok) {
+				box.text((response && response.error) || peopleT('Could not make the code.'));
+				return;
+			}
+			if (response.qr) { $('<img>').attr('src', response.qr).appendTo(box); }
+			if (response.code) { $('<textarea readonly>').val(response.code).appendTo(box); }
+		},
+		error: function() { box.text(peopleT('Could not make the code.')); }
+	});
+});
+
+$(document).on('click', '.people_construct_crest_nfc', function(e) {
+	e.stopPropagation();
+	var app = $(this).attr('app') || '';
+	if (!app) { return; }
+	peopleStatus(peopleT('Preparing the code…'));
+	$.ajax({
+		url: '/manager/people/crest/qr',
+		type: 'GET',
+		data: { app: app, format: 'json', timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || !response.ok || !response.code) {
+				peopleStatus((response && response.error) || peopleT('Could not make the code.'));
+				return;
+			}
+			peopleCrestNfcWrite(response.code);
+		},
+		error: function() { peopleStatus(peopleT('Could not make the code.')); }
+	});
+});
+
 $(document).on('click', '#people_toggle', function() {
 	peopleOpener();
 });
@@ -223,31 +334,35 @@ $(document).on('click', '#people_refresh', function() {
 // The card is fetched as a blob and handed to a temporary download link: the
 // manager's window layer owns ordinary link navigation, so a plain <a href>
 // inside a window is not a reliable download.
-$(document).on('click', '#people_crest_card', function() {
+function peopleCrestCardDownload(url, filename) {
 	if (!window.fetch || !window.URL || !URL.createObjectURL) {
-		window.location = '/manager/people/crest/card';
+		window.location = url;
 		return;
 	}
 	peopleStatus(peopleT('Preparing the card…'));
-	fetch('/manager/people/crest/card', { credentials: 'same-origin' })
+	fetch(url, { credentials: 'same-origin' })
 		.then(function(response) {
 			if (!response.ok) { throw new Error('HTTP ' + response.status); }
 			return response.blob();
 		})
 		.then(function(blob) {
-			var url = URL.createObjectURL(blob);
+			var objectUrl = URL.createObjectURL(blob);
 			var a = document.createElement('a');
-			a.href = url;
-			a.download = 'crest-card.json';
+			a.href = objectUrl;
+			a.download = filename || 'crest-card.json';
 			document.body.appendChild(a);
 			a.click();
 			a.remove();
-			setTimeout(function() { URL.revokeObjectURL(url); }, 5000);
+			setTimeout(function() { URL.revokeObjectURL(objectUrl); }, 5000);
 			peopleStatus(peopleT('Card downloaded.'));
 		})
 		.catch(function() {
 			peopleStatus(peopleT('Could not make the card.'));
 		});
+}
+
+$(document).on('click', '#people_crest_card', function() {
+	peopleCrestCardDownload('/manager/people/crest/card', 'crest-card.json');
 });
 
 $(document).on('click', '#people_crest_card_save', function() {

@@ -9278,11 +9278,14 @@ post '/manager/nfc/read' => sub($c) {
 		if (ref $message eq 'HASH' && defined $message->{'crest_code'}) {
 			my $result = &people_crest_import_code($c, $message->{'crest_code'});
 			$response->{'status'} = $result->{'ok'}
-				? ('Crest imported: ' . ($result->{'crest'}->{'name'} || ''))
+				? ($result->{'construct_app'}
+					? ('Crest: ' . ($result->{'construct_name'} || ''))
+					: ('Crest imported: ' . ($result->{'crest'}->{'name'} || '')))
 				: ('Crest import failed: ' . ($result->{'error'} || 'unknown'));
 			if ($result->{'ok'}) {
 				$response->{'crest_uuid'} = $result->{'crest'}->{'uuid'} || '';
 				$response->{'crest_known'} = $result->{'known'} ? 1 : 0;
+				$response->{'construct_app'} = $result->{'construct_app'} if length($result->{'construct_app'} || '');
 			}
 			next;
 		}
@@ -18849,6 +18852,37 @@ sub people_crest_scan_dir {
 	return $dir;
 }
 
+# The singular a construct app answers to ('community', 'team', ...), or empty
+# when the app is not a construct of this house.
+sub people_construct_kind {
+	my ($app) = @_;
+	return '' unless defined $app && length $app;
+	foreach my $construct ( @{ &people_index()->{'constructs'} } ) {
+		foreach my $row ( @{ $construct->{'rows'} } ) {
+			return $construct->{'sing'} if ($row->{'app'} || '') eq $app;
+		}
+	}
+	return '';
+}
+
+sub construct_crest_find_by_uuid {
+	my ($uuid) = @_;
+	return undef unless defined $uuid && length $uuid;
+	foreach my $construct ( @{ &people_index()->{'constructs'} } ) {
+		foreach my $row ( @{ $construct->{'rows'} } ) {
+			my $crest = &subs::construct_crest_record_read($row->{'app'});
+			next unless ($crest->{'uuid'} || '') eq $uuid;
+			return {
+				app => $row->{'app'},
+				crest => $crest,
+				type => $construct->{'name'},
+				sing => $construct->{'sing'},
+			};
+		}
+	}
+	return undef;
+}
+
 # A construct is published to another house only when its own public setting
 # says so. The setting is kept per device, like the public toggle on the
 # appointment itself, and People consolidates the rows it holds: the newest
@@ -19016,6 +19050,91 @@ sub people_crest_install {
 	return { ok => 1, crest => $signed };
 }
 
+# A construct's crest: the same signed record, card and compact code as the
+# house crest, signed by the house key and naming the construct. It lives on the
+# construct's own settings rows, so deleting the construct takes its crest with
+# it. The drawing is stored beside the house drawing with a name only this
+# construct's id makes, so the two never collide.
+sub construct_crest_install {
+	my ($c, $src, $app) = @_;
+	my $sing = &people_construct_kind($app);
+	return { ok => 0, error => 'no such construct' } unless $sing;
+	my $suds = &subs::session_suds($c);
+	return { ok => 0, error => 'the house key is not available' } unless $suds;
+	my $priv = &subs::crest_key_read($suds);
+	unless (defined $priv && length $priv == 32) {
+		return { ok => 0, error => 'the house crest key is not available' };
+	}
+	my $house = &subs::crest_record_read();
+	unless ($house->{'uuid'} && $house->{'pubkey'}) {
+		return { ok => 0, error => 'make the house crest first' };
+	}
+	my $device = &subs::device_setter();
+	my $folder = &subs::setting_grabber({ app => 'misc', setting => 'photo_location', device => $device }) || 'Pictures';
+	my $dir = &subs::home($folder) . '/me';
+	unless (-d $dir) { eval { require File::Path; File::Path::make_path($dir) }; }
+	my $old = &subs::construct_crest_record_read($app);
+	my $version = (($old->{'version'} || 0) + 1);
+	my $uuid = $old->{'uuid'} || &subs::random_string_creator(32);
+	my $color_png = "$dir/crest-$uuid.v$version.color.png";
+	my $ref_png = "$dir/crest-$uuid.v$version.ref.png";
+	my $rc = system('magick', $src, $color_png);
+	unless ($rc == 0 && -e $color_png && -s $color_png > 0) {
+		unlink $color_png;
+		return { ok => 0, error => 'the picture could not be read' };
+	}
+	unless (&subs::crest_normalize_image($color_png, $ref_png)) {
+		unlink $color_png; unlink $ref_png;
+		return { ok => 0, error => 'the picture could not be normalized' };
+	}
+	my $dhash = &subs::crest_dhash($ref_png);
+	my $sha = &subs::crest_sha256_file($ref_png);
+	unless (defined $dhash && defined $sha) {
+		unlink $color_png; unlink $ref_png;
+		return { ok => 0, error => 'the picture could not be hashed' };
+	}
+	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
+	my $color_name = "crest-$uuid.v$version.color.png.enc";
+	my $ref_name = "crest-$uuid.v$version.ref.png.enc";
+	my $color_enc = "$dir/$color_name";
+	my $ref_enc = "$dir/$ref_name";
+	unless (&subs::openssl_file_crypt('e', $standard, $suds, $color_png, $color_enc, 0, 1)
+		&& &subs::openssl_file_crypt('e', $standard, $suds, $ref_png, $ref_enc, 0, 1)) {
+		unlink $color_png; unlink $ref_png; unlink $color_enc; unlink $ref_enc;
+		return { ok => 0, error => 'the picture could not be sealed' };
+	}
+	unlink $color_png; unlink $ref_png;
+	my $record = {
+		uuid => $uuid,
+		construct => $app,
+		construct_type => $sing,
+		name => $old->{'name'} || &subs::format_name($app),
+		pubkey => $house->{'pubkey'},
+		house_uuid => $house->{'uuid'},
+		house_pubkey => $house->{'pubkey'},
+		dhash => $dhash,
+		sha256 => $sha,
+		image => $color_name,
+		reference => $ref_name,
+		version => $version,
+		issued => $old->{'issued'} || &subs::rightNow(),
+		server_time => &subs::rightNow(),
+		device => $device,
+		origin => &subs::crest_origin(),
+	};
+	$record->{'fingerprint'} = &subs::construct_crest_fingerprint($record);
+	my $signed = &subs::crest_sign_record($record, $priv);
+	unless ($signed && $signed->{'sig'}) {
+		return { ok => 0, error => 'the crest could not be signed' };
+	}
+	unless (&subs::construct_crest_record_write($app, $signed)) {
+		return { ok => 0, error => 'the crest could not be saved' };
+	}
+	my $sync_image = &subs::crest_image_data_uri($color_enc, $suds, $standard, 512);
+	&subs::construct_crest_image_sync_store($app, $signed, $sync_image) if defined $sync_image;
+	return { ok => 1, crest => $signed, app => $app };
+}
+
 sub people_crest_upload_file {
 	my ($c) = @_;
 	my @uploads = @{ $c->req->uploads || [] };
@@ -19108,6 +19227,14 @@ get '/manager/people' => sub($c) {
 		foreach my $row ( @{ $construct->{'rows'} } ) {
 			$row->{'image'} = &people_crest_image($row->{'app'});
 			$row->{'public'} = &people_construct_public($row->{'app'});
+			$row->{'crest_uuid'} = '';
+			$row->{'crest_image'} = '';
+			my $construct_crest = &subs::construct_crest_record_read($row->{'app'});
+			if ($construct_crest->{'uuid'}) {
+				&subs::construct_crest_image_materialize($c, $row->{'app'});
+				$row->{'crest_uuid'} = $construct_crest->{'uuid'};
+				$row->{'crest_image'} = &subs::construct_crest_image_src($row->{'app'});
+			}
 			foreach my $member ( @{ $row->{'members'} } ) {
 				$member->{'image'} = &people_crest_image($member->{'app'});
 				$member->{'uuid'} = $people_by_app{$member->{'app'}} || '';
@@ -19288,14 +19415,9 @@ post '/manager/people/construct/public' => sub($c) {
 	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
 	my $app = $c->param('app') || '';
 	my $value = (($c->param('value') || '') eq 'on') ? 'on' : '';
-	my $known = 0;
-	foreach my $construct ( @{ &people_index()->{'constructs'} } ) {
-		foreach my $row ( @{ $construct->{'rows'} } ) {
-			if (($row->{'app'} || '') eq $app) { $known = 1; last; }
-		}
-		last if $known;
+	unless (length $app && &people_construct_kind($app)) {
+		return $c->render(json => { ok => 0, error => 'no such construct' });
 	}
-	unless ($known) { return $c->render(json => { ok => 0, error => 'no such construct' }); }
 	&subs::setting_setter({ app => $app, setting => 'public', device => &subs::device_setter(), value => $value });
 	return $c->render(json => { ok => 1, app => $app, public => ($value eq 'on' ? 1 : 0) });
 };
@@ -19414,7 +19536,8 @@ post '/manager/people/crest/link' => sub($c) {
 get '/manager/people/crest/qr' => sub($c) {
 	unless (&people_citizen($c)) { $c->rendered(403); return; }
 	my $suds = &subs::session_suds($c);
-	my $crest = &subs::crest_record_read();
+	my $app = $c->param('app') || '';
+	my $crest = length $app ? &subs::construct_crest_record_read($app) : &subs::crest_record_read();
 	unless ($crest->{'uuid'} && $suds) { $c->rendered(404); return; }
 	my $priv = &subs::crest_key_read($suds);
 	unless ($priv) { return $c->render(json => { ok => 0, error => 'the crest key is not available' }); }
@@ -19431,31 +19554,34 @@ get '/manager/people/crest/qr' => sub($c) {
 };
 
 sub people_crest_card {
-	my ($c) = @_;
+	my ($c, $construct_app) = @_;
 	my $suds = &subs::session_suds($c);
-	my $crest = &subs::crest_record_read();
+	my $construct = defined $construct_app && length $construct_app ? $construct_app : '';
+	my $crest = $construct ? &subs::construct_crest_record_read($construct) : &subs::crest_record_read();
 	return undef unless $crest->{'uuid'} && $suds;
 	my $device = $crest->{'device'} || &subs::device_setter();
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
 	my $file = &subs::crest_image_file($crest, 'image');
 	my $image = $file ? &subs::crest_image_data_uri($file, $suds, $standard, 512) : undef;
-	my $peers = &subs::crest_peer_list_read();
 	my @vouches;
-	my %seen_vouch;
-	foreach my $vouch ( @{ &subs::crest_incoming_vouch_list_read() } ) {
-		next unless ref $vouch eq 'HASH' && &subs::crest_vouch_verify($vouch);
-		next unless ($vouch->{'to_uuid'} || '') eq ($crest->{'uuid'} || '');
-		next unless ($vouch->{'to_pubkey'} || '') eq ($crest->{'pubkey'} || '');
-		next if $seen_vouch{ $vouch->{'sig'} || '' }++;
-		push @vouches, $vouch;
-	}
-	foreach my $entry ( @{$peers} ) {
-		next unless ref $entry eq 'HASH' && ref $entry->{'vouch'} eq 'HASH';
-		my $vouch = $entry->{'vouch'};
-		next unless &subs::crest_vouch_verify($vouch);
-		next unless ($vouch->{'from_uuid'} || '') eq ($crest->{'uuid'} || '');
-		next if $seen_vouch{ $vouch->{'sig'} || '' }++;
-		push @vouches, $vouch;
+	unless ($construct) {
+		my $peers = &subs::crest_peer_list_read();
+		my %seen_vouch;
+		foreach my $vouch ( @{ &subs::crest_incoming_vouch_list_read() } ) {
+			next unless ref $vouch eq 'HASH' && &subs::crest_vouch_verify($vouch);
+			next unless ($vouch->{'to_uuid'} || '') eq ($crest->{'uuid'} || '');
+			next unless ($vouch->{'to_pubkey'} || '') eq ($crest->{'pubkey'} || '');
+			next if $seen_vouch{ $vouch->{'sig'} || '' }++;
+			push @vouches, $vouch;
+		}
+		foreach my $entry ( @{$peers} ) {
+			next unless ref $entry eq 'HASH' && ref $entry->{'vouch'} eq 'HASH';
+			my $vouch = $entry->{'vouch'};
+			next unless &subs::crest_vouch_verify($vouch);
+			next unless ($vouch->{'from_uuid'} || '') eq ($crest->{'uuid'} || '');
+			next if $seen_vouch{ $vouch->{'sig'} || '' }++;
+			push @vouches, $vouch;
+		}
 	}
 	my $card = { format => 'jawnos-crest-card', card_version => 1, crest => $crest, vouches => \@vouches };
 	$card->{'image'} = $image if defined $image;
@@ -19475,14 +19601,15 @@ sub people_crest_card {
 	};
 	# The machines that back the crest, each with its own signed statement. The
 	# crest record is the signed part of the card; a recipient can check each
-	# statement against the key it carries.
-	$card->{'cosignatures'} = &subs::crest_member_cosig_list($crest, { include_local => 1 });
+	# statement against the key it carries. Cosignatures back the house crest,
+	# not a construct's.
+	$card->{'cosignatures'} = &subs::crest_member_cosig_list($crest, { include_local => 1 }) unless $construct;
 	return $card;
 }
 
 get '/manager/people/crest/card' => sub($c) {
 	unless (&people_citizen($c)) { $c->rendered(403); return; }
-	my $card = &people_crest_card($c);
+	my $card = &people_crest_card($c, $c->param('app') || '');
 	unless ($card) { $c->rendered(404); return; }
 	my $name = $card->{'crest'}->{'name'} || 'crest';
 	$name =~ s/[^\w.\-]+/_/g;
@@ -19493,7 +19620,7 @@ get '/manager/people/crest/card' => sub($c) {
 
 post '/manager/people/crest/card/save' => sub($c) {
 	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
-	my $card = &people_crest_card($c);
+	my $card = &people_crest_card($c, $c->param('app') || '');
 	unless ($card) { return $c->render(json => { ok => 0, error => 'no crest yet' }); }
 	my $dir = &subs::home('~/Downloads');
 	$dir = &subs::home('~/Documents') unless -d $dir;
@@ -19513,6 +19640,22 @@ sub people_crest_import_code {
 	my $record = &subs::crest_code_parse($code);
 	return { ok => 0, error => 'the crest code is not readable' } unless ref $record eq 'HASH';
 	return { ok => 0, error => 'the crest record does not verify' } unless &subs::crest_verify_record($record);
+	# A construct crest names a construct, not a house. A tag for one of this
+	# house's own constructs opens it; another house's construct is not a house
+	# crest and there is nothing here to import it into.
+	if (length($record->{'construct'} || '')) {
+		my $local = &construct_crest_find_by_uuid($record->{'uuid'});
+		if ($local) {
+			return {
+				ok => 1,
+				crest => $record,
+				construct_app => $local->{'app'},
+				construct_name => $record->{'name'} || $local->{'crest'}->{'name'} || '',
+				known => 1,
+			};
+		}
+		return { ok => 0, error => 'the crest of ' . ($record->{'name'} || $record->{'construct'}) . ', a construct of another house' };
+	}
 	my $own = &subs::crest_record_read();
 	return { ok => 0, error => 'that is this house\'s own crest' } if $own->{'uuid'} && $record->{'uuid'} && $own->{'uuid'} eq $record->{'uuid'};
 	my $existing = &subs::crest_peer_find($record->{'uuid'});
@@ -19585,6 +19728,17 @@ post '/manager/people/crest/upload' => sub($c) {
 	my ($path, $error) = &people_crest_upload_file($c);
 	return $c->render(json => { ok => 0, error => $error }) unless $path;
 	my $result = &people_crest_install($c, $path);
+	unlink $path;
+	return $c->render(json => $result);
+};
+
+post '/manager/people/construct/crest/upload' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
+	my $app = $c->param('app') || '';
+	return $c->render(json => { ok => 0, error => 'no such construct' }) unless &people_construct_kind($app);
+	my ($path, $error) = &people_crest_upload_file($c);
+	return $c->render(json => { ok => 0, error => $error }) unless $path;
+	my $result = &construct_crest_install($c, $path, $app);
 	unlink $path;
 	return $c->render(json => $result);
 };
@@ -19767,12 +19921,21 @@ post '/manager/people/house_name' => sub($c) {
 get '/manager/people/crest_image' => sub($c) {
 	unless (&people_citizen($c)) { $c->rendered(403); return; }
 	my $peer_uuid = $c->param('peer') || '';
+	my $app = $c->param('app') || '';
 	my ($file, $device);
 	if ($peer_uuid) {
 		my $entry = &subs::crest_peer_find($peer_uuid);
 		unless ($entry) { $c->rendered(404); return; }
 		$file = &subs::crest_peer_image_file($entry);
 		$device = $entry->{'device'} || &subs::device_setter();
+	}
+	elsif ($app) {
+		my $record = &subs::construct_crest_record_read($app);
+		unless ($record->{'uuid'}) { $c->rendered(404); return; }
+		&subs::construct_crest_image_materialize($c, $app);
+		my $kind = (($c->param('kind') || '') eq 'reference') ? 'reference' : 'image';
+		$file = &subs::crest_image_file($record, $kind);
+		$device = $record->{'device'} || &subs::device_setter();
 	}
 	else {
 		my $record = &subs::crest_record_read();

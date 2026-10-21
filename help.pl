@@ -274,7 +274,7 @@ our %topic = (
 	'people' => {
 		title => 'People', category => 'apps', app => 'people',
 		templates => [ 'templates/apps/people.html.ep', 'templates/apps/people_person.html.ep', 'public/js/manager/people.js' ],
-		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Save card here', 'Show QR', 'Write to NFC tag', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh', 'Publish', 'Published' ],
+		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Save card here', 'Show QR', 'Write to NFC tag', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh', 'Publish', 'Published', 'Upload a logo' ],
 		verified => '2026-10-21',
 		summary => 'The house crest, and the people the house knows.',
 		body => [
@@ -288,6 +288,7 @@ our %topic = (
 			'Open a crest in Other houses (or tap its NFC tag) to see the drawing, name and fingerprint, then use Homepage, Store or Message. The panel names the address the other house says it can be reached at. Linking a crest to one of the house\'s contacts puts that crest beside the person in Chat and Mail. The address buttons come from the card the house gave you.',
 			'Look up their constructs asks the other house, at that address, what it publishes. This house presents its own crest code, the other house answers with a record signed by its crest key, and the panel lists the constructs it made public with their member names and the time of the answer. The answer is kept on the crest, so opening it again shows the last lookup without asking again.',
 			'Publishing is a choice on each construct row in its tab. Publish offers that construct to houses that look this one up; Published means it is already being offered, and pressing it again withdraws it. A lookup reveals only the construct\'s name and the names of its members - never a permission, a record or a way in. The choice is kept per device, the same public toggle the appointment itself carries, so the machine you are using can answer for its own constructs. People consolidates the rows it holds: the most recent choice across the house is the one the construct row shows, and the one a lookup answers with.',
+			'A construct can carry its own crest or logo. Open its row in a construct tab and press Upload a logo. The picture is normalized and signed with the house key, and the record names the construct and the house that made it, so it is the same kind of signed record as the house crest, with its own card and compact code. The construct row shows the logo in place of its initial. Download card, Show QR and Write to NFC tag work for it, and a phone can write that code to a tag. A tag written for one of this house\'s constructs opens that construct when it is tapped; a tag for another house\'s construct is reported as such and is not imported as a house crest.',
 			'Verify a photo compares a fresh photograph with the stored reference and reports a distance; the person confirms. A photocopy still looks like the drawing - the signed record, not the paper, is what proves the house.',
 			'The window is tabbed: Me is the house crest and its card; People is every person the house knows; then a tab for each social construct - Communities, Clubs, Teams, Projects and Accounts. The strip scrolls sideways, and each tab counts what it holds.',
 			'A person is a person construct in Relational. The moment one exists, its People row is made for it, and the row goes away when the construct is deleted; changing a construct from person to idea only hides it, so a mistaken change does not lose the identity behind it. A person\'s row shows their crest (when one is linked), the app name they are known by, and chips for the teams, clubs and communities they belong to. A chip opens that construct\'s tab on their row.',
@@ -307,9 +308,11 @@ our %topic = (
 			'Press Write to NFC tag and hold an NTAG215 to the phone; tapping that tag later imports the house.',
 			'Press Show QR to show or copy the compact code.',
 			'Press Publish on a construct row to offer it to other houses; Published turns it back off.',
+			'Open a construct row and press Upload a logo to give that construct its own crest.',
 			'When they give you their card, press Import a crest card, choose the file, then press I have met this crest.',,
 			'Tap a crest in Other houses to open it; Homepage and Store open its public pages, and Message opens the linked contact.',
 			'Press Look up their constructs to ask that house, at its address, what it publishes.',
+			'To label a construct in the world, press Write to NFC tag on its row and hold an NTAG215 to the phone; tapping that tag opens the construct.',
 			'Use the Link control in that panel to put the crest beside a person in Chat and Mail.',
 			'After the paper ages, scan it again; the new reference is signed with the same key.',
 			'To check a photograph later, press Verify a photo and read the distance.'

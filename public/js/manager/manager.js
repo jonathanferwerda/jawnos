@@ -1250,7 +1250,10 @@ function nfcInitializer() {
 					var jr = JSON.stringify(response);
 
 					$('.nfc_read_status').text(response.status);
-					if (response && response.crest_uuid && typeof peopleCrestOpen === 'function') {
+					if (response && response.construct_app && typeof peopleConstructOpen === 'function') {
+						peopleConstructOpen(response.construct_app);
+					}
+					else if (response && response.crest_uuid && typeof peopleCrestOpen === 'function') {
 						peopleCrestOpen(response.crest_uuid);
 					}
 					setTimeout(function() {
