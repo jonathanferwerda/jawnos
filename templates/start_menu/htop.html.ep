@@ -20,6 +20,28 @@
 	$p = 100 if $p > 100;
 	return sprintf('%.0f', $p);
 }; %>
+<% my $usage_class = sub {
+	my $p = shift;
+	return '' unless defined $p;
+	return 'usage_hot' if $p >= 80;
+	return 'usage_mid' if $p >= 50;
+	return 'usage_ok';
+}; %>
+<% my $usage_line = sub {
+	my ($u) = @_;
+	$u = {} unless ref $u eq 'HASH';
+	my @bits;
+	if (defined $u->{'cpu'}) {
+		my $label = 'CPU ' . sprintf('%.0f%%', $u->{'cpu'});
+		$label .= ' (JawnOS)' if ($u->{'cpu_scope'} || '') eq 'jawnos';
+		push @bits, '<span class="' . $usage_class->($u->{'cpu'}) . '">' . $label . '</span>';
+	}
+	if (defined $u->{'mem'}) {
+		push @bits, '<span class="' . $usage_class->($u->{'mem'}) . '">RAM ' . sprintf('%.0f%%', $u->{'mem'}) . '</span>';
+	}
+	return '' unless @bits;
+	return '<div class="level_usage">' . join(' &middot; ', @bits) . '</div>';
+}; %>
 <% my $battery_meta = sub {
 	my ($b) = @_;
 	my @bits;
@@ -92,6 +114,7 @@
 			<% } else { %>
 				<div class="level_meta"><%= &subs::format_name($b->{'status'} || 'no battery') %></div>
 			<% } %>
+			<%== $usage_line->($m->{'usage'}) %>
 			<% my $eta = $eta_text->($b); %>
 			<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>
 		</div>
@@ -116,6 +139,7 @@
 			<% } else { %>
 				<div class="level_meta"><%== $battery_meta->($b) || 'on mains' %></div>
 			<% } %>
+			<%== $usage_line->($m->{'usage'}) %>
 			<% my $eta = $eta_text->($b); %>
 			<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>
 		</div>
@@ -137,6 +161,7 @@
 				<% if (defined $d->{'battery_mv'}) { %>
 					<div class="level_meta"><%= sprintf('%.2f V', $d->{'battery_mv'} / 1000) %><% if (!$d->{'online'}) { %> &middot; not answering<% } %></div>
 				<% } %>
+				<%== $usage_line->($d->{'usage'}) %>
 				<% my $dev_b = { percentage => $pct, status => $d->{'status'}, pph => $d->{'pph'}, charge_pph => $d->{'charge_pph'}, charge_eta => $d->{'charge_eta'}, discharge_eta => $d->{'discharge_eta'} }; %>
 				<% my $eta = $eta_text->($dev_b); %>
 				<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>

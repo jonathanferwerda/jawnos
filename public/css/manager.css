@@ -1039,6 +1039,18 @@ html.jawnos_webview #admin_console_toggle {
 	opacity: .75;
 	min-height: 14px;
 }
+#htop_viewer .level_usage {
+	font-size: 11px;
+	opacity: .85;
+	margin-top: 2px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+#htop_viewer .level_usage .usage_ok { color: #1f9d63; }
+#htop_viewer .level_usage .usage_mid { color: #8a5d00; }
+#htop_viewer .level_usage .usage_hot { color: #b33939; font-weight: 600; }
 #htop_viewer .level_eta {
 	margin-top: 2px;
 	font-size: 11px;

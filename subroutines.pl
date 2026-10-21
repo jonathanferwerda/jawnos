@@ -3503,6 +3503,124 @@ sub levels_fast_request {
 	return $now;
 }
 
+# CPU and RAM for the levels card. A peer's /manager/health answers with the
+# same shape, so one reading means one thing across the house.
+#
+# /proc/stat is the whole machine and the first choice. Android denies it to
+# apps, so the fallback sums JawnOS's own processes - the same figure the
+# Monitor app shows there - and the reading says so. A cumulative sample lives
+# in the cache so a percentage is a real difference over a real window, and so
+# every prefork worker reads the same sample instead of guessing from one tick.
+sub usage_cpu_sample {
+	if (open(my $fh, '<', '/proc/stat')) {
+		my $line = <$fh>;
+		close $fh;
+		if (defined $line && $line =~ /^cpu\s+(.+)$/) {
+			my @v = split ' ', $1;
+			my $idle = ($v[3] // 0) + ($v[4] // 0);   # idle + iowait
+			my $total = 0;
+			$total += ($_ // 0) for @v;
+			return ($total, $idle, undef, 'system');
+		}
+	}
+	# Android: sum the jiffies of the processes this app can see. Only its own
+	# are readable, which is still the answer to "is JawnOS the hot one?".
+	my %p;
+	foreach my $d (glob('/proc/[0-9]*')) {
+		(my $pid = $d) =~ s{.*/}{};
+		open(my $sf, '<', "$d/stat") or next;
+		my $line = <$sf>;
+		close $sf;
+		next unless defined $line && $line =~ /\)\s+\S+\s+(.*)$/;
+		my @v = split ' ', $1;   # field 3 consumed; utime is field 14, stime 15
+		$p{$pid} = ($v[10] // 0) + ($v[11] // 0);
+	}
+	return (undef, undef, undef, '') unless %p;
+	return (undef, undef, \%p, 'jawnos');
+}
+
+sub usage_mem_sample {
+	my ($total, $avail);
+	if (open(my $fh, '<', '/proc/meminfo')) {
+		while (my $l = <$fh>) {
+			$total = $1 + 0 if $l =~ /^MemTotal:\s+(\d+)/;
+			$avail = $1 + 0 if $l =~ /^MemAvailable:\s+(\d+)/;
+			last if defined $total && defined $avail;
+		}
+		close $fh;
+	}
+	return (undef, undef) unless $total;
+	$avail = 0 unless defined $avail;
+	my $pct = 100 * ($total - $avail) / $total;
+	$pct = 0 if $pct < 0;
+	$pct = 100 if $pct > 100;
+	return ($pct, $total);
+}
+
+sub system_usage_sample {
+	my $now = &rightNow();
+	my ($mem, $mem_total) = &usage_mem_sample();
+	my ($total, $idle, $pids, $scope) = &usage_cpu_sample();
+	my $cpu;
+	if ($scope ne '') {
+		my $stored = &cache_get({ app => '__president', context => 'usage', subcontext => 'cpu' });
+		$stored = {} unless ref $stored eq 'HASH';
+		my $elapsed = $now - ($stored->{'at'} || 0);
+		my $fresh = 0;
+		# No usable previous reading (first call, or the scope changed): take a
+		# short sample now, so the card has a number on its first read.
+		if (!defined $stored->{'at'} || ($stored->{'scope'} || '') ne $scope) {
+			my ($t0, $i0, $p0) = ($total, $idle, $pids);
+			select(undef, undef, undef, 0.25);
+			my ($t1, $i1, $p1, $s1) = &usage_cpu_sample();
+			if ($s1 eq $scope) {
+				$stored = { at => $now, total => $t0, idle => $i0, pids => (ref $p0 eq 'HASH' ? $p0 : undef), scope => $scope };
+				($total, $idle, $pids) = ($t1, $i1, $p1);
+				$elapsed = 250;
+				$fresh = 1;
+			}
+		}
+		elsif ($elapsed < 500 && defined $stored->{'pct'}) {
+			# A burst of card reads over a few milliseconds would only measure
+			# noise; answer with the sample already held.
+			$cpu = $stored->{'pct'};
+		}
+		if (!defined $cpu && $elapsed > 0) {
+			if ($scope eq 'jawnos') {
+				my $old = (ref $stored->{'pids'} eq 'HASH') ? $stored->{'pids'} : {};
+				my $sum = 0;
+				foreach my $pid (keys %{ $pids || {} }) {
+					next unless exists $old->{$pid};
+					my $d = $pids->{$pid} - $old->{$pid};
+					$sum += $d if $d > 0;
+				}
+				# 100 jiffies a second per core, as the Monitor app assumes.
+				$cpu = 100 * ($sum / 100) / ($elapsed / 1000);
+			}
+			else {
+				my $dt = $total - ($stored->{'total'} || 0);
+				my $di = $idle - ($stored->{'idle'} || 0);
+				$cpu = $dt > 0 ? 100 * (1 - $di / $dt) : undef;
+			}
+			if (defined $cpu) { $cpu = 0 if $cpu < 0; $cpu = 100 if $cpu > 100; }
+		}
+		if (defined $cpu && ($fresh || $elapsed >= 500)) {
+			&cache_set({ app => '__president', context => 'usage', subcontext => 'cpu', warranty => '-1h' }, {
+				at => $now, total => $total, idle => $idle,
+				pids => (ref $pids eq 'HASH' ? $pids : undef),
+				scope => $scope, pct => $cpu,
+			});
+		}
+	}
+	return {
+		cpu => $cpu,
+		cpu_scope => $scope,
+		mem => $mem,
+		mem_total_kb => $mem_total,
+		at => $now,
+	};
+}
+
 sub house_levels_sync {
 	my $opts = shift || {};
 	my ($connect_timeout, $inactivity_timeout) = $opts->{'fast'} ? (2, 3) : (6, 10);
@@ -3521,6 +3639,7 @@ sub house_levels_sync {
 		device => &device_setter(),
 		version => &jawn_version(),
 		battery => &battery_sample(),
+		usage => &system_usage_sample(),
 		embedded => $devices,
 		local => 1,
 		seen => &rightNow(),
@@ -3568,6 +3687,7 @@ sub house_levels_sync {
 			device => $h->{'device'} || $rm->{'device'} || '',
 			version => $h->{'version'} || $rm->{'version'} || '',
 			battery => (ref $h->{'battery'} eq 'HASH') ? &battery_gauge_eta($h->{'battery'}) : {},
+			usage => (ref $h->{'usage'} eq 'HASH') ? $h->{'usage'} : undef,
 			embedded => (ref $h->{'embedded'} eq 'ARRAY') ? $h->{'embedded'} : [],
 			seen => &rightNow(),
 		};
@@ -3618,6 +3738,7 @@ sub levels_snapshot {
 		unshift @{ $snap->{'machines'} }, $local;
 	}
 	$local->{'battery'} = &battery_sample();
+	$local->{'usage'} = &system_usage_sample();
 	$local->{'seen'} = &rightNow();
 	$local->{'local'} = 1;
 	delete $local->{'stale'};

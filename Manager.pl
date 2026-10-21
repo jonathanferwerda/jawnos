@@ -37622,6 +37622,7 @@ sub health_report {
 		schema_version => &subs::setting_grabber({ app => '__president', setting => 'schema_version' }),
 		processes      => &health_process_count(),
 		battery        => &subs::battery_sample(),
+		usage          => &subs::system_usage_sample(),
 		embedded       => &subs::embedded_levels_cached(),
 		signatorial    => &subs::signatorial_designer(),
 		database       => { bytes => $db_bytes, wal_bytes => $wal_bytes },
