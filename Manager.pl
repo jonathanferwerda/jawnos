@@ -8393,10 +8393,12 @@ get '/manager/remote_manager' => sub ($c) {
 			$devices = [ map { $_->{'name'} || 'device' } @{$others} ];
 		}
 	}
-	$log->info('remote_manager: uuid=' . (defined $uuid ? $uuid : '-') . ' manager=' . ($manager || '-') . ' -> ' . $url . ' ticket=' . ($ticket_url ? 1 : 0) . ' approval=' . $need_approval . ' desktop=' . ($c->param('desktop') || '?') . ' bridge=' . ($c->param('bridge') || '?'));
+	my $ticket_failed = ($in_app && !$ticket_url && !$need_approval) ? 1 : 0;
+	$log->info('remote_manager: uuid=' . (defined $uuid ? $uuid : '-') . ' manager=' . ($manager || '-') . ' -> ' . $url . ' ticket=' . ($ticket_url ? 1 : 0) . ' approval=' . $need_approval . ' desktop=' . ($c->param('desktop') || '?') . ' bridge=' . ($c->param('bridge') || '?') . ' ticket_failed=' . $ticket_failed);
 	$c->render(json => {
 		manager => $url,
 		ticket_url => $ticket_url,
+		ticket_failed => $ticket_failed,
 		need_approval => $need_approval,
 		request_id => $request_id,
 		fingerprint => $fingerprint,

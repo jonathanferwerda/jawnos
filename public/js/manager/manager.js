@@ -4590,6 +4590,12 @@ function jawnosRemoteUrl(url, manager) {
 	return url;
 }
 
+function jawnosRemoteHint(text) {
+	var b = $('#remote_control_go');
+	if (b.length) { b.attr('hint', text); }
+	if (typeof jawnosUpdateNote === 'function') { jawnosUpdateNote(text); }
+}
+
 function jawnosRemoteManagerWindow(url, uuid, name, device, manager) {
 	if (!url) { return; }
 	url = jawnosRemoteUrl(url, manager);
@@ -4599,10 +4605,10 @@ function jawnosRemoteManagerWindow(url, uuid, name, device, manager) {
 	}
 	if (window.JawnDesktop) {
 		jawnosDesktopCall('open_manager', { url: url, manager: manager || url, device_uuid: device_uuid, name: name || '' }).catch(function (err) {
-			// Only an older desktop app (no open_manager) needs the browser
-			// fallback. A refusal from this app must not open a tab at the
-			// local manager.
-			if (err && err.error === 'unavailable') { window.open(url, '_blank', 'noopener'); }
+			// The desktop app owns this window. Never fall back to window.open
+			// here: WebKit hands that to the default browser, which produced a
+			// second tab (often the local Gate) beside the JawnOS window.
+			jawnosRemoteHint((typeof jawnosT === 'function') ? jawnosT('The JawnOS window could not be opened') : 'The JawnOS window could not be opened');
 		});
 		return;
 	}
@@ -4638,6 +4644,14 @@ function jawnosRemoteManagerOpen(uuid, manager, gesture) {
 			if (r.need_approval) {
 				if (preopened) { preopened.close(); }
 				jawnosGoPrompt(r, uuid, manager);
+				return;
+			}
+			// In the app a ticket is what signs the peer window in. When the
+			// mint failed (a peer restarting) opening the bare manager would
+			// only show that machine's Gate; say so and let the person retry.
+			if (r.ticket_failed) {
+				if (preopened) { preopened.close(); }
+				jawnosRemoteHint((typeof jawnosT === 'function') ? jawnosT('That machine is not ready to sign you in. Try again in a moment.') : 'That machine is not ready to sign you in. Try again in a moment.');
 				return;
 			}
 			if (r.manager) {
