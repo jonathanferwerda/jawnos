@@ -4,6 +4,13 @@
     keyed on the active subsection, so a panel renders only for its own section.
     Expects the same stash mail_checker hands the panel: settings, mail_phone,
     mail_contact, contacts, sc, list, public_channels, channel_key, channel_public. %>
+<%# a construct kind is a core label under construct.<name>; fall back to its key %>
+<% my $construct_label = sub {
+	my ($name) = @_;
+	my $key = 'construct.' . $name;
+	my $label = &subs::lang($key);
+	return (defined $label && length $label && $label ne $key) ? $label : &subs::format_name($name);
+}; %>
 <% if ($settings->{'subsection'} eq 'sms') { %>
 	<% my $phone_numbers = &subs::db_select('settings', undef, { setting => 'phone', device => &subs::device_setter() })->hashes; %>
 	<div id="mail_phone_picker mail_list_picker">
@@ -35,11 +42,11 @@
 	<% if ($privilege eq 'citizen') { %>
 		<button id="mail_picker_default" style="float:right;">Default</button>
 		<button id="mail_public_toggle" public="<%= $channel_public ? 'yes' : 'no' %>" style="float:right;margin-right:5px;" hint="Advertise this dial to guests"><%= $channel_public ? 'Advertised' : 'Advertise' %></button><br>
-		<% foreach my $group ( sort { $a->{'order'} cmp $b->{'order'} } values %{$sc} ) { %>
-			<b><%= &subs::format_name($group->{'name'}) %></b><br>
+		<% foreach my $group ( sort { $a->{'order'} <=> $b->{'order'} } values %{$sc} ) { %>
+			<b><%= $construct_label->($group->{'name'}) %></b><br>
 			<% if (scalar @{$group->{'list'}} >= 0) { %>
 				<select class="mail_picker" group="<%= $group->{'name'} %>" id="mail_<%= $group->{'sing'} %>_picker">
-					<option value="<%= $group->{'def'} %>" default="yes" <% if ($group->{'def'} eq $group->{'value'}) { %>selected<% } %>><%= &subs::format_name($group->{'def'}) %></option>
+					<option value="<%= $group->{'def'} %>" default="yes" <% if ($group->{'def'} eq $group->{'value'}) { %>selected<% } %>><%= &subs::ui(&subs::format_name($group->{'def'})) %></option>
 					<% foreach my $list ( @{$group->{'list'}} ) { %>
 						<% if ($list->{'app'} ne $group->{'def'}) { %>
 							<option value="<%= $list->{'app'} %>" <% if ($group->{'value'} eq $list->{'app'}) { %>selected<% } %>><%= &subs::format_name($list->{'app'}) %></option>
@@ -65,7 +72,7 @@
 			<thead>
 				<th></th>
 				<% foreach my $sc ( sort keys %{$sc} ) { %>
-					<th><%= &subs::format_name($sc) %></th>
+					<th><%= $construct_label->($sc) %></th>
 				<% } %>
 			</thead>
 			<tbody>
@@ -74,14 +81,14 @@
 					<tr class="mail_list hover  <% if ($uuid eq $settings->{'mail_list'}) { %>active " chosen="yes<% } %>" uuid="<%= $uuid %>">
 						<td><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="tiny_thumb mail_config_toggle hover" uuid="<%= $uuid %>"></td>
 						<% if ($ls->{'config'}->{'room'}) { %>
-							<td class="mail_list_selection" type="room" colspan="6" uuid="<%= $uuid %>"><%= &subs::format_name($ls->{'config'}->{'room'}) %></td>
+							<td class="mail_list_selection" type="room" colspan="<%= scalar(keys %{$sc}) || 1 %>" uuid="<%= $uuid %>"><%= &subs::format_name($ls->{'config'}->{'room'}) %></td>
 						<% } else { %>
-							<% foreach my $sc ( sort { $a->{'order'} cmp $b->{'order'} } values %{$sc} ) { %>
+							<% foreach my $sc ( sort { $a->{'order'} <=> $b->{'order'} } values %{$sc} ) { %>
 								<td class="mail_list_selection" type="ticket" uuid="<%= $uuid %>" group="<%= $sc->{'name'} %>" sc="<%= $ls->{$sc->{'sing'}} %>" ><%= &subs::format_name($ls->{$sc->{'sing'}}) %></td>
 							<% } %>
 						<% } %>
 					</tr>
-					<tr style="display:none;"><td colspan="7" class="mail_config_container" uuid="<%= $uuid %>"></td></tr>
+					<tr style="display:none;"><td colspan="<%= (scalar(keys %{$sc}) || 1) + 1 %>" class="mail_config_container" uuid="<%= $uuid %>"></td></tr>
 				<% } %>
 			</tbody>
 		</table>

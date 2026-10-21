@@ -66,7 +66,7 @@ CREATE TABLE "mailbox" (
 			app VARCHAR(2000),
 			manager_file VARCHAR(500),
 			status VARCHAR(25)
-		, project VARCHAR(255), club VARCHAR(255), team VARCHAR(255), community VARCHAR(255), contact VARCHAR(255), account VARCHAR(255), person VARCHAR(255), ost VARCHAR(25), phone VARCHAR(25), email VARCHAR(255), subject VARCHAR(1000), attachments LONGTEXT, from_email VARCHAR(255), file LONGTEXT, sender VARCHAR(25), email_server VARCHAR(255), conversation_uuid VARCHAR(255), cc VARCHAR(1000), bcc VARCHAR(1000), seen VARCHAR(10), starred VARCHAR(10), thread VARCHAR(255), message_id VARCHAR(255), in_reply_to VARCHAR(255), thread_refs LONGTEXT);
+		, project VARCHAR(255), club VARCHAR(255), team VARCHAR(255), community VARCHAR(255), contact VARCHAR(255), account VARCHAR(255), person VARCHAR(255), institution VARCHAR(255), government VARCHAR(255), corporation VARCHAR(255), place VARCHAR(255), vendor VARCHAR(255), event VARCHAR(255), ost VARCHAR(25), phone VARCHAR(25), email VARCHAR(255), subject VARCHAR(1000), attachments LONGTEXT, from_email VARCHAR(255), file LONGTEXT, sender VARCHAR(25), email_server VARCHAR(255), conversation_uuid VARCHAR(255), cc VARCHAR(1000), bcc VARCHAR(1000), seen VARCHAR(10), starred VARCHAR(10), thread VARCHAR(255), message_id VARCHAR(255), in_reply_to VARCHAR(255), thread_refs LONGTEXT);
 CREATE TABLE "model" (
 			app VARCHAR(500),
 			name VARCHAR(500),

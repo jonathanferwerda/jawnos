@@ -344,12 +344,6 @@ any '/watch/chat_received' => sub ($c) {
 	my $username = $c->param('username');
 	my $timestamp = $c->param('timestamp');
 	my $contact = $c->param('contact');
-	my $community = $c->param('community');
-	my $club = $c->param('club');
-	my $team = $c->param('team');
-	my $project = $c->param('project');
-	my $account = $c->param('account');
-	my $person = $c->param('person');
 	my $authorization = $c->param('authorization');
 	my $transport = $c->param('transport') // '';
 	if (my $watch_settings = &embeddedAuthorizer($c)) {
@@ -365,14 +359,14 @@ any '/watch/chat_received' => sub ($c) {
 			body => $message,
 			manager_file => $username,
 			status => 'public',
-			project => $project || $gb::social_constructs->{'projects'}->{'def'},
-			account => $account || $gb::social_constructs->{'accounts'}->{'def'},
-			community => $community || $gb::social_constructs->{'communities'}->{'def'},
-			club => $club || $gb::social_constructs->{'clubs'}->{'def'},
-			team => $team || $gb::social_constructs->{'teams'}->{'def'},
-			person => $person || $gb::social_constructs->{'people'}->{'def'},
 			contact => ($lo_radio ? 'lora' : ($contact_uuid || $watch_settings->{'__specs'}->{'computer'}))
 		};
+		# the device names a construct in a query value of its own; whatever it
+		# leaves out takes that construct's default, as the mailbox reader does
+		foreach my $scons ( values %{$gb::social_constructs} ) {
+			my $sing = $scons->{'sing'};
+			$mailbox_row->{$sing} = $c->param($sing) || $scons->{'def'};
+		}
 		&subs::db_insert('mailbox', $mailbox_row);
 		# the watch handed a message over: the browsers hear about it
 		&subs::mail_arrival({ c => $c, %{$mailbox_row} });

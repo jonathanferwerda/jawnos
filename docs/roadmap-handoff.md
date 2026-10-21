@@ -589,6 +589,12 @@ What is already in the tree:
 - `mailbox` carries all six as columns (`database/schema.sql` 69); `appointments`
   carries only project/club/account (line 22); `warehouse` carries
   project/account. So **only mail is fully construct-keyed today**.
+- *(2026-10-21)* The tuple grew to eleven — communities, clubs, teams, people,
+  projects, institutions, governments, corporations, places, vendors, events —
+  and `accounts` was retired as an address coordinate (its mail column stays
+  for rows already filed under one). The mailbox reader, the list, delete, the
+  websocket filer, the depublicizer and `/watch/chat_received` all derive the
+  tuple from the hash now, and the People app grows a tab per kind on its own.
 - `$gb::master_plan` (`gb.pl` 938) is a code-resident containment tree
   (team → clubs → communities → projects). It is read by one template, the
   ticket-request team dropdown (`templates/store/ticket_request_privilege.html.ep`);

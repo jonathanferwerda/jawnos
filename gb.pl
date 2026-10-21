@@ -216,13 +216,25 @@ our $pos = {
 	thing => {},
 };
 
+# The address tuple: the collectives a record can be filed under, in the order
+# the pickers show them. Each entry is a settings kind (pos/mab) too, so the
+# Relational window and the People app grow a section for it on their own.
+#
+# `accounts` is deliberately absent: an account is a financial coordinate, not
+# a collective. The mailbox keeps its account column for the rows already filed
+# under one, but the tuple no longer addresses by it.
 our $social_constructs = {
 	communities => { name => 'communities', list => [], sing => 'community', def => 'local', order => 0 },
-	teams => { name => 'teams', list => [], sing => 'team', def => 'family', order => 2 },
 	clubs => { name => 'clubs', list => [], sing => 'club', def => 'peers', order => 1 },
-	projects => { name => 'projects', list => [], sing => 'project', def => 'life', order => 4 },
-	accounts => { name => 'accounts', list => [], sing => 'account', def => 'cash', order => 5 },
+	teams => { name => 'teams', list => [], sing => 'team', def => 'family', order => 2 },
 	people => { name => 'people', list => [], sing => 'person', def => 'self', order => 3 },
+	projects => { name => 'projects', list => [], sing => 'project', def => 'life', order => 4 },
+	institutions => { name => 'institutions', list => [], sing => 'institution', def => 'house', order => 5 },
+	governments => { name => 'governments', list => [], sing => 'government', def => 'civic', order => 6 },
+	corporations => { name => 'corporations', list => [], sing => 'corporation', def => 'sole', order => 7 },
+	places => { name => 'places', list => [], sing => 'place', def => 'home', order => 8 },
+	vendors => { name => 'vendors', list => [], sing => 'vendor', def => 'market', order => 9 },
+	events => { name => 'events', list => [], sing => 'event', def => 'now', order => 10 },
 };
 
 our $relationals = {};

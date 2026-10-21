@@ -19798,17 +19798,18 @@ sub mail_arrival {
 	$m->{'type'} ||= 'message';
 	if (!$m->{'picker'}) {
 		# a row that carries the social constructs as columns is addressed to
-		# that thread; one with none is addressed by phone, email or contact
-		if (grep { defined $m->{$_} && length $m->{$_} } qw/project account community club team person/ ) {
-			$m->{'picker'} = {
-				projects => $m->{'project'},
-				accounts => $m->{'account'},
-				communities => $m->{'community'},
-				clubs => $m->{'club'},
-				teams => $m->{'team'},
-				people => $m->{'person'}
-			};
+		# that thread; one with none is addressed by phone, email or contact.
+		# The columns come from the registry, so a new construct needs no change
+		# here and a retired one simply stops being read.
+		my %picker;
+		my $addressed = 0;
+		foreach my $scons ( values %{$gb::social_constructs} ) {
+			my $sing = $scons->{'sing'};
+			next unless defined $m->{$sing} && length $m->{$sing};
+			$addressed = 1;
+			$picker{$scons->{'name'}} = $m->{$sing};
 		}
+		$m->{'picker'} = \%picker if $addressed;
 	}
 	$m->{'decrypted'} = 'yes' unless exists $m->{'decrypted'};
 	unless ($m->{'envelope'}) {

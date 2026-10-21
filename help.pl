@@ -291,14 +291,14 @@ our %topic = (
 			'A construct can carry its own crest or logo. Open its row in a construct tab and press Upload a logo. The picture is normalized and signed with the house key, and the record names the construct and the house that made it, so it is the same kind of signed record as the house crest, with its own card and compact code. The construct row shows the logo in place of its initial. Download card, Show QR and Write to NFC tag work for it, and a phone can write that code to a tag. A tag written for one of this house\'s constructs opens that construct when it is tapped; a tag for another house\'s construct is imported as that house\'s construct, provided its house crest is already known.',
 			'Another house\'s construct is read-only here. Its row says which house it came from, offers that house\'s page when the crest names an address, and cannot be published, given a logo, or edited in Relational. Its identity is the construct crest\'s id, not its name, so two houses can both have a Garden Club; when the name is already taken locally the row\'s key is suffixed with the house, while the name shown stays the one the other house uses.',
 			'Verify a photo compares a fresh photograph with the stored reference and reports a distance; the person confirms. A photocopy still looks like the drawing - the signed record, not the paper, is what proves the house.',
-			'The window is tabbed: Me is the house crest and its card; People is every person the house knows; then a tab for each social construct - Communities, Clubs, Teams, Projects and Accounts. The strip scrolls sideways, and each tab counts what it holds.',
-			'A person is a person construct in Relational. The moment one exists, its People row is made for it, and the row goes away when the construct is deleted; changing a construct from person to idea only hides it, so a mistaken change does not lose the identity behind it. A person\'s row shows their crest (when one is linked), the app name they are known by, and chips for the teams, clubs and communities they belong to. A chip opens that construct\'s tab on their row.',
+			'The window is tabbed: Me is the house crest and its card; People is every person the house knows; then a tab for each social construct - Communities, Clubs, Teams, Projects, Institutions, Governments, Corporations, Places, Vendors and Events. The strip scrolls sideways, and each tab counts what it holds.',
+			'A person is a person construct in Relational. The moment one exists, its People row is made for it, and the row goes away when the construct is deleted; changing a construct from person to idea only hides it, so a mistaken change does not lose the identity behind it. A person\'s row shows their crest (when one is linked), the app name they are known by, and chips for the constructs they belong to. A chip opens that construct\'s tab on their row.',
 			'Clicking a person opens their card. Their own main picture is the portrait; when a crest is linked it sits beside it. The card carries no scan, upload, card, QR, NFC or rename controls - the drawing belongs to their house. It offers Homepage, Store, Message, I have met this crest, a control to link a known crest, and Open Relational, which starts Relational already focused on that person.',
 			'Each construct tab lists the constructs of that kind and their members. A row opens to show who belongs to it, the names it answers to, and its crest controls. Relational is where the structure itself is made and changed; People reads it.',
 			'A construct can answer to more than one name. Open its row and type another name under Also called; that name then works in the Guide, on the watch and in commands sent to another machine. The x beside a name forgets it. A word that already means something else is refused, because it would make every use of that word a question; another house\'s construct is read-only here, so its names stay its own.'
 		],
 		steps => [
-			'Open People from the start menu. Me holds the house crest; People lists the people, and the construct tabs list the teams, clubs and communities they belong to.',
+			'Open People from the start menu. Me holds the house crest; People lists the people, and the construct tabs list the constructs they belong to.',
 			'To make a person, add them in Relational; the People row follows automatically.',
 			'Click a person to open their card and see their crest, their constructs and the ways to reach them.',,
 			'Place the drawing flat on the scanner, or choose Upload a photo.',
@@ -400,13 +400,13 @@ our %topic = (
 	'relational' => {
 		title => 'Relational', category => 'apps', app => 'relational',
 		templates => [ 'templates/relational/workspace.html.ep', 'public/js/manager/relational.js' ],
-		verified => '2026-10-20',
+		verified => '2026-10-21',
 		summary => 'The social constructs, and the relationships between them.',
 		body => [
-			'Relational is where the house\'s social structure is made: people, teams, clubs, communities, projects and accounts. The window is a workspace. The left column is the library of constructs, one tab per kind, with a search and a New name box; the right side is the construct you are working on, with one drop group for each kind it can belong to.',
+			'Relational is where the house\'s social structure is made: people, teams, clubs, communities, projects, institutions, governments, corporations, places, vendors and events. The window is a workspace. The left column is the library of constructs, one tab per kind, with a search and a New name box; the right side is the construct you are working on, with one drop group for each kind it can belong to.',
 			'Adding is deliberately two ways. On a desk, drag a card from the library onto the matching group (a team card onto Teams); on a phone, press the + on the card. Either way the link is written both ways, so the team lists the person and the person wears the team. Remove a link with the x on the member, or drag the member to Drop here to remove.',
 			'A construct is a named row with a kind (its pos, or its mab when it belongs to a second kind). Details on the focused card changes that kind; the tree and calculator tools of the old matcher are not part of this board.',
-			'A person construct is also a person in People: the window adds the People row for it and keeps their team, club and community chips up to date. Deleting the construct removes the person; changing its kind away from person only hides it, so an accidental change can be undone. Opening Relational from a Person card focuses that person.'
+			'A person construct is also a person in People: the window adds the People row for it and keeps their construct chips up to date. Deleting the construct removes the person; changing its kind away from person only hides it, so an accidental change can be undone. Opening Relational from a Person card focuses that person.'
 		],
 		steps => [
 			'Open Relational, or press Open Relational on a Person card to start focused on them.',
@@ -530,10 +530,10 @@ our %topic = (
 	'chat' => {
 		title => 'Chat', category => 'apps', app => 'chat',
 		templates => [ 'templates/apps/chat.html.ep', 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'templates/mail/chat_sections.html.ep', 'public/js/manager/chat.js', 'public/css/chat.css' ],
-		verified => '2026-10-19',
+		verified => '2026-10-21',
 		summary => 'The house\'s conversations: sms, the dial, ticket threads and lora.',
 		body => [
-			'Chat gathers the ways the house talks, split out of the mailbox as an app of its own: sms to phones, the dial (the house\'s radio, where a set of appointments picked across the six groups names one thread and a tab only hears messages addressed to the set it is tuned to), the list of those sets, the ticket threads the house opens for its guests, and lora.',
+			'Chat gathers the ways the house talks, split out of the mailbox as an app of its own: sms to phones, the dial (the house\'s radio, where a set of appointments picked across the social construct groups names one thread and a tab only hears messages addressed to the set it is tuned to), the list of those sets, the ticket threads the house opens for its guests, and lora.',
 			'Friends is one row per person the house knows, carrying every road they can be reached on: their name joins to a ticket when one is open for them, and their number is the thread until then. A person who keeps more than one line (a home number, a work number - set under Configure, in the app\'s Phones tile) shows them under their name, and the transport dropdown offers sms once per number, so the next text can go to the work line rather than the mobile.',
 			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down - except on the guest\'s own ticket thread, the one conversation the house opened for them.',
 			'A paperclip beside the composer attaches files to the next message; they ride the message on the ticket road and go as an MMS on the phone road.',
@@ -601,12 +601,12 @@ our %topic = (
 	'mailbox' => {
 		title => 'Mailbox', category => 'apps', app => 'mailbox',
 		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],
-		verified => '2026-10-16',
+		verified => '2026-10-21',
 		summary => 'The whole mailbox in one window — email, sms, lora, the dial, the list, ticket threads and the pen.',
 		body => [
 			'Mailbox speaks IMAP and SMTP directly. Mail arrives on the desktop rather than in a separate client: a new message raises the mailbox dot in the start menu and, if no mailbox is watching, a notification.',
 			'Sent mail is filed back onto the recipient\'s app, and its attachments are filed and sealed, so a document you emailed is still findable from the thing it belongs to. Alongside email it carries SMS, the internal message and paper-route system, and the Pen assistant — each of those sections also opens as an app of its own now, while the umbrella still carries them all.',
-			'The dial is the house\'s radio: a set of appointments picked across the six groups names one thread, and a tab only hears messages addressed to the set it is tuned to. Advertise opens the tuned set to guests, who may then tune the same channel from the mailbox on the public page.',
+			'The dial is the house\'s radio: a set of appointments picked across the social construct groups names one thread, and a tab only hears messages addressed to the set it is tuned to. Advertise opens the tuned set to guests, who may then tune the same channel from the mailbox on the public page.',
 			'A paperclip beside the composer attaches files to the next message; they ride the message on the ticket road and go as an MMS on the phone road.',
 			'A letter is filed only when its sender is trusted: a citizen\'s or resident\'s words are stored and synced, while a guest\'s are heard live by whoever is tuned in and never written down — except on the guest\'s own ticket thread, the one conversation the house opened for them. Room bubbles that are not kept are dashed to say so.'
 		],

@@ -25601,7 +25601,7 @@ sub mail_checker($c) {
 	my $last_sc;
 	my $chatbot_models;
 
-	foreach my $scons ( sort { $a->{'order'} cmp $b->{'order'} } values %{$gb::social_constructs} ) {
+	foreach my $scons ( sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs} ) {
 		my $sc = $scons->{'name'};
 		if (1 == 1 || $scons->{'order'} == 0 || scalar @{$gb::social_constructs->{$last_sc}->{'list'}} > 0) {
 			my $construct = &subs::db_query('select * from settings where (setting=? or setting =?) and value=?', 'pos', 'mab', $gb::social_constructs->{$sc}->{'sing'});
@@ -25646,36 +25646,44 @@ sub mail_checker($c) {
 	}
 
 	if ($settings->{'subsection'} eq 'list') {
-		my $listing = &subs::db_fresh('select * from mailbox where timestamp < ? and community is not null and club is not null and team is not null and project is not null and account is not null order by timestamp desc', $timestamp);
+		# The list is every distinct address tuple the mailbox holds, built from
+		# whatever $gb::social_constructs names today, so adding or retiring a
+		# construct needs no change here.
+		my @cols = &mail_construct_columns();
+		my @groups = sort keys %{$gb::social_constructs};
+		my $not_null = join ' and ', map { "$_ is not null" } @cols;
+		my $listing = &subs::db_fresh("select * from mailbox where timestamp < ? and $not_null order by timestamp desc", $timestamp);
 		foreach my $l ( @{$listing} ) {
 			my $seen = 0;
-			foreach my $soc_con ( keys %{$gb::social_constructs} ) {
-				my @ls = grep { $_->{$gb::social_constructs->{$soc_con}->{'sing'}} eq $l->{$gb::social_constructs->{$soc_con}->{'sing'}} } @{$list};
+			foreach my $sc ( @groups ) {
+				my $sing = $gb::social_constructs->{$sc}->{'sing'};
+				my @ls = grep { ($_->{$sing} // '') eq ($l->{$sing} // '') } @{$list};
 				if (scalar @ls > 0) { $seen++; }
 			}
-			if ($seen < scalar keys %{$gb::social_constructs}) {
-				my $uuid;
-				foreach my $sc ( sort keys %{$gb::social_constructs} ) {
-					$uuid .= $l->{$gb::social_constructs->{$sc}->{'sing'}} . '---';
-				}
+			if ($seen < scalar @groups) {
+				# the trailing separator is part of the key's shape; a list row's
+				# uuid must match what mail_channel_key and the stored configs use
+				my $uuid = join '', map { ($l->{$_} // '') . '---' } @cols;
 				$l->{'uuid'} = $uuid;
 				$l->{'config'} = $settings->{'mail_config'}->{$uuid};
 				push @{$list}, $l;
 			}
 		}
 
-		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and account=? and club = ? and community = ? and person = ? and project = ? and team = ? and contact is null order by timestamp desc LIMIT 30',
+		# a saved list written before this build carries the retired tuple; it
+		# no longer names a row, so a count that does not match falls back to
+		# the defaults rather than binding values into the wrong columns
+		my %picked;
+		@picked{@groups} = @selection if scalar @selection == scalar @groups;
+		my $where = join ' and ', map { "$_ = ?" } @cols;
+		my @values = map { $picked{$_} || $gb::social_constructs->{$_}->{'def'} } @groups;
+		$q = &subs::db_fresh("select * from mailbox where timestamp < ? and $where and contact is null order by timestamp desc LIMIT 30",
 			$timestamp,
-			$selection[0],
-			$selection[1],
-			$selection[2],
-			$selection[3],
-			$selection[4],
-			$selection[5],
+			@values,
 		);
-		foreach my $s ( @selection ) {
-			$main_title .= &subs::format_name(&subs::shorthand_name($s,50)) . ' ';
-		}
+		$main_title = join ' ', map { &subs::format_name(&subs::shorthand_name($_, 50)) }
+			map { $picked{$_} || $gb::social_constructs->{$_}->{'def'} }
+			map { $_->{'name'} } sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs};
 	}
 	elsif ($settings->{'subsection'} eq 'pen') {
 
@@ -25718,21 +25726,18 @@ sub mail_checker($c) {
 		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, $contact);
 	}
 	else {
-		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and project = ? and account = ? and community = ? and team = ? and club = ? and person = ? order by timestamp desc LIMIT 30',
+		# the tuple is whatever the registry says now: a dial with a picker
+		# hidden still reaches the default thread, and a new construct needs no
+		# branch here
+		my @cols = &mail_construct_columns();
+		my $where = join ' and ', map { "$_ = ?" } @cols;
+		my $constructs = &mailws_constructs($picker);
+		$q = &subs::db_fresh("select * from mailbox where timestamp < ? and $where order by timestamp desc LIMIT 30",
 			$timestamp,
-			($picker->{'projects'} || $gb::social_constructs->{'projects'}->{'def'}),
-			($picker->{'accounts'} || $gb::social_constructs->{'accounts'}->{'def'}),
-			($picker->{'communities'} || $gb::social_constructs->{'communities'}->{'def'}),
-			($picker->{'teams'} || $gb::social_constructs->{'teams'}->{'def'}),
-			($picker->{'clubs'} || $gb::social_constructs->{'clubs'}->{'def'}),
-			($picker->{'people'} || $gb::social_constructs->{'people'}->{'def'}),
+			map { $constructs->{$_} } sort keys %{$gb::social_constructs},
 		);
-		$main_title = &subs::format_name(($picker->{'projects'} || $gb::social_constructs->{'projects'}->{'def'}) . ' ' .
-			($picker->{'accounts'} || $gb::social_constructs->{'accounts'}->{'def'}) . ' ' .
-			($picker->{'communities'} || $gb::social_constructs->{'communities'}->{'def'}) . ' ' .
-			($picker->{'teams'} || $gb::social_constructs->{'teams'}->{'def'}) . ' ' .
-			($picker->{'clubs'} || $gb::social_constructs->{'clubs'}->{'def'}) . ' ' .
-			($picker->{'people'} || $gb::social_constructs->{'people'}->{'def'}));
+		$main_title = join ' ', map { &subs::format_name($constructs->{$_->{'name'}}) }
+			sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs};
 	}
 	my $mails = ref($q) eq 'ARRAY' ? $q : ($q ? $q->hashes : []);
 	&subs::subprocessor(sub {
@@ -25865,14 +25870,16 @@ post '/manager/mail/delete_conversation' => sub($c) {
 		$c->render(json => { 'status' => 'ok' });
 	} else {
 		my @selection = split '---', $uuid;
-		&subs::db_query('delete from mailbox where account=? and club = ? and community = ? and person = ? and project = ? and team = ?',
-			$selection[0],
-			$selection[1],
-			$selection[2],
-			$selection[3],
-			$selection[4],
-			$selection[5],
-		);
+		my @groups = sort keys %{$gb::social_constructs};
+		# a uuid from before this build carries the retired tuple and names no
+		# row; a count that does not match deletes nothing rather than binding
+		# values into the wrong columns
+		if (scalar @selection == scalar @groups) {
+			my %picked;
+			@picked{@groups} = @selection;
+			my $where = join ' and ', map { "$_ = ?" } &mail_construct_columns();
+			&subs::db_query("delete from mailbox where $where", map { $picked{$_} } @groups);
+		}
 		my $configure = eval { return decode_json &subs::setting_grabber({ app => 'mail', setting => 'mail_config' }) } || {};
 		delete $configure->{$uuid};
 		my $jset = encode_json $configure;
@@ -35166,15 +35173,12 @@ sub now_me($data) {
 	# used to sit on the whole request until the connect gave up, which the panel
 	# showed as a stalled/red Now Me. A fast local device answers well inside these.
 	my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 5);
-	foreach my $gah ( qw/project person community club team/ ) {
+	foreach my $scons ( sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs} ) {
+		my $gah = $scons->{'sing'};
 		my $pros = &subs::db_query('select * from settings where (setting=? or setting =?) and value=?', 'pos','mab',$gah);
 		my $professionals = $pros->hashes;
 		$op_d->{'__specs'}->{'chat'}->{$gah} = "";
-		foreach my $sc ( keys %{$gb::social_constructs} ) {
-			if ($gb::social_constructs->{$sc}->{'sing'} eq $gah) {
-				$op_d->{'__specs'}->{'chat'}->{$gah} .= $gb::social_constructs->{$sc}->{'def'} . "\n";
-			}
-		}
+		$op_d->{'__specs'}->{'chat'}->{$gah} .= $scons->{'def'} . "\n";
 
 		foreach my $pro ( @{$professionals} ) {
 			$op_d->{'__specs'}->{'chat'}->{$gah} .= &subs::format_name($pro->{'app'}) . "\n";
@@ -36327,6 +36331,24 @@ sub update_database($data) {
 			app_uuid VARCHAR(255)
 		)',
 		'alter table mailbox add column conversation_uuid VARCHAR(255)',
+		# The address tuple grew: institution, government, corporation, place,
+		# vendor and event joined the social constructs, and an account stopped
+		# being one. The account column stays so rows already filed under one keep
+		# their record, but nothing addresses by it now. Backfill each new column
+		# to its construct's default, or mail filed before this build would hide
+		# behind NULL instead of joining the default dial.
+		'alter table mailbox add column institution VARCHAR(255)',
+		'alter table mailbox add column government VARCHAR(255)',
+		'alter table mailbox add column corporation VARCHAR(255)',
+		'alter table mailbox add column place VARCHAR(255)',
+		'alter table mailbox add column vendor VARCHAR(255)',
+		'alter table mailbox add column event VARCHAR(255)',
+		"update mailbox set institution = 'house' where institution is null or institution = ''",
+		"update mailbox set government = 'civic' where government is null or government = ''",
+		"update mailbox set corporation = 'sole' where corporation is null or corporation = ''",
+		"update mailbox set place = 'home' where place is null or place = ''",
+		"update mailbox set vendor = 'market' where vendor is null or vendor = ''",
+		"update mailbox set event = 'now' where event is null or event = ''",
 		'alter table mailbox drop column artificial_intelligence',
 		'alter table warehouse add column place VARCHAR(500)',
 		'alter table warehouse add column type VARCHAR(25)',
@@ -36726,11 +36748,11 @@ websocket '/mail/ws' => sub ($c) {
 
 	my $picker = eval { return decode_json $c->param('picker') } || {};
 	# One entry per browser tab, carrying the address it is watching: a phone
-	# number, an email address, a contact, a guest's ticket, or the six social
-	# constructs a dial or list tab picked. The old registry nested the
-	# constructs as hash levels - people->accounts->projects->teams->clubs->
-	# communities - which left a sender no way to tell one shape from another;
-	# the address keeps that nest as plain data instead.
+	# number, an email address, a contact, a guest's ticket, or the social
+	# construct tuple a dial or list tab picked. The old registry nested the
+	# constructs as hash levels - people->projects->teams->clubs->communities -
+	# which left a sender no way to tell one shape from another; the address
+	# keeps that nest as plain data instead.
 	$gb::mailws->{$browser_tab_id} = {
 		tx => $c->tx,
 		address => &mailws_address($c, $picker)
@@ -36832,12 +36854,18 @@ websocket '/mail/ws' => sub ($c) {
 				$m->{'phone'} =~ s/\D+//g;
 				$m->{'phone'} =~ s/^1//;
 			}
-			# the six social constructs are defaulted the way the mailbox reads
-			# them, so a message sent from a tab with its pickers hidden still
-			# lands on the thread the reader will open; a message addressed to a
-			# phone, an email or a contact keeps its construct columns empty
+			# the social constructs are defaulted the way the mailbox reads them,
+			# so a message sent from a tab with its pickers hidden still lands on
+			# the thread the reader will open; a message addressed to a phone, an
+			# email or a contact keeps its construct columns empty
 			my $constructs = &mailws_constructs($picker);
 			if ($m->{'mail_contact'} || $m->{'phone'} || $m->{'email'}) { $constructs = {}; }
+			# the row's construct columns, named from the same registry the
+			# reader queries with, so a new construct lands in its own column
+			my %construct_columns;
+			foreach my $k ( keys %{$gb::social_constructs} ) {
+				$construct_columns{ $gb::social_constructs->{$k}->{'sing'} } = $constructs->{$k};
+			}
 			my ($db,$database,$sql) = &subs::database_grabber();
 			# the house encrypts files at rest and renames them, so the paths the
 			# page sent are stale by the time the message files: each attachment's
@@ -36858,17 +36886,12 @@ websocket '/mail/ws' => sub ($c) {
 				timestamp => $m->{'timestamp'},
 				server_time => &subs::rightNow(),
 				body => $e_msg,
-				project => $constructs->{'projects'},
-				account => $constructs->{'accounts'},
-				club => $constructs->{'clubs'},
-				team => $constructs->{'teams'},
-				community => $constructs->{'communities'},
+				%construct_columns,
 				manager_file => $m->{'manager_file'},
 				status => 'sent',
 				contact => $m->{'mail_contact'},
 				phone => $m->{'phone'},
 				email => $m->{'email'},
-				person => $constructs->{'people'},
 				conversation_uuid => $m->{'conversation_uuid'},
 				attachments => $m_attachments
 			};
@@ -36969,17 +36992,12 @@ websocket '/mail/ws' => sub ($c) {
 					timestamp => $m->{'timestamp'},
 					server_time => &subs::rightNow(),
 					body => $m->{'msg'},
-					project => $constructs->{'projects'},
-					account => $constructs->{'accounts'},
-					club => $constructs->{'clubs'},
-					team => $constructs->{'teams'},
-					community => $constructs->{'communities'},
+					%construct_columns,
 					manager_file => $m->{'manager_file'},
 					status => 'public',
 					contact => $m->{'mail_contact'},
 					phone => $m->{'phone'},
 					email => $m->{'email'},
-					person => $constructs->{'people'},
 					# an unfiled letter travels the mesh marked ephemeral: the
 					# machines that catch it deliver it live and keep nothing
 					ephemeral => ($trusted ? undef : 'yes')
@@ -37051,8 +37069,11 @@ websocket '/mail/ws' => sub ($c) {
 				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and contact = ? order by timestamp desc LIMIT 20', $last_message, $contact);
 			}
 			else {
-				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and project=? and account =? and community = ? and club = ? and team = ? and person = ? order by timestamp desc LIMIT 20',
-					$last_message, $picker->{'projects'}, $picker->{'accounts'}, $picker->{'communities'}, $picker->{'clubs'}, $picker->{'teams'}, $picker->{'people'}
+				my @cols = &mail_construct_columns();
+				my $where = join ' and ', map { "$_ = ?" } @cols;
+				my $constructs = &mailws_constructs($picker);
+				$q = &subs::db_fresh("select * from mailbox where timestamp > ? and $where order by timestamp desc LIMIT 20",
+					$last_message, map { $constructs->{$_} } sort keys %{$gb::social_constructs}
 				);
 			}
 			my $messaging = ref($q) eq 'ARRAY' ? $q : $q->hashes;
@@ -37191,6 +37212,10 @@ sub mail_depublicizer($c) {
 		my $enc_body = &subs::note_encrypter(&subs::session_suds($c), $p->{'body'}, $p->{'timestamp'});
 		&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', $enc_body, $p->{'uuid'});
 
+		my %depublicized;
+		foreach my $k ( keys %{$gb::social_constructs} ) {
+			$depublicized{$k} = $p->{ $gb::social_constructs->{$k}->{'sing'} };
+		}
 		my $messenger = {
 			# the client replaces a message whose uuid is already on screen,
 			# so this envelope must wear the row's uuid or it only ever appends
@@ -37199,14 +37224,7 @@ sub mail_depublicizer($c) {
 			timestamp => $p->{'timestamp'},
 			type => 'message',
 			mail_contact => $p->{'contact'},
-			picker => {
-				projects => $p->{'project'},
-				accounts => $p->{'account'},
-				clubs => $p->{'club'},
-				teams => $p->{'team'},
-				communities => $p->{'community'},
-				people => $p->{'person'}
-			},
+			picker => \%depublicized,
 			manager_file => $p->{'manager_file'},
 			decrypted => 'yes'
 		};
@@ -38922,9 +38940,17 @@ sub websocket_sender($wsm) {
 	return $return_msg;
 }
 
-# The six social constructs with every value filled: what the client leaves
-# out falls back to the same default the mailbox reader reaches for, so a tab
-# with its pickers hidden (a phone) still has an address a message can find.
+# The construct columns in the fixed order a channel tuple names them: the
+# plural keys sorted, which is what mail_channel_key joins and what a list
+# row's uuid concatenates. Changing $gb::social_constructs changes the tuple,
+# so every place that builds or splits one asks here instead of naming six.
+sub mail_construct_columns() {
+	return map { $gb::social_constructs->{$_}->{'sing'} } sort keys %{$gb::social_constructs};
+}
+
+# The social constructs with every value filled: what the client leaves out
+# falls back to the same default the mailbox reader reaches for, so a tab with
+# its pickers hidden (a phone) still has an address a message can find.
 sub mailws_constructs($picker) {
 	my $constructs = {};
 	foreach my $k ( keys %{$gb::social_constructs} ) {
@@ -38956,7 +38982,7 @@ sub mailws_picker_dialled($picker) {
 	return 0;
 }
 
-# One tuple of six values names one thread; this is how two dials are
+# One tuple of construct values names one thread; this is how two dials are
 # compared, whatever order their keys arrived in.
 sub mail_channel_key($constructs) {
 	return join "\x1f", map { defined $constructs->{$_} ? $constructs->{$_} : '' } sort keys %{$gb::social_constructs};
@@ -38984,7 +39010,7 @@ sub mail_public_channel_allows($picker) {
 	return 0;
 }
 
-# The human name of a dial: its six values in the order the dial lists them.
+# The human name of a dial: its construct values in the order the dial lists them.
 sub mail_channel_label($constructs) {
 	return join ' ', map { &subs::format_name($constructs->{$_->{'name'}}) }
 		sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs};
