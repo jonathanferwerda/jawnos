@@ -7657,7 +7657,7 @@ sub sync_rows_pull {
 		my $base = (ref $prior_seen->{$table} eq 'HASH') ? $prior_seen->{$table} : undef;
 		if ($cut == 0 && $table ne 'settings' && ref $base eq 'HASH' && ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }) {
 			my $band = &subs::sync_bucket_normalize($base->{'band'});
-			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, $table, $band);
+			my ($bmap, $berr) = &sync_buckets_batch($remote, $signatorial, $secret, $table, $band);
 			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
 				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
 				# The map carries the peer's clock, the way a first batch does: even
@@ -7670,6 +7670,12 @@ sub sync_rows_pull {
 				# A table changed across most of its bands is cheaper read whole: a
 				# walk is a request per band on top of the same rows.
 				$bands = $moved if ($moved_n && $moved_n <= 100 && $moved_n <= ($bands_total * 0.5));
+				if ($bands) {
+					&subs::log_writer('sync bucket repair ' . $table . ': moved=' . $moved_n . '/' . $bands_total . ' band=' . $bmap->{'band'});
+				}
+				elsif ($moved_n) {
+					&subs::log_writer('sync bucket repair skipped for ' . $table . ': moved=' . $moved_n . '/' . $bands_total . '; reading the whole table');
+				}
 				if ($moved_n == 0) {
 					# Every band matches the baseline: nothing to read. Record the
 					# new picture and move on instead of re-reading the table.
@@ -7677,6 +7683,9 @@ sub sync_rows_pull {
 					&subs::sync_job_step($job, 'merge:' . $table, { label => 'merge ' . $table, state => 'done', current => 1, total => 1 });
 					next;
 				}
+			}
+			else {
+				&subs::log_writer('sync bucket map failed for ' . $table . ': ' . ($berr || 'no map') . '; reading the whole table');
 			}
 		}
 		if (ref $bands eq 'ARRAY') {
