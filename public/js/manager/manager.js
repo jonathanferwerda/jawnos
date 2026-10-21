@@ -4616,7 +4616,13 @@ function jawnosRemoteManagerOpen(uuid, manager, gesture) {
 	if (gesture && !window.JawnDesktop) {
 		try { preopened = window.open('', '_blank'); } catch (e) { preopened = null; }
 	}
-	var data = { timestamp: Date.now() };
+	var data = {
+		timestamp: Date.now(),
+		// The desktop bridge is what opens a real JawnOS window; when it is
+		// missing the page can only hand the URL to the default browser.
+		desktop: window.JawnDesktop ? 1 : 0,
+		bridge: (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.jawnos) ? 1 : 0
+	};
 	if (uuid) { data.uuid = uuid; }
 	else { data.manager = manager; }
 	$.ajax({

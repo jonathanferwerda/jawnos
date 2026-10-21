@@ -8393,7 +8393,7 @@ get '/manager/remote_manager' => sub ($c) {
 			$devices = [ map { $_->{'name'} || 'device' } @{$others} ];
 		}
 	}
-	$log->info('remote_manager: uuid=' . (defined $uuid ? $uuid : '-') . ' manager=' . ($manager || '-') . ' -> ' . $url . ' ticket=' . ($ticket_url ? 1 : 0) . ' approval=' . $need_approval);
+	$log->info('remote_manager: uuid=' . (defined $uuid ? $uuid : '-') . ' manager=' . ($manager || '-') . ' -> ' . $url . ' ticket=' . ($ticket_url ? 1 : 0) . ' approval=' . $need_approval . ' desktop=' . ($c->param('desktop') || '?') . ' bridge=' . ($c->param('bridge') || '?'));
 	$c->render(json => {
 		manager => $url,
 		ticket_url => $ticket_url,
@@ -18896,6 +18896,11 @@ sub people_crest_profile {
 		origin => &subs::crest_origin(),
 		issued => &subs::rightNow(),
 		constructs => \@constructs,
+		# the machines that back this crest, named by their own signatures; the
+		# full statements travel on the card, this list is what a lookup shows
+		cosignatures => [ map {
+			{ signatorial => $_->{'signatorial'}, hostname => $_->{'hostname'}, at => $_->{'at'} }
+		} @{ &subs::crest_member_cosig_list($crest, { include_local => 1 }) } ],
 	};
 	return &subs::crest_sign_record($profile, $priv);
 }
@@ -19080,6 +19085,7 @@ get '/manager/people' => sub($c) {
 		last;
 	}
 	my $index = &people_link_sync();
+	my $backers = &subs::crest_member_cosig_list($crest);
 	my %person_app = map { $_ => 1 } @{ $index->{'person_apps'} };
 	my $people_rows = eval { &subs::db_select('people', undef, { status => 'active' })->hashes } || [];
 	my @people;
@@ -19122,6 +19128,7 @@ get '/manager/people' => sub($c) {
 		introduced_by => $crest_introduced_by,
 		peers => \@peers,
 		people => \@people,
+		backers => $backers,
 		constructs => $index->{'constructs'},
 		scanner => $scanner,
 		camera => $camera,
@@ -19293,6 +19300,41 @@ post '/manager/people/construct/public' => sub($c) {
 	return $c->render(json => { ok => 1, app => $app, public => ($value eq 'on' ? 1 : 0) });
 };
 
+# A member machine hands the crest holder its cosignature. The request carries
+# the peer's signature and the statement carries it again, so the roster row
+# keeps a signature that still verifies after the request is gone. Only a
+# machine on this house's roster can cosign, and only this house's crest.
+post '/manager/crest/cosign' => sub($c) {
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = $signatorial
+		? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]
+		: undef;
+	unless ($rm) { return $c->render(json => { ok => 0, error => 'no such machine' }); }
+	# A keyless row must not let an unsigned caller in: the cosignature is a
+	# signature, so the request has to carry one too.
+	unless ($c->req->headers->header('X-Peer-Signature')) {
+		return $c->render(json => { ok => 0, error => 'a signed request is required' });
+	}
+	unless (&subs::peer_verify($c, $rm)) {
+		return $c->render(json => { ok => 0, error => 'the signature is not that machine' });
+	}
+	my $body = eval { $c->req->json } || {};
+	my $crest_uuid = $body->{'crest_uuid'} || $c->param('crest_uuid') || '';
+	my $cosig = $body->{'cosig'};
+	unless (ref $cosig eq 'HASH') {
+		my $raw = $c->param('cosig') || '';
+		$cosig = eval { decode_json($raw) };
+	}
+	unless (ref $cosig eq 'HASH') {
+		return $c->render(json => { ok => 0, error => 'no cosignature' });
+	}
+	my $crest = &subs::crest_record_read();
+	if ($crest_uuid && ($crest->{'uuid'} || '') ne $crest_uuid) {
+		return $c->render(json => { ok => 0, error => 'this house holds another crest' });
+	}
+	return $c->render(json => &subs::crest_member_cosig_accept($rm, $crest, $cosig));
+};
+
 get '/manager/people/person' => sub($c) {
 	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
 	my $uuid = $c->param('uuid') || '';
@@ -19431,6 +19473,9 @@ sub people_crest_card {
 		manager => $origin . '/manager',
 		signatorial => &subs::signatorial_designer(),
 	};
+	# The machines that back the crest, with their own signatures. The card is
+	# signed by the house key, so the list cannot be edited without breaking it.
+	$card->{'cosignatures'} = &subs::crest_member_cosig_list($crest, { include_local => 1 });
 	return $card;
 }
 
@@ -29646,6 +29691,9 @@ sub app_public_path {
 	# A crest lookup is house to house: the caller presents its own crest and the
 	# reply is signed by this house's key, so no session or app key is involved.
 	return 1 if $path =~ m{^/crest(?:/|$)};
+	# A member machine hands over its crest cosignature on the same peer rail:
+	# the route requires and verifies the machine's signature itself.
+	return 1 if $path eq '/manager/crest/cosign';
 	# The embedded devices authenticate themselves with the rotated Now Me
 	# pair; they are not browsers and must keep their rail.
 	return 1 if $path =~ m{^/(?:watch|teletype|embedded)(?:/|$)};
@@ -35465,6 +35513,11 @@ sub update_database($data) {
 		'alter table remote_machines add column privilege VARCHAR(25)',
 		'alter table remote_machines add column grant_scope VARCHAR(25)',
 		'alter table remote_machines add column grant_expires VARCHAR(25)',
+		# A member machine cosigns the house crest with its peer key. crest_uuid is
+		# the crest it backs and crest_cosig is its signed statement, so the roster
+		# (and the card) can say which machines stand behind the crest.
+		'alter table remote_machines add column crest_uuid VARCHAR(255)',
+		'alter table remote_machines add column crest_cosig LONGTEXT',
 		# paired devices: the browsers and phones a citizen has signed in once
 		'create table if not exists paired_devices (uuid VARCHAR(255) unique, name VARCHAR(255), pubkey LONGTEXT, bio_pubkey LONGTEXT, privilege VARCHAR(25), status VARCHAR(25), timestamp VARCHAR(25), server_time VARCHAR(25), ost VARCHAR(25), last_seen VARCHAR(25), agent VARCHAR(500))',
 		# a phone that has enrolled its biometric key: an EC P-256 key in the
