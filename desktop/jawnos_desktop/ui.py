@@ -111,6 +111,8 @@ class Dashboard(Gtk.Window):
         self._update_pending = None
         self._update_pending_at = 0.0
         self._updating = False
+        self._tailnet = {}
+        self._tailnet_at = 0.0
         self.set_default_size(*_initial_size())
         # The CSS is scoped to this class so it cannot leak into GTK's popup
         # menus (which live in their own internal toplevel window).
@@ -193,6 +195,16 @@ class Dashboard(Gtk.Window):
             ("Start", self.action_start, True),
             ("Restart", self.action_restart, False),
             ("Stop", self.action_stop, False),
+        ])
+
+        # The tailnet lives beside jawn: the desktop's tunnel is the machine's
+        # own tailscaled, so the dashboard can bring it up or down the way the
+        # phone's dashboard does.
+        tailnet = self._card(box, "Tailnet")
+        _trow, self.tail_dot, self.tail_state = self._status_line(tailnet)
+        self._card_row(tailnet, [
+            ("Start VPN", lambda: self._async(core.tailnet_up), True),
+            ("Stop VPN", lambda: self._async(core.tailnet_down), False),
         ])
 
         opn = self._card(box, "Open")
@@ -611,6 +623,13 @@ class Dashboard(Gtk.Window):
             jawn = core.jawn_up(settings["jawn_dir"])
             ble = core.ble_up()
             now = time.monotonic()
+            # The tunnel's own state is a CLI call, so read it every few
+            # seconds; the network watcher (a cheap `ip` read) still runs on
+            # every tick so a switch is caught promptly.
+            if now - self._tailnet_at >= 5:
+                self._tailnet_at = now
+                self._tailnet = core.tailnet_state()
+            tail = core.tailnet_network_tick(self._tailnet)
             if now - self._version_check_at >= 60 and self._guard_lock.acquire(blocking=False):
                 try:
                     self._version_check_at = now
@@ -653,7 +672,7 @@ class Dashboard(Gtk.Window):
                         GLib.idle_add(self._reload_web_view)
                 finally:
                     self._guard_lock.release()
-            GLib.idle_add(self._render, jawn, ble)
+            GLib.idle_add(self._render, jawn, ble, tail)
         threading.Thread(target=probe, daemon=True).start()
         return True
 
@@ -679,7 +698,7 @@ class Dashboard(Gtk.Window):
             self.app_note.set_text("desktop v%s (%s)\nup to date - tap Update app to check again." % (iname, icode))
         self.update_button.set_sensitive(True)
 
-    def _render(self, jawn_up, ble_up):
+    def _render(self, jawn_up, ble_up, tail=None):
         if jawn_up:
             self.start_requested_at = 0.0
             js, colour = "running", GREEN_RGB
@@ -697,6 +716,26 @@ class Dashboard(Gtk.Window):
         _safe_tray_apply(self, colour)
         self.ble_state.set_text("BLE bridge  —  " + ("running" if ble_up else "stopped"))
         self._set_dot(self.ble_dot, GREEN_RGB if ble_up else DIM_RGB)
+
+        tail = tail or {}
+        tstate = tail.get("state") or ("Running" if tail.get("running") else "Stopped")
+        tlabel = {
+            "Running": "running",
+            "Stopped": "stopped",
+            "Starting": "starting",
+            "NeedsLogin": "needs login",
+            "NoState": "not installed",
+        }.get(tstate, tstate.lower() or "stopped")
+        if tail.get("error") and not tail.get("available"):
+            tlabel = "unavailable"
+        self.tail_state.set_text("Tailnet  —  " + tlabel)
+        if tail.get("running"):
+            tcolour = GREEN_RGB
+        elif tstate in ("Starting", "NeedsLogin"):
+            tcolour = AMBER_RGB
+        else:
+            tcolour = DIM_RGB
+        self._set_dot(self.tail_dot, tcolour)
         return False
 
 

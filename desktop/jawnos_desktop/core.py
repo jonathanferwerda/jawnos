@@ -848,3 +848,143 @@ def status(settings=None):
         "autostart": autostart_enabled(),
         "ble_with_jawn": bool(settings.get("ble_with_jawn", True)),
     }
+
+
+# --------------------------------------------------------------------------
+# tailnet (Tailscale) control
+# --------------------------------------------------------------------------
+# The phone carries an embedded tailnet client; on the desktop the tailnet is
+# the machine's own tailscaled, so "start" and "stop" are `tailscale up` and
+# `tailscale down`. The dashboard shows the state and offers both, and a small
+# watcher restarts the tunnel after the physical network changes -- the same
+# rule the phone needs, because a switch can leave the old route pinned.
+
+# Interfaces that are not the physical network (the tunnel itself, containers,
+# bridges and the loopback). Names are matched as prefixes.
+_NOT_PHYSICAL = (
+    "lo", "tailscale", "tun", "tap", "wg", "docker", "veth",
+    "br-", "virbr", "vmnet", "zt",
+)
+
+_TAILNET_NET = {"ifaces": None, "changed_at": 0.0, "restarted_for": 0.0}
+
+
+def tailscale_bin():
+    return os.environ.get("TAILSCALE_BIN", "tailscale")
+
+
+def _tailscale(args, timeout=25):
+    """Run the tailscale CLI. Returns (ok, message) -- never raises."""
+    try:
+        out = subprocess.run(
+            [tailscale_bin()] + list(args),
+            capture_output=True, text=True, timeout=timeout,
+        )
+        text = ((out.stdout or "") + (out.stderr or "")).strip()
+        ok = out.returncode == 0
+        if not text:
+            text = "tailscale %s: exit %d" % (args[0], out.returncode)
+        return ok, text
+    except Exception as exc:  # a missing binary is a normal answer here
+        return False, str(exc)
+
+
+def tailnet_state():
+    """The tailnet's backend state, as the dashboard's status line needs it."""
+    try:
+        out = subprocess.run(
+            [tailscale_bin(), "status", "--json"],
+            capture_output=True, text=True, timeout=4,
+        )
+        data = json.loads(out.stdout or "{}")
+        state = data.get("BackendState", "")
+        return {
+            "available": bool(state),
+            "state": state,
+            "running": state == "Running",
+            "login_url": data.get("AuthURL", "") or "",
+        }
+    except Exception as exc:
+        return {"available": False, "state": "", "running": False, "error": str(exc)}
+
+
+def tailnet_up():
+    return _tailscale(["up"])
+
+
+def tailnet_down():
+    return _tailscale(["down"])
+
+
+def physical_interfaces():
+    """The machine's non-tunnel IPv4 networks, as a stable tuple.
+
+    A switch between two Wi-Fi networks often keeps the same interface name, so
+    the address (and the default gateway) is part of the signature; the tunnel's
+    own interface is left out so the VPN coming up does not look like a switch.
+    """
+    try:
+        out = subprocess.run(
+            ["ip", "-o", "-4", "addr", "show", "up", "scope", "global"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout
+    except Exception:
+        return ()
+    parts = set()
+    for line in out.splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        name = fields[1].split("@")[0]
+        if any(name.startswith(prefix) for prefix in _NOT_PHYSICAL):
+            continue
+        parts.add(name + "|" + fields[3])
+    try:
+        routes = subprocess.run(
+            ["ip", "route", "show", "default"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout
+    except Exception:
+        routes = ""
+    match = re.search(r"default\s+via\s+(\S+)\s+dev\s+(\S+)", routes)
+    if match and not any(match.group(2).startswith(prefix) for prefix in _NOT_PHYSICAL):
+        parts.add("gateway|" + match.group(1))
+    return tuple(sorted(parts))
+
+
+def tailnet_network_tick(state=None):
+    """Restart a running tailnet after the physical network changes.
+
+    The call is cheap and is meant to ride the dashboard's two-second status
+    tick. A change is debounced for three seconds (a Wi-Fi switch produces a
+    down and an up in quick succession), then a running tunnel is stopped and
+    started again so the Go client binds the new default route instead of the
+    old one. A stopped tunnel is left stopped.
+    """
+    state = state if state is not None else {}
+    now = time.monotonic()
+    ifaces = physical_interfaces()
+    if not ifaces:
+        return state
+    last = _TAILNET_NET.get("ifaces")
+    if last is None:
+        _TAILNET_NET["ifaces"] = ifaces
+        return state
+    if ifaces != last:
+        _TAILNET_NET["ifaces"] = ifaces
+        _TAILNET_NET["changed_at"] = now
+        return state
+    changed_at = _TAILNET_NET.get("changed_at") or 0.0
+    if not changed_at or now - changed_at < 3.0:
+        return state
+    if _TAILNET_NET.get("restarted_for") == changed_at:
+        return state
+    _TAILNET_NET["restarted_for"] = changed_at
+    if not state.get("running"):
+        return state
+    _tailscale(["down"])
+    time.sleep(1.0)
+    ok, message = _tailscale(["up"])
+    state["network_restart"] = ("restarted after a network change"
+                                if ok else ("network restart failed: " + message))
+    return state
