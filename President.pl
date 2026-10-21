@@ -718,6 +718,19 @@ sub manager_starter() {
 			sleep 300;
 		}
 	}, { name => 'evaluation schedules' });
+
+	# The evaluation dispatch: the server assigns each scheduled run to a ready
+	# worker a few minutes before it is due, and every machine turns an assignment
+	# addressed to it into a queued job. The ledger travels with the ordinary sync,
+	# so a partition that cannot see the dispatcher has no fresh assignment and
+	# stands down instead of running the same report twice.
+	&subs::subprocessor(sub {
+		sleep 45;
+		while (1) {
+			eval { &subs::evaluation_dispatch_tick(); };
+			sleep 60;
+		}
+	}, { name => 'evaluation dispatch' });
 	Mojo::IOLoop->start;
 	END {
 		print "quitting now!\n";

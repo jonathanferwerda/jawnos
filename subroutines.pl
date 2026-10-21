@@ -24000,7 +24000,7 @@ sub evaluation_run_trigger {
 	return unless &subs::evaluation_cadence($app) eq 'each_run';
 	my $minion = &subs::minion_grabber();
 	return unless $minion->lock('evaluation_each_run_' . $app, 300);
-	$minion->enqueue('appointment_evaluation' => [ { app => $app } ] => { attempts => 2 });
+	$minion->enqueue('appointment_evaluation' => [ { app => $app, each_run => 1 } ] => { attempts => 2 });
 	return 1;
 }
 
@@ -24056,24 +24056,49 @@ sub appointment_evaluation_job {
 	my $app = $data->{'app'} || '__president';
 	my $key = 'eval:' . $app;
 	my $me = &ai_house_me();
-	my $named = &subs::evaluation_machine();
 	my $here = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '';
-	# The named machine is a preference, not a pin. While it is awake and can
-	# actually reach the model it takes every scheduled run; when it is quiet the
-	# house takes over, the server first, so a night is not lost to a sleeping
-	# laptop. The claim is written before the model call (ai_job_may_run), so a
-	# peer reads the intent and stands aside.
-	my $named_ready = length($named) && &ai_house_machine_ready($named, 1);
-	if ($named && $named ne $me && $named_ready) {
-		$job->finish({ app => $app, skipped => 'the chosen evaluation machine is on it' });
-		return;
+	my $each_run = $data->{'each_run'} ? 1 : 0;
+	my $dispatch_mode = 0;
+	if (!$each_run) {
+		if (&ai_house_server_known()) {
+			# The server is the dispatcher: a worker runs only the assignment
+			# addressed to it. A partition that cannot see the server has no fresh
+			# assignment and stands down, so the split house does not run twice.
+			$dispatch_mode = 1;
+			unless (&ai_job_dispatch_claim($key)) {
+				$job->finish({ app => $app, skipped => 'not addressed to this machine, or already running' });
+				return;
+			}
+		}
+		else {
+			# no server in the house: a majority of the roster elects, and a
+			# minority partition stands down rather than run the report again
+			unless (&ai_house_quorum_ok(1)) {
+				&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => '', outcome => 'skipped', note => 'no quorum in this partition' });
+				$job->finish({ app => $app, skipped => 'no quorum for the evaluation' });
+				return;
+			}
+			# The named machine is a preference within the quorum; the stable hash
+			# spreads the rest, and a machine that goes quiet drops out.
+			my $named = &subs::evaluation_machine();
+			my $named_ready = length($named) && &ai_house_machine_ready($named, 1);
+			if ($named && $named ne $me && $named_ready) {
+				$job->finish({ app => $app, skipped => 'the chosen evaluation machine is on it' });
+				return;
+			}
+			if ($named && $named eq $me && $named_ready) {
+				&ai_job_claim($key);
+			}
+			elsif (!&ai_job_may_run($key, 10 * 60 * 1000, 1, 0)) {
+				$job->finish({ app => $app, skipped => 'another machine runs this evaluation' });
+				return;
+			}
+		}
 	}
-	if ($named && $named eq $me && $named_ready) {
+	else {
+		# an each_run evaluation belongs to the appointment that ran, on the
+		# machine that recorded it; it is not a scheduled dispatch
 		&ai_job_claim($key);
-	}
-	elsif (!&ai_job_may_run($key, 10 * 60 * 1000, 1, 1)) {
-		$job->finish({ app => $app, skipped => 'another machine runs this evaluation' });
-		return;
 	}
 	# the wish is shared and the queue is per-machine: a machine that cannot
 	# reach the model would run the night and answer with an error, so it steps
@@ -24083,9 +24108,7 @@ sub appointment_evaluation_job {
 	my $model = $settings->{'eval_assistant'};
 	my $model_ready = eval { &subs::evaluation_model_available($model) };
 	unless ($model_ready) {
-		# release the claim this machine just took: it cannot carry the run, and a
-		# machine that can must be free to take the next one
-		eval { &subs::db_delete('ai_jobs', { job => $key, owner => $me }) };
+		&ai_job_settle($key, $me, $dispatch_mode, 'failed');
 		&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'skipped', note => 'no model reachable here' });
 		$job->finish({ app => $app, skipped => 'no evaluation model reachable here' });
 		return;
@@ -24094,9 +24117,7 @@ sub appointment_evaluation_job {
 	# long report does not open the job to a second machine halfway through
 	my $report = &subs::evaluation_agent($app);
 	if ($report->{'error'}) {
-		# let a retry (and a peer) take the job again: a failed run must not sit
-		# in the ledger as if it were still in progress
-		eval { &subs::db_delete('ai_jobs', { job => $key, owner => $me }) };
+		&ai_job_settle($key, $me, $dispatch_mode, 'failed');
 		&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'failed', note => substr($report->{'error'}, 0, 120) });
 		$job->fail($report->{'error'});
 		return;
@@ -24104,6 +24125,20 @@ sub appointment_evaluation_job {
 	&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'ran' });
 	&ai_job_note($key);
 	$job->finish({ app => $app, timestamp => $report->{'timestamp'} });
+}
+
+# Close a claim that could not be carried. A dispatched assignment is marked
+# failed so the dispatcher stops addressing it and the next cadence reassigns;
+# an elected run releases the row so a retry or a peer can take it.
+sub ai_job_settle {
+	my ($job, $me, $dispatch_mode, $state) = @_;
+	return unless length($job // '');
+	if ($dispatch_mode) {
+		eval { &subs::db_update('ai_jobs', { state => ($state || 'failed') }, { job => $job, owner => $me }) };
+	}
+	else {
+		eval { &subs::db_delete('ai_jobs', { job => $job, owner => $me }) };
+	}
 }
 
 # A durable note of what each night did, per scope: which machine ran it, when,
@@ -25747,6 +25782,15 @@ sub watch_tokens_add {
 
 sub ai_house_today { return localtime()->strftime('%Y-%m-%d'); }
 
+# The ledger's rows are keyed by a natural name (a job, a machine, a machine's
+# day) but the sync matches rows by uuid. A fresh random uuid on every write
+# meant a peer never recognised the update, and the table's unique key then
+# refused the insert, so the ledger froze at each machine's first row. A uuid
+# derived from the natural key is stable, so the sync updates the row it holds.
+sub ai_job_uuid { return 'ai_job_' . md5_sum(($_[0] // '')) }
+sub ai_house_uuid { return 'ai_house_' . md5_sum(($_[0] // '')) }
+sub ai_budget_uuid { return 'ai_budget_' . md5_sum(($_[0] // '') . '|' . ($_[1] // '')) }
+
 sub ai_house_have_model {
 	return ( &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' })
@@ -25784,7 +25828,7 @@ sub ai_house_publish {
 	# machine that can carry it instead of one that will answer with an error
 	my $ready = $have ? &ai_house_eval_ready() : 0;
 	&subs::db_delete('ai_house', { machine => $me });
-	&subs::db_insert('ai_house', { machine => $me, has_model => $have, eval_ready => $ready, seen => $now, server_time => $now });
+	&subs::db_insert('ai_house', { uuid => &ai_house_uuid($me), machine => $me, has_model => $have, eval_ready => $ready, seen => $now, server_time => $now });
 }
 
 # Publish this machine's capability and heartbeat, and make sure the ledger tables
@@ -25811,6 +25855,22 @@ sub ai_house_heartbeat {
 			'alter table ai_budget add column uuid VARCHAR(255)',
 			'alter table ai_budget add column ost VARCHAR(255)'
 		) { eval { &subs::db_query($sql) } }
+		# give the rows already here the natural-key uuid, so a peer's next write
+		# updates this row instead of colliding with the table's unique key
+		eval {
+			foreach my $r ( @{ &subs::db_select('ai_house', ['uuid', 'machine', 'server_time'])->hashes || [] } ) {
+				my $want = &ai_house_uuid($r->{'machine'});
+				&subs::db_update('ai_house', { uuid => $want, server_time => $r->{'server_time'} }, { machine => $r->{'machine'} }) if ($r->{'uuid'} // '') ne $want;
+			}
+			foreach my $r ( @{ &subs::db_select('ai_jobs', ['uuid', 'job', 'server_time'])->hashes || [] } ) {
+				my $want = &ai_job_uuid($r->{'job'});
+				&subs::db_update('ai_jobs', { uuid => $want, server_time => $r->{'server_time'} }, { job => $r->{'job'} }) if ($r->{'uuid'} // '') ne $want;
+			}
+			foreach my $r ( @{ &subs::db_select('ai_budget', ['uuid', 'machine', 'day', 'server_time'])->hashes || [] } ) {
+				my $want = &ai_budget_uuid($r->{'machine'}, $r->{'day'});
+				&subs::db_update('ai_budget', { uuid => $want, server_time => $r->{'server_time'} }, { machine => $r->{'machine'}, day => $r->{'day'} }) if ($r->{'uuid'} // '') ne $want;
+			}
+		};
 		$ai_ledger_ready = 1;
 	}
 	&ai_house_publish();
@@ -25875,6 +25935,54 @@ sub ai_job_rank {
 	return $h;
 }
 
+# The machine that dispatches scheduled evaluations: a server, when the house
+# has one. Several servers would choose the same one because the list is sorted.
+sub ai_house_dispatcher {
+	my @servers = sort &ai_house_servers();
+	return scalar @servers ? $servers[0] : '';
+}
+
+# On a worker, "the server is known" means the server has published a heartbeat
+# under this code. A server that is merely listed in remote_machines but has not
+# upgraded yet is ignored, so a rolling update does not stop the first morning.
+sub ai_house_server_known {
+	my $server = &ai_house_dispatcher();
+	return 0 unless length $server;
+	return 1 if $server eq &ai_house_me();
+	my $row = eval { &subs::db_select('ai_house', undef, { machine => $server })->hashes->[0] };
+	return $row ? 1 : 0;
+}
+
+# The roster a serverless house uses for quorum: the AI-capable machines seen
+# within a week, plus this machine. A machine gone for longer than that has left
+# the house and no longer holds a vote.
+sub ai_house_roster_size {
+	my ($need_eval) = @_;
+	my $me = &ai_house_me();
+	my $now = &subs::rightNow();
+	my %roster;
+	$roster{$me} = 1 if length $me && &ai_house_have_model() && (!$need_eval || &ai_house_eval_ready());
+	my $rows = eval { &subs::db_select('ai_house')->hashes } || [];
+	foreach my $r ( @{$rows} ) {
+		next unless $r->{'machine'} && $r->{'has_model'};
+		next if $need_eval && !$r->{'eval_ready'};
+		next unless ($r->{'seen'} + 0) > ($now - 7 * 86400000);
+		$roster{ $r->{'machine'} } = 1;
+	}
+	return scalar keys %roster;
+}
+
+# A strict majority of the roster must be present. A one-machine house is its
+# own majority; a minority partition stands down instead of running the report a
+# second time.
+sub ai_house_quorum_ok {
+	my ($need_eval) = @_;
+	my $roster = &ai_house_roster_size($need_eval);
+	return 1 unless $roster;
+	my @live = &ai_house_members($need_eval);
+	return (scalar(@live) * 2 > $roster) ? 1 : 0;
+}
+
 # The machine that runs $job now. The present house - the machines whose model
 # heartbeat is fresh - is ranked by the job's own order, and if nobody has run
 # the job within $ttl the highest-ranked member takes it. Because the house holds
@@ -25923,7 +26031,7 @@ sub ai_job_claim {
 	return 0 unless length($job // '');
 	my $now = &subs::rightNow();
 	eval { &subs::db_delete('ai_jobs', { job => $job }) };
-	eval { &subs::db_insert('ai_jobs', { job => $job, owner => &ai_house_me(), at => $now, state => 'running', server_time => $now }) };
+	eval { &subs::db_insert('ai_jobs', { uuid => &ai_job_uuid($job), job => $job, owner => &ai_house_me(), at => $now, state => 'running', server_time => $now }) };
 	return 1;
 }
 
@@ -25945,7 +26053,120 @@ sub ai_job_note {
 	return unless length($job // '');
 	my $now = &subs::rightNow();
 	eval { &subs::db_delete('ai_jobs', { job => $job }) };
-	eval { &subs::db_insert('ai_jobs', { job => $job, owner => &ai_house_me(), at => $now, state => 'ran', server_time => $now }) };
+	eval { &subs::db_insert('ai_jobs', { uuid => &ai_job_uuid($job), job => $job, owner => &ai_house_me(), at => $now, state => 'ran', server_time => $now }) };
+}
+
+# ---- evaluation dispatch ----------------------------------------------------
+# The server is the dispatcher; a mobile or computer is a worker. The dispatcher
+# assigns each scheduled run to one ready worker a few minutes before it is due,
+# and a worker only runs what is addressed to it. A partition that cannot see
+# the server receives no fresh assignment and stands down, which is what keeps a
+# split house from running the same report twice. A house with no server at all
+# elects by quorum instead.
+
+# Minion lists schedules with next_run as epoch seconds; a stored string form
+# is accepted too when a caller reads the row directly.
+sub evaluation_schedule_ms {
+	my ($text) = @_;
+	return 0 unless defined $text && length $text;
+	return ($text + 0) * 1000 if $text =~ /^\d+$/;
+	return 0 unless $text =~ /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/;
+	my $epoch = eval { timegm($6, $5, $4, $3, $2 - 1, $1) };
+	return defined $epoch ? $epoch * 1000 : 0;
+}
+
+# A worker claims the server's assignment. Only the addressed machine may take
+# it, only while it is fresh, and only once: 'running' is the claim, 'ran' the
+# receipt. A stale claim can be taken over, so a worker that dies mid-run does
+# not hold the job forever.
+sub ai_job_dispatch_claim {
+	my ($job) = @_;
+	my $me = &ai_house_me();
+	return 0 unless length($job // '') && length $me;
+	# two jobs can be queued for the same assignment (the cron and the dispatch
+	# tick); the lock makes the claim a single step so only one of them runs
+	my $minion = &subs::minion_grabber();
+	return 0 unless $minion->lock('evaluation_claim_' . $job, 60);
+	my $row = eval { &subs::db_select('ai_jobs', undef, { job => $job })->hashes->[0] };
+	return 0 unless $row;
+	return 0 unless (($row->{'owner'} // '') eq $me);
+	my $state = $row->{'state'} || '';
+	my $now = &subs::rightNow();
+	my $at = ($row->{'at'} || 0) + 0;
+	return 0 if $state eq 'ran' || $state eq 'failed';
+	return 0 unless $state eq 'dispatched' || $state eq 'running';
+	return 0 if !$at || ($now - $at) > 30 * 60 * 1000;
+	return 0 if $state eq 'running' && ($now - $at) <= 30 * 60 * 1000;
+	eval { &subs::db_delete('ai_jobs', { job => $job }) };
+	eval { &subs::db_insert('ai_jobs', { uuid => &ai_job_uuid($job), job => $job, owner => $me, at => $now, state => 'running', server_time => $now }) };
+	return 1;
+}
+
+# The dispatcher's half: look at the schedules due in the next ten minutes and
+# write one assignment per run. An assignment still in flight is left alone, so
+# a run is never handed to a second machine while the first holds it.
+sub evaluation_dispatch_sweep {
+	my $me = &ai_house_me();
+	my $server = &ai_house_dispatcher();
+	return 0 unless length $server && $server eq $me;
+	my $listed = eval { &subs::minion_grabber()->list_schedules(0, 1000) } || {};
+	my @ready = &ai_house_members(1);
+	my %ready = map { $_ => 1 } @ready;
+	my $named = &subs::evaluation_machine();
+	my $now = &subs::rightNow();
+	my $lead = 10 * 60 * 1000;
+	my $guard = 30 * 60 * 1000;
+	my $count = 0;
+	foreach my $sch ( @{ $listed->{'schedules'} || [] } ) {
+		next unless ($sch->{'name'} // '') =~ /^nightly_evaluation_(.+)$/;
+		my $app = $1;
+		next if $sch->{'paused'};
+		my $due = &evaluation_schedule_ms($sch->{'next_run'});
+		next unless $due > $now && $due <= $now + $lead;
+		my $key = 'eval:' . $app;
+		my $existing = eval { &subs::db_select('ai_jobs', undef, { job => $key })->hashes->[0] };
+		next if $existing && (($existing->{'at'} || 0) + 0) > ($now - $guard);
+		# the server dispatches to a mobile/computer when one is ready; it runs
+		# the report itself only when no worker can
+		my @workers = grep { $_ ne $me } @ready;
+		my $owner;
+		if ($named && $named ne $me && $ready{$named}) { $owner = $named; }
+		elsif (@workers) {
+			$owner = (sort { &ai_job_rank($key, $a) <=> &ai_job_rank($key, $b) } @workers)[0];
+		}
+		elsif (&ai_house_eval_ready()) { $owner = $me; }
+		else { next; }
+		eval {
+			&subs::db_delete('ai_jobs', { job => $key });
+			&subs::db_insert('ai_jobs', { uuid => &ai_job_uuid($key), job => $key, owner => $owner, at => $now, state => 'dispatched', server_time => $now });
+		};
+		$count++;
+	}
+	return $count;
+}
+
+# Every machine's minute: the server writes the assignments, and every machine
+# turns an assignment addressed to it into a queued job. Using the tick rather
+# than the cron means an assignment that reaches a worker a few seconds late is
+# still picked up on the next minute instead of waiting for the next cadence.
+sub evaluation_dispatch_tick {
+	my $me = &ai_house_me();
+	return 0 unless length $me;
+	if (&ai_house_dispatcher() eq $me) {
+		eval { &evaluation_dispatch_sweep() };
+	}
+	return 0 unless &ai_house_server_known();
+	my $now = &subs::rightNow();
+	my $rows = eval { &subs::db_query("select job, at from ai_jobs where job like ? and owner = ? and state = ?", 'eval:%', $me, 'dispatched')->hashes } || [];
+	my $minion = &subs::minion_grabber();
+	foreach my $r ( @{$rows} ) {
+		next unless (($r->{'at'} || 0) + 0) > ($now - 30 * 60 * 1000);
+		my ($app) = ($r->{'job'} // '') =~ /^eval:(.+)$/;
+		next unless $app;
+		next unless $minion->lock('evaluation_dispatch_' . $app, 120);
+		$minion->enqueue('appointment_evaluation' => [ { app => $app } ] => { attempts => 2 });
+	}
+	return 1;
 }
 
 # the shared purse: what the whole house has spent today
@@ -25964,7 +26185,7 @@ sub ai_house_budget_add {
 	my $row = eval { &subs::db_select('ai_budget', undef, { machine => $me, day => $day })->hashes->[0] };
 	my $total = (($row && $row->{'tokens'}) ? $row->{'tokens'} : 0) + $n;
 	&subs::db_delete('ai_budget', { machine => $me, day => $day });
-	&subs::db_insert('ai_budget', { machine => $me, day => $day, tokens => $total, server_time => &subs::rightNow() });
+	&subs::db_insert('ai_budget', { uuid => &ai_budget_uuid($me, $day), machine => $me, day => $day, tokens => $total, server_time => &subs::rightNow() });
 	return $total;
 }
 
