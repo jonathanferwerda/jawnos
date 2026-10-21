@@ -5938,6 +5938,16 @@ sub voice_brain() {
 	}
 	return undef unless $action && ref $action eq 'HASH' && $action->{'action'};
 	my $a = $action->{'action'};
+	# Resolve the name before anything acts on it. A clear answer is rewritten
+	# to the canonical app key; a tie becomes a spoken question, never a guess.
+	$action = &Manager::guide_resolve_action($action);
+	if (($action->{'action'} || '') eq 'ask') {
+		my $speech = $action->{'text'} || 'Which one did you mean?';
+		$reply->($speech);
+		$log->info('voice: brain asked "' . $speech . '"');
+		return { handled => 1, action => 'ask', said => $speech };
+	}
+	$a = $action->{'action'};
 	# A make/create is the Guide's write path: stage a proposal, and the
 	# Confirmation Requirement decides whether the same breath saves it (the
 	# Confirm tick in the Guide's associate; off = save without asking).

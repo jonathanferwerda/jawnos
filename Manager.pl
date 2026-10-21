@@ -26864,6 +26864,7 @@ post '/manager/help/act' => sub($c) {
 	# the allow-list is the same registry the prompt is built from, plus the
 	# runtime (learned) verbs, so the guide may pick either
 	my $allowed = &help::live_verb_names();
+	$action = &guide_resolve_action($action) if $action && ref $action eq 'HASH';
 	if ($action && $action->{'action'} && $allowed->{ $action->{'action'} }) {
 		# translation tools run through the same model the Guide is using this turn
 		$action->{'model'} = $model if ($action->{'action'} // '') =~ /^translate/;
@@ -27265,11 +27266,273 @@ get '/manager/help/permitted' => sub($c) {
 	$c->render(json => { app => $app, permitted => (help_app_visible($app) ? 1 : 0) });
 };
 
+get '/manager/resolve' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $r = &guide_resolve_target($c->param('q') || '', kind => ($c->param('kind') || ''));
+	$r->{'target'} = { %{ $r->{'target'} }, label => &guide_target_label($r->{'target'}) } if $r->{'target'};
+	$r->{'candidates'} = [ map { { %$_, label => &guide_target_label($_) } } @{ $r->{'candidates'} || [] } ];
+	$c->render(json => $r);
+};
+
 # ---- the remote verb channel ------------------------------------------------
 # A peer can be told what to do in the words the person used (text, parsed by
 # that machine's own guide, so it stays offline) or as a structured verb from the
 # same registry the local guide offers. Client effects are broadcast to the
 # peer's own tabs over its websocket; questions are answered here and handed back.
+# ---- names and identity -----------------------------------------------------
+# A name is not an identity. "music" can mean the Music app or a club called
+# Music, and two people can both be called John Smith. Resolution returns a
+# ranked set of candidates and only acts when one is clearly ahead; anything
+# else is handed back as a question, never guessed.
+sub guide_name_normalize {
+	my ($text) = @_;
+	my $s = lc(defined $text ? $text : '');
+	$s =~ s/[^\p{L}\p{N}]+/ /g;
+	$s =~ s/^\s+|\s+$//g;
+	$s =~ s/^(?:the|my|a|an)\s+//;
+	$s =~ s/\s+//g;
+	return $s;
+}
+
+sub guide_name_distance {
+	my ($a, $b) = @_;
+	return 0 if $a eq $b;
+	return length($a) if !length($b);
+	return length($b) if !length($a);
+	my @prev = (0 .. length($b));
+	for my $i ( 1 .. length($a) ) {
+		my @cur = ($i);
+		my $ca = substr($a, $i - 1, 1);
+		for my $j ( 1 .. length($b) ) {
+			my $cost = $ca eq substr($b, $j - 1, 1) ? 0 : 1;
+			my $v = $prev[$j] + 1;
+			$v = $cur[$j - 1] + 1 if $cur[$j - 1] + 1 < $v;
+			$v = $prev[$j - 1] + $cost if $prev[$j - 1] + $cost < $v;
+			push @cur, $v;
+		}
+		@prev = @cur;
+	}
+	return $prev[-1];
+}
+
+sub guide_target_label {
+	my ($cand) = @_;
+	return '' unless ref $cand eq 'HASH';
+	my $name = $cand->{'name'} || $cand->{'app'} || '';
+	my $kind = $cand->{'kind'} || 'app';
+	my $label = $kind eq 'app' ? 'app' : $kind;
+	$label = $cand->{'construct'} if ($kind ne 'person' && ($cand->{'construct'} || '') ne '');
+	if ($cand->{'memberships'} && @{ $cand->{'memberships'} }) {
+		return $name . ' (' . $label . ': ' . join(', ', @{ $cand->{'memberships'} }) . ')';
+	}
+	return $name . ' (' . $label . ')';
+}
+
+# Resolve a spoken or typed name. opts: kind => app|person|construct|machine|house.
+sub guide_resolve_target {
+	my ($text, %opts) = @_;
+	my $query = &guide_name_normalize($text);
+	return { ok => 0, reason => 'nothing named', candidates => [] } unless length $query;
+	my $want = $opts{'kind'} || '';
+	my $score_aliases = sub {
+		my ($aliases) = @_;
+		my ($score, $how) = (0, '');
+		foreach my $raw ( @{$aliases} ) {
+			next unless defined $raw && length $raw;
+			my $alias = &guide_name_normalize($raw);
+			next unless length $alias;
+			return (100, 'exact') if $alias eq $query;
+			if (index($alias, $query) == 0) {
+				($score, $how) = (70, 'prefix') if $score < 70;
+			}
+			elsif (length($alias) >= 3 && length($query) >= 4 && index($query, $alias) == 0) {
+				($score, $how) = (65, 'prefix') if $score < 65;
+			}
+			elsif (length($query) >= 4 && index($alias, $query) >= 0) {
+				($score, $how) = (45, 'part') if $score < 45;
+			}
+			elsif (length($query) >= 4 && abs(length($alias) - length($query)) <= 2) {
+				my $d = &guide_name_distance($alias, $query);
+				if ($d <= 1) { ($score, $how) = (30, 'near') if $score < 30; }
+				elsif ($d <= 2) { ($score, $how) = (20, 'near') if $score < 20; }
+			}
+		}
+		return ($score, $how);
+	};
+	my $accept = sub {
+		my ($kind, $construct) = @_;
+		return 1 unless length $want;
+		return 1 if $want eq $kind;
+		return 1 if $want eq 'app' && ($kind eq 'app' || $kind eq 'person');
+		return 1 if $want eq 'construct' && ($construct || '') ne '';
+		return 0;
+	};
+	my $index = &people_index();
+	my %kind_of;
+	foreach my $construct ( @{ $index->{'constructs'} || [] } ) {
+		foreach my $row ( @{ $construct->{'rows'} || [] } ) {
+			$kind_of{ $row->{'app'} } = $construct->{'sing'} if defined $row->{'app'};
+		}
+	}
+	my %person;
+	my $people_rows = eval { &subs::db_select('people', undef, { status => 'active' })->hashes } || [];
+	foreach my $p ( @{$people_rows} ) {
+		$person{ $p->{'app'} } = $p if defined $p->{'app'} && length $p->{'app'};
+	}
+	my %used;
+	my $used_rows = eval { &subs::db_query('select app, max(server_time) as used from appointments group by app')->hashes } || [];
+	foreach my $row ( @{$used_rows} ) {
+		$used{ $row->{'app'} } = $row->{'used'} if defined $row->{'app'};
+	}
+	my %apps;
+	$apps{$_} = 1 for keys %{$gb::known_appts};
+	my $construct_rows = eval { &subs::db_query("select distinct app from settings where setting in ('pos','mab')")->hashes } || [];
+	$apps{ $_->{'app'} } = 1 for @{$construct_rows};
+	my $appt_rows = eval { &subs::db_query('select distinct app from appointments')->hashes } || [];
+	$apps{ $_->{'app'} } = 1 for @{$appt_rows};
+	$apps{$_} = 1 for keys %person;
+	my @candidates;
+	foreach my $app ( keys %apps ) {
+		next unless defined $app && length $app;
+		my $is_person = $person{$app} ? 1 : 0;
+		my $kind = $is_person ? 'person' : 'app';
+		my $construct = $kind_of{$app} || '';
+		next unless $accept->($kind, $construct);
+		my @aliases = ($app, &subs::format_name($app));
+		push @aliases, $person{$app}->{'name'} if $is_person;
+		my ($score, $how) = $score_aliases->(\@aliases);
+		next unless $score;
+		my $uuid = $is_person ? ($person{$app}->{'uuid'} || '') : '';
+		unless (length $uuid) {
+			my $row = eval { &subs::db_query("select value from settings where app=? and setting='uuid' order by server_time desc limit 1", $app)->hashes->[0] };
+			$uuid = $row->{'value'} || '' if $row;
+		}
+		my @memberships;
+		if ($is_person) {
+			foreach my $chip ( @{ &people_chips($index, $app) || [] } ) {
+				push @memberships, $chip->{'label'} . ': ' . $chip->{'name'};
+				last if scalar @memberships >= 3;
+			}
+		}
+		push @candidates, {
+			kind => $kind,
+			app => $app,
+			name => $is_person ? ($person{$app}->{'name'} || &subs::format_name($app)) : &subs::format_name($app),
+			uuid => $uuid,
+			construct => $construct,
+			memberships => \@memberships,
+			score => $score,
+			how => $how,
+			used => $used{$app} || 0,
+		};
+	}
+	if (!$want || $want eq 'machine') {
+		my $machine_rows = eval { &subs::db_select('remote_machines')->hashes } || [];
+		foreach my $rm ( @{$machine_rows} ) {
+			next unless $rm->{'signatorial'};
+			my @aliases = grep { defined && length } ($rm->{'hostname'}, $rm->{'fqdn'}, $rm->{'ip'});
+			my @short = map { my $x = $_; $x =~ s/\..*$//; $x } grep { defined && length } ($rm->{'fqdn'});
+			my ($score, $how) = $score_aliases->([ @aliases, @short ]);
+			next unless $score;
+			push @candidates, {
+				kind => 'machine',
+				app => $rm->{'hostname'} || $rm->{'fqdn'} || '',
+				name => $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} || '',
+				uuid => $rm->{'uuid'} || '',
+				construct => '',
+				memberships => [],
+				score => $score,
+				how => $how,
+				used => $rm->{'server_time'} || 0,
+			};
+		}
+	}
+	if (!$want || $want eq 'house') {
+		my $own = &subs::crest_record_read();
+		if ($own->{'uuid'}) {
+			my @aliases = ($own->{'name'}, &subs::crest_house_name_read());
+			my ($score, $how) = $score_aliases->(\@aliases);
+			if ($score) {
+				push @candidates, {
+					kind => 'house', app => $own->{'name'} || '', name => $own->{'name'} || &subs::crest_house_name_read(),
+					uuid => $own->{'uuid'}, construct => '', memberships => [], score => $score, how => $how, used => 0,
+				};
+			}
+		}
+		foreach my $entry ( @{ &subs::crest_peer_list_read() || [] } ) {
+			next unless ref $entry eq 'HASH' && ref $entry->{'crest'} eq 'HASH';
+			my $crest = $entry->{'crest'};
+			next unless ($crest->{'uuid'} || '') ne '';
+			my ($score, $how) = $score_aliases->([ $crest->{'name'} ]);
+			next unless $score;
+			push @candidates, {
+				kind => 'house', app => $crest->{'name'} || '', name => $crest->{'name'} || '',
+				uuid => $crest->{'uuid'}, construct => '', memberships => [], score => $score, how => $how, used => 0,
+			};
+		}
+	}
+	@candidates = sort {
+		$b->{'score'} <=> $a->{'score'}
+			|| ($b->{'used'} || 0) <=> ($a->{'used'} || 0)
+			|| lc($a->{'name'} || '') cmp lc($b->{'name'} || '')
+	} @candidates;
+	return { ok => 0, reason => 'none', candidates => [] } unless @candidates;
+	splice @candidates, 12 if scalar @candidates > 12;
+	my @top = grep { $_->{'score'} == $candidates[0]->{'score'} } @candidates;
+	# An exact tie is ambiguous even at 100. A single prefix (70) is clear; a
+	# fuzzy guess never acts on its own.
+	if ($candidates[0]->{'score'} >= 60 && scalar @top == 1) {
+		return { ok => 1, target => $candidates[0], candidates => \@candidates };
+	}
+	return { ok => 0, reason => 'ambiguous', candidates => \@candidates };
+}
+
+# Resolve the app a Guide action names before it runs. A clear answer is written
+# back as the canonical key; a tie becomes an "ask" action, so the model does not
+# get to pick one John Smith for the person.
+sub guide_resolve_action {
+	my ($action) = @_;
+	return $action unless ref $action eq 'HASH';
+	my $a = $action->{'action'} || '';
+	my %needs = map { $_ => 1 } qw/open_app update stop delete/;
+	my $text = $action->{'app'} || '';
+	return $action unless length $text;
+	return $action unless $needs{$a} || $a eq 'create' || $a eq 'generate';
+	my $r = &guide_resolve_target($text, kind => 'app');
+	if ($r->{'ok'}) {
+		$action->{'app'} = $r->{'target'}->{'app'};
+		$action->{'app_uuid'} = $r->{'target'}->{'uuid'} if length($r->{'target'}->{'uuid'} || '');
+		$action->{'app_label'} = &guide_target_label($r->{'target'});
+		return $action;
+	}
+	if ($a eq 'create' || $a eq 'generate') {
+		# create may legitimately name a new app; an ambiguous existing name is
+		# still a question, and generate's app is optional.
+		my $cands = $r->{'candidates'} || [];
+		if ($r->{'reason'} eq 'ambiguous' && @{$cands}) {
+			return &guide_ask_candidates($text, $cands);
+		}
+		delete $action->{'app'} if $a eq 'generate';
+		return $action;
+	}
+	# Opening an app we have never seen is allowed to fall through: the client
+	# simply does nothing, and an app may exist that the index does not list yet.
+	return $action if $a eq 'open_app' && $r->{'reason'} eq 'none';
+	return &guide_ask_candidates($text, $r->{'candidates'} || []);
+}
+
+sub guide_ask_candidates {
+	my ($text, $candidates) = @_;
+	my @all = @{ $candidates || [] };
+	my $top = @all ? $all[0]->{'score'} : 0;
+	# Only the real contenders: an exact tie, or the same prefix tier. A fuzzy
+	# "misc" beside "music" is not something to ask the person about.
+	my @labels = map { &guide_target_label($_) } grep { $_->{'score'} >= $top - 10 } @all;
+	@labels = @labels[0 .. 3] if scalar @labels > 4;
+	return { action => 'ask', text => 'Which one did you mean: ' . join('; ', @labels) . '?' } if @labels;
+	return { action => 'ask', text => 'I do not know "' . $text . '" yet.' };
+}
+
 sub remote_command_run($c, $data) {
 	my $text = $data->{'text'} // '';
 	my $verb = $data->{'verb'} // '';
@@ -27305,6 +27568,8 @@ sub remote_command_run($c, $data) {
 # Run one action here. Client effects go to our own tabs over the websocket;
 # anything that is only words is answered directly.
 sub remote_command_execute($c, $action) {
+	$action = &guide_resolve_action($action) if ref $action eq 'HASH';
+	return $action->{'text'} if ref $action eq 'HASH' && ($action->{'action'} || '') eq 'ask';
 	my $a = $action->{'action'};
 	# a runtime (learned) verb runs through the same primitive executor
 	return guide_verb_execute($c, $action) if grep { $_->{'name'} eq ($a // '') } @{ &help::learned_verbs() };
