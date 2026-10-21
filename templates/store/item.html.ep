@@ -11,7 +11,7 @@
 	<span class="top_right_corner">
 		<select class="store_movement" value="<%= $settings->{'store_movement'} %>" style="vertical-align:top;">
 			<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
-				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::lang('common.' . $m) %></option>
+				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::store_movement_label($m) %></option>
 			<% } %>
 		</select>
 		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" class="store_item_cancel_button little_thumb hover">

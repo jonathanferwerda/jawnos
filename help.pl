@@ -470,6 +470,7 @@ our %topic = (
 		summary => 'Items, models, options, quotes and invoices.',
 		body => [
 			'Store is the catalogue and the paperwork. Items carry models and options, each with its own prices; a quote or invoice is built from them and prints to a white, house-styled sheet that can be delivered by email.',
+			'The movement dropdown uses the house\'s own words: Selling (an income movement) is what this house has available, and Buying (an expense movement) is a purchase the house makes. The stored movement values are unchanged, so existing quotes, invoices and reports keep working.',
 			'Recording a payment against a document updates its balance and closes it when the balance reaches zero.',
 			'A visitor who asks for a ticket sees the privacy notice before the form and must acknowledge it; the acknowledgement is stored with the request. The store and the public homepage both link to the full privacy policy, which names the controller, the data processed, the legal basis, retention, the cookies and local storage used, and how to exercise a data right.'
 		],
@@ -480,7 +481,27 @@ our %topic = (
 			'Email the invoice to the customer, or print it to the house-styled sheet.',
 			'Record a payment against it; the balance falls and it closes at zero.'
 		],
-		related => [ 'budget', 'invoices_payments', 'market' ]
+		related => [ 'budget', 'invoices_payments', 'market', 'crypto' ]
+	},
+	'crypto' => {
+		title => 'Crypto wallets and rates', category => 'functions',
+		verified => '2026-10-21',
+		templates => [ 'templates/configure/crypto_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/apps/app_details.html.ep', 'public/js/manager/configure.js', 'public/js/manager/transaction.js' ],
+		summary => 'Wallet accounts that hold a coin, live fiat and coin rates, and cost or market valuation.',
+		body => [
+			'A wallet is an ordinary account whose Tender is crypto. It keeps a public address and the coin it holds, and it records transactions, transfers and statements like any other account. JawnOS never holds a key, cannot spend from a wallet, and refuses anything that looks like a seed phrase or a private key; if a page ever asks for one, it is not JawnOS.',
+			'Configure -> Plat -> Crypto owns the shared parts: which coins may be used, the cached exchange rates, and how a holding is valued. Cost is the money recorded when the coin arrived, which is the safe figure for statements. Market is the native holding at today\'s rate, which moves with the price. The wallet list shows both so the difference is visible.',
+			'Every conversion in the app now reads the same rate snapshot, including a measure typed as 5USD to CAD or 0.01BTC to CAD. One public, keyless call to Coinbase returns every fiat code and every coin; a half-hour loop refreshes it, and Refresh now asks at once. While no snapshot has been read, the older built-in constants still answer. An offline house keeps its last snapshot rather than losing its rates.',
+			'In a transaction, a wallet account is read in its own coin: type the native amount and the form shows what it is worth, while the ledger stores the house\'s reporting-currency value so every budget and statement still sums one currency. A transfer between two wallets must stay in the same coin on both sides; moving between a wallet and a bank is a sale and a purchase, not a transfer, and the app will say so rather than write a wrong figure.'
+		],
+		steps => [
+			'Open Configure -> Plat -> Crypto and make sure the coins you want are ticked.',
+			'Press Refresh now once; the rate table and the last-read time show what the house will use.',
+			'In Configure -> App, make the account, turn on Tender, set it to crypto, then fill in the coin, network, public address and a label.',
+			'Record a transaction from that account in the app: the amount is in the coin, and the line beside it shows the money value before you save.',
+			'Read the wallet list in Plat -> Crypto for the holding, its cost and its market value; choose which one the rest of the page treats as the value.'
+		],
+		related => [ 'budget', 'store', 'configure' ]
 	},
 	'warehouse' => {
 		title => 'Warehouse', category => 'apps', app => 'warehouse',

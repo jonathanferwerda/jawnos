@@ -4,9 +4,10 @@
 		<% foreach my $ap (@{$appts->{'__accounts'}}) { %>
 			<option 
 				value="<%= $ap->{'app'} %>"
+				<% if ($ap->{'crypto_asset'}) { %>data-crypto="1" data-asset="<%= $ap->{'crypto_asset'} %>"<% } %>
 				<% if (($appts->{$a}->{'setting'}->{'to_account'} || $appts->{$a}->{'last_account'}) eq $ap->{'app'}) { %>
 					selected
-				<% } %>>
+				<% } %>
 				<%= $ap->{'formatted_name'} %>
 			</option>
 		<% } %>

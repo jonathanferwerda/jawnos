@@ -396,6 +396,43 @@
 							</span>
 						<% } %>
 					</div>
+					<% if (lc($appts->{$a}->{'setting'}->{'payment_type'} || '') eq 'crypto') { %>
+						<% my $wa = &subs::crypto_asset($appts->{$a}->{'setting'}->{'crypto_asset'}) || &subs::crypto_asset('BTC'); %>
+						<% my @wlist = @{ &subs::crypto_enabled_assets() }; push @wlist, $wa->{'code'} unless grep { $_ eq $wa->{'code'} } @wlist; %>
+						<div class="cfg-card crypto_wallet_card" app="<%= $a %>" style="margin-top:10px;">
+							<h4 style="margin-top:0;">Wallet</h4>
+							<p class="cfg-note">JawnOS keeps a public address, never a key or a seed phrase. It can read what the wallet holds, but it cannot spend from it — nothing here asks for a phrase that could.</p>
+							<div class="cfg-grid">
+								<div class="cfg-row">
+									<label>Coin</label>
+									<select class="crypto_wallet_input" setting="crypto_asset" app="<%= $a %>">
+										<% foreach my $code ( @wlist ) { my $as = &subs::crypto_asset($code); next unless $as; %>
+											<option value="<%= $as->{'code'} %>" <% if ($as->{'code'} eq $wa->{'code'}) { %>selected<% } %>><%= $as->{'code'} %> — <%= $as->{'name'} %></option>
+										<% } %>
+									</select>
+								</div>
+								<div class="cfg-row">
+									<label>Network</label>
+									<select class="crypto_wallet_input" setting="crypto_network" app="<%= $a %>">
+										<% my $wnet = $appts->{$a}->{'setting'}->{'crypto_network'} || $wa->{'network'}; %>
+										<% foreach my $net ( qw/bitcoin ethereum tron litecoin solana other/ ) { %>
+											<option value="<%= $net %>" <% if ($net eq $wnet) { %>selected<% } %>><%= &subs::format_name($net) %></option>
+										<% } %>
+									</select>
+								</div>
+							</div>
+							<div class="cfg-row">
+								<label>Address</label>
+								<input type="text" class="crypto_wallet_input crypto_wallet_address" setting="wallet_address" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'wallet_address'} %>" placeholder="public address only" autocomplete="off" spellcheck="false">
+								<button type="button" class="crypto_wallet_copy" app="<%= $a %>">Copy</button>
+							</div>
+							<div class="cfg-row">
+								<label>Label</label>
+								<input type="text" class="crypto_wallet_input" setting="wallet_label" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'wallet_label'} %>" placeholder="house cold wallet">
+							</div>
+							<span class="cfg-note crypto_wallet_status" app="<%= $a %>" style="margin:0;"></span>
+						</div>
+					<% } %>
 				</div>
 			</div>
 		<% } %>

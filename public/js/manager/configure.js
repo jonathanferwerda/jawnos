@@ -3039,3 +3039,73 @@ $(document).on('change', '.oauth_client_field', function() {
 		if (field === 'client_secret') { oauthPanelRefresh(); }
 	});
 });
+
+// ---- crypto (Configure -> Plat -> Crypto) ----------------------------------
+// Wallets are accounts; this page owns the asset list, the rate snapshot and the
+// valuation. A wallet field saves to its own app and never leaves the panel.
+function cryptoPanelRefresh() {
+	$.get('/manager/configure/crypto_panel', function(r) { $('#plat_crypto').html(r); });
+}
+
+function cryptoSettingSave(setting, value, done) {
+	$.post('/manager/setting_setter', {
+		app: 'crypto', setting: setting, value: value, device: 'all', timestamp: Date.now()
+	}, function(r) {
+		if (r && r.ok === 0) { alert(r.error || 'could not save'); }
+		if (done) { done(r); }
+	}, 'json');
+}
+
+$(document).on('change', '.crypto_setting', function() {
+	var el = $(this);
+	var setting = el.attr('setting');
+	var value = el.attr('type') === 'checkbox' ? (el.prop('checked') ? 'on' : 'off') : el.val();
+	cryptoSettingSave(setting, value, function() { cryptoPanelRefresh(); });
+});
+
+$(document).on('change', '.crypto_asset_toggle', function() {
+	var on = $('.crypto_asset_toggle:checked').map(function() { return $(this).val(); }).get();
+	if (!on.length) { $(this).prop('checked', true); return; }
+	cryptoSettingSave('assets', JSON.stringify(on), function() { cryptoPanelRefresh(); });
+});
+
+$(document).on('click', '#crypto_refresh', function() {
+	var btn = $(this);
+	btn.prop('disabled', true);
+	$('#crypto_refresh_status').text('reading…');
+	$.post('/manager/configure/crypto_refresh', { timestamp: Date.now() }, function(r) {
+		btn.prop('disabled', false);
+		$('#crypto_refresh_status').text(r && r.ok
+			? ('read ' + r.count + ' rates from ' + r.source)
+			: ((r && r.error) || 'no answer'));
+		if (r && r.ok) { setTimeout(cryptoPanelRefresh, 900); }
+	}, 'json').fail(function() {
+		btn.prop('disabled', false);
+		$('#crypto_refresh_status').text('no answer');
+	});
+});
+
+$(document).on('click', '.crypto_open_apps', function() {
+	$('#appointment_list_grabber').trigger('click');
+});
+
+$(document).on('change', '.crypto_wallet_input', function() {
+	var el = $(this);
+	var app = el.attr('app');
+	var status = $('.crypto_wallet_status[app="' + app + '"]');
+	status.text('saving…');
+	$.post('/manager/setting_setter', {
+		app: app, setting: el.attr('setting'), value: el.val(), timestamp: Date.now()
+	}, function(r) {
+		if (r && r.ok === 0) { status.text(r.error || 'could not save'); return; }
+		status.text('saved');
+	}, 'json').fail(function() { status.text('could not save'); });
+});
+
+$(document).on('click', '.crypto_wallet_copy', function() {
+	var app = $(this).attr('app');
+	var input = $('.crypto_wallet_address[app="' + app + '"]');
+	if (!input.length) { return; }
+	input.trigger('focus').trigger('select');
+	try { document.execCommand('copy'); } catch (e) {}
+});

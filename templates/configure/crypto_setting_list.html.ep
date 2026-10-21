@@ -1,0 +1,123 @@
+<% use Mojo::JSON qw/decode_json/; %>
+<% no warnings 'uninitialized'; %>
+<%
+	# Configure -> Plat -> Crypto. A wallet is an account app, so the panel lists
+	# them but the App tab is where one is made. This page owns the assets that
+	# are allowed, the live rate snapshot and how a holding is valued. It stores
+	# public addresses only: there is deliberately no field here for a key.
+	my $enabled = &subs::crypto_enabled();
+	my $assets = &subs::crypto_assets();
+	my $on = &subs::crypto_enabled_assets();
+	my %on = map { $_ => 1 } @{$on};
+	my $rates = &subs::crypto_rates_read();
+	my $base = &subs::crypto_report_currency();
+	my $valuation = lc(&subs::setting_grabber({ app => 'crypto', setting => 'valuation', device => 'all' }) || 'cost');
+	$valuation = 'market' if $valuation eq 'market';
+	$valuation = 'cost' unless $valuation eq 'market';
+	my $wallets = &subs::crypto_wallets_report();
+	my $age = &subs::crypto_rate_age();
+	my $age_text = defined $age ? &subs::time_abbrev_translator($age . 'ms') . ' ago' : 'never';
+	my $money = sub {
+		my ($v) = @_;
+		return '—' unless defined $v;
+		return sprintf('%.2f', $v) if $v >= 0.01;
+		return sprintf('%.6f', $v);
+	};
+	my %rate_of;
+	my $to_base = $rates->{'rates'}->{$base};
+	foreach my $a ( @{$assets} ) {
+		my $v = $rates->{'rates'}->{ $a->{'code'} };
+		$rate_of{ $a->{'code'} } = (defined $v && defined $to_base && $to_base > 0) ? $v / $to_base : undef;
+	}
+%>
+<div class="cfg crypto_panel" style="max-width:none;padding:0;">
+	<h2>Crypto</h2>
+	<p class="cfg-note">A wallet is an account that holds a coin. JawnOS keeps its public address and reads what it holds at the shared rate — it never holds a key, cannot spend, and will refuse anything that looks like a seed phrase. Every conversion in the app (including a currency measure typed as <b>x USD to CAD</b>) reads the same live snapshot below.</p>
+
+	<div class="cfg-card">
+		<div class="cfg-row">
+			<label>Crypto payments</label>
+			<input type="checkbox" class="crypto_setting" app="crypto" setting="enabled" value="on" <% if ($enabled) { %>checked<% } %>>
+			<span class="cfg-note" style="margin:0;">Off hides the wallet fields and stops the rate refresh. Addresses already saved are kept.</span>
+		</div>
+		<div class="cfg-row">
+			<label>Valuation</label>
+			<select class="crypto_setting" app="crypto" setting="valuation">
+				<option value="cost" <% if ($valuation eq 'cost') { %>selected<% } %>>Cost — the money recorded when it was received</option>
+				<option value="market" <% if ($valuation eq 'market') { %>selected<% } %>>Market — native holding × today's rate</option>
+			</select>
+			<span class="cfg-note" style="margin:0;">Cost is the safe default for statements. Market is for reading a wallet at today's price; it moves.</span>
+		</div>
+	</div>
+
+	<h3>Assets</h3>
+	<p class="cfg-note">Only ticked coins appear when a wallet or a transaction picks one. Bitcoin, Ethereum and the two stable units are on by default.</p>
+	<div class="cfg-card">
+		<% foreach my $a ( @{$assets} ) { %>
+			<div class="cfg-row">
+				<label style="min-width:190px;"><input type="checkbox" class="crypto_asset_toggle" value="<%= $a->{'code'} %>" <% if ($on{ $a->{'code'} }) { %>checked<% } %>> <b><%= $a->{'code'} %></b> — <%= $a->{'name'} %></label>
+				<span class="cfg-note" style="margin:0;"><%= $a->{'decimals'} %> decimal places · <%= $a->{'network'} %></span>
+			</div>
+		<% } %>
+	</div>
+
+	<h3>Rates</h3>
+	<p class="cfg-note">One public, keyless call gives every fiat code and every coin. The house's reporting currency is <b><%= $base %></b>; the loop refreshes every half hour.</p>
+	<div class="cfg-card">
+		<div class="cfg-scroll">
+			<table>
+				<thead><tr><th>Code</th><th>Name</th><th><%= $base %> per 1</th></tr></thead>
+				<tbody>
+					<% foreach my $a ( @{$assets} ) { %>
+						<tr>
+							<td><b><%= $a->{'code'} %></b></td>
+							<td><%= $a->{'name'} %></td>
+							<td><%= $money->($rate_of{ $a->{'code'} }) %></td>
+						</tr>
+					<% } %>
+					<% foreach my $code ( sort grep { $_ ne $base } qw/CAD USD EUR GBP JPY AUD CNY INR MXN BRL CHF SEK NOK/ ) { %>
+						<% my $v = $rates->{'rates'}->{$code}; next unless defined $v && defined $to_base && $to_base > 0; %>
+						<tr>
+							<td><b><%= $code %></b></td>
+							<td style="opacity:.7;">fiat</td>
+							<td><%= $money->($v / $to_base) %></td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+		</div>
+		<div class="cfg-actions">
+			<span class="cfg-note" style="margin:0;">Last read: <b><%= $age_text %></b><%= $rates->{'source'} ? ' · ' . $rates->{'source'} : '' %></span>
+			<button type="button" id="crypto_refresh">Refresh now</button>
+			<span id="crypto_refresh_status" class="cfg-note" style="margin:0;"></span>
+		</div>
+	</div>
+
+	<h3>Wallets</h3>
+	<% if (scalar @{$wallets}) { %>
+		<div class="cfg-scroll">
+			<table>
+				<thead><tr><th>Wallet</th><th>Coin</th><th>Address</th><th>Holding</th><th>Cost</th><th>Market</th></tr></thead>
+				<tbody>
+					<% foreach my $w ( @{$wallets} ) { %>
+						<tr class="crypto_wallet_row" app="<%= $w->{'app'} %>">
+							<td><b><%= $w->{'formatted_name'} %></b><% if ($w->{'label'}) { %><div class="cfg-note" style="margin:0;"><%= $w->{'label'} %></div><% } %></td>
+							<td><%= $w->{'asset'} %></td>
+							<td style="font-family:monospace;font-size:12px;"><% if ($w->{'address'}) { %><%= $w->{'address_short'} %><% } else { %><span style="opacity:.6;">no address yet</span><% } %></td>
+							<td><%= $w->{'native_display'} %></td>
+							<td><%= &subs::price_formatter($w->{'book'}) %></td>
+							<td><%= defined $w->{'market'} ? &subs::price_formatter($w->{'market'}) : '—' %></td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+		</div>
+		<p class="cfg-note">The two money columns are the same holding seen two ways: Cost is the money recorded when it arrived, Market is the native amount at today's rate.</p>
+	<% } else { %>
+		<p class="cfg-note">No wallets yet. Make an app an <b>account</b> in the App tab, turn on its <b>Tender</b> and set it to <b>crypto</b> — the wallet fields appear on that app's card.</p>
+	<% } %>
+	<div class="cfg-actions">
+		<button type="button" class="crypto_open_apps">Open App configuration</button>
+		<span class="cfg-note" style="margin:0;">A wallet is an ordinary account, so it records transactions, transfers and statements like any other.</span>
+	</div>
+</div>

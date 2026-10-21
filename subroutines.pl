@@ -27636,4 +27636,371 @@ foreach my $rm ( @{$rms} ) {
 	}
 }
 
+# ---- crypto wallets and live exchange rates --------------------------------
+# A wallet is an ordinary account app whose tender is crypto. JawnOS keeps the
+# public address and the asset, never a key or a seed phrase: it can say what a
+# wallet holds and what that is worth, but it cannot spend from it, and nothing
+# here ever asks for a phrase that could.
+#
+# Rates are one cached snapshot, denominated in the house's reporting currency:
+# rates{CODE} is how much of that currency one unit of CODE is worth. One
+# Coinbase call returns every fiat code and every coin; open.er-api is the
+# fiat-only fallback for a first boot. formula_calculator reads the same
+# snapshot, so 'x USD to CAD' is live too instead of the hand-written constants
+# in gb.pl.
+
+our @crypto_asset_list = (
+	{ code => 'BTC',  name => 'Bitcoin',   decimals => 8,  symbol => '₿', network => 'bitcoin',  coinbase => 'BTC'  },
+	{ code => 'ETH',  name => 'Ethereum',  decimals => 18, symbol => 'Ξ', network => 'ethereum', coinbase => 'ETH'  },
+	{ code => 'USDC', name => 'USD Coin',  decimals => 6,  symbol => '$', network => 'ethereum', coinbase => 'USDC' },
+	{ code => 'USDT', name => 'Tether',    decimals => 6,  symbol => '$', network => 'tron',     coinbase => 'USDT' },
+	{ code => 'LTC',  name => 'Litecoin',  decimals => 8,  symbol => 'Ł', network => 'litecoin', coinbase => 'LTC'  },
+	{ code => 'SOL',  name => 'Solana',    decimals => 9,  symbol => '◎', network => 'solana',   coinbase => 'SOL'  },
+);
+
+# The fiat codes worth keeping from the snapshot. Coinbase returns three-letter
+# coin tickers (ADA, DOT, XRP) beside the fiat, so a bare three-capital-letter
+# test would file a coin as a currency; this list is the line.
+our @crypto_fiat_list = qw/CAD USD EUR GBP JPY AUD NZD CHF CNY HKD SGD INR KRW MXN BRL ZAR SEK NOK DKK PLN CZK HUF TRY ILS AED SAR RUB UAH THB IDR MYR PHP VND NGN EGP PKR BDT LKR/;
+
+sub crypto_assets {
+	return [ map { { %{$_} } } @crypto_asset_list ];
+}
+
+sub crypto_asset {
+	my ($code) = @_;
+	return undef unless defined $code && length $code;
+	$code = uc $code;
+	foreach my $a ( @crypto_asset_list ) {
+		return { %{$a} } if $a->{'code'} eq $code;
+	}
+	return undef;
+}
+
+sub crypto_enabled {
+	my $v = &setting_grabber({ app => 'crypto', setting => 'enabled', device => 'all' });
+	return 0 if defined $v && $v eq 'off';
+	return 1;
+}
+
+sub crypto_enabled_assets {
+	my $raw = &setting_grabber({ app => 'crypto', setting => 'assets', device => 'all' });
+	my $list = eval { decode_json($raw) };
+	$list = [] unless ref $list eq 'ARRAY';
+	my %known = map { $_->{'code'} => 1 } @crypto_asset_list;
+	$list = [ 'BTC', 'ETH', 'USDC', 'USDT' ] unless scalar @{$list};
+	my @out = grep { $known{$_} } map { uc $_ } @{$list};
+	return @out ? \@out : [ 'BTC', 'ETH', 'USDC', 'USDT' ];
+}
+
+# The house's reporting currency: the one the ledger, budgets and statements
+# already speak. misc/currency can arrive as a JSON list, so read the first
+# three-letter code from it.
+sub crypto_report_currency {
+	my $c = &setting_grabber({ app => 'misc', setting => 'currency', benign => 1 });
+	$c = '' unless defined $c;
+	$c =~ s/[^A-Za-z]//g;
+	$c = uc substr($c, 0, 3);
+	return $c =~ /^[A-Z]{3}$/ ? $c : 'CAD';
+}
+
+# The coin an account holds, or '' when it is not a wallet. The asset setting is
+# what names it; an older wallet with only the tender set is Bitcoin, so a row
+# never becomes unreadable.
+sub crypto_account_asset {
+	my ($app) = @_;
+	return '' unless defined $app && length $app;
+	my $tender = &setting_grabber({ app => $app, setting => 'payment_type' });
+	return '' unless defined $tender && lc($tender) eq 'crypto';
+	my $asset = &crypto_asset(&setting_grabber({ app => $app, setting => 'crypto_asset' }));
+	$asset ||= &crypto_asset('BTC');
+	return $asset->{'code'};
+}
+
+sub crypto_accounts {
+	my $rows = &db_query("select distinct app from settings where setting = 'payment_type' and lower(value) = 'crypto' order by app")->hashes;
+	my @out;
+	foreach my $r ( @{$rows} ) {
+		my $s = &settings_grabber({ app => $r->{'app'}, settings => [ qw/crypto_asset crypto_network wallet_address wallet_label currency/ ] });
+		my $asset = &crypto_asset($s->{'crypto_asset'}) || &crypto_asset('BTC');
+		push @out, {
+			app => $r->{'app'},
+			formatted_name => &format_name($r->{'app'}),
+			asset => $asset->{'code'},
+			asset_name => $asset->{'name'},
+			decimals => $asset->{'decimals'},
+			network => $s->{'crypto_network'} || $asset->{'network'},
+			address => $s->{'wallet_address'} || '',
+			label => $s->{'wallet_label'} || '',
+			currency => $s->{'currency'} || &crypto_report_currency(),
+		};
+	}
+	return \@out;
+}
+
+# A typed amount becomes a plain decimal string, never a float: 18-decimal coins
+# would lose their last places on the way through a Perl number. Commas are
+# thousands separators (the same rule numeric_formatter uses) and only the last
+# dot is a decimal point.
+sub crypto_amount_number {
+	my ($text, $asset) = @_;
+	return undef unless defined $text;
+	my $a = ref $asset eq 'HASH' ? $asset : &crypto_asset($asset);
+	my $decimals = $a ? $a->{'decimals'} : 8;
+	$text = "$text";
+	$text = Text::Unidecode::unidecode($text) if $text =~ /[^\x00-\x7F]/;
+	$text =~ s/[^0-9.,\-]//g;
+	my $negative = $text =~ /-/ ? 1 : 0;
+	$text =~ s/-//g;
+	$text =~ s/,//g;
+	$text =~ s/\.(?=.*\.)//g;
+	$text = '0' if $text eq '' || $text eq '.';
+	return undef unless $text =~ /^\d+(?:\.\d+)?$/;
+	my ($int, $frac) = split /\./, $text, 2;
+	$frac = '' unless defined $frac;
+	$int =~ s/^0+(?=\d)//;
+	$frac = substr($frac, 0, $decimals) if $decimals >= 0;
+	$frac =~ s/0+$//;
+	my $out = length $frac ? "$int.$frac" : $int;
+	$out = "-$out" if $negative && $out ne '0';
+	return $out;
+}
+
+# Display form: the coin's own decimals, trimmed, with at least two places so a
+# small amount still reads as money rather than a bare integer.
+sub crypto_amount_format {
+	my ($amount, $asset) = @_;
+	my $a = ref $asset eq 'HASH' ? $asset : &crypto_asset($asset);
+	my $code = $a ? $a->{'code'} : (defined $asset && length $asset ? uc $asset : '');
+	my $decimals = $a ? $a->{'decimals'} : 8;
+	my $n = defined $amount ? "$amount" : '0';
+	my $negative = $n =~ /^-/ ? 1 : 0;
+	$n =~ s/^-//;
+	$n =~ s/[^0-9.]//g;
+	my ($int, $frac) = split /\./, $n, 2;
+	$int = '0' unless defined $int && length $int;
+	$frac = '' unless defined $frac;
+	my $cap = $decimals > 8 ? 8 : $decimals;
+	$frac = substr($frac, 0, $cap);
+	$frac =~ s/0+$//;
+	$frac .= ('0' x (2 - length $frac)) if length $frac < 2;
+	my $out = ($negative ? '-' : '') . $int . '.' . $frac;
+	return length $code ? "$out $code" : $out;
+}
+
+# A seed phrase pasted into an address field is refused before it is stored.
+sub crypto_looks_like_secret {
+	my ($text) = @_;
+	return 0 unless defined $text && length $text;
+	my $t = lc $text;
+	return 1 if $t =~ /\b(seed phrase|mnemonic|private key|recovery phrase)\b/;
+	my @words = grep { length } split /\s+/, $t;
+	my $count = scalar @words;
+	return 1 if ($count == 12 || $count == 15 || $count == 18 || $count == 21 || $count == 24)
+		&& !grep { /[^a-z]/ } @words;
+	return 0;
+}
+
+sub crypto_address_valid {
+	my ($asset, $address) = @_;
+	my $a = ref $asset eq 'HASH' ? $asset : &crypto_asset($asset);
+	return 0 unless $a;
+	my $s = defined $address ? $address : '';
+	$s =~ s/\s+//g;
+	return 0 unless length $s;
+	my $net = lc($a->{'network'} || '');
+	return $s =~ /^(bc1[02-9ac-hj-np-z]{11,71}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/ ? 1 : 0 if $a->{'code'} eq 'BTC';
+	return $s =~ /^(ltc1[02-9ac-hj-np-z]{11,71}|[LM3][1-9A-HJ-NP-Za-km-z]{25,34})$/ ? 1 : 0 if $a->{'code'} eq 'LTC';
+	return $s =~ /^T[1-9A-HJ-NP-Za-km-z]{33}$/ ? 1 : 0 if $net eq 'tron';
+	return $s =~ /^0x[0-9a-fA-F]{40}$/ ? 1 : 0 if $net eq 'ethereum';
+	return $s =~ /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ ? 1 : 0 if $net eq 'solana';
+	return $s =~ /^[A-Za-z0-9]{20,100}$/ ? 1 : 0;
+}
+
+sub crypto_rates_read {
+	my $raw = &setting_grabber({ app => 'crypto', setting => 'rates', device => 'all' });
+	my $r = eval { decode_json($raw) };
+	$r = {} unless ref $r eq 'HASH';
+	$r->{'rates'} = {} unless ref $r->{'rates'} eq 'HASH';
+	$r->{'at'} = 0 unless defined $r->{'at'} && $r->{'at'} =~ /^\d+$/;
+	return $r;
+}
+
+sub crypto_rates_write {
+	my ($rates, $source, $base) = @_;
+	return 0 unless ref $rates eq 'HASH';
+	my $payload = {
+		at => &rightNow(),
+		source => ($source || 'manual'),
+		base => ($base || &crypto_report_currency()),
+		rates => $rates,
+	};
+	&setting_setter({ app => 'crypto', setting => 'rates', value => encode_json($payload), device => 'all' });
+	return $payload;
+}
+
+# reporting currency per one unit of $code
+sub crypto_rate {
+	my ($code, $base) = @_;
+	$code = uc($code || '');
+	return undef unless length $code;
+	my $r = &crypto_rates_read();
+	my $rates = $r->{'rates'};
+	my $from = $rates->{$code};
+	return undef unless defined $from && $from > 0;
+	$base = uc($base || '');
+	$base = &crypto_report_currency() unless length $base;
+	my $to = $rates->{$base};
+	return undef unless defined $to && $to > 0;
+	return $from / $to;
+}
+
+sub crypto_rate_age {
+	my $r = &crypto_rates_read();
+	return undef unless $r->{'at'};
+	return &rightNow() - $r->{'at'};
+}
+
+# A fiat pair, read from the same snapshot. The static formulas in gb.pl are the
+# fallback only while no snapshot exists yet.
+sub exchange_rate {
+	my ($from, $to) = @_;
+	$from = uc($from || '');
+	$to = uc($to || '');
+	return undef unless length $from && length $to;
+	return 1 if $from eq $to;
+	my $r = &crypto_rates_read();
+	my $rates = $r->{'rates'};
+	my ($f, $t) = ($rates->{$from}, $rates->{$to});
+	return undef unless defined $f && defined $t && $f > 0 && $t > 0;
+	return $f / $t;
+}
+
+sub crypto_value {
+	my ($amount, $asset) = @_;
+	return undef unless defined $amount && $amount =~ /-?\d/;
+	my $rate = &crypto_rate($asset);
+	return undef unless defined $rate;
+	require Math::BigFloat;
+	my $v = Math::BigFloat->new("$amount");
+	$v->bmul(Math::BigFloat->new("$rate"));
+	return $v->numify;
+}
+
+sub crypto_transaction {
+	my ($data) = @_;
+	my $d = ref $data eq 'HASH' ? $data : eval { decode_json($data || '') };
+	my $c = ref $d eq 'HASH' ? $d->{'crypto'} : undef;
+	return ref $c eq 'HASH' ? $c : undef;
+}
+
+# One snapshot for every asset and every fiat code. The request is public and
+# keyless; an offline house keeps its last snapshot rather than losing the rates.
+sub crypto_rates_refresh {
+	my ($opts) = @_;
+	$opts ||= {};
+	return { ok => 0, error => 'crypto is off' } unless &crypto_enabled || $opts->{'force'};
+	require Mojo::UserAgent;
+	my $base = &crypto_report_currency();
+	my $ua = Mojo::UserAgent->new(insecure => 1, connect_timeout => 8, inactivity_timeout => 12, request_timeout => 20);
+	my (%rates, $source);
+	my $res = eval { $ua->get('https://api.coinbase.com/v2/exchange-rates?currency=' . $base)->result };
+	if ($res && $res->is_success) {
+		my $json = eval { decode_json($res->body) };
+		my $raw = ref $json eq 'HASH' ? $json->{'data'}->{'rates'} : undef;
+		if (ref $raw eq 'HASH') {
+			my %known = map { $_->{'coinbase'} => 1 } @crypto_asset_list;
+			my %fiat = map { $_ => 1 } @crypto_fiat_list;
+			foreach my $code ( keys %{$raw} ) {
+				next unless $fiat{$code} || $known{$code};
+				my $v = $raw->{$code};
+				next unless defined $v && $v =~ /^\d/ && $v > 0;
+				$rates{$code} = 1 / $v;
+			}
+			$source = 'coinbase' if scalar keys %rates > 3;
+		}
+	}
+	if (!$source) {
+		my $res2 = eval { $ua->get('https://open.er-api.com/v6/latest/' . $base)->result };
+		if ($res2 && $res2->is_success) {
+			my $json2 = eval { decode_json($res2->body) };
+			my $raw2 = ref $json2 eq 'HASH' ? $json2->{'rates'} : undef;
+			if (ref $raw2 eq 'HASH') {
+				my %fiat = map { $_ => 1 } @crypto_fiat_list;
+				foreach my $code ( keys %{$raw2} ) {
+					next unless $fiat{$code};
+					my $v = $raw2->{$code};
+					next unless defined $v && $v =~ /^\d/ && $v > 0;
+					$rates{$code} = 1 / $v;
+				}
+				$source = 'open.er-api' if scalar keys %rates > 3;
+			}
+		}
+	}
+	return { ok => 0, error => 'no rate source answered' } unless $source;
+	# A fiat-only fallback keeps the coins from the previous snapshot: a stale
+	# coin rate is better than a wallet that cannot be valued.
+	if ($source ne 'coinbase') {
+		my $old = &crypto_rates_read();
+		my %coin = map { $_->{'coinbase'} => 1 } @crypto_asset_list;
+		foreach my $code ( keys %{ $old->{'rates'} } ) {
+			$rates{$code} = $old->{'rates'}->{$code} if $coin{$code} && !exists $rates{$code};
+		}
+	}
+	$rates{$base} = 1 unless exists $rates{$base};
+	my $written = &crypto_rates_write(\%rates, $source, $base);
+	return { ok => 1, source => $source, base => $base, count => scalar keys %rates, at => $written->{'at'} };
+}
+
+# What each wallet holds and what it is worth. Native units follow the signed
+# amount stored on the transaction (income positive, expense negative, a
+# transfer leg signed by its own direction); the money column is the signed
+# total, exactly the figure the ledger's account balance uses.
+sub crypto_wallets_report {
+	my $accounts = &crypto_accounts();
+	my $mode = lc(&setting_grabber({ app => 'crypto', setting => 'valuation', device => 'all' }) || 'cost');
+	$mode = 'market' if $mode eq 'market';
+	$mode = 'cost' unless $mode eq 'market';
+	require Math::BigFloat;
+	foreach my $w ( @{$accounts} ) {
+		my $rows = &db_query("select total, data, movement from appointments where account = ? and type = 'transaction'", $w->{'app'})->hashes;
+		my $native = Math::BigFloat->new(0);
+		my $book = 0;
+		my $count = 0;
+		foreach my $r ( @{$rows} ) {
+			my $c = &crypto_transaction($r->{'data'});
+			next unless $c && defined $c->{'amount'} && $c->{'amount'} =~ /-?\d/;
+			next unless uc($c->{'asset'} || '') eq $w->{'asset'};
+			$native->badd(Math::BigFloat->new("$c->{'amount'}"));
+			$book += ($r->{'total'} || 0) + 0;
+			$count++;
+		}
+		my $rate = &crypto_rate($w->{'asset'});
+		$w->{'native'} = $native->bstr();
+		$w->{'native_display'} = &crypto_amount_format($w->{'native'}, $w->{'asset'});
+		$w->{'book'} = $book;
+		$w->{'rate'} = $rate;
+		$w->{'market'} = defined $rate ? ($native * $rate)->numify : undef;
+		$w->{'value'} = $mode eq 'market' && defined $w->{'market'} ? $w->{'market'} : $book;
+		$w->{'valuation'} = $mode;
+		$w->{'count'} = $count;
+		$w->{'address_short'} = length($w->{'address'}) > 18
+			? substr($w->{'address'}, 0, 10) . '…' . substr($w->{'address'}, -6)
+			: $w->{'address'};
+	}
+	return $accounts;
+}
+
+# The Store's two directions, named for what the house is doing: an income
+# movement is a sale and an expense movement is a purchase. The stored movement
+# values do not change - only the words on the Store's own dropdown.
+sub store_movement_label {
+	my ($m) = @_;
+	$m = '' unless defined $m;
+	return &lang('store.selling') if $m eq 'income';
+	return &lang('store.buying') if $m eq 'expense';
+	return &lang('common.' . $m) if $m eq 'transfer' || $m eq 'inventory';
+	return &format_name($m);
+}
+
 1;

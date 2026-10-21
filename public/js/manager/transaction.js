@@ -833,6 +833,7 @@ $(document).on('click', '.record_purchase', function() {
 			type: 'POST',
 			data: data,
 			success: function(response) {
+				if (response && response.error) { alert(response.error); return; }
 				centreViewWriter(response['cv']);
 				continent_record({'uuid':response['uuid'], 'app':response['app'],'purpose':'app','timestamp':response['timestamp'],'navigation':navigation});
 				appointment_chron();
@@ -843,3 +844,69 @@ $(document).on('click', '.record_purchase', function() {
 	}
 });
 
+
+// ---- crypto wallet amounts -------------------------------------------------
+// A wallet account is read in its own coin. The server owns the conversion; this
+// only shows what the typed native amount is worth before the transaction is
+// saved, using the same cached rate snapshot the server writes with.
+var jawnosCryptoRates = null;
+var jawnosCryptoBase = '';
+
+function jawnosCryptoLoadRates(done) {
+	if (jawnosCryptoRates) { if (done) { done(); } return; }
+	$.getJSON('/manager/crypto/rates', function(r) {
+		jawnosCryptoRates = (r && r.rates) || {};
+		jawnosCryptoBase = (r && r.base) || '';
+		if (done) { done(); }
+	}).fail(function() {
+		jawnosCryptoRates = {};
+		if (done) { done(); }
+	});
+}
+
+function jawnosCryptoPaint(scope) {
+	if (!scope || !scope.length) { return; }
+	var opt = scope.find('.account').find('option:selected');
+	var asset = opt.attr('data-asset') || '';
+	var hint = scope.find('.crypto_hint');
+	if (!asset) {
+		hint.hide().attr('data-asset', '');
+		return;
+	}
+	hint.show().attr('data-asset', asset);
+	hint.find('.crypto_asset_name').text(asset);
+	jawnosCryptoLoadRates(function() {
+		var rate = jawnosCryptoRates ? jawnosCryptoRates[asset] : null;
+		var total = numeral(scope.find('.total').val()).value();
+		var text = rate
+			? numeral(total * rate).format('$0,0.00') + ' at ' + numeral(rate).format('$0,0.00')
+			: 'rate not loaded';
+		hint.find('.crypto_fiat').text(text);
+	});
+}
+
+function jawnosCryptoPaintAll() {
+	$('.app_details').each(function() {
+		if ($(this).find('.crypto_hint:visible').length) { jawnosCryptoPaint($(this)); }
+	});
+}
+
+$(document).on('change', '.app_details .account', function() {
+	jawnosCryptoPaint($(this).closest('.app_details'));
+});
+
+$(document).on('input change', '.app_details .total, .app_details .amount', function() {
+	var scope = $(this).closest('.app_details');
+	if (scope.find('.crypto_hint').is(':visible')) { jawnosCryptoPaint(scope); }
+});
+
+// The appointment window is drawn after the click that opens it, so a short
+// guarded pass keeps the native amount and its value in step without a loop on
+// an idle screen.
+$(function() {
+	jawnosCryptoPaintAll();
+	setInterval(function() {
+		if (document.hidden) { return; }
+		if ($('.app_details .crypto_hint:visible').length) { jawnosCryptoPaintAll(); }
+	}, 4000);
+});

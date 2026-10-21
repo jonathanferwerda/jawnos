@@ -477,6 +477,18 @@ sub manager_starter() {
 		}
 	}, { name => 'ai balance' });
 
+	# The cached fiat and coin rates every currency conversion reads. One keyless
+	# Coinbase call every half hour keeps both the fiat exchanges and the wallets
+	# current; the loop leaves the last snapshot alone when it cannot reach a
+	# source, and does nothing at all while crypto is turned off.
+	&subs::subprocessor(sub {
+		sleep 35;
+		while (1) {
+			eval { &subs::crypto_rates_refresh(); };
+			sleep 1800;
+		}
+	}, { name => 'crypto rates' });
+
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {
 		&subs::subprocessor(sub {

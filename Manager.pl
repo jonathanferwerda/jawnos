@@ -6322,6 +6322,39 @@ get '/manager/configure/plat_setting_list' => sub($c) {
 	$c->render(template => 'configure/plat_setting_list');
 };
 
+# ---- crypto (Configure -> Plat -> Crypto) -----------------------------------
+# Wallets are ordinary account apps; this panel owns the assets, the live rates
+# and how a wallet is valued. It never holds a key: only an address is stored.
+get '/manager/configure/crypto_panel' => sub($c) {
+	$c->render(text => $c->render_to_string('configure/crypto_setting_list'));
+};
+
+post '/manager/configure/crypto_refresh' => sub($c) {
+	my $result = eval { &subs::crypto_rates_refresh({ force => 1 }) } || { ok => 0, error => 'the refresh failed' };
+	$c->render(json => $result);
+};
+
+# The transaction form converts a native amount as the person types it; this
+# hands the browser the same snapshot the server writes with.
+get '/manager/crypto/rates' => sub($c) {
+	my $r = &subs::crypto_rates_read();
+	my $base = &subs::crypto_report_currency();
+	my $rates = $r->{'rates'} || {};
+	my $to = $rates->{$base};
+	my %out;
+	foreach my $a ( @{ &subs::crypto_assets() } ) {
+		my $from = $rates->{ $a->{'code'} };
+		$out{ $a->{'code'} } = $from / $to if defined $from && defined $to && $to > 0;
+	}
+	$c->render(json => {
+		enabled => &subs::crypto_enabled() ? 1 : 0,
+		at => $r->{'at'} || 0,
+		source => $r->{'source'} || '',
+		base => $base,
+		rates => \%out,
+	});
+};
+
 # ---- OAuth2 clients (Configure -> Plat -> OAuth2) ---------------------------
 # One entry per app registration; several mail accounts can share one.
 get '/manager/configure/oauth_panel' => sub($c) {
@@ -11523,12 +11556,25 @@ sub appts_marker_builder {
 	my $appts = shift;
 	return $appts unless ref $appts eq 'HASH';
 	my $settings = &subs::db_raw('select app, setting, value, server_time from settings where setting=? or setting=?', 'pos', 'mab');
+	# A wallet account carries its coin beside its name, so the transaction form
+	# can read an amount in that coin. One small read covers every account.
+	my $crypto_rows = &subs::db_raw("select app, setting, value from settings where setting in ('payment_type','crypto_asset')");
+	my %crypto;
+	foreach my $c ( @{$crypto_rows} ) {
+		$crypto{ $c->{'app'} }->{ $c->{'setting'} } = $c->{'value'};
+	}
 	foreach my $s ( @{$settings} ) {
 		next unless $s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab';
 		my $bucket = $s->{'value'} eq 'account' ? '__accounts'
 			: $s->{'value'} eq 'project' ? '__projects' : '';
 		next unless $bucket;
-		push @{$appts->{$bucket}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'} }
+		my $wallet = '';
+		my $cs = $crypto{ $s->{'app'} };
+		if ($cs && lc($cs->{'payment_type'} || '') eq 'crypto') {
+			my $asset = &subs::crypto_asset($cs->{'crypto_asset'});
+			$wallet = $asset ? $asset->{'code'} : 'BTC';
+		}
+		push @{$appts->{$bucket}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}, crypto_asset => $wallet }
 			unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{$bucket} || []};
 	}
 	$appts->{'__specs'}->{'markers'} = 'yes' if ref $appts->{'__specs'} eq 'HASH';
@@ -14445,7 +14491,72 @@ post '/manager/transaction/record' => sub($c) {
 	my $jtransactions = $c->param('transactions');
 	my $transactions = eval { return decode_json $c->param('transactions') } || {};
 
-
+	# ---- crypto wallets -----------------------------------------------------
+	# A wallet account is read in its own coin: every figure on the form is a
+	# native amount, so it is converted at the cached snapshot rate and the
+	# native amount is kept beside the money value. The ledger itself stays in
+	# the reporting currency, which is exactly what the statements, budgets and
+	# account balances already sum - so no report has to learn about coins.
+	my $wallet_asset = &subs::crypto_account_asset($account);
+	if ($wallet_asset && ($movement eq 'income' || $movement eq 'expense')) {
+		my $rate = &subs::crypto_rate($wallet_asset);
+		if (!defined $rate) {
+			$c->render(json => { error => 'No ' . $wallet_asset . ' rate is loaded yet. Refresh the rates in Configure -> Plat -> Crypto, then record this again.' });
+			return;
+		}
+		my $native = &subs::crypto_amount_number($total, $wallet_asset);
+		$native = &subs::crypto_amount_number($amount, $wallet_asset) unless defined $native;
+		if (defined $native) {
+			$transactions->{'crypto'} = {
+				asset => $wallet_asset,
+				amount => $native,
+				rate => $rate,
+				rate_at => &subs::rightNow(),
+				value => &subs::crypto_value($native, $wallet_asset),
+			};
+			foreach my $ref ( \$amount, \$tax, \$aux, \$total ) {
+				my $n = &subs::crypto_amount_number(${$ref}, $wallet_asset);
+				${$ref} = &subs::crypto_value($n, $wallet_asset) if defined $n;
+			}
+			if (ref $transactions->{$movement} eq 'HASH') {
+				foreach my $key ( keys %{ $transactions->{$movement} } ) {
+					my $line = $transactions->{$movement}->{$key};
+					next unless ref $line eq 'HASH';
+					foreach my $f ( qw/amount tax aux total/ ) {
+						next unless defined $line->{$f} && $line->{$f} ne '';
+						my $n = &subs::crypto_amount_number($line->{$f}, $wallet_asset);
+						$line->{$f} = &subs::crypto_value($n, $wallet_asset) if defined $n;
+					}
+				}
+			}
+			$jtransactions = encode_json $transactions;
+		}
+	}
+	if ($movement eq 'transfer') {
+		my $from_asset = &subs::crypto_account_asset($account);
+		my $to_asset = &subs::crypto_account_asset($to_account);
+		if ($from_asset || $to_asset) {
+			# Between two wallets the one amount is native on both sides. Into or
+			# out of a bank it is a sale or a purchase, not a move: a single
+			# transfer figure cannot be both a coin and a dollar, so say so rather
+			# than write a wrong number.
+			if (!$from_asset || !$to_asset || $from_asset ne $to_asset) {
+				$c->render(json => { error => 'A wallet transfer has to stay in the same coin on both sides. Record a sale and a purchase instead.' });
+				return;
+			}
+			my $native = &subs::crypto_amount_number($transfer_amount, $from_asset);
+			my $rate = &subs::crypto_rate($from_asset);
+			if (!defined $native || !defined $rate) {
+				$c->render(json => { error => 'No rate is loaded for ' . $from_asset . ' yet, so the transfer cannot be valued.' });
+				return;
+			}
+			$native =~ s/^-//;
+			my $value = &subs::crypto_value($native, $from_asset);
+			$transfer_amount = abs($value) if defined $value;
+			$transactions->{'crypto'} = { asset => $from_asset, amount => $native, rate => $rate, rate_at => &subs::rightNow(), value => $value };
+			$jtransactions = encode_json $transactions;
+		}
+	}
 
 	if ($quantity =~ /G$/gi) {
 		$quantity =~ s/G$//gi;
@@ -14634,6 +14745,17 @@ post '/manager/transaction/record' => sub($c) {
 	elsif ($movement eq 'transfer') {
 		my $write1_uuid = &subs::random_string_creator(20);
 		my $write2_uuid = &subs::random_string_creator(20);
+		# Each leg carries its own signed native amount, so the wallet it belongs
+		# to gains or loses exactly its half of the move.
+		my $j1 = $jtransactions;
+		my $j2 = $jtransactions;
+		my $crypto = $transactions->{'crypto'};
+		if (ref $crypto eq 'HASH') {
+			my $positive = $crypto->{'amount'};
+			$positive =~ s/^-//;
+			$j1 = encode_json({ %{$transactions}, crypto => { %{$crypto}, amount => '-' . $positive } });
+			$j2 = encode_json({ %{$transactions}, crypto => { %{$crypto}, amount => $positive } });
+		}
 		my $write1 = {
 			app => $app,
 			amount => $transfer_amount * -1,
@@ -14646,7 +14768,7 @@ post '/manager/transaction/record' => sub($c) {
 			notes => $notes,
 			uuid => $write1_uuid,
 			warranty => $warranty,
-			data => $jtransactions,
+			data => $j1,
 			source_uuid => $write2_uuid,
 			currency => $currency
 		};
@@ -14662,6 +14784,7 @@ post '/manager/transaction/record' => sub($c) {
 			notes => $notes,
 			uuid => $write2_uuid,
 			warranty => $warranty,
+			data => $j2,
 			source_uuid => $write1_uuid,
 			currency => $currency
 		};
@@ -34810,6 +34933,15 @@ post '/manager/calculate' => sub($c) {
 	$c->render(json => { format => $format, formula => $formula, evaluation => $evaluation, uom => $uom });
 };
 
+# Is a measure code a currency (a fiat code, a coin, or a crypto asset)?
+sub currency_unit($unit) {
+	return 0 unless defined $unit && length $unit;
+	return 1 if &subs::crypto_asset($unit);
+	my $m = $gb::measures->{$unit} || $gb::measures->{uc $unit} || $gb::measures->{lc $unit};
+	return 0 unless $m && ref $m->{'types'} eq 'ARRAY';
+	return scalar( grep { $_ eq 'currency' } @{$m->{'types'}} ) ? 1 : 0;
+}
+
 sub formula_calculator($formula) {
 	my @formula = split / /, $formula;
 	my ($evaluation,$uom,$format);
@@ -34840,6 +34972,21 @@ sub formula_calculator($formula) {
 
 
 
+				# A currency pair is a live rate now (Configure -> Plat -> Crypto
+				# refreshes the snapshot every half hour). gb.pl's constants are the
+				# offline fallback while no snapshot exists yet.
+				if (&currency_unit($pre_unit) && &currency_unit($post_unit)) {
+					my $rate = &subs::exchange_rate($pre_unit, $post_unit);
+					if (defined $rate) {
+						my $n = $pre_number;
+						$n = 1 if $n eq '' || $n eq '-' || $n eq '+';
+						$evaluation = $n * $rate;
+						$uom = $post_unit;
+						$format = $post_measure ? ($post_measure->{'format'} || '0.00') : '0.00';
+						push @{$formulas}, $n . ' * ' . $rate . $post_unit;
+					}
+				}
+				unless (defined $evaluation) {
 				foreach my $for ( @{$gb::measures->{$pre_unit}->{'formulas'}} ) {
 					if ($for =~ /\Q$post_unit/gi) {
 						$for =~ s/x/\Q$pre_number/gi;
@@ -34857,6 +35004,7 @@ sub formula_calculator($formula) {
 						}
 						$uom = $post_unit;
 					}
+				}
 				}
 
 #				foreach my $for ( @{$gb::measures->{$post_unit}->{'formulas'}} ) {
@@ -38397,6 +38545,20 @@ post '/manager/setting_setter' => sub($c) {
 	my $value = $c->param('value');
 	my $subsetting = $c->param('subsetting');
 	my $timestamp = $c->param('timestamp');
+	# An address field never accepts a phrase that could spend the wallet. JawnOS
+	# stores public addresses only, so a seed phrase or private key is refused
+	# here as well as in the panel's own warning.
+	if (($setting eq 'wallet_address' || $setting eq 'crypto_asset') && &subs::crypto_looks_like_secret($value)) {
+		$c->render(json => { ok => 0, error => 'That looks like a seed phrase or private key. JawnOS only stores a public address.' });
+		return;
+	}
+	if ($setting eq 'wallet_address' && defined $value && length $value) {
+		my $asset = $c->param('crypto_asset') || &subs::setting_grabber({ app => $app, setting => 'crypto_asset' });
+		unless (&subs::crypto_address_valid($asset, $value)) {
+			$c->render(json => { ok => 0, error => 'That does not look like a ' . (uc($asset || 'wallet')) . ' address.' });
+			return;
+		}
+	}
 	# the settingSetter() client already carries a device when one is asked for
 	# (the Guide's associate saves its Confirm tick with device 'all' so every
 	# machine reads the one shared row); the route used to drop it and store the

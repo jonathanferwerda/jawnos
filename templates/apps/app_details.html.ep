@@ -30,17 +30,22 @@
 	<br>
 	<br>
 	<label>From</label>
+	<% my $current_account = $app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'}; %>
+	<% my ($current_wallet) = grep { $_->{'app'} eq $current_account } @{$appts->{'__accounts'} || []}; %>
+	<% my $current_asset = $current_wallet ? ($current_wallet->{'crypto_asset'} || '') : ''; %>
 	<select class="transaction account app_setting" app="<%= $a %>" attribute="account" style="max-width=40%;">
 		<% foreach my $ap (@{$appts->{'__accounts'}}) { %>
 			<option 
 				value="<%= $ap->{'app'} %>"
+				<% if ($ap->{'crypto_asset'}) { %>data-crypto="1" data-asset="<%= $ap->{'crypto_asset'} %>"<% } %>
 				<% if (($app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'}) eq $ap->{'app'}) { %>
 					selected
-				<% } %>>
+				<% } %>
 				<%= $ap->{'formatted_name'} %>
 			</option>
 		<% } %>
 	</select>
+	<span class="crypto_hint" style="<%= $current_asset ? '' : 'display:none;' %>font-size:13px;margin-left:6px;" data-asset="<%= $current_asset %>">amount in <b class="crypto_asset_name"><%= $current_asset %></b> — <span class="crypto_fiat"></span></span>
 
 
 

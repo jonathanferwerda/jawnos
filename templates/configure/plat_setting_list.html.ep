@@ -55,6 +55,7 @@
 	<div class="cfg-tabs">
 		<button class="cfg_tab_toggle active" tab="plat_ai">AI</button>
 		<button class="cfg_tab_toggle" tab="plat_oauth">OAuth2</button>
+		<button class="cfg_tab_toggle" tab="plat_crypto">Crypto</button>
 	</div>
 	<div id="plat_ai" class="cfg_tab_panel">
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
@@ -285,5 +286,8 @@
 	</div>
 	<div id="plat_oauth" class="cfg_tab_panel" style="display:none;">
 		<%= include 'configure/oauth_clients' %>
+	</div>
+	<div id="plat_crypto" class="cfg_tab_panel" style="display:none;">
+		<%= include 'configure/crypto_setting_list' %>
 	</div>
 </div>
