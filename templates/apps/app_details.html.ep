@@ -30,15 +30,22 @@
 	<br>
 	<br>
 	<label>From</label>
-	<% my $current_account = $app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'}; %>
-	<% my ($current_wallet) = grep { $_->{'app'} eq $current_account } @{$appts->{'__accounts'} || []}; %>
+	<% my $accounts_list = $appts->{'__accounts'} || []; %>
+	<% my $current_account = $app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'} || ''; %>
+	<% $current_account = '' if length($current_account) && !grep { $_->{'app'} eq $current_account } @{$accounts_list}; %>
+	<% $current_account = $accounts_list->[0]->{'app'} if !length($current_account) && scalar @{$accounts_list}; %>
+	<% my ($current_wallet) = grep { $_->{'app'} eq $current_account } @{$accounts_list}; %>
 	<% my $current_asset = $current_wallet ? ($current_wallet->{'crypto_asset'} || '') : ''; %>
-	<select class="transaction account app_setting" app="<%= $a %>" attribute="account" style="max-width=40%;">
-		<% foreach my $ap (@{$appts->{'__accounts'}}) { %>
+	<select class="transaction account app_setting" app="<%= $a %>" attribute="account" style="max-width:40%;color:var(--ink);">
+		<% if (!scalar @{$accounts_list}) { %>
+			<option value="" label="No accounts yet">No accounts yet</option>
+		<% } %>
+		<% foreach my $ap (@{$accounts_list}) { %>
 			<option 
 				value="<%= $ap->{'app'} %>"
+				label="<%= $ap->{'formatted_name'} %>"
 				<% if ($ap->{'crypto_asset'}) { %>data-crypto="1" data-asset="<%= $ap->{'crypto_asset'} %>"<% } %>
-				<% if (($app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'}) eq $ap->{'app'}) { %>
+				<% if ($ap->{'app'} eq $current_account) { %>
 					selected
 				<% } %>
 				<%= $ap->{'formatted_name'} %>

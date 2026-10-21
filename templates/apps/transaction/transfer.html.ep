@@ -1,11 +1,16 @@
 <span class="transferable_transaction" attribute="movement">
 	<label>To</label>
-	<select class="to_account app_setting purchase_input" app="<%= $a %>" attribute="to_account" name="account" style="max-width=40%;">
-		<% foreach my $ap (@{$appts->{'__accounts'}}) { %>
+	<% my $to_accounts = $appts->{'__accounts'} || []; %>
+	<% my $to_chosen = $appts->{$a}->{'setting'}->{'to_account'} || $appts->{$a}->{'last_account'} || ''; %>
+	<% $to_chosen = '' if length($to_chosen) && !grep { $_->{'app'} eq $to_chosen } @{$to_accounts}; %>
+	<% $to_chosen = $to_accounts->[0]->{'app'} if !length($to_chosen) && scalar @{$to_accounts}; %>
+	<select class="to_account app_setting purchase_input" app="<%= $a %>" attribute="to_account" name="account" style="max-width:40%;color:var(--ink);">
+		<% foreach my $ap (@{$to_accounts}) { %>
 			<option 
 				value="<%= $ap->{'app'} %>"
+				label="<%= $ap->{'formatted_name'} %>"
 				<% if ($ap->{'crypto_asset'}) { %>data-crypto="1" data-asset="<%= $ap->{'crypto_asset'} %>"<% } %>
-				<% if (($appts->{$a}->{'setting'}->{'to_account'} || $appts->{$a}->{'last_account'}) eq $ap->{'app'}) { %>
+				<% if ($ap->{'app'} eq $to_chosen) { %>
 					selected
 				<% } %>
 				<%= $ap->{'formatted_name'} %>

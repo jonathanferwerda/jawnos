@@ -3007,13 +3007,19 @@ $(document).on('click', '#records_fixed_open', function() {
 	}).fail(function() { list.html('<div style="opacity:.6;">Could not load the list.</div>'); });
 });
 
-// ---- the Plat page's sub-tabs (AI / OAuth2) and the OAuth2 client registry ---
-$(document).on('click', '#plat_setting_list .cfg_tab_toggle', function() {
-	var tab = $(this).attr('tab');
+// ---- the Plat page's sub-tabs (AI / OAuth2 / Crypto) -----------------------
+// The tab is remembered per device, so reopening Plat returns to where the
+// person left it.
+function jawnosPlatTabShow(tab, save) {
+	if (!tab) { return; }
 	$('#plat_setting_list .cfg_tab_toggle').removeClass('active');
-	$(this).addClass('active');
+	$('#plat_setting_list .cfg_tab_toggle[tab="' + tab + '"]').addClass('active');
 	$('#plat_setting_list .cfg_tab_panel').hide();
 	$('#' + tab).show();
+	if (save) { settingSetter({ app: '__president', setting: 'plat_tab', value: tab }); }
+}
+$(document).on('click', '#plat_setting_list .cfg_tab_toggle', function() {
+	jawnosPlatTabShow($(this).attr('tab'), true);
 });
 
 function oauthPanelRefresh() {
@@ -3021,10 +3027,7 @@ function oauthPanelRefresh() {
 }
 $(document).on('click', '#oauth_client_add', function() {
 	$.post('/manager/configure/oauth_client/add', {}, function() {
-		$('#plat_oauth').show();
-		$('#plat_setting_list .cfg_tab_toggle').removeClass('active');
-		$('#plat_setting_list .cfg_tab_toggle[tab="plat_oauth"]').addClass('active');
-		$('#plat_ai').hide();
+		jawnosPlatTabShow('plat_oauth', true);
 		oauthPanelRefresh();
 	});
 });
@@ -3085,11 +3088,7 @@ $(document).on('click', '#crypto_refresh', function() {
 	});
 });
 
-$(document).on('click', '.crypto_open_apps', function() {
-	$('#appointment_list_grabber').trigger('click');
-});
-
-$(document).on('change', '.crypto_wallet_input', function() {
+$(document).on('click', '.crypto_wallet_copy', function() {
 	var el = $(this);
 	var app = el.attr('app');
 	var status = $('.crypto_wallet_status[app="' + app + '"]');

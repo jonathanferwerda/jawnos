@@ -49,15 +49,19 @@
 		}
 	}
 	my @down = sort grep { !$bucket_ok{$_} && $_ ne 'ollama' && $_ ne 'cloudflare' } keys %bucket_ok;
+	# Remember which Plat sub-tab was last open on this device, so reopening the
+	# panel returns to the page the person was using.
+	my $plat_tab = &subs::setting_grabber({ app => '__president', setting => 'plat_tab' }) || 'plat_ai';
+	$plat_tab = 'plat_ai' unless $plat_tab =~ /^plat_(?:ai|oauth|crypto)$/;
 %>
 <div class="cfg">
 	<h2>Platform</h2>
 	<div class="cfg-tabs">
-		<button class="cfg_tab_toggle active" tab="plat_ai">AI</button>
-		<button class="cfg_tab_toggle" tab="plat_oauth">OAuth2</button>
-		<button class="cfg_tab_toggle" tab="plat_crypto">Crypto</button>
+		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_ai') { %>active<% } %>" tab="plat_ai">AI</button>
+		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_oauth') { %>active<% } %>" tab="plat_oauth">OAuth2</button>
+		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_crypto') { %>active<% } %>" tab="plat_crypto">Crypto</button>
 	</div>
-	<div id="plat_ai" class="cfg_tab_panel">
+	<div id="plat_ai" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_ai' ? '' : 'display:none;' %>">
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
 
 	<h3>Agent models</h3>
@@ -284,10 +288,10 @@
 		<span id="guide_verbs_status" class="cfg-note" style="margin:0;"></span>
 	</div>
 	</div>
-	<div id="plat_oauth" class="cfg_tab_panel" style="display:none;">
+	<div id="plat_oauth" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_oauth' ? '' : 'display:none;' %>">
 		<%= include 'configure/oauth_clients' %>
 	</div>
-	<div id="plat_crypto" class="cfg_tab_panel" style="display:none;">
+	<div id="plat_crypto" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_crypto' ? '' : 'display:none;' %>">
 		<%= include 'configure/crypto_setting_list' %>
 	</div>
 </div>
