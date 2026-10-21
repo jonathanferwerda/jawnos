@@ -4689,7 +4689,7 @@ function jawnosGoPrompt(r, uuid, manager) {
 	var askBtn = null;
 	var noBtn = null;
 	var box = $('<div>').attr('id', 'jawnos_go_prompt').attr('role', 'dialog').attr('aria-modal', 'true').css({
-		position: 'fixed', zIndex: 71000, left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
+		position: 'fixed', zIndex: 2147483000, left: '50%', top: '50%', transform: 'translate(-50%,-50%)',
 		width: 'min(92vw,380px)', background: '#161616', color: '#f4f4f4', border: '1px solid #444',
 		borderRadius: '14px', padding: '18px', boxShadow: '0 12px 40px rgba(0,0,0,.55)',
 		fontFamily: 'sans-serif', textAlign: 'center'

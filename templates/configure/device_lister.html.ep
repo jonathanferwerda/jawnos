@@ -98,7 +98,7 @@
 								<td><b><%= $r->{'name'} %></b><br><span class="remote_ip"><%= $r->{'ip'} %></span> <span class="device_when"><%= $r->{'mac'} %></span></td>
 								<td><%= $r->{'model'} || '—' %></td>
 								<td><span class="pill" style="<%= $r->{'online'} ? 'background:#4caf50;color:#fff' : 'opacity:.6' %>"><%= $r->{'online'} ? &subs::lang('common.online') : &subs::lang('common.offline') %></span> <span class="device_when"><%= $r->{'seen_display'} %></span></td>
-								<td><% if (($r->{'manager'} || '') ne '') { %><a href="<%= $r->{'manager'} %>" target="_blank" rel="noopener"><%= &subs::lang('common.go') %></a><% } %></td>
+								<td></td>
 							</tr>
 						<% } %>
 						</tbody>

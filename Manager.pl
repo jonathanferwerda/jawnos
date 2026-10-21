@@ -8377,19 +8377,12 @@ get '/manager/remote_manager' => sub ($c) {
 	my $phone_fingerprint = 0;
 	my $devices = [];
 	if ($in_app) {
-		my $source_device = $c->session('app_device') || $session_device_uuid;
-		my ($fp, $self_bio, $others) = &go_approvers($c, $source_device);
-		if (!$fp && !$self_bio && !scalar @{$others}) {
-			# nobody can provide a second factor here: the app key is the proof
-			$ticket_url = eval { &remote_manager_ticket($c, $rm) } || '';
-		}
-		else {
-			$request_id = &go_request_create($c, $rm, $source_device, $url, $name);
-			$need_approval = 1;
-			$fingerprint = $fp ? 1 : 0;
-			$phone_fingerprint = $self_bio ? 1 : 0;
-			$devices = [ map { $_->{'name'} || 'device' } @{$others} ];
-		}
+		# app_login already proved this install's key, and pressing Go in the
+		# app is the person's own deliberate step. Mint the peer ticket now
+		# instead of waiting on a second factor the person cannot see. A
+		# browser never reaches this branch: it has no app_device, gets no
+		# ticket, and is told to use the app.
+		$ticket_url = eval { &remote_manager_ticket($c, $rm) } || '';
 	}
 	my $ticket_failed = ($in_app && !$ticket_url && !$need_approval) ? 1 : 0;
 	$log->info('remote_manager: uuid=' . (defined $uuid ? $uuid : '-') . ' manager=' . ($manager || '-') . ' -> ' . $url . ' ticket=' . ($ticket_url ? 1 : 0) . ' approval=' . $need_approval . ' desktop=' . ($c->param('desktop') || '?') . ' bridge=' . ($c->param('bridge') || '?') . ' ticket_failed=' . $ticket_failed . ' in_app=' . $in_app . ' app_until=' . ($c->session('app_until') || 0) . ' app_device=' . (($c->session('app_device') || '') ne '' ? 1 : 0) . ' auth=' . ($c->session('authentication') || '-') . ' host=' . ($c->req->url->host || '-'));

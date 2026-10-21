@@ -764,6 +764,21 @@ function gimmeInputRestore(scope, keep) {
 function deviceLister() {
 	var c = $('#device_list');
 	if (!c.length || !c.is(':visible')) { return; }
+	var focus = document.activeElement;
+	if (focus && focus !== document.body && c.find(focus).length
+		&& /^(INPUT|TEXTAREA|SELECT)$/.test(focus.tagName)) {
+		// The server pushes deviceLister() when a peer or tunnel changes.
+		// Re-rendering under someone's cursor steals the field, so wait
+		// until they leave it and then apply the listing once.
+		if (!c.data('listerWait')) {
+			c.data('listerWait', 1);
+			$(focus).one('blur', function () {
+				c.removeData('listerWait');
+				deviceLister();
+			});
+		}
+		return;
+	}
 	$.ajax({
 		url: '/manager/configure/device_lister',
 		type: 'GET',
