@@ -7651,13 +7651,17 @@ sub sync_rows_pull {
 		# A whole-table read is the only expensive plan. When the peer's last
 		# reconciled band map is on hand, ask which bands moved and read only
 		# those; the whole-table digest was the cheap gate that got us here.
-		# `settings` is left alone (the durable subset has its own rules), and an
-		# older peer or a failed map simply falls through to the plain read.
+		# Settings are judged by the durable map (`settings_durable`) but read
+		# through the ordinary settings stream, which is a superset of it - the
+		# same rows a full settings read already carries. An older peer or a
+		# failed map falls through to the plain read.
 		my $bands;
-		my $base = (ref $prior_seen->{$table} eq 'HASH') ? $prior_seen->{$table} : undef;
-		if ($cut == 0 && $table ne 'settings' && ref $base eq 'HASH' && ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }) {
+		my $map_table = ($table eq 'settings') ? 'settings_durable' : $table;
+		my $base = (ref $prior_seen->{$map_table} eq 'HASH') ? $prior_seen->{$map_table} : undef;
+		my $settings_empty = ($table eq 'settings' && !$settings_count) ? 1 : 0;
+		if ($cut == 0 && !$settings_empty && ref $base eq 'HASH' && $base->{'full'} && ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }) {
 			my $band = &subs::sync_bucket_normalize($base->{'band'});
-			my ($bmap, $berr) = &sync_buckets_batch($remote, $signatorial, $secret, $table, $band);
+			my ($bmap, $berr) = &sync_buckets_batch($remote, $signatorial, $secret, $map_table, $band);
 			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
 				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
 				# The map carries the peer's clock, the way a first batch does: even
@@ -7751,6 +7755,16 @@ sub sync_rows_pull {
 		$watermark = $first->{'server_time'} || $watermark if !$watermark;
 		$wire += $first->{'wire_bytes'} || 0;
 		my $total = $first->{'total'} || 0;
+		# Settings learn their band map on the first successful pull, even when a
+		# window holds no rows: an install reconciled before this code has no map,
+		# and without one every later divergence would fall back to a blind window.
+		if ($table eq 'settings' && $settings_count && !$bucket_maps->{$table}
+			&& !(ref $base eq 'HASH' && ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} })) {
+			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, 'settings_durable', $subs::sync_bucket_band);
+			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
+				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
+			}
+		}
 		next unless $total;
 		$count++;
 		my @queue = @{ $first->{'rows'} || [] };
@@ -7783,8 +7797,10 @@ sub sync_rows_pull {
 		}
 		# A full read is the moment to learn the peer's band map, so the next
 		# divergence can be repaired band by band instead of read whole again.
-		if ($cut == 0 && $table ne 'settings' && !$bucket_maps->{$table}) {
-			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, $table, $subs::sync_bucket_band);
+		# Settings reach here when they had only a partial baseline map and the
+		# full read just replaced it.
+		if ($cut == 0 && !$bucket_maps->{$table} && ($table ne 'settings' || $settings_count)) {
+			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, $map_table, $subs::sync_bucket_band);
 			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
 				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
 			}
@@ -7828,6 +7844,9 @@ sub sync_rows_pull {
 				my $full = (defined $cut && $cut == 0) ? 1 : ((ref $prior->{$t} eq 'HASH' && $prior->{$t}->{'full'}) ? 1 : 0);
 				$seen_map{$t} = { %{$d}, full => $full };
 				my $bm = $bucket_maps->{$t};
+				# A settings pull records its map under the durable key, which is the
+				# one the planner compares.
+				$bm = $bucket_maps->{'settings'} if $t eq 'settings_durable' && ref $bm ne 'HASH';
 				if (ref $bm eq 'HASH' && ref $bm->{'buckets'} eq 'HASH') {
 					$seen_map{$t}->{'band'} = $bm->{'band'};
 					$seen_map{$t}->{'buckets'} = $bm->{'buckets'};
@@ -7942,7 +7961,7 @@ get '/manager/sync_buckets' => sub ($c) {
 		return;
 	}
 	my $table = $c->param('table') || '';
-	my %allowed = map { $_ => 1 } @{ &subs::sync_table_list() };
+	my %allowed = map { $_ => 1 } (@{ &subs::sync_table_list() }, 'settings_durable');
 	unless ($allowed{$table}) {
 		$c->render(json => { ok => 0, error => 'unknown table' });
 		return;

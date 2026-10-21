@@ -7390,6 +7390,39 @@ sub sync_plan {
 		my $seen_sum = (ref $s eq 'HASH') ? ($s->{'sum'} || 0) : 0;
 		my $seen_max = (ref $s eq 'HASH') ? ($s->{'max'} || 0) : 0;
 		my $seen_full = (ref $s eq 'HASH' && $s->{'full'}) ? 1 : 0;
+		# Settings are judged on their own terms. The durable count is not
+		# comparable with our table - the merge stores a peer's values under the
+		# local device class, so the two counts differ permanently - and comparing
+		# them either suppressed a real change or asked for the whole table. Judge
+		# this table only against the peer's own last reconciled picture.
+		if ($t eq 'settings_durable') {
+			next if ref $s eq 'HASH' && $seen_full
+				&& $seen_count == $bc
+				&& $seen_sum == $bs
+				&& $seen_max == $bm;
+			my $since;
+			if ($bm > $am) {
+				# A forward delta names its rows exactly; no map needed.
+				$since = $am;
+			}
+			elsif (!$seen_full) {
+				# Never reconciled whole: read it once, which also learns a map. A
+				# map learned from a window is not a whole-table baseline, so it must
+				# not let this branch skip the one full read.
+				$since = 0;
+			}
+			elsif (ref $s eq 'HASH' && ref $s->{'buckets'} eq 'HASH' && scalar keys %{ $s->{'buckets'} }) {
+				# A baseline map lets the pull read only the bands that moved.
+				$since = 0;
+			}
+			else {
+				# Reconciled before this code could store a map: a bounded window
+				# is the safe answer, and the pull learns the map for next time.
+				$since = $am - 600000;
+			}
+			$plan{'settings'} = $since;
+			next;
+		}
 		next if ref $s eq 'HASH' && $seen_full
 			&& $seen_count == $bc
 			&& $seen_sum == $bs
@@ -7423,14 +7456,6 @@ sub sync_plan {
 		# Its newest is recent: a bounded window covers rows written a few seconds
 		# below our max by a concurrent writer, without the full table.
 		elsif ($bm >= $am - 600000) {
-			$since = $am - 600000;
-		}
-		elsif ($t eq 'settings_durable') {
-			# The settings table carries a row per device class, and the merge stores
-			# a peer's values under the local class, so the durable count can differ
-			# permanently. Never turn that into a whole-table read on every tick: a
-			# window covers recent settings, and the nightly/deep pull reconciles an
-			# old row.
 			$since = $am - 600000;
 		}
 		else {
