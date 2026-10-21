@@ -583,16 +583,10 @@ body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data
 	background-repeat: var(--jawnos-texture-repeat, repeat);
 	background-blend-mode: var(--jawnos-texture-blend, normal);
 }
-/* a material has no painted frame around it: the slab itself is the edge. The
-   bar drops the inline window border it is made with, and the window drops the
-   ring it draws over its whole frame, so the surface simply stops at the
-   material's own rim instead of being boxed in. */
-body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .top_navbar {
-	border: none !important;
-}
-body[data-texture]:not(:is([data-texture="plain"], [data-texture="round"], [data-texture="classic"])) .wind::after {
-	border-width: 0 !important;
-}
+/* The window's painted frame is not part of the material. The title bar keeps
+   the inline border it is made with and .wind::after keeps the ring over the
+   whole frame, so the Window Border width and colour settings still dress a
+   textured window instead of the material silently swallowing them. */
 /* the window controls are their own buttons and the general button rule above
    skips them (their icon is the face). Their icons are opaque chrome tiles, so
    the material is laid over the tile as well as behind it: the button wears the
