@@ -500,6 +500,15 @@ class Dashboard(Gtk.Window):
         self._web_panel = panel
         return panel
 
+    def _reload_web_view(self):
+        """Reload the embedded manager after the tree restarted onto new code."""
+        if self._web_panel is not None:
+            try:
+                self._web_panel.view.reload()
+            except Exception:
+                pass
+        return False
+
     def _show_dashboard(self):
         self.notebook.set_current_page(0)
 
@@ -603,13 +612,17 @@ class Dashboard(Gtk.Window):
                     if jawn and now - self._version_restart_at >= 300:
                         stale = core.version_mismatch(settings["jawn_dir"])
                         if stale:
-                            running, disk = stale
-                            self._version_restart_at = now
-                            ok, message = core.restart_all(
-                                settings["jawn_dir"], settings.get("ble_with_jawn", True))
-                            GLib.idle_add(self._say, ("restarted %s -> %s" % (running, disk))
-                                          if ok else ("restart failed: %s" % message))
-                            jawn = core.jawn_up(settings["jawn_dir"])
+                            							running, disk = stale
+                            							self._version_restart_at = now
+                            							ok, message = core.restart_all(
+                            								settings["jawn_dir"], settings.get("ble_with_jawn", True))
+                            							GLib.idle_add(self._say, ("restarted %s -> %s" % (running, disk))
+                            										  if ok else ("restart failed: %s" % message))
+                            							jawn = core.jawn_up(settings["jawn_dir"])
+                            							# The embedded view keeps the bundle it loaded; a manager
+                            							# restart for new code does not touch it. Reload it once the
+                            							# tree is answering, so a page is never left on old JS.
+                            							GLib.timeout_add_seconds(6, self._reload_web_view)
                     # The dashboard's own copy follows the repo's desktop tree.
                     # Apply only after the same result on two checks, so a sync
                     # caught mid-write is not copied over a good install.

@@ -29112,6 +29112,7 @@ post '/manager/device/app_login' => sub($c) {
 	$c->session('app' => 1);
 	$c->session('app_until' => $until);
 	$c->session('app_device' => $device_uuid);
+	$log->info('app gate: app login for ' . ($device->{'name'} || $device_uuid) . ' from ' . ($c->tx->remote_address || '?'));
 	# The app key is the citizen door: a bootstrap session that pairs an app is
 	# promoted here, or the citizen-only routes would still read guest.
 	# A person is the identity; the device is how they carry it. The session
