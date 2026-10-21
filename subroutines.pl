@@ -25763,7 +25763,8 @@ my $ai_eval_ready_memo;
 sub ai_house_eval_ready {
 	my $now = time;
 	return $ai_eval_ready_memo->{'ready'} if $ai_eval_ready_memo && $ai_eval_ready_memo->{'at'} > $now - 60;
-	my $model = &subs::setting_grabber({ app => 'mail', setting => 'eval_assistant' });
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
+	my $model = $settings->{'eval_assistant'};
 	my $ready = eval { &evaluation_model_available($model) } ? 1 : 0;
 	$ai_eval_ready_memo = { at => $now, ready => $ready };
 	return $ready;
