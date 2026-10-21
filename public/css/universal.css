@@ -20,7 +20,7 @@ input[type=number] {
 .circular_thumb { border-radius: 50%; }
 #alert { border-radius: var(--jawnos-corner, 10px); text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
 #alert_cancel { position:absolute; right: 2px; top: 2px; }
-:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; --time-fixed: #ddffee; --jawnos-corner: 10px; color-scheme: light; }
+:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; --time-fixed: #ddffee; --jawnos-corner: 10px; --button_border: 3px; color-scheme: light; }
 body { background-color: var(--panel); color: var(--ink); }
 /* ---- soft corners ---------------------------------------------------------
    The program draws a great many little boxes - a folder toolbar, a receipt,
@@ -41,6 +41,33 @@ body { background-color: var(--panel); color: var(--ink); }
        details, summary, figure, figcaption, blockquote, pre, dialog,
        p, span, label, li, dt, dd, table) {
 	border-radius: var(--jawnos-corner, 10px);
+}
+/* ---- the button border ----------------------------------------------------
+   Window Border dresses the frames; Button Border dresses the things you
+   press and the pictures that stand in for them: text buttons, image buttons,
+   icons, the taskbar's window tiles and the canvas clothesline (texture.js
+   reads the same custom property for the rail). The width is !important on
+   purpose: a component's own edge is often structural (a 3px transparent
+   tile, a 2px window glyph, a bare 0), and this one setting is meant to
+   overrule every such choice. The colour is not important, so a component's
+   own ink survives - an active yellow or a destroy red keeps its meaning -
+   and only controls with no colour of their own take the theme's --line. */
+:where(button,
+       input[type=button], input[type=submit], input[type=reset], input[type=image],
+       .ui-button,
+       .window_toggle,
+       img.hover, img[hint], img[onclick],
+       img[class*="thumb"], img[class*="icon"],
+       .jonathan, .jonathan_fixed, .taskbar_pin) {
+	border-style: solid !important;
+	border-width: var(--button_border, 3px) !important;
+	border-color: var(--line);
+	border-radius: var(--jawnos-corner, 10px);
+}
+/* a picture inside a button or a taskbar tile is that control's face, not a
+   second key: only the outer control wears the edge */
+:where(button img, .ui-button img, .window_toggle img) {
+	border-width: 0 !important;
 }
 /* color-scheme is the part an author's background-color cannot reach: the
    browser draws the dropdown's list, the spin/calendar/file faces and the
@@ -85,11 +112,11 @@ body.dark_theme [data-appt-ink] {
    moment a panel pads it - a 36px select or 28px input with a 7px top/bottom pad
    left an input's content box 12px for an 18px line, so the text's lower half was
    cut off. box-sizing keeps that padding inside the min-height. */
-select { text-align:center; height: auto; min-height: 36px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
-button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
+select { text-align:center; height: auto; min-height: 36px; box-sizing: border-box; font-size: 20px; border: solid; border-width: 3px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
+button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border: solid; border-width: var(--button_border, 3px); border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
 button.active { background-color: green; }
-input { text-align:left; height: auto; min-height: 28px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
-textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
+input { text-align:left; height: auto; min-height: 28px; box-sizing: border-box; font-size: 20px; border: solid; border-width: 3px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
+textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-box; font-size: 20px; border: solid; border-width: 3px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
 /* Controls follow the theme's surface instead of the browser's white default.
    A dark scheme's ink is near-white, so an unthemed input was white text on a
    white box and its value could not be read. The swatches and the native check
@@ -117,7 +144,7 @@ body.dark_theme input:-webkit-autofill,
 body.dark_theme input:-webkit-autofill:hover,
 body.dark_theme input:-webkit-autofill:focus { -webkit-box-shadow: 0 0 0 1000px var(--panel-2) inset; -webkit-text-fill-color: var(--ink); }
 body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
-.text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); width: 100%; }
+.text_editor { text-align:left; min-height: 30px; font-size: 24px; border: solid; border-width: 3px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); width: 100%; }
 .text_editor:hover { cursor: text; }
 .text_editor:empty:not(:focus):before {
   content: attr(placeholder);

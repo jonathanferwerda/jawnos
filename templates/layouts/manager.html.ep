@@ -95,6 +95,10 @@
 				// the frame's colour, independent of the theme's --line; blank follows
 				// the theme (the ring's own fallback)
 				window_border_colour: '<%= &subs::misc_setting('window_border_colour') || '' %>',
+				// the edge on the things you press - buttons, image buttons, icons and
+				// the canvas clothesline. 0 is meaningful (a bare control), so seed it
+				// empty when unset and let the script's own default (3) apply
+				button_border: '<%= &subs::misc_setting('button_border') // '' %>',
 				clothesline_height: '<%= &subs::misc_setting('clothesline_height') || 40 %>',
 				// the desk's material: classic (Plain), round, sandglass, glass, paper,
 				// fabric, wood or metal; universal.css and the canvas clothesline both

@@ -38,6 +38,21 @@ function jawnosTextureDark() {
 	return (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(ink) === '#000000' : false;
 }
 
+// The Button Border width (a Misc setting). taskbar.js builds jawnosBars after
+// this file has loaded, so the seeded setting is read too; 0 is a bare control
+// and is kept, not defaulted away.
+function jawnosButtonBorderWidth() {
+	var raw;
+	if (typeof jawnosBars != 'undefined' && jawnosBars && jawnosBars.button_border !== undefined) {
+		raw = jawnosBars.button_border;
+	}
+	else if (typeof jawnos_bar_settings != 'undefined' && jawnos_bar_settings) {
+		raw = jawnos_bar_settings['button_border'];
+	}
+	var v = parseInt(raw, 10);
+	return isFinite(v) ? Math.max(0, v) : 3;
+}
+
 // ---- canvas material tiles ------------------------------------------------
 var jawnosTextureTiles = {};
 function jawnosTextureTile(kind, dark) {
@@ -293,6 +308,7 @@ function jawnosTextureRim(kind, dark) {
 function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	var kind = jawnosTextureCurrent;
 	var radius = h / 2;
+	var edge = jawnosButtonBorderWidth();
 	if (kind === 'classic') {
 		// the clothesline exactly as it was drawn before the pills and materials:
 		// a solid rounded rectangle, a thick themed ink border, and the name
@@ -302,9 +318,11 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 		roundRectPath(ctx, x, y, w, h, 10);
 		ctx.fillStyle = colour;
 		ctx.fill();
-		ctx.lineWidth = 3;
-		ctx.strokeStyle = (typeof jawnosInk == 'function') ? jawnosInk() : (dark ? '#f0f4f8' : '#161a1e');
-		ctx.stroke();
+		if (edge > 0) {
+			ctx.lineWidth = edge;
+			ctx.strokeStyle = (typeof jawnosInk == 'function') ? jawnosInk() : (dark ? '#f0f4f8' : '#161a1e');
+			ctx.stroke();
+		}
 		ctx.restore();
 		return;
 	}
@@ -329,9 +347,9 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 		ctx.fill();
 		ctx.beginPath();
 		roundRectPath(ctx, x, y, w, h, radius);
-		ctx.lineWidth = 1;
+		ctx.lineWidth = edge;
 		ctx.strokeStyle = dark ? 'rgba(255,255,255,0.30)' : 'rgba(0,0,0,0.22)';
-		ctx.stroke();
+		if (edge > 0) { ctx.stroke(); }
 		ctx.restore();
 		return;
 	}
@@ -359,9 +377,9 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	jawnosTextureSheen(ctx, kind, dark, x, y, w, h);
 	ctx.beginPath();
 	roundRectPath(ctx, x, y, w, h, radius);
-	ctx.lineWidth = 1;
+	ctx.lineWidth = edge;
 	ctx.strokeStyle = jawnosTextureRim(kind, dark);
-	ctx.stroke();
+	if (edge > 0) { ctx.stroke(); }
 	ctx.restore();
 }
 

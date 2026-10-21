@@ -26,6 +26,8 @@ var jawnosBars = {
 	// the window title bar's own thickness, and the frame every window wears
 	navbar: parseInt(jawnos_bar_settings['navbar_height']) || 36,
 	border: jawnosBarSettingNumber('window_border', 3),
+	// the edge on buttons, image buttons, icons and the canvas clothesline
+	button_border: jawnosBarSettingNumber('button_border', 3),
 	// the frame's colour: blank means follow the theme (the ring's own --line)
 	border_colour: jawnos_bar_settings['window_border_colour'] || '',
 	// the bar's furniture in order (drag/drop edit mode writes it), and whether
@@ -86,6 +88,19 @@ function jawnosWindowBorderColourApply(colour) {
 	var root = document.documentElement.style;
 	if (colour) { root.setProperty('--window_border_colour', colour); }
 	else { root.removeProperty('--window_border_colour'); }
+}
+// The edge on the things you press: text buttons, the pictures that stand in
+// for them, icons and the canvas clothesline. A slider previews it live; 0 is
+// a bare control. The rail is canvas, so it is repainted by hand here.
+function jawnosButtonBorderApply(px) {
+	var v = parseInt(px, 10);
+	if (isNaN(v)) { return; }
+	jawnosBars.button_border = Math.max(0, v);
+	document.documentElement.style.setProperty('--button_border', jawnosBars.button_border + 'px');
+	if (typeof clotheslineHanger == 'function' && typeof wardrobe != 'undefined' && wardrobe && wardrobe.length
+		&& typeof hangingClothes != 'undefined' && hangingClothes == 0) {
+		clotheslineHanger(wardrobe);
+	}
 }
 function jawnosDockTop() {
 	return jawnosBars.dock == 'top';
@@ -345,6 +360,8 @@ function jawnosBarsApply() {
 	root.setProperty('--navbar_h', Math.max(28, jawnosBars.navbar) + 'px');
 	// the window frame's own thickness, read by every window's ring and title bar
 	root.setProperty('--window_border', Math.max(0, jawnosBars.border) + 'px');
+	// the edge on buttons, image buttons, icons and the clothesline
+	root.setProperty('--button_border', Math.max(0, jawnosBars.button_border) + 'px');
 	// and its colour, unless the theme's --line is asked for (a blank setting)
 	jawnosWindowBorderColourApply(jawnosBars.border_colour);
 	root.setProperty('--taskbar_top_h', jawnosTaskbarEdge('top') + 'px');
@@ -482,6 +499,10 @@ function jawnosMiscRangeInput(input) {
 		// every window's frame scales at once from the CSS variable
 		jawnosWindowBorderApply(value);
 	}
+	else if (setting == 'button_border') {
+		// every pressed surface, icon and the clothesline scales at once
+		jawnosButtonBorderApply(value);
+	}
 	else if (setting == 'clothesline_height') {
 		if (typeof jawnosClotheslineHeightApply == 'function') { jawnosClotheslineHeightApply(value); }
 	}
@@ -498,6 +519,7 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'taskbar_height') { jawnosBars.height = parseInt($(this).val()) || 44; }
 	else if (setting == 'navbar_height') { jawnosWindowNavbarApply($(this).val()); }
 	else if (setting == 'window_border') { jawnosWindowBorderApply($(this).val()); }
+	else if (setting == 'button_border') { jawnosButtonBorderApply($(this).val()); }
 	else if (setting == 'window_border_colour') { jawnosWindowBorderColourApply($(this).val()); return; }
 	else if (setting == 'texture') { if (typeof jawnosTextureApply == 'function') { jawnosTextureApply($(this).val()); } return; }
 	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }

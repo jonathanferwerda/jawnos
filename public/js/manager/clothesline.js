@@ -67,6 +67,9 @@ function clotheslineHanger(clothes) {
 		var canvas = layout ? document.getElementById(layout) : undefined;
 		if (!canvas) { hangingClothes = 0; return; }
 		ctx = canvas.getContext('2d');
+		// the garments wear the Button Border width; windows.js reads the same
+		// figure when it reserves the band under the rail
+		clothesLinePos['bordersize'] = (typeof jawnosButtonBorderWidth == 'function') ? jawnosButtonBorderWidth() : clothesLinePos['bordersize'];
 		// each garment is as wide as its own name, so the full name always fits.
 		// The label is measured in the material's own font (the same one the
 		// label printer uses) and the tile keeps a minimum width for short names.

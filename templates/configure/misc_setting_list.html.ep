@@ -240,6 +240,8 @@
 				[ 'taskbar_height', 'Taskbar Height', 'range', 24, 72, 4, 44 ],
 				[ 'navbar_height', 'Navbar Height', 'range', 28, 64, 4, 36 ],
 				[ 'window_border', 'Window Border', 'range', 0, 8, 1, 3 ],
+				# the edge on buttons, image buttons, icons and the clothesline
+				[ 'button_border', 'Button Border', 'range', 0, 8, 1, 3 ],
 				# the frame's colour, on its own: blank follows the theme (--line)
 				[ 'window_border_colour', 'Window Border Colour', 'colour' ],
 				[ 'clothesline_height', 'Clothesline Height', 'range', 20, 120, 4, 40 ],
