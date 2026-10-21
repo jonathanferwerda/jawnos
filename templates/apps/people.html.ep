@@ -21,6 +21,15 @@
 		border-radius:8px; background:var(--panel); }
 	.people_peer_vouch { padding:6px 10px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); cursor:pointer; font-size:12px; }
+	.people_qr_box { text-align:center; margin:8px 0; }
+	.people_qr_box img { width:220px; height:220px; image-rendering:pixelated; background:#fff; padding:6px; border-radius:8px; }
+	.people_qr_box textarea { width:100%; box-sizing:border-box; font-family:monospace; font-size:11px;
+		border:1px solid var(--line); border-radius:8px; background:var(--panel); margin-top:6px; }
+	.people_code_row { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin:8px 0; }
+	.people_code_row textarea { flex:1 1 320px; min-height:38px; font-family:monospace; font-size:11px;
+		border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:6px; }
+	.people_code_row button { padding:7px 12px; border:1px solid var(--line); border-radius:8px;
+		background:var(--panel); cursor:pointer; font-size:13px; }
 	.people_name_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
 	.people_name_row input { min-width:180px; padding:6px 8px; border:1px solid var(--line);
 		border-radius:8px; background:var(--panel); font-size:14px; }
@@ -71,13 +80,15 @@
 			<button id="people_crest_upload_button" hint="Upload a photo"><%= &subs::ui('Upload a photo') %></button>
 			<input type="file" id="people_crest_file" accept="image/*" style="display:none">
 			<% if ($crest->{'uuid'}) { %>
-				<a class="people_button" id="people_crest_card" hint="Download card" href="/manager/people/crest/card" download><%= &subs::ui('Download card') %></a>
+				<button id="people_crest_card" hint="Download card"><%= &subs::ui('Download card') %></button>
+				<button id="people_crest_qr_button" hint="Show QR"><%= &subs::ui('Show QR') %></button>
 			<% } %>
 			<button id="people_refresh" hint="Refresh"><%= &subs::ui('Refresh') %></button>
 		</div>
 	</div>
 
 	<div id="people_status"></div>
+	<div id="people_crest_qr" class="people_qr_box"></div>
 
 	<div class="people_name_row">
 		<label for="people_house_name"><%= &subs::ui('House name') %></label>
@@ -98,6 +109,10 @@
 		<div class="people_actions">
 			<button id="people_crest_import_button" hint="Import a crest card"><%= &subs::ui('Import a crest card') %></button>
 			<input type="file" id="people_crest_import_file" accept=".json,application/json" style="display:none">
+		</div>
+		<div class="people_code_row">
+			<textarea id="people_crest_code" rows="2" placeholder="CREST1Z:..."></textarea>
+			<button id="people_crest_code_import" hint="Import a crest code"><%= &subs::ui('Import a crest code') %></button>
 		</div>
 		<% if (@{$peers}) { %>
 			<div class="people_list">

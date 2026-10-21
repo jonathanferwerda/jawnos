@@ -274,13 +274,14 @@ our %topic = (
 	'people' => {
 		title => 'People', category => 'apps', app => 'people',
 		templates => [ 'templates/apps/people.html.ep', 'public/js/manager/people.js' ],
-		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Import a crest card', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh' ],
+		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Show QR', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh' ],
 		verified => '2026-10-20',
 		summary => 'The house crest, and the people the house knows.',
 		body => [
 			'People holds the house crest: the one hand-drawn picture that names it to other houses. The picture is what a person recognises; it is not the proof. A house key signs a record that pins the drawing\'s hashes, and the short fingerprint on the card is what another house compares. Keep the original drawing - the scan is a copy.',
 			'Scan your own crest on the flatbed, or upload a photograph from a device with no scanner. The scan is normalized, its hash is recorded, and both the colour original and the matching reference are sealed like a photo. Re-scan after the paper ages or creases: the same key signs the new reference, so the house does not change.',
 			'Download card writes a signed card for this house: the record, a small copy of the drawing, and the vouches this house has given. Give that file to a house you have met. Import a crest card takes the card they give you, checks its signature and the drawing against the signed hash, and lists the house. I have met this crest signs a vouch of your own for that house; its scope is communication, not physical access. If the card came with an introduction from a house you already know, the row says so; a card with no introduction is only a claim.',
+			'Show QR puts the compact signed record into a QR code: name, key, fingerprint, drawing hash and signature, without the picture or the vouch chain. The same code can be copied from the box under the QR and written to an NFC tag with an NFC writer; an NTAG215 or larger holds the compressed code, while a tiny NTAG213 does not. The full card file is still the one that carries the picture.',
 			'Verify a photo compares a fresh photograph with the stored reference and reports a distance; the person confirms. A photocopy still looks like the drawing - the signed record, not the paper, is what proves the house.',
 			'The list below the crest is the people the house knows. For now they are added and assigned under Security, in the Devices view; this window is where crests for other houses and the vouches between them will be kept.'
 		],
@@ -291,6 +292,7 @@ our %topic = (
 			'Type the house name and press Save name.',
 			'Check the fingerprint under the crest; that is what another house compares.',
 			'Press Download card and give the file to a house you are meeting.',
+			'Press Show QR to show or copy the compact code.',
 			'When they give you their card, press Import a crest card, choose the file, then press I have met this crest.',
 			'After the paper ages, scan it again; the new reference is signed with the same key.',
 			'To check a photograph later, press Verify a photo and read the distance.'

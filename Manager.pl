@@ -18652,6 +18652,25 @@ get '/manager/people' => sub($c) {
 	$c->render(text => $contents);
 };
 
+get '/manager/people/crest/qr' => sub($c) {
+	unless (&people_citizen($c)) { $c->rendered(403); return; }
+	my $suds = &subs::session_suds($c);
+	my $crest = &subs::crest_record_read();
+	unless ($crest->{'uuid'} && $suds) { $c->rendered(404); return; }
+	my $priv = &subs::crest_key_read($suds);
+	unless ($priv) { return $c->render(json => { ok => 0, error => 'the crest key is not available' }); }
+	my $code = &subs::crest_code_build($crest, $priv);
+	unless ($code) { return $c->render(json => { ok => 0, error => 'the crest code could not be made' }); }
+	my $png = &subs::crest_qr_png($code);
+	if (($c->param('format') || '') eq 'json') {
+		return $c->render(json => { ok => 1, code => $code, qr => ($png ? 'data:image/png;base64,' . encode_base64($png, '') : '') });
+	}
+	unless ($png) { $c->rendered(500); return; }
+	$c->res->headers->content_type('image/png');
+	$c->res->headers->cache_control('private, max-age=60');
+	$c->render(data => $png);
+};
+
 get '/manager/people/crest/card' => sub($c) {
 	unless (&people_citizen($c)) { $c->rendered(403); return; }
 	my $suds = &subs::session_suds($c);
@@ -18770,9 +18789,16 @@ post '/manager/people/crest/import' => sub($c) {
 	}
 	return $fail->('no card was supplied') unless length $raw;
 	return $fail->('that card is too large') if length $raw > 5_000_000;
-	my $card = eval { decode_json($raw) };
+	my $card;
+	if ($raw =~ /^\s*CREST1Z?:/i) {
+		my $code_record = &subs::crest_code_parse($raw);
+		$card = { format => 'jawnos-crest-code', crest => $code_record, vouches => [] } if $code_record;
+	}
+	else {
+		$card = eval { decode_json($raw) };
+	}
 	return $fail->('that card is not readable') unless ref $card eq 'HASH';
-	return $fail->('that is not a JawnOS crest card') unless (($card->{'format'} || '') eq 'jawnos-crest-card');
+	return $fail->('that is not a JawnOS crest card') unless (($card->{'format'} || '') eq 'jawnos-crest-card' || ($card->{'format'} || '') eq 'jawnos-crest-code');
 	my $incoming = $card->{'crest'};
 	return $fail->('the card has no crest record') unless ref $incoming eq 'HASH';
 	return $fail->('the crest record does not verify') unless &subs::crest_verify_record($incoming);

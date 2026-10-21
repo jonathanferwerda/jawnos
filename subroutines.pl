@@ -18315,6 +18315,74 @@ sub crest_image_data_uri {
 	return 'data:image/jpeg;base64,' . encode_base64($out, '');
 }
 
+# A compact signed record for a QR code or an NFC tag: the name, key,
+# fingerprint, dHash and signature, without the picture or the vouch chain. It is
+# zlib-compressed and base64ed; the prefix says which form it is.
+sub crest_code_build {
+	my ($record, $priv) = @_;
+	return undef unless ref $record eq 'HASH' && defined $priv && length $priv == 32;
+	my $compact = {
+		uuid => $record->{'uuid'} || '',
+		name => $record->{'name'} || '',
+		pubkey => $record->{'pubkey'} || '',
+		fingerprint => $record->{'fingerprint'} || '',
+		dhash => $record->{'dhash'} || '',
+		version => $record->{'version'} || 1,
+		issued => $record->{'issued'} || '',
+	};
+	my $signed = &crest_sign_record($compact, $priv);
+	return undef unless $signed && $signed->{'sig'};
+	my $json = JSON::PP->new->canonical(1)->encode($signed);
+	require Compress::Zlib;
+	my $packed = Compress::Zlib::compress($json);
+	return undef unless defined $packed && length $packed;
+	return 'CREST1Z:' . encode_base64($packed, '');
+}
+
+sub crest_code_parse {
+	my ($code) = @_;
+	return undef unless defined $code;
+	$code =~ s/^\s+|\s+$//g;
+	my ($packed, $compressed);
+	if ($code =~ /^CREST1Z:(.*)$/is) {
+		$packed = $1;
+		$compressed = 1;
+	}
+	elsif ($code =~ /^CREST1:(.*)$/is) {
+		$packed = $1;
+	}
+	else {
+		return undef;
+	}
+	$packed =~ s/\s+//g;
+	my $bytes = eval { decode_base64($packed) };
+	return undef unless defined $bytes && length $bytes;
+	if ($compressed) {
+		require Compress::Zlib;
+		$bytes = Compress::Zlib::uncompress($bytes);
+		return undef unless defined $bytes && length $bytes;
+	}
+	my $record = eval { decode_json($bytes) };
+	return ref $record eq 'HASH' ? $record : undef;
+}
+
+sub crest_qr_png {
+	my ($code) = @_;
+	return undef unless defined $code && length $code;
+	require File::Temp;
+	my ($fh, $tmp) = File::Temp::tempfile('jawnos-crest-qr-XXXXXX', TMPDIR => 1, UNLINK => 0);
+	return undef unless $fh && $tmp;
+	binmode $fh;
+	print $fh $code;
+	close $fh;
+	open(my $qr, '-|', 'qrencode', '-t', 'PNG', '-o', '-', '-s', '6', '-l', 'M', '-r', $tmp) or do { unlink $tmp; return undef; };
+	binmode $qr;
+	my $png = do { local $/; <$qr> };
+	close $qr;
+	unlink $tmp;
+	return (defined $png && length $png) ? $png : undef;
+}
+
 # Authorization beside authentication. peer_verify answers "is this who they
 # claim?", peer_allows answers "may this house do this, and is the lease still
 # alive?". Call it only after peer_verify has accepted the row for this request:
