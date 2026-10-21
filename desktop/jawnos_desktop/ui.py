@@ -728,6 +728,8 @@ class Dashboard(Gtk.Window):
         }.get(tstate, tstate.lower() or "stopped")
         if tail.get("error") and not tail.get("available"):
             tlabel = "unavailable"
+        if tail.get("network_restart"):
+            tlabel += " · " + tail.get("network_restart")
         self.tail_state.set_text("Tailnet  —  " + tlabel)
         if tail.get("running"):
             tcolour = GREEN_RGB
