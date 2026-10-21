@@ -23923,6 +23923,300 @@ sub warehouse_money_mirror {
 	});
 }
 
+# --- Double-entry journal ---------------------------------------------------
+# A chart of accounts seeded from the money accounts and the apps that carry
+# income and expenses, and a journal that posts every money move once with the
+# other side on the account that earned or spent it. The journal is derived: a
+# rebuild is deterministic (every entry is keyed by its source row's uuid), and
+# both tables stay off the sync list, so each machine builds its own from the
+# data it already holds.
+our %accounting_account_cache;
+
+sub accounting_account_ensure {
+	my ($code,$name,$type,$normal,$app) = @_;
+	my $row = &db_query('select code from ledger_accounts where code=?', $code)->hashes->[0];
+	return $code if $row;
+	&db_insert('ledger_accounts', {
+		code => $code, name => $name, type => $type, normal => $normal,
+		app => ($app // ''), active => 'yes', server_time => &rightNow()
+	});
+	return $code;
+}
+
+sub accounting_bank_account {
+	my $account = shift || '';
+	return $accounting_account_cache{"asset\0$account"} if defined $accounting_account_cache{"asset\0$account"};
+	my $row = &db_query("select code from ledger_accounts where app=? and type='asset' and cast(code as integer) between 1000 and 1099 limit 1", $account)->hashes->[0];
+	return $accounting_account_cache{"asset\0$account"} = $row->{'code'} if $row;
+	my $max = (&db_query("select coalesce(max(cast(code as integer)),999) as m from ledger_accounts where type='asset' and cast(code as integer) between 1000 and 1099")->hashes->[0]->{'m'} || 0) + 0;
+	my $code = $max >= 1000 ? $max + 10 : 1000;
+	$code = 1090 if $code > 1090;
+	return $accounting_account_cache{"asset\0$account"} = &accounting_account_ensure($code, &format_name($account), 'asset', 'debit', $account);
+}
+
+sub accounting_app_account {
+	my ($app,$type) = @_;
+	$app = 'unknown' unless defined $app && length $app;
+	$type = ($type || '') eq 'income' ? 'income' : 'expense';
+	return $accounting_account_cache{"$type\0$app"} if defined $accounting_account_cache{"$type\0$app"};
+	my $row = &db_query('select code from ledger_accounts where app=? and type=? limit 1', $app, $type)->hashes->[0];
+	return $accounting_account_cache{"$type\0$app"} = $row->{'code'} if $row;
+	my $base = $type eq 'income' ? 4000 : 5000;
+	my $max = (&db_query('select coalesce(max(cast(code as integer)),?) as m from ledger_accounts where type=? and cast(code as integer) between ? and ?', $base - 1, $type, $base, $base + 999)->hashes->[0]->{'m'} || 0) + 0;
+	my $code = $max + 1;
+	return $accounting_account_cache{"$type\0$app"} = &accounting_account_ensure($code, &format_name($app), $type, ($type eq 'income' ? 'credit' : 'debit'), $app);
+}
+
+sub accounting_journal_add {
+	my ($entry,$timestamp,$lines,$meta) = @_;
+	my $n = 0;
+	foreach my $line ( @{$lines} ) {
+		my ($code,$debit,$credit) = @{$line};
+		$debit = defined $debit ? $debit + 0 : 0;
+		$credit = defined $credit ? $credit + 0 : 0;
+		next if abs($debit) < 0.0001 && abs($credit) < 0.0001;
+		$n++;
+		&db_insert('journal', {
+			uuid => $entry . '-' . $n,
+			entry_uuid => $entry,
+			timestamp => $timestamp,
+			account_code => $code,
+			debit => sprintf('%.4f', $debit),
+			credit => sprintf('%.4f', $credit),
+			currency => ($meta->{'currency'} // ''),
+			memo => substr(($meta->{'memo'} // ''), 0, 490),
+			source_uuid => ($meta->{'source_uuid'} // ''),
+			source_kind => ($meta->{'source_kind'} // ''),
+			app => ($meta->{'app'} // ''),
+			account => ($meta->{'account'} // ''),
+			server_time => &rightNow()
+		});
+	}
+	return $n;
+}
+
+# Rebuild the whole journal from the ledger and the documents. Every entry is
+# keyed by its source uuid, so the same data always yields the same journal.
+sub accounting_journal_rebuild {
+	&db_query('delete from journal');
+	%accounting_account_cache = ();
+	my %bank;
+	my $account_rows = &db_query("select distinct(app) as app from settings where setting in ('pos','mab') and value='account' order by app")->hashes || [];
+	foreach my $row ( @{$account_rows} ) { $bank{$row->{'app'}} = &accounting_bank_account($row->{'app'}); }
+	my $ar = &accounting_account_ensure(1100, 'Accounts Receivable', 'asset', 'debit', '');
+	my $clearing = &accounting_account_ensure(1900, 'Transfers Clearing', 'asset', 'debit', '');
+	my $tax_account = &accounting_account_ensure(2100, 'Sales Tax Payable', 'liability', 'credit', '');
+	my $equity = &accounting_account_ensure(3000, 'Opening Balance Equity', 'equity', 'credit', '');
+	my $adjust = &accounting_account_ensure(3900, 'Balance Adjustments', 'equity', 'credit', '');
+
+	my $money = &db_query("select * from warehouse where kind='money' and type='transaction' and movement != 'inventory' order by cast(timestamp as integer)")->hashes || [];
+	my $invoices = &db_query("select * from appointments where type='invoice' order by cast(timestamp as integer)")->hashes || [];
+	my $anchors = &db_query("select * from appointments where movement='inventory' and type='transaction' order by cast(timestamp as integer)")->hashes || [];
+
+	# a transaction that settles an invoice is cash against the receivable, not
+	# new revenue; the invoice itself carried the revenue
+	my %pay_of;
+	foreach my $inv ( @{$invoices} ) {
+		my $data = eval { decode_json $inv->{'data'} } || {};
+		foreach my $p ( @{$data->{'payments'} || []} ) {
+			$pay_of{$p->{'appt_uuid'}} = 1 if $p->{'appt_uuid'};
+		}
+	}
+
+	# pair the two legs of a transfer when both are present; an unpaired leg
+	# posts against the clearing account and shows up there
+	my %transfer;
+	foreach my $m ( @{$money} ) { $transfer{$m->{'uuid'}} = $m if (($m->{'movement'} || '') eq 'transfer'); }
+	my %paired;
+	my @pairs;
+	foreach my $m ( @{$money} ) {
+		next unless (($m->{'movement'} || '') eq 'transfer');
+		next if $paired{$m->{'uuid'}};
+		my $other;
+		if ($m->{'source_uuid'} && $transfer{$m->{'source_uuid'}} && !$paired{$m->{'source_uuid'}}) {
+			$other = $transfer{$m->{'source_uuid'}};
+		}
+		next unless $other;
+		$paired{$m->{'uuid'}} = 1;
+		$paired{$other->{'uuid'}} = 1;
+		my ($neg,$pos) = (($m->{'total'} || 0) < 0) ? ($m,$other) : ($other,$m);
+		push @pairs, { neg => $neg, pos => $pos };
+	}
+
+	my @events;
+	foreach my $pair ( @pairs ) { push @events, [ ($pair->{'neg'}->{'timestamp'} || 0) + 0, 0, 'pair', $pair ]; }
+	foreach my $m ( @{$money} ) { push @events, [ ($m->{'timestamp'} || 0) + 0, 0, 'money', $m ] unless $paired{$m->{'uuid'}}; }
+	foreach my $inv ( @{$invoices} ) { push @events, [ ($inv->{'timestamp'} || 0) + 0, 1, 'invoice', $inv ]; }
+	foreach my $a ( @{$anchors} ) { push @events, [ ($a->{'timestamp'} || 0) + 0, 2, 'anchor', $a ]; }
+	@events = sort { $a->[0] <=> $b->[0] || $a->[1] <=> $b->[1] } @events;
+
+	my $lines = 0;
+	foreach my $event ( @events ) {
+		my ($ts,$pri,$kind,$row) = @{$event};
+		if ($kind eq 'money') {
+			my $account = $row->{'account'} || '';
+			next unless length $account;
+			my $code = $bank{$account} ||= &accounting_bank_account($account);
+			my $movement = $row->{'movement'} || '';
+			my $total = ($row->{'total'} || 0) + 0;
+			my $app = $row->{'app'} || 'unknown';
+			my $entry = 'm-' . $row->{'uuid'};
+			my @lines;
+			if ($pay_of{$row->{'uuid'}}) {
+				@lines = $total >= 0
+					? ([$code,$total,0],[$ar,0,$total])
+					: ([$ar,abs($total),0],[$code,0,abs($total)]);
+			}
+			elsif ($movement eq 'income') {
+				if ($total >= 0) {
+					my $tax_part = ($row->{'tax'} || 0) + 0;
+					$tax_part = 0 if $tax_part < 0;
+					my $revenue = $total - $tax_part;
+					push @lines, [$code,$total,0], [&accounting_app_account($app,'income'),0,$revenue];
+					push @lines, [$tax_account,0,$tax_part] if $tax_part > 0.004;
+				}
+				else {
+					@lines = ([&accounting_app_account($app,'income'),abs($total),0],[$code,0,abs($total)]);
+				}
+			}
+			elsif ($movement eq 'expense') {
+				if ($total <= 0) {
+					# the tax in the price is an input credit against the tax
+					# collected, so the expense carries the net and the tax account
+					# carries the tax
+					my $tax_part = abs(($row->{'tax'} || 0) + 0);
+					my $cost = abs($total) - $tax_part;
+					$cost = 0 if $cost < 0;
+					push @lines, [&accounting_app_account($app,'expense'),$cost,0];
+					push @lines, [$tax_account,$tax_part,0] if $tax_part > 0.004;
+					push @lines, [$code,0,abs($total)];
+				}
+				else {
+					@lines = ([$code,$total,0],[&accounting_app_account($app,'expense'),0,$total]);
+				}
+			}
+			elsif ($movement eq 'transfer') {
+				@lines = $total >= 0
+					? ([$code,$total,0],[$clearing,0,$total])
+					: ([$clearing,abs($total),0],[$code,0,abs($total)]);
+			}
+			else { next; }
+			$lines += &accounting_journal_add($entry, $ts, \@lines, {
+				memo => ($row->{'item'} || $row->{'app'} || ''),
+				source_uuid => $row->{'uuid'}, source_kind => 'money',
+				app => $app, account => $account, currency => ($row->{'currency'} || '')
+			});
+		}
+		elsif ($kind eq 'pair') {
+			my $neg = $row->{'neg'};
+			my $pos = $row->{'pos'};
+			my $from = $bank{$neg->{'account'}} ||= &accounting_bank_account($neg->{'account'});
+			my $to = $bank{$pos->{'account'}} ||= &accounting_bank_account($pos->{'account'});
+			my $amount = abs(($neg->{'total'} || 0) + 0);
+			$lines += &accounting_journal_add('t-' . $neg->{'uuid'}, $ts,
+				[ [$to,$amount,0], [$from,0,$amount] ], {
+					memo => 'transfer between accounts',
+					source_uuid => $neg->{'uuid'}, source_kind => 'transfer',
+					app => ($neg->{'app'} || ''), account => ($neg->{'account'} || ''),
+					currency => ($neg->{'currency'} || '')
+				});
+		}
+		elsif ($kind eq 'invoice') {
+			my $data = eval { decode_json $row->{'data'} } || {};
+			my $numbers = $data->{'numbers'} || {};
+			my $total = ($numbers->{'total'} || 0) + 0;
+			next if abs($total) < 0.005;
+			my $tax_part = ($numbers->{'tax'} || 0) + 0;
+			my $revenue = $total - $tax_part;
+			my $app = $data->{'item'} || $row->{'app'} || 'unknown';
+			my @lines = ([$ar,$total,0], [&accounting_app_account($app,'income'),0,$revenue]);
+			push @lines, [$tax_account,0,$tax_part] if abs($tax_part) > 0.004;
+			$lines += &accounting_journal_add('i-' . $row->{'uuid'}, $ts, \@lines, {
+				memo => ($data->{'id'} || $row->{'app'} || ''),
+				source_uuid => $row->{'uuid'}, source_kind => 'invoice',
+				app => $app, account => '', currency => ($row->{'currency'} || '')
+			});
+		}
+		elsif ($kind eq 'anchor') {
+			my $account = $row->{'account'} || '';
+			next unless length $account;
+			my $code = $bank{$account} ||= &accounting_bank_account($account);
+			my $amount = ($row->{'amount'} || 0) + 0;
+			my $sum = &db_query('select coalesce(sum(cast(debit as real)-cast(credit as real)),0) as s from journal where account_code=?', $code)->hashes->[0];
+			my $current = ($sum->{'s'} || 0) + 0;
+			my $diff = $amount - $current;
+			next if abs($diff) < 0.005;
+			my @lines = $diff > 0
+				? ([$code,$diff,0],[$adjust,0,$diff])
+				: ([$adjust,abs($diff),0],[$code,0,abs($diff)]);
+			$lines += &accounting_journal_add('a-' . $row->{'uuid'}, $ts, \@lines, {
+				memo => 'balance adjustment', source_uuid => $row->{'uuid'}, source_kind => 'anchor',
+				app => $account, account => $account, currency => ''
+			});
+		}
+	}
+	return { entries => scalar @events, lines => $lines };
+}
+
+# Is the journal still the ledger's own picture? A missing source, a source
+# deleted, or a source edited after the last rebuild all mean rebuild.
+sub accounting_journal_stale {
+	my $has = &db_query("select 1 from sqlite_master where type='table' and name='journal'")->hashes->[0];
+	return 1 unless $has;
+	my $missing = &db_query("select count(*) as n from warehouse w where kind='money' and type='transaction' and movement != 'inventory' and abs(cast(coalesce(total,0) as real)) > 0.004 and not exists (select 1 from journal j where j.source_uuid=w.uuid) and not (w.movement='transfer' and exists (select 1 from journal j where j.source_kind='transfer' and (j.source_uuid=w.uuid or j.source_uuid=w.source_uuid)))")->hashes->[0];
+	return 1 if (($missing->{'n'} || 0) + 0) > 0;
+	my $missing_doc = &db_query("select count(*) as n from appointments a where type='invoice' and abs(cast(coalesce(json_extract(a.data,'\$.numbers.total'),0) as real)) > 0.004 and not exists (select 1 from journal j where j.source_uuid=a.uuid and j.source_kind='invoice')")->hashes->[0];
+	return 1 if (($missing_doc->{'n'} || 0) + 0) > 0;
+	my $gone = &db_query("select count(*) as n from journal j where (j.source_kind='money' and not exists (select 1 from warehouse w where w.uuid=j.source_uuid)) or (j.source_kind='transfer' and not exists (select 1 from warehouse w where w.uuid=j.source_uuid)) or (j.source_kind='invoice' and not exists (select 1 from appointments a where a.uuid=j.source_uuid and a.type='invoice')) or (j.source_kind='anchor' and not exists (select 1 from appointments a where a.uuid=j.source_uuid and a.movement='inventory'))")->hashes->[0];
+	return 1 if (($gone->{'n'} || 0) + 0) > 0;
+	my $money_src = &db_query("select max(cast(server_time as integer)) as t from warehouse where kind='money' and type='transaction' and movement != 'inventory'")->hashes->[0];
+	my $money_j = &db_query("select max(cast(server_time as integer)) as t from journal where source_kind='money'")->hashes->[0];
+	return 1 if (($money_src->{'t'} || 0) + 0) > (($money_j->{'t'} || 0) + 0) + 2;
+	my $doc_src = &db_query("select max(cast(server_time as integer)) as t from appointments where type='invoice' or (movement='inventory' and type='transaction')")->hashes->[0];
+	my $doc_j = &db_query("select max(cast(server_time as integer)) as t from journal where source_kind in ('invoice','anchor')")->hashes->[0];
+	return 1 if (($doc_src->{'t'} || 0) + 0) > (($doc_j->{'t'} || 0) + 0) + 2;
+	return 0;
+}
+
+sub accounting_journal_maybe_rebuild {
+	return { changed => 0 } unless &accounting_journal_stale();
+	my $result = &accounting_journal_rebuild();
+	$result->{'changed'} = 1;
+	return $result;
+}
+
+# The trial balance as of a moment: each account's debit and credit balance.
+sub accounting_trial_balance {
+	my $to = shift || &rightNow();
+	my $rows = &db_query(
+		'select j.account_code, a.name, a.type, a.normal, ' .
+		'sum(cast(j.debit as real)) as debit, sum(cast(j.credit as real)) as credit ' .
+		'from journal j left join ledger_accounts a on a.code = j.account_code ' .
+		'where cast(j.timestamp as integer) <= cast(? as integer) ' .
+		'group by j.account_code, a.name, a.type, a.normal ' .
+		'order by cast(j.account_code as integer), j.account_code', $to)->hashes || [];
+	my @lines;
+	my ($debit_total,$credit_total) = (0,0);
+	foreach my $r ( @{$rows} ) {
+		my $net = (($r->{'debit'} || 0) + 0) - (($r->{'credit'} || 0) + 0);
+		my $dr = $net > 0.004 ? $net : 0;
+		my $cr = $net < -0.004 ? -$net : 0;
+		next if $dr == 0 && $cr == 0;
+		$debit_total += $dr;
+		$credit_total += $cr;
+		push @lines, {
+			code => $r->{'account_code'}, name => ($r->{'name'} || $r->{'account_code'}),
+			type => ($r->{'type'} || ''), normal => ($r->{'normal'} || 'debit'),
+			debit => $dr, credit => $cr, net => $net
+		};
+	}
+	return {
+		lines => \@lines, debit_total => $debit_total, credit_total => $credit_total,
+		difference => $debit_total - $credit_total,
+		entries => (&db_query('select count(distinct entry_uuid) as n from journal where cast(timestamp as integer) <= cast(? as integer)', $to)->hashes->[0]->{'n'} || 0) + 0
+	};
+}
+
 # ---------------------------------------------------------------------------
 # Data backfills. Schema migrations can be detected by inspecting the schema
 # (Manager::migration_already_applied); a data backfill cannot, so it is named
@@ -23954,8 +24248,18 @@ sub guide_message_warranty() {
 	return $default;
 }
 
-sub backfills() {
+	sub backfills() {
 	return {
+		'accounting_journal_v1' => sub {
+			# The double-entry journal is derived from the money ledger and the
+			# invoices. Build it once the schema pass has made its tables; a machine
+			# that receives the code before its first request waits one pass.
+			my $has = &db_query("select 1 from sqlite_master where type='table' and name='journal'")->hashes->[0];
+			return 0 unless $has;
+			my $result = &accounting_journal_rebuild();
+			&say_it('backfill accounting_journal_v1: ' . $result->{'entries'} . ' entries, ' . $result->{'lines'} . ' lines');
+			return 1;
+		},
 		'password_share_retired' => sub {
 			# The password is a login, not a recovery share. Delete the sealed
 			# copy a previous version minted; three paper or device shares are

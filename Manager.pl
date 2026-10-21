@@ -18294,6 +18294,7 @@ get '/manager/budget' => sub($c) {
 		[ 'balance_sheet', &subs::ui('Balance Sheet') ],
 		[ 'cash_flow', &subs::ui('Cash Flow') ],
 		[ 'account_activity', &subs::ui('Account Activity') ],
+		[ 'trial_balance', &subs::ui('Trial Balance') ],
 		[ 'statement', &subs::ui('Ledger') ],
 		[ 'receivables', &subs::ui('Receivables') ],
 		[ 'invoices', &subs::ui('Invoices') ],
@@ -18303,6 +18304,13 @@ get '/manager/budget' => sub($c) {
 	my %known_display = map { $_->[0] => 1 } @display_options;
 	$display = 'income_statement' unless $known_display{$display};
 	my $reports = {};
+	my $trial = {};
+	if ($display eq 'trial_balance') {
+		# the journal is derived; bring it up to date before reading it so the
+		# screen never shows the picture from before the last transaction
+		&subs::accounting_journal_maybe_rebuild();
+		$trial = &subs::accounting_trial_balance($t2);
+	}
 	if ($display eq 'income_statement' || $display eq 'balance_sheet' || $display eq 'cash_flow' || $display eq 'account_activity' || $display eq 'receivables') {
 		my @report_accounts = map { $_->{'app'} } grep { $_->{'app'} ne 'all' && $_->{'app'} ne 'gallery' } @{$accounts};
 		$reports = &accounting_reports({ accounts => \@report_accounts, from => $bt, to => $t2 });
@@ -18343,6 +18351,7 @@ get '/manager/budget' => sub($c) {
 		time_lengths => \@time_lengths,
 		displays => \@display_options,
 		reports => $reports,
+		trial => $trial,
 		period_start => $period_start_label,
 		period_end => $period_end_label,
 		prior_start => $prior_start_label,
@@ -18479,6 +18488,13 @@ post '/manager/budget/reconcile' => sub($c) {
 	my $ending = $c->param('ending_balance');
 	my $lines = eval { decode_json $c->param('lines') } || [];
 	my $result = &budget_reconcile_apply($account, $statement_end, $ending, $lines);
+	$c->render(json => $result);
+};
+
+# The journal is derived from the ledger and the documents; a rebuild is safe and
+# deterministic, so the trial balance screen can ask for a fresh one.
+post '/manager/budget/journal/rebuild' => sub($c) {
+	my $result = &subs::accounting_journal_rebuild();
 	$c->render(json => $result);
 };
 
@@ -36729,6 +36745,42 @@ sub migration_already_applied($command) {
 sub update_database($data) {
 	&subs::cache_delete({ app => 'me', context => 'pseudonyms' });
 	my $commands = [
+		# Double-entry accounting: a chart of accounts and the journal that posts
+		# to it. Both are derived from the money ledger, so each machine builds its
+		# own (they stay out of the sync table list in gb.pl); the entries are
+		# keyed by their source row so a rebuild is deterministic.
+		'create table if not exists ledger_accounts (
+			uuid VARCHAR(255) unique,
+			code VARCHAR(20) unique,
+			name VARCHAR(255),
+			type VARCHAR(25),
+			normal VARCHAR(10),
+			app VARCHAR(500),
+			parent VARCHAR(20),
+			active VARCHAR(10),
+			server_time VARCHAR(30),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_ledger_accounts on ledger_accounts (app)',
+		'create table if not exists journal (
+			uuid VARCHAR(90) unique,
+			entry_uuid VARCHAR(90),
+			timestamp VARCHAR(25),
+			account_code VARCHAR(20),
+			debit VARCHAR(30),
+			credit VARCHAR(30),
+			currency VARCHAR(20),
+			memo VARCHAR(500),
+			source_uuid VARCHAR(60),
+			source_kind VARCHAR(25),
+			app VARCHAR(500),
+			account VARCHAR(500),
+			server_time VARCHAR(30),
+			ost VARCHAR(25)
+		)',
+		'create index if not exists idx1_journal_source on journal (source_uuid)',
+		'create index if not exists idx2_journal_account on journal (account_code)',
+		'create index if not exists idx3_journal_entry on journal (entry_uuid)',
 		# People: a person is the identity, a device is how they carry it.
 		'create table if not exists people (
 			uuid VARCHAR(255) unique,

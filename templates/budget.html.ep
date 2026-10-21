@@ -236,6 +236,31 @@
 				<tr><td><%= &subs::format_name($b eq 'current' ? 'current (0-30)' : $b eq '31_60' ? '31-60 days' : $b eq '61_90' ? '61-90 days' : 'over 90 days') %></td><td style="text-align:right;"><%= &subs::price_formatter($reports->{'receivables'}->{'buckets'}->{$b}) %></td></tr>
 			<% } %>
 		</table>
+	<% } elsif ($display eq 'trial_balance') { %>
+		<h2 style="margin:4px 0;"><%= &subs::ui('Trial Balance') %></h2>
+		<div style="opacity:.75;"><%= &subs::ui('As of') %> <b><%= $period_end %></b> &middot; <%= &subs::ui('Double entry, cash basis with receivables') %> &middot; <%= $trial->{'entries'} || 0 %> <%= &subs::ui('entries') %></div>
+		<div style="margin:6px 0;"><button id="budget_journal_rebuild"><%= &subs::ui('Rebuild journal') %></button> <span id="budget_journal_message"></span></div>
+		<table class="accounting_statement" style="width:100%;border:groove;border-collapse:collapse;">
+			<thead style="text-align:left;">
+				<th><%= &subs::ui('Code') %></th>
+				<th><%= &subs::ui('Account') %></th>
+				<th><%= &subs::ui('Type') %></th>
+				<th style="text-align:right;"><%= &subs::ui('Debit') %></th>
+				<th style="text-align:right;"><%= &subs::ui('Credit') %></th>
+			</thead>
+			<tbody>
+				<% foreach my $r ( @{$trial->{'lines'} || []} ) { %>
+					<tr><td><%= $r->{'code'} %></td><td><%= $r->{'name'} %></td><td><%= &subs::format_name($r->{'type'}) %></td><td style="text-align:right;"><%= $r->{'debit'} ? &subs::price_formatter($r->{'debit'}) : '' %></td><td style="text-align:right;"><%= $r->{'credit'} ? &subs::price_formatter($r->{'credit'}) : '' %></td></tr>
+				<% } %>
+				<tr><td colspan="3"><b><%= &subs::ui('Total') %></b></td><td style="text-align:right;border-top:3px double;"><b><%= &subs::price_formatter($trial->{'debit_total'}) %></b></td><td style="text-align:right;border-top:3px double;"><b><%= &subs::price_formatter($trial->{'credit_total'}) %></b></td></tr>
+			</tbody>
+		</table>
+		<% if (abs($trial->{'difference'} || 0) < 0.005) { %>
+			<div style="color:green;font-weight:700;margin-top:6px;"><%= &subs::ui('Debits equal credits.') %></div>
+		<% } else { %>
+			<div style="color:red;font-weight:700;margin-top:6px;"><%= &subs::ui('Out of balance by') %> <%= &subs::price_formatter($trial->{'difference'}) %></div>
+		<% } %>
+		<div style="opacity:.65;margin-top:6px;max-width:75%;"><%= &subs::ui('Every money move posts once with its other side: a bank account against the app that earned or spent it, an invoice against receivables, and a transfer against the other account. The clearing line is money moved to an account whose leg was not recorded.') %></div>
 	<% } elsif ($display eq 'statement') { %>
 		<table style="width:100%;border:groove;">
 			<% foreach my $d (qw/income expense transfer/) { %>

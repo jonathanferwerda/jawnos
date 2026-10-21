@@ -676,6 +676,26 @@ $(document).on('click', '#budget_reconcile_apply', function() {
 	});
 });
 
+$(document).on('click', '#budget_journal_rebuild', function() {
+	var button = $(this);
+	button.attr('disabled', 'disabled');
+	$.ajax({
+		url: '/manager/budget/journal/rebuild',
+		type: 'POST',
+		success: function(response) {
+			button.removeAttr('disabled');
+			var message = jawnosT('Journal rebuilt:') + ' ' + (response.entries || 0) + ' ' + jawnosT('entries') + ', ' + (response.lines || 0) + ' ' + jawnosT('lines') + '.';
+			if ($('#alert').length) { $('#alert').html(message).show(); }
+			else { $('#budget_journal_message').text(message); }
+			budgetInit();
+		},
+		error: function() {
+			button.removeAttr('disabled');
+			$('#budget_journal_message').text(jawnosT('The journal could not be rebuilt.'));
+		}
+	});
+});
+
 
 
 
