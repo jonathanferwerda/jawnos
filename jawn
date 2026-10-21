@@ -165,7 +165,9 @@ sub master_time_looper() {
 	# removed: the state machine below is idempotent, and a permanent ticker is
 	# also the liveness watchdog that recovers a tree which died unnoticed.
 	return if $master_timer;
-	$master_timer = Mojo::IOLoop->recurring(2 => sub {
+	# One-second tick: a restart request is noticed at once rather than up to five
+	# seconds late. The liveness probe below keeps its own 30s cadence.
+	$master_timer = Mojo::IOLoop->recurring(1 => sub {
 		# the sleeps below block the loop, so a restart cannot re-enter; guard anyway
 		# so a fatality mid-sequence cannot wedge the master permanently
 		return if $master_timer_paused;
@@ -201,7 +203,7 @@ sub master_time_looper() {
 		# than idle. This is exactly the case that used to leave the master alive
 		# with nothing on 3000/45545 and no President.pl.
 		if ($status eq 'started') {
-			if (++$tree_ticks >= 15) {
+			if (++$tree_ticks >= 30) {
 				$tree_ticks = 0;
 				if (&tree_serving()) { $tree_misses = 0 }
 				elsif (++$tree_misses >= 2) {
@@ -232,7 +234,7 @@ sub master_time_looper() {
 					}
 				}
 				unless ($refused) {
-					# the request is ours now: left standing, the next two-second tick
+					# the request is ours now: left standing, the next one-second tick
 					# reads it again, kills the fresh boot before it writes "good", and
 					# restarts forever
 					write_file($status_file, 'good') if $f_status eq 'restart';

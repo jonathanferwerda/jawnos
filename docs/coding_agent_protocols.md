@@ -20,7 +20,7 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   (`manager`, `websocket`, …) running `Manager.pl`, `Websocket.pl`.
 - **Log:** `~/manager.log`. **DB:** `./database/jawnos.db` (SQLite, WAL). The old
   `/home/jawn/initial.db` is a zero-byte decoy — never query it; the live house DB is the one under `database/`.
-- **Restart:** `printf 'restart' > ~/.president/status` — `jawn` polls every 2 s, writes `good` back,
+- **Restart:** `printf 'restart' > ~/.president/status` — `jawn` polls every second, writes `good` back,
   and reboots the tree. Don't start `./jawn` yourself; never leave a detached process.
 - Status values: `good` / `restart` / `frozen`.
 - Restart needed? `.ep` **no** (mtime checked per request) · `.pl` **yes** (`perl -c Manager.pl` first)
