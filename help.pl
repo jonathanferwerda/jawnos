@@ -561,10 +561,10 @@ our %topic = (
 	},
 	'inventory' => {
 		title => 'Inventory', category => 'apps', app => 'inventory',
-		verified => '2026-10-16',
+		verified => '2026-10-21',
 		summary => 'An app\'s own record of what it holds and has been up to.',
 		body => [
-			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together, with statistics and the Evaluation reports.'
+			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together, with statistics. The Evaluation report and the controls that run it live at the foot of the app itself.'
 		],
 		related => [ 'evaluation', 'measures', 'warehouse' ]
 	},
