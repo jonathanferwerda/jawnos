@@ -18485,6 +18485,226 @@ sub people_citizen {
 	return (($c->session('privilege') || '') eq 'citizen') ? 1 : 0;
 }
 
+# The social people are settings rows (`pos` or `mab` = person), not the
+# `people` table's device accounts. One read builds the whole picture: every
+# app's effective construct, the settings uuid each device copy carries, and
+# the membership arrays (`sc_<singular>`) those rows already keep. The
+# Relational cache is deliberately not reused here: it caches rendered
+# buckets, and this index is one small query over rows the window needs fresh.
+sub people_index {
+	my $rows = eval {
+		&subs::db_query("select app, device, setting, value, server_time from settings where setting in ('pos','mab','uuid') or substr(setting,1,3) = 'sc_'")->hashes;
+	} || [];
+	my $current = &subs::device_setter();
+	my %apps;
+	my %uuid_app;
+	my %effective;
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} // '';
+		next unless length $app;
+		my $setting = $row->{'setting'} // '';
+		$apps{$app} ||= { app => $app, uuids => {}, sc => {}, pos => '', mab => '' };
+		if ($setting eq 'uuid') {
+			my $uuid = $row->{'value'} // '';
+			next unless length $uuid;
+			$apps{$app}->{'uuids'}->{$uuid} = 1;
+			$uuid_app{$uuid} = $app;
+		}
+		elsif ($setting eq 'pos' || $setting eq 'mab') {
+			# a device keeps its own copy of a construct; the newest row on a
+			# device is that device's answer, and the current device answers
+			# for the whole app when it has one
+			my $device = $row->{'device'} // '';
+			my $stamp = $row->{'server_time'} // '';
+			my $slot = $effective{$app}->{$setting}->{$device};
+			unless ($slot && $slot->{'server_time'} gt $stamp) {
+				$effective{$app}->{$setting}->{$device} = { value => $row->{'value'} // '', server_time => $stamp };
+			}
+		}
+		elsif ($setting =~ /^sc_(.+)$/) {
+			my $sing = $1;
+			my $list = eval { decode_json($row->{'value'} // '') } || [];
+			next unless ref $list eq 'ARRAY';
+			foreach my $uuid ( @{$list} ) {
+				next unless defined $uuid && length $uuid;
+				$apps{$app}->{'sc'}->{$sing}->{$uuid} = 1;
+			}
+		}
+	}
+	foreach my $app ( keys %apps ) {
+		foreach my $setting ( qw/pos mab/ ) {
+			my $devices = $effective{$app}->{$setting} || {};
+			my $pick = $devices->{$current};
+			unless ($pick) {
+				foreach my $device ( keys %{$devices} ) {
+					my $candidate = $devices->{$device};
+					$pick = $candidate if !$pick || $candidate->{'server_time'} gt $pick->{'server_time'};
+				}
+			}
+			$apps{$app}->{$setting} = $pick ? $pick->{'value'} : '';
+		}
+	}
+	# a membership array names the uuid of the construct's settings row, so
+	# the reverse map is what turns "these uuids" into "these construct apps"
+	my %member;
+	foreach my $app ( keys %apps ) {
+		my $sc = $apps{$app}->{'sc'} || {};
+		foreach my $sing ( keys %{$sc} ) {
+			foreach my $uuid ( keys %{$sc->{$sing}} ) {
+				my $construct_app = $uuid_app{$uuid};
+				next unless defined $construct_app;
+				$member{$sing}->{$construct_app}->{$app} = 1;
+			}
+		}
+	}
+	my @person_apps = sort grep {
+		my $entry = $apps{$_};
+		(($entry->{'pos'} || '') eq 'person' || ($entry->{'mab'} || '') eq 'person') ? 1 : 0;
+	} keys %apps;
+	my @constructs;
+	foreach my $scons ( sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs} ) {
+		next if $scons->{'name'} eq 'people';
+		my $sing = $scons->{'sing'};
+		my @rows;
+		foreach my $app ( keys %apps ) {
+			my $entry = $apps{$app};
+			next unless (($entry->{'pos'} || '') eq $sing || ($entry->{'mab'} || '') eq $sing);
+			my @members;
+			foreach my $member_app ( keys %{ $member{$sing}->{$app} || {} } ) {
+				push @members, { app => $member_app, name => &subs::format_name($member_app) };
+			}
+			@members = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @members;
+			push @rows, {
+				app => $app,
+				name => &subs::format_name($app),
+				member_count => scalar @members,
+				members => \@members,
+			};
+		}
+		@rows = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @rows;
+		push @constructs, { name => $scons->{'name'}, sing => $sing, rows => \@rows };
+	}
+	return {
+		apps => \%apps,
+		uuid_app => \%uuid_app,
+		member => \%member,
+		person_apps => \@person_apps,
+		constructs => \@constructs,
+	};
+}
+
+# Keep the people table and the person constructs in step. A person construct
+# creates its people row; a row whose construct was deleted from the database
+# is removed; a construct that merely changed away from person (to idea, say)
+# keeps its row, so a mistaken change does not cost the identity behind it.
+sub people_link_sync {
+	my $index = &people_index();
+	my %person = map { $_ => 1 } @{ $index->{'person_apps'} };
+	my %known = map { $_ => 1 } keys %{ $index->{'apps'} };
+	my $now = &subs::rightNow();
+	my $rows = eval { &subs::db_select('people', undef, {})->hashes } || [];
+	my %have;
+	foreach my $person ( @{$rows} ) {
+		my $app = $person->{'app'} // '';
+		next unless length $app;
+		$have{$app} = 1;
+		if ($person{$app}) {
+			unless (($person->{'status'} || '') eq 'active') {
+				&subs::db_update('people', { status => 'active', server_time => $now }, { uuid => $person->{'uuid'} });
+			}
+		}
+		elsif (!$known{$app}) {
+			# every settings row for that app is gone, so the construct was
+			# removed rather than reclassified
+			&subs::db_update('people', { status => 'removed', server_time => $now }, { uuid => $person->{'uuid'} });
+		}
+	}
+	foreach my $app ( keys %person ) {
+		next if $have{$app};
+		&subs::db_insert('people', {
+			uuid => &subs::random_string_creator(25),
+			app => $app,
+			name => &subs::format_name($app),
+			privilege => '',
+			status => 'active',
+			created => $now,
+			server_time => $now,
+		});
+	}
+	return $index;
+}
+
+# The construct chips a person wears: each membership array names a construct
+# app's settings uuid, and the index's reverse map names the app itself.
+sub people_chips {
+	my ($index, $app) = @_;
+	my $entry = $index->{'apps'}->{$app} || {};
+	my $sc = $entry->{'sc'} || {};
+	my @chips;
+	foreach my $scons ( sort { $a->{'order'} <=> $b->{'order'} } values %{$gb::social_constructs} ) {
+		my $sing = $scons->{'sing'};
+		next unless $sc->{$sing};
+		my %seen;
+		my @names;
+		foreach my $uuid ( keys %{ $sc->{$sing} } ) {
+			my $construct_app = $index->{'uuid_app'}->{$uuid} || '';
+			next unless length $construct_app;
+			next if $seen{$construct_app}++;
+			push @names, { app => $construct_app, name => &subs::format_name($construct_app) };
+		}
+		foreach my $name ( sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @names ) {
+			push @chips, {
+				construct => $scons->{'name'},
+				sing => $sing,
+				label => &subs::lang('construct.' . $scons->{'name'}),
+				app => $name->{'app'},
+				name => $name->{'name'},
+			};
+		}
+	}
+	return \@chips;
+}
+
+# The peer crest linked to a contact app, as an image the window can show.
+sub people_crest_image {
+	my ($app) = @_;
+	my $entry = &subs::crest_contact_entry($app);
+	return '' unless $entry && ref $entry->{'crest'} eq 'HASH';
+	return $entry->{'image_data'} if defined $entry->{'image_data'} && length $entry->{'image_data'};
+	my $uuid = $entry->{'crest'}->{'uuid'} || '';
+	return '' unless length $uuid;
+	return &subs::crest_peer_image_file($entry) ? '/manager/people/crest_image?peer=' . $uuid . '&stamp=' . &subs::rightNow() : '';
+}
+
+# Met / introduced state for a linked crest, read the same way the crest
+# detail panel reads it.
+sub people_crest_state {
+	my ($entry) = @_;
+	my $own = &subs::crest_record_read();
+	my $incoming = ref $entry->{'crest'} eq 'HASH' ? $entry->{'crest'} : {};
+	my $state = { met => 0, met_at => '', introduced_by => '' };
+	if (ref $entry->{'vouch'} eq 'HASH'
+		&& &subs::crest_vouch_verify($entry->{'vouch'})
+		&& ($entry->{'vouch'}->{'from_uuid'} || '') eq ($own->{'uuid'} || '')
+		&& ($entry->{'vouch'}->{'to_uuid'} || '') eq ($incoming->{'uuid'} || '')
+		&& ($entry->{'vouch'}->{'to_pubkey'} || '') eq ($incoming->{'pubkey'} || '')) {
+		$state->{'met'} = 1;
+		$state->{'met_at'} = $entry->{'vouch'}->{'at'} || $entry->{'met_at'} || '';
+	}
+	my $peer_list = &subs::crest_peer_list_read();
+	foreach my $vouch ( @{ $entry->{'vouches'} || [] } ) {
+		next unless ref $vouch eq 'HASH';
+		next unless ($vouch->{'to_uuid'} || '') eq ($incoming->{'uuid'} || '');
+		next unless ($vouch->{'to_pubkey'} || '') eq ($incoming->{'pubkey'} || '');
+		my $issuer = &subs::crest_vouch_introducer($vouch, $own, $peer_list);
+		next unless $issuer;
+		next if ($issuer->{'uuid'} || '') eq ($own->{'uuid'} || '');
+		$state->{'introduced_by'} = $issuer->{'name'} || '';
+		last;
+	}
+	return $state;
+}
+
 sub people_crest_scan_dir {
 	my $folder = &subs::setting_grabber({ app => 'misc', setting => 'scan_location', device => &subs::device_setter() }) || 'Scans';
 	my $dir = &subs::home($folder) . '/people';
@@ -18645,8 +18865,34 @@ get '/manager/people' => sub($c) {
 		$crest_introduced_by = $issuer->{'name'} || '';
 		last;
 	}
-	my $people = eval { &subs::db_select('people', undef, { status => 'active' })->hashes } || [];
-	@{$people} = sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @{$people};
+	my $index = &people_link_sync();
+	my %person_app = map { $_ => 1 } @{ $index->{'person_apps'} };
+	my $people_rows = eval { &subs::db_select('people', undef, { status => 'active' })->hashes } || [];
+	my @people;
+	my %seen_person_app;
+	foreach my $person ( @{$people_rows} ) {
+		my $app = $person->{'app'} // '';
+		next unless length $app;
+		next unless $person_app{$app};
+		# two machines can mint a row for the same construct before they sync;
+		# the window shows the person once
+		next if $seen_person_app{$app}++;
+		$person->{'chips'} = &people_chips($index, $app);
+		$person->{'image'} = &people_crest_image($app);
+		$person->{'formatted_name'} = &subs::format_name($app);
+		push @people, $person;
+	}
+	@people = sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @people;
+	my %people_by_app = map { ($_->{'app'} || '') => ($_->{'uuid'} || '') } @people;
+	foreach my $construct ( @{ $index->{'constructs'} } ) {
+		foreach my $row ( @{ $construct->{'rows'} } ) {
+			$row->{'image'} = &people_crest_image($row->{'app'});
+			foreach my $member ( @{ $row->{'members'} } ) {
+				$member->{'image'} = &people_crest_image($member->{'app'});
+				$member->{'uuid'} = $people_by_app{$member->{'app'}} || '';
+			}
+		}
+	}
 	my $feeds = &market_scan_feeds();
 	my $scanner = (grep { $_ eq 'flatbed' } @{ $feeds || [] }) ? 1 : 0;
 	my $camera = 0;
@@ -18660,7 +18906,8 @@ get '/manager/people' => sub($c) {
 		has_image => $has_image,
 		introduced_by => $crest_introduced_by,
 		peers => \@peers,
-		people => $people,
+		people => \@people,
+		constructs => $index->{'constructs'},
 		scanner => $scanner,
 		camera => $camera,
 		nfc => $nfc,
@@ -18746,6 +18993,71 @@ get '/manager/people/crest/detail' => sub($c) {
 		contact => $contact,
 		contacts => \@contacts,
 	});
+};
+
+get '/manager/people/person' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $uuid = $c->param('uuid') || '';
+	my $person = eval { &subs::db_select('people', undef, { uuid => $uuid, status => 'active' })->hash };
+	return $c->render(json => { ok => 0, error => 'no such person' }) unless $person && length($person->{'app'} || '');
+	my $index = &people_link_sync();
+	my $app = $person->{'app'};
+	my $chips = &people_chips($index, $app);
+	my $entry = &subs::crest_contact_entry($app);
+	my $crest = {};
+	my $crest_uuid = '';
+	my $image = '';
+	my $home = '';
+	my $store = '';
+	my $met = 0;
+	my $met_at = '';
+	my $introduced_by = '';
+	if ($entry && ref $entry->{'crest'} eq 'HASH') {
+		my $incoming = $entry->{'crest'};
+		$crest_uuid = $incoming->{'uuid'} || '';
+		$crest = { name => $incoming->{'name'} || '', fingerprint => $incoming->{'fingerprint'} || '' };
+		$image = &people_crest_image($app);
+		my $endpoints = ref $entry->{'endpoints'} eq 'HASH' ? $entry->{'endpoints'} : {};
+		$home = $endpoints->{'home'} || '';
+		$store = $endpoints->{'store'} || '';
+		my $state = &people_crest_state($entry);
+		$met = $state->{'met'};
+		$met_at = $state->{'met_at'};
+		$introduced_by = $state->{'introduced_by'};
+	}
+	my ($phone, $email) = ('', '');
+	foreach my $kind ( qw/phone email/ ) {
+		my $lines = eval { &subs::contact_lines($kind) } || {};
+		my $line = $lines->{$app} || $lines->{lc($app)} || [];
+		next unless ref $line eq 'ARRAY' && scalar @{$line};
+		if ($kind eq 'phone') { $phone = $line->[0]->{'value'} || ''; }
+		else { $email = $line->[0]->{'value'} || ''; }
+	}
+	my @peer_choices;
+	foreach my $peer ( @{ &subs::crest_peer_list_read() } ) {
+		next unless ref $peer eq 'HASH' && ref $peer->{'crest'} eq 'HASH';
+		next unless length($peer->{'crest'}->{'uuid'} || '');
+		push @peer_choices, { uuid => $peer->{'crest'}->{'uuid'}, name => $peer->{'crest'}->{'name'} || '' };
+	}
+	@peer_choices = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @peer_choices;
+	my $html = $c->render_to_string(
+		template => 'apps/people_person',
+		person => $person,
+		app => $app,
+		chips => $chips,
+		crest => $crest,
+		crest_uuid => $crest_uuid,
+		image => $image,
+		home => $home,
+		store => $store,
+		met => $met,
+		met_at => $met_at,
+		introduced_by => $introduced_by,
+		phone => $phone,
+		email => $email,
+		peer_choices => \@peer_choices,
+	);
+	$c->render(json => { ok => 1, html => $html });
 };
 
 post '/manager/people/crest/link' => sub($c) {
@@ -21857,7 +22169,8 @@ post '/manager/relational/adder' => sub($c) {
 		contents_search => $relational_settings->{'contents_search'},
 	);
 
-
+	# a new person construct is a person the moment it is made
+	&people_link_sync() if ($construct eq 'person');
 
 	$c->render(json => $returner);
 };
@@ -34230,6 +34543,11 @@ sub update_database($data) {
 			server_time VARCHAR(255)
 		)',
 		'create index if not exists idx1_people on people (uuid)',
+		# a person construct (settings pos/mab = person) is the social person;
+		# `app` links the people row to that settings app so the People window
+		# and the Relational window cannot drift apart
+		'alter table people add column app VARCHAR(255)',
+		'create index if not exists idx2_people on people (app)',
 		'alter table tickets add column person_uuid VARCHAR(255)',
 		'alter table tickets add column peer_signatorial VARCHAR(255)',
 		'alter table paired_devices add column person_uuid VARCHAR(255)',
@@ -34809,6 +35127,8 @@ post '/manager/setting_setter' => sub($c) {
 	# value against this device class instead
 	my $device = $c->param('device');
 	my $s = &subs::setting_setter({ app => $app, setting => $setting, value => $value, timestamp => $timestamp, subsetting => $subsetting, device => $device });
+	# a construct change is a person change: keep the people table beside it
+	&people_link_sync() if (($setting eq 'pos' || $setting eq 'mab') && defined $app && length $app);
 	$c->render(json => $s);
 };
 

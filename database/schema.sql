@@ -168,7 +168,8 @@ CREATE TABLE IF NOT EXISTS people (
 	status VARCHAR(25),
 	created VARCHAR(255),
 	ost VARCHAR(25),
-	server_time VARCHAR(255)
+	server_time VARCHAR(255),
+	app VARCHAR(255)
 );
 CREATE TABLE IF NOT EXISTS device_requests (
 	uuid VARCHAR(255) unique,

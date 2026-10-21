@@ -273,7 +273,7 @@ our %topic = (
 	},
 	'people' => {
 		title => 'People', category => 'apps', app => 'people',
-		templates => [ 'templates/apps/people.html.ep', 'public/js/manager/people.js' ],
+		templates => [ 'templates/apps/people.html.ep', 'templates/apps/people_person.html.ep', 'public/js/manager/people.js' ],
 		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Save card here', 'Show QR', 'Write to NFC tag', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh' ],
 		verified => '2026-10-20',
 		summary => 'The house crest, and the people the house knows.',
@@ -285,10 +285,15 @@ our %topic = (
 			'Save card here writes the card into Downloads on this machine, which is the reliable path in the desktop app. Write to NFC tag writes the compact code onto the tag the phone is touching; tapping a crest tag anywhere in the app imports that house and the status appears under the crest.',
 			'Open a crest in Other houses (or tap its NFC tag) to see the drawing, name and fingerprint, then use Homepage, Store or Message. Linking a crest to one of the house\'s contacts puts that crest beside the person in Chat and Mail. The address buttons come from the card the house gave you.',
 			'Verify a photo compares a fresh photograph with the stored reference and reports a distance; the person confirms. A photocopy still looks like the drawing - the signed record, not the paper, is what proves the house.',
-			'The list below the crest is the people the house knows. For now they are added and assigned under Security, in the Devices view; this window is where crests for other houses and the vouches between them will be kept.'
+			'The window is tabbed: Me is the house crest and its card; People is every person the house knows; then a tab for each social construct - Communities, Clubs, Teams, Projects and Accounts. The strip scrolls sideways, and each tab counts what it holds.',
+			'A person is a person construct in Relational. The moment one exists, its People row is made for it, and the row goes away when the construct is deleted; changing a construct from person to idea only hides it, so a mistaken change does not lose the identity behind it. A person\'s row shows their crest (when one is linked), the app name they are known by, and chips for the teams, clubs and communities they belong to. A chip opens that construct\'s tab on their row.',
+			'Clicking a person opens their card. It looks like the house card but carries only what belongs to them: their crest and fingerprint when one is linked, their constructs, Homepage, Store, Message, I have met this crest, and a control to link a known crest to them. Their crest is not edited here; the drawing belongs to their house, and linking only says which house this person is.',
+			'Each construct tab lists the constructs of that kind and their members. A row opens to show who belongs to it. Relational is where the structure itself is made and changed; People reads it.'
 		],
 		steps => [
-			'Open People from the start menu.',
+			'Open People from the start menu. Me holds the house crest; People lists the people, and the construct tabs list the teams, clubs and communities they belong to.',
+			'To make a person, add them in Relational; the People row follows automatically.',
+			'Click a person to open their card and see their crest, their constructs and the ways to reach them.',,
 			'Place the drawing flat on the scanner, or choose Upload a photo.',
 			'Press Scan my crest; the flatbed reads one page.',
 			'Type the house name and press Save name.',
@@ -297,7 +302,7 @@ our %topic = (
 			'Press Save card here to keep a copy in Downloads; in the desktop app that is the copy that actually lands somewhere.',
 			'Press Write to NFC tag and hold an NTAG215 to the phone; tapping that tag later imports the house.',
 			'Press Show QR to show or copy the compact code.',
-			'When they give you their card, press Import a crest card, choose the file, then press I have met this crest.',
+			'When they give you their card, press Import a crest card, choose the file, then press I have met this crest.',,
 			'Tap a crest in Other houses to open it; Homepage and Store open its public pages, and Message opens the linked contact.',
 			'Use the Link control in that panel to put the crest beside a person in Chat and Mail.',
 			'After the paper ages, scan it again; the new reference is signed with the same key.',
@@ -381,17 +386,20 @@ our %topic = (
 		related => [ 'measures', 'relational', 'navigation' ]
 	},
 	'relational' => {
-		title => 'Contacts', category => 'apps', app => 'relational',
-		summary => 'People, and the relationships between them.',
+		title => 'Relational', category => 'apps', app => 'relational',
+		summary => 'The social constructs, and the relationships between them.',
 		body => [
-			'Contacts is the relational app: it stores people and the measured, named relationships between them — friend, family, colleague — with a measures panel for each connection.'
+			'Relational is where the house\'s social structure is made: people, teams, clubs, communities, projects and accounts. A construct is a named row with a kind (its pos, or its mab when it belongs to a second kind), and the rows are linked by dragging one onto another - a person onto a team, a team onto a club, a club onto a community.',
+			'A person construct is also a person in People: the window adds the People row for it and keeps their team, club and community chips up to date. Deleting the construct removes the person; changing its kind away from person only hides it, so an accidental change can be undone.'
 		],
 		steps => [
-			'Open Contacts and add a person.',
+			'Open Relational and add a person.',
 			'Record the people they connect to, and what the relationship is.',
-			'Use the measures panel to track how a connection is going over time.'
+			'Drag a person onto a team, club or community to make them a member.',
+			'Use the measures panel to track how a connection is going over time.',
+			'Open People to see the same people with their crests and memberships.'
 		],
-		related => [ 'mailbox', 'travel' ]
+		related => [ 'people', 'mailbox', 'travel' ]
 	},
 	'cards' => {
 		title => 'Cards', category => 'apps', app => 'cards',
@@ -1136,7 +1144,7 @@ our %topic = (
 			'JawnOS is built to run on more than one machine — a laptop, a phone, a tablet, a server — and to keep them in step without a central authority. Code, app builds and data all move the same way: whoever has the newest is the authority.',
 			'Machines reach each other across whatever network they are on, including from behind a router, and every machine can be logged into from another via a ticket.',
 			'Two machines on the same network find each other without waiting for the tunnel. Every machine broadcasts a small signed presence notice on its LAN every few seconds and, when it joins a network, sweeps the subnet by unicast too (some phones drop broadcast); a machine that hears a known peer updates that peer\'s row with the LAN address it is on now, replies once by unicast, and starts the sync at once, so a laptop and phone that meet on the house wifi, a friend\'s wifi or a hotspot resume the mesh within seconds. The notice is signed with the machine\'s peer key and only refreshes a peer already in the mesh, so it cannot introduce a stranger. The phone and tablet use this path because Termux has no mDNS responder; the avahi advertisement still serves the embedded devices. The Dev panel follows the same notices: this machine\'s network card, a peer\'s LAN address and the build shown beside its name refresh in place, without pressing Scan.',
-			'One machine can also tell another what to do: name it and say the task — "on the table, play Friends" — and the command is read by that machine\'s own guide there, so it runs on that machine without the words leaving the mesh. The Assistant\'s remote_control panel has a box for the same thing, and its Go and Manager buttons open the named machine\'s own Manager in a window; Go asks for the same fingerprint or another device as the Dev panel\'s Go, and the Dev panel\'s button does the same. A single click on the panel\'s dock icon opens it; drag the bar across its top to move it, and it stops at the clothesline. The machine list names each peer once, with Me first.',
+			'One machine can also tell another what to do: name it and say the task — "on the table, play Friends" — and the command is read by that machine\'s own guide there, so it runs on that machine without the words leaving the mesh. The Assistant\'s remote_control panel has a box for the same thing, and its Go button opens the named machine\'s own Manager in a window, asking for the same fingerprint or another device as the Dev panel\'s Go (which does the same). A single click on the panel\'s dock icon opens it; drag the bar across its top to move it, and it stops at the clothesline. The machine list names each peer once, with Me first.',
 			'The remote_control panel also carries a VPN button. Pick a machine and press it to route this device\'s web traffic through that machine\'s exit node, so websites see this device at that machine\'s address; press it again to come back. It is offered only for a machine that advertises an exit node (the house server is the usual one), and the local network stays direct, so the house\'s own addresses still answer. If the tailnet is on and external sites stop resolving while the house still answers, the fault is the tailnet\'s DNS proxy, not the tunnel: Headscale must carry upstream nameservers (1.1.1.1 and 8.8.8.8 are set here), otherwise every external lookup waits on a proxy with nowhere to forward and reads as “no internet”.',
 			'A machine does not need the tailnet to open its own manager. The Dev panel discovers the gateway and lists it as a Router card even after the machine leaves that network, with the last time it answered. The router\'s DNS gives each machine its own name at its own address (and local.<house domain> at 127.0.0.1); on a laptop the hosts file can do the same. So the view is opened at the machine\'s own domain, resolves to the loopback or to the machine\'s own LAN address, keeps the wildcard certificate, and works with the VPN off. The tailnet is then only for reaching other machines.',
 			'The Android app can go one step further: set "loopback_manager": true in config.json and it opens the manager at 127.0.0.1 directly, so it needs no DNS, router or tailnet at all and answers the moment the device joins a new network. The app carries its paired-device id across to the loopback origin, and the ticket is addressed there too; the first launch after the switch opens the domain form once to move that id, then stays on loopback.',

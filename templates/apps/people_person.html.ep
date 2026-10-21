@@ -1,0 +1,64 @@
+<% no warnings 'uninitialized'; %>
+<div class="people_head">
+	<div class="people_house">
+		<div class="people_crest_frame">
+			<% if ($image) { %>
+				<img src="<%= $image %>" alt="<%= $crest->{'name'} %>">
+			<% } else { %>
+				<div class="people_crest_empty"><%= &subs::ui('No crest linked') %></div>
+			<% } %>
+		</div>
+		<div class="people_meta">
+			<h2><%= $person->{'name'} %></h2>
+			<div class="people_row_sub"><%= &subs::format_name($app) %> &middot; <span class="people_fp"><%= $app %></span></div>
+			<% if ($crest->{'uuid'} || $crest->{'fingerprint'}) { %>
+				<div class="people_fp"><%= $crest->{'fingerprint'} %></div>
+				<div class="people_note">
+					<% if ($met) { %>
+						<%= &subs::ui('Met in person') %>
+						<% if ($met_at) { %> <span class="time" timestamp="<%= $met_at %>"></span><% } %>
+					<% } elsif ($introduced_by) { %>
+						<%= &subs::ui('Introduced by') %> <%= $introduced_by %>
+					<% } else { %>
+						<%= &subs::ui('Imported, not met') %>
+					<% } %>
+				</div>
+			<% } else { %>
+				<div class="people_note"><%= &subs::ui('No crest linked') %></div>
+			<% } %>
+			<% if (@{$chips}) { %>
+				<div class="people_chips">
+					<% foreach my $chip ( @{$chips} ) { %>
+						<span class="people_chip" construct-tab="<%= $chip->{'construct'} %>" construct-app="<%= $chip->{'app'} %>"><%= $chip->{'label'} %>: <%= $chip->{'name'} %></span>
+					<% } %>
+				</div>
+			<% } %>
+		</div>
+	</div>
+	<button class="people_detail_close people_person_close" hint="Close">&times;</button>
+</div>
+
+<div class="people_actions">
+	<% if ($home) { %>
+		<button class="people_person_url" href="<%= $home %>"><%= &subs::ui('Homepage') %></button>
+	<% } %>
+	<% if ($store) { %>
+		<button class="people_person_url" href="<%= $store %>"><%= &subs::ui('Store') %></button>
+	<% } %>
+	<% if ($phone || $email) { %>
+		<button class="people_person_message" phone="<%= $phone %>" email="<%= $email %>"><%= &subs::ui('Message') %></button>
+	<% } %>
+	<% if ($crest->{'uuid'} && !$met) { %>
+		<button class="people_peer_vouch" uuid="<%= $crest_uuid %>" hint="I have met this crest"><%= &subs::ui('I have met this crest') %></button>
+	<% } %>
+	<% if (@{$peer_choices}) { %>
+		<select class="people_crest_select people_person_crest">
+			<option value=""><%= &subs::ui('Link a crest') %></option>
+			<% foreach my $choice ( @{$peer_choices} ) { %>
+				<option value="<%= $choice->{'uuid'} %>" <% if ($choice->{'uuid'} eq $crest_uuid) { %>selected<% } %>><%= $choice->{'name'} %></option>
+			<% } %>
+		</select>
+		<button class="people_person_link_crest" app="<%= $app %>"><%= &subs::ui('Link') %></button>
+	<% } %>
+	<button class="people_person_relational"><%= &subs::ui('Open Relational') %></button>
+</div>

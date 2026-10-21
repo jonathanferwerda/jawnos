@@ -2,6 +2,15 @@
 <% my $signed = ($crest->{'uuid'} && &subs::crest_verify_record($crest)) ? 1 : 0; %>
 <style>
 	#people_app { width:100%; height:100%; box-sizing:border-box; padding:14px; overflow:auto; }
+	.people_tabs { display:flex; gap:6px; overflow-x:auto; white-space:nowrap; padding-bottom:8px;
+		margin-bottom:10px; border-bottom:1px solid var(--line); scrollbar-width:thin; }
+	.people_tab { flex:0 0 auto; padding:6px 13px; border:1px solid var(--line); border-radius:999px;
+		background:var(--panel); cursor:pointer; font-size:13px; color:inherit; }
+	.people_tab:hover { background:var(--line); }
+	.people_tab.active { background:var(--line); font-weight:bold; }
+	.people_tab_count { opacity:.6; font-size:11px; }
+	.people_panel { display:none; }
+	.people_panel.active { display:block; }
 	.people_head { display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap; }
 	.people_house { display:flex; gap:14px; align-items:center; flex:1 1 420px; min-width:280px; }
 	.people_crest_frame { width:160px; height:160px; flex:0 0 160px; border:1px solid var(--line); border-radius:10px;
@@ -19,6 +28,7 @@
 	.people_actions button:hover, .people_actions a.people_button:hover, .people_name_row button:hover { background:var(--line); }
 	.people_peer_thumb { width:56px; height:56px; flex:0 0 56px; object-fit:contain; border:1px solid var(--line);
 		border-radius:8px; background:var(--panel); }
+	.people_peer_thumb_empty { display:block; }
 	.people_peer_vouch { padding:6px 10px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); cursor:pointer; font-size:12px; }
 	.people_qr_box { text-align:center; margin:8px 0; }
@@ -41,6 +51,10 @@
 	.people_detail .people_actions { clear:both; }
 	.people_contact_link { padding:6px 8px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); font-size:13px; max-width:260px; }
+	.people_person_card { display:none; position:relative; border:1px solid var(--line); border-radius:10px;
+		padding:12px; margin:0 0 12px; background:var(--panel); overflow:auto; }
+	.people_person_card .people_crest_frame { width:120px; height:120px; flex:0 0 120px; }
+	.people_person_card .people_detail_close { position:static; float:right; }
 	.people_crest_row { cursor:pointer; }
 	.people_name_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
 	.people_name_row input { min-width:180px; padding:6px 8px; border:1px solid var(--line);
@@ -48,132 +62,212 @@
 	#people_status, #people_verify_result { min-height:20px; font-size:13px; color:var(--muted,#8e8e8e); margin:6px 0; }
 	.people_section { border-top:1px solid var(--line); margin-top:16px; padding-top:12px; }
 	.people_section h3 { margin:0 0 8px; font-size:16px; }
-	.people_list { max-height:300px; overflow:auto; }
+	.people_list { max-height:60vh; overflow:auto; }
 	.people_row { display:flex; align-items:center; gap:10px; padding:8px 6px; border-bottom:1px solid var(--line); }
-	.people_row_name { flex:1 1 auto; font-size:14px; }
+	.people_row_name { flex:1 1 auto; font-size:14px; min-width:0; }
 	.people_row_sub { font-size:12px; color:var(--muted,#8e8e8e); }
 	.people_empty { color:var(--muted,#8e8e8e); font-size:13px; padding:10px 0; }
+	.people_person_row { cursor:pointer; }
+	.people_person_row:hover, .people_construct_row:hover, .people_member_row:hover { background:var(--line); }
+	.people_chips { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
+	.people_chip { display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:999px;
+		font-size:11px; cursor:pointer; background:var(--panel); }
+	.people_chip:hover { background:var(--line); }
+	.people_construct_row { cursor:pointer; }
+	.people_chevron { font-size:12px; color:var(--muted,#8e8e8e); padding:0 4px; }
+	.people_construct_row.open .people_chevron { transform:rotate(90deg); }
+	.people_member_list { display:none; margin:0 0 6px 28px; border-left:1px solid var(--line); padding-left:8px; }
+	.people_construct_row.open + .people_member_list { display:block; }
+	.people_member_row { cursor:pointer; padding:5px 4px; }
+	.people_crest_select { padding:6px 8px; border:1px solid var(--line); border-radius:8px;
+		background:var(--panel); font-size:13px; max-width:240px; }
 </style>
 <div id="people_app" class="people_app">
-	<div class="people_head">
-		<div class="people_house">
-			<div class="people_crest_frame">
-				<% if ($crest->{'uuid'} && $has_image) { %>
-					<img id="people_crest_image" src="/manager/people/crest_image?kind=image&stamp=<%= &subs::rightNow() %>" alt="<%= &subs::lang('people') %>">
-				<% } elsif ($crest->{'uuid'}) { %>
-					<div class="people_crest_empty"><%= &subs::ui('The drawing is on another machine. Capture it here to copy it.') %></div>
-				<% } else { %>
-					<div class="people_crest_empty"><%= &subs::ui('No crest yet') %></div>
-				<% } %>
-			</div>
-			<div class="people_meta">
-				<h2><%= $crest->{'name'} || &subs::crest_house_name_read() %></h2>
-				<% if ($crest->{'fingerprint'}) { %>
-					<div class="people_fp"><%= $crest->{'fingerprint'} %></div>
-				<% } %>
-				<div class="people_note">
-					<% if ($crest->{'uuid'}) { %>
-						<%= &subs::ui($signed ? 'Signed by this house' : 'Not signed yet') %>
-						<% if ($crest->{'version'}) { %> &middot; v<%= $crest->{'version'} %><% } %>
-						<% if ($introduced_by) { %> &middot; <%= &subs::ui('Introduced by') %> <%= $introduced_by %><% } %>
-					<% } else { %>
-						<%= &subs::ui('Scan the drawing you want the house to be known by.') %>
-					<% } %>
-				</div>
-			</div>
-		</div>
-		<div class="people_actions">
-			<% if ($scanner) { %>
-				<button id="people_crest_scan" hint="Scan my crest"><%= &subs::ui('Scan my crest') %></button>
-			<% } %>
-			<% if ($camera) { %>
-				<button id="people_crest_capture" hint="Take picture"><%= &subs::ui('Take picture') %></button>
-			<% } %>
-			<button id="people_crest_upload_button" hint="Upload a photo"><%= &subs::ui('Upload a photo') %></button>
-			<input type="file" id="people_crest_file" accept="image/*" style="display:none">
-			<% if ($crest->{'uuid'}) { %>
-				<button id="people_crest_card" hint="Download card"><%= &subs::ui('Download card') %></button>
-				<button id="people_crest_card_save" hint="Save card here"><%= &subs::ui('Save card here') %></button>
-				<button id="people_crest_qr_button" hint="Show QR"><%= &subs::ui('Show QR') %></button>
-				<% if ($nfc) { %>
-					<button id="people_crest_nfc_write" hint="Write to NFC tag"><%= &subs::ui('Write to NFC tag') %></button>
-				<% } %>
-			<% } %>
-			<button id="people_refresh" hint="Refresh"><%= &subs::ui('Refresh') %></button>
-		</div>
+	<div class="people_tabs">
+		<button class="people_tab active" data-tab="me"><%= &subs::lang('people.me') %></button>
+		<button class="people_tab" data-tab="people"><%= &subs::lang('people') %> <span class="people_tab_count"><%= scalar @{$people} %></span></button>
+		<% foreach my $construct ( @{$constructs} ) { %>
+			<button class="people_tab" data-tab="<%= $construct->{'name'} %>"><%= &subs::lang('construct.' . $construct->{'name'}) %> <span class="people_tab_count"><%= scalar @{$construct->{'rows'}} %></span></button>
+		<% } %>
 	</div>
 
 	<div id="people_status"></div>
 	<span class="nfc_read_status people_nfc_status"></span>
-	<div id="people_crest_detail" class="people_detail"></div>
-	<div id="people_crest_qr" class="people_qr_box"></div>
 
-	<div class="people_name_row">
-		<label for="people_house_name"><%= &subs::ui('House name') %></label>
-		<input id="people_house_name" value="<%= $crest->{'name'} || &subs::crest_house_name_read() %>">
-		<button id="people_house_name_save" hint="Save name"><%= &subs::ui('Save name') %></button>
-	</div>
-
-	<% if ($crest->{'uuid'}) { %>
-		<div class="people_actions">
-			<button id="people_crest_verify_button" hint="Verify a photo"><%= &subs::ui('Verify a photo') %></button>
-			<input type="file" id="people_crest_verify_file" accept="image/*" style="display:none">
-		</div>
-		<div id="people_verify_result"></div>
-	<% } %>
-
-	<div class="people_section">
-		<h3><%= &subs::ui('Other houses') %></h3>
-		<div class="people_actions">
-			<button id="people_crest_import_button" hint="Import a crest card"><%= &subs::ui('Import a crest card') %></button>
-			<input type="file" id="people_crest_import_file" accept=".json,application/json" style="display:none">
-		</div>
-		<div class="people_code_row">
-			<textarea id="people_crest_code" rows="2" placeholder="CREST1Z:..."></textarea>
-			<button id="people_crest_code_import" hint="Import a crest code"><%= &subs::ui('Import a crest code') %></button>
-		</div>
-		<% if (@{$peers}) { %>
-			<div class="people_list">
-				<% foreach my $peer ( @{$peers} ) { %>
-					<div class="people_row peer_crest people_crest_row" uuid="<%= $peer->{'uuid'} %>">
-						<% if ($peer->{'has_image'}) { %>
-							<img class="people_peer_thumb" src="<%= $peer->{'image_src'} %>" alt="<%= $peer->{'name'} %>">
-						<% } %>
-						<span class="people_row_name"><%= $peer->{'name'} %><br><span class="people_fp"><%= $peer->{'fingerprint'} %></span></span>
-						<span class="people_row_sub">
-							<% if ($peer->{'met'}) { %>
-								<%= &subs::ui('Met in person') %>
-								<% if ($peer->{'met_at'}) { %> <span class="time" timestamp="<%= $peer->{'met_at'} %>"></span><% } %>
-							<% } elsif ($peer->{'introduced_by'}) { %>
-								<%= &subs::ui('Introduced by') %> <%= $peer->{'introduced_by'} %>
-							<% } else { %>
-								<%= &subs::ui('Imported, not met') %>
-							<% } %>
-						</span>
-						<% unless ($peer->{'met'}) { %>
-							<button class="people_peer_vouch" uuid="<%= $peer->{'uuid'} %>" hint="I have met this crest"><%= &subs::ui('I have met this crest') %></button>
+	<div class="people_panel active" data-panel="me">
+		<div class="people_head">
+			<div class="people_house">
+				<div class="people_crest_frame">
+					<% if ($crest->{'uuid'} && $has_image) { %>
+						<img id="people_crest_image" src="/manager/people/crest_image?kind=image&stamp=<%= &subs::rightNow() %>" alt="<%= &subs::lang('people') %>">
+					<% } elsif ($crest->{'uuid'}) { %>
+						<div class="people_crest_empty"><%= &subs::ui('The drawing is on another machine. Capture it here to copy it.') %></div>
+					<% } else { %>
+						<div class="people_crest_empty"><%= &subs::ui('No crest yet') %></div>
+					<% } %>
+				</div>
+				<div class="people_meta">
+					<h2><%= $crest->{'name'} || &subs::crest_house_name_read() %></h2>
+					<% if ($crest->{'fingerprint'}) { %>
+						<div class="people_fp"><%= $crest->{'fingerprint'} %></div>
+					<% } %>
+					<div class="people_note">
+						<% if ($crest->{'uuid'}) { %>
+							<%= &subs::ui($signed ? 'Signed by this house' : 'Not signed yet') %>
+							<% if ($crest->{'version'}) { %> &middot; v<%= $crest->{'version'} %><% } %>
+							<% if ($introduced_by) { %> &middot; <%= &subs::ui('Introduced by') %> <%= $introduced_by %><% } %>
+						<% } else { %>
+							<%= &subs::ui('Scan the drawing you want the house to be known by.') %>
 						<% } %>
 					</div>
-				<% } %>
+				</div>
 			</div>
-		<% } else { %>
-			<div class="people_empty"><%= &subs::ui('No other houses yet. Import the card they give you.') %></div>
+			<div class="people_actions">
+				<% if ($scanner) { %>
+					<button id="people_crest_scan" hint="Scan my crest"><%= &subs::ui('Scan my crest') %></button>
+				<% } %>
+				<% if ($camera) { %>
+					<button id="people_crest_capture" hint="Take picture"><%= &subs::ui('Take picture') %></button>
+				<% } %>
+				<button id="people_crest_upload_button" hint="Upload a photo"><%= &subs::ui('Upload a photo') %></button>
+				<input type="file" id="people_crest_file" accept="image/*" style="display:none">
+				<% if ($crest->{'uuid'}) { %>
+					<button id="people_crest_card" hint="Download card"><%= &subs::ui('Download card') %></button>
+					<button id="people_crest_card_save" hint="Save card here"><%= &subs::ui('Save card here') %></button>
+					<button id="people_crest_qr_button" hint="Show QR"><%= &subs::ui('Show QR') %></button>
+					<% if ($nfc) { %>
+						<button id="people_crest_nfc_write" hint="Write to NFC tag"><%= &subs::ui('Write to NFC tag') %></button>
+					<% } %>
+				<% } %>
+				<button id="people_refresh" hint="Refresh"><%= &subs::ui('Refresh') %></button>
+			</div>
+		</div>
+
+		<div id="people_crest_detail" class="people_detail"></div>
+		<div id="people_crest_qr" class="people_qr_box"></div>
+
+		<div class="people_name_row">
+			<label for="people_house_name"><%= &subs::ui('House name') %></label>
+			<input id="people_house_name" value="<%= $crest->{'name'} || &subs::crest_house_name_read() %>">
+			<button id="people_house_name_save" hint="Save name"><%= &subs::ui('Save name') %></button>
+		</div>
+
+		<% if ($crest->{'uuid'}) { %>
+			<div class="people_actions">
+				<button id="people_crest_verify_button" hint="Verify a photo"><%= &subs::ui('Verify a photo') %></button>
+				<input type="file" id="people_crest_verify_file" accept="image/*" style="display:none">
+			</div>
+			<div id="people_verify_result"></div>
 		<% } %>
+
+		<div class="people_section">
+			<h3><%= &subs::ui('Other houses') %></h3>
+			<div class="people_actions">
+				<button id="people_crest_import_button" hint="Import a crest card"><%= &subs::ui('Import a crest card') %></button>
+				<input type="file" id="people_crest_import_file" accept=".json,application/json" style="display:none">
+			</div>
+			<div class="people_code_row">
+				<textarea id="people_crest_code" rows="2" placeholder="CREST1Z:..."></textarea>
+				<button id="people_crest_code_import" hint="Import a crest code"><%= &subs::ui('Import a crest code') %></button>
+			</div>
+			<% if (@{$peers}) { %>
+				<div class="people_list">
+					<% foreach my $peer ( @{$peers} ) { %>
+						<div class="people_row peer_crest people_crest_row" uuid="<%= $peer->{'uuid'} %>">
+							<% if ($peer->{'has_image'}) { %>
+								<img class="people_peer_thumb" src="<%= $peer->{'image_src'} %>" alt="<%= $peer->{'name'} %>">
+							<% } else { %>
+								<span class="people_peer_thumb people_peer_thumb_empty"></span>
+							<% } %>
+							<span class="people_row_name"><%= $peer->{'name'} %><br><span class="people_fp"><%= $peer->{'fingerprint'} %></span></span>
+							<span class="people_row_sub">
+								<% if ($peer->{'met'}) { %>
+									<%= &subs::ui('Met in person') %>
+									<% if ($peer->{'met_at'}) { %> <span class="time" timestamp="<%= $peer->{'met_at'} %>"></span><% } %>
+								<% } elsif ($peer->{'introduced_by'}) { %>
+									<%= &subs::ui('Introduced by') %> <%= $peer->{'introduced_by'} %>
+								<% } else { %>
+									<%= &subs::ui('Imported, not met') %>
+								<% } %>
+							</span>
+							<% unless ($peer->{'met'}) { %>
+								<button class="people_peer_vouch" uuid="<%= $peer->{'uuid'} %>" hint="I have met this crest"><%= &subs::ui('I have met this crest') %></button>
+							<% } %>
+						</div>
+					<% } %>
+				</div>
+			<% } else { %>
+				<div class="people_empty"><%= &subs::ui('No other houses yet. Import the card they give you.') %></div>
+			<% } %>
+		</div>
 	</div>
 
-	<div class="people_section">
-		<h3><%= &subs::lang('people') %></h3>
+	<div class="people_panel" data-panel="people">
+		<div id="people_person_card" class="people_person_card"></div>
 		<% if (@{$people}) { %>
 			<div class="people_list">
 				<% foreach my $person ( @{$people} ) { %>
-					<div class="people_row" uuid="<%= $person->{'uuid'} %>">
-						<span class="people_row_name"><%= $person->{'name'} %></span>
-						<span class="people_row_sub"><%= &subs::format_name($person->{'privilege'} || '') %></span>
+					<div class="people_row people_person_row" uuid="<%= $person->{'uuid'} %>" app="<%= $person->{'app'} %>">
+						<% if ($person->{'image'}) { %>
+							<img class="people_peer_thumb" src="<%= $person->{'image'} %>" alt="<%= $person->{'name'} %>">
+						<% } else { %>
+							<span class="people_peer_thumb people_peer_thumb_empty"></span>
+						<% } %>
+						<span class="people_row_name">
+							<%= $person->{'name'} %>
+							<div class="people_row_sub"><%= $person->{'formatted_name'} %> &middot; <span class="people_fp"><%= $person->{'app'} %></span></div>
+							<% if (@{$person->{'chips'}}) { %>
+								<div class="people_chips">
+									<% foreach my $chip ( @{$person->{'chips'}} ) { %>
+										<span class="people_chip" construct-tab="<%= $chip->{'construct'} %>" construct-app="<%= $chip->{'app'} %>"><%= $chip->{'label'} %>: <%= $chip->{'name'} %></span>
+									<% } %>
+								</div>
+							<% } %>
+						</span>
 					</div>
 				<% } %>
 			</div>
 		<% } else { %>
-			<div class="people_empty"><%= &subs::ui('No people yet. Add them in Security under Devices for now.') %></div>
+			<div class="people_empty"><%= &subs::ui('No people yet. Add a person in Relational.') %></div>
 		<% } %>
 	</div>
+
+	<% foreach my $construct ( @{$constructs} ) { %>
+		<div class="people_panel" data-panel="<%= $construct->{'name'} %>">
+			<% if (@{$construct->{'rows'}}) { %>
+				<div class="people_list">
+					<% foreach my $row ( @{$construct->{'rows'}} ) { %>
+						<div class="people_row people_construct_row" app="<%= $row->{'app'} %>">
+							<% if ($row->{'image'}) { %>
+								<img class="people_peer_thumb" src="<%= $row->{'image'} %>" alt="<%= $row->{'name'} %>">
+							<% } else { %>
+								<span class="people_peer_thumb people_peer_thumb_empty"></span>
+							<% } %>
+							<span class="people_row_name"><%= $row->{'name'} %><br><span class="people_fp"><%= $row->{'app'} %></span></span>
+							<span class="people_row_sub"><%= $row->{'member_count'} %></span>
+							<span class="people_chevron">&#9656;</span>
+						</div>
+						<div class="people_member_list">
+							<% if (@{$row->{'members'}}) { %>
+								<% foreach my $member ( @{$row->{'members'}} ) { %>
+									<div class="people_row people_member_row" uuid="<%= $member->{'uuid'} %>" app="<%= $member->{'app'} %>">
+										<% if ($member->{'image'}) { %>
+											<img class="people_peer_thumb" src="<%= $member->{'image'} %>" alt="<%= $member->{'name'} %>">
+										<% } else { %>
+											<span class="people_peer_thumb people_peer_thumb_empty"></span>
+										<% } %>
+										<span class="people_row_name"><%= $member->{'name'} %></span>
+									</div>
+								<% } %>
+							<% } else { %>
+								<div class="people_empty"><%= &subs::ui('No members yet.') %></div>
+							<% } %>
+						</div>
+					<% } %>
+				</div>
+			<% } else { %>
+				<div class="people_empty"><%= &subs::ui('Nothing here yet. Add one in Relational.') %></div>
+			<% } %>
+		</div>
+	<% } %>
 </div>

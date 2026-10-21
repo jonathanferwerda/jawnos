@@ -18777,6 +18777,9 @@ sub person_revoke {
 sub people_list {
 	my $q = eval { &db_select('people', undef, { status => 'active' }) };
 	my $rows = $q ? $q->hashes : [];
+	# a person construct is a social person, not a house account: it has its own
+	# window and must not appear in Security's device-assignment lists
+	@{$rows} = grep { !(defined $_->{'app'} && length $_->{'app'}) } @{$rows};
 	return [ sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @{$rows} ];
 }
 
