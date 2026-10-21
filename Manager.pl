@@ -38570,6 +38570,11 @@ post '/manager/setting_setter' => sub($c) {
 	# value against this device class instead
 	my $device = $c->param('device');
 	my $s = &subs::setting_setter({ app => $app, setting => $setting, value => $value, timestamp => $timestamp, subsetting => $subsetting, device => $device });
+	# Turning tracking on writes the first history point at once, so the Measures
+	# app has something to chart without waiting for the six-hour tick.
+	if ($app eq 'crypto' && $setting eq 'tracking' && defined $value && $value eq 'on') {
+		eval { &subs::crypto_tracking_tick({ force => 1, create => 1 }) };
+	}
 	# a construct change is a person change: keep the people table beside it
 	&people_link_sync() if (($setting eq 'pos' || $setting eq 'mab') && defined $app && length $app);
 	$c->render(json => $s);

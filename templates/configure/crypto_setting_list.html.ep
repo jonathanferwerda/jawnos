@@ -15,8 +15,10 @@
 	$valuation = 'market' if $valuation eq 'market';
 	$valuation = 'cost' unless $valuation eq 'market';
 	my $wallets = &subs::crypto_wallets_report();
-	my $age = &subs::crypto_rate_age();
-	my $age_text = defined $age ? &subs::time_abbrev_translator($age . 'ms') . ' ago' : 'never';
+	my $tracking = &subs::crypto_tracking_on();
+	my $tracking_app = &subs::crypto_tracking_app();
+	my $tracking_name = &subs::format_name($tracking_app);
+	my $tracked_at = &subs::setting_grabber({ app => 'crypto', setting => 'tracked_at', device => 'all' });
 	my $money = sub {
 		my ($v) = @_;
 		return '—' unless defined $v;
@@ -48,6 +50,11 @@
 			</select>
 			<span class="cfg-note" style="margin:0;">Cost is the safe default for statements. Market is for reading a wallet at today's price; it moves.</span>
 		</div>
+		<div class="cfg-row">
+			<label>Currency tracking</label>
+			<input type="checkbox" class="crypto_setting" app="crypto" setting="tracking" value="on" <% if ($tracking) { %>checked<% } %>>
+			<span class="cfg-note" style="margin:0;">Record a rate history point every six hours in <b><%= $tracking_name %></b>, in place of the appointment that used to update measures. The Measures app charts it. Stop that old appointment once this is on.<% if ($tracked_at) { %> Last point <span class="time" mode="fixed" timestamp="<%= $tracked_at %>"></span>.<% } %></span>
+		</div>
 	</div>
 
 	<h3>Assets</h3>
@@ -64,7 +71,7 @@
 	<h3>Rates</h3>
 	<p class="cfg-note">One public, keyless call gives every fiat code and every coin. The house's reporting currency is <b><%= $base %></b>; the loop refreshes every half hour. The request goes to Coinbase, which sees this machine's address; nothing about your wallets is sent.</p>
 	<div class="cfg-card">
-		<div class="cfg-scroll">
+		<div class="cfg-scroll" style="max-height:320px;overflow:auto;">
 			<table>
 				<thead><tr><th>Code</th><th>Name</th><th><%= $base %> per 1</th></tr></thead>
 				<tbody>
@@ -75,11 +82,12 @@
 							<td><%= $money->($rate_of{ $a->{'code'} }) %></td>
 						</tr>
 					<% } %>
-					<% foreach my $code ( sort grep { $_ ne $base } qw/CAD USD EUR GBP JPY AUD CNY INR MXN BRL CHF SEK NOK/ ) { %>
-						<% my $v = $rates->{'rates'}->{$code}; next unless defined $v && defined $to_base && $to_base > 0; %>
+					<% foreach my $f ( @{ &subs::crypto_fiat_table() } ) { %>
+						<% next if $f->{'code'} eq $base; %>
+						<% my $v = $rates->{'rates'}->{ $f->{'code'} }; next unless defined $v && defined $to_base && $to_base > 0; %>
 						<tr>
-							<td><b><%= $code %></b></td>
-							<td style="opacity:.7;">fiat</td>
+							<td><b><%= $f->{'code'} %></b></td>
+							<td><%= $f->{'name'} %></td>
 							<td><%= $money->($v / $to_base) %></td>
 						</tr>
 					<% } %>
@@ -87,7 +95,7 @@
 			</table>
 		</div>
 		<div class="cfg-actions">
-			<span class="cfg-note" style="margin:0;">Last read: <b><%= $age_text %></b><%= $rates->{'source'} ? ' · ' . $rates->{'source'} : '' %></span>
+			<span class="cfg-note" style="margin:0;">Last read: <b class="time" mode="fixed" timestamp="<%= $rates->{'at'} %>"><%= $rates->{'at'} ? do { my @t = localtime($rates->{'at'} / 1000); sprintf('%04d-%02d-%02d %02d:%02d', $t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1]) } : 'never' %></b><%= $rates->{'source'} ? ' · ' . $rates->{'source'} : '' %></span>
 			<button type="button" id="crypto_refresh">Refresh now</button>
 			<span id="crypto_refresh_status" class="cfg-note" style="margin:0;"></span>
 		</div>

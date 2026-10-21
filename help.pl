@@ -491,7 +491,8 @@ our %topic = (
 		body => [
 			'A wallet is an ordinary account whose Tender is crypto. It keeps a public address and the coin it holds, and it records transactions, transfers and statements like any other account. JawnOS never holds a key, cannot spend from a wallet, and refuses anything that looks like a seed phrase or a private key; if a page ever asks for one, it is not JawnOS.',
 			'Configure -> Plat -> Crypto owns the shared parts: which coins may be used, the cached exchange rates, and how a holding is valued. Cost is the money recorded when the coin arrived, which is the safe figure for statements. Market is the native holding at today\'s rate, which moves with the price. The wallet list shows both so the difference is visible.',
-			'Every conversion in the app now reads the same rate snapshot, including a measure typed as 5USD to CAD or 0.01BTC to CAD. One public, keyless call to Coinbase returns every fiat code and every coin; a half-hour loop refreshes it, and Refresh now asks at once. While no snapshot has been read, the older built-in constants still answer. An offline house keeps its last snapshot rather than losing its rates.',
+			'Every conversion in the app now reads the same rate snapshot, including a measure typed as 5USD to CAD or 0.01BTC to CAD. One public, keyless call to Coinbase returns every fiat code and every coin; the snapshot keeps the most-used fiat currencies (the top 50 the source answers) and the enabled coins. A half-hour loop refreshes it, and Refresh now asks at once. While no snapshot has been read, the older built-in constants still answer. An offline house keeps its last snapshot rather than losing its rates.',
+			'Currency tracking keeps a history without an appointment. Tick it and every six hours one measure appointment is written into the house\'s currency app - the Canadian Dollar app this house already used, so its charts carry on - with a value for every tracked fiat code. The Measures app charts those points. Stop the old app\'s own appointment once the tick is on, or both will write.',
 			'In a transaction, a wallet account is read in its own coin: type the native amount and the form shows what it is worth, while the ledger stores the house\'s reporting-currency value so every budget and statement still sums one currency. A transfer between two wallets must stay in the same coin on both sides; moving between a wallet and a bank is a sale and a purchase, not a transfer, and the app will say so rather than write a wrong figure.'
 		],
 		steps => [
@@ -499,7 +500,9 @@ our %topic = (
 			'Press Refresh now once; the rate table and the last-read time show what the house will use.',
 			'In Configure -> App, make the account, turn on Tender, set it to crypto, then fill in the coin, network, public address and a label.',
 			'Record a transaction from that account in the app: the amount is in the coin, and the line beside it shows the money value before you save.',
-			'Read the wallet list in Plat -> Crypto for the holding, its cost and its market value; choose which one the rest of the page treats as the value.'
+			'Read the wallet list in Plat -> Crypto for the holding, its cost and its market value; choose which one the rest of the page treats as the value.',
+			'Tick Currency tracking if you want rate history: it writes a point every six hours into the Canadian Dollar app (or whichever app already holds currency measures), and the Measures app charts it.',
+			'Stop the currency app\'s old updating appointment once tracking is on, so the history has one writer.'
 		],
 		related => [ 'budget', 'store', 'configure' ]
 	},

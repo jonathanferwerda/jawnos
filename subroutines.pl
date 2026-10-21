@@ -27658,10 +27658,83 @@ our @crypto_asset_list = (
 	{ code => 'SOL',  name => 'Solana',    decimals => 9,  symbol => '◎', network => 'solana',   coinbase => 'SOL'  },
 );
 
-# The fiat codes worth keeping from the snapshot. Coinbase returns three-letter
-# coin tickers (ADA, DOT, XRP) beside the fiat, so a bare three-capital-letter
-# test would file a coin as a currency; this list is the line.
-our @crypto_fiat_list = qw/CAD USD EUR GBP JPY AUD NZD CHF CNY HKD SGD INR KRW MXN BRL ZAR SEK NOK DKK PLN CZK HUF TRY ILS AED SAR RUB UAH THB IDR MYR PHP VND NGN EGP PKR BDT LKR/;
+# The most-used currencies, in the order a trader would rank them. Coinbase
+# returns three-letter coin tickers (ADA, DOT, XRP) beside the fiat, so this
+# table is the line: only these codes are kept from a snapshot. Each entry's
+# measure is the key the Measures app already stores history under - the first
+# five match the canadian_dollar app, so its existing charts carry on.
+our @crypto_fiat_table = (
+	{ code => 'USD', name => 'American Dollar',    measure => 'american_dollar' },
+	{ code => 'EUR', name => 'Euro',                measure => 'euro' },
+	{ code => 'JPY', name => 'Japanese Yen',        measure => 'japanese_yen' },
+	{ code => 'GBP', name => 'British Pound',       measure => 'gbp' },
+	{ code => 'CNY', name => 'Chinese Yuan',        measure => 'chinese_yuan' },
+	{ code => 'AUD', name => 'Australian Dollar',   measure => 'australian_dollar' },
+	{ code => 'CAD', name => 'Canadian Dollar',     measure => 'canadian_dollar' },
+	{ code => 'CHF', name => 'Swiss Franc',         measure => 'swiss_franc' },
+	{ code => 'HKD', name => 'Hong Kong Dollar',    measure => 'hong_kong_dollar' },
+	{ code => 'SGD', name => 'Singapore Dollar',    measure => 'singapore_dollar' },
+	{ code => 'NZD', name => 'New Zealand Dollar',  measure => 'new_zealand_dollar' },
+	{ code => 'SEK', name => 'Swedish Krona',       measure => 'swedish_krona' },
+	{ code => 'NOK', name => 'Norwegian Krone',     measure => 'norwegian_krone' },
+	{ code => 'DKK', name => 'Danish Krone',        measure => 'danish_krone' },
+	{ code => 'KRW', name => 'South Korean Won',    measure => 'south_korean_won' },
+	{ code => 'INR', name => 'Indian Rupee',        measure => 'indian_rupee' },
+	{ code => 'BRL', name => 'Brazilian Real',      measure => 'brazilian_real' },
+	{ code => 'MXN', name => 'Mexican Peso',        measure => 'mexican_peso' },
+	{ code => 'ZAR', name => 'South African Rand',  measure => 'south_african_rand' },
+	{ code => 'TRY', name => 'Turkish Lira',        measure => 'turkish_lira' },
+	{ code => 'RUB', name => 'Russian Ruble',       measure => 'russian_ruble' },
+	{ code => 'PLN', name => 'Polish Zloty',        measure => 'polish_zloty' },
+	{ code => 'CZK', name => 'Czech Koruna',        measure => 'czech_koruna' },
+	{ code => 'HUF', name => 'Hungarian Forint',    measure => 'hungarian_forint' },
+	{ code => 'ILS', name => 'Israeli Shekel',      measure => 'israeli_shekel' },
+	{ code => 'AED', name => 'UAE Dirham',          measure => 'uae_dirham' },
+	{ code => 'SAR', name => 'Saudi Riyal',         measure => 'saudi_riyal' },
+	{ code => 'THB', name => 'Thai Baht',           measure => 'thai_baht' },
+	{ code => 'IDR', name => 'Indonesian Rupiah',   measure => 'indonesian_rupiah' },
+	{ code => 'MYR', name => 'Malaysian Ringgit',   measure => 'malaysian_ringgit' },
+	{ code => 'PHP', name => 'Philippine Peso',     measure => 'philippine_peso' },
+	{ code => 'VND', name => 'Vietnamese Dong',     measure => 'vietnamese_dong' },
+	{ code => 'TWD', name => 'Taiwan Dollar',       measure => 'taiwan_dollar' },
+	{ code => 'CLP', name => 'Chilean Peso',        measure => 'chilean_peso' },
+	{ code => 'COP', name => 'Colombian Peso',      measure => 'colombian_peso' },
+	{ code => 'PEN', name => 'Peruvian Sol',        measure => 'peruvian_sol' },
+	{ code => 'ARS', name => 'Argentine Peso',      measure => 'argentine_peso' },
+	{ code => 'RON', name => 'Romanian Leu',        measure => 'romanian_leu' },
+	{ code => 'BGN', name => 'Bulgarian Lev',       measure => 'bulgarian_lev' },
+	{ code => 'ISK', name => 'Icelandic Krona',     measure => 'icelandic_krona' },
+	{ code => 'UAH', name => 'Ukrainian Hryvnia',   measure => 'ukrainian_hryvnia' },
+	{ code => 'KZT', name => 'Kazakhstani Tenge',   measure => 'kazakhstani_tenge' },
+	{ code => 'NGN', name => 'Nigerian Naira',      measure => 'nigerian_naira' },
+	{ code => 'KES', name => 'Kenyan Shilling',     measure => 'kenyan_shilling' },
+	{ code => 'GHS', name => 'Ghanaian Cedi',       measure => 'ghanaian_cedi' },
+	{ code => 'EGP', name => 'Egyptian Pound',      measure => 'egyptian_pound' },
+	{ code => 'MAD', name => 'Moroccan Dirham',     measure => 'moroccan_dirham' },
+	{ code => 'PKR', name => 'Pakistani Rupee',     measure => 'pakistani_rupee' },
+	{ code => 'BDT', name => 'Bangladeshi Taka',    measure => 'bangladeshi_taka' },
+	{ code => 'LKR', name => 'Sri Lankan Rupee',    measure => 'sri_lankan_rupee' },
+	{ code => 'NPR', name => 'Nepalese Rupee',      measure => 'nepalese_rupee' },
+	{ code => 'QAR', name => 'Qatari Riyal',        measure => 'qatari_riyal' },
+	{ code => 'KWD', name => 'Kuwaiti Dinar',       measure => 'kuwaiti_dinar' },
+	{ code => 'JOD', name => 'Jordanian Dinar',     measure => 'jordanian_dinar' },
+	{ code => 'BHD', name => 'Bahraini Dinar',      measure => 'bahraini_dinar' },
+	{ code => 'OMR', name => 'Omani Rial',          measure => 'omani_rial' },
+	{ code => 'TND', name => 'Tunisian Dinar',      measure => 'tunisian_dinar' },
+	{ code => 'UYU', name => 'Uruguayan Peso',      measure => 'uruguayan_peso' },
+	{ code => 'DOP', name => 'Dominican Peso',      measure => 'dominican_peso' },
+	{ code => 'GTQ', name => 'Guatemalan Quetzal',  measure => 'guatemalan_quetzal' },
+);
+
+sub crypto_fiat_table { return [ map { { %{$_} } } @crypto_fiat_table ] }
+sub crypto_fiat_codes { return [ map { $_->{'code'} } @crypto_fiat_table ] }
+sub crypto_fiat {
+	my ($code) = @_;
+	return undef unless defined $code && length $code;
+	$code = uc $code;
+	foreach my $f ( @crypto_fiat_table ) { return { %{$f} } if $f->{'code'} eq $code; }
+	return undef;
+}
 
 sub crypto_assets {
 	return [ map { { %{$_} } } @crypto_asset_list ];
@@ -27910,7 +27983,7 @@ sub crypto_rates_refresh {
 		my $raw = ref $json eq 'HASH' ? $json->{'data'}->{'rates'} : undef;
 		if (ref $raw eq 'HASH') {
 			my %known = map { $_->{'coinbase'} => 1 } @crypto_asset_list;
-			my %fiat = map { $_ => 1 } @crypto_fiat_list;
+			my %fiat = map { $_->{'code'} => 1 } @crypto_fiat_table;
 			foreach my $code ( keys %{$raw} ) {
 				next unless $fiat{$code} || $known{$code};
 				my $v = $raw->{$code};
@@ -27926,7 +27999,7 @@ sub crypto_rates_refresh {
 			my $json2 = eval { decode_json($res2->body) };
 			my $raw2 = ref $json2 eq 'HASH' ? $json2->{'rates'} : undef;
 			if (ref $raw2 eq 'HASH') {
-				my %fiat = map { $_ => 1 } @crypto_fiat_list;
+				my %fiat = map { $_->{'code'} => 1 } @crypto_fiat_table;
 				foreach my $code ( keys %{$raw2} ) {
 					next unless $fiat{$code};
 					my $v = $raw2->{$code};
@@ -27949,6 +28022,9 @@ sub crypto_rates_refresh {
 	}
 	$rates{$base} = 1 unless exists $rates{$base};
 	my $written = &crypto_rates_write(\%rates, $source, $base);
+	# The same snapshot feeds the optional history: one measure appointment
+	# every six hours, in place of the app and appointment that used to do it.
+	eval { &crypto_tracking_tick(); };
 	return { ok => 1, source => $source, base => $base, count => scalar keys %rates, at => $written->{'at'} };
 }
 
@@ -27989,6 +28065,117 @@ sub crypto_wallets_report {
 			: $w->{'address'};
 	}
 	return $accounts;
+}
+
+# ---- currency tracking ------------------------------------------------------
+# The old way to keep a currency history was an app with an appointment that
+# wrote a measure every few hours. The checkbox in Configure -> Plat -> Crypto
+# does the same job from the rate snapshot: one appointment of type measure in
+# the house's currency app every six hours, carrying every tracked fiat code, so
+# the Measures app charts it and no appointment has to run.
+
+sub crypto_tracking_on {
+	my $v = &setting_grabber({ app => 'crypto', setting => 'tracking', device => 'all' });
+	return (defined $v && $v eq 'on') ? 1 : 0;
+}
+
+# The app the history goes to. An explicit choice wins; otherwise adopt the app
+# the house already uses for currency measures, so its existing charts carry on.
+sub crypto_tracking_app {
+	my $pref = &setting_grabber({ app => 'crypto', setting => 'tracking_app', device => 'all' });
+	if (defined $pref && length $pref) {
+		$pref = &unformat_name($pref);
+		return $pref if length $pref;
+	}
+	foreach my $a ( qw/canadian_dollar currency exchange_rates/ ) {
+		my $row = &db_query("select 1 from settings where app = ? and setting = 'app_measures' limit 1", $a)->hashes->[0];
+		return $a if $row;
+	}
+	return 'currency';
+}
+
+sub crypto_tracking_interval { return 6 * 60 * 60 * 1000 }
+
+sub crypto_tracking_definitions {
+	my ($app) = @_;
+	my $row = &db_query("select value from settings where app = ? and setting = 'app_measures' order by server_time desc limit 1", $app)->hashes->[0];
+	return {} unless $row;
+	my $defs = eval { decode_json($row->{'value'}) };
+	return ref $defs eq 'HASH' ? $defs : {};
+}
+
+# The app's measures can live on more than one device; update every row that is
+# there rather than the one this worker happens to be running as.
+sub crypto_tracking_definitions_write {
+	my ($app, $defs) = @_;
+	return 0 unless ref $defs eq 'HASH';
+	my $json = encode_json($defs);
+	my $devices = &db_query("select distinct device from settings where app = ? and setting = 'app_measures'", $app)->hashes;
+	my @dev = map { $_->{'device'} } @{$devices};
+	@dev = ( &device_setter() ) unless scalar @dev;
+	foreach my $d ( @dev ) {
+		next unless defined $d && length $d;
+		&setting_setter({ app => $app, setting => 'app_measures', value => $json, device => $d });
+	}
+	return 1;
+}
+
+sub crypto_tracking_tick {
+	my ($opts) = @_;
+	$opts ||= {};
+	return { ok => 0, error => 'tracking is off' } unless &crypto_tracking_on;
+	my $now = &rightNow();
+	my $last = &setting_grabber({ app => 'crypto', setting => 'tracked_at', device => 'all' });
+	if (!$opts->{'force'} && defined $last && $last =~ /^\d+$/ && $now - $last < &crypto_tracking_interval) {
+		return { ok => 0, error => 'not due yet', at => $last };
+	}
+	my $rates = &crypto_rates_read();
+	my $table = $rates->{'rates'} || {};
+	return { ok => 0, error => 'no rate snapshot' } unless scalar keys %{$table};
+	my $base = $rates->{'base'} || &crypto_report_currency();
+	my $base_v = $table->{$base};
+	$base_v = 1 unless defined $base_v && $base_v > 0;
+	my $app = &crypto_tracking_app();
+	my $defs = &crypto_tracking_definitions($app);
+	if (!scalar keys %{$defs}) {
+		return { ok => 0, error => 'no measures app yet' } unless $opts->{'create'};
+		my $init = &setting_initializer($app, $now);
+		$app = $init->{'app'} if ref $init eq 'HASH' && $init->{'app'};
+		$defs = &crypto_tracking_definitions($app);
+	}
+	my (@entries, $count);
+	$count = 0;
+	foreach my $f ( @crypto_fiat_table ) {
+		next if $f->{'code'} eq $base;   # the base against itself is always 1
+		next if $count >= 50;            # the top fifty the source answers
+		my $v = $table->{ $f->{'code'} };
+		next unless defined $v && $v > 0;
+		my $per_base = $base_v / $v;     # units of this code per 1 report unit
+		my $shown = sprintf('%.6f', $per_base);
+		push @entries, { $f->{'measure'} => $shown, ts => $now, uuid => &random_string_creator(28) };
+		$defs->{ $f->{'measure'} } = {
+			type => 'number',
+			unit => $f->{'code'},
+			value => $shown,
+			name => $f->{'name'},
+		};
+		$count++;
+	}
+	return { ok => 0, error => 'no currencies to record' } unless scalar @entries;
+	my $uuid = &random_string_creator(40);
+	&db_insert('appointments', {
+		app => $app,
+		type => 'measure',
+		timestamp => $now,
+		duration => 1000,
+		measures => encode_json(\@entries),
+		server_time => $now,
+		uuid => $uuid,
+		device => &device_setter(),
+	});
+	&crypto_tracking_definitions_write($app, $defs);
+	&setting_setter({ app => 'crypto', setting => 'tracked_at', value => $now, device => 'all' });
+	return { ok => 1, app => $app, count => $count, uuid => $uuid, at => $now };
 }
 
 # The Store's two directions, named for what the house is doing: an income
