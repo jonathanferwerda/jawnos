@@ -758,35 +758,6 @@ $(document).on('click', '.budget_payable_delete', function() {
 });
 });
 
-// A notification that names a payment: OK books the bill and pays it from the
-// account shown; the cross dismisses it for good.
-$(document).on('click', '.budget_note_ok, .budget_note_dismiss', function() {
-var button = $(this);
-var row = button.closest('.budget_note_row');
-var action = button.hasClass('budget_note_ok') ? 'create' : 'dismiss';
-button.attr('disabled', 'disabled');
-$.ajax({
-	url: '/manager/budget/payable/from_notification',
-	type: 'POST',
-	data: {
-		uuid: button.attr('uuid'),
-		action: action,
-		amount: row.attr('amount') || '',
-		vendor: row.attr('vendor') || '',
-		app: row.find('.budget_note_app').val() || '',
-		account: row.find('.budget_note_account').val() || ''
-	},
-	success: function(response) {
-		button.removeAttr('disabled');
-		if (response.error) { alert(response.error); return; }
-		budgetInit();
-	},
-	error: function() {
-		button.removeAttr('disabled');
-		alert(jawnosT('The notification could not be recorded.'));
-	}
-});
-});
 
 $(document).on('click', '.budget_schedule_toggle, .budget_schedule_delete', function() {
 var button = $(this);

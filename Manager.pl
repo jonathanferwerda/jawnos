@@ -17874,6 +17874,8 @@ sub accounting_payables {
 	my $to = shift;
 	# a schedule whose date has come is a real bill; make them before reading
 	&payable_schedule_run();
+	# a payment notification becomes a bill and its payment with no prompt
+	&notification_payable_autobook();
 	my $returner = { rows => [], total => 0, count => 0, paid_count => 0, buckets => { current => 0, '31_60' => 0, '61_90' => 0, over_90 => 0 } };
 	my $bills = &subs::db_query("select * from warehouse where kind='money' and type='transaction' and movement='payable' and cast(timestamp as integer) <= cast(? as integer) order by timestamp", $to)->hashes || [];
 	my $payments = &subs::db_query("select * from warehouse where kind='money' and type='transaction' and movement='payment' and cast(timestamp as integer) <= cast(? as integer)", $to)->hashes || [];
@@ -18003,46 +18005,148 @@ sub notification_bill_uuid {
 	return 'note-' . &subs::md5_sum($seed);
 }
 
-sub notification_payable_candidates {
-	my $rows = &subs::db_query('select * from notifications order by cast(timestamp as integer) desc limit 400')->hashes || [];
-	my $dismissed = eval { decode_json &subs::setting_grabber({ app => 'budget', setting => 'payable_dismissed' }) || '[]' } || [];
-	my %dismissed = map { $_ => 1 } @{$dismissed};
-	my $memory = &bank_merchant_memory();
-	my (@out,%seen);
+# What a notification names: an amount and the merchant it was paid to. It is
+# only a payment when a spending verb sits beside the amount, so "you have $0.00
+# left" is not one.
+sub notification_payment_of {
+	my $n = shift;
+	my $msg = $n->{'message'} || '';
+	return undef unless $msg =~ /\b(spent|paid|purchase[d]?|charged|debited|payment made)\b/i;
+	return undef unless $msg =~ /\$\s?([0-9][0-9,]*\.[0-9]{2})/;
+	my $amount = $1;
+	$amount =~ s/,//g;
+	$amount += 0;
+	return undef unless $amount > 0;
+	my $merchant;
+	if ($msg =~ /\bat\s+([A-Za-z0-9][^.\n]*?)(?:\.|\n|$)/) { $merchant = $1; }
+	elsif (($n->{'title'} || '') !~ /transaction made/i) { $merchant = $n->{'title'}; }
+	return undef unless $merchant;
+	$merchant =~ s/^\s+//; $merchant =~ s/\s+$//; $merchant =~ s/^(the)\s+//i;
+	return undef unless length $merchant;
+	return { amount => $amount, merchant => $merchant };
+}
+
+sub payable_dismissed_keys {
+	my $list = eval { decode_json &subs::setting_grabber({ app => 'budget', setting => 'payable_dismissed' }) || '[]' } || [];
+	return map { $_ => 1 } @{$list};
+}
+
+# Remember that a notification is not a bill. The undo of a booked notification
+# is the same decision, so a key dismissed here is never booked again.
+sub payable_dismiss_add {
+	my @keys = grep { defined $_ && length $_ } @_;
+	return 0 unless scalar @keys;
+	my $list = eval { decode_json &subs::setting_grabber({ app => 'budget', setting => 'payable_dismissed' }) || '[]' } || [];
+	my %have = map { $_ => 1 } @{$list};
+	my $changed = 0;
+	foreach my $key ( @keys ) {
+		next if $have{$key}++;
+		push @{$list}, $key;
+		$changed++;
+	}
+	&subs::setting_setter({ app => 'budget', setting => 'payable_dismissed', value => encode_json($list) }) if $changed;
+	return $changed;
+}
+
+# The same calendar day, in the house's own local time. A statement line is
+# stamped with the purchase date, so an import and the notification that
+# announced it share a day even when the import ran hours later.
+sub notification_same_day {
+	my ($a,$b) = @_;
+	return 0 unless $a && $b;
+	my @x = localtime(int($a / 1000));
+	my @y = localtime(int($b / 1000));
+	return ($x[5] == $y[5] && $x[4] == $y[4] && $x[7] == $y[7]) ? 1 : 0;
+}
+
+# Has this purchase already been written as money leaving the account? A
+# statement import, a reconciliation or a typed transaction records the same
+# payment as an expense; a bill and its payment on top of that would take the
+# money out twice. The match is the account, the amount and the day, and the
+# merchant when the recorded row names one. The day is what keeps today's coffee
+# from looking like yesterday's.
+sub notification_already_recorded {
+	my ($n,$payment,$account) = @_;
+	my $timestamp = ($n->{'timestamp'} || 0) + 0;
+	return 0 unless $timestamp;
+	my $rows = &subs::db_query(
+		"select vendor, item, timestamp from warehouse where kind='money' and type='transaction' and movement='expense' and account=? and abs(cast(total as real) + ?) < 0.005 and abs(cast(timestamp as integer) - ?) <= ? limit 20",
+		$account, $payment->{'amount'}, $timestamp, 36 * 3600000)->hashes || [];
+	return 0 unless scalar @{$rows};
+	my %want = map { $_ => 1 } &bank_merchant_tokens($payment->{'merchant'});
+	foreach my $row ( @{$rows} ) {
+		next unless &notification_same_day(($row->{'timestamp'} || 0) + 0, $timestamp);
+		my @known = &bank_merchant_tokens($row->{'vendor'} || $row->{'item'} || '');
+		# a recorded row that names a merchant has to name this one; a row that
+		# names nothing is taken on the amount and the day alone
+		return 1 if scalar @known && grep { $want{$_} } @known;
+		return 1 unless scalar @known;
+	}
+	return 0;
+}
+
+# Book every qualifying notification. This is the clickless path: a payment the
+# bank has already made is a bill raised and settled in the same breath, so it
+# needs no prompt. Only a notification from a bank account the house knows is
+# booked, because that is what makes the payment leg real money leaving an
+# account. The bill's uuid comes from the notification's key, so a duplicate row
+# (phone and mirror) books once, and a row already booked is skipped.
+sub notification_payable_autobook {
+	my $rows = shift;
+	$rows = &subs::db_query('select * from notifications order by cast(timestamp as integer) desc limit 400')->hashes || [] unless $rows;
+	my %dismissed = &payable_dismissed_keys();
+	my ($memory,$made);
 	foreach my $n ( @{$rows} ) {
-		my $msg = $n->{'message'} || '';
-		next unless $msg =~ /\b(spent|paid|purchase[d]?|charged|debited|payment made)\b/i;
-		next unless $msg =~ /\$\s?([0-9][0-9,]*\.[0-9]{2})/;
-		my $amount = $1;
-		$amount =~ s/,//g;
-		$amount += 0;
-		next unless $amount > 0;
-		my $merchant;
-		if ($msg =~ /\bat\s+([A-Za-z0-9][^.\n]*?)(?:\.|\n|$)/) { $merchant = $1; }
-		elsif (($n->{'title'} || '') !~ /transaction made/i) { $merchant = $n->{'title'}; }
-		next unless $merchant;
-		$merchant =~ s/^\s+//; $merchant =~ s/\s+$//; $merchant =~ s/^(the)\s+//i;
+		my $payment = &notification_payment_of($n);
+		next unless $payment;
 		my $key = $n->{'key'} || $n->{'uuid'};
+		next unless $key && length $key;
 		next if $dismissed{$key};
+		my $account = &notification_account($n);
+		next unless $account;
 		my $bill_uuid = &notification_bill_uuid($n);
 		next if &subs::db_query("select 1 from warehouse where kind='money' and uuid=? limit 1", $bill_uuid)->hashes->[0];
-		# the same notification can be stored twice (phone and mirror)
-		my $day = int((($n->{'timestamp'} || 0) + 0) / 86400000);
-		my $sig = lc($merchant) . '|' . sprintf('%.2f', $amount) . '|' . $day;
-		next if $seen{$sig}++;
-		my $suggestion = &bank_merchant_lookup($memory, $merchant, 'expense');
+		next if &notification_already_recorded($n, $payment, $account);
+		$memory = &bank_merchant_memory() unless defined $memory;
+		my $suggestion = &bank_merchant_lookup($memory, $payment->{'merchant'}, 'expense');
 		my $app = $suggestion ? ($suggestion->{'app'} || '') : '';
-		$app = &subs::unformat_name($merchant) unless length $app;
-		push @out, {
-			uuid => $n->{'uuid'}, key => $key, timestamp => ($n->{'timestamp'} || 0) + 0,
-			amount => $amount, vendor => &subs::unformat_name($merchant),
-			merchant => $merchant, app => $app,
-			account => (&notification_account($n) || ''),
-			suggested => ($suggestion ? 1 : 0), count => ($suggestion ? ($suggestion->{'n'} || 0) : 0),
-			message => $msg
-		};
+		$app = &subs::unformat_name($payment->{'merchant'}) unless length $app;
+		$app = 'unknown' unless length $app;
+		my $vendor = &subs::unformat_name($payment->{'merchant'});
+		# a title like "Transaction made" names no item; the vendor is the item then
+		my $item = &subs::unformat_name($n->{'title'} || '');
+		$item = '' if $item =~ /^transaction_made$/i;
+		my $timestamp = ($n->{'timestamp'} || 0) + 0;
+		$timestamp = &subs::rightNow() unless $timestamp;
+		my $currency = &subs::setting_grabber({ app => $app, setting => 'currency' });
+		$currency = &subs::setting_grabber({ app => $account, setting => 'currency' }) unless defined $currency && length $currency;
+		&subs::db_insert('warehouse', {
+			kind => 'money', type => 'transaction', movement => 'payable',
+			account => 'accounts_payable', app => $app, vendor => $vendor, item => $item,
+			amount => $payment->{'amount'}, tax => 0, total => $payment->{'amount'},
+			currency => $currency,
+			uuid => $bill_uuid, source_uuid => $key,
+			timestamp => $timestamp, server_time => &subs::rightNow()
+		});
+		&subs::db_insert('warehouse', {
+			kind => 'money', type => 'transaction', movement => 'payment',
+			account => $account, app => $app, vendor => $vendor, item => $item,
+			amount => $payment->{'amount'} * -1, total => $payment->{'amount'} * -1,
+			currency => $currency,
+			source_uuid => $bill_uuid, uuid => 'notepay-' . &subs::md5_sum($key),
+			timestamp => $timestamp, server_time => &subs::rightNow()
+		});
+		$made++;
 	}
-	return \@out;
+	return $made || 0;
+}
+
+# The bills the notifications made, newest first, so the screen can show what it
+# booked and offer an undo.
+sub notification_booked_bills {
+	my $limit = shift || 10;
+	my $rows = &subs::db_query("select w.*, (select p.account from warehouse p where p.kind='money' and p.movement='payment' and p.source_uuid=w.uuid order by p.timestamp limit 1) as pay_account from warehouse w where w.kind='money' and w.movement='payable' and substr(w.uuid,1,5)='note-' order by cast(w.timestamp as integer) desc limit ?", $limit)->hashes || [];
+	return $rows;
 }
 
 # The accrual side of the statements. Income and expenses are what the journal
@@ -18646,7 +18750,7 @@ get '/manager/budget' => sub($c) {
 	my $trial = {};
 	my $payables = {};
 	my $schedules = [];
-	my $notification_candidates = [];
+	my $notification_booked = [];
 	my @payable_apps;
 	if ($display eq 'trial_balance') {
 		# the journal is derived; bring it up to date before reading it so the
@@ -18657,7 +18761,7 @@ get '/manager/budget' => sub($c) {
 	if ($display eq 'payables') {
 		$payables = &accounting_payables($t2);
 		$schedules = &payable_schedules();
-		$notification_candidates = &notification_payable_candidates();
+		$notification_booked = &notification_booked_bills(10);
 		@payable_apps = map { $_->{'app'} } @{ &subs::db_query("select distinct(app) as app from warehouse where kind='money' and app is not null and app != '' order by app")->hashes || [] };
 	}
 	if ($display eq 'income_statement' || $display eq 'balance_sheet' || $display eq 'cash_flow' || $display eq 'account_activity' || $display eq 'receivables') {
@@ -18704,7 +18808,7 @@ get '/manager/budget' => sub($c) {
 		payables => $payables,
 		payable_apps => \@payable_apps,
 		schedules => $schedules,
-		notification_candidates => $notification_candidates,
+		notification_booked => $notification_booked,
 		period_start => $period_start_label,
 		period_end => $period_end_label,
 		prior_start => $prior_start_label,
@@ -18949,71 +19053,15 @@ post '/manager/budget/payable/pay' => sub($c) {
 post '/manager/budget/payable/delete' => sub($c) {
 	my $uuid = $c->param('uuid');
 	return $c->render(json => { error => &subs::ui('That bill was not found.') }) unless $uuid && length $uuid;
+	my $bill = &subs::db_query("select * from warehouse where kind='money' and movement='payable' and uuid=? limit 1", $uuid)->hashes->[0];
+	# undoing a bill a notification made is also a decision that the notification
+	# was not a bill, or the next read would book it again
+	&payable_dismiss_add($bill->{'source_uuid'}) if $bill && substr($uuid,0,5) eq 'note-';
 	&subs::db_query("delete from warehouse where kind='money' and movement='payment' and source_uuid=?", $uuid);
 	&subs::db_query("delete from warehouse where kind='money' and movement='payable' and uuid=?", $uuid);
 	$c->render(json => { ok => 1, payables => &accounting_payables(&subs::rightNow()) });
 };
 
-
-sub notification_amount {
-	my $text = shift || '';
-	return 0 unless $text =~ /\$\s?([0-9][0-9,]*\.[0-9]{2})/;
-	my $amount = $1;
-	$amount =~ s/,//g;
-	return $amount + 0;
-}
-
-# One OK books the bill the notification names and, because the bank has already
-# taken the money, pays it from the account the notification came from.
-post '/manager/budget/payable/from_notification' => sub($c) {
-	my $uuid = $c->param('uuid');
-	my $n = &subs::db_query('select * from notifications where uuid=? limit 1', $uuid)->hashes->[0];
-	return $c->render(json => { error => &subs::ui('That notification was not found.') }) unless $n;
-	my $key = $n->{'key'} || $n->{'uuid'};
-	if (($c->param('action') || 'create') eq 'dismiss') {
-		my $dismissed = eval { decode_json &subs::setting_grabber({ app => 'budget', setting => 'payable_dismissed' }) || '[]' } || [];
-		push @{$dismissed}, $key unless grep { $_ eq $key } @{$dismissed};
-		&subs::setting_setter({ app => 'budget', setting => 'payable_dismissed', value => encode_json($dismissed) });
-		return $c->render(json => { ok => 1, dismissed => 1, payables => &accounting_payables(&subs::rightNow()) });
-	}
-	my $amount = &payable_amount($c->param('amount'));
-	$amount = &notification_amount($n->{'message'}) unless $amount > 0;
-	return $c->render(json => { error => &subs::ui('A bill needs an amount.') }) unless $amount > 0;
-	my $vendor = &subs::unformat_name($c->param('vendor') || '');
-	my $app = &subs::unformat_name($c->param('app') || '');
-	$app = $vendor unless length $app;
-	$app = 'unknown' unless length $app;
-	my $account = $c->param('account') || '';
-	my $bill_uuid = &notification_bill_uuid($n);
-	my $exists = &subs::db_query("select 1 from warehouse where kind='money' and uuid=? limit 1", $bill_uuid)->hashes->[0];
-	return $c->render(json => { ok => 1, already => 1, payables => &accounting_payables(&subs::rightNow()) }) if $exists;
-	my $timestamp = ($n->{'timestamp'} || 0) + 0;
-	$timestamp = &subs::rightNow() unless $timestamp;
-	&subs::db_insert('warehouse', {
-		kind => 'money', type => 'transaction', movement => 'payable',
-		account => 'accounts_payable', app => $app, vendor => $vendor,
-		item => &subs::unformat_name($n->{'title'} || 'notification'),
-		amount => $amount, tax => 0, total => $amount,
-		currency => &subs::setting_grabber({ app => $app, setting => 'currency' }),
-		uuid => $bill_uuid, source_uuid => $key,
-		timestamp => $timestamp, server_time => &subs::rightNow()
-	});
-	if (length $account) {
-		my $bank = &subs::db_query("select 1 from settings where app=? and setting in ('pos','mab') and value='account' limit 1", $account)->hashes->[0];
-		if ($bank) {
-			&subs::db_insert('warehouse', {
-				kind => 'money', type => 'transaction', movement => 'payment',
-				account => $account, app => $app, vendor => $vendor,
-				item => &subs::unformat_name($n->{'title'} || 'notification'),
-				amount => $amount * -1, total => $amount * -1,
-				currency => &subs::setting_grabber({ app => $account, setting => 'currency' }),
-				source_uuid => $bill_uuid, uuid => &subs::random_string_creator(40),
-				timestamp => $timestamp, server_time => &subs::rightNow()
-			});
-		}
-	}
-	$c->render(json => { ok => 1, uuid => $bill_uuid, paid => (length $account ? 1 : 0), payables => &accounting_payables(&subs::rightNow()) });
-};
 
 post '/manager/budget/payable/schedule/delete' => sub($c) {
 	my $uuid = $c->param('uuid');
@@ -21721,6 +21769,7 @@ sub notification_grabber($data) {
 	if ($device eq 'mobile') {
 		my $nl = `termux-notification-list`;
 		my $notifications = decode_json($nl);
+		my @fresh;
 		foreach my $n ( @{$notifications} ) {
 			if ($n->{'title'} && !grep { $_->{'id'} eq $n->{'id'} } @{$more_notifications}) {
 				my $ts = &subs::ago_calc($n->{'when'},$timestamp);
@@ -21735,8 +21784,12 @@ sub notification_grabber($data) {
 					image => "/images/make believe/face.png",
 					uuid => &subs::random_string_creator(20)
 				});
+				push @fresh, { key => $n->{'key'}, message => $n->{'content'}, title => $n->{'title'}, timestamp => $ts };
 			}
 		}
+		# a payment the phone has announced is booked as it lands, not when a
+		# screen is opened later
+		&notification_payable_autobook(\@fresh) if scalar @fresh;
 	}
 
 	$q = &subs::db_query('select * from notifications order by timestamp DESC');

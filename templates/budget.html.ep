@@ -246,38 +246,27 @@
 	<% } elsif ($display eq 'payables') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Payables') %></h2>
 		<div style="opacity:.75;"><%= &subs::ui('Aged from the bill date') %> &middot; <%= &subs::ui('As of') %> <b><%= $period_end %></b> &middot; <%= $payables->{'count'} || 0 %> <%= &subs::ui('open') %> &middot; <%= $payables->{'paid_count'} || 0 %> <%= &subs::ui('paid') %></div>
-		<% if (scalar @{$notification_candidates || []}) { %>
-			<h3 style="margin-bottom:4px;"><%= &subs::ui('From notifications') %></h3>
-			<div style="opacity:.7;margin-bottom:4px;"><%= &subs::ui('A notification that names a payment becomes a bill and is paid from the account it came from when you press OK.') %></div>
+		<% if (scalar @{$notification_booked || []}) { %>
+			<h3 style="margin-bottom:4px;"><%= &subs::ui('Booked from notifications') %></h3>
+			<div style="opacity:.7;margin-bottom:4px;"><%= &subs::ui('A notification from a bank that names a payment is booked as a bill and paid from the account it came from, with no press. Undo removes it and leaves that notification unbooked.') %></div>
 			<table class="accounting_statement" style="width:100%;border:groove;border-collapse:collapse;">
 				<thead style="text-align:left;">
 					<th><%= &subs::ui('Date') %></th>
 					<th><%= &subs::ui('Merchant') %></th>
 					<th style="text-align:right;"><%= &subs::ui('Amount') %></th>
 					<th><%= &subs::ui('App') %></th>
-					<th><%= &subs::ui('Pay from') %></th>
+					<th><%= &subs::ui('Paid from') %></th>
 					<th></th>
 				</thead>
 				<tbody>
-					<% foreach my $n ( @{$notification_candidates || []} ) { %>
-						<tr class="budget_note_row" uuid="<%= $n->{'uuid'} %>" vendor="<%= $n->{'vendor'} %>" amount="<%= $n->{'amount'} %>">
+					<% foreach my $n ( @{$notification_booked || []} ) { %>
+						<tr class="budget_note_row" uuid="<%= $n->{'uuid'} %>">
 							<td><span class="time" timestamp="<%= $n->{'timestamp'} %>"></span></td>
-							<td><%= &subs::format_name($n->{'merchant'}) %><div style="opacity:.6;font-size:12px;max-width:420px;"><%= $n->{'message'} %></div></td>
-							<td style="text-align:right;"><%= &subs::price_formatter($n->{'amount'}) %></td>
-							<td><input class="budget_note_app" list="budget_payable_apps" value="<%= $n->{'app'} %>" style="width:120px;" hint="<%= &subs::ui('App') %>"><% if ($n->{'suggested'}) { %><div style="opacity:.6;font-size:12px;"><%= $n->{'count'} %> <%= &subs::ui('earlier payments') %></div><% } %></td>
-							<td>
-								<select class="budget_note_account" hint="<%= &subs::ui('Pay from') %>">
-									<option value=""><%= &subs::ui('Leave the bill open') %></option>
-									<% foreach my $ac ( @{$all_accounts} ) { %>
-										% next if $ac->{'app'} eq 'all' || $ac->{'app'} eq 'gallery';
-										<option value="<%= $ac->{'app'} %>" <% if ($ac->{'app'} eq $n->{'account'}) { %>selected<% } %>><%= &subs::format_name($ac->{'app'}) %></option>
-									<% } %>
-								</select>
-							</td>
-							<td style="white-space:nowrap;">
-								<button class="budget_note_ok" uuid="<%= $n->{'uuid'} %>"><%= &subs::ui('OK') %></button>
-								<button class="budget_note_dismiss" uuid="<%= $n->{'uuid'} %>" hint="<%= &subs::ui('Not a bill') %>">&times;</button>
-							</td>
+							<td><%= &subs::format_name($n->{'vendor'} || $n->{'app'}) %></td>
+							<td style="text-align:right;"><%= &subs::price_formatter($n->{'total'}) %></td>
+							<td><%= &subs::format_name($n->{'app'}) %></td>
+							<td><% if ($n->{'pay_account'}) { %><%= &subs::format_name($n->{'pay_account'}) %><% } else { %><%= &subs::ui('Still owed') %><% } %></td>
+							<td style="white-space:nowrap;"><button class="budget_payable_delete" uuid="<%= $n->{'uuid'} %>" hint="<%= &subs::lang('common.undo') %>"><%= &subs::lang('common.undo') %></button></td>
 						</tr>
 					<% } %>
 				</tbody>
