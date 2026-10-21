@@ -6502,6 +6502,9 @@ post '/manager/store/crypto_payment' => sub($c) {
 		$proof = encode_json($record);
 		$payer = ref $record->{'payer'} eq 'HASH' ? $record->{'payer'} : undef;
 	}
+	# A proof proves the key signed; the roster says whether the house has met that
+	# crest before. The seller sees the difference and decides whether to accept.
+	my $payer_known = (ref $payer eq 'HASH' && length($payer->{'uuid'} || '') && &subs::crest_peer_find($payer->{'uuid'})) ? 1 : 0;
 	my $ts = &timestamp_adjuster($c) || &subs::rightNow();
 	my $server_time = &subs::rightNow();
 	my $tx_uuid = &subs::random_string_creator(40);
@@ -6547,6 +6550,7 @@ post '/manager/store/crypto_payment' => sub($c) {
 		payer => $payer,
 		proof => $proof,
 		verified => $verified,
+		payer_known => $payer_known,
 	};
 	push @{ $data->{'payments'} }, $payment;
 	my $new_balance = $balance - $value;
@@ -6562,6 +6566,7 @@ post '/manager/store/crypto_payment' => sub($c) {
 		status => $status,
 		verified => $verified,
 		payer => $payer,
+		payer_known => $payer_known,
 	});
 };
 

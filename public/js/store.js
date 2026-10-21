@@ -1090,7 +1090,7 @@ $(document).on('click', '#crypto_pay_record', function() {
 				return;
 			}
 			var label = r.verified === 'crest'
-				? 'attested by the payer\'s crest'
+				? (r.payer_known ? 'attested by a known crest' : 'attested by a new crest')
 				: (r.verified === 'crest-unsigned' ? 'proof verified (not countersigned)' : 'recorded (no crest proof)');
 			status.text(label + ' · balance ' + numeral(r.balance).format('$0.00'));
 			customerList(scope.attr('data-cx'), 'invoice');
