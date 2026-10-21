@@ -20,8 +20,28 @@ input[type=number] {
 .circular_thumb { border-radius: 50%; }
 #alert { border-radius: 5px; text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
 #alert_cancel { position:absolute; right: 2px; top: 2px; }
-:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; --time-fixed: #ddffee; color-scheme: light; }
+:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; --time-fixed: #ddffee; --jawnos-corner: 6px; color-scheme: light; }
 body { background-color: var(--panel); color: var(--ink); }
+/* ---- soft corners ---------------------------------------------------------
+   The program draws a great many little boxes - a folder toolbar, a receipt,
+   a detail row, a table, a chip around a name - and each one ended on a hard
+   right angle unless somebody had remembered to round it. Every common box
+   now gets the same small corner by default, instead of one rule and one
+   template at a time.
+
+   The selector is wrapped in :where(), so the declaration has zero
+   specificity. A component that already picks its own radius (the windows,
+   the dock, the taskbar's tiles, the thumbnails, the cards) keeps that radius,
+   and anything that must stay square can still say border-radius: 0. An
+   element with no background, border or picture paints no corner, so this
+   only changes surfaces that actually show one. Canvases are left out on
+   purpose: most of them draw the whole desk (the wallpaper, the map, the
+   clock), and a rounded viewport would clip their picture, not soften a box. */
+:where(div, section, article, aside, header, footer, main, nav, form, fieldset,
+       details, summary, figure, figcaption, blockquote, pre, dialog,
+       p, span, label, li, dt, dd, table) {
+	border-radius: var(--jawnos-corner, 6px);
+}
 /* color-scheme is the part an author's background-color cannot reach: the
    browser draws the dropdown's list, the spin/calendar/file faces and the
    autofill wash itself. Without it a dark desktop still opened a white
@@ -65,11 +85,11 @@ body.dark_theme [data-appt-ink] {
    moment a panel pads it - a 36px select or 28px input with a 7px top/bottom pad
    left an input's content box 12px for an 18px line, so the text's lower half was
    cut off. box-sizing keeps that padding inside the min-height. */
-select { text-align:center; height: auto; min-height: 36px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: 5px; }
-button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px; }
+select { text-align:center; height: auto; min-height: 36px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 6px); }
+button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border-width: 1px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 6px); }
 button.active { background-color: green; }
-input { text-align:left; height: auto; min-height: 28px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: 5px; }
-textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: 5px; }
+input { text-align:left; height: auto; min-height: 28px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 6px); }
+textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-box; font-size: 20px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 6px); }
 /* Controls follow the theme's surface instead of the browser's white default.
    A dark scheme's ink is near-white, so an unthemed input was white text on a
    white box and its value could not be read. The swatches and the native check
@@ -97,7 +117,7 @@ body.dark_theme input:-webkit-autofill,
 body.dark_theme input:-webkit-autofill:hover,
 body.dark_theme input:-webkit-autofill:focus { -webkit-box-shadow: 0 0 0 1000px var(--panel-2) inset; -webkit-text-fill-color: var(--ink); }
 body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
-.text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-color: var(--line); border-radius: 5px; width: 100%; }
+.text_editor { text-align:left; min-height: 30px; font-size: 24px; border-width: 2px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 6px); width: 100%; }
 .text_editor:hover { cursor: text; }
 .text_editor:empty:not(:focus):before {
   content: attr(placeholder);
