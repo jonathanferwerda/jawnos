@@ -26864,7 +26864,21 @@ post '/manager/help/act' => sub($c) {
 	# the allow-list is the same registry the prompt is built from, plus the
 	# runtime (learned) verbs, so the guide may pick either
 	my $allowed = &help::live_verb_names();
-	$action = &guide_resolve_action($action) if $action && ref $action eq 'HASH';
+	if ($action && ref $action eq 'HASH') {
+		# Teaching a word for a thing is a write on this machine, not a client
+		# action: store it and answer in words.
+		if (($action->{'action'} || '') eq 'alias') {
+			my $r = &guide_alias_add($action->{'alias'}, $action->{'target'});
+			$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
+		}
+		elsif (($action->{'action'} || '') eq 'unalias') {
+			my $r = &guide_alias_remove($action->{'alias'});
+			$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
+		}
+		else {
+			$action = &guide_resolve_action($action);
+		}
+	}
 	if ($action && $action->{'action'} && $allowed->{ $action->{'action'} }) {
 		# translation tools run through the same model the Guide is using this turn
 		$action->{'model'} = $model if ($action->{'action'} // '') =~ /^translate/;
@@ -27274,6 +27288,24 @@ get '/manager/resolve' => sub($c) {
 	$c->render(json => $r);
 };
 
+get '/manager/resolve' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $r = &guide_resolve_target($c->param('q') || '', kind => ($c->param('kind') || ''));
+	$r->{'target'} = { %{ $r->{'target'} }, label => &guide_target_label($r->{'target'}) } if $r->{'target'};
+	$r->{'candidates'} = [ map { { %$_, label => &guide_target_label($_) } } @{ $r->{'candidates'} || [] } ];
+	$c->render(json => $r);
+};
+
+post '/manager/resolve/alias' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, text => 'citizen only' }); }
+	$c->render(json => &guide_alias_add($c->param('alias') || '', $c->param('target') || ''));
+};
+
+post '/manager/resolve/alias/remove' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, text => 'citizen only' }); }
+	$c->render(json => &guide_alias_remove($c->param('alias') || ''));
+};
+
 # ---- the remote verb channel ------------------------------------------------
 # A peer can be told what to do in the words the person used (text, parsed by
 # that machine's own guide, so it stays offline) or as a structured verb from the
@@ -27328,12 +27360,101 @@ sub guide_target_label {
 	return $name . ' (' . $label . ')';
 }
 
+# A person's own words for a thing: "zzz" for sleep, "js" for John Smith.
+# One synced map of normalized word -> target, so every machine understands the
+# same aliases. The target is stored by identity (kind + uuid + app) as well as
+# by name, so a rename does not break the alias.
+sub guide_aliases_read {
+	my $raw = eval { &subs::setting_grabber({ app => '__president', setting => 'aliases', device => 'all' }) } || '';
+	my $map = eval { decode_json($raw) } || {};
+	return ref $map eq 'HASH' ? $map : {};
+}
+
+sub guide_aliases_write {
+	my ($map) = @_;
+	return 0 unless ref $map eq 'HASH';
+	&subs::setting_setter({ app => '__president', setting => 'aliases', device => 'all', value => encode_json($map) });
+	return 1;
+}
+
+sub guide_alias_add {
+	my ($alias, $target) = @_;
+	my $key = &guide_name_normalize($alias);
+	return { ok => 0, text => 'That alias is too short.' } unless length $key && length($key) >= 2;
+	my $r = &guide_resolve_target($target, kind => '');
+	unless ($r->{'ok'}) {
+		return { ok => 0, text => &guide_ask_candidates($target, $r->{'candidates'} || [])->{'text'} };
+	}
+	my $t = $r->{'target'};
+	my $map = &guide_aliases_read();
+	$map->{$key} = {
+		kind => $t->{'kind'} || 'app',
+		app => $t->{'app'} || '',
+		uuid => $t->{'uuid'} || '',
+		name => $t->{'name'} || $t->{'app'} || '',
+		construct => $t->{'construct'} || '',
+		at => &subs::rightNow(),
+	};
+	&guide_aliases_write($map);
+	return { ok => 1, text => 'Remembered "' . $alias . '" for ' . ($t->{'name'} || $t->{'app'}) . '.', target => $t };
+}
+
+sub guide_alias_remove {
+	my ($alias) = @_;
+	my $key = &guide_name_normalize($alias);
+	return { ok => 0, text => 'No alias named.' } unless length $key;
+	my $map = &guide_aliases_read();
+	return { ok => 0, text => 'I did not know "' . $alias . '".' } unless exists $map->{$key};
+	delete $map->{$key};
+	&guide_aliases_write($map);
+	return { ok => 1, text => 'Forgot "' . $alias . '".' };
+}
+
 # Resolve a spoken or typed name. opts: kind => app|person|construct|machine|house.
 sub guide_resolve_target {
 	my ($text, %opts) = @_;
+	$text = '' unless defined $text;
+	# A qualifier narrows the kind before matching: app:music, person:john,
+	# club:garden (a construct singular), machine:table, house:maple.
+	my $want = $opts{'kind'} || '';
+	my $filter_sing = '';
+	if ($text =~ /^\s*([A-Za-z_]+)\s*:\s*(.+)$/s) {
+		my $prefix = lc $1;
+		my $rest = $2;
+		my %kinds = (app => 'app', person => 'person', construct => 'construct', machine => 'machine', house => 'house');
+		if ($kinds{$prefix}) {
+			$want = $kinds{$prefix};
+			$text = $rest;
+		}
+		else {
+			foreach my $sc ( values %{$gb::social_constructs} ) {
+				next unless lc($sc->{'sing'}) eq $prefix || lc($sc->{'name'}) eq $prefix;
+				$want = 'construct';
+				$filter_sing = $sc->{'sing'};
+				$text = $rest;
+				last;
+			}
+		}
+	}
+	# A short id pins the exact thing: john#7f3a.
+	my $id_prefix = '';
+	if ($text =~ s/#([A-Za-z0-9]{3,})\s*$//) { $id_prefix = $1; }
 	my $query = &guide_name_normalize($text);
 	return { ok => 0, reason => 'nothing named', candidates => [] } unless length $query;
-	my $want = $opts{'kind'} || '';
+	my $alias_map = &guide_aliases_read();
+	my %alias_for_app;
+	my %alias_for_key;
+	foreach my $key ( keys %{$alias_map} ) {
+		my $entry = $alias_map->{$key};
+		next unless ref $entry eq 'HASH';
+		my $kind = $entry->{'kind'} || '';
+		if (($kind eq 'machine' || $kind eq 'house') && length($entry->{'uuid'} || '')) {
+			push @{ $alias_for_key{ $kind . "\x1f" . $entry->{'uuid'} } }, $key;
+		}
+		elsif (length($entry->{'app'} || '')) {
+			push @{ $alias_for_app{ $entry->{'app'} } }, $key;
+		}
+	}
 	my $score_aliases = sub {
 		my ($aliases) = @_;
 		my ($score, $how) = (0, '');
@@ -27361,6 +27482,7 @@ sub guide_resolve_target {
 	};
 	my $accept = sub {
 		my ($kind, $construct) = @_;
+		return 0 if length $filter_sing && $construct ne $filter_sing;
 		return 1 unless length $want;
 		return 1 if $want eq $kind;
 		return 1 if $want eq 'app' && ($kind eq 'app' || $kind eq 'person');
@@ -27399,14 +27521,12 @@ sub guide_resolve_target {
 		my $construct = $kind_of{$app} || '';
 		next unless $accept->($kind, $construct);
 		my @aliases = ($app, &subs::format_name($app));
+		push @aliases, @{ $alias_for_app{$app} || [] };
 		push @aliases, $person{$app}->{'name'} if $is_person;
 		my ($score, $how) = $score_aliases->(\@aliases);
 		next unless $score;
 		my $uuid = $is_person ? ($person{$app}->{'uuid'} || '') : '';
-		unless (length $uuid) {
-			my $row = eval { &subs::db_query("select value from settings where app=? and setting='uuid' order by server_time desc limit 1", $app)->hashes->[0] };
-			$uuid = $row->{'value'} || '' if $row;
-		}
+		$uuid = &subs::construct_uuid($app) unless length $uuid;
 		my @memberships;
 		if ($is_person) {
 			foreach my $chip ( @{ &people_chips($index, $app) || [] } ) {
@@ -27431,6 +27551,7 @@ sub guide_resolve_target {
 		foreach my $rm ( @{$machine_rows} ) {
 			next unless $rm->{'signatorial'};
 			my @aliases = grep { defined && length } ($rm->{'hostname'}, $rm->{'fqdn'}, $rm->{'ip'});
+			push @aliases, @{ $alias_for_key{ 'machine' . "\x1f" . ($rm->{'uuid'} || '') } || [] };
 			my @short = map { my $x = $_; $x =~ s/\..*$//; $x } grep { defined && length } ($rm->{'fqdn'});
 			my ($score, $how) = $score_aliases->([ @aliases, @short ]);
 			next unless $score;
@@ -27451,6 +27572,7 @@ sub guide_resolve_target {
 		my $own = &subs::crest_record_read();
 		if ($own->{'uuid'}) {
 			my @aliases = ($own->{'name'}, &subs::crest_house_name_read());
+			push @aliases, @{ $alias_for_key{ 'house' . "\x1f" . ($own->{'uuid'} || '') } || [] };
 			my ($score, $how) = $score_aliases->(\@aliases);
 			if ($score) {
 				push @candidates, {
@@ -27463,7 +27585,7 @@ sub guide_resolve_target {
 			next unless ref $entry eq 'HASH' && ref $entry->{'crest'} eq 'HASH';
 			my $crest = $entry->{'crest'};
 			next unless ($crest->{'uuid'} || '') ne '';
-			my ($score, $how) = $score_aliases->([ $crest->{'name'} ]);
+			my ($score, $how) = $score_aliases->([ $crest->{'name'}, @{ $alias_for_key{ 'house' . "\x1f" . ($crest->{'uuid'} || '') } || [] } ]);
 			next unless $score;
 			push @candidates, {
 				kind => 'house', app => $crest->{'name'} || '', name => $crest->{'name'} || '',
@@ -27471,6 +27593,7 @@ sub guide_resolve_target {
 			};
 		}
 	}
+	@candidates = grep { index(lc($_->{'uuid'} || ''), lc($id_prefix)) == 0 } @candidates if length $id_prefix;
 	@candidates = sort {
 		$b->{'score'} <=> $a->{'score'}
 			|| ($b->{'used'} || 0) <=> ($a->{'used'} || 0)
@@ -35606,6 +35729,10 @@ sub update_database($data) {
 		'CREATE INDEX IF NOT EXISTS idx1_notes on notes (timestamp)',
 		'CREATE INDEX IF NOT EXISTS idx2_notes on notes (uuid)',
 		'alter table appointments add column subtype VARCHAR(255)',
+		# A construct's identity is its stable uuid, not its name; the label beside
+		# it can change and two houses can use the same label. Filled from the
+		# canonical construct_uuid setting on every new row.
+		'alter table appointments add column app_uuid VARCHAR(255)',
 		'alter table mailbox add column sender VARCHAR(25)',
 		'alter table mailbox add column email_server VARCHAR(255)',
 		# schema.sql has carried these two for a while, but the migration list

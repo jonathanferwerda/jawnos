@@ -5919,7 +5919,7 @@ sub voice_brain() {
 	return undef unless $model;
 	my $fast = &subs::setting_grabber({ app => 'mail', setting => 'voice_assistant' });
 	$fast = ($fallback && $fallback ne $model) ? $fallback : '' unless defined $fast && length $fast;
-	my %voice_verbs = map { $_ => 1 } qw/say ask done measure where_when create play_music open_app/;
+	my %voice_verbs = map { $_ => 1 } qw/say ask done measure where_when create play_music open_app alias unalias/;
 	my $system = &help::actions_prompt(\%voice_verbs) . "\n\n";
 	$system .= "This came in as a spoken command to the person's watch, transcribed on-device: "
 		. "words may be misheard, and there is no follow-up turn - when the intent is clear, act "
@@ -5985,6 +5985,16 @@ sub voice_brain() {
 		return undef unless length $speech;
 		$reply->($speech);
 		$log->info('voice: brain said "' . $speech . '"');
+		return { handled => 1, action => $a, said => $speech };
+	}
+	# teaching a word for a thing is stored here; it is not a screen action
+	if ($a eq 'alias' || $a eq 'unalias') {
+		my $r = $a eq 'alias'
+			? &Manager::guide_alias_add($action->{'alias'}, $action->{'target'})
+			: &Manager::guide_alias_remove($action->{'alias'});
+		my $speech = $r->{'text'} || ($r->{'ok'} ? 'Done.' : 'I could not do that.');
+		$reply->($speech);
+		$log->info('voice: brain ' . $a . ' "' . $speech . '"');
 		return { handled => 1, action => $a, said => $speech };
 	}
 	# the acting verbs the server can run itself: measure/where read our own
@@ -11902,10 +11912,38 @@ sub dbs_insert {
   return $success ? $success->last_insert_id : undef;
 }
 
+# One stable id per construct, independent of the name and of the device. The
+# per-device `uuid` settings rows are the membership references and stay as
+# they are; this is the id a name resolves to, and what an appointment carries
+# (app_uuid) so a rename is not an identity change. Created lazily and memoised
+# for the life of this worker.
+my %construct_uuid_memo;
+sub construct_uuid {
+	my ($app) = @_;
+	return '' unless defined $app && length $app;
+	return $construct_uuid_memo{$app} if $construct_uuid_memo{$app};
+	my $uuid = &setting_grabber({ app => $app, setting => 'construct_uuid', device => 'all' });
+	return $construct_uuid_memo{$app} = $uuid if defined $uuid && length $uuid;
+	my $person = eval { &db_query('select uuid from people where app = ? limit 1', $app)->hashes->[0] };
+	$uuid = $person->{'uuid'} if $person && $person->{'uuid'};
+	unless (defined $uuid && length $uuid) {
+		my $row = eval { &db_query("select value from settings where app=? and setting='uuid' order by server_time asc limit 1", $app)->hashes->[0] };
+		$uuid = $row->{'value'} if $row && $row->{'value'};
+	}
+	$uuid = substr(&sha256_hex('jawnos-construct' . "\x1f" . $app), 0, 25) unless defined $uuid && length $uuid;
+	&setting_setter({ app => $app, setting => 'construct_uuid', device => 'all', value => $uuid });
+	return $construct_uuid_memo{$app} = $uuid;
+}
+
 sub db_insert() {
 	my $table = shift;
 	my $data = shift;
 	%setting_memo = () if ($table // '') eq 'settings';
+	# An appointment names its construct by both the label and the stable id, so
+	# a later rename (or two same-named constructs) never confuses the row.
+	if ($table eq 'appointments' && !defined $data->{'app_uuid'} && defined $data->{'app'} && length $data->{'app'}) {
+		$data->{'app_uuid'} = &construct_uuid($data->{'app'});
+	}
 	$data->{'ost'} = $data->{'ost'} || &rightNow();
 	$data->{'server_time'} = $data->{'server_time'} ? $data->{'server_time'} : $data->{'ost'};
 	$data->{'uuid'} = &random_string_creator(15) unless $data->{'uuid'};
@@ -23955,6 +23993,21 @@ sub backfills() {
 			my $vault = $vault[0];
 			return 0 unless $vault && &suds_current($vault);
 			&db_query("update tickets set suds = '' where suds is not null and suds != ''");
+			return 1;
+		},
+		'construct_app_uuids' => sub {
+			# The stable id each appointment now carries. The column is added by the
+			# same migration pass; the guard keeps a peer's older command list from
+			# failing this. One UPDATE per app, not per row.
+			my $has = &db_query('select 1 from pragma_table_info(?) where name=?', 'appointments', 'app_uuid')->hashes->[0];
+			return 0 unless $has;
+			my $apps = &db_query("select distinct app from appointments where app is not null and app <> ''")->hashes || [];
+			foreach my $row ( @{$apps} ) {
+				my $app = $row->{'app'};
+				my $uuid = &construct_uuid($app);
+				next unless defined $uuid && length $uuid;
+				&db_query("update appointments set app_uuid=? where app=? and (app_uuid is null or app_uuid='')", $uuid, $app);
+			}
 			return 1;
 		},
 		'warehouse_money_ledger' => sub {
