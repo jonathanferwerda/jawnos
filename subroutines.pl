@@ -15047,24 +15047,31 @@ sub remote_machine_lister() {
 	# a mirror entry is how a machine the source knows about is reached through
 	# it; when that machine already has a row of its own the list would show the
 	# same machine twice (once, three times, with overlapping mirror sources),
-	# so a mirror is only added when it is not otherwise present. One identity
-	# per machine - uuid beats signatorial beats ip, so a tunnelled machine's
-	# 127.0.0.1 can never collide with another entry. Our own signatorial counts
-	# as present so a mirror that is this machine is never appended either.
+	# so a mirror is only added when none of its identities is otherwise present.
+	# Identities are alternatives, not a preference: a mirror of this machine
+	# carries our own signatorial (and often the app's 127.0.0.1 as its fqdn),
+	# and a mirror of a peer already listed carries that peer's uuid or
+	# signatorial. Comparing only the first identity let both through, which put
+	# "Laptop (mirror)" in the picker and sent Go to the local manager.
 	my %already;
 	$already{$self_signatorial} = 1 if $self_signatorial;
 	foreach my $rm ( @{$remote_machines} ) {
-		my $key = $rm->{'uuid'} || $rm->{'signatorial'} || $rm->{'ip'};
-		$already{$key} = 1 if $key;
+		for my $id ( $rm->{'uuid'}, $rm->{'signatorial'} ) {
+			$already{$id} = 1 if defined $id && $id ne '';
+		}
 	}
 	foreach my $rm ( @{$remote_machines} ) {
-		$rm->{'mirror'} = 'no';
+		# A mirror pushed below is visited again by this same foreach (Perl
+		# extends the array it iterates), and the old unconditional reset
+		# cleared the very flag the remote_control picker uses to hide mirrors.
+		$rm->{'mirror'} = 'no' unless ($rm->{'mirror'} || '') eq 'yes';
 		if ($rm->{'mirrors'} && $data->{'mirrors'} ne 'none') {
 			my $mirrors = eval { return decode_json $rm->{'mirrors'} } || [];
 			foreach my $mirror ( @{$mirrors} ) {
-				my $key = $mirror->{'uuid'} || $mirror->{'signatorial'} || $mirror->{'ip'};
-				next if $key && $already{$key};
-				$already{$key} = 1 if $key;
+				next if grep { defined $_ && $_ ne '' && $already{$_} }
+					( $mirror->{'uuid'}, $mirror->{'signatorial'} );
+				$already{$mirror->{'uuid'}} = 1 if $mirror->{'uuid'};
+				$already{$mirror->{'signatorial'}} = 1 if $mirror->{'signatorial'};
 				$mirror->{'hostname'} .= ' (mirror)';
 				$mirror->{'source_ip'} = $rm->{'ip'};
 				$mirror->{'source_domain'} = $rm->{'domain'};

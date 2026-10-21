@@ -117,7 +117,7 @@
 			<% $remote_control = defined $remote_control ? $remote_control : &subs::setting_grabber({ app => 'me', setting => 'remote_control_machine' }); %>
 			<% $remote_machines = ref $remote_machines eq 'ARRAY' ? $remote_machines
 				: ($remote_machines ? (eval { decode_json $remote_machines } || []) : &subs::remote_machine_lister()); %>
-			<% my @rm_options = grep { ($_->{'mirror'} || '') ne 'yes' && ($_->{'hostname'} || '') ne 'me' } @{$remote_machines}; %>
+			<% my @rm_options = grep { ($_->{'mirror'} || '') ne 'yes' && ($_->{'hostname'} || '') !~ / \(mirror\)$/ && ($_->{'hostname'} || '') ne 'me' } @{$remote_machines}; %>
 			<%# A pick saved before uuids (an ip or a signatorial) still names its machine. %>
 			<% my $pick = (defined $remote_control && !ref $remote_control) ? $remote_control : ''; %>
 			<% my ($selected_rm) = grep { $pick ne '' && (($_->{'uuid'} || '') eq $pick || ($_->{'signatorial'} || '') eq $pick || ($_->{'ip'} || '') eq $pick) } @rm_options; %>

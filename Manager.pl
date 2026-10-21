@@ -8314,7 +8314,10 @@ get '/manager/remote_manager' => sub ($c) {
 			# A stored Go link can name an address the row has since moved off
 			# (the LAN fallback, or a tunnel port): accept the row when the
 			# host is still one of its own.
-			my @hosts = grep { defined $_ && $_ ne '' } ($candidate->{'ip'}, $candidate->{'fqdn'}, $candidate->{'domain'}, $candidate->{'lan_ip'}, $candidate->{'vip'});
+			my @hosts = grep {
+				defined $_ && $_ ne ''
+					&& $_ !~ /^(?:127\.0\.0\.1|localhost|\[?::1\]?)$/i
+			} ($candidate->{'ip'}, $candidate->{'fqdn'}, $candidate->{'domain'}, $candidate->{'lan_ip'}, $candidate->{'vip'});
 			if ($have eq $want || ($want_host && grep { $_ eq $want_host } @hosts)) { $rm = $candidate; last; }
 		}
 	}
@@ -8343,6 +8346,10 @@ get '/manager/remote_manager' => sub ($c) {
 	# own deliberate step, so they may mint the ticket. If the house has a
 	# reader or a paired phone/tablet, the mint waits for that fingerprint first.
 	my $browse_host = $rm->{'fqdn'} || $rm->{'domain'} || '';
+	# A mirror learned through a peer can carry that peer's loopback as its fqdn
+	# (the app's own address). For a remote machine that names this house, not
+	# the peer, so it must never become the Go window's host.
+	$browse_host = '' if $browse_host =~ /^(?:127\.0\.0\.1|localhost|\[?::1\]?)$/i;
 	my $browse_port = eval { Mojo::URL->new($url)->port } || $rm->{'port'} || 443;
 	if ($browse_host) {
 		$url = 'https://' . $browse_host . ':' . $browse_port . '/manager';
@@ -8405,6 +8412,12 @@ sub remote_manager_ticket($c, $rm) {
 		# peer's config domain, and the ticket door refuses a ticket whose
 		# host is not the house's own domain.
 		my $ticket_host = $rm->{'fqdn'} || $host || '';
+		# A remote machine's ticket must never name this house's loopback:
+		# a mirror taken through a peer can carry 127.0.0.1 as its fqdn.
+		if ($ticket_host =~ /^(?:127\.0\.0\.1|localhost|\[?::1\]?)$/i) {
+			my $ip = $rm->{'ip'} || '';
+			$ticket_host = $ip if $ip ne '' && $ip !~ /^(?:127\.|localhost|\[?::1\]?)$/i;
+		}
 		my $url = $peer->{'manager'} . '/manager/qrcode_generator?nic=' . url_escape($ticket_host || 'lo')
 			. '&privilege=citizen&keep_warranty=1'
 			. '&signatorial=' . url_escape(&subs::signatorial_designer())
