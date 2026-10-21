@@ -60,7 +60,7 @@
 					<% } %>
 				</ul>
 			<% } else { %>
-				<div class="handbook_today_empty"><%= $t->{'is_future'} ? &subs::ui('Nothing is due or spent on this day yet.') : &subs::ui('No money moved on this day.') %></div>
+				<div class="handbook_today_empty"><%= $t->{'is_future'} ? &subs::ui('No money has gone out yet.') : &subs::ui('No money moved on this day.') %></div>
 			<% } %>
 			<div class="handbook_today_actions">
 				<button class="handbook_today_budget"><%= &subs::ui('Open Accounting') %></button>

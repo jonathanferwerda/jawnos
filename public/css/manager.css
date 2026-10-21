@@ -1428,7 +1428,9 @@ html.jawnos_webview #admin_console_toggle {
 }
 .handbook_today_grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	/* money is the narrow column; the journal gets the wider one, with projects
+	   and people under them. One column when the window is phone-sized. */
+	grid-template-columns: minmax(240px, .85fr) minmax(320px, 1.15fr);
 	gap: 12px;
 	align-items: start;
 }
@@ -1439,7 +1441,6 @@ html.jawnos_webview #admin_console_toggle {
 	border-radius: 10px;
 	background: var(--panel);
 }
-.handbook_today_life { grid-column: 1 / -1; }
 .handbook_today_card h3 {
 	margin: 0 0 8px;
 	font-size: 16px;
@@ -1539,8 +1540,9 @@ html.jawnos_webview #admin_console_toggle {
 .handbook_today_actions button:hover { background: var(--line); }
 .handbook_today_note .handbook_today_row_name { font-weight: 400; }
 .handbook_today_note .handbook_today_when { margin-left: auto; font-size: 11px; opacity: .6; }
-@media (max-width: 700px) {
+@media (max-width: 760px) {
 	.handbook_today_bar { position: static; }
+	.handbook_today_grid { grid-template-columns: 1fr; }
 	.handbook_today_big { font-size: 28px; }
 	#handbook_today_date { width: 100%; }
 }

@@ -29412,6 +29412,14 @@ sub handbook_today {
 	}
 
 	# --- measures ---------------------------------------------------------
+	# The person's own readings matter more than the machine's feeds (a currency
+	# table and a weather station are also appointments with measures). Score the
+	# streams so steps and weight lead, habits follow, and a quote screen waits at
+	# the back rather than filling the journal.
+	my $index = &people_index();
+	my %person_app = map { $_ => 1 } @{ $index->{'person_apps'} || [] };
+	my $feed_app = qr/(?:^|_)(?:weather|markets?|metals?|moon|dollars?|euro|pounds?|yen|francs?|rupees?|pesos?|kron(?:e|a)|zloty|lira|rand|yuan|won|baht|ringgit|shekel|dirham|rial|hryvnia|tenge|shilling|naira|cedi|forint|lev|leu|taka|dong|sol)$/i;
+	my $feed_measure = qr/^(?:temperature|humidity|condition|pressure|wind|illumination|moon_angle|sun_angle|sun_distance|dow|nasdaq|tsx|stoxx|nikkei)$/i;
 	my $measure_rows = &subs::db_query(
 		'select app,timestamp,measures from appointments where measures is not null and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ? order by cast(timestamp as integer) desc limit 400',
 		$start, $end
@@ -29461,8 +29469,18 @@ sub handbook_today {
 		my ($app, $measure) = split /\0/, $key, 2;
 		my $delta;
 		$delta = $slot->{'value'} - $slot->{'previous'} if defined $slot->{'previous'};
+		my $entry = $index->{'apps'}->{$app} || {};
+		my $score = 0;
+		$score += 100 if $person_app{$app};
+		$score += 40 if (($entry->{'pos'} || '') =~ /^(?:action|feel)$/ || ($entry->{'mab'} || '') =~ /^(?:action|feel)$/);
+		$score += 25 if $measure =~ /^(?:weight|steps|sleep|heart|pulse|mood|energy|pain|blood|water|food|vape|cigarette|alcohol)$/i;
+		$score -= 15 if $measure eq 'speed';
+		$score -= 60 if $app =~ $feed_app;
+		$score -= 40 if $measure =~ $feed_measure;
+		$score += 10 if scalar @{ $slot->{'today'} || [] };
 		push @measures, {
 			app => $app,
+			score => $score,
 			measure => $measure,
 			label => &subs::format_name($measure),
 			value => $slot->{'value'},
@@ -29473,7 +29491,7 @@ sub handbook_today {
 			today => $slot->{'today'} || [],
 		};
 	}
-	@measures = sort { ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @measures;
+	@measures = sort { ($b->{'score'} || 0) <=> ($a->{'score'} || 0) || ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @measures;
 	my @measures_shown = @measures[0 .. ($#measures < 5 ? $#measures : 5)];
 	my @today_measures;
 	foreach my $measure ( @measures_shown ) {
@@ -29501,7 +29519,6 @@ sub handbook_today {
 	if ($running) { @{$open} = grep { ($_->{'uuid'} || '') ne ($running->{'uuid'} || '') } @{$open}; }
 
 	# --- projects ---------------------------------------------------------
-	my $index = &people_index();
 	my $project_type = ( grep { ($_->{'name'} || '') eq 'projects' } @{ $index->{'constructs'} || [] } )[0];
 	my $project_rows = $project_type ? $project_type->{'rows'} : [];
 	my %project_last;
@@ -29570,7 +29587,6 @@ sub handbook_today {
 	# An appointment names people in two ways: its app can be a person construct,
 	# or it can belong to a project/construct whose members are people. Both are
 	# read, so "lunch" filed under a project still brings the project's people in.
-	my %person_app = map { $_ => 1 } @{ $index->{'person_apps'} || [] };
 	my $person_members = $index->{'member'}->{'person'} || {};
 	my %people_seen;
 	foreach my $appt ( @{$appts} ) {
@@ -29684,10 +29700,6 @@ get '/manager/handbook/:chapter' => sub ($c) {
 	my $type = $c->param('type');
 	my $windows = eval { return decode_json $c->param('windows') } || {};
 
-	my $settings = &subs::settings_grabber({ app => 'handbook' });
-	$settings->{'diagrams'} = eval { return decode_json $settings->{'diagrams'} } || [];
-	my $pseudonyms = &pseudonym_maker('viewer', '');
-	my $page = $c->param('page') || 'i';
 	my $contents;
 	if ($chapter eq 'today') {
 		my $today = &handbook_today($c->param('day'), $timestamp);
@@ -29697,6 +29709,10 @@ get '/manager/handbook/:chapter' => sub ($c) {
 		);
 	}
 	else {
+		my $settings = &subs::settings_grabber({ app => 'handbook' });
+		$settings->{'diagrams'} = eval { return decode_json $settings->{'diagrams'} } || [];
+		my $pseudonyms = &pseudonym_maker('viewer', '');
+		my $page = $c->param('page') || 'i';
 		my $template = 'handbook/handbook';
 		$contents = $c->render_to_string(
 			template => $template,
