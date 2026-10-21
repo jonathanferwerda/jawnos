@@ -8392,7 +8392,7 @@ get '/manager/remote_manager' => sub ($c) {
 		}
 	}
 	my $ticket_failed = ($in_app && !$ticket_url && !$need_approval) ? 1 : 0;
-	$log->info('remote_manager: uuid=' . (defined $uuid ? $uuid : '-') . ' manager=' . ($manager || '-') . ' -> ' . $url . ' ticket=' . ($ticket_url ? 1 : 0) . ' approval=' . $need_approval . ' desktop=' . ($c->param('desktop') || '?') . ' bridge=' . ($c->param('bridge') || '?') . ' ticket_failed=' . $ticket_failed);
+	$log->info('remote_manager: uuid=' . (defined $uuid ? $uuid : '-') . ' manager=' . ($manager || '-') . ' -> ' . $url . ' ticket=' . ($ticket_url ? 1 : 0) . ' approval=' . $need_approval . ' desktop=' . ($c->param('desktop') || '?') . ' bridge=' . ($c->param('bridge') || '?') . ' ticket_failed=' . $ticket_failed . ' in_app=' . $in_app . ' app_until=' . ($c->session('app_until') || 0) . ' app_device=' . (($c->session('app_device') || '') ne '' ? 1 : 0) . ' auth=' . ($c->session('authentication') || '-') . ' host=' . ($c->req->url->host || '-'));
 	$c->render(json => {
 		manager => $url,
 		ticket_url => $ticket_url,
@@ -29377,7 +29377,7 @@ post '/manager/device/app_login' => sub($c) {
 	$c->session('app' => 1);
 	$c->session('app_until' => $until);
 	$c->session('app_device' => $device_uuid);
-	$log->info('app gate: app login for ' . ($device->{'name'} || $device_uuid) . ' from ' . ($c->tx->remote_address || '?'));
+	$log->info('app gate: app login for ' . ($device->{'name'} || $device_uuid) . ' from ' . ($c->tx->remote_address || '?') . ' host=' . ($c->req->url->host || '-'));
 	# The app key is the citizen door: a bootstrap session that pairs an app is
 	# promoted here, or the citizen-only routes would still read guest.
 	# A person is the identity; the device is how they carry it. The session

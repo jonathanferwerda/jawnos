@@ -102,6 +102,7 @@ class Dashboard(Gtk.Window):
         self.settings = settings
         self.start_requested_at = 0.0
         self._web_panel = None
+        self._view_version = ''
         self._web_failed = False
         self._quitting = False
         self._guard_lock = threading.Lock()
@@ -498,7 +499,15 @@ class Dashboard(Gtk.Window):
         self.web_page.pack_start(panel, True, True, 0)
         self.web_page.show_all()
         self._web_panel = panel
+        self._view_version = self._manager_version()
         return panel
+
+    def _manager_version(self):
+        try:
+            with open(os.path.join(self.settings["jawn_dir"], "VERSION"), encoding="utf-8") as fh:
+                return fh.read().strip()
+        except OSError:
+            return ""
 
     def _reload_web_view(self):
         """Reload the embedded manager after the tree restarted onto new code."""
@@ -635,6 +644,13 @@ class Dashboard(Gtk.Window):
                             self._update_pending_at = now
                     else:
                         self._update_pending = None
+                    # The page loads the bundle once. When the manager's version
+                    # changes (a push plus a restart, ours or another agent's),
+                    # reload the view so it is never left on old JS.
+                    disk_version = self._manager_version()
+                    if self._web_panel is not None and disk_version and disk_version != self._view_version:
+                        self._view_version = disk_version
+                        GLib.idle_add(self._reload_web_view)
                 finally:
                     self._guard_lock.release()
             GLib.idle_add(self._render, jawn, ble)
