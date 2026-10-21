@@ -997,6 +997,72 @@ function jawnPadlockSignOpen(mode, target, status, house) {
 	});
 }
 
+// A payment started on a device with no fingerprint (a laptop, or a tablet with
+// only a PIN) is approved here, on a device whose Keystore key is behind a
+// fingerprint prompt. The signed statement names the request, and the house
+// binds that approval to the payment's digest.
+function jawnosCryptoPaymentPrompt(data) {
+	if (!data || !data.request_id) { return; }
+	if (!window.JawnBiometricKey || typeof jawnosBiometricKeyCall !== 'function') { return; }
+	var mine = jawnDeviceUuid();
+	if (!mine) { return; }
+	if (data.source_device && data.source_device === mine) { return; }
+	if (data.targets && data.targets.length && data.targets.indexOf(mine) < 0) { return; }
+	var lockLayer = document.getElementById('locked_screen');
+	if (lockLayer && (lockLayer.offsetWidth || lockLayer.offsetHeight || lockLayer.getClientRects().length)) { return; }
+	if (document.getElementById('jawn_crypto_pay_prompt')) { return; }
+
+	var box = document.createElement('div');
+	box.id = 'jawn_crypto_pay_prompt';
+	box.setAttribute('role', 'dialog');
+	box.setAttribute('aria-modal', 'true');
+	box.style.cssText = 'position:fixed;z-index:72000;left:50%;top:50%;transform:translate(-50%,-50%);width:min(92vw,380px);background:#161616;color:#f4f4f4;border:1px solid #444;border-radius:14px;padding:18px;box-shadow:0 12px 40px rgba(0,0,0,.55);font-family:sans-serif;text-align:center;';
+	var title = document.createElement('div');
+	title.style.cssText = 'font-size:19px;line-height:1.35;margin-bottom:6px;font-weight:bold;';
+	title.textContent = jawnPadlockPromptText('Approve a crypto payment?');
+	var note = document.createElement('div');
+	note.style.cssText = 'font-size:14px;color:#bbb;margin-bottom:14px;min-height:18px;white-space:pre-wrap;';
+	note.textContent = (data.summary || '') + '\n' + jawnPadlockPromptText('Confirm with your fingerprint to approve it.');
+	var go = document.createElement('button');
+	go.type = 'button';
+	go.textContent = jawnPadlockPromptText('Approve with fingerprint');
+	go.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:pointer;margin:0 4px 8px 4px;';
+	var no = document.createElement('button');
+	no.type = 'button';
+	no.textContent = jawnPadlockPromptText('Not now');
+	no.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #555;background:#222;color:#f4f4f4;cursor:pointer;margin:0 4px 8px 4px;';
+	box.appendChild(title);
+	box.appendChild(note);
+	box.appendChild(go);
+	box.appendChild(no);
+	document.body.appendChild(box);
+
+	no.onclick = function() { box.remove(); };
+	go.onclick = function() {
+		go.disabled = true;
+		no.disabled = true;
+		note.textContent = jawnPadlockPromptText('Confirm your fingerprint...');
+		$.post('/manager/security/biometric_challenge', { device_uuid: mine, purpose: 'pay' }).then(function(ch) {
+			if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'challenge' }; }
+			var msg = 'crypto-payment\n' + mine + '\n' + data.request_id + '\n' + ch.nonce;
+			return jawnosBiometricKeyCall('sign', [jawnosB64(new TextEncoder().encode(msg)), jawnPadlockPromptText('Approve the crypto payment')]).then(function(res) {
+				if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
+				return $.post('/manager/crypto/payment_approve', {
+					device_uuid: mine, request_id: data.request_id, nonce: ch.nonce, signature: res.signature
+				});
+			});
+		}).then(function(res) {
+			if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
+			note.textContent = jawnPadlockPromptText('Approved.');
+			setTimeout(function() { box.remove(); }, 1200);
+		}).catch(function(err) {
+			note.textContent = (typeof jawnosBiometricError === 'function') ? jawnosBiometricError(err) : jawnPadlockPromptText('That did not work. Try again.');
+			go.disabled = false;
+			no.disabled = false;
+		});
+	};
+}
+
 // A Go approval names the request, not a screen. The phone's Keystore key is
 // the real factor: the OS fingerprint prompt releases it, and the house verifies
 // the signature against the device's bio_pubkey.

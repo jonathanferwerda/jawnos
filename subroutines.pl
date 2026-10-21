@@ -27656,6 +27656,18 @@ our @crypto_asset_list = (
 	{ code => 'USDT', name => 'Tether',    decimals => 6,  symbol => '$', network => 'tron',     coinbase => 'USDT' },
 	{ code => 'LTC',  name => 'Litecoin',  decimals => 8,  symbol => 'Ł', network => 'litecoin', coinbase => 'LTC'  },
 	{ code => 'SOL',  name => 'Solana',    decimals => 9,  symbol => '◎', network => 'solana',   coinbase => 'SOL'  },
+	{ code => 'DOGE', name => 'Dogecoin',  decimals => 8,  symbol => 'Ð', network => 'dogecoin', coinbase => 'DOGE' },
+	{ code => 'XRP',  name => 'XRP',       decimals => 6,  symbol => 'X', network => 'xrpl',     coinbase => 'XRP'  },
+	{ code => 'ADA',  name => 'Cardano',   decimals => 6,  symbol => '₳', network => 'cardano',  coinbase => 'ADA'  },
+	{ code => 'BNB',  name => 'BNB',       decimals => 18, symbol => 'BNB', network => 'bnb',    coinbase => 'BNB'  },
+	{ code => 'TRX',  name => 'TRON',      decimals => 6,  symbol => 'TRX', network => 'tron',    coinbase => 'TRX'  },
+	{ code => 'AVAX', name => 'Avalanche', decimals => 18, symbol => 'AVAX', network => 'avalanche', coinbase => 'AVAX' },
+	{ code => 'LINK', name => 'Chainlink', decimals => 18, symbol => 'LINK', network => 'ethereum', coinbase => 'LINK' },
+	{ code => 'DOT',  name => 'Polkadot',  decimals => 10, symbol => 'DOT', network => 'polkadot', coinbase => 'DOT'  },
+	{ code => 'BCH',  name => 'Bitcoin Cash', decimals => 8, symbol => 'BCH', network => 'bitcoin-cash', coinbase => 'BCH' },
+	{ code => 'XLM',  name => 'Stellar',   decimals => 7,  symbol => 'XLM', network => 'stellar',  coinbase => 'XLM'  },
+	{ code => 'ATOM', name => 'Cosmos',    decimals => 6,  symbol => 'ATOM', network => 'cosmos',  coinbase => 'ATOM' },
+	{ code => 'TON',  name => 'Toncoin',   decimals => 9,  symbol => 'TON', network => 'ton',     coinbase => 'TON'  },
 );
 
 # The most-used currencies, in the order a trader would rank them. Coinbase
@@ -27884,8 +27896,17 @@ sub crypto_address_valid {
 	my $net = lc($a->{'network'} || '');
 	return $s =~ /^(bc1[02-9ac-hj-np-z]{11,71}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/ ? 1 : 0 if $a->{'code'} eq 'BTC';
 	return $s =~ /^(ltc1[02-9ac-hj-np-z]{11,71}|[LM3][1-9A-HJ-NP-Za-km-z]{25,34})$/ ? 1 : 0 if $a->{'code'} eq 'LTC';
+	return $s =~ /^[D9A][1-9A-HJ-NP-Za-km-z]{25,34}$/ ? 1 : 0 if $a->{'code'} eq 'DOGE';
+	return $s =~ /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/ ? 1 : 0 if $a->{'code'} eq 'XRP';
+	return $s =~ /^(addr1[0-9a-z]{20,100}|Ae[0-9A-Za-z]{50,60}|DdzFF[0-9A-Za-z]{50,100})$/ ? 1 : 0 if $a->{'code'} eq 'ADA';
+	return $s =~ /^1[1-9A-HJ-NP-Za-km-z]{45,47}$/ ? 1 : 0 if $a->{'code'} eq 'DOT';
+	return $s =~ /^(bitcoincash:)?[qp][0-9a-z]{41}$/ ? 1 : 0 if $a->{'code'} eq 'BCH';
+	return $s =~ /^G[A-Z2-7]{55}$/ ? 1 : 0 if $a->{'code'} eq 'XLM';
+	return $s =~ /^cosmos1[0-9a-z]{38,60}$/ ? 1 : 0 if $a->{'code'} eq 'ATOM';
+	return $s =~ /^(EQ|UQ|kQ|0Q)[A-Za-z0-9_-]{46,48}$/ ? 1 : 0 if $a->{'code'} eq 'TON';
 	return $s =~ /^T[1-9A-HJ-NP-Za-km-z]{33}$/ ? 1 : 0 if $net eq 'tron';
-	return $s =~ /^0x[0-9a-fA-F]{40}$/ ? 1 : 0 if $net eq 'ethereum';
+	return $s =~ /^0x[0-9a-fA-F]{40}$/ ? 1 : 0 if $net eq 'ethereum' || $net eq 'bnb';
+	return $s =~ /^([XPC][A-Za-z0-9-]{10,120}|0x[0-9a-fA-F]{40})$/ ? 1 : 0 if $net eq 'avalanche';
 	return $s =~ /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ ? 1 : 0 if $net eq 'solana';
 	return $s =~ /^[A-Za-z0-9]{20,100}$/ ? 1 : 0;
 }

@@ -1076,16 +1076,12 @@ $(document).on('click', '#crypto_pay_record', function() {
 		proof: scope.find('#crypto_pay_proof').val(),
 		timestamp: Date.now()
 	};
-	function record(proof) {
-		if (proof) {
-			data.bio_nonce = proof.nonce;
-			data.bio_signature = proof.signature;
-		}
+	function postPayment() {
 		status.text('recording…');
 		$.post('/manager/store/crypto_payment', data, function(r) {
 			if (!r || !r.ok) {
 				status.text((r && r.need_biometric)
-					? 'fingerprint confirmation is needed — try again'
+					? (r.need_other_device ? 'another device must approve — press Verify again' : 'fingerprint confirmation is needed — try again')
 					: ((r && r.error) || 'could not record'));
 				return;
 			}
@@ -1097,16 +1093,49 @@ $(document).on('click', '#crypto_pay_record', function() {
 			setTimeout(function() { scope.remove(); }, 1400);
 		}, 'json').fail(function() { status.text('could not record'); });
 	}
-	if (scope.attr('data-bio') === '1') {
+	var mode = scope.attr('data-bio') || 'none';
+	if (mode === 'self') {
 		if (typeof jawnosBiometricVerify !== 'function' || !window.JawnBiometricKey) {
-			status.text('This device has no fingerprint key here — record from the phone with the fingerprint, or use a device without one.');
+			status.text('This device has no fingerprint key here — record from the phone with the fingerprint.');
 			return;
 		}
-		jawnosBiometricVerify(function(t) { status.text(t); }).then(record).catch(function(err) {
+		jawnosBiometricVerify(function(t) { status.text(t); }).then(function(proof) {
+			data.bio_nonce = proof.nonce;
+			data.bio_signature = proof.signature;
+			postPayment();
+		}).catch(function(err) {
 			status.text((typeof jawnosBiometricError === 'function') ? jawnosBiometricError(err) : 'fingerprint not accepted');
 		});
 	}
+	else if (mode === 'other') {
+		status.text('asking another device in the house for a fingerprint…');
+		$.post('/manager/crypto/payment_request', data, function(r) {
+			if (!r || !r.ok) { status.text((r && r.error) || 'no device could be asked'); return; }
+			var id = r.id;
+			var started = Date.now();
+			var iv = setInterval(function() {
+				if (Date.now() - started > 120000) {
+					clearInterval(iv);
+					status.text('the request expired — try again');
+					return;
+				}
+				$.getJSON('/manager/crypto/payment_request', { id: id }, function(s) {
+					if (!s || !s.ok) { return; }
+					if (s.approved) {
+						clearInterval(iv);
+						status.text('approved by ' + (s.by || 'another device') + '…');
+						data.payment_request_id = id;
+						postPayment();
+					}
+					else if (s.expired) {
+						clearInterval(iv);
+						status.text('the request expired — try again');
+					}
+				});
+			}, 1500);
+		}, 'json').fail(function() { status.text('no device could be asked'); });
+	}
 	else {
-		record(null);
+		postPayment();
 	}
 });

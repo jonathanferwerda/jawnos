@@ -6402,6 +6402,35 @@ post '/manager/crypto/tracking_app' => sub($c) {
 # countersigned with the house's; the txid is carried, not chain-checked. The
 # money side is an ordinary income transaction on the wallet account, so every
 # statement keeps working.
+sub house_bio_device {
+	my ($except) = @_;
+	my $rows = &subs::db_select('paired_devices', undef, { status => 'active' })->hashes;
+	foreach my $d ( @{$rows} ) {
+		next unless $d->{'bio_pubkey'} && length $d->{'bio_pubkey'};
+		next if $except && ($d->{'uuid'} || '') eq $except;
+		return $d;
+	}
+	return undef;
+}
+
+sub crypto_payment_digest {
+	my ($uuid, $cx, $asset, $amount, $account, $txid, $proof) = @_;
+	return &subs::sha256_hex(join("\x1f",
+		$uuid // '', $cx // '', uc($asset // ''), $amount // '',
+		$account // '', $txid // '', &subs::sha256_hex($proof // '')));
+}
+
+sub crypto_payment_request_get {
+	my ($id) = @_;
+	return undef unless defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/;
+	my $row = &subs::db_select('cache', undef, { uuid => $id, context => 'crypto_payment_request' })->hashes->[0];
+	return undef unless $row;
+	my $d = eval { decode_json($row->{'data'} || '') } || {};
+	$d->{'id'} = $id;
+	$d->{'at'} = $row->{'server_time'} || 0;
+	return $d;
+}
+
 sub store_invoice_balance {
 	my ($inv) = @_;
 	my $data = eval { decode_json($inv->{'data'} || '') } || {};
@@ -6425,7 +6454,12 @@ post '/manager/store/crypto_panel' => sub($c) {
 	my $inv = &subs::db_select('appointments', undef, { uuid => $uuid, app => $customer->{'app'} })->hashes->[0];
 	unless ($inv && ($inv->{'type'} || '') eq 'invoice') { return $c->render(json => { ok => 0, error => 'no invoice' }); }
 	my ($data, $balance) = &store_invoice_balance($inv);
-	my $device = &subs::db_select('paired_devices', undef, { uuid => $c->session('device_uuid') || '', status => 'active' })->hashes->[0];
+	my $device_uuid = $c->session('device_uuid') || '';
+	my $device = $device_uuid
+		? &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]
+		: undef;
+	my $self_bio = ($device && $device->{'bio_pubkey'}) ? 1 : 0;
+	my $bio_mode = $self_bio ? 'self' : (&house_bio_device($device_uuid) ? 'other' : 'none');
 	my $html = $c->render_to_string(
 		template => 'store/crypto_payment',
 		invoice => $inv,
@@ -6435,7 +6469,7 @@ post '/manager/store/crypto_panel' => sub($c) {
 		assets => &subs::crypto_enabled_assets(),
 		balance => $balance,
 		base => &subs::crypto_report_currency(),
-		bio_enrolled => ($device && $device->{'bio_pubkey'}) ? 1 : 0,
+		bio_mode => $bio_mode,
 	);
 	$c->render(json => { ok => 1, html => $html });
 };
@@ -6443,10 +6477,6 @@ post '/manager/store/crypto_panel' => sub($c) {
 post '/manager/store/crypto_payment' => sub($c) {
 	unless ($c->session('authentication') eq 'approved') {
 		return $c->render(json => { ok => 0, error => 'sign in first' });
-	}
-	my $bio = &biometric_payment_confirmed($c);
-	unless ($bio->{'ok'}) {
-		return $c->render(json => { ok => 0, need_biometric => 1, enrolled => $bio->{'enrolled'} ? 1 : 0, error => 'biometric confirmation is needed' });
 	}
 	my $uuid = $c->param('uuid');
 	my $cx = $c->param('cx_uuid');
@@ -6473,6 +6503,26 @@ post '/manager/store/crypto_payment' => sub($c) {
 	my $txid = $c->param('txid') || '';
 	$txid =~ s/^\s+|\s+$//g;
 	my $proof_code = $c->param('proof') || '';
+	# A device with no fingerprint asks another device in the house. Its approval
+	# is bound to this exact payment by the digest, so it cannot be moved to a
+	# different amount or invoice.
+	my $digest = &crypto_payment_digest($uuid, $cx, $asset->{'code'}, $native, $account, $txid, $proof_code);
+	my $bio = &biometric_payment_confirmed($c);
+	my $approval_id = $c->param('payment_request_id') || '';
+	my $approved = 0;
+	if (length $approval_id && $approval_id =~ /^[A-Za-z0-9]{8,64}$/) {
+		my $req = &crypto_payment_request_get($approval_id);
+		$approved = 1 if $req && ($req->{'approved_by'} || '') ne '' && ($req->{'digest'} || '') eq $digest;
+	}
+	unless ($bio->{'ok'} || $approved) {
+		return $c->render(json => {
+			ok => 0,
+			need_biometric => 1,
+			self => $bio->{'self'} ? 1 : 0,
+			need_other_device => $bio->{'other'} ? 1 : 0,
+			error => $bio->{'other'} ? 'another device must approve this payment' : 'fingerprint confirmation is needed',
+		});
+	}
 	my ($proof, $payer, $verified) = ('', undef, $txid ? 'manual' : 'claimed');
 	if (length $proof_code) {
 		my $record = &subs::payment_proof_parse($proof_code);
@@ -6567,6 +6617,102 @@ post '/manager/store/crypto_payment' => sub($c) {
 		verified => $verified,
 		payer => $payer,
 		payer_known => $payer_known,
+	});
+};
+
+# A device without a fingerprint asks the house: this stores what is being
+# approved (by digest) and prompts every fingerprinted device. The first
+# approval wins; the record route checks it before writing.
+post '/manager/crypto/payment_request' => sub($c) {
+	unless ($c->session('authentication') eq 'approved') {
+		return $c->render(json => { ok => 0, error => 'sign in first' });
+	}
+	my $uuid = $c->param('uuid');
+	my $cx = $c->param('cx_uuid');
+	my $customer = ($cx && &subs::db_select('settings', undef, { setting => 'uuid', value => $cx })->hashes->[0]) || undef;
+	unless ($customer && $customer->{'app'}) { return $c->render(json => { ok => 0, error => 'no customer' }); }
+	my $app = $customer->{'app'};
+	my $inv = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
+	unless ($inv && ($inv->{'type'} || '') eq 'invoice') { return $c->render(json => { ok => 0, error => 'no invoice' }); }
+	my ($data, $balance) = &store_invoice_balance($inv);
+	if ($balance <= 0) { return $c->render(json => { ok => 0, error => 'this invoice is already paid' }); }
+	my $asset = &subs::crypto_asset(uc($c->param('asset') || ''));
+	unless ($asset) { return $c->render(json => { ok => 0, error => 'choose a coin' }); }
+	my $native = &subs::crypto_amount_number($c->param('amount'), $asset);
+	unless (defined $native && $native > 0) { return $c->render(json => { ok => 0, error => 'enter the amount that was sent' }); }
+	my $account = &subs::unformat_name($c->param('account') || '');
+	my $txid = $c->param('txid') || '';
+	$txid =~ s/^\s+|\s+$//g;
+	my $proof = $c->param('proof') || '';
+	my $digest = &crypto_payment_digest($uuid, $cx, $asset->{'code'}, $native, $account, $txid, $proof);
+	my $now = &subs::rightNow();
+	&subs::db_query("delete from cache where context = 'crypto_payment_request' and server_time < ?", $now - 900000);
+	my $id = &subs::random_string_creator(24);
+	my $summary = $native . ' ' . $asset->{'code'} . ' for invoice ' . ($data->{'id'} || '');
+	&subs::db_insert('cache', {
+		uuid => $id,
+		context => 'crypto_payment_request',
+		app => '__president',
+		data => encode_json({
+			at => $now, requester => $c->session('device_uuid') || '',
+			digest => $digest, summary => $summary,
+			asset => $asset->{'code'}, amount => $native,
+			invoice => $data->{'id'} || '', uuid => $uuid, cx => $cx,
+		}),
+		server_time => $now,
+		timestamp => $now,
+		device => 'all',
+	});
+	my $devices = &subs::db_select('paired_devices', undef, { status => 'active' })->hashes;
+	my @targets = map { $_->{'uuid'} } grep { $_->{'bio_pubkey'} && length $_->{'bio_pubkey'} } @{$devices};
+	&Websocket::send('server', {
+		crypto_payment_prompt => 1,
+		request_id => $id,
+		source_device => $c->session('device_uuid') || '',
+		summary => $summary,
+		amount => $native,
+		asset => $asset->{'code'},
+		invoice => $data->{'id'} || '',
+		targets => \@targets,
+		timestamp => $now,
+	});
+	$c->render(json => { ok => 1, id => $id, targets => scalar @targets });
+};
+
+post '/manager/crypto/payment_approve' => sub($c) {
+	my $id = $c->param('request_id') || '';
+	return $c->render(json => { ok => 0, error => 'no request' }) unless $id =~ /^[A-Za-z0-9]{8,64}$/;
+	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
+	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]) || undef;
+	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device && $device->{'bio_pubkey'};
+	my $nonce = $c->param('nonce') || '';
+	my $signature = $c->param('signature') || '';
+	return $c->render(json => { ok => 0, error => 'no challenge' }) unless length $nonce && length $signature;
+	return $c->render(json => { ok => 0, error => 'no challenge' }) unless &biometric_nonce_take('pay', $device_uuid, $nonce, 600000);
+	my $msg = join("\n", 'crypto-payment', $device_uuid, $id, $nonce);
+	unless (&subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature)) {
+		return $c->render(json => { ok => 0, error => 'not accepted' });
+	}
+	my $request = &crypto_payment_request_get($id);
+	return $c->render(json => { ok => 0, error => 'no request' }) unless $request;
+	return $c->render(json => { ok => 0, error => 'already approved' }) if ($request->{'approved_by'} || '') ne '';
+	$request->{'approved_by'} = $device_uuid;
+	$request->{'approved_name'} = $device->{'name'} || '';
+	$request->{'approved_at'} = &subs::rightNow();
+	&subs::db_update('cache', { data => encode_json($request), server_time => &subs::rightNow() }, { uuid => $id, context => 'crypto_payment_request' });
+	&Websocket::send('server', { crypto_payment_approved => 1, request_id => $id, approved_by => $device->{'name'} || $device_uuid, timestamp => &subs::rightNow() });
+	$c->render(json => { ok => 1 });
+};
+
+get '/manager/crypto/payment_request' => sub($c) {
+	my $request = &crypto_payment_request_get($c->param('id'));
+	return $c->render(json => { ok => 0, error => 'no request' }) unless $request;
+	my $expired = (&subs::rightNow() - ($request->{'at'} || 0)) > 300000 ? 1 : 0;
+	$c->render(json => {
+		ok => 1,
+		approved => ($request->{'approved_by'} || '') ne '' ? 1 : 0,
+		by => $request->{'approved_name'} || '',
+		expired => $expired,
 	});
 };
 
@@ -33673,25 +33819,28 @@ sub biometric_nonce_take {
 # citizen is the fallback there; the panel says which path it will use.
 sub biometric_payment_confirmed {
 	my ($c) = @_;
-	my $out = { ok => 0, enrolled => 0, device => '' };
 	my $device_uuid = $c->session('device_uuid') || '';
-	return { ok => 1, enrolled => 0, device => '' } unless length $device_uuid;
-	my $device = &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0];
-	return { ok => 1, enrolled => 0, device => '' } unless $device && $device->{'bio_pubkey'};
-	$out->{'enrolled'} = 1;
-	$out->{'device'} = $device_uuid;
+	my $device = $device_uuid
+		? &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]
+		: undef;
+	# A device with no key of its own asks a fingerprinted device in the house.
+	# If the house has none, the signed-in citizen is the fallback.
+	unless ($device && $device->{'bio_pubkey'}) {
+		my $other = &house_bio_device($device_uuid);
+		return { ok => 1, enrolled => 0, no_bio => 1 } unless $other;
+		return { ok => 0, enrolled => 0, other => 1, other_name => $other->{'name'} || '' };
+	}
 	my $nonce = $c->param('bio_nonce') || '';
 	my $signature = $c->param('bio_signature') || '';
-	return $out unless length $nonce && length $signature;
-	return $out unless &biometric_nonce_take('verify', $device_uuid, $nonce, 600000);
+	return { ok => 0, enrolled => 1, self => 1 } unless length $nonce && length $signature;
+	return { ok => 0, enrolled => 1, self => 1 } unless &biometric_nonce_take('verify', $device_uuid, $nonce, 600000);
 	my $msg = join("\n", 'padlock-bio-verify', $device_uuid, $nonce);
-	$out->{'ok'} = &subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature) ? 1 : 0;
-	return $out;
+	return { ok => &subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature) ? 1 : 0, enrolled => 1, self => 1 };
 }
 
 post '/manager/security/biometric_challenge' => sub ($c) {
 	my $purpose = $c->param('purpose') || 'unlock';
-	$purpose = 'unlock' unless $purpose =~ /^(?:enroll|unlock|verify|go)$/;
+	$purpose = 'unlock' unless $purpose =~ /^(?:enroll|unlock|verify|go|pay)$/;
 	my $device_uuid = $c->param('device_uuid') || $c->session('device_uuid') || '';
 	my $device = ($device_uuid && &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0]);
 	unless ($device) { return $c->render(json => { ok => 0, error => 'not paired' }); }

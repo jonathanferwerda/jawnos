@@ -574,6 +574,13 @@ function wsMessageHandler(event) {
 			// waiting for a refresh to show or hide the lock button
 			$('#lock_session').toggle(!!data['padlock_gate']);
 		}
+		if (data['crypto_payment_prompt']) {
+			// A payment started on a device with no fingerprint asks this one; the
+			// server sends the target device ids so an unenrolled tablet ignores it.
+			if (typeof jawnosCryptoPaymentPrompt === 'function') {
+				jawnosCryptoPaymentPrompt(data);
+			}
+		}
 		if (data['padlock_key_show']) {
 			// An explicit request gets a fingerprint prompt in place; it never
 			// moves this page. Anything else is a legacy announcement and is

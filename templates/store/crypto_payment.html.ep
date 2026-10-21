@@ -16,7 +16,7 @@
 	data-cx="<%= $customer->{'value'} %>"
 	data-balance="<%= $balance %>"
 	data-base="<%= $base %>"
-	data-bio="<%= $bio_enrolled ? 1 : 0 %>"
+	data-bio="<%= $bio_mode %>"
 	data-wallets="<%= encode_json($wallets) %>"
 	style="position:fixed;z-index:100000;left:50%;top:10%;transform:translateX(-50%);width:min(580px,94vw);max-height:80vh;overflow:auto;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.4);text-align:left;">
 	<h2 style="margin:0 0 4px;">Crypto payment</h2>
@@ -24,7 +24,7 @@
 	<% if ($balance <= 0) { %>
 		<p>This invoice is already paid.</p>
 	<% } elsif (!scalar @{$wallets}) { %>
-		<p>No crypto wallet is set up. Make an app an account, set its Tender to crypto, and save its public address on the app card.</p>
+		<p>No crypto wallet is set up. Make an app an account, set its <b>Payment Type</b> to crypto, and save its public address on the app card.</p>
 	<% } else { %>
 		<div class="cfg-row">
 			<label>Coin</label>
@@ -64,7 +64,7 @@
 			<textarea id="crypto_pay_proof" placeholder="PAY1Z:… (optional)" spellcheck="false" style="width:100%;height:58px;font-family:monospace;font-size:12px;"></textarea>
 		</div>
 		<p class="cfg-note" style="margin:0 0 8px;">
-			<% if ($bio_enrolled) { %>This device has a fingerprint enrolled: recording asks for it.<% } else { %>No fingerprint is enrolled on this device, so the signed-in citizen records it. Enrol one under Security for the stronger path.<% } %>
+			<% if ($bio_mode eq 'self') { %>This device has a fingerprint enrolled: recording asks for it.<% } elsif ($bio_mode eq 'other') { %>This device has no fingerprint. Recording asks another device in the house for one.<% } else { %>No fingerprinted device is in the house, so the signed-in citizen records it.<% } %>
 			A proof is an attestation by the payer's crest; the chain is not checked here.
 		</p>
 		<div class="cfg-actions">

@@ -129,7 +129,7 @@
 		</div>
 		<p class="cfg-note">The two money columns are the same holding seen two ways: Cost is the money recorded when it arrived, Market is the native amount at today's rate.</p>
 	<% } else { %>
-		<p class="cfg-note">No wallets yet. Make an app an <b>account</b> in the App tab, turn on its <b>Tender</b> and set it to <b>crypto</b> — the wallet fields appear on that app's card.</p>
+		<p class="cfg-note">No wallets yet. Make an app an <b>account</b> in the App tab, turn on <b>Payment Type</b> and set it to <b>crypto</b> — the wallet fields appear on that app's card.</p>
 	<% } %>
 	<div class="cfg-actions">
 		<button type="button" class="crypto_open_apps">Open App configuration</button>

@@ -415,7 +415,7 @@
 									<label>Network</label>
 									<select class="crypto_wallet_input" setting="crypto_network" app="<%= $a %>">
 										<% my $wnet = $appts->{$a}->{'setting'}->{'crypto_network'} || $wa->{'network'}; %>
-										<% foreach my $net ( qw/bitcoin ethereum tron litecoin solana other/ ) { %>
+										<% foreach my $net ( qw/bitcoin ethereum tron litecoin solana dogecoin xrpl cardano bnb avalanche polkadot bitcoin-cash stellar cosmos ton other/ ) { %>
 											<option value="<%= $net %>" <% if ($net eq $wnet) { %>selected<% } %>><%= &subs::format_name($net) %></option>
 										<% } %>
 									</select>
