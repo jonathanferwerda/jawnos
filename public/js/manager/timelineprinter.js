@@ -46,12 +46,14 @@ function timelinePrinter(appts,sort,offset) {
 	headerPrinter(ctx,appts,'Timeline');
 
 	var ink = jawnosInk();
+	var rail = (typeof jawnosPrinterLine == 'function') ? jawnosPrinterLine() : ink;
 	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 
-	// the rail the rows are hung from, in the theme's own ink so it belongs to
-	// the scheme. Over a background picture that ink can vanish, so the
-	// contrasting halo is laid underneath it first.
+	// the rail the rows are hung from, in a mid-tone of the theme's own colour so
+	// it belongs to the scheme. The themed ink is black on a light desk, which
+	// drew a hard black bar. Over a background picture that colour can vanish, so
+	// the contrasting halo is laid underneath it first.
 	ctx.save();
 	ctx.lineCap = 'round';
 	ctx.beginPath();
@@ -62,7 +64,7 @@ function timelinePrinter(appts,sort,offset) {
 		ctx.lineWidth = 12;
 		ctx.stroke();
 	}
-	ctx.strokeStyle = ink;
+	ctx.strokeStyle = rail;
 	ctx.lineWidth = 8;
 	ctx.stroke();
 	ctx.restore();

@@ -15,10 +15,11 @@ function headerPrinter(ctx,appts,title) {
 	$('#header').html(clock_in_bar ? '' : formatted_time);
 
 	// the divider under the old header text - a moveTo alone never drew a line -
-	// stands only while a top taskbar has lifted the rows down. It wears the
-	// theme's ink, with the contrasting halo beneath it over a background picture.
+	// stands only while a top taskbar has lifted the rows down. It wears a mid-tone
+	// of the theme's own colour (the ink is black on a light desk), with the
+	// contrasting halo beneath it over a background picture.
 	if (headerHeight > 0) {
-		var ink = jawnosInk();
+		var ink = (typeof jawnosPrinterLine == 'function') ? jawnosPrinterLine() : jawnosInk();
 		var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 		ctx.save();
 		ctx.beginPath();

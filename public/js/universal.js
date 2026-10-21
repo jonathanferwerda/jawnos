@@ -1104,6 +1104,28 @@ function jawnosInk() {
 	try { c = getComputedStyle(document.body).getPropertyValue('--ink'); } catch (e) { c = ''; }
 	return (c && c.trim()) || '#000000';
 }
+// The colour a printer's structural line wears (the timeline's rail, the header's
+// divider). The themed ink is right for words, but on a light theme it is pure
+// black, and an 8px rail of it reads as a hard black bar lying across the desk.
+// The manager colour carries the scheme's hue, so a mid-tone of it belongs to the
+// theme on either a light or a dark face; a neutral scheme (Graphite) keeps its
+// grey instead of inventing a hue from its meaningless hue angle.
+function jawnosPrinterLine() {
+	var bg = '';
+	try { bg = getComputedStyle(document.body).backgroundColor || ''; } catch (e) { bg = ''; }
+	var m = bg.match(/rgba?\(([^)]+)\)/);
+	if (m) {
+		var parts = m[1].split(',').map(function (x) { return parseFloat(x); });
+		// a transparent body has no scheme colour to derive from
+		if (parts.length >= 3 && !(parts.length >= 4 && parts[3] === 0)) {
+			var hsl = jawnosRgbToHsl(parts[0], parts[1], parts[2]);
+			var lum = (0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2]) / 255;
+			var tint = hsl[1] < 0.08 ? 0 : 0.45;
+			return jawnosHslToHex(hsl[0], tint, lum < 0.5 ? 0.62 : 0.45);
+		}
+	}
+	return jawnosInk();
+}
 // The Misc → Font choice. The layout writes it onto the root as --jawnos-font,
 // so the whole shell inherits it; canvas art has no CSS inheritance, so the
 // printers read the same value back through here.
