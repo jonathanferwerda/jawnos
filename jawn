@@ -429,7 +429,12 @@ sub shut_down() {
 			next if $pid == $$ || $pid == $fpid;
 			my $cmd = &pid_cmdline($pid);
 			next if $cmd =~ / (?:-c|-e|-M) /;
-			push @leftovers, $pid if $cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/;
+			# The house advertiser runs under a worker; a killed tree can orphan the
+			# avahi-publish-service (ppid 1) and it then keeps advertising the dead
+			# tree's ports. Match only our service name, not every avahi publication.
+			push @leftovers, $pid
+				if $cmd =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/
+				|| ($cmd =~ /avahi-publish-service/ && $cmd =~ /_jawnos-house\._tcp/);
 		}
 		closedir $procs;
 	}
