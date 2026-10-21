@@ -1007,12 +1007,12 @@ async function keyboardMaker(data) {
 	},100);
 }
 
-// The Manager button follows the machine picker at once, rather than waiting
-// for the setting POST and the next render.
+// The Go button follows the machine picker at once, rather than waiting for
+// the setting POST and the next render.
 function keyboardManagerButton(select) {
 	var s = select ? $(select) : $('#remote_control_machine_select');
 	var picked = s.find('option:selected');
-	var buttons = $('#remote_control_manager, #remote_control_go');
+	var buttons = $('#remote_control_go');
 	if (!buttons.length) { return; }
 	if (!picked.length || !picked.val()) {
 		buttons.hide().removeAttr('uuid').removeAttr('manager');
