@@ -1,0 +1,200 @@
+<% my $t = $today; %>
+<% my $money = $t->{'money'}; %>
+<% my $headline = $t->{'is_future'} ? $money->{'due'} : $money->{'spent'}; %>
+<% my $headline_label = $t->{'is_future'} ? &subs::ui('Due in bills') : ($t->{'is_today'} ? &subs::ui('Spent so far') : &subs::ui('Money out')); %>
+<div id="handbook_today">
+	<div class="handbook_today_bar">
+		<div class="handbook_today_nav">
+			<button class="handbook_today_arrow" day="<%= $t->{'prev_day'} %>" hint="<%= &subs::ui('Previous day') %>">&lsaquo;</button>
+			<div class="handbook_today_heading">
+				<span class="handbook_today_relative"><%= $t->{'relative'} || $t->{'date_label'} %></span>
+				<% if ($t->{'relative'}) { %><span class="handbook_today_date"><%= $t->{'date_label'} %></span><% } %>
+			</div>
+			<button class="handbook_today_arrow" day="<%= $t->{'next_day'} %>" hint="<%= &subs::ui('Next day') %>">&rsaquo;</button>
+			<% unless ($t->{'is_today'}) { %>
+				<button id="handbook_today_reset" class="handbook_today_reset"><%= &subs::ui('Today') %></button>
+			<% } %>
+			<button class="handbook_today_reset handbook_link" chapter="handbook" hint="<%= &subs::ui('Chapters') %>"><%= &subs::ui('Chapters') %></button>
+		</div>
+		<div class="handbook_today_lookup">
+			<% if ($t->{'unread'}) { %><div class="handbook_today_unread"><%= &subs::ui('That day could not be read; showing today.') %></div><% } %>
+			<input id="handbook_today_date" type="text" value="<%= $t->{'day_value'} %>"
+				placeholder="<%= &subs::ui('A day — today, yesterday, jul 16, 2025-10-21') %>"
+				hint="<%= &subs::ui('Type a day and press Enter') %>">
+		</div>
+	</div>
+
+	<div class="handbook_today_grid">
+		<section class="handbook_today_card handbook_today_money">
+			<h3><%= &subs::ui('Money') %></h3>
+			<div class="handbook_today_big"><%= &subs::price_formatter($headline) %></div>
+			<div class="handbook_today_caption"><%= $headline_label %></div>
+			<% if ($t->{'is_today'} && $money->{'due'} > 0) { %>
+				<div class="handbook_today_due"><b><%= &subs::price_formatter($money->{'due'}) %></b> <%= &subs::ui('in bills due') %></div>
+			<% } elsif (!$t->{'is_future'} && $money->{'income'} > 0) { %>
+				<div class="handbook_today_due"><b><%= &subs::price_formatter($money->{'income'}) %></b> <%= &subs::ui('came in') %></div>
+			<% } %>
+
+			<% if (scalar @{$money->{'due_rows'}}) { %>
+				<h4><%= &subs::ui('Bills due') %></h4>
+				<ul class="handbook_today_list">
+					<% foreach my $row ( @{$money->{'due_rows'}} ) { %>
+						<li class="handbook_today_row">
+							<span class="handbook_today_row_name"><%= $row->{'name'} %></span>
+							<% if ($row->{'item'}) { %><span class="handbook_today_row_note"><%= $row->{'item'} %></span><% } %>
+							<span class="handbook_today_amount"><%= &subs::price_formatter($row->{'amount'}) %></span>
+						</li>
+					<% } %>
+				</ul>
+			<% } %>
+
+			<h4><%= &subs::ui('Money out') %></h4>
+			<% if (scalar @{$money->{'rows'}}) { %>
+				<ul class="handbook_today_list">
+					<% foreach my $row ( @{$money->{'rows'}} ) { %>
+						<li class="handbook_today_row handbook_today_open_app hover" app="<%= $row->{'app'} %>" title="<%= $row->{'name'} %>">
+							<span class="handbook_today_row_name"><%= $row->{'vendor'} || $row->{'name'} %></span>
+							<% if ($row->{'item'}) { %><span class="handbook_today_row_note"><%= $row->{'item'} %></span><% } %>
+							<span class="handbook_today_amount"><%= &subs::price_formatter($row->{'amount'}) %></span>
+						</li>
+					<% } %>
+				</ul>
+			<% } else { %>
+				<div class="handbook_today_empty"><%= $t->{'is_future'} ? &subs::ui('Nothing is due or spent on this day yet.') : &subs::ui('No money moved on this day.') %></div>
+			<% } %>
+			<div class="handbook_today_actions">
+				<button class="handbook_today_budget"><%= &subs::ui('Open Accounting') %></button>
+			</div>
+		</section>
+
+		<section class="handbook_today_card handbook_today_life">
+			<h3><%= &subs::ui('State of life') %></h3>
+			<div class="handbook_today_journal">
+				<% foreach my $line ( @{$t->{'journal'}} ) { %>
+					<p><%= $line %></p>
+				<% } %>
+			</div>
+
+			<% if ($t->{'running'}) { %>
+				<div class="handbook_today_now handbook_today_open_app hover" app="<%= $t->{'running'}->{'app'} %>">
+					<b><%= &subs::format_name($t->{'running'}->{'app'}) %></b>
+					<%= &subs::ui('is running since') %>
+					<span class="time" timestamp="<%= $t->{'running'}->{'timestamp'} %>"></span>
+				</div>
+			<% } %>
+			<% if (scalar @{$t->{'open'}}) { %>
+				<h4><%= &subs::ui('Still open') %></h4>
+				<ul class="handbook_today_list">
+					<% foreach my $row ( @{$t->{'open'}} ) { %>
+						<li class="handbook_today_row handbook_today_open_app hover" app="<%= $row->{'app'} %>">
+							<span class="handbook_today_row_name"><%= &subs::format_name($row->{'app'}) %></span>
+							<span class="handbook_today_row_note"><%= &subs::ui('left open') %></span>
+							<span class="handbook_today_when time" timestamp="<%= $row->{'timestamp'} %>"></span>
+						</li>
+					<% } %>
+				</ul>
+			<% } %>
+
+			<h4><%= &subs::ui('The day') %></h4>
+			<% if (scalar @{$t->{'appointments'}}) { %>
+				<ul class="handbook_today_timeline">
+					<% foreach my $appt ( @{$t->{'appointments'}} ) { %>
+						<li class="handbook_today_appt handbook_today_open_app hover" app="<%= $appt->{'app'} %>">
+							<span class="handbook_today_time time" mode="fixed" timestamp="<%= $appt->{'timestamp'} %>"></span>
+							<span class="handbook_today_appt_name"><%= $appt->{'name'} %></span>
+							<span class="handbook_today_appt_type"><%= $appt->{'type'} %></span>
+							<% if ($appt->{'duration'}) { %><span class="handbook_today_chip"><%= $appt->{'duration'} %></span><% } %>
+							<% if ($appt->{'project'}) { %><span class="handbook_today_chip"><%= &subs::format_name($appt->{'project'}) %></span><% } %>
+						</li>
+					<% } %>
+				</ul>
+			<% } elsif ($t->{'record_count'}) { %>
+				<div class="handbook_today_empty"><%= &subs::ui('Only money and measures are on this day.') %></div>
+			<% } else { %>
+				<div class="handbook_today_empty"><%= $t->{'is_future'} ? &subs::ui('Nothing is planned for this day yet.') : &subs::ui('Nothing was recorded on this day.') %></div>
+			<% } %>
+
+			<h4><%= &subs::ui('Measures') %></h4>
+			<% if (scalar @{$t->{'measures'}}) { %>
+				<ul class="handbook_today_list">
+					<% foreach my $measure ( @{$t->{'measures'}} ) { %>
+						<li class="handbook_today_row handbook_today_open_app hover" app="<%= $measure->{'app'} %>">
+							<span class="handbook_today_row_name"><%= $measure->{'label'} %></span>
+							<span class="handbook_today_row_note"><%= &subs::format_name($measure->{'app'}) %> &middot; <span class="time" timestamp="<%= $measure->{'timestamp'} %>"></span></span>
+							<span class="handbook_today_amount">
+								<%= $measure->{'value'} %><% if ($measure->{'unit'}) { %> <%= $measure->{'unit'} %><% } %>
+								<% if (defined $measure->{'delta'}) { %>
+									<span class="handbook_today_delta <%= $measure->{'delta'} < 0 ? 'down' : 'up' %>">
+										<%= sprintf('%+.2f', $measure->{'delta'}) %>
+									</span>
+								<% } %>
+							</span>
+						</li>
+					<% } %>
+				</ul>
+			<% } else { %>
+				<div class="handbook_today_empty"><%= &subs::ui('No measure has been recorded.') %></div>
+			<% } %>
+
+			<h4><%= &subs::ui('Notes') %></h4>
+			<% if (scalar @{$t->{'notes'}}) { %>
+				<ul class="handbook_today_list">
+					<% foreach my $note ( @{$t->{'notes'}} ) { %>
+						<li class="handbook_today_row handbook_today_note">
+							<span class="handbook_today_row_name"><%= $note->{'snippet'} %></span>
+							<span class="handbook_today_when time" timestamp="<%= $note->{'timestamp'} %>"></span>
+						</li>
+					<% } %>
+				</ul>
+			<% } else { %>
+				<div class="handbook_today_empty"><%= &subs::ui('No note was written on this day.') %></div>
+			<% } %>
+		</section>
+
+		<section class="handbook_today_card handbook_today_projects">
+			<h3><%= &subs::ui('Projects') %></h3>
+			<% if (scalar @{$t->{'projects'}}) { %>
+				<ul class="handbook_today_list">
+					<% foreach my $project ( @{$t->{'projects'}} ) { %>
+						<li class="handbook_today_row handbook_today_open_app hover" app="<%= $project->{'app'} %>">
+							<span class="handbook_today_row_name"><%= $project->{'name'} %></span>
+							<span class="handbook_today_row_note">
+								<% if ($project->{'count'}) { %><%= $project->{'count'} %> <%= &subs::ui('today') %><% } elsif ($project->{'last'}) { %><%= &subs::ui('last touched') %> <span class="time" timestamp="<%= $project->{'last'} %>"></span><% } else { %><%= &subs::ui('not started') %><% } %>
+								<% if ($project->{'members'}) { %> &middot; <%= $project->{'members'} %> <%= &subs::ui('people') %><% } %>
+							</span>
+							<% if (scalar @{$project->{'member_names'}}) { %>
+								<span class="handbook_today_row_extra"><%= join(', ', @{$project->{'member_names'}}) %></span>
+							<% } %>
+						</li>
+					<% } %>
+				</ul>
+			<% } else { %>
+				<div class="handbook_today_empty"><%= &subs::ui('No project has been made yet.') %></div>
+			<% } %>
+			<div class="handbook_today_actions">
+				<button class="handbook_today_relational"><%= &subs::ui('Open Relational') %></button>
+			</div>
+		</section>
+
+		<section class="handbook_today_card handbook_today_people">
+			<h3><%= &subs::ui('People') %></h3>
+			<% if (scalar @{$t->{'people'}}) { %>
+				<ul class="handbook_today_list">
+					<% foreach my $person ( @{$t->{'people'}} ) { %>
+						<li class="handbook_today_row handbook_today_open_app hover" app="<%= $person->{'app'} %>">
+							<span class="handbook_today_row_name"><%= $person->{'name'} %></span>
+							<% foreach my $row ( @{$person->{'rows'}} ) { %>
+								<span class="handbook_today_row_note"><span class="time" mode="fixed" timestamp="<%= $row->{'timestamp'} %>"></span> &middot; <%= $row->{'name'} %></span>
+							<% } %>
+						</li>
+					<% } %>
+				</ul>
+			<% } else { %>
+				<div class="handbook_today_empty"><%= &subs::ui('No people are named in this day\'s plans.') %></div>
+			<% } %>
+			<div class="handbook_today_actions">
+				<button class="handbook_today_people_open"><%= &subs::ui('Open People') %></button>
+			</div>
+		</section>
+	</div>
+</div>

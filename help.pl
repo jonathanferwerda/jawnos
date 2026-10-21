@@ -812,10 +812,20 @@ our %topic = (
 	},
 	'handbook' => {
 		title => 'Handbook', category => 'apps', app => 'handbook',
-		templates => [ 'templates/handbook/handbook.html.ep' ],
-		summary => 'Chaptered notes about the system itself.',
+		templates => [ 'templates/handbook/handbook.html.ep', 'templates/handbook/today.html.ep' ],
+		verified => '2026-10-21',
+		summary => 'The day as a journal, and chaptered notes about the system itself.',
 		body => [
-			'Handbook is the reference shelf: chaptered pages about how JawnOS works, with diagrams. It is the longer-form cousin of this Help app.'
+			'Handbook opens on Today: the day read as a journal. It gathers what the house already knows - what money moved and what bills are due, the shape of the day, the latest measures and notes, the projects that have moved recently, and the people named in the day\'s plans - so the day can be read in one place.',
+			'The day header is also a time machine: type a day (today, yesterday, jul 16, 2025-10-21) and press Enter, or use the arrows to step one day at a time. Today reads the same stores the rest of the program writes to, so nothing is copied or typed twice.',
+			'Below Today, Handbook is still the reference shelf: chaptered pages about how JawnOS works, with diagrams. It is the longer-form cousin of this Help app.'
+		],
+		steps => [
+			'Open Handbook; Today is the first entry and the default page.',
+			'Type a day in the header and press Enter, or press the arrows to move a day at a time.',
+			'Read Money for what went out, what came in and which bills are due.',
+			'Read State of life for the day\'s journal, its timeline, the latest measures and any notes.',
+			'Read Projects and People for what moved recently and who is in the day\'s plans.'
 		],
 		related => [ 'help_app' ]
 	},

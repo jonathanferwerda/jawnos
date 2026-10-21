@@ -692,7 +692,8 @@ function appWindowOpener(i,timestamp,v) {
 			helpOpener();
 		}
 		else if (i == 'handbook') {
-			handbookGrabber(localStorage.getItem('handbook_chapter'), localStorage.getItem('handbook_page'));
+			// the daily page is the front door now; a chapter already open is kept
+			handbookGrabber(localStorage.getItem('handbook_chapter') || 'today', localStorage.getItem('handbook_page'));
 		}
 		else if (i == 'embedded') {
 			embeddedDevicesOpener();

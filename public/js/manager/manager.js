@@ -3552,7 +3552,8 @@ $(document).on('click', '#store_toggle', function() {
 
 $(document).on('click', '#handbook_toggle', function() {
 
-	var url = '/manager/handbook/' + localStorage.getItem('handbook_chapter');
+	var chapter = localStorage.getItem('handbook_chapter') || 'today';
+	var url = '/manager/handbook/' + chapter;
 	var page = localStorage.getItem('handbook_page');
 	var window_saver = sessionStorage.getItem('window_storage');
 	var open_windows = JSON.parse(window_saver) || {};
@@ -3577,7 +3578,8 @@ $(document).on('click', '.handbook_link', function() {
 });
 
 function handbookGrabber(chapter,page,type) {
-	localStorage.setItem('handbook_page', page);
+	if (chapter) { localStorage.setItem('handbook_chapter', chapter); }
+	if (page) { localStorage.setItem('handbook_page', page); }
 	var url = '/manager/handbook/' + chapter;
 	var window_saver = sessionStorage.getItem('window_storage');
 	var open_windows = JSON.parse(window_saver) || {};
@@ -3592,6 +3594,62 @@ function handbookGrabber(chapter,page,type) {
 		}
 	});
 }
+
+// --- Handbook: Today -------------------------------------------------------
+// The daily page carries its own day in a `day` param. Typing is read by the
+// same resolver the clock uses (today, yesterday, jul 16, 2025-10-21), and the
+// whole window is re-rendered in place, so its size and place are kept.
+function handbookTodayGo(day) {
+	localStorage.setItem('handbook_chapter', 'today');
+	var timestamp = Date.now();
+	$.ajax({
+		url: '/manager/handbook/today',
+		type: 'GET',
+		data: { window_maker: 'yes', timestamp: timestamp, day: day },
+		success: function(response) {
+			windowMaker(response);
+		}
+	});
+}
+
+$(document).on('click', '.handbook_today_arrow', function() {
+	handbookTodayGo($(this).attr('day'));
+});
+
+$(document).on('click', '#handbook_today_reset', function() {
+	handbookTodayGo('today');
+});
+
+$(document).on('focus', '#handbook_today_date', function() {
+	try { this.select(); } catch (e) {}
+});
+
+$(document).on('keydown keypress keyup', '#handbook_today_date', function(e) {
+	e.stopPropagation();
+	if (e.type != 'keydown') { return; }
+	if (e.keyCode == 13) {
+		e.preventDefault();
+		handbookTodayGo($(this).val() || 'today');
+	}
+});
+
+$(document).on('click', '.handbook_today_open_app', function(e) {
+	e.stopPropagation();
+	var app = $(this).attr('app');
+	if (app) { appointmentGrabber(app); }
+});
+
+$(document).on('click', '.handbook_today_budget', function() {
+	if (typeof budgetInit == 'function') { budgetInit(); }
+});
+
+$(document).on('click', '.handbook_today_relational', function() {
+	if (typeof relationalOpener == 'function') { relationalOpener(); }
+});
+
+$(document).on('click', '.handbook_today_people_open', function() {
+	if (typeof peopleOpener == 'function') { peopleOpener(); }
+});
 
 $(document).on('click', '.handbook_setting', function() {
 	var a = $(this);

@@ -1352,6 +1352,199 @@ html.jawnos_webview #admin_console_toggle {
 	background-color: yellow;
 }
 
+/* --- Handbook: Today ------------------------------------------------------
+   The daily page is a journal, not a form: a day header that doubles as a time
+   machine, then four quiet cards. Everything lives inside the window's own
+   scroll, so the page keeps working at any window size. */
+.handbook_today_entry {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	padding: 8px;
+	margin-bottom: 12px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+}
+.handbook_today_entry_date { font-size: 12px; font-weight: normal; opacity: .65; }
+#handbook_today {
+	width: 100%;
+	height: 100%;
+	overflow: auto;
+	box-sizing: border-box;
+	padding: 14px;
+	text-align: left;
+}
+.handbook_today_bar {
+	position: sticky;
+	top: 0;
+	z-index: 4;
+	display: flex;
+	gap: 12px;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	padding: 4px 0 12px;
+	margin-bottom: 12px;
+	background: var(--window, var(--panel));
+	border-bottom: 1px solid var(--line);
+}
+.handbook_today_nav {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	flex-wrap: wrap;
+}
+.handbook_today_arrow, .handbook_today_reset {
+	padding: 5px 11px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: inherit;
+	cursor: pointer;
+	font-size: 16px;
+	line-height: 1;
+}
+.handbook_today_reset { font-size: 12px; }
+.handbook_today_arrow:hover, .handbook_today_reset:hover { background: var(--line); }
+.handbook_today_heading {
+	display: flex;
+	flex-direction: column;
+	line-height: 1.15;
+	min-width: 0;
+}
+.handbook_today_relative { font-size: 22px; font-weight: bold; }
+.handbook_today_date { font-size: 12px; opacity: .7; }
+.handbook_today_unread { font-size: 11px; opacity: .7; margin-bottom: 3px; }
+#handbook_today_date {
+	width: 280px;
+	max-width: 100%;
+	padding: 7px 10px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: inherit;
+	font-size: 13px;
+}
+.handbook_today_grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+	gap: 12px;
+	align-items: start;
+}
+.handbook_today_card {
+	min-width: 0;
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--panel);
+}
+.handbook_today_life { grid-column: 1 / -1; }
+.handbook_today_card h3 {
+	margin: 0 0 8px;
+	font-size: 16px;
+}
+.handbook_today_card h4 {
+	margin: 14px 0 6px;
+	font-size: 12px;
+	letter-spacing: .04em;
+	text-transform: uppercase;
+	opacity: .7;
+}
+.handbook_today_big {
+	font-size: 34px;
+	font-weight: bold;
+	line-height: 1.05;
+	font-variant-numeric: tabular-nums;
+}
+.handbook_today_caption { font-size: 12px; opacity: .7; margin-bottom: 6px; }
+.handbook_today_due { font-size: 13px; margin: 6px 0; }
+.handbook_today_journal p { margin: 0 0 8px; line-height: 1.45; }
+.handbook_today_list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+.handbook_today_row {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+	flex-wrap: wrap;
+	padding: 5px 6px;
+	border-radius: 7px;
+}
+.handbook_today_row:hover { background: var(--line); }
+.handbook_today_row_name { font-size: 13px; font-weight: 600; }
+.handbook_today_row_note { font-size: 12px; opacity: .75; }
+.handbook_today_row_extra { flex-basis: 100%; font-size: 11px; opacity: .6; }
+.handbook_today_amount {
+	margin-left: auto;
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+.handbook_today_empty { padding: 6px 0; font-size: 13px; opacity: .65; }
+.handbook_today_timeline { list-style: none; margin: 0; padding: 0; }
+.handbook_today_appt {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+	flex-wrap: wrap;
+	padding: 5px 6px;
+	border-left: 3px solid var(--line);
+	border-radius: 6px;
+}
+.handbook_today_appt:hover { background: var(--line); }
+.handbook_today_time {
+	min-width: 72px;
+	font-size: 12px;
+	opacity: .75;
+	font-variant-numeric: tabular-nums;
+}
+.handbook_today_appt_name { font-size: 13px; font-weight: 600; }
+.handbook_today_appt_type { font-size: 11px; opacity: .6; }
+.handbook_today_chip {
+	padding: 1px 7px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	font-size: 11px;
+	opacity: .8;
+}
+.handbook_today_delta.up { color: #2a2; }
+.handbook_today_delta.down { color: #d33; }
+.handbook_today_now {
+	margin: 6px 0;
+	padding: 7px 9px;
+	border-radius: 8px;
+	background: var(--time-fixed);
+	font-size: 13px;
+}
+.handbook_today_actions {
+	margin-top: 12px;
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+.handbook_today_actions button {
+	padding: 6px 10px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: inherit;
+	cursor: pointer;
+	font-size: 12px;
+}
+.handbook_today_actions button:hover { background: var(--line); }
+.handbook_today_note .handbook_today_row_name { font-weight: 400; }
+.handbook_today_note .handbook_today_when { margin-left: auto; font-size: 11px; opacity: .6; }
+@media (max-width: 700px) {
+	.handbook_today_bar { position: static; }
+	.handbook_today_big { font-size: 28px; }
+	#handbook_today_date { width: 100%; }
+}
+
 #web_measure_toggle[toggle=on] {
 	background-color: 'yellow';
 }

@@ -5,6 +5,12 @@
 		<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="little_thumb hover handbook_link" style="float:right;" chapter="handbook">
 	</h2>
 	<% if ($chapter eq 'handbook') { %>
+		<% my $today_label = localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d, %Y'); %>
+		<h4 class="handbook_link hover handbook_today_entry" type="today" chapter="today" hint="<%= &subs::ui('The day as a journal') %>">
+			<img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/home.png') %>">
+			<%= &subs::ui('Today') %>
+			<span class="handbook_today_entry_date"><%= $today_label %></span>
+		</h4>
 		<% foreach my $h ( sort grep { $favourites->{$_} eq 'enabled' } keys %{$favourites} ) { %>
 			<% my $main_image = &subs::main_icon_maker({ app => $h, timestamp => &subs::rightNow(), size => 'large', onclick => 'none' }); %>
 			<h4 class="handbook_link hover" type="app" chapter="<%= $h %>"><%== $main_image %> <%= &subs::format_name($h) %></h4>
