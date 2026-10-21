@@ -7938,9 +7938,15 @@ get '/manager/sync_buckets' => sub ($c) {
 		$c->render(json => { ok => 0, error => 'unknown table' });
 		return;
 	}
-	my $map = &subs::sync_table_buckets($table, $c->param('band'));
-	# A tiny band can name a bucket per row. Refuse the reply rather than build
-	# one the caller cannot use; it falls back to a whole-table read.
+	my $band = $c->param('band');
+	# Refuse a tiny band before the group-by runs: a per-millisecond band would
+	# name a bucket per row and build a map the caller cannot use anyway. An
+	# absent band means the default; anything else must be sane.
+	if (defined $band && length $band && !($band =~ /^\d+$/ && $band >= 3600000)) {
+		$c->render(json => { ok => 0, error => 'band too small' });
+		return;
+	}
+	my $map = &subs::sync_table_buckets($table, $band);
 	if (scalar(keys %{ $map->{'buckets'} }) > 20000) {
 		$c->render(json => { ok => 0, error => 'too many buckets' });
 		return;
