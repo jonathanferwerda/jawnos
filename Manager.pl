@@ -17225,6 +17225,394 @@ sub merge_database($c,$configuration) {
 
 
 
+# --- Bank statement import and reconciliation ------------------------------
+# A statement is read into dated, signed lines, matched against the money the
+# ledger already holds for one account, and shown as a screen where a person
+# settles the rest. Reconciling writes the statement's ending balance as an
+# inventory anchor, which is the number the Budget balance is measured from.
+sub bank_date_ms {
+	my ($d,$order) = @_;
+	return undef unless defined $d && length $d;
+	$d =~ s/^\s+|\s+$//g;
+	$d =~ s/[\x{2018}\x{2019}']/\//g;   # a QIF year separator (10/14'26)
+	$d =~ s/[T ].*$//;                   # drop a time part
+	$d =~ s/\..*$//;
+	my ($y,$m,$day);
+	if ($d =~ /^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/) { ($y,$m,$day) = ($1,$2,$3); }
+	elsif ($d =~ /^(\d{4})(\d{2})(\d{2})/) { ($y,$m,$day) = ($1,$2,$3); }
+	elsif ($d =~ /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})/) {
+		my ($a,$b,$yy) = ($1,$2,$3);
+		if (($order || 'mdy') eq 'dmy') { ($day,$m) = ($a,$b); } else { ($m,$day) = ($a,$b); }
+		$y = $yy < 100 ? ($yy < 70 ? 2000 + $yy : 1900 + $yy) : $yy;
+	}
+	else { return undef; }
+	return undef unless $m >= 1 && $m <= 12 && $day >= 1 && $day <= 31 && $y >= 1900 && $y <= 2200;
+	my $ms = eval { timelocal(0,0,12,$day,$m-1,$y) };
+	return undef unless defined $ms;
+	return $ms * 1000;
+}
+
+sub bank_amount_value {
+	my $v = shift;
+	return undef unless defined $v;
+	$v =~ s/[^\d.,()\-+]//g;
+	return undef unless $v =~ /\d/;
+	my $neg = ($v =~ /^\s*\(/ || $v =~ /-\s*$/ || $v =~ /^-/) ? 1 : 0;
+	$v =~ s/[()+\s]//g;
+	$v =~ s/-//g;
+	# a decimal comma (1.234,56 or 12,34) versus a thousands comma
+	if ($v =~ /,(\d{1,2})$/) { $v =~ s/\.//g; $v =~ s/,/./; }
+	else { $v =~ s/,//g; }
+	return undef unless $v =~ /^\d+(?:\.\d+)?$/;
+	$v = $neg ? -$v : $v;
+	return $v + 0;
+}
+
+sub bank_csv_rows {
+	my $text = shift;
+	$text =~ s/\r\n/\n/g;
+	$text =~ s/\r/\n/g;
+	my @rows;
+	foreach my $line ( split /\n/, $text ) {
+		next unless length $line;
+		my $commas = () = $line =~ /,/g;
+		my $semis = () = $line =~ /;/g;
+		my $tabs = () = $line =~ /\t/g;
+		my $d = ',';
+		$d = ';' if $semis > $commas && $semis >= $tabs;
+		$d = "\t" if $tabs > $commas && $tabs > $semis;
+		my @fields;
+		my $field = '';
+		my $quoted = 0;
+		my @ch = split //, $line;
+		for (my $i = 0; $i <= $#ch; $i++) {
+			my $ch = $ch[$i];
+			if ($quoted) {
+				if ($ch eq '"') {
+					if ($i < $#ch && $ch[$i+1] eq '"') { $field .= '"'; $i++; }
+					else { $quoted = 0; }
+				}
+				else { $field .= $ch; }
+			}
+			elsif ($ch eq '"') { $quoted = 1; }
+			elsif ($ch eq $d) { push @fields, $field; $field = ''; }
+			else { $field .= $ch; }
+		}
+		push @fields, $field;
+		push @rows, \@fields;
+	}
+	return \@rows;
+}
+
+sub bank_csv_column_map {
+	my $header = shift;
+	my %map;
+	for (my $i = 0; $i < scalar @{$header}; $i++) {
+		my $h = lc($header->[$i] // '');
+		$h =~ s/^\s+|\s+$//g;
+		$map{'date'} = $i if !defined $map{'date'} && $h =~ /date/;
+		$map{'description'} = $i if !defined $map{'description'} && $h =~ /desc|payee|memo|detail|narrative|name/;
+		$map{'debit'} = $i if !defined $map{'debit'} && $h =~ /debit|withdraw|money out|paid out/;
+		$map{'credit'} = $i if !defined $map{'credit'} && $h =~ /credit|deposit|money in|paid in/;
+		$map{'amount'} = $i if !defined $map{'amount'} && $h =~ /amount|value/;
+		$map{'balance'} = $i if !defined $map{'balance'} && $h =~ /balance/;
+	}
+	return \%map;
+}
+
+sub bank_statement_parse_csv {
+	my ($text,$date_order) = @_;
+	my $rows = &bank_csv_rows($text);
+	my $lines = [];
+	my $file_balance;
+	my $start = 0;
+	my $map;
+	# a bank export often opens with a name or an account number before the
+	# column headings, so look a few rows in for a heading this can read
+	for (my $r = 0; $r < scalar @{$rows} && $r < 10; $r++) {
+		my $candidate = &bank_csv_column_map($rows->[$r]);
+		if (defined $candidate->{'date'} && (defined $candidate->{'amount'} || defined $candidate->{'debit'} || defined $candidate->{'credit'})) {
+			$map = $candidate;
+			$start = $r + 1;
+			last;
+		}
+	}
+	unless ($map) {
+		my $width = 0;
+		for (my $r = 0; $r < scalar @{$rows} && $r < 10; $r++) {
+			$width = scalar @{$rows->[$r]} if scalar @{$rows->[$r]} > $width;
+		}
+		$map = $width >= 4 ? { date => 0, description => 1, debit => 2, credit => 3 } : { date => 0, description => 1, amount => 2 };
+	}
+	for (my $r = $start; $r < scalar @{$rows}; $r++) {
+		my $row = $rows->[$r];
+		my $ts = &bank_date_ms($row->[$map->{'date'}], $date_order);
+		next unless defined $ts;
+		my $amount;
+		if (defined $map->{'amount'} && defined $row->[$map->{'amount'}]) {
+			$amount = &bank_amount_value($row->[$map->{'amount'}]);
+		}
+		else {
+			my $debit = defined $map->{'debit'} ? &bank_amount_value($row->[$map->{'debit'}]) : undef;
+			my $credit = defined $map->{'credit'} ? &bank_amount_value($row->[$map->{'credit'}]) : undef;
+			$amount = defined $debit ? -abs($debit) : (defined $credit ? abs($credit) : undef);
+		}
+		next unless defined $amount;
+		next if $amount == 0;
+		my $description = defined $map->{'description'} ? ($row->[$map->{'description'}] // '') : '';
+		$description =~ s/^\s+|\s+$//g;
+		unless (length $description) {
+			$description = join ' ', grep { defined && length && $_ !~ /^[\s\d.,$()\-+]+$/ } @{$row};
+		}
+		if (defined $map->{'balance'}) {
+			my $b = &bank_amount_value($row->[$map->{'balance'}]);
+			$file_balance = $b if defined $b;
+		}
+		push @{$lines}, { timestamp => $ts, amount => $amount, description => $description };
+	}
+	@{$lines} = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$lines};
+	return ($lines, $file_balance, undef);
+}
+
+sub bank_statement_parse_qif {
+	my ($text,$date_order) = @_;
+	my $lines = [];
+	my %cur;
+	foreach my $l ( split /\n/, $text ) {
+		$l =~ s/\r$//;
+		if ($l =~ /^\^/) {
+			my $ts = &bank_date_ms($cur{'date'}, $date_order);
+			my $amount = &bank_amount_value($cur{'amount'});
+			if (defined $ts && defined $amount && $amount != 0) {
+				my $description = join ' ', grep { defined && length } ($cur{'payee'}, $cur{'memo'});
+				push @{$lines}, { timestamp => $ts, amount => $amount, description => $description };
+			}
+			%cur = ();
+			next;
+		}
+		my ($k,$v) = ($l =~ /^(.)(.*)$/s);
+		next unless $k;
+		if ($k eq 'D') { $cur{'date'} = $v; }
+		elsif ($k eq 'T' || $k eq 'U') { $cur{'amount'} = $v if !defined $cur{'amount'} || $k eq 'T'; }
+		elsif ($k eq 'P') { $cur{'payee'} = $v; }
+		elsif ($k eq 'M') { $cur{'memo'} = $v; }
+	}
+	@{$lines} = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$lines};
+	my $error = scalar @{$lines} ? undef : 'No QIF transactions were found.';
+	return ($lines, undef, $error);
+}
+
+sub bank_statement_parse_ofx {
+	my ($text,$date_order) = @_;
+	my $lines = [];
+	while ($text =~ m{<STMTTRN>(.*?)(?:</STMTTRN>|(?=<STMTTRN>)|$)}gis) {
+		my $body = $1;
+		my ($d) = $body =~ m{<DTPOSTED>\s*([0-9]+)}i;
+		my ($a) = $body =~ m{<TRNAMT>\s*([-0-9.,]+)}i;
+		my ($n) = $body =~ m{<NAME>\s*([^<\r\n]*)}i;
+		my ($m) = $body =~ m{<MEMO>\s*([^<\r\n]*)}i;
+		my $ts = &bank_date_ms($d, $date_order);
+		my $amount = &bank_amount_value($a);
+		next unless defined $ts && defined $amount && $amount != 0;
+		my $description = join ' ', grep { defined && length } ($n, $m);
+		push @{$lines}, { timestamp => $ts, amount => $amount, description => $description };
+	}
+	my ($file_balance);
+	if ($text =~ m{<LEDGERBAL>(.*?)(?:</LEDGERBAL>|$)}is) {
+		my $block = $1;
+		my ($bal) = $block =~ m{<BALAMT>\s*([-0-9.,]+)}i;
+		$file_balance = &bank_amount_value($bal);
+	}
+	@{$lines} = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$lines};
+	my $error = scalar @{$lines} ? undef : 'No OFX transactions were found.';
+	return ($lines, $file_balance, $error);
+}
+
+sub bank_statement_parse {
+	my ($filename,$text,$date_order) = @_;
+	my $ext = lc($filename // '');
+	$ext =~ s/.*\.//;
+	return &bank_statement_parse_qif($text,$date_order) if $ext eq 'qif' || $text =~ /^!Type:/im;
+	return &bank_statement_parse_ofx($text,$date_order) if $ext eq 'ofx' || $ext eq 'qfx' || $text =~ /<OFX>/i;
+	return &bank_statement_parse_csv($text,$date_order);
+}
+
+# The money the ledger already holds for the account at the statement's end:
+# its last inventory anchor plus every transaction after it. Purchase rows are
+# breakdowns, not moves, so only type='transaction' is read.
+sub bank_ledger_balance {
+	my ($account,$end) = @_;
+	my $anchor = &subs::db_query("select amount, timestamp from appointments where account=? and movement='inventory' and type='transaction' and cast(timestamp as integer) <= cast(? as integer) order by cast(timestamp as integer) desc limit 1", $account, $end)->hashes->[0];
+	my $balance = $anchor ? ($anchor->{'amount'} || 0) + 0 : 0;
+	my $since = $anchor ? ($anchor->{'timestamp'} || 0) + 0 : 0;
+	my $sum = &subs::db_query("select coalesce(sum(cast(total as real)),0) as s from warehouse where kind='money' and type='transaction' and movement != 'inventory' and account=? and cast(timestamp as integer) >= cast(? as integer) and cast(timestamp as integer) <= cast(? as integer)", $account, $since, $end)->hashes->[0];
+	$balance += ($sum->{'s'} || 0) + 0;
+	return $balance;
+}
+
+# Pair each bank line with at most one ledger row of the same amount within three
+# days; the closest date wins. Rows left over are the money in Budget that the
+# statement does not show.
+sub bank_reconcile_match {
+	my ($lines,$candidates) = @_;
+	my $used = {};
+	foreach my $line ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$lines} ) {
+		my @near = grep {
+			!$used->{$_->{'uuid'}}
+			&& abs((($_->{'total'} || 0) + 0) - $line->{'amount'}) < 0.005
+			&& abs((($_->{'timestamp'} || 0) + 0) - $line->{'timestamp'}) <= 3 * 86400000
+		} @{$candidates};
+		next unless scalar @near;
+		@near = sort { abs((($a->{'timestamp'} || 0) + 0) - $line->{'timestamp'}) <=> abs((($b->{'timestamp'} || 0) + 0) - $line->{'timestamp'}) } @near;
+		my $match = $near[0];
+		$used->{$match->{'uuid'}} = 1;
+		$line->{'match'} = $match;
+	}
+	my @outstanding = grep { !$used->{$_->{'uuid'}} } @{$candidates};
+	return \@outstanding;
+}
+
+sub bank_reconcile_result {
+	my ($account,$lines,$filename,$file_balance,$parse_error) = @_;
+	my ($min,$max);
+	foreach my $l ( @{$lines} ) {
+		$min = $l->{'timestamp'} if !defined $min || $l->{'timestamp'} < $min;
+		$max = $l->{'timestamp'} if !defined $max || $l->{'timestamp'} > $max;
+	}
+	my $start = defined $min ? $min : &subs::rightNow();
+	my $end = defined $max ? $max : &subs::rightNow();
+	# the statement's last day is the window's end, so a line stamped noon does
+	# not push the end into the next morning and an anchor is written for the day
+	# the closing balance belongs to
+	if (defined $min) {
+		my @s = localtime($min / 1000);
+		my $midnight = eval { timelocal(0,0,0,$s[3],$s[4],$s[5]) };
+		$start = $midnight * 1000 if defined $midnight;
+	}
+	if (defined $max) {
+		my @e = localtime($max / 1000);
+		my $night = eval { timelocal(59,59,23,$e[3],$e[4],$e[5]) };
+		$end = $night * 1000 if defined $night;
+	}
+	my $candidates = &subs::db_query("select * from warehouse where kind='money' and type='transaction' and account=? and movement != 'inventory' and cast(timestamp as integer) >= cast(? as integer) and cast(timestamp as integer) <= cast(? as integer) order by timestamp", $account, $start - 5 * 86400000, $end + 86400000)->hashes;
+	my $outstanding = &bank_reconcile_match($lines, $candidates);
+	my @inside = grep { (($_->{'timestamp'} || 0) + 0) >= $start && (($_->{'timestamp'} || 0) + 0) <= $end } @{$outstanding};
+	my ($matched_count,$unmatched_count,$matched_total,$unmatched_total) = (0,0,0,0);
+	foreach my $l ( @{$lines} ) {
+		if ($l->{'match'}) { $matched_count++; $matched_total += $l->{'amount'}; }
+		else { $unmatched_count++; $unmatched_total += $l->{'amount'}; }
+	}
+	my $outstanding_total = 0;
+	$outstanding_total += (($_->{'total'} || 0) + 0) for @inside;
+	my $ledger_balance = &bank_ledger_balance($account, $end);
+	my $anchor = &subs::db_query("select amount, timestamp from appointments where account=? and movement='inventory' and type='transaction' and cast(timestamp as integer) <= cast(? as integer) order by cast(timestamp as integer) desc limit 1", $account, $end)->hashes->[0];
+	my $statement_balance = defined $file_balance ? $file_balance : '';
+	my $delta;
+	my $delta_defined = 0;
+	if (defined $file_balance) { $delta = $file_balance - $ledger_balance; $delta_defined = 1; }
+	my $settings = &subs::settings_grabber({ app => $account, benign => 1 });
+	return {
+		account => $account,
+		filename => $filename,
+		parse_error => $parse_error,
+		lines => $lines,
+		outstanding => \@inside,
+		statement_end => $end,
+		statement_start => $start,
+		ledger_balance => $ledger_balance,
+		statement_balance => $statement_balance,
+		delta => $delta,
+		delta_defined => $delta_defined,
+		matched_count => $matched_count,
+		unmatched_count => $unmatched_count,
+		matched_total => $matched_total,
+		unmatched_total => $unmatched_total,
+		outstanding_total => $outstanding_total,
+		last_inventory_amount => $anchor ? ($anchor->{'amount'} || 0) + 0 : undef,
+		last_inventory_time => $anchor ? ($anchor->{'timestamp'} || 0) + 0 : undef,
+		currency => $settings->{'currency'} || &subs::setting_grabber({ app => 'misc', setting => 'currency', benign => 1 }) || '[]'
+	};
+}
+
+# Write the decisions of a reconciliation: each line left on Record becomes a
+# transaction, then the statement's closing balance becomes the account's newest
+# inventory anchor. Nothing is read back from the browser to decide this, so the
+# same routine can run on a copy of the database in a test.
+sub budget_reconcile_apply {
+	my ($account,$statement_end,$ending,$lines) = @_;
+	$lines = [] unless ref $lines eq 'ARRAY';
+	my $currency = &subs::setting_grabber({ app => $account, setting => 'currency', benign => 1 });
+	$currency = &subs::setting_grabber({ app => 'misc', setting => 'currency', benign => 1 }) unless defined $currency && length $currency;
+	my $server_time = &subs::rightNow();
+	my $recorded = 0;
+	foreach my $line ( @{$lines} ) {
+		next unless (($line->{'action'} || '') eq 'record');
+		my $amount = &bank_amount_value($line->{'amount'});
+		next unless defined $amount && $amount != 0;
+		my $uuid = &subs::random_string_creator(40);
+		my $row = {
+			app => $account,
+			timestamp => $line->{'timestamp'},
+			type => 'transaction',
+			movement => ($amount < 0 ? 'expense' : 'income'),
+			account => $account,
+			amount => $amount,
+			total => $amount,
+			item => &subs::unformat_name($line->{'description'} || 'imported'),
+			uuid => $uuid,
+			server_time => $server_time,
+			currency => $currency
+		};
+		&subs::db_insert('appointments', $row);
+		&subs::warehouse_money_mirror($row);
+		$recorded++;
+	}
+	my $anchored = 0;
+	my $balance = &bank_amount_value($ending);
+	if (defined $balance && defined $statement_end && $statement_end =~ /[0-9]/) {
+		# a statement that closes today ends at midnight tonight; the anchor is
+		# written no later than now so it is the balance the panel reads at once
+		my $anchor_time = $statement_end + 0;
+		$anchor_time = $server_time if $anchor_time > $server_time;
+		my $uuid = &subs::random_string_creator(40);
+		my $row = {
+			app => $account,
+			timestamp => $anchor_time,
+			type => 'transaction',
+			movement => 'inventory',
+			account => $account,
+			amount => $balance,
+			total => $balance,
+			uuid => $uuid,
+			server_time => $server_time,
+			currency => $currency
+		};
+		&subs::db_insert('appointments', $row);
+		# the warehouse keeps the anchor beside it, as the transaction form does
+		&subs::db_insert('warehouse', {
+			kind => 'inventory',
+			type => 'transaction',
+			movement => 'inventory',
+			app => $account,
+			account => $account,
+			item => $account,
+			quantity => $balance,
+			amount => $balance,
+			total => $balance,
+			uuid => &subs::random_string_creator(40),
+			app_uuid => $uuid,
+			timestamp => $anchor_time,
+			server_time => $server_time
+		});
+		$anchored = 1;
+	}
+	foreach my $circumstance ( keys %{$gb::budget_modes} ) {
+		&subs::cache_delete({ app => $account, context => 'budget', subcontext => $circumstance });
+	}
+	&subs::cache_delete({ app => $account, context => 'template' });
+	return { recorded => $recorded, anchored => $anchored, balance => &bank_ledger_balance($account, &subs::rightNow()) };
+}
+
 get '/manager/budget' => sub($c) {
 	my $totals = {};
 	my $tally = {};
@@ -17713,6 +18101,43 @@ post '/manager/budget/display/delete' => sub($c) {
 	my $jsd = encode_json $sd;
 	&subs::setting_setter({ app => 'budget', setting => $display . '_displays', value => $jsd });
 	$c->render(json => $sd);
+};
+
+post '/manager/budget/import' => sub($c) {
+	my $account = &subs::unformat_name($c->param('account'));
+	my $date_order = ($c->param('date_order') || '') eq 'dmy' ? 'dmy' : 'mdy';
+	my $upload = $c->req->uploads->[0];
+	unless ($account) { return $c->render(json => { error => &subs::ui('Choose an account first.') }); }
+	unless ($upload) { return $c->render(json => { error => &subs::ui('Choose a file to import.') }); }
+	my $filename = $upload->filename || 'statement';
+	my $text = $upload->slurp;
+	utf8::decode($text);
+	my ($lines,$file_balance,$parse_error) = &bank_statement_parse($filename, $text, $date_order);
+	unless (scalar @{$lines}) {
+		return $c->render(json => { error => $parse_error || &subs::ui('No dated lines with an amount were found in this file.') });
+	}
+	my $result = &bank_reconcile_result($account, $lines, $filename, $file_balance);
+	my $html = $c->render_to_string(template => 'budget_reconcile', %{$result});
+	$c->render(json => {
+		html => $html,
+		account => $account,
+		lines => scalar @{$lines},
+		matched => $result->{'matched_count'},
+		unmatched => $result->{'unmatched_count'},
+		ledger_balance => $result->{'ledger_balance'},
+		statement_balance => $result->{'statement_balance'},
+		delta => $result->{'delta'},
+		filename => $filename
+	});
+};
+
+post '/manager/budget/reconcile' => sub($c) {
+	my $account = &subs::unformat_name($c->param('account'));
+	my $statement_end = $c->param('statement_end');
+	my $ending = $c->param('ending_balance');
+	my $lines = eval { decode_json $c->param('lines') } || [];
+	my $result = &budget_reconcile_apply($account, $statement_end, $ending, $lines);
+	$c->render(json => $result);
 };
 
 

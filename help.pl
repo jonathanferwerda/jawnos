@@ -437,18 +437,21 @@ our %topic = (
 	},
 	'budget' => {
 		title => 'Budget', category => 'apps', app => 'budget',
-		verified => '2026-10-18',
-		summary => 'Statement, budgets, a document ledger and a daily sheet.',
+		verified => '2026-10-21',
+		templates => [ 'templates/budget.html.ep', 'templates/budget_reconcile.html.ep', 'public/js/manager/budget.js' ],
+		summary => 'Statement, budgets, a document ledger, a daily sheet and bank reconciliation.',
 		body => [
-			'Budget turns your transaction history into something you can look at: a statement of what has moved, budgets to hold it against, a document ledger of invoices and quotes, and a daily sheet.',
+			'Budget turns your transaction history into something you can look at: a statement of what has moved, budgets to hold it against, a document ledger of invoices and quotes, a daily sheet, and a reconciliation screen for a bank statement.',
 			'The statement is drawn per account; a transaction with no account attached will not appear on it, so transactions are recorded with a real account. The window and its scope (hour, day, week, month, year) come from the app\'s own settings, so a view you set up is the view you come back to.',
-			'Each app that keeps a budget has a budget light in its header. Opening it shows the period against its budget, the pace it is on, and — when what is counted is over the budget — a Recommended button. Pressing it sets the budget to the app\'s own typical period, keeping the budget\'s scope, measure and floor or ceiling, and fills the matching row on the app\'s card in Configure. The light also lists the budget and the app\'s typical amount at the budget\'s own scope and the next two larger ones — a per-hour budget reads as an hour, a day and a week, with no meaningless per-minute figure. While a scope is still running, the budget-vs-typical and this-vs-budget rows are read against the share of the scope that has elapsed, so an early morning is not read as a fall. The light reopens with its app if it was left open when the window was closed.'
+			'Each app that keeps a budget has a budget light in its header. Opening it shows the period against its budget, the pace it is on, and — when what is counted is over the budget — a Recommended button. Pressing it sets the budget to the app\'s own typical period, keeping the budget\'s scope, measure and floor or ceiling, and fills the matching row on the app\'s card in Configure. The light also lists the budget and the app\'s typical amount at the budget\'s own scope and the next two larger ones — a per-hour budget reads as an hour, a day and a week, with no meaningless per-minute figure. While a scope is still running, the budget-vs-typical and this-vs-budget rows are read against the share of the scope that has elapsed, so an early morning is not read as a fall. The light reopens with its app if it was left open when the window was closed.',
+			'Reconcile is the bank side. Import a statement file — CSV, QIF or OFX — for one account, with the date order the file uses (month first or day first), and Budget matches each line to what it already holds by amount within three days. The screen lists the lines it found, the lines it did not, and the money in Budget that the statement does not show, so the difference between the two sides is visible before anything is written. Pressing Reconcile first records the lines left set to Record, then writes the statement\'s ending balance as the account\'s inventory balance: from that point on the Budget balance is measured from the bank\'s own figure, and the Delta line on the screen is that figure minus what Budget holds.'
 		],
 		steps => [
 			'Open Budget; it lands on the statement for the current scope.',
 			'Change the scope along the top to widen or narrow the window — hour, day, week, month, year.',
 			'Add or edit budgets so the statement has something to hold the movement against; a budget that is over its typical amount offers a Recommended value in its budget light.',
 			'Switch the display to the document ledger to see invoices and quotes with their balances, or to the daily sheet for a day at a glance.',
+			'To settle an account against its bank statement, choose Reconcile, pick the account and the file\'s date order, and import the file. Check the matches, set each unmatched line to Record or Ignore (untick a line to leave it alone), type the statement ending balance, and press Reconcile.',
 			'The display and scope are remembered, so the view you settle on is there next time.'
 		],
 		prompt => 'The reader wants help setting up a Budget view that makes sense for them. Help them decide on a scope and a display, and explain what each display is for, step by step. Never invent numbers — talk about how to read and arrange the view, not about their actual figures.',

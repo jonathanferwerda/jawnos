@@ -1,0 +1,81 @@
+<% no warnings 'uninitialized'; %>
+<div class="budget_reconcile_result" account="<%= $account %>" ledger_balance="<%= $ledger_balance %>" statement_end="<%= $statement_end %>">
+	<h3><%= &subs::format_name($account) %> &mdash; <%= &subs::ui('Bank statement') %></h3>
+	<div class="budget_reconcile_meta">
+		<%= &subs::ui('File') %>: <%= $filename %> &middot; <%= &subs::ui('Lines') %>: <%= scalar @{$lines} %>
+		<% if ($parse_error) { %><div class="budget_reconcile_error" style="color:red;"><%= $parse_error %></div><% } %>
+	</div>
+	<table style="width:100%;border:groove;">
+		<thead style="text-align:left;font-size:18px;">
+			<th></th>
+			<th><%= &subs::ui('Date') %></th>
+			<th><%= &subs::ui('Description') %></th>
+			<th><%= &subs::ui('Amount') %></th>
+			<th><%= &subs::ui('In Budget') %></th>
+		</thead>
+		<tbody>
+			<% foreach my $l ( @{$lines} ) { %>
+				<tr class="budget_reconcile_line" timestamp="<%= $l->{'timestamp'} %>" amount="<%= $l->{'amount'} %>" description="<%= $l->{'description'} %>" matched="<%= $l->{'match'} ? 'yes' : 'no' %>" match_uuid="<%= $l->{'match'} ? $l->{'match'}->{'uuid'} : '' %>">
+					<td><% if ($l->{'match'}) { %>&#10003;<% } else { %><input type="checkbox" class="budget_reconcile_take" checked><% } %></td>
+					<td><span class="time" timestamp="<%= $l->{'timestamp'} %>"></span></td>
+					<td><%= $l->{'description'} %></td>
+					<td><%= &subs::price_formatter($l->{'amount'}) %></td>
+					<td>
+						<% if ($l->{'match'}) { %>
+							<span class="budget_reconcile_match" title="<%= $l->{'match'}->{'uuid'} %>"><%= &subs::format_name($l->{'match'}->{'app'}) %> <span class="time" timestamp="<%= $l->{'match'}->{'timestamp'} %>"></span> <%= &subs::price_formatter($l->{'match'}->{'total'}) %></span>
+						<% } else { %>
+							<select class="budget_reconcile_action">
+								<option value="record"><%= &subs::ui('Record') %></option>
+								<option value="ignore"><%= &subs::ui('Ignore') %></option>
+							</select>
+						<% } %>
+					</td>
+				</tr>
+			<% } %>
+		</tbody>
+	</table>
+
+	<h4><%= &subs::ui('In Budget, not on the statement') %></h4>
+	<% if (scalar @{$outstanding}) { %>
+		<table style="width:100%;border:groove;">
+			<thead style="text-align:left;">
+				<th><%= &subs::ui('Date') %></th>
+				<th><%= &subs::ui('App') %></th>
+				<th><%= &subs::ui('Amount') %></th>
+				<th><%= &subs::ui('Item') %></th>
+			</thead>
+			<tbody>
+				<% foreach my $o ( @{$outstanding} ) { %>
+					<tr class="budget_reconcile_outstanding" uuid="<%= $o->{'uuid'} %>">
+						<td><span class="time" timestamp="<%= $o->{'timestamp'} %>"></span></td>
+						<td><%= &subs::format_name($o->{'app'}) %></td>
+						<td><%= &subs::price_formatter($o->{'total'}) %></td>
+						<td><%= $o->{'item'} %></td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	<% } else { %>
+		<div><%= &subs::ui('None') %></div>
+	<% } %>
+
+	<table class="budget_reconcile_summary" style="margin-top:10px;border:groove;">
+		<tr><td><%= &subs::ui('Matched') %></td><td><%= $matched_count %></td><td><%= &subs::price_formatter($matched_total) %></td></tr>
+		<tr><td><%= &subs::ui('Not matched') %></td><td><%= $unmatched_count %></td><td><%= &subs::price_formatter($unmatched_total) %></td></tr>
+		<tr><td><%= &subs::ui('Not on the statement') %></td><td><%= scalar @{$outstanding} %></td><td><%= &subs::price_formatter($outstanding_total) %></td></tr>
+	</table>
+
+	<div style="margin-top:10px;">
+		<label for="budget_reconcile_ending"><%= &subs::ui('Statement ending balance') %></label>
+		<input id="budget_reconcile_ending" value="<%= $statement_balance %>" style="width:120px;">
+	</div>
+	<div><%= &subs::ui('Budget balance at the statement end') %>: <b><%= &subs::price_formatter($ledger_balance) %></b></div>
+	<% if (defined $last_inventory_time) { %>
+		<div><%= &subs::ui('Last inventory balance') %>: <b><%= &subs::price_formatter($last_inventory_amount) %></b> <span class="time" timestamp="<%= $last_inventory_time %>"></span></div>
+	<% } %>
+	<div><%= &subs::ui('Delta') %>: <b id="budget_reconcile_delta" data-ledger="<%= $ledger_balance %>" data-currency="<%= $currency %>"><%= $delta_defined ? &subs::price_formatter($delta) : '' %></b></div>
+	<div style="margin-top:8px;">
+		<button id="budget_reconcile_apply" account="<%= $account %>" statement_end="<%= $statement_end %>"><%= &subs::ui('Reconcile') %></button>
+	</div>
+	<p style="max-width:60%;"><%= &subs::ui('Reconciling writes the statement ending balance as an inventory balance for the account, so the Budget balance becomes the bank\'s. Lines left set to Record are added as transactions first; unticking a line leaves it alone.') %></p>
+</div>

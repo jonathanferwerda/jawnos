@@ -589,6 +589,87 @@ $(document).on('click', '#budget_display_delete', function() {
 
 });
 
+// --- Bank statement import and reconciliation ------------------------------
+$(document).on('click', '#budget_reconcile_import', function() {
+	var button = $(this);
+	var account = $('#budget_reconcile_account').val();
+	var file = $('#budget_reconcile_file')[0].files[0];
+	var message = $('#budget_reconcile_message');
+	message.text('');
+	if (!account) { message.text(jawnosT('Choose an account first.')); return; }
+	if (!file) { message.text(jawnosT('Choose a file to import.')); return; }
+	var fd = new FormData();
+	fd.append('account', account);
+	fd.append('date_order', $('#budget_reconcile_date_order').val());
+	fd.append('file', file);
+	button.attr('disabled', 'disabled');
+	$.ajax({
+		url: '/manager/budget/import',
+		type: 'POST',
+		data: fd,
+		processData: false,
+		contentType: false,
+		success: function(response) {
+			button.removeAttr('disabled');
+			if (response.error) { message.text(response.error); return; }
+			$('#budget_reconcile_area').html(response.html);
+			appointment_chron();
+		},
+		error: function() {
+			button.removeAttr('disabled');
+			message.text(jawnosT('The file could not be imported.'));
+		}
+	});
+});
+
+// the delta follows the balance the person types, so the statement figure they
+// read off the page is what the screen measures against
+$(document).on('input change', '#budget_reconcile_ending', function() {
+	var delta = $('#budget_reconcile_delta');
+	var value = $(this).val().replace(/[^0-9.\-]/g, '');
+	var ledger = parseFloat(delta.attr('data-ledger')) || 0;
+	if (value === '' || isNaN(parseFloat(value))) { delta.text(''); return; }
+	delta.text(numeral(parseFloat(value) - ledger).format('$0.00'));
+});
+
+$(document).on('click', '#budget_reconcile_apply', function() {
+	var button = $(this);
+	var account = button.attr('account');
+	var statement_end = button.attr('statement_end');
+	var ending = $('#budget_reconcile_ending').val();
+	var lines = [];
+	$('.budget_reconcile_line').each(function() {
+		var row = $(this);
+		var take = row.find('.budget_reconcile_take').length ? row.find('.budget_reconcile_take').is(':checked') : true;
+		var action = row.attr('matched') === 'yes' ? 'match' : (row.find('.budget_reconcile_action').val() || 'record');
+		if (!take) { action = 'ignore'; }
+		lines.push({
+			timestamp: row.attr('timestamp'),
+			amount: row.attr('amount'),
+			description: row.attr('description'),
+			action: action,
+			match_uuid: row.attr('match_uuid') || ''
+		});
+	});
+	button.attr('disabled', 'disabled');
+	$.ajax({
+		url: '/manager/budget/reconcile',
+		type: 'POST',
+		data: { account: account, statement_end: statement_end, ending_balance: ending, lines: JSON.stringify(lines) },
+		success: function(response) {
+			button.removeAttr('disabled');
+			var message = jawnosT('Reconciled.') + ' ' + jawnosT('Balance') + ': ' + numeral(response.balance).format('$0.00');
+			if ($('#alert').length) { $('#alert').html(message).show(); }
+			else { $('#budget_reconcile_message').text(message); }
+			budgetInit();
+		},
+		error: function() {
+			button.removeAttr('disabled');
+			$('#budget_reconcile_message').text(jawnosT('The reconciliation could not be saved.'));
+		}
+	});
+});
+
 
 
 

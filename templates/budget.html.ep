@@ -2,7 +2,7 @@
 <div id="budget_<%= $timestamp %>" style="width: 100%; height:100%;background-color:var(--panel);overflow:scroll;">
 	<div id="budget_header" style="vertical-align:top;">
 		<select class="budget_config" config="display" style="vertical-align:top;">
-			<% foreach my $bd (qw/statement budgets invoices daily_sheet/) { %>
+			<% foreach my $bd (qw/statement budgets invoices daily_sheet reconcile/) { %>
 				<option value="<%= $bd %>" <% if ($bd eq $display) { %>selected<% } %>><%= &subs::format_name($bd) %></option>
 			<% } %>
 		</select>
@@ -382,6 +382,25 @@
 				</tr>
 			</tbody>
 		</table>
+	<% } elsif ($display eq 'reconcile') { %>
+		<div id="budget_reconcile">
+			<h3><%= &subs::ui('Import a bank statement') %></h3>
+			<span>
+				<select id="budget_reconcile_account" hint="<%= &subs::ui('Account') %>">
+					<% foreach my $ac ( grep { $_->{'app'} ne 'all' && $_->{'app'} ne 'gallery' } @{$all_accounts} ) { %>
+						<option value="<%= $ac->{'app'} %>" <% if (((grep { $_ eq 'all' } @{$account}) ? 0 : 1) && (grep { $_ eq $ac->{'app'} } @{$account})) { %>selected<% } %>><%= &subs::format_name($ac->{'app'}) %></option>
+					<% } %>
+				</select>
+				<select id="budget_reconcile_date_order" hint="<%= &subs::ui('Date order') %>">
+					<option value="mdy"><%= &subs::ui('Month / Day / Year') %></option>
+					<option value="dmy"><%= &subs::ui('Day / Month / Year') %></option>
+				</select>
+				<input type="file" id="budget_reconcile_file" accept=".csv,.qif,.ofx,.txt">
+				<button id="budget_reconcile_import"><%= &subs::ui('Import') %></button>
+			</span>
+			<div id="budget_reconcile_message"></div>
+			<div id="budget_reconcile_area"></div>
+		</div>
 	<% } %>
 </div>
 <script>appointment_chron()</script>

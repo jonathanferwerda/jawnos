@@ -23873,7 +23873,13 @@ sub warehouse_money_mirror {
 	my $row = shift;
 	return unless $row && $row->{'uuid'};
 	my $type = $row->{'type'} || '';
-	return unless ($type eq 'transaction' || $type eq 'purchase');
+	# Only the transaction is a money move. A purchase row is the item and vendor
+	# breakdown of that transaction and carries the same account and total, so
+	# mirroring it as well counted one payment two or three times (a payment with
+	# a vendor row and an item row wrote three). Transfers are type 'transaction'
+	# too, so both legs still mirror. The old purchases' ledger rows are removed by
+	# the money_ledger_transaction_rows backfill.
+	return unless $type eq 'transaction';
 	return unless $row->{'account'} && $row->{'account'} ne '';
 	# an inventory row is a balance anchor, not a move; it already has its own
 	# warehouse row (kind inventory)
@@ -24032,6 +24038,25 @@ sub backfills() {
 				$n++;
 			}
 			&subs::say_it("backfill warehouse_money_ledger: mirrored $n money transactions");
+			return 1;
+		},
+		'money_ledger_transaction_rows' => sub {
+			# The mirror used to copy type='purchase' rows as well as transactions.
+			# A purchase row is the vendor/item breakdown of the transaction it names
+			# in source_uuid (or shares a uuid with), so the ledger held the same
+			# payment twice - three times when both a vendor and an item row existed.
+			# Remove those rows once; the transaction beside each one is the money
+			# move and stays. Deleting only kind='money' rows leaves stock and balance
+			# anchors alone.
+			my $has = &subs::db_query('select 1 from pragma_table_info(?) where name=?', 'warehouse', 'kind')->hashes->[0];
+			return 0 unless $has;
+			my $rows = &subs::db_query("select uuid from warehouse where kind='money' and type is not null and type != 'transaction'")->hashes || [];
+			my $n = 0;
+			foreach my $row ( @{$rows} ) {
+				&subs::db_query("delete from warehouse where kind='money' and uuid=? and type != 'transaction'", $row->{'uuid'});
+				$n++;
+			}
+			&subs::say_it("backfill money_ledger_transaction_rows: removed $n duplicated purchase row(s)");
 			return 1;
 		},
 		'mugshot_to_file' => sub {
