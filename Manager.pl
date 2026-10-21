@@ -19389,16 +19389,29 @@ sub budget_calculator($data) {
 		}
 		else {
 			$bud[-1] = 1 . $bud[-1] unless $bud[-1] =~ /[0-9]/;
-			# A malformed scope after the slash must not reach time_span either.
-			$bud[-1] = '1month' unless &subs::time_span_length($bud[-1]);
+			# time_span_length knows the word spans; an abbreviated scope ("1w",
+			# "3d", "1M") is widened to its word with its count kept first, so a
+			# weekly budget is not silently read as a month. A scope that still
+			# does not resolve must not reach time_span either.
+			unless (&subs::time_span_length($bud[-1])) {
+				my $count = $bud[-1];
+				$count =~ s/[^0-9]//g;
+				$count = 1 unless length $count;
+				my $widened = $count . &subs::timespan_widener($bud[-1]);
+				$bud[-1] = &subs::time_span_length($widened) ? $widened : '1month';
+			}
 			$returner->{'scope_name'} = &subs::timespan_widener($bud[-1]);
 			$returner->{'duration'} = &subs::time_abbrev_translator($bud[-1],&subs::rightNow());
+			# The scope is the column the caller read, not the budget's own period:
+			# the value handed in is that column's total, so the target and the actual
+			# are held per millisecond of that column. A bare word ("week") needs its
+			# count before the translator sees it.
+			my $caller_span = $scope ? (($scope =~ /[0-9]/) ? $scope : 1 . $scope) : '';
 			unless ($scope) {
 				$returner->{'scope'} = $returner->{'duration'} ;
 			}
 			else {
-				$returner->{'scope'} = &subs::time_abbrev_translator($bud[-1]);
-				$returner->{'duration'} = $returner->{'scope'} unless $value;
+				$returner->{'scope'} = &subs::time_abbrev_translator($caller_span, &subs::rightNow()) || $returner->{'duration'};
 			}
 		}
 		# A fixed quantity budget is a level to keep on hand, not a rate of the
@@ -19459,7 +19472,10 @@ sub budget_calculator($data) {
 					$value += 1;
 				}
 				elsif ($circumstance eq 'total') {
-					$value += (abs $appt->{'total'} || 0) if $value;
+					# the block above is only entered when no value was passed in, so
+					# there is nothing to guard against here: starting from zero, every
+					# row's total is added, the way the display reads the column
+					$value += abs( $appt->{'total'} || 0 );
 				}
 				elsif ($circumstance eq 'quantity') {
 					# the stream the app's movement filter names - beer's poured amount,
@@ -19570,13 +19586,12 @@ sub budget_calculator($data) {
 		$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};
 		$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
 		$returner->{'timestamp'} = $timestamp;
-		if (!$returner->{'fixed'} && $scope ne $returner->{'scope_name'} && $returner->{'circumstance'} eq $circumstance) {
+		if ($scope && !$returner->{'fixed'} && $returner->{'scope'} != $returner->{'duration'} && $returner->{'circumstance'} eq $circumstance) {
+			# The caller read a column of another width. The reading is still held
+			# against that column - the expected and the actual are rates per
+			# millisecond, so they compare across windows - but it is not the
+			# budget's own period, so the panel must not cache it as one.
 			$returner->{'is_scope'} = 'no';
-			my $scoped = $returner->{'scope'} / &subs::time_abbrev_translator(1 . $scope ,&subs::rightNow());
-			$returner->{'expected'} = $returner->{'expected'} * $scoped;
-			$returner->{'actual'} = $returner->{'actual'} * $scoped;
-			$returner->{'expected'} = sprintf("%.19f",$returner->{'budgeted'} / ( $returner->{'duration'} * $scoped));
-			$returner->{'actual'} = sprintf("%.19f", ($returner->{'value'} * $scoped) / ($returner->{'scope'} * $scoped));
 		}
 		# A budget locked to the calendar is read against a period still running:
 		# on Monday a week holds a seventh of its value, so holding that part against
