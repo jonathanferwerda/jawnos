@@ -8354,6 +8354,21 @@ get '/manager/remote_manager' => sub ($c) {
 	if ($browse_host) {
 		$url = 'https://' . $browse_host . ':' . $browse_port . '/manager';
 	}
+	# A peer reached through a tunnel is often stored as 127.0.0.1:<tunnel port>
+	# on the machine that owns the tunnel. The Go window opens on THIS machine,
+	# where that loopback is not the peer, so use an address the peer advertises
+	# (tailnet/LAN/ip) and its own manager port. A remote's window must never be
+	# handed this house's loopback.
+	my ($url_host) = $url =~ m{^https?://([^/:]+)}i;
+	if (($url_host || '') =~ /^(?:127\.0\.0\.1|localhost|\[?::1\]?)$/i) {
+		(my $alt = $rm->{'tailnet_ip'} || $rm->{'lan_ip'} || $rm->{'ip'} || '') =~ s/^\s+|\s+$//g;
+		if ($alt ne '' && $alt !~ /^(?:127\.|localhost|\[?::1\]?)$/i) {
+			$url = 'https://' . $alt . ':' . ($rm->{'port'} || $browse_port || 45545) . '/manager';
+		}
+		else {
+			return $c->render(text => 'no address for that machine', status => 404);
+		}
+	}
 	# app_device is set only by app_login, which is the installed app proving
 	# its device key; a browser (even one opened by a ticket) never has it.
 	my $in_app = ($c->session('app_device') || '') ne '' ? 1 : 0;
@@ -8378,6 +8393,7 @@ get '/manager/remote_manager' => sub ($c) {
 			$devices = [ map { $_->{'name'} || 'device' } @{$others} ];
 		}
 	}
+	$log->info('remote_manager: uuid=' . (defined $uuid ? $uuid : '-') . ' manager=' . ($manager || '-') . ' -> ' . $url . ' ticket=' . ($ticket_url ? 1 : 0) . ' approval=' . $need_approval);
 	$c->render(json => {
 		manager => $url,
 		ticket_url => $ticket_url,
