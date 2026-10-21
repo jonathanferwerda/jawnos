@@ -46,6 +46,10 @@ function peopleOpener() {
 function peopleAfterImport(response) {
 	peopleStatus(peopleT('Imported.'));
 	peopleOpener();
+	if (response && response.construct_app) {
+		setTimeout(function() { peopleConstructOpen(response.construct_app); }, 400);
+		return;
+	}
 	var uuid = response && response.crest && response.crest.uuid;
 	if (uuid) { setTimeout(function() { peopleCrestDetail(uuid); }, 400); }
 }
@@ -214,9 +218,14 @@ $(document).on('click', '.people_publish_toggle', function(e) {
 
 function peopleConstructOpen(app) {
 	if (!app) { return; }
+	var tries = 0;
 	var show = function() {
 		var row = $('#people_app .people_construct_row[app="' + app + '"]');
-		if (!row.length) { return; }
+		if (!row.length) {
+			// an import may have just made the row: refresh and look again
+			if (tries++ < 2) { peopleOpener(); setTimeout(show, 500); }
+			return;
+		}
 		var panel = row.closest('.people_panel').attr('data-panel') || '';
 		if (panel) { peopleTabOpen(panel); }
 		row.addClass('open');
@@ -235,6 +244,12 @@ function peopleConstructOpen(app) {
 }
 
 // --- a construct's own crest -------------------------------------------------
+
+$(document).on('click', '.people_construct_web', function(e) {
+	e.stopPropagation();
+	var url = $(this).attr('web') || '';
+	if (url) { window.open(url, '_blank'); }
+});
 
 $(document).on('click', '.people_construct_crest_upload', function(e) {
 	e.stopPropagation();

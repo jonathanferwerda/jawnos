@@ -18575,7 +18575,7 @@ sub people_citizen {
 # buckets, and this index is one small query over rows the window needs fresh.
 sub people_index {
 	my $rows = eval {
-		&subs::db_query("select app, device, setting, value, server_time from settings where setting in ('pos','mab','uuid') or substr(setting,1,3) = 'sc_'")->hashes;
+		&subs::db_query("select app, device, setting, value, server_time from settings where setting in ('pos','mab','uuid','house_uuid','house_name','house_pubkey','peer_name','peer_construct','peer_profile','web','crest_uuid') or substr(setting,1,3) = 'sc_'")->hashes;
 	} || [];
 	my $current = &subs::device_setter();
 	my %apps;
@@ -18585,7 +18585,7 @@ sub people_index {
 		my $app = $row->{'app'} // '';
 		next unless length $app;
 		my $setting = $row->{'setting'} // '';
-		$apps{$app} ||= { app => $app, uuids => {}, sc => {}, pos => '', mab => '' };
+		$apps{$app} ||= { app => $app, uuids => {}, sc => {}, pos => '', mab => '', house_uuid => '', house_name => '', peer_name => '', web => '', crest_uuid => '' };
 		if ($setting eq 'uuid') {
 			my $uuid = $row->{'value'} // '';
 			next unless length $uuid;
@@ -18606,6 +18606,10 @@ sub people_index {
 			unless ($slot && $slot->{'server_time'} gt $stamp) {
 				$effective{$app}->{$setting}->{$device} = { value => $row->{'value'} // '', server_time => $stamp };
 			}
+		}
+		elsif ($setting eq 'house_uuid' || $setting eq 'house_name' || $setting eq 'peer_name' || $setting eq 'web' || $setting eq 'crest_uuid') {
+			# provenance of an imported construct; a local construct has none
+			$apps{$app}->{$setting} = $row->{'value'} // '';
 		}
 		elsif ($setting =~ /^sc_(.+)$/) {
 			my $sing = $1;
@@ -18676,7 +18680,12 @@ sub people_index {
 			@members = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @members;
 			push @rows, {
 				app => $app,
-				name => &subs::format_name($app),
+				name => $entry->{'peer_name'} || &subs::format_name($app),
+				foreign => ($entry->{'house_uuid'} || '') ne '' ? 1 : 0,
+				house_uuid => $entry->{'house_uuid'} || '',
+				house_name => $entry->{'house_name'} || '',
+				web => $entry->{'web'} || '',
+				crest_uuid => $entry->{'crest_uuid'} || '',
 				member_count => scalar @members,
 				members => \@members,
 			};
@@ -18836,10 +18845,21 @@ sub people_construct_kind {
 	return '' unless defined $app && length $app;
 	foreach my $construct ( @{ &people_index()->{'constructs'} } ) {
 		foreach my $row ( @{ $construct->{'rows'} } ) {
+			next if $row->{'foreign'};
 			return $construct->{'sing'} if ($row->{'app'} || '') eq $app;
 		}
 	}
 	return '';
+}
+
+# True when this app is another house's construct, imported read-only. A local
+# construct has no house_uuid; the marker is what keeps publication, logos and
+# Relational edits away from something this house does not own.
+sub people_app_foreign {
+	my ($app) = @_;
+	return 0 unless defined $app && length $app;
+	my $house = &subs::setting_grabber({ app => $app, setting => 'house_uuid', device => 'all' });
+	return (defined $house && length $house) ? 1 : 0;
 }
 
 sub construct_crest_find_by_uuid {
@@ -18848,12 +18868,18 @@ sub construct_crest_find_by_uuid {
 	foreach my $construct ( @{ &people_index()->{'constructs'} } ) {
 		foreach my $row ( @{ $construct->{'rows'} } ) {
 			my $crest = &subs::construct_crest_record_read($row->{'app'});
+			if (($crest->{'uuid'} || '') ne $uuid && $row->{'foreign'} && ($row->{'crest_uuid'} || '') eq $uuid) {
+				# an imported construct keeps its signed record, not a local crest
+				my $raw = &subs::setting_grabber({ app => $row->{'app'}, setting => 'peer_construct', device => 'all' });
+				$crest = eval { decode_json($raw) } || {};
+			}
 			next unless ($crest->{'uuid'} || '') eq $uuid;
 			return {
 				app => $row->{'app'},
 				crest => $crest,
 				type => $construct->{'name'},
 				sing => $construct->{'sing'},
+				foreign => $row->{'foreign'} || 0,
 			};
 		}
 	}
@@ -18872,6 +18898,82 @@ sub people_construct_public {
 	return ($row && ($row->{'value'} || '') eq 'on') ? 1 : 0;
 }
 
+# Import another house's construct as settings rows this house can read but not
+# change. Its identity is the signed construct crest (uuid + house uuid); the
+# local app key is only a label, suffixed when the name is already taken. The
+# house crest must already be held: a construct is only trustworthy as part of
+# a house this machine knows.
+sub foreign_construct_import {
+	my ($record) = @_;
+	return { ok => 0, error => 'no construct crest' }
+		unless ref $record eq 'HASH' && ($record->{'uuid'} || '') ne '';
+	return { ok => 0, error => 'that is not a construct crest' }
+		unless length($record->{'construct'} || '');
+	return { ok => 0, error => 'the construct crest does not verify' }
+		unless &subs::crest_verify_record($record);
+	my $house_uuid = $record->{'house_uuid'} || '';
+	my $house_pub = $record->{'house_pubkey'} || $record->{'pubkey'} || '';
+	return { ok => 0, error => 'the construct crest names no house' }
+		unless length($house_uuid) && length($house_pub);
+	my $own = &subs::crest_record_read();
+	return { ok => 0, error => 'that is this house\'s own construct' }
+		if ($own->{'uuid'} || '') eq $house_uuid;
+	my $entry = &subs::crest_peer_find($house_uuid);
+	my $house_crest = $entry ? ($entry->{'crest'} || {}) : undef;
+	return { ok => 0, error => 'import that house\'s crest first' }
+		unless $house_crest && (($house_crest->{'pubkey'} || '') eq $house_pub);
+	my $sing = $record->{'construct_type'} || '';
+	my %sings = map { $_->{'sing'} => 1 } values %{$gb::social_constructs};
+	return { ok => 0, error => 'the construct crest has no known kind' } unless $sings{$sing};
+	my $their_name = $record->{'name'} || &subs::format_name($record->{'construct'});
+	my $house_name = $house_crest->{'name'} || '';
+	my $index = &people_index();
+	my $app = '';
+	foreach my $construct ( @{ $index->{'constructs'} || [] } ) {
+		foreach my $row ( @{ $construct->{'rows'} || [] } ) {
+			next unless $row->{'foreign'};
+			next unless ($row->{'crest_uuid'} || '') eq $record->{'uuid'};
+			$app = $row->{'app'};
+			last;
+		}
+		last if length $app;
+	}
+	unless (length $app) {
+		my %taken = map { $_ => 1 } keys %{ $index->{'apps'} || {} };
+		my $base = &subs::unformat_name($record->{'construct'} || $their_name);
+		$base = 'construct' unless length $base;
+		$app = $base;
+		if ($taken{$app}) {
+			$app = $base . '_' . substr($house_uuid, 0, 6);
+			my $n = 2;
+			while ($taken{$app}) { $app = $base . '_' . substr($house_uuid, 0, 6) . '_' . $n++; }
+		}
+	}
+	my %set = (
+		pos => $sing,
+		construct_uuid => $record->{'uuid'},
+		crest_uuid => $record->{'uuid'},
+		house_uuid => $house_uuid,
+		house_pubkey => $house_pub,
+		house_name => $house_name,
+		peer_name => $their_name,
+		peer_construct => encode_json($record),
+	);
+	my $origin = $record->{'origin'} || $house_crest->{'origin'} || &subs::crest_entry_origin({ crest => $house_crest, endpoints => $house_crest->{'endpoints'} });
+	$origin =~ s{/+$}{};
+	$set{'web'} = $origin if $origin =~ m{^https?://[A-Za-z0-9.:\[\]-]+$};
+	foreach my $setting ( keys %set ) {
+		&subs::setting_setter({ app => $app, setting => $setting, device => 'all', value => $set{$setting} });
+	}
+	return {
+		ok => 1,
+		app => $app,
+		name => $their_name,
+		house_name => $house_name,
+		house_uuid => $house_uuid,
+	};
+}
+
 # What this house publishes to another house that presents a crest: the house
 # name and key, its address, and only the constructs marked public, with the
 # names of their members. Nothing here is a permission; the answer is signed by
@@ -18888,6 +18990,8 @@ sub people_crest_profile {
 		foreach my $row ( @{ $construct->{'rows'} } ) {
 			my $app = $row->{'app'} || '';
 			next unless length $app;
+			# another house's construct is not ours to publish
+			next if $row->{'foreign'};
 			next unless &people_construct_public($app);
 			push @constructs, {
 				type => $construct->{'name'},
@@ -19203,14 +19307,16 @@ get '/manager/people' => sub($c) {
 	foreach my $construct ( @{ $index->{'constructs'} } ) {
 		foreach my $row ( @{ $construct->{'rows'} } ) {
 			$row->{'image'} = &people_crest_image($row->{'app'});
-			$row->{'public'} = &people_construct_public($row->{'app'});
+			$row->{'public'} = $row->{'foreign'} ? 0 : &people_construct_public($row->{'app'});
 			$row->{'crest_uuid'} = '';
 			$row->{'crest_image'} = '';
-			my $construct_crest = &subs::construct_crest_record_read($row->{'app'});
-			if ($construct_crest->{'uuid'}) {
-				&subs::construct_crest_image_materialize($c, $row->{'app'});
-				$row->{'crest_uuid'} = $construct_crest->{'uuid'};
-				$row->{'crest_image'} = &subs::construct_crest_image_src($row->{'app'});
+			unless ($row->{'foreign'}) {
+				my $construct_crest = &subs::construct_crest_record_read($row->{'app'});
+				if ($construct_crest->{'uuid'}) {
+					&subs::construct_crest_image_materialize($c, $row->{'app'});
+					$row->{'crest_uuid'} = $construct_crest->{'uuid'};
+					$row->{'crest_image'} = &subs::construct_crest_image_src($row->{'app'});
+				}
 			}
 			foreach my $member ( @{ $row->{'members'} } ) {
 				$member->{'image'} = &people_crest_image($member->{'app'});
@@ -19631,7 +19737,17 @@ sub people_crest_import_code {
 				known => 1,
 			};
 		}
-		return { ok => 0, error => 'the crest of ' . ($record->{'name'} || $record->{'construct'}) . ', a construct of another house' };
+		my $imported = &foreign_construct_import($record);
+		return { ok => 0, error => $imported->{'error'} || 'the construct could not be imported' }
+			unless $imported->{'ok'};
+		return {
+			ok => 1,
+			crest => $record,
+			construct_app => $imported->{'app'},
+			construct_name => $imported->{'name'} || $record->{'name'} || '',
+			house_name => $imported->{'house_name'},
+			foreign => 1,
+		};
 	}
 	my $own = &subs::crest_record_read();
 	return { ok => 0, error => 'that is this house\'s own crest' } if $own->{'uuid'} && $record->{'uuid'} && $own->{'uuid'} eq $record->{'uuid'};
@@ -19759,6 +19875,25 @@ post '/manager/people/crest/import' => sub($c) {
 	my $incoming = $card->{'crest'};
 	return $fail->('the card has no crest record') unless ref $incoming eq 'HASH';
 	return $fail->('the crest record does not verify') unless &subs::crest_verify_record($incoming);
+	if (length($incoming->{'construct'} || '')) {
+		# A construct card: find this house's own copy first, otherwise import it
+		# as another house's construct (which the signed record names).
+		my $local = &construct_crest_find_by_uuid($incoming->{'uuid'});
+		if ($local) {
+			return $c->render(json => {
+				ok => 1, crest => $incoming, construct_app => $local->{'app'},
+				construct_name => $incoming->{'name'} || $local->{'crest'}->{'name'} || '',
+				known => 1,
+			});
+		}
+		my $imported = &foreign_construct_import($incoming);
+		unless ($imported->{'ok'}) { return $fail->($imported->{'error'}); }
+		return $c->render(json => {
+			ok => 1, crest => $incoming, construct_app => $imported->{'app'},
+			construct_name => $imported->{'name'}, house_name => $imported->{'house_name'},
+			foreign => 1,
+		});
+	}
 	my $own = &subs::crest_record_read();
 	return $fail->('that is this house\'s own crest') if $own->{'uuid'} && $incoming->{'uuid'} && $own->{'uuid'} eq $incoming->{'uuid'};
 	my $safe_uuid = $incoming->{'uuid'} || '';
@@ -22623,7 +22758,8 @@ sub relational_workspace {
 	my ($focus) = @_;
 	my $index = &people_index();
 	my %apps = %{ $index->{'apps'} || {} };
-	$focus = '' unless defined $focus && length $focus && $apps{$focus};
+	$focus = '' unless defined $focus && length $focus && $apps{$focus}
+		&& !(($apps{$focus}->{'house_uuid'} || '') ne '');
 	my $colours = &relational_colours();
 	my %social_by_sing = map { $_->{'sing'} => $_ } values %{$gb::social_constructs};
 	my $type_label = sub {
@@ -22638,6 +22774,9 @@ sub relational_workspace {
 		my @rows;
 		foreach my $app ( sort keys %apps ) {
 			my $entry = $apps{$app};
+			# another house's construct is read-only here; the Relational board
+			# shows only what this house may change
+			next if ($entry->{'house_uuid'} || '') ne '';
 			next unless (($entry->{'pos'} || '') eq $scons->{'sing'} || ($entry->{'mab'} || '') eq $scons->{'sing'});
 			push @rows, {
 				app => $app,
@@ -22780,6 +22919,8 @@ sub relational_link {
 	my $f = $index->{'apps'}->{$focus};
 	my $m = $index->{'apps'}->{$member};
 	return 0 unless $f && $m;
+	# an imported construct belongs to another house: its links are theirs
+	return 0 if ($f->{'house_uuid'} || '') ne '' || ($m->{'house_uuid'} || '') ne '';
 	my $scons = $gb::social_constructs->{$type};
 	unless ($scons) {
 		($scons) = grep { $_->{'sing'} eq $type } values %{$gb::social_constructs};
@@ -27370,6 +27511,25 @@ sub guide_aliases_write {
 	return 1;
 }
 
+# The long-standing aka convention: a settings row on the app itself, with a
+# comma-separated list of other words for it ("21" for policy 21, "zzz" for
+# sleep). It predates the Guide and is already used by setting_initializer, so
+# the resolver reads it too; a taught alias for an app is written here.
+sub guide_aka_read {
+	my $rows = eval { &subs::db_query("select app, value from settings where setting='aka'")->hashes } || [];
+	my %map;
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} || '';
+		next unless length $app;
+		foreach my $token ( split /,/, ($row->{'value'} || '') ) {
+			$token =~ s/^\s+|\s+$//g;
+			next unless length $token;
+			push @{ $map{$app} }, $token;
+		}
+	}
+	return \%map;
+}
+
 sub guide_alias_add {
 	my ($alias, $target) = @_;
 	my $key = &guide_name_normalize($alias);
@@ -27379,27 +27539,57 @@ sub guide_alias_add {
 		return { ok => 0, text => &guide_ask_candidates($target, $r->{'candidates'} || [])->{'text'} };
 	}
 	my $t = $r->{'target'};
-	my $map = &guide_aliases_read();
-	$map->{$key} = {
-		kind => $t->{'kind'} || 'app',
-		app => $t->{'app'} || '',
-		uuid => $t->{'uuid'} || '',
-		name => $t->{'name'} || $t->{'app'} || '',
-		construct => $t->{'construct'} || '',
-		at => &subs::rightNow(),
-	};
-	&guide_aliases_write($map);
-	return { ok => 1, text => 'Remembered "' . $alias . '" for ' . ($t->{'name'} || $t->{'app'}) . '.', target => $t };
+	my $app = $t->{'app'} || '';
+	if (length $app && ($t->{'kind'} || '') ne 'machine' && ($t->{'kind'} || '') ne 'house') {
+		# An app or person: the aka row lives on the target itself, where the
+		# existing aka convention and setting_initializer already look for it.
+		my $aka = &guide_aka_read();
+		my @tokens = @{ $aka->{$app} || [] };
+		push @tokens, $alias unless grep { &guide_name_normalize($_) eq $key } @tokens;
+		# one row per app, not one per device: old copies would otherwise keep
+		# winning a removal from another machine
+		&subs::db_query('delete from settings where app=? and setting=?', $app, 'aka');
+		&subs::setting_setter({ app => $app, setting => 'aka', device => 'all', value => join(',', @tokens) });
+		# do not leave a second copy in the map
+		my $map = &guide_aliases_read();
+		if (exists $map->{$key}) { delete $map->{$key}; &guide_aliases_write($map); }
+	}
+	else {
+		my $map = &guide_aliases_read();
+		$map->{$key} = {
+			kind => $t->{'kind'} || 'app',
+			app => $app,
+			uuid => $t->{'uuid'} || '',
+			name => $t->{'name'} || $app,
+			construct => $t->{'construct'} || '',
+			at => &subs::rightNow(),
+		};
+		&guide_aliases_write($map);
+	}
+	return { ok => 1, text => 'Remembered "' . $alias . '" for ' . ($t->{'name'} || $app) . '.', target => $t };
 }
 
 sub guide_alias_remove {
 	my ($alias) = @_;
 	my $key = &guide_name_normalize($alias);
 	return { ok => 0, text => 'No alias named.' } unless length $key;
+	my $found = 0;
+	my $aka = &guide_aka_read();
+	foreach my $app ( keys %{$aka} ) {
+		my @tokens = @{ $aka->{$app} || [] };
+		my @keep = grep { &guide_name_normalize($_) ne $key } @tokens;
+		next if scalar @keep == scalar @tokens;
+		$found = 1;
+		&subs::db_query('delete from settings where app=? and setting=?', $app, 'aka');
+		&subs::setting_setter({ app => $app, setting => 'aka', device => 'all', value => join(',', @keep) }) if @keep;
+	}
 	my $map = &guide_aliases_read();
-	return { ok => 0, text => 'I did not know "' . $alias . '".' } unless exists $map->{$key};
-	delete $map->{$key};
-	&guide_aliases_write($map);
+	if (exists $map->{$key}) {
+		delete $map->{$key};
+		&guide_aliases_write($map);
+		$found = 1;
+	}
+	return { ok => 0, text => 'I did not know "' . $alias . '".' } unless $found;
 	return { ok => 1, text => 'Forgot "' . $alias . '".' };
 }
 
@@ -27436,6 +27626,12 @@ sub guide_resolve_target {
 	return { ok => 0, reason => 'nothing named', candidates => [] } unless length $query;
 	my $alias_map = &guide_aliases_read();
 	my %alias_for_app;
+	# aka rows live on the target app; the aliases map covers machines and houses
+	# (and anything taught before this rule).
+	my $aka_map = &guide_aka_read();
+	foreach my $app ( keys %{$aka_map} ) {
+		$alias_for_app{$app} = [ @{ $aka_map->{$app} || [] } ];
+	}
 	my %alias_for_key;
 	foreach my $key ( keys %{$alias_map} ) {
 		my $entry = $alias_map->{$key};
@@ -27484,9 +27680,12 @@ sub guide_resolve_target {
 	};
 	my $index = &people_index();
 	my %kind_of;
+	my %display_name;
 	foreach my $construct ( @{ $index->{'constructs'} || [] } ) {
 		foreach my $row ( @{ $construct->{'rows'} || [] } ) {
-			$kind_of{ $row->{'app'} } = $construct->{'sing'} if defined $row->{'app'};
+			next unless defined $row->{'app'};
+			$kind_of{ $row->{'app'} } = $construct->{'sing'};
+			$display_name{ $row->{'app'} } = $row->{'name'} if $row->{'foreign'} && ($row->{'name'} || '') ne '';
 		}
 	}
 	my %person;
@@ -27514,6 +27713,7 @@ sub guide_resolve_target {
 		my $construct = $kind_of{$app} || '';
 		next unless $accept->($kind, $construct);
 		my @aliases = ($app, &subs::format_name($app));
+		push @aliases, $display_name{$app} if ($display_name{$app} || '') ne '';
 		push @aliases, @{ $alias_for_app{$app} || [] };
 		push @aliases, $person{$app}->{'name'} if $is_person;
 		my ($score, $how) = $score_aliases->(\@aliases);
@@ -27530,7 +27730,7 @@ sub guide_resolve_target {
 		push @candidates, {
 			kind => $kind,
 			app => $app,
-			name => $is_person ? ($person{$app}->{'name'} || &subs::format_name($app)) : &subs::format_name($app),
+			name => $display_name{$app} || ($is_person ? ($person{$app}->{'name'} || &subs::format_name($app)) : &subs::format_name($app)),
 			uuid => $uuid,
 			construct => $construct,
 			memberships => \@memberships,

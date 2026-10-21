@@ -18632,8 +18632,14 @@ sub crest_code_build {
 	if (length($record->{'construct'} || '')) {
 		# A construct crest is written to a tag, not looked up, so it carries its
 		# kind instead of the house address; the address would not fit the code.
+		# The dHash stays with the drawing on the house that made it; the tag has
+		# no picture, and dropping it leaves room for the house id.
+		delete $compact->{'dhash'};
 		$compact->{'construct'} = $record->{'construct'};
 		$compact->{'construct_type'} = $record->{'construct_type'} || '';
+		# The signing key is the house key, so house_pubkey is redundant; the
+		# house uuid is what binds the construct to a known house.
+		$compact->{'house_uuid'} = $record->{'house_uuid'} || '';
 	}
 	else {
 		$compact->{'origin'} = $record->{'origin'} || &crest_origin();
