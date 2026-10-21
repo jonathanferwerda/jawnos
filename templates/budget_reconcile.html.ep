@@ -15,19 +15,30 @@
 		</thead>
 		<tbody>
 			<% foreach my $l ( @{$lines} ) { %>
-				<tr class="budget_reconcile_line" timestamp="<%= $l->{'timestamp'} %>" amount="<%= $l->{'amount'} %>" description="<%= $l->{'description'} %>" matched="<%= $l->{'match'} ? 'yes' : 'no' %>" match_uuid="<%= $l->{'match'} ? $l->{'match'}->{'uuid'} : '' %>">
-					<td><% if ($l->{'match'}) { %>&#10003;<% } else { %><input type="checkbox" class="budget_reconcile_take" checked><% } %></td>
+				<% my $settled = ($l->{'match'} || $l->{'settled'}); %>
+				<% my $covered = $l->{'covered'}; %>
+				<% my $record_amount = defined $l->{'record_amount'} ? $l->{'record_amount'} : $l->{'amount'}; %>
+				<% my $parts_total = 0; $parts_total += (($_->{'total'} || 0) + 0) for @{$l->{'parts'} || []}; %>
+				<tr class="budget_reconcile_line" timestamp="<%= $l->{'timestamp'} %>" amount="<%= $l->{'amount'} %>" record_amount="<%= $record_amount %>" description="<%= $l->{'description'} %>" matched="<%= $settled ? 'yes' : 'no' %>" covered="<%= $covered ? 'yes' : 'no' %>" match_uuid="<%= $l->{'match'} ? $l->{'match'}->{'uuid'} : '' %>">
+					<td><% if ($settled || $covered) { %>&#10003;<% } else { %><input type="checkbox" class="budget_reconcile_take" checked><% } %></td>
 					<td><span class="time" timestamp="<%= $l->{'timestamp'} %>"></span></td>
 					<td><%= $l->{'description'} %></td>
 					<td><%= &subs::price_formatter($l->{'amount'}) %></td>
 					<td>
 						<% if ($l->{'match'}) { %>
 							<span class="budget_reconcile_match" title="<%= $l->{'match'}->{'uuid'} %>"><%= &subs::format_name($l->{'match'}->{'app'}) %> <span class="time" timestamp="<%= $l->{'match'}->{'timestamp'} %>"></span> <%= &subs::price_formatter($l->{'match'}->{'total'}) %></span>
+						<% } elsif ($l->{'settled'}) { %>
+							<span class="budget_reconcile_match"><%= &subs::ui('Matched') %>: <%= scalar @{$l->{'parts'} || []} %> <%= &subs::ui('lines') %> (<%= &subs::price_formatter($parts_total) %>)</span>
+						<% } elsif ($covered) { %>
+							<span class="budget_reconcile_match"><%= &subs::ui('Covered by the last inventory balance') %></span>
 						<% } else { %>
 							<select class="budget_reconcile_action">
 								<option value="record"><%= &subs::ui('Record') %></option>
 								<option value="ignore"><%= &subs::ui('Ignore') %></option>
 							</select>
+							<% if ($l->{'parts'}) { %>
+								<div><%= &subs::ui('Already in Budget') %>: <%= &subs::price_formatter($parts_total) %> &middot; <%= &subs::ui('record') %> <%= &subs::price_formatter($record_amount) %></div>
+							<% } %>
 						<% } %>
 					</td>
 				</tr>
@@ -61,6 +72,7 @@
 
 	<table class="budget_reconcile_summary" style="margin-top:10px;border:groove;">
 		<tr><td><%= &subs::ui('Matched') %></td><td><%= $matched_count %></td><td><%= &subs::price_formatter($matched_total) %></td></tr>
+		<% if ($covered_count) { %><tr><td><%= &subs::ui('Covered by the last inventory balance') %></td><td><%= $covered_count %></td><td><%= &subs::price_formatter($covered_total) %></td></tr><% } %>
 		<tr><td><%= &subs::ui('Not matched') %></td><td><%= $unmatched_count %></td><td><%= &subs::price_formatter($unmatched_total) %></td></tr>
 		<tr><td><%= &subs::ui('Not on the statement') %></td><td><%= scalar @{$outstanding} %></td><td><%= &subs::price_formatter($outstanding_total) %></td></tr>
 	</table>

@@ -642,10 +642,14 @@ $(document).on('click', '#budget_reconcile_apply', function() {
 		var row = $(this);
 		var take = row.find('.budget_reconcile_take').length ? row.find('.budget_reconcile_take').is(':checked') : true;
 		var action = row.attr('matched') === 'yes' ? 'match' : (row.find('.budget_reconcile_action').val() || 'record');
+		if (row.attr('covered') === 'yes') { action = 'ignore'; }
 		if (!take) { action = 'ignore'; }
+		var record_amount = row.attr('record_amount');
+		if (typeof record_amount === 'undefined' || record_amount === '') { record_amount = row.attr('amount'); }
 		lines.push({
 			timestamp: row.attr('timestamp'),
 			amount: row.attr('amount'),
+			record_amount: record_amount,
 			description: row.attr('description'),
 			action: action,
 			match_uuid: row.attr('match_uuid') || ''
