@@ -2139,3 +2139,17 @@ window.jawnosShareCrypto = (function () {
 	}
 	return { supported: supported, generate: generate, publicRaw: publicRaw, publicSpki: publicSpki, unwrap: unwrap, wrap: wrap, b64: b64, unb64: unb64 };
 })();
+
+// The manager can be opened in shadow mode, where the app-required page never
+// runs and the session never learns this install's app key. Prove it on every
+// load: app-only actions (a peer Go ticket) need app_device on the session.
+(function () {
+	function prove() {
+		if (!window.JawnDesktop) { return; }
+		if (typeof jawnAppLogin !== 'function' || typeof jawnDeviceUuid !== 'function') { return; }
+		if (!jawnDeviceUuid()) { return; }
+		jawnAppLogin(true).catch(function () {});
+	}
+	if (document.readyState === 'complete') { setTimeout(prove, 250); }
+	else { window.addEventListener('load', function () { setTimeout(prove, 250); }); }
+})();
