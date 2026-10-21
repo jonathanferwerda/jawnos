@@ -39,7 +39,9 @@
 						<% foreach my $f ( sort { $a->{'contact_name'} cmp $b->{'contact_name'} } @{$friends} ) { %>
 							<% my $fname = &subs::format_name($f->{'contact_name'}); %>
 							<div class="chat_friend hover <% if ($mail_contact eq $f->{'uuid'}) { %>active <% } %>" uuid="<%= $f->{'uuid'} %>" name="<%= &subs::unformat_name($f->{'contact_name'}) %>" phone="<%= $f->{'phone'} %>">
-								<span class="chat_friend_avatar"><%= substr($fname, 0, 1) %></span>
+								<% my $fcrest = ($privilege eq 'citizen') ? &subs::crest_contact_entry($f->{'app'}) : undef; %>
+								<% my $fsrc = ''; if ($fcrest) { $fsrc = $fcrest->{'image_data'} || (&subs::crest_peer_image_file($fcrest) ? '/manager/people/crest_image?peer=' . $fcrest->{'crest'}->{'uuid'} . '&stamp=' . &subs::rightNow() : ''); } %>
+								<span class="chat_friend_avatar"><% if ($fsrc ne '') { %><img src="<%= $fsrc %>" alt=""><% } else { %><%= substr($fname, 0, 1) %><% } %></span>
 								<span class="chat_friend_text">
 									<span class="chat_friend_name"><%= $fname %></span>
 									<span class="chat_friend_meta"><% if ($f->{'phone'}) { %>sms<% } else { %>chat<% } %><% my @extra = grep { !$_->{'primary'} && $_->{'value'} } @{ $f->{'numbers'} || [] }; %><% if (scalar @extra) { %> &middot; <%= join(' &middot; ', map { &subs::contact_line_label($_) } @extra) %><% } %></span>

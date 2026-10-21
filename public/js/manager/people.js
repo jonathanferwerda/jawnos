@@ -23,6 +23,101 @@ function peopleOpener() {
 	});
 }
 
+function peopleAfterImport(response) {
+	peopleStatus(peopleT('Imported.'));
+	peopleOpener();
+	var uuid = response && response.crest && response.crest.uuid;
+	if (uuid) { setTimeout(function() { peopleCrestDetail(uuid); }, 400); }
+}
+
+function peopleCrestMessage(contact) {
+	if (!contact) { return; }
+	if (contact.phone && typeof jawnLaunchSms === 'function') {
+		jawnLaunchSms(contact.phone, '');
+		return;
+	}
+	if (contact.email) {
+		window.open('mailto:' + contact.email, '_blank');
+		return;
+	}
+	peopleStatus(peopleT('Link a person with a phone or email first.'));
+}
+
+function peopleCrestDetail(uuid) {
+	if (!uuid) { return; }
+	$.ajax({
+		url: '/manager/people/crest/detail',
+		type: 'GET',
+		data: { uuid: uuid, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || !response.ok) {
+				peopleStatus((response && response.error) || peopleT('Could not open that crest.'));
+				return;
+			}
+			var box = $('#people_crest_detail').empty().show();
+			$('<button class="people_detail_close">').html('&times;').on('click', function() { box.hide().empty(); }).appendTo(box);
+			if (response.image) { $('<img class="people_detail_image">').attr('src', response.image).appendTo(box); }
+			$('<h3>').text(response.name || '').appendTo(box);
+			$('<div class="people_fp">').text(response.fingerprint || '').appendTo(box);
+			$('<div class="people_row_sub">').text(peopleT(response.status || '')).appendTo(box);
+			var actions = $('<div class="people_actions">').appendTo(box);
+			if (response.home) {
+				$('<button>').text(peopleT('Homepage')).on('click', function() { window.open(response.home, '_blank'); }).appendTo(actions);
+			}
+			if (response.store) {
+				$('<button>').text(peopleT('Store')).on('click', function() { window.open(response.store, '_blank'); }).appendTo(actions);
+			}
+			if (response.contact && (response.contact.phone || response.contact.email)) {
+				$('<button>').text(peopleT('Message')).on('click', function() { peopleCrestMessage(response.contact); }).appendTo(actions);
+			}
+			if (!response.met) {
+				$('<button class="people_peer_vouch">').attr('uuid', response.uuid).text(peopleT('I have met this crest')).appendTo(actions);
+			}
+			if (response.contacts && response.contacts.length) {
+				var select = $('<select class="people_contact_link">').appendTo(actions);
+				$('<option>').val('').text(peopleT('Link a person')).appendTo(select);
+				$.each(response.contacts, function(i, contact) {
+					var label = contact.name || contact.app;
+					if (contact.phone) { label += ' · ' + contact.phone; }
+					else if (contact.email) { label += ' · ' + contact.email; }
+					$('<option>').val(contact.app).text(label).appendTo(select);
+				});
+				if (response.linked_app) { select.val(response.linked_app); }
+				$('<button>').text(peopleT('Link')).on('click', function() {
+					$.post('/manager/people/crest/link', { uuid: response.uuid, app: select.val(), timestamp: Date.now() }, function() {
+						peopleCrestDetail(response.uuid);
+					});
+				}).appendTo(actions);
+			}
+			if (box[0] && box[0].scrollIntoView) { box[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+		},
+		error: function() { peopleStatus(peopleT('Could not open that crest.')); }
+	});
+}
+
+function peopleCrestOpen(uuid) {
+	if (!uuid) { return; }
+	if ($('.wind[app="people"]').length) {
+		peopleCrestDetail(uuid);
+		return;
+	}
+	$.ajax({
+		url: '/manager/people',
+		type: 'GET',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			windowMaker(response);
+			setTimeout(function() { peopleCrestDetail(uuid); }, 400);
+		}
+	});
+}
+
+$(document).on('click', '.people_crest_row', function(e) {
+	if ($(e.target).closest('button, select, input').length) { return; }
+	peopleCrestDetail($(this).attr('uuid'));
+});
+
 $(document).on('click', '#people_toggle', function() {
 	peopleOpener();
 });
@@ -278,8 +373,7 @@ $(document).on('change', '#people_crest_import_file', function() {
 			dataType: 'json',
 			success: function(response) {
 				if (response && response.ok) {
-					peopleStatus(peopleT('Imported.'));
-					peopleOpener();
+					peopleAfterImport(response);
 				}
 				else {
 					peopleStatus((response && response.error) || peopleT('Could not import.'));
@@ -302,8 +396,7 @@ $(document).on('click', '#people_crest_code_import', function() {
 		dataType: 'json',
 		success: function(response) {
 			if (response && response.ok) {
-				peopleStatus(peopleT('Imported.'));
-				peopleOpener();
+				peopleAfterImport(response);
 			}
 			else {
 				peopleStatus((response && response.error) || peopleT('Could not import.'));

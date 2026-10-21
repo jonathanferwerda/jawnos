@@ -1250,6 +1250,9 @@ function nfcInitializer() {
 					var jr = JSON.stringify(response);
 
 					$('.nfc_read_status').text(response.status);
+					if (response && response.crest_uuid && typeof peopleCrestOpen === 'function') {
+						peopleCrestOpen(response.crest_uuid);
+					}
 					setTimeout(function() {
 						$('.nfc_read_status').text('');
 					},10000);

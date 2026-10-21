@@ -9251,6 +9251,10 @@ post '/manager/nfc/read' => sub($c) {
 			$response->{'status'} = $result->{'ok'}
 				? ('Crest imported: ' . ($result->{'crest'}->{'name'} || ''))
 				: ('Crest import failed: ' . ($result->{'error'} || 'unknown'));
+			if ($result->{'ok'}) {
+				$response->{'crest_uuid'} = $result->{'crest'}->{'uuid'} || '';
+				$response->{'crest_known'} = $result->{'known'} ? 1 : 0;
+			}
 			next;
 		}
 		my $nfcs = &subs::db_query('select * from settings where setting=? and value like ? and device=?', 'nfc', '%' . $message->{'uuid'} . '%', &subs::device_setter())->hashes->[0];
@@ -18603,7 +18607,8 @@ get '/manager/people' => sub($c) {
 			crest => $incoming,
 			name => $incoming->{'name'} || '',
 			fingerprint => $incoming->{'fingerprint'} || '',
-			has_image => &subs::crest_peer_image_file($entry) ? 1 : 0,
+			has_image => ((defined $entry->{'image_data'} && length $entry->{'image_data'}) || &subs::crest_peer_image_file($entry)) ? 1 : 0,
+			image_src => (defined $entry->{'image_data'} && length $entry->{'image_data'}) ? $entry->{'image_data'} : (&subs::crest_peer_image_file($entry) ? '/manager/people/crest_image?peer=' . $incoming->{'uuid'} . '&stamp=' . &subs::rightNow() : ''),
 			met => 0,
 			met_at => '',
 			introduced_by => '',
@@ -18665,6 +18670,94 @@ get '/manager/people' => sub($c) {
 	$c->render(text => $contents);
 };
 
+get '/manager/people/crest/detail' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $uuid = $c->param('uuid') || '';
+	my $entry = &subs::crest_peer_find($uuid);
+	return $c->render(json => { ok => 0, error => 'no such crest' }) unless $entry;
+	my $incoming = $entry->{'crest'} || {};
+	my $own = &subs::crest_record_read();
+	my $peer_list = &subs::crest_peer_list_read();
+	my $met = 0;
+	my $met_at = '';
+	if (ref $entry->{'vouch'} eq 'HASH'
+		&& &subs::crest_vouch_verify($entry->{'vouch'})
+		&& ($entry->{'vouch'}->{'from_uuid'} || '') eq ($own->{'uuid'} || '')
+		&& ($entry->{'vouch'}->{'to_uuid'} || '') eq ($incoming->{'uuid'} || '')
+		&& ($entry->{'vouch'}->{'to_pubkey'} || '') eq ($incoming->{'pubkey'} || '')) {
+		$met = 1;
+		$met_at = $entry->{'vouch'}->{'at'} || $entry->{'met_at'} || '';
+	}
+	my $introduced_by = '';
+	foreach my $vouch ( @{ $entry->{'vouches'} || [] } ) {
+		next unless ref $vouch eq 'HASH';
+		next unless ($vouch->{'to_uuid'} || '') eq ($incoming->{'uuid'} || '');
+		next unless ($vouch->{'to_pubkey'} || '') eq ($incoming->{'pubkey'} || '');
+		my $issuer = &subs::crest_vouch_introducer($vouch, $own, $peer_list);
+		next unless $issuer;
+		next if ($issuer->{'uuid'} || '') eq ($own->{'uuid'} || '');
+		$introduced_by = $issuer->{'name'} || '';
+		last;
+	}
+	my $endpoints = ref $entry->{'endpoints'} eq 'HASH' ? $entry->{'endpoints'} : {};
+	my $linked_app = &subs::crest_contact_app_for_uuid($uuid);
+	my %apps;
+	foreach my $kind ( qw/phone email/ ) {
+		my $lines = eval { &subs::contact_lines($kind) } || {};
+		foreach my $app ( keys %{$lines} ) {
+			my @lines = @{ $lines->{$app} || [] };
+			$apps{$app} ||= { app => $app, name => &subs::format_name($app), phone => '', email => '' };
+			$apps{$app}->{'phone'} = $lines[0]->{'value'} || '' if $kind eq 'phone' && @lines;
+			$apps{$app}->{'email'} = $lines[0]->{'value'} || '' if $kind eq 'email' && @lines;
+		}
+	}
+	my @contacts = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } values %apps;
+	my $tickets = eval { &subs::db_query('select name from tickets')->hashes } || [];
+	foreach my $ticket ( @{$tickets} ) {
+		my $app = &subs::unformat_name($ticket->{'name'} || '');
+		next unless length $app;
+		$apps{$app} ||= { app => $app, name => &subs::format_name($app), phone => '', email => '' };
+	}
+	@contacts = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } values %apps;
+	if ($linked_app && !$apps{$linked_app}) {
+		foreach my $key ( keys %apps ) {
+			if (lc($key) eq lc($linked_app)) { $linked_app = $key; last; }
+		}
+	}
+	my $contact = ($linked_app && $apps{$linked_app}) ? $apps{$linked_app} : undef;
+	my $has_image = ((defined $entry->{'image_data'} && length $entry->{'image_data'}) || &subs::crest_peer_image_file($entry)) ? 1 : 0;
+	my $image_src = (defined $entry->{'image_data'} && length $entry->{'image_data'})
+		? $entry->{'image_data'}
+		: ($has_image ? '/manager/people/crest_image?peer=' . $uuid . '&stamp=' . &subs::rightNow() : '');
+	return $c->render(json => {
+		ok => 1,
+		uuid => $uuid,
+		name => $incoming->{'name'} || '',
+		fingerprint => $incoming->{'fingerprint'} || '',
+		met => $met ? 1 : 0,
+		met_at => $met_at,
+		introduced_by => $introduced_by,
+		status => $met ? 'Met in person' : ($introduced_by ? 'Introduced by ' . $introduced_by : 'Imported, not met'),
+		image => $image_src,
+		home => $endpoints->{'home'} || '',
+		store => $endpoints->{'store'} || '',
+		manager => $endpoints->{'manager'} || '',
+		linked_app => $linked_app,
+		contact => $contact,
+		contacts => \@contacts,
+	});
+};
+
+post '/manager/people/crest/link' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $uuid = $c->param('uuid') || '';
+	my $app = $c->param('app') // '';
+	my $entry = &subs::crest_peer_find($uuid);
+	return $c->render(json => { ok => 0, error => 'no such crest' }) unless $entry;
+	&subs::crest_contact_link_set($app, $uuid);
+	return $c->render(json => { ok => 1 });
+};
+
 get '/manager/people/crest/qr' => sub($c) {
 	unless (&people_citizen($c)) { $c->rendered(403); return; }
 	my $suds = &subs::session_suds($c);
@@ -18713,6 +18806,16 @@ sub people_crest_card {
 	}
 	my $card = { format => 'jawnos-crest-card', card_version => 1, crest => $crest, vouches => \@vouches };
 	$card->{'image'} = $image if defined $image;
+	my $config = &subs::config_reader();
+	my $host = $config->{'domain'} || $c->req->url->base->host;
+	my $port = $config->{'port'} || 3000;
+	my $working = $config->{'working_port'} || $port;
+	$card->{'endpoints'} = {
+		home => "https://$host:$port/",
+		store => "https://$host:$port/store",
+		manager => "https://$host:$working/manager",
+		signatorial => &subs::signatorial_designer(),
+	};
 	return $card;
 }
 
@@ -18759,15 +18862,18 @@ sub people_crest_import_code {
 		status => 'imported',
 		vouches => [],
 	};
+	my $known = $existing ? 1 : 0;
 	if ($existing) {
 		$entry->{'imported_at'} = $existing->{'imported_at'} || $entry->{'imported_at'};
 		$entry->{'vouch'} = $existing->{'vouch'} if ref $existing->{'vouch'} eq 'HASH';
 		$entry->{'met_at'} = $existing->{'met_at'} if defined $existing->{'met_at'};
 		$entry->{'status'} = $existing->{'status'} if (($existing->{'status'} || '') eq 'met');
 		$entry->{'image_file'} = $existing->{'image_file'} if $existing->{'image_file'};
+		$entry->{'image_data'} = $existing->{'image_data'} if defined $existing->{'image_data'};
+		$entry->{'endpoints'} = $existing->{'endpoints'} if ref $existing->{'endpoints'} eq 'HASH';
 	}
 	return { ok => 0, error => 'the crest could not be stored' } unless &subs::crest_peer_upsert($entry);
-	return { ok => 1, crest => $record, entry => $entry };
+	return { ok => 1, crest => $record, entry => $entry, known => $known };
 }
 
 post '/manager/people/crest/scan' => sub($c) {
@@ -18910,12 +19016,16 @@ post '/manager/people/crest/import' => sub($c) {
 		status => 'imported',
 		vouches => [],
 	};
+	$entry->{'endpoints'} = $card->{'endpoints'} if ref $card->{'endpoints'} eq 'HASH';
+	$entry->{'image_data'} = $card->{'image'} if defined $card->{'image'} && length $card->{'image'};
 	if ($existing) {
 		$entry->{'imported_at'} = $existing->{'imported_at'} || $entry->{'imported_at'};
 		$entry->{'vouch'} = $existing->{'vouch'} if ref $existing->{'vouch'} eq 'HASH';
 		$entry->{'met_at'} = $existing->{'met_at'} if defined $existing->{'met_at'};
 		$entry->{'status'} = $existing->{'status'} if (($existing->{'status'} || '') eq 'met');
 		$entry->{'image_file'} = $existing->{'image_file'} if !$image_name && $existing->{'image_file'};
+		$entry->{'image_data'} = $existing->{'image_data'} if !$entry->{'image_data'} && defined $existing->{'image_data'};
+		$entry->{'endpoints'} = $existing->{'endpoints'} if !$entry->{'endpoints'} && ref $existing->{'endpoints'} eq 'HASH';
 	}
 	$entry->{'image_file'} = $image_name if $image_name;
 	my %seen_vouch;

@@ -31,6 +31,17 @@
 	.people_code_row button { padding:7px 12px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); cursor:pointer; font-size:13px; }
 	.people_nfc_status { display:block; min-height:18px; font-size:12px; color:var(--muted,#8e8e8e); }
+	.people_detail { display:none; position:relative; border:1px solid var(--line); border-radius:10px;
+		padding:12px; margin:10px 0; background:var(--panel); overflow:auto; }
+	.people_detail_close { position:absolute; top:6px; right:8px; border:0; background:transparent;
+		font-size:20px; cursor:pointer; color:inherit; }
+	.people_detail_image { width:140px; height:140px; object-fit:contain; float:left; margin:0 12px 8px 0;
+		border-radius:8px; background:var(--panel); }
+	.people_detail h3 { margin:0 0 4px; }
+	.people_detail .people_actions { clear:both; }
+	.people_contact_link { padding:6px 8px; border:1px solid var(--line); border-radius:8px;
+		background:var(--panel); font-size:13px; max-width:260px; }
+	.people_crest_row { cursor:pointer; }
 	.people_name_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
 	.people_name_row input { min-width:180px; padding:6px 8px; border:1px solid var(--line);
 		border-radius:8px; background:var(--panel); font-size:14px; }
@@ -94,6 +105,7 @@
 
 	<div id="people_status"></div>
 	<span class="nfc_read_status people_nfc_status"></span>
+	<div id="people_crest_detail" class="people_detail"></div>
 	<div id="people_crest_qr" class="people_qr_box"></div>
 
 	<div class="people_name_row">
@@ -123,9 +135,9 @@
 		<% if (@{$peers}) { %>
 			<div class="people_list">
 				<% foreach my $peer ( @{$peers} ) { %>
-					<div class="people_row peer_crest" uuid="<%= $peer->{'uuid'} %>">
+					<div class="people_row peer_crest people_crest_row" uuid="<%= $peer->{'uuid'} %>">
 						<% if ($peer->{'has_image'}) { %>
-							<img class="people_peer_thumb" src="/manager/people/crest_image?peer=<%= $peer->{'uuid'} %>&stamp=<%= &subs::rightNow() %>" alt="<%= $peer->{'name'} %>">
+							<img class="people_peer_thumb" src="<%= $peer->{'image_src'} %>" alt="<%= $peer->{'name'} %>">
 						<% } %>
 						<span class="people_row_name"><%= $peer->{'name'} %><br><span class="people_fp"><%= $peer->{'fingerprint'} %></span></span>
 						<span class="people_row_sub">

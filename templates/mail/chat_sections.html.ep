@@ -27,7 +27,7 @@
 		<% foreach my $contact ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$contacts} ) { %>
 			<div class="<% if ($mail_contact eq $contact->{'uuid'}) {%>active <% } %>mail_contact hover" uuid="<%= $contact->{'uuid'} %>"
 				name="<%= &subs::unformat_name($contact->{'name'}) %>"
-				contact_name="<%= &subs::unformat_name($contact->{'contact_name'}) %>"><%= &subs::format_name($contact->{'contact_name'}) %></div>
+				contact_name="<%= &subs::unformat_name($contact->{'contact_name'}) %>"><% my $mcrest = ($privilege eq 'citizen') ? &subs::crest_contact_entry($contact->{'app'}) : undef; %><% my $msrc = ''; if ($mcrest) { $msrc = $mcrest->{'image_data'} || (&subs::crest_peer_image_file($mcrest) ? '/manager/people/crest_image?peer=' . $mcrest->{'crest'}->{'uuid'} . '&stamp=' . &subs::rightNow() : ''); } %><% if ($msrc ne '') { %><img src="<%= $msrc %>" style="width:20px;height:20px;object-fit:cover;border-radius:50%;vertical-align:middle;margin-right:4px;" alt=""><% } %><%= &subs::format_name($contact->{'contact_name'}) %></div>
 		<% } %>
 
 	</div>

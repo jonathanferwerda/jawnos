@@ -18177,17 +18177,25 @@ sub crest_vouch_verify {
 # { crest => the signed record, image_file => ..., device => ...,
 #   imported_at => ..., status => imported|met, met_at => ...,
 #   vouches => [ claims the other house presented ], vouch => our signed vouch }.
+my $crest_peer_list_cache;
+my $crest_peer_list_raw;
+
 sub crest_peer_list_read {
 	my $raw = &setting_grabber({ app => '__president', setting => 'peer_crests', device => 'all' });
 	return [] unless defined $raw && length $raw;
+	return $crest_peer_list_cache if defined $crest_peer_list_cache && defined $crest_peer_list_raw && $crest_peer_list_raw eq $raw;
 	my $list = eval { decode_json($raw) };
-	return ref $list eq 'ARRAY' ? $list : [];
+	$crest_peer_list_raw = $raw;
+	$crest_peer_list_cache = ref $list eq 'ARRAY' ? $list : [];
+	return $crest_peer_list_cache;
 }
 
 sub crest_peer_list_write {
 	my ($list) = @_;
 	return 0 unless ref $list eq 'ARRAY';
 	&setting_setter({ app => '__president', setting => 'peer_crests', device => 'all', value => encode_json($list) });
+	undef $crest_peer_list_cache;
+	undef $crest_peer_list_raw;
 	return 1;
 }
 
@@ -18230,6 +18238,57 @@ sub crest_peer_update {
 		return &crest_peer_list_write($list) ? $entry : undef;
 	}
 	return undef;
+}
+
+# A crest can be linked to one of the house's chat/mail contacts by the same app
+# name those lists use. The link is one settings map, so it syncs with the rest.
+sub crest_contact_links_read {
+	my $raw = &setting_grabber({ app => '__president', setting => 'crest_contacts', device => 'all' });
+	return {} unless defined $raw && length $raw;
+	my $map = eval { decode_json($raw) };
+	return ref $map eq 'HASH' ? $map : {};
+}
+
+sub crest_contact_links_write {
+	my ($map) = @_;
+	return 0 unless ref $map eq 'HASH';
+	&setting_setter({ app => '__president', setting => 'crest_contacts', device => 'all', value => encode_json($map) });
+	return 1;
+}
+
+sub crest_contact_link_set {
+	my ($app, $uuid) = @_;
+	$app = &unformat_name($app) if defined $app;
+	my $map = &crest_contact_links_read();
+	if (defined $app && length $app && defined $uuid && length $uuid) {
+		$map->{$app} = $uuid;
+		$map->{lc($app)} = $uuid if lc($app) ne $app;
+	}
+	elsif (defined $uuid && length $uuid) {
+		foreach my $key ( keys %$map ) {
+			delete $map->{$key} if (($map->{$key} || '') eq $uuid);
+		}
+	}
+	return &crest_contact_links_write($map);
+}
+
+sub crest_contact_entry {
+	my ($app) = @_;
+	return undef unless defined $app && length $app;
+	my $map = &crest_contact_links_read();
+	my $uuid = $map->{$app} || $map->{lc($app)} || '';
+	return undef unless length $uuid;
+	return &crest_peer_find($uuid);
+}
+
+sub crest_contact_app_for_uuid {
+	my ($uuid) = @_;
+	return '' unless defined $uuid && length $uuid;
+	my $map = &crest_contact_links_read();
+	foreach my $app ( keys %$map ) {
+		return $app if (($map->{$app} || '') eq $uuid);
+	}
+	return '';
 }
 
 # Vouches this house has received: another crest's signed statement that this
