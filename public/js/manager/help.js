@@ -179,6 +179,7 @@ function helpActionLabel(a) {
 	if (a.action === 'measure') { return 'Measuring…'; }
 	if (a.action === 'remote') { return 'Telling ' + (a.machine || 'the machine') + '…'; }
 	if (a.action === 'update') { return 'Changing “' + (a.app || a.title || 'the appointment') + '”…'; }
+	if (a.action === 'schedule') { return 'Working out the schedule…'; }
 	if (a.action === 'undo') { return 'Putting the last change back…'; }
 	if (a.action === 'stop') { return 'Stopping ' + (a.app || 'the appointment') + '…'; }
 	if (a.action === 'delete') { return 'Finding the ' + (a.app || 'appointment') + ' to delete…'; }
@@ -325,6 +326,17 @@ function helpDoAction(a, cb) {
 			jawnos_help_last_staged = null;
 			cb('Dropped the staged appointment.', 'Done - I threw it away.');
 		}).fail(function () { cb('I could not drop that.'); });
+		return;
+	}
+	if (a.action === 'schedule') {
+		// a schedule the Guide could not read on the first pass: the appointment or
+		// bill is already made and the token names it, so this only writes repeats
+		$.post('/manager/help/schedule', { token: a.token || '', text: a.text || '' }, function (r) {
+			if (!r || r.error) { cb((r && r.error) || 'I could not apply that schedule.', 'I could not apply that schedule.'); return; }
+			if (r.ask) { cb(r.ask, r.ask); return; }
+			var summary = r.summary || ('scheduled ' + (r.count || 0) + ' more');
+			cb(summary + '.', 'Done - ' + summary + '.');
+		}).fail(function () { cb('I could not apply that schedule.'); });
 		return;
 	}
 	if (a.action === 'update') {

@@ -336,7 +336,7 @@
 				<option value="quarterly"><%= &subs::ui('Every quarter') %></option>
 				<option value="yearly"><%= &subs::ui('Every year') %></option>
 			</select>
-			<input id="budget_payable_schedule" placeholder="<%= &subs::ui('1d for -2w') %>" style="width:12%;" hint="<%= &subs::ui('A custom schedule: an interval, then for how long.') %>">
+			<input id="budget_payable_schedule" placeholder="<%= &subs::ui('1d for -2w') %>" style="width:12%;" hint="<%= &subs::ui('A repeat in an interval or plain words: every 2 weeks, every third Saturday, the next 5 full moons.') %>">
 			<button id="budget_payable_add"><%= &subs::ui('Add bill') %></button>
 			<span id="budget_payable_message"></span>
 		</div>
@@ -362,10 +362,10 @@
 							<td><%= &subs::format_name($s->{'app'}) %></td>
 							<td style="text-align:right;"><%= &subs::price_formatter($s->{'amount'}) %></td>
 							<td>
-								<% if (my $label = $repeat_label{$s->{'every'}}) { %><%= &subs::ui($label) %><% } else { %><%= $s->{'every'} || &subs::ui('Every month') %><% } %>
+								<% if (ref $s->{'dates'} eq 'ARRAY') { %><%= scalar @{$s->{'dates'}} %> <%= &subs::ui('dates') %><% } elsif (my $label = $repeat_label{$s->{'every'}}) { %><%= &subs::ui($label) %><% } else { %><%= $s->{'every'} || &subs::ui('Every month') %><% } %>
 								<% if ($s->{'until'}) { %><span style="opacity:.6;"> &rarr; <span class="time" timestamp="<%= $s->{'until'} %>"></span></span><% } %>
 							</td>
-							<td><span class="time" timestamp="<%= $s->{'next'} %>"></span><% if (($s->{'active'} || 'on') eq 'off') { %> <span style="opacity:.6;">(<%= &subs::ui($s->{'finished'} ? 'ended' : 'paused') %>)</span><% } %></td>
+							<td><% if ($s->{'next'}) { %><span class="time" timestamp="<%= $s->{'next'} %>"></span><% } %><% if (($s->{'active'} || 'on') eq 'off') { %> <span style="opacity:.6;">(<%= &subs::ui($s->{'finished'} ? 'ended' : 'paused') %>)</span><% } %></td>
 							<td style="white-space:nowrap;">
 								<% unless ($s->{'finished'}) { %><button class="budget_schedule_toggle" uuid="<%= $s->{'uuid'} %>"><%= &subs::ui(($s->{'active'} || 'on') eq 'off' ? 'Resume' : 'Pause') %></button><% } %>
 								<button class="budget_schedule_delete" uuid="<%= $s->{'uuid'} %>" hint="<%= &subs::ui('Delete') %>">&times;</button>

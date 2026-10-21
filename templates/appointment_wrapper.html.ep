@@ -136,7 +136,7 @@
 				<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" style="flex:1 1 0;min-width:0;" />
 				<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="duration" style="flex:1 1 0;min-width:0;" />
 				<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="quantity" style="flex:1 1 0;min-width:0;">
-				<input type="text" class="schedule main_input" app="<%= $a %>" text="schedule" placeholder="1d for -2w" hint="Repeat interval, then how long: 1d for -2w is every day for two weeks." style="flex:1 1 0;min-width:0;" />
+				<input type="text" class="schedule main_input" app="<%= $a %>" text="schedule" placeholder="1d for -2w" hint="Repeat in an interval or plain words: 1d for -2w is every day for two weeks; every third Saturday, the next 5 full moons." style="flex:1 1 0;min-width:0;" />
 				<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="warranty" style="flex:1 1 0;min-width:0;" />
 			</div>
 			<br>

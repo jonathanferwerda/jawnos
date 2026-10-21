@@ -467,9 +467,17 @@ function assistantOpen() { return assistantOpenPanel(assistantPanel()); }
 // Open a fresh Guide associate scoped to one app: its conversation is kept under
 // the app's own name (app_<name>), so the thread comes back next time the ? is
 // pressed in that window, and each turn expires on the app's warranty.
-function assistantAppOpen(app) {
+function assistantAppOpen(app, question) {
 	var name = 'app_' + (app || 'window');
-	return assistantOpenConversation(name, (app || 'Window'));
+	return assistantOpenConversation(name, (app || 'Window'), question);
+}
+
+// Open an associate with a question already asked. Used when a schedule needs
+// clarifying: the appointment or bill is made, and the Associate is handed the
+// token and the question so it can finish the repeats.
+function assistantAskFresh(app, question) {
+	if (typeof assistantAppOpen !== 'function') { return null; }
+	return assistantAppOpen(app, question);
 }
 
 function assistantModel(panel) {
@@ -760,9 +768,16 @@ function assistantSpawn(source) {
 
 // Re-open a conversation from the agents list (or start its panel if none is
 // open): the remembered turns are fetched and replayed into the log.
-function assistantOpenConversation(name, title) {
+function assistantOpenConversation(name, title, question) {
 	var existing = $('.assistant_view[conversation="' + name + '"]');
-	if (existing.length) { return assistantOpenPanel(existing.first()); }
+	if (existing.length) {
+		var open = assistantOpenPanel(existing.first());
+		if (question) {
+			open.find('.assistant_question').val(question);
+			if (typeof assistantAsk === 'function') { assistantAsk(open); }
+		}
+		return open;
+	}
 	var panel = assistantSpawn($('.assistant_view').first());
 	if (!panel.length) { return panel; }
 	panel.attr('conversation', name).data('title', title || '').data('greeted', 1);
@@ -774,16 +789,22 @@ function assistantOpenConversation(name, title) {
 		panel.data('thread', transcript);
 		if (r && r.title) { panel.data('title', r.title); assistantTitleShow(panel); }
 		var log = assistantLog(panel);
-		if (!transcript.length) { assistantChatAdd(panel, 'step', 'Nothing was said here yet.'); return; }
-		var shown = 0;
-		transcript.forEach(function (m) {
-			var role = m.role || 'user';
-			var content = String(m.content || '');
-			if (role === 'user') { assistantChatAdd(panel, 'user', content); shown++; }
-			else if (role === 'assistant' && !/^\s*\{/.test(content)) { assistantChatAdd(panel, 'guide', content); shown++; }
-		});
-		if (!shown) { assistantChatAdd(panel, 'step', 'Nothing was said here yet.'); }
+		if (!transcript.length) { assistantChatAdd(panel, 'step', 'Nothing was said here yet.'); }
+		else {
+			var shown = 0;
+			transcript.forEach(function (m) {
+				var role = m.role || 'user';
+				var content = String(m.content || '');
+				if (role === 'user') { assistantChatAdd(panel, 'user', content); shown++; }
+				else if (role === 'assistant' && !/^\s*\{/.test(content)) { assistantChatAdd(panel, 'guide', content); shown++; }
+			});
+			if (!shown) { assistantChatAdd(panel, 'step', 'Nothing was said here yet.'); }
+		}
 		log.scrollTop(log[0] ? log[0].scrollHeight : 0);
+		if (question) {
+			panel.find('.assistant_question').val(question);
+			if (typeof assistantAsk === 'function') { assistantAsk(panel); }
+		}
 	});
 	return panel;
 }
@@ -3789,6 +3810,9 @@ function managerReset(caller,e) {
 		data: data,
 		success: function(response) {
 				appClearer(app)
+				if (response && response.schedule_ask && typeof assistantAskFresh === 'function') {
+					assistantAskFresh(app, response.schedule_ask);
+				}
 //			centreViewWriter(response);
 		//	if ($('.now').attr('presence') != 'not') {
 

@@ -702,6 +702,10 @@ $(document).on('click', '#budget_payable_add', function() {
 			button.removeAttr('disabled');
 			if (response.error) { message.text(response.error); return; }
 			$('#budget_payable_schedule').val('');
+			if (response.ask) {
+				message.text(jawnosT('The bill is saved; the Guide needs one thing about the repeat.'));
+				if (typeof assistantAskFresh === 'function') { assistantAskFresh('budget', response.ask); }
+			}
 			budgetInit();
 		},
 		error: function() {

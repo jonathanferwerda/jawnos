@@ -13067,27 +13067,38 @@ sub schedule_maker($c,$schedule,$timestamp) {
 	# appointment and could write that appointment a second time.
 	my $original_timestamp = $timestamp || $c->param('timestamp');
 	my $type = $c->param('type');
-	my @returner;
 	# A schedule names appointments to make, not actions on one: repeating a stop
 	# or a resume would close or reopen sessions the person never touched.
-	return \@returner if $type =~ /^(?:stop|cancel|resume|pause|delay)$/;
-
-	my $parsed = &subs::schedule_parse($schedule);
-	return \@returner if !$parsed || $parsed->{'error'} || $parsed->{'once'};
-	my ($count, $unit) = ($parsed->{'count'}, $parsed->{'unit'});
-	return \@returner unless defined $count && defined $unit && $unit ne 'once' && $count > 0;
+	return { dates => [] } if $type =~ /^(?:stop|cancel|resume|pause|delay)$/;
+	$schedule = '' unless defined $schedule;
 
 	my $settings = &subs::settings_grabber({ app => $app });
-	# The "for" part names the horizon. Without one the app's warranty is the
-	# horizon, which is how a bare interval has always behaved.
-	my $until = &subs::schedule_until($parsed->{'horizon'}, $original_timestamp);
-	unless (defined $until) {
-		my $warranty = $settings->{'warranty'};
-		$warranty = '-10y' unless defined $warranty && length $warranty;
-		$until = &subs::ago_calc($warranty, $original_timestamp);
-	}
-	return \@returner unless defined $until && $until > $original_timestamp;
+	my $warranty = $settings->{'warranty'};
+	$warranty = '-10y' unless defined $warranty && length $warranty;
+	my $default_until = &subs::ago_calc($warranty, $original_timestamp);
 
+	# One entry point: the compact interval syntax stays on the fast parser, and
+	# a phrase in words is read by the Guide and expanded here.
+	my $result = &subs::schedule_from_text($schedule, $original_timestamp,
+		app => $app, type => $type, default_until => $default_until, max => 366);
+
+	if ($result->{'ask'}) {
+		# The appointment is still written; the repeats wait for the Associate to
+		# clarify the rule. The token is what the schedule action later names.
+		my $token = &subs::random_string_creator(24);
+		&subs::pending_schedule_add({
+			token => $token, kind => 'appointment', app => $app,
+			start => $original_timestamp, type => $type, uuid => $c->param('uuid'),
+			text => $schedule, created => &subs::rightNow()
+		});
+		my $when = localtime(int($original_timestamp / 1000))->strftime('%A, %B %d %Y, %I:%M%P');
+		$result->{'question'} = 'I started the "' . $app . '" appointment for ' . $when
+			. ', but I could not read the schedule "' . $schedule . '": ' . $result->{'ask'}
+			. ' Ask me what you need, then call schedule with token "' . $token . '" and the full schedule text.';
+		return $result;
+	}
+
+	my $dates = $result->{'dates'} || [];
 	my $usual_duration = $settings->{'duration'};
 	$c->param('duration', $usual_duration) if ($c->param('lockingStatus') || '') eq 'on';
 	my $duration = &subs::time_abbrev_translator($c->param('duration'));
@@ -13095,21 +13106,14 @@ sub schedule_maker($c,$schedule,$timestamp) {
 	$duration = $duration * -1 if $type eq 'start' || $type eq 'record';
 
 	my $base_uuid = $c->param('uuid');
-	my $anchor_day = (localtime(int($original_timestamp / 1000)))[3];
-	# A bare interval runs to the app's warranty and can be years long; the guard
-	# keeps a typo from filling the timeline with thousands of rows.
-	my $guard = 0;
-	my $n = 1;
+	my @written;
 	# The first occurrence is the appointment manager_reset writes itself, so
-	# this starts one interval later. The horizon is exclusive: a daily schedule
-	# for two weeks is the first day plus thirteen repeats, fourteen in all.
-	while ($guard++ < 1000) {
-		my $next = &subs::calendar_shift($original_timestamp, $count * $n, $unit, $anchor_day);
-		last unless defined $next && $next < $until;
+	# every date here is one of the repeats after it.
+	foreach my $next ( @{$dates} ) {
+		next unless defined $next && $next > $original_timestamp;
 		my $uuid = $base_uuid . md5_sum($next - $original_timestamp) . '+' . md5_sum($app . ' ' . $type);
-		my $exists = &subs::db_query('select 1 from appointments where uuid = ? limit 1', $uuid)->hashes->[0];
-		if ($exists) { $n++; next; }
-		push @returner, $next;
+		next if &subs::db_query('select 1 from appointments where uuid = ? limit 1', $uuid)->hashes->[0];
+		push @written, $next;
 		&appointment_writer($c, {
 			app => $app,
 			timestamp => $next,
@@ -13120,9 +13124,9 @@ sub schedule_maker($c,$schedule,$timestamp) {
 			source_uuid => $base_uuid,
 			uuid => $uuid
 		});
-		$n++;
 	}
-	return \@returner;
+	$result->{'dates'} = \@written;
+	return $result;
 }
 
 sub remote_relay_request($c, $extra_params = {}) {
@@ -13470,6 +13474,8 @@ sub manager_reset($c) {
 	my $usual_schedule = &subs::setting_grabber({ app => $app, setting => 'schedule' });
 	my $schedule = &schedule_maker($c,$c->param('schedule'),$timestamp);
 	$schedule = &schedule_maker($c,$usual_schedule,$timestamp) unless $c->param('schedule');
+	$returner->{'schedule'} = $schedule if $schedule;
+	$returner->{'schedule_ask'} = $schedule->{'question'} if $schedule && $schedule->{'ask'};
 	my $seen = 'yes';
 	if ($timestamp > &subs::rightNow() + 1000) {
 		$seen = undef;
@@ -18208,8 +18214,37 @@ sub payable_schedule_run {
 	my ($changed,$made) = (0,0);
 	foreach my $s ( @{$list} ) {
 		next if (($s->{'active'} || 'on') eq 'off');
-		my $until = ($s->{'until'} || 0) + 0;
 		my $guard = 0;
+		# A schedule read from words carries its dates outright. The queue's first
+		# entry is the next bill; every due date already past is filled in here.
+		if (ref $s->{'dates'} eq 'ARRAY') {
+			my @queue = sort { $a <=> $b } grep { defined $_ } @{ $s->{'dates'} };
+			while (@queue && $queue[0] <= $now && $guard++ < 240) {
+				my $due = shift @queue;
+				my $uuid = 'sched-' . $s->{'uuid'} . '-' . $due;
+				my $exists = &subs::db_query("select 1 from warehouse where kind='money' and uuid=? limit 1", $uuid)->hashes->[0];
+				unless ($exists) {
+					my $total = ($s->{'amount'} || 0) + 0;
+					my $tax = ($s->{'tax'} || 0) + 0;
+					&subs::db_insert('warehouse', {
+						kind => 'money', type => 'transaction', movement => 'payable',
+						account => 'accounts_payable', app => ($s->{'app'} || 'unknown'),
+						vendor => ($s->{'vendor'} || ''), item => ($s->{'item'} || ''),
+						amount => $total, tax => $tax, total => $total,
+						currency => ($s->{'currency'} || ''),
+						uuid => $uuid, source_uuid => $s->{'uuid'},
+						timestamp => $due, server_time => &subs::rightNow()
+					});
+					$made++;
+				}
+			}
+			$s->{'dates'} = [ @queue ];
+			$s->{'next'} = @queue ? $queue[0] : 0;
+			if (!@queue) { $s->{'active'} = 'off'; $s->{'finished'} = 1; }
+			$changed = 1;
+			next;
+		}
+		my $until = ($s->{'until'} || 0) + 0;
 		while ((($s->{'next'} || 0) + 0) <= $now && $guard++ < 240) {
 			my $due = $s->{'next'} + 0;
 			# a horizon ends the schedule before its next occurrence
@@ -19244,27 +19279,47 @@ post '/manager/budget/payable/add' => sub($c) {
 	$timestamp = &subs::rightNow() unless $timestamp;
 	my $currency = $c->param('currency') || &subs::setting_grabber({ app => $app, setting => 'currency' });
 	my $repeat = $c->param('repeat') || 'once';
-	my $parsed = &subs::schedule_parse($repeat);
-	if (!$parsed || $parsed->{'error'}) {
-		return $c->render(json => { error => &subs::ui('That repeat could not be read. Use an interval such as 1d, and for a horizon add "for -2w".') });
+	# The same reader the appointment schedule uses: a compact interval stays on
+	# the fast path, and a phrase in words is read by the Guide. A phrase that
+	# cannot be read yet leaves a pending row; the bill is still recorded and the
+	# Associate finishes the repeats after its question is answered.
+	my $result = &subs::schedule_from_text($repeat, $timestamp, kind => 'bill', max => 366);
+	my $pending;
+	if ($result->{'ask'}) {
+		$pending = {
+			kind => 'bill', app => $app, vendor => $vendor, item => $item,
+			amount => $total, tax => $tax, currency => $currency,
+			start => $timestamp, text => $repeat, created => &subs::rightNow()
+		};
+		$pending->{'token'} = &subs::random_string_creator(24);
 	}
-	if (!$parsed->{'once'}) {
-		# a repeating bill is a schedule; its first due date makes the first bill
-		my $until = &subs::schedule_until($parsed->{'horizon'}, $timestamp);
-		# a horizon that has already passed is a one-off, not a schedule that
-		# would stop before its first bill
-		if (!defined $until || $until > $timestamp) {
-			my $list = &payable_schedules();
-			push @{$list}, {
-				uuid => &subs::random_string_creator(20), app => $app, vendor => $vendor, item => $item,
-				amount => $total, tax => $tax, currency => $currency,
-				every => $parsed->{'every'}, anchor_day => (localtime(int($timestamp / 1000)))[3],
-				until => $until, next => $timestamp, active => 'on'
-			};
-			&payable_schedules_save($list);
-			my $made = &payable_schedule_run();
-			return $c->render(json => { ok => 1, scheduled => 1, made => $made, payables => &accounting_payables(&subs::rightNow()) });
-		}
+	elsif (($result->{'source'} || '') eq 'interval' && scalar @{ $result->{'dates'} || [] }) {
+		# a compact repeat keeps its rule, so a long-running schedule needs no
+		# list of dates and a monthly bill keeps its anchor day
+		my $list = &payable_schedules();
+		push @{$list}, {
+			uuid => &subs::random_string_creator(20), app => $app, vendor => $vendor, item => $item,
+			amount => $total, tax => $tax, currency => $currency,
+			every => $result->{'every'}, anchor_day => (localtime(int($timestamp / 1000)))[3],
+			until => $result->{'until'}, next => $timestamp, active => 'on'
+		};
+		&payable_schedules_save($list);
+		my $made = &payable_schedule_run();
+		return $c->render(json => { ok => 1, scheduled => 1, made => $made, payables => &accounting_payables(&subs::rightNow()) });
+	}
+	elsif (($result->{'source'} || '') eq 'guide' && scalar @{ $result->{'dates'} || [] }) {
+		# a phrase's dates are already worked out; the first bill is the date
+		# typed beside the rate, and the rest follow it
+		my @dates = ($timestamp, @{ $result->{'dates'} });
+		my $list = &payable_schedules();
+		push @{$list}, {
+			uuid => &subs::random_string_creator(20), app => $app, vendor => $vendor, item => $item,
+			amount => $total, tax => $tax, currency => $currency,
+			dates => \@dates, next => $timestamp, active => 'on'
+		};
+		&payable_schedules_save($list);
+		my $made = &payable_schedule_run();
+		return $c->render(json => { ok => 1, scheduled => 1, made => $made, payables => &accounting_payables(&subs::rightNow()) });
 	}
 	my $uuid = &subs::random_string_creator(40);
 	&subs::db_insert('warehouse', {
@@ -19283,7 +19338,16 @@ post '/manager/budget/payable/add' => sub($c) {
 		timestamp => $timestamp,
 		server_time => &subs::rightNow()
 	});
-	$c->render(json => { ok => 1, uuid => $uuid, payables => &accounting_payables(&subs::rightNow()) });
+	my $response = { ok => 1, uuid => $uuid, payables => &accounting_payables(&subs::rightNow()) };
+	if ($pending) {
+		&subs::pending_schedule_add($pending);
+		$response->{'one_off'} = 1;
+		$response->{'token'} = $pending->{'token'};
+		$response->{'ask'} = 'I recorded the bill, but I could not read the repeat "' . $repeat . '": '
+			. $result->{'ask'} . ' Ask me what you need, then call schedule with token "'
+			. $pending->{'token'} . '" and the full schedule text.';
+	}
+	$c->render(json => $response);
 };
 
 post '/manager/budget/payable/pay' => sub($c) {
@@ -30113,6 +30177,63 @@ sub guide_promote_delete($c, $row) {
 	&subs::db_update('staged_appointments', { status => 'promoted' }, { uuid => $row->{'uuid'} });
 	return { promoted => $row->{'uuid'}, uuid => $target->{'uuid'}, app => $target->{'app'}, kind => 'delete', summary => $row->{'title'} };
 }
+
+# A schedule that waited for clarification: the appointment or bill is already
+# made, and this writes the repeats from the clarified phrase. The token names
+# the row the form left behind, so the Guide cannot schedule the wrong one.
+sub guide_apply_schedule($c, $token, $text) {
+	my $row = &subs::pending_schedule_get($token);
+	return { ok => 0, error => 'That schedule is no longer waiting; type it again in the form.' } unless $row;
+	my $start = ($row->{'start'} || 0) + 0;
+	my $result = &subs::schedule_from_text($text, $start, kind => $row->{'kind'}, max => 366);
+	return { ok => 0, ask => $result->{'ask'} } if $result->{'ask'};
+	my $dates = $result->{'dates'} || [];
+	unless (scalar @{$dates}) {
+		&subs::pending_schedule_drop($token);
+		return { ok => 1, count => 0, summary => 'No more dates matched that rule.' };
+	}
+	if (($row->{'kind'} || '') eq 'bill') {
+		my $list = &payable_schedules();
+		push @{$list}, {
+			uuid => &subs::random_string_creator(20), app => ($row->{'app'} || 'unknown'),
+			vendor => ($row->{'vendor'} || ''), item => ($row->{'item'} || ''),
+			amount => ($row->{'amount'} || 0), tax => ($row->{'tax'} || 0),
+			currency => ($row->{'currency'} || ''),
+			dates => [ @{$dates} ], next => $dates->[0], active => 'on'
+		};
+		&payable_schedules_save($list);
+		my $made = &payable_schedule_run();
+		&subs::pending_schedule_drop($token);
+		return { ok => 1, kind => 'bill', count => scalar(@{$dates}), made => $made, dates => $dates,
+			summary => 'scheduled ' . scalar(@{$dates}) . ' more bill' . (scalar(@{$dates}) == 1 ? '' : 's') };
+	}
+	my $app = $row->{'app'} || '';
+	my $settings = &subs::settings_grabber({ app => $app });
+	my $duration = &subs::time_abbrev_translator($settings->{'duration'});
+	$duration = $duration * -1 if ($row->{'type'} || '') =~ /^(?:start|record)$/;
+	my $base_uuid = $row->{'uuid'} || '';
+	my @written;
+	foreach my $next ( @{$dates} ) {
+		next unless $next > $start;
+		my $uuid = $base_uuid . md5_sum($next - $start) . '+' . md5_sum($app . ' ' . ($row->{'type'} || ''));
+		next if &subs::db_query('select 1 from appointments where uuid = ? limit 1', $uuid)->hashes->[0];
+		&appointment_writer($c, {
+			app => $app, timestamp => $next, type => ($row->{'type'} || 'usual'),
+			project => $settings->{'project'},
+			duration => (defined $duration ? $duration : ''),
+			stop_timestamp => (defined $duration && abs($duration)) ? $next + abs($duration) : undef,
+			source_uuid => $base_uuid, uuid => $uuid
+		});
+		push @written, $next;
+	}
+	&subs::pending_schedule_drop($token);
+	return { ok => 1, kind => 'appointment', count => scalar(@written), dates => \@written,
+		summary => 'scheduled ' . scalar(@written) . ' more appointment' . (scalar(@written) == 1 ? '' : 's') };
+}
+
+post '/manager/help/schedule' => sub($c) {
+	$c->render(json => guide_apply_schedule($c, $c->param('token'), $c->param('text')));
+};
 
 post '/manager/help/stage' => sub($c) {
 	# the id the resolver gave the client wins over the name, and a name that now
