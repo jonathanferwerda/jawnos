@@ -4575,8 +4575,21 @@ function jawnosDesktopCall(action, args) {
 	});
 }
 
+// A peer ticket can arrive as a path. Resolve it against the peer's own
+// manager, never against this page's origin: the local origin would open this
+// house's manager (the local Gate) instead of the peer's.
+function jawnosRemoteUrl(url, manager) {
+	if (!url) { return ''; }
+	if (/^https?:\/\//i.test(url)) { return url; }
+	if (manager && /^https?:\/\//i.test(manager)) {
+		try { return new URL(url, manager).href; } catch (e) {}
+	}
+	return url;
+}
+
 function jawnosRemoteManagerWindow(url, uuid, name, device, manager) {
 	if (!url) { return; }
+	url = jawnosRemoteUrl(url, manager);
 	var device_uuid = device || '';
 	if (!device_uuid) {
 		try { device_uuid = localStorage.getItem('device_uuid') || ''; } catch (e) { device_uuid = ''; }
@@ -4619,11 +4632,12 @@ function jawnosRemoteManagerOpen(uuid, manager, gesture) {
 				return;
 			}
 			if (r.manager) {
+				var target = jawnosRemoteUrl(r.ticket_url || r.manager, r.manager || manager);
 				if (preopened) {
 					preopened.opener = null;
-					preopened.location.href = r.ticket_url || r.manager;
+					preopened.location.href = target;
 				}
-				else { jawnosRemoteManagerWindow(r.ticket_url || r.manager, r.uuid || uuid, r.name, r.device_uuid, r.manager); }
+				else { jawnosRemoteManagerWindow(target, r.uuid || uuid, r.name, r.device_uuid, r.manager); }
 			}
 			else if (preopened) { preopened.close(); }
 		},
@@ -4645,11 +4659,12 @@ function jawnosRemoteManagerOpen(uuid, manager, gesture) {
 			// matches. Open that address when it is a real host; never open this
 			// machine's own manager (the tunnel loopback) as if it were a peer.
 			if (manager && !/^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/i.test(manager)) {
+				var fallback = jawnosRemoteUrl(manager, manager);
 				if (preopened) {
 					preopened.opener = null;
-					preopened.location.href = manager;
+					preopened.location.href = fallback;
 				}
-				else { jawnosRemoteManagerWindow(manager, uuid); }
+				else { jawnosRemoteManagerWindow(fallback, uuid); }
 			}
 			else {
 				if (preopened) { preopened.close(); }
