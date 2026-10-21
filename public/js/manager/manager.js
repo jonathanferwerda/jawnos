@@ -3692,6 +3692,16 @@ function handbookJournalSave(reload) {
 function handbookPlant() {
 	var text = $('#handbook_today_journal_text').val() || '';
 	var day = $('#handbook_today_date').val() || 'today';
+	// save first, so the Guide reads the entry that was just typed; then plant
+	if (text && text.replace(/\s/g, '')) {
+		handbookJournalSave(false).done(function(response) {
+			if (response && response.ok) { handbookPlantNow(day); }
+		});
+	}
+	else { handbookPlantNow(day); }
+}
+
+function handbookPlantNow(day) {
 	var button = $('#handbook_today_plant');
 	button.prop('disabled', true);
 	handbookJournalStatus(handbookTodayT('Reading the journal...'));
@@ -3699,7 +3709,7 @@ function handbookPlant() {
 	$.ajax({
 		url: '/manager/handbook/plant',
 		type: 'POST',
-		data: { text: text, day: day },
+		data: { day: day },
 		dataType: 'json',
 		timeout: 180000
 	}).done(function(response) {

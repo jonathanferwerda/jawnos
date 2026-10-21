@@ -70,7 +70,7 @@
 		<section class="handbook_today_card handbook_today_life">
 			<h3><%= &subs::ui('State of life') %></h3>
 			<div class="handbook_today_journal">
-				<% foreach my $line ( @{$t->{'journal'}} ) { %>
+				<% foreach my $line ( @{$t->{'journal_lines'}} ) { %>
 					<p><%= $line %></p>
 				<% } %>
 			</div>
@@ -161,9 +161,9 @@
 				<div class="handbook_today_planted_result" id="handbook_today_planted_result"></div>
 				<div class="handbook_today_hint"><%= &subs::ui('The Guide reads the journal and plants ideas, plans and dreams on the days they belong to.') %></div>
 			</div>
-			<% if (scalar @{$t->{'notes'}}) { %>
+			<% if (scalar @{$t->{'journal'}}) { %>
 				<ul class="handbook_today_list">
-					<% foreach my $note ( @{$t->{'notes'}} ) { %>
+					<% foreach my $note ( @{$t->{'journal'}} ) { %>
 						<li class="handbook_today_row handbook_today_note">
 							<span class="handbook_today_row_name"><%= $note->{'snippet'} %></span>
 							<span class="handbook_today_when time" mode="fixed" timestamp="<%= $note->{'timestamp'} %>"></span>
