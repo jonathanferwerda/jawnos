@@ -1,0 +1,13 @@
+# JawnOS desk: direct access to every keyboard, mouse, touchpad and tablet,
+# below the compositor (the same path on X11 and Wayland), plus the virtual
+# devices the desk creates through uinput.
+#
+# The group is the installing user's own group. New hardware matches the same
+# ID_INPUT tags, so replacing a mouse or keyboard needs no rerun. The installer
+# substitutes @GROUP@; keep this file's numbering above 60-input-id.rules so
+# the tags are already set when it runs.
+SUBSYSTEM=="input", ENV{ID_INPUT_KEY}=="1", MODE="0660", GROUP="@GROUP@"
+SUBSYSTEM=="input", ENV{ID_INPUT_MOUSE}=="1", MODE="0660", GROUP="@GROUP@"
+SUBSYSTEM=="input", ENV{ID_INPUT_TOUCHPAD}=="1", MODE="0660", GROUP="@GROUP@"
+SUBSYSTEM=="input", ENV{ID_INPUT_TABLET}=="1", MODE="0660", GROUP="@GROUP@"
+KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", GROUP="@GROUP@"

@@ -31,6 +31,7 @@ desktop/
     webview.py           the embedded JawnOS view (WebKitGTK)
     secrets.py           encrypted storage for the login ticket
   systemd/               optional systemd --user units
+  udev/                  the all-input rule for the desk
   jawnos.desktop.in      the application-menu entry
   icons/jawnos.png       the launcher icon
   install.sh             per-user installer
@@ -42,12 +43,18 @@ desktop/
 ./desktop/install.sh                 # app + CLI + dashboard under ~/.local
 ./desktop/install.sh --autostart     # also bring the BLE bridge up at login
 ./desktop/install.sh --systemd       # also install systemd --user units
+./desktop/install.sh --input-access  # also let the desk read all keyboards/mice
 ```
 
 The installer copies the tree to `~/.local/share/jawnos/desktop`, links the
 three tools into `~/.local/bin`, installs the icon and the menu entry, and
-optionally sets up autostart or `systemd --user` units. You do not have to
-install it at all — the tools run in place from the checkout:
+optionally sets up autostart or `systemd --user` units. `--input-access` also
+installs `/etc/udev/rules.d/99-jawnos-input.rules` for the installing user's
+group, so the desk can read every keyboard, mouse, touchpad and tablet (X11 and
+Wayland alike) and write `/dev/uinput`. It needs sudo once; replacing a mouse
+or keyboard needs no rerun because the rule matches the standard `ID_INPUT`
+tags. You do not have to install it at all — the tools run in place from the
+checkout:
 
 ```sh
 ./desktop/jawnosctl status

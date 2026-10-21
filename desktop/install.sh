@@ -1,9 +1,11 @@
 #!/bin/sh
-# Install the JawnOS desktop app for the current user. No root required.
+# Install the JawnOS desktop app for the current user. No root required
+# (except the optional --input-access grant, which needs sudo once).
 #
 #   ./desktop/install.sh                 # app + CLI + dashboard into ~/.local
 #   ./desktop/install.sh --autostart     # also start the BLE bridge at login
 #   ./desktop/install.sh --systemd       # also install systemd --user units
+#   ./desktop/install.sh --input-access  # let the desk read all keyboards/mice
 #   ./desktop/install.sh --headless      # a server: CLI only, plus a SYSTEM
 #                                        # service (installing it needs root)
 #
@@ -23,14 +25,16 @@ JAWN_DIR=${JAWNOS_DIR:-$REPO_ROOT}
 
 WITH_AUTOSTART=0
 WITH_SYSTEMD=0
+WITH_INPUT_ACCESS=0
 WITH_HEADLESS=0
 for arg in "$@"; do
 	case "$arg" in
 		--autostart) WITH_AUTOSTART=1 ;;
 		--systemd) WITH_SYSTEMD=1 ;;
+		--input-access) WITH_INPUT_ACCESS=1 ;;
 		--headless|--server) WITH_HEADLESS=1 ;;
 		-h|--help)
-			sed -n '2,11p' "$0"
+			sed -n '2,12p' "$0"
 			exit 0
 			;;
 		*) echo "install.sh: unknown option $arg" >&2; exit 2 ;;
@@ -153,7 +157,55 @@ if [ "$WITH_HEADLESS" -eq 0 ] && [ -z "${JAWNOS_NO_TICKET:-}" ] && [ -f "$REPO_R
 	case "$app_ticket" in
 		https://*) "$DEST/jawnosctl" ticket import "$app_ticket" >/dev/null \
 			&& echo "Stored the desktop's forever ticket" ;;
-	esac
+esac
+fi
+
+# --- desk input access (opt-in) --------------------------------------------
+# Keyboard/mouse sharing reads the physical devices below the compositor (the
+# same path on X11 and Wayland) and creates virtual ones through uinput. This
+# grants the installing user's own group access to every keyboard, mouse,
+# touchpad and tablet, and to /dev/uinput. It is opt-in because it widens what
+# the app may read; new hardware matches the same ID_INPUT tags, so replacing a
+# mouse or keyboard needs no rerun.
+if [ "$WITH_INPUT_ACCESS" -eq 1 ] && [ "$WITH_HEADLESS" -eq 0 ]; then
+	INPUT_USER=${SUDO_USER:-$(id -un)}
+	INPUT_GROUP=$(id -gn "$INPUT_USER" 2>/dev/null || id -gn)
+	RULE_OUT="${TMPDIR:-/tmp}/99-jawnos-input.rules"
+	sed -e "s|@GROUP@|$INPUT_GROUP|g" "$DEST/udev/99-jawnos-input.rules.in" > "$RULE_OUT"
+	if [ "$(id -u)" -eq 0 ]; then
+		SUDO=""
+	elif command -v sudo >/dev/null 2>&1; then
+		SUDO=sudo
+	else
+		SUDO=""
+	fi
+	if [ "$(id -u)" -eq 0 ] || [ -n "$SUDO" ]; then
+		if $SUDO install -m 0644 "$RULE_OUT" /etc/udev/rules.d/99-jawnos-input.rules; then
+			$SUDO modprobe uinput >/dev/null 2>&1 || true
+			$SUDO udevadm control --reload-rules 2>/dev/null || true
+			$SUDO udevadm trigger --subsystem-match=input 2>/dev/null || true
+			$SUDO udevadm trigger --action=change --subsystem-match=misc 2>/dev/null || true
+			if [ -e /dev/uinput ]; then
+				$SUDO chgrp "$INPUT_GROUP" /dev/uinput 2>/dev/null || true
+				$SUDO chmod 0660 /dev/uinput 2>/dev/null || true
+			fi
+			echo "Granted $INPUT_GROUP access to keyboards, mice, touchpads and uinput"
+		else
+			echo "Could not install the input rule; run these as root:"
+			echo "  sudo install -m 0644 $RULE_OUT /etc/udev/rules.d/99-jawnos-input.rules"
+			echo "  sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=input"
+			echo "  sudo udevadm trigger --action=change --subsystem-match=misc"
+			echo "  sudo chgrp $INPUT_GROUP /dev/uinput && sudo chmod 0660 /dev/uinput"
+		fi
+	else
+		echo "No sudo available; to grant the desk input access run as root:"
+		echo "  install -m 0644 $RULE_OUT /etc/udev/rules.d/99-jawnos-input.rules"
+		echo "  udevadm control --reload-rules && udevadm trigger --subsystem-match=input"
+		echo "  udevadm trigger --action=change --subsystem-match=misc"
+		echo "  chgrp $INPUT_GROUP /dev/uinput && chmod 0660 /dev/uinput"
+	fi
+elif [ "$WITH_INPUT_ACCESS" -eq 1 ]; then
+echo "--input-access is not used by a headless install (no desk input)"
 fi
 
 # --- systemd --user units (a desktop, not a server) -------------------------
