@@ -31,6 +31,7 @@ use Mojo::IOLoop::ReadWriteFork;
 use IO::Socket::UNIX;
 use IO::Select;
 use Fcntl qw/F_SETFD FD_CLOEXEC/;
+use POSIX qw/WNOHANG/;
 use File::Slurp;
 use Cwd qw(abs_path);
 use Mojo::File 'path';
@@ -137,6 +138,10 @@ $SIG{INT} = sub {
 };
 
 my ($master_boot_watch, $master_boot_tries);
+# A re-exec keeps this master's pid, so any child it fathered before exec is
+# still ours - and nobody else can reap it. Clear a stale pty shell (and any
+# defunct child) before this incarnation starts one of its own.
+&reap_own_children();
 $fork = &terminal_pty_runner({ 'program' => './President.pl' });
 &arm_boot_watch();
 
@@ -151,6 +156,7 @@ my @printless = (
 
 my ($master_timer,$master_timer_paused);
 my ($tree_ticks,$tree_misses) = (0,0);
+my $reap_ticks = 0;
 &master_time_looper();
 sub master_time_looper() {
 	# In this Mojo the recurring callback is handed the loop as its only argument
@@ -214,6 +220,13 @@ sub master_time_looper() {
 			}
 		}
 		else { $tree_ticks = 0; $tree_misses = 0 }
+		# Safety net for a shell that outlived its fork object (a teardown that
+		# died halfway, a re-exec): reap it and any defunct child, but never the
+		# current pty child, whose exit status belongs to ReadWriteFork.
+		if (++$reap_ticks >= 30) {
+			$reap_ticks = 0;
+			&reap_own_children($fork ? $fork->pid : 0);
+		}
 		if ($status eq 'frozen' || $f_status eq 'restart') {
 			$master_timer_paused = 1;
 			my $died = '';
@@ -428,6 +441,10 @@ sub shut_down() {
 		print "KILL leftover $pid\n";
 	}
 	print "leftover check: " . ($cleared ? "$cleared cleared" : 'clean') . "; web port " . (&config_port() || 0) . " is " . (&tree_serving() ? 'STILL ANSWERING' : 'free') . "\n";
+	# The pty shell is our child too. Collect it here: the IOLoop waiter cannot run
+	# during the sleeps above, and the re-exec path exec()s straight after this,
+	# which would strand a dead shell as a defunct process forever.
+	&reap_own_children();
 	$subprocesses = {};
 	sleep .1;
 }
@@ -461,6 +478,52 @@ sub pid_cmdline {
 sub pid_is_jawn {
 	my ($pid) = @_;
 	return &pid_cmdline($pid) =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/ ? 1 : 0;
+}
+
+# Reap the master's own direct children. The pty shell is a child of the master,
+# not of the OS: ReadWriteFork's waiter cannot run while a teardown blocks in
+# sleep/select, and a re-exec leaves before the IOLoop runs again, so a shell
+# killed there stayed a zombie for the life of the next incarnation - the
+# `[bash] <defunct>` that survived a re-exec on 2026-10-21. `keep` is the
+# current pty child, whose exit status belongs to its close event.
+sub reap_own_children {
+	my ($keep) = @_;
+	$keep ||= 0;
+	my @kids;
+	if (opendir(my $procs, '/proc')) {
+		for my $entry (readdir $procs) {
+			next unless $entry =~ /^([0-9]+)$/;
+			my $pid = $1;
+			next if $pid == $$ || $pid == $keep;
+			next unless open(my $fh, '<', "/proc/$pid/stat");
+			my $line = <$fh>;
+			close $fh;
+			next unless defined $line;
+			# "pid (comm) state ppid ..." - comm may hold spaces and parens
+			my ($state, $ppid) = $line =~ /\)\s+(\S+)\s+([0-9]+)\s/;
+			push @kids, [$pid, $state] if defined $ppid && $ppid == $$;
+		}
+		closedir $procs;
+	}
+	my $cleaned = 0;
+	for my $kid (@kids) {
+		my ($pid, $state) = @$kid;
+		if ($state ne 'Z') {
+			kill 'INT', $pid;
+			for (1 .. 10) { last unless &pid_alive($pid); select(undef, undef, undef, 0.05) }
+			kill 'KILL', $pid if &pid_alive($pid);
+		}
+		# waitpid is the point: an unregistered child is only gone once we
+		# collect it, so keep trying briefly rather than leave it defunct
+		for (1 .. 20) {
+			my $got = waitpid($pid, WNOHANG);
+			last if $got == $pid || $got == -1;
+			select(undef, undef, undef, 0.05);
+		}
+		print 'cleared leftover child ' . $pid . "\n";
+		$cleaned++;
+	}
+	return $cleaned;
 }
 
 # Bring the tree up (or not): after a (re)start the master checks that the web

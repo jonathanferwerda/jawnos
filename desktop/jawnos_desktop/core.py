@@ -314,6 +314,7 @@ def port_open(port, host="127.0.0.1", timeout=0.4):
 
 def jawn_up(jawn_dir):
     """jawn answers on its working port and always on the dock port (3000)."""
+    reap_detached()
     return port_open(jawn_working_port(jawn_dir)) or port_open(DOCK_PORT)
 
 
@@ -466,7 +467,52 @@ def spawn_detached(argv, cwd, log_path, env=None):
         )
     finally:
         logf.close()
+    # A detached process is still our child (start_new_session only moves its
+    # session, not its parent). Python reaps a Popen only when it is polled or
+    # waited on, so dropping the object left an exited jawn master as
+    # `[perl] <defunct>` under the desktop app for as long as it ran.
+    _detached_children.append(proc)
     return proc
+
+
+# Detached children we still owe a waitpid(). Polled from the dashboard tick;
+# poll() collects an exited child and is a no-op while it runs.
+_detached_children = []
+
+
+def reap_detached():
+    """Collect detached children that have exited, plus any zombie of ours.
+
+    Popen.poll() only knows the processes we spawned in this run, so a stale
+    zombie inherited from an earlier launch is found by its /proc state instead.
+    """
+    for proc in list(_detached_children):
+        try:
+            if proc.poll() is not None:
+                _detached_children.remove(proc)
+        except OSError:
+            _detached_children.remove(proc)
+    me = os.getpid()
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open("/proc/%s/stat" % name, "rb") as fh:
+                line = fh.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        # "pid (comm) state ppid ..." - comm may hold spaces and parens
+        fields = line[line.rfind(")") + 2:].split()
+        if len(fields) < 2 or fields[0] != "Z" or fields[1] != str(me):
+            continue
+        try:
+            os.waitpid(int(name), os.WNOHANG)
+        except OSError:
+            pass
 
 
 def start_jawn(jawn_dir):
