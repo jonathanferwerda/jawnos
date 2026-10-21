@@ -705,6 +705,19 @@ sub manager_starter() {
 		$worker->status->{jobs} = 1;
 		$worker->run;
 	}, { name => 'Minion Worker' });
+
+	# The evaluation schedules live in this machine's queue, but the cadence that
+	# asks for them is a shared setting. Re-read the wishes every few minutes so a
+	# machine that stays up learns of a cadence changed on a peer, and so every
+	# machine holds the schedules that let it take the night over when the chosen
+	# machine is quiet.
+	&subs::subprocessor(sub {
+		sleep 120;
+		while (1) {
+			eval { &subs::nightly_evaluation_reconcile(); };
+			sleep 300;
+		}
+	}, { name => 'evaluation schedules' });
 	Mojo::IOLoop->start;
 	END {
 		print "quitting now!\n";

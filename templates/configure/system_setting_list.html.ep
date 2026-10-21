@@ -113,9 +113,12 @@
 		</div>
 		<%# every machine keeps its own queue, so the house has to say where the
 		    nightly evaluations happen; remote_machine_lister (above) names the machines %>
+		<%# a preference, not a pin: the named machine runs the scheduled
+		    evaluations while it is awake and can reach the model, and the
+		    house (the server first) takes over when it cannot %>
 		<div class="cfg-row">
 			<label>Nightly machine</label>
-			<select class="evaluation_machine" app="__president" setting="evaluation_machine" hint="Only this machine's worker runs the nightly evaluations; any machine means every queue that carries the wish keeps its own">
+			<select class="evaluation_machine" app="__president" setting="evaluation_machine" hint="The machine preferred for scheduled evaluations; when it is asleep or cannot reach the model, another machine that can takes over. Any machine means the server is preferred and the rest share the work">
 				<option value="">Any machine</option>
 				<% foreach my $m ( @{$machines} ) { %>
 					<% next unless $m->{'signatorial'}; %>

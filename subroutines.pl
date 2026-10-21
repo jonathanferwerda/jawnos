@@ -23124,7 +23124,10 @@ sub evaluation_model_call() {
 sub evaluation_model_available {
 	my ($model) = @_;
 	return 0 unless $model;
-	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', @{ &subs::ai_key_settings() } ] });
+	# ai_key_settings() answers as a list; @{} over the call would put it in
+	# scalar context and read the count ("11") as if it were a reference.
+	my @key_settings = &subs::ai_key_settings();
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', @key_settings ] });
 	if ($model =~ /^\@cf/) {
 		return ($settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) ? 1 : 0;
 	}
@@ -24008,10 +24011,9 @@ sub evaluation_run_trigger {
 # take the worker down with it.
 sub nightly_evaluation_reconcile {
 	eval {
-		# a named machine keeps the nights to itself; blank keeps the old
-		# habit of every queue carrying whatever wish its settings show
-		my $chosen = &subs::evaluation_machine();
-		my $mine = !$chosen || $chosen eq &subs::signatorial_designer();
+		# Every machine keeps the schedules. The named machine is a preference the
+		# job honours, not a pin: when it is asleep the peers must already hold
+		# the same schedules to take the night over, so they are rebuilt here too.
 		# every scope ever given a cadence, or the old nightly checkbox: the
 		# effective cadence decides which of them wants a schedule
 		my %scope;
@@ -24033,7 +24035,6 @@ sub nightly_evaluation_reconcile {
 			$present{$sch->{'name'}} = 1;
 		}
 		foreach my $app ( keys %wanted ) {
-			next unless $mine;
 			# schedule() is an upsert by name (and keeping the same expression
 			# keeps the firing time), so asking for every wanted scope also
 			# retunes one whose cadence changed while nobody was looking
@@ -24041,7 +24042,7 @@ sub nightly_evaluation_reconcile {
 		}
 		foreach my $name ( keys %present ) {
 			my ($app) = $name =~ /^nightly_evaluation_(.*)$/;
-			next if $mine && $wanted{$app};
+			next if $wanted{$app};
 			&subs::minion_grabber()->unschedule($name);
 		}
 	};
@@ -24053,20 +24054,24 @@ sub nightly_evaluation_reconcile {
 sub appointment_evaluation_job {
 	my ($job, $data) = @_;
 	my $app = $data->{'app'} || '__president';
-	# the queue is per-machine and the settings are shared, so this is what keeps
-	# one wish from running on every machine's queue at once. A machine named by
-	# hand always runs it; with none named, the house ledger picks the runner, and
-	# because the house holds only machines seen recently a home that goes quiet
-	# hands the evaluation to the next machine.
+	my $key = 'eval:' . $app;
+	my $me = &ai_house_me();
 	my $named = &subs::evaluation_machine();
 	my $here = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '';
-	if ($named) {
-		if ($named ne &subs::signatorial_designer()) {
-			$job->finish({ app => $app, skipped => 'not the evaluation machine' });
-			return;
-		}
+	# The named machine is a preference, not a pin. While it is awake and can
+	# actually reach the model it takes every scheduled run; when it is quiet the
+	# house takes over, the server first, so a night is not lost to a sleeping
+	# laptop. The claim is written before the model call (ai_job_may_run), so a
+	# peer reads the intent and stands aside.
+	my $named_ready = length($named) && &ai_house_machine_ready($named, 1);
+	if ($named && $named ne $me && $named_ready) {
+		$job->finish({ app => $app, skipped => 'the chosen evaluation machine is on it' });
+		return;
 	}
-	elsif (!&ai_job_may_run('eval:' . $app, 3600 * 1000)) {
+	if ($named && $named eq $me && $named_ready) {
+		&ai_job_claim($key);
+	}
+	elsif (!&ai_job_may_run($key, 10 * 60 * 1000, 1, 1)) {
 		$job->finish({ app => $app, skipped => 'another machine runs this evaluation' });
 		return;
 	}
@@ -24076,19 +24081,28 @@ sub appointment_evaluation_job {
 	# night leaves a durable note, so an empty morning has a witness.
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
 	my $model = $settings->{'eval_assistant'};
-	unless (&subs::evaluation_model_available($model)) {
+	my $model_ready = eval { &subs::evaluation_model_available($model) };
+	unless ($model_ready) {
+		# release the claim this machine just took: it cannot carry the run, and a
+		# machine that can must be free to take the next one
+		eval { &subs::db_delete('ai_jobs', { job => $key, owner => $me }) };
 		&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'skipped', note => 'no model reachable here' });
 		$job->finish({ app => $app, skipped => 'no evaluation model reachable here' });
 		return;
 	}
-	&ai_job_note('eval:' . $app);
+	# the claim written above stays a 'running' lease while the model works, so a
+	# long report does not open the job to a second machine halfway through
 	my $report = &subs::evaluation_agent($app);
 	if ($report->{'error'}) {
+		# let a retry (and a peer) take the job again: a failed run must not sit
+		# in the ledger as if it were still in progress
+		eval { &subs::db_delete('ai_jobs', { job => $key, owner => $me }) };
 		&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'failed', note => substr($report->{'error'}, 0, 120) });
 		$job->fail($report->{'error'});
 		return;
 	}
 	&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'ran' });
+	&ai_job_note($key);
 	$job->finish({ app => $app, timestamp => $report->{'timestamp'} });
 }
 
@@ -25741,6 +25755,20 @@ sub ai_house_have_model {
 
 sub ai_house_me { return eval { &subs::signatorial_designer() } || ''; }
 
+# Whether this machine can reach the model the evaluation is configured to use.
+# The setting is shared but the reach is local: an ollama that is not running or a
+# key that was never entered makes a machine a poor home for the night's run.
+# Memoised for a minute so the heartbeat and a job do not probe twice.
+my $ai_eval_ready_memo;
+sub ai_house_eval_ready {
+	my $now = time;
+	return $ai_eval_ready_memo->{'ready'} if $ai_eval_ready_memo && $ai_eval_ready_memo->{'at'} > $now - 60;
+	my $model = &subs::setting_grabber({ app => 'mail', setting => 'eval_assistant' });
+	my $ready = eval { &evaluation_model_available($model) } ? 1 : 0;
+	$ai_eval_ready_memo = { at => $now, ready => $ready };
+	return $ready;
+}
+
 # Publish this machine's capability and heartbeat, throttled: a row every couple
 # of minutes is enough to keep it counted, and the peers see it when next synced.
 sub ai_house_publish {
@@ -25750,8 +25778,12 @@ sub ai_house_publish {
 	my $have = &ai_house_have_model();
 	my $row = eval { &subs::db_select('ai_house', undef, { machine => $me })->hashes->[0] };
 	return if $row && ($row->{'seen'} + 0) > ($now - 120000) && (($row->{'has_model'} || 0) ? 1 : 0) == $have;
+	# the evaluation needs a model it can actually reach, not merely one named in
+	# the settings; publishing that is what lets the house hand the run to a
+	# machine that can carry it instead of one that will answer with an error
+	my $ready = $have ? &ai_house_eval_ready() : 0;
 	&subs::db_delete('ai_house', { machine => $me });
-	&subs::db_insert('ai_house', { machine => $me, has_model => $have, seen => $now, server_time => $now });
+	&subs::db_insert('ai_house', { machine => $me, has_model => $have, eval_ready => $ready, seen => $now, server_time => $now });
 }
 
 # Publish this machine's capability and heartbeat, and make sure the ledger tables
@@ -25766,12 +25798,13 @@ sub ai_house_heartbeat {
 	# they existed, so the ledger's own writes land)
 	unless ($ai_ledger_ready) {
 		foreach my $sql (
-			'create table if not exists ai_house (uuid VARCHAR(255), machine VARCHAR(255) unique, has_model INT, seen VARCHAR(25), ost VARCHAR(255), server_time VARCHAR(255))',
+			'create table if not exists ai_house (uuid VARCHAR(255), machine VARCHAR(255) unique, has_model INT, eval_ready INT, seen VARCHAR(25), ost VARCHAR(255), server_time VARCHAR(255))',
 			'create table if not exists ai_jobs (uuid VARCHAR(255), job VARCHAR(255) unique, owner VARCHAR(255), at VARCHAR(25), state VARCHAR(25), ost VARCHAR(255), server_time VARCHAR(255))',
 			'create table if not exists ai_budget (uuid VARCHAR(255), machine VARCHAR(255), day VARCHAR(25), tokens INT, ost VARCHAR(255), server_time VARCHAR(255))',
 			'create unique index if not exists idx_ai_budget on ai_budget (machine, day)',
 			'alter table ai_house add column uuid VARCHAR(255)',
 			'alter table ai_house add column ost VARCHAR(255)',
+			'alter table ai_house add column eval_ready INT',
 			'alter table ai_jobs add column uuid VARCHAR(255)',
 			'alter table ai_jobs add column ost VARCHAR(255)',
 			'alter table ai_budget add column uuid VARCHAR(255)',
@@ -25784,20 +25817,54 @@ sub ai_house_heartbeat {
 
 # The machines that can take AI work: those that published a model and were seen
 # in the last ten minutes, plus this machine (so a lone or not-yet-synced machine
-# is never left with nobody). Sorted, so every machine ranks the same house.
+# is never left with nobody). When $need_eval is set the machine must also reach
+# the evaluation's model. Sorted, so every machine ranks the same house.
 sub ai_house_members {
+	my ($need_eval) = @_;
 	my $me = &ai_house_me();
 	my $now = &subs::rightNow();
 	my %member;
-	$member{$me} = 1 if length $me && &ai_house_have_model();
+	$member{$me} = 1 if length $me && &ai_house_have_model() && (!$need_eval || &ai_house_eval_ready());
 	my $rows = eval { &subs::db_select('ai_house')->hashes } || [];
 	foreach my $r ( @{$rows} ) {
 		next unless $r->{'machine'} && $r->{'has_model'};
+		next if $need_eval && !$r->{'eval_ready'};
 		next unless ($r->{'seen'} + 0) > ($now - 600000);
 		$member{ $r->{'machine'} } = 1;
 	}
 	$member{$me} = 1 if length $me && !%member;   # alone: this machine is the house
 	return sort keys %member;
+}
+
+# The house's servers, by signatorial. A server is the machine most likely to be
+# awake and reachable, so it is asked to carry the evaluation before the rest.
+sub ai_house_servers {
+	my $me = &ai_house_me();
+	my %server;
+	$server{$me} = 1 if length $me && (&subs::device_setter() // '') eq 'server';
+	my $rows = eval { &subs::db_select('remote_machines', ['signatorial', 'device'])->hashes } || [];
+	foreach my $r ( @{$rows} ) {
+		next unless $r->{'signatorial'};
+		$server{ $r->{'signatorial'} } = 1 if (($r->{'device'} // '') eq 'server');
+	}
+	return keys %server;
+}
+
+# Whether a named machine can take the work now. The local machine is asked
+# directly (its heartbeat may be this very process's); a peer is judged by the
+# row it synced, so a machine that has gone quiet is not believed.
+sub ai_house_machine_ready {
+	my ($machine, $need_eval) = @_;
+	return 0 unless defined $machine && length $machine;
+	if ($machine eq &ai_house_me()) {
+		return 0 unless &ai_house_have_model();
+		return (!$need_eval || &ai_house_eval_ready()) ? 1 : 0;
+	}
+	my $now = &subs::rightNow();
+	my $row = eval { &subs::db_select('ai_house', undef, { machine => $machine })->hashes->[0] };
+	return 0 unless $row && $row->{'has_model'} && ($row->{'seen'} + 0) > ($now - 600000);
+	return 0 if $need_eval && !$row->{'eval_ready'};
+	return 1;
 }
 
 sub ai_job_rank {
@@ -25814,30 +25881,62 @@ sub ai_job_rank {
 # to the next machine (the failover); a job already run within the ttl is left
 # alone by everyone, so a machine that runs it and then goes quiet does not cause
 # a second run.
+#
+# A claim (state 'running' or 'claimed') is a lease rather than a fact: it covers
+# the job for half an hour, and only while its owner is still among the living.
+# A machine that claimed a run and then vanished therefore hands the work on
+# instead of holding it forever.
 sub ai_job_runner {
-	my ($job, $ttl) = @_;
-	my @house = &ai_house_members();
+	my ($job, $ttl, $need_eval, $prefer_server) = @_;
+	my @house = &ai_house_members($need_eval);
 	return &ai_house_me() unless @house;
 	$ttl = 6 * 3600 * 1000 unless $ttl && $ttl > 0;
 	my $now = &subs::rightNow();
 	my $rows = eval { &subs::db_select('ai_jobs', undef, { job => $job })->hashes } || [];
 	foreach my $r ( @{$rows} ) {
 		my $at = ($r->{'at'} || 0) + 0;
-		return undef if $at && ($now - $at) <= $ttl;   # someone ran it: covered
+		next unless $at && ($now - $at) <= $ttl;
+		my $state = $r->{'state'} || 'ran';
+		if ($state eq 'claimed' || $state eq 'running') {
+			next unless ($now - $at) <= 30 * 60 * 1000;   # an expired claim is free
+			my $owner = $r->{'owner'} || '';
+			next if length $owner && !grep { $_ eq $owner } @house;   # the claimant is gone
+		}
+		return undef;   # a live machine has this job covered
 	}
 	my @ranked = sort { &ai_job_rank($job, $a) <=> &ai_job_rank($job, $b) } @house;
+	if ($prefer_server) {
+		my %server = map { $_ => 1 } &ai_house_servers();
+		my @servers = grep { $server{$_} } @ranked;
+		return $servers[0] if scalar @servers;
+	}
 	return $ranked[0];
 }
 
-# May this machine run $job? Only when it is the job's runner. The ledger row in
-# ai_jobs is the note of who ran what and when (the review list, and the cover
-# that keeps the rest of the house off).
+# Write the claim before the work starts. A peer that reads the ledger sees a job
+# already spoken for, so two machines never pay for the same evaluation; a claim
+# left by a machine that goes quiet expires (see ai_job_runner), so the house can
+# take the work back.
+sub ai_job_claim {
+	my ($job) = @_;
+	return 0 unless length($job // '');
+	my $now = &subs::rightNow();
+	eval { &subs::db_delete('ai_jobs', { job => $job }) };
+	eval { &subs::db_insert('ai_jobs', { job => $job, owner => &ai_house_me(), at => $now, state => 'running', server_time => $now }) };
+	return 1;
+}
+
+# May this machine run $job? Only when it is the job's runner. The claim is
+# written here, before the caller spends anything, so the rest of the house sees
+# the intent at once; ai_job_note marks it finished afterwards.
 sub ai_job_may_run {
-	my ($job, $ttl) = @_;
+	my ($job, $ttl, $need_eval, $prefer_server) = @_;
 	return 1 unless length($job // '');
-	my $runner = &ai_job_runner($job, $ttl);
+	my $runner = &ai_job_runner($job, $ttl, $need_eval, $prefer_server);
 	return 0 unless defined $runner;
-	return ($runner eq &ai_house_me()) ? 1 : 0;
+	return 0 unless $runner eq &ai_house_me();
+	&ai_job_claim($job);
+	return 1;
 }
 
 sub ai_job_note {

@@ -762,7 +762,9 @@ function evaluationStation(b) {
 	var text = b.text();
 	// the controls may sit in the strip, in the app's configuration, or in the
 	// system settings - the report is looked for where the button is
-	var report = b.siblings('.appointment_evaluation').first();
+	var zone = b.closest('.appointment_evaluation_zone');
+	var report = zone.length ? zone.find('.appointment_evaluation').first() : $();
+	if (report.length == 0) { report = b.siblings('.appointment_evaluation').first(); }
 	if (report.length == 0) { report = b.parent().find('.appointment_evaluation').first(); }
 	if (report.length == 0) { report = b.closest('.appointment').find('.appointment_evaluation').first(); }
 	b.text('* ' + text);

@@ -1114,13 +1114,14 @@ our %topic = (
 		title => 'Evaluation', category => 'functions',
 		summary => 'A model-backed appraisal of an app\'s activity.',
 		body => [
-			'Evaluation is an appraisal of any app\'s activity, run on demand or nightly. It reads what the app is and what it has been doing, weighs day, week, month and year together, and leaves a report beside the app with a headline and links to everything it names.',
-			'It runs through a local model, so the appraisal never leaves your machine unless you point it elsewhere.'
+			'Evaluation is an appraisal of any app\'s activity, run on demand or on a cadence. It reads what the app is and what it has been doing, weighs day, week, month and year together, and leaves a report at the foot of the app with a headline and links to everything it names.',
+			'The report sits at the bottom of the app. Its controls are folded away just beneath it: the button that runs one now, how often it runs on its own, the days it runs, and the machine preferred for the work.',
+			'It runs through a local model, so the appraisal never leaves your machine unless you point it elsewhere. The house shares the work: the server is preferred when it is awake and can reach the model, and any other machine that can takes over when it cannot. A machine notes its claim before it starts, so two machines never pay for the same report.'
 		],
 		steps => [
-			'Open the app you want appraised and find its evaluation panel.',
-			'Run it on demand, or let the nightly pass do it.',
-			'Read the report in the app\'s inventory; its links open everything it names.'
+			'Open the app you want appraised and scroll to the Evaluation at its foot.',
+			'Open the folded controls to run it now, or set how often it runs on its own.',
+			'Read the report where it sits; its links open everything it names.'
 		],
 		related => [ 'assistant', 'inventory', 'measures' ]
 	},

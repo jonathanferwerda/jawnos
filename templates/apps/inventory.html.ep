@@ -183,10 +183,8 @@
 			<b><%= &subs::format_name($b) %>:</b> <%= $returner->{'budgets'}->{$b} %><br>
 		<% } %>
 	<% } %>
-	<%# a way to run the evaluation on demand without waiting for the night; the
-	    button shares the report's own block, so the answer lands in place %>
-	<button class="system_evaluation hover" app="<%= $app %>" hint="Run the evaluation now with the chosen model">Evaluate</button>
-	<%= include 'apps/evaluation', evaluation => $evaluation, app => $app %>
+	<%# the evaluation now lives at the foot of the appointment wrapper; the
+	    inventory keeps the numbers and leaves the report to that one place %>
 	<span class="statistic_information_container" app="<%= $app %>"></span>
 <% } else { %>
 	<h4>None</h4>

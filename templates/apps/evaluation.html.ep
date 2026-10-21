@@ -1,10 +1,10 @@
-<%# the report the evaluation last left for this scope; the controls that run
-    one live with the app's configuration now, and with the system settings for
-    the whole house %>
+<%# the report the evaluation last left for this scope; it is shown at the foot
+    of the appointment wrapper, with the controls folded beneath it, and in the
+    system settings for the whole house %>
 <% my $report_app = $app || '__president'; %>
 <%# the setting is what the whole house can read; the cache is the fallback the
     machines kept before the report travelled %>
-<% my $report = &subs::evaluation_report_for($report_app); %>
+<% my $report = (ref $evaluation eq 'HASH') ? $evaluation : &subs::evaluation_report_for($report_app); %>
 <% if (($report->{'text'} || '') ne '') { %>
 	<%= include 'apps/evaluation_report', report => $report, app => $report_app %>
 <% } else { %>

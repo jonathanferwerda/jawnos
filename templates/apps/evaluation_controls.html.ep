@@ -2,8 +2,8 @@
 <%# the evaluation's controls, kept apart from its report: the button that runs
     one now, the cadence it runs on its own (hourly..yearly, or every run, with
     the days for daily and weekly), and the durable note of what the last run
-    did. They sit in the app's configuration and in the system settings, and the
-    report they fill lives beside them. %>
+    did. They sit folded beneath the report at the foot of the app, and in the
+    system settings for the whole house. %>
 <button class="system_evaluation" app="<%= $app %>" >Evaluate</button>
 <%# how much the answer carries: brief is a single headline line (cheap, for a
     daily run), full is the whole report %>
