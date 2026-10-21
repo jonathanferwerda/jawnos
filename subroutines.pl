@@ -25946,14 +25946,17 @@ sub ai_house_dispatcher {
 }
 
 # On a worker, "the server is known" means the server has published a heartbeat
-# under this code. A server that is merely listed in remote_machines but has not
-# upgraded yet is ignored, so a rolling update does not stop the first morning.
+# under this code and has been seen within the week. A server that is merely
+# listed in remote_machines but has not upgraded yet is ignored, so a rolling
+# update does not stop the first morning; a server gone for longer than the
+# week is no longer a dispatcher, and the house falls back to quorum.
 sub ai_house_server_known {
 	my $server = &ai_house_dispatcher();
 	return 0 unless length $server;
 	return 1 if $server eq &ai_house_me();
 	my $row = eval { &subs::db_select('ai_house', undef, { machine => $server })->hashes->[0] };
-	return $row ? 1 : 0;
+	return 0 unless $row;
+	return (($row->{'seen'} + 0) > (&subs::rightNow() - 7 * 86400000)) ? 1 : 0;
 }
 
 # The roster a serverless house uses for quorum: the AI-capable machines seen

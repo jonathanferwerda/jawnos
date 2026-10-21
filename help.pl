@@ -1116,7 +1116,7 @@ our %topic = (
 		body => [
 			'Evaluation is an appraisal of any app\'s activity, run on demand or on a cadence. It reads what the app is and what it has been doing, weighs day, week, month and year together, and leaves a report at the foot of the app with a headline and links to everything it names.',
 			'The report sits at the bottom of the app. Its controls are folded away just beneath it: the button that runs one now, how often it runs on its own, the days it runs, and the machine preferred for the work.',
-			'It runs through a local model, so the appraisal never leaves your machine unless you point it elsewhere. The house dispatches the work: the server is the dispatcher, and the mobile and computer machines are the workers. The server assigns each scheduled run to a ready worker a few minutes before it is due, and a worker runs only what is addressed to it, so a split house does not run the same report twice. A house with no server uses a quorum instead: a majority of the machines must be present, and a minority waits.'
+			'It runs through a local model, so the appraisal never leaves your machine unless you point it elsewhere. The house dispatches the work: the server is the dispatcher, and the mobile and computer machines are the workers. The server assigns each scheduled run to a ready worker a few minutes before it is due, and a worker runs only what is addressed to it, so a split house does not run the same report twice. A house with no server uses a quorum instead: a majority of the machines must be present, and a minority waits. A server gone for a week is treated as no server, so a dead dispatcher does not freeze the house.'
 		],
 		steps => [
 			'Open the app you want appraised and scroll to the Evaluation at its foot.',
