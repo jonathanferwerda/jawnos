@@ -1118,9 +1118,10 @@ function customerGrabber(cx) {
 	});
 }
 
-$(document).on('click', '.customer_list', function() {
-	var list = $(this).attr('type');
-	if ($('#main_viewer').attr('type') == list) {
+$(document).on('click', '.customer_action', function() {
+	var list = $(this).attr('data-list');
+	if (!list) { return; }
+	if ($('#main_viewer').is(':visible') && $('#main_viewer').attr('type') == list) {
 		$('#main_viewer').html('').hide().attr('type','');
 	}
 	else {
@@ -1129,10 +1130,22 @@ $(document).on('click', '.customer_list', function() {
 });
 
 function customerList(cx,list) {
+	var routes = {
+		quotes: '/manager/store/customer_list',
+		invoice: '/manager/store/customer_list',
+		register: '/manager/store/customer_register',
+		correspondence: '/manager/store/customer_correspondence'
+	};
+	var url = routes[list];
+	if (!url) { return; }
+	var data = { cx: cx };
+	if (list === 'quotes' || list === 'invoice') {
+		data.list = list;
+	}
 	$.ajax({
-		url: '/manager/store/customer_list',
+		url: url,
 		type: 'GET',
-		data: { cx: cx, list: list },
+		data: data,
 		success: function(response) {
 			$('#main_viewer').html(response.content).show();
 			$('#main_viewer').attr('type', list);

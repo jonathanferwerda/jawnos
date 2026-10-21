@@ -1,0 +1,70 @@
+<% no warnings 'uninitialized'; %>
+<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" class="main_viewer_cancel_button little_thumb" style="float:right;">
+<h1 class="store_journal_title"><%= &subs::lang('common.register') %></h1>
+<h3 class="store_journal_customer"><%= &subs::format_name($customer->{'app'}) %></h3>
+
+<div class="store_journal_summary">
+	<div class="store_journal_summary_cell">
+		<span class="store_journal_summary_label"><%= &subs::ui('Sales') %></span>
+		<strong><%= &subs::price_formatter($totals->{'total'}) %></strong>
+	</div>
+	<div class="store_journal_summary_cell">
+		<span class="store_journal_summary_label"><%= &subs::ui('Paid') %></span>
+		<strong><%= &subs::price_formatter($totals->{'paid'}) %></strong>
+	</div>
+	<div class="store_journal_summary_cell">
+		<span class="store_journal_summary_label"><%= &subs::ui('Outstanding') %></span>
+		<strong><%= &subs::price_formatter($totals->{'balance'}) %></strong>
+	</div>
+	<div class="store_journal_summary_cell">
+		<span class="store_journal_summary_label"><%= &subs::ui('Documents') %></span>
+		<strong><%= $totals->{'count'} %></strong>
+	</div>
+</div>
+
+<% if (scalar @{$documents} == 0) { %>
+	<p class="store_journal_empty"><%= &subs::ui('No sales or invoices yet for this customer.') %></p>
+<% } else { %>
+	<div class="store_journal_table_wrap">
+		<table class="store_journal_table">
+			<thead>
+				<tr>
+					<th><%= &subs::ui('Date') %></th>
+					<th><%= &subs::ui('Document') %></th>
+					<th><%= &subs::lang('common.item') %></th>
+					<th><%= &subs::lang('common.total') %></th>
+					<th><%= &subs::ui('Paid') %></th>
+					<th><%= &subs::ui('Balance') %></th>
+					<th><%= &subs::ui('Status') %></th>
+				</tr>
+			</thead>
+			<tbody>
+				<% foreach my $doc ( @{$documents} ) { %>
+					<tr class="register_document register_<%= $doc->{'type'} %>">
+						<td><span class="time" mode="fixed" timestamp="<%= $doc->{'timestamp'} %>"></span></td>
+						<td>
+							<strong><%= $doc->{'id'} %></strong><br>
+							<span class="store_journal_muted"><%= $doc->{'type'} eq 'sale' ? &subs::lang('common.sale') : &subs::lang('common.invoice') %></span>
+						</td>
+						<td><%= $doc->{'item'} %></td>
+						<td><%= &subs::price_formatter($doc->{'total'}) %></td>
+						<td><%= &subs::price_formatter($doc->{'paid'}) %></td>
+						<td><%= &subs::price_formatter($doc->{'balance'}) %></td>
+						<td><%= $doc->{'balance'} > 0 ? &subs::ui('Open') : &subs::ui('Paid') %></td>
+					</tr>
+					<% foreach my $p ( @{$doc->{'payments'}} ) { %>
+						<tr class="register_payment">
+							<td><span class="time" mode="fixed" timestamp="<%= $p->{'timestamp'} %>"></span></td>
+							<td colspan="2">
+								<span class="register_payment_mark">↳</span>
+								<%= &subs::ui('Payment') %><% if ($p->{'account'}) { %> · <%= $p->{'account'} %><% } %>
+							</td>
+							<td colspan="2"><%= &subs::price_formatter($p->{'amount'}) %></td>
+							<td colspan="2" class="store_journal_muted"><%= $doc->{'id'} %></td>
+						</tr>
+					<% } %>
+				<% } %>
+			</tbody>
+		</table>
+	</div>
+<% } %>

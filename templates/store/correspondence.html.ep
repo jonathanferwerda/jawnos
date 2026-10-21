@@ -1,0 +1,46 @@
+<% no warnings 'uninitialized'; %>
+<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" class="main_viewer_cancel_button little_thumb" style="float:right;">
+<h1 class="store_journal_title"><%= &subs::ui('Correspondence') %></h1>
+<h3 class="store_journal_customer"><%= &subs::format_name($customer->{'app'}) %></h3>
+
+<div class="store_journal_summary">
+	<div class="store_journal_summary_cell">
+		<span class="store_journal_summary_label"><%= &subs::ui('Emails') %></span>
+		<strong><%= $counts->{'email'} %></strong>
+	</div>
+	<div class="store_journal_summary_cell">
+		<span class="store_journal_summary_label"><%= &subs::ui('Chats') %></span>
+		<strong><%= $counts->{'chat'} %></strong>
+	</div>
+	<div class="store_journal_summary_cell">
+		<span class="store_journal_summary_label"><%= &subs::ui('Last contact') %></span>
+		<strong><% if ($last) { %><span class="time" mode="fixed" timestamp="<%= $last %>"></span><% } else { %>—<% } %></strong>
+	</div>
+</div>
+
+<% if (scalar @{$messages} == 0) { %>
+	<p class="store_journal_empty"><%= &subs::ui('No emails or chats yet for this customer.') %></p>
+<% } else { %>
+	<ol class="correspondence_journal">
+		<% foreach my $m ( @{$messages} ) { %>
+			<li class="correspondence_item" data-direction="<%= $m->{'direction'} %>" data-channel="<%= $m->{'channel'} %>">
+				<div class="correspondence_meta">
+					<span class="time" mode="fixed" timestamp="<%= $m->{'timestamp'} %>"></span>
+					<span class="correspondence_badge"><%= $m->{'channel'} eq 'email' ? &subs::ui('Email') : $m->{'channel'} eq 'chat' ? &subs::ui('Chat') : &subs::ui('Mail') %></span>
+					<span class="correspondence_direction"><%= $m->{'direction'} eq 'in' ? &subs::ui('In') : &subs::ui('Out') %></span>
+				</div>
+				<div class="correspondence_subject"><%= $m->{'subject_text'} ne '' ? $m->{'subject_text'} : &subs::ui('(no subject)') %></div>
+				<div class="correspondence_parties"><%= $m->{'from_text'} %> → <%= $m->{'to_text'} %></div>
+				<% if ($m->{'preview'}) { %>
+					<div class="correspondence_preview"><%= $m->{'preview'} %></div>
+				<% } %>
+				<% if ($m->{'body_text'} && length($m->{'body_text'}) > length($m->{'preview'})) { %>
+					<details class="correspondence_more">
+						<summary><%= &subs::ui('Read') %></summary>
+						<div class="correspondence_body"><%= $m->{'body_text'} %></div>
+					</details>
+				<% } %>
+			</li>
+		<% } %>
+	</ol>
+<% } %>

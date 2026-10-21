@@ -5211,7 +5211,9 @@ get '/manager/store/customer_correspondence' => sub($c) {
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
 	my %counts = (email => 0, chat => 0);
 	my $last = 0;
+	my $message_index = 0;
 	foreach my $m ( @{$rows} ) {
+		$message_index++;
 		my $channel = $m->{'email'} ? 'email' : ($m->{'phone'} ? 'chat' : 'mail');
 		$counts{$channel}++ if exists $counts{$channel};
 		my $direction = (($m->{'status'} || '') =~ /^(sent|outbox|draft)$/) ? 'out' : 'in';
@@ -5230,12 +5232,24 @@ get '/manager/store/customer_correspondence' => sub($c) {
 		$subject =~ s/^\s+|\s+$//g;
 		$body =~ s/^\s+|\s+$//g;
 		my $preview = length($body) > 220 ? substr($body, 0, 220) . '…' : $body;
-		my $from = $direction eq 'in' ? ($m->{'email'} || $m->{'phone'} || '') : ($settings->{'email'} || $settings->{'phone'} || '');
-		my $to = $direction eq 'in' ? ($settings->{'email'} || $settings->{'phone'} || '') : ($m->{'email'} || $m->{'phone'} || '');
+		$subject = substr($body, 0, 70) . (length($body) > 70 ? '…' : '') if $subject eq '' && $channel eq 'chat';
+		my ($from, $to);
+		if ($channel eq 'chat') {
+			$from = $direction eq 'in' ? ($m->{'phone'} || '') : ($settings->{'phone'} || '');
+			$to = $direction eq 'in' ? ($settings->{'phone'} || '') : ($m->{'phone'} || '');
+		}
+		else {
+			$from = $direction eq 'in' ? ($m->{'email'} || $m->{'phone'} || '') : ($settings->{'email'} || $settings->{'phone'} || '');
+			$to = $direction eq 'in' ? ($settings->{'email'} || $settings->{'phone'} || '') : ($m->{'email'} || $m->{'phone'} || '');
+		}
+		# The reader gets every preview. The full text rides along for the newest
+		# messages only, so a mailbox of years does not become a page of megabytes.
+		my $body_text = $message_index > 60 ? '' : $body;
+		$body_text = substr($body_text, 0, 4000) . '…' if length($body_text) > 4000;
 		$m->{'channel'} = $channel;
 		$m->{'direction'} = $direction;
 		$m->{'subject_text'} = $subject;
-		$m->{'body_text'} = $body;
+		$m->{'body_text'} = $body_text;
 		$m->{'preview'} = $preview;
 		$m->{'from_text'} = $from;
 		$m->{'to_text'} = $to;

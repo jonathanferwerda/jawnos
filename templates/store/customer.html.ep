@@ -1,7 +1,19 @@
-<div id="cx" style="vertical-align:bottom;bottom:0px;">
-	<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="<%= &subs::lang('common.list') %>" class="little_thumb customer_list hover" type="quotes">
-	<img src="<%= &subs::icon_for('/images/decipherable/register.png') %>" hint="<%= &subs::lang('common.register') %>" class="little_thumb customer_list hover" type="invoice">
-	<img src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" hint="<%= &subs::lang('common.cash') %>" class="little_thumb customer_list hover" type="sale">
-	<img src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" hint="<%= &subs::lang('common.mail') %>" class="little_thumb customer_list hover" id="mail_toggle" type="correspondance">
-	<span style="vertical-align:top;padding-top:0px;top:20px;font-size:20px;max-width:200px;" class="customer_name hover"></span>
+<div id="cx" class="store_customer_actions">
+	<button type="button" class="customer_action" data-list="quotes" title="<%= &subs::lang('store.quotes') %>">
+		<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" alt="">
+		<span><%= &subs::lang('store.quotes') %></span>
+	</button>
+	<button type="button" class="customer_action" data-list="invoice" title="<%= &subs::lang('store.invoices') %>">
+		<img src="<%= &subs::icon_for('/images/decipherable/register.png') %>" alt="">
+		<span><%= &subs::lang('store.invoices') %></span>
+	</button>
+	<button type="button" class="customer_action" data-list="register" title="<%= &subs::lang('common.register') %>">
+		<img src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" alt="">
+		<span><%= &subs::lang('common.register') %></span>
+	</button>
+	<button type="button" class="customer_action" data-list="correspondence" title="<%= &subs::lang('store.correspondence') %>">
+		<img src="<%= &subs::icon_for('/images/decipherable/envelope.png') %>" alt="">
+		<span><%= &subs::lang('store.correspondence') %></span>
+	</button>
+	<span class="customer_name hover"></span>
 </div>

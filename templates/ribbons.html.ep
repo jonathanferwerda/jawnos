@@ -1,5 +1,5 @@
 <div id="bottom_ribbon" class="store_customer_bar">
-	<% unless ($c->session('privilege') eq 'guest') { %>
+	<% if (($c->session('privilege') || '') eq 'citizen') { %>
 		<span id="customer" class="store_customer_name"></span>
 		<div id="dock"></div>
 		<div class="store_customer_search">

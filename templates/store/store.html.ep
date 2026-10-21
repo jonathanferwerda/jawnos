@@ -90,15 +90,15 @@
 		</section>
 		<aside id="item_view" class="store_detail" aria-live="polite"></aside>
 	</div>
-	<% unless ($c->session('privilege') eq 'guest') { %>
+	<% if (($c->session('privilege') || '') eq 'citizen') { %>
 		<footer class="store_footer">
 			<%= include 'ribbons', settings => $settings %>
 		</footer>
 	<% } %>
+<div id="main_viewer" class="store_viewer"></div>
 </div>
 
 <div id="image_viewer"></div>
-<div id="main_viewer" class="store_viewer"></div>
 <div id="store_privacy">
 	<a href="/privacy" target="_blank" rel="noopener"><%= &subs::lang('privacy.link') %></a>
 </div>
