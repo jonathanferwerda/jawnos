@@ -423,8 +423,15 @@ class WebViewPanel(Gtk.Box):
         self._set_fullscreen(self._fullscreen)
 
     def attach_keys(self, window):
-        """Handle F11 on the window that hosts this panel."""
+        """Handle F11 and the reload keys wherever the focus is."""
         window.connect("key-press-event", self._on_key)
+        # The WebView has its own focus and consumes keys before the window
+        # handler sees them, so bind the same handler to it as well (F11 and
+        # F5/Ctrl+R must work while the page is focused).
+        try:
+            self.view.connect("key-press-event", self._on_key)
+        except Exception:
+            pass
 
     def _on_key(self, _widget, event):
         # F11 is the only way out of the app's fullscreen. Esc must not drop it:
