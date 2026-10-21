@@ -29189,6 +29189,20 @@ get '/manager/device/app_status' => sub($c) {
 	});
 };
 
+# The installed app can lose the WebKit profile that held its device uuid (a
+# cleared cache, a restored profile) while its key is still the one paired with
+# the house. The public key is not a secret and the uuid is not a credential -
+# app_login still needs a signature - so name the paired device that owns the
+# key, and the page can seed its localStorage and sign in again.
+post '/manager/device/app_identify' => sub($c) {
+	my $pubkey = $c->param('app_pubkey') || '';
+	return $c->render(json => { ok => 0, error => 'no key' }) unless $pubkey =~ /BEGIN PUBLIC KEY/;
+	my $device = &subs::db_select('paired_devices', [ 'uuid', 'name' ], { app_pubkey => $pubkey, status => 'active' })->hash;
+	return $c->render(json => { ok => 0, error => 'not paired' }) unless $device && ($device->{'uuid'} || '') ne '';
+	$log->info('app identify: paired device ' . $device->{'uuid'});
+	$c->render(json => { ok => 1, uuid => $device->{'uuid'}, name => ($device->{'name'} || '') });
+};
+
 # A desktop app asks to add its native key to an already-paired device. It is
 # approved on a trusted app (the phone), so a browser that can reach this route
 # cannot mint an app identity for itself.

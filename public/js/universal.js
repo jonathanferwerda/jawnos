@@ -2144,11 +2144,24 @@ window.jawnosShareCrypto = (function () {
 // runs and the session never learns this install's app key. Prove it on every
 // load: app-only actions (a peer Go ticket) need app_device on the session.
 (function () {
+	function signIn() { jawnAppLogin(true).catch(function () {}); }
 	function prove() {
 		if (!window.JawnDesktop) { return; }
 		if (typeof jawnAppLogin !== 'function' || typeof jawnDeviceUuid !== 'function') { return; }
-		if (!jawnDeviceUuid()) { return; }
-		jawnAppLogin(true).catch(function () {});
+		var uuid = jawnDeviceUuid();
+		if (uuid) { signIn(); return; }
+		// A cleared or restored WebKit profile can lose the stored device id
+		// while the app key is still the one paired with the house. Name the
+		// device by its key, keep the id, then sign in.
+		if (typeof jawnosDesktopCall !== 'function' || typeof jawnDeviceUuidSave !== 'function') { return; }
+		jawnosDesktopCall('app_pubkey', {}).then(function (res) {
+			if (!res || !res.pubkey) { throw { error: 'no key' }; }
+			return $.post('/manager/device/app_identify', { app_pubkey: res.pubkey });
+		}).then(function (r) {
+			if (!r || !r.ok || !r.uuid) { return; }
+			jawnDeviceUuidSave(r.uuid);
+			signIn();
+		}).catch(function () {});
 	}
 	if (document.readyState === 'complete') { setTimeout(prove, 250); }
 	else { window.addEventListener('load', function () { setTimeout(prove, 250); }); }
