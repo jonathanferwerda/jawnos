@@ -27902,6 +27902,10 @@ sub crypto_rates_read {
 sub crypto_rates_write {
 	my ($rates, $source, $base) = @_;
 	return 0 unless ref $rates eq 'HASH';
+	# Rates are one house-wide snapshot. A row left on a single device by an
+	# older build (or replayed by a peer) is stale and would double the payload;
+	# the shared row is the only one read.
+	&db_query("delete from settings where app = 'crypto' and setting = 'rates' and device != 'all'");
 	my $payload = {
 		at => &rightNow(),
 		source => ($source || 'manual'),
@@ -28096,6 +28100,17 @@ sub crypto_tracking_app {
 
 sub crypto_tracking_interval { return 6 * 60 * 60 * 1000 }
 
+# The apps a person can pick from: every app that already holds measures, plus
+# the current choice even if it holds none yet.
+sub crypto_tracking_apps {
+	my $rows = &db_query("select distinct app from settings where setting = 'app_measures' order by app")->hashes;
+	my @out = map { { app => $_->{'app'}, name => &format_name($_->{'app'}) } } @{$rows};
+	my $current = &crypto_tracking_app();
+	push @out, { app => $current, name => &format_name($current) } unless grep { $_->{'app'} eq $current } @out;
+	@out = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @out;
+	return \@out;
+}
+
 sub crypto_tracking_definitions {
 	my ($app) = @_;
 	my $row = &db_query("select value from settings where app = ? and setting = 'app_measures' order by server_time desc limit 1", $app)->hashes->[0];
@@ -28139,8 +28154,14 @@ sub crypto_tracking_tick {
 	my $defs = &crypto_tracking_definitions($app);
 	if (!scalar keys %{$defs}) {
 		return { ok => 0, error => 'no measures app yet' } unless $opts->{'create'};
-		my $init = &setting_initializer($app, $now);
-		$app = $init->{'app'} if ref $init eq 'HASH' && $init->{'app'};
+		# An app that already exists only needs its measure definitions; a name
+		# nobody has used yet is initialized like any other app.
+		my $exists = &db_query('select 1 from settings where app = ? limit 1', $app)->hashes->[0]
+			|| &db_query('select 1 from appointments where app = ? limit 1', $app)->hashes->[0];
+		if (!$exists) {
+			my $init = &setting_initializer($app, $now);
+			$app = $init->{'app'} if ref $init eq 'HASH' && $init->{'app'};
+		}
 		$defs = &crypto_tracking_definitions($app);
 	}
 	my (@entries, $count);

@@ -17,7 +17,7 @@
 	my $wallets = &subs::crypto_wallets_report();
 	my $tracking = &subs::crypto_tracking_on();
 	my $tracking_app = &subs::crypto_tracking_app();
-	my $tracking_name = &subs::format_name($tracking_app);
+	my $tracking_apps = &subs::crypto_tracking_apps();
 	my $tracked_at = &subs::setting_grabber({ app => 'crypto', setting => 'tracked_at', device => 'all' });
 	my $money = sub {
 		my ($v) = @_;
@@ -53,7 +53,16 @@
 		<div class="cfg-row">
 			<label>Currency tracking</label>
 			<input type="checkbox" class="crypto_setting" app="crypto" setting="tracking" value="on" <% if ($tracking) { %>checked<% } %>>
-			<span class="cfg-note" style="margin:0;">Record a rate history point every six hours in <b><%= $tracking_name %></b>, in place of the appointment that used to update measures. The Measures app charts it. Stop that old appointment once this is on.<% if ($tracked_at) { %> Last point <span class="time" mode="fixed" timestamp="<%= $tracked_at %>"></span>.<% } %></span>
+			<span class="cfg-note" style="margin:0;">Record a rate history point every six hours, in place of the appointment that used to update measures. The Measures app charts it. Stop that old appointment once this is on.<% if ($tracked_at) { %> Last point <span class="time" mode="fixed" timestamp="<%= $tracked_at %>"></span>.<% } %></span>
+		</div>
+		<div class="cfg-row">
+			<label>History app</label>
+			<select class="crypto_setting" app="crypto" setting="tracking_app">
+				<% foreach my $ta ( @{$tracking_apps} ) { %>
+					<option value="<%= $ta->{'app'} %>" <% if ($ta->{'app'} eq $tracking_app) { %>selected<% } %>><%= $ta->{'name'} %></option>
+				<% } %>
+			</select>
+			<span class="cfg-note" style="margin:0;">The app whose measures hold the history. Canadian Dollar and Markets are the usual choices; any app with measures can be picked.</span>
 		</div>
 	</div>
 

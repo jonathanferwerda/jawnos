@@ -38576,6 +38576,11 @@ post '/manager/setting_setter' => sub($c) {
 	if ($app eq 'crypto' && $setting eq 'tracking' && defined $value && $value eq 'on') {
 		eval { &subs::crypto_tracking_tick({ force => 1, create => 1 }) };
 	}
+	# Choosing a different history app while tracking is on writes the first
+	# point there at once (and gives an app that has no measures its definitions).
+	if ($app eq 'crypto' && $setting eq 'tracking_app' && &subs::crypto_tracking_on()) {
+		eval { &subs::crypto_tracking_tick({ force => 1, create => 1 }) };
+	}
 	# a construct change is a person change: keep the people table beside it
 	&people_link_sync() if (($setting eq 'pos' || $setting eq 'mab') && defined $app && length $app);
 	$c->render(json => $s);
