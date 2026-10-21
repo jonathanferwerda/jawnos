@@ -693,7 +693,9 @@ function appWindowOpener(i,timestamp,v) {
 		}
 		else if (i == 'handbook') {
 			// the daily page is the front door now; a chapter already open is kept
-			handbookGrabber(localStorage.getItem('handbook_chapter') || 'today', localStorage.getItem('handbook_page'));
+			var handbook_chapter = localStorage.getItem('handbook_chapter') || 'today';
+			if (handbook_chapter == 'undefined' || handbook_chapter == 'null') { handbook_chapter = 'today'; }
+			handbookGrabber(handbook_chapter, localStorage.getItem('handbook_page'));
 		}
 		else if (i == 'embedded') {
 			embeddedDevicesOpener();

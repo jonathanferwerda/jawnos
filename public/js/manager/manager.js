@@ -3553,6 +3553,7 @@ $(document).on('click', '#store_toggle', function() {
 $(document).on('click', '#handbook_toggle', function() {
 
 	var chapter = localStorage.getItem('handbook_chapter') || 'today';
+	if (chapter == 'undefined' || chapter == 'null') { chapter = 'today'; }
 	var url = '/manager/handbook/' + chapter;
 	var page = localStorage.getItem('handbook_page');
 	var window_saver = sessionStorage.getItem('window_storage');
@@ -3649,6 +3650,97 @@ $(document).on('click', '.handbook_today_relational', function() {
 
 $(document).on('click', '.handbook_today_people_open', function() {
 	if (typeof peopleOpener == 'function') { peopleOpener(); }
+});
+
+// The journal writes into the notes store tagged for the Handbook. The Guide's
+// plant action reads those entries and writes ideas/plans/dreams as appointments
+// on their future days, so they appear when the daily page is turned to them.
+function handbookTodayT(text, value) {
+	if (typeof jawnosT == 'function') { return jawnosT.apply(null, arguments); }
+	return (value === undefined) ? text : text.replace('{0}', value);
+}
+
+function handbookJournalStatus(text, is_error) {
+	$('#handbook_today_journal_status').text(text || '').toggleClass('error', !!is_error);
+}
+
+function handbookJournalSave(reload) {
+	var text = $('#handbook_today_journal_text').val();
+	var day = $('#handbook_today_date').val() || 'today';
+	if (!text || !text.replace(/\s/g, '')) {
+		handbookJournalStatus(handbookTodayT('Write something first.'), true);
+		return $.Deferred().resolve(false).promise();
+	}
+	handbookJournalStatus(handbookTodayT('Saving...'));
+	return $.ajax({
+		url: '/manager/handbook/journal',
+		type: 'POST',
+		data: { text: text, day: day },
+		dataType: 'json'
+	}).done(function(response) {
+		if (response && response.ok) {
+			handbookJournalStatus(handbookTodayT('Saved.'));
+			$('#handbook_today_journal_text').val('');
+			if (reload !== false) { handbookTodayGo(day); }
+		}
+		else { handbookJournalStatus((response && response.error) || handbookTodayT('Could not save.'), true); }
+	}).fail(function() {
+		handbookJournalStatus(handbookTodayT('Could not save.'), true);
+	});
+}
+
+function handbookPlant() {
+	var text = $('#handbook_today_journal_text').val() || '';
+	var day = $('#handbook_today_date').val() || 'today';
+	var button = $('#handbook_today_plant');
+	button.prop('disabled', true);
+	handbookJournalStatus(handbookTodayT('Reading the journal...'));
+	$('#handbook_today_planted_result').empty();
+	$.ajax({
+		url: '/manager/handbook/plant',
+		type: 'POST',
+		data: { text: text, day: day },
+		dataType: 'json',
+		timeout: 180000
+	}).done(function(response) {
+		if (!response || !response.ok) {
+			handbookJournalStatus((response && response.error) || handbookTodayT('The Guide could not read the journal.'), true);
+			return;
+		}
+		var items = response.planted || [];
+		if (!items.length) {
+			handbookJournalStatus(response.skipped ? handbookTodayT('Nothing new was planted.') : handbookTodayT('Nothing pointed forward yet.'));
+			return;
+		}
+		$('#handbook_today_journal_text').val('');
+		handbookJournalStatus(handbookTodayT('Planted {0} entries.', items.length));
+		var html = '<div class="handbook_today_planted_list"><b>' + handbookTodayT('Planted across time') + '</b><ul>';
+		$.each(items, function(i, item) {
+			var title = $('<div>').text(item.title || '').html();
+			var kind = $('<div>').text(item.kind || '').html();
+			var when = $('<div>').text(item.day || '').html();
+			html += '<li><a href="#" class="handbook_today_planted_jump" day="' + when + '">' + title + '</a> <span class="handbook_today_planted_when">' + kind + ' &middot; ' + when + '</span></li>';
+		});
+		html += '</ul></div>';
+		$('#handbook_today_planted_result').html(html);
+	}).fail(function() {
+		handbookJournalStatus(handbookTodayT('The Guide could not read the journal.'), true);
+	}).always(function() {
+		button.prop('disabled', false);
+	});
+}
+
+$(document).on('click', '#handbook_today_journal_save', function() {
+	handbookJournalSave(true);
+});
+
+$(document).on('click', '#handbook_today_plant', function() {
+	handbookPlant();
+});
+
+$(document).on('click', '.handbook_today_planted_jump', function(e) {
+	e.preventDefault();
+	handbookTodayGo($(this).attr('day'));
 });
 
 $(document).on('click', '.handbook_setting', function() {

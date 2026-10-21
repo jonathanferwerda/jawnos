@@ -99,11 +99,12 @@
 			<% if (scalar @{$t->{'appointments'}}) { %>
 				<ul class="handbook_today_timeline">
 					<% foreach my $appt ( @{$t->{'appointments'}} ) { %>
-						<li class="handbook_today_appt handbook_today_open_app hover" app="<%= $appt->{'app'} %>">
+						<li class="handbook_today_appt handbook_today_open_app hover<% if ($appt->{'planted'}) { %> handbook_today_planted<% } %>" app="<%= $appt->{'app'} %>">
 							<span class="handbook_today_time time" mode="fixed" timestamp="<%= $appt->{'timestamp'} %>"></span>
 							<span class="handbook_today_appt_name"><%= $appt->{'name'} %></span>
 							<span class="handbook_today_appt_type"><%= $appt->{'type'} %></span>
 							<% if ($appt->{'duration'}) { %><span class="handbook_today_chip"><%= $appt->{'duration'} %></span><% } %>
+							<% if ($appt->{'planted'}) { %><span class="handbook_today_chip handbook_today_planted_chip"><%= &subs::ui('planted') %></span><% } %>
 							<% if ($appt->{'project'}) { %><span class="handbook_today_chip"><%= &subs::format_name($appt->{'project'}) %></span><% } %>
 						</li>
 					<% } %>
@@ -112,6 +113,19 @@
 				<div class="handbook_today_empty"><%= &subs::ui('Only money and measures are on this day.') %></div>
 			<% } else { %>
 				<div class="handbook_today_empty"><%= $t->{'is_future'} ? &subs::ui('Nothing is planned for this day yet.') : &subs::ui('Nothing was recorded on this day.') %></div>
+			<% } %>
+
+			<% if (scalar @{$t->{'ghosts'}}) { %>
+				<h4><%= &subs::ui('Predicted by your records') %></h4>
+				<ul class="handbook_today_timeline handbook_today_ghosts">
+					<% foreach my $ghost ( @{$t->{'ghosts'}} ) { %>
+						<li class="handbook_today_appt handbook_today_ghost handbook_today_open_app hover" app="<%= $ghost->{'app'} %>">
+							<span class="handbook_today_time time" mode="fixed" timestamp="<%= $ghost->{'timestamp'} %>"></span>
+							<span class="handbook_today_appt_name"><%= $ghost->{'name'} %></span>
+							<% if ($ghost->{'duration'}) { %><span class="handbook_today_chip"><%= $ghost->{'duration'} %></span><% } %>
+						</li>
+					<% } %>
+				</ul>
 			<% } %>
 
 			<h4><%= &subs::ui('Measures') %></h4>
@@ -136,18 +150,28 @@
 				<div class="handbook_today_empty"><%= &subs::ui('No measure has been recorded.') %></div>
 			<% } %>
 
-			<h4><%= &subs::ui('Notes') %></h4>
+			<h4><%= &subs::ui('Journal') %></h4>
+			<div class="handbook_today_journal_write">
+				<textarea id="handbook_today_journal_text" placeholder="<%= &subs::ui('What happened, what you want, what you are dreaming about...') %>"></textarea>
+				<div class="handbook_today_journal_actions">
+					<button id="handbook_today_journal_save"><%= &subs::ui('Save entry') %></button>
+					<button id="handbook_today_plant"><%= &subs::ui('Plant with the Guide') %></button>
+					<span id="handbook_today_journal_status"></span>
+				</div>
+				<div class="handbook_today_planted_result" id="handbook_today_planted_result"></div>
+				<div class="handbook_today_hint"><%= &subs::ui('The Guide reads the journal and plants ideas, plans and dreams on the days they belong to.') %></div>
+			</div>
 			<% if (scalar @{$t->{'notes'}}) { %>
 				<ul class="handbook_today_list">
 					<% foreach my $note ( @{$t->{'notes'}} ) { %>
 						<li class="handbook_today_row handbook_today_note">
 							<span class="handbook_today_row_name"><%= $note->{'snippet'} %></span>
-							<span class="handbook_today_when time" timestamp="<%= $note->{'timestamp'} %>"></span>
+							<span class="handbook_today_when time" mode="fixed" timestamp="<%= $note->{'timestamp'} %>"></span>
 						</li>
 					<% } %>
 				</ul>
 			<% } else { %>
-				<div class="handbook_today_empty"><%= &subs::ui('No note was written on this day.') %></div>
+				<div class="handbook_today_empty"><%= &subs::ui('No journal entry was written on this day.') %></div>
 			<% } %>
 		</section>
 

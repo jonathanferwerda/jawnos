@@ -1540,6 +1540,59 @@ html.jawnos_webview #admin_console_toggle {
 .handbook_today_actions button:hover { background: var(--line); }
 .handbook_today_note .handbook_today_row_name { font-weight: 400; }
 .handbook_today_note .handbook_today_when { margin-left: auto; font-size: 11px; opacity: .6; }
+.handbook_today_journal_write {
+	margin-bottom: 10px;
+	padding: 8px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--window, var(--panel));
+}
+#handbook_today_journal_text {
+	width: 100%;
+	box-sizing: border-box;
+	min-height: 90px;
+	resize: vertical;
+	padding: 8px;
+	border: 1px solid var(--line);
+	border-radius: 7px;
+	background: var(--panel);
+	color: inherit;
+	font-size: 13px;
+	line-height: 1.4;
+}
+.handbook_today_journal_actions {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	flex-wrap: wrap;
+	margin-top: 6px;
+}
+.handbook_today_journal_actions button {
+	padding: 6px 10px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: inherit;
+	cursor: pointer;
+	font-size: 12px;
+}
+.handbook_today_journal_actions button:hover { background: var(--line); }
+.handbook_today_journal_actions button:disabled { opacity: .5; cursor: wait; }
+#handbook_today_journal_status { font-size: 12px; opacity: .75; }
+#handbook_today_journal_status.error { color: #d33; opacity: 1; }
+.handbook_today_hint { margin-top: 6px; font-size: 11px; opacity: .6; }
+.handbook_today_planted_result { margin-top: 8px; }
+.handbook_today_planted_list { font-size: 12px; }
+.handbook_today_planted_list ul { margin: 4px 0 0 18px; padding: 0; }
+.handbook_today_planted_list li { margin-bottom: 3px; }
+.handbook_today_planted_when { opacity: .65; }
+.handbook_today_planted { border-left-color: #7a5; }
+.handbook_today_planted_chip { border-color: #7a5; opacity: 1; }
+.handbook_today_ghost {
+	border-left-style: dashed;
+	opacity: .55;
+	font-style: italic;
+}
 @media (max-width: 760px) {
 	.handbook_today_bar { position: static; }
 	.handbook_today_grid { grid-template-columns: 1fr; }

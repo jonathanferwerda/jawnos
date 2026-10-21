@@ -5,7 +5,7 @@
 		<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="little_thumb hover handbook_link" style="float:right;" chapter="handbook">
 	</h2>
 	<% if ($chapter eq 'handbook') { %>
-		<% my $today_label = localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d, %Y'); %>
+		<% my $today_label = POSIX::strftime('%A, %B %d, %Y', localtime(&subs::rightNow() / 1000)); %>
 		<h4 class="handbook_link hover handbook_today_entry" type="today" chapter="today" hint="<%= &subs::ui('The day as a journal') %>">
 			<img class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/home.png') %>">
 			<%= &subs::ui('Today') %>
