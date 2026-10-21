@@ -399,7 +399,13 @@ def pid_alive(pid):
 
 
 def _jawn_master_pids():
-    """PIDs of a running 'perl ./jawn' master, if any (scans /proc)."""
+    """PIDs of a running jawn master, however it was invoked (scans /proc).
+
+    The desktop starts it as `perl ./jawn`, but an autostart or a terminal can
+    use the absolute path (`perl /home/.../jawn`). Matching only `./jawn` made
+    the guard miss a master that was merely mid-restart and start a second tree
+    (2026-10-21), so match the script's basename instead.
+    """
     pids = []
     for name in os.listdir("/proc"):
         if not name.isdigit():
@@ -410,7 +416,9 @@ def _jawn_master_pids():
         except OSError:
             continue
         cmd = raw.decode("utf-8", "replace")
-        if "perl" in cmd and "./jawn" in cmd:
+        if "perl" not in cmd:
+            continue
+        if any(os.path.basename(part) == "jawn" for part in cmd.split()):
             pids.append(int(name))
     return pids
 
