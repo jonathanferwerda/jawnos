@@ -30,6 +30,7 @@
 		border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:6px; }
 	.people_code_row button { padding:7px 12px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); cursor:pointer; font-size:13px; }
+	.people_nfc_status { display:block; min-height:18px; font-size:12px; color:var(--muted,#8e8e8e); }
 	.people_name_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:8px 0; }
 	.people_name_row input { min-width:180px; padding:6px 8px; border:1px solid var(--line);
 		border-radius:8px; background:var(--panel); font-size:14px; }
@@ -81,13 +82,18 @@
 			<input type="file" id="people_crest_file" accept="image/*" style="display:none">
 			<% if ($crest->{'uuid'}) { %>
 				<button id="people_crest_card" hint="Download card"><%= &subs::ui('Download card') %></button>
+				<button id="people_crest_card_save" hint="Save card here"><%= &subs::ui('Save card here') %></button>
 				<button id="people_crest_qr_button" hint="Show QR"><%= &subs::ui('Show QR') %></button>
+				<% if ($nfc) { %>
+					<button id="people_crest_nfc_write" hint="Write to NFC tag"><%= &subs::ui('Write to NFC tag') %></button>
+				<% } %>
 			<% } %>
 			<button id="people_refresh" hint="Refresh"><%= &subs::ui('Refresh') %></button>
 		</div>
 	</div>
 
 	<div id="people_status"></div>
+	<span class="nfc_read_status people_nfc_status"></span>
 	<div id="people_crest_qr" class="people_qr_box"></div>
 
 	<div class="people_name_row">

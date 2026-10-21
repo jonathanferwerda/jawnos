@@ -37,7 +37,7 @@
 	],
 	"scanners": [{
 		"name": "Officejet LivingRoom",
-		"address": "hpaio:/net/officejet_3830_series?ip=192.168.0.74",
+		"address": "hpaio:/net/officejet_3830_series?ip=192.168.2.6",
 		"resolution": "300",
 		"feeds": [ "ADF", "Flatbed" ]
 	}],

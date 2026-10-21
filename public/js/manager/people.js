@@ -61,6 +61,77 @@ $(document).on('click', '#people_crest_card', function() {
 		});
 });
 
+$(document).on('click', '#people_crest_card_save', function() {
+	peopleStatus(peopleT('Saving the card…'));
+	$.ajax({
+		url: '/manager/people/crest/card/save',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) {
+				peopleStatus(peopleT('Saved to') + ' ' + response.path);
+			}
+			else {
+				peopleStatus((response && response.error) || peopleT('Could not save the card.'));
+			}
+		},
+		error: function() { peopleStatus(peopleT('Could not save the card.')); }
+	});
+});
+
+$(document).on('click', '#people_crest_nfc_write', function() {
+	peopleStatus(peopleT('Preparing the code…'));
+	$.ajax({
+		url: '/manager/people/crest/qr',
+		type: 'GET',
+		data: { format: 'json', timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (!response || !response.ok || !response.code) {
+				peopleStatus((response && response.error) || peopleT('Could not make the code.'));
+				return;
+			}
+			peopleCrestNfcWrite(response.code);
+		},
+		error: function() { peopleStatus(peopleT('Could not make the code.')); }
+	});
+});
+
+async function peopleCrestNfcWrite(code) {
+	if (!window.JawnNFC || typeof nfc === 'undefined' || !nfc.ndef) {
+		peopleStatus(peopleT('No NFC reader here.'));
+		return;
+	}
+	if (nfc.scanning) {
+		nfc.scanning = false;
+		if (nfc.abort) { nfc.abort.abort(); }
+		nfc.writing = true;
+		setTimeout(function() { nfc.writing = false; peopleCrestNfcWrite(code); }, 1000);
+		return;
+	}
+	try {
+		nfc.writing = true;
+		nfc.scanning = false;
+		var encoder = new TextEncoder();
+		await nfc.ndef.write({
+			records: [{
+				recordType: 'mime',
+				mediaType: 'application/json',
+				data: encoder.encode(JSON.stringify({ crest_code: code }))
+			}]
+		});
+		nfc.lastWrite = Date.now();
+		peopleStatus(peopleT('Written to the tag.'));
+	}
+	catch (error) {
+		peopleStatus(peopleT('Could not write the tag.'));
+	}
+	nfc.writing = false;
+	nfc.scanning = false;
+	if (typeof nfcListener === 'function') { nfcListener(); }
+}
+
 $(document).on('click', '#people_crest_qr_button', function() {
 	var box = $('#people_crest_qr').empty().text(peopleT('Making the code…'));
 	$.ajax({

@@ -9246,6 +9246,13 @@ post '/manager/nfc/read' => sub($c) {
 	my $msg = eval { return decode_json $jmessage } || [];
 
 	foreach my $message ( @{$msg} ) {
+		if (ref $message eq 'HASH' && defined $message->{'crest_code'}) {
+			my $result = &people_crest_import_code($c, $message->{'crest_code'});
+			$response->{'status'} = $result->{'ok'}
+				? ('Crest imported: ' . ($result->{'crest'}->{'name'} || ''))
+				: ('Crest import failed: ' . ($result->{'error'} || 'unknown'));
+			next;
+		}
 		my $nfcs = &subs::db_query('select * from settings where setting=? and value like ? and device=?', 'nfc', '%' . $message->{'uuid'} . '%', &subs::device_setter())->hashes->[0];
 		my $app = $nfcs->{'app'};
 		my $settings = &subs::settings_grabber({ app => $app });
@@ -18637,6 +18644,7 @@ get '/manager/people' => sub($c) {
 	if (&subs::device_setter() eq 'mobile' && grep { defined $_ && $_ =~ /^[01]$/ } @{ $gb::capabilities->{'mobile'}->{'camera'} || [] }) {
 		$camera = 1;
 	}
+	my $nfc = (&subs::device_setter() eq 'mobile') ? 1 : 0;
 	my $content = $c->render_to_string(
 		template => 'apps/people',
 		crest => $crest,
@@ -18646,6 +18654,7 @@ get '/manager/people' => sub($c) {
 		people => $people,
 		scanner => $scanner,
 		camera => $camera,
+		nfc => $nfc,
 		device => &subs::device_setter(),
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'people', title => &subs::lang('people'), contents => $content }, $c->param('timestamp'));
@@ -18671,11 +18680,11 @@ get '/manager/people/crest/qr' => sub($c) {
 	$c->render(data => $png);
 };
 
-get '/manager/people/crest/card' => sub($c) {
-	unless (&people_citizen($c)) { $c->rendered(403); return; }
+sub people_crest_card {
+	my ($c) = @_;
 	my $suds = &subs::session_suds($c);
 	my $crest = &subs::crest_record_read();
-	unless ($crest->{'uuid'} && $suds) { $c->rendered(404); return; }
+	return undef unless $crest->{'uuid'} && $suds;
 	my $device = $crest->{'device'} || &subs::device_setter();
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
 	my $file = &subs::crest_image_file($crest, 'image');
@@ -18700,12 +18709,62 @@ get '/manager/people/crest/card' => sub($c) {
 	}
 	my $card = { format => 'jawnos-crest-card', card_version => 1, crest => $crest, vouches => \@vouches };
 	$card->{'image'} = $image if defined $image;
-	my $name = $crest->{'name'} || 'crest';
+	return $card;
+}
+
+get '/manager/people/crest/card' => sub($c) {
+	unless (&people_citizen($c)) { $c->rendered(403); return; }
+	my $card = &people_crest_card($c);
+	unless ($card) { $c->rendered(404); return; }
+	my $name = $card->{'crest'}->{'name'} || 'crest';
 	$name =~ s/[^\w.\-]+/_/g;
 	$c->res->headers->content_type('application/json');
 	$c->res->headers->content_disposition('attachment; filename="crest-' . $name . '.json"');
 	$c->render(data => encode_json($card));
 };
+
+post '/manager/people/crest/card/save' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $card = &people_crest_card($c);
+	unless ($card) { return $c->render(json => { ok => 0, error => 'no crest yet' }); }
+	my $dir = &subs::home('~/Downloads');
+	$dir = &subs::home('~/Documents') unless -d $dir;
+	$dir = &subs::home('~') unless -d $dir;
+	my $name = $card->{'crest'}->{'name'} || 'crest';
+	$name =~ s/[^\w.\-]+/_/g;
+	my $path = "$dir/crest-$name.json";
+	$path = "$dir/crest-$name-" . &subs::rightNow() . '.json' if -e $path;
+	my $ok = eval { write_file($path, encode_json($card)); 1 };
+	unless ($ok && -e $path) { return $c->render(json => { ok => 0, error => 'the card could not be written' }); }
+	return $c->render(json => { ok => 1, path => $path });
+};
+
+sub people_crest_import_code {
+	my ($c, $code) = @_;
+	return { ok => 0, error => 'citizen only' } unless (($c->session('privilege') || '') eq 'citizen');
+	my $record = &subs::crest_code_parse($code);
+	return { ok => 0, error => 'the crest code is not readable' } unless ref $record eq 'HASH';
+	return { ok => 0, error => 'the crest record does not verify' } unless &subs::crest_verify_record($record);
+	my $own = &subs::crest_record_read();
+	return { ok => 0, error => 'that is this house\'s own crest' } if $own->{'uuid'} && $record->{'uuid'} && $own->{'uuid'} eq $record->{'uuid'};
+	my $existing = &subs::crest_peer_find($record->{'uuid'});
+	my $entry = {
+		crest => $record,
+		device => &subs::device_setter(),
+		imported_at => &subs::rightNow(),
+		status => 'imported',
+		vouches => [],
+	};
+	if ($existing) {
+		$entry->{'imported_at'} = $existing->{'imported_at'} || $entry->{'imported_at'};
+		$entry->{'vouch'} = $existing->{'vouch'} if ref $existing->{'vouch'} eq 'HASH';
+		$entry->{'met_at'} = $existing->{'met_at'} if defined $existing->{'met_at'};
+		$entry->{'status'} = $existing->{'status'} if (($existing->{'status'} || '') eq 'met');
+		$entry->{'image_file'} = $existing->{'image_file'} if $existing->{'image_file'};
+	}
+	return { ok => 0, error => 'the crest could not be stored' } unless &subs::crest_peer_upsert($entry);
+	return { ok => 1, crest => $record, entry => $entry };
+}
 
 post '/manager/people/crest/scan' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'citizen only' }) unless &people_citizen($c);
@@ -18789,16 +18848,12 @@ post '/manager/people/crest/import' => sub($c) {
 	}
 	return $fail->('no card was supplied') unless length $raw;
 	return $fail->('that card is too large') if length $raw > 5_000_000;
-	my $card;
 	if ($raw =~ /^\s*CREST1Z?:/i) {
-		my $code_record = &subs::crest_code_parse($raw);
-		$card = { format => 'jawnos-crest-code', crest => $code_record, vouches => [] } if $code_record;
+		return $c->render(json => &people_crest_import_code($c, $raw));
 	}
-	else {
-		$card = eval { decode_json($raw) };
-	}
+	my $card = eval { decode_json($raw) };
 	return $fail->('that card is not readable') unless ref $card eq 'HASH';
-	return $fail->('that is not a JawnOS crest card') unless (($card->{'format'} || '') eq 'jawnos-crest-card' || ($card->{'format'} || '') eq 'jawnos-crest-code');
+	return $fail->('that is not a JawnOS crest card') unless (($card->{'format'} || '') eq 'jawnos-crest-card');
 	my $incoming = $card->{'crest'};
 	return $fail->('the card has no crest record') unless ref $incoming eq 'HASH';
 	return $fail->('the crest record does not verify') unless &subs::crest_verify_record($incoming);
