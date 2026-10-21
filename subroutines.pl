@@ -7136,6 +7136,68 @@ sub sync_table_digest {
 	return { count => ($row->{'c'} || 0) + 0, sum => ($row->{'s'} || 0) + 0, max => ($row->{'m'} || 0) + 0 };
 }
 
+# The same count/sum/max as `sync_table_digest`, but per band of `server_time`:
+# the whole-table digest is the cheap gate that says a table moved, this says
+# where it moved, so a repair can read the bands that differ instead of the
+# whole table. Bands are fixed-width and computed by the same SQL on both
+# machines, so a band means the same range on each side. A negative server_time
+# is folded into band 0; the reader uses [-inf, band) for that band.
+our $sync_bucket_band = 7 * 24 * 60 * 60 * 1000;   # one week
+our $sync_bucket_low = -9223372036854775807;
+
+sub sync_bucket_normalize {
+	my ($band) = @_;
+	return $sync_bucket_band unless defined $band && $band =~ /^\d+$/ && $band > 0;
+	return $band + 0;
+}
+
+sub sync_table_buckets {
+	my ($table, $band) = @_;
+	$band = &sync_bucket_normalize($band);
+	my $sql_table = $table eq 'settings_durable' ? 'settings' : $table;
+	my $where = '';
+	if ($sql_table eq 'appointments') { $where = " where (status is null or status != 'deleting')"; }
+	elsif ($table eq 'settings_durable') { $where = ' where ' . &durable_settings_where(); }
+	my $rows = &db_query("select case when cast(server_time as integer) < 0 then 0 else cast(cast(server_time as integer) / $band as integer) end as b, count(*) as c, coalesce(sum(cast(server_time as integer)),0) as s, coalesce(max(server_time),0) as m from $sql_table$where group by b order by b")->hashes || [];
+	my %buckets;
+	foreach my $r (@{$rows}) {
+		my $b = defined $r->{'b'} ? ($r->{'b'} + 0) : 0;
+		$buckets{$b} = { count => ($r->{'c'} || 0) + 0, sum => ($r->{'s'} || 0) + 0, max => ($r->{'m'} || 0) + 0 };
+	}
+	return { band => $band, buckets => \%buckets };
+}
+
+# Bands whose picture moved between the baseline (the peer's last reconciled
+# map) and now. A band only in the baseline is a deletion and has no rows to
+# fetch; a band only in `now` is new.
+sub sync_bucket_diff {
+	my ($base, $now) = @_;
+	return [] unless ref $base eq 'HASH' && ref $now eq 'HASH';
+	my @moved;
+	foreach my $b (keys %{$now}) {
+		my $old = $base->{$b};
+		unless (ref $old eq 'HASH') { push @moved, $b; next; }
+		my $new = $now->{$b};
+		next if (($old->{'count'} || 0) == ($new->{'count'} || 0)
+			&& ($old->{'sum'} || 0) == ($new->{'sum'} || 0)
+			&& ($old->{'max'} || 0) == ($new->{'max'} || 0));
+		push @moved, $b;
+	}
+	return [ sort { $a <=> $b } @moved ];
+}
+
+# The half-open server_time range a band covers. Band 0 owns everything below
+# one band, including a pathological negative server_time.
+sub sync_bucket_range {
+	my ($band, $b) = @_;
+	$band = &sync_bucket_normalize($band);
+	$b = 0 unless defined $b && $b =~ /^-?\d+$/;
+	$b += 0;
+	my $from = ($b <= 0) ? $sync_bucket_low : $b * $band;
+	my $to = ($b + 1) * $band;
+	return ($from, $to);
+}
+
 our $sync_digest_cache;
 sub sync_digest_map {
 	my ($force) = @_;

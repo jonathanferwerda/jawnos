@@ -7483,10 +7483,16 @@ get '/manager/voice_download' => sub($c) {
 # cursor is the last rowid the caller already has, so a dropped tunnel costs the
 # batch, not the pull; the total is sent with the first batch for progress.
 sub sync_rows_batch {
-	my ($remote, $signatorial, $secret, $table, $cut, $after) = @_;
+	my ($remote, $signatorial, $secret, $table, $cut, $after, $range) = @_;
 	my $url = $remote->{'manager'} . '/manager/sync_rows?signatorial=' . $signatorial
 		. '&table=' . Mojo::Util::url_escape($table)
-		. '&cut=' . int($cut) . '&limit=500';
+		. '&limit=500';
+	if (ref $range eq 'HASH' && defined $range->{'from'} && defined $range->{'to'}) {
+		$url .= '&from=' . int($range->{'from'}) . '&to=' . int($range->{'to'});
+	}
+	else {
+		$url .= '&cut=' . int($cut);
+	}
 	$url .= '&after=' . Mojo::Util::url_escape($after) if defined $after && $after ne '';
 	my $res;
 	for my $attempt (1 .. 3) {
@@ -7517,6 +7523,36 @@ sub sync_rows_batch {
 	# visible in `backups.size` and the job note, the way a snapshot's size was.
 	$batch->{'wire_bytes'} = length($res->body // '');
 	return ($batch, undef);
+}
+
+# One table's band map, over the same sealed peer rail. The map is a few integers
+# per band, so it is one request, not a cursor. An older peer has no route: that
+# is a plain failure and the caller falls back to the whole-table read.
+sub sync_buckets_batch {
+	my ($remote, $signatorial, $secret, $table, $band) = @_;
+	my $url = $remote->{'manager'} . '/manager/sync_buckets?signatorial=' . $signatorial
+		. '&table=' . Mojo::Util::url_escape($table)
+		. '&band=' . int($band);
+	my $res;
+	for my $attempt (1 .. 3) {
+		$res = eval { $remote->{'ua'}->inactivity_timeout(60)->request_timeout(120)->get($url)->result };
+		last if $res && $res->is_success;
+		last if $res && $res->code < 500;
+		sleep 1 if $attempt < 3;
+	}
+	return (undef, 'the peer did not answer') unless $res;
+	return (undef, 'HTTP ' . $res->code) unless $res->is_success;
+	my $type = $res->headers->content_type || '';
+	unless ($type =~ m{octet-stream}) {
+		my $err = eval { decode_json($res->body) } || {};
+		return (undef, $err->{'error'} || 'the peer refused the bucket map');
+	}
+	my $plain = eval { &subs::decrypter($secret, $res->body) };
+	return (undef, 'the bucket map would not decrypt') unless defined $plain && length $plain;
+	my $map = eval { decode_sereal($plain) };
+	return (undef, 'the bucket map would not decode') unless ref $map eq 'HASH';
+	return (undef, $map->{'error'} || 'the peer refused the bucket map') unless $map->{'ok'};
+	return ($map, undef);
 }
 
 # Pull a peer's rows as encrypted batches and merge them with the same per-row
@@ -7599,6 +7635,10 @@ sub sync_rows_pull {
 	my $watermark = 0;
 	my $wire = 0;
 	my $failed;
+	# The peer picture we last reconciled: the baseline the band diff is measured
+	# against. Each table's fresh map, when one is fetched, rides along below.
+	my $prior_seen = &subs::sync_seen_get($remote_signatorial) || {};
+	my $bucket_maps = {};
 	foreach my $table (@ordered) {
 		my $cut = (exists $plan->{$table} && defined $plan->{$table}) ? $plan->{$table} : $default_cut;
 		$cut = 0 unless defined $cut && $cut =~ /^[0-9]+$/;
@@ -7607,6 +7647,91 @@ sub sync_rows_pull {
 			# database) has no watermark to delta against: send the whole table once.
 			$settings_count = &subs::db_query('select count(*) as c from settings')->hashes->[0]->{'c'} || 0 if $settings_count < 0;
 			$cut = 0 unless $settings_count;
+		}
+		# A whole-table read is the only expensive plan. When the peer's last
+		# reconciled band map is on hand, ask which bands moved and read only
+		# those; the whole-table digest was the cheap gate that got us here.
+		# `settings` is left alone (the durable subset has its own rules), and an
+		# older peer or a failed map simply falls through to the plain read.
+		my $bands;
+		my $base = (ref $prior_seen->{$table} eq 'HASH') ? $prior_seen->{$table} : undef;
+		if ($cut == 0 && $table ne 'settings' && ref $base eq 'HASH' && ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }) {
+			my $band = &subs::sync_bucket_normalize($base->{'band'});
+			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, $table, $band);
+			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
+				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
+				# The map carries the peer's clock, the way a first batch does: even
+				# a repair that reads no rows must still advance the watermark so
+				# the new picture is recorded below and the plan moves on.
+				$watermark = $bmap->{'server_time'} if $bmap->{'server_time'} && $bmap->{'server_time'} > $watermark;
+				my $moved = &subs::sync_bucket_diff($base->{'buckets'}, $bmap->{'buckets'});
+				my $moved_n = scalar @{$moved};
+				my $bands_total = scalar keys %{ $bmap->{'buckets'} };
+				# A table changed across most of its bands is cheaper read whole: a
+				# walk is a request per band on top of the same rows.
+				$bands = $moved if ($moved_n && $moved_n <= 100 && $moved_n <= ($bands_total * 0.5));
+				if ($moved_n == 0) {
+					# Every band matches the baseline: nothing to read. Record the
+					# new picture and move on instead of re-reading the table.
+					$count++;
+					&subs::sync_job_step($job, 'merge:' . $table, { label => 'merge ' . $table, state => 'done', current => 1, total => 1 });
+					next;
+				}
+			}
+		}
+		if (ref $bands eq 'ARRAY') {
+			my @queue = ();
+			my @pending = @{$bands};
+			my ($cur_from, $cur_to);
+			my $cursor = '';
+			my $batch_done = 0;
+			my $in_band = 0;
+			my $fetched = 0;
+			my $fetch_error;
+			my $expected = 0;
+			foreach my $b (@pending) {
+				my $bn = $bucket_maps->{$table}->{'buckets'}->{$b};
+				$expected += ($bn->{'count'} || 0) if ref $bn eq 'HASH';
+			}
+			$count++;
+			&subs::sync_job_step($job, 'merge:' . $table, { label => 'merge ' . $table, state => 'running', current => 0, total => $expected });
+			my $next_row = sub {
+				while (1) {
+					if (scalar @queue) {
+						my $row = shift @queue;
+						delete $row->{'__sync_rowid'} if ref $row eq 'HASH';
+						$watermark = $row->{'server_time'} if ref $row eq 'HASH' && defined $row->{'server_time'} && $row->{'server_time'} > $watermark;
+						return $row;
+					}
+					return undef if $fetch_error;
+					if ($in_band) {
+						if ($batch_done) { $in_band = 0; $cursor = ''; $cur_from = $cur_to = undef; next; }
+					}
+					else {
+						my $b = shift @pending;
+						return undef unless defined $b;
+						($cur_from, $cur_to) = &subs::sync_bucket_range($bucket_maps->{$table}->{'band'}, $b);
+						$in_band = 1;
+						$cursor = '';
+						$batch_done = 0;
+					}
+					my ($batch, $why) = &sync_rows_batch($remote, $signatorial, $secret, $table, 0, $cursor,
+						(defined $cur_from ? { from => $cur_from, to => $cur_to } : undef));
+					unless ($batch) { $fetch_error = $why || 'a band failed'; return undef; }
+					@queue = @{ $batch->{'rows'} || [] };
+					$cursor = $batch->{'next'} || '';
+					$batch_done = (($batch->{'done'} || $cursor eq '') ? 1 : 0);
+					$wire += $batch->{'wire_bytes'} || 0;
+					$fetched += scalar @queue;
+					&subs::sync_job_step($job, 'merge:' . $table, { current => $fetched, total => ($expected || $fetched) });
+				}
+			};
+			my $short = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total, $expected);
+			if ($short || $fetch_error) {
+				$failed = $table . ': ' . ($fetch_error || 'short read');
+				last;
+			}
+			next;
 		}
 		my ($first, $err, $skip) = &sync_rows_batch($remote, $signatorial, $secret, $table, $cut, '');
 		next if $skip;
@@ -7647,6 +7772,14 @@ sub sync_rows_pull {
 			$failed = $table . ': ' . ($fetch_error || 'short read');
 			last;
 		}
+		# A full read is the moment to learn the peer's band map, so the next
+		# divergence can be repaired band by band instead of read whole again.
+		if ($cut == 0 && $table ne 'settings' && !$bucket_maps->{$table}) {
+			my ($bmap) = &sync_buckets_batch($remote, $signatorial, $secret, $table, $subs::sync_bucket_band);
+			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
+				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
+			}
+		}
 	}
 	&merge_finish($ctx);
 	if ($failed) {
@@ -7676,7 +7809,7 @@ sub sync_rows_pull {
 			});
 		}
 		if (ref $params->{'remote_digest'} eq 'HASH') {
-			my $prior = &subs::sync_seen_get($remote_signatorial) || {};
+			my $prior = $prior_seen;
 			my %seen_map;
 			foreach my $t ( keys %{$params->{'remote_digest'}} ) {
 				my $d = $params->{'remote_digest'}->{$t};
@@ -7685,6 +7818,18 @@ sub sync_rows_pull {
 				my $cut = $plan->{$pk};
 				my $full = (defined $cut && $cut == 0) ? 1 : ((ref $prior->{$t} eq 'HASH' && $prior->{$t}->{'full'}) ? 1 : 0);
 				$seen_map{$t} = { %{$d}, full => $full };
+				my $bm = $bucket_maps->{$t};
+				if (ref $bm eq 'HASH' && ref $bm->{'buckets'} eq 'HASH') {
+					$seen_map{$t}->{'band'} = $bm->{'band'};
+					$seen_map{$t}->{'buckets'} = $bm->{'buckets'};
+				}
+				elsif (ref $prior->{$t} eq 'HASH' && ref $prior->{$t}->{'buckets'} eq 'HASH') {
+					# Keep the map we already held: it is an older picture of this peer,
+					# so a later diff may re-read a band a delta already covered, but it
+					# never misses one.
+					$seen_map{$t}->{'band'} = $prior->{$t}->{'band'};
+					$seen_map{$t}->{'buckets'} = $prior->{$t}->{'buckets'};
+				}
 			}
 			&subs::sync_seen_set($remote_signatorial, \%seen_map);
 		}
@@ -7726,8 +7871,19 @@ get '/manager/sync_rows' => sub ($c) {
 	$limit = 500 unless defined $limit && $limit =~ /^\d+$/ && $limit > 0 && $limit <= 2000;
 	my $after = $c->param('after');
 	$after = '' unless defined $after && $after =~ /^\d+$/;
-	my $where = ' where server_time >= ?';
-	my @args = ($cut);
+	# A band request names a half-open server_time range instead of a lower cut.
+	# The bucket repair walks bands this way; `cut` stays for every other caller.
+	my $from = $c->param('from');
+	my $to = $c->param('to');
+	my ($where, @args);
+	if (defined $from && $from =~ /^-?\d+$/ && defined $to && $to =~ /^-?\d+$/ && $to > $from) {
+		$where = ' where cast(server_time as integer) >= ? and cast(server_time as integer) < ?';
+		@args = ($from + 0, $to + 0);
+	}
+	else {
+		$where = ' where server_time >= ?';
+		@args = ($cut);
+	}
 	my @after_args;
 	if ($after ne '') {
 		$where .= ' and rowid > ?';
@@ -7752,6 +7908,51 @@ get '/manager/sync_rows' => sub ($c) {
 	my $sealed = eval { &subs::encrypter($secret, $plain) };
 	unless (defined $sealed) {
 		$c->render(json => { ok => 0, error => 'could not seal the batch' });
+		return;
+	}
+	$c->res->headers->content_type('application/octet-stream');
+	$c->render(data => $sealed);
+};
+
+# One table's band map: the handshake digest's count/sum/max, per server_time
+# band. Asked for only when a whole-table digest has moved, so a repair can name
+# the bands that differ instead of re-reading the table. Peer-gated and sealed
+# exactly like `/manager/sync_rows`.
+get '/manager/sync_buckets' => sub ($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+		$c->rendered(403);
+		return;
+	}
+	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
+	my $security = &subs::db_select('security', ['credential'], { level => 1 })->hash || {};
+	my $secret = &subs::decrypter($suds, $security->{'credential'} || '');
+	unless (defined $secret && length $secret) {
+		$c->render(json => { ok => 0, error => 'no shared credential' });
+		return;
+	}
+	my $table = $c->param('table') || '';
+	my %allowed = map { $_ => 1 } @{ &subs::sync_table_list() };
+	unless ($allowed{$table}) {
+		$c->render(json => { ok => 0, error => 'unknown table' });
+		return;
+	}
+	my $map = &subs::sync_table_buckets($table, $c->param('band'));
+	# A tiny band can name a bucket per row. Refuse the reply rather than build
+	# one the caller cannot use; it falls back to a whole-table read.
+	if (scalar(keys %{ $map->{'buckets'} }) > 20000) {
+		$c->render(json => { ok => 0, error => 'too many buckets' });
+		return;
+	}
+	my $plain = eval { encode_sereal({ ok => 1, table => $table, band => $map->{'band'}, buckets => $map->{'buckets'}, server_time => &subs::rightNow() }, { compress => SRL_ZSTD, compress_level => 3 }) };
+	unless (defined $plain) {
+		$c->render(json => { ok => 0, error => 'could not encode the buckets' });
+		return;
+	}
+	my $sealed = eval { &subs::encrypter($secret, $plain) };
+	unless (defined $sealed) {
+		$c->render(json => { ok => 0, error => 'could not seal the buckets' });
 		return;
 	}
 	$c->res->headers->content_type('application/octet-stream');
@@ -16693,7 +16894,7 @@ post '/manager/configure/merge_database' => sub($c) {
 # The body keeps its original `next` statements: a one-pass ROW label makes a row's
 # `next` leave just that row, while a `next` inside a nested loop still binds to it.
 sub merge_table_rows {
-	my ($ctx, $q, $next_row, $results_size, $count, $table_total) = @_;
+	my ($ctx, $q, $next_row, $results_size, $count, $table_total, $expected) = @_;
 	my $configuration = $ctx->{'configuration'};
 	my $misc_settings = $ctx->{'misc_settings'};
 	my $device = $ctx->{'device'};
@@ -16712,14 +16913,15 @@ sub merge_table_rows {
 	my %local_columns = map { $_->{'name'} => 1 } @{ &subs::db_query('select name from pragma_table_info(?)', $q)->hashes || [] };
 	my %skewed_columns;
 						if ($sync_job) {
+							my $shown = $expected || $results_size;
 							my %step = (label => 'merge ' . $q, state => 'running', current => 0);
-							$step{'total'} = $results_size if $results_size;
-							$step{'note'} = $results_size . ' row' . ($results_size == 1 ? '' : 's') if $results_size;
+							$step{'total'} = $shown if $shown;
+							$step{'note'} = $shown . ' row' . ($shown == 1 ? '' : 's') if $shown;
 							&subs::sync_job_step($sync_job, 'merge:' . $q, \%step);
 						}
 						#&subs::say_it('Now merging ' . $results . ' ' .$q);
 						my $progress = $count / $table_total * 100;
-						my $html = '<h3>Now merging ' . $results_size . ' ' . $q . '</h3><br>';
+						my $html = '<h3>Now merging ' . ($expected || $results_size) . ' ' . $q . '</h3><br>';
 						&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour,
 							progress => int($count / (($table_total) || 1) * 100), state => 'running' });
 						my $percentage = 0;
