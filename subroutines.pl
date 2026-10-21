@@ -21218,11 +21218,14 @@ sub pen_model_list() {
 	my $ua = Mojo::UserAgent->new;
 	my $url = 'http://localhost:11434/api/tags';
 
-	# Fetch the list of models from Ollama synchronously
-	my $tx = $ua->get($url);
+	# Fetch the list of models from Ollama synchronously. A machine with no Ollama
+	# daemon (the server, for one) is a normal state: a refused connection must
+	# leave an empty list and a note in the log, never take the Plat page down.
+	my $tx = eval { $ua->get($url) };
 
 	my $models_list = [];
-	if (my $res = $tx->result) {
+	my $res = $tx ? eval { $tx->result } : undef;
+	if ($res) {
 		if ($res->is_success) {
 			# Parse the JSON response safely
 			my $data = eval { decode_json($res->body) };
@@ -21236,8 +21239,8 @@ sub pen_model_list() {
 			$log->error('Ollama connection failed with status: ' . $res->code);
 		}
 	} else {
-		my $err = $tx->error;
-		$log->error('Ollama API request failed: ' . $err->{'message'});
+		my $err = $tx ? eval { $tx->error } : undef;
+		$log->error('Ollama API request failed: ' . (($err && $err->{'message'}) || $@ || 'no response'));
 	}
 	$log->info(Dumper $models_list);
 	return $models_list;
@@ -21255,15 +21258,17 @@ sub cloudflare_model_list() {
 		my $url = 'https://api.cloudflare.com/client/v4/accounts/'. $cloudflare_account . '/ai/models/search?page=1&per_page=1000';
 
 
-		# Fetch the list of models from Ollama synchronously
-		my $tx = $ua->get($url => {
+		# Fetch the list of Cloudflare models synchronously. The same rule as the
+		# Ollama probe: an unreachable API leaves an empty list, not a dead page.
+		my $tx = eval { $ua->get($url => {
 		    'Authorization' => "Bearer $cloudflare_token",
 		    'Content-Type'  => 'application/json'
-		});
+		}) };
 
 		my $models_list = [];
 		$log->info($url);
-		if (my $res = $tx->result) {
+		my $res = $tx ? eval { $tx->result } : undef;
+		if ($res) {
 			if ($res->is_success) {
 				# Parse the JSON response safely
 				my $data = eval { decode_json($res->body) };
@@ -21285,8 +21290,8 @@ sub cloudflare_model_list() {
 				$log->error('Cloudflare connection failed with status: ' . $res->code);
 			}
 		} else {
-			my $err = $tx->error;
-			$log->error('Cloudflare API request failed: ' . $err->{'message'});
+			my $err = $tx ? eval { $tx->error } : undef;
+			$log->error('Cloudflare API request failed: ' . (($err && $err->{'message'}) || $@ || 'no response'));
 		}
 		$log->info(Dumper $models_list);
 		return $models_list;
