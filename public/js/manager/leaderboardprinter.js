@@ -15,14 +15,22 @@ function headerPrinter(ctx,appts,title) {
 	$('#header').html(clock_in_bar ? '' : formatted_time);
 
 	// the divider under the old header text - a moveTo alone never drew a line -
-	// stands only while a top taskbar has lifted the rows down
+	// stands only while a top taskbar has lifted the rows down. It wears the
+	// theme's ink, with the contrasting halo beneath it over a background picture.
 	if (headerHeight > 0) {
+		var ink = jawnosInk();
+		var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 		ctx.save();
-		ctx.strokeStyle = 'yellow';
-		ctx.lineWidth = 10;
 		ctx.beginPath();
 		ctx.moveTo(0, headerHeight);
 		ctx.lineTo(canvas ? canvas.width : $(window).width(), headerHeight);
+		if (halo) {
+			ctx.strokeStyle = halo;
+			ctx.lineWidth = 14;
+			ctx.stroke();
+		}
+		ctx.strokeStyle = ink;
+		ctx.lineWidth = 10;
 		ctx.stroke();
 		ctx.restore();
 	}

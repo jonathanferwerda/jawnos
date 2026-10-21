@@ -49,14 +49,21 @@ function timelinePrinter(appts,sort,offset) {
 	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 
-	// the yellow rail the rows are hung from
+	// the rail the rows are hung from, in the theme's own ink so it belongs to
+	// the scheme. Over a background picture that ink can vanish, so the
+	// contrasting halo is laid underneath it first.
 	ctx.save();
-	ctx.strokeStyle = 'yellow';
-	ctx.lineWidth = 8;
 	ctx.lineCap = 'round';
 	ctx.beginPath();
 	ctx.moveTo(canvas.width / 2, 80);
 	ctx.lineTo(canvas.width / 2, canvas.height);
+	if (halo) {
+		ctx.strokeStyle = halo;
+		ctx.lineWidth = 12;
+		ctx.stroke();
+	}
+	ctx.strokeStyle = ink;
+	ctx.lineWidth = 8;
 	ctx.stroke();
 	ctx.restore();
 
