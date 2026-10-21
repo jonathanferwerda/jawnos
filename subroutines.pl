@@ -4050,7 +4050,12 @@ sub device_scan() {
 	my $president = $database;
 
 
-	my $oldjchips = $my_device[0]->{'chip_ids'};
+	# A plain read of $my_device[0]->{...} autovivifies that slot, so an
+	# empty match would become a one-element array and send the branch below
+	# into an update against a row that is not there (a phone with no self
+	# row yet). Keep the read guarded so "no row" stays empty and the insert
+	# branch can create it.
+	my $oldjchips = @my_device ? $my_device[0]->{'chip_ids'} : undef;
 	my $oldchips = eval { return decode_json $oldjchips } || [];
 	if (scalar @{$oldchips} > 0) {
 		foreach my $ci ( @{$oldchips} ) {
