@@ -163,13 +163,14 @@ function clotheslineHanger(clothes) {
 			}
 			else {
 				// an older bundle without texture.js: keep the rail alive
+				var edge_colour = (typeof jawnosButtonBorderColour == 'function') ? jawnosButtonBorderColour() : '';
 				ctx.save();
 				ctx.beginPath();
 				roundRectPath(ctx, bx, by, bw, bh, bh / 2);
 				ctx.fillStyle = tile_colour;
 				ctx.fill();
 				ctx.lineWidth = 1;
-				ctx.strokeStyle = ink;
+				ctx.strokeStyle = edge_colour || ink;
 				ctx.stroke();
 				ctx.fillStyle = (typeof jawnosContrastInk == 'function') ? jawnosContrastInk(tile_colour) : ink;
 				ctx.fillText(v.formatted_name, bx + 10, by + (bh / 2) + 7);

@@ -28,6 +28,9 @@ var jawnosBars = {
 	border: jawnosBarSettingNumber('window_border', 3),
 	// the edge on buttons, image buttons, icons and the canvas clothesline
 	button_border: jawnosBarSettingNumber('button_border', 3),
+	// that edge's colour: blank means follow the theme (and, on the canvas, the
+	// material's own rim)
+	button_border_colour: jawnos_bar_settings['button_border_colour'] || '',
 	// the frame's colour: blank means follow the theme (the ring's own --line)
 	border_colour: jawnos_bar_settings['window_border_colour'] || '',
 	// the bar's furniture in order (drag/drop edit mode writes it), and whether
@@ -97,6 +100,22 @@ function jawnosButtonBorderApply(px) {
 	if (isNaN(v)) { return; }
 	jawnosBars.button_border = Math.max(0, v);
 	document.documentElement.style.setProperty('--button_border', jawnosBars.button_border + 'px');
+	jawnosButtonBorderRepaint();
+}
+// The colour of that same edge. A blank value leaves the property unset, so
+// every control falls back to the theme's --line (and a material keeps its own
+// rim on the canvas); anything else rides the root as --button_border_colour.
+function jawnosButtonBorderColourApply(colour) {
+	colour = colour || '';
+	jawnosBars.button_border_colour = colour;
+	var root = document.documentElement.style;
+	if (colour) { root.setProperty('--button_border_colour', colour); }
+	else { root.removeProperty('--button_border_colour'); }
+	jawnosButtonBorderRepaint();
+}
+// The clothesline is canvas, so a width or colour change has to be painted
+// again by hand; the CSS-only surfaces follow their custom properties.
+function jawnosButtonBorderRepaint() {
 	if (typeof clotheslineHanger == 'function' && typeof wardrobe != 'undefined' && wardrobe && wardrobe.length
 		&& typeof hangingClothes != 'undefined' && hangingClothes == 0) {
 		clotheslineHanger(wardrobe);
@@ -364,6 +383,7 @@ function jawnosBarsApply() {
 	root.setProperty('--button_border', Math.max(0, jawnosBars.button_border) + 'px');
 	// and its colour, unless the theme's --line is asked for (a blank setting)
 	jawnosWindowBorderColourApply(jawnosBars.border_colour);
+	jawnosButtonBorderColourApply(jawnosBars.button_border_colour);
 	root.setProperty('--taskbar_top_h', jawnosTaskbarEdge('top') + 'px');
 	root.setProperty('--taskbar_bottom_h', jawnosTaskbarEdge('bottom') + 'px');
 	root.setProperty('--dock_top_h', jawnosDockTopOffset() + 'px');
@@ -508,6 +528,14 @@ function jawnosMiscRangeInput(input) {
 	}
 }
 
+// A misc colour swatch (the window frame and the button edge): the input event
+// previews on the live screen while the change handler writes it away.
+function jawnosMiscColourInput(input) {
+	var setting = $(input).attr('setting');
+	if (setting == 'button_border_colour') { jawnosButtonBorderColourApply(input.value); }
+	else { jawnosWindowBorderColourApply(input.value); }
+}
+
 // the configure panel writes the setting away as it changes; the bars follow
 // here at once, so the screen shows what was picked
 $(document).on('change', '.misc_setting', function () {
@@ -521,6 +549,7 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'window_border') { jawnosWindowBorderApply($(this).val()); }
 	else if (setting == 'button_border') { jawnosButtonBorderApply($(this).val()); }
 	else if (setting == 'window_border_colour') { jawnosWindowBorderColourApply($(this).val()); return; }
+	else if (setting == 'button_border_colour') { jawnosButtonBorderColourApply($(this).val()); return; }
 	else if (setting == 'texture') { if (typeof jawnosTextureApply == 'function') { jawnosTextureApply($(this).val()); } return; }
 	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }
 	else if (setting == 'start_menu_icon') {

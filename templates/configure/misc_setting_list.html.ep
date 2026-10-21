@@ -244,6 +244,8 @@
 				[ 'button_border', 'Button Border', 'range', 0, 8, 1, 3 ],
 				# the frame's colour, on its own: blank follows the theme (--line)
 				[ 'window_border_colour', 'Window Border Colour', 'colour' ],
+				# the colour of the edge on those same pressed surfaces and the rail
+				[ 'button_border_colour', 'Button Border Colour', 'colour' ],
 				[ 'clothesline_height', 'Clothesline Height', 'range', 20, 120, 4, 40 ],
 			); %>
 			<%# the colour picker starts on the theme's own line colour when the setting
@@ -272,7 +274,7 @@
 						<b><%= $label %></b>
 						<input type="color" id="<%= $key %>" class="misc_setting" device="<%= $dt %>" setting="<%= $key %>"
 							value="<%= $value %>" style="width:110px;height:34px;"
-							oninput="jawnosWindowBorderColourApply(this.value);">
+							oninput="jawnosMiscColourInput(this);">
 					</label>
 				<% } else { %>
 					<% my ($tag, $min, $max, $step, $def) = @{$g}[2 .. 6]; %>

@@ -99,6 +99,9 @@
 				// the canvas clothesline. 0 is meaningful (a bare control), so seed it
 				// empty when unset and let the script's own default (3) apply
 				button_border: '<%= &subs::misc_setting('button_border') // '' %>',
+				// the colour of that edge, independent of the theme's --line; blank
+				// follows the theme (and the material's own rim on the canvas)
+				button_border_colour: '<%= &subs::misc_setting('button_border_colour') || '' %>',
 				clothesline_height: '<%= &subs::misc_setting('clothesline_height') || 40 %>',
 				// the desk's material: classic (Plain), round, sandglass, glass, paper,
 				// fabric, wood or metal; universal.css and the canvas clothesline both

@@ -1,4 +1,4 @@
-<div style="width:100%; height: 100%; box-sizing: border-box; text-align: center; background-color:<%= $config->{$device}->{'configure'}->{'background_colour'} || "#619cfa" %>; border: solid; border-radius:2px;overflow:auto;" class="theme_surface" id="configure">
+<div style="width:100%; height: 100%; box-sizing: border-box; text-align: center; background-color:<%= $config->{$device}->{'configure'}->{'background_colour'} || "#619cfa" %>; border: solid; border-radius: 0 0 var(--window_radius, var(--jawnos-corner, 10px)) var(--window_radius, var(--jawnos-corner, 10px)); overflow:auto;" class="theme_surface" id="configure">
 	<style>
 	/* One responsive system for every Configure tab: a row stacks on a narrow
 	   screen, a wide table scrolls instead of clipping, a control fills the
