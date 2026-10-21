@@ -5,61 +5,101 @@
 
 <div class="item" id="item" item="<%= $item->{'app'} %>" price="<%= $item->{'price'} %>" quote_id="<%= $item->{'quote'}->{'id'} %>" quote_uuid="<%= $item->{'quote'}->{'uuid'} || 'new' %>"
 	formatted_name="<%= &subs::format_name($item->{'app'}) %>" main_image="<%= $item->{'settings'}->{'main_image'} %>">
-	<span class="top_left_corner">
-		<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="<%= &subs::lang('common.save') %>" class="save_quote little_thumb hover" style="display:none;">
-	</span>
-	<span class="top_right_corner">
-		<select class="store_movement" value="<%= $settings->{'store_movement'} %>" style="vertical-align:top;">
-			<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
-				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::store_movement_label($m) %></option>
-			<% } %>
-		</select>
-		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" class="store_item_cancel_button little_thumb hover">
-	</span><br>
-	<span class="hover item_title" onclick="appointmentGrabber('<%= $item->{'app'} %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item->{'app'}) %></span><br>
+	<div class="item_bar">
+		<span class="top_left_corner">
+			<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="<%= &subs::lang('common.save') %>" class="save_quote little_thumb hover" style="display:none;">
+		</span>
+		<span class="top_right_corner">
+			<select class="store_movement" value="<%= $settings->{'store_movement'} %>">
+				<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
+					<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::store_movement_label($m) %></option>
+				<% } %>
+			</select>
+			<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" class="store_item_cancel_button little_thumb hover">
+		</span>
+	</div>
+	<div class="item_title_row">
+		<span class="hover item_title" onclick="appointmentGrabber('<%= $item->{'app'} %>',<%= &subs::rightNow() %>)"><%= &subs::format_name($item->{'app'}) %></span>
+	</div>
+	<div class="item_meta">
+		<% my $item_type = $item->{'settings'}->{'pos'} || $item->{'settings'}->{'mab'} || 'product'; %>
+		<span><%= &subs::lang('common.' . $item_type) %></span>
+		<% if ($item->{'settings'}->{'subcategory'}) { %><span class="item_meta_sep">·</span><span><%= &subs::format_name($item->{'settings'}->{'subcategory'}) %></span><% } %>
+	</div>
 
-	<img id="store_main_image" class="store_main_image" style="<% if (!$item->{'settings'}->{'main_image'} || ! -e $item->{'settings'}->{'main_image'}) { %>display:none;<% } %>" style="display:none;" src="/file_open?file=<%= $item->{'settings'}->{'main_image'} %>">
-	<video id="store_main_video" autoplay controls class="store_main_video" style="display:none;" src="/file_open?file=<%= $item->{'settings'}->{'main_image'} %>"></video><br>
-	<% foreach my $file ( @{$item->{'files'}} ) { %>
-		% my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $file->{'f'}, app => $file->{'app'}, type => $file->{'type'} });
-		% $file->{'f'} = $destination . $asset;
-		% next unless -e $file->{'f'};
-		<img class="little_thumb item_image_thumb hover" type="<%= $file->{'type'} %>" pre_src="/file_open?file=<%= $file->{'f'} %>" src="/file_open?file=<%= $file->{'f'} %>&thumb=ya">
+	<div class="item_media">
+		<img id="store_main_image" class="store_main_image"<% if (!$item->{'settings'}->{'main_image'} || ! -e $item->{'settings'}->{'main_image'}) { %> style="display:none;"<% } %> src="/file_open?file=<%= $item->{'settings'}->{'main_image'} %>" alt="">
+		<video id="store_main_video" autoplay controls class="store_main_video" style="display:none;" src="/file_open?file=<%= $item->{'settings'}->{'main_image'} %>"></video>
+		<% if (scalar @{$item->{'files'}} > 0) { %>
+			<div class="item_thumbs">
+				<% foreach my $file ( @{$item->{'files'}} ) { %>
+					% my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $file->{'f'}, app => $file->{'app'}, type => $file->{'type'} });
+					% $file->{'f'} = $destination . $asset;
+					% next unless -e $file->{'f'};
+					<img class="little_thumb item_image_thumb hover" type="<%= $file->{'type'} %>" pre_src="/file_open?file=<%= $file->{'f'} %>" src="/file_open?file=<%= $file->{'f'} %>&thumb=ya" alt="">
+				<% } %>
+			</div>
+		<% } %>
+	</div>
+
+	<span id="item_description"><%== $item->{'settings'}->{'description'} %></span>
+	<% if (scalar @{$item->{'models'}} == 0 && scalar @{$item->{'options'}} == 0 && !$item->{'settings'}->{'description'}) { %>
+		<p class="item_plain_note"><%= &subs::ui('This item has no models, options or description; its price is below.') %></p>
 	<% } %>
-	<br>
-	<h2 class="display_price centered_display_price" item="<%= $item->{'app'} %>"><%= &subs::price_formatter($item->{'price'}) %></h2>
-	<% if ($item->{'settings'}->{'description'}) { %>
-		<button id="specs_toggle" style="display:none;"><%= &subs::lang('common.specs') %></button>
-		<div id="specs_balloon" style="display:none;"><div id="specs"></div></div>
-		<br>
-	<% } %>
-	<span id="item_description" style="max-width:71.28%;"><%== $item->{'settings'}->{'description'} %></span>
+
 	<% if (scalar @{$manufacturers} > 0) { %>
-		<br>
-		<select id="item_manufacturer_select">
-			<option value=""><%= &subs::lang('common.any') %></option>
-			<% foreach my $man ( @{$manufacturers} ) { %>
-				<option value="<%= $man %>"><%= &subs::format_name($man) %></option>
-			<% } %>
-		</select>
+		<label class="store_control item_manufacturer">
+			<span class="store_control_label"><%= &subs::ui('Manufacturer') %></span>
+			<select id="item_manufacturer_select">
+				<option value=""><%= &subs::lang('common.any') %></option>
+				<% foreach my $man ( @{$manufacturers} ) { %>
+					<option value="<%= $man %>"><%= &subs::format_name($man) %></option>
+				<% } %>
+			</select>
+		</label>
 	<% } %>
+
 	<div class="item_selections" item="<%= $item->{'app'} %>">
 		<%= include 'store/item_selection', item => $item, c => $c %>
 	</div>
-	<div id="price_information" style="">
+
+	<% if ($item->{'settings'}->{'description'}) { %>
+		<button type="button" id="specs_toggle" class="store_text_button" style="display:none;"><%= &subs::lang('common.specs') %></button>
+		<div id="specs_balloon" style="display:none;"><div id="specs"></div></div>
+	<% } %>
+
+	<div id="price_information" class="price_card">
 		<% if ($c->session('privilege') eq 'citizen') { %>
-			<span class="pi display_cost" id="pi_cost" angle="cost"><%= &subs::price_formatter($item->{'cost'}) %></span>
-			<input type="number" class="pi display_cost" style="display:none;" id="pi_cost_edit" angle="cost"><br>
-			<span class="pi display_markup" id="pi_markup" angle="markup"><%= ($markup - 1) * 100 . "%" %></span>
-			<input type="number" class="pi display_markup" style="display:none;" id="pi_markup_edit" angle="markup"><br>
+			<div class="price_cell">
+				<span class="price_label"><%= &subs::lang('common.cost') %></span>
+				<span class="pi display_cost" id="pi_cost" angle="cost"><%= &subs::price_formatter($item->{'cost'}) %></span>
+				<input type="number" class="pi display_cost price_edit" style="display:none;" id="pi_cost_edit" angle="cost">
+			</div>
+			<div class="price_cell">
+				<span class="price_label"><%= &subs::lang('common.markup') %></span>
+				<span class="pi display_markup" id="pi_markup" angle="markup"><%= ($markup - 1) * 100 . "%" %></span>
+				<input type="number" class="pi display_markup price_edit" style="display:none;" id="pi_markup_edit" angle="markup">
+			</div>
 		<% } %>
-		<u><span class="pi display_price" id="pi_price" angle="price"><%= &subs::price_formatter($item->{'price'}) %></span></u>
-		<input type="number" class="pi display_price" style="display:none;" id="pi_price_edit" angle="price"><br>
-		<u><span class="pi display_discount" id="pi_discount" angle="discount"><%= &subs::price_formatter($item->{'discount'}) %></span></u>
-		<input type="number" class="pi display_discount" style="display:none;" id="pi_discount_edit" angle="discount"><br>
-		<u><span class="pi display_tax" id="pi_tax" angle="tax"><%= &subs::price_formatter($item->{'tax'}) %></span></u>
-		<input type="number" class="pi display_tax" style="display:none;" id="pi_tax_edit" angle="tax"><br>
-		<u><span class="pi display_total" id="pi_total" angle="total"><%= &subs::price_formatter($item->{'price'}) %></span></u>
-		<input type="number" class="pi display_total" style="display:none;" id="pi_total_edit" angle="total"><br>
+		<div class="price_cell">
+			<span class="price_label"><%= &subs::lang('common.price') %></span>
+			<span class="pi display_price" id="pi_price" angle="price"><%= &subs::price_formatter($item->{'price'}) %></span>
+			<input type="number" class="pi display_price price_edit" style="display:none;" id="pi_price_edit" angle="price">
+		</div>
+		<div class="price_cell">
+			<span class="price_label"><%= &subs::lang('common.discount') %></span>
+			<span class="pi display_discount" id="pi_discount" angle="discount"><%= &subs::price_formatter($item->{'discount'}) %></span>
+			<input type="number" class="pi display_discount price_edit" style="display:none;" id="pi_discount_edit" angle="discount">
+		</div>
+		<div class="price_cell">
+			<span class="price_label"><%= &subs::lang('common.tax') %></span>
+			<span class="pi display_tax" id="pi_tax" angle="tax"><%= &subs::price_formatter($item->{'tax'}) %></span>
+			<input type="number" class="pi display_tax price_edit" style="display:none;" id="pi_tax_edit" angle="tax">
+		</div>
+		<div class="price_cell price_cell_total">
+			<span class="price_label"><%= &subs::lang('common.total') %></span>
+			<span class="pi display_total" id="pi_total" angle="total"><%= &subs::price_formatter($item->{'price'}) %></span>
+			<input type="number" class="pi display_total price_edit" style="display:none;" id="pi_total_edit" angle="total">
+		</div>
 	</div>
 </div>

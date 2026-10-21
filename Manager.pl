@@ -4277,10 +4277,24 @@ sub store_maker($c) {
 	my $categories = $cat->hashes;
 	my $timestamp = &subs::rightNow();
 	my $settings = &subs::settings_grabber({ app => 'store' });
+	# A category used to be one row per pos/mab setting, so the same category could
+	# appear twice; and every category appeared whether or not it held anything.
+	# Keep one of each and drop the ones with no visible item - an empty shelf is
+	# not a destination, it is a dead end.
+	my %store_seen;
+	my @store_categories;
 	foreach my $s ( @{$categories} ) {
+		next if $store_seen{ $s->{'app'} }++;
 		my $app = $s->{'app'};
 		$s->{'settings'} = &subs::settings_grabber({ app => $app });
+		$s->{'count'} = &store_category_item_count($app, $c->session('privilege'));
+		next unless $s->{'count'} > 0;
+		push @store_categories, $s;
 	}
+	$categories = [ sort { lc($a->{'app'}) cmp lc($b->{'app'}) } @store_categories ];
+	my $store_item_total = 0;
+	$store_item_total += $_->{'count'} foreach @{$categories};
+	my $store_type_counts = &store_type_counts($c->session('privilege'), [ map { $_->{'app'} } @{$categories} ]);
 	my $mail_ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/mail/ws';
 	my $paperboy_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/observer/ws';
 	my $ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/manager/ws';
@@ -4290,6 +4304,8 @@ sub store_maker($c) {
 			template => 'store/store',
 			string => $random_caching_string,
 			categories => $categories,
+			item_total => $store_item_total,
+			type_counts => $store_type_counts,
 			ws_url => $ws_url,
 			mail_ws_url => $mail_ws_url,
 			paperboy_url => $paperboy_url,
@@ -4307,6 +4323,8 @@ sub store_maker($c) {
 			layout => 'store',
 			string => $random_caching_string,
 			categories => $categories,
+			item_total => $store_item_total,
+			type_counts => $store_type_counts,
 			ws_url => $ws_url,
 			mail_ws_url => $mail_ws_url,
 			paperboy_url => $paperboy_url,
@@ -4321,19 +4339,83 @@ sub store_maker($c) {
 
 }
 
+# How many items a category holds, counting only the ones this viewer may see.
+# The Store uses this to hide empty shelves and to print a count beside each one.
+sub store_category_item_count {
+	my ($category, $privilege) = @_;
+	return 0 unless defined $category && length $category;
+	my $sql = q{select count(*) as c from settings where setting='category' and value=? and device=?};
+	my @args = ($category, $device);
+	if (($privilege || '') ne 'citizen') {
+		$sql .= q{ and app in (select app from settings where setting='public' and value='on' and device=?)};
+		push @args, $device;
+	}
+	my $q = &subs::db_query($sql, @args);
+	my $row = $q ? $q->hash : undef;
+	return $row ? ($row->{'c'} + 0) : 0;
+}
+
+# One distinct item per type, so a chip can say how much it would show. A row
+# that carries both a pos and a mab value must not be counted twice.
+sub store_type_counts {
+	my ($privilege, $category_apps) = @_;
+	my %counts = map { $_ => 0 } @gb::store_types;
+	my @cats = @{ $category_apps || [] };
+	return \%counts unless scalar @cats;
+	my $placeholders = join ',', map { '?' } @gb::store_types;
+	my $cat_placeholders = join ',', map { '?' } @cats;
+	# Count only items that actually sit on a shelf: an app wearing pos=event for
+	# its own appointments is not a Store event.
+	my $sql = "select value as type, count(distinct app) as c from settings where setting in ('pos','mab') and device=? and value in ($placeholders) and app in (select app from settings where setting='category' and device=? and value in ($cat_placeholders))";
+	my @args = ($device, @gb::store_types, $device, @cats);
+	if (($privilege || '') ne 'citizen') {
+		$sql .= q{ and app in (select app from settings where setting='public' and value='on' and device=?)};
+		push @args, $device;
+	}
+	$sql .= ' group by value';
+	my $q = &subs::db_query($sql, @args);
+	foreach my $r ( @{ $q ? $q->hashes : [] } ) {
+		$counts{ $r->{'type'} } = $r->{'c'} + 0 if defined $r->{'type'};
+	}
+	return \%counts;
+}
+
+# Item counts for the direct children of a category (or of a subcategory). The
+# $field is the settings key the items carry at that depth: `subcategory` for the
+# first level, `subcategory1` for the next, and so on.
+sub store_subcategory_counts {
+	my ($category, $field, $privilege) = @_;
+	$field = 'subcategory' unless defined $field && $field =~ /^subcategory\d*$/;
+	$field = 'subcategory' if $field eq 'subcategory0';
+	my $sql = "select value as name, count(*) as c from settings where setting=? and device=? and app in (select app from settings where setting='category' and value=? and device=?)";
+	my @args = ($field, $device, $category, $device);
+	if (($privilege || '') ne 'citizen') {
+		$sql .= q{ and app in (select app from settings where setting='public' and value='on' and device=?)};
+		push @args, $device;
+	}
+	$sql .= ' group by value';
+	my $q = &subs::db_query($sql, @args);
+	my %counts;
+	foreach my $r ( @{ $q ? $q->hashes : [] } ) {
+		$counts{ $r->{'name'} } = $r->{'c'} + 0 if defined $r->{'name'};
+	}
+	return \%counts;
+}
+
 get '/store/category_grabber' => sub ($c) {
 	my $category = &subs::unformat_name($c->param('category'));
 	my $subcategory = &subs::unformat_name($c->param('subcategory'));
 	my $types = eval { return decode_json $c->param('types') } || [];
 	my $count = &subs::numeric_formatter($c->param('count') || '');
+	my $privilege = $c->session('privilege') || '';
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $itemq = &subs::db_query('select * from settings where setting=? and value=? and device=?','category',$category,$device);
 
 	my $items = $itemq->hashes;
 	$items = &store_item_merchandiser($items,$types);
-	@{$items} = grep { $_->{'settings'}->{'public'} eq 'on' } @{$items} unless $c->session('privilege') eq 'citizen';
+	@{$items} = grep { ($_->{'settings'}->{'public'} || '') eq 'on' } @{$items} unless $privilege eq 'citizen';
 	if ($subcategory) {
-		@{$items} = grep { $_->{'settings'}->{'subcategory' . $count} eq $subcategory } @{$items};
+		@{$items} = grep { ($_->{'settings'}->{'subcategory' . $count} || '') eq $subcategory } @{$items};
 	}
 	if (scalar @{$types} > 0) {
 		my @temp_items;
@@ -4343,7 +4425,6 @@ get '/store/category_grabber' => sub ($c) {
 		@{$items} = @temp_items;
 	}
 
-
 	my $subcategories;
 	if ($subcategory) {
 		$subcategories = &subs::db_query('select * from subcategory where app=?', $subcategory)->hashes;
@@ -4352,18 +4433,20 @@ get '/store/category_grabber' => sub ($c) {
 	else {
 		$subcategories = &subs::db_query('select * from subcategory where app=?', $category)->hashes;
 	}
-	my $subcategories_text;
+	my $depth_field = $count > 0 ? 'subcategory' . $count : 'subcategory';
+	my $subcategory_counts = &store_subcategory_counts($category, $depth_field, $privilege);
+	my @subcategory_rows;
 	foreach my $sub ( @{$subcategories} ) {
-		$sub->{'settings'} = &subs::settings_grabber({ app => $sub->{'name'} });
-		$subcategories_text  .= '
-			<style>
-				.store_subcategory[category=' . $category . '][subcategory=' . $sub->{'name'} . '][status=closed] {
-					background-color:' .  $sub->{'settings'}->{'colour'} . ';border:solid 2px black;
-				}
-			</style>
-			<div class="store_subcategory hover" count="' . $count . '" status="closed" category="' . $category . '" subcategory="' . $sub->{'name'} . '" style="">' . &subs::format_name($sub->{'name'}) .
-			'</div><div style="display:none;padding-left:'. 20 * (1 + $count) . 'px;" class="store_subcategories" category="' . $category . '" subcategory="' . $sub->{'name'} . '"></div>';
+		my $n = $subcategory_counts->{ $sub->{'name'} } || 0;
+		next unless $n > 0;
+		push @subcategory_rows, {
+			name => $sub->{'name'},
+			label => &subs::format_name($sub->{'name'}),
+			count => $n + 0
+		};
 	}
+	@subcategory_rows = sort { $b->{'count'} <=> $a->{'count'} || lc($a->{'name'}) cmp lc($b->{'name'}) } @subcategory_rows;
+
 	my $rendered = $c->render_to_string(
 		template => 'store/category',
 		items => $items,
@@ -4372,7 +4455,9 @@ get '/store/category_grabber' => sub ($c) {
 	my $returner = {
 		content => $rendered,
 		category => $category,
-		subcategories => $subcategories_text
+		count => scalar @{$items},
+		depth => $count + 0,
+		subcategories => \@subcategory_rows
 	};
 	$c->render(json => $returner);
 };
@@ -4381,20 +4466,25 @@ post '/store/search' => sub($c) {
 	my $search = &subs::unformat_name($c->param('search'));
 	my $timestamp = $c->param('timestamp');
 	my $types = eval { return decode_json $c->param('types') } || [];
+	my $privilege = $c->session('privilege') || '';
 	my $items = &subs::db_query('select distinct(app) as app,* from settings where (setting= ? or setting = ?) and app like ? and device=?', 'pos', 'mab', '%' . $search . '%',$device)->hashes;
+	my %seen;
 	my @temp_items;
 	foreach my $st ( @gb::store_types ) {
-		push @temp_items, grep { $_->{'value'} eq $st } @{$items};
+		# one row per item: an item with both pos and mab was listed twice
+		push @temp_items, grep { ($_->{'value'} || '') eq $st && !$seen{ $_->{'app'} }++ } @{$items};
 	}
-	@{$items} = sort { $a->{'app'} cmp $b->{'app'} } @temp_items;
-	$items = &store_item_merchandiser($items,$types);
+	$items = &store_item_merchandiser(\@temp_items,$types);
+	@{$items} = grep { ($_->{'settings'}->{'public'} || '') eq 'on' } @{$items} unless $privilege eq 'citizen';
+	@{$items} = sort { lc($a->{'app'}) cmp lc($b->{'app'}) } @{$items};
 
 	my $rendered = $c->render_to_string(
 		template => 'store/category',
 		items => $items,
 	);
 	my $returner = {
-		content => $rendered
+		content => $rendered,
+		count => scalar @{$items}
 	};
 	$c->render(json => $returner);
 };
@@ -4417,6 +4507,17 @@ sub store_item_merchandiser($items,$types) {
 
 	foreach my $i ( @{$items} ) {
 		$i->{'settings'} = &subs::settings_grabber({ app => $i->{'app'} });
+		# What the card and the filter chips read. A type lives in either pos or mab
+		# depending on how the item was entered; the first non-blank one is its face.
+		my $type = $i->{'settings'}->{'pos'} || $i->{'settings'}->{'mab'} || 'product';
+		$i->{'type'} = (grep { $_ eq $type } @gb::store_types) ? $type : 'product';
+		$i->{'subcategory'} = $i->{'settings'}->{'subcategory'} || '';
+		# The stored colour is kept as an accent, never as the card's fill: a shelf
+		# painted in its own bright colour ignored the theme. Only a real hex value
+		# is passed through, so a stray value cannot inject CSS.
+		my $colour = $i->{'settings'}->{'colour'} || '';
+		$colour =~ s/^\s+|\s+$//g;
+		$i->{'colour'} = $colour =~ /^#?[0-9a-fA-F]{6}$/ ? ($colour =~ /^#/ ? $colour : '#' . $colour) : '';
 		$markup = $i->{'settings'}->{'markup'} || $universal_markup;
 		if ($markup =~ /%$/gi) {
 			$markup =~ s/[^0-9.]//gi;

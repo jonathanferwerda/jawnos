@@ -32,7 +32,7 @@
 			<div><h2><%= &subs::format_name($model->{'name'}) %></h2></div>
 			<h3>
 				<span class="original_price_display pricing" contenteditable="true" style="<% unless ($model->{'discount'}) { %>display:none;<% } %>" uuid="<%= $model->{'uuid'} %>"><%= &subs::price_formatter(&subs::numeric_formatter($model->{'price'})) %></span>
-				<span uuid="<%= $model->{'uuid'} %>" style="<% if ($model->{'discount'}) { %>color:red;<% } %>" contenteditable="true" class="price_display pricing"><%= &subs::price_formatter(&subs::numeric_formatter($model->{'price'}) + &subs::numeric_formatter($model->{'discount'})) %></span>
+				<span uuid="<%= $model->{'uuid'} %>" style="<% if ($model->{'discount'}) { %>color:var(--ink-muted);<% } %>" contenteditable="true" class="price_display pricing"><%= &subs::price_formatter(&subs::numeric_formatter($model->{'price'}) + &subs::numeric_formatter($model->{'discount'})) %></span>
 			</h3>
 
 			<% if ($model->{'file'}) { %>
@@ -104,7 +104,7 @@
 					<div><h3><%= &subs::format_name($option->{'name'}) %></h3></div>
 					<h4>
 						<span class="original_price_display pricing" contenteditable="true" style="<% unless ($option->{'discount'}) { %>display:none;<% } %>" uuid="<%= $option->{'uuid'} %>"><%= &subs::price_formatter($option->{'price'} || $item->{'option_categories'}->{$o}->{'price'})  %></span>
-						<span uuid="<%= $option->{'uuid'} %>" style="<% if ($option->{'discount'}) { %>color:red;<% } %>" contenteditable="true" class="price_display pricing"><%= &subs::price_formatter($option->{'price'} || $item->{'option_categories'}->{$o}->{'price'} + &subs::numeric_formatter($option->{'discount'})) %></span>
+						<span uuid="<%= $option->{'uuid'} %>" style="<% if ($option->{'discount'}) { %>color:var(--ink-muted);<% } %>" contenteditable="true" class="price_display pricing"><%= &subs::price_formatter($option->{'price'} || $item->{'option_categories'}->{$o}->{'price'} + &subs::numeric_formatter($option->{'discount'})) %></span>
 					</h4>
 					<% if ($option->{'file'}) { %>
 						<% foreach my $fi ( @{$option->{'file'}} ) { %>

@@ -7,46 +7,98 @@
 			<script>var mail_ws_url = '<%= $mail_ws_url %>';</script>
 		</div>
 
-		<div id="main_header" class="theme_surface" style="background-color:<%= $config->{$device}->{'store_header'}->{'background_colour'} %>">
-			<h1><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'store_name' })) %><h1>
+		<div id="main_header" class="theme_surface store_header">
+			<h1><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'store_name' })) %></h1>
 			<h4><%= &subs::format_name(&subs::setting_grabber({ app => 'me', setting => 'slogan' })) %></h4>
 		</div>
 	</div>
 <% } %>
-<%= include 'ribbons', settings => $settings %>
-<div id="main_window">
-	<div class="theme_surface" style="background-color:<%= $config->{$device}->{'store_header'}->{'background_colour'} %>">
-		<input type="text" id="store_search" placeholder="<%= &subs::lang('common.search') %>">
-		<% foreach my $t ( @gb::store_types ) { %>
-			<button class="store_item_type" type="<%= $t %>"><%= &subs::lang('common.' . $t) %></button>
-		<% } %>
-		<select class="store_movement" value="<%= $settings->{'store_movement'} %>">
-			<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
-				<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::store_movement_label($m) %></option>
-			<% } %>
-		</select>
-	</div>
-	<span id="category_view" style="max-height:80%">
-		<b><%= &subs::lang('common.categories') %></b>
-		<% foreach my $p ( @{$categories} ) { %>
-			<span class="store_category hover" status="closed" category="<%= $p->{'app'} %>" style="border:solid 2px;border-radius:7px;background-color:<%= $p->{'settings'}->{'colour'} %>">
-				<span class="category_name"><h2><%= &subs::format_name($p->{'app'}) %></h2></span>
-				<% if ($p->{'settings'}->{'main_image'}) { %>
-					<img class="huge_thumb" src="/file_open?file=<%= $p->{'settings'}->{'main_image'} %>">
+<%
+	my $chip_counts = $type_counts || {};
+	$item_total = 0 unless defined $item_total;
+%>
+<div id="main_window" class="store_shell">
+	<header class="store_toolbar">
+		<div class="store_toolbar_main">
+			<label class="store_search_wrap">
+				<input type="search" id="store_search" placeholder="<%= &subs::lang('common.search') %>" autocomplete="off">
+			</label>
+			<div class="store_type_chips" role="group" aria-label="<%= &subs::ui('Item type') %>">
+				<% foreach my $t ( @gb::store_types ) { %>
+					<% my $n = $chip_counts->{$t} || 0; %>
+		<button type="button" class="store_item_type" data-type="<%= $t %>" data-count="<%= $n %>"<% if (!$n) { %> disabled<% } %>>
+						<span class="store_chip_label"><%= &subs::lang('common.' . $t) %></span>
+						<span class="store_chip_count"><%= $n %></span>
+					</button>
 				<% } %>
-			</span>
-			<span class="store_subcategories" style="left:20px;" category="<%= $p->{'app'} %>" style="display:none;"></span>
-		<% } %>
-	</span>
-	<span id="items_view" style="width:45%;height:80%;">
-		<b><%= &subs::lang('common.items') %></b>
-	</span>
-	<span id="item_view" style=""></span>
+			</div>
+			<label class="store_control store_movement_wrap">
+				<span class="store_control_label"><%= &subs::ui('Movement') %></span>
+				<select class="store_movement" value="<%= $settings->{'store_movement'} %>">
+					<% foreach my $m ( qw/income expense transfer inventory/ ) { %>
+						<option value="<%= $m %>" <% if ($settings->{'store_movement'} eq $m) { %>selected <% } %>><%= &subs::store_movement_label($m) %></option>
+					<% } %>
+				</select>
+			</label>
+		</div>
+		<div class="store_toolbar_secondary">
+			<span id="store_result_count" class="store_result_count"><%= $item_total %> <%= $item_total == 1 ? &subs::lang('common.item') : &subs::lang('common.items') %></span>
+			<label class="store_control">
+				<span class="store_control_label"><%= &subs::ui('Sort') %></span>
+				<select id="store_sort">
+					<option value="name"><%= &subs::lang('common.name') %></option>
+					<option value="price_asc"><%= &subs::ui('Price: low to high') %></option>
+					<option value="price_desc"><%= &subs::ui('Price: high to low') %></option>
+				</select>
+			</label>
+			<button type="button" id="store_clear_filters" class="store_text_button"><%= &subs::lang('home.clear') %></button>
+		</div>
+	</header>
+	<div class="store_panes">
+		<aside id="category_view" class="store_categories">
+			<div class="store_pane_title"><%= &subs::lang('common.categories') %></div>
+			<% if (scalar @{$categories} == 0) { %>
+				<div class="store_empty_small"><%= &subs::ui('No items have been added to the store yet.') %></div>
+			<% } else { %>
+				<div class="store_category_list" role="list">
+					<% foreach my $p ( @{$categories} ) { %>
+						<%
+							my $cat_colour = $p->{'settings'}->{'colour'} || '';
+							$cat_colour =~ s/^\s+|\s+$//g;
+							$cat_colour = $cat_colour =~ /^#?[0-9a-fA-F]{6}$/ ? ($cat_colour =~ /^#/ ? $cat_colour : '#' . $cat_colour) : '';
+						%>
+						<button type="button" class="store_category hover" status="closed" category="<%= $p->{'app'} %>" role="listitem"<% if ($cat_colour) { %> style="--cat-colour:<%= $cat_colour %>;"<% } %>>
+							<% if ($p->{'settings'}->{'main_image'} && -e $p->{'settings'}->{'main_image'}) { %>
+								<img class="store_category_thumb" src="/file_open?file=<%= $p->{'settings'}->{'main_image'} %>" alt="">
+							<% } else { %>
+								<span class="store_category_dot"></span>
+							<% } %>
+							<span class="store_category_name"><%= &subs::format_name($p->{'app'}) %></span>
+							<span class="store_category_count"><%= $p->{'count'} %></span>
+						</button>
+					<% } %>
+				</div>
+			<% } %>
+			<div id="store_subcategory_bar" class="store_chips store_subcategory_bar" style="display:none;"></div>
+		</aside>
+		<section id="items_view" class="store_items" aria-live="polite">
+			<div id="store_browse_prompt" class="store_empty_state">
+				<h3><%= &subs::ui('Pick a category') %></h3>
+				<p><%= &subs::ui('Browse the shelves on the left, or search the whole store. Use the type chips to narrow what you see.') %></p>
+			</div>
+			<div id="store_items_grid" class="store_items_grid"></div>
+		</section>
+		<aside id="item_view" class="store_detail" aria-live="polite"></aside>
+	</div>
+	<% unless ($c->session('privilege') eq 'guest') { %>
+		<footer class="store_footer">
+			<%= include 'ribbons', settings => $settings %>
+		</footer>
+	<% } %>
 </div>
 
 <div id="image_viewer"></div>
-<div id="main_viewer"></div>
-<div id="store_privacy" style="text-align:center;font-size:12px;opacity:.75;padding:6px;">
+<div id="main_viewer" class="store_viewer"></div>
+<div id="store_privacy">
 	<a href="/privacy" target="_blank" rel="noopener"><%= &subs::lang('privacy.link') %></a>
 </div>
-

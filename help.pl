@@ -467,15 +467,20 @@ our %topic = (
 	},
 	'store' => {
 		title => 'Store', category => 'apps', app => 'store',
+		verified => '2026-10-21',
+		templates => [ 'templates/store/store.html.ep', 'templates/store/category.html.ep', 'templates/store/item.html.ep', 'templates/store/item_selection.html.ep', 'templates/store/list.html.ep', 'public/css/store.css', 'public/js/store.js' ],
 		summary => 'Items, models, options, quotes and invoices.',
 		body => [
 			'Store is the catalogue and the paperwork. Items carry models and options, each with its own prices; a quote or invoice is built from them and prints to a white, house-styled sheet that can be delivered by email.',
+			'Browsing is arranged as shelves: the category rail on the left shows only categories that hold something, with the number of items beside each, and choosing one fills the item grid. The subcategory chips under the rail narrow that shelf, the type chips at the top filter by product, service, event, place or media, and the sort control orders by name or price. Search runs across the whole store once two characters are typed. The result count says how many items the filters leave; Clear puts every filter back.',
+			'Choosing an item opens its details in a pane beside the grid rather than over it, so the shelves stay in view; Back to items (or the close button) returns to them. The price summary stays pinned to the foot of that pane while the models and options scroll, and it can be tapped to edit a price.',
 			'The movement dropdown uses the house\'s own words: Selling (an income movement) is what this house has available, and Buying (an expense movement) is a purchase the house makes. The stored movement values are unchanged, so existing quotes, invoices and reports keep working.',
 			'Recording a payment against a document updates its balance and closes it when the balance reaches zero.',
 			'A visitor who asks for a ticket sees the privacy notice before the form and must acknowledge it; the acknowledgement is stored with the request. The store and the public homepage both link to the full privacy policy, which names the controller, the data processed, the legal basis, retention, the cookies and local storage used, and how to exercise a data right.'
 		],
 		steps => [
 			'Open Store and add the items you sell, each with its models and options and their prices.',
+			'Use the category rail and the type chips to narrow the shelves; search finds an item by name anywhere in the store.',
 			'Build a quote from those items and options; the totals are worked out as you go.',
 			'When the quote is accepted, move it to an invoice — it converts and the quote is consumed.',
 			'Email the invoice to the customer, or print it to the house-styled sheet.',

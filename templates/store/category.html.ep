@@ -1,13 +1,31 @@
-<span style="max-height:80%">
-	<% foreach my $i ( @{$items} ) { %>
-		<div class="store_item hover" item="<%= $i->{'app'} %>" category="<%= $i->{'app'} %>" style="width:100%;border:solid;border-width: 2px;border-radius:7px;background-color:<%= $i->{'settings'}->{'colour'} %>">
-			<span class="store_item_name"><h2><%= &subs::format_name($i->{'app'}) %></h2></span>
+<% no warnings 'uninitialized'; %>
+<% my $store_category = $c->stash('category') || ''; %>
+<% if (scalar @{$items} == 0) { %>
+	<div class="store_empty_state store_empty_inline">
+		<h3><%= &subs::ui('Nothing on this shelf') %></h3>
+		<p><%= &subs::ui('Try another category, clear a filter, or search the whole store.') %></p>
+	</div>
+<% } %>
+<% foreach my $i ( @{$items} ) { %>
+	<%
+		my $type = $i->{'type'} || 'product';
+		my $subcategory = $i->{'subcategory'} || '';
+	%>
+	<div class="store_item hover" item="<%= $i->{'app'} %>" category="<%= $store_category %>" data-name="<%= &subs::format_name($i->{'app'}) %>" data-price="<%= $i->{'price'} %>" data-type="<%= $type %>" data-subcategory="<%= $subcategory %>"<% if ($i->{'colour'}) { %> style="--item-colour:<%= $i->{'colour'} %>;"<% } %>>
+		<div class="store_item_thumb">
 			<% if ($i->{'settings'}->{'main_image'} && -e $i->{'settings'}->{'main_image'}) { %>
-				<img class="huge_thumb" src="/file_open?file=<%= $i->{'settings'}->{'main_image'} %>">
+				<img src="/file_open?file=<%= $i->{'settings'}->{'main_image'} %>" alt="" loading="lazy">
 			<% } else { %>
-				<img class="huge_thumb" src="<%= &subs::icon_for('/icons/pos/' . $i->{'settings'}->{'pos'} . '.png') %>" hint="<%= &subs::format_name($i->{'settings'}->{'pos'}) %>">
+				<img src="<%= &subs::icon_for('/icons/pos/' . ($i->{'settings'}->{'pos'} || 'product') . '.png') %>" hint="<%= &subs::format_name($i->{'settings'}->{'pos'}) %>" alt="" loading="lazy">
 			<% } %>
-			<h4><%= &subs::price_formatter($i->{'price'}) %></h4>
+			<span class="store_item_badge"><%= &subs::lang('common.' . $type) %></span>
 		</div>
-	<% } %>
-</span>
+		<div class="store_item_info">
+			<h3 class="store_item_name"><%= &subs::format_name($i->{'app'}) %></h3>
+			<% if ($subcategory) { %>
+				<span class="store_item_subcategory"><%= &subs::format_name($subcategory) %></span>
+			<% } %>
+			<span class="store_item_price"><%= &subs::price_formatter($i->{'price'}) %></span>
+		</div>
+	</div>
+<% } %>
