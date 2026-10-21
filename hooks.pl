@@ -321,6 +321,10 @@ hook before_dispatch => sub {
 		# falling back to GitHub at the phone's ~24 KB/s (a 25-minute download).
 		$path eq '/manager/app_release' ||
 		$path eq '/manager/app_download' ||
+		# a crest lookup is house to house: the caller presents its own signed
+		# crest and the route verifies that signature itself, so there is no
+		# session cookie to carry
+		$path =~ m{^/crest(?:/|$)} ||
 		# the ticket desk rides the same bare signed rail: a linked machine reads
 		# the desk from, or answers a request held on, a neighbour's database, so
 		# its routes take a session OR a peer signature. Each checks the roster and

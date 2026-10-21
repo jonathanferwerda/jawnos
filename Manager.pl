@@ -18833,6 +18833,80 @@ sub people_crest_scan_dir {
 	return $dir;
 }
 
+# A construct is published to another house only when its own public setting
+# says so. The newest row answers, since the choice may have been made on
+# another machine; the People window writes it with device 'all'.
+sub people_construct_public {
+	my ($app) = @_;
+	return 0 unless defined $app && length $app;
+	my $row = eval { &subs::db_query("select value from settings where app=? and setting='public' order by server_time desc limit 1", $app)->hashes->[0] };
+	return ($row && ($row->{'value'} || '') eq 'on') ? 1 : 0;
+}
+
+# What this house publishes to another house that presents a crest: the house
+# name and key, its address, and only the constructs marked public, with the
+# names of their members. Nothing here is a permission; the answer is signed by
+# the house key so the asker can check it came from the crest it holds.
+sub people_crest_profile {
+	my $crest = &subs::crest_record_read();
+	return undef unless $crest->{'uuid'} && $crest->{'pubkey'};
+	my $suds = &subs::suds_grabber();
+	my $priv = $suds ? &subs::crest_key_read($suds) : undef;
+	return undef unless defined $priv && length $priv == 32;
+	my $index = &people_index();
+	my @constructs;
+	foreach my $construct ( @{ $index->{'constructs'} } ) {
+		foreach my $row ( @{ $construct->{'rows'} } ) {
+			my $app = $row->{'app'} || '';
+			next unless length $app;
+			next unless &people_construct_public($app);
+			push @constructs, {
+				type => $construct->{'name'},
+				name => &subs::format_name($app),
+				members => [ map { $_->{'name'} } @{ $row->{'members'} || [] } ],
+			};
+		}
+	}
+	@constructs = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @constructs;
+	my $profile = {
+		format => 'jawnos-crest-profile',
+		profile_version => 1,
+		uuid => $crest->{'uuid'},
+		name => $crest->{'name'} || '',
+		fingerprint => $crest->{'fingerprint'} || '',
+		pubkey => $crest->{'pubkey'},
+		origin => &subs::crest_origin(),
+		issued => &subs::rightNow(),
+		constructs => \@constructs,
+	};
+	return &subs::crest_sign_record($profile, $priv);
+}
+
+# The public door another house knocks on. The caller shows its own crest the way
+# a visitor shows a card; a crest proves only that a house is asking, so no
+# trust follows from it. Refused unless the uuid in the path is this house - a
+# machine cannot answer for a crest it does not hold.
+get '/crest/:uuid/profile' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $crest = &subs::crest_record_read();
+	unless ($crest->{'uuid'} && length $uuid && $uuid eq $crest->{'uuid'}) {
+		$c->render(json => { ok => 0, error => 'no such crest here' });
+		return;
+	}
+	my $code = $c->param('code') || '';
+	my $asker = length $code ? &subs::crest_code_parse($code) : undef;
+	unless ($asker && &subs::crest_verify_record($asker)) {
+		$c->render(json => { ok => 0, error => 'a crest is required to look this house up' });
+		return;
+	}
+	my $profile = &people_crest_profile();
+	unless ($profile) {
+		$c->render(json => { ok => 0, error => 'this house cannot sign its profile' });
+		return;
+	}
+	$c->render(json => { ok => 1, profile => $profile });
+};
+
 sub people_crest_install {
 	my ($c, $src) = @_;
 	my $suds = &subs::session_suds($c);
@@ -18904,6 +18978,7 @@ sub people_crest_install {
 		issued => $old->{'issued'} || &subs::rightNow(),
 		server_time => &subs::rightNow(),
 		device => $device,
+		origin => &subs::crest_origin(),
 		members => $old->{'members'} || [ { signatorial => &subs::signatorial_designer(), device => $device } ],
 	};
 	my $signed = &subs::crest_sign_record($record, $priv);
@@ -19008,6 +19083,7 @@ get '/manager/people' => sub($c) {
 	foreach my $construct ( @{ $index->{'constructs'} } ) {
 		foreach my $row ( @{ $construct->{'rows'} } ) {
 			$row->{'image'} = &people_crest_image($row->{'app'});
+			$row->{'public'} = &people_construct_public($row->{'app'});
 			foreach my $member ( @{ $row->{'members'} } ) {
 				$member->{'image'} = &people_crest_image($member->{'app'});
 				$member->{'uuid'} = $people_by_app{$member->{'app'}} || '';
@@ -19107,6 +19183,8 @@ get '/manager/people/crest/detail' => sub($c) {
 		introduced_by => $introduced_by,
 		status => $met ? 'Met in person' : ($introduced_by ? 'Introduced by ' . $introduced_by : 'Imported, not met'),
 		image => $image_src,
+		origin => &subs::crest_entry_origin($entry),
+		profile => (ref $entry->{'profile'} eq 'HASH' ? $entry->{'profile'} : undef),
 		home => $endpoints->{'home'} || '',
 		store => $endpoints->{'store'} || '',
 		manager => $endpoints->{'manager'} || '',
@@ -19114,6 +19192,86 @@ get '/manager/people/crest/detail' => sub($c) {
 		contact => $contact,
 		contacts => \@contacts,
 	});
+};
+
+post '/manager/people/crest/lookup' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $uuid = $c->param('uuid') || '';
+	unless ($uuid =~ /^[A-Za-z0-9_-]{8,64}$/) { return $c->render(json => { ok => 0, error => 'no such crest' }); }
+	my $entry = &subs::crest_peer_find($uuid);
+	return $c->render(json => { ok => 0, error => 'no such crest' }) unless $entry;
+	my $origin = &subs::crest_entry_origin($entry);
+	unless (length $origin) {
+		return $c->render(json => { ok => 0, error => 'this crest does not say where its house can be reached' });
+	}
+	my $own = &subs::crest_record_read();
+	my $suds = &subs::session_suds($c);
+	my $priv = $suds ? &subs::crest_key_read($suds) : undef;
+	unless ($own->{'uuid'} && defined $priv && length $priv == 32) {
+		return $c->render(json => { ok => 0, error => 'this house has no crest to present' });
+	}
+	my $code = &subs::crest_code_build($own, $priv);
+	unless ($code) { return $c->render(json => { ok => 0, error => 'the crest code could not be made' }); }
+	my $url = $origin . '/crest/' . $uuid . '/profile';
+	my $ua = Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 10, request_timeout => 15);
+	$ua->insecure(1);
+	my $res = eval { $ua->get($url => form => { code => $code })->result };
+	unless ($res) { return $c->render(json => { ok => 0, error => 'the other house did not answer' }); }
+	unless ($res->is_success) {
+		return $c->render(json => { ok => 0, error => 'the other house refused the lookup (' . $res->code . ')' });
+	}
+	my $body = eval { decode_json($res->body) } || {};
+	my $profile = $body->{'profile'};
+	unless (ref $profile eq 'HASH') {
+		return $c->render(json => { ok => 0, error => 'the answer was not a crest profile' });
+	}
+	# The answer must be the crest we hold: same id, same key, and a signature
+	# that checks. A host that merely answers the address is not enough.
+	my $incoming = ref $entry->{'crest'} eq 'HASH' ? $entry->{'crest'} : {};
+	unless (($profile->{'uuid'} || '') eq $uuid
+		&& ($profile->{'pubkey'} || '') eq ($incoming->{'pubkey'} || '')
+		&& &subs::crest_verify_record($profile)) {
+		return $c->render(json => { ok => 0, error => 'the answer was not signed by that crest' });
+	}
+	my @constructs;
+	foreach my $construct ( @{ ref $profile->{'constructs'} eq 'ARRAY' ? $profile->{'constructs'} : [] } ) {
+		next unless ref $construct eq 'HASH' && length($construct->{'name'} || '');
+		push @constructs, {
+			type => $construct->{'type'} || '',
+			name => $construct->{'name'} || '',
+			members => [ map { defined $_ ? "$_" : '' } @{ ref $construct->{'members'} eq 'ARRAY' ? $construct->{'members'} : [] } ],
+		};
+	}
+	my $store = {
+		uuid => $profile->{'uuid'},
+		name => $profile->{'name'} || '',
+		origin => $profile->{'origin'} || $origin,
+		issued => $profile->{'issued'} || '',
+		at => &subs::rightNow(),
+		constructs => \@constructs,
+	};
+	&subs::crest_peer_update($uuid, { profile => $store, profile_at => &subs::rightNow() });
+	return $c->render(json => { ok => 1, profile => $store });
+};
+
+# Publishing a construct to other houses is the same per-app public toggle the
+# appointment carries; it is a choice about what a crest lookup may reveal, not
+# a permission. Writing it for device 'all' makes it one house-wide answer that
+# every machine syncs, rather than a fresh local copy per device.
+post '/manager/people/construct/public' => sub($c) {
+	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
+	my $app = $c->param('app') || '';
+	my $value = (($c->param('value') || '') eq 'on') ? 'on' : '';
+	my $known = 0;
+	foreach my $construct ( @{ &people_index()->{'constructs'} } ) {
+		foreach my $row ( @{ $construct->{'rows'} } ) {
+			if (($row->{'app'} || '') eq $app) { $known = 1; last; }
+		}
+		last if $known;
+	}
+	unless ($known) { return $c->render(json => { ok => 0, error => 'no such construct' }); }
+	&subs::setting_setter({ app => $app, setting => 'public', device => 'all', value => $value });
+	return $c->render(json => { ok => 1, app => $app, public => ($value eq 'on' ? 1 : 0) });
 };
 
 get '/manager/people/person' => sub($c) {
@@ -19241,13 +19399,17 @@ sub people_crest_card {
 	my $card = { format => 'jawnos-crest-card', card_version => 1, crest => $crest, vouches => \@vouches };
 	$card->{'image'} = $image if defined $image;
 	my $config = &subs::config_reader();
+	# The card is handed to another house, so name the address they can reach:
+	# a loopback domain on a laptop would point them at their own machine.
+	my $origin = &subs::crest_origin();
 	my $host = $config->{'domain'} || $c->req->url->base->host;
 	my $port = $config->{'port'} || 3000;
 	my $working = $config->{'working_port'} || $port;
+	$origin ||= "https://$host:$working";
 	$card->{'endpoints'} = {
-		home => "https://$host:$port/",
-		store => "https://$host:$port/store",
-		manager => "https://$host:$working/manager",
+		home => $origin . '/',
+		store => $origin . '/store',
+		manager => $origin . '/manager',
 		signatorial => &subs::signatorial_designer(),
 	};
 	return $card;
@@ -29462,6 +29624,9 @@ sub app_public_path {
 	return 1 if $path =~ m{^/manager/device(?:/|$)};
 	return 1 if $path =~ m{^/manager/app_release(?:/|$)};
 	return 1 if $path =~ m{^/manager/app_download(?:/|$)};
+	# A crest lookup is house to house: the caller presents its own crest and the
+	# reply is signed by this house's key, so no session or app key is involved.
+	return 1 if $path =~ m{^/crest(?:/|$)};
 	# The embedded devices authenticate themselves with the rotated Now Me
 	# pair; they are not browsers and must keep their rail.
 	return 1 if $path =~ m{^/(?:watch|teletype|embedded)(?:/|$)};

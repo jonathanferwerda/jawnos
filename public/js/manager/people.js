@@ -7,6 +7,15 @@ function peopleT(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
 }
 
+// A construct kind is a core label under 'construct.<name>', which the core
+// catalog already carries; fall back to the raw name for a kind it does not.
+function peopleConstructLabel(type) {
+	if (!type) { return ''; }
+	var key = 'construct.' + type;
+	var label = peopleT(key);
+	return (label && label !== key) ? label : type;
+}
+
 // The window is re-fetched after a vouch, a link or a save. Keep the tab and
 // the person it was showing so those actions do not send the person back to Me.
 var peopleActiveTab = 'me';
@@ -72,7 +81,13 @@ function peopleCrestDetail(uuid) {
 			$('<h3>').text(response.name || '').appendTo(box);
 			$('<div class="people_fp">').text(response.fingerprint || '').appendTo(box);
 			$('<div class="people_row_sub">').text(peopleT(response.status || '')).appendTo(box);
+			if (response.origin) {
+				$('<div class="people_row_sub">').text(peopleT('Reachable at') + ' ' + response.origin).appendTo(box);
+			}
 			var actions = $('<div class="people_actions">').appendTo(box);
+			if (response.origin) {
+				$('<button class="people_crest_lookup">').attr('uuid', response.uuid).text(peopleT('Look up their constructs')).appendTo(actions);
+			}
 			if (response.home) {
 				$('<button>').text(peopleT('Homepage')).on('click', function() { window.open(response.home, '_blank'); }).appendTo(actions);
 			}
@@ -101,6 +116,28 @@ function peopleCrestDetail(uuid) {
 					});
 				}).appendTo(actions);
 			}
+			if (response.profile) {
+				var profile = response.profile;
+				var section = $('<div class="people_section">').appendTo(box);
+				$('<h3>').text(peopleT('Published constructs')).appendTo(section);
+				var looked = $('<div class="people_row_sub">').text(peopleT('Looked up') + ' ').appendTo(section);
+				$('<span class="time">').attr('timestamp', profile.at || '').appendTo(looked);
+				var published = profile.constructs || [];
+				if (published.length) {
+					var list = $('<div class="people_list">').appendTo(section);
+					$.each(published, function(i, construct) {
+						var row = $('<div class="people_row">').appendTo(list);
+						$('<span class="people_row_name">').text(construct.name || '').appendTo(row);
+						var detail = peopleConstructLabel(construct.type);
+						var members = construct.members || [];
+						detail += ' · ' + (members.length ? members.join(', ') : peopleT('No members'));
+						$('<span class="people_row_sub">').text(detail).appendTo(row);
+					});
+				}
+				else {
+					$('<div class="people_empty">').text(peopleT('This house publishes no constructs.')).appendTo(section);
+				}
+			}
 			if (box[0] && box[0].scrollIntoView) { box[0].scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 		},
 		error: function() { peopleStatus(peopleT('Could not open that crest.')); }
@@ -127,6 +164,52 @@ function peopleCrestOpen(uuid) {
 $(document).on('click', '.people_crest_row', function(e) {
 	if ($(e.target).closest('button, select, input').length) { return; }
 	peopleCrestDetail($(this).attr('uuid'));
+});
+
+$(document).on('click', '.people_crest_lookup', function() {
+	var uuid = $(this).attr('uuid') || '';
+	if (!uuid) { return; }
+	peopleStatus(peopleT('Asking the other house…'));
+	$.ajax({
+		url: '/manager/people/crest/lookup',
+		type: 'POST',
+		data: { uuid: uuid, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) {
+				peopleStatus(peopleT('Looked up.'));
+				peopleCrestDetail(uuid);
+			}
+			else {
+				peopleStatus((response && response.error) || peopleT('Could not look that house up.'));
+			}
+		},
+		error: function() { peopleStatus(peopleT('Could not look that house up.')); }
+	});
+});
+
+$(document).on('click', '.people_publish_toggle', function(e) {
+	e.stopPropagation();
+	var app = $(this).attr('app') || '';
+	var value = $(this).attr('value') || '';
+	if (!app) { return; }
+	peopleStatus(peopleT('Saving…'));
+	$.ajax({
+		url: '/manager/people/construct/public',
+		type: 'POST',
+		data: { app: app, value: value, timestamp: Date.now() },
+		dataType: 'json',
+		success: function(response) {
+			if (response && response.ok) {
+				peopleStatus(peopleT('Saved.'));
+				peopleOpener();
+			}
+			else {
+				peopleStatus((response && response.error) || peopleT('Could not save.'));
+			}
+		},
+		error: function() { peopleStatus(peopleT('Could not save.')); }
+	});
 });
 
 $(document).on('click', '#people_toggle', function() {

@@ -274,8 +274,8 @@ our %topic = (
 	'people' => {
 		title => 'People', category => 'apps', app => 'people',
 		templates => [ 'templates/apps/people.html.ep', 'templates/apps/people_person.html.ep', 'public/js/manager/people.js' ],
-		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Save card here', 'Show QR', 'Write to NFC tag', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh' ],
-		verified => '2026-10-20',
+		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Save card here', 'Show QR', 'Write to NFC tag', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh', 'Publish', 'Published' ],
+		verified => '2026-10-21',
 		summary => 'The house crest, and the people the house knows.',
 		body => [
 			'People holds the house crest: the one hand-drawn picture that names it to other houses. The picture is what a person recognises; it is not the proof. A house key signs a record that pins the drawing\'s hashes, and the short fingerprint on the card is what another house compares. Keep the original drawing - the scan is a copy.',
@@ -283,7 +283,10 @@ our %topic = (
 			'Download card writes a signed card for this house: the record, a small copy of the drawing, and the vouches this house has given. Give that file to a house you have met. Import a crest card takes the card they give you, checks its signature and the drawing against the signed hash, and lists the house. I have met this crest signs a vouch of your own for that house; its scope is communication, not physical access. If the card came with an introduction from a house you already know, the row says so; a card with no introduction is only a claim.',
 			'Show QR puts the compact signed record into a QR code: name, key, fingerprint, drawing hash and signature, without the picture or the vouch chain. The same code can be copied from the box under the QR and written to an NFC tag with an NFC writer; an NTAG215 or larger holds the compressed code, while a tiny NTAG213 does not. The full card file is still the one that carries the picture.',
 			'Save card here writes the card into Downloads on this machine, which is the reliable path in the desktop app. Write to NFC tag writes the compact code onto the tag the phone is touching; tapping a crest tag anywhere in the app imports that house and the status appears under the crest.',
-			'Open a crest in Other houses (or tap its NFC tag) to see the drawing, name and fingerprint, then use Homepage, Store or Message. Linking a crest to one of the house\'s contacts puts that crest beside the person in Chat and Mail. The address buttons come from the card the house gave you.',
+			'The line under the crest names the address other houses can reach this one at: the configured domain, or this machine\'s private network address when there is no domain. A house with neither still has a crest - the drawing and the fingerprint identify it in person - it just cannot be looked up until an address is known.',
+			'Open a crest in Other houses (or tap its NFC tag) to see the drawing, name and fingerprint, then use Homepage, Store or Message. The panel names the address the other house says it can be reached at. Linking a crest to one of the house\'s contacts puts that crest beside the person in Chat and Mail. The address buttons come from the card the house gave you.',
+			'Look up their constructs asks the other house, at that address, what it publishes. This house presents its own crest code, the other house answers with a record signed by its crest key, and the panel lists the constructs it made public with their member names and the time of the answer. The answer is kept on the crest, so opening it again shows the last lookup without asking again.',
+			'Publishing is a choice on each construct row in its tab. Publish offers that construct to houses that look this one up; Published means it is already being offered, and pressing it again withdraws it. A lookup reveals only the construct\'s name and the names of its members - never a permission, a record or a way in. The choice is one answer for the whole house, so it is the same on every machine.',
 			'Verify a photo compares a fresh photograph with the stored reference and reports a distance; the person confirms. A photocopy still looks like the drawing - the signed record, not the paper, is what proves the house.',
 			'The window is tabbed: Me is the house crest and its card; People is every person the house knows; then a tab for each social construct - Communities, Clubs, Teams, Projects and Accounts. The strip scrolls sideways, and each tab counts what it holds.',
 			'A person is a person construct in Relational. The moment one exists, its People row is made for it, and the row goes away when the construct is deleted; changing a construct from person to idea only hides it, so a mistaken change does not lose the identity behind it. A person\'s row shows their crest (when one is linked), the app name they are known by, and chips for the teams, clubs and communities they belong to. A chip opens that construct\'s tab on their row.',
@@ -302,8 +305,10 @@ our %topic = (
 			'Press Save card here to keep a copy in Downloads; in the desktop app that is the copy that actually lands somewhere.',
 			'Press Write to NFC tag and hold an NTAG215 to the phone; tapping that tag later imports the house.',
 			'Press Show QR to show or copy the compact code.',
+			'Press Publish on a construct row to offer it to other houses; Published turns it back off.',
 			'When they give you their card, press Import a crest card, choose the file, then press I have met this crest.',,
 			'Tap a crest in Other houses to open it; Homepage and Store open its public pages, and Message opens the linked contact.',
+			'Press Look up their constructs to ask that house, at its address, what it publishes.',
 			'Use the Link control in that panel to put the crest beside a person in Chat and Mail.',
 			'After the paper ages, scan it again; the new reference is signed with the same key.',
 			'To check a photograph later, press Verify a photo and read the distance.'

@@ -32,6 +32,9 @@
 		background:transparent; font-size:18px; font-weight:bold; opacity:.55; color:var(--muted,#8e8e8e); }
 	.people_peer_vouch { padding:6px 10px; border:1px solid var(--line); border-radius:8px;
 		background:var(--panel); cursor:pointer; font-size:12px; }
+	.people_publish_toggle { padding:6px 10px; border:1px solid var(--line); border-radius:8px;
+		background:var(--panel); cursor:pointer; font-size:12px; }
+	.people_publish_toggle.on { background:var(--line); font-weight:bold; }
 	.people_qr_box { text-align:center; margin:8px 0; }
 	.people_qr_box img { width:220px; height:220px; image-rendering:pixelated; background:#fff; padding:6px; border-radius:8px; }
 	.people_qr_box textarea { width:100%; box-sizing:border-box; font-family:monospace; font-size:11px;
@@ -126,6 +129,12 @@
 							<%= &subs::ui('Scan the drawing you want the house to be known by.') %>
 						<% } %>
 					</div>
+					<% my $house_origin = $crest->{'origin'} || &subs::crest_origin(); %>
+					<% if (length $house_origin) { %>
+						<div class="people_note"><%= &subs::ui('Other houses can reach this one at') %> <span class="people_fp"><%= $house_origin %></span></div>
+					<% } else { %>
+						<div class="people_note"><%= &subs::ui('This house has no address other houses can reach yet.') %></div>
+					<% } %>
 				</div>
 			</div>
 			<div class="people_actions">
@@ -251,6 +260,11 @@
 							<% } %>
 							<span class="people_row_name"><%= $row->{'name'} %><br><span class="people_fp"><%= $row->{'app'} %></span></span>
 							<span class="people_row_sub"><%= $row->{'member_count'} %></span>
+							<% if ($row->{'public'}) { %>
+								<button class="people_publish_toggle on" app="<%= $row->{'app'} %>" value="off" hint="Published"><%= &subs::ui('Published') %></button>
+							<% } else { %>
+								<button class="people_publish_toggle" app="<%= $row->{'app'} %>" value="on" hint="Publish"><%= &subs::ui('Publish') %></button>
+							<% } %>
 							<span class="people_chevron">&#9656;</span>
 						</div>
 						<div class="people_member_list">

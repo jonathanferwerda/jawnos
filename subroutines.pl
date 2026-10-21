@@ -18055,6 +18055,45 @@ sub crest_house_name_read {
 	return (defined $name && length $name) ? $name : 'Home';
 }
 
+# The address another house reaches this one at. A configured domain that is
+# not loopback wins, since it survives the machine moving between networks;
+# otherwise the machine's private LAN address on the manager's working port.
+# Empty when it has neither: a crest met in person still identifies a house that
+# cannot be called, it just cannot be looked up until its address is known.
+sub crest_origin {
+	my $config = eval { &config_reader() } || {};
+	my $host = $config->{'domain'} || '';
+	$host =~ s/^\s+|\s+$//g;
+	$host = '' if $host =~ /^(?:127\.|0\.0\.0\.0$|localhost$)/i;
+	unless (length $host) {
+		foreach my $nic ( @{ &lan_presence_network() || [] } ) {
+			next unless ($nic->{'ip'} // '') =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+			$host = $nic->{'ip'};
+			last;
+		}
+	}
+	return '' unless length $host;
+	my $port = $config->{'working_port'} || $config->{'port'} || 45545;
+	return "https://$host:$port";
+}
+
+# Where a peer crest says its house can be reached. New codes carry the origin
+# in the signed record; a card from before that names the manager endpoint, and
+# the origin is that endpoint without /manager.
+sub crest_entry_origin {
+	my ($entry) = @_;
+	return '' unless ref $entry eq 'HASH';
+	my $crest = ref $entry->{'crest'} eq 'HASH' ? $entry->{'crest'} : {};
+	my $origin = $crest->{'origin'} || '';
+	unless (length $origin) {
+		my $manager = $entry->{'endpoints'}->{'manager'} || '';
+		$origin = $1 if $manager =~ m{^(https?://[^/]+)};
+	}
+	$origin =~ s{/+$}{};
+	return '' unless $origin =~ m{^https?://[A-Za-z0-9.:\[\]-]+$};
+	return $origin;
+}
+
 sub crest_sha256_file {
 	my ($file) = @_;
 	return undef unless $file && -e $file;
@@ -18395,6 +18434,7 @@ sub crest_code_build {
 		dhash => $record->{'dhash'} || '',
 		version => $record->{'version'} || 1,
 		issued => $record->{'issued'} || '',
+		origin => $record->{'origin'} || &crest_origin(),
 	};
 	my $signed = &crest_sign_record($compact, $priv);
 	return undef unless $signed && $signed->{'sig'};
