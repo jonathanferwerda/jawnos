@@ -2046,7 +2046,8 @@ function jawnosVpnRefresh() {
 			if (peers[i] && peers[i].ip === picked.ip) { peer = peers[i]; break; }
 		}
 		var on = !!(s && s.exit && s.exit === picked.ip);
-		var available = !!(peer && peer.exit && peer.online !== false);
+		// Linux reports online as 1/0, Android as true/false.
+		var available = !!(peer && peer.exit && peer.online);
 		b.show();
 		jawnosVpnPaint(on, available);
 		if (!available && !on) { b.attr('hint', jawnosT('That machine does not offer an exit node')); }
@@ -2067,6 +2068,9 @@ function jawnosVpnToggle() {
 			return;
 		}
 		jawnosVpnRefresh();
+		// The route can take a moment to appear in the tailnet status, so ask
+		// again rather than leaving the button reading "off" after a success.
+		setTimeout(jawnosVpnRefresh, 1200);
 	};
 	if (window.JawnVPN && typeof window.JawnVPN.setExitNode === 'function') {
 		try { finish(JSON.parse(window.JawnVPN.setExitNode(target))); return; } catch (e) { finish({ ok: false, error: '' + e }); return; }
@@ -2074,3 +2078,4 @@ function jawnosVpnToggle() {
 	$.post('/manager/tailnet/exit', { ip: target }, finish, 'json').fail(function () { finish({ ok: false }); });
 }
 $(document).on('click', '#remote_command_send', function () { jawnosRemoteCommand(); });
+$(document).on('click', '#remote_control_vpn', function () { jawnosVpnToggle(); });
