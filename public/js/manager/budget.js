@@ -654,6 +654,8 @@ $(document).on('click', '#budget_reconcile_apply', function() {
 			action: action,
 			app: row.find('.budget_reconcile_app').val() || '',
 			movement: row.find('.budget_reconcile_movement').val() || '',
+			vendor: row.attr('vendor') || '',
+			item: row.attr('item') || '',
 			match_uuid: row.attr('match_uuid') || ''
 		});
 	});
@@ -672,6 +674,85 @@ $(document).on('click', '#budget_reconcile_apply', function() {
 		error: function() {
 			button.removeAttr('disabled');
 			$('#budget_reconcile_message').text(jawnosT('The reconciliation could not be saved.'));
+		}
+	});
+});
+
+// --- Payables ---------------------------------------------------------------
+$(document).on('click', '#budget_payable_add', function() {
+	var button = $(this);
+	var message = $('#budget_payable_message');
+	message.text('');
+	var data = {
+		vendor: $('#budget_payable_vendor').val() || '',
+		app: $('#budget_payable_app').val() || '',
+		item: $('#budget_payable_item').val() || '',
+		total: $('#budget_payable_total').val() || '',
+		tax: $('#budget_payable_tax').val() || '',
+		date: $('#budget_payable_date').val() || ''
+	};
+	if (!data.total) { message.text(jawnosT('A bill needs an amount.')); return; }
+	button.attr('disabled', 'disabled');
+	$.ajax({
+		url: '/manager/budget/payable/add',
+		type: 'POST',
+		data: data,
+		success: function(response) {
+			button.removeAttr('disabled');
+			if (response.error) { message.text(response.error); return; }
+			budgetInit();
+		},
+		error: function() {
+			button.removeAttr('disabled');
+			message.text(jawnosT('The bill could not be saved.'));
+		}
+	});
+});
+
+$(document).on('click', '.budget_payable_pay', function() {
+	var button = $(this);
+	var row = button.closest('.budget_payable_row');
+	var message = $('#budget_payable_message');
+	message.text('');
+	button.attr('disabled', 'disabled');
+	$.ajax({
+		url: '/manager/budget/payable/pay',
+		type: 'POST',
+		data: {
+			uuid: button.attr('uuid'),
+			account: row.find('.budget_payable_account').val() || '',
+			amount: row.find('.budget_payable_amount').val() || ''
+		},
+		success: function(response) {
+			button.removeAttr('disabled');
+			if (response.error) { message.text(response.error); return; }
+			budgetInit();
+		},
+		error: function() {
+			button.removeAttr('disabled');
+			message.text(jawnosT('The payment could not be saved.'));
+		}
+	});
+});
+
+$(document).on('click', '.budget_payable_delete', function() {
+	var button = $(this);
+	var message = $('#budget_payable_message');
+	message.text('');
+	if (!confirm(jawnosT('Delete this bill and any payments against it?'))) { return; }
+	button.attr('disabled', 'disabled');
+	$.ajax({
+		url: '/manager/budget/payable/delete',
+		type: 'POST',
+		data: { uuid: button.attr('uuid') },
+		success: function(response) {
+			button.removeAttr('disabled');
+			if (response.error) { message.text(response.error); return; }
+			budgetInit();
+		},
+		error: function() {
+			button.removeAttr('disabled');
+			message.text(jawnosT('The bill could not be deleted.'));
 		}
 	});
 });

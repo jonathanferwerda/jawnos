@@ -19,7 +19,7 @@
 				<% my $covered = $l->{'covered'}; %>
 				<% my $record_amount = defined $l->{'record_amount'} ? $l->{'record_amount'} : $l->{'amount'}; %>
 				<% my $parts_total = 0; $parts_total += (($_->{'total'} || 0) + 0) for @{$l->{'parts'} || []}; %>
-				<tr class="budget_reconcile_line" timestamp="<%= $l->{'timestamp'} %>" amount="<%= $l->{'amount'} %>" record_amount="<%= $record_amount %>" description="<%= $l->{'description'} %>" matched="<%= $settled ? 'yes' : 'no' %>" covered="<%= $covered ? 'yes' : 'no' %>" match_uuid="<%= $l->{'match'} ? $l->{'match'}->{'uuid'} : '' %>">
+				<tr class="budget_reconcile_line" timestamp="<%= $l->{'timestamp'} %>" amount="<%= $l->{'amount'} %>" record_amount="<%= $record_amount %>" description="<%= $l->{'description'} %>" vendor="<%= $l->{'suggested_vendor'} %>" item="<%= $l->{'suggested_item'} %>" matched="<%= $settled ? 'yes' : 'no' %>" covered="<%= $covered ? 'yes' : 'no' %>" match_uuid="<%= $l->{'match'} ? $l->{'match'}->{'uuid'} : '' %>">
 					<td><% if ($settled || $covered) { %>&#10003;<% } else { %><input type="checkbox" class="budget_reconcile_take" checked><% } %></td>
 					<td><span class="time" timestamp="<%= $l->{'timestamp'} %>"></span></td>
 					<td><%= $l->{'description'} %></td>
@@ -44,6 +44,9 @@
 							<input class="budget_reconcile_app" list="budget_reconcile_apps" value="<%= $l->{'app_default'} || $account %>" style="width:110px;" placeholder="<%= &subs::ui('App') %>" hint="<%= &subs::ui('App') %>">
 							<% if ($l->{'counterpart'}) { %>
 								<div><%= &subs::ui('Counterpart') %>: <%= &subs::format_name($l->{'counterpart'}->{'account'}) %> <%= &subs::price_formatter($l->{'counterpart'}->{'total'}) %> <span class="time" timestamp="<%= $l->{'counterpart'}->{'timestamp'} %>"></span></div>
+							<% } %>
+							<% if ($l->{'suggested_app'}) { %>
+								<div class="budget_reconcile_suggestion"><%= &subs::ui('Suggested') %>: <b><%= &subs::format_name($l->{'suggested_app'}) %></b> &mdash; <%= $l->{'suggested_count'} %> <%= &subs::ui(($l->{'movement'} || '') eq 'income' ? 'earlier deposits' : 'earlier payments') %><% if ($l->{'suggested_vendor'}) { %> <%= &subs::ui('to') %> <%= &subs::format_name($l->{'suggested_vendor'}) %><% } %></div>
 							<% } %>
 							<% if ($l->{'parts'}) { %>
 								<div><%= &subs::ui('Already in Budget') %>: <%= &subs::price_formatter($parts_total) %> &middot; <%= &subs::ui('record') %> <%= &subs::price_formatter($record_amount) %></div>

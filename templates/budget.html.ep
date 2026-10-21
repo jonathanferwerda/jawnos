@@ -236,6 +236,71 @@
 				<tr><td><%= &subs::format_name($b eq 'current' ? 'current (0-30)' : $b eq '31_60' ? '31-60 days' : $b eq '61_90' ? '61-90 days' : 'over 90 days') %></td><td style="text-align:right;"><%= &subs::price_formatter($reports->{'receivables'}->{'buckets'}->{$b}) %></td></tr>
 			<% } %>
 		</table>
+	<% } elsif ($display eq 'payables') { %>
+		<h2 style="margin:4px 0;"><%= &subs::ui('Payables') %></h2>
+		<div style="opacity:.75;"><%= &subs::ui('Aged from the bill date') %> &middot; <%= &subs::ui('As of') %> <b><%= $period_end %></b> &middot; <%= $payables->{'count'} || 0 %> <%= &subs::ui('open') %> &middot; <%= $payables->{'paid_count'} || 0 %> <%= &subs::ui('paid') %></div>
+		<table class="accounting_statement" style="width:100%;border:groove;border-collapse:collapse;margin-top:8px;">
+			<thead style="text-align:left;">
+				<th><%= &subs::ui('Vendor') %></th>
+				<th><%= &subs::ui('App') %></th>
+				<th><%= &subs::ui('Item') %></th>
+				<th><%= &subs::ui('Bill date') %></th>
+				<th style="text-align:right;"><%= &subs::ui('Age (days)') %></th>
+				<th style="text-align:right;"><%= &subs::ui('Total') %></th>
+				<th style="text-align:right;"><%= &subs::ui('Paid') %></th>
+				<th style="text-align:right;"><%= &subs::ui('Balance') %></th>
+				<th><%= &subs::ui('Ageing') %></th>
+				<th><%= &subs::ui('Pay') %></th>
+			</thead>
+			<tbody>
+				<% foreach my $r ( @{$payables->{'rows'} || []} ) { %>
+					<tr class="budget_payable_row" uuid="<%= $r->{'uuid'} %>">
+						<td><%= &subs::format_name($r->{'vendor'} || $r->{'app'}) %></td>
+						<td><%= &subs::format_name($r->{'app'}) %></td>
+						<td><%= &subs::format_name($r->{'item'}) %></td>
+						<td><span class="time" timestamp="<%= $r->{'timestamp'} %>"></span></td>
+						<td style="text-align:right;"><%= $r->{'age'} %></td>
+						<td style="text-align:right;"><%= &subs::price_formatter($r->{'total'}) %></td>
+						<td style="text-align:right;"><%= &subs::price_formatter($r->{'paid'}) %></td>
+						<td style="text-align:right;"><b><%= &subs::price_formatter($r->{'balance'}) %></b></td>
+						<td><%= &subs::format_name($r->{'bucket'}) %></td>
+						<td style="white-space:nowrap;">
+							<select class="budget_payable_account" hint="<%= &subs::ui('Pay from') %>">
+								<% foreach my $ac ( @{$all_accounts} ) { %>
+									% next if $ac->{'app'} eq 'all' || $ac->{'app'} eq 'gallery';
+									<option value="<%= $ac->{'app'} %>"><%= &subs::format_name($ac->{'app'}) %></option>
+								<% } %>
+							</select>
+							<input class="budget_payable_amount" value="<%= sprintf('%.2f', $r->{'balance'}) %>" style="width:80px;" hint="<%= &subs::ui('Amount') %>">
+							<button class="budget_payable_pay" uuid="<%= $r->{'uuid'} %>"><%= &subs::ui('Pay') %></button>
+							<button class="budget_payable_delete" uuid="<%= $r->{'uuid'} %>" hint="<%= &subs::ui('Delete') %>">&times;</button>
+						</td>
+					</tr>
+				<% } %>
+				<tr><td colspan="7"><b><%= &subs::ui('Total') %></b></td><td style="text-align:right;border-top:1px solid;"><b><%= &subs::price_formatter($payables->{'total'}) %></b></td><td></td><td></td></tr>
+			</tbody>
+		</table>
+		<table style="margin-top:8px;border:groove;">
+			<tr><th style="text-align:left;"><%= &subs::ui('Ageing') %></th><th style="text-align:right;"><%= &subs::ui('Balance') %></th></tr>
+			<% foreach my $b ( qw/current 31_60 61_90 over_90/ ) { %>
+				<tr><td><%= &subs::format_name($b eq 'current' ? 'current (0-30)' : $b eq '31_60' ? '31-60 days' : $b eq '61_90' ? '61-90 days' : 'over 90 days') %></td><td style="text-align:right;"><%= &subs::price_formatter($payables->{'buckets'}->{$b}) %></td></tr>
+			<% } %>
+		</table>
+		<h3 style="margin-bottom:4px;"><%= &subs::ui('Record a bill') %></h3>
+		<div style="margin-bottom:6px;">
+			<input id="budget_payable_vendor" placeholder="<%= &subs::ui('Vendor') %>" style="width:16%;">
+			<input id="budget_payable_app" list="budget_payable_apps" placeholder="<%= &subs::ui('App') %>" style="width:14%;">
+			<input id="budget_payable_item" placeholder="<%= &subs::ui('Item') %>" style="width:14%;">
+			<input id="budget_payable_total" placeholder="<%= &subs::ui('Total') %>" style="width:9%;">
+			<input id="budget_payable_tax" placeholder="<%= &subs::ui('Tax') %>" style="width:8%;">
+			<input id="budget_payable_date" placeholder="YYYY-MM-DD" value="<%= POSIX::strftime('%Y-%m-%d', localtime) %>" style="width:11%;">
+			<button id="budget_payable_add"><%= &subs::ui('Add bill') %></button>
+			<span id="budget_payable_message"></span>
+		</div>
+		<datalist id="budget_payable_apps">
+			<% foreach my $pa ( @{$payable_apps || []} ) { %><option value="<%= $pa %>"><% } %>
+		</datalist>
+		<div style="opacity:.65;margin-top:6px;max-width:75%;"><%= &subs::ui('A bill is money owed, not money moved: the expense and the payable are booked when the bill is entered, and paying it moves the payable to the bank account. The payables account is the credit side the trial balance carries.') %></div>
 	<% } elsif ($display eq 'trial_balance') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Trial Balance') %></h2>
 		<div style="opacity:.75;"><%= &subs::ui('As of') %> <b><%= $period_end %></b> &middot; <%= &subs::ui('Double entry, cash basis with receivables') %> &middot; <%= $trial->{'entries'} || 0 %> <%= &subs::ui('entries') %></div>

@@ -17549,6 +17549,58 @@ sub bank_reconcile_match {
 	return \@outstanding;
 }
 
+# The merchant memory: the app a description has consistently been filed under.
+# It reads the old transactions' vendor (Libro writes 77 Vape Wyoming as
+# 77_vape), then their item, then their app, and matches those words against a
+# statement line. A suggestion is only a default - the line still waits to be
+# confirmed.
+sub bank_merchant_tokens {
+	my $s = shift || '';
+	$s = lc $s;
+	$s =~ s/[^a-z0-9]+/ /g;
+	return grep { length } split ' ', $s;
+}
+
+sub bank_merchant_memory {
+	my $rows = &subs::db_query("select app, vendor, item, movement, count(*) as n from warehouse where kind='money' and type='transaction' and movement in ('income','expense') group by app, vendor, item, movement")->hashes || [];
+	my @memory;
+	my %stop = map { $_ => 1 } qw(cash account payment purchase transfer deposit withdrawal online pos card debit credit the and inc ltd of for at);
+	foreach my $r ( @{$rows} ) {
+		my $text = ($r->{'vendor'} && length $r->{'vendor'}) ? $r->{'vendor'}
+			: (($r->{'item'} && length $r->{'item'}) ? $r->{'item'} : ($r->{'app'} || ''));
+		my @tokens = grep { !$stop{$_} } &bank_merchant_tokens($text);
+		next unless scalar @tokens;
+		push @memory, {
+			tokens => \@tokens, app => ($r->{'app'} || ''), vendor => ($r->{'vendor'} || ''),
+			item => ($r->{'item'} || ''), movement => ($r->{'movement'} || ''), n => (($r->{'n'} || 0) + 0)
+		};
+	}
+	return \@memory;
+}
+
+sub bank_merchant_lookup {
+	my ($memory,$description,$movement) = @_;
+	my %bank = map { $_ => 1 } &bank_merchant_tokens($description);
+	return undef unless scalar keys %bank;
+	my $best;
+	foreach my $c ( @{$memory} ) {
+		next unless (($c->{'movement'} || '') eq ($movement || ''));
+		my $overlap = grep { $bank{$_} } @{$c->{'tokens'}};
+		# a multi-word merchant needs more than one shared word: 'Service Fee'
+		# must not become the passport office just because both say service
+		my $need = scalar @{$c->{'tokens'}} >= 2 ? 2 : 1;
+		next if $overlap < $need;
+		my $score = $overlap / scalar @{$c->{'tokens'}};
+		next if $score < 0.5;
+		if (!$best || $score > $best->{'score'} + 0.0001 || (abs($score - $best->{'score'}) < 0.0001 && $c->{'n'} > $best->{'n'})) {
+			$best = { %{$c}, score => $score };
+		}
+	}
+	return $best;
+}
+
+# The pair of two legs of one transfer is the other side of the same move, so a
+# missing leg is recorded as that transfer rather than as a new expense.
 sub bank_reconcile_result {
 	my ($account,$lines,$filename,$file_balance,$parse_error,$statement_end) = @_;
 	my ($min,$max);
@@ -17613,6 +17665,19 @@ sub bank_reconcile_result {
 		$l->{'counterpart'} = $near[0] if scalar @near;
 		$l->{'movement'} = $l->{'counterpart'} ? 'transfer' : ($amount < 0 ? 'expense' : 'income');
 		$l->{'app_default'} = $l->{'counterpart'} ? $l->{'counterpart'}->{'account'} : $account;
+	}
+	# a merchant the house has paid before supplies a default app; the line is
+	# still shown with Record/Ignore so the person confirms it
+	my $memory = &bank_merchant_memory();
+	foreach my $l ( @{$lines} ) {
+		next if $l->{'match'} || $l->{'settled'} || $l->{'covered'} || $l->{'counterpart'};
+		my $suggestion = &bank_merchant_lookup($memory, $l->{'description'}, $l->{'movement'});
+		next unless $suggestion;
+		$l->{'suggested_app'} = $suggestion->{'app'};
+		$l->{'suggested_vendor'} = $suggestion->{'vendor'};
+		$l->{'suggested_item'} = $suggestion->{'item'};
+		$l->{'suggested_count'} = $suggestion->{'n'};
+		$l->{'app_default'} = $suggestion->{'app'} if $suggestion->{'app'} && length $suggestion->{'app'};
 	}
 	foreach my $choice ( $account, map { $_->{'account'} } @{$counterparts} ) {
 		next unless defined $choice && length $choice && !$app_seen{$choice}++;
@@ -17681,6 +17746,8 @@ sub budget_reconcile_apply {
 		$movement = ($amount < 0 ? 'expense' : 'income') unless $movement eq 'expense' || $movement eq 'income' || $movement eq 'transfer';
 		my $app = &subs::unformat_name($line->{'app'} || $account);
 		$app = $account unless length $app;
+		my $item = (defined $line->{'item'} && length $line->{'item'}) ? $line->{'item'} : ($line->{'description'} || 'imported');
+		my $vendor = $line->{'vendor'} || '';
 		my $uuid = &subs::random_string_creator(40);
 		my $row = {
 			app => $app,
@@ -17690,7 +17757,8 @@ sub budget_reconcile_apply {
 			account => $account,
 			amount => $amount,
 			total => $amount,
-			item => &subs::unformat_name($line->{'description'} || 'imported'),
+			item => &subs::unformat_name($item),
+			vendor => &subs::unformat_name($vendor),
 			uuid => $uuid,
 			server_time => $server_time,
 			currency => $currency
@@ -17798,6 +17866,50 @@ sub accounting_receivables {
 	return $returner;
 }
 
+# Open bills at a moment. A bill is a money row on the payables account (money
+# owed, not money moved); a payment is a bank move that names the bill it
+# settles in source_uuid. There is no due date on a bill, so the age is counted
+# from the day it was written; the screen says so.
+sub accounting_payables {
+	my $to = shift;
+	my $returner = { rows => [], total => 0, count => 0, paid_count => 0, buckets => { current => 0, '31_60' => 0, '61_90' => 0, over_90 => 0 } };
+	my $bills = &subs::db_query("select * from warehouse where kind='money' and type='transaction' and movement='payable' and cast(timestamp as integer) <= cast(? as integer) order by timestamp", $to)->hashes || [];
+	my $payments = &subs::db_query("select * from warehouse where kind='money' and type='transaction' and movement='payment' and cast(timestamp as integer) <= cast(? as integer)", $to)->hashes || [];
+	my %settled;
+	foreach my $p ( @{$payments} ) {
+		next unless $p->{'source_uuid'};
+		$settled{$p->{'source_uuid'}} += abs(($p->{'total'} || 0) + 0);
+	}
+	foreach my $bill ( @{$bills} ) {
+		my $total = abs(($bill->{'total'} || 0) + 0);
+		next if $total < 0.005;
+		my $paid = $settled{$bill->{'uuid'}} || 0;
+		my $balance = $total - $paid;
+		if ($balance <= 0.005) { $returner->{'paid_count'}++; next; }
+		my $issued = ($bill->{'timestamp'} || 0) + 0;
+		my $age = int(($to - $issued) / 86400000);
+		$age = 0 if $age < 0;
+		my $bucket = $age <= 30 ? 'current' : $age <= 60 ? '31_60' : $age <= 90 ? '61_90' : 'over_90';
+		$returner->{'total'} += $balance;
+		$returner->{'buckets'}->{$bucket} += $balance;
+		$returner->{'count'}++;
+		push @{$returner->{'rows'}}, {
+			uuid => $bill->{'uuid'},
+			app => $bill->{'app'},
+			vendor => $bill->{'vendor'},
+			item => $bill->{'item'},
+			timestamp => $issued,
+			age => $age,
+			bucket => $bucket,
+			total => $total,
+			paid => $paid,
+			balance => $balance
+		};
+	}
+	@{$returner->{'rows'}} = sort { $b->{'age'} <=> $a->{'age'} } @{$returner->{'rows'}};
+	return $returner;
+}
+
 sub accounting_reports {
 	my $args = shift;
 	my $accounts = $args->{'accounts'} || [];
@@ -17844,6 +17956,7 @@ sub accounting_reports {
 			my $total = ($t->{'total'} || 0) + 0;
 			if (($t->{'movement'} || '') eq 'income') { $in += $total; }
 			elsif (($t->{'movement'} || '') eq 'expense') { $out += -$total; }
+			elsif (($t->{'movement'} || '') eq 'payment') { $out += -$total; }
 			elsif (($t->{'movement'} || '') eq 'transfer') { $transfer += $total; }
 		}
 		$cash_opening += $opening;
@@ -17858,6 +17971,7 @@ sub accounting_reports {
 		my $total = ($t->{'total'} || 0) + 0;
 		if (($t->{'movement'} || '') eq 'income') { $op_in += $total; }
 		elsif (($t->{'movement'} || '') eq 'expense') { $op_out += -$total; }
+		elsif (($t->{'movement'} || '') eq 'payment') { $op_out += -$total; }
 		elsif (($t->{'movement'} || '') eq 'transfer') { $transfers += $total; }
 	}
 	my ($prior_in,$prior_out,$prior_transfers) = (0,0,0);
@@ -17865,6 +17979,7 @@ sub accounting_reports {
 		my $total = ($t->{'total'} || 0) + 0;
 		if (($t->{'movement'} || '') eq 'income') { $prior_in += $total; }
 		elsif (($t->{'movement'} || '') eq 'expense') { $prior_out += -$total; }
+		elsif (($t->{'movement'} || '') eq 'payment') { $prior_out += -$total; }
 		elsif (($t->{'movement'} || '') eq 'transfer') { $prior_transfers += $total; }
 	}
 	my $change = $cash_closing - $cash_opening;
@@ -18297,6 +18412,7 @@ get '/manager/budget' => sub($c) {
 		[ 'trial_balance', &subs::ui('Trial Balance') ],
 		[ 'statement', &subs::ui('Ledger') ],
 		[ 'receivables', &subs::ui('Receivables') ],
+		[ 'payables', &subs::ui('Payables') ],
 		[ 'invoices', &subs::ui('Invoices') ],
 		[ 'daily_sheet', &subs::ui('Day Book') ],
 		[ 'reconcile', &subs::ui('Reconcile') ]
@@ -18305,11 +18421,17 @@ get '/manager/budget' => sub($c) {
 	$display = 'income_statement' unless $known_display{$display};
 	my $reports = {};
 	my $trial = {};
+	my $payables = {};
+	my @payable_apps;
 	if ($display eq 'trial_balance') {
 		# the journal is derived; bring it up to date before reading it so the
 		# screen never shows the picture from before the last transaction
 		&subs::accounting_journal_maybe_rebuild();
 		$trial = &subs::accounting_trial_balance($t2);
+	}
+	if ($display eq 'payables') {
+		$payables = &accounting_payables($t2);
+		@payable_apps = map { $_->{'app'} } @{ &subs::db_query("select distinct(app) as app from warehouse where kind='money' and app is not null and app != '' order by app")->hashes || [] };
 	}
 	if ($display eq 'income_statement' || $display eq 'balance_sheet' || $display eq 'cash_flow' || $display eq 'account_activity' || $display eq 'receivables') {
 		my @report_accounts = map { $_->{'app'} } grep { $_->{'app'} ne 'all' && $_->{'app'} ne 'gallery' } @{$accounts};
@@ -18352,6 +18474,8 @@ get '/manager/budget' => sub($c) {
 		displays => \@display_options,
 		reports => $reports,
 		trial => $trial,
+		payables => $payables,
+		payable_apps => \@payable_apps,
 		period_start => $period_start_label,
 		period_end => $period_end_label,
 		prior_start => $prior_start_label,
@@ -18496,6 +18620,93 @@ post '/manager/budget/reconcile' => sub($c) {
 post '/manager/budget/journal/rebuild' => sub($c) {
 	my $result = &subs::accounting_journal_rebuild();
 	$c->render(json => $result);
+};
+
+# A bill is money owed, not money moved, so it is written on the payables
+# account and the journal carries the expense now and the payable until a
+# payment settles it.
+sub payable_amount {
+	my $value = shift;
+	$value = '' unless defined $value;
+	$value =~ s/[^0-9.\-]//g;
+	return $value + 0;
+}
+
+post '/manager/budget/payable/add' => sub($c) {
+	my $app = &subs::unformat_name($c->param('app'));
+	my $vendor = &subs::unformat_name($c->param('vendor'));
+	my $item = &subs::unformat_name($c->param('item'));
+	my $total = &payable_amount($c->param('total'));
+	my $tax = &payable_amount($c->param('tax'));
+	$tax = 0 if $tax < 0;
+	$tax = $total if $tax > $total && $total > 0;
+	$app = $vendor unless length $app;
+	$app = 'unknown' unless length $app;
+	if ($total <= 0) { return $c->render(json => { error => &subs::ui('A bill needs an amount.') }); }
+	my $date = $c->param('date');
+	my $timestamp = length($date || '') ? (str2time($date) || 0) * 1000 : &subs::rightNow();
+	$timestamp = &subs::rightNow() unless $timestamp;
+	my $uuid = &subs::random_string_creator(40);
+	&subs::db_insert('warehouse', {
+		kind => 'money',
+		type => 'transaction',
+		movement => 'payable',
+		account => 'accounts_payable',
+		app => $app,
+		vendor => $vendor,
+		item => $item,
+		amount => $total,
+		tax => $tax,
+		total => $total,
+		currency => $c->param('currency') || &subs::setting_grabber({ app => $app, setting => 'currency' }),
+		uuid => $uuid,
+		timestamp => $timestamp,
+		server_time => &subs::rightNow()
+	});
+	$c->render(json => { ok => 1, uuid => $uuid, payables => &accounting_payables(&subs::rightNow()) });
+};
+
+post '/manager/budget/payable/pay' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $account = $c->param('account');
+	my $bill = &subs::db_query("select * from warehouse where kind='money' and movement='payable' and uuid=? limit 1", $uuid)->hashes->[0];
+	return $c->render(json => { error => &subs::ui('That bill was not found.') }) unless $bill;
+	return $c->render(json => { error => &subs::ui('Choose an account to pay from.') }) unless $account && length $account;
+	my $paid = &subs::db_query("select coalesce(sum(abs(cast(total as real))),0) as s from warehouse where kind='money' and movement='payment' and source_uuid=?", $uuid)->hashes->[0];
+	my $paid_so_far = ($paid->{'s'} || 0) + 0;
+	my $open = abs(($bill->{'total'} || 0) + 0) - $paid_so_far;
+	return $c->render(json => { error => &subs::ui('That bill is already paid.') }) if $open <= 0.005;
+	my $amount = &payable_amount($c->param('amount'));
+	$amount = $open if $amount <= 0;
+	$amount = $open if $amount > $open;
+	my $date = $c->param('date');
+	my $timestamp = length($date || '') ? (str2time($date) || 0) * 1000 : &subs::rightNow();
+	$timestamp = &subs::rightNow() unless $timestamp;
+	&subs::db_insert('warehouse', {
+		kind => 'money',
+		type => 'transaction',
+		movement => 'payment',
+		account => $account,
+		app => ($bill->{'app'} || 'unknown'),
+		vendor => ($bill->{'vendor'} || ''),
+		item => ($bill->{'item'} || ''),
+		amount => $amount * -1,
+		total => $amount * -1,
+		currency => ($bill->{'currency'} || &subs::setting_grabber({ app => $account, setting => 'currency' })),
+		source_uuid => $uuid,
+		uuid => &subs::random_string_creator(40),
+		timestamp => $timestamp,
+		server_time => &subs::rightNow()
+	});
+	$c->render(json => { ok => 1, payables => &accounting_payables(&subs::rightNow()), balance => &bank_ledger_balance($account, &subs::rightNow()) });
+};
+
+post '/manager/budget/payable/delete' => sub($c) {
+	my $uuid = $c->param('uuid');
+	return $c->render(json => { error => &subs::ui('That bill was not found.') }) unless $uuid && length $uuid;
+	&subs::db_query("delete from warehouse where kind='money' and movement='payment' and source_uuid=?", $uuid);
+	&subs::db_query("delete from warehouse where kind='money' and movement='payable' and uuid=?", $uuid);
+	$c->render(json => { ok => 1, payables => &accounting_payables(&subs::rightNow()) });
 };
 
 

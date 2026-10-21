@@ -23946,6 +23946,10 @@ sub accounting_account_ensure {
 sub accounting_bank_account {
 	my $account = shift || '';
 	return $accounting_account_cache{"asset\0$account"} if defined $accounting_account_cache{"asset\0$account"};
+	# a payable is a liability, not a place money sits
+	if ($account eq 'accounts_payable') {
+		return $accounting_account_cache{"asset\0$account"} = &accounting_account_ensure(2000, 'Accounts Payable', 'liability', 'credit', '');
+	}
 	my $row = &db_query("select code from ledger_accounts where app=? and type='asset' and cast(code as integer) between 1000 and 1099 limit 1", $account)->hashes->[0];
 	return $accounting_account_cache{"asset\0$account"} = $row->{'code'} if $row;
 	my $max = (&db_query("select coalesce(max(cast(code as integer)),999) as m from ledger_accounts where type='asset' and cast(code as integer) between 1000 and 1099")->hashes->[0]->{'m'} || 0) + 0;
@@ -24004,10 +24008,20 @@ sub accounting_journal_rebuild {
 	my $account_rows = &db_query("select distinct(app) as app from settings where setting in ('pos','mab') and value='account' order by app")->hashes || [];
 	foreach my $row ( @{$account_rows} ) { $bank{$row->{'app'}} = &accounting_bank_account($row->{'app'}); }
 	my $ar = &accounting_account_ensure(1100, 'Accounts Receivable', 'asset', 'debit', '');
+	my $inventory = &accounting_account_ensure(1200, 'Inventory', 'asset', 'debit', '');
 	my $clearing = &accounting_account_ensure(1900, 'Transfers Clearing', 'asset', 'debit', '');
+	my $ap = &accounting_account_ensure(2000, 'Accounts Payable', 'liability', 'credit', '');
 	my $tax_account = &accounting_account_ensure(2100, 'Sales Tax Payable', 'liability', 'credit', '');
 	my $equity = &accounting_account_ensure(3000, 'Opening Balance Equity', 'equity', 'credit', '');
 	my $adjust = &accounting_account_ensure(3900, 'Balance Adjustments', 'equity', 'credit', '');
+	my $cogs = &accounting_account_ensure(6000, 'Cost of Goods Sold', 'expense', 'debit', '');
+	$bank{'accounts_payable'} = $ap;
+	# only an item the warehouse actually stocks is inventory; a personal vape
+	# purchase stays an expense
+	my %stocked;
+	my $stock_items = &db_query("select distinct(item) as item from warehouse where kind='stock' and item is not null and item != ''")->hashes || [];
+	foreach my $row ( @{$stock_items} ) { $stocked{$row->{'item'}} = 1; }
+	my (%inv_qty,%inv_value);
 
 	my $money = &db_query("select * from warehouse where kind='money' and type='transaction' and movement != 'inventory' order by cast(timestamp as integer)")->hashes || [];
 	my $invoices = &db_query("select * from appointments where type='invoice' order by cast(timestamp as integer)")->hashes || [];
@@ -24060,6 +24074,8 @@ sub accounting_journal_rebuild {
 			my $movement = $row->{'movement'} || '';
 			my $total = ($row->{'total'} || 0) + 0;
 			my $app = $row->{'app'} || 'unknown';
+			my $item = $row->{'item'} || '';
+			my $qty = (($row->{'quantity'} || 0) + 0);
 			my $entry = 'm-' . $row->{'uuid'};
 			my @lines;
 			if ($pay_of{$row->{'uuid'}}) {
@@ -24074,6 +24090,16 @@ sub accounting_journal_rebuild {
 					my $revenue = $total - $tax_part;
 					push @lines, [$code,$total,0], [&accounting_app_account($app,'income'),0,$revenue];
 					push @lines, [$tax_account,0,$tax_part] if $tax_part > 0.004;
+					# a stocked item sold carries its cost out of inventory
+					if ($stocked{$item} && $qty > 0) {
+						my $average = $inv_qty{$item} > 0 ? $inv_value{$item} / $inv_qty{$item} : 0;
+						my $sold_cost = $average * $qty;
+						if ($sold_cost > 0.004) {
+							push @lines, [$cogs,$sold_cost,0], [$inventory,0,$sold_cost];
+							$inv_qty{$item} -= $qty;
+							$inv_value{$item} -= $sold_cost;
+						}
+					}
 				}
 				else {
 					@lines = ([&accounting_app_account($app,'income'),abs($total),0],[$code,0,abs($total)]);
@@ -24087,7 +24113,15 @@ sub accounting_journal_rebuild {
 					my $tax_part = abs(($row->{'tax'} || 0) + 0);
 					my $cost = abs($total) - $tax_part;
 					$cost = 0 if $cost < 0;
-					push @lines, [&accounting_app_account($app,'expense'),$cost,0];
+					if ($stocked{$item} && $qty > 0) {
+						# a stocked purchase adds to inventory, not to the expense
+						push @lines, [$inventory,$cost,0];
+						$inv_qty{$item} += $qty;
+						$inv_value{$item} += $cost;
+					}
+					else {
+						push @lines, [&accounting_app_account($app,'expense'),$cost,0];
+					}
 					push @lines, [$tax_account,$tax_part,0] if $tax_part > 0.004;
 					push @lines, [$code,0,abs($total)];
 				}
@@ -24099,6 +24133,22 @@ sub accounting_journal_rebuild {
 				@lines = $total >= 0
 					? ([$code,$total,0],[$clearing,0,$total])
 					: ([$clearing,abs($total),0],[$code,0,abs($total)]);
+			}
+			elsif ($movement eq 'payable') {
+				# a bill: the cost belongs to the day it was incurred, the cash
+				# moves on the day it is paid
+				my $owed = abs($total);
+				my $tax_part = abs(($row->{'tax'} || 0) + 0);
+				$tax_part = $owed if $tax_part > $owed;
+				my $cost = $owed - $tax_part;
+				push @lines, [&accounting_app_account($app,'expense'),$cost,0];
+				push @lines, [$tax_account,$tax_part,0] if $tax_part > 0.004;
+				push @lines, [$ap,0,$owed];
+			}
+			elsif ($movement eq 'payment') {
+				# settling a bill: the payable goes down, the bank goes down
+				my $paid = abs($total);
+				@lines = ([$ap,$paid,0],[$code,0,$paid]);
 			}
 			else { next; }
 			$lines += &accounting_journal_add($entry, $ts, \@lines, {
