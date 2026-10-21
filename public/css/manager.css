@@ -259,7 +259,7 @@ html, body {
 }
 .detail_area { overflow: scroll;}
 #appointment_wrapper { bottom: 0px; position: fixed; overflow:scroll; width: 100%; right: 0px;} 
-.appointment_name { background-color: var(--panel);font-size: 20px; text-align: center; top:0px; border-width: 1px; border: solid; border-color: var(--line); border-radius: 5px;}
+.appointment_name { background-color: var(--panel);font-size: 20px; text-align: center; top:0px; border-width: 1px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 10px);}
 .appointment_header { vertical-align:top; text-align: left; float: left; }
 /* the type icons are pictures of their own and the strip they sit in is not a
    box, so neither wears a frame; the time and the status text make their
@@ -307,7 +307,7 @@ html, body {
 /* One button per open window: its icon and its name in a rounded tile that
    lifts under the pointer. The shorthand stands where the name would when the
    bar is too narrow to spell it out (see the phone's own rules). */
-#taskbar .window_toggle { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: calc(var(--taskbar_h, 44px) - 8px); padding: 0px 8px; box-sizing: border-box; background-color: var(--panel); border: solid; border-width: 2px; border-color: var(--line); border-radius: 10px; transition: background-color .15s ease, transform .12s ease; }
+#taskbar .window_toggle { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: calc(var(--taskbar_h, 44px) - 8px); padding: 0px 8px; box-sizing: border-box; background-color: var(--panel); border: solid; border-width: 2px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); transition: background-color .15s ease, transform .12s ease; }
 #taskbar .window_toggle:hover { background-color: var(--panel-2); }
 #taskbar .window_toggle:active { transform: translateY(1px); }
 #taskbar .window_toggle .window_toggle_icon { height: calc(var(--taskbar_h, 44px) - 18px); width: calc(var(--taskbar_h, 44px) - 18px); max-width: none; object-fit: contain; }
@@ -471,7 +471,7 @@ html, body {
 	background-color: var(--panel-2);
 	border: solid 2px;
 	border-color: var(--line);
-	border-radius: 6px;
+	border-radius: var(--jawnos-corner, 10px);
 	padding: 4px;
 	font-size: 18px;
 	min-width: 200px;
@@ -526,7 +526,7 @@ html, body {
 #search {	
 	height: 35px;
 	width:70%;
-	border-radius: 10px;
+	border-radius: var(--jawnos-corner, 10px);
 	transition-duration: 1s;
 	font-size: 20px;
 	text-align:center;
@@ -650,13 +650,13 @@ canvas.background {
 }
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}
-.little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: 10px; }
+.little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: var(--jawnos-corner, 10px); }
 .window_icon { vertical-align:top; border:solid; border-color: var(--line); border-radius:2px; border-width:2px; font-size:26px; }
 /* Windows round their corners a touch. .wind carries the radius so its own
    panel background is clipped to it and the frame ring below inherits it; the
    title bar rounds only its top corners to match, so its square ones don't show
    through where the panel curves away. */
-.wind { border-radius: var(--window_radius, 8px); background-color: var(--window, var(--panel)); }
+.wind { border-radius: var(--window_radius, var(--jawnos-corner, 10px)); background-color: var(--window, var(--panel)); }
 /* Inside a window every surface that asked for the panel surface gets the
    window's own colour instead, so an app or an appointment does not dissolve
    into the desktop behind it. --panel-2 and --line keep the theme's contrast
@@ -698,7 +698,7 @@ canvas.background {
    edge, out of line with .window_contents. The border is the same width on all
    four sides, so the bar reads evenly - and its top corners land exactly on the
    frame ring, which carries the same width. */
-.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, 8px) var(--window_radius, 8px) 0 0; display: flex; align-items: center; padding: 0 2px; overflow: hidden; }
+.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, var(--jawnos-corner, 10px)) var(--window_radius, var(--jawnos-corner, 10px)) 0 0; display: flex; align-items: center; padding: 0 2px; overflow: hidden; }
 /* the icon sits in a bare tile with a collar of the bar's colour around it;
    the holder and the tile both centre on the bar's line. */
 .top_navbar .window_icon_holder { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; padding: 2px; }
@@ -852,7 +852,7 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 	border: solid;
 	border-width: 4px;
 	border-color: var(--line);
-	border-radius: 5px;
+	border-radius: var(--jawnos-corner, 10px);
 }
 
 /* a little bigger than the default .jonathan size, but leave the taskbar's own
