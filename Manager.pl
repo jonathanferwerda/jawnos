@@ -17872,6 +17872,8 @@ sub accounting_receivables {
 # from the day it was written; the screen says so.
 sub accounting_payables {
 	my $to = shift;
+	# a schedule whose date has come is a real bill; make them before reading
+	&payable_schedule_run();
 	my $returner = { rows => [], total => 0, count => 0, paid_count => 0, buckets => { current => 0, '31_60' => 0, '61_90' => 0, over_90 => 0 } };
 	my $bills = &subs::db_query("select * from warehouse where kind='money' and type='transaction' and movement='payable' and cast(timestamp as integer) <= cast(? as integer) order by timestamp", $to)->hashes || [];
 	my $payments = &subs::db_query("select * from warehouse where kind='money' and type='transaction' and movement='payment' and cast(timestamp as integer) <= cast(? as integer)", $to)->hashes || [];
@@ -17910,6 +17912,239 @@ sub accounting_payables {
 	return $returner;
 }
 
+# --- Recurring bills -------------------------------------------------------
+# A schedule is a template, not a bill. It lives in a setting so it needs no
+# table of its own, and each due date becomes a real bill keyed by the schedule
+# and that date, so running the schedules twice cannot double a bill.
+sub payable_schedules {
+	my $raw = &subs::setting_grabber({ app => 'budget', setting => 'payable_schedules' });
+	my $list = eval { decode_json $raw || '[]' } || [];
+	return [ grep { ref $_ eq 'HASH' } @{$list} ];
+}
+
+sub payable_schedules_save {
+	my $list = shift || [];
+	&subs::setting_setter({ app => 'budget', setting => 'payable_schedules', value => encode_json($list) });
+}
+
+sub payable_next_date {
+	my ($ts,$every) = @_;
+	$every = 'monthly' unless defined $every && length $every;
+	return $ts + 7 * 86400000 if $every eq 'weekly';
+	return $ts + 14 * 86400000 if $every eq '2weeks';
+	return $ts + 30 * 86400000 if $every eq '30days';
+	return $ts + 91 * 86400000 if $every eq 'quarterly';
+	return $ts + 365 * 86400000 if $every eq 'yearly';
+	# a calendar month keeps the day of the month, shortening to the last day
+	my $t = Time::Piece->new(int($ts / 1000));
+	my ($year,$mon,$mday) = ($t->year,$t->mon,$t->mday);
+	$mon++;
+	if ($mon > 12) { $mon = 1; $year++; }
+	my $first = Time::Piece->strptime(sprintf('%04d-%02d-01', $year, $mon), '%Y-%m-%d');
+	my $last = $first->month_last_day;
+	$mday = $last if $mday > $last;
+	# POSIX::mktime counts the year from 1900, Time::Piece returns it whole
+	return POSIX::mktime(0, 0, 0, $mday, $mon - 1, $year - 1900) * 1000;
+}
+
+sub payable_schedule_run {
+	my $now = &subs::rightNow();
+	my $list = &payable_schedules();
+	my ($changed,$made) = (0,0);
+	foreach my $s ( @{$list} ) {
+		next if (($s->{'active'} || 'on') eq 'off');
+		my $guard = 0;
+		while ((($s->{'next'} || 0) + 0) <= $now && $guard++ < 240) {
+			my $due = $s->{'next'} + 0;
+			my $uuid = 'sched-' . $s->{'uuid'} . '-' . $due;
+			my $exists = &subs::db_query("select 1 from warehouse where kind='money' and uuid=? limit 1", $uuid)->hashes->[0];
+			unless ($exists) {
+				my $total = ($s->{'amount'} || 0) + 0;
+				my $tax = ($s->{'tax'} || 0) + 0;
+				&subs::db_insert('warehouse', {
+					kind => 'money', type => 'transaction', movement => 'payable',
+					account => 'accounts_payable', app => ($s->{'app'} || 'unknown'),
+					vendor => ($s->{'vendor'} || ''), item => ($s->{'item'} || ''),
+					amount => $total, tax => $tax, total => $total,
+					currency => ($s->{'currency'} || ''),
+					uuid => $uuid, source_uuid => $s->{'uuid'},
+					timestamp => $due, server_time => &subs::rightNow()
+				});
+				$made++;
+			}
+			$s->{'next'} = &payable_next_date($due, $s->{'every'});
+			$changed = 1;
+		}
+	}
+	&payable_schedules_save($list) if $changed;
+	return $made;
+}
+
+# --- Notifications that name a payment -------------------------------------
+# A bank's "you spent $29.38 at PUBLIC MOBILE SELF" is a bill that has already
+# been paid. Match it, suggest the app the house has used for that merchant, and
+# offer one OK. The bill's uuid is derived from the notification's own key, so a
+# notification stored twice (the phone and the mirror) is still one bill.
+sub notification_account {
+	my $n = shift;
+	my $key = $n->{'key'} || '';
+	my ($package) = $key =~ /\|([A-Za-z0-9_.]+)\|/;
+	my %known = ( 'ca.koho' => 'koho', 'com.koho' => 'koho' );
+	my $account = $known{lc($package || '')};
+	if (!$account && ($n->{'message'} || '') =~ /spendable/i) { $account = 'koho'; }
+	return undef unless $account && length $account;
+	my $row = &subs::db_query("select 1 from settings where app=? and setting in ('pos','mab') and value='account' limit 1", $account)->hashes->[0];
+	return $row ? $account : undef;
+}
+
+sub notification_bill_uuid {
+	my $n = shift;
+	my $seed = $n->{'key'} || $n->{'uuid'} || '';
+	return 'note-' . &subs::md5_sum($seed);
+}
+
+sub notification_payable_candidates {
+	my $rows = &subs::db_query('select * from notifications order by cast(timestamp as integer) desc limit 400')->hashes || [];
+	my $dismissed = eval { decode_json &subs::setting_grabber({ app => 'budget', setting => 'payable_dismissed' }) || '[]' } || [];
+	my %dismissed = map { $_ => 1 } @{$dismissed};
+	my $memory = &bank_merchant_memory();
+	my (@out,%seen);
+	foreach my $n ( @{$rows} ) {
+		my $msg = $n->{'message'} || '';
+		next unless $msg =~ /\b(spent|paid|purchase[d]?|charged|debited|payment made)\b/i;
+		next unless $msg =~ /\$\s?([0-9][0-9,]*\.[0-9]{2})/;
+		my $amount = $1;
+		$amount =~ s/,//g;
+		$amount += 0;
+		next unless $amount > 0;
+		my $merchant;
+		if ($msg =~ /\bat\s+([A-Za-z0-9][^.\n]*?)(?:\.|\n|$)/) { $merchant = $1; }
+		elsif (($n->{'title'} || '') !~ /transaction made/i) { $merchant = $n->{'title'}; }
+		next unless $merchant;
+		$merchant =~ s/^\s+//; $merchant =~ s/\s+$//; $merchant =~ s/^(the)\s+//i;
+		my $key = $n->{'key'} || $n->{'uuid'};
+		next if $dismissed{$key};
+		my $bill_uuid = &notification_bill_uuid($n);
+		next if &subs::db_query("select 1 from warehouse where kind='money' and uuid=? limit 1", $bill_uuid)->hashes->[0];
+		# the same notification can be stored twice (phone and mirror)
+		my $day = int((($n->{'timestamp'} || 0) + 0) / 86400000);
+		my $sig = lc($merchant) . '|' . sprintf('%.2f', $amount) . '|' . $day;
+		next if $seen{$sig}++;
+		my $suggestion = &bank_merchant_lookup($memory, $merchant, 'expense');
+		my $app = $suggestion ? ($suggestion->{'app'} || '') : '';
+		$app = &subs::unformat_name($merchant) unless length $app;
+		push @out, {
+			uuid => $n->{'uuid'}, key => $key, timestamp => ($n->{'timestamp'} || 0) + 0,
+			amount => $amount, vendor => &subs::unformat_name($merchant),
+			merchant => $merchant, app => $app,
+			account => (&notification_account($n) || ''),
+			suggested => ($suggestion ? 1 : 0), count => ($suggestion ? ($suggestion->{'n'} || 0) : 0),
+			message => $msg
+		};
+	}
+	return \@out;
+}
+
+# The accrual side of the statements. Income and expenses are what the journal
+# posted - an invoice's revenue, a bill's cost, a stocked item's cost of goods -
+# so the income statement agrees with the Trial Balance. A row whose account is
+# a bank account outside the chosen set is left out, so the account filter still
+# means something; invoices and bills have no bank account and are house-wide.
+sub accounting_journal_report {
+	my ($accounts,$from,$to,$pfrom,$pto) = @_;
+	my @selected = grep { defined $_ && length $_ } @{$accounts || []};
+	my $filter = ' and (j.account = \'\' or j.account = \'accounts_payable\'' .
+		(scalar @selected ? ' or j.account in (' . join(',', map { '?' } @selected) . ')' : '') . ')';
+	my $window = sub {
+		my ($a,$b) = @_;
+		return &subs::db_query(
+			'select j.account_code, a.name, a.type, ' .
+			'sum(cast(j.debit as real)) as d, sum(cast(j.credit as real)) as c ' .
+			'from journal j left join ledger_accounts a on a.code = j.account_code ' .
+			'where cast(j.timestamp as integer) >= cast(? as integer) and cast(j.timestamp as integer) <= cast(? as integer)' . $filter .
+			' group by j.account_code, a.name, a.type', $a, $b, @selected)->hashes || [];
+	};
+	my $cur = $window->($from,$to);
+	my $pri = $window->($pfrom,$pto);
+	my (%income,%expense,%cogs,%pincome,%pexpense,%pcogs);
+	my %names;
+	my ($tax_in,$tax_out,$ptax_in,$ptax_out) = (0,0,0,0);
+	foreach my $pair ( [ $cur, \%income, \%expense, \%cogs, \$tax_in, \$tax_out ],
+		[ $pri, \%pincome, \%pexpense, \%pcogs, \$ptax_in, \$ptax_out ] ) {
+		my ($rows,$inc,$exp,$cog,$tin,$tout) = @{$pair};
+		foreach my $r ( @{$rows} ) {
+			my $code = $r->{'account_code'};
+			my $name = $r->{'name'} || $code;
+			my $type = $r->{'type'} || '';
+			my $d = ($r->{'d'} || 0) + 0;
+			my $c = ($r->{'c'} || 0) + 0;
+			$names{$code} = $name;
+			if ($type eq 'income') { $inc->{$code} += $c - $d; }
+			elsif ($type eq 'expense') {
+				if ($code =~ /^6/) { $cog->{$code} += $d - $c; }
+				else { $exp->{$code} += $d - $c; }
+			}
+			elsif ($code eq '2100') { $$tin += $c; $$tout += $d; }
+		}
+	}
+	my $rows_for = sub {
+		my ($now,$before) = @_;
+		my @out;
+		foreach my $code ( sort keys %{$now} ) {
+			my $amount = $now->{$code};
+			my $prior = $before->{$code} || 0;
+			next if abs($amount) < 0.005 && abs($prior) < 0.005;
+			push @out, { code => $code, name => ($names{$code} || $code), amount => $amount, prior => $prior };
+		}
+		return [ sort { $b->{'amount'} <=> $a->{'amount'} } @out ];
+	};
+	my $income_rows = $rows_for->(\%income,\%pincome);
+	my $cogs_rows = $rows_for->(\%cogs,\%pcogs);
+	my $expense_rows = $rows_for->(\%expense,\%pexpense);
+	my $sum = sub { my $t = shift; my $s = 0; $s += $_ for values %{$t}; return $s; };
+	my ($income_total,$cogs_total,$expense_total) = ($sum->(\%income),$sum->(\%cogs),$sum->(\%expense));
+	my ($pincome_total,$pcogs_total,$pexpense_total) = ($sum->(\%pincome),$sum->(\%pcogs),$sum->(\%pexpense));
+	# the balance sheet: the journal's own account balances at the moment
+	my $bal = &subs::db_query(
+		'select j.account_code, a.name, a.type, sum(cast(j.debit as real)) as d, sum(cast(j.credit as real)) as c ' .
+		'from journal j left join ledger_accounts a on a.code = j.account_code ' .
+		'where cast(j.timestamp as integer) <= cast(? as integer)' . $filter .
+		' group by j.account_code, a.name, a.type', $to, @selected)->hashes || [];
+	my (@asset_rows,@liability_rows);
+	my ($assets,$liabilities,$receivables_balance) = (0,0,0);
+	foreach my $r ( @{$bal} ) {
+		my $code = $r->{'account_code'};
+		my $type = $r->{'type'} || '';
+		my $net = (($r->{'d'} || 0) + 0) - (($r->{'c'} || 0) + 0);
+		next if abs($net) < 0.005;
+		my $name = $r->{'name'} || $code;
+		if ($type eq 'asset') {
+			if ($code eq '1100') { $receivables_balance = $net; next; }
+			if ($net > 0) { push @asset_rows, { code => $code, name => $name, balance => $net }; $assets += $net; }
+			else { push @liability_rows, { code => $code, name => $name, balance => -$net }; $liabilities += -$net; }
+		}
+		elsif ($type eq 'liability') {
+			my $owed = -$net;
+			if ($owed > 0) { push @liability_rows, { code => $code, name => $name, balance => $owed }; $liabilities += $owed; }
+			else { push @asset_rows, { code => $code, name => $name, balance => -$owed }; $assets += -$owed; }
+		}
+	}
+	@asset_rows = sort { $a->{'code'} <=> $b->{'code'} } @asset_rows;
+	@liability_rows = sort { $a->{'code'} <=> $b->{'code'} } @liability_rows;
+	$assets += $receivables_balance;
+	return {
+		income => $income_rows, cogs => $cogs_rows, expense => $expense_rows,
+		income_total => $income_total, cogs_total => $cogs_total, expense_total => $expense_total,
+		gross_profit => $income_total - $cogs_total,
+		prior_income_total => $pincome_total, prior_cogs_total => $pcogs_total, prior_expense_total => $pexpense_total,
+		prior_gross_profit => $pincome_total - $pcogs_total,
+		tax_in => $tax_in, tax_out => $tax_out,
+		assets => \@asset_rows, liabilities => \@liability_rows,
+		assets_total => $assets, liabilities_total => $liabilities,
+		receivables_balance => $receivables_balance
+	};
+}
+
 sub accounting_reports {
 	my $args = shift;
 	my $accounts = $args->{'accounts'} || [];
@@ -17919,31 +18154,18 @@ sub accounting_reports {
 	my ($pfrom,$pto) = ($from - $span, $from);
 	my $moves = &accounting_moves($accounts, $from, $to);
 	my $prior = &accounting_moves($accounts, $pfrom, $pto);
-	my %income;
-	my %expense;
-	my %prior_income;
-	my %prior_expense;
-	my ($tax_in,$tax_out) = (0,0);
-	foreach my $t ( @{$moves} ) {
-		my $app = $t->{'app'} || 'unknown';
-		my $total = ($t->{'total'} || 0) + 0;
-		my $tax = ($t->{'tax'} || 0) + 0;
-		if (($t->{'movement'} || '') eq 'income') { $income{$app} += $total; $tax_in += $tax; }
-		elsif (($t->{'movement'} || '') eq 'expense') { $expense{$app} += -$total; $tax_out += abs($tax); }
-	}
-	foreach my $t ( @{$prior} ) {
-		my $app = $t->{'app'} || 'unknown';
-		my $total = ($t->{'total'} || 0) + 0;
-		if (($t->{'movement'} || '') eq 'income') { $prior_income{$app} += $total; }
-		elsif (($t->{'movement'} || '') eq 'expense') { $prior_expense{$app} += -$total; }
-	}
-	my ($income_total,$expense_total,$prior_income_total,$prior_expense_total) = (0,0,0,0);
-	$income_total += $_ for values %income;
-	$expense_total += $_ for values %expense;
-	$prior_income_total += $_ for values %prior_income;
-	$prior_expense_total += $_ for values %prior_expense;
-	my @income_rows = map { { app => $_, amount => $income{$_}, prior => ($prior_income{$_} || 0) } } sort { $income{$b} <=> $income{$a} } keys %income;
-	my @expense_rows = map { { app => $_, amount => $expense{$_}, prior => ($prior_expense{$_} || 0) } } sort { $expense{$b} <=> $expense{$a} } keys %expense;
+	# the statements' accrual side is the journal; bring it up to date first
+	&subs::accounting_journal_maybe_rebuild();
+	my $accrual = &accounting_journal_report($accounts, $from, $to, $pfrom, $pto);
+	my $income_total = $accrual->{'income_total'};
+	my $expense_total = $accrual->{'expense_total'};
+	my $cogs_total = $accrual->{'cogs_total'};
+	my $prior_income_total = $accrual->{'prior_income_total'};
+	my $prior_expense_total = $accrual->{'prior_expense_total'};
+	my $prior_cogs_total = $accrual->{'prior_cogs_total'};
+	my @income_rows = @{$accrual->{'income'}};
+	my @expense_rows = @{$accrual->{'expense'}};
+	my @cogs_rows = @{$accrual->{'cogs'}};
 	# every account's own activity in the window, opening to closing
 	my @activity;
 	my ($cash_opening,$cash_closing,$cash_prior_opening) = (0,0,0);
@@ -17988,29 +18210,29 @@ sub accounting_reports {
 	# window's opening figure
 	my $prior_change = $cash_opening - $cash_prior_opening;
 	my $prior_adjustment = $prior_change - ($prior_in - $prior_out + $prior_transfers);
-	# balance sheet: positive account balances are what the house holds,
-	# negative ones are owed; open invoices are receivable
-	my (@asset_rows,@liability_rows);
-	my ($assets,$liabilities) = (0,0);
-	foreach my $a ( sort @{$accounts} ) {
-		my $balance = &bank_ledger_balance($a, $to);
-		next if abs($balance) < 0.005;
-		if ($balance > 0) { push @asset_rows, { app => $a, balance => $balance }; $assets += $balance; }
-		else { push @liability_rows, { app => $a, balance => -$balance }; $liabilities += -$balance; }
-	}
+	# balance sheet: the journal's account balances; an overdrawn bank account
+	# is a liability, and the receivable line is the journal's own 1100
 	my $ar = &accounting_receivables($to);
-	$assets += $ar->{'total'};
+	my @asset_rows = @{$accrual->{'assets'}};
+	my @liability_rows = @{$accrual->{'liabilities'}};
+	my $assets = $accrual->{'assets_total'};
+	my $liabilities = $accrual->{'liabilities_total'};
 	return {
 		income => \@income_rows,
 		expense => \@expense_rows,
+		cogs => \@cogs_rows,
 		income_total => $income_total,
 		expense_total => $expense_total,
-		net_income => $income_total - $expense_total,
+		cogs_total => $cogs_total,
+		gross_profit => $income_total - $cogs_total,
+		prior_gross_profit => $prior_income_total - $prior_cogs_total,
+		prior_cogs_total => $prior_cogs_total,
+		net_income => $income_total - $cogs_total - $expense_total,
 		prior_income_total => $prior_income_total,
 		prior_expense_total => $prior_expense_total,
-		prior_net_income => $prior_income_total - $prior_expense_total,
-		tax_in => $tax_in,
-		tax_out => $tax_out,
+		prior_net_income => $prior_income_total - $prior_cogs_total - $prior_expense_total,
+		tax_in => $accrual->{'tax_in'},
+		tax_out => $accrual->{'tax_out'},
 		activity => \@activity,
 		activity_totals => { opening => $cash_opening, in => $op_in, out => $op_out, transfer => $transfers, closing => $cash_closing },
 		assets => \@asset_rows,
@@ -18019,6 +18241,7 @@ sub accounting_reports {
 		liabilities_total => $liabilities,
 		equity => $assets - $liabilities,
 		receivables => $ar,
+		receivables_balance => $accrual->{'receivables_balance'},
 		cash => {
 			opening => $cash_opening,
 			closing => $cash_closing,
@@ -18422,6 +18645,8 @@ get '/manager/budget' => sub($c) {
 	my $reports = {};
 	my $trial = {};
 	my $payables = {};
+	my $schedules = [];
+	my $notification_candidates = [];
 	my @payable_apps;
 	if ($display eq 'trial_balance') {
 		# the journal is derived; bring it up to date before reading it so the
@@ -18431,6 +18656,8 @@ get '/manager/budget' => sub($c) {
 	}
 	if ($display eq 'payables') {
 		$payables = &accounting_payables($t2);
+		$schedules = &payable_schedules();
+		$notification_candidates = &notification_payable_candidates();
 		@payable_apps = map { $_->{'app'} } @{ &subs::db_query("select distinct(app) as app from warehouse where kind='money' and app is not null and app != '' order by app")->hashes || [] };
 	}
 	if ($display eq 'income_statement' || $display eq 'balance_sheet' || $display eq 'cash_flow' || $display eq 'account_activity' || $display eq 'receivables') {
@@ -18476,6 +18703,8 @@ get '/manager/budget' => sub($c) {
 		trial => $trial,
 		payables => $payables,
 		payable_apps => \@payable_apps,
+		schedules => $schedules,
+		notification_candidates => $notification_candidates,
 		period_start => $period_start_label,
 		period_end => $period_end_label,
 		prior_start => $prior_start_label,
@@ -18646,6 +18875,22 @@ post '/manager/budget/payable/add' => sub($c) {
 	my $date = $c->param('date');
 	my $timestamp = length($date || '') ? (str2time($date) || 0) * 1000 : &subs::rightNow();
 	$timestamp = &subs::rightNow() unless $timestamp;
+	my $currency = $c->param('currency') || &subs::setting_grabber({ app => $app, setting => 'currency' });
+	my $repeat = $c->param('repeat') || 'once';
+	my %known_repeat = map { $_ => 1 } qw/weekly 2weeks 30days monthly quarterly yearly/;
+	$repeat = 'once' unless $known_repeat{$repeat};
+	if ($repeat ne 'once') {
+		# a repeating bill is a schedule; its first due date makes the first bill
+		my $list = &payable_schedules();
+		push @{$list}, {
+			uuid => &subs::random_string_creator(20), app => $app, vendor => $vendor, item => $item,
+			amount => $total, tax => $tax, currency => $currency,
+			every => $repeat, next => $timestamp, active => 'on'
+		};
+		&payable_schedules_save($list);
+		my $made = &payable_schedule_run();
+		return $c->render(json => { ok => 1, scheduled => 1, made => $made, payables => &accounting_payables(&subs::rightNow()) });
+	}
 	my $uuid = &subs::random_string_creator(40);
 	&subs::db_insert('warehouse', {
 		kind => 'money',
@@ -18658,7 +18903,7 @@ post '/manager/budget/payable/add' => sub($c) {
 		amount => $total,
 		tax => $tax,
 		total => $total,
-		currency => $c->param('currency') || &subs::setting_grabber({ app => $app, setting => 'currency' }),
+		currency => $currency,
 		uuid => $uuid,
 		timestamp => $timestamp,
 		server_time => &subs::rightNow()
@@ -18707,6 +18952,86 @@ post '/manager/budget/payable/delete' => sub($c) {
 	&subs::db_query("delete from warehouse where kind='money' and movement='payment' and source_uuid=?", $uuid);
 	&subs::db_query("delete from warehouse where kind='money' and movement='payable' and uuid=?", $uuid);
 	$c->render(json => { ok => 1, payables => &accounting_payables(&subs::rightNow()) });
+};
+
+
+sub notification_amount {
+	my $text = shift || '';
+	return 0 unless $text =~ /\$\s?([0-9][0-9,]*\.[0-9]{2})/;
+	my $amount = $1;
+	$amount =~ s/,//g;
+	return $amount + 0;
+}
+
+# One OK books the bill the notification names and, because the bank has already
+# taken the money, pays it from the account the notification came from.
+post '/manager/budget/payable/from_notification' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $n = &subs::db_query('select * from notifications where uuid=? limit 1', $uuid)->hashes->[0];
+	return $c->render(json => { error => &subs::ui('That notification was not found.') }) unless $n;
+	my $key = $n->{'key'} || $n->{'uuid'};
+	if (($c->param('action') || 'create') eq 'dismiss') {
+		my $dismissed = eval { decode_json &subs::setting_grabber({ app => 'budget', setting => 'payable_dismissed' }) || '[]' } || [];
+		push @{$dismissed}, $key unless grep { $_ eq $key } @{$dismissed};
+		&subs::setting_setter({ app => 'budget', setting => 'payable_dismissed', value => encode_json($dismissed) });
+		return $c->render(json => { ok => 1, dismissed => 1, payables => &accounting_payables(&subs::rightNow()) });
+	}
+	my $amount = &payable_amount($c->param('amount'));
+	$amount = &notification_amount($n->{'message'}) unless $amount > 0;
+	return $c->render(json => { error => &subs::ui('A bill needs an amount.') }) unless $amount > 0;
+	my $vendor = &subs::unformat_name($c->param('vendor') || '');
+	my $app = &subs::unformat_name($c->param('app') || '');
+	$app = $vendor unless length $app;
+	$app = 'unknown' unless length $app;
+	my $account = $c->param('account') || '';
+	my $bill_uuid = &notification_bill_uuid($n);
+	my $exists = &subs::db_query("select 1 from warehouse where kind='money' and uuid=? limit 1", $bill_uuid)->hashes->[0];
+	return $c->render(json => { ok => 1, already => 1, payables => &accounting_payables(&subs::rightNow()) }) if $exists;
+	my $timestamp = ($n->{'timestamp'} || 0) + 0;
+	$timestamp = &subs::rightNow() unless $timestamp;
+	&subs::db_insert('warehouse', {
+		kind => 'money', type => 'transaction', movement => 'payable',
+		account => 'accounts_payable', app => $app, vendor => $vendor,
+		item => &subs::unformat_name($n->{'title'} || 'notification'),
+		amount => $amount, tax => 0, total => $amount,
+		currency => &subs::setting_grabber({ app => $app, setting => 'currency' }),
+		uuid => $bill_uuid, source_uuid => $key,
+		timestamp => $timestamp, server_time => &subs::rightNow()
+	});
+	if (length $account) {
+		my $bank = &subs::db_query("select 1 from settings where app=? and setting in ('pos','mab') and value='account' limit 1", $account)->hashes->[0];
+		if ($bank) {
+			&subs::db_insert('warehouse', {
+				kind => 'money', type => 'transaction', movement => 'payment',
+				account => $account, app => $app, vendor => $vendor,
+				item => &subs::unformat_name($n->{'title'} || 'notification'),
+				amount => $amount * -1, total => $amount * -1,
+				currency => &subs::setting_grabber({ app => $account, setting => 'currency' }),
+				source_uuid => $bill_uuid, uuid => &subs::random_string_creator(40),
+				timestamp => $timestamp, server_time => &subs::rightNow()
+			});
+		}
+	}
+	$c->render(json => { ok => 1, uuid => $bill_uuid, paid => (length $account ? 1 : 0), payables => &accounting_payables(&subs::rightNow()) });
+};
+
+post '/manager/budget/payable/schedule/delete' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $list = &payable_schedules();
+	@{$list} = grep { ($_->{'uuid'} || '') ne $uuid } @{$list};
+	&payable_schedules_save($list);
+	$c->render(json => { ok => 1, schedules => &payable_schedules() });
+};
+
+post '/manager/budget/payable/schedule/toggle' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $list = &payable_schedules();
+	foreach my $s ( @{$list} ) {
+		next unless ($s->{'uuid'} || '') eq $uuid;
+		$s->{'active'} = (($s->{'active'} || 'on') eq 'off') ? 'on' : 'off';
+	}
+	&payable_schedules_save($list);
+	$c->render(json => { ok => 1, schedules => &payable_schedules() });
 };
 
 

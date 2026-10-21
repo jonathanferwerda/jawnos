@@ -117,7 +117,7 @@
 	<% } %>
 	<% if ($display eq 'income_statement') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Income Statement') %></h2>
-		<div style="opacity:.75;"><%= &subs::ui('For the period') %> <b><%= $period_start %></b> <%= &subs::ui('to') %> <b><%= $period_end %></b> &middot; <%= &subs::ui('Cash basis') %></div>
+		<div style="opacity:.75;"><%= &subs::ui('For the period') %> <b><%= $period_start %></b> <%= &subs::ui('to') %> <b><%= $period_end %></b> &middot; <%= &subs::ui('Accrual basis') %></div>
 		<table class="accounting_statement" style="width:100%;border:groove;border-collapse:collapse;margin-top:8px;">
 			<thead style="text-align:left;">
 				<th><%= &subs::ui('Category') %></th>
@@ -127,12 +127,20 @@
 			<tbody>
 				<tr><th colspan="3" style="text-align:left;border-top:2px solid;"><%= &subs::ui('Income') %></th></tr>
 				<% foreach my $r ( @{$reports->{'income'} || []} ) { %>
-					<tr><td><%= &subs::format_name($r->{'app'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'amount'}) %></td><td style="text-align:right;opacity:.75;"><%= &subs::price_formatter($r->{'prior'}) %></td></tr>
+					<tr><td><%= &subs::format_name($r->{'name'} || $r->{'app'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'amount'}) %></td><td style="text-align:right;opacity:.75;"><%= &subs::price_formatter($r->{'prior'}) %></td></tr>
 				<% } %>
 				<tr><td><b><%= &subs::ui('Total income') %></b></td><td style="text-align:right;border-top:1px solid;"><b><%= &subs::price_formatter($reports->{'income_total'}) %></b></td><td style="text-align:right;border-top:1px solid;"><%= &subs::price_formatter($reports->{'prior_income_total'}) %></td></tr>
+				<% if (scalar @{$reports->{'cogs'} || []}) { %>
+					<tr><th colspan="3" style="text-align:left;border-top:2px solid;"><%= &subs::ui('Cost of goods sold') %></th></tr>
+					<% foreach my $r ( @{$reports->{'cogs'} || []} ) { %>
+						<tr><td><%= &subs::format_name($r->{'name'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'amount'}) %></td><td style="text-align:right;opacity:.75;"><%= &subs::price_formatter($r->{'prior'}) %></td></tr>
+					<% } %>
+					<tr><td><b><%= &subs::ui('Total cost of goods sold') %></b></td><td style="text-align:right;border-top:1px solid;"><b><%= &subs::price_formatter($reports->{'cogs_total'}) %></b></td><td style="text-align:right;border-top:1px solid;"><%= &subs::price_formatter($reports->{'prior_cogs_total'}) %></td></tr>
+					<tr><td style="font-size:115%;"><b><%= &subs::ui('Gross profit') %></b></td><td style="text-align:right;border-top:3px double;"><b><%= &subs::price_formatter($reports->{'gross_profit'}) %></b></td><td style="text-align:right;border-top:3px double;"><b><%= &subs::price_formatter($reports->{'prior_gross_profit'}) %></b></td></tr>
+				<% } %>
 				<tr><th colspan="3" style="text-align:left;border-top:2px solid;"><%= &subs::ui('Expenses') %></th></tr>
 				<% foreach my $r ( @{$reports->{'expense'} || []} ) { %>
-					<tr><td><%= &subs::format_name($r->{'app'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'amount'}) %></td><td style="text-align:right;opacity:.75;"><%= &subs::price_formatter($r->{'prior'}) %></td></tr>
+					<tr><td><%= &subs::format_name($r->{'name'} || $r->{'app'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'amount'}) %></td><td style="text-align:right;opacity:.75;"><%= &subs::price_formatter($r->{'prior'}) %></td></tr>
 				<% } %>
 				<tr><td><b><%= &subs::ui('Total expenses') %></b></td><td style="text-align:right;border-top:1px solid;"><b><%= &subs::price_formatter($reports->{'expense_total'}) %></b></td><td style="text-align:right;border-top:1px solid;"><%= &subs::price_formatter($reports->{'prior_expense_total'}) %></td></tr>
 				<tr><td style="font-size:120%;"><b><%= &subs::ui('Net income') %></b></td><td style="text-align:right;border-top:3px double;"><b><%= &subs::price_formatter($reports->{'net_income'}) %></b></td><td style="text-align:right;border-top:3px double;"><b><%= &subs::price_formatter($reports->{'prior_net_income'}) %></b></td></tr>
@@ -143,19 +151,18 @@
 		<% } %>
 	<% } elsif ($display eq 'balance_sheet') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Balance Sheet') %></h2>
-		<div style="opacity:.75;"><%= &subs::ui('As of') %> <b><%= $period_end %></b> &middot; <%= &subs::ui('Cash basis') %></div>
+		<div style="opacity:.75;"><%= &subs::ui('As of') %> <b><%= $period_end %></b> &middot; <%= &subs::ui('Accrual basis') %></div>
 		<table class="accounting_statement" style="width:100%;border:groove;border-collapse:collapse;margin-top:8px;">
 			<tbody>
 				<tr><th colspan="2" style="text-align:left;border-bottom:2px solid;"><%= &subs::ui('Assets') %></th></tr>
-				<tr><th colspan="2" style="text-align:left;opacity:.7;font-weight:600;"><%= &subs::ui('Cash and bank') %></th></tr>
 				<% foreach my $r ( @{$reports->{'assets'} || []} ) { %>
-					<tr><td><%= &subs::format_name($r->{'app'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'balance'}) %></td></tr>
+					<tr><td><%= &subs::format_name($r->{'name'} || $r->{'app'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'balance'}) %></td></tr>
 				<% } %>
-				<tr><td><%= &subs::ui('Accounts receivable') %> <span style="opacity:.6;">(<%= $reports->{'receivables'}->{'count'} || 0 %> <%= &subs::ui('open') %>)</span></td><td style="text-align:right;"><%= &subs::price_formatter($reports->{'receivables'}->{'total'}) %></td></tr>
+				<tr><td><%= &subs::ui('Accounts receivable') %> <span style="opacity:.6;">(<%= $reports->{'receivables'}->{'count'} || 0 %> <%= &subs::ui('open') %>)</span></td><td style="text-align:right;"><%= &subs::price_formatter($reports->{'receivables_balance'} || 0) %></td></tr>
 				<tr><td><b><%= &subs::ui('Total assets') %></b></td><td style="text-align:right;border-top:1px solid;"><b><%= &subs::price_formatter($reports->{'assets_total'}) %></b></td></tr>
 				<tr><th colspan="2" style="text-align:left;border-bottom:2px solid;"><%= &subs::ui('Liabilities') %></th></tr>
 				<% foreach my $r ( @{$reports->{'liabilities'} || []} ) { %>
-					<tr><td><%= &subs::format_name($r->{'app'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'balance'}) %></td></tr>
+					<tr><td><%= &subs::format_name($r->{'name'} || $r->{'app'}) %></td><td style="text-align:right;"><%= &subs::price_formatter($r->{'balance'}) %></td></tr>
 				<% } %>
 				<% unless (scalar @{$reports->{'liabilities'} || []}) { %>
 					<tr><td colspan="2" style="opacity:.6;"><%= &subs::ui('None') %></td></tr>
@@ -166,7 +173,7 @@
 				<tr><td><b><%= &subs::ui('Total liabilities and equity') %></b></td><td style="text-align:right;border-top:3px double;"><b><%= &subs::price_formatter($reports->{'liabilities_total'} + $reports->{'equity'}) %></b></td></tr>
 			</tbody>
 		</table>
-		<div style="opacity:.65;margin-top:6px;max-width:70%;"><%= &subs::ui('Equity is what is left of the assets once the liabilities are taken off; the accounts and invoices are the source of both sides.') %></div>
+		<div style="opacity:.65;margin-top:6px;max-width:70%;"><%= &subs::ui('Equity is what is left of the assets once the liabilities are taken off. The balance sheet is read from the double-entry journal, so every line is an account balance and it agrees with the Trial Balance.') %></div>
 	<% } elsif ($display eq 'cash_flow') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Cash Flow') %></h2>
 		<div style="opacity:.75;"><%= &subs::ui('For the period') %> <b><%= $period_start %></b> <%= &subs::ui('to') %> <b><%= $period_end %></b> &middot; <%= &subs::ui('Cash basis') %></div>
@@ -239,6 +246,43 @@
 	<% } elsif ($display eq 'payables') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Payables') %></h2>
 		<div style="opacity:.75;"><%= &subs::ui('Aged from the bill date') %> &middot; <%= &subs::ui('As of') %> <b><%= $period_end %></b> &middot; <%= $payables->{'count'} || 0 %> <%= &subs::ui('open') %> &middot; <%= $payables->{'paid_count'} || 0 %> <%= &subs::ui('paid') %></div>
+		<% if (scalar @{$notification_candidates || []}) { %>
+			<h3 style="margin-bottom:4px;"><%= &subs::ui('From notifications') %></h3>
+			<div style="opacity:.7;margin-bottom:4px;"><%= &subs::ui('A notification that names a payment becomes a bill and is paid from the account it came from when you press OK.') %></div>
+			<table class="accounting_statement" style="width:100%;border:groove;border-collapse:collapse;">
+				<thead style="text-align:left;">
+					<th><%= &subs::ui('Date') %></th>
+					<th><%= &subs::ui('Merchant') %></th>
+					<th style="text-align:right;"><%= &subs::ui('Amount') %></th>
+					<th><%= &subs::ui('App') %></th>
+					<th><%= &subs::ui('Pay from') %></th>
+					<th></th>
+				</thead>
+				<tbody>
+					<% foreach my $n ( @{$notification_candidates || []} ) { %>
+						<tr class="budget_note_row" uuid="<%= $n->{'uuid'} %>" vendor="<%= $n->{'vendor'} %>" amount="<%= $n->{'amount'} %>">
+							<td><span class="time" timestamp="<%= $n->{'timestamp'} %>"></span></td>
+							<td><%= &subs::format_name($n->{'merchant'}) %><div style="opacity:.6;font-size:12px;max-width:420px;"><%= $n->{'message'} %></div></td>
+							<td style="text-align:right;"><%= &subs::price_formatter($n->{'amount'}) %></td>
+							<td><input class="budget_note_app" list="budget_payable_apps" value="<%= $n->{'app'} %>" style="width:120px;" hint="<%= &subs::ui('App') %>"><% if ($n->{'suggested'}) { %><div style="opacity:.6;font-size:12px;"><%= $n->{'count'} %> <%= &subs::ui('earlier payments') %></div><% } %></td>
+							<td>
+								<select class="budget_note_account" hint="<%= &subs::ui('Pay from') %>">
+									<option value=""><%= &subs::ui('Leave the bill open') %></option>
+									<% foreach my $ac ( @{$all_accounts} ) { %>
+										% next if $ac->{'app'} eq 'all' || $ac->{'app'} eq 'gallery';
+										<option value="<%= $ac->{'app'} %>" <% if ($ac->{'app'} eq $n->{'account'}) { %>selected<% } %>><%= &subs::format_name($ac->{'app'}) %></option>
+									<% } %>
+								</select>
+							</td>
+							<td style="white-space:nowrap;">
+								<button class="budget_note_ok" uuid="<%= $n->{'uuid'} %>"><%= &subs::ui('OK') %></button>
+								<button class="budget_note_dismiss" uuid="<%= $n->{'uuid'} %>" hint="<%= &subs::ui('Not a bill') %>">&times;</button>
+							</td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+		<% } %>
 		<table class="accounting_statement" style="width:100%;border:groove;border-collapse:collapse;margin-top:8px;">
 			<thead style="text-align:left;">
 				<th><%= &subs::ui('Vendor') %></th>
@@ -294,12 +338,52 @@
 			<input id="budget_payable_total" placeholder="<%= &subs::ui('Total') %>" style="width:9%;">
 			<input id="budget_payable_tax" placeholder="<%= &subs::ui('Tax') %>" style="width:8%;">
 			<input id="budget_payable_date" placeholder="YYYY-MM-DD" value="<%= POSIX::strftime('%Y-%m-%d', localtime) %>" style="width:11%;">
+			<select id="budget_payable_repeat" hint="<%= &subs::ui('Repeat') %>">
+				<option value="once"><%= &subs::ui('Once') %></option>
+				<option value="weekly"><%= &subs::ui('Every week') %></option>
+				<option value="2weeks"><%= &subs::ui('Every 2 weeks') %></option>
+				<option value="30days"><%= &subs::ui('Every 30 days') %></option>
+				<option value="monthly"><%= &subs::ui('Every month') %></option>
+				<option value="quarterly"><%= &subs::ui('Every quarter') %></option>
+				<option value="yearly"><%= &subs::ui('Every year') %></option>
+			</select>
 			<button id="budget_payable_add"><%= &subs::ui('Add bill') %></button>
 			<span id="budget_payable_message"></span>
 		</div>
 		<datalist id="budget_payable_apps">
 			<% foreach my $pa ( @{$payable_apps || []} ) { %><option value="<%= $pa %>"><% } %>
 		</datalist>
+		<h3 style="margin-bottom:4px;"><%= &subs::ui('Scheduled bills') %></h3>
+		<% if (scalar @{$schedules || []}) { %>
+			<table class="accounting_statement" style="width:100%;border:groove;border-collapse:collapse;">
+				<thead style="text-align:left;">
+					<th><%= &subs::ui('Vendor') %></th>
+					<th><%= &subs::ui('App') %></th>
+					<th style="text-align:right;"><%= &subs::ui('Amount') %></th>
+					<th><%= &subs::ui('Repeats') %></th>
+					<th><%= &subs::ui('Next bill') %></th>
+					<th></th>
+				</thead>
+				<tbody>
+					<% my %repeat_label = ( once => 'Once', weekly => 'Every week', '2weeks' => 'Every 2 weeks', '30days' => 'Every 30 days', monthly => 'Every month', quarterly => 'Every quarter', yearly => 'Every year' ); %>
+					<% foreach my $s ( @{$schedules || []} ) { %>
+						<tr class="budget_schedule_row" uuid="<%= $s->{'uuid'} %>">
+							<td><%= &subs::format_name($s->{'vendor'}) %></td>
+							<td><%= &subs::format_name($s->{'app'}) %></td>
+							<td style="text-align:right;"><%= &subs::price_formatter($s->{'amount'}) %></td>
+							<td><%= &subs::ui($repeat_label{$s->{'every'} || 'monthly'} || 'Every month') %></td>
+							<td><span class="time" timestamp="<%= $s->{'next'} %>"></span><% if (($s->{'active'} || 'on') eq 'off') { %> <span style="opacity:.6;">(<%= &subs::ui('paused') %>)</span><% } %></td>
+							<td style="white-space:nowrap;">
+								<button class="budget_schedule_toggle" uuid="<%= $s->{'uuid'} %>"><%= &subs::ui(($s->{'active'} || 'on') eq 'off' ? 'Resume' : 'Pause') %></button>
+								<button class="budget_schedule_delete" uuid="<%= $s->{'uuid'} %>" hint="<%= &subs::ui('Delete') %>">&times;</button>
+							</td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+		<% } else { %>
+			<div style="opacity:.6;"><%= &subs::ui('None') %></div>
+		<% } %>
 		<div style="opacity:.65;margin-top:6px;max-width:75%;"><%= &subs::ui('A bill is money owed, not money moved: the expense and the payable are booked when the bill is entered, and paying it moves the payable to the bank account. The payables account is the credit side the trial balance carries.') %></div>
 	<% } elsif ($display eq 'trial_balance') { %>
 		<h2 style="margin:4px 0;"><%= &subs::ui('Trial Balance') %></h2>
