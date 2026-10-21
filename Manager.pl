@@ -17596,6 +17596,32 @@ sub bank_reconcile_result {
 			}
 		}
 	}
+	# A transfer recorded on the other account alone (one leg of the pair was
+	# lost) is the counterpart of this line: recording the line as a transfer
+	# supplies the missing leg and leaves the other account's balance alone.
+	my $counterparts = &subs::db_query("select * from warehouse where kind='money' and type='transaction' and movement='transfer' and account != ? and cast(timestamp as integer) >= cast(? as integer) and cast(timestamp as integer) <= cast(? as integer) order by timestamp", $account, $start - 3 * 86400000, $end + 3 * 86400000)->hashes;
+	my %app_seen;
+	my @app_choices;
+	foreach my $l ( @{$lines} ) {
+		next if $l->{'match'} || $l->{'settled'} || $l->{'covered'};
+		my $amount = defined $l->{'record_amount'} ? $l->{'record_amount'} + 0 : $l->{'amount'} + 0;
+		next if abs($amount) < 0.005;
+		my @near = grep {
+			abs((($_->{'total'} || 0) + 0) + $amount) < 0.005
+			&& abs((($_->{'timestamp'} || 0) + 0) - $l->{'timestamp'}) <= 3 * 86400000
+		} @{$counterparts};
+		$l->{'counterpart'} = $near[0] if scalar @near;
+		$l->{'movement'} = $l->{'counterpart'} ? 'transfer' : ($amount < 0 ? 'expense' : 'income');
+		$l->{'app_default'} = $l->{'counterpart'} ? $l->{'counterpart'}->{'account'} : $account;
+	}
+	foreach my $choice ( $account, map { $_->{'account'} } @{$counterparts} ) {
+		next unless defined $choice && length $choice && !$app_seen{$choice}++;
+		push @app_choices, $choice;
+	}
+	foreach my $row ( @{ &subs::db_query("select app, count(*) as c from appointments where type in ('transaction','purchase') and app is not null and app != '' group by app order by c desc limit 150")->hashes || [] } ) {
+		next if !defined $row->{'app'} || !length $row->{'app'} || $app_seen{$row->{'app'}}++;
+		push @app_choices, $row->{'app'};
+	}
 	my ($matched_count,$unmatched_count,$covered_count,$matched_total,$unmatched_total,$covered_total) = (0,0,0,0,0,0);
 	foreach my $l ( @{$lines} ) {
 		if ($l->{'covered'}) { $covered_count++; $covered_total += $l->{'amount'}; }
@@ -17616,6 +17642,7 @@ sub bank_reconcile_result {
 		parse_error => $parse_error,
 		lines => $lines,
 		outstanding => \@inside,
+		app_choices => \@app_choices,
 		statement_end => $end,
 		statement_start => $start,
 		ledger_balance => $ledger_balance,
@@ -17650,12 +17677,16 @@ sub budget_reconcile_apply {
 		next unless (($line->{'action'} || '') eq 'record');
 		my $amount = (defined $line->{'record_amount'} && $line->{'record_amount'} ne '') ? &bank_amount_value($line->{'record_amount'}) : &bank_amount_value($line->{'amount'});
 		next unless defined $amount && $amount != 0;
+		my $movement = $line->{'movement'} || ($amount < 0 ? 'expense' : 'income');
+		$movement = ($amount < 0 ? 'expense' : 'income') unless $movement eq 'expense' || $movement eq 'income' || $movement eq 'transfer';
+		my $app = &subs::unformat_name($line->{'app'} || $account);
+		$app = $account unless length $app;
 		my $uuid = &subs::random_string_creator(40);
 		my $row = {
-			app => $account,
+			app => $app,
 			timestamp => $line->{'timestamp'},
 			type => 'transaction',
-			movement => ($amount < 0 ? 'expense' : 'income'),
+			movement => $movement,
 			account => $account,
 			amount => $amount,
 			total => $amount,
@@ -17714,6 +17745,184 @@ sub budget_reconcile_apply {
 	return { recorded => $recorded, anchored => $anchored, balance => &bank_ledger_balance($account, &subs::rightNow()) };
 }
 
+# --- Financial statements --------------------------------------------------
+# The cash-basis statements read the same ledger the Budget view does: each
+# account's money moves (type='transaction'), grouped by the app that carries
+# the category. Nothing here writes.
+sub accounting_moves {
+	my ($accounts,$from,$to) = @_;
+	my @rows;
+	foreach my $a ( @{$accounts} ) {
+		next unless defined $a && length $a;
+		push @rows, @{ &subs::db_query("select * from warehouse where kind='money' and type='transaction' and movement != 'inventory' and account=? and cast(timestamp as integer) >= cast(? as integer) and cast(timestamp as integer) <= cast(? as integer) order by timestamp", $a, $from, $to)->hashes || [] };
+	}
+	return \@rows;
+}
+
+# Open invoices (not quotes) at a moment, with the balance and the age of each.
+# There is no due date on an invoice, so the age is counted from the day it was
+# written; the screen says so.
+sub accounting_receivables {
+	my $to = shift;
+	my $returner = { rows => [], total => 0, count => 0, buckets => { current => 0, '31_60' => 0, '61_90' => 0, 'over_90' => 0 } };
+	my $rows = &subs::db_query("select * from appointments where type='invoice' and cast(timestamp as integer) <= cast(? as integer) order by timestamp", $to)->hashes || [];
+	foreach my $doc ( @{$rows} ) {
+		my $data = eval { decode_json $doc->{'data'} } || {};
+		my $numbers = $data->{'numbers'} || {};
+		my $paid = 0;
+		foreach my $p ( @{$data->{'payments'} || []} ) {
+			$paid += (($p->{'amount'} || 0) + 0);
+		}
+		my $balance = defined $numbers->{'balance'} ? ($numbers->{'balance'} + 0) : (($numbers->{'total'} || 0) + 0) - $paid;
+		next if $balance <= 0.005;
+		my $issued = ($doc->{'timestamp'} || 0) + 0;
+		my $age = int(($to - $issued) / 86400000);
+		$age = 0 if $age < 0;
+		my $bucket = $age <= 30 ? 'current' : $age <= 60 ? '31_60' : $age <= 90 ? '61_90' : 'over_90';
+		$returner->{'total'} += $balance;
+		$returner->{'buckets'}->{$bucket} += $balance;
+		$returner->{'count'}++;
+		push @{$returner->{'rows'}}, {
+			app => $doc->{'app'},
+			uuid => $doc->{'uuid'},
+			id => $data->{'id'},
+			timestamp => $issued,
+			age => $age,
+			bucket => $bucket,
+			total => ($numbers->{'total'} || 0) + 0,
+			paid => $paid,
+			balance => $balance
+		};
+	}
+	@{$returner->{'rows'}} = sort { $b->{'age'} <=> $a->{'age'} } @{$returner->{'rows'}};
+	return $returner;
+}
+
+sub accounting_reports {
+	my $args = shift;
+	my $accounts = $args->{'accounts'} || [];
+	my ($from,$to) = (($args->{'from'} || 0) + 0, ($args->{'to'} || 0) + 0);
+	my $span = $to - $from;
+	$span = 1 if $span <= 0;
+	my ($pfrom,$pto) = ($from - $span, $from);
+	my $moves = &accounting_moves($accounts, $from, $to);
+	my $prior = &accounting_moves($accounts, $pfrom, $pto);
+	my %income;
+	my %expense;
+	my %prior_income;
+	my %prior_expense;
+	my ($tax_in,$tax_out) = (0,0);
+	foreach my $t ( @{$moves} ) {
+		my $app = $t->{'app'} || 'unknown';
+		my $total = ($t->{'total'} || 0) + 0;
+		my $tax = ($t->{'tax'} || 0) + 0;
+		if (($t->{'movement'} || '') eq 'income') { $income{$app} += $total; $tax_in += $tax; }
+		elsif (($t->{'movement'} || '') eq 'expense') { $expense{$app} += -$total; $tax_out += abs($tax); }
+	}
+	foreach my $t ( @{$prior} ) {
+		my $app = $t->{'app'} || 'unknown';
+		my $total = ($t->{'total'} || 0) + 0;
+		if (($t->{'movement'} || '') eq 'income') { $prior_income{$app} += $total; }
+		elsif (($t->{'movement'} || '') eq 'expense') { $prior_expense{$app} += -$total; }
+	}
+	my ($income_total,$expense_total,$prior_income_total,$prior_expense_total) = (0,0,0,0);
+	$income_total += $_ for values %income;
+	$expense_total += $_ for values %expense;
+	$prior_income_total += $_ for values %prior_income;
+	$prior_expense_total += $_ for values %prior_expense;
+	my @income_rows = map { { app => $_, amount => $income{$_}, prior => ($prior_income{$_} || 0) } } sort { $income{$b} <=> $income{$a} } keys %income;
+	my @expense_rows = map { { app => $_, amount => $expense{$_}, prior => ($prior_expense{$_} || 0) } } sort { $expense{$b} <=> $expense{$a} } keys %expense;
+	# every account's own activity in the window, opening to closing
+	my @activity;
+	my ($cash_opening,$cash_closing,$cash_prior_opening) = (0,0,0);
+	foreach my $a ( sort @{$accounts} ) {
+		my $opening = &bank_ledger_balance($a, $from);
+		my $closing = &bank_ledger_balance($a, $to);
+		my ($in,$out,$transfer) = (0,0,0);
+		foreach my $t ( @{$moves} ) {
+			next unless (($t->{'account'} || '') eq $a);
+			my $total = ($t->{'total'} || 0) + 0;
+			if (($t->{'movement'} || '') eq 'income') { $in += $total; }
+			elsif (($t->{'movement'} || '') eq 'expense') { $out += -$total; }
+			elsif (($t->{'movement'} || '') eq 'transfer') { $transfer += $total; }
+		}
+		$cash_opening += $opening;
+		$cash_closing += $closing;
+		$cash_prior_opening += &bank_ledger_balance($a, $pfrom);
+		push @activity, { app => $a, opening => $opening, in => $in, out => $out, transfer => $transfer, closing => $closing };
+	}
+	# cash flow: the operating moves, the transfers' net, and whatever the
+	# inventory anchors changed (the residual is what makes it tie)
+	my ($op_in,$op_out,$transfers) = (0,0,0);
+	foreach my $t ( @{$moves} ) {
+		my $total = ($t->{'total'} || 0) + 0;
+		if (($t->{'movement'} || '') eq 'income') { $op_in += $total; }
+		elsif (($t->{'movement'} || '') eq 'expense') { $op_out += -$total; }
+		elsif (($t->{'movement'} || '') eq 'transfer') { $transfers += $total; }
+	}
+	my ($prior_in,$prior_out,$prior_transfers) = (0,0,0);
+	foreach my $t ( @{$prior} ) {
+		my $total = ($t->{'total'} || 0) + 0;
+		if (($t->{'movement'} || '') eq 'income') { $prior_in += $total; }
+		elsif (($t->{'movement'} || '') eq 'expense') { $prior_out += -$total; }
+		elsif (($t->{'movement'} || '') eq 'transfer') { $prior_transfers += $total; }
+	}
+	my $change = $cash_closing - $cash_opening;
+	my $adjustment = $change - ($op_in - $op_out + $transfers);
+	# the prior period closes where this one opens, so its closing cash is this
+	# window's opening figure
+	my $prior_change = $cash_opening - $cash_prior_opening;
+	my $prior_adjustment = $prior_change - ($prior_in - $prior_out + $prior_transfers);
+	# balance sheet: positive account balances are what the house holds,
+	# negative ones are owed; open invoices are receivable
+	my (@asset_rows,@liability_rows);
+	my ($assets,$liabilities) = (0,0);
+	foreach my $a ( sort @{$accounts} ) {
+		my $balance = &bank_ledger_balance($a, $to);
+		next if abs($balance) < 0.005;
+		if ($balance > 0) { push @asset_rows, { app => $a, balance => $balance }; $assets += $balance; }
+		else { push @liability_rows, { app => $a, balance => -$balance }; $liabilities += -$balance; }
+	}
+	my $ar = &accounting_receivables($to);
+	$assets += $ar->{'total'};
+	return {
+		income => \@income_rows,
+		expense => \@expense_rows,
+		income_total => $income_total,
+		expense_total => $expense_total,
+		net_income => $income_total - $expense_total,
+		prior_income_total => $prior_income_total,
+		prior_expense_total => $prior_expense_total,
+		prior_net_income => $prior_income_total - $prior_expense_total,
+		tax_in => $tax_in,
+		tax_out => $tax_out,
+		activity => \@activity,
+		activity_totals => { opening => $cash_opening, in => $op_in, out => $op_out, transfer => $transfers, closing => $cash_closing },
+		assets => \@asset_rows,
+		liabilities => \@liability_rows,
+		assets_total => $assets,
+		liabilities_total => $liabilities,
+		equity => $assets - $liabilities,
+		receivables => $ar,
+		cash => {
+			opening => $cash_opening,
+			closing => $cash_closing,
+			in => $op_in,
+			out => $op_out,
+			transfers => $transfers,
+			change => $change,
+			adjustment => $adjustment,
+			prior_opening => $cash_prior_opening,
+			prior_closing => $cash_opening,
+			prior_in => $prior_in,
+			prior_out => $prior_out,
+			prior_transfers => $prior_transfers,
+			prior_change => $prior_change,
+			prior_adjustment => $prior_adjustment
+		}
+	};
+}
+
 get '/manager/budget' => sub($c) {
 	my $totals = {};
 	my $tally = {};
@@ -17744,6 +17953,9 @@ get '/manager/budget' => sub($c) {
 
 	my $settings = &subs::settings_grabber({ app => 'budget' });
 	my $display = $c->param('display') || $settings->{'display'};
+	# the display used to carry a budget table; the app is a set of financial
+	# statements now, so an old saved budget view lands on the income statement
+	$display = 'income_statement' if !defined $display || $display eq '' || $display eq 'budgets';
 	if ($settings->{$display . '_display'} ne '') {
 		my $d = eval { decode_json $settings->{$display . '_displays'} };
 		foreach my $k ( keys %{$d->{$settings->{$display . '_display'}}} ) {
@@ -18077,6 +18289,29 @@ get '/manager/budget' => sub($c) {
 	elsif ($display eq 'daily_sheet') {
 		$settings->{'daily_sheet_displays'} = eval { return decode_json $settings->{'daily_sheet_displays'} } || {};
 	}
+	my @display_options = (
+		[ 'income_statement', &subs::ui('Income Statement') ],
+		[ 'balance_sheet', &subs::ui('Balance Sheet') ],
+		[ 'cash_flow', &subs::ui('Cash Flow') ],
+		[ 'account_activity', &subs::ui('Account Activity') ],
+		[ 'statement', &subs::ui('Ledger') ],
+		[ 'receivables', &subs::ui('Receivables') ],
+		[ 'invoices', &subs::ui('Invoices') ],
+		[ 'daily_sheet', &subs::ui('Day Book') ],
+		[ 'reconcile', &subs::ui('Reconcile') ]
+	);
+	my %known_display = map { $_->[0] => 1 } @display_options;
+	$display = 'income_statement' unless $known_display{$display};
+	my $reports = {};
+	if ($display eq 'income_statement' || $display eq 'balance_sheet' || $display eq 'cash_flow' || $display eq 'account_activity' || $display eq 'receivables') {
+		my @report_accounts = map { $_->{'app'} } grep { $_->{'app'} ne 'all' && $_->{'app'} ne 'gallery' } @{$accounts};
+		$reports = &accounting_reports({ accounts => \@report_accounts, from => $bt, to => $t2 });
+	}
+	my $period_span = $t2 - $bt;
+	my $period_start_label = POSIX::strftime('%b %e, %Y', localtime($bt / 1000));
+	my $period_end_label = POSIX::strftime('%b %e, %Y', localtime($t2 / 1000));
+	my $prior_start_label = POSIX::strftime('%b %e, %Y', localtime(($bt - $period_span) / 1000));
+	my $prior_end_label = $period_start_label;
 	my $data = {
 		timestamp => $timestamp,
 		accounts => $acc,
@@ -18105,12 +18340,18 @@ get '/manager/budget' => sub($c) {
 		columns => $columns,
 		dollas => \@dollas,
 		time_scopes => \@time_scopes,
-		time_lengths => \@time_lengths
+		time_lengths => \@time_lengths,
+		displays => \@display_options,
+		reports => $reports,
+		period_start => $period_start_label,
+		period_end => $period_end_label,
+		prior_start => $prior_start_label,
+		prior_end => $prior_end_label
 	};
 
 
 	my $content = $c->render_to_string(%{$data});
-	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'budget', title => 'Budget', contents => $content },$timestamp);
+	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'budget', title => &subs::lang('accounting'), window_name => &subs::lang('accounting'), contents => $content },$timestamp);
 	$data->{'html'} = $contents;
 	$c->render(json => $data);
 };
@@ -22340,9 +22581,10 @@ sub window_maker($type,$timestamp) {
 	my $drawer;
 	my $formatted_name = &subs::format_name($type->{'app'});
 	my $unformatted_name = &subs::unformat_name($type->{'app'});
+	my $window_name = (defined $type->{'window_name'} && length $type->{'window_name'}) ? $type->{'window_name'} : $formatted_name;
 	my $html_name = &subs::html_name($type->{'app'});
 	my $app_attr = &subs::html_text($unformatted_name);
-	my $app_text = &subs::html_text($formatted_name);
+	my $app_text = &subs::html_text($window_name);
 	my $http_name = &subs::http_name($type->{'app'});
 	my $apostrophe_escape = &subs::apostrophe_escape($type->{'app'});
 
@@ -22370,7 +22612,7 @@ sub window_maker($type,$timestamp) {
 		$settings->{'navigation'} = &subs::time_abbrev_translator($settings->{'navigation'});
 	}
 
-	my $main_image = &subs::main_icon_maker({ app => $unformatted_name, timestamp => $timestamp, settings => $settings, size => 'tiny' });
+	my $main_image = &subs::main_icon_maker({ app => $unformatted_name, timestamp => $timestamp, settings => $settings, size => 'tiny', hint => $type->{'window_name'} });
 	# the window controls wear the icon set when it offers them, and the old text
 	# glyphs when it does not (the hand-drawn set, or no set at all)
 	my $window_control = sub {

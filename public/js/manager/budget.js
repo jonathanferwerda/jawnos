@@ -652,6 +652,8 @@ $(document).on('click', '#budget_reconcile_apply', function() {
 			record_amount: record_amount,
 			description: row.attr('description'),
 			action: action,
+			app: row.find('.budget_reconcile_app').val() || '',
+			movement: row.find('.budget_reconcile_movement').val() || '',
 			match_uuid: row.attr('match_uuid') || ''
 		});
 	});

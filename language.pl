@@ -75,6 +75,7 @@ sub label {
 # ---------------------------------------------------------------------------
 our %catalog = (
 	en => {
+		'accounting' => 'Accounting',
 		'crest' => 'Crest',
 		'people.me' => 'Me',
 		'construct.communities' => 'Communities',
@@ -225,6 +226,7 @@ our %catalog = (
 		'screensaver.art' => 'Drifting logo',
 	},
 	zh => {
+		'accounting' => '会计',
 		'crest' => '徽记',
 		'people.me' => '我',
 		'construct.communities' => '社区',
@@ -374,6 +376,7 @@ our %catalog = (
 		'screensaver.art' => '漂浮标志',
 	},
 	fr => {
+		'accounting' => 'Comptabilité',
 		'crest' => 'Blason',
 		'people.me' => 'Moi',
 		'construct.communities' => 'Communautés',
@@ -523,6 +526,7 @@ our %catalog = (
 		'screensaver.art' => 'Logo flottant',
 	},
 	es => {
+		'accounting' => 'Contabilidad',
 		'crest' => 'Blasón',
 		'people.me' => 'Yo',
 		'construct.communities' => 'Comunidades',
@@ -672,6 +676,7 @@ our %catalog = (
 		'screensaver.art' => 'Logo flotante',
 	},
 	de => {
+		'accounting' => 'Buchhaltung',
 		'crest' => 'Wappen',
 		'people.me' => 'Ich',
 		'construct.communities' => 'Gemeinschaften',
@@ -821,6 +826,7 @@ our %catalog = (
 		'screensaver.art' => 'Schwebendes Logo',
 	},
 	pt => {
+		'accounting' => 'Contabilidade',
 		'crest' => 'Brasão',
 		'people.me' => 'Eu',
 		'construct.communities' => 'Comunidades',
@@ -970,6 +976,7 @@ our %catalog = (
 		'screensaver.art' => 'Logótipo à deriva',
 	},
 	hi => {
+		'accounting' => 'लेखांकन',
 		'crest' => 'कुलचिह्न',
 		'people.me' => 'मैं',
 		'construct.communities' => 'समुदाय',
@@ -1106,6 +1113,7 @@ our %catalog = (
 		'screensaver.art' => 'बहता लोगो',
 	},
 	ar => {
+		'accounting' => 'المحاسبة',
 		'crest' => 'شعار',
 		'people.me' => 'أنا',
 		'construct.communities' => 'المجتمعات',
@@ -1242,6 +1250,7 @@ our %catalog = (
 		'screensaver.art' => 'شعار عائم',
 	},
 	bn => {
+		'accounting' => 'হিসাবরক্ষণ',
 		'crest' => 'ক্রেস্ট',
 		'people.me' => 'আমি',
 		'construct.communities' => 'সম্প্রদায়',
@@ -1378,6 +1387,7 @@ our %catalog = (
 		'screensaver.art' => 'ভাসমান লোগো',
 	},
 	ru => {
+		'accounting' => 'Бухгалтерия',
 		'crest' => 'Герб',
 		'people.me' => 'Я',
 		'construct.communities' => 'Сообщества',
@@ -1514,6 +1524,7 @@ our %catalog = (
 		'screensaver.art' => 'Парящий логотип',
 	},
 	ja => {
+		'accounting' => '会計',
 		'crest' => '紋章',
 		'people.me' => '自分',
 		'construct.communities' => 'コミュニティ',
@@ -1650,6 +1661,7 @@ our %catalog = (
 		'screensaver.art' => '漂うロゴ',
 	},
 	pa => {
+		'accounting' => 'ਲੇਖਾਕਾਰੀ',
 		'crest' => 'ਕ੍ਰੈਸਟ',
 		'people.me' => 'ਮੈਂ',
 		'construct.communities' => 'ਭਾਈਚਾਰੇ',
@@ -1786,6 +1798,7 @@ our %catalog = (
 		'screensaver.art' => 'ਤੈਰਦਾ ਲੋਗੋ',
 	},
 	id => {
+		'accounting' => 'Akuntansi',
 		'crest' => 'Lambang',
 		'people.me' => 'Saya',
 		'construct.communities' => 'Komunitas',
@@ -1922,6 +1935,7 @@ our %catalog = (
 		'screensaver.art' => 'Logo melayang',
 	},
 	ko => {
+		'accounting' => '회계',
 		'crest' => '문장',
 		'people.me' => '나',
 		'construct.communities' => '커뮤니티',
@@ -2058,6 +2072,7 @@ our %catalog = (
 		'screensaver.art' => '떠다니는 로고',
 	},
 	it => {
+		'accounting' => 'Contabilità',
 		'crest' => 'Stemma',
 		'people.me' => 'Io',
 		'construct.communities' => 'Comunità',
@@ -2194,6 +2209,7 @@ our %catalog = (
 		'screensaver.art' => 'Logo fluttuante',
 	},
 	tr => {
+		'accounting' => 'Muhasebe',
 		'crest' => 'Arma',
 		'people.me' => 'Ben',
 		'construct.communities' => 'Topluluklar',

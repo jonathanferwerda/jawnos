@@ -2362,20 +2362,23 @@ sub main_icon_maker() {
 		$onclick = 'onclick="windowRestorer(' . $timestamp . ',\'' . $unformatted_name . '\')"';
 	}
 	$settings = &subs::settings_grabber({ app => $unformatted_name }) unless $settings;
-	my $main_image = '<span id="window_icon_' . $timestamp . '" style="display:none;" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . &subs::format_name($unformatted_name) . '" ' . $onclick . '>' . &subs::initialize_name(&subs::format_name($unformatted_name)) . '</span>';
+	# a window may wear a name that is not its key (the accounting app is still
+	# stored under 'budget'), so the caller can name the hint it shows
+	my $hint = (defined $data->{'hint'} && length $data->{'hint'}) ? $data->{'hint'} : &subs::format_name($unformatted_name);
+	my $main_image = '<span id="window_icon_' . $timestamp . '" style="display:none;" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" ' . $onclick . '>' . &subs::initialize_name($hint) . '</span>';
 	my ($destination,$asset);
 	if ($settings->{'main_image'}) {
 		($destination,$asset) = &subs::file_device_renamer({ file => $settings->{'main_image'}, app => $unformatted_name, type => 'image' });
 		if (-e ($destination . $asset)) {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . &subs::format_name($unformatted_name) . '" src="/file_open?file=' . $destination . $asset . '" class="little_thumb" ' . $onclick . '>';
+			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" src="/file_open?file=' . $destination . $asset . '" class="little_thumb" ' . $onclick . '>';
 		}
 	}
 	unless (-e $destination . $asset) {
 		if ($gb::known_appts->{$unformatted_name}) {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . &subs::format_name($unformatted_name) . '" src="' . &icon_for($gb::known_appts->{$unformatted_name}->{'icon'}) . '" class="little_thumb" ' . $onclick . '>';
+			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . &icon_for($gb::known_appts->{$unformatted_name}->{'icon'}) . '" class="little_thumb" ' . $onclick . '>';
 		}
 		elsif (-e 'public/icons/pos/' . $settings->{'pos'} . '.png') {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . &subs::format_name($unformatted_name) . '" src="' . &icon_for('/icons/pos/' . $settings->{'pos'} . '.png') . '" class="little_thumb" ' . $onclick . '>';
+			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . &icon_for('/icons/pos/' . $settings->{'pos'} . '.png') . '" class="little_thumb" ' . $onclick . '>';
 		}
 	}
 	return $main_image

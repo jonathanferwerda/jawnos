@@ -36,6 +36,15 @@
 								<option value="record"><%= &subs::ui('Record') %></option>
 								<option value="ignore"><%= &subs::ui('Ignore') %></option>
 							</select>
+							<select class="budget_reconcile_movement" hint="<%= &subs::ui('Movement') %>">
+								<option value="expense" <% if (($l->{'movement'} || '') eq 'expense') { %>selected<% } %>><%= &subs::ui('Expense') %></option>
+								<option value="income" <% if (($l->{'movement'} || '') eq 'income') { %>selected<% } %>><%= &subs::ui('Income') %></option>
+								<option value="transfer" <% if (($l->{'movement'} || '') eq 'transfer') { %>selected<% } %>><%= &subs::ui('Transfer') %></option>
+							</select>
+							<input class="budget_reconcile_app" list="budget_reconcile_apps" value="<%= $l->{'app_default'} || $account %>" style="width:110px;" placeholder="<%= &subs::ui('App') %>" hint="<%= &subs::ui('App') %>">
+							<% if ($l->{'counterpart'}) { %>
+								<div><%= &subs::ui('Counterpart') %>: <%= &subs::format_name($l->{'counterpart'}->{'account'}) %> <%= &subs::price_formatter($l->{'counterpart'}->{'total'}) %> <span class="time" timestamp="<%= $l->{'counterpart'}->{'timestamp'} %>"></span></div>
+							<% } %>
 							<% if ($l->{'parts'}) { %>
 								<div><%= &subs::ui('Already in Budget') %>: <%= &subs::price_formatter($parts_total) %> &middot; <%= &subs::ui('record') %> <%= &subs::price_formatter($record_amount) %></div>
 							<% } %>
@@ -45,6 +54,9 @@
 			<% } %>
 		</tbody>
 	</table>
+	<datalist id="budget_reconcile_apps">
+		<% foreach my $app_choice ( @{$app_choices || []} ) { %><option value="<%= $app_choice %>"><% } %>
+	</datalist>
 
 	<h4><%= &subs::ui('In Budget, not on the statement') %></h4>
 	<% if (scalar @{$outstanding}) { %>
