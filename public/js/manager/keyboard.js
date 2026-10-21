@@ -923,12 +923,6 @@ async function keyboardMaker(data) {
 			success: function(response) {
 				$('#' + toggle).remove();
 				if (typeof response.keyboard === 'string') { $('#keyboard_container').append(response.keyboard); }
-				// A peer's panel is HTML; an older relay may still hand back its
-				// JSON envelope, which must never reach $() as a selector.
-				if (typeof response.remote_keyboard === 'string' && response.remote_keyboard) {
-					var remote_view = $(response.remote_keyboard).find('#remote_control_view').html();
-					if (remote_view) { $('#keyboard_container').find('#remote_control_view').html(remote_view); }
-				}
 				if (toggle == 'remote_control') {
 					// keep the picker on the machine that was just chosen, and take
 					// the Manager button with it (the setting POST can land after this

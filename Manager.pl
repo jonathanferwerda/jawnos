@@ -31661,39 +31661,24 @@ sub formula_calculator($formula) {
 post '/manager/keyboard' => sub($c) {
 	my $toggle = $c->param('toggle');
 	my $remote_uuid = $c->param('remote_uuid');
-	my $remoted = $c->param('remoted');
-	my $mirror = $c->param('mirror');
 	my $remote_control = &subs::setting_grabber({ app => 'me', setting => $toggle . '_machine' });
-	my $remote_machines = &subs::remote_machine_lister();
-	my ($remote_kb,$kb);
-	# A relayed request must not relay again: the machine that asked wants this
-	# machine's own panel. It answers with its JSON envelope, so take the
-	# keyboard HTML out of it - the page used to receive the whole envelope and
-	# pass it to $(), which threw and left the panel hidden. An explicit empty
-	# pick (Me) must not fall back to the stored machine.
+	# The picker's choice rides in this request and is the authority for this
+	# render: the setting POST that saves it can land after us, and an explicit
+	# empty pick (Me) must not fall back to the stored machine. Do not relay the
+	# panel to the peer to fill its view: the panel already renders the local
+	# pick, while a relayed copy shows that machine's own view ("ME!") and can
+	# stall the render while it waits on an unreachable peer.
 	my $picked = defined $remote_uuid ? $remote_uuid : $remote_control;
-	if (!$remoted && defined $picked && $picked ne '') {
+	my $kb = &keyboard_maker($c, $picked);
 
-
-		my $target = ($picked && scalar @{$remote_machines}) ? $picked : $remote_control;
-		my $jremote = encode_json $remote_machines;
-
-		my $relayed = eval { return &Manager::remote_relay_request($c, { remote_uuid => $target }) };
-		if ($relayed) {
-			my $parsed = eval { decode_json $relayed } || {};
-			$remote_kb = (ref $parsed eq 'HASH' && defined $parsed->{'keyboard'}) ? $parsed->{'keyboard'} : $relayed;
-		}
-	}
-	$kb = &keyboard_maker($c);
-
-	$c->render(json => { keyboard => $kb, remote_keyboard => $remote_kb });
+	$c->render(json => { keyboard => $kb });
 };
 
-sub keyboard_maker($c) {
+sub keyboard_maker($c, $remote_pick) {
 	my $timestamp = $c->param('timestamp');
 	my $browser_tab_id = $c->param('browser_tab_id');
 	my $remote_machines = $c->param('remote_machines');
-	my $remote_control = $c->param('remote_control');
+	my $remote_control = defined $remote_pick ? $remote_pick : $c->param('remote_control');
 	my $toggle = $c->param('toggle');
 	my $accts = [];
 	my $projs = [];

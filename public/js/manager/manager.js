@@ -4593,8 +4593,16 @@ function jawnosRemoteManagerWindow(url, uuid, name, device, manager) {
 	window.open(url, '_blank', 'noopener');
 }
 
-function jawnosRemoteManagerOpen(uuid, manager) {
+function jawnosRemoteManagerOpen(uuid, manager, gesture) {
 	if (!uuid && !manager) { return; }
+	// window.open() after the ajax reply is no longer inside the click's
+	// gesture, so a browser blocks it as a popup. When a click calls us, take
+	// the window now and navigate it with the resolved address. The installed
+	// desktop app opens through its own bridge and never needs this.
+	var preopened = null;
+	if (gesture && !window.JawnDesktop) {
+		try { preopened = window.open('', '_blank'); } catch (e) { preopened = null; }
+	}
 	var data = { timestamp: Date.now() };
 	if (uuid) { data.uuid = uuid; }
 	else { data.manager = manager; }
@@ -4604,9 +4612,20 @@ function jawnosRemoteManagerOpen(uuid, manager) {
 		data: data,
 		dataType: 'json',
 		success: function (r) {
-			if (!r) { return; }
-			if (r.need_approval) { jawnosGoPrompt(r, uuid, manager); return; }
-			if (r.manager) { jawnosRemoteManagerWindow(r.ticket_url || r.manager, r.uuid || uuid, r.name, r.device_uuid, r.manager); }
+			if (!r) { if (preopened) { preopened.close(); } return; }
+			if (r.need_approval) {
+				if (preopened) { preopened.close(); }
+				jawnosGoPrompt(r, uuid, manager);
+				return;
+			}
+			if (r.manager) {
+				if (preopened) {
+					preopened.opener = null;
+					preopened.location.href = r.ticket_url || r.manager;
+				}
+				else { jawnosRemoteManagerWindow(r.ticket_url || r.manager, r.uuid || uuid, r.name, r.device_uuid, r.manager); }
+			}
+			else if (preopened) { preopened.close(); }
 		},
 		fail: function (xhr) {
 			// The app gate answers a session that has not signed the installed
@@ -4614,6 +4633,7 @@ function jawnosRemoteManagerOpen(uuid, manager) {
 			// retry; a browser has no key, so it still gets the plain window.
 			if (xhr && xhr.responseText && xhr.responseText.indexOf('JawnOS app required') >= 0
 				&& typeof jawnAppLogin === 'function') {
+				if (preopened) { preopened.close(); }
 				jawnAppLogin(true).then(function () {
 					jawnosRemoteManagerOpen(uuid, manager);
 				}, function () {
@@ -4625,10 +4645,17 @@ function jawnosRemoteManagerOpen(uuid, manager) {
 			// matches. Open that address when it is a real host; never open this
 			// machine's own manager (the tunnel loopback) as if it were a peer.
 			if (manager && !/^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/i.test(manager)) {
-				jawnosRemoteManagerWindow(manager, uuid);
+				if (preopened) {
+					preopened.opener = null;
+					preopened.location.href = manager;
+				}
+				else { jawnosRemoteManagerWindow(manager, uuid); }
 			}
-			else if ($('#remote_control_go').length) {
-				$('#remote_control_go').attr('hint', jawnosT('That machine has no reachable address'));
+			else {
+				if (preopened) { preopened.close(); }
+				else if ($('#remote_control_go').length) {
+					$('#remote_control_go').attr('hint', jawnosT('That machine has no reachable address'));
+				}
 			}
 		}
 	});
@@ -4782,7 +4809,7 @@ $(document).on('click', '.remote_manager_open', function (e) {
 	if (e.ctrlKey || e.metaKey || e.shiftKey || e.which === 2) { return; }
 	e.preventDefault();
 	var b = $(this);
-	jawnosRemoteManagerOpen(b.attr('uuid'), b.attr('manager'));
+	jawnosRemoteManagerOpen(b.attr('uuid'), b.attr('manager'), true);
 });
 
 // Go links filed in remote_machines.buttons before the button existed still
@@ -4792,7 +4819,7 @@ $(document).on('click', '.remote_machine_buttons a[target="_blank"]', function (
 	var href = $(this).attr('href') || '';
 	if (href.indexOf('/manager') < 0) { return; }
 	e.preventDefault();
-	jawnosRemoteManagerOpen('', href);
+	jawnosRemoteManagerOpen('', href, true);
 });
 
 function cacheSet(params,data) {

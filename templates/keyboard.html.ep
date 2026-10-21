@@ -114,15 +114,19 @@
 	<% } %>
 	<% if ($toggle eq 'remote_control') { %>
 		<span class="keyboard bc theme_surface" id="remote_control" style="background-color:<%= $config->{$device}->{'remote_control'}->{'background_colour'} %>">
-			<% $remote_control = $remote_control || &subs::setting_grabber({ app => 'me', setting => 'remote_control_machine' }); %>
+			<% $remote_control = defined $remote_control ? $remote_control : &subs::setting_grabber({ app => 'me', setting => 'remote_control_machine' }); %>
 			<% $remote_machines = ref $remote_machines eq 'ARRAY' ? $remote_machines
 				: ($remote_machines ? (eval { decode_json $remote_machines } || []) : &subs::remote_machine_lister()); %>
-			<% my ($selected_rm) = grep { ($_->{'uuid'} || '') eq ($remote_control || '') } @{$remote_machines}; %>
+			<% my @rm_options = grep { ($_->{'mirror'} || '') ne 'yes' && ($_->{'hostname'} || '') ne 'me' } @{$remote_machines}; %>
+			<%# A pick saved before uuids (an ip or a signatorial) still names its machine. %>
+			<% my $pick = (defined $remote_control && !ref $remote_control) ? $remote_control : ''; %>
+			<% my ($selected_rm) = grep { $pick ne '' && (($_->{'uuid'} || '') eq $pick || ($_->{'signatorial'} || '') eq $pick || ($_->{'ip'} || '') eq $pick) } @rm_options; %>
+			<% $remote_control = $selected_rm ? ($selected_rm->{'uuid'} || '') : ''; %>
 
 			<select id="remote_control_machine_select" value="<%= $remote_control %>" onchange="settingSetter({ 'app': 'me', 'setting': 'remote_control_machine', 'value': this.value });keyboardManagerButton(this);keyboardMaker({ toggle: 'remote_control', state: 'on', remote_uuid: this.value })" style="vertical-align:top;">
-				<option value="" <% if ( $remote_control eq '' || !$remote_control || !grep { $_->{'ip'} eq $remote_control } @{$remote_machines}) { %>selected<% } %>>Me</option>
-				<% foreach my $rm ( grep { ($_->{'mirror'} || '') ne 'yes' && ($_->{'hostname'} || '') ne 'me' } @{$remote_machines} ) { %>
-					<option value="<%= $rm->{'uuid'} %>" manager="<%= $rm->{'manager'} %>" data-tailnet="<%= &subs::tailnet_address($rm) %>" <% if ( $rm->{'uuid'} eq $remote_control ) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'domain'} || $rm->{'ip'} %></option>
+				<option value="" <% if ( !$selected_rm ) { %>selected<% } %>>Me</option>
+				<% foreach my $rm ( @rm_options ) { %>
+					<option value="<%= $rm->{'uuid'} %>" manager="<%= $rm->{'manager'} %>" data-tailnet="<%= &subs::tailnet_address($rm) %>" <% if ( $selected_rm && ($rm->{'uuid'} || '') eq ($selected_rm->{'uuid'} || '') ) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'domain'} || $rm->{'ip'} %></option>
 				<% } %>
 			</select>
 			<button type="button" id="remote_control_go" class="remote_manager_open" uuid="<%= $selected_rm ? $selected_rm->{'uuid'} : '' %>" manager="<%= $selected_rm ? $selected_rm->{'manager'} : '' %>" hint="<%= &subs::ui("Open this machine's Manager") %>" <% if (!$selected_rm) { %>style="display:none;"<% } %>><%= &subs::lang('common.go') %></button>
@@ -130,15 +134,14 @@
 			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('remote_control')" src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
 			<br>
 			<div id="remote_control_view" class="keyboard_content">
-				<% if ($remote_control eq '' || !$remote_control || !grep { $_->{'uuid'} eq $remote_control } @{$remote_machines}) { %>
-					<% $remote_control = undef; %>
+				<% if ( !$selected_rm ) { %>
 					ME!<br>
 					<%= &subs::device_setter() %>
 				<% } else { %>
-					<% my ($rm) = grep { $_->{'uuid'} eq $remote_control } @{$remote_machines}; %>
-					<%= $rm->{'ip'} %><br>
+					<%= $selected_rm->{'hostname'} || $selected_rm->{'fqdn'} || $selected_rm->{'ip'} %><br>
+					<%= $selected_rm->{'ip'} %><br>
 					<%= &subs::device_setter() %><br>
-					<%= $remote_control %>
+					<%= $selected_rm->{'uuid'} %>
 				<% } %>
 
 				<br><span id="manager_file" style=""><%= $manager_file %></span>
