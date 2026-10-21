@@ -6335,6 +6335,245 @@ post '/manager/configure/crypto_refresh' => sub($c) {
 	$c->render(json => $result);
 };
 
+# Type-ahead for the History app: a house has thousands of apps, so the list is
+# searched on the server and only the matches travel.
+get '/manager/crypto/apps' => sub($c) {
+	my $q = $c->param('q') // '';
+	$q =~ s/^\s+|\s+$//g;
+	return $c->render(json => { apps => [] }) unless length $q;
+	$q =~ s/[%_\\]//g;
+	my @words = grep { length } split /\s+/, $q;
+	return $c->render(json => { apps => [] }) unless scalar @words;
+	my $pat = '%' . join('%', @words) . '%';
+	my $rows = &subs::db_query("select distinct app from settings where app like ? order by app limit 500", $pat)->hashes;
+	my $extra = &subs::db_query("select distinct app from appointments where app like ? order by app limit 200", $pat)->hashes;
+	push @{$rows}, @{$extra};
+	my $ql = lc $q;
+	my (%seen, @out);
+	foreach my $r ( @{$rows} ) {
+		my $app = $r->{'app'};
+		next unless defined $app && length $app;
+		next if $seen{$app}++;
+		my $name = &subs::format_name($app);
+		push @out, {
+			app => $app,
+			name => $name,
+			rank => (index(lc($app), $ql) == 0 || index(lc($name), $ql) == 0) ? 0 : 1,
+		};
+	}
+	@out = sort { $a->{'rank'} <=> $b->{'rank'} || lc($a->{'name'}) cmp lc($b->{'name'}) } @out;
+	splice(@out, 25) if scalar @out > 25;
+	$c->render(json => { apps => \@out });
+};
+
+post '/manager/crypto/tracking_app' => sub($c) {
+	my $value = $c->param('value') // '';
+	$value =~ s/^\s+|\s+$//g;
+	if (!length $value) {
+		&subs::setting_deleter({ app => 'crypto', setting => 'tracking_app', device => 'all' });
+		$c->render(json => { ok => 1, app => '', name => '' });
+		return;
+	}
+	# An exact app key wins, then an exact formatted name; anything else is a new
+	# name, normalised the way every other app name is.
+	my $app = '';
+	my $rows = &subs::db_query('select distinct app from settings where lower(app) = lower(?) limit 1', $value)->hashes;
+	$app = $rows->[0]->{'app'} if $rows->[0];
+	unless (length $app) {
+		my $want = lc(&subs::format_name($value));
+		my $all = &subs::db_query('select distinct app from settings order by app')->hashes;
+		foreach my $r ( @{$all} ) {
+			next unless lc(&subs::format_name($r->{'app'})) eq $want;
+			$app = $r->{'app'};
+			last;
+		}
+	}
+	$app = lc(&subs::unformat_name($value)) unless length $app;
+	&subs::setting_setter({ app => 'crypto', setting => 'tracking_app', value => $app, device => 'all' });
+	if (&subs::crypto_tracking_on()) {
+		eval { &subs::crypto_tracking_tick({ force => 1, create => 1 }) };
+	}
+	$c->render(json => { ok => 1, app => $app, name => &subs::format_name($app) });
+};
+
+# ---- crypto payments on a Store invoice -------------------------------------
+# The seller shows a payment request, the buyer sends the coin, and the seller
+# records it here. A payer's PAY1Z proof is checked against their crest and
+# countersigned with the house's; the txid is carried, not chain-checked. The
+# money side is an ordinary income transaction on the wallet account, so every
+# statement keeps working.
+sub store_invoice_balance {
+	my ($inv) = @_;
+	my $data = eval { decode_json($inv->{'data'} || '') } || {};
+	$data->{'numbers'} = {} unless ref $data->{'numbers'} eq 'HASH';
+	$data->{'payments'} = [] unless ref $data->{'payments'} eq 'ARRAY';
+	my $paid = 0;
+	foreach my $p ( @{ $data->{'payments'} } ) {
+		$paid += $p->{'amount'} if defined $p->{'amount'} && $p->{'amount'} =~ /[0-9]/;
+	}
+	my $balance = defined $data->{'numbers'}->{'balance'}
+		? $data->{'numbers'}->{'balance'}
+		: (($data->{'numbers'}->{'total'} || 0) - $paid);
+	return ($data, $balance + 0, $paid + 0);
+}
+
+post '/manager/store/crypto_panel' => sub($c) {
+	my $uuid = $c->param('uuid');
+	my $cx = $c->param('cx_uuid');
+	my $customer = ($cx && &subs::db_select('settings', undef, { setting => 'uuid', value => $cx })->hashes->[0]) || undef;
+	unless ($customer && $customer->{'app'}) { return $c->render(json => { ok => 0, error => 'no customer' }); }
+	my $inv = &subs::db_select('appointments', undef, { uuid => $uuid, app => $customer->{'app'} })->hashes->[0];
+	unless ($inv && ($inv->{'type'} || '') eq 'invoice') { return $c->render(json => { ok => 0, error => 'no invoice' }); }
+	my ($data, $balance) = &store_invoice_balance($inv);
+	my $device = &subs::db_select('paired_devices', undef, { uuid => $c->session('device_uuid') || '', status => 'active' })->hashes->[0];
+	my $html = $c->render_to_string(
+		template => 'store/crypto_payment',
+		invoice => $inv,
+		invoice_data => $data,
+		customer => $customer,
+		wallets => &subs::crypto_wallets_report(),
+		assets => &subs::crypto_enabled_assets(),
+		balance => $balance,
+		base => &subs::crypto_report_currency(),
+		bio_enrolled => ($device && $device->{'bio_pubkey'}) ? 1 : 0,
+	);
+	$c->render(json => { ok => 1, html => $html });
+};
+
+post '/manager/store/crypto_payment' => sub($c) {
+	unless ($c->session('authentication') eq 'approved') {
+		return $c->render(json => { ok => 0, error => 'sign in first' });
+	}
+	my $bio = &biometric_payment_confirmed($c);
+	unless ($bio->{'ok'}) {
+		return $c->render(json => { ok => 0, need_biometric => 1, enrolled => $bio->{'enrolled'} ? 1 : 0, error => 'biometric confirmation is needed' });
+	}
+	my $uuid = $c->param('uuid');
+	my $cx = $c->param('cx_uuid');
+	my $customer = ($cx && &subs::db_select('settings', undef, { setting => 'uuid', value => $cx })->hashes->[0]) || undef;
+	unless ($customer && $customer->{'app'}) { return $c->render(json => { ok => 0, error => 'no customer' }); }
+	my $app = $customer->{'app'};
+	my $inv = &subs::db_select('appointments', undef, { uuid => $uuid, app => $app })->hashes->[0];
+	unless ($inv && ($inv->{'type'} || '') eq 'invoice') { return $c->render(json => { ok => 0, error => 'no invoice' }); }
+	my ($data, $balance) = &store_invoice_balance($inv);
+	if ($balance <= 0) { return $c->render(json => { ok => 0, error => 'this invoice is already paid' }); }
+	my $asset = &subs::crypto_asset(uc($c->param('asset') || ''));
+	unless ($asset) { return $c->render(json => { ok => 0, error => 'choose a coin' }); }
+	my $native = &subs::crypto_amount_number($c->param('amount'), $asset);
+	unless (defined $native && $native > 0) { return $c->render(json => { ok => 0, error => 'enter the amount that was sent' }); }
+	my $rate = &subs::crypto_rate($asset->{'code'});
+	unless (defined $rate && $rate > 0) { return $c->render(json => { ok => 0, error => 'no ' . $asset->{'code'} . ' rate is loaded yet' }); }
+	my $value = &subs::crypto_value($native, $asset->{'code'});
+	unless (defined $value && $value > 0) { return $c->render(json => { ok => 0, error => 'the amount could not be valued' }); }
+	my $account = &subs::unformat_name($c->param('account') || '');
+	unless (&subs::crypto_account_asset($account) eq $asset->{'code'}) {
+		return $c->render(json => { ok => 0, error => 'that account does not hold ' . $asset->{'code'} });
+	}
+	my $address = $c->param('address') || '';
+	my $txid = $c->param('txid') || '';
+	$txid =~ s/^\s+|\s+$//g;
+	my $proof_code = $c->param('proof') || '';
+	my ($proof, $payer, $verified) = ('', undef, $txid ? 'manual' : 'claimed');
+	if (length $proof_code) {
+		my $record = &subs::payment_proof_parse($proof_code);
+		unless ($record && &subs::payment_proof_verify($record)) {
+			return $c->render(json => { ok => 0, error => 'the payment proof did not verify' });
+		}
+		my $own = &subs::crest_record_read();
+		my $proof_payee = ref $record->{'payee'} eq 'HASH' ? ($record->{'payee'}->{'uuid'} || '') : '';
+		if (($own->{'uuid'} || '') ne '' && $proof_payee ne ($own->{'uuid'} || '')) {
+			return $c->render(json => { ok => 0, error => 'the proof names another house as the payee' });
+		}
+		unless (uc($record->{'asset'} || '') eq $asset->{'code'}) {
+			return $c->render(json => { ok => 0, error => 'the proof names a different coin' });
+		}
+		unless (&subs::payment_amount_matches($record->{'amount'}, $native)) {
+			return $c->render(json => { ok => 0, error => 'the proof amount does not match' });
+		}
+		my $suds = &subs::session_suds($c);
+		my $priv = $suds ? &subs::crest_key_read($suds) : undef;
+		if (defined $priv && length $priv == 32) {
+			$record = &subs::payment_proof_countersign($record, $priv);
+			$verified = 'crest';
+		}
+		else {
+			$verified = 'crest-unsigned';
+		}
+		$proof = encode_json($record);
+		$payer = ref $record->{'payer'} eq 'HASH' ? $record->{'payer'} : undef;
+	}
+	my $ts = &timestamp_adjuster($c) || &subs::rightNow();
+	my $server_time = &subs::rightNow();
+	my $tx_uuid = &subs::random_string_creator(40);
+	my $tx = {
+		app => $app,
+		account => $account,
+		movement => 'income',
+		type => 'transaction',
+		timestamp => $ts,
+		server_time => $server_time,
+		uuid => $tx_uuid,
+		amount => $value,
+		total => $value,
+		tax => 0,
+		aux => 0,
+		currency => &subs::crypto_report_currency(),
+		item => &subs::unformat_name('Crypto ' . $asset->{'code'}),
+		data => encode_json({
+			crypto => {
+				asset => $asset->{'code'},
+				amount => $native,
+				rate => $rate,
+				rate_at => $server_time,
+				txid => $txid,
+				value => $value,
+			},
+		}),
+	};
+	&subs::db_insert('appointments', $tx);
+	&warehouse_money_mirror($tx);
+	my $payment = {
+		account => $account,
+		uuid => &subs::random_string_creator(12),
+		appt_uuid => $tx_uuid,
+		amount => $value,
+		timestamp => $ts,
+		server_time => $server_time,
+		asset => $asset->{'code'},
+		asset_amount => $native,
+		rate => $rate,
+		txid => $txid,
+		address => $address,
+		payer => $payer,
+		proof => $proof,
+		verified => $verified,
+	};
+	push @{ $data->{'payments'} }, $payment;
+	my $new_balance = $balance - $value;
+	$new_balance = 0 if abs($new_balance) < 0.005;
+	$data->{'numbers'}->{'balance'} = $new_balance;
+	my $status = $new_balance <= 0 ? 'completed' : 'open';
+	&subs::db_update('appointments', { data => encode_json($data), status => $status, server_time => $server_time }, { uuid => $uuid, app => $app });
+	&Websocket::send('server', { console => "appointmentDetailGrabber('" . $app . "','" . $uuid . "');" });
+	$c->render(json => {
+		ok => 1,
+		payment => { %{$payment}, proof => undef },
+		balance => $new_balance,
+		status => $status,
+		verified => $verified,
+		payer => $payer,
+	});
+};
+
+get '/manager/crypto/qr' => sub($c) {
+	my $text = $c->param('text') || '';
+	return $c->rendered(400) unless length $text && length $text <= 500;
+	my $png = &subs::crest_qr_png($text);
+	unless (defined $png && length $png) { return $c->rendered(503); }
+	$c->res->headers->content_type('image/png');
+	$c->render(data => $png);
+};
+
 # The transaction form converts a native amount as the person types it; this
 # hands the browser the same snapshot the server writes with.
 get '/manager/crypto/rates' => sub($c) {
@@ -33421,6 +33660,28 @@ sub biometric_nonce_take {
 	return 0 unless $seen && $seen->{'server_time'} && $seen->{'server_time'} > &subs::rightNow() - $ttl;
 	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_bio_nonce', $stamp);
 	return 1;
+}
+
+# A payment is confirmed by the current device's enrolled biometric key: the
+# phone signs a verify challenge, the same proof used before replacing a
+# fingerprint. A device with no key has no biometric to ask for, so the signed-in
+# citizen is the fallback there; the panel says which path it will use.
+sub biometric_payment_confirmed {
+	my ($c) = @_;
+	my $out = { ok => 0, enrolled => 0, device => '' };
+	my $device_uuid = $c->session('device_uuid') || '';
+	return { ok => 1, enrolled => 0, device => '' } unless length $device_uuid;
+	my $device = &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0];
+	return { ok => 1, enrolled => 0, device => '' } unless $device && $device->{'bio_pubkey'};
+	$out->{'enrolled'} = 1;
+	$out->{'device'} = $device_uuid;
+	my $nonce = $c->param('bio_nonce') || '';
+	my $signature = $c->param('bio_signature') || '';
+	return $out unless length $nonce && length $signature;
+	return $out unless &biometric_nonce_take('verify', $device_uuid, $nonce, 600000);
+	my $msg = join("\n", 'padlock-bio-verify', $device_uuid, $nonce);
+	$out->{'ok'} = &subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature) ? 1 : 0;
+	return $out;
 }
 
 post '/manager/security/biometric_challenge' => sub ($c) {

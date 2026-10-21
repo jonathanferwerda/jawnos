@@ -486,14 +486,15 @@ our %topic = (
 	'crypto' => {
 		title => 'Crypto wallets and rates', category => 'functions',
 		verified => '2026-10-21',
-		templates => [ 'templates/configure/crypto_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/apps/app_details.html.ep', 'public/js/manager/configure.js', 'public/js/manager/transaction.js' ],
+		templates => [ 'templates/configure/crypto_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/store/crypto_payment.html.ep', 'templates/store/list.html.ep', 'public/js/manager/configure.js', 'public/js/manager/transaction.js', 'public/js/store.js' ],
 		summary => 'Wallet accounts that hold a coin, live fiat and coin rates, and cost or market valuation.',
 		body => [
 			'A wallet is an ordinary account whose Tender is crypto. It keeps a public address and the coin it holds, and it records transactions, transfers and statements like any other account. JawnOS never holds a key, cannot spend from a wallet, and refuses anything that looks like a seed phrase or a private key; if a page ever asks for one, it is not JawnOS.',
 			'Configure -> Plat -> Crypto owns the shared parts: which coins may be used, the cached exchange rates, and how a holding is valued. Cost is the money recorded when the coin arrived, which is the safe figure for statements. Market is the native holding at today\'s rate, which moves with the price. The wallet list shows both so the difference is visible.',
 			'Every conversion in the app now reads the same rate snapshot, including a measure typed as 5USD to CAD or 0.01BTC to CAD. One public, keyless call to Coinbase returns every fiat code and every coin; the snapshot keeps the most-used fiat currencies (the top 50 the source answers) and the enabled coins. A half-hour loop refreshes it, and Refresh now asks at once. While no snapshot has been read, the older built-in constants still answer. An offline house keeps its last snapshot rather than losing its rates.',
 			'Currency tracking keeps a history without an appointment. Tick it and every six hours one measure appointment is written into the app chosen under History app - Canadian Dollar by default, since that is the app this house already used, or Markets if you prefer - with a value for every tracked fiat code. The Measures app charts those points. Choosing a different History app while tracking is on writes the first point there at once. Stop the old app\'s own appointment once the tick is on, or both will write.',
-			'In a transaction, a wallet account is read in its own coin: type the native amount and the form shows what it is worth, while the ledger stores the house\'s reporting-currency value so every budget and statement still sums one currency. A transfer between two wallets must stay in the same coin on both sides; moving between a wallet and a bank is a sale and a purchase, not a transfer, and the app will say so rather than write a wrong figure.'
+			'In a transaction, a wallet account is read in its own coin: type the native amount and the form shows what it is worth, while the ledger stores the house\'s reporting-currency value so every budget and statement still sums one currency. A transfer between two wallets must stay in the same coin on both sides; moving between a wallet and a bank is a sale and a purchase, not a transfer, and the app will say so rather than write a wrong figure.',
+			'An invoice in the Store carries a crypto action when a wallet exists. It shows the coin, the amount for the balance, the receiving address and a QR; after the buyer sends the coin, type the amount and txid and press Verify & record. A payer\'s PAY1Z proof, when pasted, is checked against their crest and countersigned with this house\'s; the txid is carried, not checked against the chain. On a device with a fingerprint enrolled the record asks for it; a device without one records as the signed-in citizen.',
 		],
 		steps => [
 			'Open Configure -> Plat -> Crypto and make sure the coins you want are ticked.',
@@ -503,6 +504,7 @@ our %topic = (
 			'Read the wallet list in Plat -> Crypto for the holding, its cost and its market value; choose which one the rest of the page treats as the value.',
 			'Tick Currency tracking if you want rate history: it writes a point every six hours into the selected History app (Canadian Dollar or Markets by default), and the Measures app charts it.',
 			'Pick a different History app if the currency measures should live elsewhere; selecting one while tracking is on writes the first point there straight away.',
+			'To take a crypto payment, open the customer\'s invoices in the Store, press the wallet icon on the invoice, send the shown amount to the address, then fill in the amount and txid (and paste the buyer\'s PAY1Z proof if they gave one) and press Verify & record.',
 			'Stop the currency app\'s old updating appointment once tracking is on, so the history has one writer.'
 		],
 		related => [ 'budget', 'store', 'configure' ]

@@ -980,3 +980,133 @@ $(document).on('keydown', function(e) {
 */
 	}
 });
+
+// ---- crypto payment on an invoice ------------------------------------------
+// The seller asks for a coin amount to an address, then records what arrived.
+// A PAY1Z proof, when given, is verified by the server and countersigned; a
+// device with an enrolled fingerprint asks for it before the record is made.
+function cryptoPayWallets(scope) {
+	try { return JSON.parse(scope.attr('data-wallets') || '[]'); } catch (e) { return []; }
+}
+
+function cryptoPayAddress(scope) {
+	var opt = scope.find('#crypto_pay_wallet option:selected');
+	var address = opt.attr('data-address') || '';
+	scope.find('#crypto_pay_address').text(address || '(no address saved)');
+	var img = scope.find('#crypto_pay_qr');
+	if (address) {
+		img.attr('src', '/manager/crypto/qr?text=' + encodeURIComponent(address)).show();
+	}
+	else {
+		img.removeAttr('src').hide();
+	}
+}
+
+function cryptoPayRefresh(scope) {
+	var asset = scope.find('#crypto_pay_asset').val();
+	var wallets = cryptoPayWallets(scope).filter(function(w) { return w.asset === asset; });
+	var ws = scope.find('#crypto_pay_wallet');
+	ws.empty();
+	if (!wallets.length) {
+		ws.append($('<option>').attr('value', '').text('(no wallet for this coin)'));
+		scope.find('#crypto_pay_address').text('');
+		scope.find('#crypto_pay_qr').removeAttr('src').hide();
+		scope.find('#crypto_pay_fiat').text('no wallet');
+		return;
+	}
+	wallets.forEach(function(w) {
+		ws.append($('<option>')
+			.attr('value', w.app)
+			.attr('data-address', w.address || '')
+			.text(w.formatted_name + (w.label ? ' · ' + w.label : '')));
+	});
+	cryptoPayAddress(scope);
+	var balance = numeral(scope.attr('data-balance')).value();
+	$.getJSON('/manager/crypto/rates', function(r) {
+		var rate = (r && r.rates) ? r.rates[asset] : null;
+		if (!rate) { scope.find('#crypto_pay_fiat').text('no rate loaded'); return; }
+		scope.find('#crypto_pay_amount').val(numeral(balance / rate).format('0.00000000'));
+		scope.find('#crypto_pay_fiat').text('≈ ' + numeral(balance).format('$0.00') + ' at ' + numeral(rate).format('$0,0.00'));
+	});
+}
+
+$(document).on('click', '.crypto_payment', function() {
+	var icon = $(this);
+	$.post('/manager/store/crypto_panel', {
+		uuid: icon.attr('uuid'), cx_uuid: icon.attr('cx_uuid'), timestamp: Date.now()
+	}, function(r) {
+		if (!r || !r.ok) { alert((r && r.error) || 'could not open the crypto payment'); return; }
+		$('#crypto_pay').remove();
+		$('body').append(r.html);
+		cryptoPayRefresh($('#crypto_pay'));
+	}, 'json');
+});
+
+$(document).on('change', '#crypto_pay_asset', function() {
+	cryptoPayRefresh($(this).closest('#crypto_pay'));
+});
+
+$(document).on('change', '#crypto_pay_wallet', function() {
+	cryptoPayAddress($(this).closest('#crypto_pay'));
+});
+
+$(document).on('click', '#crypto_pay_close', function() {
+	$('#crypto_pay').remove();
+});
+
+$(document).on('click', '#crypto_pay_copy', function() {
+	var text = $(this).closest('#crypto_pay').find('#crypto_pay_address').text();
+	if (!text) { return; }
+	var input = $('<input>').val(text).appendTo('body').trigger('select');
+	try { document.execCommand('copy'); } catch (e) {}
+	input.remove();
+});
+
+$(document).on('click', '#crypto_pay_record', function() {
+	var scope = $(this).closest('#crypto_pay');
+	var status = scope.find('#crypto_pay_status');
+	var data = {
+		uuid: scope.attr('data-uuid'),
+		cx_uuid: scope.attr('data-cx'),
+		asset: scope.find('#crypto_pay_asset').val(),
+		amount: scope.find('#crypto_pay_amount').val(),
+		account: scope.find('#crypto_pay_wallet').val(),
+		address: scope.find('#crypto_pay_address').text(),
+		txid: scope.find('#crypto_pay_txid').val(),
+		proof: scope.find('#crypto_pay_proof').val(),
+		timestamp: Date.now()
+	};
+	function record(proof) {
+		if (proof) {
+			data.bio_nonce = proof.nonce;
+			data.bio_signature = proof.signature;
+		}
+		status.text('recording…');
+		$.post('/manager/store/crypto_payment', data, function(r) {
+			if (!r || !r.ok) {
+				status.text((r && r.need_biometric)
+					? 'fingerprint confirmation is needed — try again'
+					: ((r && r.error) || 'could not record'));
+				return;
+			}
+			var label = r.verified === 'crest'
+				? 'attested by the payer\'s crest'
+				: (r.verified === 'crest-unsigned' ? 'proof verified (not countersigned)' : 'recorded (no crest proof)');
+			status.text(label + ' · balance ' + numeral(r.balance).format('$0.00'));
+			customerList(scope.attr('data-cx'), 'invoice');
+			setTimeout(function() { scope.remove(); }, 1400);
+		}, 'json').fail(function() { status.text('could not record'); });
+	}
+	if (scope.attr('data-bio') === '1') {
+		if (typeof jawnosBiometricVerify !== 'function' || !window.JawnBiometricKey) {
+			status.text('This device has no fingerprint key here — record from the phone with the fingerprint, or use a device without one.');
+			return;
+		}
+		jawnosBiometricVerify(function(t) { status.text(t); }).then(record).catch(function(err) {
+			status.text((typeof jawnosBiometricError === 'function') ? jawnosBiometricError(err) : 'fingerprint not accepted');
+		});
+	}
+	else {
+		record(null);
+	}
+});

@@ -1,0 +1,76 @@
+<% use Mojo::JSON qw/encode_json/; %>
+<% no warnings 'uninitialized'; %>
+<%
+	# The seller's side of a crypto payment. It shows what to ask for (coin,
+	# amount, address, QR), then records what was sent. A payer's PAY1Z proof is
+	# checked and countersigned; the chain itself is not queried here.
+	my $wallet0 = $wallets->[0];
+	my $asset0 = $wallet0 ? &subs::crypto_asset($wallet0->{'asset'}) : &subs::crypto_asset($assets->[0]);
+	my $rate0 = $asset0 ? &subs::crypto_rate($asset0->{'code'}) : undef;
+	my $amount0 = ($asset0 && defined $rate0 && $rate0 > 0 && $balance > 0) ? sprintf('%.8f', $balance / $rate0) : '';
+	$amount0 =~ s/0+$//;
+	$amount0 =~ s/\.$//;
+%>
+<div id="crypto_pay" class="crypto_pay"
+	data-uuid="<%= $invoice->{'uuid'} %>"
+	data-cx="<%= $customer->{'value'} %>"
+	data-balance="<%= $balance %>"
+	data-base="<%= $base %>"
+	data-bio="<%= $bio_enrolled ? 1 : 0 %>"
+	data-wallets="<%= encode_json($wallets) %>"
+	style="position:fixed;z-index:100000;left:50%;top:10%;transform:translateX(-50%);width:min(580px,94vw);max-height:80vh;overflow:auto;background:var(--panel);border:2px solid var(--line);border-radius:12px;padding:14px;box-shadow:0 12px 40px rgba(0,0,0,.4);text-align:left;">
+	<h2 style="margin:0 0 4px;">Crypto payment</h2>
+	<p class="cfg-note" style="margin:0 0 10px;">Invoice <b><%= &subs::format_name($invoice_data->{'id'}) %></b> · balance <b><%= &subs::price_formatter($balance) %></b></p>
+	<% if ($balance <= 0) { %>
+		<p>This invoice is already paid.</p>
+	<% } elsif (!scalar @{$wallets}) { %>
+		<p>No crypto wallet is set up. Make an app an account, set its Tender to crypto, and save its public address on the app card.</p>
+	<% } else { %>
+		<div class="cfg-row">
+			<label>Coin</label>
+			<select id="crypto_pay_asset" class="crypto_pay_asset">
+				<% foreach my $code ( @{$assets} ) {
+					my $a = &subs::crypto_asset($code);
+					next unless $a;
+					next unless grep { $_->{'asset'} eq $a->{'code'} } @{$wallets};
+				%>
+					<option value="<%= $a->{'code'} %>" <% if ($asset0 && $a->{'code'} eq $asset0->{'code'}) { %>selected<% } %>><%= $a->{'code'} %> — <%= $a->{'name'} %></option>
+				<% } %>
+			</select>
+		</div>
+		<div class="cfg-row">
+			<label>Amount sent</label>
+			<input id="crypto_pay_amount" value="<%= $amount0 %>" style="width:170px;" inputmode="decimal">
+			<span id="crypto_pay_fiat" class="cfg-note" style="margin:0;"></span>
+		</div>
+		<div class="cfg-row">
+			<label>Receive to</label>
+			<select id="crypto_pay_wallet"></select>
+		</div>
+		<div class="cfg-row">
+			<label>Address</label>
+			<code id="crypto_pay_address" style="font-size:12px;word-break:break-all;"></code>
+			<button type="button" id="crypto_pay_copy">Copy</button>
+		</div>
+		<div style="text-align:center;margin:4px 0 8px;">
+			<img id="crypto_pay_qr" alt="Address QR" style="width:150px;height:150px;background:#fff;padding:4px;border-radius:8px;display:none;">
+		</div>
+		<div class="cfg-row">
+			<label>txid</label>
+			<input id="crypto_pay_txid" placeholder="the transaction id from the wallet" style="width:100%;">
+		</div>
+		<div class="cfg-row">
+			<label>Payment proof</label>
+			<textarea id="crypto_pay_proof" placeholder="PAY1Z:… (optional)" spellcheck="false" style="width:100%;height:58px;font-family:monospace;font-size:12px;"></textarea>
+		</div>
+		<p class="cfg-note" style="margin:0 0 8px;">
+			<% if ($bio_enrolled) { %>This device has a fingerprint enrolled: recording asks for it.<% } else { %>No fingerprint is enrolled on this device, so the signed-in citizen records it. Enrol one under Security for the stronger path.<% } %>
+			A proof is an attestation by the payer's crest; the chain is not checked here.
+		</p>
+		<div class="cfg-actions">
+			<button type="button" id="crypto_pay_record">Verify &amp; record</button>
+			<button type="button" id="crypto_pay_close">Close</button>
+			<span id="crypto_pay_status" class="cfg-note" style="margin:0;"></span>
+		</div>
+	<% } %>
+</div>

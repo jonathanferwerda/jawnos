@@ -17,7 +17,6 @@
 	my $wallets = &subs::crypto_wallets_report();
 	my $tracking = &subs::crypto_tracking_on();
 	my $tracking_app = &subs::crypto_tracking_app();
-	my $tracking_apps = &subs::crypto_tracking_apps();
 	my $tracked_at = &subs::setting_grabber({ app => 'crypto', setting => 'tracked_at', device => 'all' });
 	my $money = sub {
 		my ($v) = @_;
@@ -57,12 +56,11 @@
 		</div>
 		<div class="cfg-row">
 			<label>History app</label>
-			<select class="crypto_setting" app="crypto" setting="tracking_app">
-				<% foreach my $ta ( @{$tracking_apps} ) { %>
-					<option value="<%= $ta->{'app'} %>" <% if ($ta->{'app'} eq $tracking_app) { %>selected<% } %>><%= $ta->{'name'} %></option>
-				<% } %>
-			</select>
-			<span class="cfg-note" style="margin:0;">The app whose measures hold the history. Canadian Dollar and Markets are the usual choices; any app with measures can be picked.</span>
+			<span class="crypto_tracking_app_picker" style="position:relative;flex:1 1 240px;min-width:0;">
+				<input type="text" id="crypto_tracking_app" class="crypto_tracking_app_input" value="<%= &subs::format_name($tracking_app) %>" placeholder="type part of a name…" autocomplete="off" spellcheck="false" style="width:100%;box-sizing:border-box;">
+				<div class="crypto_tracking_app_results" style="display:none;position:absolute;z-index:60;left:0;right:0;top:100%;background:var(--panel);border:1px solid var(--line);border-radius:8px;max-height:220px;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,.25);"></div>
+			</span>
+			<span class="cfg-note crypto_tracking_app_status" style="margin:0;">The app whose measures hold the history. Type part of a name; pick a match, or type a new name to make one.</span>
 		</div>
 	</div>
 

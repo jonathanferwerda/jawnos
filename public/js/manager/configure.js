@@ -3109,3 +3109,70 @@ $(document).on('click', '.crypto_wallet_copy', function() {
 	input.trigger('focus').trigger('select');
 	try { document.execCommand('copy'); } catch (e) {}
 });
+
+// ---- History app type-ahead ------------------------------------------------
+// A house has thousands of apps, so the panel does not ship them all: the query
+// goes to the server and only the matching names come back.
+var cryptoTrackSearch = null;
+
+function cryptoTrackHideResults() {
+	$('.crypto_tracking_app_results').hide().empty();
+}
+
+function cryptoTrackSave(value) {
+	var status = $('.crypto_tracking_app_status');
+	status.text('saving…');
+	$.post('/manager/crypto/tracking_app', { value: value, timestamp: Date.now() }, function(r) {
+		if (!r || !r.ok) { status.text((r && r.error) || 'could not save'); return; }
+		$('.crypto_tracking_app_input').val(r.name || r.app || '');
+		status.text(r.app
+			? ('history goes to ' + (r.name || r.app))
+			: 'follows the app that already holds currency measures');
+		if (r.app) { setTimeout(cryptoPanelRefresh, 500); }
+	}, 'json').fail(function() { status.text('could not save'); });
+}
+
+$(document).on('input', '.crypto_tracking_app_input', function() {
+	var q = $.trim($(this).val());
+	clearTimeout(cryptoTrackSearch);
+	if (!q.length) { cryptoTrackHideResults(); return; }
+	cryptoTrackSearch = setTimeout(function() {
+		$.getJSON('/manager/crypto/apps', { q: q }, function(r) {
+			var box = $('.crypto_tracking_app_results');
+			box.empty();
+			var list = (r && r.apps) || [];
+			if (!list.length) { box.hide(); return; }
+			list.forEach(function(a) {
+				$('<div class="crypto_tracking_app_choice"></div>')
+					.attr('data-app', a.app).attr('data-name', a.name)
+					.css({ padding: '6px 9px', cursor: 'pointer', 'border-bottom': '1px solid var(--line)' })
+					.text(a.name + '  ·  ' + a.app)
+					.appendTo(box);
+			});
+			box.show();
+		});
+	}, 120);
+});
+
+$(document).on('mousedown', '.crypto_tracking_app_choice', function(e) {
+	e.preventDefault();
+	var app = $(this).attr('data-app');
+	$('.crypto_tracking_app_input').val($(this).attr('data-name'));
+	cryptoTrackHideResults();
+	cryptoTrackSave(app);
+});
+
+$(document).on('keydown', '.crypto_tracking_app_input', function(e) {
+	if (e.key === 'Enter') {
+		e.preventDefault();
+		cryptoTrackHideResults();
+		cryptoTrackSave($(this).val());
+	}
+	else if (e.key === 'Escape') {
+		cryptoTrackHideResults();
+	}
+});
+
+$(document).on('blur', '.crypto_tracking_app_input', function() {
+	setTimeout(cryptoTrackHideResults, 160);
+});

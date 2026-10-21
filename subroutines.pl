@@ -28100,17 +28100,6 @@ sub crypto_tracking_app {
 
 sub crypto_tracking_interval { return 6 * 60 * 60 * 1000 }
 
-# The apps a person can pick from: every app that already holds measures, plus
-# the current choice even if it holds none yet.
-sub crypto_tracking_apps {
-	my $rows = &db_query("select distinct app from settings where setting = 'app_measures' order by app")->hashes;
-	my @out = map { { app => $_->{'app'}, name => &format_name($_->{'app'}) } } @{$rows};
-	my $current = &crypto_tracking_app();
-	push @out, { app => $current, name => &format_name($current) } unless grep { $_->{'app'} eq $current } @out;
-	@out = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @out;
-	return \@out;
-}
-
 sub crypto_tracking_definitions {
 	my ($app) = @_;
 	my $row = &db_query("select value from settings where app = ? and setting = 'app_measures' order by server_time desc limit 1", $app)->hashes->[0];
@@ -28209,6 +28198,116 @@ sub store_movement_label {
 	return &lang('store.buying') if $m eq 'expense';
 	return &lang('common.' . $m) if $m eq 'transfer' || $m eq 'inventory';
 	return &format_name($m);
+}
+
+# ---- payment proofs ---------------------------------------------------------
+# A payer's crest signs a statement of what was sent for which document; the
+# payee signs the same bytes back. The code travels like a crest code (PAY1Z:
+# deflated JSON), so it can be pasted or scanned. This is an attestation by the
+# two houses, not a chain check: the txid is carried, not verified here.
+
+sub payment_proof_statement {
+	my ($record) = @_;
+	return undef unless ref $record eq 'HASH';
+	my $copy = { %$record };
+	delete $copy->{'payer_sig'};
+	delete $copy->{'payee_sig'};
+	return JSON::PP->new->canonical(1)->encode($copy);
+}
+
+sub payment_proof_build {
+	my ($record, $priv) = @_;
+	return undef unless ref $record eq 'HASH' && defined $priv && length $priv == 32;
+	my $json = &payment_proof_statement($record);
+	return undef unless defined $json;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($priv, 'private');
+	my $sig = $key->sign_message($json);
+	return undef unless defined $sig && length $sig == 64;
+	return { %$record, payer_sig => encode_base64($sig, '') };
+}
+
+sub payment_proof_verify {
+	my ($record) = @_;
+	return 0 unless ref $record eq 'HASH';
+	return 0 unless ($record->{'format'} || '') eq 'jawnos-payment';
+	return 0 unless ($record->{'version'} || 0) == 1;
+	my $payer = ref $record->{'payer'} eq 'HASH' ? $record->{'payer'} : {};
+	my $pub = eval { decode_base64($payer->{'pubkey'} || '') };
+	my $sig = eval { decode_base64($record->{'payer_sig'} || '') };
+	return 0 unless defined $pub && length $pub == 32 && defined $sig && length $sig == 64;
+	my $json = &payment_proof_statement($record);
+	return 0 unless defined $json;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($pub, 'public');
+	return $key->verify_message($sig, $json) ? 1 : 0;
+}
+
+sub payment_proof_countersign {
+	my ($record, $priv) = @_;
+	return undef unless ref $record eq 'HASH' && defined $priv && length $priv == 32;
+	my $json = &payment_proof_statement($record);
+	return undef unless defined $json;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($priv, 'private');
+	my $sig = $key->sign_message($json);
+	return undef unless defined $sig && length $sig == 64;
+	return { %$record, payee_sig => encode_base64($sig, '') };
+}
+
+sub payment_proof_verify_payee {
+	my ($record, $pubkey) = @_;
+	return 0 unless ref $record eq 'HASH' && defined $pubkey && length $pubkey;
+	my $pub = eval { decode_base64($pubkey) };
+	my $sig = eval { decode_base64($record->{'payee_sig'} || '') };
+	return 0 unless defined $pub && length $pub == 32 && defined $sig && length $sig == 64;
+	my $json = &payment_proof_statement($record);
+	return 0 unless defined $json;
+	require Crypt::PK::Ed25519;
+	my $key = Crypt::PK::Ed25519->new;
+	$key->import_key_raw($pub, 'public');
+	return $key->verify_message($sig, $json) ? 1 : 0;
+}
+
+sub payment_proof_code {
+	my ($record) = @_;
+	return undef unless ref $record eq 'HASH';
+	my $json = JSON::PP->new->canonical(1)->encode($record);
+	require Compress::Zlib;
+	my $packed = Compress::Zlib::compress($json);
+	return undef unless defined $packed && length $packed;
+	return 'PAY1Z:' . encode_base64($packed, '');
+}
+
+sub payment_proof_parse {
+	my ($code) = @_;
+	return undef unless defined $code;
+	$code =~ s/^\s+|\s+$//g;
+	return undef unless $code =~ /^PAY1Z:(.*)$/is;
+	my $packed = $1;
+	$packed =~ s/\s+//g;
+	my $bytes = eval { decode_base64($packed) };
+	return undef unless defined $bytes && length $bytes;
+	require Compress::Zlib;
+	$bytes = Compress::Zlib::uncompress($bytes);
+	return undef unless defined $bytes && length $bytes;
+	my $record = eval { decode_json($bytes) };
+	return ref $record eq 'HASH' ? $record : undef;
+}
+
+# A native amount and a claimed amount are equal when they are within 1% - a
+# rate moves between quoting and sending, but not by more than that in practice.
+sub payment_amount_matches {
+	my ($a, $b) = @_;
+	return 0 unless defined $a && defined $b && "$a" =~ /\d/ && "$b" =~ /\d/;
+	my $x = "$a" + 0;
+	my $y = "$b" + 0;
+	return 1 if $x == $y;
+	return 0 unless $y != 0;
+	return abs($x - $y) / abs($y) <= 0.01 ? 1 : 0;
 }
 
 1;
