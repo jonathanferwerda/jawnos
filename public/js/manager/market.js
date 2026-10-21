@@ -2,6 +2,10 @@
 // the list, the Shopping List tab holds what to buy (each row a need/want dial,
 // Enter adds an item), and the Shopping tab reads the same list through a
 // needs/wants/all filter. The server pushes marketReload() on every change.
+//
+// Today Shopping reads this house's own list. The planned shape is one library
+// of what every reachable House has for sale - each row naming the peer that
+// offers it - while the Store's Selling view stays this house's own stock.
 var marketTab = 'list';
 var marketFilter = 'all';
 var marketVendor = '';

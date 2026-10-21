@@ -34954,6 +34954,11 @@ sub formula_calculator($formula) {
 				my $pre_number = $pre;
 				$pre_number =~ s/[A-Za-z]//gi;
 				$pre_unit =~ s/[0-9.-]//gi;
+				# "5 USD to CAD" puts the number one token earlier; the compact
+				# "5USD to CAD" is the usual form, but read the spaced one too.
+				if ($pre_number eq '' && $n >= 2 && $formula[$n - 2] =~ /^\d/) {
+					$pre_number = $formula[$n - 2];
+				}
 
 				my $post = $formula[$n + 1];
 				my $post_number = $post;

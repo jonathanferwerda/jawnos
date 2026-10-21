@@ -62,7 +62,7 @@
 	</div>
 
 	<h3>Rates</h3>
-	<p class="cfg-note">One public, keyless call gives every fiat code and every coin. The house's reporting currency is <b><%= $base %></b>; the loop refreshes every half hour.</p>
+	<p class="cfg-note">One public, keyless call gives every fiat code and every coin. The house's reporting currency is <b><%= $base %></b>; the loop refreshes every half hour. The request goes to Coinbase, which sees this machine's address; nothing about your wallets is sent.</p>
 	<div class="cfg-card">
 		<div class="cfg-scroll">
 			<table>
