@@ -135,6 +135,11 @@
 					<% } else { %>
 						<div class="people_note"><%= &subs::ui('This house has no address other houses can reach yet.') %></div>
 					<% } %>
+					<% if (@{$backers}) { %>
+						<div class="people_note"><%= &subs::ui('Also backed by') %> <%= join(', ', map { $_->{'hostname'} || $_->{'signatorial'} } @{$backers}) %></div>
+					<% } else { %>
+						<div class="people_note"><%= &subs::ui('No other machine has confirmed this crest yet.') %></div>
+					<% } %>
 				</div>
 			</div>
 			<div class="people_actions">

@@ -325,6 +325,9 @@ hook before_dispatch => sub {
 		# crest and the route verifies that signature itself, so there is no
 		# session cookie to carry
 		$path =~ m{^/crest(?:/|$)} ||
+		# a member machine hands over its crest cosignature on the peer rail; the
+		# route requires and verifies the machine's own signature
+		$path eq '/manager/crest/cosign' ||
 		# the ticket desk rides the same bare signed rail: a linked machine reads
 		# the desk from, or answers a request held on, a neighbour's database, so
 		# its routes take a session OR a peer signature. Each checks the roster and

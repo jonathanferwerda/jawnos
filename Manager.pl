@@ -19473,8 +19473,9 @@ sub people_crest_card {
 		manager => $origin . '/manager',
 		signatorial => &subs::signatorial_designer(),
 	};
-	# The machines that back the crest, with their own signatures. The card is
-	# signed by the house key, so the list cannot be edited without breaking it.
+	# The machines that back the crest, each with its own signed statement. The
+	# crest record is the signed part of the card; a recipient can check each
+	# statement against the key it carries.
 	$card->{'cosignatures'} = &subs::crest_member_cosig_list($crest, { include_local => 1 });
 	return $card;
 }

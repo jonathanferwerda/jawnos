@@ -18099,6 +18099,159 @@ sub crest_entry_origin {
 	return $origin;
 }
 
+# A member machine backs the house crest with its peer key. The house key signs
+# the crest itself; a cosignature is the same crest named by a machine, signed
+# by the key the rest of the house already pins to it. It is identity only -
+# uuid, house key and fingerprint - so a re-scan (a new dhash or version) does
+# not require every machine to sign again.
+sub crest_member_cosig_statement {
+	my ($crest) = @_;
+	return undef unless ref $crest eq 'HASH'
+		&& length($crest->{'uuid'} || '') && length($crest->{'pubkey'} || '');
+	return {
+		format => 'jawnos-crest-cosig',
+		cosign_version => 1,
+		crest_uuid => $crest->{'uuid'},
+		crest_pubkey => $crest->{'pubkey'},
+		fingerprint => $crest->{'fingerprint'} || '',
+		dhash => $crest->{'dhash'} || '',
+		signatorial => &signatorial_designer(),
+		# The crest's own update time, not the moment of signing: the statement is
+		# then the same on every pass, so re-posting it changes no row.
+		at => $crest->{'server_time'} || $crest->{'issued'} || &rightNow(),
+	};
+}
+
+sub crest_member_cosign {
+	my ($crest) = @_;
+	my $statement = &crest_member_cosig_statement($crest);
+	return undef unless $statement;
+	my $pub = &peer_pubkey();
+	return undef unless $pub && index($pub, '-----BEGIN PUBLIC KEY-----') == 0;
+	# The key is part of the signed statement: a verifier rebuilds the JSON from
+	# the record it was handed, so every field it checks must have been signed.
+	$statement->{'pubkey'} = $pub;
+	my $json = JSON::PP->new->canonical(1)->encode($statement);
+	my $sig = &peer_sign_blob($json);
+	return undef unless length $sig;
+	return { %$statement, sig => $sig };
+}
+
+sub crest_member_cosig_verify {
+	my ($cosig, $pubkey) = @_;
+	return 0 unless ref $cosig eq 'HASH';
+	return 0 unless ($cosig->{'format'} || '') eq 'jawnos-crest-cosig';
+	my $pub = $pubkey || $cosig->{'pubkey'} || '';
+	return 0 unless $pub && index($pub, '-----BEGIN PUBLIC KEY-----') == 0;
+	my $sig = $cosig->{'sig'} || '';
+	return 0 unless length $sig;
+	my $copy = { %$cosig };
+	delete $copy->{'sig'};
+	my $json = JSON::PP->new->canonical(1)->encode($copy);
+	return &signature_verify($pub, $json, $sig) ? 1 : 0;
+}
+
+sub crest_member_cosig_matches {
+	my ($cosig, $crest) = @_;
+	return 0 unless ref $cosig eq 'HASH' && ref $crest eq 'HASH';
+	return 0 unless ($cosig->{'crest_uuid'} || '') eq ($crest->{'uuid'} || '');
+	return 0 unless ($cosig->{'crest_pubkey'} || '') eq ($crest->{'pubkey'} || '');
+	my $fingerprint = $crest->{'fingerprint'} || '';
+	return 0 if length $fingerprint && ($cosig->{'fingerprint'} || '') ne $fingerprint;
+	return 1;
+}
+
+# The cosignatures this house can check: a roster row that names the crest, with
+# its signature verified against the key pinned on that row. The local machine
+# is not in its own roster, so include_local adds a fresh signature of its own.
+sub crest_member_cosig_list {
+	my ($crest, $opts) = @_;
+	$opts ||= {};
+	return [] unless ref $crest eq 'HASH' && length($crest->{'uuid'} || '');
+	my @out;
+	my %seen;
+	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
+		next unless ($rm->{'crest_uuid'} || '') eq $crest->{'uuid'};
+		my $cosig = eval { decode_json($rm->{'crest_cosig'} || '') };
+		next unless ref $cosig eq 'HASH';
+		next unless &crest_member_cosig_matches($cosig, $crest);
+		next unless &crest_member_cosig_verify($cosig, $rm->{'pubkey'});
+		next unless ($cosig->{'signatorial'} || '') eq ($rm->{'signatorial'} || '');
+		next if $seen{$cosig->{'signatorial'}}++;
+		push @out, {
+			signatorial => $cosig->{'signatorial'},
+			hostname => $rm->{'hostname'} || '',
+			at => $cosig->{'at'} || '',
+			cosig => $cosig,
+		};
+	}
+	@out = sort { lc($a->{'hostname'} || $a->{'signatorial'}) cmp lc($b->{'hostname'} || $b->{'signatorial'}) } @out;
+	if ($opts->{'include_local'}) {
+		my $local = &crest_member_cosign($crest);
+		unshift @out, {
+			signatorial => $local->{'signatorial'},
+			hostname => &machine_name(),
+			at => $local->{'at'},
+			cosig => $local,
+		} if $local && !$seen{$local->{'signatorial'}};
+	}
+	return \@out;
+}
+
+# A peer handed this house its cosignature. It must name the crest this house
+# holds and verify against the key pinned to that machine; a row with no key
+# yet pins the key its signature carries, the same first-contact rule the peer
+# rail uses. The statement is kept on the row, so it still verifies after the
+# request itself is gone.
+sub crest_member_cosig_accept {
+	my ($rm, $crest, $cosig) = @_;
+	return { ok => 0, error => 'no such machine' } unless ref $rm eq 'HASH' && ($rm->{'uuid'} || '');
+	return { ok => 0, error => 'this house holds no crest' } unless ref $crest eq 'HASH' && ($crest->{'uuid'} || '');
+	return { ok => 0, error => 'not a crest cosignature' } unless &crest_member_cosig_verify($cosig, $rm->{'pubkey'});
+	return { ok => 0, error => 'the cosignature names another crest' } unless &crest_member_cosig_matches($cosig, $crest);
+	my $signatorial = $cosig->{'signatorial'} || '';
+	return { ok => 0, error => 'the cosignature names another machine' }
+		unless length $signatorial && $signatorial eq ($rm->{'signatorial'} || '');
+	# A repeated pass re-sends the same statement; keep the row's server_time still.
+	my $stored = encode_json($cosig);
+	if (($rm->{'crest_uuid'} || '') eq $crest->{'uuid'} && ($rm->{'crest_cosig'} || '') eq $stored) {
+		return { ok => 1, signatorial => $signatorial, unchanged => 1 };
+	}
+	my $update = {
+		crest_uuid => $crest->{'uuid'},
+		crest_cosig => $stored,
+		server_time => &rightNow(),
+	};
+	$update->{'pubkey'} = $cosig->{'pubkey'} unless ($rm->{'pubkey'} || '');
+	&db_update('remote_machines', $update, { uuid => $rm->{'uuid'} });
+	return { ok => 1, signatorial => $signatorial };
+}
+
+# Tell the other machines which crest this one backs. Each peer verifies the
+# signature against the key it already pins for us and records it on our roster
+# row. The roster is this machine's own view and does not sync, so every machine
+# posts to every peer: each one gathers the backers it has heard from itself.
+sub crest_member_cosig_sync {
+	my $crest = &crest_record_read();
+	return 0 unless $crest->{'uuid'} && $crest->{'pubkey'};
+	my $cosig = &crest_member_cosign($crest);
+	return 0 unless $cosig;
+	my $me = &signatorial_designer();
+	my $sent = 0;
+	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
+		my $rsig = $rm->{'signatorial'};
+		next unless $rsig && $rsig ne $me;
+		my ($ua, $p) = &peer_useragent($rm);
+		next unless $ua && ref $p eq 'HASH' && $p->{'manager'};
+		my $res = eval { $ua->inactivity_timeout(15)->post(
+			$p->{'manager'} . '/manager/crest/cosign?signatorial=' . $me
+			=> json => { crest_uuid => $crest->{'uuid'}, cosig => $cosig }
+		)->result };
+		$sent++ if $res && $res->is_success;
+	}
+	return $sent;
+}
+
 sub crest_sha256_file {
 	my ($file) = @_;
 	return undef unless $file && -e $file;

@@ -254,6 +254,19 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
+	# Each machine signs the house crest with its peer key and hands that signature
+	# to the other machines, which keep it on the sender's roster row. Every
+	# machine posts to every peer, so each one's People panel (and the card it
+	# hands out) can list the backers it has heard from. A pass soon after boot,
+	# then every five minutes.
+	&subs::subprocessor(sub {
+		sleep 90;
+		while (1) {
+			eval { &subs::crest_member_cosig_sync(); };
+			sleep 300;
+		}
+	}, { name => 'crest member cosign' });
+
 	# The start menu's System card: every peer's battery and the embedded boards
 	# the house can see. The peers answer /manager/health; the boards answer
 	# /device_query. Both are cached, so the card never waits on a sleeping board.
