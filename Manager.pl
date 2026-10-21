@@ -13042,69 +13042,68 @@ post '/manager/continent/delete' => sub($c) {
 
 sub schedule_maker($c,$schedule,$timestamp) {
 	my $app = $c->param('app');
-	my $warranty ='';
-	my $original_timestamp = $c->param('timestamp');
-	$timestamp = $c->param('timestamp');
+	# The caller's timestamp is the appointment's own moment, already adjusted for
+	# "ago", a timeshift or the time machine. The old code overwrote it with the
+	# raw browser time, so a scheduled run started somewhere other than the first
+	# appointment and could write that appointment a second time.
+	my $original_timestamp = $timestamp || $c->param('timestamp');
+	my $type = $c->param('type');
 	my @returner;
-	if ($schedule eq 'once') {
-		push @returner, $schedule;
+	# A schedule names appointments to make, not actions on one: repeating a stop
+	# or a resume would close or reopen sessions the person never touched.
+	return \@returner if $type =~ /^(?:stop|cancel|resume|pause|delay)$/;
+
+	my $parsed = &subs::schedule_parse($schedule);
+	return \@returner if !$parsed || $parsed->{'error'} || $parsed->{'once'};
+	my ($count, $unit) = ($parsed->{'count'}, $parsed->{'unit'});
+	return \@returner unless defined $count && defined $unit && $unit ne 'once' && $count > 0;
+
+	my $settings = &subs::settings_grabber({ app => $app });
+	# The "for" part names the horizon. Without one the app's warranty is the
+	# horizon, which is how a bare interval has always behaved.
+	my $until = &subs::schedule_until($parsed->{'horizon'}, $original_timestamp);
+	unless (defined $until) {
+		my $warranty = $settings->{'warranty'};
+		$warranty = '-10y' unless defined $warranty && length $warranty;
+		$until = &subs::ago_calc($warranty, $original_timestamp);
 	}
-	else {
-		if ($schedule =~ /for/gi) {
-			my @schedule = split ' for ', $schedule;
-			$warranty = $schedule[1];
-			$schedule = $schedule[0];
+	return \@returner unless defined $until && $until > $original_timestamp;
 
-		}
-		my $renamed_schedule = $schedule;
-		$renamed_schedule =~ s/ly$//gi;
-		my $rsnumber = $renamed_schedule;
-		my $rsword = $renamed_schedule;
-		$rsnumber =~ s/[^0-9,.]//gi;
-		$rsword =~ s/[^[a-zA-Z]//gi;
-		$rsword = &subs::timespan_widener($rsword);
-		if (defined( my $t = eval { &subs::time_span($rsword, $timestamp, $rsnumber) } )) {
+	my $usual_duration = $settings->{'duration'};
+	$c->param('duration', $usual_duration) if ($c->param('lockingStatus') || '') eq 'on';
+	my $duration = &subs::time_abbrev_translator($c->param('duration'));
+	$duration = &subs::time_abbrev_translator($usual_duration) unless $c->param('duration') =~ /[a-z0-9A-Z]/;
+	$duration = $duration * -1 if $type eq 'start' || $type eq 'record';
 
-			my $diff = $timestamp - $t;
-			my $settings = &subs::settings_grabber({ app => $c->param('app') });
-			$warranty = $settings->{'warranty'} unless $warranty ne '';
-			$warranty = &subs::ago_calc($warranty,$c->param('timestamp'));
-			my $locking_status = $c->param('lockingStatus');
-			my $usual_duration = $settings->{'duration'};
-				if ($locking_status eq 'on') {
-				$c->param('duration', $usual_duration)
-			}
-			my $duration = &subs::time_abbrev_translator($c->param('duration'));
-
-			$duration = &subs::time_abbrev_translator($usual_duration) unless $c->param('duration') =~ /[a-z0-9A-Z]/;
-			if ($c->param('type') eq 'start' || $c->param('type') eq 'record') {
-				$duration = $duration * -1;
-			}
-
-			my $count = 0;
-			until ($timestamp >= $warranty) {
-				if ($timestamp != $original_timestamp || $count != 0) {
-					$c->param('timestamp',$timestamp);
-					my $stop_timestamp = $c->param('duration') =~ /[a-zA-Z0-9]/ ? $timestamp - ((abs $duration) * -1) : undef;
-					push @returner, $timestamp;
-
-					&appointment_writer($c, {
-						app => $app,
-						timestamp => $timestamp,
-						type => $c->param('type'),
-						project => $settings->{'project'},
-						duration => $duration,
-						stop_timestamp => $stop_timestamp,
-						source_uuid => $c->param('uuid'),
-						uuid => $c->param('uuid') . md5_sum($timestamp - $original_timestamp) . '+' . md5_sum($app . ' ' . $c->param('type'))
-					});
-				}
-				$timestamp = $timestamp + $diff;
-				$count++;
-			}
-		}
-		return \@returner;
+	my $base_uuid = $c->param('uuid');
+	my $anchor_day = (localtime(int($original_timestamp / 1000)))[3];
+	# A bare interval runs to the app's warranty and can be years long; the guard
+	# keeps a typo from filling the timeline with thousands of rows.
+	my $guard = 0;
+	my $n = 1;
+	# The first occurrence is the appointment manager_reset writes itself, so
+	# this starts one interval later. The horizon is exclusive: a daily schedule
+	# for two weeks is the first day plus thirteen repeats, fourteen in all.
+	while ($guard++ < 1000) {
+		my $next = &subs::calendar_shift($original_timestamp, $count * $n, $unit, $anchor_day);
+		last unless defined $next && $next < $until;
+		my $uuid = $base_uuid . md5_sum($next - $original_timestamp) . '+' . md5_sum($app . ' ' . $type);
+		my $exists = &subs::db_query('select 1 from appointments where uuid = ? limit 1', $uuid)->hashes->[0];
+		if ($exists) { $n++; next; }
+		push @returner, $next;
+		&appointment_writer($c, {
+			app => $app,
+			timestamp => $next,
+			type => $type,
+			project => $settings->{'project'},
+			duration => $duration,
+			stop_timestamp => $c->param('duration') =~ /[a-zA-Z0-9]/ ? $next + abs($duration) : undef,
+			source_uuid => $base_uuid,
+			uuid => $uuid
+		});
+		$n++;
 	}
+	return \@returner;
 }
 
 sub remote_relay_request($c, $extra_params = {}) {
@@ -16011,6 +16010,14 @@ sub father_time($data) {
 	# a caller can ask for a window that many periods wide instead of one,
 	# keeping its far edge (the budget's multiplier)
 	my $periods = $data->{'periods'} || 1;
+	# Months and years are calendar periods: their length is whichever month is
+	# being crossed, February included. The others keep the plain span below.
+	my $widener = &subs::timespan_widener($scope) || '';
+	my $calendar_unit = $widener =~ /^months?$/i ? 'month' : $widener =~ /^years?$/i ? 'year' : undef;
+	my $scope_count = $scope;
+	$scope_count =~ s/[^0-9.]//g;
+	$scope_count = 1 unless length $scope_count;
+	$scope_count += 0;
 
 	# A window is only good for the timestamp it was built from: handing the
 	# same one to a later request is what put January's month on screen just
@@ -16026,27 +16033,41 @@ sub father_time($data) {
 			$temp_timestamp = $timestamp;
 		}
 		elsif ($ts =~ 'last') {
-			$temp_timestamp = &subs::time_span($scope, $timestamp);
-			if ($ts =~ /(^[0-9])/) {
-				my $tas = $ts;
-				$tas =~ s/last//gi;
-				# the number itself: the words run out at forty, and the pages
-				# of periods walk well past that
-				$temp_timestamp = &subs::time_span($tas . $scope, $timestamp);
+			if ($calendar_unit) {
+				my $back = 1;
+				$back = $1 if $ts =~ /^(\d+)/;
+				$temp_timestamp = &subs::calendar_shift($timestamp, -$back * $scope_count, $calendar_unit);
+			}
+			else {
+				$temp_timestamp = &subs::time_span($scope, $timestamp);
+				if ($ts =~ /(^[0-9])/) {
+					my $tas = $ts;
+					$tas =~ s/last//gi;
+					# the number itself: the words run out at forty, and the pages
+					# of periods walk well past that
+					$temp_timestamp = &subs::time_span($tas . $scope, $timestamp);
+				}
 			}
 		}
 		elsif ($ts =~ 'next') {
-			# the span this scope is worth: "next" is the span after this one,
-			# "Nnext" is the next N spans counting this one, so 2next in week is
-			# this week plus next week
-			my $span_bt = &subs::time_span($scope, $timestamp);
-			my $span = $timestamp - $span_bt;
-			$temp_timestamp = $span + $timestamp;
-			if ($ts =~ /(^[0-9])/) {
-				my $tas = $ts;
-				$tas =~ s/next//gi;
-				$reach = $tas + 0;
-				$temp_timestamp = $timestamp + $span * $reach;
+			if ($calendar_unit) {
+				my $ahead = 1;
+				if ($ts =~ /^(\d+)/) { $reach = $1 + 0; $ahead = $reach; }
+				$temp_timestamp = &subs::calendar_shift($timestamp, $ahead * $scope_count, $calendar_unit);
+			}
+			else {
+				# the span this scope is worth: "next" is the span after this one,
+				# "Nnext" is the next N spans counting this one, so 2next in week is
+				# this week plus next week
+				my $span_bt = &subs::time_span($scope, $timestamp);
+				my $span = $timestamp - $span_bt;
+				$temp_timestamp = $span + $timestamp;
+				if ($ts =~ /(^[0-9])/) {
+					my $tas = $ts;
+					$tas =~ s/next//gi;
+					$reach = $tas + 0;
+					$temp_timestamp = $timestamp + $span * $reach;
+				}
 			}
 		}
 
@@ -16109,8 +16130,14 @@ sub father_time($data) {
 			$temp_timestamp = $period_start->($shift + $units);
 		}
 		else {
-			$bt = $reach > 1 ? $timestamp : &subs::time_span($scope, $temp_timestamp);
-			$bt = $temp_timestamp - ($temp_timestamp - $bt) * $periods if $periods > 1;
+			if ($calendar_unit) {
+				$bt = $reach > 1 ? $timestamp : &subs::calendar_shift($temp_timestamp, -$scope_count, $calendar_unit);
+				$bt = &subs::calendar_shift($temp_timestamp, -$scope_count * $periods, $calendar_unit) if $periods > 1;
+			}
+			else {
+				$bt = $reach > 1 ? $timestamp : &subs::time_span($scope, $temp_timestamp);
+				$bt = $temp_timestamp - ($temp_timestamp - $bt) * $periods if $periods > 1;
+			}
 		}
 	}
 
@@ -18147,23 +18174,13 @@ sub payable_schedules_save {
 }
 
 sub payable_next_date {
-	my ($ts,$every) = @_;
+	my ($ts,$every,$anchor_day) = @_;
 	$every = 'monthly' unless defined $every && length $every;
-	return $ts + 7 * 86400000 if $every eq 'weekly';
-	return $ts + 14 * 86400000 if $every eq '2weeks';
-	return $ts + 30 * 86400000 if $every eq '30days';
-	return $ts + 91 * 86400000 if $every eq 'quarterly';
-	return $ts + 365 * 86400000 if $every eq 'yearly';
-	# a calendar month keeps the day of the month, shortening to the last day
-	my $t = Time::Piece->new(int($ts / 1000));
-	my ($year,$mon,$mday) = ($t->year,$t->mon,$t->mday);
-	$mon++;
-	if ($mon > 12) { $mon = 1; $year++; }
-	my $first = Time::Piece->strptime(sprintf('%04d-%02d-01', $year, $mon), '%Y-%m-%d');
-	my $last = $first->month_last_day;
-	$mday = $last if $mday > $last;
-	# POSIX::mktime counts the year from 1900, Time::Piece returns it whole
-	return POSIX::mktime(0, 0, 0, $mday, $mon - 1, $year - 1900) * 1000;
+	# The same interval reader the appointment schedule uses: months and years
+	# step through the calendar, so a 31st bill shortens to February's last day
+	# and returns to the 31st afterwards.
+	my $next = &subs::schedule_next($ts,$every,$anchor_day);
+	return defined $next ? $next : &subs::calendar_shift($ts,1,'month',$anchor_day);
 }
 
 sub payable_schedule_run {
@@ -18172,9 +18189,12 @@ sub payable_schedule_run {
 	my ($changed,$made) = (0,0);
 	foreach my $s ( @{$list} ) {
 		next if (($s->{'active'} || 'on') eq 'off');
+		my $until = ($s->{'until'} || 0) + 0;
 		my $guard = 0;
 		while ((($s->{'next'} || 0) + 0) <= $now && $guard++ < 240) {
 			my $due = $s->{'next'} + 0;
+			# a horizon ends the schedule before its next occurrence
+			last if $until && $due >= $until;
 			my $uuid = 'sched-' . $s->{'uuid'} . '-' . $due;
 			my $exists = &subs::db_query("select 1 from warehouse where kind='money' and uuid=? limit 1", $uuid)->hashes->[0];
 			unless ($exists) {
@@ -18191,7 +18211,14 @@ sub payable_schedule_run {
 				});
 				$made++;
 			}
-			$s->{'next'} = &payable_next_date($due, $s->{'every'});
+			$s->{'next'} = &payable_next_date($due, $s->{'every'}, $s->{'anchor_day'});
+			$changed = 1;
+		}
+		# the horizon has passed, so the schedule has run its course; the bills
+		# it already made stay, and Delete removes the row if it is no longer wanted
+		if ($until && (($s->{'next'} || 0) + 0) >= $until) {
+			$s->{'active'} = 'off';
+			$s->{'finished'} = 1;
 			$changed = 1;
 		}
 	}
@@ -19198,19 +19225,27 @@ post '/manager/budget/payable/add' => sub($c) {
 	$timestamp = &subs::rightNow() unless $timestamp;
 	my $currency = $c->param('currency') || &subs::setting_grabber({ app => $app, setting => 'currency' });
 	my $repeat = $c->param('repeat') || 'once';
-	my %known_repeat = map { $_ => 1 } qw/weekly 2weeks 30days monthly quarterly yearly/;
-	$repeat = 'once' unless $known_repeat{$repeat};
-	if ($repeat ne 'once') {
+	my $parsed = &subs::schedule_parse($repeat);
+	if (!$parsed || $parsed->{'error'}) {
+		return $c->render(json => { error => &subs::ui('That repeat could not be read. Use an interval such as 1d, and for a horizon add "for -2w".') });
+	}
+	if (!$parsed->{'once'}) {
 		# a repeating bill is a schedule; its first due date makes the first bill
-		my $list = &payable_schedules();
-		push @{$list}, {
-			uuid => &subs::random_string_creator(20), app => $app, vendor => $vendor, item => $item,
-			amount => $total, tax => $tax, currency => $currency,
-			every => $repeat, next => $timestamp, active => 'on'
-		};
-		&payable_schedules_save($list);
-		my $made = &payable_schedule_run();
-		return $c->render(json => { ok => 1, scheduled => 1, made => $made, payables => &accounting_payables(&subs::rightNow()) });
+		my $until = &subs::schedule_until($parsed->{'horizon'}, $timestamp);
+		# a horizon that has already passed is a one-off, not a schedule that
+		# would stop before its first bill
+		if (!defined $until || $until > $timestamp) {
+			my $list = &payable_schedules();
+			push @{$list}, {
+				uuid => &subs::random_string_creator(20), app => $app, vendor => $vendor, item => $item,
+				amount => $total, tax => $tax, currency => $currency,
+				every => $parsed->{'every'}, anchor_day => (localtime(int($timestamp / 1000)))[3],
+				until => $until, next => $timestamp, active => 'on'
+			};
+			&payable_schedules_save($list);
+			my $made = &payable_schedule_run();
+			return $c->render(json => { ok => 1, scheduled => 1, made => $made, payables => &accounting_payables(&subs::rightNow()) });
+		}
 	}
 	my $uuid = &subs::random_string_creator(40);
 	&subs::db_insert('warehouse', {

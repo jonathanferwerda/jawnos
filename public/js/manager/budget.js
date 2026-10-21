@@ -690,7 +690,7 @@ $(document).on('click', '#budget_payable_add', function() {
 		total: $('#budget_payable_total').val() || '',
 		tax: $('#budget_payable_tax').val() || '',
 		date: $('#budget_payable_date').val() || '',
-		repeat: $('#budget_payable_repeat').val() || 'once'
+		repeat: ($('#budget_payable_schedule').val() || '').trim() || $('#budget_payable_repeat').val() || 'once'
 	};
 	if (!data.total) { message.text(jawnosT('A bill needs an amount.')); return; }
 	button.attr('disabled', 'disabled');
@@ -701,6 +701,7 @@ $(document).on('click', '#budget_payable_add', function() {
 		success: function(response) {
 			button.removeAttr('disabled');
 			if (response.error) { message.text(response.error); return; }
+			$('#budget_payable_schedule').val('');
 			budgetInit();
 		},
 		error: function() {

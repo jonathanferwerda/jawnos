@@ -336,6 +336,7 @@
 				<option value="quarterly"><%= &subs::ui('Every quarter') %></option>
 				<option value="yearly"><%= &subs::ui('Every year') %></option>
 			</select>
+			<input id="budget_payable_schedule" placeholder="<%= &subs::ui('1d for -2w') %>" style="width:12%;" hint="<%= &subs::ui('A custom schedule: an interval, then for how long.') %>">
 			<button id="budget_payable_add"><%= &subs::ui('Add bill') %></button>
 			<span id="budget_payable_message"></span>
 		</div>
@@ -360,10 +361,13 @@
 							<td><%= &subs::format_name($s->{'vendor'}) %></td>
 							<td><%= &subs::format_name($s->{'app'}) %></td>
 							<td style="text-align:right;"><%= &subs::price_formatter($s->{'amount'}) %></td>
-							<td><%= &subs::ui($repeat_label{$s->{'every'} || 'monthly'} || 'Every month') %></td>
-							<td><span class="time" timestamp="<%= $s->{'next'} %>"></span><% if (($s->{'active'} || 'on') eq 'off') { %> <span style="opacity:.6;">(<%= &subs::ui('paused') %>)</span><% } %></td>
+							<td>
+								<% if (my $label = $repeat_label{$s->{'every'}}) { %><%= &subs::ui($label) %><% } else { %><%= $s->{'every'} || &subs::ui('Every month') %><% } %>
+								<% if ($s->{'until'}) { %><span style="opacity:.6;"> &rarr; <span class="time" timestamp="<%= $s->{'until'} %>"></span></span><% } %>
+							</td>
+							<td><span class="time" timestamp="<%= $s->{'next'} %>"></span><% if (($s->{'active'} || 'on') eq 'off') { %> <span style="opacity:.6;">(<%= &subs::ui($s->{'finished'} ? 'ended' : 'paused') %>)</span><% } %></td>
 							<td style="white-space:nowrap;">
-								<button class="budget_schedule_toggle" uuid="<%= $s->{'uuid'} %>"><%= &subs::ui(($s->{'active'} || 'on') eq 'off' ? 'Resume' : 'Pause') %></button>
+								<% unless ($s->{'finished'}) { %><button class="budget_schedule_toggle" uuid="<%= $s->{'uuid'} %>"><%= &subs::ui(($s->{'active'} || 'on') eq 'off' ? 'Resume' : 'Pause') %></button><% } %>
 								<button class="budget_schedule_delete" uuid="<%= $s->{'uuid'} %>" hint="<%= &subs::ui('Delete') %>">&times;</button>
 							</td>
 						</tr>

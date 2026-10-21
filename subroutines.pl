@@ -686,45 +686,20 @@ sub time_abbrev_translator() {
 		$total_duration = $total_duration + ($duration * 60 * 60 * 24 * 7) if $measure eq 'w' || $measure =~ /week/gi;
 
 		if ($measure eq 'M' || $measure eq 'mos' || $measure =~ /month/gi) {
-			my $total_days = 0;
-			my $month = localtime( $timestamp / 1000 )->strftime( "%m");
-			if ($time < 0 || $negative eq '-') {
-				if ($time < -12) {
-					my $years = $time / 12;
-					push @times, $years . 'y';
-					until ($time > -12) {
-						$time = $time + 12;
-					}
-				}
-				for (my $n = -1; $n >= $time; $n-- ) {
-					my $month = localtime( $timestamp / 1000 )->strftime( "%m");
-					$month = $month - $n - 1;
-
-					if ($month > 12) { $month = $month - 12; }
-					$total_days -= $gb::months->[$month - 1]->{'days'};
-				}
-			} else {
-				if ($time > 12) {
-					my $years = $time / 12;
-					push @times, $years . 'y';
-					until ($time < 12) {
-						$time = $time - 12;
-					}
-				}
-				for (my $n = 1; $n <= $time; $n++ ) {
-					my $month = localtime( $timestamp / 1000 )->strftime( "%m");
-					my $year = localtime( $timestamp / 1000 )->strftime( "%m");
-					$month = $month - $n;
-
-					if ($month <= 0) { $month = 12 + $month; }
-					$total_days += $gb::months->[$month - 1]->{'days'};
-				}
-			}
-			$duration = 1000;
-			$total_duration = $total_duration + ($duration * 60 * 60 * 24 * $total_days);
+			# A month is however many days the calendar says: February is 28 or 29,
+			# and a step from the 31st clamps to the shorter month's last day. Read
+			# the real shift rather than a fixed 30 days, so a budget read and a
+			# schedule written here agree with father_time.
+			my $at = (defined $timestamp && $timestamp) ? $timestamp : &rightNow();
+			my $shifted = &calendar_shift($at, int($time), 'month');
+			$total_duration = $total_duration + ($shifted - $at);
 		}
 	 	if ($measure eq 'y' || $measure =~ /year/gi) {
-			$total_duration = $total_duration + ($duration * 60 * 60 * 24 * 365);
+			# A year is a calendar year too: 29 February shortens to the 28th and a
+			# leap year is 366 days.
+			my $at = (defined $timestamp && $timestamp) ? $timestamp : &rightNow();
+			my $shifted = &calendar_shift($at, int($time), 'year');
+			$total_duration = $total_duration + ($shifted - $at);
 		}
 		$total_duration = $total_duration + ($duration * 60 * 60 * 24 * 365 * 10) if $measure eq 'D' || $measure =~ /decade/gi;
 		$total_duration = $total_duration + ($duration * 60 * 60 * 24 * 365 * 100) if $measure eq 'c' || $measure =~ /century/gi;
@@ -734,7 +709,6 @@ sub time_abbrev_translator() {
 
 sub is_leap_year() {
 	my $timestamp = shift;
-	my $month = localtime( $timestamp / 1000 )->strftime( "%m");
 	my $year = localtime( $timestamp / 1000 )->strftime( "%Y");
 	if ($timestamp < 10000) {
 		$year = $timestamp;
@@ -744,6 +718,54 @@ sub is_leap_year() {
 	return 0 if $year % 400;
 	return 1;
 
+}
+
+# A calendar month's length. February is 29 in a leap year, and is_leap_year
+# carries the century rule: 2000 is a leap year, 1900 and 2100 are not.
+sub days_in_month {
+	my ($year, $month) = @_;
+	$month = ($month || 0) + 0;
+	return 0 unless $month >= 1 && $month <= 12;
+	return 31 if $month == 1 || $month == 3 || $month == 5 || $month == 7 || $month == 8 || $month == 10 || $month == 12;
+	return 30 if $month == 4 || $month == 6 || $month == 9 || $month == 11;
+	return &is_leap_year(($year || 0) + 0) ? 29 : 28;
+}
+
+# Move a moment by whole calendar units. Months and years keep the day of the
+# month, shortening to the month's last day when it is shorter (31 January ->
+# 28 or 29 February) and returning to $anchor_day on later months when one is
+# given (28 February -> 31 March). Days and weeks step through the local
+# calendar, so daylight saving neither drifts the hour nor shortens a day.
+sub calendar_shift {
+	my ($timestamp, $count, $unit, $anchor_day) = @_;
+	$timestamp = 0 unless defined $timestamp;
+	$count = 0 unless defined $count;
+	$unit = lc($unit || 'day');
+	return $timestamp unless $count;
+	my @lt = localtime(int($timestamp / 1000));
+	my ($sec, $min, $hour, $mday, $mon, $year) = @lt[0 .. 5];
+	if ($unit eq 'month' || $unit eq 'year') {
+		$mday = $anchor_day + 0 if defined $anchor_day && $anchor_day;
+		my $months = $unit eq 'year' ? $count * 12 : $count;
+		$months = int($months);
+		return $timestamp unless $months;
+		my $index = ($year + 1900) * 12 + $mon + $months;
+		my $nyear = int($index / 12);
+		my $nmon = $index % 12;
+		if ($nmon < 0) { $nmon += 12; $nyear--; }
+		my $last = &days_in_month($nyear, $nmon + 1);
+		$mday = $last if $mday > $last;
+		return timelocal($sec, $min, $hour, $mday, $nmon, $nyear - 1900) * 1000;
+	}
+	my $days = $unit eq 'week' ? $count * 7 : ($unit eq 'day' ? $count : 0);
+	if ($days) {
+		my $whole = int($days);
+		my $fraction = $days - $whole;
+		my @date = gmtime(timegm(0, 0, 0, $mday, $mon, $year) + $whole * 86400);
+		return timelocal($sec, $min, $hour, @date[3 .. 5]) * 1000 + $fraction * 86400000;
+	}
+	my $seconds = $count * ($unit eq 'hour' ? 3600 : $unit eq 'minute' ? 60 : 1);
+	return $timestamp + $seconds * 1000;
 }
 
 sub timespan_widener() {
@@ -1228,6 +1250,109 @@ sub time_span() {
 	my ($span, $timestamp, $multiplier) = @_;
 	my $length = &time_span_length($span) or die "unknown time span: $span";
 	return $timestamp - $length * ($multiplier || 1);
+}
+
+# A repeating interval, read the many ways people write one: "1d", "2 weeks",
+# "monthly", "quarterly", "30days" and the old payable spellings. The count
+# comes back with a calendar unit, so the caller can step it with
+# calendar_shift and keep month lengths and leap February honest.
+our %interval_words = (
+	daily       => [ 1, 'day' ],
+	hourly      => [ 1, 'hour' ],
+	weekly      => [ 1, 'week' ],
+	fortnightly => [ 2, 'week' ],
+	biweekly    => [ 2, 'week' ],
+	monthly     => [ 1, 'month' ],
+	bimonthly   => [ 2, 'month' ],
+	quarterly   => [ 3, 'month' ],
+	yearly      => [ 1, 'year' ],
+	annually    => [ 1, 'year' ],
+);
+
+sub interval_parse {
+	my $text = shift;
+	$text = '' unless defined $text;
+	my $raw = $text;
+	$text =~ s/^\s+|\s+$//g;
+	return unless length $text;
+	$text = lc $text;
+	$text =~ s/^(?:every|each)\s+//;
+	return (0, 'once') if $text eq 'once';
+	return @{$interval_words{$text}} if $interval_words{$text};
+	# "1M" is a month, while a lower-case "1m" is a minute, as everywhere else
+	return ($1 + 0, 'month') if $raw =~ /^\s*([0-9]+(?:\.[0-9]+)?)\s*M\s*$/;
+	my ($count, $word) = $text =~ /^([0-9]+(?:\.[0-9]+)?)\s*([a-z]+)$/;
+	return unless defined $count;
+	my $unit =
+		$word =~ /^(?:s|sec|secs|second|seconds)$/ ? 'second' :
+		$word =~ /^(?:m|mi|min|mins|minute|minutes)$/ ? 'minute' :
+		$word =~ /^(?:h|hr|hrs|hour|hours)$/ ? 'hour' :
+		$word =~ /^(?:d|day|days)$/ ? 'day' :
+		$word =~ /^(?:w|wk|wks|week|weeks)$/ ? 'week' :
+		$word =~ /^(?:mo|mon|month|months)$/ ? 'month' :
+		$word =~ /^(?:y|yr|yrs|year|years)$/ ? 'year' : undef;
+	return unless $unit;
+	return ($count + 0, $unit);
+}
+
+# Read a schedule the appointment input and the payable scheduler share:
+# "<interval> for <horizon>". "1d for -2w" is every day for two weeks;
+# "monthly for 1y" is the first of each month for a year. "-2w" and "2w"
+# both mean two weeks ahead, because a horizon runs forward from the first
+# occurrence. Either part may be left out and "once" means no repeat.
+sub schedule_parse {
+	my $spec = shift;
+	$spec = '' unless defined $spec;
+	my $raw = $spec;
+	$spec =~ s/^\s+|\s+$//g;
+	return { once => 1, every => 'once', raw => $raw } if !length($spec) || $spec =~ /^once$/i;
+	my ($every, $horizon);
+	if ($spec =~ /^(.*?)\s*(?:\bfor\b|\buntil\b|\bthrough\b|\bto\b|\/)\s*(.+)$/i) {
+		($every, $horizon) = ($1, $2);
+	}
+	else { $every = $spec }
+	my ($count, $unit) = &interval_parse($every);
+	unless (defined $count && defined $unit) {
+		return { error => 1, raw => $raw, every => $every, horizon => $horizon };
+	}
+	return {
+		once => $unit eq 'once' ? 1 : 0,
+		every => $every,
+		count => $count,
+		unit => $unit,
+		horizon => $horizon,
+		raw => $raw
+	};
+}
+
+# The moment a schedule's horizon names, counted forward from its first
+# occurrence. A written date ("dec 31") is read as a date; anything else is a
+# length and runs ahead whichever sign it was typed with.
+sub schedule_until {
+	my ($horizon, $from) = @_;
+	return undef unless defined $horizon && length $horizon;
+	$from = &rightNow() unless defined $from;
+	my $text = $horizon;
+	$text =~ s/^\s+|\s+$//g;
+	return undef unless length $text;
+	my $resolved = &resolve_when($text, $from);
+	return $resolved if defined $resolved;
+	$text =~ s/^[+-]\s*//;
+	# a horizon written as an interval (1y, 2 months, 30d) steps the calendar,
+	# so a year across a leap February is 366 days and a month is the month
+	my ($count, $unit) = &interval_parse($text);
+	return &calendar_shift($from, $count, $unit) if defined $count && defined $unit && $unit ne 'once' && $count > 0;
+	my $ms = &time_abbrev_translator($text, $from);
+	return undef unless defined $ms && $ms;
+	return $from + abs($ms);
+}
+
+# The next occurrence of an interval, calendar-aware for months and years.
+sub schedule_next {
+	my ($timestamp, $every, $anchor_day) = @_;
+	my ($count, $unit) = &interval_parse($every);
+	return undef unless defined $count && defined $unit && $unit ne 'once' && $count > 0;
+	return &calendar_shift($timestamp, $count, $unit, $anchor_day);
 }
 
 # The rows a page of periods walks: the periods around now first (the nexts,
