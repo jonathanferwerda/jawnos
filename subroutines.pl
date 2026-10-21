@@ -7966,11 +7966,14 @@ sub sync_digest_map {
 		if (!$force && $sync_digest_cache && ($now - $sync_digest_cache->{'at'}) < 30000);
 	# Not every column of every table is a reason to sync. `backups` is the sync's
 	# own bookkeeping (a pull writes a row on both sides, so including it would
-	# trigger the next pull forever), the AI ledger is internal churn, and the
-	# location/notification streams move constantly without being a person's
+	# trigger the next pull forever), the AI day's purse is small bookkeeping, and
+	# the location/notification streams move constantly without being a person's
 	# change. Those still ride along inside any snapshot; they just cannot start
-	# one by themselves. Appointments and durable settings are the triggers.
-	my %skip = map { $_ => 1 } qw(backups ai_budget ai_jobs ai_house continent notifications);
+	# one by themselves. Appointments and durable settings are the triggers, and
+	# so is the AI ledger: ai_jobs carries the evaluation dispatch and ai_house the
+	# liveness it is addressed by, so a quiet house must still pull them when they
+	# move (they are a few small rows).
+	my %skip = map { $_ => 1 } qw(backups ai_budget continent notifications);
 	my %map;
 	foreach my $t ( @{ &sync_table_list() } ) {
 		next if $t eq 'settings' || $skip{$t};
