@@ -18850,8 +18850,10 @@ sub people_crest_scan_dir {
 }
 
 # A construct is published to another house only when its own public setting
-# says so. The newest row answers, since the choice may have been made on
-# another machine; the People window writes it with device 'all'.
+# says so. The setting is kept per device, like the public toggle on the
+# appointment itself, and People consolidates the rows it holds: the newest
+# choice across the house is the answer the construct row shows and the answer
+# a lookup carries.
 sub people_construct_public {
 	my ($app) = @_;
 	return 0 unless defined $app && length $app;
@@ -19271,9 +19273,10 @@ post '/manager/people/crest/lookup' => sub($c) {
 };
 
 # Publishing a construct to other houses is the same per-app public toggle the
-# appointment carries; it is a choice about what a crest lookup may reveal, not
-# a permission. Writing it for device 'all' makes it one house-wide answer that
-# every machine syncs, rather than a fresh local copy per device.
+# appointment carries, so it is written for this device: the appointment and
+# People then agree on the machine the person is using. People reads every
+# device's row and consolidates them (newest wins) when it shows the row or
+# answers a lookup.
 post '/manager/people/construct/public' => sub($c) {
 	unless (&people_citizen($c)) { return $c->render(json => { ok => 0, error => 'citizen only' }); }
 	my $app = $c->param('app') || '';
@@ -19286,7 +19289,7 @@ post '/manager/people/construct/public' => sub($c) {
 		last if $known;
 	}
 	unless ($known) { return $c->render(json => { ok => 0, error => 'no such construct' }); }
-	&subs::setting_setter({ app => $app, setting => 'public', device => 'all', value => $value });
+	&subs::setting_setter({ app => $app, setting => 'public', device => &subs::device_setter(), value => $value });
 	return $c->render(json => { ok => 1, app => $app, public => ($value eq 'on' ? 1 : 0) });
 };
 
