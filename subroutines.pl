@@ -9142,16 +9142,12 @@ sub setting_setter() {
 		&subs::manufacturer_grabber();
 		my $old_settings = &subs::settings_grabber({ app => $app });
 		my $old_sc = &subs::db_query('select * from settings where app=? and setting like ? escape ?', $app, 'sc\_%', '\\')->hashes;
-		my $buc = &subs::cache_get({ app => 'relational', context => 'buckets' });
-		my $bub = &subs::cache_get({ app => 'relational', context => 'bubbles' });
 
 		foreach my $os ( @{$old_sc} ) {
 
 			my $osc = eval { return decode_json $os->{'value'} } || [];
 			foreach my $sc ( @{$osc} ) {
 				my $set = &subs::settings_grabber({ uuid => $sc });
-				delete $buc->{$set->{'app'}};
-				delete $bub->{$set->{'app'}};
 				my $otsc = eval { return decode_json $set->{'sc_' . $old_settings->{'pos'}} } || [];
 				if (scalar @{$otsc} > 0) {
 					@{$otsc} = grep { $_ ne $old_settings->{'uuid'} } @{$otsc};
@@ -9165,10 +9161,6 @@ sub setting_setter() {
 				&subs::setting_setter({ app => $set->{'app'}, setting => 'sc_' . $value, value => $jntsc });
 
 			}
-			delete $buc->{$original_app};
-			delete $bub->{$original_app};
-			&subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y'}, $buc);
-			&subs::cache_set({ app => 'relational', context => 'bubbles', warranty => '-5y'}, $bub);
 		}
 	}
 	if (($setting eq 'pos' || $setting eq 'mab') && !$sync) {
@@ -9186,12 +9178,8 @@ sub setting_setter() {
 		}
 	}
 	if ($setting eq 'colour' || $setting eq 'name_change' || $setting eq 'mab') {
-		my $buc = &subs::cache_get({ app => 'relational', context => 'buckets' });
-		my $bub = &subs::cache_get({ app => 'relational', context => 'bubbles' });
-		delete $buc->{$original_app};
-		delete $bub->{$original_app};
-		&subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y'}, $buc);
-		&subs::cache_set({ app => 'relational', context => 'bubbles', warranty => '-5y'}, $bub);
+		# The Relational board reads the settings rows directly; there is no
+		# rendered bucket to drop here any more.
 	}
 	if ($setting eq 'toggle' && $settings->{'source'} eq 'panel' && !$sync) {
 		&intelligent_automation_toggle({ app => $app });
@@ -22893,7 +22881,6 @@ sub evaluation_relate {
 	@{$bc} = grep { $_ ne 'all' } @{$bc};
 	&subs::setting_setter({ app => $app, setting => 'sc_' . $their_construct, value => encode_json($sc) });
 	&subs::setting_setter({ app => $other, setting => 'sc_' . $my_construct, value => encode_json($bc) });
-	&evaluation_relationships_changed($app, $other);
 	return { app => $other, construct => $their_construct, their_construct => $my_construct };
 }
 
@@ -22921,16 +22908,8 @@ sub evaluation_autolink {
 	return \@filed;
 }
 
-# The relational window draws each bucket from a cache; a change to either end
-# of a relationship drops both, so the window redraws them fresh.
-sub evaluation_relationships_changed {
-	my ($app, $other) = @_;
-	my $buckets = &subs::cache_get({ app => 'relational', context => 'buckets' }) || {};
-	delete $buckets->{$app};
-	delete $buckets->{$other};
-	&subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y' }, $buckets);
-	return 1;
-}
+# The relational window reads the settings rows directly; a change to either end
+# of a relationship is already in those rows when the next board is built.
 
 # Undo a relationship, both ways, whoever made it. Symmetric with
 # evaluation_relate so a link the house filed and one drawn by hand are taken
@@ -22952,7 +22931,6 @@ sub evaluation_unrelate {
 	@{$bc} = grep { $_ ne $mine->{'uuid'} } @{$bc};
 	&subs::setting_setter({ app => $app, setting => 'sc_' . $their_construct, value => encode_json($sc) });
 	&subs::setting_setter({ app => $other, setting => 'sc_' . $my_construct, value => encode_json($bc) });
-	&evaluation_relationships_changed($app, $other);
 	return { app => $other, removed => 1 };
 }
 

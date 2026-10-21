@@ -15,7 +15,6 @@
 		<% } else { %>
 			<% $constructs = &subs::db_query('select distinct(app) as app,* from settings where (setting = ? or setting=?) and value=? and device=?','pos', 'mab', $settings->{'construct'}, &subs::device_setter())->hashes;  %>
 		<% } %>
-		<% my $cd = &subs::cache_get({ app => 'relational', context => 'buckets' });
 		<% my $c = &subs::controller_builder();	%>
 		<% my $new_count = 0; %>
 		<% my $seen = []; %>
@@ -38,6 +37,6 @@
 			<% } %>
 		
 		<% } %>
-		<% &subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y' }, $cd) if $new_count > 0; %>
+		
 	</div>
 </div>

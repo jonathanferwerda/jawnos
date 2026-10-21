@@ -7557,7 +7557,6 @@ sub sync_rows_pull {
 		colour => $colour,
 	};
 	my @updateables;
-	my @cache_bucket_updateables;
 	my $ctx = {
 		configuration => $configuration,
 		misc_settings => &misc_setting_list(),
@@ -7565,7 +7564,6 @@ sub sync_rows_pull {
 		deletions => $deletions,
 		universal_settings => {},
 		updateables => \@updateables,
-		cache_bucket_updateables => \@cache_bucket_updateables,
 		sync_job => $job,
 		auuid => $auuid,
 		colour => $colour,
@@ -16709,7 +16707,6 @@ sub merge_table_rows {
 	my $deletions = $ctx->{'deletions'};
 	my $universal_settings = $ctx->{'universal_settings'};
 	my $updateables = $ctx->{'updateables'};
-	my $cache_bucket_updateables = $ctx->{'cache_bucket_updateables'};
 	my $sync_job = $ctx->{'sync_job'};
 	my $auuid = $ctx->{'auuid'};
 	my $colour = $ctx->{'colour'};
@@ -16846,7 +16843,6 @@ sub merge_table_rows {
 									}
 									#next if $protected == 1;
 									unless ($universal_settings->{$r->{'app'}}->{'unique'} eq 'checked' || $protected == 1) {
-										push @{$cache_bucket_updateables}, $r->{'app'} unless grep { $_ eq $r->{'app'} } @{$cache_bucket_updateables};
 										# A row we already hold at the peer's own server_time counts as present:
 										# the write below copies the peer's server_time verbatim, so with a strict
 										# '>' the test was false again on the very next sync and every one of
@@ -16877,7 +16873,6 @@ sub merge_table_rows {
 										# blobs). One load per app is enough to answer `unique`.
 										next;
 									}
-								#	push @cache_bucket_updateables, $r->{'app'} unless grep { $_ eq $r->{'app'} } @cache_bucket_updateables;
 								#	&subs::setting_setter($r);
 									next;
 								}
@@ -17041,7 +17036,6 @@ sub merge_finish {
 	my ($ctx) = @_;
 	my $configuration = $ctx->{'configuration'} || {};
 	my $updateables = $ctx->{'updateables'} || [];
-	my $cache_bucket_updateables = $ctx->{'cache_bucket_updateables'} || [];
 	my $auuid = $ctx->{'auuid'};
 	my $colour = $ctx->{'colour'};
 	my $percentage = 0;
@@ -17068,16 +17062,6 @@ sub merge_finish {
 		}
 	}
 	&deletion_performer($configuration->{'remote'}->{'deletions'}) if $configuration->{'remote'};
-	if ( scalar @{$cache_bucket_updateables} > 0 ) {
-		my $buc = &subs::cache_get({ app => 'relational', context => 'buckets' });
-		my $bub = &subs::cache_get({ app => 'relational', context => 'bubbles' });
-		foreach my $cbd ( @{$cache_bucket_updateables} ) {
-			delete $buc->{$cbd};
-			delete $bub->{$cbd};
-		}
-		&subs::cache_set({ app => 'relational', context => 'buckets' }, $buc);
-		&subs::cache_set({ app => 'relational', context => 'bubbles' }, $bub);
-	}
 }
 
 # Merge an encrypted snapshot: the full-migration / deep-gimme / v2 path. A normal
@@ -17126,7 +17110,6 @@ sub merge_database($c,$configuration) {
 	@{$creds} = reverse @{$creds};
 	my $encryption_standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' } ) || "aes-256-ctr";
 	my @updateables;
-	my @cache_bucket_updateables;
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
 	my $merge_ctx;
 	foreach my $cred ( @{$creds} ) {
@@ -17188,7 +17171,6 @@ sub merge_database($c,$configuration) {
 					deletions => $deletions,
 					universal_settings => $universal_settings,
 					updateables => \@updateables,
-					cache_bucket_updateables => \@cache_bucket_updateables,
 					sync_job => $sync_job,
 					auuid => $auuid,
 					colour => $colour,
@@ -22902,20 +22884,7 @@ post '/manager/relational/adder' => sub($c) {
 
 	my @constructs = grep { $_->{'sing'} eq $construct } values %{$gb::relationals};
 
-	my $pconstructs = { list => [] };
-
-
-	my $returner = { settings => $settings, sc => $constructs[0] };
-	my $relational_settings = &subs::settings_grabber({ app => 'relational' });
-	$returner->{'category'} = $c->render_to_string(
-		template => 'relational/category',
-		sc => $constructs[0],
-		all_settings => {},
-		settings => $settings,
-		pconstructs => $pconstructs,
-		category_search => $relational_settings->{'category_search'},
-		contents_search => $relational_settings->{'contents_search'},
-	);
+	my $returner = { ok => 1, app => $addition, settings => $settings, sc => $constructs[0] };
 
 	# a new person construct is a person the moment it is made
 	&people_link_sync() if ($construct eq 'person');
@@ -22998,11 +22967,6 @@ post '/manager/relational/sorter' => sub($c) {
 	);
 
 	$c->render(json => $returner);
-
-	my $cd = &subs::cache_get({ app => 'relational', context => 'buckets' });
-	$cd->{$bucket->{'app'}} = $returner->{'bucket'};
-	$cd->{$bubble->{'app'}} = $returner->{'bubble'};
-	&subs::cache_set({ app => 'relational', context => 'buckets', warranty => '-5y' }, $cd);
 };
 
 post '/manager/relational/autocalc' => sub($c) {

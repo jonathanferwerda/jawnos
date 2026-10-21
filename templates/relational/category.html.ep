@@ -7,7 +7,6 @@
 <% } %>
 
 <% my $c = &subs::controller_builder();	%>
-<% my $cd = &subs::cache_get({ app => 'relational', context => 'bubbles' });
 <% if (scalar @{$constructs} > 0) { %>
 	<div class="relational_space" construct="<%= $sc->{'sing'} %>">
 		<% if ($category_search ne '') { %> <h4><%= &subs::format_name($sc->{'sing'}) %></h4> <% } %>
@@ -40,7 +39,6 @@
 
 		
 		<% } %>
-		<% &subs::cache_set({ app => 'relational', context => 'bubbles', warranty => '-5y' }, $cd) if $new_count > 0; %>
 			
 		<% } %>
 		<input class="relational_adder" construct="<%= $sc->{'sing'} %>">
