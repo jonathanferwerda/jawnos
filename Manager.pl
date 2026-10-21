@@ -18568,6 +18568,8 @@ sub people_crest_install {
 	unless (&subs::crest_record_write($signed)) {
 		return { ok => 0, error => 'the crest could not be saved' };
 	}
+	my $sync_image = &subs::crest_image_data_uri($color_enc, $suds, $standard, 512);
+	&subs::crest_image_sync_store($signed, $sync_image) if defined $sync_image;
 	return { ok => 1, crest => $signed };
 }
 
@@ -18586,6 +18588,8 @@ sub people_crest_upload_file {
 
 get '/manager/people' => sub($c) {
 	unless (&people_citizen($c)) { $c->render(text => ''); return; }
+	&subs::crest_image_sync_seed($c);
+	&subs::crest_image_materialize($c);
 	my $crest = &subs::crest_record_read();
 	my $has_image = ($crest->{'uuid'} && &subs::crest_image_file($crest, 'image')) ? 1 : 0;
 	my $peer_list = &subs::crest_peer_list_read();

@@ -18383,6 +18383,102 @@ sub crest_qr_png {
 	return (defined $png && length $png) ? $png : undef;
 }
 
+# The crest drawing is public, and a 512px copy is small enough to ride the
+# settings sync with the record. The dHash in the record still checks it, so a
+# tampered copy is refused when a machine materializes it locally.
+sub crest_image_sync_store {
+	my ($crest, $uri) = @_;
+	return 0 unless ref $crest eq 'HASH' && ($crest->{'uuid'} || '') ne '' && defined $uri && length $uri;
+	my $payload = encode_json({
+		uuid => $crest->{'uuid'},
+		dhash => $crest->{'dhash'} || '',
+		image => $uri,
+		at => &rightNow(),
+	});
+	&setting_setter({ app => '__president', setting => 'crest_image', device => 'all', value => $payload });
+	return 1;
+}
+
+sub crest_image_sync_read {
+	my $raw = &setting_grabber({ app => '__president', setting => 'crest_image', device => 'all' });
+	return {} unless defined $raw && length $raw;
+	my $payload = eval { decode_json($raw) };
+	return ref $payload eq 'HASH' ? $payload : {};
+}
+
+sub crest_image_sync_seed {
+	my ($c) = @_;
+	my $crest = &crest_record_read();
+	return 0 unless $crest->{'uuid'};
+	my $sync = &crest_image_sync_read();
+	return 1 if ($sync->{'uuid'} || '') eq ($crest->{'uuid'} || '') && ($sync->{'image'} || '') ne '';
+	my $file = &crest_image_file($crest, 'image');
+	return 0 unless $file;
+	my $suds = &session_suds($c);
+	return 0 unless $suds;
+	my $device = $crest->{'device'} || &device_setter();
+	my $standard = &setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
+	my $uri = &crest_image_data_uri($file, $suds, $standard, 512);
+	unless (defined $uri) {
+		$device = &device_setter();
+		$standard = &setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
+		$uri = &crest_image_data_uri($file, $suds, $standard, 512);
+	}
+	return 0 unless defined $uri;
+	return &crest_image_sync_store($crest, $uri);
+}
+
+# A machine that has the record but not the drawing (a phone after the settings
+# sync) writes the synced 512px copy into its own photo location, named the way
+# the record names it, after checking the picture against the record's dHash.
+sub crest_image_materialize {
+	my ($c) = @_;
+	my $crest = &crest_record_read();
+	return 0 unless $crest->{'uuid'};
+	return 1 if &crest_image_file($crest, 'image');
+	my $sync = &crest_image_sync_read();
+	return 0 unless ($sync->{'uuid'} || '') eq ($crest->{'uuid'} || '');
+	my $bytes = &crest_data_uri_bytes($sync->{'image'});
+	return 0 unless $bytes;
+	my $suds = &session_suds($c);
+	return 0 unless $suds;
+	my $device = &device_setter();
+	my $folder = &setting_grabber({ app => 'misc', setting => 'photo_location', device => $device }) || 'Pictures';
+	my $dir = &home($folder) . '/me';
+	eval { require File::Path; File::Path::make_path($dir) } unless -d $dir;
+	require File::Temp;
+	my ($fh, $tmp) = File::Temp::tempfile('jawnos-crest-sync-XXXXXX', TMPDIR => 1, UNLINK => 0);
+	return 0 unless $fh && $tmp;
+	binmode $fh;
+	print $fh $bytes;
+	close $fh;
+	my $ref = $tmp . '.ref.png';
+	unless (&crest_normalize_image($tmp, $ref)) {
+		unlink $tmp; unlink $ref;
+		return 0;
+	}
+	my $distance = &crest_hamming($crest->{'dhash'}, &crest_dhash($ref));
+	unless (defined $distance && $distance <= 16) {
+		unlink $tmp; unlink $ref;
+		return 0;
+	}
+	my $standard = &setting_grabber({ app => 'misc', setting => 'encryption_standard', device => $device }) || 'aes-256-ctr';
+	my $name = $crest->{'image'} || 'crest.sync.jpg.enc';
+	$name = 'crest.sync.jpg.enc' unless $name =~ /^[\w.\-]+$/;
+	my $enc = "$dir/$name";
+	unless (&openssl_file_crypt('e', $standard, $suds, $tmp, $enc, 0, 1)) {
+		unlink $tmp; unlink $ref;
+		return 0;
+	}
+	my $ref_name = $crest->{'reference'} || '';
+	if ($ref_name =~ /^[\w.\-]+$/) {
+		my $ref_enc = "$dir/$ref_name";
+		&openssl_file_crypt('e', $standard, $suds, $ref, $ref_enc, 0, 1);
+	}
+	unlink $tmp; unlink $ref;
+	return 1;
+}
+
 # Authorization beside authentication. peer_verify answers "is this who they
 # claim?", peer_allows answers "may this house do this, and is the lease still
 # alive?". Call it only after peer_verify has accepted the row for this request:
