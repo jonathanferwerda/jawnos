@@ -4314,6 +4314,7 @@ sub store_maker($c) {
 			advertise_watching => $advertise_watching,
 			my_name => $c->session('name'),
 			pseudonyms => &pseudonym_maker('manager',''),
+			settings => $settings,
 			window_maker => $c->param('window_maker')
 		);
 	}
