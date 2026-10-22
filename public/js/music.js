@@ -36,6 +36,24 @@ function musicVolumeApply() {
 function musicPhoneLayout() {
 	return $('#music').attr('phone_layout') == 'yes';
 }
+// A phone's WebView is paused by the app when its activity goes to the
+// background (the screen turning off, the app being switched away from), and
+// that pause takes the player's timers - and the next track - with it. The
+// Android app exposes window.JawnMedia.playing(); saying a track is playing
+// keeps the WebView alive. The short delay lets a track change (pause then
+// play on the next source) pass without standing the keepalive down between
+// tracks; a real stop still releases it a few seconds later.
+var musicKeepaliveTimer;
+function musicKeepalive(playing) {
+	clearTimeout(musicKeepaliveTimer);
+	var media = window.JawnMedia;
+	if (!media || typeof media.playing != 'function') { return; }
+	try {
+		if (playing) { media.playing(true); }
+		else { musicKeepaliveTimer = setTimeout(function () { try { media.playing(false); } catch (e) {} }, 5000); }
+	}
+	catch (e) { /* the bridge is a nicety, never a reason to stop the player */ }
+}
 // The rendered window contents are cached server-side and reused on the next
 // open; key that cache to the code revision, so a template change (which ships
 // with a version bump) is never served stale - the tools toggle went missing
@@ -143,7 +161,7 @@ async function musicInit(method) {
 		}
 		catch (e) { /* keep the inlined copy if the fetch fails */ }
 	}
-	if (isJson(jpd) && method != 'search') {
+	if (isJson(jpd) && method != 'search' && jpd.trim() != 'null') {
 
 		var pd = JSON.parse(jpd);
 		// the level and mute the player was last left at; a cached near-zero is the
@@ -258,7 +276,7 @@ function playerCacheSaver(type) {
 		var playerData = { 
 			number: tree.current_track, 
 			'currentTime': tree.sound.currentTime, 
-			file: tree.songs[0].file, 
+			file: (tree.songs[0] ? tree.songs[0].file : ''), 
 			volume: master_volume, 
 			muted: music_muted, 
 			state: tree.sound.state, 
@@ -350,7 +368,7 @@ function mediaMaker(data) {
 	var time = data['time'];
 	var timestamp = data['timestamp'] || Date.now();
 	var method = data['method'];
-	var file = data['file'] || tree.songs[0].file;
+	var file = data['file'] || (tree.songs[0] ? tree.songs[0].file : undefined);
 	var uri_track = encodeURIComponent(file);
 	if (mao['srv'] == 'on') {
 		$.ajax({
@@ -391,8 +409,6 @@ function mediaMaker(data) {
 				tree.current_track = tree.past_songs.length + 1;
 
 				if (data['state'] != 0) {
-					tree.sound.play();
-					tree.sound.load();
 					tree.sound.state = 1;
 				}
 				else {
@@ -450,6 +466,7 @@ function mediaMaker(data) {
 			}
 			tree.sound.onplaying = function() {
 				tree.sound.state = 1;
+				musicKeepalive(true);
 				musicVolumeApply();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
@@ -506,7 +523,7 @@ function mediaMaker(data) {
 						}
 						var pre_value = $('#progress_bar').val();
 						var cursor = tree.sound.currentTime;
-						if (pre_value > cursor + 2 || pre_value < cursor - 2 && tree.sound.exempt_seek != 1) {
+						if (tree.songs[0] && (pre_value > cursor + 2 || pre_value < cursor - 2 && tree.sound.exempt_seek != 1)) {
 							remoteTrackToggle({
 								file: tree.songs[0].file,
 								toggle: 'seek',
@@ -519,7 +536,7 @@ function mediaMaker(data) {
 						$('#total_progress').text(numeral(tree.sound.duration).format('00:00:00'));
 						$('#elapsed_progress').text(numeral(tree.sound.currentTime).format('00:00:00'));
 						playerCacheSaver();
-						if (cursor >= tree.sound.duration - 3.9 && tree.sound.queued != 1) {
+						if (tree.songs[1] && cursor >= tree.sound.duration - 3.9 && tree.sound.queued != 1) {
 							remoteTrackToggle({
 								file: tree.songs[1].file,
 								toggle: 'on',
@@ -537,11 +554,13 @@ function mediaMaker(data) {
 				tree.sound.onpause = function() {
 					clearInterval(interval);
 					tree.sound.state = 0;
-			
+					musicKeepalive(false);
+
 					$('#play_logo').attr('src', jawnosPlayIcon());
-			
+
 				};
 				tree.sound.onerror = function() {
+					musicKeepalive(false);
 					nextTrack();
 				};
 				tree.sound.onended = function() {
@@ -552,10 +571,9 @@ function mediaMaker(data) {
 					$('#' + id).hide();
 		
 					tree.past_songs.push(tree.songs.shift());
-					var app = tree.songs[0].app;
 					if (tree.songs.length == 0 ) {
 						if ($('.music_repeat').attr('enabled') == 'on') {
-							for (var n = 0; n <= tree.all_songs.length; n++ ) {
+							for (var n = 0; n < tree.all_songs.length; n++ ) {
 								tree.songs.push(tree.all_songs[n]);
 							}
 							tree.past_songs = [];
@@ -563,7 +581,9 @@ function mediaMaker(data) {
 						else {
 							tree.sound.pause();
 							$('.playing').removeClass('playing');
-							musicAppointmentWriter('stop','no');	
+							musicAppointmentWriter('stop','no');
+							musicKeepalive(false);
+							return;
 						}
 					}
 					mediaMaker();
@@ -834,7 +854,7 @@ function prevTrack() {
 function nextTrack() {
 	if (tree.songs.length == 0) {
 		if ($('.music_repeat').attr('enabled') == 'on') {
-			for (var n = 0; n <= tree.all_songs.length; n++ ) {
+			for (var n = 0; n < tree.all_songs.length; n++ ) {
 				tree.songs.push(tree.all_songs[n]);
 			}
 			tree.past_songs = [];
@@ -846,6 +866,12 @@ function nextTrack() {
 	}
 	else {
 		tree.past_songs.push(tree.songs.shift());
+	}
+	if (tree.songs.length == 0) {
+		tree.sound.pause();
+		$('.playing').removeClass('playing');
+		musicKeepalive(false);
+		return;
 	}
 	mediaMaker();
 }
@@ -910,6 +936,9 @@ $(document).on('click change', '#progress_bar', function(e) {
   var total_width = $('#progress_bar').width();
   var current_location = e.offsetX;
   var seek_to = (current_location / total_width) * tree.sound.duration;
+  // a touch that reports no offset (or a track whose duration is not known yet)
+  // used to set currentTime to NaN, which aborts the whole handler
+  if (!total_width || !isFinite(seek_to) || !tree.songs[0]) { return; }
   tree.sound.currentTime = seek_to;
 	remoteTrackToggle({
 		file: tree.songs[0].file,

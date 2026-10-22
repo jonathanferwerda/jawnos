@@ -1046,6 +1046,10 @@ sub file_cache_tag($file) {
 sub file_response_headers($c, $file, $cache_control) {
 	my $tag = &file_cache_tag($file);
 	return 0 unless $tag;
+	# Every path through rock_and_roll honours a Range request, so say so: a
+	# media stack that does not see Accept-Ranges asks for the whole file (or
+	# gives up) instead of seeking.
+	$c->res->headers->accept_ranges('bytes');
 	$c->res->headers->etag($tag->{'etag'});
 	eval {
 		require Mojo::Date;
@@ -1082,6 +1086,40 @@ sub file_response_cache_headers($c, $file, $cache_control) {
 	return &file_response_headers($c, $file, $cache_control);
 }
 
+# The MIME an <audio>/<video> element can open, from the extension first (an
+# mp4 can be either) and the sniffer's verdict second. /play and /file_open
+# used to hand the data to render_file() without a type, and that helper
+# answers "application/x-download" with "Content-Disposition: attachment".
+# Desktop Chrome sniffs past that; Android's media stack does not - it refused
+# the track outright. Only audio/video are listed here: everything else keeps
+# the download disposition it had.
+my %media_type_for_ext = (
+	mp3 => 'audio/mpeg', m4a => 'audio/mp4', aac => 'audio/aac',
+	wav => 'audio/wav', flac => 'audio/flac', oga => 'audio/ogg',
+	ogg => 'audio/ogg', opus => 'audio/ogg',
+	mp4 => 'video/mp4', m4v => 'video/mp4', mkv => 'video/x-matroska',
+	webm => 'video/webm', mov => 'video/quicktime',
+	wmv => 'video/x-ms-wmv', avi => 'video/x-msvideo',
+	mpg => 'video/mpeg', mpeg => 'video/mpeg',
+);
+sub media_content_type($file, $verdict) {
+	my $name = $file;
+	$name =~ s/\.enc$//i;
+	my @parts = split /\./, $name;
+	my $ext = lc $parts[-1];
+	return $media_type_for_ext{$ext} if $media_type_for_ext{$ext};
+	return $verdict if defined $verdict && $verdict =~ m{^(?:audio|video)/};
+	return undef;
+}
+
+# A media response is inline, so a phone's player receives it as the track and
+# not as a download; every other file keeps render_file's attachment default.
+sub media_render_args($file, $verdict) {
+	my $type = &media_content_type($file, $verdict);
+	return () unless defined $type && $type =~ m{^(?:audio|video)/};
+	return (content_type => $type, content_disposition => 'inline');
+}
+
 # Pump a sealed file to the client a chunk at a time, so a large video starts
 # playing after the 16 KB probe instead of after the whole file is decrypted and
 # copied. Content-Length is known (the ciphertext length, which is exactly what
@@ -1101,9 +1139,11 @@ sub stream_sealed_file($c, $job, $file, $cache_control) {
 	$name = &quote($name);
 	$name = Encode::encode('UTF-8', $name) if eval { require Encode; 1 };
 
+	my $content_type = &media_content_type($file, $job->{'verdict'}) || 'application/x-download';
+	my $disposition = $content_type =~ m{^(?:audio|video)/} ? 'inline' : 'attachment';
 	$c->res->code(200);
-	$c->res->headers->content_type('application/x-download');
-	$c->res->headers->content_disposition('attachment;filename=' . $name);
+	$c->res->headers->content_type($content_type);
+	$c->res->headers->content_disposition($disposition . ';filename=' . $name);
 	$c->res->headers->accept_ranges('bytes');
 	$c->res->headers->content_length($job->{'total'});
 	&file_response_headers($c, $file, $cache_control);
@@ -1475,16 +1515,17 @@ sub rock_and_roll($c) {
 							$data = $full_data unless (defined $data && length $data);
 							$c->res->headers->accept_ranges('bytes');
 							&file_response_headers($c, $file, $wants_thumb ? 'private, max-age=3600' : 'private, no-cache');
+							my %media_args = &media_render_args($file, $fd);
 							if (defined $opened->{'total'} && defined $opened->{'start'}) {
 								# The slice is already decrypted. Drop the request's Range so the
 								# render helper does not slice it a second time, and send 206.
 								my $last_byte = $opened->{'start'} + $opened->{'length'} - 1;
 								$c->res->headers->content_range('bytes ' . $opened->{'start'} . '-' . $last_byte . '/' . $opened->{'total'});
 								$c->req->headers->remove('Range');
-								$data ? $c->render_file(data => $data, status => 206) : $c->render(text => 'none');
+								$data ? $c->render_file(data => $data, status => 206, %media_args) : $c->render(text => 'none');
 							}
 							else {
-								$data ? $c->render_file(data => $data) : $c->render(text => 'none');
+								$data ? $c->render_file(data => $data, %media_args) : $c->render(text => 'none');
 							}
 							return;
 						}
@@ -1516,7 +1557,7 @@ sub rock_and_roll($c) {
 					my $sub_file = $file . '.vtt';
 					if (-e $sub_file) {
 						my $data = read_file($sub_file);
-						$sub_file ? $c->render_file(filepath => $sub_file) : $c->render(text => 'WEBVTT');
+						$sub_file ? $c->render_file(filepath => $sub_file, content_type => 'text/vtt', content_disposition => 'inline') : $c->render(text => 'WEBVTT');
 						return;
 					}
 					else {
@@ -1524,7 +1565,7 @@ sub rock_and_roll($c) {
 						`$command`;
 						if (-e $sub_file) {
 							my $data = read_file($sub_file);
-							$data ? $c->render_file(data => $data, type => 'text/vtt') : $c->render(text => 'WEBVTT');
+							$data ? $c->render_file(data => $data, content_type => 'text/vtt', content_disposition => 'inline') : $c->render(text => 'WEBVTT');
 							return;
 						}
 						else {
@@ -1562,7 +1603,7 @@ sub rock_and_roll($c) {
 				else {
 					# filepath streams the file and supports Range; reading it into a
 					# scalar copied the whole thing and then copied it again into the asset.
-					$file ? $c->render_file('filepath' => $file) : $c->render(text => 'none');
+					$file ? $c->render_file('filepath' => $file, &media_render_args($file, undef)) : $c->render(text => 'none');
 					return;
 				}
 			}
@@ -1574,7 +1615,7 @@ sub rock_and_roll($c) {
 					my $sub_file = $file . '.vtt';
 					if (-e $sub_file) {
 						my $data = read_file($sub_file);
-						$sub_file ? $c->render_file(filepath => $sub_file) : $c->render(text => 'WEBVTT');
+						$sub_file ? $c->render_file(filepath => $sub_file, content_type => 'text/vtt', content_disposition => 'inline') : $c->render(text => 'WEBVTT');
 						return;
 					}
 					else {
@@ -1582,7 +1623,7 @@ sub rock_and_roll($c) {
 						`$command`;
 						if (-e $sub_file) {
 							my $data = read_file($sub_file);
-							$data ? $c->render_file(data => $data, type => 'text/vtt') : $c->render(text => 'WEBVTT');
+							$data ? $c->render_file(data => $data, content_type => 'text/vtt', content_disposition => 'inline') : $c->render(text => 'WEBVTT');
 							return;
 						}
 						else {
@@ -1666,7 +1707,7 @@ sub rock_and_roll($c) {
 					$c->render_file(data => $data);
 				}
 				else {
-					$file ? $c->render_file('filepath' => $file) : $c->render(text => 'none');
+					$file ? $c->render_file('filepath' => $file, &media_render_args($file, undef)) : $c->render(text => 'none');
 					return;
 				}
 			}
