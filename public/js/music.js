@@ -18,7 +18,14 @@ function musicLocalVolume() {
 	return master_volume;
 }
 function musicVolumeApply() {
-	if (tree && tree.sound) { tree.sound.volume = musicLocalVolume(); }
+	if (!tree || !tree.sound) { return; }
+	tree.sound.volume = musicLocalVolume();
+	// The element's own mute is the same switch as the mute button. Every resume
+	// path runs through here, so this is also where the autoplay handshake's
+	// muted element is lifted: a restore starts muted because only a muted
+	// element may autoplay, and leaving that on made a resume (the picture, or a
+	// blocked autoplay on open) play silently.
+	tree.sound.muted = music_muted;
 }
 // Is the window wearing the phone's own draw? The template says so on #music
 // (see apps/music/music.html.ep): the shelves are one-line strips and the list
@@ -423,7 +430,7 @@ function mediaMaker(data) {
 					// the play() above runs before load()/the new src and is aborted by them,
 					// so start here instead, once the source is in place. A refresh has no
 					// user gesture yet and browsers only autoplay a muted element, so a
-					// restore starts muted; onplaying lifts that again.
+					// restore starts muted; onplaying puts the mute button's state back.
 					if (method == 'restore') { tree.sound.muted = true; }
 					tree.sound.play();
 				}
@@ -442,7 +449,6 @@ function mediaMaker(data) {
 				theatreModeOff();
 			}
 			tree.sound.onplaying = function() {
-				if (method == 'restore') { tree.sound.muted = false; }
 				tree.sound.state = 1;
 				musicVolumeApply();
 				var total = tree.sound.duration;
@@ -789,7 +795,7 @@ $(document).on('click', '#play', function() {
 		mediaMaker({ file: tree.songs[0].file });
 	}
 	else if (tree.sound.paused) {
-		tree.sound.muted = false;
+		musicVolumeApply();
 		tree.sound.play();
 		tree.sound.state = 1;
 		$('#play_logo').attr('src', jawnosPauseIcon());
