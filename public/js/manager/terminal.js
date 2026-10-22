@@ -5,43 +5,93 @@
    keeps a screen matrix, parses the sequences a shell and full-screen tools
    actually send, and renders runs instead of cells. */
 
-var terminalVars = {
-	cols: 80,
-	rows: 24,
-	grid: [],
-	history: [],
-	scrollOffset: 0,
-	cursorX: 0,
-	cursorY: 0,
-	cursorVisible: true,
-	savedX: 0,
-	savedY: 0,
-	scrollTop: 0,
-	scrollBottom: 23,
-	wrapPending: false,
-	autowrap: true,
-	appCursor: false,
-	bracketedPaste: false,
-	fg: -1,
-	bg: -1,
-	attrs: 0,
-	lastChar: ' ',
-	altGrid: null,
-	altActive: false,
-	parser: { state: 'ground', params: '', inter: '', osc: '' },
-	decoder: null,
-	raf: null,
-	initialized: false,
-	font: 15,
-	cellW: 9,
-	cellH: 20,
-	styleCache: {},
-	commandHistory: [],
-	commandIndex: -1,
-	observer: null,
-	touchY: null,
-	lastKnownState: ''
-};
+/* Every Terminal window owns one state object and one server-side pty. The
+   parser below still works on the active state in terminalVars; an entry point
+   calls terminalUse(view) first, so two windows never share a screen. */
+var terminalViews = {};
+var terminalCurrentView = null;
+var terminalWindowNumber = 0;
+var terminalViewCounter = 0;
+
+function terminalNewState() {
+	return {
+		cols: 80,
+		rows: 24,
+		grid: [],
+		history: [],
+		scrollOffset: 0,
+		cursorX: 0,
+		cursorY: 0,
+		cursorVisible: true,
+		savedX: 0,
+		savedY: 0,
+		scrollTop: 0,
+		scrollBottom: 23,
+		wrapPending: false,
+		autowrap: true,
+		appCursor: false,
+		bracketedPaste: false,
+		fg: -1,
+		bg: -1,
+		attrs: 0,
+		lastChar: ' ',
+		altGrid: null,
+		altActive: false,
+		parser: { state: 'ground', params: '', inter: '', osc: '' },
+		decoder: null,
+		raf: null,
+		initialized: false,
+		font: 15,
+		cellW: 9,
+		cellH: 20,
+		styleCache: {},
+		commandHistory: [],
+		commandIndex: -1,
+		touchY: null,
+		composing: false,
+		lastKnownState: ''
+	};
+}
+
+var terminalVars = terminalNewState();
+
+function terminalUse(view) {
+	if (!view) { return null; }
+	terminalCurrentView = view;
+	terminalVars = view.state;
+	return view;
+}
+
+function terminalViewFrom(el) {
+	var node = el;
+	if (!node || node.nodeType !== 1) { node = node && node.target; }
+	if (!node || !node.closest) { return null; }
+	var root = node.closest('.terminal_app');
+	return root ? root.__terminalView : null;
+}
+
+function terminalEl(selector) {
+	var root = terminalCurrentView && terminalCurrentView.root;
+	return root ? root.querySelector(selector) : null;
+}
+
+function terminalRoot() {
+	return terminalCurrentView ? terminalCurrentView.root : null;
+}
+
+function terminalNewId() {
+	return 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function terminalNewViewKey() {
+	terminalViewCounter += 1;
+	return 'v' + terminalViewCounter + '_' + Date.now().toString(36);
+}
+
+function terminalNextName() {
+	terminalWindowNumber += 1;
+	return terminalWord('Terminal') + ' ' + terminalWindowNumber;
+}
 
 var TERM_A_BOLD = 1, TERM_A_DIM = 2, TERM_A_ITALIC = 4, TERM_A_UNDER = 8,
 	TERM_A_INVERSE = 16, TERM_A_STRIKE = 32, TERM_A_HIDDEN = 64;
@@ -585,9 +635,12 @@ function terminalReset(hard) {
 /* ---- rendering ------------------------------------------------------------ */
 
 function terminalScheduleRender() {
-	if (terminalVars.raf) { return; }
-	terminalVars.raf = window.requestAnimationFrame(function () {
-		terminalVars.raf = null;
+	var view = terminalCurrentView;
+	if (!view) { return; }
+	if (view.state.raf) { return; }
+	view.state.raf = window.requestAnimationFrame(function () {
+		view.state.raf = null;
+		terminalUse(view);
 		terminalRender();
 	});
 }
@@ -617,7 +670,7 @@ function terminalRowHtml(row, cursorX) {
 }
 
 function terminalRender() {
-	var screen = document.getElementById('terminal_screen');
+	var screen = terminalEl('.terminal_screen');
 	if (!screen) { return; }
 	var t = terminalVars;
 	var offset = Math.min(t.scrollOffset, t.history.length);
@@ -637,14 +690,14 @@ function terminalRender() {
 	}
 	screen.innerHTML = html;
 	if (t.cellH) { screen.style.setProperty('--term-line-height', t.cellH.toFixed(2) + 'px'); }
-	var jump = document.getElementById('terminal_jump');
+	var jump = terminalEl('.terminal_jump');
 	if (jump) { jump.setAttribute('data-show', offset > 0 ? 'yes' : 'no'); }
 }
 
 /* ---- sizing --------------------------------------------------------------- */
 
 function terminalMeasure() {
-	var screen = document.getElementById('terminal_screen');
+	var screen = terminalEl('.terminal_screen');
 	if (!screen) { return { w: 9, h: 20 }; }
 	var cs = window.getComputedStyle(screen);
 	var probe = document.createElement('span');
@@ -663,8 +716,8 @@ function terminalMeasure() {
 }
 
 function terminalFit(force) {
-	var wrap = document.getElementById('terminal_interactive');
-	if (!wrap || !$('#terminal_interactive').is(':visible')) { return; }
+	var wrap = terminalEl('.terminal_interactive');
+	if (!wrap || !$(wrap).is(':visible')) { return; }
 	var rect = wrap.getBoundingClientRect();
 	if (rect.width < 20 || rect.height < 20) { return; }
 	var cs = window.getComputedStyle(wrap);
@@ -713,6 +766,7 @@ function terminalResize(cols, rows) {
 function terminalSend(data) {
 	if (!data) { return; }
 	data['app'] = 'server';
+	if (terminalCurrentView && !data['terminal_id']) { data['terminal_id'] = terminalCurrentView.id; }
 	if (typeof ws === 'undefined' || !ws['server'] || ws['server'].readyState !== 1) { return; }
 	ws['server'].send(JSON.stringify(data));
 }
@@ -804,15 +858,15 @@ function terminalNearBottom(el) {
 	return el.scrollHeight - el.scrollTop - el.clientHeight < 48;
 }
 
-function terminalScrollList(container) {
-	var el = document.getElementById(container);
+function terminalScrollList(selector) {
+	var el = terminalEl(selector);
 	if (el) { el.scrollTop = el.scrollHeight; }
 }
 
 function terminalScrollListsBottom() {
-	terminalScrollList('terminal_error_entries');
-	terminalScrollList('terminal_log_entries');
-	terminalScrollList('terminal_command_output');
+	terminalScrollList('.terminal_error_entries');
+	terminalScrollList('.terminal_log_entries');
+	terminalScrollList('.terminal_command_output');
 }
 
 function terminalStampTimes(root) {
@@ -830,45 +884,50 @@ function terminalStampTimes(root) {
 	});
 }
 
-function terminalSetView(view, persist) {
-	var t = document.getElementById('terminal');
-	if (!t || !view) { return; }
-	$('#terminal .terminal_view').css('display', 'none');
-	$('#terminal .terminal_view[view="' + view + '"]').css('display', 'flex');
-	$('#terminal .terminal_view_select').removeAttr('selected').attr('aria-selected', 'false');
-	$('#terminal .terminal_view_select[view="' + view + '"]').attr('selected', 'selected').attr('aria-selected', 'true');
+function terminalSetView(name, persist) {
+	var cur = terminalCurrentView;
+	if (!cur || !name) { return; }
+	var root = cur.root;
+	$(root).find('.terminal_view').css('display', 'none');
+	$(root).find('.terminal_view[view="' + name + '"]').css('display', 'flex');
+	$(root).find('.terminal_view_select').removeAttr('selected').attr('aria-selected', 'false');
+	$(root).find('.terminal_view_select[view="' + name + '"]').attr('selected', 'selected').attr('aria-selected', 'true');
 	if (persist) {
-		settingSetter({ app: 'terminal', setting: 'view', value: view });
+		settingSetter({ app: 'terminal', setting: 'view', value: name });
 	}
-	if (view === 'interactive_terminal') {
+	if (name === 'interactive_terminal') {
 		terminalFit(true);
 		terminalFocusKeyboard();
 	}
-	else if (view === 'terminal') {
-		$('#terminal_console').trigger('focus');
-		terminalScrollList('terminal_command_output');
+	else if (name === 'terminal') {
+		$(terminalEl('.terminal_console')).trigger('focus');
+		terminalScrollList('.terminal_command_output');
 	}
 	else {
-		terminalStampTimes(document);
+		terminalStampTimes(root);
 		setTimeout(function () {
-			terminalScrollList(view === 'errors' ? 'terminal_error_entries' : 'terminal_log_entries');
+			if (cur === terminalCurrentView || cur.root.isConnected) {
+				terminalUse(cur);
+				terminalScrollList(name === 'errors' ? '.terminal_error_entries' : '.terminal_log_entries');
+			}
 		}, 0);
 	}
 }
 
 function terminalFocusKeyboard() {
-	var k = document.getElementById('terminal_keyboard');
+	var k = terminalEl('.terminal_keyboard');
 	if (!k) { return; }
 	try { k.focus({ preventScroll: true }); } catch (e) { k.focus(); }
 }
 
-function terminalShellStatus(info) {
+function terminalApplyShellStatus(info) {
 	if (!info) { return; }
-	var t = document.getElementById('terminal');
-	if (!t) { return; }
+	var cur = terminalCurrentView;
+	if (!cur || !cur.root) { return; }
+	var root = cur.root;
 	var state = info['state'] || 'live';
 	var label = info['label'] || '';
-	var dot = document.getElementById('terminal_shell_dot');
+	var dot = terminalEl('.terminal_shell_dot');
 	if (dot) {
 		dot.className = 'terminal_dot ' + (state === 'connecting' ? 'connecting'
 			: state === 'ended' ? 'ended'
@@ -877,17 +936,17 @@ function terminalShellStatus(info) {
 	}
 	var suffix = state === 'connecting' ? ' · ' + terminalWord('connecting')
 		: state === 'ended' ? ' · ' + terminalWord('ended') : '';
-	$('#terminal_shell_status').text(label + suffix).attr('title', (info['message'] || label));
+	$(terminalEl('.terminal_shell_status')).text(label + suffix).attr('title', (info['message'] || label));
 	if (label) {
-		t.setAttribute('data-shell-label', label);
+		root.setAttribute('data-shell-label', label);
 	}
-	$('#terminal .terminal_local_connect').removeClass('current');
-	$('#terminal .terminal_remote_row').removeClass('current');
+	$(root).find('.terminal_local_connect').removeClass('current');
+	$(root).find('.terminal_remote_row').removeClass('current');
 	if (state === 'local' || info['local']) {
-		$('#terminal .terminal_local_connect').addClass('current');
+		$(root).find('.terminal_local_connect').addClass('current');
 	}
 	else if (info['host']) {
-		$('#terminal .terminal_remote_row[data-host="' + info['host'] + '"]').addClass('current');
+		$(root).find('.terminal_remote_row[data-host="' + info['host'] + '"]').addClass('current');
 	}
 	terminalVars.lastKnownState = state;
 }
@@ -899,7 +958,7 @@ function terminalShellConnect(host, user, port) {
 	var label = host ? ((user ? user + '@' : '') + host) : '';
 	terminalReset(true);
 	terminalRender();
-	terminalShellStatus({ state: host ? 'connecting' : 'local', label: label, local: !host });
+	terminalApplyShellStatus({ state: host ? 'connecting' : 'local', label: label, local: !host });
 	terminalSend(host
 		? { type: 'terminal_connect', host: host, user: user, port: port }
 		: { type: 'terminal_local' });
@@ -908,8 +967,10 @@ function terminalShellConnect(host, user, port) {
 }
 
 function terminalSaveRemotes() {
+	var root = terminalRoot();
+	if (!root) { return; }
 	var map = {};
-	$('#terminal .terminal_remote_row').each(function () {
+	$(root).find('.terminal_remote_row').each(function () {
 		var key = $(this).attr('data-key') || $(this).attr('data-host');
 		if (!key) { return; }
 		map[key] = {
@@ -923,11 +984,15 @@ function terminalSaveRemotes() {
 function terminalSetFont(size) {
 	size = parseInt(size, 10);
 	if (!(size >= 10 && size <= 32)) { return; }
-	terminalVars.font = size;
-	var el = document.getElementById('terminal');
-	if (el) { el.style.setProperty('--terminal_font', size + 'px'); }
-	$('#terminal_font_size').text(size);
-	terminalFit(true);
+	var was = terminalCurrentView;
+	$.each(terminalViews, function (id, v) {
+		v.state.font = size;
+		v.root.style.setProperty('--terminal_font', size + 'px');
+		$(v.root).find('.terminal_font_size').text(size);
+		terminalUse(v);
+		terminalFit(true);
+	});
+	if (was && was.root && was.root.isConnected) { terminalUse(was); }
 	settingSetter({ app: 'terminal', setting: 'font_size', value: size });
 }
 
@@ -964,8 +1029,8 @@ function terminalEntryHtml(kind, item, whoami, hostname) {
 		+ '</div>';
 }
 
-function terminalAppendTo(containerId, html, badgeId) {
-	var box = document.getElementById(containerId);
+function terminalAppendTo(selector, badgeSelector, html) {
+	var box = terminalEl(selector);
 	if (!box) { return; }
 	var atBottom = terminalNearBottom(box);
 	var empty = box.querySelector('.terminal_empty');
@@ -973,38 +1038,59 @@ function terminalAppendTo(containerId, html, badgeId) {
 	box.insertAdjacentHTML('beforeend', html);
 	if (box.lastElementChild) { terminalStampTimes(box.lastElementChild); }
 	if (atBottom) { box.scrollTop = box.scrollHeight; }
-	if (badgeId) {
-		var badge = document.getElementById(badgeId);
+	if (badgeSelector) {
+		var badge = terminalEl(badgeSelector);
 		if (badge) { badge.textContent = (parseInt(badge.textContent, 10) || 0) + 1; }
 	}
 }
 
-function terminalAppendError(data) {
+function terminalAppendErrorFor(data) {
 	var item = data['console'] || {};
-	if (item['uuid'] && $('#terminal_error_entries .terminal_entry[data-uuid="' + item['uuid'] + '"]').length) { return; }
-	terminalAppendTo('terminal_error_entries', terminalEntryHtml('error', item, data['whoami'], data['hostname']), 'terminal_error_count');
+	if (item['uuid'] && $(terminalEl('.terminal_error_entries')).find('.terminal_entry[data-uuid="' + item['uuid'] + '"]').length) { return; }
+	terminalAppendTo('.terminal_error_entries', '.terminal_error_count', terminalEntryHtml('error', item, data['whoami'], data['hostname']));
+}
+
+function terminalAppendLogFor(data) {
+	var item = data['console'] || {};
+	if (item['uuid'] && $(terminalEl('.terminal_log_entries')).find('.terminal_entry[data-uuid="' + item['uuid'] + '"]').length) { return; }
+	terminalAppendTo('.terminal_log_entries', '.terminal_log_count', terminalEntryHtml('log', item, data['whoami'], data['hostname']));
+}
+
+function terminalAppendError(data) {
+	$.each(terminalViews, function (id, v) {
+		if (!v.root.isConnected) { return; }
+		terminalUse(v);
+		terminalAppendErrorFor(data);
+	});
 }
 
 function terminalAppendLog(data) {
-	var item = data['console'] || {};
-	if (item['uuid'] && $('#terminal_log_entries .terminal_entry[data-uuid="' + item['uuid'] + '"]').length) { return; }
-	terminalAppendTo('terminal_log_entries', terminalEntryHtml('log', item, data['whoami'], data['hostname']), 'terminal_log_count');
+	$.each(terminalViews, function (id, v) {
+		if (!v.root.isConnected) { return; }
+		terminalUse(v);
+		terminalAppendLogFor(data);
+	});
 }
 
 function terminalAppendCommand(html) {
-	terminalAppendTo('terminal_command_output', html);
+	terminalAppendTo('.terminal_command_output', null, html);
 }
 
-function terminalClearView(view) {
-	var setting = view === 'errors' ? 'errors' : 'log';
-	var entries = document.getElementById(view === 'errors' ? 'terminal_error_entries' : 'terminal_log_entries');
-	var badge = document.getElementById(view === 'errors' ? 'terminal_error_count' : 'terminal_log_count');
+function terminalClearView(kind) {
+	var setting = kind === 'errors' ? 'errors' : 'log';
+	var selector = kind === 'errors' ? '.terminal_error_entries' : '.terminal_log_entries';
+	var badgeSelector = kind === 'errors' ? '.terminal_error_count' : '.terminal_log_count';
 	settingSetter({ app: 'terminal', setting: setting, value: '[]' });
-	if (entries) {
-		var empty = entries.getAttribute('data-empty') || '';
-		entries.innerHTML = '<div class="terminal_empty">' + terminalEscape(empty) + '</div>';
-	}
-	if (badge) { badge.textContent = '0'; }
+	$.each(terminalViews, function (id, v) {
+		terminalUse(v);
+		var entries = terminalEl(selector);
+		var badge = terminalEl(badgeSelector);
+		if (entries) {
+			var empty = entries.getAttribute('data-empty') || '';
+			entries.innerHTML = '<div class="terminal_empty">' + terminalEscape(empty) + '</div>';
+		}
+		if (badge) { badge.textContent = '0'; }
+	});
 }
 
 /* ---- init ----------------------------------------------------------------- */
@@ -1022,90 +1108,242 @@ function terminalScreenEmpty() {
 	return t.history.length === 0;
 }
 
-function terminalInit() {
-	var el = document.getElementById('terminal');
-	if (!el) { return; }
-	if (!terminalVars.decoder) {
-		try { terminalVars.decoder = new TextDecoder('utf-8'); } catch (e) { terminalVars.decoder = null; }
-	}
-	var font = parseFloat(el.style.getPropertyValue('--terminal_font')) || 15;
-	terminalVars.font = font;
-	if (!terminalVars.initialized) {
-		terminalVars.initialized = true;
-		terminalVars.rows = 24;
-		terminalVars.cols = 80;
-		terminalReset(true);
-	}
-	if (!terminalVars.observer && typeof ResizeObserver !== 'undefined') {
-		terminalVars.observer = new ResizeObserver(function () {
-			window.clearTimeout(terminalVars.resizeTimer);
-			terminalVars.resizeTimer = window.setTimeout(function () { terminalFit(false); }, 80);
+function terminalOpenSession(view) {
+	var root = view.root;
+	var payload = {
+		app: 'server',
+		type: 'terminal_open',
+		terminal_id: view.id,
+		host: root.getAttribute('data-session-host') || '',
+		user: root.getAttribute('data-session-user') || '',
+		port: root.getAttribute('data-session-port') || ''
+	};
+	var tries = 0;
+	(function attempt() {
+		if (typeof ws !== 'undefined' && ws['server'] && ws['server'].readyState === 1) {
+			ws['server'].send(JSON.stringify(payload));
+		}
+		else if (++tries < 40) {
+			setTimeout(attempt, 300);
+		}
+	})();
+}
+
+function terminalMarkOpenSessions(view) {
+	if (!view || !view.root) { return; }
+	var openIds = {};
+	$.each(terminalViews, function (key, v) {
+		if (v.root && v.root.isConnected) { openIds[v.id] = 1; }
+	});
+	$(view.root).find('.terminal_session_row').each(function () {
+		var isOpen = !!openIds[$(this).attr('data-id')];
+		$(this).toggleClass('already_open', isOpen);
+		$(this).find('.terminal_session_open').prop('disabled', isOpen);
+	});
+}
+
+function terminalMarkAllOpenSessions() {
+	$.each(terminalViews, function (key, v) { terminalMarkOpenSessions(v); });
+}
+
+function terminalInitWindow(root) {
+	if (!root) { return null; }
+	if (root.__terminalView) { return root.__terminalView; }
+	terminalPruneViews();
+	var id = root.getAttribute('data-terminal-id') || terminalNewId();
+	root.setAttribute('data-terminal-id', id);
+	var state = terminalNewState();
+	var view = { key: terminalNewViewKey(), id: id, root: root, state: state, observer: null, resizeTimer: null, opened: false };
+	root.__terminalView = view;
+	terminalViews[view.key] = view;
+	terminalUse(view);
+	try { state.decoder = new TextDecoder('utf-8'); } catch (e) { state.decoder = null; }
+	state.font = parseFloat(root.style.getPropertyValue('--terminal_font')) || 15;
+	state.rows = 24;
+	state.cols = 80;
+	terminalReset(true);
+	if (typeof ResizeObserver !== 'undefined') {
+		view.observer = new ResizeObserver(function () {
+			window.clearTimeout(view.resizeTimer);
+			view.resizeTimer = window.setTimeout(function () {
+				if (!view.root.isConnected) { return; }
+				terminalUse(view);
+				terminalFit(false);
+			}, 80);
 		});
+		var wrap = root.querySelector('.terminal_interactive');
+		if (wrap) { view.observer.observe(wrap); }
 	}
-	if (terminalVars.observer) {
-		terminalVars.observer.disconnect();
-		var wrap = document.getElementById('terminal_interactive');
-		if (wrap) { terminalVars.observer.observe(wrap); }
-	}
-	var view = $('#terminal .terminal_view_select[selected]').attr('view') || 'interactive_terminal';
-	terminalSetView(view, false);
-	terminalStampTimes(document);
+	var name = $(root).find('.terminal_view_select[selected]').attr('view') || 'interactive_terminal';
+	terminalSetView(name, false);
+	terminalStampTimes(root);
 	terminalScrollListsBottom();
-	setTimeout(function () { terminalFit(true); terminalRender(); }, 30);
-	/* A fresh page missed the prompt written while no window was open. Ask the
-	   shell to draw it again - but only on a blank screen: a session already on
-	   screen is redrawn by its own activity, and a carriage return during a
-	   password prompt would answer it. */
-	if (terminalScreenEmpty()) { terminalSend({ type: 'terminal_refresh' }); }
+	setTimeout(function () {
+		if (!view.root.isConnected) { return; }
+		terminalUse(view);
+		terminalFit(true);
+		terminalRender();
+	}, 30);
+	terminalMarkAllOpenSessions();
+	terminalOpenSession(view);
+	return view;
+}
+
+function terminalInit() {
+	var roots = document.querySelectorAll('.terminal_app');
+	for (var i = 0; i < roots.length; i++) {
+		if (!roots[i].__terminalView) { terminalInitWindow(roots[i]); }
+	}
 }
 
 /* ---- data from the server ------------------------------------------------- */
 
+function terminalPruneViews() {
+	$.each(terminalViews, function (key, v) {
+		if (!v.root || !v.root.isConnected) {
+			if (v.observer) { v.observer.disconnect(); }
+			delete terminalViews[key];
+		}
+	});
+}
+
+function terminalViewsForSession(id) {
+	var found = [];
+	$.each(terminalViews, function (key, v) {
+		if (v.id === id && v.root && v.root.isConnected) { found.push(v); }
+	});
+	return found;
+}
+
+function terminalViewForMessage(id) {
+	if (id) {
+		var list = terminalViewsForSession(id);
+		if (!list.length) { return null; }
+		if (terminalCurrentView && terminalCurrentView.id === id && terminalCurrentView.root && terminalCurrentView.root.isConnected) {
+			return terminalCurrentView;
+		}
+		return list[0];
+	}
+	if (terminalCurrentView && terminalCurrentView.root && terminalCurrentView.root.isConnected) { return terminalCurrentView; }
+	var ids = Object.keys(terminalViews);
+	for (var i = 0; i < ids.length; i++) {
+		var candidate = terminalViews[ids[i]];
+		if (candidate && candidate.root && candidate.root.isConnected) { return candidate; }
+	}
+	return null;
+}
+
+function terminalOpened(data) {
+	if (!data) { return; }
+	var views = terminalViewsForSession(data['terminal_id']);
+	$.each(views, function (i, view) {
+		terminalUse(view);
+		view.opened = true;
+		terminalSend({ type: 'terminal_resize', rows: view.state.rows, cols: view.state.cols });
+		/* A window attached to a session that was already running has missed
+		   whatever the shell drew. A carriage return asks it to draw the prompt
+		   again; a brand-new session does not need it. */
+		if (data['opened'] != 1 && terminalScreenEmpty()) {
+			terminalSend({ type: 'terminal_refresh' });
+		}
+	});
+}
+
 function terminalDataReceiver(rData) {
-	var t = terminalVars;
 	var base64String = rData['terminal'];
 	if (!base64String) { return; }
-	var binaryString = atob(base64String);
-	var bytes = new Uint8Array(binaryString.length);
-	for (var i = 0; i < binaryString.length; i++) { bytes[i] = binaryString.charCodeAt(i); }
 	var text;
-	if (t.decoder) { text = t.decoder.decode(bytes, { stream: true }); }
+	if (rData['terminal_id']) {
+		var target = terminalViewsForSession(rData['terminal_id']);
+		if (!target.length) { return; }
+		var binaryString = atob(base64String);
+		var bytes = new Uint8Array(binaryString.length);
+		for (var i = 0; i < binaryString.length; i++) { bytes[i] = binaryString.charCodeAt(i); }
+		var decoder = target[0].state.decoder;
+		if (decoder) { text = decoder.decode(bytes, { stream: true }); }
+		else {
+			text = '';
+			for (var j = 0; j < bytes.length; j++) { text += String.fromCharCode(bytes[j]); }
+		}
+		$.each(target, function (i, view) {
+			terminalUse(view);
+			terminalFeed(text);
+		});
+		return;
+	}
+	var view = terminalViewForMessage();
+	if (!view) { return; }
+	terminalUse(view);
+	var binaryString2 = atob(base64String);
+	var bytes2 = new Uint8Array(binaryString2.length);
+	for (var k = 0; k < binaryString2.length; k++) { bytes2[k] = binaryString2.charCodeAt(k); }
+	if (view.state.decoder) { text = view.state.decoder.decode(bytes2, { stream: true }); }
 	else {
 		text = '';
-		for (var j = 0; j < bytes.length; j++) { text += String.fromCharCode(bytes[j]); }
+		for (var m = 0; m < bytes2.length; m++) { text += String.fromCharCode(bytes2[m]); }
 	}
 	terminalFeed(text);
 }
 
+function terminalShellStatus(info) {
+	if (!info) { return; }
+	var views = terminalViewsForSession(info['terminal_id']);
+	if (!views.length) {
+		if (info['terminal_id']) { return; }
+		var legacy = terminalViewForMessage();
+		if (legacy) { views = [legacy]; }
+	}
+	$.each(views, function (i, view) {
+		terminalUse(view);
+		terminalApplyShellStatus(info);
+	});
+}
+
 /* ---- events --------------------------------------------------------------- */
 
-$(document).on('click', '#terminal_interactive', function (e) {
+$(document).on('click', '.terminal_interactive', function (e) {
 	if ($(e.target).closest('button').length) { return; }
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	terminalFocusKeyboard();
 });
 
-$(document).on('keydown', '#terminal_keyboard', function (e) {
+$(document).on('keydown', '.terminal_keyboard', function (e) {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	var data = terminalKeyData(e);
 	if (data !== null) { terminalSendInput(data); }
 });
 
-$(document).on('input', '#terminal_keyboard', function () {
+$(document).on('input', '.terminal_keyboard', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	var value = this.value;
 	if (!value) { return; }
 	this.value = '';
 	terminalSendInput(value);
 });
 
-$(document).on('compositionstart', '#terminal_keyboard', function () {
-	terminalVars.composing = true;
+$(document).on('compositionstart', '.terminal_keyboard', function () {
+	var view = terminalViewFrom(this);
+	if (view) { view.state.composing = true; }
 });
 
-$(document).on('compositionend', '#terminal_keyboard', function (e) {
-	terminalVars.composing = false;
+$(document).on('compositionend', '.terminal_keyboard', function (e) {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
+	view.state.composing = false;
 	if (e.originalEvent && e.originalEvent.data) { terminalSendInput(e.originalEvent.data); }
 });
 
-$(document).on('paste', '#terminal_keyboard', function (e) {
+$(document).on('paste', '.terminal_keyboard', function (e) {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	var oe = e.originalEvent;
 	if (!oe || !oe.clipboardData) { return; }
 	var text = oe.clipboardData.getData('text');
@@ -1116,25 +1354,36 @@ $(document).on('paste', '#terminal_keyboard', function (e) {
 	terminalSendInput(text);
 });
 
-$(document).on('focus', '#terminal_keyboard', function () {
-	$('#terminal').removeClass('term_unfocused');
+$(document).on('focus', '.terminal_keyboard', function () {
+	var view = terminalViewFrom(this);
+	if (view) { $(view.root).removeClass('term_unfocused'); }
 });
 
-$(document).on('blur', '#terminal_keyboard', function () {
-	$('#terminal').addClass('term_unfocused');
+$(document).on('blur', '.terminal_keyboard', function () {
+	var view = terminalViewFrom(this);
+	if (view) { $(view.root).addClass('term_unfocused'); }
 });
 
-$(document).on('click', '#terminal_keyboard_toggle', function () {
+$(document).on('click', '.terminal_keyboard_toggle', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	terminalSetView('interactive_terminal', true);
 	terminalFocusKeyboard();
 });
 
-$(document).on('click', '#terminal_jump, #terminal_jump_bottom', function () {
+$(document).on('click', '.terminal_jump, .terminal_jump_bottom', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	terminalScrollBottom();
 	terminalFocusKeyboard();
 });
 
-$(document).on('wheel', '#terminal_interactive', function (e) {
+$(document).on('wheel', '.terminal_interactive', function (e) {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	var oe = e.originalEvent || e;
 	/* A full-screen app owns the screen; with no mouse reporting (we do not
 	   enable it) the wheel is the arrow keys, as xterm sends them. */
@@ -1154,12 +1403,18 @@ $(document).on('wheel', '#terminal_interactive', function (e) {
 	e.preventDefault();
 });
 
-$(document).on('touchstart', '#terminal_interactive', function (e) {
+$(document).on('touchstart', '.terminal_interactive', function (e) {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	var oe = e.originalEvent || e;
 	if (oe.touches && oe.touches.length === 1) { terminalVars.touchY = oe.touches[0].clientY; }
 });
 
-$(document).on('touchmove', '#terminal_interactive', function (e) {
+$(document).on('touchmove', '.terminal_interactive', function (e) {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	var oe = e.originalEvent || e;
 	if (!oe.touches || oe.touches.length !== 1 || terminalVars.touchY === null) { return; }
 	var dy = oe.touches[0].clientY - terminalVars.touchY;
@@ -1170,25 +1425,37 @@ $(document).on('touchmove', '#terminal_interactive', function (e) {
 	e.preventDefault();
 });
 
-$(document).on('click', '#terminal .terminal_view_select', function () {
+$(document).on('click', '.terminal_view_select', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	terminalSetView($(this).attr('view'), true);
 });
 
-$(document).on('click', '#terminal .terminal_clear', function () {
+$(document).on('click', '.terminal_clear', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	terminalClearView($(this).attr('data-view'));
 });
 
-$(document).on('click', '#terminal_configure_toggle', function () {
-	var panel = $('#terminal_configure');
+$(document).on('click', '.terminal_configure_toggle', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	var panel = $(view.root).find('.terminal_configure');
 	if (panel.is(':visible')) { panel.hide(); }
-	else { panel.show(); }
+	else { terminalMarkOpenSessions(view); panel.show(); }
 });
 
-$(document).on('click', '#terminal_configure .terminal_config_close', function () {
-	$('#terminal_configure').hide();
+$(document).on('click', '.terminal_config_close', function () {
+	var view = terminalViewFrom(this);
+	if (view) { $(view.root).find('.terminal_configure').hide(); }
 });
 
-$(document).on('click', '#terminal .terminal_shell_connect', function () {
+$(document).on('click', '.terminal_shell_connect', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	var host = $(this).attr('data-host') || '';
 	var user = '';
 	var port = '';
@@ -1197,26 +1464,60 @@ $(document).on('click', '#terminal .terminal_shell_connect', function () {
 		user = $.trim(row.find('.terminal_remote_user').val() || '');
 		port = $.trim(row.find('.terminal_remote_port').val() || '');
 	}
-	$('#terminal_configure').hide();
+	$(view.root).find('.terminal_configure').hide();
 	terminalShellConnect(host, user, port);
 });
 
-$(document).on('change', '#terminal_configure .terminal_remote_user, #terminal_configure .terminal_remote_port', function () {
+$(document).on('change', '.terminal_remote_user, .terminal_remote_port', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	terminalSaveRemotes();
 });
 
-$(document).on('click', '#terminal .terminal_font_dec', function () {
+$(document).on('click', '.terminal_session_end', function () {
+	var row = $(this).closest('.terminal_session_row');
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
+	terminalSend({ type: 'terminal_end', terminal_id: row.attr('data-id') });
+	row.remove();
+});
+
+$(document).on('click', '.terminal_session_open', function () {
+	var row = $(this).closest('.terminal_session_row');
+	var view = terminalViewFrom(this);
+	if (view) { $(view.root).find('.terminal_configure').hide(); }
+	terminalOpener({
+		terminal_id: row.attr('data-id'),
+		window_name: terminalWord('Terminal') + ' · ' + row.attr('data-label'),
+		host: row.attr('data-host'),
+		user: row.attr('data-user'),
+		port: row.attr('data-port')
+	});
+});
+
+$(document).on('click', '.terminal_font_dec', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	terminalSetFont(terminalVars.font - 1);
 });
 
-$(document).on('click', '#terminal .terminal_font_inc', function () {
+$(document).on('click', '.terminal_font_inc', function () {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	terminalSetFont(terminalVars.font + 1);
 });
 
 /* The command row is its own mode. It keeps a history of what was typed and
    sends the command to the same shell, then shows the shell so the output is
    visible. */
-$(document).on('keydown', '#terminal_console', function (e) {
+$(document).on('keydown', '.terminal_console', function (e) {
+	var view = terminalViewFrom(this);
+	if (!view) { return; }
+	terminalUse(view);
 	if (e.key === 'Enter') {
 		e.preventDefault();
 		var command = $(this).val();
@@ -1224,7 +1525,7 @@ $(document).on('keydown', '#terminal_console', function (e) {
 		if (!command) { return; }
 		terminalVars.commandHistory.push(command);
 		terminalVars.commandIndex = terminalVars.commandHistory.length;
-		var prompt = $('#terminal_console_prompt').text();
+		var prompt = $(terminalEl('.terminal_console_prompt')).text();
 		terminalAppendCommand('<div class="terminal_entry terminal_entry_command">'
 			+ '<div class="terminal_entry_head"><span class="terminal_entry_prompt">' + terminalEscape(prompt) + '</span></div>'
 			+ '<div class="terminal_entry_msg">' + terminalEscape(command) + '</div></div>');
@@ -1251,33 +1552,48 @@ $(document).on('keydown', '#terminal_console', function (e) {
 	}
 });
 
+/* Each call opens another terminal. Its id names the pty on the server, so a
+   window closed (or minimised) and reopened keeps the same shell. */
 function terminalOpener(data) {
 	data = data || {};
+	var id = data['terminal_id'] || terminalNewId();
+	var name = data['window_name'] || terminalNextName();
 	var timestamp = Date.now();
-	var oti = document.getElementById('terminal_interactive');
-	var existing = $('.wind[app="terminal"]');
-	if (existing.length) {
-		existing.show();
-		topLevelNow(existing.first());
-		terminalInit();
-		return;
-	}
 	$.ajax({
 		url: '/manager/terminal',
 		type: 'GET',
-		data: { window_maker: data['window_maker'] || 'yes', timestamp: timestamp },
+		data: {
+			window_maker: data['window_maker'] || 'yes',
+			timestamp: timestamp,
+			terminal_id: id,
+			window_name: name,
+			session_host: data['host'] || '',
+			session_user: data['user'] || '',
+			session_port: data['port'] || '',
+			terminal_device: data['device'] || ''
+		},
 		success: function (response) {
 			if ((data['window_maker'] || 'yes') === 'yes') {
 				windowMaker(response);
 			}
 			else {
-				$('#terminal').replaceWith(response);
+				$('#browser').append(response);
 			}
-			terminalInit();
-			var tv = $('#terminal_input');
-			if (tv.length) { tv.show(); }
-			if (!oti) {
-				terminalFocusKeyboard();
+			var win = $('.wind[data-terminal-id="' + id + '"]');
+			var root = win.find('.terminal_app').get(0);
+			var view = terminalInitWindow(root);
+			if (win.length) {
+				terminalMarkAllOpenSessions();
+				/* New sessions cascade instead of landing exactly on the last one. */
+				var siblings = $('.wind[app="terminal"]').length - 1;
+				if (siblings > 0) {
+					var left = (parseFloat(win.css('left')) || 0) + 28 * siblings;
+					var top = (parseFloat(win.css('top')) || 0) + 28 * siblings;
+					left = Math.max(4, Math.min(left, $(window).width() - win.outerWidth() - 8));
+					top = Math.max(44, Math.min(top, $(window).height() - win.outerHeight() - 56));
+					win.css({ left: left + 'px', top: top + 'px' });
+				}
+				if (view) { $(view.root).find('.terminal_keyboard').trigger('focus'); }
 			}
 		}
 	});

@@ -3815,11 +3815,9 @@ $(document).on('click', '.top_navbar, .neighbour_window, .room_appt', function(e
 		topLevelNow($('#' + wind));
 	}
 	else if (text == 'terminal') {
-		var wind = $('#terminal').closest('.wind').attr('id');
-		topLevelNow($('#' + wind));
+		topLevelNow(win);
 	}
 	else {
-		var wind = $('#terminal').closest('.wind').attr('id');
 		topLevelNow(win);
 	}
 	if ($('.wind[app="' + text +'"]').length == 0) {

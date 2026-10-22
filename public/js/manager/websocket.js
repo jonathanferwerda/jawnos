@@ -551,6 +551,9 @@ function wsMessageHandler(event) {
 		if (data['terminal_shell'] && typeof terminalShellStatus === 'function') {
 			terminalShellStatus(data['terminal_shell']);
 		}
+		if (data['terminal_opened'] !== undefined && typeof terminalOpened === 'function') {
+			terminalOpened(data);
+		}
 		var seenWs = $.grep(seenWsMessages, function(t,i) { return i.uuid == data.uuid });
 		if (seenWs.length > 0) {
 			return;

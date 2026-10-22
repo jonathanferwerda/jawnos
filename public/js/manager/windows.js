@@ -78,6 +78,8 @@ function taskbarDisplayer(destination) {
 		var new_icon = icon.clone();
 
 		new_icon.attr('formatted_name', formatted_name);
+		var terminal_id = $(v).attr('data-terminal-id') || '';
+		if (terminal_id) { new_icon.attr('data-terminal-id', terminal_id); }
 		if (!new_icon.attr('src')) {
 			new_icon.css({ 'font-size': '30px', 'height': '60px' });
 		}
@@ -97,6 +99,7 @@ function taskbarDisplayer(destination) {
 	$(destination).find('.window_toggle_icon').each(function(i,v) {
 		var app = $(v).attr('app');
 		var named = $(v).attr('formatted_name') || format_name(app);
+		var terminal_id = $(v).attr('data-terminal-id') || '';
 		var rand = Math.random().toString(36).substring(2);
 		// The button answers for its window itself (see the .window_toggle click):
 		// the name is a plain label, and the shorthand rides beside it for a bar
@@ -104,7 +107,7 @@ function taskbarDisplayer(destination) {
 		// windowRestorer, so pressing the name restored the window and then fell
 		// through to the button's own answer, which is what made a press behave
 		// like something other than a window manager's.
-		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" style="text-align:center;"></span>');
+		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" ' + (terminal_id ? 'data-terminal-id="' + terminal_id + '" ' : '') + 'style="text-align:center;"></span>');
 		$('#' + rand).append(' <span class="window_toggle_name_text">' + named + '</span>');
 		$('#' + rand).append(' <span class="window_toggle_shorthand">' + shorthand_name(named, 5) + '</span>');
 	});
@@ -157,6 +160,30 @@ $(document).on('click', '.window_toggle', function() {
 	var app = $(this).attr('app');
 	// the tile beats while the window it answers for comes up
 	if (typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }
+	var terminal_id = $(this).attr('data-terminal-id') || '';
+	if (terminal_id) {
+		// Several Terminal windows share the app name, so the tile answers for the
+		// one window wearing its own session id rather than every terminal.
+		var tw = $('.wind[data-terminal-id="' + terminal_id + '"]');
+		if (!tw.length) { return; }
+		if (!tw.is(':visible')) {
+			tw.show().attr('visible', 'yes');
+			topLevelNow(tw);
+			return;
+		}
+		var topmost = null, topz = -1;
+		$('.wind:visible').each(function () {
+			var z = parseInt($(this).css('z-index'), 10) || 0;
+			if (z >= topz) { topz = z; topmost = this; }
+		});
+		if (topmost === tw.get(0)) {
+			tw.hide().attr('view', 'minimized');
+		}
+		else {
+			topLevelNow(tw);
+		}
+		return;
+	}
 	var win = $('.wind[app="' + app + '"]');
 	// a button on the taskbar answers for its window: a minimized one comes
 	// back, the top one steps down, and any other rises
@@ -185,6 +212,7 @@ function windowMaker(response) {
 	if (response == '') { return; }
 	var window_id = $(response).filter('.wind').attr('id');
 	var window_app = $(response).filter('.wind').attr('app');
+	var window_terminal_id = $(response).filter('.wind').attr('data-terminal-id') || '';
 	var app = window_app;
 
 	var timestamp = $(response).filter('.wind').attr('timestamp');
@@ -198,7 +226,10 @@ function windowMaker(response) {
 		$('.wind').each(function(i,v){
 			var app_attr = $(v).attr('app');
 			var app_timestamp = $(v).attr('timestamp');
-			if (app_attr == window_app) {
+			var existing_terminal_id = $(v).attr('data-terminal-id') || '';
+			// Terminals are several windows of one app. Only the same session may
+			// refresh a window; a different session is a new window, not a redraw.
+			if (app_attr == window_app && (!window_terminal_id || !existing_terminal_id || existing_terminal_id == window_terminal_id)) {
 				var ow = $(v).width();
 				var oh = $(v).height();
 				var ol = $(v).css('left');
@@ -306,6 +337,9 @@ function windowMaker(response) {
 				$(val).find('.duration').val(duration);
 			});
 			transactionStorageRetriever(app);
+			// A terminal rendered or re-rendered by the window manager gets its
+			// engine bound here; its own opener has already done this on a fresh open.
+			if (typeof terminalInit === 'function' && win.find('.terminal_app').length) { terminalInit(); }
 			windowSaver();
 			openAttributeReopener(app);
 			appointment_chron();
@@ -1266,7 +1300,7 @@ $(document).on('click touchend', '.restore_button', function(e) {
   var app = $(this).attr('app');
   var timestamp = $(this).attr('timestamp');
   
-	windowRestore(timestamp,app);
+	windowRestore(timestamp);
 });
 
 $(document).on('click touchend', '.minimize_button', function(e) {
@@ -1278,7 +1312,7 @@ $(document).on('click touchend', '.minimize_button', function(e) {
   var app = $(this).attr('app');
   var timestamp = $(this).attr('timestamp');
   
-	windowMinimizer(timestamp,app);
+	windowMinimizer(timestamp);
 });
 
 

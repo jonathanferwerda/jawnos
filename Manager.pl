@@ -24504,6 +24504,12 @@ sub window_maker($type,$timestamp) {
 	my $app_text = &subs::html_text($window_name);
 	my $http_name = &subs::http_name($type->{'app'});
 	my $apostrophe_escape = &subs::apostrophe_escape($type->{'app'});
+	my $terminal_attr = '';
+	if ($type->{'terminal_id'}) {
+		my $tid = $type->{'terminal_id'};
+		$tid =~ s/[^A-Za-z0-9_\-]//g;
+		$terminal_attr = ' data-terminal-id="' . $tid . '"' if length $tid;
+	}
 
 	my $jp = $apostrophe_escape;
 	if ($jp =~ /cam$|scr$|aud$/gi) {
@@ -24555,7 +24561,7 @@ sub window_maker($type,$timestamp) {
 	my $window_dark_ink = &subs::contrast_ink($window_dark);
 
 	my $display =
-		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"  style="background-color:var(--window, var(--panel));
+		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . '  style="background-color:var(--window, var(--panel));
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
@@ -24671,12 +24677,46 @@ get '/manager/terminal' => sub ($c) {
 		};
 	}
 	@remotes = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @remotes;
-	my $saved_shell = eval { return decode_json($settings->{'shell'} || '') } || {};
+	# One pty per window: the client names the session, the websocket worker keeps
+	# it alive. The route only needs an id it can put on the window.
+	my $terminal_id = $c->param('terminal_id') // '';
+	$terminal_id =~ s/[^A-Za-z0-9_\-]//g;
+	$terminal_id = substr($terminal_id, 0, 64);
+	$terminal_id = 't' . &subs::random_string_creator(12) if length($terminal_id) < 4;
+	my $window_name = $c->param('window_name') // '';
+	$window_name =~ s/[<>\r\n]//g;
+	$window_name = substr($window_name, 0, 80);
+	$window_name = &subs::ui('Terminal') unless length $window_name;
+	my $session_host = $c->param('session_host') // '';
+	$session_host = '' unless $session_host =~ /^[A-Za-z0-9._:\-\[\]]{1,255}$/;
+	my $session_user = $c->param('session_user') // '';
+	$session_user = '' unless $session_user =~ /^[A-Za-z0-9._\-]{1,64}$/;
+	my $session_port = $c->param('session_port') // '';
+	$session_port = '' unless $session_port =~ /^\d+$/ && $session_port > 0 && $session_port < 65536;
+	# Sessions the websocket worker started and has not seen end. Opening one makes
+	# a window that attaches to the pty still running on the server.
+	my $session_map = &subs::cache_get({ app => 'terminal', context => 'sessions' }) || {};
+	my @open_sessions;
+	if (ref $session_map eq 'HASH') {
+		foreach my $sid ( keys %{$session_map} ) {
+			my $s = $session_map->{$sid};
+			next unless ref $s eq 'HASH';
+			next unless $sid =~ /^[A-Za-z0-9_\-]{4,64}$/;
+			push @open_sessions, {
+				id => $sid,
+				label => $s->{'label'} || $sid,
+				host => $s->{'host'} || '',
+				user => $s->{'user'} || '',
+				port => $s->{'port'} || '',
+				state => $s->{'state'} || 'open',
+				at => $s->{'at'} || 0
+			};
+		}
+	}
+	@open_sessions = sort { $b->{'at'} <=> $a->{'at'} } @open_sessions;
+	splice @open_sessions, 20;
 	my $local = { user => $whoami, host => $hostname, label => $whoami . '@' . $hostname, local => 1 };
-	my $current = ($saved_shell->{'host'} && $saved_shell->{'host'} ne '')
-		? { host => $saved_shell->{'host'}, user => $saved_shell->{'user'}, port => $saved_shell->{'port'},
-			label => ($saved_shell->{'user'} || $whoami) . '@' . $saved_shell->{'host'}, local => 0 }
-		: $local;
+	my $current = $local;
 	my $contents = $c->render_to_string(
 		template => 'terminal/terminal',
 		window_maker => 'yes',
@@ -24689,10 +24729,22 @@ get '/manager/terminal' => sub ($c) {
 		local => $local,
 		current => $current,
 		errors_total => $errors_total,
-		logs_total => $logs_total
+		logs_total => $logs_total,
+		terminal_id => $terminal_id,
+		window_name => $window_name,
+		session_host => $session_host,
+		session_user => $session_user,
+		session_port => $session_port,
+		open_sessions => \@open_sessions
 	);
 	if ($c->param('window_maker') eq 'yes') {
-		my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'terminal', contents => $contents }, $timestamp);
+		my $website = &Manager::window_maker({
+			user_agent => $c->param('user_agent'),
+			app => 'terminal',
+			terminal_id => $terminal_id,
+			window_name => $window_name,
+			contents => $contents
+		}, $timestamp);
 		$c->render(text => $website);
 	}
 	else {
@@ -42212,6 +42264,23 @@ websocket '/manager/ws' => sub ($c) {
 			&Websocket::send($app,$return_data);
 
 		}
+		elsif (($data->{'type'} || '') eq 'terminal_open' && $app eq 'server') {
+			# Every Terminal window names its own pty. A window opened from the
+			# session list attaches to the one still running; a new window starts one.
+			my $id = &terminal_session_id_clean($data->{'terminal_id'});
+			my $existed = ($gb::terminal_sessions->{$id} ? 1 : 0);
+			if (!$existed) {
+				&terminal_session_start($id, {
+					host => $data->{'host'},
+					user => $data->{'user'},
+					port => $data->{'port'}
+				});
+			}
+			else {
+				&terminal_session_status($id);
+			}
+			&Websocket::send('server', { terminal_id => $id, terminal_opened => ($existed ? 0 : 1) });
+		}
 		elsif ($data->{'pty'} && $app eq 'server') {
 			# Keys arrive as the bytes a terminal should receive (the client
 			# encodes arrows, Backspace, Tab, Ctrl+C and the rest). Old clients sent
@@ -42224,40 +42293,35 @@ websocket '/manager/ws' => sub ($c) {
 			}
 			if (defined $input && length $input) {
 				$input = &terminal_input_bytes($input);
-				if (length $input && $gb::terminal_forker) {
-					$gb::terminal_forker->write($input);
-				}
+				&terminal_session_write($data->{'terminal_id'}, $input) if length $input;
 			}
 		}
 		elsif (($data->{'type'} || '') eq 'terminal_connect' && $app eq 'server') {
-			# Switch the shared shell to another machine over ssh. The host, user
+			# Switch this window's shell to another machine over ssh. The host, user
 			# and port are validated in terminal_shell_clean; no shell is involved
 			# in starting it, so the values never reach a command line string.
-			&terminal_shell_start({
+			&terminal_session_start($data->{'terminal_id'}, {
 				host => $data->{'host'},
 				user => $data->{'user'},
 				port => $data->{'port'}
 			});
 		}
 		elsif (($data->{'type'} || '') eq 'terminal_local' && $app eq 'server') {
-			&terminal_shell_start({});
+			&terminal_session_start($data->{'terminal_id'}, {});
+		}
+		elsif (($data->{'type'} || '') eq 'terminal_end' && $app eq 'server') {
+			&terminal_session_stop($data->{'terminal_id'});
 		}
 		elsif (($data->{'type'} || '') eq 'terminal_refresh' && $app eq 'server') {
-			# The shell has been running since the worker booted; a window opened
-			# later has missed the prompt. One carriage return makes the shell draw
-			# it again, so a fresh terminal is never a blank screen.
-			if ($gb::terminal_forker) { $gb::terminal_forker->write("\r"); }
+			# A window that has just attached to a running session asks the shell to
+			# draw its prompt again. It only does this on a blank screen.
+			&terminal_session_write($data->{'terminal_id'}, "\r");
 		}
 		elsif (($data->{'type'} || '') eq 'terminal_resize' && $app eq 'server') {
 			my $rows = int($data->{'rows'} || 0);
 			my $cols = int($data->{'cols'} || 0);
 			if ($rows > 0 && $rows <= 500 && $cols > 0 && $cols <= 1000) {
-				$gb::terminal_size = { rows => $rows, cols => $cols };
-				if ($gb::terminal_forker) {
-					if (my $pty = $gb::terminal_forker->read_handle) {
-						eval { $pty->set_winsize($rows, $cols, 0, 0) };
-					}
-				}
+				&terminal_session_resize($data->{'terminal_id'}, $rows, $cols);
 			}
 		}
 		elsif ($data->{'type'} eq 'synth' && $app eq 'music') {
@@ -42407,50 +42471,111 @@ sub terminal_shell_label {
 	return $who . '@' . $host;
 }
 
-# Start (or replace) the one pty the Terminal app shares. A local shell is
-# bash -i; a remote one is ssh on the peer's own sshd port. The fork object is
-# kept globally because the websocket message handler writes to it.
-sub terminal_shell_start {
-	my ($spec) = @_;
-	$spec = &terminal_shell_clean($spec);
-	if (my $old = $gb::terminal_forker) {
-		$gb::terminal_forker = undef;
+sub terminal_session_id_clean {
+	my $id = shift // '';
+	$id =~ s/[^A-Za-z0-9_\-]//g;
+	$id = substr($id, 0, 64);
+	$id = 't' . &subs::random_string_creator(12) if length($id) < 4;
+	return $id;
+}
+
+# The live session list the Terminal settings panel shows. The websocket worker
+# writes it, the manager route reads it; an ended shell is removed here.
+sub terminal_sessions_note {
+	my ($id, $session, $state) = @_;
+	my $now = &subs::rightNow();
+	# cache is local and never synced: which shells are alive is this machine's
+	# own fact, not house data another machine should adopt.
+	my $map = &subs::cache_get({ app => 'terminal', context => 'sessions' }) || {};
+	$map = {} unless ref $map eq 'HASH';
+	if (($state // '') eq 'ended') {
+		delete $map->{$id};
+	}
+	else {
+		my $spec = $session->{'spec'} || {};
+		$map->{$id} = {
+			id => $id,
+			label => &terminal_shell_label($spec),
+			host => $spec->{'host'} || '',
+			user => $spec->{'user'} || '',
+			port => $spec->{'port'} || '',
+			state => $state,
+			at => $now
+		};
+		foreach my $k ( keys %{$map} ) {
+			delete $map->{$k} if (($map->{$k}->{'at'} || 0) < $now - 86400000);
+		}
+	}
+	&subs::cache_set({ app => 'terminal', context => 'sessions', warranty => '-1d' }, $map);
+}
+
+sub terminal_session_for {
+	my ($id) = @_;
+	return undef unless ref $gb::terminal_sessions eq 'HASH';
+	if ($id && $gb::terminal_sessions->{$id}) { return $gb::terminal_sessions->{$id}; }
+	my @ids = keys %{$gb::terminal_sessions};
+	return $gb::terminal_sessions->{$ids[0]} if scalar(@ids) == 1;
+	return undef;
+}
+
+sub terminal_session_stop {
+	my ($id, $quiet) = @_;
+	my $session = $gb::terminal_sessions->{$id};
+	return unless $session;
+	delete $gb::terminal_sessions->{$id};
+	if (my $fork = $session->{'fork'}) {
 		eval {
-			$old->write("exit\r");
-			$old->close;
-			$old->kill('TERM');
+			$fork->write("exit\r");
+			$fork->close;
+			$fork->kill('TERM');
 		};
 	}
+	&terminal_sessions_note($id, $session, 'ended') unless $quiet;
+	unless ($quiet) {
+		&Websocket::send('server', { terminal_id => $id, terminal_shell => {
+			state => 'ended',
+			label => &terminal_shell_label($session->{'spec'} || {}),
+			message => &subs::ui('The shell ended.')
+		} });
+	}
+}
+
+sub terminal_session_start {
+	my ($id, $spec) = @_;
+	$id = &terminal_session_id_clean($id);
+	$spec = &terminal_shell_clean($spec);
+	&terminal_session_stop($id, 1);
+	my $session = { id => $id, spec => $spec, live => 0, rows => 24, cols => 80 };
 	my $fork = Mojo::IOLoop::ReadWriteFork->new;
 	$fork->conduit({ raw => 1, type => 'pty' });
-	my $live = 0;
 	$fork->on(read => sub {
 		my ($f, $bytes) = @_;
-		return unless $gb::terminal_forker && $gb::terminal_forker == $f;
-		&Websocket::send('server', { terminal => encode_base64($bytes) });
-		# The first bytes from ssh are either the banner or the prompt; either
-		# way the link is up, so the toolbar's status can stop saying connecting.
-		if (!$live) {
-			$live = 1;
-			&Websocket::send('server', { terminal_shell => {
-				state => (($spec->{'host'} // '') ne '' ? 'live' : 'local'),
-				label => &terminal_shell_label($spec)
+		return unless $gb::terminal_sessions->{$id} && $gb::terminal_sessions->{$id}->{'fork'} == $f;
+		&Websocket::send('server', { terminal => encode_base64($bytes), terminal_id => $id });
+		if (!$session->{'live'}) {
+			$session->{'live'} = 1;
+			my $state = (($spec->{'host'} // '') ne '') ? 'live' : 'local';
+			&Websocket::send('server', { terminal_id => $id, terminal_shell => {
+				state => $state, label => &terminal_shell_label($spec),
+				host => $spec->{'host'}, user => $spec->{'user'}, port => $spec->{'port'}
 			} });
+			&terminal_sessions_note($id, $session, $state);
 		}
 	});
 	$fork->on(close => sub {
 		my ($f) = @_;
-		return unless $gb::terminal_forker && $gb::terminal_forker == $f;
-		$gb::terminal_forker = undef;
-		&Websocket::send('server', { terminal_shell => {
+		return unless $gb::terminal_sessions->{$id} && $gb::terminal_sessions->{$id}->{'fork'} == $f;
+		delete $gb::terminal_sessions->{$id};
+		&Websocket::send('server', { terminal_id => $id, terminal_shell => {
 			state => 'ended',
 			label => &terminal_shell_label($spec),
 			message => &subs::ui('The shell ended.')
 		} });
+		&terminal_sessions_note($id, $session, 'ended');
 	});
-	my ($program, @args) = ('bash', '-i');
-	# A real terminfo entry, so colour, line editing, full-screen tools and the
-	# alternate screen all work. TERM=dumb was why so much output looked plain.
+	# stty sane matters: IO::Pty hands the child a raw pty, so without it the shell
+	# neither echoes the keys a person types nor turns Ctrl+C into a signal.
+	my ($program, @args) = ('sh', '-c', 'stty sane 2>/dev/null; exec bash -i');
 	my %env = (
 		%ENV,
 		INPUTRC => '/dev/null',
@@ -42470,35 +42595,68 @@ sub terminal_shell_start {
 			$spec->{'user'} . '@' . $spec->{'host'});
 	}
 	$fork->start({ program => $program, program_args => \@args, env => \%env });
-	$gb::terminal_forker = $fork;
-	$gb::terminal_spec = $spec;
+	$session->{'fork'} = $fork;
+	$gb::terminal_sessions->{$id} = $session;
 	my $label = &terminal_shell_label($spec);
 	my $notice = "\r\n\x1b[38;5;114m[JawnOS]\x1b[0m "
 		. ($state eq 'local' ? &subs::ui('local shell') : &subs::ui('connecting to') . ' ' . $label)
 		. "\r\n";
 	Mojo::IOLoop->timer(0 => sub {
+		return unless $gb::terminal_sessions->{$id} && $gb::terminal_sessions->{$id}->{'fork'} == $fork;
 		&Websocket::send('server', {
 			terminal => encode_base64($notice),
+			terminal_id => $id,
 			terminal_shell => { state => $state, label => $label, host => $spec->{'host'}, user => $spec->{'user'}, port => $spec->{'port'} }
 		});
 	});
 	# The fork is forked on the next tick, so the pty handle exists a moment later.
-	# 80x24 is the size a shell can rely on before the first browser sends its own.
 	Mojo::IOLoop->timer(0.4 => sub {
-		return unless $gb::terminal_forker && $gb::terminal_forker == $fork;
-		my $size = $gb::terminal_size || { rows => 24, cols => 80 };
+		return unless $gb::terminal_sessions->{$id} && $gb::terminal_sessions->{$id}->{'fork'} == $fork;
 		if (my $pty = $fork->read_handle) {
-			eval { $pty->set_winsize($size->{'rows'}, $size->{'cols'}, 0, 0) };
+			eval { $pty->set_winsize($session->{'rows'}, $session->{'cols'}, 0, 0) };
 		}
 	});
-	&subs::setting_setter({ app => 'terminal', setting => 'shell', value => encode_json({
-		%{$spec}, label => $label, at => &subs::rightNow()
-	}) });
+	&terminal_sessions_note($id, $session, $state);
+	return $session;
 }
 
-sub terminal_pty_runner() {
-	my ($data) = @_;
-	&terminal_shell_start(ref $data eq 'HASH' ? $data : {});
+sub terminal_session_write {
+	my ($id, $bytes) = @_;
+	my $session = &terminal_session_for($id);
+	return unless $session && $session->{'fork'} && defined $bytes && length $bytes;
+	$session->{'fork'}->write($bytes);
+}
+
+sub terminal_session_resize {
+	my ($id, $rows, $cols) = @_;
+	my $session = &terminal_session_for($id);
+	return unless $session;
+	$session->{'rows'} = $rows;
+	$session->{'cols'} = $cols;
+	if (my $fork = $session->{'fork'}) {
+		if (my $pty = $fork->read_handle) {
+			eval { $pty->set_winsize($rows, $cols, 0, 0) };
+		}
+	}
+}
+
+sub terminal_session_status {
+	my ($id) = @_;
+	my $session = &terminal_session_for($id);
+	return unless $session;
+	my $spec = $session->{'spec'} || {};
+	my $state = (($spec->{'host'} // '') ne '')
+		? ($session->{'live'} ? 'live' : 'connecting')
+		: 'local';
+	&Websocket::send('server', { terminal_id => $session->{'id'}, terminal_shell => {
+		state => $state, label => &terminal_shell_label($spec),
+		host => $spec->{'host'}, user => $spec->{'user'}, port => $spec->{'port'}
+	} });
+}
+
+# Kept for callers from older code: sessions now start when a window opens.
+sub terminal_pty_runner {
+	return;
 }
 
 post 'manager/ws/remote_control' => sub($c) {
@@ -42552,7 +42710,10 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'alarm' || ($ENV{PORT_ENV} eq 'developmen
 
 
 if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'development' && $ENV{PURPOSE} eq 'main'))) {
-	&terminal_pty_runner();
+	# Sessions are ptys owned by this worker: a restarted worker has none, so
+	# the list a person sees must not promise shells that no longer exist.
+	$gb::terminal_sessions = {};
+	&subs::cache_set({ app => 'terminal', context => 'sessions', warranty => '-1d' }, {});
 
 
 	my %buffers;
@@ -42707,8 +42868,7 @@ sub websocket_sender($wsm) {
 		my $original_msg = eval { return decode_json $wsm->{'message'} } || {};
 		#return unless $original_msg->{'app'};
 		if ($original_msg->{'pty'}) {
-			my $b64bytes = encode_base64 $original_msg->{'input'};
-			$gb::terminal_forker->write($original_msg->{'input'});
+			&terminal_session_write($original_msg->{'terminal_id'}, $original_msg->{'input'});
 		}
 		my $msg = $original_msg;
 		my $app = $wsm->{'app'};
