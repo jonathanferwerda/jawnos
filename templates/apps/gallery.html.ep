@@ -4,7 +4,7 @@
 <% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 	@{$padlock_sighting} = grep { $_ eq 'gallery' } @{$padlock_sighting};
 %>
-<% my $ghome = {}; my $appts; my $archive_lookup; if ($view eq 'home') { 
+<% my $ghome = {}; my $appts; my $archive_lookup; my $home_content = ''; if ($view eq 'home') { 
 	<% 
 	if ($settings->{'search'}) {
 		$appts = &subs::db_query('select * from appointments where (app like ? or file like ?) and file is not null and (type=? or type=?) order by timestamp desc',
@@ -29,7 +29,6 @@
 
 	<% if ($view eq 'home') { %>
 		<div id="gallery_home" style="background-color:var(--panel);height: 100%; width:100%;overflow:scroll;">
-			<% &subs::subprocessor(sub { %>
 				<% foreach my $appt ( @{$appts} ) {
 					if (!$ghome->{$appt->{'app'}}) { $ghome->{$appt->{'app'}} = []; } else {  }
 					my $files = eval { return decode_json $appt->{'file'} } || [];
@@ -77,10 +76,10 @@
 						load => 'all', 
 						first_count => 0
 					);
-					&Websocket::send('music', { patience => 1, destination => $c->param('browser_tab_id'), type => 'append', selector => '#gallery_home', content => $content });
+					$home_content .= $content;
 					 %>
 				<% } %>
-			<% }, { name => 'gallery home' }); %>
+			<%== $home_content %>
 			<% if (scalar @{$padlock_sighting} > 0) { %>
 				<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:40px;<% if ($permissive) { %>background-color:red;<% } %>">
 			<% } %>
