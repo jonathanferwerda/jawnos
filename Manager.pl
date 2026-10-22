@@ -24117,6 +24117,75 @@ sub centre_view_grabber($data) {
 	}
 }
 
+# The picture an app's search row wears: the same one its window does - the
+# app's own main image first, then the built-in drawing, then the pos tile.
+sub search_index_icon($data) {
+	my $app = $data->{'app'};
+	my $main_image = $data->{'main_image'} || '';
+	if (length $main_image) {
+		return $main_image if $main_image =~ /^data:/;
+		my ($destination, $asset) = &subs::file_device_renamer({ file => $main_image, app => $app, type => 'image' });
+		if (defined $destination && defined $asset && -e ($destination . $asset)) {
+			return '/file_open?file=' . $destination . $asset;
+		}
+	}
+	if ($gb::known_appts->{$app} && $gb::known_appts->{$app}->{'icon'}) {
+		return &subs::icon_for($gb::known_appts->{$app}->{'icon'});
+	}
+	if (length($data->{'pos'} || '') && -e 'public/icons/pos/' . $data->{'pos'} . '.png') {
+		return &subs::icon_for('/icons/pos/' . $data->{'pos'} . '.png');
+	}
+	return &subs::icon_for('/images/decipherable/gear.png');
+}
+
+# The whole searchable app list, read once by the manager and filtered in the
+# browser. The settings table is small enough to hand over in one go, which is
+# what makes typing local (and so instant) instead of a request per keystroke.
+# Each entry is the key a window opens with, the name a person reads, and the
+# icon the window wears.
+get '/manager/search_index' => sub($c) {
+	my $rows = &subs::db_query("select app, device, setting, value from settings where app is not null and app != '' and setting in ('pos','visible','main_image')")->hashes;
+	my %settings_by_app;
+	foreach my $r ( @{$rows} ) {
+		next unless defined $r->{'app'} && length $r->{'app'};
+		$settings_by_app{$r->{'app'}}->{$r->{'setting'}}->{$r->{'device'} || ''} = $r->{'value'};
+	}
+	# the music player writes the tracks it plays with account gallery, and the
+	# dock's search is not the place for those to surface as apps
+	my $gallery = {};
+	foreach my $g ( @{ &subs::db_query('select distinct app from appointments where account = ? and app is not null', 'gallery')->hashes } ) {
+		$gallery->{$g->{'app'}} = 1;
+	}
+	my (@apps, %indexed);
+	foreach my $app ( sort keys %settings_by_app ) {
+		my $s = $settings_by_app{$app};
+		my $visible = 'checked';
+		if ($s->{'visible'}) {
+			$visible = $s->{'visible'}->{$device} // $s->{'visible'}->{'all'} // (values %{$s->{'visible'}})[0];
+		}
+		next if (($visible // '') ne 'checked');
+		# a known app stays even when it has gallery rows; those rows are its work
+		next if $gallery->{$app} && !$gb::known_appts->{$app};
+		my $pos = $s->{'pos'} ? (values %{$s->{'pos'}})[0] : '';
+		my $main_image = $s->{'main_image'} ? (values %{$s->{'main_image'}})[0] : '';
+		push @apps, { app => $app, name => &subs::format_name($app), icon => &search_index_icon({ app => $app, pos => $pos, main_image => $main_image }) };
+		$indexed{$app} = 1;
+	}
+	# the menu's own apps are code, not appointments: help, folders and mailbox
+	# carry no visible row at all, and some have no appointment history either,
+	# yet the box should still find and open them
+	my %builtin = map { $_ => 1 } qw(
+		configure handbook budget travel mailbox music embedded box_office cards security
+		terminal ide gallery synth editor marker twirl studio store relational web warehouse
+		measures folders process_monitor market notes phone people email chat pen help
+	);
+	foreach my $app ( sort keys %builtin ) {
+		next if $indexed{$app};
+		push @apps, { app => $app, name => &subs::format_name($app), icon => &search_index_icon({ app => $app }) };
+	}
+	$c->render(json => { apps => \@apps });
+};
+
 get '/manager/keyup_search' => sub($c) {
 	my $search = $c->param('search');
 	my $timestamp = $c->param('timestamp');

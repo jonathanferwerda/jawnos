@@ -1917,60 +1917,237 @@ $(document).on('change', '#ticket_network_device', function() {
 
 var searchingTimeout;
 var lastSearchTime;
+var jawnosSearchApps = null;
+var jawnosSearchLoading = null;
+var jawnosSearchSelected = -1;
+
+// The searchable app list, fetched once. Every keystroke is filtered here, so
+// the box never waits on a request; a failed fetch simply leaves the list empty
+// and the next keystroke tries again.
+function jawnosSearchIndex() {
+	if (jawnosSearchApps) { return $.Deferred().resolve(jawnosSearchApps).promise(); }
+	if (jawnosSearchLoading) { return jawnosSearchLoading; }
+	jawnosSearchLoading = $.ajax({ url: '/manager/search_index', type: 'GET', dataType: 'json' })
+		.then(function (response) {
+			jawnosSearchApps = (response && response.apps) ? response.apps : [];
+			jawnosSearchLoading = null;
+			return jawnosSearchApps;
+		}, function () {
+			jawnosSearchLoading = null;
+			return [];
+		});
+	return jawnosSearchLoading;
+}
+
+// Warm the list while the manager settles, so the first keypress has it.
+$(function () {
+	var warm = function () { jawnosSearchIndex(); };
+	if (window.requestIdleCallback) { requestIdleCallback(warm, { timeout: 4000 }); }
+	else { setTimeout(warm, 1500); }
+});
+
+function jawnosSearchPlain(s) {
+	return (s || '').toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function jawnosSearchClicks() {
+	var stored = {};
+	try { stored = JSON.parse(localStorage.getItem('jawnos_search_clicks') || '{}') || {}; }
+	catch (e) { stored = {}; }
+	return stored;
+}
+
+// The list puts what was opened from it most recently at the top, so the app a
+// person reaches for keeps coming back under the box.
+function jawnosSearchRecordClick(app) {
+	var clicks = jawnosSearchClicks();
+	// names may be any printable string, so prefix the key: an app called
+	// "__proto__" must be stored as an ordinary entry, not as the object's prototype
+	clicks['a:' + app] = Date.now();
+	var keys = Object.keys(clicks);
+	if (keys.length > 200) {
+		keys.sort(function (a, b) { return clicks[a] - clicks[b]; });
+		keys.slice(0, keys.length - 200).forEach(function (k) { delete clicks[k]; });
+	}
+	try { localStorage.setItem('jawnos_search_clicks', JSON.stringify(clicks)); } catch (e) {}
+}
+
+function jawnosSearchMatches(query) {
+	var raw = jawnosSearchPlain(query);
+	if (!raw || !jawnosSearchApps) { return []; }
+	var words = raw.split(' ');
+	var clicks = jawnosSearchClicks();
+	var matches = [];
+	jawnosSearchApps.forEach(function (app) {
+		var name = jawnosSearchPlain(app.app);
+		var label = jawnosSearchPlain(app.name);
+		var haystack = name + ' ' + label;
+		for (var i = 0; i < words.length; i++) {
+			if (haystack.indexOf(words[i]) < 0) { return; }
+		}
+		// an exact name beats a prefix, which beats a name the words appear in
+		var exact = (name === raw || label === raw) ? 0 : 1;
+		var prefix = (name.indexOf(raw) === 0 || label.indexOf(raw) === 0) ? 0 : 1;
+		var click_key = 'a:' + app.app;
+		var clicked = Object.prototype.hasOwnProperty.call(clicks, click_key) ? clicks[click_key] : 0;
+		matches.push({ app: app, rank: exact * 2 + prefix, clicked: clicked });
+	});
+	matches.sort(function (a, b) {
+		if (a.rank != b.rank) { return a.rank - b.rank; }
+		if (!!a.clicked != !!b.clicked) { return a.clicked ? -1 : 1; }
+		if (a.clicked != b.clicked) { return b.clicked - a.clicked; }
+		return jawnosSearchPlain(a.app.name).localeCompare(jawnosSearchPlain(b.app.name));
+	});
+	return matches.slice(0, 10);
+}
+
+// The dropdown hangs from the search's own edge: above the box when it rides
+// the bottom half, below when it rides the top.
+function jawnosSearchPlace() {
+	var box = $('#search_results');
+	if (!box.length || !box.is(':visible')) { return; }
+	var o = $('#search').offset();
+	var h = $('#search').height();
+	var height = Math.min($('#manager_search_results').height() || 0, Math.max(160, $(window).height() * 0.5));
+	// the results keep a readable width and stay on screen, however narrow the
+	// box that called them is
+	var drop_w = Math.min(Math.max($('#search').width(), 260), $(window).width() - 16);
+	var drop_left = Math.max(8, Math.min(o.left, $(window).width() - drop_w - 8));
+	var drop = { 'position': 'fixed', height: height, 'border': 'solid', 'border-width': '3px', 'text-align': 'center', 'left': drop_left, 'width': drop_w };
+	if ((o.top + (h / 2)) < ($(window).height() / 2)) {
+		drop['top'] = o.top + h + 6;
+		drop['bottom'] = 'auto';
+	}
+	else {
+		drop['bottom'] = $(window).height() + $(document).scrollTop() - o.top;
+		drop['top'] = 'auto';
+	}
+	box.css(drop);
+}
+
+function jawnosSearchRender(query) {
+	var box = $('#search_results');
+	if (!box.length) { return; }
+	var matches = jawnosSearchMatches(query);
+	jawnosSearchSelected = -1;
+	if (matches.length == 0) {
+		box.html('').hide();
+		return;
+	}
+	var list = $('<div id="manager_search_results"></div>');
+	matches.forEach(function (match, i) {
+		var row = $('<div class="hover manager_search_result"></div>').attr('app', match.app.app).attr('index', i);
+		row.append($('<img class="manager_search_icon" alt="">').attr('src', match.app.icon || ''));
+		row.append($('<span class="manager_search_label"></span>').text(match.app.name || match.app.app));
+		list.append(row);
+	});
+	box.html(list).show();
+	jawnosSearchPlace();
+}
+
+function jawnosSearchMove(direction) {
+	var rows = $('#manager_search_results .manager_search_result');
+	if (!rows.length) { return; }
+	if (jawnosSearchSelected < 0) {
+		jawnosSearchSelected = direction > 0 ? 0 : rows.length - 1;
+	}
+	else {
+		jawnosSearchSelected = (jawnosSearchSelected + direction + rows.length) % rows.length;
+	}
+	rows.removeClass('search_selected');
+	var chosen = rows.eq(jawnosSearchSelected).addClass('search_selected');
+	var box = $('#search_results');
+	if (chosen.length && box.length) {
+		var row_top = chosen.position().top + box.scrollTop();
+		var row_bottom = row_top + chosen.outerHeight();
+		if (row_top < box.scrollTop()) { box.scrollTop(row_top); }
+		else if (row_bottom > box.scrollTop() + box.height()) { box.scrollTop(row_bottom - box.height()); }
+	}
+}
+
+// A built-in app opens through the same toggle the menu uses; anything else is
+// an appointment and opens through its centre view.
+function jawnosSearchOpen(app) {
+	if (!app) { return; }
+	jawnosSearchRecordClick(app);
+	$('#search_results').hide();
+	$('#start_menu').hide();
+	if (typeof pseudonymHomeHider == 'function') { pseudonymHomeHider(pseudonymHIntervals); }
+	var special = {
+		configure: '#main_logo.configuration',
+		budget: '#budget',
+		box_office: '#ticketmaker',
+		gallery: '#image_toggle',
+		market: '.market_toggle',
+		warehouse: '.warehouse_toggle',
+		process_monitor: '.process_monitor_toggle',
+		measures: '.measures_toggle'
+	};
+	var special_toggle = Object.prototype.hasOwnProperty.call(special, app) ? special[app] : '';
+	var toggle = special_toggle ? $(special_toggle) : $(document.getElementById(app + '_toggle'));
+	if (toggle.length) { toggle.trigger('click'); return; }
+	if (typeof appointmentGrabber == 'function') { appointmentGrabber(app, Date.now()); }
+}
+
 $(document).on('keyup click', '#search', function(e) {
-	lastSearchTime = Date.now();
-	var timestamp = lastSearchTime;
 	var search = $(this).val();
+	var timestamp = Date.now();
+	lastSearchTime = timestamp;
 	clearTimeout(searchingTimeout);
 	searchingTimeout = setTimeout(function() {
-		clearTimeout(searchingTimeout);
 		$('#search').val('');
-	},5000 * 60);
-	if (e.keyCode != 13) {
-		$.ajax({
-			url: '/manager/keyup_search',
-			type: 'GET',
-			data: { search: search, timestamp: timestamp },
-			success: function(response) {
-				if (response.timestamp == lastSearchTime) {
-					var o = $('#search').offset();
-					var h = $('#search').height();
-					if (response.count > 0) {
-						$('#search_results').html(response.results).show();;
-					}
-					else {
-						$('#search_results').html('').hide();
-					}
-					var height = $('#manager_search_results').height();
-					// the results keep a readable width and stay on screen, however
-					// narrow the box that called them is
-					var drop_w = Math.min(Math.max($('#search').width(), 260), $(window).width() - 16);
-					var drop_left = Math.max(8, Math.min(o.left, $(window).width() - drop_w - 8));
-					// the dropdown hangs from the search's own edge: above the box when
-					// it rides the bottom half, below when it rides the top
-					var drop = { 'position':'fixed', height: height, 'border': 'solid', 'border-width': '3px', 'text-align': 'center', 'left': drop_left, 'width': drop_w };
-					if ((o.top + (h / 2)) < ($(window).height() / 2)) {
-						drop['top'] = o.top + h + 6;
-						drop['bottom'] = 'auto';
-					}
-					else {
-						drop['bottom'] = $(window).height() + $(document).scrollTop() - o.top;
-						drop['top'] = 'auto';
-					}
-					$('#search_results').css(drop);
-				}
-			}
-		});
+		$('#search_results').hide();
+		jawnosSearchSelected = -1;
+	}, 5000 * 60);
+	// the arrow keys, Enter and Escape belong to the keydown handler; keyup for
+	// them must not redraw the list and drop the selection it just made
+	if (e.type == 'keyup' && (e.keyCode == 38 || e.keyCode == 40 || e.keyCode == 13 || e.keyCode == 27)) { return; }
+	if (!search) {
+		$('#search_results').hide();
+		jawnosSearchSelected = -1;
+		return;
+	}
+	jawnosSearchIndex().then(function () {
+		if ($('#search').val() == search) { jawnosSearchRender(search); }
+	});
+});
+
+$(document).on('keydown', '#search', function(e) {
+	var code = e.keyCode || e.which;
+	var box = $('#search_results');
+	var shown = box.is(':visible');
+	if (code == 40 || code == 38) {
+		if (!shown) { jawnosSearchRender($(this).val()); shown = box.is(':visible'); }
+		if (!shown) { return; }
+		e.preventDefault();
+		jawnosSearchMove(code == 40 ? 1 : -1);
+	}
+	else if (code == 13) {
+		if (!shown) { return; }
+		var rows = $('#manager_search_results .manager_search_result');
+		if (!rows.length) { return; }
+		e.preventDefault();
+		jawnosSearchOpen(rows.eq(jawnosSearchSelected < 0 ? 0 : jawnosSearchSelected).attr('app'));
+	}
+	else if (code == 27) {
+		if (shown) {
+			e.preventDefault();
+			box.hide();
+			jawnosSearchSelected = -1;
+		}
 	}
 });
 
-$(document).on('click','.manager_search_result', function() {
-	var app = $(this).text();
-	var timestamp = Date.now();
-	appointmentGrabber(app,timestamp);
-	$('#search_results').hide();
-	$('#start_menu').hide();
-	pseudonymHomeHider(pseudonymHIntervals);
+$(document).on('mouseenter', '.manager_search_result', function() {
+	var i = parseInt($(this).attr('index'), 10);
+	if (isNaN(i)) { return; }
+	jawnosSearchSelected = i;
+	$('#manager_search_results .manager_search_result').removeClass('search_selected');
+	$(this).addClass('search_selected');
+});
+
+$(document).on('click', '.manager_search_result', function() {
+	jawnosSearchOpen($(this).attr('app'));
 });
 
 

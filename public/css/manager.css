@@ -541,6 +541,33 @@ html, body {
 	color: var(--ink);
 }
 #search::placeholder { color: var(--ink); opacity: 1; }
+/* The search's dropdown: one app per row, its picture beside its name. The box
+   scrolls when there are more matches than the screen should hold. */
+#search_results { overflow-y: auto; overscroll-behavior: contain; }
+#manager_search_results { display: flex; flex-direction: column; }
+.manager_search_result {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 7px 10px;
+	text-align: left;
+	font-size: 20px;
+	line-height: 1.15;
+}
+.manager_search_result .manager_search_icon {
+	width: 30px;
+	height: 30px;
+	flex: 0 0 30px;
+	object-fit: contain;
+}
+.manager_search_result .manager_search_label {
+	flex: 1 1 auto;
+	min-width: 0;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.manager_search_result.search_selected { background-color: lightblue; }
 #top_right_buttons {
 	height: 46px;
 	width: 320px;
