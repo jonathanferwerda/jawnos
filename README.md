@@ -2,6 +2,8 @@
 
 **A personal, self-hosted operating environment.**
 
+Website: **[jawnos.ca](https://jawnos.ca)**
+
 ## Support
 
 JawnOS is free and open-source software, released under the [BSD 2-Clause licence](#license). It
