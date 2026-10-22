@@ -683,11 +683,12 @@ our %topic = (
 	'process_monitor' => {
 		title => 'Process Monitor', category => 'apps', app => 'process_monitor',
 		templates => [ 'templates/monitor/monitor.html.ep', 'public/js/manager/monitor.js' ],
-		verified => '2026-10-18',
+		verified => '2026-10-22',
 		summary => 'Live CPU, memory and battery health, per-core graphs and a process list.',
 		body => [
 			'Process Monitor is the system\'s own dashboard: live CPU and memory readings, per-core graphs and a sortable process list. It is how you see what JawnOS — and everything else on the machine — is actually doing.',
-			'The health strip along the top says how many processes jawn is running (including the master), the machine\'s load average and uptime, how many sync jobs are running and how many peers are linked, and the database and write-ahead-log sizes. On a machine with a battery it also shows charge, charging state, temperature, voltage, current and battery health. PPH is the battery\'s percent-per-hour draw, measured as a least-squares slope over the discharging samples in the last hour; on a desktop, where every process is visible, it is scaled by jawn\'s share of the CPU so it reads as jawn\'s own rate, while a phone hides other apps and therefore shows the device rate. Hover the strip for the measurement window and the last sync job\'s note.'
+			'The health strip along the top says how many processes jawn is running (including the master), the machine\'s load average and uptime, how many sync jobs are running and how many peers are linked, and the database and write-ahead-log sizes. On a machine with a battery it also shows charge, charging state, temperature, voltage, current and battery health. PPH is the battery\'s percent-per-hour draw, measured as a least-squares slope over the discharging samples in the last hour; on a desktop, where every process is visible, it is scaled by jawn\'s share of the CPU so it reads as jawn\'s own rate, while a phone hides other apps and therefore shows the device rate. Hover the strip for the measurement window and the last sync job\'s note.',
+			'The main server adds a worker while every worker is inside a request and retires the extra one when they have been quiet for half a minute, so a burst of slow requests - a language model answer, a mail fetch - does not leave the rest of the interface queued behind them. That is why the process count can rise for a while and settle back on its own; the resting count is set by the `main_workers` value in config.json (0 keeps the automatic choice for the device).'
 		],
 		steps => [
 			'Open Process Monitor.',

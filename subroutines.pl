@@ -1073,6 +1073,94 @@ sub unix_socket_sender() {
 	return $response_data;
 }
 
+# ---- requests the worker supervisor watches ---------------------------------
+# A prefork worker handles one request at a time, so a handful of slow requests
+# (a model answer, an IMAP fetch) can hold every worker and leave the UI queued
+# behind them. Each main worker keeps a marker file for as long as it is inside
+# a request; President.pl's supervisor reads those markers and asks the prefork
+# manager for another worker when all of them are busy (see prefork_autoscale).
+# The file is named by pid so a marker left by a dead worker can be spotted, and
+# it lives under ~/.president, which the master wipes at boot.
+our $request_busy_depth = 0;
+sub request_busy_change {
+	my ($delta) = @_;
+	return unless (($ENV{PURPOSE} || '') eq 'main');
+	$request_busy_depth += $delta;
+	$request_busy_depth = 0 if $request_busy_depth < 0;
+	my $dir = &home('~/.president/busy');
+	my $file = $dir . '/' . $$;
+	if ($request_busy_depth > 0) {
+		return if -e $file;
+		eval {
+			mkdir $dir unless -d $dir;
+			open(my $fh, '>', $file) or die "busy marker: $!";
+			print $fh &rightNow();
+			close $fh;
+		};
+	}
+	else {
+		unlink $file;
+	}
+}
+
+# A request that hands its wait to a child (or to an async user agent) no longer
+# blocks this worker, so release the busy marker before it yields. The matching
+# after_dispatch sees the cleared flag and leaves the count alone.
+sub request_busy_release {
+	my ($c) = @_;
+	return unless $c && $c->stash('request_busy');
+	$c->stash('request_busy' => 0);
+	&request_busy_change(-1);
+}
+
+# Run a slow piece of work in a child process and render its answer when it
+# comes back, so this worker can serve other requests while it waits. The work
+# callback must not touch the controller or this process's state: it is a
+# forked copy, and only the values it returns cross back. The render callback
+# runs here, in the worker, once the child has finished. The HTTP contract is
+# unchanged - the caller still gets the same JSON, only later - but the worker
+# is free in between, which is what keeps the rest of the UI answering.
+# A burst can ask for one of these per visible row (the inventory summaries),
+# so a few at a time per worker and the rest wait their turn: each child is a
+# fork of the worker, and a phone cannot afford twenty of them at once.
+our $deferred_children = 0;
+our @deferred_jobs;
+sub render_in_subprocess {
+	my ($c, $work, $render) = @_;
+	$c->render_later;
+	&request_busy_release($c);
+	push @deferred_jobs, [ $c, $work, $render ];
+	&_deferred_pump();
+	return;
+}
+sub _deferred_pump {
+	my $limit = 3;
+	while ($deferred_children < $limit && @deferred_jobs) {
+		my ($c, $work, $render) = @{ shift @deferred_jobs };
+		$deferred_children++;
+		my $p = Mojo::IOLoop->subprocess->run_p(sub {
+			# A forked child cannot speak (its ioloop is frozen); silence the
+			# best-effort announcements rather than schedule work that never runs.
+			local $subs::say_quiet = 1;
+			return $work->();
+		});
+		$p->then(sub {
+			my @results = @_;
+			eval { $render->($c, @results); 1 } or do {
+				my $err = $@ || 'the answer could not be rendered';
+				eval { $c->render(json => { error => $err }) };
+			};
+		})->catch(sub {
+			my $err = shift;
+			$err = (defined $err && length $err) ? "$err" : 'the work did not finish';
+			eval { $c->render(json => { error => $err }) };
+		})->finally(sub {
+			$deferred_children--;
+			&_deferred_pump();
+		});
+	}
+}
+
 sub subprocessor() {
 	my ($subroutine,$params) = @_;
 	my $parent_pid = $$;

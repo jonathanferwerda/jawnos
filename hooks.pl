@@ -34,6 +34,14 @@ hook before_dispatch => sub {
 		}
 	}
 	my $path = $c->req->url->path;
+	# Tell the worker supervisor (President.pl) that this worker is inside a
+	# request. Static assets are skipped: they are microseconds long, and a burst
+	# of them must not look like a full pool. The flag on the stash keeps the
+	# matching decrement in after_dispatch even when a hook renders early.
+	if (($ENV{PURPOSE} || '') eq 'main' && $path !~ m{^/(?:js|css|images|icons|sounds|fonts)/}) {
+		$c->stash('request_busy' => 1);
+		&subs::request_busy_change(1);
+	}
 	# A relayed request carries a relay_id. If this machine has already handled
 	# that id, the copy arrived via another path through the mesh: acknowledge it
 	# and stop here, before the route handler can apply the change a second time.
@@ -468,11 +476,13 @@ hook after_render => sub  {
   	$c->res->headers->remove('Set-Cookie');
   };
 
-  # The settings memo lives for one request only.
-  hook after_dispatch => sub {
-  	%subs::setting_memo = ();
-  	$subs::setting_memo_on = 0;
-  };
+  	# The settings memo lives for one request only.
+  	hook after_dispatch => sub {
+  		my ($c) = @_;
+  		&subs::request_busy_change(-1) if $c->stash('request_busy');
+  		%subs::setting_memo = ();
+  		$subs::setting_memo_on = 0;
+  	};
 
   hook after_dispatch => sub {
   	my ($c) = @_;

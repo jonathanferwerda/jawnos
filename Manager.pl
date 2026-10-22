@@ -2867,6 +2867,7 @@ get '/manager/market/cameras' => sub($c) {
 		$c->render(json => { devices => \@devices, peers => \@peer_notes });
 	});
 	$c->render_later;
+	&subs::request_busy_release($c);
 };
 
 # The device type a browser's user agent names. Only the types the capability
@@ -8343,16 +8344,29 @@ get '/manager/ollama_models' => sub($c) {
 
 # A peer's chat turn, run against this machine's Ollama. The caller already
 # decided the model lives here; this only carries the call and its answer back.
+# The local model may take minutes, so the request is non-blocking: this worker
+# waits on the user agent's promise instead of its call stack, and keeps serving
+# every other request meanwhile.
 post '/manager/ollama_chat' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	unless ($rm) { $c->rendered(403); return; }
 	my $payload = eval { $c->req->json } || {};
 	my $ua = Mojo::UserAgent->new(connect_timeout => 5, inactivity_timeout => 300, request_timeout => 600);
-	my $res = eval { $ua->post('http://localhost:11434/api/chat' => json => $payload)->result };
-	unless ($res) { $c->render(json => { error => 'the local Ollama did not answer' }); return; }
-	$c->res->headers->content_type('application/json');
-	$c->render(data => $res->body);
+	$c->stash('ollama_ua' => $ua);
+	$c->render_later;
+	&subs::request_busy_release($c);
+	$ua->post_p('http://localhost:11434/api/chat' => json => $payload)->then(sub {
+		my $res = shift;
+		unless ($res && $res->is_success) {
+			$c->render(json => { error => 'the local Ollama did not answer' });
+			return;
+		}
+		$c->res->headers->content_type('application/json');
+		$c->render(data => $res->body);
+	})->catch(sub {
+		$c->render(json => { error => 'the local Ollama did not answer' });
+	});
 };
 
 # The voice models this machine can serve - the *.onnx files and their json under
@@ -13724,9 +13738,17 @@ any '/manager/ai_chat' => sub($c) {
 		push @{ $msg->{$key} }, { data => $data, mime => $ct };
 	}
 	my @msgs = ( ($system ? { role => 'system', content => $system } : ()), $msg );
-	my ($parts, $err) = &subs::ai_chat_parts($model, \@msgs);
-	if ($err) { $c->render(json => { model => $model, error => $err }); return; }
-	$c->render(json => { model => $model, model_used => $subs::ai_last_model, parts => $parts });
+	# A vision or chat model can take a minute; the uploads are already read
+	# above, so only the model call runs in the child.
+	&subs::render_in_subprocess($c, sub {
+		my ($parts, $err) = &subs::ai_chat_parts($model, \@msgs);
+		return { parts => $parts, err => $err, used => $subs::ai_last_model };
+	}, sub {
+		my ($c, $r) = @_;
+		$r ||= {};
+		if ($r->{'err'}) { $c->render(json => { model => $model, error => $r->{'err'} }); return; }
+		$c->render(json => { model => $model, model_used => $r->{'used'}, parts => $r->{'parts'} });
+	});
 };
 
 # Clear a provider's stand-down, so its paid models are offered again at once.
@@ -16249,28 +16271,34 @@ post '/manager/configure/packaging/suggest' => sub($c) {
 	my $packaging = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'packaging' }) } || {};
 	my $settings = &subs::settings_grabber({ app => $app });
 	my $unit = $settings->{'unit'} || '';
-	my ($text) = &subs::ai_chat_role('chatbot_model', [
+	my $ask = [
 		{ role => 'system', content => 'You know how shop goods are packaged in Canada. Answer with strict JSON only.' },
 		{ role => 'user', content => 'The item is "' . &subs::format_name($app) . '"' . ($unit ? ' sold in ' . $unit : '') . '.'
 			. ' List the ways it is normally bought as packages, most common first, up to 3.'
 			. ' Return ONLY JSON: {"packages":[{"name":"6-pack","quantity":6},{"name":"case of 24","quantity":24}]}.'
 			. ' quantity is how many of the item one package holds; if it is sold only singly, return {"name":"single","quantity":1}.' },
-	]);
-	my ($json) = ($text || '') =~ /(\{.*\})/s;
-	my $out = eval { return decode_json $json } || {};
-	my $added = 0;
-	foreach my $p ( @{ $out->{'packages'} || [] } ) {
-		next unless ref $p eq 'HASH' && ($p->{'name'} || '') ne '';
-		my $uuid = &subs::random_string_creator(20);
-		$packaging->{$uuid} = { uuid => $uuid, name => $p->{'name'}, quantity => ($p->{'quantity'} || 1) };
-		$added++;
-	}
-	&subs::setting_setter({ app => $app, setting => 'packaging', value => encode_json($packaging) }) if $added;
-	my $html = $c->render_to_string(
-		template => 'configure/packaging',
-		settings => { app_packaging => $packaging }
-	);
-	$c->render(json => { html => $html, added => $added });
+	];
+	&subs::render_in_subprocess($c, sub {
+		my ($text) = &subs::ai_chat_role('chatbot_model', $ask);
+		return { text => $text };
+	}, sub {
+		my ($c, $r) = @_;
+		my ($json) = ((($r && $r->{'text'}) || '') =~ /(\{.*\})/s);
+		my $out = eval { return decode_json $json } || {};
+		my $added = 0;
+		foreach my $p ( @{ $out->{'packages'} || [] } ) {
+			next unless ref $p eq 'HASH' && ($p->{'name'} || '') ne '';
+			my $uuid = &subs::random_string_creator(20);
+			$packaging->{$uuid} = { uuid => $uuid, name => $p->{'name'}, quantity => ($p->{'quantity'} || 1) };
+			$added++;
+		}
+		&subs::setting_setter({ app => $app, setting => 'packaging', value => encode_json($packaging) }) if $added;
+		my $html = $c->render_to_string(
+			template => 'configure/packaging',
+			settings => { app_packaging => $packaging }
+		);
+		$c->render(json => { html => $html, added => $added });
+	});
 };
 
 post '/manager/configure/packaging/delete' => sub($c) {
@@ -16378,15 +16406,22 @@ get '/manager/inventory/information' => sub($c) {
 # evaluation uses. The panel asks for it after it has drawn, so a slow model
 # only leaves the summary a moment late rather than holding the window shut.
 get '/manager/inventory/summary' => sub($c) {
-	my $returner = &inventory_cell_summary({
+	my $data = {
 		app => &subs::unformat_name($c->param('app')),
 		scope => $c->param('scope'),
 		zone => $c->param('zone'),
 		timestamp => $c->param('timestamp'),
 		start => $c->param('start_timestamp'),
 		end => $c->param('end_timestamp'),
+	};
+	# Hovering a row asks for a summary per cell, and each is a model call. The
+	# child does the waiting; this worker keeps serving the panel in between.
+	&subs::render_in_subprocess($c, sub {
+		return &inventory_cell_summary($data);
+	}, sub {
+		my ($c, $returner) = @_;
+		$c->render(json => ($returner || { summary => '', error => 'the summary did not answer' }));
 	});
-	$c->render(json => $returner);
 };
 
 sub inventory_cell_summary($data) {
@@ -27458,8 +27493,14 @@ post '/manager/mail/email/oauth/poll' => sub($c) {
 };
 
 get '/manager/mail/email/receive' => sub($c) {
-	my $s_and_r = &subs::email_receiver();
-	$c->render(json => $s_and_r);
+	# An IMAP round-trip can hold a worker for a long time while the server
+	# thinks. It runs in a child; the button still gets the same result.
+	&subs::render_in_subprocess($c, sub {
+		return &subs::email_receiver();
+	}, sub {
+		my ($c, $s_and_r) = @_;
+		$c->render(json => ($s_and_r || { result => 'failed' }));
+	});
 };
 
 
@@ -30535,12 +30576,22 @@ post '/manager/help/ask' => sub($c) {
 		$system .= ".\n";
 	}
 	$system .= "\nAnswer in plain text. Keep it under about 180 words unless they ask for more.";
-	my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' }), $system, $question, &subs::ai_role_thinking('help_assistant'));
-	if ($err || !$text) {
-		$c->render(json => { error => $err || 'the guide returned nothing readable' });
-		return;
-	}
-	$c->render(json => { answer => $text });
+	# The model can take a minute. Run it in a child so this worker keeps
+	# answering the rest of the UI while it waits; the answer is the same JSON.
+	my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
+	my $thinking = &subs::ai_role_thinking('help_assistant');
+	&subs::render_in_subprocess($c, sub {
+		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback, $system, $question, $thinking);
+		return { text => $text, err => $err };
+	}, sub {
+		my ($c, $r) = @_;
+		$r ||= {};
+		if ($r->{'err'} || !$r->{'text'}) {
+			$c->render(json => { error => $r->{'err'} || 'the guide returned nothing readable' });
+			return;
+		}
+		$c->render(json => { answer => $r->{'text'} });
+	});
 };
 
 # Speech in from the browser: the Guide's mic button records a clip and posts the
@@ -30553,12 +30604,18 @@ post '/manager/help/listen' => sub($c) {
 		$c->render(json => { error => 'I did not catch any audio.' });
 		return;
 	}
-	my $text = &subs::whisper_transcribe($raw);
-	if (!length $text) {
-		$c->render(json => { error => 'I could not make out any words.' });
-		return;
-	}
-	$c->render(json => { text => $text });
+	# Whisper runs locally and is bounded, but a clip still takes seconds; the
+	# worker is free while the child transcribes it.
+	&subs::render_in_subprocess($c, sub {
+		return &subs::whisper_transcribe($raw);
+	}, sub {
+		my ($c, $text) = @_;
+		if (!defined $text || !length $text) {
+			$c->render(json => { error => 'I could not make out any words.' });
+			return;
+		}
+		$c->render(json => { text => $text });
+	});
 };
 
 # The verdict on a guide answer - the person's "was that good?" signal. Kept in
@@ -30634,41 +30691,53 @@ post '/manager/help/act' => sub($c) {
 		push @lines, $label . ': ' . $content;
 	}
 	push @lines, '', 'Answer only the newest USER line - the USER lines before it are history you already answered. Reply with the single next JSON action.';
-	my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' }), $system, join("\n", @lines), &subs::ai_role_thinking('help_assistant'));
-	if ($err || !$text) {
-		$c->render(json => { error => $err || 'the guide returned nothing readable' });
-		return;
-	}
-	my $action = eval { decode_json $text };
-	unless ($action && $action->{'action'}) {
-		if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
-	}
-	# the allow-list is the same registry the prompt is built from, plus the
-	# runtime (learned) verbs, so the guide may pick either
-	my $allowed = &help::live_verb_names();
-	if ($action && ref $action eq 'HASH') {
-		# Teaching a word for a thing is a write on this machine, not a client
-		# action: store it and answer in words.
-		if (($action->{'action'} || '') eq 'alias') {
-			my $r = &guide_alias_add($action->{'alias'}, $action->{'target'});
-			$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
+	# The model call can take a minute; the action it names is read here, after
+	# the child returns, so every write (an alias, a staged appointment) still
+	# happens in the request worker.
+	my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
+	my $thinking = &subs::ai_role_thinking('help_assistant');
+	&subs::render_in_subprocess($c, sub {
+		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback, $system, join("\n", @lines), $thinking);
+		return { text => $text, err => $err };
+	}, sub {
+		my ($c, $r) = @_;
+		$r ||= {};
+		my ($text, $err) = ($r->{'text'}, $r->{'err'});
+		if ($err || !$text) {
+			$c->render(json => { error => $err || 'the guide returned nothing readable' });
+			return;
 		}
-		elsif (($action->{'action'} || '') eq 'unalias') {
-			my $r = &guide_alias_remove($action->{'alias'});
-			$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
+		my $action = eval { decode_json $text };
+		unless ($action && $action->{'action'}) {
+			if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+		}
+		# the allow-list is the same registry the prompt is built from, plus the
+		# runtime (learned) verbs, so the guide may pick either
+		my $allowed = &help::live_verb_names();
+		if ($action && ref $action eq 'HASH') {
+			# Teaching a word for a thing is a write on this machine, not a client
+			# action: store it and answer in words.
+			if (($action->{'action'} || '') eq 'alias') {
+				my $r = &guide_alias_add($action->{'alias'}, $action->{'target'});
+				$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
+			}
+			elsif (($action->{'action'} || '') eq 'unalias') {
+				my $r = &guide_alias_remove($action->{'alias'});
+				$action = { action => $r->{'ok'} ? 'say' : 'ask', text => $r->{'text'} || '' };
+			}
+			else {
+				$action = &guide_resolve_action($action);
+			}
+		}
+		if ($action && $action->{'action'} && $allowed->{ $action->{'action'} }) {
+			# translation tools run through the same model the Guide is using this turn
+			$action->{'model'} = $model if ($action->{'action'} // '') =~ /^translate/;
+			$c->render(json => { action => $action, raw => $text });
 		}
 		else {
-			$action = &guide_resolve_action($action);
+			$c->render(json => { action => { action => 'say', text => $text } });
 		}
-	}
-	if ($action && $action->{'action'} && $allowed->{ $action->{'action'} }) {
-		# translation tools run through the same model the Guide is using this turn
-		$action->{'model'} = $model if ($action->{'action'} // '') =~ /^translate/;
-		$c->render(json => { action => $action, raw => $text });
-	}
-	else {
-		$c->render(json => { action => { action => 'say', text => $text } });
-	}
+	});
 };
 
 # The translation engine: text or a batch of interface strings, through the
@@ -30687,14 +30756,22 @@ post '/manager/translate' => sub($c) {
 		$strings = eval { decode_json($raw) };
 		return $c->render(json => { ok => 0, error => 'strings must be a JSON array' }) unless ref $strings eq 'ARRAY';
 	}
-	my $res = &subs::translate_engine({
-		to => $to,
-		from => $from,
-		text => $text,
-		strings => $strings,
-		model => $model,
+	# The translation engine can make several model calls in a row for a large
+	# batch. It runs in a child so this worker serves the rest of the UI while it
+	# works; the caller still receives the same result, only later.
+	&subs::render_in_subprocess($c, sub {
+		my $res = &subs::translate_engine({
+			to => $to,
+			from => $from,
+			text => $text,
+			strings => $strings,
+			model => $model,
+		});
+		return $res;
+	}, sub {
+		my ($c, $res) = @_;
+		$c->render(json => ($res || { ok => 0, error => 'the translator did not answer' }));
 	});
-	$c->render(json => $res);
 };
 
 get '/manager/translate/languages' => sub($c) {
