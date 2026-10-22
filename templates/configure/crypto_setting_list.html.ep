@@ -112,13 +112,14 @@
 	<% if (scalar @{$wallets}) { %>
 		<div class="cfg-scroll">
 			<table>
-				<thead><tr><th>Wallet</th><th>Coin</th><th>Address</th><th>Holding</th><th>Cost</th><th>Market</th></tr></thead>
+				<thead><tr><th>Wallet</th><th>Coin</th><th>Address</th><th>Addresses</th><th>Holding</th><th>Cost</th><th>Market</th></tr></thead>
 				<tbody>
 					<% foreach my $w ( @{$wallets} ) { %>
 						<tr class="crypto_wallet_row" app="<%= $w->{'app'} %>">
 							<td><b><%= $w->{'formatted_name'} %></b><% if ($w->{'label'}) { %><div class="cfg-note" style="margin:0;"><%= $w->{'label'} %></div><% } %></td>
 							<td><%= $w->{'asset'} %></td>
 							<td style="font-family:monospace;font-size:12px;"><% if ($w->{'address'}) { %><%= $w->{'address_short'} %><% } else { %><span style="opacity:.6;">no address yet</span><% } %></td>
+							<td><% if ($w->{'per_invoice'}) { %><%= &subs::ui('new per invoice') %><% } else { %><%= &subs::ui('one') %><% } %></td>
 							<td><%= $w->{'native_display'} %></td>
 							<td><%= &subs::price_formatter($w->{'book'}) %></td>
 							<td><%= defined $w->{'market'} ? &subs::price_formatter($w->{'market'}) : '—' %></td>
@@ -128,6 +129,7 @@
 			</table>
 		</div>
 		<p class="cfg-note">The two money columns are the same holding seen two ways: Cost is the money recorded when it arrived, Market is the native amount at today's rate.</p>
+		<p class="cfg-note"><b>Addresses</b> shows whether the wallet issues a fresh address for every invoice (it has an account xpub) or keeps the one saved address. An xpub is public: it derives addresses and cannot spend. The address column is the fallback, used when no invoice address has been issued yet.</p>
 	<% } else { %>
 		<p class="cfg-note">No wallets yet. Make an app an <b>account</b> in the App tab, turn on <b>Payment Type</b> and set it to <b>crypto</b> — the wallet fields appear on that app's card.</p>
 	<% } %>

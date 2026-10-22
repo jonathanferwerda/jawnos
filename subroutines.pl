@@ -28181,6 +28181,8 @@ sub crypto_accounts {
 	foreach my $r ( @{$rows} ) {
 		my $s = &settings_grabber({ app => $r->{'app'}, settings => [ qw/crypto_asset crypto_network wallet_address wallet_label currency/ ] });
 		my $asset = &crypto_asset($s->{'crypto_asset'}) || &crypto_asset('BTC');
+		my $xpub = &crypto_wallet_setting($r->{'app'}, 'wallet_xpub') || '';
+		my $static_address = &crypto_wallet_setting($r->{'app'}, 'wallet_address') || '';
 		push @out, {
 			app => $r->{'app'},
 			formatted_name => &format_name($r->{'app'}),
@@ -28188,8 +28190,10 @@ sub crypto_accounts {
 			asset_name => $asset->{'name'},
 			decimals => $asset->{'decimals'},
 			network => $s->{'crypto_network'} || $asset->{'network'},
-			address => $s->{'wallet_address'} || '',
+			address => $static_address,
 			label => $s->{'wallet_label'} || '',
+			xpub => $xpub,
+			per_invoice => ($xpub ne '' && $asset->{'code'} eq 'BTC') ? 1 : 0,
 			currency => $s->{'currency'} || &crypto_report_currency(),
 		};
 	}
@@ -28282,6 +28286,304 @@ sub crypto_address_valid {
 	return $s =~ /^([XPC][A-Za-z0-9-]{10,120}|0x[0-9a-fA-F]{40})$/ ? 1 : 0 if $net eq 'avalanche';
 	return $s =~ /^[1-9A-HJ-NP-Za-km-z]{32,44}$/ ? 1 : 0 if $net eq 'solana';
 	return $s =~ /^[A-Za-z0-9]{20,100}$/ ? 1 : 0;
+}
+
+# ---- watch-only Bitcoin addresses (BIP32 public derivation) -------------------
+# An account xpub is public: it derives receive addresses and cannot spend. A
+# wallet that carries one gives every invoice its own address. OpenSSL does the
+# scalar multiple (import the scalar as a private key, export its public point)
+# and the hash/encoding work; the one step it does not expose - adding the
+# parent point to IL*G - is a handful of BigInt operations below.
+#
+# Everything here is public data. There is deliberately no function that takes a
+# private key, a seed phrase or an xprv.
+require Math::BigInt;
+
+our $crypto_secp256k1_p = Math::BigInt->new('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F');
+our $crypto_secp256k1_n = Math::BigInt->new('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141');
+our $crypto_base58_alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+our $crypto_bech32_charset = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+our %crypto_base58_index;
+@crypto_base58_index{ split //, $crypto_base58_alphabet } = ( 0 .. 57 ) unless %crypto_base58_index;
+
+# The public version bytes a wallet exports for an account. A testnet key is
+# accepted only when the wallet itself is not on bitcoin mainnet.
+our %crypto_xpub_version = (
+	0x0488B21E => { script => 'p2pkh',       net => 'main' },
+	0x049D7CB2 => { script => 'p2sh-p2wpkh', net => 'main' },
+	0x04B24746 => { script => 'p2wpkh',      net => 'main' },
+	0x043587CF => { script => 'p2pkh',       net => 'test' },
+	0x044A5262 => { script => 'p2sh-p2wpkh', net => 'test' },
+	0x045F1CF6 => { script => 'p2wpkh',      net => 'test' },
+);
+
+# A private extended key or a WIF is a spending key, never a watch-only one.
+sub crypto_xpub_is_private {
+	my ($text) = @_;
+	return 0 unless defined $text && length $text;
+	my $s = $text;
+	$s =~ s/^\s+|\s+$//g;
+	return 1 if $s =~ /^(?:[xyztuv]prv)/i;
+	return 1 if $s =~ /^[5KLc9][1-9A-HJ-NP-Za-km-z]{50,51}$/;
+	return 0;
+}
+
+sub crypto_big_mod {
+	my ($v) = @_;
+	$v->bmod($crypto_secp256k1_p);
+	$v->badd($crypto_secp256k1_p) if $v->is_neg;
+	return $v;
+}
+
+sub crypto_secp256k1_add {
+	my ($x1, $y1, $x2, $y2) = @_;
+	return undef unless defined $x1 && defined $x2 && defined $y1 && defined $y2;
+	my ($num, $den);
+	if ($x1->bcmp($x2) == 0) {
+		return undef if $y1->bcmp($y2) != 0 || $y1->is_zero;
+		$num = &crypto_big_mod($x1->copy->bmul($x1)->bmul(3));
+		$den = &crypto_big_mod($y1->copy->bmul(2));
+	}
+	else {
+		$num = &crypto_big_mod($y2->copy->bsub($y1));
+		$den = &crypto_big_mod($x2->copy->bsub($x1));
+	}
+	my $inv = eval { $den->copy->bmodinv($crypto_secp256k1_p) };
+	return undef unless $inv;
+	my $lambda = &crypto_big_mod($num->copy->bmul($inv));
+	my $x3 = &crypto_big_mod($lambda->copy->bmul($lambda)->bsub($x1)->bsub($x2));
+	my $y3 = &crypto_big_mod($lambda->copy->bmul(&crypto_big_mod($x1->copy->bsub($x3)))->bsub($y1));
+	return ($x3, $y3);
+}
+
+sub crypto_secp256k1_pub_parse {
+	my ($bytes) = @_;
+	return undef unless defined $bytes && length($bytes) == 33
+		&& (substr($bytes, 0, 1) eq "\x02" || substr($bytes, 0, 1) eq "\x03");
+	my $pk = eval { Crypt::PK::ECC->new };
+	return undef unless $pk;
+	my $ok = eval { $pk->import_key_raw($bytes, 'secp256k1'); 1 };
+	return undef unless $ok;
+	my $u = eval { $pk->export_key_raw('public') };
+	return undef unless defined $u && length($u) == 65 && substr($u, 0, 1) eq "\x04";
+	return ( Math::BigInt->from_bytes(substr($u, 1, 32)), Math::BigInt->from_bytes(substr($u, 33, 32)) );
+}
+
+# IL*G. The scalar is imported as a secp256k1 private key and its public point
+# exported, so the curve work stays in CryptX.
+sub crypto_secp256k1_mul_g {
+	my ($raw) = @_;
+	return undef unless defined $raw && length($raw) == 32;
+	my $pk = eval { Crypt::PK::ECC->new };
+	return undef unless $pk;
+	my $ok = eval { $pk->import_key_raw($raw, 'secp256k1'); 1 };
+	return undef unless $ok;
+	my $u = eval { $pk->export_key_raw('public') };
+	return undef unless defined $u && length($u) == 65 && substr($u, 0, 1) eq "\x04";
+	return ( Math::BigInt->from_bytes(substr($u, 1, 32)), Math::BigInt->from_bytes(substr($u, 33, 32)) );
+}
+
+sub crypto_secp256k1_compress {
+	my ($x, $y) = @_;
+	return undef unless $x && $y;
+	my $hex = $x->as_hex;
+	$hex =~ s/^0x//;
+	$hex = ('0' x 64) . $hex;
+	$hex = substr($hex, -64);
+	return ($y->is_odd ? "\x03" : "\x02") . pack('H*', $hex);
+}
+
+sub crypto_base58_encode {
+	my ($bytes) = @_;
+	return '' unless defined $bytes && length $bytes;
+	my $n = Math::BigInt->from_bytes($bytes);
+	my $base = Math::BigInt->new(58);
+	my $out = '';
+	while (!$n->is_zero) {
+		my $r = $n->copy->bmod($base)->numify;
+		$out = substr($crypto_base58_alphabet, $r, 1) . $out;
+		$n->bdiv($base);
+	}
+	my $zeros = ($bytes =~ /^(\x00*)/) ? length($1) : 0;
+	return ('1' x $zeros) . $out;
+}
+
+sub crypto_base58_decode {
+	my ($s) = @_;
+	return undef unless defined $s && length $s;
+	my $n = Math::BigInt->new(0);
+	foreach my $c ( split //, $s ) {
+		return undef unless exists $crypto_base58_index{$c};
+		$n->bmul(58)->badd($crypto_base58_index{$c});
+	}
+	my $bytes = $n->is_zero ? '' : $n->to_bytes;
+	my $zeros = ($s =~ /^(1*)/) ? length($1) : 0;
+	return ("\x00" x $zeros) . $bytes;
+}
+
+sub crypto_base58check_encode {
+	my ($payload) = @_;
+	return undef unless defined $payload;
+	return &crypto_base58_encode($payload . substr(Digest::SHA::sha256(Digest::SHA::sha256($payload)), 0, 4));
+}
+
+sub crypto_base58check_decode {
+	my ($s) = @_;
+	my $raw = &crypto_base58_decode($s);
+	return undef unless defined $raw && length($raw) >= 4;
+	my $payload = substr($raw, 0, -4);
+	my $check = substr($raw, -4);
+	return undef unless $check eq substr(Digest::SHA::sha256(Digest::SHA::sha256($payload)), 0, 4);
+	return $payload;
+}
+
+sub crypto_hash160 {
+	my ($bytes) = @_;
+	return undef unless defined $bytes;
+	my $ok = eval { require Crypt::Digest::RIPEMD160; 1 };
+	return undef unless $ok;
+	return Crypt::Digest::RIPEMD160::ripemd160(Digest::SHA::sha256($bytes));
+}
+
+sub crypto_bech32_polymod {
+	my (@v) = @_;
+	my @gen = (0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3);
+	my $chk = 1;
+	foreach my $v (@v) {
+		my $top = $chk >> 25;
+		$chk = (($chk & 0x1ffffff) << 5) ^ $v;
+		for my $i (0 .. 4) {
+			$chk ^= $gen[$i] if (($top >> $i) & 1);
+		}
+	}
+	return $chk;
+}
+
+sub crypto_bech32_hrp_expand {
+	my ($hrp) = @_;
+	return ( (map { ord($_) >> 5 } split //, $hrp), 0, (map { ord($_) & 31 } split //, $hrp) );
+}
+
+sub crypto_bech32_convert_bits {
+	my ($data, $from, $to, $pad) = @_;
+	my ($acc, $bits, @out) = (0, 0);
+	foreach my $b ( unpack('C*', $data) ) {
+		$acc = (($acc << $from) | $b) & ((1 << ($from + $bits)) - 1);
+		$bits += $from;
+		while ($bits >= $to) {
+			$bits -= $to;
+			push @out, (($acc >> $bits) & ((1 << $to) - 1));
+		}
+	}
+	push @out, (($acc << ($to - $bits)) & ((1 << $to) - 1)) if $pad && $bits > 0;
+	return @out;
+}
+
+sub crypto_segwit_encode {
+	my ($hrp, $version, $program) = @_;
+	return undef unless defined $hrp && defined $program && length($program);
+	my @data = ( $version, &crypto_bech32_convert_bits($program, 8, 5, 1) );
+	my $const = $version == 0 ? 1 : 0x2bc830a3;
+	my $polymod = &crypto_bech32_polymod(&crypto_bech32_hrp_expand($hrp), @data, (0) x 6) ^ $const;
+	my @check = map { ($polymod >> (5 * (5 - $_))) & 31 } (0 .. 5);
+	return $hrp . '1' . join('', map { substr($crypto_bech32_charset, $_, 1) } (@data, @check));
+}
+
+# Decode an account xpub (or ypub/zpub and their testnet forms). Returns the
+# public key and chain code plus the script type the version bytes name.
+sub crypto_xpub_decode {
+	my ($text) = @_;
+	return undef unless defined $text && length $text;
+	my $s = $text;
+	$s =~ s/^\s+|\s+$//g;
+	my $raw = &crypto_base58check_decode($s);
+	return undef unless defined $raw && length($raw) == 78;
+	my ($version, $depth, $fingerprint, $child, $chain, $pub) = unpack('N C a4 N a32 a33', $raw);
+	my $v = $crypto_xpub_version{$version} or return undef;
+	return undef unless length($pub) == 33
+		&& (substr($pub, 0, 1) eq "\x02" || substr($pub, 0, 1) eq "\x03");
+	return {
+		version => $version, depth => $depth, fingerprint => unpack('H*', $fingerprint),
+		child => $child, chain => $chain, pub => $pub,
+		script => $v->{'script'}, net => $v->{'net'},
+	};
+}
+
+sub crypto_xpub_valid {
+	my ($text) = @_;
+	return 0 if &crypto_xpub_is_private($text);
+	return defined &crypto_xpub_decode($text) ? 1 : 0;
+}
+
+# One non-hardened public child. Returns undef when BIP32 says the child is
+# invalid (IL = 0 or IL >= n), so the caller can try the next index.
+sub crypto_xpub_child {
+	my ($x, $index) = @_;
+	return undef unless ref $x eq 'HASH' && defined $x->{'pub'} && defined $x->{'chain'};
+	$index = 0 unless defined $index && $index =~ /^\d+$/;
+	my $I = Digest::SHA::hmac_sha512($x->{'pub'} . pack('N', $index), $x->{'chain'});
+	my $IL = substr($I, 0, 32);
+	my $IR = substr($I, 32, 32);
+	my $il = Math::BigInt->from_bytes($IL);
+	return undef if $il->is_zero || $il->bcmp($crypto_secp256k1_n) >= 0;
+	my ($gx, $gy) = &crypto_secp256k1_mul_g($IL);
+	return undef unless defined $gx;
+	my ($px, $py) = &crypto_secp256k1_pub_parse($x->{'pub'});
+	return undef unless defined $px;
+	my ($cx, $cy) = &crypto_secp256k1_add($px, $py, $gx, $gy);
+	return undef unless defined $cx;
+	return {
+		pub => &crypto_secp256k1_compress($cx, $cy),
+		chain => $IR,
+		index => $index,
+		depth => ($x->{'depth'} // 0) + 1,
+	};
+}
+
+# The address at /0/index under an account xpub, encoded for the script type
+# the key names. This is the external (receive) chain only; change addresses
+# live at /1/index and are never issued here.
+sub crypto_xpub_address {
+	my ($xpub, $index) = @_;
+	my $x = ref $xpub eq 'HASH' ? $xpub : &crypto_xpub_decode($xpub);
+	return undef unless $x;
+	$index = 0 unless defined $index && $index =~ /^\d+$/;
+	my $ext = &crypto_xpub_child($x, 0);
+	return undef unless $ext;
+	my $child = &crypto_xpub_child($ext, $index);
+	return undef unless $child;
+	my $hash = &crypto_hash160($child->{'pub'});
+	return undef unless defined $hash && length($hash) == 20;
+	my $address;
+	if ($x->{'script'} eq 'p2wpkh') {
+		$address = &crypto_segwit_encode($x->{'net'} eq 'test' ? 'tb' : 'bc', 0, $hash);
+	}
+	elsif ($x->{'script'} eq 'p2sh-p2wpkh') {
+		my $redeem = "\x00\x14" . $hash;
+		$address = &crypto_base58check_encode(($x->{'net'} eq 'test' ? "\xC4" : "\x05") . &crypto_hash160($redeem));
+	}
+	else {
+		$address = &crypto_base58check_encode(($x->{'net'} eq 'test' ? "\x6F" : "\x00") . $hash);
+	}
+	return undef unless defined $address && length $address;
+	my $purpose = $x->{'script'} eq 'p2pkh' ? 44 : $x->{'script'} eq 'p2sh-p2wpkh' ? 49 : 84;
+	my $coin = $x->{'net'} eq 'test' ? "1'" : "0'";
+	return {
+		address => $address,
+		index => $index,
+		path => "m/$purpose'/$coin/0'/0/$index",
+		script => $x->{'script'},
+		net => $x->{'net'},
+	};
+}
+
+# A BIP21 payment request: the address and, when known, the exact amount. No
+# label or message, so no ampersand ever reaches the QR encoder's argument.
+sub crypto_bip21_uri {
+	my ($address, $amount) = @_;
+	return '' unless defined $address && length $address;
+	my $n = &crypto_amount_number($amount, 'BTC');
+	return 'bitcoin:' . $address . (defined $n && $n =~ /[1-9]/ ? '?amount=' . $n : '');
 }
 
 sub crypto_rates_read {
@@ -28463,6 +28765,80 @@ sub crypto_wallets_report {
 			: $w->{'address'};
 	}
 	return $accounts;
+}
+
+# ---- one address per invoice -------------------------------------------------
+# The wallet's account xpub makes a fresh receiving address from the external
+# chain. The row lives in crypto_address (synced like any other table) so an
+# invoice keeps its address across edits, peers and reprints. A wallet with no
+# xpub falls back to the single address saved on the account, exactly as before.
+
+sub crypto_invoice_wallet {
+	my ($asset) = @_;
+	$asset = uc($asset || 'BTC');
+	my @wallets = @{ &crypto_accounts() };
+	my @same = grep { ($_->{'asset'} || '') eq $asset } @wallets;
+	my ($with_key) = grep { ($_->{'xpub'} || '') ne '' } @same;
+	return $with_key if $with_key;
+	return $same[0] if @same;
+	return undef;
+}
+
+# A wallet field that must be the same on every machine (the xpub, and the
+# address it falls back to). A shared row wins even when it is empty, so
+# clearing the field on one machine is not undone by a stale device row.
+sub crypto_wallet_setting {
+	my ($app, $setting) = @_;
+	return '' unless defined $app && length $app;
+	my $shared = &setting_grabber({ app => $app, setting => $setting, device => 'all' });
+	return $shared if defined $shared;
+	return &setting_grabber({ app => $app, setting => $setting });
+}
+
+# Read the address an invoice already owns. Never writes: the public invoice
+# page and the print view call this, and a GET must not allocate.
+sub crypto_invoice_address_read {
+	my ($app, $invoice) = @_;
+	return undef unless defined $app && length $app && defined $invoice && length $invoice;
+	my $q = &db_query("select * from crypto_address where app = ? and invoice_uuid = ? order by server_time desc limit 1", $app, $invoice);
+	my $row = $q ? $q->hashes->[0] : undef;
+	return { %{$row}, existing => 1 } if $row;
+	my $static = &crypto_wallet_setting($app, 'wallet_address') || '';
+	my $xpub = &crypto_wallet_setting($app, 'wallet_xpub') || '';
+	return { address => $static, static => 1, missing => 1 } if length $xpub;
+	return { address => $static, static => 1 };
+}
+
+# Reserve this invoice's address. Idempotent: a second call returns the same
+# row. insert or ignore keeps two machines that allocated the same index while
+# apart from failing the insert; the loser simply takes the next index.
+sub crypto_invoice_address {
+	my ($opts) = @_;
+	my $app = $opts->{'app'};
+	my $invoice = $opts->{'invoice'};
+	return undef unless defined $app && length $app && defined $invoice && length $invoice;
+	my $found = &crypto_invoice_address_read($app, $invoice);
+	return $found unless $found && $found->{'missing'};
+	my $static = $found->{'address'} || '';
+	my $xpub = &crypto_wallet_setting($app, 'wallet_xpub') || '';
+	my $x = &crypto_xpub_decode($xpub);
+	return { address => $static, static => 1, error => 'the xpub could not be read' } unless $x;
+	my $q = &db_query("select max(addr_index) as m from crypto_address where app = ?", $app);
+	my $row = $q ? $q->hashes->[0] : undef;
+	my $next = (defined $row && defined $row->{'m'}) ? $row->{'m'} + 1 : 0;
+	for my $try (0 .. 7) {
+		my $index = $next + $try;
+		my $a = &crypto_xpub_address($x, $index);
+		last unless $a;
+		my $now = &rightNow();
+		my $uuid = &random_string_creator(40);
+		&db_query("insert or ignore into crypto_address (uuid, server_time, ost, app, asset, network, address, derivation, addr_index, path, invoice_uuid, issued_at) values (?,?,?,?,?,?,?,?,?,?,?,?)",
+			$uuid, $now, $now, $app, 'BTC', $a->{'net'}, $a->{'address'}, $a->{'script'}, $index, $a->{'path'}, $invoice, $now);
+		my $check = &db_query("select * from crypto_address where app = ? and invoice_uuid = ? order by server_time desc limit 1", $app, $invoice);
+		my $hit = $check ? $check->hashes->[0] : undef;
+		return { %{$hit}, allocated => 1 } if $hit;
+	}
+	return { address => $static, static => 1, error => 'no free address' };
 }
 
 # ---- currency tracking ------------------------------------------------------

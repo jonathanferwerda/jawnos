@@ -20,7 +20,11 @@
 		<td class="paper_head_right">
 			<% if ($qr_img) { %>
 				<img src="<%= $qr_img %>" class="paper_qr">
-			<% } else { %>
+			<% } %>
+			<% if ($pay_note) { %>
+				<div class="paper_pay"><%= &subs::ui('Pay') %> <b><%= $pay_note %></b></div>
+				<div class="paper_footnote"><%= $pay_address %></div>
+			<% } elsif (!$qr_img) { %>
 				<div class="paper_footnote"><%= $qr_code %></div>
 			<% } %>
 			<div class="paper_id"><%== $id %></div>
@@ -165,6 +169,7 @@
 	.paper_muted { color: #555555; font-size: 13px; }
 	.paper_head_right { text-align: right; width: 120px; }
 	.paper_qr { width: 96px; height: 96px; }
+	.paper_pay { font-size: 11px; font-weight: 700; margin-top: 3px; }
 	.paper_id { font-weight: 700; font-size: 13px; margin-top: 4px; }
 	.paper_rule { border: none; border-top: 2px solid #000000; margin: 12px 0; }
 	.paper_cx { font-size: 19px; font-weight: 700; }

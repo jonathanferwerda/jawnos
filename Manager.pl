@@ -1933,6 +1933,13 @@ sub appointment_writer($c,$app) {
 			&subs::db_insert('appointments', $app);
 		}
 	}
+	# An invoice gets its own receive address as soon as it is written, so a
+	# print or a public page already names it. Idempotent: a re-save keeps the
+	# address the invoice already owns.
+	if (($app->{'type'} || '') eq 'invoice' && ($app->{'uuid'} || '') ne '') {
+		my $wallet = &subs::crypto_invoice_wallet('BTC');
+		&subs::crypto_invoice_address({ app => $wallet->{'app'}, invoice => $app->{'uuid'} }) if $wallet;
+	}
 	# a transaction with an account is a money move, so it is written to the
 	# warehouse ledger too; the budget and the warehouse then read one store
 	&warehouse_money_mirror($app);
@@ -4912,6 +4919,13 @@ post '/store/quote/move' => sub($c) {
 	$appt->{'uuid'} = &subs::random_string_creator(25);
 	&subs::db_insert('appointments', $appt, $data);
 
+	# a moved document that becomes a receivable is an invoice now: give it its
+	# own receiving address (a quote had none)
+	if (($appt->{'type'} || '') eq 'invoice' && ($appt->{'uuid'} || '') ne '') {
+		my $wallet = &subs::crypto_invoice_wallet('BTC');
+		&subs::crypto_invoice_address({ app => $wallet->{'app'}, invoice => $appt->{'uuid'} }) if $wallet;
+	}
+
 	# a quote becoming an invoice/sale moves stock; moving it back reverses
 	if ($was eq 'quote' && ($action eq 'invoice' || $action eq 'sale')) {
 		&store_quote_stock($appt, 1);
@@ -5041,15 +5055,42 @@ sub store_printer($data) {
 		}
 	}
 
-	my $qr = 'https://' . $address . ':3000/public_view/' . $type . '/' . $uuid . '/' . $cx_uuid ;
+	my $public_url = 'https://' . $address . ':3000/public_view/' . $type . '/' . $uuid . '/' . $cx_uuid;
 	# the paper a letter carries is rendered by this house's own instance when
-	# the config gives it a name here: the QR keeps the public address, which is
-	# for other people's phones, while the pdf is drawn where the code and the
-	# theme are current
-	my $pdf_url = $config->{'domain'} ? 'https://' . $config->{'domain'} . ':3000/public_view/' . $type . '/' . $uuid . '/' . $cx_uuid : $qr;
+	# the config gives it a name here: the pdf is drawn where the code and the
+	# theme are current, while the printed link keeps the public address
+	my $pdf_url = $config->{'domain'} ? 'https://' . $config->{'domain'} . ':3000/public_view/' . $type . '/' . $uuid . '/' . $cx_uuid : $public_url;
 
-	my $qr_img = `qrencode -o - $qr`;
-	$qr_img = 'data:image/png;base64,' . encode_base64($qr_img);
+	# One QR on the paper. For a single unpaid invoice with a Bitcoin wallet it
+	# is the payment request (BIP21, exact amount) rather than the document link;
+	# every other document keeps the link it had. Reading only: the public view
+	# renders this too, and a GET must not allocate an address.
+	my $pay;
+	if (($type || '') eq 'invoice' && $uuid ne 'all' && scalar @{$registers} == 1) {
+		my $balance = $registers->[0]->{'data'}->{'numbers'}->{'balance'} // 0;
+		if ($balance > 0) {
+			my $wallet = &subs::crypto_invoice_wallet('BTC');
+			if ($wallet && ($wallet->{'asset'} || '') eq 'BTC') {
+				my $alloc = &subs::crypto_invoice_address_read($wallet->{'app'}, $uuid);
+				my $addr = ($alloc && defined $alloc->{'address'}) ? $alloc->{'address'} : '';
+				$addr = $wallet->{'address'} || '' unless length $addr;
+				my $rate = &subs::crypto_rate('BTC');
+				if (length $addr && defined $rate && $rate > 0) {
+					my $native = sprintf('%.8f', $balance / $rate);
+					$pay = {
+						address => $addr,
+						asset => 'BTC',
+						amount => &subs::crypto_amount_format($native, 'BTC'),
+						uri => &subs::crypto_bip21_uri($addr, $native),
+					};
+				}
+			}
+		}
+	}
+	my $qr = $pay ? $pay->{'uri'} : $public_url;
+	my $qr_img = &subs::crest_qr_png($qr);
+	$qr_img = '' unless defined $qr_img && length $qr_img;
+	$qr_img = 'data:image/png;base64,' . encode_base64($qr_img) if length $qr_img;
 
 	my $returner = {
 		template => '/store/printer/header',
@@ -5058,9 +5099,11 @@ sub store_printer($data) {
 		visibility => $visibility,
 		uuid => $uuid,
 		cx => $cx_settings,
-		qr_code => $qr,
+		qr_code => $public_url,
 		pdf_url => $pdf_url,
 		qr_img => $qr_img,
+		pay_note => $pay ? $pay->{'amount'} : '',
+		pay_address => $pay ? $pay->{'address'} : '',
 		id => $id,
 		totals => $totals,
 		payments => $payments,
@@ -6723,12 +6766,23 @@ post '/manager/store/crypto_panel' => sub($c) {
 		: undef;
 	my $self_bio = ($device && $device->{'bio_pubkey'}) ? 1 : 0;
 	my $bio_mode = $self_bio ? 'self' : (&house_bio_device($device_uuid) ? 'other' : 'none');
+	# Every wallet on this invoice owns an address: the first time the payment
+	# panel opens, an xpub wallet issues one; a wallet without one keeps its
+	# single saved address.
+	my $wallets = &subs::crypto_wallets_report();
+	foreach my $w ( @{$wallets} ) {
+		my $alloc = &subs::crypto_invoice_address({ app => $w->{'app'}, invoice => $uuid });
+		if ($alloc && defined $alloc->{'address'} && length $alloc->{'address'}) {
+			$w->{'address'} = $alloc->{'address'};
+			$w->{'address_static'} = $alloc->{'static'} ? 1 : 0;
+		}
+	}
 	my $html = $c->render_to_string(
 		template => 'store/crypto_payment',
 		invoice => $inv,
 		invoice_data => $data,
 		customer => $customer,
-		wallets => &subs::crypto_wallets_report(),
+		wallets => $wallets,
 		assets => &subs::crypto_enabled_assets(),
 		balance => $balance,
 		base => &subs::crypto_report_currency(),
@@ -6763,6 +6817,11 @@ post '/manager/store/crypto_payment' => sub($c) {
 		return $c->render(json => { ok => 0, error => 'that account does not hold ' . $asset->{'code'} });
 	}
 	my $address = $c->param('address') || '';
+	# The invoice owns the address, not the browser: a client cannot name a
+	# different one. The submitted value is only a fallback for a wallet that
+	# has no allocation at all (no xpub and no saved address).
+	my $alloc = &subs::crypto_invoice_address({ app => $account, invoice => $uuid });
+	$address = $alloc->{'address'} if $alloc && defined $alloc->{'address'} && length $alloc->{'address'};
 	my $txid = $c->param('txid') || '';
 	$txid =~ s/^\s+|\s+$//g;
 	my $proof_code = $c->param('proof') || '';
@@ -6867,6 +6926,12 @@ post '/manager/store/crypto_payment' => sub($c) {
 	};
 	push @{ $data->{'payments'} }, $payment;
 	my $new_balance = $balance - $value;
+	# A second send cannot be stopped on the chain, but it must not become a
+	# negative balance: the invoice closes at zero and the excess is reported so
+	# the seller can return it deliberately.
+	my $overpaid = $new_balance < -0.005 ? -$new_balance : 0;
+	$payment->{'overpaid'} = $overpaid if $overpaid > 0;
+	$new_balance = 0 if $new_balance < 0;
 	$new_balance = 0 if abs($new_balance) < 0.005;
 	$data->{'numbers'}->{'balance'} = $new_balance;
 	my $status = $new_balance <= 0 ? 'completed' : 'open';
@@ -6877,6 +6942,7 @@ post '/manager/store/crypto_payment' => sub($c) {
 		payment => { %{$payment}, proof => undef },
 		balance => $new_balance,
 		status => $status,
+		overpaid => $overpaid,
 		verified => $verified,
 		payer => $payer,
 		payer_known => $payer_known,
@@ -6904,6 +6970,8 @@ post '/manager/crypto/payment_request' => sub($c) {
 	my $native = &subs::crypto_amount_number($c->param('amount'), $asset);
 	unless (defined $native && $native > 0) { return $c->render(json => { ok => 0, error => 'enter the amount that was sent' }); }
 	my $account = &subs::unformat_name($c->param('account') || '');
+	# The approval is for this invoice's own address; make sure it exists.
+	&subs::crypto_invoice_address({ app => $account, invoice => $uuid }) if length $account;
 	my $txid = $c->param('txid') || '';
 	$txid =~ s/^\s+|\s+$//g;
 	my $proof = $c->param('proof') || '';
@@ -39483,6 +39551,26 @@ sub migration_already_applied($command) {
 sub update_database($data) {
 	&subs::cache_delete({ app => 'me', context => 'pseudonyms' });
 	my $commands = [
+		# Watch-only receiving addresses: one row per invoice, public data only.
+		# An address is never reused, and the unique index is what makes two
+		# machines that allocated the same index while apart fall through to the
+		# next one instead of sharing an address.
+		'create table if not exists crypto_address (
+			uuid VARCHAR(255) unique,
+			server_time VARCHAR(255),
+			ost VARCHAR(25),
+			app VARCHAR(255),
+			asset VARCHAR(25),
+			network VARCHAR(255),
+			address VARCHAR(255) unique,
+			derivation VARCHAR(25),
+			addr_index INTEGER,
+			path VARCHAR(255),
+			invoice_uuid VARCHAR(255),
+			issued_at VARCHAR(25)
+		)',
+		'create index if not exists idx1_crypto_address on crypto_address (app, addr_index)',
+		'create index if not exists idx2_crypto_address on crypto_address (invoice_uuid)',
 		# Double-entry accounting: a chart of accounts and the journal that posts
 		# to it. Both are derived from the money ledger, so each machine builds its
 		# own (they stay out of the sync table list in gb.pl); the entries are
@@ -40152,12 +40240,50 @@ post '/manager/setting_setter' => sub($c) {
 			return;
 		}
 	}
+	# An xpub is public, but it is still checked here: a private key, a seed
+	# phrase, a key for another coin or a testnet key on a mainnet wallet is
+	# refused before it is stored. The preview is the next address it would
+	# issue, so the seller can compare it with the device before relying on it.
+	my $xpub_note;
+	if ($setting eq 'wallet_xpub' && defined $value && length $value) {
+		$value =~ s/^\s+|\s+$//g;
+		if (&subs::crypto_xpub_is_private($value) || &subs::crypto_looks_like_secret($value)) {
+			$c->render(json => { ok => 0, error => 'That is a spending key or a seed phrase. JawnOS stores the public xpub only.' });
+			return;
+		}
+		my $x = &subs::crypto_xpub_decode($value);
+		unless ($x) {
+			$c->render(json => { ok => 0, error => 'That is not an account xpub (xpub, ypub or zpub).' });
+			return;
+		}
+		my $asset = &subs::setting_grabber({ app => $app, setting => 'crypto_asset' }) || 'BTC';
+		unless (uc($asset) eq 'BTC') {
+			$c->render(json => { ok => 0, error => 'Per-invoice addresses are Bitcoin only for now.' });
+			return;
+		}
+		my $net = &subs::setting_grabber({ app => $app, setting => 'crypto_network' }) || 'bitcoin';
+		if (lc($net) eq 'bitcoin' && $x->{'net'} ne 'main') {
+			$c->render(json => { ok => 0, error => 'That is a testnet key; this wallet is on Bitcoin mainnet.' });
+			return;
+		}
+		my $q = &subs::db_query("select max(addr_index) as m from crypto_address where app = ?", $app);
+		my $row = $q ? $q->hashes->[0] : undef;
+		my $next = (defined $row && defined $row->{'m'}) ? $row->{'m'} + 1 : 0;
+		my $preview = &subs::crypto_xpub_address($x, $next);
+		$xpub_note = $preview
+			? 'Watch-only ready. The next invoice address is ' . $preview->{'address'}
+			: 'The key was saved, but the next address could not be derived.';
+		if (($x->{'depth'} // 0) != 3) {
+			$xpub_note = 'Warning: this key is at depth ' . ($x->{'depth'} // 0) . '; an account xpub is usually depth 3. ' . $xpub_note;
+		}
+	}
 	# the settingSetter() client already carries a device when one is asked for
 	# (the Guide's associate saves its Confirm tick with device 'all' so every
 	# machine reads the one shared row); the route used to drop it and store the
 	# value against this device class instead
 	my $device = $c->param('device');
 	my $s = &subs::setting_setter({ app => $app, setting => $setting, value => $value, timestamp => $timestamp, subsetting => $subsetting, device => $device });
+	$s->{'note'} = $xpub_note if defined $xpub_note && ref $s eq 'HASH';
 	# Turning tracking on writes the first history point at once, so the Measures
 	# app has something to chart without waiting for the six-hour tick.
 	if ($app eq 'crypto' && $setting eq 'tracking' && defined $value && $value eq 'on') {

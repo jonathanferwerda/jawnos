@@ -1196,7 +1196,12 @@ function cryptoPayAddress(scope) {
 	scope.find('#crypto_pay_address').text(address || '(no address saved)');
 	var img = scope.find('#crypto_pay_qr');
 	if (address) {
-		img.attr('src', '/manager/crypto/qr?text=' + encodeURIComponent(address)).show();
+		// Bitcoin wallets understand the BIP21 request; the amount pre-fills the
+		// send screen, which is the best guard against a wrong or repeated amount.
+		var asset = scope.find('#crypto_pay_asset').val() || '';
+		var amount = (scope.find('#crypto_pay_amount').val() || '').replace(/[^0-9.]/g, '');
+		var text = (asset === 'BTC' && amount && amount !== '.') ? ('bitcoin:' + address + '?amount=' + amount) : address;
+		img.attr('src', '/manager/crypto/qr?text=' + encodeURIComponent(text)).show();
 	}
 	else {
 		img.removeAttr('src').hide();
@@ -1228,6 +1233,7 @@ function cryptoPayRefresh(scope) {
 		if (!rate) { scope.find('#crypto_pay_fiat').text('no rate loaded'); return; }
 		scope.find('#crypto_pay_amount').val(numeral(balance / rate).format('0.00000000'));
 		scope.find('#crypto_pay_fiat').text('≈ ' + numeral(balance).format('$0.00') + ' at ' + numeral(rate).format('$0,0.00'));
+		cryptoPayAddress(scope);
 	});
 }
 
@@ -1248,6 +1254,10 @@ $(document).on('change', '#crypto_pay_asset', function() {
 });
 
 $(document).on('change', '#crypto_pay_wallet', function() {
+	cryptoPayAddress($(this).closest('#crypto_pay'));
+});
+
+$(document).on('input change', '#crypto_pay_amount', function() {
 	cryptoPayAddress($(this).closest('#crypto_pay'));
 });
 
@@ -1289,7 +1299,8 @@ $(document).on('click', '#crypto_pay_record', function() {
 			var label = r.verified === 'crest'
 				? (r.payer_known ? 'attested by a known crest' : 'attested by a new crest')
 				: (r.verified === 'crest-unsigned' ? 'proof verified (not countersigned)' : 'recorded (no crest proof)');
-			status.text(label + ' · balance ' + numeral(r.balance).format('$0.00'));
+			status.text(label + ' · balance ' + numeral(r.balance).format('$0.00')
+				+ ((r.overpaid && r.overpaid > 0) ? ' · overpaid by ' + numeral(r.overpaid).format('$0.00') + ' — return the extra' : ''));
 			customerList(scope.attr('data-cx'), 'invoice');
 			setTimeout(function() { scope.remove(); }, 1400);
 		}, 'json').fail(function() { status.text('could not record'); });

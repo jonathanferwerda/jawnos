@@ -426,7 +426,13 @@
 								<input type="text" class="crypto_wallet_input crypto_wallet_address" setting="wallet_address" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'wallet_address'} %>" placeholder="public address only" autocomplete="off" spellcheck="false">
 								<button type="button" class="crypto_wallet_copy" app="<%= $a %>">Copy</button>
 							</div>
-							<p class="cfg-note" style="margin:0 0 8px;"><%= &subs::ui('Recommended: a hardware wallet you control, never an exchange deposit address. For the widest coin coverage, Ledger Nano S Plus or Flex; for open-source firmware, Trezor Safe 3/5 or BitBox02; Bitcoin only, Coldcard or Blockstream Jade. Buy direct from the maker, never a reseller, confirm the address on the device\'s own screen, and send a small test amount first. JawnOS keeps this one address and reuses it on every invoice.') %></p>
+							<p class="cfg-note" style="margin:0 0 8px;"><%= &subs::ui('Recommended: a hardware wallet you control, never an exchange deposit address. For the widest coin coverage, Ledger Nano S Plus or Flex; for open-source firmware, Trezor Safe 3/5 or BitBox02; Bitcoin only, Coldcard or Blockstream Jade. Buy direct from the maker, never a reseller, confirm the address on the device\'s own screen, and send a small test amount first. Without an account xpub below, JawnOS keeps this one address and reuses it on every invoice.') %></p>
+							<div class="cfg-row">
+								<label><%= &subs::ui('Account xpub') %></label>
+								<% my $wallet_xpub = &subs::crypto_wallet_setting($a, 'wallet_xpub') || ''; %>
+								<input type="text" class="crypto_wallet_input crypto_wallet_xpub" setting="wallet_xpub" app="<%= $a %>" value="<%= $wallet_xpub %>" placeholder="zpub / ypub / xpub" autocomplete="off" spellcheck="false">
+							</div>
+							<p class="cfg-note" style="margin:0 0 8px;"><%= &subs::ui('Optional, Bitcoin only. Paste the account xpub from the wallet to give every invoice its own receiving address. It is public: it derives addresses and cannot spend. Never paste a private key or a seed phrase.') %></p>
 							<div class="cfg-row">
 								<label>Label</label>
 								<input type="text" class="crypto_wallet_input" setting="wallet_label" app="<%= $a %>" value="<%= $appts->{$a}->{'setting'}->{'wallet_label'} %>" placeholder="house cold wallet">

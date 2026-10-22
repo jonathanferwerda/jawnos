@@ -3088,16 +3088,23 @@ $(document).on('click', '#crypto_refresh', function() {
 	});
 });
 
-$(document).on('click', '.crypto_wallet_copy', function() {
+// Every wallet field saves as it changes. This was a click handler on the copy
+// button at one point, so the coin, address, label and xpub never reached the
+// server. The copy button keeps its own handler below.
+$(document).on('change', '.crypto_wallet_input', function() {
 	var el = $(this);
 	var app = el.attr('app');
 	var status = $('.crypto_wallet_status[app="' + app + '"]');
 	status.text('saving…');
-	$.post('/manager/setting_setter', {
+	var payload = {
 		app: app, setting: el.attr('setting'), value: el.val(), timestamp: Date.now()
-	}, function(r) {
+	};
+	// the xpub is the same on every machine: a phone must be able to derive
+	// the invoice's address without the desktop that typed it
+	if (el.attr('setting') === 'wallet_xpub') { payload.device = 'all'; }
+	$.post('/manager/setting_setter', payload, function(r) {
 		if (r && r.ok === 0) { status.text(r.error || 'could not save'); return; }
-		status.text('saved');
+		status.text((r && r.note) ? r.note : 'saved');
 	}, 'json').fail(function() { status.text('could not save'); });
 });
 

@@ -32,6 +32,21 @@ CREATE TABLE "cache" (
 			app LONGTEXT,
 			context VARCHAR(255)
 		, warranty VARCHAR(25), subcontext VARCHAR(25), device VARCHAR(10), uuid VARCHAR(255) unique, ost VARCHAR(25), data BLOB);
+CREATE TABLE "crypto_address" (
+			uuid VARCHAR(255) unique,
+			server_time VARCHAR(255),
+			ost VARCHAR(25),
+			app VARCHAR(255),
+			asset VARCHAR(25),
+			network VARCHAR(255),
+			address VARCHAR(255) unique,
+			derivation VARCHAR(25),
+			addr_index INTEGER,
+			path VARCHAR(255),
+			invoice_uuid VARCHAR(255),
+			issued_at VARCHAR(25));
+CREATE INDEX idx1_crypto_address on crypto_address (app, addr_index);
+CREATE INDEX idx2_crypto_address on crypto_address (invoice_uuid);
 CREATE TABLE "continent" (
 latitude VARCHAR(25),
 longitude VARCHAR(25),

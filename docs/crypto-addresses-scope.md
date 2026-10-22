@@ -1,9 +1,26 @@
 # Scope — a fresh receive address for every invoice
 
-**Status:** proposal, not built.
+**Status:** Phase 1 is built (v0.1.1084): a Bitcoin account xpub issues one fresh
+address per invoice, and an unpaid invoice's QR is a BIP21 payment request.
+The chain read (phase 2) and other chains (phase 3) are **not** built.
 **Written:** 2026-10-21.
-**Question it answers:** "I thought an invoice made a new address." It does not today.
-This is what it would take to make that true, without JawnOS ever holding a key.
+**Question it answers:** "I thought an invoice made a new address." It does now, for
+Bitcoin wallets that carry an account xpub. This is what is shipped and what is
+still open, without JawnOS ever holding a key.
+
+## What shipped
+
+- `wallet_xpub` on the wallet account (house-wide, `device = all`), validated on
+  save; private keys, seed phrases and testnet keys are refused.
+- `crypto_address` (synced) reserves one external-chain address per invoice;
+  re-saving or re-opening an invoice returns the same row.
+- Derivation is BIP32 public derivation at `/0/index` from the account xpub,
+  for `xpub`/`ypub`/`zpub` (P2PKH, P2SH-P2WPKH, P2WPKH) and their testnet forms.
+- An unpaid invoice's single QR is `bitcoin:address?amount=…`; the crypto panel's
+  QR carries the amount too.
+- A wallet without an xpub keeps the one saved address, as before.
+- An overpayment is recorded (the invoice closes at zero) and reported, not
+  silently clamped; a second payment on a paid invoice is refused.
 
 ---
 
