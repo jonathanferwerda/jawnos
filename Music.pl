@@ -220,7 +220,7 @@ sub music_receiver_state {
 	# the folders app is playing, which this button is not about.
 	my $pids = eval { `pgrep -f '\\.president/pipe'` };
 	my @pids = grep { /^\d+$/ } split /\s+/, ($pids // '');
-	my $blocked = (&subs::setting_grabber({ app => 'music', setting => 'receive_blocked' }) || '') eq 'on' ? 1 : 0;
+	my $blocked = &music_receiving_refused();
 	my $updated = 0;
 	if (@pipes) { $updated = (stat($pipes[0]))[9] || 0; }
 	elsif (-e $watcher) { $updated = (stat($watcher))[9] || 0; }
@@ -231,6 +231,13 @@ sub music_receiver_state {
 		type => ($md->{'type'} // ''),
 		updated => $updated,
 	};
+}
+
+# Whether this machine refuses what other machines send it. A marker file, not
+# a setting: `music` settings sync across the mesh, and refusing music here says
+# nothing about any other machine.
+sub music_receiving_refused {
+	return -e &subs::home('~/.president/music_receive_off') ? 1 : 0;
 }
 
 # Stop the track this machine is receiving, and take the marker with it so a
@@ -254,12 +261,17 @@ post '/manager/music/receiver/stop' => sub($c) {
 };
 
 post '/manager/music/receiver/block' => sub($c) {
-	my $blocked = ($c->param('blocked') // '') eq 'on' ? 'on' : 'off';
-	&subs::setting_setter({ app => 'music', setting => 'receive_blocked', value => $blocked });
-	# Refusing further transmissions also stops the one already playing: it is
-	# the same intent ("not here"), and leaving it running would make the switch
-	# look broken.
-	&music_receiver_stop() if $blocked eq 'on';
+	my $marker = &subs::home('~/.president/music_receive_off');
+	if (($c->param('blocked') // '') eq 'on') {
+		write_file($marker, '1');
+		# Refusing further transmissions also stops the one already playing: it
+		# is the same intent ("not here"), and leaving it running would make the
+		# switch look broken.
+		&music_receiver_stop();
+	}
+	else {
+		unlink $marker if -e $marker;
+	}
 	$c->render(json => &music_receiver_state());
 };
 
@@ -280,7 +292,7 @@ any '/music/receiver' => sub($c) {
 	# A machine can refuse what other machines send it. Answer the transmitter
 	# normally (so it does not retry or log an error) but download and play
 	# nothing - an 'off' still clears anything a previous transmission left.
-	my $blocked = (&subs::setting_grabber({ app => 'music', setting => 'receive_blocked' }) || '') eq 'on' ? 1 : 0;
+	my $blocked = &music_receiving_refused();
 	if ($blocked && $toggle ne 'off') {
 		$c->render(json => { timestamp => $timestamp, 'seek' => $seek, file => $file, toggle => $toggle, volume => $volume, type => 'transmitter', blocked => 1 });
 		return;
