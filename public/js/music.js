@@ -1402,6 +1402,10 @@ $(document).on('click', '#music_configuration_toggle', function() {
 		$.ajax({
 			url: '/music/configuration',
 			type: 'GET',
+			// The drawer is rebuilt from the server on every open. Do not let the
+			// browser answer from its cache: after a code sync it kept showing an
+			// output list that no longer existed.
+			cache: false,
 			// name the loaded remote library so the panel can show it as the
 			// current selection instead of losing it
 			data: { remote_uuid: remote_uuid },
