@@ -8581,7 +8581,9 @@ sub sync_rows_pull {
 			$watermark = $row->{'server_time'} if ref $row eq 'HASH' && defined $row->{'server_time'} && $row->{'server_time'} > $watermark;
 			return $row;
 		};
-		my $short = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total);
+		# `$total` is the first batch's own count: it keeps the panel's bar honest
+		# while a streamed read (no snapshot size) is merging.
+		my $short = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total, $total);
 		if ($short || $fetch_error) {
 			$failed = $table . ': ' . ($fetch_error || 'short read');
 			last;
@@ -17906,7 +17908,12 @@ sub merge_table_rows {
 							my $h = $resulters[0];
 							$percentage = $results_size ? sprintf("%.2f", $n / $results_size * 100) : 0;
 							if ($sync_job && &subs::rightNow() >= ($job_alert + 250)) {
-								&subs::sync_job_step($sync_job, 'merge:' . $q, { current => $n, total => $results_size });
+								my %progress = (current => $n);
+								# A row stream has no snapshot size (`$results_size` is 0); keep
+								# the total the map or first batch already named instead of
+								# overwriting it with zero.
+								$progress{'total'} = $results_size || $expected if ($results_size || $expected);
+								&subs::sync_job_step($sync_job, 'merge:' . $q, \%progress);
 								$job_alert = &subs::rightNow();
 							}
 							if ($r->{'timestamp'}) {
