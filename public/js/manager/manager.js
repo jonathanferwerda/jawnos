@@ -1918,33 +1918,83 @@ $(document).on('change', '#ticket_network_device', function() {
 var searchingTimeout;
 var lastSearchTime;
 var jawnosSearchApps = null;
+var jawnosSearchVersion = '';
 var jawnosSearchLoading = null;
+var jawnosSearchChecking = false;
 var jawnosSearchSelected = -1;
 var jawnosSearchEnterConsumed = false;
 
-// The searchable app list, fetched once. Every keystroke is filtered here, so
-// the box never waits on a request; a failed fetch simply leaves the list empty
-// and the next keystroke tries again.
-function jawnosSearchIndex() {
-	if (jawnosSearchApps) { return $.Deferred().resolve(jawnosSearchApps).promise(); }
+// The searchable app list. Every keystroke is filtered here, so the box never
+// waits on a request. A force fetch replaces the list; otherwise the copy the
+// page already has is good until the version check says it is not.
+function jawnosSearchIndex(force) {
+	if (jawnosSearchApps && !force) { return $.Deferred().resolve(jawnosSearchApps).promise(); }
 	if (jawnosSearchLoading) { return jawnosSearchLoading; }
-	jawnosSearchLoading = $.ajax({ url: '/manager/search_index', type: 'GET', dataType: 'json' })
+	jawnosSearchLoading = $.ajax({ url: '/manager/search_index', type: 'GET', dataType: 'json', cache: false })
 		.then(function (response) {
 			jawnosSearchApps = (response && response.apps) ? response.apps : [];
+			jawnosSearchVersion = (response && response.version) || '';
 			jawnosSearchLoading = null;
 			return jawnosSearchApps;
 		}, function () {
 			jawnosSearchLoading = null;
-			return [];
+			return jawnosSearchApps || [];
 		});
 	return jawnosSearchLoading;
 }
 
-// Warm the list while the manager settles, so the first keypress has it.
+// Take the list again after a change and redraw the open dropdown, keeping the
+// row the person had walked to when it survived the change.
+function jawnosSearchRefresh() {
+	return jawnosSearchIndex(true).then(function () {
+		var current = $('#search').val();
+		if (!current || !$('#search_results').is(':visible')) { return; }
+		var selected_app = $('#manager_search_results .manager_search_result.search_selected').attr('app');
+		jawnosSearchRender(current);
+		if (selected_app) {
+			var keep = $('#manager_search_results .manager_search_result').filter(function () {
+				return $(this).attr('app') === selected_app;
+			});
+			if (keep.length) {
+				jawnosSearchSelected = parseInt(keep.attr('index'), 10);
+				keep.addClass('search_selected');
+			}
+		}
+	});
+}
+
+// The cheap question: has any setting the list draws (or a deleted app) moved?
+// The full list only crosses the wire when the answer is yes.
+function jawnosSearchCheck() {
+	if (!jawnosSearchApps || jawnosSearchChecking) { return; }
+	jawnosSearchChecking = true;
+	var xhr = $.ajax({ url: '/manager/search_index', type: 'GET', dataType: 'json', cache: false, data: { check: 1 } });
+	xhr.done(function (response) {
+		if (response && response.version && response.version !== jawnosSearchVersion) {
+			jawnosSearchRefresh();
+		}
+	});
+	xhr.always(function () { jawnosSearchChecking = false; });
+}
+
+// Warm the list while the manager settles, so the first keypress has it. Then
+// watch for changes: on the box being focused, on returning to the tab, and
+// every two seconds while the dropdown is open, so a deleted app leaves the
+// list and a changed pos or main image lands without a reload.
 $(function () {
 	var warm = function () { jawnosSearchIndex(); };
 	if (window.requestIdleCallback) { requestIdleCallback(warm, { timeout: 4000 }); }
 	else { setTimeout(warm, 1500); }
+	$(document).on('focusin', '#search', jawnosSearchCheck);
+	$(window).on('focus', jawnosSearchCheck);
+	if (document.addEventListener) {
+		document.addEventListener('visibilitychange', function () {
+			if (!document.hidden) { jawnosSearchCheck(); }
+		});
+	}
+	setInterval(function () {
+		if ($('#search_results').is(':visible') && $('#search').val()) { jawnosSearchCheck(); }
+	}, 2000);
 });
 
 function jawnosSearchPlain(s) {

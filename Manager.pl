@@ -24117,6 +24117,25 @@ sub centre_view_grabber($data) {
 	}
 }
 
+# The entry a setting wears for this device: the device's own row, then the
+# house-wide ('all') one, then whatever row there is.
+sub search_index_setting($set, $device) {
+	return undef unless ref $set eq 'HASH' && scalar keys %{$set};
+	return (defined $device && exists $set->{$device}) ? $set->{$device}
+		: (exists $set->{'all'} ? $set->{'all'} : (values %{$set})[0]);
+}
+
+# Has anything the search list draws changed? Every write through setting_setter
+# stamps a fresh server_time, and a delete (a removed app or its last setting)
+# moves the count, so these two aggregates are the cheap watch. The icon set is
+# included because the row pictures follow it; manager_background_colour picks
+# the light or dark cut of that set.
+sub search_index_signature {
+	my $s = &subs::db_query("select count(*) as n, max(cast(server_time as integer)) as t from settings where setting in ('pos','visible','main_image','icon_set','manager_background_colour')")->hashes->[0] || {};
+	my $g = &subs::db_query('select count(*) as n, max(cast(server_time as integer)) as t from appointments where account = ?', 'gallery')->hashes->[0] || {};
+	return join ':', ($s->{'n'} // 0), ($s->{'t'} // 0), ($g->{'n'} // 0), ($g->{'t'} // 0);
+}
+
 # The picture an app's search row wears: the same one its window does - the
 # app's own main image first, then the built-in drawing, then the pos tile.
 sub search_index_icon($data) {
@@ -24126,7 +24145,10 @@ sub search_index_icon($data) {
 		return $main_image if $main_image =~ /^data:/;
 		my ($destination, $asset) = &subs::file_device_renamer({ file => $main_image, app => $app, type => 'image' });
 		if (defined $destination && defined $asset && -e ($destination . $asset)) {
-			return '/file_open?file=' . $destination . $asset;
+			# the setting's own stamp keeps a replaced picture from being read
+			# back out of the browser's cache under the same path
+			my $stamp = $data->{'stamp'} || '';
+			return '/file_open?file=' . $destination . $asset . (length $stamp ? '&v=' . $stamp : '');
 		}
 	}
 	if ($gb::known_appts->{$app} && $gb::known_appts->{$app}->{'icon'}) {
@@ -24142,13 +24164,19 @@ sub search_index_icon($data) {
 # browser. The settings table is small enough to hand over in one go, which is
 # what makes typing local (and so instant) instead of a request per keystroke.
 # Each entry is the key a window opens with, the name a person reads, and the
-# icon the window wears.
+# icon the window wears. `version` lets the manager ask a tiny question - "has
+# anything changed?" - without pulling the list again while it is unchanged.
 get '/manager/search_index' => sub($c) {
-	my $rows = &subs::db_query("select app, device, setting, value from settings where app is not null and app != '' and setting in ('pos','visible','main_image')")->hashes;
+	my $version = &search_index_signature();
+	if ($c->param('check')) {
+		$c->render(json => { version => $version });
+		return;
+	}
+	my $rows = &subs::db_query("select app, device, setting, value, server_time from settings where app is not null and app != '' and setting in ('pos','visible','main_image')")->hashes;
 	my %settings_by_app;
 	foreach my $r ( @{$rows} ) {
 		next unless defined $r->{'app'} && length $r->{'app'};
-		$settings_by_app{$r->{'app'}}->{$r->{'setting'}}->{$r->{'device'} || ''} = $r->{'value'};
+		$settings_by_app{$r->{'app'}}->{$r->{'setting'}}->{$r->{'device'} || ''} = { value => $r->{'value'}, server_time => $r->{'server_time'} };
 	}
 	# the music player writes the tracks it plays with account gallery, and the
 	# dock's search is not the place for those to surface as apps
@@ -24159,16 +24187,17 @@ get '/manager/search_index' => sub($c) {
 	my (@apps, %indexed);
 	foreach my $app ( sort keys %settings_by_app ) {
 		my $s = $settings_by_app{$app};
-		my $visible = 'checked';
-		if ($s->{'visible'}) {
-			$visible = $s->{'visible'}->{$device} // $s->{'visible'}->{'all'} // (values %{$s->{'visible'}})[0];
-		}
+		my $vis_entry = &search_index_setting($s->{'visible'}, $device);
+		my $visible = defined $vis_entry ? (ref $vis_entry eq 'HASH' ? $vis_entry->{'value'} : $vis_entry) : 'checked';
 		next if (($visible // '') ne 'checked');
 		# a known app stays even when it has gallery rows; those rows are its work
 		next if $gallery->{$app} && !$gb::known_appts->{$app};
-		my $pos = $s->{'pos'} ? (values %{$s->{'pos'}})[0] : '';
-		my $main_image = $s->{'main_image'} ? (values %{$s->{'main_image'}})[0] : '';
-		push @apps, { app => $app, name => &subs::format_name($app), icon => &search_index_icon({ app => $app, pos => $pos, main_image => $main_image }) };
+		my $pos_entry = &search_index_setting($s->{'pos'}, $device);
+		my $pos = defined $pos_entry ? (ref $pos_entry eq 'HASH' ? $pos_entry->{'value'} : $pos_entry) : '';
+		my $mi_entry = &search_index_setting($s->{'main_image'}, $device);
+		my $main_image = defined $mi_entry ? (ref $mi_entry eq 'HASH' ? $mi_entry->{'value'} : $mi_entry) : '';
+		my $stamp = ref $mi_entry eq 'HASH' ? ($mi_entry->{'server_time'} || '') : '';
+		push @apps, { app => $app, name => &subs::format_name($app), icon => &search_index_icon({ app => $app, pos => $pos, main_image => $main_image, stamp => $stamp }) };
 		$indexed{$app} = 1;
 	}
 	# the menu's own apps are code, not appointments: help, folders and mailbox
@@ -24186,7 +24215,7 @@ get '/manager/search_index' => sub($c) {
 		next if $settings_by_app{$app} && $settings_by_app{$app}->{'visible'};
 		push @apps, { app => $app, name => &subs::format_name($app), icon => &search_index_icon({ app => $app }) };
 	}
-	$c->render(json => { apps => \@apps });
+	$c->render(json => { apps => \@apps, version => $version });
 };
 
 get '/manager/keyup_search' => sub($c) {
