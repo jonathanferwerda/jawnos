@@ -53,25 +53,25 @@ our %topic = (
 	},
 	'gallery' => {
 		title => 'Gallery', category => 'apps', app => 'gallery',
-		templates => [ 'templates/apps/gallery.html.ep', 'templates/apps/gallery_album.html.ep', 'templates/apps/gallery_home.html.ep' ],
-		controls => [ 'Previous', 'Next', 'Refresh', 'Repeat', 'Shuffle', 'File information', 'Fetch home', 'Set as main image', 'Albums', 'Home', 'Lock', 'Archives' ],
+		templates => [ 'templates/apps/gallery.html.ep', 'public/js/images.js' ],
+		controls => [ 'Albums', 'All photos', 'Search', 'Newest first', 'Oldest first', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
 		verified => '2026-10-22',
-		summary => 'Browse your photos by album or one at a time, and choose what each app shows.',
+		summary => 'Browse your photos and videos by album, in a grid, or one at a time.',
 		body => [
-			'Gallery is the photo browser. It gathers the photos and videos your apps have recorded and shows them three ways: **Home** (an album cover per app), **Album** (every photo in one scrollable grid) and **Photo** (a single shot, full-screen).',
-			'Which photos appear is decided by the **sources** — the apps whose galleries are open. Open the apps you want to look through and their photos join the Gallery; a source app also has to be marked visible (or the gallery unlocked) to be shown. Sealed photos (a name ending .enc) are hidden while the gallery\'s lock is shut, and join the set only when it is open at home.',
-			'In the single-photo view you can walk the whole set, shuffle or loop it, read a photo\'s details, or make it the cover the app uses. In the Album view you can search, flip the order, and include photos whose local copy has moved to the archive.'
+			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
+			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home (bring a photo back from the archive) and Delete.',
+			'Which photos appear is decided by the apps that are marked visible. The search box finds photos by app or file name, and the sort button flips the order between newest and oldest first.',
+			'Sealed photos (a name ending .enc) stay hidden while the gallery lock is shut. Press **Lock** to open the padlock view; unlock it with this phone or computer\'s fingerprint, or with the recovery code. Once it is open the sealed photos join the grid, and the check stays with the window until you lock it again.'
 		],
 		steps => [
-			'Open the apps whose photos you want to browse — Gallery shows the galleries of the windows you have open.',
-			'Open Gallery from the start menu (the photo icon). It lands on Home, one album cover per app.',
-			'Use the Home button for the album covers and the Albums button for the full grid of every photo; as you scroll the grid it keeps loading more.',
-			'Click any photo to open it full-screen. The toolbar gives Previous and Next, Refresh (reload the set), Shuffle (play them in a random order), Repeat (loop the slideshow), File information, Fetch home, and Set as main image.',
-			'Type in the Search box (top-left in Home and Album) and press Enter to find photos by app or file name.',
-			'In Album view, toggle Archives to include photos stored away, and use the arrow to flip the order between newest-first and oldest-first.',
-			'The lock covers the gallery when you want it out of the way; unlock it with this computer\'s fingerprint or on a paired phone. Gallery opens with its lock shut, so sealed photos stay hidden until the lock is open, and albums you have marked not-visible also wait until you are at home.',
+			'Open Gallery from the start menu (the photo icon). It lands on Albums, one cover per app.',
+			'Tap an album to see its photos, or All photos for every app; the grid loads more as you scroll.',
+			'Use the search box to find photos by app or file name, and the sort button to switch between newest and oldest first.',
+			'Tap a photo to open it full-screen. Swipe or use Previous and Next; Close returns to the grid.',
+			'The viewer bar gives File information, Set as main image, Fetch home and Delete.',
+			'Press Lock to hide sealed photos, or to unlock them with your fingerprint; the sealed photos stay in the grid only while the lock is open.'
 		],
-		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser — not a phone gallery and not a file manager. Its photos are the ones recorded by their apps, and which apps are shown are the "sources", which default to the apps they currently have open. Guide them in terms of the Home / Album / Photo views and the named buttons (Home, Albums, Previous, Next, Shuffle, Repeat, Refresh, File information, Set as main image, Archives, lock). If they say they see nothing, the likeliest cause is that no source app is open or marked visible — suggest opening an app that has photos. If you are unsure how a control starts or works, describe what its label means rather than inventing a sequence of clicks. Never describe or guess the content of their photos.',
+		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser. It is not a phone gallery or a file manager: its photos are the ones recorded by their apps. Describe it in terms of Albums, All photos, the photo grid, and the viewer with Previous, Next, Close, File information, Set as main image, Fetch home and Delete. If they see nothing, the likeliest cause is that no app with photos is marked visible, or the gallery lock is shut and the photos are sealed. If you are unsure how a control works, describe what its label means rather than inventing a sequence. Never describe or guess the content of their photos.',
 		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
 	},
 	'marker' => {

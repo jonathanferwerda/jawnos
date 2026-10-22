@@ -25097,202 +25097,142 @@ post '/manager/terminal' => sub ($c) {
 	$c->render('text' => 'ok');
 };
 
+# The Gallery shell. The old route built every tile into the response and let
+# /file_open make missing thumbnails inside the request; a library opened that
+# way held every prefork worker and the rest of the UI stopped answering. The
+# tiles now come in pages from /manager/gallery/data, and the client only asks
+# for the images it is about to show.
 get '/manager/gallery' => sub ($c) {
-	my $timestamp = $c->param('timestamp');
-	my $shuffle = $c->param('shuffle');
-	my $view = $c->param('view');
-	my $search = $c->param('search');
-	my $count = $c->param('count');
-	my $source = $c->param('source');
-	my $load_images = $c->param('loadImages');
-	my $file_uuid = $c->param('file_uuid');
-	my $new_settings = eval { return decode_json $c->param('new_settings') } || {};
-	foreach my $ns ( keys %{$new_settings} ) {
-		&subs::setting_setter({ app => 'gallery', setting => $ns, value => $new_settings->{$ns} });
-	}
-
-	if ($view ne 'load') {
-		&subs::setting_setter({ app => 'gallery', setting => 'apps', value => $c->param('apps') });
-		&subs::setting_setter({ app => 'gallery', setting => 'search', value => $search });
-		&subs::setting_setter({ app => 'gallery', setting => 'view', value => $view });
-		&subs::setting_setter({ app => 'gallery', setting => 'count', value => $count });
-	}
-	my $settings = &subs::settings_grabber({ app => 'gallery' });
-	$search = $settings->{'search'};
-	$view = $settings->{'view'};
-	$count = $settings->{'count'};
-	# an app opens locked: only the token this window holds, minted by the
-	# phone's unlock, lets sealed and hidden things through
 	my $permissive = media_unlock_open($c, 'gallery') ? 1 : 0;
-	my $unlock = $permissive ? $c->param('unlock') : '';
-	# sealed photos follow the padlock; the extra rule for a source marked
-	# not-visible still waits for home
-	my $revealed = ($permissive && help_at_home()) ? 1 : 0;
-	my $apps = eval { return decode_json $settings->{'apps'} } || [];
-	my $jfiles = $c->param('files');
-
-
-	if ($jfiles) {
-		push @{$apps}, 'ide';
-		$view = 'photo';
-	}
-	if (scalar @{$apps} == 0) {
-		$settings->{'home_toggled'} = 'on';
-	}
-
-	if (!$view) { $view = 'photo';
-		if ($settings->{'home_toggled'} eq 'on') {
-			$view = 'home';
-		}
-	}
-
-	my $images = [];
-	my $total_files = 0;
-	my $total_appts = 0;
-	my $total_absentees = 0;
-	my $asettings = {};
-	my @chosen;
-	my $send_count = 0;
-	my $last_send = 0;
-	my $seen_chosen = 0;
-	my $skip_processing = 0;
-	# a photo whose local copy is gone may still be in the archive: one manifest
-	# request, made only when a missing file is actually met
-	my $archive_lookup;
-	foreach my $app_name ( @{$apps} ) {
-		$asettings->{$app_name} = &subs::settings_grabber({ app => $app_name, settings => ['main_image', 'visible' ] }) unless $asettings->{$app_name};
-		next if $asettings->{$app_name}->{'visible'} ne 'checked' && $revealed == 0;
-		my $files = [];
-		if ($app_name eq 'ide' && $jfiles) {
-			$files = decode_json $jfiles;
-			foreach my $f ( @{$files} ) {
-				my $jf = encode_json [$f];
-				$f = { file => $jf, app => 'ide', server_time => &subs::rightNow(), uuid => &subs::random_string_creator(12) };
-			}
-			$view = 'photo';
-			$load_images = 1;
-			$skip_processing = 1;
-		}
-		else {
-			if ($view eq 'photo' && $skip_processing == 0) {
-				if ($settings->{'search'}) {
-					$files = &subs::db_query('select * from appointments where (app like ? or file like ?) and file is not null order by timestamp ' . ($settings->{'scroll_direction'} || 'desc') . '',
-						'%' . $settings->{'search'} . '%', '%' . $settings->{'search'} . '%')->hashes;
-				} else {
-					$files = &subs::db_query('select * from appointments where file is not null and app = ? order by timestamp ' . $settings->{'scroll_direction'}, $app_name)->hashes;
-
-				}
-				if ($shuffle eq 'on') {
-					@{$files} = shuffle @{$files};
-				}
-			}
-		}
-		if ($view eq 'photo' && $load_images != 0) {
-			&subs::subprocessor(sub {
-		    Mojo::IOLoop->reset;
-
-				my ($last_appt, $last_file);
-				foreach my $fi ( @{$files} ) {
-
-					$total_appts++;
-					my $absentees = [];
-					$last_appt = 1 if $total_appts >= scalar @{$files};
-					my $filer = eval { return decode_json $fi->{'file'} } || [];
-					if ($settings->{'search'}) {
-						my $search = $settings->{'search'};
-						unless ($fi->{'app'} =~ /\Q$search/gi) {
-							@{$filer} = grep { $_->{'name'} =~ /\Q$search/gi } @{$filer};
-						}
-					}
-
-					if ($settings->{'scroll_direction'} eq 'asc') {
-						@{$filer} = sort { $a->{'server_time'} cmp $b->{'server_time'} } @{$filer};
-					}
-					else {
-						@{$filer} = sort { $b->{'server_time'} cmp $a->{'server_time'} } @{$filer};
-					}
-					foreach my $f ( @{$filer} ) {
-						# a sealed photo waits for this window's padlock; a list
-						# handed over by Folders was reached through that unlock
-						next if (!$permissive && !$skip_processing && ($f->{'f'} || '') =~ /\.enc$/i);
-						$total_files++;
-
-						$f->{'app'} = $fi->{'app'};
-						unless (-e $f->{'f'} ) {
-							if ($skip_processing == 0 && ($settings->{'archive'} || '') eq 'on') {
-								$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
-							}
-							my $archived = ($archive_lookup && $archive_lookup->{'locate'}) ? $archive_lookup->{'locate'}->($f->{'f'}) : undef;
-							if ($archived) {
-								# shown from the machine holding it, and kept out of the
-								# absentees, which is what used to have it deleted
-								$f->{'f'} = $archived->{'path'};
-								$f->{'remote_uuid'} = $archived->{'remote_uuid'};
-							}
-							elsif ($skip_processing == 0) {
-								push @{$absentees}, $f;
-
-								next;
-							}
-						}
-						$f->{'original_file'} = $f->{'f'};
-						my @ext = split /\./, $f->{'f'};
-
-						if (grep { $ext[-2] eq $_ || $ext[-1] eq $_ } qw/png jpg svg bmp gif mp4 webm/ ) {
-							$f->{'file'} = '/play?app=' . $fi->{'app'} . '&track=' . uri_encode $f->{'f'} . '&timestamp=' . $fi->{'server_time'} . ($f->{'remote_uuid'} ? '&remote_uuid=' . $f->{'remote_uuid'} : '');
-							$f->{'type'} = $fi->{'type'} unless $f->{'type'};
-							$f->{'server_time'} = $fi->{'server_time'};
-							$f->{'timestamp'} = $fi->{'timestamp'},
-							$f->{'app_uuid'} = $fi->{'uuid'};
-							if ($f->{'uuid'} eq $file_uuid) {
-								$seen_chosen = 1;
-								$count = scalar @{$images};
-							}
-						}
-
-						push @{$images}, $f if $fi->{'account'} ne 'gallery' || $f->{'uuid'} eq $file_uuid;
-					}
-					if (scalar @{$absentees} > 0) {
-						foreach my $f ( @{$absentees} ) {
-							@{$filer} = grep { $_->{'uuid'} ne $f->{'uuid'} } @{$filer};
-							&delete_file({ app => $fi->{'app'}, file_uuid => $f->{'uuid'}, app_uuid => $fi->{'uuid'} });
-						}
-						$total_absentees+= scalar @{$absentees};
-					}
-					$send_count++;
-					if ($total_files - $last_send > 56 || $last_appt == 1) {
-						my @sender;
-						for (my $k = $last_send; $k <= $total_files; $k++) {
-							push @sender, $images->[$k] if $images->[$k]->{'uuid'};
-						}
-						&Websocket::send('music', { patience => 1, browser_tab_id => $c->param('browser_tab_id'), type => 'gallery_images', count => $count, images => \@sender, seen_chosen => $seen_chosen, last_send => $last_send, total_files => $total_files });
-						$seen_chosen = 0;
-						$last_send = $total_files;
-					}
-				}
-			}, { name => 'gallery processor' });
-		}
-	}
-	if ($shuffle eq 'on') {
-		@{$images} = shuffle @{$images};
-	}
+	my $unlock = $permissive ? ($c->param('unlock') || '') : '';
+	my $settings = &subs::settings_grabber({ app => 'gallery' });
 	my $contents = $c->render_to_string(
 		template => 'apps/gallery',
-		window_maker => 'yes',
-		settings => $settings,
-		images => $images,
-		view => $view,
 		unlock => $unlock,
 		permissive => $permissive,
-		revealed => $revealed,
-		asettings => $asettings,
-		apps => $apps,
-		count => $count,
-		search => $search,
+		settings => $settings,
 		c => $c
 	);
-	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'gallery', contents => $contents }, $timestamp);
-	$c->render(json => { window => $website, view => $view, images => $images, settings => $settings, apps => $apps, search => $search });
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'gallery', contents => $contents }, $c->param('timestamp') || &subs::rightNow());
+	$c->render(json => { window => $website, locked => ($permissive ? 0 : 1), unlock => $unlock });
+};
+
+# One page of tiles. A tile carries the thumbnail it should show (the stored
+# one when there is one) and the full file for the viewer.
+get '/manager/gallery/data' => sub ($c) {
+	my $permissive = media_unlock_open($c, 'gallery') ? 1 : 0;
+	my $revealed = ($permissive && help_at_home()) ? 1 : 0;
+	my $search = lc($c->param('search') || '');
+	my $sort = ($c->param('sort') || 'desc') eq 'asc' ? 'asc' : 'desc';
+	my $offset = int($c->param('offset') || 0);
+	my $limit = int($c->param('limit') || 160);
+	$limit = 160 if $limit < 1 || $limit > 300;
+	my $apps = eval { return decode_json $c->param('apps') } || [];
+	$apps = [] unless ref $apps eq 'ARRAY';
+	my $jfiles = $c->param('files');
+	my $settings = &subs::settings_grabber({ app => 'gallery' });
+	my @all;
+	my %albums;
+	my %aset_cache;
+	my $archive_lookup;
+
+	my $tile_for = sub {
+		my ($app, $appt, $f) = @_;
+		my $path = $f->{'f'} || '';
+		return undef unless length $path;
+		return undef if !$permissive && $path =~ /\.enc$/i;
+		if (!-e $path && !$f->{'remote_uuid'}) {
+			return undef unless ($settings->{'archive'} || '') eq 'on';
+			$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
+			my $archived = ($archive_lookup && $archive_lookup->{'locate'}) ? $archive_lookup->{'locate'}->($path) : undef;
+			return undef unless $archived;
+			$path = $archived->{'path'};
+			$f->{'f'} = $path;
+			$f->{'remote_uuid'} = $archived->{'remote_uuid'};
+		}
+		my $server_time = $f->{'server_time'} || $appt->{'server_time'} || 0;
+		my $type = $f->{'type'} || $appt->{'type'} || 'image';
+		my $thumb_path = ($f->{'thumb'} && -e $f->{'thumb'}) ? $f->{'thumb'} : $path;
+		my $thumb = '/file_open?file=' . uri_encode($thumb_path)
+			. '&app=' . uri_encode($app)
+			. '&app_uuid=' . uri_encode($appt->{'uuid'} || '')
+			. '&timestamp=' . uri_encode($server_time)
+			. ($f->{'uuid'} ? '&file_uuid=' . uri_encode($f->{'uuid'}) : '')
+			. (($f->{'thumb'} && -e $f->{'thumb'}) ? '' : '&thumb=ya');
+		my $full = '/play?app=' . uri_encode($app)
+			. '&track=' . uri_encode($path)
+			. '&timestamp=' . uri_encode($server_time)
+			. ($f->{'remote_uuid'} ? '&remote_uuid=' . uri_encode($f->{'remote_uuid'}) : '');
+		my $name = $path;
+		$name =~ s{.*/}{};
+		return {
+			uuid => $f->{'uuid'} || '',
+			app => $app,
+			label => &subs::format_name($app),
+			app_uuid => $appt->{'uuid'} || '',
+			type => $type,
+			f => $path,
+			name => $name,
+			thumb => $thumb,
+			file => $full,
+			server_time => $server_time,
+			timestamp => $appt->{'timestamp'} || 0,
+			remote_uuid => $f->{'remote_uuid'} || '',
+			info => $f->{'info'} || {},
+		};
+	};
+
+	if ($jfiles) {
+		my $files = eval { return decode_json $jfiles } || [];
+		foreach my $f ( @{$files} ) {
+			my $app = $f->{'app'} || 'ide';
+			my $tile = $tile_for->($app, { timestamp => &subs::rightNow(), server_time => &subs::rightNow(), uuid => &subs::random_string_creator(12), type => $f->{'type'} || 'image' }, $f);
+			next unless $tile;
+			push @all, $tile;
+		}
+	}
+	else {
+		my $rows = &subs::db_query('select * from appointments where file is not null and (type = ? or type = ?) order by timestamp', 'image', 'video')->hashes;
+		foreach my $appt ( @{$rows} ) {
+			my $app = $appt->{'app'} || '';
+			next if scalar @{$apps} && !grep { $_ eq $app } @{$apps};
+			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
+			next if (($aset->{'visible'} || '') ne 'checked') && $revealed == 0;
+			my $files = eval { return decode_json $appt->{'file'} } || [];
+			foreach my $f ( @{$files} ) {
+				next if $search && index(lc($app), $search) < 0 && index(lc($f->{'f'} || ''), $search) < 0;
+				my $tile = $tile_for->($app, $appt, $f);
+				next unless $tile;
+				push @all, $tile;
+				my $album = $albums{$app} ||= { app => $app, label => &subs::format_name($app), count => 0, cover => '' };
+				$album->{'count'}++;
+				$album->{'cover'} ||= $tile->{'thumb'};
+			}
+		}
+		# a chosen cover beats the newest photo
+		foreach my $album ( values %albums ) {
+			my $main = &subs::setting_grabber({ app => $album->{'app'}, setting => 'main_image' });
+			next unless defined $main && length $main;
+			$album->{'cover'} = '/file_open?file=' . uri_encode($main) . '&app=' . uri_encode($album->{'app'}) . '&thumb=ya';
+		}
+	}
+
+	my @ordered = sort { $sort eq 'asc' ? $a->{'server_time'} <=> $b->{'server_time'} : $b->{'server_time'} <=> $a->{'server_time'} } @all;
+	my $total = scalar @ordered;
+	my @page;
+	if ($offset < $total) {
+		my $last = $offset + $limit - 1;
+		$last = $total - 1 if $last > $total - 1;
+		@page = @ordered[$offset .. $last];
+	}
+	$c->render(json => {
+		items => \@page,
+		total => $total,
+		albums => [ sort { $a->{'label'} cmp $b->{'label'} } values %albums ],
+		locked => ($permissive ? 0 : 1),
+		unlock => ($permissive ? ($c->param('unlock') || '') : ''),
+		sort => $sort,
+	});
 };
 
 get '/manager/gallery/scroll' => sub($c) {

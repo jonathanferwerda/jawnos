@@ -1,127 +1,82 @@
 <% use Mojo::JSON qw/encode_json decode_json/; %>
-<% use Mojo::IOLoop; %>
 <% no warnings 'uninitialized'; %>
 <% my $padlock_sighting = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || [];
 	@{$padlock_sighting} = grep { $_ eq 'gallery' } @{$padlock_sighting};
 %>
-<% my $ghome = {}; my $appts; my $archive_lookup; my $home_content = ''; if ($view eq 'home') { 
-	<% 
-	if ($settings->{'search'}) {
-		$appts = &subs::db_query('select * from appointments where (app like ? or file like ?) and file is not null and (type=? or type=?) order by timestamp desc',
-			'%' . $settings->{'search'} . '%', '%' . $settings->{'search'} . '%','image','video')->hashes;
-		$view = 'album';
-		my @temp_apps;
-		@temp_apps = map { $_->{'app'} } @{$appts};
-		foreach my $ta ( @temp_apps ) {
-			unless ( grep { $_ eq $ta } @{$apps} ) {
-				push @{$apps}, $ta;
-			}
-		}
-	}
-	else {
-		$appts = &subs::db_query('select * from appointments where file is not null and (type=? or type=?) order by timestamp desc','image','video')->hashes; 
-	}
-}	%>
-<div id="gallery" unlock="<%= $unlock %>" view="<%= $view %>" apps="<%= eval { return encode_json $apps } || [] %>" style="text-align:center;display:block;width:105%;max-height:100%;height:100%;background-color:black;">
-	<% if ($view ne 'photo') { %>
-		<input id="gallery_search" value="<%= $settings->{'search'} %>" style="float:left;" placeholder="Search"><br>
-	<% } %>
-
-	<% if ($view eq 'home') { %>
-		<div id="gallery_home" style="background-color:var(--panel);height: 100%; width:100%;overflow:scroll;">
-				<% foreach my $appt ( @{$appts} ) {
-					if (!$ghome->{$appt->{'app'}}) { $ghome->{$appt->{'app'}} = []; } else {  }
-					my $files = eval { return decode_json $appt->{'file'} } || [];
-
-					foreach my $f ( @{$files} ) {
-						# a sealed photo waits for this window's padlock
-						next if (!$permissive && ($f->{'f'} || '') =~ /\.enc$/i);
-						$f->{'type'} = $appt->{'type'} unless $f->{'type'};
-						$f->{'app'} = $appt->{'app'};
-						$f->{'app_uuid'} = $appt->{'uuid'};
-						$f->{'info'} = {} unless $f->{'info'};
-						if ((!$f->{'info'}->{'duration'} || $f->{'info'}->{'duration'} =~ /[A-Za-z]/gi) && $f->{'type'} eq 'video') {
-							$f->{'info'}->{'duration'} = $appt->{'duration'} / 1000;
-						}
-						# a tile whose photo has gone to the archive is shown from there
-						if (!-e $f->{'f'} && ($settings->{'archive'} || '') eq 'on') {
-							$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
-							my $archived = ($archive_lookup && $archive_lookup->{'locate'}) ? $archive_lookup->{'locate'}->($f->{'f'}) : undef;
-							if ($archived) {
-								$f->{'f'} = $archived->{'path'};
-								$f->{'remote_uuid'} = $archived->{'remote_uuid'};
-							}
-						}
-					}
-					push @{$ghome->{$appt->{'app'}}}, @{$files};
-				}
-				<% my @seen_and_sent; %>
-				<% foreach my $app ( sort keys %{$ghome} ) { %>
-					<% next if grep { $_ eq $app } @seen_and_sent; %>
-					<% next unless scalar @{$ghome->{$app}}; %>
-					<% push @seen_and_sent, $app; %>
-					<% my $aset = $asettings->{$app} || &subs::settings_grabber({ app => $app, settings => ['main_image','visible'] }); %>
-					<% next if $aset->{'visible'} ne 'checked' && $revealed == 0; %>
-
-					<% my $content = $c->render_to_string(
-						template => 'apps/gallery_home',
-						appts => $appts, 
-						aset => $aset,
-						app => $app,
-						ghome => $ghome,
-						settings => $settings,
-						asettings => $asettings,
-						permissive => $permissive,
-						pre_count => $count, 
-						load => 'all', 
-						first_count => 0
-					);
-					$home_content .= $content;
-					 %>
-				<% } %>
-			<%== $home_content %>
-			<% if (scalar @{$padlock_sighting} > 0) { %>
-				<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:40px;<% if ($permissive) { %>background-color:red;<% } %>">
-			<% } %>
-			<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
-		</div>
-	<% } elsif ($view eq 'album') { %>
-		<div id="gallery_album" style="display:inline-block;background-color:var(--panel);height:100%; width:100%;overflow:scroll;">
-			<%= include 'apps/gallery_album', appts => $appts, settings => $settings, asettings => $asettings, pre_count => $count, load => 'all', first_count => 0 %>
-			<% my $archive_status = &subs::setting_grabber({ app => 'gallery', setting => 'archive' }); %>
-			<img src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Archives" status="<%= $archive_status %>" class="hover tiny_thumb gallery gallery_archive_toggle" style="position:absolute;top:35px;right:120px;<% if ($archive_status eq 'on') { %>background-color:lightblue;<% } %>">
-			<% if ($settings->{'scroll_direction'} eq 'asc') { %>
-				<img src="<%= &subs::icon_for('/images/make believe/down.png') %>" hint="Ascending order" direction="asc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">
-			<% } else { %>
-				<img src="<%= &subs::icon_for('/images/make believe/up.png') %>" hint="Descending order" direction="desc" class="hover tiny_thumb gallery gallery_scroll_direction" style="position:absolute;top:35px;right:40px;">
-			<% } %>
-			<% if (scalar @{$padlock_sighting} > 0) { %>
-				<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($permissive) { %>background-color:red;<% } %>">
-			<% } %>
-			<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
-		</div>
-	<% } elsif ($view eq 'photo') { %>
-		<img class="images" id="main_image" style="height:100%;max-height:100%;top:60px;object-fit:contain;"></img>
-		<video class="images" loop autoplay id="main_video" style="display:none;height:100%;max-height:100%;object-fit:contain;"></video>
-		<img src="<%= &subs::icon_for('/images/studio/back.png') %>" hint="Previous" class="hover tiny_thumb image_control" direction="prev" style="position:absolute;left:0px;top:35px;">
-		<img src="<%= &subs::icon_for('/images/studio/forward.png') %>" hint="Next" class="hover tiny_thumb image_control" direction="next" style="position:absolute;left:40px;top:35px;">
-		<img src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Refresh" class="hover tiny_thumb image_renew" style="position:absolute;top:35px;left:80px;">
-		<img src="<%= &subs::icon_for('/images/studio/repeat.png') %>" hint="Repeat" class="hover tiny_thumb image_repeat repeat" style="position:absolute;top:35px;left:170px;">
-		<img src="<%= &subs::icon_for('/images/studio/shuffle.png') %>" hint="Shuffle" class="hover tiny_thumb image_shuffle shuffle" style="position:absolute;top:35px;left:125px;">
-		<img src="<%= &subs::icon_path('info', '/icons/lymeboard/I.png') %>" hint="File information" class="hover tiny_thumb gallery file_information_grabber" style="position:absolute;top:35px;left:220px;">
-		<img src="<%= &subs::icon_for('/images/make believe/download.png') %>" hint="Fetch home" class="hover tiny_thumb gallery image_fetch_home" style="position:absolute;top:35px;left:300px;">
-
-		<img class="hover little_thumb gallery main_image_selector"	app="" file="" style="position:absolute;top:35px;left:255px;" src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" hint="Set as main image">
-		<img src="<%= &subs::icon_for('/images/decipherable/handbook.png') %>" hint="Albums" class="hover tiny_thumb gallery gallery_home_album" style="position:absolute;top:35px;right:40px;">
-		<% if (scalar @{$padlock_sighting} > 0) { %>
-			<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover tiny_thumb gallery gallery_lock" style="position:absolute;top:35px;right:80px;<% if ($permissive) { %>background-color:red;<% } %>">
+<style>
+#gallery { display:flex; flex-direction:column; width:100%; height:100%; min-height:0; background:#0b0b0d; color:#eee; font-family:system-ui,-apple-system,sans-serif; overflow:hidden; }
+#gallery * { box-sizing:border-box; }
+#gallery_header { display:flex; align-items:center; gap:6px; padding:7px 8px; flex-wrap:wrap; background:#151519; border-bottom:1px solid #2a2a30; flex:0 0 auto; }
+#gallery_header .gallery_tab { font-size:13px; line-height:1; padding:8px 11px; border:1px solid #34343c; border-radius:8px; background:#1d1d23; color:#ddd; cursor:pointer; }
+#gallery_header .gallery_tab.active { background:#3a3a44; border-color:#5a5a68; color:#fff; }
+#gallery_header .gallery_lock { margin-left:auto; }
+#gallery_search { flex:1 1 120px; min-width:100px; font-size:14px; padding:8px 10px; border-radius:8px; border:1px solid #34343c; background:#101014; color:#eee; outline:none; }
+#gallery_search:focus { border-color:#6a6a7a; }
+#gallery_body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; position:relative; }
+#gallery_albums { display:grid; grid-template-columns:repeat(auto-fill,minmax(135px,1fr)); gap:10px; padding:10px; }
+.gallery_album_card { position:relative; border-radius:10px; overflow:hidden; background:#1a1a20; cursor:pointer; border:1px solid #26262d; }
+.gallery_album_card:hover { border-color:#4a4a56; }
+.gallery_album_card img { display:block; width:100%; aspect-ratio:1/1; object-fit:cover; background:#222; }
+.gallery_album_meta { padding:6px 8px; }
+.gallery_album_name { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gallery_album_count { font-size:11px; color:#9a9aa6; margin-top:2px; }
+#gallery_grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(104px,1fr)); gap:3px; padding:3px; }
+.gallery_tile { position:relative; aspect-ratio:1/1; overflow:hidden; background:#17171c; cursor:pointer; border-radius:3px; }
+.gallery_tile img { display:block; width:100%; height:100%; object-fit:cover; }
+.gallery_tile:hover img { opacity:.85; }
+.gallery_tile_badge { position:absolute; right:4px; bottom:4px; font-size:10px; letter-spacing:.04em; text-transform:uppercase; padding:2px 5px; border-radius:5px; background:#000a; color:#fff; }
+.gallery_day { grid-column:1/-1; padding:10px 4px 3px; font-size:12px; letter-spacing:.03em; color:#9a9aa6; text-transform:uppercase; }
+#gallery_empty { padding:40px 16px; text-align:center; color:#9a9aa6; font-size:14px; }
+#gallery_viewer { position:absolute; inset:0; z-index:60; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+#gallery_viewer_stage { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+#gallery_viewer_stage img, #gallery_viewer_stage video { max-width:100%; max-height:100%; object-fit:contain; display:block; }
+.gallery_viewer_nav { position:absolute; top:50%; transform:translateY(-50%); z-index:3; width:44px; height:64px; font-size:30px; line-height:1; border:0; border-radius:10px; background:#0008; color:#fff; cursor:pointer; }
+#gallery_viewer_prev { left:6px; }
+#gallery_viewer_next { right:6px; }
+#gallery_viewer_close { position:absolute; top:6px; right:6px; z-index:3; width:40px; height:40px; font-size:24px; border:0; border-radius:50%; background:#0008; color:#fff; cursor:pointer; }
+#gallery_viewer_bar { position:absolute; left:0; right:0; bottom:0; z-index:3; display:flex; align-items:center; gap:6px; padding:9px; flex-wrap:wrap; background:linear-gradient(transparent,#000d); }
+#gallery_viewer_label { flex:1 1 130px; min-width:100px; font-size:12px; color:#ddd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gallery_viewer_action { font-size:12px; padding:7px 9px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; cursor:pointer; }
+.gallery_viewer_action.armed { background:#7a1d1d; border-color:#b33; }
+#gallery_lock { position:absolute; inset:0; z-index:70; background:#0b0b0d; display:flex; align-items:center; justify-content:center; overflow:auto; }
+#gallery_lock .padlock_frame { position:relative !important; inset:auto !important; margin:20px; }
+</style>
+<div id="gallery" unlock="<%= $unlock %>" padlock="<%= scalar @{$padlock_sighting} ? 1 : 0 %>">
+	<div id="gallery_header">
+		<button type="button" id="gallery_home_tab" class="gallery_tab active" hint="Albums"><%= &subs::ui('Albums') %></button>
+		<button type="button" id="gallery_all_tab" class="gallery_tab" hint="All photos"><%= &subs::ui('All photos') %></button>
+		<input id="gallery_search" type="search" autocomplete="off" hint="Search" placeholder="<%= &subs::lang('common.search') %>">
+		<button type="button" id="gallery_sort" class="gallery_tab" hint="Newest first"><%= &subs::ui('Newest first') %></button>
+		<% if (scalar @{$padlock_sighting}) { %>
+			<button type="button" class="gallery_tab gallery_lock" hint="Lock"><%= &subs::ui('Lock') %></button>
 		<% } %>
-
-		<img src="<%= &subs::icon_path('home', '/images/decipherable/home.png') %>" hint="Home" toggled="<%= $settings->{'home_toggled'} %>" class="hover tiny_thumb gallery gallery_home_toggle" style="position:absolute;top:35px;right:0px;">
-	<% } elsif ($view eq 'padlock') { %>
-		<div id="gallery_padlock" style="width:100%;height:100%;max-height:100%;top:60px;object-fit:contain;">
-			<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="little_thumb" id="gallery_cancel_padlock" style="position:absolute;top:35px;right:5px;">
-			<%= include 'padlock', mode => 'gallery', fingerprint => 1 %>
+	</div>
+	<div id="gallery_body">
+		<div id="gallery_locked_note" style="display:none;padding:9px 12px;font-size:12px;color:#c9c9d2;background:#1a1a20;border-bottom:1px solid #2a2a30;">
+			<%= &subs::ui('Sealed photos stay hidden until the gallery is unlocked.') %>
+			<button type="button" class="gallery_tab gallery_lock" hint="Unlock" style="margin-left:8px;"><%= &subs::ui('Unlock') %></button>
 		</div>
-	<% } %>
+		<div id="gallery_albums"></div>
+		<div id="gallery_grid" style="display:none;"></div>
+		<div id="gallery_empty" style="display:none;"><%= &subs::ui('No photos to show.') %></div>
+	</div>
+	<div id="gallery_viewer" style="display:none;">
+		<button type="button" id="gallery_viewer_close" hint="Close">×</button>
+		<button type="button" id="gallery_viewer_prev" hint="Previous">‹</button>
+		<div id="gallery_viewer_stage"></div>
+		<button type="button" id="gallery_viewer_next" hint="Next">›</button>
+		<div id="gallery_viewer_bar">
+			<span id="gallery_viewer_label"></span>
+			<button type="button" class="gallery_viewer_action gallery_info" hint="File information"><%= &subs::ui('File information') %></button>
+			<button type="button" class="gallery_viewer_action gallery_main" hint="Set as main image"><%= &subs::ui('Set as main image') %></button>
+			<button type="button" class="gallery_viewer_action gallery_fetch" hint="Fetch home"><%= &subs::ui('Fetch home') %></button>
+			<button type="button" class="gallery_viewer_action gallery_delete" hint="Delete"><%= &subs::lang('common.delete') %></button>
+		</div>
+	</div>
+	<div id="gallery_lock" style="display:none;">
+		<button type="button" id="gallery_lock_close" hint="Close" style="position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;font-size:22px;border:0;border-radius:50%;background:#222;color:#eee;cursor:pointer;">×</button>
+		<%= include 'padlock', mode => 'gallery', fingerprint => 1 %>
+	</div>
+	<span id="gallery_info_anchor" class="gallery file_information_grabber" style="display:none;"></span>
+	<span hint="Oldest first" style="display:none;"></span>
 </div>
