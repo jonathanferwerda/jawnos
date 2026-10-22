@@ -105,7 +105,7 @@ get '/manager/music' => sub ($c) {
 		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
 		if ($rm->{'uuid'}) {
 			$c->param('remote_uuid' => $rm->{'uuid'});
-			$c->param('library_name' => ($rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'}));
+			$c->param('library_name' => &music_remote_label($rm));
 			$c->param('subprocess' => 'yes');
 			my $result = &Manager::remote_relay_request($c);
 			if ($result =~ /music/gi) {
@@ -538,6 +538,16 @@ sub music_search($data) {
 	return $crate;
 }
 
+# A peer's name for the library label. A Termux machine's own hostname is
+# 'localhost', which tells nobody which library they are on; its fqdn (or its
+# address) does.
+sub music_remote_label($rm) {
+	return '' unless $rm;
+	my $host = $rm->{'hostname'} || '';
+	$host = $rm->{'fqdn'} || $rm->{'ip'} || '' if $host eq '' || lc($host) eq 'localhost' || lc($host) eq 'me';
+	return $host || $rm->{'uuid'} || '';
+}
+
 # What the search bar should say the library is: this machine's own name for a
 # local library, or the host the window was relayed from for a remote one. The
 # caller passes library_name when it relays, because the page is then rendered
@@ -553,11 +563,8 @@ sub music_library_label($settings, $c) {
 	}
 	return &subs::ui('None') if $library eq 'none';
 	my $rm = &subs::db_query('select hostname,fqdn,ip from remote_machines where uuid=?', $library)->hashes->[0];
-	if ($rm) {
-		my $host = $rm->{'hostname'} || '';
-		$host = $rm->{'fqdn'} || $rm->{'ip'} || '' if $host eq '' || lc($host) eq 'localhost' || lc($host) eq 'me';
-		return $host if length $host;
-	}
+	my $host = &music_remote_label($rm);
+	return $host if length $host;
 	return $library;
 }
 
@@ -822,7 +829,7 @@ post '/music/search' => sub ($c) {
 		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
 		if ($rm->{'uuid'}) {
 			$c->param('remote_uuid' => $rm->{'uuid'});
-			$c->param('library_name' => ($rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'}));
+			$c->param('library_name' => &music_remote_label($rm));
 			$c->param('subprocess' => 'yes');
 			my $result = &Manager::remote_relay_request($c);
 			if ($result =~ /music/gi) {
