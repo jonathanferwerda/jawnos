@@ -59,7 +59,7 @@ our %topic = (
 		summary => 'Browse your photos and videos by album, in a grid, or one at a time.',
 		body => [
 			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
-			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home (bring a photo back from the archive) and Delete.',
+			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home and Delete. Fetch home appears only for a photo that lives on another machine: it brings that photo back to this one.',
 			'Which photos appear is decided by the apps that are marked visible. The search box finds photos by app or file name, and the sort button flips the order between newest and oldest first.',
 			'An album marked visible opens straight away, sealed photos and all. An album marked not-visible stays out of the grid until the gallery is unlocked at home: press **Lock** to open the padlock view and unlock it with this phone or computer\'s fingerprint, or with the recovery code.'
 		],

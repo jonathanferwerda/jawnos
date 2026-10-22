@@ -124,6 +124,8 @@ function galleryApplyChrome() {
 	$('#gallery_home_tab').toggleClass('active', gallery.view == 'albums');
 	$('#gallery_all_tab').toggleClass('active', gallery.view == 'grid' && !gallery.app);
 	$('#gallery_sort').text(gallery.sort == 'asc' ? jawnosT('Oldest first') : jawnosT('Newest first'));
+	var shut = !(gallery.unlock || '');
+	$('#gallery_lock_button').text(shut ? jawnosT('Unlock') : jawnosT('Lock')).attr('hint', shut ? 'Unlock' : 'Lock');
 	if ($('#gallery_search').val() != gallery.search) { $('#gallery_search').val(gallery.search); }
 	$('#gallery_locked_note').toggle((gallery.unlock || '') === '' && gallery.padlock == 1);
 }
@@ -182,7 +184,12 @@ function imageViewer(data) {
 }
 
 function galleryFetch(reset) {
-	if (gallery.loading) { return; }
+	if (gallery.loading) {
+		// a request is in flight: remember that another is wanted instead of
+		// dropping it (a Lock press right after opening would otherwise be lost)
+		gallery.queued = reset ? 1 : (gallery.queued || 0);
+		return;
+	}
 	if (reset) {
 		gallery.offset = 0;
 		gallery.items = [];
@@ -232,10 +239,20 @@ function galleryFetch(reset) {
 				galleryTargetUuid = '';
 				if (chosen > -1) { galleryOpenViewer(chosen); }
 			}
+			if (gallery.queued) {
+				var queued = gallery.queued;
+				gallery.queued = 0;
+				galleryFetch(queued === 1);
+			}
 		},
 		error: function() {
 			gallery.loading = false;
 			$('#gallery_body').css('cursor', '');
+			if (gallery.queued) {
+				var queued = gallery.queued;
+				gallery.queued = 0;
+				galleryFetch(queued === 1);
+			}
 		}
 	});
 }
@@ -304,6 +321,9 @@ function galleryOpenViewer(index) {
 	$('#gallery_viewer_label').text((item.label || item.app) + ' · ' + galleryDay(item.server_time) + ' · ' + item.name);
 	$('.gallery_delete').removeClass('armed').text(jawnosT('Delete'));
 	$('.gallery_main').removeClass('armed').text(jawnosT('Set as main image'));
+	// Fetch home is the archive's way back: it only means anything for a photo
+	// that lives on another machine. A local photo hid nothing to fetch.
+	$('.gallery_fetch').toggle(!!item.remote_uuid);
 	$('#gallery_viewer').show();
 	$('#gallery_body').css('overflow', 'hidden');
 }
@@ -472,10 +492,18 @@ $(document).on('click', '.gallery_tile', function() {
 });
 
 $(document).on('click', '.gallery_lock', function() {
-	if (!$('#gallery').attr('unlock')) {
-		$('#gallery_lock').show();
-		if (typeof padlockAskPhone === 'function') { padlockAskPhone('gallery'); }
+	// One button, two directions: shut, it asks for the print; open, it closes
+	// the album that was unlocked and refetches without the token.
+	if ($('#gallery').attr('unlock')) {
+		galleryUnlockRemember('');
+		$('#gallery').attr('unlock', '');
+		gallery.unlock = '';
+		$('#gallery_lock').hide();
+		galleryFetch(true);
+		return;
 	}
+	$('#gallery_lock').show();
+	if (typeof padlockAskPhone === 'function') { padlockAskPhone('gallery'); }
 });
 
 $(document).on('click', '#gallery_lock_close', function() {

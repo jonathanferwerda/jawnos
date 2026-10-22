@@ -48,7 +48,7 @@
 		<input id="gallery_search" type="search" autocomplete="off" hint="Search" placeholder="<%= &subs::lang('common.search') %>">
 		<button type="button" id="gallery_sort" class="gallery_tab" hint="Newest first"><%= &subs::ui('Newest first') %></button>
 		<% if (scalar @{$padlock_sighting}) { %>
-			<button type="button" class="gallery_tab gallery_lock" hint="Lock"><%= &subs::ui('Lock') %></button>
+		<button type="button" id="gallery_lock_button" class="gallery_tab gallery_lock" hint="Unlock"><%= &subs::ui('Unlock') %></button>
 		<% } %>
 	</div>
 	<div id="gallery_body">
@@ -78,5 +78,8 @@
 		<%= include 'padlock', mode => 'gallery', fingerprint => 1 %>
 	</div>
 	<span id="gallery_info_anchor" class="gallery file_information_grabber" style="display:none;"></span>
+	<%# the lock button's label and hint swap with the padlock; the auditor reads
+	    the template, so both names live here the way the sort button's do %>
+	<span hint="Lock" style="display:none;"></span>
 	<span hint="Oldest first" style="display:none;"></span>
 </div>
