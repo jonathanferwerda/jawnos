@@ -8082,11 +8082,26 @@ sub sync_plan {
 		# catches new rows, and a migration (full=1) or the nightly pass can
 		# reconcile the few old ones later. 500 rows is a guard, not a rule.
 		my $small = 500;
+		# The peer's rows above our newest are a clean forward delta only when they
+		# account for the whole difference. The handshake's `above` counts them at
+		# the cut this machine sent, so what is left (total minus above) is what the
+		# peer holds at or below our newest. Equal to ours means the delta is the
+		# whole story; otherwise an old row is hiding under the watermark and only
+		# a band walk can name it. Without `above` the watermark keeps its old
+		# authority.
+		my $above_count = (ref $above->{$t} eq 'HASH') ? ($above->{$t}->{'count'} || 0) : undef;
+		my $above_sum = (ref $above->{$t} eq 'HASH') ? ($above->{$t}->{'sum'} || 0) : undef;
+		my $delta_whole = 0;
+		if ($bm > $am) {
+			$delta_whole = (!defined $above_count || (($bc - $above_count) == $ac && ($bs - $above_sum) == $as)) ? 1 : 0;
+		}
 		# Watermark first: anything newer than our newest row is a forward delta,
 		# whatever the handshake's above-count says. The count is advisory and can
 		# be zero while the peer plainly holds a newer row.
 		if ($bm > $am) {
-			$since = $am;
+			# A delta that leaves an old row behind is read by band instead, so the
+			# newer rows and the missed one arrive in the same pull.
+			$since = ($bands && !$delta_whole) ? 0 : $am;
 		}
 		# A peer that can answer a band map is asked to localise whatever the
 		# watermark cannot name - including the handful of old rows the small-gap
