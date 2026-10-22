@@ -1,1 +1,29 @@
-<span style="color:yellow" class="terminal_error"><span class="time" timestamp="<%= $err->{'timestamp'} %>"> </span><%= $whoami %>@<%= $hostname %> <%= $err->{'code'} %>: <%= $err->{'msg'} %></span><br>
+<%
+	my $msg = defined $err->{'msg'} ? $err->{'msg'} : '';
+	# The server joins a path and a message with <br>; the reader shows them as
+	# two lines rather than printing the tag.
+	$msg =~ s/<br\s*\/?>/\n/gi;
+	my $full = $msg;
+	my $trimmed = length($msg) > 1400;
+	my $preview = $trimmed ? substr($msg, 0, 1400) : $msg;
+	my $ts = $err->{'timestamp'} // '';
+	my $when = '';
+	if ($ts =~ /^\d+$/) {
+		my @t = localtime(int($ts / 1000));
+		$when = sprintf('%02d:%02d:%02d', $t[2], $t[1], $t[0]);
+	}
+%>
+<div class="terminal_entry terminal_entry_error" data-ts="<%= $ts %>">
+	<div class="terminal_entry_head">
+		<span class="terminal_entry_time" data-ts="<%= $ts %>"><%= $when %></span>
+		<span class="terminal_entry_code"><%= $err->{'code'} // '' %></span>
+		<% if ($whoami) { %><span class="terminal_entry_who"><%= $whoami %>@<%= $hostname %></span><% } %>
+	</div>
+	<div class="terminal_entry_msg"><%= $preview %><% if ($trimmed) { %>&#8230;<% } %></div>
+	<% if ($trimmed) { %>
+		<details class="terminal_entry_more">
+			<summary><%= &subs::ui('Show the full message') %></summary>
+			<div class="terminal_entry_msg"><%= $full %></div>
+		</details>
+	<% } %>
+</div>

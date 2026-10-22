@@ -296,7 +296,7 @@ function heartbeatSend(app) {
 					type: 'POST',
 					data: { errors: errors },
 					success: function(response) {
-						errorInto = [];
+						errorInfo = [];
 					}
 				});
 			}
@@ -546,6 +546,11 @@ function wsMessageHandler(event) {
 			sessionStorage.setItem('jawnos_revision', data['revision']);
 			jawnosRevisionArrived(data['revision_parts'], data['version'], rv);
 		}
+		// The Terminal toolbar names the machine its shell is running on, and a
+		// connect or a dropped ssh link changes that without re-rendering anything.
+		if (data['terminal_shell'] && typeof terminalShellStatus === 'function') {
+			terminalShellStatus(data['terminal_shell']);
+		}
 		var seenWs = $.grep(seenWsMessages, function(t,i) { return i.uuid == data.uuid });
 		if (seenWs.length > 0) {
 			return;
@@ -643,23 +648,24 @@ function wsMessageHandler(event) {
 		}
 		else if ( data['console'] ) {
 			if (data['view'] == 'errors') {
-				var tv = $('#terminal_error_view');
-				tv.append('<span class="terminal_error" style="color:blue;"><b>' + data['whoami'] + '@' + data['hostname'] + ':</b></span> ' + data['console']['code'] + ' ' + data['console']['msg'] + '<br>');
-				tv.scrollTop(tv.height() * 4000);
+				if (typeof terminalAppendError === 'function') { terminalAppendError(data); }
+				else {
+					var tv = $('#terminal_error_view');
+					tv.append('<span class="terminal_error" style="color:blue;"><b>' + syncEscape(data['whoami']) + '@' + syncEscape(data['hostname']) + ':</b></span> ' + syncEscape(data['console']['code']) + ' ' + syncEscape(data['console']['msg']) + '<br>');
+					tv.scrollTop(tv.height() * 4000);
+				}
 			}
 			else if (data['view'] == 'log') {
-				var tv = $('#terminal_log_view');
-				tv.append('<span class="terminal_log" style="color:blue;"><b>' + data['whoami'] + '@' + data['hostname'] + ':</b></span> ' + data['console']['msg'] + '<br>');
-				tv.scrollTop(tv.height() * 4000);
+				if (typeof terminalAppendLog === 'function') { terminalAppendLog(data); }
+				else {
+					var tv = $('#terminal_log_view');
+					tv.append('<span class="terminal_log" style="color:blue;"><b>' + syncEscape(data['whoami']) + '@' + syncEscape(data['hostname']) + ':</b></span> ' + syncEscape(data['console']['msg']) + '<br>');
+					tv.scrollTop(tv.height() * 4000);
+				}
 			}
 			else {
-				var returns = eval(data['console']);
-				if (!returns instanceof jQuery && (Array.isArray(returns) || Object.keys(returns).length > 0)) {
-					returns = JSON.stringify(returns);
-				}
-			
-				var tv = $('#terminal_view');
-				tv.append('<span style="color:blue;"><b>' + data['whoami'] + '@' + data['hostname'] + ':</b></span> ' + data['console'] + '<br>' + returns + '<br>');
+				var tv = $('#terminal_view .terminal_entries');
+				tv.append('<div class="terminal_entry terminal_entry_command"><div class="terminal_entry_head"><span style="color:blue;"><b>' + syncEscape(data['whoami']) + '@' + syncEscape(data['hostname']) + ':</b></span></div><div class="terminal_entry_msg">' + syncEscape(data['console']) + '</div></div>');
 				tv.scrollTop(tv.height() * 4000);
 				appointment_chron()
 			}

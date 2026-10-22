@@ -1,42 +1,699 @@
-<div id="terminal" style="background-color:black;opacity:.8;width:100%;height:100%;position:relative;">
-	<div class="terminal_view" view="interactive_terminal" id="terminal_interactive" tabindex=0 style="<% if ($settings->{'view'} ne 'interactive_terminal') { %>display:none;<% } %>position:absolute;overflow:scroll;font-size:20px;color:white;background-color:black;height: 85%;width:98%; max-height:100%;">
+<style>
+	/* ---- Terminal ------------------------------------------------------------
+	   The canvas is a terminal: dark in either theme, monospace, no chrome in
+	   the way. The frame and the toolbar use the app's own theme variables, so
+	   the window still belongs to the desk it sits on. */
+	#terminal.terminal_app {
+		--term_bg: #0b0e14;
+		--term_bg_soft: #121722;
+		--term_ink: #d7dae0;
+		--term_dim: #8b93a1;
+		--term_accent: #5af78e;
+		--term_red: #ff6b6b;
+		--term_amber: #f3c969;
+		--term_line: #232a38;
+		display: flex;
+		flex-direction: column;
+		position: relative;
+		width: 100%;
+		height: 100%;
+		min-width: 0;
+		min-height: 0;
+		background: var(--term_bg);
+		background-image: none !important;
+		color: var(--term_ink);
+		font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace;
+		overflow: hidden;
+	}
+	#terminal.terminal_app .terminal_views {
+		position: relative;
+		flex: 1 1 auto;
+		min-height: 0;
+		min-width: 0;
+		background: var(--term_bg);
+		background-image: none !important;
+	}
+	#terminal.terminal_app .terminal_view {
+		position: absolute;
+		inset: 0;
+		min-height: 0;
+	}
+	/* ---- the shell --------------------------------------------------------- */
+	#terminal.terminal_app .terminal_shell_view {
+		display: flex;
+		flex-direction: column;
+		padding: 8px 10px;
+		background: var(--term_bg);
+		color: var(--term_ink);
+		outline: none;
+		overflow: hidden;
+	}
+	#terminal.terminal_app .terminal_screen {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow: hidden;
+		white-space: pre;
+		font-size: var(--terminal_font, 15px);
+		line-height: 1.32;
+		letter-spacing: 0;
+		tab-size: 8;
+		cursor: text;
+	}
+	#terminal.terminal_app .term-line {
+		white-space: pre;
+		height: var(--term-line-height, 1.32em);
+		line-height: var(--term-line-height, 1.32em);
+	}
+	#terminal.terminal_app .term-cursor {
+		background: var(--term_ink);
+		color: var(--term_bg);
+		border-radius: 1px;
+		animation: terminal_cursor_blink 1.1s steps(1) infinite;
+	}
+	#terminal.terminal_app.term_unfocused .term-cursor { animation: none; opacity: .55; }
+	@keyframes terminal_cursor_blink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0; } }
+	#terminal.terminal_app .terminal_keyboard {
+		position: absolute;
+		left: 8px;
+		bottom: 4px;
+		width: 2px;
+		height: 2px;
+		padding: 0;
+		margin: 0;
+		border: 0;
+		opacity: 0;
+		background: transparent;
+		color: transparent;
+		resize: none;
+		overflow: hidden;
+		z-index: 0;
+		font-size: 16px;
+	}
+	#terminal.terminal_app .terminal_jump {
+		position: absolute;
+		right: 14px;
+		bottom: 12px;
+		display: none;
+		align-items: center;
+		gap: 4px;
+		padding: 4px 10px;
+		border: 1px solid var(--term_line);
+		border-radius: 999px;
+		background: var(--term_bg_soft);
+		color: var(--term_ink);
+		font: inherit;
+		font-size: 12px;
+		cursor: pointer;
+		z-index: 3;
+	}
+	#terminal.terminal_app .terminal_jump[data-show="yes"] { display: inline-flex; }
+	/* ---- the command, error and log readers -------------------------------- */
+	#terminal.terminal_app .terminal_list_view {
+		display: flex;
+		flex-direction: column;
+		background: var(--window, var(--panel));
+		color: var(--ink);
+		font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace;
+	}
+	#terminal.terminal_app .terminal_list_head {
+		position: sticky;
+		top: 0;
+		z-index: 4;
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 10px;
+		background: var(--panel-2);
+		color: var(--ink);
+		border-bottom: 1px solid var(--line);
+		font-size: 13px;
+	}
+	#terminal.terminal_app .terminal_list_title { display: flex; align-items: center; gap: 6px; font-weight: 700; }
+	#terminal.terminal_app .terminal_prompt {
+		display: inline-block;
+		padding: 1px 7px;
+		border-radius: 4px;
+		background: var(--term_amber);
+		color: #16181d;
+		font-size: 11px;
+		font-weight: 800;
+		letter-spacing: .02em;
+	}
+	#terminal.terminal_app .terminal_badge {
+		display: inline-block;
+		min-width: 18px;
+		padding: 0 6px;
+		border-radius: 999px;
+		background: var(--panel);
+		border: 1px solid var(--line);
+		color: var(--ink-muted);
+		font-size: 11px;
+		line-height: 17px;
+		text-align: center;
+	}
+	#terminal.terminal_app .terminal_clear {
+		margin-left: auto;
+		flex: 0 0 auto;
+		padding: 2px 12px;
+		min-height: 24px;
+		height: 24px;
+		font-size: 12px;
+		border-width: 1px !important;
+		border-color: var(--line);
+		background: var(--panel);
+		color: var(--ink);
+		cursor: pointer;
+	}
+	#terminal.terminal_app .terminal_clear:hover { background: var(--panel-2); }
+	#terminal.terminal_app .terminal_entries {
+		flex: 1 1 auto;
+		min-height: 0;
+		overflow: auto;
+		padding: 8px 10px 14px;
+		scrollbar-width: thin;
+	}
+	#terminal.terminal_app .terminal_entry {
+		display: block;
+		margin: 0 0 7px;
+		padding: 7px 10px;
+		border: 1px solid var(--line);
+		border-left: 4px solid var(--line);
+		border-radius: 8px;
+		background: var(--panel-2);
+		font-size: 13px;
+		line-height: 1.45;
+	}
+	#terminal.terminal_app .terminal_entry_error { border-left-color: var(--term_red); }
+	#terminal.terminal_app .terminal_entry_log { border-left-color: #2f9e66; }
+	#terminal.terminal_app .terminal_entry_command { border-left-color: #4b7bec; }
+	#terminal.terminal_app .terminal_entry_head {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 4px 9px;
+		margin-bottom: 3px;
+		color: var(--ink-muted);
+		font-size: 11px;
+	}
+	#terminal.terminal_app .terminal_entry_time { font-variant-numeric: tabular-nums; }
+	#terminal.terminal_app .terminal_entry_code {
+		font-weight: 800;
+		color: var(--ink);
+	}
+	#terminal.terminal_app .terminal_entry_who { opacity: .8; }
+	#terminal.terminal_app .terminal_entry_msg {
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+		color: var(--ink);
+		font-size: 13px;
+	}
+	#terminal.terminal_app .terminal_entry_more { margin-top: 4px; }
+	#terminal.terminal_app .terminal_entry_more summary {
+		cursor: pointer;
+		font-size: 11px;
+		color: var(--ink-muted);
+	}
+	#terminal.terminal_app .terminal_entry_more summary:hover { color: var(--ink); }
+	#terminal.terminal_app .terminal_entry_more .terminal_entry_msg {
+		margin-top: 4px;
+		max-height: 40vh;
+		overflow: auto;
+		padding: 6px 8px;
+		border: 1px solid var(--line);
+		border-radius: 6px;
+		background: var(--panel);
+		font-size: 12px;
+	}
+	#terminal.terminal_app .terminal_entry_prompt { color: var(--ink-muted); }
+	#terminal.terminal_app .terminal_empty {
+		padding: 18px 10px;
+		color: var(--ink-muted);
+		font-size: 13px;
+		font-style: italic;
+	}
+	#terminal.terminal_app .terminal_command_row {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 10px;
+		border-top: 1px solid var(--line);
+		background: var(--panel-2);
+	}
+	#terminal.terminal_app .terminal_command_row .terminal_console {
+		flex: 1 1 auto;
+		min-width: 0;
+		height: 30px;
+		min-height: 30px;
+		padding: 2px 8px;
+		border: 1px solid var(--line);
+		border-width: 1px !important;
+		border-radius: 6px;
+		background: var(--panel);
+		color: var(--ink);
+		font: inherit;
+		font-size: 14px;
+	}
+	#terminal.terminal_app .terminal_command_prompt { white-space: nowrap; color: var(--term_accent); font-size: 13px; }
+	/* ---- the toolbar ------------------------------------------------------- */
+	#terminal.terminal_app .terminal_toolbar {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		position: relative;
+		z-index: 10;
+		min-height: 44px;
+		padding: 4px 8px;
+		background: var(--panel-2);
+		color: var(--ink);
+		border-top: 1px solid var(--line);
+		box-sizing: border-box;
+	}
+	#terminal.terminal_app .terminal_status {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+		max-width: 34%;
+		font-size: 12px;
+		color: var(--ink-muted);
+	}
+	#terminal.terminal_app #terminal_shell_status {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Liberation Mono", Menlo, Consolas, monospace;
+	}
+	#terminal.terminal_app .terminal_dot {
+		flex: 0 0 auto;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: #9aa1ad;
+		box-shadow: 0 0 0 2px var(--panel);
+	}
+	#terminal.terminal_app .terminal_dot.local { background: #2f9e66; }
+	#terminal.terminal_app .terminal_dot.remote { background: #4b7bec; }
+	#terminal.terminal_app .terminal_dot.connecting { background: var(--term_amber); animation: terminal_pulse 1s ease-in-out infinite; }
+	#terminal.terminal_app .terminal_dot.ended { background: var(--term_red); }
+	@keyframes terminal_pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+	#terminal.terminal_app .terminal_toolbar_buttons {
+		display: flex;
+		align-items: center;
+		gap: 3px;
+		flex: 1 1 auto;
+		min-width: 0;
+		overflow-x: auto;
+		scrollbar-width: none;
+	}
+	#terminal.terminal_app .terminal_toolbar_buttons::-webkit-scrollbar { display: none; }
+	#terminal.terminal_app .terminal_view_select {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+		flex: 0 0 auto;
+		height: 32px;
+		min-height: 32px;
+		padding: 2px 9px;
+		border: 1px solid transparent;
+		border-width: 1px !important;
+		border-radius: 7px;
+		background: transparent;
+		color: var(--ink-muted);
+		font: inherit;
+		font-size: 12px;
+		cursor: pointer;
+	}
+	#terminal.terminal_app .terminal_view_select img { height: 18px; width: 18px; object-fit: contain; border: 0; background: transparent; }
+	#terminal.terminal_app .terminal_view_select:hover { background: var(--panel); color: var(--ink); }
+	#terminal.terminal_app .terminal_view_select[selected] {
+		background: var(--panel);
+		border-color: var(--line);
+		color: var(--ink);
+		font-weight: 700;
+	}
+	#terminal.terminal_app .terminal_view_select[selected]::after {
+		content: "";
+		width: 5px;
+		height: 5px;
+		margin-left: 1px;
+		border-radius: 50%;
+		background: var(--term_accent);
+	}
+	#terminal.terminal_app .terminal_toolbar_actions { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+	#terminal.terminal_app .terminal_tool {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		height: 32px;
+		min-height: 32px;
+		min-width: 32px;
+		padding: 0 6px;
+		border: 1px solid transparent;
+		border-width: 1px !important;
+		border-radius: 7px;
+		background: transparent;
+		color: var(--ink-muted);
+		font: inherit;
+		font-size: 14px;
+		cursor: pointer;
+	}
+	#terminal.terminal_app .terminal_tool:hover { background: var(--panel); color: var(--ink); }
+	#terminal.terminal_app .terminal_tool img { height: 18px; width: 18px; border: 0; background: transparent; object-fit: contain; }
+	/* ---- the configuration panel ------------------------------------------ */
+	#terminal.terminal_app .terminal_configure {
+		position: absolute;
+		left: 8px;
+		right: 8px;
+		bottom: 52px;
+		z-index: 30;
+		display: none;
+		max-height: calc(100% - 64px);
+		overflow: auto;
+		background: var(--panel);
+		color: var(--ink);
+		border: 1px solid var(--line);
+		border-radius: 10px;
+		box-shadow: 0 14px 44px rgba(0,0,0,.38);
+		font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	}
+	#terminal.terminal_app .terminal_config_head {
+		position: sticky;
+		top: 0;
+		z-index: 2;
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		padding: 10px 12px;
+		background: var(--panel-2);
+		border-bottom: 1px solid var(--line);
+	}
+	#terminal.terminal_app .terminal_config_head b { font-size: 14px; }
+	#terminal.terminal_app .terminal_config_sub { flex: 1 1 auto; min-width: 0; font-size: 12px; color: var(--ink-muted); }
+	#terminal.terminal_app .terminal_config_close {
+		flex: 0 0 auto;
+		height: 24px;
+		min-height: 24px;
+		padding: 0 8px;
+		border-width: 1px !important;
+		border-color: var(--line);
+		background: var(--panel);
+		color: var(--ink);
+		font-size: 12px;
+		cursor: pointer;
+	}
+	#terminal.terminal_app .terminal_config_body { padding: 10px 12px 12px; }
+	#terminal.terminal_app .terminal_config_section { padding: 8px 0; border-bottom: 1px solid var(--line); }
+	#terminal.terminal_app .terminal_config_section:last-child { border-bottom: 0; }
+	#terminal.terminal_app .terminal_config_title {
+		margin-bottom: 6px;
+		font-size: 11px;
+		font-weight: 800;
+		letter-spacing: .06em;
+		text-transform: uppercase;
+		color: var(--ink-muted);
+	}
+	#terminal.terminal_app .terminal_local_connect {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 10px;
+		border: 1px solid var(--line);
+		border-width: 1px !important;
+		border-radius: 7px;
+		background: var(--panel-2);
+		color: var(--ink);
+		font: inherit;
+		font-size: 13px;
+		text-align: left;
+		cursor: pointer;
+	}
+	#terminal.terminal_app .terminal_local_connect:hover { background: var(--panel); }
+	#terminal.terminal_app .terminal_local_connect.current { border-color: var(--term_accent); }
+	#terminal.terminal_app .terminal_remote_row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		flex-wrap: wrap;
+		padding: 6px 0;
+	}
+	#terminal.terminal_app .terminal_remote_identity {
+		display: flex;
+		flex-direction: column;
+		min-width: 130px;
+		flex: 1 1 150px;
+	}
+	#terminal.terminal_app .terminal_remote_name { font-size: 13px; font-weight: 700; }
+	#terminal.terminal_app .terminal_remote_addr { font-size: 11px; color: var(--ink-muted); font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
+	#terminal.terminal_app .terminal_remote_field { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--ink-muted); }
+	#terminal.terminal_app .terminal_remote_field span { white-space: nowrap; }
+	#terminal.terminal_app .terminal_remote_field input {
+		width: 84px;
+		height: 28px;
+		min-height: 28px;
+		padding: 1px 6px;
+		border: 1px solid var(--line);
+		border-width: 1px !important;
+		border-radius: 6px;
+		background: var(--panel);
+		color: var(--ink);
+		font: inherit;
+		font-size: 13px;
+	}
+	#terminal.terminal_app .terminal_remote_field.port input { width: 64px; }
+	#terminal.terminal_app .terminal_remote_connect {
+		height: 28px;
+		min-height: 28px;
+		padding: 0 12px;
+		border-width: 1px !important;
+		border-color: var(--line);
+		background: var(--panel-2);
+		color: var(--ink);
+		font-size: 12px;
+		font-weight: 700;
+		cursor: pointer;
+	}
+	#terminal.terminal_app .terminal_remote_connect:hover { background: var(--term_accent); color: #16181d; }
+	#terminal.terminal_app .terminal_config_hint { margin-top: 6px; font-size: 11px; color: var(--ink-muted); }
+	#terminal.terminal_app .terminal_config_type { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+	#terminal.terminal_app .terminal_font_button {
+		height: 26px;
+		min-height: 26px;
+		min-width: 34px;
+		padding: 0 8px;
+		border-width: 1px !important;
+		border-color: var(--line);
+		background: var(--panel-2);
+		color: var(--ink);
+		font-size: 13px;
+		cursor: pointer;
+	}
+	#terminal.terminal_app .terminal_font_size { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; color: var(--ink-muted); }
+	/* Narrow windows keep the icons and drop the words, so every control stays
+	   reachable instead of the toolbar overflowing. */
+	@media (max-width: 560px) {
+		#terminal.terminal_app .terminal_view_select span { display: none; }
+		#terminal.terminal_app .terminal_view_select { padding: 2px 7px; }
+		#terminal.terminal_app .terminal_status { max-width: 30%; }
+		#terminal.terminal_app .terminal_view_select[selected]::after { display: none; }
+	}
+</style>
+
+<%
+	my $active_view = $settings->{'view'} || 'interactive_terminal';
+	my $error_count = defined $c->stash('errors_total') ? $c->stash('errors_total') : scalar(@{$settings->{'errors'} || []});
+	my $log_count = defined $c->stash('logs_total') ? $c->stash('logs_total') : scalar(@{$settings->{'log'} || []});
+	my $errors_shown = scalar(@{$settings->{'errors'} || []});
+	my $logs_shown = scalar(@{$settings->{'log'} || []});
+	my $active_shell = $current || { user => $whoami, host => $hostname, label => $whoami . '@' . $hostname, local => 1 };
+	my $me = $local || { user => $whoami, host => $hostname, label => $whoami . '@' . $hostname, local => 1 };
+	my $machine_list = $remotes || [];
+%>
+
+<div id="terminal" class="terminal_app" data-user="<%= $whoami %>" data-host="<%= $hostname %>"
+	data-shell-label="<%= $active_shell->{'label'} %>" style="--terminal_font:<%= $font_size || 15 %>px;">
+
+	<div class="terminal_views">
+
+		<div class="terminal_view terminal_shell_view" view="interactive_terminal" id="terminal_interactive"
+			tabindex="0" role="application" aria-label="<%= &subs::ui('Terminal shell') %>"
+			<% if ($active_view ne 'interactive_terminal') { %>style="display:none;"<% } %>>
+			<div class="terminal_screen" id="terminal_screen" aria-live="polite"></div>
+			<textarea id="terminal_keyboard" class="terminal_keyboard" rows="1" cols="1"
+				autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+				aria-label="<%= &subs::ui('Keyboard input for the terminal') %>"></textarea>
+			<button type="button" id="terminal_jump" class="terminal_jump" data-show="no"
+				hint="<%= &subs::ui('Scroll to the newest output') %>">&#8595; <%= &subs::ui('Newest') %></button>
+		</div>
+
+		<div class="terminal_view terminal_list_view" view="terminal" id="terminal_view"
+			<% if ($active_view ne 'terminal') { %>style="display:none;"<% } %>>
+			<div class="terminal_list_head">
+				<span class="terminal_list_title"><span class="terminal_prompt">President:</span> <%= &subs::ui('Commands') %></span>
+			</div>
+			<div class="terminal_entries" id="terminal_command_output">
+				<div class="terminal_entry terminal_entry_command">
+					<div class="terminal_entry_msg"><%= &subs::ui('Commands run on both the server and this browser. Handle with care.') %></div>
+				</div>
+			</div>
+			<div class="terminal_command_row">
+				<span class="terminal_command_prompt" id="terminal_console_prompt"><%= $whoami %>@<%= $hostname %> $</span>
+				<input id="terminal_console" class="terminal_console" type="text"
+					placeholder="<%= &subs::ui('Type a command and press Enter') %>"
+					autocomplete="off" spellcheck="false" aria-label="<%= &subs::ui('Command') %>">
+			</div>
+		</div>
+
+		<div class="terminal_view terminal_list_view" view="errors" id="terminal_error_view"
+			<% if ($active_view ne 'errors') { %>style="display:none;"<% } %>>
+			<div class="terminal_list_head">
+				<span class="terminal_list_title"><span class="terminal_prompt">President:</span> <%= &subs::ui('Error log') %></span>
+				<span class="terminal_badge" id="terminal_error_count"><%= $error_count %></span>
+				<% if ($error_count > $errors_shown) { %><span class="terminal_config_hint"><%= &subs::ui('Newest') %> <%= $errors_shown %></span><% } %>
+				<button type="button" class="terminal_clear" data-view="errors"
+					hint="<%= &subs::ui('Clear the error log') %>"><%= &subs::ui('Clear') %></button>
+			</div>
+			<div class="terminal_entries" id="terminal_error_entries"
+				data-empty="<%= &subs::ui('No errors have been recorded.') %>">
+				<% if ($error_count) { %>
+					<% foreach my $err ( @{$settings->{'errors'}} ) { %><%= include 'terminal/error', err => $err, whoami => $whoami, hostname => $hostname %><% } %>
+				<% } else { %>
+					<div class="terminal_empty"><%= &subs::ui('No errors have been recorded.') %></div>
+				<% } %>
+			</div>
+		</div>
+
+		<div class="terminal_view terminal_list_view" view="log" id="terminal_log_view"
+			<% if ($active_view ne 'log') { %>style="display:none;"<% } %>>
+			<div class="terminal_list_head">
+				<span class="terminal_list_title"><span class="terminal_prompt">President:</span> <%= &subs::ui('Log') %></span>
+				<span class="terminal_badge" id="terminal_log_count"><%= $log_count %></span>
+				<% if ($log_count > $logs_shown) { %><span class="terminal_config_hint"><%= &subs::ui('Newest') %> <%= $logs_shown %></span><% } %>
+				<button type="button" class="terminal_clear" data-view="log"
+					hint="<%= &subs::ui('Clear the log') %>"><%= &subs::ui('Clear') %></button>
+			</div>
+			<div class="terminal_entries" id="terminal_log_entries"
+				data-empty="<%= &subs::ui('Nothing has been logged.') %>">
+				<% if ($log_count) { %>
+					<% foreach my $log ( @{$settings->{'log'}} ) { %><%= include 'terminal/log', 'log' => $log, whoami => $whoami, hostname => $hostname %><% } %>
+				<% } else { %>
+					<div class="terminal_empty"><%= &subs::ui('Nothing has been logged.') %></div>
+				<% } %>
+			</div>
+		</div>
 
 	</div>
-	<div class="terminal_view" view="terminal" id="terminal_view" style="<% if ($settings->{'view'} ne 'terminal') { %>display:none;<% } %>position:absolute;overflow:scroll;font-size:20px;color:white;background-color:black;height: 85%;width:100%; max-height:100%;">
-		<span style="color:black;background-color:yellow;">President: </span>Commands</span>
+
+	<div id="terminal_configure" class="terminal_configure" role="dialog" aria-label="<%= &subs::ui('Terminal configuration') %>">
+		<div class="terminal_config_head">
+			<b><%= &subs::ui('Terminals') %></b>
+			<span class="terminal_config_sub"><%= &subs::ui('Choose the machine this shell runs on') %></span>
+			<button type="button" class="terminal_config_close" hint="<%= &subs::ui('Close') %>">&#10005;</button>
+		</div>
+		<div class="terminal_config_body">
+			<div class="terminal_config_section">
+				<div class="terminal_config_title"><%= &subs::ui('This machine') %></div>
+				<button type="button" class="terminal_local_connect terminal_shell_connect <%= $active_shell->{'local'} ? 'current' : '' %>"
+					data-host="" data-user="" data-port=""
+					hint="<%= &subs::ui('Run the shell on this machine') %>">
+					<span class="terminal_dot <%= $active_shell->{'local'} ? 'local' : '' %>"></span>
+					<span><%= $me->{'label'} %></span>
+				</button>
+			</div>
+
+			<div class="terminal_config_section">
+				<div class="terminal_config_title"><%= &subs::ui('Remote machines') %></div>
+				<% if (!scalar(@{$machine_list})) { %>
+					<div class="terminal_empty"><%= &subs::ui('No other machines are linked yet. Link one under Configure, Devices.') %></div>
+				<% } else { %>
+					<% foreach my $rm ( @{$machine_list} ) { %>
+						<div class="terminal_remote_row" data-key="<%= $rm->{'key'} %>" data-host="<%= $rm->{'host'} %>"
+							data-name="<%= $rm->{'name'} %>">
+							<div class="terminal_remote_identity">
+								<span class="terminal_remote_name"><%= $rm->{'name'} %></span>
+								<span class="terminal_remote_addr"><%= $rm->{'address'} %><% if ($rm->{'connection'} ne 'active') { %> &middot; <%= &subs::ui('offline') %><% } %></span>
+							</div>
+							<label class="terminal_remote_field">
+								<span><%= &subs::ui('User') %></span>
+								<input class="terminal_remote_user" type="text" value="<%= $rm->{'user'} %>" spellcheck="false" autocomplete="off">
+							</label>
+							<label class="terminal_remote_field port">
+								<span><%= &subs::ui('Port') %></span>
+								<input class="terminal_remote_port" type="number" min="1" max="65535" value="<%= $rm->{'port'} %>">
+							</label>
+							<button type="button" class="terminal_remote_connect terminal_shell_connect"
+								data-host="<%= $rm->{'host'} %>" data-name="<%= $rm->{'name'} %>"
+								hint="<%= &subs::ui('Open a shell on this machine') %>"><%= &subs::ui('Connect') %></button>
+						</div>
+					<% } %>
+				<% } %>
+				<div class="terminal_config_hint"><%= &subs::ui('Connects over ssh on the machine\'s own sshd port (8022 by default).') %></div>
+				<div class="terminal_config_hint"><%= &subs::ui('Terminal windows on this machine share one shell, so switching here switches all of them.') %></div>
+			</div>
+
+			<div class="terminal_config_section terminal_config_type">
+				<span><%= &subs::ui('Text size') %></span>
+				<button type="button" class="terminal_font_button terminal_font_dec" hint="<%= &subs::ui('Smaller text') %>">A&minus;</button>
+				<span class="terminal_font_size" id="terminal_font_size"><%= $font_size || 15 %></span>
+				<button type="button" class="terminal_font_button terminal_font_inc" hint="<%= &subs::ui('Larger text') %>">A+</button>
+			</div>
+		</div>
 	</div>
 
-	<div class="terminal_view" view="errors" id="terminal_error_view" style="<% if ($settings->{'view'} ne 'errors') { %>display:none;<% } %>position:absolute;overflow:scroll;font-size:20px;color:white;background-color:black;height: 85%;width:100%; max-height:100%;">
-		<span style="color:black;background-color:yellow;">President: </span>Error log
-		<button style="float:right;" class="terminal_clear">Clear</button>
-		<br>
-
-		<% foreach my $err ( @{$settings->{'errors'}} ) { %>
-			<%= include 'terminal/error', err => $err %>
-		<% } %>
+	<div id="terminal_input" class="terminal_toolbar">
+		<div class="terminal_status" hint="<%= &subs::ui('The machine this shell is running on') %>">
+			<span id="terminal_shell_dot" class="terminal_dot <%= $active_shell->{'local'} ? 'local' : 'remote' %>"></span>
+			<span id="terminal_shell_status"><%= $active_shell->{'label'} %></span>
+		</div>
+		<div class="terminal_toolbar_buttons" role="tablist" aria-label="<%= &subs::ui('Terminal views') %>">
+			<button type="button" class="terminal_view_select" view="interactive_terminal" role="tab"
+				aria-selected="<%= $active_view eq 'interactive_terminal' ? 'true' : 'false' %>"
+				<% if ($active_view eq 'interactive_terminal') { %>selected<% } %>
+				hint="<%= &subs::ui('Interactive shell') %>">
+				<img src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" alt="">
+				<span><%= &subs::ui('Shell') %></span>
+			</button>
+			<button type="button" class="terminal_view_select" view="terminal" role="tab"
+				aria-selected="<%= $active_view eq 'terminal' ? 'true' : 'false' %>"
+				<% if ($active_view eq 'terminal') { %>selected<% } %>
+				hint="<%= &subs::ui('Commands') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/code.png') %>" alt="">
+				<span><%= &subs::ui('Commands') %></span>
+			</button>
+			<button type="button" class="terminal_view_select" view="errors" role="tab"
+				aria-selected="<%= $active_view eq 'errors' ? 'true' : 'false' %>"
+				<% if ($active_view eq 'errors') { %>selected<% } %>
+				hint="<%= &subs::ui('Errors') %>">
+				<img src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" alt="">
+				<span><%= &subs::ui('Errors') %></span>
+			</button>
+			<button type="button" class="terminal_view_select" view="log" role="tab"
+				aria-selected="<%= $active_view eq 'log' ? 'true' : 'false' %>"
+				<% if ($active_view eq 'log') { %>selected<% } %>
+				hint="<%= &subs::ui('Log') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" alt="">
+				<span><%= &subs::ui('Log') %></span>
+			</button>
+		</div>
+		<div class="terminal_toolbar_actions">
+			<button type="button" id="terminal_keyboard_toggle" class="terminal_tool"
+				hint="<%= &subs::ui('Show the keyboard') %>" aria-label="<%= &subs::ui('Show the keyboard') %>">&#9000;</button>
+			<button type="button" id="terminal_jump_bottom" class="terminal_tool"
+				hint="<%= &subs::ui('Scroll to the newest output') %>" aria-label="<%= &subs::ui('Scroll to the newest output') %>">&#8595;</button>
+			<button type="button" id="terminal_configure_toggle" class="terminal_tool"
+				hint="<%= &subs::ui('Terminals and settings') %>" aria-label="<%= &subs::ui('Terminals and settings') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/server.png') %>" alt="">
+			</button>
+			<button type="button" class="terminal_tool coding_chat_toggle" mount="terminal"
+				hint="<%= &subs::ui('Coding agent') %>" aria-label="<%= &subs::ui('Coding agent') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/code.png') %>" alt="">
+			</button>
+		</div>
 	</div>
-	<div class="terminal_view" view="log" id="terminal_log_view" style="<% if ($settings->{'view'} ne 'log') { %>display:none;<% } %>position:absolute;overflow:scroll;font-size:20px;color:white;background-color:black;height: 85%;width:100%; max-height:100%;">
-		<span style="color:black;background-color:yellow;">President: </span>Log
-		<button style="float:right;" class="terminal_clear">Clear</button>
-		<br>
 
-		<% foreach my $log ( @{$settings->{'log'}} ) { %>
-			<%= include 'terminal/log', 'log' => $log %>
-		<% } %>
-	</div>
-
-	<br>
-	<div id="terminal_input" style="text-align:left;width:100%; bottom:0px; position:absolute; background-color:black;">
-		<input class="" style="font-size:22px;text-align:left;" id="terminal_console" placeholder="<%= $whoami . '@' . $hostname %>"></input>
-		<img src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" hint="Interactive" <% if($settings->{'view'} eq 'interactive_terminal') { %>selected<% } %> class="little_thumb terminal_view_select hover" view="interactive_terminal">
-		<img src="<%= &subs::icon_for('/images/decipherable/code.png') %>" hint="Terminal" <% if ($settings->{'view'} eq 'terminal') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="terminal">
-		<img src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" hint="Errors" <% if ($settings->{'view'} eq 'errors') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="errors">
-		<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" hint="Log" <% if ($settings->{'view'} eq 'log') {%>selected<% } %> class="little_thumb terminal_view_select hover" view="log">
-		<img src="<%= &subs::icon_for('/images/decipherable/server.png') %>" hint="Server" class="little_thumb hover" id="terminal_configure_toggle">
-		<img src="<%= &subs::icon_for('/images/decipherable/code.png') %>" hint="Coding agent" class="little_thumb hover coding_chat_toggle" mount="terminal">
-	</div>
 	<%= include 'apps/coding_chat', mount => 'terminal', label => 'Coding agent (terminal)' %>
-	<div id="terminal_configure_container" style="width:100%;height:30%;position:absolute;bottom:40px;left:0px;">
-		<%= include 'terminal/configure', settings => $settings %>
-	</div>
 </div>

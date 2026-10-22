@@ -24560,12 +24560,66 @@ get '/manager/terminal' => sub ($c) {
 	my $settings = &subs::settings_grabber({ app => 'terminal' });
 	$settings->{'errors'} = eval { return decode_json $settings->{'errors'} } || [];
 	$settings->{'log'} = eval { return decode_json $settings->{'log'} } || [];
+	$settings->{'errors'} = [] unless ref $settings->{'errors'} eq 'ARRAY';
+	$settings->{'log'} = [] unless ref $settings->{'log'} eq 'ARRAY';
+	# The files can grow for months. A reader shows the newest page, not the whole
+	# archive: hundreds of stale entries made the window slow to draw and hid the
+	# one that matters. The counts stay truthful, and the stored arrays are
+	# capped where they are written.
+	my $errors_total = scalar(@{$settings->{'errors'}});
+	my $logs_total = scalar(@{$settings->{'log'}});
+	$settings->{'errors'} = [ @{$settings->{'errors'}}[-200 .. -1] ] if $errors_total > 200;
+	$settings->{'log'} = [ @{$settings->{'log'}}[-150 .. -1] ] if $logs_total > 150;
+	# A fresh terminal used to render every view hidden (the saved view was unset),
+	# so the window opened completely blank. Default to the live shell.
+	my $view = $settings->{'view'} || 'interactive_terminal';
+	$view = 'interactive_terminal' unless grep { $_ eq $view } qw/interactive_terminal terminal errors log/;
+	$settings->{'view'} = $view;
+	my $font_size = $settings->{'font_size'};
+	$font_size = 15 unless (defined $font_size && $font_size =~ /^\d+$/ && $font_size >= 10 && $font_size <= 32);
+	# The machine list for the configuration panel. A remote's own stored user and
+	# port win; otherwise this machine's login name and the sshd port JawnOS uses.
+	my $remote_settings = eval { return decode_json($settings->{'remotes'} || '') } || {};
+	my @remotes;
+	my %seen_remote;
+	foreach my $rm ( @{ &subs::remote_machine_lister({ self => 'no' }) } ) {
+		my $host = $rm->{'lan_ip'} || $rm->{'ip'} || $rm->{'fqdn'} || $rm->{'hostname'} || '';
+		next unless $host ne '';
+		next if $host =~ /^(?:127\.0\.0\.1|localhost|::1)$/i;
+		my $key = $rm->{'uuid'} || $rm->{'signatorial'} || $host;
+		next if $seen_remote{$key}++;
+		my $saved = $remote_settings->{$key} || {};
+		push @remotes, {
+			key => $key,
+			host => $host,
+			address => $rm->{'fqdn'} || $rm->{'lan_ip'} || $rm->{'ip'} || $host,
+			name => $rm->{'hostname'} || $rm->{'fqdn'} || $host,
+			device => $rm->{'device'} || '',
+			connection => $rm->{'connection'} || '',
+			user => (defined $saved->{'user'} && $saved->{'user'} =~ /^[A-Za-z0-9._@\-]+$/) ? $saved->{'user'} : $whoami,
+			port => (defined $saved->{'port'} && $saved->{'port'} =~ /^\d+$/ && $saved->{'port'} > 0 && $saved->{'port'} < 65536) ? $saved->{'port'} : 8022
+		};
+	}
+	@remotes = sort { lc($a->{'name'}) cmp lc($b->{'name'}) } @remotes;
+	my $saved_shell = eval { return decode_json($settings->{'shell'} || '') } || {};
+	my $local = { user => $whoami, host => $hostname, label => $whoami . '@' . $hostname, local => 1 };
+	my $current = ($saved_shell->{'host'} && $saved_shell->{'host'} ne '')
+		? { host => $saved_shell->{'host'}, user => $saved_shell->{'user'}, port => $saved_shell->{'port'},
+			label => ($saved_shell->{'user'} || $whoami) . '@' . $saved_shell->{'host'}, local => 0 }
+		: $local;
 	my $contents = $c->render_to_string(
 		template => 'terminal/terminal',
 		window_maker => 'yes',
 		whoami => $whoami,
 		hostname => $hostname,
-		settings => $settings
+		settings => $settings,
+		view => $view,
+		font_size => $font_size,
+		remotes => \@remotes,
+		local => $local,
+		current => $current,
+		errors_total => $errors_total,
+		logs_total => $logs_total
 	);
 	if ($c->param('window_maker') eq 'yes') {
 		my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'terminal', contents => $contents }, $timestamp);
@@ -24578,20 +24632,26 @@ get '/manager/terminal' => sub ($c) {
 
 
 
-post '/manager/termina/error_report' => sub($c) {
-	if (1 == 0) {
-		my $errors = eval { return decode_json $c->param('errors') } || [];
-		my $browser_tab_id = $c->param('browser_tab_id');
-		if (scalar @{$errors} > 0) {
-			my $old_errors = eval { return decode_json &subs::setting_grabber({ app => 'terminal', setting => 'errors' }) } || [];
-			push @{$old_errors}, @{$errors};
-			my $jerrors = encode_json $old_errors;
-			&subs::setting_setter({ app => 'terminal', setting => 'errors', value => $jerrors });
+post '/manager/terminal/error_report' => sub($c) {
+	# The browser's own failures (a route that answered 500, a script that threw)
+	# join the same log the server writes to. Keep it bounded and small: this is a
+	# reader for a person, not an archive.
+	my $errors = eval { return decode_json $c->param('errors') } || [];
+	if (ref $errors eq 'ARRAY' && scalar @{$errors} > 0) {
+		my $old_errors = eval { return decode_json &subs::setting_grabber({ app => 'terminal', setting => 'errors' }) } || [];
+		foreach my $e ( @{$errors} ) {
+			next unless ref $e eq 'HASH';
+			push @{$old_errors}, {
+				timestamp => &subs::rightNow(),
+				code => substr($e->{'code'} // 'browser', 0, 40),
+				msg => substr($e->{'msg'} // $e->{'message'} // 'unknown browser error', 0, 4000),
+				uuid => &subs::random_string_creator(12)
+			};
 		}
+		splice @{$old_errors}, 0, scalar(@{$old_errors}) - 200 if scalar @{$old_errors} > 200;
+		&subs::setting_setter({ app => 'terminal', setting => 'errors', value => encode_json $old_errors });
 	}
-	my $errors = [];
-	$c->render(json => $errors);
-
+	$c->render(json => []);
 };
 
 post '/manager/window_closer' => sub($c) {
@@ -42025,43 +42085,52 @@ websocket '/manager/ws' => sub ($c) {
 
 		}
 		elsif ($data->{'pty'} && $app eq 'server') {
-			my $keycode = $data->{'keyCode'};
-			if ($keycode == 13) {
-				$data->{'command'} .= "\n";
-				$gb::terminal_forker->write($data->{'command'});
+			# Keys arrive as the bytes a terminal should receive (the client
+			# encodes arrows, Backspace, Tab, Ctrl+C and the rest). Old clients sent
+			# the browser's key name and a handful were mapped here. Anything the
+			# browser calls a modifier key is not input at all - it used to be
+			# echoed back and printed "Shift" on the screen.
+			my $input = $data->{'input'};
+			if (!defined $input && defined $data->{'command'} && (($data->{'keyCode'} || 0) == 13)) {
+				$input = $data->{'command'} . "\r";
 			}
-			elsif ($data->{'input'} && $data->{'type'} eq 'input') {
-				my $original_input = $data->{'input'};
-				if ($data->{'input'} eq 'Enter') {
-					$data->{'input'} = "\n";
+			if (defined $input && length $input) {
+				$input = &terminal_input_bytes($input);
+				if (length $input && $gb::terminal_forker) {
+					$gb::terminal_forker->write($input);
 				}
-				elsif ($data->{'input'} eq 'Backspace') {
-					$data->{'input'} = "\b";
-				}
-				elsif ($data->{'input'} eq 'ArrowUp') {
-					$data->{'input'} = "\x1b[A";
-				}
-				elsif ($data->{'input'} eq 'ArrowDown') {
-					$data->{'input'} = "\x1b[B";
-				}
-				elsif ($data->{'input'} eq 'ArrowLeft') {
-					$data->{'input'} = "\x1b[D";
-				}
-				elsif ($data->{'input'} eq 'ArrowRight') {
-					$data->{'input'} = "\x1b[C";
-				}
-				my $b64bytes = encode_base64 $data->{'input'};
-				if ($data->{'input'} eq $original_input) {
-					&Websocket::send('server', { terminal => $b64bytes, original_input => $original_input });
-				}
-				$gb::terminal_forker->write($data->{'input'});
 			}
 		}
-		elsif ($data->{'type'} eq 'terminal_resize' && $app eq 'server') {
-			if (my $pty = $gb::terminal_forker->read_handle) {
-		    # 2. Update rows, columns, x-pixels, y-pixels on the system process
-		    $pty->set_winsize($data->{rows}, $data->{cols}, 0, 0);
-      }
+		elsif (($data->{'type'} || '') eq 'terminal_connect' && $app eq 'server') {
+			# Switch the shared shell to another machine over ssh. The host, user
+			# and port are validated in terminal_shell_clean; no shell is involved
+			# in starting it, so the values never reach a command line string.
+			&terminal_shell_start({
+				host => $data->{'host'},
+				user => $data->{'user'},
+				port => $data->{'port'}
+			});
+		}
+		elsif (($data->{'type'} || '') eq 'terminal_local' && $app eq 'server') {
+			&terminal_shell_start({});
+		}
+		elsif (($data->{'type'} || '') eq 'terminal_refresh' && $app eq 'server') {
+			# The shell has been running since the worker booted; a window opened
+			# later has missed the prompt. One carriage return makes the shell draw
+			# it again, so a fresh terminal is never a blank screen.
+			if ($gb::terminal_forker) { $gb::terminal_forker->write("\r"); }
+		}
+		elsif (($data->{'type'} || '') eq 'terminal_resize' && $app eq 'server') {
+			my $rows = int($data->{'rows'} || 0);
+			my $cols = int($data->{'cols'} || 0);
+			if ($rows > 0 && $rows <= 500 && $cols > 0 && $cols <= 1000) {
+				$gb::terminal_size = { rows => $rows, cols => $cols };
+				if ($gb::terminal_forker) {
+					if (my $pty = $gb::terminal_forker->read_handle) {
+						eval { $pty->set_winsize($rows, $cols, 0, 0) };
+					}
+				}
+			}
 		}
 		elsif ($data->{'type'} eq 'synth' && $app eq 'music') {
 			my $freq = $data->{'freq'};
@@ -42154,37 +42223,154 @@ websocket '/manager/ws' => sub ($c) {
 };
 
 
-sub terminal_pty_runner() {
-	my $fork = $gb::terminal_forker;
-  $fork = Mojo::IOLoop::ReadWriteFork->new;
+# The bytes a key press should send down the pty. The browser now sends those
+# bytes itself, so this only has to keep an older page working: a whole-string
+# key name is mapped, a modifier name is dropped (it is not input), and any
+# other string passes through unchanged.
+sub terminal_input_bytes {
+	my $input = shift;
+	return '' unless defined $input && length $input;
+	my %named = (
+		Enter => "\r", Return => "\r",
+		Backspace => "\x7f", Delete => "\x1b[3~", Insert => "\x1b[2~",
+		Tab => "\t", Escape => "\x1b", Esc => "\x1b",
+		ArrowUp => "\x1b[A", ArrowDown => "\x1b[B", ArrowRight => "\x1b[C", ArrowLeft => "\x1b[D",
+		Home => "\x1b[H", End => "\x1b[F",
+		PageUp => "\x1b[5~", PageDown => "\x1b[6~",
+		F1 => "\x1bOP", F2 => "\x1bOQ", F3 => "\x1bOR", F4 => "\x1bOS",
+		F5 => "\x1b[15~", F6 => "\x1b[17~", F7 => "\x1b[18~", F8 => "\x1b[19~",
+		F9 => "\x1b[20~", F10 => "\x1b[21~", F11 => "\x1b[23~", F12 => "\x1b[24~"
+	);
+	return $named{$input} if exists $named{$input};
+	# A lone modifier is a key event, not a character: printing its name was the
+	# old "Shift" and "Control" appearing in the middle of a command.
+	return '' if $input =~ /^(?:Shift|ShiftLeft|ShiftRight|Control|ControlLeft|ControlRight|Alt|AltLeft|AltRight|AltGraph|Meta|MetaLeft|MetaRight|OS|Super|Hyper|CapsLock|NumLock|ScrollLock|Fn|FnLock|Symbol|SymbolLock|ContextMenu|Dead|Process|Unidentified)$/;
+	utf8::encode($input) if utf8::is_utf8($input);
+	return $input;
+}
 
+# Only values that can name a host, an ssh login and a port get through; the
+# start below passes them as separate argv entries, never through a shell.
+sub terminal_shell_clean {
+	my ($spec) = @_;
+	$spec = {} unless ref $spec eq 'HASH';
+	my $host = $spec->{'host'} // '';
+	my $user = $spec->{'user'} // '';
+	my $port = $spec->{'port'} // 8022;
+	$host = '' unless $host =~ /^[A-Za-z0-9._:\-\[\]]{1,255}$/;
+	$user = '' unless $user =~ /^[A-Za-z0-9._\-]{1,64}$/;
+	if ($host ne '' && $user eq '') {
+		$user = `whoami`;
+		chomp $user;
+		$user = '' unless $user =~ /^[A-Za-z0-9._\-]{1,64}$/;
+	}
+	$port = 8022 unless $port =~ /^\d+$/ && $port > 0 && $port < 65536;
+	return { host => $host, user => ($host ne '' ? $user : ''), port => 0 + $port };
+}
 
-	$fork->conduit({raw => 1, type => "pty"});
+sub terminal_shell_label {
+	my ($spec) = @_;
+	my $who = `whoami`;
+	chomp $who;
+	my $host = `hostname`;
+	chomp $host;
+	return ((($spec->{'user'} // '') ne '') ? $spec->{'user'} : $who) . '@' . $spec->{'host'}
+		if (($spec->{'host'} // '') ne '');
+	return $who . '@' . $host;
+}
 
-
-  # 2. Handle output coming FROM the pseudo-terminal back TO the browser
-  $fork->on(read => sub ($fork, $bytes) {
-			my $b64bytes = encode_base64 $bytes;
-			&Websocket::send('server', { terminal => $b64bytes });
-  });
-
-  # Handle process exit cleanup
-  $fork->on(close => sub ($fork, $exit_code) {
-  });
-
-  # 4. Spawn the interactive shell process
-  $fork->start({
-		program => "bash",
-		program_args => [ "-i" ],
-    env          => {
-        %ENV,
-        INPUTRC        => '/dev/null',
-        # Disables Ubuntu/Debian's automatic title bar injection macro
-        PROMPT_COMMAND => '',
-        TERM           => 'dumb'
-    }
- });
+# Start (or replace) the one pty the Terminal app shares. A local shell is
+# bash -i; a remote one is ssh on the peer's own sshd port. The fork object is
+# kept globally because the websocket message handler writes to it.
+sub terminal_shell_start {
+	my ($spec) = @_;
+	$spec = &terminal_shell_clean($spec);
+	if (my $old = $gb::terminal_forker) {
+		$gb::terminal_forker = undef;
+		eval {
+			$old->write("exit\r");
+			$old->close;
+			$old->kill('TERM');
+		};
+	}
+	my $fork = Mojo::IOLoop::ReadWriteFork->new;
+	$fork->conduit({ raw => 1, type => 'pty' });
+	my $live = 0;
+	$fork->on(read => sub {
+		my ($f, $bytes) = @_;
+		return unless $gb::terminal_forker && $gb::terminal_forker == $f;
+		&Websocket::send('server', { terminal => encode_base64($bytes) });
+		# The first bytes from ssh are either the banner or the prompt; either
+		# way the link is up, so the toolbar's status can stop saying connecting.
+		if (!$live) {
+			$live = 1;
+			&Websocket::send('server', { terminal_shell => {
+				state => (($spec->{'host'} // '') ne '' ? 'live' : 'local'),
+				label => &terminal_shell_label($spec)
+			} });
+		}
+	});
+	$fork->on(close => sub {
+		my ($f) = @_;
+		return unless $gb::terminal_forker && $gb::terminal_forker == $f;
+		$gb::terminal_forker = undef;
+		&Websocket::send('server', { terminal_shell => {
+			state => 'ended',
+			label => &terminal_shell_label($spec),
+			message => &subs::ui('The shell ended.')
+		} });
+	});
+	my ($program, @args) = ('bash', '-i');
+	# A real terminfo entry, so colour, line editing, full-screen tools and the
+	# alternate screen all work. TERM=dumb was why so much output looked plain.
+	my %env = (
+		%ENV,
+		INPUTRC => '/dev/null',
+		PROMPT_COMMAND => '',
+		TERM => 'xterm-256color',
+		COLORTERM => 'truecolor',
+		TERM_PROGRAM => 'JawnOS',
+		LANG => ($ENV{'LANG'} || 'C.UTF-8')
+	);
+	my $state = 'local';
+	if (($spec->{'host'} // '') ne '') {
+		$state = 'connecting';
+		($program, @args) = ('ssh', '-tt', '-p', $spec->{'port'},
+			'-o', 'StrictHostKeyChecking=accept-new',
+			'-o', 'ConnectTimeout=10',
+			'-o', 'ServerAliveInterval=30',
+			$spec->{'user'} . '@' . $spec->{'host'});
+	}
+	$fork->start({ program => $program, program_args => \@args, env => \%env });
 	$gb::terminal_forker = $fork;
+	$gb::terminal_spec = $spec;
+	my $label = &terminal_shell_label($spec);
+	my $notice = "\r\n\x1b[38;5;114m[JawnOS]\x1b[0m "
+		. ($state eq 'local' ? &subs::ui('local shell') : &subs::ui('connecting to') . ' ' . $label)
+		. "\r\n";
+	Mojo::IOLoop->timer(0 => sub {
+		&Websocket::send('server', {
+			terminal => encode_base64($notice),
+			terminal_shell => { state => $state, label => $label, host => $spec->{'host'}, user => $spec->{'user'}, port => $spec->{'port'} }
+		});
+	});
+	# The fork is forked on the next tick, so the pty handle exists a moment later.
+	# 80x24 is the size a shell can rely on before the first browser sends its own.
+	Mojo::IOLoop->timer(0.4 => sub {
+		return unless $gb::terminal_forker && $gb::terminal_forker == $fork;
+		my $size = $gb::terminal_size || { rows => 24, cols => 80 };
+		if (my $pty = $fork->read_handle) {
+			eval { $pty->set_winsize($size->{'rows'}, $size->{'cols'}, 0, 0) };
+		}
+	});
+	&subs::setting_setter({ app => 'terminal', setting => 'shell', value => encode_json({
+		%{$spec}, label => $label, at => &subs::rightNow()
+	}) });
+}
+
+sub terminal_pty_runner() {
+	my ($data) = @_;
+	&terminal_shell_start(ref $data eq 'HASH' ? $data : {});
 }
 
 post 'manager/ws/remote_control' => sub($c) {

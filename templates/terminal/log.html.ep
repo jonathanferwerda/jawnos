@@ -1,1 +1,27 @@
-<span style="color:green" class="terminal_log"><span class="time" timestamp="<%= $log->{'timestamp'} %>"></span><%= $whoami %>@<%= $hostname %>: <%= $log->{'code'} %>: <%= $log->{'msg'} %></span><br>
+<%
+	my $msg = defined $log->{'msg'} ? $log->{'msg'} : '';
+	$msg =~ s/<br\s*\/?>/\n/gi;
+	my $full = $msg;
+	my $trimmed = length($msg) > 1400;
+	my $preview = $trimmed ? substr($msg, 0, 1400) : $msg;
+	my $ts = $log->{'timestamp'} // '';
+	my $when = '';
+	if ($ts =~ /^\d+$/) {
+		my @t = localtime(int($ts / 1000));
+		$when = sprintf('%02d:%02d:%02d', $t[2], $t[1], $t[0]);
+	}
+%>
+<div class="terminal_entry terminal_entry_log" data-ts="<%= $ts %>">
+	<div class="terminal_entry_head">
+		<span class="terminal_entry_time" data-ts="<%= $ts %>"><%= $when %></span>
+		<span class="terminal_entry_code"><%= &subs::ui('log') %></span>
+		<% if ($whoami) { %><span class="terminal_entry_who"><%= $whoami %>@<%= $hostname %></span><% } %>
+	</div>
+	<div class="terminal_entry_msg"><%= $preview %><% if ($trimmed) { %>&#8230;<% } %></div>
+	<% if ($trimmed) { %>
+		<details class="terminal_entry_more">
+			<summary><%= &subs::ui('Show the full message') %></summary>
+			<div class="terminal_entry_msg"><%= $full %></div>
+		</details>
+	<% } %>
+</div>

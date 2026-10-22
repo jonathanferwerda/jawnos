@@ -1,3 +1,32 @@
-<div id="terminal_configure" style="width:100%;height:30%;position:absolute;bottom:40px;left:0px;display:none;width:100%;height:100%;background-color:<%= $settings->{'colour'} %>;">
-	This is the configuration menu
+%# The Terminal app's configuration is rendered inside terminal/terminal.
+%# Kept as an include for callers that still render it on its own.
+<div id="terminal_configure" class="terminal_configure" role="dialog" aria-label="<%= &subs::ui('Terminal configuration') %>">
+	<div class="terminal_config_head">
+		<b><%= &subs::ui('Terminals') %></b>
+		<span class="terminal_config_sub"><%= &subs::ui('Choose the machine this shell runs on') %></span>
+	</div>
+	<div class="terminal_config_body">
+		<div class="terminal_config_section">
+			<div class="terminal_config_title"><%= &subs::ui('This machine') %></div>
+			<button type="button" class="terminal_local_connect terminal_shell_connect" data-host="" data-user="" data-port=""
+				hint="<%= &subs::ui('Run the shell on this machine') %>"><%= &subs::ui('This machine') %></button>
+		</div>
+		<div class="terminal_config_section">
+			<div class="terminal_config_title"><%= &subs::ui('Remote machines') %></div>
+			<% foreach my $rm ( @{ $remotes || [] } ) { %>
+				<div class="terminal_remote_row" data-key="<%= $rm->{'key'} %>" data-host="<%= $rm->{'host'} %>">
+					<div class="terminal_remote_identity">
+						<span class="terminal_remote_name"><%= $rm->{'name'} %></span>
+						<span class="terminal_remote_addr"><%= $rm->{'address'} %></span>
+					</div>
+					<label class="terminal_remote_field"><span><%= &subs::ui('User') %></span>
+						<input class="terminal_remote_user" type="text" value="<%= $rm->{'user'} %>"></label>
+					<label class="terminal_remote_field port"><span><%= &subs::ui('Port') %></span>
+						<input class="terminal_remote_port" type="number" value="<%= $rm->{'port'} %>"></label>
+					<button type="button" class="terminal_remote_connect terminal_shell_connect"
+						data-host="<%= $rm->{'host'} %>" data-name="<%= $rm->{'name'} %>"><%= &subs::ui('Connect') %></button>
+				</div>
+			<% } %>
+		</div>
+	</div>
 </div>

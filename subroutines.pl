@@ -24727,7 +24727,9 @@ sub log_writer() {
 
 	my $sl = encode_json $settings->{'log'};
 	&subs::setting_setter({ app => 'terminal', setting => 'log', value => $sl });
-	&Websocket::send('server', { view => 'log', console => $logg, error => $uuid });
+	my $hostname = `hostname`;
+	chomp $hostname;
+	&Websocket::send('server', { view => 'log', console => $logg, error => $uuid, whoami => ($ENV{'USER'} || ''), hostname => $hostname });
 	return $data;
 }
 

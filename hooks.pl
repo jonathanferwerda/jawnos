@@ -485,8 +485,11 @@ hook after_render => sub  {
 			if (eval { $h->[3]->{'message'} }) {
 				my $errors = eval { decode_json &subs::setting_grabber({ app => 'terminal', setting => 'errors' }) } || [];
 				my $uuid = &subs::random_string_creator(12);
-				my $error = { timestamp => &subs::rightNow, code => $c->res->code, msg => $c->req->url->path . '<br>' . $h->[3]->{'message'}, uuid => $uuid };
+				my $error = { timestamp => &subs::rightNow, code => $c->res->code, msg => substr($c->req->url->path . '<br>' . $h->[3]->{'message'}, 0, 8000), uuid => $uuid };
 				push @{$errors}, $error;
+				# A log that only ever grows turns the reader into an archive: keep the
+				# newest entries and let the count at the top say how many there are.
+				splice @{$errors}, 0, scalar(@{$errors}) - 300 if scalar(@{$errors}) > 300;
 				my $jerror = encode_json $errors;
 
 				&subs::setting_setter({ app => 'terminal', setting => 'errors', value => $jerror });

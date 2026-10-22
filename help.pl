@@ -212,16 +212,19 @@ our %topic = (
 	},
 	'terminal' => {
 		title => 'Terminal', category => 'apps', app => 'terminal',
-		summary => 'A shell, in a window.',
-		verified => '2026-10-13',
+		summary => 'A shell, in a window - on this machine or another one.',
+		verified => '2026-10-21',
 		body => [
 			'Terminal is a real shell attached to the machine running JawnOS. It is where you do the hands-on work: scripts, checks, and the occasional bit of archaeology.',
+			'The toolbar at the foot of the window switches views. Shell is the live session: click it and type straight into it, with colour, cursor keys, Backspace, Tab, Ctrl+C and the rest behaving as they do in a desktop terminal. Commands holds a short history of what you sent to the shell. Errors and Log are readable lists, each with its own Clear button in the header; the newest entry is always in view, and the list follows new entries while you are at the bottom.',
+			'The status at the left of the toolbar names the machine the shell is running on. Press the server button beside it to open the terminal settings: connect back to this machine, or pick one of the machines linked to the house and connect to it over ssh. Each machine remembers its own login name and port; the port is 8022 by default, which is the sshd JawnOS runs elsewhere. Every Terminal window on this machine shares the one shell, so switching a machine here switches all of them. The same panel sets the text size.',
 			'The code button in the toolbar opens the Coding agent\'s chatbox, so you can ask for a change in words and watch it run the commands and ship the result without leaving the terminal. It keeps its own conversation. The bar drags the panel anywhere on the screen, and + in the bar opens another agent, each with its own thread.',
 		],
 		steps => [
 			'Open Terminal; it opens a session on the host machine.',
-			'Run commands as you would in any shell.',
-			'Use multiple windows or tabs for separate jobs.',
+			'Run commands as you would in any shell, or use Commands to keep a history of them.',
+			'Press the server button to switch the shell to another linked machine over ssh.',
+			'Use Errors and Log to read what went wrong; Clear in either header empties that list.',
 			'Press the code button to hand a task to the Coding agent — or + in its bar for another one, so several can work at once.'
 		],
 		related => [ 'ide', 'process_monitor' ]
