@@ -9,6 +9,8 @@ var image_number = 0;
 var galleryTargetUuid = '';
 var galleryPlaceholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
+function galleryEl(id) { return document.getElementById(id); }
+
 var gallery = {
 	view: 'albums',
 	app: '',
