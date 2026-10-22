@@ -8,6 +8,55 @@ var galleryThumbnails = {};
 var gallerySearchTimeout;
 var imageViewerRunning = 0;
 var galleryTargetUuid = '';
+
+// Gallery tiles carry their real URL in data-src and a 1x1 transparent gif in
+// src. loading="lazy" still fetched every tile when the album was a scroll box
+// inside the window, so a 74-app home asked /file_open for all 74 covers at
+// once and the manager (2 workers on the phone) spent the next seconds
+// decrypting thumbnails while the UI waited. Load a tile only when it really
+// intersects the viewport, which accounts for the gallery's own clipping.
+var galleryLazyObserver = null;
+var galleryLazyPending = false;
+
+function galleryLazyLoad(image) {
+	if (!image || !image.getAttribute) { return; }
+	var src = image.getAttribute('data-src');
+	if (!src) { return; }
+	image.setAttribute('src', src);
+	image.removeAttribute('data-src');
+}
+
+function galleryLazyStart() {
+	var images = document.querySelectorAll('img.gallery_lazy[data-src]');
+	if (!images.length) { return; }
+	if (!('IntersectionObserver' in window)) {
+		Array.prototype.forEach.call(images, galleryLazyLoad);
+		return;
+	}
+	if (!galleryLazyObserver) {
+		galleryLazyObserver = new IntersectionObserver(function(entries) {
+			entries.forEach(function(entry) {
+				if (!entry.isIntersecting) { return; }
+				galleryLazyLoad(entry.target);
+				galleryLazyObserver.unobserve(entry.target);
+			});
+		}, { root: null, rootMargin: '300px' });
+	}
+	Array.prototype.forEach.call(images, function(image) { galleryLazyObserver.observe(image); });
+}
+
+function galleryLazyQueue() {
+	if (galleryLazyPending) { return; }
+	galleryLazyPending = true;
+	setTimeout(function() { galleryLazyPending = false; galleryLazyStart(); }, 120);
+}
+
+$(document).ready(function() {
+	galleryLazyStart();
+	if (window.MutationObserver) {
+		new MutationObserver(galleryLazyQueue).observe(document.body, { childList: true, subtree: true });
+	}
+});
 $(document).on('click', '#main_image', function(e) {
 	clearTimeout(gallery);
 	$('#image_toggle').css({ 'background-color': 'lightgray' });
