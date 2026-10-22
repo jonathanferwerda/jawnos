@@ -18082,12 +18082,16 @@ sub merge_table_rows {
 											next unless $fi->{$file_type};
 											my $file = $fi->{$file_type};
 											$last_percent = $percentage;
-											$percentage = sprintf("%.2f", ($n + ($file_count / scalar @{$files})) / $results_size * 100);
+											# A row stream (the v3 pull) has no snapshot size to divide
+											# by: `$results_size` is 0 there, and the file-carry progress
+											# is display-only. Guard both divisors so a pulled row with an
+											# attachment cannot kill the merge.
+											$percentage = sprintf("%.2f", ($n + ($file_count / scalar @{$files})) / ($results_size || 1) * 100);
 
 
 											if ($percentage >= $last_percent && $results_size > 0 && &subs::rightNow() >= ($last_alert + 250)) {
-												my $speed = abs sprintf("%.2f", $n / ($start_time - &subs::rightNow()) * 1000);
-												my $remaining = &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000);
+												my $speed = abs sprintf("%.2f", $n / ((($start_time - &subs::rightNow()) || 1)) * 1000);
+												my $remaining = $percentage ? &subs::duration_sayer(((&subs::rightNow() - $start_time) / $percentage) * (100 - $percentage) / 1000) : 'unknown';
 												my $html = '<b style="font-size:20px">' . sprintf("%.2f", ($n + ($file_count / scalar @{$files}))) . ' / ' . $results_size . ' ' . &subs::format_name($q) . ' ' . $percentage . '% @ ' . $speed . '/sec ' . $remaining .'</b><br>' .
 													'<progress style="width:70%;height:60px;" value="' . $n . '" max="' . $results_size . '"></progress>';
 												$last_percent = $percentage;
