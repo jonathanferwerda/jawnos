@@ -54,6 +54,15 @@ function musicKeepalive(playing) {
 	}
 	catch (e) { /* the bridge is a nicety, never a reason to stop the player */ }
 }
+// Closing the window takes the <video> element with it, which ends playback
+// without an onpause; release the keepalive so a backgrounded app can sleep
+// again. Minimising or hiding the window leaves it alone.
+$(document).on('click touchend', '.close_button[app="music"]', function() {
+	musicKeepalive(false);
+});
+$(window).on('pagehide', function() {
+	musicKeepalive(false);
+});
 // The rendered window contents are cached server-side and reused on the next
 // open; key that cache to the code revision, so a template change (which ships
 // with a version bump) is never served stale - the tools toggle went missing
