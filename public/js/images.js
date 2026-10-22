@@ -29,6 +29,22 @@ var gallery = {
 };
 
 var gallerySearchTimer = null;
+var galleryUnlockKey = 'jawnos_gallery_unlock';
+
+// The token the padlock mints for this window. Keeping it for the tab means a
+// reopened gallery still shows the sealed photos while the app padlock is open;
+// the server clears the secret when the padlock locks, so a stale copy stops
+// working and the window asks again.
+function galleryUnlockRemember(token) {
+	try {
+		if (token) { sessionStorage.setItem(galleryUnlockKey, token); }
+		else { sessionStorage.removeItem(galleryUnlockKey); }
+	} catch (e) {}
+}
+
+function galleryUnlockRecall() {
+	try { return sessionStorage.getItem(galleryUnlockKey) || ''; } catch (e) { return ''; }
+}
 
 function galleryEscape(value) {
 	return String(value == null ? '' : value)
@@ -103,11 +119,16 @@ function galleryApplyChrome() {
 }
 
 function galleryInitWindow(response) {
+	var attr = $('#gallery').attr('unlock') || '';
 	gallery.unlock = (response && typeof response.unlock == 'string' && response.unlock)
 		? response.unlock
-		: ($('#gallery').attr('unlock') || gallery.unlock || '');
+		: (attr || gallery.unlock || galleryUnlockRecall() || '');
 	gallery.padlock = $('#gallery').attr('padlock') == '1' ? 1 : 0;
-	if (gallery.unlock) { $('#gallery_lock').hide(); }
+	if (attr) { galleryUnlockRemember(attr); }
+	// A window with no token shows only the few unsealed photos; opening the
+	// print prompt says why instead of presenting that as the whole gallery.
+	if (gallery.padlock == 1 && !gallery.unlock) { $('#gallery_lock').show(); }
+	else { $('#gallery_lock').hide(); }
 	galleryApplyChrome();
 }
 
@@ -179,6 +200,14 @@ function galleryFetch(reset) {
 			if (typeof response.unlock == 'string' && response.unlock) {
 				gallery.unlock = response.unlock;
 				$('#gallery').attr('unlock', response.unlock);
+				galleryUnlockRemember(response.unlock);
+			}
+			else if (gallery.locked) {
+				// the padlock closed: a remembered token is no longer proof
+				gallery.unlock = '';
+				galleryUnlockRemember('');
+				$('#gallery').attr('unlock', '');
+				if (gallery.padlock == 1) { $('#gallery_lock').show(); }
 			}
 			gallery.albums = response.albums || [];
 			gallery.total = response.total || 0;

@@ -25158,6 +25158,9 @@ get '/manager/gallery/data' => sub ($c) {
 			. '&app_uuid=' . uri_encode($appt->{'uuid'} || '')
 			. '&timestamp=' . uri_encode($server_time)
 			. ($f->{'uuid'} ? '&file_uuid=' . uri_encode($f->{'uuid'}) : '')
+			# a photo living on a peer (or the archive) must relay its thumb too,
+			# not just the full-size file the viewer asks for
+			. ($f->{'remote_uuid'} ? '&remote_uuid=' . uri_encode($f->{'remote_uuid'}) : '')
 			. (($f->{'thumb'} && -e $f->{'thumb'}) ? '' : '&thumb=ya');
 		my $full = '/play?app=' . uri_encode($app)
 			. '&track=' . uri_encode($path)
@@ -25225,6 +25228,8 @@ get '/manager/gallery/data' => sub ($c) {
 		$last = $total - 1 if $last > $total - 1;
 		@page = @ordered[$offset .. $last];
 	}
+	$log->info('gallery data: locked, unlock=' . length($c->param('unlock') || '') . ' albums=' . scalar(keys %albums) . ' total=' . $total . ' revealed=' . $revealed . ' at_home=' . help_at_home())
+		if (!$permissive && !$offset);
 	$c->render(json => {
 		items => \@page,
 		total => $total,
