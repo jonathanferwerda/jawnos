@@ -201,6 +201,68 @@ get '/play' => sub($c) {
 
 };
 
+# What this machine is being asked to play by another machine's Music app.
+# A transmitter downloads the whole track here and plays it with `play`, so the
+# receiving machine gets sound but no window, no player state and - before this -
+# no control at all. The receiver leaves two markers: ~/.president/ws_watcher
+# (the track it was told about) and ~/.president/pipe.<ext> (the audio it plays).
+# Reading them here lets the keyboard show the track and stop it.
+sub music_receiver_state {
+	my $watcher = &subs::home('~/.president/ws_watcher');
+	my $md = {};
+	if (-e $watcher) {
+		my $text = eval { read_file($watcher) };
+		$md = eval { decode_json $text } || {} if $text;
+	}
+	my @pipes = grep { -e $_ } glob(&subs::home('~/.president/pipe') . '.*');
+	# The receiver starts `play <pipe> trim ...`, so the pipe path is what names
+	# the process. Do not use a bare `pkill play`: that also stops an audio file
+	# the folders app is playing, which this button is not about.
+	my $pids = eval { `pgrep -f '\\.president/pipe'` };
+	my @pids = grep { /^\d+$/ } split /\s+/, ($pids // '');
+	my $blocked = (&subs::setting_grabber({ app => 'music', setting => 'receive_blocked' }) || '') eq 'on' ? 1 : 0;
+	my $updated = 0;
+	if (@pipes) { $updated = (stat($pipes[0]))[9] || 0; }
+	elsif (-e $watcher) { $updated = (stat($watcher))[9] || 0; }
+	return {
+		playing => (scalar @pids ? 1 : 0),
+		blocked => $blocked,
+		file => ($md->{'file'} // ''),
+		type => ($md->{'type'} // ''),
+		updated => $updated,
+	};
+}
+
+# Stop the track this machine is receiving, and take the marker with it so a
+# later status read does not keep showing a track that is no longer playing.
+sub music_receiver_stop {
+	`pkill -f '\\.president/pipe'`;
+	foreach my $pipe ( glob(&subs::home('~/.president/pipe') . '.*') ) {
+		`shred -u "$pipe"` if -e $pipe;
+	}
+	my $watcher = &subs::home('~/.president/ws_watcher');
+	write_file($watcher, '') if -e $watcher;
+}
+
+get '/manager/music/receiver' => sub($c) {
+	$c->render(json => &music_receiver_state());
+};
+
+post '/manager/music/receiver/stop' => sub($c) {
+	&music_receiver_stop();
+	$c->render(json => &music_receiver_state());
+};
+
+post '/manager/music/receiver/block' => sub($c) {
+	my $blocked = ($c->param('blocked') // '') eq 'on' ? 'on' : 'off';
+	&subs::setting_setter({ app => 'music', setting => 'receive_blocked', value => $blocked });
+	# Refusing further transmissions also stops the one already playing: it is
+	# the same intent ("not here"), and leaving it running would make the switch
+	# look broken.
+	&music_receiver_stop() if $blocked eq 'on';
+	$c->render(json => &music_receiver_state());
+};
+
 any '/music/receiver' => sub($c) {
 	my $file = $c->param('file');
 	my $remote_address = $c->tx->remote_address;
@@ -215,6 +277,14 @@ any '/music/receiver' => sub($c) {
 	my $latency = $c->param('latency');
 	my $queuing = $c->param('queuing');
 	my $server_time = &subs::rightNow();
+	# A machine can refuse what other machines send it. Answer the transmitter
+	# normally (so it does not retry or log an error) but download and play
+	# nothing - an 'off' still clears anything a previous transmission left.
+	my $blocked = (&subs::setting_grabber({ app => 'music', setting => 'receive_blocked' }) || '') eq 'on' ? 1 : 0;
+	if ($blocked && $toggle ne 'off') {
+		$c->render(json => { timestamp => $timestamp, 'seek' => $seek, file => $file, toggle => $toggle, volume => $volume, type => 'transmitter', blocked => 1 });
+		return;
+	}
 	my $pipe = $piped;
 	my @file = split /\./, $file;
 	my $ext = $file[-1];

@@ -5,6 +5,7 @@
 		<br>
 		<span class="keyboard bc theme_surface" id="keyboard" style="background-color:<%= $config->{$device}->{'keyboard'}->{'background_colour'} %>;">
 			<canvas id="keyboard_screen" style="height:70px;width:350px;background-color:#bbd47b;"></canvas><br>
+			<%= include 'keyboard_music' %>
 			<div id="calculator_walkman" style="overflow-x:scroll;width:400px;height:70px">
 				<% foreach my $p (@{$pseudonyms}) { %>
 					<button class="medium_thumb" style="width:60px">
@@ -189,6 +190,7 @@
 					</tr>
 				<tbody>
 			</table>
+			<%= include 'keyboard_music' %>
 		</span>
 	<% } %>
 	<% if ($toggle eq 'delorean') { %>

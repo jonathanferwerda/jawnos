@@ -938,6 +938,8 @@ async function keyboardMaker(data) {
 				$('.typewriter').show();
 				$('#time_machine').val(localStorage.getItem('time_machine')	);
 				initializer();
+				// a re-rendered panel starts on the markup's idle text; ask once
+				musicReceiverRefresh();
 				if (css) {
 					css['width'] = t.width();
 					t.css(css);
@@ -1000,6 +1002,58 @@ async function keyboardMaker(data) {
 		}
 	},100);
 }
+
+// Music sent here by another machine is played by the receiver with `play`:
+// there is no window and no player to press, only the two markers the receiver
+// leaves. The keyboard's strip reports what is arriving, stops it, and can
+// refuse further transmissions to this machine.
+function musicReceiverText(words) {
+	return (typeof jawnosT === 'function') ? jawnosT(words) : words;
+}
+function musicReceiverDraw(state) {
+	var boxes = $('.music_receiver_control');
+	if (!boxes.length) { return; }
+	var file = (state && state.file) ? String(state.file).split('/').pop() : '';
+	var playing = !!(state && state.playing);
+	var blocked = !!(state && state.blocked);
+	boxes.each(function () {
+		var box = $(this);
+		var title = box.find('.music_receiver_title');
+		if (playing) {
+			title.text(musicReceiverText('Receiving') + (file ? ': ' + file : ''));
+		}
+		else if (blocked) {
+			title.text(musicReceiverText('Music from other devices is off'));
+		}
+		else {
+			title.text(musicReceiverText('No music is playing here'));
+		}
+		box.attr('status', playing ? 'playing' : (blocked ? 'blocked' : 'idle'));
+		box.find('.music_receiver_stop').css({ 'display': playing ? '' : 'none' });
+		box.find('.music_receiver_block').prop('checked', blocked);
+	});
+}
+function musicReceiverRefresh() {
+	if (!$('.music_receiver_control:visible').length) { return; }
+	$.ajax({
+		url: '/manager/music/receiver',
+		type: 'GET',
+		dataType: 'json',
+		success: musicReceiverDraw
+	});
+}
+$(document).on('click', '.music_receiver_stop', function() {
+	var button = $(this);
+	button.prop('disabled', true);
+	$.post('/manager/music/receiver/stop', {}, function (state) {
+		button.prop('disabled', false);
+		musicReceiverDraw(state);
+	});
+});
+$(document).on('change', '.music_receiver_block', function() {
+	$.post('/manager/music/receiver/block', { blocked: $(this).is(':checked') ? 'on' : 'off' }, musicReceiverDraw);
+});
+setInterval(musicReceiverRefresh, 5000);
 
 // The Go button follows the machine picker at once, rather than waiting for
 // the setting POST and the next render.

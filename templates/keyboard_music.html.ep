@@ -1,0 +1,12 @@
+<%# Music transmitted from another machine is played here by the receiver with
+    `play`, so it has no window and no player of its own. This strip is the only
+    control it has; public/js/manager/keyboard.js keeps it fed and wired. It is
+    a class, not an id, because the keyboard and the websocket panel both carry
+    a copy. %>
+<div class="music_receiver_control" status="idle" style="display:block;margin:3px auto 4px;max-width:400px;font-size:12px;text-align:left;">
+	<span class="music_receiver_title"><%= &subs::ui('No music is playing here') %></span>
+	<button type="button" class="music_receiver_stop keyboard_button hover" hint="<%= &subs::ui('Stop the track another device is playing on this machine') %>" style="display:none;margin-left:4px;">&#9632;</button>
+	<label class="music_receiver_block_label" style="display:block;font-size:11px;white-space:normal;">
+		<input type="checkbox" class="music_receiver_block"> <%= &subs::ui('Receive music from other devices') %>
+	</label>
+</div>
