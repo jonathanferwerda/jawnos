@@ -24181,6 +24181,9 @@ get '/manager/search_index' => sub($c) {
 	);
 	foreach my $app ( sort keys %builtin ) {
 		next if $indexed{$app};
+		# a built-in with no visible row is always an app; one the person has
+		# explicitly hidden stays hidden
+		next if $settings_by_app{$app} && $settings_by_app{$app}->{'visible'};
 		push @apps, { app => $app, name => &subs::format_name($app), icon => &search_index_icon({ app => $app }) };
 	}
 	$c->render(json => { apps => \@apps });
