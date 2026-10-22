@@ -543,7 +543,7 @@ html, body {
 #search::placeholder { color: var(--ink); opacity: 1; }
 /* The search's dropdown: one app per row, its picture beside its name. The box
    scrolls when there are more matches than the screen should hold. */
-#search_results { overflow-y: auto; overscroll-behavior: contain; }
+#search_results { overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; }
 #manager_search_results { display: flex; flex-direction: column; }
 .manager_search_result {
 	display: flex;

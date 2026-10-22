@@ -2001,29 +2001,50 @@ function jawnosSearchMatches(query) {
 	return matches.slice(0, 10);
 }
 
-// The dropdown hangs from the search's own edge: above the box when it rides
-// the bottom half, below when it rides the top.
-function jawnosSearchPlace() {
+// The dropdown hugs the search box: same width, just above or below it. It is
+// pulled out to the body because a transformed ancestor (an auto-hidden
+// taskbar, a sliding dock) turns position:fixed into a child of that bar, which
+// is what put the list off the top of the screen.
+function jawnosSearchResultsPlace() {
 	var box = $('#search_results');
-	if (!box.length || !box.is(':visible')) { return; }
-	var o = $('#search').offset();
-	var h = $('#search').height();
-	var height = Math.min($('#manager_search_results').height() || 0, Math.max(160, $(window).height() * 0.5));
-	// the results keep a readable width and stay on screen, however narrow the
-	// box that called them is
-	var drop_w = Math.min(Math.max($('#search').width(), 260), $(window).width() - 16);
-	var drop_left = Math.max(8, Math.min(o.left, $(window).width() - drop_w - 8));
-	var drop = { 'position': 'fixed', height: height, 'border': 'solid', 'border-width': '3px', 'text-align': 'center', 'left': drop_left, 'width': drop_w };
-	if ((o.top + (h / 2)) < ($(window).height() / 2)) {
-		drop['top'] = o.top + h + 6;
+	var input = $('#search');
+	if (!box.length || !input.length || !box.is(':visible')) { return; }
+	var rect = input[0].getBoundingClientRect();
+	var vw = window.innerWidth || $(window).width();
+	var vh = window.innerHeight || $(window).height();
+	var gap = 6;
+	var width = Math.max(0, rect.width);
+	var left = Math.max(4, Math.min(rect.left, vw - width - 4));
+	var content = $('#manager_search_results').outerHeight() || 0;
+	var below = vh - rect.bottom - gap;
+	var above = rect.top - gap;
+	// below is the natural side; go above only when it has more room
+	var place_below = below >= Math.min(content, 80) || below >= above;
+	var height = Math.max(0, Math.min(content, place_below ? below : above));
+	var drop = {
+		'position': 'fixed',
+		'left': left,
+		'width': width,
+		'height': height,
+		'right': 'auto',
+		'z-index': 40002,
+		'border-width': '3px',
+		'text-align': 'center'
+	};
+	if (place_below) {
+		drop['top'] = rect.bottom + gap;
 		drop['bottom'] = 'auto';
 	}
 	else {
-		drop['bottom'] = $(window).height() + $(document).scrollTop() - o.top;
+		drop['bottom'] = vh - rect.top + gap;
 		drop['top'] = 'auto';
 	}
 	box.css(drop);
 }
+
+$(window).on('resize', function () {
+	if ($('#search_results').is(':visible')) { jawnosSearchResultsPlace(); }
+});
 
 function jawnosSearchRender(query) {
 	var box = $('#search_results');
@@ -2041,8 +2062,10 @@ function jawnosSearchRender(query) {
 		row.append($('<span class="manager_search_label"></span>').text(match.app.name || match.app.app));
 		list.append(row);
 	});
+	// leave any transformed bar behind so the fixed coordinates are the viewport's
+	if (box.parent()[0] !== document.body) { box.appendTo(document.body); }
 	box.html(list).show();
-	jawnosSearchPlace();
+	jawnosSearchResultsPlace();
 }
 
 function jawnosSearchMove(direction) {
@@ -2073,6 +2096,13 @@ function jawnosSearchOpen(app) {
 	$('#search_results').hide();
 	$('#start_menu').hide();
 	if (typeof pseudonymHomeHider == 'function') { pseudonymHomeHider(pseudonymHIntervals); }
+	// the common apps have a direct opener, so the real app opens even on a
+	// layout where the menu's own button is not in the document
+	var openers = { music: 'musicToggle', help: 'helpOpener', mailbox: 'mailMaker' };
+	if (Object.prototype.hasOwnProperty.call(openers, app) && typeof window[openers[app]] == 'function') {
+		window[openers[app]]();
+		return;
+	}
 	var special = {
 		configure: '#main_logo.configuration',
 		budget: '#budget',
