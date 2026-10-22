@@ -62,8 +62,23 @@ sub playable_enc_name($name) {
 	return playable_name(substr($name, 0, -4));
 }
 
+# An album's own visibility decides whether its sealed tracks need the padlock.
+# The album is the folder above the file, the same part the walk names as `app`.
+my %app_visible_cache;
+sub music_app_visible($name) {
+	my @part = split '/', $name;
+	return 1 unless scalar @part >= 2;
+	my $app = &subs::unformat_name($part[-2]);
+	return 1 unless defined $app && length $app;
+	unless (exists $app_visible_cache{$app}) {
+		$app_visible_cache{$app} = &Manager::help_app_hidden($app) ? 0 : 1;
+	}
+	return $app_visible_cache{$app};
+}
+
 sub process_file($name) {
-	return unless playable_name($name) || ($permissive == 1 && playable_enc_name($name));
+	return unless playable_name($name)
+		|| (($permissive == 1 || music_app_visible($name)) && playable_enc_name($name));
 	# A directory walk hands names back as UTF-8 bytes, but the music window is a
 	# character string: an undecoded name gets upgraded as Latin-1 and served
 	# double-encoded (Æ -> Ã), which the player then cannot open. Decode only the
@@ -454,8 +469,8 @@ sub music_archive_entries($data) {
 			next unless ($type eq 'audio' || $type eq 'video');
 			my $relative = $row->{'relative'} || '';
 			next unless length $relative;
-			# a sealed track in the archive waits for the same padlock
-			next if (!$permissive && $relative =~ /\.enc$/i);
+			# a sealed track waits for the padlock only when its album is hidden
+			next if (!$permissive && $relative =~ /\.enc$/i && !music_app_visible($relative));
 			next if (length $lookup->{'prefix'} && index($relative, $lookup->{'prefix'}) != 0);
 			push @entries, {
 				path => (length $folder ? $folder . '/' . $relative : $relative),

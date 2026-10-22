@@ -39,7 +39,7 @@ our %topic = (
 			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
 			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
 			'Moving, sealing, opening or deleting a file carries the appointments, mail attachments and store entries that named it along with it, so nothing is left pointing at a file that is no longer there.',
-			'A lock on the toolbar turns the media padlock. Anything you have marked not-visible is kept out of the listing until the padlock is open and you are at home, so a private folder stays out of sight out in public. The same padlock is what uncovers sealed files: a name ending .enc is not listed at all while it is shut, and appears - still sealed, and ready to open from the menu - only when it is open. Folders opens with that padlock shut, and the next open starts shut again. The house gate in Security has nothing to do with this; each media app has its own padlock.',
+			'A lock on the toolbar turns the media padlock. Anything you have marked not-visible is kept out of the listing until the padlock is open and you are at home, so a private folder stays out of sight out in public. A sealed file (a name ending .enc) in a folder that is marked visible is listed as usual; only a sealed file belonging to a not-visible folder waits for the padlock. Folders opens with that padlock shut, and the next open starts shut again. The house gate in Security has nothing to do with this; each media app has its own padlock.',
 		],
 		steps => [
 			'Open Folders from the start menu.',
@@ -47,7 +47,7 @@ our %topic = (
 			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
 			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.',
 			'For a not-visible folder, press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone, and it appears — at home.',
-			'Sealed names ending .enc stay out of the listing until that same Folders padlock is open; press an open padlock to shut it again and hide them.'
+			'Sealed names ending .enc are listed with their folder; only a sealed name inside a not-visible folder waits for that same Folders padlock. Press an open padlock to shut it again.'
 		],
 		related => [ 'sealing_files', 'gallery', 'backup' ]
 	},
@@ -61,7 +61,7 @@ our %topic = (
 			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
 			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home (bring a photo back from the archive) and Delete.',
 			'Which photos appear is decided by the apps that are marked visible. The search box finds photos by app or file name, and the sort button flips the order between newest and oldest first.',
-			'Sealed photos (a name ending .enc) stay hidden while the gallery lock is shut. Press **Lock** to open the padlock view; unlock it with this phone or computer\'s fingerprint, or with the recovery code. Once it is open the sealed photos join the grid, and the check stays with the window until you lock it again.'
+			'An album marked visible opens straight away, sealed photos and all. An album marked not-visible stays out of the grid until the gallery is unlocked at home: press **Lock** to open the padlock view and unlock it with this phone or computer\'s fingerprint, or with the recovery code.'
 		],
 		steps => [
 			'Open Gallery from the start menu (the photo icon). It lands on Albums, one cover per app.',
@@ -69,9 +69,9 @@ our %topic = (
 			'Use the search box to find photos by app or file name, and the sort button to switch between newest and oldest first.',
 			'Tap a photo to open it full-screen. Swipe or use Previous and Next; Close returns to the grid.',
 			'The viewer bar gives File information, Set as main image, Fetch home and Delete.',
-			'Press Lock to hide sealed photos, or to unlock them with your fingerprint; the sealed photos stay in the grid only while the lock is open.'
+			'Press Lock to unlock the album you have marked not-visible; the visible albums never need it.'
 		],
-		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser. It is not a phone gallery or a file manager: its photos are the ones recorded by their apps. Describe it in terms of Albums, All photos, the photo grid, and the viewer with Previous, Next, Close, File information, Set as main image, Fetch home and Delete. If they see nothing, the likeliest cause is that no app with photos is marked visible, or the gallery lock is shut and the photos are sealed. If you are unsure how a control works, describe what its label means rather than inventing a sequence. Never describe or guess the content of their photos.',
+		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser. It is not a phone gallery or a file manager: its photos are the ones recorded by their apps. Describe it in terms of Albums, All photos, the photo grid, and the viewer with Previous, Next, Close, File information, Set as main image, Fetch home and Delete. If they see nothing, the likeliest cause is that no app with photos is marked visible, or the hidden albums need the gallery lock opened at home. If you are unsure how a control works, describe what its label means rather than inventing a sequence. Never describe or guess the content of their photos.',
 		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
 	},
 	'marker' => {
@@ -135,7 +135,7 @@ our %topic = (
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
 			'Texture, in Appearance, dresses the window in the desk\'s material - the top interface bar, every track, the player bar at the foot and every other surface; Plain and Round leave them bare.',
-			'Music opens with its padlock shut: sealed tracks (a name ending .enc) are not listed until you press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone. The next fresh open starts locked again.',
+			'Sealed tracks (a name ending .enc) in an album marked visible are listed and play as usual. Only a sealed track in an album marked not-visible waits for the padlock: press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone. A fresh open starts with that padlock shut.',
 			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen. A machine that is chosen as an output downloads the track and plays it with the system player, so it has no Music window of its own. Its keyboard and websocket panel carry a strip naming the track being received, with a Stop button and a Receive music from other devices switch. Turning the switch off stops the current track and refuses later transmissions to that machine; turning it back on lets it be an output again.',
 			'The line under the search box names the library this window is showing: this machine\'s own name for a local library, or the host it is relayed from for a remote one.',
 			'On a phone it keeps playing with the screen off or the app in the background: the player asks the app to leave the view running while a track is playing, so the queue carries on to the next track instead of stopping when the screen sleeps.',

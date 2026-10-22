@@ -135,10 +135,9 @@ function galleryInitWindow(response) {
 		: (attr || gallery.unlock || galleryUnlockRecall() || '');
 	gallery.padlock = $('#gallery').attr('padlock') == '1' ? 1 : 0;
 	if (attr) { galleryUnlockRemember(attr); }
-	// A window with no token shows only the few unsealed photos; opening the
-	// print prompt says why instead of presenting that as the whole gallery.
-	if (gallery.padlock == 1 && !gallery.unlock) { $('#gallery_lock').show(); }
-	else { $('#gallery_lock').hide(); }
+	// A visible album is theirs to browse without a print; the gate opens when
+	// they ask for the hidden ones (the Lock button), not on every open.
+	if (gallery.unlock) { $('#gallery_lock').hide(); }
 	galleryApplyChrome();
 }
 
@@ -217,7 +216,6 @@ function galleryFetch(reset) {
 				gallery.unlock = '';
 				galleryUnlockRemember('');
 				$('#gallery').attr('unlock', '');
-				if (gallery.padlock == 1) { $('#gallery_lock').show(); }
 			}
 			gallery.albums = response.albums || [];
 			gallery.total = response.total || 0;
@@ -424,8 +422,9 @@ $(document).on('click', '#gallery_home_tab', function() {
 	gallery.view = 'albums';
 	gallery.app = '';
 	gallery.files = null;
-	if (gallery.albums.length) { galleryRender(); }
-	else { galleryFetch(true); }
+	// refetch: the album list in the last response was narrowed to the album
+	// that was open, so rendering it again would show only that one
+	galleryFetch(true);
 	$('#gallery_body').scrollTop(0);
 });
 

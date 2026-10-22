@@ -1572,7 +1572,7 @@ sub rock_and_roll($c) {
 											my $whole = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
 											write_file($filename, $whole) if defined $whole && length $whole;
 										}
-										my $command2 = 'magick ' . $filename . ' -resize ' . $thumbnail_size . ' -';
+										my $command2 = 'magick ' . $filename . ' -auto-orient -resize ' . $thumbnail_size . ' -';
 										$file_data->{'type'} = 'image';
 										$data = &run_thumb_command($command2);
 									}
@@ -13511,7 +13511,7 @@ sub thumbnail_creator($data) {
 				`$command2`;
 			}
 			elsif ($upload_type eq 'image' || $upload_type eq 'document') {
-				my $command2 = 'magick ' . $filename . ' -resize ' . $thumbnail_size . ' ' . $thumb;
+				my $command2 = 'magick ' . $filename . ' -auto-orient -resize ' . $thumbnail_size . ' ' . $thumb;
 				`$command2`;
 			}
 			else {
@@ -25171,7 +25171,12 @@ get '/manager/gallery/data' => sub ($c) {
 			my $local = (defined $dir && defined $asset) ? $dir . $asset : '';
 			$path = $local if length $local && -e $local;
 		}
-		return undef if !$permissive && $path =~ /\.enc$/i;
+		# The padlock is for what the person hid, not for every sealed file: an
+		# album marked visible is theirs to browse, so only a hidden album's
+		# photos wait for an unlock.
+		my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
+		my $app_visible = (($aset->{'visible'} || '') eq 'checked') ? 1 : 0;
+		return undef if !$permissive && !$app_visible && $path =~ /\.enc$/i;
 		if (!-e $path && !$f->{'remote_uuid'}) {
 			return undef unless ($settings->{'archive'} || '') eq 'on';
 			$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
@@ -25186,7 +25191,8 @@ get '/manager/gallery/data' => sub ($c) {
 			my $tlocal = (defined $tdir && defined $tasset) ? $tdir . $tasset : '';
 			$f->{'thumb'} = $tlocal if length $tlocal && -e $tlocal;
 		}
-		my $thumb_path = ($f->{'thumb'} && -e $f->{'thumb'}) ? $f->{'thumb'} : $path;
+		my $thumb_ok = ($f->{'thumb'} && -e $f->{'thumb'} && (-s $f->{'thumb'}) > 100) ? 1 : 0;
+		my $thumb_path = $thumb_ok ? $f->{'thumb'} : $path;
 		my $thumb = '/file_open?file=' . $uenc->($thumb_path)
 			. '&app=' . $uenc->($app)
 			. '&app_uuid=' . $uenc->($appt->{'uuid'} || '')
@@ -25195,7 +25201,7 @@ get '/manager/gallery/data' => sub ($c) {
 			# a photo living on a peer (or the archive) must relay its thumb too,
 			# not just the full-size file the viewer asks for
 			. ($f->{'remote_uuid'} ? '&remote_uuid=' . $uenc->($f->{'remote_uuid'}) : '')
-			. (($f->{'thumb'} && -e $f->{'thumb'}) ? '' : '&thumb=ya');
+			. ($thumb_ok ? '' : '&thumb=ya');
 		my $full = '/play?app=' . $uenc->($app)
 			. '&track=' . $uenc->($path)
 			. '&timestamp=' . $uenc->($server_time)
@@ -25259,8 +25265,12 @@ get '/manager/gallery/data' => sub ($c) {
 			}
 			# a cover the tiles can already show is cheapest from its stored thumb
 			my ($tile) = grep { ($_->{'f'} || '') eq $main } @all;
-			$album->{'cover'} = $tile ? $tile->{'thumb'}
-				: '/file_open?file=' . $uenc->($main) . '&app=' . $uenc->($album->{'app'}) . '&thumb=ya';
+			if ($tile) { $album->{'cover'} = $tile->{'thumb'}; }
+			elsif (-e $main) {
+				$album->{'cover'} = '/file_open?file=' . $uenc->($main) . '&app=' . $uenc->($album->{'app'}) . '&thumb=ya';
+			}
+			# A choice that resolves to nothing on this machine (a photo taken on
+			# the phone that never synced) keeps the newest photo's cover above.
 		}
 	}
 
@@ -26400,13 +26410,12 @@ sub folders_opener($data) {
 	# a thing the person hid (visible ne checked) is not listed unless a media
 	# padlock is open and we are at home - the same rule the gallery reads
 	my $revealed = help_media_revealed();
-	# a sealed name (.enc) belongs to this window's own padlock: it is listed
-	# only while that padlock is open at home, whatever the house gate does
-	my $sealed = $unlocked;
+	# a sealed name (.enc) is listed without a padlock when its app is marked
+	# visible; only a name belonging to a hidden app waits for the unlock
 	@{$files} = grep {
 		my $app = folders_owning_app($_->{'path'});
 		my $hidden = ($app && help_app_hidden($app) && !$revealed);
-		my $sealed_name = (!$sealed && ($_->{'name'} // '') =~ /\.enc$/i);
+		my $sealed_name = (!$unlocked && ($_->{'name'} // '') =~ /\.enc$/i && (!$app || help_app_hidden($app)));
 		!$hidden && !$sealed_name;
 	} @{$files};
 	my @folders = grep { $_->{'type'} eq 'folder' } @{$files};
