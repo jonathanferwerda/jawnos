@@ -47,6 +47,62 @@ Still to do:
 - **Test VOIP** — a free service to call in from another number (Fongo is installed
   on the handset as the current other-number path).
 
+## Phone — digital assistant (deferred)
+
+**Not started (2026-10-22).** Goal: let the JawnOS Android app hold Android's
+**Digital assistant** role and send the assistant trigger to the Guide. The APK
+(`~/jawnos-app/termux-app`, branch `jawnos`) declares no `ACTION_ASSIST` activity
+and no `VoiceInteractionService`, so JawnOS is not offered under Settings → Apps
+→ Default apps → Digital assistant today.
+
+Planned first cut (press-to-talk; no hotword):
+- `JawnAssistActivity` (exported, `ACTION_ASSIST` + `CATEGORY_DEFAULT`,
+  `Theme.NoDisplay`, `noHistory`, `excludeFromRecents`) starts
+  `JawnWebViewActivity` with `jawn_assistant_listen` (or `jawn_assistant_ask`).
+- `JawnWebViewActivity.injectLaunchExtras` hands those to the page through
+  `window.__jawnLaunchExtras`; `help.js` grows `helpOpenAndAsk()` — open the
+  Guide, clear `jawnos_help_coding`, then `helpChatIngest(text)` or `helpAsk()`
+  with an empty box (the existing mic → `/manager/help/listen` →
+  `whisper_transcribe` path).
+- Dashboard **Permissions → Assistant** requests `RoleManager.ROLE_ASSISTANT`
+  (API 29+), falling back to the voice-input settings on older/odd builds.
+- Update the help topic; bump the APK `versionCode`/`versionName` and build,
+  stage and publish per `~/jawnos-app/termux-app/AGENTS.md`.
+
+Caveats recorded from the design pass:
+- **No hotword.** "Hey Jawn" on the phone needs a `VoiceInteractionService` plus
+  a hotword detector; the assist activity is press-the-assistant-trigger, then
+  talk. It replaces Google/Bixby for that role and grants no extra permissions.
+- **OEM pickers vary.** Some phones list only their own assistant plus Google;
+  once the activity exists, the adb fallback is `adb shell cmd role
+  add-role-holder android.app.role.ASSISTANT com.termux`.
+- The assist intent does not reliably hand over a transcript; collect the
+  request in the Guide. Selected text can be read from `AssistStructure` if
+  wanted.
+- The Guide needs a model under Configure → Plat → Agent models → Help guide;
+  the mic path needs a **Transcription (speech in)** model.
+
+**Transcription: Plat, not Android `SpeechRecognizer`.** The Guide's mic posts
+raw audio to `/manager/help/listen`; `subs::whisper_transcribe` uses
+`transcription_assistant` — local whisper.cpp or the configured cloud model.
+`SpeechRecognizer` would instead use the phone's recognizer (usually Google),
+return text only (no raw audio for Plat), send audio off the phone, and need its
+own conversation/echo handling; it is not the chosen path.
+
+**Streaming (not built).** Plat is a batch transcriber; the watch's
+`voice_stream` only reassembles, then transcribes at the end. Near-streaming is
+possible without a new engine: capture PCM in the WebView, send it over an
+authenticated `/manager/help/stream` WebSocket, re-transcribe a rolling window
+with the same Plat model every ~1–1.5 s, show **provisional** partials, and make
+the final full-clip transcript authoritative. Guard one decode in flight, cap
+30 s, drop silence hallucinations, and use local tiny for partials when the
+configured model is cloud (or disable partials for cloud). This improves the
+feel, not the final answer latency; a true streaming final needs a streaming
+engine — sherpa-onnx/Vosk locally or Deepgram/AssemblyAI/Google/Azure — because
+whisper.cpp has no streaming HTTP API. Repeated POSTs to
+`/manager/help/listen` were rejected as the shipping design: each blocks a
+manager worker and re-uploads the growing clip.
+
 ## Chat / mailbox deconsolidation
 
 Done: **Phone**, **Email**, **Chat** split into their own apps; the appointment
