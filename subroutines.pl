@@ -7925,7 +7925,11 @@ sub sync_table_buckets {
 
 # Bands whose picture moved between the baseline (the peer's last reconciled
 # map) and now. A band only in the baseline is a deletion and has no rows to
-# fetch; a band only in `now` is new.
+# fetch; a band only in `now` is new. The same diff serves a first reconciliation
+# with this machine's own map as the baseline: a band either side differs in has
+# to be read, because counts and sums cannot tell which side holds the row the
+# other lacks. Newest band first: the walk moves back through history, so a
+# recent gap is filled before an older one.
 sub sync_bucket_diff {
 	my ($base, $now) = @_;
 	return [] unless ref $base eq 'HASH' && ref $now eq 'HASH';
@@ -7939,7 +7943,18 @@ sub sync_bucket_diff {
 			&& ($old->{'max'} || 0) == ($new->{'max'} || 0));
 		push @moved, $b;
 	}
-	return [ sort { $a <=> $b } @moved ];
+	return [ sort { $b <=> $a } @moved ];
+}
+
+# Can a peer answer a band map? The route arrived in 0.1.1036, so its handshake
+# version answers it. An explicit `bands` marker is enough on its own; a peer
+# that reports no usable version is assumed unable, which keeps the old small-gap
+# guard (and the CPU it saves) for an older build.
+sub sync_bands_peer {
+	my ($version, $flag) = @_;
+	return 1 if $flag;
+	return 0 unless defined $version && $version =~ /^\d+(?:\.\d+)*$/;
+	return &version_cmp($version, '0.1.1036') >= 0 ? 1 : 0;
 }
 
 # The half-open server_time range a band covers. Band 0 owns everything below
@@ -7995,13 +8010,13 @@ sub sync_table_above {
 	return { count => ($row->{'c'} || 0) + 0, sum => ($row->{'s'} || 0) + 0, max => ($row->{'m'} || 0) + 0 };
 }
 
-# The caller's plan: table => since. `0` means a full table; a timestamp means
+# The caller's plan: table => since. `0` asks for the whole table's picture (the
+# puller localises it by band when the peer can answer a map); a timestamp means
 # pull only what is newer. Watermark first: rows above our newest are always a
-# delta, and the full read is for a table we have not reconciled in full yet
-# (`seen->{full}` records that one full read). A peer that is behind and was
-# already read in full is skipped rather than copied again on every write.
+# delta. `bands` says the peer can answer `/manager/sync_buckets`, which lets any
+# other divergence be localised instead of skipped or read whole.
 sub sync_plan {
-	my ($mine, $theirs, $above, $seen) = @_;
+	my ($mine, $theirs, $above, $seen, $bands) = @_;
 	return undef unless ref $mine eq 'HASH' && ref $theirs eq 'HASH';
 	$seen ||= {};
 	my %plan;
@@ -8040,9 +8055,9 @@ sub sync_plan {
 				$since = $am;
 			}
 			elsif (!$seen_full) {
-				# Never reconciled whole: read it once, which also learns a map. A
-				# map learned from a window is not a whole-table baseline, so it must
-				# not let this branch skip the one full read.
+				# Never reconciled whole: ask for the whole picture. The pull stores the
+				# peer's map and reads only the bands that differ, so this is a band walk,
+				# not a whole-table copy.
 				$since = 0;
 			}
 			elsif (ref $s eq 'HASH' && ref $s->{'buckets'} eq 'HASH' && scalar keys %{ $s->{'buckets'} }) {
@@ -8050,9 +8065,10 @@ sub sync_plan {
 				$since = 0;
 			}
 			else {
-				# Reconciled before this code could store a map: a bounded window
-				# is the safe answer, and the pull learns the map for next time.
-				$since = $am - 600000;
+				# Reconciled before this code could store a map. A peer that can answer
+				# one is asked for the whole picture so the pull can localise it; an
+				# older peer gets a bounded window, which is the safe answer.
+				$since = $bands ? 0 : $am - 600000;
 			}
 			$plan{'settings'} = $since;
 			next;
@@ -8072,13 +8088,21 @@ sub sync_plan {
 		if ($bm > $am) {
 			$since = $am;
 		}
-		# The peer is behind or level and holds no more rows than we do: there
-		# is nothing the watermark can name. Do not rebuild the table for it.
+		# A peer that can answer a band map is asked to localise whatever the
+		# watermark cannot name - including the handful of old rows the small-gap
+		# guard used to leave behind forever. One sealed map request names the
+		# blocks that moved, so this costs a band, not the whole table.
+		elsif ($bands) {
+			$since = 0;
+		}
+		# An older peer cannot localise. The peer is behind or level and holds no
+		# more rows than we do, so there is nothing the watermark can name; do not
+		# rebuild the table for it.
 		elsif ($bm <= $am && $bc <= $ac) {
 			next;
 		}
-		# The peer holds a few more rows, but the gap is small. A full copy of
-		# 110k rows to find a handful is what ran the CPU hot every few minutes.
+		# It holds a few more rows and the gap is small. A full copy of 110k rows
+		# to find a handful is what ran the CPU hot every few minutes.
 		elsif ($bm <= $am && ($bc - $ac) <= $small) {
 			next;
 		}

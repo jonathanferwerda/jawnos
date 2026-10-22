@@ -8423,8 +8423,15 @@ sub sync_rows_pull {
 		my $map_table = ($table eq 'settings') ? 'settings_durable' : $table;
 		my $base = (ref $prior_seen->{$map_table} eq 'HASH') ? $prior_seen->{$map_table} : undef;
 		my $settings_empty = ($table eq 'settings' && !$settings_count) ? 1 : 0;
-		if ($cut == 0 && !$settings_empty && ref $base eq 'HASH' && $base->{'full'} && ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }) {
-			my $band = &subs::sync_bucket_normalize($base->{'band'});
+		# The last reconciled map is the exact baseline: it names the blocks this
+		# peer changed. With no baseline yet (the first divergence after this code,
+		# or after a whole-table read), this machine's own picture is the reference
+		# instead - it localises just as well, and the same request learns the
+		# peer's map for every later tick.
+		my $have_base = (ref $base eq 'HASH' && $base->{'full'}
+			&& ref $base->{'buckets'} eq 'HASH' && scalar keys %{ $base->{'buckets'} }) ? 1 : 0;
+		if ($cut == 0 && !$settings_empty) {
+			my $band = &subs::sync_bucket_normalize($have_base ? $base->{'band'} : $subs::sync_bucket_band);
 			my ($bmap, $berr) = &sync_buckets_batch($remote, $signatorial, $secret, $map_table, $band);
 			if (ref $bmap eq 'HASH' && ref $bmap->{'buckets'} eq 'HASH') {
 				$bucket_maps->{$table} = { band => $bmap->{'band'}, buckets => $bmap->{'buckets'} };
@@ -8432,7 +8439,18 @@ sub sync_rows_pull {
 				# a repair that reads no rows must still advance the watermark so
 				# the new picture is recorded below and the plan moves on.
 				$watermark = $bmap->{'server_time'} if $bmap->{'server_time'} && $bmap->{'server_time'} > $watermark;
-				my $moved = &subs::sync_bucket_diff($base->{'buckets'}, $bmap->{'buckets'});
+				my $moved;
+				if ($have_base) {
+					$moved = &subs::sync_bucket_diff($base->{'buckets'}, $bmap->{'buckets'});
+				}
+				else {
+					# No reconciled peer picture yet: compare the peer's map with this
+					# machine's own. A band either side differs in is read - counts and
+					# sums cannot say which side holds the row the other lacks.
+					my $local = &subs::sync_table_buckets($map_table, $bmap->{'band'});
+					$moved = &subs::sync_bucket_diff($local->{'buckets'}, $bmap->{'buckets'});
+					&subs::log_writer('sync bucket bootstrap ' . $table . ': moved=' . scalar(@{$moved}) . ' band=' . $bmap->{'band'});
+				}
 				my $moved_n = scalar @{$moved};
 				my $bands_total = scalar keys %{ $bmap->{'buckets'} };
 				# A table changed across most of its bands is cheaper read whole: a
@@ -8486,7 +8504,13 @@ sub sync_rows_pull {
 					}
 					else {
 						my $b = shift @pending;
-						return undef unless defined $b;
+						unless (defined $b) {
+							# Every band was walked. Fewer rows than the map promised is a
+							# short read (a band changed under us), not a reconciled table:
+							# name it so the pull retries instead of reporting success.
+							$fetch_error = 'short band read: ' . $fetched . ' of ' . $expected if $expected && $fetched < $expected;
+							return undef;
+						}
 						($cur_from, $cur_to) = &subs::sync_bucket_range($bucket_maps->{$table}->{'band'}, $b);
 						$in_band = 1;
 						$cursor = '';
@@ -8503,6 +8527,9 @@ sub sync_rows_pull {
 					&subs::sync_job_step($job, 'merge:' . $table, { current => $fetched, total => ($expected || $fetched) });
 				}
 			};
+			# `0` leaves the merge unbounded: a band can grow between the map and the
+			# read, and bounding by the map's count would drop the extra rows. The
+			# closure below names a short read instead (fetched < expected).
 			my $short = &merge_table_rows($ctx, $table, $next_row, 0, $count, $table_total, $expected);
 			if ($short || $fetch_error) {
 				$failed = $table . ': ' . ($fetch_error || 'short read');
@@ -40874,6 +40901,9 @@ get '/manager/remote_auth_test' => sub($c) {
 					sync_cursor => &subs::tombstone_max(),
 					pending => $pending,
 					sync_version => 3,
+					# This build can answer a per-band map, so a peer that can read one
+					# may localise a divergence instead of reading the whole table.
+					bands => 1,
 					digest => &subs::sync_digest_map(),
 					above => \%above,
 				};
@@ -41205,7 +41235,11 @@ sub remote_machine_reconnector($c) {
 						# its one full reconciliation now instead of a bounded window that
 						# leaves old unique rows behind forever.
 						my $seen = &subs::sync_seen_get($rj->{'signatorial'});
-						my $plan = &subs::sync_plan($my_digest, $rj->{'digest'}, $rj->{'above'} || {}, $seen);
+						# The band map is what turns a divergent picture into a handful of
+						# moved blocks; without it the planner must either skip a small
+						# old-row gap or read the table whole.
+						my $bands = &subs::sync_bands_peer($rj->{'version'}, $rj->{'bands'});
+						my $plan = &subs::sync_plan($my_digest, $rj->{'digest'}, $rj->{'above'} || {}, $seen, $bands);
 						my $plan_differs = (ref $plan eq 'HASH' && scalar keys %{$plan}) ? 1 : 0;
 						my $plan_pull = $plan_differs ? 1 : 0;
 						if ($rj->{'deletions'}) {
