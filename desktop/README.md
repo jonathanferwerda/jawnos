@@ -35,6 +35,7 @@ desktop/
   jawnos.desktop.in      the application-menu entry
   icons/jawnos.png       the launcher icon
   install.sh             per-user installer
+  install-wallet.sh      Sparrow + hardware-wallet USB rules (opt-in)
 ```
 
 ## Install
@@ -44,6 +45,7 @@ desktop/
 ./desktop/install.sh --autostart     # also bring the BLE bridge up at login
 ./desktop/install.sh --systemd       # also install systemd --user units
 ./desktop/install.sh --input-access  # also let the desk read all keyboards/mice
+./desktop/install.sh --with-wallet   # also install Sparrow + USB wallet rules
 ```
 
 The installer copies the tree to `~/.local/share/jawnos/desktop`, links the
@@ -86,6 +88,44 @@ they are missing. On Arch the VA-API plugin used to be a separate
 
 Every system also needs the **VA-API driver for its GPU** (below), or video
 decodes in software.
+
+## Hardware wallet (Sparrow)
+
+`./desktop/install.sh --with-wallet` installs **Sparrow Wallet** and the USB
+rules a Ledger or Trezor needs. It is opt-in because a headless box has no GUI
+wallet. The same work can be re-run alone:
+
+```sh
+./desktop/install-wallet.sh             # Sparrow + Ledger/Trezor rules
+./desktop/install-wallet.sh --rules-only
+./desktop/install-wallet.sh --dry-run
+```
+
+Arch/Manjaro uses the AUR (`sparrow-wallet`, `ledger-udev`); Debian/Ubuntu and
+Fedora fetch the release package from GitHub and check its SHA-256 against the
+published manifest; other systems get the official tarball under
+`~/.local/opt/sparrow`. Every path is non-fatal: if it cannot install (no AUR
+helper, no sudo), it prints the exact commands.
+
+The wallet's key never leaves the device. JawnOS needs only the **account
+xpub**:
+
+1. Unlock the device and open its Bitcoin app.
+2. Sparrow: **File -> New Wallet -> Single Signature -> Native Segwit (BIP84) ->
+   Connected Hardware Wallet -> Scan -> Create Wallet**.
+3. **Settings -> Wallet -> Show xpub**; copy the `zpub...`.
+4. In JawnOS: **Configure -> App -> Account xpub**; paste it. Compare the "next
+   invoice address" it reports with Sparrow's **Receive** tab.
+5. Send a small test payment before relying on it.
+
+The same hardware wallet can be used on **several Sparrows** (and several
+machines): the key is on the device, and each Sparrow is an independent
+watch-only view of the same account. Export the same account xpub, use the same
+script type (`m/84'/0'/0'`), and close one app before opening the other (only
+one process can hold the USB connection). Never "restore" the seed into a
+computer; import the xpub instead. If two separate JawnOS houses share one
+xpub, they will allocate the same address indexes independently - use one
+house, or a different account per house, to avoid address reuse.
 
 ## The app's login ticket
 

@@ -6,6 +6,7 @@
 #   ./desktop/install.sh --autostart     # also start the BLE bridge at login
 #   ./desktop/install.sh --systemd       # also install systemd --user units
 #   ./desktop/install.sh --input-access  # let the desk read all keyboards/mice
+#   ./desktop/install.sh --with-wallet   # also install Sparrow + USB wallet rules
 #   ./desktop/install.sh --headless      # a server: CLI only, plus a SYSTEM
 #                                        # service (installing it needs root)
 #
@@ -27,14 +28,16 @@ WITH_AUTOSTART=0
 WITH_SYSTEMD=0
 WITH_INPUT_ACCESS=0
 WITH_HEADLESS=0
+WITH_WALLET=0
 for arg in "$@"; do
 	case "$arg" in
 		--autostart) WITH_AUTOSTART=1 ;;
 		--systemd) WITH_SYSTEMD=1 ;;
 		--input-access) WITH_INPUT_ACCESS=1 ;;
+		--with-wallet|--wallet) WITH_WALLET=1 ;;
 		--headless|--server) WITH_HEADLESS=1 ;;
 		-h|--help)
-			sed -n '2,12p' "$0"
+			sed -n '2,14p' "$0"
 			exit 0
 			;;
 		*) echo "install.sh: unknown option $arg" >&2; exit 2 ;;
@@ -116,7 +119,7 @@ echo "Installing to $DEST"
 mkdir -p "$DEST"
 cp -R "$DESKTOP_SRC/." "$DEST/"
 find "$DEST" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-chmod +x "$DEST/jawnosctl" "$DEST/jawnos-desktop" "$DEST/jawnos-bt-daemon"
+chmod +x "$DEST/jawnosctl" "$DEST/jawnos-desktop" "$DEST/jawnos-bt-daemon" "$DEST/install-wallet.sh"
 # Record what was installed, so the app's own Update button offers only a newer
 # repo tree - a plain install is "up to date" from the start.
 "$PYTHON" -c "import sys; sys.path.insert(0, r'$DEST'); from jawnos_desktop import core; core.apply_update(dict(jawn_dir=r'$JAWN_DIR'))" >/dev/null 2>&1 || true
@@ -206,6 +209,21 @@ if [ "$WITH_INPUT_ACCESS" -eq 1 ] && [ "$WITH_HEADLESS" -eq 0 ]; then
 	fi
 elif [ "$WITH_INPUT_ACCESS" -eq 1 ]; then
 echo "--input-access is not used by a headless install (no desk input)"
+fi
+
+# --- hardware wallet (opt-in) ----------------------------------------------
+# Sparrow is the desktop companion for a Ledger, Trezor or Coldcard. It is a
+# GUI app, so a headless server skips it. The helper is safe to re-run, and it
+# prints the manual commands when it cannot install (no AUR helper, no sudo).
+if [ "$WITH_WALLET" -eq 1 ] && [ "$WITH_HEADLESS" -eq 0 ]; then
+	echo
+	if [ -f "$DEST/install-wallet.sh" ]; then
+		sh "$DEST/install-wallet.sh" || true
+	else
+		echo "install.sh: install-wallet.sh missing from $DEST"
+	fi
+elif [ "$WITH_WALLET" -eq 1 ]; then
+	echo "--with-wallet is not used by a headless install (no GUI wallet)"
 fi
 
 # --- systemd --user units (a desktop, not a server) -------------------------
