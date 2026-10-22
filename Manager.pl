@@ -1255,6 +1255,44 @@ sub sealed_thumb_prefix($filename, $job, $bytes) {
 	return 1;
 }
 
+# Making a thumbnail means decrypting the whole original and running
+# ImageMagick inside the request. A gallery asks for a screenful at once, so
+# every prefork worker ended up doing that (or sleeping on the per-appointment
+# priority lock) and the UI's own requests waited behind them - the "web UI
+# froze" reports. Only one generation runs per machine; a request that finds
+# the slot taken answers at once with a placeholder, and the next view gets the
+# finished thumbnail because it is stored in the appointment.
+sub thumb_generation_slot {
+	my $path = $gb::tmp_dir . '/thumb_generation.lock';
+	open(my $fh, '>>', $path) or return undef;
+	unless (flock($fh, LOCK_EX | LOCK_NB)) { close $fh; return undef; }
+	return $fh;
+}
+
+sub thumb_placeholder {
+	my ($c) = @_;
+	# a 1x1 transparent PNG: a cheap answer while another request generates
+	my $png = pack('H*', '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c6360000200000500017a5eab3f0000000049454e44ae426082');
+	$c->res->headers->content_type('image/png');
+	$c->res->headers->cache_control('no-store');
+	$c->render(data => $png);
+}
+
+# A corrupt file or a stuck decoder used to hold the worker forever; a
+# thumbnail is not worth an unanswered request.
+sub run_thumb_command {
+	my ($command) = @_;
+	my $out = '';
+	eval {
+		local $SIG{ALRM} = sub { die "thumbnail command timed out\n" };
+		alarm 20;
+		$out = `$command`;
+		alarm 0;
+	};
+	alarm 0;
+	return $out;
+}
+
 sub rock_and_roll($c) {
 	my $man = 'rejected';
 	my $file = $c->param('file');
@@ -1367,6 +1405,17 @@ sub rock_and_roll($c) {
 			if (&file_response_cache_headers($c, $file, $cc)) {
 				$c->res->code(304);
 				$c->res->body('');
+				return;
+			}
+		}
+		# Do not decrypt an original and run ImageMagick while every other
+		# worker is doing the same; a taken slot answers immediately instead.
+		my $thumb_slot;
+		if ($wants_thumb && $thumbnail_size ne 'none' && $file =~ /\.enc$/i
+			&& $file_data->{'uuid'} && (!$file_data->{'thumb'} || !-e $file_data->{'thumb'})) {
+			$thumb_slot = &thumb_generation_slot();
+			unless ($thumb_slot) {
+				&thumb_placeholder($c);
 				return;
 			}
 		}
@@ -1509,12 +1558,12 @@ sub rock_and_roll($c) {
 									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm mpg mpeg mov mkv avi/ ) {
 										my $command2 = 'ffmpeg -ss 00:00:00.010 -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
 										$file_data->{'type'} = 'video';
-										$data = `$command2`;
+										$data = &run_thumb_command($command2);
 										if ($opened->{'stream'} && (!defined $data || !length $data)) {
 											my $whole = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
 											if (defined $whole && length $whole) {
 												write_file($filename, $whole);
-												$data = `$command2`;
+												$data = &run_thumb_command($command2);
 											}
 										}
 									}
@@ -1525,7 +1574,7 @@ sub rock_and_roll($c) {
 										}
 										my $command2 = 'magick ' . $filename . ' -resize ' . $thumbnail_size . ' -';
 										$file_data->{'type'} = 'image';
-										$data = `$command2`;
+										$data = &run_thumb_command($command2);
 									}
 									if ($file_data->{'uuid'} && $data && $thumbnail_size ne 'none') {
 										pop @file_split;
@@ -1575,6 +1624,7 @@ sub rock_and_roll($c) {
 									}, { name => 'thumb shredder' });
 								}
 							}
+							close($thumb_slot) if $thumb_slot;
 							$data = $full_data unless (defined $data && length $data);
 							$c->res->headers->accept_ranges('bytes');
 							&file_response_headers($c, $file, $wants_thumb ? 'private, max-age=3600' : 'private, no-cache');
