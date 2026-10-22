@@ -22,7 +22,10 @@
 	<div id="interface" class="theme_surface" style="position:absolute;top:0px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
 
 		<div id="audio_controls">
-			<input id="music_search" value="<%= $search %>" placeholder="Search">
+			<span id="music_search_wrap">
+				<input id="music_search" value="<%= $search %>" placeholder="Search">
+				<span id="music_library_name" hint="<%= &subs::ui('The library this Music window is showing') %>"><%= &subs::ui('Library') %>: <%= $crate->{'library_name'} || &subs::ui('Local') %></span>
+			</span>
 			<span id="progress_readout"><span id="elapsed_progress"></span>/<span id="total_progress"></span></span>
 			<span id="music_volume_group">
 				<img id="music_mute" hint="Mute" class="hover little_thumb music_mute" muted="no"

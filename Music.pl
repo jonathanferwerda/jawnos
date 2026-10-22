@@ -105,6 +105,7 @@ get '/manager/music' => sub ($c) {
 		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
 		if ($rm->{'uuid'}) {
 			$c->param('remote_uuid' => $rm->{'uuid'});
+			$c->param('library_name' => ($rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'}));
 			$c->param('subprocess' => 'yes');
 			my $result = &Manager::remote_relay_request($c);
 			if ($result =~ /music/gi) {
@@ -115,7 +116,9 @@ get '/manager/music' => sub ($c) {
 		else { &subs::setting_setter({ app => 'music', setting => 'library', value => 'local' }); $settings->{'library'} = 'local'; }
 	}
 	my $misc_settings = &Manager::misc_setting_list();
-	unless ($files) {
+	# A relayed page carries the host it came from; do not answer it from the
+	# cached shell, which was built for whichever library last filled it.
+	unless ($files || $c->param('library_name')) {
 		if (my $cache = &subs::cache_get({ app => 'music', context => 'content', subcontext => $content_cache })) {
 			if ($cache->{'contents'}) {
 				if ($c->param('window_maker')) {
@@ -535,6 +538,29 @@ sub music_search($data) {
 	return $crate;
 }
 
+# What the search bar should say the library is: this machine's own name for a
+# local library, or the host the window was relayed from for a remote one. The
+# caller passes library_name when it relays, because the page is then rendered
+# by the remote machine and knows itself only as 'local'.
+sub music_library_label($settings, $c) {
+	my $passed = $c ? $c->param('library_name') : undef;
+	return $passed if defined $passed && length $passed;
+	my $library = $settings->{'library'} // '';
+	if ($library eq '' || $library eq 'local') {
+		return &subs::setting_grabber({ app => 'me', setting => 'computer_name' })
+			|| &subs::config_reader()->{'name'}
+			|| &subs::ui('Local');
+	}
+	return &subs::ui('None') if $library eq 'none';
+	my $rm = &subs::db_query('select hostname,fqdn,ip from remote_machines where uuid=?', $library)->hashes->[0];
+	if ($rm) {
+		my $host = $rm->{'hostname'} || '';
+		$host = $rm->{'fqdn'} || $rm->{'ip'} || '' if $host eq '' || lc($host) eq 'localhost' || lc($host) eq 'me';
+		return $host if length $host;
+	}
+	return $library;
+}
+
 sub song_maker($data) {
 	my $files = $data->{'files'};
 	my $settings = $data->{'settings'};
@@ -726,9 +752,10 @@ sub song_maker($data) {
 		$albums = $cache_albums;
 	}
 
-	my $crate = { 
-		config => $config, 
-		remote_uuid => $c->param('remote_uuid'), 
+	my $crate = {
+		config => $config,
+		remote_uuid => $c->param('remote_uuid'),
+		library_name => &music_library_label($settings, $c), 
 		current_track => $current_track, 
 		artist => $settings->{'artist'}, 
 		album => $settings->{'album'}, 
@@ -795,6 +822,7 @@ post '/music/search' => sub ($c) {
 		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
 		if ($rm->{'uuid'}) {
 			$c->param('remote_uuid' => $rm->{'uuid'});
+			$c->param('library_name' => ($rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'}));
 			$c->param('subprocess' => 'yes');
 			my $result = &Manager::remote_relay_request($c);
 			if ($result =~ /music/gi) {

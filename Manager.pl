@@ -1120,6 +1120,69 @@ sub media_render_args($file, $verdict) {
 	return (content_type => $type, content_disposition => 'inline');
 }
 
+# Android's /sdcard is a FUSE mount. Mojolicious's render_file(filepath => ...)
+# hands the path to Mojo::Asset::File, whose sendfile/seek path never returns on
+# that mount: the request is left open with no headers, so the phone's <video>
+# sits at readyState 0 and the music player runs through the whole queue. A
+# plain read/seek on the same path works (the /play as_is path proves it), so
+# stream the bytes here instead - with the one Range a media element sends.
+sub stream_fuse_media($c, $file) {
+	my $type = &media_content_type($file, undef);
+	return 0 unless defined $type && $type =~ m{^(?:audio|video)/};
+	my $size = -s $file;
+	return 0 unless defined $size && $size > 0;
+	my ($start, $end, $code) = (0, $size - 1, 200);
+	my $range = $c->req->headers->range;
+	if (defined $range && length $range && $range =~ m/^bytes=(\d*)-(\d*)/) {
+		my ($s, $e) = ($1, $2);
+		if ($s eq '' && $e ne '') {
+			my $want = int($e);
+			$want = $size if $want > $size;
+			$start = $size - $want;
+			$end = $size - 1;
+		}
+		elsif ($s ne '') {
+			$start = int($s);
+			$end = ($e ne '') ? int($e) : $size - 1;
+			$end = $size - 1 if $end >= $size;
+		}
+		if ($start > $end || $start >= $size) {
+			$c->res->code(416);
+			$c->res->headers->content_range('bytes */' . $size);
+			$c->res->headers->accept_ranges('bytes');
+			$c->res->body('');
+			return 1;
+		}
+		$code = 206;
+	}
+	my $length = $end - $start + 1;
+	return 0 unless open my $fh, '<:raw', $file;
+	unless (seek($fh, $start, 0)) { close $fh; return 0; }
+	my $name = $file;
+	$name =~ s{.*/}{};
+	$name =~ s/"/'/g;
+	$c->res->code($code);
+	$c->res->headers->content_type($type);
+	$c->res->headers->content_disposition('inline; filename="' . $name . '"');
+	$c->res->headers->content_length($length);
+	$c->res->headers->content_range('bytes ' . $start . '-' . $end . '/' . $size) if $code == 206;
+	&file_response_headers($c, $file, 'private, no-cache');
+	my $remaining = $length;
+	my $chunk = 256 * 1024;
+	my $emit;
+	$emit = sub {
+		if ($remaining <= 0) { close $fh; $c->write(''); return; }
+		my $want = $remaining < $chunk ? $remaining : $chunk;
+		my $buf = '';
+		my $got = read($fh, $buf, $want);
+		if (!defined $got || $got <= 0) { close $fh; $c->write(''); return; }
+		$remaining -= $got;
+		$c->write($buf, $emit);
+	};
+	$emit->();
+	return 1;
+}
+
 # Pump a sealed file to the client a chunk at a time, so a large video starts
 # playing after the 16 KB probe instead of after the whole file is decrypted and
 # copied. Content-Length is known (the ciphertext length, which is exactly what
@@ -1603,6 +1666,8 @@ sub rock_and_roll($c) {
 				else {
 					# filepath streams the file and supports Range; reading it into a
 					# scalar copied the whole thing and then copied it again into the asset.
+					# The FUSE-backed storage paths take the manual streamer above.
+					if ($file && $file =~ m{^/(?:sdcard|storage)/} && &stream_fuse_media($c, $file)) { return; }
 					$file ? $c->render_file('filepath' => $file, &media_render_args($file, undef)) : $c->render(text => 'none');
 					return;
 				}

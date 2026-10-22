@@ -276,6 +276,31 @@ body.dark_theme #music {
 	width: 110px;
 	accent-color: var(--music-accent);
 }
+#music #music_search_wrap {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: 1px;
+}
+#music #music_search_wrap #music_search {
+	flex: 0 0 auto;
+	width: 100%;
+	margin: 0;
+	box-sizing: border-box;
+}
+/* The library this window is looking at: local means this machine's own name,
+   a remote library carries the host it was relayed from. */
+#music #music_library_name {
+	padding: 0 16px;
+	font-size: 11px;
+	line-height: 1;
+	color: var(--ink-muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
 #music #music_search {
 	flex: 1 1 auto;
 	min-width: 0;
@@ -326,6 +351,7 @@ body.dark_theme #music {
 	#music #audio_controls .control { padding: 2px; border-radius: 9px; }
 	#music #audio_controls img.medium_thumb { height: 32px; max-width: 38px; }
 	#music #music_search { height: 30px; padding: 0 10px; font-size: 14px; }
+	#music #music_library_name { padding: 0 10px; font-size: 10px; }
 	#music #progress_readout { font-size: 13px; letter-spacing: 0; }
 	#music #music_volume { width: 64px; }
 	#music #music_mute { height: 30px; }
