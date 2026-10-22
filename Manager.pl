@@ -1832,6 +1832,14 @@ sub rock_and_roll($c) {
 				return;
 			}
 		}
+		# A path this machine does not have (a photo kept on another machine, or
+		# one that moved) used to fall out of the branches with no answer at all,
+		# leaving the request open until the client gave up. One stale album
+		# cover could pin a worker that way, and a few of them pinned the pool.
+		unless ($c->res->body) {
+			$c->res->code(404);
+			$c->render(text => 'not found');
+		}
 	}
 	else {
 		# the gate may already have answered (a locked request for a file is
@@ -25140,6 +25148,18 @@ get '/manager/gallery/data' => sub ($c) {
 		my ($app, $appt, $f) = @_;
 		my $path = $f->{'f'} || '';
 		return undef unless length $path;
+		my $type = $f->{'type'} || $appt->{'type'} || 'image';
+		my $server_time = $f->{'server_time'} || $appt->{'server_time'} || 0;
+		# A row synced from another machine keeps that machine's path. The copy on
+		# this one lives under its own photo (or video) location, and the same
+		# renamer the rest of the manager uses maps it there. Without this a phone
+		# shows only the photos it took itself, and a laptop trips over a
+		# main_image that names a phone path.
+		if (!-e $path) {
+			my ($dir, $asset) = &subs::file_device_renamer({ file => $path, app => $app, type => $type });
+			my $local = (defined $dir && defined $asset) ? $dir . $asset : '';
+			$path = $local if length $local && -e $local;
+		}
 		return undef if !$permissive && $path =~ /\.enc$/i;
 		if (!-e $path && !$f->{'remote_uuid'}) {
 			return undef unless ($settings->{'archive'} || '') eq 'on';
@@ -25150,8 +25170,11 @@ get '/manager/gallery/data' => sub ($c) {
 			$f->{'f'} = $path;
 			$f->{'remote_uuid'} = $archived->{'remote_uuid'};
 		}
-		my $server_time = $f->{'server_time'} || $appt->{'server_time'} || 0;
-		my $type = $f->{'type'} || $appt->{'type'} || 'image';
+		if ($f->{'thumb'} && !-e $f->{'thumb'}) {
+			my ($tdir, $tasset) = &subs::file_device_renamer({ file => $f->{'thumb'}, app => $app, type => $type });
+			my $tlocal = (defined $tdir && defined $tasset) ? $tdir . $tasset : '';
+			$f->{'thumb'} = $tlocal if length $tlocal && -e $tlocal;
+		}
 		my $thumb_path = ($f->{'thumb'} && -e $f->{'thumb'}) ? $f->{'thumb'} : $path;
 		my $thumb = '/file_open?file=' . uri_encode($thumb_path)
 			. '&app=' . uri_encode($app)
@@ -25216,7 +25239,17 @@ get '/manager/gallery/data' => sub ($c) {
 		foreach my $album ( values %albums ) {
 			my $main = &subs::setting_grabber({ app => $album->{'app'}, setting => 'main_image' });
 			next unless defined $main && length $main;
-			$album->{'cover'} = '/file_open?file=' . uri_encode($main) . '&app=' . uri_encode($album->{'app'}) . '&thumb=ya';
+			# the choice may name a path from the machine that set it; this
+			# machine's copy is under its own location
+			if (!-e $main) {
+				my ($dir, $asset) = &subs::file_device_renamer({ file => $main, app => $album->{'app'}, type => 'image' });
+				my $local = (defined $dir && defined $asset) ? $dir . $asset : '';
+				$main = $local if length $local && -e $local;
+			}
+			# a cover the tiles can already show is cheapest from its stored thumb
+			my ($tile) = grep { ($_->{'f'} || '') eq $main } @all;
+			$album->{'cover'} = $tile ? $tile->{'thumb'}
+				: '/file_open?file=' . uri_encode($main) . '&app=' . uri_encode($album->{'app'}) . '&thumb=ya';
 		}
 	}
 
