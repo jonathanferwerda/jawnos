@@ -74,6 +74,16 @@ function galleryLazyLoad(image) {
 	if (!src) { return; }
 	image.setAttribute('src', src);
 	image.removeAttribute('data-src');
+	// A thumb that is still being generated answers with a 1x1 placeholder. Ask
+	// again in a moment: the generation slot fills one per pass, so without this
+	// a cover stayed blank until the gallery was reopened.
+	var tries = 0;
+	image.onload = function() {
+		if (this.naturalWidth > 1 || tries >= 4) { return; }
+		var self = this;
+		tries++;
+		setTimeout(function() { self.src = src + '&retry=' + tries; }, 2500);
+	};
 }
 
 function galleryLazyStart() {

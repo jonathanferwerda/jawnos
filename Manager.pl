@@ -25142,6 +25142,17 @@ get '/manager/gallery/data' => sub ($c) {
 	my @all;
 	my %albums;
 	my %aset_cache;
+	my $uenc = sub {
+		my $v = shift;
+		return '' unless defined $v;
+		my $copy = "$v";
+		# uri_encode is pure Perl and costs half a millisecond a call; a gallery
+		# page builds four URLs per tile, which was over a second per page and
+		# held a worker that long. This is the same encoding, and it also escapes
+		# # and ? that the old one left to break the query.
+		utf8::encode($copy) if utf8::is_utf8($copy);
+		return url_escape($copy, '^A-Za-z0-9\-._~/')
+	};
 	my $archive_lookup;
 
 	my $tile_for = sub {
@@ -25176,19 +25187,19 @@ get '/manager/gallery/data' => sub ($c) {
 			$f->{'thumb'} = $tlocal if length $tlocal && -e $tlocal;
 		}
 		my $thumb_path = ($f->{'thumb'} && -e $f->{'thumb'}) ? $f->{'thumb'} : $path;
-		my $thumb = '/file_open?file=' . uri_encode($thumb_path)
-			. '&app=' . uri_encode($app)
-			. '&app_uuid=' . uri_encode($appt->{'uuid'} || '')
-			. '&timestamp=' . uri_encode($server_time)
-			. ($f->{'uuid'} ? '&file_uuid=' . uri_encode($f->{'uuid'}) : '')
+		my $thumb = '/file_open?file=' . $uenc->($thumb_path)
+			. '&app=' . $uenc->($app)
+			. '&app_uuid=' . $uenc->($appt->{'uuid'} || '')
+			. '&timestamp=' . $uenc->($server_time)
+			. ($f->{'uuid'} ? '&file_uuid=' . $uenc->($f->{'uuid'}) : '')
 			# a photo living on a peer (or the archive) must relay its thumb too,
 			# not just the full-size file the viewer asks for
-			. ($f->{'remote_uuid'} ? '&remote_uuid=' . uri_encode($f->{'remote_uuid'}) : '')
+			. ($f->{'remote_uuid'} ? '&remote_uuid=' . $uenc->($f->{'remote_uuid'}) : '')
 			. (($f->{'thumb'} && -e $f->{'thumb'}) ? '' : '&thumb=ya');
-		my $full = '/play?app=' . uri_encode($app)
-			. '&track=' . uri_encode($path)
-			. '&timestamp=' . uri_encode($server_time)
-			. ($f->{'remote_uuid'} ? '&remote_uuid=' . uri_encode($f->{'remote_uuid'}) : '');
+		my $full = '/play?app=' . $uenc->($app)
+			. '&track=' . $uenc->($path)
+			. '&timestamp=' . $uenc->($server_time)
+			. ($f->{'remote_uuid'} ? '&remote_uuid=' . $uenc->($f->{'remote_uuid'}) : '');
 		my $name = $path;
 		$name =~ s{.*/}{};
 		return {
@@ -25249,7 +25260,7 @@ get '/manager/gallery/data' => sub ($c) {
 			# a cover the tiles can already show is cheapest from its stored thumb
 			my ($tile) = grep { ($_->{'f'} || '') eq $main } @all;
 			$album->{'cover'} = $tile ? $tile->{'thumb'}
-				: '/file_open?file=' . uri_encode($main) . '&app=' . uri_encode($album->{'app'}) . '&thumb=ya';
+				: '/file_open?file=' . $uenc->($main) . '&app=' . $uenc->($album->{'app'}) . '&thumb=ya';
 		}
 	}
 
