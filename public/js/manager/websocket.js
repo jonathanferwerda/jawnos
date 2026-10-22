@@ -667,6 +667,13 @@ function wsMessageHandler(event) {
 				}
 			}
 			else {
+				// The console channel carries instructions, not terminal text: a
+				// refresh, a removal, ticket_list(), jawnosThemeApply(). Run it here
+				// (the old eval was dropped in v0.1.1082, which left every live push
+				// painting only its own source line - a start no longer re-themed the
+				// desktop). The echoed entry is escaped so the command cannot inject
+				// markup, and a bad instruction must not kill the socket.
+				try { eval(data['console']); } catch (err) {}
 				var tv = $('#terminal_view .terminal_entries');
 				tv.append('<div class="terminal_entry terminal_entry_command"><div class="terminal_entry_head"><span style="color:blue;"><b>' + syncEscape(data['whoami']) + '@' + syncEscape(data['hostname']) + ':</b></span></div><div class="terminal_entry_msg">' + syncEscape(data['console']) + '</div></div>');
 				tv.scrollTop(tv.height() * 4000);

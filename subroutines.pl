@@ -755,14 +755,18 @@ sub calendar_shift {
 		if ($nmon < 0) { $nmon += 12; $nyear--; }
 		my $last = &days_in_month($nyear, $nmon + 1);
 		$mday = $last if $mday > $last;
-		return timelocal($sec, $min, $hour, $mday, $nmon, $nyear - 1900) * 1000;
+		# Give Time::Local the whole year, never the years-since-1900 offset: it
+		# reads an offset of 0..99 as a rolling two-digit year around today, so
+		# 1951 (51) came back as 2051 and a seventy-five year shift fell on the
+		# wrong century. A four-figure year is taken literally.
+		return timelocal($sec, $min, $hour, $mday, $nmon, $nyear) * 1000;
 	}
 	my $days = $unit eq 'week' ? $count * 7 : ($unit eq 'day' ? $count : 0);
 	if ($days) {
 		my $whole = int($days);
 		my $fraction = $days - $whole;
-		my @date = gmtime(timegm(0, 0, 0, $mday, $mon, $year) + $whole * 86400);
-		return timelocal($sec, $min, $hour, @date[3 .. 5]) * 1000 + $fraction * 86400000;
+		my @date = gmtime(timegm(0, 0, 0, $mday, $mon, $year + 1900) + $whole * 86400);
+		return timelocal($sec, $min, $hour, @date[3, 4], $date[5] + 1900) * 1000 + $fraction * 86400000;
 	}
 	my $seconds = $count * ($unit eq 'hour' ? 3600 : $unit eq 'minute' ? 60 : 1);
 	return $timestamp + $seconds * 1000;
