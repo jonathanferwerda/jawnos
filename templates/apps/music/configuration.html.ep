@@ -1,6 +1,13 @@
 <% my $remote_machines = &subs::remote_machine_lister(); %>
-<% my @machines; my %seen_machine; %>
+<% my @machines; my %seen_machine; my $self_signatorial = &subs::signatorial_designer(); %>
 <% foreach my $rm ( @{$remote_machines} ) {
+	# remote_machine_lister puts a synthetic 'me' row (hostname me, ip
+	# 127.0.0.1) first for the machine pickers. The local output is the real
+	# Me button above; this row is not a peer, and its 127.0.0.1 key can be
+	# the same key as a peer reached over loopback - on the phone that made a
+	# second 'me' button whose output actually went to the laptop. Leave it out.
+	next if ($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1';
+	next if $self_signatorial && ($rm->{'signatorial'} || '') eq $self_signatorial;
 	my $key = $rm->{'uuid'} || $rm->{'signatorial'} || $rm->{'ip'};
 	next if !$key || $seen_machine{$key};
 	$seen_machine{$key} = 1;
