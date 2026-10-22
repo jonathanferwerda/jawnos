@@ -6776,6 +6776,8 @@ post '/manager/store/crypto_panel' => sub($c) {
 			$w->{'address'} = $alloc->{'address'};
 			$w->{'address_static'} = $alloc->{'static'} ? 1 : 0;
 		}
+		# the browser needs the address, never the key that derives the rest
+		delete $w->{'xpub'};
 	}
 	my $html = $c->render_to_string(
 		template => 'store/crypto_payment',
