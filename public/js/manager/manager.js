@@ -1920,6 +1920,7 @@ var lastSearchTime;
 var jawnosSearchApps = null;
 var jawnosSearchLoading = null;
 var jawnosSearchSelected = -1;
+var jawnosSearchEnterConsumed = false;
 
 // The searchable app list, fetched once. Every keystroke is filtered here, so
 // the box never waits on a request; a failed fetch simply leaves the list empty
@@ -1955,6 +1956,15 @@ function jawnosSearchClicks() {
 	try { stored = JSON.parse(localStorage.getItem('jawnos_search_clicks') || '{}') || {}; }
 	catch (e) { stored = {}; }
 	return stored;
+}
+
+// Enter belongs to a chosen result for exactly one press: the input also wears
+// timed_input, whose own Enter adds/opens the typed name, and that must not
+// fire on the same key. Typing again clears the choice (and the claim).
+function jawnosSearchTakeEnter() {
+	if (!jawnosSearchEnterConsumed) { return false; }
+	jawnosSearchEnterConsumed = false;
+	return true;
 }
 
 // The list puts what was opened from it most recently at the top, so the app a
@@ -2049,6 +2059,7 @@ $(window).on('resize', function () {
 function jawnosSearchRender(query) {
 	var box = $('#search_results');
 	if (!box.length) { return; }
+	jawnosSearchEnterConsumed = false;
 	var matches = jawnosSearchMatches(query);
 	jawnosSearchSelected = -1;
 	if (matches.length == 0) {
@@ -2131,7 +2142,19 @@ $(document).on('keyup click', '#search', function(e) {
 	}, 5000 * 60);
 	// the arrow keys, Enter and Escape belong to the keydown handler; keyup for
 	// them must not redraw the list and drop the selection it just made
-	if (e.type == 'keyup' && (e.keyCode == 38 || e.keyCode == 40 || e.keyCode == 13 || e.keyCode == 27)) { return; }
+	if (e.type == 'keyup') {
+		if (e.keyCode == 13) {
+			// a chosen result owns this Enter; the timed_input add/reset must not run
+			if (jawnosSearchTakeEnter()) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+			}
+			return;
+		}
+		if (e.keyCode == 38 || e.keyCode == 40 || e.keyCode == 27) { return; }
+		// typing again makes the next Enter the box's own
+		jawnosSearchEnterConsumed = false;
+	}
 	if (!search) {
 		$('#search_results').hide();
 		jawnosSearchSelected = -1;
@@ -2153,11 +2176,14 @@ $(document).on('keydown', '#search', function(e) {
 		jawnosSearchMove(code == 40 ? 1 : -1);
 	}
 	else if (code == 13) {
-		if (!shown) { return; }
+		// Enter only belongs to the list once a result has been chosen with the
+		// arrows; otherwise the box keeps its own Enter (the add/reset)
+		if (!shown || jawnosSearchSelected < 0) { return; }
 		var rows = $('#manager_search_results .manager_search_result');
 		if (!rows.length) { return; }
 		e.preventDefault();
-		jawnosSearchOpen(rows.eq(jawnosSearchSelected < 0 ? 0 : jawnosSearchSelected).attr('app'));
+		jawnosSearchEnterConsumed = true;
+		jawnosSearchOpen(rows.eq(jawnosSearchSelected).attr('app'));
 	}
 	else if (code == 27) {
 		if (shown) {
@@ -2721,6 +2747,8 @@ $(document).on('click','.inventory', function() {
 var backy_color = 0;
 $(document).on('keyup', '.timed_input', function(e) {
 	if (e.keyCode == 13) {
+		// a chosen search result owns this Enter; typing again clears the choice
+		if ($(this).is('#search') && typeof jawnosSearchTakeEnter == 'function' && jawnosSearchTakeEnter()) { return; }
 		var url;
 		var i = $(this);
 

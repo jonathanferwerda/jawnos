@@ -540,7 +540,7 @@ html, body {
 	background-color: var(--panel);
 	color: var(--ink);
 }
-#search::placeholder { color: var(--ink); opacity: 1; }
+#search::placeholder { color: var(--ink); opacity: .55; }
 /* The search's dropdown: one app per row, its picture beside its name. The box
    scrolls when there are more matches than the screen should hold. */
 #search_results { overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; }

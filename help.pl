@@ -984,7 +984,7 @@ our %topic = (
 			'Search finds apps by name. The box can live in the start menu, the taskbar or the dock, and it filters the catalogue as you type.',
 			'It searches the house\'s real apps - the ones the menu opens and the appointments you have made - not just the ones already on screen. Each result shows the app\'s own icon beside its name.',
 			'The list puts the apps you have opened from it most recently at the top, so the one you reach for keeps coming back under the box. An exact name still wins: typing Music puts Music first.',
-			'Press the down or up arrow to walk the results and Enter to open the one you have landed on; Escape closes the list. Pressing Enter with nothing chosen opens the top result.'
+			'Press the down or up arrow to walk the results and Enter to open the one you have landed on; Escape closes the list. Typing again clears the choice, and Enter with no highlighted result keeps the box\'s usual behaviour for the typed name.'
 		],
 		related => [ 'start_menu', 'dock' ]
 	},
