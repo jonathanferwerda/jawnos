@@ -334,15 +334,27 @@ function galleryOpenViewer(index) {
 // The manager's taskbar is fixed over the page, so a window that reaches the top
 // of the screen puts the viewer's buttons underneath it. Push them down by
 // whatever overlap there actually is - none, for a window already below it.
-// The full-screen class lives on the window, which is a stacking context of its
-// own; putting it on the gallery would leave the taskbar painting above.
+// The full-screen class goes on the gallery; the browser layer it lives in is
+// raised with it, because the taskbar is a sibling layer above #browser.
 function galleryFullscreenHost() {
-	var win = $('#gallery').closest('.wind');
-	return win.length ? win : $('#gallery');
+	return $('#gallery');
 }
 
 function galleryIsFullscreen() {
-	return galleryFullscreenHost().hasClass('gallery_fullscreen');
+	return $('#gallery').hasClass('gallery_fullscreen');
+}
+
+function galleryFullscreenToggle() {
+	var on = !galleryIsFullscreen();
+	$('#gallery').toggleClass('gallery_fullscreen', on);
+	$('#browser').toggleClass('gallery_fullscreen_host', on);
+	galleryViewerPad();
+	galleryFullscreenLabel();
+}
+
+function galleryFullscreenLabel() {
+	var on = galleryIsFullscreen();
+	$('#gallery_viewer_full').text(on ? '⤡' : '⤢').attr('hint', on ? 'Leave full screen' : 'Full screen');
 }
 
 function galleryViewerPad() {
@@ -367,23 +379,11 @@ function galleryViewerPad() {
 	viewer.style.setProperty('--gallery_viewer_pad', pad + 'px');
 }
 
-function galleryFullscreenLabel() {
-	var on = galleryIsFullscreen();
-	$('#gallery_viewer_full').text(on ? '⤡' : '⤢').attr('hint', on ? 'Leave full screen' : 'Full screen');
-}
-
-function galleryFullscreenToggle() {
-	var host = galleryFullscreenHost();
-	if (!host.length) { return; }
-	host.toggleClass('gallery_fullscreen');
-	galleryViewerPad();
-	galleryFullscreenLabel();
-}
-
 function galleryCloseViewer() {
 	gallery.viewerIndex = -1;
 	$('#gallery_viewer_stage').empty();
-	galleryFullscreenHost().removeClass('gallery_fullscreen');
+	$('#gallery').removeClass('gallery_fullscreen');
+	$('#browser').removeClass('gallery_fullscreen_host');
 	$('#gallery_viewer').hide();
 	$('#gallery_body').css('overflow-y', 'auto');
 }

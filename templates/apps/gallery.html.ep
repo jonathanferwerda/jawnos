@@ -30,10 +30,11 @@
 #gallery_viewer { position:absolute; inset:0; z-index:60; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
 /* full screen is a class, not the Fullscreen API: the desktop app and the
    Android WebView do not all hand an element the screen, but a fixed panel
-   over the taskbar does the same job everywhere. It goes on the window, not on
-   the gallery, because a window is its own stacking context and the taskbar
-   would otherwise still paint over it. */
+   over the taskbar does the same job everywhere. The gallery's own window sits
+   in #browser, which is a stacking context below the taskbar, so the browser
+   layer is raised too - otherwise the taskbar still paints over the panel. */
 .gallery_fullscreen { position:fixed !important; inset:0 !important; width:100vw !important; height:100vh !important; max-height:100vh !important; z-index:50000 !important; border-radius:0 !important; }
+#browser.gallery_fullscreen_host { z-index:50001 !important; }
 #gallery_viewer_stage { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
 #gallery_viewer_stage img, #gallery_viewer_stage video { max-width:100%; max-height:100%; object-fit:contain; display:block; }
 .gallery_viewer_nav { position:absolute; top:50%; transform:translateY(-50%); z-index:3; width:44px; height:64px; font-size:30px; line-height:1; border:0; border-radius:10px; background:#0008; color:#fff; cursor:pointer; }
