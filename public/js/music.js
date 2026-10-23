@@ -62,9 +62,12 @@ $(document).on('click touchend', '.close_button[app="music"]', function() {
 	musicAudioClose();
 	document.querySelectorAll('[data-jawnos-seek-preview]').forEach(function(n) { n.remove(); });
 });
-$(window).on('pagehide', function() {
+$(window).on('pagehide', function(e) {
 	musicKeepalive(false);
-	musicAudioClose();
+	// a real unload/reload releases the context and its Pulse stream; a page
+	// parked in the back/forward cache (a phone putting the app away) keeps it,
+	// so background playback is not cut off
+	if (!e.originalEvent || !e.originalEvent.persisted) { musicAudioClose(); }
 });
 // The rendered window contents are cached server-side and reused on the next
 // open; key that cache to the code revision, so a template change (which ships
