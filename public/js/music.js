@@ -901,6 +901,11 @@ async function musicInit(method) {
 		// that is already loaded plays back at the audio-handshake volume when the
 		// app is re-opened
 		musicVolumeApply();
+		// a one-sided local output is a graph choice; a restored window must wear
+		// it as soon as its context can run
+		if (musicOutputChannel(mao['me']) == 'left' || musicOutputChannel(mao['me']) == 'right') {
+			try { musicAudioGraph(); } catch (e) {}
+		}
 		// The bar follows the machine's own volume when the system exposes one (the
 		// Master mixer on a desk, the music channel on Android). Ask once before the
 		// player cache is read, so a saved app level is not laid over it, then keep
@@ -1249,7 +1254,8 @@ function mediaMaker(data) {
 				// a context suspended by a call or the app going away is resumed here;
 				// a graph deferred while it was stopped is finished once it runs
 				musicAudioResume();
-				if (music_normalize && music_normalize != 'off') { musicAudioGraph(); }
+				var local_side = musicOutputChannel(mao['me']);
+				if ((music_normalize && music_normalize != 'off') || local_side == 'left' || local_side == 'right') { musicAudioGraph(); }
 				musicBaselineStart();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
@@ -2376,6 +2382,11 @@ $(document).on('click', '.music_audio_output_select', function() {
 		}
 	}
 	else {
+		// a one-sided local output needs the shared graph even when nothing else
+		// (normalisation, a visualiser, a remote tap) has asked for it yet
+		if (musicOutputChannel(mao['me']) == 'left' || musicOutputChannel(mao['me']) == 'right') {
+			try { musicAudioGraph(); } catch (e) {}
+		}
 		musicVolumeApply();
 		updateMusicMuteIcon();
 	}
