@@ -23742,6 +23742,11 @@ sub evaluation_agent() {
 				next unless ref $was eq 'HASH' && $was->{'measurements'};
 				$was = { measurements => $was->{'measurements'} };
 			}
+			elsif (!$speed_app && ref $was eq 'HASH' && ref $was->{'measurements'} eq 'HASH') {
+				# a speed an older run happened to record is not a reading this run
+				# compares: drop it from the "was" side so its absence says nothing
+				delete $was->{'measurements'}->{'speed'};
+			}
 			$delta{$wname} = { was => $was, now => $now };
 		}
 		$since_last = { previous_at => $prior->{'timestamp'}, windows => \%delta } if scalar keys %delta;
@@ -23776,6 +23781,7 @@ sub evaluation_agent() {
 	# the readings are the whole subject, so the model is told plainly not to
 	# invent a pace from the count of readings.
 	$system .= ' This scope records measurements, not events: each appointment is a reading of a value. Report only the measured values and what changed between them - never occurrences, sessions, episodes, days active, pace, logs or counts of any kind. A window with no readings is a gap in logging, not a fall to zero.' if $measure_app;
+	$system .= ' Speed is not a reading of this scope; do not mention it, even if a previous report did.' if !$global && !$speed_app;
 	my $measure_instructions = 'Begin with a single headline line - at most twenty words, no label - that names what the values did, then a blank line. Say what changed since the last run using since_last (and previous when it rides along). Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends, give each measurement\'s latest value against that window\'s average, min and max, and say whether it is rising, falling or steady across the windows; hold the range the app is set to expect against it where the briefing gives one. This scope records measurements, not events: never mention occurrences, sessions, episodes, days active, pace, logs or how often anything was recorded. A window with no readings is a gap in logging, not a fall to zero. Under Correlations, weigh any conditions the briefing carries, or say there is nothing to correlate. Under Predictions give two or three concrete, falsifiable predictions that the readings carry. Plain text.';
 	my $instructions = $depth eq 'brief'
 		? ($measure_app
