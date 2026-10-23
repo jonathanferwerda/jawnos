@@ -321,6 +321,53 @@ $(document).on('change', '.update_method_select', function() {
 	});
 });
 
+// The manual update button. It uses the selected method's source, so a machine
+// left on Manual - GitHub or Manual - Peers can be updated without turning the
+// watcher back on. A dirty tree is reported first; the force path discards
+// tracked local changes only after a confirmation.
+$(document).on('click', '#update_now_button', function() {
+	var button = $(this);
+	var status = $('#update_now_status');
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	if (button.attr('disabled') == 'disabled') { return; }
+	var post = function(force) {
+		button.attr('disabled', 'disabled');
+		status.text(t(force ? 'updating, discarding local changes…' : 'updating…'));
+		$.ajax({
+			url: '/manager/configure/update_now',
+			type: 'POST',
+			dataType: 'json',
+			data: { force: force ? 1 : 0, timestamp: Date.now() },
+			success: function(r) {
+				button.removeAttr('disabled');
+				var s = (r && r.status) || 'unknown';
+				if (s == 'updated' || s == 'reset' || s == 'peer/updated') {
+					status.text(t('updated — restarting…'));
+					return;
+				}
+				if (s == 'current') { status.text(t('already up to date')); return; }
+				if (s == 'none') { status.text(t('no newer code found')); return; }
+				if (s == 'ahead' || s == 'diverged') { status.text(t('local commits block the update')); return; }
+				if (s == 'dirty') {
+					var files = ((r && r.output) || '').trim();
+					if (!force && confirm(t('Local changes block the update. Discard them and update anyway?'))) {
+						post(1);
+						return;
+					}
+					status.text(t('local changes block the update') + (files ? ': ' + files.split('\n').slice(0, 3).join(' ') : ''));
+					return;
+				}
+				status.text(s + ((r && r.output) ? ': ' + r.output : ''));
+			},
+			error: function() {
+				button.removeAttr('disabled');
+				status.text(t('could not update'));
+			}
+		});
+	};
+	post(0);
+});
+
 // A custom notification sound: the file is uploaded to the house, which files it
 // beside the shipped ones, and every sound select is re-drawn so the new one can
 // be picked (here and on any other app's Notifications panel)

@@ -8365,6 +8365,31 @@ post '/manager/configure/deploy_neighbours' => sub($c) {
 	$c->render(json => { results => \@results });
 };
 
+# The Dev panel's Update now button. Unlike the boot-time watcher this is an
+# explicit instruction: it uses the method's source (GitHub, a peer, or GitHub
+# then a peer for None/Any) even when automatic updates are off. A dirty tree is
+# reported, not clobbered, unless the person confirms the force path; a
+# successful pull restarts after the reply is on the wire.
+post '/manager/configure/update_now' => sub($c) {
+	$c->inactivity_timeout(180);
+	my $result = &subs::update_now({ force => ($c->param('force') ? 1 : 0) });
+	my $restart = 0;
+	if ($result->{'status'} eq 'updated' || $result->{'status'} eq 'reset' || $result->{'status'} eq 'peer/updated') {
+		my $repo = &subs::home('~/jawnos');
+		if (-d &subs::home('~/.local/share/jawnos/desktop') && -x "$repo/desktop/install.sh") {
+			`cd "$repo" && ./desktop/install.sh >/dev/null 2>&1`;
+		}
+		&subs::install_extras();
+		$restart = 1;
+	}
+	$result->{'restart'} = $restart;
+	$result->{'version'} = &subs::jawn_version();
+	if ($restart) {
+		$c->on(finish => sub { write_file(&subs::home('~/.president/status'), 'restart'); });
+	}
+	$c->render(json => $result);
+};
+
 
 # ---------------------------------------------------------------------------
 # App releases (the APK). scripts/app_release.pl stages a built APK into

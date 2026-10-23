@@ -26594,7 +26594,7 @@ sub git_checkout_normalize {
 	my $dirty = `cd "$repo" && "$git" status --porcelain --untracked-files=no 2>/dev/null`;
 	return ('clean', '') unless $dirty =~ /\S/;
 	# best effort: with no route the synced tree is still worth preserving
-	`cd "$repo" && "$git" fetch origin --quiet 2>/dev/null`;
+	`cd "$repo" && timeout 30 "$git" fetch origin --quiet 2>/dev/null`;
 	my $fetched = ($? == 0);
 	my $tree = &subs::git_worktree_tree($repo);
 	if ($fetched && $tree && &subs::git_origin_has_tree($repo, $tree)) {
@@ -26620,7 +26620,7 @@ sub git_repo_update {
 		# below: a tree whose content is already a shipped commit is not work
 		$dirty = $run->("\"$git\" status --porcelain --untracked-files=no");
 	}
-	my $out = $run->("\"$git\" fetch origin --quiet");
+	my $out = $run->("timeout 30 \"$git\" fetch origin --quiet");
 	# a failed fetch must never be acted on: the remote-tracking ref may be
 	# stale, so comparing HEAD against it could read as current (or worse, a
 	# force could reset to the stale ref). error sends the watcher to its peer
@@ -26677,7 +26677,8 @@ sub git_peer_update {
 	return ('no-repo', '') unless -d "$repo/.git";
 	return ('no-peer', '') unless $rm;
 	# never touch a tree with local modifications to tracked files
-	my $dirty = `cd "$repo" && "$git" status --porcelain --untracked-files=no 2>&1`;
+	my $dirty = '';
+	$dirty = `cd "$repo" && "$git" status --porcelain --untracked-files=no 2>&1` unless $opts->{'force'};
 	return ('dirty', $dirty) if $dirty =~ /\S/;
 	my $head = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $head;
 	my ($ua, $p) = &subs::peer_useragent($rm);
@@ -26696,6 +26697,10 @@ sub git_peer_update {
 	return ('fetch-error', $fetch) unless $target;
 	my $current = `cd "$repo" && "$git" rev-parse HEAD 2>/dev/null`; chomp $current;
 	return ('current', '') if $current eq $target;
+	if ($opts->{'force'}) {
+		my $out = `cd "$repo" && "$git" reset --hard $target 2>&1`;
+		return ('reset', $out);
+	}
 	if (system("cd \"$repo\" && \"$git\" merge-base --is-ancestor HEAD $target >/dev/null 2>&1") == 0) {
 		my $out = `cd "$repo" && "$git" merge --ff-only $target 2>&1`;
 		return ('updated', $out);
@@ -28651,20 +28656,77 @@ sub coding_propose_fix {
 sub sync_update_method_get {
 	my $v = &subs::setting_grabber({ app => 'sync', setting => 'update_method', device => 'all' });
 	$v = &subs::setting_grabber({ app => 'sync', setting => 'update_method' }) unless defined $v && length $v;
-	$v = 'any' unless defined $v && $v =~ /^(?:none|github|peers|any)$/;
+	$v = 'any' unless defined $v && $v =~ /^(?:none|github|peers|any|manual_github|manual_peers)$/;
 	return $v;
 }
 
-our $git_watcher_dirty_note;
+# The newest peer that can fast-forward this checkout. The watcher's fallback
+# and the manual button share it: sort by the version the peer advertises, keep
+# the few that are newer, and stop at the first true fast-forward. A peer whose
+# history merely shares a commit with ours is not enough - ff_only refuses the
+# reset, which is what keeps a rewritten peer history from dragging a machine
+# backward. Returns (status, output, peer row).
+sub git_peer_update_best {
+	my ($opts) = @_;
+	my $repo = $opts->{'repo'} || '.';
+	my $mine = &subs::jawn_version();
+	my $rms = eval { &subs::db_select('remote_machines')->hashes } || [];
+	my @peers = sort { &subs::version_cmp($b->{'version'}, $a->{'version'}) }
+		grep { $_->{'version'} && &subs::version_newer($_->{'version'}, $mine) } @{$rms};
+	@peers = @peers[0 .. 2] if scalar @peers > 3;
+	my ($last_status, $last_out) = ('none', '');
+	foreach my $rm ( @peers ) {
+		my ($st, $o) = &subs::git_peer_update({ repo => $repo, rm => $rm, ff_only => 1, force => $opts->{'force'} });
+		return ($st, $o, $rm) if $st eq 'updated' || $st eq 'reset' || $st eq 'dirty';
+		$last_status = $st;
+		$last_out = $o;
+	}
+	return ($last_status, $last_out, undef);
+}
+
+# An explicit update, from the Dev panel's button. Unlike the watcher this may
+# run whichever source the method names, and for None (or Any) it tries GitHub
+# first and then a peer: pressing the button is the person's own instruction,
+# so the automatic-update switch does not veto it. Never force unless the caller
+# says so - force is what discards tracked local changes.
+sub update_now {
+	my ($opts) = @_;
+	my $repo = $opts->{'repo'} || '.';
+	my $force = $opts->{'force'} ? 1 : 0;
+	my $method = $opts->{'method'} || &subs::sync_update_method_get();
+	my ($status, $out, $source) = ('none', '', '');
+	if ($method eq 'github' || $method eq 'manual_github') {
+		($status, $out) = &subs::git_repo_update({ repo => $repo, force => $force });
+		$source = 'github';
+	}
+	elsif ($method eq 'peers' || $method eq 'manual_peers') {
+		($status, $out, undef) = &subs::git_peer_update_best({ repo => $repo, force => $force });
+		$source = 'peers';
+	}
+	else {
+		($status, $out) = &subs::git_repo_update({ repo => $repo, force => $force });
+		$source = 'github';
+		unless ($status eq 'updated' || $status eq 'reset' || $status eq 'current') {
+			my ($pst, $pout) = &subs::git_peer_update_best({ repo => $repo, force => $force });
+			if ($pst ne 'none') {
+				($status, $out, $source) = ($pst, $pout, 'peer');
+			}
+		}
+	}
+	return { status => $status, output => $out, source => $source, method => $method };
+}
+
+our $git_watcher_blocked_note;
 
 sub git_watcher_check {
 	return unless -d '.git';
 	# Update method is the house's choice of authority: none stops auto-update,
-	# github follows origin/main alone, peers takes only a peer's fast-forward, and
-	# any (the default) tries GitHub first, then a peer. An explicit deploy still
+	# the manual modes leave it off for the Dev panel's Update now button, github
+	# follows origin/main alone, peers takes only a peer's fast-forward, and any
+	# (the default) tries GitHub first, then a peer. An explicit update still
 	# works whatever the method says.
 	my $method = &subs::sync_update_method_get();
-	return if $method eq 'none';
+	return if $method eq 'none' || $method eq 'manual_github' || $method eq 'manual_peers';
 	my $before = `git rev-parse HEAD 2>/dev/null`; chomp $before;
 	# `any` keeps the old order: the checkout follows origin/main first, and only a
 	# machine origin cannot move forward - the fetch failed (the mesh answers while
@@ -28679,31 +28741,33 @@ sub git_watcher_check {
 	($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 }) unless $method eq 'peers';
 	unless ($status eq 'dirty' || $status eq 'updated' || $status eq 'reset' || $status eq 'current') {
 		return unless $method eq 'peers' || $method eq 'any';
-		my $mine = &subs::jawn_version();
-		my $rms = eval { &subs::db_select('remote_machines')->hashes } || [];
-		my @peers = sort { &subs::version_cmp($b->{'version'}, $a->{'version'}) }
-			grep { $_->{'version'} && &subs::version_newer($_->{'version'}, $mine) } @{$rms};
-		# only a few, so a run of dead peers cannot hold the watcher up
-		@peers = @peers[0 .. 2] if scalar @peers > 3;
-		foreach my $rm ( @peers ) {
-			my ($st, $o) = &subs::git_peer_update({ repo => '.', rm => $rm, ff_only => 1 });
-			if ($st eq 'updated') { $status = "peer/$st"; $out = $o; last; }
-			if ($st eq 'dirty') { $status = 'dirty'; $out = $o; last; }
-		}
+		my ($pst, $pout) = &subs::git_peer_update_best({ repo => '.' });
+		if ($pst eq 'updated') { $status = 'peer/updated'; $out = $pout; }
+		elsif ($pst ne 'none') { $status = $pst; $out = $pout; }
 	}
-	if ($status eq 'dirty') {
-		# a tree with tracked changes never moves; say so once an hour rather
-		# than leaving the machine quietly stuck behind
+	return if $status eq 'current';
+	unless ($status eq 'updated' || $status eq 'reset' || $status eq 'peer/updated') {
+		# A machine that cannot move names the reason once an hour: dirty tracked
+		# files, local commits the authority does not have, or no fetch and no
+		# newer peer. The silent versions of these looked exactly like a watcher
+		# that was not running - which is how a phone sat ten versions behind.
 		my $now = &subs::rightNow();
-		if ((!$git_watcher_dirty_note || $now - $git_watcher_dirty_note > 3600000) && $subs::logfile) {
-			$git_watcher_dirty_note = $now;
+		if ((!$git_watcher_blocked_note || $now - $git_watcher_blocked_note > 3600000) && $subs::logfile) {
+			$git_watcher_blocked_note = $now;
+			my $detail = '';
+			if ($status eq 'ahead' || $status eq 'diverged' || $status eq 'peer/diverged') {
+				my $git = &subs::git_binary();
+				$detail = `cd . && "$git" log --oneline --max-count=3 origin/main..HEAD 2>/dev/null`;
+				$detail =~ s/\s+/ /g;
+				$detail = ' commits: ' . $detail if $detail;
+			}
+			my $label = ($status eq 'dirty') ? 'tree is dirty' : ($status eq 'none' ? 'no newer peer' : $status);
 			open(my $fh, '>>', $subs::logfile);
-			print $fh $now . " git watcher: tree is dirty, left alone\n";
+			print $fh $now . " git watcher: $label, left alone$detail\n";
 			close $fh;
 		}
 		return;
 	}
-	return unless $status eq 'updated' || $status eq 'reset';
 	if ($subs::logfile) {
 		my $after = `git rev-parse HEAD 2>/dev/null`; chomp $after;
 		# name the source in the log: origin is the authority, a peer the fallback
