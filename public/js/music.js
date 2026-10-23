@@ -63,7 +63,7 @@ function musicVolumeApply() {
 // therefore sample-locked to every other one, and to the local picture once the
 // lip-sync delay is applied.
 var musicStream = {
-	ws: null, active: false, paused: false, ready: {}, latency: 0,
+	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0,
 	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm'
 };
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false };
@@ -185,20 +185,30 @@ function musicStreamConnect() {
 	musicStream.ws = ws;
 	ws.onopen = function() {
 		musicStream.reconnect = 0;
-		// a fresh connection measures a fresh pipeline; do not keep an old max
-		musicStream.latency = 0;
+		// a fresh connection measures a fresh pipeline; do not keep an old max.
+		// Opus has its own encoder/decoder buffer, so start near its real range
+		// rather than the PCM default while the pings settle.
+		musicStream.latency = (musicStream.codec == 'opus') ? 300 : 0;
+		musicStream.ready = {};
+		musicStream.failed = {};
 		musicStreamSendJson(musicStreamHello());
-		if (musicStream.codec == 'opus') {
-			// the first WebM header must reach this connection
-			musicOpusRecord();
-		}
-		else { musicStreamTapActive(true, true); }
+		if (musicStream.codec != 'opus') { musicStreamTapActive(true, true); }
 	};
 	ws.onmessage = function(e) {
 		if (typeof e.data != 'string') { return; }
 		var d;
 		try { d = JSON.parse(e.data); } catch (err) { return; }
-		if (d.type == 'ready') { musicStream.ready[d.key] = 1; }
+		if (d.type == 'ready') {
+			if (d.ok === 0) {
+				delete musicStream.ready[d.key];
+				musicStream.failed[d.key] = 1;
+			}
+			else {
+				musicStream.ready[d.key] = 1;
+				delete musicStream.failed[d.key];
+			}
+			musicStreamMaybeRecord();
+		}
 		else if (d.type == 'latency') {
 			musicStream.ready[d.key] = 1;
 			if (d.ms > musicStream.latency) {
@@ -206,11 +216,17 @@ function musicStreamConnect() {
 				musicLipDelayChanged();
 			}
 		}
-		else if (d.type == 'closed' || d.type == 'error') { delete musicStream.ready[d.key]; }
+		else if (d.type == 'closed' || d.type == 'error') {
+			delete musicStream.ready[d.key];
+			musicStream.failed[d.key] = 1;
+			musicStreamMaybeRecord();
+		}
 	};
 	ws.onerror = function() {};
 	ws.onclose = function() {
 		if (musicStream.ws === ws) { musicStream.ws = null; }
+		// the next connection gets a fresh recorder and WebM header
+		if (musicStream.codec == 'opus') { musicOpusStopRecorder(); }
 		if (!musicStream.active || musicStream.paused) { return; }
 		if (musicStream.reconnect < 3) {
 			musicStream.reconnect++;
@@ -222,6 +238,21 @@ function musicStreamConnect() {
 			musicLipStop();
 		}
 	};
+}
+
+// Opus is a container stream: the first blob carries the WebM header, so the
+// recorder may only start once every enabled output's ffmpeg is up. Otherwise
+// the header reaches some remotes and not others, and those decoders fail on
+// headerless clusters.
+function musicStreamMaybeRecord() {
+	if (musicStream.codec != 'opus' || musicOpus.recorder) { return; }
+	var outs = musicStreamOutputs();
+	for (var i = 0; i < outs.length; i++) {
+		if (!musicStream.ready[outs[i]] && !musicStream.failed[outs[i]]) { return; }
+	}
+	var any = false;
+	for (var j = 0; j < outs.length; j++) { if (musicStream.ready[outs[j]]) { any = true; break; } }
+	if (any) { musicOpusRecord(); }
 }
 
 function musicStreamStart(file, seek) {
@@ -238,6 +269,7 @@ function musicStreamStart(file, seek) {
 	musicStream.attached = false;
 	musicStream.gap = 0;
 	musicStream.codec = opus ? 'opus' : 'pcm';
+	musicStream.latency = opus ? 300 : 0;
 	musicStream.file = file || (tree.songs[0] ? tree.songs[0].file : '');
 	musicStream.type = (tree.songs[0] && tree.songs[0].type) || '';
 	var attach = opus ? Promise.resolve(musicOpusAttach()) : musicStreamTapAttach();
@@ -273,7 +305,7 @@ function musicOpusAttach() {
 }
 
 function musicOpusRecord() {
-	if (!musicOpus.dest) { return; }
+	if (!musicOpus.dest || musicOpus.recorder) { return; }
 	musicOpusStopRecorder();
 	musicOpus.gen++;
 	var gen = musicOpus.gen;

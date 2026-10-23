@@ -510,6 +510,12 @@ sub music_source_client_close($st, $key) {
 	}
 }
 
+sub music_source_ping($tx, $cl) {
+	return unless $cl && $cl->{'up'} && $tx;
+	$cl->{'pings'} = ($cl->{'pings'} || 0) + 1;
+	eval { $tx->send({text => encode_json({ type => 'ping', t => &subs::rightNow() })}); };
+}
+
 sub music_source_client_open($c, $st, $key) {
 	return if $st->{'clients'}->{$key};
 	my $rm = &music_source_row($key);
@@ -549,21 +555,41 @@ sub music_source_client_open($c, $st, $key) {
 			my $kind = $d->{'type'} || '';
 			if ($kind eq 'pong') {
 				my $rtt = &subs::rightNow() - ($d->{'t'} || 0);
-				$cl->{'rtt'} = $rtt;
-				my $ms = int(($d->{'base'} || 80) + ($rtt / 2) + 20);
-				$c->tx->send({text => encode_json({ type => 'latency', key => $key, ms => $ms })}) if $c->tx->is_websocket;
+				$cl->{'base'} = $d->{'base'} if $d->{'base'};
+				$cl->{'min_rtt'} = $rtt if !defined $cl->{'min_rtt'} || $rtt < $cl->{'min_rtt'};
+				$cl->{'pongs'} = ($cl->{'pongs'} || 0) + 1;
+				# a phone starting ffmpeg/pacat can delay the first reply by a
+				# second; three spread pings and the smallest wins
+				if ($cl->{'pongs'} < 3) {
+					Mojo::IOLoop->timer(0.3 => sub { &music_source_ping($tx, $cl); });
+					return;
+				}
+				unless ($cl->{'latency_sent'}) {
+					$cl->{'latency_sent'} = 1;
+					my $ms = int(($cl->{'base'} || 80) + ($cl->{'min_rtt'} / 2) + 20);
+					$c->tx->send({text => encode_json({ type => 'latency', key => $key, ms => $ms })}) if $c->tx->is_websocket;
+				}
 				return;
 			}
 			# Ping only once the remote has started its player: the ping is what
 			# measures the pipeline, and it must not include pacat's startup time.
 			if ($kind eq 'ready' && !$cl->{'pinged'}) {
 				$cl->{'pinged'} = 1;
-				$tx->send({text => encode_json({ type => 'ping', t => &subs::rightNow() })});
+				Mojo::IOLoop->timer(0.4 => sub { &music_source_ping($tx, $cl); });
+				# if a reply is lost, still give the browser a safe estimate
+				Mojo::IOLoop->timer(2.5 => sub {
+					return if $cl->{'latency_sent'} || !$cl->{'up'};
+					$cl->{'latency_sent'} = 1;
+					my $min = defined $cl->{'min_rtt'} ? $cl->{'min_rtt'} : 20;
+					my $ms = int(($cl->{'base'} || 80) + ($min / 2) + 20);
+					eval { $c->tx->send({text => encode_json({ type => 'latency', key => $key, ms => $ms })}); };
+				});
 			}
 			$c->tx->send({text => $msg}) if $c->tx->is_websocket;
 		});
 		$tx->send({text => encode_json($hello)});
 		$tx->on(finish => sub {
+			$cl->{'up'} = 0;
 			delete $st->{'clients'}->{$key};
 			$c->tx->send({text => encode_json({ type => 'closed', key => $key })}) if $c->tx->is_websocket;
 		});
