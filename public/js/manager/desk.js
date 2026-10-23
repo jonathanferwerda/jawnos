@@ -99,7 +99,9 @@ function deskAppItem(a) {
 // the ones with no button in the document, so a shortcut uses it first.
 function deskOpenApp(app) {
 	if (!app) { return; }
-	if (typeof appWindowOpener == 'function') { appWindowOpener(app, Date.now()); }
+	// the window restorer expects a saved view; a fresh shortcut is simply
+	// visible (without this the generic apps would open and immediately hide)
+	if (typeof appWindowOpener == 'function') { appWindowOpener(app, Date.now(), { visible: 'yes' }); }
 	else if (typeof jawnosSearchOpen == 'function') { jawnosSearchOpen(app); }
 }
 

@@ -252,7 +252,7 @@ $(document).on('dblclick', '.folders_file', function() {
 	var el = $(this);
 	if (el.hasClass('desk_app')) {
 		if (typeof deskOpenApp == 'function') { deskOpenApp(el.attr('app')); }
-		else if (typeof appWindowOpener == 'function') { appWindowOpener(el.attr('app'), Date.now()); }
+		else if (typeof appWindowOpener == 'function') { appWindowOpener(el.attr('app'), Date.now(), { visible: 'yes' }); }
 		else if (typeof jawnosSearchOpen == 'function') { jawnosSearchOpen(el.attr('app')); }
 		return;
 	}
@@ -1036,7 +1036,7 @@ function foldersKey(e, surface) {
 		var chosen = items.filter('.selected').last();
 		if (chosen.length && chosen.hasClass('desk_app')) {
 			if (typeof deskOpenApp == 'function') { deskOpenApp(chosen.attr('app')); }
-			else if (typeof appWindowOpener == 'function') { appWindowOpener(chosen.attr('app'), Date.now()); }
+			else if (typeof appWindowOpener == 'function') { appWindowOpener(chosen.attr('app'), Date.now(), { visible: 'yes' }); }
 			return;
 		}
 		if (st.selected && st.selected.length == 1) {
