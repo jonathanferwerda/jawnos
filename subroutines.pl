@@ -14107,6 +14107,68 @@ sub rightNow() {
 	return $time;
 }
 
+# The navigation utility's own pace, in seconds. President adopts this machine's
+# row from the utility controller at runtime, but Manager and the scripts do not
+# share that process, so read the same persisted row here.
+sub navigation_interval {
+	my $signatorial = &subs::signatorial_designer();
+	my $controls = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
+	my $interval = $controls->{$signatorial}->{'navigation'}->{'interval'};
+	$interval = $gb::timeouts->{'navigation'}->{'interval'} unless $interval && $interval > 0;
+	return $interval || 600;
+}
+
+# The pace navigation must keep right now, in seconds. The machine's utility
+# interval is the base, but a running appointment whose app asks for fixes more
+# often than that (its navigation setting, say 1m) is a request to update faster
+# than the slower utility slot - so the pace follows the app down to a
+# battery-wise floor. Base only asks for the utility's own pace.
+sub navigation_pace {
+	my $data = shift || {};
+	my $base = &navigation_interval();
+	return $base if $data->{'base'};
+	my $fastest = $base;
+	my $running = &subs::db_query('select app from appointments where (type = ? or type = ?) and timestamp < ?', 'start', 'record', &subs::rightNow())->hashes;
+	foreach my $appt ( @{$running} ) {
+		my $navigation = eval { return &subs::setting_grabber({ app => $appt->{'app'}, setting => 'navigation' }) };
+		next unless defined $navigation && $navigation =~ /\S/;
+		next if $navigation =~ /^(?:none|once)$/i;
+		my $ms = ($navigation =~ /^\d+$/ && $navigation > 1000) ? $navigation : &subs::time_abbrev_translator($navigation);
+		next unless $ms && $ms > 0;
+		my $seconds = $ms / 1000;
+		$fastest = $seconds if $seconds < $fastest;
+	}
+	$fastest = 10 if $fastest < 10;
+	return $fastest;
+}
+
+# How long a fix the browser writes stays the machine's current place. It has
+# to outlive the next automatic navigation run or the place falls back to public
+# between fixes - the old flat five minutes did exactly that whenever the
+# navigation utility was slower than five minutes. A scheduled watcher says when
+# its own next run is due; otherwise the utility's pace (or the app's, when that
+# is longer) is the gap to cover. Two minutes of grace absorbs a late slot or a
+# device that could not get a fix on its first try.
+sub navigation_hold_warranty {
+	my $data = shift || {};
+	my $now = $data->{'server_time'} || &subs::rightNow();
+	my $grace = 2 * 60 * 1000;
+	my $hold = 5 * 60 * 1000;
+	my $navigation = $data->{'navigation'};
+	my $next = $data->{'next_navigation'};
+	my $timestamp = $data->{'timestamp'};
+	if ($next && $timestamp && $next > $timestamp) {
+		# both came from the browser's clock, so their difference is the wait
+		$hold = ($next - $timestamp) if ($next - $timestamp) > $hold;
+	}
+	elsif (defined $navigation && $navigation =~ /^\d+$/ && $navigation > 0) {
+		$hold = $navigation if $navigation > $hold;
+	}
+	my $pace = &navigation_pace({ base => 1 }) * 1000;
+	$hold = $pace if $pace > $hold;
+	return $now + $hold + $grace;
+}
+
 sub headless_navigation() {
 	my $signatorial = &subs::signatorial_designer();
 	my $now = &subs::rightNow();
@@ -14131,7 +14193,8 @@ sub headless_navigation() {
 	# call from elsewhere. The runner's tick of slack keeps a call landing a few
 	# milliseconds before the interval from skipping a whole slot (the stamp is
 	# taken at the slot, so a strict comparison can be just short).
-	if ($now - $gb::timeouts->{'navigation'}->{'lasted_run'} >= ($gb::timeouts->{'navigation'}->{'interval'} * 1000) - 5000) {
+	my $pace = &navigation_pace();
+	if ($now - $gb::timeouts->{'navigation'}->{'lasted_run'} >= ($pace * 1000) - 5000) {
 		$gb::timeouts->{'navigation'}->{'lasted_run'} = $now;
 		my $returner = {
 			uuid => &subs::random_string_creator(103),
@@ -14140,7 +14203,7 @@ sub headless_navigation() {
 			timestamp => $now,
 			signatorial => $signatorial,
 			server_time => &subs::rightNow(),
-			warranty => &subs::ago_calc('-' . &subs::duration_sayer($gb::timeouts->{'navigation'}->{'interval'} * 1000 * 3),$now),
+			warranty => &subs::ago_calc('-' . &subs::duration_sayer(&navigation_interval() * 1000 * 3),$now),
 		};
 		my $written = 0;
 		# The capture runs on the navigation interval alone (the gate above). It

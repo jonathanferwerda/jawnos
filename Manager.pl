@@ -14024,7 +14024,14 @@ sub continent_record($c) {
 			my $treturner = clone $returner;
 			$treturner->{'type'} = 'temporary';
 			$treturner->{'app'} = '__president';
-			$treturner->{'warranty'} = &subs::ago_calc('-5m', &subs::rightNow());
+			# hold the place until the next automatic run, not a flat five minutes
+			# (the gap that let a private place fall back to public between fixes)
+			$treturner->{'warranty'} = &subs::navigation_hold_warranty({
+				navigation => $navigation,
+				next_navigation => $next_navigation,
+				timestamp => $timestamp,
+				server_time => $server_time
+			});
 			$treturner->{'uuid'} = &subs::random_string_creator(31);
 			&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
 			&subs::db_insert('continent', $treturner);
@@ -14042,8 +14049,20 @@ sub continent_record($c) {
 			my $json = encode_json $returner;
 			&subs::setting_setter({ app => 'me', device => $device, setting => 'home_plate', value => $json });
 		}
-		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $pre_uuid .'\');' });
+		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $pre_uuid . '\');' }) unless $purpose eq 'navigation';
 		&subs::navigation_automation($returner) if $returner->{'latitude'};
+		# a manual navigation answers with the place it has just settled on, so
+		# the start menu's site-type picture follows the fresh fix at once
+		if ($purpose eq 'navigation') {
+			my $nav = &subs::navigation_information({ signatorial => $signatorial, cache => 'no' });
+			my $site_type = $nav->{$signatorial}->{'site_type'};
+			if ($site_type && $gb::site_types->{$site_type}) {
+				$returner->{'site_type'} = $site_type;
+				$returner->{'site_rating'} = $nav->{$signatorial}->{'site_rating'};
+				$returner->{'site_source'} = $nav->{$signatorial}->{'site_source'};
+				$returner->{'site_icon'} = &subs::icon_for($gb::site_types->{$site_type}->{'icon'});
+			}
+		}
 	}
 	if ($returner->{'navigation'} ne 'once') {
 		$returner->{'navigation'} = &subs::ago_calc('-' . ($navigation || 60000), $server_time);
@@ -14089,7 +14108,9 @@ post '/manager/continent/record_anyway' => sub($c) {
 		$returner = &subs::embedded_location_grabber($returner);
 
 		unless ($returner->{'latitude'}) {
-			if ($purpose ne 'app') {
+			# navigation (like an appointment) is a place the person is standing in;
+			# the home plate is where their machine lives, so it is never the answer
+			if ($purpose ne 'app' && $purpose ne 'navigation') {
 				my $home_plate = &subs::setting_grabber({ 'app' => 'me', setting => 'home_plate' });
 				if (my $hp = eval { return decode_json $home_plate }) {
 
@@ -14108,7 +14129,7 @@ post '/manager/continent/record_anyway' => sub($c) {
 				$treturner->{'type'} = 'temporary';
 				$treturner->{'app'} = '__president';
 				$treturner->{'uuid'} = &subs::random_string_creator(31);
-				$treturner->{'warranty'} = &subs::ago_calc('-5m', &subs::rightNow());
+				$treturner->{'warranty'} = &subs::navigation_hold_warranty({ timestamp => $timestamp, server_time => $server_time });
 				&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
 				&subs::db_insert('continent', $treturner);
 			}

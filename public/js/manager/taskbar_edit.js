@@ -280,12 +280,12 @@ function jawnosTaskbarKeyboardPins() {
 	return pins;
 }
 
-// The start menu's foot buttons - leave, the site type, now, the assistant and
-// the bird. They are launchers (an action, not an app window), keyed by a
-// selector into the live menu.
+// The start menu's foot buttons - leave, the site type, now, the assistant,
+// the navigation button and the bird. They are launchers (an action, not an app
+// window), keyed by a selector into the live menu.
 function jawnosTaskbarFootPinsFrom(root) {
 	var pins = [];
-	root.find('.leave, .site_type_manual_changer_toggle, #now_toggle, #assistant, .fuck_you').each(function () {
+	root.find('.leave, .site_type_manual_changer_toggle, #now_toggle, #assistant, #navigation_now, .fuck_you').each(function () {
 		var img = $(this);
 		var id = img.attr('id');
 		var sel;

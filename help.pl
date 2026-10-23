@@ -705,11 +705,11 @@ our %topic = (
 	'process_monitor' => {
 		title => 'Process Monitor', category => 'apps', app => 'process_monitor',
 		templates => [ 'templates/monitor/monitor.html.ep', 'public/js/manager/monitor.js' ],
-		verified => '2026-10-22',
+		verified => '2026-10-23',
 		summary => 'Live CPU, memory and battery health, per-core graphs and a process list.',
 		body => [
 			'Process Monitor is the system\'s own dashboard: live CPU and memory readings, per-core graphs and a sortable process list. It is how you see what JawnOS — and everything else on the machine — is actually doing.',
-			'The health strip along the top says how many processes jawn is running (including the master), the machine\'s load average and uptime, how many sync jobs are running and how many peers are linked, and the database and write-ahead-log sizes. On a machine with a battery it also shows charge, charging state, temperature, voltage, current and battery health. PPH is the battery\'s percent-per-hour draw, measured as a least-squares slope over the discharging samples in the last hour; on a desktop, where every process is visible, it is scaled by jawn\'s share of the CPU so it reads as jawn\'s own rate, while a phone hides other apps and therefore shows the device rate. Hover the strip for the measurement window and the last sync job\'s note.',
+			'The health strip along the top says how many processes jawn is running (including the master), the machine\'s load average and uptime, how many sync jobs are running and how many peers are linked, and the database and write-ahead-log sizes. On a machine with a battery it also shows charge, charging state, temperature, voltage, current and battery health. PPH is the battery\'s percent-per-hour draw, measured as a robust slope over the discharging samples in the last three hours, and only once the pack has moved at least two percent across twenty minutes; on a desktop, where every process is visible, it is scaled by jawn\'s share of the CPU so it reads as jawn\'s own rate, while a phone hides other apps and therefore shows the device rate. When the slope is too flat or too noisy to measure, the strip says so rather than inventing a number. Hover the strip for the measurement window and the last sync job\'s note.',
 			'The main server adds a worker while every worker is inside a request and retires the extra one when they have been quiet for half a minute, so a burst of slow requests - a language model answer, a mail fetch - does not leave the rest of the interface queued behind them. That is why the process count can rise for a while and settle back on its own; the resting count is set by the `main_workers` value in config.json (0 keeps the automatic choice for the device).'
 		],
 		steps => [
@@ -723,7 +723,7 @@ our %topic = (
 	'configure' => {
 		title => 'Configure', category => 'apps', app => 'configure',
 		templates => [ 'templates/configure/configure.html.ep', 'templates/configure/misc_setting_list.html.ep', 'templates/configure/device_lister.html.ep', 'public/js/manager/configure.js' ],
-		verified => '2026-10-23',
+		verified => '2026-10-22',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (colour schemes, font, texture, icon set, zoom, bar heights, the window border and the button border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
@@ -976,7 +976,7 @@ our %topic = (
 		summary => 'Recently used apps, a category rail and a search.',
 		body => [
 			'The start menu opens on the apps you used most recently, with a category rail (accessories, business, games, media, system) for the whole catalogue.',
-			'Its pages also cover what is running, what is upcoming and what is expiring, plus a System view of the house\'s levels: this machine\'s battery, every peer that answered the last pass, and the embedded boards any of them can see (over Wi-Fi, or the Bluetooth link a machine is already holding), each with charge, state, temperature, voltage and PPH, and an estimate of the time left on it (or the time to full while it is charging). Every machine with a processor also reports its CPU load and the share of RAM in use, in green, amber or red as the load rises; on Android, where the kernel hides the whole-machine counters, the CPU figure is JawnOS\'s own share and says so. The view stays live while it is open, refreshing every few seconds; a pack that reports its own gauge (a phone\'s charge counter, a laptop\'s energy and power) gives the finish time the moment it is plugged in, without waiting for a measured rate. A search box can ride the menu, the taskbar or the dock. A new message raises a dot on the menu\'s mailbox icon.'
+			'Its pages also cover what is running, what is upcoming and what is expiring, plus a System view of the house\'s levels: this machine\'s battery, every peer that answered the last pass, and the embedded boards any of them can see (over Wi-Fi, or the Bluetooth link a machine is already holding), each with charge, state, temperature, voltage and PPH, and an estimate of the time left on it (or the time to full while it is charging). The estimate is the pack\'s own gauge reading where it reports one; otherwise it is a robust slope over up to three hours of discharging samples, shown as a range while the samples are noisy and as "more than" a floor when the pack is moving too slowly to measure. Every machine with a processor also reports its CPU load and the share of RAM in use, in green, amber or red as the load rises; on Android, where the kernel hides the whole-machine counters, the CPU figure is JawnOS\'s own share and says so. The view stays live while it is open, refreshing every few seconds; a pack that reports its own gauge (a phone\'s charge counter, a laptop\'s energy and power) gives the finish time the moment it is plugged in, without waiting for a measured rate. A search box can ride the menu, the taskbar or the dock. A new message raises a dot on the menu\'s mailbox icon.'
 		],
 		steps => [
 			'Press the start button to open the menu.',
@@ -1086,22 +1086,25 @@ our %topic = (
 	},
 	'navigation' => {
 		title => 'Navigation (location logging)', category => 'features',
-		templates => [ 'templates/appointment_details.html.ep', 'templates/appointment_wrapper.html.ep', 'public/js/manager/travel.js' ],
-		verified => '2026-10-16',
+		templates => [ 'templates/appointment_details.html.ep', 'templates/appointment_wrapper.html.ep', 'templates/start_menu/start_menu.html.ep', 'public/js/manager/travel.js' ],
+		verified => '2026-10-23',
 		summary => 'JawnOS records where a device is on a schedule, screen on or off.',
 		body => [
 			'Navigation is the autonomous location log. On a handheld the backend asks for a fresh GPS fix once per navigation interval — whether or not the app is open and whether or not the screen is on, since the phone holds a wake lock for it — and writes that one point down as the machine\'s current position.',
-			'An app can also carry its own pace. An app\'s navigation setting is none (never log), once (log only when you act on it), or an interval such as 1m. While an appointment of that app is running, a fix is filed against it at that interval — never faster than the navigation interval itself (the utility\'s own pace in the Utility controller), which is the real ceiling.',
+			'An app can also carry its own pace. An app\'s navigation setting is none (never log), once (log only when you act on it), or an interval such as 1m. While an appointment of that app is running, a fix is filed against it at that interval, and the machine\'s own navigation pace follows the fastest running app: an app asking for a point a minute makes navigation run about a minute apart even when the Utility controller\'s navigation interval is longer. The navigation fast pace has a ten-second floor so a very short setting cannot hammer the GPS.',
+			'The current place holds until the next navigation run, so a private place stays private between fixes instead of falling back to public. When no automatic fix is due, the old five-minute warranty on the machine\'s position is what used to expire first; a fix now stays current through the next run, with a couple of minutes of grace for a late or failed one.',
+			'To ask for a fix at once, press the navigation button at the foot of the Start menu, beside the Guide\'s associate button. It takes one fix now and the site-type picture beside it follows the answer. Starting an appointment also asks for a fix, and a fix the browser hands back a little late is kept rather than dropped, so a start reliably writes a point.',
 			'Those filed fixes are the Distance list on the appointment: open its details and the Distance section lists each point with its distance from home, the kilometres since the last one, and the speed between them.',
 			'Navigation also drives the home plate: when the device crosses a home plate\'s radius, that plate\'s duty can start or stop the matching appointment on its own.'
 		],
 		steps => [
 			'Give an app a navigation value in its settings: none never logs, once only logs when you act, and an interval (like 1m) logs while one of its appointments is running.',
-			'Start an appointment of that app and carry the device; the backend files a fix each navigation interval.',
+			'Start an appointment of that app and carry the device; the backend files a fix each navigation interval, or at the app\'s faster interval while one of its appointments runs.',
+			'Press the navigation button at the foot of the Start menu whenever you want a fix now.',
 			'Open the appointment and read its Distance list for the points, the distance and the speed.',
 			'Set a home plate and a duty on it to let crossing that radius start or stop the appointment by itself.'
 		],
-		prompt => 'Explain JawnOS navigation: the backend logs one GPS fix per navigation interval, screen on or off, while the phone holds its wake lock; the per-app navigation setting is none / once / an interval; and filed fixes appear in the appointment\'s Distance list (distance from home, kilometres since the last, speed). The utility interval is the ceiling — a 1m per-app setting still only gets a point about as often as the utility runs. Do not describe it as a live map, and never guess a person\'s actual location.',
+		prompt => 'Explain JawnOS navigation: the backend logs one GPS fix per navigation interval, screen on or off, while the phone holds its wake lock; the per-app navigation setting is none / once / an interval; while an appointment with a shorter interval runs, navigation follows that faster pace (down to a ten-second floor); the current place holds until the next automatic fix so a private place does not fall back to public between runs; the Start menu has a navigation button beside the Guide\'s associate to take a fix now; and filed fixes appear in the appointment\'s Distance list (distance from home, kilometres since the last, speed). Do not describe it as a live map, and never guess a person\'s actual location.',
 		related => [ 'travel', 'appointments', 'devices_and_mesh' ]
 	},
 

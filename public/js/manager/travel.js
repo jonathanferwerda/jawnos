@@ -218,10 +218,8 @@ function continent_record(setter) {
 	var pathname = $(location)[0]['pathname'];
 	var protocol = $(location)[0]['protocol'];
 	var uuid = setter['uuid'];
+	var complete = typeof setter['complete'] == 'function' ? setter['complete'] : null;
 
-	if (!navigation) {
-	//	navigation = $('.appointment[app="' + app + '"]').attr('navigation');
-	}
 	var now = Date.now();
 	if (!locationWatchers[app]) {
 		locationWatchers[app] = { watch: undefined, timer: (now - numeral(navigation).value()) };
@@ -229,109 +227,121 @@ function continent_record(setter) {
 	else {
 		navigator.geolocation.clearWatch(locationWatchers[app]['watch']);
 	}
-	var returner;
-	var gotLocation = 0;
-	
-	if (navigator.geolocation) { 
-		if (navigation == 'once' || navigation == undefined || navigation == 0) {
-			navigator.geolocation.getCurrentPosition((position) => {
-				gotLocation = 1;
-				var data = position.coords;
-				now = Date.now();
-				if (now - position.timestamp < 2000) {
-					$.ajax({
-						url: '/manager/continent/record',
-						type: 'POST',
-						data: { 
-							latitude: data.latitude,
-							longitude: data.longitude,
-							altitude: data.altitude,
-							speed: data.speed,
-							accuracy: data.accuracy,
-							timestamp: position.timestamp,
-							user_agent: navigator.userAgent,
-							hostname: hostname,
-							pathname: pathname,
-							protocol: protocol,
-							purpose: purpose,
-							scope: scope,
-							app: app,
-							device: device,
-							uuid: uuid,
-							navigation: setter['navigation']
-						},
-						success: function(response) {
-							return response;
-						},
-					});
-				}
-				else {
-					continent_record_anyway({ app: app, scope:scope, uuid:uuid, purpose:purpose, timestamp: timestamp, device: device });
-				}
-			}, (error) => {
-				continent_record_anyway({ app: app, uuid:uuid, scope:scope, purpose:purpose, timestamp: timestamp, device: device });
-			}, { 
-				maximumAge:1_000, enableHighAccuracy: true 
-			});
-		}
-		else {
 
-			locationWatchers[app]['watch'] = navigator.geolocation.watchPosition((position) => {
-				gotLocation = 1;
-				var data = position.coords;
+	// A fix counts while it still describes now. The old two-second gate threw
+	// away a desktop's or a cold phone's slightly cached answer and never asked
+	// again, so an appointment start could log no point at all. Keep what the
+	// API hands back while it is still a reasonable picture of where you are.
+	var usable = function(position) {
+		return (Date.now() - position.timestamp) < 60000;
+	};
+	var send = function(position, next) {
+		var data = position.coords;
+		var payload = {
+			latitude: data.latitude,
+			longitude: data.longitude,
+			altitude: data.altitude,
+			speed: data.speed,
+			accuracy: data.accuracy,
+			timestamp: position.timestamp,
+			user_agent: navigator.userAgent,
+			hostname: hostname,
+			pathname: pathname,
+			protocol: protocol,
+			purpose: purpose,
+			scope: scope,
+			app: app,
+			device: device,
+			uuid: uuid,
+			navigation: setter['navigation']
+		};
+		if (next) { payload['next_navigation'] = next; }
+		$.ajax({
+			url: '/manager/continent/record',
+			type: 'POST',
+			data: payload,
+			success: function(response) {
+				if (complete) { complete(response); }
+				return response;
+			},
+		});
+	};
+	var anyway = function() {
+		continent_record_anyway({ app: app, scope: scope, uuid: uuid, purpose: purpose, timestamp: timestamp, device: device }, complete);
+	};
 
-				var now = Date.now();
-				if (now > locationWatchers[app]['timer']) {
-					locationWatchers[app]['timer'] = (now + numeral(navigation).value());
-					if (now - position.timestamp < 2000) {
-						$.ajax({
-							url: '/manager/continent/record',
-							type: 'POST',
-							data: { 
-								latitude: data.latitude,
-								longitude: data.longitude,
-								altitude: data.altitude,
-								speed: data.speed,
-								accuracy: data.accuracy,
-								timestamp: position.timestamp,
-								user_agent: navigator.userAgent,
-								hostname: hostname,
-								pathname: pathname,
-								protocol: protocol,
-								purpose: purpose,
-								scope: scope,
-								app: app,
-								device: device,
-								uuid: uuid,
-								navigation: setter['navigation'],
-								next_navigation: locationWatchers[app]['timer']
-							},
-							success: function(response) {
-
-								return response;
-							},
-						});
-					}
-				}
-				else {
-					continent_record_anyway({ app: app, scope:scope, uuid:uuid, purpose:purpose, timestamp: timestamp, device: device });
-				}
-			}, (error) => {
-				continent_record_anyway({ app: app, scope:scope, uuid:uuid, purpose:purpose, timestamp: timestamp, device: device });
-			}, { 
-				maximumAge:1_000, enableHighAccuracy: true 
-			});
-		}
-	} 
+	if (!navigator.geolocation) {
+		if (complete) { complete(null); }
+		return;
+	}
+	if (navigation == 'once' || navigation == undefined || navigation == 0) {
+		navigator.geolocation.getCurrentPosition(function(position) {
+			if (usable(position)) { send(position); }
+			else { anyway(); }
+		}, function(error) {
+			anyway();
+		}, {
+			maximumAge: 0, enableHighAccuracy: true, timeout: 20000
+		});
+	}
+	else {
+		locationWatchers[app]['watch'] = navigator.geolocation.watchPosition(function(position) {
+			var now = Date.now();
+			// Only the slot that is due records, and a stale fix does not burn the
+			// slot: the next callback tries again instead of waiting a whole
+			// interval with nothing written.
+			if (now > locationWatchers[app]['timer'] && usable(position)) {
+				locationWatchers[app]['timer'] = (now + numeral(navigation).value());
+				send(position, locationWatchers[app]['timer']);
+			}
+		}, function(error) {
+			anyway();
+		}, {
+			maximumAge: 0, enableHighAccuracy: true, timeout: 20000
+		});
+	}
 }
 
-function continent_record_anyway(data) {
+// The start menu's navigation button: ask for a fix now, with no appointment
+// behind it, and let the site-type picture follow the answer. It is the same
+// browser path an appointment start takes, so a manual run and an automatic one
+// write the same kind of point.
+function navigationNow() {
+	continent_record({
+		app: 'me',
+		purpose: 'navigation',
+		navigation: 'once',
+		complete: function(response) {
+			if (!response) { return; }
+			var icon = $('#site_type_toggle');
+			if (response['site_icon'] && icon.length) {
+				icon.attr('src', response['site_icon']);
+			}
+			var source = response['site_source'];
+			if (source == 'manual' || source == 'lost') {
+				icon.css({ 'border-style': 'solid', 'border-color': (source == 'manual' ? 'red' : 'black'), 'border-width': '8px' });
+			}
+			else if (source) {
+				icon.css({ 'border-style': '', 'border-color': '', 'border-width': '' });
+			}
+			startMenuHtmlFlush();
+		}
+	});
+}
+
+$(document).on('click', '#navigation_now', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	navigationNow();
+});
+
+function continent_record_anyway(data, complete) {
 	$.ajax({
 		url: '/manager/continent/record_anyway',
 		type: 'POST',
 		data: data,
 		success: function(response) {
-
+			if (typeof complete == 'function') { complete(response); }
 		}
 	}); 
 }

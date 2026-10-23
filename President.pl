@@ -962,6 +962,14 @@ sub utility_runner() {
 		my $u = $gb::timeouts->{$t};
 		next unless $u->{'subroutine'} && $u->{'toggle'} eq 'on';
 		my $interval = $u->{'interval'} || 0;
+		# navigation keeps the machine's pace, but a running appointment whose app
+		# asks for fixes more often than that moves the slot up to the app's own
+		# rate (floored in subs::navigation_pace) instead of waiting for the slower
+		# utility interval.
+		if ($t eq 'navigation' && $interval > 0) {
+			my $pace = &subs::navigation_pace();
+			$interval = $pace if $pace && $pace < $interval;
+		}
 		next if $interval <= 0;
 		# read per job: another job in this same pass may have run for minutes
 		my $now = &subs::rightNow();
