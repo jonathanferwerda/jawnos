@@ -25417,7 +25417,7 @@ get '/manager/gallery/data' => sub ($c) {
 	my $archive_lookup;
 
 	my $tile_for = sub {
-		my ($app, $appt, $f) = @_;
+		my ($app, $appt, $f, $explicit) = @_;
 		my $path = $f->{'f'} || '';
 		return undef unless length $path;
 		my $type = $f->{'type'} || $appt->{'type'} || 'image';
@@ -25438,10 +25438,15 @@ get '/manager/gallery/data' => sub ($c) {
 		}
 		# The padlock is for what the person hid, not for every sealed file: an
 		# album marked visible is theirs to browse, so only a hidden album's
-		# photos wait for an unlock.
-		my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
-		my $app_visible = (($aset->{'visible'} || '') eq 'checked') ? 1 : 0;
-		return undef if !$permissive && !$app_visible && $path =~ /\.enc$/i;
+		# photos wait for an unlock. A list handed over by another app (Folders,
+		# the IDE) has already been through that app's own rule - the file was
+		# chosen from a listing the person could see - and it is not one of this
+		# gallery's albums, so its names are not filtered again here.
+		if (!$explicit) {
+			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
+			my $app_visible = (($aset->{'visible'} || '') eq 'checked') ? 1 : 0;
+			return undef if !$permissive && !$app_visible && $path =~ /\.enc$/i;
+		}
 		if (!-e $path && !$f->{'remote_uuid'}) {
 			return undef unless ($settings->{'archive'} || '') eq 'on';
 			$archive_lookup = &subs::archive_image_lookup({}) unless $archive_lookup;
@@ -25476,7 +25481,7 @@ get '/manager/gallery/data' => sub ($c) {
 		return {
 			uuid => $f->{'uuid'} || '',
 			app => $app,
-			label => &subs::format_name($app),
+			label => $f->{'label'} || &subs::format_name($app),
 			app_uuid => $appt->{'uuid'} || '',
 			type => $type,
 			f => $path,
@@ -25495,7 +25500,7 @@ get '/manager/gallery/data' => sub ($c) {
 		my $files = eval { return decode_json $jfiles } || [];
 		foreach my $f ( @{$files} ) {
 			my $app = $f->{'app'} || 'ide';
-			my $tile = $tile_for->($app, { timestamp => &subs::rightNow(), server_time => &subs::rightNow(), uuid => &subs::random_string_creator(12), type => $f->{'type'} || 'image' }, $f);
+			my $tile = $tile_for->($app, { timestamp => &subs::rightNow(), server_time => &subs::rightNow(), uuid => &subs::random_string_creator(12), type => $f->{'type'} || 'image' }, $f, 1);
 			next unless $tile;
 			push @all, $tile;
 		}
@@ -28021,6 +28026,16 @@ post '/manager/folders/file/open' => sub ($c) {
 		@chosen = ( @front, grep { $_->{'path'} ne $first } @chosen );
 		@chosen = ( { path => $first, type => $type }, @chosen ) unless scalar @front;
 	}
+	# The folder these files came from is the album the gallery shows behind the
+	# photo, so name it the way Folders names that folder.
+	my $album = '';
+	if (defined $first && length $first) {
+		my $dir = $first;
+		$dir =~ s{/[^/]*$}{};
+		$dir = '/' unless length $dir;
+		$album = &folders_display_name($dir);
+		$album = '/' unless length $album;
+	}
 	if (!$folders->{'remote_uuid'} && $app && ($app eq 'gallery' || $app eq 'music') && scalar @chosen) {
 		my $dir = $chosen[0]->{'path'};
 		$dir =~ s{/[^/]*$}{};
@@ -28050,10 +28065,13 @@ post '/manager/folders/file/open' => sub ($c) {
 			file => $fs->{'path'},
 			uuid => &subs::random_string_creator(10),
 			server_time => $temp->{'created'} * 1000,
-			type => $fs->{'type'}
+			type => $fs->{'type'},
+			label => $album
 		};
 	}
-	my $returner = { raw_files => $raw_files, files => $files, app => $app };
+	# `target` is the file the person picked: the gallery opens it in the viewer
+	# with this folder's photos behind it, so closing it lands on the album.
+	my $returner = { raw_files => $raw_files, files => $files, app => $app, target => ($first // ''), album => $album };
 
 
 	$c->render(json => $returner);

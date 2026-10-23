@@ -884,7 +884,7 @@ function foldersFileOpener(state) {
 		},
 		success: function(response) {
 			if (response['app'] == 'gallery') {
-				imageViewer({ 'files': response['files'], loadImages: 1, shuffle: 'off' });
+				imageViewer({ 'files': response['files'], 'target': response['target'], loadImages: 1, shuffle: 'off' });
 			} else if (response['app'] == 'music') {
 				musicToggle(response['raw_files']);
 			} else if (response['app'] == 'studio') {

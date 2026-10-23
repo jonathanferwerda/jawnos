@@ -7,6 +7,9 @@
 var images = [];
 var image_number = 0;
 var galleryTargetUuid = '';
+// The file the window was opened for (Folders hands one over): the first fetch
+// opens its viewer, and closing it leaves the folder's own photos behind.
+var galleryTargetFile = '';
 var galleryPlaceholder = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 function galleryEl(id) { return document.getElementById(id); }
@@ -155,6 +158,7 @@ function imageViewer(data) {
 	}
 	if (typeof data.unlock == 'string' && data.unlock) { gallery.unlock = data.unlock; }
 	if (data.file_uuid) { galleryTargetUuid = data.file_uuid; }
+	if (data.target) { galleryTargetFile = data.target; }
 	if (data.view === 'padlock') {
 		$('#gallery_lock').show();
 	}
@@ -242,12 +246,16 @@ function galleryFetch(reset) {
 			gallery.offset = gallery.items.length;
 			images = gallery.items;
 			galleryRender();
-			if (galleryTargetUuid) {
+			if (galleryTargetUuid || galleryTargetFile) {
 				var chosen = -1;
 				for (var i = 0; i < gallery.items.length; i++) {
-					if (gallery.items[i] && gallery.items[i].uuid == galleryTargetUuid) { chosen = i; break; }
+					var item = gallery.items[i];
+					if (!item) { continue; }
+					if (galleryTargetUuid && item.uuid == galleryTargetUuid) { chosen = i; break; }
+					if (galleryTargetFile && item.f == galleryTargetFile) { chosen = i; break; }
 				}
 				galleryTargetUuid = '';
+				galleryTargetFile = '';
 				if (chosen > -1) { galleryOpenViewer(chosen); }
 			}
 			if (gallery.queued) {
@@ -535,6 +543,8 @@ $(document).on('click', '#gallery_home_tab', function() {
 	gallery.view = 'albums';
 	gallery.app = '';
 	gallery.files = null;
+	galleryTargetUuid = '';
+	galleryTargetFile = '';
 	// refetch: the album list in the last response was narrowed to the album
 	// that was open, so rendering it again would show only that one
 	galleryFetch(true);
@@ -545,6 +555,8 @@ $(document).on('click', '#gallery_all_tab', function() {
 	gallery.view = 'grid';
 	gallery.app = '';
 	gallery.files = null;
+	galleryTargetUuid = '';
+	galleryTargetFile = '';
 	galleryFetch(true);
 	$('#gallery_body').scrollTop(0);
 });
@@ -560,6 +572,8 @@ $(document).on('input', '#gallery_search', function() {
 	gallery.app = '';
 	gallery.view = 'grid';
 	gallery.files = null;
+	galleryTargetUuid = '';
+	galleryTargetFile = '';
 	clearTimeout(gallerySearchTimer);
 	gallerySearchTimer = setTimeout(function() { galleryFetch(true); }, 300);
 });
@@ -575,6 +589,8 @@ $(document).on('click', '.gallery_album_card', function() {
 	gallery.app = $(this).attr('data-app') || '';
 	gallery.view = 'grid';
 	gallery.files = null;
+	galleryTargetUuid = '';
+	galleryTargetFile = '';
 	galleryFetch(true);
 	$('#gallery_body').scrollTop(0);
 });
