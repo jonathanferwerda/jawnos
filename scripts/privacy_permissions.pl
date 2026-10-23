@@ -8,7 +8,7 @@
 #
 # What it changes:
 #   database/           0700, everything inside 0600
-#     jawnos.db, -wal, -shm, initial.enc, backups/*.enc, thumbs/, schema.sql
+#     jawnos.db, -wal, -shm, initial.enc, backups/*.enc, .thumbs/, schema.sql
 #   config.json         0600        (host, ports and the install's own settings)
 #   .secrets/           0700, files 0600
 #   .shots/             0700, files 0600   (ticket.txt is a live credential)
@@ -90,7 +90,7 @@ sub tighten_tree {
 	}, $top);
 }
 
-&tighten(0700, "$root/database", "$root/database/backups", "$root/database/thumbs",
+&tighten(0700, "$root/database", "$root/database/backups", "$root/database/.thumbs",
 	"$root/.secrets", "$root/.shots",
 	"$home/.president", "$home/.local/state/jawnos", "$home/.jawnos_paper_shares");
 &tighten(0600, "$root/config.json", "$root/.shots/ticket.txt", "$home/manager.log", "$home/.house.key");

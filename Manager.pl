@@ -760,7 +760,7 @@ sub take_picture($c,$data) {
 
 	my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
 	`mkdir -p $filename` unless -e $filename;
-	my $thumb = $filename . '/thumbs/';
+	my $thumb = $filename . '/.thumbs/';
 	`mkdir -p $thumb` unless -e $thumb;
 	$thumb = $thumb . $app_path . '_' . $timestamp . '.jpg';
 	$filename = $filename . '/' . $app_path . '_' . $timestamp;
@@ -914,7 +914,7 @@ sub scan($c,$scandata) {
 	my $filename = $folder . '/' . $app_path;
 	$filename = &subs::home($filename);
 	`mkdir -p $filename` unless -e $filename;
-	my $thumb_folder = $filename . '/thumbs';
+	my $thumb_folder = $filename . '/.thumbs';
 	`mkdir -p $thumb_folder` unless -e $thumb_folder;
 	my $thumb = $thumb_folder . '/' . $app_path . '_' . $timestamp . '.jpg';
 	my $file = $filename . '/' . $app_path . '_' . $timestamp;
@@ -1582,7 +1582,7 @@ sub rock_and_roll($c) {
 									if ($file_data->{'uuid'} && $data && $thumbnail_size ne 'none') {
 										pop @file_split;
 										my $folder = join '/', @file_split;
-										$folder = $folder . '/thumbs';
+										$folder = $folder . '/.thumbs';
 										`mkdir -p $folder`;
 										my $worker_id = &subs::random_string_creator(10);
 										my $priority = $folder . '/priority.txt';
@@ -1767,7 +1767,7 @@ sub rock_and_roll($c) {
 						my @folder = split /\//, $file;
 						my $tfile = pop @folder;
 						my $folder = join '/', @folder;
-						my $thumb_folder = $folder . '/thumbs';
+						my $thumb_folder = $folder . '/.thumbs';
 						my $tfd = &subs::terminal_name($thumb_folder);
 						`mkdir -p $tfd` unless -e $thumb_folder;
 						my @tfile = split /\./, $tfile;
@@ -11732,7 +11732,7 @@ sub phone_blocked() {
 # app shows its own logo when there is none, so nothing is drawn here for that.
 sub phone_avatar_thumb($file) {
 	return '' unless $file && -e $file;
-	my $dir = &subs::database_dir() . '/thumbs';
+	my $dir = &subs::database_dir() . '/.thumbs';
 	mkdir $dir unless -d $dir;
 	my @stat = stat($file);
 	my $base = $file;
@@ -13515,14 +13515,14 @@ post '/manager/upload_file' => sub ($c) {
 			$upload_type = 'video';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'video_location', device => $device } );
 			$location = &subs::home($folder) . '/' . $app_path;
-			$thumb = $location . '/thumbs';
+			$thumb = $location . '/.thumbs';
 
 		}
 		elsif ($upload->{'type'} =~ /image/gi || lc $ext eq 'jpg' || lc $ext eq 'png') {
 			$upload_type = 'image';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
 			$location = &subs::home($folder) . '/' . $app_path;
-			$thumb = $location . '/thumbs';
+			$thumb = $location . '/.thumbs';
 		}
 		elsif ($upload->{'type'} =~ /pdf/gi) {
 			$upload_type = 'scan';
@@ -24221,7 +24221,7 @@ post '/manager/palette' => sub($c) {
 				my @folder = split '/', $f;
 				pop @folder;
 				my $folder = join '/', @folder;
-				my $thumb_folder = $folder . '/thumbs';
+				my $thumb_folder = $folder . '/.thumbs';
 				my @f = split /\./, $f;
 				$f[0] = &subs::random_string_creator(12);
 				my $nf = $folder . '/' . join '.', @f;
@@ -27041,7 +27041,7 @@ sub folders_property_grabber($data) {
 			$file->{'trash_original'} = $original;
 		}
 	}
-	my $thumb_dir = $folder . '/thumbs';
+	my $thumb_dir = $folder . '/.thumbs';
 	if (-e $thumb_dir && $file->{'type'} eq 'video') {
 		my $formatted_thumbs_dir = &subs::terminal_name($thumb_dir);
 		my $thumbs = `ls $formatted_thumbs_dir`;
@@ -37569,7 +37569,7 @@ sub delete_file($data) {
 			pop @folder;
 			my $folder = join '/', @folder;
 
-			my $thumb_folder = $folder . '/thumbs';
+			my $thumb_folder = $folder . '/.thumbs';
 			if (-e $thumb_folder) {
 				if (&is_folder_empty($thumb_folder)) {
 					rmdir( $thumb_folder );

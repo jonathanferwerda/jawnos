@@ -10490,6 +10490,16 @@ sub setting_setter() {
 		&cache_delete({ context => 'header' });
 		&appointment_theme_push() unless $sync;
 	}
+	elsif ($setting eq 'icon_set_override' || $setting eq 'texture_override') {
+		# an explicit choice on top of the active theme: the effective set or
+		# material moved, so the memo, the rendered pages and every open manager
+		# follow. The push carries the effective values, not the theme's defaults.
+		&icon_set_forget();
+		&cache_delete({ app => '__president', context => 'config' });
+		&cache_delete({ context => 'template' });
+		&cache_delete({ context => 'header' });
+		&appointment_theme_push() unless $sync;
+	}
 	elsif ($setting eq 'ci') {
 		# The panel's open circumstance is rendered into the centre view. The
 		# template cache kept the closed panel (an empty ci) for its ten-day
@@ -10585,10 +10595,19 @@ sub misc_setting() {
 sub texture_name() {
 	my $value = shift;
 	unless (defined $value) {
-		# a theme carries its own material; the Misc choice is what a desk with
-		# no theme in charge wears
+		# A theme carries its own material. An explicit override chosen from the
+		# Misc panel while the theme is active wins over it; the Misc Texture is
+		# what a desk with no theme in charge wears.
 		my $bundle = &active_theme_bundle();
-		$value = $bundle->{'texture'} if defined $bundle->{'texture'} && length $bundle->{'texture'};
+		if ($bundle->{'slug'}) {
+			my $override = &misc_setting('texture_override');
+			if (defined $override && length $override && grep { $_ eq $override } @gb::textures) {
+				$value = $override;
+			}
+			elsif (defined $bundle->{'texture'} && length $bundle->{'texture'}) {
+				$value = $bundle->{'texture'};
+			}
+		}
 		$value = &misc_setting('texture') unless defined $value && length $value;
 	}
 	$value = 'round' if defined $value && $value eq 'plain';
@@ -10980,11 +10999,11 @@ sub file_device_renamer() {
 	my $destination;
 	my $asset = $f[-1];
 
-	if ($f[-2] eq 'thumbs') {
+	if ($f[-2] eq '.thumbs' || $f[-2] eq 'thumbs') {
 		$is_thumb = 1;
 	}
 	if (!$app) {
-		if ($f[-2] eq 'thumbs') {
+		if ($f[-2] eq '.thumbs' || $f[-2] eq 'thumbs') {
 			$app = $f[-3];
 		}
 		else {
@@ -11039,7 +11058,7 @@ sub file_device_renamer() {
 		}
 	}
 	if ($is_thumb == 1) {
-		$destination = $destination . 'thumbs/';
+		$destination = $destination . '.thumbs/';
 	}
 	return ($destination,$asset,$type,$app);
 }
@@ -13884,16 +13903,40 @@ sub appointment_theme_push {
 	&icon_set_forget();
 	my (undef, undef, $bg, $bundle, undef, $appointment) = &theme_state();
 	return unless defined $bg && length $bg;
+	# The effective values, not the bundle's defaults: an icon/texture override
+	# chosen on top of the theme is part of what the desk is wearing. The
+	# signature lets the browser ignore a push that changes nothing - a start or
+	# stop on the same theme must not reload every window.
+	my $icon_set = &icon_set();
+	my $texture = &texture_name();
+	my $font = $bundle->{'font'} || &misc_setting('title_font') || 'system-ui, sans-serif';
+	my $corner = $bundle->{'corner'} || '';
+	my $accent = $bundle->{'accent'} || '';
+	my $signature = &theme_signature();
 	my %send = (
 		background => $bg,
 		appointment => $appointment ? 1 : 0,
-		icon_set => ($bundle->{'icon_set'} // ''),
-		texture => ($bundle->{'texture'} // ''),
-		font => ($bundle->{'font'} // ''),
-		corner => ($bundle->{'corner'} // ''),
-		accent => ($bundle->{'accent'} // ''),
+		icon_set => $icon_set,
+		texture => $texture,
+		font => $font,
+		corner => $corner,
+		accent => $accent,
+		signature => $signature,
 	);
 	&Websocket::send('server', { console => 'jawnosThemeBundleApply(' . encode_json(\%send) . ');' });
+}
+
+# What the desk currently wears, as one comparable string: paint, effective
+# glyphs, material, face and corner. The appointment flag is deliberately left
+# out - it changes who owns the desk, not how it is painted - so a start/stop on
+# the same theme pushes nothing and reloads no window.
+sub theme_signature {
+	my $bundle = &active_theme_bundle();
+	my $bg = $bundle->{'background'} // '';
+	my $font = $bundle->{'font'} || &misc_setting('title_font') || 'system-ui, sans-serif';
+	my $corner = $bundle->{'corner'} || '';
+	my $accent = $bundle->{'accent'} || '';
+	return join '|', map { defined $_ ? $_ : '' } ( $bg, &icon_set(), &texture_name(), $font, $corner, $accent );
 }
 
 # The colours the current theme is built from: the distinct *_background_colour
@@ -14067,11 +14110,22 @@ sub icon_set() {
 	my $now = &rightNow();
 	return $icon_set_memo if defined $icon_set_memo && $now - $icon_set_memo_time < 1000;
 	my $config = &config_reader();
-	my $set = $config->{'icon_set'} || '';
-	# a theme names its own glyphs; the Misc choice is what a desk with no theme
-	# in charge wears
+	my $set = '';
+	# While a theme is in charge it names the glyphs; the Misc Icon Set is what a
+	# desk with no theme wears. An explicit override (chosen from the Misc panel
+	# while the theme is active) wins over the theme's own set, so a person can
+	# keep Deepin's paint and still use another set of icons.
 	my $bundle = &active_theme_bundle();
-	$set = $bundle->{'icon_set'} if defined $bundle->{'icon_set'} && length $bundle->{'icon_set'};
+	if ($bundle->{'slug'}) {
+		my $override = &misc_setting('icon_set_override');
+		if (defined $override && length $override && grep { $_ eq $override } @gb::icon_sets) {
+			$set = $override;
+		}
+		elsif (defined $bundle->{'icon_set'} && length $bundle->{'icon_set'}) {
+			$set = $bundle->{'icon_set'};
+		}
+	}
+	$set = $config->{'icon_set'} || '' unless length $set;
 	# a dark desktop asks for the set's dark cut: the same glyphs on a plate
 	# that does not glare. The light cut stays the fallback for a hand-drawn
 	# set (which has no generated cut) and for any set without one.
@@ -21410,7 +21464,7 @@ sub email_receiver() {
 								my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $filename, app => $ca->{'app'}, is_thumb => 0 });
 								copy($gb::tmp_dir . '/' . $filename, $destination . $asset);
 								my $u_data = { server_time => &subs::rightNow(), f => $destination . $asset, uuid => &subs::random_string_creator(28), type => $type, mail_uuid => $mailbox_uuid };
-								my $thumb = $destination . '/thumbs';
+								my $thumb = $destination . '/.thumbs';
 								if ($type eq 'image') {
 									`mkdir -p $thumb` unless -e $thumb;
 									$u_data->{'thumb'} = $thumb . '/' . $asset;
@@ -25360,7 +25414,7 @@ sub generate_ai_media {
 	# pool can show it at once instead of waiting on the full file
 	my $thumb;
 	if ($upload_type eq 'image' || $upload_type eq 'video') {
-		my $thumb_dir = $public_dir . '/thumbs';
+		my $thumb_dir = $public_dir . '/.thumbs';
 		`mkdir -p $thumb_dir` unless -d $thumb_dir;
 		my $t = $thumb_dir . '/' . $filename;
 		$t =~ s/\.[^.]+$/.png/;
