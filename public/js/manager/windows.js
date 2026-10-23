@@ -1574,6 +1574,30 @@ $(document).on('click', '.wind', function(e) {
 	topLevelNow($(this));
 });
 
+// A scroll is a touch on that window. Scrolling a window that is not at the
+// front lifts it there, the same way a press does, so the window you are
+// reading and scrolling takes the focus - and its taskbar tile - without a
+// separate press. The front check keeps a burst of wheel events from restacking
+// every tick; the phone's pile walk is left to a tap, which is what it has.
+$(document).on('wheel', '.wind', function() {
+	if (windowPhoneChecker()) { return; }
+	var win = $(this);
+	if (windowIsFront(win)) { return; }
+	topLevelNow(win);
+});
+
+function windowIsFront(win) {
+	var z = parseInt(win.css('z-index'), 10) || 0;
+	var front = true;
+	$('.wind').filter(':visible').each(function() {
+		if (this !== win[0] && (parseInt($(this).css('z-index'), 10) || 0) > z) {
+			front = false;
+			return false;
+		}
+	});
+	return front;
+}
+
 function topLevelNow(win) {
 
 	if (win.length > 0) {

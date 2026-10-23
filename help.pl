@@ -936,8 +936,9 @@ our %topic = (
 	'windows' => {
 		title => 'Windows', category => 'features',
 		summary => 'Open, stack, move, resize, snap and minimise.',
+		verified => '2026-10-23',
 		body => [
-			'Everything that opens opens in a window. Windows stack in the order you last touched them, drag by their title bar, resize by their edge, and minimise to a small bar.',
+			'Everything that opens opens in a window. Windows stack in the order you last touched them, drag by their title bar, resize by their edge, and minimise to a small bar. Pressing or scrolling in a window brings it to the front, so the window you are reading is the one you are working in.',
 			'The title bar\'s buttons are help (?), minimise, restore, maximise and close, and each window\'s drop-down menu adds snapping to half the screen and a move mode for precise placement. The layout of what is open is remembered and restored next time.'
 		],
 		related => [ 'taskbar', 'start_menu', 'appointment_windows', 'help_app' ]
