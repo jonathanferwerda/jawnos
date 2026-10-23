@@ -193,12 +193,18 @@ function wsOpener(event,app,origin) {
 	var browser_tab = localStorage.getItem('browser_tab');
 	var uA = navigator.userAgent;
 	ws[app]['status'] = 'open';
-	// A socket that had dropped and come back may be a restarted tree, whose
-	// boot dropped every media grant. Draw what the house says now; the first
-	// connect of a page is left alone (its own load already locked).
-	if (app === 'server' && typeof jawnosMediaLockdown === 'function') {
-		if (window.jawnosMediaConnected) { jawnosMediaLockdown('', document.hidden); }
-		window.jawnosMediaConnected = 1;
+	// A reconnected socket may be a restarted tree, whose boot dropped every
+	// media grant. Re-check the open app windows by REFETCHING - never by
+	// clearing their tokens: a socket that flaps must leave an open padlock
+	// alone. Only a gap long enough to be a restart, not a reconnect, triggers
+	// the check.
+	if (app === 'server') {
+		var media_now = Date.now();
+		if (window.jawnosMediaServerAt && media_now - window.jawnosMediaServerAt > 20000
+			&& typeof jawnosMediaRefresh === 'function') {
+			jawnosMediaRefresh(['gallery', 'music', 'folders']);
+		}
+		window.jawnosMediaServerAt = media_now;
 	}
 	var data = JSON.stringify({ 
 		browser_tab_id: browser_tab_id,
@@ -1365,11 +1371,11 @@ function lockScreen() {
 }
 function unlockScreen() {
 	// The screen is back: draw what the server now says (locked, unless a fresh
-	// print was given while it was away).
+	// print was given while it was away). The lock itself was sent when the
+	// screen went away; sending it again would reach the other windows too.
 	if (window.jawnosMediaLockPending && typeof jawnosMediaRefresh === 'function') {
 		var apps = window.jawnosMediaLockPending;
 		window.jawnosMediaLockPending = null;
-		jawnosMediaLockBeacon('');
 		jawnosMediaRefresh(apps);
 	}
 }

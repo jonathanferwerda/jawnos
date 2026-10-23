@@ -26393,7 +26393,7 @@ post '/manager/folders' => sub($c) {
 	);
 
 	my $html = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'folders', contents => $contents }, $timestamp);
-	$c->render(json => { html => $html, fo => $fo });
+	$c->render(json => { html => $html, fo => $fo, unlocked => $unlocked });
 };
 
 # Apps that are not launchable from the app menu: citizen kinds and the

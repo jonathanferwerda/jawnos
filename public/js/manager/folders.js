@@ -106,6 +106,10 @@ function foldersOpener(data) {
 			folders['disk'] = response.fo.disk;
 			folders['files'] = response.fo.files;
 			folders['remote_uuid'] = remote_uuid;
+			// the server decides: a token that no longer has a grant (a restarted
+			// tree, a window that was closed) is cleared here, so the padlock
+			// shows shut and the next request stops carrying it
+			if (!response.unlocked) { $('#folders').attr('unlock', ''); }
 			folders['selected'] = [];
 			folders['path'] = undefined;
 			folders['type'] = undefined;
