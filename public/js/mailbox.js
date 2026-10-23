@@ -866,16 +866,18 @@ function jawnSmsSend(digits, message) {
 	return 'termux';
 }
 
-// An attachment on the sms road: MMS through the bridge when JawnOS is the
-// default sms app, else the OS messaging app is handed the first file to send.
-function jawnSmsMms(digits, subject, parts) {
+// An attachment on the sms road is one picture message: the words ride the mms
+// as its text part (not as a subject beside a separate text). Through the
+// bridge when JawnOS is the default sms app, else the OS messaging app is
+// handed the first file to send.
+function jawnSmsMms(digits, text, parts, jawnUuid) {
 	if (!(window.JawnSms && window.JawnSms.mms)) { return 'no bridge'; }
 	if (window.JawnSms.isDefaultSms && window.JawnSms.isDefaultSms() === 'yes') {
-		window.JawnSms.mms(digits, subject, JSON.stringify(parts || []));
+		window.JawnSms.mms(digits, text, JSON.stringify(parts || []), jawnUuid || '');
 	}
 	else {
 		var p = (parts && parts[0]) || {};
-		window.JawnSms.share(digits, subject, p.path, p.mime);
+		window.JawnSms.share(digits, text, p.path, p.mime);
 	}
 	return 'ok';
 }

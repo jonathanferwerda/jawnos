@@ -37118,11 +37118,13 @@ sub sms_send_command($digits, $message) {
 		. ' : (window.JawnSms && window.JawnSms.send ? (window.JawnSms.send(' . encode_json($digits) . ',' . encode_json($message) . '), "bridge")'
 		. ' : (function(){ $.post("/manager/sms/termux_fallback", {digits: ' . encode_json($digits) . ', message: ' . encode_json($message) . '}); return "termux"; })())';
 }
-sub sms_mms_command($digits, $subject, $parts) {
-	my $call = 'jawnSmsMms(' . encode_json($digits) . ',' . encode_json($subject) . ',' . encode_json($parts) . ')';
+sub sms_mms_command($digits, $text, $parts, $jawn_uuid) {
+	my $call = 'jawnSmsMms(' . encode_json($digits) . ',' . encode_json($text) . ',' . encode_json($parts) . ',' . encode_json($jawn_uuid || '') . ')';
 	# The command names its own outcome in the phone's log: 'ok' means the page
 	# had the bridge and called it, 'no bridge' means the app page is old or this
-	# is not the JawnOS app. The bridge then posts its own result (via mms/share).
+	# is not the JawnOS app. The bridge then posts its own result (via mms/share),
+	# including the system MMS row it filed (its id, date and thread) so the
+	# house row can wear the same identity instead of standing beside it.
 	return '(function(){ try { var r = (typeof jawnSmsMms === "function") ? ' . $call . ' : "no bridge";'
 		. ' if (typeof window.__jawnSmsResult === "function") { window.__jawnSmsResult({ ok: (r === "ok" ? 1 : 0), via: "mms_command", error: (r === "ok" ? "" : r) }); }'
 		. ' return r; } catch (e) { if (typeof window.__jawnSmsResult === "function") { window.__jawnSmsResult({ ok: 0, via: "mms_command", error: String(e) }); } return "error"; } })()';
@@ -37239,13 +37241,32 @@ post '/manager/sms/termux_fallback' => sub($c) {
 };
 
 # The bridge's answer (window.__jawnSmsResult posts here): the send is logged,
-# so a message that failed is visible in the log even when the UI is not.
+# so a message that failed is visible in the log even when the UI is not. A
+# saved MMS row also leaves its id for the mms route's short wait, and updates
+# the house row if this machine already holds it (same uuid, now linked).
 post '/manager/sms/result' => sub($c) {
 	my $ok = $c->param('ok');
 	my $error = $c->param('error') || '';
 	my $via = $c->param('via') || 'sms';
 	my $id = $c->param('id') || '';
-	$log->info('sms bridge result: ok=' . ($ok || '?') . ' via=' . $via . ' id=' . $id . ' error=' . $error);
+	my $mms_id = $c->param('mms_id') || 0;
+	my $mms_date = $c->param('mms_date') || 0;
+	my $mms_thread = $c->param('mms_thread') || 0;
+	my $jawn_uuid = $c->param('jawn_uuid') || '';
+	$log->info('sms bridge result: ok=' . ($ok || '?') . ' via=' . $via . ' id=' . $id . ' mms_id=' . $mms_id . ' mms_date=' . $mms_date . ' error=' . $error);
+	# Only the mms bridge's own answer is the mms outcome. The page also reports
+	# the hand-over itself ('mms_command', an immediate ok) and the plain text's
+	# own send ('sms'); either would overwrite the real answer before the mms
+	# route reads it, leaving the house row unlinked while the picture sits in
+	# the system thread with no house row pointing at it.
+	if ($jawn_uuid && $via ne 'mms_command' && $via ne 'sms') {
+		my $result_file = &subs::home('~/.shots/sms_mms_result_' . $jawn_uuid . '.json');
+		&write_file($result_file, encode_json({ ok => $ok, via => $via, mms_id => $mms_id, mms_date => $mms_date, mms_thread => $mms_thread, error => $error, server_time => &subs::rightNow() }));
+		my $row = &subs::db_select('mailbox', undef, { uuid => $jawn_uuid })->hashes->[0];
+		if ($row && $mms_id) {
+			&subs::db_update('mailbox', &sms_mms_row_link($mms_id, $mms_date), { uuid => $jawn_uuid });
+		}
+	}
 	$c->render(json => { received => 1 });
 };
 
@@ -37255,6 +37276,7 @@ post '/manager/sms/result' => sub($c) {
 # page is handed the paths - window.JawnSms.mms sends them, or share() hands the
 # OS messaging app the first when JawnOS is not the default sms app.
 post '/manager/sms/mms' => sub($c) {
+	my $jawn_uuid = $c->param('jawn_uuid') || '';
 	my $digits = $c->param('digits') || '';
 	my $subject = $c->param('subject') || '';
 	my $parts = eval { return decode_json $c->param('parts') } || [];
@@ -37285,8 +37307,27 @@ post '/manager/sms/mms' => sub($c) {
 		$c->render(json => { ok => 0, error => 'no parts', parts => 0 });
 	}
 	elsif (scalar @{$tabs} > 0) {
-		&Websocket::send('tab', { console => &sms_mms_command($digits, $subject, \@local) });
-		$c->render(json => { ok => 1, via => 'bridge', parts => scalar @local });
+		&Websocket::send('tab', { console => &sms_mms_command($digits, $subject, \@local, $jawn_uuid) });
+		# The page posts the saved MMS row's id back to /manager/sms/result. Wait
+		# briefly so the sender can link that system message to the house row.
+		my ($mms_id, $mms_date, $mms_thread) = (0, 0, 0);
+		if ($jawn_uuid) {
+			my $result_file = &subs::home('~/.shots/sms_mms_result_' . $jawn_uuid . '.json');
+			for my $try ( 1 .. 25 ) {
+				if (-e $result_file) {
+					my $answer = eval { decode_json(scalar &read_file($result_file)) };
+					if ($answer && $answer->{'mms_id'}) {
+						$mms_id = $answer->{'mms_id'};
+						$mms_date = $answer->{'mms_date'} || 0;
+						$mms_thread = $answer->{'mms_thread'} || 0;
+					}
+					unlink $result_file;
+					last;
+				}
+				select(undef, undef, undef, 0.2);
+			}
+		}
+		$c->render(json => { ok => 1, via => 'bridge', parts => scalar @local, mms_id => $mms_id, mms_date => $mms_date, mms_thread => $mms_thread });
 	}
 	else {
 		$c->render(json => { ok => 0, error => 'no app page open for mms', parts => scalar @local });
@@ -37332,7 +37373,19 @@ sub attachment_plain_path($att) {
 # the bridge reads; anywhere else they are read, base64'd and relayed to the
 # phone's /manager/sms/mms. A phone is found by asking its radio, not by taking
 # the first mobile peer (the house may also hold a wifi-only tablet).
-sub sms_mms_relay($digits, $subject, $attachments) {
+
+# The house row a message was filed as before it touched the sms stack wears
+# the system's own identity once the phone has filed the same message: the
+# system thread keeps the sent copy, and this row IS that message here, so the
+# poll, a re-read and every other machine see one message rather than two. The
+# system's date also becomes the row's time, so a poll matches it exactly.
+sub sms_mms_row_link($mms_id, $mms_date) {
+	my %set = (message_id => 'mms:' . $mms_id, server_time => &subs::rightNow());
+	$set{'timestamp'} = $mms_date * 1000 if $mms_date && $mms_date =~ /^\d+$/;
+	return \%set;
+}
+
+sub sms_mms_relay($digits, $text, $attachments, $jawn_uuid) {
 	my $parts = [];
 	foreach my $att ( @{$attachments || []} ) {
 		my $f = &attachment_plain_path($att);
@@ -37361,7 +37414,7 @@ sub sms_mms_relay($digits, $subject, $attachments) {
 		return { ok => 0, error => 'this device has no telephony' } unless &telephony_status()->{'telephony'};
 		my $tabs = &subs::db_query("select browser_tab_id from websockets where app = ?", 'tab')->hashes;
 		return { ok => 0, error => 'no app page open' } unless scalar @{$tabs} > 0;
-		&Websocket::send('tab', { console => &sms_mms_command($digits, $subject, $parts) });
+		&Websocket::send('tab', { console => &sms_mms_command($digits, $text, $parts, $jawn_uuid) });
 		return { ok => 1, via => 'bridge' };
 	}
 	my $remote_machines = &subs::db_query('select * from remote_machines where connection=? and device=?', 'active', 'mobile')->hashes;
@@ -37382,12 +37435,16 @@ sub sms_mms_relay($digits, $subject, $attachments) {
 	my $last = 'no phone reached';
 	foreach my $pair ( @phones, @unknown ) {
 		my ($rm, $ru) = @{$pair};
-		my $tx = eval { $ru->{'ua'}->inactivity_timeout(30)->post($ru->{'manager'} . '/manager/sms/mms', form => { digits => $digits, subject => $subject, parts => encode_json $parts }) };
+		# parentheses matter here: `parts => encode_json $parts, jawn_uuid => ...`
+		# hands the uuid to encode_json as another argument, so the relay quietly
+		# sent no jawn_uuid and the house row never learned its system id
+		my %form = ( digits => $digits, subject => $text, parts => encode_json($parts), jawn_uuid => $jawn_uuid );
+		my $tx = eval { $ru->{'ua'}->inactivity_timeout(30)->post($ru->{'manager'} . '/manager/sms/mms', form => \%form) };
 		if (!$tx) { $last = 'no answer'; next; }
 		if ($tx->error) { $last = $tx->error->{'message'} || 'no answer'; next; }
 		my $answer = eval { return decode_json $tx->res->body };
 		if ($answer && $answer->{'ok'}) {
-			return { ok => 1, via => 'relay', phone => ($rm->{'hostname'} || $rm->{'name'} || $rm->{'ip'}), parts => ($answer->{'parts'} || 0) };
+			return { ok => 1, via => 'relay', phone => ($rm->{'hostname'} || $rm->{'name'} || $rm->{'ip'}), parts => ($answer->{'parts'} || 0), mms_id => ($answer->{'mms_id'} || 0), mms_date => ($answer->{'mms_date'} || 0), mms_thread => ($answer->{'mms_thread'} || 0) };
 		}
 		$last = (ref $answer eq 'HASH' && $answer->{'error'}) ? $answer->{'error'} : ('HTTP ' . $tx->res->code);
 	}
@@ -42299,11 +42356,19 @@ websocket '/mail/ws' => sub ($c) {
 				# minus the trailing newline Enter left in the composer
 				my $sms_msg = $m->{'body'} || $m->{'msg'};
 				$sms_msg =~ s/\n+$//;
-				&sms_message_send($m->{'phone'}, $sms_msg);
-				# an attachment on the sms road rides an MMS through the phone
-				if (ref $m->{'attachments'} eq 'ARRAY' && scalar @{$m->{'attachments'}} > 0) {
-					my $mms = &sms_mms_relay($m->{'phone'}, $sms_msg, $m->{'attachments'});
+				# A picture is one message, not two: the words ride the mms as its
+				# text part instead of also going out as a separate text (the
+				# system thread showed a text bubble and a picture bubble for the
+				# one thing the person sent).
+				my $rides_mms = (ref $m->{'attachments'} eq 'ARRAY' && scalar @{$m->{'attachments'}} > 0);
+				&sms_message_send($m->{'phone'}, $sms_msg) unless $rides_mms;
+				if ($rides_mms) {
+					my $mms = &sms_mms_relay($m->{'phone'}, $sms_msg, $m->{'attachments'}, $m->{'uuid'});
 					$log->info('mms relay: ' . ($mms->{'via'} || $mms->{'error'} || '?'));
+					if ($mms->{'mms_id'}) {
+						&subs::db_update('mailbox', &sms_mms_row_link($mms->{'mms_id'}, $mms->{'mms_date'}), { uuid => $m->{'uuid'} });
+						$log->info('mms system id ' . $mms->{'mms_id'} . ' linked to ' . $m->{'uuid'});
+					}
 				}
 			}
 			elsif ($trusted && ($m->{'transport'} // '') eq 'lora') {
@@ -44340,28 +44405,47 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 
 	my %buffers;
 
-	foreach my $ws ( @{$gb::ws_apps} ) {
-		$ws_server->{$ws} = &ws_server_socket({ app => $ws });
-	}
-
-	Mojo::IOLoop->recurring(5 => sub {
-		foreach my $ws ( keys %{$ws_server} ) {
-		  my $is_running = defined Mojo::IOLoop->acceptor($ws_server->{$ws}) ? 1 : 0;
-			if (!$is_running) {
-				$ws_server->{$ws} = &ws_server_socket({ app => $ws });
+	# These sockets are how a manager worker hands a live push to the websocket
+	# worker that holds the page's socket. The websocket worker must bind them
+	# *itself*, after the fork: bound earlier (in the process that loads this
+	# file), the pre-fork server's start registers the listeners as MOJO_REUSE
+	# descriptors and the forked worker then "reuses" a file descriptor while
+	# no path exists on disk. Every push then looked delivered to the caller
+	# while the page never saw it - the phone's silent MMS failure. Bound here,
+	# on the worker's first tick, the path is real; and a worker that is
+	# recycled leaves a stale path behind, so any path that stops answering is
+	# bound again. (See ws_server_socket: it also clears this path from
+	# MOJO_REUSE, which is what made the reuse win over a real bind.)
+	my $ws_binder_pid = $$;
+	my $ws_bind_all = sub {
+		my ($check) = @_;
+		foreach my $ws ( @{$gb::ws_apps} ) {
+			my $file = $gb::tmp_dir . '/ws/' . &subs::path_name($ws);
+			if ($check && -e $file) {
+				my $probe = IO::Socket::UNIX->new(Peer => $file, Type => SOCK_STREAM);
+				if ($probe) { close $probe; next; }
 			}
+			$ws_server->{$ws} = &ws_server_socket({ app => $ws });
 		}
-	});
+	};
+	# only a forked worker binds: the loader's own loop never accepts, so a
+	# listener it held would swallow a push with no page socket to deliver to
+	Mojo::IOLoop->next_tick(sub { $ws_bind_all->(0) if $$ != $ws_binder_pid });
+	Mojo::IOLoop->recurring(5 => sub { $ws_bind_all->(1) if $$ != $ws_binder_pid });
 	sub ws_server_socket($data) {
-		eval {
-			my $app = $data->{'app'} || 'general';
-			$app = $app;
-			my $folder = $gb::tmp_dir . '/ws';
-			`mkdir -p $folder` unless -e $folder;
-			my $file = $folder . '/' . &subs::path_name($app);
-			unlink $file if -e $file;
-
-			my $server = Mojo::IOLoop->server({ path => $file } => sub ($loop,$stream,$id) {
+		my $app = $data->{'app'} || 'general';
+		my $folder = $gb::tmp_dir . '/ws';
+		`mkdir -p $folder` unless -e $folder;
+		my $file = $folder . '/' . &subs::path_name($app);
+		# a reused descriptor wins over a real bind in Mojo's listen(), and the
+		# pre-fork server put this path in MOJO_REUSE from the loader's own
+		# listeners; drop it so the bind really creates the path
+		if ($ENV{'MOJO_REUSE'}) {
+			$ENV{'MOJO_REUSE'} = join ',', grep { !/^unix:\Q$file\E:/ } split /,/, $ENV{'MOJO_REUSE'};
+		}
+		unlink $file if -e $file;
+		my $server = eval {
+			Mojo::IOLoop->server({ path => $file } => sub ($loop,$stream,$id) {
 				$stream->handle->autoflush(1);
 				$stream->high_water_mark(8 * 1024 * 1024);
 				$buffers{$id} = '';
@@ -44398,17 +44482,22 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 					delete $buffers{$id};
 				});
 			});
-			return $server;
-		}
-
+		};
+		my $err = $@;
+		$log->error('ws socket ' . $file . ' could not bind: ' . ($err || 'no acceptor')) if $err || !defined $server;
+		return $server;
 	}
 
 	my $mailfile = $gb::tmp_dir . '/ws/mailws';
 
 	my $mailws_server;
 	my $mailws_listener = sub {
+		# the loader no longer binds the per-app sockets (a fork child must),
+		# so this process makes the folder rather than finding it made
+		my $ws_folder = $gb::tmp_dir . '/ws';
+		`mkdir -p $ws_folder` unless -d $ws_folder;
 		unlink $mailfile if -e $mailfile;
-		$mailws_server = Mojo::IOLoop->server({ path => $mailfile } => sub ($loop,$stream,$id) {
+		$mailws_server = eval { Mojo::IOLoop->server({ path => $mailfile } => sub ($loop,$stream,$id) {
 			$stream->handle->autoflush(1);
 			$stream->high_water_mark(8 * 1024 * 1024);
 			$buffers{$id} = '';
@@ -44454,6 +44543,8 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 						delete $buffers{$id};
 				});
 			});
+		};
+		$log->error('mailws could not bind: ' . $@) if $@;
 	};
 	$mailws_listener->();
 	# like the per-app sockets above, the mail socket is put back up if it dies
