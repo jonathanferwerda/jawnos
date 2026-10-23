@@ -6675,8 +6675,14 @@ post '/sesh_check' => sub ($c) {
 				&subs::say_it('your majesty');
 				&notification_sender($d,$database);
 			}
-			my $hs = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' }) || `hostname`;
-			chomp $hs;
+			my $hs = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' }) || '';
+			if ($hs eq '') {
+				$hs = `hostname`;
+				chomp $hs;
+			}
+			# A phone's `hostname` is 'localhost'; give the peers a name a person
+			# can pick out of a list instead of that placeholder.
+			$hs = &subs::device_hostname_better($hs, '', $config->{'domain'});
 
 			my $who = `whoami`;
 			chomp $who;
@@ -10083,6 +10089,13 @@ sub remote_device_connect($rdata) {
 			$bti = $returner->{'body'}->{'browser_tab_id'};
 			my $ssh_port = $returner->{'body'}->{'ssh_port'} || $config->{'ssh_port'};
 			my $remote_device = $returner->{'body'}->{'device'};
+			# Remember the name this machine already has. A phone reports
+			# 'localhost' every time, and writing that over a good name made the
+			# Music output list (and the Dev panel) call it localhost.
+			my $peer_host = &subs::device_hostname_better(
+				$returner->{'body'}->{'hostname'},
+				($nd->[0] ? $nd->[0]->{'hostname'} : ''),
+				$returner->{'body'}->{'fqdn'});
 
 			my $buttons = [
 				{ name => 'RD', class => 'neighbour_disconnect', direction => 'disconnect' },
@@ -10101,7 +10114,7 @@ sub remote_device_connect($rdata) {
 			foreach my $b ( @{$buttons} ) {
 				$returner->{'button'} .= '<button direction="' . $b->{'direction'} . '" device="' . $remote_device .'"
 					home="' . $returner->{'body'}->{'pwd'} . '" signatorial="' . $returner->{'body'}->{'signatorial'} . '"
-					hostname="' . $returner->{'body'}->{'hostname'} . '" uuid="' . $uuid . '" ssh_port="' . $ssh_port .'" ip="' . $ip . '"
+					hostname="' . &subs::html_text($peer_host) . '" uuid="' . $uuid . '" ssh_port="' . $ssh_port .'" ip="' . $ip . '"
 					database="' . $returner->{'body'}->{'database'} .  '" nic="' . $nic . '"
 					class="' . $b->{'class'} . '">' . $b->{'name'} . '</button>';
 			}
@@ -10157,7 +10170,7 @@ sub remote_device_connect($rdata) {
 					nic => $nic,
 					manager_file => $returner->{'body'}->{'manager_file'},
 					device => $returner->{'body'}->{'device'},
-					hostname => $returner->{'body'}->{'hostname'},
+					hostname => $peer_host,
 					version => $returner->{'body'}->{'version'},
 					tunnel => $tunnel,
 					mirrors => eval { return encode_json $returner->{'body'}->{'mirrors'} } || undef,

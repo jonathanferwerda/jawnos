@@ -13,6 +13,13 @@
 	$seen_machine{$key} = 1;
 	push @machines, $rm;
 } %>
+<% my $output_channel = sub {
+	my $v = shift // '';
+	return 'left' if $v eq 'left';
+	return 'right' if $v eq 'right';
+	return 'stereo' if $v eq 'on' || $v eq 'stereo';
+	return 'off';
+}; %>
 <% my $remote_listed = 0; %>
 <% if ($crate->{'remote_uuid'}) { foreach my $rm ( @machines ) { $remote_listed = 1 if $rm->{'uuid'} && $rm->{'uuid'} eq $crate->{'remote_uuid'}; } } %>
 <% my $layout = $crate->{'settings'}->{'layout'} || 'list'; %>
@@ -35,11 +42,25 @@
 <div class="music_cfg_section">
 	<h4 class="music_cfg_heading"><%= &subs::lang('music.output') %></h4>
 	<div id="music_audio_output" class="music_cfg_chips">
-		<% foreach my $ma ( qw/me srv/ ) { %>
-			<button class="music_audio_output_select hover" state="<%= $mao->{$ma} %>" value="<%= $ma %>"><%= &subs::format_name($ma) %></button>
-		<% } %>
-		<% foreach my $rm ( @machines ) { %>
-			<button class="music_audio_output_select hover" state="<%= $mao->{$rm->{'fqdn'} || $rm->{'ip'}} %>" value="<%= $rm->{'fqdn'} || $rm->{'ip'} %>"><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></button>
+		<% my $me_channel = $output_channel->($mao->{'me'}); %>
+		<span class="music_output_group" value="me" state="<%= $me_channel %>">
+			<button class="music_audio_output_select music_output_left hover" value="me" channel="left" state="<%= $me_channel eq 'left' ? 'left' : 'off' %>" hint="Left speaker">L</button>
+			<button class="music_audio_output_select music_output_center hover" value="me" state="<%= $me_channel eq 'stereo' ? 'on' : 'off' %>" hint="Stereo"><%= &subs::format_name('me') %></button>
+			<button class="music_audio_output_select music_output_right hover" value="me" channel="right" state="<%= $me_channel eq 'right' ? 'right' : 'off' %>" hint="Right speaker">R</button>
+		</span>
+		<%# the server player hands the file to the machine's own player, so it has
+		    no channel split to offer - only on and off %>
+		<button class="music_audio_output_select hover" state="<%= $mao->{'srv'} %>" value="srv"><%= &subs::format_name('srv') %></button>
+		<% foreach my $rm ( @machines ) {
+			my $key = $rm->{'fqdn'} || $rm->{'ip'};
+			my $channel = $output_channel->($mao->{$key});
+			my $label = &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key;
+		%>
+			<span class="music_output_group" value="<%= $key %>" state="<%= $channel %>">
+				<button class="music_audio_output_select music_output_left hover" value="<%= $key %>" channel="left" state="<%= $channel eq 'left' ? 'left' : 'off' %>" hint="Left speaker">L</button>
+				<button class="music_audio_output_select music_output_center hover" value="<%= $key %>" state="<%= $channel eq 'stereo' ? 'on' : 'off' %>" hint="Stereo"><%= $label %></button>
+				<button class="music_audio_output_select music_output_right hover" value="<%= $key %>" channel="right" state="<%= $channel eq 'right' ? 'right' : 'off' %>" hint="Right speaker">R</button>
+			</span>
 		<% } %>
 	</div>
 </div>
@@ -63,7 +84,7 @@
 				<option value="none"><%= &subs::ui('None') %></option>
 				<option value="local" <% if ($library eq 'local' || $library eq '') { %>selected<% } %>><%= &subs::ui('Local') %></option>
 				<% foreach my $rm ( @machines ) { %>
-					<option value="<%= $rm->{'uuid'} %>" <% if ($library eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} %></option>
+					<option value="<%= $rm->{'uuid'} %>" <% if ($library eq $rm->{'uuid'}) { %>selected<% } %>><%= &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $rm->{'uuid'} %></option>
 				<% } %>
 			</select>
 		</div>

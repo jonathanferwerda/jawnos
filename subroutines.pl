@@ -2585,6 +2585,38 @@ sub machine_name() {
 	return $h;
 }
 
+# The name a person reads for a machine. A phone has no hostname of its own:
+# Android/Termux answers `hostname` with 'localhost', and that used to overwrite
+# the good name a peer had already learned every time the phone reconnected.
+# Prefer the machine's own report, then the name we already remember, then the
+# first label of its fqdn (phone.example.com -> Phone).
+sub device_hostname_better {
+	my ($reported, $stored, $fqdn) = @_;
+	my $clean = sub {
+		my $n = shift;
+		return '' unless defined $n;
+		$n =~ s/^\s+|\s+$//g;
+		return '' if $n eq '' || $n eq 'null' || $n eq 'NULL';
+		return '' if $n =~ /^(?:localhost|127\.0\.0\.1|::1|\[?::1\]?)(?::\d+)?$/i;
+		return $n;
+	};
+	my $own = $clean->($reported);
+	return $own if $own ne '';
+	my $remembered = $clean->($stored);
+	return $remembered if $remembered ne '';
+	my $host = $clean->($fqdn);
+	# only a real name says anything: an ip-literal fqdn would give '192' or a
+	# stray hextet as a device name
+	if ($host ne '' && $host =~ /[a-z]/i && $host =~ /\./) {
+		$host =~ s{^[a-z]+://}{}i;
+		$host =~ s{[:/].*$}{};
+		my ($label) = split /\./, $host;
+		$label = $clean->($label);
+		return ucfirst($label) if $label ne '';
+	}
+	return defined $reported ? $reported : '';
+}
+
 # Released by writing it empty rather than deleting it, so the release rides the
 # same mesh merge the claim does.
 sub release_work() {

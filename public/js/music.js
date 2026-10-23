@@ -32,8 +32,20 @@ function musicLocalVolume() {
 	if (music_muted || mao['me'] == 'off') { return 0; }
 	return master_volume;
 }
+// The local output's L/centre/R choice. A stereo splitter and merger make the
+// silent side truly silent, which a pan would not: a pan at the hard left still
+// feeds the right channel some of the left one.
+function musicLocalChannelApply() {
+	if (!musicVisual || !musicVisual.localLeft || !musicVisual.localRight) { return; }
+	var channel = musicOutputChannel(mao['me']);
+	var left = (channel == 'right') ? 0 : 1;
+	var right = (channel == 'left') ? 0 : 1;
+	try { musicVisual.localLeft.gain.value = left; } catch (e) {}
+	try { musicVisual.localRight.gain.value = right; } catch (e) {}
+}
 function musicVolumeApply() {
 	if (!tree || !tree.sound) { return; }
+	musicLocalChannelApply();
 	// Once the shared graph exists, the element is a pass-through and the local
 	// gain is the level. That split is what lets the remote stream be tapped
 	// before the local mute (mao['me'] = off) without also muting the remote.
@@ -76,14 +88,36 @@ function musicStreamSupported() {
 	return !!(Ctor && location.protocol == 'https:' && (window.AudioWorkletNode || window.MediaRecorder));
 }
 
+// An output is on for any of its three states. 'on' is the older spelling of
+// stereo and is kept so rows written before the L/R controls still play.
+function musicOutputOn(value) {
+	return value == 'on' || value == 'stereo' || value == 'left' || value == 'right';
+}
+function musicOutputChannel(value) {
+	if (value == 'left' || value == 'right') { return value; }
+	if (value == 'on' || value == 'stereo') { return 'stereo'; }
+	return '';
+}
+
 // The output keys the configuration panel stores (a fqdn or an ip). 'me' and
 // 'srv' are local outputs, not peers.
 function musicStreamOutputs() {
 	var outs = [];
 	$.each(mao, function(k, v) {
-		if (k && k.indexOf('.') >= 0 && v == 'on') { outs.push(k); }
+		if (k && k.indexOf('.') >= 0 && musicOutputOn(v)) { outs.push(k); }
 	});
 	return outs;
+}
+
+// Which side each remote output should play. A remote that only receives one
+// channel still gets the full stereo stream; its own player silences the side
+// it was not given.
+function musicStreamChannels() {
+	var channels = {};
+	$.each(musicStreamOutputs(), function(i, key) {
+		channels[key] = musicOutputChannel(mao[key]) || 'stereo';
+	});
+	return channels;
 }
 
 function musicStreamSendJson(obj) {
@@ -98,6 +132,7 @@ function musicStreamHello() {
 	return {
 		type: 'hello',
 		outputs: musicStreamOutputs(),
+		channels: musicStreamChannels(),
 		file: song.file || musicStream.file || '',
 		music_data: song,
 		rate: (musicVisual.ctx ? musicVisual.ctx.sampleRate : 48000) || 48000,
@@ -420,7 +455,7 @@ function musicStreamOutputsChanged() {
 	if (!musicStream.active) { return; }
 	var outs = musicStreamOutputs();
 	if (!outs.length) { musicStreamStop(); return; }
-	musicStreamSendJson({ type: 'outputs', outputs: outs });
+	musicStreamSendJson({ type: 'outputs', outputs: outs, channels: musicStreamChannels() });
 }
 
 // ---- lip sync ---------------------------------------------------------------
@@ -433,7 +468,8 @@ function musicStreamOutputsChanged() {
 // captions, and cannot show a half-decoded frame.
 var musicLip = {
 	on: false, delay: 0.12, clone: null, timer: 0, video: null,
-	saved: '', revealed: false, track: null, src: ''
+	saved: '', revealed: false, painted: false, track: null, src: '',
+	freeze: null, freezeCanvas: null, freezeGen: 0, freezeAt: 0
 };
 
 function musicLipWanted() {
@@ -453,6 +489,90 @@ function musicLipDelayChanged() {
 		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
 		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
 	}
+}
+
+// The moment the picture is handed from the live element to the delayed clone,
+// the clone's box is black until its decoder presents a frame. This holds the
+// frame we are handing over to as a still over the clone, and takes it down on
+// the clone's first real frame, so lining up reads as a freeze rather than a
+// blackout. Same classes and inline geometry as the clone, so theatre mode,
+// fullscreen and a resize keep the still in the right box.
+function musicLipFreezeShow(source) {
+	var v = musicLip.video, ref = musicLip.clone || v;
+	if (!ref || !ref.parentNode) { return false; }
+	var from = (source && source.videoWidth && source.videoHeight) ? source
+		: ((v && v.videoWidth && v.videoHeight) ? v : null);
+	if (!from) { return false; }
+	var canvas = musicLip.freezeCanvas;
+	if (!canvas) { canvas = musicLip.freezeCanvas = document.createElement('canvas'); }
+	var scale = Math.min(1, 1280 / from.videoWidth);
+	canvas.width = Math.max(1, Math.round(from.videoWidth * scale));
+	canvas.height = Math.max(1, Math.round(from.videoHeight * scale));
+	var url;
+	try {
+		canvas.getContext('2d').drawImage(from, 0, 0, canvas.width, canvas.height);
+		url = canvas.toDataURL('image/jpeg', 0.85);
+	}
+	catch (e) {
+		// a cross-origin frame would taint the canvas; leave the live picture up
+		return false;
+	}
+	var img = musicLip.freeze;
+	if (!img) {
+		img = musicLip.freeze = document.createElement('img');
+		img.className = 'music_lip_freeze';
+		img.setAttribute('aria-hidden', 'true');
+	}
+	var css = ref.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
+	img.style.cssText = css + ';object-fit:contain;pointer-events:none;';
+	img.style.opacity = '1';
+	if (img.parentNode !== ref.parentNode) { ref.parentNode.insertBefore(img, ref.nextSibling); }
+	img.src = url;
+	return true;
+}
+function musicLipFreezePlace() {
+	var img = musicLip.freeze, ref = musicLip.clone || musicLip.video;
+	if (!img || !img.parentNode || !ref) { return; }
+	img.style.cssText = ref.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '')
+		+ ';object-fit:contain;pointer-events:none;';
+	img.style.opacity = '1';
+}
+function musicLipFreezeHide() {
+	var img = musicLip.freeze;
+	musicLip.freeze = null;
+	if (!img) { return; }
+	img.style.opacity = '0';
+	if (img.parentNode) { img.parentNode.removeChild(img); }
+}
+// Take the still down on the clone's first presented frame. A decoder that
+// never presents one must not leave the picture frozen forever, so a timer
+// takes it down anyway.
+function musicLipFreezeUntilFrame() {
+	var c = musicLip.clone;
+	var gen = ++musicLip.freezeGen;
+	var finish = function() {
+		if (gen !== musicLip.freezeGen) { return; }
+		musicLip.painted = true;
+		if (musicLip.clone) { musicLip.clone.style.opacity = '1'; }
+		if (musicLip.video) { musicLip.video.style.opacity = '0'; }
+		musicLipFreezeHide();
+	};
+	if (!c) { finish(); return; }
+	// a paused seek presents its new frame without a playing-frame callback
+	if (c.paused) {
+		c.addEventListener('seeked', finish, { once: true });
+		setTimeout(finish, 500);
+		return;
+	}
+	var called = false;
+	if (c.requestVideoFrameCallback) {
+		try {
+			c.requestVideoFrameCallback(function() { called = true; finish(); });
+			setTimeout(function() { if (!called) { finish(); } }, 1500);
+			return;
+		} catch (e) {}
+	}
+	setTimeout(finish, 350);
 }
 
 function musicLipApply() {
@@ -475,6 +595,7 @@ function musicLipStart() {
 	musicLip.video = v;
 	musicLip.src = src;
 	musicLip.revealed = false;
+	musicLip.painted = false;
 	musicLipDelayChanged();
 	var c = document.createElement('video');
 	c.className = v.className;
@@ -505,10 +626,36 @@ function musicLipStart() {
 	musicLip.clone = c;
 	musicLip.saved = v.style.opacity;
 	var reveal = function() {
-		if (!musicLip.on || musicLip.clone !== c) { return; }
+		if (!musicLip.on || musicLip.clone !== c || musicLip.revealed) { return; }
 		musicLip.revealed = true;
-		c.style.opacity = '1';
-		v.style.opacity = '0';
+		musicLip.painted = false;
+		var still = musicLipFreezeShow(c.videoWidth ? c : v);
+		// keep the clone hidden and the live picture up until the still has
+		// decoded: an <img> paints nothing before its data URL is ready, so this
+		// is the one ordering that leaves no black frame at all
+		c.style.opacity = '0';
+		v.style.opacity = musicLip.saved || '';
+		var hand_over = function() {
+			if (!musicLip.on || musicLip.clone !== c) { return; }
+			c.style.opacity = '1';
+			v.style.opacity = '0';
+			musicLipFreezeUntilFrame();
+		};
+		if (still) {
+			var img = musicLip.freeze;
+			if (img && img.decode) {
+				var done = false;
+				var go = function() { if (!done) { done = true; hand_over(); } };
+				img.decode().then(go, function() { setTimeout(go, 80); });
+				setTimeout(go, 600);
+			}
+			else if (img && img.complete) { hand_over(); }
+			else if (img) { img.addEventListener('load', hand_over, { once: true }); }
+		}
+		else {
+			// no still to hold: hand over on the clone's first real frame
+			musicLipFreezeUntilFrame();
+		}
 		// local sound joins the delayed picture now, not before it is visible
 		musicLipDelayChanged();
 	};
@@ -532,8 +679,8 @@ function musicLipSync() {
 	// follow theatre mode, a resize and fullscreen: the clone wears the same
 	// classes and inline geometry, minus the opacity that hides the original
 	var css = v.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
-	if (c._lip_css !== css) { c._lip_css = css; c.style.cssText = css; }
-	c.style.opacity = musicLip.revealed ? '1' : '0';
+	if (c._lip_css !== css) { c._lip_css = css; c.style.cssText = css; musicLipFreezePlace(); }
+	c.style.opacity = (musicLip.revealed && musicLip.painted) ? '1' : '0';
 	c.className = v.className;
 	var target = Math.max(0, v.currentTime - musicLip.delay);
 	var base = v.playbackRate || 1;
@@ -555,6 +702,13 @@ function musicLipSync() {
 	}
 	var drift = target - c.currentTime;
 	if (Math.abs(drift) > 0.35) {
+		// a seek empties the decoder for a moment; hold the frame we last saw.
+		// Encode at most once a second: on a slow decoder the correction can
+		// repeat, and a still every tick would make the stumble worse.
+		if (Date.now() - (musicLip.freezeAt || 0) > 800 && musicLipFreezeShow(c)) {
+			musicLip.freezeAt = Date.now();
+			musicLipFreezeUntilFrame();
+		}
 		try { c.currentTime = target; } catch (e) {}
 		c.playbackRate = base;
 	}
@@ -566,6 +720,7 @@ function musicLipSync() {
 function musicLipSeek() {
 	var v = musicLip.video, c = musicLip.clone;
 	if (!v || !c) { return; }
+	if (musicLip.revealed && musicLipFreezeShow(c)) { musicLipFreezeUntilFrame(); }
 	try { c.currentTime = Math.max(0, v.currentTime - musicLip.delay); } catch (e) {}
 	if (!v.paused) {
 		var p = null;
@@ -583,12 +738,15 @@ function musicLipStop() {
 		try { c.pause(); } catch (e) {}
 		if (c.parentNode) { c.parentNode.removeChild(c); }
 	}
+	musicLipFreezeHide();
+	musicLip.freezeGen++;
 	if (v) { v.style.opacity = musicLip.saved || ''; }
 	musicLip.clone = null;
 	musicLip.track = null;
 	musicLip.video = null;
 	musicLip.src = '';
 	musicLip.revealed = false;
+	musicLip.painted = false;
 	musicLip.saved = '';
 	if (musicVisual.localDelay) {
 		try { musicVisual.localDelay.delayTime.setTargetAtTime(0, musicVisual.ctx.currentTime, 0.08); }
@@ -2179,33 +2337,42 @@ $(document).on('click', '.music_repeat', function() {
 
 $(document).on('click', '.music_audio_output_select', function() {
 	var output = $(this).val();
-	var state = $(this).attr('state');
+	var side = $(this).attr('channel') || 'center';
+	var current = mao[output];
+	var state;
+	// The centre is stereo. The two sides are one speaker each. Pressing the
+	// state that is already on turns that output off; pressing the other side
+	// moves it there; pressing centre while a side is on makes it stereo.
+	if (side == 'center') {
+		state = (musicOutputChannel(current) == 'stereo') ? 'off' : 'on';
+	}
+	else {
+		state = (musicOutputChannel(current) == side) ? 'off' : side;
+	}
 	var file = (tree.songs[0] ? tree.songs[0].file : '');
 	var seek = tree.sound.currentTime;
 	var remote = (output != 'me' && output != 'srv');
-	if (state == 'on') {
-		state = 'off';
-	}
-	else {
-		state = 'on';
-	}
-	$(this).attr('state', state);
+	musicOutputPaint(output, state);
+	// the server player is a single on/off chip, not a group of three
+	if (!$(this).closest('.music_output_group').length) { $(this).attr('state', state == 'on' ? 'on' : 'off'); }
 	// the setting is written first, so the stream sees the new output list
 	// when it starts or re-announces
 	mao[output] = state;
 	if (remote) {
-		if (musicStream.active && musicStream.codec == 'opus') {
-			// every decoder needs the new output set's header
-			setTimeout(musicStreamRestart, 0);
+		if (musicStream.active) {
+			if (musicStream.codec == 'opus') {
+				// every decoder needs the new output set's header
+				setTimeout(musicStreamRestart, 0);
+			}
+			else {
+				musicStreamOutputsChanged();
+			}
 		}
-		else if (state == 'on' && tree.sound.state == 1) {
+		else if (musicOutputOn(state) && tree.sound.state == 1) {
 			remoteTrackToggle({ file: file, toggle: 'on', seek: seek });
 		}
 		else if (!musicStreamOutputs().length) {
 			musicStreamStop();
-		}
-		else {
-			musicStreamOutputsChanged();
 		}
 	}
 	else {
@@ -2218,11 +2385,22 @@ $(document).on('click', '.music_audio_output_select', function() {
 		data: { state: state, output: output },
 		success: function(response) {
 			mao = response;
+			$.each(mao, function(k, v) { musicOutputPaint(k, v); });
 			musicVolumeApply();
 			updateMusicMuteIcon();
 		}
 	});
 });
+
+// Repaint one output group's three buttons from the state it now wears.
+function musicOutputPaint(output, state) {
+	var group = $('.music_output_group[value="' + output.replace(/"/g, '\\"') + '"]');
+	var channel = musicOutputChannel(state);
+	group.find('.music_output_left').attr('state', channel == 'left' ? 'left' : 'off');
+	group.find('.music_output_center').attr('state', channel == 'stereo' ? 'on' : 'off');
+	group.find('.music_output_right').attr('state', channel == 'right' ? 'right' : 'off');
+	group.attr('state', channel || 'off');
+}
 
 $(document).on('click', '#music_configuration_close', function(e) {
 	e.preventDefault();
@@ -2307,6 +2485,10 @@ var musicVisual = {
 	leveler: null,
 	localGain: null,
 	localDelay: null,
+	localSplit: null,
+	localLeft: null,
+	localRight: null,
+	localMerge: null,
 	freq: null,
 	raf: 0,
 	last: 0,
@@ -2380,6 +2562,10 @@ function musicAudioClose() {
 	musicVisual.limiter = null;
 	musicVisual.localGain = null;
 	musicVisual.localDelay = null;
+	musicVisual.localSplit = null;
+	musicVisual.localLeft = null;
+	musicVisual.localRight = null;
+	musicVisual.localMerge = null;
 	musicStreamTap.node = null;
 	musicStreamTap.sink = null;
 	musicStreamTap.ready = false;
@@ -2462,6 +2648,10 @@ function musicAudioGraph() {
 			// is the lip-sync offset (see musicLipApply).
 			musicVisual.localGain = musicVisual.ctx.createGain();
 			musicVisual.localDelay = musicVisual.ctx.createDelay(1.0);
+			musicVisual.localSplit = musicVisual.ctx.createChannelSplitter(2);
+			musicVisual.localLeft = musicVisual.ctx.createGain();
+			musicVisual.localRight = musicVisual.ctx.createGain();
+			musicVisual.localMerge = musicVisual.ctx.createChannelMerger(2);
 			musicVisual.localDelay.delayTime.value = (musicLip.on ? musicLip.delay : 0);
 			musicVisual.source.connect(musicVisual.compressor);
 			musicVisual.compressor.connect(musicVisual.leveler);
@@ -2470,7 +2660,12 @@ function musicAudioGraph() {
 			musicVisual.limiter.connect(musicVisual.localGain);
 			musicVisual.localGain.connect(musicVisual.analyser);
 			musicVisual.analyser.connect(musicVisual.localDelay);
-			musicVisual.localDelay.connect(musicVisual.ctx.destination);
+			musicVisual.localDelay.connect(musicVisual.localSplit);
+			musicVisual.localSplit.connect(musicVisual.localLeft, 0);
+			musicVisual.localSplit.connect(musicVisual.localRight, 1);
+			musicVisual.localLeft.connect(musicVisual.localMerge, 0, 0);
+			musicVisual.localRight.connect(musicVisual.localMerge, 0, 1);
+			musicVisual.localMerge.connect(musicVisual.ctx.destination);
 			musicVisual.el = el;
 			musicNormalizeParams();
 			musicBaselineApply();

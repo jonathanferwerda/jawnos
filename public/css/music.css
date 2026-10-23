@@ -578,11 +578,37 @@ body.dark_theme #music {
 	color: #111;
 	font-weight: 700;
 }
-#music #music_configuration .music_audio_output_select[state="on"] {
+#music #music_configuration .music_audio_output_select[state="on"],
+#music #music_configuration .music_audio_output_select[state="left"],
+#music #music_configuration .music_audio_output_select[state="right"] {
 	background: var(--music-on);
 	border-color: var(--music-on);
 	color: #fff;
 	font-weight: 700;
+}
+/* L, the output's name and R are one pill: the sides are small, and the three
+   share their borders so the name reads as the centre of a stereo pair. */
+#music #music_configuration .music_output_group {
+	display: inline-flex;
+	align-items: stretch;
+}
+#music #music_configuration .music_output_group .music_output_left,
+#music #music_configuration .music_output_group .music_output_right {
+	padding: 5px 8px;
+	min-width: 24px;
+}
+#music #music_configuration .music_output_group .music_output_left {
+	border-top-right-radius: 0;
+	border-bottom-right-radius: 0;
+	border-right: 0;
+}
+#music #music_configuration .music_output_group .music_output_center {
+	border-radius: 0;
+}
+#music #music_configuration .music_output_group .music_output_right {
+	border-top-left-radius: 0;
+	border-bottom-left-radius: 0;
+	border-left: 0;
 }
 #music .music_cfg_fields {
 	display: grid;

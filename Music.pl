@@ -269,6 +269,7 @@ sub music_stream_state_write($st) {
 		rate => ($st->{'rate'} // 48000),
 		latency_ms => ($st->{'base'} // 80),
 		codec => ($st->{'codec'} // 'pcm'),
+		channel => ($st->{'channel'} // 'stereo'),
 		pid => ($st->{'pid'} // 0),
 		started => ($st->{'started'} // &subs::rightNow()),
 		updated => &subs::rightNow(),
@@ -369,6 +370,16 @@ sub music_pulse_ready {
 	return 0;
 }
 
+# One output can be given one side of the stereo pair. The source still sends
+# ordinary stereo; a left/right output is produced here with ffmpeg's pan filter
+# (the other channel is silenced), so 'left' really is the left speaker and not
+# the left channel copied to both.
+sub music_channel_filter($channel) {
+	return 'pan=stereo|c0=c0|c1=0' if ($channel // '') eq 'left';
+	return 'pan=stereo|c0=0|c1=c1' if ($channel // '') eq 'right';
+	return '';
+}
+
 sub music_pacat_command($rate) {
 	my $pacat = `command -v pacat 2>/dev/null`;
 	chomp $pacat;
@@ -421,15 +432,32 @@ sub music_remote_audio_start($st) {
 		return 0;
 	}
 	my @cmd;
+	my $channel = $st->{'channel'} // 'stereo';
+	my $pan = &music_channel_filter($channel);
 	if (($st->{'codec'} || 'pcm') eq 'opus') {
 		# The source records WebM/Opus. ffmpeg decodes the live stream from
 		# stdin and pacat plays the PCM; decoding to 44100 keeps the phone and
 		# tablet's OpenSL sink from resampling. The command is fixed text (no
 		# caller input), so the shell pipeline is safe here.
+		my $filter = $pan ne '' ? ' -af "' . $pan . '"' : '';
 		my $pipeline = 'ffmpeg -hide_banner -loglevel error -fflags nobuffer -analyzeduration 0 -probesize 32k'
-			. ' -i pipe:0 -f s16le -acodec pcm_s16le -ar 44100 -ac 2 pipe:1'
+			. ' -i pipe:0' . $filter . ' -f s16le -acodec pcm_s16le -ar 44100 -ac 2 pipe:1'
 			. ' | pacat --playback --raw --format=s16le --rate=44100 --channels=2 --latency-msec=60'
 			. ' --client-name=jawnos-music-opus --stream-name=jawnos-music';
+		@cmd = ('sh', '-c', $pipeline);
+	}
+	elsif ($pan ne '') {
+		# Raw stereo PCM plus a channel filter: ffmpeg only remaps the samples,
+		# so the same pacat at the end keeps the low latency.
+		my $rate = &music_stream_rate($st->{'rate'});
+		my $pacat = `command -v pacat 2>/dev/null`;
+		chomp $pacat;
+		$pacat = 'pacat' unless $pacat;
+		my $pipeline = 'ffmpeg -hide_banner -loglevel error -fflags nobuffer -f s16le'
+			. ' -ar ' . $rate . ' -ac 2 -i pipe:0 -af "' . $pan . '"'
+			. ' -f s16le -acodec pcm_s16le -ar ' . $rate . ' -ac 2 pipe:1'
+			. ' | ' . $pacat . ' --playback --raw --format=s16le --rate=' . $rate
+			. ' --channels=2 --latency-msec=60 --client-name=jawnos-music --stream-name=jawnos-music';
 		@cmd = ('sh', '-c', $pipeline);
 	}
 	else { @cmd = &music_pacat_command($st->{'rate'}); }
@@ -516,8 +544,9 @@ sub music_source_ping($tx, $cl) {
 	eval { $tx->send({text => encode_json({ type => 'ping', t => &subs::rightNow() })}); };
 }
 
-sub music_source_client_open($c, $st, $key) {
+sub music_source_client_open($c, $st, $key, $channel) {
 	return if $st->{'clients'}->{$key};
+	$channel = 'stereo' unless defined $channel && ($channel eq 'left' || $channel eq 'right');
 	my $rm = &music_source_row($key);
 	unless ($rm && $rm->{'uuid'}) {
 		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'unreachable' })});
@@ -535,7 +564,7 @@ sub music_source_client_open($c, $st, $key) {
 	my $ua = Mojo::UserAgent->new()->insecure(1)->connect_timeout(5)->request_timeout(0)->inactivity_timeout(0);
 	# every request on the peer rail names this machine and carries a signature
 	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
-	my $cl = { key => $key, rm => $rm, ua => $ua, up => 0, rtt => 0 };
+	my $cl = { key => $key, rm => $rm, ua => $ua, up => 0, rtt => 0, channel => $channel };
 	$st->{'clients'}->{$key} = $cl;
 	my $source = &subs::signatorial_designer();
 	my $full = $url . '?peer=1&signatorial=' . uri_encode($source) . '&from=' . uri_encode($key);
@@ -548,7 +577,8 @@ sub music_source_client_open($c, $st, $key) {
 		}
 		$cl->{'tx'} = $tx;
 		$cl->{'up'} = 1;
-		my $hello = { %{$st->{'hello'} || {}}, type => 'hello', source => $source, key => $key };
+		my $hello = { %{$st->{'hello'} || {}}, type => 'hello', source => $source, key => $key, channel => $cl->{'channel'} };
+		delete $hello->{'channels'};
 		$tx->on(text => sub {
 			my ($tx, $msg) = @_;
 			my $d = eval { decode_json $msg } || {};
@@ -596,10 +626,23 @@ sub music_source_client_open($c, $st, $key) {
 	});
 }
 
-sub music_source_sync_outputs($c, $st, $outputs) {
-	my %want = map { $_ => 1 } @{$outputs || []};
-	foreach my $key (keys %want) { &music_source_client_open($c, $st, $key); }
-	foreach my $key (keys %{$st->{'clients'}}) { &music_source_client_close($st, $key) unless $want{$key}; }
+sub music_source_sync_outputs($c, $st, $outputs, $channels) {
+	my %want;
+	foreach my $key ( @{$outputs || []} ) {
+		my $ch = (ref $channels eq 'HASH' && defined $channels->{$key}) ? $channels->{$key} : 'stereo';
+		$ch = 'stereo' unless $ch eq 'left' || $ch eq 'right';
+		$want{$key} = $ch;
+	}
+	foreach my $key (keys %want) {
+		my $cl = $st->{'clients'}->{$key};
+		# a different side needs a different player, so reopen that output
+		if ($cl && ($cl->{'channel'} || 'stereo') ne $want{$key}) {
+			&music_source_client_close($st, $key);
+			$cl = undef;
+		}
+		&music_source_client_open($c, $st, $key, $want{$key}) unless $cl;
+	}
+	foreach my $key (keys %{$st->{'clients'}}) { &music_source_client_close($st, $key) unless exists $want{$key}; }
 }
 
 sub music_source_forward($st, $data) {
@@ -669,6 +712,8 @@ websocket '/manager/music/stream' => sub ($c) {
 					: ($st->{'file'} =~ /\.(mp4|mkv|mov|webm|wmv|avi)$/i ? 'video' : 'audio');
 				$st->{'rate'} = &music_stream_rate($d->{'rate'});
 				$st->{'codec'} = (($d->{'codec'} || 'pcm') eq 'opus') ? 'opus' : 'pcm';
+				my $channel = lc($d->{'channel'} || 'stereo');
+				$st->{'channel'} = ($channel eq 'left' || $channel eq 'right') ? $channel : 'stereo';
 				# Opus has an encoder and decoder buffer in front of pacat's; the
 				# ping measures only the network/player round trip, so the base
 				# carries the extra for lip sync.
@@ -735,10 +780,10 @@ websocket '/manager/music/stream' => sub ($c) {
 		if ($type eq 'hello') {
 			$st->{'hello'} = $d;
 			$st->{'started'} = 1;
-			&music_source_sync_outputs($c, $st, $d->{'outputs'} || []);
+			&music_source_sync_outputs($c, $st, $d->{'outputs'} || [], $d->{'channels'});
 		}
 		elsif ($type eq 'outputs') {
-			&music_source_sync_outputs($c, $st, $d->{'outputs'} || []);
+			&music_source_sync_outputs($c, $st, $d->{'outputs'} || [], $d->{'channels'});
 		}
 		elsif ($type eq 'control') {
 			if (($d->{'action'} || '') eq 'track') {
@@ -1350,7 +1395,8 @@ post '/music/archive_toggle' => sub($c) {
 
 post '/music/audio_output_select' => sub ($c) {
 	my $output = $c->param('output');
-	my $state = $c->param('state');
+	my $state = $c->param('state') // 'off';
+	$state = 'off' unless $state =~ /^(?:off|on|stereo|left|right)$/;
 	my $mao = eval { return decode_json &subs::setting_grabber({ app => 'music', setting => 'mao' }) } || {};
 	$mao->{$output} = $state;
 	my $jmao = encode_json $mao;
