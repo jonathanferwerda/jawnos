@@ -117,7 +117,11 @@
 						<img src="<%= &subs::icon_for('/images/decipherable/vacuum.png') %>" hint="Vacuum" class="vacuum_app medium_thumb" app="<%= $a %>">
 						<img src="<%= &subs::icon_for('/images/decipherable/adopt.png') %>" hint="Adopt" class="adopt_app medium_thumb" app="<%= $a %>">
 						<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="medium_thumb" onClick="appointmentGrabber('<%= $a %>','<%= $timestamp %>')">
-						<img src="<%= &subs::icon_for('/images/decipherable/clothesline.png') %>" hint="Clothesline" class="medium_thumb clothesline" app="<%= $a %>">
+						<%# the Me app's rail settings sit in the walkman's Configure, beside
+						    the time machine, so its card no longer carries the button %>
+						<% unless ($a eq 'me') { %>
+							<img src="<%= &subs::icon_for('/images/decipherable/clothesline.png') %>" hint="Clothesline" class="medium_thumb clothesline" app="<%= $a %>">
+						<% } %>
 					</span>
 				</div>
 				<% my $template = $gb::pos->{$appts->{$a}->{'setting'}->{'pos'}}->{'template'}; %>

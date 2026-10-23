@@ -18,5 +18,10 @@
 		<label><input type="checkbox" id="timestamp_in_view" <% if ($in_view eq 'checked') { %>checked="checked"<% } %>>Timestamps in view only</label>
 		<label><input type="checkbox" id="ghost_appointments" <% if ($ghosts eq 'checked') { %>checked="checked"<% } %>>Ghost appointments</label>
 		<label class="ghosts_claim" style="display:block;">Ghosts being sorted out: <% if ($ghost_claim) { %>by <b><%= $ghost_claim->{'machine'} || $ghost_claim->{'by'} %></b> since <%= &subs::formatted_time($ghost_claim->{'at'}) %> <a href="#" class="work_claim_release" task="ghosts">release</a><% } else { %>nobody <a href="#" class="work_claim_take" task="ghosts">take it</a><% } %></label>
+		<%# the Me app's own rail settings moved here from its Configure -> App card,
+		    so what hangs for you is set beside the time machine it hangs for %>
+		<span style="display:block;margin-top:6px;">
+			<img class="little_thumb clothesline" app="me" hint="Clothesline" src="<%= &subs::icon_for('/images/decipherable/clothesline.png') %>"> <%= &subs::ui('Clothesline settings') %>
+		</span>
 	</span>
 <% } %>

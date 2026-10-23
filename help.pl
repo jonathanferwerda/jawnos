@@ -983,11 +983,12 @@ our %topic = (
 	},
 	'clothesline' => {
 		title => 'The clothesline', category => 'features',
-		verified => '2026-10-19',
+		verified => '2026-10-22',
 		summary => 'A rail that hangs the routines belonging to this hour.',
 		body => [
 			'The clothesline runs along the top of the desktop and hangs the routines and rituals that belong at the current hour, in the order they usually happen.',
 			'It can hang the ones your history shows you actually do, automatically, and each hang is configured per app: a schedule, a budget, and the time slots it belongs to.',
+			'The Me app\'s own rail settings - which of your routines hang, and at which hours, days and budgets - are set from the walkman\'s Configure (the wrench beside the time machine), so they sit next to the clock they follow. Every other app keeps its Clothesline button in its own Configure -> App card.',
 			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), sandglass, glass, paper, fabric, wood or metal — sized to its own name, with the full name set in the Misc → Font face and printed in black or white (tinted with the app\'s colour) so it reads on the pane.',
 			'A textured pill goes down when you press it: its lit top edge becomes an inset shade for a moment, so the tile reads pressed-in rather than sticking up. Plain, round and classic keep the original grow-on-press.'
 		],

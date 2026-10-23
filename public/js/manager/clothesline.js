@@ -742,7 +742,10 @@ $(document).on('click', '.clothesline', function() {
 		type: 'GET',
 		data: { app: app, timestamp: timestamp },
 		success: function(response) {
-			$('#alert').html(response.html).show();
+			// the editor can be opened from a keyboard's Configure, which stands
+			// above the ordinary alert layer; ride above it so the schedule is
+			// not tucked behind the time machine
+			$('#alert').attr('over_keyboard', 'yes').html(response.html).show();
 		}
 	});
 });

@@ -5020,7 +5020,7 @@ $(document).on('click', '#lock_session', function() {
 
 $(document).on('click', '#alert_cancel', function() {
 	$('#alert_message').text('');
-	$('#alert').html('');
+	$('#alert').removeAttr('over_keyboard').html('');
 	$('#alert').hide();
 	$('#alert').attr('hidden', 'yes');
 });
