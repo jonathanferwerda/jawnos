@@ -1799,16 +1799,19 @@ function musicAudioGraph() {
 var musicBaseline = { src: '', mean: null, max: null, gain: 1, requested: false, failed: false, token: 0 };
 var musicBaselineCache = {};
 var musicBaselineSettings = {
-	slight:     { target: -18, max: 3 },
-	mild:       { target: -18, max: 6 },
-	aggressive: { target: -18, max: 12 }
+	slight:     { target: -18, factor: 0.5,  max: 3 },
+	mild:       { target: -18, factor: 0.75, max: 6 },
+	aggressive: { target: -18, factor: 1,    max: 12 }
 };
 function musicBaselineConf() {
 	return musicBaselineSettings[music_normalize] || musicBaselineSettings.mild;
 }
 function musicBaselineGain(mean, max) {
 	var conf = musicBaselineConf();
-	var db = conf.target - mean;
+	// Each level is a different strength, not just a different ceiling: a track
+	// 6 dB from the baseline is lifted 3 dB on Slight and 6 dB on Aggressive, so
+	// the choice is audible on ordinary material too.
+	var db = (conf.target - mean) * conf.factor;
 	db = Math.max(-conf.max, Math.min(conf.max, db));
 	// The peak limiter handles the few loud transients a boost would lift; a
 	// cap here would refuse to lift any track whose peak already touches full
