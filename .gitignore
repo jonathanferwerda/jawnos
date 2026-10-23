@@ -54,6 +54,9 @@ database/*.db
 database/*.db-shm
 database/*.db-wal
 database/backups/
+# the hidden thumbnail cache beside the database (phone avatars): generated
+# locally, never shared
+database/.thumbs/
 # the machine's own signatorial, mirrored beside the database so a restored
 # database (or a run with the wrong HOME) cannot change this machine's identity
 database/.jawnos_signatorial_id
