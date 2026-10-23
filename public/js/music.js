@@ -59,10 +59,12 @@ function musicKeepalive(playing) {
 // again. Minimising or hiding the window leaves it alone.
 $(document).on('click touchend', '.close_button[app="music"]', function() {
 	musicKeepalive(false);
+	musicAudioClose();
 	document.querySelectorAll('[data-jawnos-seek-preview]').forEach(function(n) { n.remove(); });
 });
 $(window).on('pagehide', function() {
 	musicKeepalive(false);
+	musicAudioClose();
 });
 // The rendered window contents are cached server-side and reused on the next
 // open; key that cache to the code revision, so a template change (which ships
@@ -443,7 +445,11 @@ function mediaMaker(data) {
 					tree.sound.state = 0;
 				}
 				tree.sound.saved_volume = master_volume;
-				tree.sound.volume = 0.00001;
+				// Mute for the autoplay handshake, never a near-zero volume. WebKit
+				// maps the element's volume onto its Pulse stream and remembers it per
+				// media role; 0.00001 there left later streams at 1% with the mute
+				// button off - silent, and no UI to explain it.
+				tree.sound.muted = true;
 
 				if (tree.songs[0].remote_uuid) {
 					url += '&remote_uuid=' + tree.songs[0].remote_uuid;
@@ -635,7 +641,9 @@ function remoteTrackToggle(data) {
 	var toggle = data['toggle'];
 	var music_data = data['music_data'] || tree.songs[0];
 	if (data['queuing'] != 1) {
-		tree.sound.volume = 0.000001;
+		// mute rather than a near-zero volume: WebKit carries the element volume
+		// onto the Pulse stream and remembers it for the role (see mediaMaker)
+		tree.sound.muted = true;
 	}
 	if (mao['me'] == 'off') {
 
@@ -1743,6 +1751,22 @@ function musicPlayerFullscreen() {
 	if (p && p.catch) { p.catch(function () {}); }
 }
 
+// Closing the window or leaving the page closes the AudioContext. WebKit gives
+// each context its own Pulse stream; leaving them open accumulated a dozen
+// "jawnos desktop" playback streams over a session.
+function musicAudioClose() {
+	if (typeof musicVisual == 'undefined' || !musicVisual || !musicVisual.ctx) { return; }
+	var ctx = musicVisual.ctx;
+	try { ctx.close(); } catch (e) {}
+	musicVisual.ctx = null;
+	musicVisual.source = null;
+	musicVisual.el = null;
+	musicVisual.analyser = null;
+	musicVisual.compressor = null;
+	musicVisual.leveler = null;
+	musicVisual.makeup = null;
+	musicVisual.limiter = null;
+}
 // Resume the audio context and, once it is running, finish a graph that was
 // deferred while it was stopped. Returns the context state after the attempt.
 function musicAudioResume() {
