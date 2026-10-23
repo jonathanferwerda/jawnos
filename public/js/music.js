@@ -1070,9 +1070,14 @@ function musicSystemVolumePoll(adopt) {
 			musicSystemWired = true;
 			musicSystemStream = pick.stream;
 			musicSystemMax = max;
+			var level = raw / max;
+			// Only touch the player when the level actually moved: an OS mixer read
+			// every few seconds must not repaint the bar, the icon and the media
+			// element for a level that has not changed.
+			if (!adopt && was_wired && Math.abs(level - musicSystemLevel) < 0.001) { return; }
 			// the element is only a pass-through while the mixer is the level
 			if (adopt || !was_wired) { master_volume = 1; }
-			musicSystemVolumePaint(raw / max, false);
+			musicSystemVolumePaint(level, false);
 		},
 		error: function() { /* leave the player level in place */ }
 	});
@@ -1080,10 +1085,14 @@ function musicSystemVolumePoll(adopt) {
 function musicSystemVolumeWatch() {
 	clearInterval(musicSystemInterval);
 	musicSystemInterval = setInterval(function() {
-		// no point reading a hidden window's mixer; the next open reads it again
+		// no point reading a hidden or background window's mixer; the next open
+		// reads it again. On the desk, a window that is not at the front is being
+		// read behind whatever the person is using, so leave it alone too.
 		if (document.hidden || !$('#music_volume').is(':visible')) { return; }
+		if (typeof windowPhoneChecker == 'function' && !windowPhoneChecker()
+			&& typeof windowIsFront == 'function' && !windowIsFront($('#music').closest('.wind'))) { return; }
 		musicSystemVolumePoll(false);
-	}, 3000);
+	}, 5000);
 }
 // The volume slider sets the level to play back at; mute silences without losing
 // it. Both go through musicVolumeApply() so the element and the icon agree.

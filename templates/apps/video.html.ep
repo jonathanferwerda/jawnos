@@ -29,6 +29,10 @@
 			width:98%;
 			height:20px;
 		}
+		#<%= $miss %>_position_preview {
+			width: 200px;
+			height: 120px;
+		}
 		#<%= $miss %>_back {
 			position: absolute;
 			left: 220px;
@@ -374,7 +378,7 @@
 	</script>
 	<script>
 		var v = document.getElementById('<%= $id %>');
-		v.lastPositionPreview = Date.now();
+		v.lastPositionPreview = 0;
 
 		if (misses['<%= $id %>'] != '<%= $miss %>') {
 			misses['<%= $id %>'] = '<%= $miss %>';
@@ -951,13 +955,81 @@
 					v.currentTime = (v.duration * (val / 100));
 				}
 			});
+			<% if ($source eq 'music') { %>
+			// A seek preview from the video itself: a second, hidden element takes the
+			// same local stream and is seeked to the hovered second, then its frame is
+			// drawn into a canvas. The server's ffmpeg frame is the fallback while this
+			// one warms up; once it is ready a hover no longer waits for a round trip.
+			// A remote track is left to the server preview - pulling the tunnel a second
+			// time to preview it would cost more than the wait.
+			var <%= $miss %>SeekPreview = { video: null, src: '', time: 0, ready: false, canvas: null, failed: false };
+			function <%= $miss %>SeekPreviewDraw() {
+				var p = <%= $miss %>SeekPreview;
+				var el = p.video;
+				if (!el || !el.videoWidth || !el.videoHeight) { return; }
+				var c = p.canvas || (p.canvas = document.createElement('canvas'));
+				c.width = 200;
+				c.height = 120;
+				c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
+				$('#<%= $miss %>_position_preview').attr('src', c.toDataURL('image/jpeg', 0.72)).show();
+			}
+			function <%= $miss %>SeekPreviewShow(time) {
+				var p = <%= $miss %>SeekPreview;
+				var main = document.getElementById('<%= $id %>');
+				var src = main && (main.currentSrc || main.getAttribute('src')) || '';
+				if (!src || p.failed || src.indexOf('remote_uuid=') > -1) { return false; }
+				p.time = time;
+				if (p.video && (p.src !== src || !document.body.contains(p.video))) {
+					try { p.video.removeAttribute('src'); p.video.load(); p.video.remove(); } catch (e) {}
+					p.video = null; p.ready = false;
+				}
+				if (!p.video) {
+					var el = document.createElement('video');
+					el.muted = true;
+					el.playsInline = true;
+					el.preload = 'metadata';
+					el.setAttribute('muted', '');
+					el.setAttribute('playsinline', '');
+					el.style.cssText = 'position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';
+					el.src = src;
+					el.addEventListener('loadedmetadata', function() {
+						p.ready = true;
+						el.currentTime = p.time;
+					});
+					el.addEventListener('loadeddata', function() {
+						if (Math.abs(el.currentTime - p.time) <= 0.5) { <%= $miss %>SeekPreviewDraw(); }
+					});
+					el.addEventListener('seeked', function() {
+						if (!el.videoWidth || !el.videoHeight || Math.abs(el.currentTime - p.time) > 0.5) { return; }
+						<%= $miss %>SeekPreviewDraw();
+					});
+					el.addEventListener('error', function() {
+						p.failed = true;
+						try { el.removeAttribute('src'); el.load(); el.remove(); } catch (e) {}
+						p.video = null;
+					});
+					(main && main.parentNode || document.body).appendChild(el);
+					p.video = el;
+					p.src = src;
+				}
+				if (!p.ready) { return false; }
+				if (Math.abs((p.video.currentTime || 0) - time) > 0.5) {
+					p.video.currentTime = time;
+					$('#<%= $miss %>_position_preview').show();
+				}
+				else {
+					// already on this frame: a seek to where we are fires no seeked event,
+					// so draw it now (0:00, or hovering within half a second)
+					<%= $miss %>SeekPreviewDraw();
+				}
+				return true;
+			}
+<% } %>
 			vidOn('hover mousemove mouseover touchmove', '#<%= $miss %>_position', function(e) {
 				var vid = $('#<%= $id %>');
 				var width = $(this).width();
 				var val = $(this).val();
 				var x = e.originalEvent.offsetX;
-				var allowedTime = Date.now();
-				allowedTime = allowedTime - 200;
 				var h = $('#<%= $miss %>_position_preview').height();
 				var w = $('#<%= $miss %>_position_preview').width();
 				var wl = numeral($(this).closest('.wind').css('left')).value();
@@ -978,19 +1050,37 @@
 				$('#<%= $miss %>_position_preview').css({ 'position': 'fixed', 'left': left, 'top': top, opacity: 3 });
 				$('#<%= $miss %>_position_preview_info').css({ 'position': 'fixed', 'height': '23px', 'background-color':'black', 'color': 'yellow', 'left': left, 'top': (top - 20), opacity: 3 });
 				if (vid.attr('type') == 'video') {
-					if (v.lastPositionPreview <= allowedTime) {
-						v.lastPositionPreview = Date.now();
-						var time = (v.duration * (x / width));
-						var src = v.src + '&thumb=ya&position=' + time;
-						$('#<%= $miss %>_position_preview').attr('src', src).show();
-						$('#<%= $miss %>_position_preview_info').text(numeral(time).format('00:00:00')).show();
+					var time = (v.duration * (x / width));
+					$('#<%= $miss %>_position_preview_info').text(numeral(time).format('00:00:00')).show();
+					var instant = false;
+<% if ($source eq 'music') { %>
+					instant = <%= $miss %>SeekPreviewShow(time);
+<% } %>
+					if (instant) { return; }
+					// A whole-second bucket: the server runs ffmpeg for every position it
+					// has not been asked for, so moving the pointer a pixel must reuse the
+					// frame the browser already holds. The first hover asks at once - the
+					// old 100ms wait made every hover feel late - and the 120ms trailing
+					// call catches the bucket the pointer comes to rest on while a sweep
+					// across a long film cannot spawn a frame per pixel.
+					var bucket = Math.max(0, Math.round(time));
+					var previewKey = v.src + '#' + bucket;
+					var paintPreview = function() {
+						if (v.lastPositionPreviewKey !== previewKey) {
+							v.lastPositionPreviewKey = previewKey;
+							$('#<%= $miss %>_position_preview').attr('src', v.src + '&thumb=ya&position=' + bucket);
+						}
+						$('#<%= $miss %>_position_preview').show();
+					};
+					var now = Date.now();
+					if (v.lastPositionPreviewKey === previewKey) {
+						paintPreview();
 					}
-					v.positionPreviewTimeout = setTimeout(function() {
-						var time = (v.duration * (x / width));
-						var src = v.src + '&thumb=ya&position=' + time;
-						$('#<%= $miss %>_position_preview').attr('src', src).show();
-						$('#<%= $miss %>_position_preview_info').text(numeral(time).format('00:00:00')).show();
-					},100);
+					else if (now - v.lastPositionPreview >= 120) {
+						v.lastPositionPreview = now;
+						paintPreview();
+					}
+					v.positionPreviewTimeout = setTimeout(paintPreview, 120);
 				}
 			});
 			vidOn('mouseout', '#<%= $miss %>_position', function(e) {

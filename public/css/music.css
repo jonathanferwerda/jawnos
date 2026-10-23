@@ -653,9 +653,8 @@ body.dark_theme #music {
 	#music .music_cfg_fields { grid-template-columns: 1fr; }
 	#music #music_configuration { width: min(330px, calc(100% - 16px)); right: 8px; padding: 12px; }
 }
-/* the two bars take a wheel: up/down changes the level, forward/back seeks */
+/* the volume bar takes a wheel: up/down changes the level */
 #music #music_volume { cursor: ns-resize; }
-#music .music_seek { cursor: ew-resize; }
 
 .all_music[enabled=yes] {
 	background-color: lightgreen;
