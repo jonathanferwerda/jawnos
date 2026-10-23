@@ -14166,6 +14166,7 @@ sub navigation_hold_warranty {
 	}
 	my $pace = &navigation_pace({ base => 1 }) * 1000;
 	$hold = $pace if $pace > $hold;
+	$hold += $pace;
 	return $now + $hold + $grace;
 }
 
