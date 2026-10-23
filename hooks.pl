@@ -295,6 +295,12 @@ hook before_dispatch => sub {
 		# a session, or a peer signature itself (see Manager.pl).
 		$path eq '/manager/health' ||
 		$path eq '/manager/health/page' ||
+		# a computer's manual navigation button asks a same-LAN phone for its
+		# current fix. The route peer_verifies the caller against the roster and
+		# checks the source is on one of this machine's physical subnets itself
+		# (see Manager.pl); a peer has no session, and a gated reply would look
+		# like a silent "no fix" and send the button down its browser fallback.
+		$path eq '/manager/navigation/position' ||
 		# the sync rail: a peer asks this machine for a backup (backup_now), pulls
 		# its archive (backup_serve) and confirms it (backup/confirm) over the same
 		# bare signed rail. The session cookie these once relied on lapses, and a

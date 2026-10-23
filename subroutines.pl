@@ -9533,7 +9533,7 @@ sub embedded_location_grabber() {
 		my $ping_test = `$ping`;
 		if ($ping_test =~ /ttl/gi) {
 			my $ua = Mojo::UserAgent->new();
-			$ua->connect_timeout(1);
+			$ua = $ua->connect_timeout(1)->inactivity_timeout(2)->request_timeout(3);
 			my $watch_home = 'http://' . $watch->{'ip'} . ':' . $config->{'port'} . '/my_position';
 			my $res = eval { return $ua->insecure(1)->get($watch_home)->result };
 			if (eval { return decode_json $res->body }) {
@@ -17281,11 +17281,13 @@ sub lan_presence_send {
 	close $sock;
 }
 
-# The LAN addresses of every known peer that shares one of our current subnets.
-# Tries the row's ip first, then the NICs in its network report (including the
-# `lan` entry the presence notices keep fresh).
-sub lan_presence_targets {
-	my ($nics) = @_;
+# The known peers that share one of our current subnets, resolved to the
+# address and manager port they answered from. The row's ip is tried first,
+# then the NICs in its network report (including the `lan` entry the presence
+# notices keep fresh). A caller that only needs addresses calls
+# lan_presence_targets below.
+sub lan_peer_targets {
+	my ($nics, $want_device) = @_;
 	my @targets;
 	my %seen;
 	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
@@ -17293,11 +17295,10 @@ sub lan_presence_targets {
 		my @ips;
 		push @ips, $rm->{'ip'} if ($rm->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
 		my $net = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
-		if (ref $net eq 'HASH') {
-			foreach my $k ( keys %{$net} ) {
-				next if $k eq 'public_address' || !ref $net->{$k};
-				push @ips, $net->{$k}->{'ip'} if ($net->{$k}->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
-			}
+		$net = {} unless ref $net eq 'HASH';
+		foreach my $k ( keys %{$net} ) {
+			next if $k eq 'public_address' || !ref $net->{$k};
+			push @ips, $net->{$k}->{'ip'} if ($net->{$k}->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
 		}
 		my $ip = '';
 		foreach my $c ( @ips ) {
@@ -17307,9 +17308,24 @@ sub lan_presence_targets {
 			last;
 		}
 		next unless $ip && !$seen{$ip}++;
-		push @targets, $ip;
+		my $lan = (ref $net->{'lan'} eq 'HASH') ? $net->{'lan'} : {};
+		my $port = $lan->{'port'} || $rm->{'port'} || 45545;
+		my $device = $lan->{'device'} || $rm->{'device'} || '';
+		next if $want_device && $device ne $want_device;
+		push @targets, {
+			ip => $ip,
+			port => ($port =~ /^\d+$/ ? $port : 45545),
+			device => $device,
+			signatorial => ($rm->{'signatorial'} // ''),
+			server_time => (0 + ($rm->{'server_time'} || 0)),
+		};
 	}
-	return \@targets;
+	return [ sort { $b->{'server_time'} <=> $a->{'server_time'} } @targets ];
+}
+
+sub lan_presence_targets {
+	my ($nics) = @_;
+	return [ map { $_->{'ip'} } @{ &lan_peer_targets($nics) } ];
 }
 
 # The physical LANs this machine is on: the interfaces the presence notices use,
@@ -17425,6 +17441,81 @@ sub lan_navigation_accept {
 		eval { &subs::log_writer('navigation: borrowed a place from ' . substr($sig, 0, 8) . ' at ' . $peer_ip) };
 	}
 	return 1;
+}
+
+# This machine's own current fix, used when a peer asks for it. A held fix from
+# the last navigation run answers at once; when that is stale, ask the GPS with a
+# short bound and fall back to the network provider, then to the last held fix.
+# Read-only: the asking machine writes the place, and this one's own navigation
+# keeps its cadence.
+sub local_position {
+	return {} unless &subs::device_setter() eq 'mobile';
+	my $now = &subs::rightNow();
+	my $me = &subs::signatorial_designer();
+	my $row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and timestamp > ? order by server_time desc limit 1', 'temporary', $me, $now - 120000)->hashes->[0];
+	if ($row && $row->{'latitude'}) {
+		return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
+	}
+	my $jloc = `timeout 3 termux-location`;
+	my $loc = eval { return decode_json $jloc } || {};
+	my $usable = $loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500;
+	unless ($usable) {
+		my $nloc = eval { return decode_json `timeout 3 termux-location -p network` } || {};
+		if ($nloc->{'latitude'} && ($nloc->{'elapsedMs'} || 1e9) < 60000 && ($nloc->{'accuracy'} || 0) < 2000) {
+			$loc = $nloc;
+			$usable = 1;
+		}
+	}
+	if ($usable) {
+		return { latitude => $loc->{'latitude'}, longitude => $loc->{'longitude'}, accuracy => sprintf("%.2F", ($loc->{'accuracy'} || 0)), timestamp => $now, source => ($loc->{'provider'} || 'gps') };
+	}
+	$row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and (warranty is null or warranty = ? or warranty > ?) order by server_time desc limit 1', 'temporary', $me, '', $now)->hashes->[0];
+	return {} unless $row && $row->{'latitude'};
+	return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
+}
+
+# The manual navigation button on a computer asks the devices that can actually
+# see the sky: a teletype (the T-Deck serves /my_position on the LAN) and then
+# any mobile peer on one of this machine's physical subnets. The peer route is
+# signed and answers only a verified caller on the same subnet. Returns a fix
+# hash, or an empty hash when nothing answers; the caller then falls back to the
+# browser's own geolocation.
+sub nearby_position {
+	my $data = shift || {};
+	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	my $tdeck = &embedded_location_grabber({ timestamp => $timestamp });
+	if ($tdeck->{'latitude'}) {
+		return {
+			latitude => $tdeck->{'latitude'},
+			longitude => $tdeck->{'longitude'},
+			accuracy => $tdeck->{'accuracy'},
+			timestamp => $timestamp,
+			source => 'teletype',
+		};
+	}
+	my @nics = @{ &lan_physical_network() };
+	return {} unless @nics;
+	my $targets = &lan_peer_targets(\@nics, 'mobile');
+	return {} unless scalar @{$targets};
+	my $ua = Mojo::UserAgent->new();
+	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
+	$ua = $ua->insecure(1)->connect_timeout(1)->inactivity_timeout(4)->request_timeout(7);
+	foreach my $target ( @{$targets} ) {
+		my $url = 'https://' . $target->{'ip'} . ':' . $target->{'port'} . '/manager/navigation/position?peer=yes&signatorial=' . &signatorial_designer();
+		my $res = eval { $ua->get($url)->result };
+		next unless $res && $res->is_success;
+		my $body = eval { decode_json($res->body) } || {};
+		next unless ref $body eq 'HASH' && $body->{'latitude'} && $body->{'longitude'};
+		return {
+			latitude => $body->{'latitude'},
+			longitude => $body->{'longitude'},
+			accuracy => $body->{'accuracy'},
+			timestamp => $body->{'timestamp'},
+			source => ($body->{'source'} || 'peer'),
+			signatorial => $target->{'signatorial'},
+		};
+	}
+	return {};
 }
 
 sub lan_presence_listen {

@@ -303,29 +303,47 @@ function continent_record(setter) {
 }
 
 // The start menu's navigation button: ask for a fix now, with no appointment
-// behind it, and let the site-type picture follow the answer. It is the same
-// browser path an appointment start takes, so a manual run and an automatic one
-// write the same kind of point.
-function navigationNow() {
+// behind it, and let the site-type picture follow the answer. A computer with
+// no GPS of its own first asks the phone or deck on this LAN; when none answers
+// it falls back to the same browser path an appointment start takes.
+function navigationNowApply(response) {
+	if (!response) { return; }
+	var icon = $('#site_type_toggle');
+	if (response['site_icon'] && icon.length) {
+		icon.attr('src', response['site_icon']);
+	}
+	var source = response['site_source'];
+	if (source == 'manual' || source == 'lost') {
+		icon.css({ 'border-style': 'solid', 'border-color': (source == 'manual' ? 'red' : 'black'), 'border-width': '8px' });
+	}
+	else if (source) {
+		icon.css({ 'border-style': '', 'border-color': '', 'border-width': '' });
+	}
+	startMenuHtmlFlush();
+}
+
+function navigationNowLocal() {
 	continent_record({
 		app: 'me',
 		purpose: 'navigation',
 		navigation: 'once',
-		complete: function(response) {
-			if (!response) { return; }
-			var icon = $('#site_type_toggle');
-			if (response['site_icon'] && icon.length) {
-				icon.attr('src', response['site_icon']);
+		complete: navigationNowApply
+	});
+}
+
+function navigationNow() {
+	$.ajax({
+		url: '/manager/navigation/nearby',
+		type: 'POST',
+		data: { timestamp: Date.now() },
+		success: function(response) {
+			if (response && response['latitude']) {
+				navigationNowApply(response);
+				return;
 			}
-			var source = response['site_source'];
-			if (source == 'manual' || source == 'lost') {
-				icon.css({ 'border-style': 'solid', 'border-color': (source == 'manual' ? 'red' : 'black'), 'border-width': '8px' });
-			}
-			else if (source) {
-				icon.css({ 'border-style': '', 'border-color': '', 'border-width': '' });
-			}
-			startMenuHtmlFlush();
-		}
+			navigationNowLocal();
+		},
+		error: navigationNowLocal
 	});
 }
 

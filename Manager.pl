@@ -14053,6 +14053,72 @@ post '/manager/continent/record' => sub ($c) {
 	$c->render(json => $returner );
 };
 
+# The manual navigation button asks a device that has a GPS for its fix. On a
+# computer with none of its own, that is the phone or the deck on the same
+# physical LAN; the answer is written here as this machine's place, with no
+# home-plate automation (the phone's own navigation does that). When nothing
+# answers, `local` says to fall back to the browser's own geolocation.
+post '/manager/navigation/nearby' => sub($c) {
+	my $timestamp = $c->param('timestamp') || &subs::rightNow();
+	return $c->render(json => { local => 1 }) if &subs::device_setter() eq 'mobile';
+	my $fix = &subs::nearby_position({ timestamp => $timestamp });
+	unless ($fix->{'latitude'}) {
+		return $c->render(json => { local => 1 });
+	}
+	my $now = &subs::rightNow();
+	my $signatorial = &subs::signatorial_designer();
+	my $fix_time = $fix->{'timestamp'} || $timestamp;
+	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'app', setting => 'warranty' }) || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $now);
+	my $returner = {
+		timestamp => $fix_time,
+		server_time => $now,
+		uuid => &subs::random_string_creator(25),
+		type => 'navigation',
+		app => 'me',
+		warranty => $warranty,
+		signatorial => $signatorial,
+		latitude => $fix->{'latitude'},
+		longitude => $fix->{'longitude'},
+		accuracy => sprintf("%.2F", ($fix->{'accuracy'} || 0)),
+	};
+	&subs::db_insert('continent', $returner);
+	my $treturner = clone $returner;
+	$treturner->{'type'} = 'temporary';
+	$treturner->{'app'} = '__president';
+	$treturner->{'uuid'} = &subs::random_string_creator(31);
+	$treturner->{'warranty'} = &subs::navigation_hold_warranty({ timestamp => $fix_time, server_time => $now });
+	&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
+	&subs::db_insert('continent', $treturner);
+	&subs::cache_delete({ app => 'travel', context => 'navigation_information', subcontext => $signatorial });
+	my $nav = &subs::navigation_information({ signatorial => $signatorial, cache => 'no' });
+	my $site_type = $nav->{$signatorial}->{'site_type'};
+	if ($site_type && $gb::site_types->{$site_type}) {
+		$returner->{'site_type'} = $site_type;
+		$returner->{'site_rating'} = $nav->{$signatorial}->{'site_rating'};
+		$returner->{'site_source'} = $nav->{$signatorial}->{'site_source'};
+		$returner->{'site_icon'} = &subs::icon_for($gb::site_types->{$site_type}->{'icon'});
+	}
+	$returner->{'source'} = $fix->{'source'} || 'peer';
+	&Websocket::send('tab', { console => 'jawnosContinentAt = 0; if (typeof startMenuHtmlFlush == "function") { startMenuHtmlFlush(); }' });
+	$c->render(json => $returner);
+};
+
+# A peer on this LAN asks this handheld where it is, for its manual navigation
+# button. The route is on the bare signed rail (a peer has no session): the
+# caller must be in the roster with a pinned key AND its source must be on one
+# of this machine's physical subnets. It only reads - the asking machine writes
+# the place; this one's own navigation keeps its cadence.
+get '/manager/navigation/position' => sub($c) {
+	my $signatorial = $c->param('signatorial') || '';
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	my $ip = $c->tx->remote_address || '';
+	my @nics = @{ &subs::lan_physical_network() };
+	my $same = grep { &subs::same_net_test($_->{'ip'}, $ip) eq 'yes' } @nics;
+	unless ($same) { $c->rendered(403); return; }
+	$c->render(json => &subs::local_position());
+};
+
 sub continent_record($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $app = &subs::unformat_name($c->param('app'));
