@@ -176,6 +176,7 @@ our %topic = (
 			'For a track with no picture of its own, open the tools panel (the wrench in the player) and choose a Visualization; the drawing shows in the player\'s corner while the library is up, and takes the whole player in Theatre mode or fullscreen.',
 			'Fullscreen (the player button, or F) fills the screen with the picture; moving the mouse brings back the top bar and the transport, and they fade away again when the pointer rests.',
 			'A wheel over the picture moves through the track; on a trackpad, a sideways swipe does the same and up/down sets the volume. On a touchscreen, drag sideways to move through it and up or down to set the volume. The same gestures work in fullscreen, over the interface; the fullscreen button (or F) leaves fullscreen too.',
+			'A wheel or trackpad scroll directly over the seek bar moves through the track, and the same over the volume bar turns it up or down.',
 			'Open the configuration drawer to choose the audio output, or to send playback to another machine on the mesh.',
 			'To even out volumes, open the configuration drawer and choose Volume normalization: Off, Slight, Mild or Aggressive. The setting applies as soon as it is picked and stays with this machine.',
 			'If a machine starts playing with no Music window to control it, open its keyboard or websocket panel and press the square Stop beside the received track. The Receive music from other devices switch under it keeps that machine from being used as an output at all.'

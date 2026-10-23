@@ -1090,6 +1090,69 @@ function musicSystemVolumeWatch() {
 $(document).on('input', '#music_volume', function() {
 	musicVolumeSet(this.value);
 });
+// A wheel or a two-finger trackpad scroll over either bar moves it: up/forward
+// for volume and the seek, down/back the other way. A wheel notch is about
+// 100px; a trackpad sends a stream of smaller deltas, so the same arithmetic
+// gives a fine nudge there and a whole step on a mouse wheel. The seek bar also
+// takes a sideways two-finger swipe, which reads as forward and back.
+function musicWheelAmount(e, sideways) {
+	var ev = e.originalEvent || e;
+	var dx = ev.deltaX || 0;
+	var dy = ev.deltaY || 0;
+	var amount;
+	if (sideways && Math.abs(dx) > Math.abs(dy)) {
+		amount = dx;
+	}
+	else if (ev.deltaY != undefined) {
+		amount = -dy;
+	}
+	else if (ev.wheelDelta != undefined) {
+		amount = ev.wheelDelta;
+	}
+	else { return 0; }
+	if (ev.deltaMode == 1) { amount = amount * 16; }
+	else if (ev.deltaMode == 2) { amount = amount * 400; }
+	return amount / 100;
+}
+var musicSeekTarget = null;
+var musicSeekRaf = 0;
+function musicSeekBy(seconds) {
+	if (!tree || !tree.sound || !isFinite(tree.sound.duration) || !tree.sound.duration) { return; }
+	// a trackpad sends a stream of small deltas: accumulate them and seek once a
+	// frame, or a long scroll decodes a frame per event and the picture stutters
+	var base = (musicSeekTarget == null) ? (tree.sound.currentTime || 0) : musicSeekTarget;
+	musicSeekTarget = Math.max(0, Math.min(tree.sound.duration, base + seconds));
+	var to = musicSeekTarget;
+	// move the visible bar at once; the playing interval tells a remote output
+	// about the jump in its usual drift check
+	var m = $('#video').attr('miss');
+	if (m) { $('#' + m + '_position').val(to / tree.sound.duration * 100); }
+	$('#elapsed_progress').text(numeral(to).format('00:00:00'));
+	if (musicSeekRaf) { return; }
+	musicSeekRaf = requestAnimationFrame(function() {
+		musicSeekRaf = 0;
+		var target = musicSeekTarget;
+		musicSeekTarget = null;
+		if (target != null) { tree.sound.currentTime = target; }
+	});
+}
+$(document).on('wheel', '#music_volume', function(e) {
+	var amount = musicWheelAmount(e, false);
+	if (!amount) { return; }
+	e.preventDefault();
+	e.stopPropagation();
+	musicVolumeSet(musicVolumeLevel() + amount * 0.04);
+});
+$(document).on('wheel', '.music_seek', function(e) {
+	var amount = musicWheelAmount(e, true);
+	if (!amount || !tree || !tree.sound || !isFinite(tree.sound.duration) || !tree.sound.duration) { return; }
+	e.preventDefault();
+	e.stopPropagation();
+	// one notch is one percent of the track, kept between half a second and
+	// fifteen seconds so a song and a long film both feel right
+	var step = Math.max(0.5, Math.min(15, tree.sound.duration * 0.01));
+	musicSeekBy(amount * step);
+});
 $(document).on('change', '#music_normalize_select', function() {
 	music_normalize = $(this).val() || 'off';
 	$('#music').attr('normalize', music_normalize);
@@ -1524,6 +1587,11 @@ $(document).on('click', '.music_audio_output_select', function() {
 
 
 
+});
+
+$(document).on('click', '#music_configuration_close', function(e) {
+	e.preventDefault();
+	$('#music_configuration').hide();
 });
 
 $(document).on('click', '#music_configuration_toggle', function() {

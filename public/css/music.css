@@ -491,77 +491,171 @@ body.dark_theme #music {
 	white-space: nowrap;
 }
 
-/* the configuration panel */
+/* the configuration drawer --------------------------------------------------
+   A quiet sheet of the window's own surface, cut into labelled sections,
+   rather than a stack of coloured blocks. Chips wrap, the fields take the
+   full width when the drawer is narrow, and the drawer itself scrolls inside
+   the window rather than running off its foot. */
 #music #music_configuration {
-	border-radius: 14px;
-	padding: 10px;
-	border: 1px solid var(--music-line);
-	box-shadow: 0 10px 30px rgba(0, 0, 0, .35);
-	/* the panel wears a random colour per open, so its controls carry their own
-	   light surface and dark ink instead of trusting the theme ink */
-	color: #111;
-	/* the drawer is taller than the window on a phone: keep it inside the
-	   window and let the contents scroll rather than running off the bottom */
+	position: absolute;
+	top: 90px;
+	right: 0;
+	width: min(360px, 94%);
 	box-sizing: border-box;
 	max-height: calc(100% - 100px);
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	-webkit-overflow-scrolling: touch;
 	scrollbar-width: thin;
+	padding: 14px;
+	border: 1px solid var(--music-line);
+	border-radius: 14px;
+	background: var(--panel-2, var(--panel));
+	color: var(--ink);
+	box-shadow: 0 18px 40px rgba(0, 0, 0, .32);
 }
-#music #music_folders,
-#music #music_audio_output {
-	border-radius: 10px;
-	padding: 6px;
-	margin-bottom: 8px;
+#music .music_cfg_close {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--ink-muted);
+	font-size: 22px;
+	line-height: 26px;
+	box-shadow: none;
+	cursor: pointer;
 }
-#music #music_folders { background-color: rgba(120, 160, 220, 0.18) !important; }
-#music #music_audio_output { background-color: rgba(90, 190, 120, 0.18) !important; }
-#music .music_folder_toggle,
-#music .music_audio_output_select {
-	height: 30px;
-	min-width: 40px;
-	padding: 0 10px;
-	margin: 2px;
-	font-size: 15px;
-	border-radius: 8px;
-	border: 1px solid rgba(0, 0, 0, 0.28);
-	background-color: rgba(255, 255, 255, 0.85);
+#music .music_cfg_close:hover {
+	background: var(--music-line-soft);
+	color: var(--ink);
+}
+#music .music_cfg_section + .music_cfg_section {
+	margin-top: 14px;
+	padding-top: 14px;
+	border-top: 1px solid var(--music-line-soft);
+}
+#music .music_cfg_heading {
+	margin: 0 0 8px;
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: .09em;
+	text-transform: uppercase;
+	color: var(--ink-muted);
+}
+#music .music_cfg_chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+#music #music_configuration .music_folder_toggle,
+#music #music_configuration .music_archive_toggle,
+#music #music_configuration .music_audio_output_select {
+	height: auto;
+	min-height: 30px;
+	margin: 0;
+	padding: 5px 11px;
+	font-size: 13px;
+	border: 1px solid var(--music-line);
+	border-radius: 999px;
+	background: var(--panel);
+	color: var(--ink);
+	box-shadow: none;
+}
+#music #music_configuration .music_folder_toggle:hover,
+#music #music_configuration .music_archive_toggle:hover,
+#music #music_configuration .music_audio_output_select:hover {
+	border-color: var(--music-accent);
+}
+#music #music_configuration .music_folder_toggle[status="on"],
+#music #music_configuration .music_archive_toggle[status="on"] {
+	background: var(--music-accent);
+	border-color: var(--music-accent);
 	color: #111;
-}
-#music .music_folder_toggle[status="on"] {
-	background-color: rgba(255, 216, 66, 0.92) !important;
-	border-color: rgba(0, 0, 0, 0.35) !important;
-	color: #111 !important;
 	font-weight: 700;
 }
-#music .music_audio_output_select[state="on"] {
-	background-color: rgba(120, 205, 126, 0.92) !important;
-	border-color: rgba(0, 0, 0, 0.35) !important;
-	color: #111 !important;
+#music #music_configuration .music_audio_output_select[state="on"] {
+	background: var(--music-on);
+	border-color: var(--music-on);
+	color: #fff;
 	font-weight: 700;
+}
+#music .music_cfg_fields {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 10px;
+}
+#music .music_cfg_field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+#music .music_cfg_field_wide { grid-column: 1 / -1; }
+#music .music_cfg_label {
+	font-size: 12px;
+	color: var(--ink-muted);
 }
 #music #music_configuration select {
-	background-color: rgba(255, 255, 255, 0.9);
-	color: #111;
-}
-#music #music_layout_select,
-#music #music_library_select {
-	width: 48%;
-	margin: 2px 1%;
-	border-radius: 8px;
-}
-#music #music_normalize_label {
-	display: block;
-	margin: 8px 2% 2px;
+	width: 100%;
+	height: 34px;
+	padding: 0 9px;
 	font-size: 13px;
+	border: 1px solid var(--music-line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: var(--ink);
+}
+#music #music_configuration select:focus {
+	outline: none;
+	border-color: var(--music-accent);
+	box-shadow: 0 0 0 3px rgba(255, 207, 46, .25);
+}
+#music #music_configuration .volume_control_device {
+	display: inline-block;
+	margin: 0 5px 7px 0;
+	padding: 4px 10px;
+	font-size: 12px;
+	border: 1px solid var(--music-line);
+	border-radius: 999px;
+	background: var(--panel);
+	color: var(--ink);
+	cursor: pointer;
+}
+#music #music_configuration .volume_control_device.selected {
+	background: var(--music-accent);
+	border-color: var(--music-accent);
+	color: #111;
 	font-weight: 600;
 }
-#music #music_normalize_select {
-	width: 96%;
-	margin: 0 2%;
-	border-radius: 8px;
+#music #music_configuration #device_volume_control { display: block; }
+#music #music_configuration #device_volume_control br { display: none; }
+#music #music_configuration #device_volume_control > b {
+	display: block;
+	margin: 6px 0 2px;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--ink-muted);
 }
+#music #music_configuration .volume_control {
+	width: 100% !important;
+	margin: 0;
+	accent-color: var(--music-accent);
+}
+@container (max-width: 380px) {
+	#music .music_cfg_fields { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+	#music .music_cfg_fields { grid-template-columns: 1fr; }
+	#music #music_configuration { width: min(330px, calc(100% - 16px)); right: 8px; padding: 12px; }
+}
+/* the two bars take a wheel: up/down changes the level, forward/back seeks */
+#music #music_volume { cursor: ns-resize; }
+#music .music_seek { cursor: ew-resize; }
 
 .all_music[enabled=yes] {
 	background-color: lightgreen;
