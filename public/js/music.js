@@ -193,6 +193,16 @@ function musicStreamConnect() {
 		musicStream.failed = {};
 		musicStreamSendJson(musicStreamHello());
 		if (musicStream.codec != 'opus') { musicStreamTapActive(true, true); }
+		else {
+			// do not wait forever on an unreachable output; start for the ones
+			// that answered, and a later one will be marked closed
+			setTimeout(function() {
+				if (musicStream.ws !== ws || !musicStream.active || musicStream.codec != 'opus' || musicOpus.recorder) { return; }
+				for (var k in musicStream.ready) {
+					if (musicStream.ready[k]) { musicOpusRecord(); return; }
+				}
+			}, 2000);
+		}
 	};
 	ws.onmessage = function(e) {
 		if (typeof e.data != 'string') { return; }
@@ -357,6 +367,17 @@ function musicOpusStop() {
 	musicOpus.chain = Promise.resolve();
 }
 
+// A codec or output change during Opus needs a new WebM header for every
+// decoder, so the whole stream is restarted rather than patched.
+function musicStreamRestart() {
+	if (!musicStream.active) { return; }
+	var playing = (tree.sound.state == 1);
+	var file = (tree.songs[0] ? tree.songs[0].file : musicStream.file);
+	var seek = tree.sound.currentTime;
+	musicStreamStop();
+	if (playing) { musicStreamStart(file, seek); }
+}
+
 function musicStreamStop() {
 	if (musicStream.ws) {
 		musicStreamSendJson({ type: 'control', action: 'stop' });
@@ -367,6 +388,7 @@ function musicStreamStop() {
 	musicStream.paused = false;
 	musicStream.reconnect = 0;
 	musicStream.ready = {};
+	musicStream.failed = {};
 	musicStream.latency = 0;
 	musicStream.attached = false;
 	musicStream.gap = 0;
@@ -1766,10 +1788,7 @@ $(document).on('change', '#music_stream_codec', function() {
 	$('#music').attr('stream_codec', music_stream_codec);
 	settingSetter({ 'app': 'music', 'setting': 'stream_codec', 'value': music_stream_codec });
 	if (!musicStream.active) { return; }
-	var file = (tree.songs[0] ? tree.songs[0].file : '');
-	var seek = tree.sound.currentTime;
-	musicStreamStop();
-	if (tree.sound.state == 1) { musicStreamStart(file, seek); }
+	musicStreamRestart();
 });
 $(document).on('click', '#music_mute', function() {
 	music_muted = !music_muted;
@@ -2175,7 +2194,11 @@ $(document).on('click', '.music_audio_output_select', function() {
 	// when it starts or re-announces
 	mao[output] = state;
 	if (remote) {
-		if (state == 'on' && tree.sound.state == 1) {
+		if (musicStream.active && musicStream.codec == 'opus') {
+			// every decoder needs the new output set's header
+			setTimeout(musicStreamRestart, 0);
+		}
+		else if (state == 'on' && tree.sound.state == 1) {
 			remoteTrackToggle({ file: file, toggle: 'on', seek: seek });
 		}
 		else if (!musicStreamOutputs().length) {
