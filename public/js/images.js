@@ -347,6 +347,7 @@ function galleryIsFullscreen() {
 function galleryFullscreenToggle() {
 	var on = !galleryIsFullscreen();
 	$('#gallery').toggleClass('gallery_fullscreen', on);
+	$('#gallery').closest('.wind').toggleClass('gallery_fullscreen_window', on);
 	$('#browser').toggleClass('gallery_fullscreen_host', on);
 	galleryViewerPad();
 	galleryFullscreenLabel();
@@ -366,8 +367,9 @@ function galleryViewerPad() {
 		return;
 	}
 	var top = viewer.getBoundingClientRect().top;
-	// the taskbar is the usual top bar; the clothesline header is fixed too and
-	// is what a window with a bottom taskbar sits under
+	// The window's own title bar floats over its content, so it is part of the
+	// ceiling too; the taskbar is the usual top bar, and the clothesline header
+	// is what a window with a bottom taskbar sits under.
 	var bottom = 0;
 	['taskbar', 'header'].forEach(function(id) {
 		var el = document.getElementById(id);
@@ -375,6 +377,8 @@ function galleryViewerPad() {
 		var r = el.getBoundingClientRect();
 		if (r.height > 0 && r.width > window.innerWidth / 2) { bottom = Math.max(bottom, r.bottom); }
 	});
+	var navbar = $('#gallery').closest('.wind').find('.top_navbar').first();
+	if (navbar.length && navbar.is(':visible')) { bottom = Math.max(bottom, navbar[0].getBoundingClientRect().bottom); }
 	var pad = Math.max(6, Math.ceil(bottom - top) + 6);
 	viewer.style.setProperty('--gallery_viewer_pad', pad + 'px');
 }
@@ -383,6 +387,7 @@ function galleryCloseViewer() {
 	gallery.viewerIndex = -1;
 	$('#gallery_viewer_stage').empty();
 	$('#gallery').removeClass('gallery_fullscreen');
+	$('#gallery').closest('.wind').removeClass('gallery_fullscreen_window');
 	$('#browser').removeClass('gallery_fullscreen_host');
 	$('#gallery_viewer').hide();
 	$('#gallery_body').css('overflow-y', 'auto');

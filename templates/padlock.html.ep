@@ -63,6 +63,12 @@
 			width: 300px;
 			text-align: center;
 		}
+		/* a short window (a phone, or a small tablet) cannot fit the emblem
+		   and the buttons: cap the picture so the ways in stay on screen */
+		@media screen and (max-height: 760px) {
+			.padlock_emblem .denial_image { max-height: 32vh; width: auto; margin: 0 auto; }
+			.padlock_message { font-size: 15px; margin: 4px 0; }
+		}
 		.padlock_frame .denial_image {
 			width: 100%;
 			display: block;
@@ -146,8 +152,9 @@
 			text-decoration: none;
 		}
 		@media screen and (max-width:900px) {
-			.padlock_ask_phone,
 			.padlock_fingerprint { display: none; }
+			/* the peer button stays: a tablet with no reader of its own has no
+			   other way in, and the phone-key page would be a dead end there */
 			.padlock_phone_key { display: block; }
 		}
 		.padlock_screensaver {
