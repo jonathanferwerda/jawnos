@@ -375,8 +375,12 @@ sub music_pulse_ready {
 # (the other channel is silenced), so 'left' really is the left speaker and not
 # the left channel copied to both.
 sub music_channel_filter($channel) {
-	return 'pan=stereo|c0=c0|c1=0' if ($channel // '') eq 'left';
-	return 'pan=stereo|c0=0|c1=c1' if ($channel // '') eq 'right';
+	# A bare 0 is not accepted as an input channel in the pan filter this ffmpeg
+	# ships with ("Expected in channel name"), so the silent side is 0 times a
+	# real channel. Verified on the Table: c0=c0|c1=0*c0 gives left only and
+	# c0=0*c1|c1=c1 gives right only.
+	return 'pan=stereo|c0=c0|c1=0*c0' if ($channel // '') eq 'left';
+	return 'pan=stereo|c0=0*c1|c1=c1' if ($channel // '') eq 'right';
 	return '';
 }
 
