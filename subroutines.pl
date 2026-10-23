@@ -3599,7 +3599,7 @@ sub embedded_levels_scan {
 		my $old_row = $old{$chip} || {};
 		my @history = @{ (ref $old_row->{'history'} eq 'ARRAY') ? $old_row->{'history'} : [] };
 		if ($d->{'online'} && defined $d->{'battery'}) {
-			push @history, { t => $now, p => $d->{'battery'} + 0, s => ($d->{'status'} || '') };
+			push @history, { t => $now, p => $d->{'battery'} + 0, s => lc($d->{'status'} || '') };
 			splice @history, 0, scalar(@history) - 36 if scalar @history > 36;
 		}
 		my $recent = [ grep { defined $_->{'p'} && defined $_->{'t'} && $now - $_->{'t'} <= 10800000 } @history ];
