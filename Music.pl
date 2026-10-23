@@ -248,7 +248,11 @@ sub music_stream_rate { my $r = shift || 48000; return $r =~ /^\d+$/ ? $r : 4800
 sub music_stream_state_read {
 	my $path = &music_stream_state_path();
 	return {} unless -e $path;
-	my $md = eval { decode_json read_file($path) } || {};
+	# read_file in list context returns lines; decode_json is not prototyped, so
+	# assign first or it decodes only the opening brace
+	my $text = eval { read_file($path) };
+	return {} unless defined $text && length $text;
+	my $md = eval { decode_json $text } || {};
 	if ($md->{'pid'} && !kill(0, $md->{'pid'})) {
 		unlink $path;
 		return {};
