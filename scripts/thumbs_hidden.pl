@@ -96,7 +96,13 @@ foreach my $src ( sort @moves ) {
 	foreach my $entry ( sort grep { $_ ne '.' && $_ ne '..' } readdir $dh ) {
 		my $to = "$dst/$entry";
 		if (-e $to) {
-			print "keep  $src/$entry (already in .thumbs)\n" unless $quiet;
+			# A thumbnail regenerated into the old folder after the move: the hidden
+			# folder already has a cache file under the same name (the sealed copy
+			# can differ in size - each seal has its own container). Drop the old one.
+			if (!unlink "$src/$entry") {
+				$failed++;
+				print "FAIL  $src/$entry: $!\n";
+			}
 			$kept++;
 			next;
 		}

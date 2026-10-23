@@ -162,8 +162,16 @@
 	</div>
 	<div class="cfg-row">
 		<label><b>Texture</b></label>
-		<% my $current_texture = &subs::texture_name(); %>
-		<select class="misc_setting" setting="texture" device="<%= $dev %>">
+		<% my $active_bundle = &subs::active_theme_bundle(); %>
+		<% my $active_theme = $active_bundle->{'slug'} // ''; %>
+		<% my $current_texture = $active_theme
+			? (&subs::setting_grabber({ app => 'misc', setting => 'texture_override', device => $dev }) || '')
+			: &subs::texture_name(); %>
+		<select class="misc_setting" setting="<%= $active_theme ? 'texture_override' : 'texture' %>" device="<%= $dev %>">
+			<% if ($active_theme) { %>
+				<% my $theme_texture = $gb::texture_labels{ $active_bundle->{'texture'} } || ''; %>
+				<option value="" <% if (!length $current_texture) { %>selected="selected"<% } %>><%= &subs::lang('configure.follow_theme') %><% if (length $theme_texture) { %> — <%= $theme_texture %><% } %></option>
+			<% } %>
 			<% foreach my $t ( @gb::textures ) { %>
 				<option value="<%= $t %>" <% if ($current_texture eq $t) { %>selected="selected"<% } %>><%= $gb::texture_labels{$t} %></option>
 			<% } %>
@@ -180,9 +188,16 @@
 	</div>
 	<div class="cfg-row">
 		<label><b>Icon Set</b></label>
-		<% my $current_icon_set = &subs::setting_grabber({ app => 'misc', setting => 'icon_set', device => $dev }) || ''; %>
-		<select class="misc_setting" setting="icon_set" device="<%= $dev %>">
-			<option value="" <% if (!$current_icon_set) { %>selected="selected"<% } %>>Default</option>
+		<% my $current_icon_set = $active_theme
+			? (&subs::setting_grabber({ app => 'misc', setting => 'icon_set_override', device => $dev }) || '')
+			: (&subs::setting_grabber({ app => 'misc', setting => 'icon_set', device => $dev }) || ''); %>
+		<select class="misc_setting" setting="<%= $active_theme ? 'icon_set_override' : 'icon_set' %>" device="<%= $dev %>">
+			<% if ($active_theme) { %>
+				<% my $theme_icon_label = $gb::icon_set_labels{ $active_bundle->{'icon_set'} } || ''; %>
+				<option value="" <% if (!length $current_icon_set) { %>selected="selected"<% } %>><%= &subs::lang('configure.follow_theme') %><% if (length $theme_icon_label) { %> — <%= $theme_icon_label %><% } %></option>
+			<% } else { %>
+				<option value="" <% if (!length $current_icon_set) { %>selected="selected"<% } %>>Default</option>
+			<% } %>
 			<% foreach my $s ( @gb::icon_sets ) { %>
 				<option value="<%= $s %>" <% if ($current_icon_set eq $s) { %>selected="selected"<% } %>><%= $gb::icon_set_labels{$s} %></option>
 			<% } %>
@@ -202,7 +217,7 @@
 			<% } %>
 		</select>
 	</div>
-	<p class="cfg-note"><%= &subs::ui('A theme from the gallery may name its own icon set, material, font and corner. The choices above are what the System card uses.') %></p>
+	<p class="cfg-note"><%= &subs::ui('A theme carries its own icon set and material. Follow theme uses those; another choice overrides them for this machine while the theme is active. With no theme active, the choices here are the desk\'s own.') %></p>
 	<div class="cfg-row">
 		<label><b>Appointment Colours</b></label>
 		<button id="appt_colour_update" class="hover">Re-theme appointments</button>
@@ -623,8 +638,14 @@
 			$('<img>').attr('src', u).css({ width: '40px', height: '40px' }).appendTo(box);
 		});
 	}
-	jawnosPreviewIcons($('.misc_setting[setting="icon_set"]').val());
-	$(document).on('change', '.misc_setting[setting="icon_set"]', function () { jawnosPreviewIcons($(this).val()); });
+	var jawnos_theme_icon_set = <%== encode_json($active_bundle->{'icon_set'} || '') %>;
+	function iconSetPreviewValue() {
+		var override = $('.misc_setting[setting="icon_set_override"]').val();
+		var system = $('.misc_setting[setting="icon_set"]').val();
+		return override || system || jawnos_theme_icon_set || '';
+	}
+	jawnosPreviewIcons(iconSetPreviewValue());
+	$(document).on('change', '.misc_setting[setting="icon_set"], .misc_setting[setting="icon_set_override"]', function () { jawnosPreviewIcons(iconSetPreviewValue()); });
 
 	// ---- named theme gallery --------------------------------------------
 	// A card is applied with one write (the Misc setting appearance_theme); the

@@ -140,7 +140,7 @@
 <% my ($manager_bg, $manager_appt_theme) = &subs::active_manager_background(); %>
 <% my $theme_dark = &subs::theme_is_dark(); %>
   <% my $body_class = join ' ', grep { length } (($theme_dark ? 'dark_theme' : ''), ((&Manager::fingerprint_available() && &Manager::padlock_request_is_local($c)) ? '' : 'no_local_fingerprint')); %>
-  <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
+  <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>" data-icon-set="<%= &subs::icon_set() %>" data-theme-sig="<%= &subs::theme_signature() %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
   <% my $theme_bundle = &subs::active_theme_bundle(); %>
   <% my $title_font = $theme_bundle->{'font'} || &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
   <% my $theme_corner = $theme_bundle->{'corner'} || ''; %>

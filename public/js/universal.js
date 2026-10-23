@@ -1602,6 +1602,10 @@ function jawnosThemeApply(bg, appt) {
 	if (appt) { document.body.setAttribute('data-appt-theme', 'yes'); }
 	else { document.body.removeAttribute('data-appt-theme'); }
 	document.body.style.backgroundColor = bg;
+	// This ad-hoc repaint is not the active theme's signature any more: the next
+	// bundle push must be allowed to land rather than comparing against a stale
+	// one and becoming a no-op.
+	document.body.removeAttribute('data-theme-sig');
 	jawnosApplyInk();
 }
 // A whole dressing arrives at once: paint, glyphs, material, face, corner and
@@ -1612,9 +1616,18 @@ function jawnosThemeBundleApply(bundle, appt) {
 	if (typeof bundle === 'string') { try { bundle = JSON.parse(bundle); } catch (e) { return; } }
 	if (!bundle || typeof bundle !== 'object') { return; }
 	if (bundle.appointment != null) { appt = bundle.appointment; }
+	// The appointment flag answers on its own: a start/stop on the same theme
+	// changes only who owns the desk, not how it is painted.
+	if (appt) { document.body.setAttribute('data-appt-theme', 'yes'); }
+	else { document.body.removeAttribute('data-appt-theme'); }
+	// A signature is the whole dressing in one string. An unchanged push is a
+	// no-op: a start or stop that does not move the theme must not reload a
+	// single window.
+	var sig = ('signature' in bundle) ? ('' + bundle.signature) : '';
+	var current = document.body.getAttribute('data-theme-sig') || '';
+	if (sig && sig === current) { return; }
+	var icon_now = document.body.getAttribute('data-icon-set') || '';
 	if (bundle.background) {
-		if (appt) { document.body.setAttribute('data-appt-theme', 'yes'); }
-		else { document.body.removeAttribute('data-appt-theme'); }
 		document.body.style.backgroundColor = bundle.background;
 	}
 	if (bundle.font) {
@@ -1629,14 +1642,17 @@ function jawnosThemeBundleApply(bundle, appt) {
 	if (bundle.texture && typeof jawnosTextureApply === 'function') {
 		jawnosTextureApply(bundle.texture);
 	}
+	// Paint, material and face repaint live. Only a different icon set needs the
+	// server's path translation, and that is what re-renders open windows, so it
+	// is kept for an icon-set change alone.
+	window.jawnos_theme_suppress_icon_reload = true;
 	jawnosApplyInk(bundle.accent || '');
-	// The icon paths were rendered with the old set and only the server knows
-	// where a path lives in the new one, so ask it to translate them again. A
-	// light/dark crossing inside jawnosApplyInk schedules the same call; the
-	// guard keeps one change from asking twice.
-	if (bundle.icon_set && typeof jawnosReloadIcons === 'function') {
+	window.jawnos_theme_suppress_icon_reload = false;
+	if (('icon_set' in bundle) && (bundle.icon_set || '') !== icon_now && typeof jawnosReloadIcons === 'function') {
+		document.body.setAttribute('data-icon-set', bundle.icon_set || '');
 		setTimeout(jawnosReloadIcons, 60);
 	}
+	if (sig) { document.body.setAttribute('data-theme-sig', sig); }
 }
 $(function () { jawnosApplyInk('', true); });
 
