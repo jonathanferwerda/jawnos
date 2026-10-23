@@ -2,6 +2,7 @@
 <% my $signatorial = &subs::signatorial_designer(); %>
 <% my $topology = &subs::setting_grabber({ app => 'sync', setting => 'topology', device => 'all' })
 	|| &subs::setting_grabber({ app => 'sync', setting => 'topology' }) || 'auto'; %>
+<% my $update_method = &subs::sync_update_method_get(); %>
 <%# the lister as networks: a toolbar, the machines (each named and removable
     once), then one section per network the house is on - the subnet, the
     interfaces that reach it, and a neighbour table of the devices found there.
@@ -76,6 +77,25 @@
 					<option value="hub" <% if ($topology eq 'hub') { %>selected<% } %>>Hub only — spokes dial the server</option>
 				</select>
 				<span id="sync_topology_status" class="device_when"></span>
+			</div>
+		</div>
+		<%# Where code updates come from. Also house-wide: the watcher reads it on
+		    every pass, so None leaves the machine on the version it has until a
+		    person deploys by hand. %>
+		<div class="device_card" id="update_method_card">
+			<div class="device_head">
+				<span class="network_cidr"><%= &subs::ui('Update Method') %></span>
+				<span class="device_when"><%= &subs::ui('house-wide · each machine applies it on its next tick') %></span>
+			</div>
+			<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+				<label for="update_method_select"><%= &subs::ui('Updates') %></label>
+				<select id="update_method_select" class="update_method_select" setting="update_method">
+					<option value="none" <% if ($update_method eq 'none') { %>selected<% } %>><%= &subs::ui('None — stay on this version') %></option>
+					<option value="github" <% if ($update_method eq 'github') { %>selected<% } %>><%= &subs::ui('GitHub — pull from origin/main only') %></option>
+					<option value="peers" <% if ($update_method eq 'peers') { %>selected<% } %>><%= &subs::ui('Peers — pull only from this mesh') %></option>
+					<option value="any" <% if ($update_method eq 'any') { %>selected<% } %>><%= &subs::ui('Any — GitHub first, then a peer') %></option>
+				</select>
+				<span id="update_method_status" class="device_when"></span>
 			</div>
 		</div>
 		<% if (scalar @{$routers || []}) { %>

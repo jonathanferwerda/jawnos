@@ -27897,12 +27897,29 @@ sub coding_propose_fix {
 	return $files ? 'proposed' : 'failed';
 }
 
+# Where this machine takes code updates from. A house setting
+# (`sync/update_method`, device => 'all'), so the Dev panel writes it once and
+# every machine's next settings pull carries it. Blank or unknown means any:
+# origin first, a peer as the fallback, which is what the watcher always did.
+sub sync_update_method_get {
+	my $v = &subs::setting_grabber({ app => 'sync', setting => 'update_method', device => 'all' });
+	$v = &subs::setting_grabber({ app => 'sync', setting => 'update_method' }) unless defined $v && length $v;
+	$v = 'any' unless defined $v && $v =~ /^(?:none|github|peers|any)$/;
+	return $v;
+}
+
 our $git_watcher_dirty_note;
 
 sub git_watcher_check {
 	return unless -d '.git';
+	# Update method is the house's choice of authority: none stops auto-update,
+	# github follows origin/main alone, peers takes only a peer's fast-forward, and
+	# any (the default) tries GitHub first, then a peer. An explicit deploy still
+	# works whatever the method says.
+	my $method = &subs::sync_update_method_get();
+	return if $method eq 'none';
 	my $before = `git rev-parse HEAD 2>/dev/null`; chomp $before;
-	# GitHub is the authority: the checkout follows origin/main first, and only a
+	# `any` keeps the old order: the checkout follows origin/main first, and only a
 	# machine origin cannot move forward - the fetch failed (the mesh answers while
 	# the internet does not), or it holds commits origin/main lacks - consults a
 	# peer as the fallback. A peer pull must be a true fast-forward: the old order
@@ -27911,7 +27928,22 @@ sub git_watcher_check {
 	# path, so the watcher never accepts a peer reset. A peer with rewritten
 	# history, or with work the whole house should ride, pushes to GitHub and the
 	# authority carries it everywhere.
-	my ($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 });
+	my ($status, $out) = ('none', '');
+	($status, $out) = &subs::git_repo_update({ repo => '.', force => 0 }) unless $method eq 'peers';
+	unless ($status eq 'dirty' || $status eq 'updated' || $status eq 'reset' || $status eq 'current') {
+		return unless $method eq 'peers' || $method eq 'any';
+		my $mine = &subs::jawn_version();
+		my $rms = eval { &subs::db_select('remote_machines')->hashes } || [];
+		my @peers = sort { &subs::version_cmp($b->{'version'}, $a->{'version'}) }
+			grep { $_->{'version'} && &subs::version_newer($_->{'version'}, $mine) } @{$rms};
+		# only a few, so a run of dead peers cannot hold the watcher up
+		@peers = @peers[0 .. 2] if scalar @peers > 3;
+		foreach my $rm ( @peers ) {
+			my ($st, $o) = &subs::git_peer_update({ repo => '.', rm => $rm, ff_only => 1 });
+			if ($st eq 'updated') { $status = "peer/$st"; $out = $o; last; }
+			if ($st eq 'dirty') { $status = 'dirty'; $out = $o; last; }
+		}
+	}
 	if ($status eq 'dirty') {
 		# a tree with tracked changes never moves; say so once an hour rather
 		# than leaving the machine quietly stuck behind
@@ -27923,18 +27955,6 @@ sub git_watcher_check {
 			close $fh;
 		}
 		return;
-	}
-	unless ($status eq 'updated' || $status eq 'reset' || $status eq 'current') {
-		my $mine = &subs::jawn_version();
-		my $rms = eval { &subs::db_select('remote_machines')->hashes } || [];
-		my @peers = sort { &subs::version_cmp($b->{'version'}, $a->{'version'}) }
-			grep { $_->{'version'} && &subs::version_newer($_->{'version'}, $mine) } @{$rms};
-		# only a few, so a run of dead peers cannot hold the watcher up
-		@peers = @peers[0 .. 2] if scalar @peers > 3;
-		foreach my $rm ( @peers ) {
-			my ($st, $o) = &subs::git_peer_update({ repo => '.', rm => $rm, ff_only => 1 });
-			if ($st eq 'updated') { $status = "peer/$st"; $out = $o; last; }
-		}
 	}
 	return unless $status eq 'updated' || $status eq 'reset';
 	if ($subs::logfile) {

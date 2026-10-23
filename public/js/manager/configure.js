@@ -305,6 +305,22 @@ $(document).on('change', '.sync_topology_select', function() {
 	});
 });
 
+// The update method is the same kind of house setting: which authority the
+// auto-update watcher follows (none, GitHub, peers, or either). It is read by
+// the boot-time watcher on each pass, so a save takes effect on the next tick.
+$(document).on('change', '.update_method_select', function() {
+	var status = $('#update_method_status');
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	status.text(t('saving…'));
+	$.ajax({
+		url: '/manager/setting_setter',
+		type: 'POST',
+		data: { app: 'sync', setting: 'update_method', value: $(this).val(), device: 'all', timestamp: Date.now() },
+		success: function() { status.text(t('house-wide — saved')); },
+		error: function() { status.text(t('could not save')); }
+	});
+});
+
 // A custom notification sound: the file is uploaded to the house, which files it
 // beside the shipped ones, and every sound select is re-drawn so the new one can
 // be picked (here and on any other app's Notifications panel)
