@@ -165,6 +165,8 @@ function musicStreamConnect() {
 	musicStream.ws = ws;
 	ws.onopen = function() {
 		musicStream.reconnect = 0;
+		// a fresh connection measures a fresh pipeline; do not keep an old max
+		musicStream.latency = 0;
 		musicStreamSendJson(musicStreamHello());
 		musicStreamTapActive(true, true);
 	};
@@ -2259,7 +2261,15 @@ function musicAudioResume() {
 			// the capture waits for a running context; finish it once resume lands
 			if (p && p.then) {
 				p.then(function () {
-					if (musicVisual.ctx && musicVisual.ctx.state == 'running') { musicAudioGraph(); musicBaselineApply(); }
+					if (musicVisual.ctx && musicVisual.ctx.state == 'running') {
+						musicAudioGraph();
+						musicBaselineApply();
+						// the first play can build the context before it is running; the
+						// stream's tap attach then failed and needs another look
+						if (musicStream.active && !musicStreamTap.ready) {
+							musicStreamStart(tree.songs[0] ? tree.songs[0].file : '', tree.sound ? tree.sound.currentTime : 0);
+						}
+					}
 				}).catch(function () {});
 			}
 		}
