@@ -25,6 +25,7 @@ var gallery = {
 	loading: false,
 	locked: 0,
 	padlock: 0,
+	hidden: 0,
 	viewerIndex: -1
 };
 
@@ -125,6 +126,9 @@ function galleryApplyChrome() {
 	$('#gallery_all_tab').toggleClass('active', gallery.view == 'grid' && !gallery.app);
 	$('#gallery_sort').text(gallery.sort == 'asc' ? jawnosT('Oldest first') : jawnosT('Newest first'));
 	var shut = !(gallery.unlock || '');
+	// an album hidden by the visibility rule needs a way in even when this
+	// device's padlock context list does not name the gallery
+	$('#gallery_lock_button').toggle(gallery.padlock == 1 || gallery.hidden > 0);
 	$('#gallery_lock_button').text(shut ? jawnosT('Unlock') : jawnosT('Lock')).attr('hint', shut ? 'Unlock' : 'Lock');
 	if ($('#gallery_search').val() != gallery.search) { $('#gallery_search').val(gallery.search); }
 }
@@ -212,6 +216,7 @@ function galleryFetch(reset) {
 			$('#gallery_body').css('cursor', '');
 			if (!response) { return; }
 			gallery.locked = response.locked ? 1 : 0;
+			gallery.hidden = response.hidden || 0;
 			if (typeof response.unlock == 'string' && response.unlock) {
 				gallery.unlock = response.unlock;
 				$('#gallery').attr('unlock', response.unlock);

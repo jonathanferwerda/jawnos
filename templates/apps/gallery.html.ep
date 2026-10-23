@@ -59,9 +59,9 @@
 		<button type="button" id="gallery_all_tab" class="gallery_tab" hint="All photos"><%= &subs::ui('All photos') %></button>
 		<input id="gallery_search" type="search" autocomplete="off" hint="Search" placeholder="<%= &subs::lang('common.search') %>">
 		<button type="button" id="gallery_sort" class="gallery_tab" hint="Newest first"><%= &subs::ui('Newest first') %></button>
-		<% if (scalar @{$padlock_sighting}) { %>
-		<button type="button" id="gallery_lock_button" class="gallery_tab gallery_lock" hint="Unlock"><%= &subs::ui('Unlock') %></button>
-		<% } %>
+		<%# shown by the client when the padlock covers the gallery or when an album
+		    is hidden by the visibility rule, whichever comes first %>
+		<button type="button" id="gallery_lock_button" class="gallery_tab gallery_lock" hint="Unlock" style="display:none;"><%= &subs::ui('Unlock') %></button>
 	</div>
 	<div id="gallery_body">
 		<div id="gallery_albums"></div>

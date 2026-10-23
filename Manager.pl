@@ -25141,6 +25141,7 @@ get '/manager/gallery/data' => sub ($c) {
 	my $settings = &subs::settings_grabber({ app => 'gallery' });
 	my @all;
 	my %albums;
+	my %hidden_albums;
 	my %aset_cache;
 	my $uenc = sub {
 		my $v = shift;
@@ -25240,7 +25241,7 @@ get '/manager/gallery/data' => sub ($c) {
 			my $app = $appt->{'app'} || '';
 			next if scalar @{$apps} && !grep { $_ eq $app } @{$apps};
 			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
-			next if (($aset->{'visible'} || '') ne 'checked') && $revealed == 0;
+			if ((($aset->{'visible'}) || '') ne 'checked' && $revealed == 0) { $hidden_albums{$app} = 1; next; }
 			my $files = eval { return decode_json $appt->{'file'} } || [];
 			foreach my $f ( @{$files} ) {
 				next if $search && index(lc($app), $search) < 0 && index(lc($f->{'f'} || ''), $search) < 0;
@@ -25288,6 +25289,9 @@ get '/manager/gallery/data' => sub ($c) {
 		items => \@page,
 		total => $total,
 		albums => [ sort { $a->{'label'} cmp $b->{'label'} } values %albums ],
+		# albums the visibility rule kept out: the window offers its Unlock
+		# button for them even on a device whose padlock context list is bare
+		hidden => scalar(keys %hidden_albums),
 		locked => ($permissive ? 0 : 1),
 		unlock => ($permissive ? ($c->param('unlock') || '') : ''),
 		sort => $sort,
@@ -35003,6 +35007,17 @@ sub padlock_mark_unlocked {
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	my $suds = &subs::suds_grabber() || &subs::session_suds($c) || $gb::suds;
 	return 0 unless $suds;
+	# Opening an app's padlock makes that app one of the lock's contexts. A
+	# device whose contexts were only "general" otherwise has no such padlock:
+	# it shows no Unlock button, and the token the unlock mints could never
+	# validate there (media_unlock_open reads this same list).
+	if ($mode ne 'locker') {
+		my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+		unless (grep { $_ eq $mode } @{$contexts}) {
+			push @{$contexts}, $mode;
+			&subs::setting_setter({ app => '__president', setting => 'padlock_contexts', value => encode_json $contexts });
+		}
+	}
 	my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 	$activity_timeout = abs &subs::time_abbrev_translator($activity_timeout);
 	my $new_timeout = &subs::rightNow() + $activity_timeout;
