@@ -497,6 +497,10 @@ function mediaMaker(data) {
 				tree.sound.state = 1;
 				musicKeepalive(true);
 				musicVolumeApply();
+				// a context suspended by a call or the app going away is resumed here;
+				// a graph deferred while it was stopped is finished once it runs
+				musicAudioResume();
+				if (music_normalize && music_normalize != 'off') { musicAudioGraph(); }
 				musicBaselineStart();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
@@ -1169,6 +1173,9 @@ $(document).on('change', '#music_normalize_select', function() {
 	music_normalize = $(this).val() || 'off';
 	$('#music').attr('normalize', music_normalize);
 	musicNormalizeApply();
+	// the graph is captured on this gesture; put the element's level and mute
+	// state back in step in case a track change left them at the handshake value
+	musicVolumeApply();
 	settingSetter({ 'app': 'music', 'setting': 'normalize', 'value': music_normalize });
 });
 $(document).on('click', '#music_mute', function() {
@@ -1736,6 +1743,27 @@ function musicPlayerFullscreen() {
 	if (p && p.catch) { p.catch(function () {}); }
 }
 
+// Resume the audio context and, once it is running, finish a graph that was
+// deferred while it was stopped. Returns the context state after the attempt.
+function musicAudioResume() {
+	var ctx = musicVisual.ctx;
+	if (!ctx) { return null; }
+	if (ctx.state == 'suspended' || ctx.state == 'interrupted') {
+		var now = Date.now();
+		if (now - musicVisual.resumeAt > 300) {
+			musicVisual.resumeAt = now;
+			var p = null;
+			try { p = ctx.resume(); } catch (e) { return ctx.state; }
+			// the capture waits for a running context; finish it once resume lands
+			if (p && p.then) {
+				p.then(function () {
+					if (musicVisual.ctx && musicVisual.ctx.state == 'running') { musicAudioGraph(); musicBaselineApply(); }
+				}).catch(function () {});
+			}
+		}
+	}
+	return ctx.state;
+}
 // The player's audio graph: made on first use and kept for the page. An element
 // can only be captured once, and the graph has to stay in place or the sound
 // goes with it. A re-opened window hands back a fresh element; the old tap is
@@ -1743,11 +1771,19 @@ function musicPlayerFullscreen() {
 function musicAudioGraph() {
 	var el = document.getElementById('video');
 	if (!el) { return null; }
-	if (!musicVisual.ctx) {
+	if (!musicVisual.ctx || musicVisual.ctx.state == 'closed') {
 		var Ctor = window.AudioContext || window.webkitAudioContext;
 		if (!Ctor) { return null; }
 		try { musicVisual.ctx = new Ctor(); } catch (e) { return null; }
+		musicVisual.source = null;
+		musicVisual.el = null;
 	}
+	// A MediaElementSource takes the element's sound away from the page and into
+	// the graph. Capturing while the context is stopped is silence with no direct
+	// path back, so the capture waits until the context is actually running; the
+	// resume above re-enters here once it is.
+	var state = musicAudioResume();
+	if (!musicVisual.source && state != 'running') { return null; }
 	if (musicVisual.el !== el) {
 		if (musicVisual.source) { try { musicVisual.source.disconnect(); } catch (e) {} }
 		musicVisual.source = null;
@@ -1778,17 +1814,6 @@ function musicAudioGraph() {
 		catch (e) {
 			musicVisual.source = null;
 			return null;
-		}
-	}
-	if (musicVisual.ctx.state == 'suspended') {
-		// the dropdown or the normalisation choice is the usual gesture that lets
-		// the context start; this is the retry for one that was interrupted (a
-		// phone call, say)
-		var now = Date.now();
-		if (now - musicVisual.resumeAt > 1000) {
-			musicVisual.resumeAt = now;
-			var p = musicVisual.ctx.resume();
-			if (p && p.catch) { p.catch(function () {}); }
 		}
 	}
 	return musicVisual;
@@ -2029,6 +2054,13 @@ function musicNormalizeApply() {
 // is not left silent by a context that could not start on its own.
 $(document).on('pointerdown touchstart keydown', function() {
 	if (music_normalize && music_normalize != 'off' && $('#music').length) { musicAudioGraph(); }
+});
+// A phone pauses the graph when the app is put away; coming back resumes it.
+$(document).on('visibilitychange', function() {
+	if (!document.hidden && music_normalize && music_normalize != 'off' && $('#music').length) {
+		musicAudioGraph();
+		musicVolumeApply();
+	}
 });
 
 // The visualiser's tap. It shares the normaliser's graph so the drawing follows
