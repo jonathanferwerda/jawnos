@@ -6,6 +6,7 @@ Wants=bluetooth.target
 
 [Service]
 Type=simple
+UMask=0077
 ExecStart=@PYTHON@ @DESKTOP@/jawnos-bt-daemon
 Restart=on-failure
 RestartSec=3

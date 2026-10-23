@@ -6,6 +6,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# The database, its WAL, the backups and the logs are house data; nothing the
+# tree creates should land group- or world-readable.
+UMask=0077
 WorkingDirectory=@JAWN_DIR@
 ExecStart=@PERL@ ./jawn
 Restart=on-failure

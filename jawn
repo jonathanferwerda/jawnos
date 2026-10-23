@@ -3,6 +3,13 @@
 use strict;
 use warnings;
 
+# Everything this tree writes is house data: the database and its WAL, backups,
+# plaintext export temporaries and the logs. Create files private by default so
+# a new one is never briefly readable by another local account; every worker
+# inherits this umask. Existing files are tightened by
+# scripts/privacy_permissions.pl.
+umask 077;
+
 # Somebody launching this (a desktop app, a systemd unit, an .desktop entry) never
 # sources ~/.zshrc, so only the system @INC is present and the first 'use' below
 # dies on 'Can't locate Mojo/...'. Find the same local::lib tree the shell would

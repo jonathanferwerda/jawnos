@@ -7604,6 +7604,14 @@ sub backup_now() {
 	my $appendage = $gb::universal_splitter . &subs::encrypter(undef,$encryption_standard);
 	my $path = &subs::backups_dir() . '/' . (do { my $n = $databaser; $n =~ s{.*/}{}; $n });
 	my $temporary_path = &subs::home('~/.president/') . &subs::random_string_creator() . '.sql';
+	# Private from the instant it exists. sqlite3's .backup and the shell's `>`
+	# create at 0666 minus the umask, which left a full plaintext copy of the
+	# database readable by any local user for the length of the export, and a crash
+	# before the shred left it behind. Creating it here fixes the mode, and the
+	# chmod also catches a file left by an interrupted run.
+	open(my $backup_guard, '>>', $temporary_path);
+	close $backup_guard if $backup_guard;
+	chmod 0600, $temporary_path;
 	my $enc_file = $path . '.enc';
 	my $signatorial = &subs::signatorial_designer();
 	my $initializer = 1;
@@ -7679,6 +7687,7 @@ sub backup_now() {
 		# a parse error ("object name reserved for internal use: sqlite_sequence"),
 		# and SQLite builds them again where they are wanted
 		`sqlite3 $database .schema | grep -vE 'sqlite_stat|sqlite_sequence' > $schema_file`;
+		chmod 0600, $schema_file;
 		my $command = `sqlite3 $temporary_path < $schema_file`;
 		`shred -u $schema_file`;
 #		my $backup = `sqlite3 $database .schema $temporary_path`;
@@ -7817,11 +7826,13 @@ sub backup_now() {
 
 	my $archive_path = $path . '_' . $timestamp;
 	my $encrypt = &openssl_file_crypt('e', $encryption_standard, $secret, $temporary_path, $archive_path . '.enc', 0, 1);
+	chmod 0600, $archive_path . '.enc' if -e $archive_path . '.enc';
 	my $stat_path = `stat $temporary_path`;
 	`echo "$appendage" >> $archive_path.enc`;
 
 	unless ($reason eq 'remote_update') {
 		my $archive_encrypt = `cp -v $archive_path.enc $enc_file`;
+		chmod 0600, $enc_file if -e $enc_file;
 	}
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
@@ -12689,6 +12700,12 @@ sub backups_dir {
 # gate on before there is a way in would lock it out - a paper recovery code or
 # an already-paired phone is that way in.
 sub padlock_seed_default {
+	# An app padlock never survives a restart. The token lives in one window;
+	# a tree that has just come up has no such window, and a grant left behind
+	# would let a reopened gallery, music or folders window list the sealed
+	# things without a fresh print. The old house-wide secret is cleared too.
+	&subs::db_query('delete from cache where context = ?', 'media_unlock');
+	&subs::db_query('delete from settings where setting = ? and app in (?,?,?)', 'combo_unlock', 'gallery', 'music', 'folders');
 	return if (&subs::setting_grabber({ app => '__president', setting => 'padlock_gate_initialized' }) || '') eq 'yes';
 	my $recovery = &subs::db_query('select server_time from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
 	my $paired = &subs::db_select('paired_devices', undef, { status => 'active' })->hashes->[0];
@@ -27146,6 +27163,7 @@ sub records_backup_now {
 	my $out = "$dir/jawnos_" . &rightNow() . '.enc';
 	`sqlite3 "$database" ".backup '$tmp'"`;
 	&openssl_file_crypt('e', $standard, $secret, $tmp, $out, 0, 1);
+	chmod 0600, $out if -e $out;
 	my $appendage = $gb::universal_splitter . &encrypter($secret, $standard);
 	if (open(my $af, '>>', $out)) { print $af $appendage . "\n"; close $af; }
 	unlink $tmp;

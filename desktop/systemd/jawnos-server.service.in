@@ -11,6 +11,9 @@ Type=simple
 # bridge and no login session. Run a server like a server.
 User=@JAWN_USER@
 Group=@JAWN_GROUP@
+# The database, its WAL, the backups and the logs are house data; nothing the
+# tree creates should land group- or world-readable.
+UMask=0077
 WorkingDirectory=@JAWN_DIR@
 ExecStart=@PERL@ ./jawn
 
