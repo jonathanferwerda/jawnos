@@ -3405,6 +3405,15 @@ function deloreanBringer() {
 function calculator() {
 	var now = Date.now();
 
+	// The desk has no appointment view to keep current: its clock runs on a
+	// one-second tick of its own and its clothesline is read once a minute (both
+	// in desk.js), so the whole appointment_viewer round trip is skipped.
+	if (localStorage.getItem('layout') == 'desk') {
+		if (typeof windowBackgroundAdjuster == 'function') { windowBackgroundAdjuster({ caller: 'calculator' }); }
+		if (typeof deskShow == 'function') { deskShow(); }
+		return;
+	}
+
 	if (!jawn_resting() && clothesLineAtRest()) {
 		var data = deloreanBringer();
 		windowBackgroundAdjuster({ caller: 'calculator' });

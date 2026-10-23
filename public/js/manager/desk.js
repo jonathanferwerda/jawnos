@@ -8,6 +8,8 @@ var desk_visible = false;
 var desk_xhr = undefined;
 var desk_paint_key = '';
 var desk_poll_timer = undefined;
+var desk_clock_timer = undefined;
+var desk_rail_timer = undefined;
 
 function deskRefreshIfVisible() {
 	if (!desk_visible) { return; }
@@ -15,14 +17,82 @@ function deskRefreshIfVisible() {
 }
 
 function deskShow() {
+	// one background at a time: the other layouts' canvases go away even though
+	// the appointment poll that used to do this is skipped for the desk
+	$.each(['leaderboard', 'clockface', 'timeline', 'calendar', 'continent', 'narrator'], function (i, v) {
+		$('#' + v).hide();
+	});
+	$('#desk').show();
+	if (localStorage.getItem('background_images') == 'on') { $('#background').show(); }
+	else { $('#background').hide(); }
 	$('#desk_layer').addClass('active');
-	deskPosition();
 	deskPrinter();
+	// the wallpaper is repainted whole on a resize, which takes the rail with it;
+	// hang the clothes we already have before waiting on the next minute's read
+	if (typeof clotheslineHanger == 'function') { clotheslineHanger(typeof wardrobe == 'undefined' ? [] : wardrobe); }
+	deskPosition();
 	if (!desk_visible) {
 		desk_visible = true;
 		deskLoad();
+		deskRailRefresh();
 	}
+	deskClockStart();
+	deskClockTick();
+	deskRailStart();
 	deskPollStart();
+}
+
+// The desk's clock is the taskbar's own face, ticked every second here: there is
+// no appointment view behind the desk to draw it. The header span is the face
+// when the taskbar is away, exactly as the printers leave it.
+function deskClockTick() {
+	var now = Date.now();
+	if (typeof jawnosClockShow == 'function') { jawnosClockShow(now); }
+	if (typeof jawnosClockInTaskbar == 'function' && !jawnosClockInTaskbar() && typeof fixedTimeString == 'function') {
+		$('#header').text(fixedTimeString(now));
+	}
+}
+function deskClockStart() {
+	if (desk_clock_timer) { return; }
+	desk_clock_timer = setInterval(function () {
+		if (!desk_visible) { return; }
+		deskClockTick();
+	}, 1000);
+}
+
+// While the desk is the background there is no timeline or leaderboard to keep
+// current, so the appointment_viewer poll is skipped and only the clothesline is
+// kept fresh - once a minute, and only while the rail is worn.
+function deskRailRefresh() {
+	if (typeof clotheslineEnabled != 'undefined' && !clotheslineEnabled) { deskPosition(); return; }
+	$.ajax({
+		url: '/manager/clothesline_rail',
+		type: 'GET',
+		data: { background_images: localStorage.getItem('background_images') || '' },
+		success: function (response) {
+			if (!response || typeof response != 'object') { return; }
+			if (typeof clotheslineHanger == 'function') { clotheslineHanger(response['clothesline'] || []); }
+			// a picture background lives on #background, under the desk canvas
+			if (localStorage.getItem('background_images') == 'on' && typeof response['backgrounds'] != 'undefined'
+				&& typeof backgroundPrinter == 'function') {
+				backgroundPrinter({
+					__specs: {
+						timestamp: response['timestamp'],
+						backgrounds: response['backgrounds'],
+						background: response['background']
+					}
+				}, response);
+			}
+			deskPosition();
+		}
+	});
+}
+function deskRailStart() {
+	if (desk_rail_timer) { return; }
+	desk_rail_timer = setInterval(function () {
+		if (!desk_visible) { return; }
+		deskRailRefresh();
+	}, 60000);
 }
 
 // The icons start under whatever the desk reserves above them: a top taskbar,
@@ -40,6 +110,8 @@ function deskHide() {
 	desk_visible = false;
 	$('#desk_layer').removeClass('active');
 	if (desk_poll_timer) { clearInterval(desk_poll_timer); desk_poll_timer = undefined; }
+	if (desk_clock_timer) { clearInterval(desk_clock_timer); desk_clock_timer = undefined; }
+	if (desk_rail_timer) { clearInterval(desk_rail_timer); desk_rail_timer = undefined; }
 }
 
 // The Recycle Bin badge and the chosen desk folder can change while the desk is
@@ -361,5 +433,9 @@ function deskPrinter() {
 }
 
 $(window).on('resize', function() {
-	if (desk_visible) { deskPrinter(); }
+	if (desk_visible) {
+		deskPrinter();
+		if (typeof clotheslineHanger == 'function') { clotheslineHanger(typeof wardrobe == 'undefined' ? [] : wardrobe); }
+		deskPosition();
+	}
 });

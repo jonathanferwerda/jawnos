@@ -23600,6 +23600,20 @@ get '/manager/appointment_viewer' => sub($c) {
 	);
 };
 
+# The desk's own rail. With the desk as the background there is no timeline or
+# leaderboard to build, so desk.js asks this instead of appointment_viewer once a
+# minute: the stored clothesline, and the picture when the background is on.
+get '/manager/clothesline_rail' => sub($c) {
+	my $clothesline = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
+	my %payload = ( clothesline => $clothesline, timestamp => &subs::rightNow() );
+	if (($c->param('background_images') || '') eq 'on') {
+		my $backgrounds = eval { return decode_json &subs::setting_grabber({ app => 'marker', setting => 'backgrounds' }) } || [];
+		$payload{'backgrounds'} = $backgrounds;
+		$payload{'background'} = $backgrounds->[ int(rand(scalar @{$backgrounds})) ] if scalar @{$backgrounds};
+	}
+	$c->render(json => \%payload);
+};
+
 get '/manager/tasks' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $app = $c->param('app');
@@ -27610,6 +27624,8 @@ post '/manager/folders/file/open' => sub ($c) {
 	my $path = $folders->{'path'};
 	my ($raw_files,$files) = [];
 	my $app;
+	# the same padlock this window holds for its own listing
+	my $unlocked = media_unlock_open($c, 'folders') ? 1 : 0;
 
 	if ($type eq 'image') {
 		$app = 'gallery';
@@ -27620,28 +27636,51 @@ post '/manager/folders/file/open' => sub ($c) {
 	} elsif ($type eq 'document' || $type eq 'subtitles') {
 		$app = 'ide';
 	}
-	if (@{$folders->{'selected'}} > 0) {
-		my @types;
-		foreach my $fs ( @{$folders->{'selected'}} ) {
-			next unless $fs->{'type'} eq $type;
-
-			my @stat = stat($fs->{'path'});
-			my $temp = {};
-			$temp->{'size'} = $stat[7];
-			$temp->{'modified'} = $stat[9];
-			$temp->{'created'} = $stat[10];
-			$temp->{'accessed'} = $stat[8];
-			push @{$raw_files}, $fs->{'path'};
-			push @{$files},	{
-				app => '__president',
-				source => 'folders',
-				f => $fs->{'path'},
-				file => $fs->{'path'},
-				uuid => &subs::random_string_creator(10),
-				server_time => $temp->{'created'} * 1000,
-				type => $fs->{'type'}
-			};
+	# What the app is handed: the clicked file first, then its siblings of the
+	# same kind from the same folder. A gallery and a player are a set, not one
+	# file - opening a photo should offer the rest of the photos beside it, the
+	# way a desktop viewer does; opening a track should queue the album. IDE is
+	# deliberately left alone: each raw file opens its own editor tab, so handing
+	# it a folder's worth would open a folder's worth of editors.
+	my @chosen = grep { ($_->{'type'} || '') eq $type } @{ $folders->{'selected'} || [] };
+	my $first = $folders->{'path'};
+	$first = $chosen[0]->{'path'} if (!defined $first || !length $first) && scalar @chosen;
+	if (defined $first && length $first) {
+		my @front = grep { $_->{'path'} eq $first } @chosen;
+		@chosen = ( @front, grep { $_->{'path'} ne $first } @chosen );
+		@chosen = ( { path => $first, type => $type }, @chosen ) unless scalar @front;
+	}
+	if (!$folders->{'remote_uuid'} && $app && ($app eq 'gallery' || $app eq 'music') && scalar @chosen) {
+		my $dir = $chosen[0]->{'path'};
+		$dir =~ s{/[^/]*$}{};
+		$dir = '/' unless length $dir;
+		# the listing applies the same padlock and hidden-app rules the window
+		# saw, so a sibling cannot be opened that the listing kept out of sight
+		my $listing = &folders_listing($dir, $unlocked, $c);
+		my %seen = map { $_->{'path'} => 1 } @chosen;
+		foreach my $sibling ( @{ $listing->{'files'} || [] } ) {
+			next if $seen{ $sibling->{'path'} }++;
+			next unless (($sibling->{'type'} || '') eq $type);
+			push @chosen, { path => $sibling->{'path'}, type => $sibling->{'type'} };
 		}
+	}
+	foreach my $fs ( @chosen ) {
+		my @stat = stat($fs->{'path'});
+		my $temp = {};
+		$temp->{'size'} = $stat[7];
+		$temp->{'modified'} = $stat[9];
+		$temp->{'created'} = $stat[10];
+		$temp->{'accessed'} = $stat[8];
+		push @{$raw_files}, $fs->{'path'};
+		push @{$files},	{
+			app => '__president',
+			source => 'folders',
+			f => $fs->{'path'},
+			file => $fs->{'path'},
+			uuid => &subs::random_string_creator(10),
+			server_time => $temp->{'created'} * 1000,
+			type => $fs->{'type'}
+		};
 	}
 	my $returner = { raw_files => $raw_files, files => $files, app => $app };
 

@@ -821,7 +821,11 @@ function foldersFileOpener(state) {
 		url: '/manager/folders/file/open',
 		type: 'POST',
 		data: {
-			folders: JSON.stringify(st)
+			folders: JSON.stringify(st),
+			// the window's own padlock token, so a sibling in a hidden app's folder
+			// is listed on the same terms the window already saw it
+			unlock: (typeof foldersRoot == 'function') ? ($('#folders').attr('unlock') || '') : '',
+			browser_tab_id: (typeof jawnosMediaTab == 'function') ? jawnosMediaTab() : ''
 		},
 		success: function(response) {
 			if (response['app'] == 'gallery') {
