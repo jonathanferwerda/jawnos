@@ -24832,6 +24832,14 @@ sub window_maker($type,$timestamp) {
 		$tid =~ s/[^A-Za-z0-9_\-]//g;
 		$terminal_attr = ' data-terminal-id="' . $tid . '"' if length $tid;
 	}
+	# A generic window instance: several windows of one app (Folders, now) are
+	# told apart by this, the same way Terminal is by its session id.
+	my $window_instance_attr = '';
+	if ($type->{'window_id'}) {
+		my $wid = $type->{'window_id'};
+		$wid =~ s/[^A-Za-z0-9_\-]//g;
+		$window_instance_attr = ' data-window-id="' . $wid . '"' if length $wid;
+	}
 
 	my $jp = $apostrophe_escape;
 	if ($jp =~ /cam$|scr$|aud$/gi) {
@@ -24883,7 +24891,7 @@ sub window_maker($type,$timestamp) {
 	my $window_dark_ink = &subs::contrast_ink($window_dark);
 
 	my $display =
-		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . '  style="background-color:var(--window, var(--panel));
+		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . '  style="background-color:var(--window, var(--panel));
 			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
@@ -26374,6 +26382,17 @@ post '/manager/folders' => sub($c) {
 	}
 	my $folder = $c->param('folder') || &subs::home('~');
 	my $command = $c->param('command');
+	# One id per window and one per tab. The id is what keeps two Folders
+	# windows apart while windowMaker answers a refresh; the tab id is what the
+	# window's own tab strip selects between.
+	my $folders_id = $c->param('window_id') // '';
+	$folders_id =~ s/[^A-Za-z0-9_\-]//g;
+	$folders_id = substr($folders_id, 0, 64);
+	$folders_id = 'f' . &subs::random_string_creator(12) if length($folders_id) < 4;
+	my $tab_id = $c->param('tab_id') // '';
+	$tab_id =~ s/[^A-Za-z0-9_\-]//g;
+	$tab_id = substr($tab_id, 0, 64);
+	$tab_id = 't' . &subs::random_string_creator(12) if length($tab_id) < 4;
 	my $settings = &subs::settings_grabber({ app => 'folders' });
 	# an app opens locked: only the token this window holds, minted by the
 	# phone's unlock, may list a sealed name
@@ -26381,19 +26400,22 @@ post '/manager/folders' => sub($c) {
 	my $unlock = $unlocked ? $c->param('unlock') : '';
 
 	my $fo = &folders_opener({ folder => $folder, command => $command, c => $c, unlocked => $unlocked });
+	my $window_name = &subs::ui('Folders') . ' - ' . ($fo->{'folder'} || '');
 	my $contents = $c->render_to_string(
 		template => 'folders/folders',
 		settings => $settings,
 		fo => $fo,
 		folder => $folder,
+		folders_id => $folders_id,
+		tab_id => $tab_id,
 		unlocked => $unlocked,
 		unlock => $unlock,
 		machines => &subs::remote_machine_lister({ self => 'no' }),
 		remote_uuid => $c->param('remote_uuid')
 	);
 
-	my $html = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'folders', contents => $contents }, $timestamp);
-	$c->render(json => { html => $html, fo => $fo, unlocked => $unlocked });
+	my $html = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'folders', window_id => $folders_id, window_name => $window_name, contents => $contents }, $timestamp);
+	$c->render(json => { html => $html, fo => $fo, window_id => $folders_id, tab_id => $tab_id, window_name => $window_name, unlocked => $unlocked });
 };
 
 # Apps that are not launchable from the app menu: citizen kinds and the
@@ -26459,11 +26481,27 @@ get '/manager/folders/desk' => sub($c) {
 			icon => &subs::icon_for($gb::known_appts->{$_}->{'icon'})
 		}
 	} &folders_desk_pinned();
+	my $trash = &folders_trash_files_dir();
+	my $trash_count = &folders_trash_count();
 	$c->render(json => {
 		folder => $folder,
 		files => $listing->{'files'},
 		apps => \@apps,
 		disk => $listing->{'disk'},
+		# the two fixed places: Computer opens the root, the bin its own folder
+		computer => {
+			name => &subs::ui('Computer'),
+			icon => &subs::icon_for('/images/decipherable/computer.png'),
+			path => '/'
+		},
+		trash => {
+			name => &subs::ui('Recycle Bin'),
+			icon => &subs::icon_for('/icons/trash.png'),
+			path => $trash,
+			count => $trash_count
+		},
+		trash_folder => $trash,
+		trash_count => $trash_count,
 		unlocked => $unlocked
 	});
 };
@@ -26618,6 +26656,14 @@ sub folders_listing($folder, $unlocked, $c) {
 		total_size => &subs::data_size($total_size)
 	};
 	unshift @{$files}, @folders;
+	# In the bin the stored name (name, name.1, ...) is only the move's own; the
+	# person reads the name it had where it came from, so list by that.
+	if (&folders_in_trash($folder)) {
+		@{$files} = sort {
+			lc($_->{'display'} || $_->{'name'}) cmp lc($_->{'display'} || $_->{'name'})
+				|| ($_->{'display'} || $_->{'name'}) cmp ($_->{'display'} || $_->{'name'})
+		} @{$files};
+	}
 	# the disk figures belong to the path being read; `--` keeps a path that
 	# starts with a dash from being read as an option
 	my $df = `df -h -- $formatted_folder 2>/dev/null`;
@@ -26641,6 +26687,16 @@ sub folders_property_grabber($data) {
 	my $ftype = &file_type_recognizer($path);
 	$file->{'type'} = $ftype->{'type'} || 'file';
 	$file->{'icon'} = $ftype->{'icon'};
+	# In the Recycle Bin the stored name is only the move's own; show the name
+	# it had where it came from, and remember the whole path for Properties.
+	if (&folders_in_trash($folder)) {
+		my $original = &folders_trash_original($f);
+		if (length $original) {
+			my @orig = split '/', $original;
+			$file->{'display'} = pop @orig;
+			$file->{'trash_original'} = $original;
+		}
+	}
 	my $thumb_dir = $folder . '/thumbs';
 	if (-e $thumb_dir && $file->{'type'} eq 'video') {
 		my $formatted_thumbs_dir = &subs::terminal_name($thumb_dir);
@@ -26687,6 +26743,130 @@ sub folders_command_items {
 	return @items;
 }
 
+# ---- the Recycle Bin ---------------------------------------------------------
+# Deleting a file moves it here instead of unlinking it; a shred still destroys
+# it. The layout is the freedesktop one (~/.local/share/Trash/files beside
+# info/*.trashinfo), so the bin also works with the rest of the desktop.
+sub folders_trash_root {
+	my $root = &subs::home('~/.local/share/Trash');
+	$root =~ s{/+$}{};
+	return $root;
+}
+sub folders_trash_files_dir {
+	my $dir = &folders_trash_root() . '/files';
+	File::Path::make_path($dir) unless -d $dir;
+	return $dir;
+}
+sub folders_trash_info_dir {
+	my $dir = &folders_trash_root() . '/info';
+	File::Path::make_path($dir) unless -d $dir;
+	return $dir;
+}
+sub folders_in_trash($folder) {
+	return 0 unless defined $folder && length $folder;
+	my $dir = &folders_trash_root();
+	$folder =~ s{/+$}{} unless $folder eq '/';
+	return ($folder eq $dir || $folder eq $dir . '/files' || $folder eq $dir . '/info') ? 1 : 0;
+}
+
+# A move that works across filesystems: rename is the cheap same-disk case; a
+# folder is walked otherwise, so a file deleted onto another drive still lands
+# in the bin rather than being shredded to make the move fit.
+sub folders_move_path($from, $to) {
+	return 0 unless defined $from && length $from && -e $from;
+	return 1 if rename($from, $to);
+	if (!-d $from) {
+		return File::Copy::move($from, $to) ? 1 : 0;
+	}
+	File::Path::make_path($to) unless -d $to;
+	opendir(my $dh, $from) or return 0;
+	my @names = grep { $_ ne '.' && $_ ne '..' } readdir $dh;
+	closedir $dh;
+	foreach my $name ( @names ) {
+		return 0 unless &folders_move_path($from . '/' . $name, $to . '/' . $name);
+	}
+	rmdir $from;
+	return 1;
+}
+
+# Put one path in the bin, with a .trashinfo naming where it came from.
+sub folders_trash_move($path) {
+	return 'no path' unless (defined $path && length $path);
+	return $path . ': it is not there' unless -e $path;
+	my $files = &folders_trash_files_dir();
+	my $info = &folders_trash_info_dir();
+	my @parts = split '/', $path;
+	my $name = pop @parts;
+	$name = 'item' unless (defined $name && length $name);
+	my $base = $name;
+	my $n = 1;
+	while (-e $files . '/' . $name || -e $info . '/' . $name . '.trashinfo') {
+		$name = $base . '.' . $n++;
+	}
+	my $dest = $files . '/' . $name;
+	return $path . ': it could not be moved to the Recycle Bin' unless &folders_move_path($path, $dest);
+	my $when = POSIX::strftime('%Y-%m-%dT%H:%M:%S', localtime());
+	my $encoded = uri_encode($path);
+	write_file($info . '/' . $name . '.trashinfo', "[Trash Info]\nPath=" . $encoded . "\nDeletionDate=" . $when . "\n");
+	return undef;
+}
+
+# The original path a bin entry remembers, or '' when there is no info file.
+sub folders_trash_original($name) {
+	return '' unless (defined $name && length $name && $name !~ m{/});
+	my $file = &folders_trash_info_dir() . '/' . $name . '.trashinfo';
+	return '' unless -e $file;
+	my $raw = eval { read_file($file) } || '';
+	return '' unless $raw =~ /^Path=(.*)$/m;
+	my $path = $1;
+	$path =~ s/\r$//;
+	$path = uri_decode($path);
+	return $path;
+}
+
+# Put one bin entry back where it came from. A restored name that is already
+# taken is kept beside it as name.restored, never written over.
+sub folders_trash_restore($name) {
+	return { ok => 0, error => 'That is not a bin entry.' } unless (defined $name && length $name && $name !~ m{/} && $name ne '.' && $name ne '..');
+	my $src = &folders_trash_files_dir() . '/' . $name;
+	return { ok => 0, error => 'That item is no longer in the bin.' } unless -e $src;
+	my $original = &folders_trash_original($name);
+	return { ok => 0, error => 'The bin does not remember where that came from.' } unless length $original && $original =~ m{^/};
+	my @parts = split '/', $original;
+	my $base = pop @parts;
+	my $parent = join('/', @parts) || '/';
+	File::Path::make_path($parent) unless -d $parent;
+	return { ok => 0, error => 'The folder it came from is not there.' } unless -d $parent;
+	my $dest = $parent . '/' . $base;
+	if (-e $dest) {
+		$dest = $dest . '.restored';
+		my $n = 1;
+		while (-e $dest) { $dest = $parent . '/' . $base . '.restored.' . $n++; }
+	}
+	return { ok => 0, error => 'It could not be put back.' } unless &folders_move_path($src, $dest);
+	unlink &folders_trash_info_dir() . '/' . $name . '.trashinfo';
+	return { ok => 1, path => $dest, name => $name };
+}
+
+# Permanently take away every entry in the bin.
+sub folders_trash_empty {
+	my $files = &folders_trash_files_dir();
+	my $info = &folders_trash_info_dir();
+	my $count = 0;
+	foreach my $name ( &folders_entry_names($files) ) {
+		my $error = &subs::folders_job_take_away($files . '/' . $name);
+		$count++ unless $error;
+	}
+	foreach my $entry ( &folders_entry_names($info) ) {
+		unlink $info . '/' . $entry if $entry =~ /\.trashinfo$/;
+	}
+	return $count;
+}
+sub folders_trash_count {
+	my @names = &folders_entry_names(&folders_trash_files_dir());
+	return scalar @names;
+}
+
 # Take a folders selection away. Anything an appointment has attached goes
 # through the app's own file deletion first, so the appointment lets go of it,
 # the thumb goes with it, and the other machines hear about it; the rows
@@ -26697,15 +26877,25 @@ sub folders_command_items {
 sub folders_delete_away {
 	my ($command, $items) = @_;
 	my @errors;
+	my $bin = &folders_trash_files_dir();
 	foreach my $item ( @{$items} ) {
 		my $path = $item->{'path'};
+		# An item already in the bin has nowhere left to be moved to, so a delete
+		# there (the keyboard's Delete, since the menu hides it) is permanent.
+		my @leaf = split '/', ($path || '');
+		my $leaf = pop @leaf;
+		my $in_bin = (join('/', @leaf) eq $bin);
+		my $shred = ($command eq 'shred' || ($command eq 'delete' && $in_bin)) ? 1 : 0;
 		foreach my $attached ( @{ &subs::folders_appt_entries($path) } ) {
 			&delete_file($attached);
 		}
 		&subs::folders_entry_trim($path);
 		&folders_delete_backups($path);
 		next unless -e $path;
-		my $error = ($command eq 'shred') ? &subs::folders_job_shred($path) : &subs::folders_job_take_away($path);
+		my $error = $shred ? &subs::folders_job_shred($path) : &folders_trash_move($path);
+		# taking a bin entry away also takes its note, or the bin keeps an entry
+		# it can no longer restore
+		if (!$error && $shred && $in_bin) { unlink &folders_trash_info_dir() . '/' . $leaf . '.trashinfo'; }
 		push @errors, $error if $error;
 	}
 	return \@errors;
@@ -26795,13 +26985,28 @@ get '/manager/folders/context/command' => sub($c) {
 		};
 	}
 	elsif ($command eq 'delete' || $command eq 'shred') {
-		my $text = ($command eq 'delete')
-			? 'Delete ' . scalar(@items) . " item(s)? A folder goes with everything in it.\n\n"
-			: 'Shred ' . scalar(@items) . " item(s)? Nothing shredded can be read again.\n\n";
+		my $in_bin = &folders_in_trash($folders->{'folder'});
+		my $text;
+		if ($command eq 'delete') {
+			$text = $in_bin
+				? &subs::ui('Delete') . ' ' . scalar(@items) . ' ' . &subs::ui('item(s)? They are taken out of the Recycle Bin for good.') . "\n\n"
+				: &subs::ui('Delete') . ' ' . scalar(@items) . ' ' . &subs::ui('item(s)? They go to the Recycle Bin. A folder goes with everything in it.') . "\n\n";
+		}
+		else {
+			$text = &subs::ui('Shred') . ' ' . scalar(@items) . ' ' . &subs::ui('item(s)? Nothing shredded can be read again.') . "\n\n";
+		}
 		$box = {
 			name => &subs::format_name($command),
 			text => $text . join("\n", @names),
 			height => '320px'
+		};
+	}
+	elsif ($command eq 'empty_trash') {
+		my $count = &folders_trash_count();
+		$box = {
+			name => &subs::ui('Empty Recycle Bin'),
+			text => $count . ' ' . &subs::ui('item(s) will be permanently deleted. This cannot be undone.'),
+			height => '260px'
 		};
 	}
 	elsif ($command eq 'encrypt' || $command eq 'decrypt') {
@@ -26934,6 +27139,27 @@ post '/manager/folders/context/command' => sub($c) {
 		else {
 			$returner->{'status'} = 'ok';
 		}
+	}
+	elsif ($command eq 'restore_trash') {
+		my @items = &folders_command_items($folders);
+		my @errors;
+		foreach my $item ( @items ) {
+			my @parts = split '/', ($item->{'path'} || '');
+			my $name = pop @parts;
+			my $restored = &folders_trash_restore($name);
+			push @errors, $restored->{'error'} unless $restored->{'ok'};
+		}
+		if (scalar @errors) {
+			$answer->({ name => &subs::ui('Restore'), text => join("\n", @errors), cancel => 'no' });
+			$returner->{'status'} = 'error';
+			$returner->{'error'} = join '; ', @errors;
+		}
+		else { $returner->{'status'} = 'ok'; }
+	}
+	elsif ($command eq 'empty_trash') {
+		my $emptied = &folders_trash_empty();
+		$returner->{'status'} = 'ok';
+		$returner->{'emptied'} = $emptied;
 	}
 	elsif ($command eq 'paste') {
 		my @items = @{$folders->{'clipboard'} || []};

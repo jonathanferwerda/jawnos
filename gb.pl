@@ -395,6 +395,11 @@ our $known_icons = {
 	desk_folder_reset => '/images/decipherable/home.png',
 	browser_back => '/images/make believe/left arrow.png',
 	browser_refresh => '/images/make believe/renew.png',
+	open_tab => '/images/decipherable/forward.png',
+	open_window => '/images/decipherable/windows.png',
+	restore_trash => '/images/make believe/renew.png',
+	open_trash => '/icons/trash.png',
+	empty_trash => '/icons/trash.png',
 };
 
 our $inventory_states = [

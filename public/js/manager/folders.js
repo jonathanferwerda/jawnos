@@ -38,62 +38,274 @@ var desk = {
 	anchor: undefined
 };
 
+var folders_instances = {};
+var folders_last_window = undefined;
+var folders_window_seq = 0;
 var folders_drag_state = undefined;
 var folders_last_drag = 0;
 var folders_typeahead = '';
 var folders_typeahead_at = 0;
 var folders_marquee = undefined;
 
+// The canonical ids live on one window at a time. A second Folders window has
+// the same markup with classes only; activating it moves the ids to it, so the
+// older code paths that ask for #folders_contents still mean the window the
+// person is working in.
+var folders_id_map = {
+	folders: 'folders_app',
+	folders_toolbar: 'folders_toolbar',
+	folders_tabs: 'folders_tabs',
+	folders_mainview: 'folders_mainview',
+	folders_sidebar: 'folders_sidebar',
+	folders_sidebar_toggle: 'folders_sidebar_toggle',
+	folders_listing_pane: 'folders_listing_pane',
+	folders_list_header: 'folders_list_header',
+	folders_contents: 'folders_contents',
+	folders_breadcrumb: 'folders_breadcrumb',
+	folders_address: 'folders_address',
+	folders_path_toggle: 'folders_path_toggle',
+	folders_machine_select: 'folders_machine_select',
+	folders_view_toggle: 'folders_view_toggle',
+	folders_bookmarks_toggle: 'folders_bookmarks_toggle',
+	folders_archive_toggle: 'folders_archive_toggle',
+	folders_refresh: 'folders_refresh',
+	folders_back: 'folders_back',
+	folders_forward: 'folders_forward',
+	folders_bookmarks: 'folders_bookmarks',
+	folders_archive_queue: 'folders_archive_queue',
+	folders_padlock: 'folders_padlock',
+	folders_bottom_bar: 'folders_bottom_bar'
+};
+
+function foldersNewId(prefix) {
+	folders_window_seq++;
+	return (prefix || 'f') + Date.now().toString(36) + folders_window_seq.toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function foldersNewTab(folder, remote_uuid, tab_id) {
+	return {
+		id: tab_id || foldersNewId('t'),
+		folder: (folder === undefined || folder === null) ? undefined : folder,
+		remote_uuid: remote_uuid || '',
+		disk: {},
+		files: [],
+		history: [],
+		history_index: -1,
+		selected: [],
+		clipboard: [],
+		command: undefined,
+		type: undefined,
+		path: undefined,
+		anchor: undefined
+	};
+}
+
+function foldersRootFor(id) {
+	if (!id) { return $(); }
+	return $('.wind[data-window-id="' + id + '"] .folders_app').first();
+}
+
+function foldersRoot() {
+	if (folders && folders.window_id) {
+		var active = foldersRootFor(folders.window_id);
+		if (active.length) { return active; }
+	}
+	return $('.folders_app').first();
+}
+
+function foldersInstanceFor(root) {
+	root = $(root);
+	var id = root.attr('data-folders-id');
+	if (!id) { return null; }
+	var inst = folders_instances[id];
+	if (!inst) {
+		inst = { id: id, root: root, tabs: [], active: 0 };
+		folders_instances[id] = inst;
+	}
+	inst.root = root;
+	if (!inst.tabs.length) {
+		inst.tabs.push(foldersNewTab(root.attr('folder') || undefined, root.attr('remote_uuid') || '', root.attr('data-tab-id')));
+		inst.active = 0;
+	}
+	return inst;
+}
+
+function foldersNormalizeIds(active_root) {
+	active_root = active_root && active_root.length ? active_root : $('.folders_app').first();
+	$('.folders_app').each(function () {
+		var root = $(this);
+		$.each(folders_id_map, function (id, cls) {
+			if (id == 'folders') { root.removeAttr('id'); }
+			else { root.find('.' + cls).removeAttr('id'); }
+		});
+	});
+	if (!active_root.length) { return; }
+	$.each(folders_id_map, function (id, cls) {
+		if (id == 'folders') { active_root.attr('id', 'folders'); }
+		else { active_root.find('.' + cls).first().attr('id', id); }
+	});
+}
+
+function foldersTabLabel(folder) {
+	if (!folder) { return jawnosT('Home'); }
+	var parts = String(folder).replace(/\/+$/, '').split('/').filter(Boolean);
+	return parts.length ? parts[parts.length - 1] : '/';
+}
+
+function foldersApplyWindowName(inst) {
+	if (!inst || !inst.root || !inst.root.length) { return; }
+	var tab = inst.tabs[inst.active];
+	var folder = (tab && tab.folder) ? tab.folder : '';
+	var wind = inst.root.closest('.wind');
+	if (!wind.length) { return; }
+	var name = jawnosT('Folders') + (folder ? ' - ' + folder : '');
+	var text = wind.find('.appointment_name .name_text').first();
+	// every click activates the window; only a real name change repaints the bar
+	if (text.length && text.text() === name) { return; }
+	text.text(name);
+	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
+}
+
+function foldersTabsRender(inst) {
+	if (!inst || !inst.root || !inst.root.length) { return; }
+	var bar = inst.root.find('.folders_tabs');
+	if (!bar.length) { return; }
+	var signature = inst.active + '|' + $.map(inst.tabs, function (tab) { return tab.id + '=' + (tab.folder || ''); }).join('|');
+	if (bar.attr('data-signature') === signature) { return; }
+	bar.attr('data-signature', signature);
+	bar.empty();
+	if (inst.tabs.length <= 1) { bar.hide(); return; }
+	bar.show();
+	$.each(inst.tabs, function (i, tab) {
+		var button = $('<button type="button" class="folders_tab"></button>')
+			.attr({ 'data-tab-id': tab.id, title: tab.folder || '' });
+		if (i == inst.active) { button.addClass('active'); }
+		$('<span class="folders_tab_label"></span>').text(foldersTabLabel(tab.folder)).appendTo(button);
+		$('<span class="folders_tab_close" aria-label="' + jawnosT('Close') + '">×</span>').appendTo(button);
+		bar.append(button);
+	});
+	bar.append($('<button type="button" class="folders_tab_new" aria-label="' + jawnosT('New tab') + '">+</button>'));
+}
+
+function foldersSidebarApply(root) {
+	root = (root && root.length) ? root : foldersRoot();
+	if (!root.length) { return; }
+	var wide = root.width() >= 720;
+	var pref = localStorage.getItem('folders_sidebar');
+	var show = wide && pref != 'off';
+	root.find('.folders_sidebar').toggle(show);
+	root.find('.folders_sidebar_toggle').toggle(wide).attr('data-on', show ? 'yes' : 'no');
+}
+
+function foldersActivate(root) {
+	var inst = foldersInstanceFor(root);
+	if (!inst) { return null; }
+	var tab = inst.tabs[inst.active];
+	if (!tab) {
+		tab = foldersNewTab(inst.root.attr('folder') || undefined, inst.root.attr('remote_uuid') || '', inst.root.attr('data-tab-id'));
+		inst.tabs.push(tab);
+		inst.active = 0;
+	}
+	folders = tab;
+	folders.window_id = inst.id;
+	folders.tab_id = tab.id;
+	folders_last_window = inst.id;
+	foldersNormalizeIds(inst.root);
+	foldersApplyWindowName(inst);
+	foldersTabsRender(inst);
+	foldersSidebarApply(inst.root);
+	foldersHistoryApply();
+	return inst;
+}
+
+function foldersActivateFrom(el) {
+	var root = $(el).closest('.folders_app');
+	if (root.length) { foldersActivate(root); return true; }
+	return false;
+}
+
 function foldersState(surface) { return (surface == 'desk') ? desk : folders; }
-function foldersContainer(surface) { return (surface == 'desk') ? $('#desk_layer') : $('#folders_contents'); }
+function foldersContainer(surface) {
+	if (surface == 'desk') { return $('#desk_layer'); }
+	return foldersRoot().find('.folders_contents');
+}
 function foldersSurfaceOf(el) { return ($(el).closest('#desk_layer').length) ? 'desk' : 'folders'; }
 
 // A long press on a file, folder or the listing background opens its menu on touch
 if (typeof jawnosContextMenuOn == 'function') { jawnosContextMenuOn('.folders_file, .folders_contents, #desk_layer'); }
 $(document).on('click', '#folders_toggle', function() {
-	foldersOpener();
+	// Like Terminal, the menu's Folders row opens another window. A window is
+	// added beside the one already open, with its own tab strip and history.
+	foldersOpener({ new_window: true });
 });
 
 // the media padlock: sealed names and a hidden app's files are not listed
 // until a paired phone signs the house open. An open padlock shuts again on a
 // press; a shut one asks the house to show the unlock page.
 $(document).on('click', '.folders_lock', function () {
-	if ($('#folders').attr('unlock')) {
-		$('#folders').attr('unlock', '');
+	foldersActivateFrom(this);
+	var root = $(this).closest('.folders_app');
+	if (root.attr('unlock')) {
+		root.attr('unlock', '');
 		if (typeof jawnosMediaLockApp === 'function') {
-			jawnosMediaLockApp('folders', function () { foldersOpener(); });
+			jawnosMediaLockApp('folders', function () { foldersRefreshWindows(); });
 		}
-		else { foldersOpener(); }
+		else { foldersRefreshWindows(); }
 	}
 	else {
-		$('#folders_mainview').hide();
-		$('#folders_padlock').show();
+		root.find('.folders_mainview').hide();
+		root.find('.folders_padlock').show();
 		if (typeof padlockAskPhone === 'function') { padlockAskPhone('folders'); }
 	}
 });
 $(document).on('click', '.folders_cancel_padlock', function () {
-	$('#folders_padlock').hide();
-	$('#folders_mainview').show();
+	var root = $(this).closest('.folders_app');
+	root.find('.folders_padlock').hide();
+	root.find('.folders_mainview').show();
 });
 
 function foldersOpener(data) {
 	if (!data) { data = {}; }
-	// which machine is being browsed: an explicit choice, else whatever the
-	// window was rendered for, else this machine
-	if (folders.remote_uuid === undefined) {
-		folders.remote_uuid = $('#folders').attr('remote_uuid') || '';
+	var window_id = data['window_id'];
+	if (!window_id && data['new_window']) { window_id = foldersNewId('f'); }
+	if (!window_id && folders && folders.window_id && folders_instances[folders.window_id]) { window_id = folders.window_id; }
+	if (!window_id) { window_id = foldersNewId('f'); }
+	var inst = folders_instances[window_id];
+	if (!inst) {
+		inst = { id: window_id, root: foldersRootFor(window_id), tabs: [], active: 0 };
+		folders_instances[window_id] = inst;
 	}
-	var remote_uuid = (data['remote_uuid'] !== undefined) ? data['remote_uuid'] : folders.remote_uuid;
+	var tab = null;
+	if (data['tab_id']) {
+		$.each(inst.tabs, function (i, t) { if (t.id == data['tab_id']) { tab = t; } });
+	}
+	if (!tab && data['keep_tab'] && inst.tabs.length) { tab = inst.tabs[inst.active]; }
+	if (!tab && inst.tabs.length && !data['new_window']) { tab = inst.tabs[inst.active]; }
+	if (!tab) {
+		tab = foldersNewTab(data['folder'], data['remote_uuid'], data['tab_id']);
+		inst.tabs.push(tab);
+		inst.active = inst.tabs.length - 1;
+	}
+	if (data['folder'] === undefined && tab.folder !== undefined) { data['folder'] = tab.folder; }
+	if (data['remote_uuid'] === undefined) { data['remote_uuid'] = tab.remote_uuid || ''; }
+	var remote_uuid = (data['remote_uuid'] !== undefined) ? data['remote_uuid'] : (tab.remote_uuid || '');
 	var timestamp = Date.now();
-	var previous_folder = folders.folder;
-	var previous_remote = folders.remote_uuid;
+	var previous_folder = tab.folder;
+	var previous_remote = tab.remote_uuid;
 	var history_mode = data['history'];
-	var previous_scroll = $('#folders_contents').scrollTop() || 0;
+	var quiet = data['quiet'];
+	var target_root = foldersRootFor(window_id);
+	var previous_scroll = target_root.length ? (target_root.find('.folders_contents').scrollTop() || 0) : 0;
+	var unlock = target_root.length
+		? (target_root.attr('unlock') || '')
+		: (data['new_window'] ? '' : ($('#folders').attr('unlock') || ''));
 	$.ajax({
 		url: '/manager/folders',
 		type: 'POST',
 		data: {
 			timestamp: timestamp,
+			window_id: window_id,
+			tab_id: tab.id,
 			folder: data['folder'],
 			command: data['command'],
 			remote_uuid: remote_uuid,
@@ -101,75 +313,129 @@ function foldersOpener(data) {
 			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : '',
 			// the window's own unlock token: a fresh open has none and stays
 			// locked; the refresh after a phone signs carries the one it minted
-			unlock: $('#folders').attr('unlock') || ''
+			unlock: unlock
 		},
-		success:function(response) {
+		success: function(response) {
 			var same_folder = (previous_folder !== undefined && response.fo.folder === previous_folder);
 			var changed = (previous_folder !== undefined && response.fo.folder !== previous_folder);
 			var machine_changed = (previous_remote !== undefined && previous_remote !== remote_uuid);
 			windowMaker(response.html);
-			folders['folder'] = response.fo.folder;
-			folders['disk'] = response.fo.disk;
-			folders['files'] = response.fo.files;
-			folders['remote_uuid'] = remote_uuid;
-			// the server decides: a token that no longer has a grant (a restarted
-			// tree, a window that was closed) is cleared here, so the padlock
-			// shows shut and the next request stops carrying it
-			if (!response.unlocked) { $('#folders').attr('unlock', ''); }
-			folders['selected'] = [];
-			folders['path'] = undefined;
-			folders['type'] = undefined;
-			folders['anchor'] = undefined;
-			$('#folders_machine_select').val(remote_uuid);
-			// a remote listing is read-only, and worth saying so at a glance
-			$('#folders_toolbar').attr('data-remote', remote_uuid ? 'yes' : '');
-			foldersApplyView();
-			foldersDraggable();
-			foldersSelectionSync('folders');
+			var root = foldersRootFor(window_id);
+			inst.root = root;
+			tab.folder = response.fo.folder;
+			tab.disk = response.fo.disk;
+			tab.files = response.fo.files;
+			tab.remote_uuid = remote_uuid;
+			tab.selected = [];
+			tab.path = undefined;
+			tab.type = undefined;
+			tab.anchor = undefined;
+			if (!response.unlocked) { root.attr('unlock', ''); }
 			// A back/forward visit already moved the index; a new visit truncates
 			// what was ahead and appends itself. A refresh of the same folder
 			// leaves the trail alone.
 			if (history_mode == 'skip') {
-				if (folders.history_index >= 0 && folders.history.length) {
-					folders.history[folders.history_index] = response.fo.folder;
+				if (tab.history_index >= 0 && tab.history.length) {
+					tab.history[tab.history_index] = response.fo.folder;
 				}
 			}
 			else {
-				if (machine_changed) { folders.history = []; folders.history_index = -1; }
-				if (!folders.history.length) {
-					folders.history.push(response.fo.folder);
-					folders.history_index = 0;
+				if (machine_changed) { tab.history = []; tab.history_index = -1; }
+				if (!tab.history.length) {
+					tab.history.push(response.fo.folder);
+					tab.history_index = 0;
 				}
 				else if (changed) {
-					folders.history = folders.history.slice(0, folders.history_index + 1);
-					if (folders.history[folders.history.length - 1] !== response.fo.folder) {
-						folders.history.push(response.fo.folder);
+					tab.history = tab.history.slice(0, tab.history_index + 1);
+					if (tab.history[tab.history.length - 1] !== response.fo.folder) {
+						tab.history.push(response.fo.folder);
 					}
-					folders.history_index = folders.history.length - 1;
+					tab.history_index = tab.history.length - 1;
 				}
-				else if (folders.history[folders.history_index] !== response.fo.folder) {
-					folders.history[folders.history_index] = response.fo.folder;
+				else if (tab.history[tab.history_index] !== response.fo.folder) {
+					tab.history[tab.history_index] = response.fo.folder;
 				}
-				// a long session should not grow without bound
-				while (folders.history.length > 50) {
-					folders.history.shift();
-					folders.history_index--;
+				while (tab.history.length > 50) {
+					tab.history.shift();
+					tab.history_index--;
 				}
 			}
-			foldersHistoryApply();
+			var is_active = (folders && folders.window_id == window_id && folders.tab_id == tab.id);
+			if (!quiet || is_active) {
+				folders = tab;
+				folders.window_id = window_id;
+				folders.tab_id = tab.id;
+				folders_last_window = window_id;
+				foldersNormalizeIds(root);
+				is_active = true;
+			}
+			else {
+				foldersNormalizeIds(foldersRootFor(folders.window_id));
+			}
+			var scoped_root = foldersRootFor(window_id);
+			scoped_root.find('.folders_machine_select').val(remote_uuid);
+			scoped_root.find('.folders_toolbar').attr('data-remote', remote_uuid ? 'yes' : '');
+			foldersApplyView(scoped_root);
+			foldersDraggable();
+			if (is_active) {
+				foldersSelectionSync('folders');
+				foldersHistoryApply();
+			}
+			foldersApplyWindowName(inst);
+			foldersTabsRender(inst);
+			foldersSidebarApply(scoped_root);
+			foldersObserveRoot(scoped_root);
 			if (typeof appointment_chron == 'function') { appointment_chron(); }
-			if (same_folder) { $('#folders_contents').scrollTop(previous_scroll); }
-			$('#folders_contents').focus();
+			if (is_active) {
+				if (same_folder) { scoped_root.find('.folders_contents').scrollTop(previous_scroll); }
+				scoped_root.find('.folders_contents').focus();
+			}
 		}
 	});
+}
+
+function foldersRefreshWindows() {
+	var ids = [];
+	$('.folders_app').each(function () { var inst = foldersInstanceFor(this); if (inst) { ids.push(inst.id); } });
+	$.each(ids, function (i, id) {
+		var inst = folders_instances[id];
+		var tab = inst && inst.tabs[inst.active];
+		if (!tab) { return; }
+		foldersOpener({ window_id: id, tab_id: tab.id, folder: tab.folder, remote_uuid: tab.remote_uuid, history: 'skip', keep_tab: true, quiet: true });
+	});
+	if (typeof deskRefreshIfVisible == 'function') { deskRefreshIfVisible(); }
+}
+
+function foldersOpenInTab(folder, remote_uuid, window_id) {
+	// an empty folder is Home: the server fills it in
+	if (folder === undefined || folder === null) { return; }
+	var inst = null;
+	if (window_id) { inst = folders_instances[window_id] || null; }
+	if (!inst && folders_last_window) { inst = folders_instances[folders_last_window] || null; }
+	if (!inst) {
+		foldersOpener({ new_window: true, folder: folder, remote_uuid: remote_uuid || '' });
+		return;
+	}
+	var tab = foldersNewTab(folder, remote_uuid || '');
+	inst.tabs.push(tab);
+	inst.active = inst.tabs.length - 1;
+	folders = tab;
+	folders.window_id = inst.id;
+	folders.tab_id = tab.id;
+	foldersOpener({ window_id: inst.id, tab_id: tab.id, folder: folder, remote_uuid: remote_uuid || '', keep_tab: true });
+}
+
+function foldersOpenInWindow(folder, remote_uuid) {
+	foldersOpener({ new_window: true, folder: folder, remote_uuid: remote_uuid || '' });
 }
 
 $(document).on('change', '#folders_machine_select', function () {
 	// a new machine starts at its own home: this machine's paths mean nothing
 	// over there, and neither does the trail that reached one of them
+	foldersActivateFrom(this);
 	folders.history = [];
 	folders.history_index = -1;
-	foldersOpener({ remote_uuid: $(this).val(), folder: '' });
+	foldersOpener({ window_id: folders.window_id, tab_id: folders.tab_id, remote_uuid: $(this).val(), folder: '', keep_tab: true });
 });
 
 function foldersHistoryApply() {
@@ -181,10 +447,68 @@ function foldersHistoryMove(delta) {
 	var next = folders.history_index + delta;
 	if (next < 0 || next >= folders.history.length) { return; }
 	folders.history_index = next;
-	foldersOpener({ folder: folders.history[next], history: 'skip' });
+	foldersOpener({ window_id: folders.window_id, tab_id: folders.tab_id, folder: folders.history[next], history: 'skip', keep_tab: true });
 }
-$(document).on('click', '#folders_back', function () { foldersHistoryMove(-1); });
-$(document).on('click', '#folders_forward', function () { foldersHistoryMove(1); });
+$(document).on('click', '#folders_back', function () { foldersActivateFrom(this); foldersHistoryMove(-1); });
+$(document).on('click', '#folders_forward', function () { foldersActivateFrom(this); foldersHistoryMove(1); });
+
+// ---- tabs ------------------------------------------------------------------
+$(document).on('click', '.folders_tab', function (e) {
+	if ($(e.target).closest('.folders_tab_close').length) { return; }
+	var root = $(this).closest('.folders_app');
+	var inst = foldersActivate(root);
+	if (!inst) { return; }
+	var id = $(this).attr('data-tab-id');
+	$.each(inst.tabs, function (i, tab) {
+		if (tab.id == id) { foldersSwitchTab(inst, i); return false; }
+	});
+});
+$(document).on('click', '.folders_tab_close', function (e) {
+	e.stopPropagation();
+	var root = $(this).closest('.folders_app');
+	var inst = foldersActivate(root);
+	if (!inst) { return; }
+	var id = $(this).closest('.folders_tab').attr('data-tab-id');
+	$.each(inst.tabs, function (i, tab) {
+		if (tab.id == id) { foldersCloseTab(inst, i); return false; }
+	});
+});
+$(document).on('click', '.folders_tab_new', function () {
+	var root = $(this).closest('.folders_app');
+	var inst = foldersActivate(root);
+	if (!inst) { return; }
+	var tab = inst.tabs[inst.active];
+	foldersOpenInTab('', tab ? tab.remote_uuid : '', inst.id);
+});
+
+function foldersSwitchTab(inst, index) {
+	if (!inst || index < 0 || index >= inst.tabs.length) { return; }
+	inst.active = index;
+	var tab = inst.tabs[index];
+	folders = tab;
+	folders.window_id = inst.id;
+	folders.tab_id = tab.id;
+	foldersOpener({ window_id: inst.id, tab_id: tab.id, folder: tab.folder, remote_uuid: tab.remote_uuid, history: 'skip', keep_tab: true });
+}
+
+function foldersCloseTab(inst, index) {
+	var tab = inst.tabs[index];
+	if (!tab) { return; }
+	if (inst.tabs.length <= 1) {
+		var wind = inst.root.closest('.wind');
+		var close = wind.find('.close_button');
+		if (close.length) { close.trigger('click'); }
+		else { wind.remove(); }
+		delete folders_instances[inst.id];
+		if (folders_last_window == inst.id) { folders_last_window = undefined; }
+		return;
+	}
+	inst.tabs.splice(index, 1);
+	if (index < inst.active) { inst.active--; }
+	else if (index == inst.active) { inst.active = Math.min(index, inst.tabs.length - 1); }
+	foldersSwitchTab(inst, inst.active);
+}
+
 
 // ---- view ------------------------------------------------------------------
 // The grid is the default; the list gives every item its type, size and date.
@@ -192,15 +516,17 @@ $(document).on('click', '#folders_forward', function () { foldersHistoryMove(1);
 function foldersView() {
 	return (localStorage.getItem('folders_view') == 'list') ? 'list' : 'grid';
 }
-function foldersApplyView() {
+function foldersApplyView(root) {
 	var view = foldersView();
-	$('#folders_contents').attr('data-view', view);
-	$('#folders_mainview').attr('data-view', view);
-	var toggle = $('#folders_view_toggle');
+	root = (root && root.length) ? root : foldersRoot();
+	root.find('.folders_contents').attr('data-view', view);
+	root.find('.folders_mainview').attr('data-view', view);
+	var toggle = root.find('.folders_view_toggle');
 	var icon = (view == 'list') ? toggle.attr('data-icon-grid') : toggle.attr('data-icon-list');
 	if (icon) { toggle.find('img').attr('src', icon); }
 }
 $(document).on('click', '#folders_view_toggle', function () {
+	foldersActivateFrom(this);
 	localStorage.setItem('folders_view', (foldersView() == 'list') ? 'grid' : 'list');
 	foldersApplyView();
 	$('#folders_contents').focus();
@@ -215,9 +541,9 @@ function foldersSelectionSync(surface, activeEl) {
 	container.find('.folders_file').each(function () {
 		var el = $(this);
 		if (el.hasClass('selected')) {
-			// app shortcuts are selected visually, but they are not files: they
-			// must not reach a paste, a delete or a properties read
-			if (!el.hasClass('desk_app') && el.attr('path')) {
+			// app shortcuts and desk places are selected visually, but they are not
+			// files: they must not reach a paste, a delete or a properties read
+			if (!el.hasClass('desk_app') && !el.hasClass('desk_place') && el.attr('path')) {
 				selected.push({ path: el.attr('path'), type: el.attr('type') });
 			}
 		}
@@ -234,7 +560,7 @@ function foldersSelectionSync(surface, activeEl) {
 		st.anchor = undefined;
 	}
 	if (surface == 'folders') {
-		var total = container.find('.folders_file').length;
+		var total = container.find('.folders_file').not('.desk_place').length;
 		var word = selected.length
 			? jawnosT('{0} of {1} selected', selected.length, total)
 			: jawnosT('{0} items', total);
@@ -271,6 +597,7 @@ function foldersSelectOnly(surface, el) {
 }
 
 $(document).on('click', '.folders_file', function(e) {
+	foldersActivateFrom(this);
 	var el = $(this);
 	if (Date.now() - folders_last_drag < 300) { return; }
 	var surface = foldersSurfaceOf(el);
@@ -301,11 +628,13 @@ $(document).on('click', '.folders_file', function(e) {
 // A press on the listing's own background clears the selection. A right-click
 // is left to the context menu, which reads the same target.
 $(document).on('click', '#folders_contents, #desk_layer', function(e) {
+	foldersActivateFrom(this);
 	if ($(e.target).closest('.folders_file').length) { return; }
 	foldersClearSelection(foldersSurfaceOf(this));
 });
 
 $(document).on('dblclick', '.folders_file', function() {
+	foldersActivateFrom(this);
 	var el = $(this);
 	if (el.hasClass('desk_app')) {
 		if (typeof deskOpenApp == 'function') { deskOpenApp(el.attr('app')); }
@@ -331,6 +660,7 @@ $(document).on('dblclick', '.folders_file', function() {
 // A press on the empty listing and a drag draws a selection rectangle; every
 // item it touches joins the selection (Ctrl/Cmd keeps what was there).
 $(document).on('mousedown', '#folders_contents, #desk_layer', function(e) {
+	foldersActivateFrom(this);
 	if (e.which != 1) { return; }
 	if ($(e.target).closest('.folders_file').length) { return; }
 	if ($(e.target).closest('#folders_list_header').length) { return; }
@@ -363,6 +693,8 @@ $(document).on('mousemove', function(e) {
 	var container = folders_marquee.container;
 	container.find('.folders_file').each(function () {
 		var el = $(this);
+		// a desk place is a fixed door, not part of a selection run
+		if (el.hasClass('desk_place')) { return; }
 		var r = this.getBoundingClientRect();
 		var hit = !(r.right < rect.left || r.left > rect.right || r.bottom < rect.top || r.top > rect.bottom);
 		if (hit) { el.addClass('selected'); }
@@ -387,8 +719,9 @@ function foldersDraggable() {
 	var can_drag = (typeof windowPhoneChecker != 'function') || windowPhoneChecker() == false;
 	$('.folders_file').each(function() {
 		var item = $(this);
-		// an app shortcut has no file behind it to move
-		if (item.hasClass('desk_app')) { return; }
+		// an app shortcut has no file behind it to move, and a desk place is a
+		// fixed door, not something to drag
+		if (item.hasClass('desk_app') || item.hasClass('desk_place')) { return; }
 		// a remote listing is read-only: its paths mean something on the other
 		// machine, so neither the item nor a folder in it takes a drop
 		var remote = (foldersSurfaceOf(item) == 'folders' && folders.remote_uuid);
@@ -511,8 +844,9 @@ function foldersFileOpener(state) {
 
 // ---- context menu ----------------------------------------------------------
 $(document).on('contextmenu', '.folders_file, #folders_contents, #desk_layer', function(e) {
-	// a pinned app has its own short menu (Open, Unpin) in desk.js
-	if ($(e.target).closest('.desk_app').length) { return; }
+	// a pinned app and a desk place each have their own short menu (desk.js)
+	if ($(e.target).closest('.desk_app, .desk_place').length) { return; }
+	foldersActivateFrom(this);
 	e.preventDefault();
 	var press_x = e.clientX, press_y = e.clientY;
 	var surface = foldersSurfaceOf(this);
@@ -561,16 +895,19 @@ $(document).on('click contextmenu', function() {
 });
 
 $(document).on('click', '.folders_command', function() {
+	foldersActivateFrom(this);
 	var command = $(this).attr('command');
 	var folder = $('#folders').attr('folder');
 	foldersOpener({ folder: folder, command: command });
 });
 
 $(document).on('click', '#folders_refresh', function() {
+	foldersActivateFrom(this);
 	foldersOpener({ folder: $('#folders').attr('folder') || folders.folder });
 });
 
 $(document).on('keyup', '#folders_address', function(e) {
+	foldersActivateFrom(this);
 	if (e.keyCode == 13) {
 		foldersOpener({ folder: $(this).val() });
 		foldersPathEdit(false);
@@ -581,6 +918,7 @@ $(document).on('keyup', '#folders_address', function(e) {
 });
 
 $(document).on('click', '.folders_crumb', function() {
+	foldersActivateFrom(this);
 	foldersOpener({ folder: $(this).attr('path') });
 });
 
@@ -594,6 +932,7 @@ function foldersPathEdit(show) {
 	}
 }
 $(document).on('click', '#folders_path_toggle', function() {
+	foldersActivateFrom(this);
 	foldersPathEdit(!$('#folders').hasClass('edit_path'));
 });
 
@@ -651,6 +990,26 @@ function foldersCommand(data, state) {
 	}
 	else if (command == 'unpin_app') {
 		if (st.app && typeof deskUnpinApp == 'function') { deskUnpinApp(st.app); }
+	}
+	else if (command == 'open_tab' || command == 'open_window') {
+		var target = st.folder;
+		if (st.path) {
+			// a file opens the folder it lives in; a folder opens itself
+			target = (st.type == 'folder') ? st.path : (String(st.path).replace(/\/[^\/]*$/, '') || '/');
+		}
+		if (command == 'open_tab') {
+			foldersOpenInTab(target, st.remote_uuid || '', (st.window_id || undefined));
+		}
+		else {
+			foldersOpenInWindow(target, st.remote_uuid || '');
+		}
+	}
+	else if (command == 'restore_trash') {
+		foldersCommandPOST({ command: 'restore_trash' }, st);
+	}
+	else if (command == 'open_trash') {
+		var trash = (st === desk) ? (desk.trash_folder || (desk.trash && desk.trash['path'])) : '';
+		if (trash) { foldersOpener({ folder: trash, remote_uuid: '' }); }
 	}
 	else if (command == 'browser_back') {
 		window.history.back();
@@ -989,8 +1348,37 @@ function foldersArchiveRescan(location) {
 	});
 }
 
+// ---- sidebar ---------------------------------------------------------------
+// One observer per window instance. The window's contents are replaced on every
+// navigation, so the observer is re-made for the fresh root each time.
+var folders_observers = {};
+function foldersObserveRoot(root) {
+	if (!root || !root.length || typeof ResizeObserver == 'undefined') { return; }
+	var id = root.attr('data-folders-id');
+	if (!id) { return; }
+	var old = folders_observers[id];
+	if (old) { try { old.disconnect(); } catch (e) { /* already gone */ } }
+	var observer = new ResizeObserver(function () { foldersSidebarApply(root); });
+	observer.observe(root[0]);
+	folders_observers[id] = observer;
+}
+$(document).on('click', '#folders_sidebar_toggle', function () {
+	foldersActivateFrom(this);
+	var root = $(this).closest('.folders_app');
+	var pref = localStorage.getItem('folders_sidebar');
+	localStorage.setItem('folders_sidebar', pref == 'off' ? 'on' : 'off');
+	foldersSidebarApply(root);
+});
+$(document).on('click', '.folders_sidebar_place', function () {
+	var root = $(this).closest('.folders_app');
+	foldersActivate(root);
+	var path = $(this).attr('path');
+	if (path) { foldersOpener({ folder: path }); }
+});
+
 // ---- drawers ---------------------------------------------------------------
 $(document).on('click', '#folders_bookmarks_toggle', function () {
+	foldersActivateFrom(this);
 	var box = $('#folders_bookmarks');
 	if (box.is(':visible')) {
 		box.hide();
@@ -1003,12 +1391,14 @@ $(document).on('click', '#folders_bookmarks_toggle', function () {
 // A bookmark is navigation only, so it works the same on a remote machine:
 // the path means something there, and the machine being browsed stays put.
 $(document).on('click', '.folders_bookmark', function () {
+	foldersActivateFrom(this);
 	var path = $(this).attr('path');
 	$('#folders_bookmarks').hide();
 	foldersOpener({ folder: path });
 });
 
 $(document).on('click', '#folders_archive_toggle', function () {
+	foldersActivateFrom(this);
 	var box = $('#folders_archive_queue');
 	if (box.is(':visible')) {
 		box.hide();
@@ -1070,8 +1460,8 @@ function foldersKey(e, surface) {
 	var ctrl = e.ctrlKey || e.metaKey;
 	if (ctrl && (key == 'a' || key == 'A')) {
 		e.preventDefault();
-		items.addClass('selected');
-		foldersSelectionSync(surface, items.last());
+		items.not('.desk_place').addClass('selected');
+		foldersSelectionSync(surface, items.not('.desk_place').last());
 		return;
 	}
 	if (ctrl && (key == 'c' || key == 'C')) { e.preventDefault(); foldersCommand({ command: 'copy' }, st); return; }
@@ -1100,6 +1490,10 @@ function foldersKey(e, surface) {
 		if (chosen.length && chosen.hasClass('desk_app')) {
 			if (typeof deskOpenApp == 'function') { deskOpenApp(chosen.attr('app')); }
 			else if (typeof appWindowOpener == 'function') { appWindowOpener(chosen.attr('app'), Date.now(), { visible: 'yes' }); }
+			return;
+		}
+		if (chosen.length && chosen.hasClass('desk_place')) {
+			foldersOpener({ folder: chosen.attr('path'), remote_uuid: '' });
 			return;
 		}
 		if (st.selected && st.selected.length == 1) {

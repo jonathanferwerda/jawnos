@@ -7,6 +7,7 @@
 var desk_visible = false;
 var desk_xhr = undefined;
 var desk_paint_key = '';
+var desk_poll_timer = undefined;
 
 function deskRefreshIfVisible() {
 	if (!desk_visible) { return; }
@@ -21,6 +22,7 @@ function deskShow() {
 		desk_visible = true;
 		deskLoad();
 	}
+	deskPollStart();
 }
 
 // The icons start under whatever the desk reserves above them: a top taskbar,
@@ -37,9 +39,22 @@ function deskPosition() {
 function deskHide() {
 	desk_visible = false;
 	$('#desk_layer').removeClass('active');
+	if (desk_poll_timer) { clearInterval(desk_poll_timer); desk_poll_timer = undefined; }
 }
 
-function deskLoad() {
+// The Recycle Bin badge and the chosen desk folder can change while the desk is
+// on screen (a delete in a Folders window, another machine's edit). A quiet read
+// compares the two and only redraws when one of them actually moved, so a poll
+// never clears a selection the person is making.
+function deskPollStart() {
+	if (desk_poll_timer) { return; }
+	desk_poll_timer = setInterval(function() {
+		if (!desk_visible) { return; }
+		deskLoad(true);
+	}, 10000);
+}
+
+function deskLoad(quiet) {
 	if (desk_xhr && desk_xhr.readyState && desk_xhr.readyState != 4) { desk_xhr.abort(); }
 	desk_xhr = $.ajax({
 		url: '/manager/folders/desk',
@@ -49,16 +64,26 @@ function deskLoad() {
 			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : ''
 		},
 		success: function(response) {
-			desk.folder = (response && response.folder) || '';
-			desk.files = (response && response.files) || [];
-			desk.apps = (response && response.apps) || [];
-			desk.disk = (response && response.disk) || {};
-			desk.selected = [];
-			desk.app = undefined;
-			desk.path = undefined;
-			desk.type = undefined;
-			desk.anchor = undefined;
-			deskRender();
+			response = response || {};
+			var folder = response.folder || '';
+			var count = parseInt(response.trash_count, 10) || 0;
+			var changed = !quiet || folder != (desk.folder || '') || count != (desk.trash_count || 0);
+			desk.folder = folder;
+			desk.files = response.files || [];
+			desk.apps = response.apps || [];
+			desk.disk = response.disk || {};
+			desk.computer = response.computer || undefined;
+			desk.trash = response.trash || undefined;
+			desk.trash_folder = response.trash_folder || '';
+			desk.trash_count = count;
+			if (!quiet) {
+				desk.selected = [];
+				desk.app = undefined;
+				desk.path = undefined;
+				desk.type = undefined;
+				desk.anchor = undefined;
+			}
+			if (changed) { deskRender(); }
 		}
 	});
 }
@@ -68,23 +93,38 @@ function deskRender() {
 	if (!layer.length) { return; }
 	layer.empty();
 	deskPosition();
-	// One alphabetical run of icons down the left: pinned apps and the desk's
-	// own files and folders together, the way a desktop reads by default.
-	var entries = [];
+	// Computer keeps the first place always, the Recycle Bin the last; between
+	// them pinned apps and the desk's own files sit in one alphabetical run, the
+	// way a desktop reads by default.
+	var body = [];
 	$.each(desk.apps || [], function (i, a) {
-		entries.push({ kind: 'app', name: (a['name'] || ''), data: a });
+		body.push({ kind: 'app', name: (a['name'] || ''), data: a });
 	});
 	$.each(desk.files || [], function (i, f) {
-		entries.push({ kind: 'file', name: (f['name'] || ''), data: f });
+		body.push({ kind: 'file', name: (f['name'] || ''), data: f });
 	});
-	entries.sort(function (a, b) {
+	body.sort(function (a, b) {
 		return String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase());
 	});
-	$.each(entries, function (i, e) {
-		layer.append((e.kind == 'app') ? deskAppItem(e.data) : deskFileItem(e.data));
+	var selected = {};
+	$.each(desk.selected || [], function (i, s) { if (s['path']) { selected[s['path']] = 1; } });
+	var append = function (item) {
+		if (item && item.length) {
+			if (selected[item.attr('path')]) { item.addClass('selected'); }
+			layer.append(item);
+		}
+	};
+	var computer = desk.computer || { name: jawnosT('Computer'), icon: '/images/decipherable/computer.png', path: '/' };
+	append(deskPlaceItem(computer, 'computer'));
+	$.each(body, function (i, e) {
+		append((e.kind == 'app') ? deskAppItem(e.data) : deskFileItem(e.data));
 	});
-	if (!entries.length) {
-		$('<div class="desk_empty"></div>').text(jawnosT('Your desktop is empty')).appendTo(layer);
+	if (desk.trash && desk.trash['path']) { append(deskPlaceItem(desk.trash, 'trash')); }
+	if (!body.length) {
+		var note = $('<div class="desk_empty"></div>').text(jawnosT('Your desktop is empty'));
+		// Keep the note beside the places rather than under a full-width grid row.
+		note.css({ 'grid-column': '1', 'pointer-events': 'none' });
+		layer.append(note);
 	}
 	foldersDraggable();
 	foldersSelectionSync('desk');
@@ -97,6 +137,21 @@ function deskFileItem(f) {
 		.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''))
 		.appendTo(item);
 	$('<span class="folders_label"></span>').text(f['name'] || '').attr('title', f['name'] || '').appendTo(item);
+	return item;
+}
+
+// Computer and the Recycle Bin are places, not files: a double-click opens them
+// in a Folders window, but they are never dragged, dropped into or deleted.
+function deskPlaceItem(p, kind) {
+	var item = $('<div class="folders_file desk_file desk_place" tabindex="-1" role="option" aria-selected="false"></div>')
+		.attr({ path: p['path'] || '', type: 'folder', 'data-name': p['name'] || '', 'data-place': kind });
+	$('<span class="folders_thumb"></span>')
+		.append($('<img draggable="false" alt="">').attr('src', p['icon'] || ''))
+		.appendTo(item);
+	$('<span class="folders_label"></span>').text(p['name'] || '').attr('title', p['name'] || '').appendTo(item);
+	if (kind == 'trash' && p['count']) {
+		$('<span class="desk_badge" aria-hidden="true"></span>').text(p['count']).appendTo(item);
+	}
 	return item;
 }
 
@@ -163,6 +218,35 @@ function deskAppMenuRow(command, label, icon) {
 	$('<span style="vertical-align:top;"></span>').text(label).appendTo(row);
 	return row;
 }
+
+// Computer and the Recycle Bin: open, or open beside this window. The bin also
+// offers its empty command, with the same confirmation the Folders menu uses.
+$(document).on('contextmenu', '.desk_place', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var item = $(this);
+	var kind = item.attr('data-place');
+	desk.app = undefined;
+	desk.selected = [];
+	desk.path = item.attr('path');
+	desk.type = 'folder';
+	$('#desk_layer .folders_file').removeClass('selected');
+	item.addClass('selected');
+	var menu = $('<div class="folders_context" surface="desk"></div>')
+		.css({ position: 'fixed', width: 220, background: 'var(--panel-2)' });
+	var icon = item.find('img').attr('src');
+	menu.append(deskAppMenuRow('open', jawnosT('Open'), icon));
+	menu.append(deskAppMenuRow('open_window', jawnosT('Open in new window'), '/images/make believe/renew.png'));
+	if (kind == 'trash' && (desk.trash_count || 0) > 0) {
+		menu.append(deskAppMenuRow('empty_trash', jawnosT('Empty Recycle Bin'), icon));
+	}
+	$('body').append(menu);
+	var margin = 6;
+	var left = Math.min(e.clientX, $(window).width() - menu.outerWidth() - margin);
+	var top = Math.min(e.clientY, $(window).height() - menu.outerHeight() - margin);
+	menu.css({ left: Math.max(margin, left), top: Math.max(margin, top) });
+});
+
 $(document).on('contextmenu', '.desk_app', function(e) {
 	e.preventDefault();
 	var item = $(this);

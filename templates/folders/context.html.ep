@@ -9,10 +9,14 @@
 	<%# a folder can hold either kind, so both the sealing and the opening are offered for one %>
 	<% my $encrypt_visible = ($plain || $has_folder) ? 'yes' : 'no'; %>
 	<% my $decrypt_visible = ($sealed || $has_folder) ? 'yes' : 'no'; %>
+	<% my $in_trash = &Manager::folders_in_trash($folders->{'folder'}) ? 'yes' : 'no'; %>
+	<% my $on_desk = (($folders->{'surface'} || '') eq 'desk') ? 'yes' : 'no'; %>
 	<% my $contexts = {
 		file => [
 			{ 'open' => { visible => $single } },
 			{ 'open_with' => { visible => $single } },
+			{ 'open_tab' => { visible => $single } },
+			{ 'open_window' => { visible => $single } },
 			{ 'archive' => {} },
 			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'cut' => {} },
@@ -20,14 +24,17 @@
 			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 'yes' : 'no' } },
 			{ 'encrypt' => { visible => $encrypt_visible } },
 			{ 'decrypt' => { visible => $decrypt_visible } },
-			{ 'delete' => {} },
+			{ 'delete' => { visible => $in_trash eq 'yes' ? 'no' : 'yes' } },
 			{ 'shred' => {} },
 			{ 'select_all' => {} },
 			{ 'rename' => { visible => $single } },
+			{ 'restore_trash' => { visible => $in_trash } },
 			{ 'properties' => {} }
 		],
 		folder => [
 			{ 'open' => { visible => $single } },
+			{ 'open_tab' => { visible => $single } },
+			{ 'open_window' => { visible => $single } },
 			{ 'archive' => {} },
 			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'cut' => {} },
@@ -35,10 +42,11 @@
 			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 1 : 0 } },
 			{ 'encrypt' => { visible => $encrypt_visible } },
 			{ 'decrypt' => { visible => $decrypt_visible } },
-			{ 'delete' => {} },
+			{ 'delete' => { visible => $in_trash eq 'yes' ? 'no' : 'yes' } },
 			{ 'shred' => {} },
 			{ 'select_all' => {} },
 			{ 'rename' => { visible => $single } },
+			{ 'restore_trash' => { visible => $in_trash } },
 			{ 'properties' => {} },
 			{ 'desk_folder' => {} }
 		],
@@ -48,6 +56,10 @@
 			{ 'pin_app' => {} },
 			{ 'desk_folder' => {} },
 			{ 'desk_folder_reset' => {} },
+			{ 'open_tab' => {} },
+			{ 'open_window' => {} },
+			{ 'open_trash' => { visible => $on_desk } },
+			{ 'empty_trash' => { visible => ($in_trash eq 'yes' || $on_desk eq 'yes') ? 'yes' : 'no' } },
 			{ 'archive' => {} },
 			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'select_all' => {} },
@@ -63,6 +75,11 @@
 		desk_folder_reset => &subs::ui('Reset desk folder'),
 		browser_back => &subs::ui('Back'),
 		browser_refresh => &subs::ui('Refresh'),
+		open_tab => &subs::ui('Open in new tab'),
+		open_window => &subs::ui('Open in new window'),
+		open_trash => &subs::ui('Open Recycle Bin'),
+		restore_trash => &subs::ui('Restore'),
+		empty_trash => &subs::ui('Empty Recycle Bin'),
 	); %>
 	<% foreach my $co ( @{$contexts->{$context}} ) { %>
 		<% foreach my $o ( keys %{$co} ) { %>

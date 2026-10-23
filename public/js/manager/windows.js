@@ -80,6 +80,9 @@ function taskbarDisplayer(destination) {
 		new_icon.attr('formatted_name', formatted_name);
 		var terminal_id = $(v).attr('data-terminal-id') || '';
 		if (terminal_id) { new_icon.attr('data-terminal-id', terminal_id); }
+		// a named window instance (Folders, now) gets its own tile too
+		var window_id = $(v).attr('data-window-id') || '';
+		if (window_id) { new_icon.attr('data-window-id', window_id); }
 		if (!new_icon.attr('src')) {
 			new_icon.css({ 'font-size': '30px', 'height': '60px' });
 		}
@@ -100,6 +103,7 @@ function taskbarDisplayer(destination) {
 		var app = $(v).attr('app');
 		var named = $(v).attr('formatted_name') || format_name(app);
 		var terminal_id = $(v).attr('data-terminal-id') || '';
+		var window_id = $(v).attr('data-window-id') || '';
 		var rand = Math.random().toString(36).substring(2);
 		// The button answers for its window itself (see the .window_toggle click):
 		// the name is a plain label, and the shorthand rides beside it for a bar
@@ -107,7 +111,7 @@ function taskbarDisplayer(destination) {
 		// windowRestorer, so pressing the name restored the window and then fell
 		// through to the button's own answer, which is what made a press behave
 		// like something other than a window manager's.
-		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" ' + (terminal_id ? 'data-terminal-id="' + terminal_id + '" ' : '') + 'style="text-align:center;"></span>');
+		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" ' + (terminal_id ? 'data-terminal-id="' + terminal_id + '" ' : '') + (window_id ? 'data-window-id="' + window_id + '" ' : '') + 'style="text-align:center;"></span>');
 		$('#' + rand).append(' <span class="window_toggle_name_text">' + named + '</span>');
 		$('#' + rand).append(' <span class="window_toggle_shorthand">' + shorthand_name(named, 5) + '</span>');
 	});
@@ -161,10 +165,14 @@ $(document).on('click', '.window_toggle', function() {
 	// the tile beats while the window it answers for comes up
 	if (typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }
 	var terminal_id = $(this).attr('data-terminal-id') || '';
-	if (terminal_id) {
-		// Several Terminal windows share the app name, so the tile answers for the
-		// one window wearing its own session id rather than every terminal.
-		var tw = $('.wind[data-terminal-id="' + terminal_id + '"]');
+	var window_id = $(this).attr('data-window-id') || '';
+	if (terminal_id || window_id) {
+		// Several Terminal windows share the app name, and so do several Folders
+		// windows, so the tile answers for the one window wearing its own id
+		// rather than every window of the app.
+		var tw = terminal_id
+			? $('.wind[data-terminal-id="' + terminal_id + '"]')
+			: $('.wind[data-window-id="' + window_id + '"]');
 		if (!tw.length) { return; }
 		if (!tw.is(':visible')) {
 			tw.show().attr('visible', 'yes');
@@ -213,6 +221,7 @@ function windowMaker(response) {
 	var window_id = $(response).filter('.wind').attr('id');
 	var window_app = $(response).filter('.wind').attr('app');
 	var window_terminal_id = $(response).filter('.wind').attr('data-terminal-id') || '';
+	var window_instance_id = $(response).filter('.wind').attr('data-window-id') || '';
 	var app = window_app;
 
 	var timestamp = $(response).filter('.wind').attr('timestamp');
@@ -227,9 +236,11 @@ function windowMaker(response) {
 			var app_attr = $(v).attr('app');
 			var app_timestamp = $(v).attr('timestamp');
 			var existing_terminal_id = $(v).attr('data-terminal-id') || '';
-			// Terminals are several windows of one app. Only the same session may
-			// refresh a window; a different session is a new window, not a redraw.
-			if (app_attr == window_app && (!window_terminal_id || !existing_terminal_id || existing_terminal_id == window_terminal_id)) {
+			var existing_instance_id = $(v).attr('data-window-id') || '';
+			// Terminals are several windows of one app, and so are Folders windows.
+			// Only the same session (or the same named window) may refresh a window;
+			// a different one is a new window, not a redraw.
+			if (app_attr == window_app && (!window_terminal_id || !existing_terminal_id || existing_terminal_id == window_terminal_id) && (!window_instance_id || !existing_instance_id || existing_instance_id == window_instance_id)) {
 				var ow = $(v).width();
 				var oh = $(v).height();
 				var ol = $(v).css('left');

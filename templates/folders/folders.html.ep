@@ -2,7 +2,9 @@
 <%# The folder being read, its trail back to Home, and the items. The markup is
     the data: selection, keyboard focus and drag/drop are handled in folders.js
     against .folders_file, so the desk behind the manager can reuse the same
-    item shape and the same commands. %>
+    item shape and the same commands. Each window carries its own id and the
+    active tab's id; the canonical element ids are re-homed to the window the
+    person is working in, so one set of selectors serves every window. %>
 <% my $home = &subs::home('~/'); $home =~ s{/+$}{}; %>
 <% my $folder = $fo->{'folder'} // ''; %>
 <% my @crumbs; %>
@@ -25,14 +27,15 @@
 		% push @crumbs, { name => $p, path => $acc };
 	% }
 % }
-<div id="folders" unlock="<%= $unlock %>" class="folders_app" folder="<%= $fo->{'folder'} %>" remote_uuid="<%= $remote_uuid || '' %>">
-	<div id="folders_toolbar">
+<div id="folders" class="folders_app" data-folders-id="<%= $folders_id %>" data-tab-id="<%= $tab_id %>" unlock="<%= $unlock %>" folder="<%= $fo->{'folder'} %>" remote_uuid="<%= $remote_uuid || '' %>">
+	<div id="folders_toolbar" class="folders_toolbar">
 		<div class="folders_nav">
+			<button type="button" id="folders_sidebar_toggle" class="folders_sidebar_toggle" hint="Sidebar" aria-label="Sidebar"><img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" alt=""></button>
 			<button type="button" class="folders_command" command="home" hint="Home" aria-label="Home"><img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" alt=""></button>
-			<button type="button" id="folders_back" hint="Back" aria-label="Back" disabled="disabled"><img src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>" alt=""></button>
-			<button type="button" id="folders_forward" hint="Forward" aria-label="Forward" disabled="disabled"><img src="<%= &subs::icon_for('/images/make believe/right arrow.png') %>" alt=""></button>
+			<button type="button" id="folders_back" class="folders_back" hint="Back" aria-label="Back" disabled="disabled"><img src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>" alt=""></button>
+			<button type="button" id="folders_forward" class="folders_forward" hint="Forward" aria-label="Forward" disabled="disabled"><img src="<%= &subs::icon_for('/images/make believe/right arrow.png') %>" alt=""></button>
 			<button type="button" class="folders_command" command="up" hint="Up" aria-label="Up"><img src="<%= &subs::icon_for('/images/make believe/up.png') %>" alt=""></button>
-			<button type="button" id="folders_refresh" hint="Refresh" aria-label="Refresh"><img src="<%= &subs::icon_for('/images/make believe/renew.png') %>" alt=""></button>
+			<button type="button" id="folders_refresh" class="folders_refresh" hint="Refresh" aria-label="Refresh"><img src="<%= &subs::icon_for('/images/make believe/renew.png') %>" alt=""></button>
 		</div>
 		<div class="folders_pathbar">
 			<nav id="folders_breadcrumb" class="folders_breadcrumb" aria-label="Path">
@@ -42,69 +45,112 @@
 					<button type="button" class="folders_crumb<% if ($i == $#crumbs) { %> current<% } %>" path="<%= $crumb->{'path'} %>" title="<%= $crumb->{'path'} %>"><%= $crumb->{'name'} %></button>
 				<% } %>
 			</nav>
-			<input type="text" id="folders_address" value="<%= $fo->{'folder'} %>" placeholder="Folder path" aria-label="Folder path" spellcheck="false" autocomplete="off">
-			<button type="button" id="folders_path_toggle" hint="Type a path" aria-label="Type a path"><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" alt=""></button>
+			<input type="text" id="folders_address" class="folders_address" value="<%= $fo->{'folder'} %>" placeholder="Folder path" aria-label="Folder path" spellcheck="false" autocomplete="off">
+			<button type="button" id="folders_path_toggle" class="folders_path_toggle" hint="Type a path" aria-label="Type a path"><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" alt=""></button>
 		</div>
 		<div class="folders_tools">
-			<select id="folders_machine_select" aria-label="Machine">
+			<select id="folders_machine_select" class="folders_machine_select" aria-label="Machine">
 				<option value="">This machine</option>
 				<% foreach my $rm ( @{$machines} ) { %>
 					<option value="<%= $rm->{'uuid'} %>" <% if (($remote_uuid || '') eq $rm->{'uuid'}) { %>selected="selected"<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
 				<% } %>
 			</select>
-			<button type="button" id="folders_view_toggle" hint="Switch between icons and a list" aria-label="Switch between icons and a list" data-icon-grid="<%= &subs::icon_for('/images/decipherable/windows.png') %>" data-icon-list="<%= &subs::icon_for('/images/decipherable/list.png') %>"><img src="<%= &subs::icon_for('/images/decipherable/windows.png') %>" alt=""></button>
-			<button type="button" id="folders_bookmarks_toggle" hint="Bookmarks" aria-label="Bookmarks"><img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" alt=""></button>
-			<button type="button" id="folders_archive_toggle" hint="Archive queue" aria-label="Archive queue"><img src="<%= &subs::icon_for('/images/make believe/download.png') %>" alt=""></button>
+			<button type="button" id="folders_view_toggle" class="folders_view_toggle" hint="Switch between icons and a list" aria-label="Switch between icons and a list" data-icon-grid="<%= &subs::icon_for('/images/decipherable/windows.png') %>" data-icon-list="<%= &subs::icon_for('/images/decipherable/list.png') %>"><img src="<%= &subs::icon_for('/images/decipherable/windows.png') %>" alt=""></button>
+			<button type="button" id="folders_bookmarks_toggle" class="folders_bookmarks_toggle" hint="Bookmarks" aria-label="Bookmarks"><img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" alt=""></button>
+			<button type="button" id="folders_archive_toggle" class="folders_archive_toggle" hint="Archive queue" aria-label="Archive queue"><img src="<%= &subs::icon_for('/images/make believe/download.png') %>" alt=""></button>
 			<% my $fpl = eval { return decode_json &subs::setting_grabber({app => '__president', setting => 'padlock_contexts' }) } || []; %>
 			<% if (grep { $_ eq 'folders' } @{$fpl}) { %>
 				<button type="button" class="folders_lock" hint="Lock" aria-label="Lock"<% if ($unlocked) { %> style="background-color:red;"<% } %>><img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" alt=""></button>
 			<% } %>
 		</div>
 	</div>
+	<div id="folders_tabs" class="folders_tabs" style="display:none;"></div>
 	<%# the folders worth getting back to on the machine being browsed - which,
 	    for a remote one, is that machine's own list, since it renders this %>
 	<% my @bookmarks = ( { name => 'Home', path => $home } ); %>
 	<% my $misc = &Manager::misc_setting_list(); %>
 	<% my $dev = &subs::device_setter(); %>
+	<% my %place_labels = ( document => 'Documents', download => 'Downloads', photo => 'Pictures', video => 'Videos', scan => 'Scans', rec => 'Recordings', music => 'Music' ); %>
+	<% my %place_icons = (
+		computer => '/images/decipherable/computer.png',
+		home => '/images/decipherable/home.png',
+		desktop => '/images/decipherable/windows.png',
+		document => '/images/decipherable/file.png',
+		download => '/images/make believe/download.png',
+		photo => '/images/decipherable/gallery.png',
+		music => '/images/make believe/music.png',
+		video => '/images/make believe/camera.png',
+		scan => '/images/decipherable/flatbed.png',
+		rec => '/images/make believe/microphone.png',
+		archive => '/images/decipherable/diskette.png',
+		trash => '/icons/trash.png'
+	); %>
+	<% my @sidebar = (
+		{ name => &subs::ui('Computer'), path => '/', icon => $place_icons{'computer'} },
+		{ name => &subs::ui('Home'), path => $home, icon => $place_icons{'home'} }
+	); %>
+	<% my $desktop_dir = &subs::home('~/Desktop'); $desktop_dir =~ s{/+$}{}; %>
+	<% push @sidebar, { name => &subs::ui('Desktop'), path => $desktop_dir, icon => $place_icons{'desktop'} } if -d $desktop_dir; %>
 	<% foreach my $location ( &subs::location_types() ) { %>
 		<% my $path = $misc->{$dev}->{$location . '_location'}; %>
-		<% push @bookmarks, { name => &subs::format_name($location), path => &subs::home($path) } if (defined $path && length $path); %>
+		<% next unless defined $path && length $path; %>
+		<% my $full = &subs::home($path); $full =~ s{/+$}{}; %>
+		<% my $label = $place_labels{$location} ? &subs::ui($place_labels{$location}) : &subs::format_name($location); %>
+		<% push @sidebar, { name => $label, path => $full, icon => $place_icons{$location} || $place_icons{'document'} }; %>
+		<% push @bookmarks, { name => $label, path => $full }; %>
 	<% } %>
 	<% my $archive_root = &subs::archive_root(); %>
-	<% push @bookmarks, { name => 'Archive', path => $archive_root } if ($archive_root && -d $archive_root); %>
-	<div id="folders_bookmarks" class="folders_drawer" style="display:none;">
+	<% if ($archive_root && -d $archive_root) { %>
+		<% push @bookmarks, { name => &subs::ui('Archive'), path => $archive_root }; %>
+		<% push @sidebar, { name => &subs::ui('Archive'), path => $archive_root, icon => $place_icons{'archive'} }; %>
+	<% } %>
+	<% my $trash_dir = &Manager::folders_trash_files_dir(); %>
+	<% push @sidebar, { name => &subs::ui('Recycle Bin'), path => $trash_dir, icon => $place_icons{'trash'} }; %>
+	<div id="folders_bookmarks" class="folders_drawer folders_bookmarks" style="display:none;">
 		<% foreach my $b ( @bookmarks ) { %>
 			<button type="button" class="hover folders_bookmark" path="<%= $b->{'path'} %>"><%= $b->{'name'} %></button>
 		<% } %>
 	</div>
-	<div id="folders_archive_queue" class="folders_drawer" style="display:none;width:min(430px, 60%);right:2px;font-size:15px;padding:4px;"></div>
-	<div id="folders_mainview">
-		<div id="folders_list_header" aria-hidden="true">
-			<span></span><span><%= &subs::lang('common.name') %></span><span><%= &subs::lang('folders.type') %></span><span><%= &subs::lang('folders.size') %></span><span><%= &subs::lang('folders.modified') %></span>
-		</div>
-		<div id="folders_contents" class="folders_contents" tabindex="0" role="listbox" aria-label="Folder contents">
-			<% foreach my $f ( @{$fo->{'files'}} ) { %>
-				<% my @stat = @{ $f->{'stat'} || [] }; %>
-				<% my $is_folder = (($f->{'type'} || '') eq 'folder'); %>
-				<div class="folders_file" path="<%= $f->{'path'} %>" type="<%= $f->{'type'} %>" data-name="<%= $f->{'name'} %>" tabindex="-1" role="option" aria-selected="false">
-					<span class="folders_thumb"><img src="<%= $f->{'icon'} %>" alt="" draggable="false"></span>
-					<span class="folders_label" title="<%= $f->{'name'} %>"><%= $f->{'name'} %></span>
-					<span class="folders_kind"><%= &subs::format_name($f->{'type'} || 'file') %></span>
-					<span class="folders_size"><%= $is_folder ? '' : &subs::data_size($f->{'size'} || 0) %></span>
-					<span class="folders_modified time" mode="fixed" timestamp="<%= ($stat[9] || 0) * 1000 %>"></span>
-				</div>
+	<div id="folders_archive_queue" class="folders_drawer folders_archive_queue" style="display:none;width:min(430px, 60%);right:2px;font-size:15px;padding:4px;"></div>
+	<div id="folders_mainview" class="folders_mainview">
+		<aside id="folders_sidebar" class="folders_sidebar">
+			<div class="folders_sidebar_title"><%= &subs::ui('Places') %></div>
+			<% foreach my $p ( @sidebar ) { %>
+				<button type="button" class="folders_sidebar_place hover<% if (($p->{'path'} || '') eq $folder) { %> current<% } %>" path="<%= $p->{'path'} %>" title="<%= $p->{'path'} %>">
+					<img src="<%= &subs::icon_for($p->{'icon'}) %>" alt="">
+					<span><%= $p->{'name'} %></span>
+				</button>
 			<% } %>
-			<% if (!scalar @{$fo->{'files'}}) { %>
-				<div id="folders_empty" class="folders_empty"><%= &subs::ui('This folder is empty.') %></div>
-			<% } %>
+		</aside>
+		<div id="folders_listing_pane" class="folders_listing_pane">
+			<div id="folders_list_header" class="folders_list_header" aria-hidden="true">
+				<span></span><span><%= &subs::lang('common.name') %></span><span><%= &subs::lang('folders.type') %></span><span><%= &subs::lang('folders.size') %></span><span><%= &subs::lang('folders.modified') %></span>
+			</div>
+			<div id="folders_contents" class="folders_contents" tabindex="0" role="listbox" aria-label="Folder contents">
+				<% foreach my $f ( @{$fo->{'files'}} ) { %>
+					<% my @stat = @{ $f->{'stat'} || [] }; %>
+					<% my $is_folder = (($f->{'type'} || '') eq 'folder'); %>
+					<% my $display = $f->{'display'} || $f->{'name'}; %>
+					<div class="folders_file" path="<%= $f->{'path'} %>" type="<%= $f->{'type'} %>" data-name="<%= $display %>" tabindex="-1" role="option" aria-selected="false">
+						<span class="folders_thumb"><img src="<%= $f->{'icon'} %>" alt="" draggable="false"></span>
+						<span class="folders_label" title="<%= $display %>"><%= $display %></span>
+						<span class="folders_kind"><%= &subs::format_name($f->{'type'} || 'file') %></span>
+						<span class="folders_size"><%= $is_folder ? '' : &subs::data_size($f->{'size'} || 0) %></span>
+						<span class="folders_modified time" mode="fixed" timestamp="<%= ($stat[9] || 0) * 1000 %>"></span>
+					</div>
+				<% } %>
+				<% if (!scalar @{$fo->{'files'}}) { %>
+					<div id="folders_empty" class="folders_empty"><%= &subs::ui('This folder is empty.') %></div>
+				<% } %>
+			</div>
 		</div>
 	</div>
-	<div id="folders_padlock" style="display:none;position:absolute;top:45px;left:0;width:100%;height:80%;z-index:7;">
+	<div id="folders_padlock" class="folders_padlock" style="display:none;position:absolute;top:45px;left:0;width:100%;height:80%;z-index:7;">
 		<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="little_thumb folders_cancel_padlock hover" style="position:absolute;top:0;right:5px;z-index:8;">
 		<%= include 'padlock', mode => 'folders', fingerprint => 1 %>
 	</div>
 	% my $disk = $fo->{'disk'} || {};
-	<div id="folders_bottom_bar">
+	<div id="folders_bottom_bar" class="folders_bottom_bar">
 		<span class="folders_selected_info"></span>
 		<span class="folders_disk_info">
 			<% if (($disk->{'folders'} || 0) > 0) { %>
