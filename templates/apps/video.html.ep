@@ -962,7 +962,7 @@
 			// one warms up; once it is ready a hover no longer waits for a round trip.
 			// A remote track is left to the server preview - pulling the tunnel a second
 			// time to preview it would cost more than the wait.
-			var <%= $miss %>SeekPreview = { video: null, src: '', time: 0, ready: false, drawn: false, canvas: null, failed: false };
+			var <%= $miss %>SeekPreview = { video: null, src: '', want: 0, ready: false, drawn: false, visible: false, raf: 0, canvas: null, failed: false };
 			function <%= $miss %>SeekPreviewDraw() {
 				var p = <%= $miss %>SeekPreview;
 				var el = p.video;
@@ -980,16 +980,27 @@
 				for (var i = 0; i < px.length; i += 4) { sum += px[i] + px[i + 1] + px[i + 2]; }
 				if (sum / (px.length / 4) < 1) { p.drawn = false; return; }
 				p.drawn = true;
-				$('#<%= $miss %>_position_preview').attr('src', c.toDataURL('image/jpeg', 0.72)).show();
+				var img = $('#<%= $miss %>_position_preview');
+				img.attr('src', c.toDataURL('image/jpeg', 0.72));
+				if (p.visible) { img.show(); }
+			}
+			function <%= $miss %>SeekPreviewSeek() {
+				var p = <%= $miss %>SeekPreview;
+				p.raf = 0;
+				if (!p.ready || !p.video || !p.visible) { return; }
+				if (Math.abs((p.video.currentTime || 0) - p.want) > 0.05) { p.video.currentTime = p.want; }
+				else { <%= $miss %>SeekPreviewDraw(); }
 			}
 			function <%= $miss %>SeekPreviewShow(time) {
 				var p = <%= $miss %>SeekPreview;
 				var main = document.getElementById('<%= $id %>');
 				var src = main && (main.currentSrc || main.getAttribute('src')) || '';
+				p.visible = true;
 				if (!src || p.failed || src.indexOf('remote_uuid=') > -1) { return false; }
-				p.time = time;
+				p.want = time;
 				if (p.video && (p.src !== src || !document.body.contains(p.video))) {
 					try { p.video.removeAttribute('src'); p.video.load(); p.video.remove(); } catch (e) {}
+					if (p.raf) { cancelAnimationFrame(p.raf); p.raf = 0; }
 					p.video = null; p.ready = false; p.drawn = false;
 				}
 				if (!p.video) {
@@ -1003,16 +1014,15 @@
 					// a theatre transition) must not stop the decoder from painting.
 					el.style.cssText = 'position:fixed;left:-4px;top:-4px;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;';
 					el.setAttribute('data-jawnos-seek-preview', '');
-					el.src = src;
 					el.addEventListener('loadedmetadata', function() {
 						p.ready = true;
-						el.currentTime = p.time;
+						el.currentTime = p.want;
 					});
 					el.addEventListener('loadeddata', function() {
-						if (Math.abs(el.currentTime - p.time) <= 0.5) { <%= $miss %>SeekPreviewDraw(); }
+						if (Math.abs(el.currentTime - p.want) <= 0.5) { <%= $miss %>SeekPreviewDraw(); }
 					});
 					el.addEventListener('seeked', function() {
-						if (!el.videoWidth || !el.videoHeight || Math.abs(el.currentTime - p.time) > 0.5) { return; }
+						if (!el.videoWidth || !el.videoHeight || Math.abs(el.currentTime - p.want) > 0.5) { return; }
 						<%= $miss %>SeekPreviewDraw();
 					});
 					el.addEventListener('error', function() {
@@ -1023,19 +1033,11 @@
 					document.body.appendChild(el);
 					p.video = el;
 					p.src = src;
+					el.src = src;
 				}
 				if (!p.ready) { return false; }
-				if (Math.abs((p.video.currentTime || 0) - time) > 0.5) {
-					p.video.currentTime = time;
-				}
-				else {
-					// already on this frame: a seek to where we are fires no seeked event,
-					// so draw it now (0:00, or hovering within half a second)
-					<%= $miss %>SeekPreviewDraw();
-				}
-				// Only a frame that actually reached the canvas counts. Until then the
-				// server's frame is the preview, so a decoder that cannot seek never
-				// leaves an empty or black box behind.
+				if (!p.raf) { p.raf = requestAnimationFrame(<%= $miss %>SeekPreviewSeek); }
+				if (p.drawn) { $('#<%= $miss %>_position_preview').show(); }
 				return p.drawn;
 			}
 <% } %>
@@ -1099,6 +1101,10 @@
 			});
 			vidOn('mouseout', '#<%= $miss %>_position', function(e) {
 				clearInterval(v.positionPreviewTimeout);
+<% if ($source eq 'music') { %>
+				if (<%= $miss %>SeekPreview.raf) { cancelAnimationFrame(<%= $miss %>SeekPreview.raf); <%= $miss %>SeekPreview.raf = 0; }
+				<%= $miss %>SeekPreview.visible = false;
+<% } %>
 				$('#<%= $miss %>_position_preview').hide();
 				$('#<%= $miss %>_position_preview_info').hide();
 			});

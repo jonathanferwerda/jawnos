@@ -1258,6 +1258,85 @@ sub sealed_thumb_prefix($filename, $job, $bytes) {
 	return 1;
 }
 
+# Write a sealed stream's whole plaintext to a path, a chunk at a time, so a
+# two-hour film never has to sit in memory as one string.
+sub sealed_file_to_path($job, $path) {
+	my $spec = $job->{'spec'} or return 0;
+	my $container = $job->{'container'};
+	my $mode = $spec->{'family'} eq 'ctr' ? &subs::note_ctr_mode($spec) : &subs::note_cbc_mode($spec, 1);
+	my $stream = eval { $mode->start_decrypt($job->{'key'}, $job->{'iv'}) };
+	return 0 unless $stream;
+	open(my $fh, '>', $path) or return 0;
+	my ($offset, $end, $step) = (0, length($container) - 16, 1024 * 1024);
+	while ($offset < $end) {
+		my $take = $offset + $step > $end ? $end - $offset : $step;
+		my $plain = eval { $stream->add(substr($container, 16 + $offset, $take)) };
+		if (!defined $plain) { close $fh; return 0; }
+		print $fh $plain;
+		$offset += $take;
+	}
+	my $tail = eval { $stream->finish };
+	print $fh $tail if defined $tail && length $tail;
+	close $fh;
+	return -s $path ? 1 : 0;
+}
+
+# The whole-track loudness baseline: one ffmpeg pass over the audio, measuring
+# the mean and peak level. The mean is the track's own loudness; a single gain
+# computed from it preserves the dynamics inside the track instead of squeezing
+# dialogue and action towards each other every second.
+sub media_loudness_measure_path($path) {
+	my $out = '';
+	eval {
+		local $SIG{ALRM} = sub { die "loudness measurement timed out\n" };
+		alarm 120;
+		my $cmd = 'ffmpeg -nostats -i ' . &subs::terminal_name($path) . ' -vn -af volumedetect -f null - 2>&1';
+		$out = `$cmd`;
+		alarm 0;
+	};
+	alarm 0;
+	return undef unless length $out;
+	my ($mean, $max, $duration);
+	foreach my $line ( split /\n/, $out ) {
+		$mean = $1 if $line =~ /mean_volume:\s*(-?\d+(?:\.\d+)?) dB/;
+		$max = $1 if $line =~ /max_volume:\s*(-?\d+(?:\.\d+)?) dB/;
+		$duration = $1 if $line =~ /Duration:\s*(\d+:\d+:\d+(?:\.\d+)?)/;
+	}
+	return undef unless defined $mean;
+	return { mean_volume => $mean + 0, max_volume => (defined $max ? $max + 0 : undef), duration => $duration };
+}
+
+sub media_loudness_key($path) {
+	my @st = stat($path);
+	require Digest::MD5;
+	return 'loudness-' . Digest::MD5::md5_hex($path . ':' . ($st[7] || 0) . ':' . ($st[9] || 0));
+}
+
+sub media_loudness_cached($path) {
+	my $key = &media_loudness_key($path);
+	my $cached = &subs::cache_get({ app => 'music', context => 'loudness', subcontext => $key });
+	return (ref $cached eq 'HASH' && defined $cached->{'mean_volume'}) ? $cached : undef;
+}
+
+# Answer with a cached measurement when there is one, otherwise measure the
+# plaintext path and cache the result against the original file's identity.
+sub media_loudness_response($c, $measure_path, $identity_path) {
+	my $identity = defined $identity_path && length $identity_path ? $identity_path : $measure_path;
+	my $cached = &media_loudness_cached($identity);
+	if ($cached) {
+		$c->render(json => { ok => 1, cached => 1, %{$cached} });
+		return;
+	}
+	my $result = &media_loudness_measure_path($measure_path);
+	if ($result) {
+		&subs::cache_set({ app => 'music', context => 'loudness', subcontext => &media_loudness_key($identity), warranty => '-1y' }, $result);
+		$c->render(json => { ok => 1, %{$result} });
+		return;
+	}
+	$c->render(json => { ok => 0 });
+	return;
+}
+
 # Making a thumbnail means decrypting the whole original and running
 # ImageMagick inside the request. A gallery asks for a screenful at once, so
 # every prefork worker ended up doing that (or sleeping on the per-appointment
@@ -1428,6 +1507,15 @@ sub rock_and_roll($c) {
 			}
 		}
 		if ($file =~ /\.enc$/gi) {
+			# A measured track is answered before any decryption: the key walks and
+			# the whole-file decrypt a sealed track needs are exactly what a cache
+			# hit should skip.
+			if ($c->param('loudness')) {
+				if (my $cached = &media_loudness_cached($file)) {
+					$c->render(json => { ok => 1, cached => 1, %{$cached} });
+					return;
+				}
+			}
 			my $encryption_standard = $appter->[0]->{'encryption_standard'} || &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || "aes-256-ctr";
 			my @encryption_standards = ( $encryption_standard );
 			if (!$appter->[0]->{'uuid'}) {
@@ -1501,6 +1589,22 @@ sub rock_and_roll($c) {
 			my $video_thumb = ($wants_thumb && $file =~ /\.(?:mp4|webm|mpg|mpeg|mov|mkv|avi)\.enc$/i) ? 1 : 0;
 			my $want_stream = (!$range && ($video_thumb || (!$c->param('duty') && !$wants_thumb)) && $file !~ /\.pdf(?:\.enc)?$/i && (-s $file || 0) >= 2 * 1024 * 1024) ? 1 : 0;
 			my $opened = &subs::sealed_file_open($file, \@secrets, \@encryption_standards, 1, $inspect, $range, $want_stream);
+			if ($c->param('loudness') && $opened && !$opened->{'unsatisfiable'}) {
+				my $base = $file;
+				$base =~ s/\.enc$//i;
+				my $ext = ($base =~ /\.([^.\/]+)$/) ? $1 : 'bin';
+				my $tmp = $tdir . '/loudness_' . &subs::random_string_creator(20) . '.' . $ext;
+				my $ok = 0;
+				if ($opened->{'stream'}) { $ok = &sealed_file_to_path($opened, $tmp); }
+				elsif (defined $opened->{'data'}) {
+					write_file($tmp, $opened->{'data'});
+					$ok = (-s $tmp) ? 1 : 0;
+				}
+				if ($ok) { &media_loudness_response($c, $tmp, $file); }
+				else { $c->render(json => { ok => 0 }); }
+				unlink $tmp;
+				return;
+			}
 			if ($opened && $opened->{'stream'} && !$video_thumb) {
 				if (&stream_sealed_file($c, $opened, $file, 'private, no-cache')) { return }
 				# the stream could not start: fall back to the buffered body
@@ -1657,6 +1761,10 @@ sub rock_and_roll($c) {
 							return;
 						}
 					}
+		}
+		elsif ($c->param('loudness') && -e $file) {
+			&media_loudness_response($c, $file, $file);
+			return;
 		}
 		elsif ($c->param('duty')) {
 			my $data = read_file($file);
