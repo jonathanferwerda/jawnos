@@ -1764,6 +1764,13 @@ function musicNormalizeApply() {
 	if (music_normalize && music_normalize != 'off') { musicAudioGraph(); }
 	musicNormalizeParams();
 }
+// A page restored with normalisation on has no user gesture yet, and a browser
+// only starts an AudioContext inside (or after) one. The first touch or key that
+// reaches the window puts the graph in place and resumes it, so a restored track
+// is not left silent by a context that could not start on its own.
+$(document).on('pointerdown touchstart keydown', function() {
+	if (music_normalize && music_normalize != 'off' && $('#music').length) { musicAudioGraph(); }
+});
 
 // The visualiser's tap. It shares the normaliser's graph so the drawing follows
 // the sound after normalisation, and so neither can capture the element twice.
