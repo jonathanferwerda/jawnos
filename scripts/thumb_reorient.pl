@@ -13,6 +13,7 @@ use strict;
 use warnings;
 use FindBin;
 use File::Temp qw(tempfile);
+use File::Type;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
 require './subroutines.pl';
 require Mojo::JSON;
@@ -25,6 +26,14 @@ for (my $i = 0; $i < @ARGV; $i++) {
 
 my $suds = &subs::suds_grabber();
 my @standards = @{ &subs::note_encryption_standards() };
+# Without a verdict every secret "opens" the file: the first one always wins and
+# the probe writes ciphertext, which ImageMagick then refuses. The verdict is what
+# tells sealed_file_open which secret is the right one.
+my $ft = File::Type->new();
+my $inspect = sub {
+	my $verdict = $ft->checktype_contents($_[0]);
+	return ($verdict ne 'application/octet-stream') ? $verdict : undef;
+};
 my $rows = &subs::db_query('select uuid, app, type, server_time, file from appointments where file is not null and type = ?', 'image')->hashes;
 
 my ($checked, $sideways, $removed, $failed) = (0, 0, 0, 0);
@@ -44,24 +53,40 @@ foreach my $appt ( @{$rows} ) {
 			my $secret = &subs::decrypter($suds, $p->{'credential'}, $stamp);
 			push @secrets, $secret if defined $secret && length $secret;
 		}
-		my $opened = &subs::sealed_file_open($file, \@secrets, \@standards, 1);
-		unless ($opened && defined $opened->{'data'} && length $opened->{'data'}) { $failed++; next; }
+		my $opened = &subs::sealed_file_open($file, \@secrets, \@standards, 1, $inspect);
+		unless ($opened && defined $opened->{'data'} && length $opened->{'data'}) { print "OPEN FAIL $file\n" if $apply; $failed++; next; }
 		my ($fh, $tmp) = tempfile(SUFFIX => '.img', TMPDIR => 1);
 		binmode $fh;
 		print $fh $opened->{'data'};
 		close $fh;
 		my $orientation = `magick $tmp -format '%[orientation]' info: 2>/dev/null`;
-		unlink $tmp;
 		chomp $orientation;
-		next unless length $orientation;
-		next if $orientation eq 'TopLeft' || $orientation eq 'Undefined';
+		# no answer means the probe could not read the picture: count it, never
+		# treat it as "upright", which is how a whole library can be skipped
+		unless (length $orientation) { unlink $tmp; $failed++; next; }
+		if ($orientation eq 'TopLeft' || $orientation eq 'Undefined') { unlink $tmp; next; }
 		$sideways++;
-		print $apply ? 'REMOVE ' : 'sideways ', $appt->{'app'} || '', ' ', $file, ' (', $orientation, ")\n";
+		print $apply ? 'FIX    ' : 'sideways ', $appt->{'app'} || '', ' ', $file, ' (', $orientation, ")\n";
 		next unless $apply;
-		unlink $thumb;
-		$removed++ unless -e $thumb;
+		# Regenerate the thumb upright in place. Deleting it would work too, but
+		# then the album lies blank until every photo is opened again; the plain
+		# image is already in hand here, so this is the cheap moment to redo it.
+		my $size = &subs::setting_grabber({ app => 'misc', setting => 'thumbnail_size' }) || 'none';
+		if ($size eq 'none') { unlink $tmp; next; }
+		my ($tfh, $plain) = tempfile(SUFFIX => '.png', TMPDIR => 1);
+		close $tfh;
+		# -strip drops the source's profiles: a few Samsung JPEGs carry an ICC
+		# profile ImageMagick refuses to write, and it then emits a broken PNG
+		my $cmd = 'magick ' . $tmp . ' -auto-orient -strip -resize ' . $size . ' png:' . $plain . ' 2>/dev/null';
+		`$cmd`;
+		if (-e $plain && (-s $plain) > 100 && &subs::seal_file($plain, $thumb, $opened->{'secret'}, $opened->{'standard'})) {
+			$removed++;
+		}
+		else { print "WRITE FAIL $thumb\n" if $apply; $failed++; }
+		unlink $plain;
+		unlink $tmp;
 	}
 }
 
-printf "%s: checked=%d sideways=%d removed=%d failed=%d\n",
+printf "%s: checked=%d sideways=%d fixed=%d failed=%d\n",
 	($apply ? 'APPLIED' : 'DRY RUN'), $checked, $sideways, $removed, $failed;

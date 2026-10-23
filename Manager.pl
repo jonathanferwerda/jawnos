@@ -1572,7 +1572,7 @@ sub rock_and_roll($c) {
 											my $whole = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
 											write_file($filename, $whole) if defined $whole && length $whole;
 										}
-										my $command2 = 'magick ' . $filename . ' -auto-orient -resize ' . $thumbnail_size . ' -';
+										my $command2 = 'magick ' . $filename . ' -auto-orient -strip -resize ' . $thumbnail_size . ' -';
 										$file_data->{'type'} = 'image';
 										$data = &run_thumb_command($command2);
 									}
@@ -13511,7 +13511,7 @@ sub thumbnail_creator($data) {
 				`$command2`;
 			}
 			elsif ($upload_type eq 'image' || $upload_type eq 'document') {
-				my $command2 = 'magick ' . $filename . ' -auto-orient -resize ' . $thumbnail_size . ' ' . $thumb;
+				my $command2 = 'magick ' . $filename . ' -auto-orient -strip -resize ' . $thumbnail_size . ' ' . $thumb;
 				`$command2`;
 			}
 			else {

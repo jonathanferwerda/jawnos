@@ -127,7 +127,6 @@ function galleryApplyChrome() {
 	var shut = !(gallery.unlock || '');
 	$('#gallery_lock_button').text(shut ? jawnosT('Unlock') : jawnosT('Lock')).attr('hint', shut ? 'Unlock' : 'Lock');
 	if ($('#gallery_search').val() != gallery.search) { $('#gallery_search').val(gallery.search); }
-	$('#gallery_locked_note').toggle((gallery.unlock || '') === '' && gallery.padlock == 1);
 }
 
 function galleryInitWindow(response) {
@@ -324,13 +323,47 @@ function galleryOpenViewer(index) {
 	// Fetch home is the archive's way back: it only means anything for a photo
 	// that lives on another machine. A local photo hid nothing to fetch.
 	$('.gallery_fetch').toggle(!!item.remote_uuid);
+	galleryViewerPad();
 	$('#gallery_viewer').show();
 	$('#gallery_body').css('overflow', 'hidden');
+	galleryFullscreenLabel();
+}
+
+// The manager's taskbar is fixed over the page, so a window that reaches the top
+// of the screen puts the viewer's buttons underneath it. Push them down by
+// whatever overlap there actually is - none, for a window already below it.
+function galleryViewerPad() {
+	var viewer = document.getElementById('gallery_viewer');
+	if (!viewer) { return; }
+	if ($('#gallery').hasClass('gallery_fullscreen')) {
+		// it covers the desk, taskbar and all: nothing is over it
+		viewer.style.setProperty('--gallery_viewer_pad', '6px');
+		return;
+	}
+	var top = viewer.getBoundingClientRect().top;
+	var bar = document.getElementById('taskbar');
+	var bar_bottom = bar ? bar.getBoundingClientRect().bottom : 0;
+	var pad = Math.max(6, Math.ceil(bar_bottom - top) + 6);
+	viewer.style.setProperty('--gallery_viewer_pad', pad + 'px');
+}
+
+function galleryFullscreenLabel() {
+	var on = $('#gallery').hasClass('gallery_fullscreen');
+	$('#gallery_viewer_full').text(on ? '⤡' : '⤢').attr('hint', on ? 'Leave full screen' : 'Full screen');
+}
+
+function galleryFullscreenToggle() {
+	var el = $('#gallery');
+	if (!el.length) { return; }
+	el.toggleClass('gallery_fullscreen');
+	galleryViewerPad();
+	galleryFullscreenLabel();
 }
 
 function galleryCloseViewer() {
 	gallery.viewerIndex = -1;
 	$('#gallery_viewer_stage').empty();
+	$('#gallery').removeClass('gallery_fullscreen');
 	$('#gallery_viewer').hide();
 	$('#gallery_body').css('overflow-y', 'auto');
 }
@@ -411,6 +444,8 @@ $(document).on('click', '.gallery_delete', function() {
 });
 
 $(document).on('click', '#gallery_viewer_close', galleryCloseViewer);
+$(document).on('click', '#gallery_viewer_full', galleryFullscreenToggle);
+$(window).on('resize', function() { if ($('#gallery_viewer').is(':visible')) { galleryViewerPad(); } });
 $(document).on('click', '#gallery_viewer_prev', function() { galleryViewerStep(-1); });
 $(document).on('click', '#gallery_viewer_next', function() { galleryViewerStep(1); });
 
@@ -423,6 +458,24 @@ $(document).on('keydown', function(e) {
 });
 
 var galleryTouchStart = null;
+var galleryWheelAt = 0;
+var galleryWheelAcc = 0;
+// A trackpad swipe arrives as a horizontal wheel. Step once per gesture rather
+// than once per event, and only when the motion is mostly sideways.
+$(document).on('wheel', '#gallery_viewer_stage', function(e) {
+	var ev = e.originalEvent || e;
+	var dx = ev.deltaX || 0;
+	var dy = ev.deltaY || 0;
+	if (Math.abs(dx) <= Math.abs(dy)) { return; }
+	e.preventDefault();
+	var now = Date.now();
+	if (now - galleryWheelAt < 400) { return; }
+	galleryWheelAcc += dx;
+	if (Math.abs(galleryWheelAcc) < 60) { return; }
+	galleryViewerStep(galleryWheelAcc > 0 ? 1 : -1);
+	galleryWheelAcc = 0;
+	galleryWheelAt = now;
+});
 $(document).on('touchstart', '#gallery_viewer_stage', function(e) {
 	var touch = e.originalEvent && e.originalEvent.touches ? e.originalEvent.touches[0] : null;
 	galleryTouchStart = touch ? touch.clientX : null;

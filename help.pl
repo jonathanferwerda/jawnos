@@ -54,12 +54,12 @@ our %topic = (
 	'gallery' => {
 		title => 'Gallery', category => 'apps', app => 'gallery',
 		templates => [ 'templates/apps/gallery.html.ep', 'public/js/images.js' ],
-		controls => [ 'Albums', 'All photos', 'Search', 'Newest first', 'Oldest first', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
+		controls => [ 'Albums', 'All photos', 'Search', 'Newest first', 'Oldest first', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'Full screen', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
 		verified => '2026-10-22',
 		summary => 'Browse your photos and videos by album, in a grid, or one at a time.',
 		body => [
 			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
-			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home and Delete. Fetch home appears only for a photo that lives on another machine: it brings that photo back to this one.',
+			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe, a trackpad\'s sideways swipe, or the arrow keys) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home and Delete. Fetch home appears only for a photo that lives on another machine: it brings that photo back to this one.',
 			'Which photos appear is decided by the apps that are marked visible. The search box finds photos by app or file name, and the sort button flips the order between newest and oldest first.',
 			'An album marked visible opens straight away, sealed photos and all. An album marked not-visible stays out of the grid until the gallery is unlocked at home: press **Lock** to open the padlock view and unlock it with this phone or computer\'s fingerprint, or with the recovery code.'
 		],
@@ -67,7 +67,7 @@ our %topic = (
 			'Open Gallery from the start menu (the photo icon). It lands on Albums, one cover per app.',
 			'Tap an album to see its photos, or All photos for every app; the grid loads more as you scroll.',
 			'Use the search box to find photos by app or file name, and the sort button to switch between newest and oldest first.',
-			'Tap a photo to open it full-screen. Swipe or use Previous and Next; Close returns to the grid.',
+			'Tap a photo to open it full-screen. Swipe or use Previous and Next; Close returns to the grid. The square button beside Close gives the gallery the whole screen, over the taskbar, and takes it back again.',
 			'The viewer bar gives File information, Set as main image, Fetch home and Delete.',
 			'Press Lock to unlock the album you have marked not-visible; the visible albums never need it.'
 		],
