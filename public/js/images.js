@@ -334,10 +334,21 @@ function galleryOpenViewer(index) {
 // The manager's taskbar is fixed over the page, so a window that reaches the top
 // of the screen puts the viewer's buttons underneath it. Push them down by
 // whatever overlap there actually is - none, for a window already below it.
+// The full-screen class lives on the window, which is a stacking context of its
+// own; putting it on the gallery would leave the taskbar painting above.
+function galleryFullscreenHost() {
+	var win = $('#gallery').closest('.wind');
+	return win.length ? win : $('#gallery');
+}
+
+function galleryIsFullscreen() {
+	return galleryFullscreenHost().hasClass('gallery_fullscreen');
+}
+
 function galleryViewerPad() {
 	var viewer = document.getElementById('gallery_viewer');
 	if (!viewer) { return; }
-	if ($('#gallery').hasClass('gallery_fullscreen')) {
+	if (galleryIsFullscreen()) {
 		// it covers the desk, taskbar and all: nothing is over it
 		viewer.style.setProperty('--gallery_viewer_pad', '6px');
 		return;
@@ -357,14 +368,14 @@ function galleryViewerPad() {
 }
 
 function galleryFullscreenLabel() {
-	var on = $('#gallery').hasClass('gallery_fullscreen');
+	var on = galleryIsFullscreen();
 	$('#gallery_viewer_full').text(on ? '⤡' : '⤢').attr('hint', on ? 'Leave full screen' : 'Full screen');
 }
 
 function galleryFullscreenToggle() {
-	var el = $('#gallery');
-	if (!el.length) { return; }
-	el.toggleClass('gallery_fullscreen');
+	var host = galleryFullscreenHost();
+	if (!host.length) { return; }
+	host.toggleClass('gallery_fullscreen');
 	galleryViewerPad();
 	galleryFullscreenLabel();
 }
@@ -372,7 +383,7 @@ function galleryFullscreenToggle() {
 function galleryCloseViewer() {
 	gallery.viewerIndex = -1;
 	$('#gallery_viewer_stage').empty();
-	$('#gallery').removeClass('gallery_fullscreen');
+	galleryFullscreenHost().removeClass('gallery_fullscreen');
 	$('#gallery_viewer').hide();
 	$('#gallery_body').css('overflow-y', 'auto');
 }

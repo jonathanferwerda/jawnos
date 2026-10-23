@@ -30,8 +30,10 @@
 #gallery_viewer { position:absolute; inset:0; z-index:60; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden; }
 /* full screen is a class, not the Fullscreen API: the desktop app and the
    Android WebView do not all hand an element the screen, but a fixed panel
-   over the taskbar does the same job everywhere */
-#gallery.gallery_fullscreen { position:fixed; inset:0; width:100vw; height:100vh; max-height:100vh; z-index:50000; border-radius:0; }
+   over the taskbar does the same job everywhere. It goes on the window, not on
+   the gallery, because a window is its own stacking context and the taskbar
+   would otherwise still paint over it. */
+.gallery_fullscreen { position:fixed !important; inset:0 !important; width:100vw !important; height:100vh !important; max-height:100vh !important; z-index:50000 !important; border-radius:0 !important; }
 #gallery_viewer_stage { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
 #gallery_viewer_stage img, #gallery_viewer_stage video { max-width:100%; max-height:100%; object-fit:contain; display:block; }
 .gallery_viewer_nav { position:absolute; top:50%; transform:translateY(-50%); z-index:3; width:44px; height:64px; font-size:30px; line-height:1; border:0; border-radius:10px; background:#0008; color:#fff; cursor:pointer; }
@@ -43,8 +45,10 @@
 #gallery_viewer_label { flex:1 1 130px; min-width:100px; font-size:12px; color:#ddd; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .gallery_viewer_action { font-size:12px; padding:7px 9px; border:1px solid #444; border-radius:8px; background:#191919; color:#eee; cursor:pointer; }
 .gallery_viewer_action.armed { background:#7a1d1d; border-color:#b33; }
-#gallery_lock { position:absolute; inset:0; z-index:70; background:#0b0b0d; display:flex; align-items:center; justify-content:center; overflow:auto; }
-#gallery_lock .padlock_frame { position:relative !important; inset:auto !important; transform:none !important; margin:20px; }
+#gallery_lock { position:absolute; inset:0; z-index:70; background:#0b0b0d; display:flex; align-items:flex-start; justify-content:center; overflow:auto; padding:10px; }
+/* margin:auto centres a gate that fits and leaves it scrollable from the top
+   when it does not; align-items:center cut the top off a tall one instead */
+#gallery_lock .padlock_frame { position:relative !important; inset:auto !important; transform:none !important; margin:auto; }
 </style>
 <div id="gallery" unlock="<%= $unlock %>" padlock="<%= scalar @{$padlock_sighting} ? 1 : 0 %>">
 	<div id="gallery_header">
