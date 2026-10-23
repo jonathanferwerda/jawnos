@@ -6175,6 +6175,7 @@ my @manager_bundle_files = qw(
 	/js/manager/text_editor_variables.js
 	/js/manager/texture.js
 	/js/manager/clothesline.js
+	/js/manager/dialog.js
 	/js/manager/manager.js
 	/js/manager/mapengine.js
 	/js/manager/mapmarkers.js
@@ -11141,7 +11142,7 @@ sub start_menu_maker($c) {
 	my $menu = $c->param('menu');
 
 	if (1 == 0) {
-		&Websocket::send('server', { console => '$(\'#alert\').html(\'<h1>Fingerprint NOW!</h1><img src="/images/jbuttons/ne pas.png"><button id="alert_cancel">Hide</button>\').show()' });
+		&Websocket::send('server', { console => 'jawnosAlert(\'<h1>Fingerprint NOW!</h1><img src="/images/jbuttons/ne pas.png">\')' });
 		if ($device eq 'mobile') {
 			my $tf = `termux-fingerprint`;
 			my $f = eval { return decode_json $tf } || {};
@@ -11159,7 +11160,7 @@ sub start_menu_maker($c) {
 		else {
 			$fingerprint = 1;
 		}
-		&Websocket::send('server', { console => '$(\'#alert\').hide()' });
+		&Websocket::send('server', { console => 'jawnosAlertClose()' });
 	}
 	$fingerprint = 1;
 	if ($fingerprint == 1) {
@@ -17932,7 +17933,6 @@ get '/manager/configure/database_vacuum' => sub($c) {
 
 	$html .= '<img src="/images/decipherable/vacuum.png" id="database_vacuum_confirm" class="medium_thumb">';
 	$html = "Your house is clean!" if scalar @unique_settings == 0;
-	$html .= '<img src="/images/make believe/cancel_button.png" id="alert_cancel"  class="medium_thumb">';
 	$c->render(json => { html => $html });
 };
 
@@ -17965,7 +17965,7 @@ post '/manager/configure/database_vacuum_confirm' => sub($c) {
 	}
 
 	$html .= '
-		<img src="/images/make believe/cancel_button.png" id="alert_cancel"  class="medium_thumb">';
+		';
 	$c->render(json => { html => $html });
 };
 
@@ -18008,8 +18008,7 @@ get '/manager/configure/database_doctor' => sub($c) {
 		$returner->{'html'} .= '</span><br>';
 	}
 	$returner->{'html'} .= '
-		<img src="/images/jbuttons/doctor.png" id="database_doctor_confirm" class="medium_thumb">
-		<img src="/images/make believe/cancel_button.png" id="alert_cancel"  class="medium_thumb">';
+		<img src="/images/jbuttons/doctor.png" id="database_doctor_confirm" class="medium_thumb">';
 	$c->render(json => $returner);
 };
 
@@ -18018,7 +18017,7 @@ post '/manager/configure/database_doctor_confirm' => sub($c) {
 	my $auuid = $c->param('auuid') || &subs::random_string_creator(20);
 
 	my $returner = { tables => [], count => {} };
-	my $html = '<h2>Now repairing ' . $database . '</h2><br><h4></h4><br><button id="alert_cancel">Hide</button>';
+	my $html = '<h2>Now repairing ' . $database . '</h2><br><h4></h4><br>';
 	&Websocket::send('server', { yellow => $html, uuid => $auuid });
 	my $download_location = &subs::home('~/.president');
 	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
@@ -18045,7 +18044,7 @@ post '/manager/configure/database_doctor_confirm' => sub($c) {
 
 		my $existing = $tdb->query('select * from ' . $table)->hashes;
 		if (scalar @{$existing} != $count) {
-			my $html = '<h2>Now repairing ' . $count . ' ' . $table . '</h2><br><h4></h4><br><button id="alert_cancel">Hide</button>';
+			my $html = '<h2>Now repairing ' . $count . ' ' . $table . '</h2><br><h4></h4><br>';
 			&Websocket::send('server', { yellow => $html, uuid => $auuid });
 
 			my $repairable = [];
@@ -18069,7 +18068,7 @@ post '/manager/configure/database_doctor_confirm' => sub($c) {
 
 		}
 		else {
-			my $html = '<h2>Now inserting ' . $count . ' ' . $table . '</h2><br><h4></h4><br><button id="alert_cancel">Hide</button>';
+			my $html = '<h2>Now inserting ' . $count . ' ' . $table . '</h2><br><h4></h4><br>';
 			&Websocket::send('server', { yellow => $html, uuid => $auuid });
 			foreach my $i ( @{$tdb->select($table, undef, {})->hashes} ) {
 				$ndb->insert($table, $i);
@@ -18089,8 +18088,7 @@ get '/manager/configure/vacuum_app' => sub($c) {
 	my $app = $c->param('app');
 	my $html = '<h2>You are about to delete</h2><h1>' . &subs::format_name($app) . '</h1>
 		<h4>This process is irreversible, unless you have backups or whatever!</h4>
-		<img src="/images/decipherable/vacuum.png" id="vacuum_app_confirm" app="'. $app . '" class="medium_thumb">
-		<img src="/images/make believe/cancel_button.png" id="alert_cancel"  class="medium_thumb">';
+		<img src="/images/decipherable/vacuum.png" id="vacuum_app_confirm" app="'. $app . '" class="medium_thumb">';
 
 	$c->render(text => $html );
 };
@@ -18101,7 +18099,7 @@ post '/manager/configure/vacuum_app_confirm' => sub($c) {
 	&subs::vacuum_app($app);
 	&deletion_registration({ table => 'appointments', app => $app, scope => 'vacuum' });
 	my $html = '<h1>' . &subs::format_name($app) . ' is gone forever!</h1>
-	<h4>I hope you thought long and hard about it!</h4></button><button id="alert_cancel">Close</button>';
+	<h4>I hope you thought long and hard about it!</h4>';
 	$c->render(text => $html );
 };
 
@@ -37465,7 +37463,7 @@ get '/manager/configure/adopt_app' => sub($c) {
 			}
 		}
 	}
-	$html .= '<br><br><img src="/images/decipherable/adopt.png" class="medium_thumb" app="' . $app . '" id="adopt_app_confirm">&nbsp;&nbsp;<img src="/images/make believe/cancel_button.png" id="alert_cancel" class="medium_thumb">';
+	$html .= '<br><br><img src="/images/decipherable/adopt.png" class="medium_thumb" app="' . $app . '" id="adopt_app_confirm">';
 	$c->render('text' => $html);
 };
 
@@ -40263,7 +40261,7 @@ get '/manager/marker/gallery' => sub ($c) {
 		$drawings = &subs::db_select('drawings')->hashes;
 	}
 	my $returner = { app => $app, timestamp => $timestamp, drawings => $drawings };
-	$returner->{'html'} = '<h2>' . &subs::format_name($app || 'All') . '<img src="/images/make believe/cancel_button.png" id="alert_cancel"  class="medium_thumb"><div id="marker_exhibition">';
+	$returner->{'html'} = '<h2>' . &subs::format_name($app || 'All') . '<div id="marker_exhibition">';
 	foreach my $drawing ( @{$drawings} ) {
 		$returner->{'html'} .= '<img id="' . $drawing->{'paper'} . '" timestamp="' . $drawing->{'timestamp'} . '" class="paper huge_thumb ' . $drawing->{'paper'} . '" src="' . $drawing->{'image'} . '">';
 		$returner->{'html'} .= '<button class="marker_delete ' . $drawing->{'paper'} . '_delete" server_time="' . $drawing->{'server_time'} . '" uuid="' . $drawing->{'uuid'} . '" timestamp="' . $drawing->{'timestamp'} . '" paper="' . $drawing->{'paper'} . '" id="' . $drawing->{'paper'} . '_delete">D</button>';

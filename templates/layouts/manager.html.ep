@@ -103,6 +103,8 @@
 				// follows the theme (and the material's own rim on the canvas)
 				button_border_colour: '<%= &subs::misc_setting('button_border_colour') || '' %>',
 				clothesline_height: '<%= &subs::misc_setting('clothesline_height') || 40 %>',
+				// whether the rail is worn at all; unset means on, as it always was
+				clothesline_on: '<%= &subs::misc_setting('clothesline_on') || 'on' %>',
 				// the desk's material: classic (Plain), round, sandglass, glass, paper,
 				// fabric, wood or metal; universal.css and the canvas clothesline both
 				// read it

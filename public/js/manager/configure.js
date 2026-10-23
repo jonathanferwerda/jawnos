@@ -936,10 +936,11 @@ $(document).on('click', '.pseudonym_icon_set', function() {
 	var set = $(this);
 	var name = set.attr('name');
 	if ($('#whiteboard').is(':visible')) {
+		$('#alert').html('');
 		$('#alert_message').html('Are you sure you want to change the pseudonym: ' + name + '\'s icon?<br><br>' +
-			'<button pseudonym_name="' + name + '" id="pseudonym_icon_change_submit">Submit</button><button id="alert_cancel">Cancel</button>'
+			'<button pseudonym_name="' + name + '" id="pseudonym_icon_change_submit">Submit</button>'
 		);
-		$('#alert').show();
+		jawnosAlert();
 	}
 });
 
@@ -965,7 +966,7 @@ $(document).on('click', '#pseudonym_icon_change_submit',function() {
 			success: function(response) {
 				$('#pseudonym_list').html(response.list);
 				$('[name="' + name + '"][src="' + prev_img + '"]').attr('src',img);
-				$('#alert').hide();
+				jawnosAlertClose();
 			}
 		});
 	}
@@ -2259,7 +2260,7 @@ $(document).on('click', '.vacuum_app', function() {
 		type: 'GET',
 		data: { app: app, timestamp: timestamp },
 		success: function(response) {
-			$('#alert').html(response).show();
+			jawnosAlert(response);
 		}
 	});
 });
@@ -2287,7 +2288,7 @@ $(document).on('click', '#vacuum_app_confirm', function() {
 		type: 'POST',
 		data: { app: app, timestamp: timestamp },
 		success: function(response) {
-			$('#alert').html(response).show();
+			jawnosAlert(response);
 			$('.appointment_configuration_cell[app="' + app + '"]').remove();
 			$('.wind[app="' + app + '"]').remove();
 		}
@@ -2302,7 +2303,7 @@ $(document).on('click', '.adopt_app', function() {
 		url: '/manager/configure/adopt_app',
 		data: { app: app, timestamp: timestamp, scope: scope },
 		success: function(response) {
-			$('#alert').html(response).show();
+			jawnosAlert(response);
 		}
 	});
 });
@@ -2336,7 +2337,7 @@ $(document).on('click', '#adopt_app_confirm', function() {
 		type: 'POST',
 		data: { app: app, timestamp, timestamp, files: jfiles },
 		success: function(response) {
-			$('#alert').html('').hide();
+			jawnosAlertClose();
 		}
 	});
 });
@@ -2348,7 +2349,7 @@ $(document).on('click', '#database_doctor', function() {
 		type: 'GET',
 		data: { timestamp: timestamp },
 		success: function(response) {
-			$('#alert').html(response.html).show();
+			jawnosAlert(response.html);
 		}
 	});
 });
@@ -2372,7 +2373,7 @@ $(document).on('click', '#database_vacuum', function() {
 		type: 'GET',
 		data: { timestamp: timestamp },
 		success: function(response) {
-			$('#alert').html(response.html).show();
+			jawnosAlert(response.html);
 		}
 	});
 });
@@ -2394,7 +2395,7 @@ $(document).on('click', '#database_vacuum_confirm', function() {
 		type: 'POST',
 		data: { timestamp: timestamp, checkboxes: checked },
 		success: function(response) {
-			$('#alert').html(response.html).show();
+			jawnosAlert(response.html);
 		}
 	});
 });

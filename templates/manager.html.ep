@@ -1,11 +1,16 @@
 % title $title;
 <% use Mojo::JSON qw/encode_json decode_json/; %>
-<div id="alert" style="display:none;">
-	<h1>ALERT!!!!</h1>
-	<h4 id="alert_message"></h4>
-	<input type="text" style="display:none;" id="alert_input">
-	<span id="alert_buttons">
-	</span>
+<div id="alert_dialog" class="dialog_box jawnos_dialog" data-dialog-id="alert" data-dialog-title="<%= &subs::ui('Alert') %>" data-dialog-icon="<%= &subs::icon_for('/images/decipherable/windows.png') %>" hidden style="display:none;">
+	<div class="header jawnos_dialog_header">
+		<span class="jawnos_dialog_title"><%= &subs::ui('Alert') %></span>
+		<button type="button" class="cancel jawnos_dialog_close" id="alert_close" hint="<%= &subs::ui('Close') %>" aria-label="<%= &subs::ui('Close') %>">✕</button>
+	</div>
+	<div class="body jawnos_dialog_body">
+		<h4 id="alert_message"></h4>
+		<input type="text" style="display:none;" id="alert_input">
+		<span id="alert_buttons"></span>
+		<div id="alert"></div>
+	</div>
 </div>
 
 <span id="header"></span>

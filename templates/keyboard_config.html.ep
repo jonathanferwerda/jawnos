@@ -9,19 +9,20 @@
 	<% my $clothesline = &subs::setting_grabber({ app => 'keyboard', setting => 'clothesline_sensitivity' }); %>
 	<% my $in_view = &subs::setting_grabber({ app => 'keyboard', setting => 'timestamp_in_view' }); %>
 	<% my $ghosts = &subs::setting_grabber({ app => 'keyboard', setting => 'ghost_appointments' }); %>
+	<% my $clothesline_on = &subs::setting_grabber({ app => 'misc', setting => 'clothesline_on' }); %>
 	<% my $ghost_claim = &subs::work_claim('ghosts'); %>
 	<% $trackpad = '.02' unless (defined $trackpad && length $trackpad); %>
 	<% $clothesline = '.4' unless (defined $clothesline && length $clothesline); %>
 	<span style="display:block;text-align:center;font-size:13px;">
 		Trackpad <input type="range" class="keyboard_sensitivity" setting="trackpad_sensitivity" min=".002" max=".1" step=".002" value="<%= $trackpad %>" style="width:35%;vertical-align:middle;"><span class="keyboard_sensitivity_viewer" setting="trackpad_sensitivity"><%= $trackpad %></span><br>
 		Clothesline <input type="range" class="keyboard_sensitivity" setting="clothesline_sensitivity" min=".05" max="2" step=".05" value="<%= $clothesline %>" style="width:35%;vertical-align:middle;"><span class="keyboard_sensitivity_viewer" setting="clothesline_sensitivity"><%= $clothesline %></span><br>
-		<label><input type="checkbox" id="timestamp_in_view" <% if ($in_view eq 'checked') { %>checked="checked"<% } %>>Timestamps in view only</label>
-		<label><input type="checkbox" id="ghost_appointments" <% if ($ghosts eq 'checked') { %>checked="checked"<% } %>>Ghost appointments</label>
-		<label class="ghosts_claim" style="display:block;">Ghosts being sorted out: <% if ($ghost_claim) { %>by <b><%= $ghost_claim->{'machine'} || $ghost_claim->{'by'} %></b> since <%= &subs::formatted_time($ghost_claim->{'at'}) %> <a href="#" class="work_claim_release" task="ghosts">release</a><% } else { %>nobody <a href="#" class="work_claim_take" task="ghosts">take it</a><% } %></label>
-		<%# the Me app's own rail settings moved here from its Configure -> App card,
-		    so what hangs for you is set beside the time machine it hangs for %>
-		<span style="display:block;margin-top:6px;">
-			<img class="little_thumb clothesline" app="me" hint="Clothesline" src="<%= &subs::icon_for('/images/decipherable/clothesline.png') %>"> <%= &subs::ui('Clothesline settings') %>
+		<%# the three switches are their own lines, left-aligned, so their boxes
+		    line up under one another rather than sharing a centred row %>
+		<span style="display:block;text-align:left;margin-top:6px;">
+			<label style="display:block;"><input type="checkbox" id="timestamp_in_view" <% if ($in_view eq 'checked') { %>checked="checked"<% } %>> Timestamps in view only</label>
+			<label style="display:block;"><input type="checkbox" id="ghost_appointments" <% if ($ghosts eq 'checked') { %>checked="checked"<% } %>> Ghost appointments</label>
+			<label style="display:block;"><input type="checkbox" id="clothesline_on" <% unless (defined $clothesline_on && $clothesline_on eq 'off') { %>checked="checked"<% } %>> <%= &subs::ui('Show clothesline') %></label>
 		</span>
+		<label class="ghosts_claim" style="display:block;">Ghosts being sorted out: <% if ($ghost_claim) { %>by <b><%= $ghost_claim->{'machine'} || $ghost_claim->{'by'} %></b> since <%= &subs::formatted_time($ghost_claim->{'at'}) %> <a href="#" class="work_claim_release" task="ghosts">release</a><% } else { %>nobody <a href="#" class="work_claim_take" task="ghosts">take it</a><% } %></label>
 	</span>
 <% } %>

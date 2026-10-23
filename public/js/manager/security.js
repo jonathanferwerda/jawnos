@@ -189,7 +189,7 @@ $(document).on('click', '.neighbour_link_credential', function() {
 			credential: credential
 		},
 		success: function(response) {
-			$('#alert').html('').hide();
+			jawnosAlertClose();
 		}
 	});
 });
@@ -235,18 +235,18 @@ $(document).on('change', '.device_person_select', function() {
 				appointment_chron();
 			}
 			else {
-				$('#alert').html(response && response.error ? response.error : 'Could not assign that person').show();
+				jawnosAlert(response && response.error ? response.error : 'Could not assign that person');
 			}
 		},
 		error: function() {
-			$('#alert').html('Could not assign that person').show();
+			jawnosAlert('Could not assign that person');
 		}
 	});
 });
 
 $(document).on('click', '#person_add_button', function() {
 	var name = ($('#person_new_name').val() || '').trim();
-	if (!name) { $('#alert').html('Type a name first').show(); return; }
+	if (!name) { jawnosAlert('Type a name first'); return; }
 	$.ajax({
 		url: '/manager/security/person_create',
 		type: 'POST',
@@ -257,11 +257,11 @@ $(document).on('click', '#person_add_button', function() {
 				appointment_chron();
 			}
 			else {
-				$('#alert').html('Could not add that person').show();
+				jawnosAlert('Could not add that person');
 			}
 		},
 		error: function() {
-			$('#alert').html('Could not add that person').show();
+			jawnosAlert('Could not add that person');
 		}
 	});
 });
@@ -291,7 +291,7 @@ $(document).on('click', '.person_revoke', function() {
 		success: function(response) {
 			button.prop('disabled', false);
 			if (!response || !response.ok) {
-				$('#alert').html(response && response.error ? response.error : 'Could not revoke that person').show();
+				jawnosAlert(response && response.error ? response.error : 'Could not revoke that person');
 				button.text(original);
 				return;
 			}
@@ -301,7 +301,7 @@ $(document).on('click', '.person_revoke', function() {
 		error: function() {
 			button.prop('disabled', false);
 			button.text(original);
-			$('#alert').html('Could not revoke that person').show();
+			jawnosAlert('Could not revoke that person');
 		}
 	});
 });
@@ -313,7 +313,7 @@ $(document).on('click', '#recovery_create', function() {
 		data: { timestamp: Date.now(), security_view: 'recovery' },
 		success: function(response) {
 			if (!response || !response.ok || !response.code) {
-				$('#alert').html('Could not make a recovery code').show();
+				jawnosAlert('Could not make a recovery code');
 				return;
 			}
 			$('#security').replaceWith(response.html);
@@ -322,7 +322,7 @@ $(document).on('click', '#recovery_create', function() {
 			$('#recovery_code_value').text(response.code);
 		},
 		error: function() {
-			$('#alert').html('Could not make a recovery code').show();
+			jawnosAlert('Could not make a recovery code');
 		}
 	});
 });
@@ -334,7 +334,7 @@ $(document).on('click', '#shares_create', function() {
 		data: { security_view: 'recovery' },
 		success: function(response) {
 			if (!response || !response.ok || !response.shares) {
-				$('#alert').html('Could not make the shares').show();
+				jawnosAlert('Could not make the shares');
 				return;
 			}
 			$('#security').replaceWith(response.html);
@@ -344,7 +344,7 @@ $(document).on('click', '#shares_create', function() {
 			jawnosShareQr('#shares_qr', '#shares_qr_dir', response.qr);
 		},
 		error: function() {
-			$('#alert').html('Could not make the shares').show();
+			jawnosAlert('Could not make the shares');
 		}
 	});
 });
@@ -535,7 +535,7 @@ $(document).on('click', '.signatorial_selection', function() {
 				data: { holders: holders, security_view: 'recovery' },
 				success: function (r) {
 					button.prop('disabled', false);
-					if (!r || !r.ok) { $('#alert').html('Could not make device shares').show(); return; }
+					if (!r || !r.ok) { jawnosAlert('Could not make device shares'); return; }
 					$('#security').replaceWith(r.html);
 					appointment_chron();
 					$('#shares_wrap_display').show();
@@ -552,7 +552,7 @@ $(document).on('click', '.signatorial_selection', function() {
 				},
 				error: function () {
 					button.prop('disabled', false);
-					$('#alert').html('Could not make device shares').show();
+					jawnosAlert('Could not make device shares');
 				}
 			});
 		});

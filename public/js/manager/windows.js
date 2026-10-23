@@ -59,20 +59,19 @@ function window_initializer(id) {
 // newest on the right (ascending z-index, so the most recently raised window
 // sits at the right hand end), each wearing the window's own icon and name.
 // This is the list the start menu used to carry at its foot, so every caller
-// that kept the menu's strip fresh keeps the bar fresh by the same name.
+// that kept the menu's strip fresh keeps the bar fresh by the same name. Dialog
+// boxes count as windows too - the Alert, a folder question and a job's progress
+// each get a tile - so any of them can be brought back or minimised from here.
 function taskbarDisplayer(destination) {
 	if (!destination) {
 		destination = '#taskbar_windows';
 	}
 	$(destination).html('');
 	if ($(destination).length == 0) { return; }
-	var html = '';
+	var tiles = [];
 	var timestamp = Date.now();
-	$('.wind').sort(function(a, b) {
-    var valueA = numeral($(a).css('z-index')).value();
-    var valueB = numeral($(b).css('z-index')).value();
-
-    return valueA - valueB; }).each(function(i,v) {
+	$('.wind').each(function(i,v) {
+		var z = numeral($(v).css('z-index')).value();
 		var icon = $(v).find('.window_icon');
 		var formatted_name = $(v).find('.name_text').text();
 		var new_icon = icon.clone();
@@ -93,10 +92,29 @@ function taskbarDisplayer(destination) {
 		new_icon.removeClass('window_icon');
 		new_icon.addClass('window_toggle_icon little_thumb');
 
-		html += new_icon.wrap('<span/>').parent().html();
+		tiles.push({ z: z, html: new_icon.wrap('<span/>').parent().html() });
 
 		new_icon.show();
 	});
+	// A dialog is a window for the bar's purposes: a minimised one keeps its
+	// tile, while a closed Alert carries hidden="yes" and stays out of the list.
+	$('.dialog_box').each(function(i,v) {
+		if ($(v).is('[hidden]')) { return; }
+		var dialog_id = $(v).attr('data-dialog-id');
+		if (!dialog_id) {
+			dialog_id = 'dialog_' + Math.random().toString(36).substring(2);
+			$(v).attr('data-dialog-id', dialog_id);
+		}
+		var title = $(v).attr('data-dialog-title') || $(v).find('.jawnos_dialog_title, .folders_dialog_title').first().text() || 'Dialog';
+		var icon_src = $(v).attr('data-dialog-icon') || '/images/decipherable/windows.png';
+		var icon = $('<img class="window_toggle_icon little_thumb">').attr('src', icon_src)
+			.attr('app', 'dialog').attr('formatted_name', title)
+			.attr('data-dialog-id', dialog_id);
+		tiles.push({ z: numeral($(v).css('z-index')).value(), html: icon.wrap('<span/>').parent().html() });
+	});
+	tiles.sort(function(a, b) { return a.z - b.z; });
+	var html = '';
+	$.each(tiles, function(i,v) { html += v.html; });
 	$(destination).html(html);
 	$('.window_toggle_name').remove();
 	$(destination).find('.window_toggle_icon').each(function(i,v) {
@@ -104,6 +122,7 @@ function taskbarDisplayer(destination) {
 		var named = $(v).attr('formatted_name') || format_name(app);
 		var terminal_id = $(v).attr('data-terminal-id') || '';
 		var window_id = $(v).attr('data-window-id') || '';
+		var dialog_id = $(v).attr('data-dialog-id') || '';
 		var rand = Math.random().toString(36).substring(2);
 		// The button answers for its window itself (see the .window_toggle click):
 		// the name is a plain label, and the shorthand rides beside it for a bar
@@ -111,7 +130,7 @@ function taskbarDisplayer(destination) {
 		// windowRestorer, so pressing the name restored the window and then fell
 		// through to the button's own answer, which is what made a press behave
 		// like something other than a window manager's.
-		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" ' + (terminal_id ? 'data-terminal-id="' + terminal_id + '" ' : '') + (window_id ? 'data-window-id="' + window_id + '" ' : '') + 'style="text-align:center;"></span>');
+		$(v).wrap('<span class="hover window_toggle" id="' + rand + '" app="' + app + '" formatted_name="' + named + '" ' + (terminal_id ? 'data-terminal-id="' + terminal_id + '" ' : '') + (window_id ? 'data-window-id="' + window_id + '" ' : '') + (dialog_id ? 'data-dialog-id="' + dialog_id + '" ' : '') + 'style="text-align:center;"></span>');
 		$('#' + rand).append(' <span class="window_toggle_name_text">' + named + '</span>');
 		$('#' + rand).append(' <span class="window_toggle_shorthand">' + shorthand_name(named, 5) + '</span>');
 	});
@@ -161,6 +180,13 @@ function startMenuDisplayer(destination) {
 $(document).on('click', '.window_toggle', function() {
 
 	var timestamp = Date.now();
+	var dialog_id = $(this).attr('data-dialog-id') || '';
+	// a dialog's tile answers for the dialog, not an app window
+	if (dialog_id) {
+		if (typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }
+		jawnosDialogToggle(dialog_id);
+		return;
+	}
 	var app = $(this).attr('app');
 	// the tile beats while the window it answers for comes up
 	if (typeof jawnosLoadingPulse == 'function') { jawnosLoadingPulse($(this)); }

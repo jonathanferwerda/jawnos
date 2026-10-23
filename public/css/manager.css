@@ -2573,7 +2573,7 @@ body.dark_theme #desk { --desk-accent: #6ea8fe; }
 /* One shape for every Folders question and job: title bar, scrolling body,
    actions at the foot. The old boxes were absolutely placed inside a fixed
    box, so a long list ran under the buttons. */
-.folders_dialog {
+.folders_dialog, .jawnos_dialog {
 	--folders-accent: #2f6feb;
 	position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 9999;
 	display: flex; flex-direction: column; max-height: 82vh; overflow: hidden;
@@ -2581,29 +2581,32 @@ body.dark_theme #desk { --desk-accent: #6ea8fe; }
 	border: 1px solid var(--line); border-radius: 10px;
 	box-shadow: 0 18px 50px rgba(0, 0, 0, .42);
 }
-body.dark_theme .folders_dialog { --folders-accent: #6ea8fe; }
-.folders_dialog_header {
+body.dark_theme .folders_dialog, body.dark_theme .jawnos_dialog { --folders-accent: #6ea8fe; }
+.jawnos_dialog { width: min(560px, 94vw); }
+.folders_dialog_header, .jawnos_dialog_header {
 	flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
 	padding: 7px 10px; background: var(--panel-2); border-bottom: 1px solid var(--line);
-	font-size: 16px; font-weight: 600;
+	font-size: 16px; font-weight: 600; cursor: move;
 }
-.folders_dialog_title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.folders_dialog_close {
+.folders_dialog_title, .jawnos_dialog_title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folders_dialog_close, .jawnos_dialog_close {
 	flex: 0 0 auto; width: 28px; height: 28px; min-width: 28px; padding: 0;
 	font-size: 15px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
 }
-.folders_dialog_body {
+.folders_dialog_body, .jawnos_dialog_body {
 	flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 14px;
-	font-size: 14px; line-height: 1.45; box-sizing: border-box;
+	font-size: 14px; line-height: 1.45; box-sizing: border-box; position: relative;
 }
-.folders_dialog_text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.folders_dialog_input { display: block; width: 100%; margin: 0 0 8px; box-sizing: border-box; }
-.folders_dialog_progress { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; opacity: .85; }
-.folders_dialog_footer {
+.folders_dialog_text, .jawnos_dialog_text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.folders_dialog_input, .jawnos_dialog_input { display: block; width: 100%; margin: 0 0 8px; box-sizing: border-box; }
+.folders_dialog_progress, .jawnos_dialog_progress { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; opacity: .85; }
+.folders_dialog_footer, .jawnos_dialog_footer {
 	flex: 0 0 auto; display: flex; justify-content: flex-end; align-items: center; gap: 8px;
 	padding: 8px 10px; background: var(--panel-2); border-top: 1px solid var(--line);
 }
-.folders_dialog_footer button { min-width: 84px; }
+.folders_dialog_footer button, .jawnos_dialog_footer button { min-width: 84px; }
+.jawnos_dialog_body h1 { font-size: 20px; margin: 0 0 8px; }
+.jawnos_dialog_body h4 { font-size: 15px; margin: 0 0 8px; }
 
 /* ---------------- Properties ---------------- */
 .folders_properties { font-size: 14px; }

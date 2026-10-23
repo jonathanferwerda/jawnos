@@ -18,12 +18,10 @@ input[type=number] {
 .massive_thumb {  object-fit: cover; max-width: 400px; height: 160px; border: solid; border-radius: 12px; background-color: lightgrey;}
 .gigantic_thumb {  object-fit: cover; max-width: 600px; height: 200px; border: solid; border-radius: 12px; background-color: lightgrey;}
 .circular_thumb { border-radius: 50%; }
-#alert { border-radius: var(--jawnos-corner, 10px); text-align:center; z-index: 6000; position:fixed; max-width:90%; max-height: 90%; overflow:scroll; width: 70%; height: 70%; background-color: yellow; left: 15%; top: 90px; }
-/* the clothesline editor can be opened from a keyboard's Configure, and the
-   keyboard panels stand at z-index 9100; while that editor is open it rides
-   above them so it is not tucked behind the time machine */
-#alert[over_keyboard="yes"] { z-index: 9200; }
-#alert_cancel { position:absolute; right: 2px; top: 2px; }
+/* The Alert's body: the frame (title bar, close, scrolling body) lives in
+   #alert_dialog - see manager.html.ep and public/js/manager/dialog.js - so this
+   is only the content the alert carries. */
+#alert { text-align:center; }
 :root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; --time-fixed: #ddffee; --jawnos-corner: 10px; --button_border: 3px; color-scheme: light; }
 body { background-color: var(--panel); color: var(--ink); }
 /* ---- soft corners ---------------------------------------------------------

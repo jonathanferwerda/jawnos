@@ -1135,6 +1135,12 @@ $(document).on('change', '#ghost_appointments', function() {
 	if (typeof calculator == 'function') { calculator(); }
 });
 
+$(document).on('change', '#clothesline_on', function() {
+	var value = $(this).is(':checked') ? 'on' : 'off';
+	settingSetter({ 'app': 'misc', 'setting': 'clothesline_on', 'value': value });
+	if (typeof clotheslineToggleApply == 'function') { clotheslineToggleApply(value); }
+});
+
 // A work claim says which machine is on a job, so two agents do not take the same
 // one. It rides the 'claims' app, which the mesh carries to every machine.
 $(document).on('click', '.work_claim_take, .work_claim_release', function(e) {

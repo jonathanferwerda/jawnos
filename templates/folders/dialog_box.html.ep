@@ -1,6 +1,6 @@
 <%# One dialog shape for every Folders job and question: a title bar with a
     close, a scrolling body, and the actions at the foot. %>
-<div class="dialog_box folders_dialog" command="<%= $box->{'command'} %>" job="<%= $box->{'job'} %>" folder="<%= $folders->{'folder'} %>" uuid="<%= $uuid %>" style="height:<%= $box->{'height'} || 'auto' %>;width:<%= $box->{'width'} || 'min(520px, 94vw)' %>;">
+<div class="dialog_box folders_dialog" command="<%= $box->{'command'} %>" job="<%= $box->{'job'} %>" folder="<%= $folders->{'folder'} %>" uuid="<%= $uuid %>" data-dialog-icon="<%= &subs::icon_for('/images/decipherable/folder.png') %>" style="height:<%= $box->{'height'} || 'auto' %>;width:<%= $box->{'width'} || 'min(520px, 94vw)' %>;">
 	<div class="header folders_dialog_header">
 		<span class="folders_dialog_title"><%= $box->{'name'} || &subs::ui('Dialog Box') %></span>
 		<button type="button" class="cancel folders_dialog_close" uuid="<%= $uuid %>" onclick="$('[uuid=\'<%= $uuid %>\']').remove()" hint="<%= &subs::ui('Close') %>" aria-label="<%= &subs::ui('Close') %>">✕</button>

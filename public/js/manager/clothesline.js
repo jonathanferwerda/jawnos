@@ -2,7 +2,11 @@
 // the layout); clothesLineHeight is what the printers actually read, and it is
 // held at 0 whenever the desk wears no rail at all.
 var clothesLineBaseHeight = (typeof jawnos_bar_settings != 'undefined' && parseInt(jawnos_bar_settings['clothesline_height'])) || 40;
-var clothesLineHeight = clothesLineBaseHeight;
+// The rail is worn unless the person turned it off beside the time machine. A
+// hidden rail keeps its height for when it comes back, but the printers reserve
+// nothing for it while clothesLineHeight is 0.
+var clotheslineEnabled = (typeof jawnos_bar_settings == 'undefined' || jawnos_bar_settings['clothesline_on'] !== 'off');
+var clothesLineHeight = clotheslineEnabled ? clothesLineBaseHeight : 0;
 var clothesLinePos = {
 	x: 0, 
 	y: 0, 
@@ -50,12 +54,34 @@ var clotheslineSensitivity = keyboardSensitivity('clothesline', .4);
 function jawnosClotheslineHeightApply(px) {
 	px = parseInt(px, 10);
 	clothesLineBaseHeight = (isFinite(px) && px > 0) ? px : 40;
+	if (!clotheslineEnabled) { return; }
 	if (wardrobe && wardrobe.length) {
 		clothesLineHeight = clothesLineBaseHeight;
 		if (typeof clotheslineHanger == 'function') { clotheslineHanger(wardrobe); }
 	}
 }
+// The switch beside the time machine. Turning the rail off gives its band back
+// to the view at once; turning it on hangs it again at its configured height.
+function clotheslineToggleApply(value) {
+	clotheslineEnabled = (value !== 'off');
+	clothesLineHeight = clotheslineEnabled ? clothesLineBaseHeight : 0;
+	if (!clotheslineEnabled) {
+		clothesLinePos['exists'] = 0;
+		clothesLinePos['maxHeight'] = clothesLinePos['minHeight'] = headerHeight;
+	}
+	if (typeof graphicalize == 'function' && typeof response != 'undefined' && response && response.appts) {
+		graphicalize();
+	}
+	else if (clotheslineEnabled && typeof clotheslineHanger == 'function') {
+		clotheslineHanger(wardrobe);
+	}
+}
 function clotheslineHanger(clothes) {
+	if (!clotheslineEnabled) {
+		clothesLinePos['exists'] = 0;
+		clothesLinePos['maxHeight'] = clothesLinePos['minHeight'] = headerHeight;
+		return;
+	}
 
 	if (hangingClothes == 0) {
 		hangingClothes = 1;
@@ -742,10 +768,7 @@ $(document).on('click', '.clothesline', function() {
 		type: 'GET',
 		data: { app: app, timestamp: timestamp },
 		success: function(response) {
-			// the editor can be opened from a keyboard's Configure, which stands
-			// above the ordinary alert layer; ride above it so the schedule is
-			// not tucked behind the time machine
-			$('#alert').attr('over_keyboard', 'yes').html(response.html).show();
+			jawnosAlert(response.html);
 		}
 	});
 });

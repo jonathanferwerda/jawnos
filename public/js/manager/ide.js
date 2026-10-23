@@ -374,7 +374,7 @@ $(document).on('input', '#ide_content', function() {
 });
 
 $(document).on('click', '#ide_new', function() {
-	$('#alert').html('<h1>Gonna make a new file!</h1><h4>Folder: ' + idecwd + '</h4><input id="ide_new_file_namer"><button id="ide_new_file_create" class="hover">Create</button><button id="alert_cancel" class="hover">Cancel</button>').show();
+	jawnosAlert('<h1>Gonna make a new file!</h1><h4>Folder: ' + idecwd + '</h4><input id="ide_new_file_namer"><button id="ide_new_file_create" class="hover">Create</button>');
 });
 
 $(document).on('click', '#ide_new_file_create', function() {
@@ -386,7 +386,7 @@ $(document).on('click', '#ide_new_file_create', function() {
 		type: 'POST',
 		data: { filename: filename, timestamp: timestamp },
 		success: function(response) {
-			$('#alert').hide();
+			jawnosAlertClose();
 			ideFolderSelector(idecwd);
 			var openerAttempts = 0;
 			var opener = setInterval(function() {

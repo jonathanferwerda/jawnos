@@ -1798,7 +1798,7 @@ $(document).on('click', '#marker_gallery', function() {
 		type: 'GET',
 		data: { timestamp: timestamp, app: app },
 		success: function(response) {
-			$('#alert').html(response.html).show();
+			jawnosAlert(response.html);
 		}
 	});
 });

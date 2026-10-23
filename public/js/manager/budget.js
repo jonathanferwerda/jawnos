@@ -393,9 +393,8 @@ $(document).on('click', '.budget_autocalc', function() {
 						message += '<button app="' + response.data.app + '" circumstance="' + response.data.circumstance + '" result="' + v.formatted_result + '" class="budget_autocalc_accept">' + v.formatted_result +'</button><br>';
 					}
 				});
-				message += '<br><button id="alert_cancel">Cancel</button>'
-				$('#alert').html(message);
-				$('#alert').show();
+				message += '<br>';
+				jawnosAlert(message);
 				$(this).removeClass('active');
 		//	}
 			if ($('.wind[app="' + app + '"]').is(':visible')) {
@@ -468,7 +467,7 @@ $(document).on('click', '.budget_autocalc_accept', function() {
 			label.find('.ability_label').html('<b>' + label.attr('formatted_setting') + ':</b> ' + budgetGoalsValue(form).slice(0, 20));
 		}
 	}
-	$('#alert').hide();
+	jawnosAlertClose();
 	$.ajax({
 		url: '/manager/budget/edit',
 		type: 'POST',
@@ -667,7 +666,7 @@ $(document).on('click', '#budget_reconcile_apply', function() {
 		success: function(response) {
 			button.removeAttr('disabled');
 			var message = jawnosT('Reconciled.') + ' ' + jawnosT('Balance') + ': ' + numeral(response.balance).format('$0.00');
-			if ($('#alert').length) { $('#alert').html(message).show(); }
+			if ($('#alert').length) { jawnosAlert(message); }
 			else { $('#budget_reconcile_message').text(message); }
 			budgetInit();
 		},
@@ -796,7 +795,7 @@ $(document).on('click', '#budget_journal_rebuild', function() {
 		success: function(response) {
 			button.removeAttr('disabled');
 			var message = jawnosT('Journal rebuilt:') + ' ' + (response.entries || 0) + ' ' + jawnosT('entries') + ', ' + (response.lines || 0) + ' ' + jawnosT('lines') + '.';
-			if ($('#alert').length) { $('#alert').html(message).show(); }
+			if ($('#alert').length) { jawnosAlert(message); }
 			else { $('#budget_journal_message').text(message); }
 			budgetInit();
 		},

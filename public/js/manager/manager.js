@@ -2440,7 +2440,7 @@ function fuck_you() {
 	$('#taskbar_windows').html('');
 	$('#time_machine').val('');
 	$('#timeshift').val('');
-	$('#alert').html('').hide();
+	jawnosAlertClose();
 	$('.dot').hide();
 	$('.window_icon').remove();
 	localStorage.setItem('timeshift', '0');
@@ -3555,7 +3555,7 @@ $(document).on('click', '.web', function() {
 							type: 'post',
 							data: { app: app, uuid: uuid, selector: selector, index: index, measure: measure, text: text },
 							success: function(response) {
-								$('#alert').html(response.confirmation).show();
+								jawnosAlert(response.confirmation);
 							}
 		
 						});
@@ -3608,7 +3608,7 @@ $(document).on('click', '#web_measure_confirm_save', function() {
 			spec: chosen.attr('spec')
 		},
 		success: function(response) {
-			$('#alert').hide();
+			jawnosAlertClose();
 		}
 	});
 });
@@ -3711,7 +3711,7 @@ function graphicalize(respons) {
 	}
 	// the rail's band is the configured height, unless the desk wears no rail at
 	// all (then the printers below reserve nothing for it)
-	clothesLineHeight = (respons.clothesline.length == 0) ? 0 : clothesLineBaseHeight;
+	clothesLineHeight = (clotheslineEnabled && respons.clothesline.length) ? clothesLineBaseHeight : 0;
 	appts = respons.appts;
 
 	timestamp = appts['__specs']['timestamp'];
@@ -4648,7 +4648,7 @@ $(document).on('click', '.delete_app', function() {
 				}
 			},
 			error: function(err) { 
-				$('#alert').html('It didn\'t work! Try again!<br><br><button id="alert_cancel">Cancel</button>');	
+				jawnosAlert('It didn\'t work! Try again!');
 			}
 		});
 	}
@@ -5027,14 +5027,7 @@ $(document).on('click', '#lock_session', function() {
 	}, 300);
 });
 
-$(document).on('click', '#alert_cancel', function() {
-	$('#alert_message').text('');
-	$('#alert').removeAttr('over_keyboard').html('');
-	$('#alert').hide();
-	$('#alert').attr('hidden', 'yes');
-});
-
-$(document).on('click','.enabler', function() {
+$(document).on('click', '.enabler', function() {
 	var strawbeery = $(this);
 	var appointment = strawbeery.closest('.appointment');
 	var app = appointment.attr('app');

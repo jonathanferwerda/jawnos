@@ -787,12 +787,12 @@ function wsMessageHandler(event) {
 		}
 		else if ( data['alert'] ) {
 
-			if ((!$('#alert').attr('uuid') || $('#alert').attr('uuid') == data['uuid']) && $('#alert').attr('hidden') != 'yes') {
-				$('#alert').html(data['alert']).show();
+			if ((!$('#alert').attr('uuid') || $('#alert').attr('uuid') == data['uuid']) && !$('#alert').is('[hidden]')) {
+				jawnosAlert(data['alert'], { uuid: data['uuid'] });
 			}
 			$('#alert').attr('uuid', data['uuid']);
 			if (data['close'] == 'yes') { 
-				$('#alert').hide();
+				jawnosAlertClose();
 
 				$('#alert').attr('uuid', undefined);
 				$('#alert').attr('hidden', undefined);
