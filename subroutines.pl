@@ -3153,31 +3153,145 @@ sub device_setter() {
 # power_supply sysfs to apps, while a desktop reads BAT0 directly.
 our $battery_sample_memo;
 
-# The least-squares slope of a battery history, in percentage points per hour.
-# Points are { t => epoch_ms, p => percent }; a slope needs three samples across
-# at least five minutes, or one integer percentage step decides the answer.
+# The robust slope of a battery history, in percentage points per hour.
+# Points are { t => epoch_ms, p => percent }. A fit needs $min_points samples
+# across $min_span milliseconds AND at least $min_delta points of net movement:
+# on a 1% gauge a three-sample five-minute window is one integer step, not a
+# rate. The slope is Theil-Sen (the median of every pairwise slope), so a
+# single voltage sag or bad reading is one pair's worth of noise rather than the
+# answer. Returns (slope, span_ms, samples, p25, p75, movement); the first three
+# are the old contract, and p25/p75 form the confidence band the card shows as a
+# range. A partial answer still carries the span/movement so a caller can tell
+# "not enough time yet" from "too flat to measure".
 sub battery_slope {
-	my ($points, $min_points, $min_span) = @_;
+	my ($points, $min_points, $min_span, $min_delta) = @_;
 	$min_points ||= 3;
-	$min_span ||= 300000;
-	my @p = grep { ref $_ eq 'HASH' && defined $_->{'p'} && defined $_->{'t'} } @{ $points || [] };
-	return unless scalar @p >= $min_points;
-	my $span = $p[-1]->{'t'} - $p[0]->{'t'};
-	return unless $span >= $min_span;
-	my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
-	my $start = $p[0]->{'t'};
-	foreach my $point ( @p ) {
-		my $x = ($point->{'t'} - $start) / 3600000;   # hours
-		my $y = $point->{'p'};                    # percentage points
-		$n++;
-		$sx += $x;
-		$sy += $y;
-		$sxx += $x * $x;
-		$sxy += $x * $y;
+	$min_span ||= 1200000;   # twenty minutes
+	$min_delta = 2 unless defined $min_delta;
+	my @raw = sort { $a->{'t'} <=> $b->{'t'} }
+		grep { ref $_ eq 'HASH' && defined $_->{'p'} && defined $_->{'t'} } @{ $points || [] };
+	my @p;
+	my $last_t;
+	foreach my $point ( @raw ) {
+		my $t = $point->{'t'} + 0;
+		my $v = $point->{'p'} + 0;
+		next if $v < 0 || $v > 100;
+		next if defined $last_t && $t <= $last_t;   # a duplicate or out of order
+		# A jump this large, or a gap this long, is a new segment - a battery
+		# swap, a bad read, or a board that slept through the gap - not the
+		# drain being measured. Keep the newest segment.
+		@p = () if @p && abs($v - $p[-1]->{'p'}) > 10;
+		@p = () if @p && $t - $p[-1]->{'t'} > 1800000;
+		push @p, { t => $t, p => $v };
+		$last_t = $t;
 	}
-	my $den = $n * $sxx - $sx * $sx;
-	return unless $den > 0;
-	return (($n * $sxy - $sx * $sy) / $den, $span, $n);   # points/hour, span_ms, samples
+	return (undef, 0, 0, undef, undef, 0) unless @p;
+	my $span = $p[-1]->{'t'} - $p[0]->{'t'};
+	my $movement = abs($p[-1]->{'p'} - $p[0]->{'p'});
+	return (undef, $span, scalar @p, undef, undef, $movement) if @p < $min_points;
+	return (undef, $span, scalar @p, undef, undef, $movement) if $span < $min_span;
+	return (undef, $span, scalar @p, undef, undef, $movement) if $movement < $min_delta;
+	my @slopes;
+	for my $i ( 0 .. $#p - 1 ) {
+		for my $j ( $i + 1 .. $#p ) {
+			my $dt = ($p[$j]->{'t'} - $p[$i]->{'t'}) / 3600000;   # hours
+			next unless $dt > 0;
+			push @slopes, ($p[$j]->{'p'} - $p[$i]->{'p'}) / $dt;
+		}
+	}
+	return (undef, $span, scalar @p, undef, undef, $movement) unless @slopes;
+	@slopes = sort { $a <=> $b } @slopes;
+	my $quantile = sub {
+		my $f = shift;
+		my $pos = $f * (scalar(@slopes) - 1);
+		my $lo = int($pos);
+		my $hi = $lo + 1;
+		$hi = $lo if $hi > $#slopes;
+		return $slopes[$lo] + ($slopes[$hi] - $slopes[$lo]) * ($pos - $lo);
+	};
+	my $median = $quantile->(0.5);
+	my $lo = $quantile->(0.25);
+	my $hi = $quantile->(0.75);
+	return ($median, $span, scalar @p, $lo, $hi, $movement);
+}
+
+# The card's one estimate, in hours, from whichever reading the pack gives.
+# The gauge (energy/power) is the only real measurement; a percentage slope is
+# an inference. Fills eta_kind (left/full), eta_hours, eta_lo/eta_hi (a band),
+# eta_flat (too flat to measure) and eta_floor (the most time a flat reading
+# allows). `$previous` is the last sample, used to keep the shown figure still
+# while the fit settles; a status change or a large real move is taken at once.
+sub battery_eta_estimate {
+	my ($b, $previous) = @_;
+	return $b unless ref $b eq 'HASH';
+	delete @{$b}{qw/eta_kind eta_hours eta_lo eta_hi eta_flat eta_floor/};
+	my $pct = $b->{'percentage'};
+	return $b unless defined $pct;
+	my $status = lc($b->{'status'} || '');
+	return $b if $status eq 'full' || $pct >= 100;
+	my ($kind, $hours, $lo, $hi, $flat, $floor);
+	if ($status eq 'charging') {
+		$kind = 'full';
+		if (defined $b->{'charge_eta'} && $b->{'charge_eta'} > 0) {
+			$hours = $lo = $hi = $b->{'charge_eta'};
+		}
+		elsif (defined $b->{'charge_pph'} && $b->{'charge_pph'} > 0) {
+			# A percentage-only charge runs short in the constant-current phase:
+			# the last part of a Li-ion charge tapers. Pad it a little, and show
+			# the slope's own band where there is one.
+			$hours = (100 - $pct) / $b->{'charge_pph'} * 1.2;
+			if (defined $b->{'charge_pph_hi'} && $b->{'charge_pph_hi'} > 0
+				&& defined $b->{'charge_pph_lo'} && $b->{'charge_pph_lo'} > 0) {
+				$lo = (100 - $pct) / $b->{'charge_pph_hi'} * 1.2;
+				$hi = (100 - $pct) / $b->{'charge_pph_lo'} * 1.2;
+			}
+		}
+	}
+	elsif ($status eq 'discharging' || $status eq '') {
+		$kind = 'left';
+		if (defined $b->{'discharge_eta'} && $b->{'discharge_eta'} > 0) {
+			$hours = $lo = $hi = $b->{'discharge_eta'};
+		}
+		elsif (defined $b->{'pph'} && $b->{'pph'} > 0) {
+			$hours = $pct / $b->{'pph'};
+			if (defined $b->{'pph_hi'} && $b->{'pph_hi'} > 0
+				&& defined $b->{'pph_lo'} && $b->{'pph_lo'} > 0) {
+				$lo = $pct / $b->{'pph_hi'};   # the steepest plausible rate
+				$hi = $pct / $b->{'pph_lo'};   # the shallowest
+			}
+		}
+		elsif ($b->{'pph_flat'}) {
+			$flat = 1;
+			my $window = $b->{'pph_window'} || 2;
+			# Two points of movement is the smallest step the gauge resolves;
+			# a flatter history means the rate is no more than this.
+			$floor = $window > 0 ? $pct / (2 / $window) : undef;
+		}
+	}
+	else {
+		return $b;   # not charging, unknown: the template says plugged in
+	}
+	return $b unless defined $kind;
+	if (defined $hours) {
+		my $prev = ref $previous eq 'HASH' ? $previous->{'eta_hours'} : undef;
+		my $prev_kind = ref $previous eq 'HASH' ? ($previous->{'eta_kind'} || '') : '';
+		if (defined $prev && $prev > 0 && $prev_kind eq $kind) {
+			# Follow a real move at once; otherwise smooth, so an eight-second
+			# card refresh does not make the figure flicker.
+			$b->{'eta_hours'} = ($hours > $prev * 1.25 || $hours < $prev * 0.8)
+				? $hours : $prev * 0.7 + $hours * 0.3;
+		}
+		else {
+			$b->{'eta_hours'} = $hours;
+		}
+		$b->{'eta_lo'} = $lo if defined $lo;
+		$b->{'eta_hi'} = $hi if defined $hi;
+		$b->{'eta_over'} = 1 if $hours >= 240;   # a clamped gauge is a floor
+	}
+	$b->{'eta_kind'} = $kind;
+	$b->{'eta_flat'} = 1 if $flat;
+	$b->{'eta_floor'} = $floor if defined $floor;
+	return $b;
 }
 # Fill in a finish-time estimate from a pack's own gauge, where the fields are
 # there to do it: Android's charge counter plus the percentage gives the pack's
@@ -3205,7 +3319,10 @@ sub battery_gauge_eta {
 		? ($capacity * ($scale - $pct) / $scale) / $amps
 		: ($capacity * $pct / $scale) / $amps;
 	$b->{'capacity_mah'} = $capacity;
-	$b->{$eta} = $hours if $hours > 0.01 && $hours < 48;
+	if ($hours > 0.01) {
+		if ($hours > 240) { $hours = 240; $b->{'eta_capped'} = 1; }
+		$b->{$eta} = $hours;
+	}
 	return $b;
 }
 
@@ -3297,12 +3414,20 @@ sub battery_sample {
 		# A laptop's power_now is a short-term average that swings with the
 		# load, so a finish time taken from one reading jumps every few seconds.
 		# A slow EMA (about three samples) keeps it steady without hiding a real
-		# change in the charge rate.
+		# change in the charge rate. A status change starts fresh: blending a
+		# charging rate into a discharging one would read several times too
+		# short for a few samples after the cable comes out.
+		my $status_now = lc($b->{'status'} || '');
 		my $rate_w = defined $b->{'power'} ? abs($b->{'power'}) : undef;
-		$rate_w = abs($b->{'current'}) * $b->{'voltage'}
+		# current is mA; /1000 makes it A, so current * voltage is W. Without
+		# this the fallback was 1000x too high (mW treated as W).
+		$rate_w = abs($b->{'current'}) / 1000 * $b->{'voltage'}
 			if (!defined $rate_w || $rate_w == 0) && defined $b->{'current'} && defined $b->{'voltage'};
 		if (defined $rate_w && $rate_w > 0) {
-			my $prev = (ref $cached eq 'HASH') ? $cached->{'rate_w'} : undef;
+			my $prev_source = (ref $cached eq 'HASH') ? ($cached->{'source'} || '') : '';
+			my $prev_status = (ref $cached eq 'HASH') ? lc($cached->{'status'} || '') : '';
+			my $prev = (ref $cached eq 'HASH' && $prev_status eq $status_now && $prev_source eq $b->{'source'})
+				? $cached->{'rate_w'} : undef;
 			$b->{'rate_w'} = (defined $prev && $prev > 0) ? ($prev * 0.7 + $rate_w * 0.3) : $rate_w;
 			$rate_w = $b->{'rate_w'};
 		}
@@ -3318,7 +3443,6 @@ sub battery_sample {
 				: (defined $b->{'current'} ? abs($b->{'current'}) * 1000 : undef);
 			$b->{'capacity_mah'} = $charge_full / 1000;
 		}
-		my $status_now = lc($b->{'status'} || '');
 		if (defined $rate_u && $rate_u > 0 && defined $now_u) {
 			if ($status_now eq 'charging' && $full_u > $now_u) {
 				$b->{'charge_eta'} = ($full_u - $now_u) / $rate_u;
@@ -3330,11 +3454,12 @@ sub battery_sample {
 	}
 	# PPH: one number, the battery's percent-per-hour draw while discharging.
 	# The old view divided one drop by one interval and had a `percenttage` typo
-	# that made every value zero; this is a least-squares slope over the
-	# discharging samples in the last hour, so integer percentage steps and a
-	# missed sample do not decide the answer. A sample is kept every 30s (the
-	# reading itself may refresh every 10s) and 360 of them give a three-hour
-	# window without growing the cache row.
+	# that made every value zero. The fit is now robust across the whole stored
+	# history (three hours), needs twenty minutes and two points of movement, and
+	# carries a confidence band, so one integer step or one bad reading does not
+	# decide the answer. A sample is kept every 30s (the reading itself may
+	# refresh every 10s) and 360 of them give a three-hour window without growing
+	# the cache row.
 	my $history = (ref $cached eq 'HASH' && ref $cached->{'history'} eq 'ARRAY') ? $cached->{'history'} : [];
 	if (defined $b->{'percentage'}) {
 		my $last_at = scalar(@{$history}) ? ($history->[-1]->{'t'} || 0) : 0;
@@ -3347,47 +3472,68 @@ sub battery_sample {
 		my $want = lc($b->{'status'} || '');
 		my @points = grep {
 			defined $_->{'p'} && defined $_->{'t'} && ($_->{'s'} || '') eq $want
-				&& $now - $_->{'t'} <= 3600000
+				&& $now - $_->{'t'} <= 10800000
 		} @{$history};
-		my ($slope, $span, $n) = &battery_slope(\@points);
-		if (defined $slope) {
-			if ($want eq 'discharging') {
-				my $rate = -$slope;
-				$b->{'pph'} = $rate > 0 ? $rate : 0;
-				$b->{'pph_window'} = $span / 3600000;
-				$b->{'pph_points'} = $n;
-			}
-			elsif ($slope > 0) {
-				# the same slope the other way: how fast the pack is filling
-				$b->{'charge_pph'} = $slope;
-				$b->{'charge_window'} = $span / 3600000;
-				$b->{'charge_points'} = $n;
-			}
+		my ($slope, $span, $n, $lo, $hi, $movement) = &battery_slope(\@points);
+		if (defined $slope && $want eq 'discharging' && -$slope > 0) {
+			my $rate = -$slope;
+			$b->{'pph'} = $rate;
+			$b->{'pph_lo'} = -$hi if defined $hi && -$hi > 0;
+			$b->{'pph_hi'} = -$lo if defined $lo && -$lo > 0;
+			$b->{'pph_window'} = $span / 3600000;
+			$b->{'pph_points'} = $n;
+		}
+		elsif (defined $slope && $want eq 'charging' && $slope > 0) {
+			# the same slope the other way: how fast the pack is filling
+			$b->{'charge_pph'} = $slope;
+			$b->{'charge_pph_lo'} = $lo if defined $lo && $lo > 0;
+			$b->{'charge_pph_hi'} = $hi if defined $hi && $hi > 0;
+			$b->{'charge_window'} = $span / 3600000;
+			$b->{'charge_points'} = $n;
 		}
 		elsif ($want eq 'charging') {
-			# A pack with no usable gauge still needs five minutes for the
+			# A pack with no usable gauge still needs twenty minutes for the
 			# regular slope, but integer percentages hide a fast charge for a
-			# long time: two readings a minute apart that actually differ are
-			# enough to say "about an hour". The gauge estimate above, where
-			# the pack reports one, stays the better answer.
-			my ($quick, $qspan, $qn) = &battery_slope(\@points, 2, 60000);
-			if (defined $quick && $quick > 0) {
-				$b->{'charge_pph'} = $quick;
-				$b->{'charge_window'} = $qspan / 3600000;
-				$b->{'charge_points'} = $qn;
-				$b->{'charge_quick'} = 1;
+			# long time: the last two readings that actually differ, within a
+			# quarter of an hour, say enough to show "about an hour". The gauge
+			# estimate above, where the pack reports one, stays the better one.
+			my @recent = grep { $_->{'t'} >= $now - 900000 } @points;
+			if (@recent >= 2) {
+				my $last = $recent[-1];
+				my ($prev) = reverse grep { $_->{'p'} != $last->{'p'} } @recent;
+				if ($prev) {
+					my $dt = ($last->{'t'} - $prev->{'t'}) / 3600000;
+					my $dp = $last->{'p'} - $prev->{'p'};
+					if ($dt > 0 && $dp > 0) {
+						$b->{'charge_pph'} = $dp / $dt;
+						$b->{'charge_window'} = $dt;
+						$b->{'charge_points'} = 2;
+						$b->{'charge_quick'} = 1;
+					}
+				}
 			}
+		}
+		elsif ($want eq 'discharging' && $span >= 7200000 && $movement < 2) {
+			# It has not moved enough to measure over two hours: the drain is
+			# below the gauge's resolution, so the honest answer is a floor.
+			$b->{'pph_flat'} = 1;
+			$b->{'pph_window'} = $span / 3600000;
+			$b->{'pph_points'} = $n;
 		}
 	}
 	# A gauge can divide by a near-empty reading and return a wild number; keep
-	# only a plausible finish time (roughly a minute to two days).
+	# only a plausible finish time (roughly a minute to ten days). A pack that
+	# reports more than ten days is kept at the bound rather than dropped, so
+	# the card can say "> ten days" instead of falling back to "estimating".
 	foreach my $eta ( qw/charge_eta discharge_eta/ ) {
 		next unless defined $b->{$eta};
-		$b->{$eta} = undef unless $b->{$eta} > 0.01 && $b->{$eta} < 48;
+		if ($b->{$eta} <= 0.01) { $b->{$eta} = undef; }
+		elsif ($b->{$eta} > 240) { $b->{$eta} = 240; $b->{'eta_capped'} = 1; }
 	}
 	# a machine with no battery has nothing worth caching; the Monitor can stat
 	# it every poll without a write
 	if ($b->{'source'} ne 'none') {
+		&battery_eta_estimate($b, $cached);
 		my %store = %{$b};
 		$store{'history'} = $history;
 		&cache_set({ app => '__president', context => 'battery', subcontext => 'current', warranty => '-1d' }, \%store);
@@ -3443,9 +3589,10 @@ sub embedded_levels_scan {
 		}
 	}
 
-	# One reading every five minutes, kept for three hours: enough for the same
-	# least-squares slope the machines use, without a row that grows with the
-	# cache's warranty. Both the HTTP and the Bluetooth paths land here.
+	# One reading every five minutes, kept for three hours: the same robust
+	# slope the machines use, over the same window, without a row that grows
+	# with the cache's warranty. Both the HTTP and the Bluetooth paths land
+	# here.
 	my $entry = sub {
 		my ($d) = @_;
 		my $chip = $d->{'chip_id'};
@@ -3455,31 +3602,55 @@ sub embedded_levels_scan {
 			push @history, { t => $now, p => $d->{'battery'} + 0, s => ($d->{'status'} || '') };
 			splice @history, 0, scalar(@history) - 36 if scalar @history > 36;
 		}
-		my $recent = [ grep { defined $_->{'p'} && defined $_->{'t'} && $now - $_->{'t'} <= 3600000 } @history ];
-		my ($pph, $charge_pph, $pph_window, $pph_points, $charge_window, $charge_points);
+		my $recent = [ grep { defined $_->{'p'} && defined $_->{'t'} && $now - $_->{'t'} <= 10800000 } @history ];
+		my ($pph, $pph_lo, $pph_hi, $pph_window, $pph_points);
+		my ($charge_pph, $charge_pph_lo, $charge_pph_hi, $charge_window, $charge_points);
+		my $pph_flat;
 		my $status_now = lc($d->{'status'} || '');
 		if ($status_now eq 'discharging' || $status_now eq 'charging') {
 			my @p = grep { ($_->{'s'} || '') eq $status_now } @{$recent};
-			my ($slope, $span, $count) = &battery_slope(\@p);
+			my ($slope, $span, $count, $lo, $hi, $movement) = &battery_slope(\@p);
 			if (defined $slope) {
 				if ($status_now eq 'discharging' && -$slope > 0) {
-					$pph = -$slope; $pph_window = $span / 3600000; $pph_points = $count;
+					$pph = -$slope;
+					$pph_lo = -$hi if defined $hi && -$hi > 0;
+					$pph_hi = -$lo if defined $lo && -$lo > 0;
+					$pph_window = $span / 3600000; $pph_points = $count;
 				}
 				elsif ($status_now eq 'charging' && $slope > 0) {
-					$charge_pph = $slope; $charge_window = $span / 3600000; $charge_points = $count;
+					$charge_pph = $slope;
+					$charge_pph_lo = $lo if defined $lo && $lo > 0;
+					$charge_pph_hi = $hi if defined $hi && $hi > 0;
+					$charge_window = $span / 3600000; $charge_points = $count;
 				}
+			}
+			elsif ($status_now eq 'discharging' && $span >= 7200000 && $movement < 2) {
+				# Too flat to measure over two hours: a floor, not a number.
+				$pph_flat = 1;
+				$pph_window = $span / 3600000;
+				$pph_points = $count;
 			}
 		}
 		else {
 			# Older firmware sends no state; the sign of the slope still says
 			# which way the pack is going.
-			my ($slope, $span, $count) = &battery_slope($recent);
+			my ($slope, $span, $count, $lo, $hi) = &battery_slope($recent);
 			if (defined $slope) {
-				if ($slope < -0.01) { $pph = -$slope; $pph_window = $span / 3600000; $pph_points = $count; }
-				elsif ($slope > 0.01) { $charge_pph = $slope; $charge_window = $span / 3600000; $charge_points = $count; }
+				if ($slope < -0.01) {
+					$pph = -$slope;
+					$pph_lo = -$hi if defined $hi && -$hi > 0;
+					$pph_hi = -$lo if defined $lo && -$lo > 0;
+					$pph_window = $span / 3600000; $pph_points = $count;
+				}
+				elsif ($slope > 0.01) {
+					$charge_pph = $slope;
+					$charge_pph_lo = $lo if defined $lo && $lo > 0;
+					$charge_pph_hi = $hi if defined $hi && $hi > 0;
+					$charge_window = $span / 3600000; $charge_points = $count;
+				}
 			}
 		}
-		return {
+		my $entry = {
 			chip_id => $chip,
 			name => $d->{'name'} || $d->{'model'} || $d->{'purpose'},
 			model => $d->{'model'} || '',
@@ -3487,19 +3658,27 @@ sub embedded_levels_scan {
 			ip => $d->{'ip'} || '',
 			bt => $d->{'bt'} || '',
 			battery => $d->{'battery'},
+			percentage => $d->{'battery'},
 			battery_mv => $d->{'mv'},
 			status => $d->{'status'},
 			link => $d->{'link'} || '',
 			history => \@history,
 			pph => $pph,
+			pph_lo => $pph_lo,
+			pph_hi => $pph_hi,
+			pph_flat => $pph_flat,
 			pph_window => $pph_window,
 			pph_points => $pph_points,
 			charge_pph => $charge_pph,
+			charge_pph_lo => $charge_pph_lo,
+			charge_pph_hi => $charge_pph_hi,
 			charge_window => $charge_window,
 			charge_points => $charge_points,
 			online => $d->{'online'} ? 1 : 0,
 			seen => $d->{'seen'} || 0,
 		};
+		&battery_eta_estimate($entry, $old_row);
+		return $entry;
 	};
 
 	foreach my $row ( @{$device_rows} ) {
@@ -3792,12 +3971,18 @@ sub house_levels_sync {
 			next;
 		}
 		$peers++;
+		my $peer_battery = (ref $h->{'battery'} eq 'HASH') ? &battery_gauge_eta($h->{'battery'}) : {};
+		# A peer on older code sends the raw pph but not the estimate; fill
+		# it in so every row on the card is read the same way. A newer peer's
+		# own smoothed figure is left alone.
+		&battery_eta_estimate($peer_battery)
+			if ref $peer_battery eq 'HASH' && !defined $peer_battery->{'eta_hours'};
 		push @machines, {
 			signatorial => $rsig,
 			hostname => $pname,
 			device => $h->{'device'} || $rm->{'device'} || '',
 			version => $h->{'version'} || $rm->{'version'} || '',
-			battery => (ref $h->{'battery'} eq 'HASH') ? &battery_gauge_eta($h->{'battery'}) : {},
+			battery => $peer_battery,
 			usage => (ref $h->{'usage'} eq 'HASH') ? $h->{'usage'} : undef,
 			embedded => (ref $h->{'embedded'} eq 'ARRAY') ? $h->{'embedded'} : [],
 			seen => &rightNow(),

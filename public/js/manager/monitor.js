@@ -158,7 +158,7 @@ function monitorRenderHealth(h, jawnShare) {
 	var rateWindow = (b.pph_window ? ' over ' + Math.round(b.pph_window * 60) + ' min' : '');
 	if (pph === null) {
 		put('pph', '—');
-		$('#monitor_health [data-h="pph"]').attr('title', 'needs a discharging window of at least 5 minutes');
+		$('#monitor_health [data-h="pph"]').attr('title', 'needs a discharging window of at least 20 minutes and 2% of movement');
 	}
 	else if (typeof jawnShare === 'number' && isFinite(jawnShare)) {
 		put('pph', (pph * jawnShare).toFixed(2) + ' %/h');

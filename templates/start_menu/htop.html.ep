@@ -1,10 +1,15 @@
 <% my $when = sub {
 	my $at = shift || 0;
-	return 'not yet' unless $at;
+	return &subs::ui('not yet') unless $at;
 	my $age = int((&subs::rightNow() - $at) / 1000);
-	return 'just now' if $age < 60;
-	return int($age / 60) . 'm ago' if $age < 3600;
-	return int($age / 3600) . 'h ago';
+	return &subs::ui('just now') if $age < 60;
+	return int($age / 60) . 'm ' . &subs::ui('ago') if $age < 3600;
+	return int($age / 3600) . 'h ' . &subs::ui('ago');
+}; %>
+<% my $status_label = sub {
+	my $s = &subs::format_name(shift || '');
+	return '' if $s eq '';
+	return &subs::ui($s);
 }; %>
 <% my $level_class = sub {
 	my $p = shift;
@@ -45,7 +50,7 @@
 <% my $battery_meta = sub {
 	my ($b) = @_;
 	my @bits;
-	my $state = &subs::format_name($b->{'status'} || '');
+	my $state = $status_label->($b->{'status'} || '');
 	push @bits, $state if $state ne '';
 	push @bits, sprintf('%.1f&deg;', $b->{'temperature'}) if defined $b->{'temperature'};
 	push @bits, sprintf('%.2f V', $b->{'voltage'}) if defined $b->{'voltage'};
@@ -58,35 +63,73 @@
 	return '—' unless defined $h && $h > 0;
 	my $m = int($h * 60 + 0.5);
 	return $m . 'm' if $m < 60;
-	return int($m / 60) . 'h ' . ($m % 60) . 'm';
+	my $hours = int($m / 60);
+	my $mins = $m % 60;
+	return $hours . 'h' . ($mins ? ' ' . $mins . 'm' : '') if $hours < 24;
+	my $days = int($hours / 24);
+	my $rem = $hours % 24;
+	return $days . 'd' . ($rem ? ' ' . $rem . 'h' : '');
+}; %>
+<% my $eta_phrase = sub {
+	my ($kind, $short, $long, $over) = @_;
+	my $tail = &subs::ui($kind eq 'left' ? 'left' : 'to full');
+	return '> ' . $duration->($short) . ' ' . $tail if $over;
+	# A band more than about half as wide again as its lower end is not a
+	# number worth pretending to know; show the range instead. Both ends use
+	# one unit so a range never reads "16h 36m-1d 9h".
+	if (defined $long && $long > 0 && $long > $short * 1.4) {
+		my $range_value = sub {
+			my $h = shift;
+			return int($h * 60 + 0.5) . 'm' if $h < 1;
+			return int($h + 0.5) . 'h' if $h < 72;
+			return int($h / 24 + 0.5) . 'd';
+		};
+		return '~' . $range_value->($short) . '–' . $range_value->($long) . ' ' . $tail;
+	}
+	return '~' . $duration->($short) . ' ' . $tail;
 }; %>
 <% my $eta_text = sub {
 	my ($b) = @_;
 	my $pct = $b->{'percentage'};
 	return '' unless defined $pct;
 	my $status = lc($b->{'status'} || '');
-	return 'full' if $status eq 'full' || $pct >= 100;
+	return &subs::ui('full') if $status eq 'full' || $pct >= 100;
+	# The sampler puts the one estimate on the reading; read it first so a
+	# gauge, a robust slope and an older peer's raw fields all say one thing.
+	if (defined $b->{'eta_kind'} && defined $b->{'eta_hours'} && $b->{'eta_hours'} > 0) {
+		my ($short, $long) = ($b->{'eta_hours'}, $b->{'eta_hours'});
+		if (defined $b->{'eta_lo'} && defined $b->{'eta_hi'}
+			&& $b->{'eta_lo'} > 0 && $b->{'eta_hi'} > 0) {
+			($short, $long) = ($b->{'eta_lo'}, $b->{'eta_hi'});
+			($short, $long) = ($long, $short) if $short > $long;
+		}
+		return $eta_phrase->($b->{'eta_kind'}, $short, $long, $b->{'eta_over'});
+	}
+	if ($b->{'eta_flat'}) {
+		return '> ' . $duration->($b->{'eta_floor'}) . ' ' . &subs::ui('left')
+			if defined $b->{'eta_floor'} && $b->{'eta_floor'} > 0;
+		return '> 1 ' . &subs::ui('day') . ' ' . &subs::ui('left');
+	}
+	# A peer on older code sends only the raw fields.
 	if ($status eq 'charging') {
-		# The gauge's own energy/current reading answers at once; the slope is
-		# the fallback for a pack that does not report one.
 		if (defined $b->{'charge_eta'} && $b->{'charge_eta'} > 0 && $pct < 100) {
-			return '~' . $duration->($b->{'charge_eta'}) . ' to full';
+			return $eta_phrase->('full', $b->{'charge_eta'}, undef, 0);
 		}
 		if (defined $b->{'charge_pph'} && $b->{'charge_pph'} > 0 && $pct < 100) {
-			return '~' . $duration->((100 - $pct) / $b->{'charge_pph'}) . ' to full';
+			return $eta_phrase->('full', (100 - $pct) / $b->{'charge_pph'} * 1.2, undef, 0);
 		}
-		return 'charging';
+		return &subs::ui('charging');
 	}
 	if ($status eq 'discharging' || ($status eq '' && (defined $b->{'pph'} || defined $b->{'discharge_eta'}))) {
 		if (defined $b->{'discharge_eta'} && $b->{'discharge_eta'} > 0 && $pct > 0) {
-			return '~' . $duration->($b->{'discharge_eta'}) . ' left';
+			return $eta_phrase->('left', $b->{'discharge_eta'}, undef, 0);
 		}
 		if (defined $b->{'pph'} && $b->{'pph'} > 0 && $pct > 0) {
-			return '~' . $duration->($pct / $b->{'pph'}) . ' left';
+			return $eta_phrase->('left', $pct / $b->{'pph'}, undef, 0);
 		}
-		return 'estimating';
+		return &subs::ui('estimating');
 	}
-	return 'plugged in' if $status =~ /not[ _]charging/;
+	return &subs::ui('plugged in') if $status =~ /not[ _]charging/;
 	return '';
 }; %>
 <% my @machines = @{ $levels->{'machines'} || [] }; %>
@@ -95,7 +138,7 @@
 <% my @devices = @{ $levels->{'devices'} || [] }; %>
 <div id="htop_viewer">
 	<div class="levels_head">
-		<span>Levels</span>
+		<span><%= &subs::ui('Levels') %></span>
 		<span><%= $when->($levels->{'at'}) %></span>
 	</div>
 	<% foreach my $m ( @local ) { %>
@@ -103,41 +146,41 @@
 		<% my $pct = $b->{'percentage'}; %>
 		<div class="level_tile level_you">
 			<div class="level_top">
-				<span class="level_name"><%= $m->{'hostname'} || 'this machine' %></span>
+				<span class="level_name"><%= $m->{'hostname'} || &subs::ui('this machine') %></span>
 				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
-				<% } else { %><span class="level_pct level_mains">mains</span><% } %>
+				<% } else { %><span class="level_pct level_mains"><%= &subs::ui('mains') %></span><% } %>
 			</div>
-			<div class="level_sub"><%= &subs::format_name($m->{'device'} || '') %> &middot; this machine &middot; v<%= $m->{'version'} || &subs::jawn_version() %></div>
+			<div class="level_sub"><%= &subs::format_name($m->{'device'} || '') %> &middot; <%= &subs::ui('this machine') %> &middot; v<%= $m->{'version'} || &subs::jawn_version() %></div>
 			<% if (defined $pct) { %>
 				<div class="level_bar"><i class="<%= $level_class->($pct) %>" style="width:<%= $bar_width->($pct) %>%"></i></div>
 				<div class="level_meta"><%== $battery_meta->($b) %></div>
 			<% } else { %>
-				<div class="level_meta"><%= &subs::format_name($b->{'status'} || 'no battery') %></div>
+				<div class="level_meta"><%= $b->{'status'} ? $status_label->($b->{'status'}) : &subs::ui('no battery') %></div>
 			<% } %>
 			<%== $usage_line->($m->{'usage'}) %>
 			<% my $eta = $eta_text->($b); %>
 			<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>
 		</div>
 	<% } %>
-	<div class="levels_caption">House</div>
+	<div class="levels_caption"><%= &subs::ui('House') %></div>
 	<% if (!@peers) { %>
-		<div class="level_empty">No other machines reporting yet.</div>
+		<div class="level_empty"><%= &subs::ui('No other machines reporting yet.') %></div>
 	<% } %>
 	<% foreach my $m ( @peers ) { %>
 		<% my $b = $m->{'battery'} || {}; %>
 		<% my $pct = $b->{'percentage'}; %>
 		<div class="level_tile<% if ($m->{'stale'}) { %> level_stale<% } %>">
 			<div class="level_top">
-				<span class="level_name"><%= $m->{'hostname'} || 'machine' %></span>
+				<span class="level_name"><%= $m->{'hostname'} || &subs::ui('machine') %></span>
 				<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
-				<% } else { %><span class="level_pct level_mains">mains</span><% } %>
+				<% } else { %><span class="level_pct level_mains"><%= &subs::ui('mains') %></span><% } %>
 			</div>
-			<div class="level_sub"><%= &subs::format_name($m->{'device'} || '') %><% if ($m->{'stale'}) { %> &middot; last seen <%= $when->($m->{'seen'}) %><% } else { %> &middot; v<%= $m->{'version'} || '?' %><% } %></div>
+			<div class="level_sub"><%= &subs::format_name($m->{'device'} || '') %><% if ($m->{'stale'}) { %> &middot; <%= &subs::ui('last seen') %> <%= $when->($m->{'seen'}) %><% } else { %> &middot; v<%= $m->{'version'} || '?' %><% } %></div>
 			<% if (defined $pct) { %>
 				<div class="level_bar"><i class="<%= $level_class->($pct) %>" style="width:<%= $bar_width->($pct) %>%"></i></div>
 				<div class="level_meta"><%== $battery_meta->($b) %></div>
 			<% } else { %>
-				<div class="level_meta"><%== $battery_meta->($b) || 'on mains' %></div>
+				<div class="level_meta"><%== $battery_meta->($b) || &subs::ui('on mains') %></div>
 			<% } %>
 			<%== $usage_line->($m->{'usage'}) %>
 			<% my $eta = $eta_text->($b); %>
@@ -145,28 +188,28 @@
 		</div>
 	<% } %>
 	<% if (@devices) { %>
-		<div class="levels_caption">Devices</div>
+		<div class="levels_caption"><%= &subs::ui('Devices') %></div>
 		<% foreach my $d ( @devices ) { %>
 			<% my $pct = $d->{'battery'}; %>
 			<div class="level_tile level_device<% if (!$d->{'online'}) { %> level_stale<% } %>">
 				<div class="level_top">
-					<span class="level_name"><%= $d->{'name'} || &subs::format_name($d->{'purpose'} || 'device') %></span>
+					<span class="level_name"><%= $d->{'name'} || &subs::format_name($d->{'purpose'} || &subs::ui('device')) %></span>
 					<% if (defined $pct) { %><span class="level_pct <%= $level_class->($pct) %>"><%= sprintf('%.0f%%', $pct) %></span>
 					<% } else { %><span class="level_pct level_mains">&mdash;</span><% } %>
 				</div>
-				<div class="level_sub"><%= &subs::format_name($d->{'purpose'} || '') %><% if ($d->{'host'}) { %> &middot; via <%= $d->{'host'} %><% } %><% if (($d->{'link'} || '') ne '') { %> &middot; <%= $d->{'link'} eq 'bluetooth' ? 'Bluetooth' : 'Wi-Fi' %><% } %><% if (!$d->{'online'}) { %><% if ($d->{'seen'}) { %> &middot; last seen <%= $when->($d->{'seen'}) %><% } else { %> &middot; not answering<% } %><% } %></div>
+				<div class="level_sub"><%= &subs::format_name($d->{'purpose'} || '') %><% if ($d->{'host'}) { %> &middot; <%= &subs::ui('via') %> <%= $d->{'host'} %><% } %><% if (($d->{'link'} || '') ne '') { %> &middot; <%= $d->{'link'} eq 'bluetooth' ? &subs::ui('Bluetooth') : &subs::ui('Wi-Fi') %><% } %><% if (!$d->{'online'}) { %><% if ($d->{'seen'}) { %> &middot; <%= &subs::ui('last seen') %> <%= $when->($d->{'seen'}) %><% } else { %> &middot; <%= &subs::ui('not answering') %><% } %><% } %></div>
 				<% if (defined $pct) { %>
 					<div class="level_bar"><i class="<%= $level_class->($pct) %>" style="width:<%= $bar_width->($pct) %>%"></i></div>
 				<% } %>
 				<% if (defined $d->{'battery_mv'}) { %>
-					<div class="level_meta"><%= sprintf('%.2f V', $d->{'battery_mv'} / 1000) %><% if (!$d->{'online'}) { %> &middot; not answering<% } %></div>
+					<div class="level_meta"><%= sprintf('%.2f V', $d->{'battery_mv'} / 1000) %><% if (!$d->{'online'}) { %> &middot; <%= &subs::ui('not answering') %><% } %></div>
 				<% } %>
 				<%== $usage_line->($d->{'usage'}) %>
-				<% my $dev_b = { percentage => $pct, status => $d->{'status'}, pph => $d->{'pph'}, charge_pph => $d->{'charge_pph'}, charge_eta => $d->{'charge_eta'}, discharge_eta => $d->{'discharge_eta'} }; %>
-				<% my $eta = $eta_text->($dev_b); %>
+				<% my %dev_b = (%{ $d }, percentage => $pct); %>
+				<% my $eta = $eta_text->(\%dev_b); %>
 				<% if ($eta ne '') { %><div class="level_eta"><%= $eta %></div><% } %>
 			</div>
 		<% } %>
 	<% } %>
-	<div class="levels_foot">v<%= &subs::jawn_version() %><% if (($levels->{'peers'} || 0) > 0) { %> &middot; <%= $levels->{'peers'} %> peers<% } %><% if (($levels->{'failed'} || 0) > 0) { %> &middot; <%= $levels->{'failed'} %> unreached<% } %></div>
+	<div class="levels_foot">v<%= &subs::jawn_version() %><% if (($levels->{'peers'} || 0) > 0) { %> &middot; <%= $levels->{'peers'} %> <%= &subs::ui('peers') %><% } %><% if (($levels->{'failed'} || 0) > 0) { %> &middot; <%= $levels->{'failed'} %> <%= &subs::ui('unreached') %><% } %></div>
 </div>
