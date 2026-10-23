@@ -382,6 +382,9 @@ sub help_search_summary {
 	return @bits ? join('; ', @bits) : 'nothing found';
 }
 
+# The apps whose own padlock is a media padlock (per screen, per window).
+our @media_unlock_apps = qw/gallery music folders/;
+
 # The content tables the guide may search by name, beyond the appointments log.
 # Only tables that hold the person's own words: the settings, credentials,
 # device and cache tables are deliberately left out, so a secret cannot ride out
@@ -400,7 +403,7 @@ our %help_search_tables = (
 # or notes), the files they carry, the first, newest and next such moments, and
 # any named thing in the content tables. This is the read behind the guide's find
 # action and the time machine's own fallback.
-sub help_search($q) {
+sub help_search($q, $device = undef) {
 	$q = '' unless defined $q;
 	my $like = '%' . join('%', split /\s+/, $q) . '%';
 	my $now = &subs::rightNow();
@@ -410,7 +413,7 @@ sub help_search($q) {
 	if (length $q) {
 		my $rows = &subs::db_query('select app, uuid, file, notes, timestamp from appointments where (app like ? or file like ? or notes like ?) limit 80', $like, $like, $like)->hashes;
 		foreach my $r ( @{$rows} ) {
-			next unless help_app_visible($r->{'app'});
+			next unless help_app_visible($r->{'app'}, $device);
 			$visible_count++;
 			$apps{ $r->{'app'} }++ if $r->{'app'};
 			my $fl = eval { decode_json $r->{'file'} } || [];
@@ -10817,6 +10820,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	my $path = $c->req->url->path;
 	return 0 if ($path eq '/manager/security/padlock_phone_show' ||
 		$path eq '/manager/security/padlock_request_cancel' ||
+		$path eq '/manager/security/media_lock' ||
 		$path eq '/manager/security/padlock_challenge' ||
 		$path eq '/manager/security/padlock_unlock' ||
 		$path eq '/manager/security/padlock_key_show_peer' ||
@@ -10883,14 +10887,30 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		&padlock_device_clear_time($device_uuid);
 		$overlay_target = $device_uuid;
 	}
-	if (&subs::setting_grabber({ app => 'gallery', setting => 'combo_unlock' })) {
-		&subs::setting_deleter({ app => 'gallery', setting => 'combo_unlock' });
-		&subs::window_closer('gallery', $close_tab);
-		&subs::setting_deleter({ app => 'music', setting => 'combo_unlock' });
+	# A media grant belongs to one screen. A whole-house lock drops every
+	# screen's grants on this machine; a single-screen lock drops only its own,
+	# so locking here never shuts another screen's or a peer's padlock.
+	my @open_media;
+	if ($whole_house) {
+		my $rows = &subs::db_query('select distinct app from cache where context = ?', 'media_unlock')->hashes || [];
+		@open_media = map { $_->{'app'} } @{$rows};
+		# a row left by the old house-wide secret still counts as an open one
+		foreach my $legacy_app ( @media_unlock_apps ) {
+			push @open_media, $legacy_app if &subs::setting_grabber({ app => $legacy_app, setting => 'combo_unlock' });
+		}
+		&subs::db_query('delete from cache where context = ?', 'media_unlock');
 	}
-	if (&subs::setting_grabber({ app => 'folders', setting => 'combo_unlock' })) {
-		&subs::setting_deleter({ app => 'folders', setting => 'combo_unlock' });
-		&subs::window_closer('folders', $close_tab);
+	else {
+		my $rows = &subs::db_query('select distinct app from cache where context = ? and device = ?', 'media_unlock', $device_uuid)->hashes || [];
+		@open_media = map { $_->{'app'} } @{$rows};
+		&media_unlock_clear($device_uuid);
+	}
+	# the old house-wide secret never stands again; a stale row from before the
+	# per-screen grants would otherwise keep a peer's window open
+	&subs::db_query('delete from settings where setting = ? and app in (?,?,?)', 'combo_unlock', @media_unlock_apps);
+	foreach my $media_app ( @open_media ) {
+		next unless grep { $_ eq $media_app } @media_unlock_apps;
+		&subs::window_closer($media_app, $close_tab);
 	}
 
 	my $player = &subs::cache_get({ app => 'music', context => 'player' });
@@ -25081,6 +25101,12 @@ post '/manager/terminal/error_report' => sub($c) {
 post '/manager/window_closer' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $app = &subs::unformat_name($c->param('app'));
+	# Closing the app closes its padlock: the grant is dropped before the window
+	# goes, so reopening it (or the app after a restart) opens locked.
+	if (grep { $_ eq $app } @media_unlock_apps) {
+		my $device = &media_unlock_device($c);
+		&media_unlock_clear($device, $app) if length $device;
+	}
 	&subs::window_closer($app, $c->param('browser_tab_id'));
 	my $settings = &subs::settings_grabber({ app => &subs::unformat_name($app) });
 
@@ -30994,7 +31020,7 @@ get '/manager/translate/languages' => sub($c) {
 # What the guide's find action sees: appointments whose app, file or notes match,
 # summarised as the apps involved and a few matching file names.
 get '/manager/help/find' => sub($c) {
-	$c->render(json => help_search($c->param('q') // ''));
+	$c->render(json => help_search($c->param('q') // '', &media_unlock_device($c)));
 };
 
 # ---- what the acting guide reads to answer, instead of guessing --------
@@ -31017,43 +31043,151 @@ sub help_site_rating {
 }
 sub help_at_home { return help_site_rating() <= 1 ? 1 : 0; }
 
-# Whether a media padlock (gallery, music or folders) is open: the same unlock
-# those apps read.
-sub help_media_unlocked {
+# The media padlocks (gallery, music, folders) are per screen. An unlock is a
+# token minted for the device that asked for the print, stored for that device
+# alone, and dropped the moment the app window, the screen or the tree closes.
+# A peer, another window on a different device, or a restarted tree holds no
+# grant, so opening the app there stays locked.
+
+# The screen a media request speaks for. The app's own requests carry the uuid
+# it knows (jawnDeviceUuid); a request without one falls back to the session.
+sub media_unlock_device($c) {
+	my $device = ($c && ($c->session('device_uuid') || '')) || '';
+	$device = '' unless $device =~ /^[A-Za-z0-9]{8,64}$/;
+	unless (length $device) {
+		$device = ($c && ($c->param('device_uuid') || '')) || '';
+		$device = '' unless $device =~ /^[A-Za-z0-9]{8,64}$/;
+	}
+	unless (length $device) {
+		$device = $c->session('app_device') || '' if $c;
+		$device = '' unless $device =~ /^[A-Za-z0-9]{8,64}$/;
+	}
+	return $device;
+}
+
+# The window a media request speaks for, when it names one.
+sub media_unlock_tab($c) {
+	return '' unless $c;
+	my $tab = $c->param('browser_tab_id') || $c->session('browser_tab_id') || '';
+	$tab = '' unless $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
+	return $tab;
+}
+
+# Drop one app's grant (or every media grant) for one device. The rows are keyed
+# by the device uuid, so one screen locking never reaches a peer's row.
+sub media_unlock_clear {
+	my ($device, $app) = @_;
+	return 0 unless defined $device && length $device;
+	if (defined $app && length $app) {
+		my $q = &subs::db_query('delete from cache where context = ? and app = ? and device = ?', 'media_unlock', $app, $device);
+		return $q ? $q->rows : 0;
+	}
+	my $q = &subs::db_query('delete from cache where context = ? and device = ?', 'media_unlock', $device);
+	return $q ? $q->rows : 0;
+}
+
+# Mint one window's grant. Only one grant stands per app and device: a second
+# unlock replaces the first, which is what makes a new window open locked even
+# while another was open a moment ago.
+sub media_unlock_store {
+	my ($app, $device, $tab) = @_;
+	return '' unless $app && $device;
+	my $suds = &subs::suds_grabber() || $gb::suds;
+	return '' unless $suds;
+	my $token = &subs::note_encrypter($suds, &subs::random_string_creator(255));
+	return '' unless defined $token && length $token;
+	my $now = &subs::rightNow();
+	my $window = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
+	$window = eval { abs &subs::time_abbrev_translator($window) } || 7200000;
+	my $until = $now + $window;
+	&media_unlock_clear($device, $app);
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'media_unlock', $now - 604800000);
+	&subs::db_insert('cache', {
+		uuid => &subs::random_string_creator(25),
+		context => 'media_unlock',
+		app => $app,
+		device => $device,
+		data => encode_json({ token => $token, tab => ($tab || ''), until => $until }),
+		timestamp => $now,
+		server_time => $now,
+	});
+	return $token;
+}
+
+# The sealed token an open grant holds, for the request that just minted it.
+# The console push is the usual way a window is told; this lets the same window
+# read it straight from the reply when the push is late or the socket is down.
+sub media_unlock_token {
+	my ($app, $device) = @_;
+	return '' unless defined $app && length $app && defined $device && length $device;
+	my $now = &subs::rightNow();
+	my $rows = &subs::db_query('select data from cache where context = ? and app = ? and device = ? order by server_time desc', 'media_unlock', $app, $device)->hashes || [];
+	foreach my $r ( @{$rows} ) {
+		my $d = eval { decode_json $r->{'data'} } || {};
+		next unless ($d->{'until'} || 0) > $now;
+		my $token = $d->{'token'} || '';
+		return $token if length $token;
+	}
+	return '';
+}
+
+# A grant belongs to one device. Helpers without a request (the guide's own
+# search) are given the device explicitly; with no device they see a shut lock.
+sub help_media_unlocked($device) {
+	$device = '' unless defined $device;
+	return 0 unless $device =~ /^[A-Za-z0-9]{8,64}$/;
 	my $sightings = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
-	foreach my $ctx ( qw/gallery music folders/ ) {
-		next unless &subs::setting_grabber({ app => $ctx, setting => 'combo_unlock' });
-		return 1 if grep { $_ eq $ctx } @{$sightings};
+	my $now = &subs::rightNow();
+	my $rows = &subs::db_query('select app, data from cache where context = ? and device = ? order by server_time desc', 'media_unlock', $device)->hashes || [];
+	foreach my $r ( @{$rows} ) {
+		my $ctx = $r->{'app'} || '';
+		next unless grep { $_ eq $ctx } @{$sightings};
+		my $d = eval { decode_json $r->{'data'} } || {};
+		return 1 if ($d->{'until'} || 0) > $now;
 	}
 	return 0;
 }
 
-# A thing the person marked not-visible is shown while its padlock is open. The
-# place used to be part of the rule; it is not any more: a machine with no
-# location fix could never reveal its own private albums after an unlock, which
-# read as "the unlock did nothing". The unlock is the deliberate act.
-sub help_media_revealed { return help_media_unlocked() ? 1 : 0; }
+# A thing the person marked not-visible is shown while that screen's padlock is
+# open. The place used to be part of the rule; it is not any more: a machine with
+# no location fix could never reveal its own private albums after an unlock,
+# which read as "the unlock did nothing". The unlock is the deliberate act.
+sub help_media_revealed {
+	my ($device) = @_;
+	return help_media_unlocked($device) ? 1 : 0;
+}
 
-# Whether one page's `unlock` token opens one media app's padlock. A fresh open
-# carries no token and stays locked, even when the secret from an earlier open
-# is still in settings; the refresh after a phone signs carries the token that
-# unlock minted, so the refreshed window stays open. The stored secret is only
-# the validator, never proof by itself. The padlock itself is not location
-# gated; only the extra rule for items marked not-visible still waits for home.
+# Whether one page's `unlock` token opens one media app's padlock. The token is
+# checked against the grant stored for this device: a token minted on another
+# screen or another machine is no proof here, and a fresh open carries none and
+# stays locked.
 sub media_unlock_open($c, $app) {
 	return 0 unless ($c && defined $app && length $app);
 	my $token = $c->param('unlock');
 	return 0 unless (defined $token && length $token);
 	my $sightings = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
 	return 0 unless grep { $_ eq $app } @{$sightings};
-	my $stored = &subs::setting_grabber({ app => $app, setting => 'combo_unlock' });
-	return 0 unless (defined $stored && length $stored);
+	my $device = &media_unlock_device($c);
+	return 0 unless (length $device);
 	my $suds = &subs::session_suds($c);
 	return 0 unless $suds;
 	my $given = &subs::note_decrypter($suds, $token);
-	my $known = &subs::note_decrypter($suds, $stored);
-	return 0 unless (defined $given && defined $known && length $given && length $known);
-	return secure_compare($given, $known) ? 1 : 0;
+	return 0 unless (defined $given && length $given);
+	my $now = &subs::rightNow();
+	my $tab = &media_unlock_tab($c);
+	my $rows = &subs::db_query('select data from cache where context = ? and app = ? and device = ? order by server_time desc', 'media_unlock', $app, $device)->hashes || [];
+	foreach my $r ( @{$rows} ) {
+		my $d = eval { decode_json $r->{'data'} } || {};
+		next unless ($d->{'until'} || 0) > $now;
+		# a grant names the one window it was minted for; another tab of the
+		# same screen, or a reopened one after a crash, holds no way in
+		my $grant_tab = $d->{'tab'} || '';
+		next if (length $grant_tab && $grant_tab ne $tab);
+		my $known = &subs::note_decrypter($suds, $d->{'token'} || '');
+		next unless (defined $known && length $known);
+		return 1 if secure_compare($given, $known);
+	}
+	return 0;
 }
 
 # An app is hidden when any device marks it not visible: a thing hidden anywhere
@@ -31067,9 +31201,9 @@ sub help_app_hidden($app) {
 }
 
 # What the guide may reach: an app it is not hidden, or the reveal rule holds.
-sub help_app_visible($app) {
+sub help_app_visible($app, $device = undef) {
 	return 1 unless help_app_hidden($app);
-	return help_media_revealed();
+	return help_media_revealed($device);
 }
 
 # the nearest thing we have measured, for naming a fix
@@ -31291,7 +31425,7 @@ sub help_music_file($c, $q, $shuffle) {
 	my $device = &subs::device_setter();
 	my @every = sort grep { /_location$/ } keys %{ $misc->{$device} || {} };
 	my $port = $c->req->url->base->port;
-	my $res = &music_search({ settings => $settings, c => $c, now_playing => {}, port => $port, misc_settings => $misc, return_files => 1, folders => \@every, permissive => (&help_media_revealed() ? 1 : 0) });
+	my $res = &music_search({ settings => $settings, c => $c, now_playing => {}, port => $port, misc_settings => $misc, return_files => 1, folders => \@every, permissive => (&help_media_revealed(&media_unlock_device($c)) ? 1 : 0) });
 	my @files = @{ $res->{'files'} || [] };
 	my @words = grep { length } split /\s+/, lc $q;
 	my @hits;
@@ -31338,7 +31472,7 @@ get '/manager/help/music' => sub($c) {
 
 get '/manager/help/permitted' => sub($c) {
 	my $app = &subs::unformat_name($c->param('app') || '');
-	$c->render(json => { app => $app, permitted => (help_app_visible($app) ? 1 : 0) });
+	$c->render(json => { app => $app, permitted => (help_app_visible($app, &media_unlock_device($c)) ? 1 : 0) });
 };
 
 get '/manager/resolve' => sub($c) {
@@ -32615,7 +32749,7 @@ sub guide_verb_execute($c, $action) {
 	if ($prim eq 'find') {
 		my $q = $p{'query'} // '';
 		return 'no search given' unless length $q;
-		return &help_search_summary(&help_search($q));
+		return &help_search_summary(&help_search($q, &media_unlock_device($c)));
 	}
 	if ($prim eq 'play_music') {
 		my $r = help_music_file($c, $p{'query'}, $p{'shuffle'});
@@ -34672,9 +34806,10 @@ sub padlock_key_show_relay {
 # padlock_state, so a phone that was asleep when the button was pressed finds
 # it on its next connection.
 sub padlock_request_store {
-	my ($target, $mode, $source, $id, $device_name, $source_device, $source_hostname) = @_;
+	my ($target, $mode, $source, $id, $device_name, $source_device, $source_hostname, $tab) = @_;
 	my $now = &subs::rightNow();
 	$id ||= &subs::random_string_creator(24);
+	$tab = '' unless defined $tab && $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
 	my $data = encode_json({
 		id => $id,
 		target => $target || '',
@@ -34683,6 +34818,7 @@ sub padlock_request_store {
 		device_name => $device_name || '',
 		source_device => $source_device || '',
 		source_hostname => $source_hostname || '',
+		tab => $tab,
 		house => (($target || '') eq '' ? 1 : 0),
 		time => $now,
 	});
@@ -34702,6 +34838,23 @@ sub padlock_request_store {
 		});
 	}
 	return $id;
+}
+
+# The request a media mint may read: the newest one naming this screen. Its
+# `source` says which machine holds the screen, and its `tab` says which window
+# asked, so the token goes to that window alone.
+sub padlock_request_for_target {
+	my ($target) = @_;
+	return {} unless defined $target && $target =~ /^[A-Za-z0-9]{8,64}$/;
+	my $now = &subs::rightNow();
+	my $rows = &subs::db_query('select uuid, data, server_time from cache where context = ? and server_time > ? order by server_time desc', 'padlock_request', $now - 300000)->hashes || [];
+	foreach my $row ( @{$rows} ) {
+		my $d = eval { decode_json $row->{'data'} } || {};
+		next unless (($d->{'target'} || '') eq $target);
+		$d->{'id'} ||= $row->{'uuid'};
+		return $d;
+	}
+	return {};
 }
 
 sub padlock_request_get {
@@ -34940,6 +35093,7 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/security/padlock_open_peer';
 	return 1 if $path eq '/manager/security/padlock_key_show_peer';
 	return 1 if $path eq '/manager/security/padlock_state';
+	return 1 if $path eq '/manager/security/media_lock';
 	return 1 if $path eq '/manager/security/padlock_key';
 	return 1 if $path eq '/manager/security/fingerprint_unlock_status';
 	return 1 if $path eq '/manager/security/fingerprint_unlock';
@@ -35062,7 +35216,7 @@ sub padlock_gate_answer {
 # names it, an empty target is the house-wide timeout lock. The global timer is
 # moved past now either way, so the unlocked screen is not re-locked at once.
 sub padlock_mark_unlocked {
-	my ($c, $mode, $target) = @_;
+	my ($c, $mode, $target, $tab_override) = @_;
 	$mode ||= 'locker';
 	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
 	my $suds = &subs::suds_grabber() || &subs::session_suds($c) || $gb::suds;
@@ -35103,23 +35257,41 @@ sub padlock_mark_unlocked {
 	}
 	$c->session('pl_time' => $new_timeout);
 	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => &subs::note_encrypter($suds, 0) });
-	if ($mode eq 'gallery') {
-		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
-		&subs::setting_setter({ app => 'gallery', setting => 'combo_unlock', value => $combo_unlock });
-		# one message, so the window holds the token before its refresh runs
-		&Websocket::send('server', { console => '$("#gallery").attr("unlock", "' . $combo_unlock . '"); imageViewer({ "view":"home" });', browser_tab_id => $c->param('browser_tab_id') });
-	}
-	if ($mode eq 'music') {
-		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
-		&subs::setting_setter({ app => 'music', setting => 'combo_unlock', value => $combo_unlock });
-		# one message, so the window holds the token before its refresh runs
-		&Websocket::send('server', { console => '$("#music").attr("unlock", "' . $combo_unlock . '"); $("#music").show(); $("#music_padlock").hide(); if (typeof searchMusic === "function") { searchMusic(); }', browser_tab_id => $c->param('browser_tab_id') });
-	}
-	if ($mode eq 'folders') {
-		my $combo_unlock = &subs::note_encrypter($suds, &subs::random_string_creator(255));
-		&subs::setting_setter({ app => 'folders', setting => 'combo_unlock', value => $combo_unlock });
-		# one message, so the window holds the token before its refresh runs
-		&Websocket::send('server', { console => '$("#folders").attr("unlock", "' . $combo_unlock . '"); if (typeof foldersOpener === "function") { foldersOpener(); }', browser_tab_id => $c->param('browser_tab_id') });
+	if ($mode =~ /^(?:gallery|music|folders)$/) {
+		my $device = $target || &media_unlock_device($c);
+		my $request = &padlock_request_for_target($device);
+		# the request row names the screen that pressed Unlock; the caller's own
+		# tab is only a fallback (a phone confirming another screen carries its
+		# own tab, which must not receive that screen's token)
+		my $tab = $tab_override || $request->{'tab'} || $c->param('browser_tab_id') || '';
+		$tab = '' unless $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
+		# Only the machine that holds the screen may mint its app grant. The
+		# unlock is relayed to every peer so the screen's own jawn hears it, and
+		# each peer used to mint a grant of its own - the app then opened on
+		# machines nobody had asked about. A local print or button, or a request
+		# this machine wrote for this screen, is the whole test; a peer's relay
+		# is never local even when a tunnel makes its address look so.
+		my $peer_route = (($c->req->url->path // '') eq '/manager/security/padlock_open_peer') ? 1 : 0;
+		my $mine = &media_unlock_device($c);
+		# A local reader or button opens the screen it is attached to. A local
+		# phone confirming ANOTHER screen is not that screen's host: its own
+		# grant would sit in the wrong database, so the relay below mints it.
+		my $hosted = (!$peer_route && &padlock_request_is_local($c) && length $mine && $target eq $mine) ? 1 : 0;
+		$hosted = 1 if (!$hosted && $request->{'id'}
+			&& (($request->{'source'} || '') eq &subs::signatorial_designer()));
+		if ($hosted && length $device) {
+			my $token = &media_unlock_store($mode, $device, $tab);
+			if (length $token) {
+				my $js = ($mode eq 'gallery')
+					? '$("#gallery").attr("unlock", "' . $token . '"); imageViewer({ "view":"home" });'
+					: ($mode eq 'music')
+					? '$("#music").attr("unlock", "' . $token . '"); $("#music").show(); $("#music_padlock").hide(); if (typeof searchMusic === "function") { searchMusic(); }'
+					: '$("#folders").attr("unlock", "' . $token . '"); if (typeof foldersOpener === "function") { foldersOpener(); }';
+				# one window's message, so another tab of the same screen stays
+				# shut and no peer is told to drop a token it never held
+				&Websocket::send('server', { console => $js, browser_tab_id => $tab }) if length $tab;
+			}
+		}
 	}
 	else {
 		&Websocket::send('server', { padlock_open => 1, mode => $mode, target => $target, timestamp => &subs::rightNow() });
@@ -35163,7 +35335,9 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 	$source_hostname .= ' (' . $host . ')' if $host && $host ne $source_hostname;
 	$source_hostname =~ s/[\r\n\t]//g;
 	$source_hostname = substr($source_hostname, 0, 120);
-	my $request_id = &padlock_request_store($target, $mode, $source, undef, $device_name, $source_device, $source_hostname);
+	my $source_tab = $c->param('browser_tab_id') || '';
+	$source_tab = '' unless $source_tab =~ /^[A-Za-z0-9_-]{1,64}$/;
+	my $request_id = &padlock_request_store($target, $mode, $source, undef, $device_name, $source_device, $source_hostname, $source_tab);
 	$log->info('padlock: prompt asked for ' . ($target || 'house') . ($device_name ? ' (' . $device_name . ')' : '') . ' by ' . ($source_device || '?') . ' on ' . $source_hostname . ' id=' . $request_id);
 	&Websocket::send('server', { padlock_key_show => 1, prompt => 1, request_id => $request_id, device_name => $device_name, source_device => $source_device, source => $source, source_hostname => $source_hostname, house => (($target || '') eq '' ? 1 : 0), mode => $mode, target => $target, show => 1, timestamp => &subs::rightNow() });
 	# another machine's screens are part of the house too
@@ -35179,6 +35353,23 @@ post '/manager/security/padlock_request_cancel' => sub ($c) {
 	my $id = $c->param('request_id') || '';
 	&padlock_request_clear_id($id);
 	$c->render(json => { ok => 1, request_id => $id });
+};
+
+# The app window, the screen or the tree is going away: drop this device's
+# media grant and tell the window that asked to show its locked view. The delete
+# is keyed by device, so another screen - or a peer - keeps what it had.
+post '/manager/security/media_lock' => sub ($c) {
+	my $device = &media_unlock_device($c);
+	my $app = $c->param('app') || '';
+	$app = '' unless $app =~ /^(?:gallery|music|folders)$/;
+	my $tab = $c->param('browser_tab_id') || '';
+	$tab = '' unless $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
+	&media_unlock_clear($device, $app) if length $device;
+	my @apps = $app ? ($app) : @media_unlock_apps;
+	foreach my $a ( @apps ) {
+		&Websocket::send('server', { console => 'jawnosMediaLockdown("' . $a . '")', browser_tab_id => $tab }) if length $tab;
+	}
+	$c->render(json => { ok => 1, app => $app, device => $device });
 };
 
 # A local fingerprint is an alternative to the phone for the screen it is on.
@@ -35219,6 +35410,7 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	else {
 		$mode = $c->param('mode') || 'locker';
 		$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+		$device = &media_unlock_device($c) unless length $device;
 		# the reader opens the screen it is attached to: an app padlock names that
 		# screen too, so the unlock never becomes a house-wide one
 		$target = ($mode ne 'locker') ? $device : '';
@@ -35244,6 +35436,10 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	my $token = &subs::random_string_creator(24);
 	my $now = &subs::rightNow();
 	my %fingerprint = (pending => 1, device => $device, ip => $ip, mode => $mode, target => $target);
+	my $source_tab = $c->param('browser_tab_id') || '';
+	$source_tab = '' unless $source_tab =~ /^[A-Za-z0-9_-]{1,64}$/;
+	$fingerprint{'tab'} = $source_tab;
+	$fingerprint{'device_param'} = &media_unlock_device($c);
 	$fingerprint{'purpose'} = 'go' if $purpose eq 'go';
 	$fingerprint{'request_id'} = $go_request if $purpose eq 'go';
 	&subs::db_query('delete from cache where context = ? and server_time < ?', 'padlock_fingerprint', $now - 300000);
@@ -35266,7 +35462,7 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 			my $child_error = (defined $err && $err ne '') ? $err : '';
 			my $ok = (!$child_error && defined $rc && $rc == 0) ? 1 : 0;
 			my $error = $ok ? '' : ($child_error ? 'reader error' : ((defined $rc && $rc == 31744) ? 'timeout' : 'not accepted'));
-			my %result = (pending => 0, ok => $ok, error => $error, device => $device, ip => $ip, mode => $mode, target => $target);
+			my %result = (pending => 0, ok => $ok, error => $error, device => $device, ip => $ip, mode => $mode, target => $target, tab => $source_tab, device_param => &media_unlock_device($c));
 			$result{'purpose'} = 'go' if $purpose eq 'go';
 			$result{'request_id'} = $go_request if $purpose eq 'go';
 			&subs::db_query('update cache set data = ?, server_time = ? where context = ? and uuid = ?',
@@ -35317,9 +35513,13 @@ get '/manager/security/fingerprint_unlock_status' => sub ($c) {
 	if ($mode ne 'locker' && !length $target) {
 		return $c->render(json => { ok => 0, error => 'no device' });
 	}
-	my $opened = &padlock_mark_unlocked($c, $mode, $target);
+	# the token belongs to the window that pressed the button, not every tab
+	my $tab = $c->param('browser_tab_id') || $d->{'tab'} || '';
+	$tab = '' unless $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
+	my $opened = &padlock_mark_unlocked($c, $mode, $target, $tab);
 	$log->info('padlock: local fingerprint opened ' . ($mode ne 'locker' ? "$mode padlock on " : '') . ($target || 'this screen'));
-	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0) });
+	my $unlock_token = ($mode ne 'locker' && $opened) ? &media_unlock_token($mode, $target) : '';
+	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), unlock => $unlock_token });
 };
 
 # --- Go approvals ----------------------------------------------------------
@@ -35674,7 +35874,8 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 		});
 	}, { name => 'padlock biometric relay' });
 	$log->info('padlock: biometric open by ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip . ' target=' . ($target || 'self'));
-	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $open_target });
+	my $unlock_token = ($mode ne 'locker' && $opened) ? &media_unlock_token($mode, $open_target) : '';
+	$c->render(json => { ok => ($opened ? 1 : 0), unlocked => ($opened ? 1 : 0), name => $device->{'name'}, target => $open_target, unlock => $unlock_token });
 };
 
 # --- opening the lock with a paired device's signature ---------------------
@@ -35767,7 +35968,10 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 			params => { signatorial => &subs::signatorial_designer(), target => $open_target, mode => $mode, house => ($house ? 1 : 0) },
 		});
 	}, { name => 'padlock unlock relay' });
-	unless ($locked) {
+	# A media padlock is not the screen timer: the app opens locked while the
+	# screen itself is open, so its grant must be minted even then. Clearing the
+	# request first would also lose the tab the token belongs to.
+	if (!$locked && $mode eq 'locker') {
 		&padlock_request_clear($open_target);
 		return $c->render(json => { ok => 1, unlocked => 1, already => 1, relayed => ($open_target ? 1 : 0), name => $device->{'name'} });
 	}

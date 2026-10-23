@@ -32,19 +32,14 @@ var gallery = {
 var gallerySearchTimer = null;
 var galleryUnlockKey = 'jawnos_gallery_unlock';
 
-// The token the padlock mints for this window. Keeping it for the tab means a
-// reopened gallery still shows the sealed photos while the app padlock is open;
-// the server clears the secret when the padlock locks, so a stale copy stops
-// working and the window asks again.
+// The token the padlock mints for this window. It is cleared on Lock, on the
+// app window closing and on the screen going away; it is deliberately not
+// recalled by a later window, so a reopened gallery asks again.
 function galleryUnlockRemember(token) {
 	try {
 		if (token) { sessionStorage.setItem(galleryUnlockKey, token); }
 		else { sessionStorage.removeItem(galleryUnlockKey); }
 	} catch (e) {}
-}
-
-function galleryUnlockRecall() {
-	try { return sessionStorage.getItem(galleryUnlockKey) || ''; } catch (e) { return ''; }
 }
 
 function galleryEscape(value) {
@@ -135,9 +130,11 @@ function galleryApplyChrome() {
 
 function galleryInitWindow(response) {
 	var attr = $('#gallery').attr('unlock') || '';
+	// A window with no token drawn into it is closed, even when an earlier
+	// window in this tab had been open: the grant belongs to that window.
 	gallery.unlock = (response && typeof response.unlock == 'string' && response.unlock)
 		? response.unlock
-		: (attr || gallery.unlock || galleryUnlockRecall() || '');
+		: attr;
 	gallery.padlock = $('#gallery').attr('padlock') == '1' ? 1 : 0;
 	if (attr) { galleryUnlockRemember(attr); }
 	// A visible album is theirs to browse without a print; the gate opens when
@@ -179,7 +176,7 @@ function imageViewer(data) {
 	$.ajax({
 		url: '/manager/gallery',
 		type: 'GET',
-		data: { timestamp: timestamp, unlock: gallery.unlock || '', user_agent: navigator.userAgent },
+		data: { timestamp: timestamp, unlock: gallery.unlock || '', device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '', browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : '', user_agent: navigator.userAgent },
 		success: function(response) {
 			if (!response || !response.window) { return; }
 			windowMaker(response.window);
@@ -211,6 +208,8 @@ function galleryFetch(reset) {
 			sort: gallery.sort,
 			search: gallery.search,
 			unlock: gallery.unlock || '',
+			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
+			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : '',
 			apps: gallery.app ? JSON.stringify([gallery.app]) : '',
 			files: gallery.files ? JSON.stringify(gallery.files) : ''
 		},
@@ -593,7 +592,12 @@ $(document).on('click', '.gallery_lock', function() {
 		$('#gallery').attr('unlock', '');
 		gallery.unlock = '';
 		$('#gallery_lock').hide();
-		galleryFetch(true);
+		// the grant is dropped server-side for this screen before the refetch,
+		// so a reopened gallery cannot pick the old token up again
+		if (typeof jawnosMediaLockApp === 'function') {
+			jawnosMediaLockApp('gallery', function () { galleryFetch(true); });
+		}
+		else { galleryFetch(true); }
 		return;
 	}
 	$('#gallery_lock').show();

@@ -193,6 +193,13 @@ function wsOpener(event,app,origin) {
 	var browser_tab = localStorage.getItem('browser_tab');
 	var uA = navigator.userAgent;
 	ws[app]['status'] = 'open';
+	// A socket that had dropped and come back may be a restarted tree, whose
+	// boot dropped every media grant. Draw what the house says now; the first
+	// connect of a page is left alone (its own load already locked).
+	if (app === 'server' && typeof jawnosMediaLockdown === 'function') {
+		if (window.jawnosMediaConnected) { jawnosMediaLockdown('', document.hidden); }
+		window.jawnosMediaConnected = 1;
+	}
 	var data = JSON.stringify({ 
 		browser_tab_id: browser_tab_id,
 		browser_tab: browser_tab,
@@ -1350,24 +1357,31 @@ function websocketStop(app) {
 }
 
 function lockScreen() {
-
+	// The screen going away closes the app padlocks with it. The grant is
+	// dropped on the server for this screen alone and the visible content is
+	// cleared at once; coming back redraws the locked view.
+	if (typeof jawnosMediaLockdown === 'function') { jawnosMediaLockdown('', true); }
+	if (typeof jawnosMediaLockBeacon === 'function') { jawnosMediaLockBeacon(''); }
 }
-function unlockScreen() {}
+function unlockScreen() {
+	// The screen is back: draw what the server now says (locked, unless a fresh
+	// print was given while it was away).
+	if (window.jawnosMediaLockPending && typeof jawnosMediaRefresh === 'function') {
+		var apps = window.jawnosMediaLockPending;
+		window.jawnosMediaLockPending = null;
+		jawnosMediaLockBeacon('');
+		jawnosMediaRefresh(apps);
+	}
+}
 
 
 document.addEventListener("visibilitychange", function(e) {
-	if (e.returnValue == true) {
-	//	windowVisible = 1;
-	//	websocketStop();
-	//	mailWebSocketStop();
-		unlockScreen();
+	if (document.hidden) {
+		lockScreen();
+		$('#search').val('');
 	}
 	else {
-	//	windowVisible = 0;
-		//websocketStop();
-		lockScreen();
-		//mailWebSocketStop();
-		$('#search').val('');
+		unlockScreen();
 	}
 });
 

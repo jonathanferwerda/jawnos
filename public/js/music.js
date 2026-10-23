@@ -1076,6 +1076,8 @@ function searchMusic(data) {
 			artist: artist, 
 			album: album, 
 			unlock: unlock, 
+			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
+			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : '',
 			now_playing: jnowPlaying, 
 			list: jlist, 
 			same_order: same_order, 
@@ -1270,14 +1272,16 @@ $(document).on('click', '.music_archive_toggle', function() {
 $(document).on('click', '.music_lock', function() {
 	if ($('#music').attr('unlock')) {
 		$('#music').attr('unlock', undefined);
-		settingDeleter({ 'app': 'music', 'setting': 'combo_unlock' });
 		tree.sound = undefined;
 		$('#music_search').val('');
 		$('.music_artist').attr('active', 'no');
 		$('.music_album').attr('active', 'no');
 		var wt = $('.wind[app="video"]').attr('timestamp');
 		closeWindow(wt);
-		searchMusic();
+		if (typeof jawnosMediaLockApp === 'function') {
+			jawnosMediaLockApp('music', function () { searchMusic(); });
+		}
+		else { searchMusic(); }
 	}
 	else if ($('#music').is(':visible')) {
 		$('#music').hide();

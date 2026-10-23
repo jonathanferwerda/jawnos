@@ -281,6 +281,19 @@ function windowMaker(response) {
 		
 		if (matches == 0 && response != "null") {
 			$('#browser').append('' + response + '');
+			// A window that is new to this page never inherits a media unlock: the
+			// token belongs to the window that asked for the print. A restored
+			// window (or one opened beside another) draws its locked view.
+			if (app == 'gallery' || app == 'music' || app == 'folders') {
+				var media_root = $('#' + window_id).find('#' + app).first();
+				if (media_root.length && media_root.attr('unlock')) {
+					if (typeof jawnosMediaLockdown === 'function') { jawnosMediaLockdown(app, true); }
+					else { media_root.attr('unlock', ''); }
+					if (typeof jawnosMediaRefresh === 'function') {
+						setTimeout(function () { jawnosMediaRefresh([app]); }, 0);
+					}
+				}
+			}
 			websocketStart(app);
 			// a window closed with its budget light open comes back with the light
 			// open: the server rendered the app's ci setting onto the panel
@@ -1466,6 +1479,10 @@ function closeWindow(timestamp) {
 		twirlRunning = false;
 	}
 	if (app == 'mailbox' && typeof mailSocketClose == 'function') { mailSocketClose(); }
+	// closing the app closes its padlock in this tab as well as on the server
+	if ((app == 'gallery' || app == 'music' || app == 'folders') && typeof jawnosMediaLockdown === 'function') {
+		jawnosMediaLockdown(app, true);
+	}
 	$('#window_' + timestamp ).remove();
 	$('#window_icon_' + timestamp).remove();
 	//pseudonymFreeSpaceFinder();
@@ -1480,7 +1497,7 @@ function closeWindow(timestamp) {
 	$.ajax({
 		url: '/manager/window_closer',
 		type: 'POST',
-		data: { timestamp: timestamp, app: app },
+		data: { timestamp: timestamp, app: app, browser_tab_id: sessionStorage.getItem('browser_tab_id') || (typeof bti !== 'undefined' ? bti : ''), device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '' },
 		success: function(response) {
 			websocketStop(app);
 		}

@@ -654,12 +654,123 @@ function jawnAppEnrollDesktop() {
 function padlockAskPhone(mode, target) {
 	mode = mode || 'locker';
 	if (typeof target === 'undefined') { target = jawnDeviceUuid(); }
+	// The tab that pressed the button is the only window the minted app token
+	// belongs to: another tab of the same screen, or a peer, must stay shut.
+	var tab = '';
+	try { tab = sessionStorage.getItem('browser_tab_id') || ''; } catch (e) { tab = ''; }
 	$.post('/manager/security/padlock_phone_show', {
 		mode: mode,
 		target: target,
-		device_uuid: jawnDeviceUuid()
+		device_uuid: jawnDeviceUuid(),
+		browser_tab_id: tab
 	});
 }
+
+// ---- media padlocks belong to one screen and one window -----------------------
+// gallery, music and folders open locked. The token for an open one is minted
+// for the device that asked for the print and kept for that window alone, so a
+// closed app, a closed screen, a new window, a peer or a restarted tree has no
+// way in without a fresh print.
+function jawnosMediaTab() {
+	try { return sessionStorage.getItem('browser_tab_id') || ''; } catch (e) { return ''; }
+}
+
+function jawnosMediaLockApp(app, then) {
+	$.ajax({
+		url: '/manager/security/media_lock',
+		type: 'POST',
+		data: { app: app || '', device_uuid: jawnDeviceUuid(), browser_tab_id: jawnosMediaTab() },
+		complete: function () { if (typeof then === 'function') { then(); } }
+	});
+}
+
+// The page is leaving (an app window closing, the screen going dark, a reload or
+// a restart). A beacon is the only request a closing page is allowed to make.
+function jawnosMediaLockBeacon(app) {
+	var body = 'app=' + encodeURIComponent(app || '') +
+		'&device_uuid=' + encodeURIComponent(jawnDeviceUuid()) +
+		'&browser_tab_id=' + encodeURIComponent(jawnosMediaTab());
+	// the same browser's other tabs clear at once, without waiting for a fetch
+	try { localStorage.setItem('jawnos_media_lock', String(Date.now())); } catch (e) {}
+	if (navigator.sendBeacon) {
+		try {
+			navigator.sendBeacon('/manager/security/media_lock', new Blob([body], { type: 'application/x-www-form-urlencoded' }));
+			return;
+		} catch (e) {}
+	}
+	$.ajax({ url: '/manager/security/media_lock', type: 'POST', async: false, data: { app: app || '', device_uuid: jawnDeviceUuid(), browser_tab_id: jawnosMediaTab() } });
+}
+
+// Clear the visible state at once and ask the app to draw its locked view when
+// the page is visible; a hidden tab defers the draw until it comes back.
+function jawnosMediaLockdown(app, defer) {
+	var apps = app ? [app] : ['gallery', 'music', 'folders'];
+	apps.forEach(function (a) {
+		if (a === 'gallery') {
+			if (typeof galleryUnlockRemember === 'function') { galleryUnlockRemember(''); }
+			$('#gallery').attr('unlock', '');
+			if (typeof gallery !== 'undefined' && gallery) { gallery.unlock = ''; }
+			$('#gallery_grid').empty();
+			$('#gallery_albums').empty();
+		} else if (a === 'folders') {
+			$('#folders').attr('unlock', '');
+		} else if (a === 'music') {
+			$('#music').attr('unlock', undefined);
+			$('#music').show();
+			$('#music_padlock').hide();
+		}
+	});
+	window.jawnosMediaLockPending = apps;
+	if (defer || document.hidden) { return; }
+	jawnosMediaRefresh(apps);
+}
+
+function jawnosMediaRefresh(apps) {
+	apps = apps || window.jawnosMediaLockPending || [];
+	window.jawnosMediaLockPending = null;
+	if ($.inArray('gallery', apps) > -1 && typeof galleryFetch === 'function' && $('#gallery').length) { galleryFetch(true); }
+	if ($.inArray('folders', apps) > -1 && typeof foldersOpener === 'function' && $('#folders').length) { foldersOpener(); }
+	if ($.inArray('music', apps) > -1 && typeof searchMusic === 'function' && $('#music').length) { searchMusic(); }
+}
+
+// Put the token an unlock's own reply carried into this window and redraw it.
+// The websocket push normally does this; the reply is the fallback for a socket
+// that is asleep, and it is only used for the screen named in the reply.
+function jawnosMediaApplyToken(app, token, target) {
+	if (!app || !token) { return; }
+	if (target && target !== jawnDeviceUuid()) { return; }
+	var root = $('#' + app);
+	if (!root.length) { return; }
+	root.attr('unlock', token);
+	if (app === 'gallery') {
+		if (typeof gallery !== 'undefined' && gallery) { gallery.unlock = token; }
+		if (typeof galleryUnlockRemember === 'function') { galleryUnlockRemember(token); }
+	}
+	jawnosMediaRefresh([app]);
+}
+
+// A closing page cannot wait for the reply; the grant is gone by the time the
+// app is opened again, and no peer is touched.
+window.addEventListener('pagehide', function () {
+	if (typeof jawnosMediaLockdown === 'function') { jawnosMediaLockdown('', true); }
+	jawnosMediaLockBeacon('');
+});
+
+// A lock in one window is a lock in every window of this browser.
+window.addEventListener('storage', function (e) {
+	if (e && e.key === 'jawnos_media_lock' && typeof jawnosMediaLockdown === 'function') {
+		jawnosMediaLockdown('', document.hidden);
+	}
+});
+
+// A page that has just opened is a new window, and a media unlock belongs to
+// the window that asked for the print. Any manager page - a browser tab, a
+// webui window, a refreshed one - starts this screen's media padlocks shut.
+$(function () {
+	if ((location.pathname || '').indexOf('/manager') !== 0) { return; }
+	if (!jawnDeviceUuid()) { return; }
+	jawnosMediaLockBeacon('');
+});
 // The app locks (gallery, music, folders) still carry the padlock partial's own
 // Unlock button; it asks the house for the same in-place prompt.
 $(document).on('click', '.padlock_ask_phone', function () {
@@ -1655,7 +1766,7 @@ function jawnosBiometricUnlock(mode, target, status, context, house, sourceHost,
 				if (!res || !res.ok || !res.signature) { throw { error: (res && res.error) || 'not accepted' }; }
 				// the thumb passed; the shackle opens while the house verifies the signature
 				if (typeof jawnPadlockArtUnlocking === 'function') { jawnPadlockArtUnlocking(context); }
-				var body = { device_uuid: uuid, nonce: ch.nonce, signature: res.signature, mode: mode };
+				var body = { device_uuid: uuid, nonce: ch.nonce, signature: res.signature, mode: mode, browser_tab_id: jawnosMediaTab() };
 				if (house) { body.house = 1; }
 				else if (target) { body.target = target; }
 				return $.post('/manager/security/biometric_unlock', body);
@@ -1744,8 +1855,11 @@ $(document).on('click', '.padlock_biometric, #locked_biometric', function () {
 			});
 		}
 		throw err;
-	}).then(function () {
+	}).then(function (res) {
 		if (note.length) { note.text('Unlocked. Loading...'); }
+		if (res && res.unlock && typeof jawnosMediaApplyToken === 'function') {
+			jawnosMediaApplyToken(mode, res.unlock, res.target);
+		}
 		// the gate repaints from the server; an app padlock is refreshed by the
 		// console message the unlock already sent
 		if (mode === 'locker') { setTimeout(function () { window.location.reload(); }, 700); }
@@ -1772,6 +1886,9 @@ $(document).on('click', '.padlock_fingerprint', function () {
 		if (res && res.ok) {
 			// the accepted print mints the app's token and refreshes the window
 			say(t('Unlocked. Loading...'));
+			if (res.unlock && typeof jawnosMediaApplyToken === 'function') {
+				jawnosMediaApplyToken(mode, res.unlock, res.target);
+			}
 			return;
 		}
 		button.prop('disabled', false);
@@ -1788,7 +1905,7 @@ $(document).on('click', '.padlock_fingerprint', function () {
 	};
 	var poll = function (token, tries) {
 		tries = tries || 0;
-		$.ajax({ url: '/manager/security/fingerprint_unlock_status', type: 'GET', data: { token: token }, cache: false })
+		$.ajax({ url: '/manager/security/fingerprint_unlock_status', type: 'GET', data: { token: token, browser_tab_id: jawnosMediaTab(), device_uuid: jawnDeviceUuid() }, cache: false })
 			.then(function (res) {
 				if (res && res.pending) {
 					if (tries > 30) { finish({ ok: 0, error: 'timeout' }); return; }
@@ -1802,7 +1919,7 @@ $(document).on('click', '.padlock_fingerprint', function () {
 	button.prop('disabled', true);
 	if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(false, button); }
 	say(t('Touch the fingerprint reader now...'));
-	$.ajax({ url: '/manager/security/fingerprint_unlock', type: 'POST', data: { mode: mode }, cache: false })
+	$.ajax({ url: '/manager/security/fingerprint_unlock', type: 'POST', data: { mode: mode, browser_tab_id: jawnosMediaTab(), device_uuid: jawnDeviceUuid() }, cache: false })
 		.then(function (res) {
 			if (res && res.pending && res.token) { poll(res.token, 0); return; }
 			finish(res);
