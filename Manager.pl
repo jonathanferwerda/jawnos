@@ -14082,6 +14082,15 @@ sub continent_record($c) {
 			if ($device eq 'mobile') {
 				my $navigations = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'running_navigation' }) } || {};
 			}
+			# An unmoved fix still refreshes the borrowed place on the peers:
+			# the browser short-circuits the write here, but the laptop's hold
+			# must keep pace with the fix that just arrived.
+			&subs::navigation_share_fix({
+				latitude => $c->param('latitude'),
+				longitude => $c->param('longitude'),
+				accuracy => $c->param('accuracy'),
+				timestamp => $timestamp,
+			});
 
 			return $returner;
 		}
@@ -14123,6 +14132,10 @@ sub continent_record($c) {
 			&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
 			&subs::db_insert('continent', $treturner);
 		}
+		# A fresh fix is also the moment to hand it to a computer on this LAN:
+		# the receiving machine records its own place, without running the
+		# home-plate automation that would duplicate this machine's start.
+		&subs::navigation_share_fix($returner) if $returner->{'latitude'};
 		if ($purpose eq 'proxy_load' && $scope) {
 			&Websocket::send('server', { console => 'listProxy(' . $timestamp . ',"' . $uuid . '");' });
 		}
@@ -30011,9 +30024,12 @@ sub travel_atlas_maps {
 
 # The machine's current position - the single row several writers (the headless
 # navigator, the browser, the tunnels, the reconnector) keep rewriting with type
-# 'temporary'. Returns undef when none has been recorded.
+# 'temporary'. Returns undef when none has been recorded, or when the row's hold
+# has run out: a fix borrowed from a phone must not leave the laptop claiming a
+# place the phone left hours ago. Writers always stamp a warranty; a legacy row
+# with none is still read.
 sub travel_here_position {
-	my $row = &subs::db_query('select * from continent where type = ? and latitude is not null order by server_time desc limit 1', 'temporary')->hashes->[0];
+	my $row = &subs::db_query('select * from continent where type = ? and latitude is not null and (warranty is null or warranty = ? or warranty > ?) order by server_time desc limit 1', 'temporary', '', &subs::rightNow())->hashes->[0];
 	return ($row && $row->{'latitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0, label => 'You are here' } : undef;
 }
 

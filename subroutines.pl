@@ -14729,6 +14729,10 @@ sub headless_navigation() {
 			}
 		}
 		if ($returner->{'latitude'} && $written == 1) {
+			# Hand the fix to a computer on this LAN before the appointment
+			# bookkeeping runs: the laptop records the place, but only this
+			# machine (the one holding the GPS) starts or stops appointments.
+			&subs::navigation_share_fix($returner);
 
 		#	&subs::db_insert('continent', $returner);
 			foreach my $nd ( @{$navigation_due} ) {
@@ -17308,6 +17312,121 @@ sub lan_presence_targets {
 	return \@targets;
 }
 
+# The physical LANs this machine is on: the interfaces the presence notices use,
+# less the tunnel and tailnet adapters. A fix shared over a VPN would claim the
+# receiving machine stands where the phone is when all the two share is a route,
+# so the handover is limited to a real subnet.
+sub lan_physical_network {
+	my @nics;
+	foreach my $nic ( @{ &lan_presence_network() } ) {
+		my $name = $nic->{'nic'} // '';
+		next if $name =~ /^(?:tun|tap|wg|tailscale|utun|ppp|zt|nordlynx|proton)/i;
+		next if ($nic->{'ip'} // '') =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+		push @nics, $nic;
+	}
+	return \@nics;
+}
+
+# A handheld that has just taken its own fix hands it to the peers on this LAN,
+# so a computer with no GPS of its own can be in the same place now instead of
+# on the next mesh sync. Only a mobile sends; the receiving computer records the
+# place but never repeats it, so there is no echo. Nothing here starts or stops
+# an appointment: the handheld's navigation_automation already logged the visit,
+# and a second start for the same place is exactly the duplicate to avoid.
+sub navigation_share_fix {
+	my $fix = shift || {};
+	return unless &subs::device_setter() eq 'mobile';
+	return unless defined $fix->{'latitude'} && $fix->{'latitude'} =~ /^-?\d+(?:\.\d+)?$/
+		&& defined $fix->{'longitude'} && $fix->{'longitude'} =~ /^-?\d+(?:\.\d+)?$/;
+	return unless abs($fix->{'latitude'}) <= 90 && abs($fix->{'longitude'}) <= 180;
+	return unless defined $fix->{'accuracy'} && $fix->{'accuracy'} =~ /^\d+(?:\.\d+)?$/ && $fix->{'accuracy'} < 200;
+	my @nics = @{ &lan_physical_network() };
+	return unless @nics;
+	# one handover for a burst of callbacks describing the same fix
+	my $now = &subs::rightNow();
+	our $navigation_share_at;
+	return if $navigation_share_at && $now - $navigation_share_at < 3000;
+	$navigation_share_at = $now;
+	my $msg = {
+		type => 'jawnos-nav',
+		signatorial => &subs::signatorial_designer(),
+		latitude => $fix->{'latitude'},
+		longitude => $fix->{'longitude'},
+		accuracy => $fix->{'accuracy'},
+		timestamp => ($fix->{'timestamp'} || $now),
+		ts => int(time()),
+		nonce => &subs::random_string_creator(16),
+	};
+	my $pub = &subs::peer_pubkey();
+	$msg->{'pubkey'} = $pub if $pub;
+	my $sig = &subs::peer_sign_blob(&subs::lan_presence_canonical($msg));
+	$msg->{'sig'} = $sig if $sig;
+	my $json = &subs::encode_json($msg);
+	require Socket;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(Proto => 'udp') or return;
+	foreach my $target ( @{ &lan_presence_targets(\@nics) } ) {
+		my $addr = Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($target));
+		$sock->send($json, 0, $addr);
+	}
+	close $sock;
+	return 1;
+}
+
+# A fix arrived from a handheld on this LAN. Record it as this machine's own
+# current position, with the same hold the handheld gives its own fixes, but
+# deliberately do not run navigation_automation: the appointment the visit
+# belongs to is the handheld's to start, and starting a second one here is the
+# duplicate this handover exists to avoid.
+sub lan_navigation_accept {
+	my ($msg, $peer_ip) = @_;
+	return unless ref $msg eq 'HASH';
+	return unless ($msg->{'type'} // '') eq 'jawnos-nav';
+	return if &subs::device_setter() eq 'mobile';
+	my $sig = $msg->{'signatorial'} // '';
+	return unless $sig && $sig ne &subs::signatorial_designer();
+	my $ts = $msg->{'ts'} // 0;
+	return unless $ts =~ /^\d+$/ && abs(time() - $ts) <= 600;
+	return unless ($peer_ip // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+	my $lat = $msg->{'latitude'} // '';
+	my $lon = $msg->{'longitude'} // '';
+	return unless $lat =~ /^-?\d+(?:\.\d+)?$/ && $lon =~ /^-?\d+(?:\.\d+)?$/;
+	return unless abs($lat) <= 90 && abs($lon) <= 180;
+	my $accuracy = $msg->{'accuracy'} // '';
+	return unless $accuracy =~ /^\d+(?:\.\d+)?$/ && $accuracy < 200;
+	my @nics = @{ &lan_physical_network() };
+	return unless @nics;
+	my $same = grep { &subs::same_net_test($_->{'ip'}, $peer_ip) eq 'yes' } @nics;
+	return unless $same;
+	my $rm = &subs::db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0];
+	return unless $rm;
+	return unless &subs::lan_presence_verify($rm, $msg);
+	my $now = &subs::rightNow();
+	my $me = &subs::signatorial_designer();
+	my $fix_time = ($msg->{'timestamp'} // '') =~ /^\d+$/ ? $msg->{'timestamp'} : $now;
+	&subs::db_delete('continent', { type => 'temporary', signatorial => $me });
+	&subs::db_insert('continent', {
+		uuid => &subs::random_string_creator(31),
+		type => 'temporary',
+		app => '__president',
+		signatorial => $me,
+		latitude => $lat,
+		longitude => $lon,
+		accuracy => sprintf("%.2F", $accuracy),
+		timestamp => $fix_time,
+		server_time => $now,
+		warranty => &subs::navigation_hold_warranty({ timestamp => $fix_time, server_time => $now }),
+	});
+	&subs::cache_delete({ app => 'travel', context => 'navigation_information', subcontext => $me });
+	eval { &Websocket::send('tab', { console => 'jawnosContinentAt = 0; if (typeof startMenuHtmlFlush == "function") { startMenuHtmlFlush(); }' }) };
+	our %navigation_share_seen;
+	if (($navigation_share_seen{$sig} || 0) < $now - 300000) {
+		$navigation_share_seen{$sig} = $now;
+		eval { &subs::log_writer('navigation: borrowed a place from ' . substr($sig, 0, 8) . ' at ' . $peer_ip) };
+	}
+	return 1;
+}
+
 sub lan_presence_listen {
 	require Socket;
 	require IO::Socket::INET;
@@ -17340,6 +17459,10 @@ sub lan_presence_listen {
 			next unless $ip;
 			my $msg = eval { decode_json($data) };
 			next unless ref $msg eq 'HASH';
+			if (($msg->{'type'} // '') eq 'jawnos-nav') {
+				eval { &lan_navigation_accept($msg, $ip) };
+				next;
+			}
 			eval { &lan_presence_accept($msg, $ip) };
 		}
 		close $sock;
