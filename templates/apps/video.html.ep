@@ -723,10 +723,10 @@
 				return Math.abs(deltaY) >= 40 ? 'mouse' : 'trackpad';
 			}
 			function <%= $miss %>VolumeLevel() {
-<% if ($source eq 'music') { %>
-				if ($('#music_volume').length && typeof master_volume != 'undefined') {
-					return music_muted ? 0 : master_volume;
-				}
+				<% if ($source eq 'music') { %>
+					if ($('#music_volume').length && typeof musicVolumeLevel == 'function') {
+						return music_muted ? 0 : musicVolumeLevel();
+					}
 <% } %>
 				var v = document.getElementById('<%= $id %>');
 				if (!v) { return 0; }

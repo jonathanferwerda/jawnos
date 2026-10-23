@@ -44,6 +44,14 @@
 	<% } %>
 </select>
 
+<% my $normalize = $crate->{'settings'}->{'normalize'} || 'off'; %>
+<label id="music_normalize_label" for="music_normalize_select" hint="Volume normalization"><%= &subs::lang('music.normalize') %></label>
+<select id="music_normalize_select" hint="Make quiet and loud tracks play at a similar level">
+	<% foreach my $level ( qw/off slight mild aggressive/ ) { %>
+		<option value="<%= $level %>" <% if ($level eq $normalize) { %>selected<% } %>><%= &subs::lang('music.normalize_' . $level) %></option>
+	<% } %>
+</select>
+
 <select id="music_library_select" value="<%= $crate->{'settings'}->{'library'} || 'local' %>">
 	<% if ($crate->{'remote_uuid'} && !$remote_listed) { %>
 		<option value="<%= $crate->{'remote_uuid'} %>" <% if ($crate->{'settings'}->{'library'} eq $crate->{'remote_uuid'}) { %>selected<% } %>><%= $crate->{'remote_hostname'} || $crate->{'remote_uuid'} %></option>

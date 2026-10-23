@@ -921,10 +921,17 @@ function wsMessageHandler(event) {
 					tree.sound.currentTime = seek_to;
 				}
 				else if (data['control'] == 'volume_control') {
-					master_volume = parseFloat(data['value']) || 0;
-					$('#music_volume').val(master_volume);
-					musicVolumeApply();
-					updateMusicMuteIcon();
+					// the bar now follows the machine's mixer when one is exposed, so
+					// the remote control moves the same channel a person would
+					if (typeof musicVolumeSet == 'function') {
+						musicVolumeSet(parseFloat(data['value']) || 0);
+					}
+					else {
+						master_volume = parseFloat(data['value']) || 0;
+						$('#music_volume').val(master_volume);
+						musicVolumeApply();
+						updateMusicMuteIcon();
+					}
 				}
 				else {
 					$('#' + data['control']).val(data['value']);

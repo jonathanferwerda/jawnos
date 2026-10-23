@@ -152,10 +152,20 @@ function musicToggle(files, same_order) {
 async function musicInit(method) {
 	treeMaker();
 	if (method != 'search') {
+		// a restored window comes back with the setting the server last saved;
+		// a search re-render keeps the value already running in this page
+		var normalize_attr = $('#music').attr('normalize');
+		if (normalize_attr) { music_normalize = normalize_attr; }
 		// not a silent start: restore the machine's own output level, or a track
 		// that is already loaded plays back at the audio-handshake volume when the
 		// app is re-opened
 		musicVolumeApply();
+		// The bar follows the machine's own volume when the system exposes one (the
+		// Master mixer on a desk, the music channel on Android). Ask once before the
+		// player cache is read, so a saved app level is not laid over it, then keep
+		// it in step while the window is up.
+		try { await musicSystemVolumePoll(true); } catch (e) {}
+		musicSystemVolumeWatch();
 	}
 	// The window contents can be served from the server-side cache, which freezes
 	// the player snapshot that was inlined when it was written. Trusting that copy
@@ -174,12 +184,17 @@ async function musicInit(method) {
 
 		var pd = JSON.parse(jpd);
 		// the level and mute the player was last left at; a cached near-zero is the
-		// old autoplay-handshake value, so it is ignored
-		if (pd.volume && pd.volume >= 0.05) { master_volume = pd.volume; }
+		// old autoplay-handshake value, so it is ignored. With the bar wired to the
+		// system mixer the element itself stays at full gain - the system channel is
+		// the level - so a saved app volume would otherwise attenuate twice.
+		if (!musicSystemWired && pd.volume && pd.volume >= 0.05) { master_volume = pd.volume; }
+		if (musicSystemWired) { master_volume = 1; }
+		if (!music_normalize && pd.normalize) { music_normalize = pd.normalize; }
 		music_muted = !!pd.muted;
-		$('#music_volume').val(master_volume);
+		$('#music_volume').val(musicVolumeLevel());
 		updateMusicMuteIcon();
 		musicVolumeApply();
+		musicNormalizeApply();
 		$('#video').attr('theatre_mode', pd.theatre_mode);
 		$('#video').attr('type', pd.type);
 		// the drawing the player was left on; musicVisualApply below puts it back
@@ -236,6 +251,8 @@ async function musicInit(method) {
 		playerCacheSaver();
 		musicVisualApply();
 	}
+	// a window with no player cache still wears the setting from its markup
+	musicNormalizeApply();
 
 
 	$('.file_duration').each(function(i,v) {
@@ -298,6 +315,7 @@ function playerCacheSaver(type) {
 			},
 			type: $('#video').attr('type'),
 			visualization: musicVisual.mode,
+			normalize: music_normalize,
 			method: 'playerCache',
 			subtitle_mode: tree.sound.textTracks[0].mode
 		};
@@ -957,13 +975,126 @@ $(document).on('click change', '#progress_bar', function(e) {
  });
 
 var master_volume = 1;
+// Volume normalisation: off, slight, mild or aggressive. The setting is saved
+// as the music app's `normalize` setting; the choice builds the shared Web Audio
+// graph in musicAudioGraph().
+var music_normalize = '';
+
+// The bar and the machine's own mixer. When the system exposes a music/Master
+// channel the slider is that channel, and the element stays at full gain so the
+// two do not attenuate one another. When no mixer can be read the slider is the
+// player's own level, as it was before.
+var musicSystemWired = false;
+var musicSystemStream = '';
+var musicSystemMax = 100;
+var musicSystemLevel = 1;
+var musicSystemTouchedAt = 0;
+var musicSystemSendTimer = null;
+var musicSystemInterval = null;
+
+function musicVolumeClamp(level) {
+	level = parseFloat(level);
+	if (isNaN(level)) { return 0; }
+	return Math.max(0, Math.min(1, level));
+}
+// What the wheel, a finger drag and the slider all read as the current level.
+function musicVolumeLevel() {
+	return musicSystemWired ? musicSystemLevel : master_volume;
+}
+function musicSystemVolumePaint(level, user) {
+	musicSystemLevel = musicVolumeClamp(level);
+	$('#music_volume').val(musicSystemLevel);
+	if (user && musicSystemLevel > 0) { music_muted = false; }
+	updateMusicMuteIcon();
+	musicVolumeApply();
+}
+function musicSystemVolumeSend(level) {
+	if (!musicSystemWired || !musicSystemStream) { return; }
+	clearTimeout(musicSystemSendTimer);
+	// dragging the slider sends a stream of input events; the last one wins
+	musicSystemSendTimer = setTimeout(function() {
+		var raw = Math.round(musicVolumeClamp(level) * musicSystemMax);
+		$.ajax({
+			url: '/manager/volume_control',
+			type: 'GET',
+			dataType: 'json',
+			data: { stream: musicSystemStream, volume: raw, max: musicSystemMax, device: 'local' },
+			error: function() { /* a machine without a mixer keeps its own level */ }
+		});
+	}, 140);
+}
+// A person (or the remote media control) moved the bar.
+function musicVolumeSet(level) {
+	level = musicVolumeClamp(level);
+	musicSystemTouchedAt = Date.now();
+	if (musicSystemWired) {
+		musicSystemVolumePaint(level, true);
+		musicSystemVolumeSend(level);
+		return;
+	}
+	master_volume = level;
+	if (master_volume > 0) { music_muted = false; }
+	$('#music_volume').val(master_volume);
+	musicVolumeApply();
+	updateMusicMuteIcon();
+}
+// Read the machine's own mixer. The music channel is preferred (Android's
+// music stream); a desk's Master is the fallback. Returns the request so the
+// first read can be waited on before a saved player level is restored.
+function musicSystemVolumePoll(adopt) {
+	if (document.hidden) { return null; }
+	if (!document.getElementById('music_volume')) { return null; }
+	// do not undo a level the person has just set while its write is in flight
+	if (!adopt && Date.now() - musicSystemTouchedAt < 2000) { return null; }
+	return $.ajax({
+		url: '/manager/volume_control',
+		type: 'GET',
+		dataType: 'json',
+		success: function(response) {
+			var volumes = (response && response.volumes) || [];
+			var pick = null, master = null;
+			$.each(volumes, function(i, v) {
+				var stream = String(v.stream || '').toLowerCase();
+				if (stream == 'music') { pick = v; }
+				else if (stream == 'master') { master = v; }
+			});
+			if (!pick) { pick = master; }
+			var max = pick ? parseFloat(pick.max_volume) : 0;
+			var raw = pick ? parseFloat(pick.volume) : NaN;
+			if (!pick || !max || isNaN(raw)) {
+				musicSystemWired = false;
+				musicSystemStream = '';
+				return;
+			}
+			var was_wired = musicSystemWired;
+			musicSystemWired = true;
+			musicSystemStream = pick.stream;
+			musicSystemMax = max;
+			// the element is only a pass-through while the mixer is the level
+			if (adopt || !was_wired) { master_volume = 1; }
+			musicSystemVolumePaint(raw / max, false);
+		},
+		error: function() { /* leave the player level in place */ }
+	});
+}
+function musicSystemVolumeWatch() {
+	clearInterval(musicSystemInterval);
+	musicSystemInterval = setInterval(function() {
+		// no point reading a hidden window's mixer; the next open reads it again
+		if (document.hidden || !$('#music_volume').is(':visible')) { return; }
+		musicSystemVolumePoll(false);
+	}, 3000);
+}
 // The volume slider sets the level to play back at; mute silences without losing
 // it. Both go through musicVolumeApply() so the element and the icon agree.
 $(document).on('input', '#music_volume', function() {
-	master_volume = parseFloat(this.value);
-	if (master_volume > 0) { music_muted = false; }
-	musicVolumeApply();
-	updateMusicMuteIcon();
+	musicVolumeSet(this.value);
+});
+$(document).on('change', '#music_normalize_select', function() {
+	music_normalize = $(this).val() || 'off';
+	$('#music').attr('normalize', music_normalize);
+	musicNormalizeApply();
+	settingSetter({ 'app': 'music', 'setting': 'normalize', 'value': music_normalize });
 });
 $(document).on('click', '#music_mute', function() {
 	music_muted = !music_muted;
@@ -1453,11 +1584,13 @@ $(document).on('click', '.all_music', function() {
 // in the player cache like theatre_mode.
 //
 // The sound is tapped with the Web Audio API. An element can only be captured
-// once, so the tap is made lazily (the dropdown is the user gesture that also
-// lets the context start) and then kept for the page: the graph is a
-// pass-through, source -> analyser -> destination, and the element still
-// behaves as it normally would, so volume, mute, seeking and src changes all
-// still do what they did - what you hear is what is drawn.
+// once, so the graph is made lazily and then kept for the page: source ->
+// normaliser -> makeup gain -> limiter -> analyser -> destination. The element
+// still behaves as it normally would, so volume, mute, seeking and src changes
+// all still do what they did - what you hear is what is drawn. The normaliser
+// and the visualiser share this one graph: a second createMediaElementSource on
+// the same element throws, and whichever of the two asked first would take the
+// sound with it.
 
 var musicVisual = {
 	mode: 'none',
@@ -1465,6 +1598,9 @@ var musicVisual = {
 	el: null,
 	source: null,
 	analyser: null,
+	compressor: null,
+	makeup: null,
+	limiter: null,
 	freq: null,
 	raf: 0,
 	last: 0,
@@ -1520,9 +1656,11 @@ function musicPlayerFullscreen() {
 	if (p && p.catch) { p.catch(function () {}); }
 }
 
-// The analyser, made on first use and kept for the page: an element can only be
-// captured once, and the graph has to stay in place or the sound goes with it.
-function musicVisualAnalyser() {
+// The player's audio graph: made on first use and kept for the page. An element
+// can only be captured once, and the graph has to stay in place or the sound
+// goes with it. A re-opened window hands back a fresh element; the old tap is
+// spent and the graph is rebuilt around the new one.
+function musicAudioGraph() {
 	var el = document.getElementById('video');
 	if (!el) { return null; }
 	if (!musicVisual.ctx) {
@@ -1531,17 +1669,27 @@ function musicVisualAnalyser() {
 		try { musicVisual.ctx = new Ctor(); } catch (e) { return null; }
 	}
 	if (musicVisual.el !== el) {
-		// a re-opened window hands back a fresh element; the old tap is spent
 		if (musicVisual.source) { try { musicVisual.source.disconnect(); } catch (e) {} }
 		musicVisual.source = null;
 		musicVisual.analyser = null;
+		musicVisual.compressor = null;
+		musicVisual.makeup = null;
+		musicVisual.limiter = null;
 		try {
 			musicVisual.source = musicVisual.ctx.createMediaElementSource(el);
+			musicVisual.compressor = musicVisual.ctx.createDynamicsCompressor();
+			musicVisual.makeup = musicVisual.ctx.createGain();
+			musicVisual.limiter = musicVisual.ctx.createDynamicsCompressor();
 			musicVisual.analyser = musicVisual.ctx.createAnalyser();
 			musicVisual.analyser.fftSize = 2048;
 			musicVisual.analyser.smoothingTimeConstant = 0.82;
-			musicVisual.source.connect(musicVisual.analyser).connect(musicVisual.ctx.destination);
+			musicVisual.source.connect(musicVisual.compressor);
+			musicVisual.compressor.connect(musicVisual.makeup);
+			musicVisual.makeup.connect(musicVisual.limiter);
+			musicVisual.limiter.connect(musicVisual.analyser);
+			musicVisual.analyser.connect(musicVisual.ctx.destination);
 			musicVisual.el = el;
+			musicNormalizeParams();
 		}
 		catch (e) {
 			musicVisual.source = null;
@@ -1549,8 +1697,9 @@ function musicVisualAnalyser() {
 		}
 	}
 	if (musicVisual.ctx.state == 'suspended') {
-		// the dropdown is the usual gesture that lets the context start; this is
-		// the retry for one that was interrupted (a phone call, say)
+		// the dropdown or the normalisation choice is the usual gesture that lets
+		// the context start; this is the retry for one that was interrupted (a
+		// phone call, say)
 		var now = Date.now();
 		if (now - musicVisual.resumeAt > 1000) {
 			musicVisual.resumeAt = now;
@@ -1558,7 +1707,69 @@ function musicVisualAnalyser() {
 			if (p && p.catch) { p.catch(function () {}); }
 		}
 	}
-	return musicVisual.analyser;
+	return musicVisual;
+}
+
+// Slight, mild and aggressive differ in how hard the compressor works and how
+// much makeup gain puts the quiet parts back up. Off is a transparent setting on
+// the same graph (a ratio of 1, no makeup, and a limiter that only sees peaks
+// above full scale), so switching levels never has to rewire the element.
+var musicNormalizePresets = {
+	off:        { threshold: 0,   knee: 0,  ratio: 1,  attack: 0.003, release: 0.25, gain: 1.00 },
+	slight:     { threshold: -20, knee: 16, ratio: 2,  attack: 0.010, release: 0.30, gain: 1.50 },
+	mild:       { threshold: -28, knee: 22, ratio: 4,  attack: 0.006, release: 0.25, gain: 3.00 },
+	aggressive: { threshold: -36, knee: 28, ratio: 8,  attack: 0.003, release: 0.20, gain: 6.00 }
+};
+function musicNormalizeParams() {
+	var g = musicVisual;
+	if (!g.ctx || !g.compressor || !g.makeup || !g.limiter) { return; }
+	var preset = musicNormalizePresets[music_normalize] || musicNormalizePresets.off;
+	var now = g.ctx.currentTime;
+	try {
+		g.compressor.threshold.setTargetAtTime(preset.threshold, now, 0.02);
+		g.compressor.knee.setTargetAtTime(preset.knee, now, 0.02);
+		g.compressor.attack.setTargetAtTime(preset.attack, now, 0.02);
+		g.compressor.release.setTargetAtTime(preset.release, now, 0.02);
+		g.makeup.gain.setTargetAtTime(preset.gain, now, 0.02);
+	}
+	catch (e) {
+		g.compressor.threshold.value = preset.threshold;
+		g.compressor.knee.value = preset.knee;
+		g.compressor.attack.value = preset.attack;
+		g.compressor.release.value = preset.release;
+		g.makeup.gain.value = preset.gain;
+	}
+	g.compressor.ratio.value = preset.ratio;
+	// a final guard: the makeup gain must not push peaks past full scale. Off is
+	// left transparent - a track mastered at full scale is not shaved.
+	var limiting = (preset !== musicNormalizePresets.off);
+	try {
+		g.limiter.threshold.setTargetAtTime(limiting ? -1 : 0, now, 0.02);
+		g.limiter.knee.setTargetAtTime(0, now, 0.02);
+		g.limiter.attack.setTargetAtTime(0.003, now, 0.02);
+		g.limiter.release.setTargetAtTime(limiting ? 0.10 : 0.25, now, 0.02);
+	}
+	catch (e) {
+		g.limiter.threshold.value = limiting ? -1 : 0;
+		g.limiter.knee.value = 0;
+		g.limiter.attack.value = 0.003;
+		g.limiter.release.value = limiting ? 0.10 : 0.25;
+	}
+	g.limiter.ratio.value = limiting ? 20 : 1;
+}
+// The normaliser is only put in the signal path when it is asked for: turning it
+// on builds the shared graph (on the gesture that chose it), and turning it off
+// leaves the graph transparent so a playing track is not interrupted.
+function musicNormalizeApply() {
+	if (music_normalize && music_normalize != 'off') { musicAudioGraph(); }
+	musicNormalizeParams();
+}
+
+// The visualiser's tap. It shares the normaliser's graph so the drawing follows
+// the sound after normalisation, and so neither can capture the element twice.
+function musicVisualAnalyser() {
+	var g = musicAudioGraph();
+	return g ? g.analyser : null;
 }
 
 // One moment of the sound: the band levels (0..1), where its weight sits (the

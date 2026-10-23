@@ -37976,7 +37976,7 @@ get '/manager/volume_control' => sub($c) {
 		$md = eval { return decode_json $data->{'md'} } || {};
 	}
 	else {
-		if ($stream && $volume) {
+		if (defined $stream && length $stream && defined $volume && length $volume) {
 			if ($device eq 'mobile') {
 				$stream = lc $stream;
 				`termux-volume $stream $volume`;

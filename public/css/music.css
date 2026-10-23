@@ -500,6 +500,14 @@ body.dark_theme #music {
 	/* the panel wears a random colour per open, so its controls carry their own
 	   light surface and dark ink instead of trusting the theme ink */
 	color: #111;
+	/* the drawer is taller than the window on a phone: keep it inside the
+	   window and let the contents scroll rather than running off the bottom */
+	box-sizing: border-box;
+	max-height: calc(100% - 100px);
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+	scrollbar-width: thin;
 }
 #music #music_folders,
 #music #music_audio_output {
@@ -541,6 +549,17 @@ body.dark_theme #music {
 #music #music_library_select {
 	width: 48%;
 	margin: 2px 1%;
+	border-radius: 8px;
+}
+#music #music_normalize_label {
+	display: block;
+	margin: 8px 2% 2px;
+	font-size: 13px;
+	font-weight: 600;
+}
+#music #music_normalize_select {
+	width: 96%;
+	margin: 0 2%;
 	border-radius: 8px;
 }
 

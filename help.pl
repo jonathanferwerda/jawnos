@@ -154,15 +154,17 @@ our %topic = (
 	},
 	'music' => {
 		title => 'Music', category => 'apps', app => 'music',
-		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
-		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization' ],
-		verified => '2026-10-22',
+		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
+		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization', 'Volume normalization' ],
+		verified => '2026-10-23',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
 			'Texture, in Appearance, dresses the window in the desk\'s material - the top interface bar, every track, the player bar at the foot and every other surface; Plain and Round leave them bare.',
 			'Sealed tracks (a name ending .enc) in an album marked visible are listed and play as usual. Only a sealed track in an album marked not-visible waits for the padlock: press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone. The unlock belongs to that screen and that window; closing the Music window, the screen going away, or a restart shuts the padlock again.',
 			'It plays through the browser and can hand playback to a linked device, and it is where the audio output is chosen. A machine that is chosen as an output downloads the track and plays it with the system player, so it has no Music window of its own. Its keyboard and websocket panel carry a strip naming the track being received, with a Stop button and a Receive music from other devices switch. Turning the switch off stops the current track and refuses later transmissions to that machine; turning it back on lets it be an output again.',
+			'The volume bar follows the machine\'s own volume: the Master mixer on a desk, or the music channel on Android, so the system volume keys and the bar move together. On a machine with no mixer to read, the bar is the player\'s own level.',
+			'Volume normalization, in the configuration drawer, evens out the difference between a quiet recording and a loud one. Off leaves the sound untouched, Slight makes gentle corrections, Mild is the everyday setting for mixed films and albums, and Aggressive lifts quiet dialog and holds down action scenes the most. It is one setting for the whole player and it is remembered on this machine.',
 			'The line under the search box names the library this window is showing: this machine\'s own name for a local library, or the host it is relayed from for a remote one.',
 			'On a phone it keeps playing with the screen off or the app in the background: the player asks the app to leave the view running while a track is playing, so the queue carries on to the next track instead of stopping when the screen sleeps.',
 			'An audio track has no picture of its own, so the player can draw the sound instead and play that drawing as its picture: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).',
@@ -175,6 +177,7 @@ our %topic = (
 			'Fullscreen (the player button, or F) fills the screen with the picture; moving the mouse brings back the top bar and the transport, and they fade away again when the pointer rests.',
 			'A wheel over the picture moves through the track; on a trackpad, a sideways swipe does the same and up/down sets the volume. On a touchscreen, drag sideways to move through it and up or down to set the volume. The same gestures work in fullscreen, over the interface; the fullscreen button (or F) leaves fullscreen too.',
 			'Open the configuration drawer to choose the audio output, or to send playback to another machine on the mesh.',
+			'To even out volumes, open the configuration drawer and choose Volume normalization: Off, Slight, Mild or Aggressive. The setting applies as soon as it is picked and stays with this machine.',
 			'If a machine starts playing with no Music window to control it, open its keyboard or websocket panel and press the square Stop beside the received track. The Receive music from other devices switch under it keeps that machine from being used as an output at all.'
 		],
 		related => [ 'studio', 'synth' ]
