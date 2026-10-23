@@ -1575,14 +1575,16 @@ $(document).on('click', '#card_description', function() {
 	$('#card_description').hide();
 });
 
-var key_index;
-var original_key_position;
 $(document).on('click', '#ticketmaker', function() {
 	boxOffice();
 });
 
-$(document).on('change', '#box_office_view', function() {
-	var view = $(this).val();
+// The two views are tabs now. The value still lives in #box_office_view (a
+// hidden input) so boxOffice() and the server keep reading one place.
+$(document).on('click', '.bo_tab', function() {
+	var view = $(this).attr('view');
+	if (!view || view === $('#box_office_view').val()) { return; }
+	$('#box_office_view').val(view);
 	settingSetter({ 'app': 'misc', 'setting': 'box_office_view', 'value': view });
 	boxOffice();
 });
@@ -1742,30 +1744,6 @@ function boxOfficeMaker(response) {
 		windowMaker(response);
 		$('#box_office').show();
 		ticketDotClear();
-		if (original_key_position == undefined) {
-			original_key_position = {
-				top: $('#ticket_sales').css('top'),
-				left: $('#ticket_sales').css('left')
-			};
-		}
-		$('#ticket_sales').show();
-		$('#ticket_sales').draggable({
-			start: function(p) {
-
-				$('.unlock').show();
-				key_index = $('#ticket_sales').css('z-index');
-
-			},
-			drag: function(p) {
-
-
-			},
-			stop: function(p) {
-
-				$('.unlock').hide();
-
-			}
-		});
 	}
 }
 
@@ -1773,27 +1751,53 @@ function boxOfficeMaker(response) {
 
 $(document).on('click', '.box_office_close_button', function() { 
 	$('#ticket_sales').hide();
+});
 
-	$('#ticket_sales').css(original_key_position);
+$(document).on('click', '#ticket_issue', function() {
+	qrcode_generator();
 });
 
 function qrcode_generator(app) {
 	var timestamp = Date.now();
+	var button = $('#ticket_issue');
+	var status = $('#ticket_issue_status');
 	var nic = $('#ticket_network_device').val();
 	var name = $('#ticket_name').val();
 	var warranty = $('#ticket_warranty').val();
 	var privilege = $('#ticket_privilege').val();
 	var project = $('#ticket_project').val();
+	var chosen_app = app || $('#ticket_app').val();
 	var debriefer = JSON.stringify(localStorage);
+
+	if (!chosen_app) {
+		status.text(jawnosT('Choose an app first.'));
+		return;
+	}
+	if (button.length) { button.prop('disabled', true).text(jawnosT('Issuing…')); }
+	status.text('');
 
 	$.ajax({
 		url: '/manager/qrcode_generator',
 		type: 'GET',
-		data: { timestamp: timestamp, nic: nic, debriefer:debriefer, name: name, warranty: warranty, privilege: privilege, app: app, project: project },
+		data: { timestamp: timestamp, nic: nic, debriefer: debriefer, name: name, warranty: warranty, privilege: privilege, app: chosen_app, project: project },
 		success: function(response) {
-			if (response) {
+			if (response && !response.error && response.uuid) {
+				var who = response.name || name || 'visitor';
+				status.empty().text(jawnosT('Ticket issued for') + ' ' + who + ' (' + chosen_app + '). ');
+				if (response.url) {
+					$('<a>').attr({ href: response.url, target: '_blank', rel: 'noopener' }).text(jawnosT('Open')).appendTo(status);
+				}
 				ticket_list();
 			}
+			else {
+				status.text(jawnosT('The ticket could not be issued.'));
+			}
+		},
+		error: function() {
+			status.text(jawnosT('The ticket could not be issued.'));
+		},
+		complete: function() {
+			if (button.length) { button.prop('disabled', false).text(jawnosT('Issue ticket')); }
 		}
 	});
 }
@@ -1809,9 +1813,41 @@ function ticket_list() {
 			var tl = $(response).find('#ticket_list').html();
 
 			$('#ticket_list').html(tl);
+			bo_ticket_count();
 		}
 	});
 }
+
+// The Tickets tab and the card's own count both read the rows on the page.
+function bo_ticket_count() {
+	$('#bo_ticket_count').text($('#ticket_list_body .ticket_holder').length);
+}
+
+// Copying the link matters: the link is the credential and retyping it from
+// the row is how the old desk made people share a secret badly.
+function bo_copy_text(text, button) {
+	var done = function() {
+		var old = button.text();
+		button.text(jawnosT('Copied'));
+		setTimeout(function() { button.text(old); }, 1500);
+	};
+	var fallback = function() {
+		var ta = $('<textarea>').val(text).css({ position: 'fixed', opacity: 0, top: 0, left: 0 });
+		$('body').append(ta);
+		ta[0].select();
+		try { document.execCommand('copy'); done(); } catch (e) { /* the browser refused both */ }
+		ta.remove();
+	};
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text).then(done, fallback);
+	}
+	else { fallback(); }
+}
+
+$(document).on('click', '.bo_copy_link', function() {
+	var b = $(this);
+	bo_copy_text(b.attr('data-url') || '', b);
+});
 
 $(document).on('click', '.ticket', function() {
 	var t = $(this);
@@ -1835,6 +1871,7 @@ $(document).on('click', '.delete_ticket', function() {
 			success: function(response) {
 
 				$('.ticket_holder[uuid="' + response['uuid'] + '"]').remove();
+				bo_ticket_count();
 			}
 		});
 	}
@@ -1911,7 +1948,7 @@ $(document).on('change', '#ticket_network_device', function() {
 	var t = $(this);
 	var ip = t.find('option[value="' + t.val() + '"]').attr('ip');
 	$('#ticket_network_ip').text(ip);
-
+	$('#ticket_network_meta').text(t.find('option:selected').text());
 });
 
 

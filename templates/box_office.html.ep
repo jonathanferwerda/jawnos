@@ -1,205 +1,595 @@
+<%# The Box Office: the desk that mints, watches and revokes the house's
+    tickets. The form mints directly (no dragging the key onto a window), the
+    network address lives in a fold-away panel, and each ticket's access log is
+    its own accordion so the list stays readable. %>
+<%
+	my @tickets_shown = grep { ($_->{'status'} || '') ne 'request' } @{$tickets || []};
+	my $selected_priv = $gb::chairs->{$privilege} ? $privilege : 'guest';
+	my @people_list = @{$people || []};
+	my $selected_name = &subs::unformat_name($name || '');
+	my $name_found = grep { &subs::unformat_name($_->{'app'} || '') eq $selected_name } @people_list;
+	my %not_app = map { $_ => 1 } qw(citizen resident guest blacklisted);
+	my %app_seen = map { $_ => 1 } grep { !$not_app{$_} } keys %{$gb::known_appts};
+	foreach my $t ( @{$tickets || []} ) {
+		my $a = $t->{'app'} || '';
+		$app_seen{$a} = 1 if length $a && !$not_app{$a};
+	}
+	my @apps_list = sort { lc($a) cmp lc($b) } keys %app_seen;
+	push @apps_list, 'box_office' unless grep { $_ eq 'box_office' } @apps_list;
 
-<span id="box_office" class="theme_surface" style="overflow-x:scroll;width:100%;height:100%;background-color:<%= $config->{$device}->{'box_office'}->{'background_colour'} %>">
-	<select id="box_office_view">
-		<% foreach my $v ( qw/tickets requests/ ) { %>
-			<option value="<%= $v %>" <% if ($v eq $view) { %>selected<% } %>><%= &subs::format_name($v) %></option>
-		<% } %>
+	my @nic_options;
+	if ($config->{'domain'}) {
+		push @nic_options, { value => $config->{'domain'}, ip => $config->{'domain'}, label => $config->{'domain'} };
+	}
+	foreach my $nd (sort keys %{$addresses || {}}) {
+		next unless $addresses->{$nd}->{'ip'};
+		push @nic_options, { value => $nd, ip => $addresses->{$nd}->{'ip'}, label => $nd };
+	}
+	my $selected_nic = '';
+	foreach my $o (@nic_options) {
+		if (($nic || '') eq $o->{'value'}) { $selected_nic = $o->{'value'}; last; }
+	}
+	$selected_nic = $nic_options[0]->{'value'} if (!length $selected_nic && scalar @nic_options);
+	my ($selected_ip) = map { $_->{'ip'} } grep { $_->{'value'} eq $selected_nic } @nic_options;
+%>
+<span id="box_office" class="theme_surface bo_shell" style="background-color:<%= $config->{$device}->{'box_office'}->{'background_colour'} || 'var(--window, var(--panel))' %>">
+	<input type="hidden" id="box_office_view" value="<%= $view %>">
 
-	</select>
-	<span id="ticket_network_ip"><%= $addresses->{$nic}->{'ip'} %></span>
-	<% if ($view eq 'tickets') { %>
-		<table>
-			<thead><th>Name</th><th>Privilege</th><th>Project</th><th>Warranty</th><th>NIC</th></thead>
-			<tbody>
-				<tr>
-					<td>
-						<select id="ticket_name">
-							<% foreach my $p ( @{$people} ) { %>
-								<option value="<%= $p->{'app'} %>" <% if (&subs::unformat_name($p->{'app'}) eq &subs::unformat_name($name)) { %>selected<% } %>><%= &subs::format_name($p->{'app'}) %></option>
-							<% } %>
-						</select>
-					</td>
-					<td>
-						<select id="ticket_privilege" value="<%= $privilege %>">
-							<% foreach my $p ( keys %{$gb::chairs} ) { %>
-								<option <% if ($privilege eq $p) { %>selected <% } %> value="<%= $p %>"><%= &subs::format_name($p) %></option>
-							<% } %>
-						</select>
-					</td>
-					<td>
-						<select id="ticket_project">
-							<% foreach my $proj ( @{$projects} ) { %>
-								<option value="<%= $proj->{'app'} %>"><%= &subs::format_name($proj->{'app'}) %></option>
-							<% } %>
-						</select>
-					</td>
-					<td><input type="text" id="ticket_warranty" value="<%= $warranty %>" style="width:120px;"></td>
-					<td>
-						<select id="ticket_network_device" style="width:120px;">
-							<% if ($config->{'domain'}) { %>
-								<option ip="<%= $config->{'domain'} %>" value="<%= $config->{'domain'} %>" <% if ($nic eq $config->{'domain'}) { %>selected<% } %>><%= $config->{'domain'} %></option>
-							<% } %>
-							<% foreach my $nd ( keys %{$addresses} ) { %>
-								<% if ( $addresses->{$nd}->{'ip'} ) { %>
-									<option ip="<%= $addresses->{$nd}->{'ip'} %>" value="<%= $nd %>" <% if ($nic eq $nd) { %>selected<% } %>><%= $nd %></option>
-								<% } %>
-							<% } %>
-						</select>
-					</td>			
-				</tr>
-			</tbody>
-		</table>
-		<table id="ticket_list" style="width:100%;max-width:100%;">
-			<thead>
-				<th>QR</th><th>App</th><th>Name</th><th>Status</th><th>Privilege</th><th>Project</th><th>Init</th><th>Duration</th><th>Warranty</th><th>Log</th><th>Delete</th>
-			</thead>
-			<tbody id="ticket_list_body">
-				<% foreach my $t ( grep { $_->{'status'} ne 'request' } @{$tickets} ) { %>
-					<tr class="ticket_holder" uuid="<%= $t->{'uuid'} %>" style="background-color:<% if ($t->{'status'} eq 'active' ) { %>yellow<% } elsif ($t->{'status'} eq 'suspended') { %>red<% } else { %>grey<% } %>;">
-						<td><img class="little_thumb ticket" src="<%= $t->{'image'} %>"><br>
-				<a target="_blank" class="take_on_me" href="<%= $t->{'url'} %>">Link</a>
-						</td>
-						<td><span class="ticket_app" app="<%= $t->{'app'} %>"><%= &subs::format_name($t->{'app'}) %></span></td>
-						<td><span class="ticket_name"><%= &subs::format_name($t->{'name'}) %></span></td>
-						<td><span class="ticket_status"><%= $t->{'status'} %></span></td>
-						<td><span class="ticket_privilege"><%= $t->{'privilege'} %></span>
-							<select class="ticket_privilege_change" uuid="<%= $t->{'uuid'} %>" title="Upgrade">
-								<% foreach my $chair ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
-									<option value="<%= $chair %>" <% if (($t->{'privilege'} || '') eq $chair) { %>selected<% } %>><%= &subs::format_name($chair) %></option>
-								<% } %>
-							</select></td>
-						<td><span class="ticket_project"><%= &subs::format_name($t->{'project'}) %></span</td>
-						<td><span class="ticket_timestamp time" timestamp="<%= $t->{'timestamp'} %>"><%= $t->{'timestamp'} %></span></td>
-						<td><span class="ticket_duration duration" timestamp="<%= $t->{'duration'} %>"><%= &subs::duration_sayer($t->{'duration'} / 1000) %></span></td>
-						<td><span class="ticket_warranty time" timestamp="<%= $t->{'warranty'} %>"><%= $t->{'warranty'} %></span></td>
-						<td>
-							<% foreach my $al ( sort { $b->{'server_time'} <=> $a->{'server_time'} } @{$t->{'access_log'}} ) { %>
-								<%= $al->{'ip'} %> <span class="time" timestamp="<%= $al->{'server_time'} %>"></span><br>
-							<% } %>
-						</td>
-						<td>
-							<% if ($t->{'status'} eq 'active') { %>
-								<span><button class="suspend_ticket" uuid="<%= $t->{'uuid'} %>">Suspend</button></span>
-							<% } %>
-							<% if ($t->{'status'} eq 'suspended') { %>
-								<span><button class="reinstate_ticket" uuid="<%= $t->{'uuid'} %>">Reinstate</button></span>
-							<% } %>
-							<% if ($t->{'status'} ne 'suspended' ) { %>
-								<span><button class="renew_ticket" uuid="<%= $t->{'uuid'} %>">Renew</button></span>
-							<% } %>
-							<span><button class="delete_ticket" uuid="<%= $t->{'uuid'} %>">Delete</button></span>
-						</td>
-					</tr>
-				<% } %>
-			</tbody>
-		</table>
-		<div id="blocked_numbers">
-			<h3>Blocked numbers</h3>
-			<div id="blocked_numbers_hint">A call from a number here is turned away before it rings - the phone checks this list when it rings. The same list is the door's blacklist, so a number blocked here is refused a request as well.</div>
-			<div id="blocked_numbers_add">
-				<input type="text" id="blocked_number_input" placeholder="number" style="width:160px;">
-				<input type="text" id="blocked_number_note" placeholder="why (optional)" style="width:200px;">
-				<button id="blocked_number_add_button">Block</button>
-				<span id="blocked_number_status"></span>
+	<div class="bo_head">
+		<div class="bo_brand">
+			<img class="bo_mark" src="<%= &subs::icon_for($gb::known_appts->{'box_office'}->{'icon'}) %>" alt="">
+			<div>
+				<h2 class="bo_title"><%= &subs::ui('Box Office') %></h2>
+				<div class="bo_sub"><%= &subs::ui('Issue access tickets and answer requests.') %></div>
 			</div>
-			<div id="blocked_number_list">
-				<% my @blocked_phones = grep { ($_->{'phone'} || '') ne '' } grep { ref $_ eq 'HASH' } @{$blacklist}; %>
+		</div>
+		<div class="bo_tabs" role="tablist">
+			<button type="button" class="bo_tab <% if ($view eq 'tickets') { %>on<% } %>" view="tickets" role="tab" aria-selected="<%= $view eq 'tickets' ? 'true' : 'false' %>">
+				<%= &subs::ui('Tickets') %><span class="bo_count" id="bo_ticket_count"><%= scalar @tickets_shown %></span>
+			</button>
+			<button type="button" class="bo_tab <% if ($view eq 'requests') { %>on<% } %>" view="requests" role="tab" aria-selected="<%= $view eq 'requests' ? 'true' : 'false' %>">
+				<%= &subs::ui('Requests') %><% if (scalar @{$requests || []}) { %><span class="bo_count bo_count_alert"><%= scalar @{$requests || []} %></span><% } %>
+			</button>
+		</div>
+	</div>
+
+	<% if ($view eq 'tickets') { %>
+		<section class="bo_card bo_issue_card">
+			<div class="bo_card_head">
+				<h3><%= &subs::ui('Issue a ticket') %></h3>
+				<span class="bo_muted"><%= &subs::ui('Choose who it is for and what it opens, then issue it.') %></span>
+			</div>
+			<div class="bo_form">
+				<label class="bo_field">
+					<span><%= &subs::ui('Who') %></span>
+					<select id="ticket_name">
+						<option value="" <% unless ($name_found) { %>selected<% } %>><%= &subs::ui('Visitor') %></option>
+						<% foreach my $p ( sort { lc($a->{'app'}) cmp lc($b->{'app'}) } @people_list ) { %>
+							<option value="<%= $p->{'app'} %>" <% if (&subs::unformat_name($p->{'app'}) eq $selected_name) { %>selected<% } %>><%= &subs::format_name($p->{'app'}) %></option>
+						<% } %>
+					</select>
+				</label>
+				<label class="bo_field">
+					<span><%= &subs::ui('App') %></span>
+					<select id="ticket_app">
+						<% foreach my $a ( @apps_list ) { %>
+							<option value="<%= $a %>" <% if ($a eq 'box_office') { %>selected<% } %>><%= &subs::format_name($a) %></option>
+						<% } %>
+					</select>
+				</label>
+				<label class="bo_field">
+					<span><%= &subs::ui('Privilege') %></span>
+					<select id="ticket_privilege">
+						<% foreach my $p ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
+							<option value="<%= $p %>" <% if ($selected_priv eq $p) { %>selected<% } %>><%= &subs::format_name($p) %></option>
+						<% } %>
+					</select>
+				</label>
+				<label class="bo_field">
+					<span><%= &subs::ui('Project') %></span>
+					<select id="ticket_project">
+						<option value=""><%= &subs::ui('No project') %></option>
+						<% foreach my $proj ( sort { lc($a->{'app'}) cmp lc($b->{'app'}) } @{$projects || []} ) { %>
+							<option value="<%= $proj->{'app'} %>"><%= &subs::format_name($proj->{'app'}) %></option>
+						<% } %>
+					</select>
+				</label>
+				<label class="bo_field">
+					<span><%= &subs::ui('Warranty') %></span>
+					<input type="text" id="ticket_warranty" value="<%= $warranty %>" placeholder="-1d, -1y, forever">
+				</label>
+				<div class="bo_form_action">
+					<button type="button" id="ticket_issue" class="bo_primary" hint="<%= &subs::ui('Issue a ticket now') %>"><%= &subs::ui('Issue ticket') %></button>
+					<span id="ticket_issue_status" class="bo_statusline" aria-live="polite"></span>
+				</div>
+			</div>
+
+			<details class="bo_acc" id="bo_network">
+				<summary>
+					<span class="bo_acc_title"><%= &subs::ui('Network address') %></span>
+					<span class="bo_acc_meta" id="ticket_network_meta"><%= $selected_nic %></span>
+				</summary>
+				<div class="bo_acc_body">
+					<label class="bo_field bo_field_wide">
+						<span><%= &subs::ui('Interface') %></span>
+						<select id="ticket_network_device">
+							<% foreach my $o ( @nic_options ) { %>
+								<option ip="<%= $o->{'ip'} %>" value="<%= $o->{'value'} %>" <% if ($selected_nic eq $o->{'value'}) { %>selected<% } %>><%= $o->{'label'} %></option>
+							<% } %>
+						</select>
+					</label>
+					<div class="bo_ip_line">
+						<span class="bo_muted"><%= &subs::ui('The ticket link will point at') %></span>
+						<span id="ticket_network_ip"><%= $selected_ip %></span>
+					</div>
+				</div>
+			</details>
+		</section>
+
+		<section class="bo_card bo_list_card">
+			<div class="bo_card_head">
+				<h3><%= &subs::ui('Issued tickets') %></h3>
+				<span class="bo_muted"><%= &subs::ui('A ticket is a single-use link that signs its holder in.') %></span>
+			</div>
+			<div class="bo_table_wrap">
+				<table id="ticket_list" class="bo_table">
+					<thead>
+						<tr>
+							<th class="bo_qr_cell"><%= &subs::ui('QR') %></th>
+							<th><%= &subs::ui('Ticket') %></th>
+							<th><%= &subs::ui('Status') %></th>
+							<th><%= &subs::ui('Privilege') %></th>
+							<th><%= &subs::ui('Project') %></th>
+							<th><%= &subs::ui('Issued') %></th>
+							<th><%= &subs::ui('Expires') %></th>
+							<th><%= &subs::ui('Access log') %></th>
+							<th><%= &subs::ui('Actions') %></th>
+						</tr>
+					</thead>
+					<tbody id="ticket_list_body">
+						<% foreach my $t ( @tickets_shown ) { %>
+							<% my $status = $t->{'status'} || 'expired'; %>
+							<tr class="ticket_holder" uuid="<%= $t->{'uuid'} %>" data-status="<%= $status %>">
+								<td class="bo_qr_cell">
+									<img class="little_thumb ticket bo_qr" src="<%= $t->{'image'} %>" alt="<%= &subs::ui('Ticket QR code') %>" title="<%= &subs::ui('Click to enlarge') %>">
+								</td>
+								<td>
+									<span class="ticket_name bo_ticket_name"><%= &subs::format_name($t->{'name'}) %></span>
+									<span class="ticket_app bo_ticket_app" app="<%= $t->{'app'} %>"><%= &subs::format_name($t->{'app'}) %></span>
+								</td>
+								<td><span class="bo_status ticket_status" data-status="<%= $status %>"><%= $status %></span></td>
+								<td>
+									<span class="ticket_privilege bo_chip"><%= &subs::format_name($t->{'privilege'}) %></span>
+									<select class="ticket_privilege_change bo_select_sm" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Change this ticket\'s privilege') %>">
+										<% foreach my $chair ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
+											<option value="<%= $chair %>" <% if (($t->{'privilege'} || '') eq $chair) { %>selected<% } %>><%= &subs::format_name($chair) %></option>
+										<% } %>
+									</select>
+								</td>
+								<td><span class="ticket_project"><%= &subs::format_name($t->{'project'}) %></span></td>
+								<td><span class="ticket_timestamp time" timestamp="<%= $t->{'timestamp'} %>"></span></td>
+								<td>
+									<span class="ticket_warranty time" timestamp="<%= $t->{'warranty'} %>"></span>
+									<span class="ticket_duration duration bo_muted bo_duration" timestamp="<%= $t->{'duration'} %>"><%= &subs::duration_sayer($t->{'duration'} / 1000) %></span>
+								</td>
+								<td>
+									<% my @log = sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) } @{$t->{'access_log'} || []}; %>
+									<% if (scalar @log) { %>
+										<details class="bo_log">
+											<summary><%= &subs::ui('Access log') %> <span class="bo_log_count"><%= scalar @log %></span></summary>
+											<div class="bo_log_body">
+												<% foreach my $al ( @log ) { %>
+													<div class="bo_log_ip">
+														<span><%= $al->{'ip'} %></span>
+														<span class="time" timestamp="<%= $al->{'server_time'} %>"></span>
+													</div>
+												<% } %>
+											</div>
+										</details>
+									<% } else { %>
+										<span class="bo_muted">&mdash;</span>
+									<% } %>
+								</td>
+								<td class="bo_actions">
+									<a class="bo_link" href="<%= $t->{'url'} %>" target="_blank" rel="noopener" hint="<%= &subs::ui('Open the ticket link') %>"><%= &subs::ui('Link') %></a>
+									<button type="button" class="bo_copy_link bo_small" data-url="<%= $t->{'url'} %>" hint="<%= &subs::ui('Copy the ticket link') %>"><%= &subs::ui('Copy') %></button>
+									<% if ($status eq 'active') { %>
+										<button type="button" class="suspend_ticket bo_small" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Suspend this ticket') %>"><%= &subs::ui('Suspend') %></button>
+									<% } %>
+									<% if ($status eq 'suspended') { %>
+										<button type="button" class="reinstate_ticket bo_small" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Reinstate this ticket') %>"><%= &subs::ui('Reinstate') %></button>
+									<% } %>
+									<% if ($status ne 'suspended') { %>
+										<button type="button" class="renew_ticket bo_small" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Renew using the warranty in the form above') %>"><%= &subs::ui('Renew') %></button>
+									<% } %>
+									<button type="button" class="delete_ticket bo_small bo_danger" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Delete this ticket (press twice)') %>"><%= &subs::ui('Delete') %></button>
+								</td>
+							</tr>
+						<% } %>
+						<% if (!scalar @tickets_shown) { %>
+							<tr><td colspan="9" class="bo_empty"><%= &subs::ui('No tickets yet. Issue one above.') %></td></tr>
+						<% } %>
+					</tbody>
+				</table>
+			</div>
+		</section>
+
+		<section class="bo_card" id="blocked_numbers">
+			<div class="bo_card_head">
+				<h3><%= &subs::ui('Blocked numbers') %></h3>
+			</div>
+			<div id="blocked_numbers_hint" class="bo_hint"><%= &subs::ui('A call from a number here is turned away before it rings. The same list is the door\'s blacklist, so a blocked number is refused a ticket request as well.') %></div>
+			<div id="blocked_numbers_add" class="bo_inline_form">
+				<input type="text" id="blocked_number_input" placeholder="<%= &subs::ui('number') %>">
+				<input type="text" id="blocked_number_note" placeholder="<%= &subs::ui('why (optional)') %>">
+				<button type="button" id="blocked_number_add_button" hint="<%= &subs::ui('Block this number') %>"><%= &subs::ui('Block') %></button>
+				<span id="blocked_number_status" class="bo_statusline"></span>
+			</div>
+			<div id="blocked_number_list" class="bo_chips">
+				<% my @blocked_phones = grep { ($_->{'phone'} || '') ne '' } grep { ref $_ eq 'HASH' } @{$blacklist || []}; %>
 				<% if (scalar @blocked_phones) { %>
 					<% foreach my $b ( sort { ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @blocked_phones ) { %>
-						<span class="blocked_number" stamp="<%= $b->{'timestamp'} %>"><%= $b->{'phone'} %><% if (($b->{'name'} || '') ne '') { %> &middot; <%= &subs::format_name($b->{'name'}) %><% } %><% if (($b->{'note'} || '') ne '') { %> <i><%= $b->{'note'} %></i><% } %><button class="blocked_number_remove" stamp="<%= $b->{'timestamp'} %>">Remove</button></span>
+						<span class="blocked_number" stamp="<%= $b->{'timestamp'} %>">
+							<span><%= $b->{'phone'} %><% if (($b->{'name'} || '') ne '') { %> &middot; <%= &subs::format_name($b->{'name'}) %><% } %><% if (($b->{'note'} || '') ne '') { %> <i><%= $b->{'note'} %></i><% } %></span>
+							<button type="button" class="blocked_number_remove bo_small" stamp="<%= $b->{'timestamp'} %>" hint="<%= &subs::ui('Unblock this number') %>"><%= &subs::ui('Remove') %></button>
+						</span>
 					<% } %>
 				<% } else { %>
-					<span id="blocked_numbers_empty">None yet.</span>
+					<span id="blocked_numbers_empty" class="bo_muted"><%= &subs::ui('None yet.') %></span>
 				<% } %>
 			</div>
-		</div>
+		</section>
 	<% } else { %>
-		<div id="ticket_request_policy">
-			<label><input type="checkbox" id="ticket_policy_auto" <% if ($policy->{'issue_guest_on_request'}) { %>checked<% } %>> Issue guest tickets on request</label>
-			guest warranty: <input type="text" id="ticket_policy_warranty" value="<%= $policy->{'guest_warranty'} %>" style="width:100px;">
-			<button id="ticket_policy_save">Save</button>
-		</div>
-		<table id="ticket_request_list" style="width:100%;">
-			<thead>
-				<th>Name</th><th>Contact</th><th>Description</th><th>Known</th><th><%= &subs::lang('crest') %></th><th>Asked</th><th>Age</th><th>Approve</th><th>Decide</th>
-			</thead>
-			<tbody>
-				<% foreach my $r ( @{$requests} ) { %>
-					<tr class="ticket_request" uuid="<%= $r->{'uuid'} %>">
-						<td><%= $r->{'name'} %></td>
-						<td><%= $r->{'info'}->{'email'} %><br><%= $r->{'info'}->{'phone'} %></td>
-						<td style="max-width:300px;overflow-wrap:break-word;"><%= $r->{'info'}->{'description'} %></td>
-						<td><%== join '<br>', map { &subs::format_name($_) } @{$r->{'known'}} %></td>
-						<td class="ticket_request_crest" style="max-width:220px;">
-							<% if ($r->{'crest'}) { %>
-								<% my $cr = $r->{'crest'}; %>
-								<% if ($cr->{'image'}) { %><img class="little_thumb" src="<%= $cr->{'image'} %>" alt=""><br><% } %>
-								<b><%= $cr->{'name'} || &subs::ui('Unknown crest') %></b><br>
-								<span style="font-family:monospace;font-size:10px;overflow-wrap:anywhere;display:block;" title="<%= $cr->{'fingerprint'} %>"><%= $cr->{'fingerprint'} %></span>
-								<span style="font-size:11px;">
-									<% if ($cr->{'met'}) { %><%= &subs::ui('Met in person') %>
-									<% } elsif ($cr->{'introduced_by'}) { %><%= &subs::ui('Introduced by') %> <%= $cr->{'introduced_by'} %>
-									<% } elsif ($cr->{'known'}) { %><%= &subs::ui('Imported, not met') %>
-									<% } else { %><%= &subs::ui('Not known yet') %><% } %>
-								</span>
-								<% if (scalar @{$cr->{'chips'} || []}) { %>
-									<div style="margin-top:3px;">
-										<% foreach my $chip (@{$cr->{'chips'}}) { %>
-											<span style="display:inline-block;padding:1px 6px;border:solid 1px;border-radius:999px;font-size:10px;margin:2px 2px 0 0;"><%= $chip->{'label'} %>: <%= $chip->{'name'} %></span>
+		<section class="bo_card">
+			<div class="bo_card_head">
+				<h3><%= &subs::ui('Request policy') %></h3>
+				<span class="bo_muted"><%= &subs::ui('How the public ticket form is answered.') %></span>
+			</div>
+			<div id="ticket_request_policy" class="bo_policy">
+				<label class="bo_check"><input type="checkbox" id="ticket_policy_auto" <% if ($policy->{'issue_guest_on_request'}) { %>checked<% } %>> <span><%= &subs::ui('Issue guest tickets on request') %></span></label>
+				<label class="bo_field bo_field_inline">
+					<span><%= &subs::ui('Guest warranty') %></span>
+					<input type="text" id="ticket_policy_warranty" value="<%= $policy->{'guest_warranty'} %>" placeholder="-1d">
+				</label>
+				<button type="button" id="ticket_policy_save" hint="<%= &subs::ui('Save the request policy') %>"><%= &subs::ui('Save') %></button>
+			</div>
+		</section>
+
+		<section class="bo_card">
+			<div class="bo_card_head">
+				<h3><%= &subs::ui('Waiting requests') %></h3>
+				<span class="bo_muted"><%= &subs::ui('Approve the ones that belong, decline or blacklist the rest.') %></span>
+			</div>
+			<div class="bo_table_wrap">
+				<table id="ticket_request_list" class="bo_table">
+					<thead>
+						<tr>
+							<th><%= &subs::ui('Name') %></th>
+							<th><%= &subs::ui('Contact') %></th>
+							<th><%= &subs::ui('Description') %></th>
+							<th><%= &subs::ui('Known') %></th>
+							<th><%= &subs::lang('crest') %></th>
+							<th><%= &subs::ui('Asked') %></th>
+							<th><%= &subs::ui('Age') %></th>
+							<th><%= &subs::ui('Approve') %></th>
+							<th><%= &subs::ui('Decide') %></th>
+						</tr>
+					</thead>
+					<tbody>
+						<% foreach my $r ( @{$requests || []} ) { %>
+							<tr class="ticket_request" uuid="<%= $r->{'uuid'} %>">
+								<td><span class="bo_ticket_name"><%= $r->{'name'} %></span></td>
+								<td><span class="bo_contact"><%= $r->{'info'}->{'email'} %><br><%= $r->{'info'}->{'phone'} %></span></td>
+								<td class="bo_description"><%= $r->{'info'}->{'description'} %></td>
+								<td><%== join '<br>', map { &subs::format_name($_) } @{$r->{'known'} || []} %></td>
+								<td class="ticket_request_crest bo_crest_cell">
+									<% if ($r->{'crest'}) { %>
+										<% my $cr = $r->{'crest'}; %>
+										<div class="bo_crest">
+											<% if ($cr->{'image'}) { %><img class="little_thumb" src="<%= $cr->{'image'} %>" alt=""><% } %>
+											<b><%= $cr->{'name'} || &subs::ui('Unknown crest') %></b>
+											<span class="bo_fingerprint" title="<%= $cr->{'fingerprint'} %>"><%= $cr->{'fingerprint'} %></span>
+											<span class="bo_crest_state">
+												<% if ($cr->{'met'}) { %><%= &subs::ui('Met in person') %>
+												<% } elsif ($cr->{'introduced_by'}) { %><%= &subs::ui('Introduced by') %> <%= $cr->{'introduced_by'} %>
+												<% } elsif ($cr->{'known'}) { %><%= &subs::ui('Imported, not met') %>
+												<% } else { %><%= &subs::ui('Not known yet') %><% } %>
+											</span>
+											<% if (scalar @{$cr->{'chips'} || []}) { %>
+												<div class="bo_crest_chips">
+													<% foreach my $chip (@{$cr->{'chips'}}) { %>
+														<span class="bo_chip"><%= $chip->{'label'} %>: <%= $chip->{'name'} %></span>
+													<% } %>
+												</div>
+											<% } %>
+										</div>
+									<% } else { %><span class="bo_muted">&mdash;</span><% } %>
+								</td>
+								<td><span class="bo_chip"><%= &subs::format_name($r->{'info'}->{'privilege'} || 'guest') %></span></td>
+								<td><span class="time" timestamp="<%= $r->{'timestamp'} %>"></span></td>
+								<td class="bo_age_cell">
+									<select class="ticket_request_privilege bo_select_sm" hint="<%= &subs::ui('Privilege this request is approved with') %>">
+										<% foreach my $chair ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
+											<option value="<%= $chair %>" <% if ($chair eq 'guest') { %>selected<% } %>><%= &subs::format_name($chair) %></option>
 										<% } %>
-									</div>
-								<% } %>
-							<% } else { %>&mdash;<% } %>
-						</td>
-						<td><%= &subs::format_name($r->{'info'}->{'privilege'} || 'guest') %></td>
-						<td class="time" timestamp="<%= $r->{'timestamp'} %>"></td>
-						<td>
-							<select class="ticket_request_privilege">
-								<% foreach my $chair ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
-									<option value="<%= $chair %>" <% if ($chair eq 'guest') { %>selected<% } %>><%= &subs::format_name($chair) %></option>
-								<% } %>
-							</select>
-							<input class="ticket_request_warranty" value="<%= $policy->{'guest_warranty'} %>" style="width:70px;">
-							<button class="ticket_approve" ticket="<%= $r->{'uuid'} %>">Approve</button>
-						</td>
-						<td>
-							<button class="ticket_decline" ticket="<%= $r->{'uuid'} %>">Decline</button>
-							<button class="ticket_blacklist" ticket="<%= $r->{'uuid'} %>">Blacklist</button>
-						</td>
-					</tr>
-				<% } %>
-			</tbody>
-		</table>
-		<% if (scalar @{$requests} == 0) { %><div>No requests waiting.</div><% } %>
-		<h3>Blacklist</h3>
-		<table id="ticket_blacklist_list" style="width:100%;">
-			<thead>
-				<th>Name</th><th>Email</th><th>Phone</th><th>Note</th><th></th>
-			</thead>
-			<tbody>
-				<% foreach my $b ( sort { ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @{$blacklist} ) { %>
-					<tr class="ticket_blacklist_entry" stamp="<%= $b->{'timestamp'} %>">
-						<td><%= $b->{'name'} %></td>
-						<td><%= $b->{'email'} %></td>
-						<td><%= $b->{'phone'} %></td>
-						<td><%= $b->{'note'} %></td>
-						<td><button class="ticket_blacklist_remove" stamp="<%= $b->{'timestamp'} %>">Remove</button></td>
-					</tr>
-				<% } %>
-			</tbody>
-		</table>
+									</select>
+									<input class="ticket_request_warranty bo_input_sm" value="<%= $policy->{'guest_warranty'} %>" placeholder="-1d">
+									<button type="button" class="ticket_approve bo_small bo_primary" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('Approve') %></button>
+								</td>
+								<td class="bo_actions">
+									<button type="button" class="ticket_decline bo_small" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('Decline') %></button>
+									<button type="button" class="ticket_blacklist bo_small bo_danger" ticket="<%= $r->{'uuid'} %>"><%= &subs::ui('Blacklist') %></button>
+								</td>
+							</tr>
+						<% } %>
+						<% if (!scalar @{$requests || []}) { %>
+							<tr><td colspan="9" class="bo_empty"><%= &subs::ui('No requests waiting.') %></td></tr>
+						<% } %>
+					</tbody>
+				</table>
+			</div>
+		</section>
+
+		<section class="bo_card">
+			<div class="bo_card_head">
+				<h3><%= &subs::ui('Blacklist') %></h3>
+				<span class="bo_muted"><%= &subs::ui('Names and contacts the door refuses.') %></span>
+			</div>
+			<div class="bo_table_wrap">
+				<table id="ticket_blacklist_list" class="bo_table">
+					<thead>
+						<tr><th><%= &subs::ui('Name') %></th><th><%= &subs::ui('Email') %></th><th><%= &subs::ui('Phone') %></th><th><%= &subs::ui('Note') %></th><th></th></tr>
+					</thead>
+					<tbody>
+						<% foreach my $b ( sort { ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0) } @{$blacklist || []} ) { %>
+							<tr class="ticket_blacklist_entry" stamp="<%= $b->{'timestamp'} %>">
+								<td><%= $b->{'name'} || '' %></td>
+								<td><%= $b->{'email'} || '' %></td>
+								<td><%= $b->{'phone'} || '' %></td>
+								<td><%= $b->{'note'} || '' %></td>
+								<td class="bo_actions"><button type="button" class="ticket_blacklist_remove bo_small" stamp="<%= $b->{'timestamp'} %>"><%= &subs::ui('Remove') %></button></td>
+							</tr>
+						<% } %>
+						<% if (!scalar @{$blacklist || []}) { %>
+							<tr><td colspan="5" class="bo_empty"><%= &subs::ui('Nothing is blacklisted.') %></td></tr>
+						<% } %>
+					</tbody>
+				</table>
+			</div>
+		</section>
 	<% } %>
 </span>
 
 <style>
-	#ticket_network_ip {
-		font-size: 20px;
+	#box_office.bo_shell {
+		display: block;
+		width: 100%;
+		height: 100%;
+		box-sizing: border-box;
+		padding: 14px;
+		overflow-x: auto;
+		overflow-y: auto;
+		color: var(--ink);
 	}
-	#blocked_numbers { margin-top:18px; }
-	#blocked_numbers_hint { font-size:12px; opacity:0.7; max-width:640px; margin:4px 0 8px; }
-	#blocked_numbers_add { margin-bottom:8px; }
-	#blocked_number_status { margin-left:8px; font-size:12px; }
-	.blocked_number { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line);
-		border-radius:999px; padding:4px 10px; margin:0 6px 6px 0; font-size:13px; }
-	.blocked_number button { font-size:11px; padding:2px 8px; border-radius:999px; }
+
+	#box_office .bo_head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		flex-wrap: wrap;
+		margin-bottom: 14px;
+	}
+	#box_office .bo_brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+	#box_office .bo_mark { width: 38px; height: 38px; object-fit: contain; flex: 0 0 auto; }
+	#box_office .bo_title { margin: 0; font-size: 22px; line-height: 1.1; font-weight: 700; }
+	#box_office .bo_sub { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
+
+	#box_office .bo_tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+	#box_office .bo_tab {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		height: 34px;
+		padding: 0 14px;
+		font-size: 14px;
+		line-height: 1;
+		background: var(--panel);
+		color: var(--ink);
+		border: 1px solid var(--line);
+		border-radius: 999px !important;
+		cursor: pointer;
+	}
+	#box_office .bo_tab:hover { background: var(--panel-2, var(--panel)); }
+	#box_office .bo_tab.on { background: var(--accent, #4a90d9); color: #fff; border-color: transparent; }
+	#box_office .bo_count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 20px;
+		height: 20px;
+		padding: 0 6px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--ink) 14%, transparent);
+		font-size: 11px;
+		font-weight: 700;
+	}
+	#box_office .bo_tab.on .bo_count { background: rgba(255,255,255,.24); }
+	#box_office .bo_count_alert { background: #b0342e; color: #fff; }
+
+	#box_office .bo_card {
+		background: var(--panel-2, var(--panel));
+		border: 1px solid var(--line);
+		border-radius: 12px;
+		padding: 14px;
+		margin: 0 0 14px;
+	}
+	#box_office .bo_card_head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 10px;
+		flex-wrap: wrap;
+		margin-bottom: 10px;
+	}
+	#box_office .bo_card_head h3 { margin: 0; font-size: 16px; line-height: 1.2; }
+	#box_office .bo_muted, #box_office .bo_hint { color: var(--ink-muted); font-size: 12px; }
+	#box_office .bo_hint { max-width: 680px; margin: 0 0 10px; line-height: 1.45; }
+	#box_office .bo_empty { text-align: center; color: var(--ink-muted); font-size: 13px; padding: 18px 8px; }
+
+	#box_office .bo_form {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: 10px 12px;
+		align-items: end;
+	}
+	#box_office .bo_field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+	#box_office .bo_field > span { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-muted); }
+	#box_office .bo_field_wide { min-width: 190px; }
+	#box_office .bo_field_inline { flex-direction: row; align-items: center; gap: 8px; }
+	#box_office select, #box_office input[type=text] {
+		font-size: 14px;
+		min-height: 34px;
+		height: auto;
+		text-align: left;
+		padding: 4px 8px;
+		background: var(--panel);
+		color: var(--ink);
+		border: 1px solid var(--line);
+		border-radius: 8px;
+	}
+	#box_office input[type=text] { box-sizing: border-box; }
+	#box_office .bo_select_sm { font-size: 12px; min-height: 28px; padding: 2px 6px; border-radius: 7px; }
+	#box_office .bo_input_sm { font-size: 12px; min-height: 28px; padding: 2px 6px; border-radius: 7px; width: 70px; }
+
+	#box_office .bo_form_action { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+	#box_office .bo_primary {
+		font-size: 14px;
+		height: 36px;
+		padding: 0 16px;
+		background: var(--accent, #4a90d9);
+		color: #fff;
+		border-color: transparent !important;
+		cursor: pointer;
+	}
+	#box_office .bo_primary:hover { filter: brightness(1.06); }
+	#box_office .bo_primary:disabled { opacity: .6; cursor: default; }
+	#box_office .bo_statusline { font-size: 12px; color: var(--ink-muted); }
+
+	#box_office .bo_acc { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+	#box_office summary { cursor: pointer; list-style: none; user-select: none; }
+	#box_office summary::-webkit-details-marker { display: none; }
+	#box_office .bo_acc > summary {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: .03em;
+		text-transform: uppercase;
+		color: var(--ink-muted);
+		padding: 2px 0;
+	}
+	#box_office .bo_acc > summary::before { content: '\25B8'; font-size: 13px; transition: transform .15s ease; }
+	#box_office .bo_acc[open] > summary::before { content: '\25BE'; }
+	#box_office .bo_acc_meta { margin-left: auto; font-weight: 600; text-transform: none; letter-spacing: 0; }
+	#box_office .bo_acc_body { display: flex; align-items: end; flex-wrap: wrap; gap: 12px 16px; padding: 10px 2px 2px; }
+	#box_office .bo_ip_line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding-bottom: 6px; }
+	#box_office #ticket_network_ip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; font-weight: 700; }
+
+	#box_office .bo_table_wrap { overflow-x: auto; }
+	#box_office table.bo_table { width: 100%; border-collapse: collapse; font-size: 13px; }
+	#box_office table.bo_table th {
+		text-align: left;
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: .06em;
+		text-transform: uppercase;
+		color: var(--ink-muted);
+		padding: 7px 8px;
+		border-bottom: 2px solid var(--line);
+		white-space: nowrap;
+	}
+	#box_office table.bo_table td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+	#box_office table.bo_table tbody tr:hover { background: color-mix(in srgb, var(--line) 28%, transparent); }
+	#box_office table.bo_table tbody tr[data-status=active] { background: color-mix(in srgb, #2e7d32 7%, transparent); }
+	#box_office table.bo_table tbody tr[data-status=suspended] { background: color-mix(in srgb, #b0342e 7%, transparent); }
+	#box_office table.bo_table tbody tr[data-status=expired],
+	#box_office table.bo_table tbody tr[data-status=rotated] { opacity: .74; }
+
+	#box_office .bo_qr_cell { width: 48px; }
+	#box_office .bo_qr_cell .bo_qr { width: 38px; height: 38px; object-fit: contain; cursor: zoom-in; }
+	#box_office .bo_ticket_name { display: block; font-size: 14px; font-weight: 600; line-height: 1.2; }
+	#box_office .bo_ticket_app { display: block; font-size: 11px; color: var(--ink-muted); margin-top: 1px; }
+	#box_office .bo_contact { font-size: 12px; line-height: 1.4; }
+	#box_office .bo_description { max-width: 300px; overflow-wrap: break-word; font-size: 12px; }
+	#box_office .bo_duration { display: block; margin-top: 2px; }
+
+	#box_office .bo_status, #box_office .bo_chip {
+		display: inline-block;
+		padding: 1px 8px;
+		border-radius: 999px;
+		font-size: 11px;
+		font-weight: 700;
+		background: var(--panel);
+		border: 1px solid var(--line);
+		white-space: nowrap;
+	}
+	#box_office .bo_status { text-transform: capitalize; }
+	#box_office .bo_status[data-status=active] { background: #2e7d32; color: #fff; border-color: transparent; }
+	#box_office .bo_status[data-status=suspended] { background: #b0342e; color: #fff; border-color: transparent; }
+	#box_office .bo_status[data-status=expired] { background: #6f6f6f; color: #fff; border-color: transparent; }
+	#box_office .bo_status[data-status=rotated] { background: #6a55c9; color: #fff; border-color: transparent; }
+
+	#box_office .bo_log { max-width: 220px; }
+	#box_office .bo_log > summary { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-muted); }
+	#box_office .bo_log > summary::before { content: '\25B8'; font-size: 11px; }
+	#box_office .bo_log[open] > summary::before { content: '\25BE'; }
+	#box_office .bo_log_count { color: var(--ink-muted); font-size: 11px; }
+	#box_office .bo_log_body { max-height: 150px; overflow: auto; margin-top: 4px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+	#box_office .bo_log_ip { display: flex; justify-content: space-between; gap: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; padding: 1px 0; }
+
+	#box_office .bo_actions { white-space: nowrap; }
+	#box_office .bo_actions > * { margin: 2px 3px 2px 0; }
+	#box_office .bo_actions .bo_link { font-size: 12px; }
+	#box_office .bo_small {
+		font-size: 12px;
+		height: 28px;
+		min-width: 0;
+		padding: 0 8px;
+		cursor: pointer;
+		border-width: 1px !important;
+		border-radius: 7px;
+	}
+	#box_office .bo_danger[armed=yes] { background: #b0342e; color: #fff; border-color: transparent !important; }
+
+	#box_office .bo_policy { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+	#box_office .bo_check { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+	#box_office .bo_check input { width: 22px; height: 22px; }
+
+	#box_office .bo_crest_cell { max-width: 220px; }
+	#box_office .bo_crest { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; font-size: 12px; }
+	#box_office .bo_fingerprint { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; overflow-wrap: anywhere; color: var(--ink-muted); max-width: 100%; }
+	#box_office .bo_crest_state { font-size: 11px; color: var(--ink-muted); }
+	#box_office .bo_crest_chips { display: flex; flex-wrap: wrap; gap: 2px; }
+	#box_office .bo_age_cell { white-space: nowrap; }
+	#box_office .bo_age_cell > * { vertical-align: middle; }
+
+	#box_office .bo_inline_form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 4px 0 10px; }
+	#box_office .bo_inline_form input { width: auto; }
+	#box_office #blocked_number_input { width: 160px; }
+	#box_office #blocked_number_note { width: 200px; }
+	#box_office .bo_chips { display: flex; flex-wrap: wrap; gap: 6px; }
+	#box_office .blocked_number {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		border: 1px solid var(--line);
+		border-radius: 999px;
+		padding: 3px 4px 3px 10px;
+		font-size: 12px;
+		background: var(--panel);
+	}
+
+	#box_office button:active { transform: translateY(1px); border-color: var(--line); }
 </style>

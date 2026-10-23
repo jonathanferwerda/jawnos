@@ -804,23 +804,28 @@ our %topic = (
 	'box_office' => {
 		title => 'Box Office', category => 'apps', app => 'box_office',
 		templates => [ 'templates/box_office.html.ep', 'templates/store/ticket_request.html.ep', 'public/js/manager/manager.js', 'public/js/homepage.js' ],
-		verified => '2026-10-20',
+		verified => '2026-10-22',
 		summary => 'Issue, suspend, renew and revoke tickets.',
 		body => [
-			'The Box Office manages tickets — the single-use links that log a visitor in. From here you issue a ticket, set its privilege, and suspend, renew, reinstate or delete it. The select in a ticket\'s row changes its privilege; the next time the link is opened the session wears the new chair.',
+			'The Box Office manages tickets — the single-use links that log a visitor in. The Tickets tab opens on an issue form: choose who the ticket is for, the app it opens, its privilege, an optional project and the warranty, then press Issue ticket. Nothing has to be dragged onto a window any more; the app is a field on the form.',
+			'Network address is a fold-away panel under the form. It names the interface the ticket link should point at and shows the exact address that will go into the link. The panel stays closed until you need it, so the common case is one short form.',
+			'The list below shows each ticket as a compact row: its QR, who and what app it is for, its status, privilege and project, when it was issued and when it expires. The access log is its own accordion in the row — open it to see the addresses that used the link and when — so a busy ticket does not stretch the whole table.',
+			'Copy puts the ticket link on the clipboard; Link opens it. The select in a ticket\'s row changes its privilege; the next time the link is opened the session wears the new chair. Suspend pauses a ticket, Reinstate brings it back, Renew gives it the warranty currently typed in the issue form, and Delete asks for a second press before it removes the ticket.',
 			'The Requests view holds what the public page asked for: each request shows its name, contact, description and whether the house already knows the contact. A request may also carry a crest — a compact signed code pasted from the visitor\'s QR or NFC tag. The Crest column shows that house, its fingerprint and whether this house has met it (Met in person), has an introduction to it (Introduced by ...), has imported it without meeting (Imported, not met), or has only the verified record (Not known yet). The crest is identity, not a grant: it never approves a request by itself.',
 			'Approve mints the ticket (the waiting page lets itself in), Decline forgets it, Blacklist remembers the identifiers so the door refuses them before a request is ever queued.',
 			'Issue guest tickets on request keeps the door open: a request is minted a guest ticket on the spot at the guest warranty. Leave it unticked and requests queue for approval instead.',
 			'A blacklisted ticket is the deny: its holder is shown the denial page and that browser is then locked out of the house — public pages included — with no redirect.',
-			'The tickets view also carries Blocked numbers: a number typed there — or added by the Phone app\'s Block button on a recent call — is turned away before it can ring, and the same list keeps that number (or a request from the same email) out at the door. Removing a number from the list lets it ring again.'
+			'The Tickets tab also carries Blocked numbers: a number typed there — or added by the Phone app\'s Block button on a recent call — is turned away before it can ring, and the same list keeps that number (or a request from the same email) out at the door. Removing a number from the list lets it ring again.'
 		],
 		steps => [
 			'Open the Box Office.',
-			'Issue a new ticket and choose its privilege — citizen, resident, guest or blacklisted.',
-			'Copy the link and give it to whoever needs it.',
-			'Suspend, renew or delete a ticket from the same list when it is no longer wanted.',
-			'Change a ticket\'s privilege from the select in its row; the next login wears it.',
-			'Open the Requests view to approve, decline or blacklist what the public page asked for.',
+			'On the Tickets tab, choose who the ticket is for and the app it opens.',
+			'Choose its privilege — citizen, resident, guest or blacklisted — and the warranty.',
+			'Press Issue ticket, then Copy the link and give it to whoever needs it.',
+			'Open Network address only when the ticket must point at another interface or address.',
+			'Open a ticket row\'s Access log to see the addresses that used it.',
+			'Suspend, reinstate, renew or delete a ticket from the same list when it is no longer wanted.',
+			'Open the Requests tab to approve, decline or blacklist what the public page asked for.',
 			'Read the Crest column beside Known before deciding; it says who is asking, not what they may do.',
 			'Block a nuisance number under Blocked numbers — or from the Phone app\'s Recents — and remove it there when it is welcome again.'
 		],
