@@ -240,6 +240,11 @@ hook before_dispatch => sub {
 		# the tunnel websocket authorizes itself (signatorial vs remote_machines)
 		# and a websocket upgrade cannot carry the gate's session or ws_auth
 		$path eq '/manager/tunnel/ws' ||
+		# the audio stream is opened by a browser on this machine (approved
+		# session) and by a peer's manager (pinned peer signature); the route
+		# checks whichever role the connection names. A peer has no session, so
+		# the gate must step aside for it to reach that check.
+		$path eq '/manager/music/stream' ||
 		# the tunnel control calls come from a peer's supervisor. A peer whose
 		# session cookie lapsed must still reserve and confirm its ports (the
 		# request would otherwise get the Gate page and the tunnel never form);

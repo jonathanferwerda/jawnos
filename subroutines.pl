@@ -11114,46 +11114,14 @@ sub file_media_information() {
 }
 
 
-sub music_transmitter() {
-	my $c = shift;
-	my $data = shift;
-	&subs::subprocessor(sub {
-    Mojo::IOLoop->reset;
-		my $file = $data->{'file'};
-		my $domain = $data->{'domain'};
-		my $mao = eval { return decode_json &subs::setting_grabber({ app => 'music', setting => 'mao' }) } || {};
-		my $remote_machines = &subs::db_query('select * from remote_machines where connection=?','active')->hashes;
-		my $signatorial = &subs::signatorial_designer();
-		my $toggle = $data->{'toggle'};
-		my $seek = $data->{'seek'} || 0;
-		my $volume = $data->{'volume'};
-		my $timestamp = $data->{'timestamp'};
-		my $music_data = $data->{'music_data'};
-		my $queuing = $data->{'queuing'};
-		foreach my $rm ( @{$remote_machines} ) {
-			if ($domain eq $rm->{'fqdn'} || $domain eq $rm->{'ip'}) {
-				my $address = $rm->{'fqdn'};
-				my $ping = `timeout .5 ping -c 1 $address`;
-				if ($ping =~ /ttl/gi) {
-					$rm = &Manager::remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $signatorial, rm => $rm });
-					my $server_time = &subs::rightNow();
-					$seek = $seek + (($server_time - $timestamp) / 1000);
-					$music_data = encode_json $music_data;
-
-					$music_data = encode_base64 &subs::encrypter(&subs::session_suds($c), $music_data);
-					my $latency = ($server_time - $timestamp) / 1000;
-					my $url = $rm->{'manager'} . '/music/receiver?timestamp=' . $timestamp . '&latency=' . $latency . '&queuing=' . $queuing . '&file=' . $file . '&domain=' . $config->{'domain'} . '&volume=' . $volume . '&toggle=' . $toggle . '&seek=' . $seek . '&music_data=' . $music_data;
-					my $res = $rm->{'ua'}->post($url)->result;
-					if ($res->is_success) {
-						my $bod = eval { return decode_json $res->body } || {};
-						$bod->{'browser_tab_id'} = $data->{'browser_tab_id'};
-						&Websocket::send('music', $bod);
-					}
-				}
-			}
-		}
-	}, { name => 'music transmitter' });
-};
+# The old whole-file transmitter is retired: it downloaded the track on the
+# remote and started `play` at a guessed offset. Remote audio is now a live PCM
+# stream driven by public/js/music.js over /manager/music/stream. An older page
+# that still sends method=transmitter reaches this no-op instead of starting a
+# download.
+sub music_transmitter {
+	return;
+}
 
 sub vacuum() {
 	my $app = shift;

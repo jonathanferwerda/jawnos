@@ -15,7 +15,7 @@
     navbar-relative tops answer to the navbar height setting, the same way the
     window's own contents do. %>
 <% my $phone_layout = (($device // '') eq 'mobile') ? 1 : 0; %>
-<div id="music" class="theme_surface" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" phone_layout="<%= $phone_layout ? 'yes' : 'no' %>" normalize="<%= $crate->{'settings'}->{'normalize'} || 'off' %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'unlock'} || '' %>">
+<div id="music" class="theme_surface" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" phone_layout="<%= $phone_layout ? 'yes' : 'no' %>" normalize="<%= $crate->{'settings'}->{'normalize'} || 'off' %>" lip_sync="<%= $crate->{'settings'}->{'lip_sync'} || 'off' %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'unlock'} || '' %>">
 	<%# left empty on purpose: the player is restored from the live cache, not a
 	    snapshot frozen into this cached window (see musicContentCache in music.js) %>
 	<div id="music_player_data" style="display:none;"></div>

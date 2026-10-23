@@ -8,6 +8,10 @@ use Mojolicious::Static;
 use Mojo::Log;
 use Mojo::File;
 use Mojo::JSON qw(decode_json encode_json);
+use Mojo::UserAgent;
+use Mojo::IOLoop;
+use Mojo::IOLoop::Stream;
+use Mojo::URL;
 use Encode qw(encode decode);
 use List::Util qw(shuffle);
 use Data::Dumper;
@@ -219,36 +223,58 @@ get '/play' => sub($c) {
 
 };
 
-# What this machine is being asked to play by another machine's Music app.
-# A transmitter downloads the whole track here and plays it with `play`, so the
-# receiving machine gets sound but no window, no player state and - before this -
-# no control at all. The receiver leaves two markers: ~/.president/ws_watcher
-# (the track it was told about) and ~/.president/pipe.<ext> (the audio it plays).
-# Reading them here lets the keyboard show the track and stop it.
-sub music_receiver_state {
-	my $watcher = &subs::home('~/.president/ws_watcher');
-	my $md = {};
-	if (-e $watcher) {
-		my $text = eval { read_file($watcher) };
-		$md = eval { decode_json $text } || {} if $text;
+# ---- remote audio: a live stream, not a downloaded file ---------------------
+#
+# The Music window taps the sound it is playing (public/js/music_stream_worklet.js)
+# and sends 16-bit stereo PCM over a websocket to this manager. The source manager
+# opens one peer-signed websocket per enabled output and forwards the frames; the
+# remote manager writes them to `pacat`, so the remote hears the stream itself
+# rather than a second copy of the file started at a guessed offset.
+#
+# The old whole-file path (download to ~/.president/pipe.<ext>, then `play ...
+# trim`) is gone: it waited for a complete copy, wrote a plaintext file to disk,
+# and could only approximate the position. The receiver strip and the block
+# marker are kept; they now describe and stop this stream.
+
+sub music_stream_state_path { return &subs::home('~/.president/music_stream.json'); }
+sub music_stream_watcher_path { return &subs::home('~/.president/ws_watcher'); }
+sub music_stream_wake_path { return &subs::home('~/.president/music_stream_wake'); }
+sub music_stream_rate { my $r = shift || 48000; return $r =~ /^\d+$/ ? $r : 48000; }
+
+# The remote's record of the stream it is playing. The receiver strip is served
+# by a different worker (the main prefork) from the websocket worker that owns
+# pacat, so the state is a file, not a process variable. A stale pid means the
+# stream ended without clearing it.
+sub music_stream_state_read {
+	my $path = &music_stream_state_path();
+	return {} unless -e $path;
+	my $md = eval { decode_json read_file($path) } || {};
+	if ($md->{'pid'} && !kill(0, $md->{'pid'})) {
+		unlink $path;
+		return {};
 	}
-	my @pipes = grep { -e $_ } glob(&subs::home('~/.president/pipe') . '.*');
-	# The receiver starts `play <pipe> trim ...`, so the pipe path is what names
-	# the process. Do not use a bare `pkill play`: that also stops an audio file
-	# the folders app is playing, which this button is not about.
-	my $pids = eval { `pgrep -f '\\.president/pipe'` };
-	my @pids = grep { /^\d+$/ } split /\s+/, ($pids // '');
-	my $blocked = &music_receiving_refused();
-	my $updated = 0;
-	if (@pipes) { $updated = (stat($pipes[0]))[9] || 0; }
-	elsif (-e $watcher) { $updated = (stat($watcher))[9] || 0; }
-	return {
-		playing => (scalar @pids ? 1 : 0),
-		blocked => $blocked,
-		file => ($md->{'file'} // ''),
-		type => ($md->{'type'} // ''),
-		updated => $updated,
-	};
+	return $md;
+}
+sub music_stream_state_write($st) {
+	write_file(&music_stream_state_path(), encode_json({
+		file => ($st->{'file'} // ''),
+		type => ($st->{'type'} // ''),
+		source => ($st->{'source'} // ''),
+		rate => ($st->{'rate'} // 48000),
+		latency_ms => ($st->{'latency_ms'} // 80),
+		pid => ($st->{'pid'} // 0),
+		started => ($st->{'started'} // &subs::rightNow()),
+		updated => &subs::rightNow(),
+		paused => ($st->{'paused'} ? 1 : 0),
+	}));
+}
+
+# The track the remote is playing, in the shape the keyboard strip already reads.
+sub music_stream_watcher_write {
+	my ($music_data) = @_;
+	return unless defined $music_data;
+	my $text = ref $music_data ? encode_json($music_data) : $music_data;
+	write_file(&music_stream_watcher_path(), $text);
 }
 
 # Whether this machine refuses what other machines send it. A marker file, not
@@ -258,15 +284,282 @@ sub music_receiving_refused {
 	return -e &subs::home('~/.president/music_receive_off') ? 1 : 0;
 }
 
-# Stop the track this machine is receiving, and take the marker with it so a
+sub music_receiver_state {
+	my $state = &music_stream_state_read();
+	my $watcher = &music_stream_watcher_path();
+	my $md = {};
+	if (-e $watcher) {
+		my $text = eval { read_file($watcher) };
+		$md = eval { decode_json $text } || {} if $text;
+	}
+	my $updated = 0;
+	if (-e &music_stream_state_path()) { $updated = (stat(&music_stream_state_path()))[9] || 0; }
+	elsif (-e $watcher) { $updated = (stat($watcher))[9] || 0; }
+	return {
+		playing => ($state->{'pid'} ? 1 : 0),
+		paused => ($state->{'paused'} ? 1 : 0),
+		blocked => &music_receiving_refused(),
+		file => ($md->{'file'} // $state->{'file'} // ''),
+		type => ($md->{'type'} // $state->{'type'} // ''),
+		source => ($state->{'source'} // ''),
+		latency_ms => ($state->{'latency_ms'} // 0),
+		updated => $updated,
+	};
+}
+
+# Stop the stream this machine is receiving, and take the markers with it so a
 # later status read does not keep showing a track that is no longer playing.
 sub music_receiver_stop {
-	`pkill -f '\\.president/pipe'`;
-	foreach my $pipe ( glob(&subs::home('~/.president/pipe') . '.*') ) {
-		`shred -u "$pipe"` if -e $pipe;
+	my $state = &music_stream_state_read();
+	if ($state->{'pid'}) {
+		kill 'TERM', $state->{'pid'};
+		select(undef, undef, undef, 0.05);
 	}
-	my $watcher = &subs::home('~/.president/ws_watcher');
+	unlink &music_stream_state_path();
+	my $watcher = &music_stream_watcher_path();
 	write_file($watcher, '') if -e $watcher;
+	# the removed download path left these behind; clear them on the way through
+	foreach my $pipe ( glob(&subs::home('~/.president/pipe') . '.*') ) {
+		unlink $pipe if -e $pipe;
+	}
+}
+
+# A Termux node must hold a wake lock or Android suspends it when the screen goes
+# off - which is exactly how a tablet or phone is used as a wireless speaker. The
+# count keeps two overlapping streams from releasing each other's lock.
+sub music_wake_lock($delta) {
+	return unless $device eq 'mobile';
+	my $path = &music_stream_wake_path();
+	my $count = (-e $path ? (read_file($path) + 0) : 0);
+	my $was = $count;
+	$count += $delta;
+	$count = 0 if $count < 0;
+	write_file($path, $count);
+	my $cmd = $count > 0 ? 'termux-wake-lock' : 'termux-wake-unlock';
+	if (($was == 0 && $count > 0) || ($was > 0 && $count == 0)) {
+		my $found = `command -v $cmd 2>/dev/null`;
+		chomp $found;
+		`$cmd >/dev/null 2>&1` if $found;
+	}
+}
+
+# Start the Termux PulseAudio daemon if a reboot left it down. The sink module is
+# `module-sles-sink` there (OpenSL), so a normal `pacat` reaches the Android
+# speaker; a LINUX node's PipeWire/Pulse is already up.
+sub music_pulse_ready {
+	my $info = `pactl info 2>&1`;
+	return 1 if $info =~ /Server String:/;
+	return 0 unless $device eq 'mobile';
+	my $found = `command -v pulseaudio 2>/dev/null`;
+	chomp $found;
+	return 0 unless $found;
+	`$found --start --exit-idle-time=-1 >/dev/null 2>&1`;
+	for (1..20) {
+		select(undef, undef, undef, 0.1);
+		$info = `pactl info 2>&1`;
+		return 1 if $info =~ /Server String:/;
+	}
+	return 0;
+}
+
+sub music_pacat_command($rate) {
+	my $pacat = `command -v pacat 2>/dev/null`;
+	chomp $pacat;
+	$pacat = 'pacat' unless $pacat;
+	return ($pacat,
+		'--playback', '--raw', '--format=s16le',
+		'--rate=' . &music_stream_rate($rate),
+		'--channels=2',
+		'--latency-msec=60',
+		'--client-name=jawnos-music',
+		'--stream-name=jawnos-music');
+}
+
+# --- the receiving side ------------------------------------------------------
+sub music_remote_audio_stop($st, $keep_state) {
+	# capture the pid first: the stream's close event clears it
+	my $pid = $st->{'pid'};
+	# an intentional stop (pause, seek, stop) must not look like pacat dying and
+	# tell the source to hang up
+	$st->{'stopping'} = 1;
+	if ($st->{'stream'}) {
+		$st->{'stream'}->close;
+		delete $st->{'stream'};
+	}
+	# closing the stream only removes the reactor watcher; the pipe itself is
+	# still open until its handle goes, and pacat needs that EOF to exit
+	if ($st->{'fh'}) {
+		eval { close $st->{'fh'}; };
+		delete $st->{'fh'};
+	}
+	if ($pid) { waitpid($pid, 0); }
+	delete $st->{'pid'};
+	$st->{'stopping'} = 0;
+	unless ($keep_state) {
+		unlink &music_stream_state_path();
+		my $watcher = &music_stream_watcher_path();
+		write_file($watcher, '') if -e $watcher;
+		if ($st->{'locked'}) {
+			&music_wake_lock(-1);
+			$st->{'locked'} = 0;
+		}
+	}
+}
+
+sub music_remote_audio_start($st) {
+	return 1 if $st->{'pid'};
+	delete $st->{'error'};
+	unless (&music_pulse_ready()) {
+		$st->{'error'} = 'pulse';
+		return 0;
+	}
+	my @cmd = &music_pacat_command($st->{'rate'});
+	my $pid = open(my $fh, '|-', @cmd);
+	unless ($pid) {
+		$st->{'error'} = 'pacat';
+		return 0;
+	}
+	$fh->blocking(0);
+	my $stream = Mojo::IOLoop::Stream->new($fh)->timeout(0);
+	$stream->start;
+	$stream->on(error => sub { });
+	$stream->on(close => sub {
+		delete $st->{'stream'};
+		my $dead = delete $st->{'pid'};
+		# WNOHANG: the pipe is still open when this fires, so a blocking wait
+		# would deadlock. Reap a moment later, once pacat has seen the EOF.
+		Mojo::IOLoop->timer(0.5 => sub { waitpid($dead, 1) }) if $dead;
+		# pacat ended without our asking (the receiver's Stop, or a crashed
+		# sink): tell the source, so it stops pushing frames at a dead output
+		unless ($st->{'stopping'} || $st->{'paused'}) {
+			if ($st->{'tx'} && $st->{'tx'}->is_websocket) {
+				eval {
+					$st->{'tx'}->send({text => encode_json({ type => 'stopped' })});
+					$st->{'tx'}->finish;
+				};
+			}
+		}
+	});
+	$st->{'pid'} = $pid;
+	$st->{'fh'} = $fh;
+	$st->{'stream'} = $stream;
+	$st->{'paused'} = 0;
+	$st->{'started'} ||= &subs::rightNow();
+	unless ($st->{'locked'}) {
+		&music_wake_lock(1);
+		$st->{'locked'} = 1;
+	}
+	&music_stream_state_write($st);
+	return 1;
+}
+
+sub music_remote_write($st, $bytes) {
+	return unless $st->{'stream'} && !$st->{'paused'};
+	# pacat consumes in real time; a stalled sink must not grow this buffer
+	return if $st->{'stream'}->bytes_waiting > 1_000_000;
+	$st->{'stream'}->write($bytes);
+}
+
+# --- the sending side --------------------------------------------------------
+sub music_source_row($key) {
+	return &subs::db_query('select * from remote_machines where (fqdn=? or ip=? or hostname=?) and connection=? order by server_time desc limit 1', $key, $key, $key, 'active')->hashes->[0];
+}
+
+sub music_source_uri($rm) {
+	my $host = $rm->{'ip'};
+	if (!$host) {
+		my $url = eval { Mojo::URL->new($rm->{'manager'}) };
+		$host = $url ? $url->host : '';
+	}
+	return unless $host;
+	my $port = $rm->{'ws_port'} || $config->{'ws_port'} || '';
+	return 'wss://' . $host . ($port ? ':' . $port : '') . '/manager/music/stream';
+}
+
+sub music_source_client_close($st, $key) {
+	my $cl = delete $st->{'clients'}->{$key};
+	return unless $cl;
+	if ($cl->{'tx'}) {
+		my $tx = $cl->{'tx'};
+		eval {
+			$tx->send({text => encode_json({ type => 'control', action => 'stop' })});
+			$tx->finish;
+		};
+	}
+}
+
+sub music_source_client_open($c, $st, $key) {
+	return if $st->{'clients'}->{$key};
+	my $rm = &music_source_row($key);
+	unless ($rm && $rm->{'uuid'}) {
+		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'unreachable' })});
+		return;
+	}
+	if (($rm->{'device'} || '') eq 'server') {
+		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'no audio' })});
+		return;
+	}
+	my $url = &music_source_uri($rm);
+	unless ($url) {
+		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'no address' })});
+		return;
+	}
+	my $ua = Mojo::UserAgent->new()->insecure(1)->connect_timeout(5)->request_timeout(0)->inactivity_timeout(0);
+	# every request on the peer rail names this machine and carries a signature
+	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+	my $cl = { key => $key, rm => $rm, ua => $ua, up => 0, rtt => 0 };
+	$st->{'clients'}->{$key} = $cl;
+	my $source = &subs::signatorial_designer();
+	my $full = $url . '?peer=1&signatorial=' . uri_encode($source) . '&from=' . uri_encode($key);
+	$ua->websocket($full => sub {
+		my ($ua, $tx) = @_;
+		if (!$tx->is_websocket) {
+			delete $st->{'clients'}->{$key};
+			$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'connect' })}) if $c->tx->is_websocket;
+			return;
+		}
+		$cl->{'tx'} = $tx;
+		$cl->{'up'} = 1;
+		my $hello = { %{$st->{'hello'} || {}}, type => 'hello', source => $source, key => $key };
+		$tx->send({text => encode_json($hello)});
+		$tx->send({text => encode_json({ type => 'ping', t => &subs::rightNow() })});
+		$tx->on(text => sub {
+			my ($tx, $msg) = @_;
+			my $d = eval { decode_json $msg } || {};
+			if (($d->{'type'} || '') eq 'pong') {
+				my $rtt = &subs::rightNow() - ($d->{'t'} || 0);
+				$cl->{'rtt'} = $rtt;
+				my $ms = int(($d->{'base'} || 80) + ($rtt / 2) + 20);
+				$c->tx->send({text => encode_json({ type => 'latency', key => $key, ms => $ms })}) if $c->tx->is_websocket;
+				return;
+			}
+			$c->tx->send({text => $msg}) if $c->tx->is_websocket;
+		});
+		$tx->on(finish => sub {
+			delete $st->{'clients'}->{$key};
+			$c->tx->send({text => encode_json({ type => 'closed', key => $key })}) if $c->tx->is_websocket;
+		});
+	});
+}
+
+sub music_source_sync_outputs($c, $st, $outputs) {
+	my %want = map { $_ => 1 } @{$outputs || []};
+	foreach my $key (keys %want) { &music_source_client_open($c, $st, $key); }
+	foreach my $key (keys %{$st->{'clients'}}) { &music_source_client_close($st, $key) unless $want{$key}; }
+}
+
+sub music_source_forward($st, $data) {
+	my $json = encode_json($data);
+	foreach my $key (keys %{$st->{'clients'}}) {
+		my $cl = $st->{'clients'}->{$key};
+		next unless $cl->{'up'} && $cl->{'tx'};
+		eval { $cl->{'tx'}->send({text => $json}); };
+	}
+}
+
+sub music_source_close($st) {
+	foreach my $key (keys %{$st->{'clients'}}) { &music_source_client_close($st, $key); }
+	delete $st->{'started'};
 }
 
 get '/manager/music/receiver' => sub($c) {
@@ -293,87 +586,114 @@ post '/manager/music/receiver/block' => sub($c) {
 	$c->render(json => &music_receiver_state());
 };
 
-any '/music/receiver' => sub($c) {
-	my $file = $c->param('file');
-	my $remote_address = $c->tx->remote_address;
-	my $domain = $c->param('domain');
-	my $remote_uuid = $c->param('remote_uuid');
-	my $toggle = $c->param('toggle');
-	my $seek = $c->param('seek');
-	my $volume = $c->param('volume');
-	my $music_data = &subs::decrypter(&subs::session_suds($c), decode_base64 $c->param('music_data'));
-	my $piped = &subs::home('~/.president/pipe');
-	my $timestamp = $c->param('timestamp');
-	my $latency = $c->param('latency');
-	my $queuing = $c->param('queuing');
-	my $server_time = &subs::rightNow();
-	# A machine can refuse what other machines send it. Answer the transmitter
-	# normally (so it does not retry or log an error) but download and play
-	# nothing - an 'off' still clears anything a previous transmission left.
-	my $blocked = &music_receiving_refused();
-	if ($blocked && $toggle ne 'off') {
-		$c->render(json => { timestamp => $timestamp, 'seek' => $seek, file => $file, toggle => $toggle, volume => $volume, type => 'transmitter', blocked => 1 });
+# One route, two roles. A browser opens it on this machine (session-cookie
+# authenticated) and sends hello/PCM; the source manager opens it on each
+# enabled remote with `peer=1&signatorial=...` and the peer signature, and the
+# remote turns the PCM into sound. The gate exempts this path (hooks.pl); each
+# role checks its caller here.
+websocket '/manager/music/stream' => sub ($c) {
+	if ($c->param('peer')) {
+		my $signatorial = $c->param('signatorial');
+		my $rm = ($signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0] : undef);
+		unless ($rm && &subs::peer_verify($c, $rm)) {
+			$c->rendered(403);
+			return;
+		}
+		if (&music_receiving_refused()) {
+			$c->rendered(403);
+			return;
+		}
+		my $st = { role => 'remote', source => $signatorial, key => ($c->param('from') || ''), rate => 48000, tx => $c->tx };
+		$c->on(text => sub {
+			my ($c, $msg) = @_;
+			my $d = eval { decode_json $msg } || {};
+			my $type = $d->{'type'} || '';
+			if ($type eq 'hello') {
+				$st->{'file'} = $d->{'file'} || '';
+				$st->{'type'} = ($d->{'music_data'} && $d->{'music_data'}->{'type'})
+					? $d->{'music_data'}->{'type'}
+					: ($st->{'file'} =~ /\.(mp4|mkv|mov|webm|wmv|avi)$/i ? 'video' : 'audio');
+				$st->{'rate'} = &music_stream_rate($d->{'rate'});
+				$st->{'music_data'} = $d->{'music_data'};
+				&music_stream_watcher_write($d->{'music_data'});
+				my $ok = &music_remote_audio_start($st);
+				$c->tx->send({text => encode_json({ type => 'ready', key => $st->{'key'}, base => 80, latency_ms => 80, ok => ($ok ? 1 : 0), error => ($st->{'error'} || '') })});
+			}
+			elsif ($type eq 'ping') {
+				$c->tx->send({text => encode_json({ type => 'pong', t => $d->{'t'}, base => 80 })});
+			}
+			elsif ($type eq 'control') {
+				my $action = $d->{'action'} || '';
+				if ($action eq 'pause') {
+					&music_remote_audio_stop($st, 1);
+					$st->{'paused'} = 1;
+					&music_stream_state_write($st);
+				}
+				elsif ($action eq 'resume') {
+					$st->{'paused'} = 0;
+					&music_remote_audio_start($st);
+				}
+				elsif ($action eq 'seek' || $action eq 'track') {
+					if ($action eq 'track' && $d->{'file'}) {
+						$st->{'file'} = $d->{'file'};
+						$st->{'type'} = ($d->{'music_data'} && $d->{'music_data'}->{'type'}) ? $d->{'music_data'}->{'type'} : $st->{'type'};
+						$st->{'music_data'} = $d->{'music_data'} if $d->{'music_data'};
+						&music_stream_watcher_write($d->{'music_data'}) if $d->{'music_data'};
+					}
+					unless ($st->{'paused'}) {
+						&music_remote_audio_stop($st, 1);
+						&music_stream_state_write($st);
+						&music_remote_audio_start($st);
+					}
+				}
+				elsif ($action eq 'stop') {
+					&music_remote_audio_stop($st, 0);
+				}
+			}
+		});
+		$c->on(binary => sub { my ($c, $msg) = @_; &music_remote_write($st, $msg); });
+		$c->on(finish => sub { &music_remote_audio_stop($st, 0); });
 		return;
 	}
-	my $pipe = $piped;
-	my @file = split /\./, $file;
-	my $ext = $file[-1];
-	if ($ext eq 'enc') {
-		$ext = $file[-2];
+
+	unless ($c->session('authentication') eq 'approved') {
+		$c->rendered(403);
+		return;
 	}
-	$pipe = $pipe . '.' . $ext;
-
-	my $ws_watcher = &subs::home('~/.president/ws_watcher');
-	my $pre_md = eval { return decode_json read_file($ws_watcher) } || {};
-
-	write_file($ws_watcher, $music_data) unless $queuing == 1;
-	my $md = eval { return decode_json $music_data } || {};
-	if ($toggle eq 'off') {
-		`pkill play`;
-		`shred -u $piped*`;
-		`shred -u $ws_watcher`;
-	}
-	elsif ($toggle eq 'seek') {
-		`pkill play`;
-		$seek = $seek + ((&subs::rightNow() - $server_time) / 1000) + $latency;
-		threads->create(sub() { 
-			`play $pipe trim $seek 60000000000`;
-		});
-	}
-	else {
-		my $rm = &subs::db_query('select * from remote_machines where (ip=? or fqdn=?) and connection=?', $remote_address,$domain,'active')->hashes->[0];
-		if ($rm->{'uuid'}) {
-			if ($md->{'file'} ne $pre_md->{'file'} || $queuing == 1) {
-				my $signatorial = &subs::signatorial_designer();
-				$rm = &Manager::remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $signatorial, rm => $rm });
-
-				my $url = $rm->{'manager'} . '/file_open?&file=' . uri_encode $file;
-				$rm->{'ua'} = $rm->{'ua'}->max_response_size(0);
-				my $res = $rm->{'ua'}->get($url);# => { Accept => '*/*' } => 'Content!');
-				my $data = $res->res->content->asset->slurp;
-
-				unless (-e $pipe) {
-					`touch $pipe`;
-				}
-				write_file($pipe, $data);
-				if ($queuing != 1) {
-					`pkill play`;
-					$seek = $seek + ((&subs::rightNow() - $server_time) / 1000) + $latency;
-					threads->create(sub() {
-						`play $pipe trim $seek 60000000000`;
-					});
-				}
-			}
-			else {
-				`pkill play`;
-				$seek = $seek + ((&subs::rightNow() - $server_time) / 1000) + $latency;
-				threads->create(sub() {
-					`play $pipe trim $seek 60000000000`;
-				});
-			}
+	my $st = { role => 'source', clients => {} };
+	$c->on(text => sub {
+		my ($c, $msg) = @_;
+		my $d = eval { decode_json $msg } || {};
+		my $type = $d->{'type'} || '';
+		if ($type eq 'hello') {
+			$st->{'hello'} = $d;
+			$st->{'started'} = 1;
+			&music_source_sync_outputs($c, $st, $d->{'outputs'} || []);
 		}
-	}
-	$c->render(json => { timestamp => $timestamp, 'seek' => $seek, file => $file, toggle => $toggle, volume => $volume, type => 'transmitter' });
+		elsif ($type eq 'outputs') {
+			&music_source_sync_outputs($c, $st, $d->{'outputs'} || []);
+		}
+		elsif ($type eq 'control') {
+			if (($d->{'action'} || '') eq 'track') {
+				$st->{'hello'}->{'file'} = $d->{'file'} if $d->{'file'};
+				$st->{'hello'}->{'music_data'} = $d->{'music_data'} if $d->{'music_data'};
+			}
+			&music_source_forward($st, $d);
+			&music_source_close($st) if (($d->{'action'} || '') eq 'stop');
+		}
+	});
+	$c->on(binary => sub {
+		my ($c, $msg) = @_;
+		return unless $st->{'started'};
+		foreach my $key (keys %{$st->{'clients'}}) {
+			my $cl = $st->{'clients'}->{$key};
+			next unless $cl->{'up'} && $cl->{'tx'} && $cl->{'tx'}->is_websocket;
+			# a stalled remote must not grow this worker's buffer without bound
+			next if length($cl->{'tx'}->{write} // '') > 1_000_000;
+			eval { $cl->{'tx'}->send({binary => $msg}); };
+		}
+	});
+	$c->on(finish => sub { &music_source_close($st); });
 };
 
 

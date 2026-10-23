@@ -75,6 +75,12 @@
 				<% } %>
 			</select>
 		</div>
+		<div class="music_cfg_field music_cfg_field_wide">
+			<label class="music_cfg_label music_cfg_check" for="music_lip_sync" hint="Lip sync">
+				<input type="checkbox" id="music_lip_sync" <% if (($crate->{'settings'}->{'lip_sync'} || 'off') eq 'on') { %>checked<% } %> />
+				<%= &subs::ui('Lip sync (delay the picture to match remote audio)') %>
+			</label>
+		</div>
 	</div>
 </div>
 <div class="music_cfg_section">
