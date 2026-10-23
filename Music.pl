@@ -207,7 +207,9 @@ get '/play' => sub($c) {
 
 	&Manager::rock_and_roll($c);
 
-	if ($mao->{'srv'} eq 'on') {
+	# the lip-sync clone re-requests /play for the same file; it must not start
+	# the server-side player a second time
+	if ($mao->{'srv'} eq 'on' && $c->param('clone') ne '1') {
 		&subs::subprocessor(sub {
 
 			if ($device eq 'computer') {
@@ -265,7 +267,8 @@ sub music_stream_state_write($st) {
 		type => ($st->{'type'} // ''),
 		source => ($st->{'source'} // ''),
 		rate => ($st->{'rate'} // 48000),
-		latency_ms => ($st->{'latency_ms'} // 80),
+		latency_ms => ($st->{'base'} // 80),
+		codec => ($st->{'codec'} // 'pcm'),
 		pid => ($st->{'pid'} // 0),
 		started => ($st->{'started'} // &subs::rightNow()),
 		updated => &subs::rightNow(),
@@ -417,7 +420,19 @@ sub music_remote_audio_start($st) {
 		$st->{'error'} = 'pulse';
 		return 0;
 	}
-	my @cmd = &music_pacat_command($st->{'rate'});
+	my @cmd;
+	if (($st->{'codec'} || 'pcm') eq 'opus') {
+		# The source records WebM/Opus. ffmpeg decodes the live stream from
+		# stdin and pacat plays the PCM; decoding to 44100 keeps the phone and
+		# tablet's OpenSL sink from resampling. The command is fixed text (no
+		# caller input), so the shell pipeline is safe here.
+		my $pipeline = 'ffmpeg -hide_banner -loglevel error -fflags nobuffer -analyzeduration 0 -probesize 32k'
+			. ' -i pipe:0 -f s16le -acodec pcm_s16le -ar 44100 -ac 2 pipe:1'
+			. ' | pacat --playback --raw --format=s16le --rate=44100 --channels=2 --latency-msec=60'
+			. ' --client-name=jawnos-music-opus --stream-name=jawnos-music';
+		@cmd = ('sh', '-c', $pipeline);
+	}
+	else { @cmd = &music_pacat_command($st->{'rate'}); }
 	my $pid = open(my $fh, '|-', @cmd);
 	unless ($pid) {
 		$st->{'error'} = 'pacat';
@@ -459,8 +474,11 @@ sub music_remote_audio_start($st) {
 
 sub music_remote_write($st, $bytes) {
 	return unless $st->{'stream'} && !$st->{'paused'};
-	# pacat consumes in real time; a stalled sink must not grow this buffer
-	return if $st->{'stream'}->bytes_waiting > 1_000_000;
+	# PCM is paced in real time, so a backlog is a delay: drop it. Opus clusters
+	# are not independent packets (the WebM header and cluster order matter), so
+	# that stream is allowed a larger buffer instead of being corrupted.
+	my $cap = (($st->{'codec'} || 'pcm') eq 'opus') ? 4_000_000 : 65_536;
+	return if $st->{'stream'}->bytes_waiting > $cap;
 	$st->{'stream'}->write($bytes);
 }
 
@@ -624,37 +642,50 @@ websocket '/manager/music/stream' => sub ($c) {
 					? $d->{'music_data'}->{'type'}
 					: ($st->{'file'} =~ /\.(mp4|mkv|mov|webm|wmv|avi)$/i ? 'video' : 'audio');
 				$st->{'rate'} = &music_stream_rate($d->{'rate'});
+				$st->{'codec'} = (($d->{'codec'} || 'pcm') eq 'opus') ? 'opus' : 'pcm';
+				# Opus has an encoder and decoder buffer in front of pacat's; the
+				# ping measures only the network/player round trip, so the base
+				# carries the extra for lip sync.
+				$st->{'base'} = ($st->{'codec'} eq 'opus') ? 280 : 80;
 				$st->{'music_data'} = $d->{'music_data'};
 				&music_stream_watcher_write($d->{'music_data'});
 				my $ok = &music_remote_audio_start($st);
-				$c->tx->send({text => encode_json({ type => 'ready', key => $st->{'key'}, base => 80, latency_ms => 80, ok => ($ok ? 1 : 0), error => ($st->{'error'} || '') })});
+				$c->tx->send({text => encode_json({ type => 'ready', key => $st->{'key'}, base => $st->{'base'}, latency_ms => $st->{'base'}, ok => ($ok ? 1 : 0), error => ($st->{'error'} || '') })});
 			}
 			elsif ($type eq 'ping') {
-				$c->tx->send({text => encode_json({ type => 'pong', t => $d->{'t'}, base => 80 })});
+				$c->tx->send({text => encode_json({ type => 'pong', t => $d->{'t'}, base => ($st->{'base'} || 80) })});
 			}
 			elsif ($type eq 'control') {
 				my $action = $d->{'action'} || '';
 				if ($action eq 'pause') {
-					&music_remote_audio_stop($st, 1);
+					# Opus keeps its decoder alive: the source resumes the same
+					# WebM stream, and a new ffmpeg would need a new header.
+					if (($st->{'codec'} || 'pcm') ne 'opus') { &music_remote_audio_stop($st, 1); }
 					$st->{'paused'} = 1;
 					&music_stream_state_write($st);
 				}
 				elsif ($action eq 'resume') {
 					$st->{'paused'} = 0;
-					&music_remote_audio_start($st);
+					if (($st->{'codec'} || 'pcm') ne 'opus') { &music_remote_audio_start($st); }
+					else { &music_stream_state_write($st); }
 				}
-				elsif ($action eq 'seek' || $action eq 'track') {
+				elsif ($action eq 'seek' || $action eq 'track' || $action eq 'flush') {
 					if ($action eq 'track' && $d->{'file'}) {
 						$st->{'file'} = $d->{'file'};
 						$st->{'type'} = ($d->{'music_data'} && $d->{'music_data'}->{'type'}) ? $d->{'music_data'}->{'type'} : $st->{'type'};
 						$st->{'music_data'} = $d->{'music_data'} if $d->{'music_data'};
 						&music_stream_watcher_write($d->{'music_data'}) if $d->{'music_data'};
 					}
-					unless ($st->{'paused'}) {
+					# Opus is a continuous WebM stream; seeking or changing the
+					# track does not restart its decoder. PCM restarts pacat to
+					# flush the buffer (a seek, a new track, or the source's flush
+					# after it dropped a stale backlog).
+					if (($st->{'codec'} || 'pcm') ne 'opus' && !$st->{'paused'}) {
 						&music_remote_audio_stop($st, 1);
 						&music_stream_state_write($st);
 						&music_remote_audio_start($st);
 					}
+					elsif (($st->{'codec'} || 'pcm') eq 'opus') { &music_stream_state_write($st); }
 				}
 				elsif ($action eq 'stop') {
 					&music_remote_audio_stop($st, 0);

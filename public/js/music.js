@@ -64,14 +64,16 @@ function musicVolumeApply() {
 // lip-sync delay is applied.
 var musicStream = {
 	ws: null, active: false, paused: false, ready: {}, latency: 0,
-	file: '', type: '', reconnect: 0
+	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm'
 };
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false };
+var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0 };
 var music_lip_sync = 'off';
+var music_stream_codec = 'pcm';
 
 function musicStreamSupported() {
 	var Ctor = window.AudioContext || window.webkitAudioContext;
-	return !!(Ctor && window.AudioWorkletNode && location.protocol == 'https:');
+	return !!(Ctor && location.protocol == 'https:' && (window.AudioWorkletNode || window.MediaRecorder));
 }
 
 // The output keys the configuration panel stores (a fqdn or an ip). 'me' and
@@ -101,6 +103,7 @@ function musicStreamHello() {
 		rate: (musicVisual.ctx ? musicVisual.ctx.sampleRate : 48000) || 48000,
 		channels: 2,
 		seek: (tree && tree.sound ? (tree.sound.currentTime || 0) : 0),
+		codec: musicStream.codec,
 		lip: music_lip_sync,
 		timestamp: Date.now()
 	};
@@ -138,9 +141,26 @@ function musicStreamTapAttach() {
 				sink.connect(ctx.destination);
 				if (musicVisual.limiter) { musicVisual.limiter.connect(node); }
 				node.port.onmessage = function(e) {
-					if (!musicStream.active || musicStream.paused) { return; }
-					if (musicStream.ws && musicStream.ws.readyState == 1 && musicStream.ws.bufferedAmount < 262144) {
-						try { musicStream.ws.send(e.data.buffer); } catch (err) {}
+					if (!musicStream.active) { return; }
+					var d = e.data || {};
+					var pcm = d.pcm;
+					if (!pcm) { return; }
+					// A busy main thread (a high-quality video decoding) lets the
+					// worklet's queue grow; sending it afterwards would put a second
+					// of audio into pacat and leave the remote a second behind. Drop
+					// the stale frames and tell the remote to drop its buffer once.
+					var age = musicVisual.ctx ? ((musicVisual.ctx.currentTime - (d.t || 0)) * 1000) : 0;
+					if (age > 150) {
+						if (!musicStream.gap) {
+							musicStream.gap = 1;
+							if (music_stream_codec == 'pcm') { musicStreamSendJson({ type: 'control', action: 'flush' }); }
+						}
+						return;
+					}
+					if (musicStream.gap && age < 60) { musicStream.gap = 0; }
+					if (musicStream.paused) { return; }
+					if (musicStream.ws && musicStream.ws.readyState == 1 && musicStream.ws.bufferedAmount < 32768) {
+						try { musicStream.ws.send(pcm.buffer); } catch (err) {}
 					}
 				};
 				musicStreamTap.node = node;
@@ -168,7 +188,11 @@ function musicStreamConnect() {
 		// a fresh connection measures a fresh pipeline; do not keep an old max
 		musicStream.latency = 0;
 		musicStreamSendJson(musicStreamHello());
-		musicStreamTapActive(true, true);
+		if (musicStream.codec == 'opus') {
+			// the first WebM header must reach this connection
+			musicOpusRecord();
+		}
+		else { musicStreamTapActive(true, true); }
 	};
 	ws.onmessage = function(e) {
 		if (typeof e.data != 'string') { return; }
@@ -206,20 +230,99 @@ function musicStreamStart(file, seek) {
 		return false;
 	}
 	if (!musicStreamOutputs().length) { return false; }
+	var opus = (music_stream_codec == 'opus');
+	if (!opus && !window.AudioWorkletNode) { opus = true; }
+	if (opus && !window.MediaRecorder) { opus = false; }
 	musicStream.active = true;
 	musicStream.paused = false;
+	musicStream.attached = false;
+	musicStream.gap = 0;
+	musicStream.codec = opus ? 'opus' : 'pcm';
 	musicStream.file = file || (tree.songs[0] ? tree.songs[0].file : '');
 	musicStream.type = (tree.songs[0] && tree.songs[0].type) || '';
-	musicStreamTapAttach().then(function(ok) {
+	var attach = opus ? Promise.resolve(musicOpusAttach()) : musicStreamTapAttach();
+	attach.then(function(ok) {
 		if (!musicStream.active) { return; }
 		// the audio context may still be suspended on the first play; onplaying
 		// calls back in once it is running
 		if (!ok) { return; }
+		musicStream.attached = true;
 		musicStreamConnect();
-		musicStreamTapActive(true, true);
+		if (!opus) { musicStreamTapActive(true, true); }
 		musicLipApply();
 	});
 	return true;
+}
+
+// ---- Opus ---------------------------------------------------------------
+// MediaRecorder produces a live WebM/Opus stream from the same limiter tap.
+// It is one recorder per websocket connection: a reconnect gets a fresh
+// recorder so the remote's new ffmpeg sees a WebM header first. A pause keeps
+// the recorder alive and simply stops sending, so resuming needs no new header.
+function musicOpusAttach() {
+	if (musicOpus.active) { return true; }
+	var graph = null;
+	try { graph = musicAudioGraph(); } catch (e) {}
+	var ctx = musicVisual.ctx;
+	if (!graph || !ctx || !window.MediaRecorder || !musicVisual.limiter) { return false; }
+	var dest = ctx.createMediaStreamDestination();
+	musicVisual.limiter.connect(dest);
+	musicOpus.dest = dest;
+	musicOpus.active = true;
+	return true;
+}
+
+function musicOpusRecord() {
+	if (!musicOpus.dest) { return; }
+	musicOpusStopRecorder();
+	musicOpus.gen++;
+	var gen = musicOpus.gen;
+	var mime = '';
+	try {
+		if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) { mime = 'audio/webm;codecs=opus'; }
+		else if (MediaRecorder.isTypeSupported('audio/webm')) { mime = 'audio/webm'; }
+	}
+	catch (e) {}
+	var rec;
+	try {
+		rec = new MediaRecorder(musicOpus.dest.stream, mime ? { mimeType: mime, audioBitsPerSecond: 128000 } : {});
+	}
+	catch (e) { return; }
+	rec.ondataavailable = function(e) {
+		if (!e.data || !e.data.size) { return; }
+		if (gen !== musicOpus.gen) { return; }
+		// Blob -> ArrayBuffer is async; chain it so WebM clusters stay in order
+		musicOpus.chain = musicOpus.chain.then(function() {
+			return e.data.arrayBuffer();
+		}).then(function(buf) {
+			// a stopped recorder's final blob must not land in a new stream
+			if (gen !== musicOpus.gen) { return; }
+			if (!musicStream.active || musicStream.paused) { return; }
+			if (musicStream.ws && musicStream.ws.readyState == 1) {
+				// never drop an Opus cluster: a missing one breaks the decoder
+				try { musicStream.ws.send(buf); } catch (err) {}
+			}
+		}).catch(function() {});
+	};
+	try { rec.start(100); } catch (e) { return; }
+	musicOpus.recorder = rec;
+}
+
+function musicOpusStopRecorder() {
+	musicOpus.gen++;
+	if (!musicOpus.recorder) { return; }
+	try { musicOpus.recorder.stop(); } catch (e) {}
+	musicOpus.recorder = null;
+}
+
+function musicOpusStop() {
+	musicOpusStopRecorder();
+	if (musicOpus.dest) {
+		try { musicOpus.dest.disconnect(); } catch (e) {}
+		musicOpus.dest = null;
+	}
+	musicOpus.active = false;
+	musicOpus.chain = Promise.resolve();
 }
 
 function musicStreamStop() {
@@ -233,7 +336,10 @@ function musicStreamStop() {
 	musicStream.reconnect = 0;
 	musicStream.ready = {};
 	musicStream.latency = 0;
+	musicStream.attached = false;
+	musicStream.gap = 0;
 	musicStreamTapActive(false, true);
+	musicOpusStop();
 	musicLipStop();
 }
 
@@ -246,8 +352,14 @@ function musicStreamControl(action, extra) {
 	if (!d.file) { d.file = (tree.songs[0] ? tree.songs[0].file : musicStream.file); }
 	if (!d.music_data && tree.songs[0] && (action == 'track' || action == 'seek')) { d.music_data = tree.songs[0]; }
 	musicStreamSendJson(d);
-	if (action == 'pause') { musicStream.paused = true; musicStreamTapActive(false); }
-	if (action == 'resume') { musicStream.paused = false; musicStreamTapActive(true); }
+	if (action == 'pause') {
+		musicStream.paused = true;
+		if (musicStream.codec != 'opus') { musicStreamTapActive(false); }
+	}
+	if (action == 'resume') {
+		musicStream.paused = false;
+		if (musicStream.codec != 'opus') { musicStreamTapActive(true); }
+	}
 }
 
 function musicStreamOutputsChanged() {
@@ -259,14 +371,15 @@ function musicStreamOutputsChanged() {
 
 // ---- lip sync ---------------------------------------------------------------
 // The remote cannot play earlier than it receives, so it is L milliseconds
-// behind the source. With lip sync on, the local picture is delayed by the same
-// L (frames are captured with requestVideoFrameCallback into a small pool and
-// painted when their media time reaches now - L), and the local sound runs
-// through localDelay so this screen stays coherent too. The remote tap is taken
-// before that delay, so remote audio lands with the delayed picture.
+// behind the source. With lip sync on, this screen shows a second, muted <video>
+// started at `currentTime - L`, so the picture waits for the stream; the local
+// sound runs through localDelay by the same L. The remote tap is taken before
+// that delay, so remote audio lands with the delayed picture. A second element
+// rather than a canvas ring keeps the browser's own scaling, theatre styles and
+// captions, and cannot show a half-decoded frame.
 var musicLip = {
-	on: false, delay: 0.12, canvas: null, ctx: null, subtitle: null,
-	frames: [], pool: [], raf: 0, vfc: 0, video: null, hidden: false, saved: ''
+	on: false, delay: 0.12, clone: null, timer: 0, video: null,
+	saved: '', revealed: false, track: null, src: ''
 };
 
 function musicLipWanted() {
@@ -280,7 +393,11 @@ function musicLipDelayChanged() {
 	ms = Math.max(40, Math.min(500, ms));
 	musicLip.delay = ms / 1000;
 	if (musicVisual.localDelay) {
-		try { musicVisual.localDelay.delayTime.value = (musicLip.on ? musicLip.delay : 0); } catch (e) {}
+		// wait to delay the local sound until the delayed picture is actually up;
+		// a short ramp keeps the change from clicking
+		var want = (musicLip.on && musicLip.revealed) ? musicLip.delay : 0;
+		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
+		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
 	}
 }
 
@@ -298,176 +415,130 @@ function musicLipStart() {
 	}
 	if (musicLip.on && musicLip.video === v) { musicLipDelayChanged(); return; }
 	if (musicLip.on) { musicLipStop(); }
+	var src = v.currentSrc || v.src;
+	if (!src) { return; }
 	musicLip.on = true;
 	musicLip.video = v;
+	musicLip.src = src;
+	musicLip.revealed = false;
 	musicLipDelayChanged();
-	var container = v.parentNode;
-	if (!container) { musicLip.on = false; musicLip.video = null; return; }
-	var c = document.createElement('canvas');
-	c.id = 'music_lip_canvas';
-	c.className = 'music_lip_canvas';
-	// fixed and measured from the video's own rect, so theatre mode, a resize
-	// and fullscreen all land in the same box without copying the element's
-	// inline geometry; it sits before the controls in the DOM, so they stay on top
-	c.style.position = 'fixed';
-	c.style.pointerEvents = 'none';
-	c.style.objectFit = 'contain';
-	c.style.background = '#000';
-	container.insertBefore(c, v.nextSibling);
-	musicLip.canvas = c;
-	musicLip.ctx = c.getContext('2d');
-	var sub = document.createElement('div');
-	sub.className = 'music_lip_subtitle';
-	sub.style.position = 'fixed';
-	sub.style.textAlign = 'center';
-	sub.style.color = '#fff';
-	sub.style.textShadow = '0 0 4px #000, 0 0 4px #000';
-	sub.style.fontSize = '1.15em';
-	sub.style.pointerEvents = 'none';
-	container.insertBefore(sub, c.nextSibling);
-	musicLip.subtitle = sub;
-	// opacity, not visibility: the corner thumbnail and the media title still
-	// draw this element into a canvas, and a hidden element can stop painting
+	var c = document.createElement('video');
+	c.className = v.className;
+	c.setAttribute('playsinline', '');
+	c.setAttribute('webkit-playsinline', '');
+	c.muted = true;
+	c.defaultMuted = true;
+	c.volume = 0;
+	c.autoplay = false;
+	c.preload = 'auto';
+	c.style.cssText = v.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
+	c.style.opacity = '0';
+	// a second request of /play must not start the server-side player again
+	c.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'clone=1';
+	var orig = document.getElementById('video_subtitles');
+	var tsrc = orig && orig.getAttribute('src');
+	if (tsrc) {
+		var t = document.createElement('track');
+		t.kind = 'subtitles';
+		t.srclang = 'eng';
+		t.label = 'English';
+		t.src = tsrc;
+		t.default = true;
+		c.appendChild(t);
+		musicLip.track = t;
+	}
+	v.parentNode.insertBefore(c, v.nextSibling);
+	musicLip.clone = c;
 	musicLip.saved = v.style.opacity;
-	v.style.opacity = '0';
-	musicLip.hidden = true;
-	musicLip.frames = [];
-	musicLip.pool = [];
-	musicLip.lastPick = null;
-	var capture = function(now, meta) {
-		if (!musicLip.on || musicLip.video !== v) { return; }
-		var t = (meta && meta.mediaTime !== undefined) ? meta.mediaTime : v.currentTime;
-		musicLipCapture(v, t);
-		if (v.requestVideoFrameCallback) { musicLip.vfc = v.requestVideoFrameCallback(capture); }
-		else { musicLip.vfc = setTimeout(function() { capture(0, null); }, 33); }
+	var reveal = function() {
+		if (!musicLip.on || musicLip.clone !== c) { return; }
+		musicLip.revealed = true;
+		c.style.opacity = '1';
+		v.style.opacity = '0';
+		// local sound joins the delayed picture now, not before it is visible
+		musicLipDelayChanged();
 	};
-	if (v.requestVideoFrameCallback) { musicLip.vfc = v.requestVideoFrameCallback(capture); }
-	else { musicLip.vfc = setTimeout(function() { capture(0, null); }, 33); }
-	musicLip.raf = requestAnimationFrame(function paint() {
-		if (!musicLip.on) { return; }
-		musicLipPaint();
-		musicLip.raf = requestAnimationFrame(paint);
-	});
-	musicLipLayout();
+	c.addEventListener('canplay', reveal, { once: true });
+	c.addEventListener('loadeddata', reveal, { once: true });
+	try { c.currentTime = Math.max(0, v.currentTime - musicLip.delay); } catch (e) {}
+	var p = null;
+	try { p = c.play(); } catch (e) {}
+	if (p && p.catch) { p.catch(function () {}); }
+	musicLip.timer = setInterval(musicLipSync, 200);
+	musicLipSync();
 }
 
-function musicLipCapture(v, time) {
-	var w = v.videoWidth || 640;
-	var h = v.videoHeight || 360;
-	var cap = musicPhoneLayout() ? 960 : 1280;
-	if (w > cap) { h = Math.round(h * cap / w); w = cap; }
-	var c = null;
-	for (var i = 0; i < musicLip.pool.length; i++) {
-		if (!musicLip.pool[i].inUse) { c = musicLip.pool[i]; break; }
+function musicLipSync() {
+	var v = musicLip.video, c = musicLip.clone;
+	if (!musicLip.on || !v || !c) { return; }
+	// a next/previous (not an ended track) changes the original's source under
+	// us; the clone needs its own new source and decoder
+	var src = v.currentSrc || v.src;
+	if (src && musicLip.src && src !== musicLip.src) { musicLipStop(); musicLipStart(); return; }
+	// follow theatre mode, a resize and fullscreen: the clone wears the same
+	// classes and inline geometry, minus the opacity that hides the original
+	var css = v.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
+	if (c._lip_css !== css) { c._lip_css = css; c.style.cssText = css; }
+	c.style.opacity = musicLip.revealed ? '1' : '0';
+	c.className = v.className;
+	var target = Math.max(0, v.currentTime - musicLip.delay);
+	var base = v.playbackRate || 1;
+	if (musicLip.track) {
+		var status = $('#video_subtitle_toggle').attr('status');
+		try { musicLip.track.track.mode = (status == 'showing') ? 'showing' : 'hidden'; } catch (e) {}
 	}
-	if (!c) {
-		var el = document.createElement('canvas');
-		c = { el: el, ctx: el.getContext('2d'), w: 0, h: 0, inUse: false };
-		musicLip.pool.push(c);
-	}
-	if (c.w !== w || c.h !== h) { c.el.width = w; c.el.height = h; c.w = w; c.h = h; }
-	try { c.ctx.drawImage(v, 0, 0, w, h); } catch (e) { return; }
-	c.inUse = true;
-	musicLip.frames.push({ t: time, c: c });
-	var cut = v.currentTime - musicLip.delay - 2;
-	while (musicLip.frames.length && musicLip.frames[0].t < cut) {
-		musicLip.frames.shift().c.inUse = false;
-	}
-}
-
-function musicLipPaint() {
-	var v = tree.sound;
-	if (!v) { return; }
-	var target = v.currentTime - musicLip.delay;
-	var pick = null;
-	for (var i = musicLip.frames.length - 1; i >= 0; i--) {
-		if (musicLip.frames[i].t <= target) { pick = musicLip.frames[i]; break; }
-	}
-	if (pick && musicLip.ctx) {
-		var c = musicLip.canvas;
-		if (c.width !== pick.c.w || c.height !== pick.c.h) { c.width = pick.c.w; c.height = pick.c.h; musicLip.lastPick = null; }
-		if (pick !== musicLip.lastPick) {
-			musicLip.lastPick = pick;
-			try { musicLip.ctx.drawImage(pick.c.el, 0, 0); } catch (e) {}
-		}
-	}
-	musicLipLayout();
-	musicLipSubtitles(target);
-}
-
-function musicLipLayout() {
-	var v = tree.sound;
-	var c = musicLip.canvas;
-	if (!v || !c) { return; }
-	var vr = v.getBoundingClientRect();
-	if (!vr.width || !vr.height) {
-		c.style.display = 'none';
-		if (musicLip.subtitle) { musicLip.subtitle.style.display = 'none'; }
+	if (v.paused || v.ended) {
+		if (!c.paused) { c.pause(); }
 		return;
 	}
-	c.style.display = 'block';
-	c.style.left = vr.left + 'px';
-	c.style.top = vr.top + 'px';
-	c.style.width = vr.width + 'px';
-	c.style.height = vr.height + 'px';
-	if (musicLip.subtitle) {
-		musicLip.subtitle.style.display = 'block';
-		musicLip.subtitle.style.left = (vr.left + vr.width * 0.05) + 'px';
-		musicLip.subtitle.style.width = (vr.width * 0.9) + 'px';
-		musicLip.subtitle.style.top = (vr.top + vr.height * 0.78) + 'px';
+	if (c.paused) {
+		try { c.currentTime = target; } catch (e) {}
+		c.playbackRate = base;
+		var p = null;
+		try { p = c.play(); } catch (e) {}
+		if (p && p.catch) { p.catch(function () {}); }
+		return;
 	}
+	var drift = target - c.currentTime;
+	if (Math.abs(drift) > 0.35) {
+		try { c.currentTime = target; } catch (e) {}
+		c.playbackRate = base;
+	}
+	else if (drift > 0.05) { c.playbackRate = base * 1.05; }
+	else if (drift < -0.05) { c.playbackRate = base * 0.95; }
+	else { c.playbackRate = base; }
 }
 
-function musicLipSubtitles(target) {
-	var div = musicLip.subtitle;
-	if (!div) { return; }
-	var track = tree.sound.textTracks && tree.sound.textTracks[0];
-	if (!track || $('#video_subtitle_toggle').attr('status') != 'showing') { div.innerHTML = ''; return; }
-	// the built-in renderer would draw the undelayed cue over the delayed picture
-	try { if (track.mode != 'hidden') { track.mode = 'hidden'; } } catch (e) {}
-	var text = '';
-	if (track.cues) {
-		for (var i = 0; i < track.cues.length; i++) {
-			var cue = track.cues[i];
-			if (cue.startTime <= target && cue.endTime >= target) { text += (text ? '<br>' : '') + cue.text; }
-			}
-		}
-		if (div._text !== text) { div._text = text; div.innerHTML = text; }
-	}
-
 function musicLipSeek() {
-	musicLip.frames = [];
-	musicLip.lastPick = null;
-	$.each(musicLip.pool, function(i, c) { c.inUse = false; });
-	if (musicLip.subtitle) { musicLip.subtitle.innerHTML = ''; musicLip.subtitle._text = ''; }
+	var v = musicLip.video, c = musicLip.clone;
+	if (!v || !c) { return; }
+	try { c.currentTime = Math.max(0, v.currentTime - musicLip.delay); } catch (e) {}
+	if (!v.paused) {
+		var p = null;
+		try { p = c.play(); } catch (e) {}
+		if (p && p.catch) { p.catch(function () {}); }
+	}
 }
 
 function musicLipStop() {
 	musicLip.on = false;
-	if (musicLip.vfc && musicLip.video) {
-		if (musicLip.video.cancelVideoFrameCallback) {
-			try { musicLip.video.cancelVideoFrameCallback(musicLip.vfc); } catch (e) {}
-		}
-		else { clearTimeout(musicLip.vfc); }
+	if (musicLip.timer) { clearInterval(musicLip.timer); musicLip.timer = 0; }
+	var c = musicLip.clone;
+	var v = musicLip.video;
+	if (c) {
+		try { c.pause(); } catch (e) {}
+		if (c.parentNode) { c.parentNode.removeChild(c); }
 	}
-	musicLip.vfc = 0;
-	if (musicLip.raf) { cancelAnimationFrame(musicLip.raf); }
-	musicLip.raf = 0;
-	if (musicLip.video && musicLip.hidden) {
-		musicLip.video.style.opacity = musicLip.saved || '';
-		musicLip.hidden = false;
-	}
-	if (musicLip.canvas && musicLip.canvas.parentNode) { musicLip.canvas.parentNode.removeChild(musicLip.canvas); }
-	if (musicLip.subtitle && musicLip.subtitle.parentNode) { musicLip.subtitle.parentNode.removeChild(musicLip.subtitle); }
-	musicLip.canvas = null;
-	musicLip.ctx = null;
-	musicLip.subtitle = null;
+	if (v) { v.style.opacity = musicLip.saved || ''; }
+	musicLip.clone = null;
+	musicLip.track = null;
 	musicLip.video = null;
-	musicLip.frames = [];
-	musicLip.pool = [];
-	musicLip.lastPick = null;
+	musicLip.src = '';
+	musicLip.revealed = false;
+	musicLip.saved = '';
 	if (musicVisual.localDelay) {
-		try { musicVisual.localDelay.delayTime.value = 0; } catch (e) {}
+		try { musicVisual.localDelay.delayTime.setTargetAtTime(0, musicVisual.ctx.currentTime, 0.08); }
+		catch (e) { try { musicVisual.localDelay.delayTime.value = 0; } catch (e2) {} }
 	}
 	var track = tree && tree.sound && tree.sound.textTracks && tree.sound.textTracks[0];
 	if (track) {
@@ -612,6 +683,8 @@ async function musicInit(method) {
 		if (normalize_attr) { music_normalize = normalize_attr; }
 		var lip_attr = $('#music').attr('lip_sync');
 		if (lip_attr) { music_lip_sync = lip_attr; }
+		var codec_attr = $('#music').attr('stream_codec');
+		if (codec_attr) { music_stream_codec = codec_attr; }
 		// not a silent start: restore the machine's own output level, or a track
 		// that is already loaded plays back at the audio-handshake volume when the
 		// app is re-opened
@@ -958,7 +1031,7 @@ function mediaMaker(data) {
 				// a stream started before the audio context was running retries
 				// here, and a paused stream resumes
 				if (musicStream.active) {
-					if (!musicStreamTap.ready) { musicStreamStart(file, tree.sound.currentTime); }
+					if (!musicStream.attached) { musicStreamStart(file, tree.sound.currentTime); }
 					else if (musicStream.paused) { musicStreamControl('resume'); }
 				}
 				// a context suspended by a call or the app going away is resumed here;
@@ -1656,6 +1729,16 @@ $(document).on('change', '#music_lip_sync', function() {
 	if (music_lip_sync == 'on') { musicLipApply(); }
 	else { musicLipStop(); }
 });
+$(document).on('change', '#music_stream_codec', function() {
+	music_stream_codec = $(this).val() || 'pcm';
+	$('#music').attr('stream_codec', music_stream_codec);
+	settingSetter({ 'app': 'music', 'setting': 'stream_codec', 'value': music_stream_codec });
+	if (!musicStream.active) { return; }
+	var file = (tree.songs[0] ? tree.songs[0].file : '');
+	var seek = tree.sound.currentTime;
+	musicStreamStop();
+	if (tree.sound.state == 1) { musicStreamStart(file, seek); }
+});
 $(document).on('click', '#music_mute', function() {
 	music_muted = !music_muted;
 	musicVolumeApply();
@@ -2266,7 +2349,7 @@ function musicAudioResume() {
 						musicBaselineApply();
 						// the first play can build the context before it is running; the
 						// stream's tap attach then failed and needs another look
-						if (musicStream.active && !musicStreamTap.ready) {
+						if (musicStream.active && !musicStream.attached) {
 							musicStreamStart(tree.songs[0] ? tree.songs[0].file : '', tree.sound ? tree.sound.currentTime : 0);
 						}
 					}
@@ -2286,7 +2369,12 @@ function musicAudioGraph() {
 	if (!musicVisual.ctx || musicVisual.ctx.state == 'closed') {
 		var Ctor = window.AudioContext || window.webkitAudioContext;
 		if (!Ctor) { return null; }
-		try { musicVisual.ctx = new Ctor(); } catch (e) { return null; }
+		// 44.1 kHz: the Termux phones and tablets use an OpenSL sink at 44100, and
+		// handing them 48000 made PulseAudio resample and buffer (a high-quality
+		// video's 48 kHz audio arrived about a second late). A 48 kHz desk sink
+		// resamples the other way, with a far smaller buffer.
+		try { musicVisual.ctx = new Ctor({ sampleRate: 44100 }); }
+		catch (e) { try { musicVisual.ctx = new Ctor(); } catch (e2) { return null; } }
 		musicVisual.source = null;
 		musicVisual.el = null;
 	}

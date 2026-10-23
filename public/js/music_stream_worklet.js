@@ -36,7 +36,9 @@ class MusicStreamTap extends AudioWorkletProcessor {
 			this.count++;
 			if (this.count >= this.frames) {
 				const out = this.chunk;
-				this.port.postMessage(out, [out.buffer]);
+				// the context time rides along so the main thread can drop a backlog
+				// instead of sending a one-second burst after it was busy decoding
+				this.port.postMessage({ pcm: out, t: currentTime }, [out.buffer]);
 				this.chunk = new Int16Array(this.frames * 2);
 				this.count = 0;
 			}
