@@ -216,14 +216,13 @@
     wear later. Presets are read-only (builtin), custom ones are settings rows. %>
 <% my $theme_registry = &subs::theme_registry(); %>
 <% my $current_theme = &subs::setting_grabber({ app => 'misc', setting => 'appearance_theme', device => $dev }) || ''; %>
-<% my %device_themes = map { $_ => (&subs::setting_grabber({ app => 'misc', setting => 'appearance_theme', device => $_ }) || '') } @devices; %>
 <% my @theme_order = grep { $theme_registry->{$_} && $theme_registry->{$_}->{'builtin'} } @subs::theme_preset_order; %>
 <% my @custom_order = sort { lc($theme_registry->{$a}->{'name'} // $a) cmp lc($theme_registry->{$b}->{'name'} // $b) } grep { $theme_registry->{$_} && !$theme_registry->{$_}->{'builtin'} } keys %{$theme_registry}; %>
 <% push @theme_order, @custom_order; %>
 <% my @current_palette = &subs::theme_palette(); %>
 <div class="misc_section cfg-card" id="theme_gallery_card">
 	<h3><%= &subs::lang('configure.themes') %></h3>
-	<p class="cfg-note"><%= &subs::ui('A theme dresses the whole desktop: its colours, its icon set, its material, its face and its corner. Pick one for this device, or save one of your own; an appointment can then wear it while it runs.') %></p>
+	<p class="cfg-note"><%= &subs::ui('A theme dresses the whole desktop: its colours, its icon set, its material, its face and its corner. Pick one for this machine, or save one of your own; an appointment can then wear it while it runs.') %></p>
 	<div class="theme_gallery">
 		<div class="theme_card<% if (!length $current_theme) { %> selected<% } %>" theme_slug="" role="button" tabindex="0">
 			<span class="theme_swatches">
@@ -511,7 +510,6 @@
 			$('.misc_device_block').hide();
 			$('.misc_device_block[device="' + dev + '"]').show();
 			syncSchemeDropdown();
-			if (typeof themeShowDevice === 'function') { themeShowDevice(dev); }
 		}
 		$(document).on('click', '.misc_device_tab', function () {
 			var picked = $(this).attr('device');
@@ -633,15 +631,11 @@
 	// editor saves a named bundle. Both handlers are namespaced because this
 	// panel is re-injected when Configure re-opens.
 	var jawnos_themes = <%== encode_json($theme_registry) %>;
-	var jawnos_device_themes = <%== encode_json(\%device_themes) %>;
 	var jawnos_theme_labels = { new_theme: <%== encode_json(&subs::lang('configure.new_theme')) %>, edit_theme: <%== encode_json(&subs::lang('configure.edit_theme')) %> };
-	function themeShowDevice(dev) {
-		var slug = jawnos_device_themes[dev] || '';
-		$('.theme_card').removeClass('selected');
-		$('.theme_card[theme_slug="' + slug + '"]').addClass('selected');
-	}
 	function themePanelDevice() {
-		return $('.misc_device_tab.selected').attr('device') || '<%= $dev %>';
+		// The gallery is about the machine in front of you: the manager reads its
+		// own device's row, not whichever device tab happens to be open.
+		return '<%= $dev %>';
 	}
 	function themeCardRender(slug, theme) {
 		var card = $('<div class="theme_card"></div>').attr({ role: 'button', tabindex: '0' }).attr('theme_slug', slug || '');
@@ -691,7 +685,6 @@
 		var slug = $(this).attr('theme_slug') || '';
 		$('.theme_card').removeClass('selected');
 		$(this).addClass('selected');
-		jawnos_device_themes[themePanelDevice()] = slug;
 		$.post('/manager/configure/misc_setting', {
 			setting: 'appearance_theme', value: slug, device: themePanelDevice(), timestamp: Date.now()
 		});
@@ -699,7 +692,7 @@
 	$(document).off('keydown.themeui').on('keydown.themeui', '.theme_card[theme_slug]', function (e) {
 		if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
 	});
-	$(document).off('click.themeui').on('click.themeui', '.theme_edit', function (e) {
+	$(document).off('click.themeui-edit').on('click.themeui-edit', '.theme_edit', function (e) {
 		e.stopPropagation();
 		themeEditorOpen($(this).attr('theme_slug'));
 	});
@@ -733,7 +726,6 @@
 			// owns the desk, and the server's push keeps that rule
 			$('.theme_card').removeClass('selected');
 			card.addClass('selected');
-			jawnos_device_themes[themePanelDevice()] = r.slug;
 			$.post('/manager/configure/misc_setting', {
 				setting: 'appearance_theme', value: r.slug, device: themePanelDevice(), timestamp: Date.now()
 			});
@@ -748,7 +740,6 @@
 			if (!r || !r.deleted) { $('#theme_status').text((r && r.error) || <%== encode_json(&subs::ui('Could not delete')) %>); return; }
 			$('.theme_card[theme_slug="' + slug + '"]').remove();
 			delete jawnos_themes[slug];
-			$.each(jawnos_device_themes, function (dev, chosen) { if (chosen === slug) { jawnos_device_themes[dev] = ''; } });
 			if ($('.theme_card.selected').attr('theme_slug') === slug) {
 				$('.theme_card').removeClass('selected');
 				$('.theme_card[theme_slug=""]').addClass('selected');
