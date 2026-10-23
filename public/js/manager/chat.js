@@ -11,6 +11,13 @@ $(document).on('click', '#chat_toggle', function () {
 		success: function (response) {
 			windowMaker(response);
 			chatBackRestore();
+			// The start-menu icon opens the panel directly, so it must also start
+			// the mail socket (which decrypts the bodies) and dress the thread the
+			// same way the friend picker does.
+			if (typeof chatDressMessages === 'function') { chatDressMessages(); }
+			if (typeof mailWebSocketStart === 'function') { mailWebSocketStart(); }
+			if (typeof chatTransportOptions === 'function') { chatTransportOptions(); }
+			if (typeof mailScrollBottom === 'function') { mailScrollBottom('load'); }
 		}
 	});
 });
@@ -335,9 +342,9 @@ function chatDressMessages(root) {
 		var outgoing = ((inner.attr('style') || '').indexOf('float:right') >= 0);
 		b.addClass('chat_bubble ' + (outgoing ? 'chat_out' : 'chat_in')).removeAttr('style');
 		inner.removeAttr('style').addClass('chat_bubble_inner');
-		inner.find('.time').addClass('chat_time');
-		inner.find('b').addClass('chat_sender');
-		inner.find('.mailbox_message_contents').addClass('chat_text');
+		inner.find('.time').removeAttr('style').addClass('chat_time');
+		inner.find('b').removeAttr('style').addClass('chat_sender');
+		inner.find('.mailbox_message_contents').removeAttr('style').addClass('chat_text');
 	});
 }
 

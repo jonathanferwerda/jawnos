@@ -733,6 +733,9 @@ function wsMessageHandler(event) {
 		else if ( data['type'] == 'mailbox_message' ) {
 			var s = $(data['selector']);
 			s.replaceWith($(data['content']).clone());
+			// the decrypted envelope is rendered for the shared Mailbox markup; a
+			// Chat window needs it re-dressed as bubbles, exactly like a live one
+			if (typeof chatDressMessages === 'function') { chatDressMessages(); }
 			appointment_chron()
 			mailScrollBottom();
 		}

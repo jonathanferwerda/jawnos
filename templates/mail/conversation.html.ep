@@ -9,6 +9,9 @@
                        be offered once per number; absent means a single sms %>
 <% no warnings 'uninitialized'; %>
 <% my $chat = $chat_ui ? 1 : 0; %>
+<%# the message partial reads the stash (so it is still defined when the
+    decryption pass re-renders a single envelope later) %>
+<% $c->stash('chat_ui' => $chat); %>
 <div id="conversation"<% if ($chat) { %> class="chat_thread"<% } else { %> style="width:99%;height:89%;border-width:2px;border-radius:5px;border:solid;bottom:5px;<% if ($incoming_data->{'sidebar'} == 1) { %>display:none;<% } %>"<% } %>>
 	<div id="mailbox_realtime_controls" style="display:none;">
 		<img id="mailbox_audio" src="<%= &subs::icon_for('/images/make believe/microphone.png') %>" hint="Microphone" class="little_thumb">
@@ -38,17 +41,19 @@
 				    may keep more than one line, so sms is offered once per number and
 				    the chosen one is the number the next text goes to. %>
 				<% my @lines = @{ $sms_lines || [] }; %>
-				<select id="mail_transport" hint="How this message travels">
-					<option value="chat">chat</option>
-					<% if (scalar @lines > 1) { %>
-						<% foreach my $l ( @lines ) { %>
-							<option value="sms" data-line="<%= $l->{'value'} %>"><%= 'sms · ' . ($l->{'display'} || $l->{'value'}) %></option>
+				<span class="chat_transport_wrap">
+					<select id="mail_transport" hint="How this message travels">
+						<option value="chat">chat</option>
+						<% if (scalar @lines > 1) { %>
+							<% foreach my $l ( @lines ) { %>
+								<option value="sms" data-line="<%= $l->{'value'} %>"><%= 'sms · ' . ($l->{'display'} || $l->{'value'}) %></option>
+							<% } %>
+						<% } else { %>
+							<option value="sms">sms</option>
 						<% } %>
-					<% } else { %>
-						<option value="sms">sms</option>
-					<% } %>
-					<option value="lora">LoRaWAN</option>
-				</select>
+						<option value="lora">LoRaWAN</option>
+					</select>
+				</span>
 				<span id="chat_sms_count" class="chat_sms_count"></span>
 			</div>
 			<div id="chat_emoji_panel" class="chat_emoji_panel" hidden>

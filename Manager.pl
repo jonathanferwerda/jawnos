@@ -1635,6 +1635,7 @@ sub rock_and_roll($c) {
 							}
 							close($thumb_slot) if $thumb_slot;
 							if (defined $hover_position && ($file_data->{'type'} // '') eq 'video') {
+								$c->res->headers->cache_control('private, max-age=3600') if $data;
 								$data ? $c->render_file(data => $data, content_type => 'image/png') : $c->render(text => 'none');
 								return;
 							}
@@ -37010,7 +37011,71 @@ sub sms_send_command($digits, $message) {
 		. ' : (function(){ $.post("/manager/sms/termux_fallback", {digits: ' . encode_json($digits) . ', message: ' . encode_json($message) . '}); return "termux"; })())';
 }
 sub sms_mms_command($digits, $subject, $parts) {
-	return 'typeof jawnSmsMms === "function" ? jawnSmsMms(' . encode_json($digits) . ',' . encode_json($subject) . ',' . encode_json($parts) . ') : "no bridge"';
+	my $call = 'jawnSmsMms(' . encode_json($digits) . ',' . encode_json($subject) . ',' . encode_json($parts) . ')';
+	# The command names its own outcome in the phone's log: 'ok' means the page
+	# had the bridge and called it, 'no bridge' means the app page is old or this
+	# is not the JawnOS app. The bridge then posts its own result (via mms/share).
+	return '(function(){ try { var r = (typeof jawnSmsMms === "function") ? ' . $call . ' : "no bridge";'
+		. ' if (typeof window.__jawnSmsResult === "function") { window.__jawnSmsResult({ ok: (r === "ok" ? 1 : 0), via: "mms_command", error: (r === "ok" ? "" : r) }); }'
+		. ' return r; } catch (e) { if (typeof window.__jawnSmsResult === "function") { window.__jawnSmsResult({ ok: 0, via: "mms_command", error: String(e) }); } return "error"; } })()';
+}
+
+# This machine's radio. termux-telephony-deviceinfo is the same source the
+# Phone app trusts: a phone answers phone_type=gsm/cdma with a ready SIM, a
+# wifi-only tablet answers phone_type=none, and a desktop has no termux at all.
+sub telephony_status() {
+	my $state = { telephony => 0, phone_type => 'none', sim_state => '', network_type => '' };
+	return $state unless &subs::device_setter() eq 'mobile';
+	my $json = `timeout 8 termux-telephony-deviceinfo 2>/dev/null`;
+	my $info = eval { return decode_json $json } || {};
+	my $type = lc($info->{'phone_type'} || 'none');
+	my $sim = lc($info->{'sim_state'} || '');
+	$state->{'phone_type'} = $type;
+	$state->{'sim_state'} = $sim;
+	$state->{'network_type'} = $info->{'network_type'} || '';
+	$state->{'telephony'} = (($type ne '' && $type ne 'none') && $sim eq 'ready') ? 1 : 0;
+	return $state;
+}
+
+# A peer's radio, asked before an MMS is handed over: a laptop with a phone and
+# a wifi tablet must not send the picture to the tablet and call it a phone.
+sub peer_telephony($ru) {
+	return undef unless $ru && $ru->{'ua'} && $ru->{'manager'};
+	my $tx = eval { $ru->{'ua'}->inactivity_timeout(10)->get($ru->{'manager'} . '/manager/telephony') };
+	return undef unless $tx && !$tx->error && $tx->res->is_success;
+	my $info = eval { return decode_json $tx->res->body };
+	return (ref $info eq 'HASH') ? $info : undef;
+}
+
+get '/manager/telephony' => sub($c) {
+	$c->render(json => { ok => 1, %{ &telephony_status() } });
+};
+
+# The app's FileProvider is rooted at getFilesDir() (/data/user/0/...), while
+# subs::home() and TermuxConstants say /data/data/.... Hand the bridge the
+# provider's own spelling so getUriForFile finds the file; a path outside that
+# root is what made the share() hand-off fail.
+sub bridge_path($path) {
+	my $data = $ENV{'TERMUX_APP__DATA_DIR'};
+	return $path unless $data && $path =~ m{^/data/data/[^/]+/files(?:/|$)};
+	$path =~ s{^/data/data/[^/]+/files}{$data/files};
+	return $path;
+}
+
+# MMS carriers are happiest below about a megabyte; an original photo can be
+# several. A copy is shrunk to fit (and auto-oriented), leaving the filed
+# original alone. No ImageMagick, or a failure, keeps the original for the
+# bridge's own Bitmap compression to handle.
+sub mms_part_prepare($path, $mime) {
+	return ($path, $mime) unless $path && -e $path;
+	return ($path, $mime) unless ($mime || '') =~ m{^image/}i;
+	my $size = -s $path || 0;
+	return ($path, $mime) if $size <= 0 || $size <= (320 * 1024);
+	my $dir = &subs::home('~/.shots/sms_parts');
+	`mkdir -p "$dir"` unless -e $dir;
+	my $out = $dir . '/' . &subs::random_string_creator(8) . '-mms.jpg';
+	my $rc = system('magick', $path, '-auto-orient', '-strip', '-resize', '1280x960>', '-quality', '82', $out);
+	return (($rc == 0 && -e $out && (-s $out) > 0) ? ($out, 'image/jpeg') : ($path, $mime));
 }
 
 sub sms_message_send($digits,$message) {
@@ -37085,6 +37150,12 @@ post '/manager/sms/mms' => sub($c) {
 	my $digits = $c->param('digits') || '';
 	my $subject = $c->param('subject') || '';
 	my $parts = eval { return decode_json $c->param('parts') } || [];
+	# a wifi-only tablet is a 'mobile' device in the house, but it has no radio to
+	# carry an MMS; answer so a relay can fall through to the phone
+	if (&subs::device_setter() eq 'mobile' && !&telephony_status()->{'telephony'}) {
+		$c->render(json => { ok => 0, error => 'no telephony on this device', parts => 0 });
+		return;
+	}
 	$digits =~ s/\D+//g;
 	$digits =~ s/^1//;
 	my @local;
@@ -37099,10 +37170,13 @@ post '/manager/sms/mms' => sub($c) {
 		my $file = $dir . '/' . &subs::random_string_creator(8) . '-' . $name;
 		my $bytes = decode_base64($data);
 		&write_file($file, $bytes);
-		push @local, { path => $file, mime => $mime };
+		push @local, { path => &bridge_path($file), mime => $mime };
 	}
 	my $tabs = &subs::db_query("select browser_tab_id from websockets where app = ?", 'tab')->hashes;
-	if (scalar @{$tabs} > 0 && scalar @local > 0) {
+	if (scalar @local == 0) {
+		$c->render(json => { ok => 0, error => 'no parts', parts => 0 });
+	}
+	elsif (scalar @{$tabs} > 0) {
 		&Websocket::send('tab', { console => &sms_mms_command($digits, $subject, \@local) });
 		$c->render(json => { ok => 1, via => 'bridge', parts => scalar @local });
 	}
@@ -37148,15 +37222,17 @@ sub attachment_plain_path($att) {
 
 # An attachment on the sms road: on the phone the parts are already local files
 # the bridge reads; anywhere else they are read, base64'd and relayed to the
-# phone's /manager/sms/mms.
+# phone's /manager/sms/mms. A phone is found by asking its radio, not by taking
+# the first mobile peer (the house may also hold a wifi-only tablet).
 sub sms_mms_relay($digits, $subject, $attachments) {
 	my $parts = [];
 	foreach my $att ( @{$attachments || []} ) {
 		my $f = &attachment_plain_path($att);
 		my $mime = $att->{'mime'} || $att->{'type'} || 'image/jpeg';
 		next unless $f;
+		($f, $mime) = &mms_part_prepare($f, $mime);
 		if (&subs::device_setter() eq 'mobile') {
-			push @{$parts}, { path => $f, mime => $mime };
+			push @{$parts}, { path => &bridge_path($f), mime => $mime };
 		}
 		else {
 			next unless -e $f;
@@ -37173,18 +37249,41 @@ sub sms_mms_relay($digits, $subject, $attachments) {
 	}
 	return { ok => 0, error => 'no parts' } unless scalar @{$parts} > 0;
 	if (&subs::device_setter() eq 'mobile') {
+		# a wifi tablet can read a picture but has no radio to carry it
+		return { ok => 0, error => 'this device has no telephony' } unless &telephony_status()->{'telephony'};
 		my $tabs = &subs::db_query("select browser_tab_id from websockets where app = ?", 'tab')->hashes;
 		return { ok => 0, error => 'no app page open' } unless scalar @{$tabs} > 0;
 		&Websocket::send('tab', { console => &sms_mms_command($digits, $subject, $parts) });
 		return { ok => 1, via => 'bridge' };
 	}
 	my $remote_machines = &subs::db_query('select * from remote_machines where connection=? and device=?', 'active', 'mobile')->hashes;
+	# confirmed radios first; a peer that will not answer the check stays a
+	# candidate rather than silently disabling a working phone on an old build
+	my ( @phones, @unknown );
 	foreach my $rm ( @{$remote_machines} ) {
-		$rm = &remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm });
-		my $res = $rm->{'ua'}->post($rm->{'manager'} . '/manager/sms/mms', form => { digits => $digits, subject => $subject, parts => encode_json $parts });
-		if (eval {decode_json $res}) { return { ok => 1, via => 'relay' }; }
+		my $ru = eval { &remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm }) };
+		next unless $ru && $ru->{'ua'} && $ru->{'manager'};
+		my $tel = &peer_telephony($ru);
+		if ($tel && defined $tel->{'telephony'}) {
+			push @phones, [ $rm, $ru ] if $tel->{'telephony'};
+		}
+		else {
+			push @unknown, [ $rm, $ru ];
+		}
 	}
-	return { ok => 0, error => 'no phone reached' };
+	my $last = 'no phone reached';
+	foreach my $pair ( @phones, @unknown ) {
+		my ($rm, $ru) = @{$pair};
+		my $tx = eval { $ru->{'ua'}->inactivity_timeout(30)->post($ru->{'manager'} . '/manager/sms/mms', form => { digits => $digits, subject => $subject, parts => encode_json $parts }) };
+		if (!$tx) { $last = 'no answer'; next; }
+		if ($tx->error) { $last = $tx->error->{'message'} || 'no answer'; next; }
+		my $answer = eval { return decode_json $tx->res->body };
+		if ($answer && $answer->{'ok'}) {
+			return { ok => 1, via => 'relay', phone => ($rm->{'hostname'} || $rm->{'name'} || $rm->{'ip'}), parts => ($answer->{'parts'} || 0) };
+		}
+		$last = (ref $answer eq 'HASH' && $answer->{'error'}) ? $answer->{'error'} : ('HTTP ' . $tx->res->code);
+	}
+	return { ok => 0, error => $last };
 };
 
 # ---------------------------------------------------------------------------
