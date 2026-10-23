@@ -270,8 +270,7 @@
 							<th><%= &subs::ui('Known') %></th>
 							<th><%= &subs::lang('crest') %></th>
 							<th><%= &subs::ui('Asked') %></th>
-							<th><%= &subs::ui('Age') %></th>
-							<th><%= &subs::ui('Approve') %></th>
+							<th><%= &subs::ui('Approve with') %></th>
 							<th><%= &subs::ui('Decide') %></th>
 						</tr>
 					</thead>
@@ -323,7 +322,7 @@
 							</tr>
 						<% } %>
 						<% if (!scalar @{$requests || []}) { %>
-							<tr><td colspan="9" class="bo_empty"><%= &subs::ui('No requests waiting.') %></td></tr>
+							<tr><td colspan="8" class="bo_empty"><%= &subs::ui('No requests waiting.') %></td></tr>
 						<% } %>
 					</tbody>
 				</table>
