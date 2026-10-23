@@ -390,7 +390,9 @@ our $known_icons = {
 	cut => '/images/palette/crop.png',
 	encrypt => '/images/make believe/lock.png',
 	decrypt => '/images/make believe/key.png',
-	
+	pin_app => '/images/decipherable/forward.png',
+	desk_folder => '/images/decipherable/computer.png',
+	desk_folder_reset => '/images/decipherable/home.png',
 };
 
 our $inventory_states = [

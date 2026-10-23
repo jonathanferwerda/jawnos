@@ -47,8 +47,10 @@ function deskLoad() {
 		success: function(response) {
 			desk.folder = (response && response.folder) || '';
 			desk.files = (response && response.files) || [];
+			desk.apps = (response && response.apps) || [];
 			desk.disk = (response && response.disk) || {};
 			desk.selected = [];
+			desk.app = undefined;
 			desk.path = undefined;
 			desk.type = undefined;
 			desk.anchor = undefined;
@@ -62,23 +64,106 @@ function deskRender() {
 	if (!layer.length) { return; }
 	layer.empty();
 	deskPosition();
-	if (!desk.files.length) {
+	// pinned apps first: they are the fixed furniture of the desk, the files
+	// behind them are what changes
+	$.each(desk.apps || [], function (i, a) { layer.append(deskAppItem(a)); });
+	$.each(desk.files || [], function (i, f) {
+		var item = $('<div class="folders_file desk_file" tabindex="-1" role="option" aria-selected="false"></div>')
+			.attr({ path: f['path'], type: f['type'], 'data-name': f['name'] });
+		$('<span class="folders_thumb"></span>')
+			.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''))
+			.appendTo(item);
+		$('<span class="folders_label"></span>').text(f['name'] || '').attr('title', f['name'] || '').appendTo(item);
+		layer.append(item);
+	});
+	if (!(desk.apps || []).length && !(desk.files || []).length) {
 		$('<div class="desk_empty"></div>').text(jawnosT('Your desktop is empty')).appendTo(layer);
-	}
-	else {
-		$.each(desk.files, function (i, f) {
-			var item = $('<div class="folders_file desk_file" tabindex="-1" role="option" aria-selected="false"></div>')
-				.attr({ path: f['path'], type: f['type'], 'data-name': f['name'] });
-			$('<span class="folders_thumb"></span>')
-				.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''))
-				.appendTo(item);
-			$('<span class="folders_label"></span>').text(f['name'] || '').attr('title', f['name'] || '').appendTo(item);
-			layer.append(item);
-		});
 	}
 	foldersDraggable();
 	foldersSelectionSync('desk');
 }
+
+function deskAppItem(a) {
+	var item = $('<div class="folders_file desk_file desk_app" tabindex="-1" role="option" aria-selected="false"></div>')
+		.attr({ app: a['app'], 'data-name': a['name'] });
+	$('<span class="folders_thumb"></span>')
+		.append($('<img draggable="false" alt="">').attr('src', a['icon'] || ''))
+		.appendTo(item);
+	$('<span class="folders_label"></span>').text(a['name'] || '').attr('title', a['name'] || '').appendTo(item);
+	$('<span class="desk_shortcut_mark" aria-hidden="true">↗</span>').appendTo(item);
+	return item;
+}
+
+// ---- pinned apps -----------------------------------------------------------
+// The window restorer's own opener understands every built-in app, including
+// the ones with no button in the document, so a shortcut uses it first.
+function deskOpenApp(app) {
+	if (!app) { return; }
+	if (typeof appWindowOpener == 'function') { appWindowOpener(app, Date.now()); }
+	else if (typeof jawnosSearchOpen == 'function') { jawnosSearchOpen(app); }
+}
+
+function deskAppPicker() {
+	$.ajax({
+		url: '/manager/folders/desk/apps',
+		type: 'GET',
+		success: function(response) {
+			if (response && response['dialog']) {
+				var box = $(response['dialog']).attr('state_surface', 'desk');
+				$('#dialog_boxes').append(box);
+				if (typeof appointment_chron == 'function') { appointment_chron(); }
+			}
+		}
+	});
+}
+
+function deskPinsSaveList(list) {
+	$.ajax({
+		url: '/manager/folders/desk/apps',
+		type: 'POST',
+		data: { apps: JSON.stringify(list || []) },
+		success: function(response) {
+			if (response && response['ok']) { deskLoad(); }
+		}
+	});
+}
+
+function deskUnpinApp(app) {
+	var list = [];
+	$.each(desk.apps || [], function (i, a) {
+		if (a['app'] != app) { list.push(a['app']); }
+	});
+	deskPinsSaveList(list);
+}
+
+// A right-click on a shortcut is its own small menu: open it, or take it off
+// the desk. File items keep the full Folders menu.
+function deskAppMenuRow(command, label, icon) {
+	var row = $('<div class="folders_context_selection hover_showing"></div>').attr('command', command);
+	if (icon) { $('<img class="miniscule_thumb" alt="">').attr('src', icon).appendTo(row); }
+	$('<span style="vertical-align:top;"></span>').text(label).appendTo(row);
+	return row;
+}
+$(document).on('contextmenu', '.desk_app', function(e) {
+	e.preventDefault();
+	var item = $(this);
+	var app = item.attr('app');
+	desk.app = app;
+	desk.path = undefined;
+	desk.type = undefined;
+	$('#desk_layer .folders_file').removeClass('selected');
+	item.addClass('selected');
+	foldersSelectionSync('desk');
+	var menu = $('<div class="folders_context" surface="desk"></div>')
+		.css({ position: 'fixed', width: 220, background: 'var(--panel-2)' });
+	menu.append(deskAppMenuRow('open_app', jawnosT('Open'), item.find('img').attr('src')));
+	menu.append(deskAppMenuRow('unpin_app', jawnosT('Unpin from the desk'), '/images/decipherable/off.png'));
+	$('body').append(menu);
+	var margin = 6;
+	var left = Math.min(e.clientX, $(window).width() - menu.outerWidth() - margin);
+	var top = Math.min(e.clientY, $(window).height() - menu.outerHeight() - margin);
+	menu.css({ left: Math.max(margin, left), top: Math.max(margin, top) });
+});
 
 // ---- the wallpaper ---------------------------------------------------------
 function deskStyleValue(name, fallback) {

@@ -1,43 +1,35 @@
-
-<div class="dialog_box" command="<%= $box->{'command'} %>" job="<%= $box->{'job'} %>" folder="<%= $folders->{'folder'} %>" uuid="<%= $uuid %>" style="background-color:var(--panel-2);height:<%= $box->{'height'} || '180px' %>;width:400px;position:fixed;top: 50%;left: 50%;transform: translate(-50%, -50%);z-index: 9999;">
-	<div class="header" style="background-color:navy;color:white;font-size:26px;position:absolute;top:0px;width:100%;">
-		<span style="float:right;"><button class="cancel" uuid="<%= $uuid %>" onclick="$('[uuid=\'<%= $uuid %>\']').remove()">X</button></span>
-		<span style="float:left;"><%= $box->{'name'} || 'Dialog Box' %></span>
+<%# One dialog shape for every Folders job and question: a title bar with a
+    close, a scrolling body, and the actions at the foot. %>
+<div class="dialog_box folders_dialog" command="<%= $box->{'command'} %>" job="<%= $box->{'job'} %>" folder="<%= $folders->{'folder'} %>" uuid="<%= $uuid %>" style="height:<%= $box->{'height'} || 'auto' %>;width:<%= $box->{'width'} || 'min(520px, 94vw)' %>;">
+	<div class="header folders_dialog_header">
+		<span class="folders_dialog_title"><%= $box->{'name'} || &subs::ui('Dialog Box') %></span>
+		<button type="button" class="cancel folders_dialog_close" uuid="<%= $uuid %>" onclick="$('[uuid=\'<%= $uuid %>\']').remove()" hint="<%= &subs::ui('Close') %>" aria-label="<%= &subs::ui('Close') %>">✕</button>
 	</div>
-	<div class="body" style="width:100%;position:absolute;top:60px;font-size:16px;">
+	<div class="body folders_dialog_body">
 		<% if ($box->{'text'}) { %>
-			<div style="white-space:pre-wrap;"><%= $box->{'text'} %></div>
+			<div class="folders_dialog_text"><%= $box->{'text'} %></div>
 		<% } %>
 		<% if ($box->{'content'}) { %>
-			<div><%== $box->{'content'} %></div>
+			<div class="folders_dialog_content"><%== $box->{'content'} %></div>
 		<% } %>
 		<% if ($box->{'inputs'}) { %>
 			<% foreach my $i ( @{$box->{'inputs'}} ) { %>
-				<input type="<%= $i->{'type'} %>" placeholder="<%= $i->{'placeholder'} %>" value="<%= $i->{'value'} %>" name="<%= $i->{'name'} %>">
+				<input class="folders_dialog_input" type="<%= $i->{'type'} %>" placeholder="<%= $i->{'placeholder'} %>" value="<%= $i->{'value'} %>" name="<%= $i->{'name'} %>">
 			<% } %>
 		<% } %>
 		<% if ($box->{'job'}) { %>
-			<div class="job_progress" style="white-space:pre-wrap;"><%= $box->{'progress'} || 'starting' %></div>
+			<div class="job_progress folders_dialog_progress"><%= $box->{'progress'} || &subs::ui('starting') %></div>
 		<% } %>
-
-
-
 	</div>
-
-	<div class="bottom_buttons" style="position:absolute;bottom:2px;width:100%;">
-		<span class="float:right;">
-			<% if ($box->{'job'}) { %>
-				<button class="job_stop" job="<%= $box->{'job'} %>">Stop</button>
-			<% } %>
-			<% unless ( $box->{'cancel'} eq 'no') { %>
-				<button class="cancel" uuid="<%= $uuid %>" onclick="$('[uuid=\'<%= $uuid %>\']').remove()">Cancel</button>
-			<% } %>
-			<% unless ( $box->{'ok'} eq 'no') { %>
-				<button class="ok" uuid="<%= $uuid %>" onclick="foldersCommandConfirm('<%= $uuid %>')">OK</button>
-			<% } %>
-		</span>
+	<div class="bottom_buttons folders_dialog_footer">
+		<% if ($box->{'job'}) { %>
+			<button type="button" class="job_stop" job="<%= $box->{'job'} %>"><%= &subs::ui('Stop') %></button>
+		<% } %>
+		<% unless (($box->{'cancel'} || '') eq 'no') { %>
+			<button type="button" class="cancel" uuid="<%= $uuid %>" onclick="$('[uuid=\'<%= $uuid %>\']').remove()"><%= $box->{'cancel_label'} || &subs::ui('Cancel') %></button>
+		<% } %>
+		<% unless (($box->{'ok'} || '') eq 'no') { %>
+			<button type="button" class="ok" uuid="<%= $uuid %>" onclick="foldersCommandConfirm('<%= $uuid %>')"><%= $box->{'ok_label'} || &subs::ui('OK') %></button>
+		<% } %>
 	</div>
-	<script>
-		
-	</script>
 </div>

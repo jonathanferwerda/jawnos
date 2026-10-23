@@ -28,6 +28,8 @@ var desk = {
 	folder: undefined,
 	disk: {},
 	files: [],
+	apps: [],
+	app: undefined,
 	type: undefined,
 	path: undefined,
 	remote_uuid: '',
@@ -156,7 +158,11 @@ function foldersSelectionSync(surface, activeEl) {
 	container.find('.folders_file').each(function () {
 		var el = $(this);
 		if (el.hasClass('selected')) {
-			selected.push({ path: el.attr('path'), type: el.attr('type') });
+			// app shortcuts are selected visually, but they are not files: they
+			// must not reach a paste, a delete or a properties read
+			if (!el.hasClass('desk_app') && el.attr('path')) {
+				selected.push({ path: el.attr('path'), type: el.attr('type') });
+			}
 		}
 		el.attr('aria-selected', el.hasClass('selected') ? 'true' : 'false');
 	});
@@ -244,12 +250,20 @@ $(document).on('click', '#folders_contents, #desk_layer', function(e) {
 
 $(document).on('dblclick', '.folders_file', function() {
 	var el = $(this);
+	if (el.hasClass('desk_app')) {
+		if (typeof deskOpenApp == 'function') { deskOpenApp(el.attr('app')); }
+		else if (typeof appWindowOpener == 'function') { appWindowOpener(el.attr('app'), Date.now()); }
+		else if (typeof jawnosSearchOpen == 'function') { jawnosSearchOpen(el.attr('app')); }
+		return;
+	}
 	var surface = foldersSurfaceOf(el);
 	var st = foldersState(surface);
 	st.path = el.attr('path');
 	st.type = el.attr('type');
 	if (st.type == 'folder') {
-		foldersOpener({ folder: st.path });
+		var open_data = { folder: st.path };
+		if (surface == 'desk') { open_data.remote_uuid = ''; }
+		foldersOpener(open_data);
 	}
 	else {
 		foldersFileOpener(st);
@@ -316,6 +330,8 @@ function foldersDraggable() {
 	var can_drag = (typeof windowPhoneChecker != 'function') || windowPhoneChecker() == false;
 	$('.folders_file').each(function() {
 		var item = $(this);
+		// an app shortcut has no file behind it to move
+		if (item.hasClass('desk_app')) { return; }
 		// a remote listing is read-only: its paths mean something on the other
 		// machine, so neither the item nor a folder in it takes a drop
 		var remote = (foldersSurfaceOf(item) == 'folders' && folders.remote_uuid);
@@ -438,10 +454,13 @@ function foldersFileOpener(state) {
 
 // ---- context menu ----------------------------------------------------------
 $(document).on('contextmenu', '.folders_file, #folders_contents, #desk_layer', function(e) {
+	// a pinned app has its own short menu (Open, Unpin) in desk.js
+	if ($(e.target).closest('.desk_app').length) { return; }
 	e.preventDefault();
 	var press_x = e.clientX, press_y = e.clientY;
 	var surface = foldersSurfaceOf(this);
 	var st = foldersState(surface);
+	st.app = undefined;
 	var container = foldersContainer(surface);
 	// a remote listing is read-only: every command here would run on this
 	// machine against a path that only exists on the other one
@@ -552,7 +571,9 @@ function foldersCommand(data, state) {
 	}
 	else if (command == 'open') {
 		if (st.type == 'folder') {
-			foldersOpener({ folder: st.path });
+			var open_data = { folder: st.path };
+			if (surface == 'desk') { open_data.remote_uuid = ''; }
+			foldersOpener(open_data);
 		}
 		else {
 			foldersFileOpener(st);
@@ -563,6 +584,22 @@ function foldersCommand(data, state) {
 	}
 	else if (command == 'paste') {
 		foldersPaste(st);
+	}
+	else if (command == 'pin_app') {
+		if (typeof deskAppPicker == 'function') { deskAppPicker(); }
+	}
+	else if (command == 'open_app') {
+		if (st.app && typeof deskOpenApp == 'function') { deskOpenApp(st.app); }
+		else if (st.app && typeof jawnosSearchOpen == 'function') { jawnosSearchOpen(st.app); }
+	}
+	else if (command == 'unpin_app') {
+		if (st.app && typeof deskUnpinApp == 'function') { deskUnpinApp(st.app); }
+	}
+	else if (command == 'desk_folder') {
+		foldersDeskFolder(st.path || st.folder);
+	}
+	else if (command == 'desk_folder_reset') {
+		foldersDeskFolder('');
 	}
 	else if (command == 'archive') {
 		foldersArchive(st);
@@ -618,6 +655,14 @@ function foldersFetchHome(state) {
 function foldersCommandConfirm(uuid) {
 	var box = $('.dialog_box[uuid="' + uuid + '"]');
 	var command = box.attr('command');
+	// the app picker saves a list of names, not a file command
+	if (command == 'pin_app') {
+		var pinned = [];
+		box.find('.desk_pin_check:checked').each(function () { pinned.push($(this).val()); });
+		box.remove();
+		if (typeof deskPinsSaveList == 'function') { deskPinsSaveList(pinned); }
+		return;
+	}
 	var surface = box.attr('state_surface') || 'folders';
 	var st = (surface == 'desk') ? desk : folders;
 	var inputs = {};
@@ -628,6 +673,46 @@ function foldersCommandConfirm(uuid) {
 	if (!command) { return; }
 	foldersCommandPOST({ command: command, inputs: inputs }, st);
 }
+
+// Choose (or reset) the folder the desk shows. The machine saves it; a visible
+// desk is read again at once.
+function foldersDeskFolder(folder) {
+	$.ajax({
+		url: '/manager/folders/desk/folder',
+		type: 'POST',
+		data: { folder: folder || '' },
+		success: function(response) {
+			if (response && response['ok'] && typeof deskRefreshIfVisible == 'function') {
+				deskRefreshIfVisible();
+			}
+		}
+	});
+}
+
+// The properties card's two buttons: put the path on the clipboard, or open its
+// folder in the browser.
+$(document).on('click', '.folders_copy_path', function () {
+	var button = $(this);
+	var path = button.attr('path') || '';
+	var done = function () {
+		button.text(jawnosT('Copied'));
+		setTimeout(function () { button.text(jawnosT('Copy path')); }, 1200);
+	};
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(path).then(done, done);
+	}
+	else {
+		var field = $('<textarea>').val(path).css({ position: 'fixed', left: '-9999px' }).appendTo('body');
+		field[0].select();
+		try { document.execCommand('copy'); } catch (e) { /* older engines */ }
+		field.remove();
+		done();
+	}
+});
+$(document).on('click', '.folders_open_parent', function () {
+	var path = $(this).attr('path');
+	if (path) { foldersOpener({ folder: path, remote_uuid: ($(this).attr('remote') || '') }); }
+});
 
 // What a command with nothing more to ask does: the clipboard going into the
 // folder on screen, and the desktop's own opener for a file.
@@ -948,6 +1033,12 @@ function foldersKey(e, surface) {
 	}
 	if (key == 'Enter') {
 		e.preventDefault();
+		var chosen = items.filter('.selected').last();
+		if (chosen.length && chosen.hasClass('desk_app')) {
+			if (typeof deskOpenApp == 'function') { deskOpenApp(chosen.attr('app')); }
+			else if (typeof appWindowOpener == 'function') { appWindowOpener(chosen.attr('app'), Date.now()); }
+			return;
+		}
 		if (st.selected && st.selected.length == 1) {
 			st.path = st.selected[0]['path'];
 			st.type = st.selected[0]['type'];

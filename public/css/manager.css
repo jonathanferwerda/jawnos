@@ -2490,3 +2490,95 @@ body.dark_theme #desk { --desk-accent: #6ea8fe; }
 /* The listing is one focusable control; the ring says the keyboard is live. */
 #folders_contents:focus-visible,
 #desk_layer:focus-visible { box-shadow: inset 0 0 0 2px var(--folders-accent, #2f6feb); }
+
+/* ---------------- Folders dialogs ---------------- */
+/* One shape for every Folders question and job: title bar, scrolling body,
+   actions at the foot. The old boxes were absolutely placed inside a fixed
+   box, so a long list ran under the buttons. */
+.folders_dialog {
+	--folders-accent: #2f6feb;
+	position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 9999;
+	display: flex; flex-direction: column; max-height: 82vh; overflow: hidden;
+	background: var(--panel); color: var(--ink);
+	border: 1px solid var(--line); border-radius: 10px;
+	box-shadow: 0 18px 50px rgba(0, 0, 0, .42);
+}
+body.dark_theme .folders_dialog { --folders-accent: #6ea8fe; }
+.folders_dialog_header {
+	flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+	padding: 7px 10px; background: var(--panel-2); border-bottom: 1px solid var(--line);
+	font-size: 16px; font-weight: 600;
+}
+.folders_dialog_title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folders_dialog_close {
+	flex: 0 0 auto; width: 28px; height: 28px; min-width: 28px; padding: 0;
+	font-size: 15px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+}
+.folders_dialog_body {
+	flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 14px;
+	font-size: 14px; line-height: 1.45; box-sizing: border-box;
+}
+.folders_dialog_text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.folders_dialog_input { display: block; width: 100%; margin: 0 0 8px; box-sizing: border-box; }
+.folders_dialog_progress { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; opacity: .85; }
+.folders_dialog_footer {
+	flex: 0 0 auto; display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+	padding: 8px 10px; background: var(--panel-2); border-top: 1px solid var(--line);
+}
+.folders_dialog_footer button { min-width: 84px; }
+
+/* ---------------- Properties ---------------- */
+.folders_properties { font-size: 14px; }
+.folders_properties_head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; }
+.folders_properties_icon {
+	flex: 0 0 78px; width: 78px; height: 78px; display: flex; align-items: center;
+	justify-content: center; background: var(--panel-2);
+	border: 1px solid var(--line); border-radius: 10px;
+}
+.folders_properties_icon img { max-width: 68px; max-height: 68px; object-fit: contain; }
+.folders_properties_title { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding-top: 2px; }
+.folders_properties_title b { font-size: 16px; overflow-wrap: anywhere; }
+.folders_properties_title span { font-size: 12px; opacity: .65; overflow-wrap: anywhere; }
+.folders_properties_rows {
+	display: grid; grid-template-columns: 120px minmax(0, 1fr);
+	gap: 7px 14px; align-items: start;
+}
+.folders_properties_key {
+	font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+	opacity: .65; padding-top: 2px;
+}
+.folders_properties_value { overflow-wrap: anywhere; }
+.folders_properties_actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.folders_properties_table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.folders_properties_table th,
+.folders_properties_table td { padding: 5px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.folders_properties_table th { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .7; }
+.folders_properties_table td { overflow-wrap: anywhere; }
+.folders_properties_number { text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.folders_properties_total { margin-top: 10px; font-size: 12px; opacity: .75; }
+
+/* ---------------- App picker ---------------- */
+.folders_picker_intro { margin: 0 0 12px; font-size: 13px; opacity: .75; }
+.folders_picker_grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 6px; }
+.folders_picker_item {
+	display: flex; align-items: center; gap: 8px; padding: 6px 8px; cursor: pointer;
+	background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+}
+.folders_picker_item:hover { border-color: var(--folders-accent, #2f6feb); }
+.folders_picker_item input {
+	flex: 0 0 auto; width: 17px; height: 17px; min-height: 17px; margin: 0;
+}
+.folders_picker_item .folders_thumb { flex: 0 0 26px; width: 26px; height: 26px; }
+.folders_picker_item .folders_thumb img { max-width: 24px; max-height: 24px; }
+.folders_picker_item .folders_label {
+	display: block; min-width: 0; max-height: none; text-align: left; font-size: 12.5px;
+	white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* A shortcut says so: a small arrow badge on the icon's lower corner. */
+.desk_shortcut_mark {
+	position: absolute; top: 40px; right: 8px; width: 16px; height: 16px;
+	border-radius: 50%; background: var(--panel); color: var(--ink);
+	border: 1px solid var(--line); font-size: 10px; line-height: 14px;
+	text-align: center; pointer-events: none;
+}

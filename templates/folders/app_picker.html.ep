@@ -1,0 +1,14 @@
+<%# The desk's app picker: every launchable app, ticked if it is already pinned.
+    A tile is a label around a checkbox, so the whole row is a target. %>
+<div class="folders_app_picker">
+	<p class="folders_picker_intro"><%= &subs::ui('Choose the apps to keep on the desk. A double-click opens one; the shortcut can be unpinned from its own menu.') %></p>
+	<div class="folders_picker_grid">
+		<% foreach my $a ( @{$apps} ) { %>
+			<label class="folders_picker_item">
+				<input type="checkbox" class="desk_pin_check" value="<%= $a->{'app'} %>"<% if ($pinned->{$a->{'app'}}) { %> checked="checked"<% } %>>
+				<span class="folders_thumb"><img src="<%= $a->{'icon'} %>" alt=""></span>
+				<span class="folders_label"><%= $a->{'name'} %></span>
+			</label>
+		<% } %>
+	</div>
+</div>

@@ -26396,21 +26396,137 @@ post '/manager/folders' => sub($c) {
 	$c->render(json => { html => $html, fo => $fo });
 };
 
+# Apps that are not launchable from the app menu: citizen kinds and the
+# handbook's older alias. They must not be offered as desk shortcuts.
+my %folders_desk_not_app = map { $_ => 1 } qw(citizen resident guest blacklisted library);
+
+# The folder the desk shows. A chosen desktop_folder wins; otherwise ~/Desktop
+# is used only when it has something in it (an empty desktop reads as broken),
+# and the home folder stands in for both.
+sub folders_desk_folder {
+	my $set = &subs::setting_grabber({ app => 'folders', setting => 'desktop_folder' });
+	if (defined $set && length $set) {
+		my $chosen = &subs::home($set);
+		$chosen =~ s{/+$}{} unless $chosen eq '/';
+		return $chosen if -d $chosen;
+	}
+	my $desktop = &subs::home('~/Desktop');
+	$desktop =~ s{/+$}{} unless $desktop eq '/';
+	if (-d $desktop) {
+		my @names = &folders_entry_names($desktop);
+		return $desktop if scalar @names;
+	}
+	my $home = &subs::home('~/');
+	$home =~ s{/+$}{};
+	$home = '/' unless length $home;
+	return $home;
+}
+
+# The apps pinned to the desk, in the order they were pinned.
+sub folders_desk_pinned {
+	my $raw = eval { decode_json &subs::setting_grabber({ app => 'folders', setting => 'desktop_apps' }) };
+	my @list = ref $raw eq 'ARRAY' ? @{$raw} : ();
+	my %seen;
+	return grep {
+		defined $_ && length $_ && !$seen{$_}++
+			&& $gb::known_appts->{$_} && !$folders_desk_not_app{$_}
+	} @list;
+}
+
+# Every app a person may pin, with the name and icon the picker draws.
+sub folders_pinable_apps {
+	return [ map {
+		{
+			app => $_,
+			name => &subs::format_name($_),
+			icon => &subs::icon_for($gb::known_appts->{$_}->{'icon'})
+		}
+	} grep { !$folders_desk_not_app{$_} } sort { lc($a) cmp lc($b) } keys %{$gb::known_appts} ];
+}
+
 # The desk behind the manager: the same Folders listing drawn as icons on the
-# desktop background. ~/Desktop when the house has one, the home folder
-# otherwise. The padlock is the Folders window's own token, so a sealed name
-# appears here only while this screen has Folders open.
+# desktop background, plus any app shortcuts pinned there. The padlock is the
+# Folders window's own token, so a sealed name appears here only while this
+# screen has Folders open.
 get '/manager/folders/desk' => sub($c) {
-	my $folder = &subs::home('~/Desktop');
-	$folder = &subs::home('~/') unless -d $folder;
+	my $folder = &folders_desk_folder();
 	my $unlocked = media_unlock_open($c, 'folders') ? 1 : 0;
 	my $listing = &folders_listing($folder, $unlocked, $c);
+	my @apps = map {
+		{
+			app => $_,
+			name => &subs::format_name($_),
+			icon => &subs::icon_for($gb::known_appts->{$_}->{'icon'})
+		}
+	} &folders_desk_pinned();
 	$c->render(json => {
 		folder => $folder,
 		files => $listing->{'files'},
+		apps => \@apps,
 		disk => $listing->{'disk'},
 		unlocked => $unlocked
 	});
+};
+
+# The app picker the desk's background menu opens.
+get '/manager/folders/desk/apps' => sub($c) {
+	my %pinned = map { $_ => 1 } &folders_desk_pinned();
+	my $content = $c->render_to_string(
+		template => 'folders/app_picker',
+		apps => &folders_pinable_apps(),
+		pinned => \%pinned
+	);
+	my $uuid = &subs::random_string_creator(12);
+	my $dialog = $c->render_to_string(
+		template => 'folders/dialog_box',
+		folders => { folder => &folders_desk_folder() },
+		box => {
+			name => &subs::ui('Pin apps to the desk'),
+			command => 'pin_app',
+			content => $content,
+			height => '70%',
+			width => 'min(680px, 94vw)',
+			ok_label => &subs::ui('Pin'),
+			cancel_label => &subs::ui('Cancel')
+		},
+		uuid => $uuid
+	);
+	$c->render(json => { dialog => $dialog });
+};
+
+# Save the pinned list. Only known, launchable apps are kept; the list is capped
+# so the desk never turns into an app drawer.
+post '/manager/folders/desk/apps' => sub($c) {
+	my $apps = eval { decode_json $c->param('apps') } || [];
+	my %seen;
+	my @clean;
+	foreach my $app ( @{$apps} ) {
+		next unless defined $app && $app =~ /^[a-z0-9_]+$/;
+		next unless $gb::known_appts->{$app} && !$folders_desk_not_app{$app};
+		push @clean, $app unless $seen{$app}++;
+	}
+	@clean = @clean[0 .. 19] if scalar @clean > 20;
+	&subs::setting_setter({ app => 'folders', setting => 'desktop_apps', value => encode_json(\@clean) });
+	$c->render(json => { ok => 1, apps => \@clean });
+};
+
+# Choose the folder the desk shows. An empty path returns to the automatic
+# choice (~/Desktop when it has something in it, else home).
+post '/manager/folders/desk/folder' => sub($c) {
+	my $folder = $c->param('folder');
+	if (!defined $folder || !length $folder) {
+		&subs::setting_deleter({ app => 'folders', setting => 'desktop_folder' });
+		$c->render(json => { ok => 1, folder => &folders_desk_folder() });
+		return;
+	}
+	$folder = &subs::home($folder);
+	$folder =~ s{/+$}{} unless $folder eq '/';
+	unless (-d $folder) {
+		$c->render(json => { ok => 0, error => &subs::ui('That folder is not there.') });
+		return;
+	}
+	&subs::setting_setter({ app => 'folders', setting => 'desktop_folder', value => $folder });
+	$c->render(json => { ok => 1, folder => $folder });
 };
 
 # The app a path belongs to: the first segment under a known location root
@@ -26450,6 +26566,8 @@ sub folders_opener($data) {
 	elsif (defined $command && $command eq 'home') {
 		$folder = &subs::home('~/');
 	}
+	# a trailing slash makes every path below it look like a double slash
+	$folder =~ s{/+$}{} if (defined $folder && $folder ne '/');
 	my $formatted_folder = &subs::terminal_name($folder);
 	my $listing = &folders_listing($folder, $unlocked, $c);
 	return { %{$listing}, formatted_folder => $formatted_folder, folder => $folder };
@@ -26709,7 +26827,11 @@ get '/manager/folders/context/command' => sub($c) {
 			my @parts = split '/', $item->{'path'};
 			my $name = pop @parts;
 			my $file = &folders_property_grabber({ file => $name, folder => join('/', @parts) });
+			$file->{'parent'} = join('/', @parts) || '/';
 			$total_size += $file->{'size'} unless (($file->{'type'} || '') eq 'folder');
+			# a folder's own inode is not what the person wants to know; the
+			# number of things inside it is
+			$file->{'children'} = scalar &folders_entry_names($file->{'path'}) if (($file->{'type'} || '') eq 'folder');
 			push @files, $file;
 		}
 		my $text = $c->render_to_string(
@@ -26722,9 +26844,11 @@ get '/manager/folders/context/command' => sub($c) {
 
 		$box = {
 			ok => 'no',
-			cancel => 'no',
-			height => '60%',
-			name => 'Properties',
+			cancel => 'yes',
+			cancel_label => &subs::ui('Close'),
+			height => '70%',
+			width => 'min(660px, 94vw)',
+			name => &subs::ui('Properties'),
 			content => $text
 		};
 	}

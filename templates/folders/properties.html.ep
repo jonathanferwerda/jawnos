@@ -1,19 +1,63 @@
-<table style="width:100%;font-size:14px;">
-	<thead>
-		<th style="text-align:left;">Name</th>
-		<th style="text-align:left;">Type</th>
-		<th style="text-align:left;">Size</th>
-		<th style="text-align:left;">Modified</th>
-	</thead>
-	<tbody>
-		<% foreach my $f ( @{$files} ) { %>
-			<tr>
-				<td style="overflow-wrap:break-word;word-break:break-word;"><%= &subs::format_name($f->{'name'}) %></td>
-				<td><%= &subs::format_name($f->{'type'} || 'file') %></td>
-				<td><% if (($f->{'type'} || '') eq 'folder') { %>-<% } else { %><%= &subs::data_size($f->{'size'}) %><% } %></td>
-				<td><span class="time" mode="fixed" timestamp="<%= (($f->{'stat'}->[9] || 0) * 1000) %>"></span></td>
-			</tr>
+<%# Properties: one item gets a card with a preview and every stat field worth
+    reading; a run of items gets a compact table and a total. %>
+<% my $count = scalar @{$files}; %>
+<% my $one = ($count == 1) ? $files->[0] : undef; %>
+<div class="folders_properties">
+% if ($one) {
+	<div class="folders_properties_head">
+		<span class="folders_properties_icon"><img src="<%= $one->{'icon'} %>" alt=""></span>
+		<span class="folders_properties_title">
+			<b><%= $one->{'name'} %></b>
+			<span><%= $one->{'path'} %></span>
+		</span>
+	</div>
+	<div class="folders_properties_rows">
+		<span class="folders_properties_key"><%= &subs::lang('folders.type') %></span>
+		<span class="folders_properties_value"><%= &subs::format_name($one->{'type'} || 'file') %></span>
+		<span class="folders_properties_key"><%= &subs::lang('folders.size') %></span>
+		<span class="folders_properties_value"><% if (($one->{'type'} || '') eq 'folder') { %><%= &subs::ui('Folder') %><% } else { %><%= &subs::data_size($one->{'size'} || 0) %><% } %></span>
+		<% if ((($one->{'type'} || '') eq 'folder') && defined $one->{'children'}) { %>
+			<span class="folders_properties_key"><%= &subs::ui('Contains') %></span>
+			<span class="folders_properties_value"><%= $one->{'children'} %> <%= &subs::ui('items') %></span>
 		<% } %>
-	</tbody>
-</table>
-<%= scalar @{$files} %> item(s), <%= &subs::data_size($total_size) %> together<br>
+		<span class="folders_properties_key"><%= &subs::lang('folders.modified') %></span>
+		<span class="folders_properties_value"><span class="time" mode="fixed" timestamp="<%= ($one->{'stat'}->[9] || 0) * 1000 %>"></span></span>
+		<span class="folders_properties_key"><%= &subs::ui('Accessed') %></span>
+		<span class="folders_properties_value"><span class="time" mode="fixed" timestamp="<%= ($one->{'stat'}->[8] || 0) * 1000 %>"></span></span>
+		<span class="folders_properties_key"><%= &subs::ui('Changed') %></span>
+		<span class="folders_properties_value"><span class="time" mode="fixed" timestamp="<%= ($one->{'stat'}->[10] || 0) * 1000 %>"></span></span>
+		<span class="folders_properties_key"><%= &subs::ui('Permissions') %></span>
+		<span class="folders_properties_value"><%= defined $one->{'stat'}->[2] ? sprintf('%04o', $one->{'stat'}->[2] & 07777) : '—' %></span>
+		<span class="folders_properties_key"><%= &subs::ui('Owner') %></span>
+		<span class="folders_properties_value"><% my $owner = defined $one->{'stat'}->[4] ? eval { getpwuid($one->{'stat'}->[4]) } : undef; %><%= defined $owner && length $owner ? $owner : ($one->{'stat'}->[4] // '—') %></span>
+		<span class="folders_properties_key"><%= &subs::ui('Group') %></span>
+		<span class="folders_properties_value"><% my $group = defined $one->{'stat'}->[5] ? eval { getgrgid($one->{'stat'}->[5]) } : undef; %><%= defined $group && length $group ? $group : ($one->{'stat'}->[5] // '—') %></span>
+	</div>
+	<div class="folders_properties_actions">
+		<button type="button" class="hover folders_copy_path" path="<%= $one->{'path'} %>"><%= &subs::ui('Copy path') %></button>
+		<button type="button" class="hover folders_open_parent" path="<%= (($one->{'type'} || '') eq 'folder') ? $one->{'path'} : ($one->{'parent'} || '/') %>" remote="<%= $folders->{'remote_uuid'} || '' %>"><%= &subs::ui('Show in Folders') %></button>
+	</div>
+% } else {
+	<table class="folders_properties_table">
+		<thead>
+			<tr>
+				<th><%= &subs::lang('common.name') %></th>
+				<th><%= &subs::lang('folders.type') %></th>
+				<th class="folders_properties_number"><%= &subs::lang('folders.size') %></th>
+				<th><%= &subs::lang('folders.modified') %></th>
+			</tr>
+		</thead>
+		<tbody>
+			<% foreach my $f ( @{$files} ) { %>
+				<tr>
+					<td><%= $f->{'name'} %></td>
+					<td><%= &subs::format_name($f->{'type'} || 'file') %></td>
+					<td class="folders_properties_number"><% if (($f->{'type'} || '') eq 'folder') { %>—<% } else { %><%= &subs::data_size($f->{'size'} || 0) %><% } %></td>
+					<td><span class="time" mode="fixed" timestamp="<%= ($f->{'stat'}->[9] || 0) * 1000 %>"></span></td>
+				</tr>
+			<% } %>
+		</tbody>
+	</table>
+	<div class="folders_properties_total"><%= $count %> <%= &subs::ui('items') %>, <%= &subs::data_size($total_size) %> <%= &subs::ui('together') %></div>
+% }
+</div>

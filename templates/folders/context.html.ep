@@ -39,11 +39,15 @@
 			{ 'shred' => {} },
 			{ 'select_all' => {} },
 			{ 'rename' => { visible => $single } },
-			{ 'properties' => {} }
+			{ 'properties' => {} },
+			{ 'desk_folder' => {} }
 		],
 		folder_background => [
 			{ 'new_file' => {} },
 			{ 'new_folder' => {} },
+			{ 'pin_app' => {} },
+			{ 'desk_folder' => {} },
+			{ 'desk_folder_reset' => {} },
 			{ 'archive' => {} },
 			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'select_all' => {} },
@@ -51,6 +55,11 @@
 			{ 'properties' => {} }
 		]
 	}; %>
+	<% my %command_labels = (
+		pin_app => &subs::ui('Pin apps to the desk'),
+		desk_folder => &subs::ui('Use as desk folder'),
+		desk_folder_reset => &subs::ui('Reset desk folder'),
+	); %>
 	<% foreach my $co ( @{$contexts->{$context}} ) { %>
 		<% foreach my $o ( keys %{$co} ) { %>
 			% unless (($co->{$o}->{'visible'} || 'yes') eq 'no') {
@@ -58,7 +67,7 @@
 					<% if ($gb::known_icons->{$o}) { %>
 						<img src="<%= $gb::known_icons->{$o} %>" class="miniscule_thumb">
 					<% } %>
-					<span style="vertical-align:top;"><%= &subs::format_name($o) %></span>
+					<span style="vertical-align:top;"><%= $command_labels{$o} || &subs::format_name($o) %></span>
 				</div>
 			% }
 		% }
