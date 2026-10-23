@@ -22,8 +22,29 @@ input[type=number] {
    #alert_dialog - see manager.html.ep and public/js/manager/dialog.js - so this
    is only the content the alert carries. */
 #alert { text-align:center; }
-:root { --ink: #000000; --ink-muted: #333333; --panel: #ffffff; --panel-2: #f0f0f0; --window: #f7f7f7; --line: #c9c9c9; --time-fixed: #ddffee; --jawnos-corner: 10px; --button_border: 3px; color-scheme: light; }
-body { background-color: var(--panel); color: var(--ink); }
+/* ---- design tokens -------------------------------------------------------
+   The desk had one roundness, one border width and no shadow: every surface
+   was a flat slab with a thick outline. These are the quiet defaults the
+   components below build on. A theme may override the corner (and an accent)
+   through the bundle, and the Misc settings still override the borders. */
+:root {
+	--ink: #111417; --ink-muted: #5b6169;
+	--panel: #ffffff; --panel-2: #f2f3f5; --window: #f7f7f9; --line: #d7d9de;
+	--time-fixed: #ddffee;
+	--accent: #3b7ddd; --accent-soft: #e6effb; --accent-line: #2f6cc4; --accent-ink: #ffffff;
+	--jawnos-corner: 12px;
+	--button_border: 1px;
+	--shadow-1: 0 1px 2px rgba(0, 0, 0, .06), 0 2px 6px rgba(0, 0, 0, .05);
+	--shadow-2: 0 10px 30px rgba(0, 0, 0, .16), 0 2px 8px rgba(0, 0, 0, .08);
+	color-scheme: light;
+}
+body {
+	background-color: var(--panel); color: var(--ink);
+	/* the wallpaper gains a breath of light at the top and a shade at the foot:
+	   a flat fill reads as a placeholder, a gentle gradient reads as depth */
+	background-image: linear-gradient(180deg, rgba(255,255,255,.30), rgba(0,0,0,.035));
+	background-attachment: fixed;
+}
 /* ---- soft corners ---------------------------------------------------------
    The program draws a great many little boxes - a folder toolbar, a receipt,
    a detail row, a table, a chip around a name - and each one ended on a hard
@@ -63,9 +84,9 @@ body { background-color: var(--panel); color: var(--ink); }
        img[class*="thumb"], img[class*="icon"],
        .jonathan, .jonathan_fixed, .taskbar_pin) {
 	border-style: solid !important;
-	border-width: var(--button_border, 3px) !important;
+	border-width: var(--button_border, 1px) !important;
 	border-color: var(--button_border_colour, var(--line));
-	border-radius: var(--jawnos-corner, 10px);
+	border-radius: var(--jawnos-corner, 12px);
 }
 /* a picture inside a button or a taskbar tile is that control's face, not a
    second key: only the outer control wears the edge */
@@ -77,7 +98,10 @@ body { background-color: var(--panel); color: var(--ink); }
    autofill wash itself. Without it a dark desktop still opened a white
    <select> menu and pale native fields, whatever the control's own surface
    said. The variables below are the same surfaces the rules further down use. */
-body.dark_theme { --ink: #d4d4d4; --ink-muted: #8f8f8f; --panel: #1e1e1e; --panel-2: #262626; --line: #525252; --time-fixed: #1f3a2a; color-scheme: dark; }
+body.dark_theme { --ink: #e6e6e6; --ink-muted: #9a9a9a; --panel: #1b1d21; --panel-2: #24272c; --line: #3a3f47; --time-fixed: #1f3a2a; color-scheme: dark; }
+body.dark_theme {
+	background-image: linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.18));
+}
 body.dark_theme .tiny_thumb, body.dark_theme .little_thumb, body.dark_theme .petite_thumb,
 body.dark_theme .medium_thumb, body.dark_theme .large_thumb, body.dark_theme .huge_thumb,
 body.dark_theme .massive_thumb, body.dark_theme .gigantic_thumb, body.dark_theme .miniscule_thumb {
@@ -115,15 +139,18 @@ body.dark_theme [data-appt-ink] {
    moment a panel pads it - a 36px select or 28px input with a 7px top/bottom pad
    left an input's content box 12px for an 18px line, so the text's lower half was
    cut off. box-sizing keeps that padding inside the min-height. */
-select { text-align:center; height: auto; min-height: 36px; box-sizing: border-box; font-size: 20px; border: solid; border-width: 3px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
-button { text-align:center; height: 34px; min-width: 30px; font-size: 20px; border: solid; border-width: var(--button_border, 3px); border-color: var(--button_border_colour, var(--line)); border-radius: var(--jawnos-corner, 10px); }
-button.active { background-color: green; }
-input { text-align:left; height: auto; min-height: 28px; box-sizing: border-box; font-size: 20px; border: solid; border-width: 3px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
+select { text-align:center; height: auto; min-height: 32px; box-sizing: border-box; font-size: 15px; border: solid; border-width: 1px; border-color: var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .75); background-color: var(--panel); transition: border-color .15s ease, box-shadow .15s ease; }
+button { text-align:center; height: 30px; min-width: 28px; font-size: 15px; padding: 0 11px; border: solid; border-width: var(--button_border, 1px); border-color: var(--button_border_colour, var(--line)); border-radius: calc(var(--jawnos-corner, 12px) * .75); background-color: var(--panel); color: var(--ink); transition: background-color .15s ease, border-color .15s ease, box-shadow .15s ease; }
+button:hover { background-color: var(--panel-2); border-color: var(--accent-line, var(--line)); }
+button.active { background-color: var(--accent-soft, #e6effb); border-color: var(--accent-line, var(--line)); }
+input { text-align:left; height: auto; min-height: 28px; box-sizing: border-box; font-size: 15px; border: solid; border-width: 1px; border-color: var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .75); }
+/* A focused field gets the accent ring, never the browser's stock orange. */
+:where(input, select, textarea, button, .text_editor):focus-visible { outline: 2px solid var(--accent, #3b7ddd); outline-offset: 1px; }
 /* A button-shaped input is a button for the border's purpose: it wears the
    Button Border pair like the pressed surfaces above, rather than only the
    width. Listed after the bare input rule so the colour wins. */
 input[type=button], input[type=submit], input[type=reset], input[type=image] { border-color: var(--button_border_colour, var(--line)); }
-textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-box; font-size: 20px; border: solid; border-width: 3px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); }
+textarea { text-align:left; height: auto; min-height: 30px; box-sizing: border-box; font-size: 15px; border: solid; border-width: 1px; border-color: var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .75); }
 /* Controls follow the theme's surface instead of the browser's white default.
    A dark scheme's ink is near-white, so an unthemed input was white text on a
    white box and its value could not be read. The swatches and the native check
@@ -151,7 +178,7 @@ body.dark_theme input:-webkit-autofill,
 body.dark_theme input:-webkit-autofill:hover,
 body.dark_theme input:-webkit-autofill:focus { -webkit-box-shadow: 0 0 0 1000px var(--panel-2) inset; -webkit-text-fill-color: var(--ink); }
 body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
-.text_editor { text-align:left; min-height: 30px; font-size: 24px; border: solid; border-width: 3px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); width: 100%; }
+.text_editor { text-align:left; min-height: 30px; font-size: 16px; border: solid; border-width: 1px; border-color: var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .75); width: 100%; }
 .text_editor:hover { cursor: text; }
 .text_editor:empty:not(:focus):before {
   content: attr(placeholder);
@@ -166,10 +193,10 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 	left: 10px;
 	height: calc(100% - 25px);
 	top: 10px;
-	background-color: lightgreen;
+	background-color: var(--panel);
 	border:solid;
-	border-radius: var(--jawnos-corner, 10px);
-	border-width: 5px;
+	border-radius: var(--jawnos-corner, 12px);
+	border-width: 1px;
 	display:none;
 }
 #red_dot {
@@ -424,12 +451,12 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 }
 
 .manager_search_result:hover {
-	background-color: lightblue;
+	background-color: var(--accent-soft, #e6effb);
 }
 
 .hover_showing:hover {
 	cursor: pointer;
-	background-color:lightblue;
+	background-color: var(--accent-soft, #e6effb);
 }
 
 .time:hover {
@@ -498,6 +525,19 @@ body[data-texture="classic"] {
 	--jawnos-texture-blend: normal;
 	--jawnos-texture-edge: var(--line);
 	--jawnos-texture-shadow: none;
+}
+body[data-texture="soft"] {
+	/* The house default: a flat face with one breath of light and the shadow
+	   the design tokens use. No gloss, no grain - the deepin/Cutefish register. */
+	--jawnos-texture: linear-gradient(180deg, rgba(255,255,255,.12), rgba(0,0,0,.025));
+	--jawnos-texture-size: 100% 100%;
+	--jawnos-texture-repeat: no-repeat;
+	--jawnos-texture-blend: normal;
+	--jawnos-texture-edge: var(--line);
+	--jawnos-texture-shadow: var(--shadow-1, 0 1px 2px rgba(0,0,0,.06));
+}
+body.dark_theme[data-texture="soft"] {
+	--jawnos-texture: linear-gradient(180deg, rgba(255,255,255,.055), rgba(0,0,0,.08));
 }
 body[data-texture="sandglass"] {
 	--jawnos-texture:

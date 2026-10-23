@@ -25,9 +25,9 @@ var jawnosBars = {
 	height: parseInt(jawnos_bar_settings['taskbar_height']) || 44,
 	// the window title bar's own thickness, and the frame every window wears
 	navbar: parseInt(jawnos_bar_settings['navbar_height']) || 36,
-	border: jawnosBarSettingNumber('window_border', 3),
+	border: jawnosBarSettingNumber('window_border', 1),
 	// the edge on buttons, image buttons, icons and the canvas clothesline
-	button_border: jawnosBarSettingNumber('button_border', 3),
+	button_border: jawnosBarSettingNumber('button_border', 1),
 	// that edge's colour: blank means follow the theme (and, on the canvas, the
 	// material's own rim)
 	button_border_colour: jawnos_bar_settings['button_border_colour'] || '',

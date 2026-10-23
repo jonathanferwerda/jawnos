@@ -141,12 +141,22 @@
 						<span class="theme_field">
 							<label>Theme</label>
 							<%# the desktop wears this while a start appointment for the app runs;
-							    blank follows the Misc manager colour %>
+							    blank follows the Misc manager colour. A theme carries its icon set,
+							    material and face too, so one name dresses the whole room. %>
+							<% my $theme_registry = &subs::theme_registry(); %>
+							<% my @theme_names = sort { lc($theme_registry->{$a}->{'name'} // $a) cmp lc($theme_registry->{$b}->{'name'} // $b) } keys %{$theme_registry}; %>
 							<select setting="theme" class="configure_input" app="<%= $a %>" hint="Theme while running">
 								<option value="" <% if (!length($app_themes->{$a} || '')) { %>selected="selected"<% } %>>Follow system</option>
-								<% foreach my $scheme ( @subs::colour_scheme_order ) { %>
-									<option value="<%= $scheme %>" <% if (($app_themes->{$a} || '') eq $scheme) { %>selected="selected"<% } %>><%= $scheme %></option>
-								<% } %>
+								<optgroup label="<%= &subs::lang('configure.themes') %>">
+									<% foreach my $theme_name ( @theme_names ) { %>
+										<option value="<%= $theme_name %>" <% if (($app_themes->{$a} || '') eq $theme_name) { %>selected="selected"<% } %>><%= $theme_registry->{$theme_name}->{'name'} // &subs::format_name($theme_name) %></option>
+									<% } %>
+								</optgroup>
+								<optgroup label="<%= &subs::ui('Colour schemes') %>">
+									<% foreach my $scheme ( @subs::colour_scheme_order ) { %>
+										<option value="<%= $scheme %>" <% if (($app_themes->{$a} || '') eq $scheme) { %>selected="selected"<% } %>><%= $scheme %></option>
+									<% } %>
+								</optgroup>
 							</select>
 						</span>
 						<span class="app_checks">

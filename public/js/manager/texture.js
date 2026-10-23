@@ -8,20 +8,20 @@
 // it looked before the pills and materials (the clothesline's original solid
 // rounded tile); round is the solid rounded pill that used to be called plain.
 
-var jawnosTextureNames = [ 'classic', 'round', 'sandglass', 'glass', 'paper', 'fabric', 'wood', 'metal' ];
+var jawnosTextureNames = [ 'classic', 'round', 'soft', 'sandglass', 'glass', 'paper', 'fabric', 'wood', 'metal' ];
 // 'plain' was the solid rounded pill's old internal name: read it as round so a
 // desk that had chosen it keeps the same look now that Plain means the original.
 function jawnosTextureName(value) {
 	if (value === 'plain') { return 'round'; }
 	return value;
 }
-var jawnosTextureCurrent = (typeof jawnos_bar_settings != 'undefined' && jawnos_bar_settings && jawnos_bar_settings.texture) || 'sandglass';
+var jawnosTextureCurrent = (typeof jawnos_bar_settings != 'undefined' && jawnos_bar_settings && jawnos_bar_settings.texture) || 'soft';
 jawnosTextureCurrent = jawnosTextureName(jawnosTextureCurrent);
-if (jawnosTextureNames.indexOf(jawnosTextureCurrent) < 0) { jawnosTextureCurrent = 'sandglass'; }
+if (jawnosTextureNames.indexOf(jawnosTextureCurrent) < 0) { jawnosTextureCurrent = 'soft'; }
 
 function jawnosTextureApply(value) {
 	value = jawnosTextureName(value);
-	if (!value || jawnosTextureNames.indexOf(value) < 0) { value = 'sandglass'; }
+	if (!value || jawnosTextureNames.indexOf(value) < 0) { value = 'soft'; }
 	jawnosTextureCurrent = value;
 	if (typeof jawnos_bar_settings != 'undefined' && jawnos_bar_settings) { jawnos_bar_settings.texture = value; }
 	if (document.body) { document.body.setAttribute('data-texture', value); }
@@ -50,7 +50,7 @@ function jawnosButtonBorderWidth() {
 		raw = jawnos_bar_settings['button_border'];
 	}
 	var v = parseInt(raw, 10);
-	return isFinite(v) ? Math.max(0, v) : 3;
+	return isFinite(v) ? Math.max(0, v) : 1;
 }
 
 // The Button Border colour (a Misc setting): blank follows the theme, so a
@@ -247,6 +247,7 @@ function jawnosTextureFillCircle(ctx, x, y, r, colour, dark) {
 }
 
 function jawnosTextureBase(kind, dark) {
+	if (kind === 'soft') { return dark ? 'rgba(40,44,50,0.55)' : 'rgba(255,255,255,0.82)'; }
 	if (kind === 'sandglass') { return dark ? 'rgba(48,54,62,0.50)' : 'rgba(255,255,255,0.55)'; }
 	if (kind === 'glass') { return dark ? 'rgba(190,215,240,0.16)' : 'rgba(255,255,255,0.34)'; }
 	if (kind === 'paper') { return dark ? 'rgba(108,96,76,0.66)' : 'rgba(248,242,226,0.88)'; }
@@ -258,7 +259,15 @@ function jawnosTextureBase(kind, dark) {
 
 function jawnosTextureSheen(ctx, kind, dark, x, y, w, h) {
 	var g = ctx.createLinearGradient(0, y, 0, y + h);
-	if (kind === 'glass') {
+	if (kind === 'soft') {
+		// one breath of light along the top and a hairline shade at the foot: the
+		// deepin/Cutefish register, without the glass or sandglass gloss
+		g.addColorStop(0, dark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.42)');
+		g.addColorStop(0.42, 'rgba(255,255,255,0)');
+		g.addColorStop(0.58, 'rgba(0,0,0,0)');
+		g.addColorStop(1, dark ? 'rgba(0,0,0,0.16)' : 'rgba(0,0,0,0.05)');
+	}
+	else if (kind === 'glass') {
 		g.addColorStop(0, 'rgba(255,255,255,0.85)');
 		g.addColorStop(0.20, 'rgba(255,255,255,0.35)');
 		g.addColorStop(0.42, 'rgba(255,255,255,0.02)');
@@ -309,6 +318,7 @@ function jawnosTextureSheen(ctx, kind, dark, x, y, w, h) {
 }
 
 function jawnosTextureRim(kind, dark) {
+	if (kind === 'soft') { return dark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.16)'; }
 	if (kind === 'paper') { return dark ? 'rgba(255,244,224,0.26)' : 'rgba(80,60,35,0.22)'; }
 	if (kind === 'wood') { return dark ? 'rgba(255,220,180,0.28)' : 'rgba(90,55,25,0.28)'; }
 	if (kind === 'metal') { return dark ? 'rgba(255,255,255,0.45)' : 'rgba(60,70,80,0.30)'; }
@@ -322,6 +332,14 @@ function jawnosTextureRim(kind, dark) {
 function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	var kind = jawnosTextureCurrent;
 	var radius = h / 2;
+	// Soft is a rounded rect, not a capsule: the theme's corner sets the radius,
+	// which is the single biggest difference between a designed desktop and a
+	// row of jelly beans.
+	if (kind === 'soft') {
+		var corner = 12;
+		try { corner = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--jawnos-corner')) || 12; } catch (e) { corner = 12; }
+		radius = Math.min(h / 2, Math.max(2, corner));
+	}
 	var edge = jawnosButtonBorderWidth();
 	// the chosen Button Border colour, if any: it dresses every material's rim
 	var edge_colour = (typeof jawnosButtonBorderColour == 'function') ? jawnosButtonBorderColour() : '';
@@ -373,9 +391,9 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	ctx.save();
 	ctx.beginPath();
 	roundRectPath(ctx, x, y, w, h, radius);
-	ctx.shadowColor = kind === 'glass' ? 'rgba(0,0,0,0.50)' : 'rgba(0,0,0,0.38)';
-	ctx.shadowBlur = kind === 'glass' ? 12 : 8;
-	ctx.shadowOffsetY = 3;
+	ctx.shadowColor = kind === 'glass' ? 'rgba(0,0,0,0.50)' : (kind === 'soft' ? (dark ? 'rgba(0,0,0,0.42)' : 'rgba(0,0,0,0.16)') : 'rgba(0,0,0,0.38)');
+	ctx.shadowBlur = kind === 'glass' ? 12 : (kind === 'soft' ? 5 : 8);
+	ctx.shadowOffsetY = kind === 'soft' ? 2 : 3;
 	ctx.fillStyle = jawnosTextureBase(kind, dark);
 	ctx.fill();
 	ctx.shadowColor = 'transparent';

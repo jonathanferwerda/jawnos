@@ -141,9 +141,11 @@
 <% my $theme_dark = &subs::theme_is_dark(); %>
   <% my $body_class = join ' ', grep { length } (($theme_dark ? 'dark_theme' : ''), ((&Manager::fingerprint_available() && &Manager::padlock_request_is_local($c)) ? '' : 'no_local_fingerprint')); %>
   <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
-  <% my $title_font = &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
+  <% my $theme_bundle = &subs::active_theme_bundle(); %>
+  <% my $title_font = $theme_bundle->{'font'} || &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
+  <% my $theme_corner = $theme_bundle->{'corner'} || ''; %>
   <style>
-    :root { --jawnos-font: <%= $title_font %>; }
+    :root { --jawnos-font: <%= $title_font %>;<% if (length $theme_corner) { %> --jawnos-corner: <%= $theme_corner %>;<% } %> }
     /* the Misc → Font choice is the program's face, not just a few titles:
        the shell and the controls inherit it, while surfaces that declare their
        own family (the terminal, the IDE, mailed text) keep it. */

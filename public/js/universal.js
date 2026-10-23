@@ -1503,7 +1503,7 @@ function jawnosHslToHex(h, s, l) {
 // Recompute the panel and ink variables from the page background so windows and
 // text follow the active colour scheme. configure.js updates the body colour on a
 // live scheme change and then calls this, so windows re-theme without a reload.
-function jawnosApplyInk() {
+function jawnosApplyInk(accentOverride, keepExisting) {
 	var bg = '';
 	try { bg = getComputedStyle(document.body).backgroundColor || ''; } catch (e) { bg = ''; }
 	var m = bg.match(/rgba?\(([^)]+)\)/);
@@ -1552,6 +1552,38 @@ function jawnosApplyInk() {
 	style.setProperty('--line', line);
 	style.setProperty('--ink', ink);
 	style.setProperty('--ink-muted', ink_muted);
+	// The one loud colour: a theme may name an accent, otherwise the manager hue
+	// is pulled to a readable saturation. Keep this in step with
+	// subroutines.pl::theme_panel_css so a server-rendered page and a live repaint
+	// agree to the hex.
+	var accent = '';
+	if (accentOverride) {
+		var ac = ('' + accentOverride).replace(/^\s*#/, '').trim();
+		if (/^[0-9a-fA-F]{6}$/.test(ac)) { accent = '#' + ac.toLowerCase(); }
+	}
+	else if (keepExisting) {
+		// The page was painted by the server with the active bundle's accent;
+		// the first run of this function must not overwrite it with a derived
+		// one before the person has changed anything.
+		var existing = (style.getPropertyValue('--accent') || '').replace(/^\s*#/, '').trim();
+		if (/^[0-9a-fA-F]{6}$/.test(existing)) { accent = '#' + existing.toLowerCase(); }
+	}
+	var accent_h = hsl[0], accent_s = hsl[1], accent_l;
+	if (!accent) {
+		accent_s = hsl[1] < 0.35 ? 0.58 : (hsl[1] > 0.78 ? 0.78 : hsl[1]);
+		if (hsl[1] < 0.12) { accent_s = 0.55; }
+		accent_l = lum < 0.5 ? 0.68 : 0.46;
+		accent = jawnosHslToHex(accent_h, accent_s, accent_l);
+	}
+	else {
+		var an = parseInt(accent.substring(1), 16);
+		var ahsl = jawnosRgbToHsl((an >> 16) & 255, (an >> 8) & 255, an & 255);
+		accent_h = ahsl[0]; accent_s = ahsl[1]; accent_l = ahsl[2];
+	}
+	style.setProperty('--accent', accent);
+	style.setProperty('--accent-soft', jawnosHslToHex(accent_h, accent_s, lum < 0.5 ? 0.24 : 0.94));
+	style.setProperty('--accent-line', jawnosHslToHex(accent_h, accent_s, lum < 0.5 ? 0.55 : 0.38));
+	style.setProperty('--accent-ink', jawnosContrastInk(accent));
 	// the icon sets ship a light and a dark cut: when the desktop crosses the
 	// light/dark line the buttons on screen have to be asked for again
 	var was_dark = document.body.classList.contains('dark_theme');
@@ -1572,7 +1604,41 @@ function jawnosThemeApply(bg, appt) {
 	document.body.style.backgroundColor = bg;
 	jawnosApplyInk();
 }
-$(function () { jawnosApplyInk(); });
+// A whole dressing arrives at once: paint, glyphs, material, face, corner and
+// accent. The server sends this over the websocket when a start/stop moves the
+// active theme, so the desk changes without a reload. Empty fields mean "leave
+// the Misc choice alone", which is what a bare colour-scheme row needs.
+function jawnosThemeBundleApply(bundle, appt) {
+	if (typeof bundle === 'string') { try { bundle = JSON.parse(bundle); } catch (e) { return; } }
+	if (!bundle || typeof bundle !== 'object') { return; }
+	if (bundle.appointment != null) { appt = bundle.appointment; }
+	if (bundle.background) {
+		if (appt) { document.body.setAttribute('data-appt-theme', 'yes'); }
+		else { document.body.removeAttribute('data-appt-theme'); }
+		document.body.style.backgroundColor = bundle.background;
+	}
+	if (bundle.font) {
+		document.documentElement.style.setProperty('--jawnos-font', bundle.font);
+	}
+	if (bundle.corner) {
+		document.documentElement.style.setProperty('--jawnos-corner', bundle.corner);
+	}
+	else {
+		document.documentElement.style.removeProperty('--jawnos-corner');
+	}
+	if (bundle.texture && typeof jawnosTextureApply === 'function') {
+		jawnosTextureApply(bundle.texture);
+	}
+	jawnosApplyInk(bundle.accent || '');
+	// The icon paths were rendered with the old set and only the server knows
+	// where a path lives in the new one, so ask it to translate them again. A
+	// light/dark crossing inside jawnosApplyInk schedules the same call; the
+	// guard keeps one change from asking twice.
+	if (bundle.icon_set && typeof jawnosReloadIcons === 'function') {
+		setTimeout(jawnosReloadIcons, 60);
+	}
+}
+$(function () { jawnosApplyInk('', true); });
 
 // ---- icon set swap: refresh the icons currently on screen ----------------------
 // Called over the websocket after the pseudonym icon set changes; re-renders any

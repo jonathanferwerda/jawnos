@@ -103,6 +103,22 @@
 	.misc_grid label > select, .misc_grid label > input:not([type=color]) { width:100%; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 	.misc_colour_chip { display:flex; flex-direction:column; align-items:center; width:118px; font-size:13px; text-align:center; }
 	.misc_colour_chip input[type=color] { width:110px; height:34px; }
+	/* ---- named themes: a gallery of whole dressings ---------------------- */
+	.theme_gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(152px,1fr)); gap:10px; margin:4px 0 10px; }
+	.theme_card { position:relative; display:flex; flex-direction:column; gap:7px; padding:10px; border:1px solid var(--line); border-radius:14px; background:var(--panel); cursor:pointer; text-align:left; color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.06); transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+	.theme_card:hover { border-color:var(--accent, #3b7ddd); box-shadow:0 8px 20px rgba(0,0,0,.14); transform:translateY(-1px); }
+	.theme_card.selected { border-color:var(--accent, #3b7ddd); box-shadow:0 0 0 2px var(--accent-soft, #e6effb); }
+	.theme_card.selected::after { content:'\2713'; position:absolute; top:6px; right:9px; color:var(--accent, #3b7ddd); font-weight:bold; }
+	.theme_swatches { display:flex; height:26px; border-radius:8px; overflow:hidden; border:1px solid rgba(0,0,0,.12); }
+	.theme_swatches span { flex:1 1 0; }
+	.theme_card_name { font-weight:600; font-size:14px; line-height:1.2; }
+	.theme_card_meta { font-size:12px; color:var(--ink-muted, #666); }
+	.theme_edit { position:absolute; bottom:6px; right:6px; height:20px; min-width:0; padding:0 7px; font-size:11px; border-width:1px !important; border-radius:6px; }
+	.theme_form { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
+	.theme_form label { display:flex; flex-direction:column; gap:4px; font-size:13px; }
+	.theme_form input[type=text], .theme_form select { width:100%; box-sizing:border-box; font-size:14px; min-height:32px; padding:4px 8px; }
+	.theme_form input[type=number] { width:90px; }
+	.theme_form input[type=color] { width:100%; height:32px; }
 </style>
 
 <div class="cfg-actions misc_device_tabs">
@@ -148,8 +164,8 @@
 		<label><b>Texture</b></label>
 		<% my $current_texture = &subs::texture_name(); %>
 		<select class="misc_setting" setting="texture" device="<%= $dev %>">
-			<% foreach my $t ( qw/classic round sandglass glass paper fabric wood metal/ ) { %>
-				<option value="<%= $t %>" <% if ($current_texture eq $t) { %>selected="selected"<% } %>><%= $t eq 'classic' ? 'Plain' : &subs::format_name($t) %></option>
+			<% foreach my $t ( @gb::textures ) { %>
+				<option value="<%= $t %>" <% if ($current_texture eq $t) { %>selected="selected"<% } %>><%= $gb::texture_labels{$t} %></option>
 			<% } %>
 		</select>
 	</div>
@@ -186,10 +202,98 @@
 			<% } %>
 		</select>
 	</div>
+	<p class="cfg-note"><%= &subs::ui('A theme from the gallery may name its own icon set, material, font and corner. The choices above are what the System card uses.') %></p>
 	<div class="cfg-row">
 		<label><b>Appointment Colours</b></label>
 		<button id="appt_colour_update" class="hover">Re-theme appointments</button>
 		<span id="appt_colour_update_status" style="font-size:13px;"></span>
+	</div>
+</div>
+
+<%# ---- named themes ------------------------------------------------------
+    A theme is the whole dressing, not just the paint. The gallery applies one
+    to this device; the editor saves a named bundle that an appointment can
+    wear later. Presets are read-only (builtin), custom ones are settings rows. %>
+<% my $theme_registry = &subs::theme_registry(); %>
+<% my $current_theme = &subs::setting_grabber({ app => 'misc', setting => 'appearance_theme', device => $dev }) || ''; %>
+<% my %device_themes = map { $_ => (&subs::setting_grabber({ app => 'misc', setting => 'appearance_theme', device => $_ }) || '') } @devices; %>
+<% my @theme_order = grep { $theme_registry->{$_} && $theme_registry->{$_}->{'builtin'} } @subs::theme_preset_order; %>
+<% my @custom_order = sort { lc($theme_registry->{$a}->{'name'} // $a) cmp lc($theme_registry->{$b}->{'name'} // $b) } grep { $theme_registry->{$_} && !$theme_registry->{$_}->{'builtin'} } keys %{$theme_registry}; %>
+<% push @theme_order, @custom_order; %>
+<% my @current_palette = &subs::theme_palette(); %>
+<div class="misc_section cfg-card" id="theme_gallery_card">
+	<h3><%= &subs::lang('configure.themes') %></h3>
+	<p class="cfg-note"><%= &subs::ui('A theme dresses the whole desktop: its colours, its icon set, its material, its face and its corner. Pick one for this device, or save one of your own; an appointment can then wear it while it runs.') %></p>
+	<div class="theme_gallery">
+		<div class="theme_card<% if (!length $current_theme) { %> selected<% } %>" theme_slug="" role="button" tabindex="0">
+			<span class="theme_swatches">
+				<% my @system_chips = @current_palette ? @current_palette : @{ $subs::colour_schemes{'Graphite'} }; %>
+				<% foreach my $c ( @system_chips ) { %><span style="background:<%= $c %>"></span><% } %>
+			</span>
+			<span class="theme_card_name"><%= &subs::lang('configure.follow_system') %></span>
+			<span class="theme_card_meta"><%= &subs::ui('The Misc choices below') %></span>
+		</div>
+		<% foreach my $slug ( @theme_order ) { %>
+			<% my $b = &subs::theme_bundle($slug); %>
+			<% my $ramp = $subs::colour_schemes{ $b->{'scheme'} } || []; %>
+			<div class="theme_card<% if ($current_theme eq $slug) { %> selected<% } %>" theme_slug="<%= $slug %>" data-builtin="<%= $b->{'builtin'} ? 1 : 0 %>" role="button" tabindex="0">
+				<span class="theme_swatches"><% foreach my $c ( @{$ramp} ) { %><span style="background:<%= $c %>"></span><% } %></span>
+				<span class="theme_card_name"><%= $b->{'name'} %></span>
+				<span class="theme_card_meta"><%= join ' · ', grep { length } ( $b->{'scheme'}, $gb::texture_labels{ $b->{'texture'} } ) %></span>
+				<% if (!$b->{'builtin'}) { %><button type="button" class="theme_edit" theme_slug="<%= $slug %>"><%= &subs::lang('configure.edit_theme') %></button><% } %>
+			</div>
+		<% } %>
+	</div>
+	<div class="cfg-actions">
+		<button type="button" id="theme_new"><%= &subs::lang('configure.new_theme') %></button>
+	</div>
+</div>
+
+<div class="misc_section cfg-card" id="theme_editor" style="display:none;">
+	<h3><%= &subs::lang('configure.edit_theme') %></h3>
+	<input type="hidden" id="theme_slug" value="">
+	<div class="theme_form">
+		<label><%= &subs::ui('Name') %>
+			<input type="text" id="theme_name" maxlength="60" placeholder="<%= &subs::ui('A name for this theme') %>">
+		</label>
+		<label><%= &subs::ui('Colour scheme') %>
+			<select id="theme_scheme">
+				<% foreach my $scheme ( @subs::colour_scheme_order ) { %><option value="<%= $scheme %>"><%= $scheme %></option><% } %>
+			</select>
+		</label>
+		<label><%= &subs::ui('Icon set') %>
+			<select id="theme_icon_set">
+				<option value=""><%= &subs::ui('System') %></option>
+				<% foreach my $s ( @gb::icon_sets ) { %><option value="<%= $s %>"><%= $gb::icon_set_labels{$s} %></option><% } %>
+			</select>
+		</label>
+		<label><%= &subs::ui('Texture') %>
+			<select id="theme_texture">
+				<option value=""><%= &subs::ui('System') %></option>
+				<% foreach my $t ( @gb::textures ) { %><option value="<%= $t %>"><%= $gb::texture_labels{$t} %></option><% } %>
+			</select>
+		</label>
+		<label><%= &subs::ui('Font') %>
+			<select id="theme_font">
+				<option value=""><%= &subs::ui('System') %></option>
+				<% foreach my $f ( @gb::theme_fonts ) { %><option value="<%= $f->{'value'} %>"><%= $f->{'label'} %></option><% } %>
+			</select>
+		</label>
+		<label><%= &subs::ui('Corner') %>
+			<input type="number" id="theme_corner" min="0" max="28" step="1" value="10">
+		</label>
+		<label><%= &subs::ui('Accent') %>
+			<input type="color" id="theme_accent" value="#3b7ddd">
+		</label>
+		<label style="flex-direction:row;align-items:center;gap:6px;">
+			<input type="checkbox" id="theme_accent_auto" checked="checked"> <%= &subs::ui('Take the accent from the scheme') %>
+		</label>
+	</div>
+	<div class="cfg-actions">
+		<button type="button" id="theme_save"><%= &subs::ui('Save theme') %></button>
+		<button type="button" id="theme_cancel"><%= &subs::ui('Cancel') %></button>
+		<button type="button" id="theme_delete" style="display:none;"><%= &subs::ui('Delete theme') %></button>
+		<span id="theme_status" style="font-size:13px;"></span>
 	</div>
 </div>
 
@@ -239,9 +343,9 @@
 				# a range rather than a list: [ key, label, 'range', min, max, step, default ]
 				[ 'taskbar_height', 'Taskbar Height', 'range', 24, 72, 4, 44 ],
 				[ 'navbar_height', 'Navbar Height', 'range', 28, 64, 4, 36 ],
-				[ 'window_border', 'Window Border', 'range', 0, 8, 1, 3 ],
+				[ 'window_border', 'Window Border', 'range', 0, 8, 1, 1 ],
 				# the edge on buttons, image buttons, icons and the clothesline
-				[ 'button_border', 'Button Border', 'range', 0, 8, 1, 3 ],
+				[ 'button_border', 'Button Border', 'range', 0, 8, 1, 1 ],
 				# the frame's colour, on its own: blank follows the theme (--line)
 				[ 'window_border_colour', 'Window Border Colour', 'colour' ],
 				# the colour of the edge on those same pressed surfaces and the rail
@@ -407,6 +511,7 @@
 			$('.misc_device_block').hide();
 			$('.misc_device_block[device="' + dev + '"]').show();
 			syncSchemeDropdown();
+			if (typeof themeShowDevice === 'function') { themeShowDevice(dev); }
 		}
 		$(document).on('click', '.misc_device_tab', function () {
 			var picked = $(this).attr('device');
@@ -522,4 +627,133 @@
 	}
 	jawnosPreviewIcons($('.misc_setting[setting="icon_set"]').val());
 	$(document).on('change', '.misc_setting[setting="icon_set"]', function () { jawnosPreviewIcons($(this).val()); });
+
+	// ---- named theme gallery --------------------------------------------
+	// A card is applied with one write (the Misc setting appearance_theme); the
+	// editor saves a named bundle. Both handlers are namespaced because this
+	// panel is re-injected when Configure re-opens.
+	var jawnos_themes = <%== encode_json($theme_registry) %>;
+	var jawnos_device_themes = <%== encode_json(\%device_themes) %>;
+	var jawnos_theme_labels = { new_theme: <%== encode_json(&subs::lang('configure.new_theme')) %>, edit_theme: <%== encode_json(&subs::lang('configure.edit_theme')) %> };
+	function themeShowDevice(dev) {
+		var slug = jawnos_device_themes[dev] || '';
+		$('.theme_card').removeClass('selected');
+		$('.theme_card[theme_slug="' + slug + '"]').addClass('selected');
+	}
+	function themePanelDevice() {
+		return $('.misc_device_tab.selected').attr('device') || '<%= $dev %>';
+	}
+	function themeCardRender(slug, theme) {
+		var card = $('<div class="theme_card"></div>').attr({ role: 'button', tabindex: '0' }).attr('theme_slug', slug || '');
+		if (theme) { card.attr('data-builtin', theme.builtin ? '1' : '0'); }
+		var sw = $('<span class="theme_swatches"></span>');
+		var palette = theme && jawnos_colour_schemes[theme.scheme];
+		if (palette && palette.length) {
+			$.each(palette, function (i, c) { sw.append($('<span></span>').css('background-color', c)); });
+		}
+		else {
+			$('.misc_colour_chip .misc_setting[device="' + themePanelDevice() + '"]').slice(0, 6).each(function () {
+				sw.append($('<span></span>').css('background-color', $(this).val()));
+			});
+		}
+		card.append(sw);
+		card.append($('<span class="theme_card_name"></span>').text(theme ? (theme.name || slug) : <%== encode_json(&subs::lang('configure.follow_system')) %>));
+		var meta = [];
+		if (theme && theme.scheme) { meta.push(theme.scheme); }
+		if (theme && theme.texture) { meta.push(theme.texture); }
+		card.append($('<span class="theme_card_meta"></span>').text(meta.join(' \u00b7 ')));
+		if (theme && !theme.builtin && slug) {
+			card.append($('<button type="button" class="theme_edit"></button>').attr('theme_slug', slug).text(<%== encode_json(&subs::lang('configure.edit_theme')) %>));
+		}
+		return card;
+	}
+	function themeEditorOpen(slug) {
+		var t = jawnos_themes[slug] || {};
+		var dev = themePanelDevice();
+		$('#theme_slug').val(t.builtin ? '' : (slug || ''));
+		$('#theme_name').val(t.name || '');
+		$('#theme_scheme').val(t.scheme || (slug ? 'Blue' : ($('#colour_scheme').val() || 'Blue')));
+		$('#theme_icon_set').val(t.icon_set || (slug ? '' : ($('.misc_setting[setting="icon_set"][device="' + dev + '"]').val() || '')));
+		$('#theme_texture').val(t.texture || (slug ? '' : ($('.misc_setting[setting="texture"][device="' + dev + '"]').val() || '')));
+		$('#theme_font').val(t.font || (slug ? '' : ($('.misc_setting[setting="title_font"][device="' + dev + '"]').val() || '')));
+		$('#theme_corner').val(parseInt(t.corner, 10) || 10);
+		var accent = (t.accent || '').replace(/^#/, '');
+		$('#theme_accent_auto').prop('checked', !accent);
+		if (accent) { $('#theme_accent').val('#' + accent); }
+		$('#theme_delete').toggle(!!slug && !t.builtin);
+		$('#theme_editor h3').text(slug && !t.builtin ? jawnos_theme_labels.edit_theme : jawnos_theme_labels.new_theme);
+		$('#theme_status').text('');
+		$('#theme_editor').show();
+		$('#theme_name').trigger('focus');
+	}
+	$(document).off('click.themeui').on('click.themeui', '.theme_card[theme_slug]', function (e) {
+		if ($(e.target).closest('.theme_edit').length) { return; }
+		var slug = $(this).attr('theme_slug') || '';
+		$('.theme_card').removeClass('selected');
+		$(this).addClass('selected');
+		jawnos_device_themes[themePanelDevice()] = slug;
+		$.post('/manager/configure/misc_setting', {
+			setting: 'appearance_theme', value: slug, device: themePanelDevice(), timestamp: Date.now()
+		});
+	});
+	$(document).off('keydown.themeui').on('keydown.themeui', '.theme_card[theme_slug]', function (e) {
+		if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $(this).trigger('click'); }
+	});
+	$(document).off('click.themeui').on('click.themeui', '.theme_edit', function (e) {
+		e.stopPropagation();
+		themeEditorOpen($(this).attr('theme_slug'));
+	});
+	$('#theme_new').off('click.themeui').on('click.themeui', function () { themeEditorOpen(''); });
+	$('#theme_cancel').off('click.themeui').on('click.themeui', function () { $('#theme_editor').hide(); });
+	$('#theme_save').off('click.themeui').on('click.themeui', function () {
+		var name = $.trim($('#theme_name').val());
+		if (!name) { $('#theme_status').text(<%== encode_json(&subs::ui('Give the theme a name')) %>); return; }
+		$('#theme_status').text(<%== encode_json(&subs::ui('Saving...')) %>);
+		$.post('/manager/configure/theme_save', {
+			slug: $('#theme_slug').val(),
+			name: name,
+			scheme: $('#theme_scheme').val(),
+			icon_set: $('#theme_icon_set').val(),
+			texture: $('#theme_texture').val(),
+			font: $('#theme_font').val(),
+			corner: $('#theme_corner').val(),
+			accent: $('#theme_accent_auto').is(':checked') ? '' : $('#theme_accent').val()
+		}, function (r) {
+			if (!r || r.error) { $('#theme_status').text((r && r.error) || <%== encode_json(&subs::ui('Could not save')) %>); return; }
+			jawnos_themes[r.slug] = $.extend({}, jawnos_themes[r.slug] || {}, {
+				name: r.name, builtin: 0, scheme: r.bundle.scheme,
+				icon_set: r.bundle.icon_set, texture: r.bundle.texture,
+				font: r.bundle.font, corner: ('' + (r.bundle.corner || '')).replace('px', ''),
+				accent: r.bundle.accent || ''
+			});
+			var card = themeCardRender(r.slug, jawnos_themes[r.slug]);
+			var old = $('.theme_card[theme_slug="' + r.slug + '"]');
+			if (old.length) { old.replaceWith(card); } else { $('.theme_gallery').append(card); }
+			// saving a theme is also choosing it; a running appointment theme still
+			// owns the desk, and the server's push keeps that rule
+			$('.theme_card').removeClass('selected');
+			card.addClass('selected');
+			jawnos_device_themes[themePanelDevice()] = r.slug;
+			$.post('/manager/configure/misc_setting', {
+				setting: 'appearance_theme', value: r.slug, device: themePanelDevice(), timestamp: Date.now()
+			});
+			$('#theme_status').text(<%== encode_json(&subs::ui('Saved')) %>);
+			$('#theme_editor').hide();
+		}).fail(function () { $('#theme_status').text(<%== encode_json(&subs::ui('Could not save')) %>); });
+	});
+	$('#theme_delete').off('click.themeui').on('click.themeui', function () {
+		var slug = $('#theme_slug').val();
+		if (!slug) { return; }
+		$.post('/manager/configure/theme_delete', { slug: slug }, function (r) {
+			if (!r || !r.deleted) { $('#theme_status').text((r && r.error) || <%== encode_json(&subs::ui('Could not delete')) %>); return; }
+			$('.theme_card[theme_slug="' + slug + '"]').remove();
+			delete jawnos_themes[slug];
+			$.each(jawnos_device_themes, function (dev, chosen) { if (chosen === slug) { jawnos_device_themes[dev] = ''; } });
+			if ($('.theme_card.selected').attr('theme_slug') === slug) {
+				$('.theme_card').removeClass('selected');
+				$('.theme_card[theme_slug=""]').addClass('selected');
+			}
+			$('#theme_editor').hide();
+		});
+	});
 </script>

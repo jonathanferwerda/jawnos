@@ -10481,6 +10481,15 @@ sub setting_setter() {
 		&cache_delete({ context => 'template' });
 		&cache_delete({ context => 'header' });
 	}
+	elsif ($setting eq 'appearance_theme') {
+		# the whole dressing changed: paint, glyphs, material and face. Every
+		# worker must forget its memo, and every open manager re-paints now.
+		&icon_set_forget();
+		&cache_delete({ app => '__president', context => 'config' });
+		&cache_delete({ context => 'template' });
+		&cache_delete({ context => 'header' });
+		&appointment_theme_push() unless $sync;
+	}
 	elsif ($setting eq 'ci') {
 		# The panel's open circumstance is rendered into the centre view. The
 		# template cache kept the closed panel (an empty ci) for its ten-day
@@ -10575,9 +10584,15 @@ sub misc_setting() {
 # means the clothesline as it looked before the materials (internal 'classic').
 sub texture_name() {
 	my $value = shift;
-	$value = &misc_setting('texture') unless defined $value;
+	unless (defined $value) {
+		# a theme carries its own material; the Misc choice is what a desk with
+		# no theme in charge wears
+		my $bundle = &active_theme_bundle();
+		$value = $bundle->{'texture'} if defined $bundle->{'texture'} && length $bundle->{'texture'};
+		$value = &misc_setting('texture') unless defined $value && length $value;
+	}
 	$value = 'round' if defined $value && $value eq 'plain';
-	$value = 'sandglass' unless defined $value && length $value;
+	$value = 'soft' unless defined $value && length $value;
 	return $value;
 }
 
@@ -13416,7 +13431,11 @@ sub budget_icon {
 # the theme's hue. Returned as a declaration string so a layout can fold it into
 # an inline style attribute.
 sub theme_panel_css {
-	my ($bg) = @_;
+	my ($bg, $accent) = @_;
+	unless (defined $accent && length $accent) {
+		my $bundle = &active_theme_bundle();
+		$accent = $bundle->{'accent'} if defined $bundle->{'accent'} && length $bundle->{'accent'};
+	}
 	my ($r, $g, $b);
 	if (defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/) {
 		($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
@@ -13428,11 +13447,32 @@ sub theme_panel_css {
 		}
 	}
 	unless (defined $r) {
-		return '--ink:#000000;--ink-muted:#333333;--panel:#ffffff;--panel-2:#f0f0f0;--window:#f0f0f0;--line:#c9c9c9;';
+		return '--ink:#000000;--ink-muted:#333333;--panel:#ffffff;--panel-2:#f0f0f0;--window:#f0f0f0;--line:#c9c9c9;--accent:#3b7ddd;--accent-soft:#e6effb;--accent-ink:#ffffff;--accent-line:#2f6cc4;';
 	}
 	my $lum = (0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255;
 	my ($h, $s, $l) = &_rgb_to_hsl($r, $g, $b);
 	my $tint = $s < 0.18 ? $s : 0.18;
+	# The accent is the one loud colour the desk is allowed. A theme may name
+	# one; otherwise it is the manager hue pulled to a readable saturation, so
+	# every scheme gets a matching focus ring, active tile and link without a
+	# second table to maintain. --accent-soft is the same hue as a quiet wash.
+	my $accent_hex = '';
+	my ($ah, $as, $al);
+	if (defined $accent && $accent =~ /^\#?([0-9a-fA-F]{6})$/) {
+		$accent_hex = '#' . lc $1;
+		($ah, $as, $al) = &_rgb_to_hsl(map { hex } ($accent_hex =~ /(..)(..)(..)/));
+	}
+	else {
+		$ah = $h;
+		$as = $s < 0.35 ? 0.58 : ($s > 0.78 ? 0.78 : $s);
+		$as = 0.55 if $s < 0.12;   # graphite still needs a visible focus ring
+		$al = $lum < 0.5 ? 0.68 : 0.46;
+		$accent_hex = &_hsl_to_hex($ah, $as, $al);
+	}
+	my $accent_soft = &_hsl_to_hex($ah, $as, $lum < 0.5 ? 0.24 : 0.94);
+	my $accent_line = &_hsl_to_hex($ah, $as, $lum < 0.5 ? 0.55 : 0.38);
+	my $accent_ink = &contrast_ink($accent_hex);
+	my $accent_vars = "--accent:$accent_hex;--accent-soft:$accent_soft;--accent-line:$accent_line;--accent-ink:$accent_ink;";
 	# the curated window surface for a named scheme, or a shade of its own for a
 	# hand-picked manager colour (lighter than the desktop on a dark theme,
 	# lighter than the panel on a light one)
@@ -13447,12 +13487,12 @@ sub theme_panel_css {
 		my $panel = &_hsl_to_hex($h, $tint, 0.16);
 		my $panel2 = &_hsl_to_hex($h, $tint, 0.23);
 		my $line = &_hsl_to_hex($h, $tint, 0.32);
-		return "--ink:#d4d4d4;--ink-muted:#8f8f8f;--panel:$panel;--panel-2:$panel2;--window:$window;--line:$line;";
+		return "--ink:#e6e6e6;--ink-muted:#9a9a9a;--panel:$panel;--panel-2:$panel2;--window:$window;--line:$line;$accent_vars";
 	}
 	my $panel = &_hsl_to_hex($h, $tint, 0.88);
 	my $panel2 = &_hsl_to_hex($h, $tint, 0.80);
 	my $line = &_hsl_to_hex($h, $tint, 0.66);
-	return "--ink:#000000;--ink-muted:#333333;--panel:$panel;--panel-2:$panel2;--window:$window;--line:$line;";
+	return "--ink:#111417;--ink-muted:#5b6169;--panel:$panel;--panel-2:$panel2;--window:$window;--line:$line;$accent_vars";
 }
 
 # The named colour schemes the configure panel offers. One table, shared by the
@@ -13463,7 +13503,8 @@ sub theme_panel_css {
 our @colour_scheme_order = (
 	'Blue', 'Blue Dark', 'Graphite', 'Graphite Dark', 'Green', 'Green Dark',
 	'Indigo', 'Indigo Dark', 'Steel', 'Steel Dark', 'Amber', 'Amber Dark',
-	'Teal', 'Teal Dark', 'Plum', 'Plum Dark', 'Rose', 'Rose Dark'
+	'Teal', 'Teal Dark', 'Plum', 'Plum Dark', 'Rose', 'Rose Dark',
+	'Nord', 'Nord Dark', 'Sage', 'Sage Dark', 'Mocha', 'Mocha Dark'
 );
 our %colour_schemes = (
 	'Blue'          => [ '#eaf2fb', '#d6e5f7', '#b4cfef', '#86b0e0', '#4a90d9', '#0078d4' ],
@@ -13484,7 +13525,224 @@ our %colour_schemes = (
 	'Plum Dark'     => [ '#1c1626', '#241c31', '#2e2440', '#3c2f52', '#6d3bd4', '#8b5cf6' ],
 	'Rose'          => [ '#fdf0f3', '#f9dbe3', '#f2c2d0', '#e79cb3', '#d64570', '#b02853' ],
 	'Rose Dark'     => [ '#211419', '#2b1a21', '#36222b', '#462e39', '#b02853', '#d64570' ],
+	# Cool, warm and green neutrals: the desk needed a quiet register between
+	# Windows blue and the vivid accents. Each keeps the same six-step ramp as
+	# every other scheme, so it works the Misc panel and the appointment picker.
+	'Nord'          => [ '#eef2f7', '#dfe6ef', '#c8d4e4', '#a7b8d0', '#5e81ac', '#4a6b94' ],
+	'Nord Dark'     => [ '#1a1f27', '#222933', '#2b3441', '#394658', '#5e81ac', '#81a5cf' ],
+	'Sage'          => [ '#f1f5ee', '#e2ebdd', '#cdddc6', '#aec7a4', '#6f9e62', '#517f46' ],
+	'Sage Dark'     => [ '#191f19', '#212921', '#2a332a', '#364337', '#4b7a45', '#6fa968' ],
+	'Mocha'         => [ '#f8f1eb', '#efe2d7', '#e0cabb', '#c9a891', '#b07d5f', '#8c5b3f' ],
+	'Mocha Dark'    => [ '#1f1915', '#29211c', '#332922', '#43352d', '#8c5b3f', '#c08562' ],
 );
+
+# ---- named themes ----------------------------------------------------------
+# A colour scheme is only the paint. A theme is the whole dressing: paint, icon
+# set, material, face and corner. The presets below are the house's own curated
+# bundles; a person may save more (see theme_registry). A name found here is
+# what an appointment's Theme setting stores, so every machine that reads the
+# row paints the same room.
+our @theme_preset_order = qw/deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose/;
+our %theme_presets = (
+	deepin => {
+		name => 'Deepin', scheme => 'Blue Dark',
+		icon_set => 'gnome', texture => 'soft',
+		font => 'Noto Sans, system-ui, sans-serif', corner => 12,
+	},
+	cutefish => {
+		name => 'Cutefish', scheme => 'Teal',
+		icon_set => 'pastel', texture => 'soft',
+		font => 'Cantarell, system-ui, sans-serif', corner => 16,
+	},
+	adwaita => {
+		name => 'Adwaita', scheme => 'Graphite',
+		icon_set => 'gnome', texture => 'soft',
+		font => 'Cantarell, system-ui, sans-serif', corner => 12,
+	},
+	macos => {
+		name => 'macOS', scheme => 'Graphite',
+		icon_set => 'mac', texture => 'soft',
+		font => 'system-ui, sans-serif', corner => 12,
+	},
+	windows => {
+		name => 'Windows', scheme => 'Blue',
+		icon_set => 'windows', texture => 'soft',
+		font => 'Segoe UI, system-ui, sans-serif', corner => 8,
+	},
+	mint => {
+		name => 'Mint', scheme => 'Green',
+		icon_set => 'gnome', texture => 'paper',
+		font => 'Noto Sans, system-ui, sans-serif', corner => 10,
+	},
+	nord => {
+		name => 'Nord', scheme => 'Nord Dark',
+		icon_set => 'outline', texture => 'fabric',
+		font => 'Inter, system-ui, sans-serif', corner => 10,
+	},
+	sage => {
+		name => 'Sage', scheme => 'Sage',
+		icon_set => 'pastel', texture => 'fabric',
+		font => 'Noto Sans, system-ui, sans-serif', corner => 14,
+	},
+	mocha => {
+		name => 'Mocha', scheme => 'Mocha Dark',
+		icon_set => 'outline', texture => 'paper',
+		font => 'Palatino Linotype, Iowan Old Style, Georgia, serif', corner => 14,
+	},
+	neon => {
+		name => 'Neon', scheme => 'Indigo Dark',
+		icon_set => 'neon', texture => 'glass',
+		font => 'JetBrains Mono, Courier New, monospace', corner => 14,
+	},
+	mono => {
+		name => 'Mono', scheme => 'Graphite Dark',
+		icon_set => 'mono', texture => 'metal',
+		font => 'system-ui, sans-serif', corner => 6,
+	},
+	rose => {
+		name => 'Rose', scheme => 'Rose',
+		icon_set => 'pastel', texture => 'paper',
+		font => 'Noto Sans, system-ui, sans-serif', corner => 16,
+	},
+);
+
+# A saved theme lives as one settings row: app misc, setting
+# appearance_theme_custom, subsetting <slug>, value a small JSON document. The
+# row is house-wide (device 'all') because an appointment may name it on any
+# machine. Memoised for a second: icon_set() and texture_name() ask on every
+# render, and each read is a query.
+my ($theme_registry_memo, $theme_registry_time);
+sub theme_registry() {
+	my $now = &rightNow();
+	return $theme_registry_memo if $theme_registry_memo && $now - $theme_registry_time < 1000;
+	my %registry;
+	foreach my $slug ( keys %theme_presets ) {
+		$registry{$slug} = { %{ $theme_presets{$slug} }, slug => $slug, builtin => 1 };
+	}
+	my $rows = eval {
+		&db_query("select subsetting, value from settings where app = 'misc' and setting = 'appearance_theme_custom' and subsetting is not null and value is not null and value != ''")->hashes;
+	} || [];
+	foreach my $row ( @{$rows} ) {
+		my $slug = $row->{'subsetting'} // '';
+		next unless $slug =~ /^[a-z0-9][a-z0-9_-]{0,39}$/;
+		my $data = eval { decode_json($row->{'value'}) };
+		next unless ref $data eq 'HASH';
+		$registry{$slug} = { %{$data}, slug => $slug, builtin => 0 };
+	}
+	$theme_registry_memo = \%registry;
+	$theme_registry_time = $now;
+	return $theme_registry_memo;
+}
+
+# A name an appointment may store: a saved/preset theme or a bare colour scheme
+# (the older values still in the table).
+sub theme_known {
+	my ($name) = @_;
+	return 0 unless defined $name && length $name;
+	return 1 if $colour_schemes{$name};
+	my $registry = &theme_registry();
+	return $registry->{$name} ? 1 : 0;
+}
+
+sub theme_safe_font {
+	my ($font) = @_;
+	return '' unless defined $font && length $font;
+	foreach my $f ( @gb::theme_fonts ) {
+		return $f->{'value'} if $f->{'value'} eq $font;
+	}
+	return '';
+}
+
+sub theme_safe_corner {
+	my ($corner) = @_;
+	return '' unless defined $corner && $corner =~ /^\s*(\d{1,2})\s*(?:px)?\s*$/;
+	my $n = $1 + 0;
+	return '' if $n > 28;
+	return $n . 'px';
+}
+
+# A name -> the whole bundle. Unknown names resolve to an empty bundle, which
+# means "the Misc settings are in charge". A bare colour-scheme name resolves
+# to that scheme and nothing else, so rows written before themes existed keep
+# their meaning.
+sub theme_bundle {
+	my ($name) = @_;
+	return {} unless defined $name && length $name;
+	my $registry = &theme_registry();
+	my $theme = $registry->{$name};
+	$theme = { scheme => $name } if !$theme && $colour_schemes{$name};
+	return {} unless $theme;
+	my $scheme = $theme->{'scheme'} // '';
+	$scheme = '' unless $colour_schemes{$scheme};
+	my $background = $theme->{'background'} // '';
+	$background = '' unless $background =~ /^\#?[0-9a-fA-F]{6}$/;
+	$background = '#' . $background if $background =~ /^[0-9a-fA-F]{6}$/;
+	my $bg = $scheme ? &colour_scheme_manager_colour($scheme) : $background;
+	my $icon_set = $theme->{'icon_set'} // '';
+	$icon_set = '' unless grep { $_ eq $icon_set } @gb::icon_sets;
+	my $texture = $theme->{'texture'} // '';
+	$texture = '' unless grep { $_ eq $texture } @gb::textures;
+	my $accent = $theme->{'accent'} // '';
+	$accent = '' unless $accent =~ /^\#?[0-9a-fA-F]{6}$/;
+	$accent = '#' . $accent if $accent =~ /^[0-9a-fA-F]{6}$/;
+	# A theme that names no accent takes its scheme's own accent step, not a
+	# colour derived from the manager surface: on a charcoal window the derived
+	# hue is grey and the active tile loses the theme's colour entirely.
+	if (!length $accent && $scheme && ref $colour_schemes{$scheme} eq 'ARRAY') {
+		my $pal = $colour_schemes{$scheme};
+		my $dark = 0;
+		if (defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/) {
+			my ($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
+			$dark = ((0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255) < 0.5 ? 1 : 0;
+		}
+		$accent = $pal->[ $dark ? 5 : 4 ] // $pal->[4] // '';
+		$accent = '#' . $accent if $accent =~ /^[0-9a-fA-F]{6}$/;
+	}
+	return {
+		slug       => $name,
+		name       => $theme->{'name'} // $name,
+		builtin    => $theme->{'builtin'} ? 1 : 0,
+		scheme     => $scheme,
+		background => $bg,
+		icon_set   => $icon_set,
+		texture    => $texture,
+		font       => &theme_safe_font($theme->{'font'}),
+		corner     => &theme_safe_corner($theme->{'corner'}),
+		accent     => $accent,
+	};
+}
+
+# The theme in charge: a running start/record appointment first, then the
+# Misc Appearance choice. Blank means the Misc surfaces are in charge.
+sub active_theme_name {
+	my $theme = &running_appointment_theme();
+	return $theme if defined $theme && length $theme;
+	my $picked = &misc_setting('appearance_theme');
+	return $picked if defined $picked && length $picked && &theme_known($picked);
+	return '';
+}
+sub active_theme_bundle {
+	# The running appointment's theme sits over the Misc theme: a field the
+	# running theme does not name (a legacy colour-scheme row has no icons or
+	# material) is taken from the Misc theme, so a start appointment never
+	# undresses the desk by accident.
+	my $running = &running_appointment_theme();
+	my $picked = &misc_setting('appearance_theme');
+	$picked = '' unless defined $picked && length $picked && &theme_known($picked);
+	my $system = length $picked ? &theme_bundle($picked) : {};
+	if (defined $running && length $running) {
+		my $over = &theme_bundle($running);
+		my %merged = %{$system};
+		foreach my $key ( qw/scheme background icon_set texture font corner accent name/ ) {
+			$merged{$key} = $over->{$key} if defined $over->{$key} && length $over->{$key};
+		}
+		$merged{'slug'} = $running;
+		$merged{'appointment'} = 1;
+		return \%merged;
+	}
+	$system->{'appointment'} = 0 if ref $system eq 'HASH';
+	return $system;
+}
 
 # A scheme's manager surface and its window surface. The palette is applied
 # across @gb::misc_settings by index, so the manager is the same colour the Misc
@@ -13603,29 +13861,38 @@ sub running_appointment_theme {
 	} || [];
 	foreach my $row ( @{$rows} ) {
 		my $theme = $row->{'theme'};
-		return $theme if defined $theme && length $theme && $colour_schemes{$theme};
+		return $theme if defined $theme && length $theme && &theme_known($theme);
 	}
 	return '';
 }
 
 # The manager background the desktop should paint now, plus the appointment
-# theme driving it (blank when the Misc system theme is in charge).
+# theme driving it (blank when the Misc system theme is in charge). Both come
+# from theme_state(), so a render asks the running-appointment query once.
 sub active_manager_background {
-	my $theme = &running_appointment_theme();
-	if (defined $theme && length $theme) {
-		my $bg = &colour_scheme_manager_colour($theme);
-		return ($bg, $theme) if defined $bg && length $bg;
-	}
-	my $config = &config_reader();
-	my $bg = $config->{ &signatorial_designer() }->{'manager'}->{'background_colour'};
-	return ($bg, '');
+	my (undef, $theme, $bg) = &theme_state();
+	return ($bg, $theme);
 }
 
 # Tell every open manager to re-paint its body for the current active theme.
+# A theme is more than a colour: the message carries the whole bundle, so the
+# icons, material, face and corner change with it and no reload is needed.
 sub appointment_theme_push {
-	my ($bg, $theme) = &active_manager_background();
+	# the running set may have just changed: a warm memo would send the room the
+	# desk is leaving, so forget every theme cache before asking
+	&icon_set_forget();
+	my (undef, undef, $bg, $bundle, undef, $appointment) = &theme_state();
 	return unless defined $bg && length $bg;
-	&Websocket::send('server', { console => 'jawnosThemeApply(' . encode_json($bg) . ',' . (defined $theme && length $theme ? 1 : 0) . ');' });
+	my %send = (
+		background => $bg,
+		appointment => $appointment ? 1 : 0,
+		icon_set => ($bundle->{'icon_set'} // ''),
+		texture => ($bundle->{'texture'} // ''),
+		font => ($bundle->{'font'} // ''),
+		corner => ($bundle->{'corner'} // ''),
+		accent => ($bundle->{'accent'} // ''),
+	);
+	&Websocket::send('server', { console => 'jawnosThemeBundleApply(' . encode_json(\%send) . ');' });
 }
 
 # The colours the current theme is built from: the distinct *_background_colour
@@ -13726,16 +13993,23 @@ my $icon_set_memo_time = 0;
 my ($theme_state_memo, $theme_state_time);
 sub theme_state() {
 	my $now = &rightNow();
-	return @{$theme_state_memo} if $theme_state_memo && $now - $theme_state_time < 1;
-	my ($bg, $theme) = &active_manager_background();
+	return @{$theme_state_memo} if $theme_state_memo && $now - $theme_state_time < 1000;
+	my $bundle = &active_theme_bundle();
+	my $name = $bundle->{'slug'} // '';
+	my $appointment = $bundle->{'appointment'} ? 1 : 0;
+	my $bg = $bundle->{'background'} // '';
+	unless (length $bg) {
+		my $config = &config_reader();
+		$bg = $config->{ &signatorial_designer() }->{'manager'}->{'background_colour'} // '';
+	}
 	my $dark = 0;
-	if (defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/) {
+	if ($bg =~ /^\#?([0-9a-fA-F]{6})$/) {
 		my ($r, $g, $b) = map { hex } ($1 =~ /(..)(..)(..)/);
 		# keep in step with theme_panel_css(): the same 0.5 luminance line
 		# decides whether the chrome is a light or a dark face
 		$dark = ((0.2126 * $r + 0.7152 * $g + 0.0722 * $b) / 255) < 0.5 ? 1 : 0;
 	}
-	$theme_state_memo = [ $dark, defined $theme ? $theme : '' ];
+	$theme_state_memo = [ $dark, ($appointment ? $name : ''), $bg, $bundle, $name, $appointment ];
 	$theme_state_time = $now;
 	return @{$theme_state_memo};
 }
@@ -13751,14 +14025,16 @@ sub theme_is_dark() {
 sub theme_surface_colour() {
 	my ($key, $device) = @_;
 	return undef unless defined $key && length $key;
-	my ($dark, $theme) = &theme_state();
-	if (defined $theme && length $theme && $colour_schemes{$theme}) {
+	my (undef, undef, undef, $bundle) = &theme_state();
+	my $dark = &theme_is_dark();
+	my $scheme = ref $bundle eq 'HASH' ? ($bundle->{'scheme'} // '') : '';
+	if (length $scheme && $colour_schemes{$scheme}) {
 		my $index = 0;
 		foreach my $k ( @gb::misc_settings ) {
 			last if $k eq $key;
 			$index++;
 		}
-		my $ramp = $colour_schemes{$theme};
+		my $ramp = $colour_schemes{$scheme};
 		return $ramp->[ $index % scalar @{$ramp} ];
 	}
 	my $config = &config_reader();
@@ -13791,6 +14067,10 @@ sub icon_set() {
 	return $icon_set_memo if defined $icon_set_memo && $now - $icon_set_memo_time < 1000;
 	my $config = &config_reader();
 	my $set = $config->{'icon_set'} || '';
+	# a theme names its own glyphs; the Misc choice is what a desk with no theme
+	# in charge wears
+	my $bundle = &active_theme_bundle();
+	$set = $bundle->{'icon_set'} if defined $bundle->{'icon_set'} && length $bundle->{'icon_set'};
 	# a dark desktop asks for the set's dark cut: the same glyphs on a plate
 	# that does not glare. The light cut stays the fallback for a hand-drawn
 	# set (which has no generated cut) and for any set without one.
@@ -13810,6 +14090,8 @@ sub icon_set_forget {
 	$icon_set_memo_time = 0;
 	$theme_state_memo = undef;
 	$theme_state_time = 0;
+	$theme_registry_memo = undef;
+	$theme_registry_time = 0;
 }
 
 # When the hand-drawn set is active, swap a public icon path for its original
@@ -14332,8 +14614,8 @@ sub navigation_pace {
 # between fixes - the old flat five minutes did exactly that whenever the
 # navigation utility was slower than five minutes. A scheduled watcher says when
 # its own next run is due; otherwise the utility's pace (or the app's, when that
-# is longer) is the gap to cover. Two minutes of grace absorbs a late slot or a
-# device that could not get a fix on its first try.
+# is longer) is the gap to cover. One more interval lets the place survive a run
+# that could not get a fix, and two minutes of grace absorbs a late slot.
 sub navigation_hold_warranty {
 	my $data = shift || {};
 	my $now = $data->{'server_time'} || &subs::rightNow();

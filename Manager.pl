@@ -7627,6 +7627,93 @@ post '/manager/configure/misc_settings' => sub($c) {
 	$c->render(json => \@applied);
 };
 
+# ---- named themes ----------------------------------------------------------
+# A theme is the whole dressing (paint, icons, material, face, corner); these
+# routes save and remove the ones a person names. Presets live in
+# subroutines.pl::theme_presets and can never be overwritten. A saved theme is
+# one house-wide settings row, so an appointment may name it on any machine.
+post '/manager/configure/theme_save' => sub($c) {
+	my $name = $c->param('name') // '';
+	$name =~ s/^\s+|\s+$//g;
+	return $c->render(json => { error => 'a theme needs a name' }) unless length $name && length($name) <= 60;
+	my $slug = $c->param('slug') // '';
+	unless ($slug =~ /^[a-z0-9][a-z0-9_-]{0,39}$/) {
+		$slug = lc $name;
+		$slug =~ s/[^a-z0-9]+/-/g;
+		$slug =~ s/^-+|-+$//g;
+		$slug = 'theme' unless length $slug;
+		$slug = substr($slug, 0, 40);
+	}
+	# a saved theme must not take a preset's name: the preset is the house's own
+	$slug = 'custom-' . $slug if $subs::theme_presets{$slug};
+	# a new theme with a name already in use gets its own slug rather than
+	# silently overwriting the older theme
+	unless (length($c->param('slug') // '')) {
+		my $base = $slug;
+		my $n = 2;
+		while ( &subs::db_query('select 1 from settings where app = ? and setting = ? and subsetting = ?', 'misc', 'appearance_theme_custom', $slug)->hashes->[0] ) {
+			$slug = $base . '-' . $n++;
+		}
+	}
+	my $scheme = $c->param('scheme') // '';
+	$scheme = '' unless $subs::colour_schemes{$scheme};
+	my $icon_set = $c->param('icon_set') // '';
+	$icon_set = '' unless grep { $_ eq $icon_set } @gb::icon_sets;
+	my $texture = $c->param('texture') // '';
+	$texture = '' unless grep { $_ eq $texture } @gb::textures;
+	my $font = &subs::theme_safe_font($c->param('font'));
+	my $corner = &subs::theme_safe_corner($c->param('corner'));
+	my $accent = $c->param('accent') // '';
+	$accent = '' unless $accent =~ /^\#?[0-9a-fA-F]{6}$/;
+	$accent = '#' . lc $accent if $accent =~ /^[0-9a-fA-F]{6}$/;
+	my $now = &subs::rightNow();
+	my $value = encode_json({
+		name => $name, scheme => $scheme, icon_set => $icon_set,
+		texture => $texture, font => $font, corner => $corner, accent => $accent,
+	});
+	my $existing = &subs::db_query(
+		'select rowid from settings where app = ? and setting = ? and subsetting = ?',
+		'misc', 'appearance_theme_custom', $slug
+	)->hashes->[0];
+	if ($existing) {
+		&subs::db_update('settings', {
+			value => $value, device => 'all', timestamp => $now, server_time => $now,
+		}, { rowid => $existing->{'rowid'} });
+	}
+	else {
+		&subs::db_insert('settings', {
+			app => 'misc', setting => 'appearance_theme_custom', subsetting => $slug,
+			device => 'all', value => $value, timestamp => $now, server_time => $now,
+		});
+	}
+	&subs::icon_set_forget();
+	&subs::cache_delete({ context => 'template' });
+	&subs::cache_delete({ context => 'header' });
+	&subs::appointment_theme_push();
+	$c->render(json => { slug => $slug, name => $name, bundle => &subs::theme_bundle($slug) });
+};
+
+post '/manager/configure/theme_delete' => sub($c) {
+	my $slug = $c->param('slug') // '';
+	return $c->render(json => { error => 'no theme' }) unless $slug =~ /^[a-z0-9][a-z0-9_-]{0,39}$/;
+	return $c->render(json => { error => 'a preset cannot be deleted' }) if $subs::theme_presets{$slug};
+	&subs::db_delete('settings', { app => 'misc', setting => 'appearance_theme_custom', subsetting => $slug });
+	# a desk wearing the theme falls back to the Misc surfaces rather than to a
+	# name that no longer resolves
+	my $chosen = &subs::db_query(
+		'select rowid from settings where app = ? and setting = ? and value = ?',
+		'misc', 'appearance_theme', $slug
+	)->hashes;
+	foreach my $row ( @{$chosen} ) {
+		&subs::db_update('settings', { value => '', server_time => &subs::rightNow() }, { rowid => $row->{'rowid'} });
+	}
+	&subs::icon_set_forget();
+	&subs::cache_delete({ context => 'template' });
+	&subs::cache_delete({ context => 'header' });
+	&subs::appointment_theme_push();
+	$c->render(json => { deleted => 1, slug => $slug });
+};
+
 get '/manager/configure/ping' => sub($c) {
 	my $ip = $c->param('host');
 	my $timestamp = $c->param('timestamp');

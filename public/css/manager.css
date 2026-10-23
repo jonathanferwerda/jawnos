@@ -12,51 +12,44 @@ html, body {
 }
 
 .active {
-	transform: transform 0.2s ease scale(1.2);
-	-webkit-transform:scale(1.02);
+	transition: background-color .18s ease, box-shadow .18s ease, transform .18s ease;
 }
 .selected {
-	background-color: lightblue;
-	border-radius:3%;
-	border:solid;
+	background-color: var(--accent-soft, #e6effb);
+	border: 1px solid var(--accent-line, #2f6cc4);
+	border-radius: var(--jawnos-corner, 12px);
 }
 .start_menu_menu.selected {
-	border-width: 7px;
-	border-color: yellow;
+	border-width: 2px;
+	border-color: var(--accent, #3b7ddd);
 }
 
-.jonathan { 
+.jonathan {
 	height: 46px;
 	width: 46px;
 	z-index: 50000;
 	background-color:transparent;
-	border: 3px solid transparent; border-radius: 10px;
+	border: 1px solid transparent; border-radius: 12px;
  }
 .jonathan:active, .save_appointment:active, button:active {
-	transform:transform 0.25s ease scale(1.5);
-	-webkit-transform:scale(1.4);
-	border-radius: 10px;
-	border-width:3px;
-	border-color:yellow;
+	transform: translateY(1px);
+	border-color: var(--accent-line, var(--line));
+	box-shadow: inset 0 1px 3px rgba(0, 0, 0, .18);
 }
 .superactive {
-	transform:transform 0.25s ease scale(2.1);
-	-webkit-transform:scale(1.7);
+	box-shadow: 0 0 0 3px var(--accent-soft, rgba(59,125,221,.22)), var(--shadow-2, 0 8px 24px rgba(0,0,0,.18));
 }
-.jonathan_fixed { 
+.jonathan_fixed {
 	height: 46px;
 	width: 46px;
-	z-index: 50000; 
+	z-index: 50000;
 	position:fixed;
-	transform:transform 0.25s ease;
-	border: 3px solid transparent; border-radius: 10px;
+	border: 1px solid transparent; border-radius: 12px;
  }
 .jonathan_fixed:active {
-	transform:transform 0.25s ease scale(1.7);
-	-webkit-transform:scale(1.7);
-	border-radius: 10px;
-	border-width:3px;
-	border-color:yellow;
+	transform: translateY(1px);
+	border-color: var(--accent-line, var(--line));
+	box-shadow: inset 0 1px 3px rgba(0, 0, 0, .18);
 }
 .pseudonym { 
 	height: 60px;
@@ -71,22 +64,21 @@ html, body {
 /* the dock's own tiles wear the taskbar buttons' dressing: a thin ink edge,
    rounded corners, and a lift under the pointer */
 .pseudonym.bar {
-	border: solid 2px;
-	border-color: var(--line);
-	border-radius: 10px;
-	transition: border-color .15s ease, transform .12s ease;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	box-shadow: var(--shadow-1, 0 1px 2px rgba(0,0,0,.06));
+	transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
-.pseudonym.bar:hover { border-color: yellow; }
-.pseudonym.bar:active { transform: translateY(1px); }
+.pseudonym.bar:hover { border-color: var(--accent, #3b7ddd); box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18)); transform: translateY(-1px); }
+.pseudonym.bar:active { transform: translateY(0); }
 #pseudonym_home {
 	height: 120px;
 	position:fixed;
 	left: 50%;
-	background-color:grey;
-	border: solid;
-	border-radius: 12px;
-	border-width:2px;
-	border-color:black;
+	background-color: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 16px;
+	box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18));
 	padding-right: 30px;
 	padding-left: 30px;
 	/* the taskbar paints over a tucked dock's box, which slips under the shared
@@ -226,15 +218,17 @@ html, body {
 	width: 100%;
 }
 .register_option {
-	background-color: lightgreen;
+	background-color: var(--accent-soft, #e6effb);
+	color: var(--ink);
 	border-width: 3px;
 	border-radius: 3px;
 	border: solid;
 	width: 100%;
 }
 .register_option_category {
-	background-color: lightblue;
-	border-width: 3px;
+	background-color: var(--accent-soft, #e6effb);
+	color: var(--ink);
+	border-width: 1px;
 	border-radius: 3px;
 	border: solid;
 	width: 100%;
@@ -247,10 +241,10 @@ html, body {
 	width: 100%;
 }
 .shuffle[enabled=on] {
-	background-color: lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 }
 .repeat[enabled=on] {
-	background-color:lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 }
 .attribute_characteristic {
 	border: dotted;
@@ -295,20 +289,25 @@ html, body {
 	   the bar itself keeps no air on the right; the leading edge was always bare
 	   (the window buttons stand on the very left) */
 	padding: 2px 0px 2px 0px;
-	font-size: calc(var(--taskbar_h, 44px) * 0.45);
+	font-size: calc(var(--taskbar_h, 44px) * 0.42);
 	background-color: var(--panel-2);
+	/* a whisper of light along the top and a hairline where the bar meets the
+	   desk: the strip reads as a surface laid on the wallpaper, not a slab */
+	background-image: linear-gradient(rgba(255,255,255,.16), rgba(255,255,255,0));
 	border: solid; border-width: 0px; border-color: var(--line);
+	box-shadow: 0 -1px 0 var(--line), 0 -12px 34px rgba(0,0,0,.10);
 	overflow: hidden;
 }
-#taskbar[position=top] { top: 0px; border-bottom-width: 3px; }
-#taskbar[position=bottom] { bottom: 0px; border-top-width: 3px; }
+body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.05), rgba(0,0,0,.10)); box-shadow: 0 -1px 0 var(--line), 0 -12px 34px rgba(0,0,0,.34); }
+#taskbar[position=top] { top: 0px; border-bottom-width: 1px; box-shadow: 0 1px 0 var(--line), 0 12px 34px rgba(0,0,0,.10); }
+#taskbar[position=bottom] { bottom: 0px; border-top-width: 1px; }
 #taskbar[position=hidden] { display: none; }
-#taskbar_windows { display: flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; }
+#taskbar_windows { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; height: 100%; overflow-x: auto; overflow-y: hidden; }
 /* One button per open window: its icon and its name in a rounded tile that
    lifts under the pointer. The shorthand stands where the name would when the
    bar is too narrow to spell it out (see the phone's own rules). */
-#taskbar .window_toggle { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: calc(var(--taskbar_h, 44px) - 8px); padding: 0px 8px; box-sizing: border-box; background-color: var(--panel); border: solid; border-width: 2px; border-color: var(--line); border-radius: var(--jawnos-corner, 10px); transition: background-color .15s ease, transform .12s ease; }
-#taskbar .window_toggle:hover { background-color: var(--panel-2); }
+#taskbar .window_toggle { position: relative; display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; height: calc(var(--taskbar_h, 44px) - 8px); padding: 0px 9px; box-sizing: border-box; background-color: transparent; border: 1px solid transparent; border-radius: calc(var(--jawnos-corner, 12px) * .75); transition: background-color .15s ease, border-color .15s ease, transform .12s ease, box-shadow .15s ease; }
+#taskbar .window_toggle:hover { background-color: var(--panel); border-color: var(--line); box-shadow: var(--shadow-1, 0 1px 2px rgba(0,0,0,.06)); }
 #taskbar .window_toggle:active { transform: translateY(1px); }
 #taskbar .window_toggle .window_toggle_icon { height: calc(var(--taskbar_h, 44px) - 18px); width: calc(var(--taskbar_h, 44px) - 18px); max-width: none; object-fit: contain; }
 #taskbar .window_toggle .window_toggle_name_text { font-size: calc(var(--taskbar_h, 44px) * 0.36); white-space: nowrap; }
@@ -316,15 +315,13 @@ html, body {
 #taskbar_clock {
 	flex: 0 0 auto;
 	white-space: nowrap;
-	padding: 3px 10px;
+	padding: 3px 11px;
 	margin: 0px 4px;
-	/* a plate sunk into the bar: a muted edge, a lighter face and a shadow down
-	   its inside */
-	border: solid 2px;
-	border-radius: 6px;
-	border-color: var(--ink-muted, rgba(0,0,0,0.5));
+	/* a quiet plate on the strip: a hairline edge, the panel face, no bevel */
+	border: 1px solid var(--line);
+	border-radius: calc(var(--jawnos-corner, 12px) * .6);
 	background-color: var(--panel);
-	box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+	box-shadow: var(--shadow-1, 0 1px 2px rgba(0,0,0,.06));
 }
 /* The clock's face is not the present: the time machine or a timeshift has
    carried the view off now, or the poll that advances it has stopped. The plate
@@ -402,15 +399,26 @@ html, body {
 	object-fit: contain;
 }
 
-/* The window tiles' states, the clock's sunk plate for the one on top and a
-   raised edge for the rest that are open: the same bevel reads at a glance. */
+/* The window tiles' states: the one on top is tinted with the accent and
+   underlined, the rest that are open keep a hairline edge. A bevel and a sunk
+   plate read as a 1990s toolbar at this size; an accent line reads at a glance. */
 #taskbar .window_toggle[state=active] {
-	border-color: var(--ink-muted, rgba(0, 0, 0, 0.5));
-	box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
+	background-color: var(--accent-soft, rgba(59,125,221,.18));
+	border-color: var(--accent-line, var(--line));
+	box-shadow: none;
+}
+#taskbar .window_toggle[state=active]::after {
+	content: '';
+	position: absolute;
+	left: 9px; right: 9px; bottom: 3px;
+	height: 2px;
+	border-radius: 2px;
+	background: var(--accent, #3b7ddd);
 }
 #taskbar .window_toggle[state=open] {
-	border-color: var(--ink-muted, rgba(0, 0, 0, 0.35));
-	box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4), 0 1px 1px rgba(255, 255, 255, 0.25) inset;
+	border-color: var(--line);
+	background-color: var(--panel);
+	box-shadow: none;
 }
 
 /* Edit mode: the slots drag along the bar. While it is on the furniture ignores
@@ -567,7 +575,7 @@ html, body {
 	overflow: hidden;
 	text-overflow: ellipsis;
 }
-.manager_search_result.search_selected { background-color: lightblue; }
+.manager_search_result.search_selected { background-color: var(--accent-soft, #e6effb); }
 #top_right_buttons {
 	height: 46px;
 	width: 320px;
@@ -621,7 +629,7 @@ html, body {
 }
 
 #travel_home_plate[status="enabled"] {
-	background-color:lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 }
 .neighbour_status[status="mirror"] { background-color: red }
 .neighbour_tunnel[status="active"] { background-color: yellow; }
@@ -630,7 +638,7 @@ html, body {
 input[type="checkbox"] {
 	width: 30px;
 	height: 30px;
-	color: lightgreen;
+	accent-color: var(--accent, #3b7ddd);
 }
 input[type="checkbox"]:hover {
 	cursor: pointer;
@@ -677,13 +685,14 @@ canvas.background {
 }
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}
-.little_window { font-size: 26px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: orange; border: solid; border-radius: var(--jawnos-corner, 10px); }
-.window_icon { vertical-align:top; border:solid; border-color: var(--line); border-radius:2px; border-width:2px; font-size:26px; }
+.little_window { font-size: 20px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: var(--panel); border: 1px solid var(--line); border-radius: var(--jawnos-corner, 12px); box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18)); }
+.window_icon { vertical-align:top; border:solid; border-color: var(--line); border-radius:4px; border-width:1px; font-size:26px; }
 /* Windows round their corners a touch. .wind carries the radius so its own
    panel background is clipped to it and the frame ring below inherits it; the
    title bar rounds only its top corners to match, so its square ones don't show
    through where the panel curves away. */
-.wind { border-radius: var(--window_radius, var(--jawnos-corner, 10px)); background-color: var(--window, var(--panel)); }
+.wind { border-radius: var(--window_radius, var(--jawnos-corner, 12px)); background-color: var(--window, var(--panel)); box-shadow: 0 20px 50px rgba(0,0,0,.24), 0 2px 8px rgba(0,0,0,.12); }
+body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35); }
 /* Inside a window every surface that asked for the panel surface gets the
    window's own colour instead, so an app or an appointment does not dissolve
    into the desktop behind it. --panel-2 and --line keep the theme's contrast
@@ -725,7 +734,8 @@ canvas.background {
    edge, out of line with .window_contents. The border is the same width on all
    four sides, so the bar reads evenly - and its top corners land exactly on the
    frame ring, which carries the same width. */
-.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, var(--jawnos-corner, 10px)) var(--window_radius, var(--jawnos-corner, 10px)) 0 0; display: flex; align-items: center; padding: 0 2px; overflow: hidden; }
+.top_navbar { line-height: 0; box-sizing: border-box; height: var(--navbar_h, 36px); border-radius: var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px)) 0 0; display: flex; align-items: center; padding: 0 2px; overflow: hidden; background-image: linear-gradient(rgba(255,255,255,.14), rgba(0,0,0,.04)); }
+body.dark_theme .top_navbar { background-image: linear-gradient(rgba(255,255,255,.06), rgba(0,0,0,.12)); }
 /* the icon sits in a bare tile with a collar of the bar's colour around it;
    the holder and the tile both centre on the bar's line. */
 .top_navbar .window_icon_holder { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; padding: 2px; }
@@ -755,14 +765,14 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 	text-align: center;
 }
 .editor_content_component.grapple_active {
-	border: 4px solid yellow;
+	border: 2px solid var(--accent, #3b7ddd);
 }
 
 .grapple_capable {
-	border: 4px solid red;
+	border: 2px solid var(--accent, #3b7ddd);
 }
 .configure_toggle[status=active] {
-	background-color:lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 	border-width: 3px;
 }
 .ticket_input { 
@@ -854,7 +864,7 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 }
 
 .media_picker[status=on] {
-	background-color: lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 }
 
 .cards_mode {
@@ -862,7 +872,7 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 }
 
 .cards_mode[status=enabled] {
-	background-color: lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 }
 
 #start_menu {
@@ -877,9 +887,10 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 	top: calc(var(--taskbar_top_h, 0px) + 4px);
 	z-index: 40001;
 	border: solid;
-	border-width: 4px;
+	border-width: 1px;
 	border-color: var(--line);
-	border-radius: var(--jawnos-corner, 10px);
+	border-radius: var(--jawnos-corner, 12px);
+	box-shadow: 0 24px 60px rgba(0,0,0,.30), 0 2px 10px rgba(0,0,0,.12);
 }
 
 /* a little bigger than the default .jonathan size, but leave the taskbar's own
@@ -903,8 +914,8 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 #start_menu .start_menu_item img,
 #start_menu .window_icon {
 	box-sizing: border-box;
-	border: 3px solid var(--jawnos-texture-edge, var(--line));
-	border-radius: 8px;
+	border: 1px solid var(--jawnos-texture-edge, var(--line));
+	border-radius: 10px;
 }
 
 /* Mail the server accepted rings the envelope until the mailbox is opened: the
@@ -1237,7 +1248,7 @@ html.jawnos_webview #admin_console_toggle {
 }
 
 .appointment_option[select=on] {
-	background-color: lightblue;
+	background-color: var(--accent-soft, #e6effb);
 }
 #terminal-container {
 
@@ -1286,7 +1297,7 @@ html.jawnos_webview #admin_console_toggle {
 
 
 .terminal_view_select[selected] {
-	background-color: lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 }
 
 #studio_video_toggle[toggled=on] {
@@ -1313,16 +1324,16 @@ html.jawnos_webview #admin_console_toggle {
 }
 
 #mailbox_lora_toggle[toggle=on] {
-	border-color: yellow;
-	background-color: yellow;
+	border-color: var(--accent, #3b7ddd);
+	background-color: var(--accent-soft, #e6effb);
 }
 
 .gallery_home_toggle[toggled=on] {
-	background-color:lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 }
 
 .purchase_config[enabled=on] {
-	background-color:lightgreen;
+	background-color: var(--accent-soft, #e6effb);
 }
 
 .warehouse_expired {
@@ -1634,7 +1645,7 @@ html.jawnos_webview #admin_console_toggle {
 .email_attachment_probability {
 	border: solid;
 	border-radius: 10%;
-	border-color: yellow;
+	border-color: var(--accent, #3b7ddd);
   animation: flash-smooth .5s infinite linear;
 }
 
@@ -1652,7 +1663,7 @@ html.jawnos_webview #admin_console_toggle {
     border-color: #ccc; /* Default color */
   }
   50% {
-    border-color: yellow; /* Flash color (e.g., Red) */
+    border-color: var(--accent, #3b7ddd); /* Flash color */
   }
 }
 

@@ -143,6 +143,40 @@ our @misc_settings = qw/homepage homepage_content manager start_menu gate config
 # icon_set() selects by itself while the active theme is dark.
 # 'handdrawn' is special: it restores the original hand-drawn PNGs from public/icons/original/
 our @icon_sets = qw/handdrawn windows mac gnome cartoon dark light outline neon pastel mono sunburst holographic sticker psychedelic kaleidoscope clown/;
+our @textures = qw/classic round soft sandglass glass paper fabric wood metal/;
+our %texture_labels = (
+	classic => 'Plain',
+	round   => 'Round',
+	soft    => 'Soft',
+	sandglass => 'Sandglass',
+	glass   => 'Glass',
+	paper   => 'Paper',
+	fabric  => 'Fabric',
+	wood    => 'Wood',
+	metal   => 'Metal',
+);
+
+# A theme may name a face. The list is a whitelist: the value is written into a
+# CSS custom property, so only a house stack may reach the page. A stored value
+# that is not here is still honoured by the Misc Font picker (it appends the
+# current one), but a theme cannot introduce a new string.
+our @theme_fonts = (
+	{ value => 'system-ui, sans-serif', label => 'System' },
+	{ value => 'Noto Sans, system-ui, sans-serif', label => 'Noto Sans' },
+	{ value => 'Inter, system-ui, sans-serif', label => 'Inter' },
+	{ value => 'Cantarell, system-ui, sans-serif', label => 'Cantarell' },
+	{ value => 'Segoe UI, system-ui, sans-serif', label => 'Segoe UI' },
+	{ value => 'Helvetica Neue, Helvetica, Arial, sans-serif', label => 'Helvetica' },
+	{ value => 'Arial, sans-serif', label => 'Arial' },
+	{ value => 'Verdana, sans-serif', label => 'Verdana' },
+	{ value => '"Trebuchet MS", sans-serif', label => 'Trebuchet' },
+	{ value => 'Georgia, serif', label => 'Georgia' },
+	{ value => 'Palatino Linotype, Iowan Old Style, Georgia, serif', label => 'Palatino' },
+	{ value => 'Times New Roman, serif', label => 'Times' },
+	{ value => 'JetBrains Mono, Courier New, monospace', label => 'JetBrains Mono' },
+	{ value => 'Courier New, monospace', label => 'Courier' },
+);
+
 our %icon_set_labels = (
 	handdrawn    => 'Hand-drawn (original)',
 	windows      => 'Windows',
