@@ -525,20 +525,26 @@ sub music_source_client_open($c, $st, $key) {
 		$cl->{'tx'} = $tx;
 		$cl->{'up'} = 1;
 		my $hello = { %{$st->{'hello'} || {}}, type => 'hello', source => $source, key => $key };
-		$tx->send({text => encode_json($hello)});
-		$tx->send({text => encode_json({ type => 'ping', t => &subs::rightNow() })});
 		$tx->on(text => sub {
 			my ($tx, $msg) = @_;
 			my $d = eval { decode_json $msg } || {};
-			if (($d->{'type'} || '') eq 'pong') {
+			my $kind = $d->{'type'} || '';
+			if ($kind eq 'pong') {
 				my $rtt = &subs::rightNow() - ($d->{'t'} || 0);
 				$cl->{'rtt'} = $rtt;
 				my $ms = int(($d->{'base'} || 80) + ($rtt / 2) + 20);
 				$c->tx->send({text => encode_json({ type => 'latency', key => $key, ms => $ms })}) if $c->tx->is_websocket;
 				return;
 			}
+			# Ping only once the remote has started its player: the ping is what
+			# measures the pipeline, and it must not include pacat's startup time.
+			if ($kind eq 'ready' && !$cl->{'pinged'}) {
+				$cl->{'pinged'} = 1;
+				$tx->send({text => encode_json({ type => 'ping', t => &subs::rightNow() })});
+			}
 			$c->tx->send({text => $msg}) if $c->tx->is_websocket;
 		});
+		$tx->send({text => encode_json($hello)});
 		$tx->on(finish => sub {
 			delete $st->{'clients'}->{$key};
 			$c->tx->send({text => encode_json({ type => 'closed', key => $key })}) if $c->tx->is_websocket;
