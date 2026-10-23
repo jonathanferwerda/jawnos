@@ -1870,14 +1870,16 @@ var musicBaseline = { src: '', mean: null, max: null, gain: 1, failed: false, to
 var musicBaselineCache = {};
 var musicBaselinePending = {};
 var musicBaselineSettings = {
-	slight:     { target: -15, factor: 0.5,  max: 4 },
-	mild:       { target: -15, factor: 0.75, max: 8 },
-	aggressive: { target: -15, factor: 1,    max: 12 }
+	slight:     { target: -15, factor: 0.5,  max: 8 },
+	mild:       { target: -15, factor: 0.75, max: 14 },
+	aggressive: { target: -15, factor: 1,    max: 18 }
 };
 // The in-track leveller. `window` is the top slice of the track's range that is
 // compressed and `ratio` turns it into a reduction. The makeup equals the
 // reduction at the peak, so the action keeps its own level and only the quieter
-// dialogue comes up - by about 3, 6 or 10 dB.
+// dialogue comes up. A very quiet film gets a wider window (see
+// musicLevellerWindow): its average is mostly room tone and dialogue, so the
+// top slice has to reach further down for the makeup to make it audible.
 var musicLevellerSettings = {
 	slight:     { window: 6,  ratio: 2.0 },
 	mild:       { window: 10, ratio: 2.5 },
@@ -1889,9 +1891,19 @@ function musicBaselineConf() {
 function musicLevellerConf() {
 	return musicLevellerSettings[music_normalize] || null;
 }
-function musicLevellerMakeupDb() {
+function musicLevellerWindow(conf, mean) {
+	var base = conf.window;
+	if (mean == null) { return base; }
+	// 0 at -32 dB, 1 at -38 dB: music and ordinary shows keep the base window,
+	// while a film far below the house level widens up to 80% more.
+	var quiet = Math.max(0, Math.min(1, (-32 - mean) / 6));
+	return base + (base * 0.8) * quiet;
+}
+function musicLevellerMakeupDb(mean) {
 	var conf = musicLevellerConf();
-	return conf ? conf.window * (1 - 1 / conf.ratio) : 0;
+	if (!conf) { return 0; }
+	var window = musicLevellerWindow(conf, mean);
+	return window * (1 - 1 / conf.ratio);
 }
 // What the track's average becomes once the leveller has run: the makeup lifts
 // every passage while the compressed top slice is pulled back. The track gain is
@@ -1899,11 +1911,12 @@ function musicLevellerMakeupDb() {
 function musicLevelledMean(mean, max) {
 	var conf = musicLevellerConf();
 	if (!conf || mean == null) { return mean; }
-	if (max == null) { max = mean + conf.window; }
+	var window = musicLevellerWindow(conf, mean);
+	if (max == null) { max = mean + window; }
 	var crest = Math.max(0.5, max - mean);
-	var above = Math.min(1, conf.window / crest);
-	var reduction = above * (conf.window / 2) * (1 - 1 / conf.ratio);
-	return Math.min(max, mean + musicLevellerMakeupDb() - reduction);
+	var above = Math.min(1, window / crest);
+	var reduction = above * (window / 2) * (1 - 1 / conf.ratio);
+	return Math.min(max, mean + musicLevellerMakeupDb(mean) - reduction);
 }
 function musicBaselineGain(mean, max) {
 	var conf = musicBaselineConf();
@@ -1937,14 +1950,15 @@ function musicLevellerApply() {
 	var ratio = 1, threshold = 0, knee = 0, attack = 0.003, release = 0.25, makeup = 1;
 	if (on) {
 		ratio = conf.ratio;
+		var window = musicLevellerWindow(conf, musicBaseline.mean);
 		// the top slice of this track's own range, so the threshold follows the
 		// recording rather than a fixed level
-		threshold = Math.max(-60, musicBaseline.max - conf.window);
-		knee = Math.min(12, conf.window);
+		threshold = Math.max(-60, musicBaseline.max - window);
+		knee = Math.min(12, window);
 		// slow next to a syllable: the gain does not ride the dialogue
 		attack = 0.08;
 		release = 0.45;
-		makeup = Math.pow(10, musicLevellerMakeupDb() / 20);
+		makeup = Math.pow(10, musicLevellerMakeupDb(musicBaseline.mean) / 20);
 	}
 	try {
 		g.compressor.threshold.setTargetAtTime(threshold, now, 0.05);
