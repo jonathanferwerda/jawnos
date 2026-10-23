@@ -589,6 +589,13 @@ function wsMessageHandler(event) {
 				jawnosCryptoPaymentPrompt(data);
 			}
 		}
+		if (data['padlock_key_clear']) {
+			// the request was answered (or withdrawn) on another screen: close it
+			// here too, but never a newer request than the one named
+			if (typeof jawnPadlockPromptClear === 'function') {
+				jawnPadlockPromptClear(data['request_id']);
+			}
+		}
 		if (data['padlock_key_show']) {
 			// An explicit request gets a fingerprint prompt in place; it never
 			// moves this page. Anything else is a legacy announcement and is

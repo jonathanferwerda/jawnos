@@ -10815,6 +10815,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 	# already opened.
 	my $path = $c->req->url->path;
 	return 0 if ($path eq '/manager/security/padlock_phone_show' ||
+		$path eq '/manager/security/padlock_request_cancel' ||
 		$path eq '/manager/security/padlock_challenge' ||
 		$path eq '/manager/security/padlock_unlock' ||
 		$path eq '/manager/security/padlock_key_show_peer' ||
@@ -25129,7 +25130,7 @@ get '/manager/gallery' => sub ($c) {
 # one when there is one) and the full file for the viewer.
 get '/manager/gallery/data' => sub ($c) {
 	my $permissive = media_unlock_open($c, 'gallery') ? 1 : 0;
-	my $revealed = ($permissive && help_at_home()) ? 1 : 0;
+	my $revealed = $permissive ? 1 : 0;
 	my $search = lc($c->param('search') || '');
 	my $sort = ($c->param('sort') || 'desc') eq 'asc' ? 'asc' : 'desc';
 	my $offset = int($c->param('offset') || 0);
@@ -25162,6 +25163,10 @@ get '/manager/gallery/data' => sub ($c) {
 		return undef unless length $path;
 		my $type = $f->{'type'} || $appt->{'type'} || 'image';
 		my $server_time = $f->{'server_time'} || $appt->{'server_time'} || 0;
+		# The app's own timestamp is when the thing happened; server_time is when
+		# the row was written or synced, which can be days later. Sort and date by
+		# the former when the appointment carries one.
+		my $sort_time = $appt->{'timestamp'} || $f->{'timestamp'} || $f->{'server_time'} || $server_time || 0;
 		# A row synced from another machine keeps that machine's path. The copy on
 		# this one lives under its own photo (or video) location, and the same
 		# renamer the rest of the manager uses maps it there. Without this a phone
@@ -25220,6 +25225,7 @@ get '/manager/gallery/data' => sub ($c) {
 			thumb => $thumb,
 			file => $full,
 			server_time => $server_time,
+			sort_time => $sort_time,
 			timestamp => $appt->{'timestamp'} || 0,
 			remote_uuid => $f->{'remote_uuid'} || '',
 			info => $f->{'info'} || {},
@@ -25275,7 +25281,7 @@ get '/manager/gallery/data' => sub ($c) {
 		}
 	}
 
-	my @ordered = sort { $sort eq 'asc' ? $a->{'server_time'} <=> $b->{'server_time'} : $b->{'server_time'} <=> $a->{'server_time'} } @all;
+	my @ordered = sort { $sort eq 'asc' ? $a->{'sort_time'} <=> $b->{'sort_time'} : $b->{'sort_time'} <=> $a->{'sort_time'} } @all;
 	my $total = scalar @ordered;
 	my @page;
 	if ($offset < $total) {
@@ -25308,7 +25314,7 @@ get '/manager/gallery/scroll' => sub($c) {
 	my $first_count = $c->param('first_count');
 	my $returner = { apps => $apps, count => $count, count_timestamp => $count_timestamp };
 	my $permissive = media_unlock_open($c, 'gallery') ? 1 : 0;
-	my $revealed = ($permissive && help_at_home()) ? 1 : 0;
+	my $revealed = $permissive ? 1 : 0;
 	$returner->{'html'} = $c->render_to_string(
 		template => 'apps/gallery_album',
 		settings => $settings,
@@ -30981,9 +30987,11 @@ sub help_media_unlocked {
 	return 0;
 }
 
-# A thing the person marked not-visible is shown only when its padlock is open
-# AND we are at home - so a hidden album can never be opened out in public.
-sub help_media_revealed { return (help_media_unlocked() && help_at_home()) ? 1 : 0; }
+# A thing the person marked not-visible is shown while its padlock is open. The
+# place used to be part of the rule; it is not any more: a machine with no
+# location fix could never reveal its own private albums after an unlock, which
+# read as "the unlock did nothing". The unlock is the deliberate act.
+sub help_media_revealed { return help_media_unlocked() ? 1 : 0; }
 
 # Whether one page's `unlock` token opens one media app's padlock. A fresh open
 # carries no token and stays locked, even when the secret from an earlier open
@@ -34678,14 +34686,25 @@ sub padlock_request_clear {
 	my ($target) = @_;
 	return unless defined $target;
 	if ($target eq '') {
-		&subs::db_query('delete from cache where context = ?', 'padlock_request');
+		my $all = &subs::db_query('select uuid from cache where context = ?', 'padlock_request')->hashes || [];
+		&padlock_request_clear_id($_->{'uuid'}) for @{$all};
 		return;
 	}
 	my $rows = &subs::db_query('select uuid, data from cache where context = ?', 'padlock_request')->hashes || [];
 	foreach my $r ( @{$rows} ) {
 		my $d = eval { decode_json $r->{'data'} } || {};
-		&subs::db_query('delete from cache where uuid = ?', $r->{'uuid'}) if (($d->{'target'} || '') eq $target);
+		&padlock_request_clear_id($r->{'uuid'}) if (($d->{'target'} || '') eq $target);
 	}
+}
+
+# Clearing a request is also the signal that stops the prompt everywhere. The
+# request's own id travels with it, so a screen can tell this one from a newer
+# request that happens to name the same device.
+sub padlock_request_clear_id {
+	my ($id) = @_;
+	return unless defined $id && $id =~ /^[A-Za-z0-9]{8,64}$/;
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'padlock_request', $id);
+	&Websocket::send('server', { padlock_key_clear => 1, request_id => $id, timestamp => &subs::rightNow() });
 }
 
 # --- Go approvals ---------------------------------------------------------
@@ -35111,6 +35130,14 @@ post '/manager/security/padlock_phone_show' => sub ($c) {
 		&padlock_key_show_relay($c, $mode, $target, 1, 1, $request_id, $device_name, $source_device, $source_hostname);
 	}
 	$c->render(json => { ok => 1, mode => $mode, target => $target, request_id => $request_id });
+};
+
+# "Not now", or a prompt that has gone stale: clear the request and tell every
+# screen that showed it, so the print prompt does not linger elsewhere.
+post '/manager/security/padlock_request_cancel' => sub ($c) {
+	my $id = $c->param('request_id') || '';
+	&padlock_request_clear_id($id);
+	$c->render(json => { ok => 1, request_id => $id });
 };
 
 # A local fingerprint is an alternative to the phone for the screen it is on.

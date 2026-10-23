@@ -748,6 +748,10 @@ function jawnPadlockKeyCheck(force) {
 		if (r && r.id && typeof jawnPadlockPrompt === 'function') {
 			jawnPadlockPrompt(r.mode || 'locker', r.target || '', r.id, r.device_name || '', r.source_device || '', r.source_hostname || '', r.house);
 		}
+		else if (!r && jawnPadlockPromptOpen && !jawnPadlockPromptBusy && typeof jawnPadlockPromptDismiss === 'function') {
+			// answered or withdrawn elsewhere: this screen must not keep asking
+			jawnPadlockPromptDismiss();
+		}
 	});
 }
 
@@ -756,6 +760,8 @@ function jawnPadlockKeyCheck(force) {
 // the screen named in the request; this device is unchanged.
 var jawnPadlockPromptOpen = false;
 var jawnPadlockPromptTarget = '';
+var jawnPadlockPromptId = '';
+var jawnPadlockPromptBusy = false;
 var jawnPadlockPromptSeen = {};
 
 function jawnPadlockPromptDismiss(target) {
@@ -764,6 +770,15 @@ function jawnPadlockPromptDismiss(target) {
 	if (box && box.parentNode) { box.parentNode.removeChild(box); }
 	jawnPadlockPromptOpen = false;
 	jawnPadlockPromptTarget = '';
+	jawnPadlockPromptId = '';
+	jawnPadlockPromptBusy = false;
+}
+
+// The request that was answered or withdrawn is gone everywhere: close the
+// prompt only if it is that request, never a newer one.
+function jawnPadlockPromptClear(requestId) {
+	if (requestId && requestId !== jawnPadlockPromptId) { return; }
+	jawnPadlockPromptDismiss();
 }
 
 function jawnPadlockPromptText(text, value) {
@@ -812,6 +827,8 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 	jawnPadlockPromptSeen[key] = 1;
 	jawnPadlockPromptOpen = true;
 	jawnPadlockPromptTarget = target || '';
+	jawnPadlockPromptId = requestId || '';
+	jawnPadlockPromptBusy = false;
 	mode = mode || 'locker';
 	house = (typeof house === 'undefined') ? !target : !!house;
 	var is_go = (mode === 'go');
@@ -857,8 +874,13 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 	box.appendChild(no);
 	document.body.appendChild(box);
 
-	no.onclick = function () { jawnPadlockPromptDismiss(); };
+	no.onclick = function () {
+		// withdraw it: the other screens must stop asking too
+		$.post('/manager/security/padlock_request_cancel', { request_id: jawnPadlockPromptId }, function() {}, 'json');
+		jawnPadlockPromptDismiss();
+	};
 	go.onclick = function () {
+		jawnPadlockPromptBusy = true;
 		go.disabled = true;
 		no.disabled = true;
 		note.textContent = jawnPadlockPromptText('Authenticate to continue...');
@@ -908,6 +930,7 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 			setTimeout(function () { jawnPadlockPromptDismiss(); }, 1200);
 		}).catch(function (err) {
 			if (err && err.error === 'cancelled') { jawnPadlockPromptDismiss(); return; }
+			jawnPadlockPromptBusy = false;
 			note.textContent = (typeof jawnosBiometricError === 'function') ? jawnosBiometricError(err) : jawnPadlockPromptText('That did not work. Try again.');
 			go.disabled = false;
 			no.disabled = false;

@@ -144,6 +144,9 @@ function galleryInitWindow(response) {
 	// they ask for the hidden ones (the Lock button), not on every open.
 	if (gallery.unlock) { $('#gallery_lock').hide(); }
 	galleryApplyChrome();
+	// a scroll on an element does not bubble, so the listener belongs here and
+	// not on document; off/on keeps one copy across window refreshes
+	$('#gallery_body').off('scroll.gallery').on('scroll.gallery', galleryScrollCheck);
 }
 
 function imageViewer(data) {
@@ -231,7 +234,12 @@ function galleryFetch(reset) {
 			gallery.albums = response.albums || [];
 			gallery.total = response.total || 0;
 			if (reset) { gallery.items = response.items || []; }
-			else { gallery.items = gallery.items.concat(response.items || []); }
+			else {
+				var more = response.items || [];
+				gallery.items = gallery.items.concat(more);
+				// an empty page means the total was stale: stop asking
+				if (!more.length) { gallery.total = gallery.items.length; }
+			}
 			gallery.offset = gallery.items.length;
 			images = gallery.items;
 			galleryRender();
@@ -275,6 +283,9 @@ function galleryRender() {
 		$('#gallery_grid').append('<div id="gallery_more" style="grid-column:1/-1;text-align:center;padding:14px;color:#888;font-size:12px;">' + jawnosT('Loading…') + '</div>');
 	}
 	galleryLazyStart();
+	// a page shorter than the window would never fire a scroll: ask again so the
+	// grid fills the view before the person has to drag it
+	setTimeout(galleryScrollCheck, 0);
 }
 
 function galleryRenderAlbums() {
@@ -293,7 +304,7 @@ function galleryRenderGrid() {
 	var html = '';
 	var last_day = '';
 	gallery.items.forEach(function(item, index) {
-		var day = galleryDay(item.server_time);
+		var day = galleryDay(item.sort_time || item.server_time);
 		if (day != last_day) {
 			html += '<div class="gallery_day">' + galleryEscape(day) + '</div>';
 			last_day = day;
@@ -322,7 +333,7 @@ function galleryOpenViewer(index) {
 	else {
 		stage.html('<img src="' + galleryEscape(item.file) + '" alt="">');
 	}
-	$('#gallery_viewer_label').text((item.label || item.app) + ' · ' + galleryDay(item.server_time) + ' · ' + item.name);
+	$('#gallery_viewer_label').text((item.label || item.app) + ' · ' + galleryDay(item.sort_time || item.server_time) + ' · ' + item.name);
 	$('.gallery_delete').removeClass('armed').text(jawnosT('Delete'));
 	$('.gallery_main').removeClass('armed').text(jawnosT('Set as main image'));
 	// Fetch home is the archive's way back: it only means anything for a photo
@@ -593,14 +604,15 @@ $(document).on('click', '#gallery_lock_close', function() {
 	$('#gallery_lock').hide();
 });
 
-// more tiles as the grid nears the bottom
-$(document).on('scroll', '#gallery_body', function() {
+// more tiles as the grid nears the bottom of its own scroll box
+function galleryScrollCheck() {
 	if (gallery.view != 'grid' || gallery.loading) { return; }
-	var body = this;
+	var body = document.getElementById('gallery_body');
+	if (!body) { return; }
 	if (body.scrollTop + body.clientHeight >= body.scrollHeight - 400) {
 		if (gallery.items.length < gallery.total) { galleryFetch(false); }
 	}
-});
+}
 
 // The start-menu button opens the Gallery in the albums view.
 $(document).on('click', '#image_toggle', function() {
