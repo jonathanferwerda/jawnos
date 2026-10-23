@@ -343,9 +343,16 @@ function galleryViewerPad() {
 		return;
 	}
 	var top = viewer.getBoundingClientRect().top;
-	var bar = document.getElementById('taskbar');
-	var bar_bottom = bar ? bar.getBoundingClientRect().bottom : 0;
-	var pad = Math.max(6, Math.ceil(bar_bottom - top) + 6);
+	// the taskbar is the usual top bar; the clothesline header is fixed too and
+	// is what a window with a bottom taskbar sits under
+	var bottom = 0;
+	['taskbar', 'header'].forEach(function(id) {
+		var el = document.getElementById(id);
+		if (!el) { return; }
+		var r = el.getBoundingClientRect();
+		if (r.height > 0 && r.width > window.innerWidth / 2) { bottom = Math.max(bottom, r.bottom); }
+	});
+	var pad = Math.max(6, Math.ceil(bottom - top) + 6);
 	viewer.style.setProperty('--gallery_viewer_pad', pad + 'px');
 }
 

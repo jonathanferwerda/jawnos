@@ -840,7 +840,12 @@ function jawnPadlockPrompt(mode, target, requestId, deviceName, sourceDevice, so
 			+ ' · ' + contextLabel + '. ' + jawnPadlockPromptText('Confirm with your fingerprint to open it.'));
 	var go = document.createElement('button');
 	go.type = 'button';
-	go.textContent = is_go ? jawnPadlockPromptText('Approve with fingerprint') : jawnPadlockPromptText('Unlock with fingerprint');
+	var have_print = !!(window.JawnBiometricKey
+		|| typeof window.jawnos_local_fingerprint === 'undefined'
+		|| window.jawnos_local_fingerprint !== 0);
+	go.textContent = is_go
+		? jawnPadlockPromptText('Approve with fingerprint')
+		: (have_print ? jawnPadlockPromptText('Unlock with fingerprint') : jawnPadlockPromptText('Approve on this device'));
 	go.style.cssText = 'font-size:15px;padding:10px 16px;border-radius:9px;border:1px solid #2b6;background:#2b6;color:#08110a;font-weight:bold;cursor:pointer;margin:0 4px 8px 4px;';
 	var no = document.createElement('button');
 	no.type = 'button';
@@ -979,13 +984,15 @@ function jawnPadlockSignOpen(mode, target, status, house) {
 	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!(window.crypto && crypto.subtle && crypto.subtle.sign)) { return Promise.reject({ error: 'unavailable' }); }
+	var signKey = null;
 	return jawnosDeviceKeyGet().then(function (key) {
 		if (!key) { throw { error: 'not paired' }; }
+		signKey = key;
 		return $.post('/manager/security/padlock_challenge', { device_uuid: uuid });
 	}).then(function (ch) {
 		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
 		var msg = 'padlock-unlock\n' + uuid + '\n' + (signedTarget ? signedTarget + '\n' : '') + ch.nonce;
-		return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+		return crypto.subtle.sign('Ed25519', signKey, new TextEncoder().encode(msg)).then(function (sig) {
 			var body = { device_uuid: uuid, nonce: ch.nonce, signature: jawnosB64(sig), mode: mode };
 			if (house) { body.house = 1; }
 			else if (target) { body.target = target; }
@@ -1093,13 +1100,15 @@ function jawnGoSignApproval(requestId, status) {
 	var uuid = jawnDeviceUuid();
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!(window.crypto && crypto.subtle && crypto.subtle.sign)) { return Promise.reject({ error: 'unavailable' }); }
+	var signKey = null;
 	return jawnosDeviceKeyGet().then(function (key) {
 		if (!key) { throw { error: 'not paired' }; }
+		signKey = key;
 		return $.post('/manager/security/padlock_challenge', { device_uuid: uuid });
 	}).then(function (ch) {
 		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
 		var msg = 'go-approve\n' + uuid + '\n' + requestId + '\n' + ch.nonce;
-		return crypto.subtle.sign('Ed25519', key, new TextEncoder().encode(msg)).then(function (sig) {
+		return crypto.subtle.sign('Ed25519', signKey, new TextEncoder().encode(msg)).then(function (sig) {
 			return $.post('/manager/security/go_approve', { kind: 'pair', device_uuid: uuid, request_id: requestId, nonce: ch.nonce, signature: jawnosB64(sig) });
 		});
 	}).then(function (res) {
