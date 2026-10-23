@@ -59,6 +59,8 @@ function musicKeepalive(playing) {
 // again. Minimising or hiding the window leaves it alone.
 $(document).on('click touchend', '.close_button[app="music"]', function() {
 	musicKeepalive(false);
+	musicLookaheadStop();
+	document.querySelectorAll('[data-jawnos-seek-preview]').forEach(function(n) { n.remove(); });
 });
 $(window).on('pagehide', function() {
 	musicKeepalive(false);
@@ -449,6 +451,7 @@ function mediaMaker(data) {
 				}
 
 				tree.sound.src = url
+				if (method != 'benign') { musicLookaheadStop(); }
 				var st_url = url + '&subtitle=yes';
 				document.getElementById('video_subtitles').src = st_url;
 				document.getElementById('video_subtitles').addEventListener('error', function() {
@@ -495,6 +498,7 @@ function mediaMaker(data) {
 				tree.sound.state = 1;
 				musicKeepalive(true);
 				musicVolumeApply();
+				musicLookaheadStart();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
 					var endsong = tree.sound.duration;
@@ -582,6 +586,7 @@ function mediaMaker(data) {
 					clearInterval(interval);
 					tree.sound.state = 0;
 					musicKeepalive(false);
+					musicLookaheadSync();
 
 					$('#play_logo').attr('src', jawnosPlayIcon());
 
@@ -592,6 +597,7 @@ function mediaMaker(data) {
 				};
 				tree.sound.onended = function() {
 					clearInterval(interval);
+					musicLookaheadStop();
 					$('#progress_bar').attr('value', 0).attr('max', 0);
 					$('#total_progress').text(0);
 					$('#elapsed_progress').text(0);
@@ -967,6 +973,7 @@ $(document).on('click change', '#progress_bar', function(e) {
   // used to set currentTime to NaN, which aborts the whole handler
   if (!total_width || !isFinite(seek_to) || !tree.songs[0]) { return; }
   tree.sound.currentTime = seek_to;
+	musicLookaheadSeek();
 	remoteTrackToggle({
 		file: tree.songs[0].file,
 		toggle: 'seek',
@@ -1142,7 +1149,7 @@ function musicSeekBy(seconds) {
 		musicSeekRaf = 0;
 		var target = musicSeekTarget;
 		musicSeekTarget = null;
-		if (target != null) { tree.sound.currentTime = target; }
+		if (target != null) { tree.sound.currentTime = target; musicLookaheadSeek(); }
 	});
 }
 $(document).on('wheel', '#music_volume', function(e) {
@@ -1797,11 +1804,263 @@ var musicNormalizePresets = {
 	mild:       { threshold: -28, knee: 22, ratio: 4,  attack: 0.006, release: 0.25, gain: 3.00 },
 	aggressive: { threshold: -36, knee: 28, ratio: 8,  attack: 0.003, release: 0.20, gain: 6.00 }
 };
+
+// ---- look-ahead levelling ---------------------------------------------------
+// A compressor can only react after a loud moment has already started. While
+// normalisation is on, a second, silent copy of a local track plays a couple of
+// seconds ahead of the player; its loudness is measured and turned into a gain
+// map for the times the player has not reached yet. The map is applied by the
+// graph's makeup gain a moment before the main element gets there, so a quiet
+// line of dialogue rises and an action cue is already held down when it lands.
+// The compressor below stays as the fallback for remote tracks, files the
+// browser will not play twice, and the first couple of seconds of a seek.
+var musicLookahead = {
+	el: null, src: '', source: null, analyser: null, silent: null, buffer: null,
+	pending: [], timer: 0, active: false, failed: false, blocked: false,
+	gain: 1, loud: null, look: 2.5
+};
+// The measured map, kept per source for the session: a seek or a replay can use
+// the gains already learned instead of playing the first two seconds flat.
+var musicLookaheadMaps = {};
+var musicLookaheadMapSetting = '';
+var musicLookaheadSettings = {
+	slight:     { target: -20, up: 8,  down: 8 },
+	mild:       { target: -18, up: 14, down: 12 },
+	aggressive: { target: -16, up: 20, down: 16 }
+};
+
+function musicLookaheadStop() {
+	var p = musicLookahead;
+	clearInterval(p.timer);
+	p.timer = 0;
+	p.active = false;
+	if (p.el) {
+		try { p.el.pause(); p.el.removeAttribute('src'); p.el.load(); p.el.remove(); } catch (e) {}
+	}
+	if (p.source) { try { p.source.disconnect(); } catch (e) {} }
+	if (p.silent) { try { p.silent.disconnect(); } catch (e) {} }
+	p.el = null;
+	p.src = '';
+	p.source = null;
+	p.analyser = null;
+	p.silent = null;
+	p.buffer = null;
+	p.pending = [];
+	p.gain = 1;
+	p.loud = null;
+	p.blocked = false;
+	musicNormalizeParams();
+}
+
+function musicLookaheadSync() {
+	var p = musicLookahead;
+	if (!p.active || !p.el || !tree || !tree.sound) { return; }
+	if (tree.sound.paused) {
+		if (!p.el.paused) { p.el.pause(); }
+		return;
+	}
+	if (p.el.paused) {
+		var played = p.el.play();
+		if (played && played.catch) { played.catch(function() { p.blocked = true; p.active = false; musicNormalizeParams(); }); }
+	}
+}
+
+function musicLookaheadSeek() {
+	var p = musicLookahead;
+	p.pending = [];
+	p.loud = null;
+	var map = musicLookaheadMaps[p.src];
+	if (!map || !tree || !tree.sound) { return; }
+	var now = tree.sound.currentTime;
+	p.pending = map.filter(function(e) { return e.t >= now && e.t <= now + 60; }).slice(0, 600);
+}
+
+function musicLookaheadStart() {
+	var p = musicLookahead;
+	if (!music_normalize || music_normalize == 'off' || !tree || !tree.sound) {
+		if (p.active) { musicLookaheadStop(); }
+		return;
+	}
+	var main = tree.sound;
+	var src = main.currentSrc || main.getAttribute('src') || '';
+	// A remote track would pull the tunnel twice; the compressor is its fallback.
+	if (!src || src.indexOf('remote_uuid=') > -1) {
+		if (p.active) { musicLookaheadStop(); }
+		return;
+	}
+	var g = musicAudioGraph();
+	if (!g || !g.ctx || !g.makeup) { return; }
+	if (p.failed && p.src !== src) { p.failed = false; }
+	if (p.failed) { return; }
+	if (p.el && p.src === src) {
+		p.active = true;
+		musicNormalizeParams();
+		musicLookaheadSync();
+		return;
+	}
+	musicLookaheadStop();
+	var el = document.createElement('audio');
+	el.preload = 'auto';
+	el.style.cssText = 'position:fixed;left:-4px;top:-4px;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;';
+	try {
+		p.source = g.ctx.createMediaElementSource(el);
+		p.analyser = g.ctx.createAnalyser();
+		p.analyser.fftSize = 2048;
+		p.analyser.smoothingTimeConstant = 0.35;
+		p.silent = g.ctx.createGain();
+		p.silent.gain.value = 0;
+		// the analyser is before the silent gain: the copy is measured but not heard
+		p.source.connect(p.analyser);
+		p.analyser.connect(p.silent);
+		p.silent.connect(g.ctx.destination);
+		p.buffer = new Float32Array(p.analyser.fftSize);
+	}
+	catch (e) {
+		p.failed = true;
+		p.active = false;
+		try { el.remove(); } catch (ignored) {}
+		musicNormalizeParams();
+		return;
+	}
+	document.body.appendChild(el);
+	p.el = el;
+	p.src = src;
+	p.active = true;
+	p.pending = [];
+	p.gain = 1;
+	p.loud = null;
+	var saved = musicLookaheadMaps[src];
+	if (saved && saved.length) {
+		var start = main.currentTime;
+		p.pending = saved.filter(function(e) { return e.t >= start && e.t <= start + 60; }).slice(0, 600);
+	}
+	var seekCopy = function() {
+		if (!p.active || !tree || !tree.sound) { return; }
+		var want = Math.max(0, tree.sound.currentTime + p.look);
+		try { el.currentTime = want; } catch (e) {}
+		if (tree.sound.paused) { return; }
+		var played = el.play();
+		if (played && played.catch) { played.catch(function() { p.blocked = true; p.active = false; musicNormalizeParams(); }); }
+	};
+	el.addEventListener('loadedmetadata', seekCopy);
+	el.addEventListener('error', function() {
+		p.failed = true;
+		musicLookaheadStop();
+	});
+	el.src = src;
+	g.makeup.gain.value = 1;
+	clearInterval(p.timer);
+	p.timer = setInterval(musicLookaheadTick, 100);
+	musicNormalizeParams();
+}
+
+function musicLookaheadTick() {
+	var p = musicLookahead;
+	if (!p.active || !p.el || !p.analyser || !tree || !tree.sound) { return; }
+	// the window closing takes the player with it; do not leave the silent copy
+	// running in the page after the app is gone
+	if (!$('#music').length) { musicLookaheadStop(); return; }
+	var main = tree.sound;
+	var src = main.currentSrc || main.getAttribute('src') || '';
+	if (src && p.src && src !== p.src) { musicLookaheadStart(); return; }
+	if (main.paused) {
+		if (!p.el.paused) { p.el.pause(); }
+		return;
+	}
+	var want = main.currentTime + p.look;
+	if (p.el.seeking || Math.abs((p.el.currentTime || 0) - want) > 1.2) {
+		try { p.el.currentTime = Math.max(0, want); } catch (e) {}
+		// The stored map is keyed by the track's own time, so entries still ahead
+		// of the player stay valid across a seek; only the ones it has passed go.
+		var here = main.currentTime;
+		p.pending = p.pending.filter(function(e) { return e.t > here; });
+	}
+	if (p.el.paused) {
+		var played = p.el.play();
+		if (played && played.catch) { played.catch(function() { p.blocked = true; p.active = false; musicNormalizeParams(); }); }
+	}
+	if (p.el.readyState < 2 || !p.analyser.getFloatTimeDomainData) { return; }
+	p.analyser.getFloatTimeDomainData(p.buffer);
+	var sum = 0;
+	for (var i = 0; i < p.buffer.length; i++) {
+		var s = p.buffer[i];
+		sum += s * s;
+	}
+	var rms = Math.sqrt(sum / p.buffer.length);
+	if (rms < 0.00001) { return; }
+	var db = 20 * Math.log10(rms);
+	p.loud = (p.loud == null) ? db : p.loud + (db - p.loud) * 0.18;
+	var conf = musicLookaheadSettings[music_normalize] || musicLookaheadSettings.mild;
+	var gainDb = conf.target - p.loud;
+	gainDb = Math.max(-conf.down, Math.min(conf.up, gainDb));
+	var gain = Math.pow(10, gainDb / 20);
+	var entry = { t: p.el.currentTime, g: gain };
+	// The pending queue may already hold a seeded stretch of the stored map; keep
+	// the live entries in time order so they merge into it rather than queueing
+	// behind it.
+	var at = p.pending.length;
+	while (at > 0 && p.pending[at - 1].t > entry.t) { at--; }
+	p.pending.splice(at, 0, entry);
+	if (p.pending.length > 800) { p.pending.shift(); }
+	var map = musicLookaheadMaps[p.src];
+	if (!map) {
+		var known = Object.keys(musicLookaheadMaps);
+		if (known.length >= 12) { delete musicLookaheadMaps[known[0]]; }
+		map = musicLookaheadMaps[p.src] = [];
+	}
+	map.push(entry);
+	if (map.length > 20000) { map.splice(0, map.length - 20000); }
+	var now = main.currentTime;
+	var next = null;
+	while (p.pending.length && p.pending[0].t <= now + 0.05) { next = p.pending.shift().g; }
+	if (next != null) {
+		// rate limit once per tick: roughly 7 dB a second, so a scene change glides in
+		if (next > p.gain * 1.08) { next = p.gain * 1.08; }
+		if (next < p.gain / 1.08) { next = p.gain / 1.08; }
+		p.gain = next;
+	}
+	if (musicVisual.makeup && musicVisual.ctx) {
+		try { musicVisual.makeup.gain.setTargetAtTime(p.gain, musicVisual.ctx.currentTime, 0.20); }
+		catch (e) { musicVisual.makeup.gain.value = p.gain; }
+	}
+}
 function musicNormalizeParams() {
 	var g = musicVisual;
 	if (!g.ctx || !g.compressor || !g.makeup || !g.limiter) { return; }
-	var preset = musicNormalizePresets[music_normalize] || musicNormalizePresets.off;
 	var now = g.ctx.currentTime;
+	if (musicLookahead.active) {
+		// The look-ahead map is the level now: leave the compressor transparent
+		// and let the tick drive the makeup gain. The limiter stays as a peak
+		// guard for the boosted quiet passages.
+		try {
+			g.compressor.threshold.setTargetAtTime(0, now, 0.02);
+			g.compressor.knee.setTargetAtTime(0, now, 0.02);
+			g.compressor.attack.setTargetAtTime(0.003, now, 0.02);
+			g.compressor.release.setTargetAtTime(0.25, now, 0.02);
+		}
+		catch (e) {
+			g.compressor.threshold.value = 0;
+			g.compressor.knee.value = 0;
+			g.compressor.attack.value = 0.003;
+			g.compressor.release.value = 0.25;
+		}
+		g.compressor.ratio.value = 1;
+		try {
+			g.limiter.threshold.setTargetAtTime(-1, now, 0.02);
+			g.limiter.knee.setTargetAtTime(0, now, 0.02);
+			g.limiter.attack.setTargetAtTime(0.003, now, 0.02);
+			g.limiter.release.setTargetAtTime(0.10, now, 0.02);
+		}
+		catch (e) {
+			g.limiter.threshold.value = -1;
+			g.limiter.knee.value = 0;
+			g.limiter.attack.value = 0.003;
+			g.limiter.release.value = 0.10;
+		}
+		g.limiter.ratio.value = 20;
+		return;
+	}
+	var preset = musicNormalizePresets[music_normalize] || musicNormalizePresets.off;
 	try {
 		g.compressor.threshold.setTargetAtTime(preset.threshold, now, 0.02);
 		g.compressor.knee.setTargetAtTime(preset.knee, now, 0.02);
@@ -1838,7 +2097,16 @@ function musicNormalizeParams() {
 // on builds the shared graph (on the gesture that chose it), and turning it off
 // leaves the graph transparent so a playing track is not interrupted.
 function musicNormalizeApply() {
-	if (music_normalize && music_normalize != 'off') { musicAudioGraph(); }
+	var setting = music_normalize || 'off';
+	if (musicLookaheadMapSetting && musicLookaheadMapSetting !== setting) { musicLookaheadMaps = {}; }
+	musicLookaheadMapSetting = setting;
+	if (setting != 'off') {
+		musicAudioGraph();
+		musicLookaheadStart();
+	}
+	else {
+		musicLookaheadStop();
+	}
 	musicNormalizeParams();
 }
 // A page restored with normalisation on has no user gesture yet, and a browser
@@ -1846,7 +2114,22 @@ function musicNormalizeApply() {
 // reaches the window puts the graph in place and resumes it, so a restored track
 // is not left silent by a context that could not start on its own.
 $(document).on('pointerdown touchstart keydown', function() {
-	if (music_normalize && music_normalize != 'off' && $('#music').length) { musicAudioGraph(); }
+	if (music_normalize && music_normalize != 'off' && $('#music').length) {
+		musicAudioGraph();
+		if (musicLookahead.blocked && musicLookahead.active) {
+			musicLookahead.blocked = false;
+			musicLookaheadSync();
+		}
+		else if (musicLookahead.blocked) {
+			musicLookahead.blocked = false;
+			musicLookaheadStart();
+		}
+	}
+});
+// A manual seek moves the analysis copy too; its pending map belongs to the old
+// timeline and must not be applied to the new position.
+$(document).on('change mouseup touchend', '.music_seek', function() {
+	musicLookaheadSeek();
 });
 
 // The visualiser's tap. It shares the normaliser's graph so the drawing follows

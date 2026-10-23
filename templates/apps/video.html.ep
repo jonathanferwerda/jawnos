@@ -962,15 +962,24 @@
 			// one warms up; once it is ready a hover no longer waits for a round trip.
 			// A remote track is left to the server preview - pulling the tunnel a second
 			// time to preview it would cost more than the wait.
-			var <%= $miss %>SeekPreview = { video: null, src: '', time: 0, ready: false, canvas: null, failed: false };
+			var <%= $miss %>SeekPreview = { video: null, src: '', time: 0, ready: false, drawn: false, canvas: null, failed: false };
 			function <%= $miss %>SeekPreviewDraw() {
 				var p = <%= $miss %>SeekPreview;
 				var el = p.video;
-				if (!el || !el.videoWidth || !el.videoHeight) { return; }
+				if (!el || !el.videoWidth || !el.videoHeight || el.readyState < 2) { return; }
 				var c = p.canvas || (p.canvas = document.createElement('canvas'));
 				c.width = 200;
 				c.height = 120;
-				c.getContext('2d').drawImage(el, 0, 0, c.width, c.height);
+				var g = c.getContext('2d');
+				g.drawImage(el, 0, 0, c.width, c.height);
+				// An all-black canvas is what a decoder that never produced the frame
+				// gives us. Do not let it stand in for a preview: leave drawn false so
+				// the caller keeps asking the server for the frame.
+				var px = g.getImageData(0, 0, c.width, c.height).data;
+				var sum = 0;
+				for (var i = 0; i < px.length; i += 4) { sum += px[i] + px[i + 1] + px[i + 2]; }
+				if (sum / (px.length / 4) < 1) { p.drawn = false; return; }
+				p.drawn = true;
 				$('#<%= $miss %>_position_preview').attr('src', c.toDataURL('image/jpeg', 0.72)).show();
 			}
 			function <%= $miss %>SeekPreviewShow(time) {
@@ -981,7 +990,7 @@
 				p.time = time;
 				if (p.video && (p.src !== src || !document.body.contains(p.video))) {
 					try { p.video.removeAttribute('src'); p.video.load(); p.video.remove(); } catch (e) {}
-					p.video = null; p.ready = false;
+					p.video = null; p.ready = false; p.drawn = false;
 				}
 				if (!p.video) {
 					var el = document.createElement('video');
@@ -990,7 +999,10 @@
 					el.preload = 'metadata';
 					el.setAttribute('muted', '');
 					el.setAttribute('playsinline', '');
-					el.style.cssText = 'position:fixed;left:-10000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none;';
+					// The body, not the media window: a hidden parent (a folded window,
+					// a theatre transition) must not stop the decoder from painting.
+					el.style.cssText = 'position:fixed;left:-4px;top:-4px;width:2px;height:2px;opacity:0.01;pointer-events:none;z-index:-1;';
+					el.setAttribute('data-jawnos-seek-preview', '');
 					el.src = src;
 					el.addEventListener('loadedmetadata', function() {
 						p.ready = true;
@@ -1008,21 +1020,23 @@
 						try { el.removeAttribute('src'); el.load(); el.remove(); } catch (e) {}
 						p.video = null;
 					});
-					(main && main.parentNode || document.body).appendChild(el);
+					document.body.appendChild(el);
 					p.video = el;
 					p.src = src;
 				}
 				if (!p.ready) { return false; }
 				if (Math.abs((p.video.currentTime || 0) - time) > 0.5) {
 					p.video.currentTime = time;
-					$('#<%= $miss %>_position_preview').show();
 				}
 				else {
 					// already on this frame: a seek to where we are fires no seeked event,
 					// so draw it now (0:00, or hovering within half a second)
 					<%= $miss %>SeekPreviewDraw();
 				}
-				return true;
+				// Only a frame that actually reached the canvas counts. Until then the
+				// server's frame is the preview, so a decoder that cannot seek never
+				// leaves an empty or black box behind.
+				return p.drawn;
 			}
 <% } %>
 			vidOn('hover mousemove mouseover touchmove', '#<%= $miss %>_position', function(e) {

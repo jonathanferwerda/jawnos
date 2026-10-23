@@ -1313,6 +1313,11 @@ sub rock_and_roll($c) {
 	# thumbnail swaps the file out and clears the parameter. The header itself is
 	# set only on a successful response, so a rejected or 'none' one is not cached.
 	my $wants_thumb = ($c->param('thumb') ? 1 : 0);
+	# A hover preview asks for one frame at a position. It must be generated at
+	# that position, not answered from the track's one cached cover thumbnail,
+	# and it must not replace that cover.
+	my $hover_position = $c->param('position');
+	$hover_position = undef unless defined $hover_position && $hover_position =~ /^\d+(?:\.\d+)?$/;
 	my ($db,$database,$sql) = &subs::database_grabber();
 
 	my $mag;
@@ -1392,7 +1397,7 @@ sub rock_and_roll($c) {
 				$appt_server_time = $af->{'server_time'};
 				$file_data = $af;
 
-				if ($af->{'thumb'} && $c->param('thumb') && $thumbnail_size ne 'none') {
+				if ($af->{'thumb'} && $c->param('thumb') && $thumbnail_size ne 'none' && !defined $hover_position) {
 					if (-e $af->{'thumb'} && (-s $af->{'thumb'}) > 100) {
 						$file = $af->{'thumb'};
 						$c->param('thumb' => undef);
@@ -1446,7 +1451,7 @@ sub rock_and_roll($c) {
 						if ($file eq ($af->{'file'} // $af->{'f'} // '')) {
 							$appt_server_time = $af->{'server_time'};
 							$file_data = $af;
-							if ($af->{'thumb'} && $wants_thumb && $thumbnail_size ne 'none') {
+							if ($af->{'thumb'} && $wants_thumb && $thumbnail_size ne 'none' && !defined $hover_position) {
 								if (-e $af->{'thumb'} && (-s $af->{'thumb'}) > 100) {
 									$file = $af->{'thumb'};
 									$c->param('thumb' => undef);
@@ -1545,7 +1550,7 @@ sub rock_and_roll($c) {
 
 								my @filename = split /\./, $file;
 								my $ext = $filename[-2];
-								unless (-e $file_data->{'thumb'} && (-s $file_data->{'thumb'}) > 100) {
+								if (defined $hover_position || !(-e $file_data->{'thumb'} && (-s $file_data->{'thumb'}) > 100)) {
 									my $filename = $tdir . '/' .&subs::random_string_creator(20) . '.' . $ext;
 									if ($file =~ /webm/i) { $fd = 'video/webm'; }
 									# The plaintext is already in hand for an image; for a sealed video
@@ -1559,7 +1564,8 @@ sub rock_and_roll($c) {
 									}
 
 									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm mpg mpeg mov mkv avi/ ) {
-										my $command2 = 'ffmpeg -ss 00:00:00.010 -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
+										my $seek = defined $hover_position ? sprintf('%.3f', $hover_position) : '00:00:00.010';
+										my $command2 = 'ffmpeg -ss ' . $seek . ' -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
 										$file_data->{'type'} = 'video';
 										$data = &run_thumb_command($command2);
 										if ($opened->{'stream'} && (!defined $data || !length $data)) {
@@ -1579,7 +1585,7 @@ sub rock_and_roll($c) {
 										$file_data->{'type'} = 'image';
 										$data = &run_thumb_command($command2);
 									}
-									if ($file_data->{'uuid'} && $data && $thumbnail_size ne 'none') {
+									if ($file_data->{'uuid'} && $data && $thumbnail_size ne 'none' && !defined $hover_position) {
 										pop @file_split;
 										my $folder = join '/', @file_split;
 										$folder = $folder . '/.thumbs';
@@ -1628,6 +1634,10 @@ sub rock_and_roll($c) {
 								}
 							}
 							close($thumb_slot) if $thumb_slot;
+							if (defined $hover_position && ($file_data->{'type'} // '') eq 'video') {
+								$data ? $c->render_file(data => $data, content_type => 'image/png') : $c->render(text => 'none');
+								return;
+							}
 							$data = $full_data unless (defined $data && length $data);
 							$c->res->headers->accept_ranges('bytes');
 							&file_response_headers($c, $file, $wants_thumb ? 'private, max-age=3600' : 'private, no-cache');
@@ -1705,7 +1715,12 @@ sub rock_and_roll($c) {
 						my $filename = $tdir . '/' . &subs::random_string_creator(20) . '.png';
 						my $command = 'ffmpeg -ss 00:01:30.010 -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
 						my $data = `$command`;
-						$data ? $c->render_file(data => $data) : $c->render(text => 'none');
+						if ($c->param('position')) {
+							$data ? $c->render_file(data => $data, content_type => 'image/png') : $c->render(text => 'none');
+						}
+						else {
+							$data ? $c->render_file(data => $data) : $c->render(text => 'none');
+						}
 						return;
 					}
 				}
