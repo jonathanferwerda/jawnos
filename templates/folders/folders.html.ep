@@ -29,6 +29,8 @@
 	<div id="folders_toolbar">
 		<div class="folders_nav">
 			<button type="button" class="folders_command" command="home" hint="Home" aria-label="Home"><img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" alt=""></button>
+			<button type="button" id="folders_back" hint="Back" aria-label="Back" disabled="disabled"><img src="<%= &subs::icon_for('/images/make believe/left arrow.png') %>" alt=""></button>
+			<button type="button" id="folders_forward" hint="Forward" aria-label="Forward" disabled="disabled"><img src="<%= &subs::icon_for('/images/make believe/right arrow.png') %>" alt=""></button>
 			<button type="button" class="folders_command" command="up" hint="Up" aria-label="Up"><img src="<%= &subs::icon_for('/images/make believe/up.png') %>" alt=""></button>
 			<button type="button" id="folders_refresh" hint="Refresh" aria-label="Refresh"><img src="<%= &subs::icon_for('/images/make believe/renew.png') %>" alt=""></button>
 		</div>

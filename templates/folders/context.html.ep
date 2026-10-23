@@ -52,6 +52,8 @@
 			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'select_all' => {} },
 			{ 'paste' => { visible => scalar @{$folders->{'clipboard'}} > 0 ? 1 : 0 } },
+			{ 'browser_back' => { visible => (($folders->{'surface'} || '') eq 'desk') ? 'yes' : 'no' } },
+			{ 'browser_refresh' => { visible => (($folders->{'surface'} || '') eq 'desk') ? 'yes' : 'no' } },
 			{ 'properties' => {} }
 		]
 	}; %>
@@ -59,6 +61,8 @@
 		pin_app => &subs::ui('Pin apps to the desk'),
 		desk_folder => &subs::ui('Use as desk folder'),
 		desk_folder_reset => &subs::ui('Reset desk folder'),
+		browser_back => &subs::ui('Back'),
+		browser_refresh => &subs::ui('Refresh'),
 	); %>
 	<% foreach my $co ( @{$contexts->{$context}} ) { %>
 		<% foreach my $o ( keys %{$co} ) { %>

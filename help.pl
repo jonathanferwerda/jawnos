@@ -37,10 +37,10 @@ our %topic = (
 		verified => '2026-10-22',
 		body => [
 			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
-			'The toolbar carries Home, Up and Refresh, a clickable breadcrumb back to Home, the machine chooser, and a button that switches the listing between a grid of icons and a list showing each item\'s type, size and date. The path can be typed instead: press the small button beside the breadcrumb, or Ctrl+L, and Enter to go.',
+			'The toolbar carries Home, Back, Forward, Up and Refresh, a clickable breadcrumb back to Home, the machine chooser, and a button that switches the listing between a grid of icons and a list showing each item\'s type, size and date. Back and Forward walk the folders already visited (Alt+Left and Alt+Right do the same), and the path can be typed instead: press the small button beside the breadcrumb, or Ctrl+L, and Enter to go.',
 			'Selecting works the way a file manager\'s does: click one item, Ctrl (or Cmd) click to add or remove one, Shift click to take the run between the last click and this one, and drag on the empty background to draw a selection box. The arrow keys walk the listing, Shift and an arrow extend the run, Ctrl+A selects everything, Enter opens, F2 renames, Delete removes and Shift+Delete shreds; typing a name jumps to it.',
 			'Dragging carries the whole selection. Drop it on a folder\'s tile to put it inside, on the window\'s empty space to put it in the folder on screen, or on the desk to put it in the desktop folder; Ctrl (or Cmd) held at the drop copies instead of moving. Every move reports its progress in a dialog and the listing reads itself again when it finishes.',
-			'The desk behind the manager shows a folder of its own. It starts on ~/Desktop when that has something in it, and on your home folder otherwise. To choose another, right-click that folder (or the folder background) and pick Use as desk folder; Reset desk folder returns to the automatic choice.',
+			'The desk behind the manager shows a folder of its own. It starts on ~/Desktop when that has something in it, and on your home folder otherwise. To choose another, right-click that folder (or the folder background) and pick Use as desk folder; Reset desk folder returns to the automatic choice. Its icons line up down the left side in alphabetical order, under the clothesline when the rail is showing, and right-clicking the desk also offers the browser\'s own Back and Refresh.',
 			'Right-click the desk or the folder background and pick Pin apps to the desk to keep app shortcuts there. A double-click opens the app; right-click a shortcut and choose Unpin from the desk to take it away. The shortcut wears a small arrow on its icon, and files can still be dragged past or onto the desk around it.',
 			'Properties tells you what a file is without opening it: its path, type, size (or for a folder, how many things are inside), modified, accessed and changed dates, permissions, owner and group. Select several items and Properties gives one table with the sizes and a total. Copy path puts the full path on the clipboard, and Show in Folders opens the folder that holds it.',
 			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
@@ -49,7 +49,7 @@ our %topic = (
 		],
 		steps => [
 			'Open Folders from the start menu.',
-			'Click into a folder to descend; the breadcrumb along the top walks back up, and Home returns to your home folder.',
+			'Click into a folder to descend; the breadcrumb along the top walks back up, and Home returns to your home folder. Back and Forward (or Alt+Left and Alt+Right) retrace the folders you have visited.',
 			'Press the view button (or Ctrl+L to type a path) to work in a list with type, size and date instead of icons.',
 			'Click an item; Ctrl-click adds one, Shift-click takes a run, and a drag on the empty background draws a selection box.',
 			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',

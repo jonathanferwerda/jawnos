@@ -393,6 +393,8 @@ our $known_icons = {
 	pin_app => '/images/decipherable/forward.png',
 	desk_folder => '/images/decipherable/computer.png',
 	desk_folder_reset => '/images/decipherable/home.png',
+	browser_back => '/images/make believe/left arrow.png',
+	browser_refresh => '/images/make believe/renew.png',
 };
 
 our $inventory_states = [

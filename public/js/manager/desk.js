@@ -24,9 +24,13 @@ function deskShow() {
 }
 
 // The icons start under whatever the desk reserves above them: a top taskbar,
-// and the clothesline's own band.
+// and the clothesline's own band when the rail is showing.
 function deskPosition() {
 	var top = (typeof windowTopLimit == 'function') ? windowTopLimit() : 0;
+	if (typeof clothesLinePos !== 'undefined' && typeof clothesLineHeight !== 'undefined'
+		&& clothesLineHeight > 0 && clothesLinePos['maxHeight']) {
+		top = Math.max(top, clothesLinePos['maxHeight'] + (clothesLinePos['bordersize'] || 0));
+	}
 	$('#desk_layer').css({ 'top': (top + 8) + 'px' });
 }
 
@@ -64,23 +68,36 @@ function deskRender() {
 	if (!layer.length) { return; }
 	layer.empty();
 	deskPosition();
-	// pinned apps first: they are the fixed furniture of the desk, the files
-	// behind them are what changes
-	$.each(desk.apps || [], function (i, a) { layer.append(deskAppItem(a)); });
-	$.each(desk.files || [], function (i, f) {
-		var item = $('<div class="folders_file desk_file" tabindex="-1" role="option" aria-selected="false"></div>')
-			.attr({ path: f['path'], type: f['type'], 'data-name': f['name'] });
-		$('<span class="folders_thumb"></span>')
-			.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''))
-			.appendTo(item);
-		$('<span class="folders_label"></span>').text(f['name'] || '').attr('title', f['name'] || '').appendTo(item);
-		layer.append(item);
+	// One alphabetical run of icons down the left: pinned apps and the desk's
+	// own files and folders together, the way a desktop reads by default.
+	var entries = [];
+	$.each(desk.apps || [], function (i, a) {
+		entries.push({ kind: 'app', name: (a['name'] || ''), data: a });
 	});
-	if (!(desk.apps || []).length && !(desk.files || []).length) {
+	$.each(desk.files || [], function (i, f) {
+		entries.push({ kind: 'file', name: (f['name'] || ''), data: f });
+	});
+	entries.sort(function (a, b) {
+		return String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase());
+	});
+	$.each(entries, function (i, e) {
+		layer.append((e.kind == 'app') ? deskAppItem(e.data) : deskFileItem(e.data));
+	});
+	if (!entries.length) {
 		$('<div class="desk_empty"></div>').text(jawnosT('Your desktop is empty')).appendTo(layer);
 	}
 	foldersDraggable();
 	foldersSelectionSync('desk');
+}
+
+function deskFileItem(f) {
+	var item = $('<div class="folders_file desk_file" tabindex="-1" role="option" aria-selected="false"></div>')
+		.attr({ path: f['path'], type: f['type'], 'data-name': f['name'] });
+	$('<span class="folders_thumb"></span>')
+		.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''))
+		.appendTo(item);
+	$('<span class="folders_label"></span>').text(f['name'] || '').attr('title', f['name'] || '').appendTo(item);
+	return item;
 }
 
 function deskAppItem(a) {

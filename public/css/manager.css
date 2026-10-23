@@ -2343,6 +2343,8 @@ body.dark_theme #folders, body.dark_theme #desk_layer { --folders-accent: #6ea8f
 	background: transparent; border: 1px solid transparent; border-radius: 8px;
 }
 #folders_toolbar button:hover { background: var(--panel); border-color: var(--line); }
+#folders_toolbar button:disabled { opacity: .32; cursor: default; }
+#folders_toolbar button:disabled:hover { background: transparent; border-color: transparent; }
 #folders_toolbar button img { height: 20px; width: 20px; max-width: 20px; object-fit: contain; }
 .folders_nav, .folders_tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
 .folders_pathbar { display: flex; align-items: center; gap: 4px; flex: 1 1 220px; min-width: 120px; }
@@ -2473,7 +2475,8 @@ body.dark_theme #desk { --desk-accent: #6ea8fe; }
 	bottom: calc(var(--taskbar_bottom_h, 0px) + 8px); width: 100%;
 	box-sizing: border-box; padding: 10px 16px; z-index: 4; overflow: auto;
 	align-content: start; justify-content: start; outline: none;
-	grid-template-columns: repeat(auto-fill, 96px); grid-auto-rows: min-content; gap: 6px;
+	/* one column down the left: the desk reads top to bottom, alphabetically */
+	grid-template-columns: 96px; grid-auto-rows: min-content; gap: 4px;
 }
 #desk_layer.active { display: grid; }
 #desk_layer .desk_file { padding: 6px 4px; }

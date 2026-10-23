@@ -12,6 +12,8 @@ var folders = {
 	folder: undefined,
 	disk: {},
 	files: [],
+	history: [],
+	history_index: -1,
 	type: undefined,
 	path: undefined,
 	remote_uuid: undefined,
@@ -84,6 +86,8 @@ function foldersOpener(data) {
 	var remote_uuid = (data['remote_uuid'] !== undefined) ? data['remote_uuid'] : folders.remote_uuid;
 	var timestamp = Date.now();
 	var previous_folder = folders.folder;
+	var previous_remote = folders.remote_uuid;
+	var history_mode = data['history'];
 	var previous_scroll = $('#folders_contents').scrollTop() || 0;
 	$.ajax({
 		url: '/manager/folders',
@@ -101,6 +105,8 @@ function foldersOpener(data) {
 		},
 		success:function(response) {
 			var same_folder = (previous_folder !== undefined && response.fo.folder === previous_folder);
+			var changed = (previous_folder !== undefined && response.fo.folder !== previous_folder);
+			var machine_changed = (previous_remote !== undefined && previous_remote !== remote_uuid);
 			windowMaker(response.html);
 			folders['folder'] = response.fo.folder;
 			folders['disk'] = response.fo.disk;
@@ -120,6 +126,37 @@ function foldersOpener(data) {
 			foldersApplyView();
 			foldersDraggable();
 			foldersSelectionSync('folders');
+			// A back/forward visit already moved the index; a new visit truncates
+			// what was ahead and appends itself. A refresh of the same folder
+			// leaves the trail alone.
+			if (history_mode == 'skip') {
+				if (folders.history_index >= 0 && folders.history.length) {
+					folders.history[folders.history_index] = response.fo.folder;
+				}
+			}
+			else {
+				if (machine_changed) { folders.history = []; folders.history_index = -1; }
+				if (!folders.history.length) {
+					folders.history.push(response.fo.folder);
+					folders.history_index = 0;
+				}
+				else if (changed) {
+					folders.history = folders.history.slice(0, folders.history_index + 1);
+					if (folders.history[folders.history.length - 1] !== response.fo.folder) {
+						folders.history.push(response.fo.folder);
+					}
+					folders.history_index = folders.history.length - 1;
+				}
+				else if (folders.history[folders.history_index] !== response.fo.folder) {
+					folders.history[folders.history_index] = response.fo.folder;
+				}
+				// a long session should not grow without bound
+				while (folders.history.length > 50) {
+					folders.history.shift();
+					folders.history_index--;
+				}
+			}
+			foldersHistoryApply();
 			if (typeof appointment_chron == 'function') { appointment_chron(); }
 			if (same_folder) { $('#folders_contents').scrollTop(previous_scroll); }
 			$('#folders_contents').focus();
@@ -129,9 +166,25 @@ function foldersOpener(data) {
 
 $(document).on('change', '#folders_machine_select', function () {
 	// a new machine starts at its own home: this machine's paths mean nothing
-	// over there
+	// over there, and neither does the trail that reached one of them
+	folders.history = [];
+	folders.history_index = -1;
 	foldersOpener({ remote_uuid: $(this).val(), folder: '' });
 });
+
+function foldersHistoryApply() {
+	$('#folders_back').prop('disabled', !(folders.history && folders.history_index > 0));
+	$('#folders_forward').prop('disabled', !(folders.history && folders.history_index >= 0 && folders.history_index < folders.history.length - 1));
+}
+function foldersHistoryMove(delta) {
+	if (!folders.history || !folders.history.length) { return; }
+	var next = folders.history_index + delta;
+	if (next < 0 || next >= folders.history.length) { return; }
+	folders.history_index = next;
+	foldersOpener({ folder: folders.history[next], history: 'skip' });
+}
+$(document).on('click', '#folders_back', function () { foldersHistoryMove(-1); });
+$(document).on('click', '#folders_forward', function () { foldersHistoryMove(1); });
 
 // ---- view ------------------------------------------------------------------
 // The grid is the default; the list gives every item its type, size and date.
@@ -486,7 +539,7 @@ $(document).on('contextmenu', '.folders_file, #folders_contents, #desk_layer', f
 		foldersClearSelection(surface);
 		context = 'folder_background';
 	}
-	var jstate = JSON.stringify(st);
+	var jstate = JSON.stringify($.extend({}, st, { surface: surface }));
 	$.ajax({
 		url: '/manager/folders/context',
 		type: 'POST',
@@ -598,6 +651,12 @@ function foldersCommand(data, state) {
 	}
 	else if (command == 'unpin_app') {
 		if (st.app && typeof deskUnpinApp == 'function') { deskUnpinApp(st.app); }
+	}
+	else if (command == 'browser_back') {
+		window.history.back();
+	}
+	else if (command == 'browser_refresh') {
+		window.location.reload();
 	}
 	else if (command == 'desk_folder') {
 		foldersDeskFolder(st.path || st.folder);
@@ -1052,6 +1111,12 @@ function foldersKey(e, surface) {
 	}
 	if (key == 'ArrowLeft' || key == 'ArrowRight' || key == 'ArrowUp' || key == 'ArrowDown') {
 		e.preventDefault();
+		// Alt+Left/Right is the file-manager way back and forward through the
+		// folders already visited; plain arrows walk the listing
+		if (surface == 'folders' && e.altKey && (key == 'ArrowLeft' || key == 'ArrowRight')) {
+			foldersHistoryMove((key == 'ArrowLeft') ? -1 : 1);
+			return;
+		}
 		var delta = 0;
 		if (key == 'ArrowRight') { delta = 1; }
 		else if (key == 'ArrowLeft') { delta = -1; }
