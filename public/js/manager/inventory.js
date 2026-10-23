@@ -736,10 +736,29 @@ $(document).on('change', '.evaluation_cadence', function() {
 
 $(document).on('change', '.nightly_evaluation_days', function() {
 	var pick = $(this);
+	var app = pick.attr('app');
 	var nights = pick.val() || [];
-	// which nights of the week it runs (for daily and weekly); none picked means
-	// every night for daily and Sunday for weekly
-	settingSetter({ app: pick.attr('app'), setting: 'nightly_evaluation_days', value: nights.join(',') });
+	var all = $('.nightly_evaluation_days_all[app="' + app + '"]').first();
+	// which days it runs (for daily and weekly); every day is All, and no day at
+	// all stops the schedule rather than quietly falling back to every night
+	all.prop('checked', nights.length === 0 || nights.length === 7);
+	settingSetter({ app: app, setting: 'nightly_evaluation_days', value: nights.length ? nights.join(',') : 'none' });
+});
+
+$(document).on('change', '.nightly_evaluation_days_all', function() {
+	var box = $(this);
+	var app = box.attr('app');
+	var pick = $('.nightly_evaluation_days[app="' + app + '"]').first();
+	// All selects every day; clearing it clears the list and stops the schedule
+	// until a day is picked
+	if (box.is(':checked')) {
+		pick.find('option').prop('selected', true);
+		settingSetter({ app: app, setting: 'nightly_evaluation_days', value: '0,1,2,3,4,5,6' });
+	}
+	else {
+		pick.find('option').prop('selected', false);
+		settingSetter({ app: app, setting: 'nightly_evaluation_days', value: 'none' });
+	}
 });
 
 $(document).on('change', '.evaluation_machine', function() {

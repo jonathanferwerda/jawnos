@@ -25,13 +25,20 @@
 		<option value="<%= $c %>" <% if ($cadence eq $c) { %>selected<% } %>><%= $c eq 'each_run' ? 'Every Run' : &subs::format_name($c) %></option>
 	<% } %>
 </select>
-<%# the days it runs on when the cadence is daily or weekly; nothing picked means
-    every night for daily and Sunday for weekly %>
-<% my @nightly_days = @{ &subs::nightly_evaluation_days($run_scope) }; %>
-<select multiple class="nightly_evaluation_days" app="<%= $run_scope %>" hint="The days the evaluation runs on, for daily or weekly; nothing picked means every night (daily) or Sunday (weekly)" style="vertical-align:bottom;height:70px;">
+<%# the days it runs on when the cadence is daily or weekly. All is the wish to
+    run every day; a blank legacy value also reads as All, because that is what a
+    blank meant before the change. "none" (written by clearing All) stops the
+    scheduled runs without turning the cadence off. %>
+<% my $days_setting = &subs::setting_grabber({ app => $run_scope, setting => 'nightly_evaluation_days' }); %>
+<% my $days_none = (defined $days_setting && $days_setting =~ /^\s*none\s*$/i) ? 1 : 0; %>
+<% my @nightly_days = $days_none ? () : @{ &subs::nightly_evaluation_days($run_scope) }; %>
+<% my $days_all = (!$days_none && (!scalar @nightly_days || scalar(@nightly_days) == 7)) ? 1 : 0; %>
+<% my @days_shown = $days_all ? (0 .. 6) : @nightly_days; %>
+<label class="nightly_evaluation_days_all_label" style="font-size:80%;vertical-align:bottom;margin-right:4px;white-space:nowrap;" hint="Run every day; clear it to pick particular days, or to stop the scheduled runs"><input type="checkbox" class="nightly_evaluation_days_all" app="<%= $run_scope %>"<% if ($days_all) { %> checked<% } %>> <%= &subs::lang('common.all') %></label>
+<select multiple class="nightly_evaluation_days" app="<%= $run_scope %>" hint="The days the evaluation runs on, for daily or weekly. All runs every day; clear it and pick days to narrow it, or leave the list empty to stop the scheduled runs" style="vertical-align:bottom;height:70px;">
 	<% my @day_names = qw/sunday monday tuesday wednesday thursday friday saturday/; %>
 	<% foreach my $d ( 0 .. 6 ) { %>
-		<option value="<%= $d %>" <% if (grep { $_ == $d } @nightly_days) { %>selected<% } %>><%= &subs::format_name($day_names[$d]) %></option>
+		<option value="<%= $d %>" <% if (grep { $_ == $d } @days_shown) { %>selected<% } %>><%= &subs::format_name($day_names[$d]) %></option>
 	<% } %>
 </select>
 <%# when the next scheduled run is due, so the cadence is easy to read at a glance %>
