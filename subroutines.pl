@@ -28694,6 +28694,12 @@ sub update_now {
 	my $repo = $opts->{'repo'} || '.';
 	my $force = $opts->{'force'} ? 1 : 0;
 	my $method = $opts->{'method'} || &subs::sync_update_method_get();
+	my $was_dirty = 0;
+	if ($force) {
+		my $git = &subs::git_binary();
+		my $d = `cd "$repo" && "$git" status --porcelain --untracked-files=no 2>/dev/null`;
+		$was_dirty = ($d =~ /\S/) ? 1 : 0;
+	}
 	my ($status, $out, $source) = ('none', '', '');
 	if ($method eq 'github' || $method eq 'manual_github') {
 		($status, $out) = &subs::git_repo_update({ repo => $repo, force => $force });
@@ -28712,6 +28718,13 @@ sub update_now {
 				($status, $out, $source) = ($pst, $pout, 'peer');
 			}
 		}
+	}
+	# A confirmed force on an already-current tree has nothing to pull, but it
+	# still promised to discard the tracked changes that blocked the watcher.
+	if ($force && $was_dirty && $status eq 'current') {
+		my $git = &subs::git_binary();
+		$out = `cd "$repo" && "$git" reset --hard HEAD 2>&1`;
+		$status = 'reset';
 	}
 	return { status => $status, output => $out, source => $source, method => $method };
 }
