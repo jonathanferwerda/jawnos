@@ -26599,7 +26599,28 @@ post '/manager/folders' => sub($c) {
 	my $unlock = $unlocked ? $c->param('unlock') : '';
 
 	my $fo = &folders_opener({ folder => $folder, command => $command, c => $c, unlocked => $unlocked });
-	my $window_name = &subs::ui('Folders') . ' - ' . ($fo->{'folder'} || '');
+	# the bar names the folder being read, not its whole path
+	my $named_folder = $fo->{'folder'} || '';
+	unless ($named_folder eq '/') { $named_folder =~ s{/+$}{}; $named_folder =~ s{.*/}{}; }
+	my $window_name = &subs::ui('Folders') . (length $named_folder ? ' - ' . $named_folder : '');
+	my $remote_uuid = $c->param('remote_uuid') || '';
+	my $machines = &subs::remote_machine_lister({ self => 'no' });
+	# A remote listing is rendered by the machine being read, where that machine
+	# is "self" and so absent from its peer list. Keep an option for it: the
+	# toolbar must always name the machine whose files are on screen.
+	if ($remote_uuid && !grep { ($_->{'uuid'} || '') eq $remote_uuid } @{$machines}) {
+		my $rm = &subs::db_select('remote_machines', undef, { uuid => $remote_uuid })->hashes->[0] || {};
+		my $label = $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} || '';
+		unless (length $label) {
+			# a relayed rendering: this uuid is the source's name for us
+			if (($c->param('remoted') || '') eq 'yes') {
+				$label = `hostname`;
+				chomp $label;
+			}
+		}
+		$label = $remote_uuid unless length $label;
+		push @{$machines}, { uuid => $remote_uuid, hostname => $label };
+	}
 	my $contents = $c->render_to_string(
 		template => 'folders/folders',
 		settings => $settings,
@@ -26609,8 +26630,8 @@ post '/manager/folders' => sub($c) {
 		tab_id => $tab_id,
 		unlocked => $unlocked,
 		unlock => $unlock,
-		machines => &subs::remote_machine_lister({ self => 'no' }),
-		remote_uuid => $c->param('remote_uuid')
+		machines => $machines,
+		remote_uuid => $remote_uuid
 	);
 
 	my $html = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'folders', window_id => $folders_id, window_name => $window_name, contents => $contents }, $timestamp);

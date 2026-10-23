@@ -164,6 +164,9 @@ function jawnosTaskbarOrderApply() {
 	if (jawnosBars.search == 'taskbar' && order.indexOf('search') < 0) { order.push('search'); }
 
 	bar.children('.taskbar_pin').remove();
+	// A parked window button was a child of the pin just removed; the next
+	// displayer must rebuild its tile instead of trusting an unchanged stamp.
+	bar.find('#taskbar_windows').removeAttr('data-taskbar-stamp');
 	order.forEach(function (item) {
 		var el = null;
 		if (item && typeof item === 'object' && item.k == 'pin') {

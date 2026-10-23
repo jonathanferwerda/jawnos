@@ -158,7 +158,8 @@ function foldersApplyWindowName(inst) {
 	var folder = (tab && tab.folder) ? tab.folder : '';
 	var wind = inst.root.closest('.wind');
 	if (!wind.length) { return; }
-	var name = jawnosT('Folders') + (folder ? ' - ' + folder : '');
+	// the bar names the folder being read, not its whole path
+	var name = jawnosT('Folders') + (folder ? ' - ' + foldersTabLabel(folder) : '');
 	var text = wind.find('.appointment_name .name_text').first();
 	// every click activates the window; only a real name change repaints the bar
 	if (text.length && text.text() === name) { return; }
@@ -282,7 +283,18 @@ function foldersOpener(data) {
 	if (!tab && data['keep_tab'] && inst.tabs.length) { tab = inst.tabs[inst.active]; }
 	if (!tab && inst.tabs.length && !data['new_window']) { tab = inst.tabs[inst.active]; }
 	if (!tab) {
-		tab = foldersNewTab(data['folder'], data['remote_uuid'], data['tab_id']);
+		var seed_folder = data['folder'];
+		var seed_remote = data['remote_uuid'];
+		// A plain open (the menu's Folders row, a new window) comes back to the
+		// last folder read, on the machine it was read from. An explicit folder,
+		// machine or command is the person's choice and always wins.
+		if (seed_folder === undefined && seed_remote === undefined && data['command'] === undefined) {
+			try {
+				seed_folder = localStorage.getItem('folders_last_folder') || undefined;
+				seed_remote = localStorage.getItem('folders_last_remote_uuid') || '';
+			} catch (e) {}
+		}
+		tab = foldersNewTab(seed_folder, seed_remote, data['tab_id']);
 		inst.tabs.push(tab);
 		inst.active = inst.tabs.length - 1;
 	}
@@ -326,6 +338,10 @@ function foldersOpener(data) {
 			tab.disk = response.fo.disk;
 			tab.files = response.fo.files;
 			tab.remote_uuid = remote_uuid;
+			try {
+				localStorage.setItem('folders_last_folder', response.fo.folder || '');
+				localStorage.setItem('folders_last_remote_uuid', remote_uuid || '');
+			} catch (e) {}
 			tab.selected = [];
 			tab.path = undefined;
 			tab.type = undefined;

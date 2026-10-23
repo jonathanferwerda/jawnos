@@ -66,7 +66,6 @@ function taskbarDisplayer(destination) {
 	if (!destination) {
 		destination = '#taskbar_windows';
 	}
-	$(destination).html('');
 	if ($(destination).length == 0) { return; }
 	var tiles = [];
 	var timestamp = Date.now();
@@ -114,7 +113,18 @@ function taskbarDisplayer(destination) {
 	});
 	tiles.sort(function(a, b) { return a.z - b.z; });
 	var html = '';
-	$.each(tiles, function(i,v) { html += v.html; });
+	var stamp = '';
+	$.each(tiles, function(i,v) { html += v.html; stamp += v.z + '\u0001' + v.html + '\u0002'; });
+	// The view poll calls windowBackgroundAdjuster every few seconds, and that
+	// calls this. Rebuilding identical tiles emptied and refilled the bar each
+	// time, which made every window button blink. Paint only when the list (its
+	// order, names, icons or dialogs) really changed; the state pass below still
+	// runs from jawnosTaskbarPinsRefresh on every call.
+	if ($(destination).attr('data-taskbar-stamp') === stamp) {
+		appointment_chron();
+		return;
+	}
+	$(destination).attr('data-taskbar-stamp', stamp);
 	$(destination).html(html);
 	$('.window_toggle_name').remove();
 	$(destination).find('.window_toggle_icon').each(function(i,v) {
