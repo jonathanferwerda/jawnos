@@ -173,7 +173,7 @@ function deskRender() {
 		body.push({ kind: 'app', name: (a['name'] || ''), data: a });
 	});
 	$.each(desk.files || [], function (i, f) {
-		body.push({ kind: 'file', name: (f['name'] || ''), data: f });
+		body.push({ kind: 'file', name: (f['display'] || f['name'] || ''), data: f });
 	});
 	body.sort(function (a, b) {
 		return String(a.name).toLowerCase().localeCompare(String(b.name).toLowerCase());
@@ -203,12 +203,13 @@ function deskRender() {
 }
 
 function deskFileItem(f) {
+	var name = f['display'] || f['name'] || '';
 	var item = $('<div class="folders_file desk_file" tabindex="-1" role="option" aria-selected="false"></div>')
-		.attr({ path: f['path'], type: f['type'], 'data-name': f['name'] });
+		.attr({ path: f['path'], type: f['type'], 'data-name': name });
 	$('<span class="folders_thumb"></span>')
 		.append($('<img draggable="false" alt="">').attr('src', f['icon'] || ''))
 		.appendTo(item);
-	$('<span class="folders_label"></span>').text(f['name'] || '').attr('title', f['name'] || '').appendTo(item);
+	$('<span class="folders_label"></span>').text(name).attr('title', name).appendTo(item);
 	return item;
 }
 

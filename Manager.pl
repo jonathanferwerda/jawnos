@@ -26833,6 +26833,88 @@ sub folders_owning_app($path) {
 	return undef;
 }
 
+# The house's own apps are written to disk under their key form - path_name() of
+# the app name - so a folder the program made reads as a word salad in the
+# listing. The apps the settings table knows are collected here once per folder.
+sub folders_app_names {
+	my %apps = map { $_ => 1 } keys %{ $gb::known_appts || {} };
+	my $names = &subs::appointment_names() || {};
+	$apps{$_} = 1 for keys %{$names};
+	return \%apps;
+}
+
+# The folder a media location wrote for an app reads as the app's own name. Only
+# a location's top level is renamed; a folder inside an app folder keeps the
+# name it has on disk.
+sub folders_app_folder_display($path, $apps) {
+	return undef unless defined $path && length $path && $apps;
+	my $base = $path;
+	$base =~ s{.*/}{};
+	my $seg = &folders_owning_app($path);
+	return undef unless defined $seg && length $seg && $seg eq $base;
+	my $app = &url_unescape($seg);
+	utf8::decode($app) if !utf8::is_utf8($app);
+	return undef unless $apps->{$app};
+	my $display = &subs::format_name($app);
+	return ($display eq $base) ? undef : $display;
+}
+
+# A sealed name carries no words of its own. A row that points at it may name it
+# - a map's place, a document's title - and that name wins; otherwise it reads as
+# the app that wrote it and the moment it was made, "Autumn 10162026 3:30pm".
+sub folders_sealed_display($path, $apps, $references) {
+	return undef unless defined $path && length $path;
+	my $blob;
+	my $row_app = '';
+	foreach my $spot ( @{ ($references && $references->{'paths'}->{$path}) || [] } ) {
+		next unless ($spot->{'kind'} || '') eq 'f';
+		$blob = $spot->{'blob'};
+		$row_app = $spot->{'info'}->{'app'} || '';
+		last;
+	}
+	my $named = $blob ? ($blob->{'name'} || '') : '';
+	if ($named =~ /\S/) {
+		my $display = &subs::format_name($named);
+		return $display if length $display;
+	}
+	my $app = '';
+	my $seg = &folders_owning_app($path);
+	if (defined $seg && length $seg) {
+		my $candidate = &url_unescape($seg);
+		utf8::decode($candidate) if !utf8::is_utf8($candidate);
+		$app = $candidate if $apps && $apps->{$candidate};
+	}
+	$app = $row_app unless length $app;
+	my $stamp = 0;
+	my $base = $path;
+	$base =~ s{.*/}{};
+	if ($base =~ /_(\d{12,14})\.[^.]+\.enc$/i) { $stamp = $1 + 0; }
+	elsif ($blob && ($blob->{'server_time'} || '') =~ /^(\d{10,14})$/) { $stamp = $1 + 0; }
+	else { my @st = stat($path); $stamp = ($st[9] || 0) * 1000; }
+	my $when = &folders_stamp_words($stamp);
+	if (length $app) {
+		my $app_name = &subs::format_name($app);
+		return $app_name . (length $when ? ' ' . $when : '');
+	}
+	# nothing ties it to an app: the name it went in under is still better than
+	# the random one the seal carries
+	if ($blob && ($blob->{'of'} || '') =~ /\S/) {
+		my $of = $blob->{'of'};
+		$of =~ s{.*/}{};
+		return $of if length $of;
+	}
+	return undef;
+}
+
+# The moment a sealed file was made, in the house's short form: 10162026 3:30pm.
+sub folders_stamp_words($ms) {
+	return '' unless $ms && $ms > 0;
+	my @t = localtime(int($ms / 1000));
+	my $hour = $t[2] % 12;
+	$hour = 12 unless $hour;
+	return sprintf('%02d%02d%04d %d:%02d%s', $t[4] + 1, $t[3], $t[5] + 1900, $hour, $t[1], ($t[2] < 12 ? 'am' : 'pm'));
+}
+
 # Whether Folders may list sealed names comes from the window's own unlock
 # token (media_unlock_open), never from the secret left in settings: a fresh
 # open is locked, while the refresh after an unlock carries the token.
@@ -26895,6 +26977,23 @@ sub folders_listing($folder, $unlocked, $c) {
 	} @{$files};
 	my @folders = grep { $_->{'type'} eq 'folder' } @{$files};
 	@{$files} = grep { $_->{'type'} ne 'folder' } @{$files};
+	# the names the house gave its own folders and seals, for the eye only: the
+	# path every command works on is still the real one
+	my $apps = &folders_app_names();
+	foreach my $file ( @folders ) {
+		next if defined $file->{'display'};
+		my $display = &folders_app_folder_display($file->{'path'}, $apps);
+		$file->{'display'} = $display if defined $display;
+	}
+	my @sealed = grep { ($_->{'name'} // '') =~ /\.enc$/i } @{$files};
+	if (scalar @sealed) {
+		my $references = &subs::file_reference_read();
+		foreach my $file ( @sealed ) {
+			next if defined $file->{'display'};
+			my $display = &folders_sealed_display($file->{'path'}, $apps, $references);
+			$file->{'display'} = $display if defined $display && length $display;
+		}
+	}
 	my $disk = {
 		folders => scalar @folders,
 		files => scalar @{$files},

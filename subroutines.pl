@@ -11995,7 +11995,7 @@ sub folders_entry_trim {
 # remembers its sealed file as a bare path, so it is here too.
 sub file_reference_places {
 	return (
-		{ table => 'appointments', column => 'file', shape => 'entries', standard => 1 },
+		{ table => 'appointments', column => 'file', shape => 'entries', standard => 1, app => 1 },
 		{ table => 'mailbox', column => 'attachments', shape => 'entries' },
 		{ table => 'model', column => 'file', shape => 'entries' },
 		{ table => 'model', column => 'files', shape => 'entries' },
@@ -12044,7 +12044,7 @@ sub file_reference_read {
 	foreach my $place ( &file_reference_places() ) {
 		my $table = $place->{'table'};
 		my $column = $place->{'column'};
-		my $select = "rowid, $column" . ($place->{'standard'} ? ', encryption_standard' : '');
+		my $select = "rowid, $column" . ($place->{'standard'} ? ', encryption_standard' : '') . ($place->{'app'} ? ', app' : '');
 		my $found = eval { &db_query("select $select from $table where $column is not null and $column != ''")->hashes } || [];
 		foreach my $row ( @{$found} ) {
 			my $info = {
@@ -12053,7 +12053,8 @@ sub file_reference_read {
 				shape => $place->{'shape'},
 				flagged => $place->{'standard'} ? 1 : 0,
 				rowid => $row->{'rowid'},
-				row_standard => $row->{'encryption_standard'}
+				row_standard => $row->{'encryption_standard'},
+				app => ($place->{'app'} ? ($row->{'app'} || '') : '')
 			};
 			if ($place->{'shape'} eq 'entries') {
 				my $blob = eval { return decode_json $row->{$column} };
