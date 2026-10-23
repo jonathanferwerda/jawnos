@@ -133,6 +133,7 @@ function deskLoad(quiet) {
 		type: 'GET',
 		data: {
 			unlock: $('#folders').attr('unlock') || '',
+			show_hidden: ((desk.show_hidden || (typeof foldersShowHidden == 'function' && foldersShowHidden())) ? 1 : 0),
 			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : ''
 		},
 		success: function(response) {
@@ -141,6 +142,7 @@ function deskLoad(quiet) {
 			var count = parseInt(response.trash_count, 10) || 0;
 			var changed = !quiet || folder != (desk.folder || '') || count != (desk.trash_count || 0);
 			desk.folder = folder;
+			if (typeof foldersShowHidden == 'function') { desk.show_hidden = foldersShowHidden(); }
 			desk.files = response.files || [];
 			desk.apps = response.apps || [];
 			desk.disk = response.disk || {};

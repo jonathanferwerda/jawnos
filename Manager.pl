@@ -26625,9 +26625,9 @@ post '/manager/folders' => sub($c) {
 
 	my $show_hidden = $c->param('show_hidden') ? 1 : 0;
 	my $fo = &folders_opener({ folder => $folder, command => $command, c => $c, unlocked => $unlocked, show_hidden => $show_hidden });
-	# the bar names the folder being read, not its whole path
-	my $named_folder = $fo->{'folder'} || '';
-	unless ($named_folder eq '/') { $named_folder =~ s{/+$}{}; $named_folder =~ s{.*/}{}; }
+	# the bar names the folder being read, not its whole path, in the same words
+	# the address bar uses; every command still works on the real path
+	my $named_folder = $fo->{'display_name'} || '';
 	my $window_name = &subs::ui('Folders') . (length $named_folder ? ' - ' . $named_folder : '');
 	my $remote_uuid = $c->param('remote_uuid') || '';
 	my $machines = &subs::remote_machine_lister({ self => 'no' });
@@ -26719,7 +26719,8 @@ sub folders_pinable_apps {
 get '/manager/folders/desk' => sub($c) {
 	my $folder = &folders_desk_folder();
 	my $unlocked = media_unlock_open($c, 'folders') ? 1 : 0;
-	my $listing = &folders_listing($folder, $unlocked, $c);
+	my $show_hidden = $c->param('show_hidden') ? 1 : 0;
+	my $listing = &folders_listing($folder, $unlocked, $c, $show_hidden);
 	my @apps = map {
 		{
 			app => $_,
@@ -26844,6 +26845,38 @@ sub folders_app_names {
 	return \%apps;
 }
 
+# One path segment as the address bar reads it: a component a program wrote
+# carries its percent escapes (path_name), so decode it first; then the house's
+# own words, the same format_name every other name gets.
+sub folders_display_segment($seg) {
+	$seg = '' unless defined $seg;
+	if ($seg =~ /%[0-9A-Fa-f]{2}/) {
+		my $decoded = eval { &url_unescape($seg) };
+		$seg = $decoded if defined $decoded && length $decoded;
+	}
+	return &subs::format_name($seg);
+}
+
+# The folder a person reads along the top and in the title bar. This is the eye
+# only: folder, path, history and every command keep the real path.
+sub folders_display_path($path) {
+	return '' unless defined $path && length $path;
+	my $lead = (substr($path, 0, 1) eq '/') ? '/' : '';
+	my @parts = grep { length } split '/', $path;
+	return '/' unless scalar @parts;
+	return $lead . join('/', map { &folders_display_segment($_) } @parts);
+}
+
+# The name the window's title bar adds after "Folders": the folder on screen,
+# not its whole path.
+sub folders_display_name($path) {
+	return '' unless defined $path && length $path;
+	return '/' if $path eq '/';
+	my $display = &folders_display_path($path);
+	$display =~ s{.*/}{};
+	return length $display ? $display : '/';
+}
+
 # The folder a media location wrote for an app reads as the app's own name. Only
 # a location's top level is renamed; a folder inside an app folder keeps the
 # name it has on disk.
@@ -26936,7 +26969,11 @@ sub folders_opener($data) {
 	$folder =~ s{/+$}{} if (defined $folder && $folder ne '/');
 	my $formatted_folder = &subs::terminal_name($folder);
 	my $listing = &folders_listing($folder, $unlocked, $c, $data->{'show_hidden'});
-	return { %{$listing}, formatted_folder => $formatted_folder, folder => $folder };
+	return { %{$listing},
+		formatted_folder => $formatted_folder,
+		folder => $folder,
+		display_folder => &folders_display_path($folder),
+		display_name => &folders_display_name($folder) };
 }
 
 # The names in a folder, in the order a file manager lists them. `readdir` rather
@@ -27990,7 +28027,7 @@ post '/manager/folders/file/open' => sub ($c) {
 		$dir = '/' unless length $dir;
 		# the listing applies the same padlock and hidden-app rules the window
 		# saw, so a sibling cannot be opened that the listing kept out of sight
-		my $listing = &folders_listing($dir, $unlocked, $c);
+		my $listing = &folders_listing($dir, $unlocked, $c, $folders->{'show_hidden'} ? 1 : 0);
 		my %seen = map { $_->{'path'} => 1 } @chosen;
 		foreach my $sibling ( @{ $listing->{'files'} || [] } ) {
 			next if $seen{ $sibling->{'path'} }++;

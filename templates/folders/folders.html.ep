@@ -42,10 +42,10 @@
 				<% foreach my $i ( 0 .. $#crumbs ) { %>
 					<% my $crumb = $crumbs[$i]; %>
 					<% if ($i > 0) { %><span class="folders_crumb_sep" aria-hidden="true">›</span><% } %>
-					<button type="button" class="folders_crumb<% if ($i == $#crumbs) { %> current<% } %>" path="<%= $crumb->{'path'} %>" title="<%= $crumb->{'path'} %>"><%= $crumb->{'name'} %></button>
+					<button type="button" class="folders_crumb<% if ($i == $#crumbs) { %> current<% } %>" path="<%= $crumb->{'path'} %>" title="<%= $crumb->{'path'} %>"><%= &Manager::folders_display_segment($crumb->{'name'}) %></button>
 				<% } %>
 			</nav>
-			<input type="text" id="folders_address" class="folders_address" value="<%= $fo->{'folder'} %>" placeholder="Folder path" aria-label="Folder path" spellcheck="false" autocomplete="off">
+			<input type="text" id="folders_address" class="folders_address" value="<%= $fo->{'display_folder'} %>" placeholder="Folder path" aria-label="Folder path" spellcheck="false" autocomplete="off">
 			<button type="button" id="folders_path_toggle" class="folders_path_toggle" hint="Type a path" aria-label="Type a path"><img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" alt=""></button>
 		</div>
 		<div class="folders_tools">

@@ -90,6 +90,7 @@ function foldersToggleHidden() {
 	$.each(folders_instances, function (id, inst) {
 		$.each(inst.tabs || [], function (i, tab) { tab.show_hidden = on; });
 	});
+	desk.show_hidden = on;
 	folders.show_hidden = on;
 	foldersRefreshWindows();
 }
@@ -170,14 +171,24 @@ function foldersTabLabel(folder) {
 	return parts.length ? parts[parts.length - 1] : '/';
 }
 
+// The same presentation the server gives the address bar and the title bar
+// (subs::format_name): underscores read as spaces and each word is capitalised.
+// It is for the eye only - paths, history and commands keep the real name.
+function foldersFormatName(name) {
+	var words = String(name || '').toLowerCase().replace(/_/g, ' ').split(/\s+/).filter(Boolean);
+	return words.map(function (word) { return word.charAt(0).toUpperCase() + word.slice(1); }).join(' ');
+}
+
 function foldersApplyWindowName(inst) {
 	if (!inst || !inst.root || !inst.root.length) { return; }
 	var tab = inst.tabs[inst.active];
 	var folder = (tab && tab.folder) ? tab.folder : '';
 	var wind = inst.root.closest('.wind');
 	if (!wind.length) { return; }
-	// the bar names the folder being read, not its whole path
-	var name = jawnosT('Folders') + (folder ? ' - ' + foldersTabLabel(folder) : '');
+	// the bar names the folder being read, not its whole path, in the address
+	// bar's own words
+	var label = (tab && tab.display_name) ? tab.display_name : (folder ? foldersFormatName(foldersTabLabel(folder)) : '');
+	var name = jawnosT('Folders') + (label ? ' - ' + label : '');
 	var text = wind.find('.appointment_name .name_text').first();
 	// every click activates the window; only a real name change repaints the bar
 	if (text.length && text.text() === name) { return; }
@@ -355,6 +366,7 @@ function foldersOpener(data) {
 			var root = foldersRootFor(window_id);
 			inst.root = root;
 			tab.folder = response.fo.folder;
+			tab.display_name = response.fo.display_name || '';
 			tab.disk = response.fo.disk;
 			tab.files = response.fo.files;
 			tab.remote_uuid = remote_uuid;
