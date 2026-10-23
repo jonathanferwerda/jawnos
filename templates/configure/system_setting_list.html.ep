@@ -109,7 +109,7 @@
 		    report already lives %>
 		<div class="cfg-card">
 			<%= include 'apps/evaluation_controls', app => '' %>
-			<%= include 'apps/evaluation', evaluation => $evaluation, app => undef %>
+			<%= include 'apps/evaluation', evaluation => $evaluation, app => undef, controls => 0 %>
 		</div>
 		<%# every machine keeps its own queue, so the house has to say where the
 		    nightly evaluations happen; remote_machine_lister (above) names the machines %>

@@ -1173,14 +1173,14 @@ our %topic = (
 		summary => 'A model-backed appraisal of an app\'s activity.',
 		body => [
 			'Evaluation is an appraisal of any app\'s activity, run on demand or on a cadence. It reads what the app is and what it has been doing, weighs day, week, month and year together, and leaves a report at the foot of the app with a headline and links to everything it names.',
-			'The report sits at the bottom of the app. Its controls are folded away just beneath it: the button that runs one now, how often it runs on its own, the days it runs, and the machine preferred for the work.',
+			'The report sits at the bottom of the app. Open its headline and the controls are inside the same accordion: the button that runs one now, how often it runs on its own, the days it runs, and the machine preferred for the work. In the app\'s Configure panel the controls sit above the report instead, so they can be set while the app is being configured.',
 			'The days list has an All box. All runs every night; clear it to pick particular days, or to leave the list empty and stop the scheduled runs without changing the cadence. A daily or weekly cadence that was left blank used to mean All, and the app now makes that choice explicit instead of showing an empty list.',
 			'Where an app\'s records are measurements (a weather feed, a currency quote, a meter reading), the report speaks only about the measured values and how they moved, not about how many readings there were: a reading is a value, not an occurrence. Speed from the GPS track is read only for an app whose own construct is an action; a start or stop in any other app still takes a GPS fix, but its speed is not a movement and is left out.',
 			'It runs through a local model, so the appraisal never leaves your machine unless you point it elsewhere. The house dispatches the work: the server is the dispatcher, and the mobile and computer machines are the workers. The server assigns each scheduled run to a ready worker a few minutes before it is due, and a worker runs only what is addressed to it, so a split house does not run the same report twice. A house with no server uses a quorum instead: a majority of the machines must be present, and a minority waits. A server gone for a week is treated as no server, so a dead dispatcher does not freeze the house.'
 		],
 		steps => [
 			'Open the app you want appraised and scroll to the Evaluation at its foot.',
-			'Open the folded controls to run it now, or set how often it runs on its own.',
+			'Open the report\'s headline to reach the controls, then run it now or set how often it runs on its own.',
 			'Use the All box to run every night, or clear it and pick the days you want.',
 			'Read the report where it sits; its links open everything it names.'
 		],

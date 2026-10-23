@@ -1,13 +1,22 @@
 <%# the report the evaluation last left for this scope; it is shown at the foot
-    of the appointment wrapper, with the controls folded beneath it, and in the
-    system settings for the whole house %>
+    of the appointment wrapper, and in the system settings for the whole house.
+    controls puts the run/cadence controls inside the report's own accordion, so
+    opening the headline is how the controls are reached %>
 <% my $report_app = $app || '__president'; %>
+<% my $show_controls = $controls ? 1 : 0; %>
 <%# the setting is what the whole house can read; the cache is the fallback the
     machines kept before the report travelled %>
 <% my $report = (ref $evaluation eq 'HASH') ? $evaluation : &subs::evaluation_report_for($report_app); %>
 <% if (($report->{'text'} || '') ne '') { %>
-	<%= include 'apps/evaluation_report', report => $report, app => $report_app %>
+	<%= include 'apps/evaluation_report', report => $report, app => $report_app, controls => $show_controls %>
 <% } else { %>
 	<%# the block lives even with nothing to say, because a run fills it in place %>
-	<div class="appointment_evaluation evaluation_report" app="<%= $report_app %>" style="border:solid;border-radius:5px;border-width:2px;padding:4px;margin-top:4px;text-align:left;font-size:110%;"><b class="evaluation_headline" style="display:block;">No report yet</b></div>
+	<div class="appointment_evaluation evaluation_report" app="<%= $report_app %>" style="border:solid;border-radius:5px;border-width:2px;padding:4px;margin-top:4px;text-align:left;font-size:110%;">
+		<b class="evaluation_headline<% if ($show_controls) { %> hover<% } %>"<% if ($show_controls) { %> hint="Tap to open the controls"<% } %> style="display:block;">No report yet</b>
+		<% if ($show_controls) { %>
+		<div class="evaluation_body" style="display:none;">
+			<div class="evaluation_controls_body" style="white-space:normal;font-size:80%;margin-top:4px;"><%= include 'apps/evaluation_controls', app => $report_app %></div>
+		</div>
+		<% } %>
+	</div>
 <% } %>

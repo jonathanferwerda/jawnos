@@ -196,16 +196,10 @@
 			<% if ($from ne 'store') { %>
 			<%# the evaluation lives at the foot of the app and nowhere else: the
 			    report keeps its headline, and the controls that ask for a run or set
-			    its cadence are folded away beneath it %>
+			    its cadence sit inside the report's own accordion %>
 			<% my $app_evaluation = &subs::evaluation_report_for($a); %>
 			<div class="appointment_evaluation_zone" app="<%= $a %>" style="margin-top:6px;">
-				<%= include 'apps/evaluation', evaluation => $app_evaluation, app => $a %>
-				<details class="evaluation_controls_fold" style="margin-top:4px;">
-					<summary class="hover" hint="Run the evaluation now, and set how often it runs on its own" style="font-size:80%;cursor:pointer;"><%= &subs::ui('Evaluation controls') %></summary>
-					<div style="margin-top:4px;">
-						<%= include 'apps/evaluation_controls', app => $a %>
-					</div>
-				</details>
+				<%= include 'apps/evaluation', evaluation => $app_evaluation, app => $a, controls => 1 %>
 			</div>
 			<% } %>
 		</div>

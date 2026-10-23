@@ -786,6 +786,10 @@ function evaluationStation(b) {
 	if (report.length == 0) { report = b.siblings('.appointment_evaluation').first(); }
 	if (report.length == 0) { report = b.parent().find('.appointment_evaluation').first(); }
 	if (report.length == 0) { report = b.closest('.appointment').find('.appointment_evaluation').first(); }
+	// the controls can live inside the report's accordion; a fresh report must
+	// keep them, and a body the person already had open stays open
+	var controls = report.find('.evaluation_controls_body').first();
+	var was_open = report.find('.evaluation_body').first().is(':visible');
 	b.text('* ' + text);
 	report.text('The evaluator is reading the numbers...');
 	clearInterval(configIntervals['sysEvaluateInterval']);
@@ -804,13 +808,13 @@ function evaluationStation(b) {
 			clearInterval(configIntervals['sysEvaluateInterval']);
 			clearTimeout(configIntervals['sysEvaluateTimeout']);
 			b.text(text);
-			evaluationReportFill(report, response['evaluation_report'] || {}, response['pieces']);
+			evaluationReportFill(report, response['evaluation_report'] || {}, response['pieces'], controls, was_open);
 		},
 		error: function() {
 			clearInterval(configIntervals['sysEvaluateInterval']);
 			clearTimeout(configIntervals['sysEvaluateTimeout']);
 			b.text(text);
-			report.text('The evaluation request failed.');
+			evaluationReportFill(report, {}, { headline: 'The evaluation request failed.', chunks: [] }, controls, true);
 		}
 	});
 }
@@ -818,10 +822,11 @@ function evaluationStation(b) {
 // the model's report lands as text, and stays text - nothing in it may be
 // taken for markup. The headline goes up, the chunks go behind it, and only
 // the names the server matched come back as links.
-function evaluationReportFill(container, r, pieces) {
-pieces = pieces || {};
-container.empty();
-var head = $('<b>').addClass('evaluation_headline hover').attr('hint', 'Tap to open the whole report').text(pieces['headline'] || 'Evaluation');
+function evaluationReportFill(container, r, pieces, controls, open) {
+	pieces = pieces || {};
+	controls = controls || $();
+	container.empty();
+var head = $('<b>').addClass('evaluation_headline hover').attr('hint', controls.length ? 'Tap to open the report and its controls' : 'Tap to open the whole report').text(pieces['headline'] || 'Evaluation');
 var body = $('<div>').addClass('evaluation_body').css({ 'display':'none', 'white-space':'pre-wrap' });
 $.each(pieces['chunks'] || [ { text: r['text'] || 'No report came back.' } ], function(i,chunk) {
 	if (chunk['app']) {
@@ -841,8 +846,12 @@ if (r['model'] || linked['construct']) {
 		foot.append($('<br>')).append($('<span>').text(r['model']));
 	}
 	body.append(foot);
-}
-container.append(head).append(body);
+	}
+	// the run/cadence controls travelled with the old report's body; put them
+	// back inside the new one so the accordion is still the controls' home
+	if (controls.length) { body.append(controls); }
+	container.append(head).append(body);
+	if (open) { body.show(); }
 }
 
 // The graphs answer the mouse: a floating readout follows the pointer over a

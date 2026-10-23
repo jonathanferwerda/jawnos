@@ -233,7 +233,7 @@
 										<%= include 'apps/evaluation_controls', app => $a %>
 										<% my $app_evaluation = &subs::evaluation_report_for($a); %>
 										<% if (($app_evaluation->{'text'} || '') ne '') { %>
-											<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a %>
+											<%= include 'apps/evaluation_report', report => $app_evaluation, app => $a, controls => 0 %>
 										<% } %>
 									<% } elsif ($b eq 'notifications') { %>
 										<div class="app_notification_configurator" app="<%= $a %>">
