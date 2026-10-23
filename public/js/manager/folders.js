@@ -389,7 +389,14 @@ function foldersOpener(data) {
 				foldersNormalizeIds(foldersRootFor(folders.window_id));
 			}
 			var scoped_root = foldersRootFor(window_id);
-			scoped_root.find('.folders_machine_select').val(remote_uuid);
+			var machine_select = scoped_root.find('.folders_machine_select');
+			// A peer that has not been updated renders the listing without a row
+			// for itself (it is "self" there). Keep the toolbar naming the machine
+			// being read rather than letting the choice fall back to This machine.
+			if (remote_uuid && !machine_select.find('option').filter(function () { return this.value === remote_uuid; }).length) {
+				machine_select.append($('<option></option>').attr('value', remote_uuid).text(remote_uuid));
+			}
+			machine_select.val(remote_uuid);
 			scoped_root.find('.folders_toolbar').attr('data-remote', remote_uuid ? 'yes' : '');
 			foldersApplyView(scoped_root);
 			foldersDraggable();
