@@ -17,6 +17,7 @@ var folders = {
 	type: undefined,
 	path: undefined,
 	remote_uuid: undefined,
+	show_hidden: 0,
 	anchor: undefined
 };
 
@@ -35,6 +36,7 @@ var desk = {
 	type: undefined,
 	path: undefined,
 	remote_uuid: '',
+	show_hidden: 0,
 	anchor: undefined
 };
 
@@ -77,6 +79,21 @@ var folders_id_map = {
 	folders_bottom_bar: 'folders_bottom_bar'
 };
 
+// Dotfiles are hidden by default. The background menu toggles them for every
+// Folders window and remembers the choice on this screen.
+function foldersShowHidden() {
+	try { return localStorage.getItem('folders_show_hidden') === 'yes' ? 1 : 0; } catch (e) { return 0; }
+}
+function foldersToggleHidden() {
+	var on = foldersShowHidden() ? 0 : 1;
+	try { localStorage.setItem('folders_show_hidden', on ? 'yes' : 'no'); } catch (e) {}
+	$.each(folders_instances, function (id, inst) {
+		$.each(inst.tabs || [], function (i, tab) { tab.show_hidden = on; });
+	});
+	folders.show_hidden = on;
+	foldersRefreshWindows();
+}
+
 function foldersNewId(prefix) {
 	folders_window_seq++;
 	return (prefix || 'f') + Date.now().toString(36) + folders_window_seq.toString(36) + Math.random().toString(36).slice(2, 6);
@@ -96,6 +113,7 @@ function foldersNewTab(folder, remote_uuid, tab_id) {
 		command: undefined,
 		type: undefined,
 		path: undefined,
+		show_hidden: foldersShowHidden(),
 		anchor: undefined
 	};
 }
@@ -300,6 +318,7 @@ function foldersOpener(data) {
 	}
 	if (data['folder'] === undefined && tab.folder !== undefined) { data['folder'] = tab.folder; }
 	if (data['remote_uuid'] === undefined) { data['remote_uuid'] = tab.remote_uuid || ''; }
+	if (data['show_hidden'] !== undefined) { tab.show_hidden = data['show_hidden'] ? 1 : 0; }
 	var remote_uuid = (data['remote_uuid'] !== undefined) ? data['remote_uuid'] : (tab.remote_uuid || '');
 	var timestamp = Date.now();
 	var previous_folder = tab.folder;
@@ -321,6 +340,7 @@ function foldersOpener(data) {
 			folder: data['folder'],
 			command: data['command'],
 			remote_uuid: remote_uuid,
+			show_hidden: (tab.show_hidden ? 1 : 0),
 			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
 			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : '',
 			// the window's own unlock token: a fresh open has none and stays
@@ -973,9 +993,10 @@ function foldersCommand(data, state) {
 	if (!data) { return; }
 	var st = state || folders;
 	var surface = (st === desk) ? 'desk' : 'folders';
-	// fetching is the one thing that makes sense while looking at another
-	// machine, so it is answered before the read-only gate below
+	// fetching and the display toggle make sense while looking at another
+	// machine, so they are answered before the read-only gate below
 	if (data['command'] == 'fetch_home') { foldersFetchHome(st); return; }
+	if (data['command'] == 'toggle_hidden') { foldersToggleHidden(); return; }
 	if (surface == 'folders' && folders.remote_uuid) { return; }
 	var command = data['command'];
 	if (command == 'copy') {

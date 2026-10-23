@@ -26623,7 +26623,8 @@ post '/manager/folders' => sub($c) {
 	my $unlocked = media_unlock_open($c, 'folders') ? 1 : 0;
 	my $unlock = $unlocked ? $c->param('unlock') : '';
 
-	my $fo = &folders_opener({ folder => $folder, command => $command, c => $c, unlocked => $unlocked });
+	my $show_hidden = $c->param('show_hidden') ? 1 : 0;
+	my $fo = &folders_opener({ folder => $folder, command => $command, c => $c, unlocked => $unlocked, show_hidden => $show_hidden });
 	# the bar names the folder being read, not its whole path
 	my $named_folder = $fo->{'folder'} || '';
 	unless ($named_folder eq '/') { $named_folder =~ s{/+$}{}; $named_folder =~ s{.*/}{}; }
@@ -26934,7 +26935,7 @@ sub folders_opener($data) {
 	# a trailing slash makes every path below it look like a double slash
 	$folder =~ s{/+$}{} if (defined $folder && $folder ne '/');
 	my $formatted_folder = &subs::terminal_name($folder);
-	my $listing = &folders_listing($folder, $unlocked, $c);
+	my $listing = &folders_listing($folder, $unlocked, $c, $data->{'show_hidden'});
 	return { %{$listing}, formatted_folder => $formatted_folder, folder => $folder };
 }
 
@@ -26942,10 +26943,13 @@ sub folders_opener($data) {
 # than a shell `ls`: a name is data, and one holding a space, a quote, a star or a
 # newline used to be split or expanded by the shell before the app ever saw it.
 # Dotfiles stay out of the listing, as they did with `ls`.
-sub folders_entry_names($folder) {
+sub folders_entry_names {
+	my ($folder, $show_hidden) = @_;
 	unless (defined $folder && length $folder && -d $folder) { return (); }
 	opendir(my $dh, $folder) or return ();
-	my @names = grep { $_ ne '.' && $_ ne '..' && substr($_, 0, 1) ne '.' } readdir $dh;
+	# dotfiles stay out of the listing unless the window has been told to show
+	# hidden files from its background menu
+	my @names = grep { $_ ne '.' && $_ ne '..' && ($show_hidden || substr($_, 0, 1) ne '.') } readdir $dh;
 	closedir $dh;
 	return sort { lc($a) cmp lc($b) || $a cmp $b } @names;
 }
@@ -26954,11 +26958,11 @@ sub folders_entry_names($folder) {
 # the folders apart from the files and the disk's own figures. The padlock rule
 # is the same one the gallery reads, so a not-visible app's files stay out until
 # this screen's Folders padlock is open.
-sub folders_listing($folder, $unlocked, $c) {
+sub folders_listing($folder, $unlocked, $c, $show_hidden) {
 	my $formatted_folder = &subs::terminal_name($folder);
 	my $files = [];
 	my $total_size = 0;
-	foreach my $f ( &folders_entry_names($folder) ) {
+	foreach my $f ( &folders_entry_names($folder, $show_hidden) ) {
 		my $file = &folders_property_grabber({ folder => $folder, file => $f });
 		$total_size += $file->{'size'} unless $file->{'type'} eq 'folder';
 		push @{$files}, $file;

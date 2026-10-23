@@ -58,6 +58,7 @@
 			{ 'desk_folder_reset' => {} },
 			{ 'open_tab' => {} },
 			{ 'open_window' => {} },
+			{ 'toggle_hidden' => { visible => $on_desk eq 'yes' ? 'no' : 'yes' } },
 			{ 'open_trash' => { visible => $on_desk } },
 			{ 'empty_trash' => { visible => ($in_trash eq 'yes' || $on_desk eq 'yes') ? 'yes' : 'no' } },
 			{ 'archive' => {} },
@@ -80,6 +81,7 @@
 		open_trash => &subs::ui('Open Recycle Bin'),
 		restore_trash => &subs::ui('Restore'),
 		empty_trash => &subs::ui('Empty Recycle Bin'),
+		toggle_hidden => ($folders->{'show_hidden'} ? &subs::lang('folders.hide_hidden') : &subs::lang('folders.show_hidden')),
 	); %>
 	<% foreach my $co ( @{$contexts->{$context}} ) { %>
 		<% foreach my $o ( keys %{$co} ) { %>
