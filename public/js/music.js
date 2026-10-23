@@ -450,7 +450,7 @@ function mediaMaker(data) {
 				}
 
 				tree.sound.src = url
-				if (method != 'benign') { musicBaselineReset(); }
+				if (method != 'benign') { musicBaselineReset(); musicBaselineStart(); }
 				var st_url = url + '&subtitle=yes';
 				document.getElementById('video_subtitles').src = st_url;
 				document.getElementById('video_subtitles').addEventListener('error', function() {
@@ -1753,23 +1753,27 @@ function musicAudioGraph() {
 		musicVisual.source = null;
 		musicVisual.analyser = null;
 		musicVisual.compressor = null;
+		musicVisual.leveler = null;
 		musicVisual.makeup = null;
 		musicVisual.limiter = null;
 		try {
 			musicVisual.source = musicVisual.ctx.createMediaElementSource(el);
 			musicVisual.compressor = musicVisual.ctx.createDynamicsCompressor();
+			musicVisual.leveler = musicVisual.ctx.createGain();
 			musicVisual.makeup = musicVisual.ctx.createGain();
 			musicVisual.limiter = musicVisual.ctx.createDynamicsCompressor();
 			musicVisual.analyser = musicVisual.ctx.createAnalyser();
 			musicVisual.analyser.fftSize = 2048;
 			musicVisual.analyser.smoothingTimeConstant = 0.82;
 			musicVisual.source.connect(musicVisual.compressor);
-			musicVisual.compressor.connect(musicVisual.makeup);
+			musicVisual.compressor.connect(musicVisual.leveler);
+			musicVisual.leveler.connect(musicVisual.makeup);
 			musicVisual.makeup.connect(musicVisual.limiter);
 			musicVisual.limiter.connect(musicVisual.analyser);
 			musicVisual.analyser.connect(musicVisual.ctx.destination);
 			musicVisual.el = el;
 			musicNormalizeParams();
+			musicBaselineApply();
 		}
 		catch (e) {
 			musicVisual.source = null;
@@ -1790,78 +1794,135 @@ function musicAudioGraph() {
 	return musicVisual;
 }
 
-// ---- whole-track baseline ---------------------------------------------------
-// A look-ahead AGC reacted to every line of dialogue and audibly pumped. Instead,
-// one pass over the whole track measures its mean and peak level; a single gain
-// is chosen from that measurement and held for the track. Dynamics inside the
-// track are untouched - a quiet conversation stays quiet against a loud action
-// cue - but one track no longer sits far above or below another.
-var musicBaseline = { src: '', mean: null, max: null, gain: 1, requested: false, failed: false, token: 0 };
+// ---- whole-track measurement ------------------------------------------------
+// The house reference is about -15 dB. The loud material sits at or above it
+// (LrgMeal -7.5, Lucerin Blue -13.2) and the shows sit far below (Scrubs -25.8,
+// Doctor Who -35.0). A loud track is never turned down; a quiet one is raised.
+// Inside the track a slow leveller lifts the quiet passages rather than following
+// every line of dialogue, so the gap between dialogue and action closes without
+// the pumping a per-second AGC produced.
+var musicBaseline = { src: '', mean: null, max: null, gain: 1, failed: false, token: 0 };
 var musicBaselineCache = {};
+var musicBaselinePending = {};
 var musicBaselineSettings = {
-	slight:     { target: -18, factor: 0.5,  max: 3 },
-	mild:       { target: -18, factor: 0.75, max: 6 },
-	aggressive: { target: -18, factor: 1,    max: 12 }
+	slight:     { target: -15, factor: 0.5,  max: 4 },
+	mild:       { target: -15, factor: 0.75, max: 8 },
+	aggressive: { target: -15, factor: 1,    max: 12 }
+};
+// The in-track leveller. `window` is the top slice of the track's range that is
+// compressed and `ratio` turns it into a reduction. The makeup equals the
+// reduction at the peak, so the action keeps its own level and only the quieter
+// dialogue comes up - by about 3, 6 or 10 dB.
+var musicLevellerSettings = {
+	slight:     { window: 6,  ratio: 2.0 },
+	mild:       { window: 10, ratio: 2.5 },
+	aggressive: { window: 14, ratio: 3.5 }
 };
 function musicBaselineConf() {
 	return musicBaselineSettings[music_normalize] || musicBaselineSettings.mild;
 }
+function musicLevellerConf() {
+	return musicLevellerSettings[music_normalize] || null;
+}
+function musicLevellerMakeupDb() {
+	var conf = musicLevellerConf();
+	return conf ? conf.window * (1 - 1 / conf.ratio) : 0;
+}
+// What the track's average becomes once the leveller has run: the makeup lifts
+// every passage while the compressed top slice is pulled back. The track gain is
+// chosen from that figure, so the in-track lift is not counted twice.
+function musicLevelledMean(mean, max) {
+	var conf = musicLevellerConf();
+	if (!conf || mean == null) { return mean; }
+	if (max == null) { max = mean + conf.window; }
+	var crest = Math.max(0.5, max - mean);
+	var above = Math.min(1, conf.window / crest);
+	var reduction = above * (conf.window / 2) * (1 - 1 / conf.ratio);
+	return Math.min(max, mean + musicLevellerMakeupDb() - reduction);
+}
 function musicBaselineGain(mean, max) {
 	var conf = musicBaselineConf();
-	// Each level is a different strength, not just a different ceiling: a track
-	// 6 dB from the baseline is lifted 3 dB on Slight and 6 dB on Aggressive, so
-	// the choice is audible on ordinary material too.
-	var db = (conf.target - mean) * conf.factor;
-	db = Math.max(-conf.max, Math.min(conf.max, db));
-	// The peak limiter handles the few loud transients a boost would lift; a
-	// cap here would refuse to lift any track whose peak already touches full
-	// scale, which is most commercial material.
+	var reference = musicLevelledMean(mean, max);
+	var db = (conf.target - reference) * conf.factor;
+	// boost only: a loud track is never turned down, and a quiet one is raised.
+	// A boost that drives a 0 dBFS peak into the limiter is still wanted; the
+	// limiter is what keeps it from clipping.
+	db = Math.max(0, Math.min(conf.max, db));
 	return Math.pow(10, db / 20);
 }
 function musicBaselineApply() {
 	var g = musicVisual;
-	if (!g || !g.ctx || !g.makeup) { return; }
-	var gain = 1;
-	if (music_normalize && music_normalize != 'off' && musicBaseline.mean != null) { gain = musicBaseline.gain; }
-	try { g.makeup.gain.setTargetAtTime(gain, g.ctx.currentTime, 1.2); }
-	catch (e) { g.makeup.gain.value = gain; }
+	if (!g) { return; }
+	if (g.ctx && g.makeup) {
+		var gain = 1;
+		if (music_normalize && music_normalize != 'off' && musicBaseline.mean != null) { gain = musicBaseline.gain; }
+		try { g.makeup.gain.setTargetAtTime(gain, g.ctx.currentTime, 1.2); }
+		catch (e) { g.makeup.gain.value = gain; }
+	}
+	musicLevellerApply();
+}
+// The slow compressor that closes the dialogue/action gap. It is transparent
+// until the track has been measured, and when the setting is off.
+function musicLevellerApply() {
+	var g = musicVisual;
+	if (!g || !g.ctx || !g.compressor || !g.leveler) { return; }
+	var conf = musicLevellerConf();
+	var on = !!(conf && music_normalize && music_normalize != 'off' && musicBaseline.max != null);
+	var now = g.ctx.currentTime;
+	var ratio = 1, threshold = 0, knee = 0, attack = 0.003, release = 0.25, makeup = 1;
+	if (on) {
+		ratio = conf.ratio;
+		// the top slice of this track's own range, so the threshold follows the
+		// recording rather than a fixed level
+		threshold = Math.max(-60, musicBaseline.max - conf.window);
+		knee = Math.min(12, conf.window);
+		// slow next to a syllable: the gain does not ride the dialogue
+		attack = 0.08;
+		release = 0.45;
+		makeup = Math.pow(10, musicLevellerMakeupDb() / 20);
+	}
+	try {
+		g.compressor.threshold.setTargetAtTime(threshold, now, 0.05);
+		g.compressor.knee.setTargetAtTime(knee, now, 0.05);
+		g.compressor.attack.setTargetAtTime(attack, now, 0.05);
+		g.compressor.release.setTargetAtTime(release, now, 0.05);
+		g.compressor.ratio.setTargetAtTime(ratio, now, 0.05);
+		g.leveler.gain.setTargetAtTime(makeup, now, 0.4);
+	}
+	catch (e) {
+		g.compressor.threshold.value = threshold;
+		g.compressor.knee.value = knee;
+		g.compressor.attack.value = attack;
+		g.compressor.release.value = release;
+		g.compressor.ratio.value = ratio;
+		g.leveler.gain.value = makeup;
+	}
 }
 function musicBaselineReset() {
 	musicBaseline.src = '';
 	musicBaseline.mean = null;
 	musicBaseline.max = null;
 	musicBaseline.gain = 1;
-	musicBaseline.requested = false;
 	musicBaseline.failed = false;
 	musicBaseline.token++;
 	musicBaselineApply();
 }
-function musicBaselineStart() {
-	if (!music_normalize || music_normalize == 'off' || !tree || !tree.sound) { return; }
-	var song = (tree.songs && tree.songs[0]) ? tree.songs[0] : null;
-	if (!song || !song.file) { return; }
-	var src = tree.sound.currentSrc || tree.sound.getAttribute('src') || song.file;
-	if (musicBaseline.src === src) {
-		if (musicBaseline.mean != null) { musicBaseline.gain = musicBaselineGain(musicBaseline.mean, musicBaseline.max); }
-		musicBaselineApply();
-		return;
-	}
-	musicBaseline.src = src;
-	musicBaseline.mean = null;
-	musicBaseline.max = null;
-	musicBaseline.gain = 1;
-	musicBaseline.failed = false;
-	musicBaselineApply();
-	var cached = musicBaselineCache[src];
-	if (cached && cached.mean != null) {
-		musicBaseline.mean = cached.mean;
-		musicBaseline.max = cached.max;
-		musicBaseline.gain = musicBaselineGain(cached.mean, cached.max);
-		musicBaselineApply();
-		return;
-	}
-	var token = ++musicBaseline.token;
-	musicBaseline.requested = true;
+// One measurement request per file. A prefetch for the next track and a
+// playback that has just reached it share the same request: the second caller
+// waits for the answer instead of asking again.
+function musicBaselineRequest(song, onDone) {
+	if (!song || !song.file) { if (onDone) { onDone(null); } return; }
+	var key = song.file;
+	if (musicBaselineCache[key]) { if (onDone) { onDone(musicBaselineCache[key]); } return; }
+	if (musicBaselinePending[key]) { if (onDone) { musicBaselinePending[key].push(onDone); } return; }
+	musicBaselinePending[key] = onDone ? [ onDone ] : [];
+	var settle = function(measured) {
+		var waiters = musicBaselinePending[key] || [];
+		delete musicBaselinePending[key];
+		for (var i = 0; i < waiters.length; i++) {
+			try { waiters[i](measured); } catch (e) {}
+		}
+	};
 	var url = '/file_open?track=' + encodeURIComponent(song.file) + '&loudness=yes';
 	if (song.remote_uuid) { url += '&remote_uuid=' + encodeURIComponent(song.remote_uuid); }
 	$.ajax({
@@ -1872,44 +1933,65 @@ function musicBaselineStart() {
 		// remote case is given a short rope rather than three minutes of tunnel
 		timeout: song.remote_uuid ? 30000 : 180000,
 		success: function(r) {
-			if (token !== musicBaseline.token) { return; }
 			if (r && r.ok && typeof r.mean_volume != 'undefined') {
 				var mean = parseFloat(r.mean_volume);
 				var max = (r.max_volume == null) ? null : parseFloat(r.max_volume);
 				if (!isNaN(mean)) {
-					musicBaseline.mean = mean;
-					musicBaseline.max = max;
-					musicBaseline.gain = musicBaselineGain(mean, max);
-					musicBaselineCache[src] = { mean: mean, max: max };
-					musicBaselineApply();
+					var measured = { mean: mean, max: max };
+					musicBaselineCache[key] = measured;
+					settle(measured);
 					return;
 				}
 			}
-			musicBaseline.failed = true;
+			settle(null);
 		},
-		error: function() { if (token === musicBaseline.token) { musicBaseline.failed = true; } },
-		complete: function() { if (token === musicBaseline.token) { musicBaseline.requested = false; } }
+		error: function() { settle(null); },
+		complete: function() { if (musicBaselinePending[key]) { settle(null); } }
+	});
+}
+// Measure the track after this one while this one plays, so the next gain is
+// already in hand when the queue reaches it.
+function musicBaselinePrefetch() {
+	if (!music_normalize || music_normalize == 'off' || !tree || !tree.songs) { return; }
+	var next = tree.songs[1];
+	if (!next || !next.file) { return; }
+	musicBaselineRequest(next, null);
+}
+function musicBaselineStart() {
+	if (!music_normalize || music_normalize == 'off' || !tree || !tree.sound) { return; }
+	var song = (tree.songs && tree.songs[0]) ? tree.songs[0] : null;
+	if (!song || !song.file) { return; }
+	var key = song.file;
+	if (musicBaseline.src === key) {
+		if (musicBaseline.mean != null) { musicBaseline.gain = musicBaselineGain(musicBaseline.mean, musicBaseline.max); }
+		musicBaselineApply();
+		musicBaselinePrefetch();
+		return;
+	}
+	musicBaseline.src = key;
+	musicBaseline.mean = null;
+	musicBaseline.max = null;
+	musicBaseline.gain = 1;
+	musicBaseline.failed = false;
+	musicBaselineApply();
+	var token = ++musicBaseline.token;
+	musicBaselineRequest(song, function(measured) {
+		if (token !== musicBaseline.token) { return; }
+		if (!measured) { musicBaseline.failed = true; return; }
+		musicBaseline.mean = measured.mean;
+		musicBaseline.max = measured.max;
+		musicBaseline.gain = musicBaselineGain(measured.mean, measured.max);
+		musicBaselineApply();
+		musicBaselinePrefetch();
 	});
 }
 function musicNormalizeParams() {
 	var g = musicVisual;
-	if (!g.ctx || !g.compressor || !g.makeup || !g.limiter) { return; }
+	if (!g.ctx || !g.makeup || !g.limiter) { return; }
 	var now = g.ctx.currentTime;
-	// No compression: the track gain is the leveller. The compressor is held
-	// transparent and only the peak limiter remains, so a boost cannot clip.
-	try {
-		g.compressor.threshold.setTargetAtTime(0, now, 0.02);
-		g.compressor.knee.setTargetAtTime(0, now, 0.02);
-		g.compressor.attack.setTargetAtTime(0.003, now, 0.02);
-		g.compressor.release.setTargetAtTime(0.25, now, 0.02);
-	}
-	catch (e) {
-		g.compressor.threshold.value = 0;
-		g.compressor.knee.value = 0;
-		g.compressor.attack.value = 0.003;
-		g.compressor.release.value = 0.25;
-	}
-	g.compressor.ratio.value = 1;
+	// The compressor is the in-track leveller and musicLevellerApply() owns it.
+	// Here only the peak guard is set: when the normaliser is on, a boost cannot
+	// clip; when it is off the limiter is transparent too.
 	var limiting = (music_normalize && music_normalize != 'off');
 	try {
 		g.limiter.threshold.setTargetAtTime(limiting ? -1 : 0, now, 0.02);
