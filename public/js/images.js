@@ -323,8 +323,10 @@ function galleryOpenViewer(index) {
 	// Fetch home is the archive's way back: it only means anything for a photo
 	// that lives on another machine. A local photo hid nothing to fetch.
 	$('.gallery_fetch').toggle(!!item.remote_uuid);
-	galleryViewerPad();
 	$('#gallery_viewer').show();
+	// measured after it is shown: a hidden element reports a zero rect, which
+	// would pad the buttons by the whole taskbar every time
+	galleryViewerPad();
 	$('#gallery_body').css('overflow', 'hidden');
 	galleryFullscreenLabel();
 }
