@@ -47,6 +47,8 @@ const GLYPHS = {
 	eye: '<path d="M12 5.5C6.5 5.5 2.7 9.6 1.5 12c1.2 2.4 5 6.5 10.5 6.5S21.3 14.4 22.5 12C21.3 9.6 17.5 5.5 12 5.5z" fill="{G}"/><circle cx="12" cy="12" r="3.4" fill="{D}"/><circle cx="12" cy="12" r="1.4" fill="{G}"/>',
 	marker: '<rect x="9" y="3.5" width="6" height="8.5" rx="1.4" fill="{G}"/><path d="M9 12h6l-1.2 3.4a1.6 1.6 0 0 1-1.5 1h-.6a1.6 1.6 0 0 1-1.5-1z" fill="{G}"/><rect x="4.5" y="19" width="15" height="1.8" rx="0.9" fill="{D}"/>',
 	monitor: '<rect x="3" y="4.5" width="18" height="12" rx="2" fill="{G}"/><rect x="5.2" y="6.8" width="13.6" height="8.2" rx="1" fill="{D}"/><rect x="11" y="16.5" width="2" height="2.6" fill="{G}"/><rect x="8" y="19.1" width="8" height="1.8" rx="0.9" fill="{G}"/>',
+	// the desk's Computer place: an open laptop, as its hand-drawn picture is
+	computer: '<rect x="4.5" y="4" width="15" height="10" rx="1.6" fill="{G}"/><rect x="6" y="5.5" width="12" height="7" rx="0.9" fill="{D}"/><path d="M5 15h14l2.6 3.4a1.5 1.5 0 0 1-1.2 2.4H3.6a1.5 1.5 0 0 1-1.2-2.4z" fill="{G}"/><rect x="10.1" y="16.4" width="3.8" height="1.3" rx="0.65" fill="{D}"/>',
 	mic: '<rect x="9" y="3" width="6" height="11" rx="3" fill="{G}"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0" fill="none" stroke="{G}" stroke-width="1.9" stroke-linecap="round"/><rect x="11" y="16.4" width="2" height="3.2" fill="{G}"/><rect x="8.5" y="19.4" width="7" height="1.8" rx="0.9" fill="{G}"/>',
 	renew: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/><path d="M20 3.5v5h-5z" fill="{G}"/>',
 	x: '<circle cx="12" cy="12" r="9" fill="{G}"/><path d="M8.5 8.5 15.5 15.5M15.5 8.5 8.5 15.5" fill="none" stroke="{D}" stroke-width="2.2" stroke-linecap="round"/>',
@@ -297,6 +299,8 @@ const ICONS = {
 	'road ahead': 'up',
 	'nonsense': 'hourglass',
 	'water': 'pulse',
+	// the desk's fixed Computer place, the one picture every set lacked
+	'computer': 'computer',
 	'folder': 'folder',
 	'chart': 'chart',
 	'aeroplane': 'aeroplane',
