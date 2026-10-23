@@ -5,6 +5,21 @@ var music_muted = false;
 // resolved paths on #play_logo (see apps/music/music.html.ep).
 function jawnosPlayIcon() { var s = $('#play_logo').attr('play_icon'); return s || '/icons/play.jpg'; }
 function jawnosPauseIcon() { var s = $('#play_logo').attr('pause_icon'); return s || '/icons/pause.jpg'; }
+// Play, and tell the truth if the browser refuses it (an unmuted autoplay with no
+// gesture): leave the button on play rather than showing a track that is not
+// running. WebKit in particular refuses unmuted autoplay without a gesture.
+function musicPlay() {
+	if (!tree || !tree.sound) { return null; }
+	var p = null;
+	try { p = tree.sound.play(); } catch (e) { return null; }
+	if (p && p.catch) {
+		p.catch(function () {
+			if (tree && tree.sound) { tree.sound.state = 0; }
+			$('#play_logo').attr('src', jawnosPlayIcon());
+		});
+	}
+	return p;
+}
 
 // The local element is this machine's own output: audible whenever the 'me'
 // output is on (which is also the default when the setting has no 'me' key at
@@ -448,11 +463,14 @@ function mediaMaker(data) {
 					tree.sound.state = 0;
 				}
 				tree.sound.saved_volume = master_volume;
-				// Mute for the autoplay handshake, never a near-zero volume. WebKit
-				// maps the element's volume onto its Pulse stream and remembers it per
-				// media role; 0.00001 there left later streams at 1% with the mute
-				// button off - silent, and no UI to explain it.
-				tree.sound.muted = true;
+				// Set the final level once. WebKit maps the element's volume and
+				// muted flag onto its Pulse stream and does not reliably take a later
+				// change back: a transient mute or near-zero volume for the autoplay
+				// handshake left streams at 1% or muted with the button off. If the
+				// browser refuses an unmuted autoplay the track simply waits for a
+				// press, which is better than playing silently.
+				tree.sound.volume = musicLocalVolume();
+				tree.sound.muted = music_muted;
 
 				if (tree.songs[0].remote_uuid) {
 					url += '&remote_uuid=' + tree.songs[0].remote_uuid;
@@ -481,12 +499,8 @@ function mediaMaker(data) {
 					}
 				};
 				if (data['state'] != 0) {
-					// the play() above runs before load()/the new src and is aborted by them,
-					// so start here instead, once the source is in place. A refresh has no
-					// user gesture yet and browsers only autoplay a muted element, so a
-					// restore starts muted; onplaying puts the mute button's state back.
-					if (method == 'restore') { tree.sound.muted = true; }
-					tree.sound.play();
+					// no mute/volume trick here: WebKit would carry it onto the stream
+					musicPlay();
 				}
 				if (method != 'restore') {
 					remoteTrackToggle({
@@ -644,9 +658,8 @@ function remoteTrackToggle(data) {
 	var toggle = data['toggle'];
 	var music_data = data['music_data'] || tree.songs[0];
 	if (data['queuing'] != 1) {
-		// mute rather than a near-zero volume: WebKit carries the element volume
-		// onto the Pulse stream and remembers it for the role (see mediaMaker)
-		tree.sound.muted = true;
+		// leave volume and mute to the final state set when the track loaded;
+		// WebKit carries a transient change onto the Pulse stream and keeps it
 	}
 	if (mao['me'] == 'off') {
 
@@ -861,7 +874,7 @@ $(document).on('click', '#play', function() {
 	}
 	else if (tree.sound.paused) {
 		musicVolumeApply();
-		tree.sound.play();
+		musicPlay();
 		tree.sound.state = 1;
 		$('#play_logo').attr('src', jawnosPauseIcon());
 		remoteTrackToggle({
@@ -2081,6 +2094,9 @@ function musicNormalizeApply() {
 // is not left silent by a context that could not start on its own.
 $(document).on('pointerdown touchstart keydown', function() {
 	if (music_normalize && music_normalize != 'off' && $('#music').length) { musicAudioGraph(); }
+	// a stream left muted by an older build or a failed autoplay is put right
+	// on the first gesture, when WebKit accepts the change
+	if ($('#music').length && tree && tree.sound) { musicVolumeApply(); }
 });
 // A phone pauses the graph when the app is put away; coming back resumes it.
 $(document).on('visibilitychange', function() {

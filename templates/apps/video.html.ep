@@ -962,7 +962,7 @@
 			// one warms up; once it is ready a hover no longer waits for a round trip.
 			// A remote track is left to the server preview - pulling the tunnel a second
 			// time to preview it would cost more than the wait.
-			var <%= $miss %>SeekPreview = { video: null, src: '', want: 0, ready: false, drawn: false, visible: false, raf: 0, canvas: null, failed: false };
+			var <%= $miss %>SeekPreview = { video: null, src: '', want: 0, ready: false, drawn: false, visible: false, raf: 0, hideTimer: 0, canvas: null, failed: false };
 			function <%= $miss %>SeekPreviewDraw() {
 				var p = <%= $miss %>SeekPreview;
 				var el = p.video;
@@ -995,6 +995,8 @@
 				var p = <%= $miss %>SeekPreview;
 				var main = document.getElementById('<%= $id %>');
 				var src = main && (main.currentSrc || main.getAttribute('src')) || '';
+				clearTimeout(p.hideTimer);
+				p.hideTimer = 0;
 				p.visible = true;
 				if (!src || p.failed || src.indexOf('remote_uuid=') > -1) { return false; }
 				p.want = time;
@@ -1102,8 +1104,19 @@
 			vidOn('mouseout', '#<%= $miss %>_position', function(e) {
 				clearInterval(v.positionPreviewTimeout);
 <% if ($source eq 'music') { %>
-				if (<%= $miss %>SeekPreview.raf) { cancelAnimationFrame(<%= $miss %>SeekPreview.raf); <%= $miss %>SeekPreview.raf = 0; }
-				<%= $miss %>SeekPreview.visible = false;
+				var sp = <%= $miss %>SeekPreview;
+				if (sp.raf) { cancelAnimationFrame(sp.raf); sp.raf = 0; }
+				sp.visible = false;
+				// A paused hidden video keeps a Pulse stream open on WebKit. Pause it
+				// at once and unload it if the pointer does not come back: a hovered
+				// preview is not worth a playback stream that looks like the player.
+				if (sp.video) { try { sp.video.pause(); } catch (e) {} }
+				clearTimeout(sp.hideTimer);
+				sp.hideTimer = setTimeout(function() {
+					if (sp.visible || !sp.video) { return; }
+					try { sp.video.removeAttribute('src'); sp.video.load(); sp.video.remove(); } catch (e) {}
+					sp.video = null; sp.src = ''; sp.ready = false; sp.drawn = false;
+				}, 10000);
 <% } %>
 				$('#<%= $miss %>_position_preview').hide();
 				$('#<%= $miss %>_position_preview_info').hide();
