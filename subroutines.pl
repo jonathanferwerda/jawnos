@@ -14203,7 +14203,9 @@ sub headless_navigation() {
 			timestamp => $now,
 			signatorial => $signatorial,
 			server_time => &subs::rightNow(),
-			warranty => &subs::ago_calc('-' . &subs::duration_sayer(&navigation_interval() * 1000 * 3),$now),
+			# duration_sayer reads seconds; a millisecond count here used to become
+			# "8d 8h" for a four-minute pace and left a stale place current for days
+			warranty => &subs::ago_calc('-' . &subs::duration_sayer(&navigation_interval() * 3),$now),
 		};
 		my $written = 0;
 		# The capture runs on the navigation interval alone (the gate above). It
