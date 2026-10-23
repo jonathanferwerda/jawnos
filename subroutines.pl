@@ -964,6 +964,21 @@ sub controller_builder() {
 }
 
 our $cached_sockets = {};
+
+# Per-process backoff for a watch socket that is down. A missing or refused
+# socket used to be dialled on every send and the whole payload was dumped to
+# the log each time; under a busy tick that is a loop of encode + Dumper + log
+# I/O and can pin a core. Keyed like the socket cache, reset by a success.
+our $socket_retry = {};
+sub socket_retry_note {
+	my ($key) = @_;
+	my $state = $socket_retry->{$key} ||= { count => 0, next => 0, logged => 0 };
+	$state->{'count'}++;
+	# 1, 2, 4, 8, then one attempt every 10 seconds while it stays down
+	my $wait = $state->{'count'} >= 5 ? 10 : (2 ** ($state->{'count'} - 1));
+	$state->{'next'} = time + $wait;
+	return $state;
+}
 sub unix_socket_sender() {
 	my ($file,$data,$rcv) = @_;
 
@@ -975,8 +990,10 @@ sub unix_socket_sender() {
 	}
 	my $cache_key = $file . '_' . $$;
 	my $response_data;
-	eval {
-		return unless -e $file;
+	my $retry = $socket_retry->{$cache_key};
+	return if $retry && $retry->{'next'} > time;
+	my $ok = eval {
+		return 0 unless -e $file;
 
 
 		my $socket = $cached_sockets->{$cache_key};
@@ -1048,27 +1065,29 @@ sub unix_socket_sender() {
       $response_data = $decoder->decode($response_payload);
     }
 		1;
-	} or do {
-		my $err = $@ || 'Unknown transaction failure';
-		$log->info(Dumper $data);
-		# a refused connect to a watch socket that exists is the master between
-		# boots: the sender repeats its report on the next tick, so it is not an
-		# error - a write or protocol failure still is
-		if (defined $log) {
-			if ($err =~ /Socket connection failed|Connection refused/) {
-				$log->info("Socket sender: $err (the master is between boots)");
-			}
-			else {
-				$log->error("Socket sender error: $err");
-			}
+};
+unless ($ok) {
+	my $err = $@ || '';
+	my $state = &socket_retry_note($cache_key);
+	my $now = time;
+	# one line a second at most, and no payload dump
+	if (defined $log && length $err && (!$state->{'logged'} || $now - $state->{'logged'} >= 1)) {
+		$state->{'logged'} = $now;
+		# a refused connect to a watch socket that exists is the master
+		# between boots: the sender repeats its report on the next tick, so
+		# it is not an error - a write or protocol failure still is
+		if ($err =~ /Socket connection failed|Connection refused/) {
+			$log->info("Socket sender: $err (the master is between boots)");
 		}
-
-		# Log the state of the socket when it crashed to see if it's bloated
-		if (defined $cached_sockets->{$cache_key}) {
-			$log->debug("Cleaning up socket cache for $file due to error.");
+		else {
+			$log->error("Socket sender error: $err");
 		}
-		delete $cached_sockets->{$cache_key};
-  };
+	}
+	delete $cached_sockets->{$cache_key};
+}
+else {
+	delete $socket_retry->{$cache_key};
+}
 
 	return $response_data;
 }
@@ -13349,7 +13368,9 @@ sub dark_colour_for {
 			$index++;
 		}
 	}
-	my ($r, $g, $b) = map { hex } ($hex =~ /(..)(..)(..)/);
+	# $hex still carries the leading '#'; strip it before reading the three
+	# channels, or hex('#f') warns and the red channel becomes 0.
+	my ($r, $g, $b) = map { hex } (substr($hex, 1) =~ /(..)(..)(..)/);
 	my ($h, $s, $l) = &_rgb_to_hsl($r, $g, $b);
 	$s = 0.62 if $s > 0.62;
 	my $target = 0.18 + (0.34 * $l);
