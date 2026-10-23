@@ -1,6 +1,8 @@
 
 <div class="folders_context" style="font-size:20px;width:200px;position:fixed;background-color:var(--panel-2);" uuid="<%= $uuid %>">
 	<% my $selected = $folders->{'selected'} || []; %>
+	<% my $count = scalar @{$selected}; $count = 1 if (!$count && ($folders->{'path'} || '') ne ''); %>
+	<% my $single = ($count <= 1) ? 'yes' : 'no'; %>
 	<% my $has_folder = scalar grep { ($_->{'type'} || '') eq 'folder' } @{$selected}; %>
 	<% my $sealed = scalar grep { (defined $_->{'path'}) && $_->{'path'} =~ /\.enc$/i } @{$selected}; %>
 	<% my $plain = scalar grep { (defined $_->{'path'}) && $_->{'path'} !~ /\.enc$/i } @{$selected}; %>
@@ -9,8 +11,8 @@
 	<% my $decrypt_visible = ($sealed || $has_folder) ? 'yes' : 'no'; %>
 	<% my $contexts = {
 		file => [
-			{ 'open' => {} },
-			{ 'open_with' => {} },
+			{ 'open' => { visible => $single } },
+			{ 'open_with' => { visible => $single } },
 			{ 'archive' => {} },
 			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'cut' => {} },
@@ -21,11 +23,11 @@
 			{ 'delete' => {} },
 			{ 'shred' => {} },
 			{ 'select_all' => {} },
-			{ 'rename' => {} },
+			{ 'rename' => { visible => $single } },
 			{ 'properties' => {} }
 		],
 		folder => [
-			{ 'open' => {} },
+			{ 'open' => { visible => $single } },
 			{ 'archive' => {} },
 			{ 'fetch_home' => { visible => $folders->{'remote_uuid'} ? 'yes' : 'no' } },
 			{ 'cut' => {} },
@@ -36,7 +38,7 @@
 			{ 'delete' => {} },
 			{ 'shred' => {} },
 			{ 'select_all' => {} },
-			{ 'rename' => {} },
+			{ 'rename' => { visible => $single } },
 			{ 'properties' => {} }
 		],
 		folder_background => [
@@ -51,7 +53,7 @@
 	}; %>
 	<% foreach my $co ( @{$contexts->{$context}} ) { %>
 		<% foreach my $o ( keys %{$co} ) { %>
-			% unless ($co->{$o}->{'visible'} eq 'no') {
+			% unless (($co->{$o}->{'visible'} || 'yes') eq 'no') {
 				<div class="folders_context_selection hover_showing" command="<%= $o %>">
 					<% if ($gb::known_icons->{$o}) { %>
 						<img src="<%= $gb::known_icons->{$o} %>" class="miniscule_thumb">

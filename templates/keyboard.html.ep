@@ -249,6 +249,7 @@
 				<option value="calendar">Calendar</option>
 				<option value="continent">Continent</option>
 				<option value="narrator">Narrator</option>
+				<option value="desk"><%= &subs::lang('layout.desktop') %></option>
 			</select>
 			<select name="sorts" id="sorts">
 				<option value="alphabetical">Alphabetical</option>

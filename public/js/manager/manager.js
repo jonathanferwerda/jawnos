@@ -3774,7 +3774,7 @@ function graphicalize(respons) {
 	if (typeof nowIconApply == 'function') { nowIconApply(time_machine != '' ? 'time_machine' : 'here'); }
 
 	//guests.push(appts);
-	$.each(['leaderboard', 'clockface', 'timeline', 'calendar', 'continent', 'narrator'], function(i,v) {
+	$.each(['leaderboard', 'clockface', 'timeline', 'calendar', 'continent', 'narrator', 'desk'], function(i,v) {
 		if (v != layout)
 			$('#' + v).hide();
 	});
@@ -3796,6 +3796,14 @@ function graphicalize(respons) {
 	else if (layout == 'continent') {
 		continentPrinter(appts);
 	}
+	// the desk is a wallpaper plus a layer of items, not a canvas printer; the
+	// layer loads the listing the first time it is shown and after any change
+	if (layout == 'desk') {
+		if (typeof deskShow == 'function') { deskShow(); }
+	}
+	else if (typeof deskHide == 'function') {
+		deskHide();
+	}
 	if (background_images == 'on') {
 		backgroundPrinter(appts,respons);
 	}
@@ -3809,6 +3817,9 @@ function graphicalize(respons) {
 	sessionStorage.setItem('appts_timestamp', appts['__specs']['timestamp']);
 
 	clotheslineHanger(respons.clothesline);
+	// the rail's band is only known once it has hung, so the desk's icons take
+	// their place under it after it does
+	if (layout == 'desk' && typeof deskPosition == 'function') { deskPosition(); }
 }
 
 var page_number = 0;

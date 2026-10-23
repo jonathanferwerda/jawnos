@@ -6218,6 +6218,7 @@ my @manager_bundle_files = qw(
 	/js/manager/measures.js
 	/js/manager/monitor.js
 	/js/manager/folders.js
+	/js/manager/desk.js
 	/js/manager/notes.js
 	/js/manager/help.js
 	/js/manager/coding.js
@@ -26369,6 +26370,23 @@ post '/manager/folders' => sub($c) {
 	$c->render(json => { html => $html, fo => $fo });
 };
 
+# The desk behind the manager: the same Folders listing drawn as icons on the
+# desktop background. ~/Desktop when the house has one, the home folder
+# otherwise. The padlock is the Folders window's own token, so a sealed name
+# appears here only while this screen has Folders open.
+get '/manager/folders/desk' => sub($c) {
+	my $folder = &subs::home('~/Desktop');
+	$folder = &subs::home('~/') unless -d $folder;
+	my $unlocked = media_unlock_open($c, 'folders') ? 1 : 0;
+	my $listing = &folders_listing($folder, $unlocked, $c);
+	$c->render(json => {
+		folder => $folder,
+		files => $listing->{'files'},
+		disk => $listing->{'disk'},
+		unlocked => $unlocked
+	});
+};
+
 # The app a path belongs to: the first segment under a known location root
 # (~/Pictures/<app>/...). Used to apply the visibility rule to a listing.
 sub folders_owning_app($path) {
@@ -26398,28 +26416,48 @@ sub folders_opener($data) {
 	my $command = $data->{'command'};
 	my $c = $data->{'c'};
 	my $unlocked = $data->{'unlocked'} ? 1 : 0;
-	if ($command eq 'up') {
+	if (defined $command && $command eq 'up') {
 		my @folders = split '/', $folder;
 		pop @folders if scalar @folders;
 		$folder = join '/', @folders;
 	}
-	elsif ($command eq 'home') {
+	elsif (defined $command && $command eq 'home') {
 		$folder = &subs::home('~/');
 	}
 	my $formatted_folder = &subs::terminal_name($folder);
+	my $listing = &folders_listing($folder, $unlocked, $c);
+	return { %{$listing}, formatted_folder => $formatted_folder, folder => $folder };
+}
 
+# The names in a folder, in the order a file manager lists them. `readdir` rather
+# than a shell `ls`: a name is data, and one holding a space, a quote, a star or a
+# newline used to be split or expanded by the shell before the app ever saw it.
+# Dotfiles stay out of the listing, as they did with `ls`.
+sub folders_entry_names($folder) {
+	unless (defined $folder && length $folder && -d $folder) { return (); }
+	opendir(my $dh, $folder) or return ();
+	my @names = grep { $_ ne '.' && $_ ne '..' && substr($_, 0, 1) ne '.' } readdir $dh;
+	closedir $dh;
+	return sort { lc($a) cmp lc($b) || $a cmp $b } @names;
+}
 
+# One folder read as the app (and the desktop behind it) shows it: its entries,
+# the folders apart from the files and the disk's own figures. The padlock rule
+# is the same one the gallery reads, so a not-visible app's files stay out until
+# this screen's Folders padlock is open.
+sub folders_listing($folder, $unlocked, $c) {
+	my $formatted_folder = &subs::terminal_name($folder);
 	my $files = [];
-	my $listing = `ls $formatted_folder`;
-	my $total_size = 0 ;
-	foreach my $f ( split /\n/, $listing ) {
-		my $file = folders_property_grabber({ folder => $folder, file => $f });
+	my $total_size = 0;
+	foreach my $f ( &folders_entry_names($folder) ) {
+		my $file = &folders_property_grabber({ folder => $folder, file => $f });
 		$total_size += $file->{'size'} unless $file->{'type'} eq 'folder';
 		push @{$files}, $file;
 	}
-	# a thing the person hid (visible ne checked) is not listed unless a media
-	# padlock is open and we are at home - the same rule the gallery reads
-	my $revealed = help_media_revealed();
+	# a thing the person hid (visible ne checked) is not listed unless this
+	# window holds a valid Folders token - the same per-window rule the gallery
+	# reads, so a grant left by a closed window reveals nothing
+	my $revealed = $unlocked ? 1 : 0;
 	# a sealed name (.enc) is listed without a padlock when its app is marked
 	# visible; only a name belonging to a hidden app waits for the unlock
 	@{$files} = grep {
@@ -26436,16 +26474,16 @@ sub folders_opener($data) {
 		total_size => &subs::data_size($total_size)
 	};
 	unshift @{$files}, @folders;
-	my $df = `df -h $formatted_folder`;
+	# the disk figures belong to the path being read; `--` keeps a path that
+	# starts with a dash from being read as an option
+	my $df = `df -h -- $formatted_folder 2>/dev/null`;
 	my @df = split /\n/, $df;
-	my @first_line = split(/\s+/, $df[0]);
-	my @data_line = split(/\s+/, $df[1]);
-
-	for ( my $n = 0; $n <= scalar @first_line; $n++) {
+	my @first_line = split(/\s+/, $df[0] // '');
+	my @data_line = split(/\s+/, $df[1] // '');
+	for ( my $n = 0; $n < scalar @first_line; $n++) {
 		$disk->{$first_line[$n]} = $data_line[$n];
-
 	}
-	return { files => $files, formatted_folder => $formatted_folder, folder => $folder, folders => \@folders, disk => $disk };
+	return { files => $files, folders => \@folders, disk => $disk };
 }
 
 sub folders_property_grabber($data) {
@@ -26457,7 +26495,7 @@ sub folders_property_grabber($data) {
 		path => $path
 	};
 	my $ftype = &file_type_recognizer($path);
-	$file->{'type'} = $ftype->{'type'};
+	$file->{'type'} = $ftype->{'type'} || 'file';
 	$file->{'icon'} = $ftype->{'icon'};
 	my $thumb_dir = $folder . '/thumbs';
 	if (-e $thumb_dir && $file->{'type'} eq 'video') {
@@ -26474,7 +26512,10 @@ sub folders_property_grabber($data) {
 
 
 
-	$file->{'stat'} = stat($path);
+	# in list context, so the template can read the mtime the way it reads any
+	# other stat result; a scalar stat here gives back a count, not the fields
+	my @stat = stat($path);
+	$file->{'stat'} = \@stat;
 	$file->{'size'} = -s $path;
 
 	$file->{'path'} = $path;

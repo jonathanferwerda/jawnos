@@ -22,6 +22,8 @@
 <canvas class="background" id="continent"></canvas>
 <canvas class="background" id="calendar"></canvas>
 <canvas class="background" id="narrator"></canvas>
+<canvas class="background" id="desk"></canvas>
+<div id="desk_layer" class="desk_layer" tabindex="0" role="listbox" aria-label="<%= &subs::lang('layout.desktop') %>"></div>
 
 
 <img id="mouse_pointer" height="40" width="30" src="<%= &subs::icon_for('/images/make believe/pointer.png') %>" style="display:none;z-index:6000;object-fit:contain;">

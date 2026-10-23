@@ -34,17 +34,23 @@ our %topic = (
 	'folders' => {
 		title => 'Folders', category => 'apps', app => 'folders',
 		summary => 'Browse, manage, seal and play with your files.',
-		verified => '2026-10-19',
+		verified => '2026-10-22',
 		body => [
 			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
+			'The toolbar carries Home, Up and Refresh, a clickable breadcrumb back to Home, the machine chooser, and a button that switches the listing between a grid of icons and a list showing each item\'s type, size and date. The path can be typed instead: press the small button beside the breadcrumb, or Ctrl+L, and Enter to go.',
+			'Selecting works the way a file manager\'s does: click one item, Ctrl (or Cmd) click to add or remove one, Shift click to take the run between the last click and this one, and drag on the empty background to draw a selection box. The arrow keys walk the listing, Shift and an arrow extend the run, Ctrl+A selects everything, Enter opens, F2 renames, Delete removes and Shift+Delete shreds; typing a name jumps to it.',
+			'Dragging carries the whole selection. Drop it on a folder\'s tile to put it inside, on the window\'s empty space to put it in the folder on screen, or on the desk to put it in the desktop folder; Ctrl (or Cmd) held at the drop copies instead of moving. Every move reports its progress in a dialog and the listing reads itself again when it finishes.',
 			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
 			'Moving, sealing, opening or deleting a file carries the appointments, mail attachments and store entries that named it along with it, so nothing is left pointing at a file that is no longer there.',
 			'A lock on the toolbar turns the media padlock. Anything you have marked not-visible is kept out of the listing until the padlock is open, so a private folder stays out of sight until you unlock it. A sealed file (a name ending .enc) in a folder that is marked visible is listed as usual; only a sealed file belonging to a not-visible folder waits for the padlock. Folders opens with that padlock shut, and the next open starts shut again. The house gate in Security has nothing to do with this; each media app has its own padlock.',
 		],
 		steps => [
 			'Open Folders from the start menu.',
-			'Click into a folder to descend; the breadcrumb along the top walks back up.',
+			'Click into a folder to descend; the breadcrumb along the top walks back up, and Home returns to your home folder.',
+			'Press the view button (or Ctrl+L to type a path) to work in a list with type, size and date instead of icons.',
+			'Click an item; Ctrl-click adds one, Shift-click takes a run, and a drag on the empty background draws a selection box.',
 			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
+			'Drag the selection onto a folder tile, the window\'s empty space, or the desk; hold Ctrl while dropping to copy.',
 			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.',
 			'For a not-visible folder, press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone, and it appears.',
 			'Sealed names ending .enc are listed with their folder; only a sealed name inside a not-visible folder waits for that same Folders padlock. Press an open padlock to shut it again.'

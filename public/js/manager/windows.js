@@ -1750,7 +1750,8 @@ function windowDimensionSetter(w) {
 
 function windowBackgroundAdjuster(data) {
 	if (!data) { data = {}; }
-	$('#background').css({ 'width': '100%', 'left': '0px' });
+	var background_set = $('#background, #desk_layer');
+	background_set.css({ 'width': '100%', 'left': '0px' });
 	$('.background').css({ 'width': '100%', 'left': '0px' });
 	var leftFree = 1;
 	var rightFree = 1;
@@ -1765,10 +1766,12 @@ function windowBackgroundAdjuster(data) {
 		var layout = localStorage.getItem('layout');
 		if (leftFree == 1) {
 			$('#background').css({ 'width': half, 'left': '0%', 'position': 'fixed' });
+			$('#desk_layer').css({ 'width': half, 'left': '0%', 'position': 'fixed' });
 			$('#' + layout).css({ 'width': half, 'left': '0%', 'position': 'fixed' });
 		}
 		else if (rightFree == 1) {
 			$('#background').css({ 'width': half, 'left': half, 'position': 'fixed' });
+			$('#desk_layer').css({ 'width': half, 'left': half, 'position': 'fixed' });
 			$('#' + layout).css({ 'width': half, 'left': half, 'position': 'fixed' });
 		}
 	}

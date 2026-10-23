@@ -2319,3 +2319,174 @@ body.dark_theme #ide {
 #security table img.medium_thumb { height: 40px; max-width: 40px; }
 #security table img.little_thumb { height: 28px; width: 28px; max-width: 28px; }
 #security table img.large_thumb { height: 56px; max-width: 56px; }
+
+/* ---------------- Folders ---------------- */
+/* The window is a column: toolbar, a scrolling listing, a status strip. The
+   listing is a grid of tiles by default and a real file list on request; both
+   are the same .folders_file item, so selection and drag/drop behave the same. */
+#folders {
+	--folders-accent: #2f6feb;
+	box-sizing: border-box; width: 100%; height: 100%; min-height: 0;
+	display: flex; flex-direction: column; position: relative; overflow: hidden;
+	background: var(--panel); color: var(--ink);
+}
+body.dark_theme #folders, body.dark_theme #desk_layer { --folders-accent: #6ea8fe; }
+#folders_toolbar {
+	flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center;
+	gap: 6px; padding: 6px 8px; background: var(--panel-2);
+	border-bottom: 1px solid var(--line);
+}
+#folders_toolbar[data-remote=yes] { box-shadow: inset 0 0 0 2px orange; }
+#folders_toolbar button {
+	height: 30px; min-width: 30px; padding: 0 4px; display: inline-flex;
+	align-items: center; justify-content: center; cursor: pointer;
+	background: transparent; border: 1px solid transparent; border-radius: 8px;
+}
+#folders_toolbar button:hover { background: var(--panel); border-color: var(--line); }
+#folders_toolbar button img { height: 20px; width: 20px; max-width: 20px; object-fit: contain; }
+.folders_nav, .folders_tools { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.folders_pathbar { display: flex; align-items: center; gap: 4px; flex: 1 1 220px; min-width: 120px; }
+.folders_breadcrumb {
+	display: flex; align-items: center; gap: 1px; flex: 1 1 auto; min-width: 0;
+	overflow-x: auto; white-space: nowrap; height: 30px; padding: 0 4px;
+	box-sizing: border-box; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+}
+.folders_crumb {
+	height: 24px; min-width: 0; padding: 0 6px; font-size: 13px; border: 0;
+	border-radius: 5px; background: transparent; color: var(--ink);
+	cursor: pointer; white-space: nowrap;
+}
+.folders_crumb:hover { background: var(--panel-2); }
+.folders_crumb.current { font-weight: 600; }
+.folders_crumb_sep { opacity: .45; font-size: 14px; padding: 0 1px; }
+#folders_address {
+	display: none; flex: 1 1 auto; min-width: 120px; height: 30px; min-height: 30px;
+	margin: 0; padding: 0 8px; font-size: 13px;
+}
+#folders.edit_path .folders_breadcrumb { display: none; }
+#folders.edit_path #folders_address { display: block; }
+#folders_machine_select { height: 30px; min-height: 30px; font-size: 13px; padding: 0 4px; max-width: 170px; }
+#folders_mainview { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; position: relative; }
+#folders_list_header {
+	display: none; flex: 0 0 auto; align-items: center; padding: 5px 12px 5px 10px;
+	grid-template-columns: 32px minmax(0, 1fr) 90px 80px 150px; gap: 0 10px;
+	background: var(--panel-2); border-bottom: 1px solid var(--line);
+	font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; opacity: .75;
+}
+#folders_mainview[data-view=list] #folders_list_header { display: grid; }
+#folders_contents {
+	flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px; box-sizing: border-box;
+	display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+	gap: 6px; align-content: start; outline: none;
+}
+#folders_contents[data-view=list] { display: block; padding: 0 4px 8px; }
+.folders_file {
+	display: flex; flex-direction: column; align-items: center; gap: 4px;
+	padding: 8px 4px; border: 1px solid transparent; border-radius: 9px;
+	cursor: default; position: relative; min-width: 0; color: var(--ink);
+	user-select: none; -webkit-user-select: none;
+}
+.folders_file:hover { background: rgba(128, 128, 128, .12); }
+.folders_file.selected { background: rgba(47, 111, 235, .16); border-color: var(--folders-accent); }
+body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
+.folders_file.folders_cut { opacity: .45; }
+.folders_file.folders_drop_active { border-color: var(--folders-accent); background: rgba(47, 111, 235, .14); }
+.folders_thumb { width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.folders_thumb img { max-width: 52px; max-height: 52px; object-fit: contain; }
+.folders_label {
+	font-size: 12.5px; line-height: 1.25; text-align: center;
+	overflow-wrap: anywhere; word-break: break-word; max-height: 2.5em; overflow: hidden;
+	display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.folders_kind, .folders_size, .folders_modified { display: none; }
+#folders_contents[data-view=list] .folders_file {
+	display: grid; grid-template-columns: 32px minmax(0, 1fr) 90px 80px 150px;
+	gap: 0 10px; align-items: center; padding: 4px 8px 4px 6px; border-radius: 6px;
+}
+#folders_contents[data-view=list] .folders_thumb { width: 26px; height: 26px; }
+#folders_contents[data-view=list] .folders_thumb img { max-width: 24px; max-height: 24px; }
+#folders_contents[data-view=list] .folders_label {
+	text-align: left; max-height: none; overflow: hidden; white-space: nowrap;
+	text-overflow: ellipsis; display: block;
+}
+#folders_contents[data-view=list] .folders_kind,
+#folders_contents[data-view=list] .folders_size,
+#folders_contents[data-view=list] .folders_modified {
+	display: block; font-size: 12px; opacity: .7; white-space: nowrap;
+	overflow: hidden; text-overflow: ellipsis;
+}
+#folders_contents[data-view=list] .folders_size,
+#folders_contents[data-view=list] .folders_modified { text-align: right; font-variant-numeric: tabular-nums; }
+.folders_empty, .desk_empty { grid-column: 1 / -1; padding: 28px 12px; text-align: center; opacity: .6; font-size: 14px; }
+#folders_contents[data-view=list] .folders_empty { display: block; }
+.folders_drawer {
+	position: absolute; top: 40px; left: 2px; max-height: 70%; overflow: auto;
+	background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+	z-index: 20; text-align: left; box-shadow: 0 8px 24px rgba(0, 0, 0, .25);
+}
+#folders_bookmarks { width: min(280px, 55%); padding: 3px; }
+#folders_bookmarks .folders_bookmark {
+	display: block; width: 100%; height: auto; min-height: 28px; padding: 4px 8px;
+	text-align: left; background: transparent; border: 0; border-radius: 5px;
+	font-size: 13px; cursor: pointer;
+}
+#folders_bookmarks .folders_bookmark:hover { background: var(--panel); }
+#folders_archive_queue { top: 40px; }
+#folders_bottom_bar {
+	flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-height: 26px;
+	padding: 2px 8px; box-sizing: border-box; font-size: 12px;
+	background: var(--panel-2); border-top: 1px solid var(--line);
+}
+#folders_bottom_bar .folders_selected_info { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#folders_bottom_bar .folders_disk_info { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; opacity: .8; }
+#folders_bottom_bar .folders_disk_info img { height: 14px; width: 14px; max-width: 14px; object-fit: contain; }
+#folders_bottom_bar .folders_disk_use { opacity: .7; white-space: nowrap; }
+#folders_padlock { background: var(--panel); }
+.folders_context {
+	z-index: 60000 !important; overflow: hidden; padding: 3px 0;
+	border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .3);
+	font-size: 14px !important;
+}
+.folders_context .folders_context_selection { display: flex; align-items: center; gap: 8px; padding: 5px 10px; cursor: pointer; }
+.folders_context .folders_context_selection:hover { background: var(--panel); }
+.folders_context .folders_context_selection img { height: 16px; width: 16px; max-width: 16px; object-fit: contain; }
+.folders_drag_helper { opacity: .85; z-index: 999999 !important; }
+.folders_drag_count {
+	position: absolute; top: -6px; right: -6px; min-width: 20px; padding: 1px 5px;
+	border-radius: 10px; background: var(--folders-accent, #2f6feb); color: #fff;
+	font-size: 12px; text-align: center;
+}
+.folders_marquee {
+	position: fixed; border: 1px solid var(--folders-accent, #2f6feb);
+	background: rgba(47, 111, 235, .14); border-radius: 2px;
+	pointer-events: none; z-index: 50000;
+}
+
+/* ---------------- Desk background ---------------- */
+/* #desk is the layout's canvas (the clothesline has to have one); #desk_layer
+   over it holds the same items the Folders window uses. The layer starts under
+   whatever the desk reserves above (set in desk.js) and stops above the bar. */
+#desk { --desk-accent: #2f6feb; position: absolute; left: 0; top: 0; width: 100%; z-index: 2; }
+body.dark_theme #desk { --desk-accent: #6ea8fe; }
+#desk_layer {
+	display: none; position: fixed; left: 0; top: 60px;
+	bottom: calc(var(--taskbar_bottom_h, 0px) + 8px); width: 100%;
+	box-sizing: border-box; padding: 10px 16px; z-index: 4; overflow: auto;
+	align-content: start; justify-content: start; outline: none;
+	grid-template-columns: repeat(auto-fill, 96px); grid-auto-rows: min-content; gap: 6px;
+}
+#desk_layer.active { display: grid; }
+#desk_layer .desk_file { padding: 6px 4px; }
+#desk_layer .folders_thumb { width: 46px; height: 46px; }
+#desk_layer .folders_thumb img { max-width: 46px; max-height: 46px; }
+#desk_layer .folders_label {
+	max-width: 88px; padding: 1px 5px; border-radius: 5px;
+	background: rgba(0, 0, 0, .32); color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, .45);
+}
+#desk_layer .folders_file:hover { background: rgba(255, 255, 255, .14); }
+#desk_layer .folders_file.selected { background: rgba(255, 255, 255, .22); border-color: #fff; }
+#desk_layer .desk_empty { color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, .6); }
+
+/* The listing is one focusable control; the ring says the keyboard is live. */
+#folders_contents:focus-visible,
+#desk_layer:focus-visible { box-shadow: inset 0 0 0 2px var(--folders-accent, #2f6feb); }
