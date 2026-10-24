@@ -571,6 +571,7 @@ function musicPictureDelay() {
 function musicLipWanted() {
 	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return false; }
 	if (!tree.sound || !tree.sound.tagName || tree.sound.tagName.toLowerCase() != 'video') { return false; }
+	if (tree.sound.paused) { return false; }
 	return musicPictureDelay() > 0.01;
 }
 
