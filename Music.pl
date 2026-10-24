@@ -1481,7 +1481,8 @@ sub music_media_labels {
 		# only when it is not that.
 		my $tag_ok = length($tag_title)
 			&& $tag_title !~ /\bS\d{1,2}\s*[EXM]\d{1,3}\b/i
-			&& $tag_title !~ /\b(?:\d{3,4}p|4k|x26[45]|hevc|web[ .-]?dl|blu[ .-]?ray)\b/i;
+			&& $tag_title !~ /\b(?:\d{3,4}p|4k|x26[45]|hevc|web[ .-]?dl|blu[ .-]?ray)\b/i
+			&& $tag_title !~ /\.(?:mp4|m4v|mkv|avi|mov|webm|wmv|flv|mpg|mpeg|m2ts|ts)$/i;
 		if ($ep->{'episode'}) {
 			$artist = &music_strip_release($ep->{'show'});
 			# Doctor Who 2005 is the same show as Doctor Who in the folder
