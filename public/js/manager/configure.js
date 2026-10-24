@@ -3148,6 +3148,22 @@ $(document).on('click', '.dns_client_from_ai, .dns_client_to_ai', function() {
 		if (r && r.result === 'ok') { dnsPanelRefresh(); }
 	}, 'json');
 });
+$(document).on('change', '#house_domain_input', function() {
+	var status = $('#house_domain_status');
+	status.text('saving…');
+	$.post('/manager/configure/domain/house', { domain: $(this).val() }, function(r) {
+		if (!r || r.result !== 'ok') { status.text((r && r.message) || 'could not save'); return; }
+		status.text('saved');
+		dnsPanelRefresh();
+	}, 'json');
+});
+$(document).on('change', '.device_host_input', function() {
+	var t = $(this);
+	$.post('/manager/configure/domain/host', { signatorial: t.attr('signatorial'), host: t.val() }, function(r) {
+		if (!r || r.result !== 'ok') { alert((r && r.message) || 'could not save'); return; }
+		dnsPanelRefresh();
+	}, 'json');
+});
 $(document).on('click', '#tls_issue_now', function() {
 	var status = $('#tls_issue_status');
 	status.text('issuing…');

@@ -6716,7 +6716,7 @@ post '/sesh_check' => sub ($c) {
 				signatorial => $signatorial,
 				version => &subs::jawn_version(),
 				pwd => $pwd,
-				fqdn => $config->{'domain'},
+				fqdn => (&subs::public_origin_host() || $config->{'domain'}),
 				ssh_port => $config->{'ssh_port'},
 				manager_colour => &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour', device => $signatorial }) || &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour' })
 			};
@@ -7576,6 +7576,46 @@ post '/manager/configure/dns_client/to_ai' => sub($c) {
 	my $suds = &subs::session_suds($c);
 	&subs::setting_setter({ app => 'mail', setting => 'cloudflare_token', value => &subs::note_encrypter($suds, $plain) });
 	$c->render(json => { result => 'ok' });
+};
+
+# ---- the house's public names ----------------------------------------------
+# config.json's `domain` stays the loopback the house calls itself on. These two
+# routes own the public side: the zone (which is also the WebAuthn RP ID) and the
+# name each machine answers on, keyed by signatorial so one machine can name all
+# of them.
+post '/manager/configure/domain/house' => sub($c) {
+	my $v = $c->param('domain') || '';
+	$v =~ s/^\s+|\s+$//g;
+	$v =~ s{^https?://}{}i;
+	$v =~ s{/.*$}{};
+	$v =~ s{:\d+$}{};
+	return $c->render(json => { result => 'error', message => 'a domain like example.com' }) unless $v =~ /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
+	$v = lc $v;
+	&subs::setting_setter({ app => '__president', setting => 'house_domain', device => 'all', value => $v });
+	$c->render(json => { result => 'ok', domain => $v });
+};
+
+post '/manager/configure/domain/host' => sub($c) {
+	my $sig = $c->param('signatorial') || '';
+	my $host = $c->param('host') || '';
+	$host =~ s/^\s+|\s+$//g;
+	$host =~ s{^https?://}{}i;
+	$host =~ s{/.*$}{};
+	$host =~ s{:\d+$}{};
+	$host = lc $host;
+	my $house = &subs::house_domain();
+	return $c->render(json => { result => 'error', message => 'set the house domain first' }) unless length $house;
+	$sig = lc $sig;
+	return $c->render(json => { result => 'error', message => 'not a signatorial' }) unless $sig =~ /^[0-9a-f]{8,64}$/;
+	if (length $host) {
+		return $c->render(json => { result => 'error', message => 'must be under ' . $house }) unless $host eq $house || $host =~ /\.\Q$house\E$/;
+		return $c->render(json => { result => 'error', message => 'letters, digits, dots and hyphens only' }) unless $host =~ /^[a-z0-9.-]+$/;
+	}
+	my $map = &subs::device_hosts();
+	if (length $host) { $map->{$sig} = $host; }
+	else { delete $map->{$sig}; }
+	&subs::setting_setter({ app => '__president', setting => 'device_hosts', device => 'all', value => encode_json($map) });
+	$c->render(json => { result => 'ok', host => $host });
 };
 
 # Issue or renew from the panel. Local only and signatorial-gated: the run
@@ -12635,8 +12675,10 @@ get '/box_office/:uuid' => sub($c) {
 	my ($db,$database) = &subs::database_grabber();
 
 	my $base_host = $c->req->url->base->host;
+	my $public_host = &subs::public_origin_host();
+	my $local_host = &subs::local_domain();
 
-	if ($base_host ne $config->{'domain'} && $ip ne $c->tx->local_address) {
+	if ($base_host ne $config->{'domain'} && $base_host ne $public_host && $base_host ne $local_host && $ip ne $c->tx->local_address) {
 		$c->render(template => 'guest_layouts/denial');
 		return;
 	}
@@ -43248,7 +43290,7 @@ get '/manager/remote_auth_test' => sub($c) {
 					me => $c->tx->local_address,
 					you => $c->tx->remote_address,
 					deletions => $rm->[-1]->{'deletions'},
-					fqdn => $config->{'domain'},
+					fqdn => (&subs::public_origin_host() || $config->{'domain'}),
 					domain => $domain,
 					ws_auth => $ws_auth,
 					env => $ENV{PORT_ENV},

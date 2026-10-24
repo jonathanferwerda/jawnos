@@ -15,12 +15,41 @@
 	my $email = $config->{'email'} || '';
 	my $status = &tls::tls_status_read();
 	my $sig = &subs::signatorial_designer();
+	my $house = &subs::house_domain();
+	my $hosts = &subs::device_hosts();
+	my $rms = &subs::db_select('remote_machines')->hashes;
+	my $dock = $ENV{'PORT_DOCK'} || 3000;
+	my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || 'this machine';
 	my %pname = map { $_->{'id'} => $_->{'label'} } @{$providers};
 %>
-<p class="cfg-note">A wildcard certificate (<b>*.<%= $domain =~ /\./ ? $domain : 'example.com' %></b>) can only be proved through a DNS TXT record, so the house writes that record and removes it again. No inbound port is opened, so a machine behind NAT can still renew. The token is sealed with the house key and is never shown again after it is saved. The issuer is <b>scripts/tls_issue.pl</b>, run by the <b>jawnos-tls.timer</b> systemd timer; the certificate lands in <b>server/fullchain.pem</b> and <b>server/privkey.pem</b>, which the dock server already reads.</p>
-<div class="cfg-note" style="margin-bottom:10px;">
-	Domain: <b><%= length($domain) ? $domain : 'not set' %></b> &middot; email: <b><%= length($email) ? $email : 'not set' %></b> &middot; these come from <b>config.json</b>.
-	<% if (!length($domain) || $domain =~ /^(?:127\.|localhost$|\[)/) { %><span style="color:#e5484d;">Set a real domain there before issuing.</span><% } %>
+<p class="cfg-note">A wildcard certificate (<b>*.<%= length($house) ? $house : 'example.com' %></b>) can only be proved through a DNS TXT record, so the house writes that record and removes it again. No inbound port is opened, so a machine behind NAT can still renew. The token is sealed with the house key and is never shown again after it is saved. On a server that already runs the system <b>certbot-renew.timer</b>, that timer owns the renewal; this page's issuer is for a machine that has none. The certificate lands in <b>server/fullchain.pem</b> and <b>server/privkey.pem</b>, which the dock server already reads.</p>
+<div class="cfg-card">
+	<h3 style="margin-top:0;">House name</h3>
+	<p class="cfg-note">config.json's <b>domain</b> stays <b><%= $domain %></b> &mdash; it is the loopback the house calls itself on, not a public name. The public side is here: the house domain is the wildcard's zone and the WebAuthn RP ID, and each machine's name must sit under it. A machine reads its own entry, so one machine can name all of them.</p>
+	<div class="cfg-row">
+		<label>House domain</label>
+		<input type="text" id="house_domain_input" value="<%= $house %>" placeholder="example.com" autocomplete="off" spellcheck="false">
+		<span class="cfg-note" id="house_domain_status" style="margin:0;"></span>
+	</div>
+	<div class="cfg-row">
+		<label>This machine</label>
+		<span class="cfg-note" style="margin:0;">
+			<% if (length &subs::public_host()) { %>
+				<b><%= &subs::public_host() %></b> &middot; https://<%= &subs::public_host() %>:<%= $dock %>
+			<% } else { %>
+				not named yet
+			<% } %>
+			&middot; email <b><%= length($email) ? $email : 'not set' %></b> (config.json)
+		</span>
+	</div>
+	<table style="width:100%;border-collapse:collapse;margin:6px 0;">
+		<tr><th style="text-align:left;">Machine</th><th style="text-align:left;">Answers on</th></tr>
+		<tr><td>This machine (<%= $my_name %>)</td><td><input type="text" class="device_host_input" signatorial="<%= $sig %>" value="<%= $hosts->{$sig} || '' %>" placeholder="laptop.<%= $house %>" autocomplete="off" spellcheck="false"></td></tr>
+		<% foreach my $rm ( @{$rms} ) { my $rsig = $rm->{'signatorial'} || ''; next unless length $rsig; %>
+			<tr><td><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rsig %></td><td><input type="text" class="device_host_input" signatorial="<%= $rsig %>" value="<%= $hosts->{$rsig} || '' %>" placeholder="phone.<%= $house %>" autocomplete="off" spellcheck="false"></td></tr>
+		<% } %>
+	</table>
+	<p class="cfg-note" style="margin:0;">Names save when the field loses focus. Leave a field empty to drop that machine's name.</p>
 </div>
 <div id="dns_client_list">
 	<% if (!scalar @{$clients}) { %>

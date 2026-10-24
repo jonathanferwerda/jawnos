@@ -17347,13 +17347,65 @@ sub local_domain {
 	my $explicit = $config->{'local_domain'} || '';
 	$explicit =~ s/^\s+|\s+$//g;
 	return $explicit if $explicit ne '';
+	# The name this machine answers on is the honest answer, and it is the one
+	# the wildcard covers. A house with no per-device name keeps the older
+	# local.<domain> convention.
+	my $host = &public_host();
+	return $host if length $host;
 	my $domain = $config->{'domain'} || '';
 	$domain =~ s/^\s+|\s+$//g;
-	return '' if $domain eq '';
+	if ($domain eq '' || $domain =~ /^(?:127\.|localhost$|\[?::1\]?)$/i) {
+		my $house = &house_domain();
+		return length $house ? 'local.' . $house : '';
+	}
 	my @labels = split /\./, $domain;
 	return $domain if scalar @labels < 2;
 	shift @labels;
 	return 'local.' . join '.', @labels;
+}
+
+# ---- public naming ---------------------------------------------------------
+# config.json's `domain` is an address, not a name: it is the loopback the house
+# calls itself on, so it is deliberately not a public name. The public side
+# lives in two synced settings: the house domain (the wildcard's zone and the
+# WebAuthn RP ID) and a per-device map, keyed by signatorial, of the name each
+# machine answers on. The map is written once from any machine and read by each
+# device for its own entry, so a name never has to be typed on the device
+# itself.
+sub house_domain {
+	my $v = &setting_grabber({ app => '__president', setting => 'house_domain', device => 'all' });
+	return '' unless defined $v && length $v;
+	$v =~ s/^\s+|\s+$//g;
+	$v =~ s{^https?://}{}i;
+	$v =~ s{/.*$}{};
+	$v =~ s{:\d+$}{};
+	return lc $v;
+}
+
+sub device_hosts {
+	my $raw = &setting_grabber({ app => '__president', setting => 'device_hosts', device => 'all' });
+	my $map = eval { &decode_json($raw) } || {};
+	return ref $map eq 'HASH' ? $map : {};
+}
+
+sub public_host {
+	my $map = &device_hosts();
+	my $sig = &signatorial_designer();
+	my $host = (defined $sig && length $sig) ? ($map->{$sig} || '') : '';
+	$host =~ s/^\s+|\s+$//g;
+	return length $host ? lc $host : '';
+}
+
+sub public_origin_host {
+	my $host = &public_host();
+	return $host if length $host;
+	my $config = eval { &config_reader() } || {};
+	my $c = $config->{'public_host'} || '';
+	$c =~ s/^\s+|\s+$//g;
+	return lc $c if length $c && $c !~ /^(?:127\.|localhost$|\[?::1\]?)$/i;
+	my $d = $config->{'domain'} || '';
+	return '' if $d =~ /^(?:127\.|localhost$|\[?::1\]?)$/i;
+	return lc $d;
 }
 
 sub tailnet_address {

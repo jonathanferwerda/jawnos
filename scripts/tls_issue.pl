@@ -97,6 +97,7 @@ for (my $i = 0; $i < @ARGV; $i++) {
 
 my $config = eval { &subs::config_reader() } || {};
 $config = {} unless ref $config eq 'HASH';
+$domain = &subs::house_domain() unless length $domain;
 $domain = $config->{'domain'} || '' unless length $domain;
 $email = $config->{'email'} || '' unless length $email;
 
