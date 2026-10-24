@@ -243,6 +243,27 @@ sub music_stream_watcher_path { return &subs::home('~/.president/ws_watcher'); }
 sub music_stream_wake_path { return &subs::home('~/.president/music_stream_wake'); }
 sub music_stream_rate { my $r = shift || 48000; return $r =~ /^\d+$/ ? $r : 48000; }
 
+# ---- the sync trace ---------------------------------------------------------
+# The browser's 2-second report and each receiver's arrival report land in one
+# line-per-record file. It is a trace for a person (or the coding agent) to read
+# after a bad stream, not an audit: the oldest file is moved aside at 1 MB.
+sub music_sync_log_path { return &subs::home('~/.president/music_sync.jsonl'); }
+sub music_sync_log($role, $key, $d) {
+	my %row = (ref $d eq 'HASH') ? %{$d} : ();
+	$row{'role'} = $role;
+	$row{'key'} = $key if defined $key && length $key;
+	$row{'machine'} = $device;
+	$row{'at'} = &subs::rightNow();
+	my $line = eval { encode_json(\%row) };
+	return unless defined $line && length $line;
+	my $path = &music_sync_log_path();
+	rename($path, $path . '.1') if -e $path && (-s $path) > 1_048_576;
+	if (open(my $fh, '>>', $path)) {
+		print $fh $line, "\n";
+		close $fh;
+	}
+}
+
 # The remote's record of the stream it is playing. The receiver strip is served
 # by a different worker (the main prefork) from the websocket worker that owns
 # pacat, so the state is a file, not a process variable. A stale pid means the
@@ -433,6 +454,8 @@ sub music_pacat_command($rate) {
 
 # --- the receiving side ------------------------------------------------------
 sub music_remote_audio_stop($st, $keep_state) {
+	# a report timer would otherwise outlive the stream it describes
+	&music_rx_report_stop($st);
 	# capture the pid first: the stream's close event clears it
 	my $pid = $st->{'pid'};
 	# an intentional stop (pause, seek, stop) must not look like pacat dying and
@@ -530,6 +553,8 @@ sub music_remote_audio_start($st) {
 	$st->{'stream'} = $stream;
 	$st->{'paused'} = 0;
 	$st->{'started'} ||= &subs::rightNow();
+	$st->{'starts'} = ($st->{'starts'} || 0) + 1;
+	&music_rx_report_start($st);
 	unless ($st->{'locked'}) {
 		&music_wake_lock(1);
 		$st->{'locked'} = 1;
@@ -551,8 +576,65 @@ sub music_remote_write($st, $bytes) {
 	# are not independent packets (the WebM header and cluster order matter), so
 	# that stream is allowed a larger buffer instead of being corrupted.
 	my $cap = (($st->{'codec'} || 'pcm') eq 'opus') ? 4_000_000 : 65_536;
-	return if $st->{'stream'}->bytes_waiting > $cap;
+	# The gap between writes is the receiver's own measure of a starving stream:
+	# pacat's 60 ms buffer cannot hide a mesh stall longer than that.
+	my $now = &subs::rightNow();
+	if ($st->{'rx_last'}) {
+		my $gap = $now - $st->{'rx_last'};
+		$st->{'rx_max_gap'} = $gap if $gap > ($st->{'rx_max_gap'} || 0);
+	}
+	$st->{'rx_last'} = $now;
+	if ($st->{'stream'}->bytes_waiting > $cap) {
+		$st->{'rx_dropped'} = ($st->{'rx_dropped'} || 0) + 1;
+		return;
+	}
+	$st->{'rx_bytes'} = ($st->{'rx_bytes'} || 0) + length($bytes);
+	$st->{'rx_writes'} = ($st->{'rx_writes'} || 0) + 1;
 	$st->{'stream'}->write($bytes);
+}
+
+# The receiving machine's half of the trace. The source reports what it sent;
+# this reports what actually arrived, so a gap can be attributed to the network,
+# to pacat, or to the source having dropped the frame itself.
+sub music_rx_report_send($st) {
+	return unless $st->{'tx'} && $st->{'tx'}->is_websocket;
+	my $now = &subs::rightNow();
+	# pactl is not free; refresh the sink number now and then
+	if (!$st->{'sink_at'} || $now - $st->{'sink_at'} > 10_000) {
+		$st->{'sink_at'} = $now;
+		my $ms = &music_receiver_sink_latency();
+		$st->{'sink_ms'} = $ms if $ms > 0;
+	}
+	my $d = {
+		type => 'rx_report',
+		t => $now,
+		bytes => (delete($st->{'rx_bytes'}) || 0),
+		writes => (delete($st->{'rx_writes'}) || 0),
+		max_gap_ms => (delete($st->{'rx_max_gap'}) || 0),
+		dropped => (delete($st->{'rx_dropped'}) || 0),
+		waiting => ($st->{'stream'} ? ($st->{'stream'}->bytes_waiting || 0) : 0),
+		alive => (($st->{'pid'} && kill(0, $st->{'pid'})) ? 1 : 0),
+		paused => ($st->{'paused'} ? 1 : 0),
+		codec => ($st->{'codec'} || 'pcm'),
+		sink_ms => ($st->{'sink_ms'} || 0),
+		starts => ($st->{'starts'} || 0),
+	};
+	eval { $st->{'tx'}->send({ text => encode_json($d) }); };
+}
+sub music_rx_report_start($st) {
+	&music_rx_report_stop($st);
+	$st->{'rx_bytes'} = 0;
+	$st->{'rx_writes'} = 0;
+	$st->{'rx_max_gap'} = 0;
+	$st->{'rx_dropped'} = 0;
+	$st->{'rx_last'} = 0;
+	$st->{'rx_timer'} = Mojo::IOLoop->recurring(2 => sub { &music_rx_report_send($st); });
+}
+sub music_rx_report_stop($st) {
+	if ($st->{'rx_timer'}) {
+		Mojo::IOLoop->remove($st->{'rx_timer'});
+		delete $st->{'rx_timer'};
+	}
 }
 
 # --- the sending side --------------------------------------------------------
@@ -617,17 +699,40 @@ sub music_source_client_open($c, $st, $key, $channel) {
 		my ($ua, $tx) = @_;
 		if (!$tx->is_websocket) {
 			delete $st->{'clients'}->{$key};
+			&music_sync_log('link', $key, { type => 'link', state => 'error' });
 			$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'connect' })}) if $c->tx->is_websocket;
 			return;
 		}
 		$cl->{'tx'} = $tx;
 		$cl->{'up'} = 1;
+		$cl->{'opened'} = &subs::rightNow();
+		&music_sync_log('link', $key, { type => 'link', state => 'open', channel => $cl->{'channel'}, codec => ($st->{'hello'}->{'codec'} || 'pcm') });
 		my $hello = { %{$st->{'hello'} || {}}, type => 'hello', source => $source, key => $key, channel => $cl->{'channel'} };
 		delete $hello->{'channels'};
 		$tx->on(text => sub {
 			my ($tx, $msg) = @_;
 			my $d = eval { decode_json $msg } || {};
 			my $kind = $d->{'type'} || '';
+			# pacat ended on its own. Tell the browser the same thing a dropped
+			# connection says, so the output is reopened instead of staying dead.
+			if ($kind eq 'stopped') {
+				&music_sync_log('link', $key, { type => 'link', state => 'stopped' });
+				$c->tx->send({text => encode_json({ type => 'closed', key => $key })}) if $c->tx->is_websocket;
+				return;
+			}
+			if ($kind eq 'rx_report') {
+				&music_sync_log('remote', $key, $d);
+				return;
+			}
+			# The receiver could not start its player. Close this connection so the
+			# browser's retry (a fresh outputs message) opens a new one; leaving it
+			# open made a "pulse is not ready" answer permanent.
+			if ($kind eq 'ready' && defined $d->{'ok'} && !$d->{'ok'}) {
+				&music_sync_log('link', $key, { type => 'link', state => 'ready_failed', error => ($d->{'error'} || '') });
+				eval { $tx->finish; };
+				delete $st->{'clients'}->{$key};
+				return;
+			}
 			if ($kind eq 'pong') {
 				my $rtt = &subs::rightNow() - ($d->{'t'} || 0);
 				$cl->{'base'} = $d->{'base'} if $d->{'base'};
@@ -666,6 +771,7 @@ sub music_source_client_open($c, $st, $key, $channel) {
 		$tx->on(finish => sub {
 			$cl->{'up'} = 0;
 			delete $st->{'clients'}->{$key};
+			&music_sync_log('link', $key, { type => 'link', state => 'closed', up_ms => ($cl->{'opened'} ? &subs::rightNow() - $cl->{'opened'} : 0) });
 			$c->tx->send({text => encode_json({ type => 'closed', key => $key })}) if $c->tx->is_websocket;
 		});
 	});
@@ -777,6 +883,30 @@ post '/manager/music/receiver/block' => sub($c) {
 	$c->render(json => &music_receiver_state());
 };
 
+# The last reports from the browser and from each receiver. A failing stream is
+# read here after the fact: the source's send counters, the receiver's arrival
+# gaps, and the picture's black runs sit on the same timeline. `limit` caps the
+# records returned (1-500); the file itself is rotated at 1 MB.
+get '/manager/music/sync_diag' => sub($c) {
+	my $limit = int($c->param('limit') // 120);
+	$limit = 1 if $limit < 1;
+	$limit = 500 if $limit > 500;
+	my $path = &music_sync_log_path();
+	my @entries;
+	if (-e $path) {
+		my $text = eval { read_file($path) };
+		if (defined $text && length $text) {
+			my @lines = grep { length } split /\n/, $text;
+			my $start = @lines > $limit ? scalar(@lines) - $limit : 0;
+			for my $i ($start .. $#lines) {
+				my $d = eval { decode_json($lines[$i]) };
+				push @entries, $d if $d;
+			}
+		}
+	}
+	$c->render(json => { entries => \@entries, size => (-e $path ? (-s $path) : 0) });
+};
+
 # One route, two roles. A browser opens it on this machine (session-cookie
 # authenticated) and sends hello/PCM; the source manager opens it on each
 # enabled remote with `peer=1&signatorial=...` and the peer signature, and the
@@ -810,7 +940,7 @@ websocket '/manager/music/stream' => sub ($c) {
 				$st->{'channel'} = ($channel eq 'left' || $channel eq 'right') ? $channel : 'stereo';
 				# Opus has an encoder and decoder buffer in front of pacat's; the
 				# ping measures only the network/player round trip, so the base
-				# carries the extra for lip sync.
+				# carries the extra for the remote's estimate.
 				$st->{'base'} = ($st->{'codec'} eq 'opus') ? 280 : 80;
 				$st->{'music_data'} = $d->{'music_data'};
 				&music_stream_watcher_write($d->{'music_data'});
@@ -878,6 +1008,9 @@ websocket '/manager/music/stream' => sub ($c) {
 		}
 		elsif ($type eq 'outputs') {
 			&music_source_sync_outputs($c, $st, $d->{'outputs'} || [], $d->{'channels'});
+		}
+		elsif ($type eq 'sync_report') {
+			&music_sync_log('source', '', $d);
 		}
 		elsif ($type eq 'control') {
 			if (($d->{'action'} || '') eq 'track') {

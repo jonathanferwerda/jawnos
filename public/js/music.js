@@ -87,9 +87,6 @@ function musicVolumeApply() {
 		// blocked autoplay on open) play silently.
 		tree.sound.muted = music_muted;
 	}
-	// A level change can make the local sound audible or silent; either way the
-	// picture's delay follows it. A paused player keeps the clone it already has.
-	if (!tree.sound.paused) { musicLipApply(); }
 }
 
 // ---- the remote audio stream ------------------------------------------------
@@ -99,16 +96,21 @@ function musicVolumeApply() {
 // an AudioWorklet taps the shared graph just before the local gain, the chunks
 // ride a websocket to this machine's manager, and the manager forwards them to
 // each enabled remote, where `pacat` writes them to PulseAudio. Every remote is
-// therefore sample-locked to every other one, and to the local picture once the
-// lip-sync delay is applied.
+// therefore sample-locked to every other one. A remote is a small moment behind
+// the picture because its buffer and the network cannot be made earlier.
 var musicStream = {
 	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0, latencies: {},
-	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm'
+	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm',
+	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0
 };
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false };
 var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0 };
-var music_lip_sync = 'off';
 var music_stream_codec = 'pcm';
+// Counters for the sync report. They ride the same websocket as the audio, so
+// a stream that is failing tells the manager what it dropped and why.
+var musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0, sent: 0, sentBytes: 0 };
+var musicVideoStats = { waits: 0, stalled_ms: 0, black_runs: 0, black_ms: 0, black_max_ms: 0,
+	in_black: 0, black_at: 0, waitAt: 0, canvas: null };
 
 function musicStreamSupported() {
 	var Ctor = window.AudioContext || window.webkitAudioContext;
@@ -177,8 +179,6 @@ function musicStreamHealthPing() {
 				// larger of that and what the context says it has
 				var l = d ? parseFloat(d.latency) : NaN;
 				if (isFinite(l) && l > 0) { musicVisual.graphLatency = l; }
-				musicLipDelayChanged();
-				musicLipApply();
 			},
 			error: function() { /* a machine without pactl keeps the browser level */ }
 		});
@@ -197,7 +197,6 @@ function musicStreamHello() {
 		channels: 2,
 		seek: (tree && tree.sound ? (tree.sound.currentTime || 0) : 0),
 		codec: musicStream.codec,
-		lip: music_lip_sync,
 		timestamp: Date.now()
 	};
 }
@@ -239,12 +238,14 @@ function musicStreamTapAttach() {
 					var d = e.data || {};
 					var pcm = d.pcm;
 					if (!pcm) { return; }
+					musicSyncStats.received++;
 					// A busy main thread (a high-quality video decoding) lets the
 					// worklet's queue grow; sending it afterwards would put a second
 					// of audio into pacat and leave the remote a second behind. Drop
 					// the stale frames and tell the remote to drop its buffer once.
 					var age = musicVisual.ctx ? ((musicVisual.ctx.currentTime - (d.t || 0)) * 1000) : 0;
 					if (age > 150) {
+						musicSyncStats.stale++;
 						if (!musicStream.gap) {
 							musicStream.gap = 1;
 							if (music_stream_codec == 'pcm') { musicStreamSendJson({ type: 'control', action: 'flush' }); }
@@ -252,10 +253,16 @@ function musicStreamTapAttach() {
 						return;
 					}
 					if (musicStream.gap && age < 60) { musicStream.gap = 0; }
-					if (musicStream.paused) { return; }
-					if (musicStream.ws && musicStream.ws.readyState == 1 && musicStream.ws.bufferedAmount < 32768) {
-						try { musicStream.ws.send(pcm.buffer); } catch (err) {}
+					if (musicStream.paused) { musicSyncStats.paused++; return; }
+					if (musicStream.ws && musicStream.ws.readyState == 1) {
+						if (musicStream.ws.bufferedAmount < 32768) {
+							try { musicStream.ws.send(pcm.buffer); } catch (err) { musicSyncStats.sockdrop++; return; }
+							musicSyncStats.sent++;
+							musicSyncStats.sentBytes += pcm.byteLength || 0;
+						}
+						else { musicSyncStats.sockdrop++; }
 					}
+					else { musicSyncStats.offline++; }
 				};
 				musicStreamTap.node = node;
 				musicStreamTap.sink = sink;
@@ -286,6 +293,7 @@ function musicStreamConnect() {
 		musicStream.latencies = {};
 		musicStream.ready = {};
 		musicStream.failed = {};
+		musicStreamRetryClear();
 		musicStreamSendJson(musicStreamHello());
 		if (musicStream.codec != 'opus') { musicStreamTapActive(true, true); }
 		else {
@@ -305,12 +313,12 @@ function musicStreamConnect() {
 		try { d = JSON.parse(e.data); } catch (err) { return; }
 		if (d.type == 'ready') {
 			if (d.ok === 0) {
-				delete musicStream.ready[d.key];
-				musicStream.failed[d.key] = 1;
+				musicStreamOutputLost(d.key);
 			}
 			else {
 				musicStream.ready[d.key] = 1;
 				delete musicStream.failed[d.key];
+				musicStreamOutputReady(d.key);
 			}
 			musicStreamMaybeRecord();
 		}
@@ -318,16 +326,12 @@ function musicStreamConnect() {
 			musicStream.ready[d.key] = 1;
 			musicStream.latencies[d.key] = d.ms || 0;
 			if (d.ms > musicStream.latency) { musicStream.latency = d.ms; }
-			musicLipDelayChanged();
-			// the first measurement is what makes the clone worth starting
-			musicLipApply();
+			musicStreamOutputReady(d.key);
 		}
-		else if (d.type == 'closed' || d.type == 'error') {
-			delete musicStream.ready[d.key];
-			musicStream.failed[d.key] = 1;
-			// the last speaker going means there is nothing left to wait for
-			musicLipDelayChanged();
-			musicLipApply();
+		else if (d.type == 'closed' || d.type == 'error' || d.type == 'stopped') {
+			// a lost output is reopened; it used to stay silent for the rest of
+			// the track because only hello/outputs opens a peer connection
+			musicStreamOutputLost(d.key);
 			musicStreamMaybeRecord();
 		}
 	};
@@ -344,9 +348,164 @@ function musicStreamConnect() {
 		else {
 			musicStream.active = false;
 			musicStreamTapActive(false, true);
-			musicLipStop();
+			musicSyncWatchStop();
 		}
 	};
+}
+
+// A remote output that dropped is reopened instead of staying silent for the
+// rest of the track. The manager only opens a peer connection on hello/outputs,
+// so a fresh outputs message is what asks it to try again. Backoff keeps a
+// speaker that is switched off from being hammered.
+function musicStreamOutputStillOn(key) {
+	return !!key && $.inArray(key, musicStreamOutputs()) >= 0;
+}
+function musicStreamRetryClear() {
+	for (var k in musicStream.retryTimers) { clearTimeout(musicStream.retryTimers[k]); }
+	musicStream.retryTimers = {};
+	musicStream.retry = {};
+}
+function musicStreamReopen(key) {
+	if (!musicStream.active || musicStream.paused) { return; }
+	if (!musicStreamOutputStillOn(key)) { return; }
+	musicStreamSendJson({ type: 'outputs', outputs: musicStreamOutputs(), channels: musicStreamChannels() });
+}
+function musicStreamOutputLost(key) {
+	if (!key) { return; }
+	delete musicStream.ready[key];
+	delete musicStream.latencies[key];
+	musicStream.failed[key] = 1;
+	if (!musicStreamOutputStillOn(key)) { return; }
+	var n = musicStream.retry[key] || 0;
+	if (n >= 8) { return; }
+	musicStream.retry[key] = n + 1;
+	var wait = Math.min(30000, 1000 * Math.pow(2, n));
+	clearTimeout(musicStream.retryTimers[key]);
+	musicStream.retryTimers[key] = setTimeout(function() {
+		delete musicStream.retryTimers[key];
+		musicStreamReopen(key);
+	}, wait);
+}
+function musicStreamOutputReady(key) {
+	delete musicStream.retry[key];
+	if (musicStream.retryTimers[key]) { clearTimeout(musicStream.retryTimers[key]); delete musicStream.retryTimers[key]; }
+}
+
+// ---- the sync watch ---------------------------------------------------------
+// The stream reports what it sent, what it had to drop, and what the picture is
+// doing. It is diagnostic only: nothing here changes playback.
+function musicVideoWatch(el) {
+	if (!el || el._syncWatch) { return; }
+	el._syncWatch = 1;
+	el.addEventListener('waiting', function() {
+		if (!musicVideoStats.waitAt) { musicVideoStats.waitAt = Date.now(); }
+		musicVideoStats.waits++;
+	});
+	var settled = function() {
+		if (musicVideoStats.waitAt) {
+			musicVideoStats.stalled_ms += Date.now() - musicVideoStats.waitAt;
+			musicVideoStats.waitAt = 0;
+		}
+	};
+	el.addEventListener('playing', settled);
+	el.addEventListener('canplay', settled);
+	el.addEventListener('seeked', settled);
+}
+// Sample the picture twice a second. A run of near-black while the picture is
+// on screen is the blackout being reported; counting it is what lets a trace
+// separate a decoder stall from a dark scene.
+function musicSyncBlackTick() {
+	var v = tree && tree.sound;
+	var now = Date.now();
+	if (!v || !v.tagName || v.tagName.toLowerCase() != 'video' || v.paused || v.ended
+		|| !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video'
+		|| v.readyState < 2 || !v.videoWidth || !v.offsetWidth || !v.offsetHeight) {
+		musicVideoStats.in_black = 0;
+		return;
+	}
+	var c = musicVideoStats.canvas;
+	if (!c) { c = musicVideoStats.canvas = document.createElement('canvas'); c.width = 32; c.height = 18; }
+	var g = c.getContext('2d', { willReadFrequently: true });
+	var dark = false;
+	try {
+		g.drawImage(v, 0, 0, c.width, c.height);
+		var d = g.getImageData(0, 0, c.width, c.height).data;
+		var sum = 0;
+		for (var i = 0; i < d.length; i += 4) { sum += d[i] + d[i + 1] + d[i + 2]; }
+		dark = (sum / (d.length / 4)) < 2;
+	}
+	catch (e) { return; }
+	if (dark) {
+		if (!musicVideoStats.in_black) {
+			musicVideoStats.in_black = 1;
+			musicVideoStats.black_at = now;
+			musicVideoStats.black_runs++;
+		}
+		return;
+	}
+	if (musicVideoStats.in_black) {
+		var run = now - (musicVideoStats.black_at || now);
+		musicVideoStats.black_ms += run;
+		if (run > musicVideoStats.black_max_ms) { musicVideoStats.black_max_ms = run; }
+		musicVideoStats.in_black = 0;
+	}
+}
+function musicSyncReport() {
+	if (!musicStream.active) { return; }
+	var v = tree && tree.sound;
+	var q = null;
+	try { q = (v && v.getVideoPlaybackQuality) ? v.getVideoPlaybackQuality() : null; } catch (e) {}
+	musicStreamSendJson({
+		type: 'sync_report',
+		t: Date.now(),
+		codec: musicStream.codec,
+		paused: musicStream.paused ? 1 : 0,
+		ws: musicStream.ws ? musicStream.ws.readyState : -1,
+		buffered: musicStream.ws ? (musicStream.ws.bufferedAmount || 0) : 0,
+		outputs: musicStreamOutputs(),
+		ready: musicStream.ready,
+		failed: musicStream.failed,
+		latencies: musicStream.latencies,
+		retry: musicStream.retry,
+		received: musicSyncStats.received,
+		stale: musicSyncStats.stale,
+		sockdrop: musicSyncStats.sockdrop,
+		offline: musicSyncStats.offline,
+		paused_frames: musicSyncStats.paused,
+		sent: musicSyncStats.sent,
+		sent_kb: Math.round(musicSyncStats.sentBytes / 1024),
+		audio_state: (musicVisual.ctx ? musicVisual.ctx.state : ''),
+		graph_ms: Math.round((musicVisual.graphLatency || 0) * 1000),
+		video: v ? {
+			ct: Math.round((v.currentTime || 0) * 100) / 100,
+			paused: v.paused ? 1 : 0,
+			seeking: v.seeking ? 1 : 0,
+			ready: v.readyState,
+			dropped: q ? q.droppedVideoFrames : 0,
+			frames: q ? q.totalVideoFrames : 0,
+			waits: musicVideoStats.waits,
+			stalled_ms: musicVideoStats.stalled_ms,
+			black_runs: musicVideoStats.black_runs,
+			black_ms: musicVideoStats.black_ms,
+			black_max_ms: musicVideoStats.black_max_ms
+		} : null
+	});
+}
+function musicSyncWatchStart() {
+	if (musicStream.reportTimer) { return; }
+	musicStream.reportTimer = setInterval(musicSyncReport, 2000);
+	musicStream.blackTimer = setInterval(musicSyncBlackTick, 500);
+	musicVideoWatch(tree && tree.sound);
+}
+function musicSyncWatchStop() {
+	if (musicStream.reportTimer) { clearInterval(musicStream.reportTimer); musicStream.reportTimer = 0; }
+	if (musicStream.blackTimer) { clearInterval(musicStream.blackTimer); musicStream.blackTimer = 0; }
+	if (musicVideoStats.in_black) {
+		var run = Date.now() - (musicVideoStats.black_at || Date.now());
+		musicVideoStats.black_ms += run;
+		if (run > musicVideoStats.black_max_ms) { musicVideoStats.black_max_ms = run; }
+		musicVideoStats.in_black = 0;
+	}
 }
 
 // Opus is a container stream: the first blob carries the WebM header, so the
@@ -380,6 +539,17 @@ function musicStreamStart(file, seek) {
 	musicStream.codec = opus ? 'opus' : 'pcm';
 	musicStream.latency = opus ? 300 : 0;
 	musicStream.latencies = {};
+	musicStream.failed = {};
+	musicStreamRetryClear();
+	musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0, sent: 0, sentBytes: 0 };
+	musicVideoStats.waits = 0;
+	musicVideoStats.stalled_ms = 0;
+	musicVideoStats.black_runs = 0;
+	musicVideoStats.black_ms = 0;
+	musicVideoStats.black_max_ms = 0;
+	musicVideoStats.in_black = 0;
+	musicVideoStats.waitAt = 0;
+	musicSyncWatchStart();
 	musicStream.file = file || (tree.songs[0] ? tree.songs[0].file : '');
 	musicStream.type = (tree.songs[0] && tree.songs[0].type) || '';
 	var attach = opus ? Promise.resolve(musicOpusAttach()) : musicStreamTapAttach();
@@ -391,7 +561,6 @@ function musicStreamStart(file, seek) {
 		musicStream.attached = true;
 		musicStreamConnect();
 		if (!opus) { musicStreamTapActive(true, true); }
-		musicLipApply();
 	});
 	return true;
 }
@@ -495,7 +664,8 @@ function musicStreamStop() {
 	musicStream.gap = 0;
 	musicStreamTapActive(false, true);
 	musicOpusStop();
-	musicLipStop();
+	musicSyncWatchStop();
+	musicStreamRetryClear();
 }
 
 function musicStreamControl(action, extra) {
@@ -522,9 +692,8 @@ function musicStreamOutputsChanged() {
 	var outs = musicStreamOutputs();
 	if (!outs.length) { musicStreamStop(); return; }
 	musicStreamSendJson({ type: 'outputs', outputs: outs, channels: musicStreamChannels() });
-	// the picture should no longer wait for an output that was just turned off
-	musicLipDelayChanged();
-	musicLipApply();
+	// a fresh outputs message is also the retry path for a dropped output
+	musicStreamRetryClear();
 }
 
 // ---- the equalizer ----------------------------------------------------------
@@ -547,8 +716,6 @@ var music_equalizer = { bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bass: 0, preset: 
 var music_eq_save_timer = 0;
 var music_eq_drag = null;
 var music_audio_loading = false;
-var music_sync_offset = 0;
-var music_sync_save_timer = 0;
 
 function musicEqualizerClampBand(v) {
 	v = parseFloat(v);
@@ -704,520 +871,6 @@ $(document).on('input', '#music_eq_bass', function() {
 	musicEqualizerChanged();
 });
 
-// ---- lip sync ---------------------------------------------------------------
-// The remote cannot play earlier than it receives, so it is L milliseconds
-// behind the source. With lip sync on, this screen shows a second, muted <video>
-// started at `currentTime - L`, so the picture waits for the stream; the local
-// sound runs through localDelay by the same L. The remote tap is taken before
-// that delay, so remote audio lands with the delayed picture. A second element
-// rather than a canvas ring keeps the browser's own scaling, theatre styles and
-// captions, and cannot show a half-decoded frame.
-var musicLip = {
-	on: false, delay: 0.12, audioDelay: 0, clone: null, timer: 0, video: null,
-	saved: '', revealed: false, painted: false, track: null, src: '', seekAt: 0,
-	cloneSource: null, cloneMute: null,
-	freeze: null, freezeCanvas: null, freezeGen: 0, freezeAt: 0, checkCanvas: null,
-	lastStill: '', lastStillAt: 0
-};
-
-// Is the element showing something other than a decoder's black frame? Used
-// before a delayed picture is put on screen: a still may cover a seek, but a
-// black clone must not replace the live picture it is hiding.
-function musicLipFrameOk(el) {
-	if (!el || !el.videoWidth || !el.videoHeight || el.readyState < 2) { return false; }
-	try {
-		var c = musicLip.checkCanvas || (musicLip.checkCanvas = document.createElement('canvas'));
-		c.width = 32;
-		c.height = 18;
-		var g = c.getContext('2d', { willReadFrequently: true });
-		g.drawImage(el, 0, 0, c.width, c.height);
-		var d = g.getImageData(0, 0, c.width, c.height).data;
-		var sum = 0;
-		for (var i = 0; i < d.length; i += 4) { sum += d[i] + d[i + 1] + d[i + 2]; }
-		return (sum / (d.length / 4)) >= 2;
-	}
-	catch (e) { return true; }
-}
-
-// The shared graph sits between the element and this machine's speakers, and a
-// Web Audio context renders into its own sink with a buffer of its own. The
-// picture is presented by the element itself, so without compensation the local
-// sound lands after the picture by the graph's output latency - the A/V drift
-// heard once the graph is in the path (normalisation, a remote output, an L/R
-// split). Report that latency in seconds.
-function musicGraphLatency() {
-	var ctx = musicVisual && musicVisual.ctx;
-	var l = (musicVisual && musicVisual.graphLatency) ? musicVisual.graphLatency : 0;
-	if (!ctx) { return l; }
-	try { l = Math.max(l, ctx.outputLatency || 0, ctx.baseLatency || 0); } catch (e) {}
-	return (isFinite(l) && l > 0) ? l : 0;
-}
-// Whether the graph currently carries this machine's own sound. When it does,
-// localGain is the level and the element stays at full gain (musicVolumeApply).
-function musicGraphCarriesLocal() {
-	if (!musicVisual || !musicVisual.localGain) { return false; }
-	// a parked graph (window closed) is not connected to the element on screen
-	if (!tree || !tree.sound || musicVisual.el !== tree.sound) { return false; }
-	var g = 0;
-	try { g = musicVisual.localGain.gain.value; } catch (e) {}
-	return g > 0.0001;
-}
-// How far behind the live element the picture has to be shown. Only a remote
-// output needs this: the local sound and picture are already together when me
-// is the only output, so lip sync leaves a local-only session untouched (no
-// clone, no delayed sound). With a remote in use, the picture waits for the
-// measured stream latency; the local sound's own graph buffer is subtracted in
-// musicLipDelayChanged. The clone follows the remote, never a local-only graph.
-// The current outputs' measured delays. Holding one number meant a slow output
-// that had been switched off kept the picture waiting after it was gone.
-function musicStreamLatency() {
-	var max = 0;
-	var outs = musicStreamOutputs();
-	for (var i = 0; i < outs.length; i++) {
-		var k = outs[i];
-		if (!musicStream.ready[k]) { continue; }
-		var ms = musicStream.latencies[k] || 0;
-		if (ms > max) { max = ms; }
-	}
-	return max;
-}
-function musicPictureDelay() {
-	if (music_lip_sync != 'on') { return 0; }
-	if (!musicStream.active || !musicStreamOutputs().length) { return 0; }
-	// an output that never answered is not a speaker that needs waiting for
-	var ready = false;
-	for (var k in musicStream.ready) { if (musicStream.ready[k]) { ready = true; break; } }
-	if (!ready) { return 0; }
-	// The measured stream latency, plus the machine's own trim: a positive
-	// offset waits longer for a remote whose output buffer is not reported.
-	var delay = musicStreamLatency() / 1000 + (music_sync_offset || 0) / 1000;
-	return Math.max(0, Math.min(1, delay));
-}
-
-function musicLipWanted() {
-	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return false; }
-	if (!tree.sound || !tree.sound.tagName || tree.sound.tagName.toLowerCase() != 'video') { return false; }
-	if (tree.sound.paused) { return false; }
-	return musicPictureDelay() > 0.01;
-}
-
-function musicLipDelayChanged() {
-	musicLip.delay = musicPictureDelay();
-	// The local sound already waits for the graph's output buffer, so it needs
-	// that much less added delay to land with the picture (and with the remote,
-	// which is measured from the tap in front of that buffer).
-	var audio = musicLip.delay;
-	if (musicGraphCarriesLocal()) { audio = Math.max(0, audio - musicGraphLatency()); }
-	musicLip.audioDelay = audio;
-	if (musicVisual.localDelay) {
-		// wait to delay the local sound until the delayed picture is actually up;
-		// a short ramp keeps the change from clicking
-		var want = (musicLip.on && musicLip.revealed) ? audio : 0;
-		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
-		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
-	}
-}
-
-// The moment the picture is handed from the live element to the delayed clone,
-// the clone's box is black until its decoder presents a frame. This holds the
-// frame we are handing over to as a still over the clone, and takes it down on
-// the clone's first real frame, so lining up reads as a freeze rather than a
-// blackout. Same classes and inline geometry as the clone, so theatre mode,
-// fullscreen and a resize keep the still in the right box.
-function musicLipStillUrl(source) {
-	if (!source || source.seeking || !source.videoWidth || !source.videoHeight || source.readyState < 2) { return ''; }
-	var canvas = musicLip.freezeCanvas;
-	if (!canvas) { canvas = musicLip.freezeCanvas = document.createElement('canvas'); }
-	var scale = Math.min(1, 640 / source.videoWidth);
-	canvas.width = Math.max(1, Math.round(source.videoWidth * scale));
-	canvas.height = Math.max(1, Math.round(source.videoHeight * scale));
-	try {
-		canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
-		return canvas.toDataURL('image/jpeg', 0.8);
-	}
-	catch (e) { return ''; }
-}
-// A still is only useful if it is not a decoder's black frame. Keep one from
-// ordinary playback so a seek has something to show while both the live
-// element and the clone are seeking (and neither can give a frame).
-function musicLipKeepStill(v) {
-	if (!v || v.seeking || v.readyState < 2 || !v.videoWidth) { return; }
-	var now = Date.now();
-	if (now - (musicLip.lastStillAt || 0) < 400) { return; }
-	if (!musicLipFrameOk(v)) { return; }
-	var url = musicLipStillUrl(v);
-	if (url) { musicLip.lastStill = url; musicLip.lastStillAt = now; }
-}
-
-function musicLipFreezeShow(source) {
-	var v = musicLip.video, ref = musicLip.clone || v;
-	if (!ref || !ref.parentNode) { return false; }
-	// During a seek the source itself is black. The rolling still from before
-	// the seek is the frame the screen should hold.
-	var url = musicLipStillUrl(source);
-	if (!url) { url = musicLip.lastStill || ''; }
-	if (!url) { return false; }
-	var img = musicLip.freeze;
-	if (!img) {
-		img = musicLip.freeze = document.createElement('img');
-		img.className = 'music_lip_freeze';
-		img.setAttribute('aria-hidden', 'true');
-	}
-	var css = ref.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
-	img.style.cssText = css + ';object-fit:contain;pointer-events:none;';
-	img.style.opacity = '1';
-	// above the live picture: the clone now sits *behind* it, so inserting
-	// after the clone would put the still underneath the element it covers
-	var anchor = v || ref;
-	if (img.parentNode !== anchor.parentNode || img.previousSibling !== anchor) {
-		anchor.parentNode.insertBefore(img, anchor.nextSibling);
-	}
-	img.src = url;
-	return true;
-}
-function musicLipFreezePlace() {
-	var img = musicLip.freeze, ref = musicLip.clone || musicLip.video;
-	if (!img || !img.parentNode || !ref) { return; }
-	img.style.cssText = ref.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '')
-		+ ';object-fit:contain;pointer-events:none;';
-	img.style.opacity = '1';
-}
-function musicLipFreezeHide() {
-	var img = musicLip.freeze;
-	musicLip.freeze = null;
-	if (!img) { return; }
-	img.style.opacity = '0';
-	if (img.parentNode) { img.parentNode.removeChild(img); }
-}
-// Take the still down on the clone's first presented frame. A decoder that
-// never presents one must not leave the picture frozen forever, so a timer
-// takes it down anyway.
-function musicLipFreezeUntilFrame() {
-	var c = musicLip.clone;
-	var gen = ++musicLip.freezeGen;
-	var started = Date.now();
-	var finish = function() {
-		if (gen !== musicLip.freezeGen) { return; }
-		// Keep the still up while the clone only has a decoder's black frame.
-		// A dark scene eventually passes (2 s), but a seek blackout does not.
-		if (musicLip.clone && !musicLipFrameOk(musicLip.clone) && Date.now() - started < 2000) {
-			setTimeout(finish, 60);
-			return;
-		}
-		musicLip.painted = true;
-		if (musicLip.clone) { musicLip.clone.style.opacity = '1'; }
-		if (musicLip.video) { musicLip.video.style.opacity = '0'; }
-		musicLipFreezeHide();
-	};
-	if (!c) { finish(); return; }
-	// a paused seek presents its new frame without a playing-frame callback
-	if (c.paused) {
-		c.addEventListener('seeked', function() { setTimeout(finish, 60); }, { once: true });
-		setTimeout(finish, 500);
-		return;
-	}
-	var called = false;
-	if (c.requestVideoFrameCallback) {
-		try {
-			c.requestVideoFrameCallback(function() {
-				called = true;
-				// give the compositor the frame that was just presented; hiding
-				// the still in the same task can expose one black composite
-				setTimeout(finish, 40);
-			});
-			setTimeout(function() { if (!called) { finish(); } }, 1500);
-			return;
-		} catch (e) {}
-	}
-	setTimeout(finish, 350);
-}
-
-function musicLipApply() {
-	if (musicLipWanted()) { musicLipStart(); }
-	else { musicLipStop(); }
-}
-
-// Take the lip-sync clone's audio into the graph at zero gain. It reads the
-// same stream as the element, so the Pulse stream WebKitPulse exposes stays at
-// full scale (and is not remembered as a muted video stream).
-function musicLipSilenceClone(c) {
-	var ctx = musicVisual && musicVisual.ctx;
-	if (!ctx) { c.muted = true; c.volume = 0; return; }
-	try {
-		var source = ctx.createMediaElementSource(c);
-		var mute = ctx.createGain();
-		mute.gain.value = 0;
-		source.connect(mute);
-		mute.connect(ctx.destination);
-		musicLip.cloneSource = source;
-		musicLip.cloneMute = mute;
-	}
-	catch (e) {
-		// an engine that will not capture a second element: the element itself
-		// is the only way to keep the clone silent
-		c.muted = true;
-		c.volume = 0;
-	}
-}
-
-function musicAbsoluteUrl(u) {
-	try { return new URL(u, location.href).href; } catch (e) { return u; }
-}
-
-function musicLipStart() {
-	var v = tree.sound;
-	if (!v || !v.videoWidth) {
-		// the picture's size arrives with its metadata; try again shortly
-		setTimeout(function() { if (musicLipWanted() && !musicLip.on) { musicLipStart(); } }, 250);
-		return;
-	}
-	if (musicLip.on && musicLip.video === v) { musicLipDelayChanged(); return; }
-	if (musicLip.on) { musicLipStop(); }
-	var src = v.currentSrc || v.src;
-	if (!src) { return; }
-	musicLip.on = true;
-	musicLip.video = v;
-	musicLip.src = musicAbsoluteUrl(src);
-	musicLip.revealed = false;
-	musicLip.painted = false;
-	musicLip.seekAt = 0;
-	musicLipDelayChanged();
-	var c = document.createElement('video');
-	c.className = v.className;
-	c.setAttribute('playsinline', '');
-	c.setAttribute('webkit-playsinline', '');
-	// The clone is a picture, so its sound must be silent. Do not silence it by
-	// setting the element's volume to 0: WebKit maps that onto the Pulse stream
-	// and remembers it for the role, which left later real tracks at 0% with the
-	// mute button off (the muted 'Music' stream in pavucontrol). Keep the element
-	// at full level and take the clone's sound into the shared graph through a
-	// zero gain instead. Older engines without a graph fall back to the element.
-	c.volume = 1;
-	c.muted = false;
-	musicLipSilenceClone(c);
-	c.autoplay = false;
-	c.preload = 'auto';
-	c.style.cssText = v.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
-	// The clone sits behind the live picture (inserted before it below) and
-	// plays in the open: the live picture hides it, the decoder keeps making
-	// frames, and there is no opacity:0 layer to stop requestVideoFrameCallback
-	// from firing.
-	c.style.opacity = '1';
-	// a second request of /play must not start the server-side player again
-	c.src = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'clone=1';
-	var orig = document.getElementById('video_subtitles');
-	var tsrc = orig && orig.getAttribute('src');
-	if (tsrc) {
-		var t = document.createElement('track');
-		t.kind = 'subtitles';
-		t.srclang = 'eng';
-		t.label = 'English';
-		t.src = tsrc;
-		t.default = true;
-		c.appendChild(t);
-		musicLip.track = t;
-	}
-	// behind the live picture, so the clone can decode and play unseen
-	v.parentNode.insertBefore(c, v);
-	musicLip.clone = c;
-	musicLip.saved = v.style.opacity;
-	var handed = false;
-	var reveal = function() {
-		if (!musicLip.on || musicLip.clone !== c || handed) { return; }
-		handed = true;
-		musicLip.painted = false;
-		// Keep the live picture - and the local sound, which is not delayed
-		// until the hand-over - up while the clone finds its first frame. The
-		// clone is already playing behind it.
-		v.style.opacity = musicLip.saved || '';
-		var hand_over = function(framed) {
-			if (!musicLip.on || musicLip.clone !== c) { return; }
-			// Once the clone has presented a frame, the still is taken from the live
-			// picture: while a seek is settling the clone's newest frame can be black,
-			// and a black still is a blackout.
-			var still = musicLipFreezeShow(v);
-			var done = false;
-			var hand_at = Date.now();
-			var finish = function() {
-				if (done) { return; }
-				// do not hand the screen to a decoder's black frame
-				if (musicLip.clone && !musicLipFrameOk(musicLip.clone) && Date.now() - hand_at < 2000) {
-					setTimeout(finish, 60);
-					return;
-				}
-				done = true;
-				if (!musicLip.on || musicLip.clone !== c) { return; }
-				musicLip.revealed = true;
-				musicLip.painted = true;
-				v.style.opacity = '0';
-				if (still) {
-					var cover = musicLip.freeze;
-					setTimeout(function() {
-						// a seek may have put a newer still up in the meantime
-						if (musicLip.on && musicLip.clone === c && musicLip.freeze === cover) { musicLipFreezeHide(); }
-					}, framed ? 60 : 500);
-				}
-				// local sound joins the delayed picture now, not before it is visible
-				musicLipDelayChanged();
-			};
-			if (framed || !still) { finish(); return; }
-			// no frame yet: keep the live picture until the still has decoded
-			var img = musicLip.freeze;
-			if (img && img.decode) {
-				img.decode().then(finish, function() { setTimeout(finish, 80); });
-				setTimeout(finish, 600);
-			}
-			else if (img) {
-				img.addEventListener('load', finish, { once: true });
-				setTimeout(finish, 600);
-			}
-			else { finish(); }
-		};
-		if (c.requestVideoFrameCallback) {
-			// Wait for a real frame. The live picture keeps playing meanwhile, so a
-			// clone that never presents simply leaves lip sync unapplied rather
-			// than showing a black box or freezing the screen.
-			try { c.requestVideoFrameCallback(function() { hand_over(true); }); }
-			catch (e) { setTimeout(function() { hand_over(false); }, 120); }
-		}
-		else {
-			// older engines: keep the live picture up until the clone has had time
-			// to paint its first frame
-			setTimeout(function() { hand_over(false); }, 120);
-		}
-	};
-	c.addEventListener('canplay', reveal, { once: true });
-	c.addEventListener('loadeddata', reveal, { once: true });
-	try { c.currentTime = Math.max(0, v.currentTime - musicLip.delay); } catch (e) {}
-	var p = null;
-	try { p = c.play(); } catch (e) {}
-	if (p && p.catch) { p.catch(function () {}); }
-	musicLip.timer = setInterval(musicLipSync, 200);
-	musicLipSync();
-}
-
-function musicLipSync() {
-	var v = musicLip.video, c = musicLip.clone;
-	if (!musicLip.on || !v || !c) { return; }
-	// a next/previous (not an ended track) changes the original's source under
-	// us; the clone needs its own new source and decoder. Compare the resolved
-	// URL: before the media loads currentSrc is empty and src may be relative,
-	// which used to look like a new track on the very next tick.
-	var src = v.currentSrc || v.src;
-	if (src && musicLip.src && musicAbsoluteUrl(src) !== musicLip.src) { musicLipStop(); musicLipStart(); return; }
-	// follow theatre mode, a resize and fullscreen: the clone wears the same
-	// classes and inline geometry, minus the opacity that hides the original
-	var css = v.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
-	if (c._lip_css !== css) { c._lip_css = css; c.style.cssText = css; musicLipFreezePlace(); }
-	c.style.opacity = '1';
-	c.className = v.className;
-	var target = Math.max(0, v.currentTime - musicLip.delay);
-	var base = v.playbackRate || 1;
-	if (!v.paused && !v.ended) { musicLipKeepStill(v); }
-	if (musicLip.track) {
-		var status = $('#video_subtitle_toggle').attr('status');
-		try { musicLip.track.track.mode = (status == 'showing') ? 'showing' : 'hidden'; } catch (e) {}
-	}
-	if (v.paused || v.ended) {
-		if (!c.paused) { c.pause(); }
-		return;
-	}
-	if (c.paused) {
-		try { c.currentTime = target; } catch (e) {}
-		c.playbackRate = base;
-		var p = null;
-		try { p = c.play(); } catch (e) {}
-		if (p && p.catch) { p.catch(function () {}); }
-		return;
-	}
-	var drift = target - c.currentTime;
-	// A clone that is still seeking reports its old position, and chasing that
-	// seek again every tick is what made the picture blink black.
-	if (c.seeking) { return; }
-	var now = Date.now();
-	// Steady sync is done by nudging the playback rate: a hard seek empties the
-	// decoder and is the thing that blinks. Only a really large jump (a stall, a
-	// changed source) is re-anchored, and while that correction settles the rate
-	// keeps working instead of leaving the drift uncorrected.
-	if (Math.abs(drift) > 0.9) {
-		if (now - (musicLip.seekAt || 0) < 3000) {
-			// drift is target - clone: positive means the clone is behind and
-			// must speed up, negative means it is ahead and must slow down.
-			c.playbackRate = base * (drift > 0 ? 1.15 : 0.85);
-			return;
-		}
-		musicLip.seekAt = now;
-		var held = musicLipFreezeShow(v);
-		musicLip.freezeAt = now;
-		try { c.currentTime = target; } catch (e) {}
-		c.playbackRate = base;
-		// arm the wait after the seek: an already-queued frame would otherwise
-		// take the still down before the seek had a chance to black out
-		if (held) { musicLipFreezeUntilFrame(); }
-	}
-	else if (drift > 0.05) { c.playbackRate = base * (drift > 0.4 ? 1.2 : 1.1); }
-	else if (drift < -0.05) { c.playbackRate = base * (drift < -0.4 ? 0.82 : 0.92); }
-	else { c.playbackRate = base; }
-}
-
-function musicLipSeek() {
-	var v = musicLip.video, c = musicLip.clone;
-	if (!v || !c) { return; }
-	var held = musicLip.revealed && musicLipFreezeShow(v);
-	try { c.currentTime = Math.max(0, v.currentTime - musicLip.delay); } catch (e) {}
-	if (held) { musicLipFreezeUntilFrame(); }
-	if (!v.paused) {
-		var p = null;
-		try { p = c.play(); } catch (e) {}
-		if (p && p.catch) { p.catch(function () {}); }
-	}
-}
-
-function musicLipStop() {
-	musicLip.on = false;
-	if (musicLip.timer) { clearInterval(musicLip.timer); musicLip.timer = 0; }
-	var c = musicLip.clone;
-	var v = musicLip.video;
-	// drop the clone's graph tap before the element goes, so the context is not
-	// left holding a dead media source
-	if (musicLip.cloneSource) {
-		try { musicLip.cloneSource.disconnect(); } catch (e) {}
-		musicLip.cloneSource = null;
-	}
-	if (musicLip.cloneMute) {
-		try { musicLip.cloneMute.disconnect(); } catch (e) {}
-		musicLip.cloneMute = null;
-	}
-	if (c) {
-		try { c.pause(); } catch (e) {}
-		// Setting a new/removed source and loading hands the decoder back: deleting
-		// the element alone left its Pulse stream (and a muted 'Music' entry in
-		// pavucontrol) behind for the rest of the web process's life.
-		try { c.removeAttribute('src'); c.load(); } catch (e) {}
-		if (c.parentNode) { c.parentNode.removeChild(c); }
-	}
-	musicLipFreezeHide();
-	musicLip.freezeGen++;
-	if (v) { v.style.opacity = musicLip.saved || ''; }
-	musicLip.clone = null;
-	musicLip.track = null;
-	musicLip.video = null;
-	musicLip.src = '';
-	musicLip.revealed = false;
-	musicLip.painted = false;
-	musicLip.saved = '';
-	musicLip.lastStill = '';
-	musicLip.lastStillAt = 0;
-	if (musicVisual.localDelay) {
-		try { musicVisual.localDelay.delayTime.setTargetAtTime(0, musicVisual.ctx.currentTime, 0.08); }
-		catch (e) { try { musicVisual.localDelay.delayTime.value = 0; } catch (e2) {} }
-	}
-	var track = tree && tree.sound && tree.sound.textTracks && tree.sound.textTracks[0];
-	if (track) {
-		var status = $('#video_subtitle_toggle').attr('status');
-		try { track.mode = (status == 'showing') ? 'showing' : 'hidden'; } catch (e) {}
-	}
-}
 // Is the window wearing the phone's own draw? The template says so on #music
 // (see apps/music/music.html.ep): the shelves are one-line strips and the list
 // runs from under them to the player, all of it inline. The desktop's geometry
@@ -1362,8 +1015,6 @@ async function musicInit(method) {
 		// a search re-render keeps the value already running in this page
 		var normalize_attr = $('#music').attr('normalize');
 		if (normalize_attr) { music_normalize = normalize_attr; }
-		var lip_attr = $('#music').attr('lip_sync');
-		if (lip_attr) { music_lip_sync = lip_attr; }
 		var codec_attr = $('#music').attr('stream_codec');
 		if (codec_attr) { music_stream_codec = codec_attr; }
 		// not a silent start: restore the machine's own output level, or a track
@@ -1780,10 +1431,7 @@ function mediaMaker(data) {
 						var subtitle_ready = !!(subtitle_track && subtitle_track.getAttribute('src') && (subtitle_track.readyState < 2 || (subtitle_cues && subtitle_cues.length)));
 						if (subtitle_ready && subtitle_text) {
 							$('#video_subtitle_toggle').show();
-							// with the picture delayed, the cues are drawn at the delayed
-							// time by musicLipSubtitles, not by the element
-							if (musicLip.on) { subtitle_text.mode = 'hidden'; }
-							else { subtitle_text.mode = $('#video_subtitle_toggle').attr('status') == 'showing' ? 'showing' : 'hidden'; }
+							subtitle_text.mode = $('#video_subtitle_toggle').attr('status') == 'showing' ? 'showing' : 'hidden';
 						}
 						else {
 							$('#video_subtitle_toggle').hide();
@@ -1887,7 +1535,6 @@ function remoteTrackToggle(data) {
 		if (musicStream.active) {
 			musicStreamTapActive(true, true);
 			musicStreamControl('seek', { seek: seek, file: file, music_data: data['music_data'] || tree.songs[0] });
-			musicLipSeek();
 		}
 		return;
 	}
@@ -2437,13 +2084,6 @@ $(document).on('change', '#music_normalize_select', function() {
 	musicVolumeApply();
 	settingSetter({ 'app': 'music', 'setting': 'normalize', 'value': music_normalize });
 });
-$(document).on('change', '#music_lip_sync', function() {
-	music_lip_sync = this.checked ? 'on' : 'off';
-	$('#music').attr('lip_sync', music_lip_sync);
-	settingSetter({ 'app': 'music', 'setting': 'lip_sync', 'value': music_lip_sync });
-	if (music_lip_sync == 'on') { musicLipApply(); }
-	else { musicLipStop(); }
-});
 $(document).on('change', '#music_stream_codec', function() {
 	music_stream_codec = $(this).val() || 'pcm';
 	$('#music').attr('stream_codec', music_stream_codec);
@@ -2929,34 +2569,9 @@ function musicEqualizerFromEqualizer(eq) {
 	return true;
 }
 // The drawer is fetched from this machine, not the library host: its outputs,
-// format, lip-sync, normalization and equalizer are local settings. The first
-// open also gives the equalizer to a page that has not shown the drawer yet, so
-// a saved curve is in place before playback starts.
-function musicSyncOffsetRead() {
-	var el = $('#music_sync_offset');
-	if (el.length) {
-		var v = parseFloat(el.val());
-		if (isFinite(v)) { music_sync_offset = Math.max(-300, Math.min(500, v)); }
-		el.val(music_sync_offset);
-	}
-	$('#music_sync_offset_value').text(music_sync_offset + ' ms');
-}
-function musicSyncOffsetSave() {
-	clearTimeout(music_sync_save_timer);
-	music_sync_save_timer = setTimeout(function() {
-		settingSetter({ app: 'music', setting: 'sync_offset', value: music_sync_offset });
-	}, 250);
-}
-
-$(document).on('input', '#music_sync_offset', function() {
-	var v = parseFloat(this.value);
-	if (isFinite(v)) { music_sync_offset = Math.max(-300, Math.min(500, v)); }
-	musicSyncOffsetRead();
-	musicLipDelayChanged();
-	musicLipApply();
-	musicSyncOffsetSave();
-});
-
+// format, normalization and equalizer are local settings. The first open also
+// gives the equalizer to a page that has not shown the drawer yet, so a saved
+// curve is in place before playback starts.
 function musicAudioPanelLoad(show) {
 	var panel = $('#music_audio_panel');
 	if (!panel.length) { return; }
@@ -2976,7 +2591,6 @@ function musicAudioPanelLoad(show) {
 			if (r.mao) { mao = r.mao; }
 			panel.html(r.html);
 			if (!musicEqualizerFromEqualizer(r.equalizer)) { musicEqualizerLoad(); }
-			musicSyncOffsetRead();
 			if (musicEqualizerDirty() && !(musicVisual && musicVisual.limiter)) {
 				try { musicAudioGraph(); } catch (e) {}
 			}
@@ -3079,7 +2693,6 @@ var musicVisual = {
 	leveler: null,
 	localGain: null,
 	remoteGain: null,
-	localDelay: null,
 	localSplit: null,
 	localLeft: null,
 	localRight: null,
@@ -3184,7 +2797,6 @@ function musicAudioClose() {
 	musicVisual.limiter = null;
 	musicVisual.localGain = null;
 	musicVisual.remoteGain = null;
-	musicVisual.localDelay = null;
 	musicVisual.localSplit = null;
 	musicVisual.localLeft = null;
 	musicVisual.localRight = null;
@@ -3251,7 +2863,6 @@ function musicAudioGraph() {
 		musicVisual.limiter = null;
 		musicVisual.localGain = null;
 		musicVisual.remoteGain = null;
-		musicVisual.localDelay = null;
 		musicVisual.localSplit = null;
 		musicVisual.localLeft = null;
 		musicVisual.localRight = null;
@@ -3274,19 +2885,16 @@ function musicAudioGraph() {
 			musicVisual.analyser = musicVisual.ctx.createAnalyser();
 			musicVisual.analyser.fftSize = 2048;
 			musicVisual.analyser.smoothingTimeConstant = 0.82;
-			// The local output has its own gain and delay. The gain keeps the
-			// element at full level, so the remote tap (taken at the limiter) still
-			// hears the track while this machine is muted or `me` is off; the delay
-			// is the picture-sync offset (see musicLipApply).
+			// The local output has its own gain. It keeps the element at full
+			// level, so the remote tap (taken at the limiter) still hears the
+			// track while this machine is muted or `me` is off.
 			musicVisual.localGain = musicVisual.ctx.createGain();
 			musicVisual.remoteGain = musicVisual.ctx.createGain();
 			musicVisual.remoteGain.gain.value = musicRemoteVolume();
-			musicVisual.localDelay = musicVisual.ctx.createDelay(1.0);
 			musicVisual.localSplit = musicVisual.ctx.createChannelSplitter(2);
 			musicVisual.localLeft = musicVisual.ctx.createGain();
 			musicVisual.localRight = musicVisual.ctx.createGain();
 			musicVisual.localMerge = musicVisual.ctx.createChannelMerger(2);
-			musicVisual.localDelay.delayTime.value = (musicLip.on && musicLip.revealed) ? (musicLip.audioDelay || 0) : 0;
 			// The equalizer sits after the leveller and before the limiter, so the
 			// peak guard still catches a boosted band and the remote tap hears the
 			// same curve as this machine. A flat curve is 0 dB on every filter.
@@ -3313,8 +2921,7 @@ function musicAudioGraph() {
 			musicVisual.limiter.connect(musicVisual.localGain);
 			musicVisual.limiter.connect(musicVisual.remoteGain);
 			musicVisual.localGain.connect(musicVisual.analyser);
-			musicVisual.analyser.connect(musicVisual.localDelay);
-			musicVisual.localDelay.connect(musicVisual.localSplit);
+			musicVisual.analyser.connect(musicVisual.localSplit);
 			musicVisual.localSplit.connect(musicVisual.localLeft, 0);
 			musicVisual.localSplit.connect(musicVisual.localRight, 1);
 			musicVisual.localLeft.connect(musicVisual.localMerge, 0, 0);
@@ -3345,9 +2952,6 @@ function musicAudioGraph() {
 		musicVolumeApply();
 		if (musicStreamTap.node) { musicVisual.remoteGain.connect(musicStreamTap.node); }
 	}
-	// The picture has to wait for the graph's own output latency (and, when lip
-	// sync is on, for the remote); this also restarts the clone on a new element.
-	musicLipApply();
 	return musicVisual;
 }
 
