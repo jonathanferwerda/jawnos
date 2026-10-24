@@ -3164,7 +3164,11 @@ $(document).on('submit', "#main_upload", function(e) {
   });
 });
 
+// The title in a window's bar is a label, not a source: clicking it raises the
+// window (the .top_navbar handler), but it does not pour the app's name into
+// the focused input. An appointment's own .name_text still does.
 $(document).on('click', '.name_text', function(){
+	if ($(this).closest('.top_navbar').length) { return; }
 	var text = $(this).text();
 	focused_input.val(text);
 });
