@@ -465,6 +465,7 @@ function musicSyncReport() {
 	var v = tree && tree.sound;
 	var q = null;
 	try { q = (v && v.getVideoPlaybackQuality) ? v.getVideoPlaybackQuality() : null; } catch (e) {}
+	var ar = musicAheadRanges();
 	musicStreamSendJson({
 		type: 'sync_report',
 		t: Date.now(),
@@ -499,6 +500,9 @@ function musicSyncReport() {
 			seeking: (musicAhead.el && musicAhead.el.seeking) ? 1 : 0,
 			el_paused: (musicAhead.el && musicAhead.el.paused) ? 1 : 0,
 			seekable: (musicAhead.el && musicAhead.el.seekable) ? musicAhead.el.seekable.length : 0,
+			seek_start: ar.seek_start,
+			seek_end: ar.seek_end,
+			buf_end: ar.buf_end,
 			opus_src: (musicOpus.source || '')
 		},
 		video: v ? {
@@ -871,9 +875,29 @@ function musicAheadForget() {
 	musicAhead.chain = null;
 }
 
+// The ahead element's seekable and buffered bounds, for the trace: a moving
+// seekable window is what makes a seek land somewhere other than asked.
+function musicAheadRanges() {
+	var out = { seek_start: -1, seek_end: -1, buf_end: -1 };
+	var el = musicAhead.el;
+	if (!el) { return out; }
+	try {
+		if (el.seekable && el.seekable.length) {
+			out.seek_start = Math.round(el.seekable.start(0) * 1000);
+			out.seek_end = Math.round(el.seekable.end(0) * 1000);
+		}
+	} catch (e) {}
+	try {
+		if (el.buffered && el.buffered.length) {
+			out.buf_end = Math.round(el.buffered.end(el.buffered.length - 1) * 1000);
+		}
+	} catch (e) {}
+	return out;
+}
+
 // Put the ahead element at the player's position plus the lead, and keep it
 // there. A small error is trimmed with the playback rate; a large one is a real
-// jump and is seeked, but at most once every four seconds. The old picture clone
+// jump and is seeked, but at most once every five seconds. The old picture clone
 // learned this the hard way: chasing a seek every tick, or seeking again while
 // one is still in flight, is what makes the sound jump and crackle.
 function musicAheadLead(hard) {

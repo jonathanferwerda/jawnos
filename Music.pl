@@ -205,6 +205,15 @@ get '/play' => sub($c) {
 	my $track = &subs::terminal_name($c->param('track'));
 	my $data;
 
+	# The ahead tap is an <audio> element reading the same file. Without a Range
+	# the file is answered as a live stream with no known length: its seekable
+	# window moves and its clock wanders, so a seek lands somewhere else. A
+	# whole-file range gives it the same fixed, seekable response a <video>
+	# element asks for by itself.
+	if (($c->param('clone') // '') eq '1' && !$c->req->headers->header('Range')) {
+		$c->req->headers->header('Range' => 'bytes=0-');
+	}
+
 	&Manager::rock_and_roll($c);
 
 	# the ahead tap re-requests /play for the same file; it must not start the
@@ -1300,19 +1309,36 @@ sub music_strip_release {
 	my $had_junk = ($text =~ s/$music_release_junk/ /gi) ? 1 : 0;
 	# a group tag usually hangs off the last release token, as in x264-GROUP
 	$text =~ s/\s*[-\x{2013}\x{2014}]\s*[A-Za-z0-9][A-Za-z0-9._-]{1,24}\s*$// if $had_junk;
-	# a bracket left over from a half-stripped group ([GROUP] at one end)
-	$text =~ s/^[\s\[\]{}]+//;
-	$text =~ s/[\s\[\]{}]+$//;
+	# edges: Arrested Development - S01E01 - Pilot leaves "- Pilot"; the dashes
+	# belong to the release name, not the episode
+	$text =~ s/^[\s\-\x{2013}\x{2014}:;,.|_]+//;
+	$text =~ s/^[+&]\s+//;
+	$text =~ s/[\s\-\x{2013}\x{2014}:;,.|_]+$//;
 	return &music_trim_text($text);
+}
+
+# A file's extension tells us how to play it, never what it is. song_maker has
+# already removed the audio ones it recognises; this finishes the job for video
+# (and for a sealed track, whose real extension sits inside .enc).
+my $music_media_extension = qr/\.(?:mp4|m4v|mkv|avi|mov|webm|wmv|flv|mpg|mpeg|m2ts|ts|mp3|m4a|wav|flac|aac|ogg|opus|aiff|wma)$/i;
+sub music_media_stem {
+	my $text = shift;
+	return '' unless defined $text;
+	my $stem = "$text";
+	$stem =~ s/\.enc$//i;
+	$stem =~ s/$music_media_extension//;
+	return $stem;
 }
 
 sub music_episode_from_text {
 	my $text = shift;
 	return {} unless defined $text && length $text;
-	if ($text =~ /^(.*?)\s*\bS(\d{1,2})\s*E(\d{1,3})\b(.*)$/i) {
+	# S06E01, S06X01 (The Office uses X), S01E01+E02, S07E17X01
+	if ($text =~ /^(.*?)\s*\bS(\d{1,2})\s*[EX](\d{1,3})(?:\s*[+&]?\s*[EX]\d{1,3})*\b(.*)$/i) {
 		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
 	}
-	if ($text =~ /^(.*?)\s*\b(\d{1,2})\s*x\s*(\d{1,3})\b(.*)$/i) {
+	# 1x02, and 4x22 & 23
+	if ($text =~ /^(.*?)\s*\b(\d{1,2})\s*x\s*(\d{1,3})(?:\s*[+&]\s*\d{1,3})*\b(.*)$/i) {
 		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
 	}
 	if ($text =~ /^(.*?)\s*\b(?:Season|Series)\s*(\d{1,2})\s*(?:Episode|Ep)\s*(\d{1,3})\b(.*)$/i) {
@@ -1321,24 +1347,92 @@ sub music_episode_from_text {
 	if ($text =~ /^(.*?)\s*\bE(?:p|pisode)?\s*(\d{1,3})\b(.*)$/i) {
 		return { show => $1, season => '', episode => $2, rest => $3, code => sprintf('Episode %d', $2) };
 	}
+	# Home Improvement - 315 - Reel Men: a packed season/episode code
+	if ($text =~ /^(.*?)\s*[-\x{2013}\x{2014}]\s*(\d)(\d{2})\s*[-\x{2013}\x{2014}]\s*(.*)$/) {
+		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
+	}
+	# Home Improvement 5-01 A Taylor Runs Through It
+	if ($text =~ /^(.*?)\s*\b(\d{1,2})\s*[-\x{2013}\x{2014}]\s*(\d{2})\b(.*)$/) {
+		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
+	}
 	return {};
+}
+
+# A release tag repeated through a whole folder (GalaxyTV, PSA, SAiNTS, 2CH) is
+# part of the release, not the episode. Only tokens that *look* like release
+# noise are taken: one with a digit, one in capitals at the end, or one sitting
+# after a known release token. This is deliberately narrow - in the Portugal.
+# The Man album every track ends in "Magic", and Magic is the title, not noise.
+sub music_common_noise {
+	my $files = shift;
+	my %noise;
+	my @names;
+	foreach my $path ( @{$files || []} ) {
+		next unless defined $path && length $path;
+		my $base = $path;
+		$base =~ s{.*/}{};
+		$base = &music_media_stem($base);
+		push @names, $base if length $base;
+	}
+	my $count = scalar @names;
+	return {} if $count < 3;
+	my $need = int($count * 0.8 + 0.9999);
+	my (%seen, %after, %last);
+	foreach my $base ( @names ) {
+		my @token = grep { length } split /[^A-Za-z0-9]+/, $base;
+		next unless scalar @token;
+		my %once;
+		$once{$_} = 1 for @token;
+		$seen{$_}++ for keys %once;
+		$last{$token[-1]}++ if length $token[-1];
+		my $marked = 0;
+		foreach my $token ( @token ) {
+			if ($token =~ $music_release_junk) {
+				$marked = 1;
+				next;
+			}
+			$after{$token}++ if $marked;
+		}
+	}
+	foreach my $token ( keys %seen ) {
+		next if length($token) < 2;
+		next if $token =~ /^\d+$/;
+		next if $token =~ /^[Ss]\d{1,2}[EeXx]?\d{0,3}$/;
+		next if $token =~ /^\d{1,2}x\d{1,3}$/i;
+		next if $token =~ /^(?:the|a|an|and|or|of|to|in|on|for|with|at|by|from|one|two|part|vol|ep|episode|season|series)$/i;
+		next if ($seen{$token} || 0) < $need;
+		my $digit = ($token =~ /\d/) ? 1 : 0;
+		my $caps = ($token =~ /^[A-Z0-9]{2,12}$/) ? 1 : 0;
+		my $after = (($after{$token} || 0) >= $need) ? 1 : 0;
+		my $last = (($last{$token} || 0) >= $need) ? 1 : 0;
+		$noise{lc $token} = 1 if $digit || $after || ($caps && $last);
+	}
+	return \%noise;
 }
 
 # The three labels every track carries, worked out once so the list, the icons
 # grid and the phone all draw the same words.
 sub music_media_labels {
-	my $f = shift;
+	my ($f, $noise) = @_;
+	$noise ||= {};
 	my $tags = (ref($f->{'info'}) && ref($f->{'info'}->{'tags'})) ? $f->{'info'}->{'tags'} : {};
 	my $tag_artist = &music_trim_text($tags->{'artist'} || $tags->{'album_artist'} || '');
 	my $tag_album  = &music_trim_text($tags->{'album'} || '');
 	my $tag_title  = &music_trim_text($tags->{'title'} || '');
 	my $folder_artist = &music_path_text($f->{'artist_name'} // $f->{'artist'});
 	my $folder_album  = &music_path_text($f->{'album_name'} // $f->{'album'});
-	my $stem = &music_path_text($f->{'full_title'} || $f->{'song'});
+	my $stem = &music_path_text(&music_media_stem($f->{'full_title'} || $f->{'song'}));
 	# folder names that only say where the file is, not who made it
 	my %generic = map { $_ => 1 } qw/videos video movies movie tv television shows show media library music audio films film/;
 	$folder_artist = '' if $generic{lc $folder_artist};
 	$folder_album  = '' if $generic{lc $folder_album};
+	# "Home Improvement Season 3", "The Office US S06 (360p re-blurip)" and
+	# "Friends Season 1" are all the same shelf; name it Season N. A folder
+	# holding a range (S01-S09, Season 1-3) is left as it is.
+	if ($folder_album =~ /\b(?:season|series)\s*(\d{1,2})\b(?!\s*[-\x{2013}\x{2014}]\s*[SE]?\d)/i
+		|| $folder_album =~ /\bS(\d{1,2})\b(?!\s*[-\x{2013}\x{2014}]\s*[SE]?\d)/i) {
+		$folder_album = 'Season ' . (0 + $1);
+	}
 
 	my ($artist, $album, $track, $code);
 	if (($f->{'type'} || '') eq 'video') {
@@ -1346,10 +1440,14 @@ sub music_media_labels {
 		# A container's own title is sometimes the release name itself; trust it
 		# only when it is not that.
 		my $tag_ok = length($tag_title)
-			&& $tag_title !~ /\bS\d{1,2}\s*E\d{1,3}\b/i
+			&& $tag_title !~ /\bS\d{1,2}\s*[EX]\d{1,3}\b/i
 			&& $tag_title !~ /\b(?:\d{3,4}p|4k|x26[45]|hevc|web[ .-]?dl|blu[ .-]?ray)\b/i;
 		if ($ep->{'episode'}) {
 			$artist = &music_strip_release($ep->{'show'});
+			# Doctor Who 2005 is the same show as Doctor Who in the folder
+			$artist =~ s/\s*\((?:19|20)\d{2}\)\s*$//;
+			$artist =~ s/\s+\b(?:19|20)\d{2}\s*$// if $artist =~ /[^\d\s]/;
+			$artist = &music_trim_text($artist);
 			$artist = $tag_artist if !length $artist;
 			$artist = $folder_artist if !length $artist;
 			$code = $ep->{'code'};
@@ -1393,12 +1491,28 @@ sub music_media_labels {
 			# no tag: the file name, with its track number and any repeated artist
 			my $name = &music_strip_release($stem);
 			$name =~ s/^\d{1,3}[\s._-]+//;
-			$name =~ s/^\Q$artist\E\s*[-\x{2013}\x{2014}]\s*//i if length $artist;
 			$track = $name;
 		}
 	}
+	# the show's own name is the artist, not part of the track
+	if (length $artist) {
+		$track =~ s/^\s*\Q$artist\E\s*[-\x{2013}\x{2014}:]\s*//i;
+	}
+	# a tag repeated through the folder is release noise (GalaxyTV, 2CH, PSA)
+	if (%{$noise}) {
+		my @word;
+		foreach my $word ( split /\s+/, $track ) {
+			(my $key = $word) =~ s/[^\p{L}\p{N}]+//g;
+			next if length($key) && $noise->{lc $key};
+			push @word, $word;
+		}
+		$track = &music_trim_text(join ' ', @word);
+	}
+	$track =~ s/^[\s\-\x{2013}\x{2014}:;,.|_]+//;
+	$track =~ s/[\s\-\x{2013}\x{2014}:;,.|_]+$//;
+	$track = &music_trim_text($track);
+	$track = $code if !length($track) && length($code);
 	$track = $stem if !length $track;
-	$track = $code if !length $track && length $code;
 	return {
 		artist => $artist,
 		album => $album,
@@ -1459,6 +1573,20 @@ sub song_maker($data) {
 	if ($now_playing->{'file'}) {
 		my @is = grep { $_ eq $now_playing->{'file'} } @local_files;
 		unshift @local_files, $now_playing->{'file'} unless grep { $_ eq $now_playing->{'file'} } @local_files;
+	}
+
+	# A tag repeated through one folder is part of the release, not the track
+	# (GalaxyTV, SAiNTS, 2CH). Work it out per folder, so one show's group tag
+	# is never applied to a track from another show.
+	my %noise_by_folder;
+	my %files_by_folder;
+	foreach my $path ( @local_files ) {
+		my ($dir) = $path =~ m{^(.*)/[^/]*$};
+		$dir = '' unless defined $dir;
+		push @{$files_by_folder{$dir}}, $path;
+	}
+	foreach my $dir ( keys %files_by_folder ) {
+		$noise_by_folder{$dir} = &music_common_noise($files_by_folder{$dir});
 	}
 
 	for (my $n = 0; $n <= $max_files; $n++) {
@@ -1568,7 +1696,7 @@ sub song_maker($data) {
 			}
 		}
 		# the three words every draw shows, settled once here
-		my $labels = &music_media_labels($f);
+		my $labels = &music_media_labels($f, $noise_by_folder{$album_folder} || {});
 		$f->{'display_artist'} = $labels->{'artist'};
 		$f->{'display_album'} = $labels->{'album'};
 		$f->{'display_track'} = $labels->{'track'};
