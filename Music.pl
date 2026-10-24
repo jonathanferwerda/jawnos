@@ -392,6 +392,27 @@ sub music_channel_filter($channel, $device) {
 	return '';
 }
 
+# How much the receiving machine's own audio path adds after pacat has handed
+# the samples over: the sink input's buffer and device latency. The source's
+# ping can only measure the network and the player's start, so without this a
+# phone's OpenSL buffer sat between the remote sound and the picture.
+sub music_receiver_sink_latency {
+	my $json = `pactl -f json list sink-inputs 2>/dev/null`;
+	return 0 unless $json =~ /^\s*\[/;
+	my $list = eval { decode_json $json } || [];
+	my $ms = 0;
+	foreach my $si ( @{$list} ) {
+		my $p = $si->{'properties'} || {};
+		my $name = lc(($p->{'media.name'} || '') . ' ' . ($p->{'application.name'} || '') . ' ' . ($p->{'application.process.binary'} || ''));
+		next unless $name =~ /jawnos-music/;
+		my $b = ($si->{'buffer_latency_usec'} || 0) + 0;
+		my $s = ($si->{'sink_latency_usec'} || 0) + 0;
+		my $v = ($b + $s) / 1000;
+		$ms = $v if $v > $ms;
+	}
+	return int($ms + 0.5);
+}
+
 sub music_pacat_command($rate) {
 	my $pacat = `command -v pacat 2>/dev/null`;
 	chomp $pacat;
@@ -514,6 +535,13 @@ sub music_remote_audio_start($st) {
 		$st->{'locked'} = 1;
 	}
 	&music_stream_state_write($st);
+	# The receiver's own sink latency joins the measured base: the ping can only
+	# time the network and the player's start, not the phone's output buffer.
+	Mojo::IOLoop->timer(0.25 => sub {
+		return unless $st->{'pid'};
+		my $ms = &music_receiver_sink_latency();
+		$st->{'sink_ms'} = $ms if $ms > 0;
+	});
 	return 1;
 }
 
@@ -790,7 +818,7 @@ websocket '/manager/music/stream' => sub ($c) {
 				$c->tx->send({text => encode_json({ type => 'ready', key => $st->{'key'}, base => $st->{'base'}, latency_ms => $st->{'base'}, ok => ($ok ? 1 : 0), error => ($st->{'error'} || '') })});
 			}
 			elsif ($type eq 'ping') {
-				$c->tx->send({text => encode_json({ type => 'pong', t => $d->{'t'}, base => ($st->{'base'} || 80) })});
+				$c->tx->send({text => encode_json({ type => 'pong', t => $d->{'t'}, base => (($st->{'base'} || 80) + ($st->{'sink_ms'} || 0)) })});
 			}
 			elsif ($type eq 'control') {
 				my $action = $d->{'action'} || '';

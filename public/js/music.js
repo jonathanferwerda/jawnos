@@ -709,8 +709,27 @@ var musicLip = {
 	on: false, delay: 0.12, audioDelay: 0, clone: null, timer: 0, video: null,
 	saved: '', revealed: false, painted: false, track: null, src: '', seekAt: 0,
 	cloneSource: null, cloneMute: null,
-	freeze: null, freezeCanvas: null, freezeGen: 0, freezeAt: 0
+	freeze: null, freezeCanvas: null, freezeGen: 0, freezeAt: 0, checkCanvas: null
 };
+
+// Is the element showing something other than a decoder's black frame? Used
+// before a delayed picture is put on screen: a still may cover a seek, but a
+// black clone must not replace the live picture it is hiding.
+function musicLipFrameOk(el) {
+	if (!el || !el.videoWidth || !el.videoHeight || el.readyState < 2) { return false; }
+	try {
+		var c = musicLip.checkCanvas || (musicLip.checkCanvas = document.createElement('canvas'));
+		c.width = 32;
+		c.height = 18;
+		var g = c.getContext('2d', { willReadFrequently: true });
+		g.drawImage(el, 0, 0, c.width, c.height);
+		var d = g.getImageData(0, 0, c.width, c.height).data;
+		var sum = 0;
+		for (var i = 0; i < d.length; i += 4) { sum += d[i] + d[i + 1] + d[i + 2]; }
+		return (sum / (d.length / 4)) >= 2;
+	}
+	catch (e) { return true; }
+}
 
 // The shared graph sits between the element and this machine's speakers, and a
 // Web Audio context renders into its own sink with a buffer of its own. The
@@ -839,8 +858,15 @@ function musicLipFreezeHide() {
 function musicLipFreezeUntilFrame() {
 	var c = musicLip.clone;
 	var gen = ++musicLip.freezeGen;
+	var started = Date.now();
 	var finish = function() {
 		if (gen !== musicLip.freezeGen) { return; }
+		// Keep the still up while the clone only has a decoder's black frame.
+		// A dark scene eventually passes (2 s), but a seek blackout does not.
+		if (musicLip.clone && !musicLipFrameOk(musicLip.clone) && Date.now() - started < 2000) {
+			setTimeout(finish, 60);
+			return;
+		}
 		musicLip.painted = true;
 		if (musicLip.clone) { musicLip.clone.style.opacity = '1'; }
 		if (musicLip.video) { musicLip.video.style.opacity = '0'; }
@@ -969,13 +995,19 @@ function musicLipStart() {
 		v.style.opacity = musicLip.saved || '';
 		var hand_over = function(framed) {
 			if (!musicLip.on || musicLip.clone !== c) { return; }
-			// Once the clone has presented a frame, the still is taken from that
-			// frame: there is no black box and no jump back to an older picture.
-			// Without a frame, the live picture is the only safe still.
-			var still = musicLipFreezeShow(framed ? c : v);
+			// Once the clone has presented a frame, the still is taken from the live
+			// picture: while a seek is settling the clone's newest frame can be black,
+			// and a black still is a blackout.
+			var still = musicLipFreezeShow(v);
 			var done = false;
+			var hand_at = Date.now();
 			var finish = function() {
 				if (done) { return; }
+				// do not hand the screen to a decoder's black frame
+				if (musicLip.clone && !musicLipFrameOk(musicLip.clone) && Date.now() - hand_at < 2000) {
+					setTimeout(finish, 60);
+					return;
+				}
 				done = true;
 				if (!musicLip.on || musicLip.clone !== c) { return; }
 				musicLip.revealed = true;
@@ -1062,35 +1094,36 @@ function musicLipSync() {
 	}
 	var drift = target - c.currentTime;
 	// A clone that is still seeking reports its old position, and chasing that
-	// seek again every tick is what made the picture blink black. Let the decoder
-	// settle, and give a hard correction a moment before it is allowed to repeat.
+	// seek again every tick is what made the picture blink black.
 	if (c.seeking) { return; }
-	if (Math.abs(drift) > 0.35) {
-		if (Date.now() - (musicLip.seekAt || 0) < 1200) { return; }
-		musicLip.seekAt = Date.now();
-		// a seek empties the decoder for a moment; hold the frame we last saw.
-		// Encode at most once a second: on a slow decoder the correction can
-		// repeat, and a still every tick would make the stumble worse.
-		var held = false;
-		if (Date.now() - (musicLip.freezeAt || 0) > 800 && musicLipFreezeShow(c)) {
-			musicLip.freezeAt = Date.now();
-			held = true;
+	var now = Date.now();
+	// Steady sync is done by nudging the playback rate: a hard seek empties the
+	// decoder and is the thing that blinks. Only a really large jump (a stall, a
+	// changed source) is re-anchored, and while that correction settles the rate
+	// keeps working instead of leaving the drift uncorrected.
+	if (Math.abs(drift) > 1.2) {
+		if (now - (musicLip.seekAt || 0) < 4000) {
+			c.playbackRate = base * (drift > 0 ? 1.1 : 0.9);
+			return;
 		}
+		musicLip.seekAt = now;
+		var held = musicLipFreezeShow(v);
+		musicLip.freezeAt = now;
 		try { c.currentTime = target; } catch (e) {}
 		c.playbackRate = base;
 		// arm the wait after the seek: an already-queued frame would otherwise
 		// take the still down before the seek had a chance to black out
 		if (held) { musicLipFreezeUntilFrame(); }
 	}
-	else if (drift > 0.05) { c.playbackRate = base * 1.05; }
-	else if (drift < -0.05) { c.playbackRate = base * 0.95; }
+	else if (drift > 0.05) { c.playbackRate = base * 1.1; }
+	else if (drift < -0.05) { c.playbackRate = base * 0.9; }
 	else { c.playbackRate = base; }
 }
 
 function musicLipSeek() {
 	var v = musicLip.video, c = musicLip.clone;
 	if (!v || !c) { return; }
-	var held = musicLip.revealed && musicLipFreezeShow(c);
+	var held = musicLip.revealed && musicLipFreezeShow(v);
 	try { c.currentTime = Math.max(0, v.currentTime - musicLip.delay); } catch (e) {}
 	if (held) { musicLipFreezeUntilFrame(); }
 	if (!v.paused) {
@@ -2289,6 +2322,14 @@ function musicWheelAmount(e, sideways) {
 	else if (ev.deltaMode == 2) { amount = amount * 400; }
 	return amount / 100;
 }
+// A trackpad sends a stream of small pixel deltas, while a wheel sends one
+// notch (about 100 px). The same per-pixel arithmetic made a two-finger flick
+// race through the track (or the volume); fine mode is a fraction of a notch
+// per event.
+function musicWheelFine(e) {
+	var ev = e.originalEvent || e;
+	return ev.deltaMode == 0 && Math.abs(ev.deltaY || 0) < 60 && Math.abs(ev.deltaX || 0) < 60;
+}
 var musicSeekTarget = null;
 var musicSeekRaf = 0;
 function musicSeekBy(seconds) {
@@ -2316,7 +2357,8 @@ $(document).on('wheel', '#music_volume', function(e) {
 	if (!amount) { return; }
 	e.preventDefault();
 	e.stopPropagation();
-	musicVolumeSet(musicVolumeLevel() + amount * 0.04);
+	var scale = musicWheelFine(e) ? 0.35 : 1;
+	musicVolumeSet(musicVolumeLevel() + amount * 0.04 * scale);
 });
 $(document).on('wheel', '.music_seek', function(e) {
 	var amount = musicWheelAmount(e, true);
@@ -2326,7 +2368,8 @@ $(document).on('wheel', '.music_seek', function(e) {
 	// one notch is one percent of the track, kept between half a second and
 	// fifteen seconds so a song and a long film both feel right
 	var step = Math.max(0.5, Math.min(15, tree.sound.duration * 0.01));
-	musicSeekBy(amount * step);
+	var scale = musicWheelFine(e) ? 0.08 : 1;
+	musicSeekBy(amount * step * scale);
 });
 $(document).on('change', '#music_normalize_select', function() {
 	music_normalize = $(this).val() || 'off';

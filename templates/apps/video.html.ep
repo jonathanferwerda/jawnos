@@ -962,7 +962,7 @@
 			// one warms up; once it is ready a hover no longer waits for a round trip.
 			// A remote track is left to the server preview - pulling the tunnel a second
 			// time to preview it would cost more than the wait.
-			var <%= $miss %>SeekPreview = { video: null, src: '', want: 0, ready: false, drawn: false, visible: false, raf: 0, hideTimer: 0, canvas: null, failed: false };
+			var <%= $miss %>SeekPreview = { video: null, src: '', want: 0, ready: false, drawn: false, visible: false, raf: 0, timer: 0, lastSeekAt: 0, hideTimer: 0, canvas: null, failed: false };
 			function <%= $miss %>SeekPreviewDraw() {
 				var p = <%= $miss %>SeekPreview;
 				var el = p.video;
@@ -988,8 +988,24 @@
 				var p = <%= $miss %>SeekPreview;
 				p.raf = 0;
 				if (!p.ready || !p.video || !p.visible) { return; }
+				var now = Date.now();
+				if (now - (p.lastSeekAt || 0) < 200) { return; }
+				p.lastSeekAt = now;
 				if (Math.abs((p.video.currentTime || 0) - p.want) > 0.05) { p.video.currentTime = p.want; }
 				else { <%= $miss %>SeekPreviewDraw(); }
+			}
+			// A sweep should paint about five frames a second, not wait for the pointer
+			// to rest. One seek is issued at most every 200 ms, and a trailing timer
+			// catches the position the pointer lands on last.
+			function <%= $miss %>SeekPreviewSoon() {
+				var p = <%= $miss %>SeekPreview;
+				if (!p.ready || !p.video || !p.visible || p.raf || p.timer) { return; }
+				var wait = Math.max(0, 200 - (Date.now() - (p.lastSeekAt || 0)));
+				p.timer = setTimeout(function() {
+					p.timer = 0;
+					if (!p.visible || !p.ready || !p.video || p.raf) { return; }
+					p.raf = requestAnimationFrame(<%= $miss %>SeekPreviewSeek);
+				}, wait);
 			}
 			function <%= $miss %>SeekPreviewShow(time) {
 				var p = <%= $miss %>SeekPreview;
@@ -1021,11 +1037,13 @@
 						el.currentTime = p.want;
 					});
 					el.addEventListener('loadeddata', function() {
-						if (Math.abs(el.currentTime - p.want) <= 0.5) { <%= $miss %>SeekPreviewDraw(); }
+						<%= $miss %>SeekPreviewDraw();
 					});
 					el.addEventListener('seeked', function() {
-						if (!el.videoWidth || !el.videoHeight || Math.abs(el.currentTime - p.want) > 0.5) { return; }
+						if (!el.videoWidth || !el.videoHeight) { return; }
 						<%= $miss %>SeekPreviewDraw();
+						// the seek was for an older position than want; ask for the newest
+						if (Math.abs(el.currentTime - p.want) > 0.5) { <%= $miss %>SeekPreviewSoon(); }
 					});
 					el.addEventListener('error', function() {
 						p.failed = true;
@@ -1038,7 +1056,7 @@
 					el.src = src;
 				}
 				if (!p.ready) { return false; }
-				if (!p.raf) { p.raf = requestAnimationFrame(<%= $miss %>SeekPreviewSeek); }
+				<%= $miss %>SeekPreviewSoon();
 				if (p.drawn) { $('#<%= $miss %>_position_preview').show(); }
 				return p.drawn;
 			}
@@ -1106,6 +1124,7 @@
 <% if ($source eq 'music') { %>
 				var sp = <%= $miss %>SeekPreview;
 				if (sp.raf) { cancelAnimationFrame(sp.raf); sp.raf = 0; }
+				if (sp.timer) { clearTimeout(sp.timer); sp.timer = 0; }
 				sp.visible = false;
 				// A paused hidden video keeps a Pulse stream open on WebKit. Pause it
 				// at once and unload it if the pointer does not come back: a hovered
