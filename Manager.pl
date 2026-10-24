@@ -10632,6 +10632,14 @@ sub remote_useragent_maker($data) {
 		}
 	}
 	else {
+		# No stored session. The signed rail is what authenticates a peer request
+		# (peer_sign_request rides every request this agent makes), so the agent is
+		# usable anyway. Leaving it undef made every caller that checks for one -
+		# the destination relay among them - treat the peer as unreachable and
+		# silently do the work here instead of there.
+		$rm->{'ua'} = $ua;
+		$rm->{'ua'}->insecure(1);
+		$rm->{'ua'}->inactivity_timeout(60);
 	}
 	$rm->{'data'} = eval { return decode_json $rm->{'data'} };
 

@@ -7527,27 +7527,37 @@ sub ble_message_processor() {
 			return;
 		}
 		my $tog = (($payload->{'toggle'} || 0) == 1) ? 'off' : 'on';
-		my $returner = eval {
-			&subs::edt_button_presser({
-				timestamp => (($payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
-				room => $payload->{'room'},
-				watch_settings => $ws,
-				button => $payload->{'button'},
-				edt => $edt,
-				chip_id => $chip_id,
-				remote_address => 'bluetooth',
-				toggle => $tog
-			});
-		};
-		$log->error('BLE button press failed: ' . $@) if $@;
-		if ($returner && ref $returner eq 'HASH') {
-			&subs::bluetooth_sender_async({
-				intent => 'com.jawn.president.bt.connect',
-				chip_id => $chip_id,
-				edt => $edt,
-				message => { type => 'button', data => $returner }
-			});
-		}
+		# Applying a tap reaches the network (a command relayed to another machine)
+		# and the database. On the listener's own reader that held up every message
+		# behind it, so the next tap was not even logged until the relay returned -
+		# the delay before a press appeared at all. The arrival line above stays
+		# inline; the work rides a child. (In the child bluetooth_sender_async runs
+		# inline, so its ack still follows the press.)
+		my ($press_edt, $press_chip, $press_tog, $press_payload, $press_ws)
+			= ($edt, $chip_id, $tog, $payload, $ws);
+		&subs::subprocessor(sub {
+			my $returner = eval {
+				&subs::edt_button_presser({
+					timestamp => (($press_payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
+					room => $press_payload->{'room'},
+					watch_settings => $press_ws,
+					button => $press_payload->{'button'},
+					edt => $press_edt,
+					chip_id => $press_chip,
+					remote_address => 'bluetooth',
+					toggle => $press_tog
+				});
+			};
+			$log->error('BLE button press failed: ' . $@) if $@;
+			if ($returner && ref $returner eq 'HASH') {
+				&subs::bluetooth_sender_async({
+					intent => 'com.jawn.president.bt.connect',
+					chip_id => $press_chip,
+					edt => $press_edt,
+					message => { type => 'button', data => $returner }
+				});
+			}
+		}, { name => 'ble button press' });
 		return;
 	}
 	if ($type && $type eq 'switch') {
@@ -7568,21 +7578,26 @@ sub ble_message_processor() {
 		my $syl_count = ($edt eq 'microcontroller') ? 10 : 1;
 		my $b = $ws->{ &subs::shorthand_name('switch', $syl_count) . $button } || {};
 		my $toggle = ($state eq 'on') ? 'off' : 'on';
-		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $toggle }) if $b->{'app'};
 		$log->info('BLE switch for ' . ($chip_id || '?') . ': switch ' . $button . ' -> ' . $toggle);
-		eval {
-			&subs::edt_button_presser({
-				timestamp => (($payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
-				room => $payload->{'room'},
-				watch_settings => $ws,
-				button => $button,
-				component => 'switch',
-				edt => $edt,
-				chip_id => $chip_id,
-				remote_address => 'bluetooth'
-			});
-		};
-		$log->error('BLE switch press failed: ' . $@) if $@;
+		# Same reason as a button: the movement can relay a command or run one.
+		my ($sw_edt, $sw_chip, $sw_ws, $sw_button, $sw_b, $sw_payload, $sw_toggle)
+			= ($edt, $chip_id, $ws, $button, $b, $payload, $toggle);
+		&subs::subprocessor(sub {
+			&subs::setting_setter({ app => $sw_b->{'app'}, setting => 'toggle', value => $sw_toggle }) if $sw_b->{'app'};
+			eval {
+				&subs::edt_button_presser({
+					timestamp => (($sw_payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
+					room => $sw_payload->{'room'},
+					watch_settings => $sw_ws,
+					button => $sw_button,
+					component => 'switch',
+					edt => $sw_edt,
+					chip_id => $sw_chip,
+					remote_address => 'bluetooth'
+				});
+			};
+			$log->error('BLE switch press failed: ' . $@) if $@;
+		}, { name => 'ble switch press' });
 		return;
 	}
 	if ($type && $type eq 'measure') {
@@ -7613,20 +7628,25 @@ sub ble_message_processor() {
 			my $state_total = $eratio * $total;
 			$measure = sprintf("%.3f", $state_total + $app_measures->{$b->{'measure'}}->{'min'});
 		}
-		eval {
-			&subs::edt_button_presser({
-				timestamp => &subs::rightNow(),
-				room => $payload->{'room'},
-				watch_settings => $ws,
-				button => $button,
-				edt => $edt,
-				chip_id => $chip_id,
-				measure => $measure,
-				component => $component,
-				remote_address => 'bluetooth'
-			});
-		};
-		$log->error('BLE measure failed: ' . $@) if $@;
+		# A pot turn can run a command too, so it gets the same treatment as a tap.
+		my ($m_edt, $m_chip, $m_ws, $m_button, $m_measure, $m_component, $m_payload)
+			= ($edt, $chip_id, $ws, $button, $measure, $component, $payload);
+		&subs::subprocessor(sub {
+			eval {
+				&subs::edt_button_presser({
+					timestamp => &subs::rightNow(),
+					room => $m_payload->{'room'},
+					watch_settings => $m_ws,
+					button => $m_button,
+					edt => $m_edt,
+					chip_id => $m_chip,
+					measure => $m_measure,
+					component => $m_component,
+					remote_address => 'bluetooth'
+				});
+			};
+			$log->error('BLE measure failed: ' . $@) if $@;
+		}, { name => 'ble measure press' });
 		return;
 	}
 	if ($type && $type eq 'state') {
@@ -14652,13 +14672,25 @@ sub destination_relay() {
 	$rms = [] unless ref $rms eq 'ARRAY';
 	my $sent = 0;
 	my $label;
+	my $considered = 0;
 	foreach my $rm ( @{$rms} ) {
 		next unless ref $rm eq 'HASH';
 		my $sig = $rm->{'signatorial'};
 		next unless $sig && $sig ne $me;   # this machine's own copy is run by the caller
-		next unless $rm->{'ip'};
+		$considered++;
+		unless ($rm->{'ip'}) {
+			$log->error('destination relay to ' . $sig . ' skipped: no address on its row') if $log;
+			next;
+		}
 		my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
-		next unless $hop && $hop->{'ua'} && $hop->{'manager'};
+		unless ($hop && $hop->{'ua'} && $hop->{'manager'}) {
+			$log->error('destination relay to ' . $sig . ' skipped: no signed agent for ' . ($rm->{'manager'} || '?')) if $log;
+			next;
+		}
+		# A button press is waiting on this, and an unreachable machine must fall
+		# back to running here promptly: the peer agent carries the long snapshot
+		# inactivity timeout (3000 s), which is far too long to hold a tap.
+		$hop->{'ua'}->connect_timeout(4)->inactivity_timeout(12);
 		my $res = eval {
 			$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/reset' => form => {
 				app => $app,
@@ -14672,8 +14704,13 @@ sub destination_relay() {
 			$label = $rm->{'hostname'} . ' (' . $rm->{'ip'} . ')' unless $label;
 		}
 		else {
-			$log->error('destination relay to ' . ($sig || '?') . ' failed: ' . ($@ || 'no answer'));
+			my $why = $@ || ($res ? ('HTTP ' . $res->code) : 'no answer');
+			$why =~ s/\s+/ /g;
+			$log->error('destination relay to ' . $sig . ' failed: ' . $why) if $log;
 		}
+	}
+	unless ($considered) {
+		$log->error('destination relay: no active machine matches ' . ($destination || 'all')) if $log;
 	}
 	if (!$destination || $destination eq 'all') {
 		return $sent ? 'every machine (' . $sent . ')' : undef;
