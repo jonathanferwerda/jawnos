@@ -1248,25 +1248,57 @@ $(document).on('input', '#music_eq_bass', function() {
 function musicConfigKey(panel) {
 	return 'music:' + (panel.attr('id') == 'music_audio_panel' ? 'audio' : 'configuration');
 }
+// A sheet never moved opens against the Music window's top-right. When the
+// other sheet is already open, put this one beside it rather than over it, so
+// both can be read at once; if the screen has no room for two, stagger it a
+// little so both bars stay in reach.
 function musicConfigPlace(panel) {
 	if (!panel.length) { return; }
 	var key = musicConfigKey(panel);
 	if (typeof jawnosPanelPosRestore == 'function' && jawnosPanelPosRestore(key, panel)) { return; }
 	var win = panel.closest('.wind');
+	var vw = $(window).width(), vh = $(window).height();
 	var w = panel.outerWidth() || 360, h = panel.outerHeight();
-	var left = $(window).width() - w - 16;
+	var left = vw - w - 16;
 	var top = 90;
 	if (win.length) {
 		var r = win[0].getBoundingClientRect();
 		left = r.right - w - 16;
 		top = r.top + 90;
 	}
+	var other = (panel.attr('id') == 'music_audio_panel') ? $('#music_configuration') : $('#music_audio_panel');
+	if (other.length && other.is(':visible')) {
+		var o = other[0].getBoundingClientRect();
+		var gap = 12;
+		var clear = (left + w + gap <= o.left || left >= o.right + gap || top + h + gap <= o.top || top >= o.bottom + gap);
+		if (!clear) {
+			// beside it: to its left first, then its right
+			var spots = [o.left - w - gap, o.right + gap];
+			var beside = null;
+			for (var i = 0; i < spots.length; i++) {
+				if (spots[i] >= 0 && spots[i] + w <= vw) { beside = spots[i]; break; }
+			}
+			if (beside !== null) {
+				left = beside;
+				top = Math.max(0, Math.min(top, vh - h));
+			}
+			else {
+				// no room for both across the screen: stagger, keeping both bars clear
+				left = Math.max(0, Math.min(o.left + 42, vw - w));
+				top = Math.max(0, Math.min(o.top + 52, vh - h));
+			}
+		}
+	}
 	panel.css({
-		left: Math.max(0, Math.min(left, $(window).width() - w)) + 'px',
-		top: Math.max(0, Math.min(top, $(window).height() - h)) + 'px',
+		left: Math.max(0, Math.min(left, vw - w)) + 'px',
+		top: Math.max(0, Math.min(top, vh - h)) + 'px',
 		right: 'auto',
 		bottom: 'auto'
 	});
+}
+function musicConfigFront(panel) {
+	$('#music_configuration, #music_audio_panel').not(panel).css('z-index', 900000);
+	panel.css('z-index', 900001);
 }
 // The window paints its own title bar above its contents, so a sheet left in
 // the content slides under it. Move the sheet onto the window's frame: it is
@@ -1284,11 +1316,16 @@ function musicConfigFloat(panel) {
 function musicConfigShow(panel) {
 	if (!panel.length || panel.is(':visible')) { return; }
 	musicConfigFloat(panel);
+	musicConfigFront(panel);
 	// measure behind visibility, not display: none - a hidden element has no box
 	panel.css({ visibility: 'hidden', display: 'flex' });
 	musicConfigPlace(panel);
 	panel.css('visibility', '');
 }
+// whichever sheet is touched comes to the front of the pair
+$(document).on('mousedown touchstart', '.music_cfg_drawer', function () {
+	musicConfigFront($(this));
+});
 function musicConfigDraggable() {
 	$('#music_configuration, #music_audio_panel').filter(':not([cfg_drag_armed])').each(function () {
 		var panel = $(this);
@@ -1302,6 +1339,7 @@ function musicConfigDraggable() {
 				// the sheet rides above every other window while it is being moved
 				var win = $(this).closest('.wind');
 				if (win.length && typeof topLevelNow == 'function') { topLevelNow(win); }
+				musicConfigFront($(this));
 			},
 			drag: function (e, ui) {
 				// keep the whole sheet on the screen, wherever it is dragged
@@ -3075,7 +3113,7 @@ function musicAudioPanelLoad(show) {
 $(document).on('click', '#music_audio_toggle', function() {
 	var panel = $('#music_audio_panel');
 	if (panel.is(':visible')) { panel.hide(); return; }
-	$('#music_configuration').hide();
+	// the configuration sheet is left alone: both can be open at once
 	musicAudioPanelLoad(true);
 });
 
@@ -3091,8 +3129,8 @@ $(document).on('click', '#music_configuration_toggle', function() {
 		mc.hide();
 	}
 	else {
+		// the Audio sheet is left alone: both can be open at once
 		musicConfigShow(mc);
-		$('#music_audio_panel').hide();
 		$.ajax({
 			url: '/music/configuration',
 			type: 'GET',
