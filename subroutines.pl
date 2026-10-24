@@ -9298,38 +9298,161 @@ sub seal_file {
 # old probes treated a webm path as good enough for *any* credential, so the
 # first (wrong) secret won and the file was served as garbage. Sniff the
 # plaintext's own magic first; it is the only thing that says the key is right.
+# This is the house's primary sniffer: the table covers the media, documents,
+# archives, executables and fonts a person actually stores, and text is
+# recognised from its bytes rather than its extension. File::Type is only the
+# last resort for a format the table does not name.
 our $plaintext_ft;
 sub plaintext_verdict {
 	my ($head) = @_;
 	return undef unless defined $head && length $head;
-	my %magic = (
-		"\x1a\x45\xdf\xa3" => 'video/webm',          # EBML (webm / matroska)
-		"\x89PNG\r\n\x1a\n" => 'image/png',
-		"\xff\xd8\xff"      => 'image/jpeg',
-		'GIF87a'            => 'image/gif',
-		'GIF89a'            => 'image/gif',
-		'%PDF'              => 'application/pdf',
-		'OggS'              => 'application/ogg',
-		'fLaC'              => 'audio/flac',
-		'ID3'               => 'audio/mpeg',
-		"PK\x03\x04"        => 'application/zip',
+	my @exact = (
+		[ "\x1a\x45\xdf\xa3", 'video/webm' ],                  # EBML: webm / matroska
+		[ "\x89PNG\r\n\x1a\n", 'image/png' ],
+		[ "\xff\xd8\xff", 'image/jpeg' ],
+		[ 'GIF87a', 'image/gif' ],
+		[ 'GIF89a', 'image/gif' ],
+		[ "\x00\x00\x01\x00", 'image/x-icon' ],
+		[ "\x00\x00\x02\x00", 'image/x-icon' ],
+		[ 'II*' . "\0", 'image/tiff' ],
+		[ 'MM' . "\0*", 'image/tiff' ],
+		[ '8BPS', 'image/vnd.adobe.photoshop' ],
+		[ 'gimp xcf ', 'image/x-xcf' ],
+		[ 'DDS ', 'image/vnd-ms.dds' ],
+		[ 'KTX 11', 'image/ktx' ],
+		[ "\x00\x00\x00\x0cjP  \r\n\x87\n", 'image/jp2' ],
+		[ "\xff\x4f\xff\x51", 'image/jp2' ],
+		[ "\x00\x00\x00\x0cJXL \r\n\x87\n", 'image/jxl' ],
+		[ 'qoif', 'image/qoi' ],
+		[ 'farbfeld', 'image/farbfeld' ],
+		[ "v/1\x01", 'image/openexr' ],
+		[ 'FLIF', 'image/flif' ],
+		[ 'glTF', 'model/gltf-binary' ],
+		[ '%PDF', 'application/pdf' ],
+		[ '%!PS', 'application/postscript' ],
+		[ '{\\rtf', 'application/rtf' ],
+		[ 'OggS', 'application/ogg' ],
+		[ 'fLaC', 'audio/flac' ],
+		[ 'FLAC', 'audio/flac' ],
+		[ 'ID3', 'audio/mpeg' ],
+		[ 'MThd', 'audio/midi' ],
+		[ '#!AMR', 'audio/amr' ],
+		[ 'caff', 'audio/x-caf' ],
+		[ 'wvpk', 'audio/wavpack' ],
+		[ 'MAC ', 'audio/ape' ],
+		[ 'MPCK', 'audio/musepack' ],
+		[ 'TTA1', 'audio/tta' ],
+		[ 'wOFF', 'font/woff' ],
+		[ 'wOF2', 'font/woff2' ],
+		[ 'OTTO', 'font/otf' ],
+		[ 'ttcf', 'font/collection' ],
+		[ "\x00\x01\x00\x00\x00", 'font/ttf' ],
+		[ "\x1f\x8b", 'application/gzip' ],
+		[ 'BZh', 'application/x-bzip2' ],
+		[ "\xfd7zXZ\x00", 'application/x-xz' ],
+		[ "7z\xbc\xaf\x27\x1c", 'application/x-7z-compressed' ],
+		[ "Rar!\x1a\x07", 'application/vnd.rar' ],
+		[ "PK\x03\x04", 'application/zip' ],
+		[ "PK\x05\x06", 'application/zip' ],
+		[ "PK\x07\x08", 'application/zip' ],
+		[ "!<arch>\n", 'application/x-ar' ],
+		[ "\xed\xab\xee\xdb", 'application/x-rpm' ],
+		[ "QFI\xfb", 'application/x-qemu-disk' ],
+		[ "\x7fELF", 'application/x-elf' ],
+		[ "\xca\xfe\xba\xbe", 'application/x-mach-binary' ],
+		[ "\xfe\xed\xfa\xce", 'application/x-mach-binary' ],
+		[ "\xce\xfa\xed\xfe", 'application/x-mach-binary' ],
+		[ "\xfe\xed\xfa\xcf", 'application/x-mach-binary' ],
+		[ "\xcf\xfa\xed\xfe", 'application/x-mach-binary' ],
+		[ "\x00asm", 'application/wasm' ],
+		[ "dex\n", 'application/x-dex' ],
+		[ "SQLite format 3\0", 'application/vnd.sqlite3' ],
+		[ "FLV\x01", 'video/x-flv' ],
+		[ "\x30\x26\xb2\x75\x8e\x66\xcf\x11", 'video/x-ms-asf' ],
+		[ "\x00\x00\x01\xba", 'video/mpeg' ],
+		[ "\x00\x00\x01\xb3", 'video/mpeg' ],
 	);
-	foreach my $sig ( keys %magic ) {
-		return $magic{$sig} if substr($head, 0, length $sig) eq $sig;
+	foreach my $pair ( @exact ) {
+		return $pair->[1] if substr($head, 0, length $pair->[0]) eq $pair->[0];
 	}
-	if (substr($head, 0, 4) eq 'RIFF' && length $head >= 12) {
+	# RIFF / FORM containers name their flavour in the first 12 bytes
+	if (length($head) >= 12 && substr($head, 0, 4) eq 'RIFF') {
 		my $kind = substr($head, 8, 4);
 		return 'image/webp' if $kind eq 'WEBP';
 		return 'audio/wav'  if $kind eq 'WAVE';
-		return 'video/avi'  if $kind eq 'AVI ';
+		return 'video/x-msvideo' if $kind eq 'AVI ';
 	}
-	return 'video/mp4' if substr($head, 4, 4) eq 'ftyp';
+	if (length($head) >= 12 && substr($head, 0, 4) eq 'FORM') {
+		my $kind = substr($head, 8, 4);
+		return 'audio/aiff' if $kind eq 'AIFF';
+		return 'audio/aiff' if $kind eq 'AIFC';
+	}
+	# ISO base media: the brand after ftyp says what it holds
+	if (length($head) >= 12 && substr($head, 4, 4) eq 'ftyp') {
+		my $brand = substr($head, 8, 4);
+		return 'image/heic' if $brand =~ /^(?:heic|heix|hevc|hevx|mif1|msf1)$/;
+		return 'image/avif' if $brand eq 'avif';
+		return 'video/quicktime' if $brand eq 'qt  ';
+		return 'audio/mp4' if $brand =~ /^(?:M4A |M4B )$/;
+		return 'video/mp4';
+	}
+	# a BMP is 'BM' plus a zeroed reserved field; 'BM' alone is too weak
+	if (substr($head, 0, 2) eq 'BM' && length($head) >= 26 && substr($head, 6, 4) eq "\0\0\0\0") {
+		return 'image/bmp';
+	}
+	# a DOS/PE executable: 'MZ' and binary content
+	if (substr($head, 0, 2) eq 'MZ' && length($head) >= 64 && index($head, "\0") >= 0) {
+		return 'application/x-dosexec';
+	}
+	# MPEG transport stream: sync bytes 188 apart
+	if (substr($head, 0, 1) eq "\x47" && length($head) > 188 && substr($head, 188, 1) eq "\x47") {
+		return 'video/mp2t';
+	}
+	# MPEG audio / ADTS frame sync
+	if (length($head) >= 4 && substr($head, 0, 1) eq "\xff") {
+		my $b2 = ord(substr($head, 1, 1));
+		return 'audio/aac' if ($b2 & 0xF6) == 0xF0;
+		return 'audio/mpeg' if ($b2 & 0xE0) == 0xE0;
+	}
+	# tar names itself 257 bytes in
+	if (length($head) >= 262 && substr($head, 257, 5) eq 'ustar') {
+		return 'application/x-tar';
+	}
+	# markup, before the generic text test
+	my $probe = substr($head, 0, 4096);
+	if ($probe =~ /^\s*<\?xml/i) {
+		return 'image/svg+xml' if $probe =~ /<svg[\s>]/i;
+		return 'application/xml';
+	}
+	if ($probe =~ /^\s*(?:<!doctype\s+html|<html[\s>])/i) {
+		return 'text/html';
+	}
 	# the EBML doctype names the flavour a little further in
 	my $doc = substr($head, 0, 64);
-	return 'video/webm' if index($doc, 'webm') >= 0 || index($doc, 'matroska') >= 0;
+	return 'video/x-matroska' if index($doc, 'matroska') >= 0;
+	return 'video/webm' if index($doc, 'webm') >= 0;
+	return 'text/plain' if &plaintext_looks_text($head);
 	$plaintext_ft ||= File::Type->new();
 	my $fd = eval { $plaintext_ft->checktype_contents($head) };
 	return (defined $fd && $fd ne 'application/octet-stream') ? $fd : undef;
+}
+
+# Text is bytes with no NUL and no control characters; valid UTF-8 is text even
+# when most of it is outside ASCII. This is strict enough that a wrong key's
+# random bytes do not pass, which is what makes it usable as a key verdict.
+sub plaintext_looks_text {
+	my ($head) = @_;
+	return 0 unless defined $head && length $head;
+	# a 16-byte block of padding from an empty seal is not text, and random
+	# bytes that short can pass by accident
+	return 0 if length($head) < 32;
+	return 0 if index($head, "\0") >= 0;
+	my $copy = $head;
+	if (eval { utf8::decode($copy); 1 }) {
+		my $control = ($copy =~ tr/\x00-\x08\x0b\x0c\x0e-\x1f\x7f//);
+		return 1 if $control == 0;
+	}
+	return &folders_reads_as_text($head);
 }
 
 sub open_file {
@@ -12608,8 +12731,8 @@ sub folders_decrypt_job {
 				# password that gives back a type - or words - is the password
 				my $head = '';
 				if (open my $fh, '<', $temp) { binmode $fh; read $fh, $head, 1024; close $fh; }
-				my $type = File::Type->new()->mime_type($head);
-				if ($type ne 'application/octet-stream' || $head =~ /webm/ || &folders_reads_as_text($head)) { $opened_it = 1; last }
+				my $type = &plaintext_verdict($head);
+				if (defined $type) { $opened_it = 1; last }
 				# a file that was empty seals to a block or two, and opens to nothing
 				if ((-s $temp) == 0 && (-s $file) <= 48) { $opened_it = 1; last }
 			}
@@ -12781,8 +12904,8 @@ sub folders_reseal_job {
 				# opening is read as a file the way the decrypt job reads one
 				my $head = '';
 				if (open my $fh, '<', $clear) { binmode $fh; read $fh, $head, 1024; close $fh; }
-				my $type = File::Type->new()->checktype_contents($head);
-				if ($type ne 'application/octet-stream' || $head =~ /webm/ || &folders_reads_as_text($head) || ((-s $clear) == 0 && (-s $file) <= 48)) {
+				my $type = &plaintext_verdict($head);
+				if (defined $type || ((-s $clear) == 0 && (-s $file) <= 48)) {
 					$opened_with = $password;
 					$opened_standard = $which;
 					last;

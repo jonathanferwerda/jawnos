@@ -1773,8 +1773,7 @@ sub rock_and_roll($c) {
 		}
 		elsif ($c->param('duty')) {
 			my $data = read_file($file);
-			my $ft = File::Type->new();
-			my $fd = $ft->checktype_contents($data);
+			my $fd = &subs::plaintext_verdict(substr($data, 0, 65536)) || 'application/octet-stream';
 			my @ext = split /\./, $file;
 			my $ext = $ext[-1];
 			my $server_time;
@@ -5545,7 +5544,7 @@ get '/manager/store/customer_correspondence' => sub($c) {
 
 	my $rows = [];
 	if (scalar @where) {
-		my $sql = 'select * from mailbox where (' . join(' or ', @where) . ') order by timestamp desc limit 300';
+		my $sql = 'select * from mailbox where (' . join(' or ', @where) . ") and coalesce(status, '') != 'ignored' order by timestamp desc limit 300";
 		$rows = &subs::db_query($sql, @args)->hashes;
 	}
 	my $suds = &subs::session_suds($c) || &subs::suds_grabber();
@@ -6317,6 +6316,7 @@ my @manager_bundle_files = qw(
 	/js/manager/ide_code.js
 	/js/mailbox.js
 	/js/manager/email.js
+	/js/manager/soft_keyboard.js
 	/js/manager/chat.js
 	/js/manager/pen.js
 	/js/manager/clockfaceprinter.js
@@ -13545,9 +13545,8 @@ get '/manager/download_file' => sub ($c) {
 			foreach my $p ( @{$pwords} ) {
 				my $secret = &subs::decrypter($suds, $p->{'credential'});
 				my $process_data = &subs::openssl_file_read($encryption_standard, $secret, $file, 0, 1);
-				my $ft = File::Type->new();
-				my $type_from_data = $ft->checktype_contents($process_data);
-				if ($type_from_data ne 'application/octet-stream' || ($data =~ /webm/)) {
+				my $type_from_data = &subs::plaintext_verdict($process_data);
+				if (defined $type_from_data) {
 					$data = $process_data;
 
 					my @file = split '/', $file;
@@ -29367,7 +29366,7 @@ get '/manager/mail/email/search' => sub($c) {
 	}
 	else {
 		# no folder named: search everything that is not thrown away
-		@rows = @{ &subs::db_query("select * from mailbox where status != 'trash'")->hashes };
+		@rows = @{ &subs::db_query("select * from mailbox where status != 'trash' and coalesce(status, '') != 'ignored'")->hashes };
 	}
 	my @matched;
 	foreach my $m ( @rows ) {
@@ -30018,7 +30017,7 @@ sub mail_checker($c) {
 	elsif ($phone) {
 		$phone =~ s/\D+//gi;
 		$phone =~ s/^1//;
-		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and phone = ? order by timestamp desc LIMIT 30', $timestamp, $phone);
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and phone = ? and coalesce(status, \'\') != \'ignored\' order by timestamp desc LIMIT 30', $timestamp, $phone);
 		$main_title = &subs::format_name(&subs::db_select('settings', undef, { setting => 'phone', value => $phone })->hashes->[0]->{'app'}) . ' ' . $phone;
 	}
 	elsif ($email) {
@@ -30041,7 +30040,7 @@ sub mail_checker($c) {
 			next unless $pn;
 			&subs::db_query('update mailbox set contact = ? where contact is null and phone = ?', $contact, $pn);
 		}
-		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? order by timestamp desc LIMIT 30', $timestamp, $contact);
+		$q = &subs::db_fresh('select * from mailbox where timestamp < ? and contact = ? and coalesce(status, \'\') != \'ignored\' order by timestamp desc LIMIT 30', $timestamp, $contact);
 	}
 	else {
 		# the tuple is whatever the registry says now: a dial with a picker
@@ -30050,7 +30049,7 @@ sub mail_checker($c) {
 		my @cols = &mail_construct_columns();
 		my $where = join ' and ', map { "$_ = ?" } @cols;
 		my $constructs = &mailws_constructs($picker);
-		$q = &subs::db_fresh("select * from mailbox where timestamp < ? and $where order by timestamp desc LIMIT 30",
+		$q = &subs::db_fresh("select * from mailbox where timestamp < ? and coalesce(status, '') != 'ignored' and $where order by timestamp desc LIMIT 30",
 			$timestamp,
 			map { $constructs->{$_} } sort keys %{$gb::social_constructs},
 		);
@@ -37356,12 +37355,22 @@ sub padlock_time_extender($c) {
 # the phone's own termux when neither has landed yet - so a message always goes
 # out during the hand-over from termux-sms-send.
 sub sms_send_command($digits, $message) {
-	return 'typeof jawnSmsSend === "function" ? jawnSmsSend(' . encode_json($digits) . ',' . encode_json($message) . ')'
-		. ' : (window.JawnSms && window.JawnSms.send ? (window.JawnSms.send(' . encode_json($digits) . ',' . encode_json($message) . '), "bridge")'
-		. ' : (function(){ $.post("/manager/sms/termux_fallback", {digits: ' . encode_json($digits) . ', message: ' . encode_json($message) . '}); return "termux"; })())';
+	# json_chars hands back characters, not UTF-8 bytes: the console string is
+	# concatenated with character literals and then JSON-encoded again for the
+	# socket, so bytes here would be read as Latin-1 and an emoji would reach the
+	# bridge as mojibake (or be refused).
+	my $d = &subs::json_chars($digits);
+	my $m = &subs::json_chars($message);
+	return 'typeof jawnSmsSend === "function" ? jawnSmsSend(' . $d . ',' . $m . ')'
+		. ' : (window.JawnSms && window.JawnSms.send ? (window.JawnSms.send(' . $d . ',' . $m . '), "bridge")'
+		. ' : (function(){ $.post("/manager/sms/termux_fallback", {digits: ' . $d . ', message: ' . $m . '}); return "termux"; })())';
 }
 sub sms_mms_command($digits, $text, $parts, $jawn_uuid) {
-	my $call = 'jawnSmsMms(' . encode_json($digits) . ',' . encode_json($text) . ',' . encode_json($parts) . ',' . encode_json($jawn_uuid || '') . ')';
+	my $d = &subs::json_chars($digits);
+	my $t = &subs::json_chars($text);
+	my $p = &subs::json_chars($parts);
+	my $u = &subs::json_chars($jawn_uuid || '');
+	my $call = 'jawnSmsMms(' . $d . ',' . $t . ',' . $p . ',' . $u . ')';
 	# The command names its own outcome in the phone's log: 'ok' means the page
 	# had the bridge and called it, 'no bridge' means the app page is old or this
 	# is not the JawnOS app. The bridge then posts its own result (via mms/share),
@@ -42813,20 +42822,20 @@ websocket '/mail/ws' => sub ($c) {
 			my $last_message = $m->{'last_message'} || 0;
 			my $q;
 			if ($address->{'phone'}) {
-				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and phone = ? order by timestamp desc LIMIT 20', $last_message, $address->{'phone'});
+				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and phone = ? and coalesce(status, \'\') != \'ignored\' order by timestamp desc LIMIT 20', $last_message, $address->{'phone'});
 			}
 			elsif ($address->{'email'}) {
 				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and email = ? order by timestamp desc LIMIT 20', $last_message, $address->{'email'});
 			}
 			elsif ($address->{'contact'} || $address->{'ticket'}) {
 				my $contact = $address->{'contact'} || $address->{'ticket'};
-				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and contact = ? order by timestamp desc LIMIT 20', $last_message, $contact);
+				$q = &subs::db_fresh('select * from mailbox where timestamp > ? and contact = ? and coalesce(status, \'\') != \'ignored\' order by timestamp desc LIMIT 20', $last_message, $contact);
 			}
 			else {
 				my @cols = &mail_construct_columns();
 				my $where = join ' and ', map { "$_ = ?" } @cols;
 				my $constructs = &mailws_constructs($picker);
-				$q = &subs::db_fresh("select * from mailbox where timestamp > ? and $where order by timestamp desc LIMIT 20",
+				$q = &subs::db_fresh("select * from mailbox where timestamp > ? and coalesce(status, '') != 'ignored' and $where order by timestamp desc LIMIT 20",
 					$last_message, map { $constructs->{$_} } sort keys %{$gb::social_constructs}
 				);
 			}

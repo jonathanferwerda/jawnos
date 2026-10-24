@@ -34,16 +34,14 @@ GetOptions('standard=s' => \$only, 'bytes=i' => \$bytes) or die "usage: $0 [--st
 my @standards = $only ? ($only) : @{ subs::note_encryption_standards() };
 die "no standards to test\n" unless @standards;
 
-# A known magic on the front so the File::Type probe has something to find.
+# A known magic on the front so the plaintext verdict has something to find.
 my $plain = "\x89PNG\r\n\x1a\n" . join '', map { chr(($_ * 37 + 11) & 255) } 1 .. $bytes;
 my $dir = tempdir(CLEANUP => 1);
 my ($pt, $enc) = ("$dir/plain.bin", "$dir/sealed.enc");
 write_file($pt, $plain);
 
-my $ft = File::Type->new();
 my $inspect = sub {
-	my $fd = $ft->checktype_contents($_[0]);
-	return $fd ne 'application/octet-stream' ? $fd : undef;
+	return &subs::plaintext_verdict($_[0]);
 };
 
 my @ranges = ([0, 100], [1, 1], [15, 33], [4096, 8192], [length($plain) - 10, 10], [int(length($plain) / 2), undef]);
