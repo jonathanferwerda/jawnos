@@ -306,6 +306,43 @@ sub credential_by_id {
 	return $c;
 }
 
+# ---- enrollment links --------------------------------------------------------
+# A one-time link lets the installed app hand enrollment to a real browser on
+# the house name, where WebAuthn can actually run. It carries only the person
+# and a five-minute life; it creates no session and is spent by the first
+# successful registration.
+sub enroll_new {
+	my ($payload) = @_;
+	my $token = &b64u_encode(&random_bytes(32));
+	my $now = &subs::rightNow();
+	&subs::db_query('delete from cache where context = ? and server_time < ?', 'webauthn_enroll', $now - 600000);
+	&subs::db_insert('cache', {
+		uuid        => $token,
+		context     => 'webauthn_enroll',
+		app         => '__president',
+		server_time => $now,
+		timestamp   => $now,
+		data        => &subs::encode_sereal({ %{$payload || {}}, at => $now }),
+	});
+	return $token;
+}
+
+sub enroll_peek {
+	my ($token) = @_;
+	return undef unless defined $token && $token =~ /^[A-Za-z0-9_-]{20,128}$/;
+	my $row = &subs::db_query('select server_time, data from cache where context = ? and uuid = ? limit 1', 'webauthn_enroll', $token)->hashes->[0];
+	return undef unless $row && $row->{'server_time'} && $row->{'server_time'} > &subs::rightNow() - 300000;
+	return eval { &subs::decode_sereal($row->{'data'}) } || undef;
+}
+
+sub enroll_take {
+	my ($token) = @_;
+	my $payload = &enroll_peek($token);
+	return undef unless $payload;
+	&subs::db_query('delete from cache where context = ? and uuid = ?', 'webauthn_enroll', $token);
+	return $payload;
+}
+
 # ---- verification -----------------------------------------------------------
 sub _client_data {
 	my ($b64u) = @_;

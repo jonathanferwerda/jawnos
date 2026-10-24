@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JawnOS passkey</title>
+<style>
+	:root { color-scheme: light dark; --bg:#f3f3ef; --card:#ffffff; --ink:#1d1d1b; --muted:#6b6b66; --line:#dcdcd4; --accent:#2f6f4e; }
+	@media (prefers-color-scheme: dark) {
+		:root { --bg:#17181a; --card:#232427; --ink:#ececec; --muted:#a0a09a; --line:#3a3b3f; --accent:#7bc49b; }
+	}
+	* { box-sizing: border-box; }
+	body {
+		margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+		background:var(--bg); color:var(--ink); padding:24px;
+		font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	}
+	.card { width:100%; max-width:520px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:28px; }
+	.mark { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin-bottom:18px; }
+	h1 { font-size:24px; margin:0 0 8px; }
+	p { margin:0 0 14px; }
+	.muted { color:var(--muted); }
+	.small { font-size:13px; }
+	label { display:block; font-size:13px; color:var(--muted); margin:18px 0 6px; }
+	input {
+		width:100%; padding:11px 12px; font:inherit; color:var(--ink); background:transparent;
+		border:1px solid var(--line); border-radius:10px;
+	}
+	button {
+		margin-top:16px; width:100%; padding:12px 16px; font:inherit; font-weight:600;
+		color:#fff; background:var(--accent); border:0; border-radius:10px; cursor:pointer;
+	}
+	button:disabled { opacity:.55; cursor:default; }
+	.status { min-height:22px; margin-top:12px; font-size:14px; color:var(--muted); }
+	.done { display:none; margin-top:14px; font-size:14px; color:var(--accent); }
+	a { color:var(--accent); }
+	hr { border:0; border-top:1px solid var(--line); margin:20px 0; }
+</style>
+</head>
+<body>
+<main class="card">
+	<div class="mark">JawnOS</div>
+	<% if (!$valid) { %>
+		<h1>This link has expired</h1>
+		<p>Enrollment links last five minutes and work once. Open <b>Security &rarr; Passkeys</b> on a machine you are already signed in to, and press <b>Open in browser</b> again.</p>
+	<% } else { %>
+		<h1>Add a passkey</h1>
+		<p>For <b><%= $person_name %></b> on <b><%= $house %></b>.</p>
+		<p class="muted">The key is made on this device and stays here. The house keeps only its public half, so there is nothing to steal and nothing to type into the wrong page.</p>
+		<label for="name">What is this device?</label>
+		<input id="name" value="Passkey" autocomplete="off" spellcheck="false">
+		<button id="make" type="button" data-token="<%= $token %>">Create the passkey</button>
+		<div id="status" class="status" role="status" aria-live="polite"></div>
+		<a id="done" class="done" href="https://<%= $house %>:<%= $port %>/manager">Open the house &rarr;</a>
+	<% } %>
+	<hr>
+	<p class="muted small">Bound to <b><%= length($house) ? $house : 'the house domain' %></b>, so it signs in on every machine under that name. A passkey proves who you are; what you may do still comes from the person.</p>
+</main>
+<% if ($valid) { %>
+<script>
+(function () {
+	var btn = document.getElementById('make');
+	if (!btn) { return; }
+	var token = btn.getAttribute('data-token');
+	function b64uToBytes(s) {
+		s = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+		var pad = s.length % 4;
+		if (pad) { s += '='.repeat(4 - pad); }
+		var bin = atob(s), out = new Uint8Array(bin.length);
+		for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+		return out;
+	}
+	function bytesToB64u(buf) {
+		var b = new Uint8Array(buf), s = '';
+		for (var i = 0; i < b.length; i++) { s += String.fromCharCode(b[i]); }
+		return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	}
+	function post(url, body) {
+		return fetch(url, {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams(body || {}).toString()
+		}).then(function (r) { return r.json(); });
+	}
+	btn.addEventListener('click', function () {
+		var st = document.getElementById('status');
+		if (!window.PublicKeyCredential || !navigator.credentials) {
+			st.textContent = 'This browser cannot make passkeys (or the page is not on https).';
+			return;
+		}
+		btn.disabled = true;
+		st.textContent = 'Waiting for your device…';
+		post('/passkey/begin', { t: token }).then(function (r) {
+			if (!r || !r.ok) { st.textContent = (r && r.error) || 'Could not start.'; btn.disabled = false; return; }
+			var pk = r.publicKey;
+			return navigator.credentials.create({ publicKey: {
+				challenge: b64uToBytes(pk.challenge),
+				rp: pk.rp,
+				user: { id: b64uToBytes(pk.user.id), name: pk.user.name, displayName: pk.user.displayName },
+				pubKeyCredParams: pk.pubKeyCredParams,
+				timeout: pk.timeout,
+				attestation: pk.attestation,
+				authenticatorSelection: pk.authenticatorSelection,
+				excludeCredentials: (pk.excludeCredentials || []).map(function (c) {
+					return { type: c.type, id: b64uToBytes(c.id), transports: c.transports };
+				})
+			} }).then(function (cred) {
+				return post('/passkey/finish', {
+					t: token,
+					name: document.getElementById('name').value || 'Passkey',
+					client_data: bytesToB64u(cred.response.clientDataJSON),
+					attestation: bytesToB64u(cred.response.attestationObject)
+				}).then(function (f) {
+					if (!f || !f.ok) { st.textContent = (f && f.error) || 'The house refused it.'; btn.disabled = false; return; }
+					st.textContent = 'Added. You can close this tab, or open the house below.';
+					document.getElementById('done').style.display = 'inline-block';
+				});
+			});
+		}).catch(function (e) {
+			st.textContent = (e && e.message) || 'Cancelled.';
+			btn.disabled = false;
+		});
+	});
+})();
+</script>
+<% } %>
+</html>

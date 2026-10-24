@@ -695,4 +695,21 @@ $(document).on('click', '.signatorial_selection', function() {
 			securityRefresh();
 		}, 'json');
 	});
+
+	// The app window is on 127.0.0.1, which is not a usable WebAuthn origin. Mint
+	// a short, single-use link and hand it to a real browser on the house name.
+	$(document).on('click', '#passkey_open_browser', function () {
+		var status = $('#passkey_status');
+		status.text('making a one-time link…');
+		$.post('/manager/webauthn/enroll_link', {}, function (r) {
+			if (!r || !r.ok) { status.text((r && r.error) || 'could not make a link'); return; }
+			var w = window.open(r.url, '_blank');
+			if (!w) {
+				status.html('Popup blocked - open this link in a browser: <a href="' + r.url + '" target="_blank" rel="noopener">' + r.url + '</a>');
+			}
+			else {
+				status.text('opened in a browser - finish there');
+			}
+		}, 'json');
+	});
 })();

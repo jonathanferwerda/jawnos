@@ -157,7 +157,12 @@ hook before_dispatch => sub {
 			$path ne '/box_office/ticket_request' &&
 			$path !~ m{^/i18n/} &&
 			$path ne '/js/translate.js' &&
-			$path ne '/privacy') {
+			$path ne '/privacy' &&
+			# a browser enrollment page and its two calls are a way in, like the
+			# box office: the link itself is the credential, and it is spent once
+			$path ne '/passkey' &&
+			$path !~ m{^/passkey/} &&
+			$path !~ m{^/manager/webauthn/login/}) {
 		$c->stash('no' => 1);
 	}
 
@@ -382,6 +387,10 @@ hook before_dispatch => sub {
 		# static assets on the public pages too
 		$path =~ m{^/i18n/} ||
 		$path eq '/js/translate.js' ||
+		# the enrollment page and the passkey sign-in routes are ways in, like
+		# the box office: no session exists yet when they are used
+		$path =~ m{^/passkey(?:/|$)} ||
+		$path =~ m{^/manager/webauthn/login/(?:begin|finish)$} ||
 		$path eq '/', ) {
 
 		my $device = &subs::device_setter();

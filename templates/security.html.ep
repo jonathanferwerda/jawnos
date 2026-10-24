@@ -102,9 +102,13 @@
 		<div style="margin-top:12px;">
 			<input id="passkey_name" type="text" placeholder="Laptop" style="width:170px;" autocomplete="off" spellcheck="false">
 			<button id="passkey_add" type="button"<% if (!$passkey_person || !length($webauthn_rp || '')) { %> disabled<% } %>>Add a passkey</button>
+			<button id="passkey_open_browser" type="button"<% if (!$passkey_person || !length($webauthn_rp || '')) { %> disabled<% } %>>Open in browser</button>
 			<span id="passkey_status" style="font-size:14px;margin-left:8px;"></span>
 		</div>
 		<p style="font-size:13px;color:#777;max-width:640px;">
+			<b>Open in browser</b> is the reliable way: it makes a five-minute, single-use link and opens it on the
+			house name, where the authenticator prompt can run. <b>Add a passkey</b> only works when this window is
+			already on the house name - the desktop app's own window is on 127.0.0.1, which no authenticator accepts.
 			Removing a passkey here only forgets it in the house; the key stays in the device until you delete it there.
 			A passkey proves who you are, not what you may do - privileges still come from the person.
 		</p>

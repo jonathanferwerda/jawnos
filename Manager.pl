@@ -7759,6 +7759,105 @@ post '/manager/webauthn/remove' => sub($c) {
 	$c->render(json => { ok => 1 });
 };
 
+# ---- enrollment in a real browser ----------------------------------------
+# The installed app lives on 127.0.0.1, which no authenticator accepts as an
+# origin. This mints a five-minute, single-use link that a browser opens on the
+# house name; the page makes the credential and the link is spent.
+post '/manager/webauthn/enroll_link' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('authentication') || '') eq 'approved';
+	my $p = &webauthn_person($c);
+	return $c->render(json => { ok => 0, error => 'this device is not assigned to a person yet' }) unless $p;
+	my $host = &subs::public_origin_host();
+	return $c->render(json => { ok => 0, error => 'set the house domain and this machine\'s name first' }) unless length $host;
+	my $token = &webauthn::enroll_new({
+		person_uuid => $p->{'uuid'},
+		name        => $p->{'name'},
+		device_uuid => ($c->session('app_device') || $c->session('device_uuid') || ''),
+	});
+	my $port = $ENV{'PORT_DOCK'} || 3000;
+	$c->render(json => {
+		ok      => 1,
+		url     => 'https://' . $host . ':' . $port . '/passkey?t=' . $token,
+		expires => 300,
+	});
+};
+
+get '/passkey' => sub($c) {
+	my $token = $c->param('t') || '';
+	my $p = &webauthn::enroll_peek($token);
+	$c->render(
+		template => 'passkey',
+		layout => undef,
+		token => ($p ? $token : ''),
+		valid => ($p ? 1 : 0),
+		person_name => ($p ? ($p->{'name'} || '') : ''),
+		house => &webauthn::rp_id(),
+		port => ($ENV{'PORT_DOCK'} || 3000),
+	);
+};
+
+post '/passkey/begin' => sub($c) {
+	my $token = $c->param('t') || '';
+	my $p = &webauthn::enroll_peek($token);
+	return $c->render(json => { ok => 0, error => 'this link has expired' }) unless $p;
+	return $c->render(json => { ok => 0, error => 'that person is no longer active' }) unless &subs::person_active($p->{'person_uuid'});
+	my $rp = &webauthn::rp_id();
+	return $c->render(json => { ok => 0, error => 'set the house domain first' }) unless length $rp;
+	my $challenge = &webauthn::challenge_put('enroll', { person_uuid => $p->{'person_uuid'}, token => $token });
+	my @exclude = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(internal hybrid) ] } }
+		grep { ($_->{'person_uuid'} || '') eq $p->{'person_uuid'} } @{ &webauthn::credentials() };
+	$c->render(json => {
+		ok => 1,
+		publicKey => {
+			rp => { name => 'JawnOS', id => $rp },
+			user => { id => &webauthn::user_handle($p->{'person_uuid'}), name => $p->{'name'}, displayName => $p->{'name'} },
+			challenge => $challenge,
+			pubKeyCredParams => [ { type => 'public-key', alg => -7 }, { type => 'public-key', alg => -8 } ],
+			timeout => 120000,
+			attestation => 'none',
+			authenticatorSelection => { residentKey => 'preferred', userVerification => 'preferred' },
+			excludeCredentials => \@exclude,
+		},
+	});
+};
+
+post '/passkey/finish' => sub($c) {
+	my $token = $c->param('t') || '';
+	my $p = &webauthn::enroll_peek($token);
+	return $c->render(json => { ok => 0, error => 'this link has expired' }) unless $p;
+	return $c->render(json => { ok => 0, error => 'that person is no longer active' }) unless &subs::person_active($p->{'person_uuid'});
+	my $cd = $c->param('client_data') || '';
+	my $jd = eval { decode_json(&webauthn::b64u_decode($cd)) } || {};
+	my $challenge = $jd->{'challenge'} || '';
+	my $payload = &webauthn::challenge_take('enroll', $challenge);
+	return $c->render(json => { ok => 0, error => 'the challenge expired - try again' })
+		unless $payload && ($payload->{'token'} || '') eq $token && ($payload->{'person_uuid'} || '') eq $p->{'person_uuid'};
+	my ($reg, $err) = &webauthn::verify_registration($cd, $c->param('attestation'), $challenge, &webauthn::origin_of($c));
+	return $c->render(json => { ok => 0, error => $err }) unless $reg;
+	my $name = $c->param('name') || 'Passkey';
+	$name =~ s/^\s+|\s+$//g;
+	$name = 'Passkey' unless length $name;
+	$name = substr($name, 0, 60);
+	my $list = &webauthn::credentials();
+	@{$list} = grep { ($_->{'id'} || '') ne $reg->{'id'} } @{$list};
+	push @{$list}, {
+		id          => $reg->{'id'},
+		key         => $reg->{'key'},
+		person_uuid => $p->{'person_uuid'},
+		person_name => $p->{'name'},
+		name        => $name,
+		sign_count  => $reg->{'sign_count'},
+		aaguid      => $reg->{'aaguid'},
+		transports  => 'internal,hybrid',
+		created     => &subs::rightNow(),
+		last_used   => 0,
+	};
+	&webauthn::credentials_store($list);
+	&webauthn::enroll_take($token);
+	$log->info('webauthn: enrolled a passkey for ' . ($p->{'name'} || '?') . ' from a browser link');
+	$c->render(json => { ok => 1, person => $p->{'name'} });
+};
+
 post '/manager/webauthn/login/begin' => sub($c) {
 	my $rp = &webauthn::rp_id();
 	my $list = &webauthn::credentials();
@@ -11443,6 +11542,10 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 		$path eq '/manager/security/biometric_challenge' ||
 		$path eq '/manager/security/biometric_unlock' ||
 		$path eq '/manager/security/padlock_key');
+	# A passkey is a way in, like the paper code: the enrollment page and the
+	# sign-in routes must answer while a screen is locked.
+	return 0 if $path =~ m{^/passkey(?:/|$)};
+	return 0 if $path =~ m{^/manager/webauthn/login/(?:begin|finish)$};
 
 	# A request that started while the lock screen was up can reach here after
 	# another screen has already turned the lock. Re-read the stored time (the
@@ -36158,6 +36261,7 @@ sub app_public_path {
 	return 1 if $path eq '/sesh_check' || $path eq '/gate';
 	return 1 if $path eq '/manager/health';
 	return 1 if $path =~ m{^/manager/webauthn/login/(?:begin|finish)$};
+	return 1 if $path =~ m{^/passkey(?:/|$)};
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/tunnel/ws';
 	# The padlock is its own small protocol: a locked screen must still be able
 	# to ask another device for a print even when its app window has lapsed, and
@@ -36615,6 +36719,10 @@ sub padlock_gate_allows {
 	# APK; it needs no house data and is session-gated inside the route, so a
 	# locked screen can still take its own update
 	return 1 if $path eq '/manager/app_release_sync';
+	# A passkey is a way in, like the paper code: the enrollment page and the
+	# sign-in routes answer while the screen is locked.
+	return 1 if $path =~ m{^/passkey(?:/|$)};
+	return 1 if $path =~ m{^/manager/webauthn/login/(?:begin|finish)$};
 	return 0;
 }
 
