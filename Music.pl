@@ -462,7 +462,10 @@ sub music_pacat_command($rate) {
 		'--playback', '--raw', '--format=s16le',
 		'--rate=' . &music_stream_rate($rate),
 		'--channels=2',
-		'--latency-msec=60',
+		# 30 ms of buffer on top of the sink's own latency: the pipe behind pacat
+		# absorbs a network stall, and a smaller sink buffer is the difference
+		# between a room that answers the screen and one that trails it.
+		'--latency-msec=30',
 		# PulseAudio's stream-restore remembers a stream name's old level, so a
 		# receiver that was once turned down (or muted) came back silent while
 		# the Music app looked like it was playing. pacat names the level it
@@ -525,7 +528,7 @@ sub music_remote_audio_start($st) {
 		my $filter = $pan ne '' ? ' -af "' . $pan . '"' : '';
 		my $pipeline = 'ffmpeg -hide_banner -loglevel error -fflags nobuffer -analyzeduration 0 -probesize 32k'
 			. ' -i pipe:0' . $filter . ' -f s16le -acodec pcm_s16le -ar 44100 -ac 2 pipe:1'
-			. ' | pacat --playback --raw --format=s16le --rate=44100 --channels=2 --latency-msec=60'
+			. ' | pacat --playback --raw --format=s16le --rate=44100 --channels=2 --latency-msec=30'
 			. ' --volume=65536 --client-name=jawnos-music-opus --stream-name=jawnos-music';
 		@cmd = ('sh', '-c', $pipeline);
 	}
@@ -540,7 +543,7 @@ sub music_remote_audio_start($st) {
 			. ' -ar ' . $rate . ' -ac 2 -i pipe:0 -af "' . $pan . '"'
 			. ' -f s16le -acodec pcm_s16le -ar ' . $rate . ' -ac 2 pipe:1'
 			. ' | ' . $pacat . ' --playback --raw --format=s16le --rate=' . $rate
-			. ' --channels=2 --latency-msec=60 --volume=65536 --client-name=jawnos-music --stream-name=jawnos-music';
+			. ' --channels=2 --latency-msec=30 --volume=65536 --client-name=jawnos-music --stream-name=jawnos-music';
 		@cmd = ('sh', '-c', $pipeline);
 	}
 	else { @cmd = &music_pacat_command($st->{'rate'}); }
@@ -623,8 +626,9 @@ sub music_remote_write($st, $bytes) {
 sub music_rx_report_send($st) {
 	return unless $st->{'tx'} && $st->{'tx'}->is_websocket;
 	my $now = &subs::rightNow();
-	# pactl is not free; refresh the sink number now and then
-	if (!$st->{'sink_at'} || $now - $st->{'sink_at'} > 10_000) {
+	# pactl is not free, but the sink buffer is what a resume changes; a number
+	# ten seconds stale reads as a smaller lag than the room can hear
+	if (!$st->{'sink_at'} || $now - $st->{'sink_at'} > 2_000) {
 		$st->{'sink_at'} = $now;
 		my $ms = &music_receiver_sink_latency();
 		$st->{'sink_ms'} = $ms if $ms > 0;

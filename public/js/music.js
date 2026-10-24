@@ -800,16 +800,20 @@ function musicRemoteDelayShow() {
 // new buffer; otherwise the Me sound replays the pre-pause second and then
 // glides forward to catch the picture, which reads as the output being thrown off.
 function musicResumeSync() {
-	// Only a lip-sync session delays the picture and the sound by a measured
+	// The receiver starts a fresh player on the resume, so the old measurement
+	// describes audio that is gone.
+	musicStream.measured = {};
+	musicRemoteDelayShow();
+	// Only a lip-sync session delays the sound and the picture by a measured
 	// wait. A Me trim is the sound's own relation to a live picture and must
 	// survive the pause unchanged.
 	if (!musicLip.on) { return; }
-	musicStream.measured = {};
-	musicRemoteDelayShow();
 	if (musicVisual && musicVisual.localDelay) {
-		// the context was suspended through the pause, so this lands before a
-		// sample is rendered: no glide, and none of the pre-pause sound is read
-		try { musicVisual.localDelay.delayTime.value = 0; } catch (e) {}
+		// The context kept running through the pause, so the delay line holds the
+		// silence of the pause; skip it with a short ramp rather than play that
+		// silence out as a gap when the picture starts moving again.
+		try { musicVisual.localDelay.delayTime.setTargetAtTime(0, musicVisual.ctx.currentTime, 0.02); }
+		catch (e) { try { musicVisual.localDelay.delayTime.value = 0; } catch (e2) {} }
 	}
 	musicLip.reanchorAt = 0;
 	musicLipDelayChanged();
@@ -2162,8 +2166,9 @@ function mediaMaker(data) {
 			}
 			tree.sound.onplaying = function() {
 				tree.sound.state = 1;
-				// the context was suspended on the pause; resume it before the element's
-				// sound is expected, so the graph and the picture start together again
+				// The context is left running through a pause (see onpause), but a
+				// backgrounded tab or an interrupted context still needs resuming
+				// before the element's sound is expected.
 				musicAudioResume();
 				tree.sound.sync_cursor = null;
 				tree.sound.sync_wall = 0;
@@ -2195,9 +2200,9 @@ function mediaMaker(data) {
 					musicStreamStart(file, tree.sound.currentTime);
 				}
 				// A pause/play used to leave the element's sound ahead of the picture
-				// when both clocked through the audio graph. The context is suspended
-				// on the pause and resumed above, which re-anchors them; the old small
-				// seek here was not enough.
+				// when both clocked through the audio graph. The resume re-anchors the
+				// delayed pair (musicResumeSync) and the stream's own measure; the old
+				// small seek here was not enough.
 				var local_side = musicOutputChannel(mao['me']);
 				if ((music_normalize && music_normalize != 'off') || local_side == 'left' || local_side == 'right' || musicEqualizerDirty() || music_local_delay > 0) { musicAudioGraph(); }
 				musicBaselineStart();
@@ -2294,12 +2299,11 @@ function mediaMaker(data) {
 					tree.sound.state = 0;
 					musicKeepalive(false);
 					musicStreamControl('pause');
-					// stop the graph with the element: a suspended context leaves no
-					// buffered sound to run ahead of the picture on the resume
-					if (musicVisual && musicVisual.ctx && musicVisual.ctx.state == 'running') {
-						try { musicVisual.ctx.suspend(); } catch (e) {}
-					}
-
+					// The context is deliberately left running. Suspending it and resuming
+					// it on the next play made every resume behave a little differently
+					// (the graph's own queue and its delay line do not restart alike);
+					// a running context fed silence for the pause resumes identically
+					// to the first play.
 					$('#play_logo').attr('src', jawnosPlayIcon());
 
 				};
