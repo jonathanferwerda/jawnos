@@ -183,6 +183,8 @@ function musicStreamHealthPing() {
 				// larger of that and what the context says it has
 				var l = d ? parseFloat(d.latency) : NaN;
 				if (isFinite(l) && l > 0) { musicVisual.graphLatency = l; }
+				// the Me delay allows for this latency; re-apply it with the new value
+				musicLocalDelayApply();
 				musicAheadRetarget();
 			},
 			error: function() { /* a machine without pactl keeps the browser level */ }
@@ -360,13 +362,13 @@ function musicStreamConnect() {
 			var ms;
 			if (!prev) { ms = Math.round(lag); }
 			else {
-				// The pipeline moves slowly. Limit how far one report can move it,
-				// so a single stalled report cannot jerk the lead and a real change
-				// still settles over a few reports.
+				// The pipeline moves slowly and the pipe's own jitter is not worth
+				// chasing; a slow average keeps the lead steady. A single stalled
+				// report is clamped to a few milliseconds of movement.
 				var delta = lag - prev.ms;
-				if (delta > 100) { delta = 100; }
-				else if (delta < -250) { delta = -250; }
-				ms = Math.round(prev.ms + delta * 0.5);
+				if (delta > 150) { delta = 150; }
+				else if (delta < -150) { delta = -150; }
+				ms = Math.round(prev.ms + delta * 0.2);
 			}
 			musicStream.measured[d.key] = { ms: ms, at: Date.now() };
 			musicStream.ready[d.key] = 1;
@@ -1169,9 +1171,9 @@ function musicAheadLead(hard) {
 	if (el.seeking) { return; }
 	var now = Date.now();
 	// a small error is inaudible; a big one is a jump, but not more often than
-	// once a second, and never while a seek is still running
-	if (!hard && now - (musicAhead.seekAt || 0) < 1200) { return; }
-	if (!hard && Math.abs(err) < 0.12) { return; }
+	// every second and a half, and never while a seek is still running
+	if (!hard && now - (musicAhead.seekAt || 0) < 1500) { return; }
+	if (!hard && Math.abs(err) < 0.15) { return; }
 	musicAhead.seekAt = now;
 	musicAhead.seekCount++;
 	try { el.currentTime = want; } catch (e) {}

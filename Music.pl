@@ -921,14 +921,19 @@ sub music_stream_health {
 		my $p = $si->{'properties'} || {};
 		my $app = $p->{'application.name'} || '';
 		next unless $app =~ /^jawnos/i;
-		# the Web Audio stream is the one this machine hears; its node latency
-		# is the graph's own output buffer, which the picture has to wait for
+		# the Web Audio stream is the one this machine hears. Its node latency is
+		# the graph's own render buffer; the sink input's buffer and the device's
+		# own latency sit after it, and all of them delay Me relative to the
+		# picture, so the largest path is the one the local delay must allow for.
 		if (lc($p->{'media.role'} || '') eq 'webaudio') {
+			my $sec = 0;
 			my $nl = $p->{'node.latency'} || '';
-			if ($nl =~ m{^(\d+)/(\d+)$} && $2 > 0) {
-				my $sec = $1 / $2;
-				$latency = $sec if $sec > $latency;
-			}
+			if ($nl =~ m{^(\d+)/(\d+)$} && $2 > 0) { $sec = $1 / $2; }
+			my $buf = ($si->{'buffer_latency_usec'} || 0) + 0;
+			my $sink = ($si->{'sink_latency_usec'} || 0) + 0;
+			my $path = ($buf + $sink) / 1_000_000;
+			my $total = $path > $sec ? $path : $sec;
+			$latency = $total if $total > $latency;
 		}
 		my $id = $si->{'index'};
 		next unless defined $id && $id =~ /^\d+$/;
