@@ -154,6 +154,13 @@ function clotheslineHanger(clothes) {
 		ctx.rect(0, minHeight, canvas.width, clothesLineHeight);
 		ctx.clip();
 
+		// The timeline's centre rail is cleared with the band above; put it back
+		// before the garments go on, so it reaches the taskbar and a tile still
+		// hangs in front of it.
+		if (canvas.id == 'timeline' && clothesLineHeight > 0 && typeof jawnosTimelineRail == 'function') {
+			jawnosTimelineRail(ctx, minHeight, maxHeight);
+		}
+
 		// each garment takes the desk's material (the Misc Texture setting):
 		// plain is the original flat tile, round is a solid rounded pill, and the
 		// rest are panes of glass, paper, fabric, wood or metal with the app's

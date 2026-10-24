@@ -7,6 +7,33 @@
 // grows to hold every app.
 
 var appPosition = [];
+
+// The vertical rail the rows hang from, in a mid-tone of the theme's own colour
+// so it belongs to the scheme (the themed ink is black on a light desk, which
+// drew a hard black bar). Over a background picture that colour can vanish, so
+// the contrasting halo is laid underneath it first. The clothesline clears its
+// own band after the timeline has drawn, so it calls this too - for the band it
+// just emptied - to keep the rail running right up to the taskbar.
+function jawnosTimelineRail(ctx, fromY, toY) {
+	var ink = jawnosInk();
+	var rail = (typeof jawnosPrinterLine == 'function') ? jawnosPrinterLine() : ink;
+	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
+	ctx.save();
+	ctx.lineCap = 'round';
+	ctx.beginPath();
+	ctx.moveTo(ctx.canvas.width / 2, fromY);
+	ctx.lineTo(ctx.canvas.width / 2, toY);
+	if (halo) {
+		ctx.strokeStyle = halo;
+		ctx.lineWidth = 12;
+		ctx.stroke();
+	}
+	ctx.strokeStyle = rail;
+	ctx.lineWidth = 8;
+	ctx.stroke();
+	ctx.restore();
+}
+
 function timelinePrinter(appts,sort,offset) {
 	appPosition = [];
 	var scope = localStorage.getItem('scope');
@@ -46,28 +73,12 @@ function timelinePrinter(appts,sort,offset) {
 	headerPrinter(ctx,appts,'Timeline');
 
 	var ink = jawnosInk();
-	var rail = (typeof jawnosPrinterLine == 'function') ? jawnosPrinterLine() : ink;
 	var darkTheme = (typeof jawnosTextureDark == 'function') ? jawnosTextureDark() : false;
 	var halo = typeof jawnosPrinterHalo == 'function' ? jawnosPrinterHalo() : undefined;
 
-	// the rail the rows are hung from, in a mid-tone of the theme's own colour so
-	// it belongs to the scheme. The themed ink is black on a light desk, which
-	// drew a hard black bar. Over a background picture that colour can vanish, so
-	// the contrasting halo is laid underneath it first.
-	ctx.save();
-	ctx.lineCap = 'round';
-	ctx.beginPath();
-	ctx.moveTo(canvas.width / 2, 80);
-	ctx.lineTo(canvas.width / 2, canvas.height);
-	if (halo) {
-		ctx.strokeStyle = halo;
-		ctx.lineWidth = 12;
-		ctx.stroke();
-	}
-	ctx.strokeStyle = rail;
-	ctx.lineWidth = 8;
-	ctx.stroke();
-	ctx.restore();
+	// the rail the rows are hung from runs from the top of the clothesline - the
+	// taskbar's own edge when one is worn at the top - down to the canvas's foot
+	jawnosTimelineRail(ctx, headerHeight, canvas.height);
 
 	var placement_number = 0;
 	var textPrinter = [];
