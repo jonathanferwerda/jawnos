@@ -698,12 +698,11 @@ function musicLipStart() {
 			else { finish(); }
 		};
 		if (c.requestVideoFrameCallback) {
-			var framed = false;
-			try { c.requestVideoFrameCallback(function() { framed = true; hand_over(true); }); }
-			catch (e) {}
-			// a clone that never presents (paused or refused) must not hold the
-			// live picture forever
-			setTimeout(function() { if (!framed) { hand_over(false); } }, 1200);
+			// Wait for a real frame. The live picture keeps playing meanwhile, so a
+			// clone that never presents simply leaves lip sync unapplied rather
+			// than showing a black box or freezing the screen.
+			try { c.requestVideoFrameCallback(function() { hand_over(true); }); }
+			catch (e) { setTimeout(function() { hand_over(false); }, 120); }
 		}
 		else {
 			// older engines: keep the live picture up until the clone has had time
