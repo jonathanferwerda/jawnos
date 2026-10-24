@@ -49,7 +49,7 @@
 								<option value="sms" data-line="<%= $l->{'value'} %>"><%= 'sms · ' . ($l->{'display'} || $l->{'value'}) %></option>
 							<% } %>
 						<% } else { %>
-							<option value="sms">sms</option>
+							<option value="sms" data-line="<%= $lines[0] ? $lines[0]->{'value'} : '' %>">sms</option>
 						<% } %>
 						<option value="lora">LoRaWAN</option>
 					</select>

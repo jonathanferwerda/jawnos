@@ -40,7 +40,7 @@ function chatTransportOptions() {
 	var section = $('.mail_subsection.active').attr('section') || '';
 	var onPerson = section == 'tickets' || section == 'sms';
 	var onLora = section == 'lora';
-	var hasPhone = (localStorage.getItem('mail_phone') || '') != '';
+	var hasPhone = (localStorage.getItem('mail_phone') || '') != '' || sel.find('option[value="sms"]').filter(function () { return (($(this).attr('data-line') || '') != ''); }).length > 0;
 	// LoRa is a road only on the LoRa section; a person's thread offers chat and
 	// their phone lines, so a text never quietly becomes a radio broadcast.
 	sel.find('option[value="lora"]').toggle(onLora);
@@ -51,6 +51,12 @@ function chatTransportOptions() {
 	else if (sel.val() == 'lora') {
 		sel.val('chat');
 	}
+	// A person's road is remembered: once sms is picked it is how the thread
+	// opens again, until another road is chosen. The thread stays the person's
+	// (a ticket-holder keeps their ticket thread) - only the road changes.
+	var remembered = onPerson ? chatRememberedMethod() : '';
+	if (remembered == 'sms' && !hasPhone) { remembered = ''; }
+	if (remembered && sel.find('option[value="' + remembered + '"]').length) { sel.val(remembered); }
 	if (sel.val() == 'sms') {
 		var first = sel.find('option[value="sms"]').first();
 		if (first.length) { sel.find('option').prop('selected', false); first.prop('selected', true); }
@@ -58,7 +64,65 @@ function chatTransportOptions() {
 	sel.find('option[value="sms"]').prop('disabled', !hasPhone);
 	if (!hasPhone && sel.val() == 'sms') { sel.val('chat'); }
 	updateChatSmsCount();
+	chatMethodLabel(sel, onPerson);
 	if (onLora) { setTimeout(chatLoraRefresh, 200); }
+}
+
+// The transport belongs to the person, not the window: a phone number is the
+// most stable key across the friend row, the ticket and the phone list, with the
+// ticket's uuid as the fallback for someone who keeps no number here.
+function chatMethodKey() {
+	var phone = localStorage.getItem('mail_phone') || '';
+	var contact = localStorage.getItem('mail_contact') || '';
+	if (phone) { return 'phone:' + phone; }
+	if (contact && contact != 'pen' && contact != 'lora') { return 'contact:' + contact; }
+	return '';
+}
+
+function chatRememberedMethod() {
+	var phone = localStorage.getItem('mail_phone') || '';
+	var contact = localStorage.getItem('mail_contact') || '';
+	if (phone) {
+		var by_phone = localStorage.getItem('chat_method_phone:' + phone);
+		if (by_phone) { return by_phone; }
+	}
+	if (contact && contact != 'pen' && contact != 'lora') {
+		return localStorage.getItem('chat_method_contact:' + contact) || '';
+	}
+	return '';
+}
+
+function chatRememberMethod(value) {
+	if (!value) { return; }
+	var phone = localStorage.getItem('mail_phone') || '';
+	var contact = localStorage.getItem('mail_contact') || '';
+	// the chosen sms line can name the person even when the ticket, not a phone
+	// row, opened the thread
+	var line = $('#mail_transport option[value="sms"]:selected').attr('data-line') || '';
+	if (phone) { localStorage.setItem('chat_method_phone:' + phone, value); }
+	if (line) { localStorage.setItem('chat_method_phone:' + line, value); }
+	if (contact && contact != 'pen' && contact != 'lora') { localStorage.setItem('chat_method_contact:' + contact, value); }
+}
+
+// The subtitle under the name names the road the next message will take - the
+// number when it is sms, rather than the section's own name (it used to say
+// "Tickets" even when the next text was going by phone).
+function chatMethodLabel(sel, onPerson) {
+	var label = $('#chat_method_label');
+	if (!label.length) { return; }
+	var fallback = label.attr('data-label') || label.text();
+	var text = fallback;
+	if (onPerson && chatMethodKey() && sel && sel.length && sel.is(':visible')) {
+		var value = sel.val() || '';
+		if (value == 'sms') {
+			var line = sel.find('option[value="sms"]:selected').attr('data-line') || localStorage.getItem('mail_phone') || '';
+			text = line || sel.find('option[value="sms"]').first().text() || fallback;
+		}
+		else {
+			text = sel.find('option[value="' + value + '"]').text() || fallback;
+		}
+	}
+	label.text(text);
 }
 $(document).on('click', '.mail_subsection', function () {
 	// the old section's place in the rail is saved before the render replaces it
@@ -215,7 +279,11 @@ $(document).on('click', '.chat_emoji', function (e) {
 });
 
 $(document).on('input keyup', '#message', updateChatSmsCount);
-$(document).on('change', '#mail_transport', updateChatSmsCount);
+$(document).on('change', '#mail_transport', function () {
+	chatRememberMethod($(this).val());
+	updateChatSmsCount();
+	chatMethodLabel($(this), $('.mail_subsection.active').attr('section') == 'tickets' || $('.mail_subsection.active').attr('section') == 'sms');
+});
 
 // ---- LoRaWAN ---------------------------------------------------------------
 var chatLoraLoaded = false;
@@ -354,6 +422,32 @@ function chatDressMessages(root) {
 	});
 }
 
+// ---- landing on the newest message ---------------------------------------
+// The window is inserted before the browser has laid out its messages, so one
+// scrollTop at insert time can land short; a few passes settle it on the last
+// bubble. The socket also replaces messages as they arrive, so the thread stays
+// pinned briefly while those replacements grow the list.
+var chatAutoScrollUntil = 0;
+function chatScrollBottom() {
+	if (!$('#mail').hasClass('chat_shell')) { return; }
+	chatAutoScrollUntil = Date.now() + 3000;
+	var go = function () {
+		if (!$('#mail').hasClass('chat_shell')) { return; }
+		var box = document.getElementById('mailbox');
+		if (!box) { return; }
+		box.scrollTop = box.scrollHeight;
+	};
+	go();
+	if (window.requestAnimationFrame) {
+		requestAnimationFrame(function () { requestAnimationFrame(go); });
+	}
+	setTimeout(go, 80);
+	setTimeout(go, 240);
+	setTimeout(go, 600);
+}
+// a real scroll gesture means the person is reading, so stop pinning
+$(document).on('wheel touchmove', '.chat_shell #mailbox', function () { chatAutoScrollUntil = 0; });
+
 // ---- rail: menu, subheadings and remembered scroll ------------------------
 // On a phone the rail is a drawer over the conversation. Its default follows
 // the container query the stylesheet uses (closed when the shell is narrow,
@@ -448,5 +542,7 @@ $(function () {
 	if ($('.chat_shell').length) {
 		chatDressMessages();
 		chatRailApply();
+		chatTransportOptions();
+		chatScrollBottom();
 	}
 });

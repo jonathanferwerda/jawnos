@@ -738,6 +738,9 @@ function wsMessageHandler(event) {
 			if (typeof chatDressMessages === 'function') { chatDressMessages(); }
 			appointment_chron()
 			mailScrollBottom();
+			// a thread that is still filling in (the first open after a worker
+			// start decrypts in a batch) stays pinned to its newest message
+			if (typeof chatAutoScrollUntil !== 'undefined' && Date.now() < chatAutoScrollUntil && typeof chatScrollBottom === 'function') { chatScrollBottom(); }
 		}
 		else if ( data['type'] == 'mail_arrival' ) {
 			// a letter the server accepted: the start menu's envelope rings until

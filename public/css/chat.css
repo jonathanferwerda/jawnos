@@ -127,6 +127,9 @@
 	min-width: 0;
 	overflow-y: auto;
 	padding: 10px;
+	/* the lists can reach the last row: keep it clear of the window edge and the
+	   phone's home bar so the sms/dial/list/tickets buttons stay pressable */
+	padding-bottom: calc(25px + env(safe-area-inset-bottom, 0px));
 	background: var(--panel-2, var(--panel));
 	border-right: 1px solid var(--line);
 }
@@ -385,7 +388,9 @@
 	background: transparent;
 	border: 0;
 	border-radius: 0;
-	scroll-behavior: smooth;
+	/* an instant jump is what lands a freshly opened thread on its last message;
+	   a smooth animation was still travelling when the page settled at the top */
+	scroll-behavior: auto;
 }
 
 .chat_shell .chat_messages:empty::before {
@@ -828,7 +833,7 @@
 
 	.chat_shell .chat_rail_list[data-chat-scroll="people"],
 	.chat_shell .chat_phone_group .chat_rail_list {
-		max-height: 38vh;
+		max-height: 30vh;
 		overflow-y: auto;
 	}
 
@@ -854,7 +859,7 @@
 
 	.chat_shell .chat_rail_list[data-chat-scroll="people"],
 	.chat_shell .chat_phone_group .chat_rail_list {
-		max-height: 38vh;
+		max-height: 30vh;
 		overflow-y: auto;
 	}
 

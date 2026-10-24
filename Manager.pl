@@ -30077,7 +30077,7 @@ sub mail_checker($c) {
 			);
 			&Websocket::send('tab', {  type => 'mailbox_message', selector => '.mailbox_message[uuid="' . $m->{'uuid'} . '"]', content => $content, browser_tab_id => $c->param('browser_tab_id') });
 		}
-	}, { name => 'mail message processor' });
+	}, { name => 'mail message processor', sync => 1 });
 	# the advertised dials, each carrying its label and comparison key so the
 	# template can list a house's public face without walking the tuples itself
 	my $channel_list = [];

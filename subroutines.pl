@@ -1182,6 +1182,18 @@ sub _deferred_pump {
 
 sub subprocessor() {
 	my ($subroutine,$params) = @_;
+	# sync => 1 runs the work in this process and returns once it is done, without
+	# the subprocess wrapper's loop reset. Use it when the caller needs the result
+	# before it can build its response - the mail batch decrypts its rows and
+	# renders them, and a forked child left the page to show its envelopes empty.
+	if ($params->{'sync'}) {
+		my $result = eval { $subroutine->() };
+		my $error = $@;
+		if ($error) {
+			eval { $log->error('subprocessor ' . ($params->{'name'} || '?') . ' sync failed: ' . ($error =~ s/\s+/ /gr)) } if $log;
+		}
+		return $result;
+	}
 	my $parent_pid = $$;
 	my $wrapped_subroutine = sub {
 		Mojo::IOLoop->reset({ freeze => 1 });
@@ -9529,12 +9541,14 @@ sub note_decrypter() {
 	$tries ||= 0;
 	return '' unless defined $contented && length $contented;
 
-	# a plain note is memoised on (key, ciphertext); '' there means a known miss
-	my $memo_key;
-	if (!$timestamp) {
-		$memo_key = md5_sum($secret) . ':' . md5_sum($contented);
-		return $note_memo{$memo_key} if defined $note_memo{$memo_key};
-	}
+	# a plain note is memoised on (key, ciphertext, timestamp); '' there means a
+	# known miss. The timestamp is part of the key because a note written before a
+	# key rotation is opened with the credentials current then - and it is always
+	# present for mail, so leaving it out kept every message out of the memo and
+	# made a re-read pay the key derivation again. A timed miss is not kept: a
+	# historical credential that arrives later can still open it.
+	my $memo_key = md5_sum($secret // '') . ':' . md5_sum($contented) . ':' . md5_sum($timestamp // '');
+	return $note_memo{$memo_key} if defined $note_memo{$memo_key};
 
 	# the key in use now opens almost every note, and one in-process try costs
 	# nothing, so it is tried alone first
@@ -9561,7 +9575,7 @@ sub note_decrypter() {
 	}
 
 	$plain = '' unless defined $plain;
-	&note_memo_put($memo_key, $plain) if defined $memo_key;
+	&note_memo_put($memo_key, $plain) if length $plain || !$timestamp;
 	return $plain;
 }
 

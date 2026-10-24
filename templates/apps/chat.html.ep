@@ -27,7 +27,7 @@
 			<div class="chat_avatar"><%= $avatar %></div>
 			<div class="chat_identity_text">
 				<div class="chat_title"><%= $main_title || &subs::ui('Chat') %></div>
-				<div class="chat_subtitle"><%= $chat_panel_label %><% if (($settings->{'lora_toggle'} // '') eq 'on') { %> &middot; LoRa mesh<% } %></div>
+				<div class="chat_subtitle"><span id="chat_method_label" data-label="<%= $chat_panel_label %>"><%= $chat_panel_label %></span><% if (($settings->{'lora_toggle'} // '') eq 'on') { %> &middot; LoRa mesh<% } %></div>
 			</div>
 		</div>
 		<div class="chat_head_actions">
@@ -103,4 +103,6 @@
 <script>
 	last_mail_message = Date.now();
 	if (typeof chatRailApply === 'function') { chatRailApply(); }
+	if (typeof chatTransportOptions === 'function') { chatTransportOptions(); }
+	if (typeof chatScrollBottom === 'function') { chatScrollBottom(); }
 </script>
