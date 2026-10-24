@@ -272,6 +272,32 @@ if [ "$WITH_HEADLESS" -eq 1 ]; then
 		echo "  sudo install -m 0644 $UNIT_OUT /etc/systemd/system/jawnos.service"
 		echo "  sudo systemctl daemon-reload && sudo systemctl enable --now jawnos.service"
 	fi
+
+	# The certificate timer lives on the same headless machine. DNS-01 needs no
+	# inbound port, so a server behind NAT can still renew. It is installed but
+	# left disabled: there is no DNS credential yet, and an enabled timer on a
+	# fresh install would only burn a Let's Encrypt attempt and log a failure.
+	TLS_SERVICE_OUT="${TMPDIR:-/tmp}/jawnos-tls.service"
+	TLS_TIMER_OUT="${TMPDIR:-/tmp}/jawnos-tls.timer"
+	sed -e "s|@PERL@|${PERL:-/usr/bin/perl}|g" \
+		-e "s|@JAWN_DIR@|$JAWN_DIR|g" \
+		-e "s|@JAWN_USER@|$JAWN_USER|g" \
+		-e "s|@JAWN_GROUP@|$JAWN_GROUP|g" \
+		"$DESKTOP_SRC/systemd/jawnos-tls.service.in" > "$TLS_SERVICE_OUT"
+	cp "$DESKTOP_SRC/systemd/jawnos-tls.timer.in" "$TLS_TIMER_OUT"
+	echo "Wrote the TLS units to $TLS_SERVICE_OUT and $TLS_TIMER_OUT"
+	if [ "$(id -u)" -eq 0 ] && command -v systemctl >/dev/null 2>&1; then
+		install -m 0644 "$TLS_SERVICE_OUT" /etc/systemd/system/jawnos-tls.service
+		install -m 0644 "$TLS_TIMER_OUT" /etc/systemd/system/jawnos-tls.timer
+		systemctl daemon-reload
+		echo "Installed jawnos-tls.timer (not enabled). Once a DNS credential is saved:"
+		echo "  sudo systemctl enable --now jawnos-tls.timer"
+	else
+		echo "Install them as root, then enable the timer once a DNS credential exists:"
+		echo "  sudo install -m 0644 $TLS_SERVICE_OUT /etc/systemd/system/jawnos-tls.service"
+		echo "  sudo install -m 0644 $TLS_TIMER_OUT /etc/systemd/system/jawnos-tls.timer"
+		echo "  sudo systemctl daemon-reload && sudo systemctl enable --now jawnos-tls.timer"
+	fi
 fi
 
 # --- XDG autostart ----------------------------------------------------------
