@@ -1,8 +1,47 @@
+<% use Mojo::JSON qw/encode_json/; %>
 <%# The JawnOS on-screen keyboard. One dock serves every editable field in the
     house: letters, a calculator for numbers, and a page of special characters.
     It is placed by soft_keyboard.js - inside the Chat composer, inside the
     window being typed in, or fixed at the foot of the page - so the system
     keyboard never has to reshape the page. %>
+<%# The units a typed quantity can name: the registry the old calculator used,
+    plus every coin, so "5jpy" and "32.33L" resolve in the browser. The values
+    are decoded here because this file's own literals are UTF-8 bytes. %>
+<% my $kb_chars = sub {
+	my $s = shift;
+	return '' unless defined $s;
+	utf8::decode($s) if length $s && !utf8::is_utf8($s);
+	return $s;
+}; %>
+<% my $kb_units = &Manager::measures_all(); %>
+<% my (%kb, %kb_sym); %>
+<% foreach my $k ( sort keys %{$kb_units} ) {
+	my $u = $kb_units->{$k};
+	next unless ref $u eq 'HASH';
+	$kb{$k} = {
+		name => $kb_chars->($u->{'name'} || $k),
+		types => [ @{ $u->{'types'} || [] } ],
+		symbol => $kb_chars->($u->{'symbol'} || ''),
+	};
+} %>
+<% my $kb_base = &subs::crypto_report_currency(); %>
+<% if ( &subs::crypto_enabled() ) {
+	foreach my $a ( @{ &subs::crypto_assets() } ) {
+		my $code = uc($a->{'code'} || '');
+		next unless length $code;
+		my $name = $kb_chars->($a->{'name'} || $code);
+		my $symbol = $kb_chars->($a->{'symbol'} || '');
+		$kb{$code} ||= { name => $name, types => [ 'currency' ], symbol => $symbol };
+		$kb_sym{$symbol} = $code if length $symbol && $symbol ne '$';
+	}
+} %>
+<% foreach my $f ( @{ &subs::crypto_fiat_table() } ) {
+	my $code = uc($f->{'code'} || '');
+	next unless length $code;
+	$kb{$code} ||= { name => $kb_chars->($f->{'name'} || $code), types => [ 'currency' ], symbol => '' };
+} %>
+<% $kb_sym{'€'} = 'EUR'; $kb_sym{'£'} = 'GBP'; $kb_sym{'¥'} = 'JPY'; $kb_sym{'₹'} = 'INR'; $kb_sym{'₽'} = 'RUB'; $kb_sym{'₩'} = 'KRW'; $kb_sym{'₺'} = 'TRY'; %>
+<% $kb_sym{'$'} = $kb_base; %>
 <% my @symbols = (
 	'€','£','¥','₹','₽','₿','¢','$',
 	'±','×','÷','−','≠','≈','≤','≥','∞','π','√','∑','∏','∆','∂','∫','°','%','‰',
@@ -18,6 +57,13 @@
 		<span class="soft_kb_title"></span>
 		<button type="button" class="soft_kb_close" data-kb_action="close" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
 	</div>
+
+	<div id="soft_kb_convert" class="soft_kb_convert" hidden>
+		<span id="soft_kb_convert_src" class="soft_kb_convert_src"></span>
+		<div id="soft_kb_convert_rows" class="soft_kb_convert_rows"></div>
+	</div>
+
+	<script id="soft_kb_units" type="application/json"><%== encode_json({ units => \%kb, symbols => \%kb_sym, base => $kb_base }) %></script>
 
 	<div class="soft_kb_panel" data-kb_panel="letters">
 		<div class="soft_kb_row">

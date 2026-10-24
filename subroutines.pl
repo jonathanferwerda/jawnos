@@ -30347,6 +30347,8 @@ sub crypto_rates_refresh {
 	}
 	$rates{$base} = 1 unless exists $rates{$base};
 	my $written = &crypto_rates_write(\%rates, $source, $base);
+	# The Measures app's PV column is a reading of the same snapshot.
+	eval { &crypto_measures_sync(); };
 	# The same snapshot feeds the optional history: one measure appointment
 	# every six hours, in place of the app and appointment that used to do it.
 	eval { &crypto_tracking_tick(); };
@@ -30517,6 +30519,58 @@ sub crypto_tracking_definitions_write {
 		&setting_setter({ app => $app, setting => 'app_measures', value => $json, device => $d });
 	}
 	return 1;
+}
+
+# The Measures app's PV column reads the same snapshot the Crypto panel shows:
+# one unit of a code, valued in the house's reporting currency. The fiat rows
+# Measures already holds are updated in place; every enabled coin gets a row of
+# its own, so a market price has somewhere to sit. Called after a refresh and
+# whenever Measures opens, so a snapshot taken while the panel was closed still
+# fills the column without waiting for the next half-hour.
+sub crypto_measures_sync {
+	my $rates = &crypto_rates_read();
+	my $table = $rates->{'rates'};
+	return 0 unless ref $table eq 'HASH' && scalar keys %{$table};
+	my $base = $rates->{'base'} || &crypto_report_currency();
+	my $base_v = $table->{$base};
+	$base_v = 1 unless defined $base_v && $base_v > 0;
+	my $raw = &setting_grabber({ app => 'measures', setting => 'measures' });
+	my $measures = eval { decode_json($raw) };
+	return 0 unless ref $measures eq 'HASH' && scalar keys %{$measures};
+	my $changed = 0;
+	foreach my $k ( keys %{$measures} ) {
+		next unless ref $measures->{$k} eq 'HASH';
+		# only a code-shaped row (USD, EUR, JPY) names a snapshot unit
+		next unless uc($k) eq $k && $k =~ /^[A-Z]{3}$/;
+		my $v = $table->{$k};
+		next unless defined $v && $v > 0;
+		my $pv = sprintf('%.6f', $v / $base_v);
+		next if defined $measures->{$k}->{'pv'} && $measures->{$k}->{'pv'} eq $pv;
+		$measures->{$k}->{'pv'} = $pv;
+		$changed++;
+	}
+	foreach my $code ( @{ &crypto_enabled_assets() } ) {
+		my $v = $table->{$code};
+		next unless defined $v && $v > 0;
+		my $asset = &crypto_asset($code);
+		my $row = $measures->{$code};
+		if (ref $row ne 'HASH') {
+			$row = $measures->{$code} = {
+				name => ($asset->{'name'} || $code),
+				types => [ 'currency' ],
+				symbol => ($asset->{'symbol'} || ''),
+				uuid => &random_string_creator(26),
+			};
+			$changed++;
+		}
+		my $pv = sprintf('%.6f', $v / $base_v);
+		next if defined $row->{'pv'} && $row->{'pv'} eq $pv;
+		$row->{'pv'} = $pv;
+		$changed++;
+	}
+	return 0 unless $changed;
+	&setting_setter({ app => 'measures', setting => 'measures', value => encode_json($measures) });
+	return $changed;
 }
 
 sub crypto_tracking_tick {

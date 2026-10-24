@@ -2422,6 +2422,8 @@ sub register_grabber($app) {
 
 get '/manager/measures' => sub($c) {
 	my $timestamp = $c->param('timestamp');
+	# the live rate snapshot fills the PV column without waiting for the half-hour
+	eval { &subs::crypto_measures_sync(); };
 	my $settings = &subs::settings_grabber({ app => 'measures' });
 	my $measures = eval { return decode_json $settings->{'measures'} } || $gb::measures;
 	if ( scalar keys %{$measures} == 0 ) { $measures = $gb::measures; }
@@ -2881,6 +2883,29 @@ sub market_accounts {
 sub measures_all {
 	my $stored = eval { return decode_json &subs::setting_grabber({ app => 'measures', setting => 'measures' }) } || {};
 	my %all = (%{$gb::measures}, %{$stored});
+	# The house keeps its own copy of the built-in units, so a formula seeded
+	# with a typo shadowed every later correction in gb.pl (one litre was a
+	# hundred millilitres, one gram a ten-thousandth of a kilogram). Repair only
+	# the exact old strings, and lift the misspelled `fomulas` list, so a formula
+	# a person has edited is left alone.
+	my %fix = (
+		'm' => { 'x * .0001km' => 'x * .001km' },
+		'mi' => { 'x * 1689.344m' => 'x * 1609.344m' },
+		'L' => { 'x * 100mL' => 'x * 1000mL' },
+		'g' => { 'x * .0001kg' => 'x * .001kg' },
+		'mg' => { 'x * .0001g' => 'x * .001g' },
+		'tsp' => { 'x * .667oz' => 'x * .16667oz', 'x * .0625cup' => 'x * .02083333cup' },
+		'oz' => {},
+	);
+	foreach my $k ( keys %fix ) {
+		next unless ref $all{$k} eq 'HASH';
+		if ( ref $all{$k}->{'fomulas'} eq 'ARRAY' && ref $all{$k}->{'formulas'} ne 'ARRAY' ) {
+			$all{$k}->{'formulas'} = delete $all{$k}->{'fomulas'};
+		}
+		my $fs = $all{$k}->{'formulas'};
+		next unless ref $fs eq 'ARRAY' && scalar keys %{ $fix{$k} };
+		$all{$k}->{'formulas'} = [ map { defined $fix{$k}->{$_} ? $fix{$k}->{$_} : $_ } @{$fs} ];
+	}
 	foreach my $k ( keys %all ) {
 		next unless ref $all{$k} eq 'HASH';
 		$all{$k}->{'name'} = $k unless defined $all{$k}->{'name'} && $all{$k}->{'name'} ne '';
@@ -38730,10 +38755,22 @@ post '/manager/calculate' => sub($c) {
 	$c->render(json => { format => $format, formula => $formula, evaluation => $evaluation, uom => $uom });
 };
 
+# The keyboard's conversion row: a quantity typed as "$32.31", "5jpy" or
+# "32.33L" names its unit, and every other unit of the same kind is offered
+# beside it. The old calculator's formulas are the non-currency source; the
+# live rate snapshot is the currency source.
+get '/manager/keyboard/convert' => sub($c) {
+	my $value = $c->param('value');
+	$value =~ s/[^0-9.\-]//g if defined $value;
+	return $c->render(json => { ok => 0 }) unless defined $value && $value =~ /^-?(?:\d+(?:\.\d+)?|\.\d+)$/;
+	$c->render(json => &measure_conversion_rows($c->param('unit'), 0 + $value));
+};
+
 # Is a measure code a currency (a fiat code, a coin, or a crypto asset)?
 sub currency_unit($unit) {
 	return 0 unless defined $unit && length $unit;
 	return 1 if &subs::crypto_asset($unit);
+	return 1 if &subs::crypto_fiat($unit);
 	my $m = $gb::measures->{$unit} || $gb::measures->{uc $unit} || $gb::measures->{lc $unit};
 	return 0 unless $m && ref $m->{'types'} eq 'ARRAY';
 	return scalar( grep { $_ eq 'currency' } @{$m->{'types'}} ) ? 1 : 0;
@@ -38832,6 +38869,209 @@ sub formula_calculator($formula) {
 		$evaluation = eval $formula;
 	}
 	return ($formula,$evaluation,$uom,$format);
+}
+
+# ---- the keyboard's units of conversion -----------------------------------
+# A unit resolved from whatever a person typed: the registry key ("JPY", "L",
+# "m"), the same code in another case, the unit's own name, or its plural.
+sub measure_unit_resolve($raw, $units) {
+	return (undef, undef) unless defined $raw;
+	$raw =~ s/^\s+|\s+$//g;
+	return (undef, undef) unless length $raw;
+	$raw = &subs::crypto_report_currency() if $raw eq '$';
+	$units ||= &measures_all();
+	foreach my $t ( $raw, uc $raw, lc $raw ) {
+		return ($t, $units->{$t}) if ref $units->{$t} eq 'HASH';
+	}
+	my $low = lc $raw;
+	foreach my $k ( keys %{$units} ) {
+		my $def = $units->{$k};
+		next unless ref $def eq 'HASH';
+		foreach my $n ( $def->{'name'}, $def->{'plural'} ) {
+			next unless defined $n && length $n;
+			return ($k, $def) if lc($n) eq $low;
+		}
+	}
+	return (undef, undef) unless length $low > 3 && $low =~ /s$/;
+	return &measure_unit_resolve(substr($low, 0, -1), $units);
+}
+
+# The old calculator's formulas are directed ("x * 1000mL" says one litre is a
+# thousand millilitres), so the graph carries each edge and its reciprocal and a
+# short walk reaches any unit of the same kind (Litre -> mL -> teaspoon).
+sub measure_conversion_edges($units) {
+	my %edge;
+	foreach my $from ( keys %{$units} ) {
+		my $fs = $units->{$from}->{'formulas'};
+		next unless ref $fs eq 'ARRAY';
+		foreach my $f ( @{$fs} ) {
+			next unless defined $f;
+			next unless $f =~ /^\s*x\s*\*\s*([0-9]*\.?[0-9]+)\s*([A-Za-z\/]+)\s*$/i;
+			my ($factor, $target) = ($1 + 0, $2);
+			next unless $factor > 0;
+			my ($to) = &measure_unit_resolve($target, $units);
+			next unless defined $to && length $to;
+			$edge{$from}->{$to} = $factor unless defined $edge{$from}->{$to};
+		}
+	}
+	return \%edge;
+}
+
+# units of $to per one $from, walked over the formula graph
+sub measure_conversion_factor($edges, $from, $to) {
+	return undef unless defined $from && defined $to;
+	return 1 if $from eq $to;
+	my %seen = ( $from => 1 );
+	my @queue = ( [ $from, 1 ] );
+	my $walked = 0;
+	while ( scalar @queue && $walked++ < 400 ) {
+		my ($u, $factor) = @{ shift @queue };
+		my %next;
+		foreach my $v ( keys %{ $edges->{$u} || {} } ) { $next{$v} = $edges->{$u}->{$v}; }
+		foreach my $v ( keys %{$edges} ) {
+			my $back = $edges->{$v}->{$u};
+			next unless defined $back && $back > 0;
+			$next{$v} = 1 / $back unless defined $next{$v};
+		}
+		foreach my $v ( keys %next ) {
+			next if $seen{$v}++;
+			my $f = $factor * $next{$v};
+			return $f if $v eq $to;
+			push @queue, [ $v, $f ];
+		}
+	}
+	return undef;
+}
+
+sub measure_temperature_convert($from, $to, $value) {
+	return $value if $from eq $to;
+	return $value * 9 / 5 + 32 if $from eq 'C' && $to eq 'F';
+	return ($value - 32) * 5 / 9 if $from eq 'F' && $to eq 'C';
+	return undef;
+}
+
+sub measure_value_text($value, $unit, $currency) {
+	my $abs = abs($value);
+	my $dec = $abs >= 1 ? 2 : ($abs >= 0.01 ? 4 : 8);
+	my $text = sprintf("%.${dec}f", $value);
+	if ($currency) {
+		if ($dec > 2) { $text =~ s/0+$//; $text =~ s/\.$//; }
+	}
+	else {
+		$text =~ s/0+$// if $text =~ /\.\d/;
+		$text =~ s/\.$//;
+	}
+	return $text . ' ' . $unit;
+}
+
+sub measure_unit_name($key, $def) {
+	my $asset = &subs::crypto_asset($key);
+	return $asset->{'name'} if $asset && $asset->{'name'};
+	foreach my $f ( @{ &subs::crypto_fiat_table() } ) {
+		return $f->{'name'} if $f->{'code'} eq uc $key;
+	}
+	my $name = ref $def eq 'HASH' ? ($def->{'name'} || '') : '';
+	return length $name ? $name : $key;
+}
+
+# The live snapshot gives every fiat pair and every coin in one read: a code's
+# rate is the reporting currency per one unit, so the pair is the ratio of the
+# two. While no snapshot exists yet, the old calculator's static formulas answer.
+sub measure_currency_conversions($key, $value, $units) {
+	my $snap = &subs::crypto_rates_read();
+	my $table = $snap->{'rates'} || {};
+	my $from = $table->{uc $key};
+	my @order = ( &subs::crypto_report_currency(), qw/USD EUR GBP JPY CNY AUD CHF MXN INR BRL/,
+		( @{ &subs::crypto_enabled_assets() } ),
+		( map { $_->{'code'} } @{ &subs::crypto_fiat_table() } ),
+		( map { $_->{'code'} } @{ &subs::crypto_assets() } ) );
+	my (@codes, %seen);
+	foreach my $c ( @order ) {
+		next unless defined $c && length $c;
+		my $code = uc $c;
+		next if $seen{$code}++;
+		push @codes, $code;
+	}
+	my ($edges, @rows);
+	foreach my $to ( @codes ) {
+		next if $to eq uc $key;
+		my $rate;
+		if ( defined $from && $from > 0 && defined $table->{$to} && $table->{$to} > 0 ) {
+			$rate = $from / $table->{$to};
+		}
+		else {
+			$edges ||= &measure_conversion_edges($units);
+			$rate = &measure_conversion_factor($edges, $key, $to);
+		}
+		next unless defined $rate && $rate > 0 && $rate < 1e15;
+		my $v = $value * $rate;
+		push @rows, { unit => $to, name => &measure_unit_name($to, $units->{$to}), value => 0 + $v, text => &measure_value_text($v, $to, 1) };
+		last if scalar @rows >= 30;
+	}
+	return \@rows;
+}
+
+sub measure_unit_conversions($key, $def, $value, $units) {
+	my %type = map { $_ => 1 } @{ $def->{'types'} || [] };
+	my @order = qw/mm cm m km in ft mi mL L tsp tbsp cup pint gal oz g mg kg lb C F/;
+	my %pref;
+	my $i = 0;
+	$pref{$_} = $i++ for @order;
+	my @targets = grep {
+		$_ ne $key && ref $units->{$_} eq 'HASH'
+			&& !&currency_unit($_)
+			&& grep { $type{$_} } @{ $units->{$_}->{'types'} || [] }
+	} keys %{$units};
+	@targets = sort { ($pref{$a} // 999) <=> ($pref{$b} // 999) || $a cmp $b } @targets;
+	my $edges = &measure_conversion_edges($units);
+	my $temp = $type{'temperature'} ? 1 : 0;
+	my @rows;
+	foreach my $to ( @targets ) {
+		my $v;
+		if ($temp) { $v = &measure_temperature_convert($key, $to, $value); }
+		else {
+			my $factor = &measure_conversion_factor($edges, $key, $to);
+			$v = $value * $factor if defined $factor;
+		}
+		next unless defined $v && $v == $v && abs($v) < 1e15;
+		push @rows, { unit => $to, name => &measure_unit_name($to, $units->{$to}), value => 0 + $v, text => &measure_value_text($v, $to, 0) };
+	}
+	return \@rows;
+}
+
+sub measure_conversion_rows($unit, $value) {
+	my $units = &measures_all();
+	my ($key, $def) = &measure_unit_resolve($unit, $units);
+	if (!defined $key) {
+		# a coin or a fiat code is not in the units registry, but the snapshot
+		# knows both
+		my $asset = &subs::crypto_asset(uc($unit || ''));
+		if ($asset) {
+			$key = uc $asset->{'code'};
+			$def = { name => $asset->{'name'}, types => [ 'currency' ], symbol => $asset->{'symbol'} || '' };
+		}
+		else {
+			my $fiat = &subs::crypto_fiat(uc($unit || ''));
+			if ($fiat) {
+				$key = uc $fiat->{'code'};
+				$def = { name => $fiat->{'name'}, types => [ 'currency' ] };
+			}
+		}
+	}
+	return { ok => 0 } unless defined $key && ref $def eq 'HASH';
+	$value = 0 unless defined $value && $value =~ /^-?\d/;
+	my $rows = &currency_unit($key)
+		? &measure_currency_conversions($key, $value, $units)
+		: &measure_unit_conversions($key, $def, $value, $units);
+	return { ok => 0, unit => $key } unless scalar @{$rows};
+	return {
+		ok => 1,
+		unit => $key,
+		name => &measure_unit_name($key, $def),
+		value => 0 + $value,
+		text => &measure_value_text($value, $key, &currency_unit($key)),
+		rows => $rows,
+	};
 }
 
 

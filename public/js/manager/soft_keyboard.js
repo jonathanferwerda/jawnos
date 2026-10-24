@@ -85,11 +85,11 @@ function softKbShow(el) {
 	var changed = jawnSoftField !== el;
 	jawnSoftField = el;
 	jawnSoftNumeric = softKbNumeric(el);
-	softKbSuppress(el);
 	if (changed) {
 		jawnSoftExpr = jawnSoftNumeric ? (el.value || '') : '';
 		softKbShiftSet(false);
 	}
+	softKbSuppress(el);
 	softKbPlace(el);
 	dock.prop('hidden', false).attr('aria-hidden', 'false');
 	$('body').addClass('soft_kb_open');
@@ -104,6 +104,7 @@ function softKbHide() {
 	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
 	$('body').removeClass('soft_kb_open');
 	$('.chat_shell').css('padding-bottom', '');
+	softKbConvertHide();
 	jawnSoftField = null;
 	$('#chat_soft_toggle').removeClass('active').attr('aria-expanded', 'false');
 }
@@ -161,6 +162,7 @@ function softKbModeSet(mode) {
 	dock.find('.soft_kb_title').text(mode == 'calc' ? softKbLabel('Calculator') : (mode == 'symbols' ? softKbLabel('Special characters') : softKbLabel('Keyboard')));
 	dock.find('.soft_kb_mode[data-kb_mode="letters"]').prop('hidden', jawnSoftNumeric);
 	if (mode == 'calc') { softKbCalcRender(); softKbHistoryRender(); }
+	softKbConvertUpdate();
 	softKbReserve();
 	if (jawnSoftField) { softKbScrollField(jawnSoftField); }
 }
@@ -192,6 +194,7 @@ function softKbNotify(el) {
 	};
 	if (window.requestAnimationFrame) { requestAnimationFrame(fire); }
 	else { setTimeout(fire, 0); }
+	softKbConvertUpdate();
 }
 
 function softKbInsert(text) {
@@ -272,9 +275,9 @@ function softKbEnter() {
 
 // ---- calculator ------------------------------------------------------------
 function softKbCalcKey(k) {
-	if (k == '=') { softKbCalcEquals(); return; }
-	if (k == 'clear') { jawnSoftExpr = ''; softKbCalcRender(); softKbCalcSyncNumeric(); return; }
-	if (k == 'backspace') { jawnSoftExpr = jawnSoftExpr.slice(0, -1); softKbCalcRender(); softKbCalcSyncNumeric(); return; }
+	if (k == '=') { softKbCalcEquals(); softKbConvertUpdate(); return; }
+	if (k == 'clear') { jawnSoftExpr = ''; softKbCalcRender(); softKbCalcSyncNumeric(); softKbConvertUpdate(); return; }
+	if (k == 'backspace') { jawnSoftExpr = jawnSoftExpr.slice(0, -1); softKbCalcRender(); softKbCalcSyncNumeric(); softKbConvertUpdate(); return; }
 	if (k == 'sign') {
 		var m = jawnSoftExpr.match(/(\d*\.?\d+)$/);
 		if (m) {
@@ -282,6 +285,7 @@ function softKbCalcKey(k) {
 			jawnSoftExpr = jawnSoftExpr.slice(0, at) + (m[1].charAt(0) == '-' ? m[1].slice(1) : '-' + m[1]);
 			softKbCalcRender();
 			softKbCalcSyncNumeric();
+			softKbConvertUpdate();
 		}
 		return;
 	}
@@ -289,6 +293,7 @@ function softKbCalcKey(k) {
 		jawnSoftExpr += k;
 		softKbCalcRender();
 		softKbCalcSyncNumeric();
+		softKbConvertUpdate();
 	}
 }
 
@@ -408,6 +413,170 @@ function softKbHistoryPick(out) {
 	softKbInsert(out);
 }
 
+// ---- the units a typed quantity converts to --------------------------------
+// A quantity typed as "$32.31", "5jpy" or "32.33L" names its unit; every other
+// unit of the same kind is offered in a row under the display. The last unit
+// used is remembered, so a bare number keeps converting without typing "usd"
+// again. The server answers from the same registry the old calculator used.
+var jawnSoftUnit = null;
+var jawnSoftUnits = null;
+var jawnSoftSymbols = null;
+var jawnSoftBase = null;
+var jawnSoftConvertTimer = null;
+var jawnSoftConvertSeq = 0;
+
+function softKbUnitsLoad() {
+	if (jawnSoftUnits) { return jawnSoftUnits; }
+	jawnSoftUnits = {};
+	jawnSoftSymbols = {};
+	var el = document.getElementById('soft_kb_units');
+	if (el) {
+		try {
+			var data = JSON.parse(el.textContent || el.innerHTML || '{}');
+			jawnSoftUnits = data.units || {};
+			jawnSoftSymbols = data.symbols || {};
+			jawnSoftBase = data.base || null;
+		} catch (err) {}
+	}
+	return jawnSoftUnits;
+}
+
+function softKbUnitCode(raw) {
+	var units = softKbUnitsLoad();
+	if (!raw) { return null; }
+	if (units[raw]) { return raw; }
+	if (units[raw.toUpperCase()]) { return raw.toUpperCase(); }
+	if (units[raw.toLowerCase()]) { return raw.toLowerCase(); }
+	var low = String(raw).toLowerCase();
+	for (var k in units) {
+		var u = units[k] || {};
+		if (u.name && String(u.name).toLowerCase() == low) { return k; }
+		if (u.plural && String(u.plural).toLowerCase() == low) { return k; }
+	}
+	if (low.length > 3 && /s$/.test(low)) { return softKbUnitCode(low.slice(0, -1)); }
+	return null;
+}
+
+function softKbNumber(text) {
+	var n = parseFloat(String(text || '').replace(/,/g, ''));
+	return isFinite(n) ? n : null;
+}
+
+// The last quantity in the text: a number followed by a code, or a currency
+// symbol followed by a number. A bare number falls back to the remembered unit
+// only in the calculator, so composing a message is not turned into money.
+function softKbConvertParse(text) {
+	softKbUnitsLoad();
+	text = String(text || '');
+	var best = null;
+	var re = /(-?\d[\d,]*(?:\.\d+)?)([A-Za-z]{1,6})/g;
+	var m;
+	while ((m = re.exec(text))) {
+		if (/[A-Za-z]/.test(text.charAt(re.lastIndex))) { continue; }
+		var code = softKbUnitCode(m[2]);
+		var value = softKbNumber(m[1]);
+		if (!code || value == null) { continue; }
+		best = { value: value, unit: code, at: m.index };
+	}
+	var sre = /([$€£¥₹₽₩₺₿Ξ₳ŁÐ◎])\s*(-?\d[\d,]*(?:\.\d+)?)/g;
+	while ((m = sre.exec(text))) {
+		var sym = (jawnSoftSymbols || {})[m[1]];
+		var v = softKbNumber(m[2]);
+		if (!sym || v == null) { continue; }
+		if (!best || m.index >= best.at) { best = { value: v, unit: sym, at: m.index }; }
+	}
+	if (best) { return best; }
+	if (jawnSoftMode == 'calc' && jawnSoftUnit) {
+		var tm = text.match(/(-?\d[\d,]*(?:\.\d+)?)\s*$/);
+		if (tm) {
+			var n = softKbNumber(tm[1]);
+			if (n != null) { return { value: n, unit: jawnSoftUnit, at: tm.index, sticky: true }; }
+		}
+	}
+	return null;
+}
+
+function softKbConvertText() {
+	if (jawnSoftMode == 'calc') { return jawnSoftExpr || ''; }
+	var el = jawnSoftField;
+	if (!el) { return ''; }
+	return el.isContentEditable ? $(el).text() : (el.value || '');
+}
+
+function softKbConvertHide() {
+	clearTimeout(jawnSoftConvertTimer);
+	jawnSoftConvertSeq++;
+	var wrap = $('#soft_kb_convert');
+	if (wrap.length && !wrap.prop('hidden')) {
+		wrap.prop('hidden', true);
+		softKbReserve();
+	}
+}
+
+function softKbConvertUpdate() {
+	if (!$('#jawn_soft_keyboard').is(':visible')) { return; }
+	var hit = softKbConvertParse(softKbConvertText());
+	if (!hit) { softKbConvertHide(); return; }
+	jawnSoftUnit = hit.unit;
+	try { localStorage.setItem('jawn_soft_calc_unit', hit.unit); } catch (err) {}
+	var seq = ++jawnSoftConvertSeq;
+	clearTimeout(jawnSoftConvertTimer);
+	jawnSoftConvertTimer = setTimeout(function () {
+		$.get('/manager/keyboard/convert', { unit: hit.unit, value: hit.value }, function (r) {
+			if (seq != jawnSoftConvertSeq) { return; }
+			if (!r || !r.ok || !r.rows || !r.rows.length) { softKbConvertHide(); return; }
+			softKbConvertRender(r);
+		}, 'json').fail(function () {
+			if (seq == jawnSoftConvertSeq) { softKbConvertHide(); }
+		});
+	}, 260);
+}
+
+function softKbConvertRender(r) {
+	var wrap = $('#soft_kb_convert');
+	if (!wrap.length) { return; }
+	$('#soft_kb_convert_src').text(r.text || (r.value + ' ' + r.unit));
+	var rows = $('#soft_kb_convert_rows').empty();
+	for (var i = 0; i < r.rows.length; i++) {
+		var row = r.rows[i];
+		$('<button type="button" class="soft_kb_convert_item"></button>')
+			.attr({
+				'data-kb_convert_unit': row.unit,
+				'data-kb_convert_value': row.value,
+				title: (row.name || row.unit),
+				'aria-label': (row.text || '') + ' ' + (row.name || '')
+			})
+			.text(row.text || (row.value + ' ' + row.unit))
+			.appendTo(rows);
+	}
+	wrap.prop('hidden', false);
+	softKbReserve();
+}
+
+// Tapping a conversion uses its answer: a number field takes it as the value,
+// and it becomes the remembered unit so the next number converts from there.
+function softKbConvertPick(unit, value) {
+	value = softKbNumber(value);
+	if (unit) {
+		jawnSoftUnit = unit;
+		try { localStorage.setItem('jawn_soft_calc_unit', unit); } catch (err) {}
+	}
+	if (value == null) { return; }
+	if (jawnSoftNumeric && jawnSoftField) {
+		jawnSoftExpr = String(value);
+		softKbCalcRender();
+		softKbCalcSyncNumeric();
+		softKbConvertUpdate();
+		return;
+	}
+	if (jawnSoftMode == 'calc') {
+		jawnSoftExpr = String(value);
+		softKbCalcRender();
+	}
+	softKbInsert(String(value));
+	softKbConvertUpdate();
+}
+
 function softKbFormat(value) {
 	var out = String(Math.round(value * 1e12) / 1e12);
 	if (out.indexOf('e') >= 0 || out.length > 18) { out = String(parseFloat(value.toPrecision(12))); }
@@ -496,6 +665,7 @@ function softKbPress(b) {
 		return;
 	}
 	if (b.attr('data-kb_history') != null) { softKbHistoryPick(b.attr('data-kb_history')); return; }
+	if (b.attr('data-kb_convert_unit') != null) { softKbConvertPick(b.attr('data-kb_convert_unit'), b.attr('data-kb_convert_value')); return; }
 	if (b.attr('data-kb_char') != null) { softKbChar(b.attr('data-kb_char')); return; }
 	var k = b.attr('data-kb_key');
 	if (k == null) { return; }
@@ -574,6 +744,7 @@ $(document).on('input', 'input, textarea', function () {
 		$('#soft_kb_expr').text(jawnSoftExpr || '0');
 		$('#soft_kb_result').text('');
 	}
+	if (this === jawnSoftField) { softKbConvertUpdate(); }
 });
 
 // The Chat composer's keyboard button asks for the dock; pressing it again puts
@@ -599,4 +770,11 @@ $(document).on('click', '#send_it', function () {
 
 $(window).on('resize', function () { if (softKbVisible()) { softKbReserve(); } });
 
-$(function () { softKbHistoryRender(); });
+$(function () {
+	softKbHistoryRender();
+	softKbUnitsLoad();
+	try { jawnSoftUnit = localStorage.getItem('jawn_soft_calc_unit') || null; } catch (err) {}
+	// a bare number in the calculator starts in the house's own currency, so
+	// the conversion row is there before a unit has been typed
+	if (!jawnSoftUnit) { jawnSoftUnit = jawnSoftBase || null; }
+});

@@ -52,7 +52,7 @@
 		<div class="cfg-row">
 			<label>Currency tracking</label>
 			<input type="checkbox" class="crypto_setting" app="crypto" setting="tracking" value="on" <% if ($tracking) { %>checked<% } %>>
-			<span class="cfg-note" style="margin:0;">Record a rate history point every six hours, in place of the appointment that used to update measures. The Measures app charts it. Stop that old appointment once this is on.<% if ($tracked_at) { %> Last point <span class="time" mode="fixed" timestamp="<%= $tracked_at %>"></span>.<% } %></span>
+			<span class="cfg-note" style="margin:0;">Record a rate history point every six hours, in place of the appointment that used to update measures. The Measures app charts it and shows each currency and coin as a present value. Stop that old appointment once this is on.<% if ($tracked_at) { %> Last point <span class="time" mode="fixed" timestamp="<%= $tracked_at %>"></span>.<% } %></span>
 		</div>
 		<div class="cfg-row">
 			<label>History app</label>
