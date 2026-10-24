@@ -1292,11 +1292,11 @@ my $music_release_junk = qr{
 		(?:2160|1440|1080|720|576|480|360)p
 		|4k|uhd|hdr10|hdr
 		|blu[ .-]?ray|bdrip|brrip|remux|web[ .-]?dl|webrip|web[ .-]?rip
-		|hdtv|pdtv|dvdrip|dvdscr|hdrip|hdlight
+		|hdtv|pdtv|dvd|dvdrip|dvdscr|hdrip|hdlight
 		|x264|x265|h[ .]?264|h[ .]?265|hevc|avc|xvid|divx
 		|10bit|8bit|hi10p
 		|aac|ac3|eac3|dts(?:[ .-]?hd)?|ddp?[ .]?[57][ .]?1|truehd|flac|opus
-		|amzn|dsnp|hmax|atvp
+		|amzn|dsnp|hmax|atvp|yify|yts|rarbg|eztv|galaxytv
 	)\b
 }ix;
 
@@ -1333,9 +1333,12 @@ sub music_media_stem {
 sub music_episode_from_text {
 	my $text = shift;
 	return {} unless defined $text && length $text;
-	# S06E01, S06X01 (The Office uses X), S01E01+E02, S07E17X01
-	if ($text =~ /^(.*?)\s*\bS(\d{1,2})\s*[EX](\d{1,3})(?:\s*[+&]?\s*[EX]\d{1,3})*\b(.*)$/i) {
-		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
+	# S06E01, S06X01 / S04M01 (The Office and Sabrina use X and M),
+	# S01E01+E02, S07E17X01, S07E21+22
+	if ($text =~ /^(.*?)\s*\bS(\d{1,2})\s*([EXM])(\d{1,3})(?:\s*[+&]\s*[EXM]?\d{1,3})*(?:\s*X\d{1,3})?\b(.*)$/i) {
+		my ($show, $season, $marker, $episode, $rest) = ($1, $2, $3, $4, $5);
+		return { show => $show, season => $season, episode => $episode, rest => $rest,
+			code => sprintf('S%02d%s%02d', $season, uc $marker, $episode) };
 	}
 	# 1x02, and 4x22 & 23
 	if ($text =~ /^(.*?)\s*\b(\d{1,2})\s*x\s*(\d{1,3})(?:\s*[+&]\s*\d{1,3})*\b(.*)$/i) {
@@ -1344,8 +1347,13 @@ sub music_episode_from_text {
 	if ($text =~ /^(.*?)\s*\b(?:Season|Series)\s*(\d{1,2})\s*(?:Episode|Ep)\s*(\d{1,3})\b(.*)$/i) {
 		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
 	}
-	if ($text =~ /^(.*?)\s*\bE(?:p|pisode)?\s*(\d{1,3})\b(.*)$/i) {
-		return { show => $1, season => '', episode => $2, rest => $3, code => sprintf('Episode %d', $2) };
+	# Episode 6 / E06 / X01 / M01. X264 and X265 are codecs, not episodes.
+	if ($text =~ /^(.*?)\s*\b([EXM])(?:p|pisode)?\s*(\d{1,3})\b(.*)$/i) {
+		my ($show, $marker, $episode, $rest) = ($1, $2, $3, $4);
+		unless (uc($marker) eq 'X' && $episode =~ /^26[45]$/) {
+			my $code = ($marker =~ /E/i) ? sprintf('Episode %d', $episode) : sprintf('%s%02d', uc $marker, $episode);
+			return { show => $show, season => '', episode => $episode, rest => $rest, code => $code };
+		}
 	}
 	# Home Improvement - 315 - Reel Men: a packed season/episode code
 	if ($text =~ /^(.*?)\s*[-\x{2013}\x{2014}]\s*(\d)(\d{2})\s*[-\x{2013}\x{2014}]\s*(.*)$/) {
@@ -1397,7 +1405,7 @@ sub music_common_noise {
 	foreach my $token ( keys %seen ) {
 		next if length($token) < 2;
 		next if $token =~ /^\d+$/;
-		next if $token =~ /^[Ss]\d{1,2}[EeXx]?\d{0,3}$/;
+		next if $token =~ /^[Ss]\d{1,2}[EeXxMm]?\d{0,3}$/;
 		next if $token =~ /^\d{1,2}x\d{1,3}$/i;
 		next if $token =~ /^(?:the|a|an|and|or|of|to|in|on|for|with|at|by|from|one|two|part|vol|ep|episode|season|series)$/i;
 		next if ($seen{$token} || 0) < $need;
@@ -1419,6 +1427,7 @@ sub music_media_labels {
 	my $tag_artist = &music_trim_text($tags->{'artist'} || $tags->{'album_artist'} || '');
 	my $tag_album  = &music_trim_text($tags->{'album'} || '');
 	my $tag_title  = &music_trim_text($tags->{'title'} || '');
+	my $is_video = (($f->{'type'} || '') eq 'video') ? 1 : 0;
 	my $folder_artist = &music_path_text($f->{'artist_name'} // $f->{'artist'});
 	my $folder_album  = &music_path_text($f->{'album_name'} // $f->{'album'});
 	my $stem = &music_path_text(&music_media_stem($f->{'full_title'} || $f->{'song'}));
@@ -1426,9 +1435,40 @@ sub music_media_labels {
 	my %generic = map { $_ => 1 } qw/videos video movies movie tv television shows show media library music audio films film/;
 	$folder_artist = '' if $generic{lc $folder_artist};
 	$folder_album  = '' if $generic{lc $folder_album};
+	if ($is_video) {
+		# A folder carries release notes too ("(360p re-dvdrip)"), and a
+		# whole-series folder carries a range ("S01-S07 (1993-)"). Clean both
+		# before they become the artist and album.
+		$folder_artist = &music_strip_release($folder_artist);
+		$folder_album  = &music_strip_release($folder_album);
+		my $album_range = ($folder_album =~ /\bS\d{1,2}\s*[-\x{2013}\x{2014}]\s*S?\d{1,2}\b/i
+			|| $folder_album =~ /\b(?:season|series)\s*\d{1,2}\s*[-\x{2013}\x{2014}]\s*\d{1,2}\b/i) ? 1 : 0;
+		my $series_name = '';
+		if ($album_range) {
+			($series_name = $folder_album) =~ s/\s*\bS\d{1,2}\s*[-\x{2013}\x{2014}]\s*S?\d{1,2}\b//ig;
+			$series_name =~ s/\s*\b(?:season|series)\s*\d{1,2}\s*[-\x{2013}\x{2014}]\s*\d{1,2}\b//ig;
+			$folder_album = '';
+		}
+		foreach my $name ( \$folder_artist, \$folder_album ) {
+			next unless length $$name;
+			$$name =~ s/\s*\bS\d{1,2}\s*[-\x{2013}\x{2014}]\s*S?\d{1,2}\b//ig;
+			$$name =~ s/\s*\b(?:season|series)\s*\d{1,2}\s*[-\x{2013}\x{2014}]\s*\d{1,2}\b//ig;
+			$$name =~ s/\s*\((?:19|20)\d{2}\s*[-\x{2013}\x{2014}]\s*(?:\d{2,4})?\)\s*$//;
+			$$name =~ s/\s+\b(?:19|20)\d{2}\s*[-\x{2013}\x{2014}]\s*(?:\d{2,4})?$// if $$name =~ /[^\d\s]/;
+			$$name = &music_trim_text($$name);
+		}
+		# a whole-series folder is the show, not an album: when the file sits
+		# directly in it, that show is the artist and the season comes from the
+		# episode marker (Entourage S08M01, Sabrina TTW X01)
+		if (!length $folder_artist && length $series_name) {
+			$series_name =~ s/\s*\((?:19|20)\d{2}\s*[-\x{2013}\x{2014}]\s*(?:\d{2,4})?\)\s*$//;
+			$series_name =~ s/\s+\b(?:19|20)\d{2}\s*[-\x{2013}\x{2014}]\s*(?:\d{2,4})?$// if $series_name =~ /[^\d\s]/;
+			$folder_artist = &music_trim_text($series_name);
+		}
+	}
 	# "Home Improvement Season 3", "The Office US S06 (360p re-blurip)" and
 	# "Friends Season 1" are all the same shelf; name it Season N. A folder
-	# holding a range (S01-S09, Season 1-3) is left as it is.
+	# holding a range (S01-S09, Season 1-3) was emptied above.
 	if ($folder_album =~ /\b(?:season|series)\s*(\d{1,2})\b(?!\s*[-\x{2013}\x{2014}]\s*[SE]?\d)/i
 		|| $folder_album =~ /\bS(\d{1,2})\b(?!\s*[-\x{2013}\x{2014}]\s*[SE]?\d)/i) {
 		$folder_album = 'Season ' . (0 + $1);
@@ -1440,7 +1480,7 @@ sub music_media_labels {
 		# A container's own title is sometimes the release name itself; trust it
 		# only when it is not that.
 		my $tag_ok = length($tag_title)
-			&& $tag_title !~ /\bS\d{1,2}\s*[EX]\d{1,3}\b/i
+			&& $tag_title !~ /\bS\d{1,2}\s*[EXM]\d{1,3}\b/i
 			&& $tag_title !~ /\b(?:\d{3,4}p|4k|x26[45]|hevc|web[ .-]?dl|blu[ .-]?ray)\b/i;
 		if ($ep->{'episode'}) {
 			$artist = &music_strip_release($ep->{'show'});
@@ -1470,7 +1510,36 @@ sub music_media_labels {
 		else {
 			$artist = $tag_artist || $folder_artist;
 			$album = $tag_album || $folder_album;
-			$track = $tag_ok ? $tag_title : &music_strip_release($stem);
+			# "001 - Pilot" (Boy Meets World): the number is the episode and the
+			# season is the folder. Only where the folder names a season, so a
+			# film called 300 keeps its number.
+			my ($season_no) = $folder_album =~ /^Season\s*(\d+)$/i;
+			my $name_rest;
+			if (length($season_no) && $stem =~ /^(\d{1,3})(?:-\d)?\s*[-\x{2013}\x{2014}]\s*(.+)$/) {
+				my $ep_no = $1;
+				$name_rest = $2;
+				$code = sprintf('S%02dE%02d', $season_no, $ep_no);
+			}
+			if ($tag_ok) {
+				$track = $tag_title;
+			}
+			elsif (defined $name_rest) {
+				$track = &music_strip_release($name_rest);
+			}
+			else {
+				$track = &music_strip_release($stem);
+			}
+			# a film has no artist/album split: the folder is the work, so it
+			# becomes the artist rather than an album that repeats the title
+			if (!length($artist) && length($album) && $album !~ /^Season\s+\d+$/i) {
+				$artist = $album;
+				$album = '';
+			}
+			# the film's year sits in the folder; do not repeat it in the track
+			if (length($artist) && $artist =~ /\(((?:19|20)\d{2})\)/) {
+				my $year = $1;
+				$track =~ s/\s*\b\Q$year\E\b\s*$//;
+			}
 			# a film filed as Movies/Inception/inception-2010.mkv would otherwise
 			# read the same words twice; when there is no artist, the album is the
 			# only other word worth keeping, so drop it only when it repeats the track
