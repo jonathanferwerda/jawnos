@@ -100,6 +100,31 @@ body.soft_kb_open .dot_info {
 	border-radius: 0;
 }
 
+/* the conversions that ride above the field a desk is typing in (the dock
+   above is a phone's keyboard; a desk keeps its own) */
+#jawn_measure_pop {
+	position: fixed;
+	left: 8px;
+	top: 8px;
+	z-index: 40010;
+	box-sizing: border-box;
+	min-width: 240px;
+	max-width: calc(100vw - 16px);
+	padding: 6px 8px;
+	background: var(--panel);
+	color: var(--ink);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, .22);
+	font-size: 13px;
+}
+
+/* a quantity is being typed, not selected; the row must not take the caret */
+#jawn_measure_pop button {
+	user-select: none;
+	-webkit-user-select: none;
+}
+
 /* the units a typed quantity converts to, always in reach while the
    calculator has a value */
 .soft_kb_convert {

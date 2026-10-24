@@ -174,3 +174,11 @@
 		</div>
 	</div>
 </div>
+
+<%# The conversions a unit-named quantity offers, riding just above the field a
+    desk is typing in. The dock above is a phone's keyboard; a desk keeps its
+    own, so this is where the same row lives there. soft_keyboard.js places it. %>
+<div id="jawn_measure_pop" class="soft_kb_convert" hidden>
+	<span id="jawn_measure_pop_src" class="soft_kb_convert_src"></span>
+	<div id="jawn_measure_pop_rows" class="soft_kb_convert_rows"></div>
+</div>

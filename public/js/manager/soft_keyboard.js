@@ -3,8 +3,10 @@
 // One dock serves every editable field in the manager: letters, a calculator for
 // number fields, and a page of special characters. It suppresses the platform
 // keyboard with inputmode="none", so the viewport never changes shape. On a phone
-// it is the default; a desk keeps its hardware keyboard until the Chat keyboard
-// button asks for the dock.
+// it is the default; a desk keeps its hardware keyboard, so the dock stays closed
+// there (a real key press proves the keyboard) and the unit conversions ride
+// above the field being typed in instead. The dock is one explicit ask away (the
+// Chat keyboard button or the dock's keyboard icon).
 //
 // Placement: inside the Chat composer it is an ordinary block (the composer makes
 // room for it); inside another window it rides the window's foot; outside a
@@ -19,6 +21,13 @@ var jawnSoftExpr = '';
 var jawnSoftSetting = false;
 var jawnSoftKeyAt = 0;
 var jawnSoftHideTimer = null;
+// A desk's keyboard is the one to type with. A browser cannot enumerate input
+// devices, but a fine pointer that hovers with no phone-shaped screen is a
+// desk, and one trusted key press settles it. `forced` is the person asking
+// for the dock in this visit (the Chat button or the dock's keyboard icon).
+var jawnSoftHardware = false;
+var jawnSoftForced = false;
+try { jawnSoftHardware = localStorage.getItem('jawn_soft_keyboard_hw') == 'on'; } catch (err) {}
 
 // ---- layouts ---------------------------------------------------------------
 // The keys a phone's own keyboard puts where. A layout is rows of tokens: a
@@ -308,10 +317,9 @@ function softKbLayoutSet(id) {
 // field at all).
 function softKbDockOpen(mode) {
 	var want = (mode == 'calc') ? 'calc' : 'letters';
-	if (softKbVisible() && jawnSoftMode == want) { softKbHide(); return; }
-	if (!softKbOn()) {
-		try { localStorage.setItem('jawn_soft_keyboard', 'on'); } catch (err) {}
-	}
+	if (softKbVisible() && jawnSoftMode == want) { jawnSoftForced = false; softKbHide(); return; }
+	softKbForce();
+	jawnMeasureHide();
 	var dock = $('#jawn_soft_keyboard');
 	if (!dock.length) { return; }
 	var field = (jawnSoftField && document.contains(jawnSoftField)) ? jawnSoftField : null;
@@ -333,11 +341,49 @@ function softKbDockOpen(mode) {
 }
 
 function softKbOn() {
-	var stored = localStorage.getItem('jawn_soft_keyboard');
+	var stored = null;
+	try { stored = localStorage.getItem('jawn_soft_keyboard'); } catch (err) {}
 	if (stored == 'off') { return false; }
+	if (jawnSoftHardware) { return false; }
+	if (jawnSoftForced) { return true; }
+	// a desk with its own keyboard never raises the dock on its own, even if it
+	// was left on last time; only an explicit ask (below) brings it back
+	if (softKbDesk()) { return false; }
 	if (stored == 'on') { return true; }
 	if (typeof windowPhoneChecker == 'function') { return windowPhoneChecker(); }
 	return /Android|iPhone|iPad|iPod|Tablet|Mobile/i.test(navigator.userAgent || '');
+}
+
+// A desk, as far as the page can tell: not a phone by the manager's own test,
+// and a fine pointer that hovers (a mouse or trackpad). A touch laptop still
+// counts as a desk - its screen is not what the dock is for.
+function softKbDesk() {
+	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) { return false; }
+	try {
+		if (window.matchMedia) { return window.matchMedia('(hover: hover) and (any-pointer: fine)').matches; }
+	} catch (err) {}
+	return false;
+}
+
+// Remember that a real key was typed, and put the dock away. The flag is kept
+// so the next focus does not bring it straight back; a finger on a phone clears
+// it again (see the touchstart handler), and an explicit ask clears it here.
+function softKbHardwareMark() {
+	if (jawnSoftHardware) { return; }
+	jawnSoftHardware = true;
+	try { localStorage.setItem('jawn_soft_keyboard_hw', 'on'); } catch (err) {}
+	if (softKbVisible()) { softKbHide(); }
+}
+
+function softKbHardwareClear() {
+	jawnSoftHardware = false;
+	try { localStorage.setItem('jawn_soft_keyboard_hw', 'off'); } catch (err) {}
+}
+
+function softKbForce() {
+	jawnSoftForced = true;
+	softKbHardwareClear();
+	try { localStorage.setItem('jawn_soft_keyboard', 'on'); } catch (err) {}
 }
 
 function softKbRoot(el) {
@@ -441,6 +487,7 @@ function softKbShow(el) {
 	if (!softKbEditable(el)) { return; }
 	var dock = $('#jawn_soft_keyboard');
 	if (!dock.length) { return; }
+	jawnMeasureHide();
 	var changed = jawnSoftField !== el;
 	jawnSoftField = el;
 	jawnSoftNumeric = softKbNumeric(el);
@@ -1333,8 +1380,9 @@ function softKbNumber(text) {
 
 // The last quantity in the text: a number followed by a code, or a currency
 // symbol followed by a number. A bare number falls back to the remembered unit
-// only in the calculator, so composing a message is not turned into money.
-function softKbConvertParse(text) {
+// only in the calculator, so composing a message is not turned into money. The
+// desk's row passes `strict` so a bare number in an ordinary field is left be.
+function softKbConvertParse(text, strict) {
 	softKbUnitsLoad();
 	text = String(text || '');
 	var best = null;
@@ -1345,21 +1393,21 @@ function softKbConvertParse(text) {
 		var code = softKbUnitCode(m[2]);
 		var value = softKbNumber(m[1]);
 		if (!code || value == null) { continue; }
-		best = { value: value, unit: code, at: m.index };
+		best = { value: value, unit: code, at: m.index, len: m[0].length };
 	}
-	var sre = /([$€£¥₹₽₩₺₿Ξ₳ŁÐ◎])\s*(-?\d[\d,]*(?:\.\d+)?)/g;
+	var sre = /([$\u20ac\u00a3\u00a5\u20b9\u20bd\u20a9\u20ba\u20bf\u039e\u20b3\u0141\u00d0\u25ce])\s*(-?\d[\d,]*(?:\.\d+)?)/g;
 	while ((m = sre.exec(text))) {
 		var sym = (jawnSoftSymbols || {})[m[1]];
 		var v = softKbNumber(m[2]);
 		if (!sym || v == null) { continue; }
-		if (!best || m.index >= best.at) { best = { value: v, unit: sym, at: m.index }; }
+		if (!best || m.index >= best.at) { best = { value: v, unit: sym, at: m.index, len: m[0].length }; }
 	}
 	if (best) { return best; }
-	if (jawnSoftMode == 'calc' && jawnSoftUnit) {
+	if (!strict && jawnSoftMode == 'calc' && jawnSoftUnit) {
 		var tm = text.match(/(-?\d[\d,]*(?:\.\d+)?)\s*$/);
 		if (tm) {
 			var n = softKbNumber(tm[1]);
-			if (n != null) { return { value: n, unit: jawnSoftUnit, at: tm.index, sticky: true }; }
+			if (n != null) { return { value: n, unit: jawnSoftUnit, at: tm.index, len: tm[0].length, sticky: true }; }
 		}
 	}
 	return null;
@@ -1493,6 +1541,207 @@ function softKbConvertPick(unit, value) {
 	softKbInsert(String(value));
 	softKbConvertUpdate();
 }
+
+// ---- the same conversions, beside the field -------------------------------
+// The dock is a phone's keyboard. A desk types with its own and the dock stays
+// closed, but a quantity that names a unit (32.33L, $32.31, 5jpy) still has
+// every other unit of its kind to offer, so that row rides just above the field
+// being typed in. It is the same parse and the same server answer as the dock's
+// row; only the place is different, and the quantity is replaced by the answer
+// instead of the number being appended at the caret.
+var jawnMeasureField = null;
+var jawnMeasureHit = null;
+var jawnMeasureTimer = null;
+var jawnMeasureSeq = 0;
+var jawnMeasureHideTimer = null;
+var jawnMeasureQuiet = 0;
+
+function jawnMeasureUsable(el) {
+	if (!el || el.nodeType != 1) { return false; }
+	if ($(el).closest('#jawn_soft_keyboard, #jawn_measure_pop').length) { return false; }
+	return softKbEditable(el);
+}
+
+function jawnMeasureText(el) {
+	if (!el) { return ''; }
+	return el.isContentEditable ? $(el).text() : (el.value || '');
+}
+
+function jawnMeasureHide() {
+	clearTimeout(jawnMeasureTimer);
+	jawnMeasureSeq++;
+	jawnMeasureHit = null;
+	var pop = $('#jawn_measure_pop');
+	if (pop.length && !pop.prop('hidden')) { pop.prop('hidden', true); }
+}
+
+function jawnMeasureFocus(el) {
+	if (!jawnMeasureUsable(el)) { jawnMeasureField = null; jawnMeasureHide(); return; }
+	jawnMeasureField = el;
+	jawnMeasureUpdate();
+}
+
+function jawnMeasureUpdate() {
+	var el = jawnMeasureField;
+	if (!el || !document.contains(el)) { jawnMeasureHide(); return; }
+	if (Date.now() - jawnMeasureQuiet < 400) { return; }
+	// the dock's own row is the one to read while the keys are up
+	if (softKbVisible()) { jawnMeasureHide(); return; }
+	// a time, a length, a warranty or a repeat names its own units; "5m" there
+	// is five minutes and must not be read as metres
+	var context = softKbContext(el);
+	if (context == 'password' || context == 'when' || context == 'duration' || context == 'warranty' || context == 'schedule') {
+		jawnMeasureHide();
+		return;
+	}
+	var hit = softKbConvertParse(jawnMeasureText(el), true);
+	if (!hit) { jawnMeasureHide(); return; }
+	jawnMeasureHit = hit;
+	var seq = ++jawnMeasureSeq;
+	clearTimeout(jawnMeasureTimer);
+	jawnMeasureTimer = setTimeout(function () {
+		$.get('/manager/keyboard/convert', { unit: hit.unit, value: hit.value }, function (r) {
+			if (seq != jawnMeasureSeq) { return; }
+			if (!r || !r.ok || !r.rows || !r.rows.length) { jawnMeasureHide(); return; }
+			jawnMeasureRender(r, hit);
+		}, 'json').fail(function () {
+			if (seq == jawnMeasureSeq) { jawnMeasureHide(); }
+		});
+	}, 260);
+}
+
+function jawnMeasureRender(r, hit) {
+	var pop = $('#jawn_measure_pop');
+	if (!pop.length) { return; }
+	jawnSoftUnit = r.unit || (hit && hit.unit) || jawnSoftUnit;
+	try { localStorage.setItem('jawn_soft_calc_unit', jawnSoftUnit); } catch (err) {}
+	$('#jawn_measure_pop_src').text(r.text || ((r.value != null ? r.value : hit.value) + ' ' + jawnSoftUnit));
+	var use = softKbUseLoad();
+	var rows = (r.rows || []).slice(0);
+	rows.sort(function (a, b) { return (Number(use[b.unit]) || 0) - (Number(use[a.unit]) || 0); });
+	if (rows.length > JAWN_SOFT_CONVERT_MAX) { rows.length = JAWN_SOFT_CONVERT_MAX; }
+	var box = $('#jawn_measure_pop_rows').empty();
+	for (var i = 0; i < rows.length; i++) {
+		var row = rows[i];
+		var text = row.text || (row.value + ' ' + row.unit);
+		$('<button type="button" class="soft_kb_convert_item"></button>')
+			.attr({
+				'data-measure_unit': row.unit,
+				'data-measure_value': row.value,
+				'data-measure_text': text,
+				title: (row.name || row.unit),
+				'aria-label': text + ' ' + (row.name || '')
+			})
+			.text(text)
+			.appendTo(box);
+	}
+	pop.prop('hidden', false);
+	jawnMeasurePlace();
+}
+
+// Above the field, or below it when the top of the page has no room. The row
+// keeps the field's own width where it can, and never runs off the screen.
+function jawnMeasurePlace() {
+	var pop = $('#jawn_measure_pop');
+	var el = jawnMeasureField;
+	if (!pop.length || pop.prop('hidden') || !el || !document.contains(el)) { return; }
+	var rect = el.getBoundingClientRect();
+	var vw = window.innerWidth || $(window).width();
+	var vh = window.innerHeight || $(window).height();
+	if (rect.bottom < 0 || rect.top > vh) { jawnMeasureHide(); return; }
+	var width = Math.min(Math.max(rect.width, 240), 460, vw - 16);
+	pop.css('width', width + 'px');
+	var h = pop.outerHeight() || 0;
+	var gap = 8;
+	var left = Math.max(8, Math.min(rect.left, vw - width - 8));
+	var top = rect.top - h - gap;
+	if (top < 8) { top = Math.min(vh - h - 8, rect.bottom + gap); }
+	pop.css({ left: left + 'px', top: Math.max(8, top) + 'px' });
+}
+
+// Tapping a conversion writes its answer: a number field takes the number, and
+// a text field has the quantity it typed (unit and all) replaced by the answer.
+function jawnMeasurePick(unit, value, text) {
+	var el = jawnMeasureField;
+	var hit = jawnMeasureHit;
+	if (!el) { return; }
+	var num = softKbNumber(value);
+	if (unit) {
+		jawnSoftUnit = unit;
+		softKbUseAdd(unit);
+		try {
+			localStorage.setItem('jawn_soft_calc_unit', unit);
+			if (jawnSoftType) { localStorage.setItem('jawn_soft_unit_' + jawnSoftType, unit); }
+		} catch (err) {}
+	}
+	jawnMeasureQuiet = Date.now();
+	if (num != null) {
+		if (!el.isContentEditable && softKbNumeric(el)) {
+			el.value = String(num);
+			try { el.focus({ preventScroll: true }); el.setSelectionRange(el.value.length, el.value.length); } catch (err) {}
+			softKbNotify(el);
+		}
+		else if (!el.isContentEditable && hit && text) {
+			var start = hit.at;
+			var end = hit.at + (hit.len || 0);
+			if (start < 0 || start > el.value.length) { start = el.value.length; end = start; }
+			if (end > el.value.length || end < start) { end = el.value.length; }
+			el.value = el.value.slice(0, start) + text + el.value.slice(end);
+			try { el.focus({ preventScroll: true }); el.setSelectionRange(start + text.length, start + text.length); } catch (err) {}
+			softKbNotify(el);
+		}
+		else {
+			softKbInsert(text || String(num), el);
+		}
+	}
+	jawnMeasureHide();
+}
+
+// The row answers a press without taking the caret out of the field. A chip
+// answers a release that did not travel, the way the dock's own chips do, so a
+// sideways drag along the row pans it instead of choosing.
+var jawnMeasureTap = null;
+$(document).on('pointerdown', '#jawn_measure_pop button', function (e) {
+	if (e.button != null && e.button != 0) { return; }
+	e.preventDefault();
+	jawnMeasureTap = { x: e.clientX, y: e.clientY, el: this };
+});
+$(document).on('pointerup', '#jawn_measure_pop button', function (e) {
+	var tap = jawnMeasureTap;
+	jawnMeasureTap = null;
+	if (!tap || tap.el !== this) { return; }
+	if (Math.abs((e.clientX || 0) - tap.x) > 12 || Math.abs((e.clientY || 0) - tap.y) > 12) { return; }
+	e.preventDefault();
+	jawnMeasurePick($(this).attr('data-measure_unit'), $(this).attr('data-measure_value'), $(this).attr('data-measure_text'));
+});
+$(document).on('pointerup pointercancel', function () { jawnMeasureTap = null; });
+
+$(document).on('focusin', function (e) { jawnMeasureFocus(e.target); });
+
+$(document).on('focusout', function (e) {
+	if (e.target !== jawnMeasureField) { return; }
+	clearTimeout(jawnMeasureHideTimer);
+	jawnMeasureHideTimer = setTimeout(function () {
+		if ($(document.activeElement).closest('#jawn_measure_pop').length) { return; }
+		jawnMeasureHide();
+		jawnMeasureField = null;
+	}, 240);
+});
+
+// typing in a contenteditable fires input too; the dock's own listener covers
+// input and textarea
+if (document.addEventListener) {
+	document.addEventListener('input', function (e) {
+		if (e.target && e.target === jawnMeasureField) { jawnMeasureUpdate(); }
+	}, true);
+}
+
+document.addEventListener('scroll', function () {
+	if (!jawnMeasureField) { return; }
+	var pop = document.getElementById('jawn_measure_pop');
+	if (!pop || pop.hidden) { return; }
+	jawnMeasurePlace();
+}, true);
 
 // ---- what the field is asking for ------------------------------------------
 // The row names the kind of value the field wants. A tap writes the whole value
@@ -1663,7 +1912,7 @@ function softKbPress(b) {
 	if (b.attr('data-kb_action') == 'layouts') { softKbLayoutsToggle(); return; }
 	if (b.attr('data-kb_action') == 'layouts_close') { softKbLayoutsToggle(false); return; }
 	if (b.attr('data-kb_action') == 'dictate') { softKbDictateToggle(); return; }
-	if (b.attr('data-kb_action') == 'close') { softKbHide(); return; }
+	if (b.attr('data-kb_action') == 'close') { jawnSoftForced = false; softKbHide(); return; }
 	if (b.attr('data-kb_action') == 'clear_history') {
 		jawnSoftHistory = [];
 		softKbHistorySave();
@@ -1879,7 +2128,27 @@ document.addEventListener('pointerdown', function (e) {
 }, true);
 document.addEventListener('touchstart', function (e) {
 	var el = e.target;
+	// a finger means the phone is back in hand, even if a Bluetooth keyboard was
+	// used a moment ago
+	if (jawnSoftHardware) { softKbHardwareClear(); }
 	if (softKbOn() && (softKbEditable(el) || (el.isContentEditable))) { softKbSuppress(el); }
+}, true);
+
+// The only honest test for a real keyboard is a real key: the page may not
+// enumerate input devices, but a trusted key press is proof enough. It puts the
+// dock away at once and keeps it away, so a desk never has to dismiss it twice.
+// Modifier-only keys and shortcuts are not typing, and the dock's own buttons
+// are not evidence of anything.
+document.addEventListener('keydown', function (e) {
+	if (!e || e.isTrusted === false) { return; }
+	if (e.ctrlKey || e.metaKey || e.altKey) { return; }
+	var k = e.key || '';
+	if (!k) { return; }
+	if (k == 'Escape') { jawnMeasureHide(); return; }
+	if (k == 'Shift' || k == 'Alt' || k == 'Control' || k == 'Meta' || k == 'CapsLock' || k == 'Tab') { return; }
+	var target = e.target;
+	if (target && target.closest && target.closest('#jawn_soft_keyboard, #jawn_measure_pop')) { return; }
+	softKbHardwareMark();
 }, true);
 
 $(document).on('focusin', function (e) {
@@ -1920,8 +2189,8 @@ $(document).on('input', 'input, textarea', function () {
 $(document).on('click', '#chat_soft_toggle', function () {
 	var el = document.getElementById('message');
 	if (!el) { return; }
-	if (softKbVisible() && jawnSoftField === el) { softKbHide(); return; }
-	if (!softKbOn()) { localStorage.setItem('jawn_soft_keyboard', 'on'); }
+	if (softKbVisible() && jawnSoftField === el) { jawnSoftForced = false; softKbHide(); return; }
+	softKbForce();
 	try { el.focus({ preventScroll: true }); } catch (err) { el.focus(); }
 	softKbShow(el);
 });
@@ -1936,7 +2205,7 @@ $(document).on('click', '#send_it', function () {
 	}, 0);
 });
 
-$(window).on('resize', function () { if (softKbVisible()) { softKbReserve(); } });
+$(window).on('resize', function () { if (softKbVisible()) { softKbReserve(); } jawnMeasurePlace(); });
 
 $(function () {
 	softKbHistoryRender();
@@ -1944,6 +2213,10 @@ $(function () {
 	softKbLayoutsRender();
 	softKbMicState();
 	softKbUnitsLoad();
+	// the row lives in the body, like the dock: a transformed ancestor would
+	// make position:fixed a child of that ancestor instead of the page
+	var measure_pop = $('#jawn_measure_pop');
+	if (measure_pop.length && !measure_pop.parent().is('body')) { $('body').append(measure_pop); }
 	try { jawnSoftUnit = localStorage.getItem('jawn_soft_calc_unit') || null; } catch (err) {}
 	// a bare number in the calculator starts in the house's own currency, so
 	// the conversion row is there before a unit has been typed
