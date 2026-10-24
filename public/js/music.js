@@ -957,7 +957,7 @@ var musicAhead = {
 	el: null, source: null, chain: null, src: '', ready: false, starting: false,
 	failed: false, failedAt: 0, gen: 0, timer: 0, retryTimer: 0, waiters: [], waitTimer: 0,
 	target: 0, err: 0, seekAt: 0, seekCount: 0, rate: 1, hold: false, mode: '',
-	base: 2.0, maxDelay: 8.0, snap: false
+	base: 2.0, maxDelay: 8.0, snap: false, fadeTo: 0, fadeTimer: 0, fading: false
 };
 // The lead reads the same /play source through its own copy of the chain.
 // Music.pl answers `ahead=1` with a fixed whole-file Range, so the element can
@@ -1096,11 +1096,14 @@ function musicStreamLatency() {
 	for (var i = 0; i < outs.length; i++) {
 		var k = outs[i];
 		if (!musicStream.ready[k]) { continue; }
-		// What the receiver measures beats what the ping estimated. The beacon's
-		// answer carries the receiver's own buffer and any shortfall since the
-		// mark, so it is the only number that moves when the stream falls behind.
+		// What the receiver measures beats what the ping estimated, because it
+		// carries the buffer and any shortfall since the mark. But the ping is a
+		// full round trip after the player started, so it is a floor: using only
+		// the beacon let a small under-read put the room behind the screen.
 		var m = musicStream.measured[k];
-		var ms = (m && (now - m.at) < 8000) ? m.ms : (musicStream.latencies[k] || 0);
+		var ping = musicStream.latencies[k] || 0;
+		var ms = (m && (now - m.at) < 8000) ? m.ms : ping;
+		if (ping > ms) { ms = ping; }
 		if (ms > max) { max = ms; }
 	}
 	return max;
@@ -1145,11 +1148,13 @@ function musicAheadChain() {
 		limiter: ctx.createDynamicsCompressor(),
 		out: ctx.createGain(),
 		delay: ctx.createDelay(10.0),
+		fade: ctx.createGain(),
 		sink: ctx.createGain()
 	};
 	c.sink.gain.value = 0;
 	c.out.gain.value = musicRemoteVolume();
 	c.delay.delayTime.value = 0;
+	c.fade.gain.value = 1;
 	var prev = c.makeup;
 	for (var i = 0; i < music_eq_freqs.length; i++) {
 		var f = ctx.createBiquadFilter();
@@ -1170,11 +1175,16 @@ function musicAheadChain() {
 	c.leveler.connect(c.makeup);
 	c.limiter.connect(c.out);
 	// The tap reads through a delay, not the element itself. The delay trims
-	// the lead smoothly; seeking the element to chase every drift was what
-	// clicked every few seconds. The zero-gain sink keeps the chain pulled
-	// even while no tap is attached.
+	// the lead; the fade after it hides the jump when the delay is re-anchored,
+	// so a big correction is a 30 ms dip instead of a click or a long, slow
+	// pitch stretch. The zero-gain sink keeps the chain pulled even while no
+	// tap is attached.
 	c.out.connect(c.delay);
+	c.delay.connect(c.fade);
 	c.out.connect(c.sink);
+	// keep the delayed branch rendering even with no tap attached, so its line
+	// already holds the last `base` seconds when the tap switches to it
+	c.fade.connect(c.sink);
 	c.sink.connect(ctx.destination);
 	musicAhead.chain = c;
 	musicAheadApply();
@@ -1200,7 +1210,8 @@ function musicStreamTapSource(want) {
 	try { if (musicVisual.limiter) { musicVisual.limiter.disconnect(node); } } catch (e) {}
 	try { if (musicAhead.chain) { musicAhead.chain.out.disconnect(node); } } catch (e) {}
 	try { if (musicAhead.chain) { musicAhead.chain.delay.disconnect(node); } } catch (e) {}
-	if (ahead) { musicAhead.chain.delay.connect(node); return; }
+	try { if (musicAhead.chain) { musicAhead.chain.fade.disconnect(node); } } catch (e) {}
+	if (ahead) { musicAhead.chain.fade.connect(node); return; }
 	if (musicVisual.remoteGain) { musicVisual.remoteGain.connect(node); }
 	else if (musicVisual.limiter) { musicVisual.limiter.connect(node); }
 }
@@ -1212,7 +1223,8 @@ function musicOpusSource() {
 	try { if (musicVisual.limiter) { musicVisual.limiter.disconnect(dest); } } catch (e) {}
 	try { if (musicAhead.chain) { musicAhead.chain.out.disconnect(dest); } } catch (e) {}
 	try { if (musicAhead.chain) { musicAhead.chain.delay.disconnect(dest); } } catch (e) {}
-	if (musicOpus.source == 'ahead') { musicAhead.chain.delay.connect(dest); return; }
+	try { if (musicAhead.chain) { musicAhead.chain.fade.disconnect(dest); } } catch (e) {}
+	if (musicOpus.source == 'ahead') { musicAhead.chain.fade.connect(dest); return; }
 	if (musicVisual.remoteGain) { musicVisual.remoteGain.connect(dest); }
 	else if (musicVisual.limiter) { musicVisual.limiter.connect(dest); }
 }
@@ -1247,6 +1259,16 @@ function musicAheadStop() {
 	musicAhead.snap = false;
 	clearInterval(musicAhead.timer);
 	musicAhead.timer = 0;
+	clearTimeout(musicAhead.fadeTimer);
+	musicAhead.fadeTimer = 0;
+	musicAhead.fading = false;
+	if (musicAhead.chain && musicAhead.chain.fade) {
+		try {
+			musicAhead.chain.fade.gain.cancelScheduledValues(musicAhead.chain.fade.context.currentTime);
+			musicAhead.chain.fade.gain.value = 1;
+		}
+		catch (e) {}
+	}
 	if (musicAhead.el) {
 		try { musicAhead.el.pause(); } catch (e) {}
 		try { musicAhead.el.removeAttribute('src'); musicAhead.el.load(); } catch (e) {}
@@ -1274,6 +1296,7 @@ function musicAheadForget() {
 	if (musicAhead.chain) {
 		try { musicAhead.chain.out.disconnect(); } catch (e) {}
 		try { musicAhead.chain.delay.disconnect(); } catch (e) {}
+		try { musicAhead.chain.fade.disconnect(); } catch (e) {}
 		try { musicAhead.chain.sink.disconnect(); } catch (e) {}
 	}
 	if (musicAhead.el && musicAhead.el.parentNode) { musicAhead.el.parentNode.removeChild(musicAhead.el); }
@@ -1311,6 +1334,10 @@ function musicAheadLead(hard) {
 		if (!hard && now - (musicAhead.seekAt || 0) < 2000) { return; }
 		musicAhead.seekAt = now;
 		musicAhead.seekCount++;
+		clearTimeout(musicAhead.fadeTimer);
+		musicAhead.fadeTimer = 0;
+		musicAhead.fading = false;
+		try { chain.fade.gain.cancelScheduledValues(chain.fade.context.currentTime); chain.fade.gain.value = 1; } catch (e) {}
 		try { el.currentTime = want + base; } catch (e) {}
 		musicAhead.snap = true;
 		err = -base;
@@ -1329,15 +1356,46 @@ function musicAheadLead(hard) {
 	var cur = 0;
 	try { cur = chain.delay.delayTime.value || 0; } catch (e) {}
 	if (musicAhead.snap) {
+		// the seek that set this is done; the jump it left is handled below
+		// (faded if it is large, glided if it is small)
 		musicAhead.snap = false;
-		try { chain.delay.delayTime.value = d; } catch (e) {}
+	}
+	if (musicAhead.fading) { musicAhead.fadeTo = d; return; }
+	var jump = d - cur;
+	if (Math.abs(jump) < 0.03) { return; }
+	if (Math.abs(jump) > 0.05) {
+		// A large trim is not a pitch bend. Fade the tap, put the delay where
+		// it belongs, and bring it back: about 30 ms of dip instead of a click
+		// or a long patch of slightly slow audio while a 2 % glide catches up.
+		musicAhead.fadeTo = d;
+		musicAhead.fading = true;
+		clearTimeout(musicAhead.fadeTimer);
+		musicAhead.fadeTimer = setTimeout(function() {
+			musicAhead.fadeTimer = 0;
+			try { chain.delay.delayTime.value = musicAhead.fadeTo; } catch (e) {}
+			try {
+				var c2 = chain.fade.context.currentTime;
+				chain.fade.gain.cancelScheduledValues(c2);
+				chain.fade.gain.setValueAtTime(chain.fade.gain.value, c2);
+				chain.fade.gain.linearRampToValueAtTime(1, c2 + 0.025);
+			}
+			catch (e) { try { chain.fade.gain.value = 1; } catch (e2) {} }
+			setTimeout(function() { musicAhead.fading = false; }, 40);
+		}, 25);
+		try {
+			var c1 = chain.fade.context.currentTime;
+			chain.fade.gain.cancelScheduledValues(c1);
+			chain.fade.gain.setValueAtTime(chain.fade.gain.value, c1);
+			chain.fade.gain.linearRampToValueAtTime(0, c1 + 0.015);
+		}
+		catch (e) {}
 		return;
 	}
-	// A jump spread over this time moves the pitch by about two percent at
-	// most: a soft glide instead of the click a seek made.
-	var tau = Math.abs(d - cur) / 0.02;
-	if (!(tau > 0.2)) { tau = 0.2; }
-	if (tau > 4) { tau = 4; }
+	// The remaining changes are drift, a few tens of milliseconds: a slow
+	// glide of at most half a percent, which keeps the pitch steady.
+	var tau = Math.abs(jump) / 0.005;
+	if (!(tau > 0.4)) { tau = 0.4; }
+	if (tau > 6) { tau = 6; }
 	try { chain.delay.delayTime.setTargetAtTime(d, chain.delay.context.currentTime, tau); }
 	catch (e) { try { chain.delay.delayTime.value = d; } catch (e2) {} }
 }
