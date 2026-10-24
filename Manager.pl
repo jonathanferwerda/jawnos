@@ -36993,11 +36993,7 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 	my $msg = $signed_target
 		? join("\n", 'padlock-bio-unlock', $device_uuid, $signed_target, $nonce)
 		: join("\n", 'padlock-bio-unlock', $device_uuid, $nonce);
-	# Older pages signed without the target. Accept that form too, for the one
-	# build in flight; the nonce is single-use and the key is still the phone's.
-	my $msg_legacy = join("\n", 'padlock-bio-unlock', $device_uuid, $nonce);
-	unless (&subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature)
-		|| ($target && !$house && &subs::ecdsa_verify($device->{'bio_pubkey'}, $msg_legacy, $signature))) {
+	unless (&subs::ecdsa_verify($device->{'bio_pubkey'}, $msg, $signature)) {
 		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'padlock_bio_fail', app => '__president', server_time => $now, timestamp => $now });
 		$log->info('padlock: biometric signature refused for ' . ($device->{'name'} || $device_uuid) . ' from ' . $ip);
 		return $c->render(json => { ok => 0, error => 'not accepted' });
