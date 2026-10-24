@@ -62,6 +62,7 @@ no warnings 'once';
 require "./Websocket.pl";
 require "./subroutines.pl";
 require "./tls.pl";
+require "./webauthn.pl";
 require "./Music.pl";
 require "./hooks.pl";
 require "./tunnel.pl";
@@ -7641,6 +7642,188 @@ post '/manager/configure/domain/host' => sub($c) {
 	else { delete $map->{$sig}; }
 	&subs::setting_setter({ app => '__president', setting => 'device_hosts', device => 'all', value => encode_json($map) });
 	$c->render(json => { result => 'ok', host => $host });
+};
+
+# ---- passkeys (WebAuthn) ---------------------------------------------------
+# Registration needs a signed-in session and a person; login is the one thing
+# that must work before anyone is signed in, so those two routes are public in
+# app_public_path. A passkey session is marked webauthn so the app gate admits
+# it: a key held by the platform, bound to this house's origin, is a stronger
+# door than a ticket and is exactly what the gate exists to protect.
+sub webauthn_person($c) {
+	my $uuid = $c->session('person_uuid') || '';
+	if (length $uuid) {
+		my $p = &subs::db_select('people', undef, { uuid => $uuid, status => 'active' })->hash;
+		return $p if $p;
+	}
+	my $dev = $c->session('app_device') || $c->session('device_uuid') || '';
+	if (length $dev) {
+		my $p = &subs::person_for_device($dev);
+		return $p if $p;
+	}
+	return undef;
+}
+
+get '/manager/webauthn/list' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('authentication') || '') eq 'approved';
+	my $p = &webauthn_person($c);
+	my @out = map {
+		{
+			id          => $_->{'id'},
+			name        => $_->{'name'} || 'Passkey',
+			person_uuid => $_->{'person_uuid'} || '',
+			person_name => $_->{'person_name'} || '',
+			created     => $_->{'created'} || 0,
+			last_used   => $_->{'last_used'} || 0,
+			mine        => ($p && ($_->{'person_uuid'} || '') eq $p->{'uuid'}) ? 1 : 0,
+		}
+	} @{ &webauthn::credentials() };
+	$c->render(json => {
+		ok          => 1,
+		rp          => &webauthn::rp_id(),
+		person      => ($p ? { uuid => $p->{'uuid'}, name => $p->{'name'} } : undef),
+		credentials => \@out,
+	});
+};
+
+post '/manager/webauthn/register/begin' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('authentication') || '') eq 'approved';
+	my $p = &webauthn_person($c);
+	return $c->render(json => { ok => 0, error => 'this device is not assigned to a person yet - assign it in Security -> People first' }) unless $p;
+	my $rp = &webauthn::rp_id();
+	return $c->render(json => { ok => 0, error => 'set the house domain first (Configure -> Plat -> DNS)' }) unless length $rp;
+	my $challenge = &webauthn::challenge_put('register', { person_uuid => $p->{'uuid'} });
+	my @exclude = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(internal hybrid) ] } }
+		grep { ($_->{'person_uuid'} || '') eq $p->{'uuid'} } @{ &webauthn::credentials() };
+	$c->render(json => {
+		ok => 1,
+		publicKey => {
+			rp => { name => 'JawnOS', id => $rp },
+			user => { id => &webauthn::user_handle($p->{'uuid'}), name => $p->{'name'}, displayName => $p->{'name'} },
+			challenge => $challenge,
+			pubKeyCredParams => [ { type => 'public-key', alg => -7 }, { type => 'public-key', alg => -8 } ],
+			timeout => 120000,
+			attestation => 'none',
+			authenticatorSelection => { residentKey => 'preferred', userVerification => 'preferred' },
+			excludeCredentials => \@exclude,
+		},
+	});
+};
+
+post '/manager/webauthn/register/finish' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('authentication') || '') eq 'approved';
+	my $p = &webauthn_person($c);
+	return $c->render(json => { ok => 0, error => 'no person' }) unless $p;
+	my $cd = $c->param('client_data') || '';
+	my $jd = eval { decode_json(&webauthn::b64u_decode($cd)) } || {};
+	my $challenge = $jd->{'challenge'} || '';
+	my $payload = &webauthn::challenge_take('register', $challenge);
+	return $c->render(json => { ok => 0, error => 'the challenge expired - try again' }) unless $payload && ($payload->{'person_uuid'} || '') eq $p->{'uuid'};
+	my ($reg, $err) = &webauthn::verify_registration($cd, $c->param('attestation'), $challenge, &webauthn::origin_of($c));
+	return $c->render(json => { ok => 0, error => $err }) unless $reg;
+	my $name = $c->param('name') || 'Passkey';
+	$name =~ s/^\s+|\s+$//g;
+	$name = 'Passkey' unless length $name;
+	$name = substr($name, 0, 60);
+	my $list = &webauthn::credentials();
+	@{$list} = grep { ($_->{'id'} || '') ne $reg->{'id'} } @{$list};
+	push @{$list}, {
+		id          => $reg->{'id'},
+		key         => $reg->{'key'},
+		person_uuid => $p->{'uuid'},
+		person_name => $p->{'name'},
+		name        => $name,
+		sign_count  => $reg->{'sign_count'},
+		aaguid      => $reg->{'aaguid'},
+		transports  => 'internal,hybrid',
+		created     => &subs::rightNow(),
+		last_used   => 0,
+	};
+	&webauthn::credentials_store($list);
+	$log->info('webauthn: registered a passkey for ' . $p->{'name'} . ' (' . $reg->{'id'} . ')');
+	$c->render(json => { ok => 1, id => $reg->{'id'} });
+};
+
+post '/manager/webauthn/remove' => sub($c) {
+	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('authentication') || '') eq 'approved';
+	my $p = &webauthn_person($c);
+	my $id = $c->param('id') || '';
+	return $c->render(json => { ok => 0, error => 'no person' }) unless $p;
+	my $list = &webauthn::credentials();
+	my ($cred) = grep { ($_->{'id'} || '') eq $id } @{$list};
+	return $c->render(json => { ok => 0, error => 'no such passkey' }) unless $cred;
+	return $c->render(json => { ok => 0, error => 'that passkey belongs to someone else' }) unless ($cred->{'person_uuid'} || '') eq $p->{'uuid'};
+	@{$list} = grep { ($_->{'id'} || '') ne $id } @{$list};
+	&webauthn::credentials_store($list);
+	$log->info('webauthn: removed a passkey for ' . $p->{'name'});
+	$c->render(json => { ok => 1 });
+};
+
+post '/manager/webauthn/login/begin' => sub($c) {
+	my $rp = &webauthn::rp_id();
+	my $list = &webauthn::credentials();
+	return $c->render(json => { ok => 0, error => 'no passkeys on this house' }) unless length $rp && scalar @{$list};
+	my $challenge = &webauthn::challenge_put('login', {});
+	my @allow = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(internal hybrid) ] } } @{$list};
+	$c->render(json => {
+		ok => 1,
+		publicKey => {
+			challenge => $challenge,
+			rpId => $rp,
+			timeout => 120000,
+			userVerification => 'preferred',
+			allowCredentials => \@allow,
+		},
+	});
+};
+
+post '/manager/webauthn/login/finish' => sub($c) {
+	my $ip = $c->tx->remote_address || '?';
+	my $fails = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'webauthn_fail', $ip . ':%', &subs::rightNow() - 300000)->hash->{'n'} || 0;
+	return $c->render(json => { ok => 0, error => 'too many attempts - wait five minutes' }) if $fails >= 10;
+	my $id = $c->param('id') || '';
+	my $cred = &webauthn::credential_by_id($id);
+	if (!$cred) { &subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'webauthn_fail', app => '__president', server_time => &subs::rightNow(), timestamp => &subs::rightNow() }); return $c->render(json => { ok => 0, error => 'no such passkey' }); }
+	my $cd = $c->param('client_data') || '';
+	my $jd = eval { decode_json(&webauthn::b64u_decode($cd)) } || {};
+	my $challenge = $jd->{'challenge'} || '';
+	my $payload = &webauthn::challenge_take('login', $challenge);
+	return $c->render(json => { ok => 0, error => 'the challenge expired - try again' }) unless $payload;
+	my ($res, $err) = &webauthn::verify_assertion($cred, $cd, $c->param('auth_data'), $c->param('signature'), $challenge, &webauthn::origin_of($c));
+	if (!$res) {
+		&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'webauthn_fail', app => '__president', server_time => &subs::rightNow(), timestamp => &subs::rightNow() });
+		$log->info('webauthn: login refused for ' . $id . ' from ' . $ip . ': ' . $err);
+		return $c->render(json => { ok => 0, error => $err });
+	}
+	my $list = &webauthn::credentials();
+	foreach my $row ( @{$list} ) {
+		next unless ($row->{'id'} || '') eq $id;
+		$row->{'sign_count'} = $res->{'sign_count'};
+		$row->{'last_used'} = &subs::rightNow();
+	}
+	&webauthn::credentials_store($list);
+	my $p = &subs::db_select('people', undef, { uuid => $cred->{'person_uuid'}, status => 'active' })->hash;
+	my $now = &subs::rightNow();
+	my ($db, $database) = &subs::database_grabber();
+	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'login_warranty' }) || '-12h', $now);
+	$c->session(authentication => 'approved');
+	$c->session(webauthn => 1);
+	$c->session(source => 'webauthn');
+	$c->session(bootstrap => undef);
+	$c->session(person_uuid => $cred->{'person_uuid'});
+	$c->session(name => ($p ? $p->{'name'} : $cred->{'person_name'}));
+	$c->session(privilege => ($p && $p->{'privilege'}) ? $p->{'privilege'} : 'guest');
+	$c->session(warranty => $warranty);
+	$c->session(server_time => $now);
+	$c->session(string => &subs::random_string_creator());
+	$c->session(database => $database) if $database;
+	my $suds = eval { &subs::suds_grabber() };
+	$c->session(suds_id => &subs::suds_id($suds)) if $suds;
+	$c->session('app' => undef);
+	$c->session('app_device' => undef);
+	&subs::db_query('delete from cache where context = ? and uuid like ?', 'webauthn_fail', $ip . ':%');
+	$log->info('webauthn: login for ' . ($p ? $p->{'name'} : $cred->{'person_name'} || '?') . ' from ' . $ip . ' clone=' . ($res->{'clone'} ? 1 : 0));
+	$c->render(json => { ok => 1, redirect => '/manager', person => ($p ? $p->{'name'} : $cred->{'person_name'}), clone => ($res->{'clone'} ? 1 : 0) });
 };
 
 # Issue or renew from the panel. Local only and signatorial-gated: the run
@@ -35010,6 +35193,9 @@ sub security_initializer($c) {
 		people => &subs::people_list(),
 		current_device_uuid => $current_device_uuid,
 		biometric_enrolled => $biometric_enrolled,
+		passkeys => &webauthn::credentials(),
+		webauthn_rp => &webauthn::rp_id(),
+		passkey_person => &webauthn_person($c),
 		recovery => $recovery,
 		recovery_stale => $recovery_stale,
 		share_stale => $share_stale,
@@ -35965,6 +36151,7 @@ sub app_public_path {
 	return 1 if $path =~ m{^/public_view(?:/|$)};
 	return 1 if $path eq '/sesh_check' || $path eq '/gate';
 	return 1 if $path eq '/manager/health';
+	return 1 if $path =~ m{^/manager/webauthn/login/(?:begin|finish)$};
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/tunnel/ws';
 	# The padlock is its own small protocol: a locked screen must still be able
 	# to ask another device for a print even when its app window has lapsed, and
@@ -39449,7 +39636,12 @@ sub authentication_passer($c) {
 	if ($app_mode ne 'off') {
 		&app_schema_ensure();
 		my $app_path = $c->req->url->path->to_string;
-		unless (&app_public_path($app_path) || &app_session_ok($c) || &app_peer_ok($c)) {
+		# The Gate is the front door for a person without an app key. A browser
+		# that has not signed in must be able to see it, because the passkey is
+		# the login that then admits the session (webauthn=1). An approved
+		# session with no passkey is still refused, so the app-only rule holds.
+		my $gate_only = ($app_path eq '/manager' && (($c->session('authentication') || '') ne 'approved')) ? 1 : 0;
+		unless (&app_public_path($app_path) || &app_session_ok($c) || &app_peer_ok($c) || $c->session('webauthn') || $gate_only) {
 			if ($app_mode eq 'enforce') {
 				$c->render(template => 'app_required', layout => undef,
 					device_uuid => ($c->session('device_uuid') || ''),
@@ -39657,6 +39849,7 @@ sub authentication_passer($c) {
 				template => 'gate',
 				layout => 'gate',
 				restore_list => $restore_list,
+				webauthn_available => (scalar @{ &webauthn::credentials() } ? 1 : 0),
 				# no home path on the gate: shown before anyone has signed in
 				start_dir => '',
 				config => { 'gate' => {'background_colour' => $config->{'gate'}->{'background_colour'} } },

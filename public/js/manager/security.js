@@ -618,3 +618,81 @@ $(document).on('click', '.signatorial_selection', function() {
 		ensureShareKey().catch(function () {});
 	});
 })();
+
+// ---- passkeys (WebAuthn) ---------------------------------------------------
+// Registration is the only place a credential is made. The public half is what
+// the house keeps; the private half never leaves the platform authenticator.
+(function () {
+	function b64uToBytes(s) {
+		s = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+		var pad = s.length % 4;
+		if (pad) { s += '='.repeat(4 - pad); }
+		var bin = atob(s);
+		var out = new Uint8Array(bin.length);
+		for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+		return out;
+	}
+	function bytesToB64u(buf) {
+		var b = new Uint8Array(buf), s = '';
+		for (var i = 0; i < b.length; i++) { s += String.fromCharCode(b[i]); }
+		return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	}
+	function securityRefresh() {
+		$.ajax({
+			url: '/manager/security',
+			type: 'GET',
+			data: { security_view: 'passkeys', window_maker: 'yes' },
+			success: function (r) {
+				if (r && r.html) {
+					$('#security').replaceWith(r.html);
+					if (typeof appointment_chron === 'function') { appointment_chron(); }
+				}
+			}
+		});
+	}
+
+	$(document).on('click', '#passkey_add', function () {
+		var status = $('#passkey_status');
+		if (!window.PublicKeyCredential || !navigator.credentials) {
+			status.text('this browser has no passkey support (or the page is not on https)');
+			return;
+		}
+		status.text('asking the house…');
+		$.post('/manager/webauthn/register/begin', {}, function (r) {
+			if (!r || !r.ok) { status.text((r && r.error) || 'could not start'); return; }
+			var pk = r.publicKey;
+			navigator.credentials.create({ publicKey: {
+				challenge: b64uToBytes(pk.challenge),
+				rp: pk.rp,
+				user: { id: b64uToBytes(pk.user.id), name: pk.user.name, displayName: pk.user.displayName },
+				pubKeyCredParams: pk.pubKeyCredParams,
+				timeout: pk.timeout,
+				attestation: pk.attestation,
+				authenticatorSelection: pk.authenticatorSelection,
+				excludeCredentials: (pk.excludeCredentials || []).map(function (c) {
+					return { type: c.type, id: b64uToBytes(c.id), transports: c.transports };
+				})
+			} }).then(function (cred) {
+				if (!cred) { throw new Error('no credential'); }
+				$.post('/manager/webauthn/register/finish', {
+					client_data: bytesToB64u(cred.response.clientDataJSON),
+					attestation: bytesToB64u(cred.response.attestationObject),
+					name: $('#passkey_name').val() || 'Passkey'
+				}, function (f) {
+					if (!f || !f.ok) { status.text((f && f.error) || 'could not save'); return; }
+					securityRefresh();
+				}, 'json');
+			}).catch(function (e) {
+				status.text((e && e.message) || 'cancelled');
+			});
+		}, 'json');
+	});
+
+	$(document).on('click', '.passkey_remove', function () {
+		if (!confirm('Remove this passkey from the house?')) { return; }
+		$.post('/manager/webauthn/remove', { id: $(this).attr('id') }, function (r) {
+			if (!r || !r.ok) { alert((r && r.error) || 'could not remove'); return; }
+			securityRefresh();
+		}, 'json');
+	});
+})();

@@ -7,6 +7,7 @@
 		<button class="security_view_select" view="signatorial" style="<% if ($president->{'security_view'} eq 'signatorial') { %>background-color:lightgreen;<% } %>">Signatorial</button>
 		<button class="security_view_select" view="devices" style="<% if ($president->{'security_view'} eq 'devices') { %>background-color:lightgreen;<% } %>">Devices</button>
 		<button class="security_view_select" view="recovery" style="<% if ($president->{'security_view'} eq 'recovery') { %>background-color:lightgreen;<% } %>">Recovery</button>
+		<button class="security_view_select" view="passkeys" style="<% if ($president->{'security_view'} eq 'passkeys') { %>background-color:lightgreen;<% } %>">Passkeys</button>
 	</div>
 	<div class="security_view" view="padlock" style="<% unless ( $president->{'security_view'} eq 'padlock' ) { %>display:none;<% } %>">
 		<% my $padlock = &subs::db_query('select * from security where level=? limit 1', 'padlock')->hashes->[0]; %>
@@ -58,6 +59,55 @@
 				<% } %>
 			</select>
 		</div>
+	</div>
+
+	<div class="security_view" view="passkeys" style="<% unless ( $president->{'security_view'} eq 'passkeys' ) { %>display:none;<% } %>">
+		<h2>Passkeys</h2>
+		<p style="line-height:1.4;max-width:640px;">
+			A passkey is a keypair the device makes in its own secure hardware. The house keeps only its public half,
+			so there is nothing here to steal, and the key signs a challenge from this house rather than a password
+			that can be typed into the wrong page. A passkey registered here is bound to
+			<b><%= length($webauthn_rp || '') ? $webauthn_rp : 'the house domain (not set yet)' %></b>, so the same
+			key works on every machine under that name.
+		</p>
+		<% if (!length($webauthn_rp || '')) { %>
+			<p style="color:#e5484d;">Set the house domain first: Configure &rarr; Plat &rarr; DNS &rarr; House domain.</p>
+		<% } %>
+		<% if (!$passkey_person) { %>
+			<p style="color:#e5484d;">This device is not assigned to a person yet. Assign it under Devices, then come back.</p>
+		<% } %>
+		<table style="width:100%;text-align:left;">
+			<thead>
+				<tr><th>Name</th><th>Person</th><th>Added</th><th>Last used</th><th></th></tr>
+			</thead>
+			<tbody>
+				<% if (!scalar @{$passkeys}) { %>
+					<tr><td colspan="5" style="opacity:.7;">No passkeys yet.</td></tr>
+				<% } %>
+				<% foreach my $pk ( @{$passkeys} ) { %>
+					<tr class="passkey_row">
+						<td><%= $pk->{'name'} || 'Passkey' %></td>
+						<td><%= $pk->{'person_name'} || '' %></td>
+						<td><% if ($pk->{'created'}) { %><span class="time" mode="fixed" timestamp="<%= $pk->{'created'} %>"></span><% } %></td>
+						<td><% if ($pk->{'last_used'}) { %><span class="time" mode="fixed" timestamp="<%= $pk->{'last_used'} %>"></span><% } else { %>never<% } %></td>
+						<td>
+							<% if ($passkey_person && ($pk->{'person_uuid'} || '') eq $passkey_person->{'uuid'}) { %>
+								<button class="passkey_remove" id="<%= $pk->{'id'} %>" type="button">Remove</button>
+							<% } %>
+						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+		<div style="margin-top:12px;">
+			<input id="passkey_name" type="text" placeholder="Laptop" style="width:170px;" autocomplete="off" spellcheck="false">
+			<button id="passkey_add" type="button"<% if (!$passkey_person || !length($webauthn_rp || '')) { %> disabled<% } %>>Add a passkey</button>
+			<span id="passkey_status" style="font-size:14px;margin-left:8px;"></span>
+		</div>
+		<p style="font-size:13px;color:#777;max-width:640px;">
+			Removing a passkey here only forgets it in the house; the key stays in the device until you delete it there.
+			A passkey proves who you are, not what you may do - privileges still come from the person.
+		</p>
 	</div>
 
 	<div class="security_view" view="neighbour_link" style="<% unless ( $president->{'security_view'} eq 'neighbour_link' ) { %>display:none;<% } %>">

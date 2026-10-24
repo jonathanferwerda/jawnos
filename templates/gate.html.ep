@@ -92,6 +92,72 @@
 		<div style="font-size:13px;color:#777;max-width:520px;margin:6px auto 0;"><%= &subs::ui('Pairing travels over the mesh: the approval can take a couple of minutes to reach this device. This page keeps checking and continues by itself.') %></div>
 	</div>
 </div>
+<% if ($webauthn_available) { %>
+<div id="passkey_door" style="margin-top:6px;">
+	<button id="passkey_login" type="button">Sign in with a passkey</button>
+	<div id="passkey_login_status" style="min-height:22px;max-width:520px;margin:6px auto 0;font-size:14px;"></div>
+</div>
+<script>
+(function () {
+	function b64uToBytes(s) {
+		s = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+		var pad = s.length % 4;
+		if (pad) { s += '='.repeat(4 - pad); }
+		var bin = atob(s), out = new Uint8Array(bin.length);
+		for (var i = 0; i < bin.length; i++) { out[i] = bin.charCodeAt(i); }
+		return out;
+	}
+	function bytesToB64u(buf) {
+		var b = new Uint8Array(buf), s = '';
+		for (var i = 0; i < b.length; i++) { s += String.fromCharCode(b[i]); }
+		return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+	}
+	function post(url, body) {
+		return fetch(url, {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams(body || {}).toString()
+		}).then(function (r) { return r.json(); });
+	}
+	var btn = document.getElementById('passkey_login');
+	if (!btn) { return; }
+	btn.addEventListener('click', function () {
+		var st = document.getElementById('passkey_login_status');
+		if (!window.PublicKeyCredential || !navigator.credentials) {
+			st.textContent = 'this browser has no passkey support (or the page is not on https)';
+			return;
+		}
+		st.textContent = 'waiting for your device…';
+		post('/manager/webauthn/login/begin', {}).then(function (r) {
+			if (!r || !r.ok) { st.textContent = (r && r.error) || 'no passkey'; return; }
+			var pk = r.publicKey;
+			return navigator.credentials.get({ publicKey: {
+				challenge: b64uToBytes(pk.challenge),
+				rpId: pk.rpId,
+				timeout: pk.timeout,
+				userVerification: pk.userVerification,
+				allowCredentials: (pk.allowCredentials || []).map(function (c) {
+					return { type: c.type, id: b64uToBytes(c.id), transports: c.transports };
+				})
+			} }).then(function (cred) {
+				return post('/manager/webauthn/login/finish', {
+					id: bytesToB64u(cred.rawId),
+					client_data: bytesToB64u(cred.response.clientDataJSON),
+					auth_data: bytesToB64u(cred.response.authenticatorData),
+					signature: bytesToB64u(cred.response.signature)
+				}).then(function (f) {
+					if (!f || !f.ok) { st.textContent = (f && f.error) || 'refused'; return; }
+					window.location = f.redirect || '/manager';
+				});
+			});
+		}).catch(function (e) {
+			st.textContent = (e && e.message) || 'cancelled';
+		});
+	});
+})();
+</script>
+<% } %>
 <div id="results_grabber" class="results_grabber">
 	<% if (scalar @{$restore_list} > 0) { %>
 		<% foreach my $b ( @{$restore_list} ) { %>
