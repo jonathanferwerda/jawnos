@@ -207,8 +207,8 @@ get '/play' => sub($c) {
 
 	&Manager::rock_and_roll($c);
 
-	# the lip-sync clone re-requests /play for the same file; it must not start
-	# the server-side player a second time
+	# the ahead tap re-requests /play for the same file; it must not start the
+	# server-side player a second time
 	if ($mao->{'srv'} eq 'on' && $c->param('clone') ne '1') {
 		&subs::subprocessor(sub {
 
