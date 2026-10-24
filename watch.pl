@@ -232,7 +232,9 @@ get '/watch/button' => sub($c) {
 			data => $returner
 		};
 
-		my $returner = &subs::bluetooth_sender({
+		# Already answered above; a send here must not hold this worker (the watch
+		# server has one on a phone) while the radio may have gone to sleep.
+		&subs::bluetooth_sender_async({
 			intent => 'com.jawn.president.bt.connect',
 			chip_id => $chip_id,
 			edt => $edt,

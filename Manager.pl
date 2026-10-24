@@ -39165,15 +39165,18 @@ post '/manager/teletype/wifi_update' => sub($c) {
 	# trying to join. Read the stored wifi setting back and push it over BLE.
 	my $json_wifi = &subs::setting_grabber({ app => $edt, setting => 'wifi', subsetting => $chip_id }) || '{}';
 	my $wifi = eval { decode_json $json_wifi } || {};
-	if ($wifi->{'ssid'} && &subs::bluetooth_sender({
-		intent => 'com.jawn.president.bt.connect',
-		chip_id => $chip_id,
-		edt => $edt,
-		message => { type => 'wifi', data => {
-			ssid => $wifi->{'ssid'}, password => $wifi->{'password'},
-			ap_ssid => $wifi->{'ap_ssid'}, ap_password => $wifi->{'ap_password'},
-		} }
-	})) {
+	if ($wifi->{'ssid'} && &subs::ble_push_available($edt, $chip_id)) {
+		# Off the request: the client waits for the radio to acknowledge the write,
+		# and a watch that has gone to sleep never does (see bluetooth_sender_async).
+		&subs::bluetooth_sender_async({
+			intent => 'com.jawn.president.bt.connect',
+			chip_id => $chip_id,
+			edt => $edt,
+			message => { type => 'wifi', data => {
+				ssid => $wifi->{'ssid'}, password => $wifi->{'password'},
+				ap_ssid => $wifi->{'ap_ssid'}, ap_password => $wifi->{'ap_password'},
+			} }
+		});
 		$c->render(text => 'pushed over bluetooth');
 		return;
 	}
@@ -40554,38 +40557,51 @@ sub now_me($data) {
 		$link = 'bluetooth' if !$link && &subs::ble_bridge_capable() && $watch->{'mac_addresses'}->{'bluetooth'};
 	}
 	if ($link && $link eq 'bluetooth') {
-		my $returner = &subs::bluetooth_sender({
-			intent => 'com.jawn.president.bt.connect',
-			chip_id => $chip_id,
-			edt => $edt,
-			message => { type => 'now_me', data => $params }
-		});
-		# The role follows the params. A watch/deck draws its buttons from the room
-		# payload; a board gets the compact form (no chat lists, no pairing
-		# patience) so it can be carried as plain JSON and applied without a zlib
-		# inflater on the microcontroller.
-		if ($edt eq 'microcontroller') {
-			my $board_payload = &subs::board_config_payload({ edt => $edt, chip_id => $chip_id });
-			if ($board_payload) {
+		# The bridge client waits for the radio to acknowledge each write, and a
+		# watch that has gone to sleep suspends its link without saying so: the wait
+		# runs until Android's link supervision timeout. That must never happen in
+		# this process - a request here, or the bridge listener's own reader when a
+		# re-home lands, would hold the whole manager - and a Now Me is three sends.
+		# One child carries the push; the caller only needs to know it went out.
+		my ($push_edt, $push_chip) = ($edt, $chip_id);
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			eval {
 				&subs::bluetooth_sender({
 					intent => 'com.jawn.president.bt.connect',
-					chip_id => $chip_id,
-					edt => $edt,
-					message => { type => 'board_config', data => $board_payload }
+					chip_id => $push_chip,
+					edt => $push_edt,
+					message => { type => 'now_me', data => $params }
 				});
-			}
-		}
-		else {
-			my $room_payload = &subs::watch_room_payload({ edt => $edt, chip_id => $chip_id });
-			if ($room_payload) {
-				&subs::bluetooth_sender({
-					intent => 'com.jawn.president.bt.connect',
-					chip_id => $chip_id,
-					edt => $edt,
-					message => { type => 'room', data => { room => 1, payload => $room_payload } }
-				});
-			}
-		}
+				# The role follows the params. A watch/deck draws its buttons from the
+				# room payload; a board gets the compact form (no chat lists, no
+				# pairing patience) so it can be carried as plain JSON and applied
+				# without a zlib inflater on the microcontroller.
+				if ($push_edt eq 'microcontroller') {
+					my $board_payload = &subs::board_config_payload({ edt => $push_edt, chip_id => $push_chip });
+					if ($board_payload) {
+						&subs::bluetooth_sender({
+							intent => 'com.jawn.president.bt.connect',
+							chip_id => $push_chip,
+							edt => $push_edt,
+							message => { type => 'board_config', data => $board_payload }
+						});
+					}
+				}
+				else {
+					my $room_payload = &subs::watch_room_payload({ edt => $push_edt, chip_id => $push_chip });
+					if ($room_payload) {
+						&subs::bluetooth_sender({
+							intent => 'com.jawn.president.bt.connect',
+							chip_id => $push_chip,
+							edt => $push_edt,
+							message => { type => 'room', data => { room => 1, payload => $room_payload } }
+						});
+					}
+				}
+				1;
+			};
+		}, { name => 'now me push' });
 		# say so, rather than fall through to the empty {} the caller then
 		# rendered as HASH(0x...) and read as a button that did nothing
 		return 'pushed over bluetooth';

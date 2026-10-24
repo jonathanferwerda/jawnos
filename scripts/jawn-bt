@@ -30,24 +30,49 @@ unless (defined $cmd) {
 my %opt;
 my @args;
 while (defined(my $a = shift @ARGV)) {
-	if ($a =~ /^--(service|rx|tx|mtu|compress|mac|id)$/) { $opt{$1} = shift @ARGV; }
+	if ($a =~ /^--(service|rx|tx|mtu|compress|mac|id|timeout)$/) { $opt{$1} = shift @ARGV; }
 	elsif ($a eq '--all') { $opt{all} = 1; }
 	else { push @args, $a; }
 }
+
+# How long each command may wait for the daemon. A watch that goes to sleep
+# suspends its radio without telling anyone, and a no-response write to it is
+# not acknowledged until Android's link supervision timeout (~20 s). Nothing on
+# the manager's event loop may sit through that: a deadline is reported as an
+# error and the process exits non-zero, so the caller can fall back (an HTTP
+# send, a retry) instead of mistaking silence for delivery. --timeout overrides.
+my %default_timeout = (connect => 20, send => 15, status => 10, disconnect => 10);
+my $timeout = defined $opt{'timeout'} && $opt{'timeout'} =~ /^\d+$/ ? $opt{'timeout'} + 0 : undef;
 
 sub start_daemon {
 	system('sh', '-c', 'am start-foreground-service -n com.termux.api/.JawnBleService >/dev/null 2>&1');
 }
 
 sub dial {
+	# Bounded: the daemon is either up or being started. The old 24 tries with a
+	# 2 s connect each could hunt for close to a minute, and the caller waiting on
+	# us (a request, a listener reply) wore all of it.
 	my $sock;
-	for my $i (1 .. 24) {
-		$sock = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 2);
+	for my $i (1 .. 12) {
+		$sock = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 1);
 		return $sock if $sock;
-		start_daemon() if $i == 1 || $i == 6 || $i == 12;
+		start_daemon() if $i == 1 || $i == 4 || $i == 8;
 		sleep 0.5;
 	}
 	die "jawn-bt: could not reach the BLE bridge on 127.0.0.1:$port\n";
+}
+
+# A hard net over the whole run: a blocking write to a daemon that has stopped
+# reading, or a socket call a deadline did not cover, must still end this
+# process rather than hang whoever started it. The per-command deadlines below
+# are the real bound; this only catches what they miss. listen runs for the life
+# of the tree and sendloop for the life of a stream, so neither is armed.
+if ($cmd ne 'listen' && $cmd ne 'sendloop') {
+	$SIG{ALRM} = sub {
+		print JSON::PP->new->encode({ event => 'error', error => 'timeout', cmd => $cmd }), "\n";
+		exit 2;
+	};
+	alarm(($timeout || ($default_timeout{$cmd} || 30)) + 12);
 }
 
 my $sock = dial();
@@ -106,7 +131,7 @@ my $last;
 if ($cmd eq 'scan') {
 	my $secs = $args[0] || 8;
 	send_cmd({ cmd => 'scan', seconds => $secs });
-	$last = wait_for(sub { $_[0]->{'event'} eq 'scan_done' || $_[0]->{'event'} eq 'error' }, $secs + 15);
+	$last = wait_for(sub { $_[0]->{'event'} eq 'scan_done' || $_[0]->{'event'} eq 'error' }, $timeout || ($secs + 15));
 }
 elsif ($cmd eq 'connect') {
 	my $mac = $args[0] or die "jawn-bt connect: mac required\n";
@@ -136,7 +161,7 @@ elsif ($cmd eq 'connect') {
 		# MAC is not this command's answer.
 		return 1 unless defined $o->{'mac'};
 		return uc($o->{'mac'}) eq $want;
-	}, 30);
+	}, $timeout || $default_timeout{'connect'});
 }
 elsif ($cmd eq 'send') {
 	my $text = $args[0];
@@ -150,12 +175,19 @@ elsif ($cmd eq 'send') {
 	my $want = defined $opt{'mac'} ? uc $opt{'mac'} : undef;
 	$last = wait_for(sub {
 		my $o = shift;
-		return 0 unless $o->{'event'} =~ /^(sent|error)$/;
+		return 0 unless $o->{'event'} =~ /^(sent|error|disconnected)$/;
+		# A link that dropped under the write will never acknowledge it: stop
+		# waiting for the radio's own supervision timeout and report the failure.
+		if ($o->{'event'} eq 'disconnected') {
+			return 1 if !defined $want;
+			return 1 if !defined $o->{'mac'} || uc($o->{'mac'}) eq $want;
+			return 0;
+		}
 		return 1 unless defined $want;
 		return 1 if defined $o->{'mac'} && uc($o->{'mac'}) eq $want;
 		return 1 if $o->{'event'} eq 'error' && !defined $o->{'mac'};
 		return 0;
-	}, 30);
+	}, $timeout || $default_timeout{'send'});
 }
 elsif ($cmd eq 'sendloop') {
 	# One connection, many messages: each stdin line is forwarded to the daemon as
@@ -180,7 +212,7 @@ elsif ($cmd eq 'sendloop') {
 	close $sock;
 }
 elsif ($cmd eq 'status') {
-	$last = wait_for(sub { $_[0]->{'event'} eq 'status' }, 10);
+	$last = wait_for(sub { $_[0]->{'event'} eq 'status' }, $timeout || $default_timeout{'status'});
 }
 elsif ($cmd eq 'disconnect') {
 	my %h = (cmd => 'disconnect');
@@ -201,7 +233,7 @@ elsif ($cmd eq 'disconnect') {
 		return 1 if defined $o->{'mac'} && uc($o->{'mac'}) eq $want;
 		return 1 if $o->{'event'} eq 'error' && !defined $o->{'mac'};
 		return 0;
-	}, 10);
+	}, $timeout || $default_timeout{'disconnect'});
 }
 elsif ($cmd eq 'listen') {
 	# Ask for the current link up front: the daemon auto-connects to its stored
@@ -215,4 +247,19 @@ else {
 	die "jawn-bt: unknown command '$cmd'\n";
 }
 
-exit(($last && ($last->{'event'} || '') eq 'error') ? 1 : 0);
+# Exit non-zero unless the daemon actually answered. A timeout used to fall
+# through as success ($last undef -> 0), so a caller counted a message sent to a
+# sleeping watch as delivered and never took its fallback road.
+alarm(0);
+my $event = ($last && ref $last eq 'HASH') ? ($last->{'event'} || '') : '';
+my $ok = 0;
+if    ($cmd eq 'scan')       { $ok = $event eq 'scan_done'; }
+elsif ($cmd eq 'connect')    { $ok = $event eq 'connected' || $event eq 'status'; }
+elsif ($cmd eq 'send')       { $ok = $event eq 'sent'; }
+elsif ($cmd eq 'status')     { $ok = $event eq 'status'; }
+elsif ($cmd eq 'disconnect') { $ok = $event eq 'disconnected' || $event eq 'status'; }
+elsif ($cmd eq 'sendloop')   { $ok = 1; }
+unless ($ok) {
+	print JSON::PP->new->encode({ event => 'error', error => ($event eq 'error' ? 'daemon' : 'timeout'), event_got => $event, cmd => $cmd }), "\n";
+}
+exit($ok ? 0 : 2);

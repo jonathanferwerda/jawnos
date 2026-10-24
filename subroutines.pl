@@ -2994,7 +2994,10 @@ sub watch_reply() {
 	my ($meta, $text) = @_;
 	return unless $meta && $meta->{'chip_id'} && defined $text && length $text;
 	my $edt = $meta->{'edt'} || 'watch';
-	&subs::bluetooth_sender({
+	# The words go first and must keep their place ahead of the audio below, so
+	# this send is async only when we are on the loop (see bluetooth_sender_async:
+	# inside a fork it runs inline).
+	&subs::bluetooth_sender_async({
 		intent => 'com.jawn.president.bt.connect',
 		chip_id => $meta->{'chip_id'},
 		edt => $edt,
@@ -3069,7 +3072,10 @@ sub watch_reply_stream() {
 	my $send = sub {
 		my ($data) = @_;
 		if ($bt) {
-			print {$bt} encode_json($data) . "\n";
+			{
+				local $SIG{'PIPE'} = 'IGNORE';
+				print {$bt} encode_json($data) . "\n";
+			}
 		}
 		else {
 			&subs::bluetooth_sender({
@@ -5946,7 +5952,7 @@ sub ble_relay_route {
 	};
 	if (&ble_may_serve($edt, $to) && $chip->{'bluetooth'}) {
 		$log->info('BLE relay ' . ($from || '?') . ' -> ' . $to . ' (' . $edt . '), hop ' . ($hops + 1));
-		&bluetooth_sender({
+		&bluetooth_sender_async({
 			intent => 'com.jawn.president.bt.connect',
 			chip_id => $to,
 			edt => $edt,
@@ -6307,7 +6313,9 @@ sub ble_battery_poll {
 		my $link = $links->{ &ble_link_key($w->{'mac'}) };
 		next unless $link && $link->{'connected'};
 		next unless &ble_may_serve($w->{'edt'}, $w->{'id'});
-		&bluetooth_sender({
+		# A poll is a nudge, never worth holding the loop for: a watch that slept
+		# suspends its link, and the client would wait out the supervision timeout.
+		&bluetooth_sender_async({
 			intent => 'com.jawn.president.bt.connect',
 			chip_id => $w->{'id'},
 			edt => $w->{'edt'},
@@ -6413,13 +6421,55 @@ sub bluetooth_sender() {
 			# the client used to receive the encoded copy and the watch got a
 			# base64 blob it could not parse.
 			open(my $bt_fh, '|-', $client, 'send', '--mac', $bt_mac) or return;
-			print {$bt_fh} $json;
+			# The client can now refuse a dead link and exit before it reads this
+			# (a watch that has suspended its radio), so a plain print here would
+			# die of SIGPIPE and take the process with it.
+			{
+				local $SIG{'PIPE'} = 'IGNORE';
+				print {$bt_fh} $json;
+			}
 			return close $bt_fh;
 		}
 		my $b64 = encode_base64 $json;
 		my $cmd = "am broadcast --user 0 -a $intent -e mac_address '$bt_mac' -e message '$b64' -e name '$name' -e service_uuid '$service_uuid' -e characteristic_uuid_rx '$characteristic_uuid_rx' -e characteristic_uuid_tx '$characteristic_uuid_tx'";
 		return `$cmd`;
 	}
+}
+
+# A send that must not hold the caller's event loop. bluetooth_sender waits for
+# the radio to acknowledge the write; a watch that has gone to sleep suspends its
+# link without saying so, and nothing comes back until Android's link supervision
+# timeout, tens of seconds later. Run inline that wait is the whole manager
+# frozen - the bridge listener's reader, a recurring timer, a request handler -
+# and every later message queues behind it, so the freeze repeats. The homebase
+# checks are cheap; the client and its wait ride a child instead.
+sub bluetooth_sender_async() {
+	my $data = shift;
+	return 0 unless $data && $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'};
+	# Already in a child forked for this work: send inline, so this message keeps
+	# its place in that child's run of messages (the words before the audio).
+	if ($gb::subprocessed) {
+		eval { &bluetooth_sender($data) };
+		return 1;
+	}
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		eval { &bluetooth_sender($data) };
+		$log->error('ble send failed: ' . ($@ =~ s/\s+/ /gr)) if $@ && $log;
+	}, { name => 'ble send' });
+	return 1;
+}
+
+sub ble_push_available() {
+	# The cheap half of bluetooth_sender's checks, so a caller can choose the
+	# bridge (and hand it to bluetooth_sender_async) without running the client on
+	# its own event loop just to learn whether the device is ours to serve.
+	my ($edt, $chip_id) = @_;
+	return 0 unless $edt && $chip_id && &subs::ble_bridge_capable();
+	return 0 unless &ble_may_serve($edt, $chip_id);
+	my $embedded = &subs::device_lister(&subs::rightNow(), $edt, undef, $chip_id);
+	return 0 unless ref $embedded eq 'HASH' && $embedded->{'mac_addresses'}->{'bluetooth'};
+	return 1;
 }
 
 # One bridge connection for a run of messages, for a streamed reply: the daemon
@@ -6920,7 +6970,7 @@ sub voice_clip_ack() {
 	# new capture cannot delete the newer clip.
 	my ($meta) = @_;
 	return unless $meta && $meta->{'chip_id'};
-	&subs::bluetooth_sender({
+	&subs::bluetooth_sender_async({
 		intent => 'com.jawn.president.bt.connect',
 		chip_id => $meta->{'chip_id'},
 		edt => $meta->{'edt'} || 'watch',
@@ -7287,7 +7337,7 @@ sub ble_message_processor() {
 			$toggles = { map { $_ => $toggles->{$_} } grep { $wanted{$_} } keys %{$toggles} };
 		}
 		$log->info('BLE state_request for ' . $chip_id . ': ' . scalar(keys %{$toggles}) . ' toggles');
-		&subs::bluetooth_sender({
+		&subs::bluetooth_sender_async({
 			intent => 'com.jawn.president.bt.connect',
 			chip_id => $chip_id,
 			edt => $edt,
@@ -7305,7 +7355,7 @@ sub ble_message_processor() {
 			my $board = &subs::board_config_payload({ edt => $edt, chip_id => $chip_id });
 			if ($board) {
 				$log->info('BLE board_request for ' . $chip_id);
-				&subs::bluetooth_sender({
+				&subs::bluetooth_sender_async({
 					intent => 'com.jawn.president.bt.connect',
 					chip_id => $chip_id,
 					edt => $edt,
@@ -7317,7 +7367,7 @@ sub ble_message_processor() {
 			my $payload = &subs::watch_room_payload({ edt => $edt, chip_id => $chip_id });
 			if ($payload) {
 				$log->info('BLE room_request for ' . $chip_id . ', room ' . $room);
-				&subs::bluetooth_sender({
+				&subs::bluetooth_sender_async({
 					intent => 'com.jawn.president.bt.connect',
 					chip_id => $chip_id,
 					edt => $edt,
@@ -7346,7 +7396,7 @@ sub ble_message_processor() {
 			# and retries it until this lands, so the ack must come off the reassembly
 			# and not wait on whisper (seconds). voice_done follows after the file is
 			# transcribed, and it is what deletes the watch's copy.
-			&subs::bluetooth_sender({
+			&subs::bluetooth_sender_async({
 				intent => 'com.jawn.president.bt.connect',
 				chip_id => $msg->{'chip_id'},
 				edt => $msg->{'edt'} || 'watch',
@@ -7393,7 +7443,7 @@ sub ble_message_processor() {
 				if (length($data) > 100 && &subs::voice_clip_fresh($chip_id, $ts)) {
 					my $wav = &subs::adpcm_wav_wrap($data);
 					$log->info('BLE streamed clip for ' . $chip_id . ': ' . length($data) . ' encoded bytes');
-					&subs::bluetooth_sender({
+					&subs::bluetooth_sender_async({
 						intent => 'com.jawn.president.bt.connect',
 						chip_id => $chip_id,
 						edt => $rec->{'edt'},
@@ -7448,7 +7498,7 @@ sub ble_message_processor() {
 		};
 		$log->error('BLE button press failed: ' . $@) if $@;
 		if ($returner && ref $returner eq 'HASH') {
-			&subs::bluetooth_sender({
+			&subs::bluetooth_sender_async({
 				intent => 'com.jawn.president.bt.connect',
 				chip_id => $chip_id,
 				edt => $edt,
