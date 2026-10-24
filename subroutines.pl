@@ -9287,6 +9287,45 @@ sub seal_file {
 	return(-e $out_path ? 1 : 0);
 }
 
+# The verdict for a decrypted prefix. File::Type knows the formats it ships,
+# but WebM/Matroska is EBML: it often comes back application/octet-stream. The
+# old probes treated a webm path as good enough for *any* credential, so the
+# first (wrong) secret won and the file was served as garbage. Sniff the
+# plaintext's own magic first; it is the only thing that says the key is right.
+our $plaintext_ft;
+sub plaintext_verdict {
+	my ($head) = @_;
+	return undef unless defined $head && length $head;
+	my %magic = (
+		"\x1a\x45\xdf\xa3" => 'video/webm',          # EBML (webm / matroska)
+		"\x89PNG\r\n\x1a\n" => 'image/png',
+		"\xff\xd8\xff"      => 'image/jpeg',
+		'GIF87a'            => 'image/gif',
+		'GIF89a'            => 'image/gif',
+		'%PDF'              => 'application/pdf',
+		'OggS'              => 'application/ogg',
+		'fLaC'              => 'audio/flac',
+		'ID3'               => 'audio/mpeg',
+		"PK\x03\x04"        => 'application/zip',
+	);
+	foreach my $sig ( keys %magic ) {
+		return $magic{$sig} if substr($head, 0, length $sig) eq $sig;
+	}
+	if (substr($head, 0, 4) eq 'RIFF' && length $head >= 12) {
+		my $kind = substr($head, 8, 4);
+		return 'image/webp' if $kind eq 'WEBP';
+		return 'audio/wav'  if $kind eq 'WAVE';
+		return 'video/avi'  if $kind eq 'AVI ';
+	}
+	return 'video/mp4' if substr($head, 4, 4) eq 'ftyp';
+	# the EBML doctype names the flavour a little further in
+	my $doc = substr($head, 0, 64);
+	return 'video/webm' if index($doc, 'webm') >= 0 || index($doc, 'matroska') >= 0;
+	$plaintext_ft ||= File::Type->new();
+	my $fd = eval { $plaintext_ft->checktype_contents($head) };
+	return (defined $fd && $fd ne 'application/octet-stream') ? $fd : undef;
+}
+
 sub open_file {
 	my ($in_path, $secret, $standard, $nopad) = @_;
 	my $container = eval { &read_file($in_path) };
@@ -10952,15 +10991,14 @@ sub file_decrypter() {
 	# One credential list and one sniffer for the whole job, not a DB query and a
 	# fresh File::Type per file.
 	my @secrets;
+	push @secrets, $suds if defined $suds && length $suds;
 	my $passwords = &subs::db_query('select * from security where level != ? and level != ? order by server_time DESC','padlock','door');
 	foreach my $p ( @{ $passwords->hashes } ) {
 		my $secret = &subs::decrypter($suds, $p->{'credential'});
 		push @secrets, $secret if defined $secret && length $secret;
 	}
-	my $ft = File::Type->new();
 	my $inspect = sub {
-		my $fd = $ft->checktype_contents($_[0]);
-		return ($fd ne 'application/octet-stream' || ($_[0] =~ /webm/)) ? $fd : undef;
+		return &plaintext_verdict($_[0]);
 	};
 	foreach my $filing ( @{$filings} ) {
 		my $files = eval { return decode_json $filing->{'file'} } || [];

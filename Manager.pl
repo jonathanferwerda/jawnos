@@ -1561,6 +1561,11 @@ sub rock_and_roll($c) {
 			# Decrypt each stored credential once, then let sealed_file_open try them
 			# against a 16 KB prefix instead of the whole file.
 			my @secrets;
+			# The current key is a candidate of its own: a file sealed while the
+			# person was closing a window used the session suds, which need not be
+			# one of the stored credentials below. WebM/thumb files here are sealed
+			# with it, and without it they could not be opened at all.
+			push @secrets, $suds if defined $suds && length $suds;
 			foreach my $p ( @{ $passwords->hashes } ) {
 				my $secret = &subs::decrypter($suds, $p->{'credential'}, $appt_server_time);
 				push @secrets, $secret if defined $secret && length $secret;
@@ -1577,10 +1582,10 @@ sub rock_and_roll($c) {
 					elsif ($end >= $start) { $range = [ $start, $end - $start + 1 ] }
 				}
 			}
-			my $ft = File::Type->new();
 			my $inspect = sub {
-				my $fd = $ft->checktype_contents($_[0]);
-				return ($fd ne 'application/octet-stream' || ($file =~ /webm/i)) ? $fd : undef;
+				# the plaintext's own magic, never the path: a webm that File::Type
+				# calls octet-stream must still reject a wrong credential
+				return &subs::plaintext_verdict($_[0]);
 			};
 			# A whole-file request for a big sealed file streams: the key is known
 			# after the prefix probe, so the body can start before it is all decrypted.
@@ -13949,6 +13954,7 @@ sub sealed_file_bytes {
 	return read_file($file) unless $file =~ /\.enc$/i;
 	my $standard = &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 	my @secrets;
+	push @secrets, $suds if defined $suds && length $suds;
 	my $pwords = &subs::db_query('select * from security where level != ? and level != ? order by server_time DESC', 'padlock', 'door')->hashes;
 	foreach my $p ( @{$pwords} ) {
 		my $secret = &subs::decrypter($suds, $p->{'credential'});
@@ -13960,12 +13966,7 @@ sub sealed_file_bytes {
 	foreach my $s ( @{ &subs::note_encryption_standards() } ) {
 		push @standards, $s unless grep { $_ eq $s } @standards;
 	}
-	my $ft = File::Type->new();
-	my $inspect = sub {
-		my $fd = $ft->checktype_contents($_[0]);
-		return $fd ne 'application/octet-stream' ? $fd : undef;
-	};
-	my $opened = &subs::sealed_file_open($file, \@secrets, \@standards, 0, $inspect);
+	my $opened = &subs::sealed_file_open($file, \@secrets, \@standards, 0, sub { return &subs::plaintext_verdict($_[0]); });
 	return $opened ? $opened->{'data'} : undef;
 }
 
@@ -18685,8 +18686,8 @@ sub merge_table_rows {
 	# `single` tombstone drops the whole row; a `file` tombstone removes just
 	# the named attachment, so an appointment with surviving photos stays.
 	my (%tombstone_single, %tombstone_file);
-	if ($q eq 'appointments') {
-		foreach my $tomb ( @{ &subs::db_query('select uuid, scope, additional from sync_log where tbl = ?', 'appointments')->hashes || [] } ) {
+	if ($q eq 'appointments' || $q eq 'mailbox') {
+		foreach my $tomb ( @{ &subs::db_query('select uuid, scope, additional from sync_log where tbl = ?', $q)->hashes || [] } ) {
 			my $scope = $tomb->{'scope'} || '';
 			if ($scope eq 'single') { $tombstone_single{$tomb->{'uuid'}} = 1; }
 			elsif ($scope eq 'file') {
@@ -18752,7 +18753,7 @@ sub merge_table_rows {
 			}
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
-							next ROW if $q eq 'appointments' && $tombstone_single{$r->{'uuid'}};
+							next ROW if ($q eq 'appointments' || $q eq 'mailbox') && $tombstone_single{$r->{'uuid'}};
 							$percentage = $results_size ? sprintf("%.2f", $n / $results_size * 100) : 0;
 							if ($sync_job && &subs::rightNow() >= ($job_alert + 250)) {
 								my %progress = (current => $n);

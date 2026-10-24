@@ -28,11 +28,10 @@ my $suds = &subs::suds_grabber();
 my @standards = @{ &subs::note_encryption_standards() };
 # Without a verdict every secret "opens" the file: the first one always wins and
 # the probe writes ciphertext, which ImageMagick then refuses. The verdict is what
-# tells sealed_file_open which secret is the right one.
-my $ft = File::Type->new();
+# tells sealed_file_open which secret is the right one. The current suds is a
+# candidate of its own - a file sealed on window close used it directly.
 my $inspect = sub {
-	my $verdict = $ft->checktype_contents($_[0]);
-	return ($verdict ne 'application/octet-stream') ? $verdict : undef;
+	return &subs::plaintext_verdict($_[0]);
 };
 my $rows = &subs::db_query('select uuid, app, type, server_time, file from appointments where file is not null and type = ?', 'image')->hashes;
 
@@ -49,6 +48,7 @@ foreach my $appt ( @{$rows} ) {
 		my $stamp = $f->{'server_time'} || $appt->{'server_time'};
 		my $passwords = &subs::db_query('select * from security where level != ? and level != ? and timestamp <= ? order by timestamp DESC', 'padlock', 'door', $stamp);
 		my @secrets;
+		push @secrets, $suds if defined $suds && length $suds;
 		foreach my $p ( @{ $passwords->hashes } ) {
 			my $secret = &subs::decrypter($suds, $p->{'credential'}, $stamp);
 			push @secrets, $secret if defined $secret && length $secret;
