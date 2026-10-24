@@ -25942,9 +25942,17 @@ sub window_maker($type,$timestamp) {
 	my $window_ink = &subs::contrast_ink($window_colour);
 	my $window_dark_ink = &subs::contrast_ink($window_dark);
 
+	# A fresh window's size. The appointment wrapper's collapsed content - the
+	# header, tape row, app_act row, group toggles, five fields, notes and the
+	# evaluation headline - fits with room to spare and no app_act panel open;
+	# the width keeps the five fields readable without wrapping. A window the
+	# person has sized for themselves keeps its own dimensions.
+	my $default_width = 480;
+	my $default_height = 640;
+
 	my $display =
 		'<div class="wind" id="window_' . $timestamp . '" pre_dimensioned="' . $pre_dimensioned . '"' . $terminal_attr . $window_instance_attr . '  style="background-color:var(--window, var(--panel));
-			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || 411) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || 546) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
+			position:fixed;left:' . ($settings->{'dimensions'}->{'left'}) . 'px;top:' . ($settings->{'dimensions'}->{'top'} || 100) . 'px;width:' . ($settings->{'dimensions'}->{'width'} || $default_width) . 'px;height:' . ($settings->{'dimensions'}->{'height'} || $default_height) . 'px" app="'. $app_attr .'" visible="yes" timestamp="' . $timestamp . '" navigation="' . ($settings->{'navigation'} || 'once') . '"
 			locked="yes" current_information="' . $settings->{'ci'} . '" scrollTop="' . $settings->{'scrollTop'} . '">
 			<div id="top_navbar_' . $timestamp . '" class="top_navbar" app="' . $app_attr . '" background_colour="' . $window_colour . '" data-appt-tint="yes" style="--appt-dark:' . $window_dark . ';--appt-dark-ink:' . $window_dark_ink . ';height:var(--navbar_h, 36px);max-height:var(--navbar_h, 36px);position:absolute;width:100%;border:var(--window_border, 3px) solid var(--window_border_colour, var(--line));background-color:'.$window_colour .
 				';" app="' . $app_attr .'">
