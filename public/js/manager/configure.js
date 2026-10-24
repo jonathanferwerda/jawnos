@@ -3107,6 +3107,62 @@ $(document).on('change', '.oauth_client_field', function() {
 	});
 });
 
+// ---- DNS (Configure -> Plat -> DNS) ----------------------------------------
+// The credential a wildcard certificate is issued through. A token is sealed
+// server-side and never returned, so a saved secret shows as "set" and a blank
+// field leaves it alone. Changing the provider drops the old provider's secrets.
+function dnsPanelRefresh() {
+	$.get('/manager/configure/dns_panel', function(r) { $('#plat_dns').html(r); });
+}
+$(document).on('click', '#dns_client_add', function() {
+	$.post('/manager/configure/dns_client/add', {}, function() {
+		jawnosPlatTabShow('plat_dns', true);
+		dnsPanelRefresh();
+	});
+});
+$(document).on('click', '.dns_client_remove', function() {
+	$.post('/manager/configure/dns_client/remove', { uuid: $(this).attr('uuid') }, function() { dnsPanelRefresh(); });
+});
+$(document).on('change', '.dns_client_field', function() {
+	var t = $(this);
+	var field = t.attr('field');
+	if ((field === 'token' || field === 'key' || field === 'secret') && !t.val()) { return; }
+	$.post('/manager/configure/dns_client/save', { uuid: t.attr('uuid'), field: field, value: t.val() }, function() {
+		if (field === 'provider' || field === 'token' || field === 'key' || field === 'secret') { dnsPanelRefresh(); }
+	});
+});
+$(document).on('click', '.dns_client_test', function() {
+	var uuid = $(this).attr('uuid');
+	var status = $('.dns_client_status[uuid="' + uuid + '"]');
+	status.text('testing…');
+	$.post('/manager/configure/dns_client/test', { uuid: uuid }, function(r) {
+		status.text((r && r.message) || (r && r.result) || 'no answer');
+	}, 'json');
+});
+$(document).on('click', '.dns_client_from_ai, .dns_client_to_ai', function() {
+	var uuid = $(this).attr('uuid');
+	var to_ai = $(this).hasClass('dns_client_to_ai');
+	var status = $('.dns_client_status[uuid="' + uuid + '"]');
+	$.post(to_ai ? '/manager/configure/dns_client/to_ai' : '/manager/configure/dns_client/from_ai', { uuid: uuid }, function(r) {
+		status.text((r && r.message) || (r && r.result) || 'no answer');
+		if (r && r.result === 'ok') { dnsPanelRefresh(); }
+	}, 'json');
+});
+$(document).on('click', '#tls_issue_now', function() {
+	var status = $('#tls_issue_status');
+	status.text('issuing…');
+	$.post('/manager/tls/issue', { signatorial: $(this).attr('signatorial') }, function(r) {
+		if (!r || !r.ok) { status.text((r && r.error) || 'could not start'); return; }
+		var poll = setInterval(function() {
+			$.get('/manager/tls/status', function(s) {
+				if (!s || !s.message) { return; }
+				status.text('Last run: ' + (s.ok ? 'ok' : 'failed') + ' — ' + s.message);
+				if (s.message !== 'issuing') { clearInterval(poll); }
+			}, 'json');
+		}, 3000);
+	}, 'json');
+});
+
 // ---- crypto (Configure -> Plat -> Crypto) ----------------------------------
 // Wallets are accounts; this page owns the asset list, the rate snapshot and the
 // valuation. A wallet field saves to its own app and never leaves the panel.

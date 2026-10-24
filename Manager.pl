@@ -61,6 +61,7 @@ no warnings 'uninitialized';
 no warnings 'once';
 require "./Websocket.pl";
 require "./subroutines.pl";
+require "./tls.pl";
 require "./Music.pl";
 require "./hooks.pl";
 require "./tunnel.pl";
@@ -7492,6 +7493,107 @@ post '/manager/configure/oauth_client/remove' => sub($c) {
 	@{$clients} = grep { ($_->{'uuid'} || '') ne $uuid } @{$clients};
 	&subs::oauth_clients_store($clients);
 	$c->render(json => { result => 'ok' });
+};
+
+# ---- DNS credentials (Configure -> Plat -> DNS) ----------------------------
+# The provider a certificate is issued through. A wildcard can only be proved
+# by DNS-01, which needs no inbound port - the only challenge a machine behind
+# NAT can pass. The token is sealed with the house key, the same as an OAuth
+# client secret, so it syncs as ciphertext and is never shown again.
+get '/manager/configure/dns_panel' => sub($c) {
+	$c->render(text => $c->render_to_string('configure/dns_clients'));
+};
+
+post '/manager/configure/dns_client/add' => sub($c) {
+	my $clients = &tls::dns_clients();
+	push @{$clients}, { uuid => &subs::random_string_creator(15), name => 'New provider', provider => 'cloudflare', zone => '' };
+	&tls::dns_clients_store($clients);
+	$c->render(json => { result => 'ok' });
+};
+
+post '/manager/configure/dns_client/save' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $field = $c->param('field') || '';
+	my $value = $c->param('value');
+	$value = '' unless defined $value;
+	my $clients = &tls::dns_clients();
+	my ($client) = grep { ($_->{'uuid'} || '') eq $uuid } @{$clients};
+	return $c->render(json => { result => 'no client' }) unless $client;
+	return $c->render(json => { result => 'bad field' }) unless $field =~ /^(name|provider|zone|token|key|secret)$/;
+	if ($field =~ /^(?:token|key|secret)$/) {
+		return $c->render(json => { result => 'empty' }) unless length $value;
+		$value = &tls::dns_seal($value, &subs::session_suds($c));
+	}
+	$client->{$field} = $value;
+	# A different provider cannot use the old one's secrets: drop them so a
+	# Cloudflare token is never sent to GoDaddy by accident.
+	if ($field eq 'provider') {
+		foreach my $k ( qw/token key secret/ ) { $client->{$k} = ''; }
+	}
+	&tls::dns_clients_store($clients);
+	$c->render(json => { result => 'ok' });
+};
+
+post '/manager/configure/dns_client/remove' => sub($c) {
+	my $uuid = $c->param('uuid') || '';
+	my $clients = &tls::dns_clients();
+	@{$clients} = grep { ($_->{'uuid'} || '') ne $uuid } @{$clients};
+	&tls::dns_clients_store($clients);
+	$c->render(json => { result => 'ok' });
+};
+
+post '/manager/configure/dns_client/test' => sub($c) {
+	my $client = &tls::dns_client($c->param('uuid') || '');
+	return $c->render(json => { result => 'no client' }) unless $client;
+	my ($ok, $message) = &tls::dns_check($client);
+	$c->render(json => { result => ($ok ? 'ok' : 'error'), message => $message });
+};
+
+# Cloudflare is the one provider the AI panel also holds a token for, so either
+# direction copies it, sealed. No other provider's credential is shared.
+post '/manager/configure/dns_client/from_ai' => sub($c) {
+	my $client = &tls::dns_client($c->param('uuid') || '');
+	return $c->render(json => { result => 'no client' }) unless $client;
+	return $c->render(json => { result => 'error', message => 'Cloudflare only' }) unless ($client->{'provider'} || '') eq 'cloudflare';
+	my $suds = &subs::session_suds($c);
+	my $stored = &subs::setting_grabber({ app => 'mail', setting => 'cloudflare_token' });
+	return $c->render(json => { result => 'error', message => 'no Cloudflare token under Plat -> AI' }) unless length $stored;
+	my $plain = eval { &subs::note_decrypter($suds, $stored) } || '';
+	$plain = $stored unless length $plain;
+	my $clients = &tls::dns_clients();
+	my ($row) = grep { ($_->{'uuid'} || '') eq $client->{'uuid'} } @{$clients};
+	$row->{'token'} = &tls::dns_seal($plain, $suds);
+	&tls::dns_clients_store($clients);
+	$c->render(json => { result => 'ok' });
+};
+
+post '/manager/configure/dns_client/to_ai' => sub($c) {
+	my $client = &tls::dns_client($c->param('uuid') || '');
+	return $c->render(json => { result => 'no client' }) unless $client;
+	return $c->render(json => { result => 'error', message => 'Cloudflare only' }) unless ($client->{'provider'} || '') eq 'cloudflare';
+	my $plain = &tls::dns_plain($client->{'token'});
+	return $c->render(json => { result => 'error', message => 'save a token first' }) unless length $plain;
+	my $suds = &subs::session_suds($c);
+	&subs::setting_setter({ app => 'mail', setting => 'cloudflare_token', value => &subs::note_encrypter($suds, $plain) });
+	$c->render(json => { result => 'ok' });
+};
+
+# Issue or renew from the panel. Local only and signatorial-gated: the run
+# writes DNS records and restarts the tree when the certificate changes.
+post '/manager/tls/issue' => sub($c) {
+	my $sig = $c->param('signatorial') || '';
+	return $c->render(json => { ok => 0, error => 'not authorised' }) unless length $sig && $sig eq &subs::signatorial_designer();
+	my $ip = $c->tx->remote_address || '';
+	return $c->render(json => { ok => 0, error => 'local only' }) unless $ip eq '127.0.0.1' || $ip eq '::1' || $ip eq '::ffff:127.0.0.1';
+	&tls::tls_status_write({ at => POSIX::strftime('%Y-%m-%d %H:%M', localtime), ok => 0, message => 'issuing' });
+	&subs::subprocessor(sub {
+		system($^X, 'scripts/tls_issue.pl', '--renew');
+	}, { name => 'tls issue' });
+	$c->render(json => { ok => 1 });
+};
+
+get '/manager/tls/status' => sub($c) {
+	$c->render(json => &tls::tls_status_read());
 };
 
 post '/manager/configure/me_setting' => sub($c) {

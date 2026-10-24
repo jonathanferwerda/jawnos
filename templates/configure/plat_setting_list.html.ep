@@ -56,7 +56,7 @@
 	# Remember which Plat sub-tab was last open on this device, so reopening the
 	# panel returns to the page the person was using.
 	my $plat_tab = &subs::setting_grabber({ app => '__president', setting => 'plat_tab' }) || 'plat_ai';
-	$plat_tab = 'plat_ai' unless $plat_tab =~ /^plat_(?:ai|oauth|crypto)$/;
+	$plat_tab = 'plat_ai' unless $plat_tab =~ /^plat_(?:ai|oauth|crypto|dns)$/;
 %>
 <div class="cfg">
 	<h2>Platform</h2>
@@ -64,6 +64,7 @@
 		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_ai') { %>active<% } %>" tab="plat_ai">AI</button>
 		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_oauth') { %>active<% } %>" tab="plat_oauth">OAuth2</button>
 		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_crypto') { %>active<% } %>" tab="plat_crypto">Crypto</button>
+		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_dns') { %>active<% } %>" tab="plat_dns">DNS</button>
 	</div>
 	<div id="plat_ai" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_ai' ? '' : 'display:none;' %>">
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
@@ -309,5 +310,8 @@
 	</div>
 	<div id="plat_crypto" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_crypto' ? '' : 'display:none;' %>">
 		<%= include 'configure/crypto_setting_list' %>
+	</div>
+	<div id="plat_dns" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_dns' ? '' : 'display:none;' %>">
+		<%= include 'configure/dns_clients' %>
 	</div>
 </div>

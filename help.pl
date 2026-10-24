@@ -773,7 +773,7 @@ our %topic = (
 		steps => [
 			'Open Configure.',
 			'Use the tabs to move between appearance, devices, utilities and the mesh.',
-			'The Plat tab has two pages: AI, which holds every AI model choice and provider key, and OAuth2, where an app registration (a client id, secret and tenant) is added once with Add client and shared by any number of mail accounts. The other tabs hold the rest of the house\'s settings.',
+			'The Plat tab has four pages: AI, which holds every AI model choice and provider key; OAuth2, where an app registration (a client id, secret and tenant) is added once with Add client and shared by any number of mail accounts; Crypto, which holds the assets, the rate snapshot and how a holding is valued; and DNS, where the DNS provider\'s API token is saved so the house can prove it owns its domain and renew a wildcard certificate without opening a port. The other tabs hold the rest of the house\'s settings.',
 			'For speech, pick a Say voice under Misc and press Preview to hear it.',
 			'Pick the interface language at the top of Misc; the page reloads in the language you chose, and every device in the house follows it.',
 			'To give an app a ringtone, open its card on the App panel, tap Notifications, and pick a sound — or add your own sound from there.',

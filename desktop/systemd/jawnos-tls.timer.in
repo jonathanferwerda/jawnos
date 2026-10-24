@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily JawnOS TLS renewal check
+Documentation=https://github.com/jonathanferwerda/jawnos
+
+[Timer]
+# Let's Encrypt asks for two runs a day at a random minute; certbot renews only
+# when less than a third of the lifetime is left, so a daily run is plenty.
+OnCalendar=*-*-* 04:17:00
+RandomizedDelaySec=3600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

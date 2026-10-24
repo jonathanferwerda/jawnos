@@ -1,0 +1,86 @@
+<%# Configure -> Plat -> DNS. The DNS credentials a certificate is issued
+    through, plus the last run's state. Rendered inside the Plat page's DNS tab
+    and refetched on its own (/manager/configure/dns_panel) after a change.
+
+    A wildcard certificate can only be validated by DNS-01, and DNS-01 needs no
+    inbound connection - which is what makes it work on a machine behind NAT.
+    The token is sealed with the house key, exactly like an OAuth client secret.
+%>
+<% no warnings 'uninitialized'; %>
+<%
+	my $clients = &tls::dns_clients();
+	my $providers = &tls::dns_providers();
+	my $config = &subs::config_reader() || {};
+	my $domain = $config->{'domain'} || '';
+	my $email = $config->{'email'} || '';
+	my $status = &tls::tls_status_read();
+	my $sig = &subs::signatorial_designer();
+	my %pname = map { $_->{'id'} => $_->{'label'} } @{$providers};
+%>
+<p class="cfg-note">A wildcard certificate (<b>*.<%= $domain =~ /\./ ? $domain : 'example.com' %></b>) can only be proved through a DNS TXT record, so the house writes that record and removes it again. No inbound port is opened, so a machine behind NAT can still renew. The token is sealed with the house key and is never shown again after it is saved. The issuer is <b>scripts/tls_issue.pl</b>, run by the <b>jawnos-tls.timer</b> systemd timer; the certificate lands in <b>server/fullchain.pem</b> and <b>server/privkey.pem</b>, which the dock server already reads.</p>
+<div class="cfg-note" style="margin-bottom:10px;">
+	Domain: <b><%= length($domain) ? $domain : 'not set' %></b> &middot; email: <b><%= length($email) ? $email : 'not set' %></b> &middot; these come from <b>config.json</b>.
+	<% if (!length($domain) || $domain =~ /^(?:127\.|localhost$|\[)/) { %><span style="color:#e5484d;">Set a real domain there before issuing.</span><% } %>
+</div>
+<div id="dns_client_list">
+	<% if (!scalar @{$clients}) { %>
+		<p class="cfg-note">No DNS credentials yet. Press <b>Add provider</b>.</p>
+	<% } %>
+	<% foreach my $dc ( @{$clients} ) { %>
+		<% my $pid = $dc->{'provider'} || 'cloudflare'; my $prov = &tls::dns_provider($pid); %>
+		<div class="cfg-card dns_client" uuid="<%= $dc->{'uuid'} %>">
+			<div class="cfg-row">
+				<label>Name</label>
+				<input type="text" class="dns_client_field" field="name" uuid="<%= $dc->{'uuid'} %>" value="<%= $dc->{'name'} %>" placeholder="House DNS">
+			</div>
+			<div class="cfg-row">
+				<label>Provider</label>
+				<select class="dns_client_field" field="provider" uuid="<%= $dc->{'uuid'} %>">
+					<% foreach my $p ( @{$providers} ) { %>
+						<option value="<%= $p->{'id'} %>" <% if ($p->{'id'} eq $pid) { %>selected<% } %>><%= $p->{'label'} %></option>
+					<% } %>
+				</select>
+			</div>
+			<div class="cfg-row">
+				<label>Zone</label>
+				<input type="text" class="dns_client_field" field="zone" uuid="<%= $dc->{'uuid'} %>" value="<%= $dc->{'zone'} %>" placeholder="example.com">
+			</div>
+			<% foreach my $f ( @{ $prov ? $prov->{'fields'} : [] } ) { %>
+				<% my ($key, $label) = @{$f}; my $set = length($dc->{$key} || '') ? 1 : 0; %>
+				<div class="cfg-row">
+					<label><%= $label %></label>
+					<span class="cfg-inline">
+						<input type="password" class="dns_client_field" field="<%= $key %>" uuid="<%= $dc->{'uuid'} %>" value="" placeholder="<%= $set ? '••• set — type to replace' : 'paste the credential' %>" autocomplete="off" spellcheck="false">
+						<% if ($set) { %><span class="cfg-note" style="margin:0;white-space:nowrap;">✔ set</span><% } %>
+					</span>
+				</div>
+			<% } %>
+			<% if ($pid eq 'manual') { %>
+				<p class="cfg-note" style="margin:0;">Manual mode writes nothing. An issue run prints the exact TXT record to add, then waits for the person to press Enter. It cannot run from the timer.</p>
+			<% } %>
+			<% if ($pid eq 'cloudflare') { %>
+				<p class="cfg-note" style="margin:0;">The same Cloudflare token can serve the AI provider (<b>Cloudflare Workers AI</b>) under Plat &rarr; AI. Either direction copies it, sealed.</p>
+			<% } %>
+			<div class="cfg-row" style="flex-wrap:wrap;gap:8px;">
+				<button class="button dns_client_test" uuid="<%= $dc->{'uuid'} %>">Test</button>
+				<% if ($pid eq 'cloudflare') { %>
+					<button class="button dns_client_from_ai" uuid="<%= $dc->{'uuid'} %>">Use the AI token</button>
+					<button class="button dns_client_to_ai" uuid="<%= $dc->{'uuid'} %>">Use for AI</button>
+				<% } %>
+				<button class="button dns_client_remove" uuid="<%= $dc->{'uuid'} %>" style="border-color:#e5484d;">Remove</button>
+				<span class="cfg-note dns_client_status" uuid="<%= $dc->{'uuid'} %>" style="margin:0;"></span>
+			</div>
+		</div>
+	<% } %>
+</div>
+<div class="cfg-row" style="flex-wrap:wrap;gap:8px;">
+	<button id="dns_client_add" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">+ Add provider</button>
+	<button id="tls_issue_now" class="button" signatorial="<%= $sig %>" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Issue / renew now</button>
+	<span id="tls_issue_status" class="cfg-note" style="margin:0;">
+		<% if ($status->{'at'}) { %>
+			Last run <b><%= $status->{'at'} %></b>: <%= $status->{'ok'} ? 'ok' : 'failed' %> — <%= $status->{'message'} || '' %>
+		<% } else { %>
+			No run yet on this machine.
+		<% } %>
+	</span>
+</div>
