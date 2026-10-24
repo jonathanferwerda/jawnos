@@ -1,0 +1,498 @@
+// The JawnOS on-screen keyboard.
+//
+// One dock serves every editable field in the manager: letters, a calculator for
+// number fields, and a page of special characters. It suppresses the platform
+// keyboard with inputmode="none", so the viewport never changes shape. On a phone
+// it is the default; a desk keeps its hardware keyboard until the Chat keyboard
+// button asks for the dock.
+//
+// Placement: inside the Chat composer it is an ordinary block (the composer makes
+// room for it); inside another window it rides the window's foot; outside a
+// window it is fixed above the taskbar. The focused field is scrolled clear of it.
+
+var jawnSoftField = null;
+var jawnSoftMode = 'letters';
+var jawnSoftShift = false;
+var jawnSoftNumeric = false;
+var jawnSoftExpr = '';
+var jawnSoftSetting = false;
+var jawnSoftKeyAt = 0;
+var jawnSoftHideTimer = null;
+
+function softKbOn() {
+	var stored = localStorage.getItem('jawn_soft_keyboard');
+	if (stored == 'off') { return false; }
+	if (stored == 'on') { return true; }
+	if (typeof windowPhoneChecker == 'function') { return windowPhoneChecker(); }
+	return /Android|iPhone|iPad|iPod|Tablet|Mobile/i.test(navigator.userAgent || '');
+}
+
+function softKbRoot(el) {
+	if (!el) { return null; }
+	if (el.isContentEditable) { return el.closest('[contenteditable]') || el; }
+	return el;
+}
+
+function softKbEditable(el) {
+	if (!el || el.nodeType != 1) { return false; }
+	if (el.disabled || el.readOnly) { return false; }
+	if (el.getAttribute('data-soft_keyboard') == 'off') { return false; }
+	if (el.isContentEditable) { return true; }
+	var tag = el.tagName.toLowerCase();
+	if (tag == 'textarea') { return true; }
+	if (tag != 'input') { return false; }
+	var type = (el.getAttribute('type') || 'text').toLowerCase();
+	return ['text', 'search', 'email', 'url', 'password', 'tel', 'number'].indexOf(type) >= 0;
+}
+
+function softKbNumeric(el) {
+	if (!el) { return false; }
+	var type = (el.getAttribute('type') || '').toLowerCase();
+	var mode = (el.getAttribute('inputmode') || el.getAttribute('data-soft_inputmode') || '').toLowerCase();
+	return type == 'number' || mode == 'numeric' || mode == 'decimal';
+}
+
+function softKbSuppress(el) {
+	el = softKbRoot(el);
+	if (!el || el.getAttribute('data-soft_inputmode') != null) { return; }
+	el.setAttribute('data-soft_inputmode', el.getAttribute('inputmode') || '');
+	el.setAttribute('inputmode', 'none');
+	if (el.isContentEditable) { el.setAttribute('virtualkeyboardpolicy', 'manual'); }
+}
+
+function softKbRestore(el) {
+	el = softKbRoot(el);
+	if (!el) { return; }
+	var prior = el.getAttribute('data-soft_inputmode');
+	if (prior != null) {
+		if (prior) { el.setAttribute('inputmode', prior); }
+		else { el.removeAttribute('inputmode'); }
+		el.removeAttribute('data-soft_inputmode');
+	}
+	if (el.isContentEditable) { el.removeAttribute('virtualkeyboardpolicy'); }
+}
+
+function softKbLabel(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+function softKbShow(el) {
+	if (!softKbOn()) { return; }
+	el = softKbRoot(el);
+	if (!softKbEditable(el)) { return; }
+	var dock = $('#jawn_soft_keyboard');
+	if (!dock.length) { return; }
+	var changed = jawnSoftField !== el;
+	jawnSoftField = el;
+	jawnSoftNumeric = softKbNumeric(el);
+	softKbSuppress(el);
+	if (changed) {
+		jawnSoftExpr = jawnSoftNumeric ? (el.value || '') : '';
+		softKbShiftSet(false);
+	}
+	softKbPlace(el);
+	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	softKbModeSet(jawnSoftNumeric ? 'calc' : 'letters');
+	softKbReserve();
+	softKbScrollField(el);
+	var chat = el.id == 'message';
+	$('#chat_soft_toggle').toggleClass('active', chat).attr('aria-expanded', chat ? 'true' : 'false');
+}
+
+function softKbHide() {
+	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
+	$('.chat_shell').css('padding-bottom', '');
+	jawnSoftField = null;
+	$('#chat_soft_toggle').removeClass('active').attr('aria-expanded', 'false');
+}
+
+function softKbVisible() {
+	return $('#jawn_soft_keyboard').is(':visible');
+}
+
+function softKbPlace(el) {
+	var dock = $('#jawn_soft_keyboard');
+	// The dock always lives in the body: a window that re-renders or closes
+	// cannot take the keyboard with it.
+	if (!dock.parent().is('body')) { $('body').append(dock); }
+	dock.removeClass('soft_kb_in_window soft_kb_inline');
+}
+
+// Keep the Chat composer above the keys when the window reaches the foot of
+// the screen. The window keeps its shape; only the Chat shell gives up the
+// overlap, and the message list takes the rest.
+function softKbReserve() {
+	$('.chat_shell').css('padding-bottom', '');
+	var dock = $('#jawn_soft_keyboard');
+	if (!dock.is(':visible') || !jawnSoftField) { return; }
+	var chat = $(jawnSoftField).closest('.chat_shell');
+	if (!chat.length) { return; }
+	var win = chat.closest('.wind');
+	if (!win.length) { return; }
+	var dockTop = dock[0].getBoundingClientRect().top;
+	var winRect = win[0].getBoundingClientRect();
+	var bottom = Math.min(winRect.bottom, window.innerHeight);
+	var overlap = Math.max(0, bottom - dockTop);
+	if (overlap > 0) { chat.css('padding-bottom', overlap + 'px'); }
+}
+
+function softKbScrollField(el) {
+	if (!el) { return; }
+	if (el.id == 'message' && $(el).closest('.chat_shell').length) { return; }
+	setTimeout(function () {
+		var dock = $('#jawn_soft_keyboard');
+		if (!dock.is(':visible')) { return; }
+		var h = dock.outerHeight() || 0;
+		el.style.scrollMarginBottom = (h + 18) + 'px';
+		el.style.scrollMarginTop = '18px';
+		try { el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' }); }
+		catch (err) { el.scrollIntoView(); }
+	}, 30);
+}
+
+function softKbModeSet(mode) {
+	if (jawnSoftNumeric && mode == 'letters') { mode = 'calc'; }
+	jawnSoftMode = mode;
+	var dock = $('#jawn_soft_keyboard');
+	dock.find('.soft_kb_mode').removeClass('active').filter('[data-kb_mode="' + mode + '"]').addClass('active');
+	dock.find('.soft_kb_panel').prop('hidden', true).filter('[data-kb_panel="' + mode + '"]').prop('hidden', false);
+	dock.find('.soft_kb_title').text(mode == 'calc' ? softKbLabel('Calculator') : (mode == 'symbols' ? softKbLabel('Special characters') : softKbLabel('Keyboard')));
+	dock.find('.soft_kb_mode[data-kb_mode="letters"]').prop('hidden', jawnSoftNumeric);
+	if (mode == 'calc') { softKbCalcRender(); }
+	softKbReserve();
+	if (jawnSoftField) { softKbScrollField(jawnSoftField); }
+}
+
+function softKbShiftSet(on) {
+	jawnSoftShift = !!on;
+	$('#jawn_soft_keyboard .soft_kb_letter').each(function () {
+		var k = $(this).attr('data-kb_key') || '';
+		$(this).text(jawnSoftShift ? k.toUpperCase() : k);
+	});
+	$('#jawn_soft_keyboard .soft_kb_key[data-kb_key="shift"]').toggleClass('active', jawnSoftShift);
+}
+
+function softKbNotify(el) {
+	if (!el) { return; }
+	if (window.requestAnimationFrame) {
+		requestAnimationFrame(function () { $(el).trigger('input'); });
+	}
+	else { setTimeout(function () { $(el).trigger('input'); }, 0); }
+}
+
+function softKbInsert(text) {
+	var el = jawnSoftField;
+	if (!el) { return; }
+	if (el.isContentEditable) {
+		el.focus({ preventScroll: true });
+		var ok = false;
+		try { ok = document.execCommand('insertText', false, text); } catch (err) { ok = false; }
+		if (!ok) {
+			var sel = window.getSelection();
+			if (sel && sel.rangeCount) {
+				var range = sel.getRangeAt(0);
+				range.deleteContents();
+				var node = document.createTextNode(text);
+				range.insertNode(node);
+				range.setStartAfter(node);
+				range.collapse(true);
+				sel.removeAllRanges();
+				sel.addRange(range);
+			}
+		}
+		softKbNotify(el);
+		return;
+	}
+	var start = (el.selectionStart == null) ? el.value.length : el.selectionStart;
+	var end = (el.selectionEnd == null) ? start : el.selectionEnd;
+	try { el.setRangeText(text, start, end, 'end'); }
+	catch (err) {
+		el.value = el.value.slice(0, start) + text + el.value.slice(end);
+		el.selectionStart = el.selectionEnd = start + text.length;
+	}
+	try { el.focus({ preventScroll: true }); } catch (err2) { el.focus(); }
+	softKbNotify(el);
+}
+
+function softKbBackspace() {
+	var el = jawnSoftField;
+	if (!el) { return; }
+	if (el.isContentEditable) {
+		el.focus({ preventScroll: true });
+		try { document.execCommand('delete'); } catch (err) {}
+		softKbNotify(el);
+		return;
+	}
+	var start = (el.selectionStart == null) ? el.value.length : el.selectionStart;
+	var end = (el.selectionEnd == null) ? start : el.selectionEnd;
+	if (start == end) {
+		if (start == 0) { return; }
+		var code = el.value.charCodeAt(start - 1);
+		if (code >= 0xDC00 && code <= 0xDFFF && start >= 2) {
+			var high = el.value.charCodeAt(start - 2);
+			start = (high >= 0xD800 && high <= 0xDBFF) ? start - 2 : start - 1;
+		}
+		else { start--; }
+	}
+	try { el.setRangeText('', start, end, 'end'); }
+	catch (err) {
+		el.value = el.value.slice(0, start) + el.value.slice(end);
+		el.selectionStart = el.selectionEnd = start;
+	}
+	try { el.focus({ preventScroll: true }); } catch (err2) { el.focus(); }
+	softKbNotify(el);
+}
+
+function softKbEnter() {
+	var el = jawnSoftField;
+	if (jawnSoftMode == 'calc') { softKbCalcEquals(); return; }
+	if (!el) { return; }
+	if (el.tagName == 'TEXTAREA' || el.isContentEditable) { softKbInsert('\n'); return; }
+	$(el).trigger($.Event('keydown', { key: 'Enter', keyCode: 13, which: 13 }));
+	$(el).trigger($.Event('keyup', { key: 'Enter', keyCode: 13, which: 13 }));
+}
+
+// ---- calculator ------------------------------------------------------------
+function softKbCalcKey(k) {
+	if (k == '=') { softKbCalcEquals(); return; }
+	if (k == 'clear') { jawnSoftExpr = ''; softKbCalcRender(); softKbCalcSyncNumeric(); return; }
+	if (k == 'backspace') { jawnSoftExpr = jawnSoftExpr.slice(0, -1); softKbCalcRender(); softKbCalcSyncNumeric(); return; }
+	if (k == 'sign') {
+		var m = jawnSoftExpr.match(/(\d*\.?\d+)$/);
+		if (m) {
+			var at = jawnSoftExpr.length - m[1].length;
+			jawnSoftExpr = jawnSoftExpr.slice(0, at) + (m[1].charAt(0) == '-' ? m[1].slice(1) : '-' + m[1]);
+			softKbCalcRender();
+			softKbCalcSyncNumeric();
+		}
+		return;
+	}
+	if (/^[0-9.]$/.test(k) || ['+', '-', '*', '/', '(', ')', '%'].indexOf(k) >= 0) {
+		jawnSoftExpr += k;
+		softKbCalcRender();
+		softKbCalcSyncNumeric();
+	}
+}
+
+// A number field shows a plain number as it is typed, not only after '='.
+function softKbCalcSyncNumeric() {
+	if (!jawnSoftNumeric || !jawnSoftField) { return; }
+	if (!/^-?([0-9]+(\.[0-9]+)?|\.[0-9]+)$/.test(jawnSoftExpr) && jawnSoftExpr != '') { return; }
+	jawnSoftSetting = true;
+	jawnSoftField.value = jawnSoftExpr;
+	$(jawnSoftField).trigger('input');
+	jawnSoftSetting = false;
+}
+
+function softKbCalcRender() {
+	$('#soft_kb_expr').text(jawnSoftExpr || '0');
+	$('#soft_kb_result').text('');
+}
+
+function softKbCalcEquals() {
+	var expr = jawnSoftExpr.trim();
+	if (!expr) { return; }
+	var value = null;
+	try { value = softKbEval(expr); } catch (err) { value = null; }
+	if (value == null || !isFinite(value)) {
+		$('#soft_kb_result').text(softKbLabel('Error'));
+		return;
+	}
+	var out = softKbFormat(value);
+	jawnSoftExpr = out;
+	$('#soft_kb_expr').text(out);
+	$('#soft_kb_result').text('');
+	if (jawnSoftNumeric && jawnSoftField) {
+		jawnSoftSetting = true;
+		jawnSoftField.value = out;
+		try { jawnSoftField.focus({ preventScroll: true }); } catch (err) { jawnSoftField.focus(); }
+		$(jawnSoftField).trigger('input');
+		$(jawnSoftField).trigger('change');
+		jawnSoftSetting = false;
+	}
+	else { softKbInsert(out); }
+}
+
+function softKbFormat(value) {
+	var out = String(Math.round(value * 1e12) / 1e12);
+	if (out.indexOf('e') >= 0 || out.length > 18) { out = String(parseFloat(value.toPrecision(12))); }
+	return out;
+}
+
+// A small recursive-descent evaluation: + - * /, parentheses, unary signs and a
+// postfix percent. No eval, and anything outside that grammar is refused.
+function softKbEval(source) {
+	var s = String(source).replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/\s+/g, '');
+	var i = 0;
+	function factor() {
+		if (s[i] == '+') { i++; return factor(); }
+		if (s[i] == '-') { i++; return -factor(); }
+		if (s[i] == '(') {
+			i++;
+			var v = expression();
+			if (s[i] != ')') { throw new Error('parenthesis'); }
+			i++;
+			return v;
+		}
+		var start = i;
+		while (i < s.length && /[0-9.]/.test(s[i])) { i++; }
+		if (start == i) { throw new Error('number'); }
+		var n = parseFloat(s.slice(start, i));
+		if (!isFinite(n)) { throw new Error('number'); }
+		while (s[i] == '%') { n = n / 100; i++; }
+		return n;
+	}
+	function term() {
+		var v = factor();
+		while (s[i] == '*' || s[i] == '/') {
+			var op = s[i++];
+			var r = factor();
+			v = (op == '*') ? v * r : v / r;
+		}
+		return v;
+	}
+	function expression() {
+		var v = term();
+		while (s[i] == '+' || s[i] == '-') {
+			var op = s[i++];
+			var r = term();
+			v = (op == '+') ? v + r : v - r;
+		}
+		return v;
+	}
+	var result = expression();
+	if (i != s.length) { throw new Error('trailing'); }
+	return result;
+}
+
+// ---- keys ------------------------------------------------------------------
+function softKbKey(k) {
+	if (k == 'shift') { softKbShiftSet(!jawnSoftShift); return; }
+	if (k == 'backspace') {
+		if (jawnSoftMode == 'calc') { softKbCalcKey('backspace'); } else { softKbBackspace(); }
+		return;
+	}
+	if (k == 'enter') { softKbEnter(); return; }
+	if (jawnSoftMode == 'calc') { softKbCalcKey(k); return; }
+	if (k == 'space') { softKbInsert(' '); return; }
+	if (k.length == 1) {
+		softKbInsert(jawnSoftShift ? k.toUpperCase() : k);
+		if (jawnSoftShift) { softKbShiftSet(false); }
+	}
+}
+
+function softKbChar(c) {
+	if (jawnSoftMode == 'calc') {
+		var map = { '×': '*', '÷': '/', '−': '-', '–': '-', '+': '+', '%': '%', '(': '(', ')': ')', '=': '=' };
+		if (map[c] != null) { softKbCalcKey(map[c]); }
+		else if (c == '±') { softKbCalcKey('sign'); }
+		return;
+	}
+	if (jawnSoftField && !jawnSoftNumeric) { softKbInsert(c); }
+}
+
+function softKbPress(b) {
+	if (b.attr('data-kb_mode')) { softKbModeSet(b.attr('data-kb_mode')); return; }
+	if (b.attr('data-kb_action') == 'close') { softKbHide(); return; }
+	if (b.attr('data-kb_char') != null) { softKbChar(b.attr('data-kb_char')); return; }
+	var k = b.attr('data-kb_key');
+	if (k == null) { return; }
+	softKbKey(k);
+}
+
+$(document).on('pointerdown', '#jawn_soft_keyboard button', function (e) {
+	if (e.button != null && e.button != 0) { return; }
+	// act on the press and keep the caret in the field
+	e.preventDefault();
+	jawnSoftKeyAt = Date.now();
+	softKbPress($(this));
+});
+$(document).on('click', '#jawn_soft_keyboard button', function () {
+	if (Date.now() - jawnSoftKeyAt < 600) { return; }
+	softKbPress($(this));
+});
+$(document).on('pointerdown', '#jawn_soft_keyboard', function (e) {
+	if (!$(e.target).closest('button').length) { e.preventDefault(); }
+});
+
+// ---- attaching to fields ---------------------------------------------------
+// Sweep the page and every window it adds: the platform keyboard is told to
+// stay away before the field can ask for it, not after it has opened.
+function softKbSweep(root) {
+	if (!softKbOn() || !$('#jawn_soft_keyboard').length) { return; }
+	$(root).find('input, textarea, [contenteditable="true"]').addBack('input, textarea, [contenteditable="true"]').each(function () {
+		if (softKbEditable(this) && this.getAttribute('data-soft_inputmode') == null) { softKbSuppress(this); }
+	});
+}
+var softKbSweepTimer;
+if (window.MutationObserver) {
+	new MutationObserver(function () {
+		clearTimeout(softKbSweepTimer);
+		softKbSweepTimer = setTimeout(function () { softKbSweep(document); }, 150);
+	}).observe(document.documentElement, { childList: true, subtree: true });
+}
+$(function () { softKbSweep(document); });
+
+document.addEventListener('pointerdown', function (e) {
+	var el = e.target;
+	if (softKbOn() && (softKbEditable(el) || (el.isContentEditable))) { softKbSuppress(el); }
+}, true);
+document.addEventListener('touchstart', function (e) {
+	var el = e.target;
+	if (softKbOn() && (softKbEditable(el) || (el.isContentEditable))) { softKbSuppress(el); }
+}, true);
+
+$(document).on('focusin', function (e) {
+	var el = e.target;
+	if (!softKbOn() || !softKbEditable(el)) { return; }
+	softKbSuppress(el);
+	softKbShow(el);
+});
+
+$(document).on('click', 'input, textarea, [contenteditable="true"]', function () {
+	if (softKbOn() && softKbEditable(this)) { softKbShow(this); }
+});
+
+$(document).on('focusout', function (e) {
+	if (!softKbEditable(e.target)) { return; }
+	clearTimeout(jawnSoftHideTimer);
+	jawnSoftHideTimer = setTimeout(function () {
+		var active = document.activeElement;
+		if ($(active).closest('#jawn_soft_keyboard').length) { return; }
+		if ($(active).is('#chat_soft_toggle')) { return; }
+		if (softKbEditable(active) && softKbOn()) { return; }
+		softKbHide();
+	}, 260);
+});
+
+// A number field typed into from a hardware keyboard keeps the calculator in step.
+$(document).on('input', 'input, textarea', function () {
+	if (this === jawnSoftField && jawnSoftNumeric && !jawnSoftSetting) {
+		jawnSoftExpr = this.value || '';
+		$('#soft_kb_expr').text(jawnSoftExpr || '0');
+		$('#soft_kb_result').text('');
+	}
+});
+
+// The Chat composer's keyboard button asks for the dock; pressing it again puts
+// it away. It also turns the dock on for a desk that has not asked for it yet.
+$(document).on('click', '#chat_soft_toggle', function () {
+	var el = document.getElementById('message');
+	if (!el) { return; }
+	if (softKbVisible() && jawnSoftField === el) { softKbHide(); return; }
+	if (!softKbOn()) { localStorage.setItem('jawn_soft_keyboard', 'on'); }
+	try { el.focus({ preventScroll: true }); } catch (err) { el.focus(); }
+	softKbShow(el);
+});
+
+// Sending must not put the dock away.
+$(document).on('click', '#send_it', function () {
+	if (!jawnSoftField || jawnSoftField.id != 'message' || !softKbVisible()) { return; }
+	setTimeout(function () {
+		var el = document.getElementById('message');
+		if (!el) { return; }
+		try { el.focus({ preventScroll: true }); } catch (err) { el.focus(); }
+	}, 0);
+});
+
+$(window).on('resize', function () { if (softKbVisible()) { softKbReserve(); } });

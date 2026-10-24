@@ -708,79 +708,10 @@
 	background: var(--panel-2, rgba(127, 127, 127, .12));
 }
 
-/* The on-screen keyboard rides inside the composer. It takes its height from
-   the message list, so opening it never changes the window or the page shape. */
-.chat_shell .chat_soft_keyboard {
-	display: flex;
-	flex-direction: column;
-	gap: 5px;
-	margin-top: 6px;
-	padding-top: 8px;
-	border-top: 1px solid var(--line);
-}
-
-.chat_shell .chat_soft_keyboard[hidden] {
-	display: none;
-}
-
-.chat_shell .chat_soft_row {
-	display: flex;
-	gap: 4px;
-	justify-content: center;
-}
-
-.chat_shell .chat_soft_key {
-	flex: 1 1 0;
-	min-width: 0;
-	height: 38px;
-	padding: 0;
-	border: 1px solid var(--line);
-	border-radius: 8px;
-	background: var(--panel);
-	background-image: none;
-	color: var(--ink);
-	font-size: 15px;
-	line-height: 1;
-	cursor: pointer;
-	user-select: none;
-	-webkit-user-select: none;
-	touch-action: manipulation;
-}
-
-.chat_shell .chat_soft_key:active {
-	background: var(--panel-2, rgba(127, 127, 127, .2));
-}
-
-.chat_shell .chat_soft_mod {
-	flex: 0 0 50px;
-	font-size: 13px;
-}
-
-.chat_shell .chat_soft_space {
-	flex: 3 1 0;
-	font-size: 13px;
-}
-
-.chat_shell .chat_soft_key.active {
-	background: #4f8cff;
-	border-color: #4f8cff;
-	color: #fff;
-}
-
+/* the composer's keyboard button wears the dock's active colour while open */
 .chat_shell #chat_soft_toggle.active {
 	background: #4f8cff;
 	color: #fff;
-}
-
-@media (max-width: 760px) {
-	.chat_shell .chat_soft_key {
-		height: 40px;
-		font-size: 16px;
-	}
-
-	.chat_shell .chat_soft_mod {
-		flex-basis: 46px;
-	}
 }
 
 .chat_shell .chat_attachments {

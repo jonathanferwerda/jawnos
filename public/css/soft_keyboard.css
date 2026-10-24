@@ -1,0 +1,270 @@
+/* The JawnOS on-screen keyboard.
+ *
+ * One dock for every editable field. On the page it sits fixed above the
+ * taskbar; inside a window it rides the window's foot; inside the Chat composer
+ * it is an ordinary block so the composer makes room for it. The theme's own
+ * variables keep it in step with the rest of the house.
+ */
+
+.soft_kb {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: var(--taskbar_bottom_h, 0px);
+	z-index: 39990;
+	box-sizing: border-box;
+	padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+	background: var(--panel);
+	color: var(--ink);
+	border-top: 1px solid var(--line);
+	box-shadow: 0 -8px 26px rgba(0, 0, 0, .22);
+	font-size: 15px;
+	user-select: none;
+	-webkit-user-select: none;
+}
+
+.soft_kb[hidden] {
+	display: none;
+}
+
+/* inside the window being typed in: the window keeps its shape */
+.soft_kb.soft_kb_in_window {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 30;
+	border-radius: 0 0 var(--window_radius, var(--jawnos-corner, 12px)) var(--window_radius, var(--jawnos-corner, 12px));
+	box-shadow: 0 -6px 18px rgba(0, 0, 0, .18);
+}
+
+/* inside the Chat composer: part of the flow, so the messages give up the room */
+.soft_kb.soft_kb_inline {
+	position: static;
+	z-index: auto;
+	padding: 0;
+	background: transparent;
+	border-top: 0;
+	box-shadow: none;
+	border-radius: 0;
+}
+
+.soft_kb_bar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 1px 2px 6px;
+}
+
+.soft_kb_mode {
+	min-width: 42px;
+	height: 26px;
+	padding: 0 9px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--panel-2, var(--panel));
+	color: var(--ink-muted);
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.soft_kb_mode.active {
+	background: #4f8cff;
+	border-color: #4f8cff;
+	color: #fff;
+}
+
+.soft_kb_title {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-align: center;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--ink-muted);
+	font-size: 11px;
+}
+
+.soft_kb_close {
+	width: 34px;
+	height: 30px;
+	padding: 0;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: var(--ink);
+	font-size: 16px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.soft_kb_panel {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.soft_kb_panel[hidden] {
+	display: none;
+}
+
+.soft_kb_row {
+	display: flex;
+	gap: 4px;
+}
+
+.soft_kb_key {
+	flex: 1 1 0;
+	min-width: 0;
+	height: 40px;
+	padding: 0;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel-2, var(--panel));
+	background-image: none;
+	color: var(--ink);
+	font-size: 15px;
+	line-height: 1;
+	cursor: pointer;
+	touch-action: manipulation;
+}
+
+.soft_kb_key:active {
+	background: rgba(79, 140, 255, .18);
+}
+
+.soft_kb_letter {
+	text-transform: lowercase;
+}
+
+.soft_kb_wide {
+	flex: 1 1 0;
+}
+
+.soft_kb_mod {
+	flex: 0 0 52px;
+	font-size: 12px;
+}
+
+.soft_kb_space {
+	flex: 3 1 0;
+	font-size: 13px;
+}
+
+.soft_kb_key.active {
+	background: #4f8cff;
+	border-color: #4f8cff;
+	color: #fff;
+}
+
+/* the calculator */
+.soft_kb_display {
+	margin: 0 1px 6px;
+	padding: 8px 12px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--panel-2, var(--panel));
+	text-align: right;
+	overflow: hidden;
+}
+
+.soft_kb_expr {
+	min-height: 22px;
+	overflow-x: auto;
+	color: var(--ink);
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-size: 19px;
+	line-height: 1.2;
+	white-space: nowrap;
+}
+
+.soft_kb_result {
+	min-height: 16px;
+	color: var(--ink-muted);
+	font-family: ui-monospace, Menlo, Consolas, monospace;
+	font-size: 12px;
+	line-height: 1.2;
+	white-space: nowrap;
+}
+
+.soft_kb_numpad {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 4px;
+}
+
+.soft_kb_numpad .soft_kb_key {
+	height: 42px;
+	font-size: 17px;
+}
+
+.soft_kb_func {
+	flex: 1 1 0;
+	height: 34px;
+	font-size: 13px;
+}
+
+.soft_kb_op {
+	color: #4f8cff;
+	font-weight: 700;
+}
+
+.soft_kb_equals {
+	background: #4f8cff;
+	border-color: #4f8cff;
+	color: #fff;
+	font-weight: 700;
+}
+
+/* the special characters page */
+.soft_kb_symbols {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	max-height: 34vh;
+	margin-bottom: 6px;
+	padding: 4px;
+	overflow-y: auto;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--panel-2, var(--panel));
+}
+
+.soft_kb_sym {
+	width: 42px;
+	height: 38px;
+	padding: 0;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: var(--ink);
+	font-size: 17px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.soft_kb_sym:active {
+	background: rgba(79, 140, 255, .18);
+}
+
+@media (max-width: 760px) {
+	.soft_kb {
+		padding-left: 5px;
+		padding-right: 5px;
+	}
+
+	.soft_kb_key {
+		height: 42px;
+		font-size: 16px;
+	}
+
+	.soft_kb_mod {
+		flex-basis: 46px;
+	}
+
+	.soft_kb_numpad .soft_kb_key {
+		height: 44px;
+	}
+}

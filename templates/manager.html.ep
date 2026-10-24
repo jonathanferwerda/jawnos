@@ -43,6 +43,7 @@
 		<img id="ticket_sales" class="medium_thumb draggable lock" style="position:fixed;right:8px;top:96px;z-index:10000;display:none;" src="<%= &subs::icon_for('/images/make believe/key.png') %>" jawnos_icon="/images/make believe/key.png">
 	</div>
 	<div id="keyboard_container"></div>
+	<%= include 'soft_keyboard' %>
 </div>
 
 <div id="top_right_buttons">

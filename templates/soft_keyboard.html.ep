@@ -1,0 +1,97 @@
+<%# The JawnOS on-screen keyboard. One dock serves every editable field in the
+    house: letters, a calculator for numbers, and a page of special characters.
+    It is placed by soft_keyboard.js - inside the Chat composer, inside the
+    window being typed in, or fixed at the foot of the page - so the system
+    keyboard never has to reshape the page. %>
+<% my @symbols = (
+	'€','£','¥','₹','₽','₿','¢','$',
+	'±','×','÷','−','≠','≈','≤','≥','∞','π','√','∑','∏','∆','∂','∫','°','%','‰',
+	'—','–','…','•','·','§','¶','†','‡','«','»','“','”','‘','’','¡','¿',
+	'←','→','↑','↓','↔','⇒','⇐','⇔',
+	'©','®','™','✓','✗','★','☆','♥','♦','♣','♠','♪','☀','☾','♀','♂','½','¼','¾','⅓','⅔',
+); %>
+<div id="jawn_soft_keyboard" class="soft_kb" hidden aria-hidden="true">
+	<div class="soft_kb_bar">
+		<button type="button" class="soft_kb_mode active" data-kb_mode="letters">abc</button>
+		<button type="button" class="soft_kb_mode" data-kb_mode="calc">123</button>
+		<button type="button" class="soft_kb_mode" data-kb_mode="symbols">#+=</button>
+		<span class="soft_kb_title"></span>
+		<button type="button" class="soft_kb_close" data-kb_action="close" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
+	</div>
+
+	<div class="soft_kb_panel" data-kb_panel="letters">
+		<div class="soft_kb_row">
+			<% foreach my $k (qw/1 2 3 4 5 6 7 8 9 0/) { %><button type="button" class="soft_kb_key soft_kb_wide" data-kb_key="<%= $k %>"><%= $k %></button><% } %>
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_key="backspace" aria-label="<%= &subs::ui('Backspace') %>">⌫</button>
+		</div>
+		<div class="soft_kb_row">
+			<% foreach my $k (qw/q w e r t y u i o p/) { %><button type="button" class="soft_kb_key soft_kb_letter soft_kb_wide" data-kb_key="<%= $k %>"><%= $k %></button><% } %>
+		</div>
+		<div class="soft_kb_row">
+			<% foreach my $k (qw/a s d f g h j k l/) { %><button type="button" class="soft_kb_key soft_kb_letter soft_kb_wide" data-kb_key="<%= $k %>"><%= $k %></button><% } %>
+			<button type="button" class="soft_kb_key soft_kb_wide" data-kb_key="'">'</button>
+		</div>
+		<div class="soft_kb_row">
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_key="shift" aria-label="<%= &subs::ui('Shift') %>">⇧</button>
+			<% foreach my $k (qw/z x c v b n m/) { %><button type="button" class="soft_kb_key soft_kb_letter soft_kb_wide" data-kb_key="<%= $k %>"><%= $k %></button><% } %>
+			<button type="button" class="soft_kb_key soft_kb_wide" data-kb_key=",">,</button>
+			<button type="button" class="soft_kb_key soft_kb_wide" data-kb_key=".">.</button>
+			<button type="button" class="soft_kb_key soft_kb_wide" data-kb_key="?">?</button>
+		</div>
+		<div class="soft_kb_row">
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_mode="symbols">#+=</button>
+			<button type="button" class="soft_kb_key soft_kb_space" data-kb_key="space"><%= &subs::lang('chat.space') %></button>
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_key="enter" aria-label="<%= &subs::ui('New line') %>">⏎</button>
+		</div>
+	</div>
+
+	<div class="soft_kb_panel" data-kb_panel="calc" hidden>
+		<div class="soft_kb_display">
+			<div id="soft_kb_expr" class="soft_kb_expr">0</div>
+			<div id="soft_kb_result" class="soft_kb_result"></div>
+		</div>
+		<div class="soft_kb_row">
+			<button type="button" class="soft_kb_key soft_kb_func" data-kb_key="clear">C</button>
+			<button type="button" class="soft_kb_key soft_kb_func" data-kb_key="backspace" aria-label="<%= &subs::ui('Backspace') %>">⌫</button>
+			<button type="button" class="soft_kb_key soft_kb_func" data-kb_key="(">(</button>
+			<button type="button" class="soft_kb_key soft_kb_func" data-kb_key=")">)</button>
+			<button type="button" class="soft_kb_key soft_kb_func" data-kb_key="%">%</button>
+			<button type="button" class="soft_kb_key soft_kb_func" data-kb_key="sign">±</button>
+		</div>
+		<div class="soft_kb_numpad">
+			<button type="button" class="soft_kb_key" data-kb_key="7">7</button>
+			<button type="button" class="soft_kb_key" data-kb_key="8">8</button>
+			<button type="button" class="soft_kb_key" data-kb_key="9">9</button>
+			<button type="button" class="soft_kb_key soft_kb_op" data-kb_key="/">÷</button>
+			<button type="button" class="soft_kb_key" data-kb_key="4">4</button>
+			<button type="button" class="soft_kb_key" data-kb_key="5">5</button>
+			<button type="button" class="soft_kb_key" data-kb_key="6">6</button>
+			<button type="button" class="soft_kb_key soft_kb_op" data-kb_key="*">×</button>
+			<button type="button" class="soft_kb_key" data-kb_key="1">1</button>
+			<button type="button" class="soft_kb_key" data-kb_key="2">2</button>
+			<button type="button" class="soft_kb_key" data-kb_key="3">3</button>
+			<button type="button" class="soft_kb_key soft_kb_op" data-kb_key="-">−</button>
+			<button type="button" class="soft_kb_key" data-kb_key="0">0</button>
+			<button type="button" class="soft_kb_key" data-kb_key=".">.</button>
+			<button type="button" class="soft_kb_key soft_kb_equals" data-kb_key="=">=</button>
+			<button type="button" class="soft_kb_key soft_kb_op" data-kb_key="+">+</button>
+		</div>
+		<div class="soft_kb_row">
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_mode="letters">abc</button>
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_mode="symbols">#+=</button>
+			<button type="button" class="soft_kb_key soft_kb_space" data-kb_key="enter" aria-label="<%= &subs::ui('Return') %>">⏎</button>
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_action="close" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
+		</div>
+	</div>
+
+	<div class="soft_kb_panel" data-kb_panel="symbols" hidden>
+		<div class="soft_kb_symbols">
+			<% foreach my $c ( @symbols ) { %><button type="button" class="soft_kb_sym" data-kb_char="<%= $c %>"><%= $c %></button><% } %>
+		</div>
+		<div class="soft_kb_row">
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_mode="letters">abc</button>
+			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_mode="calc">123</button>
+			<button type="button" class="soft_kb_key soft_kb_space" data-kb_action="close" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
+		</div>
+	</div>
+</div>

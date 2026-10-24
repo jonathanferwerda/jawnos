@@ -72,35 +72,6 @@
 				<button type="button" id="send_it" class="chat_send" hint="Send" aria-label="<%= &subs::ui('Send') %>">&#10148;</button>
 			</div>
 			<div id="mail_attachments" class="chat_attachments"></div>
-			<%# The on-screen keyboard is part of the composer, not an overlay: it
-			    takes its height from the messages instead of resizing the page, so
-			    the phone never reflows the window when it opens. Its key layout is
-			    the one keyboard.html.ep carries. %>
-			<div id="chat_soft_keyboard" class="chat_soft_keyboard" hidden aria-hidden="true">
-				<div class="chat_soft_row">
-					<% foreach my $k (qw/1 2 3 4 5 6 7 8 9 0/) { %><button type="button" class="chat_soft_key" data-soft_key="<%= $k %>"><%= $k %></button><% } %>
-					<button type="button" class="chat_soft_key chat_soft_mod" data-soft_key="backspace" aria-label="<%= &subs::ui('Backspace') %>">⌫</button>
-				</div>
-				<div class="chat_soft_row">
-					<% foreach my $k (qw/q w e r t y u i o p/) { %><button type="button" class="chat_soft_key chat_soft_letter" data-soft_key="<%= $k %>"><%= $k %></button><% } %>
-				</div>
-				<div class="chat_soft_row">
-					<% foreach my $k (qw/a s d f g h j k l/) { %><button type="button" class="chat_soft_key chat_soft_letter" data-soft_key="<%= $k %>"><%= $k %></button><% } %>
-					<button type="button" class="chat_soft_key" data-soft_key="'">'</button>
-				</div>
-				<div class="chat_soft_row">
-					<button type="button" class="chat_soft_key chat_soft_mod" data-soft_key="shift" aria-label="<%= &subs::ui('Shift') %>">⇧</button>
-					<% foreach my $k (qw/z x c v b n m/) { %><button type="button" class="chat_soft_key chat_soft_letter" data-soft_key="<%= $k %>"><%= $k %></button><% } %>
-					<button type="button" class="chat_soft_key" data-soft_key=",">,</button>
-					<button type="button" class="chat_soft_key" data-soft_key=".">.</button>
-					<button type="button" class="chat_soft_key" data-soft_key="?">?</button>
-				</div>
-				<div class="chat_soft_row">
-					<button type="button" class="chat_soft_key chat_soft_space" data-soft_key="space"><%= &subs::lang('chat.space') %></button>
-					<button type="button" class="chat_soft_key chat_soft_mod" data-soft_key="enter" aria-label="<%= &subs::ui('New line') %>">⏎</button>
-					<button type="button" class="chat_soft_key chat_soft_mod" data-soft_key="hide" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
-				</div>
-			</div>
 		</div>
 	<% } else { %>
 		<div id="just_hit_send" style="text-align:center;">

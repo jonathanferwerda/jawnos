@@ -132,6 +132,7 @@
 		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/manager.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/chat.css?string=<%= $string %>" />
+		<link rel="stylesheet" href="/css/soft_keyboard.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/store.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
   </head>
