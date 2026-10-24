@@ -967,7 +967,7 @@ var musicAhead = {
 // normalization, EQ, L/R split or remote output) it leaves that path and runs
 // ahead by exactly this lag. requestVideoFrameCallback reports the media time
 // of the frame on screen, which is the measurement.
-var musicPicture = { lag: 0, raw: 0, at: 0, queued: false, queuedAt: 0, applied: 0 };
+var musicPicture = { lag: 0, raw: 0, at: 0, queued: false, queuedAt: 0, applied: 0, ct: 0, pending: 0 };
 
 // The graph's own output buffer: sound through it lands this much later.
 function musicGraphLatency() {
@@ -983,8 +983,10 @@ function musicGraphCarriesLocal() {
 }
 
 // Measure how far the element's clock is ahead of the picture on screen. The
-// callback runs as a frame is presented, so currentTime - mediaTime is the
-// lag; a big step is a seek or a fresh decoder, not jitter.
+// callback runs as a frame is presented, so currentTime - mediaTime is the lag.
+// A step is only taken when it is confirmed - the clock genuinely jumped, or
+// two frames in a row agree - because one frame reading a second off used to
+// throw the lead (and the Me delay) a second forward and straight back.
 function musicPictureWatch() {
 	var v = tree && tree.sound;
 	if (!v || !v.requestVideoFrameCallback) { return; }
@@ -1005,15 +1007,45 @@ function musicPictureWatch() {
 			if (isFinite(mt) && mt >= 0) {
 				var lag = (v.currentTime || 0) - mt;
 				if (isFinite(lag) && lag > -1.5 && lag < 5) {
+					// A presented frame cannot really lead the element's own clock
+					// by a perceptible amount; a negative reading is a quirk.
+					if (lag < 0) { lag = 0; }
+					var ct = v.currentTime || 0;
+					var moved = Math.abs(ct - (musicPicture.ct || 0));
+					musicPicture.ct = ct;
 					musicPicture.raw = lag;
-					if (Math.abs(lag - musicPicture.lag) > 0.25) {
+					var took = true;
+					if (!musicPicture.at) {
 						musicPicture.lag = lag;
-						// a step is a fresh decoder or a seek: allow the lead to re-anchor
-						// at once instead of riding it out for the usual two seconds
-						musicAhead.seekAt = 0;
 					}
-					else { musicPicture.lag = musicPicture.lag * 0.65 + lag * 0.35; }
-					musicPicture.at = Date.now();
+					else {
+						var d = lag - musicPicture.lag;
+						if (moved > 1.5) {
+							// the element jumped (a seek, a fresh decoder): take it now
+							musicPicture.lag = lag;
+							musicPicture.pending = 0;
+							musicAhead.seekAt = 0;
+						}
+						else if (Math.abs(d) <= 0.25) {
+							musicPicture.lag = musicPicture.lag * 0.65 + lag * 0.35;
+							musicPicture.pending = 0;
+						}
+						else if (musicPicture.pending && Math.abs(lag - musicPicture.pending) <= 0.15) {
+							// two frames agree, so the lag really did change
+							musicPicture.lag = lag;
+							musicPicture.pending = 0;
+							musicAhead.seekAt = 0;
+						}
+						else {
+							// One frame reading a second off is a decoder hiccup, not
+							// a new lag. Snapping to it threw the lead forward a
+							// second and then back - the drift and the detune - so
+							// wait for the next frame to agree before moving.
+							musicPicture.pending = lag;
+							took = false;
+						}
+					}
+					if (took) { musicPicture.at = Date.now(); }
 				}
 			}
 			if (Date.now() - musicPicture.applied > 200) {
@@ -2251,6 +2283,8 @@ function mediaMaker(data) {
 				musicPicture.lag = 0;
 				musicPicture.raw = 0;
 				musicPicture.at = 0;
+				musicPicture.ct = 0;
+				musicPicture.pending = 0;
 
 				if (tree.songs[0].remote_uuid) {
 					url += '&remote_uuid=' + tree.songs[0].remote_uuid;
@@ -3648,8 +3682,15 @@ function musicLocalDelayApply() {
 	}
 	if (musicVisual && musicVisual.localDelay) {
 		var want = musicLocalDelaySeconds();
-		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.25); }
-		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
+		var cur = 0;
+		try { cur = musicVisual.localDelay.delayTime.value || 0; } catch (e) {}
+		// A delay line whose length is nudged every frame wobbles the pitch - the
+		// detuned sound a few milliseconds of measurement jitter made. Ignore a
+		// change too small to hear; one above it is ramped once and left alone.
+		if (Math.abs(want - cur) > 0.02) {
+			try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.25); }
+			catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
+		}
 	}
 }
 $(document).on('input', '#music_local_delay', function() {

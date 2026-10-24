@@ -19,6 +19,7 @@ use Data::UUID;
 use Mojo::Util qw/term_escape html_unescape url_unescape url_escape/;
 use File::Find;
 use File::Slurp;
+use Fcntl qw(F_SETPIPE_SZ);
 plugin 'RenderFile';
 use LWP::UserAgent;
 use Mojolicious::Sessions;
@@ -552,6 +553,14 @@ sub music_remote_audio_start($st) {
 		$st->{'error'} = 'pacat';
 		return 0;
 	}
+	# The kernel pipe between this manager and pacat is a buffer the receiver's
+	# report cannot see. Linux gives it 64 KB by default: about 363 ms at
+	# 44.1 kHz stereo, sitting after pacat's 30 ms and the sink - half a second
+	# of audio a room is heard behind while the measured lag says a tenth of
+	# it. Shrink it so a slow player backs up into bytes_waiting, which is
+	# measured (the lead answers it, and PCM flushes when it runs away).
+	my $pipe_bytes = ((($st->{'codec'} || 'pcm') eq 'opus') || $pan ne '') ? 16_384 : 8_192;
+	eval { fcntl($fh, F_SETPIPE_SZ, $pipe_bytes) };
 	$fh->blocking(0);
 	my $stream = Mojo::IOLoop::Stream->new($fh)->timeout(0);
 	$stream->start;
@@ -600,7 +609,10 @@ sub music_remote_write($st, $bytes) {
 	# PCM is paced in real time, so a backlog is a delay: drop it. Opus clusters
 	# are not independent packets (the WebM header and cluster order matter), so
 	# that stream is allowed a larger buffer instead of being corrupted.
-	my $cap = (($st->{'codec'} || 'pcm') eq 'opus') ? 4_000_000 : 65_536;
+	# The kernel pipe is kept small in music_remote_audio_start, so this cap is
+	# most of the receiver's hidden buffer; about a tenth of a second of backlog
+	# is the point where a live stream is better off skipping than falling behind.
+	my $cap = (($st->{'codec'} || 'pcm') eq 'opus') ? 4_000_000 : 16_384;
 	# The gap between writes is the receiver's own measure of a starving stream:
 	# pacat's 60 ms buffer cannot hide a mesh stall longer than that.
 	my $now = &subs::rightNow();
@@ -659,9 +671,12 @@ sub music_rx_report_send($st) {
 	# Opus cannot, because a new ffmpeg would need the WebM header again.
 	my $flushed = 0;
 	# The lead is measured from this same report, so a steady pipe backlog is not
-	# a fault: the sender simply leads it. Only a lag far beyond any plausible
-	# pipeline is treated as a stranded player and restarted.
-	if ($lag_ms > 1500 && ($st->{'codec'} || 'pcm') ne 'opus') {
+	# a fault: the sender simply leads it. On a video that lead can answer a few
+	# hundred milliseconds, so only a stranded player is restarted there. An audio
+	# track has no lead to reduce it, and a few hundred milliseconds is plainly
+	# heard as an echo, so it is flushed much sooner.
+	my $lag_flush = (($st->{'type'} || '') eq 'audio') ? 350 : 1500;
+	if ($lag_ms > $lag_flush && ($st->{'codec'} || 'pcm') ne 'opus') {
 		$st->{'lag_big'} = ($st->{'lag_big'} || 0) + 1;
 	}
 	else { delete $st->{'lag_big'}; }
