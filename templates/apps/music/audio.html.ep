@@ -39,6 +39,7 @@
 	<span class="music_cfg_bar_title"><%= &subs::lang('music.audio') %></span>
 	<button type="button" id="music_audio_close" class="music_cfg_close hover" hint="Close" aria-label="Close">&times;</button>
 </div>
+<div class="music_cfg_body">
 <div class="music_cfg_section">
 	<h4 class="music_cfg_heading"><%= &subs::lang('music.output') %></h4>
 	<div id="music_audio_output" class="music_cfg_chips">
@@ -119,4 +120,5 @@
 		</div>
 	</div>
 	<div id="music_equalizer_data" style="display:none;" bands="<%= join(',', @eq_bands) %>" bass="<%= $eq_bass %>" preset="<%= $eq->{'preset'} || 'flat' %>"></div>
+</div>
 </div>

@@ -22,6 +22,7 @@
 	<span class="music_cfg_bar_title"><%= &subs::lang('music.configuration') %></span>
 	<button type="button" id="music_configuration_close" class="music_cfg_close hover" hint="Close" aria-label="Close">&times;</button>
 </div>
+<div class="music_cfg_body">
 <div class="music_cfg_section">
 	<h4 class="music_cfg_heading"><%= &subs::lang('music.folders') %></h4>
 	<div id="music_folders" class="music_cfg_chips">
@@ -66,6 +67,7 @@
 	<div class="music_cfg_device_volume">
 		<span id="device_volume_control"></span>
 	</div>
+</div>
 </div>
 <script>
 	volumeChecker();
