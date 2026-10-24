@@ -31,19 +31,30 @@
 
 /* The floating dock normally steps aside while a window is being typed in, so
    it cannot sit across the space bar. When the field being typed in is the
-   dock's own search (or the taskbar's), the bar moves above the keys instead -
-   the keyboard stays pinned to the bottom and the input stays in view. */
-body.soft_kb_open #pseudonym_home {
+   search itself, the dock keeps whatever mode it is in (visible, tucked or
+   hidden); only the search input rises above the keys. */
+body.soft_kb_open:not(.soft_kb_search_field) #pseudonym_home {
 	display: none !important;
 }
 
-body.soft_kb_open.soft_kb_dock_field #pseudonym_home {
-	display: block !important;
-	bottom: var(--soft_kb_h, 0px) !important;
-}
-
-body.soft_kb_open.soft_kb_bar_field #taskbar[position=bottom] {
-	bottom: var(--soft_kb_h, 0px) !important;
+body.soft_kb_open #search_entanglement.soft_kb_search_lifted {
+	position: fixed !important;
+	left: 10px !important;
+	right: 10px !important;
+	top: auto !important;
+	bottom: calc(var(--soft_kb_h, 0px) + 8px) !important;
+	width: auto !important;
+	margin: 0 !important;
+	transform: none !important;
+	opacity: 1 !important;
+	pointer-events: auto !important;
+	z-index: 40003;
+	box-sizing: border-box;
+	padding: 6px;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	box-shadow: 0 -6px 20px rgba(0, 0, 0, .22);
 }
 
 /* inside the window being typed in: the window keeps its shape */

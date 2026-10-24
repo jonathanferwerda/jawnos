@@ -124,28 +124,35 @@ function softKbShow(el) {
 	softKbSuppress(el);
 	softKbPlace(el);
 	dock.prop('hidden', false).attr('aria-hidden', 'false');
-	// the search rides in the dock or the taskbar; whichever holds the field
-	// lifts above the keys instead of being covered by them
-	$('body').toggleClass('soft_kb_dock_field', $(el).closest('#pseudonym_home').length > 0);
-	$('body').toggleClass('soft_kb_bar_field', $(el).closest('#taskbar').length > 0);
+	// the search itself rises above the keys; the bar it lives in (dock or
+	// taskbar) keeps whatever mode it was in
+	var search_field = el.id == 'search' || $(el).closest('#search_entanglement').length > 0;
+	$('body').toggleClass('soft_kb_search_field', search_field);
+	$('#search_entanglement').toggleClass('soft_kb_search_lifted', search_field);
 	$('body').addClass('soft_kb_open');
 	softKbModeSet(jawnSoftNumeric ? 'calc' : 'letters');
 	softKbSuggestSync();
 	softKbReserve();
 	softKbScrollField(el);
+	// the search dropdown is measured against the keyboard while the keys are up
+	setTimeout(function () {
+		if (typeof jawnosSearchResultsPlace === 'function') { jawnosSearchResultsPlace(); }
+	}, 20);
 	var chat = el.id == 'message';
 	$('#chat_soft_toggle').toggleClass('active', chat).attr('aria-expanded', chat ? 'true' : 'false');
 }
 
 function softKbHide() {
 	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
-	$('body').removeClass('soft_kb_open soft_kb_dock_field soft_kb_bar_field');
+	$('body').removeClass('soft_kb_open soft_kb_dock_field soft_kb_bar_field soft_kb_search_field');
+	$('#search_entanglement').removeClass('soft_kb_search_lifted');
 	$('.chat_shell').css('padding-bottom', '');
 	$('.soft_kb_reserved').css('padding-bottom', '').removeClass('soft_kb_reserved');
 	softKbConvertHide();
 	$('#soft_kb_suggest').prop('hidden', true);
 	jawnSoftContext = '';
 	jawnSoftField = null;
+	if (typeof jawnosSearchResultsPlace === 'function') { setTimeout(jawnosSearchResultsPlace, 0); }
 	$('#chat_soft_toggle').removeClass('active').attr('aria-expanded', 'false');
 }
 
@@ -174,6 +181,9 @@ function softKbReserve() {
 	if (document.body && document.body.style) {
 		document.body.style.setProperty('--soft_kb_h', (dock.outerHeight() || 0) + 'px');
 	}
+	// the search dropdown lives in the space above the keys, and the keys just
+	// changed height
+	if (typeof jawnosSearchResultsPlace === 'function') { jawnosSearchResultsPlace(); }
 	var chat = $(jawnSoftField).closest('.chat_shell');
 	var scroller = chat.length ? chat : $(jawnSoftField).closest('.appointment_contents, .window_contents');
 	if (!scroller.length) { return; }

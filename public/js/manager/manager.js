@@ -2109,11 +2109,19 @@ function jawnosSearchResultsPlace() {
 	var rect = input[0].getBoundingClientRect();
 	var vw = window.innerWidth || $(window).width();
 	var vh = window.innerHeight || $(window).height();
+	// while the on-screen keyboard is up, the keys are the floor of the visible
+	// page: the list may not run over them
+	var bound = vh;
+	var kb = $('#jawn_soft_keyboard');
+	if (kb.length && kb.is(':visible')) {
+		var kb_top = kb[0].getBoundingClientRect().top;
+		if (kb_top > 0 && kb_top < bound) { bound = kb_top; }
+	}
 	var gap = 6;
 	var width = Math.max(0, rect.width);
 	var left = Math.max(4, Math.min(rect.left, vw - width - 4));
 	var content = $('#manager_search_results').outerHeight() || 0;
-	var below = vh - rect.bottom - gap;
+	var below = bound - rect.bottom - gap;
 	var above = rect.top - gap;
 	// below is the natural side; go above only when it has more room
 	var place_below = below >= Math.min(content, 80) || below >= above;
@@ -2124,7 +2132,8 @@ function jawnosSearchResultsPlace() {
 		'width': width,
 		'height': height,
 		'right': 'auto',
-		'z-index': 40002,
+		// the keyboard sits at 40002: it always paints over the list
+		'z-index': 40001,
 		'border-width': '3px',
 		'text-align': 'center'
 	};

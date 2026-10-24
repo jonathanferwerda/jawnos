@@ -275,7 +275,10 @@ $(document).on('change', '.appointment_model_packaging', function() {
 });
 
 $(document).on('click', '.appointment_option', function(e) {
-	if ($(e.target).hasClass('appointment_option_quantity') || $(e.target).hasClass('appointment_option_unit') || $(e.target).hasClass('appointment_option_name')) {
+	// the quantity and unit are their own controls, and the little view button
+	// beside the name opens the option's app; everything else on the row -
+	// including the name itself - selects or clears the option
+	if ($(e.target).hasClass('appointment_option_quantity') || $(e.target).hasClass('appointment_option_unit') || $(e.target).hasClass('appointment_option_open')) {
 		return;
 	}
 	var uuid = $(this).attr('uuid');
@@ -344,6 +347,15 @@ function appointmentOptionUpdater(o,source) {
 		}
 	});
 }
+
+// The name cell selects the option; this little view button is the only way a
+// tap opens the option's own app, so the words never launch a window by accident.
+$(document).on('click', '.appointment_option_open', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var app = $(this).attr('app');
+	if (app && typeof appointmentGrabber === 'function') { appointmentGrabber(app); }
+});
 
 $(document).on('change', '.appointment_option_quantity, .appointment_option_unit', function() {
 	var uuid = $(this).attr('uuid');
