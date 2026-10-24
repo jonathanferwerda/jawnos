@@ -105,7 +105,7 @@ function musicVolumeApply() {
 var musicStream = {
 	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0, latencies: {}, measured: {},
 	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm', markSeq: 0,
-	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0, seekTimer: 0
+	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0, resumeTimer: 0, seekTimer: 0
 };
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false, source: 'local' };
 var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0, source: '' };
@@ -114,7 +114,7 @@ var music_stream_codec = 'pcm';
 // a stream that is failing tells the manager what it dropped and why.
 var musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0, sent: 0, sentBytes: 0 };
 var musicVideoStats = { waits: 0, stalled_ms: 0, black_runs: 0, black_ms: 0, black_max_ms: 0,
-	in_black: 0, black_at: 0, waitAt: 0, canvas: null };
+	in_black: 0, black_at: 0, waitAt: 0, waitCt: 0, canvas: null };
 
 function musicStreamSupported() {
 	var Ctor = window.AudioContext || window.webkitAudioContext;
@@ -452,7 +452,10 @@ function musicVideoWatch(el) {
 	if (!el || el._syncWatch) { return; }
 	el._syncWatch = 1;
 	el.addEventListener('waiting', function() {
-		if (!musicVideoStats.waitAt) { musicVideoStats.waitAt = Date.now(); }
+		if (!musicVideoStats.waitAt) {
+			musicVideoStats.waitAt = Date.now();
+			musicVideoStats.waitCt = el.currentTime || 0;
+		}
 		musicVideoStats.waits++;
 		// the picture has stopped; letting the audio-only tap run on would put
 		// it ahead by the length of every stall
@@ -462,6 +465,7 @@ function musicVideoWatch(el) {
 		if (musicVideoStats.waitAt) {
 			musicVideoStats.stalled_ms += Date.now() - musicVideoStats.waitAt;
 			musicVideoStats.waitAt = 0;
+			musicVideoStats.waitCt = 0;
 		}
 		// the picture is moving again; realign the ahead tap to it
 		musicAheadResume();
@@ -555,6 +559,7 @@ function musicSyncReport() {
 			seeking: (musicAhead.el && musicAhead.el.seeking) ? 1 : 0,
 			el_paused: (musicAhead.el && musicAhead.el.paused) ? 1 : 0,
 			source: (musicStreamTap.source || 'local'),
+			mode: (musicAhead.mode || ''),
 			offset_ms: (music_sync_offset || 0)
 		},
 		video: v ? {
@@ -576,11 +581,24 @@ function musicSyncWatchStart() {
 	if (musicStream.reportTimer) { return; }
 	musicStream.reportTimer = setInterval(musicSyncReport, 2000);
 	musicStream.blackTimer = setInterval(musicSyncBlackTick, 500);
+	musicStream.resumeTimer = setInterval(musicStreamResumeWatch, 500);
 	musicVideoWatch(tree && tree.sound);
+}
+// A resume event can be missed (or overtaken by a late pause), leaving the
+// stream paused while the picture runs. That is the state where the remote
+// falls behind and only a fresh play/pause brings it back, so put it right on
+// a short watch instead of waiting for the next event.
+function musicStreamResumeWatch() {
+	if (!musicStream.active || !musicStream.paused) { return; }
+	var v = tree && tree.sound;
+	if (!v || v.paused || v.ended) { return; }
+	if (!musicStreamOutputs().length) { return; }
+	musicStreamControl('resume');
 }
 function musicSyncWatchStop() {
 	if (musicStream.reportTimer) { clearInterval(musicStream.reportTimer); musicStream.reportTimer = 0; }
 	if (musicStream.blackTimer) { clearInterval(musicStream.blackTimer); musicStream.blackTimer = 0; }
+	if (musicStream.resumeTimer) { clearInterval(musicStream.resumeTimer); musicStream.resumeTimer = 0; }
 	if (musicVideoStats.in_black) {
 		var run = Date.now() - (musicVideoStats.black_at || Date.now());
 		musicVideoStats.black_ms += run;
@@ -871,8 +889,14 @@ function musicStreamOutputsChanged() {
 var musicAhead = {
 	el: null, source: null, chain: null, src: '', ready: false, starting: false,
 	failed: false, gen: 0, timer: 0, retryTimer: 0, waiters: [], waitTimer: 0,
-	target: 0, err: 0, seekAt: 0, seekCount: 0, rate: 1, hold: false
+	target: 0, err: 0, seekAt: 0, seekCount: 0, rate: 1, hold: false,
+	blobUrl: '', blobFor: '', noBlobFor: '', controller: null, mode: ''
 };
+// A complete copy is held in memory only up to this size. A progressive
+// response's seekable window moves with the buffer, and the lead has to be
+// able to read behind the player; a Blob is seekable at once. A larger file is
+// streamed instead, where a backward seek may clamp to the live edge.
+var musicAheadMaxBlob = 256 * 1024 * 1024;
 
 // The presented picture lags the element's clock. The browser keeps its own
 // sound with the picture, but once the sound goes through Web Audio (any
@@ -1121,6 +1145,8 @@ function musicAheadStop() {
 		try { musicAhead.el.removeAttribute('src'); musicAhead.el.load(); } catch (e) {}
 	}
 	musicAheadSettle(false);
+	if (musicAhead.controller) { try { musicAhead.controller.abort(); } catch (e) {} musicAhead.controller = null; }
+	musicAhead.mode = '';
 	musicStreamTapSource('local');
 	musicOpusSource();
 	// Losing the lead while a stream is live leaves the receiver holding audio
@@ -1138,6 +1164,9 @@ function musicAheadForget() {
 	clearTimeout(musicAhead.retryTimer);
 	musicAhead.retryTimer = 0;
 	musicAheadStop();
+	if (musicAhead.blobUrl) { try { URL.revokeObjectURL(musicAhead.blobUrl); } catch (e) {} musicAhead.blobUrl = ''; }
+	musicAhead.blobFor = '';
+	musicAhead.noBlobFor = '';
 	if (musicAhead.source) { try { musicAhead.source.disconnect(); } catch (e) {} }
 	if (musicAhead.chain) {
 		try { musicAhead.chain.out.disconnect(); } catch (e) {}
@@ -1259,39 +1288,79 @@ function musicAheadStart() {
 	musicAhead.failed = false;
 	musicAhead.src = src;
 	musicAhead.target = lead;
+	musicAhead.mode = '';
 	if (changed) { try { el.pause(); } catch (e) {} }
-	// A whole-file Range response (Music.pl forces one for ahead=1) keeps the
-	// element's seekable window fixed, which is what a lead needs; a plain
-	// progressive response only lets it seek as far as it has buffered.
+	// A whole-file Range response (Music.pl forces one for ahead=1) is fixed, but
+	// a progressive response's seekable window moves with the buffer. A Blob is
+	// seekable at once and lets the lead read behind the player, which a negative
+	// lead needs; a larger file streams and may clamp at the live edge.
 	var url = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'ahead=1';
-	var media_url = musicAbsoluteUrl(url);
-	var done = false;
-	var ready = function() {
-		if (done || gen !== musicAhead.gen || el.src !== media_url) { return; }
-		done = true;
-		musicAhead.starting = false;
-		musicAhead.ready = true;
-		musicAhead.target = musicStreamLead();
-		musicAheadLead(true);
-		// a fresh stream waiting on this gets the tap switched before it opens
-		musicAheadSettle(true);
-		// a lead that became ready mid-stream has no waiter; switch the live tap
-		if (musicStream.ws && musicStream.ws.readyState == 1 && musicStreamTap.source != 'ahead') {
-			if (musicStream.codec == 'opus') { musicAheadRestart(); return; }
-			musicStreamTapSource('ahead');
-			musicStreamTapActive(true, true);
-			musicStreamSendJson({ type: 'control', action: 'flush' });
-		}
-		if (!musicAheadRunning() || musicAhead.hold) { return; }
-		var p = null;
-		try { p = el.play(); } catch (e) {}
-		if (p && p.catch) { p.catch(function() { if (gen === musicAhead.gen) { musicAheadFailed(); } }); }
+	var attach = function(mediaUrl, mode) {
+		if (gen !== musicAhead.gen) { return; }
+		var abs = musicAbsoluteUrl(mediaUrl);
+		var done = false;
+		musicAhead.mode = mode;
+		var ready = function() {
+			if (done || gen !== musicAhead.gen || el.src !== abs) { return; }
+			done = true;
+			musicAhead.starting = false;
+			musicAhead.ready = true;
+			musicAhead.target = musicStreamLead();
+			musicAheadLead(true);
+			// a fresh stream waiting on this gets the tap switched before it opens
+			musicAheadSettle(true);
+			// a lead that became ready mid-stream has no waiter; switch the live tap
+			if (musicStream.ws && musicStream.ws.readyState == 1 && musicStreamTap.source != 'ahead') {
+				if (musicStream.codec == 'opus') { musicAheadRestart(); return; }
+				musicStreamTapSource('ahead');
+				musicStreamTapActive(true, true);
+				musicStreamSendJson({ type: 'control', action: 'flush' });
+			}
+			if (!musicAheadRunning() || musicAhead.hold) { return; }
+			var p = null;
+			try { p = el.play(); } catch (e) {}
+			if (p && p.catch) { p.catch(function() { if (gen === musicAhead.gen) { musicAheadFailed(); } }); }
+		};
+		el.onerror = function() { if (gen === musicAhead.gen && el.src === abs) { musicAheadFailed(); } };
+		el.onloadedmetadata = ready;
+		el.oncanplay = ready;
+		setTimeout(function() { if (gen === musicAhead.gen && !musicAhead.ready) { musicAheadFailed(); } }, 8000);
+		el.src = mediaUrl;
 	};
-	el.onerror = function() { if (gen === musicAhead.gen && el.src === media_url) { musicAheadFailed(); } };
-	el.onloadedmetadata = ready;
-	el.oncanplay = ready;
-	setTimeout(function() { if (gen === musicAhead.gen && !musicAhead.ready) { musicAheadFailed(); } }, 8000);
-	el.src = url;
+	if (musicAhead.blobFor == src && musicAhead.noBlobFor == src) {
+		attach(url, 'stream');
+	}
+	else if (musicAhead.blobUrl && musicAhead.blobFor == src) {
+		attach(musicAhead.blobUrl, 'blob');
+	}
+	else {
+		if (musicAhead.controller) { try { musicAhead.controller.abort(); } catch (e) {} musicAhead.controller = null; }
+		if (musicAhead.blobUrl) { try { URL.revokeObjectURL(musicAhead.blobUrl); } catch (e) {} musicAhead.blobUrl = ''; }
+		musicAhead.blobFor = src;
+		var ctrl = (typeof AbortController != 'undefined') ? new AbortController() : null;
+		musicAhead.controller = ctrl;
+		var opts = { credentials: 'same-origin' };
+		if (ctrl) { opts.signal = ctrl.signal; }
+		fetch(url, opts).then(function(res) {
+			if (!res.ok && res.status != 206) { throw new Error('play ' + res.status); }
+			var len = parseInt(res.headers.get('Content-Length') || '0', 10);
+			if (!len || len > musicAheadMaxBlob) {
+				musicAhead.noBlobFor = src;
+				if (ctrl) { try { ctrl.abort(); } catch (e) {} }
+				throw new Error('too big');
+			}
+			return res.blob();
+		}).then(function(blob) {
+			if (gen !== musicAhead.gen) { return; }
+			musicAhead.controller = null;
+			musicAhead.blobUrl = URL.createObjectURL(blob);
+			attach(musicAhead.blobUrl, 'blob');
+		}).catch(function() {
+			if (gen !== musicAhead.gen) { return; }
+			musicAhead.controller = null;
+			attach(url, 'stream');
+		});
+	}
 	clearInterval(musicAhead.timer);
 	musicAhead.timer = setInterval(musicAheadTick, 250);
 }
@@ -1299,7 +1368,20 @@ function musicAheadStart() {
 function musicAheadTick() {
 	if (!musicAheadWanted() || !musicAhead.ready || !musicAhead.el) { return; }
 	if (musicAheadSourceChanged()) { return; }
-	if (musicAhead.hold || !musicAheadRunning()) { return; }
+	if (musicAhead.hold) {
+		// A waiting event pauses the lead while the picture is stalled. If the
+		// picture's clock has moved since then, the stall is over even if its
+		// playing/canplay event was missed; do not stay paused for the rest of
+		// the track.
+		var v = tree && tree.sound;
+		if (musicVideoStats.waitAt && v && !v.paused && (v.currentTime || 0) > (musicVideoStats.waitCt || 0) + 0.2) {
+			musicVideoStats.waitAt = 0;
+			musicVideoStats.waitCt = 0;
+		}
+		if (musicVideoStats.waitAt) { return; }
+		musicAhead.hold = false;
+	}
+	if (!musicAheadRunning()) { return; }
 	if (musicAhead.el.ended) { return; }
 	if (musicAhead.el.paused) {
 		musicAheadLead(true);
