@@ -20,6 +20,290 @@ var jawnSoftSetting = false;
 var jawnSoftKeyAt = 0;
 var jawnSoftHideTimer = null;
 
+// ---- layouts ---------------------------------------------------------------
+// The keys a phone's own keyboard puts where. A layout is rows of tokens: a
+// single character is a letter, and 'shift', 'backspace', 'enter', 'space' and
+// 'sym' name the keys that edit or change layer. `extra` is a scrollable row of
+// a language's accented letters (or the characters another script needs), kept
+// out of the letter rows so the familiar shape stays. `lang` is what dictation
+// listens for. `cased: false` marks a script with no upper case, so the layout
+// carries no shift key.
+var JAWN_SOFT_LAYOUTS = [
+	{
+		id: 'samsung', group: 'phone', name: 'Samsung (One UI)', note: 'Numbers on top', lang: 'en-US',
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0'],
+			['q','w','e','r','t','y','u','i','o','p'],
+			['a','s','d','f','g','h','j','k','l'],
+			['shift','z','x','c','v','b','n','m','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'ios', group: 'phone', name: 'iOS', note: 'No number row', lang: 'en-US',
+		rows: [
+			['q','w','e','r','t','y','u','i','o','p'],
+			['a','s','d','f','g','h','j','k','l'],
+			['shift','z','x','c','v','b','n','m','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'gboard', group: 'phone', name: 'Gboard (Pixel)', note: 'Numbers on top', lang: 'en-US',
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['q','w','e','r','t','y','u','i','o','p'],
+			['a','s','d','f','g','h','j','k','l'],
+			['shift','z','x','c','v','b','n','m','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'qwerty', group: 'phone', name: 'QWERTY (US)', note: 'Numbers on top', lang: 'en-US',
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['q','w','e','r','t','y','u','i','o','p'],
+			['a','s','d','f','g','h','j','k','l',';'],
+			['shift','z','x','c','v','b','n','m',',','.','/'],
+			['sym','space','enter']
+		]
+	},
+	{
+		id: 'azerty', group: 'language', name: 'Français', note: 'AZERTY', lang: 'fr-FR',
+		extra: ['é','è','ê','ë','à','â','ç','ô','û','î','ï','œ','ù','ÿ'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['a','z','e','r','t','y','u','i','o','p'],
+			['q','s','d','f','g','h','j','k','l','m'],
+			['shift','w','x','c','v','b','n',',','backspace'],
+			['sym','space','.','enter']
+		]
+	},
+	{
+		id: 'qwertz', group: 'language', name: 'Deutsch', note: 'QWERTZ', lang: 'de-DE',
+		extra: ['ä','ö','ü','ß','€'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['q','w','e','r','t','z','u','i','o','p','ü'],
+			['a','s','d','f','g','h','j','k','l','ö','ä'],
+			['shift','y','x','c','v','b','n','m','ß','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'spanish', group: 'language', name: 'Español', note: 'Spanish', lang: 'es-ES',
+		extra: ['á','é','í','ó','ú','ü','ñ','¿','¡'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['q','w','e','r','t','y','u','i','o','p'],
+			['a','s','d','f','g','h','j','k','l','ñ'],
+			['shift','z','x','c','v','b','n','m','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'italian', group: 'language', name: 'Italiano', note: 'Italian', lang: 'it-IT',
+		extra: ['à','è','é','ì','ò','ù'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['q','w','e','r','t','y','u','i','o','p'],
+			['a','s','d','f','g','h','j','k','l'],
+			['shift','z','x','c','v','b','n','m','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'portuguese', group: 'language', name: 'Português', note: 'Portuguese', lang: 'pt-BR',
+		extra: ['á','â','ã','à','é','ê','í','ó','ô','õ','ú','ü','ç'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['q','w','e','r','t','y','u','i','o','p'],
+			['a','s','d','f','g','h','j','k','l','ç'],
+			['shift','z','x','c','v','b','n','m','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'turkish', group: 'language', name: 'Türkçe', note: 'Turkish Q', lang: 'tr-TR',
+		extra: ['â','î','û','ç','ğ','ı','ö','ş','ü'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['q','w','e','r','t','y','u','ı','o','p','ğ','ü'],
+			['a','s','d','f','g','h','j','k','l','ş','i'],
+			['shift','z','x','c','v','b','n','m','ö','ç','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'russian', group: 'language', name: 'Русский', note: 'Cyrillic', lang: 'ru-RU',
+		extra: ['ё'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['й','ц','у','к','е','н','г','ш','щ','з','х','ъ'],
+			['ф','ы','в','а','п','р','о','л','д','ж','э'],
+			['shift','я','ч','с','м','и','т','ь','б','ю','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'arabic', group: 'language', name: 'العربية', note: 'Arabic', lang: 'ar-SA', cased: false,
+		extra: ['ً','ٌ','ٍ','َ','ُ','ِ','ّ','ْ','؟','،','؛'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['ض','ص','ث','ق','ف','غ','ع','ه','خ','ح','ج','د'],
+			['ش','س','ي','ب','ل','ا','ت','ن','م','ك','ط'],
+			['ئ','ء','ؤ','ر','لا','ى','ة','و','ز','ظ','backspace'],
+			['sym','،','space','.','enter']
+		]
+	},
+	{
+		id: 'hindi', group: 'language', name: 'हिन्दी', note: 'Devanagari', lang: 'hi-IN', cased: false,
+		extra: ['घ','ङ','छ','झ','ञ','ठ','ढ','ण','थ','ध','फ','श','ष','ह','ऱ','ॐ'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['ौ','ै','ा','ी','ू','ब','ह','ग','द','ज','ड','़'],
+			['ो','े','्','ि','ु','प','र','क','त','च','ट'],
+			['ॉ','ं','म','न','व','ल','स','य','अ','ख','भ','backspace'],
+			['sym',',','space','.','enter']
+		]
+	},
+	{
+		id: 'bengali', group: 'language', name: 'বাংলা', note: 'Bengali', lang: 'bn-BD', cased: false,
+		extra: ['অ','আ','ই','ঈ','উ','ঊ','ঋ','এ','ঐ','ও','ঔ','া','ি','ী','ু','ূ','ৃ','ে','ৈ','ো','ৌ','্','ং','ঃ','ঁ'],
+		rows: [
+			['1','2','3','4','5','6','7','8','9','0','backspace'],
+			['ক','খ','গ','ঘ','ঙ','চ','ছ','জ','ঝ','ঞ'],
+			['ট','ঠ','ড','ঢ','ণ','ত','থ','দ','ধ','ন'],
+			['প','ফ','ব','ভ','ম','য','র','ল','শ','ষ'],
+			['sym','স','হ','ড়','ঢ়','য়','ৎ','space','enter']
+		]
+	}
+];
+
+var jawnSoftLayoutId = null;
+var jawnSoftListening = false;
+var jawnSoftRecognition = null;
+var jawnSoftSpeechRestart = null;
+
+function softKbLayoutFind(id) {
+	for (var i = 0; i < JAWN_SOFT_LAYOUTS.length; i++) {
+		if (JAWN_SOFT_LAYOUTS[i].id === id) { return JAWN_SOFT_LAYOUTS[i]; }
+	}
+	return null;
+}
+
+function softKbLayoutDefault() {
+	var ua = navigator.userAgent || '';
+	if (/iPhone|iPad|iPod/i.test(ua)) { return 'ios'; }
+	if (/Android/i.test(ua)) { return 'samsung'; }
+	return 'qwerty';
+}
+
+function softKbLayout() {
+	if (jawnSoftLayoutId == null) {
+		try { jawnSoftLayoutId = localStorage.getItem('jawn_soft_layout') || ''; } catch (err) { jawnSoftLayoutId = ''; }
+		if (!softKbLayoutFind(jawnSoftLayoutId)) { jawnSoftLayoutId = softKbLayoutDefault(); }
+	}
+	return softKbLayoutFind(jawnSoftLayoutId) || JAWN_SOFT_LAYOUTS[0];
+}
+
+function softKbUpper(ch, layout) {
+	try { return ch.toLocaleUpperCase(layout.lang || 'en'); }
+	catch (err) { try { return ch.toUpperCase(); } catch (err2) { return ch; } }
+}
+
+function softKbHtml(text) {
+	return String(text == null ? '' : text)
+		.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function softKbKeyHtml(tok, layout, shift, extra) {
+	var esc = softKbHtml;
+	if (tok == 'shift') {
+		return '<button type="button" class="soft_kb_key soft_kb_mod' + (shift ? ' active' : '') + '" data-kb_key="shift" aria-label="' + esc(softKbLabel('Shift')) + '">⇧</button>';
+	}
+	if (tok == 'backspace') {
+		return '<button type="button" class="soft_kb_key soft_kb_mod" data-kb_key="backspace" aria-label="' + esc(softKbLabel('Backspace')) + '">⌫</button>';
+	}
+	if (tok == 'enter') {
+		return '<button type="button" class="soft_kb_key soft_kb_mod" data-kb_key="enter" aria-label="' + esc(softKbLabel('New line')) + '">⏎</button>';
+	}
+	if (tok == 'space') {
+		var space_label = softKbServerLabel('space', 'Space');
+		return '<button type="button" class="soft_kb_key soft_kb_space" data-kb_key="space" aria-label="' + esc(space_label) + '">' + esc(space_label) + '</button>';
+	}
+	if (tok == 'sym') {
+		return '<button type="button" class="soft_kb_key soft_kb_mod" data-kb_mode="symbols">#+=</button>';
+	}
+	var label = shift ? softKbUpper(tok, layout) : tok;
+	return '<button type="button" class="soft_kb_key' + (extra ? ' soft_kb_extra_key' : ' soft_kb_letter') + '" data-kb_key="' + esc(tok) + '" aria-label="' + esc(label) + '">' + esc(label) + '</button>';
+}
+
+// Draw the letters panel from the chosen layout. Shift is a re-draw rather than
+// a walk over the keys, so a layout can carry its own upper-case shape.
+function softKbLayoutRender() {
+	var host = $('#soft_kb_letters_rows');
+	if (!host.length) { return; }
+	var layout = softKbLayout();
+	var shift = !!jawnSoftShift && layout.cased !== false;
+	var rows = [];
+	if (layout.extra && layout.extra.length) { rows.push({ extra: true, keys: layout.extra }); }
+	(layout.rows || []).forEach(function (r) { rows.push({ extra: false, keys: r }); });
+	var html = '';
+	rows.forEach(function (r) {
+		html += '<div class="soft_kb_row' + (r.extra ? ' soft_kb_extra_row' : '') + '">';
+		r.keys.forEach(function (tok) { html += softKbKeyHtml(tok, layout, shift, r.extra); });
+		html += '</div>';
+	});
+	host.html(html);
+}
+
+function softKbLayoutsRender() {
+	var host = $('#soft_kb_layouts_list');
+	if (!host.length) { return; }
+	var current = softKbLayout().id;
+	var groups = [
+		{ key: 'phone', label: softKbLabel('Phone keyboards') },
+		{ key: 'language', label: softKbLabel('Other languages') }
+	];
+	var html = '';
+	groups.forEach(function (g) {
+		var items = JAWN_SOFT_LAYOUTS.filter(function (l) { return l.group === g.key; });
+		if (!items.length) { return; }
+		html += '<div class="soft_kb_layout_group"><div class="soft_kb_layout_group_label">' + softKbHtml(g.label) + '</div><div class="soft_kb_layout_grid">';
+		items.forEach(function (l) {
+			html += '<button type="button" class="soft_kb_layout_item' + (l.id === current ? ' active' : '') + '" data-kb_layout="' + softKbHtml(l.id) + '">'
+				+ '<span class="soft_kb_layout_name">' + softKbHtml(l.name) + '</span>'
+				+ '<span class="soft_kb_layout_note">' + softKbHtml(l.note ? softKbLabel(l.note) : '') + '</span></button>';
+		});
+		html += '</div></div>';
+	});
+	host.html(html);
+}
+
+function softKbLayoutsToggle(open) {
+	var panel = $('#soft_kb_layouts');
+	if (!panel.length) { return; }
+	var show = (open == null) ? panel.prop('hidden') : !!open;
+	if (show) { softKbLayoutsRender(); }
+	panel.prop('hidden', !show);
+	$('#soft_kb_layout_button').attr('aria-expanded', show ? 'true' : 'false').toggleClass('active', show);
+	softKbReserve();
+}
+
+function softKbLayoutSet(id) {
+	var layout = softKbLayoutFind(id);
+	if (!layout) { return; }
+	if (jawnSoftListening) { softKbDictateStop(); }
+	jawnSoftLayoutId = id;
+	try { localStorage.setItem('jawn_soft_layout', id); } catch (err) {}
+	jawnSoftShift = false;
+	softKbLayoutRender();
+	softKbLayoutsToggle(false);
+	softKbTitleUpdate();
+}
+
 function softKbOn() {
 	var stored = localStorage.getItem('jawn_soft_keyboard');
 	if (stored == 'off') { return false; }
@@ -77,6 +361,22 @@ function softKbLabel(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
 }
 
+// A label the server already translated as a core interface label (the space
+// bar's word is one). Parsed once from the template's own data block.
+var jawnSoftServerLabels = null;
+function softKbServerLabel(key, text) {
+	if (jawnSoftServerLabels == null) {
+		jawnSoftServerLabels = {};
+		var host = document.getElementById('soft_kb_labels');
+		if (host) {
+			try { jawnSoftServerLabels = JSON.parse(host.textContent || '{}') || {}; }
+			catch (err) { jawnSoftServerLabels = {}; }
+		}
+	}
+	var label = jawnSoftServerLabels[key];
+	return (label != null && label !== '') ? label : softKbLabel(text);
+}
+
 // What kind of field the dock is typing into. The class, name and placeholder
 // are the house's own conventions ("ago", "duration", "warranty", "schedule",
 // "notes"), and a `time` input is a timestamp written in words. The answer
@@ -124,6 +424,9 @@ function softKbShow(el) {
 	softKbSuppress(el);
 	softKbPlace(el);
 	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	// the chooser is a drawer over the keys; a new field starts with it shut
+	$('#soft_kb_layouts').prop('hidden', true);
+	$('#soft_kb_layout_button').attr('aria-expanded', 'false').removeClass('active');
 	// the search itself rises above the keys; the bar it lives in (dock or
 	// taskbar) keeps whatever mode it was in
 	var search_field = el.id == 'search' || $(el).closest('#search_entanglement').length > 0;
@@ -145,6 +448,9 @@ function softKbShow(el) {
 
 function softKbHide() {
 	softKbRepeatStop();
+	softKbDictateStop();
+	$('#soft_kb_layouts').prop('hidden', true);
+	$('#soft_kb_layout_button').attr('aria-expanded', 'false').removeClass('active');
 	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
 	$('body').removeClass('soft_kb_open soft_kb_dock_field soft_kb_bar_field soft_kb_search_field');
 	$('.soft_kb_search_lifted').removeClass('soft_kb_search_lifted');
@@ -213,14 +519,21 @@ function softKbScrollField(el) {
 	}, 30);
 }
 
+function softKbTitleUpdate() {
+	var dock = $('#jawn_soft_keyboard');
+	var mode = jawnSoftMode;
+	dock.find('.soft_kb_title').text(mode == 'calc' ? softKbLabel('Calculator') : (mode == 'symbols' ? softKbLabel('Special characters') : softKbLayout().name));
+}
+
 function softKbModeSet(mode) {
 	if (jawnSoftNumeric && mode == 'letters') { mode = 'calc'; }
 	jawnSoftMode = mode;
 	var dock = $('#jawn_soft_keyboard');
 	dock.find('.soft_kb_mode').removeClass('active').filter('[data-kb_mode="' + mode + '"]').addClass('active');
 	dock.find('.soft_kb_panel').prop('hidden', true).filter('[data-kb_panel="' + mode + '"]').prop('hidden', false);
-	dock.find('.soft_kb_title').text(mode == 'calc' ? softKbLabel('Calculator') : (mode == 'symbols' ? softKbLabel('Special characters') : softKbLabel('Keyboard')));
 	dock.find('.soft_kb_mode[data-kb_mode="letters"]').prop('hidden', jawnSoftNumeric);
+	if (mode == 'letters') { softKbLayoutRender(); }
+	if (!jawnSoftListening) { softKbTitleUpdate(); }
 	if (mode == 'calc') { softKbCalcRender(); softKbHistoryRender(); }
 	softKbConvertUpdate();
 	softKbReserve();
@@ -229,12 +542,155 @@ function softKbModeSet(mode) {
 
 function softKbShiftSet(on) {
 	jawnSoftShift = !!on;
-	$('#jawn_soft_keyboard .soft_kb_letter').each(function () {
-		var k = $(this).attr('data-kb_key') || '';
-		$(this).text(jawnSoftShift ? k.toUpperCase() : k);
-	});
-	$('#jawn_soft_keyboard .soft_kb_key[data-kb_key="shift"]').toggleClass('active', jawnSoftShift);
+	softKbLayoutRender();
 }
+
+// ---- dictation -------------------------------------------------------------
+// The microphone beside the hide button speaks into the field being typed in.
+// On the house's own Android view it rides the native recognizer (JawnSpeech);
+// in a browser it uses the Web Speech API. Both report the same way: final
+// words are inserted, and the bar shows the phrase while it is still being
+// heard. A layout's language is the one dictation listens for.
+function softKbNativeSpeech() {
+	return (window.JawnSpeech && typeof window.JawnSpeech.start == 'function') ? window.JawnSpeech : null;
+}
+
+function softKbDictateHint(text) {
+	$('#jawn_soft_keyboard .soft_kb_title').text(text || '');
+}
+
+function softKbDictateErrorText(code) {
+	if (code == 'permission' || code == 'not-allowed' || code == 'service-not-allowed') { return softKbLabel('Microphone permission was refused'); }
+	if (code == 'network') { return softKbLabel('Dictation needs a network connection'); }
+	if (code == 'audio-capture') { return softKbLabel('No microphone was found'); }
+	if (code == 'language' || code == 'language-not-supported') { return softKbLabel('Dictation does not support this language'); }
+	if (code == 'busy') { return softKbLabel('The microphone is busy'); }
+	return softKbLabel('Dictation is not available in this browser');
+}
+
+function softKbMicState() {
+	var on = !!jawnSoftListening;
+	$('#soft_kb_mic_button')
+		.toggleClass('active soft_kb_mic_listening', on)
+		.attr('aria-pressed', on ? 'true' : 'false')
+		.attr('aria-label', softKbLabel(on ? 'Stop dictation' : 'Start dictation'))
+		.attr('hint', softKbLabel(on ? 'Stop dictation' : 'Start dictation'));
+}
+
+function softKbDictateStop() {
+	jawnSoftListening = false;
+	clearTimeout(jawnSoftSpeechRestart);
+	if (jawnSoftRecognition) {
+		var rec = jawnSoftRecognition;
+		jawnSoftRecognition = null;
+		try { rec.abort(); } catch (err) {}
+	}
+	var native = softKbNativeSpeech();
+	if (native) { try { native.stop(); } catch (err2) {} }
+	softKbMicState();
+	softKbTitleUpdate();
+}
+
+function softKbDictateUnavailable() {
+	jawnSoftListening = false;
+	clearTimeout(jawnSoftSpeechRestart);
+	softKbMicState();
+	softKbDictateHint(softKbLabel('Dictation is not available in this browser'));
+}
+
+function softKbDictateToggle() {
+	if (jawnSoftListening) { softKbDictateStop(); return; }
+	if (!jawnSoftField) { return; }
+	softKbLayoutsToggle(false);
+	jawnSoftListening = true;
+	softKbMicState();
+	softKbDictateHint(softKbLabel('Listening…'));
+	var native = softKbNativeSpeech();
+	if (native) {
+		try {
+			if (typeof native.available == 'function' && !native.available()) { throw new Error('unavailable'); }
+			native.start(softKbLayout().lang || 'en-US');
+		}
+		catch (err) { softKbDictateUnavailable(); }
+		return;
+	}
+	softKbWebSpeechStart();
+}
+
+function softKbWebSpeechStart() {
+	var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+	if (!SR) { softKbDictateUnavailable(); return; }
+	var rec;
+	try { rec = new SR(); } catch (err) { softKbDictateUnavailable(); return; }
+	jawnSoftRecognition = rec;
+	rec.lang = softKbLayout().lang || 'en-US';
+	rec.continuous = true;
+	rec.interimResults = true;
+	rec.maxAlternatives = 1;
+	rec.onresult = function (event) {
+		if (!jawnSoftListening) { return; }
+		var final_text = '';
+		var interim = '';
+		for (var i = event.resultIndex; i < event.results.length; i++) {
+			var r = event.results[i];
+			if (r.isFinal) { final_text += r[0].transcript; }
+			else { interim += r[0].transcript; }
+		}
+		if (final_text) { softKbInsert(final_text); }
+		softKbDictateHint(interim || (final_text ? softKbLabel('Listening…') : ''));
+	};
+	rec.onerror = function (event) {
+		var code = (event && event.error) || '';
+		if (code == 'no-speech' || code == 'aborted') { return; }
+		jawnSoftListening = false;
+		softKbMicState();
+		softKbDictateHint(softKbDictateErrorText(code));
+	};
+	rec.onend = function () {
+		if (!jawnSoftListening || jawnSoftRecognition !== rec) { return; }
+		setTimeout(function () {
+			if (!jawnSoftListening || jawnSoftRecognition !== rec) { return; }
+			try { rec.start(); }
+			catch (err) { jawnSoftListening = false; softKbMicState(); }
+		}, 250);
+	};
+	try { rec.start(); }
+	catch (err) { softKbDictateUnavailable(); }
+}
+
+// The Android view reports through these two globals (JawnSpeech). A final
+// phrase is written into the field; an interim one only rides the bar, so a
+// half-heard word is never typed twice.
+window.jawnSpeechResult = function (text, isFinal) {
+	if (!jawnSoftListening || !jawnSoftField || !text) { return; }
+	if (isFinal) {
+		softKbInsert(text);
+		softKbDictateHint(softKbLabel('Listening…'));
+	}
+	else { softKbDictateHint(text); }
+};
+
+window.jawnSpeechState = function (state, detail) {
+	if (!jawnSoftListening) { return; }
+	if (state == 'listening') { softKbDictateHint(softKbLabel('Listening…')); return; }
+	if (state == 'stopped' || (state == 'error' && detail == 'no-speech')) {
+		if (!jawnSoftListening) { return; }
+		clearTimeout(jawnSoftSpeechRestart);
+		jawnSoftSpeechRestart = setTimeout(function () {
+			if (!jawnSoftListening) { return; }
+			var native = softKbNativeSpeech();
+			if (native) { try { native.start(softKbLayout().lang || 'en-US'); } catch (err) {} }
+			else { softKbWebSpeechStart(); }
+		}, 300);
+		return;
+	}
+	if (state == 'error') {
+		jawnSoftListening = false;
+		clearTimeout(jawnSoftSpeechRestart);
+		softKbMicState();
+		softKbDictateHint(softKbDictateErrorText(detail));
+	}
+};
 
 function softKbNotify(el) {
 	if (!el) { return; }
@@ -1037,8 +1493,10 @@ function softKbKey(k) {
 	if (k == 'enter') { softKbEnter(); return; }
 	if (jawnSoftMode == 'calc') { softKbCalcKey(k); return; }
 	if (k == 'space') { softKbInsert(' '); return; }
-	if (k.length == 1) {
-		softKbInsert(jawnSoftShift ? k.toUpperCase() : k);
+	if (k && k.length) {
+		var layout = softKbLayout();
+		var out = (jawnSoftShift && layout.cased !== false) ? softKbUpper(k, layout) : k;
+		softKbInsert(out);
 		if (jawnSoftShift) { softKbShiftSet(false); }
 	}
 }
@@ -1055,6 +1513,10 @@ function softKbChar(c) {
 
 function softKbPress(b) {
 	if (b.attr('data-kb_mode')) { softKbModeSet(b.attr('data-kb_mode')); return; }
+	if (b.attr('data-kb_layout')) { softKbLayoutSet(b.attr('data-kb_layout')); return; }
+	if (b.attr('data-kb_action') == 'layouts') { softKbLayoutsToggle(); return; }
+	if (b.attr('data-kb_action') == 'layouts_close') { softKbLayoutsToggle(false); return; }
+	if (b.attr('data-kb_action') == 'dictate') { softKbDictateToggle(); return; }
 	if (b.attr('data-kb_action') == 'close') { softKbHide(); return; }
 	if (b.attr('data-kb_action') == 'clear_history') {
 		jawnSoftHistory = [];
@@ -1080,7 +1542,7 @@ var jawnSoftChipAt = 0;
 
 $(document).on('pointerdown', '#jawn_soft_keyboard button', function (e) {
 	if (e.button != null && e.button != 0) { return; }
-	if ($(this).hasClass('soft_kb_convert_item') || $(this).hasClass('soft_kb_history_item')) {
+	if ($(this).hasClass('soft_kb_convert_item') || $(this).hasClass('soft_kb_history_item') || $(this).hasClass('soft_kb_layout_item')) {
 		jawnSoftChipStart = { x: e.clientX, y: e.clientY, el: this };
 		return;
 	}
@@ -1096,7 +1558,7 @@ $(document).on('pointerup', '#jawn_soft_keyboard button', function (e) {
 	if (!jawnSoftChipStart) { return; }
 	var start = jawnSoftChipStart;
 	jawnSoftChipStart = null;
-	if (!$(this).hasClass('soft_kb_convert_item') && !$(this).hasClass('soft_kb_history_item')) { return; }
+	if (!$(this).hasClass('soft_kb_convert_item') && !$(this).hasClass('soft_kb_history_item') && !$(this).hasClass('soft_kb_layout_item')) { return; }
 	var dx = Math.abs((e.clientX || 0) - start.x);
 	var dy = Math.abs((e.clientY || 0) - start.y);
 	if (dx > 12 || dy > 12) { jawnSoftChipAt = Date.now(); return; }   // a swipe, not a tap
@@ -1332,6 +1794,9 @@ $(window).on('resize', function () { if (softKbVisible()) { softKbReserve(); } }
 
 $(function () {
 	softKbHistoryRender();
+	softKbLayoutRender();
+	softKbLayoutsRender();
+	softKbMicState();
 	softKbUnitsLoad();
 	try { jawnSoftUnit = localStorage.getItem('jawn_soft_calc_unit') || null; } catch (err) {}
 	// a bare number in the calculator starts in the house's own currency, so

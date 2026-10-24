@@ -59,6 +59,12 @@
 	my ($unit) = grep { exists $kb{$_} } @{ $kb_pref{$t} || [] };
 	push @kb_types, { key => $t, unit => $unit } if $unit;
 } %>
+<%# ordinary punctuation first: a phone keyboard's 123 layer is where a
+    comma and a full stop live, and they were missing from this page %>
+<% my @punctuation = (
+	',','.','?','!',"'",'"',':',';','-','_','@','#','&','*','+','/','\\',
+	'(',')','[',']','{','}','<','>','=','~','^','|','`',
+); %>
 <% my @symbols = (
 	'€','£','¥','₹','₽','₿','¢','$',
 	'±','×','÷','−','≠','≈','≤','≥','∞','π','√','∑','∏','∆','∂','∫','°','%','‰',
@@ -72,7 +78,18 @@
 		<button type="button" class="soft_kb_mode" data-kb_mode="calc">123</button>
 		<button type="button" class="soft_kb_mode" data-kb_mode="symbols">#+=</button>
 		<span class="soft_kb_title"></span>
+		<button type="button" id="soft_kb_layout_button" class="soft_kb_icon" data-kb_action="layouts" aria-expanded="false" aria-label="<%= &subs::ui('Keyboard layout') %>" hint="<%= &subs::ui('Choose keyboard layout') %>">🌐</button>
+		<button type="button" id="soft_kb_mic_button" class="soft_kb_icon" data-kb_action="dictate" aria-pressed="false" aria-label="<%= &subs::ui('Start dictation') %>" hint="<%= &subs::ui('Dictate into this field') %>">🎤</button>
 		<button type="button" class="soft_kb_close" data-kb_action="close" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
+	</div>
+
+	<div id="soft_kb_layouts" class="soft_kb_layouts" hidden>
+		<div class="soft_kb_layouts_head">
+			<span><%= &subs::ui('Choose keyboard layout') %></span>
+			<button type="button" class="soft_kb_layouts_close" data-kb_action="layouts_close" aria-label="<%= &subs::ui('Close') %>">×</button>
+		</div>
+		<div id="soft_kb_layouts_list" class="soft_kb_layouts_list"></div>
+		<div class="soft_kb_layouts_note"><%= &subs::ui('The layout is remembered on this device. The microphone dictates in the language of the chosen layout.') %></div>
 	</div>
 
 	<div id="soft_kb_types" class="soft_kb_convert" hidden>
@@ -91,31 +108,15 @@
 	</div>
 
 	<script id="soft_kb_units" type="application/json"><%== encode_json({ units => \%kb, symbols => \%kb_sym, base => $kb_base, types => \@kb_types }) %></script>
+	<%# the core label the letter panel draws for its space bar; soft_keyboard.js
+	    reads it because the keys themselves are built in the browser %>
+	<script id="soft_kb_labels" type="application/json"><%== encode_json({ space => &subs::lang('chat.space') }) %></script>
 
 	<div class="soft_kb_panel" data-kb_panel="letters">
-		<div class="soft_kb_row">
-			<% foreach my $k (qw/1 2 3 4 5 6 7 8 9 0/) { %><button type="button" class="soft_kb_key soft_kb_wide" data-kb_key="<%= $k %>"><%= $k %></button><% } %>
-			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_key="backspace" aria-label="<%= &subs::ui('Backspace') %>">⌫</button>
-		</div>
-		<div class="soft_kb_row">
-			<% foreach my $k (qw/q w e r t y u i o p/) { %><button type="button" class="soft_kb_key soft_kb_letter soft_kb_wide" data-kb_key="<%= $k %>"><%= $k %></button><% } %>
-		</div>
-		<div class="soft_kb_row">
-			<% foreach my $k (qw/a s d f g h j k l/) { %><button type="button" class="soft_kb_key soft_kb_letter soft_kb_wide" data-kb_key="<%= $k %>"><%= $k %></button><% } %>
-			<button type="button" class="soft_kb_key soft_kb_wide" data-kb_key="'">'</button>
-		</div>
-		<div class="soft_kb_row">
-			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_key="shift" aria-label="<%= &subs::ui('Shift') %>">⇧</button>
-			<% foreach my $k (qw/z x c v b n m/) { %><button type="button" class="soft_kb_key soft_kb_letter soft_kb_wide" data-kb_key="<%= $k %>"><%= $k %></button><% } %>
-			<button type="button" class="soft_kb_key soft_kb_wide" data-kb_key=",">,</button>
-			<button type="button" class="soft_kb_key soft_kb_wide" data-kb_key=".">.</button>
-			<button type="button" class="soft_kb_key soft_kb_wide" data-kb_key="?">?</button>
-		</div>
-		<div class="soft_kb_row">
-			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_mode="symbols">#+=</button>
-			<button type="button" class="soft_kb_key soft_kb_space" data-kb_key="space"><%= &subs::lang('chat.space') %></button>
-			<button type="button" class="soft_kb_key soft_kb_mod" data-kb_key="enter" aria-label="<%= &subs::ui('New line') %>">⏎</button>
-		</div>
+		<%# the letter keys are drawn by soft_keyboard.js from the chosen layout so
+		    the person can pick the keyboard they know (Samsung, iOS, Gboard, or
+		    another language's); the first paint is the layout they last chose %>
+		<div id="soft_kb_letters_rows" class="soft_kb_rows"></div>
 	</div>
 
 	<div class="soft_kb_panel" data-kb_panel="calc" hidden>
@@ -163,6 +164,7 @@
 
 	<div class="soft_kb_panel" data-kb_panel="symbols" hidden>
 		<div class="soft_kb_symbols">
+			<% foreach my $c ( @punctuation ) { %><button type="button" class="soft_kb_sym" data-kb_char="<%= $c %>"><%= $c %></button><% } %>
 			<% foreach my $c ( @symbols ) { %><button type="button" class="soft_kb_sym" data-kb_char="<%= $c %>"><%= $c %></button><% } %>
 		</div>
 		<div class="soft_kb_row">
