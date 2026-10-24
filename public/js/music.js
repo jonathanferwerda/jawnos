@@ -2179,6 +2179,13 @@ function mediaMaker(data) {
 				musicStreamHealthPing();
 				// a stream started before the audio context was running retries
 				// here, and a paused stream resumes
+				if (musicStream.active && !musicStreamOutputs().length) {
+					// Me is the only output: the remote path is not merely idle, it is
+					// not wanted. A stream left over from an output that has since been
+					// turned off is stopped here, so nothing of it stays attached to this
+					// machine's own sound.
+					musicStreamStop();
+				}
 				if (musicStream.active) {
 					if (!musicStream.attached) { musicStreamStart(file, tree.sound.currentTime); }
 					else if (musicStream.paused) {
