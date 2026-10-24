@@ -32785,7 +32785,7 @@ sub help_media_revealed {
 # checked against the grant stored for this device: a token minted on another
 # screen or another machine is no proof here, and a fresh open carries none and
 # stays locked.
-sub media_unlock_open($c, $app, $max_age) {
+sub media_unlock_open($c, $app, $max_age = undef) {
 	return 0 unless ($c && defined $app && length $app);
 	my $token = $c->param('unlock');
 	return 0 unless (defined $token && length $token);
@@ -35689,6 +35689,10 @@ post '/manager/security/device_revoke' => sub($c) {
 		$c->render(json => { html => '<p>citizen only</p>' });
 		return;
 	}
+	unless (&security_action_open($c)) {
+		$c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
+		return;
+	}
 	my $uuid = $c->param('uuid');
 	&subs::db_delete('paired_devices', { uuid => $uuid }) if $uuid;
 	&subs::house_key_share_revoke_device($uuid) if $uuid;
@@ -35762,6 +35766,10 @@ post '/manager/security/shares/create' => sub($c) {
 post '/manager/security/person_revoke' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { ok => 0, error => 'citizen only' });
+		return;
+	}
+	unless (&security_action_open($c)) {
+		$c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
 		return;
 	}
 	my $person_uuid = $c->param('person_uuid') // '';
@@ -36283,6 +36291,11 @@ post '/manager/security/gate/enable' => sub ($c) {
 post '/manager/security/gate/disable' => sub ($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		return $c->render(json => { ok => 0, error => 'citizen only' });
+	}
+	# Turning the lock off is the dangerous direction, so it asks for the person;
+	# turning it on does not, which keeps a lost phone from leaving you unlocked.
+	unless (&security_action_open($c)) {
+		return $c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
 	}
 	&subs::db_delete('security', { level => 'padlock' });
 	&subs::db_delete('security', { level => 'padlock_device' });
