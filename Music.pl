@@ -1470,7 +1470,27 @@ post '/music/audio_output_select' => sub ($c) {
 	$c->render(json => $mao);
 };
 
-get '/music/configuration' => sub($c) {
+# The Audio drawer belongs to this machine even when the library is remote: it
+# is rendered from this machine's settings and output list, so a remote render of
+# the Music window (which would carry the remote's mao) never supplies it.
+get '/music/audio' => sub ($c) {
+	my $settings = &subs::settings_grabber({ app => 'music' });
+	my $jmao = $settings->{'mao'};
+	my $mao = eval { return decode_json $jmao } || {};
+	my $eq = eval { return decode_json($settings->{'equalizer'} // '') } || {};
+	my $html = $c->render_to_string(
+		template => 'apps/music/audio',
+		folders => &Manager::misc_setting_list(),
+		device => &subs::device_setter(),
+		mao => $mao,
+		jmao => $jmao,
+		settings => $settings,
+		crate => { settings => $settings }
+	);
+	$c->render(json => { html => $html, equalizer => $eq, mao => $mao });
+};
+
+get '/music/configuration' => sub ($c) {
 	my $returner = {};
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	my $jmao = $settings->{'mao'};

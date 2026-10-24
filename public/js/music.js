@@ -131,7 +131,9 @@ function musicOutputChannel(value) {
 function musicStreamOutputs() {
 	var outs = [];
 	$.each(mao, function(k, v) {
-		if (k && k.indexOf('.') >= 0 && musicOutputOn(v)) { outs.push(k); }
+		// a key with a dot is a peer; the loopback key is this machine's own
+		// stale self row, never a speaker to send a copy of the stream to
+		if (k && k != '127.0.0.1' && k.indexOf('.') >= 0 && musicOutputOn(v)) { outs.push(k); }
 	});
 	return outs;
 }
@@ -323,6 +325,9 @@ function musicStreamConnect() {
 		else if (d.type == 'closed' || d.type == 'error') {
 			delete musicStream.ready[d.key];
 			musicStream.failed[d.key] = 1;
+			// the last speaker going means there is nothing left to wait for
+			musicLipDelayChanged();
+			musicLipApply();
 			musicStreamMaybeRecord();
 		}
 	};
@@ -517,6 +522,181 @@ function musicStreamOutputsChanged() {
 	musicStreamSendJson({ type: 'outputs', outputs: outs, channels: musicStreamChannels() });
 }
 
+// ---- the equalizer ----------------------------------------------------------
+// Ten peaking bands across the audible range plus a low shelf for the bass
+// boost. The filters sit in the shared graph after the leveller and before the
+// limiter, so the local sound and the remote stream hear the same curve. The
+// state is one `music` setting, so it follows the machine like normalization
+// and survives a reload. Flat means no graph is built for it on its own.
+var music_eq_freqs = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+var music_eq_presets = {
+	flat:      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+	rock:      [6, 4, 2, -1, -2, -1, 1, 3, 4, 5],
+	pop:       [-1, 1, 3, 4, 2, -1, -1, 1, 2, 2],
+	jazz:      [4, 3, 1, 2, -1, -1, 0, 1, 2, 3],
+	classical: [4, 3, 2, 1, 0, -1, -1, 0, 1, 2],
+	vocal:     [-3, -2, 0, 2, 4, 4, 3, 1, 0, -2],
+	bass:      [8, 7, 5, 3, 0, 0, 0, 0, 0, 0]
+};
+var music_equalizer = { bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bass: 0, preset: 'flat' };
+var music_eq_save_timer = 0;
+var music_eq_drag = null;
+var music_audio_loading = false;
+
+function musicEqualizerClampBand(v) {
+	v = parseFloat(v);
+	if (isNaN(v)) { return 0; }
+	v = Math.round(v * 2) / 2;
+	return Math.max(-12, Math.min(12, v));
+}
+function musicEqualizerClampBass(v) {
+	v = parseFloat(v);
+	if (isNaN(v)) { return 0; }
+	return Math.max(0, Math.min(12, Math.round(v * 2) / 2));
+}
+function musicEqualizerLoad() {
+	var el = document.getElementById('music_equalizer_data');
+	if (!el) { return; }
+	var bands = (el.getAttribute('bands') || '').split(',');
+	for (var i = 0; i < music_eq_freqs.length; i++) {
+		music_equalizer.bands[i] = musicEqualizerClampBand(bands[i]);
+	}
+	music_equalizer.bass = musicEqualizerClampBass(el.getAttribute('bass'));
+	music_equalizer.preset = el.getAttribute('preset') || 'flat';
+	musicEqualizerPaint();
+}
+function musicEqualizerDirty() {
+	if (music_equalizer.bass > 0) { return true; }
+	for (var i = 0; i < music_equalizer.bands.length; i++) {
+		if (Math.abs(music_equalizer.bands[i]) > 0.001) { return true; }
+	}
+	return false;
+}
+function musicEqualizerSave() {
+	clearTimeout(music_eq_save_timer);
+	music_eq_save_timer = setTimeout(function() {
+		settingSetter({
+			app: 'music',
+			setting: 'equalizer',
+			value: JSON.stringify({ bands: music_equalizer.bands, bass: music_equalizer.bass, preset: music_equalizer.preset })
+		});
+	}, 250);
+}
+function musicEqualizerApply() {
+	var g = musicVisual;
+	var now = (g && g.ctx) ? g.ctx.currentTime : 0;
+	if (g && g.eqFilters) {
+		for (var i = 0; i < g.eqFilters.length && i < music_equalizer.bands.length; i++) {
+			try { g.eqFilters[i].gain.setTargetAtTime(music_equalizer.bands[i], now, 0.02); }
+			catch (e) { try { g.eqFilters[i].gain.value = music_equalizer.bands[i]; } catch (e2) {} }
+		}
+	}
+	if (g && g.eqBass) {
+		try { g.eqBass.gain.setTargetAtTime(music_equalizer.bass, now, 0.02); }
+		catch (e) { try { g.eqBass.gain.value = music_equalizer.bass; } catch (e2) {} }
+	}
+	// a boosted band should be peak-guarded even when normalization is off
+	if (g && g.limiter) { musicNormalizeParams(); }
+	musicEqualizerPaint();
+}
+// Paint every band from its dB value: the knob sits at the value, the fill runs
+// from the centre line to it. The value is also the slider's ARIA state.
+function musicEqualizerPaint() {
+	$('#music_eq_presets .music_eq_preset').each(function() {
+		$(this).attr('state', $(this).attr('data-preset') == music_equalizer.preset ? 'on' : 'off');
+	});
+	$('#music_eq_bands .music_eq_band').each(function() {
+		var band = parseInt($(this).attr('data-band'), 10);
+		var v = music_equalizer.bands[band] || 0;
+		var p = (v + 12) / 24;
+		var fill = $(this).find('.music_eq_fill');
+		if (v >= 0) {
+			fill.css({ bottom: '50%', height: ((p - 0.5) * 100).toFixed(2) + '%' });
+		}
+		else {
+			fill.css({ bottom: (p * 100).toFixed(2) + '%', height: ((0.5 - p) * 100).toFixed(2) + '%' });
+		}
+		$(this).find('.music_eq_knob').css({ top: ((1 - p) * 100).toFixed(2) + '%' });
+		$(this).find('.music_eq_value').text((v > 0 ? '+' : '') + v);
+		$(this).attr('aria-valuenow', v);
+	});
+	$('#music_eq_bass').val(music_equalizer.bass);
+	$('#music_eq_bass_value').text(music_equalizer.bass + ' dB');
+}
+function musicEqualizerChanged(preset) {
+	music_equalizer.preset = preset || 'custom';
+	// A non-flat curve needs the shared graph; flat leaves it alone (and does not
+	// build one just to multiply the sound by nothing).
+	if (musicEqualizerDirty() && !(musicVisual && musicVisual.limiter)) {
+		try { musicAudioGraph(); } catch (e) {}
+	}
+	musicEqualizerApply();
+	musicEqualizerSave();
+}
+function musicEqualizerBand(band, value) {
+	band = parseInt(band, 10);
+	if (isNaN(band) || band < 0 || band >= music_eq_freqs.length) { return; }
+	music_equalizer.bands[band] = musicEqualizerClampBand(value);
+	musicEqualizerChanged();
+}
+function musicEqualizerBandFromEvent(e, track) {
+	if (!track || !track.length) { return 0; }
+	var r = track[0].getBoundingClientRect();
+	if (!r.height) { return 0; }
+	var y = (e.clientY - r.top) / r.height;
+	y = Math.max(0, Math.min(1, y));
+	return (0.5 - y) * 24;
+}
+
+// A band takes a drag up/down, a wheel notch, an arrow key or a double click
+// (back to 0). The whole band is the target, not only the thin track.
+$(document).on('pointerdown', '.music_eq_band', function(e) {
+	music_eq_drag = $(this).attr('data-band');
+	try { this.focus(); } catch (err) {}
+	musicEqualizerBand(music_eq_drag, musicEqualizerBandFromEvent(e, $(this).find('.music_eq_track')));
+	e.preventDefault();
+});
+$(document).on('pointermove', function(e) {
+	if (music_eq_drag === null) { return; }
+	var t = $('.music_eq_band[data-band="' + music_eq_drag + '"] .music_eq_track');
+	musicEqualizerBand(music_eq_drag, musicEqualizerBandFromEvent(e, t));
+});
+$(document).on('pointerup pointercancel', function() { music_eq_drag = null; });
+$(document).on('wheel', '.music_eq_band', function(e) {
+	var ev = e.originalEvent || e;
+	var d = ev.deltaY || 0;
+	if (!d) { return; }
+	e.preventDefault();
+	e.stopPropagation();
+	var band = parseInt($(this).attr('data-band'), 10);
+	musicEqualizerBand(band, (music_equalizer.bands[band] || 0) + (d < 0 ? 1 : -1));
+});
+$(document).on('dblclick', '.music_eq_band', function() {
+	musicEqualizerBand($(this).attr('data-band'), 0);
+});
+$(document).on('keydown', '.music_eq_band', function(e) {
+	var band = parseInt($(this).attr('data-band'), 10);
+	var v = music_equalizer.bands[band] || 0;
+	if (e.key == 'ArrowUp' || e.key == 'ArrowRight') { v += 1; }
+	else if (e.key == 'ArrowDown' || e.key == 'ArrowLeft') { v -= 1; }
+	else if (e.key == 'Home') { v = 0; }
+	else { return; }
+	e.preventDefault();
+	musicEqualizerBand(band, v);
+});
+$(document).on('click', '.music_eq_preset', function() {
+	var name = $(this).attr('data-preset');
+	var preset = music_eq_presets[name];
+	if (!preset) { return; }
+	music_equalizer.bands = preset.slice();
+	if (name == 'flat') { music_equalizer.bass = 0; }
+	musicEqualizerChanged(name);
+});
+$(document).on('input', '#music_eq_bass', function() {
+	music_equalizer.bass = musicEqualizerClampBass(this.value);
+	musicEqualizerChanged();
+});
+
 // ---- lip sync ---------------------------------------------------------------
 // The remote cannot play earlier than it receives, so it is L milliseconds
 // behind the source. With lip sync on, this screen shows a second, muted <video>
@@ -527,7 +707,7 @@ function musicStreamOutputsChanged() {
 // captions, and cannot show a half-decoded frame.
 var musicLip = {
 	on: false, delay: 0.12, audioDelay: 0, clone: null, timer: 0, video: null,
-	saved: '', revealed: false, painted: false, track: null, src: '',
+	saved: '', revealed: false, painted: false, track: null, src: '', seekAt: 0,
 	cloneSource: null, cloneMute: null,
 	freeze: null, freezeCanvas: null, freezeGen: 0, freezeAt: 0
 };
@@ -555,17 +735,20 @@ function musicGraphCarriesLocal() {
 	try { g = musicVisual.localGain.gain.value; } catch (e) {}
 	return g > 0.0001;
 }
-// How far behind the live element the picture has to be shown. Two things can
-// put the sound behind the picture: the graph's own output buffer, and a remote
-// output (when lip sync is on, the picture waits for the stream). The clone is
-// started for either, so local A/V stays together even with no remote playing.
+// How far behind the live element the picture has to be shown. Only a remote
+// output needs this: the local sound and picture are already together when me
+// is the only output, so lip sync leaves a local-only session untouched (no
+// clone, no delayed sound). With a remote in use, the picture waits for the
+// measured stream latency; the local sound's own graph buffer is subtracted in
+// musicLipDelayChanged. The clone follows the remote, never a local-only graph.
 function musicPictureDelay() {
-	var delay = 0;
-	if (musicGraphCarriesLocal()) { delay = musicGraphLatency(); }
-	if (music_lip_sync == 'on' && musicStream.active && musicStreamOutputs().length > 0) {
-		delay = Math.max(delay, (musicStream.latency || 0) / 1000);
-	}
-	return Math.max(0, Math.min(1, delay));
+	if (music_lip_sync != 'on') { return 0; }
+	if (!musicStream.active || !musicStreamOutputs().length) { return 0; }
+	// an output that never answered is not a speaker that needs waiting for
+	var ready = false;
+	for (var k in musicStream.ready) { if (musicStream.ready[k]) { ready = true; break; } }
+	if (!ready) { return 0; }
+	return Math.max(0, Math.min(1, (musicStream.latency || 0) / 1000));
 }
 
 function musicLipWanted() {
@@ -734,6 +917,7 @@ function musicLipStart() {
 	musicLip.src = musicAbsoluteUrl(src);
 	musicLip.revealed = false;
 	musicLip.painted = false;
+	musicLip.seekAt = 0;
 	musicLipDelayChanged();
 	var c = document.createElement('video');
 	c.className = v.className;
@@ -877,7 +1061,13 @@ function musicLipSync() {
 		return;
 	}
 	var drift = target - c.currentTime;
+	// A clone that is still seeking reports its old position, and chasing that
+	// seek again every tick is what made the picture blink black. Let the decoder
+	// settle, and give a hard correction a moment before it is allowed to repeat.
+	if (c.seeking) { return; }
 	if (Math.abs(drift) > 0.35) {
+		if (Date.now() - (musicLip.seekAt || 0) < 1200) { return; }
+		musicLip.seekAt = Date.now();
 		// a seek empties the decoder for a moment; hold the frame we last saw.
 		// Encode at most once a second: on a slow decoder the correction can
 		// repeat, and a still every tick would make the stumble worse.
@@ -1086,6 +1276,12 @@ function musicToggle(files, same_order) {
 
 async function musicInit(method) {
 	treeMaker();
+	// the equalizer's saved curve and the panel's sliders
+	musicEqualizerLoad();
+	// The Audio drawer is fetched from this machine and is also where the saved
+	// curve lives; fetch it once per opened window so a saved EQ is applied even
+	// if the drawer is never opened.
+	if (!$('#music_audio_panel').children().length) { musicAudioPanelLoad(false); }
 	if (method != 'search') {
 		// a restored window comes back with the setting the server last saved;
 		// a search re-render keeps the value already running in this page
@@ -1456,7 +1652,7 @@ function mediaMaker(data) {
 				// a graph deferred while it was stopped is finished once it runs
 				musicAudioResume();
 				var local_side = musicOutputChannel(mao['me']);
-				if ((music_normalize && music_normalize != 'off') || local_side == 'left' || local_side == 'right') { musicAudioGraph(); }
+				if ((music_normalize && music_normalize != 'off') || local_side == 'left' || local_side == 'right' || musicEqualizerDirty()) { musicAudioGraph(); }
 				musicBaselineStart();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
@@ -2621,6 +2817,63 @@ $(document).on('click', '#music_configuration_close', function(e) {
 	$('#music_configuration').hide();
 });
 
+function musicEqualizerFromEqualizer(eq) {
+	if (!eq) { return false; }
+	var bands = eq.bands || [];
+	for (var i = 0; i < music_eq_freqs.length; i++) {
+		music_equalizer.bands[i] = musicEqualizerClampBand(bands[i]);
+	}
+	music_equalizer.bass = musicEqualizerClampBass(eq.bass);
+	music_equalizer.preset = eq.preset || 'flat';
+	musicEqualizerPaint();
+	return true;
+}
+// The drawer is fetched from this machine, not the library host: its outputs,
+// format, lip-sync, normalization and equalizer are local settings. The first
+// open also gives the equalizer to a page that has not shown the drawer yet, so
+// a saved curve is in place before playback starts.
+function musicAudioPanelLoad(show) {
+	var panel = $('#music_audio_panel');
+	if (!panel.length) { return; }
+	// the drawer floats over the theatre picture like the configuration sheet
+	try { panel.css({ 'z-index': (parseInt($('#interface').css('z-index')) || 0) + 1 }); } catch (e) {}
+	if (show) { panel.show(); }
+	if (music_audio_loading) { return; }
+	music_audio_loading = true;
+	$.ajax({
+		url: '/music/audio',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		success: function(r) {
+			if (!r || !r.html) { return; }
+			// the drawer belongs to this machine, including the output list
+			if (r.mao) { mao = r.mao; }
+			panel.html(r.html);
+			if (!musicEqualizerFromEqualizer(r.equalizer)) { musicEqualizerLoad(); }
+			if (musicEqualizerDirty() && !(musicVisual && musicVisual.limiter)) {
+				try { musicAudioGraph(); } catch (e) {}
+			}
+			musicEqualizerApply();
+			$.each(mao, function(k, v) { musicOutputPaint(k, v); });
+		},
+		error: function() { /* keep whatever the drawer already holds */ },
+		complete: function() { music_audio_loading = false; }
+	});
+}
+
+$(document).on('click', '#music_audio_toggle', function() {
+	var panel = $('#music_audio_panel');
+	if (panel.is(':visible')) { panel.hide(); return; }
+	$('#music_configuration').hide();
+	musicAudioPanelLoad(true);
+});
+
+$(document).on('click', '#music_audio_close', function(e) {
+	e.preventDefault();
+	$('#music_audio_panel').hide();
+});
+
 $(document).on('click', '#music_configuration_toggle', function() {
 	var mc = $('#music_configuration');
 	var remote_uuid = mc.attr('remote_uuid');
@@ -2629,6 +2882,7 @@ $(document).on('click', '#music_configuration_toggle', function() {
 	}
 	else {
 		mc.show();
+		$('#music_audio_panel').hide();
 		$.ajax({
 			url: '/music/configuration',
 			type: 'GET',
@@ -2705,6 +2959,8 @@ var musicVisual = {
 	localRight: null,
 	localMerge: null,
 	graphLatency: 0,
+	eqFilters: null,
+	eqBass: null,
 	freq: null,
 	raf: 0,
 	last: 0,
@@ -2808,6 +3064,8 @@ function musicAudioClose() {
 	musicVisual.localRight = null;
 	musicVisual.localMerge = null;
 	musicVisual.graphLatency = 0;
+	musicVisual.eqFilters = null;
+	musicVisual.eqBass = null;
 }
 // Resume the audio context and, once it is running, finish a graph that was
 // deferred while it was stopped. Returns the context state after the attempt.
@@ -2853,9 +3111,11 @@ function musicAudioGraph() {
 		// handing them 48000 made PulseAudio resample and buffer (a high-quality
 		// video's 48 kHz audio arrived about a second late). A 48 kHz desk sink
 		// resamples the other way, with a far smaller buffer.
-		try { musicVisual.ctx = new Ctor({ sampleRate: 44100 }); }
+		try { musicVisual.ctx = new Ctor({ sampleRate: 44100, latencyHint: 'interactive' }); }
 		catch (e) { try { musicVisual.ctx = new Ctor(); } catch (e2) { return null; } }
 		musicVisual.graphLatency = 0;
+		musicVisual.eqFilters = null;
+		musicVisual.eqBass = null;
 		musicVisual.source = null;
 		musicVisual.el = null;
 		musicVisual.analyser = null;
@@ -2901,9 +3161,29 @@ function musicAudioGraph() {
 			musicVisual.localRight = musicVisual.ctx.createGain();
 			musicVisual.localMerge = musicVisual.ctx.createChannelMerger(2);
 			musicVisual.localDelay.delayTime.value = (musicLip.on && musicLip.revealed) ? (musicLip.audioDelay || 0) : 0;
+			// The equalizer sits after the leveller and before the limiter, so the
+			// peak guard still catches a boosted band and the remote tap hears the
+			// same curve as this machine. A flat curve is 0 dB on every filter.
+			musicVisual.eqFilters = [];
+			var eq_prev = musicVisual.makeup;
+			for (var eq_i = 0; eq_i < music_eq_freqs.length; eq_i++) {
+				var eq_f = musicVisual.ctx.createBiquadFilter();
+				eq_f.type = 'peaking';
+				eq_f.frequency.value = music_eq_freqs[eq_i];
+				eq_f.Q.value = 1.1;
+				eq_f.gain.value = 0;
+				eq_prev.connect(eq_f);
+				eq_prev = eq_f;
+				musicVisual.eqFilters.push(eq_f);
+			}
+			musicVisual.eqBass = musicVisual.ctx.createBiquadFilter();
+			musicVisual.eqBass.type = 'lowshelf';
+			musicVisual.eqBass.frequency.value = 90;
+			musicVisual.eqBass.gain.value = 0;
+			eq_prev.connect(musicVisual.eqBass);
+			musicVisual.eqBass.connect(musicVisual.limiter);
 			musicVisual.compressor.connect(musicVisual.leveler);
 			musicVisual.leveler.connect(musicVisual.makeup);
-			musicVisual.makeup.connect(musicVisual.limiter);
 			musicVisual.limiter.connect(musicVisual.localGain);
 			musicVisual.limiter.connect(musicVisual.remoteGain);
 			musicVisual.localGain.connect(musicVisual.analyser);
@@ -2914,6 +3194,7 @@ function musicAudioGraph() {
 			musicVisual.localLeft.connect(musicVisual.localMerge, 0, 0);
 			musicVisual.localRight.connect(musicVisual.localMerge, 0, 1);
 			musicVisual.localMerge.connect(musicVisual.ctx.destination);
+			musicEqualizerApply();
 		}
 		catch (e) {
 			musicVisual.limiter = null;
@@ -3156,7 +3437,7 @@ function musicNormalizeParams() {
 	// The compressor is the in-track leveller and musicLevellerApply() owns it.
 	// Here only the peak guard is set: when the normaliser is on, a boost cannot
 	// clip; when it is off the limiter is transparent too.
-	var limiting = (music_normalize && music_normalize != 'off');
+	var limiting = (music_normalize && music_normalize != 'off') || musicEqualizerDirty();
 	try {
 		g.limiter.threshold.setTargetAtTime(limiting ? -1 : 0, now, 0.02);
 		g.limiter.knee.setTargetAtTime(0, now, 0.02);
@@ -3192,14 +3473,14 @@ function musicNormalizeApply() {
 // reaches the window puts the graph in place and resumes it, so a restored track
 // is not left silent by a context that could not start on its own.
 $(document).on('pointerdown touchstart keydown', function() {
-	if (music_normalize && music_normalize != 'off' && $('#music').length) { musicAudioGraph(); }
+	if ((music_normalize && music_normalize != 'off') || musicEqualizerDirty()) { musicAudioGraph(); }
 	// a stream left muted by an older build or a failed autoplay is put right
 	// on the first gesture, when WebKit accepts the change
 	if ($('#music').length && tree && tree.sound) { musicVolumeApply(); }
 });
 // A phone pauses the graph when the app is put away; coming back resumes it.
 $(document).on('visibilitychange', function() {
-	if (!document.hidden && music_normalize && music_normalize != 'off' && $('#music').length) {
+	if (!document.hidden && ((music_normalize && music_normalize != 'off') || musicEqualizerDirty()) && $('#music').length) {
 		musicAudioGraph();
 		musicVolumeApply();
 	}

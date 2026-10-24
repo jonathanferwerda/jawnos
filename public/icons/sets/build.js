@@ -70,6 +70,9 @@ const GLYPHS = {
 	image: '<rect x="3" y="4.5" width="18" height="15" rx="2.2" fill="{G}"/><circle cx="8.2" cy="9.6" r="1.8" fill="{D}"/><path d="M4 18.2 9.2 12l3.2 3.6L15 13l5 5.2z" fill="{D}"/>',
 	exit: '<path d="M10.5 4H6.5A2.5 2.5 0 0 0 4 6.5v11A2.5 2.5 0 0 0 6.5 20h4" fill="none" stroke="{G}" stroke-width="1.9" stroke-linecap="round"/><path d="M9.5 12H20" fill="none" stroke="{G}" stroke-width="1.9" stroke-linecap="round"/><path d="M16 8.5 19.5 12 16 15.5" fill="none" stroke="{G}" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
 	sliders: '<g stroke="{D}" stroke-width="1.6" stroke-linecap="round"><path d="M7 4v16M12 4v16M17 4v16"/></g><circle cx="7" cy="9" r="2.4" fill="{G}"/><circle cx="12" cy="15" r="2.4" fill="{G}"/><circle cx="17" cy="7" r="2.4" fill="{G}"/>',
+	// the Audio panel: a spectrum of bands, already tuned to a curve (the
+	// small dots are the tops the knobs travel along)
+	equalizer: '<g fill="{G}"><rect x="2.6" y="10" width="3" height="10" rx="1.4"/><rect x="7.1" y="6" width="3" height="14" rx="1.4"/><rect x="11.6" y="12" width="3" height="8" rx="1.4"/><rect x="16.1" y="4.5" width="3" height="15.5" rx="1.4"/></g><g fill="{D}"><circle cx="4.1" cy="8" r="1.15"/><circle cx="8.6" cy="4.2" r="1.15"/><circle cx="13.1" cy="10" r="1.15"/><circle cx="17.6" cy="2.7" r="1.15"/></g>',
 	dollar: '<circle cx="12" cy="12" r="9" fill="{G}"/><path d="M12 5.6v12.8" fill="none" stroke="{D}" stroke-width="1.5" stroke-linecap="round"/><path d="M14.8 9c-.6-.8-1.6-1.3-2.7-1.2-1.6.1-2.7 1-2.7 2.3 0 1.5 1.5 2 3.3 2.4 1.8.4 3.2 1 3.2 2.6 0 1.5-1.4 2.4-3.1 2.4-1.4 0-2.6-.6-3.2-1.6" fill="none" stroke="{D}" stroke-width="1.5" stroke-linecap="round"/>',
 	pause: '<rect x="6" y="5" width="4.2" height="14" rx="1.4" fill="{G}"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.4" fill="{G}"/>',
 	detour: '<path d="M4 18c0-6 4-9 10-9" fill="none" stroke="{G}" stroke-width="2.2" stroke-linecap="round"/><path d="M11.5 5 17 9l-5.5 4z" fill="{G}"/>',
@@ -256,6 +259,7 @@ const ICONS = {
 	'gallery': 'image',
 	'exit': 'exit',
 	'mixer': 'sliders',
+	'equalizer': 'equalizer',
 	'cash': 'dollar',
 	'pause': 'pause',
 	'detour': 'detour',

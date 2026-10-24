@@ -1,0 +1,115 @@
+<% use Mojo::JSON qw(decode_json); %>
+<% my $remote_machines = &subs::remote_machine_lister(); %>
+<% my @machines; my %seen_machine; my $self_signatorial = &subs::signatorial_designer(); %>
+<% foreach my $rm ( @{$remote_machines} ) {
+	# remote_machine_lister puts a synthetic 'me' row (hostname me, ip
+	# 127.0.0.1) first for the machine pickers. The local output is the real
+	# Me button; this row is not a peer. A machine never carries itself as an
+	# output either, so its own signatorial is left out.
+	next if ($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1';
+	next if $self_signatorial && ($rm->{'signatorial'} || '') eq $self_signatorial;
+	my $key = $rm->{'uuid'} || $rm->{'signatorial'} || $rm->{'ip'};
+	next if !$key || $seen_machine{$key};
+	$seen_machine{$key} = 1;
+	push @machines, $rm;
+} %>
+<% my $output_channel = sub {
+	my $v = shift // '';
+	return 'left' if $v eq 'left';
+	return 'right' if $v eq 'right';
+	return 'stereo' if $v eq 'on' || $v eq 'stereo';
+	return 'off';
+}; %>
+<% my $eq = eval { decode_json(&subs::setting_grabber({ app => 'music', setting => 'equalizer' }) // '') } || {}; %>
+<% my @eq_bands = @{$eq->{'bands'} || []};
+	@eq_bands = (0) x 10 unless scalar @eq_bands == 10;
+	@eq_bands = map { my $v = $_ + 0; $v < -12 ? -12 : ($v > 12 ? 12 : $v) } @eq_bands;
+%>
+<% my $eq_bass = $eq->{'bass'} || 0;
+	$eq_bass = 0 if $eq_bass < 0;
+	$eq_bass = 12 if $eq_bass > 12;
+%>
+<% my @eq_freq = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000); %>
+<% my @eq_label = ('31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'); %>
+<button type="button" id="music_audio_close" class="music_cfg_close hover" hint="Close" aria-label="Close">&times;</button>
+<h3 class="music_audio_heading"><%= &subs::lang('music.audio') %></h3>
+<div class="music_cfg_section">
+	<h4 class="music_cfg_heading"><%= &subs::lang('music.output') %></h4>
+	<div id="music_audio_output" class="music_cfg_chips">
+		<% my $me_channel = $output_channel->($mao->{'me'}); %>
+		<span class="music_output_group" value="me" state="<%= $me_channel %>">
+			<button class="music_audio_output_select music_output_left hover" value="me" channel="left" state="<%= $me_channel eq 'left' ? 'left' : 'off' %>" hint="Left speaker">L</button>
+			<button class="music_audio_output_select music_output_center hover" value="me" state="<%= $me_channel eq 'stereo' ? 'on' : 'off' %>" hint="Stereo"><%= &subs::format_name('me') %></button>
+			<button class="music_audio_output_select music_output_right hover" value="me" channel="right" state="<%= $me_channel eq 'right' ? 'right' : 'off' %>" hint="Right speaker">R</button>
+		</span>
+		<%# the server player hands the file to the machine's own player, so it has
+		    no channel split to offer - only on and off %>
+		<button class="music_audio_output_select hover" state="<%= $mao->{'srv'} %>" value="srv"><%= &subs::format_name('srv') %></button>
+		<% foreach my $rm ( @machines ) {
+			my $key = $rm->{'fqdn'} || $rm->{'ip'};
+			my $channel = $output_channel->($mao->{$key});
+			my $label = &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key;
+		%>
+			<span class="music_output_group" value="<%= $key %>" state="<%= $channel %>">
+				<button class="music_audio_output_select music_output_left hover" value="<%= $key %>" channel="left" state="<%= $channel eq 'left' ? 'left' : 'off' %>" hint="Left speaker">L</button>
+				<button class="music_audio_output_select music_output_center hover" value="<%= $key %>" state="<%= $channel eq 'stereo' ? 'on' : 'off' %>" hint="Stereo"><%= $label %></button>
+				<button class="music_audio_output_select music_output_right hover" value="<%= $key %>" channel="right" state="<%= $channel eq 'right' ? 'right' : 'off' %>" hint="Right speaker">R</button>
+			</span>
+		<% } %>
+	</div>
+</div>
+<div class="music_cfg_section">
+	<h4 class="music_cfg_heading"><%= &subs::lang('music.playback') %></h4>
+	<div class="music_cfg_fields">
+		<div class="music_cfg_field music_cfg_field_wide">
+			<label class="music_cfg_label" for="music_normalize_select" hint="Volume normalization"><%= &subs::lang('music.normalize') %></label>
+			<select id="music_normalize_select" hint="Make quiet and loud tracks play at a similar level">
+				<% foreach my $level ( qw/off slight mild aggressive/ ) { %>
+					<option value="<%= $level %>" <% if ($level eq ($crate->{'settings'}->{'normalize'} || 'off')) { %>selected<% } %>><%= &subs::lang('music.normalize_' . $level) %></option>
+				<% } %>
+			</select>
+		</div>
+		<div class="music_cfg_field music_cfg_field_wide">
+			<label class="music_cfg_label" for="music_stream_codec" hint="Remote audio format"><%= &subs::lang('music.remote_format') %></label>
+			<select id="music_stream_codec" hint="Remote audio format">
+				<% my $codec = $crate->{'settings'}->{'stream_codec'} || 'pcm'; %>
+				<option value="pcm" <% if ($codec eq 'pcm') { %>selected<% } %>><%= &subs::ui('PCM (lowest latency)') %></option>
+				<option value="opus" <% if ($codec eq 'opus') { %>selected<% } %>><%= &subs::ui('Opus (lower bandwidth)') %></option>
+			</select>
+		</div>
+		<div class="music_cfg_field music_cfg_field_wide">
+			<label class="music_cfg_label music_cfg_check" for="music_lip_sync" hint="Lip sync">
+				<input type="checkbox" id="music_lip_sync" <% if (($crate->{'settings'}->{'lip_sync'} || 'off') eq 'on') { %>checked<% } %> />
+				<%= &subs::lang('music.lip_sync') %>
+			</label>
+		</div>
+	</div>
+</div>
+<div class="music_cfg_section">
+	<h4 class="music_cfg_heading"><%= &subs::lang('music.equalizer') %></h4>
+	<div id="music_equalizer" preset="<%= $eq->{'preset'} || 'flat' %>">
+		<div id="music_eq_presets" class="music_eq_presets">
+			<% foreach my $p ( qw/flat rock pop jazz classical vocal bass/ ) { %>
+				<button type="button" class="music_eq_preset hover" data-preset="<%= $p %>" <% if (($eq->{'preset'} || 'flat') eq $p) { %>state="on"<% } %>><%= &subs::lang('music.preset_' . $p) %></button>
+			<% } %>
+		</div>
+		<div id="music_eq_bands" class="music_eq_bands">
+			<% foreach my $i (0..9) { %>
+				<div class="music_eq_band hover" data-band="<%= $i %>" tabindex="0" role="slider" aria-label="<%= $eq_label[$i] %> Hz" aria-valuemin="-12" aria-valuemax="12" aria-valuenow="<%= $eq_bands[$i] %>" hint="<%= &subs::lang('music.equalizer') %>">
+					<div class="music_eq_track">
+						<div class="music_eq_fill"></div>
+						<div class="music_eq_knob"></div>
+					</div>
+					<span class="music_eq_value"><%= $eq_bands[$i] %></span>
+					<span class="music_eq_freq"><%= $eq_label[$i] %></span>
+				</div>
+			<% } %>
+		</div>
+		<div class="music_eq_bass_row">
+			<label for="music_eq_bass" hint="<%= &subs::lang('music.bass_boost') %>"><%= &subs::lang('music.bass_boost') %></label>
+			<input type="range" id="music_eq_bass" min="0" max="12" step="0.5" value="<%= $eq_bass %>" hint="<%= &subs::lang('music.bass_boost') %>">
+			<span id="music_eq_bass_value"><%= $eq_bass %> dB</span>
+		</div>
+	</div>
+	<div id="music_equalizer_data" style="display:none;" bands="<%= join(',', @eq_bands) %>" bass="<%= $eq_bass %>" preset="<%= $eq->{'preset'} || 'flat' %>"></div>
+</div>

@@ -38,6 +38,7 @@
 				<% if (scalar @{$padlock_sighting} > 0) { %>
 					<img src="<%= &subs::icon_for("/images/jbuttons/padlock unlock.png") %>" hint="Lock" class="hover little_thumb music music_lock" id="music_padlock_toggle" style="<% if ($crate->{'unlocked'}) { %>background-color:red;<% } %>">
 				<% } %>
+				<img src="<%= &subs::icon_path('equalizer', '/images/decipherable/equalizer.svg') %>" hint="<%= &subs::lang('music.audio') %>" class="little_thumb hover" id="music_audio_toggle">
 				<img src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb hover" id="music_configuration_toggle">
 			</span>
 
@@ -78,7 +79,7 @@
 		</div>
 
 	</div>
-	<div id="music_configuration" remote_uuid="<%= $crate->{'remote_uuid'} %>" style="display:none;">
+	<div id="music_configuration" class="music_cfg_drawer" remote_uuid="<%= $crate->{'remote_uuid'} %>" style="display:none;">
 		<% if ($crate->{'remote_uuid'}) { %>
 			<%# a remote library is still configured from this machine - the panel is
 			    fetched from home when the gear is first opened %>
@@ -86,6 +87,7 @@
 			<%= include 'apps/music/configuration' %>
 		<% } %>
 	</div>
+	<div id="music_audio_panel" class="music_cfg_drawer" style="display:none;"></div>
 
 	<div id="music_theatre" style="bottom:0px;">
 	 <%= include 'apps/video',

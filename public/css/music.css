@@ -328,6 +328,7 @@ body.dark_theme #music {
 	gap: 4px;
 	flex: 0 0 auto;
 }
+#music #music_audio_toggle,
 #music #music_configuration_toggle,
 #music #music_padlock_toggle {
 	height: 38px;
@@ -337,6 +338,7 @@ body.dark_theme #music {
 	box-shadow: none;
 	transition: transform .15s, background-color .15s;
 }
+#music #music_audio_toggle:hover,
 #music #music_configuration_toggle:hover,
 #music #music_padlock_toggle:hover {
 	transform: scale(1.08);
@@ -355,6 +357,7 @@ body.dark_theme #music {
 	#music #progress_readout { font-size: 13px; letter-spacing: 0; }
 	#music #music_volume { width: 64px; }
 	#music #music_mute { height: 30px; }
+	#music #music_audio_toggle,
 	#music #music_configuration_toggle,
 	#music #music_padlock_toggle { height: 28px; }
 	/* the shelves and the list lose their generous padding */
@@ -496,7 +499,7 @@ body.dark_theme #music {
    rather than a stack of coloured blocks. Chips wrap, the fields take the
    full width when the drawer is narrow, and the drawer itself scrolls inside
    the window rather than running off its foot. */
-#music #music_configuration {
+#music .music_cfg_drawer {
 	position: absolute;
 	top: 90px;
 	right: 0;
@@ -552,9 +555,9 @@ body.dark_theme #music {
 	flex-wrap: wrap;
 	gap: 6px;
 }
-#music #music_configuration .music_folder_toggle,
-#music #music_configuration .music_archive_toggle,
-#music #music_configuration .music_audio_output_select {
+#music .music_cfg_drawer .music_folder_toggle,
+#music .music_cfg_drawer .music_archive_toggle,
+#music .music_cfg_drawer .music_audio_output_select {
 	height: auto;
 	min-height: 30px;
 	margin: 0;
@@ -566,21 +569,21 @@ body.dark_theme #music {
 	color: var(--ink);
 	box-shadow: none;
 }
-#music #music_configuration .music_folder_toggle:hover,
-#music #music_configuration .music_archive_toggle:hover,
-#music #music_configuration .music_audio_output_select:hover {
+#music .music_cfg_drawer .music_folder_toggle:hover,
+#music .music_cfg_drawer .music_archive_toggle:hover,
+#music .music_cfg_drawer .music_audio_output_select:hover {
 	border-color: var(--music-accent);
 }
-#music #music_configuration .music_folder_toggle[status="on"],
-#music #music_configuration .music_archive_toggle[status="on"] {
+#music .music_cfg_drawer .music_folder_toggle[status="on"],
+#music .music_cfg_drawer .music_archive_toggle[status="on"] {
 	background: var(--music-accent);
 	border-color: var(--music-accent);
 	color: #111;
 	font-weight: 700;
 }
-#music #music_configuration .music_audio_output_select[state="on"],
-#music #music_configuration .music_audio_output_select[state="left"],
-#music #music_configuration .music_audio_output_select[state="right"] {
+#music .music_cfg_drawer .music_audio_output_select[state="on"],
+#music .music_cfg_drawer .music_audio_output_select[state="left"],
+#music .music_cfg_drawer .music_audio_output_select[state="right"] {
 	background: var(--music-on);
 	border-color: var(--music-on);
 	color: #fff;
@@ -588,24 +591,24 @@ body.dark_theme #music {
 }
 /* L, the output's name and R are one pill: the sides are small, and the three
    share their borders so the name reads as the centre of a stereo pair. */
-#music #music_configuration .music_output_group {
+#music .music_cfg_drawer .music_output_group {
 	display: inline-flex;
 	align-items: stretch;
 }
-#music #music_configuration .music_output_group .music_output_left,
-#music #music_configuration .music_output_group .music_output_right {
+#music .music_cfg_drawer .music_output_group .music_output_left,
+#music .music_cfg_drawer .music_output_group .music_output_right {
 	padding: 5px 8px;
 	min-width: 24px;
 }
-#music #music_configuration .music_output_group .music_output_left {
+#music .music_cfg_drawer .music_output_group .music_output_left {
 	border-top-right-radius: 0;
 	border-bottom-right-radius: 0;
 	border-right: 0;
 }
-#music #music_configuration .music_output_group .music_output_center {
+#music .music_cfg_drawer .music_output_group .music_output_center {
 	border-radius: 0;
 }
-#music #music_configuration .music_output_group .music_output_right {
+#music .music_cfg_drawer .music_output_group .music_output_right {
 	border-top-left-radius: 0;
 	border-bottom-left-radius: 0;
 	border-left: 0;
@@ -626,7 +629,7 @@ body.dark_theme #music {
 	font-size: 12px;
 	color: var(--ink-muted);
 }
-#music #music_configuration select {
+#music .music_cfg_drawer select {
 	width: 100%;
 	height: 34px;
 	padding: 0 9px;
@@ -636,12 +639,12 @@ body.dark_theme #music {
 	background: var(--panel);
 	color: var(--ink);
 }
-#music #music_configuration select:focus {
+#music .music_cfg_drawer select:focus {
 	outline: none;
 	border-color: var(--music-accent);
 	box-shadow: 0 0 0 3px rgba(255, 207, 46, .25);
 }
-#music #music_configuration .volume_control_device {
+#music .music_cfg_drawer .volume_control_device {
 	display: inline-block;
 	margin: 0 5px 7px 0;
 	padding: 4px 10px;
@@ -652,32 +655,162 @@ body.dark_theme #music {
 	color: var(--ink);
 	cursor: pointer;
 }
-#music #music_configuration .volume_control_device.selected {
+#music .music_cfg_drawer .volume_control_device.selected {
 	background: var(--music-accent);
 	border-color: var(--music-accent);
 	color: #111;
 	font-weight: 600;
 }
-#music #music_configuration #device_volume_control { display: block; }
-#music #music_configuration #device_volume_control br { display: none; }
-#music #music_configuration #device_volume_control > b {
+#music .music_cfg_drawer #device_volume_control { display: block; }
+#music .music_cfg_drawer #device_volume_control br { display: none; }
+#music .music_cfg_drawer #device_volume_control > b {
 	display: block;
 	margin: 6px 0 2px;
 	font-size: 11px;
 	font-weight: 600;
 	color: var(--ink-muted);
 }
-#music #music_configuration .volume_control {
+#music .music_cfg_drawer .volume_control {
 	width: 100% !important;
 	margin: 0;
 	accent-color: var(--music-accent);
+}
+/* the Audio drawer ----------------------------------------------------------
+   The same sheet as the configuration drawer, a little wider for the
+   equaliser. The output chips, the remote format and the lip-sync switch moved
+   here from the configuration drawer. */
+#music #music_audio_panel { width: min(430px, 96%); }
+#music #music_audio_panel .music_audio_heading {
+	margin: 0 0 10px;
+	font-size: 15px;
+	font-weight: 700;
+	color: var(--ink);
+}
+#music #music_audio_panel .music_cfg_section:first-of-type { margin-top: 4px; }
+#music .music_eq_presets {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 12px;
+}
+#music .music_eq_preset {
+	height: auto;
+	min-height: 26px;
+	padding: 3px 10px;
+	font-size: 12px;
+	border: 1px solid var(--music-line);
+	border-radius: 999px;
+	background: var(--panel);
+	color: var(--ink);
+	box-shadow: none;
+}
+#music .music_eq_preset:hover { border-color: var(--music-accent); }
+#music .music_eq_preset[state="on"] {
+	background: var(--music-accent);
+	border-color: var(--music-accent);
+	color: #111;
+	font-weight: 700;
+}
+#music .music_eq_bands {
+	display: flex;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 4px;
+	height: 132px;
+	padding: 4px 2px 0;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+}
+#music .music_eq_band {
+	flex: 1 1 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	min-width: 0;
+	cursor: ns-resize;
+	outline: none;
+}
+#music .music_eq_track {
+	position: relative;
+	width: 100%;
+	max-width: 26px;
+	height: 96px;
+	border: 1px solid var(--music-line);
+	border-radius: 6px;
+	background: var(--panel);
+	overflow: hidden;
+}
+#music .music_eq_track::after {
+	content: '';
+	position: absolute;
+	left: 2px;
+	right: 2px;
+	top: 50%;
+	height: 1px;
+	background: var(--music-line);
+	opacity: .7;
+}
+#music .music_eq_fill {
+	position: absolute;
+	left: 0;
+	right: 0;
+	background: var(--music-accent);
+	opacity: .55;
+	pointer-events: none;
+}
+#music .music_eq_knob {
+	position: absolute;
+	left: 1px;
+	right: 1px;
+	height: 6px;
+	border-radius: 3px;
+	background: var(--ink);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+	transform: translateY(-50%);
+	pointer-events: none;
+}
+#music .music_eq_band:focus .music_eq_track {
+	box-shadow: 0 0 0 2px var(--music-accent);
+}
+#music .music_eq_value,
+#music .music_eq_freq {
+	font-size: 10px;
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-muted);
+	white-space: nowrap;
+}
+#music .music_eq_bass_row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 12px;
+	font-size: 12px;
+	color: var(--ink-muted);
+}
+#music .music_eq_bass_row input[type="range"] {
+	flex: 1 1 auto;
+	min-width: 0;
+	margin: 0;
+	accent-color: var(--music-accent);
+}
+#music #music_eq_bass_value {
+	min-width: 48px;
+	text-align: right;
+	font-variant-numeric: tabular-nums;
+}
+@media (max-width: 700px) {
+	#music #music_audio_panel { width: min(360px, calc(100% - 16px)); right: 8px; padding: 12px; }
+	#music .music_eq_bands { height: 116px; }
+	#music .music_eq_track { height: 82px; }
 }
 @container (max-width: 380px) {
 	#music .music_cfg_fields { grid-template-columns: 1fr; }
 }
 @media (max-width: 700px) {
 	#music .music_cfg_fields { grid-template-columns: 1fr; }
-	#music #music_configuration { width: min(330px, calc(100% - 16px)); right: 8px; padding: 12px; }
+	#music .music_cfg_drawer { width: min(330px, calc(100% - 16px)); right: 8px; padding: 12px; }
 }
 /* the volume bar takes a wheel: up/down changes the level */
 #music #music_volume { cursor: ns-resize; }
