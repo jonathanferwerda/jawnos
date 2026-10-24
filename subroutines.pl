@@ -9213,6 +9213,12 @@ sub note_seal_container {
 sub note_encrypter() {
 	my ($secret, $content) = @_;
 	return undef unless defined $content && length $content;
+	# The websocket hands text back as characters (an emoji is one code point,
+	# not its four UTF-8 bytes). MD5 and the cipher both refuse a wide string,
+	# so a message carrying an emoji, an accent or CJK text used to return undef
+	# and never reach the thread. Seal the same UTF-8 bytes the rest of the
+	# house stores, and note_decrypter hands the characters back.
+	$content = encode_utf8($content) if utf8::is_utf8($content);
 	$content =~ s/\r?\n$//;
 	my $md5 = &shorthand_name(md5_sum($content), 5);
 	my $standard = &note_encryption_standard();

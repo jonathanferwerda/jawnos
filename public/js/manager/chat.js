@@ -264,6 +264,7 @@ function chatInsertEmoji(emoji) {
 	ta.value = ta.value.slice(0, start) + emoji + ta.value.slice(end);
 	ta.selectionStart = ta.selectionEnd = start + emoji.length;
 	ta.focus();
+	$(ta).trigger('input');
 	updateChatSmsCount();
 }
 
@@ -276,6 +277,128 @@ $(document).on('click', '#mail_emoji_toggle', function (e) {
 $(document).on('click', '.chat_emoji', function (e) {
 	e.preventDefault();
 	chatInsertEmoji($(this).attr('data-emoji') || '');
+});
+
+// ---- the on-screen keyboard ------------------------------------------------
+// The phone's own keyboard resizes the viewport, which reshapes the window
+// under the person. This keyboard lives inside the composer, so the window
+// keeps its shape; the message list gives up the room instead. It is off until
+// the keyboard button is pressed, so a hardware keyboard and the native one
+// still work where they are wanted.
+function chatSoftOn() {
+	return localStorage.getItem('chat_soft_keyboard') == 'on';
+}
+
+function chatSoftApply() {
+	if (!$('.chat_shell #message').length) { return; }
+	if (chatSoftOn()) { $('#message').attr('inputmode', 'none'); }
+	else { $('#message').removeAttr('inputmode'); chatSoftHide(); }
+}
+
+function chatSoftShow() {
+	if (!chatSoftOn() || !$('#chat_soft_keyboard').length) { return; }
+	$('#message').attr('inputmode', 'none');
+	$('#chat_soft_keyboard').prop('hidden', false).attr('aria-hidden', 'false');
+	$('#chat_soft_toggle').addClass('active').attr('aria-expanded', 'true');
+	if (typeof chatKeepPinned === 'function') { chatKeepPinned(); }
+}
+
+function chatSoftHide() {
+	$('#chat_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
+	$('#chat_soft_toggle').removeClass('active').attr('aria-expanded', 'false');
+}
+
+var chatSoftShift = false;
+function chatSoftShiftSet(on) {
+	chatSoftShift = !!on;
+	$('.chat_shell .chat_soft_letter').each(function () {
+		var k = $(this).attr('data-soft_key') || '';
+		$(this).text(chatSoftShift ? k.toUpperCase() : k);
+	});
+	$('.chat_shell .chat_soft_key[data-soft_key="shift"]').toggleClass('active', chatSoftShift);
+}
+
+function chatSoftInsert(text) {
+	var ta = document.getElementById('message');
+	if (!ta) { return; }
+	var start = (ta.selectionStart == null) ? ta.value.length : ta.selectionStart;
+	var end = (ta.selectionEnd == null) ? start : ta.selectionEnd;
+	ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+	var pos = start + text.length;
+	ta.selectionStart = ta.selectionEnd = pos;
+	ta.focus();
+	$(ta).trigger('input');
+}
+
+function chatSoftBackspace() {
+	var ta = document.getElementById('message');
+	if (!ta) { return; }
+	var start = (ta.selectionStart == null) ? ta.value.length : ta.selectionStart;
+	var end = (ta.selectionEnd == null) ? start : ta.selectionEnd;
+	if (start == end) {
+		if (start == 0) { return; }
+		// remove a whole code point, so one press does not leave half an emoji
+		var code = ta.value.charCodeAt(start - 1);
+		if (code >= 0xDC00 && code <= 0xDFFF && start >= 2) {
+			var high = ta.value.charCodeAt(start - 2);
+			start = (high >= 0xD800 && high <= 0xDBFF) ? start - 2 : start - 1;
+		}
+		else { start--; }
+	}
+	ta.value = ta.value.slice(0, start) + ta.value.slice(end);
+	ta.selectionStart = ta.selectionEnd = start;
+	ta.focus();
+	$(ta).trigger('input');
+}
+
+$(document).on('mousedown', '.chat_shell .chat_soft_key', function (e) {
+	// keep the caret in the message while a key is pressed on a desk
+	e.preventDefault();
+});
+
+$(document).on('click', '.chat_shell .chat_soft_key', function () {
+	var k = $(this).attr('data-soft_key') || '';
+	if (k == 'shift') { chatSoftShiftSet(!chatSoftShift); return; }
+	if (k == 'backspace') { chatSoftBackspace(); return; }
+	if (k == 'space') { chatSoftInsert(' '); return; }
+	if (k == 'enter') { chatSoftInsert('\n'); return; }
+	if (k == 'hide') { chatSoftHide(); return; }
+	chatSoftInsert(chatSoftShift ? k.toUpperCase() : k);
+	if (chatSoftShift) { chatSoftShiftSet(false); }
+});
+
+$(document).on('click', '#chat_soft_toggle', function () {
+	if (chatSoftOn()) {
+		localStorage.setItem('chat_soft_keyboard', 'off');
+		$('#message').removeAttr('inputmode');
+		chatSoftHide();
+		// hand the field back to the platform so its keyboard opens
+		if (document.activeElement && document.activeElement.blur) { document.activeElement.blur(); }
+		setTimeout(function () { $('#message').focus(); }, 60);
+		return;
+	}
+	localStorage.setItem('chat_soft_keyboard', 'on');
+	// drop a native keyboard that is already up, then focus with none
+	if (document.activeElement && document.activeElement.blur) { document.activeElement.blur(); }
+	chatSoftShiftSet(false);
+	setTimeout(function () { $('#message').attr('inputmode', 'none').focus(); chatSoftShow(); }, 80);
+});
+
+$(document).on('focus click', '.chat_shell #message', function () {
+	if (chatSoftOn()) { chatSoftShow(); }
+});
+
+$(document).on('click', '.chat_shell #send_it', function () {
+	// sending must not put the on-screen keyboard away
+	if (!chatSoftOn()) { return; }
+	setTimeout(function () { $('#message').focus(); chatSoftShow(); }, 0);
+});
+
+$(document).on('blur', '.chat_shell #message', function () {
+	if (!chatSoftOn()) { return; }
+	setTimeout(function () {
+		if (!$(document.activeElement).closest('.chat_soft_keyboard').length) { chatSoftHide(); }
+	}, 250);
 });
 
 $(document).on('input keyup', '#message', updateChatSmsCount);
@@ -608,6 +731,7 @@ $(function () {
 		chatDressMessages();
 		chatRailApply();
 		chatTransportOptions();
+		chatSoftApply();
 		chatScrollBottom();
 		chatObservePin();
 	}

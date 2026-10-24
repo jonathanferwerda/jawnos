@@ -29845,6 +29845,15 @@ sub mail_scope_sections($scope) {
 	return @{ $groups{$scope} || [$scope] };
 }
 
+# A decrypted note is UTF-8 bytes. The template and the JSON socket both want
+# characters, or an emoji goes out as four Latin-1 glyphs; invalid UTF-8 is left
+# exactly as it came.
+sub mail_text_chars {
+	my ($text) = @_;
+	utf8::decode($text) if defined $text && length $text;
+	return $text;
+}
+
 sub mail_checker($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $incoming_data = eval { return decode_json $c->param('incoming_data') } || {};
@@ -30084,10 +30093,10 @@ sub mail_checker($c) {
 				&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter(&subs::session_suds($c), $m->{'body'}, $m->{'timestamp'}), $m->{'uuid'});
 			}
 			else {
-				$m->{'body'} = &subs::note_decrypter(&subs::suds_grabber(),$m->{'body'},$m->{'ost'});
+				$m->{'body'} = &mail_text_chars(&subs::note_decrypter(&subs::suds_grabber(),$m->{'body'},$m->{'ost'}));
 			}
 			if ($m->{'subject'}) {
-				$m->{'subject'} = &subs::note_decrypter(&subs::session_suds($c),$m->{'subject'},$m->{'ost'});
+				$m->{'subject'} = &mail_text_chars(&subs::note_decrypter(&subs::session_suds($c),$m->{'subject'},$m->{'ost'}));
 			}
 
 			if ($m->{'phone'} && $m->{'status'} eq 'sent') {
@@ -42550,7 +42559,7 @@ websocket '/mail/ws' => sub ($c) {
 
 				foreach my $d ( @{$m->{'decrypteds'}} ) {
 					my $dm = &subs::db_query('select * from mailbox where uuid = ?', $d)->hashes->[0];
-					$dm->{'body'} = &subs::note_decrypter(&subs::session_suds($c),$dm->{'body'},$dm->{'ost'});
+					$dm->{'body'} = &mail_text_chars(&subs::note_decrypter(&subs::session_suds($c),$dm->{'body'},$dm->{'ost'}));
 
 					$dm->{'decrypted'} = 'yes';
 					my $content = $c->render_to_string(
@@ -42860,10 +42869,10 @@ websocket '/mail/ws' => sub ($c) {
 					&subs::db_query('update mailbox set status=?, body =? where uuid =?', 'sent', &subs::note_encrypter(&subs::session_suds($c), $mess->{'body'}, $mess->{'timestamp'}), $mess->{'uuid'});
 				}
 				else {
-					$mess->{'body'} = &subs::note_decrypter(&subs::suds_grabber(), $mess->{'body'}, $mess->{'ost'});
+					$mess->{'body'} = &mail_text_chars(&subs::note_decrypter(&subs::suds_grabber(), $mess->{'body'}, $mess->{'ost'}));
 				}
 				if ($mess->{'subject'}) {
-					$mess->{'subject'} = &subs::note_decrypter(&subs::session_suds($c), $mess->{'subject'}, $mess->{'ost'});
+					$mess->{'subject'} = &mail_text_chars(&subs::note_decrypter(&subs::session_suds($c), $mess->{'subject'}, $mess->{'ost'}));
 				}
 				$mess->{'decrypted'} = 'yes';
 				$mess->{'envelope'} = $c->render_to_string(

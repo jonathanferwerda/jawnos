@@ -1437,7 +1437,17 @@ function windowFitAllSoon() {
 		// ignore a viewport that moved but did not really change (the browser's
 		// collapsing bar nudges it on every scroll)
 		if (Math.abs(view.width - windowFitLast.width) < 2 && Math.abs(view.height - windowFitLast.height) < 2) { return; }
+		var keyboard = windowPhoneChecker() && view.width === windowFitLast.width && view.height < windowFitLast.height;
 		windowFitLast = view;
+		// A height-only shrink is the on-screen keyboard. Only the window being
+		// typed in needs the room; fitting every window made the whole page
+		// rebuild itself under the person each time a field was focused.
+		if (keyboard) {
+			var active = document.activeElement;
+			var holder = active && active.closest ? active.closest('.wind') : null;
+			if (holder) { windowFit($(holder)); }
+			return;
+		}
 		$('.wind').each(function () { windowFit($(this)); });
 	}, 60);
 }
