@@ -340,19 +340,29 @@ function musicStreamConnect() {
 			musicLipApply();
 		}
 		else if (d.type == 'sync') {
+			if (!d.key) { return; }
+			if (d.flushed) {
+				// the receiver threw its stale buffer away to get back near live;
+				// the next report measures the fresh player
+				delete musicStream.measured[d.key];
+				musicRemoteDelayShow();
+				musicLipDelayChanged();
+				musicLipApply();
+				return;
+			}
 			// The receiver's own answer to a beacon: how far behind the picture it
 			// is actually playing, its buffered audio plus any shortfall since the
 			// mark. A report with no live mark behind it says nothing - and neither
 			// does one from a receiver that has not seen a beacon yet, whose zero
 			// would otherwise replace the ping estimate.
-			if (!d.key || d.paused || !d.alive) { return; }
+			if (d.paused || !d.alive) { return; }
 			if (!(d.seq > 0) || !(d.age_ms >= 0) || d.age_ms > 4000) { return; }
 			var lag = Math.max(0, (d.lag_ms || 0) + (d.rtt_ms || 0));
 			var prev = musicStream.measured[d.key];
-			// A step far larger than the last reading is a stall or a fresh player,
-			// not jitter: take it whole. Small movement is smoothed so the picture
-			// does not chase every report.
-			var ms = (prev && Math.abs(lag - prev.ms) < 2000) ? Math.round(prev.ms * 0.6 + lag * 0.4) : Math.round(lag);
+			// A step larger than the jitter of a steady stream is a stall or a fresh
+			// player, not noise: take it whole. Small movement is smoothed so the
+			// picture does not chase every report.
+			var ms = (prev && Math.abs(lag - prev.ms) < 250) ? Math.round(prev.ms * 0.6 + lag * 0.4) : Math.round(lag);
 			var jump = prev ? Math.abs(ms - prev.ms) : 0;
 			musicStream.measured[d.key] = { ms: ms, at: Date.now() };
 			musicStream.ready[d.key] = 1;
@@ -362,7 +372,7 @@ function musicStreamConnect() {
 			musicLipApply();
 			// Beyond what the clone's rate-only correction closes; re-anchor it
 			// under a still, at most now and then.
-			if (jump > 1000 && musicLip.on && musicLip.revealed && Date.now() - (musicLip.reanchorAt || 0) > 8000) {
+			if (jump > 250 && musicLip.on && musicLip.revealed && Date.now() - (musicLip.reanchorAt || 0) > 8000) {
 				musicLip.reanchorAt = Date.now();
 				musicLipSeek();
 			}

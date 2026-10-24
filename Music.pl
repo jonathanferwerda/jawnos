@@ -648,6 +648,21 @@ sub music_rx_report_send($st) {
 			$lag_ms = int($lag + 0.5) if $lag > 0;
 		}
 	}
+	# Near-live: a pipe that has filled with a burst stays filled, because pacat
+	# consumes exactly what arrives. When the lag says the player is running
+	# hundreds of milliseconds behind, throw the stale buffer away and let a
+	# fresh player start on the audio arriving now. PCM restarts pacat for this;
+	# Opus cannot, because a new ffmpeg would need the WebM header again.
+	my $flushed = 0;
+	if ($lag_ms > 400 && ($st->{'codec'} || 'pcm') ne 'opus') {
+		$st->{'lag_big'} = ($st->{'lag_big'} || 0) + 1;
+	}
+	else { delete $st->{'lag_big'}; }
+	if (($st->{'lag_big'} || 0) >= 2 && $now - ($st->{'flush_at'} || 0) > 30_000) {
+		$st->{'flush_at'} = $now;
+		$st->{'lag_big'} = 0;
+		$flushed = 1;
+	}
 	my $d = {
 		type => 'rx_report',
 		t => $now,
@@ -664,9 +679,17 @@ sub music_rx_report_send($st) {
 		mark_age_ms => $mark_age_ms,
 		mark_seq => ($st->{'mark'} ? ($st->{'mark'}->{'seq'} || 0) : 0),
 		lag_ms => $lag_ms,
+		flushed => $flushed,
 		starts => ($st->{'starts'} || 0),
 	};
 	eval { $st->{'tx'}->send({ text => encode_json($d) }); };
+	if ($flushed) {
+		&music_sync_log('remote', $st->{'key'}, { type => 'flush', lag_ms => $lag_ms, waiting_ms => int($waiting_ms + 0.5), sink_ms => ($st->{'sink_ms'} || 0) });
+		&music_remote_audio_stop($st, 1);
+		unless (&music_remote_audio_start($st)) {
+			&music_sync_log('remote', $st->{'key'}, { type => 'flush', state => 'restart_failed', error => ($st->{'error'} || '') });
+		}
+	}
 }
 sub music_rx_report_start($st) {
 	&music_rx_report_stop($st);
@@ -783,6 +806,7 @@ sub music_source_client_open($c, $st, $key, $channel) {
 					seq => ($d->{'mark_seq'} || 0),
 					paused => ($d->{'paused'} ? 1 : 0),
 					alive => ($d->{'alive'} ? 1 : 0),
+					flushed => ($d->{'flushed'} ? 1 : 0),
 					rtt_ms => int(($cl->{'min_rtt'} || 0) / 2)
 				})}) if $c->tx->is_websocket;
 				return;
