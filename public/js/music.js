@@ -783,6 +783,29 @@ function musicRemoteDelayShow() {
 	el.text(ms >= 0 ? (Math.round(ms) + ' ms') : '\u2014');
 }
 
+// A pause stops the graph and the receiver both. The delay line still holds the
+// sound from before the pause, while the receiver's player starts again with a
+// fresh buffer, so the old measurement describes audio that is no longer there.
+// Start the delayed pair at the live moment and let the next beacon measure the
+// new buffer; otherwise the Me sound replays the pre-pause second and then
+// glides forward to catch the picture, which reads as the output being thrown off.
+function musicResumeSync() {
+	// Only a lip-sync session delays the picture and the sound by a measured
+	// wait. A Me trim is the sound's own relation to a live picture and must
+	// survive the pause unchanged.
+	if (!musicLip.on) { return; }
+	musicStream.measured = {};
+	musicRemoteDelayShow();
+	if (musicVisual && musicVisual.localDelay) {
+		// the context was suspended through the pause, so this lands before a
+		// sample is rendered: no glide, and none of the pre-pause sound is read
+		try { musicVisual.localDelay.delayTime.value = 0; } catch (e) {}
+	}
+	musicLip.reanchorAt = 0;
+	musicLipDelayChanged();
+	if (musicLip.on && musicLip.revealed) { musicLipSeek(); }
+}
+
 function musicStreamOutputsChanged() {
 	if (!musicStream.active) { return; }
 	var outs = musicStreamOutputs();
@@ -2144,6 +2167,10 @@ function mediaMaker(data) {
 				if (musicStream.active) {
 					if (!musicStream.attached) { musicStreamStart(file, tree.sound.currentTime); }
 					else if (musicStream.paused) {
+						// a pause left the graph's delay line holding pre-pause sound
+						// while the receiver starts a fresh buffer; re-anchor both to
+						// the live moment before either one plays
+						musicResumeSync();
 						// Opus keeps its decoder and pacat buffer across a pause;
 						// restarting gives every receiver a clean one instead of
 						// stale audio, and reopens an output that died while paused
