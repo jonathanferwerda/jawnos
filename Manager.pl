@@ -7688,6 +7688,7 @@ get '/manager/webauthn/list' => sub($c) {
 
 post '/manager/webauthn/register/begin' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('authentication') || '') eq 'approved';
+	return $c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 }) unless &security_action_open($c);
 	my $p = &webauthn_person($c);
 	return $c->render(json => { ok => 0, error => 'this device is not assigned to a person yet - assign it in Security -> People first' }) unless $p;
 	my $rp = &webauthn::rp_id();
@@ -7712,6 +7713,7 @@ post '/manager/webauthn/register/begin' => sub($c) {
 
 post '/manager/webauthn/register/finish' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('authentication') || '') eq 'approved';
+	return $c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 }) unless &security_action_open($c);
 	my $p = &webauthn_person($c);
 	return $c->render(json => { ok => 0, error => 'no person' }) unless $p;
 	my $cd = $c->param('client_data') || '';
@@ -7749,6 +7751,7 @@ post '/manager/webauthn/register/finish' => sub($c) {
 
 post '/manager/webauthn/remove' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'not signed in' }) unless ($c->session('authentication') || '') eq 'approved';
+	return $c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 }) unless &security_action_open($c);
 	my $p = &webauthn_person($c);
 	my $id = $c->param('id') || '';
 	return $c->render(json => { ok => 0, error => 'no person' }) unless $p;
@@ -32782,7 +32785,7 @@ sub help_media_revealed {
 # checked against the grant stored for this device: a token minted on another
 # screen or another machine is no proof here, and a fresh open carries none and
 # stays locked.
-sub media_unlock_open($c, $app) {
+sub media_unlock_open($c, $app, $max_age) {
 	return 0 unless ($c && defined $app && length $app);
 	my $token = $c->param('unlock');
 	return 0 unless (defined $token && length $token);
@@ -32796,10 +32799,13 @@ sub media_unlock_open($c, $app) {
 	return 0 unless (defined $given && length $given);
 	my $now = &subs::rightNow();
 	my $tab = &media_unlock_tab($c);
-	my $rows = &subs::db_query('select data from cache where context = ? and app = ? and device = ? order by server_time desc', 'media_unlock', $app, $device)->hashes || [];
+	my $rows = &subs::db_query('select data, server_time from cache where context = ? and app = ? and device = ? order by server_time desc', 'media_unlock', $app, $device)->hashes || [];
 	foreach my $r ( @{$rows} ) {
 		my $d = eval { decode_json $r->{'data'} } || {};
 		next unless ($d->{'until'} || 0) > $now;
+		# A grant can also be required to be young: the Security app unlocks
+		# once for browsing, but replacing the key asks for a fresh print.
+		next if (defined $max_age && $max_age > 0 && (($r->{'server_time'} || 0) + $max_age) < $now);
 		# a grant names the one window it was minted for; another tab of the
 		# same screen, or a reopened one after a crash, holds no way in
 		my $grant_tab = $d->{'tab'} || '';
@@ -35242,8 +35248,21 @@ post '/manager/handbook/settings' => sub ($c) {
 };
 
 get '/manager/security' => sub ($c) {
-	my $contents = &security_initializer($c);
+	# The app opens locked: only a grant minted by a fingerprint - this phone's
+	# own reader, or the screen's padlock confirmed on a paired device - draws the
+	# contents. Rotating the key and the share actions ask again on top of this.
 	my $timestamp = $c->param('timestamp');
+	unless (&media_unlock_open($c, 'security')) {
+		my $locked = $c->render_to_string(
+			template => 'security_locked',
+			layout => undef,
+			local_key => (&biometric_enrolled_for($c->session('device_uuid') || '') ? 1 : 0),
+			device_uuid => ($c->session('device_uuid') || ''),
+		);
+		$locked = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'security', contents => $locked }, $timestamp) if $c->param('window_maker');
+		return $c->render(json => { ok => 1, locked => 1, html => $locked });
+	}
+	my $contents = &security_initializer($c);
 
 	if ($c->param('window_maker')) {
 		$contents->{'html'} = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'security', contents => $contents->{'html'} }, $timestamp);
@@ -35721,6 +35740,10 @@ post '/manager/security/shares/create' => sub($c) {
 		$c->render(json => { ok => 0 });
 		return;
 	}
+	unless (&security_action_open($c)) {
+		$c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
+		return;
+	}
 	my $suds = &subs::session_suds($c);
 	unless ($suds && length $suds) { $c->render(json => { ok => 0 }); return; }
 	my ($k, $n) = &subs::shamir_policy();
@@ -35769,6 +35792,10 @@ post '/manager/security/shares/key' => sub($c) {
 post '/manager/security/shares/wrap' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { ok => 0 });
+		return;
+	}
+	unless (&security_action_open($c)) {
+		$c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
 		return;
 	}
 	my $suds = &subs::session_suds($c);
@@ -35857,6 +35884,10 @@ post '/manager/security/shares/release' => sub($c) {
 		$c->render(json => { ok => 0, error => 'citizen only' });
 		return;
 	}
+	unless (&security_action_open($c)) {
+		$c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
+		return;
+	}
 	my $device_uuid = $c->session('device_uuid') || '';
 	my $request_uuid = $c->param('request_uuid') // '';
 	my $share_index = $c->param('share_index');
@@ -35868,6 +35899,10 @@ post '/manager/security/shares/release' => sub($c) {
 post '/manager/security/recovery/create' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { ok => 0 });
+		return;
+	}
+	unless (&security_action_open($c)) {
+		$c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
 		return;
 	}
 	my $code = &subs::recovery_code_make();
@@ -35883,9 +35918,48 @@ post '/manager/security/recovery/create' => sub($c) {
 	$c->render(json => { ok => 1, code => $code, html => $sec->{'html'} });
 };
 
+# A phone can die. The paper code (or three shares) is the other way past this
+# app's lock, and it is the same secret that already opens the house, so a person
+# who has lost their only fingerprint is not locked out of rotating the key.
+post '/manager/security/confirm_code' => sub($c) {
+	unless ($c->session('authentication') eq 'approved') { $c->render(json => { ok => 0, error => 'not signed in' }); return; }
+	my $raw_code = $c->param('code') // '';
+	my $code = &subs::recovery_code_clean($raw_code);
+	my @share_codes = grep { /\S/ } split /[\s,]+/, $raw_code;
+	unless (length $code >= 20 || @share_codes) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
+	my $ip = $c->tx->remote_address;
+	my $now = &subs::rightNow();
+	my $tries = &subs::db_query('select count(*) as n from cache where context = ? and uuid like ? and server_time > ?', 'security_code_attempt', $ip . ':%', $now - 3600000)->hash->{'n'} || 0;
+	if ($tries >= 5) { $c->render(json => { ok => 0, error => 'too many' }); return; }
+	&subs::db_insert('cache', { uuid => $ip . ':' . &subs::random_string_creator(12), context => 'security_code_attempt', app => '__president', server_time => $now, timestamp => $now });
+	my $suds;
+	if (length $code >= 20) {
+		my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'recovery')->hashes->[0];
+		$suds = eval { &subs::note_decrypter($code, $row->{'value'}) } if $row && $row->{'value'};
+	}
+	if (!(defined $suds && length $suds) && @share_codes) { $suds = &subs::shamir_open_shares(\@share_codes); }
+	$suds =~ s/\s+$// if $suds;
+	unless ($suds && &subs::suds_current($suds)) { $c->render(json => { ok => 0, error => 'not accepted' }); return; }
+	# the code is the house's own secret, so it stands in for the print
+	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	unless (grep { $_ eq 'security' } @{$contexts}) {
+		push @{$contexts}, 'security';
+		&subs::setting_setter({ app => '__president', setting => 'padlock_contexts', value => encode_json $contexts });
+	}
+	my $device = &media_unlock_device($c);
+	my $token = length $device ? &media_unlock_store('security', $device, &media_unlock_tab($c)) : '';
+	&subs::db_query('delete from cache where context = ? and uuid like ?', 'security_code_attempt', $ip . ':%');
+	$log->info('security: app opened with the paper code from ' . $ip);
+	$c->render(json => { ok => ($token ? 1 : 0), unlock => $token });
+};
+
 post '/manager/security/rotate_key' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { ok => 0 });
+		return;
+	}
+	unless (&security_action_open($c)) {
+		$c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
 		return;
 	}
 	my $result = &subs::rotate_house_key();
@@ -35907,6 +35981,10 @@ post '/manager/security/rotate_key' => sub($c) {
 post '/manager/security/legacy_reseal' => sub($c) {
 	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
 		$c->render(json => { ok => 0 });
+		return;
+	}
+	unless (&security_action_open($c)) {
+		$c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
 		return;
 	}
 	my $local = &subs::legacy_reseal();
@@ -36845,10 +36923,20 @@ sub padlock_gate_answer {
 # the emergency paths all land here. A manual gate locks one device; a target
 # names it, an empty target is the house-wide timeout lock. The global timer is
 # moved past now either way, so the unlocked screen is not re-locked at once.
+# The key material in Security is a second door behind the app: rotating the
+# house key, replacing the recovery code, splitting or releasing shares, and
+# adding or removing a passkey each ask for the person again. Only a grant
+# minted in the last two minutes counts, so browsing the app on one unlock is
+# not enough to change how the house can be opened.
+sub security_action_open {
+	my ($c) = @_;
+	return &media_unlock_open($c, 'security', 120000) ? 1 : 0;
+}
+
 sub padlock_mark_unlocked {
 	my ($c, $mode, $target, $tab_override) = @_;
 	$mode ||= 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
 	my $suds = &subs::suds_grabber() || &subs::session_suds($c) || $gb::suds;
 	return 0 unless $suds;
 	# Opening an app's padlock makes that app one of the lock's contexts. A
@@ -36887,7 +36975,7 @@ sub padlock_mark_unlocked {
 	}
 	$c->session('pl_time' => $new_timeout);
 	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => &subs::note_encrypter($suds, 0) });
-	if ($mode =~ /^(?:gallery|music|folders)$/) {
+	if ($mode =~ /^(?:gallery|music|folders|security)$/) {
 		my $device = $target || &media_unlock_device($c);
 		my $request = &padlock_request_for_target($device);
 		# the request row names the screen that pressed Unlock; the caller's own
@@ -36916,6 +37004,8 @@ sub padlock_mark_unlocked {
 					? '$("#gallery").attr("unlock", "' . $token . '"); imageViewer({ "view":"home" });'
 					: ($mode eq 'music')
 					? '$("#music").attr("unlock", "' . $token . '"); $("#music").show(); $("#music_padlock").hide(); if (typeof searchMusic === "function") { searchMusic(); }'
+					: ($mode eq 'security')
+					? 'if (typeof jawnosSecurityGrant === "function") { jawnosSecurityGrant("' . $token . '"); }'
 					: '$("#folders").attr("unlock", "' . $token . '"); if (typeof foldersOpener === "function") { foldersOpener(); }';
 				# one window's message, so another tab of the same screen stays
 				# shut and no peer is told to drop a token it never held
@@ -36947,7 +37037,7 @@ post '/manager/security/padlock_watch' => sub ($c) {
 # device that is already open is never sent away from the page it is on.
 post '/manager/security/padlock_phone_show' => sub ($c) {
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $device_name = '';
@@ -37450,7 +37540,7 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 	my $nonce = $c->param('nonce') || '';
 	my $signature = $c->param('signature') || '';
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
 	# The phone may confirm an unlock for ANOTHER screen (the person presses
 	# Unlock on the laptop, then touches the phone). The target is bound into the
 	# signed message, so a signature made for one screen cannot be replayed for
@@ -37621,7 +37711,7 @@ get '/manager/security/padlock_open_peer' => sub ($c) {
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
 	my $opened = &padlock_mark_unlocked($c, $mode, $target);
 	&padlock_request_clear($target);
 	$log->info('padlock: peer unlock from ' . ($rm->{'hostname'} || $signatorial) . ' mode=' . $mode . ($target ? ' target=' . $target : ' house'));

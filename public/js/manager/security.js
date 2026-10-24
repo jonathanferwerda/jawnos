@@ -641,7 +641,7 @@ $(document).on('click', '.signatorial_selection', function() {
 		$.ajax({
 			url: '/manager/security',
 			type: 'GET',
-			data: { security_view: 'passkeys', window_maker: 'yes' },
+			data: { security_view: 'passkeys', window_maker: 'yes', unlock: (window.jawnosSecurityToken || '') },
 			success: function (r) {
 				if (r && r.html) {
 					$('#security').replaceWith(r.html);
@@ -650,6 +650,8 @@ $(document).on('click', '.signatorial_selection', function() {
 			}
 		});
 	}
+	// the app's own door (below) redraws through this after an unlock
+	window.jawnosSecurityRefresh = securityRefresh;
 
 	$(document).on('click', '#passkey_add', function () {
 		var status = $('#passkey_status');
@@ -724,5 +726,98 @@ $(document).on('click', '.signatorial_selection', function() {
 				status.text('opened in a browser - finish there');
 			}
 		}, 'json');
+	});
+})();
+
+// ---- Security's own door ---------------------------------------------------
+// This app holds the ways the house can be opened, so it opens locked, and the
+// actions that change the key ask again with a grant no older than two minutes.
+// The server answers those with need_biometric; this asks the phone and replays
+// the very same request with the fresh grant, so no call site has to know.
+(function () {
+	var token = '';
+	var pending = null;
+
+	function askStatus() {
+		var s = $('.security_unlock_status').first();
+		if (!s.length) {
+			s = $('<div class="security_confirm_status" style="position:fixed;left:50%;transform:translateX(-50%);bottom:26px;background:#222;color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;z-index:99999;"></div>').appendTo('body');
+		}
+		return s;
+	}
+
+	window.jawnosSecurityGrant = function (grant) {
+		token = String(grant || '');
+		window.jawnosSecurityToken = token;
+		$('.security_unlock_status').text('Unlocked.');
+		var f = pending; pending = null;
+		if (typeof f === 'function') { f(token); }
+	};
+
+	function redraw() {
+		if (typeof window.jawnosSecurityRefresh === 'function') { window.jawnosSecurityRefresh(); }
+	}
+
+	// This device's own reader first; otherwise the phone in the house confirms
+	// this screen, and the grant comes back over the socket.
+	function confirmWith(then) {
+		var st = askStatus();
+		if (window.JawnBiometricKey && typeof jawnosBiometricUnlock === 'function') {
+			st.text('Waiting for your fingerprint…');
+			jawnosBiometricUnlock('security', jawnDeviceUuid(), function (t) { st.text(t); }, null, false, '', '').then(function (r) {
+				if (r && r.unlock) { st.text(''); window.jawnosSecurityGrant(r.unlock); then(String(r.unlock)); }
+				else { st.text('Not confirmed.'); }
+			}, function (e) {
+				st.text(typeof jawnosBiometricError === 'function' ? jawnosBiometricError(e) : 'Not confirmed.');
+			});
+			return;
+		}
+		pending = then;
+		st.text('Confirm on your phone…');
+		$.post('/manager/security/padlock_phone_show', {
+			mode: 'security', target: jawnDeviceUuid(), browser_tab_id: jawnosMediaTab()
+		}, function (r) {
+			if (!r || !r.ok) { pending = null; st.text('The house did not ask your phone.'); }
+		}, 'json');
+	}
+
+	$(document).on('click', '.security_unlock', function () {
+		confirmWith(function (grant) {
+			window.jawnosSecurityToken = grant;
+			redraw();
+		});
+	});
+
+	$(document).on('click', '.security_code_go', function () {
+		var st = $('.security_code_status');
+		var code = $('.security_code').val() || '';
+		if (!code.replace(/\s+/g, '')) { st.text('Type the code first.'); return; }
+		st.text('Checking…');
+		$.post('/manager/security/confirm_code', { code: code, browser_tab_id: jawnosMediaTab() }, function (r) {
+			if (!r || !r.ok || !r.unlock) {
+				st.text((r && r.error === 'too many') ? 'Too many tries. Wait an hour.' : 'That code was not accepted.');
+				return;
+			}
+			st.text('');
+			window.jawnosSecurityGrant(r.unlock);
+			redraw();
+		}, 'json');
+	});
+
+	var guarded = /^\/manager\/security\/(rotate_key|legacy_reseal|recovery\/create|shares\/create|shares\/wrap|shares\/release)/;
+	var guarded_key = /^\/manager\/webauthn\/(register\/begin|register\/finish|remove)/;
+	$(document).ajaxSuccess(function (event, xhr, settings) {
+		var r = xhr.responseJSON || {};
+		if (!r.need_biometric || settings.security_retried) { return; }
+		var url = settings.url || '';
+		if (!guarded.test(url) && !guarded_key.test(url)) { return; }
+		confirmWith(function (grant) {
+			var body = typeof settings.data === 'string' ? (settings.data + '&unlock=' + encodeURIComponent(grant)) : settings.data;
+			$.ajax({
+				url: url, type: settings.type || 'POST', data: body, dataType: 'json',
+				security_retried: 1,
+				success: settings.success, error: settings.error, complete: settings.complete
+			});
+		});
 	});
 })();
