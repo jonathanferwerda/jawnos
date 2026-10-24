@@ -1141,7 +1141,9 @@ function musicLipSync() {
 	// keeps working instead of leaving the drift uncorrected.
 	if (Math.abs(drift) > 0.9) {
 		if (now - (musicLip.seekAt || 0) < 3000) {
-			c.playbackRate = base * (drift > 0 ? 0.85 : 1.15);
+			// drift is target - clone: positive means the clone is behind and
+			// must speed up, negative means it is ahead and must slow down.
+			c.playbackRate = base * (drift > 0 ? 1.15 : 0.85);
 			return;
 		}
 		musicLip.seekAt = now;
@@ -1153,8 +1155,8 @@ function musicLipSync() {
 		// take the still down before the seek had a chance to black out
 		if (held) { musicLipFreezeUntilFrame(); }
 	}
-	else if (drift > 0.05) { c.playbackRate = base * (drift > 0.4 ? 0.82 : 0.92); }
-	else if (drift < -0.05) { c.playbackRate = base * (drift < -0.4 ? 1.2 : 1.1); }
+	else if (drift > 0.05) { c.playbackRate = base * (drift > 0.4 ? 1.2 : 1.1); }
+	else if (drift < -0.05) { c.playbackRate = base * (drift < -0.4 ? 0.82 : 0.92); }
 	else { c.playbackRate = base; }
 }
 
