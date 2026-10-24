@@ -167,9 +167,9 @@ function deskRender() {
 	if (!layer.length) { return; }
 	layer.empty();
 	deskPosition();
-	// Computer keeps the first place always, the Recycle Bin the last; between
-	// them pinned apps and the desk's own files sit in one alphabetical run, the
-	// way a desktop reads by default.
+	// Computer and the Recycle Bin keep the first two places; after them the
+	// pinned apps and the desk's own files sit in one alphabetical run, the way a
+	// desktop reads by default.
 	var body = [];
 	$.each(desk.apps || [], function (i, a) {
 		body.push({ kind: 'app', name: (a['name'] || ''), data: a });
@@ -190,10 +190,10 @@ function deskRender() {
 	};
 	var computer = desk.computer || { name: jawnosT('Computer'), icon: '/images/decipherable/computer.png', path: '/' };
 	append(deskPlaceItem(computer, 'computer'));
+	if (desk.trash && desk.trash['path']) { append(deskPlaceItem(desk.trash, 'trash')); }
 	$.each(body, function (i, e) {
 		append((e.kind == 'app') ? deskAppItem(e.data) : deskFileItem(e.data));
 	});
-	if (desk.trash && desk.trash['path']) { append(deskPlaceItem(desk.trash, 'trash')); }
 	if (!body.length) {
 		var note = $('<div class="desk_empty"></div>').text(jawnosT('Your desktop is empty'));
 		// Keep the note beside the places rather than under a full-width grid row.
