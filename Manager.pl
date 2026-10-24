@@ -16884,8 +16884,18 @@ sub inventory_cell_summary($data) {
 	unless ($start && $end) {
 		($start, $end) = &father_time({ scope => $scope, ts => $zone, lock => $settings->{'s_lock'}, timestamp => $timestamp });
 	}
-	my $appts = &subs::db_query('select * from appointments where (app = ? or model = ?) and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ? order by timestamp', $app, $app, $start, $end)->hashes;
-	my $value = &inventory_window_value($appts, $display, $settings);
+	my $appts;
+	my $value;
+	if ($display eq 'duration') {
+		# a session that crossed the edge of this window spent part of its time in
+		# it even though it started before the window began
+		$appts = &subs::db_query("select * from appointments where (app = ? or model = ?) and cast(timestamp as integer) < ? and (cast(timestamp as integer) >= ? or type in ('start','record') or (cast(timestamp as integer) + abs(cast(coalesce(duration,0) as real))) > ?) order by timestamp", $app, $app, $end, $start, $start)->hashes;
+		$value = &inventory_window_value($appts, $display, $settings, $start, $end);
+	}
+	else {
+		$appts = &subs::db_query('select * from appointments where (app = ? or model = ?) and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ? order by timestamp', $app, $app, $start, $end)->hashes;
+		$value = &inventory_window_value($appts, $display, $settings);
+	}
 	my $format = sub {
 		my $n = shift;
 		return '-' unless defined $n;
@@ -16952,10 +16962,26 @@ sub inventory_cell_summary($data) {
 	return { summary => $text, error => $error, briefing => $briefing };
 }
 
+# The part of an appointment's span that lies inside [start, end): an appointment
+# runs from its timestamp for its duration, and a session that crosses a period's
+# edge belongs to both periods by the time actually spent in each - 23:36 to
+# 02:30 gives the first day 24 minutes and the next 2 hours 30, rather than the
+# whole night to the day it started. The caller sets duration for a running
+# session (there is none in the row while it is open).
+sub appointment_overlap {
+	my ($appt, $start, $end) = @_;
+	my $from = ($appt->{'timestamp'} || 0) + 0;
+	my $to = $from + abs($appt->{'duration'} || 0);
+	my $lo = $from > $start ? $from : $start;
+	my $hi = $to < $end ? $to : $end;
+	return $hi > $lo ? $hi - $lo : 0;
+}
+
 # the value one window shows for the inventory's chosen measure, the way the
 # inventory buckets it (a running session read to now, a measure read off the
-# appointment's own readings)
-sub inventory_window_value($appts, $display, $settings) {
+# appointment's own readings). A duration is read only for the part inside the
+# window when the caller names its edges.
+sub inventory_window_value($appts, $display, $settings, $start, $end) {
 	my $value = 0;
 	my $now = &subs::rightNow();
 	foreach my $a ( @{$appts} ) {
@@ -16963,6 +16989,10 @@ sub inventory_window_value($appts, $display, $settings) {
 		elsif ($display eq 'duration') {
 			my $d = abs($a->{'duration'} || 0);
 			$d = $now - $a->{'timestamp'} if ($a->{'type'} eq 'start' || $a->{'type'} eq 'record') && $a->{'timestamp'} && $a->{'timestamp'} < $now;
+			if (defined $start && defined $end) {
+				my $copy = { %{$a}, duration => $d };
+				$d = &appointment_overlap($copy, $start, $end);
+			}
 			$value += $d;
 		}
 		elsif ($display eq 'total') { $value += abs($a->{'total'} || 0); }
@@ -17190,6 +17220,9 @@ sub inventory_details($c,$settings) {
 				}
 			}
 			$a->{'duration'} = abs $a->{'duration'};
+			# where the session ends: read once so a window that cannot overlap it
+			# costs only the two comparisons below
+			my $ends_at = ($a->{'timestamp'} || 0) + ($a->{'duration'} || 0);
 			if (($s_display eq 'total') && ($a->{'total'} == 0 || $a->{'total'} == undef)) {
 				next;
 			}
@@ -17197,7 +17230,17 @@ sub inventory_details($c,$settings) {
 				foreach my $window (@time_windows) {
 					# half open [bt, tt): an instant on an edge belongs to the window
 					# it opens, so the windows never overlap and never leave a gap
-					if ($a->{'timestamp'} >= $window->[2] && $a->{'timestamp'} < $window->[3]) {
+					my $starts_here = ($a->{'timestamp'} >= $window->[2] && $a->{'timestamp'} < $window->[3]);
+					# A session that runs over a period's edge belongs to both periods:
+					# its occurrence stays with the one it started in, but its time is
+					# counted where it was actually spent. Other readings are instants and
+					# stay in the window they open.
+					my $overlap = 0;
+					if ($s_display eq 'duration' && $a->{'timestamp'} < $window->[3] && $ends_at > $window->[2]) {
+						$overlap = &appointment_overlap($a, $window->[2], $window->[3]);
+					}
+					next unless $starts_here || $overlap > 0;
+					{
 						# only unpack the matching windows: unpacking all of them is most of
 						# what this loop spends its time on
 						my ($ts, $scope, $bt, $temp_timestamp) = @{$window};
@@ -17286,11 +17329,13 @@ sub inventory_details($c,$settings) {
 								}
 							}
 
+							my $amount = ($s_display eq 'duration') ? $overlap : $a->{$s_display};
+
 							if ($settings->{'s_calc'} eq 'average' ) {
-								$bucket->{'t_' . $s_display} += $a->{$s_display};
+								$bucket->{'t_' . $s_display} += $amount;
 								$bucket->{'c_' . $s_display} += 1;
 								my $sprinter = "%.2f";
-								if ($a->{$s_display} < 1 && $a->{$s_display} > -1) {
+								if ($amount < 1 && $amount > -1) {
 									$sprinter = "%.4f";
 								}
 								$bucket->{$s_display} = sprintf($sprinter, $bucket->{'t_' . $s_display} / $bucket->{'c_' . $s_display});
@@ -17300,22 +17345,22 @@ sub inventory_details($c,$settings) {
 							}
 							elsif ($settings->{'s_calc'} eq 'high') {
 								$bucket->{$s_display} = 0 unless $bucket->{$s_display};
-								if ($a->{$s_display} > $bucket->{$s_display}) {
-									$bucket->{$s_display} = $a->{$s_display};
+								if ($amount > $bucket->{$s_display}) {
+									$bucket->{$s_display} = $amount;
 								}
 							}
 							elsif ($settings->{'s_calc'} eq 'low') {
-								$bucket->{$s_display} = $a->{$s_display} unless $bucket->{$s_display};
-								if ($a->{$s_display} < $bucket->{$s_display}) {
-									$bucket->{$s_display} = $a->{$s_display};
+								$bucket->{$s_display} = $amount unless $bucket->{$s_display};
+								if ($amount < $bucket->{$s_display}) {
+									$bucket->{$s_display} = $amount;
 								}
 							}
 							else {
-								$bucket->{$s_display} += $a->{$s_display} unless $s_display eq 'occurences';
+								$bucket->{$s_display} += $amount unless $s_display eq 'occurences';
 							}
 						}
-						$bucket->{'timestamp'} = $a->{'timestamp'};
-						$bucket->{'occurences'} += 1;# unless $s_display eq 'occurences';
+						$bucket->{'timestamp'} = $a->{'timestamp'} if $starts_here;
+						$bucket->{'occurences'} += 1 if $starts_here;# unless $s_display eq 'occurences';
 						$a->{'occurences'} = 1;
 
 						$bucket->{'formatted_duration'} = $duration_sayer->((abs $bucket->{'duration'}) / 1000);
@@ -17325,7 +17370,8 @@ sub inventory_details($c,$settings) {
 						# so they hold what it and "next" hold again, and the per period
 						# totals and average leave them out
 						if ($ts !~ /^[0-9]+next/) {
-							$returner->{'total'}->{$scope}->{$s_display} += abs $a->{$s_display};
+							my $contribution = ($s_display eq 'duration') ? $overlap : abs $a->{$s_display};
+							$returner->{'total'}->{$scope}->{$s_display} += $contribution;
 							$returner->{'count'}->{$scope}->{$s_display} += 1;
 							$returner->{'average'}->{$scope}->{$s_display} = sprintf("%.2f", $returner->{'total'}->{$scope}->{$s_display} / $returner->{'count'}->{$scope}->{$s_display});
 						}
@@ -21325,17 +21371,33 @@ sub budget_calculator($data) {
 		unless ($value || $handled) {
 			my ($db) = &subs::database_grabber();
 			my $appts = $data->{'appts'};
-			unless ($data->{'appts'}) {
+			# A duration is read over the budget's own window even when the caller
+			# passed the appointments, so a session that crossed the window's edge
+			# offers only the time spent inside it.
+			my ($window_bt, $window_end);
+			if (!$appts || $circumstance eq 'duration') {
 				my $ft_data = {
 					scope => $returner->{'scope_name'},
 					ts => 'this',
 					lock => $settings->{'s_lock'},
 					timestamp => $timestamp
 				};
-				my ($bt, $temp_timestamp) = &father_time($ft_data);
-
-				my @params = ( $app, $temp_timestamp, $bt );
-				my $query = 'select * from appointments where app = ? and timestamp < ? and timestamp >= ? ';
+				($window_bt, $window_end) = &father_time($ft_data);
+			}
+			unless ($appts) {
+				my @params = ( $app, $window_end );
+				my $query = 'select * from appointments where app = ? and timestamp < ? ';
+				if ($circumstance eq 'duration') {
+					# a session overlaps this window when it starts before the window
+					# ends and stops after it begins; a running session has no stored
+					# duration, so it is read to now and always overlaps a past window
+					$query .= "and (timestamp >= ? or type in ('start','record') or (cast(timestamp as integer) + abs(cast(coalesce(duration,0) as real))) > ?) ";
+					push @params, $window_bt, $window_bt;
+				}
+				else {
+					$query .= 'and timestamp >= ? ';
+					push @params, $window_bt;
+				}
 
 				if ($settings->{'s_movement'}) {
 					my $bail = 0;
@@ -21345,9 +21407,10 @@ sub budget_calculator($data) {
 					$bail = 1 if grep { $_ eq 'all' } @{$settings->{'sss_movement'}};
 					if ($bail == 0) {
 						if (scalar @{$settings->{'sss_movement'}} > 0 ) { $query .= 'and ( '; }
+						my $first_movement = 1;
 						foreach my $sm ( @{$settings->{'sss_movement'}} ) {
-							$query .= 'type = ? ' if scalar @params == 3;
-							$query .= ' or type = ? ' if scalar @params > 3;
+							$query .= $first_movement ? 'type = ? ' : ' or type = ? ';
+							$first_movement = 0;
 							push @params, $sm;
 						}
 						if (scalar @{$settings->{'sss_movement'}} > 0 ) { $query .= ' ) '; }
@@ -21355,7 +21418,9 @@ sub budget_calculator($data) {
 				}
 				$query .= ' order by timestamp DESC';
 				$appts = &subs::db_query($query, @params)->hashes;
-				$data->{'appts'} = $appts;
+				# a duration list is not reused for the next budget entry, since that
+				# entry may name a different window; a caller's own list is left alone
+				$data->{'appts'} = $appts unless $circumstance eq 'duration';
 			}
 
 			my ($m_sum, $m_count) = (0, 0);
@@ -21364,7 +21429,11 @@ sub budget_calculator($data) {
 					if ($appt->{'type'} eq 'start' || $appt->{'type'} eq 'record') {
 						$appt->{'duration'} = $server_time - $appt->{'timestamp'};
 					}
-					$value += abs $appt->{'duration'};
+					my $spent = abs($appt->{'duration'} || 0);
+					if (defined $window_bt && defined $window_end) {
+						$spent = &appointment_overlap($appt, $window_bt, $window_end);
+					}
+					$value += $spent;
 				}
 				elsif ($circumstance eq 'occurences') {
 					$value += 1;
