@@ -102,8 +102,13 @@ function mailMaker(incomingData, app) {
 				}
 			}
 			mailScroll = { topLoad: 0 };
-			if (localStorage.getItem('mail_sidebar') == 'on' && incomingData['scroll'] != 1) {
-				$('#mail_hamburger').trigger('click');
+			if (incomingData['scroll'] != 1) {
+				if ($('#mail').hasClass('chat_shell') && typeof chatRailApply === 'function') {
+					chatRailApply();
+				}
+				else if (localStorage.getItem('mail_sidebar') == 'on') {
+					$('#mail_hamburger').trigger('click');
+				}
 			}
 		}, error: function (response) {  }
 	});
@@ -117,16 +122,14 @@ $(document).on('click', '#mail_hamburger', function() {
 
 	if ($('#mail').hasClass('chat_shell')) {
 		// Chat is a two-pane app on a wide screen: the hamburger opens and
-		// closes the conversation rail, but never hides the thread itself.
-		if (ml.is(':visible')) {
-			ml.hide();
-			status = 'off';
-		}
-		else {
-			ml.show();
-		}
+		// closes the conversation rail, but never hides the thread itself. On a
+		// phone the rail is a drawer, so the same press puts every list away.
+		var open = !ml.is(':visible');
+		ml.toggle(open);
 		c.show();
-		localStorage.setItem('mail_sidebar', status);
+		localStorage.setItem('mail_sidebar', open ? 'on' : 'off');
+		$('#mail_hamburger').attr('aria-expanded', open ? 'true' : 'false');
+		if (open && typeof chatScrollRestore === 'function') { chatScrollRestore(); }
 		mailScrollBottom('load');
 		return;
 	}
@@ -1143,6 +1146,8 @@ $(document).on('click', '.mail_contact', function() {
 	var timestamp = Date.now();
 	var uuid;
 	uuid = $(this).attr('uuid');
+	if (typeof chatScrollSave === 'function') { chatScrollSave(); }
+	if (typeof chatRailAutoClose === 'function') { chatRailAutoClose(); }
 	localStorage.setItem('mail_contact', uuid);
 	localStorage.removeItem('mail_phone');
 
@@ -1159,6 +1164,7 @@ $(document).on('click', '.mail_contact', function() {
 			mailWebSocketStop();	
 			$('.mail_contact[uuid="' + uuid + '"]').addClass('active');
 			mailScrollBottom('load');
+			if (typeof chatRailApply === 'function') { chatRailApply(); }
 		}
 	});
 });
@@ -1166,6 +1172,8 @@ $(document).on('click', '.mail_contact', function() {
 $(document).on('click', '.mail_phone', function() {
 	var timestamp = Date.now();
 	var phone = $(this).attr('phone');
+	if (typeof chatScrollSave === 'function') { chatScrollSave(); }
+	if (typeof chatRailAutoClose === 'function') { chatRailAutoClose(); }
 	$.ajax({
 		url: '/manager/mail/phone',
 		type: 'GET',
@@ -1175,6 +1183,7 @@ $(document).on('click', '.mail_phone', function() {
 			localStorage.setItem('mail_phone', phone);
 			mailScrollBottom('load');
 			mailScroll = { topLoad: 0 };
+			if (typeof chatRailApply === 'function') { chatRailApply(); }
 			mailWebSocketStop();
 		}
 	});
@@ -1336,6 +1345,7 @@ $(document).on('dblclick', '#mailbox', function() {
 
 $(document).on('click', '.mail_subsection', function() {
 	var section = $(this).attr('section');
+	if (typeof chatScrollSave === 'function') { chatScrollSave(); }
 
 	if (section == 'pen') {
 		localStorage.setItem('mail_contact', 'pen');

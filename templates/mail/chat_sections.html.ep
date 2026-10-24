@@ -3,7 +3,9 @@
     carries every section until it retires). The panels are one if/elsif chain
     keyed on the active subsection, so a panel renders only for its own section.
     Expects the same stash mail_checker hands the panel: settings, mail_phone,
-    mail_contact, contacts, sc, list, public_channels, channel_key, channel_public. %>
+    mail_contact, contacts, sc, list, public_channels, channel_key, channel_public.
+    Chat passes chat_rail => 1 to split the phone list into the names it knows and
+    the bare numbers it does not; the umbrella keeps its single flat list. %>
 <%# a construct kind is a core label under construct.<name>; fall back to its key %>
 <% my $construct_label = sub {
 	my ($name) = @_;
@@ -13,14 +15,15 @@
 }; %>
 <% if ($settings->{'subsection'} eq 'sms') { %>
 	<% my $phone_numbers = &subs::db_select('settings', undef, { setting => 'phone', device => &subs::device_setter() })->hashes; %>
-	<div id="mail_phone_picker mail_list_picker">
+	<% foreach my $phone ( @{$phone_numbers} ) { $phone->{'value'} =~ s/\S\d(?=\d{10})//; } %>
+	<% if (!$chat_rail) { %>
+	<div id="mail_phone_picker" class="mail_list_picker">
 		<table style="font-size:20px;width:100%;text-align:center;">
 			<thead>
 				<th></th>
 			</thead>
 			<tbody>
 				<% foreach my $phone ( sort { $a->{'app'} cmp $b->{'app'} } @{$phone_numbers} ) { %>
-					<% $phone->{'value'} =~ s/\S\d(?=\d{10})//; %>
 					<tr type="phone" phone="<%= $phone->{'value'} %>" class="mail_phone hover <% if ($mail_phone eq $phone->{'value'}) { %>active <% } %>">
 						<td class="" colspan="3"><%= &subs::format_name($phone->{'app'}) %></td>
 						<td class="" colspan="3"><%= &subs::format_name($phone->{'value'}) %></td>
@@ -29,6 +32,58 @@
 			</tbody>
 		</table>
 	</div>
+	<% } else { %>
+	<%# A named person is known; a row whose app is only its own digits is a
+	    stranger's number the house has not named yet (phone_directory draws the
+	    same line). Splitting them lets each kind be put out of the way. %>
+	<% my @known = sort { lc($a->{'app'} // '') cmp lc($b->{'app'} // '') } grep { ($_->{'app'} // '') !~ /^\d+$/ } @{$phone_numbers}; %>
+	<% my @unknown = sort { ($a->{'app'} // '') cmp ($b->{'app'} // '') } grep { ($_->{'app'} // '') =~ /^\d+$/ } @{$phone_numbers}; %>
+	<div id="mail_phone_picker" class="mail_list_picker">
+		<% if (scalar @known) { %>
+			<div class="chat_phone_group">
+				<button type="button" class="chat_rail_subhead chat_phone_subhead" data-chat_group="phone_known" aria-expanded="true">
+					<span class="chat_rail_subhead_label"><%= &subs::lang('chat.known') %></span>
+					<span class="chat_rail_subhead_meta"><span class="chat_rail_count"><%= scalar @known %></span><span class="chat_rail_chevron" aria-hidden="true">&#9662;</span></span>
+				</button>
+				<div class="chat_rail_list" data-chat_group_body="phone_known" data-chat-scroll="phone_known">
+					<table class="chat_phone_table">
+						<tbody>
+							<% foreach my $phone ( @known ) { %>
+								<tr type="phone" phone="<%= $phone->{'value'} %>" class="mail_phone hover <% if ($mail_phone eq $phone->{'value'}) { %>active <% } %>">
+									<td class="" colspan="3"><%= &subs::format_name($phone->{'app'}) %></td>
+									<td class="" colspan="3"><%= &subs::format_name($phone->{'value'}) %></td>
+								</tr>
+							<% } %>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		<% } %>
+		<% if (scalar @unknown) { %>
+			<div class="chat_phone_group">
+				<button type="button" class="chat_rail_subhead chat_phone_subhead" data-chat_group="phone_unknown" aria-expanded="true">
+					<span class="chat_rail_subhead_label"><%= &subs::lang('chat.unknown') %></span>
+					<span class="chat_rail_subhead_meta"><span class="chat_rail_count"><%= scalar @unknown %></span><span class="chat_rail_chevron" aria-hidden="true">&#9662;</span></span>
+				</button>
+				<div class="chat_rail_list" data-chat_group_body="phone_unknown" data-chat-scroll="phone_unknown">
+					<table class="chat_phone_table">
+						<tbody>
+							<% foreach my $phone ( @unknown ) { %>
+								<tr type="phone" phone="<%= $phone->{'value'} %>" class="mail_phone hover <% if ($mail_phone eq $phone->{'value'}) { %>active <% } %>">
+									<td class="" colspan="3"><%= &subs::format_name($phone->{'app'}) %></td>
+									<td class="" colspan="3"><%= &subs::format_name($phone->{'value'}) %></td>
+								</tr>
+							<% } %>
+						</tbody>
+					</table>
+				</div>
+			</div>
+		<% } %>
+		<% if (!scalar @{$phone_numbers}) { %>
+			<div class="chat_rail_empty"><%= &subs::ui('No phone numbers yet.') %></div>
+		<% } %>
+	</div>
+	<% } %>
 <% } elsif ($settings->{'subsection'} eq 'tickets') { %>
 	<div id="mail_contacts_list" style="height:100px;font-size:20px;max-height:100px;text-align:center;">
 		<% foreach my $contact ( sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$contacts} ) { %>

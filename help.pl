@@ -632,7 +632,7 @@ our %topic = (
 	'chat' => {
 		title => 'Chat', category => 'apps', app => 'chat',
 		templates => [ 'templates/apps/chat.html.ep', 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'templates/mail/chat_sections.html.ep', 'public/js/manager/chat.js', 'public/css/chat.css' ],
-		verified => '2026-10-23',
+		verified => '2026-10-24',
 		summary => 'The house\'s conversations: sms, the dial, ticket threads and lora.',
 		body => [
 			'Chat gathers the ways the house talks, split out of the mailbox as an app of its own: sms to phones, the dial (the house\'s radio, where a set of appointments picked across the social construct groups names one thread and a tab only hears messages addressed to the set it is tuned to), the list of those sets, the ticket threads the house opens for its guests, and lora.',
@@ -641,11 +641,13 @@ our %topic = (
 			'A paperclip beside the composer attaches files to the next message; they ride the message on the ticket road and go as an MMS on the phone road. The picture and its words travel as one message, not a text beside a picture. The phone sends it itself when JawnOS is its default SMS app and files the sent copy in the phone\'s own message thread, so the stock thread and the house\'s conversation hold the same message under the same id rather than two copies; otherwise it opens the phone\'s messaging app with the picture and number filled in, ready to send. A picture larger than a carrier will take is shrunk to fit first.',
 			'Advertise opens the tuned set to guests, who may then tune the same channel from the public page. Room bubbles that are not kept are dashed to say so.',
 			'The conversation is drawn as a modern chat: a conversation rail on the left, bubbles for each road on the right, a rounded composer with an emoji picker, and a live SMS counter. The counter knows the difference between GSM-7 and Unicode: an emoji, an accent or a CJK character switches the body to the 70-unit Unicode alphabet, which the phone splits correctly through SmsManager.divideMessage. Incoming emoji are stored and shown as themselves.',
+			'The lists live in a drawer. The menu at the top left opens and closes them - on a phone the drawer starts closed so the thread has the room, and picking a conversation puts it away again. Inside, subheadings group the lists: People, Sections, then the open section\'s own list. Press a subheading to fold that list away, and it stays folded. The rail remembers the place you left it, and keeps a separate place for each section, so coming back to Sms returns to the row you were reading rather than the top. In the phone-number list, Known and Unknown are subheadings of their own: Known holds the numbers the house has named, Unknown the bare numbers it has not, and either can be folded away.',
 			'LoRa mode is its own section and its own road. Configure the network in the LoRa panel: band, sub-band, Join EUI, Dev EUI, App key, port and whether uplinks are confirmed. Save and configure pushes the credentials to the T-Deck on the LAN; Join network asks its SX1262 to join; Send test sends one uplink. A message written in the LoRa section travels through the LoRaWAN node and is filed on the LoRa thread, and a network server forwards downlinks to the webhook URL shown in the panel. LoRaWAN and the old raw-LoRa mesh are alternatives: while LoRaWAN is on, the deck\'s point-to-point broadcast and receive stand down.',
 			'An appointment\'s Connect group carries a Chat button: it opens that person\'s one conversation right in the window - the ticket thread when they hold a ticket, the phone otherwise - and the window keeps their name and colour on the way. A back button beside the menu puts the appointment back, and closing the window closes the chat.'
 		],
 		steps => [
 			'Open Chat from the start menu.',
+			'Press the menu at the top left to show or hide the lists. Press a subheading to fold that list; the Known and Unknown subheadings put that kind of phone number away.',
 			'Pick a section from the sidebar - sms, dial, list, tickets or lora.',
 			'Friends: tap a person to open their one conversation, and the transport dropdown picks how the next message travels (a person with several lines gets one sms option each).',
 			'Sms: tap a number, then write in the box below the conversation. The emoji button opens the picker, and the counter above the box names the alphabet and the segments.',

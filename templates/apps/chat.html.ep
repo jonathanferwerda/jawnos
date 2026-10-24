@@ -8,9 +8,17 @@
 <% my $active = $settings->{'subsection'} || 'sms'; %>
 <% my $chat_sidebar = defined $incoming_data->{'sidebar'} ? $incoming_data->{'sidebar'} : 1; %>
 <% my $avatar = substr($main_title || 'Chat', 0, 1); %>
+<% my %chat_section_label = (
+	sms => &subs::lang('chat.phone_numbers'),
+	dial => &subs::lang('chat.dial'),
+	list => &subs::lang('chat.list'),
+	tickets => &subs::lang('chat.tickets'),
+	lora => &subs::lang('chat.lora'),
+); %>
+<% my $chat_panel_label = $chat_section_label{$active} || &subs::format_name($active); %>
 <div id="mail" class="chat_shell">
 	<div class="chat_head">
-		<button type="button" id="mail_hamburger" class="chat_icon_button" hint="Chats" aria-label="<%= &subs::ui('Chats') %>">&#9776;</button>
+		<button type="button" id="mail_hamburger" class="chat_icon_button" hint="Show or hide the chat lists" aria-label="<%= &subs::ui('Show or hide the chat lists') %>" aria-controls="mail_sidebar" aria-expanded="true">&#9776;</button>
 		<%# back to the appointment this window came from: the in-window chat hides
 		    the regular window contents, and this puts them back (chat.js shows it
 		    only on a window that swapped in from an appointment) %>
@@ -19,7 +27,7 @@
 			<div class="chat_avatar"><%= $avatar %></div>
 			<div class="chat_identity_text">
 				<div class="chat_title"><%= $main_title || &subs::ui('Chat') %></div>
-				<div class="chat_subtitle"><%= &subs::format_name($active) %><% if (($settings->{'lora_toggle'} // '') eq 'on') { %> &middot; LoRa mesh<% } %></div>
+				<div class="chat_subtitle"><%= $chat_panel_label %><% if (($settings->{'lora_toggle'} // '') eq 'on') { %> &middot; LoRa mesh<% } %></div>
 			</div>
 		</div>
 		<div class="chat_head_actions">
@@ -34,35 +42,59 @@
 					<span><%= &subs::ui('Chats') %></span>
 					<span class="chat_rail_count"><%= scalar @{$friends || []} %></span>
 				</div>
-				<% if (@{$friends || []}) { %>
-					<div id="chat_friends">
-						<% foreach my $f ( sort { $a->{'contact_name'} cmp $b->{'contact_name'} } @{$friends} ) { %>
-							<% my $fname = &subs::format_name($f->{'contact_name'}); %>
-							<div class="chat_friend hover <% if ($mail_contact eq $f->{'uuid'}) { %>active <% } %>" uuid="<%= $f->{'uuid'} %>" name="<%= &subs::unformat_name($f->{'contact_name'}) %>" phone="<%= $f->{'phone'} %>">
-								<% my $fcrest = ($privilege eq 'citizen') ? &subs::crest_contact_entry($f->{'app'}) : undef; %>
-								<% my $fsrc = ''; if ($fcrest) { $fsrc = $fcrest->{'image_data'} || (&subs::crest_peer_image_file($fcrest) ? '/manager/people/crest_image?peer=' . $fcrest->{'crest'}->{'uuid'} . '&stamp=' . &subs::rightNow() : ''); } %>
-								<span class="chat_friend_avatar"><% if ($fsrc ne '') { %><img src="<%= $fsrc %>" alt=""><% } else { %><%= substr($fname, 0, 1) %><% } %></span>
-								<span class="chat_friend_text">
-									<span class="chat_friend_name"><%= $fname %></span>
-									<span class="chat_friend_meta"><% if ($f->{'phone'}) { %>sms<% } else { %>chat<% } %><% my @extra = grep { !$_->{'primary'} && $_->{'value'} } @{ $f->{'numbers'} || [] }; %><% if (scalar @extra) { %> &middot; <%= join(' &middot; ', map { &subs::contact_line_label($_) } @extra) %><% } %></span>
-								</span>
+				<div class="chat_rail_group">
+					<button type="button" class="chat_rail_subhead" data-chat_group="people" aria-expanded="true">
+						<span class="chat_rail_subhead_label"><%= &subs::lang('people') %></span>
+						<span class="chat_rail_subhead_meta"><span class="chat_rail_chevron" aria-hidden="true">&#9662;</span></span>
+					</button>
+					<div class="chat_rail_list" data-chat_group_body="people" data-chat-scroll="people">
+						<% if (@{$friends || []}) { %>
+							<div id="chat_friends">
+								<% foreach my $f ( sort { $a->{'contact_name'} cmp $b->{'contact_name'} } @{$friends} ) { %>
+									<% my $fname = &subs::format_name($f->{'contact_name'}); %>
+									<div class="chat_friend hover <% if ($mail_contact eq $f->{'uuid'}) { %>active <% } %>" uuid="<%= $f->{'uuid'} %>" name="<%= &subs::unformat_name($f->{'contact_name'}) %>" phone="<%= $f->{'phone'} %>">
+										<% my $fcrest = ($privilege eq 'citizen') ? &subs::crest_contact_entry($f->{'app'}) : undef; %>
+										<% my $fsrc = ''; if ($fcrest) { $fsrc = $fcrest->{'image_data'} || (&subs::crest_peer_image_file($fcrest) ? '/manager/people/crest_image?peer=' . $fcrest->{'crest'}->{'uuid'} . '&stamp=' . &subs::rightNow() : ''); } %>
+										<span class="chat_friend_avatar"><% if ($fsrc ne '') { %><img src="<%= $fsrc %>" alt=""><% } else { %><%= substr($fname, 0, 1) %><% } %></span>
+										<span class="chat_friend_text">
+											<span class="chat_friend_name"><%= $fname %></span>
+											<span class="chat_friend_meta"><% if ($f->{'phone'}) { %>sms<% } else { %>chat<% } %><% my @extra = grep { !$_->{'primary'} && $_->{'value'} } @{ $f->{'numbers'} || [] }; %><% if (scalar @extra) { %> &middot; <%= join(' &middot; ', map { &subs::contact_line_label($_) } @extra) %><% } %></span>
+										</span>
+									</div>
+								<% } %>
 							</div>
+						<% } else { %>
+							<div class="chat_rail_empty"><%= &subs::ui('No people yet.') %></div>
 						<% } %>
 					</div>
-				<% } %>
-				<% if ($privilege eq 'citizen') { %>
-					<div class="chat_nav">
-						<% foreach my $ss ( qw/sms dial list tickets lora/ ) { %>
-							<button type="button" class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::format_name($ss) %></button>
+				</div>
+				<div class="chat_rail_group">
+					<button type="button" class="chat_rail_subhead" data-chat_group="sections" aria-expanded="true">
+						<span class="chat_rail_subhead_label"><%= &subs::lang('chat.sections') %></span>
+						<span class="chat_rail_subhead_meta"><span class="chat_rail_chevron" aria-hidden="true">&#9662;</span></span>
+					</button>
+					<div class="chat_rail_list" data-chat_group_body="sections" data-chat-scroll="sections">
+						<% if ($privilege eq 'citizen') { %>
+							<div class="chat_nav">
+								<% foreach my $ss ( qw/sms dial list tickets lora/ ) { %>
+									<button type="button" class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::lang('chat.' . $ss) %></button>
+								<% } %>
+								<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="LoRa mesh broadcast" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
+							</div>
+						<% } else { %>
+							<button type="button" class="mail_subsection active" section="dial" disabled><%= &subs::lang('chat.dial') %></button>
 						<% } %>
-						<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="LoRa mesh broadcast" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">
 					</div>
-				<% } else { %>
-					<button type="button" class="mail_subsection active" section="dial" disabled>Dial</button>
-				<% } %>
-				<br><br><br>
-
-				<%= include 'mail/chat_sections', settings => $settings, mail_phone => $mail_phone, mail_contact => $mail_contact, contacts => $contacts, sc => $sc, list => $list, public_channels => $public_channels, channel_key => $channel_key, channel_public => $channel_public, privilege => $privilege, lorawan => $lorawan %>
+				</div>
+				<div class="chat_rail_group">
+					<button type="button" class="chat_rail_subhead" data-chat_group="panel" aria-expanded="true">
+						<span class="chat_rail_subhead_label"><%= $chat_panel_label %></span>
+						<span class="chat_rail_subhead_meta"><span class="chat_rail_chevron" aria-hidden="true">&#9662;</span></span>
+					</button>
+					<div class="chat_rail_list" data-chat_group_body="panel" data-chat-scroll="panel">
+						<%= include 'mail/chat_sections', chat_rail => 1, settings => $settings, mail_phone => $mail_phone, mail_contact => $mail_contact, contacts => $contacts, sc => $sc, list => $list, public_channels => $public_channels, channel_key => $channel_key, channel_public => $channel_public, privilege => $privilege, lorawan => $lorawan %>
+					</div>
+				</div>
 			</div>
 		<% } %>
 		<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data, chat_ui => 1, sms_lines => $sms_lines %>
@@ -70,4 +102,5 @@
 </div>
 <script>
 	last_mail_message = Date.now();
+	if (typeof chatRailApply === 'function') { chatRailApply(); }
 </script>

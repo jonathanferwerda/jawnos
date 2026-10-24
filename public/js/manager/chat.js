@@ -60,7 +60,11 @@ function chatTransportOptions() {
 	updateChatSmsCount();
 	if (onLora) { setTimeout(chatLoraRefresh, 200); }
 }
-$(document).on('click', '.mail_subsection', function () { setTimeout(chatTransportOptions, 50); });
+$(document).on('click', '.mail_subsection', function () {
+	// the old section's place in the rail is saved before the render replaces it
+	if (typeof chatScrollSave === 'function') { chatScrollSave(); }
+	setTimeout(chatTransportOptions, 50);
+});
 
 // A friend opens their one conversation; the dropdown names how the next
 // message travels. The thread is the ticket when they hold one, else the phone
@@ -70,6 +74,8 @@ $(document).on('click', '.mail_subsection', function () { setTimeout(chatTranspo
 $(document).on('click', '#chat_friends .chat_friend', function () {
 	var uuid = $(this).attr('uuid') || '';
 	var phone = $(this).attr('phone') || '';
+	chatScrollSave();
+	chatRailAutoClose();
 	localStorage.setItem('mail_contact', uuid);
 	localStorage.setItem('mail_phone', phone);
 	var data = {
@@ -348,12 +354,99 @@ function chatDressMessages(root) {
 	});
 }
 
+// ---- rail: menu, subheadings and remembered scroll ------------------------
+// On a phone the rail is a drawer over the conversation. Its default follows
+// the container query the stylesheet uses (closed when the shell is narrow,
+// open on a desk); the menu's own choice is remembered and wins after that.
+function chatRailNarrow() {
+	var shell = $('.chat_shell').get(0);
+	if (shell) {
+		var width = shell.getBoundingClientRect().width;
+		if (width) { return width <= 720; }
+	}
+	return window.matchMedia('(max-width: 760px)').matches;
+}
+
+function chatRailApply() {
+	var rail = $('#mail_sidebar');
+	if (!rail.length || !$('#mail').hasClass('chat_shell')) { return; }
+	var pref = localStorage.getItem('mail_sidebar');
+	var open = (pref == 'on') ? true : (pref == 'off') ? false : !chatRailNarrow();
+	rail.toggle(open);
+	$('#conversation').show();
+	$('#mail_hamburger').attr('aria-expanded', open ? 'true' : 'false');
+	chatGroupsApply();
+	if (open) { chatScrollRestore(); }
+}
+
+// Picking a conversation on a phone puts the drawer away; picking a section
+// keeps it open, because that section's own list lives in the rail.
+function chatRailAutoClose() {
+	if (!$('#mail').hasClass('chat_shell')) { return; }
+	if (chatRailNarrow()) { localStorage.setItem('mail_sidebar', 'off'); }
+}
+
+// The rail's position belongs to the section it was showing, so sms -> dial ->
+// sms returns to the row the person was looking at. Each list keeps its own
+// position too, for the subheadings that hold one.
+function chatRailSection() {
+	return $('.mail_subsection.active').attr('section') || 'sms';
+}
+
+function chatScrollSave() {
+	var rail = $('.chat_shell .chat_rail').get(0);
+	if (rail) { localStorage.setItem('chat_scroll_rail_' + chatRailSection(), rail.scrollTop); }
+	$('.chat_shell .chat_rail [data-chat-scroll]').each(function () {
+		localStorage.setItem('chat_scroll_' + $(this).attr('data-chat-scroll'), this.scrollTop);
+	});
+}
+
+function chatScrollRestore() {
+	var rail = $('.chat_shell .chat_rail').get(0);
+	if (rail) {
+		var top = parseInt(localStorage.getItem('chat_scroll_rail_' + chatRailSection()) || '', 10);
+		if (!isNaN(top)) { rail.scrollTop = top; }
+	}
+	$('.chat_shell .chat_rail [data-chat-scroll]').each(function () {
+		var top = parseInt(localStorage.getItem('chat_scroll_' + $(this).attr('data-chat-scroll')) || '', 10);
+		if (!isNaN(top)) { this.scrollTop = top; }
+	});
+}
+
+// A subheading carries data-chat_group and hides the list beside it
+// (data-chat_group_body). "off" is remembered so Known can stay folded away.
+function chatGroupsApply() {
+	$('.chat_shell .chat_rail_subhead').each(function () {
+		var key = $(this).attr('data-chat_group') || '';
+		var hidden = localStorage.getItem('chat_group_' + key) == 'off';
+		$(this).attr('aria-expanded', hidden ? 'false' : 'true');
+		$('.chat_shell [data-chat_group_body="' + key + '"]').prop('hidden', hidden);
+	});
+}
+
+$(document).on('click', '.chat_shell .chat_rail_subhead', function () {
+	var key = $(this).attr('data-chat_group') || '';
+	var body = $('.chat_shell [data-chat_group_body="' + key + '"]');
+	var open = body.prop('hidden');
+	body.prop('hidden', !open);
+	$(this).attr('aria-expanded', open ? 'true' : 'false');
+	localStorage.setItem('chat_group_' + key, open ? 'on' : 'off');
+	if (open) { chatScrollRestore(); }
+});
+
+var chatScrollTimer;
+// scroll events do not bubble, so listen in the capture phase to catch the rail
+// (and each list that can scroll inside it) however it was rendered.
+document.addEventListener('scroll', function (e) {
+	var el = e.target;
+	if (!el || !el.closest || !$(el).closest('.chat_shell .chat_rail').length) { return; }
+	clearTimeout(chatScrollTimer);
+	chatScrollTimer = setTimeout(chatScrollSave, 140);
+}, true);
+
 $(function () {
 	if ($('.chat_shell').length) {
 		chatDressMessages();
-		if (localStorage.getItem('mail_sidebar') == 'off') {
-			$('#mail_sidebar').hide();
-			$('#conversation').show();
-		}
+		chatRailApply();
 	}
 });

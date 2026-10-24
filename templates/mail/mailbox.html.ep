@@ -32,7 +32,7 @@
 			<br><br><br>
 
 			<% if (grep { $_ eq $settings->{'subsection'} } qw/sms tickets dial list/) { %>
-				<%= include 'mail/chat_sections', settings => $settings, mail_phone => $mail_phone, mail_contact => $mail_contact, contacts => $contacts, sc => $sc, list => $list, public_channels => $public_channels, channel_key => $channel_key, channel_public => $channel_public, privilege => $privilege %>
+				<%= include 'mail/chat_sections', chat_rail => 0, settings => $settings, mail_phone => $mail_phone, mail_contact => $mail_contact, contacts => $contacts, sc => $sc, list => $list, public_channels => $public_channels, channel_key => $channel_key, channel_public => $channel_public, privilege => $privilege %>
 			<% } elsif ($settings->{'subsection'} eq 'email') { %>
 
 				<div id="email_main_buttons">

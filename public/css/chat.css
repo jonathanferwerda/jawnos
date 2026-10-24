@@ -116,6 +116,9 @@
 	display: flex;
 	flex: 1 1 auto;
 	min-height: 0;
+	/* the narrow-screen drawer is positioned against the body, not the whole
+	   window, so it can never ride up over the header and its menu button */
+	position: relative;
 }
 
 .chat_shell .chat_rail {
@@ -135,6 +138,100 @@
 	padding: 2px 4px 8px;
 	font-size: 15px;
 	font-weight: 700;
+}
+
+/* the rail is a stack of named lists; each subheading collapses its own */
+.chat_shell .chat_rail_group {
+	margin-top: 4px;
+}
+
+.chat_shell .chat_rail_subhead {
+	display: flex;
+	align-items: center;
+	width: 100%;
+	margin: 0;
+	padding: 7px 4px 5px;
+	border: 0;
+	border-top: 1px solid var(--line);
+	border-radius: 0;
+	background: transparent;
+	background-image: none;
+	color: var(--ink-muted);
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: .06em;
+	line-height: 1.2;
+	text-align: left;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+
+.chat_shell .chat_rail_subhead:hover {
+	color: var(--ink);
+}
+
+.chat_shell .chat_rail_subhead_label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat_shell .chat_rail_subhead_meta {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-left: auto;
+	padding-left: 8px;
+}
+
+.chat_shell .chat_rail_chevron {
+	font-size: 10px;
+	line-height: 1;
+	transition: transform .15s;
+}
+
+.chat_shell .chat_rail_subhead[aria-expanded="false"] .chat_rail_chevron {
+	transform: rotate(-90deg);
+}
+
+.chat_shell .chat_rail_list[hidden] {
+	display: none;
+}
+
+.chat_shell .chat_rail_list {
+	min-width: 0;
+}
+
+.chat_shell .chat_rail_empty {
+	padding: 10px 6px;
+	color: var(--ink-muted);
+	font-size: 12px;
+}
+
+.chat_shell .chat_phone_group + .chat_phone_group {
+	margin-top: 2px;
+}
+
+.chat_shell .chat_phone_subhead {
+	padding: 5px 4px;
+	border-top-style: dashed;
+	font-size: 11px;
+	letter-spacing: .04em;
+}
+
+.chat_shell .chat_phone_table {
+	width: 100%;
+	font-size: 18px;
+	text-align: center;
+}
+
+.chat_shell .chat_phone_table td {
+	padding: 3px 2px;
+}
+
+.chat_shell .chat_phone_table .mail_phone {
+	cursor: pointer;
 }
 
 .chat_shell .chat_rail_count {
@@ -721,12 +818,18 @@
 @container chat (max-width: 720px) {
 	.chat_shell .chat_rail {
 		position: absolute;
-		inset: 52px 0 0 0;
+		inset: 0;
 		z-index: 20;
 		width: 100%;
 		flex-basis: 100%;
 		border-right: 0;
 		box-shadow: 0 8px 28px rgba(0, 0, 0, .22);
+	}
+
+	.chat_shell .chat_rail_list[data-chat-scroll="people"],
+	.chat_shell .chat_phone_group .chat_rail_list {
+		max-height: 38vh;
+		overflow-y: auto;
 	}
 
 	.chat_shell .chat_bubble_inner {
@@ -741,12 +844,18 @@
 @media (max-width: 760px) {
 	.chat_shell .chat_rail {
 		position: absolute;
-		inset: 52px 0 0 0;
+		inset: 0;
 		z-index: 20;
 		width: 100%;
 		flex-basis: 100%;
 		border-right: 0;
 		box-shadow: 0 8px 28px rgba(0, 0, 0, .22);
+	}
+
+	.chat_shell .chat_rail_list[data-chat-scroll="people"],
+	.chat_shell .chat_phone_group .chat_rail_list {
+		max-height: 38vh;
+		overflow-y: auto;
 	}
 
 	.chat_shell .chat_bubble_inner {
