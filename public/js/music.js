@@ -848,7 +848,10 @@ function musicLipDelayChanged() {
 // graph/stream path already supplies the wait that lined the Me up, and adding
 // the trim on top would put the local sound late.
 function musicLocalDelaySeconds() {
-	return (musicStreamOutputs().length ? 0 : (music_local_delay || 0)) / 1000;
+	if (musicStreamOutputs().length) { return 0; }
+	// a picture is the only thing that can lag; an audio track takes no trim
+	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return 0; }
+	return (music_local_delay || 0) / 1000;
 }
 
 // The moment the picture is handed from the live element to the delayed clone,
