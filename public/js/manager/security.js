@@ -657,6 +657,16 @@ $(document).on('click', '.signatorial_selection', function() {
 			status.text('this browser has no passkey support (or the page is not on https)');
 			return;
 		}
+		// A passkey is bound to the house domain, so the page has to be open on
+		// it. On 127.0.0.1 the browser refuses before it ever prompts, so say
+		// that here rather than let it surface as a cryptic SecurityError.
+		var rp = String($(this).attr('data-rp') || '').toLowerCase();
+		var host = String(window.location.hostname || '').toLowerCase();
+		var on_house = rp.length > 0 && (host === rp || host.slice(-(rp.length + 1)) === ('.' + rp));
+		if (!on_house) {
+			status.text('this window is on ' + (host || 'an address') + ', not ' + (rp || 'the house domain') + ' - press Open in browser to enroll on the house name');
+			return;
+		}
 		status.text('asking the house…');
 		$.post('/manager/webauthn/register/begin', {}, function (r) {
 			if (!r || !r.ok) { status.text((r && r.error) || 'could not start'); return; }
@@ -683,7 +693,9 @@ $(document).on('click', '.signatorial_selection', function() {
 					securityRefresh();
 				}, 'json');
 			}).catch(function (e) {
-				status.text((e && e.message) || 'cancelled');
+				var name = (e && e.name) || '';
+				var msg = (e && e.message) || 'cancelled';
+				status.text(name ? (name + ': ' + msg) : msg);
 			});
 		}, 'json');
 	});

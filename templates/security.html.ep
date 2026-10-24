@@ -101,7 +101,7 @@
 		</table>
 		<div style="margin-top:12px;">
 			<input id="passkey_name" type="text" placeholder="Laptop" style="width:170px;" autocomplete="off" spellcheck="false">
-			<button id="passkey_add" type="button"<% if (!$passkey_person || !length($webauthn_rp || '')) { %> disabled<% } %>>Add a passkey</button>
+			<button id="passkey_add" type="button" data-rp="<%= $webauthn_rp || '' %>"<% if (!$passkey_person || !length($webauthn_rp || '')) { %> disabled<% } %>>Add a passkey</button>
 			<button id="passkey_open_browser" type="button"<% if (!$passkey_person || !length($webauthn_rp || '')) { %> disabled<% } %>>Open in browser</button>
 			<span id="passkey_status" style="font-size:14px;margin-left:8px;"></span>
 		</div>
