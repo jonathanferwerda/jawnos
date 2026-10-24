@@ -107,7 +107,7 @@ var musicStream = {
 	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0
 };
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false };
-var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0 };
+var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0, source: '' };
 var music_stream_codec = 'pcm';
 // Counters for the sync report. They ride the same websocket as the audio, so
 // a stream that is failing tells the manager what it dropped and why.
@@ -405,12 +405,17 @@ function musicVideoWatch(el) {
 	el.addEventListener('waiting', function() {
 		if (!musicVideoStats.waitAt) { musicVideoStats.waitAt = Date.now(); }
 		musicVideoStats.waits++;
+		// the picture has stopped; letting the audio-only tap run on would put
+		// it ahead by the length of every stall
+		musicAheadPause();
 	});
 	var settled = function() {
 		if (musicVideoStats.waitAt) {
 			musicVideoStats.stalled_ms += Date.now() - musicVideoStats.waitAt;
 			musicVideoStats.waitAt = 0;
 		}
+		// the picture is moving again; realign the ahead tap to it
+		musicAheadResume();
 	};
 	el.addEventListener('playing', settled);
 	el.addEventListener('canplay', settled);
@@ -486,7 +491,15 @@ function musicSyncReport() {
 			failed: musicAhead.failed ? 1 : 0,
 			lead_ms: Math.round((musicAhead.target || 0) * 1000),
 			err_ms: Math.round((musicAhead.err || 0) * 1000),
-			offset_ms: (music_sync_offset || 0)
+			offset_ms: (music_sync_offset || 0),
+			rate: musicAhead.rate || 1,
+			seeks: musicAhead.seekCount || 0,
+			src_ms: musicAhead.el ? Math.round((musicAhead.el.currentTime || 0) * 1000) : 0,
+			el_ready: musicAhead.el ? musicAhead.el.readyState : -1,
+			seeking: (musicAhead.el && musicAhead.el.seeking) ? 1 : 0,
+			el_paused: (musicAhead.el && musicAhead.el.paused) ? 1 : 0,
+			seekable: (musicAhead.el && musicAhead.el.seekable) ? musicAhead.el.seekable.length : 0,
+			opus_src: (musicOpus.source || '')
 		},
 		video: v ? {
 			ct: Math.round((v.currentTime || 0) * 100) / 100,
@@ -647,6 +660,7 @@ function musicOpusStop() {
 		musicOpus.dest = null;
 	}
 	musicOpus.active = false;
+	musicOpus.source = '';
 	musicOpus.chain = Promise.resolve();
 }
 
@@ -724,7 +738,8 @@ function musicStreamOutputsChanged() {
 // picture is never delayed, so there is no second video decoder and no blackout.
 var musicAhead = {
 	el: null, source: null, chain: null, src: '', ready: false, starting: false,
-	failed: false, gen: 0, timer: 0, retryTimer: 0, target: 0, err: 0
+	failed: false, gen: 0, timer: 0, retryTimer: 0, target: 0, err: 0,
+	seekAt: 0, seekCount: 0, rate: 1, hold: false
 };
 
 // The lead to give the remote, from the measured latency of every output that
@@ -820,15 +835,17 @@ function musicOpusSource() {
 	try { if (musicVisual.remoteGain) { musicVisual.remoteGain.disconnect(dest); } } catch (e) {}
 	try { if (musicVisual.limiter) { musicVisual.limiter.disconnect(dest); } } catch (e) {}
 	try { if (musicAhead.chain) { musicAhead.chain.out.disconnect(dest); } } catch (e) {}
-	if (musicAhead.ready && musicAhead.chain) { musicAhead.chain.out.connect(dest); return; }
+	if (musicAhead.ready && musicAhead.chain) { musicAhead.chain.out.connect(dest); musicOpus.source = 'ahead'; return; }
 	if (musicVisual.remoteGain) { musicVisual.remoteGain.connect(dest); }
 	else if (musicVisual.limiter) { musicVisual.limiter.connect(dest); }
+	musicOpus.source = 'local';
 }
 
 function musicAheadStop() {
 	musicAhead.gen++;
 	musicAhead.ready = false;
 	musicAhead.starting = false;
+	musicAhead.hold = false;
 	musicAhead.src = '';
 	clearInterval(musicAhead.timer);
 	musicAhead.timer = 0;
@@ -855,8 +872,10 @@ function musicAheadForget() {
 }
 
 // Put the ahead element at the player's position plus the lead, and keep it
-// there. A small error is trimmed with the playback rate so the remote does not
-// hear a gap; a big one is a real jump and is seeked.
+// there. A small error is trimmed with the playback rate; a large one is a real
+// jump and is seeked, but at most once every four seconds. The old picture clone
+// learned this the hard way: chasing a seek every tick, or seeking again while
+// one is still in flight, is what makes the sound jump and crackle.
 function musicAheadLead(hard) {
 	var el = musicAhead.el, main = tree && tree.sound;
 	if (!el || !main || !musicAhead.ready) { return; }
@@ -868,16 +887,25 @@ function musicAheadLead(hard) {
 	if (dur > 0) { want = Math.min(want, Math.max(0, dur - 0.05)); }
 	var err = want - (el.currentTime || 0);
 	musicAhead.err = err;
-	if (hard || Math.abs(err) > 0.5) {
+	if (!hard && el.seeking) { return; }
+	var now = Date.now();
+	if (hard || (Math.abs(err) > 0.5 && now - (musicAhead.seekAt || 0) > 4000)) {
+		musicAhead.seekAt = now;
+		musicAhead.seekCount++;
 		try { el.currentTime = Math.max(0, want); } catch (e) {}
 		el.playbackRate = 1;
+		musicAhead.rate = 1;
 		return;
 	}
-	if (err > 0.2) { el.playbackRate = 1.1; }
-	else if (err < -0.2) { el.playbackRate = 0.9; }
-	else if (err > 0.05) { el.playbackRate = 1.03; }
-	else if (err < -0.05) { el.playbackRate = 0.97; }
-	else { el.playbackRate = 1; }
+	var rate = 1;
+	if (err > 0.4) { rate = 1.1; }
+	else if (err > 0.15) { rate = 1.05; }
+	else if (err > 0.05) { rate = 1.02; }
+	else if (err < -0.4) { rate = 0.9; }
+	else if (err < -0.15) { rate = 0.95; }
+	else if (err < -0.05) { rate = 0.98; }
+	try { el.playbackRate = rate; } catch (e) {}
+	musicAhead.rate = rate;
 }
 
 function musicAheadStart() {
@@ -887,6 +915,8 @@ function musicAheadStart() {
 	}
 	// a pause keeps the loaded element; the resume hard-seeks it
 	if (musicStream.paused || !tree.sound || tree.sound.paused || tree.sound.ended) { return; }
+	// a video that is waiting right now must not let the audio-only tap run on
+	musicAhead.hold = !!musicVideoStats.waitAt;
 	var main = tree.sound;
 	var src = main.currentSrc || main.src;
 	if (!src) { return; }
@@ -943,7 +973,7 @@ function musicAheadStart() {
 			musicStreamSendJson({ type: 'control', action: 'flush' });
 		}
 		if (!musicStream.active || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { musicAheadStop(); return; }
-		if (musicStream.paused || (tree.sound && tree.sound.paused)) { return; }
+		if (musicStream.paused || (tree.sound && tree.sound.paused) || musicAhead.hold) { return; }
 		var p = null;
 		try { p = el.play(); } catch (e) {}
 		if (p && p.catch) { p.catch(function() { if (gen === musicAhead.gen) { musicAheadFailed(); } }); }
@@ -961,6 +991,7 @@ function musicAheadStart() {
 
 function musicAheadTick() {
 	if (!musicAheadWanted() || !musicAhead.ready || !musicAhead.el) { return; }
+	if (musicAhead.hold) { return; }
 	if (musicAhead.el.ended) { return; }
 	if (musicAhead.el.paused) {
 		var p = null;
@@ -1005,9 +1036,11 @@ function musicAheadRetarget() {
 	musicAheadLead(false);
 }
 function musicAheadPause() {
+	musicAhead.hold = true;
 	if (musicAhead.el) { try { musicAhead.el.pause(); } catch (e) {} }
 }
 function musicAheadResume() {
+	musicAhead.hold = false;
 	if (!musicAheadWanted()) { return; }
 	if (musicAhead.ready) {
 		musicAheadLead(true);
@@ -1204,24 +1237,55 @@ $(document).on('input', '#music_eq_bass', function() {
 	musicEqualizerChanged();
 });
 
-// The configuration and Audio drawers are dragged by the bar across their top,
-// the way the Guide's associate is dragged by its header. The bar's own controls
-// are left alone, a few pixels of travel are needed before a drag begins, and
-// the sheet stays inside the window that owns it.
-function musicConfigBounds(panel) {
-	var parent = panel.offsetParent();
-	var origin = parent.length ? parent.offset() : { left: 0, top: 0 };
-	var width = parent.length ? parent.outerWidth() : $(window).width();
-	var height = parent.length ? parent.outerHeight() : $(window).height();
-	var left = 0, top = 0;
-	// keep the sheet clear of the window's title bar
-	var content = panel.closest('.window_contents');
-	if (content.length) {
-		var c = content.offset();
-		left = Math.max(0, c.left - origin.left);
-		top = Math.max(0, c.top - origin.top);
+// The configuration and Audio drawers float over the whole screen and are
+// dragged by the bar across their top, the way the Guide's associate is dragged
+// by its header. The bar's own controls are left alone, a few pixels of travel
+// are needed before a drag begins, and a sheet that has been moved keeps its
+// spot in the same window_places store the Guide uses, so it comes back after a
+// restart. A sheet never moved opens against the Music window's top-right.
+function musicConfigKey(panel) {
+	return 'music:' + (panel.attr('id') == 'music_audio_panel' ? 'audio' : 'configuration');
+}
+function musicConfigPlace(panel) {
+	if (!panel.length) { return; }
+	var key = musicConfigKey(panel);
+	if (typeof jawnosPanelPosRestore == 'function' && jawnosPanelPosRestore(key, panel)) { return; }
+	var win = panel.closest('.wind');
+	var w = panel.outerWidth() || 360, h = panel.outerHeight();
+	var left = $(window).width() - w - 16;
+	var top = 90;
+	if (win.length) {
+		var r = win[0].getBoundingClientRect();
+		left = r.right - w - 16;
+		top = r.top + 90;
 	}
-	return { left: left, top: top, right: Math.max(left, width), bottom: Math.max(top, height) };
+	panel.css({
+		left: Math.max(0, Math.min(left, $(window).width() - w)) + 'px',
+		top: Math.max(0, Math.min(top, $(window).height() - h)) + 'px',
+		right: 'auto',
+		bottom: 'auto'
+	});
+}
+// The window paints its own title bar above its contents, so a sheet left in
+// the content slides under it. Move the sheet onto the window's frame: it is
+// still the window's child (removed and minimised with it) but sits above the
+// bar and is free to cross the whole screen.
+function musicConfigFloat(panel) {
+	var win = panel.closest('.wind');
+	if (!win.length) { return; }
+	panel.attr('music_window', win.attr('id'));
+	if (panel.parent()[0] !== win[0]) { win.append(panel); }
+	// above the title bar (top_level_now + 2) and below the window's frame ring
+	panel.css('z-index', 900000);
+	if (typeof topLevelNow == 'function') { topLevelNow(win); }
+}
+function musicConfigShow(panel) {
+	if (!panel.length || panel.is(':visible')) { return; }
+	musicConfigFloat(panel);
+	// measure behind visibility, not display: none - a hidden element has no box
+	panel.css({ visibility: 'hidden', display: 'flex' });
+	musicConfigPlace(panel);
+	panel.css('visibility', '');
 }
 function musicConfigDraggable() {
 	$('#music_configuration, #music_audio_panel').filter(':not([cfg_drag_armed])').each(function () {
@@ -1232,11 +1296,19 @@ function musicConfigDraggable() {
 			// a tap on the bar must not move the sheet
 			distance: 8,
 			cancel: 'button, input, select, textarea, label, a',
+			start: function () {
+				// the sheet rides above every other window while it is being moved
+				var win = $(this).closest('.wind');
+				if (win.length && typeof topLevelNow == 'function') { topLevelNow(win); }
+			},
 			drag: function (e, ui) {
+				// keep the whole sheet on the screen, wherever it is dragged
 				var w = $(this).outerWidth(), h = $(this).outerHeight();
-				var b = musicConfigBounds($(this));
-				ui.position.left = Math.max(b.left, Math.min(ui.position.left, b.right - w));
-				ui.position.top = Math.max(b.top, Math.min(ui.position.top, b.bottom - h));
+				ui.position.left = Math.max(0, Math.min(ui.position.left, $(window).width() - w));
+				ui.position.top = Math.max(0, Math.min(ui.position.top, $(window).height() - h));
+			},
+			stop: function () {
+				if (typeof jawnosPanelPosSave == 'function') { jawnosPanelPosSave(musicConfigKey($(this)), $(this)); }
 			}
 		});
 	});
@@ -1527,10 +1599,7 @@ async function musicInit(method) {
 		});
 	}
 	var mc = $('#music_configuration');
-	if (mc.is(':visible')) {
-		var z_index = $('#interface').css('z-index') + 1;
-		mc.css({ 'z-index': z_index });
-	}
+	if (mc.is(':visible')) { musicConfigFloat(mc); }
 }
 function playerCacheSaver(type) {
 	var timestamp = Date.now();
@@ -2681,7 +2750,7 @@ function searchMusic(data) {
 			musicInit('search');
 
 			if (configOpen == true) {
-				$('#music_configuration').show();
+				musicConfigShow($('#music_configuration'));
 			}
 			if (theatreMode == 'on') {
 				theatreModeOn();
@@ -2975,8 +3044,7 @@ function musicAudioPanelLoad(show) {
 	var panel = $('#music_audio_panel');
 	if (!panel.length) { return; }
 	// the drawer floats over the theatre picture like the configuration sheet
-	try { panel.css({ 'z-index': (parseInt($('#interface').css('z-index')) || 0) + 1 }); } catch (e) {}
-	if (show) { panel.show(); }
+	if (show) { musicConfigShow(panel); }
 	if (music_audio_loading) { return; }
 	music_audio_loading = true;
 	$.ajax({
@@ -3021,7 +3089,7 @@ $(document).on('click', '#music_configuration_toggle', function() {
 		mc.hide();
 	}
 	else {
-		mc.show();
+		musicConfigShow(mc);
 		$('#music_audio_panel').hide();
 		$.ajax({
 			url: '/music/configuration',
@@ -3036,10 +3104,6 @@ $(document).on('click', '#music_configuration_toggle', function() {
 			success: function(response) {
 				mc.html(response.html);
 				volumeChecker();
-				// a computed z-index of 'auto' used to become 'auto1' here, which
-				// browsers ignore - the panel then hid behind a theatre picture
-				var z_index = (parseInt($('#interface').css('z-index')) || 0) + 1;
-				mc.css({ 'z-index': z_index });
 			}
 		});
 	}

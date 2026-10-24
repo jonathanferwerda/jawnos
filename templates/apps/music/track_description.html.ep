@@ -18,9 +18,16 @@
 	</span>
 	<br>
 	<table style="width:100%;border:solid;border-radius:2px;"><tbody>
-		<% foreach my $t ( qw/artist album track genre title date composer publisher lyrics height width/ ) { %>
-			<% if ($f->{$t}) { %>
-				<tr><td><b><%= &subs::format_name($t) %></b>:</td> <td><%= $f->{$t} %></td></tr>
+		<%# the three words are the settled labels, not the raw folder and file
+		    names; the technical tags follow them when a file carries one %>
+		<% foreach my $t ( qw/artist album track episode genre date composer publisher lyrics height width/ ) { %>
+			<% my $value = $t eq 'artist' ? $f->{'display_artist'}
+				: $t eq 'album' ? $f->{'display_album'}
+				: $t eq 'track' ? $f->{'display_track'}
+				: $t eq 'episode' ? $f->{'display_code'}
+				: $f->{$t}; %>
+			<% if (defined $value && length $value) { %>
+				<tr><td><b><%= &subs::format_name($t) %></b>:</td> <td><%= $value %></td></tr>
 			<% } %>
 		<% } %>
 	</tbody></table>

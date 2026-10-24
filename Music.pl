@@ -1242,6 +1242,172 @@ sub music_library_label($settings, $c) {
 	return $library;
 }
 
+# ---- what a track is called -------------------------------------------------
+#
+# The library is a folder tree - artist/album/track - but a file's own name
+# often carries more than its folder, and a release name such as
+# Doctor.Who.S03E06.720p.HDTV.x264 tells nobody what the episode is. The list
+# shows three things and only three: the artist, the album and the track. A
+# music file normally carries them as tags, so those win. A video usually has
+# only its name: the episode marker is read out of it (S03E06, 1x02,
+# Season 3 Episode 6), and the quality, source, codec and release group are
+# dropped, so both kinds read the same way.
+
+sub music_trim_text {
+	my $text = shift;
+	return '' unless defined $text;
+	$text = "$text";
+	$text =~ s/[\x00-\x1f\x7f]+/ /g;
+	$text =~ s/\s+/ /g;
+	$text =~ s/^ | $//g;
+	return $text;
+}
+
+# A folder or file name rather than a tag: dots and underscores stand in for
+# spaces, and a name stored wholly in lower case is title-cased. A name that
+# already carries a capital keeps its own spelling (AC/DC stays AC/DC).
+sub music_path_text {
+	my $text = &music_trim_text(shift);
+	$text =~ s/[._]+/ /g;
+	$text =~ s/\s+/ /g;
+	$text =~ s/^ | $//g;
+	if ($text !~ /\p{Lu}/) {
+		$text =~ s/(^|[\s\-\(\[])(\p{Ll})/$1 . uc($2)/ge;
+	}
+	return $text;
+}
+
+# Everything a release name carries that is about the file and not the work.
+my $music_release_junk = qr{
+	\b(?:
+		(?:2160|1440|1080|720|576|480|360)p
+		|4k|uhd|hdr10|hdr
+		|blu[ .-]?ray|bdrip|brrip|remux|web[ .-]?dl|webrip|web[ .-]?rip
+		|hdtv|pdtv|dvdrip|dvdscr|hdrip|hdlight
+		|x264|x265|h[ .]?264|h[ .]?265|hevc|avc|xvid|divx
+		|10bit|8bit|hi10p
+		|aac|ac3|eac3|dts(?:[ .-]?hd)?|ddp?[ .]?[57][ .]?1|truehd|flac|opus
+		|amzn|dsnp|hmax|atvp
+	)\b
+}ix;
+
+sub music_strip_release {
+	my $text = &music_trim_text(shift);
+	return '' unless length $text;
+	$text =~ s/\[[^\]]*\]//g;
+	$text =~ s/\{[^}]*\}//g;
+	$text =~ s/\([^)]*(?:\d{3,4}p|rip|x26[45]|hevc|avc|aac|ac3|dts|hdr|uhd|web)[^)]*\)//gi;
+	my $had_junk = ($text =~ s/$music_release_junk/ /gi) ? 1 : 0;
+	# a group tag usually hangs off the last release token, as in x264-GROUP
+	$text =~ s/\s*[-\x{2013}\x{2014}]\s*[A-Za-z0-9][A-Za-z0-9._-]{1,24}\s*$// if $had_junk;
+	# a bracket left over from a half-stripped group ([GROUP] at one end)
+	$text =~ s/^[\s\[\]{}]+//;
+	$text =~ s/[\s\[\]{}]+$//;
+	return &music_trim_text($text);
+}
+
+sub music_episode_from_text {
+	my $text = shift;
+	return {} unless defined $text && length $text;
+	if ($text =~ /^(.*?)\s*\bS(\d{1,2})\s*E(\d{1,3})\b(.*)$/i) {
+		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
+	}
+	if ($text =~ /^(.*?)\s*\b(\d{1,2})\s*x\s*(\d{1,3})\b(.*)$/i) {
+		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
+	}
+	if ($text =~ /^(.*?)\s*\b(?:Season|Series)\s*(\d{1,2})\s*(?:Episode|Ep)\s*(\d{1,3})\b(.*)$/i) {
+		return { show => $1, season => $2, episode => $3, rest => $4, code => sprintf('S%02dE%02d', $2, $3) };
+	}
+	if ($text =~ /^(.*?)\s*\bE(?:p|pisode)?\s*(\d{1,3})\b(.*)$/i) {
+		return { show => $1, season => '', episode => $2, rest => $3, code => sprintf('Episode %d', $2) };
+	}
+	return {};
+}
+
+# The three labels every track carries, worked out once so the list, the icons
+# grid and the phone all draw the same words.
+sub music_media_labels {
+	my $f = shift;
+	my $tags = (ref($f->{'info'}) && ref($f->{'info'}->{'tags'})) ? $f->{'info'}->{'tags'} : {};
+	my $tag_artist = &music_trim_text($tags->{'artist'} || $tags->{'album_artist'} || '');
+	my $tag_album  = &music_trim_text($tags->{'album'} || '');
+	my $tag_title  = &music_trim_text($tags->{'title'} || '');
+	my $folder_artist = &music_path_text($f->{'artist_name'} // $f->{'artist'});
+	my $folder_album  = &music_path_text($f->{'album_name'} // $f->{'album'});
+	my $stem = &music_path_text($f->{'full_title'} || $f->{'song'});
+	# folder names that only say where the file is, not who made it
+	my %generic = map { $_ => 1 } qw/videos video movies movie tv television shows show media library music audio films film/;
+	$folder_artist = '' if $generic{lc $folder_artist};
+	$folder_album  = '' if $generic{lc $folder_album};
+
+	my ($artist, $album, $track, $code);
+	if (($f->{'type'} || '') eq 'video') {
+		my $ep = &music_episode_from_text($stem);
+		# A container's own title is sometimes the release name itself; trust it
+		# only when it is not that.
+		my $tag_ok = length($tag_title)
+			&& $tag_title !~ /\bS\d{1,2}\s*E\d{1,3}\b/i
+			&& $tag_title !~ /\b(?:\d{3,4}p|4k|x26[45]|hevc|web[ .-]?dl|blu[ .-]?ray)\b/i;
+		if ($ep->{'episode'}) {
+			$artist = &music_strip_release($ep->{'show'});
+			$artist = $tag_artist if !length $artist;
+			$artist = $folder_artist if !length $artist;
+			$code = $ep->{'code'};
+			my $title = &music_strip_release($ep->{'rest'});
+			$title = $tag_title if !length($title) && $tag_ok && lc($tag_title) ne lc($artist);
+			$track = length($title) ? $title : $code;
+			my $season_no = $ep->{'season'};
+			my $folder_is_season = $folder_album =~ /\b(?:season|series)\b|\bS\d{1,2}\b/i;
+			if (length($folder_album) && lc($folder_album) ne lc($artist) && ($folder_is_season || length $season_no)) {
+				$album = $folder_album;
+			}
+			elsif (length $season_no) {
+				$album = 'Season ' . (0 + $season_no);
+			}
+			else {
+				$album = $folder_album;
+			}
+			$album = $tag_album if !length $album;
+		}
+		else {
+			$artist = $tag_artist || $folder_artist;
+			$album = $tag_album || $folder_album;
+			$track = $tag_ok ? $tag_title : &music_strip_release($stem);
+			# a film filed as Movies/Inception/inception-2010.mkv would otherwise
+			# read the same words twice; when there is no artist, the album is the
+			# only other word worth keeping, so drop it only when it repeats the track
+			if (!length($artist) && length($album)) {
+				my $album_key = lc $album;
+				my $track_key = lc $track;
+				$album_key =~ s/[^\p{L}\p{N}]+//g;
+				$track_key =~ s/[^\p{L}\p{N}]+//g;
+				$album = '' if $album_key eq $track_key;
+			}
+		}
+	}
+	else {
+		$artist = $tag_artist || $folder_artist;
+		$album = $tag_album || $folder_album;
+		$track = $tag_title;
+		if (!length $track) {
+			# no tag: the file name, with its track number and any repeated artist
+			my $name = &music_strip_release($stem);
+			$name =~ s/^\d{1,3}[\s._-]+//;
+			$name =~ s/^\Q$artist\E\s*[-\x{2013}\x{2014}]\s*//i if length $artist;
+			$track = $name;
+		}
+	}
+	$track = $stem if !length $track;
+	$track = $code if !length $track && length $code;
+	return {
+		artist => $artist,
+		album => $album,
+		track => $track,
+		code => $code || '',
+		meta => join(' ' . chr(0xB7) . ' ', grep { length } ($artist, $album)),
+	};
+}
+
 sub song_maker($data) {
 	my $files = $data->{'files'};
 	my $settings = $data->{'settings'};
@@ -1350,8 +1516,10 @@ sub song_maker($data) {
 			track => $t,
 			extension => $extension,
 			artist => $t[-3],
+			artist_name => $t[-3],
 			artist_folder => $artist_folder,
 			album => $t[-2],
+			album_name => $t[-2],
 			app => &subs::unformat_name($t[-2]),
 			album_folder => $album_folder,
 			thumbs => \@thumbs,
@@ -1399,6 +1567,14 @@ sub song_maker($data) {
 				}
 			}
 		}
+		# the three words every draw shows, settled once here
+		my $labels = &music_media_labels($f);
+		$f->{'display_artist'} = $labels->{'artist'};
+		$f->{'display_album'} = $labels->{'album'};
+		$f->{'display_track'} = $labels->{'track'};
+		$f->{'display_code'} = $labels->{'code'};
+		$f->{'display_meta'} = $labels->{'meta'};
+		$f->{'formatted_name'} = $labels->{'track'} if length $labels->{'track'};
 		if ($now_playing->{'file'} eq $filename) {
 			$current_track = $n;
 			$f->{'playing'} = 'yes';
