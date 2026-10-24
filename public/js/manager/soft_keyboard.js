@@ -144,6 +144,7 @@ function softKbShow(el) {
 }
 
 function softKbHide() {
+	softKbRepeatStop();
 	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
 	$('body').removeClass('soft_kb_open soft_kb_dock_field soft_kb_bar_field soft_kb_search_field');
 	$('.soft_kb_search_lifted').removeClass('soft_kb_search_lifted');
@@ -322,6 +323,178 @@ function softKbBackspace() {
 	}
 	try { el.focus({ preventScroll: true }); } catch (err2) { el.focus(); }
 	softKbNotify(el);
+}
+
+// ---- hold-to-repeat ---------------------------------------------------------
+// A held backspace eats whole words after a short wait. A double-tap and hold
+// repeats characters like a normal key, then climbs to a sentence at three
+// seconds and clears the field at six. The calculator repeats its expression one
+// character at a time (there are no words in a sum).
+var JAWN_SOFT_HOLD_DELAY = 450;
+var JAWN_SOFT_WORD_EVERY = 240;
+var JAWN_SOFT_CHAR_EVERY = 60;
+var JAWN_SOFT_SENTENCE_AT = 3000;
+var JAWN_SOFT_WHOLE_AT = 6000;
+var JAWN_SOFT_DOUBLE = 380;
+var jawnSoftHold = null;
+var jawnSoftHoldAt = 0;
+var jawnSoftBackspaceAt = 0;
+
+function softKbDeleteSpan(el, start, end) {
+	if (!el || start == null || end == null || start >= end) { return; }
+	try { el.setRangeText('', start, end, 'end'); }
+	catch (err) {
+		el.value = el.value.slice(0, start) + el.value.slice(end);
+		el.selectionStart = el.selectionEnd = start;
+	}
+	try { el.focus({ preventScroll: true }); } catch (err2) { el.focus(); }
+	softKbNotify(el);
+}
+
+// backward to the start of the previous word, trailing spaces included
+function softKbDeleteWord() {
+	var el = jawnSoftField;
+	if (!el) { return; }
+	if (el.isContentEditable) { softKbDeleteGranularity('word'); return; }
+	var v = el.value || '';
+	var end = (el.selectionStart == null) ? v.length : el.selectionStart;
+	var start = (el.selectionEnd == null) ? end : el.selectionEnd;
+	if (start != end) { softKbDeleteSpan(el, start, end); return; }
+	var i = end;
+	while (i > 0 && /\s/.test(v.charAt(i - 1))) { i--; }
+	while (i > 0 && !/\s/.test(v.charAt(i - 1))) { i--; }
+	softKbDeleteSpan(el, i, end);
+}
+
+// backward to the previous sentence end (. ! ? or a blank line)
+function softKbDeleteSentence() {
+	var el = jawnSoftField;
+	if (!el) { return; }
+	if (el.isContentEditable) { softKbDeleteGranularity('sentence'); return; }
+	var v = el.value || '';
+	var end = (el.selectionStart == null) ? v.length : el.selectionStart;
+	var start = (el.selectionEnd == null) ? end : el.selectionEnd;
+	if (start != end) { softKbDeleteSpan(el, start, end); return; }
+	if (end == 0) { return; }
+	var i = end;
+	while (i > 0 && /\s/.test(v.charAt(i - 1))) { i--; }
+	while (i > 0) {
+		var c = v.charAt(i - 1);
+		i--;
+		if (c == '.' || c == '!' || c == '?') { break; }
+		if (c == '\n' && i > 0 && v.charAt(i - 1) == '\n') { i--; break; }
+	}
+	softKbDeleteSpan(el, i, end);
+}
+
+function softKbDeleteAll() {
+	var el = jawnSoftField;
+	if (!el) { return; }
+	if (el.isContentEditable) {
+		try { el.focus({ preventScroll: true }); } catch (err) {}
+		try {
+			var range = document.createRange();
+			range.selectNodeContents(el);
+			var sel = window.getSelection();
+			sel.removeAllRanges();
+			sel.addRange(range);
+			document.execCommand('delete');
+		} catch (err2) { try { document.execCommand('delete'); } catch (err3) {} }
+		softKbNotify(el);
+		return;
+	}
+	el.value = '';
+	el.selectionStart = el.selectionEnd = 0;
+	try { el.focus({ preventScroll: true }); } catch (err4) {}
+	softKbNotify(el);
+}
+
+// contenteditable: let the selection walk back by a word/sentence, then delete
+function softKbDeleteGranularity(gran) {
+	var el = jawnSoftField;
+	if (!el) { return; }
+	try { el.focus({ preventScroll: true }); } catch (err) {}
+	var sel = window.getSelection ? window.getSelection() : null;
+	if (sel && sel.rangeCount) {
+		try { sel.modify('extend', 'backward', gran); }
+		catch (err2) { sel = null; }
+		if (sel) {
+			try { document.execCommand('delete'); } catch (err3) {}
+			softKbNotify(el);
+			return;
+		}
+	}
+	try { document.execCommand('delete'); } catch (err4) {}
+	softKbNotify(el);
+}
+
+function softKbRepeatStop() {
+	if (!jawnSoftHold) { return; }
+	clearTimeout(jawnSoftHold.timer);
+	clearInterval(jawnSoftHold.interval);
+	clearTimeout(jawnSoftHold.sentence);
+	clearTimeout(jawnSoftHold.whole);
+	jawnSoftHold = null;
+	jawnSoftHoldAt = Date.now();
+}
+
+function softKbRepeatBegin() {
+	var hold = jawnSoftHold;
+	if (!hold) { return; }
+	if (!jawnSoftField) { softKbRepeatStop(); return; }
+	if (hold.mode == 'calc') {
+		hold.interval = setInterval(function () {
+			if (!jawnSoftField) { softKbRepeatStop(); return; }
+			softKbCalcKey('backspace');
+		}, JAWN_SOFT_CHAR_EVERY);
+		return;
+	}
+	if (hold.mode == 'word') {
+		hold.interval = setInterval(function () {
+			if (!jawnSoftField) { softKbRepeatStop(); return; }
+			softKbDeleteWord();
+		}, JAWN_SOFT_WORD_EVERY);
+		return;
+	}
+	// double-tap hold: characters first, then sentences, then the whole field
+	hold.interval = setInterval(function () {
+		if (!jawnSoftField) { softKbRepeatStop(); return; }
+		softKbBackspace();
+	}, JAWN_SOFT_CHAR_EVERY);
+	hold.sentence = setTimeout(function () {
+		if (!jawnSoftHold) { return; }
+		clearInterval(jawnSoftHold.interval);
+		jawnSoftHold.interval = setInterval(function () {
+			if (!jawnSoftField) { softKbRepeatStop(); return; }
+			softKbDeleteSentence();
+		}, 400);
+	}, JAWN_SOFT_SENTENCE_AT - JAWN_SOFT_HOLD_DELAY);
+	hold.whole = setTimeout(function () {
+		if (!jawnSoftHold) { return; }
+		softKbRepeatStop();
+		softKbDeleteAll();
+	}, JAWN_SOFT_WHOLE_AT - JAWN_SOFT_HOLD_DELAY);
+}
+
+// The backspace press itself still deletes at once; the hold is armed behind it.
+function softKbBackspaceOnce() {
+	if (jawnSoftMode == 'calc') { softKbCalcKey('backspace'); }
+	else { softKbBackspace(); }
+}
+
+function softKbBackspaceDown(el) {
+	var now = Date.now();
+	var double = (now - jawnSoftBackspaceAt) < JAWN_SOFT_DOUBLE;
+	jawnSoftBackspaceAt = now;
+	softKbRepeatStop();
+	softKbBackspaceOnce();
+	if (!jawnSoftField) { return; }
+	jawnSoftHold = {
+		mode: (jawnSoftMode == 'calc') ? 'calc' : (double ? 'fast' : 'word'),
+		started: now,
+		timer: null, interval: null, sentence: null, whole: null
+	};
+	jawnSoftHold.timer = setTimeout(function () { softKbRepeatBegin(); }, JAWN_SOFT_HOLD_DELAY);
 }
 
 function softKbEnter() {
@@ -914,6 +1087,9 @@ $(document).on('pointerdown', '#jawn_soft_keyboard button', function (e) {
 	// act on the press and keep the caret in the field
 	e.preventDefault();
 	jawnSoftKeyAt = Date.now();
+	if ($(this).attr('data-kb_key') == 'backspace') { softKbBackspaceDown(this); return; }
+	// any other key puts a hold on backspace away
+	softKbRepeatStop();
 	softKbPress($(this));
 });
 $(document).on('pointerup', '#jawn_soft_keyboard button', function (e) {
@@ -928,10 +1104,15 @@ $(document).on('pointerup', '#jawn_soft_keyboard button', function (e) {
 	jawnSoftChipAt = Date.now();
 	softKbPress($(start.el));
 });
-$(document).on('pointerup pointercancel', function () { if (jawnSoftChipStart) { jawnSoftChipAt = Date.now(); jawnSoftChipStart = null; } });
+$(document).on('pointerup pointercancel', '#jawn_soft_keyboard button', function () {
+	softKbRepeatStop();
+});
+$(document).on('pointerup pointercancel', function () { if (jawnSoftChipStart) { jawnSoftChipAt = Date.now(); jawnSoftChipStart = null; } softKbRepeatStop(); });
 $(document).on('click', '#jawn_soft_keyboard button', function () {
 	if (Date.now() - jawnSoftKeyAt < 600) { return; }
 	if (Date.now() - jawnSoftChipAt < 700) { return; }
+	// a long hold can outlive the press guard; its release must not delete again
+	if ($(this).attr('data-kb_key') == 'backspace' && Date.now() - jawnSoftHoldAt < 800) { return; }
 	softKbPress($(this));
 });
 $(document).on('pointerdown', '#jawn_soft_keyboard', function (e) {
