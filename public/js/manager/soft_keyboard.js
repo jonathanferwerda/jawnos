@@ -128,7 +128,8 @@ function softKbShow(el) {
 	// taskbar) keeps whatever mode it was in
 	var search_field = el.id == 'search' || $(el).closest('#search_entanglement').length > 0;
 	$('body').toggleClass('soft_kb_search_field', search_field);
-	$('#search_entanglement').toggleClass('soft_kb_search_lifted', search_field);
+	$('.soft_kb_search_lifted').removeClass('soft_kb_search_lifted');
+	if (search_field) { $(el).closest('#search_entanglement').addClass('soft_kb_search_lifted'); }
 	$('body').addClass('soft_kb_open');
 	softKbModeSet(jawnSoftNumeric ? 'calc' : 'letters');
 	softKbSuggestSync();
@@ -145,7 +146,7 @@ function softKbShow(el) {
 function softKbHide() {
 	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
 	$('body').removeClass('soft_kb_open soft_kb_dock_field soft_kb_bar_field soft_kb_search_field');
-	$('#search_entanglement').removeClass('soft_kb_search_lifted');
+	$('.soft_kb_search_lifted').removeClass('soft_kb_search_lifted');
 	$('.chat_shell').css('padding-bottom', '');
 	$('.soft_kb_reserved').css('padding-bottom', '').removeClass('soft_kb_reserved');
 	softKbConvertHide();

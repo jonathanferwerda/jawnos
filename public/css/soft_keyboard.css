@@ -37,7 +37,7 @@ body.soft_kb_open:not(.soft_kb_search_field) #pseudonym_home {
 	display: none !important;
 }
 
-body.soft_kb_open #search_entanglement.soft_kb_search_lifted {
+body.soft_kb_open .soft_kb_search_lifted {
 	position: fixed !important;
 	left: 10px !important;
 	right: 10px !important;
