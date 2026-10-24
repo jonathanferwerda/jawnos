@@ -820,7 +820,7 @@ function musicPictureDelay() {
 	// The ceiling only guards a runaway measurement; it has to clear the largest
 	// trim the slider offers, or the slider silently stops at the cap.
 	var delay = musicStreamLatency() / 1000 + (music_sync_offset || 0) / 1000;
-	return Math.max(0, Math.min(4, delay));
+	return Math.max(0, Math.min(8, delay));
 }
 
 function musicLipWanted() {
@@ -1133,9 +1133,13 @@ function musicLipStart() {
 	c.addEventListener('canplay', reveal, { once: true });
 	c.addEventListener('loadeddata', reveal, { once: true });
 	try { c.currentTime = Math.max(0, v.currentTime - musicLip.delay); } catch (e) {}
-	var p = null;
-	try { p = c.play(); } catch (e) {}
-	if (p && p.catch) { p.catch(function () {}); }
+	// Ahead of the trim there is no earlier frame to show; hold the first one
+	// (musicLipSync starts the clone once the live element has played it out).
+	if (v.currentTime >= musicLip.delay) {
+		var p = null;
+		try { p = c.play(); } catch (e) {}
+		if (p && p.catch) { p.catch(function () {}); }
+	}
 	musicLip.timer = setInterval(musicLipSync, 200);
 	musicLipSync();
 }
@@ -1164,6 +1168,16 @@ function musicLipSync() {
 	}
 	if (v.paused || v.ended) {
 		if (!c.paused) { c.pause(); }
+		return;
+	}
+	// The trim can be seconds long. Until the live element has played that much
+	// there is no earlier frame to show, so hold the clone's first frame instead
+	// of letting it run ahead of the position the trim asks for (the rate-only
+	// correction closes a drift at only a fifth of a second per second).
+	if (v.currentTime < musicLip.delay) {
+		if (!c.paused) { c.pause(); }
+		if (c.seeking) { return; }
+		if (c.currentTime > 0.05) { try { c.currentTime = 0; } catch (e) {} }
 		return;
 	}
 	if (c.paused) {
@@ -1272,9 +1286,9 @@ var music_audio_loading = false;
 var music_sync_offset = 0;
 // The Sync offset slider's range, mirrored in templates/apps/music/audio.html.ep.
 // The trim has to cover a remote whose own output buffer is not reported, which
-// can be a second or two; a wider trim is why the picture delay is not capped at 1 s.
-var music_sync_offset_min = -300;
-var music_sync_offset_max = 2000;
+// can be several seconds; a wider trim is why the picture delay is not capped at 1 s.
+var music_sync_offset_min = -5000;
+var music_sync_offset_max = 5000;
 var music_local_delay = 0;
 var music_local_delay_save_timer = 0;
 var music_sync_save_timer = 0;
@@ -3677,7 +3691,7 @@ function musicAudioGraph() {
 			musicVisual.localGain = musicVisual.ctx.createGain();
 			musicVisual.remoteGain = musicVisual.ctx.createGain();
 			musicVisual.remoteGain.gain.value = musicRemoteVolume();
-			musicVisual.localDelay = musicVisual.ctx.createDelay(5.0);
+			musicVisual.localDelay = musicVisual.ctx.createDelay(10.0);
 			musicVisual.localSplit = musicVisual.ctx.createChannelSplitter(2);
 			musicVisual.localLeft = musicVisual.ctx.createGain();
 			musicVisual.localRight = musicVisual.ctx.createGain();
