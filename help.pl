@@ -590,7 +590,7 @@ our %topic = (
 		related => [ 'inventory', 'market', 'moves_ledger' ]
 	},
 	'market' => {
-		'Market', category => 'apps', app => 'market',
+		title => 'Market', category => 'apps', app => 'market',
 		'verified' => '2026-10-17',
 		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js' ],
 		summary => 'The shopping list and the shopping run.',
@@ -1407,7 +1407,128 @@ our %topic = (
 			'You can also teach it new verbs at runtime (Configure → Plat → Guide commands): each is a small JSON entry naming a primitive and its parameters, and because it is a setting it syncs, so every machine understands the same commands.'
 		],
 		related => [ 'hints', 'handbook', 'assistant' ]
+	},
+
+	'keyboard_shortcuts' => {
+		title => 'Keyboard shortcuts', category => 'features',
+		summary => 'The keys that move windows and drive each app, gathered on one sheet.',
+		verified => '2026-10-24',
+		sheet => 1,
+		body => [
+			'Shortcuts fall into two groups. The desktop keys work whatever is in front: moving, maximising and closing windows, the app switcher, the start menu, dialog boxes and Help itself. An app\'s own keys act only while that app is the front window, and never while the focus is in a text field - a field keeps the space bar, the arrows and Enter for typing. The Super key is the Windows key on a PC and the Command key on a Mac; Folders also accepts Cmd wherever Ctrl is named, while a Terminal keeps Cmd for the browser.',
+			'The sheet below is built from the same lists that each app carries on its own Help page, so the two cannot drift apart. Every app with keys of its own is listed here under its name, and the heading is a link straight to its topic. The keys named with an app are the ones worth learning; ordinary form keys such as Enter to press the focused button are not repeated for every box.',
+			'The same sheet can be written out as a file for printing or for reading away from the screen: run perl scripts/keyboard_shortcuts.pl from the jawnos folder, which regenerates docs/KEYBOARD-SHORTCUTS.md from this registry. Add --check to the command to ask whether that file is still current; it exits non-zero when it is not.'
+		],
+		related => [ 'windows', 'start_menu', 'search', 'folders', 'terminal', 'hints' ]
 	}
+);
+
+# Keyboard shortcuts, keyed by the topic they belong to. Each row is
+# [ keys, action ]. They live beside the prose but in one list, so an app\'s own
+# Help page and the aggregated cheat sheet are always the same words. The
+# desktop keys are the 'keyboard_shortcuts' entry; every other key is an app's
+# own. Keep the actions in the imperative, and name keys as they are printed on
+# the keyboard (Super, Ctrl, Alt, Shift).
+our %shortcuts = (
+	'keyboard_shortcuts' => [
+		[ 'Super+Left', 'Fit the front window to the left half of the screen' ],
+		[ 'Super+Right', 'Fit the front window to the right half' ],
+		[ 'Super+Up', 'Maximise the front window, or restore it if it is already maximised' ],
+		[ 'Super+Down', 'Minimise the front window' ],
+		[ 'Super+Q', 'Close the front window' ],
+		[ 'Super+Ctrl+Left / Right / Up / Down', 'Nudge the front window a little in that direction' ],
+		[ 'Super+Shift', 'Open the app switcher; keep Super held, press Left or Right to choose, then release Super' ],
+		[ 'Ctrl+Alt', 'Open or close the start menu' ],
+		[ 'F1', 'Open Help for the window in focus, or for the control under the pointer' ],
+		[ 'Enter', 'Press the highlighted button in a dialog box' ],
+		[ 'Escape', 'Cancel the dialog box, or leave the mode you are in' ]
+	],
+	'folders' => [
+		[ 'Ctrl+A', 'Select every item in the listing' ],
+		[ 'Ctrl+C', 'Copy the selection' ],
+		[ 'Ctrl+X', 'Cut the selection' ],
+		[ 'Ctrl+V', 'Paste into the folder on screen' ],
+		[ 'Ctrl+L', 'Type a path instead of browsing to it' ],
+		[ 'Alt+Left', 'Go back to the folder visited before this one' ],
+		[ 'Alt+Right', 'Go forward again' ],
+		[ 'Enter', 'Open the selected item' ],
+		[ 'F2', 'Rename the one selected item' ],
+		[ 'Delete', 'Move the selection to the Recycle Bin' ],
+		[ 'Shift+Delete', 'Shred the selection for good' ],
+		[ 'Arrow keys', 'Walk the listing' ],
+		[ 'Shift+Arrow', 'Extend the selection from the last click' ],
+		[ 'Home / End', 'Jump to the first or last item' ],
+		[ 'A letter or name', 'Jump to the first item whose name starts with what you type' ],
+		[ 'Escape', 'Clear the selection, or stop editing the path' ]
+	],
+	'gallery' => [
+		[ 'Left / Right', 'Show the previous or next picture in the viewer' ],
+		[ 'Escape', 'Close the viewer' ]
+	],
+	'marker' => [
+		[ 'Ctrl+Z', 'Undo the last stroke' ],
+		[ 'Ctrl+Shift+Z', 'Redo' ],
+		[ 'Ctrl+Y', 'Redo' ],
+		[ '+ or =', 'Zoom in' ],
+		[ '- or _', 'Zoom out' ],
+		[ '0', 'Fit the whole board in the window' ]
+	],
+	'music' => [
+		[ 'Space', 'Play or pause' ],
+		[ 'Left', 'Previous track' ],
+		[ 'Right', 'Next track' ],
+		[ 'Up', 'Next chapter' ],
+		[ 'Down', 'Previous chapter' ],
+		[ 'F', 'Full screen the player' ],
+		[ 'Arrows on an EQ band', 'Raise or lower that band; Home returns it to flat' ]
+	],
+	'synth' => [
+		[ "A W S E D F T G Y H U J K O L P ; '", 'Play the chromatic scale from the current octave, with Keys on' ],
+		[ 'Z', 'Down an octave' ],
+		[ 'X', 'Up an octave' ]
+	],
+	'studio' => [
+		[ 'Delete / Backspace', 'Remove the selected take' ],
+		[ 'S', 'Split the selected take at the playhead' ]
+	],
+	'terminal' => [
+		[ 'Ctrl+C', 'Interrupt the running command' ],
+		[ 'Ctrl+D', 'End input' ],
+		[ 'Ctrl+Z', 'Suspend the foreground job' ],
+		[ 'Ctrl+L', 'Clear the screen' ],
+		[ 'Tab / Shift+Tab', 'Complete forward or backward' ],
+		[ 'Ctrl + a letter', 'Send that letter\'s usual control code to the shell' ],
+		[ 'Up / Down in the Commands box', 'Recall an earlier or later command' ],
+		[ 'Function and navigation keys', 'Sent to the running program as a terminal expects' ]
+	],
+	'ide' => [
+		[ 'Tab', 'Insert two spaces in the code editor' ]
+	],
+	'notes' => [
+		[ 'Enter', 'Save the note on a desk; Shift+Enter makes a new line (on a phone Enter makes the new line)' ]
+	],
+	'chat' => [
+		[ 'Enter', 'Send the message in the composer' ]
+	],
+	'market' => [
+		[ 'Enter', 'Add the typed item, or find the typed barcode' ]
+	],
+	'help_app' => [
+		[ 'Enter', 'Ask the Guide the question in the composer' ]
+	],
+	'search' => [
+		[ 'Up / Down', 'Move through the results' ],
+		[ 'Enter', 'Open the chosen result' ],
+		[ 'Escape', 'Close the result list' ]
+	]
+);
+
+# The cheat sheet's order: the desktop keys first, then the apps as a person
+# would look for them. Any topic with rows but not named here follows in key
+# order, so adding a new app cannot silently drop it from the sheet.
+our @shortcut_order = qw(
+	keyboard_shortcuts folders gallery marker music synth studio terminal ide
+	notes chat market help_app search
 );
 
 # Resolve a loose topic name to a canonical key. Case is folded and spaces or
@@ -1442,6 +1563,35 @@ sub catalogue {
 	return @out;
 }
 
+# The keyboard rows belonging to one topic, as [ keys, action ] pairs.
+sub shortcuts_for {
+	my ($id) = @_;
+	$id = help::key($id);
+	return @{ $shortcuts{$id} || [] };
+}
+
+# Every topic that carries shortcuts, in the sheet's reading order, grouped for
+# the cheat sheet. $skip drops one topic (the sheet calls with its own id so the
+# desktop keys are not printed twice).
+sub shortcut_sheet {
+	my ($skip) = @_;
+	$skip = help::key($skip) if defined $skip && length $skip;
+	my @ids;
+	my %seen;
+	foreach my $id ( @shortcut_order, sort keys %shortcuts ) {
+		next if $seen{$id}++;
+		next unless $shortcuts{$id} && @{ $shortcuts{$id} };
+		next if defined $skip && $id eq $skip;
+		next unless $topic{$id};
+		push @ids, $id;
+	}
+	return map { {
+		id => $_,
+		title => $topic{$_}{'title'},
+		rows => $shortcuts{$_}
+	} } @ids;
+}
+
 # Simple case-insensitive substring search over the title, summary, body and
 # steps.
 sub search {
@@ -1452,6 +1602,7 @@ sub search {
 	foreach my $id (sort keys %topic) {
 		my $t = $topic{$id};
 		my $hay = join ' ', ($t->{'title'} // ''), ($t->{'summary'} // ''), @{ $t->{'body'} // [] }, @{ $t->{'steps'} // [] };
+		$hay .= ' ' . join ' ', map { @{$_} } @{ $shortcuts{$id} || [] };
 		if (lc($hay) =~ /\Q$needle\E/) {
 			push @out, { id => $id, title => $t->{'title'}, category => $t->{'category'}, summary => $t->{'summary'}, app => $t->{'app'} };
 		}
@@ -1471,6 +1622,9 @@ sub briefing {
 	foreach my $p ( @{ $t->{'body'} // [] } ) { push @lines, $p; }
 	if (@{ $t->{'steps'} // [] }) {
 		push @lines, 'Steps: ' . join(' | ', @{ $t->{'steps'} });
+	}
+	if (@{ $shortcuts{$id} || [] }) {
+		push @lines, 'Keyboard shortcuts: ' . join('; ', map { $_->[0] . ' = ' . $_->[1] } @{ $shortcuts{$id} });
 	}
 	push @lines, 'Steering: ' . $t->{'prompt'} if $t->{'prompt'};
 	return join "\n", @lines;

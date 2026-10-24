@@ -4,6 +4,8 @@
 	# composer along the foot is always the same box.
 	my $raw = $topic // '';
 	my $shown = &help::get($raw);
+	my $topic_id = length $raw ? &help::key($raw) : '';
+	my @own_shortcuts = ($topic_id && defined &help::shortcuts_for) ? &help::shortcuts_for($topic_id) : ();
 	my $search = $search // '';
 	my $results = length $search ? [ &help::search($search) ] : undef;
 	my $catalogue = [ &help::catalogue() ];
@@ -61,6 +63,33 @@
 					<div style="opacity:.7;font-style:italic;margin-bottom:12px;"><%= $shown->{'summary'} %></div>
 					<% foreach my $para ( @{ $shown->{'body'} } ) { %>
 						<p style="line-height:1.5;margin:0 0 12px;"><%= $para %></p>
+					<% } %>
+					<% if (@own_shortcuts) { %>
+						<div style="margin:16px 0 6px;font-weight:bold;">Keyboard shortcuts</div>
+						<table style="border-collapse:collapse;width:100%;margin:0 0 14px;font-size:14px;">
+							<% foreach my $row (@own_shortcuts) { %>
+								<tr>
+									<td style="border:1px solid var(--line);padding:5px 8px;white-space:nowrap;vertical-align:top;"><b><%= $row->[0] %></b></td>
+									<td style="border:1px solid var(--line);padding:5px 8px;line-height:1.4;"><%= $row->[1] %></td>
+								</tr>
+							<% } %>
+						</table>
+					<% } %>
+					<% if ($shown->{'sheet'} && defined &help::shortcut_sheet) { %>
+						<div style="margin:18px 0 6px;font-weight:bold;">Every app's keys</div>
+						<% foreach my $group ( &help::shortcut_sheet($topic_id) ) { %>
+							<div style="margin:16px 0 5px;font-weight:bold;">
+								<span class="help_topic_link hover" topic="<%= $group->{'id'} %>" style="cursor:pointer;text-decoration:underline;"><%= $group->{'title'} %></span>
+							</div>
+							<table style="border-collapse:collapse;width:100%;margin:0 0 10px;font-size:14px;">
+								<% foreach my $row (@{ $group->{'rows'} }) { %>
+									<tr>
+										<td style="border:1px solid var(--line);padding:5px 8px;white-space:nowrap;vertical-align:top;"><b><%= $row->[0] %></b></td>
+										<td style="border:1px solid var(--line);padding:5px 8px;line-height:1.4;"><%= $row->[1] %></td>
+									</tr>
+								<% } %>
+							</table>
+						<% } %>
 					<% } %>
 					<% if (@{ $shown->{'steps'} || [] }) { %>
 						<div style="margin:4px 0 14px;padding:10px 12px 4px;border:1px solid var(--line);border-radius:8px;">
