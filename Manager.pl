@@ -18678,6 +18678,23 @@ sub merge_table_rows {
 	my $misc_settings = $ctx->{'misc_settings'};
 	my $device = $ctx->{'device'};
 	my $deletions = $ctx->{'deletions'};
+	# A row this machine deleted stays deleted even when a stale peer still
+	# carries it. The peer's own list covers the first minute, but a machine
+	# that only serves (and never pulls) keeps sending the old row forever; the
+	# durable tombstone in sync_log is what makes the local deletion final. A
+	# `single` tombstone drops the whole row; a `file` tombstone removes just
+	# the named attachment, so an appointment with surviving photos stays.
+	my (%tombstone_single, %tombstone_file);
+	if ($q eq 'appointments') {
+		foreach my $tomb ( @{ &subs::db_query('select uuid, scope, additional from sync_log where tbl = ?', 'appointments')->hashes || [] } ) {
+			my $scope = $tomb->{'scope'} || '';
+			if ($scope eq 'single') { $tombstone_single{$tomb->{'uuid'}} = 1; }
+			elsif ($scope eq 'file') {
+				my $extra = eval { return decode_json $tomb->{'additional'} } || {};
+				$tombstone_file{$tomb->{'uuid'}}->{$extra->{'file_uuid'}} = 1 if $extra->{'file_uuid'};
+			}
+		}
+	}
 	my $universal_settings = $ctx->{'universal_settings'};
 	my $updateables = $ctx->{'updateables'};
 	my $sync_job = $ctx->{'sync_job'};
@@ -18735,6 +18752,7 @@ sub merge_table_rows {
 			}
 							my @resulters = @{&subs::db_select($q, undef, { uuid => $r->{'uuid'} })->hashes};
 							my $h = $resulters[0];
+							next ROW if $q eq 'appointments' && $tombstone_single{$r->{'uuid'}};
 							$percentage = $results_size ? sprintf("%.2f", $n / $results_size * 100) : 0;
 							if ($sync_job && &subs::rightNow() >= ($job_alert + 250)) {
 								my %progress = (current => $n);
@@ -18925,6 +18943,12 @@ sub merge_table_rows {
 											}
 										}
 									}
+									if ($q eq 'appointments' && $tombstone_file{$r->{'uuid'}}) {
+										my $strip = $tombstone_file{$r->{'uuid'}};
+										my $before = scalar @{$files};
+										@{$files} = grep { !$strip->{ $_->{'uuid'} } } @{$files};
+										next ROW if $before > scalar @{$files} && scalar @{$files} == 0;
+									}
 									my $file_count = 0;
 									foreach my $fi ( @{$files} ) {
 										$file_count++;
@@ -18986,7 +19010,7 @@ sub merge_table_rows {
 									}
 									$r->{'file'} = encode_json $files;
 								}
-								unless ( grep { ($_->{'uuid'} eq $r->{'uuid'} ) && $_->{'table'} eq $q } @{$deletions} ) {
+								unless ( grep { ($_->{'uuid'} eq $r->{'uuid'} ) && $_->{'table'} eq $q && ($_->{'scope'} || '') ne 'file' } @{$deletions} ) {
 									if (scalar @resulters == 0) {
 										my $inserted = eval { &subs::db_insert($q,$r)};
 										if ($@) { push @insert_errors, ($r->{'uuid'} || '?') . ': ' . ($@ =~ s/\s+/ /gr); }
@@ -38087,7 +38111,9 @@ sub delete_file($data) {
 
 	my $appt = &subs::db_select('appointments', undef, { app => $app, uuid => $app_uuid })->hashes->[0];
 	my $files = eval { return decode_json $appt->{'file'} } || [];
+	my $removed = 0;
 	foreach my $file ( grep { $_->{'uuid'} eq $file_uuid } @{$files} ) {
+		$removed++;
 		my $filing = $file->{'f'};
 		my $thumb = $file->{'thumb'};
 		if ($file->{'att'}) {
@@ -38160,6 +38186,10 @@ sub delete_file($data) {
 			}
 		}
 	}
+	# A repeated deletion (a peer echoing the tombstone back, a late click) is a
+	# no-op. Without this it wrote a fresh tombstone and a websocket update every
+	# time the same uuid arrived, so the durable log grew on every sync pass.
+	return unless $removed;
 	@{$files} = grep { $_->{'uuid'} ne $file_uuid } @{$files};
 	my $jfiles = encode_json $files;
 	if (scalar @{$files} == 0 && $data->{'reason'} ne 'delete_app' && grep { $appt->{'type'} eq $_ } qw/image video scan/) {
@@ -38183,17 +38213,20 @@ sub deletion_registration($data) {
 	# Record one durable tombstone. It stays in sync_log until every remote
 	# machine has confirmed reading past it, so an offline machine still learns
 	# of the deletion whenever it next connects.
+	my $additional = $data->{'additional'};
+	# A file deletion must name the file it removes: a peer applies it by uuid,
+	# and without one the tombstone reached the other machines and did nothing.
+	$additional = encode_json({ file_uuid => $data->{'file_uuid'} }) if !$additional && $data->{'file_uuid'};
 	&subs::tombstone_writer({
 		table => $data->{'table'}, app => $data->{'app'},
 		uuid => $data->{'uuid'}, scope => $data->{'scope'},
-		additional => $data->{'additional'},
+		additional => $additional,
 	});
 	my $app = $data->{'app'};
 	my $uuid = $data->{'uuid'};
 	my $scope = $data->{'scope'};
 	my $table = $data->{'table'};
 	my $server_time = $data->{'server_time'};
-	my $additional = $data->{'additional'};
 	my $remote_machines = &subs::db_select('remote_machines')->hashes;
 	foreach my $rm ( @{$remote_machines} ) {
 		my $deletions = eval { return decode_json $rm->{'deletions'} } || [];
@@ -38216,7 +38249,9 @@ sub deletion_performer($json) {
 				&subs::vacuum_app($deletion->{'app'});
 			}
 			elsif ( $deletion->{'scope'} eq 'file' ) {
-				&delete_file({ app => $deletion->{'app'}, app_uuid => $deletion->{'uuid'}, file_uuid => $deletion->{'file_uuid'} });
+				my $extra = eval { return decode_json $deletion->{'additional'} } || {};
+				my $file_uuid = $deletion->{'file_uuid'} || $extra->{'file_uuid'};
+				&delete_file({ app => $deletion->{'app'}, app_uuid => $deletion->{'uuid'}, file_uuid => $file_uuid }) if defined $file_uuid && length $file_uuid;
 			}
 		}
 	#	elsif ($deletion->{'table'} eq 'settings') {
@@ -43485,7 +43520,7 @@ sub remote_machine_reconnector($c) {
 						# Apply the peer's durable tombstones and record how far we have
 						# read its log, so its next purge can drop what we have seen.
 						if ($rj->{'tombstones'}) {
-							my @dels = map { { table => $_->{'tbl'}, app => $_->{'app'}, uuid => $_->{'uuid'}, scope => $_->{'scope'}, server_time => $_->{'server_time'} } } @{$rj->{'tombstones'}};
+							my @dels = map { { table => $_->{'tbl'}, app => $_->{'app'}, uuid => $_->{'uuid'}, scope => $_->{'scope'}, server_time => $_->{'server_time'}, additional => $_->{'additional'} } } @{$rj->{'tombstones'}};
 							&deletion_performer(encode_json \@dels) if scalar @dels;
 							&subs::db_update('remote_machines', { sync_cursor => ($rj->{'sync_cursor'} || 0) }, { signatorial => $rj->{'signatorial'} });
 						}

@@ -8852,6 +8852,12 @@ sub tombstone_max() {
 # Drop tombstones every known machine has confirmed reading. With no remote
 # machines there is nothing to sync, so the log clears wholesale; if any machine
 # has never confirmed (no cursor yet) the whole backlog is kept.
+#
+# File-scope tombstones stay: a peer reads the log to advance its cursor, but an
+# older peer has no file-scope deletion (the entry carried no file uuid before),
+# so "confirmed reading" does not mean "applied". Keeping these rows is what
+# stops a peer that still carries the attachment from handing it back on every
+# pull; they are few, and a peer on current code applies them when it reads them.
 sub tombstone_purge() {
 	my $rms = &db_select('remote_machines', ['signatorial'])->hashes || [];
 	if (!scalar @{$rms}) { &db_query('delete from sync_log'); return; }
@@ -8862,7 +8868,7 @@ sub tombstone_purge() {
 		return unless defined $c && $c =~ /^[0-9]+$/;
 		$floor = $c if !defined $floor || $c < $floor;
 	}
-	&db_query('delete from sync_log where id <= ?', $floor) if defined $floor && $floor > 0;
+	&db_query("delete from sync_log where id <= ? and coalesce(scope, '') ne 'file'", $floor) if defined $floor && $floor > 0;
 }
 
 
