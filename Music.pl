@@ -210,7 +210,7 @@ get '/play' => sub($c) {
 	# window moves and its clock wanders, so a seek lands somewhere else. A
 	# whole-file range gives it the same fixed, seekable response a <video>
 	# element asks for by itself.
-	if (($c->param('clone') // '') eq '1' && !$c->req->headers->header('Range')) {
+	if ((($c->param('ahead') // $c->param('clone') // '') eq '1') && !$c->req->headers->header('Range')) {
 		$c->req->headers->header('Range' => 'bytes=0-');
 	}
 
@@ -218,7 +218,7 @@ get '/play' => sub($c) {
 
 	# the ahead tap re-requests /play for the same file; it must not start the
 	# server-side player a second time
-	if ($mao->{'srv'} eq 'on' && $c->param('clone') ne '1') {
+	if ($mao->{'srv'} eq 'on' && $c->param('ahead') ne '1' && $c->param('clone') ne '1') {
 		&subs::subprocessor(sub {
 
 			if ($device eq 'computer') {
@@ -658,7 +658,10 @@ sub music_rx_report_send($st) {
 	# fresh player start on the audio arriving now. PCM restarts pacat for this;
 	# Opus cannot, because a new ffmpeg would need the WebM header again.
 	my $flushed = 0;
-	if ($lag_ms > 400 && ($st->{'codec'} || 'pcm') ne 'opus') {
+	# The lead is measured from this same report, so a steady pipe backlog is not
+	# a fault: the sender simply leads it. Only a lag far beyond any plausible
+	# pipeline is treated as a stranded player and restarted.
+	if ($lag_ms > 1500 && ($st->{'codec'} || 'pcm') ne 'opus') {
 		$st->{'lag_big'} = ($st->{'lag_big'} || 0) + 1;
 	}
 	else { delete $st->{'lag_big'}; }
