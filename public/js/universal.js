@@ -49,6 +49,7 @@ $(document).on('keyup click change input', 'textarea, .text-editor', function() 
 	if (el && el.tagName == 'TEXTAREA') {
 		if (ta.val() == '') {
 			ta.height(30);
+			if (typeof chatKeepPinned === 'function') { chatKeepPinned(); }
 			return;
 		}
 		// Grow only by the overflow. scrollHeight and clientHeight both count the
@@ -69,6 +70,9 @@ $(document).on('keyup click change input', 'textarea, .text-editor', function() 
 		var max = parseFloat(style.maxHeight);
 		if (!isNaN(max) && max > 0) { target = Math.min(target, max); }
 		el.style.height = target + 'px';
+		// the Chat thread follows its composer: a growing box must not swallow
+		// the newest bubbles
+		if (typeof chatKeepPinned === 'function') { chatKeepPinned(); }
 		return;
 	}
 	var scrollHeight = el.scrollHeight;

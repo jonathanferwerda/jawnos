@@ -428,14 +428,32 @@ function chatDressMessages(root) {
 // bubble. The socket also replaces messages as they arrive, so the thread stays
 // pinned briefly while those replacements grow the list.
 var chatAutoScrollUntil = 0;
+// Whether the person is reading the foot of the thread. Typing grows the
+// composer, which takes height from the messages, and the keyboard shrinks the
+// whole window; both used to leave the newest bubbles below the fold. Only a
+// real scroll gesture moves the flag, so a resize that drags the scroll position
+// around is never mistaken for someone reading history.
+var chatPinnedToBottom = true;
+
+function chatPinBottomGo() {
+	var box = document.getElementById('mailbox');
+	if (!box) { return; }
+	box.scrollTop = box.scrollHeight;
+	chatPinnedToBottom = true;
+}
+
+function chatPinnedNow() {
+	var box = document.getElementById('mailbox');
+	if (!box) { return false; }
+	return (box.scrollHeight - box.scrollTop - box.clientHeight) < 60;
+}
+
 function chatScrollBottom() {
 	if (!$('#mail').hasClass('chat_shell')) { return; }
 	chatAutoScrollUntil = Date.now() + 3000;
 	var go = function () {
 		if (!$('#mail').hasClass('chat_shell')) { return; }
-		var box = document.getElementById('mailbox');
-		if (!box) { return; }
-		box.scrollTop = box.scrollHeight;
+		chatPinBottomGo();
 	};
 	go();
 	if (window.requestAnimationFrame) {
@@ -445,8 +463,55 @@ function chatScrollBottom() {
 	setTimeout(go, 240);
 	setTimeout(go, 600);
 }
-// a real scroll gesture means the person is reading, so stop pinning
-$(document).on('wheel touchmove', '.chat_shell #mailbox', function () { chatAutoScrollUntil = 0; });
+
+// A live message keeps a pinned thread at its foot.
+function chatKeepPinned() {
+	if (!$('#mail').hasClass('chat_shell')) { return; }
+	if (chatPinnedToBottom) { chatPinBottomGo(); }
+}
+
+// A real scroll gesture means the person is reading, so stop pinning.
+// Evaluating after the gesture (rather than on every scroll event) keeps the
+// browser's own scroll clamping during a keyboard resize out of the decision.
+var chatPinGestureTimer;
+$(document).on('wheel touchmove', '.chat_shell #mailbox', function () {
+	chatAutoScrollUntil = 0;
+	clearTimeout(chatPinGestureTimer);
+	chatPinGestureTimer = setTimeout(function () { chatPinnedToBottom = chatPinnedNow(); }, 220);
+});
+$(document).on('touchend mouseup', '.chat_shell #mailbox', function () {
+	clearTimeout(chatPinGestureTimer);
+	chatPinnedToBottom = chatPinnedNow();
+});
+
+// Both the composer (the textarea growing) and the message box (the keyboard
+// shrinking the window) change size without a render. Follow either, and keep a
+// pinned thread at the foot.
+var chatPinObserver;
+function chatObservePin() {
+	if (chatPinObserver) { chatPinObserver.disconnect(); chatPinObserver = null; }
+	if (!window.ResizeObserver || !$('#mail').hasClass('chat_shell')) { return; }
+	var box = document.getElementById('mailbox');
+	var composer = document.getElementById('just_hit_send');
+	if (!box) { return; }
+	chatPinObserver = new ResizeObserver(function () {
+		if (chatPinnedToBottom) { chatPinBottomGo(); }
+	});
+	chatPinObserver.observe(box);
+	if (composer) { chatPinObserver.observe(composer); }
+}
+
+var chatViewportTimer;
+function chatViewportChanged() {
+	if (!$('#mail').hasClass('chat_shell')) { return; }
+	clearTimeout(chatViewportTimer);
+	// after the window has taken its new size (windowFit is debounced)
+	chatViewportTimer = setTimeout(function () {
+		if (chatPinnedToBottom) { chatScrollBottom(); }
+	}, 120);
+}
+window.addEventListener('resize', chatViewportChanged);
+if (window.visualViewport) { window.visualViewport.addEventListener('resize', chatViewportChanged); }
 
 // ---- rail: menu, subheadings and remembered scroll ------------------------
 // On a phone the rail is a drawer over the conversation. Its default follows
@@ -544,5 +609,6 @@ $(function () {
 		chatRailApply();
 		chatTransportOptions();
 		chatScrollBottom();
+		chatObservePin();
 	}
 });

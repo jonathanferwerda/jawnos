@@ -105,4 +105,5 @@
 	if (typeof chatRailApply === 'function') { chatRailApply(); }
 	if (typeof chatTransportOptions === 'function') { chatTransportOptions(); }
 	if (typeof chatScrollBottom === 'function') { chatScrollBottom(); }
+	if (typeof chatObservePin === 'function') { chatObservePin(); }
 </script>

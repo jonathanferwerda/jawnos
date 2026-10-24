@@ -1054,6 +1054,7 @@ function mailWebSocketStart() {
 			}
 			if (typeof chatDressMessages === 'function') { chatDressMessages(); }
 			mailScrollBottom();
+			if (typeof chatKeepPinned === 'function') { chatKeepPinned(); }
 			last_mail_message = Date.now();
 			appointment_chron();
 		}
@@ -1068,6 +1069,7 @@ function mailWebSocketStart() {
 			});
 			if (typeof chatDressMessages === 'function') { chatDressMessages(); }
 			mailScrollBottom();
+			if (typeof chatKeepPinned === 'function') { chatKeepPinned(); }
 			appointment_chron();
 		}
 		else if (data.type == 'writing') {
@@ -1078,6 +1080,7 @@ function mailWebSocketStart() {
 			} else {
 				$('.mailbox_message_contents[uuid="' + data.uuid + '"]').html(data.all_text);
 				mailScrollBottom();
+				if (typeof chatKeepPinned === 'function') { chatKeepPinned(); }
 			}
 		}
 
