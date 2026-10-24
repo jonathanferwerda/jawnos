@@ -865,7 +865,12 @@ function wsMessageHandler(event) {
 			dotTimeout['green'] = setTimeout(function() { $('#green_dot').hide(); ginfo.hide(); }, 10000);
 		}
 		else if ( data['key'] ) {
-			typing(data['key'],data['toggle']);
+			// the panel already drew the key it was pressed with; this is its
+			// server echo, so do not put the same character in twice
+			if (typeof keyboardSkipEcho !== 'undefined' && keyboardSkipEcho[data['toggle']] > 0) {
+				keyboardSkipEcho[data['toggle']]--;
+			}
+			else { typing(data['key'],data['toggle']); }
 		}
 		else if (data['id']) {
 			$('#' + data['id']).html(data['html']);

@@ -79,6 +79,7 @@
 			<div id="chat_soft_keyboard" class="chat_soft_keyboard" hidden aria-hidden="true">
 				<div class="chat_soft_row">
 					<% foreach my $k (qw/1 2 3 4 5 6 7 8 9 0/) { %><button type="button" class="chat_soft_key" data-soft_key="<%= $k %>"><%= $k %></button><% } %>
+					<button type="button" class="chat_soft_key chat_soft_mod" data-soft_key="backspace" aria-label="<%= &subs::ui('Backspace') %>">⌫</button>
 				</div>
 				<div class="chat_soft_row">
 					<% foreach my $k (qw/q w e r t y u i o p/) { %><button type="button" class="chat_soft_key chat_soft_letter" data-soft_key="<%= $k %>"><%= $k %></button><% } %>
@@ -95,7 +96,6 @@
 					<button type="button" class="chat_soft_key" data-soft_key="?">?</button>
 				</div>
 				<div class="chat_soft_row">
-					<button type="button" class="chat_soft_key chat_soft_mod" data-soft_key="backspace" aria-label="<%= &subs::ui('Backspace') %>">⌫</button>
 					<button type="button" class="chat_soft_key chat_soft_space" data-soft_key="space"><%= &subs::lang('chat.space') %></button>
 					<button type="button" class="chat_soft_key chat_soft_mod" data-soft_key="enter" aria-label="<%= &subs::ui('New line') %>">⏎</button>
 					<button type="button" class="chat_soft_key chat_soft_mod" data-soft_key="hide" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>

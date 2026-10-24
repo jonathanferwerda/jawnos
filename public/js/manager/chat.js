@@ -286,7 +286,13 @@ $(document).on('click', '.chat_emoji', function (e) {
 // the keyboard button is pressed, so a hardware keyboard and the native one
 // still work where they are wanted.
 function chatSoftOn() {
-	return localStorage.getItem('chat_soft_keyboard') == 'on';
+	var stored = localStorage.getItem('chat_soft_keyboard');
+	if (stored == 'on') { return true; }
+	if (stored == 'off') { return false; }
+	// The phone's own keyboard is what reshapes the page, so the docked one is
+	// the default there. A desk keeps its hardware keyboard.
+	if (typeof windowPhoneChecker == 'function') { return windowPhoneChecker(); }
+	return /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || '');
 }
 
 function chatSoftApply() {
@@ -309,6 +315,7 @@ function chatSoftHide() {
 }
 
 var chatSoftShift = false;
+var chatSoftKeyAt = 0;
 function chatSoftShiftSet(on) {
 	chatSoftShift = !!on;
 	$('.chat_shell .chat_soft_letter').each(function () {
@@ -326,8 +333,16 @@ function chatSoftInsert(text) {
 	ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
 	var pos = start + text.length;
 	ta.selectionStart = ta.selectionEnd = pos;
-	ta.focus();
-	$(ta).trigger('input');
+	try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); }
+	chatSoftNotify(ta);
+}
+
+function chatSoftNotify(ta) {
+	// Paint the character first; the auto-grow, the counter and the pinned
+	// scroll do their layout work on the next frame instead of ahead of it.
+	var fire = function () { $(ta).trigger('input'); };
+	if (window.requestAnimationFrame) { requestAnimationFrame(fire); }
+	else { setTimeout(fire, 0); }
 }
 
 function chatSoftBackspace() {
@@ -347,17 +362,27 @@ function chatSoftBackspace() {
 	}
 	ta.value = ta.value.slice(0, start) + ta.value.slice(end);
 	ta.selectionStart = ta.selectionEnd = start;
-	ta.focus();
-	$(ta).trigger('input');
+	try { ta.focus({ preventScroll: true }); } catch (e) { ta.focus(); }
+	chatSoftNotify(ta);
 }
 
-$(document).on('mousedown', '.chat_shell .chat_soft_key', function (e) {
-	// keep the caret in the message while a key is pressed on a desk
+$(document).on('pointerdown', '.chat_shell .chat_soft_key', function (e) {
+	if (e.button != null && e.button != 0) { return; }
+	// Act on the press, not a click after it: the key answers at once, and the
+	// caret stays in the message instead of the button taking focus.
 	e.preventDefault();
+	chatSoftKeyAt = Date.now();
+	chatSoftKeyPress($(this));
 });
 
 $(document).on('click', '.chat_shell .chat_soft_key', function () {
-	var k = $(this).attr('data-soft_key') || '';
+	// a keyboard activation (Enter/Space on a focused key) still answers
+	if (Date.now() - chatSoftKeyAt < 600) { return; }
+	chatSoftKeyPress($(this));
+});
+
+function chatSoftKeyPress(b) {
+	var k = b.attr('data-soft_key') || '';
 	if (k == 'shift') { chatSoftShiftSet(!chatSoftShift); return; }
 	if (k == 'backspace') { chatSoftBackspace(); return; }
 	if (k == 'space') { chatSoftInsert(' '); return; }
@@ -365,7 +390,7 @@ $(document).on('click', '.chat_shell .chat_soft_key', function () {
 	if (k == 'hide') { chatSoftHide(); return; }
 	chatSoftInsert(chatSoftShift ? k.toUpperCase() : k);
 	if (chatSoftShift) { chatSoftShiftSet(false); }
-});
+}
 
 $(document).on('click', '#chat_soft_toggle', function () {
 	if (chatSoftOn()) {

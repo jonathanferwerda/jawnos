@@ -1268,6 +1268,26 @@ function newLine(toggle) {
 }
 
 var keyboard = {};
+// The server echoes every key back over the socket, which is what draws the
+// typewriter and calculator. Waiting for that round trip is the delay on every
+// press; draw the visible key locally first, and let the matching echo go by.
+var keyboardSkipEcho = {};
+function keyboardOptimisticKey(b, toggle) {
+	if (toggle != 'keyboard' && toggle != 'calculator') { return ''; }
+	var label = b.text().replace(/\s+/g, '');
+	if (!label) { return ''; }
+	if (label == '⌫') { return 'backspace'; }
+	if (label == 'C') { return 'clear'; }
+	if (label == 'Space') { return ' '; }
+	if (label == '±' || label == 'To') { return ''; }
+	if (label == '÷') { return ' / '; }
+	if (label == '×') { return ' * '; }
+	if (/^[A-Z]$/.test(label)) {
+		var shift = b.closest('.keyboard').find('.keyboard_button[key="shift"]').attr('enabled') == 'yes';
+		return shift ? label.toUpperCase() : label.toLowerCase();
+	}
+	return label;
+}
 $(document).on('click', '.keyboard_button', function() {
 	var b = $(this);
 	var key = b.attr('key');
@@ -1344,6 +1364,15 @@ $(document).on('click', '.keyboard_button', function() {
 		}
 
 		else {
+			// draw the key now; the socket's copy is skipped below
+			var local_key = keyboardOptimisticKey(b, toggle);
+			if (local_key) {
+				keyboardSkipEcho[toggle] = (keyboardSkipEcho[toggle] || 0) + 1;
+				setTimeout(function () {
+					if (keyboardSkipEcho[toggle] > 0) { keyboardSkipEcho[toggle]--; }
+				}, 6000);
+				typing(local_key, toggle);
+			}
 			$.ajax({
 				url: '/manager/keyboard_presser',
 				type: 'POST',
