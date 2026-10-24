@@ -46,25 +46,33 @@
 		</div>
 	</div>
 
-	<%# The provider balances: only a couple publish one, so the rest read — %>
+	<%# The provider balances: only an account on file is a row, and only a couple
+	   of those publish a balance, so the rest read — %>
 	<div class="cfg-card">
 		<h3>API balances</h3>
 		<p class="cfg-note">
-			What is left on each provider account, where the provider reports it.
+			<%= &subs::ui('What is left on each provider account you have registered, where the provider reports it.') %>
 			<% if (!$ai_balance->{'at'}) { %>Not read yet — this fills in a moment after boot.<% } %>
 		</p>
+		<% my $balance_keys = &subs::settings_grabber({ app => 'mail', settings => [ &subs::ai_key_settings() ] }); %>
+		<% my %balance_cached = map { ($_->{'provider'} || '') => $_ } @{ $ai_balance->{'rows'} || [] }; %>
+		<% my @balance_rows; foreach my $p ( @{ &subs::ai_providers() } ) { next unless &subs::ai_provider_registered($p, $balance_keys); push @balance_rows, ($balance_cached{ $p->{'id'} } || { label => $p->{'label'}, available => undef, note => &subs::ui('not read yet') }); } %>
 		<div class="cfg-scroll">
 			<table>
 				<thead>
 					<tr><th>Provider</th><th>Available</th><th>Read</th></tr>
 				</thead>
 				<tbody>
-					<% foreach my $b ( @{ $ai_balance->{'rows'} } ) { %>
-						<tr>
-							<td style="text-align:left;"><%= $b->{'label'} %></td>
-							<td><%= (defined $b->{'available'} ? (sprintf('%.2f', $b->{'available'}) . ' ' . ($b->{'currency'} || '')) : ($b->{'note'} || '—')) %></td>
-							<td><% if ($ai_balance->{'at'}) { %><span class="time" timestamp="<%= $ai_balance->{'at'} %>"></span><% } else { %>—<% } %></td>
-						</tr>
+					<% if (@balance_rows) { %>
+						<% foreach my $b ( @balance_rows ) { %>
+							<tr>
+								<td style="text-align:left;"><%= $b->{'label'} %></td>
+								<td><%= (defined $b->{'available'} ? (sprintf('%.2f', $b->{'available'}) . ' ' . ($b->{'currency'} || '')) : ($b->{'note'} || '—')) %></td>
+								<td><% if ($ai_balance->{'at'}) { %><span class="time" timestamp="<%= $ai_balance->{'at'} %>"></span><% } else { %>—<% } %></td>
+							</tr>
+						<% } %>
+					<% } else { %>
+						<tr><td colspan="3" style="text-align:left;"><%= &subs::ui('No provider accounts registered yet — add a key under Configure → Plat, under Provider access.') %></td></tr>
 					<% } %>
 				</tbody>
 			</table>

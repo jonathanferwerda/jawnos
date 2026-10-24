@@ -24033,6 +24033,20 @@ sub ai_provider_ready {
 	return 1;
 }
 
+# A provider with an account on file: at least one of the settings it needs is
+# filled in. Ollama's key is optional, so a bare local daemon has no account and
+# does not count; passing $values avoids re-reading the settings per provider.
+sub ai_provider_registered {
+	my ($provider, $values) = @_;
+	return 0 unless ref $provider eq 'HASH';
+	$values ||= &subs::settings_grabber({ app => 'mail', settings => [ map { $_->[0] } @{ $provider->{'keys'} || [] } ] });
+	foreach my $k ( @{ $provider->{'keys'} || [] } ) {
+		my $v = $values->{ $k->[0] };
+		return 1 if defined $v && length $v;
+	}
+	return 0;
+}
+
 # The model choices, grouped by provider, for the dropdowns. Ollama and
 # Cloudflare are read live; the rest are the fixed lists above.
 #
@@ -27871,7 +27885,8 @@ sub ai_house_report {
 # The money left on each provider account, where the provider will say. There is
 # no common balance API: OpenRouter publishes its credits and DeepSeek its account
 # balance, and the rest (OpenAI, Anthropic, Google, xAI, Mistral, Groq,
-# Cloudflare) have none, so they read "—". The read itself is done off the page
+# Cloudflare) have none, so they read "—". Only providers with an account on file
+# are listed at all. The read itself is done off the page
 # by President.pl's ai balance loop; this only ever reads the cached result, so a
 # page load never waits on a provider.
 sub ai_balance_report {
@@ -27922,9 +27937,11 @@ sub ai_balance_refresh {
 		}
 		$money{'deepseek'} = $row;
 	}
-	# every provider, in the panel's own order, with a balance where there is one
+	# every registered provider, in the panel's own order, with a balance where
+	# there is one; a provider with no account on file is not a row at all
 	my @rows;
 	foreach my $p ( @{ &subs::ai_providers() } ) {
+		next unless &subs::ai_provider_registered($p, $settings);
 		my $m = $money{ $p->{'id'} };
 		push @rows, {
 			provider  => $p->{'id'},

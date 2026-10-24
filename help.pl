@@ -1098,7 +1098,7 @@ our %topic = (
 		title => 'Utility controller', category => 'features',
 		templates => [ 'templates/configure/utility_controller.html.ep', 'templates/configure/system_setting_list.html.ep' ],
 		controls => [ 'Run this job', 'How often', 'Good', 'Bad' ],
-		verified => '2026-10-16',
+		verified => '2026-10-24',
 		summary => 'The background jobs every machine runs, how often, and the house AI view above them.',
 		body => [
 			'Configure → Sys holds the Utility controller: one card per machine on the mesh, and under each card its background jobs — the utilities. A job has a switch to run it, a box for how often, the time it last ran, and a good/bad dot. Your own machine is the first card, named Me, above every peer; the peer cards follow, named by their hostname.',
@@ -1107,16 +1107,16 @@ our %topic = (
 			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, the remote relay (which hands a change queued with no browser behind it on to the other machines), navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',
 			'It is per machine: an interval or a switch set here applies to the machine whose card it is on, so one job can run every two minutes on the phone and hourly on the server.',
 			'The Sys panel also shows the house at a glance, above the Utility controller: one row per machine, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
-			'Below it is the API balances table: what is left on each provider account, where the provider reports it. OpenRouter and DeepSeek do; the rest — Ollama, Cloudflare, OpenAI, Anthropic, Google, xAI, Mistral and Groq — have no balance endpoint and read “no balance API”. The read happens in the background every ten minutes, so the page never waits.'
+			'Below it is the API balances table, and it lists only the providers with an account on file — a key or account entered under Configure → Plat, under Provider access. For each of those it says what is left, where the provider reports it: OpenRouter and DeepSeek do; the rest — Ollama, Cloudflare, OpenAI, Anthropic, Google, xAI, Mistral and Groq — have no balance endpoint and read “no balance API”. A provider with no account entered is not listed. The read happens in the background every ten minutes, so the page never waits.'
 		],
 		steps => [
 			'Open Configure and press Sys; the Utility controller is in that panel.',
 			'Find the machine whose jobs you want to change.',
 			'Tick the switch to run a job, and set its interval in the box beside it (for example 2m).',
 			'Watch the last-run time and the good/bad dot to see whether it is keeping up.',
-			'In the Sys panel, read the house table and the API balances to see the AI work and what is left on each account.'
+			'In the Sys panel, read the house table and the API balances to see the AI work and what is left on each registered account.'
 		],
-		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, where only OpenRouter and DeepSeek report a balance and the rest read no balance API. Do not invent job names beyond the ones listed.',
+		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, which lists only the providers with an account registered under Configure → Plat; only OpenRouter and DeepSeek report a balance and the rest read no balance API. Do not invent job names beyond the ones listed.',
 		related => [ 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
 	},
 	'navigation' => {
