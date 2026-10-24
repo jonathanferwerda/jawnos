@@ -27,6 +27,13 @@
 	display: none;
 }
 
+/* The floating dock keeps the same foot of the screen as the keys, and its
+   search bar would otherwise sit across the space bar. While the keyboard is
+   up the dock steps aside; it returns the moment the keys are put away. */
+body.soft_kb_open #pseudonym_home {
+	display: none !important;
+}
+
 /* inside the window being typed in: the window keeps its shape */
 .soft_kb.soft_kb_in_window {
 	position: absolute;
@@ -193,6 +200,52 @@
 	display: grid;
 	grid-template-columns: repeat(4, 1fr);
 	gap: 4px;
+}
+
+/* the running list of calculations and conversions, kept across sessions */
+.soft_kb_history_wrap {
+	display: flex;
+	gap: 4px;
+	margin: 0 1px 6px;
+}
+
+.soft_kb_history_wrap[hidden] {
+	display: none;
+}
+
+.soft_kb_history {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	gap: 4px;
+	overflow-x: auto;
+	padding-bottom: 2px;
+}
+
+.soft_kb_history_item {
+	flex: 0 0 auto;
+	height: 26px;
+	padding: 0 9px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--panel);
+	color: var(--ink-muted);
+	font-size: 11px;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.soft_kb_history_clear {
+	flex: 0 0 26px;
+	height: 26px;
+	padding: 0;
+	border: 1px solid var(--line);
+	border-radius: 50%;
+	background: var(--panel);
+	color: var(--ink-muted);
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
 }
 
 .soft_kb_numpad .soft_kb_key {

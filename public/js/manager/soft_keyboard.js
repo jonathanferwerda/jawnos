@@ -92,6 +92,7 @@ function softKbShow(el) {
 	}
 	softKbPlace(el);
 	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	$('body').addClass('soft_kb_open');
 	softKbModeSet(jawnSoftNumeric ? 'calc' : 'letters');
 	softKbReserve();
 	softKbScrollField(el);
@@ -101,6 +102,7 @@ function softKbShow(el) {
 
 function softKbHide() {
 	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
+	$('body').removeClass('soft_kb_open');
 	$('.chat_shell').css('padding-bottom', '');
 	jawnSoftField = null;
 	$('#chat_soft_toggle').removeClass('active').attr('aria-expanded', 'false');
@@ -158,7 +160,7 @@ function softKbModeSet(mode) {
 	dock.find('.soft_kb_panel').prop('hidden', true).filter('[data-kb_panel="' + mode + '"]').prop('hidden', false);
 	dock.find('.soft_kb_title').text(mode == 'calc' ? softKbLabel('Calculator') : (mode == 'symbols' ? softKbLabel('Special characters') : softKbLabel('Keyboard')));
 	dock.find('.soft_kb_mode[data-kb_mode="letters"]').prop('hidden', jawnSoftNumeric);
-	if (mode == 'calc') { softKbCalcRender(); }
+	if (mode == 'calc') { softKbCalcRender(); softKbHistoryRender(); }
 	softKbReserve();
 	if (jawnSoftField) { softKbScrollField(jawnSoftField); }
 }
@@ -290,12 +292,17 @@ function softKbCalcKey(k) {
 	}
 }
 
-// A number field shows a plain number as it is typed, not only after '='.
+// A number field mirrors the operand currently being typed, not the whole
+// expression (a number input cannot hold '+' or '('). Backspace therefore edits
+// the field as well as the calculator screen.
 function softKbCalcSyncNumeric() {
 	if (!jawnSoftNumeric || !jawnSoftField) { return; }
-	if (!/^-?([0-9]+(\.[0-9]+)?|\.[0-9]+)$/.test(jawnSoftExpr) && jawnSoftExpr != '') { return; }
+	var m = jawnSoftExpr.match(/(-?\d*\.?\d*)$/);
+	var value = m ? m[1] : '';
+	if (value == '-' || value == '.') { value = ''; }
+	if (/\.$/.test(value)) { value = value.slice(0, -1); }
 	jawnSoftSetting = true;
-	jawnSoftField.value = jawnSoftExpr;
+	jawnSoftField.value = value;
 	$(jawnSoftField).trigger('input');
 	$(jawnSoftField).trigger($.Event('keyup', { key: ' ', keyCode: 32 }));
 	jawnSoftSetting = false;
@@ -319,6 +326,7 @@ function softKbCalcEquals() {
 	jawnSoftExpr = out;
 	$('#soft_kb_expr').text(out);
 	$('#soft_kb_result').text('');
+	softKbHistoryAdd(expr, out);
 	if (jawnSoftNumeric && jawnSoftField) {
 		jawnSoftSetting = true;
 		jawnSoftField.value = out;
@@ -328,6 +336,76 @@ function softKbCalcEquals() {
 		jawnSoftSetting = false;
 	}
 	else { softKbInsert(out); }
+}
+
+// ---- the running list of calculations and conversions ----------------------
+// Kept in localStorage so the sums a person works out survive a reload. A chip
+// carries the result back into the field; the newest sum sits first.
+var jawnSoftHistory = null;
+
+function softKbHistoryLoad() {
+	if (jawnSoftHistory) { return jawnSoftHistory; }
+	var list = [];
+	try {
+		var raw = localStorage.getItem('jawn_soft_calc_history');
+		var parsed = raw ? JSON.parse(raw) : null;
+		if (parsed && parsed.length) {
+			for (var i = 0; i < parsed.length; i++) {
+				var item = parsed[i];
+				if (item && typeof item.expr == 'string' && typeof item.out == 'string') { list.push({ expr: item.expr, out: item.out }); }
+			}
+		}
+	} catch (err) { list = []; }
+	if (list.length > 30) { list.length = 30; }
+	jawnSoftHistory = list;
+	return jawnSoftHistory;
+}
+
+function softKbHistorySave() {
+	try { localStorage.setItem('jawn_soft_calc_history', JSON.stringify(jawnSoftHistory || [])); } catch (err) {}
+}
+
+function softKbHistoryAdd(expr, out) {
+	expr = (expr || '').trim();
+	if (!expr || !out || expr == out) { return; }
+	var list = softKbHistoryLoad().filter(function (item) { return item.expr != expr; });
+	list.unshift({ expr: expr, out: out });
+	if (list.length > 30) { list.length = 30; }
+	jawnSoftHistory = list;
+	softKbHistorySave();
+	softKbHistoryRender();
+}
+
+function softKbHistoryRender() {
+	var box = $('#soft_kb_history');
+	if (!box.length) { return; }
+	var list = softKbHistoryLoad();
+	var wrap = $('#soft_kb_history_wrap');
+	box.empty();
+	if (!list.length) { wrap.prop('hidden', true); return; }
+	for (var i = 0; i < list.length; i++) {
+		var label = list[i].expr + ' = ' + list[i].out;
+		$('<button type="button" class="soft_kb_history_item"></button>')
+			.attr({ 'data-kb_history': list[i].out, title: label, 'aria-label': label })
+			.text(label)
+			.appendTo(box);
+	}
+	wrap.prop('hidden', false);
+}
+
+function softKbHistoryPick(out) {
+	if (!out) { return; }
+	if (jawnSoftNumeric && jawnSoftField) {
+		jawnSoftExpr = out;
+		softKbCalcRender();
+		softKbCalcSyncNumeric();
+		return;
+	}
+	if (jawnSoftMode == 'calc') {
+		jawnSoftExpr = out;
+		softKbCalcRender();
+	}
+	softKbInsert(out);
 }
 
 function softKbFormat(value) {
@@ -411,6 +489,13 @@ function softKbChar(c) {
 function softKbPress(b) {
 	if (b.attr('data-kb_mode')) { softKbModeSet(b.attr('data-kb_mode')); return; }
 	if (b.attr('data-kb_action') == 'close') { softKbHide(); return; }
+	if (b.attr('data-kb_action') == 'clear_history') {
+		jawnSoftHistory = [];
+		softKbHistorySave();
+		softKbHistoryRender();
+		return;
+	}
+	if (b.attr('data-kb_history') != null) { softKbHistoryPick(b.attr('data-kb_history')); return; }
 	if (b.attr('data-kb_char') != null) { softKbChar(b.attr('data-kb_char')); return; }
 	var k = b.attr('data-kb_key');
 	if (k == null) { return; }
@@ -513,3 +598,5 @@ $(document).on('click', '#send_it', function () {
 });
 
 $(window).on('resize', function () { if (softKbVisible()) { softKbReserve(); } });
+
+$(function () { softKbHistoryRender(); });

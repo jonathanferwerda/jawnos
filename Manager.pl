@@ -20,7 +20,7 @@ use Mojo::Parameters;
 use Mojo::DOM;
 use Mojo::URL;
 
-use Mojo::JSON qw(decode_json encode_json);
+use Mojo::JSON qw(decode_json encode_json from_json);
 use URI::Encode qw(uri_encode uri_decode);
 use List::Util qw(shuffle);
 plugin 'RenderFile';
@@ -42623,7 +42623,7 @@ websocket '/observer/ws' => sub ($c) {
 	my $browser_tab_id = $c->param('browser_tab_id');
 	$gb::paperboy->{$browser_tab_id} = $c->tx;
 	$c->on(message => sub ($ows, $msg) {
-		my $m = decode_json $msg;
+		my $m = from_json $msg;
 		if ($m->{'type'} eq 'heartbeat') {
 			$ows->send($msg);
 		}
@@ -42633,8 +42633,9 @@ websocket '/observer/ws' => sub ($c) {
 			my $q = &subs::db_query('select * from magazine where timestamp >= ? and timestamp <= ? and status=?', $m->{'last_paper_delivered'},$server_time,'publish');
 			my $papers = $q->hashes;
 			foreach my $p ( @{$papers} ) {
-				my $papes = encode_json $p;
-				$ows->send($papes);
+				# A hash under json is encoded once by Mojo; handing it the bytes
+				# encode_json made would encode them a second time.
+				$ows->send({ json => $p });
 			}
 		}
 	});
@@ -42660,7 +42661,7 @@ websocket '/mail/ws' => sub ($c) {
 	};
 	my $name = $c->session('name');
 	$c->on(message => sub ($mws, $msg) {
-		my $m = decode_json $msg;
+		my $m = from_json $msg;
 		$m->{'uuid'} = &subs::random_string_creator(35);
 
 		if ($m->{'type'} eq 'heartbeat') {
@@ -42718,7 +42719,7 @@ websocket '/mail/ws' => sub ($c) {
 				# address falls back to the ticket - the one thread the house
 				# opened for them. A guest speaks through the box, never through
 				# a phone number, a mailbox server or the Pen.
-				my $dialled = eval { return decode_json $m->{'picker'} } || {};
+				my $dialled = eval { return from_json $m->{'picker'} } || {};
 				if (&mail_public_channel_allows($dialled)) {
 					$m->{'picker'} = encode_json $dialled;
 					$m->{'mail_contact'} = undef;
@@ -42747,7 +42748,7 @@ websocket '/mail/ws' => sub ($c) {
 			$m->{'msg'} =~ s/\n/<br>/gi;
 			my $e_msg = &subs::note_encrypter(&subs::suds_grabber(),$m->{'msg'});
 
-			my $picker = eval { return decode_json $m->{'picker'} } || {};
+			my $picker = eval { return from_json $m->{'picker'} } || {};
 			# a phone is stored and read bare (digits only, no leading country
 			# code), whatever road wore it - the reader strips the same way, so the
 			# thread a message is filed on is the thread that reads it back
@@ -43003,7 +43004,7 @@ websocket '/mail/ws' => sub ($c) {
 					'me' => $me
 				);
 			}
-			$mws->send(encode_json { messages => $messaging, 'type' => 'refresher' });
+			$mws->send({ json => { messages => $messaging, 'type' => 'refresher' } });
 		}
 	});
 	$c->on(finish => sub ($c, $code, $reason) {
@@ -44265,7 +44266,7 @@ websocket '/manager/ws' => sub ($c) {
 	}
 
 	$c->on(message => sub ($ws, $msg) {
-		my $data = eval { return decode_json $msg };
+		my $data = eval { return from_json $msg };
 		my $app = $data->{'app'};
 		my $apper = $data->{'app'};
 		if ($app =~ /@/gi) {
@@ -44307,7 +44308,7 @@ websocket '/manager/ws' => sub ($c) {
 			}
 			if ($app eq 'tab') {
 				if ($data->{'windows'}) {
-					my $windows = eval { return decode_json $data->{'windows'} } || [];
+					my $windows = eval { return from_json $data->{'windows'} } || [];
 
 					foreach my $w ( keys %{$windows} ) {
 						foreach my $set ( qw/scrollTop jopen/ ) {
@@ -45042,9 +45043,15 @@ if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'websocket' || ($ENV{PORT_ENV} eq 'develo
 sub websocket_sender($wsm) {
 	my $returner;
 	my $return_msg = { save => [] };
+	# The message travels as the bytes encode_json made. Mojo encodes a plain
+	# string to UTF-8 again when it builds a text frame, so an emoji or an accent
+	# would reach the browser double-encoded (and reach the phone's SMS bridge as
+	# mojibake). Hand the frame characters instead, and encode exactly once.
+	my $wire = $wsm->{'message'};
+	utf8::decode($wire) if defined $wire && length $wire && !utf8::is_utf8($wire);
 	if ($wsm->{'environment'} eq 'papers') {
 		foreach my $subscriber ( keys %{$gb::paperboy} ) {
-			$gb::paperboy->{$subscriber}->send($wsm->{'message'});
+			$gb::paperboy->{$subscriber}->send($wire);
 		}
 	}
 	else {
@@ -45086,7 +45093,7 @@ sub websocket_sender($wsm) {
 			}
 			if ( $original_msg->{'destination'}) {
 				if (my $conn = $ws->{$app}->{$wsm->{'destination'}}) {
-					$conn->send($wsm->{'message'}) unless $recipient_locked->($conn);
+					$conn->send($wire) unless $recipient_locked->($conn);
 				}
 				elsif ($wsm->{'server_time'} > &subs::rightNow() - 10000) {
 					push @{$return_msg->{'save'}}, $wsm;
@@ -45102,7 +45109,7 @@ sub websocket_sender($wsm) {
 								next;
 							}
 						}
-						$returner = $conn->send($wsm->{'message'});
+						$returner = $conn->send($wire);
 					}
 				}
 			}
@@ -45115,7 +45122,7 @@ sub websocket_sender($wsm) {
 								next;
 							}
 						}
-						$returner = $conn->send($wsm->{'message'});
+						$returner = $conn->send($wire);
 					}
 				}
 			}
@@ -45288,12 +45295,17 @@ sub mailws_address_matches($address, $m, $constructs) {
 sub mailws_sender($m) {
 	my $constructs = &mailws_message_constructs($m);
 	my $pmsg = encode_json $m;
+	# Mojo encodes a plain string to UTF-8 when it builds a text frame, so the
+	# JSON bytes above would be encoded a second time and an emoji would land in
+	# the browser as mojibake. Send characters, encoded once.
+	my $wire = $pmsg;
+	utf8::decode($wire) if !utf8::is_utf8($wire);
 	my $sent = 0;
 	foreach my $bti ( keys %{$gb::mailws} ) {
 		my $entry = $gb::mailws->{$bti};
 		next unless $entry && $entry->{'tx'};
 		next unless &mailws_address_matches($entry->{'address'}, $m, $constructs);
-		my $ok = eval { $entry->{'tx'}->send($pmsg); 1 };
+		my $ok = eval { $entry->{'tx'}->send($wire); 1 };
 		unless ($ok) {
 			warn "Worker $$: mail send failed for $bti: $@";
 			delete $gb::mailws->{$bti};

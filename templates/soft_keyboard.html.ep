@@ -50,6 +50,10 @@
 			<div id="soft_kb_expr" class="soft_kb_expr">0</div>
 			<div id="soft_kb_result" class="soft_kb_result"></div>
 		</div>
+		<div id="soft_kb_history_wrap" class="soft_kb_history_wrap" hidden>
+			<div id="soft_kb_history" class="soft_kb_history"></div>
+			<button type="button" class="soft_kb_history_clear" data-kb_action="clear_history" aria-label="<%= &subs::ui('Clear history') %>">×</button>
+		</div>
 		<div class="soft_kb_row">
 			<button type="button" class="soft_kb_key soft_kb_func" data-kb_key="clear">C</button>
 			<button type="button" class="soft_kb_key soft_kb_func" data-kb_key="backspace" aria-label="<%= &subs::ui('Backspace') %>">⌫</button>
