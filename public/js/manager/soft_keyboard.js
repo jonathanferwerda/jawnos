@@ -174,10 +174,22 @@ function softKbShiftSet(on) {
 
 function softKbNotify(el) {
 	if (!el) { return; }
-	if (window.requestAnimationFrame) {
-		requestAnimationFrame(function () { $(el).trigger('input'); });
-	}
-	else { setTimeout(function () { $(el).trigger('input'); }, 0); }
+	var fire = function () {
+		$(el).trigger('input');
+		// older fields listen on keyup rather than input (the search box, the
+		// text editor); a harmless space code keeps their handlers in step
+		$(el).trigger($.Event('keyup', { key: ' ', keyCode: 32 }));
+		if (!el.isContentEditable) { return; }
+		// The house's rich text editor keeps a source textarea beside its
+		// contenteditable; copy the words across so the app's own save sees them.
+		var source = el.getAttribute('source_id');
+		if (source && $('#' + source).length) {
+			$('#' + source).val($(el).text());
+			$('#' + source).trigger('change');
+		}
+	};
+	if (window.requestAnimationFrame) { requestAnimationFrame(fire); }
+	else { setTimeout(fire, 0); }
 }
 
 function softKbInsert(text) {
@@ -186,7 +198,11 @@ function softKbInsert(text) {
 	if (el.isContentEditable) {
 		el.focus({ preventScroll: true });
 		var ok = false;
-		try { ok = document.execCommand('insertText', false, text); } catch (err) { ok = false; }
+		try {
+			ok = (text == '\n')
+				? document.execCommand('insertHTML', false, '<br>')
+				: document.execCommand('insertText', false, text);
+		} catch (err) { ok = false; }
 		if (!ok) {
 			var sel = window.getSelection();
 			if (sel && sel.rangeCount) {
@@ -281,6 +297,7 @@ function softKbCalcSyncNumeric() {
 	jawnSoftSetting = true;
 	jawnSoftField.value = jawnSoftExpr;
 	$(jawnSoftField).trigger('input');
+	$(jawnSoftField).trigger($.Event('keyup', { key: ' ', keyCode: 32 }));
 	jawnSoftSetting = false;
 }
 
