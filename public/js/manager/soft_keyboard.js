@@ -497,8 +497,9 @@ function softKbConvertParse(text) {
 }
 
 function softKbConvertText() {
-	if (jawnSoftMode == 'calc') { return jawnSoftExpr || ''; }
 	var el = jawnSoftField;
+	if (el && (el.getAttribute('type') || '').toLowerCase() == 'password') { return ''; }
+	if (jawnSoftMode == 'calc') { return jawnSoftExpr || ''; }
 	if (!el) { return ''; }
 	return el.isContentEditable ? $(el).text() : (el.value || '');
 }

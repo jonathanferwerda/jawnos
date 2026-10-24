@@ -30544,7 +30544,8 @@ sub crypto_measures_sync {
 		next unless uc($k) eq $k && $k =~ /^[A-Z]{3}$/;
 		my $v = $table->{$k};
 		next unless defined $v && $v > 0;
-		my $pv = sprintf('%.6f', $v / $base_v);
+		my $per = $v / $base_v;
+		my $pv = $per >= 1 ? sprintf('%.2f', $per) : sprintf('%.6f', $per);
 		next if defined $measures->{$k}->{'pv'} && $measures->{$k}->{'pv'} eq $pv;
 		$measures->{$k}->{'pv'} = $pv;
 		$changed++;
@@ -30563,7 +30564,8 @@ sub crypto_measures_sync {
 			};
 			$changed++;
 		}
-		my $pv = sprintf('%.6f', $v / $base_v);
+		my $per = $v / $base_v;
+		my $pv = $per >= 1 ? sprintf('%.2f', $per) : sprintf('%.6f', $per);
 		next if defined $row->{'pv'} && $row->{'pv'} eq $pv;
 		$row->{'pv'} = $pv;
 		$changed++;
