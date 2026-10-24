@@ -9303,9 +9303,98 @@ sub seal_file {
 # recognised from its bytes rather than its extension. File::Type is only the
 # last resort for a format the table does not name.
 our $plaintext_ft;
+# ZIP containers name themselves inside the archive: ODF and EPUB put an
+# uncompressed `mimetype` first, OOXML leaves `[Content_Types].xml` and then
+# `word/`, `xl/` or `ppt/`, and iWork leaves `Index/*.iwa`. The prefix is
+# enough to read the local headers, so a .docx is not just "a zip".
+sub zip_container_verdict {
+	my ($head) = @_;
+	my @names;
+	my $mimetype = '';
+	my $pos = 0;
+	my $len = length $head;
+	my $seen = 0;
+	while ($pos + 30 <= $len && $seen++ < 512) {
+		last unless substr($head, $pos, 4) eq "PK\x03\x04";
+		my $flags = unpack('v', substr($head, $pos + 6, 2));
+		my $method = unpack('v', substr($head, $pos + 8, 2));
+		my $csize = unpack('V', substr($head, $pos + 18, 4));
+		my $usize = unpack('V', substr($head, $pos + 22, 4));
+		my $nlen = unpack('v', substr($head, $pos + 26, 2));
+		my $elen = unpack('v', substr($head, $pos + 28, 2));
+		last if $pos + 30 + $nlen > $len;
+		my $name = substr($head, $pos + 30, $nlen);
+		push @names, $name;
+		my $data = $pos + 30 + $nlen + $elen;
+		if ($name eq 'mimetype' && $method == 0 && $usize > 0 && $data + $usize <= $len) {
+			$mimetype = substr($head, $data, $usize);
+		}
+		last if $flags & 0x08;    # data descriptor: the sizes here are not trustworthy
+		my $next = $data + $csize;
+		last if $next <= $pos;
+		$pos = $next;
+	}
+	my %has = map { $_ => 1 } @names;
+	$mimetype =~ s/^\s+|\s+$//g;
+	return $mimetype if $mimetype =~ m{^application/(?:vnd\.oasis\.opendocument\.[a-z.+-]+|epub\+zip)$};
+	# Apple iWork packages
+	return 'application/vnd.apple.keynote' if $has{'Index/Presentation.iwa'};
+	return 'application/vnd.apple.numbers' if $has{'Index/CalculationEngine.iwa'};
+	return 'application/vnd.apple.pages' if $has{'Index/Document.iwa'};
+	# Microsoft Office: macro-enabled flavours carry vbaProject.bin
+	return 'application/vnd.ms-word.document.macroEnabled.12' if $has{'word/vbaProject.bin'};
+	return 'application/vnd.ms-excel.sheet.macroEnabled.12' if $has{'xl/vbaProject.bin'};
+	return 'application/vnd.ms-powerpoint.presentation.macroEnabled.12' if $has{'ppt/vbaProject.bin'};
+	return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' if grep { m{^word/} } @names;
+	return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' if grep { m{^xl/} } @names;
+	return 'application/vnd.openxmlformats-officedocument.presentationml.presentation' if grep { m{^ppt/} } @names;
+	return 'application/vnd.android.package-archive' if $has{'AndroidManifest.xml'} && $has{'classes.dex'};
+	return 'application/java-archive' if $has{'META-INF/MANIFEST.MF'} && grep { m{\.class$} } @names;
+	return 'application/vnd.ms-xpsdocument' if $has{'FixedDocSeq.fdseq'};
+	return 'application/vnd.ms-package.3dmanufacturing-3dmodel+zip' if $has{'3D/3dmodel.model'};
+	return 'application/vnd.openxmlformats-officedocument' if $has{'[Content_Types].xml'};
+	return 'application/epub+zip' if $has{'META-INF/container.xml'};
+	return 'application/zip';
+}
+
+# Legacy Office files are OLE2 compound documents. The directory's stream names
+# say which program wrote it; the first directory sector is inside the prefix.
+sub ole_container_verdict {
+	my ($head) = @_;
+	return undef if length($head) < 512;
+	my $sector = unpack('v', substr($head, 30, 2));
+	$sector = 512 if $sector < 128 || $sector > 65536;
+	my $dir = unpack('V', substr($head, 48, 4));
+	return undef if $dir == 0xFFFFFFFE || $dir > 1_000_000;
+	my $off = ($dir + 1) * $sector;
+	my $len = length $head;
+	my $count = 0;
+	while ($off + 128 <= $len && $count++ < 64) {
+		my $nlen = unpack('v', substr($head, $off + 64, 2));
+		last unless $nlen >= 2 && $nlen <= 64;
+		my $name = substr($head, $off, $nlen - 2);
+		$name =~ s/\x00//g;
+		return 'application/msword' if $name eq 'WordDocument';
+		return 'application/vnd.ms-excel' if $name eq 'Workbook' || $name eq 'Book';
+		return 'application/vnd.ms-powerpoint' if $name eq 'PowerPoint Document';
+		return 'application/vnd.openxmlformats-officedocument' if $name eq 'EncryptedPackage';
+		$off += 128;
+	}
+	return undef;
+}
+
 sub plaintext_verdict {
 	my ($head) = @_;
 	return undef unless defined $head && length $head;
+	# a zip is only the wrapper; decide what it holds before the generic table
+	if (substr($head, 0, 4) eq "PK\x03\x04" || substr($head, 0, 4) eq "PK\x05\x06") {
+		return &zip_container_verdict($head);
+	}
+	# OLE2 compound file: legacy .doc/.xls/.ppt (and encrypted OOXML)
+	if (substr($head, 0, 8) eq "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1") {
+		my $ole = &ole_container_verdict($head);
+		return defined $ole ? $ole : 'application/x-ole-storage';
+	}
 	my @exact = (
 		[ "\x1a\x45\xdf\xa3", 'video/webm' ],                  # EBML: webm / matroska
 		[ "\x89PNG\r\n\x1a\n", 'image/png' ],
@@ -9352,8 +9441,6 @@ sub plaintext_verdict {
 		[ "\xfd7zXZ\x00", 'application/x-xz' ],
 		[ "7z\xbc\xaf\x27\x1c", 'application/x-7z-compressed' ],
 		[ "Rar!\x1a\x07", 'application/vnd.rar' ],
-		[ "PK\x03\x04", 'application/zip' ],
-		[ "PK\x05\x06", 'application/zip' ],
 		[ "PK\x07\x08", 'application/zip' ],
 		[ "!<arch>\n", 'application/x-ar' ],
 		[ "\xed\xab\xee\xdb", 'application/x-rpm' ],
@@ -9422,6 +9509,16 @@ sub plaintext_verdict {
 	my $probe = substr($head, 0, 4096);
 	if ($probe =~ /^\s*<\?xml/i) {
 		return 'image/svg+xml' if $probe =~ /<svg[\s>]/i;
+		# flat OpenDocument (.fodt/.fods/.fodp) names its MIME on the root
+		if ($probe =~ /office:mimetype\s*=\s*["']([^"']+)["']/i) {
+			my $flat = $1;
+			return $flat if $flat =~ m{^application/vnd\.oasis\.opendocument\.};
+		}
+		# flat OOXML (Word 2003 XML / Flat OPC)
+		return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' if $probe =~ /<pkg:package[\s>]/i && $probe =~ /spreadsheetml/i;
+		return 'application/vnd.openxmlformats-officedocument.presentationml.presentation' if $probe =~ /<pkg:package[\s>]/i && $probe =~ /presentationml/i;
+		return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' if $probe =~ /<w:document[\s>]/i || ($probe =~ /<pkg:package[\s>]/i && $probe =~ /wordprocessingml/i);
+		return 'application/msword' if $probe =~ /<w:wordDocument[\s>]/i;
 		return 'application/xml';
 	}
 	if ($probe =~ /^\s*(?:<!doctype\s+html|<html[\s>])/i) {
