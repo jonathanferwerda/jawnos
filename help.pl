@@ -156,7 +156,7 @@ our %topic = (
 		title => 'Music', category => 'apps', app => 'music',
 		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/audio.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization', 'Volume normalization', 'Remote audio format', 'Left speaker', 'Stereo', 'Right speaker' ],
-		verified => '2026-10-23',
+		verified => '2026-10-24',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
@@ -178,6 +178,7 @@ our %topic = (
 			'Fullscreen (the player button, or F) fills the screen with the picture; moving the mouse brings back the top bar and the transport, and they fade away again when the pointer rests.',
 			'A wheel over the picture moves through the track; on a trackpad, a sideways swipe does the same and up/down sets the volume. On a touchscreen, drag sideways to move through it and up or down to set the volume. The same gestures work in fullscreen, over the interface; the fullscreen button (or F) leaves fullscreen too.',
 			'A wheel or trackpad scroll directly over the seek bar moves through the track, and the same over the volume bar turns it up or down.',
+			'The gear opens the configuration drawer and the equalizer icon opens the Audio drawer. Drag either one by the bar across its top to move it out of the way, and press the X on that bar to close it.',
 			'Open the Audio drawer (the equalizer icon beside the gear) to choose the audio output, or to send playback to another machine on the mesh.',
 			'Each output has L, its name and R: press the centre for stereo, L for the left channel, or R for the right. On a computer with a stereo pair that is the left or right speaker alone; a phone or tablet plays the chosen channel through the speaker it has. Press the same side again to turn that output off.',
 			'When a remote speaker is in use and you are watching a video on this screen, tick Lip sync in the Audio drawer. The picture waits the measured moment the stream takes, so the sound from the other room lines up with it; local sound waits with it. The picture holds its last frame while the delayed copy lines up, so the hand-over is a still rather than a black flash. Leave it off when the audio is only for another room and the picture here should run as early as it can. With me as the only output no delayed copy is made at all, so the picture plays normally.',

@@ -31,8 +31,10 @@
 %>
 <% my @eq_freq = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000); %>
 <% my @eq_label = ('31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'); %>
-<button type="button" id="music_audio_close" class="music_cfg_close hover" hint="Close" aria-label="Close">&times;</button>
-<h3 class="music_audio_heading"><%= &subs::lang('music.audio') %></h3>
+<div class="music_cfg_bar" hint="Drag here to move this panel">
+	<span class="music_cfg_bar_title"><%= &subs::lang('music.audio') %></span>
+	<button type="button" id="music_audio_close" class="music_cfg_close hover" hint="Close" aria-label="Close">&times;</button>
+</div>
 <div class="music_cfg_section">
 	<h4 class="music_cfg_heading"><%= &subs::lang('music.output') %></h4>
 	<div id="music_audio_output" class="music_cfg_chips">

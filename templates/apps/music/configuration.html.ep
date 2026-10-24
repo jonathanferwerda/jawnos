@@ -18,7 +18,10 @@
 <% my $layout = $crate->{'settings'}->{'layout'} || 'list'; %>
 <% my $library = $crate->{'settings'}->{'library'} || 'local'; %>
 <% my $normalize = $crate->{'settings'}->{'normalize'} || 'off'; %>
-<button type="button" id="music_configuration_close" class="music_cfg_close hover" hint="Close" aria-label="Close">&times;</button>
+<div class="music_cfg_bar" hint="Drag here to move this panel">
+	<span class="music_cfg_bar_title"><%= &subs::lang('music.configuration') %></span>
+	<button type="button" id="music_configuration_close" class="music_cfg_close hover" hint="Close" aria-label="Close">&times;</button>
+</div>
 <div class="music_cfg_section">
 	<h4 class="music_cfg_heading"><%= &subs::lang('music.folders') %></h4>
 	<div id="music_folders" class="music_cfg_chips">

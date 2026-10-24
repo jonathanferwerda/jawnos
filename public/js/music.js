@@ -872,6 +872,44 @@ $(document).on('input', '#music_eq_bass', function() {
 	musicEqualizerChanged();
 });
 
+// The configuration and Audio drawers are dragged by the bar across their top,
+// the way the Guide's associate is dragged by its header. The bar's own controls
+// are left alone, a few pixels of travel are needed before a drag begins, and
+// the sheet stays inside the window that owns it.
+function musicConfigBounds(panel) {
+	var parent = panel.offsetParent();
+	var origin = parent.length ? parent.offset() : { left: 0, top: 0 };
+	var width = parent.length ? parent.outerWidth() : $(window).width();
+	var height = parent.length ? parent.outerHeight() : $(window).height();
+	var left = 0, top = 0;
+	// keep the sheet clear of the window's title bar
+	var content = panel.closest('.window_contents');
+	if (content.length) {
+		var c = content.offset();
+		left = Math.max(0, c.left - origin.left);
+		top = Math.max(0, c.top - origin.top);
+	}
+	return { left: left, top: top, right: Math.max(left, width), bottom: Math.max(top, height) };
+}
+function musicConfigDraggable() {
+	$('#music_configuration, #music_audio_panel').filter(':not([cfg_drag_armed])').each(function () {
+		var panel = $(this);
+		panel.attr('cfg_drag_armed', '1');
+		panel.draggable({
+			handle: '.music_cfg_bar',
+			// a tap on the bar must not move the sheet
+			distance: 8,
+			cancel: 'button, input, select, textarea, label, a',
+			drag: function (e, ui) {
+				var w = $(this).outerWidth(), h = $(this).outerHeight();
+				var b = musicConfigBounds($(this));
+				ui.position.left = Math.max(b.left, Math.min(ui.position.left, b.right - w));
+				ui.position.top = Math.max(b.top, Math.min(ui.position.top, b.bottom - h));
+			}
+		});
+	});
+}
+
 // Is the window wearing the phone's own draw? The template says so on #music
 // (see apps/music/music.html.ep): the shelves are one-line strips and the list
 // runs from under them to the player, all of it inline. The desktop's geometry
@@ -1005,6 +1043,8 @@ function musicToggle(files, same_order) {
 
 async function musicInit(method) {
 	treeMaker();
+	// the drawers ship with their bars, so arm their drag once the window is up
+	musicConfigDraggable();
 	// the equalizer's saved curve and the panel's sliders
 	musicEqualizerLoad();
 	// The Audio drawer is fetched from this machine and is also where the saved

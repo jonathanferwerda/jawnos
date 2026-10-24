@@ -517,10 +517,41 @@ body.dark_theme #music {
 	color: var(--ink);
 	box-shadow: 0 18px 40px rgba(0, 0, 0, .32);
 }
+/* The bar across the top is the drawer's handle, the way the Guide's associate
+   is grabbed by its header: the title keeps the space and the close button
+   stays a button, so a press on the X never starts a drag. */
+#music .music_cfg_bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	margin: -14px -14px 12px;
+	padding: 6px 8px 6px 12px;
+	border-bottom: 1px solid var(--music-line-soft);
+	border-radius: 14px 14px 0 0;
+	background: var(--panel-2, var(--panel));
+	cursor: grab;
+	user-select: none;
+	-webkit-user-select: none;
+	touch-action: none;
+}
+#music .music_cfg_bar:active { cursor: grabbing; }
+#music .music_cfg_drawer.ui-draggable-dragging .music_cfg_bar { cursor: grabbing; }
+#music .music_cfg_bar_title {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	font-weight: 700;
+	letter-spacing: .04em;
+	opacity: .85;
+}
 #music .music_cfg_close {
-	position: absolute;
-	top: 8px;
-	right: 8px;
+	flex: 0 0 auto;
 	width: 28px;
 	height: 28px;
 	padding: 0;
@@ -680,12 +711,7 @@ body.dark_theme #music {
    equaliser. The output chips, the remote format and the lip-sync switch moved
    here from the configuration drawer. */
 #music #music_audio_panel { width: min(430px, 96%); }
-#music #music_audio_panel .music_audio_heading {
-	margin: 0 0 10px;
-	font-size: 15px;
-	font-weight: 700;
-	color: var(--ink);
-}
+
 #music #music_audio_panel .music_cfg_section:first-of-type { margin-top: 4px; }
 #music .music_eq_presets {
 	display: flex;
