@@ -956,7 +956,8 @@ function musicStreamOutputsChanged() {
 var musicAhead = {
 	el: null, source: null, chain: null, src: '', ready: false, starting: false,
 	failed: false, failedAt: 0, gen: 0, timer: 0, retryTimer: 0, waiters: [], waitTimer: 0,
-	target: 0, err: 0, seekAt: 0, seekCount: 0, rate: 1, hold: false, mode: ''
+	target: 0, err: 0, seekAt: 0, seekCount: 0, rate: 1, hold: false, mode: '',
+	base: 2.0, maxDelay: 8.0, snap: false
 };
 // The lead reads the same /play source through its own copy of the chain.
 // Music.pl answers `ahead=1` with a fixed whole-file Range, so the element can
@@ -1079,8 +1080,9 @@ function musicStreamLead() {
 // ahead element carrying the remote, that is its clock, not the picture's; the
 // receiver's answer is therefore the pipeline delay rather than an error.
 function musicTapMedia() {
-	if (musicStreamTap.source == 'ahead' && musicAhead.ready && musicAhead.el) {
-		return musicAhead.el.currentTime || 0;
+	if (musicStreamTap.source == 'ahead' && musicAhead.ready && tree && tree.sound) {
+		// the content the delayed tap is carrying, not the lead element's clock
+		return (tree.sound.currentTime || 0) + musicAhead.target;
 	}
 	return (tree && tree.sound) ? (tree.sound.currentTime || 0) : 0;
 }
@@ -1142,10 +1144,12 @@ function musicAheadChain() {
 		eqBass: ctx.createBiquadFilter(),
 		limiter: ctx.createDynamicsCompressor(),
 		out: ctx.createGain(),
+		delay: ctx.createDelay(10.0),
 		sink: ctx.createGain()
 	};
 	c.sink.gain.value = 0;
 	c.out.gain.value = musicRemoteVolume();
+	c.delay.delayTime.value = 0;
 	var prev = c.makeup;
 	for (var i = 0; i < music_eq_freqs.length; i++) {
 		var f = ctx.createBiquadFilter();
@@ -1165,7 +1169,11 @@ function musicAheadChain() {
 	c.compressor.connect(c.leveler);
 	c.leveler.connect(c.makeup);
 	c.limiter.connect(c.out);
-	// pull the chain even when no tap is attached yet
+	// The tap reads through a delay, not the element itself. The delay trims
+	// the lead smoothly; seeking the element to chase every drift was what
+	// clicked every few seconds. The zero-gain sink keeps the chain pulled
+	// even while no tap is attached.
+	c.out.connect(c.delay);
 	c.out.connect(c.sink);
 	c.sink.connect(ctx.destination);
 	musicAhead.chain = c;
@@ -1191,7 +1199,8 @@ function musicStreamTapSource(want) {
 	try { if (musicVisual.remoteGain) { musicVisual.remoteGain.disconnect(node); } } catch (e) {}
 	try { if (musicVisual.limiter) { musicVisual.limiter.disconnect(node); } } catch (e) {}
 	try { if (musicAhead.chain) { musicAhead.chain.out.disconnect(node); } } catch (e) {}
-	if (ahead) { musicAhead.chain.out.connect(node); return; }
+	try { if (musicAhead.chain) { musicAhead.chain.delay.disconnect(node); } } catch (e) {}
+	if (ahead) { musicAhead.chain.delay.connect(node); return; }
 	if (musicVisual.remoteGain) { musicVisual.remoteGain.connect(node); }
 	else if (musicVisual.limiter) { musicVisual.limiter.connect(node); }
 }
@@ -1202,7 +1211,8 @@ function musicOpusSource() {
 	try { if (musicVisual.remoteGain) { musicVisual.remoteGain.disconnect(dest); } } catch (e) {}
 	try { if (musicVisual.limiter) { musicVisual.limiter.disconnect(dest); } } catch (e) {}
 	try { if (musicAhead.chain) { musicAhead.chain.out.disconnect(dest); } } catch (e) {}
-	if (musicOpus.source == 'ahead') { musicAhead.chain.out.connect(dest); return; }
+	try { if (musicAhead.chain) { musicAhead.chain.delay.disconnect(dest); } } catch (e) {}
+	if (musicOpus.source == 'ahead') { musicAhead.chain.delay.connect(dest); return; }
 	if (musicVisual.remoteGain) { musicVisual.remoteGain.connect(dest); }
 	else if (musicVisual.limiter) { musicVisual.limiter.connect(dest); }
 }
@@ -1234,6 +1244,7 @@ function musicAheadStop() {
 	musicAhead.starting = false;
 	musicAhead.hold = false;
 	musicAhead.src = '';
+	musicAhead.snap = false;
 	clearInterval(musicAhead.timer);
 	musicAhead.timer = 0;
 	if (musicAhead.el) {
@@ -1262,6 +1273,7 @@ function musicAheadForget() {
 	if (musicAhead.source) { try { musicAhead.source.disconnect(); } catch (e) {} }
 	if (musicAhead.chain) {
 		try { musicAhead.chain.out.disconnect(); } catch (e) {}
+		try { musicAhead.chain.delay.disconnect(); } catch (e) {}
 		try { musicAhead.chain.sink.disconnect(); } catch (e) {}
 	}
 	if (musicAhead.el && musicAhead.el.parentNode) { musicAhead.el.parentNode.removeChild(musicAhead.el); }
@@ -1270,46 +1282,71 @@ function musicAheadForget() {
 	musicAhead.chain = null;
 }
 
-// Put the lead element at the player's position plus the lead. The element is
-// the source of the stream, so its playback rate must stay at 1: slowing it
-// starves the receiver's buffer (the phone underran and then reported a huge
-// lag) and speeding it makes the buffer grow. A position error is corrected by
-// a small, rare seek instead, which leaves the stream at real time.
+// Keep the remote tap on the player's position plus the lead, without clicking.
+// The lead element plays at real time; a delay after its chain does the trim.
+// The element is parked `base` seconds ahead of the wanted content, so normal
+// drift moves the delay by a few milliseconds and is ramped (a small pitch
+// glide), while the stream itself never stops. A seek is used only to re-anchor
+// after a real jump (start, track, main seek), or if the element falls so far
+// behind that a delay cannot reach it.
 function musicAheadLead(hard) {
 	var el = musicAhead.el, main = tree && tree.sound;
 	if (!el || !main || !musicAhead.ready) { return; }
+	var chain = musicAhead.chain;
+	if (!chain || !chain.delay) { return; }
 	if (el.ended) { try { el.playbackRate = 1; } catch (e) {} return; }
+	try { if (el.playbackRate != 1) { el.playbackRate = 1; } } catch (e) {}
+	musicAhead.rate = 1;
 	var want = (main.currentTime || 0) + musicAhead.target;
 	var dur = main.duration || 0;
 	if (dur > 0) { want = Math.min(want, Math.max(0, dur - 0.05)); }
-	// a negative lead lets the element read earlier in the file; at the very
-	// start there is no earlier frame, so hold the first one instead
 	want = Math.max(0, want);
+	var base = musicAhead.base;
 	var err = want - (el.currentTime || 0);
-	musicAhead.err = err;
-	try { if (el.playbackRate != 1) { el.playbackRate = 1; } } catch (e) {}
-	musicAhead.rate = 1;
+	var d = hard ? base : -err;          // the delay that puts the tap at `want`
+	var seek = hard || d < -0.05 || d > musicAhead.maxDelay;
+	if (seek) {
+		var now = Date.now();
+		if (!hard && el.seeking) { return; }
+		if (!hard && now - (musicAhead.seekAt || 0) < 2000) { return; }
+		musicAhead.seekAt = now;
+		musicAhead.seekCount++;
+		try { el.currentTime = want + base; } catch (e) {}
+		musicAhead.snap = true;
+		err = -base;
+		d = base;
+		// while the seek runs the old position is still what comes out, so park
+		// the delay where the new position will want it; the next tick snaps
+		try { chain.delay.delayTime.value = d; } catch (e) {}
+		musicAhead.err = err + d;
+		return;
+	}
 	if (el.seeking) { return; }
-	var now = Date.now();
-	// a small error is inaudible; a big one is a jump, but not more often than
-	// every second and a half, and never while a seek is still running
-	if (!hard && now - (musicAhead.seekAt || 0) < 1500) { return; }
-	if (!hard && Math.abs(err) < 0.15) { return; }
-	musicAhead.seekAt = now;
-	musicAhead.seekCount++;
-	try { el.currentTime = want; } catch (e) {}
+	if (d < 0) { d = 0; }
+	if (d > musicAhead.maxDelay) { d = musicAhead.maxDelay; }
+	// what the tap still leads or trails after the delay trims it
+	musicAhead.err = err + d;
+	var cur = 0;
+	try { cur = chain.delay.delayTime.value || 0; } catch (e) {}
+	if (musicAhead.snap) {
+		musicAhead.snap = false;
+		try { chain.delay.delayTime.value = d; } catch (e) {}
+		return;
+	}
+	// A jump spread over this time moves the pitch by about two percent at
+	// most: a soft glide instead of the click a seek made.
+	var tau = Math.abs(d - cur) / 0.02;
+	if (!(tau > 0.2)) { tau = 0.2; }
+	if (tau > 4) { tau = 4; }
+	try { chain.delay.delayTime.setTargetAtTime(d, chain.delay.context.currentTime, tau); }
+	catch (e) { try { chain.delay.delayTime.value = d; } catch (e2) {} }
 }
 
-// Follow a new lead. A change of more than 150 ms is a real jump in the
-// measured pipeline (or a Sync offset move), not drift: re-anchor once, with
-// a throttle so a series of reports cannot make it chase its own seek. Smaller
-// changes are left to musicAheadLead's own error test.
+// Follow a new lead. The delay absorbs the change; musicAheadLead only seeks
+// when the requested position is out of the delay's reach.
 function musicAheadRetune(lead) {
-	var prev = musicAhead.target;
 	musicAhead.target = lead;
-	var diff = lead - prev;
-	var hard = (diff > 0.15 || diff < -0.3) && (Date.now() - (musicAhead.seekAt || 0) > 2000);
-	musicAheadLead(hard);
+	musicAheadLead(false);
 }
 
 // Resolve a possibly-relative media URL the way the element will; comparing an
@@ -1511,9 +1548,10 @@ function musicAheadResume() {
 	if (musicAheadSourceChanged()) { return; }
 	if (musicAhead.ready) {
 		// The receiver starts a fresh player on a resume, so the lead it can use
-		// is the freshly measured one, not the one from before the pause.
+		// is the freshly measured one, not the one from before the pause. The
+		// delay absorbs the change; a seek here would click on every resume.
 		musicAhead.target = musicStreamLead();
-		musicAheadLead(true);
+		musicAheadLead(false);
 		var p = null;
 		try { p = musicAhead.el.play(); } catch (e) {}
 		if (p && p.catch) { p.catch(function() {}); }
