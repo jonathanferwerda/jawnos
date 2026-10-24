@@ -103,7 +103,7 @@ function musicVolumeApply() {
 // audio-only lead element running just ahead of the picture instead of the
 // player's own sound (see musicAhead).
 var musicStream = {
-	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0, latencies: {}, measured: {},
+	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0, latencies: {}, measured: {}, starts: {},
 	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm', markSeq: 0,
 	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0, resumeTimer: 0, seekTimer: 0
 };
@@ -298,12 +298,18 @@ function musicStreamConnect() {
 		musicStream.latency = (musicStream.codec == 'opus') ? 300 : 0;
 		musicStream.latencies = {};
 		musicStream.measured = {};
+		musicStream.starts = {};
 		musicStream.ready = {};
 		musicStream.failed = {};
 		musicStreamRetryClear();
 		musicStreamSendJson(musicStreamHello());
 		musicStreamMark();
-		if (musicStream.codec != 'opus') { musicStreamTapActive(true, true); }
+		if (musicStream.codec != 'opus') {
+			// the lead may have become ready while the socket was connecting, after
+			// the start chose the live tap; take it now, before audio flows
+			musicStreamTapSource(musicAhead.ready ? 'ahead' : 'local');
+			musicStreamTapActive(true, true);
+		}
 		else {
 			// do not wait forever on an unreachable output; start for the ones
 			// that answered, and a later one will be marked closed
@@ -337,8 +343,25 @@ function musicStreamConnect() {
 			musicStreamOutputReady(d.key);
 			musicAheadRetarget();
 		}
+		else if (d.type == 'mark_now') {
+			// a receiver has just started; a beacon now lets it report the fresh
+			// pipeline in half a second instead of waiting for the next report
+			musicStreamMark();
+		}
 		else if (d.type == 'sync') {
 			if (!d.key) { return; }
+			// A receiver that restarted its player (a resume, a seek, a dropped
+			// buffer) has a new pipeline. The old measurement belongs to the old
+			// player; keeping it is what leaves the room ahead of the picture
+			// until the slow average catches up.
+			if (d.starts !== undefined) {
+				var prior_starts = musicStream.starts[d.key];
+				musicStream.starts[d.key] = d.starts;
+				if (prior_starts !== undefined && prior_starts != d.starts) {
+					delete musicStream.measured[d.key];
+					musicAhead.seekAt = 0;
+				}
+			}
 			if (d.flushed) {
 				// the receiver threw its stale buffer away to get back near live;
 				// the next report measures the fresh player
@@ -360,7 +383,12 @@ function musicStreamConnect() {
 			var lag = Math.max(0, (d.lag_ms || 0) + (d.rtt_ms || 0));
 			var prev = musicStream.measured[d.key];
 			var ms;
-			if (!prev) { ms = Math.round(lag); }
+			if (!prev) {
+				// a new pipeline (or one whose measurement went stale): adopt it
+				// at once, and let the lead re-anchor without the usual throttle
+				ms = Math.round(lag);
+				musicAhead.seekAt = 0;
+			}
 			else {
 				// The pipeline moves slowly and the pipe's own jitter is not worth
 				// chasing; a slow average keeps the lead steady. A single stalled
@@ -476,6 +504,25 @@ function musicVideoWatch(el) {
 	el.addEventListener('canplay', settled);
 	el.addEventListener('seeked', settled);
 }
+// A `waiting` event marks a stalled picture, but there is no event when the
+// stall ends if the picture simply resumes. The mark stops the beacons (the
+// clock had stopped while the tap kept sending), so a mark left behind goes
+// stale and the lead falls back to a ping that is no longer the pipeline. The
+// lead's own 250 ms tick can clear it, but that tick does not run when the lead
+// element is not ready or has failed. Every caller that cares asks here.
+function musicStallClear() {
+	var v = tree && tree.sound;
+	if (!musicVideoStats.waitAt) { return false; }
+	if (!v || v.paused || v.ended) { return false; }
+	if ((v.currentTime || 0) > (musicVideoStats.waitCt || 0) + 0.2) {
+		musicVideoStats.stalled_ms += Date.now() - musicVideoStats.waitAt;
+		musicVideoStats.waitAt = 0;
+		musicVideoStats.waitCt = 0;
+		return true;
+	}
+	return false;
+}
+
 // Sample the picture twice a second. A run of near-black while the picture is
 // on screen is the blackout being reported; counting it is what lets a trace
 // separate a decoder stall from a dark scene.
@@ -517,6 +564,8 @@ function musicSyncBlackTick() {
 }
 function musicSyncReport() {
 	if (!musicStream.active) { return; }
+	// a picture that has moved on is not stalled any more; let the beacon go
+	if (musicStallClear()) { musicAheadResume(); }
 	// a beacon every report; the receiver's answer is what the picture follows
 	musicStreamMark();
 	var v = tree && tree.sound;
@@ -589,7 +638,10 @@ function musicSyncWatchStart() {
 // falls behind and only a fresh play/pause brings it back, so put it right on
 // a short watch instead of waiting for the next event.
 function musicStreamResumeWatch() {
-	if (!musicStream.active || !musicStream.paused) { return; }
+	if (!musicStream.active) { return; }
+	// a stall whose end event was missed clears here within half a second
+	if (musicStallClear()) { musicAheadResume(); musicStreamMark(); }
+	if (!musicStream.paused) { return; }
 	var v = tree && tree.sound;
 	if (!v || v.paused || v.ended) { return; }
 	if (!musicStreamOutputs().length) { return; }
@@ -638,8 +690,18 @@ function musicStreamStart(file, seek) {
 	musicStream.codec = opus ? 'opus' : 'pcm';
 	musicStream.latency = opus ? 300 : 0;
 	musicStream.latencies = {};
+	musicStream.measured = {};
+	musicStream.starts = {};
 	musicStream.ready = {};
 	musicStream.failed = {};
+	// A new stream is a fresh try at the lead. A load cut short by a suspended
+	// page or a busy disk used to disable the lead for the rest of the track,
+	// which left the room tapping the live picture - a whole picture-lag ahead.
+	// The cooldown keeps a genuine failure from restarting Opus in a loop.
+	if (musicAhead.failed && Date.now() - (musicAhead.failedAt || 0) > 5000) {
+		musicAhead.failed = false;
+		musicAhead.failedAt = 0;
+	}
 	musicStreamRetryClear();
 	musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0, sent: 0, sentBytes: 0 };
 	musicVideoStats.waits = 0;
@@ -659,22 +721,20 @@ function musicStreamStart(file, seek) {
 		// calls back in once it is running
 		if (!ok) { return; }
 		musicStream.attached = true;
-		var begin = function(ahead) {
-			if (!musicStream.active) { return; }
-			musicStreamTapSource(ahead ? 'ahead' : 'local');
-			musicOpusSource();
-			musicStreamConnect();
-			if (!opus) { musicStreamTapActive(true, true); }
-			if (ahead) { musicAheadResume(); }
-		};
-		// The lead element is loaded before the socket opens, so the first
-		// samples a receiver hears are the lead and not the live picture. A
-		// source that does not answer falls back to this machine's own tap.
 		var want_ahead = !musicAhead.failed
 			&& tree && tree.songs && tree.songs[0] && tree.songs[0].type == 'video'
 			&& tree.sound && tree.sound.tagName && tree.sound.tagName.toLowerCase() == 'video';
-		if (want_ahead) { musicAheadWait(function(ready) { begin(ready); }, 2500); }
-		else { begin(false); }
+		// Start on whatever source is ready this instant and load the lead in the
+		// background. Waiting for it here made a first play open the socket up to
+		// two and a half seconds late; the ready handler below switches the live
+		// tap to the lead (and flushes the receiver) as soon as it arrives.
+		var use_ahead = want_ahead && musicAhead.ready;
+		musicStreamTapSource(use_ahead ? 'ahead' : 'local');
+		musicOpusSource();
+		musicStreamConnect();
+		if (!opus) { musicStreamTapActive(true, true); }
+		if (use_ahead) { musicAheadResume(); }
+		else if (want_ahead) { musicAheadStart(); }
 	});
 	return true;
 }
@@ -799,7 +859,13 @@ function musicStreamControl(action, extra) {
 	if (action == 'pause') {
 		musicStream.paused = true;
 		musicAheadPause();
-		if (musicStream.codec != 'opus') { musicStreamTapActive(false); }
+		if (musicStream.codec != 'opus') {
+			musicStreamTapActive(false);
+			// the receiver stops pacat here and starts a fresh one on resume; a
+			// measurement from the old player would lead the new one too far
+			musicStream.measured = {};
+			musicRemoteDelayShow();
+		}
 	}
 	if (action == 'resume') {
 		musicStream.paused = false;
@@ -825,10 +891,11 @@ function musicStreamMark() {
 	var v = tree && tree.sound;
 	if (!v || v.paused || v.ended) { return; }
 	// A stalled picture has a frozen clock while the tap keeps sending silence;
-	// a mark then would name audio that is not what is arriving. The resume
-	// sends a fresh one. A lead element in the middle of a correction is the
-	// same: its clock has jumped, the samples have not.
-	if (musicVideoStats.waitAt) { return; }
+	// a mark then would name audio that is not what is arriving. A clock that
+	// has moved on means the stall was over even if its event never came. A lead
+	// element in the middle of a correction is the same: its clock has jumped,
+	// the samples have not.
+	if (musicVideoStats.waitAt && !musicStallClear()) { return; }
 	if (musicAhead.ready && musicAhead.el && musicAhead.el.seeking) { return; }
 	musicStream.markSeq = (musicStream.markSeq || 0) + 1;
 	musicStreamSendJson({ type: 'mark', seq: musicStream.markSeq, media_ms: Math.round(musicTapMedia() * 1000) });
@@ -888,15 +955,12 @@ function musicStreamOutputsChanged() {
 // trim moves the sound later (positive) or earlier (negative).
 var musicAhead = {
 	el: null, source: null, chain: null, src: '', ready: false, starting: false,
-	failed: false, gen: 0, timer: 0, retryTimer: 0, waiters: [], waitTimer: 0,
-	target: 0, err: 0, seekAt: 0, seekCount: 0, rate: 1, hold: false,
-	blobUrl: '', blobFor: '', noBlobFor: '', controller: null, mode: ''
+	failed: false, failedAt: 0, gen: 0, timer: 0, retryTimer: 0, waiters: [], waitTimer: 0,
+	target: 0, err: 0, seekAt: 0, seekCount: 0, rate: 1, hold: false, mode: ''
 };
-// A complete copy is held in memory only up to this size. A progressive
-// response's seekable window moves with the buffer, and the lead has to be
-// able to read behind the player; a Blob is seekable at once. A larger file is
-// streamed instead, where a backward seek may clamp to the live edge.
-var musicAheadMaxBlob = 256 * 1024 * 1024;
+// The lead reads the same /play source through its own copy of the chain.
+// Music.pl answers `ahead=1` with a fixed whole-file Range, so the element can
+// seek freely - including backwards, which a negative lead needs.
 
 // The presented picture lags the element's clock. The browser keeps its own
 // sound with the picture, but once the sound goes through Web Audio (any
@@ -1145,7 +1209,6 @@ function musicAheadStop() {
 		try { musicAhead.el.removeAttribute('src'); musicAhead.el.load(); } catch (e) {}
 	}
 	musicAheadSettle(false);
-	if (musicAhead.controller) { try { musicAhead.controller.abort(); } catch (e) {} musicAhead.controller = null; }
 	musicAhead.mode = '';
 	musicStreamTapSource('local');
 	musicOpusSource();
@@ -1164,9 +1227,6 @@ function musicAheadForget() {
 	clearTimeout(musicAhead.retryTimer);
 	musicAhead.retryTimer = 0;
 	musicAheadStop();
-	if (musicAhead.blobUrl) { try { URL.revokeObjectURL(musicAhead.blobUrl); } catch (e) {} musicAhead.blobUrl = ''; }
-	musicAhead.blobFor = '';
-	musicAhead.noBlobFor = '';
 	if (musicAhead.source) { try { musicAhead.source.disconnect(); } catch (e) {} }
 	if (musicAhead.chain) {
 		try { musicAhead.chain.out.disconnect(); } catch (e) {}
@@ -1290,10 +1350,12 @@ function musicAheadStart() {
 	musicAhead.target = lead;
 	musicAhead.mode = '';
 	if (changed) { try { el.pause(); } catch (e) {} }
-	// A whole-file Range response (Music.pl forces one for ahead=1) is fixed, but
-	// a progressive response's seekable window moves with the buffer. A Blob is
-	// seekable at once and lets the lead read behind the player, which a negative
-	// lead needs; a larger file streams and may clamp at the live edge.
+	// A whole-file Range response (Music.pl forces one for ahead=1) is fixed and
+	// seekable, so the lead reads the file itself. It used to fetch the whole
+	// file into a Blob first; on a busy disk that took long enough to miss the
+	// start, and a load cut short (a suspended page, a stall) failed for the
+	// rest of the track - which left the room on the live tap, a picture-lag
+	// ahead of the screen.
 	var url = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'ahead=1';
 	var attach = function(mediaUrl, mode) {
 		if (gen !== musicAhead.gen) { return; }
@@ -1327,40 +1389,7 @@ function musicAheadStart() {
 		setTimeout(function() { if (gen === musicAhead.gen && !musicAhead.ready) { musicAheadFailed(); } }, 8000);
 		el.src = mediaUrl;
 	};
-	if (musicAhead.blobFor == src && musicAhead.noBlobFor == src) {
-		attach(url, 'stream');
-	}
-	else if (musicAhead.blobUrl && musicAhead.blobFor == src) {
-		attach(musicAhead.blobUrl, 'blob');
-	}
-	else {
-		if (musicAhead.controller) { try { musicAhead.controller.abort(); } catch (e) {} musicAhead.controller = null; }
-		if (musicAhead.blobUrl) { try { URL.revokeObjectURL(musicAhead.blobUrl); } catch (e) {} musicAhead.blobUrl = ''; }
-		musicAhead.blobFor = src;
-		var ctrl = (typeof AbortController != 'undefined') ? new AbortController() : null;
-		musicAhead.controller = ctrl;
-		var opts = { credentials: 'same-origin' };
-		if (ctrl) { opts.signal = ctrl.signal; }
-		fetch(url, opts).then(function(res) {
-			if (!res.ok && res.status != 206) { throw new Error('play ' + res.status); }
-			var len = parseInt(res.headers.get('Content-Length') || '0', 10);
-			if (!len || len > musicAheadMaxBlob) {
-				musicAhead.noBlobFor = src;
-				if (ctrl) { try { ctrl.abort(); } catch (e) {} }
-				throw new Error('too big');
-			}
-			return res.blob();
-		}).then(function(blob) {
-			if (gen !== musicAhead.gen) { return; }
-			musicAhead.controller = null;
-			musicAhead.blobUrl = URL.createObjectURL(blob);
-			attach(musicAhead.blobUrl, 'blob');
-		}).catch(function() {
-			if (gen !== musicAhead.gen) { return; }
-			musicAhead.controller = null;
-			attach(url, 'stream');
-		});
-	}
+	attach(url, 'stream');
 	clearInterval(musicAhead.timer);
 	musicAhead.timer = setInterval(musicAheadTick, 250);
 }
@@ -1373,11 +1402,7 @@ function musicAheadTick() {
 		// picture's clock has moved since then, the stall is over even if its
 		// playing/canplay event was missed; do not stay paused for the rest of
 		// the track.
-		var v = tree && tree.sound;
-		if (musicVideoStats.waitAt && v && !v.paused && (v.currentTime || 0) > (musicVideoStats.waitCt || 0) + 0.2) {
-			musicVideoStats.waitAt = 0;
-			musicVideoStats.waitCt = 0;
-		}
+		musicStallClear();
 		if (musicVideoStats.waitAt) { return; }
 		musicAhead.hold = false;
 	}
@@ -1400,12 +1425,12 @@ function musicAheadRestart() {
 }
 function musicAheadFailed() {
 	musicAhead.failed = true;
+	musicAhead.failedAt = Date.now();
 	musicAheadStop();
 	musicAheadSettle(false);
 	if (!musicStream.active) { return; }
-	// The tap falls back to the live picture. PCM can drop the queued lead at
-	// once; Opus needs a fresh WebM header for every receiver, so restart the
-	// stream, which keeps the live tap because the ahead has failed.
+	// The tap falls back to the live picture, which is a whole picture-lag
+	// ahead of the room; the retarget below retries the lead after a rest.
 	if (musicStream.codec == 'opus') { musicAheadRestart(); return; }
 	musicStreamTapActive(true, true);
 	musicStreamSendJson({ type: 'control', action: 'flush' });
@@ -1417,7 +1442,17 @@ function musicAheadRetarget() {
 		if (musicAhead.ready) { musicAheadStop(); }
 		return;
 	}
-	if (musicAhead.failed) { return; }
+	if (musicAhead.failed) {
+		// A failed load is often transient - a suspended page, a busy disk. Try
+		// again after a rest, or the room stays on the live tap for the rest of
+		// the track, which is a whole picture-lag ahead of the screen.
+		if (Date.now() - (musicAhead.failedAt || 0) > 30000) {
+			musicAhead.failed = false;
+			musicAhead.failedAt = 0;
+			musicAheadStart();
+		}
+		return;
+	}
 	if (musicAheadSourceChanged()) { return; }
 	if (musicStream.paused || (tree.sound && tree.sound.paused)) {
 		musicAheadPause();
@@ -1443,6 +1478,9 @@ function musicAheadResume() {
 	if (!musicAheadRunning()) { return; }
 	if (musicAheadSourceChanged()) { return; }
 	if (musicAhead.ready) {
+		// The receiver starts a fresh player on a resume, so the lead it can use
+		// is the freshly measured one, not the one from before the pause.
+		musicAhead.target = musicStreamLead();
 		musicAheadLead(true);
 		var p = null;
 		try { p = musicAhead.el.play(); } catch (e) {}
@@ -2207,6 +2245,12 @@ function mediaMaker(data) {
 				musicVolumeApply();
 				// a new file gets a fresh try at the ahead tap even if the last one failed
 				musicAhead.failed = false;
+				musicAhead.failedAt = 0;
+				// a new file has its own presentation lag; the last track's measurement
+				// must not hold Me back or lead the room until this one is measured
+				musicPicture.lag = 0;
+				musicPicture.raw = 0;
+				musicPicture.at = 0;
 
 				if (tree.songs[0].remote_uuid) {
 					url += '&remote_uuid=' + tree.songs[0].remote_uuid;
@@ -2386,7 +2430,10 @@ function mediaMaker(data) {
 						if (tree.songs[0] && last_cursor != null && last_wall) {
 							var moved = cursor - last_cursor;
 							var elapsed = (now_ms - last_wall) / 1000;
-							if (Math.abs(moved - elapsed) > 2) {
+							// A seek jumps the clock. A stalled decoder - or an interval the
+							// page was too busy to run - leaves it where it was, and used to
+							// be reported as a seek, restarting the stream at every stall.
+							if (!musicVideoStats.waitAt && Math.abs(moved) > 0.25 && Math.abs(moved - elapsed) > 2) {
 								remoteTrackToggle({
 									file: tree.songs[0].file,
 									toggle: 'seek',
@@ -2480,18 +2527,36 @@ function remoteTrackToggle(data) {
 	}
 	if (toggle == 'seek') {
 		if (musicStream.active) {
+			// The receiver starts a fresh player at the new position; the measurement
+			// from the player it just left would lead the new one too far.
+			musicStream.measured = {};
+			musicRemoteDelayShow();
+			// a user seek is a good moment to give a failed lead another try
+			if (musicAhead.failed && Date.now() - (musicAhead.failedAt || 0) > 2000) {
+				musicAhead.failed = false;
+				musicAhead.failedAt = 0;
+			}
+			musicAhead.target = musicStreamLead();
 			musicAheadSeek();
 			musicStreamTapActive(true, true);
 			musicStreamControl('seek', { seek: seek, file: file, music_data: data['music_data'] || tree.songs[0] });
-			// A seek is the one place the receiver's buffer is simply stale: the
-			// old audio is already queued there and the new position is behind it.
-			// Let a drag settle, then give both ends a fresh stream at the position
-			// the listener stopped on, which is what a manual output toggle did.
+			// A seek is the one place the receiver's buffer is simply stale, but the
+			// seek control already stops its pacat and starts a fresh one, so PCM is
+			// flushed there. Only Opus needs a new stream: it is one continuous WebM
+			// and nothing in it can reset the decoder at a seek. A whole restart for
+			// PCM cost a second of silence and reopened every output - the very thing
+			// that left the room out of step after a seek.
 			clearTimeout(musicStream.seekTimer);
-			musicStream.seekTimer = setTimeout(function() {
-				musicStream.seekTimer = 0;
-				if (musicStream.active) { musicStreamRestart(); }
-			}, 400);
+			musicStream.seekTimer = 0;
+			if (musicStream.codec == 'opus') {
+				musicStream.seekTimer = setTimeout(function() {
+					musicStream.seekTimer = 0;
+					if (musicStream.active) { musicStreamRestart(); }
+				}, 400);
+			}
+			// the interval must not report this same jump again as it ticks
+			tree.sound.sync_cursor = seek;
+			tree.sound.sync_wall = Date.now();
 		}
 		return;
 	}

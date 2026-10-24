@@ -811,6 +811,10 @@ sub music_source_client_open($c, $st, $key, $channel) {
 					sink_ms => ($d->{'sink_ms'} || 0),
 					age_ms => ($d->{'mark_age_ms'} || 0),
 					seq => ($d->{'mark_seq'} || 0),
+					# which player produced this report: a new one (a resume, a seek,
+					# a dropped buffer) has a new pipeline, and the source must not
+					# keep leading it by the old player's measurement
+					starts => ($d->{'starts'} || 0),
 					paused => ($d->{'paused'} ? 1 : 0),
 					alive => ($d->{'alive'} ? 1 : 0),
 					flushed => ($d->{'flushed'} ? 1 : 0),
@@ -847,6 +851,11 @@ sub music_source_client_open($c, $st, $key, $channel) {
 			}
 			# Ping only once the remote has started its player: the ping is what
 			# measures the pipeline, and it must not include pacat's startup time.
+			if ($kind eq 'ready') {
+				# A beacon now measures the new player before the two-second report
+				# would; the browser sends the samples that frame the mark.
+				eval { $c->tx->send({text => encode_json({ type => 'mark_now', key => $key })}) } if $c->tx->is_websocket;
+			}
 			if ($kind eq 'ready' && !$cl->{'pinged'}) {
 				$cl->{'pinged'} = 1;
 				Mojo::IOLoop->timer(0.4 => sub { &music_source_ping($tx, $cl); });
@@ -1062,6 +1071,17 @@ websocket '/manager/music/stream' => sub ($c) {
 					}
 				}
 				$st->{'mark'} = { seq => ($d->{'seq'} || 0), media_ms => ($d->{'media_ms'} || 0), at => &subs::rightNow(), bytes => $tot };
+				# The first beacon after a player (re)start measures the fresh player.
+				# Answer it soon instead of waiting for the two-second report, so the
+				# source can move the lead before the old pipeline's offset is heard.
+				my $started = $st->{'starts'} || 0;
+				if (($st->{'early_for'} // -1) != $started) {
+					$st->{'early_for'} = $started;
+					Mojo::IOLoop->timer(0.4 => sub {
+						return unless $st->{'stream'} && !$st->{'paused'};
+						&music_rx_report_send($st);
+					});
+				}
 			}
 			elsif ($type eq 'ping') {
 				$c->tx->send({text => encode_json({ type => 'pong', t => $d->{'t'}, base => (($st->{'base'} || 80) + ($st->{'sink_ms'} || 0)) })});
