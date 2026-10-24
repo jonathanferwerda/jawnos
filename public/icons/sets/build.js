@@ -360,6 +360,8 @@ const ICONS = {
 	'logo2': 'power',
 	'bullseye': 'bullseye',
 	'padlock': 'lock',
+	// the sealed-file fallback in Folders (/images/make believe/lock.png)
+	'lock': 'lock',
 	// --- studio instrument / control artwork ---
 	'jtune': 'pedal',
 	'compressionX': 'pedal',

@@ -27814,6 +27814,12 @@ sub folders_property_grabber($data) {
 
 
 
+	# A generic file, a folder, a track, subtitles and a sealed file fall back to
+	# the hand-drawn pictures; an icon set names those same pictures, so the
+	# listing (and the desk drawn from it) wears the chosen set like the rest of
+	# the interface. A generated thumbnail is the file's own picture and stays.
+	if (($file->{'icon'} || '') =~ m{^/(?:images|icons)/}) { $file->{'icon'} = &subs::icon_for($file->{'icon'}); }
+
 	# in list context, so the template can read the mtime the way it reads any
 	# other stat result; a scalar stat here gives back a count, not the fields
 	my @stat = stat($path);

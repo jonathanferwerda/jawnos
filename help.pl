@@ -1075,7 +1075,7 @@ our %topic = (
 		summary => 'A choice of looks for every icon; a theme may carry its own.',
 		body => [
 			'Every icon can be swapped between a set of looks — from the original hand-drawn artwork through cleaner, flatter and frankly sillier sets. New installs start on the clean GNOME-like set; a theme can name its own set, and the Misc choice is what a desk with no theme in force wears.',
-			'Pick one under Configure; the whole interface follows, including the window controls, the phone app\'s handset and camera buttons and the dock\'s own buttons.',
+			'Pick one under Configure; the whole interface follows, including the window controls, the phone app\'s handset and camera buttons and the dock\'s own buttons. The Folders listing and the desk take the set too: a folder, a plain file, an audio track, subtitles and a sealed file each wear the set\'s own picture.',
 			'Each set has a light and a dark cut. While a dark colour scheme (or a dark appointment theme) is in force the dark cut is chosen automatically — the same glyphs, on a plate that does not glare — and it returns to the light cut when the desktop does. The hand-drawn set has no dark cut of its own, so it stays as drawn.'
 		],
 		related => [ 'themes', 'configure' ]
