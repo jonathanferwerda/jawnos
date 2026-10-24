@@ -678,6 +678,8 @@ function musicStreamStop() {
 	musicStream.gap = 0;
 	musicStreamTapActive(false, true);
 	musicAheadStop();
+	clearTimeout(musicAhead.retryTimer);
+	musicAhead.retryTimer = 0;
 	musicOpusStop();
 	musicSyncWatchStop();
 	musicStreamRetryClear();
@@ -722,7 +724,7 @@ function musicStreamOutputsChanged() {
 // picture is never delayed, so there is no second video decoder and no blackout.
 var musicAhead = {
 	el: null, source: null, chain: null, src: '', ready: false, starting: false,
-	failed: false, gen: 0, timer: 0, target: 0, err: 0
+	failed: false, gen: 0, timer: 0, retryTimer: 0, target: 0, err: 0
 };
 
 // The lead to give the remote, from the measured latency of every output that
@@ -838,6 +840,8 @@ function musicAheadStop() {
 	musicOpusSource();
 }
 function musicAheadForget() {
+	clearTimeout(musicAhead.retryTimer);
+	musicAhead.retryTimer = 0;
 	musicAheadStop();
 	if (musicAhead.source) { try { musicAhead.source.disconnect(); } catch (e) {} }
 	if (musicAhead.chain) {
@@ -942,13 +946,14 @@ function musicAheadStart() {
 		if (musicStream.paused || (tree.sound && tree.sound.paused)) { return; }
 		var p = null;
 		try { p = el.play(); } catch (e) {}
-		if (p && p.catch) { p.catch(function() { if (gen === musicAhead.gen) { musicAhead.failed = true; musicAheadStop(); } }); }
+		if (p && p.catch) { p.catch(function() { if (gen === musicAhead.gen) { musicAheadFailed(); } }); }
 	};
-	el.onerror = function() { if (gen === musicAhead.gen && el.src === url) { musicAhead.failed = true; musicAhead.starting = false; musicAheadStop(); } };
+	el.onerror = function() { if (gen === musicAhead.gen && el.src === url) { musicAheadFailed(); } };
 	el.onloadedmetadata = ready;
 	el.oncanplay = ready;
-	// a source that never answers must not leave the live tap switched off
-	setTimeout(function() { if (gen === musicAhead.gen && !musicAhead.ready) { musicAhead.starting = false; musicAheadStop(); } }, 5000);
+	// a source that never answers must not leave the live tap switched off;
+	// one retry is scheduled so a slow load is not permanent
+	setTimeout(function() { if (gen === musicAhead.gen && !musicAhead.ready) { musicAheadFailed(); } }, 5000);
 	el.src = url;
 	clearInterval(musicAhead.timer);
 	musicAhead.timer = setInterval(musicAheadTick, 500);
@@ -960,9 +965,19 @@ function musicAheadTick() {
 	if (musicAhead.el.paused) {
 		var p = null;
 		try { p = musicAhead.el.play(); } catch (e) {}
-		if (p && p.catch) { p.catch(function() { musicAhead.failed = true; musicAheadStop(); }); }
+		if (p && p.catch) { p.catch(function() { musicAheadFailed(); }); }
 	}
 	musicAheadLead(false);
+}
+function musicAheadFailed() {
+	musicAhead.failed = true;
+	musicAheadStop();
+	if (!musicStream.active) { return; }
+	clearTimeout(musicAhead.retryTimer);
+	musicAhead.retryTimer = setTimeout(function() {
+		musicAhead.retryTimer = 0;
+		if (musicStream.active && !musicAhead.ready) { musicAheadStart(); }
+	}, 10000);
 }
 function musicAheadRetarget() {
 	if (!musicStream.active) { if (musicAhead.ready) { musicAheadStop(); } return; }
