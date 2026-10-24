@@ -839,7 +839,7 @@ function musicLipDelayChanged() {
 	if (musicVisual.localDelay) {
 		// wait to delay the local sound until the delayed picture is actually up;
 		// a short ramp keeps the change from clicking
-		var want = (musicLip.on && musicLip.revealed) ? audio : 0;
+		var want = (musicLip.on && musicLip.revealed) ? audio : ((music_local_delay || 0) / 1000);
 		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
 		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
 	}
@@ -1227,8 +1227,9 @@ function musicLipStop() {
 	musicLip.lastStill = '';
 	musicLip.lastStillAt = 0;
 	if (musicVisual.localDelay) {
-		try { musicVisual.localDelay.delayTime.setTargetAtTime(0, musicVisual.ctx.currentTime, 0.08); }
-		catch (e) { try { musicVisual.localDelay.delayTime.value = 0; } catch (e2) {} }
+		var want = (music_local_delay || 0) / 1000;
+		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
+		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
 	}
 	var track = tree && tree.sound && tree.sound.textTracks && tree.sound.textTracks[0];
 	if (track) {
@@ -1258,6 +1259,8 @@ var music_eq_save_timer = 0;
 var music_eq_drag = null;
 var music_audio_loading = false;
 var music_sync_offset = 0;
+var music_local_delay = 0;
+var music_local_delay_save_timer = 0;
 var music_sync_save_timer = 0;
 
 function musicEqualizerClampBand(v) {
@@ -2060,7 +2063,7 @@ function mediaMaker(data) {
 				// on the pause and resumed above, which re-anchors them; the old small
 				// seek here was not enough.
 				var local_side = musicOutputChannel(mao['me']);
-				if ((music_normalize && music_normalize != 'off') || local_side == 'left' || local_side == 'right' || musicEqualizerDirty()) { musicAudioGraph(); }
+				if ((music_normalize && music_normalize != 'off') || local_side == 'left' || local_side == 'right' || musicEqualizerDirty() || music_local_delay > 0) { musicAudioGraph(); }
 				musicBaselineStart();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
@@ -3299,6 +3302,40 @@ $(document).on('input', '#music_sync_offset', function() {
 	musicSyncOffsetSave();
 });
 
+// The local picture can be presented a little after the sound (a decode/vsync
+// lag the browser does not compensate); this waits this machine's own sound by
+// a few milliseconds so it lands with the picture. It is before the remote tap,
+// so remote outputs are not delayed by it.
+function musicLocalDelayRead() {
+	var el = $('#music_local_delay');
+	if (el.length) {
+		var v = parseFloat(el.val());
+		if (isFinite(v)) { music_local_delay = Math.max(0, Math.min(400, v)); }
+		el.val(music_local_delay);
+	}
+	$('#music_local_delay_value').text(music_local_delay + ' ms');
+	musicLocalDelayApply();
+}
+function musicLocalDelaySave() {
+	clearTimeout(music_local_delay_save_timer);
+	music_local_delay_save_timer = setTimeout(function() {
+		settingSetter({ app: 'music', setting: 'local_delay', value: music_local_delay });
+	}, 250);
+}
+function musicLocalDelayApply() {
+	// the delay lives in the shared graph; a setting on its own is what asks for it
+	if (music_local_delay > 0 && !(musicVisual && musicVisual.limiter)) {
+		try { musicAudioGraph(); } catch (e) {}
+	}
+	musicLipDelayChanged();
+}
+$(document).on('input', '#music_local_delay', function() {
+	var v = parseFloat(this.value);
+	if (isFinite(v)) { music_local_delay = Math.max(0, Math.min(400, v)); }
+	musicLocalDelayRead();
+	musicLocalDelaySave();
+});
+
 function musicAudioPanelLoad(show) {
 	var panel = $('#music_audio_panel');
 	if (!panel.length) { return; }
@@ -3318,6 +3355,7 @@ function musicAudioPanelLoad(show) {
 			panel.html(r.html);
 			if (!musicEqualizerFromEqualizer(r.equalizer)) { musicEqualizerLoad(); }
 			musicSyncOffsetRead();
+			musicLocalDelayRead();
 			if (musicEqualizerDirty() && !(musicVisual && musicVisual.limiter)) {
 				try { musicAudioGraph(); } catch (e) {}
 			}
@@ -3623,7 +3661,7 @@ function musicAudioGraph() {
 			musicVisual.localLeft = musicVisual.ctx.createGain();
 			musicVisual.localRight = musicVisual.ctx.createGain();
 			musicVisual.localMerge = musicVisual.ctx.createChannelMerger(2);
-			musicVisual.localDelay.delayTime.value = (musicLip.on && musicLip.revealed) ? (musicLip.audioDelay || 0) : 0;
+			musicVisual.localDelay.delayTime.value = (musicLip.on && musicLip.revealed) ? (musicLip.audioDelay || 0) : ((music_local_delay || 0) / 1000);
 			// The equalizer sits after the leveller and before the limiter, so the
 			// peak guard still catches a boosted band and the remote tap hears the
 			// same curve as this machine. A flat curve is 0 dB on every filter.
@@ -3937,14 +3975,14 @@ function musicNormalizeApply() {
 // reaches the window puts the graph in place and resumes it, so a restored track
 // is not left silent by a context that could not start on its own.
 $(document).on('pointerdown touchstart keydown', function() {
-	if ((music_normalize && music_normalize != 'off') || musicEqualizerDirty()) { musicAudioGraph(); }
+	if ((music_normalize && music_normalize != 'off') || musicEqualizerDirty() || music_local_delay > 0) { musicAudioGraph(); }
 	// a stream left muted by an older build or a failed autoplay is put right
 	// on the first gesture, when WebKit accepts the change
 	if ($('#music').length && tree && tree.sound) { musicVolumeApply(); }
 });
 // A phone pauses the graph when the app is put away; coming back resumes it.
 $(document).on('visibilitychange', function() {
-	if (!document.hidden && ((music_normalize && music_normalize != 'off') || musicEqualizerDirty()) && $('#music').length) {
+	if (!document.hidden && ((music_normalize && music_normalize != 'off') || musicEqualizerDirty() || music_local_delay > 0) && $('#music').length) {
 		musicAudioGraph();
 		musicVolumeApply();
 	}

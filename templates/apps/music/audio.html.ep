@@ -33,6 +33,10 @@
 	$sync_offset = -300 if $sync_offset < -300;
 	$sync_offset = 500 if $sync_offset > 500;
 %>
+<% my $local_delay = $crate->{'settings'}->{'local_delay'} || 0;
+	$local_delay = 0 if $local_delay < 0;
+	$local_delay = 400 if $local_delay > 400;
+%>
 <% my @eq_freq = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000); %>
 <% my @eq_label = ('31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'); %>
 <div class="music_cfg_bar" hint="Drag here to move this panel">
@@ -95,6 +99,13 @@
 			<div class="music_sync_row">
 				<input type="range" id="music_sync_offset" min="-300" max="500" step="10" value="<%= $sync_offset %>" hint="Sync offset">
 				<span id="music_sync_offset_value"><%= $sync_offset %> ms</span>
+			</div>
+		</div>
+		<div class="music_cfg_field music_cfg_field_wide">
+			<label class="music_cfg_label" for="music_local_delay" hint="<%= &subs::lang('music.me_delay') %>"><%= &subs::lang('music.me_delay') %></label>
+			<div class="music_sync_row">
+				<input type="range" id="music_local_delay" min="0" max="400" step="10" value="<%= $local_delay %>" hint="Me audio delay">
+				<span id="music_local_delay_value"><%= $local_delay %> ms</span>
 			</div>
 		</div>
 	</div>
