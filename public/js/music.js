@@ -342,9 +342,11 @@ function musicStreamConnect() {
 		else if (d.type == 'sync') {
 			// The receiver's own answer to a beacon: how far behind the picture it
 			// is actually playing, its buffered audio plus any shortfall since the
-			// mark. A report with no live mark behind it says nothing.
+			// mark. A report with no live mark behind it says nothing - and neither
+			// does one from a receiver that has not seen a beacon yet, whose zero
+			// would otherwise replace the ping estimate.
 			if (!d.key || d.paused || !d.alive) { return; }
-			if (!(d.age_ms >= 0) || d.age_ms > 4000) { return; }
+			if (!(d.seq > 0) || !(d.age_ms >= 0) || d.age_ms > 4000) { return; }
 			var lag = Math.max(0, (d.lag_ms || 0) + (d.rtt_ms || 0));
 			var prev = musicStream.measured[d.key];
 			// A step far larger than the last reading is a stall or a fresh player,

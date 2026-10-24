@@ -780,6 +780,7 @@ sub music_source_client_open($c, $st, $key, $channel) {
 					waiting_ms => ($d->{'waiting_ms'} || 0),
 					sink_ms => ($d->{'sink_ms'} || 0),
 					age_ms => ($d->{'mark_age_ms'} || 0),
+					seq => ($d->{'mark_seq'} || 0),
 					paused => ($d->{'paused'} ? 1 : 0),
 					alive => ($d->{'alive'} ? 1 : 0),
 					rtt_ms => int(($cl->{'min_rtt'} || 0) / 2)
