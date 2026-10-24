@@ -750,8 +750,11 @@ body.dark_theme .top_navbar { background-image: linear-gradient(rgba(255,255,255
 .top_navbar .appointment_name { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: center; background: none; border: none; }
 .top_navbar .appointment_name_marks { display: flex; align-items: center; flex: 0 0 auto; }
 /* the title is painted, not typed: it cannot be selected or copied and shows no
-   text caret - a click on it is a window click, nothing more */
-.top_navbar .appointment_name .name_text { min-width: 0; max-width: 100%; padding: 0 6px; line-height: 1; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; user-select: none; -webkit-user-select: none; }
+   text caret - a click on it is a window click, nothing more. The leading is
+   normal, not 1: overflow:hidden is here for the ellipsis and a line box of
+   exactly the font size clipped the descenders (the g in a title lost its
+   tail). The flex row still centres it in the bar. */
+.top_navbar .appointment_name .name_text { min-width: 0; max-width: 100%; padding: 0 6px; line-height: normal; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: default; user-select: none; -webkit-user-select: none; }
 /* on a dark desk the bar's ink is the theme's own near-white, not the pure
    #ffffff contrast_ink picks for a dark tint: the title and the window glyphs
    still read, without every bar glaring white at the top of the window */
