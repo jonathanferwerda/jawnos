@@ -1380,10 +1380,23 @@ $(document).on('click touchend', '.minimize_button', function(e) {
 // so any tall element that stretched the document let windows grow past the
 // viewport. A phone window is always the full width of the screen, pinned
 // left; anything overflowing gets its contents scrolled instead of spilled.
+//
+// The visual viewport is the one to trust for the on-screen keyboard: Android
+// shrinks it while the keys are up and grows it back when they go. A window
+// clamped for the keyboard remembers the height it wanted, and a later resize
+// restores it instead of leaving the window small for the rest of the session.
+function windowViewport() {
+	var vv = window.visualViewport;
+	var width = (vv && vv.width) ? vv.width : $(window).width();
+	var height = (vv && vv.height) ? vv.height : $(window).height();
+	return { width: Math.round(width), height: Math.round(height) };
+}
+
 function windowFit(win) {
 	if (win.length == 0) { return; }
-	var viewW = $(window).width();
-	var viewH = $(window).height();
+	var view = windowViewport();
+	var viewW = view.width;
+	var viewH = view.height;
 	if (windowPhoneChecker()) {
 		win.css({ 'left': 0, 'width': viewW });
 	}
@@ -1392,7 +1405,17 @@ function windowFit(win) {
 	if (winLeft + win.width() > viewW) {
 		win.width(Math.max(240, viewW - winLeft));
 	}
+	var wanted = parseFloat(win.attr('fit_height')) || 0;
+	if (win.attr('fit_shrunk') == 'yes' && wanted && winTop + wanted <= viewH) {
+		// the keyboard is gone (or the screen grew back): return the window to
+		// the size it had before the shrink
+		win.height(wanted);
+		win.removeAttr('fit_shrunk').removeAttr('fit_height');
+	}
 	if (winTop + win.height() > viewH) {
+		if (win.attr('fit_shrunk') != 'yes') {
+			win.attr('fit_height', win.height()).attr('fit_shrunk', 'yes');
+		}
 		win.height(Math.max(240, viewH - winTop));
 	}
 	win.find('.window_contents').each(function () {
@@ -1405,10 +1428,26 @@ function windowFit(win) {
 	});
 }
 
-$(window).on('resize orientationchange', function () {
-	$('.wind').each(function () { windowFit($(this)); });
+var windowFitTimer;
+var windowFitLast = { width: 0, height: 0 };
+function windowFitAllSoon() {
+	clearTimeout(windowFitTimer);
+	windowFitTimer = setTimeout(function () {
+		var view = windowViewport();
+		// ignore a viewport that moved but did not really change (the browser's
+		// collapsing bar nudges it on every scroll)
+		if (Math.abs(view.width - windowFitLast.width) < 2 && Math.abs(view.height - windowFitLast.height) < 2) { return; }
+		windowFitLast = view;
+		$('.wind').each(function () { windowFit($(this)); });
+	}, 60);
+}
+$(window).on('resize orientationchange', windowFitAllSoon);
+if (window.visualViewport) { window.visualViewport.addEventListener('resize', windowFitAllSoon); }
+$(document).on('resizestop', '.wind', function () {
+	// a person's own resize is the new wanted size
+	$(this).removeAttr('fit_shrunk').removeAttr('fit_height');
+	windowFit($(this));
 });
-$(document).on('resizestop', '.wind', function () { windowFit($(this)); });
 
 function windowPhoneChecker() {
 	if (navigator.userAgent.match('Android') || navigator.userAgent.match('Mobile')) {

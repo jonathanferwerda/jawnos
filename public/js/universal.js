@@ -43,10 +43,35 @@ $(document).ready(function() {
 	appointment_chron();
 });
 
-$(document).on('keyup click change', 'textarea, .text-editor', function() {
+$(document).on('keyup click change input', 'textarea, .text-editor', function() {
 	var ta = $(this);
-	var scrollHeight = ta[0].scrollHeight;
-	var scrollTop = ta.scrollTop();
+	var el = ta[0];
+	if (el && el.tagName == 'TEXTAREA') {
+		if (ta.val() == '') {
+			ta.height(30);
+			return;
+		}
+		// Grow only by the overflow. scrollHeight and clientHeight both count the
+		// padding, so their difference is the real content overflow; the old pass
+		// set the box's height to scrollHeight and so added the padding again on
+		// every keyup, which is what made the box crawl open.
+		var overflow = el.scrollHeight - el.clientHeight;
+		if (overflow <= 1) { return; }
+		var style = window.getComputedStyle(el);
+		var pad = (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+		var target;
+		if (style.boxSizing == 'border-box') {
+			target = el.getBoundingClientRect().height + overflow;
+		}
+		else {
+			target = (parseFloat(style.height) || (el.clientHeight - pad)) + overflow;
+		}
+		var max = parseFloat(style.maxHeight);
+		if (!isNaN(max) && max > 0) { target = Math.min(target, max); }
+		el.style.height = target + 'px';
+		return;
+	}
+	var scrollHeight = el.scrollHeight;
 	var height = ta.height();
 	if (scrollHeight > (height + 5) || scrollHeight < (height - 5)) {
 		if (scrollHeight < 700) {
