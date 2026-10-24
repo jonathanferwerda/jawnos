@@ -11399,58 +11399,29 @@ sub start_menu_forget($key) {
 }
 
 sub start_menu_maker($c) {
-	my $fingerprint = 0;
 	my $returner = {};
 	my $menu = $c->param('menu');
 
-	if (1 == 0) {
-		&Websocket::send('server', { console => 'jawnosAlert(\'<h1>Fingerprint NOW!</h1><img src="/images/jbuttons/ne pas.png">\')' });
-		if ($device eq 'mobile') {
-			my $tf = `termux-fingerprint`;
-			my $f = eval { return decode_json $tf } || {};
-			if ($f->{'auth_result'} eq 'AUTH_RESULT_SUCCESS') {
-				$fingerprint = 1;
-			}
-		}
-		elsif ($device eq 'computer' ) {
-			my $f = `fprintd-verify`;
-			my @f = split /\n/, $f;
-			if ($f[-1] eq 'Verify result: verify-match (done)') {
-				$fingerprint = 1;
-			}
-		}
-		else {
-			$fingerprint = 1;
-		}
-		&Websocket::send('server', { console => 'jawnosAlertClose()' });
+	# Opening the System view is what asks the levels loop for quick passes.
+	&subs::levels_fast_request() if ($menu || '') eq 'view';
+	my $html = $c->render_to_string(
+		template => 'start_menu/start_menu',
+		parking_lot => &parking_lot_grabber($c),
+		config => &subs::config_reader(),
+		padlock => &subs::db_select('security', ['level'], { level => 'padlock' })->hashes,
+		menu => $menu,
+		recent => &start_menu_recent()
+	);
+	# Static files carry no Cache-Control, so browsers cached the icons
+	# heuristically and kept showing stale ones. Version the local images
+	# so the start menu always pulls the current set.
+	my $v = &subs::rightNow();
+	my $set = &subs::icon_set();
+	if ($set) {
+		$html =~ s{src="(/[^"]*\.(?:png|jpe?g|gif))"}{'src="' . &subs::icon_for($1, $set) . '"'}ge;
 	}
-	$fingerprint = 1;
-	if ($fingerprint == 1) {
-		# Opening the System view is what asks the levels loop for quick passes.
-		&subs::levels_fast_request() if ($menu || '') eq 'view';
-		my $html = $c->render_to_string(
-			template => 'start_menu/start_menu',
-			parking_lot => &parking_lot_grabber($c),
-			config => &subs::config_reader(),
-			padlock => &subs::db_select('security', ['level'], { level => 'padlock' })->hashes,
-			menu => $menu,
-			recent => &start_menu_recent()
-		);
-		# Static files carry no Cache-Control, so browsers cached the icons
-		# heuristically and kept showing stale ones. Version the local images
-		# so the start menu always pulls the current set.
-		my $v = &subs::rightNow();
-		my $set = &subs::icon_set();
-		if ($set) {
-			$html =~ s{src="(/[^"]*\.(?:png|jpe?g|gif))"}{'src="' . &subs::icon_for($1, $set) . '"'}ge;
-		}
-		$html =~ s/"([^"]*\.(?:png|jpe?g|gif|svg))"/"$1?v=$v"/g;
-		$returner = { html => $html };
-
-	}
-	else {
-		&lock_session($c);
-	}
+	$html =~ s/"([^"]*\.(?:png|jpe?g|gif|svg))"/"$1?v=$v"/g;
+	$returner = { html => $html };
 
 	return $returner;
 }
