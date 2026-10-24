@@ -152,7 +152,9 @@
 				});
 			});
 		}).catch(function (e) {
-			st.textContent = (e && e.message) || 'cancelled';
+			var name = (e && e.name) || '';
+			var msg = (e && e.message) || 'cancelled';
+			st.textContent = name ? (name + ': ' + msg) : msg;
 		});
 	});
 })();

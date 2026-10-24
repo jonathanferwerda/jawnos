@@ -81,6 +81,22 @@ sub origin_of {
 	return $scheme . '://' . $host . $suffix;
 }
 
+# The base a browser link should carry: the public name this machine answers to,
+# on the port the request actually arrived on. PORT_DOCK is the entry/ticket
+# listener, so it is the wrong number to build a manager link from.
+sub house_link_base {
+	my ($c) = @_;
+	my $url = $c->req->url->base;
+	my $scheme = lc($url->scheme || 'https');
+	my $port = $url->port;
+	my $default = ($scheme eq 'https') ? 443 : 80;
+	my $suffix = (defined $port && $port ne '' && $port != $default) ? ':' . $port : '';
+	my $host = &subs::public_origin_host();
+	$host = lc($url->host || '') unless length $host;
+	return '' unless length $host;
+	return $scheme . '://' . $host . $suffix;
+}
+
 sub origin_ok {
 	my ($client_origin, $expected) = @_;
 	return 0 unless defined $client_origin && defined $expected;

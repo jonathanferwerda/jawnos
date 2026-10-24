@@ -7702,7 +7702,7 @@ post '/manager/webauthn/register/begin' => sub($c) {
 			user => { id => &webauthn::user_handle($p->{'uuid'}), name => $p->{'name'}, displayName => $p->{'name'} },
 			challenge => $challenge,
 			pubKeyCredParams => [ { type => 'public-key', alg => -7 }, { type => 'public-key', alg => -8 } ],
-			timeout => 120000,
+			timeout => 300000,
 			attestation => 'none',
 			authenticatorSelection => { residentKey => 'preferred', userVerification => 'preferred' },
 			excludeCredentials => \@exclude,
@@ -7774,10 +7774,10 @@ post '/manager/webauthn/enroll_link' => sub($c) {
 		name        => $p->{'name'},
 		device_uuid => ($c->session('app_device') || $c->session('device_uuid') || ''),
 	});
-	my $port = $ENV{'PORT_DOCK'} || 3000;
+	my $base = &webauthn::house_link_base($c);
 	$c->render(json => {
 		ok      => 1,
-		url     => 'https://' . $host . ':' . $port . '/passkey?t=' . $token,
+		url     => $base . '/passkey?t=' . $token,
 		expires => 300,
 	});
 };
@@ -7785,14 +7785,32 @@ post '/manager/webauthn/enroll_link' => sub($c) {
 get '/passkey' => sub($c) {
 	my $token = $c->param('t') || '';
 	my $p = &webauthn::enroll_peek($token);
+	my $house = &webauthn::rp_id();
+	# The same link, offered as a QR so a phone can open it itself and use its
+	# own authenticator, rather than relying on the cross-device hand-off.
+	my $page_url = '';
+	my $qr_img = '';
+	my $house_url = '';
+	if ($p && length $house) {
+		my $base = &webauthn::house_link_base($c);
+		if (length $base) {
+			$house_url = $base;
+			$page_url = $base . '/passkey?t=' . $token;
+			my $png = &subs::crest_qr_png($page_url);
+			$qr_img = 'data:image/png;base64,' . encode_base64($png) if defined $png && length $png;
+		}
+	}
 	$c->render(
 		template => 'passkey',
 		layout => undef,
 		token => ($p ? $token : ''),
 		valid => ($p ? 1 : 0),
 		person_name => ($p ? ($p->{'name'} || '') : ''),
-		house => &webauthn::rp_id(),
+		house => $house,
 		port => ($ENV{'PORT_DOCK'} || 3000),
+		page_url => $page_url,
+		house_url => $house_url,
+		qr_img => $qr_img,
 	);
 };
 
@@ -7813,7 +7831,7 @@ post '/passkey/begin' => sub($c) {
 			user => { id => &webauthn::user_handle($p->{'person_uuid'}), name => $p->{'name'}, displayName => $p->{'name'} },
 			challenge => $challenge,
 			pubKeyCredParams => [ { type => 'public-key', alg => -7 }, { type => 'public-key', alg => -8 } ],
-			timeout => 120000,
+			timeout => 300000,
 			attestation => 'none',
 			authenticatorSelection => { residentKey => 'preferred', userVerification => 'preferred' },
 			excludeCredentials => \@exclude,
@@ -7869,7 +7887,7 @@ post '/manager/webauthn/login/begin' => sub($c) {
 		publicKey => {
 			challenge => $challenge,
 			rpId => $rp,
-			timeout => 120000,
+			timeout => 300000,
 			userVerification => 'preferred',
 			allowCredentials => \@allow,
 		},

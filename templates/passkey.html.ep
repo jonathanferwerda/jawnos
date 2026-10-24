@@ -15,12 +15,14 @@
 		background:var(--bg); color:var(--ink); padding:24px;
 		font:16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 	}
-	.card { width:100%; max-width:520px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:28px; }
+	.card { width:100%; max-width:560px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:28px; }
 	.mark { font-size:13px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin-bottom:18px; }
 	h1 { font-size:24px; margin:0 0 8px; }
+	h2 { font-size:16px; margin:0 0 6px; }
 	p { margin:0 0 14px; }
 	.muted { color:var(--muted); }
 	.small { font-size:13px; }
+	.tiny { font-size:12px; }
 	label { display:block; font-size:13px; color:var(--muted); margin:18px 0 6px; }
 	input {
 		width:100%; padding:11px 12px; font:inherit; color:var(--ink); background:transparent;
@@ -32,9 +34,18 @@
 	}
 	button:disabled { opacity:.55; cursor:default; }
 	.status { min-height:22px; margin-top:12px; font-size:14px; color:var(--muted); }
+	.status.bad { color:#b4543a; }
 	.done { display:none; margin-top:14px; font-size:14px; color:var(--accent); }
 	a { color:var(--accent); }
-	hr { border:0; border-top:1px solid var(--line); margin:20px 0; }
+	hr { border:0; border-top:1px solid var(--line); margin:22px 0; }
+	.phone { display:flex; gap:18px; align-items:flex-start; }
+	.phone .words { flex:1 1 auto; min-width:0; }
+	.phone .qr { flex:0 0 auto; width:132px; height:132px; border-radius:10px; background:#fff; padding:8px; }
+	.url { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; word-break:break-all; color:var(--muted); }
+	details { margin-top:16px; }
+	summary { cursor:pointer; font-size:13px; color:var(--muted); }
+	.caps { margin-top:8px; font-size:12px; line-height:1.7; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--muted); }
+	@media (max-width: 460px) { .phone { flex-direction:column-reverse; align-items:center; } .phone .qr { width:160px; height:160px; } }
 </style>
 </head>
 <body>
@@ -46,12 +57,35 @@
 	<% } else { %>
 		<h1>Add a passkey</h1>
 		<p>For <b><%= $person_name %></b> on <b><%= $house %></b>.</p>
-		<p class="muted">The key is made on this device and stays here. The house keeps only its public half, so there is nothing to steal and nothing to type into the wrong page.</p>
+		<p class="muted">The key is made on the device and stays there. The house keeps only its public half, so there is nothing to steal and nothing to type into a wrong page.</p>
 		<label for="name">What is this device?</label>
 		<input id="name" value="Passkey" autocomplete="off" spellcheck="false">
-		<button id="make" type="button" data-token="<%= $token %>">Create the passkey</button>
+		<button id="make" type="button" data-token="<%= $token %>">Create the passkey here</button>
 		<div id="status" class="status" role="status" aria-live="polite"></div>
-		<a id="done" class="done" href="https://<%= $house %>:<%= $port %>/manager">Open the house &rarr;</a>
+		<a id="done" class="done" href="<%= length $house_url ? $house_url . '/manager' : 'https://' . $house . ':' . $port . '/manager' %>">Open the house &rarr;</a>
+
+		<hr>
+
+		<div class="phone">
+			<div class="words">
+				<h2>On a phone</h2>
+				<p class="muted small">A phone usually has a fingerprint or face reader, and that is the easiest key to make. Scan this with the camera to open this same page on the phone, then press <b>Create the passkey here</b> on the phone.</p>
+				<% if (length $page_url) { %>
+					<p class="url"><%= $page_url %></p>
+					<p class="muted tiny">Five minutes, one use. Reload this page for a fresh code.</p>
+				<% } else { %>
+					<p class="muted small">Set the house domain and this machine's name first, then reload.</p>
+				<% } %>
+			</div>
+			<% if (length $qr_img) { %>
+				<img class="qr" src="<%= $qr_img %>" alt="QR code for this enrollment page">
+			<% } %>
+		</div>
+
+		<details>
+			<summary>What this browser can offer</summary>
+			<div id="caps" class="caps">checking…</div>
+		</details>
 	<% } %>
 	<hr>
 	<p class="muted small">Bound to <b><%= length($house) ? $house : 'the house domain' %></b>, so it signs in on every machine under that name. A passkey proves who you are; what you may do still comes from the person.</p>
@@ -83,16 +117,65 @@
 			body: new URLSearchParams(body || {}).toString()
 		}).then(function (r) { return r.json(); });
 	}
+
+	// The browser tells us which authenticators it can reach, which is what
+	// decides between "here", "the phone in the next room" and "plug in a key".
+	function sayCaps() {
+		var box = document.getElementById('caps');
+		if (!box) { return; }
+		var pb = window.PublicKeyCredential;
+		if (!pb || !navigator.credentials) { box.textContent = 'no WebAuthn on this page (not https, or an old browser)'; return; }
+		var rows = [];
+		function row(k, v) { rows.push(k + ': ' + v); }
+		row('secure page', window.isSecureContext ? 'yes' : 'no');
+		var caps = null;
+		if (typeof pb.getClientCapabilities === 'function') {
+			try { caps = pb.getClientCapabilities(); } catch (e) { caps = null; }
+		}
+		if (caps) {
+			function yes(v) { return (v === true) ? 'yes' : (v === false ? 'no' : 'unknown'); }
+			if ('passkeyPlatformAuthenticator' in caps) { row('passkey on this device', yes(caps.passkeyPlatformAuthenticator)); }
+			if ('userVerifyingPlatformAuthenticator' in caps) { row('fingerprint / face on this device', yes(caps.userVerifyingPlatformAuthenticator)); }
+			if ('hybridTransport' in caps) { row('phone by QR (hybrid)', yes(caps.hybridTransport)); }
+			if ('relatedOrigins' in caps) { row('related origins', yes(caps.relatedOrigins)); }
+		}
+		if (typeof pb.isUserVerifyingPlatformAuthenticatorAvailable === 'function') {
+			pb.isUserVerifyingPlatformAuthenticatorAvailable().then(function (v) {
+				row('platform authenticator (live)', v ? 'yes' : 'no');
+				box.textContent = rows.join('\n');
+			}).catch(function () {
+				box.textContent = rows.join('\n');
+			});
+		} else {
+			box.textContent = rows.join('\n');
+		}
+		box.style.whiteSpace = 'pre-line';
+	}
+	sayCaps();
+
+	// Chrome folds a dozen different refusals into one message, so the name is
+	// the only part worth writing down; the hint names the likely cause.
+	var HINTS = {
+		NotAllowedError: 'The browser gave up before anything was made. The usual causes: Bluetooth off on one of the two devices, a phone hand-off that never reached the phone, or the prompt being dismissed. Scan the QR above to do this on the phone itself, try again, or plug in a security key.',
+		InvalidStateError: 'This device already holds a passkey for the house. Sign in with that one instead of making another.',
+		SecurityError: 'The address in the bar does not belong to the house domain, so the browser refused to make a key for it.',
+		NotSupportedError: 'This browser has no authenticator it can offer - no fingerprint reader, no phone hand-off, and no security key plugged in.',
+		AbortError: 'The prompt was closed before it finished.',
+		ConstraintError: 'The browser could not meet the requested key settings. Reload for a fresh challenge and try once more.'
+	};
+
 	btn.addEventListener('click', function () {
 		var st = document.getElementById('status');
 		if (!window.PublicKeyCredential || !navigator.credentials) {
+			st.className = 'status bad';
 			st.textContent = 'This browser cannot make passkeys (or the page is not on https).';
 			return;
 		}
 		btn.disabled = true;
+		st.className = 'status';
 		st.textContent = 'Waiting for your device…';
 		post('/passkey/begin', { t: token }).then(function (r) {
-			if (!r || !r.ok) { st.textContent = (r && r.error) || 'Could not start.'; btn.disabled = false; return; }
+			if (!r || !r.ok) { st.className = 'status bad'; st.textContent = (r && r.error) || 'Could not start.'; btn.disabled = false; return; }
 			var pk = r.publicKey;
 			return navigator.credentials.create({ publicKey: {
 				challenge: b64uToBytes(pk.challenge),
@@ -112,13 +195,30 @@
 					client_data: bytesToB64u(cred.response.clientDataJSON),
 					attestation: bytesToB64u(cred.response.attestationObject)
 				}).then(function (f) {
-					if (!f || !f.ok) { st.textContent = (f && f.error) || 'The house refused it.'; btn.disabled = false; return; }
+					if (!f || !f.ok) { st.className = 'status bad'; st.textContent = (f && f.error) || 'The house refused it.'; btn.disabled = false; return; }
+					st.className = 'status';
 					st.textContent = 'Added. You can close this tab, or open the house below.';
 					document.getElementById('done').style.display = 'inline-block';
 				});
+			}, function (e) {
+				// create() rejecting is not a network failure; report it plainly.
+				var name = (e && e.name) || 'Error';
+				var msg = (e && e.message) || 'Cancelled.';
+				st.className = 'status bad';
+				st.textContent = name + ': ' + msg;
+				var hint = HINTS[name];
+				if (hint) {
+					var p = document.createElement('p');
+					p.className = 'muted small';
+					p.style.marginTop = '8px';
+					p.textContent = hint;
+					st.appendChild(p);
+				}
+				btn.disabled = false;
 			});
 		}).catch(function (e) {
-			st.textContent = (e && e.message) || 'Cancelled.';
+			st.className = 'status bad';
+			st.textContent = (e && e.message) || 'Could not reach the house.';
 			btn.disabled = false;
 		});
 	});
