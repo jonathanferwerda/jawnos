@@ -109,6 +109,8 @@ var musicStream = {
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false };
 var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0, source: '' };
 var music_stream_codec = 'pcm';
+// where the local element was left when it paused, so a resume can be resynced
+var musicLocalPausedAt = null;
 // Counters for the sync report. They ride the same websocket as the audio, so
 // a stream that is failing tells the manager what it dropped and why.
 var musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0, sent: 0, sentBytes: 0 };
@@ -503,6 +505,7 @@ function musicSyncReport() {
 			seek_start: ar.seek_start,
 			seek_end: ar.seek_end,
 			buf_end: ar.buf_end,
+			mode: (musicAhead.mode || ''),
 			opus_src: (musicOpus.source || '')
 		},
 		video: v ? {
@@ -721,6 +724,10 @@ function musicStreamControl(action, extra) {
 		musicStream.paused = false;
 		if (musicStream.codec != 'opus') { musicStreamTapActive(true); }
 		musicAheadResume();
+		// a retry that fired during the pause gave up; resume is the moment to
+		// ask for any output that is no longer connected
+		musicStreamSendJson({ type: 'outputs', outputs: musicStreamOutputs(), channels: musicStreamChannels() });
+		musicStreamRetryClear();
 	}
 }
 
@@ -743,8 +750,12 @@ function musicStreamOutputsChanged() {
 var musicAhead = {
 	el: null, source: null, chain: null, src: '', ready: false, starting: false,
 	failed: false, gen: 0, timer: 0, retryTimer: 0, target: 0, err: 0,
-	seekAt: 0, seekCount: 0, rate: 1, hold: false
+	seekAt: 0, seekCount: 0, rate: 1, hold: false,
+	blobUrl: '', blobFor: '', controller: null, mode: ''
 };
+// A complete copy is held in memory only up to this size; a larger file is
+// streamed (and will lag), rather than spending hundreds of megabytes.
+var musicAheadMaxBlob = 256 * 1024 * 1024;
 
 // The lead to give the remote, from the measured latency of every output that
 // answered. The slowest decides, as the picture delay did; the trim moves the
@@ -857,6 +868,10 @@ function musicAheadStop() {
 		try { musicAhead.el.pause(); } catch (e) {}
 		try { musicAhead.el.removeAttribute('src'); musicAhead.el.load(); } catch (e) {}
 	}
+	if (musicAhead.controller) { try { musicAhead.controller.abort(); } catch (e) {} musicAhead.controller = null; }
+	if (musicAhead.blobUrl) { try { URL.revokeObjectURL(musicAhead.blobUrl); } catch (e) {} musicAhead.blobUrl = ''; }
+	musicAhead.blobFor = '';
+	musicAhead.mode = '';
 	musicStreamTapSource('local');
 	musicOpusSource();
 }
@@ -955,7 +970,9 @@ function musicAheadStart() {
 		musicAheadLead(false);
 		return;
 	}
-	if (musicAhead.starting) { return; }
+	// a load for the same track is already in flight; a load for a different
+	// track must be abandoned, not waited for
+	if (musicAhead.starting && musicAhead.src == src) { return; }
 	var ctx = musicVisual.ctx;
 	if (!ctx) { return; }
 	var chain = musicAheadChain();
@@ -976,41 +993,84 @@ function musicAheadStart() {
 		catch (e) { musicAhead.failed = true; musicAheadForget(); return; }
 	}
 	var gen = ++musicAhead.gen;
+	var changed = (musicAhead.src != src);
 	musicAhead.starting = true;
 	musicAhead.ready = false;
 	musicAhead.failed = false;
 	musicAhead.src = src;
 	musicAhead.target = lead;
-	var url = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'clone=1';
-	var done = false;
-	var ready = function() {
-		if (done || gen !== musicAhead.gen || el.src !== url) { return; }
-		done = true;
-		musicAhead.starting = false;
-		musicAhead.ready = true;
-		musicAheadLead(true);
-		musicStreamTapSource('ahead');
+	// a new track must not keep the old one on the remote while its copy loads
+	if (changed) {
+		try { el.pause(); } catch (e) {}
+		musicStreamTapSource('local');
 		musicOpusSource();
-		// the live tap had already sent the moment the ahead element replaces;
-		// PCM drops it so the remote starts at the new place instead of playing
-		// the old buffer and then jumping
-		if (musicStream.codec == 'pcm') {
-			musicStreamTapActive(true, true);
-			musicStreamSendJson({ type: 'control', action: 'flush' });
-		}
-		if (!musicStream.active || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { musicAheadStop(); return; }
-		if (musicStream.paused || (tree.sound && tree.sound.paused) || musicAhead.hold) { return; }
-		var p = null;
-		try { p = el.play(); } catch (e) {}
-		if (p && p.catch) { p.catch(function() { if (gen === musicAhead.gen) { musicAheadFailed(); } }); }
+	}
+	var url = src + (src.indexOf('?') >= 0 ? '&' : '?') + 'clone=1';
+	var attach = function(mediaUrl, mode) {
+		if (gen !== musicAhead.gen) { return; }
+		musicAhead.mode = mode;
+		var done = false;
+		var ready = function() {
+			if (done || gen !== musicAhead.gen || el.src !== mediaUrl) { return; }
+			done = true;
+			musicAhead.controller = null;
+			musicAhead.starting = false;
+			musicAhead.ready = true;
+			musicAheadLead(true);
+			musicStreamTapSource('ahead');
+			musicOpusSource();
+			// the live tap had already sent the moment the ahead element replaces;
+			// PCM drops it so the remote starts at the new place instead of playing
+			// the old buffer and then jumping
+			if (musicStream.codec == 'pcm') {
+				musicStreamTapActive(true, true);
+				musicStreamSendJson({ type: 'control', action: 'flush' });
+			}
+			if (!musicStream.active || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { musicAheadStop(); return; }
+			if (musicStream.paused || (tree.sound && tree.sound.paused) || musicAhead.hold) { return; }
+			var p = null;
+			try { p = el.play(); } catch (e) {}
+			if (p && p.catch) { p.catch(function() { if (gen === musicAhead.gen) { musicAheadFailed(); } }); }
+		};
+		el.onerror = function() { if (gen === musicAhead.gen && el.src === mediaUrl) { musicAheadFailed(); } };
+		el.onloadedmetadata = ready;
+		el.oncanplay = ready;
+		// a source that never answers must not leave the live tap switched off
+		setTimeout(function() { if (gen === musicAhead.gen && !musicAhead.ready) { musicAheadFailed(); } }, 8000);
+		el.src = mediaUrl;
 	};
-	el.onerror = function() { if (gen === musicAhead.gen && el.src === url) { musicAheadFailed(); } };
-	el.onloadedmetadata = ready;
-	el.oncanplay = ready;
-	// a source that never answers must not leave the live tap switched off;
-	// one retry is scheduled so a slow load is not permanent
-	setTimeout(function() { if (gen === musicAhead.gen && !musicAhead.ready) { musicAheadFailed(); } }, 5000);
-	el.src = url;
+	// Prefer a complete local copy. A progressive /play response is seekable
+	// only up to the bytes the element has already read, so a seek to the lead
+	// either fails or lands short; a Blob is seekable at once, and the remote
+	// needs the sound ahead of the picture rather than chasing it.
+	if (musicAhead.blobUrl && musicAhead.blobFor == src) {
+		attach(musicAhead.blobUrl, 'blob');
+	}
+	else {
+		if (musicAhead.controller) { try { musicAhead.controller.abort(); } catch (e) {} musicAhead.controller = null; }
+		if (musicAhead.blobUrl) { try { URL.revokeObjectURL(musicAhead.blobUrl); } catch (e) {} musicAhead.blobUrl = ''; }
+		musicAhead.blobFor = src;
+		var ctrl = (typeof AbortController != 'undefined') ? new AbortController() : null;
+		musicAhead.controller = ctrl;
+		var opts = { credentials: 'same-origin' };
+		if (ctrl) { opts.signal = ctrl.signal; }
+		fetch(url, opts).then(function(res) {
+			if (!res.ok && res.status != 206) { throw new Error('play ' + res.status); }
+			var len = parseInt(res.headers.get('Content-Length') || '0', 10);
+			// too large to hold, or a size the server did not declare: stream it
+			if (!len || len > musicAheadMaxBlob) { throw new Error('too big'); }
+			return res.blob();
+		}).then(function(blob) {
+			if (gen !== musicAhead.gen) { return; }
+			musicAhead.controller = null;
+			musicAhead.blobUrl = URL.createObjectURL(blob);
+			attach(musicAhead.blobUrl, 'blob');
+		}).catch(function() {
+			if (gen !== musicAhead.gen) { return; }
+			musicAhead.controller = null;
+			attach(url, 'stream');
+		});
+	}
 	clearInterval(musicAhead.timer);
 	musicAhead.timer = setInterval(musicAheadTick, 500);
 }
@@ -1880,11 +1940,33 @@ function mediaMaker(data) {
 				musicStreamHealthPing();
 				// a stream started before the audio context was running retries
 				// here, and a paused stream resumes
-			if (musicStream.active) {
-				if (!musicStream.attached) { musicStreamStart(file, tree.sound.currentTime); }
-				else if (musicStream.paused) { musicStreamControl('resume'); }
-				else { musicAheadStart(); }
-			}
+				if (musicStream.active) {
+					if (!musicStream.attached) { musicStreamStart(file, tree.sound.currentTime); }
+					else if (musicStream.paused) {
+						// Opus keeps its decoder and pacat buffer across a pause;
+						// restarting gives every receiver a clean one instead of
+						// stale audio, and reopens an output that died while paused
+						if (musicStream.codec == 'opus') { musicStreamRestart(); }
+						else { musicStreamControl('resume'); }
+					}
+					else { musicAheadStart(); }
+				}
+				else if (musicStreamOutputs().length && tree.sound.state == 1) {
+					// a stream that died while it was paused has no retry left;
+					// a resume is the moment to bring the outputs back
+					musicStreamStart(file, tree.sound.currentTime);
+				}
+				// A pause/play can leave the element's sound a moment ahead of the
+				// picture (the audio graph and decoder do not stop together). A
+				// tiny seek is what the listener already does by hand; it makes
+				// the decoder and the graph start from the same place again.
+				if (musicLocalPausedAt != null) {
+					var at = musicLocalPausedAt;
+					musicLocalPausedAt = null;
+					if (Math.abs((tree.sound.currentTime || 0) - at) < 0.2) {
+						try { tree.sound.currentTime = at + 0.02; } catch (e) {}
+					}
+				}
 				// a context suspended by a call or the app going away is resumed here;
 				// a graph deferred while it was stopped is finished once it runs
 				musicAudioResume();
@@ -1980,6 +2062,7 @@ function mediaMaker(data) {
 					clearInterval(interval);
 					tree.sound.state = 0;
 					musicKeepalive(false);
+					musicLocalPausedAt = tree.sound.currentTime;
 					musicStreamControl('pause');
 
 					$('#play_logo').attr('src', jawnosPlayIcon());
