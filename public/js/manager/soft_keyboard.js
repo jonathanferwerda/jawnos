@@ -124,6 +124,10 @@ function softKbShow(el) {
 	softKbSuppress(el);
 	softKbPlace(el);
 	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	// the search rides in the dock or the taskbar; whichever holds the field
+	// lifts above the keys instead of being covered by them
+	$('body').toggleClass('soft_kb_dock_field', $(el).closest('#pseudonym_home').length > 0);
+	$('body').toggleClass('soft_kb_bar_field', $(el).closest('#taskbar').length > 0);
 	$('body').addClass('soft_kb_open');
 	softKbModeSet(jawnSoftNumeric ? 'calc' : 'letters');
 	softKbSuggestSync();
@@ -135,8 +139,9 @@ function softKbShow(el) {
 
 function softKbHide() {
 	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
-	$('body').removeClass('soft_kb_open');
+	$('body').removeClass('soft_kb_open soft_kb_dock_field soft_kb_bar_field');
 	$('.chat_shell').css('padding-bottom', '');
+	$('.soft_kb_reserved').css('padding-bottom', '').removeClass('soft_kb_reserved');
 	softKbConvertHide();
 	$('#soft_kb_suggest').prop('hidden', true);
 	jawnSoftContext = '';
@@ -165,6 +170,10 @@ function softKbReserve() {
 	$('.soft_kb_reserved').css('padding-bottom', '').removeClass('soft_kb_reserved');
 	var dock = $('#jawn_soft_keyboard');
 	if (!dock.is(':visible') || !jawnSoftField) { return; }
+	// the dock and taskbar rules lift themselves by this much
+	if (document.body && document.body.style) {
+		document.body.style.setProperty('--soft_kb_h', (dock.outerHeight() || 0) + 'px');
+	}
 	var chat = $(jawnSoftField).closest('.chat_shell');
 	var scroller = chat.length ? chat : $(jawnSoftField).closest('.appointment_contents, .window_contents');
 	if (!scroller.length) { return; }
@@ -234,6 +243,7 @@ function softKbNotify(el) {
 	if (window.requestAnimationFrame) { requestAnimationFrame(fire); }
 	else { setTimeout(fire, 0); }
 	softKbConvertUpdate();
+	softKbSuggestSync();
 }
 
 function softKbInsert(text) {
@@ -462,13 +472,18 @@ var jawnSoftUnit = null;
 var jawnSoftUnits = null;
 var jawnSoftSymbols = null;
 var jawnSoftBase = null;
+var jawnSoftTypes = null;
+var jawnSoftType = '';
+var jawnSoftUse = null;
 var jawnSoftConvertTimer = null;
 var jawnSoftConvertSeq = 0;
+var JAWN_SOFT_CONVERT_MAX = 12;
 
 function softKbUnitsLoad() {
 	if (jawnSoftUnits) { return jawnSoftUnits; }
 	jawnSoftUnits = {};
 	jawnSoftSymbols = {};
+	jawnSoftTypes = [];
 	var el = document.getElementById('soft_kb_units');
 	if (el) {
 		try {
@@ -476,9 +491,37 @@ function softKbUnitsLoad() {
 			jawnSoftUnits = data.units || {};
 			jawnSoftSymbols = data.symbols || {};
 			jawnSoftBase = data.base || null;
+			jawnSoftTypes = data.types || [];
 		} catch (err) {}
 	}
 	return jawnSoftUnits;
+}
+
+function softKbTypeLabel(key) {
+	var labels = {
+		currency: 'Currency', weight: 'Weight', volume: 'Volume', distance: 'Distance',
+		temperature: 'Temperature', speed: 'Speed', power: 'Power', resistance: 'Resistance'
+	};
+	return softKbLabel(labels[key] || key);
+}
+
+// How often each target unit has been used: the row puts the most-used first.
+function softKbUseLoad() {
+	if (jawnSoftUse) { return jawnSoftUse; }
+	jawnSoftUse = {};
+	try {
+		var raw = localStorage.getItem('jawn_soft_convert_use');
+		var parsed = raw ? JSON.parse(raw) : null;
+		if (parsed && typeof parsed == 'object') { jawnSoftUse = parsed; }
+	} catch (err) { jawnSoftUse = {}; }
+	return jawnSoftUse;
+}
+
+function softKbUseAdd(unit) {
+	if (!unit) { return; }
+	var use = softKbUseLoad();
+	use[unit] = (Number(use[unit]) || 0) + 1;
+	try { localStorage.setItem('jawn_soft_convert_use', JSON.stringify(use)); } catch (err) {}
 }
 
 function softKbUnitCode(raw) {
@@ -548,10 +591,11 @@ function softKbConvertHide() {
 	clearTimeout(jawnSoftConvertTimer);
 	jawnSoftConvertSeq++;
 	var wrap = $('#soft_kb_convert');
-	if (wrap.length && !wrap.prop('hidden')) {
-		wrap.prop('hidden', true);
-		softKbReserve();
-	}
+	var types = $('#soft_kb_types');
+	var shown = false;
+	if (wrap.length && !wrap.prop('hidden')) { wrap.prop('hidden', true); shown = true; }
+	if (types.length && !types.prop('hidden')) { types.prop('hidden', true); shown = true; }
+	if (shown) { softKbReserve(); }
 }
 
 function softKbConvertUpdate() {
@@ -582,10 +626,32 @@ function softKbConvertUpdate() {
 function softKbConvertRender(r) {
 	var wrap = $('#soft_kb_convert');
 	if (!wrap.length) { return; }
+	softKbUnitsLoad();
+	jawnSoftType = r.type ? (r.type == 'mass' ? 'weight' : r.type) : jawnSoftType;
+	// the kinds of measure, the active one wearing the highlight
+	var typeWrap = $('#soft_kb_types');
+	if (typeWrap.length && jawnSoftTypes && jawnSoftTypes.length) {
+		var types = $('#soft_kb_types_rows').empty();
+		for (var t = 0; t < jawnSoftTypes.length; t++) {
+			var ty = jawnSoftTypes[t] || {};
+			if (!ty.key) { continue; }
+			var chip = $('<button type="button" class="soft_kb_convert_item soft_kb_type_item"></button>')
+				.attr({ 'data-kb_type': ty.key, 'data-kb_type_unit': ty.unit || '', 'aria-label': softKbTypeLabel(ty.key) })
+				.text(softKbTypeLabel(ty.key));
+			if (ty.key == jawnSoftType) { chip.addClass('active'); }
+			chip.appendTo(types);
+		}
+		typeWrap.prop('hidden', false);
+	}
 	$('#soft_kb_convert_src').text(r.text || (r.value + ' ' + r.unit));
-	var rows = $('#soft_kb_convert_rows').empty();
-	for (var i = 0; i < r.rows.length; i++) {
-		var row = r.rows[i];
+	// the units used most first, then the registry's own order
+	var use = softKbUseLoad();
+	var rows = (r.rows || []).slice(0);
+	rows.sort(function (a, b) { return (Number(use[b.unit]) || 0) - (Number(use[a.unit]) || 0); });
+	if (rows.length > JAWN_SOFT_CONVERT_MAX) { rows.length = JAWN_SOFT_CONVERT_MAX; }
+	var box = $('#soft_kb_convert_rows').empty();
+	for (var i = 0; i < rows.length; i++) {
+		var row = rows[i];
 		$('<button type="button" class="soft_kb_convert_item"></button>')
 			.attr({
 				'data-kb_convert_unit': row.unit,
@@ -594,10 +660,23 @@ function softKbConvertRender(r) {
 				'aria-label': (row.text || '') + ' ' + (row.name || '')
 			})
 			.text(row.text || (row.value + ' ' + row.unit))
-			.appendTo(rows);
+			.appendTo(box);
 	}
 	wrap.prop('hidden', false);
 	softKbReserve();
+}
+
+// Choosing a kind converts from the unit last used for that kind (or the kind's
+// own representative), so the row changes without retyping a unit.
+function softKbTypePick(type, unit) {
+	if (!type) { return; }
+	var src = unit;
+	try { src = localStorage.getItem('jawn_soft_unit_' + type) || unit; } catch (err) {}
+	if (!src) { return; }
+	jawnSoftUnit = src;
+	jawnSoftType = type;
+	try { localStorage.setItem('jawn_soft_calc_unit', src); } catch (err) {}
+	softKbConvertUpdate();
 }
 
 // Tapping a conversion uses its answer: a number field takes it as the value,
@@ -606,7 +685,11 @@ function softKbConvertPick(unit, value) {
 	value = softKbNumber(value);
 	if (unit) {
 		jawnSoftUnit = unit;
-		try { localStorage.setItem('jawn_soft_calc_unit', unit); } catch (err) {}
+		softKbUseAdd(unit);
+		try {
+			localStorage.setItem('jawn_soft_calc_unit', unit);
+			if (jawnSoftType) { localStorage.setItem('jawn_soft_unit_' + jawnSoftType, unit); }
+		} catch (err) {}
 	}
 	if (value == null) { return; }
 	if (jawnSoftNumeric && jawnSoftField) {
@@ -648,23 +731,52 @@ var jawnSoftSuggestDefs = {
 	}
 };
 
+function softKbSuggestText() {
+	var el = jawnSoftField;
+	if (!el) { return ''; }
+	return el.isContentEditable ? $(el).text() : (el.value || '');
+}
+
+// A number already typed steers the row: 5 in a time field offers 5s, 5m, 5h,
+// 5d, 5w, 5M and 5y, in a duration 5m through 5y, and a warranty takes them
+// negative. The fixed chips follow, without repeats.
+function softKbSuggestItems(def) {
+	var items = [];
+	var found = String(softKbSuggestText() || '').match(/\d+(?:\.\d+)?/g);
+	var n = found ? found[found.length - 1] : '';
+	if (n) {
+		var units = (jawnSoftContext == 'when') ? ['s', 'm', 'h', 'd', 'w', 'M', 'y'] : ['m', 'h', 'd', 'w', 'M', 'y'];
+		for (var i = 0; i < units.length; i++) {
+			var v = n + units[i];
+			if (jawnSoftContext == 'warranty') { v = '-' + v; }
+			items.push(v);
+		}
+	}
+	for (var j = 0; j < def.items.length; j++) {
+		if (items.indexOf(def.items[j]) < 0) { items.push(def.items[j]); }
+	}
+	return items;
+}
+
 function softKbSuggestSync() {
 	var wrap = $('#soft_kb_suggest');
 	var def = jawnSoftSuggestDefs[jawnSoftContext];
 	if (!def || !jawnSoftField) {
-		if (!wrap.prop('hidden')) { wrap.prop('hidden', true); softKbReserve(); }
+		if (wrap.length && !wrap.prop('hidden')) { wrap.prop('hidden', true); softKbReserve(); }
 		return;
 	}
+	var was = wrap.prop('hidden');
 	$('#soft_kb_suggest_label').text(softKbLabel(def.label));
+	var items = softKbSuggestItems(def);
 	var rows = $('#soft_kb_suggest_rows').empty();
-	for (var i = 0; i < def.items.length; i++) {
+	for (var i = 0; i < items.length; i++) {
 		$('<button type="button" class="soft_kb_convert_item"></button>')
-			.attr({ 'data-kb_suggest': def.items[i], 'aria-label': def.items[i] })
-			.text(def.items[i])
+			.attr({ 'data-kb_suggest': items[i], 'aria-label': items[i] })
+			.text(items[i])
 			.appendTo(rows);
 	}
 	wrap.prop('hidden', false);
-	softKbReserve();
+	if (was) { softKbReserve(); }
 }
 
 function softKbSuggestPick(value) {
@@ -676,6 +788,7 @@ function softKbSuggestPick(value) {
 	softKbNotify(el);
 	$(el).trigger('change');
 	softKbConvertUpdate();
+	softKbSuggestSync();
 }
 
 function softKbFormat(value) {
@@ -767,6 +880,7 @@ function softKbPress(b) {
 	}
 	if (b.attr('data-kb_history') != null) { softKbHistoryPick(b.attr('data-kb_history')); return; }
 	if (b.attr('data-kb_convert_unit') != null) { softKbConvertPick(b.attr('data-kb_convert_unit'), b.attr('data-kb_convert_value')); return; }
+	if (b.attr('data-kb_type') != null) { softKbTypePick(b.attr('data-kb_type'), b.attr('data-kb_type_unit')); return; }
 	if (b.attr('data-kb_suggest') != null) { softKbSuggestPick(b.attr('data-kb_suggest')); return; }
 	if (b.attr('data-kb_char') != null) { softKbChar(b.attr('data-kb_char')); return; }
 	var k = b.attr('data-kb_key');
@@ -870,7 +984,7 @@ $(document).on('input', 'input, textarea', function () {
 		$('#soft_kb_expr').text(jawnSoftExpr || '0');
 		$('#soft_kb_result').text('');
 	}
-	if (this === jawnSoftField) { softKbConvertUpdate(); }
+	if (this === jawnSoftField) { softKbConvertUpdate(); softKbSuggestSync(); }
 });
 
 // The Chat composer's keyboard button asks for the dock; pressing it again puts

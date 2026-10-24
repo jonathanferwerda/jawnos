@@ -15,10 +15,10 @@
 			<% next if $adder eq 'totals'; %>
 			<% my $ad = $add->{$adder}; %>
 			<div style="width:99%;border:solid;border-radius:5px;">
-				<span><b>Movement:</b> <%= &subs::format_name($app->{'movement'}) %><br>
-				<span><b>Account:</b> <%= &subs::format_name($app->{'account'}) %><br
+				<span><b>Movement:</b> <%= &subs::format_name($app->{'movement'}) %></span><br>
+				<span><b>Account:</b> <%= &subs::format_name($app->{'account'}) %></span><br>
 				<% if ($ad->{'item'}) { %>
-					<span><b>Item:</b> <%= &subs::format_name($model->{'name'} || $ad->{'item'}) %></span></br>
+					<span><b>Item:</b> <%= &subs::format_name($model->{'name'} || $ad->{'item'}) %></span><br>
 				<% } %>
 				<% if ($ad->{'manufacturer'}) { %>
 					<span><b>Manufacturer:</b> <%= &subs::format_name($ad->{'manufacturer'}) %></span><br>

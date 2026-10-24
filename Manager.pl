@@ -39365,9 +39365,13 @@ sub measure_conversion_rows($unit, $value) {
 		? &measure_currency_conversions($key, $value, $units)
 		: &measure_unit_conversions($key, $def, $value, $units);
 	return { ok => 0, unit => $key } unless scalar @{$rows};
+	my $type = '';
+	if (&currency_unit($key)) { $type = 'currency'; }
+	elsif (ref $def->{'types'} eq 'ARRAY' && scalar @{$def->{'types'}}) { $type = $def->{'types'}->[0]; }
 	return {
 		ok => 1,
 		unit => $key,
+		type => $type,
 		name => &measure_unit_name($key, $def),
 		value => 0 + $value,
 		text => &measure_value_text($value, $key, &currency_unit($key)),

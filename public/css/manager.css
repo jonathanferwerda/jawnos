@@ -252,6 +252,9 @@ html, body {
 	border-radius: 3px;
 }
 .detail_area { overflow: scroll;}
+/* the tools on a stored appointment row: inline buttons that wrap on a phone
+   instead of the invalid table cells they used to be */
+.appointment_detail_button { display: inline-block; vertical-align: middle; }
 #appointment_wrapper { bottom: 0px; position: fixed; overflow:scroll; width: 100%; right: 0px;} 
 .appointment_name { background-color: var(--panel);font-size: 20px; text-align: center; top:0px; border-width: 1px; border: solid; border-color: var(--line); border-radius: var(--jawnos-corner, 10px);}
 .appointment_header { vertical-align:top; text-align: left; float: left; }
@@ -799,6 +802,11 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 	#ticket { width: 100% }
 	.window_view { width: 100%; }
 	.appointment { width: 100%; }
+	/* The appointment's own fields: five in a row is unreadable on a phone, so
+	   they wrap two to a line and the last one takes the rest. */
+	.main_inputs_row { flex-wrap: wrap; }
+	.main_inputs_row .main_input { flex: 1 1 calc(50% - 3px) !important; min-width: calc(50% - 3px) !important; }
+	.main_inputs_row .main_input:last-child { flex-basis: 100% !important; }
 	#music_player { width: 100%; }
 	.pseudonym { 
 		z-index: 40000; 

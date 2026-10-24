@@ -22,7 +22,7 @@
 					<th>TS</th>
 					<th>Dur</th>
 					<% if ($l->{'stop_timestamp'}) { %>
-						<th>Stop</td>
+						<th>Stop</th>
 					<% } %>
 					<th>Warr</th>
 					<th>OST</th>
@@ -31,14 +31,15 @@
 				<tbody>
 					<tr>
 						<% if ($l->{'pseudonym'}->{'icon'}) { %>
-						<td><img style="left:0px;"><img class="little_thumb
-							<% if ($l->{'type'} eq 'studio') { %>
-								hover" onclick="studioInit({ last_song: '<%= $l->{'uuid'} %>' })
-							<% } elsif ($l->{'type'} eq 'email' && ref $l->{'data'} eq 'HASH' && $l->{'data'}->{'mail_uuid'}) { %>
-								mail_open hover" mail_uuid="<%= $l->{'data'}->{'mail_uuid'} %>" email="<%= $l->{'data'}->{'email'} %>"
-							<% } %>
-							" hint="<%= $l->{'formatted_type'} %>" src="<%= $l->{'pseudonym'}->{'icon'} %>"
-						></td>
+						<td>
+						<% if ($l->{'type'} eq 'studio') { %>
+							<img class="little_thumb hover" onclick="studioInit({ last_song: '<%= $l->{'uuid'} %>' })" hint="<%= $l->{'formatted_type'} %>" src="<%= $l->{'pseudonym'}->{'icon'} %>">
+						<% } elsif ($l->{'type'} eq 'email' && ref $l->{'data'} eq 'HASH' && $l->{'data'}->{'mail_uuid'}) { %>
+							<img class="little_thumb mail_open hover" mail_uuid="<%= $l->{'data'}->{'mail_uuid'} %>" email="<%= $l->{'data'}->{'email'} %>" hint="<%= $l->{'formatted_type'} %>" src="<%= $l->{'pseudonym'}->{'icon'} %>">
+						<% } else { %>
+							<img class="little_thumb" hint="<%= $l->{'formatted_type'} %>" src="<%= $l->{'pseudonym'}->{'icon'} %>">
+						<% } %>
+						</td>
 						<% } else { %>
 							<td><%= $l->{'formatted_type'} %></td>
 						<% } %>
@@ -62,34 +63,34 @@
 				EDITOR!
 			</div>
 			<div class="appointment_details_buttons">
-				<td><img src="<%= &subs::icon_path('trash', '/icons/trash.png') %>" hint="Delete" app="<%= $a %>" timestamp="<%= $l->{'timestamp'} %>" 
-					class="delete_app little_thumb hover" formatted_name="<%= $appts->{$a}->{'formatted_name'} %>" 
+				<span class="appointment_detail_button"><img src="<%= &subs::icon_path('trash', '/icons/trash.png') %>" hint="Delete" app="<%= $a %>" timestamp="<%= $l->{'timestamp'} %>"
+					class="delete_app little_thumb hover" formatted_name="<%= $appts->{$a}->{'formatted_name'} %>"
 					formatted_time="<%= $l->{'formatted_time'} %>"
 					app_type="<%= $l->{'type'} %>"
 					server_time="<%= $l->{'server_time'} %>"
-					formatted_duration="<%= $l->{'formatted_duration'} %>" 
+					formatted_duration="<%= $l->{'formatted_duration'} %>"
 					uuid="<%= $l->{'uuid'} %>" />
-				</td>
-				<td><img class="little_thumb upload_file app_upload hover" src="<%= &subs::icon_path('upload', '/images/make believe/up.png') %>" hint="Upload"></td>
+				</span>
+				<span class="appointment_detail_button"><img class="little_thumb upload_file app_upload hover" src="<%= &subs::icon_path('upload', '/images/make believe/up.png') %>" hint="Upload"></span>
 
 				<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
-					<td>
+					<span class="appointment_detail_button">
 						<img class="little_thumb take_picture hover" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
-					</td>
-					<td>
+					</span>
+					<span class="appointment_detail_button">
 						<img class="little_thumb take_picture hover" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
-					</td>
+					</span>
 				<% } %>
 				<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
-					<td>
+					<span class="appointment_detail_button">
 						<img class="little_thumb scan_document hover" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
-					</td>
-					<td>
+					</span>
+					<span class="appointment_detail_button">
 						<img class="little_thumb scan_document hover" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">
-					</td>
-					<td>
+					</span>
+					<span class="appointment_detail_button">
 						<img class="little_thumb take_picture hover" camera="webcam" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>" hint="Webcam">
-					</td>
+					</span>
 					<br>
 				<% } %>
 				<% if ($l->{'start_notes'} eq 'redacted' || $l->{'notes'} eq 'redacted' || $l->{'end_notes'} eq 'redacted') { %>
@@ -123,7 +124,7 @@
 					<% } %>
 					<% if ($l->{'measures'}) { %>
 						<% if (scalar @{$l->{'measures'}} > 0) { %>
-							<th><button class="appointment_list_toggle hover" list="measures">Measures</button</th>
+							<th><button class="appointment_list_toggle hover" list="measures">Measures</button></th>
 						<% } %>
 					<% } %>
 					<% if ($l->{'type'} eq 'command' || $l->{'type'} eq 'kill') { %><th>Ran</th><% } %>
@@ -233,5 +234,5 @@
 			<% } %>
 		</div>
 	<% } %>
-<div>
+</div>
 

@@ -42,6 +42,23 @@
 } %>
 <% $kb_sym{'€'} = 'EUR'; $kb_sym{'£'} = 'GBP'; $kb_sym{'¥'} = 'JPY'; $kb_sym{'₹'} = 'INR'; $kb_sym{'₽'} = 'RUB'; $kb_sym{'₩'} = 'KRW'; $kb_sym{'₺'} = 'TRY'; %>
 <% $kb_sym{'$'} = $kb_base; %>
+<%# The kinds the type row offers, with a unit to convert from when none was
+    typed. Only a kind whose representative unit exists is offered. %>
+<% my %kb_pref = (
+	currency => [ $kb_base ],
+	weight => [ 'kg', 'lb', 'g', 'oz' ],
+	volume => [ 'L', 'mL', 'tsp' ],
+	distance => [ 'm', 'km' ],
+	temperature => [ 'C', 'F' ],
+	speed => [ 'km/h', 'mph' ],
+	power => [ 'V', 'A', 'ohm' ],
+	resistance => [ 'ohm' ],
+); %>
+<% my @kb_types; %>
+<% foreach my $t ( qw/currency weight volume distance temperature speed power resistance/ ) {
+	my ($unit) = grep { exists $kb{$_} } @{ $kb_pref{$t} || [] };
+	push @kb_types, { key => $t, unit => $unit } if $unit;
+} %>
 <% my @symbols = (
 	'€','£','¥','₹','₽','₿','¢','$',
 	'±','×','÷','−','≠','≈','≤','≥','∞','π','√','∑','∏','∆','∂','∫','°','%','‰',
@@ -58,6 +75,11 @@
 		<button type="button" class="soft_kb_close" data-kb_action="close" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
 	</div>
 
+	<div id="soft_kb_types" class="soft_kb_convert" hidden>
+		<span class="soft_kb_convert_src"><%= &subs::ui('Type') %></span>
+		<div id="soft_kb_types_rows" class="soft_kb_convert_rows"></div>
+	</div>
+
 	<div id="soft_kb_convert" class="soft_kb_convert" hidden>
 		<span id="soft_kb_convert_src" class="soft_kb_convert_src"></span>
 		<div id="soft_kb_convert_rows" class="soft_kb_convert_rows"></div>
@@ -68,7 +90,7 @@
 		<div id="soft_kb_suggest_rows" class="soft_kb_convert_rows"></div>
 	</div>
 
-	<script id="soft_kb_units" type="application/json"><%== encode_json({ units => \%kb, symbols => \%kb_sym, base => $kb_base }) %></script>
+	<script id="soft_kb_units" type="application/json"><%== encode_json({ units => \%kb, symbols => \%kb_sym, base => $kb_base, types => \@kb_types }) %></script>
 
 	<div class="soft_kb_panel" data-kb_panel="letters">
 		<div class="soft_kb_row">

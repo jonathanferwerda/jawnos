@@ -27,7 +27,7 @@
 			<% } %>
 
 		<% } %>
-		<td><img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="tiny_thumb app_measure_delete hover" uuid="<%= $me->{'uuid'} %>"></td>
+		<span class="appointment_detail_button"><img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="tiny_thumb app_measure_delete hover" uuid="<%= $me->{'uuid'} %>"></span>
 		<br>
 	<% } %>
 <% } %>

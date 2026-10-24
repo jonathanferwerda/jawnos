@@ -10,8 +10,10 @@
 	position: fixed;
 	left: 0;
 	right: 0;
-	bottom: var(--taskbar_bottom_h, 0px);
-	z-index: 39990;
+	/* a mobile keyboard owns the very foot of the screen: whatever chrome the
+	   page keeps there sits above the keys while they are up */
+	bottom: 0;
+	z-index: 40002;
 	box-sizing: border-box;
 	padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
 	background: var(--panel);
@@ -27,11 +29,21 @@
 	display: none;
 }
 
-/* The floating dock keeps the same foot of the screen as the keys, and its
-   search bar would otherwise sit across the space bar. While the keyboard is
-   up the dock steps aside; it returns the moment the keys are put away. */
+/* The floating dock normally steps aside while a window is being typed in, so
+   it cannot sit across the space bar. When the field being typed in is the
+   dock's own search (or the taskbar's), the bar moves above the keys instead -
+   the keyboard stays pinned to the bottom and the input stays in view. */
 body.soft_kb_open #pseudonym_home {
 	display: none !important;
+}
+
+body.soft_kb_open.soft_kb_dock_field #pseudonym_home {
+	display: block !important;
+	bottom: var(--soft_kb_h, 0px) !important;
+}
+
+body.soft_kb_open.soft_kb_bar_field #taskbar[position=bottom] {
+	bottom: var(--soft_kb_h, 0px) !important;
 }
 
 /* inside the window being typed in: the window keeps its shape */
@@ -104,6 +116,12 @@ body.soft_kb_open #pseudonym_home {
 }
 
 .soft_kb_convert_item:active {
+	background: #4f8cff;
+	border-color: #4f8cff;
+	color: #fff;
+}
+
+.soft_kb_type_item.active {
 	background: #4f8cff;
 	border-color: #4f8cff;
 	color: #fff;

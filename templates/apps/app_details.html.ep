@@ -15,7 +15,7 @@
 	</select>
 	<br>
 	<label>Project</label>
-	<select class="transaction project app_setting" attribute="project" style="max-width=50%;">
+	<select class="transaction project app_setting" attribute="project" style="max-width:50%;">
 		<option selected="selected" value="<%= $a %>"><%= $appts->{$a}->{'formatted_name'} %></option>
 		<% foreach my $ap (@{$appts->{'__projects'}}) { %>
 			<option 

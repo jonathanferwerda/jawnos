@@ -48,7 +48,7 @@
 			</select>
 		<% } elsif ($m->{'type'} eq 'range') { %>
 			<input type="range" class="app_measure" measure="<%= $meas %>" min="<%= $m->{'min'} || 0 %>" max="<%= $m->{'max'} || 100 %>" value="<%= $am->{$meas}->{'value'} %>" unit="<%= $m->{'unit'} %>" style="width:80%;">
-			<span class="app_measure_display"measure="<%= $meas %>"><%= $am->{$meas}->{'value'} %></span>
+			<span class="app_measure_display" measure="<%= $meas %>"><%= $am->{$meas}->{'value'} %></span>
 		<% } elsif ($m->{'type'} eq 'text') { %>
 			<input class="app_measure" measure="<%= $meas %>" value="<%= &subs::format_name($am->{$meas}->{'value'}) %>" placeholder="<%= &subs::format_name($meas) %>" unit="<%= $m->{'unit'} %>" style="width:98%;text-align:center;">
 		<% } else { %>
