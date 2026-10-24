@@ -370,17 +370,25 @@ sub music_pulse_ready {
 	return 0;
 }
 
-# One output can be given one side of the stereo pair. The source still sends
-# ordinary stereo; a left/right output is produced here with ffmpeg's pan filter
-# (the other channel is silenced), so 'left' really is the left speaker and not
-# the left channel copied to both.
-sub music_channel_filter($channel) {
+# One output can be given one channel of the stereo pair. The source still sends
+# ordinary stereo; a left/right output is produced here with ffmpeg's pan filter.
+# A computer's stereo pair keeps the physical side (left speaker only / right
+# speaker only); a phone or tablet usually has one speaker, so the chosen
+# channel is sent to both sides there and is still heard however its speaker is
+# wired.
+sub music_channel_filter($channel, $device) {
+	my $side = $channel // '';
+	return '' unless $side eq 'left' || $side eq 'right';
+	my $src = $side eq 'left' ? 'c0' : 'c1';
+	if (($device // '') eq 'mobile') {
+		return 'pan=stereo|c0=' . $src . '|c1=' . $src;
+	}
 	# A bare 0 is not accepted as an input channel in the pan filter this ffmpeg
 	# ships with ("Expected in channel name"), so the silent side is 0 times a
 	# real channel. Verified on the Table: c0=c0|c1=0*c0 gives left only and
 	# c0=0*c1|c1=c1 gives right only.
-	return 'pan=stereo|c0=c0|c1=0*c0' if ($channel // '') eq 'left';
-	return 'pan=stereo|c0=0*c1|c1=c1' if ($channel // '') eq 'right';
+	return 'pan=stereo|c0=c0|c1=0*c0' if $side eq 'left';
+	return 'pan=stereo|c0=0*c1|c1=c1' if $side eq 'right';
 	return '';
 }
 
@@ -437,7 +445,7 @@ sub music_remote_audio_start($st) {
 	}
 	my @cmd;
 	my $channel = $st->{'channel'} // 'stereo';
-	my $pan = &music_channel_filter($channel);
+	my $pan = &music_channel_filter($channel, $device);
 	if (($st->{'codec'} || 'pcm') eq 'opus') {
 		# The source records WebM/Opus. ffmpeg decodes the live stream from
 		# stdin and pacat plays the PCM; decoding to 44100 keeps the phone and
