@@ -6368,6 +6368,32 @@ sub ble_device_from_chip() {
 	return $dev;
 }
 
+sub embedded_device {
+	# One embedded device, by chip, for a caller that will dereference the answer
+	# as a hash. device_lister answers with this machine's whole device list when
+	# the chip is not among the devices it can reach *now* - its only sighting is
+	# older than the presence window (the bridge was down, or it is another
+	# machine's homebase), so the neighbour tables know nothing about it. Now Me
+	# and the pin editor dereferenced that list as a hash and died on the spot
+	# ("Not a HASH reference"), which the panel showed as a red dot.
+	#
+	# Fall back to the recorded chip: it still carries the radio address the
+	# bridge needs, and ble_device_from_chip builds the same device row the
+	# sighting branch would. An empty hash means the chip is not recorded at all;
+	# the caller checks for that before using the device.
+	my ($timestamp, $edt, $chip_id) = @_;
+	my $dev = &device_lister($timestamp, $edt, undef, $chip_id);
+	return $dev if ref $dev eq 'HASH';
+	if ($chip_id) {
+		my $chip = &ble_chip_record($chip_id);
+		if ($chip && ref $chip eq 'HASH') {
+			my $fallback = &ble_device_from_chip($chip, $edt);
+			return $fallback if ref $fallback eq 'HASH';
+		}
+	}
+	return {};
+}
+
 # The Bluetooth devices the bridge has seen, for the Dev panel. A BLE-only device
 # off its access point is in no machine's neighbour table, so the network listing
 # never shows it; the bridge records each sighting in a machine's `chip_ids`

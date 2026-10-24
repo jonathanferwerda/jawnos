@@ -39290,7 +39290,7 @@ sub embedded_grabber($c,$timestamp) {
 			$chip_id = $best->{'id'} if $best;
 		}
 	}
-	my $embedded = &subs::device_lister($timestamp,$edt,undef,$chip_id);
+	my $embedded = &subs::embedded_device($timestamp,$edt,$chip_id);
 	$timestamp = $c->param('timestamp');
 	my $tty_enabled = &subs::setting_grabber({ app => $edt, setting => 'enabled' });
 	my $pseudonyms = &pseudonym_maker($edt, '');
@@ -39405,7 +39405,7 @@ get '/manager/embedded/device_query' => sub($c) {
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
-	my $embedded = &subs::device_lister($timestamp,$edt,undef,$chip_id);
+	my $embedded = &subs::embedded_device($timestamp,$edt,$chip_id);
 	my $query = &embedded_device_query($embedded);
 	my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id } );
 	my $op_d = eval { return decode_json $od } || {};
@@ -39476,7 +39476,7 @@ post '/manager/embedded/files/delete' => sub($c) {
 	my $edt = $c->param('edt');
 	my $chip_id = $c->param('chip_id');
 	my $timestamp = $c->param('timestamp');
-	my $embedded = &subs::device_lister($timestamp,$edt,undef,$chip_id);
+	my $embedded = &subs::embedded_device($timestamp,$edt,$chip_id);
 	my $file = $c->param('file');
 	if ($embedded->{'ip'}) {
 		my $op_d = eval { return decode_json &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $embedded->{'chip_id'} }) } || {};
@@ -39524,7 +39524,11 @@ sub embedded_pin_grabber($data) {
 	my $edt = $data->{'edt'};
 	my $device_type = $data->{'edt'};
 	my $current_component = $data->{'component'};
-	my $embedded = &subs::device_lister($timestamp,$edt,undef,$chip_id);
+	my $embedded = &subs::embedded_device($timestamp,$edt,$chip_id);
+	# Keep the identifiers the form needs even when the device itself is not in
+	# reach, so the re-rendered controls still post for this chip.
+	$embedded->{'chip_id'} ||= $chip_id;
+	$embedded->{'edt'} ||= $edt;
 	my $od = &subs::setting_grabber({ app => $edt, setting => 'operator_door', subsetting => $chip_id } );
 	my $op_d = eval { return decode_json $od } || {};
 	my $returner;
@@ -39596,7 +39600,7 @@ sub embedded_pin_grabber($data) {
 		push @{$chip_ids}, @{$chip->{'chip_ids'}};
 	}
 
-	return $returner;
+	return $returner || { html => '' };
 };
 
 get '/manager/embedded/wigi' => sub($c) {
@@ -40279,7 +40283,10 @@ post '/manager/watch/setting' => sub($c) {
 		chip_id => $chip_id,
 		timestamp => $timestamp
 	});
-	my $res = &now_me({ c => $c, timestamp => $timestamp, edt => $edt, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id') });
+	my $res = eval { &now_me({ c => $c, timestamp => $timestamp, edt => $edt, chip_id => $chip_id, browser_tab_id => $c->param('browser_tab_id') }) };
+	# The setting is saved either way; a push that failed must not take the panel's
+	# whole request down with it (a red dot that says nothing).
+	$log->error('Now Me after setting: ' . ($@ =~ s/\s+/ /gr)) if $@;
 	$c->render(json => $returner );
 };
 
@@ -40401,7 +40408,14 @@ sub now_me($data) {
 
 
 
-	my $watch = &subs::device_lister($timestamp, $edt, undef, $chip_id);
+	my $watch = &subs::embedded_device($timestamp, $edt, $chip_id);
+	# The setting that led here is already saved. A device this machine cannot
+	# reach is not an error: it takes its copy on its next state_request, or from
+	# its homebase, which is the only machine that may push it anyway.
+	unless ($watch->{'chip_id'}) {
+		$log->info('Now Me for ' . ($chip_id || '?') . ' skipped: device not listed');
+		return 'device not listed';
+	}
 	# A Bluetooth-only watch belongs to one machine. A different machine must not
 	# rotate its homebase and authorization, or re-push the watch onto itself -
 	# bluetooth_sender refuses the send anyway, so a Now Me here would only
