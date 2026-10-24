@@ -72,7 +72,8 @@
 		%>
 		<h2>Passkeys</h2>
 		<p style="line-height:1.4;max-width:640px;">
-			A passkey is a keypair the device makes in its own secure hardware. The house keeps only its public half,
+			A passkey is a keypair made by a security key you plug in - a USB or NFC key, not this device's own
+			reader and not a phone. The house keeps only its public half,
 			so there is nothing here to steal, and the key signs a challenge from this house rather than a password
 			that can be typed into the wrong page. A passkey registered here is bound to
 			<b><%= length($webauthn_rp || '') ? $webauthn_rp : 'the house domain (not set yet)' %></b>, so the same

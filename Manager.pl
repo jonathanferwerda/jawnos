@@ -7693,7 +7693,7 @@ post '/manager/webauthn/register/begin' => sub($c) {
 	my $rp = &webauthn::rp_id();
 	return $c->render(json => { ok => 0, error => 'set the house domain first (Configure -> Plat -> DNS)' }) unless length $rp;
 	my $challenge = &webauthn::challenge_put('register', { person_uuid => $p->{'uuid'} });
-	my @exclude = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(internal hybrid) ] } }
+	my @exclude = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(usb nfc ble) ] } }
 		grep { ($_->{'person_uuid'} || '') eq $p->{'uuid'} } @{ &webauthn::credentials() };
 	$c->render(json => {
 		ok => 1,
@@ -7704,7 +7704,7 @@ post '/manager/webauthn/register/begin' => sub($c) {
 			pubKeyCredParams => [ { type => 'public-key', alg => -7 }, { type => 'public-key', alg => -8 } ],
 			timeout => 300000,
 			attestation => 'none',
-			authenticatorSelection => { residentKey => 'preferred', userVerification => 'preferred' },
+			authenticatorSelection => { authenticatorAttachment => 'cross-platform', residentKey => 'preferred', userVerification => 'preferred' },
 			excludeCredentials => \@exclude,
 		},
 	});
@@ -7721,6 +7721,9 @@ post '/manager/webauthn/register/finish' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'the challenge expired - try again' }) unless $payload && ($payload->{'person_uuid'} || '') eq $p->{'uuid'};
 	my ($reg, $err) = &webauthn::verify_registration($cd, $c->param('attestation'), $challenge, &webauthn::origin_of($c));
 	return $c->render(json => { ok => 0, error => $err }) unless $reg;
+	my $transports = $c->param('transports') || '';
+	return $c->render(json => { ok => 0, error => 'that was this device\'s own reader or a phone, not a security key - plug in a USB key and try again' })
+		if &webauthn::platform_transport_only($transports);
 	my $name = $c->param('name') || 'Passkey';
 	$name =~ s/^\s+|\s+$//g;
 	$name = 'Passkey' unless length $name;
@@ -7735,7 +7738,7 @@ post '/manager/webauthn/register/finish' => sub($c) {
 		name        => $name,
 		sign_count  => $reg->{'sign_count'},
 		aaguid      => $reg->{'aaguid'},
-		transports  => 'internal,hybrid',
+		transports  => $transports,
 		created     => &subs::rightNow(),
 		last_used   => 0,
 	};
@@ -7786,20 +7789,8 @@ get '/passkey' => sub($c) {
 	my $token = $c->param('t') || '';
 	my $p = &webauthn::enroll_peek($token);
 	my $house = &webauthn::rp_id();
-	# The same link, offered as a QR so a phone can open it itself and use its
-	# own authenticator, rather than relying on the cross-device hand-off.
-	my $page_url = '';
-	my $qr_img = '';
 	my $house_url = '';
-	if ($p && length $house) {
-		my $base = &webauthn::house_link_base($c);
-		if (length $base) {
-			$house_url = $base;
-			$page_url = $base . '/passkey?t=' . $token;
-			my $png = &subs::crest_qr_png($page_url);
-			$qr_img = 'data:image/png;base64,' . encode_base64($png) if defined $png && length $png;
-		}
-	}
+	$house_url = &webauthn::house_link_base($c) if $p && length $house;
 	$c->render(
 		template => 'passkey',
 		layout => undef,
@@ -7808,9 +7799,7 @@ get '/passkey' => sub($c) {
 		person_name => ($p ? ($p->{'name'} || '') : ''),
 		house => $house,
 		port => ($ENV{'PORT_DOCK'} || 3000),
-		page_url => $page_url,
 		house_url => $house_url,
-		qr_img => $qr_img,
 	);
 };
 
@@ -7822,7 +7811,7 @@ post '/passkey/begin' => sub($c) {
 	my $rp = &webauthn::rp_id();
 	return $c->render(json => { ok => 0, error => 'set the house domain first' }) unless length $rp;
 	my $challenge = &webauthn::challenge_put('enroll', { person_uuid => $p->{'person_uuid'}, token => $token });
-	my @exclude = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(internal hybrid) ] } }
+	my @exclude = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(usb nfc ble) ] } }
 		grep { ($_->{'person_uuid'} || '') eq $p->{'person_uuid'} } @{ &webauthn::credentials() };
 	$c->render(json => {
 		ok => 1,
@@ -7833,7 +7822,7 @@ post '/passkey/begin' => sub($c) {
 			pubKeyCredParams => [ { type => 'public-key', alg => -7 }, { type => 'public-key', alg => -8 } ],
 			timeout => 300000,
 			attestation => 'none',
-			authenticatorSelection => { residentKey => 'preferred', userVerification => 'preferred' },
+			authenticatorSelection => { authenticatorAttachment => 'cross-platform', residentKey => 'preferred', userVerification => 'preferred' },
 			excludeCredentials => \@exclude,
 		},
 	});
@@ -7852,6 +7841,9 @@ post '/passkey/finish' => sub($c) {
 		unless $payload && ($payload->{'token'} || '') eq $token && ($payload->{'person_uuid'} || '') eq $p->{'person_uuid'};
 	my ($reg, $err) = &webauthn::verify_registration($cd, $c->param('attestation'), $challenge, &webauthn::origin_of($c));
 	return $c->render(json => { ok => 0, error => $err }) unless $reg;
+	my $transports = $c->param('transports') || '';
+	return $c->render(json => { ok => 0, error => 'that was this device\'s own reader or a phone, not a security key - plug in a USB key and try again' })
+		if &webauthn::platform_transport_only($transports);
 	my $name = $c->param('name') || 'Passkey';
 	$name =~ s/^\s+|\s+$//g;
 	$name = 'Passkey' unless length $name;
@@ -7866,7 +7858,7 @@ post '/passkey/finish' => sub($c) {
 		name        => $name,
 		sign_count  => $reg->{'sign_count'},
 		aaguid      => $reg->{'aaguid'},
-		transports  => 'internal,hybrid',
+		transports  => $transports,
 		created     => &subs::rightNow(),
 		last_used   => 0,
 	};
@@ -7878,10 +7870,10 @@ post '/passkey/finish' => sub($c) {
 
 post '/manager/webauthn/login/begin' => sub($c) {
 	my $rp = &webauthn::rp_id();
-	my $list = &webauthn::credentials();
-	return $c->render(json => { ok => 0, error => 'no passkeys on this house' }) unless length $rp && scalar @{$list};
+	my @keys = grep { !&webauthn::platform_transport_only($_->{'transports'}) } @{ &webauthn::credentials() };
+	return $c->render(json => { ok => 0, error => 'no passkeys on this house' }) unless length $rp && scalar @keys;
 	my $challenge = &webauthn::challenge_put('login', {});
-	my @allow = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(internal hybrid) ] } } @{$list};
+	my @allow = map { { type => 'public-key', id => $_->{'id'}, transports => [ qw(usb nfc ble) ] } } @keys;
 	$c->render(json => {
 		ok => 1,
 		publicKey => {

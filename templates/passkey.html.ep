@@ -37,11 +37,8 @@
 	.status.bad { color:#b4543a; }
 	.done { display:none; margin-top:14px; font-size:14px; color:var(--accent); }
 	a { color:var(--accent); }
+	.key { margin:0; }
 	hr { border:0; border-top:1px solid var(--line); margin:22px 0; }
-	.phone { display:flex; gap:18px; align-items:flex-start; }
-	.phone .words { flex:1 1 auto; min-width:0; }
-	.phone .qr { flex:0 0 auto; width:132px; height:132px; border-radius:10px; background:#fff; padding:8px; }
-	.url { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; word-break:break-all; color:var(--muted); }
 	details { margin-top:16px; }
 	summary { cursor:pointer; font-size:13px; color:var(--muted); }
 	.caps { margin-top:8px; font-size:12px; line-height:1.7; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; color:var(--muted); }
@@ -66,20 +63,10 @@
 
 		<hr>
 
-		<div class="phone">
-			<div class="words">
-				<h2>On a phone</h2>
-				<p class="muted small">A phone usually has a fingerprint or face reader, and that is the easiest key to make. Scan this with the camera to open this same page on the phone, then press <b>Create the passkey here</b> on the phone.</p>
-				<% if (length $page_url) { %>
-					<p class="url"><%= $page_url %></p>
-					<p class="muted tiny">Five minutes, one use. Reload this page for a fresh code.</p>
-				<% } else { %>
-					<p class="muted small">Set the house domain and this machine's name first, then reload.</p>
-				<% } %>
-			</div>
-			<% if (length $qr_img) { %>
-				<img class="qr" src="<%= $qr_img %>" alt="QR code for this enrollment page">
-			<% } %>
+		<div class="key">
+			<h2>A security key</h2>
+			<p class="muted small">This page takes a <b>security key</b> - a USB or NFC key, not this device's own reader and not a phone. Plug the key in, then press <b>Create the passkey here</b> and touch it when it blinks.</p>
+			<p class="muted tiny">A device's own reader and a phone handed over the network are refused: a synced passkey cannot be told apart from them, and its custody runs through somebody else's account.</p>
 		</div>
 
 		<details>
@@ -192,6 +179,7 @@
 				return post('/passkey/finish', {
 					t: token,
 					name: document.getElementById('name').value || 'Passkey',
+					transports: (cred.response.getTransports ? cred.response.getTransports().join(',') : ''),
 					client_data: bytesToB64u(cred.response.clientDataJSON),
 					attestation: bytesToB64u(cred.response.attestationObject)
 				}).then(function (f) {

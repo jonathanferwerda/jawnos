@@ -687,6 +687,7 @@ $(document).on('click', '.signatorial_selection', function() {
 				$.post('/manager/webauthn/register/finish', {
 					client_data: bytesToB64u(cred.response.clientDataJSON),
 					attestation: bytesToB64u(cred.response.attestationObject),
+					transports: (cred.response.getTransports ? cred.response.getTransports().join(',') : ''),
 					name: $('#passkey_name').val() || 'Passkey'
 				}, function (f) {
 					if (!f || !f.ok) { status.text((f && f.error) || 'could not save'); return; }

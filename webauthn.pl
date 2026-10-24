@@ -304,6 +304,19 @@ sub challenge_take {
 # ---- the credential store ---------------------------------------------------
 # Credentials are public keys, so they live in a synced setting: every peer can
 # verify an assertion without a new table and without a sync registration.
+# This house takes a security key: a roaming authenticator (usb, nfc or ble).
+# A platform authenticator, or a phone handed over the network (internal,
+# hybrid), is refused, because a synced passkey cannot be told apart from one of
+# those and its custody runs through a third party. The transports list comes
+# from the browser, so this is enrollment hygiene rather than a proof.
+sub platform_transport_only {
+	my ($t) = @_;
+	my @list = map { lc } grep { length } split /\s*,\s*/, (defined $t ? $t : '');
+	return 0 unless @list;
+	return 0 if grep { $_ eq 'usb' || $_ eq 'nfc' || $_ eq 'ble' } @list;
+	return (grep { $_ eq 'internal' || $_ eq 'hybrid' } @list) ? 1 : 0;
+}
+
 sub credentials {
 	my $raw = &subs::setting_grabber({ app => 'webauthn', setting => 'credentials', device => 'all' });
 	my $list = eval { decode_json($raw) } || [];
