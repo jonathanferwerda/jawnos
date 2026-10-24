@@ -2152,6 +2152,42 @@ $(window).on('resize', function () {
 	if ($('#search_results').is(':visible')) { jawnosSearchResultsPlace(); }
 });
 
+// The details list's Dur column ticks while a session is open: the row carries
+// its start and stop, and the same two-unit shape duration_sayer gives is
+// rebuilt here (1h 5s, 59m 59s, 1d 1m).
+function jawnosDurationText(seconds) {
+	seconds = Math.max(0, Math.floor(Number(seconds) || 0));
+	var d = Math.floor(seconds / 86400); seconds %= 86400;
+	var h = Math.floor(seconds / 3600); seconds %= 3600;
+	var m = Math.floor(seconds / 60);
+	var s = seconds % 60;
+	var parts = [];
+	if (d) { parts.push(d + 'd'); }
+	if (h) { parts.push(h + 'h'); }
+	if (m) { parts.push(m + 'm'); }
+	if (s) { parts.push(s + 's'); }
+	return parts.length ? parts.slice(0, 2).join(' ') : '0s';
+}
+
+function jawnosDetailsDurationTick() {
+	var now = Date.now();
+	$('.appointment_detail_duration').each(function () {
+		var cell = $(this);
+		if (cell.attr('stop_timestamp')) { return; }
+		var type = cell.attr('appt_type') || '';
+		if (type != 'start' && type != 'record') { return; }
+		var start = Number(cell.attr('timestamp')) || 0;
+		if (!start || start > now) { return; }
+		var text = jawnosDurationText((now - start) / 1000);
+		if (cell.text() !== text) { cell.text(text); }
+	});
+}
+
+$(function () {
+	setInterval(jawnosDetailsDurationTick, 1000);
+	jawnosDetailsDurationTick();
+});
+
 function jawnosSearchRender(query) {
 	var box = $('#search_results');
 	if (!box.length) { return; }

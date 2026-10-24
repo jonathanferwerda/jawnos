@@ -57,6 +57,15 @@ body.soft_kb_open .soft_kb_search_lifted {
 	box-shadow: 0 -6px 20px rgba(0, 0, 0, .22);
 }
 
+/* A finger dragged across a field selects from where it landed, so the field
+   owns that gesture rather than the page's pan. */
+input[type="text"], input[type="search"], input[type="email"], input[type="url"],
+input[type="tel"], input[type="password"], textarea, [contenteditable="true"] {
+	-webkit-user-select: text;
+	user-select: text;
+	touch-action: none;
+}
+
 /* inside the window being typed in: the window keeps its shape */
 .soft_kb.soft_kb_in_window {
 	position: absolute;

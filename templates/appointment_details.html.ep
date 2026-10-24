@@ -52,7 +52,7 @@
 
 
 						<td class="time" style="font-size:16px;" timestamp="<%= $l->{'timestamp'} %>"></td>
-						<td><%= $l->{'formatted_duration'} %></td>
+						<td class="appointment_detail_duration" timestamp="<%= $l->{'timestamp'} %>" stop_timestamp="<%= $l->{'stop_timestamp'} %>" appt_type="<%= $l->{'type'} %>"><%= $l->{'formatted_duration'} %></td>
 						<% if ($l->{'stop_timestamp'}) { %><td class="time" timestamp="<%= $l->{'stop_timestamp'} %>"></td><% } %>
 						<td class="time" timestamp="<%= $l->{'warranty'} %>"></td>
 						<td class="time" timestamp="<%= $l->{'ost'} %>"></td>

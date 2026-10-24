@@ -1137,6 +1137,134 @@ if (window.MutationObserver) {
 }
 $(function () { softKbSweep(document); });
 
+// ---- selecting text by dragging --------------------------------------------
+// A finger dragged across a field selects from where it landed as it moves, so
+// the highlight appears at once instead of waiting for the platform's long-press
+// handles. Chromium reports the caret inside an input/textarea through
+// caretPositionFromPoint; a contenteditable reports its text node.
+var jawnTextDrag = null;
+
+function jawnTextSelectable(el) {
+	if (!el || el.nodeType != 1 || el.disabled) { return false; }
+	if (el.isContentEditable) { return true; }
+	var tag = (el.tagName || '').toLowerCase();
+	if (tag == 'textarea') { return true; }
+	if (tag != 'input') { return false; }
+	var type = (el.getAttribute('type') || 'text').toLowerCase();
+	return ['text', 'search', 'email', 'url', 'tel', 'password'].indexOf(type) >= 0;
+}
+
+function jawnTextCaretAt(x, y) {
+	try {
+		if (document.caretPositionFromPoint) {
+			var p = document.caretPositionFromPoint(x, y);
+			if (p && p.offsetNode) { return { node: p.offsetNode, offset: p.offset }; }
+		}
+		if (document.caretRangeFromPoint) {
+			var r = document.caretRangeFromPoint(x, y);
+			if (r) { return { node: r.startContainer, offset: r.startOffset }; }
+		}
+	} catch (err) {}
+	return null;
+}
+
+function jawnTextOwns(field, node) {
+	if (!node) { return false; }
+	if (node === field) { return true; }
+	return field.contains(node);
+}
+
+function jawnTextDragAnchor(d) {
+	var el = d.el;
+	var a = jawnTextCaretAt(d.x, d.y);
+	if (el.isContentEditable) {
+		if (a && jawnTextOwns(el, a.node)) { d.anchorNode = a.node; d.anchorOffset = a.offset; return; }
+		d.anchorNode = el;
+		d.anchorOffset = 0;
+		return;
+	}
+	if (a && a.node === el) { d.anchor = a.offset; return; }
+	d.anchor = (el.selectionStart == null) ? 0 : el.selectionStart;
+}
+
+function jawnTextDragOffset(d, x, y) {
+	var el = d.el;
+	var a = jawnTextCaretAt(x, y);
+	if (el.isContentEditable) {
+		if (a && jawnTextOwns(el, a.node)) { return a; }
+		var r = el.getBoundingClientRect();
+		var range = document.createRange();
+		range.selectNodeContents(el);
+		range.collapse(y < r.top || (y <= r.bottom && x < r.left));
+		return { node: range.startContainer, offset: range.startOffset };
+	}
+	if (a && a.node === el) { return { node: el, offset: a.offset }; }
+	var rect = el.getBoundingClientRect();
+	var before = (y < rect.top) || (y <= rect.bottom && x < rect.left);
+	return { node: el, offset: before ? 0 : (el.value || '').length };
+}
+
+function jawnTextDragApply(d, x, y) {
+	var el = d.el;
+	var cur = jawnTextDragOffset(d, x, y);
+	if (!cur) { return; }
+	if (el.isContentEditable) {
+		if (d.anchorNode == null) { return; }
+		var sel = window.getSelection ? window.getSelection() : null;
+		if (!sel) { return; }
+		var range = document.createRange();
+		try {
+			range.setStart(d.anchorNode, d.anchorOffset);
+			range.setEnd(d.anchorNode, d.anchorOffset);
+			var probe = document.createRange();
+			probe.setStart(cur.node, cur.offset);
+			probe.setEnd(cur.node, cur.offset);
+			if (range.compareBoundaryPoints(Range.START_TO_START, probe) <= 0) {
+				range.setEnd(cur.node, cur.offset);
+			}
+			else {
+				range.setStart(cur.node, cur.offset);
+				range.setEnd(d.anchorNode, d.anchorOffset);
+			}
+		} catch (err) { return; }
+		sel.removeAllRanges();
+		sel.addRange(range);
+		return;
+	}
+	var a = (d.anchor == null) ? 0 : d.anchor;
+	var o = cur.offset;
+	try { el.setSelectionRange(Math.min(a, o), Math.max(a, o)); } catch (err) {}
+}
+
+$(document).on('pointerdown', 'input, textarea, [contenteditable="true"]', function (e) {
+	if (e.pointerType === 'mouse') { return; }
+	if (e.isPrimary === false) { return; }
+	var el = softKbRoot(this);
+	if (!jawnTextSelectable(el)) { return; }
+	jawnTextDrag = { el: el, x: e.clientX, y: e.clientY, pointerId: e.pointerId, moved: false, anchor: null, anchorNode: null, anchorOffset: 0 };
+});
+
+$(document).on('pointermove', function (e) {
+	var d = jawnTextDrag;
+	if (!d) { return; }
+	if (e.pointerId != null && d.pointerId != null && e.pointerId !== d.pointerId) { return; }
+	if (!d.moved) {
+		if (Math.abs(e.clientX - d.x) < 6 && Math.abs(e.clientY - d.y) < 6) { return; }
+		d.moved = true;
+		try { d.el.focus({ preventScroll: true }); } catch (err) {}
+		jawnTextDragAnchor(d);
+	}
+	e.preventDefault();
+	jawnTextDragApply(d, e.clientX, e.clientY);
+});
+
+$(document).on('pointerup pointercancel', function (e) {
+	var d = jawnTextDrag;
+	if (!d) { return; }
+	if (e && e.pointerId != null && d.pointerId != null && e.pointerId !== d.pointerId) { return; }
+	jawnTextDrag = null;
+});
+
 document.addEventListener('pointerdown', function (e) {
 	var el = e.target;
 	if (softKbOn() && (softKbEditable(el) || (el.isContentEditable))) { softKbSuppress(el); }
