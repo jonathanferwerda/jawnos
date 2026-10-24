@@ -820,26 +820,6 @@ function musicResumeSync() {
 	if (musicLip.on && musicLip.revealed) { musicLipSeek(); }
 }
 
-// A pause leaves a little of the element's sound queued in the audio graph's
-// pipeline. On the resume that queue plays before the new position, so the
-// sound starts at a different place from the picture - a seek is what flushes
-// it, which is why a seek makes the two agree again. Seek a few milliseconds
-// at the same place to get that flush on a resume, without moving the track.
-function musicResumeFlush() {
-	var v = tree && tree.sound;
-	if (!v || !v.tagName) { return; }
-	// a picture is the only thing this can put out of step
-	if (!tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return; }
-	// without the graph carrying this machine's sound there is no queue to flush
-	if (!musicGraphCarriesLocal()) { return; }
-	try {
-		var t = (v.currentTime || 0) + 0.01;
-		if (isFinite(v.duration) && v.duration > 0 && t > v.duration - 0.05) { t = v.duration - 0.05; }
-		if (t < 0) { t = 0; }
-		v.currentTime = t;
-	} catch (e) {}
-}
-
 function musicStreamOutputsChanged() {
 	if (!musicStream.active) { return; }
 	var outs = musicStreamOutputs();
@@ -1415,9 +1395,6 @@ var music_sync_offset = 0;
 // can be several seconds; a wider trim is why the picture delay is not capped at 1 s.
 var music_sync_offset_min = -5000;
 var music_sync_offset_max = 5000;
-// Set on a pause and consumed by the next play: a resume needs the sound's
-// pipeline flushed, and a seek is what does that (see musicResumeFlush).
-var musicResumeFlushNext = 0;
 var music_local_delay = 0;
 var music_local_delay_save_timer = 0;
 var music_sync_save_timer = 0;
@@ -2187,19 +2164,12 @@ function mediaMaker(data) {
 			else {
 				theatreModeOff();
 			}
-		tree.sound.onplaying = function() {
-			tree.sound.state = 1;
-			// The context is left running through a pause (see onpause), but a
-			// backgrounded tab or an interrupted context still needs resuming
-			// before the element's sound is expected.
-			musicAudioResume();
-			// A resume plays whatever the sound pipeline still had queued, which
-			// is a little past where the picture stopped. Flush it before the
-			// first frame of this play, exactly as a seek would.
-			if (musicResumeFlushNext) {
-				musicResumeFlushNext = 0;
-				musicResumeFlush();
-			}
+			tree.sound.onplaying = function() {
+				tree.sound.state = 1;
+				// The context is left running through a pause (see onpause), but a
+				// backgrounded tab or an interrupted context still needs resuming
+				// before the element's sound is expected.
+				musicAudioResume();
 				tree.sound.sync_cursor = null;
 				tree.sound.sync_wall = 0;
 				musicKeepalive(true);
@@ -2336,8 +2306,6 @@ function mediaMaker(data) {
 					tree.sound.state = 0;
 					musicKeepalive(false);
 					musicStreamControl('pause');
-					// the next play flushes the sound pipeline (see musicResumeFlush)
-					musicResumeFlushNext = 1;
 					// The context is deliberately left running. Suspending it and resuming
 					// it on the next play made every resume behave a little differently
 					// (the graph's own queue and its delay line do not restart alike);
