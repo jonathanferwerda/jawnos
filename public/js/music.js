@@ -817,8 +817,10 @@ function musicPictureDelay() {
 	if (!ready) { return 0; }
 	// The measured stream latency, plus the machine's own trim: a positive
 	// offset waits longer for a remote whose output buffer is not reported.
+	// The ceiling only guards a runaway measurement; it has to clear the largest
+	// trim the slider offers, or the slider silently stops at the cap.
 	var delay = musicStreamLatency() / 1000 + (music_sync_offset || 0) / 1000;
-	return Math.max(0, Math.min(1, delay));
+	return Math.max(0, Math.min(4, delay));
 }
 
 function musicLipWanted() {
@@ -1268,6 +1270,11 @@ var music_eq_save_timer = 0;
 var music_eq_drag = null;
 var music_audio_loading = false;
 var music_sync_offset = 0;
+// The Sync offset slider's range, mirrored in templates/apps/music/audio.html.ep.
+// The trim has to cover a remote whose own output buffer is not reported, which
+// can be a second or two; a wider trim is why the picture delay is not capped at 1 s.
+var music_sync_offset_min = -300;
+var music_sync_offset_max = 2000;
 var music_local_delay = 0;
 var music_local_delay_save_timer = 0;
 var music_sync_save_timer = 0;
@@ -3291,7 +3298,7 @@ function musicSyncOffsetRead() {
 	var el = $('#music_sync_offset');
 	if (el.length) {
 		var v = parseFloat(el.val());
-		if (isFinite(v)) { music_sync_offset = Math.max(-300, Math.min(500, v)); }
+		if (isFinite(v)) { music_sync_offset = Math.max(music_sync_offset_min, Math.min(music_sync_offset_max, v)); }
 		el.val(music_sync_offset);
 	}
 	$('#music_sync_offset_value').text(music_sync_offset + ' ms');
@@ -3300,11 +3307,16 @@ function musicSyncOffsetSave() {
 	clearTimeout(music_sync_save_timer);
 	music_sync_save_timer = setTimeout(function() {
 		settingSetter({ app: 'music', setting: 'sync_offset', value: music_sync_offset });
+		// A trim of a second or more is far beyond the clone's rate-only
+		// correction, which closes a drift at a fifth of a second per second.
+		// Once the drag settles, re-anchor the clone; the still covers the seek,
+		// exactly as it does for an explicit seek.
+		if (musicLip.on && musicLip.revealed) { musicLipSeek(); }
 	}, 250);
 }
 $(document).on('input', '#music_sync_offset', function() {
 	var v = parseFloat(this.value);
-	if (isFinite(v)) { music_sync_offset = Math.max(-300, Math.min(500, v)); }
+	if (isFinite(v)) { music_sync_offset = Math.max(music_sync_offset_min, Math.min(music_sync_offset_max, v)); }
 	musicSyncOffsetRead();
 	musicLipDelayChanged();
 	musicLipApply();
@@ -3665,7 +3677,7 @@ function musicAudioGraph() {
 			musicVisual.localGain = musicVisual.ctx.createGain();
 			musicVisual.remoteGain = musicVisual.ctx.createGain();
 			musicVisual.remoteGain.gain.value = musicRemoteVolume();
-			musicVisual.localDelay = musicVisual.ctx.createDelay(1.0);
+			musicVisual.localDelay = musicVisual.ctx.createDelay(5.0);
 			musicVisual.localSplit = musicVisual.ctx.createChannelSplitter(2);
 			musicVisual.localLeft = musicVisual.ctx.createGain();
 			musicVisual.localRight = musicVisual.ctx.createGain();

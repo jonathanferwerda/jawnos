@@ -31,7 +31,7 @@
 %>
 <% my $sync_offset = $crate->{'settings'}->{'sync_offset'} || 0;
 	$sync_offset = -300 if $sync_offset < -300;
-	$sync_offset = 500 if $sync_offset > 500;
+	$sync_offset = 2000 if $sync_offset > 2000;
 %>
 <% my $local_delay = $crate->{'settings'}->{'local_delay'} || 0;
 	$local_delay = 0 if $local_delay < 0;
@@ -97,7 +97,7 @@
 		<div class="music_cfg_field music_cfg_field_wide">
 			<label class="music_cfg_label" for="music_sync_offset" hint="Sync offset"><%= &subs::lang('music.sync_offset') %></label>
 			<div class="music_sync_row">
-				<input type="range" id="music_sync_offset" min="-300" max="500" step="10" value="<%= $sync_offset %>" hint="Sync offset">
+				<input type="range" id="music_sync_offset" min="-300" max="2000" step="10" value="<%= $sync_offset %>" hint="Sync offset">
 				<span id="music_sync_offset_value"><%= $sync_offset %> ms</span>
 			</div>
 		</div>
