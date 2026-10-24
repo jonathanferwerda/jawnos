@@ -2549,10 +2549,14 @@ body.dark_theme #desk { --desk-accent: #6ea8fe; }
 #desk_layer {
 	display: none; position: fixed; left: 0; top: 60px;
 	bottom: calc(var(--taskbar_bottom_h, 0px) + 8px); width: 100%;
-	box-sizing: border-box; padding: 10px 16px; z-index: 4; overflow: auto;
+	box-sizing: border-box; padding: 10px 16px; z-index: 4; overflow: hidden;
 	align-content: start; justify-content: start; outline: none;
-	/* one column down the left: the desk reads top to bottom, alphabetically */
-	grid-template-columns: 96px; grid-auto-rows: min-content; gap: 4px;
+	/* A desktop fills a column top to bottom, then starts the next one to the
+	   right. The rows are fixed so the flow knows where a column ends; whatever
+	   fits the screen is shown, and the grid never scrolls. */
+	grid-auto-flow: column;
+	grid-template-rows: repeat(auto-fill, 96px);
+	grid-auto-columns: 96px; gap: 4px;
 }
 #desk_layer.active { display: grid; }
 #desk_layer .desk_file { padding: 6px 4px; }
