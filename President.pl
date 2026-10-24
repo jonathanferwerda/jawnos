@@ -1332,7 +1332,15 @@ sub utility_functions() {
 					foreach my $nic ( keys %{$network} ) {
 						push @{$addresses}, { ip => $network->{$nic}->{'ip'}, gw => $network->{$nic}->{'gw'} };
 						if (!grep { $_->{'ip'} eq $network->{$nic}->{'ip'} && $_->{'gw'} eq $network->{$nic}->{'gw'}  } @{$old_addresses}) {
-							&subs::db_delete('continent', { type => 'temporary', signatorial => &subs::signatorial_designer() });
+							# A network change invalidates a borrowed place, but not a fix
+							# this machine's own GPS made: a phone's WiFi, cell and VPN
+							# addresses can change while it stands still, and clearing
+							# the row made the site type fall back to public until the
+							# next fix. Only a machine with no GPS of its own loses
+							# the place here.
+							unless (&subs::navigation_gps_present()) {
+								&subs::db_delete('continent', { type => 'temporary', signatorial => &subs::signatorial_designer() });
+							}
 							$duty = 'restart';
 						}
 					}
