@@ -44,8 +44,34 @@ while (defined(my $a = shift @ARGV)) {
 my %default_timeout = (connect => 20, send => 15, status => 10, disconnect => 10);
 my $timeout = defined $opt{'timeout'} && $opt{'timeout'} =~ /^\d+$/ ? $opt{'timeout'} + 0 : undef;
 
+sub am_path {
+	# Android's `am` is not on Termux's PATH in every environment jawn is started
+	# from (a background session, the boot path), and a missing `am` made every
+	# bridge start fail into /dev/null. Name it outright when it is where Android
+	# puts it.
+	foreach my $am ('/system/bin/am', '/system/xbin/am') {
+		return $am if -x $am;
+	}
+	return 'am';
+}
+
 sub start_daemon {
-	system('sh', '-c', 'am start-foreground-service -n com.termux.api/.JawnBleService >/dev/null 2>&1');
+	# The direct start, as it always was, but with `am` named outright: it is not
+	# on Termux's PATH in every environment jawn is started from (a background
+	# session, the boot path), and a missing `am` made every start fail into
+	# /dev/null.
+	system('sh', '-c', am_path() . ' start-foreground-service -n com.termux.api/.JawnBleService >/dev/null 2>&1');
+}
+
+sub wake_app {
+	# Ask the JawnOS host app to start the bridge, for when the direct start is
+	# refused. Android can refuse a foreground-service start from a background app
+	# (the error goes to /dev/null, so the bridge simply never came back); the
+	# app's JawnWakeReceiver runs in the app's own process, where the start is
+	# always allowed, and it brings the BLE bridge up alongside jawn. Safe to
+	# repeat: a bridge already up ignores it, and a redundant ./jawn stands down
+	# before it touches anything.
+	system('sh', '-c', am_path() . ' broadcast -a com.termux.app.JAWN_WAKE -n com.termux/.app.JawnWakeReceiver >/dev/null 2>&1');
 }
 
 sub dial {
@@ -53,10 +79,14 @@ sub dial {
 	# 2 s connect each could hunt for close to a minute, and the caller waiting on
 	# us (a request, a listener reply) wore all of it.
 	my $sock;
-	for my $i (1 .. 12) {
+	my $started = 0;
+	for my $i (1 .. 16) {
 		$sock = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Proto => 'tcp', Timeout => 1);
 		return $sock if $sock;
-		start_daemon() if $i == 1 || $i == 4 || $i == 8;
+		unless ($started) { start_daemon(); $started = 1; }
+		# Nothing listening a few seconds after the direct start: take the road
+		# that is allowed from a background process.
+		wake_app() if $i == 6;
 		sleep 0.5;
 	}
 	die "jawn-bt: could not reach the BLE bridge on 127.0.0.1:$port\n";
