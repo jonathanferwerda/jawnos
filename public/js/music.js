@@ -889,7 +889,9 @@ function musicAheadLead(hard) {
 	musicAhead.err = err;
 	if (!hard && el.seeking) { return; }
 	var now = Date.now();
-	if (hard || (Math.abs(err) > 0.5 && now - (musicAhead.seekAt || 0) > 4000)) {
+	// a real jump is rare; the old clone found 2 s a safer line than 0.5 s,
+	// because anything smaller is better ridden out with the playback rate
+	if (hard || (Math.abs(err) > 2.0 && now - (musicAhead.seekAt || 0) > 5000)) {
 		musicAhead.seekAt = now;
 		musicAhead.seekCount++;
 		try { el.currentTime = Math.max(0, want); } catch (e) {}
@@ -898,12 +900,12 @@ function musicAheadLead(hard) {
 		return;
 	}
 	var rate = 1;
-	if (err > 0.4) { rate = 1.1; }
-	else if (err > 0.15) { rate = 1.05; }
-	else if (err > 0.05) { rate = 1.02; }
-	else if (err < -0.4) { rate = 0.9; }
-	else if (err < -0.15) { rate = 0.95; }
-	else if (err < -0.05) { rate = 0.98; }
+	// the same tiers the picture clone used: a large error is corrected in a few
+	// seconds, not by emptying the decoder
+	if (err > 0.4) { rate = 1.2; }
+	else if (err > 0.05) { rate = 1.1; }
+	else if (err < -0.4) { rate = 0.82; }
+	else if (err < -0.05) { rate = 0.92; }
 	try { el.playbackRate = rate; } catch (e) {}
 	musicAhead.rate = rate;
 }
