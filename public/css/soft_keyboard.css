@@ -66,6 +66,18 @@ input[type="tel"], input[type="password"], textarea, [contenteditable="true"] {
 	touch-action: none;
 }
 
+/* The status lights (red, yellow and green) live in the corner the keyboard
+   now owns. While the keys are up they step out of the way entirely and return
+   the moment the keyboard closes. */
+#red_dot, #yellow_dot, #green_dot, .dot_info { transition: opacity .15s ease; }
+body.soft_kb_open #red_dot,
+body.soft_kb_open #yellow_dot,
+body.soft_kb_open #green_dot,
+body.soft_kb_open .dot_info {
+	opacity: 0 !important;
+	pointer-events: none !important;
+}
+
 /* inside the window being typed in: the window keeps its shape */
 .soft_kb.soft_kb_in_window {
 	position: absolute;
