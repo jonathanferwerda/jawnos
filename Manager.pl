@@ -35265,6 +35265,7 @@ get '/manager/security' => sub ($c) {
 			template => 'security_locked',
 			layout => undef,
 			local_key => (&biometric_enrolled_for($c->session('device_uuid') || '') ? 1 : 0),
+			reader => (&fingerprint_available() ? 1 : 0),
 			device_uuid => ($c->session('device_uuid') || ''),
 		);
 		$locked = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'security', contents => $locked }, $timestamp) if $c->param('window_maker');
@@ -37150,7 +37151,7 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	}
 	else {
 		$mode = $c->param('mode') || 'locker';
-		$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+		$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
 		$device = &media_unlock_device($c) unless length $device;
 		# the reader opens the screen it is attached to: an app padlock names that
 		# screen too, so the unlock never becomes a house-wide one
@@ -37249,7 +37250,7 @@ get '/manager/security/fingerprint_unlock_status' => sub ($c) {
 	# the print was accepted: open the screen and padlock it was asked for
 	my $device = $c->session('device_uuid') || $d->{'device'} || '';
 	my $mode = $d->{'mode'} || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
 	my $target = $d->{'target'} || $device;
 	if ($mode ne 'locker' && !length $target) {
 		return $c->render(json => { ok => 0, error => 'no device' });

@@ -8,8 +8,8 @@
 		<button class="button security_unlock" type="button">Unlock with a fingerprint</button>
 		<div class="security_unlock_status" style="min-height:22px;margin-top:12px;font-size:14px;opacity:.75;"></div>
 		<p style="font-size:13px;opacity:.65;line-height:1.5;margin-top:16px;">
-			<% if ($local_key) { %>
-				Use the reader on this device, or confirm on a paired phone or tablet.
+			<% if ($reader) { %>
+				Touch the fingerprint reader on this machine, or confirm on a paired phone or tablet.
 			<% } else { %>
 				Confirm on a paired phone or tablet - the one holding your fingerprint.
 			<% } %>

@@ -760,6 +760,34 @@ $(document).on('click', '.signatorial_selection', function() {
 
 	// This device's own reader first; otherwise the phone in the house confirms
 	// this screen, and the grant comes back over the socket.
+	function localReader() {
+		var d = $.Deferred();
+		var tab = (typeof jawnosMediaTab === 'function' ? jawnosMediaTab() : '');
+		$.post('/manager/security/fingerprint_unlock', { mode: 'security', browser_tab_id: tab }, function (r) {
+			if (!r || !r.pending || !r.token) { d.reject(r || { error: 'no reader' }); return; }
+			var tries = 0;
+			(function poll() {
+				if (tries++ > 18) { d.reject({ error: 'timeout' }); return; }
+				$.get('/manager/security/fingerprint_unlock_status', { token: r.token, browser_tab_id: tab }, function (s) {
+					if (s && s.pending) { setTimeout(poll, 1200); return; }
+					if (s && s.ok && s.unlock) { d.resolve(String(s.unlock)); return; }
+					d.reject(s || { error: 'not accepted' });
+				}, 'json').fail(function () { d.reject({ error: 'reader error' }); });
+			})();
+		}, 'json').fail(function () { d.reject({ error: 'no reader' }); });
+		return d.promise();
+	}
+
+	function askPhone(st, then) {
+		pending = then;
+		st.text('Confirm on your phone…');
+		$.post('/manager/security/padlock_phone_show', {
+			mode: 'security', target: jawnDeviceUuid(), browser_tab_id: jawnosMediaTab()
+		}, function (r) {
+			if (!r || !r.ok) { pending = null; st.text('The house did not ask your phone.'); }
+		}, 'json');
+	}
+
 	function confirmWith(then) {
 		var st = askStatus();
 		if (window.JawnBiometricKey && typeof jawnosBiometricUnlock === 'function') {
@@ -772,13 +800,19 @@ $(document).on('click', '.signatorial_selection', function() {
 			});
 			return;
 		}
-		pending = then;
-		st.text('Confirm on your phone…');
-		$.post('/manager/security/padlock_phone_show', {
-			mode: 'security', target: jawnDeviceUuid(), browser_tab_id: jawnosMediaTab()
-		}, function (r) {
-			if (!r || !r.ok) { pending = null; st.text('The house did not ask your phone.'); }
-		}, 'json');
+		st.text('Touch the fingerprint reader…');
+		localReader().then(function (grant) {
+			st.text('');
+			window.jawnosSecurityGrant(grant);
+			then(grant);
+		}, function (e) {
+			// no reader here, or it was busy: the phone is the other way in
+			if (e && e.error && e.error !== 'no fingerprint' && e.error !== 'local only' && e.error !== 'busy' && e.error !== 'no reader' && e.error !== 'timeout' && e.error !== 'no result' && e.error !== 'reader error') {
+				st.text('The reader did not accept that print.');
+				return;
+			}
+			askPhone(st, then);
+		});
 	}
 
 	$(document).on('click', '.security_unlock', function () {
