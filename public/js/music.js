@@ -52,13 +52,27 @@ function musicRemoteVolume() {
 	// graph stays at full gain; the remote must hear that level too, not 1.
 	return musicSystemWired ? musicSystemLevel : master_volume;
 }
+var musicGraphTrying = false;
 function musicVolumeApply() {
 	if (!tree || !tree.sound) { return; }
 	musicLocalChannelApply();
-	// Once the shared graph exists, the element is a pass-through and the local
-	// gain is the level. That split is what lets the remote tap be taken after
-	// its own remote gain (sender volume, not 'me' off).
-	if (musicVisual && musicVisual.localGain) {
+	// Silence the local output with a gain, not with a 0 volume on the element:
+	// WebKit carries the element's volume onto its Pulse stream and remembers it
+	// for the role, so a track played with `me` off came back muted (or at 1%)
+	// on a later play. Build the graph when it can carry the zero.
+	if (!musicGraphTrying && musicLocalVolume() <= 0
+		&& !(musicVisual && musicVisual.localGain && musicVisual.el === tree.sound)) {
+		musicGraphTrying = true;
+		try { musicAudioGraph(); } catch (e) {}
+		musicGraphTrying = false;
+	}
+	// Once the shared graph actually carries this element, the element is a
+	// pass-through and the local gain is the level. That split is what lets the
+	// remote tap be taken after its own remote gain (sender volume, not 'me'
+	// off), and it keeps WebKit from remembering a muted/low element as the
+	// volume for every later track. Before the source is connected (a parked
+	// graph, a page with no gesture yet) the element itself has to carry it.
+	if (musicVisual && musicVisual.localGain && musicVisual.el === tree.sound) {
 		tree.sound.volume = 1;
 		tree.sound.muted = false;
 		try { musicVisual.localGain.gain.value = musicLocalVolume(); } catch (e) {}
@@ -73,6 +87,9 @@ function musicVolumeApply() {
 		// blocked autoplay on open) play silently.
 		tree.sound.muted = music_muted;
 	}
+	// A level change can make the local sound audible or silent; either way the
+	// picture's delay follows it. A paused player keeps the clone it already has.
+	if (!tree.sound.paused) { musicLipApply(); }
 }
 
 // ---- the remote audio stream ------------------------------------------------
@@ -135,6 +152,35 @@ function musicStreamSendJson(obj) {
 		try { musicStream.ws.send(JSON.stringify(obj)); return true; } catch (e) {}
 	}
 	return false;
+}
+
+// Once the browser has created the playback stream for this start, ask the
+// manager to lift a level PulseAudio's stream-restore may have left on it. The
+// stream is a pass-through (the graph or the system mixer is the level), so it
+// belongs at 100% and unmuted. A short wait lets the sink input appear first.
+function musicStreamHealthPing() {
+	clearTimeout(musicStream.health);
+	musicStream.health = setTimeout(function() {
+		// Only ask for full scale when the element is not carrying the level
+		// itself; otherwise WebKit has mapped the slider onto the stream and
+		// raising it here would play louder than the slider says.
+		var full = (musicVisual && tree && tree.sound && musicVisual.el === tree.sound)
+			|| (musicSystemWired && musicLocalVolume() > 0);
+		$.ajax({
+			url: '/manager/music/stream_health?full=' + (full ? '1' : '0'),
+			type: 'GET',
+			dataType: 'json',
+			success: function(d) {
+				// the sink reports the graph's real output buffer; prefer the
+				// larger of that and what the context says it has
+				var l = d ? parseFloat(d.latency) : NaN;
+				if (isFinite(l) && l > 0) { musicVisual.graphLatency = l; }
+				musicLipDelayChanged();
+				musicLipApply();
+			},
+			error: function() { /* a machine without pactl keeps the browser level */ }
+		});
+	}, 300);
 }
 
 function musicStreamHello() {
@@ -270,6 +316,8 @@ function musicStreamConnect() {
 			if (d.ms > musicStream.latency) {
 				musicStream.latency = d.ms;
 				musicLipDelayChanged();
+				// the first measurement is what makes the clone worth starting
+				musicLipApply();
 			}
 		}
 		else if (d.type == 'closed' || d.type == 'error') {
@@ -478,25 +526,66 @@ function musicStreamOutputsChanged() {
 // rather than a canvas ring keeps the browser's own scaling, theatre styles and
 // captions, and cannot show a half-decoded frame.
 var musicLip = {
-	on: false, delay: 0.12, clone: null, timer: 0, video: null,
+	on: false, delay: 0.12, audioDelay: 0, clone: null, timer: 0, video: null,
 	saved: '', revealed: false, painted: false, track: null, src: '',
+	cloneSource: null, cloneMute: null,
 	freeze: null, freezeCanvas: null, freezeGen: 0, freezeAt: 0
 };
 
+// The shared graph sits between the element and this machine's speakers, and a
+// Web Audio context renders into its own sink with a buffer of its own. The
+// picture is presented by the element itself, so without compensation the local
+// sound lands after the picture by the graph's output latency - the A/V drift
+// heard once the graph is in the path (normalisation, a remote output, an L/R
+// split). Report that latency in seconds.
+function musicGraphLatency() {
+	var ctx = musicVisual && musicVisual.ctx;
+	var l = (musicVisual && musicVisual.graphLatency) ? musicVisual.graphLatency : 0;
+	if (!ctx) { return l; }
+	try { l = Math.max(l, ctx.outputLatency || 0, ctx.baseLatency || 0); } catch (e) {}
+	return (isFinite(l) && l > 0) ? l : 0;
+}
+// Whether the graph currently carries this machine's own sound. When it does,
+// localGain is the level and the element stays at full gain (musicVolumeApply).
+function musicGraphCarriesLocal() {
+	if (!musicVisual || !musicVisual.localGain) { return false; }
+	// a parked graph (window closed) is not connected to the element on screen
+	if (!tree || !tree.sound || musicVisual.el !== tree.sound) { return false; }
+	var g = 0;
+	try { g = musicVisual.localGain.gain.value; } catch (e) {}
+	return g > 0.0001;
+}
+// How far behind the live element the picture has to be shown. Two things can
+// put the sound behind the picture: the graph's own output buffer, and a remote
+// output (when lip sync is on, the picture waits for the stream). The clone is
+// started for either, so local A/V stays together even with no remote playing.
+function musicPictureDelay() {
+	var delay = 0;
+	if (musicGraphCarriesLocal()) { delay = musicGraphLatency(); }
+	if (music_lip_sync == 'on' && musicStream.active && musicStreamOutputs().length > 0) {
+		delay = Math.max(delay, (musicStream.latency || 0) / 1000);
+	}
+	return Math.max(0, Math.min(1, delay));
+}
+
 function musicLipWanted() {
-	return music_lip_sync == 'on' && musicStream.active && musicStreamOutputs().length > 0
-		&& tree && tree.songs && tree.songs[0] && tree.songs[0].type == 'video'
-		&& tree.sound && tree.sound.tagName && tree.sound.tagName.toLowerCase() == 'video';
+	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return false; }
+	if (!tree.sound || !tree.sound.tagName || tree.sound.tagName.toLowerCase() != 'video') { return false; }
+	return musicPictureDelay() > 0.01;
 }
 
 function musicLipDelayChanged() {
-	var ms = musicStream.latency || 120;
-	ms = Math.max(40, Math.min(500, ms));
-	musicLip.delay = ms / 1000;
+	musicLip.delay = musicPictureDelay();
+	// The local sound already waits for the graph's output buffer, so it needs
+	// that much less added delay to land with the picture (and with the remote,
+	// which is measured from the tap in front of that buffer).
+	var audio = musicLip.delay;
+	if (musicGraphCarriesLocal()) { audio = Math.max(0, audio - musicGraphLatency()); }
+	musicLip.audioDelay = audio;
 	if (musicVisual.localDelay) {
 		// wait to delay the local sound until the delayed picture is actually up;
 		// a short ramp keeps the change from clicking
-		var want = (musicLip.on && musicLip.revealed) ? musicLip.delay : 0;
+		var want = (musicLip.on && musicLip.revealed) ? audio : 0;
 		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
 		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
 	}
@@ -601,6 +690,29 @@ function musicLipApply() {
 	else { musicLipStop(); }
 }
 
+// Take the lip-sync clone's audio into the graph at zero gain. It reads the
+// same stream as the element, so the Pulse stream WebKitPulse exposes stays at
+// full scale (and is not remembered as a muted video stream).
+function musicLipSilenceClone(c) {
+	var ctx = musicVisual && musicVisual.ctx;
+	if (!ctx) { c.muted = true; c.volume = 0; return; }
+	try {
+		var source = ctx.createMediaElementSource(c);
+		var mute = ctx.createGain();
+		mute.gain.value = 0;
+		source.connect(mute);
+		mute.connect(ctx.destination);
+		musicLip.cloneSource = source;
+		musicLip.cloneMute = mute;
+	}
+	catch (e) {
+		// an engine that will not capture a second element: the element itself
+		// is the only way to keep the clone silent
+		c.muted = true;
+		c.volume = 0;
+	}
+}
+
 function musicLipStart() {
 	var v = tree.sound;
 	if (!v || !v.videoWidth) {
@@ -622,9 +734,15 @@ function musicLipStart() {
 	c.className = v.className;
 	c.setAttribute('playsinline', '');
 	c.setAttribute('webkit-playsinline', '');
-	c.muted = true;
-	c.defaultMuted = true;
-	c.volume = 0;
+	// The clone is a picture, so its sound must be silent. Do not silence it by
+	// setting the element's volume to 0: WebKit maps that onto the Pulse stream
+	// and remembers it for the role, which left later real tracks at 0% with the
+	// mute button off (the muted 'Music' stream in pavucontrol). Keep the element
+	// at full level and take the clone's sound into the shared graph through a
+	// zero gain instead. Older engines without a graph fall back to the element.
+	c.volume = 1;
+	c.muted = false;
+	musicLipSilenceClone(c);
 	c.autoplay = false;
 	c.preload = 'auto';
 	c.style.cssText = v.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
@@ -790,8 +908,22 @@ function musicLipStop() {
 	if (musicLip.timer) { clearInterval(musicLip.timer); musicLip.timer = 0; }
 	var c = musicLip.clone;
 	var v = musicLip.video;
+	// drop the clone's graph tap before the element goes, so the context is not
+	// left holding a dead media source
+	if (musicLip.cloneSource) {
+		try { musicLip.cloneSource.disconnect(); } catch (e) {}
+		musicLip.cloneSource = null;
+	}
+	if (musicLip.cloneMute) {
+		try { musicLip.cloneMute.disconnect(); } catch (e) {}
+		musicLip.cloneMute = null;
+	}
 	if (c) {
 		try { c.pause(); } catch (e) {}
+		// Setting a new/removed source and loading hands the decoder back: deleting
+		// the element alone left its Pulse stream (and a muted 'Music' entry in
+		// pavucontrol) behind for the rest of the web process's life.
+		try { c.removeAttribute('src'); c.load(); } catch (e) {}
 		if (c.parentNode) { c.parentNode.removeChild(c); }
 	}
 	musicLipFreezeHide();
@@ -846,7 +978,9 @@ function musicKeepalive(playing) {
 // again. Minimising or hiding the window leaves it alone.
 $(document).on('click touchend', '.close_button[app="music"]', function() {
 	musicKeepalive(false);
-	musicAudioClose();
+	// park the graph rather than closing it: closing and re-opening the window
+	// made a new AudioContext (and a new Pulse stream) for every visit
+	musicAudioSuspend();
 	document.querySelectorAll('[data-jawnos-seek-preview]').forEach(function(n) { n.remove(); });
 });
 $(window).on('pagehide', function(e) {
@@ -1247,11 +1381,13 @@ function mediaMaker(data) {
 				// Set the final level once. WebKit maps the element's volume and
 				// muted flag onto its Pulse stream and does not reliably take a later
 				// change back: a transient mute or near-zero volume for the autoplay
-				// handshake left streams at 1% or muted with the button off. If the
-				// browser refuses an unmuted autoplay the track simply waits for a
-				// press, which is better than playing silently.
-				tree.sound.volume = musicLocalVolume();
-				tree.sound.muted = music_muted;
+				// handshake left streams at 1% or muted with the button off. When the
+				// shared graph carries the element, this keeps the element at full
+				// gain and puts the real level in the graph, where WebKit cannot see
+				// (or remember) it. If the browser refuses an unmuted autoplay the
+				// track simply waits for a press, which is better than playing
+				// silently.
+				musicVolumeApply();
 
 				if (tree.songs[0].remote_uuid) {
 					url += '&remote_uuid=' + tree.songs[0].remote_uuid;
@@ -1301,6 +1437,9 @@ function mediaMaker(data) {
 				tree.sound.state = 1;
 				musicKeepalive(true);
 				musicVolumeApply();
+				// a stream left at a remembered low/muted level by Pulse is put right
+				// once the browser has actually created this start's sink input
+				musicStreamHealthPing();
 				// a stream started before the audio context was running retries
 				// here, and a paused stream resumes
 				if (musicStream.active) {
@@ -2559,6 +2698,7 @@ var musicVisual = {
 	localLeft: null,
 	localRight: null,
 	localMerge: null,
+	graphLatency: 0,
 	freq: null,
 	raf: 0,
 	last: 0,
@@ -2614,17 +2754,50 @@ function musicPlayerFullscreen() {
 	if (p && p.catch) { p.catch(function () {}); }
 }
 
-// Closing the window or leaving the page closes the AudioContext. WebKit gives
-// each context its own Pulse stream; leaving them open accumulated a dozen
-// "jawnos desktop" playback streams over a session.
+// The stream tap is a per-context worklet node. It is dropped when the window
+// parks, and the next stream builds a fresh one in the same context.
+function musicStreamTapForget() {
+	if (musicStreamTap.node) {
+		try { musicStreamTap.node.disconnect(); } catch (e) {}
+		musicStreamTap.node = null;
+	}
+	if (musicStreamTap.sink) {
+		try { musicStreamTap.sink.disconnect(); } catch (e) {}
+		musicStreamTap.sink = null;
+	}
+	musicStreamTap.ready = false;
+	musicStreamTap.loading = null;
+}
+// Take the element (and the tap) out of the graph entirely, for a real unload.
+function musicAudioDetach() {
+	if (typeof musicVisual == 'undefined' || !musicVisual) { return; }
+	if (musicVisual.source) {
+		try { musicVisual.source.disconnect(); } catch (e) {}
+		musicVisual.source = null;
+	}
+	musicVisual.el = null;
+	musicStreamTapForget();
+}
+// Closing the Music window stops the sound and parks the graph. The context and
+// its single Pulse stream stay for the page, so re-opening the window reuses
+// them instead of adding another stream. The element source is kept too: if the
+// window hands back the same element it is already captured, and capturing an
+// element twice is what throws.
+function musicAudioSuspend() {
+	if (typeof musicVisual == 'undefined' || !musicVisual || !musicVisual.ctx) { return; }
+	musicStreamStop();
+	musicStreamTapForget();
+	try { musicVisual.ctx.suspend(); } catch (e) {}
+}
+// Leaving the page (a real unload, not the back/forward cache) gives the context
+// back to the browser: nodes, stream and all.
 function musicAudioClose() {
 	if (typeof musicVisual == 'undefined' || !musicVisual || !musicVisual.ctx) { return; }
 	musicStreamStop();
+	musicAudioDetach();
 	var ctx = musicVisual.ctx;
 	try { ctx.close(); } catch (e) {}
 	musicVisual.ctx = null;
-	musicVisual.source = null;
-	musicVisual.el = null;
 	musicVisual.analyser = null;
 	musicVisual.compressor = null;
 	musicVisual.leveler = null;
@@ -2637,10 +2810,7 @@ function musicAudioClose() {
 	musicVisual.localLeft = null;
 	musicVisual.localRight = null;
 	musicVisual.localMerge = null;
-	musicStreamTap.node = null;
-	musicStreamTap.sink = null;
-	musicStreamTap.ready = false;
-	musicStreamTap.loading = null;
+	musicVisual.graphLatency = 0;
 }
 // Resume the audio context and, once it is running, finish a graph that was
 // deferred while it was stopped. Returns the context state after the attempt.
@@ -2673,8 +2843,9 @@ function musicAudioResume() {
 }
 // The player's audio graph: made on first use and kept for the page. An element
 // can only be captured once, and the graph has to stay in place or the sound
-// goes with it. A re-opened window hands back a fresh element; the old tap is
-// spent and the graph is rebuilt around the new one.
+// goes with it. A re-opened window hands back a fresh element, so only the
+// element's source is replaced; the rest of the chain (and the context, and so
+// its single Pulse stream) stays.
 function musicAudioGraph() {
 	var el = document.getElementById('video');
 	if (!el) { return null; }
@@ -2687,8 +2858,21 @@ function musicAudioGraph() {
 		// resamples the other way, with a far smaller buffer.
 		try { musicVisual.ctx = new Ctor({ sampleRate: 44100 }); }
 		catch (e) { try { musicVisual.ctx = new Ctor(); } catch (e2) { return null; } }
+		musicVisual.graphLatency = 0;
 		musicVisual.source = null;
 		musicVisual.el = null;
+		musicVisual.analyser = null;
+		musicVisual.compressor = null;
+		musicVisual.leveler = null;
+		musicVisual.makeup = null;
+		musicVisual.limiter = null;
+		musicVisual.localGain = null;
+		musicVisual.remoteGain = null;
+		musicVisual.localDelay = null;
+		musicVisual.localSplit = null;
+		musicVisual.localLeft = null;
+		musicVisual.localRight = null;
+		musicVisual.localMerge = null;
 	}
 	// A MediaElementSource takes the element's sound away from the page and into
 	// the graph. Capturing while the context is stopped is silence with no direct
@@ -2696,16 +2880,10 @@ function musicAudioGraph() {
 	// resume above re-enters here once it is.
 	var state = musicAudioResume();
 	if (!musicVisual.source && state != 'running') { return null; }
-	if (musicVisual.el !== el) {
-		if (musicVisual.source) { try { musicVisual.source.disconnect(); } catch (e) {} }
-		musicVisual.source = null;
-		musicVisual.analyser = null;
-		musicVisual.compressor = null;
-		musicVisual.leveler = null;
-		musicVisual.makeup = null;
-		musicVisual.limiter = null;
+	// Build the chain once per context. A closed window leaves it in place; the
+	// next element only needs a new source in front of it.
+	if (!musicVisual.limiter) {
 		try {
-			musicVisual.source = musicVisual.ctx.createMediaElementSource(el);
 			musicVisual.compressor = musicVisual.ctx.createDynamicsCompressor();
 			musicVisual.leveler = musicVisual.ctx.createGain();
 			musicVisual.makeup = musicVisual.ctx.createGain();
@@ -2713,10 +2891,10 @@ function musicAudioGraph() {
 			musicVisual.analyser = musicVisual.ctx.createAnalyser();
 			musicVisual.analyser.fftSize = 2048;
 			musicVisual.analyser.smoothingTimeConstant = 0.82;
-			// The local output now has its own gain and delay. The gain keeps the
+			// The local output has its own gain and delay. The gain keeps the
 			// element at full level, so the remote tap (taken at the limiter) still
 			// hears the track while this machine is muted or `me` is off; the delay
-			// is the lip-sync offset (see musicLipApply).
+			// is the picture-sync offset (see musicLipApply).
 			musicVisual.localGain = musicVisual.ctx.createGain();
 			musicVisual.remoteGain = musicVisual.ctx.createGain();
 			musicVisual.remoteGain.gain.value = musicRemoteVolume();
@@ -2725,8 +2903,7 @@ function musicAudioGraph() {
 			musicVisual.localLeft = musicVisual.ctx.createGain();
 			musicVisual.localRight = musicVisual.ctx.createGain();
 			musicVisual.localMerge = musicVisual.ctx.createChannelMerger(2);
-			musicVisual.localDelay.delayTime.value = (musicLip.on ? musicLip.delay : 0);
-			musicVisual.source.connect(musicVisual.compressor);
+			musicVisual.localDelay.delayTime.value = (musicLip.on && musicLip.revealed) ? (musicLip.audioDelay || 0) : 0;
 			musicVisual.compressor.connect(musicVisual.leveler);
 			musicVisual.leveler.connect(musicVisual.makeup);
 			musicVisual.makeup.connect(musicVisual.limiter);
@@ -2740,17 +2917,33 @@ function musicAudioGraph() {
 			musicVisual.localLeft.connect(musicVisual.localMerge, 0, 0);
 			musicVisual.localRight.connect(musicVisual.localMerge, 0, 1);
 			musicVisual.localMerge.connect(musicVisual.ctx.destination);
-			musicVisual.el = el;
-			musicNormalizeParams();
-			musicBaselineApply();
-			musicVolumeApply();
-			if (musicStreamTap.node) { musicVisual.remoteGain.connect(musicStreamTap.node); }
+		}
+		catch (e) {
+			musicVisual.limiter = null;
+			return null;
+		}
+	}
+	if (musicVisual.el !== el || !musicVisual.source) {
+		if (state != 'running') { return null; }
+		if (musicVisual.source) { try { musicVisual.source.disconnect(); } catch (e) {} }
+		musicVisual.source = null;
+		try {
+			musicVisual.source = musicVisual.ctx.createMediaElementSource(el);
+			musicVisual.source.connect(musicVisual.compressor);
 		}
 		catch (e) {
 			musicVisual.source = null;
 			return null;
 		}
+		musicVisual.el = el;
+		musicNormalizeParams();
+		musicBaselineApply();
+		musicVolumeApply();
+		if (musicStreamTap.node) { musicVisual.remoteGain.connect(musicStreamTap.node); }
 	}
+	// The picture has to wait for the graph's own output latency (and, when lip
+	// sync is on, for the remote); this also restarts the clone on a new element.
+	musicLipApply();
 	return musicVisual;
 }
 

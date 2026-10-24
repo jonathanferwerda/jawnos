@@ -401,6 +401,11 @@ sub music_pacat_command($rate) {
 		'--rate=' . &music_stream_rate($rate),
 		'--channels=2',
 		'--latency-msec=60',
+		# PulseAudio's stream-restore remembers a stream name's old level, so a
+		# receiver that was once turned down (or muted) came back silent while
+		# the Music app looked like it was playing. pacat names the level it
+		# wants at creation; the sender's own volume arrives in the samples.
+		'--volume=65536',
 		'--client-name=jawnos-music',
 		'--stream-name=jawnos-music');
 }
@@ -455,7 +460,7 @@ sub music_remote_audio_start($st) {
 		my $pipeline = 'ffmpeg -hide_banner -loglevel error -fflags nobuffer -analyzeduration 0 -probesize 32k'
 			. ' -i pipe:0' . $filter . ' -f s16le -acodec pcm_s16le -ar 44100 -ac 2 pipe:1'
 			. ' | pacat --playback --raw --format=s16le --rate=44100 --channels=2 --latency-msec=60'
-			. ' --client-name=jawnos-music-opus --stream-name=jawnos-music';
+			. ' --volume=65536 --client-name=jawnos-music-opus --stream-name=jawnos-music';
 		@cmd = ('sh', '-c', $pipeline);
 	}
 	elsif ($pan ne '') {
@@ -469,7 +474,7 @@ sub music_remote_audio_start($st) {
 			. ' -ar ' . $rate . ' -ac 2 -i pipe:0 -af "' . $pan . '"'
 			. ' -f s16le -acodec pcm_s16le -ar ' . $rate . ' -ac 2 pipe:1'
 			. ' | ' . $pacat . ' --playback --raw --format=s16le --rate=' . $rate
-			. ' --channels=2 --latency-msec=60 --client-name=jawnos-music --stream-name=jawnos-music';
+			. ' --channels=2 --latency-msec=60 --volume=65536 --client-name=jawnos-music --stream-name=jawnos-music';
 		@cmd = ('sh', '-c', $pipeline);
 	}
 	else { @cmd = &music_pacat_command($st->{'rate'}); }
@@ -670,6 +675,55 @@ sub music_source_close($st) {
 	foreach my $key (keys %{$st->{'clients'}}) { &music_source_client_close($st, $key); }
 	delete $st->{'started'};
 }
+
+# The browser's playback stream can come back from PulseAudio's stream-restore
+# at a remembered level - muted, or a few percent - and WebKit's element volume
+# is tied to that stream. The app's real level lives in the shared graph (or the
+# system mixer), so the stream itself is always meant to be full scale. Put only
+# this house's streams right, after playback has created them.
+sub music_stream_health {
+	my $full = shift || 0;
+	return [] unless $device eq 'computer';
+	my $json = `pactl -f json list sink-inputs 2>/dev/null`;
+	return [] unless $json =~ /^\s*\[/;
+	my $list = eval { decode_json $json } || [];
+	my @fixed;
+	my $latency = 0;
+	foreach my $si ( @{$list} ) {
+		my $p = $si->{'properties'} || {};
+		my $app = $p->{'application.name'} || '';
+		next unless $app =~ /^jawnos/i;
+		# the Web Audio stream is the one this machine hears; its node latency
+		# is the graph's own output buffer, which the picture has to wait for
+		if (lc($p->{'media.role'} || '') eq 'webaudio') {
+			my $nl = $p->{'node.latency'} || '';
+			if ($nl =~ m{^(\d+)/(\d+)$} && $2 > 0) {
+				my $sec = $1 / $2;
+				$latency = $sec if $sec > $latency;
+			}
+		}
+		my $id = $si->{'index'};
+		next unless defined $id && $id =~ /^\d+$/;
+		my $pct = -1;
+		foreach my $ch ( values %{$si->{'volume'} || {}} ) {
+			if (defined $ch->{'value_percent'} && $ch->{'value_percent'} =~ /^(\d+)%/) { $pct = $1; last; }
+		}
+		next unless $si->{'mute'} || $pct < 0 || $pct < 100;
+		# Only when the app's level is not the element's own: with a graph the
+		# element is a full-gain pass-through, and with the system mixer wired
+		# the ceiling is for the mixer to set.
+		next unless $full;
+		`pactl set-sink-input-mute $id 0 2>/dev/null`;
+		`pactl set-sink-input-volume $id 100% 2>/dev/null`;
+		push @fixed, $id;
+	}
+	return (\@fixed, $latency);
+}
+
+get '/manager/music/stream_health' => sub($c) {
+	my ($fixed, $latency) = &music_stream_health(($c->param('full') // '') eq '1');
+	$c->render(json => { fixed => $fixed, latency => $latency });
+};
 
 get '/manager/music/receiver' => sub($c) {
 	$c->render(json => &music_receiver_state());
