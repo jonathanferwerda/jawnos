@@ -839,10 +839,16 @@ function musicLipDelayChanged() {
 	if (musicVisual.localDelay) {
 		// wait to delay the local sound until the delayed picture is actually up;
 		// a short ramp keeps the change from clicking
-		var want = (musicLip.on && musicLip.revealed) ? audio : ((music_local_delay || 0) / 1000);
+		var want = (musicLip.on && musicLip.revealed) ? audio : musicLocalDelaySeconds();
 		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
 		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
 	}
+}
+// The Me trim is for a remote-less session: with an output configured, the
+// graph/stream path already supplies the wait that lined the Me up, and adding
+// the trim on top would put the local sound late.
+function musicLocalDelaySeconds() {
+	return (musicStreamOutputs().length ? 0 : (music_local_delay || 0)) / 1000;
 }
 
 // The moment the picture is handed from the live element to the delayed clone,
@@ -1227,7 +1233,7 @@ function musicLipStop() {
 	musicLip.lastStill = '';
 	musicLip.lastStillAt = 0;
 	if (musicVisual.localDelay) {
-		var want = (music_local_delay || 0) / 1000;
+		var want = musicLocalDelaySeconds();
 		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
 		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
 	}
@@ -3661,7 +3667,7 @@ function musicAudioGraph() {
 			musicVisual.localLeft = musicVisual.ctx.createGain();
 			musicVisual.localRight = musicVisual.ctx.createGain();
 			musicVisual.localMerge = musicVisual.ctx.createChannelMerger(2);
-			musicVisual.localDelay.delayTime.value = (musicLip.on && musicLip.revealed) ? (musicLip.audioDelay || 0) : ((music_local_delay || 0) / 1000);
+			musicVisual.localDelay.delayTime.value = (musicLip.on && musicLip.revealed) ? (musicLip.audioDelay || 0) : musicLocalDelaySeconds();
 			// The equalizer sits after the leveller and before the limiter, so the
 			// peak guard still catches a boosted band and the remote tap hears the
 			// same curve as this machine. A flat curve is 0 dB on every filter.
