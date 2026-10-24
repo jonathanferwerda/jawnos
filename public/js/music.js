@@ -102,8 +102,8 @@ function musicVolumeApply() {
 // therefore sample-locked to every other one, and to the local picture once the
 // lip-sync delay is applied.
 var musicStream = {
-	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0, latencies: {},
-	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm',
+	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0, latencies: {}, measured: {},
+	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm', markSeq: 0,
 	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0, seekTimer: 0
 };
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false };
@@ -298,10 +298,12 @@ function musicStreamConnect() {
 		// rather than the PCM default while the pings settle.
 		musicStream.latency = (musicStream.codec == 'opus') ? 300 : 0;
 		musicStream.latencies = {};
+		musicStream.measured = {};
 		musicStream.ready = {};
 		musicStream.failed = {};
 		musicStreamRetryClear();
 		musicStreamSendJson(musicStreamHello());
+		musicStreamMark();
 		if (musicStream.codec != 'opus') { musicStreamTapActive(true, true); }
 		else {
 			// do not wait forever on an unreachable output; start for the ones
@@ -336,6 +338,32 @@ function musicStreamConnect() {
 			musicStreamOutputReady(d.key);
 			musicLipDelayChanged();
 			musicLipApply();
+		}
+		else if (d.type == 'sync') {
+			// The receiver's own answer to a beacon: how far behind the picture it
+			// is actually playing, its buffered audio plus any shortfall since the
+			// mark. A report with no live mark behind it says nothing.
+			if (!d.key || d.paused || !d.alive) { return; }
+			if (!(d.age_ms >= 0) || d.age_ms > 4000) { return; }
+			var lag = Math.max(0, (d.lag_ms || 0) + (d.rtt_ms || 0));
+			var prev = musicStream.measured[d.key];
+			// A step far larger than the last reading is a stall or a fresh player,
+			// not jitter: take it whole. Small movement is smoothed so the picture
+			// does not chase every report.
+			var ms = (prev && Math.abs(lag - prev.ms) < 2000) ? Math.round(prev.ms * 0.6 + lag * 0.4) : Math.round(lag);
+			var jump = prev ? Math.abs(ms - prev.ms) : 0;
+			musicStream.measured[d.key] = { ms: ms, at: Date.now() };
+			musicStream.ready[d.key] = 1;
+			musicStreamOutputReady(d.key);
+			musicRemoteDelayShow();
+			musicLipDelayChanged();
+			musicLipApply();
+			// Beyond what the clone's rate-only correction closes; re-anchor it
+			// under a still, at most now and then.
+			if (jump > 1000 && musicLip.on && musicLip.revealed && Date.now() - (musicLip.reanchorAt || 0) > 8000) {
+				musicLip.reanchorAt = Date.now();
+				musicLipSeek();
+			}
 		}
 		else if (d.type == 'closed' || d.type == 'error' || d.type == 'stopped') {
 			// a lost output is reopened; it used to stay silent for the rest of
@@ -465,6 +493,8 @@ function musicSyncBlackTick() {
 }
 function musicSyncReport() {
 	if (!musicStream.active) { return; }
+	// a beacon every report; the receiver's answer is what the picture follows
+	musicStreamMark();
 	var v = tree && tree.sound;
 	var q = null;
 	try { q = (v && v.getVideoPlaybackQuality) ? v.getVideoPlaybackQuality() : null; } catch (e) {}
@@ -479,6 +509,7 @@ function musicSyncReport() {
 		ready: musicStream.ready,
 		failed: musicStream.failed,
 		latencies: musicStream.latencies,
+		measured: musicStream.measured,
 		retry: musicStream.retry,
 		received: musicSyncStats.received,
 		stale: musicSyncStats.stale,
@@ -686,6 +717,8 @@ function musicStreamStop() {
 	musicStream.failed = {};
 	musicStream.latency = 0;
 	musicStream.latencies = {};
+	musicStream.measured = {};
+	musicRemoteDelayShow();
 	musicStream.attached = false;
 	musicStream.gap = 0;
 	clearTimeout(musicStream.seekTimer);
@@ -718,6 +751,34 @@ function musicStreamControl(action, extra) {
 		musicStreamSendJson({ type: 'outputs', outputs: musicStreamOutputs(), channels: musicStreamChannels() });
 		musicStreamRetryClear();
 	}
+	// the timeline restarted: a mark now anchors the new position for the receiver
+	if (action == 'seek' || action == 'track' || action == 'resume') { musicStreamMark(); }
+}
+
+// A beacon through the audio socket: the media position at the moment these
+// samples were sent. It rides in order with the audio, so the receiver can say
+// how far behind the picture it is actually playing; the answer comes back as
+// a `sync` message and that measurement is what the picture delay follows.
+function musicStreamMark() {
+	if (!musicStream.active || musicStream.paused) { return; }
+	var v = tree && tree.sound;
+	if (!v || v.paused || v.ended) { return; }
+	musicStream.markSeq = (musicStream.markSeq || 0) + 1;
+	musicStreamSendJson({ type: 'mark', seq: musicStream.markSeq, media_ms: Math.round((v.currentTime || 0) * 1000) });
+}
+
+// The measured delay of the furthest-behind output, in the Audio drawer. It is
+// there whether or not lip sync is on: it is the number the picture would have
+// to wait for, and the one that moves when the stream falls behind.
+function musicRemoteDelayShow() {
+	var el = $('#music_remote_delay_value');
+	if (!el.length) { return; }
+	var now = Date.now(), ms = -1;
+	for (var k in musicStream.measured) {
+		var m = musicStream.measured[k];
+		if (m && (now - m.at) < 8000 && m.ms > ms) { ms = m.ms; }
+	}
+	el.text(ms >= 0 ? (Math.round(ms) + ' ms') : '\u2014');
 }
 
 function musicStreamOutputsChanged() {
@@ -799,11 +860,16 @@ function musicGraphCarriesLocal() {
 // that had been switched off kept the picture waiting after it was gone.
 function musicStreamLatency() {
 	var max = 0;
+	var now = Date.now();
 	var outs = musicStreamOutputs();
 	for (var i = 0; i < outs.length; i++) {
 		var k = outs[i];
 		if (!musicStream.ready[k]) { continue; }
-		var ms = musicStream.latencies[k] || 0;
+		// What the receiver measures beats what the ping estimated. The beacon's
+		// answer carries the receiver's own buffer and any shortfall since the
+		// mark, so it is the only number that moves when the stream falls behind.
+		var m = musicStream.measured[k];
+		var ms = (m && (now - m.at) < 8000) ? m.ms : (musicStream.latencies[k] || 0);
 		if (ms > max) { max = ms; }
 	}
 	return max;
@@ -1218,6 +1284,7 @@ function musicLipSeek() {
 
 function musicLipStop() {
 	musicLip.on = false;
+	musicLip.reanchorAt = 0;
 	if (musicLip.timer) { clearInterval(musicLip.timer); musicLip.timer = 0; }
 	var c = musicLip.clone;
 	var v = musicLip.video;
@@ -3391,6 +3458,7 @@ function musicAudioPanelLoad(show) {
 			if (!musicEqualizerFromEqualizer(r.equalizer)) { musicEqualizerLoad(); }
 			musicSyncOffsetRead();
 			musicLocalDelayRead();
+			musicRemoteDelayShow();
 			if (musicEqualizerDirty() && !(musicVisual && musicVisual.limiter)) {
 				try { musicAudioGraph(); } catch (e) {}
 			}

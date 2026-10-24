@@ -981,6 +981,9 @@ body.dark_theme .music_cfg_drawer {
 	text-align: right;
 	font-variant-numeric: tabular-nums;
 }
+#music_audio_panel #music_remote_delay_value {
+	font-variant-numeric: tabular-nums;
+}
 #music_audio_panel .music_eq_bass_row input[type="range"] {
 	flex: 1 1 auto;
 	min-width: 0;

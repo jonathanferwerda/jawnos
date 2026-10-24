@@ -102,6 +102,12 @@
 			</div>
 		</div>
 		<div class="music_cfg_field music_cfg_field_wide">
+			<label class="music_cfg_label" hint="Remote delay"><%= &subs::lang('music.remote_delay') %></label>
+			<div class="music_sync_row">
+				<span id="music_remote_delay_value" hint="Remote delay">&mdash;</span>
+			</div>
+		</div>
+		<div class="music_cfg_field music_cfg_field_wide">
 			<label class="music_cfg_label" for="music_local_delay" hint="<%= &subs::lang('music.me_delay') %>"><%= &subs::lang('music.me_delay') %></label>
 			<div class="music_sync_row">
 				<input type="range" id="music_local_delay" min="0" max="400" step="10" value="<%= $local_delay %>" hint="Me audio delay">

@@ -443,6 +443,17 @@ sub music_receiver_sink_latency {
 	return int($ms + 0.5);
 }
 
+# How many bytes of the stream carry one millisecond of sound. PCM is exact;
+# Opus is compressed at a varying rate, so its calibration comes from the
+# source's beacons (the bytes between two marks over the media time between
+# them), which is why the receiver keeps the largest from every pair.
+sub music_receiver_bytes_per_ms($st) {
+	my $rate = &music_stream_rate($st->{'rate'});
+	return 0 unless $rate;
+	return ($st->{'rx_bpm'} || 0) if ($st->{'codec'} || 'pcm') eq 'opus';
+	return $rate * 2 * 2 / 1000;
+}
+
 sub music_pacat_command($rate) {
 	my $pacat = `command -v pacat 2>/dev/null`;
 	chomp $pacat;
@@ -465,6 +476,8 @@ sub music_pacat_command($rate) {
 sub music_remote_audio_stop($st, $keep_state) {
 	# a report timer would otherwise outlive the stream it describes
 	&music_rx_report_stop($st);
+	# a beacon from before the stop names a position this player is no longer at
+	delete $st->{'mark'};
 	# capture the pid first: the stream's close event clears it
 	my $pid = $st->{'pid'};
 	# an intentional stop (pause, seek, stop) must not look like pacat dying and
@@ -598,6 +611,8 @@ sub music_remote_write($st, $bytes) {
 		return;
 	}
 	$st->{'rx_bytes'} = ($st->{'rx_bytes'} || 0) + length($bytes);
+	# cumulative as well: a beacon's anchor is an absolute byte count
+	$st->{'rx_total'} = ($st->{'rx_total'} || 0) + length($bytes);
 	$st->{'rx_writes'} = ($st->{'rx_writes'} || 0) + 1;
 	$st->{'stream'}->write($bytes);
 }
@@ -614,6 +629,25 @@ sub music_rx_report_send($st) {
 		my $ms = &music_receiver_sink_latency();
 		$st->{'sink_ms'} = $ms if $ms > 0;
 	}
+	# How far behind the source's beacon this player is running: the time since
+	# the mark arrived, less the sound that has actually gone through the pipe,
+	# plus what is still buffered (the pipe and the sink). A steady player reads
+	# its own buffer here; a starved or dropped stream reads more, which is the
+	# lag the picture has to wait for.
+	my $lag_ms = 0;
+	my $waiting_ms = 0;
+	# -1 means no beacon has been seen, which is not the same as a fresh one
+	my $mark_age_ms = -1;
+	my $bpm = &music_receiver_bytes_per_ms($st);
+	if ($st->{'mark'} && $bpm > 0) {
+		$mark_age_ms = $now - ($st->{'mark'}->{'at'} || $now);
+		$waiting_ms = ($st->{'stream'} ? ($st->{'stream'}->bytes_waiting || 0) : 0) / $bpm;
+		if (!$st->{'paused'} && $mark_age_ms < 4000) {
+			my $written_ms = (($st->{'rx_total'} || 0) - ($st->{'mark'}->{'bytes'} || 0)) / $bpm;
+			my $lag = $mark_age_ms - $written_ms + ($st->{'sink_ms'} || 0) + $waiting_ms;
+			$lag_ms = int($lag + 0.5) if $lag > 0;
+		}
+	}
 	my $d = {
 		type => 'rx_report',
 		t => $now,
@@ -626,6 +660,10 @@ sub music_rx_report_send($st) {
 		paused => ($st->{'paused'} ? 1 : 0),
 		codec => ($st->{'codec'} || 'pcm'),
 		sink_ms => ($st->{'sink_ms'} || 0),
+		waiting_ms => int($waiting_ms + 0.5),
+		mark_age_ms => $mark_age_ms,
+		mark_seq => ($st->{'mark'} ? ($st->{'mark'}->{'seq'} || 0) : 0),
+		lag_ms => $lag_ms,
 		starts => ($st->{'starts'} || 0),
 	};
 	eval { $st->{'tx'}->send({ text => encode_json($d) }); };
@@ -731,6 +769,21 @@ sub music_source_client_open($c, $st, $key, $channel) {
 			}
 			if ($kind eq 'rx_report') {
 				&music_sync_log('remote', $key, $d);
+				# The live measurement the picture follows. The one-shot ping estimate
+				# says what the network and the player start should cost; this says
+				# what the receiver's buffer and any shortfall actually cost, which is
+				# the number that moves when the stream falls behind.
+				$c->tx->send({text => encode_json({
+					type => 'sync',
+					key => $key,
+					lag_ms => ($d->{'lag_ms'} || 0),
+					waiting_ms => ($d->{'waiting_ms'} || 0),
+					sink_ms => ($d->{'sink_ms'} || 0),
+					age_ms => ($d->{'mark_age_ms'} || 0),
+					paused => ($d->{'paused'} ? 1 : 0),
+					alive => ($d->{'alive'} ? 1 : 0),
+					rtt_ms => int(($cl->{'min_rtt'} || 0) / 2)
+				})}) if $c->tx->is_websocket;
 				return;
 			}
 			# The receiver could not start its player. Close this connection so the
@@ -956,6 +1009,23 @@ websocket '/manager/music/stream' => sub ($c) {
 				my $ok = &music_remote_audio_start($st);
 				$c->tx->send({text => encode_json({ type => 'ready', key => $st->{'key'}, base => $st->{'base'}, latency_ms => $st->{'base'}, ok => ($ok ? 1 : 0), error => ($st->{'error'} || '') })});
 			}
+			elsif ($type eq 'mark') {
+				# The source's beacon: the media position at the moment the samples
+				# around it were sent. It arrives in order with them, so every byte
+				# written after it is audio from that position onwards, and the
+				# report can say how far behind the player is running.
+				my $tot = $st->{'rx_total'} || 0;
+				my $prev = $st->{'mark'};
+				if ($prev && ($st->{'codec'} || 'pcm') eq 'opus') {
+					my $dm = ($d->{'media_ms'} || 0) - ($prev->{'media_ms'} || 0);
+					my $db = $tot - ($prev->{'bytes'} || 0);
+					if ($dm > 200 && $db > 0) {
+						my $cand = $db / $dm;
+						$st->{'rx_bpm'} = $cand if !$st->{'rx_bpm'} || $cand > $st->{'rx_bpm'};
+					}
+				}
+				$st->{'mark'} = { seq => ($d->{'seq'} || 0), media_ms => ($d->{'media_ms'} || 0), at => &subs::rightNow(), bytes => $tot };
+			}
 			elsif ($type eq 'ping') {
 				$c->tx->send({text => encode_json({ type => 'pong', t => $d->{'t'}, base => (($st->{'base'} || 80) + ($st->{'sink_ms'} || 0)) })});
 			}
@@ -1020,6 +1090,11 @@ websocket '/manager/music/stream' => sub ($c) {
 		}
 		elsif ($type eq 'sync_report') {
 			&music_sync_log('source', '', $d);
+		}
+		elsif ($type eq 'mark') {
+			# The beacon rides the same socket as the audio, so every receiver sees
+			# it in order with the samples whose position it names.
+			&music_source_forward($st, $d);
 		}
 		elsif ($type eq 'control') {
 			if (($d->{'action'} || '') eq 'track') {
