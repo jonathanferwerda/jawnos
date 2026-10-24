@@ -39533,6 +39533,11 @@ sub embedded_pin_grabber($data) {
 	my $op_d = eval { return decode_json $od } || {};
 	my $returner;
 	my $components = $gb::embedded_components;
+	# The destination picker (which machine a button's command runs on) draws its
+	# options from this list, and embedded.html.ep hands it in on the first render.
+	# Without it here the list collapsed to "every machine" the moment any setting
+	# was changed - the change looked like it had been thrown away.
+	my $destinations = [ grep { $_->{'hostname'} && ($_->{'connection'} || 'active') eq 'active' } @{ &subs::remote_machine_lister({}) || [] } ];
 	my $settings;
 	my $movements;
 	foreach my $m ( qw/usual command kill record start toggle measure/ ) {
@@ -39584,6 +39589,7 @@ sub embedded_pin_grabber($data) {
 			device_type => $device_type,
 			source => 'grabber',
 			pin => $pin,
+			destinations => $destinations,
 			name => $op_d->{$syl . $n}->{'name'}
 		);
 	}
@@ -40246,6 +40252,22 @@ post '/manager/watch/assign' => sub($c) {
 };
 
 post '/manager/watch/setting' => sub($c) {
+	# A die in here used to be a 500 with an empty body: the panel paints its red
+	# dot and says nothing about why. Name the fault in the reply as well as the
+	# log, so the dot itself carries the reason.
+	my $returner = eval { &watch_setting_save($c) };
+	if ($@) {
+		my $reason = $@;
+		$reason =~ s/\s+/ /g;
+		$log->error('watch setting ' . ($c->param('setting') || '?')
+			. ' for ' . ($c->param('edt') || '?') . '/' . ($c->param('chip_id') || '?')
+			. ' failed: ' . $reason);
+		return $c->render(json => { ok => 0, error => $reason }, status => 500);
+	}
+	$c->render(json => $returner );
+};
+
+sub watch_setting_save($c) {
 	my $edt = $c->param('edt');
 	my $timestamp = $c->param('timestamp');
 	my $numero = $c->param('numero');
@@ -40287,8 +40309,8 @@ post '/manager/watch/setting' => sub($c) {
 	# The setting is saved either way; a push that failed must not take the panel's
 	# whole request down with it (a red dot that says nothing).
 	$log->error('Now Me after setting: ' . ($@ =~ s/\s+/ /gr)) if $@;
-	$c->render(json => $returner );
-};
+	return $returner;
+}
 
 get '/manager/watch/diagram' => sub($c) {
 	my $uuid = $c->param('uuid');
