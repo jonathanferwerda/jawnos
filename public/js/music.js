@@ -985,9 +985,10 @@ function musicKeepalive(playing) {
 // again. Minimising or hiding the window leaves it alone.
 $(document).on('click touchend', '.close_button[app="music"]', function() {
 	musicKeepalive(false);
-	// park the graph rather than closing it: closing and re-opening the window
-	// made a new AudioContext (and a new Pulse stream) for every visit
-	musicAudioSuspend();
+	// Closing the window gives the AudioContext (and so its Pulse stream) back
+	// to the browser. The leaked streams were the unused ones treeMaker made on
+	// every re-render, not this graph; see treeMaker.
+	musicAudioClose();
 	document.querySelectorAll('[data-jawnos-seek-preview]').forEach(function(n) { n.remove(); });
 });
 $(window).on('pagehide', function(e) {
@@ -2773,7 +2774,8 @@ function musicStreamTapForget() {
 	musicStreamTap.ready = false;
 	musicStreamTap.loading = null;
 }
-// Take the element (and the tap) out of the graph entirely, for a real unload.
+// Take the element (and the tap) out of the graph entirely, for a close or a
+// real unload.
 function musicAudioDetach() {
 	if (typeof musicVisual == 'undefined' || !musicVisual) { return; }
 	if (musicVisual.source) {
@@ -2783,19 +2785,9 @@ function musicAudioDetach() {
 	musicVisual.el = null;
 	musicStreamTapForget();
 }
-// Closing the Music window stops the sound and parks the graph. The context and
-// its single Pulse stream stay for the page, so re-opening the window reuses
-// them instead of adding another stream. The element source is kept too: if the
-// window hands back the same element it is already captured, and capturing an
-// element twice is what throws.
-function musicAudioSuspend() {
-	if (typeof musicVisual == 'undefined' || !musicVisual || !musicVisual.ctx) { return; }
-	musicStreamStop();
-	musicStreamTapForget();
-	try { musicVisual.ctx.suspend(); } catch (e) {}
-}
-// Leaving the page (a real unload, not the back/forward cache) gives the context
-// back to the browser: nodes, stream and all.
+// Closing the window or leaving the page closes the AudioContext, which is what
+// releases its Pulse stream. (The streams that accumulated were the unused
+// contexts treeMaker used to make on every re-render; see treeMaker.)
 function musicAudioClose() {
 	if (typeof musicVisual == 'undefined' || !musicVisual || !musicVisual.ctx) { return; }
 	musicStreamStop();
