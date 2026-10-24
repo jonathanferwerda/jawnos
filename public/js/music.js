@@ -542,6 +542,8 @@ var music_equalizer = { bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bass: 0, preset: 
 var music_eq_save_timer = 0;
 var music_eq_drag = null;
 var music_audio_loading = false;
+var music_sync_offset = 0;
+var music_sync_save_timer = 0;
 
 function musicEqualizerClampBand(v) {
 	v = parseFloat(v);
@@ -767,7 +769,10 @@ function musicPictureDelay() {
 	var ready = false;
 	for (var k in musicStream.ready) { if (musicStream.ready[k]) { ready = true; break; } }
 	if (!ready) { return 0; }
-	return Math.max(0, Math.min(1, (musicStream.latency || 0) / 1000));
+	// The measured stream latency, plus the machine's own trim: a positive
+	// offset waits longer for a remote whose output buffer is not reported.
+	var delay = (musicStream.latency || 0) / 1000 + (music_sync_offset || 0) / 1000;
+	return Math.max(0, Math.min(1, delay));
 }
 
 function musicLipWanted() {
@@ -2875,6 +2880,31 @@ function musicEqualizerFromEqualizer(eq) {
 // format, lip-sync, normalization and equalizer are local settings. The first
 // open also gives the equalizer to a page that has not shown the drawer yet, so
 // a saved curve is in place before playback starts.
+function musicSyncOffsetRead() {
+	var el = $('#music_sync_offset');
+	if (el.length) {
+		var v = parseFloat(el.val());
+		if (isFinite(v)) { music_sync_offset = Math.max(-300, Math.min(500, v)); }
+		el.val(music_sync_offset);
+	}
+	$('#music_sync_offset_value').text(music_sync_offset + ' ms');
+}
+function musicSyncOffsetSave() {
+	clearTimeout(music_sync_save_timer);
+	music_sync_save_timer = setTimeout(function() {
+		settingSetter({ app: 'music', setting: 'sync_offset', value: music_sync_offset });
+	}, 250);
+}
+
+$(document).on('input', '#music_sync_offset', function() {
+	var v = parseFloat(this.value);
+	if (isFinite(v)) { music_sync_offset = Math.max(-300, Math.min(500, v)); }
+	musicSyncOffsetRead();
+	musicLipDelayChanged();
+	musicLipApply();
+	musicSyncOffsetSave();
+});
+
 function musicAudioPanelLoad(show) {
 	var panel = $('#music_audio_panel');
 	if (!panel.length) { return; }
@@ -2894,6 +2924,7 @@ function musicAudioPanelLoad(show) {
 			if (r.mao) { mao = r.mao; }
 			panel.html(r.html);
 			if (!musicEqualizerFromEqualizer(r.equalizer)) { musicEqualizerLoad(); }
+			musicSyncOffsetRead();
 			if (musicEqualizerDirty() && !(musicVisual && musicVisual.limiter)) {
 				try { musicAudioGraph(); } catch (e) {}
 			}
