@@ -99,7 +99,7 @@ function musicVolumeApply() {
 // ride a websocket to this machine's manager, and the manager forwards them to
 // each enabled remote, where `pacat` writes them to PulseAudio. Every remote is
 // therefore sample-locked to every other one. A remote hears what it is sent a
-// measured moment late, so for a video with Lip sync on the tap reads an
+// measured moment late, so for a video with a remote output the tap reads an
 // audio-only lead element running just ahead of the picture instead of the
 // player's own sound (see musicAhead).
 var musicStream = {
@@ -110,7 +110,6 @@ var musicStream = {
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false, source: 'local' };
 var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0, source: '' };
 var music_stream_codec = 'pcm';
-var music_lip_sync = 'off';
 // Counters for the sync report. They ride the same websocket as the audio, so
 // a stream that is failing tells the manager what it dropped and why.
 var musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0, sent: 0, sentBytes: 0 };
@@ -203,7 +202,6 @@ function musicStreamHello() {
 		channels: 2,
 		seek: (tree && tree.sound ? (tree.sound.currentTime || 0) : 0),
 		codec: musicStream.codec,
-		lip: music_lip_sync,
 		timestamp: Date.now()
 	};
 }
@@ -363,10 +361,11 @@ function musicStreamConnect() {
 			musicStream.measured[d.key] = { ms: ms, at: Date.now() };
 			musicStream.ready[d.key] = 1;
 			musicStreamOutputReady(d.key);
-			musicRemoteDelayShow();
 			// the receiver's position is what the lead follows; this is the one
-			// place a new measurement enters the ahead element
+			// place a new measurement enters the ahead element. Show the readout
+			// after the lead moves, so it reports the net offset, not a transient.
 			musicAheadRetarget();
+			musicRemoteDelayShow();
 		}
 		else if (d.type == 'closed' || d.type == 'error' || d.type == 'stopped') {
 			// a lost output is reopened; it used to stay silent for the rest of
@@ -641,7 +640,7 @@ function musicStreamStart(file, seek) {
 		// The lead element is loaded before the socket opens, so the first
 		// samples a receiver hears are the lead and not the live picture. A
 		// source that does not answer falls back to this machine's own tap.
-		var want_ahead = (music_lip_sync == 'on') && !musicAhead.failed
+		var want_ahead = !musicAhead.failed
 			&& tree && tree.songs && tree.songs[0] && tree.songs[0].type == 'video'
 			&& tree.sound && tree.sound.tagName && tree.sound.tagName.toLowerCase() == 'video';
 		if (want_ahead) { musicAheadWait(function(ready) { begin(ready); }, 2500); }
@@ -797,24 +796,31 @@ function musicStreamMark() {
 	if (!v || v.paused || v.ended) { return; }
 	// A stalled picture has a frozen clock while the tap keeps sending silence;
 	// a mark then would name audio that is not what is arriving. The resume
-	// sends a fresh one.
+	// sends a fresh one. A lead element in the middle of a correction is the
+	// same: its clock has jumped, the samples have not.
 	if (musicVideoStats.waitAt) { return; }
+	if (musicAhead.ready && musicAhead.el && musicAhead.el.seeking) { return; }
 	musicStream.markSeq = (musicStream.markSeq || 0) + 1;
 	musicStreamSendJson({ type: 'mark', seq: musicStream.markSeq, media_ms: Math.round(musicTapMedia() * 1000) });
 }
 
 // The measured delay of the furthest-behind output, in the Audio drawer. It is
-// the pipeline delay the lead follows: a number that keeps growing means the
-// stream is falling behind, not that the trim is wrong.
+// what is left after the lead: the receiver's pipeline, less the lead given to
+// it and the picture's own lag. Zero means the room is in step with the frame
+// on screen; a negative number means it is playing ahead of the picture.
 function musicRemoteDelayShow() {
 	var el = $('#music_remote_delay_value');
 	if (!el.length) { return; }
-	var now = Date.now(), ms = -1;
+	var now = Date.now(), ms = null;
+	var lead = (typeof musicAhead != 'undefined' && musicAhead.ready ? (musicAhead.target || 0) : 0) * 1000;
+	var pic = (typeof musicPicture != 'undefined' ? (musicPicture.lag || 0) : 0) * 1000;
 	for (var k in musicStream.measured) {
 		var m = musicStream.measured[k];
-		if (m && (now - m.at) < 8000 && m.ms > ms) { ms = m.ms; }
+		if (!m || (now - m.at) >= 8000) { continue; }
+		var net = m.ms - lead - pic;
+		if (ms === null || net > ms) { ms = net; }
 	}
-	el.text(ms >= 0 ? (Math.round(ms) + ' ms') : '\u2014');
+	el.text(ms === null ? '\u2014' : (Math.round(ms) + ' ms'));
 }
 
 // A pause stops the graph and the receiver both. The receiver's player starts
@@ -923,6 +929,7 @@ function musicPictureApply() {
 	// Me and the remote both target the frame on screen, not the element clock.
 	musicLocalDelayApply();
 	musicAheadRetarget();
+	musicRemoteDelayShow();
 }
 
 // The lead to give the remote, relative to the element's own clock: the measured
@@ -979,7 +986,6 @@ function musicLocalDelaySeconds() {
 // Whether the ahead element should be loaded. The video may still be paused
 // while it loads; it is only played once the picture is moving.
 function musicAheadWanted() {
-	if (music_lip_sync != 'on') { return false; }
 	return !!(musicStream.active && musicStreamOutputs().length
 		&& tree && tree.songs && tree.songs[0] && tree.songs[0].type == 'video'
 		&& tree.sound);
@@ -1105,9 +1111,9 @@ function musicAheadStop() {
 	musicAheadSettle(false);
 	musicStreamTapSource('local');
 	musicOpusSource();
-	// Turning Lip sync off (or losing the lead) while a stream is live leaves
-	// the receiver holding audio from the lead position. PCM can drop it; Opus
-	// needs a fresh WebM header, which only a whole-stream restart gives it.
+	// Losing the lead while a stream is live leaves the receiver holding audio
+	// from the lead position. PCM can drop it; Opus needs a fresh WebM header,
+	// which only a whole-stream restart gives it.
 	if (was_ahead && musicStream.active && musicStream.ws && musicStream.ws.readyState == 1) {
 		if (musicStream.codec == 'opus') { musicAheadRestart(); }
 		else {
@@ -1270,8 +1276,8 @@ function musicAheadStart() {
 		musicAheadLead(true);
 		// a fresh stream waiting on this gets the tap switched before it opens
 		musicAheadSettle(true);
-		// turning Lip sync on mid-stream has no waiter; switch the live tap now
-		if (music_lip_sync == 'on' && musicStream.ws && musicStream.ws.readyState == 1 && musicStreamTap.source != 'ahead') {
+		// a lead that became ready mid-stream has no waiter; switch the live tap
+		if (musicStream.ws && musicStream.ws.readyState == 1 && musicStreamTap.source != 'ahead') {
 			if (musicStream.codec == 'opus') { musicAheadRestart(); return; }
 			musicStreamTapSource('ahead');
 			musicStreamTapActive(true, true);
@@ -1820,8 +1826,6 @@ async function musicInit(method) {
 		// a search re-render keeps the value already running in this page
 		var normalize_attr = $('#music').attr('normalize');
 		if (normalize_attr) { music_normalize = normalize_attr; }
-		var lip_attr = $('#music').attr('lip_sync');
-		if (lip_attr) { music_lip_sync = lip_attr; }
 		var codec_attr = $('#music').attr('stream_codec');
 		if (codec_attr) { music_stream_codec = codec_attr; }
 		// not a silent start: restore the machine's own output level, or a track
@@ -2956,13 +2960,6 @@ $(document).on('change', '#music_normalize_select', function() {
 	// state back in step in case a track change left them at the handshake value
 	musicVolumeApply();
 	settingSetter({ 'app': 'music', 'setting': 'normalize', 'value': music_normalize });
-});
-$(document).on('change', '#music_lip_sync', function() {
-	music_lip_sync = this.checked ? 'on' : 'off';
-	$('#music').attr('lip_sync', music_lip_sync);
-	settingSetter({ 'app': 'music', 'setting': 'lip_sync', 'value': music_lip_sync });
-	if (music_lip_sync == 'on') { musicAheadRetarget(); }
-	else { musicAheadStop(); }
 });
 $(document).on('change', '#music_stream_codec', function() {
 	music_stream_codec = $(this).val() || 'pcm';

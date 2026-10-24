@@ -89,12 +89,6 @@
 			</select>
 		</div>
 		<div class="music_cfg_field music_cfg_field_wide">
-			<label class="music_cfg_label music_cfg_check" for="music_lip_sync" hint="Lip sync">
-				<input type="checkbox" id="music_lip_sync" <% if (($crate->{'settings'}->{'lip_sync'} || 'off') eq 'on') { %>checked<% } %> />
-				<%= &subs::lang('music.lip_sync') %>
-			</label>
-		</div>
-		<div class="music_cfg_field music_cfg_field_wide">
 			<label class="music_cfg_label" for="music_sync_offset" hint="Sync offset"><%= &subs::lang('music.sync_offset') %></label>
 			<div class="music_sync_row">
 				<input type="range" id="music_sync_offset" min="-5000" max="5000" step="10" value="<%= $sync_offset %>" hint="Sync offset">
