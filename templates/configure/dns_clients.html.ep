@@ -20,6 +20,12 @@
 	my $rms = &subs::db_select('remote_machines')->hashes;
 	my $dock = $ENV{'PORT_DOCK'} || 3000;
 	my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || 'this machine';
+	# The system certbot owns renewal on a machine that already has it. Offering
+	# a second issue there would only create a parallel lineage inside
+	# ~/.jawnos_tls and spend a Let's Encrypt attempt for nothing.
+	my $system_timer = `systemctl is-active certbot-renew.timer 2>/dev/null`;
+	chomp $system_timer;
+	$system_timer = ($system_timer eq 'active') ? 1 : 0;
 	my %pname = map { $_->{'id'} => $_->{'label'} } @{$providers};
 %>
 <p class="cfg-note">A wildcard certificate (<b>*.<%= length($house) ? $house : 'example.com' %></b>) can only be proved through a DNS TXT record, so the house writes that record and removes it again. No inbound port is opened, so a machine behind NAT can still renew. The token is sealed with the house key and is never shown again after it is saved. On a server that already runs the system <b>certbot-renew.timer</b>, that timer owns the renewal; this page's issuer is for a machine that has none. The certificate lands in <b>server/fullchain.pem</b> and <b>server/privkey.pem</b>, which the dock server already reads.</p>
@@ -104,7 +110,11 @@
 </div>
 <div class="cfg-row" style="flex-wrap:wrap;gap:8px;">
 	<button id="dns_client_add" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">+ Add provider</button>
-	<button id="tls_issue_now" class="button" signatorial="<%= $sig %>" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Issue / renew now</button>
+	<% if ($system_timer) { %>
+		<span class="cfg-note" style="margin:0;">Renewal is owned by this machine's system <b>certbot-renew.timer</b>; no second certificate is issued from here.</span>
+	<% } else { %>
+		<button id="tls_issue_now" class="button" signatorial="<%= $sig %>" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Issue / renew now</button>
+	<% } %>
 	<span id="tls_issue_status" class="cfg-note" style="margin:0;">
 		<% if ($status->{'at'}) { %>
 			Last run <b><%= $status->{'at'} %></b>: <%= $status->{'ok'} ? 'ok' : 'failed' %> — <%= $status->{'message'} || '' %>
