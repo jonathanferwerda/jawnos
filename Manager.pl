@@ -14294,6 +14294,14 @@ sub continent_record($c) {
 	my $returner = {};
 	my $purpose = $c->param('purpose');
 	my $scope = $c->param('scope');
+	# The machine's current place is only written by a machine that has a real
+	# GPS. A home plate is the person's own explicit mark, so that purpose keeps
+	# working anywhere; a navigation button pressed on a handheld is an explicit
+	# request for that device's own fix. A browser's network estimate on a
+	# computer has no place here.
+	my $publishable_place = ($purpose eq 'home_plate'
+		|| &subs::navigation_gps_present()
+		|| ($purpose eq 'navigation' && $device eq 'mobile')) ? 1 : 0;
 	my ($uuid,$pre_uuid);
 	if ($c->param('uuid')) {
 		$pre_uuid = $c->param('uuid');
@@ -14344,7 +14352,7 @@ sub continent_record($c) {
 		# the speed a fix carried is saved as a measure on the appointment it was
 		# recorded against, so the evaluation reads it with the rest of the readings
 		&subs::continent_speed_measure($app, $pre_uuid, $speed, $timestamp) if defined $speed && $speed =~ /\S/;
-		if ($returner->{'accuracy'} < 200) {
+		if ($returner->{'accuracy'} < 200 && $publishable_place) {
 			my $treturner = clone $returner;
 			$treturner->{'type'} = 'temporary';
 			$treturner->{'app'} = '__president';
@@ -14421,6 +14429,9 @@ post '/manager/continent/record_anyway' => sub($c) {
 		}
 		my $warranty => $c->param('warranty') || &subs::ago_calc(&subs::setting_grabber({ app => $app, setting => 'warranty' }) || &subs::setting_grabber({ app => 'me', setting => 'warranty' }),$server_time);
 		my $purpose = $c->param('purpose') || 'home_plate';
+		my $publishable_place = ($purpose eq 'home_plate'
+			|| &subs::navigation_gps_present()
+			|| ($purpose eq 'navigation' && &subs::device_setter() eq 'mobile')) ? 1 : 0;
 
 		my $returner = {
 			timestamp => $timestamp,
@@ -14452,7 +14463,7 @@ post '/manager/continent/record_anyway' => sub($c) {
 		}
 		else {
 			&subs::db_insert('continent', $returner);
-			if ($returner->{'accuracy'} < 200) {
+			if ($returner->{'accuracy'} < 200 && $publishable_place) {
 				my $treturner = clone $returner;
 				$treturner->{'type'} = 'temporary';
 				$treturner->{'app'} = '__president';
@@ -18569,12 +18580,26 @@ sub merge_table_rows {
 								}
 								if ($q eq 'continent') {
 									if ($r->{'type'} eq 'temporary' && $r->{'app'} eq '__president') {
-										my $continents = &subs::db_query('select * from continent where app = ? and type = ? and signatorial = ? and server_time > ?', $r->{'app'}, $r->{'type'}, $r->{'signatorial'}, $r->{'server_time'})->hashes;
+										# A local row AT LEAST this new wins. The sync copies server_time
+										# verbatim, so a peer echoes our own temporary row back with the
+										# very same stamp; the old strict `>` did not count that as newer,
+										# so it deleted the fresh row and then the generic merge below
+										# skipped the re-insert (its @resulters still held the deleted
+										# row, and server_time was not greater). A phone's own fix then
+										# vanished seconds after every navigation run and it borrowed a
+										# peer's place instead - the public place that only a manual
+										# fix corrected. `>=` keeps the row we hold.
+										my $continents = &subs::db_query('select * from continent where app = ? and type = ? and signatorial = ? and cast(server_time as integer) >= cast(? as integer)', $r->{'app'}, $r->{'type'}, $r->{'signatorial'}, $r->{'server_time'})->hashes;
 										if (scalar @{$continents} > 0) {
 											next;
 										}
-										else {
-											&subs::db_delete('continent', { app => $r->{'app'}, type => $r->{'type'}, signatorial => $r->{'signatorial'} });
+										# The incoming row is genuinely newer: keep one temporary row per
+										# signatorial by dropping our older copies, but never the row the
+										# merge is about to write (its uuid is in @resulters above; only
+										# the insert/update at the foot of this block can put it back).
+										my $older = &subs::db_query('select uuid from continent where app = ? and type = ? and signatorial = ? and uuid != ?', $r->{'app'}, $r->{'type'}, $r->{'signatorial'}, ($r->{'uuid'} || ''))->hashes;
+										foreach my $old ( @{$older} ) {
+											&subs::db_delete('continent', { uuid => $old->{'uuid'} });
 										}
 									}
 								}
@@ -42806,7 +42831,13 @@ get '/manager/remote_auth_test' => sub($c) {
 				my $m_live = ($m_flag eq 'running' && (!$m_pid || ($m_pid =~ /^\d+$/ && $m_pid > 1 && kill(0, $m_pid)))) ? 1 : 0;
 				my $merging = ($m_live && int($merge_row->{'server_time'} || 0) + 600000 > $now) ? 'running' : '';
 
-				my $location = &subs::db_query('select * from continent where signatorial=? and type=? and server_time >= ? order by server_time desc limit 1', $my_signatorial, 'temporary',&subs::rightNow() - (5 * 60 * 1000))->hashes->[0];
+				# Only a machine with a real GPS advertises its place in the handshake.
+				# A computer's own row is borrowed from a phone, and lending that on
+				# would let a third machine adopt a copy of a copy.
+				my $location;
+				if (&subs::navigation_gps_present()) {
+					$location = &subs::db_query('select * from continent where signatorial=? and type=? and server_time >= ? order by server_time desc limit 1', $my_signatorial, 'temporary',&subs::rightNow() - (5 * 60 * 1000))->hashes->[0];
+				}
 
 				# The caller handed us the watermark it already holds (?since=); this
 				# is how many of our appointments sit above it, so the caller can tell
@@ -43227,7 +43258,11 @@ sub remote_machine_reconnector($c) {
 						my $flags = { connection => 'active', status => 'connected', server_time => &subs::rightNow() };
 						$flags->{'version'} = $rj->{'version'} if $rj->{'version'};
 						&subs::db_update('remote_machines', $flags, { signatorial => $rj->{'signatorial'} });
-						if ($rj->{'location'}) {
+						if ($rj->{'location'} && &subs::device_setter() ne 'mobile') {
+							# Only a machine with no GPS of its own adopts a peer's place. A
+							# phone that has its own GPS keeps its own fix; borrowing one
+							# here is what let a computer's copy of a place overwrite the
+							# real fix (and read as public until the next manual fix).
 							my $same_net = &subs::same_net_test($rj->{'you'},$rj->{'me'});
 							my $location_source = &subs::remote_machine_lister({ signatorial => $rj->{'location'}->{'signatorial'}, mirrors => 'none', limit => 1 });
 							if ($same_net eq 'yes' && $rj->{'same_net'} eq 'yes') {

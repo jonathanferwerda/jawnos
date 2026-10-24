@@ -3287,16 +3287,33 @@ sub battery_eta_estimate {
 	}
 	elsif ($status eq 'discharging' || $status eq '') {
 		$kind = 'left';
-		if (defined $b->{'discharge_eta'} && $b->{'discharge_eta'} > 0) {
-			$hours = $lo = $hi = $b->{'discharge_eta'};
-		}
-		elsif (defined $b->{'pph'} && $b->{'pph'} > 0) {
-			$hours = $pct / $b->{'pph'};
+		my $gauge = (defined $b->{'discharge_eta'} && $b->{'discharge_eta'} > 0) ? $b->{'discharge_eta'} : undef;
+		my ($slope, $slo, $shi);
+		if (defined $b->{'pph'} && $b->{'pph'} > 0) {
+			$slope = $pct / $b->{'pph'};
 			if (defined $b->{'pph_hi'} && $b->{'pph_hi'} > 0
 				&& defined $b->{'pph_lo'} && $b->{'pph_lo'} > 0) {
-				$lo = $pct / $b->{'pph_hi'};   # the steepest plausible rate
-				$hi = $pct / $b->{'pph_lo'};   # the shallowest
+				$slo = $pct / $b->{'pph_hi'};   # the steepest plausible rate
+				$shi = $pct / $b->{'pph_lo'};   # the shallowest
 			}
+		}
+		# An Android charge counter is not in consistent units across vendors: on
+		# a phone here the gauge named a 2.4 Ah pack and four hours left while the
+		# measured drop said twelve hours (and the pack is rated 4.7 Ah). When the
+		# gauge and the percentage slope disagree by more than half again, the
+		# slope is the drain the person is actually living through, so it wins.
+		if (defined $gauge && defined $slope && ($gauge > $slope * 1.5 || $gauge < $slope / 1.5)) {
+			$hours = $slope;
+			$lo = $slo;
+			$hi = $shi;
+		}
+		elsif (defined $gauge) {
+			$hours = $lo = $hi = $gauge;
+		}
+		elsif (defined $slope) {
+			$hours = $slope;
+			$lo = $slo;
+			$hi = $shi;
 		}
 		elsif ($b->{'pph_flat'}) {
 			$flat = 1;
@@ -14679,6 +14696,25 @@ sub rightNow() {
 	return $time;
 }
 
+# Whether this machine has a real GPS. termux-location names the provider that
+# answered; only a `gps` answer proves the hardware. The flag is cache, which is
+# this machine's own and never syncs, so one phone cannot lend its GPS to a
+# laptop. A network fix can be a cell-tower guess blocks from where the person
+# stands, so it never turns the flag on by itself.
+sub navigation_gps_present {
+	my $c = &cache_get({ app => '__president', context => 'navigation', subcontext => 'gps' });
+	return (ref $c eq 'HASH' && $c->{'present'}) ? 1 : 0;
+}
+
+# Remember that a real GPS answered here. Returns 1 once the flag is set.
+sub navigation_gps_confirm {
+	my $provider = lc(shift // '');
+	return 0 unless $provider eq 'gps';
+	return 1 if &navigation_gps_present();
+	&cache_set({ app => '__president', context => 'navigation', subcontext => 'gps', warranty => '-10y' }, { present => 1, at => &rightNow() });
+	return 1;
+}
+
 # The navigation utility's own pace, in seconds. President adopts this machine's
 # row from the utility controller at runtime, but Manager and the scripts do not
 # share that process, so read the same persisted row here.
@@ -14789,19 +14825,27 @@ sub headless_navigation() {
 		if (&subs::device_setter() eq 'mobile') {
 			my $jloc = `termux-location`;
 			my $loc = eval { return decode_json $jloc } || {};
+			# A `gps` provider answer proves this machine has the hardware; a
+			# network answer does not. Only a machine with a real GPS publishes
+			# its place - a tablet or computer with no GPS must never become a
+			# source another machine borrows from.
+			&subs::navigation_gps_confirm($loc->{'provider'});
+			my $has_gps = &subs::navigation_gps_present();
 			# A walk gives plenty of perfectly usable fixes that are a couple of
 			# seconds old or a little loose. The old 1s / 100m gates threw them
 			# away silently, so the location stopped moving with the person; keep
 			# the good ones and say when a fix was dropped.
-			my $usable = $loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500;
+			my $usable = $has_gps && $loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500;
 			# With the screen off the phone often cannot get a fresh GPS fix at all,
 			# so termux-location answers with a last-known one minutes old and the
 			# point was dropped - the position stopped moving and the home plate
 			# never fired. When the GPS fix is stale or loose, ask the network
 			# provider (a fresh, coarser fix) rather than throw the point away.
+			# This stays limited to a machine whose GPS has answered: on a device
+			# with none it would publish a cell-tower guess as a real place.
 			unless ($usable) {
 				my $nloc = eval { return decode_json `termux-location -p network` } || {};
-				if ($nloc->{'latitude'} && ($nloc->{'elapsedMs'} || 1e9) < 60000 && ($nloc->{'accuracy'} || 0) < 2000) {
+				if ($has_gps && $nloc->{'latitude'} && ($nloc->{'elapsedMs'} || 1e9) < 60000 && ($nloc->{'accuracy'} || 0) < 2000) {
 					$loc = $nloc;
 					$usable = 1;
 				}
@@ -17457,6 +17501,9 @@ sub lan_physical_network {
 sub navigation_share_fix {
 	my $fix = shift || {};
 	return unless &subs::device_setter() eq 'mobile';
+	# A handheld without a real GPS has no place worth handing on: a network
+	# guess would arrive at the computer looking like a fix.
+	return unless &subs::navigation_gps_present();
 	return unless defined $fix->{'latitude'} && $fix->{'latitude'} =~ /^-?\d+(?:\.\d+)?$/
 		&& defined $fix->{'longitude'} && $fix->{'longitude'} =~ /^-?\d+(?:\.\d+)?$/;
 	return unless abs($fix->{'latitude'}) <= 90 && abs($fix->{'longitude'}) <= 180;
@@ -17558,15 +17605,19 @@ sub local_position {
 	my $now = &subs::rightNow();
 	my $me = &subs::signatorial_designer();
 	my $row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and timestamp > ? order by server_time desc limit 1', 'temporary', $me, $now - 120000)->hashes->[0];
-	if ($row && $row->{'latitude'}) {
+	if ($row && $row->{'latitude'} && &subs::navigation_gps_present()) {
 		return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
 	}
 	my $jloc = `timeout 3 termux-location`;
 	my $loc = eval { return decode_json $jloc } || {};
-	my $usable = $loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500;
+	# Only a machine whose own GPS has answered may answer a peer. A device
+	# with none must not lend a network guess to the machine asking.
+	&subs::navigation_gps_confirm($loc->{'provider'});
+	my $has_gps = &subs::navigation_gps_present();
+	my $usable = $has_gps && $loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500;
 	unless ($usable) {
 		my $nloc = eval { return decode_json `timeout 3 termux-location -p network` } || {};
-		if ($nloc->{'latitude'} && ($nloc->{'elapsedMs'} || 1e9) < 60000 && ($nloc->{'accuracy'} || 0) < 2000) {
+		if ($has_gps && $nloc->{'latitude'} && ($nloc->{'elapsedMs'} || 1e9) < 60000 && ($nloc->{'accuracy'} || 0) < 2000) {
 			$loc = $nloc;
 			$usable = 1;
 		}
@@ -17574,6 +17625,7 @@ sub local_position {
 	if ($usable) {
 		return { latitude => $loc->{'latitude'}, longitude => $loc->{'longitude'}, accuracy => sprintf("%.2F", ($loc->{'accuracy'} || 0)), timestamp => $now, source => ($loc->{'provider'} || 'gps') };
 	}
+	return {} unless &subs::navigation_gps_present();
 	$row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and (warranty is null or warranty = ? or warranty > ?) order by server_time desc limit 1', 'temporary', $me, '', $now)->hashes->[0];
 	return {} unless $row && $row->{'latitude'};
 	return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
