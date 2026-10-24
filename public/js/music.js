@@ -104,14 +104,12 @@ function musicVolumeApply() {
 var musicStream = {
 	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0, latencies: {},
 	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm',
-	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0
+	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0, seekTimer: 0
 };
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false };
 var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0 };
 var music_stream_codec = 'pcm';
 var music_lip_sync = 'off';
-// where the local element was left when it paused, so a resume can be resynced
-var musicLocalPausedAt = null;
 // Counters for the sync report. They ride the same websocket as the audio, so
 // a stream that is failing tells the manager what it dropped and why.
 var musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0, sent: 0, sentBytes: 0 };
@@ -495,6 +493,8 @@ function musicSyncReport() {
 			on: musicLip.on ? 1 : 0,
 			delay_ms: Math.round((musicLip.delay || 0) * 1000),
 			audio_ms: Math.round((musicLip.audioDelay || 0) * 1000),
+			revealed: musicLip.revealed ? 1 : 0,
+			local_ms: (musicVisual && musicVisual.localDelay) ? Math.round((musicVisual.localDelay.delayTime.value || 0) * 1000) : 0,
 			clone: musicLip.clone ? 1 : 0,
 			seeking: (musicLip.clone && musicLip.clone.seeking) ? 1 : 0,
 			ready: musicLip.clone ? musicLip.clone.readyState : -1,
@@ -688,6 +688,8 @@ function musicStreamStop() {
 	musicStream.latencies = {};
 	musicStream.attached = false;
 	musicStream.gap = 0;
+	clearTimeout(musicStream.seekTimer);
+	musicStream.seekTimer = 0;
 	musicStreamTapActive(false, true);
 	musicOpusStop();
 	musicLipStop();
@@ -761,7 +763,7 @@ function musicLipFrameOk(el) {
 		for (var i = 0; i < d.length; i += 4) { sum += d[i] + d[i + 1] + d[i + 2]; }
 		return (sum / (d.length / 4)) >= 2;
 	}
-	catch (e) { return true; }
+	catch (e) { return false; }
 }
 
 // The shared graph sits between the element and this machine's speakers, and a
@@ -925,8 +927,11 @@ function musicLipFreezeUntilFrame() {
 		if (gen !== musicLip.freezeGen) { return; }
 		// Keep the still up while the clone only has a decoder's black frame.
 		// A dark scene eventually passes (2 s), but a seek blackout does not.
-		if (musicLip.clone && !musicLipFrameOk(musicLip.clone) && Date.now() - started < 2000) {
-			setTimeout(finish, 60);
+		if (musicLip.clone && !musicLipFrameOk(musicLip.clone)) {
+			if (Date.now() - started < 2000) { setTimeout(finish, 60); return; }
+			// it never presented a frame we can trust; never take the live picture
+			// down for a black clone
+			musicLipStop();
 			return;
 		}
 		musicLip.painted = true;
@@ -1066,8 +1071,11 @@ function musicLipStart() {
 			var finish = function() {
 				if (done) { return; }
 				// do not hand the screen to a decoder's black frame
-				if (musicLip.clone && !musicLipFrameOk(musicLip.clone) && Date.now() - hand_at < 2000) {
-					setTimeout(finish, 60);
+				if (musicLip.clone && !musicLipFrameOk(musicLip.clone)) {
+					if (Date.now() - hand_at < 2000) { setTimeout(finish, 60); return; }
+					// the clone never presented a frame we can trust; keep the live
+					// picture and give up lip sync rather than show black
+					musicLipStop();
 					return;
 				}
 				done = true;
@@ -1159,29 +1167,14 @@ function musicLipSync() {
 	// A clone that is still seeking reports its old position, and chasing that
 	// seek again every tick is what made the picture blink black.
 	if (c.seeking) { return; }
-	var now = Date.now();
-	// Steady sync is done by nudging the playback rate: a hard seek empties the
-	// decoder and is the thing that blinks. Only a really large jump (a stall, a
-	// changed source) is re-anchored, and while that correction settles the rate
-	// keeps working instead of leaving the drift uncorrected.
-	if (Math.abs(drift) > 0.9) {
-		if (now - (musicLip.seekAt || 0) < 3000) {
-			// drift is target - clone: positive means the clone is behind and
-			// must speed up, negative means it is ahead and must slow down.
-			c.playbackRate = base * (drift > 0 ? 1.15 : 0.85);
-			return;
-		}
-		musicLip.seekAt = now;
-		var held = musicLipFreezeShow(v);
-		musicLip.freezeAt = now;
-		try { c.currentTime = target; } catch (e) {}
-		c.playbackRate = base;
-		// arm the wait after the seek: an already-queued frame would otherwise
-		// take the still down before the seek had a chance to black out
-		if (held) { musicLipFreezeUntilFrame(); }
-	}
-	else if (drift > 0.05) { c.playbackRate = base * (drift > 0.4 ? 1.2 : 1.1); }
-	else if (drift < -0.05) { c.playbackRate = base * (drift < -0.4 ? 0.82 : 0.92); }
+	// Rate-only correction. A hard seek empties the decoder and is the other
+	// thing that blinks black, so a large drift after a stall is ridden out at
+	// up to 20 percent instead of re-anchored; a real seek by the listener still
+	// goes through musicLipSeek, which holds a still over the black frames.
+	if (drift > 0.4) { c.playbackRate = base * 1.2; }
+	else if (drift > 0.05) { c.playbackRate = base * 1.1; }
+	else if (drift < -0.4) { c.playbackRate = base * 0.82; }
+	else if (drift < -0.05) { c.playbackRate = base * 0.92; }
 	else { c.playbackRate = base; }
 }
 
@@ -2034,6 +2027,9 @@ function mediaMaker(data) {
 			}
 			tree.sound.onplaying = function() {
 				tree.sound.state = 1;
+				// the context was suspended on the pause; resume it before the element's
+				// sound is expected, so the graph and the picture start together again
+				musicAudioResume();
 				tree.sound.sync_cursor = null;
 				tree.sound.sync_wall = 0;
 				musicKeepalive(true);
@@ -2059,20 +2055,10 @@ function mediaMaker(data) {
 					// a resume is the moment to bring the outputs back
 					musicStreamStart(file, tree.sound.currentTime);
 				}
-				// A pause/play can leave the element's sound a moment ahead of the
-				// picture (the audio graph and decoder do not stop together). A
-				// tiny seek is what the listener already does by hand; it makes
-				// the decoder and the graph start from the same place again.
-				if (musicLocalPausedAt != null) {
-					var at = musicLocalPausedAt;
-					musicLocalPausedAt = null;
-					if (Math.abs((tree.sound.currentTime || 0) - at) < 0.2) {
-						try { tree.sound.currentTime = at + 0.02; } catch (e) {}
-					}
-				}
-				// a context suspended by a call or the app going away is resumed here;
-				// a graph deferred while it was stopped is finished once it runs
-				musicAudioResume();
+				// A pause/play used to leave the element's sound ahead of the picture
+				// when both clocked through the audio graph. The context is suspended
+				// on the pause and resumed above, which re-anchors them; the old small
+				// seek here was not enough.
 				var local_side = musicOutputChannel(mao['me']);
 				if ((music_normalize && music_normalize != 'off') || local_side == 'left' || local_side == 'right' || musicEqualizerDirty()) { musicAudioGraph(); }
 				musicBaselineStart();
@@ -2168,8 +2154,12 @@ function mediaMaker(data) {
 					clearInterval(interval);
 					tree.sound.state = 0;
 					musicKeepalive(false);
-					musicLocalPausedAt = tree.sound.currentTime;
 					musicStreamControl('pause');
+					// stop the graph with the element: a suspended context leaves no
+					// buffered sound to run ahead of the picture on the resume
+					if (musicVisual && musicVisual.ctx && musicVisual.ctx.state == 'running') {
+						try { musicVisual.ctx.suspend(); } catch (e) {}
+					}
 
 					$('#play_logo').attr('src', jawnosPlayIcon());
 
@@ -2232,6 +2222,15 @@ function remoteTrackToggle(data) {
 			musicStreamTapActive(true, true);
 			musicStreamControl('seek', { seek: seek, file: file, music_data: data['music_data'] || tree.songs[0] });
 			musicLipSeek();
+			// A seek is the one place the receiver's buffer is simply stale: the
+			// old audio is already queued there and the new position is behind it.
+			// Let a drag settle, then give both ends a fresh stream at the position
+			// the listener stopped on, which is what a manual output toggle did.
+			clearTimeout(musicStream.seekTimer);
+			musicStream.seekTimer = setTimeout(function() {
+				musicStream.seekTimer = 0;
+				if (musicStream.active) { musicStreamRestart(); }
+			}, 400);
 		}
 		return;
 	}
