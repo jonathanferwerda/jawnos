@@ -14,6 +14,7 @@ var jawnSoftField = null;
 var jawnSoftMode = 'letters';
 var jawnSoftShift = false;
 var jawnSoftNumeric = false;
+var jawnSoftContext = '';
 var jawnSoftExpr = '';
 var jawnSoftSetting = false;
 var jawnSoftKeyAt = 0;
@@ -76,6 +77,36 @@ function softKbLabel(text) {
 	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
 }
 
+// What kind of field the dock is typing into. The class, name and placeholder
+// are the house's own conventions ("ago", "duration", "warranty", "schedule",
+// "notes"), and a `time` input is a timestamp written in words. The answer
+// decides both the recommendation row and whether a typed "5m" is minutes or
+// metres.
+function softKbContext(el) {
+	if (!el) { return ''; }
+	if ((el.getAttribute('type') || '').toLowerCase() == 'password') { return 'password'; }
+	var raw = [
+		el.id,
+		el.getAttribute('name'),
+		el.getAttribute('placeholder'),
+		el.getAttribute('text'),
+		el.getAttribute('attribute'),
+		el.getAttribute('hint'),
+		el.getAttribute('data-context'),
+		el.className
+	].join(' ').toLowerCase();
+	var tokens = raw.split(/[^a-z0-9]+/);
+	var has = function (t) { return tokens.indexOf(t) >= 0; };
+	if (has('duration')) { return 'duration'; }
+	if (has('warranty')) { return 'warranty'; }
+	if (has('schedule')) { return 'schedule'; }
+	if (has('timestamp') || has('ago') || has('time')) { return 'when'; }
+	if (has('notes') || has('note')) { return 'notes'; }
+	if (el.id == 'message' || $(el).closest('.chat_shell').length) { return 'chat'; }
+	if (softKbNumeric(el)) { return 'number'; }
+	return 'text';
+}
+
 function softKbShow(el) {
 	if (!softKbOn()) { return; }
 	el = softKbRoot(el);
@@ -85,6 +116,7 @@ function softKbShow(el) {
 	var changed = jawnSoftField !== el;
 	jawnSoftField = el;
 	jawnSoftNumeric = softKbNumeric(el);
+	jawnSoftContext = softKbContext(el);
 	if (changed) {
 		jawnSoftExpr = jawnSoftNumeric ? (el.value || '') : '';
 		softKbShiftSet(false);
@@ -94,6 +126,7 @@ function softKbShow(el) {
 	dock.prop('hidden', false).attr('aria-hidden', 'false');
 	$('body').addClass('soft_kb_open');
 	softKbModeSet(jawnSoftNumeric ? 'calc' : 'letters');
+	softKbSuggestSync();
 	softKbReserve();
 	softKbScrollField(el);
 	var chat = el.id == 'message';
@@ -105,6 +138,8 @@ function softKbHide() {
 	$('body').removeClass('soft_kb_open');
 	$('.chat_shell').css('padding-bottom', '');
 	softKbConvertHide();
+	$('#soft_kb_suggest').prop('hidden', true);
+	jawnSoftContext = '';
 	jawnSoftField = null;
 	$('#chat_soft_toggle').removeClass('active').attr('aria-expanded', 'false');
 }
@@ -121,22 +156,26 @@ function softKbPlace(el) {
 	dock.removeClass('soft_kb_in_window soft_kb_inline');
 }
 
-// Keep the Chat composer above the keys when the window reaches the foot of
-// the screen. The window keeps its shape; only the Chat shell gives up the
-// overlap, and the message list takes the rest.
+// Keep the field's own scrolling area above the keys: the Chat shell gives up
+// the overlap at its foot, and an appointment (or any other window) gives it up
+// in its scroll area, so its lower fields and buttons stay reachable. The window
+// itself keeps its shape.
 function softKbReserve() {
 	$('.chat_shell').css('padding-bottom', '');
+	$('.soft_kb_reserved').css('padding-bottom', '').removeClass('soft_kb_reserved');
 	var dock = $('#jawn_soft_keyboard');
 	if (!dock.is(':visible') || !jawnSoftField) { return; }
 	var chat = $(jawnSoftField).closest('.chat_shell');
-	if (!chat.length) { return; }
-	var win = chat.closest('.wind');
-	if (!win.length) { return; }
+	var scroller = chat.length ? chat : $(jawnSoftField).closest('.appointment_contents, .window_contents');
+	if (!scroller.length) { return; }
+	if (!chat.length && !scroller.closest('.wind').length) { return; }
 	var dockTop = dock[0].getBoundingClientRect().top;
-	var winRect = win[0].getBoundingClientRect();
-	var bottom = Math.min(winRect.bottom, window.innerHeight);
+	var box = scroller[0].getBoundingClientRect();
+	var bottom = Math.min(box.bottom, window.innerHeight);
 	var overlap = Math.max(0, bottom - dockTop);
-	if (overlap > 0) { chat.css('padding-bottom', overlap + 'px'); }
+	if (overlap <= 0) { return; }
+	if (chat.length) { chat.css('padding-bottom', overlap + 'px'); }
+	else { scroller.addClass('soft_kb_reserved').css('padding-bottom', overlap + 'px'); }
 }
 
 function softKbScrollField(el) {
@@ -404,6 +443,7 @@ function softKbHistoryPick(out) {
 		jawnSoftExpr = out;
 		softKbCalcRender();
 		softKbCalcSyncNumeric();
+		try { jawnSoftField.focus({ preventScroll: true }); } catch (err) {}
 		return;
 	}
 	if (jawnSoftMode == 'calc') {
@@ -516,6 +556,12 @@ function softKbConvertHide() {
 
 function softKbConvertUpdate() {
 	if (!$('#jawn_soft_keyboard').is(':visible')) { return; }
+	// a time, a length, a warranty or a repeat already names its own units;
+	// "5m" there is five minutes and must not be read as metres
+	if (jawnSoftContext == 'when' || jawnSoftContext == 'duration' || jawnSoftContext == 'warranty' || jawnSoftContext == 'schedule' || jawnSoftContext == 'password') {
+		softKbConvertHide();
+		return;
+	}
 	var hit = softKbConvertParse(softKbConvertText());
 	if (!hit) { softKbConvertHide(); return; }
 	jawnSoftUnit = hit.unit;
@@ -567,6 +613,7 @@ function softKbConvertPick(unit, value) {
 		jawnSoftExpr = String(value);
 		softKbCalcRender();
 		softKbCalcSyncNumeric();
+		try { jawnSoftField.focus({ preventScroll: true }); } catch (err) {}
 		softKbConvertUpdate();
 		return;
 	}
@@ -575,6 +622,59 @@ function softKbConvertPick(unit, value) {
 		softKbCalcRender();
 	}
 	softKbInsert(String(value));
+	softKbConvertUpdate();
+}
+
+// ---- what the field is asking for ------------------------------------------
+// The row names the kind of value the field wants. A tap writes the whole value
+// (instead of appending it) because these fields hold one answer, and the value
+// goes through input/keyup/change so the app saves it the way typing would.
+var jawnSoftSuggestDefs = {
+	when: {
+		label: 'Time',
+		items: ['now', '5m', '15m', '1h', '4h', '1d', '1w', '1M', 'yesterday', 'today', 'tomorrow', 'in 1h', 'in 1d']
+	},
+	duration: {
+		label: 'Duration',
+		items: ['5m', '15m', '30m', '1h', '2h', '4h', '8h', '1d', '1w']
+	},
+	warranty: {
+		label: 'Warranty',
+		items: ['-1d', '-1w', '-1M', '-3M', '-6M', '-1y', '-2y', '-5y', '-10y']
+	},
+	schedule: {
+		label: 'Repeat',
+		items: ['once', '1d', '1w', '1M', '1y', '1d for -2w', '1w for -8w']
+	}
+};
+
+function softKbSuggestSync() {
+	var wrap = $('#soft_kb_suggest');
+	var def = jawnSoftSuggestDefs[jawnSoftContext];
+	if (!def || !jawnSoftField) {
+		if (!wrap.prop('hidden')) { wrap.prop('hidden', true); softKbReserve(); }
+		return;
+	}
+	$('#soft_kb_suggest_label').text(softKbLabel(def.label));
+	var rows = $('#soft_kb_suggest_rows').empty();
+	for (var i = 0; i < def.items.length; i++) {
+		$('<button type="button" class="soft_kb_convert_item"></button>')
+			.attr({ 'data-kb_suggest': def.items[i], 'aria-label': def.items[i] })
+			.text(def.items[i])
+			.appendTo(rows);
+	}
+	wrap.prop('hidden', false);
+	softKbReserve();
+}
+
+function softKbSuggestPick(value) {
+	var el = jawnSoftField;
+	if (!el || value == null) { return; }
+	if (el.isContentEditable) { softKbInsert(value); return; }
+	el.value = value;
+	try { el.focus({ preventScroll: true }); el.setSelectionRange(value.length, value.length); } catch (err) {}
+	softKbNotify(el);
+	$(el).trigger('change');
 	softKbConvertUpdate();
 }
 
@@ -667,25 +767,50 @@ function softKbPress(b) {
 	}
 	if (b.attr('data-kb_history') != null) { softKbHistoryPick(b.attr('data-kb_history')); return; }
 	if (b.attr('data-kb_convert_unit') != null) { softKbConvertPick(b.attr('data-kb_convert_unit'), b.attr('data-kb_convert_value')); return; }
+	if (b.attr('data-kb_suggest') != null) { softKbSuggestPick(b.attr('data-kb_suggest')); return; }
 	if (b.attr('data-kb_char') != null) { softKbChar(b.attr('data-kb_char')); return; }
 	var k = b.attr('data-kb_key');
 	if (k == null) { return; }
 	softKbKey(k);
 }
 
+// A chip in the conversion/history/recommendation row sits inside a sideways
+// scroller. It must not act on pointerdown, or a swipe becomes a tap; record
+// where the finger landed and act on a release that did not travel.
+var jawnSoftChipStart = null;
+var jawnSoftChipAt = 0;
+
 $(document).on('pointerdown', '#jawn_soft_keyboard button', function (e) {
 	if (e.button != null && e.button != 0) { return; }
+	if ($(this).hasClass('soft_kb_convert_item') || $(this).hasClass('soft_kb_history_item')) {
+		jawnSoftChipStart = { x: e.clientX, y: e.clientY, el: this };
+		return;
+	}
 	// act on the press and keep the caret in the field
 	e.preventDefault();
 	jawnSoftKeyAt = Date.now();
 	softKbPress($(this));
 });
+$(document).on('pointerup', '#jawn_soft_keyboard button', function (e) {
+	if (!jawnSoftChipStart) { return; }
+	var start = jawnSoftChipStart;
+	jawnSoftChipStart = null;
+	if (!$(this).hasClass('soft_kb_convert_item') && !$(this).hasClass('soft_kb_history_item')) { return; }
+	var dx = Math.abs((e.clientX || 0) - start.x);
+	var dy = Math.abs((e.clientY || 0) - start.y);
+	if (dx > 12 || dy > 12) { jawnSoftChipAt = Date.now(); return; }   // a swipe, not a tap
+	e.preventDefault();
+	jawnSoftChipAt = Date.now();
+	softKbPress($(start.el));
+});
+$(document).on('pointerup pointercancel', function () { if (jawnSoftChipStart) { jawnSoftChipAt = Date.now(); jawnSoftChipStart = null; } });
 $(document).on('click', '#jawn_soft_keyboard button', function () {
 	if (Date.now() - jawnSoftKeyAt < 600) { return; }
+	if (Date.now() - jawnSoftChipAt < 700) { return; }
 	softKbPress($(this));
 });
 $(document).on('pointerdown', '#jawn_soft_keyboard', function (e) {
-	if (!$(e.target).closest('button').length) { e.preventDefault(); }
+	if (!$(e.target).closest('button').length && !$(e.target).closest('.soft_kb_convert_rows').length) { e.preventDefault(); }
 });
 
 // ---- attaching to fields ---------------------------------------------------

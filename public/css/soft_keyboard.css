@@ -83,18 +83,21 @@ body.soft_kb_open #pseudonym_home {
 	display: flex;
 	gap: 4px;
 	overflow-x: auto;
+	/* a sideways drag pans the row; it must never be read as a tap */
+	touch-action: pan-x;
+	-webkit-overflow-scrolling: touch;
 	padding-bottom: 2px;
 }
 
 .soft_kb_convert_item {
 	flex: 0 0 auto;
-	height: 26px;
-	padding: 0 9px;
+	height: 30px;
+	padding: 0 10px;
 	border: 1px solid var(--line);
 	border-radius: 999px;
 	background: var(--panel-2, var(--panel));
 	color: var(--ink);
-	font-size: 11px;
+	font-size: 12px;
 	font-weight: 700;
 	white-space: nowrap;
 	cursor: pointer;
@@ -269,25 +272,27 @@ body.soft_kb_open #pseudonym_home {
 	display: flex;
 	gap: 4px;
 	overflow-x: auto;
+	touch-action: pan-x;
+	-webkit-overflow-scrolling: touch;
 	padding-bottom: 2px;
 }
 
 .soft_kb_history_item {
 	flex: 0 0 auto;
-	height: 26px;
-	padding: 0 9px;
+	height: 30px;
+	padding: 0 10px;
 	border: 1px solid var(--line);
 	border-radius: 999px;
 	background: var(--panel);
 	color: var(--ink-muted);
-	font-size: 11px;
+	font-size: 12px;
 	white-space: nowrap;
 	cursor: pointer;
 }
 
 .soft_kb_history_clear {
-	flex: 0 0 26px;
-	height: 26px;
+	flex: 0 0 30px;
+	height: 30px;
 	padding: 0;
 	border: 1px solid var(--line);
 	border-radius: 50%;

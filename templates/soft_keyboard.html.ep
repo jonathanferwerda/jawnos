@@ -63,6 +63,11 @@
 		<div id="soft_kb_convert_rows" class="soft_kb_convert_rows"></div>
 	</div>
 
+	<div id="soft_kb_suggest" class="soft_kb_convert" hidden>
+		<span id="soft_kb_suggest_label" class="soft_kb_convert_src"></span>
+		<div id="soft_kb_suggest_rows" class="soft_kb_convert_rows"></div>
+	</div>
+
 	<script id="soft_kb_units" type="application/json"><%== encode_json({ units => \%kb, symbols => \%kb_sym, base => $kb_base }) %></script>
 
 	<div class="soft_kb_panel" data-kb_panel="letters">
