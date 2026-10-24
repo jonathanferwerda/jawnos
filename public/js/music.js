@@ -351,13 +351,23 @@ function musicStreamConnect() {
 			// does one from a receiver that has not seen a beacon yet, whose zero
 			// would otherwise replace the ping estimate.
 			if (d.paused || !d.alive) { return; }
-			if (!(d.seq > 0) || !(d.age_ms >= 0) || d.age_ms > 4000) { return; }
+			// A mark goes out every two seconds. A much older one means the
+			// receiver missed it (a stall), and its shortfall is not a new pipeline
+			// size - taking it would throw the lead seconds into the future.
+			if (!(d.seq > 0) || !(d.age_ms >= 0) || d.age_ms > 3000) { return; }
 			var lag = Math.max(0, (d.lag_ms || 0) + (d.rtt_ms || 0));
 			var prev = musicStream.measured[d.key];
-			// A step larger than the jitter of a steady stream is a stall or a fresh
-			// player, not noise: take it whole. Small movement is smoothed so the
-			// lead does not chase every report.
-			var ms = (prev && Math.abs(lag - prev.ms) < 250) ? Math.round(prev.ms * 0.6 + lag * 0.4) : Math.round(lag);
+			var ms;
+			if (!prev) { ms = Math.round(lag); }
+			else {
+				// The pipeline moves slowly. Limit how far one report can move it,
+				// so a single stalled report cannot jerk the lead and a real change
+				// still settles over a few reports.
+				var delta = lag - prev.ms;
+				if (delta > 100) { delta = 100; }
+				else if (delta < -250) { delta = -250; }
+				ms = Math.round(prev.ms + delta * 0.5);
+			}
 			musicStream.measured[d.key] = { ms: ms, at: Date.now() };
 			musicStream.ready[d.key] = 1;
 			musicStreamOutputReady(d.key);
@@ -1137,17 +1147,15 @@ function musicAheadForget() {
 	musicAhead.chain = null;
 }
 
-// Put the ahead element at the player's position plus the lead, and keep it
-// there. A small error is trimmed with the playback rate; a large one is a real
-// jump and is seeked, but at most once every five seconds. Chasing a seek every
-// tick, or seeking while one is still in flight, is what made the old ahead tap
-// jump and crackle.
+// Put the lead element at the player's position plus the lead. The element is
+// the source of the stream, so its playback rate must stay at 1: slowing it
+// starves the receiver's buffer (the phone underran and then reported a huge
+// lag) and speeding it makes the buffer grow. A position error is corrected by
+// a small, rare seek instead, which leaves the stream at real time.
 function musicAheadLead(hard) {
 	var el = musicAhead.el, main = tree && tree.sound;
 	if (!el || !main || !musicAhead.ready) { return; }
-	// the ahead element can reach the end L before the picture does; its last L
-	// seconds are already in the remote's buffer, so do not seek it back to life
-	if (el.ended) { el.playbackRate = 1; return; }
+	if (el.ended) { try { el.playbackRate = 1; } catch (e) {} return; }
 	var want = (main.currentTime || 0) + musicAhead.target;
 	var dur = main.duration || 0;
 	if (dur > 0) { want = Math.min(want, Math.max(0, dur - 0.05)); }
@@ -1156,38 +1164,27 @@ function musicAheadLead(hard) {
 	want = Math.max(0, want);
 	var err = want - (el.currentTime || 0);
 	musicAhead.err = err;
-	if (!hard && el.seeking) { return; }
+	try { if (el.playbackRate != 1) { el.playbackRate = 1; } } catch (e) {}
+	musicAhead.rate = 1;
+	if (el.seeking) { return; }
 	var now = Date.now();
-	if (hard || (Math.abs(err) > 2.0 && now - (musicAhead.seekAt || 0) > 5000)) {
-		musicAhead.seekAt = now;
-		musicAhead.seekCount++;
-		try { el.currentTime = Math.max(0, want); } catch (e) {}
-		el.playbackRate = 1;
-		musicAhead.rate = 1;
-		return;
-	}
-	// rate-only correction, in small steps: the element preserves pitch, so a
-	// few percent is inaudible while a hard seek would be a hole in the sound
-	var rate = 1;
-	if (err > 0.4) { rate = 1.08; }
-	else if (err > 0.05) { rate = 1.03; }
-	else if (err < -0.4) { rate = 0.92; }
-	else if (err < -0.05) { rate = 0.97; }
-	try { el.playbackRate = rate; } catch (e) {}
-	musicAhead.rate = rate;
+	// a small error is inaudible; a big one is a jump, but not more often than
+	// once a second, and never while a seek is still running
+	if (!hard && now - (musicAhead.seekAt || 0) < 1200) { return; }
+	if (!hard && Math.abs(err) < 0.12) { return; }
+	musicAhead.seekAt = now;
+	musicAhead.seekCount++;
+	try { el.currentTime = want; } catch (e) {}
 }
 
 // Follow a new lead. A change of more than 150 ms is a real jump in the
 // measured pipeline (or a Sync offset move), not drift: re-anchor once, with
-// a throttle so a series of reports cannot make it chase its own seek.
+// a throttle so a series of reports cannot make it chase its own seek. Smaller
+// changes are left to musicAheadLead's own error test.
 function musicAheadRetune(lead) {
 	var prev = musicAhead.target;
 	musicAhead.target = lead;
 	var diff = lead - prev;
-	// Moving the sound forward is a gap in what was already sent; a small one is
-	// ridden out at a slower rate, but a measured jump must be re-anchored. A
-	// backward change would make the receiver replay audio it already holds, so
-	// only a large one is seeked; the rest is drained by playing a little slower.
 	var hard = (diff > 0.15 || diff < -0.3) && (Date.now() - (musicAhead.seekAt || 0) > 2000);
 	musicAheadLead(hard);
 }
