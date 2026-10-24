@@ -844,9 +844,6 @@ async function keyboardMaker(data) {
 	var o = pseudonym.offset();
 	var d = Number(numeral(pseudonym.width()).format()) * 1.07;
 	var bottom = h - o.top;
-	var shift = $('.keyboard_button[key="shift"]').attr('enabled');
-	var fn = $('.keyboard_button[key="fn"]').attr('enabled');
-	var ctrl = $('.keyboard_button[key="ctrl"]').attr('enabled');
 
 	var av = await navigator.mediaDevices.enumerateDevices();
 	var avData = JSON.stringify(av);
@@ -905,12 +902,9 @@ async function keyboardMaker(data) {
 		$('#' + toggle).css(css);
 	}
 	if (!t.is(':visible') && !t.hasClass('keyboard') || state == 'on') {
-		var data = { 
-			timestamp: timestamp, 
-			toggle: toggle, 
-			shift: shift, 
-			fn: fn, 
-			ctrl: ctrl,
+		var data = {
+			timestamp: timestamp,
+			toggle: toggle,
 			avData: avData,
 			browser_tab_id: bti,
 			remote_uuid: remote_uuid
@@ -1173,286 +1167,15 @@ $(document).on('click', '.keyboard_base', function() {
 
 });
 
-var led = { 
-	'calculator': {
-		'start': 5,
-		'left': 5,
-		'top': 20,
-		'screen': undefined,
-		'ctx': undefined,
-		'image': undefined,
-		'font': { 'size': '20', 'font': 'Arial' },
-	},
-	'keyboard': {
-		'start': 5,
-		'left': 5,
-		'top': 20,
-		'screen': undefined,
-		'ctx': undefined,
-		'image': undefined,
-		'font': { 'size': '20', 'font': 'Arial' },
-	} };
-
-async function typing(key,toggle) {
-
-	led[toggle]['screen'] = document.getElementById(toggle + '_screen');
-	if (!keyboard[toggle] || keyboard[toggle] == null) {
-		keyboard[toggle] = '';
-	}
-	if (!led[toggle]['image']) {
-		led[toggle]['screen'].width = $('#' + toggle + '_screen').width();
-		led[toggle]['screen'].height = $('#' + toggle + '_screen').height();
-		led[toggle]['ctx'] = led[toggle]['screen'].getContext('2d');
-		led[toggle]['ctx'].globalAlpha = 1;
-		led[toggle]['ctx'].beginPath();
-	}
-	if (led[toggle]['ctx']) {
-
-		led[toggle]['ctx'].font = "1 " + led[toggle]['font']['size'] + "px " + led[toggle]['font']['font'];
-		if (led[toggle]['top'] > led[toggle]['screen'].height) {
-			led[toggle]['ctx'].clearRect(0,0,led[toggle]['screen'].width,led[toggle]['screen'].height);
-			var image = new Image();
-			image.onload=function(){
-				led[toggle]['ctx'].drawImage(image,0,(led[toggle]['font']['size'] * -1),led[toggle]['screen'].width,led[toggle]['screen'].height);
-			};
-			image.src = led[toggle]['image'];
-			led[toggle]['top'] = led[toggle]['top'] - led[toggle]['font']['size'];
-
-
-		}
-
-		var meas = led[toggle]['ctx'].measureText(key).width;
-
-		if (key == 'backspace') {
-			var c = keyboard[toggle];
-			c = c.slice(0, -1)
-			keyboard[toggle] = c;
-
-			led[toggle]['ctx'].clearRect(led[toggle]['left'],led[toggle]['top'],led[toggle]['left'] + led[toggle]['font']['size'],led[toggle]['top'] + led[toggle]['font']['size']);
-			led[toggle]['ctx'].clearRect(0,0,led[toggle]['screen'].width,led[toggle]['screen'].height);
-			led[toggle]['ctx'].fillText(c,led[toggle]['left'],led[toggle]['top']);
-		}
-		else if (key == 'clear') {
-			keyboard[toggle] = '';
-			led[toggle]['image'] = undefined;
-			led[toggle]['ctx'].clearRect(0,0,led[toggle]['screen'].width,led[toggle]['screen'].height);
-			led[toggle]['left'] = 5;
-			led[toggle]['top'] = 28;
-		}
-		else {
-
-			keyboard[toggle] = keyboard[toggle] + key;
-			led[toggle]['ctx'].clearRect(0,0,led[toggle]['screen'].width,led[toggle]['screen'].height);
-			led[toggle]['ctx'].fillText(keyboard[toggle],led[toggle]['left'],led[toggle]['top']);
-
-			if ($('.focused_input')) {
-			//	focused_input.val(focused_input.val() + key);
-			}
-		}
-
-
-	//	led[toggle]['left'] += meas;
-		var w = $('#' + toggle + '_screen');
-
-
-		if ((Number(led[toggle]['left']) + meas) > Number(w.width())) {
-			newLine(toggle);
-		}
-		led[toggle]['image'] = led[toggle]['screen'].toDataURL('image/png');
-	}
-}
-
-function newLine(toggle) {
-	led[toggle]['left'] = led[toggle]['start'];
-	led[toggle]['top'] += Number(led[toggle]['font']['size']);
-}
-
-var keyboard = {};
-// The server echoes every key back over the socket, which is what draws the
-// typewriter and calculator. Waiting for that round trip is the delay on every
-// press; draw the visible key locally first, and let the matching echo go by.
-var keyboardSkipEcho = {};
-function keyboardOptimisticKey(b, toggle) {
-	if (toggle != 'keyboard' && toggle != 'calculator') { return ''; }
-	var label = b.text().replace(/\s+/g, '');
-	if (!label) { return ''; }
-	if (label == '⌫') { return 'backspace'; }
-	if (label == 'C') { return 'clear'; }
-	if (label == 'Space') { return ' '; }
-	if (label == '±' || label == 'To') { return ''; }
-	if (label == '÷') { return ' / '; }
-	if (label == '×') { return ' * '; }
-	if (/^[A-Z]$/.test(label)) {
-		var shift = b.closest('.keyboard').find('.keyboard_button[key="shift"]').attr('enabled') == 'yes';
-		return shift ? label.toUpperCase() : label.toLowerCase();
-	}
-	return label;
-}
-$(document).on('click', '.keyboard_button', function() {
-	var b = $(this);
-	var key = b.attr('key');
-	var cushion = b.attr('cushion');
-	var colour = b.css('background-color')
-	var toggle = b.closest('.keyboard').attr('id');
-	var dest = b.closest('.keyboard').find('.keyboard_destination.selected');
-	var destination = dest.attr('destination');
-
-	var k = keyboard[toggle];
-	var timestamp = Date.now();
-	var amount = 0;
-	b.css({'background-color' : 'yellow' });
-	var shift = $('.keyboard_button[key="shift"]').attr('enabled');
-	var fn = $('.keyboard_button[key="fn"]').attr('enabled');
-	var ctrl = $('.keyboard_button[key="ctrl"]').attr('enabled');
-	var selector = "";
-	var notes = '';
-	var evaluation = '';
-	if (b.attr('key') == ' plmi ') {
-		key = '-';
-
-	}
-	if (b.attr('key') == 'shift' || b.attr('key') == 'ctrl' || b.attr('key') == 'fn') {
-		if (b.attr('enabled') == 'yes') {
-			b.css({ 'background-color': '' });
-			b.attr('enabled', 'no');
-		}
-		else {
-			b.css({ 'background-color': 'yellow' });
-			b.attr('enabled', 'yes');
-		}
-	}
-	else {
-		setTimeout(function() {
-			b.css({'background-color': colour });
-		},200);
-		if (b.attr('key') == 'backspace') {
-			if (k) {
-				keyboard[toggle] = keyboard[toggle].slice(0, -1);
-			}
-			else {
-				
-			}
-		}
-		else if (b.attr('key') == 'reset' || b.attr('key') == 'calc' || b.hasClass('return_key')) {
-			var f = focused_input.val();
-
-			var e = $.Event( "keyup", { keyCode: 13 } );
-			var timestamp = Date.now();
-			var time_machine = localStorage.getItem('time_machine');
-			var timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
-			var type = b.attr('type') || b.attr('key');
-			var app = topWindow() ? topWindow() : $('#search').val();
-			if (type == 'calc') {
-				evaluation = calculate(app,toggle,keyboard[toggle]);
-			}
-			else if (app) {
-				$.ajax({
-					url: '/manager/reset',
-					type: 'POST',
-					data: { app: app, timeshift: timeshift, amount: amount, timestamp: timestamp, type: type, time_machine: time_machine, notes: notes },
-					success: function(response) {
-						newLine(toggle);
-
-						b.removeClass('active');
-						appointment_chron();
-						navigator.geolocation.getCurrentPosition((position) => {
-							check(position);
-						});
-					}
-				});
-			}
-		}
-
-		else {
-			// draw the key now; the socket's copy is skipped below
-			var local_key = keyboardOptimisticKey(b, toggle);
-			if (local_key) {
-				keyboardSkipEcho[toggle] = (keyboardSkipEcho[toggle] || 0) + 1;
-				setTimeout(function () {
-					if (keyboardSkipEcho[toggle] > 0) { keyboardSkipEcho[toggle]--; }
-				}, 6000);
-				typing(local_key, toggle);
-			}
-			$.ajax({
-				url: '/manager/keyboard_presser',
-				type: 'POST',
-				data: { shift: shift, fn: fn, ctrl: ctrl, key: key, toggle: toggle, timestamp: timestamp, destination: destination, cushion: cushion },
-				success: function(response) {
-					if (localStorage.getItem('marker_tool') == 'kb' && $('#whiteboard').is(':visible')) {
-						var json_pos = jawnosWhiteboardGet();
-						var whiteboard_position = JSON.parse(json_pos || '{}' );
-						var font_size = marker.selected_marker_size * 2;
-						var marker_transparency = marker.selected_marker_transparency * 20;
-						var wb_ctx = markerActiveContext();
-						wb_ctx.font = marker_transparency + " " + font_size + "px arial";
-						wb_ctx.fillStyle = marker.selected_marker_colour;
-						wb_ctx.fillText(response['key'], whiteboard_position['x'], whiteboard_position['y']);
-						var char_size = wb_ctx.measureText(response['key']).width;
-						markerCompose();
-						markerAutosaveSoon();
-
-						var new_x = Number(whiteboard_position['x']) + (Number(char_size) + 2);
-						var new_y = Number(whiteboard_position['y']);
-						jawnosWhiteboardSet('{"x": "' + new_x + '", "y": "' + new_y + '"}' );
-						var wb = $('#whiteboard').offset();
-						// the board can be zoomed and panned, so convert the document
-						// position to screen position for the pointer icon
-						var pointer_screen = markerDocToScreen(Number(new_x), Number(new_y));
-						$('#pointer').css({ 'left': wb['left'] + pointer_screen.x, 'top': wb['top'] + pointer_screen.y - 12 });
-					}
-					else {
-						if (led[toggle]['image']) {
-							var image = new Image();
-							image.onload=function(){
-								led[toggle]['ctx'].drawImage(image,0,0,led[toggle]['screen'].width,led[toggle]['screen'].height);	
-							};
-							image.src = led[toggle]['image'];
-						}
-					//	typing(response['key'],toggle);
-					}
-
-				}
-			});
-
-		}
-	}
-});
-
-async function calculate(app,toggle,k) {
-
-	$.ajax({
-		url: '/manager/calculate',
-		type: 'POST',
-		data: { app: app, formula: k, toggle: toggle },
-		success: function(response) {
-			var evaluation = eval(response.evaluation);
-			if (response['format']) { evaluation = numeral(evaluation).format(response['format']); }
-			evaluation += response.uom;
-			typing('=' + evaluation,toggle);
-
-			$('#calculator_calculations').prepend('<button key="' + evaluation + '" class="measure keyboard_button">' + evaluation + '</button>');
-		}
-	});
-
-}
-
-$(document).on('click', '.magic_wand', function() {
-	var wand = $(this);
-	var selected = wand.hasClass('selected');
-	$('.magic_wand').each(function(i,v) {
-		$(v).removeClass('selected');
-		$(v).css({'background-color':'navy'});
-	});
-	if (!selected) {
-		wand.addClass('selected');
-		wand.css({'background-color':'yellow'});
-	}
-
-
-});
 
 $(document).on('click','.pseudonym', function() {
 	var toggle = $(this).attr('toggle');
+	// The old floating keyboard and calculator are gone: both dock icons now
+	// open the JawnOS on-screen keyboard (the calculator on its own page).
+	if ((toggle == 'keyboard' || toggle == 'calculator') && typeof softKbDockOpen == 'function') {
+		softKbDockOpen(toggle == 'calculator' ? 'calc' : 'letters');
+		return;
+	}
 	var panel = $('#' + toggle);
 	// A click is the open gesture. The dock's own state can lag the panel (the
 	// first click used to render and the click then remove it before it showed),
@@ -1988,28 +1711,7 @@ $(document).on('keydown', function(e) {
 				if (typeof musicPlayerFullscreen == 'function') { musicPlayerFullscreen(); }
 				else { tree.sound.requestFullscreen(); }
 			}
-		
-		
-	} else if ($('#keyboard').is(':visible') || $('#calculator').is(':visible')) {
-		var m = mouse_position();
-		var elements = document.elementsFromPoint(m.x, m.y);
-
-		$.each(elements, function(i,v) {
-			if ($(v).attr('id') == 'keyboard' || $(v).attr('id') == 'calculator') {
-				var toggle = $(v).attr('id');
-				console.log('for the ' + toggle + ' ' + e.key + '!');
-				var legend = JSON.parse($('#' + toggle + '_legend').text());
-				console.log(legend[e.key]);
-				var button = legend[e.key];
-				if (toggle == 'calculator') {
-					if (e.key == 'Enter') { button = 'calc'; }
-					if (e.key == 'Delete') { button = 'clear'; }
-				}
-				console.log(toggle + ' ' + button);
-				$('#' + toggle).find('.keyboard_button[key="' + button + '"]').trigger('click');
-			}
-		});
-	}
+		}
 
 
 /*

@@ -32452,6 +32452,44 @@ post '/manager/help/ask' => sub($c) {
 	});
 };
 
+# The on-screen keyboard's microphone. Unlike the Guide's own listen route this
+# one is for dictation: the phrase is transcribed by the house's transcription
+# role and then lightly punctuated by the Guide's model, and the word guard in
+# dictation_punctuate means the model can only change punctuation. ?lang= names
+# the layout's language; ?punctuate=0 asks for the raw transcript.
+post '/manager/dictate' => sub($c) {
+	my $raw = $c->req->body;
+	$raw = $raw->slurp if ref $raw;
+	unless (defined $raw && length $raw) {
+		$c->render(json => { error => 'no-audio' });
+		return;
+	}
+	my $lang = lc($c->param('lang') || 'auto');
+	$lang =~ s/[^a-z-]//g;
+	$lang =~ s/-.*//;
+	$lang = 'auto' unless $lang =~ /^[a-z]{2,3}$/;
+	my $punctuate = $c->param('punctuate');
+	my $do_punctuate = !(defined $punctuate && $punctuate eq '0');
+	&subs::render_in_subprocess($c, sub {
+		my $text = &subs::whisper_transcribe($raw, $lang);
+		return { error => 'unreadable' } unless defined $text && length $text;
+		my $raw_text = $text;
+		my $fixed;
+		if ($do_punctuate) {
+			my ($clean, $err) = &subs::dictation_punctuate($text);
+			$fixed = $clean if defined $clean && length $clean;
+		}
+		return {
+			text => (defined $fixed && length $fixed ? $fixed : $text),
+			raw => $raw_text,
+			punctuated => (defined $fixed && length $fixed ? 1 : 0),
+		};
+	}, sub {
+		my ($c, $r) = @_;
+		$c->render(json => ($r || { error => 'unreadable' }));
+	});
+};
+
 # Speech in from the browser: the Guide's mic button records a clip and posts the
 # raw bytes here, and the same whisper pipeline the watch uses turns it into text
 # for the question box. The clip is short, so the call is bounded; '' on failure.
@@ -39519,7 +39557,6 @@ post '/manager/keyboard' => sub($c) {
 };
 
 sub keyboard_maker($c, $remote_pick) {
-	my $timestamp = $c->param('timestamp');
 	my $browser_tab_id = $c->param('browser_tab_id');
 	my $remote_machines = $c->param('remote_machines');
 	my $remote_control = defined $remote_pick ? $remote_pick : $c->param('remote_control');
@@ -39528,23 +39565,6 @@ sub keyboard_maker($c, $remote_pick) {
 	my $projs = [];
 	my $accounts = &subs::db_query("select * from settings where (setting = ? or setting =?) and value=?",'pos', 'mab', 'account');
 	my $acc = $accounts->hashes;
-	my $keys = {};
-	my $measures = clone $gb::measures;
-	if ($toggle eq 'keyboard' || $toggle eq 'calculator') {
-		foreach my $key (@{$gb::inputs}) {
-			$keys->{$key->{'c'}} = &subs::random_string_creator();
-		}
-		foreach my $key (keys %{$measures}) {
-			if ( $keys->{$key} ) {
-				my $data = clone $measures->{$key};
-				$key = '_' . $key;
-				$measures->{$key} = $data;
-			}
-			$keys->{$key} = $key;
-		}
-		my $key_cutter = &subs::encrypter(&subs::session_suds($c), encode_json($keys));
-		&subs::setting_setter({ app => 'keyboard', setting => $toggle, value => $key_cutter, timestamp => $timestamp, browser_tab_id => $browser_tab_id });
-	}
 	if ($toggle eq 'delorean') {
 		foreach my $a ( reverse @{$acc} ) {
 			push @{$accts},$a unless grep { $_->{'app'} eq $a->{'app'}} @{$accts};
@@ -39597,7 +39617,6 @@ sub keyboard_maker($c, $remote_pick) {
 		accounts => $accts,
 		projects => $projs,
 		template => 'keyboard',
-		'keys' => $keys,
 		toggle => $toggle,
 		device => $device,
 		av_data => $av_data,
@@ -39608,7 +39627,6 @@ sub keyboard_maker($c, $remote_pick) {
 		config => $config,
 		manager_file => &manager_file_maker($c->session('name')),
 		pseudonyms => &pseudonym_maker('viewer', ''),
-		measures => $measures,
 		ws => $gb::ws,
 	);
 	return $kb;
@@ -39678,32 +39696,6 @@ get '/manager/keyboard_alias' => sub($c) {
 	$c->render_file('filepath' => $paths->to_string);
 };
 
-post '/manager/keyboard_presser' => sub($c) {
-
-	my $key = $c->param('key');
-	my $toggle = $c->param('toggle');
-	my $shift = $c->param('shift');
-	my $ctrl = $c->param('ctrl');
-	my $cushion = $c->param('cushion');
-	my $fn = $c->param('fn');
-	my $timestamp = $c->param('timestamp');
-	my $destination = $c->param('destination');
-	my $browser_tab_id = $c->param('browser_tab_id');
-	my $value = &subs::db_select('settings', ['value','timestamp'], { app => 'keyboard', setting => $toggle, browser_tab_id => $browser_tab_id })->hash;
-	my $key_cutter = &subs::decrypter(&subs::session_suds($c),$value->{'value'});
-	$key_cutter = decode_json $key_cutter;
-	foreach my $k (keys %{$key_cutter}) {
-		if ($key_cutter->{$k} eq $key) {
-			$key = $k;
-			$key = uc $key if $shift eq 'yes';
-		}
-	}
-	if ($cushion) {
-		$key = $cushion . $key . $cushion;
-	}
-	&Websocket::send('server', { key => $key, origin => $browser_tab_id, destination => $destination, toggle => $toggle, timestamp => $timestamp });
-  $c->render(json => { key => $key });
-};
 
 
 get '/manager/say_it' => sub ($c) {
@@ -44931,12 +44923,6 @@ websocket '/manager/ws' => sub ($c) {
 		}
 	}
 #	$c->send({json => $init_data});
-	if ($app eq 'server') {
-		&Websocket::send('server', { magic_wand => $browser_tab_id, action => 'open', timestamp => $timestamp });
-
-
-
-	}
 
 	$c->on(message => sub ($ws, $msg) {
 		my $data = eval { return from_json $msg };
@@ -45201,7 +45187,6 @@ websocket '/manager/ws' => sub ($c) {
 			# were never culled (about 870 dead rows had piled up).
 			&subs::db_query('delete from websockets where app = ? and browser_tab_id = ? and room is null', $app, $browser_tab_id);
 			delete $gb::ws->{$app}->{$browser_tab_id};
-			&Websocket::send('server', { magic_wand => $browser_tab_id, action => 'closed', timestamp => $timestamp });
 			if ($app eq 'music') {
 				if ($log_me eq 'on') {
 					my $appts = &subs::db_query('select * from appointments where source_uuid = ? and app = ? and type = ? order by timestamp desc limit 30', $browser_tab, $computer_name,'start')->hashes;

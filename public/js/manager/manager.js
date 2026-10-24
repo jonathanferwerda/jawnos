@@ -1370,14 +1370,14 @@ $(document).on('click', 'input',function() {
 	focused_input = $(this);
 //	focused_input.addClass('focused_input');
 
-	if ($('#numberpad').is(':visible') || $('#keyboard').is(':visible')) {
+	if ($('#numberpad').is(':visible')) {
 		focused_input.blur();
 	}
 });
 $(document).on('click', 'textarea',function() {
 	focused_input = $(this);
 
-	if ($('#numberpad').is(':visible') || $('#keyboard').is(':visible')) {
+	if ($('#numberpad').is(':visible')) {
 		focused_input.blur();
 	}
 });

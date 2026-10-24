@@ -6691,7 +6691,7 @@ sub ble_rehome_check() {
 # transcriptions endpoint (Groq whisper-large-v3*, OpenAI whisper-1). '' on any
 # failure, so the caller falls back to the local whisper.cpp pipeline.
 sub ai_transcribe_cloud {
-	my ($model, $raw) = @_;
+	my ($model, $raw, $lang) = @_;
 	return '' unless $model && defined $raw && length $raw;
 	my @key_settings = &subs::ai_key_settings();
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', @key_settings ] });
@@ -6726,13 +6726,15 @@ sub ai_transcribe_cloud {
 	my %key = ( openai => 'openai_key', groq => 'groq_key' );
 	my $key = $secret->($settings->{ $key{$provider} });
 	return '' unless $key;
-	my $tx = $ua->post($url => {
-		'Authorization' => 'Bearer ' . $key
-	} => form => {
+	my %form = (
 		model => $real,
 		file => { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },
 		response_format => 'json'
-	});
+	);
+	$form{'language'} = $lang if defined $lang && $lang =~ /^[a-z]{2,3}$/ && $lang ne 'auto';
+	my $tx = $ua->post($url => {
+		'Authorization' => 'Bearer ' . $key
+	} => form => \%form);
 	return '' if $tx->error || !$tx->res->is_success;
 	my $d = eval { $tx->res->json } || {};
 	return ($d->{'text'} || '');
@@ -6780,14 +6782,18 @@ sub whisper_server_port { return 8178; }
 # A warm server keeps the model loaded, so a clip skips the model load the
 # one-shot CLI pays on every call. '' when it is not running or did not answer.
 sub whisper_server_transcribe() {
-	my ($raw) = @_;
+	my ($raw, $lang) = @_;
 	return '' unless defined $raw && length $raw;
 	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 30, request_timeout => 45);
+	my $form = {
+		file => { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },
+		response_format => 'json'
+	};
+	# the keyboard's chosen layout names the language; whisper itself treats
+	# 'auto' as detect
+	$form->{'language'} = $lang if defined $lang && $lang =~ /^[a-z]{2,3}$/ && $lang ne 'auto';
 	my $tx = eval {
-		$ua->post('http://127.0.0.1:' . &whisper_server_port() . '/inference' => form => {
-			file => { content => $raw, filename => 'clip.webm', 'Content-Type' => 'audio/webm' },
-			response_format => 'json'
-		});
+		$ua->post('http://127.0.0.1:' . &whisper_server_port() . '/inference' => form => $form);
 	};
 	return '' unless $tx && !$tx->error && $tx->res->is_success;
 	my $d = eval { $tx->res->json } || {};
@@ -6801,7 +6807,7 @@ sub whisper_server_transcribe() {
 # The one-shot CLI path. It is also the local path on a machine whose warm
 # server is not up yet.
 sub whisper_cli_transcribe() {
-	my ($raw) = @_;
+	my ($raw, $lang) = @_;
 	return '' unless $raw;
 	require IPC::Open3;
 	require Symbol;
@@ -6814,9 +6820,10 @@ sub whisper_cli_transcribe() {
 		$model = &subs::home('~/whisper.cpp/models/ggml-base.bin');
 	}
 	return '' unless -e $bin && -e $model;
+	my $language = (defined $lang && $lang =~ /^[a-z]{2,3}$/ && $lang ne 'auto') ? ' -l ' . $lang : '';
 	my $cmd = sprintf(
-		'ffmpeg -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s --output-txt --file - 2>/dev/null',
-		$bin, $model
+		'ffmpeg -loglevel error -i - -blocksize 4096 -f wav -ar 16000 -ac 1 -acodec pcm_s16le - | %s -m %s%s --output-txt --file - 2>/dev/null',
+		$bin, $model, $language
 	);
 	my ($in, $out, $err);
 	$err = Symbol::gensym();
@@ -6841,14 +6848,15 @@ sub whisper_transcribe() {
 	# model is only the fallback; with a cloud model chosen, the order is
 	# unchanged and the local path is the last resort. Raw audio bytes in (any
 	# container ffmpeg reads), the transcript out. '' on any failure or on a
-	# stock silence line, so a caller only has to check for text.
-	my ($raw) = @_;
+	# stock silence line, so a caller only has to check for text. $lang is the
+	# keyboard layout's language ('fr', 'hi', ...); 'auto' lets whisper decide.
+	my ($raw, $lang) = @_;
 	return '' unless $raw;
 	my ($primary, $fallback) = &ai_role_models('transcription_assistant');
 	my $local_chosen = scalar( grep { ($_ // '') eq 'local:whisper.cpp' } ($primary, $fallback) );
 	my $local_text = sub {
-		my $text = &whisper_server_transcribe($raw);
-		$text = &whisper_cli_transcribe($raw) unless length $text;
+		my $text = &whisper_server_transcribe($raw, $lang);
+		$text = &whisper_cli_transcribe($raw, $lang) unless length $text;
 		return '' unless length $text;
 		if (&subs::voice_silence_hallucination($text)) {
 			$log->info('voice: dropping a stock silence transcript ("' . $text . '")') if $log;
@@ -6861,12 +6869,45 @@ sub whisper_transcribe() {
 		return $text if length $text;
 	}
 	foreach my $m ( grep { $_ && $_ ne 'local:whisper.cpp' } ($primary, $fallback) ) {
-		my $text = &ai_transcribe_cloud($m, $raw);
+		my $text = &ai_transcribe_cloud($m, $raw, $lang);
 		next if $text && &subs::voice_silence_hallucination($text);
 		return $text if $text;
 	}
 	return $local_text->() unless $local_chosen;
 	return '';
+}
+
+sub dictation_punctuate {
+	# The Guide's model, not whisper, restores sentence punctuation and capital
+	# letters to a dictated phrase. It is told to change nothing but punctuation;
+	# the word guard below enforces that, so a model that rewrites the phrase
+	# cannot lose what the person said. Returns (text, error).
+	my ($text) = @_;
+	return (undef, 'nothing to punctuate') unless defined $text && length $text;
+	return (undef, 'too long') if length($text) > 6000;
+	my ($primary, $fallback) = &ai_role_models('help_assistant');
+	return (undef, 'no guide model') unless $primary;
+	my $system = 'You are the punctuation pass for dictated text in JawnOS. '
+		. 'Return ONLY the same text with correct sentence punctuation, capitalisation and spacing. '
+		. 'Never add, remove, reorder or reword anything: keep every word, name, number and filler exactly as given. '
+		. 'Do not translate, do not explain, and do not wrap the answer in quotes. '
+		. 'If the text is already correct, return it unchanged.';
+	my ($out, $err) = &evaluation_model_call_with_fallback($primary, $fallback, $system, $text, &ai_role_thinking('help_assistant'));
+	return (undef, $err || 'no answer') if $err || !defined $out || !length $out;
+	$out =~ s/^\s+|\s+$//g;
+	$out =~ s/^["'`\x{201C}\x{201D}]+|["'`\x{201C}\x{201D}]+$//g;
+	$out =~ s/\s+/ /g;
+	return (undef, 'empty') unless length $out;
+	my $norm = sub {
+		my $s = shift;
+		utf8::decode($s) if length $s && !utf8::is_utf8($s);
+		$s = lc $s;
+		$s =~ s/[^\p{L}\p{N}]+/ /g;
+		$s =~ s/^\s+|\s+$//g;
+		return $s;
+	};
+	return (undef, 'words changed') unless $norm->($text) eq $norm->($out);
+	return ($out, undef);
 }
 
 sub voice_command_parse() {

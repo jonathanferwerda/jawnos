@@ -998,7 +998,6 @@ our $inputs = [
 	{ c => ' ', num => 32, img => 'space', trigger => 'key' },
 	{ c => 'clear', num => undef },
 	{ c => 'backspace', img => 'BackSpace', num => 8, trigger => 'key' },
-	{ c => 'magic_wand', num => undef },
 	{ c => 'Enter', num => 13, img => 'return' }
 ];
 

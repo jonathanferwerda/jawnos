@@ -864,24 +864,8 @@ function wsMessageHandler(event) {
 			}
 			dotTimeout['green'] = setTimeout(function() { $('#green_dot').hide(); ginfo.hide(); }, 10000);
 		}
-		else if ( data['key'] ) {
-			// the panel already drew the key it was pressed with; this is its
-			// server echo, so do not put the same character in twice
-			if (typeof keyboardSkipEcho !== 'undefined' && keyboardSkipEcho[data['toggle']] > 0) {
-				keyboardSkipEcho[data['toggle']]--;
-			}
-			else { typing(data['key'],data['toggle']); }
-		}
 		else if (data['id']) {
 			$('#' + data['id']).html(data['html']);
-		}
-		else if (data['magic_wand']) {
-			if (data['action'] == 'closed') {
-				$('.magic_wand[destination="' + data['magic_wand'] + '"').remove();
-			}
-			if (data['action'] == 'open') {
-				$('.magic_wands.keyboard_cauldron').append('<img destination="' + data['magic_wand'] + '" class="keyboard_destination magic_wand tiny_thumb" style="background-color:navy;" src="/images/make believe/key.png">');
-			}
 		}
 		else if (data['textAreaMagic']) {
 			var d = data['textAreaMagic'];

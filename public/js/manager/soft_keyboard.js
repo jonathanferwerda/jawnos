@@ -182,8 +182,6 @@ var JAWN_SOFT_LAYOUTS = [
 
 var jawnSoftLayoutId = null;
 var jawnSoftListening = false;
-var jawnSoftRecognition = null;
-var jawnSoftSpeechRestart = null;
 
 function softKbLayoutFind(id) {
 	for (var i = 0; i < JAWN_SOFT_LAYOUTS.length; i++) {
@@ -302,6 +300,36 @@ function softKbLayoutSet(id) {
 	softKbLayoutRender();
 	softKbLayoutsToggle(false);
 	softKbTitleUpdate();
+}
+
+// The dock's keyboard and calculator icons open this dock now instead of the
+// old floating panels. With a field focused it types there; with none it opens
+// anyway, ready for the next field that is touched (the calculator needs no
+// field at all).
+function softKbDockOpen(mode) {
+	var want = (mode == 'calc') ? 'calc' : 'letters';
+	if (softKbVisible() && jawnSoftMode == want) { softKbHide(); return; }
+	if (!softKbOn()) {
+		try { localStorage.setItem('jawn_soft_keyboard', 'on'); } catch (err) {}
+	}
+	var dock = $('#jawn_soft_keyboard');
+	if (!dock.length) { return; }
+	var field = (jawnSoftField && document.contains(jawnSoftField)) ? jawnSoftField : null;
+	if (!field && document.activeElement && softKbEditable(document.activeElement)) {
+		field = softKbRoot(document.activeElement);
+	}
+	if (field) {
+		softKbShow(field);
+		softKbModeSet(want);
+		return;
+	}
+	softKbPlace(null);
+	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	$('body').addClass('soft_kb_open');
+	jawnSoftContext = '';
+	jawnSoftNumeric = false;
+	softKbModeSet(want);
+	softKbReserve();
 }
 
 function softKbOn() {
@@ -522,7 +550,10 @@ function softKbScrollField(el) {
 function softKbTitleUpdate() {
 	var dock = $('#jawn_soft_keyboard');
 	var mode = jawnSoftMode;
-	dock.find('.soft_kb_title').text(mode == 'calc' ? softKbLabel('Calculator') : (mode == 'symbols' ? softKbLabel('Special characters') : softKbLayout().name));
+	var title = mode == 'calc' ? softKbLabel('Calculator')
+		: (mode == 'symbols' ? softKbLabel('Special characters')
+		: (jawnSoftField ? softKbLayout().name : softKbLabel('Tap a field to type')));
+	dock.find('.soft_kb_title').text(title);
 }
 
 function softKbModeSet(mode) {
@@ -546,26 +577,41 @@ function softKbShiftSet(on) {
 }
 
 // ---- dictation -------------------------------------------------------------
-// The microphone beside the hide button speaks into the field being typed in.
-// On the house's own Android view it rides the native recognizer (JawnSpeech);
-// in a browser it uses the Web Speech API. Both report the same way: final
-// words are inserted, and the bar shows the phrase while it is still being
-// heard. A layout's language is the one dictation listens for.
-function softKbNativeSpeech() {
-	return (window.JawnSpeech && typeof window.JawnSpeech.start == 'function') ? window.JawnSpeech : null;
-}
+// The microphone beside the hide key records a phrase and hands the audio to
+// the house's own transcription: whisper.cpp on this machine, or the cloud
+// model chosen for the transcription role. A phrase ends by itself when the
+// room falls quiet, and the next recording starts at once so talking continues
+// while the last phrase is transcribed. The Guide's model then restores
+// punctuation without changing a word. Nothing goes to a browser or phone
+// speech service.
+var JAWN_DICTATE_SILENCE = 850;
+var JAWN_DICTATE_MAX = 20000;
+var JAWN_DICTATE_THRESHOLD = 0.035;
+var jawnDictate = {
+	stream: null,
+	audio: null,
+	analyser: null,
+	data: null,
+	recorder: null,
+	meter: null,
+	maxTimer: null,
+	target: null,
+	lang: 'auto',
+	segments: [],
+	sending: false,
+	session: 0
+};
 
 function softKbDictateHint(text) {
 	$('#jawn_soft_keyboard .soft_kb_title').text(text || '');
 }
 
 function softKbDictateErrorText(code) {
-	if (code == 'permission' || code == 'not-allowed' || code == 'service-not-allowed') { return softKbLabel('Microphone permission was refused'); }
-	if (code == 'network') { return softKbLabel('Dictation needs a network connection'); }
-	if (code == 'audio-capture') { return softKbLabel('No microphone was found'); }
-	if (code == 'language' || code == 'language-not-supported') { return softKbLabel('Dictation does not support this language'); }
-	if (code == 'busy') { return softKbLabel('The microphone is busy'); }
-	return softKbLabel('Dictation is not available in this browser');
+	if (code == 'no-audio') { return softKbLabel('I did not catch any audio'); }
+	if (code == 'unreadable') { return softKbLabel('I could not make out any words'); }
+	if (code == 'no-model') { return softKbLabel('No transcription is set up on this machine'); }
+	if (code == 'words') { return softKbLabel('I could not punctuate that'); }
+	return softKbLabel('I could not transcribe that');
 }
 
 function softKbMicState() {
@@ -577,120 +623,206 @@ function softKbMicState() {
 		.attr('hint', softKbLabel(on ? 'Stop dictation' : 'Start dictation'));
 }
 
+function softKbDictateCut() {
+	if (jawnDictate.meter) { clearInterval(jawnDictate.meter); jawnDictate.meter = null; }
+	if (jawnDictate.maxTimer) { clearTimeout(jawnDictate.maxTimer); jawnDictate.maxTimer = null; }
+	var rec = jawnDictate.recorder;
+	jawnDictate.recorder = null;
+	if (rec && rec.state != 'inactive') { try { rec.stop(); } catch (err) {} }
+}
+
+function softKbDictateRelease() {
+	if (jawnDictate.stream) {
+		jawnDictate.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (err) {} });
+		jawnDictate.stream = null;
+	}
+	if (jawnDictate.audio) {
+		try { jawnDictate.audio.close(); } catch (err) {}
+		jawnDictate.audio = null;
+	}
+	jawnDictate.analyser = null;
+	jawnDictate.data = null;
+}
+
 function softKbDictateStop() {
 	jawnSoftListening = false;
-	clearTimeout(jawnSoftSpeechRestart);
-	if (jawnSoftRecognition) {
-		var rec = jawnSoftRecognition;
-		jawnSoftRecognition = null;
-		try { rec.abort(); } catch (err) {}
-	}
-	var native = softKbNativeSpeech();
-	if (native) { try { native.stop(); } catch (err2) {} }
+	jawnDictate.session++;
+	softKbDictateCut();
+	softKbDictateRelease();
+	jawnDictate.target = null;
 	softKbMicState();
-	softKbTitleUpdate();
+	if (!jawnDictate.sending && !jawnDictate.segments.length) { softKbTitleUpdate(); }
 }
 
 function softKbDictateUnavailable() {
 	jawnSoftListening = false;
-	clearTimeout(jawnSoftSpeechRestart);
+	jawnDictate.session++;
+	softKbDictateCut();
+	softKbDictateRelease();
 	softKbMicState();
 	softKbDictateHint(softKbLabel('Dictation is not available in this browser'));
 }
 
+function softKbDictateMime() {
+	if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) { return ''; }
+	var types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+	try {
+		for (var i = 0; i < types.length; i++) {
+			if (MediaRecorder.isTypeSupported(types[i])) { return types[i]; }
+		}
+	}
+	catch (err) { return ''; }
+	return '';
+}
+
+// One phrase. The recorder is replaced only after the last one has really
+// stopped, so a phrase can never be captured twice by two live recorders.
+function softKbDictateSegment() {
+	if (!jawnSoftListening || !jawnDictate.stream || jawnDictate.recorder) { return; }
+	var mime = softKbDictateMime();
+	var rec;
+	try {
+		rec = mime ? new MediaRecorder(jawnDictate.stream, { mimeType: mime }) : new MediaRecorder(jawnDictate.stream);
+	}
+	catch (err) {
+		try { rec = new MediaRecorder(jawnDictate.stream); }
+		catch (err2) { softKbDictateUnavailable(); return; }
+	}
+	var seg = { chunks: [], heard: false, quiet: 0, target: jawnDictate.target, mime: mime || rec.mimeType || 'audio/webm' };
+	jawnDictate.recorder = rec;
+	rec.ondataavailable = function (e) { if (e.data && e.data.size) { seg.chunks.push(e.data); } };
+	rec.onstop = function () {
+		if (jawnDictate.recorder === rec) { jawnDictate.recorder = null; }
+		if (seg.heard && seg.chunks.length) {
+			var blob = new Blob(seg.chunks, { type: seg.mime });
+			if (blob.size > 1200) {
+				jawnDictate.segments.push({ blob: blob, target: seg.target });
+				softKbDictateQueue();
+			}
+		}
+		if (jawnSoftListening) { setTimeout(function () { softKbDictateSegment(); }, 0); }
+	};
+	try { rec.start(250); }
+	catch (err) { jawnDictate.recorder = null; softKbDictateUnavailable(); return; }
+	if (jawnDictate.analyser) {
+		jawnDictate.meter = setInterval(function () {
+			if (!jawnDictate.analyser) { return; }
+			jawnDictate.analyser.getByteTimeDomainData(jawnDictate.data);
+			var rms = 0;
+			for (var i = 0; i < jawnDictate.data.length; i++) {
+				var d = (jawnDictate.data[i] - 128) / 128;
+				rms += d * d;
+			}
+			rms = Math.sqrt(rms / jawnDictate.data.length);
+			if (rms > JAWN_DICTATE_THRESHOLD) { seg.heard = true; seg.quiet = 0; return; }
+			if (!seg.heard) { return; }
+			if (!seg.quiet) { seg.quiet = Date.now(); return; }
+			if (Date.now() - seg.quiet > JAWN_DICTATE_SILENCE) { softKbDictateFinishSegment(rec); }
+		}, 100);
+	}
+	jawnDictate.maxTimer = setTimeout(function () { softKbDictateFinishSegment(rec); }, JAWN_DICTATE_MAX);
+}
+
+function softKbDictateFinishSegment(rec) {
+	if (!rec || rec.state == 'inactive') { return; }
+	if (jawnDictate.meter) { clearInterval(jawnDictate.meter); jawnDictate.meter = null; }
+	if (jawnDictate.maxTimer) { clearTimeout(jawnDictate.maxTimer); jawnDictate.maxTimer = null; }
+	try { rec.stop(); } catch (err) {}
+}
+
+// Transcribe the finished phrases in the order they were spoken, while the next
+// one is already being recorded.
+function softKbDictateQueue() {
+	if (jawnDictate.sending) { return; }
+	var item = jawnDictate.segments.shift();
+	if (!item) {
+		if (jawnSoftListening) { softKbDictateHint(softKbLabel('Listening…')); }
+		else { softKbTitleUpdate(); }
+		return;
+	}
+	jawnDictate.sending = true;
+	if (!jawnSoftListening) { softKbDictateHint(softKbLabel('Transcribing…')); }
+	$.ajax({
+		url: '/manager/dictate?lang=' + encodeURIComponent(jawnDictate.lang || 'auto'),
+		type: 'POST',
+		data: item.blob,
+		processData: false,
+		contentType: 'application/octet-stream',
+		dataType: 'json',
+		timeout: 120000,
+		success: function (r) {
+			jawnDictate.sending = false;
+			if (r && r.text) {
+				softKbDictationAppend(item.target, r.text);
+				if (jawnSoftListening) { softKbDictateHint(softKbLabel('Listening…')); }
+			}
+			else if (r && r.error) { softKbDictateHint(softKbDictateErrorText(r.error)); }
+			softKbDictateQueue();
+		},
+		error: function () {
+			jawnDictate.sending = false;
+			softKbDictateHint(softKbLabel('I could not transcribe that'));
+			softKbDictateQueue();
+		}
+	});
+}
+
+// A dictation phrase joins the field where the microphone was opened, even if
+// the person has moved on to another window while it was being transcribed.
+function softKbDictationAppend(target, text) {
+	if (!target || !document.contains(target) || !softKbEditable(target)) { return; }
+	text = String(text || '').replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+	if (!text) { return; }
+	var sep = '';
+	if (!target.isContentEditable) {
+		var caret = (target.selectionStart == null) ? (target.value || '').length : target.selectionStart;
+		var before = (target.value || '').charAt(caret - 1);
+		if (caret > 0 && before && !/\s/.test(before) && !/^[,.;:!?)]/.test(text)) { sep = ' '; }
+	}
+	else {
+		var last = (target.textContent || '').slice(-1);
+		if (last && !/\s/.test(last) && !/^[,.;:!?)]/.test(text)) { sep = ' '; }
+	}
+	softKbInsert(sep + text, target, true);
+}
+
 function softKbDictateToggle() {
 	if (jawnSoftListening) { softKbDictateStop(); return; }
-	if (!jawnSoftField) { return; }
+	if (!jawnSoftField) { softKbDictateHint(softKbLabel('Tap a field first')); return; }
+	if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+		softKbDictateUnavailable();
+		return;
+	}
 	softKbLayoutsToggle(false);
 	jawnSoftListening = true;
+	var session = ++jawnDictate.session;
+	jawnDictate.target = jawnSoftField;
+	jawnDictate.lang = String(softKbLayout().lang || 'auto').split('-')[0];
 	softKbMicState();
 	softKbDictateHint(softKbLabel('Listening…'));
-	var native = softKbNativeSpeech();
-	if (native) {
+	navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+		if (!jawnSoftListening || session != jawnDictate.session) {
+			stream.getTracks().forEach(function (t) { try { t.stop(); } catch (err) {} });
+			return;
+		}
+		jawnDictate.stream = stream;
 		try {
-			if (typeof native.available == 'function' && !native.available()) { throw new Error('unavailable'); }
-			native.start(softKbLayout().lang || 'en-US');
+			jawnDictate.audio = new (window.AudioContext || window.webkitAudioContext)();
+			var src = jawnDictate.audio.createMediaStreamSource(stream);
+			jawnDictate.analyser = jawnDictate.audio.createAnalyser();
+			jawnDictate.analyser.fftSize = 1024;
+			jawnDictate.data = new Uint8Array(jawnDictate.analyser.fftSize);
+			src.connect(jawnDictate.analyser);
 		}
-		catch (err) { softKbDictateUnavailable(); }
-		return;
-	}
-	softKbWebSpeechStart();
-}
-
-function softKbWebSpeechStart() {
-	var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-	if (!SR) { softKbDictateUnavailable(); return; }
-	var rec;
-	try { rec = new SR(); } catch (err) { softKbDictateUnavailable(); return; }
-	jawnSoftRecognition = rec;
-	rec.lang = softKbLayout().lang || 'en-US';
-	rec.continuous = true;
-	rec.interimResults = true;
-	rec.maxAlternatives = 1;
-	rec.onresult = function (event) {
-		if (!jawnSoftListening) { return; }
-		var final_text = '';
-		var interim = '';
-		for (var i = event.resultIndex; i < event.results.length; i++) {
-			var r = event.results[i];
-			if (r.isFinal) { final_text += r[0].transcript; }
-			else { interim += r[0].transcript; }
-		}
-		if (final_text) { softKbInsert(final_text); }
-		softKbDictateHint(interim || (final_text ? softKbLabel('Listening…') : ''));
-	};
-	rec.onerror = function (event) {
-		var code = (event && event.error) || '';
-		if (code == 'no-speech' || code == 'aborted') { return; }
+		catch (err) { jawnDictate.analyser = null; jawnDictate.data = null; }
+		softKbDictateSegment();
+	}).catch(function () {
+		if (session != jawnDictate.session) { return; }
 		jawnSoftListening = false;
 		softKbMicState();
-		softKbDictateHint(softKbDictateErrorText(code));
-	};
-	rec.onend = function () {
-		if (!jawnSoftListening || jawnSoftRecognition !== rec) { return; }
-		setTimeout(function () {
-			if (!jawnSoftListening || jawnSoftRecognition !== rec) { return; }
-			try { rec.start(); }
-			catch (err) { jawnSoftListening = false; softKbMicState(); }
-		}, 250);
-	};
-	try { rec.start(); }
-	catch (err) { softKbDictateUnavailable(); }
+		softKbDictateHint(softKbLabel('I could not reach the microphone'));
+	});
 }
-
-// The Android view reports through these two globals (JawnSpeech). A final
-// phrase is written into the field; an interim one only rides the bar, so a
-// half-heard word is never typed twice.
-window.jawnSpeechResult = function (text, isFinal) {
-	if (!jawnSoftListening || !jawnSoftField || !text) { return; }
-	if (isFinal) {
-		softKbInsert(text);
-		softKbDictateHint(softKbLabel('Listening…'));
-	}
-	else { softKbDictateHint(text); }
-};
-
-window.jawnSpeechState = function (state, detail) {
-	if (!jawnSoftListening) { return; }
-	if (state == 'listening') { softKbDictateHint(softKbLabel('Listening…')); return; }
-	if (state == 'stopped' || (state == 'error' && detail == 'no-speech')) {
-		if (!jawnSoftListening) { return; }
-		clearTimeout(jawnSoftSpeechRestart);
-		jawnSoftSpeechRestart = setTimeout(function () {
-			if (!jawnSoftListening) { return; }
-			var native = softKbNativeSpeech();
-			if (native) { try { native.start(softKbLayout().lang || 'en-US'); } catch (err) {} }
-			else { softKbWebSpeechStart(); }
-		}, 300);
-		return;
-	}
-	if (state == 'error') {
-		jawnSoftListening = false;
-		clearTimeout(jawnSoftSpeechRestart);
-		softKbMicState();
-		softKbDictateHint(softKbDictateErrorText(detail));
-	}
-};
 
 function softKbNotify(el) {
 	if (!el) { return; }
@@ -710,14 +842,28 @@ function softKbNotify(el) {
 	};
 	if (window.requestAnimationFrame) { requestAnimationFrame(fire); }
 	else { setTimeout(fire, 0); }
-	softKbConvertUpdate();
-	softKbSuggestSync();
+	// A dictation phrase can arrive for a field that is no longer the one being
+	// typed in; only the current field's conversion and suggestion rows follow it.
+	if (el === jawnSoftField) {
+		softKbConvertUpdate();
+		softKbSuggestSync();
+	}
 }
 
-function softKbInsert(text) {
-	var el = jawnSoftField;
+function softKbInsert(text, target, nofocus) {
+	var el = target || jawnSoftField;
 	if (!el) { return; }
 	if (el.isContentEditable) {
+		// A transcribed phrase for a field that is no longer focused appends to
+		// its end; focusing it would take the caret away from where the person is.
+		if (document.activeElement !== el) {
+			if (nofocus) {
+				try { el.appendChild(document.createTextNode(text)); }
+				catch (err) {}
+				softKbNotify(el);
+				return;
+			}
+		}
 		el.focus({ preventScroll: true });
 		var ok = false;
 		try {
@@ -748,7 +894,7 @@ function softKbInsert(text) {
 		el.value = el.value.slice(0, start) + text + el.value.slice(end);
 		el.selectionStart = el.selectionEnd = start + text.length;
 	}
-	try { el.focus({ preventScroll: true }); } catch (err2) { el.focus(); }
+	if (!nofocus) { try { el.focus({ preventScroll: true }); } catch (err2) { el.focus(); } }
 	softKbNotify(el);
 }
 

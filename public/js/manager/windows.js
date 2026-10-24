@@ -685,6 +685,9 @@ function windowRetriever() {
 			appWindowLoader(i,v);
 		}
 		else if (v.type == 'keyboard') {
+			// the old floating keyboard and calculator panels are retired; their
+			// saved windows now open the docked on-screen keyboard instead
+			if (i == 'keyboard' || i == 'calculator') { return; }
 			
 		//	$('#keyboard_container').append('<div class="typewriter">' + v.typewriter + '</div>');
 

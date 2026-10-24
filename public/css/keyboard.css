@@ -7,12 +7,6 @@
 		z-index: 9100;
 		display:none;
 	}
-	#keyboard {
-		position: fixed;
-		display:none;
-		z-index: 9100;
-		white-space: nowrap;
-	}
 	#controller {
 		position: fixed;
 		left: 0px;
@@ -46,46 +40,12 @@
 		text-align: center;
 		vertical-align: bottom;
 	}
-	.letter_key.keyboard_button {
-		background-color: var(--panel);
-		width: 23px;
-		vertical-align: bottom;
-
-	}
-	.space_bar.keyboard_button {
-		width: 160px;
-		vertical-align: bottom;
-	}
-	.return_key.keyboard_button {
-		width: 20px;
-		vertical-align: bottom;
-	}
-	.shift_key.keyboard_button {
-		width: 23px;
-		vertical-align: bottom;
-	}
-	.ctrl_key.keyboard_button {
-		width: 22px;
-		vertical-align: bottom;
-	}
-	.calculator_button {
-		height: 50px;
-		width: 50px;
-	}
 }
 @media screen and (min-width:600px) {
 	.typewriter { text-align: center;}
 	#numberpad {
 		position: fixed;
 		z-index: 9100;
-	}
-	#keyboard {
-		position: fixed;
-		text-align: center;
-		z-index: 9100;
-		white-space: nowrap;
-		padding-bottom: 5px;
-		display:none;
 	}
 	#controller {
 		position: fixed;
@@ -112,26 +72,6 @@
 		white-space: nowrap;
 		display:none;
 	}
-	.letter_key.keyboard_button {
-		background-color: var(--panel);
-		width: 20px;
-		vertical-align: bottom;
-	}
-	.space_bar.keyboard_button {
-		width: 180px;
-		vertical-align: bottom;
-	}
-	.return_key.keyboard_button {
-		width: 37px;
-		vertical-align: bottom;
-	}
-	.shift_key.keyboard_button {
-		vertical-align: bottom;
-	}
-	.ctrl_key.keyboard_button {
-		width: 57px;
-		vertical-align: bottom;
-	}
 	.keyboard_button {
 		height: 35px;
 		background-color: var(--panel);
@@ -139,10 +79,6 @@
 		border: solid;
 		border-radius: 8px;
 		text-align: center;
-	}
-	.calculator_button {
-		height: 35px;
-		min-width: 35px;
 	}
 }
 #test_input {
