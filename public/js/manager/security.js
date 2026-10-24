@@ -641,7 +641,7 @@ $(document).on('click', '.signatorial_selection', function() {
 		$.ajax({
 			url: '/manager/security',
 			type: 'GET',
-			data: { security_view: 'passkeys', window_maker: 'yes', unlock: (window.jawnosSecurityToken || '') },
+			data: { security_view: 'passkeys', window_maker: 'yes', unlock: (window.jawnosSecurityToken || ''), browser_tab_id: (typeof jawnosMediaTab === 'function' ? jawnosMediaTab() : '') },
 			success: function (r) {
 				if (r && r.html) {
 					$('#security').replaceWith(r.html);
@@ -812,7 +812,14 @@ $(document).on('click', '.signatorial_selection', function() {
 		var url = settings.url || '';
 		if (!guarded.test(url) && !guarded_key.test(url)) { return; }
 		confirmWith(function (grant) {
-			var body = typeof settings.data === 'string' ? (settings.data + '&unlock=' + encodeURIComponent(grant)) : settings.data;
+			var tab = (typeof jawnosMediaTab === 'function' ? jawnosMediaTab() : '');
+			var body;
+			if (typeof settings.data === 'string') {
+				body = settings.data + '&unlock=' + encodeURIComponent(grant) + (tab ? '&browser_tab_id=' + encodeURIComponent(tab) : '');
+			}
+			else {
+				body = $.extend({}, settings.data || {}, { unlock: grant, browser_tab_id: tab });
+			}
 			$.ajax({
 				url: url, type: settings.type || 'POST', data: body, dataType: 'json',
 				security_retried: 1,
