@@ -454,6 +454,8 @@ function musicVideoWatch(el) {
 		}
 		// the picture is moving again; realign the ahead tap to it
 		musicAheadResume();
+		// and re-measure the picture's lag after a seek or a resume
+		musicPictureWatch();
 	};
 	el.addEventListener('playing', settled);
 	el.addEventListener('canplay', settled);
@@ -535,11 +537,13 @@ function musicSyncReport() {
 			rate: musicAhead.rate || 1,
 			seeks: musicAhead.seekCount || 0,
 			src_ms: musicAhead.el ? Math.round((musicAhead.el.currentTime || 0) * 1000) : 0,
+			pic_ms: Math.round((musicPicture.lag || 0) * 1000),
+			pic_raw_ms: Math.round((musicPicture.raw || 0) * 1000),
+			local_ms: (musicVisual && musicVisual.localDelay) ? Math.round((musicVisual.localDelay.delayTime.value || 0) * 1000) : 0,
 			el_ready: musicAhead.el ? musicAhead.el.readyState : -1,
 			seeking: (musicAhead.el && musicAhead.el.seeking) ? 1 : 0,
 			el_paused: (musicAhead.el && musicAhead.el.paused) ? 1 : 0,
 			source: (musicStreamTap.source || 'local'),
-			local_ms: (musicVisual && musicVisual.localDelay) ? Math.round((musicVisual.localDelay.delayTime.value || 0) * 1000) : 0,
 			offset_ms: (music_sync_offset || 0)
 		},
 		video: v ? {
@@ -852,18 +856,84 @@ var musicAhead = {
 	target: 0, err: 0, seekAt: 0, seekCount: 0, rate: 1, hold: false
 };
 
-// The lead to give the remote: the measured pipeline delay, less any Sync
-// offset trim. Until the first measurement lands, start near the codec's real
-// range so the opening is not sent at the wrong place and then jumped.
+// The presented picture lags the element's clock. The browser keeps its own
+// sound with the picture, but once the sound goes through Web Audio (any
+// normalization, EQ, L/R split or remote output) it leaves that path and runs
+// ahead by exactly this lag. requestVideoFrameCallback reports the media time
+// of the frame on screen, which is the measurement.
+var musicPicture = { lag: 0, raw: 0, at: 0, queued: false, queuedAt: 0, applied: 0 };
+
+// The graph's own output buffer: sound through it lands this much later.
+function musicGraphLatency() {
+	var ctx = musicVisual && musicVisual.ctx;
+	var l = (musicVisual && musicVisual.graphLatency) ? musicVisual.graphLatency : 0;
+	if (!ctx) { return l; }
+	try { l = Math.max(l, ctx.outputLatency || 0, ctx.baseLatency || 0); } catch (e) {}
+	return (isFinite(l) && l > 0) ? l : 0;
+}
+function musicGraphCarriesLocal() {
+	if (!musicVisual || !musicVisual.source || !musicVisual.el) { return false; }
+	return !!(tree && tree.sound && musicVisual.el === tree.sound);
+}
+
+// Measure how far the element's clock is ahead of the picture on screen. The
+// callback runs as a frame is presented, so currentTime - mediaTime is the
+// lag; a big step is a seek or a fresh decoder, not jitter.
+function musicPictureWatch() {
+	var v = tree && tree.sound;
+	if (!v || !v.requestVideoFrameCallback) { return; }
+	if (musicPicture.queued) {
+		// a callback can be lost when the page is hidden; do not let that stop
+		// the measurement for the rest of the session
+		if (Date.now() - (musicPicture.queuedAt || 0) < 1000) { return; }
+		musicPicture.queued = false;
+	}
+	if (!tree.songs || !tree.songs[0] || tree.songs[0].type != 'video' || v.paused || v.ended) { return; }
+	musicPicture.queued = true;
+	musicPicture.queuedAt = Date.now();
+	try {
+		v.requestVideoFrameCallback(function(now, meta) {
+			musicPicture.queued = false;
+			if (!tree || tree.sound !== v || v.paused || v.ended) { return; }
+			var mt = (meta && typeof meta.mediaTime == 'number') ? meta.mediaTime : NaN;
+			if (isFinite(mt) && mt >= 0) {
+				var lag = (v.currentTime || 0) - mt;
+				if (isFinite(lag) && lag > -1.5 && lag < 5) {
+					musicPicture.raw = lag;
+					if (Math.abs(lag - musicPicture.lag) > 0.25) {
+						musicPicture.lag = lag;
+						// a step is a fresh decoder or a seek: allow the lead to re-anchor
+						// at once instead of riding it out for the usual two seconds
+						musicAhead.seekAt = 0;
+					}
+					else { musicPicture.lag = musicPicture.lag * 0.65 + lag * 0.35; }
+					musicPicture.at = Date.now();
+				}
+			}
+			if (Date.now() - musicPicture.applied > 200) {
+				musicPicture.applied = Date.now();
+				musicPictureApply();
+			}
+			musicPictureWatch();
+		});
+	}
+	catch (e) { musicPicture.queued = false; }
+}
+function musicPictureApply() {
+	// Me and the remote both target the frame on screen, not the element clock.
+	musicLocalDelayApply();
+	musicAheadRetarget();
+}
+
+// The lead to give the remote, relative to the element's own clock: the measured
+// pipeline less the picture's lag, so the sound lands with the frame on screen.
+// It is negative when the picture is further behind than the pipeline, which
+// simply puts the lead element earlier in the file (it can trail the element).
 function musicStreamLead() {
 	var ms = (musicStreamLatency && musicStreamLatency()) || 0;
-	// Before the first measurement lands (or after a reconnect cleared it),
-	// keep the lead already in use: the path is the same, and a sudden drop to
-	// the codec default would lurch the sound forward and back.
-	if (!(ms > 0)) { ms = (musicAhead.target || 0) * 1000; }
 	if (!(ms > 0)) { ms = (musicStream.codec == 'opus') ? 300 : 120; }
-	var lead = (ms - (music_sync_offset || 0)) / 1000;
-	return Math.max(0, Math.min(5, lead));
+	var lead = (ms - (musicPicture.lag || 0) * 1000 - (music_sync_offset || 0)) / 1000;
+	return Math.max(-8, Math.min(8, lead));
 }
 
 // The media position of the samples the tap is actually sending. With the
@@ -895,14 +965,15 @@ function musicStreamLatency() {
 	return max;
 }
 
-// The Me trim is for a picture presented a little after the sound. With a
-// remote output configured the graph/stream path already supplies the wait
-// that lined the Me up, so adding the trim on top would put the local sound
-// late; an audio track has no picture to trim for at all.
+// The Me delay holds this machine's sound back to the presented picture: the
+// frame lag less the graph's own output buffer, plus the manual trim. It
+// applies with a remote output too now, because the graph is what took the
+// sound away from the browser's sync in the first place.
 function musicLocalDelaySeconds() {
-	if (musicStreamOutputs().length) { return 0; }
 	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return 0; }
-	return (music_local_delay || 0) / 1000;
+	if (!musicGraphCarriesLocal()) { return 0; }
+	var delay = (musicPicture.lag || 0) - musicGraphLatency() + (music_local_delay || 0) / 1000;
+	return Math.max(0, Math.min(8, delay));
 }
 
 // Whether the ahead element should be loaded. The video may still be paused
@@ -1074,6 +1145,9 @@ function musicAheadLead(hard) {
 	var want = (main.currentTime || 0) + musicAhead.target;
 	var dur = main.duration || 0;
 	if (dur > 0) { want = Math.min(want, Math.max(0, dur - 0.05)); }
+	// a negative lead lets the element read earlier in the file; at the very
+	// start there is no earlier frame, so hold the first one instead
+	want = Math.max(0, want);
 	var err = want - (el.currentTime || 0);
 	musicAhead.err = err;
 	if (!hard && el.seeking) { return; }
@@ -1107,8 +1181,8 @@ function musicAheadRetune(lead) {
 	// Moving the sound forward is a gap in what was already sent; a small one is
 	// ridden out at a slower rate, but a measured jump must be re-anchored. A
 	// backward change would make the receiver replay audio it already holds, so
-	// only a huge one is seeked; the rest is drained by playing a little slower.
-	var hard = (diff > 0.15 || diff < -1.0) && (Date.now() - (musicAhead.seekAt || 0) > 2000);
+	// only a large one is seeked; the rest is drained by playing a little slower.
+	var hard = (diff > 0.15 || diff < -0.3) && (Date.now() - (musicAhead.seekAt || 0) > 2000);
 	musicAheadLead(hard);
 }
 
@@ -1251,6 +1325,7 @@ function musicAheadFailed() {
 }
 function musicAheadRetarget() {
 	if (!musicStream.active) { if (musicAhead.ready) { musicAheadStop(); } return; }
+	if (!musicAheadWanted()) { if (musicAhead.ready) { musicAheadStop(); } return; }
 	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') {
 		if (musicAhead.ready) { musicAheadStop(); }
 		return;
@@ -2076,6 +2151,17 @@ function mediaMaker(data) {
 						bar.val(tree.sound.currentTime / tree.sound.duration * 100);
 					}
 				};
+				// A seek empties the element's buffered sound; the Me delay line still
+				// holds the pre-seek moment and would replay it. Drop it and measure the
+				// picture again at the new position.
+				if (!tree.sound._lead_seek) {
+					tree.sound._lead_seek = 1;
+					tree.sound.addEventListener('seeked', function() {
+						if (musicVisual && musicVisual.localDelay) { try { musicVisual.localDelay.delayTime.value = 0; } catch (e) {} }
+						musicPictureWatch();
+						musicLocalDelayApply();
+					});
+				}
 				if (data['state'] != 0) {
 					// no mute/volume trick here: WebKit would carry it onto the stream
 					musicPlay();
@@ -2100,6 +2186,12 @@ function mediaMaker(data) {
 				// backgrounded tab or an interrupted context still needs resuming
 				// before the element's sound is expected.
 				musicAudioResume();
+				// the picture's own lag drives the Me delay and the remote lead
+				musicPictureWatch();
+				// a resume starts with the delay line dropped, so the pre-pause tail
+				// cannot play over the new picture; it ramps back to the measured lag
+				if (musicVisual && musicVisual.localDelay) { try { musicVisual.localDelay.delayTime.value = 0; } catch (e) {} }
+				musicLocalDelayApply();
 				tree.sound.sync_cursor = null;
 				tree.sound.sync_wall = 0;
 				musicKeepalive(true);
@@ -2233,6 +2325,13 @@ function mediaMaker(data) {
 					tree.sound.state = 0;
 					musicKeepalive(false);
 					musicStreamControl('pause');
+					// The delay line still holds the picture-lag's worth of sound; without
+					// this the Me output keeps playing for a moment after the picture has
+					// stopped. The next play restores the level through musicVolumeApply().
+					if (musicVisual && musicVisual.localGain) {
+						try { musicVisual.localGain.gain.setTargetAtTime(0, musicVisual.ctx.currentTime, 0.02); }
+						catch (e) { try { musicVisual.localGain.gain.value = 0; } catch (e2) {} }
+					}
 					// The context is deliberately left running. Suspending it and resuming
 					// it on the next play made every resume behave a little differently
 					// (the graph's own queue and its delay line do not restart alike);
@@ -3406,7 +3505,7 @@ function musicLocalDelayApply() {
 	}
 	if (musicVisual && musicVisual.localDelay) {
 		var want = musicLocalDelaySeconds();
-		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.08); }
+		try { musicVisual.localDelay.delayTime.setTargetAtTime(want, musicVisual.ctx.currentTime, 0.25); }
 		catch (e) { try { musicVisual.localDelay.delayTime.value = want; } catch (e2) {} }
 	}
 }
@@ -3805,6 +3904,7 @@ function musicAudioGraph() {
 		if (musicStreamTap.node) { musicVisual.remoteGain.connect(musicStreamTap.node); }
 	}
 	musicAheadRetarget();
+	musicLocalDelayApply();
 	return musicVisual;
 }
 
@@ -4073,6 +4173,8 @@ $(document).on('visibilitychange', function() {
 		musicAudioGraph();
 		musicVolumeApply();
 	}
+	// a hidden page presents no frames, so the picture-lag callback can be lost
+	if (!document.hidden) { musicPicture.queued = false; musicPictureWatch(); }
 });
 
 // The visualiser's tap. It shares the normaliser's graph so the drawing follows
