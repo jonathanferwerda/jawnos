@@ -1,6 +1,9 @@
 # Migration Roadmap
 
-**Status:** draft — Stage 0 in progress
+**Status:** draft — **deferred 2026-10-23**. No work is in flight; nothing here is a task.
+Kept for reference: the measured baseline (§3) and the extraction recipe (§6.6) stay valid whenever
+this is picked up. `scripts/verify_change.pl` already covers the compile/truncation class; the
+golden-master harness in §6.1 remains the gap if behaviour-level verification is ever wanted.
 **Started:** 2026-10-23
 **Related:** `docs/AGENTS-notes.md` (data model), `AGENTS.md` (run/restart, rules)
 
