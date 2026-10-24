@@ -713,6 +713,10 @@ function musicLipSilenceClone(c) {
 	}
 }
 
+function musicAbsoluteUrl(u) {
+	try { return new URL(u, location.href).href; } catch (e) { return u; }
+}
+
 function musicLipStart() {
 	var v = tree.sound;
 	if (!v || !v.videoWidth) {
@@ -726,7 +730,7 @@ function musicLipStart() {
 	if (!src) { return; }
 	musicLip.on = true;
 	musicLip.video = v;
-	musicLip.src = src;
+	musicLip.src = musicAbsoluteUrl(src);
 	musicLip.revealed = false;
 	musicLip.painted = false;
 	musicLipDelayChanged();
@@ -842,9 +846,11 @@ function musicLipSync() {
 	var v = musicLip.video, c = musicLip.clone;
 	if (!musicLip.on || !v || !c) { return; }
 	// a next/previous (not an ended track) changes the original's source under
-	// us; the clone needs its own new source and decoder
+	// us; the clone needs its own new source and decoder. Compare the resolved
+	// URL: before the media loads currentSrc is empty and src may be relative,
+	// which used to look like a new track on the very next tick.
 	var src = v.currentSrc || v.src;
-	if (src && musicLip.src && src !== musicLip.src) { musicLipStop(); musicLipStart(); return; }
+	if (src && musicLip.src && musicAbsoluteUrl(src) !== musicLip.src) { musicLipStop(); musicLipStart(); return; }
 	// follow theatre mode, a resize and fullscreen: the clone wears the same
 	// classes and inline geometry, minus the opacity that hides the original
 	var css = v.style.cssText.replace(/opacity\s*:\s*[^;]+;?/gi, '');
@@ -1280,8 +1286,6 @@ function treeMaker() {
 		seek: 0,
 		song_id: 0,
 		current_track: 0,
-		speaker: new Audio,
-		ctx: new AudioContext,
 		sound: document.getElementById('video'),
 		lastCache: 0
 	};
