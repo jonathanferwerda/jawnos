@@ -37569,7 +37569,9 @@ sub sms_message_send($digits,$message) {
 			my $remote_machines = &subs::db_query('select * from remote_machines where connection=? and device=?', 'active', 'mobile')->hashes;
 			foreach my $rm ( @{$remote_machines} ) {
 				$rm = &remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm });
-				my $res = $rm->{'ua'}->post($rm->{'manager'} . '/manager/sms/message?digits=' . $digits . '&message=' . uri_encode $message);
+				my $wire = $message;
+				utf8::encode($wire) if utf8::is_utf8($wire);
+				my $res = $rm->{'ua'}->post($rm->{'manager'} . '/manager/sms/message?digits=' . $digits . '&message=' . uri_encode($wire));
 				if (eval {decode_json $res}) {
 					next;
 				}
