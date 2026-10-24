@@ -1106,9 +1106,9 @@ function musicLipSync() {
 	// decoder and is the thing that blinks. Only a really large jump (a stall, a
 	// changed source) is re-anchored, and while that correction settles the rate
 	// keeps working instead of leaving the drift uncorrected.
-	if (Math.abs(drift) > 1.2) {
-		if (now - (musicLip.seekAt || 0) < 4000) {
-			c.playbackRate = base * (drift > 0 ? 1.1 : 0.9);
+	if (Math.abs(drift) > 0.9) {
+		if (now - (musicLip.seekAt || 0) < 3000) {
+			c.playbackRate = base * (drift > 0 ? 0.85 : 1.15);
 			return;
 		}
 		musicLip.seekAt = now;
@@ -1120,8 +1120,8 @@ function musicLipSync() {
 		// take the still down before the seek had a chance to black out
 		if (held) { musicLipFreezeUntilFrame(); }
 	}
-	else if (drift > 0.05) { c.playbackRate = base * 1.1; }
-	else if (drift < -0.05) { c.playbackRate = base * 0.9; }
+	else if (drift > 0.05) { c.playbackRate = base * (drift > 0.4 ? 0.82 : 0.92); }
+	else if (drift < -0.05) { c.playbackRate = base * (drift < -0.4 ? 1.2 : 1.1); }
 	else { c.playbackRate = base; }
 }
 
@@ -1645,6 +1645,8 @@ function mediaMaker(data) {
 				tree.sound.playbackRate = 1;
 				tree.sound.currentTime = time || 0;
 				tree.sound.queued = 0;
+				tree.sound.sync_cursor = null;
+				tree.sound.sync_wall = 0;
 				// the seek bar is only redrawn by the playing interval, which does not run
 				// while paused, so a paused restore would otherwise leave it sitting at 0
 				// even though the track is at its saved position
@@ -1675,6 +1677,8 @@ function mediaMaker(data) {
 			}
 			tree.sound.onplaying = function() {
 				tree.sound.state = 1;
+				tree.sound.sync_cursor = null;
+				tree.sound.sync_wall = 0;
 				musicKeepalive(true);
 				musicVolumeApply();
 				// a stream left at a remembered low/muted level by Pulse is put right
@@ -1748,16 +1752,27 @@ function mediaMaker(data) {
 							$('#video_subtitle_toggle').hide();
 							if (subtitle_text) { subtitle_text.mode = 'hidden'; }
 						}
-						var pre_value = $('#progress_bar').val();
+						// A seek is where the media clock and the wall clock disagree: the
+						// interval can be late without the track having jumped, and the
+						// hidden <progress> value is not a reliable previous position. Compare
+						// how far the track moved with how long it actually took.
 						var cursor = tree.sound.currentTime;
-						if (tree.songs[0] && (pre_value > cursor + 2 || pre_value < cursor - 2 && tree.sound.exempt_seek != 1)) {
-							remoteTrackToggle({
-								file: tree.songs[0].file,
-								toggle: 'seek',
-								seek: tree.sound.currentTime
-							});
+						var now_ms = Date.now();
+						var last_cursor = tree.sound.sync_cursor;
+						var last_wall = tree.sound.sync_wall;
+						tree.sound.sync_cursor = cursor;
+						tree.sound.sync_wall = now_ms;
+						if (tree.songs[0] && last_cursor != null && last_wall) {
+							var moved = cursor - last_cursor;
+							var elapsed = (now_ms - last_wall) / 1000;
+							if (Math.abs(moved - elapsed) > 2) {
+								remoteTrackToggle({
+									file: tree.songs[0].file,
+									toggle: 'seek',
+									seek: cursor
+								});
+							}
 						}
-						tree.sound.exempt_seek = 0;
 						$('#progress_bar').attr('value', cursor);
 						$('#cursor').text(cursor);
 						$('#total_progress').text(numeral(tree.sound.duration).format('00:00:00'));

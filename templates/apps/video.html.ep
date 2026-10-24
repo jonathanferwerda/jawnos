@@ -988,6 +988,10 @@
 				var p = <%= $miss %>SeekPreview;
 				p.raf = 0;
 				if (!p.ready || !p.video || !p.visible) { return; }
+				// One seek in flight at a time. Issuing the next target before the
+				// decoder has answered the last one cancelled every frame until the
+				// pointer stopped, which is why the preview looked delayed.
+				if (p.video.seeking) { return; }
 				var now = Date.now();
 				if (now - (p.lastSeekAt || 0) < 200) { return; }
 				p.lastSeekAt = now;
@@ -999,7 +1003,7 @@
 			// catches the position the pointer lands on last.
 			function <%= $miss %>SeekPreviewSoon() {
 				var p = <%= $miss %>SeekPreview;
-				if (!p.ready || !p.video || !p.visible || p.raf || p.timer) { return; }
+				if (!p.ready || !p.video || !p.visible || p.raf || p.timer || p.video.seeking) { return; }
 				var wait = Math.max(0, 200 - (Date.now() - (p.lastSeekAt || 0)));
 				p.timer = setTimeout(function() {
 					p.timer = 0;
@@ -1043,7 +1047,7 @@
 						if (!el.videoWidth || !el.videoHeight) { return; }
 						<%= $miss %>SeekPreviewDraw();
 						// the seek was for an older position than want; ask for the newest
-						if (Math.abs(el.currentTime - p.want) > 0.5) { <%= $miss %>SeekPreviewSoon(); }
+						if (Math.abs(el.currentTime - p.want) > 0.2) { <%= $miss %>SeekPreviewSoon(); }
 					});
 					el.addEventListener('error', function() {
 						p.failed = true;
