@@ -807,7 +807,7 @@ $(document).on('click', '.signatorial_selection', function() {
 			then(grant);
 		}, function (e) {
 			// no reader here, or it was busy: the phone is the other way in
-			if (e && e.error && e.error !== 'no fingerprint' && e.error !== 'local only' && e.error !== 'busy' && e.error !== 'no reader' && e.error !== 'timeout' && e.error !== 'no result' && e.error !== 'reader error') {
+			if (e && e.error && e.error !== 'no fingerprint' && e.error !== 'local only' && e.error !== 'busy' && e.error !== 'no reader' && e.error !== 'timeout' && e.error !== 'no result' && e.error !== 'reader error' && e.error !== 'no device') {
 				st.text('The reader did not accept that print.');
 				return;
 			}
