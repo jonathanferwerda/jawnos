@@ -377,9 +377,10 @@ function musicStreamOutputLost(key) {
 	musicStream.failed[key] = 1;
 	if (!musicStreamOutputStillOn(key)) { return; }
 	var n = musicStream.retry[key] || 0;
-	if (n >= 8) { return; }
-	musicStream.retry[key] = n + 1;
-	var wait = Math.min(30000, 1000 * Math.pow(2, n));
+	musicStream.retry[key] = Math.min(8, n + 1);
+	// keep trying every 30 s while the stream runs: a machine that reboots or
+	// wakes should come back without the listener toggling its output again
+	var wait = Math.min(30000, 1000 * Math.pow(2, Math.min(n, 5)));
 	clearTimeout(musicStream.retryTimers[key]);
 	musicStream.retryTimers[key] = setTimeout(function() {
 		delete musicStream.retryTimers[key];
