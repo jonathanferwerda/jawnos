@@ -16890,7 +16890,7 @@ sub inventory_cell_summary($data) {
 		# a session that crossed the edge of this window spent part of its time in
 		# it even though it started before the window began
 		$appts = &subs::db_query("select * from appointments where (app = ? or model = ?) and cast(timestamp as integer) < ? and (cast(timestamp as integer) >= ? or type in ('start','record') or (cast(timestamp as integer) + abs(cast(coalesce(duration,0) as real))) > ?) order by timestamp", $app, $app, $end, $start, $start)->hashes;
-		$value = &inventory_window_value($appts, $display, $settings, $start, $end);
+		$value = &inventory_window_value($appts, $display, $settings, $start, $end, $timestamp);
 	}
 	else {
 		$appts = &subs::db_query('select * from appointments where (app = ? or model = ?) and cast(timestamp as integer) >= ? and cast(timestamp as integer) < ? order by timestamp', $app, $app, $start, $end)->hashes;
@@ -16977,13 +16977,130 @@ sub appointment_overlap {
 	return $hi > $lo ? $hi - $lo : 0;
 }
 
+# The next local midnight after a moment, as epoch milliseconds. The calendar
+# date is stepped by hand because Time::Local refuses an out-of-range day (32)
+# and normalising through it would croak on the last day of a month.
+sub next_local_midnight {
+	my $ms = shift;
+	my @lt = localtime(int($ms / 1000));
+	my ($mday, $mon, $year) = @lt[3, 4, 5];
+	my @days = (31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31);
+	my $y = $year + 1900;
+	$days[1] = 29 if ($y % 4 == 0 && ($y % 100 != 0 || $y % 400 == 0));
+	$mday++;
+	if ($mday > $days[$mon]) {
+		$mday = 1;
+		$mon++;
+		if ($mon > 11) { $mon = 0; $year++; }
+	}
+	return timelocal(0, 0, 0, $mday, $mon, $year) * 1000;
+}
+
+# Allocate a session's time across the allocation view's components by when it
+# was actually spent: the hour of the day, weekday, day of the month and the
+# rest each get their part, instead of the whole session landing on the one it
+# started in. Seconds and minutes repeat on a fixed clock, so whole cycles are
+# added once and only the remainder is walked; the longer components step from
+# one local boundary to the next. A span past a year is one bad row rather than
+# a distribution, so it stays on the components it started in.
+sub allocation_duration_add {
+	my ($returner, $appt, $display, $display_options) = @_;
+	my $from = ($appt->{'timestamp'} || 0) + 0;
+	my $to = $from + abs($appt->{'duration'} || 0);
+	return if $to <= $from;
+
+	my $add = sub {
+		my ($scope, $key, $amount) = @_;
+		return unless defined $key && $amount > 0;
+		my $bucket = $returner->{$key}->{$scope} ||= {};
+		$bucket->{$display} = ($bucket->{$display} || 0) + $amount;
+		$bucket->{'formatted_duration'} = &subs::duration_sayer($bucket->{$display} / 1000) if $display eq 'duration';
+		foreach my $d ( @{$display_options || []} ) {
+			my $name = $d->{'name'};
+			my $value = $bucket->{$name};
+			if ($value > $returner->{'highest'}->{$scope}->{$name}) {
+				$returner->{'highest'}->{$scope}->{$name} = $value;
+			}
+			elsif ($returner->{'highest'}->{$scope}->{$name} == undef) {
+				$returner->{'highest'}->{$scope}->{$name} = $value;
+			}
+			if ($value < $returner->{'lowest'}->{$scope}->{$name}) {
+				$returner->{'lowest'}->{$scope}->{$name} = $value;
+			}
+			elsif ($returner->{'lowest'}->{$scope}->{$name} == undef) {
+				$returner->{'lowest'}->{$scope}->{$name} = $value;
+			}
+		}
+	};
+
+	if ($to - $from > 366 * 86400000) {
+		my @lt = localtime(int($from / 1000));
+		my %key = (
+			second => $lt[0], minute => $lt[1], hour => $lt[2],
+			mday => $lt[3], month => $lt[4] + 1, year => $lt[5] + 1900,
+			wday => $lt[6], yday => $lt[7], isdst => $lt[8]
+		);
+		foreach my $scope ( qw/second minute hour mday month year wday yday isdst/ ) {
+			$add->($scope, $key{$scope}, $to - $from);
+		}
+		return;
+	}
+
+	foreach my $cycle ( [ 'second', 60, 1000 ], [ 'minute', 3600, 60000 ] ) {
+		my ($scope, $values, $step) = @{$cycle};
+		my $period = $values * $step;
+		my $full = int(($to - $from) / $period);
+		for (my $v = 0; $full > 0 && $v < $values; $v++) {
+			$add->($scope, $v, $full * $step);
+		}
+		my $cursor = $from + $full * $period;
+		while ($cursor < $to) {
+			my $next = int($cursor / $step) * $step + $step;
+			my $end = $next < $to ? $next : $to;
+			$add->($scope, int($cursor / $step) % $values, $end - $cursor);
+			$cursor = $end;
+		}
+	}
+
+	# hour of day and daylight saving change at the top of a local hour
+	my $cursor = $from;
+	while ($cursor < $to) {
+		my @lt = localtime(int($cursor / 1000));
+		# the time already spent in this local hour, taken off the clock rather
+		# than rebuilt with timelocal, so an hour that daylight saving repeats or
+		# skips still steps one real hour and never asks for hour 24
+		my $elapsed = $lt[1] * 60000 + $lt[0] * 1000 + ($cursor % 1000);
+		my $next = $cursor - $elapsed + 3600000;
+		$next = $cursor + 3600000 if $next <= $cursor;
+		my $end = $next < $to ? $next : $to;
+		$add->('hour', $lt[2], $end - $cursor);
+		$add->('isdst', $lt[8], $end - $cursor);
+		$cursor = $end;
+	}
+
+	# the calendar components change at local midnight
+	$cursor = $from;
+	while ($cursor < $to) {
+		my @lt = localtime(int($cursor / 1000));
+		my $next = &next_local_midnight($cursor);
+		$next = $cursor + 86400000 if $next <= $cursor;
+		my $end = $next < $to ? $next : $to;
+		$add->('mday', $lt[3], $end - $cursor);
+		$add->('month', $lt[4] + 1, $end - $cursor);
+		$add->('year', $lt[5] + 1900, $end - $cursor);
+		$add->('wday', $lt[6], $end - $cursor);
+		$add->('yday', $lt[7], $end - $cursor);
+		$cursor = $end;
+	}
+}
+
 # the value one window shows for the inventory's chosen measure, the way the
 # inventory buckets it (a running session read to now, a measure read off the
 # appointment's own readings). A duration is read only for the part inside the
 # window when the caller names its edges.
-sub inventory_window_value($appts, $display, $settings, $start, $end) {
+sub inventory_window_value($appts, $display, $settings, $start, $end, $view_now) {
 	my $value = 0;
-	my $now = &subs::rightNow();
+	my $now = $view_now || &subs::rightNow();
 	foreach my $a ( @{$appts} ) {
 		if ($display eq 'occurences') { $value += 1; }
 		elsif ($display eq 'duration') {
@@ -17022,6 +17139,11 @@ sub inventory_details($c,$settings) {
 	my $app = $c->param('app');
 	my $server_time = &subs::rightNow();
 	my $timestamp = $c->param('timestamp');
+	# The windows are built from this request's moment, so a running session is
+	# read to that moment too. Using the later server time left a sliver of the
+	# session past every "Nnext" window's opening edge, which put a second or so
+	# of duration on every future scope.
+	my $view_now = ($timestamp && $timestamp =~ /^[0-9]+$/) ? $timestamp : $server_time;
 	my $appts = [];
 	if ($c->param('display')) {
 		$settings->{'s_display'} = $c->param('display');
@@ -17212,8 +17334,8 @@ sub inventory_details($c,$settings) {
 				$a->{'measure_dejsonified'} = 1;
 			}
 			if (($a->{'type'} eq 'start' || $a->{'type'} eq 'record')) {
-				if ($a->{'timestamp'} < $server_time) {
-					$a->{'duration'} = $server_time - $a->{'timestamp'};
+				if ($a->{'timestamp'} < $view_now) {
+					$a->{'duration'} = $view_now - $a->{'timestamp'};
 				}
 				else {
 					$a->{'duration'} = &subs::time_abbrev_translator($settings->{'duration'});
@@ -17470,6 +17592,10 @@ sub inventory_details($c,$settings) {
 					}
 				}
 				next unless $a->{'uuid'};
+				# a split duration has already been added to every component the
+				# session touched, so the start bucket takes only its occurrence
+				my $split_duration = ($s_display eq 'duration' && ($settings->{'s_calc'} || 'sum') eq 'sum');
+				&allocation_duration_add($returner, $a, $s_display, \@display_options) if $split_duration;
 				for (my $n = 0; $n <= scalar @time_lengths; $n++) {
 					if (($a->{$s_display} || $a->{$s_display} == 0) || ( $bmt > 0 )) {
 						my $scope = $time_lengths[$n];
@@ -17499,7 +17625,7 @@ sub inventory_details($c,$settings) {
 							}
 						}
 						else {
-							$bucket->{$s_display} += $a->{$s_display};
+							$bucket->{$s_display} += $a->{$s_display} unless $split_duration;
 
 						}
 						$bucket->{'formatted_duration'} = $duration_sayer->((abs $bucket->{'duration'}) / 1000);

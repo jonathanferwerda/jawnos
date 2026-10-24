@@ -625,7 +625,7 @@ our %topic = (
 		summary => 'An app\'s own record of what it holds and has been up to.',
 		body => [
 			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together, with statistics. The Evaluation report and the controls that run it live at the foot of the app itself.',
-			'When Duration is shown, time is counted where it was actually spent: a session that runs from late evening into the next morning gives each day the part that happened in it, while its occurrence stays with the day it started. The same split is used by the app\'s duration budget, so an overnight session does not land wholly on the day it began.'
+			'When Duration is shown, in Historical and Allocation alike, time is counted where it was actually spent: a session that runs from late evening into the next morning gives each day, hour and weekday the part that happened in it, while its occurrence stays with the period it started in. The same split is used by the app\'s duration budget, so an overnight session does not land wholly on the day it began.'
 		],
 		related => [ 'evaluation', 'measures', 'warehouse' ]
 	},
