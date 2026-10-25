@@ -1138,15 +1138,16 @@ function softKbBackspace() {
 }
 
 // ---- hold-to-repeat ---------------------------------------------------------
-// A held backspace eats whole words after a short wait. A double-tap and hold
-// repeats characters like a normal key, then climbs to a sentence at three
-// seconds and clears the field at six. The calculator repeats its expression one
-// character at a time (there are no words in a sum).
+// A held backspace repeats characters, starting after a short wait and getting
+// faster the longer it is held. A double tap takes a whole word at once, and
+// holding after it keeps taking words the same way. The calculator has no
+// words, so it always repeats its expression one character at a time.
 var JAWN_SOFT_HOLD_DELAY = 450;
-var JAWN_SOFT_WORD_EVERY = 240;
-var JAWN_SOFT_CHAR_EVERY = 60;
-var JAWN_SOFT_SENTENCE_AT = 3000;
-var JAWN_SOFT_WHOLE_AT = 6000;
+var JAWN_SOFT_CHAR_FIRST = 140;
+var JAWN_SOFT_CHAR_MIN = 30;
+var JAWN_SOFT_WORD_FIRST = 220;
+var JAWN_SOFT_WORD_MIN = 90;
+var JAWN_SOFT_ACCEL = 0.82;
 var JAWN_SOFT_DOUBLE = 380;
 var jawnSoftHold = null;
 var jawnSoftHoldAt = 0;
@@ -1178,50 +1179,7 @@ function softKbDeleteWord() {
 	softKbDeleteSpan(el, i, end);
 }
 
-// backward to the previous sentence end (. ! ? or a blank line)
-function softKbDeleteSentence() {
-	var el = jawnSoftField;
-	if (!el) { return; }
-	if (el.isContentEditable) { softKbDeleteGranularity('sentence'); return; }
-	var v = el.value || '';
-	var end = (el.selectionStart == null) ? v.length : el.selectionStart;
-	var start = (el.selectionEnd == null) ? end : el.selectionEnd;
-	if (start != end) { softKbDeleteSpan(el, start, end); return; }
-	if (end == 0) { return; }
-	var i = end;
-	while (i > 0 && /\s/.test(v.charAt(i - 1))) { i--; }
-	while (i > 0) {
-		var c = v.charAt(i - 1);
-		i--;
-		if (c == '.' || c == '!' || c == '?') { break; }
-		if (c == '\n' && i > 0 && v.charAt(i - 1) == '\n') { i--; break; }
-	}
-	softKbDeleteSpan(el, i, end);
-}
-
-function softKbDeleteAll() {
-	var el = jawnSoftField;
-	if (!el) { return; }
-	if (el.isContentEditable) {
-		try { el.focus({ preventScroll: true }); } catch (err) {}
-		try {
-			var range = document.createRange();
-			range.selectNodeContents(el);
-			var sel = window.getSelection();
-			sel.removeAllRanges();
-			sel.addRange(range);
-			document.execCommand('delete');
-		} catch (err2) { try { document.execCommand('delete'); } catch (err3) {} }
-		softKbNotify(el);
-		return;
-	}
-	el.value = '';
-	el.selectionStart = el.selectionEnd = 0;
-	try { el.focus({ preventScroll: true }); } catch (err4) {}
-	softKbNotify(el);
-}
-
-// contenteditable: let the selection walk back by a word/sentence, then delete
+// contenteditable: let the selection walk back by a word, then delete
 function softKbDeleteGranularity(gran) {
 	var el = jawnSoftField;
 	if (!el) { return; }
@@ -1243,9 +1201,6 @@ function softKbDeleteGranularity(gran) {
 function softKbRepeatStop() {
 	if (!jawnSoftHold) { return; }
 	clearTimeout(jawnSoftHold.timer);
-	clearInterval(jawnSoftHold.interval);
-	clearTimeout(jawnSoftHold.sentence);
-	clearTimeout(jawnSoftHold.whole);
 	jawnSoftHold = null;
 	jawnSoftHoldAt = Date.now();
 }
@@ -1255,37 +1210,30 @@ function softKbRepeatBegin() {
 	if (!hold) { return; }
 	if (!jawnSoftField) { softKbRepeatStop(); return; }
 	if (hold.mode == 'calc') {
-		hold.interval = setInterval(function () {
-			if (!jawnSoftField) { softKbRepeatStop(); return; }
-			softKbCalcKey('backspace');
-		}, JAWN_SOFT_CHAR_EVERY);
+		softKbRepeatStart(hold, JAWN_SOFT_CHAR_FIRST, JAWN_SOFT_CHAR_MIN, function () { softKbCalcKey('backspace'); });
 		return;
 	}
 	if (hold.mode == 'word') {
-		hold.interval = setInterval(function () {
-			if (!jawnSoftField) { softKbRepeatStop(); return; }
-			softKbDeleteWord();
-		}, JAWN_SOFT_WORD_EVERY);
+		softKbRepeatStart(hold, JAWN_SOFT_WORD_FIRST, JAWN_SOFT_WORD_MIN, softKbDeleteWord);
 		return;
 	}
-	// double-tap hold: characters first, then sentences, then the whole field
-	hold.interval = setInterval(function () {
-		if (!jawnSoftField) { softKbRepeatStop(); return; }
-		softKbBackspace();
-	}, JAWN_SOFT_CHAR_EVERY);
-	hold.sentence = setTimeout(function () {
-		if (!jawnSoftHold) { return; }
-		clearInterval(jawnSoftHold.interval);
-		jawnSoftHold.interval = setInterval(function () {
-			if (!jawnSoftField) { softKbRepeatStop(); return; }
-			softKbDeleteSentence();
-		}, 400);
-	}, JAWN_SOFT_SENTENCE_AT - JAWN_SOFT_HOLD_DELAY);
-	hold.whole = setTimeout(function () {
-		if (!jawnSoftHold) { return; }
-		softKbRepeatStop();
-		softKbDeleteAll();
-	}, JAWN_SOFT_WHOLE_AT - JAWN_SOFT_HOLD_DELAY);
+	softKbRepeatStart(hold, JAWN_SOFT_CHAR_FIRST, JAWN_SOFT_CHAR_MIN, softKbBackspace);
+}
+
+// Each repeat comes a little sooner than the last, down to a floor.
+function softKbRepeatStart(hold, every, min, fn) {
+	hold.every = every;
+	hold.min = min;
+	hold.fn = fn;
+	hold.timer = setTimeout(function () { softKbRepeatStep(hold); }, every);
+}
+
+function softKbRepeatStep(hold) {
+	if (jawnSoftHold !== hold) { return; }
+	if (!jawnSoftField) { softKbRepeatStop(); return; }
+	hold.fn();
+	hold.every = Math.max(hold.min, Math.round(hold.every * JAWN_SOFT_ACCEL));
+	hold.timer = setTimeout(function () { softKbRepeatStep(hold); }, hold.every);
 }
 
 // The backspace press itself still deletes at once; the hold is armed behind it.
@@ -1299,12 +1247,16 @@ function softKbBackspaceDown(el) {
 	var double = (now - jawnSoftBackspaceAt) < JAWN_SOFT_DOUBLE;
 	jawnSoftBackspaceAt = now;
 	softKbRepeatStop();
-	softKbBackspaceOnce();
+	if (double && jawnSoftMode != 'calc') {
+		// a double tap takes the whole word at once
+		softKbDeleteWord();
+	}
+	else { softKbBackspaceOnce(); }
 	if (!jawnSoftField) { return; }
 	jawnSoftHold = {
-		mode: (jawnSoftMode == 'calc') ? 'calc' : (double ? 'fast' : 'word'),
+		mode: (jawnSoftMode == 'calc') ? 'calc' : (double ? 'word' : 'char'),
 		started: now,
-		timer: null, interval: null, sentence: null, whole: null
+		timer: null, every: 0, min: 0, fn: null
 	};
 	jawnSoftHold.timer = setTimeout(function () { softKbRepeatBegin(); }, JAWN_SOFT_HOLD_DELAY);
 }
