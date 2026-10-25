@@ -21710,6 +21710,11 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 	my $share = (defined $budget->{'elapsed'} && $budget->{'elapsed'} >= 0 && $budget->{'elapsed'} < 1) ? $budget->{'elapsed'} : 1;
 	my $typical = $autocalc->{$budget->{'scope_name'}}->{'result'} || 0;
 	my $budget_share = ($budget->{'budgeted'} || 0) * $share;
+	# a duration target is held against the real window (25h/169h when the clocks
+	# change), so its share widens with the day or week it belongs to
+	if ($circumstance eq 'duration' && defined $budget->{'full_expected'} && defined $budget->{'scope'}) {
+		$budget_share = $budget->{'full_expected'} * $budget->{'scope'} * $share;
+	}
 	my $typical_share = $typical * $share;
 	my $value = $budget->{'value'} || 0;
 	my $ov = sprintf("%.5f", $typical_share - $budget_share);
@@ -22186,18 +22191,47 @@ sub budget_calculator($data) {
 	}
 
 	if ($returner->{'budget'} && $returner->{'budgeted'}) {
-		if ($returner->{'duration'} eq $returner->{'scope'} && $returner->{'circumstance'} eq $circumstance) {
+		my $nominal_scope = $returner->{'scope'};
+		my $same_width = ($returner->{'duration'} eq $nominal_scope) ? 1 : 0;
+		# A locked day or week can be 25 hours or 169 hours long when the clocks
+		# change. The value is already read over the real window; the rate is per
+		# the nominal period, so the target for this column is that rate times the
+		# real window. Only a duration: a count, a sum or a measure is not a rate of
+		# time and must not grow with an hour the clock gained.
+		my $actual_scope;
+		if ($circumstance eq 'duration' && !$returner->{'fixed'} && ($settings->{'s_lock'} || '') eq 'on') {
+			my $caller_scope = $scope || $returner->{'scope_name'};
+			my $unit = &subs::timespan_widener($caller_scope) || '';
+			if ($unit eq 'day' || $unit eq 'week') {
+				my ($cb, $ce) = &father_time({
+					scope => $caller_scope,
+					ts => $ts,
+					lock => $settings->{'s_lock'},
+					timestamp => $timestamp
+				});
+				$actual_scope = $ce - $cb if defined $ce && defined $cb && $ce > $cb;
+			}
+		}
+		if ($same_width && $returner->{'circumstance'} eq $circumstance) {
 			$returner->{'is_scope'} = 'yes';
 		}
 
 		$returner->{'expected'} = sprintf("%.19f",$returner->{'budgeted'} / $returner->{'duration'});
-		$returner->{'formatted_budgeted'} = sprintf("%.3f", $returner->{'expected'} * $returner->{'scope'}) . ($is_measure ? $circumstance : '') . '/' . $returner->{'scope_name'};
-		$returner->{'formatted_budgeted'} = &subs::duration_sayer($returner->{'expected'} * $returner->{'duration'} / 1000) . '/' . $returner->{'scope_name'} if $circumstance eq 'duration';
+		if ($circumstance eq 'duration') {
+			# the own period wears the real window; another column keeps the nominal
+			# rate as its label, while its threshold below is scaled to the column
+			my $display_span = $same_width ? ($actual_scope || $returner->{'duration'}) : $returner->{'duration'};
+			$returner->{'formatted_budgeted'} = &subs::duration_sayer($returner->{'expected'} * $display_span / 1000) . '/' . $returner->{'scope_name'};
+		}
+		else {
+			$returner->{'formatted_budgeted'} = sprintf("%.3f", $returner->{'expected'} * $returner->{'scope'}) . ($is_measure ? $circumstance : '') . '/' . $returner->{'scope_name'};
+		}
+		if ($actual_scope) { $returner->{'scope'} = $actual_scope; }
 		$returner->{'actual'} = sprintf("%.19f", $returner->{'value'} / $returner->{'scope'});
 		$returner->{'threshold'} = $returner->{'expected'} * $returner->{'scope'};
 		$returner->{'eval'} = $returner->{'actual'} - $returner->{'expected'};
 		$returner->{'timestamp'} = $timestamp;
-		if ($scope && !$returner->{'fixed'} && $returner->{'scope'} != $returner->{'duration'} && $returner->{'circumstance'} eq $circumstance) {
+		if ($scope && !$returner->{'fixed'} && !$same_width && $returner->{'circumstance'} eq $circumstance) {
 			# The caller read a column of another width. The reading is still held
 			# against that column - the expected and the actual are rates per
 			# millisecond, so they compare across windows - but it is not the
@@ -22274,7 +22308,10 @@ sub budget_calculator($data) {
 		# at or under the target is settled, over it is the alarm. Re-read the status
 		# from the value against the target, not from the ratio.
 		if (($returner->{'direction'} || 'floor') eq 'ceiling') {
-			my $target = $returner->{'budgeted'} || 0;
+			# a duration target wears the same real-window widening as a floor
+			my $target = ($circumstance eq 'duration' && defined $returner->{'full_expected'} && defined $returner->{'scope'})
+				? $returner->{'full_expected'} * $returner->{'scope'}
+				: ($returner->{'budgeted'} || 0);
 			my $value = $returner->{'value'} || 0;
 			# a hair of float noise either side of the target is still the target
 			my $epsilon = $target * .0000000001;

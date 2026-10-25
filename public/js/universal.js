@@ -226,7 +226,7 @@ function quality_inventory(timestamp) {
 			t += ' ' + Math.floor(r) + 's';
 		}
 	}
-	if (minutes >= 60 && hours <= 24 ) { 
+	if (minutes >= 60 && hours <= 75 ) { 
 		t += Math.floor(hours) + 'h';
 		var r = (hours - Math.floor(hours)) * 60;
 		if (Math.floor(r) > 0) {
@@ -237,7 +237,7 @@ function quality_inventory(timestamp) {
 			t += ' ' + Math.floor(r * 60) + 's';
 		}
 	}
-	if (hours > 24 && days <= 90) { 
+	if (hours > 75 && days <= 90) { 
 		t += Math.floor(days) + 'd';
 		var r = (days - Math.floor(days)) * 24;
 		if (Math.floor(r) > 0) {
@@ -249,10 +249,10 @@ function quality_inventory(timestamp) {
 		}
 
 	}
-	if (days > 90 && months < 24) { 
+	if (days > 90 && years < 1) { 
 		t += numeral(months).format('0,0.0000') + 'M';
 	}
-	if (years >= 2) { 
+	if (years >= 1) { 
 		t += Math.floor(years) + 'y';
 		var r = years - Math.floor(years);
 		r = r * 12;
