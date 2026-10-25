@@ -34089,7 +34089,30 @@ sub remote_input_geometry {
 	return $remote_input_geometry_cache;
 }
 
+# Adjacent moves and typed characters are one action each: a fast typist must
+# not become a process per character, and a dragged pointer only needs its last
+# position. Runs on both sides so a batch that crossed a handshake is still one
+# string.
+sub remote_input_coalesce($events) {
+	my @out;
+	foreach my $e ( @{$events} ) {
+		next unless ref $e eq 'HASH';
+		my $last = @out ? $out[-1] : undef;
+		if (($e->{'t'} || '') eq 'move' && $last && ($last->{'t'} || '') eq 'move') {
+			$out[-1] = $e;
+		}
+		elsif (($e->{'t'} || '') eq 'type' && $last && ($last->{'t'} || '') eq 'type') {
+			$last->{'s'} = substr((($last->{'s'} // '') . ($e->{'s'} // '')), -2000);
+		}
+		else {
+			push @out, $e;
+		}
+	}
+	return \@out;
+}
+
 sub remote_input_apply($events) {
+	$events = &remote_input_coalesce($events);
 	my $geometry = &remote_input_geometry();
 	my $applied = 0;
 	foreach my $e ( @{$events} ) {
@@ -34131,6 +34154,9 @@ sub remote_input_apply($events) {
 		elsif ($t eq 'type') {
 			my $text = $e->{'s'} // '';
 			next unless length $text;
+			# xdotool and dotool read bytes; a character string would warn and
+			# could lose an accent.
+			utf8::encode($text) if utf8::is_utf8($text);
 			$applied++ if &remote_input::inject('type', substr($text, 0, 4096));
 		}
 		elsif ($t eq 'release') {
@@ -34170,15 +34196,72 @@ post '/manager/remote_input' => sub($c) {
 	});
 };
 
-# The local half: this machine's remote_control panel sends a batch for a peer.
-# The agent is kept per peer so a woken screen does not pay for a new signed
-# connection on every pointer move; a tunnel that moved is a new key.
+# The same input over one persistent socket. The HTTP route above signs and
+# verifies every batch with an openssl process at each end; a live keyboard
+# cannot pay that on every character. The socket is opened once, signed at the
+# handshake, and frames after that are just bytes in order.
+websocket '/manager/remote_input/ws' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	unless (&subs::peer_allows($c, $rm, 'remote_control')) { $c->rendered(403); return; }
+	my $geometry = &remote_input_geometry();
+	$c->send(&remote_input_frame({
+		t => 'hello',
+		backend => &remote_input::backend(),
+		screen => ($geometry ? [ $geometry->[0], $geometry->[1] ] : undef),
+	}));
+	$c->on(message => sub($ws, $msg) {
+		my $m = eval { decode_json $msg } || {};
+		my $events = $m->{'events'};
+		$events = eval { decode_json $events } unless ref $events eq 'ARRAY';
+		return unless ref $events eq 'ARRAY';
+		$#$events = 119 if @{$events} > 120;
+		&remote_input_apply($events);
+		# A release ends the session; the target closes the control socket so an
+		# idle authenticated channel does not outlive the hold.
+		if (grep { ref $_ eq 'HASH' && (($_->{'t'} || '') eq 'release') } @{$events}) {
+			$ws->finish;
+		}
+	});
+};
+
 our %remote_input_ua;
-sub remote_input_send($data) {
-	my $uuid = $data->{'uuid'};
+our %remote_input_ws;
+our %remote_input_rm;
+
+# The roster row is read on every batch otherwise (a SQLite query per 6 ms of
+# typing). Ten seconds is long enough to save the work and short enough to
+# follow a tunnel that moved.
+sub remote_input_machine($uuid) {
+	return undef unless $uuid;
+	my $hit = $remote_input_rm{$uuid};
+	return $hit->{'rm'} if $hit && time - $hit->{'at'} < 10;
 	my $rm = &subs::remote_machine_lister({ uuid => $uuid, limit => 1 });
-	return { ok => 0, error => 'no such machine' } unless $rm && $rm->{'uuid'} && $rm->{'manager'};
-	my $cache_key = $uuid . '|' . $rm->{'manager'};
+	$remote_input_rm{$uuid} = { rm => $rm, at => time } if $rm;
+	return $rm;
+}
+
+sub remote_input_batch($events) {
+	$events = eval { decode_json $events } unless ref $events eq 'ARRAY';
+	$events = [] unless ref $events eq 'ARRAY';
+	$#$events = 119 if @{$events} > 120;
+	return $events;
+}
+
+# Mojo builds a text frame from a character string and would encode a byte
+# string again, so an accented letter typed on one side would arrive mangled.
+# Decode exactly once, as websocket_sender does.
+sub remote_input_frame($object) {
+	my $wire = encode_json($object);
+	utf8::decode($wire) if defined $wire && length $wire && !utf8::is_utf8($wire);
+	return $wire;
+}
+
+# The signed HTTP relay, used when a control socket cannot be opened. Every call
+# signs and verifies with openssl, which is exactly why the socket exists.
+sub remote_input_http($rm, $events) {
+	my $cache_key = ($rm->{'uuid'} || '') . '|' . ($rm->{'manager'} || '');
 	my $ua = $remote_input_ua{$cache_key};
 	unless ($ua) {
 		my $peer = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm });
@@ -34190,16 +34273,123 @@ sub remote_input_send($data) {
 	my $res = eval {
 		$ua->post($rm->{'manager'} . '/manager/remote_input' => form => {
 			signatorial => &subs::signatorial_designer(),
-			events => $data->{'events'} || '[]',
+			events => $events,
 		})->result;
 	};
 	unless ($res && $res->is_success) {
 		my $status = $res ? $res->code : '';
-		return { ok => 0, error => 'no reply from ' . ($rm->{'hostname'} || $rm->{'fqdn'} || $uuid) . ($status ? " ($status)" : '') };
+		return { ok => 0, error => 'no reply from ' . ($rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'uuid'} || '') . ($status ? " ($status)" : '') };
 	}
 	my $parsed = eval { decode_json $res->body };
 	return $parsed if ref $parsed eq 'HASH';
 	return { ok => 0, error => 'that machine did not understand the input' };
+}
+
+# One open control socket per peer. Signing the handshake is the expensive part
+# (openssl on each end), so it is paid once and the frames after it are cheap.
+# The handshake is asynchronous: a keyboard must not wait on a worker to dial
+# and sign before the next character is accepted. Batches that arrive while it
+# dials wait in `pending`; a handshake that fails sends them by the signed HTTP
+# route and tells the tab why.
+sub remote_input_socket_for($rm, $browser_tab_id, $events) {
+	my $key = ($rm->{'uuid'} || $rm->{'signatorial'} || '') . '|' . ($rm->{'manager'} || '');
+	my $entry = $remote_input_ws{$key};
+	if ($entry) {
+		$entry->{'browser_tab_id'} = $browser_tab_id if $browser_tab_id;
+		if ($entry->{'socket'}) {
+			$entry->{'socket'}->send(&remote_input_frame({ events => &remote_input_batch($events) }));
+		}
+		else {
+			push @{$entry->{'pending'}}, $events;
+			splice(@{$entry->{'pending'}}, 0, @{$entry->{'pending'}} - 50) if @{$entry->{'pending'}} > 50;
+		}
+		return 1;
+	}
+	my $manager = $rm->{'manager'} || '';
+	return 0 unless $manager;
+	my $url = $manager;
+	$url =~ s{^https://}{wss://}i;
+	$url =~ s{^http://}{ws://}i;
+	$url =~ s{/manager/?$}{}i;
+	$url .= '/manager/remote_input/ws?signatorial=' . uri_encode(&subs::signatorial_designer());
+	my $ua = Mojo::UserAgent->new;
+	$ua->insecure(1);
+	$ua->connect_timeout(4);
+	$ua->inactivity_timeout(20);
+	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+	$entry = {
+		ua => $ua,
+		uuid => $rm->{'uuid'} || '',
+		browser_tab_id => $browser_tab_id || '',
+		pending => [ $events ],
+	};
+	$remote_input_ws{$key} = $entry;
+	$ua->websocket($url => sub {
+		my ($ua, $tx) = @_;
+		my $socket = ($tx && $tx->is_websocket) ? $tx->res->websocket : undef;
+		unless ($socket) {
+			my $pending = delete $entry->{'pending'} || [];
+			delete $remote_input_ws{$key};
+			# One HTTP relay for everything that waited, in order.
+			my @all;
+			foreach my $batch (@{$pending}) {
+				push @all, @{ &remote_input_batch($batch) };
+			}
+			@all = @{ &remote_input_coalesce(\@all) };
+			$#all = 119 if @all > 120;
+			my $result = &remote_input_http($rm, encode_json(\@all));
+			my $dest = $entry->{'browser_tab_id'} || '';
+			if ($dest) {
+				&Websocket::send('server', {
+					%{$result},
+					type => 'remote_input_result',
+					destination => $dest,
+					remote_uuid => $entry->{'uuid'},
+				});
+			}
+			return;
+		}
+		$entry->{'socket'} = $socket;
+		$entry->{'tx'} = $tx;
+		$ua->inactivity_timeout(0);
+		$socket->on(message => sub($socket, $msg) {
+			my $m = eval { decode_json $msg } || {};
+			return unless (($m->{'t'} || '') eq 'hello');
+			my $dest = $entry->{'browser_tab_id'} || '';
+			return unless $dest;
+			&Websocket::send('server', {
+				type => 'remote_input_result',
+				destination => $dest,
+				ok => 1,
+				backend => $m->{'backend'},
+				screen => $m->{'screen'},
+				remote_uuid => $entry->{'uuid'},
+			});
+		});
+		$socket->on(finish => sub { delete $remote_input_ws{$key}; });
+		my $pending = delete $entry->{'pending'} || [];
+		my @all;
+		foreach my $batch (@{$pending}) {
+			push @all, @{ &remote_input_batch($batch) };
+		}
+		@all = @{ &remote_input_coalesce(\@all) };
+		$#all = 119 if @all > 120;
+		$socket->send(&remote_input_frame({ events => \@all })) if @all;
+	});
+	return 1;
+}
+
+sub remote_input_send($data) {
+	my $uuid = $data->{'uuid'};
+	my $rm = &remote_input_machine($uuid);
+	return { ok => 0, error => 'no such machine' } unless $rm && $rm->{'uuid'} && $rm->{'manager'};
+	my $events = $data->{'events'};
+	$events = encode_json($events) if ref $events eq 'ARRAY';
+	$events = '[]' unless defined $events && length $events;
+	if (&remote_input_socket_for($rm, $data->{'browser_tab_id'}, $events)) {
+		return { ok => 1, queued => 1 };
+	}
+	return &remote_input_http($rm, $events);
 }
 
 post '/manager/remote_input/send' => sub($c) {
@@ -34209,7 +34399,9 @@ post '/manager/remote_input/send' => sub($c) {
 	# The browser bounds its own queue; this is the server's backstop against a
 	# caller that ignores the rules.
 	if (length($events) > 65536) { $c->render(json => { ok => 0, error => 'too many events at once' }); return; }
-	$c->render(json => remote_input_send({ uuid => $uuid, events => $events }));
+	$c->render(json => remote_input_send({
+		uuid => $uuid, events => $events, browser_tab_id => $c->param('browser_tab_id')
+	}));
 };
 
 # The remote_control panel's VPN button. The exit node is a property of this
@@ -45672,6 +45864,26 @@ websocket '/manager/ws' => sub ($c) {
 			my $cols = int($data->{'cols'} || 0);
 			if ($rows > 0 && $rows <= 500 && $cols > 0 && $cols <= 1000) {
 				&terminal_session_resize($data->{'terminal_id'}, $rows, $cols);
+			}
+		}
+		elsif (($data->{'type'} || '') eq 'remote_input') {
+			# The remote_control panel sends its pointer/key batches over this
+			# already-open socket: one frame, no request and no openssl per
+			# character. A peer that has no live control socket yet (or fell
+			# back after a restart) is served by the signed HTTP route, whose
+			# answer goes back to the tab here.
+			my $result = remote_input_send({
+				uuid => $data->{'remote_uuid'},
+				events => $data->{'events'} || [],
+				browser_tab_id => $browser_tab_id,
+			});
+			if ($result && !$result->{'queued'}) {
+				&Websocket::send('server', {
+					%{$result},
+					type => 'remote_input_result',
+					destination => $browser_tab_id,
+					remote_uuid => $data->{'remote_uuid'},
+				});
 			}
 		}
 		elsif ($data->{'type'} eq 'synth' && $app eq 'music') {

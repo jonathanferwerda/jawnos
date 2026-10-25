@@ -24,8 +24,13 @@
 		locked: false,
 		wantedLock: false,
 		edgeArmed: false,
+		lastClient: { x: null, y: null },
+		lastScreen: { x: null, y: null },
+		lastMouseAt: 0,
+		mouseHasMovement: false,
 		queue: [],
 		flushTimer: null,
+		flushDelay: null,
 		inFlight: false,
 		sending: false,
 		cooldownUntil: 0,
@@ -98,28 +103,65 @@
 	function clearQueue() {
 		R.queue = [];
 		if (R.flushTimer) { clearTimeout(R.flushTimer); R.flushTimer = null; }
+		R.flushDelay = null;
 	}
 
 	function pushEvent(ev) {
 		if (!R.on || !R.uuid) { return; }
 		var q = R.queue;
-		if (ev.t === 'move' && q.length && q[q.length - 1].t === 'move') {
+		var last = q.length ? q[q.length - 1] : null;
+		if (ev.t === 'move' && last && last.t === 'move') {
 			q[q.length - 1] = ev;
+		}
+		else if (ev.t === 'type' && last && last.t === 'type') {
+			// one string is one type action on the other machine: typing a word
+			// must not become a process per character
+			last.s = (last.s + ev.s).slice(-2000);
 		}
 		else {
 			q.push(ev);
 			if (q.length > 300) { q.splice(0, q.length - 300); }
 		}
-		scheduleFlush();
+		scheduleFlush(ev.t === 'move' ? 18 : 6);
 	}
 
-	function scheduleFlush() {
-		if (R.flushTimer) { return; }
-		R.flushTimer = setTimeout(flush, 24);
+	function scheduleFlush(delay) {
+		delay = (typeof delay === 'number') ? delay : 12;
+		if (R.flushTimer) {
+			// a key waits for a shorter turn than a move already scheduled
+			if (delay >= R.flushDelay) { return; }
+			clearTimeout(R.flushTimer);
+		}
+		R.flushDelay = delay;
+		R.flushTimer = setTimeout(function () {
+			R.flushTimer = null;
+			R.flushDelay = null;
+			flush();
+		}, delay);
+	}
+
+	// The input socket: send over the already-open manager websocket when it is
+	// there, so a batch costs one frame instead of a request. The manager hands
+	// it to the peer over one persistent control socket (the handshake is the
+	// expensive signed part), and the HTTP route remains the fallback.
+	function socketSend(events) {
+		if (typeof ws === 'undefined' || !ws || !ws['server'] || ws['server'].readyState !== 1) { return false; }
+		try {
+			ws['server'].send(JSON.stringify({
+				app: 'server',
+				type: 'remote_input',
+				browser_tab_id: sessionStorage.getItem('browser_tab_id') || '',
+				remote_uuid: R.uuid,
+				events: events
+			}));
+			return true;
+		}
+		catch (e) { return false; }
 	}
 
 	function flush() {
 		R.flushTimer = null;
+		R.flushDelay = null;
 		if (!R.uuid) { return; }
 		if (!R.on) {
 			// A release may still be waiting behind a batch that was in flight when
@@ -132,13 +174,18 @@
 		if (R.inFlight) { scheduleFlush(); return; }
 		var batch = R.queue;
 		R.queue = [];
+		if (socketSend(batch)) { return; }
 		R.inFlight = true;
 		$.ajax({
 			url: '/manager/remote_input/send',
 			type: 'POST',
 			dataType: 'json',
 			timeout: 12000,
-			data: { remote_uuid: R.uuid, events: JSON.stringify(batch) },
+			data: {
+				remote_uuid: R.uuid,
+				events: JSON.stringify(batch),
+				browser_tab_id: sessionStorage.getItem('browser_tab_id') || ''
+			},
 			success: function (r) {
 				if (!r || r.ok === 0 || r.ok === false) {
 					R.lastError = (r && r.error) || jawnosT('That machine refused the input.');
@@ -178,13 +225,14 @@
 			scheduleFlush();
 			return;
 		}
+		if (socketSend([ev])) { return; }
 		R.inFlight = true;
 		$.ajax({
 			url: '/manager/remote_input/send',
 			type: 'POST',
 			dataType: 'json',
 			timeout: 8000,
-			data: { remote_uuid: R.uuid, events: JSON.stringify([ev]) },
+			data: { remote_uuid: R.uuid, events: JSON.stringify([ev]), browser_tab_id: sessionStorage.getItem('browser_tab_id') || '' },
 			complete: function () {
 				R.inFlight = false;
 				if (R.queue.length) { scheduleFlush(); }
@@ -194,6 +242,47 @@
 
 	function isControlTarget(e) {
 		return !!(e.target && $(e.target).closest('#remote_input_controls').length);
+	}
+
+	function numberOr(value, fallback) {
+		return (typeof value === 'number' && isFinite(value)) ? value : fallback;
+	}
+
+	// One move path for both a locked pointer and a free one. A locked pointer
+	// has frozen client coordinates on some WebViews and no movementX on
+	// others; an unlocked pointer is most honestly tracked by the cursor's own
+	// change. Reading the wrong one is what pinned the other screen to an edge.
+	function onMove(e) {
+		if (!R.on) { return; }
+		if (!R.controlling) {
+			var armed = !!(R.uuid && Date.now() > R.cooldownUntil && atEdge(e.clientX, e.clientY));
+			if (armed !== R.edgeArmed) {
+				R.edgeArmed = armed;
+				paints();
+			}
+			return;
+		}
+		var dx = 0, dy = 0;
+		if (!R.locked && R.lastClient.x !== null && typeof e.clientX === 'number') {
+			dx = e.clientX - R.lastClient.x;
+			dy = e.clientY - R.lastClient.y;
+		}
+		else {
+			dx = numberOr(e.movementX, numberOr(e.webkitMovementX, numberOr(e.mozMovementX, 0)));
+			dy = numberOr(e.movementY, numberOr(e.webkitMovementY, numberOr(e.mozMovementY, 0)));
+			if (!dx && !dy && R.lastScreen.x !== null && typeof e.screenX === 'number') {
+				dx = e.screenX - R.lastScreen.x;
+				dy = e.screenY - R.lastScreen.y;
+			}
+		}
+		R.lastClient = { x: e.clientX, y: e.clientY };
+		R.lastScreen = { x: e.screenX, y: e.screenY };
+		if (!dx && !dy) { return; }
+		R.pos.x = Math.max(0, Math.min(1, R.pos.x + dx / Math.max(1, window.innerWidth)));
+		R.pos.y = Math.max(0, Math.min(1, R.pos.y + dy / Math.max(1, window.innerHeight)));
+		if (!R.returnArmed && awayFromStart()) { R.returnArmed = true; }
+		pushEvent({ t: 'move', x: R.pos.x, y: R.pos.y });
+		if (R.returnArmed && backToStart()) { release('edge'); }
 	}
 
 	function atEdge(x, y) {
@@ -234,6 +323,8 @@
 		R.edgeArmed = false;
 		R.pos = startPosition(R.edge);
 		R.returnArmed = false;
+		R.lastClient = { x: null, y: null };
+		R.lastScreen = { x: null, y: null };
 		R.wantedLock = true;
 		try {
 			var target = document.documentElement;
@@ -342,41 +433,18 @@
 		if (R.bound) { return; }
 		R.bound = true;
 
+		document.addEventListener('mousemove', function (e) {
+			R.lastMouseAt = Date.now();
+			R.mouseHasMovement = (typeof e.movementX === 'number' || typeof e.movementY === 'number');
+			onMove(e);
+		}, true);
+
 		document.addEventListener('pointermove', function (e) {
-			if (!R.on) { return; }
-			if (!R.controlling) {
-				var armed = !!(R.uuid && Date.now() > R.cooldownUntil
-					&& atEdge(e.clientX, e.clientY));
-				if (armed !== R.edgeArmed) {
-					R.edgeArmed = armed;
-					paints();
-				}
-				return;
-			}
-			var dx = (typeof e.movementX === 'number') ? e.movementX : 0;
-			var dy = (typeof e.movementY === 'number') ? e.movementY : 0;
-			if (!R.locked) {
-				// Without a pointer lock the cursor stops at the screen edge, so
-				// the position is read directly; movementX carries the push past
-				// the edge where the browser reports it.
-				if (dx || dy) {
-					R.pos.x += dx / Math.max(1, window.innerWidth);
-					R.pos.y += dy / Math.max(1, window.innerHeight);
-				}
-				else {
-					R.pos.x = e.clientX / Math.max(1, window.innerWidth);
-					R.pos.y = e.clientY / Math.max(1, window.innerHeight);
-				}
-			}
-			else {
-				R.pos.x += dx / Math.max(1, window.innerWidth);
-				R.pos.y += dy / Math.max(1, window.innerHeight);
-			}
-			R.pos.x = Math.max(0, Math.min(1, R.pos.x));
-			R.pos.y = Math.max(0, Math.min(1, R.pos.y));
-			if (!R.returnArmed && awayFromStart()) { R.returnArmed = true; }
-			pushEvent({ t: 'move', x: R.pos.x, y: R.pos.y });
-			if (R.returnArmed && backToStart()) { release('edge'); }
+			// the mouse is handled by mousemove when that event carries deltas;
+			// pointermove does not always carry movementX/movementY, so it is the
+			// fallback rather than a second copy of the same move
+			if (e.pointerType === 'mouse' && R.mouseHasMovement && Date.now() - R.lastMouseAt < 50) { return; }
+			onMove(e);
 		}, true);
 
 		document.addEventListener('pointerdown', function (e) {
@@ -531,6 +599,26 @@
 	}
 
 	// ---------------------------------------------------------------- entry
+
+	window.jawnosRemoteInputResult = function (data) {
+		if (!data) { return; }
+		if (data.remote_uuid && R.uuid && data.remote_uuid !== R.uuid) { return; }
+		if (data.ok === 0 || data.ok === false) {
+			R.lastError = data.error || jawnosT('That machine refused the input.');
+			paints();
+			return;
+		}
+		R.backend = data.backend || R.backend;
+		R.screen = data.screen || R.screen;
+		R.lastError = '';
+		if (R.backend === 'none') {
+			R.lastError = jawnosT('That machine has no input backend installed.');
+		}
+		else if (!R.screen) {
+			R.lastError = jawnosT('That machine does not know its screen size.');
+		}
+		paints();
+	};
 
 	window.jawnosRemoteInputInit = function () {
 		bind();

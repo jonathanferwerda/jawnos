@@ -921,6 +921,10 @@ function wsMessageHandler(event) {
 		}
 
 
+		if (data['type'] == 'remote_input_result' && typeof jawnosRemoteInputResult == 'function') {
+			jawnosRemoteInputResult(data);
+		}
+
 		if (data['type'] == 'remote_control') {
 			if (data['value'] && data['value'] != '') {
 				if (data['control'] == 'progress_bar') {
