@@ -1011,7 +1011,12 @@ function softKbDictateToggle() {
 	jawnDictate.lang = String(softKbLayout().lang || 'auto').split('-')[0];
 	softKbMicState();
 	softKbDictateHint(softKbLabel('Listening…'));
-	navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+	// the conversation's capture settings, so the one room floor both readers
+	// share is measured on signals processed the same way
+	var dictate_mic = navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } }).catch(function () {
+		return navigator.mediaDevices.getUserMedia({ audio: true });
+	});
+	dictate_mic.then(function (stream) {
 		if (!jawnSoftListening || session != jawnDictate.session) {
 			stream.getTracks().forEach(function (t) { try { t.stop(); } catch (err) {} });
 			return;
@@ -1023,10 +1028,16 @@ function softKbDictateToggle() {
 		try {
 			jawnDictate.audio = new (window.AudioContext || window.webkitAudioContext)();
 			var src = jawnDictate.audio.createMediaStreamSource(stream);
+			// the same high pass the Guide's conversation uses: a fan's low rumble
+			// must not be the room either side of the shared floor
+			var hp = jawnDictate.audio.createBiquadFilter();
+			hp.type = 'highpass';
+			hp.frequency.value = 180;
+			src.connect(hp);
 			jawnDictate.analyser = jawnDictate.audio.createAnalyser();
 			jawnDictate.analyser.fftSize = 1024;
 			jawnDictate.data = new Uint8Array(jawnDictate.analyser.fftSize);
-			src.connect(jawnDictate.analyser);
+			hp.connect(jawnDictate.analyser);
 		}
 		catch (err) { jawnDictate.analyser = null; jawnDictate.data = null; }
 		softKbDictateSegment();

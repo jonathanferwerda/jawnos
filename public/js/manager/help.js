@@ -567,7 +567,7 @@ function helpAsk() {
 // pipeline turn it into words. In a conversation the clip ends itself once
 // speech has been heard and the room falls quiet, so nobody has to press Stop
 // between turns.
-var jawn_clip = { recorder: null, chunks: [], listening: false, cb: null, discard: false, meter: null, maxtimer: null, audioctx: null, owner: null };
+var jawn_clip = { recorder: null, chunks: [], pcm: [], pcm_rate: 0, listening: false, cb: null, discard: false, meter: null, maxtimer: null, audioctx: null, owner: null };
 
 function jawnClipListening() { return jawn_clip.listening; }
 
@@ -575,6 +575,55 @@ function jawnClipCleanup() {
 	if (jawn_clip.meter) { clearInterval(jawn_clip.meter); jawn_clip.meter = null; }
 	if (jawn_clip.maxtimer) { clearTimeout(jawn_clip.maxtimer); jawn_clip.maxtimer = null; }
 	if (jawn_clip.audioctx) { try { jawn_clip.audioctx.close(); } catch (e) {} jawn_clip.audioctx = null; }
+}
+
+// WebKit's MP4/AAC recorder reports support and then produces no data at all, so
+// a type that actually writes (webm/ogg first) is preferred over the default.
+function jawnClipMime() {
+	if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) { return ''; }
+	var types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/mp4'];
+	try {
+		for (var i = 0; i < types.length; i++) {
+			if (MediaRecorder.isTypeSupported(types[i])) { return types[i]; }
+		}
+	}
+	catch (e) { return ''; }
+	return '';
+}
+
+// The fallback clip: the samples the room reader already saw, written as a plain
+// 16-bit mono WAV that ffmpeg (and so whisper) reads anywhere.
+function jawnClipWavBlob(pcm, rate) {
+	var n = 0, i, j;
+	for (i = 0; i < pcm.length; i++) { n += pcm[i].length; }
+	if (!n) { return new Blob([], { type: 'audio/wav' }); }
+	rate = rate || 48000;
+	var buf = new ArrayBuffer(44 + n * 2);
+	var view = new DataView(buf);
+	var put = function (off, s) { for (var k = 0; k < s.length; k++) { view.setUint8(off + k, s.charCodeAt(k)); } };
+	put(0, 'RIFF');
+	view.setUint32(4, 36 + n * 2, true);
+	put(8, 'WAVE');
+	put(12, 'fmt ');
+	view.setUint32(16, 16, true);
+	view.setUint16(20, 1, true);   // PCM
+	view.setUint16(22, 1, true);   // mono
+	view.setUint32(24, rate, true);
+	view.setUint32(28, rate * 2, true);
+	view.setUint16(32, 2, true);
+	view.setUint16(34, 16, true);
+	put(36, 'data');
+	view.setUint32(40, n * 2, true);
+	var off = 44;
+	for (i = 0; i < pcm.length; i++) {
+		var ch = pcm[i];
+		for (j = 0; j < ch.length; j++) {
+			var s = Math.max(-1, Math.min(1, ch[j]));
+			view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+			off += 2;
+		}
+	}
+	return new Blob([buf], { type: 'audio/wav' });
 }
 
 // end the clip now, or throw it away (the silence watch and the cap call this)
@@ -626,7 +675,59 @@ function jawnClipListen(opts) {
 			}
 		} catch (e) {}
 		jawn_clip.chunks = [];
-		var rec = new MediaRecorder(stream);
+		jawn_clip.pcm = [];
+		jawn_clip.pcm_rate = 0;
+
+		// One audio graph serves both readers: an analyser for the room (with a
+		// fan's low rumble taken off) and a PCM tap that can stand in for the
+		// recorder when the engine writes nothing. The tap is muted, never played.
+		var an = null;
+		try {
+			var ctx = new (window.AudioContext || window.webkitAudioContext)();
+			var src = ctx.createMediaStreamSource(stream);
+			var hp = ctx.createBiquadFilter();
+			hp.type = 'highpass';
+			hp.frequency.value = 180;
+			src.connect(hp);
+			an = ctx.createAnalyser();
+			an.fftSize = 1024;
+			hp.connect(an);
+			var mk = ctx.createScriptProcessor || ctx.createJavaScriptNode;
+			if (mk) {
+				var pcm_node = mk.call(ctx, 4096, 1, 1);
+				jawn_clip.pcm_rate = ctx.sampleRate || 48000;
+				pcm_node.onaudioprocess = function (e) {
+					if (!jawn_clip.listening || !jawn_clip.pcm) { return; }
+					var ch = e.inputBuffer.getChannelData(0);
+					try { jawn_clip.pcm.push(ch.slice()); }
+					catch (err) {
+						var copy = new Float32Array(ch.length);
+						copy.set(ch);
+						jawn_clip.pcm.push(copy);
+					}
+				};
+				var mute = ctx.createGain();
+				mute.gain.value = 0;
+				hp.connect(pcm_node);
+				pcm_node.connect(mute);
+				mute.connect(ctx.destination);
+			}
+			jawn_clip.audioctx = ctx;
+			try { if (ctx.state === 'suspended' && ctx.resume) { ctx.resume(); } } catch (err) {}
+		}
+		catch (e) { an = null; }
+
+		var mime = jawnClipMime();
+		var rec = null;
+		try { rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream); }
+		catch (err) { try { rec = new MediaRecorder(stream); } catch (err2) { rec = null; } }
+		if (!rec) {
+			jawnClipCleanup();
+			stream.getTracks().forEach(function (t) { t.stop(); });
+			if (opts.status) { opts.status('I could not start the recorder.'); }
+			if (opts.onFail) { opts.onFail('recorder'); }
+			return;
+		}
 		jawn_clip.recorder = rec;
 		jawn_clip.listening = true;
 		jawn_clip.cb = opts.onText || null;
@@ -637,11 +738,24 @@ function jawnClipListen(opts) {
 		rec.onstop = function () {
 			jawn_clip.listening = false;
 			jawn_clip.owner = null;
+			var blob = new Blob(jawn_clip.chunks, { type: rec.mimeType || 'audio/webm' });
+			var from = 'media';
+			var pcm_n = 0, pi;
+			if (jawn_clip.pcm) { for (pi = 0; pi < jawn_clip.pcm.length; pi++) { pcm_n += jawn_clip.pcm[pi].length; } }
+			// a recorder that wrote nothing (WebKit's MP4/AAC) or only a sliver is
+			// replaced by the samples the room reader already had
+			if (pcm_n > (jawn_clip.pcm_rate || 48000) * 0.2 && blob.size < 4000) {
+				blob = jawnClipWavBlob(jawn_clip.pcm, jawn_clip.pcm_rate);
+				from = 'wav';
+			}
+			jawn_clip.last_from = from;
+			jawn_clip.pcm = [];
+			jawn_clip.pcm_rate = 0;
 			jawnClipCleanup();
 			stream.getTracks().forEach(function (t) { t.stop(); });
 			if (opts.onend) { opts.onend(); }
 			if (jawn_clip.discard) { jawn_clip.discard = false; return; }
-			jawnClipSend(new Blob(jawn_clip.chunks, { type: rec.mimeType || 'audio/webm' }), opts);
+			jawnClipSend(blob, opts);
 		};
 		if (opts.talking) {
 			// hands-free: the clip ends by itself once speech has been heard and
@@ -649,12 +763,7 @@ function jawnClipListen(opts) {
 			// same reader the keyboard's dictation uses, rather than a fixed number
 			// a fan or a steady hiss would sit above forever.
 			if (opts.status) { opts.status('Listening…'); }
-			try {
-				var ctx = new (window.AudioContext || window.webkitAudioContext)();
-				var src = ctx.createMediaStreamSource(stream);
-				var an = ctx.createAnalyser();
-				an.fftSize = 1024;
-				src.connect(an);
+			if (an) {
 				var data = new Uint8Array(an.fftSize);
 				// the room reader lives with the keyboard's dictation; a page that
 				// has no soft keyboard still ends a turn on the old fixed floor
@@ -676,7 +785,6 @@ function jawnClipListen(opts) {
 				// in the console and the level, floor and thresholds print once a second
 				var debug_room = false;
 				try { debug_room = (localStorage.getItem('jawn_room_debug') == 'on'); } catch (e) {}
-				jawn_clip.audioctx = ctx;
 				jawn_clip.meter = setInterval(function () {
 					an.getByteTimeDomainData(data);
 					var rms = 0;
@@ -733,8 +841,9 @@ function jawnClipListen(opts) {
 					if (!quiet_since) { quiet_since = Date.now(); return; }
 					if (Date.now() - quiet_since > 1100) { jawnClipStop(); }
 				}, 120);
-				jawn_clip.maxtimer = setTimeout(function () { jawnClipStop(); }, 30000);
-			} catch (e) { jawn_clip.audioctx = null; }
+			}
+			// a clip with no analyser still needs its cap
+			jawn_clip.maxtimer = setTimeout(function () { jawnClipStop(); }, 30000);
 		}
 		else if (opts.status) { opts.status('Listening — press Stop when you are done.'); }
 		try { rec.start(250); }
@@ -789,8 +898,8 @@ function jawnClipSend(blob, opts) {
 	// diagnosing a clip that arrives empty: the same switch the room reader uses
 	try {
 		if (localStorage.getItem('jawn_room_debug') == 'on') {
-			console.log('[clip] type=' + (blob ? blob.type : 'none') + ' size=' + (blob ? blob.size : 0)
-				+ ' chunks=' + ((jawn_clip.chunks || []).length));
+			console.log('[clip] from=' + (jawn_clip.last_from || 'media') + ' type=' + (blob ? blob.type : 'none')
+				+ ' size=' + (blob ? blob.size : 0) + ' chunks=' + ((jawn_clip.chunks || []).length));
 		}
 	} catch (e) {}
 	if (!blob || !blob.size) { if (opts.status) { opts.status('I did not catch any audio.'); } if (opts.onFail) { opts.onFail('empty'); } return; }
