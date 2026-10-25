@@ -91,6 +91,9 @@ $(document).on('keyup click change input', 'textarea, .text-editor', function() 
 function appointment_chron() {
 	clearInterval(appointment_chronicler);
 	time_updater();
+	// durations are painted by the manager's own tick; give them a pass here too
+	// so a freshly loaded details panel wears its saved reading at once
+	if (typeof jawnosDetailsDurationTick === 'function') { jawnosDetailsDurationTick(); }
 	appointment_chronicler = setInterval(function(){
 		// no point repainting clocks while the page isn't on screen, or while a
 		// fullscreen video is covering it
@@ -105,7 +108,7 @@ function appointment_chron() {
 			var timestamp = $(this).attr('timestamp');
 			var display = header.closest('.wind').attr('app') || '';
 			var saved_mode = timeDisplaySaved(display);
-			if (saved_mode == 'dynamic' || saved_mode == 'exact' || saved_mode == 'fixed') {
+			if (saved_mode == 'dynamic' || saved_mode == 'hours' || saved_mode == 'minutes' || saved_mode == 'fixed') {
 				mode = saved_mode;
 				header.attr('mode', saved_mode);
 			}
@@ -130,22 +133,20 @@ function appointment_chron() {
 				}
 				header.attr('next_check', now + 3600000);
 			}
-			else if (mode == 'exact') {
-				// The long relative reading: every unit down to the second, so the
-				// same moment can also be read as "3d 3h 12m 5s".
+			else if (mode == 'hours' || mode == 'minutes') {
+				// The same span read in one unit: 130h 10m, or 7810m 22s.
+				var unit_text = mode == 'hours' ? quality_inventory_hours(timestamp) : quality_inventory_minutes(timestamp);
 				if (header.is('input') && !header.hasClass('editing')) {
-					var value = quality_inventory_exact(timestamp);
-					if (header.val() != value) { header.val(value).css({'background-color': ''}); }
+					if (header.val() != unit_text) { header.val(unit_text).css({'background-color': ''}); }
 				}
 				else if (header.hasClass('editing')) {
 					header.css({'background-color': ''});
 					return;
 				}
 				else {
-					var text = quality_inventory_exact(timestamp);
-					if (header.text() != text) { header.text(text); }
+					if (header.text() != unit_text) { header.text(unit_text); }
 				}
-				header.attr('mode', 'exact');
+				header.attr('mode', mode);
 			}
 			else {
 				// Dynamic times read "in 3m 12s" or "3d 4h ago", so they are worked out
@@ -222,102 +223,102 @@ function shorthand_name(name, shorten) {
 }
 
 function quality_inventory(timestamp) {
-	var now = numeral(Date.now()).value();
-	var then = timestamp;
-
+	// a blank attribute - a warranty or OST the row never set - is not 1970:
+	// leave the cell empty rather than reading it as fifty-odd years ago
+	if (timestamp === undefined || timestamp === null || timestamp === '') { return ''; }
+	var now = Date.now();
+	var then = Number(timestamp);
+	if (isNaN(then)) { return ''; }
 
 	var since = (now - then);
-	var t = "";
-	if (now < then) {  since = Math.abs(since); }
+	var future = since < 0;
+	if (future) { since = Math.abs(since); }
 	var seconds = (since / 1000);
 	var minutes = (seconds / 60);
 	var hours = (minutes / 60);
-	var days = numeral(hours / 24).format('0.000');
-	var weeks = numeral( days / 7 ).format('0.000');
-	var months = numeral( days / 30 ).format('0.000');
-	var seasons = numeral( days / 90 ).format('0.000');
-	var years = numeral( days / 365 ).format('0.000');
+	var days = (hours / 24);
+	var t = "";
 
+	// A month is the average calendar month and a year the average calendar
+	// year, and the month count is taken in whole months with the days left
+	// over, so eleven months never rounds up into a twelfth: a year ago reads
+	// 1y, never 12.1333M. The half day keeps 91 days from reading 2M 30d, and
+	// three whole months is where the days reading gives way to months.
+	var month_days = 30.4375;
+	var months = Math.floor((days + 0.5) / month_days);
 
 	if (seconds < 60) { 
-		t += numeral(seconds).format('10') + 's';
+		t += Math.floor(seconds) + 's';
 	}
-	if ( seconds >= 60 && minutes < 60 ) { 
+	else if (minutes < 60) { 
 		t += Math.floor(minutes) + 'm';
-		var r = (minutes - Math.floor(minutes)) * 60;
-		if (Math.floor(r) > 0) {
-			t += ' ' + Math.floor(r) + 's';
+		var r = Math.floor(seconds % 60);
+		if (r > 0) {
+			t += ' ' + r + 's';
 		}
 	}
-	if (minutes >= 60 && hours <= 75 ) { 
-		t += Math.floor(hours) + 'h';
-		var r = (hours - Math.floor(hours)) * 60;
-		if (Math.floor(r) > 0) {
-			t += ' ' + Math.floor(r) + 'm';
+	else if (Math.floor(hours) <= 75) { 
+		var parts = [];
+		var hh = Math.floor(hours);
+		var mm = Math.floor((seconds % 3600) / 60);
+		var ss = Math.floor(seconds % 60);
+		if (hh) { parts.push(hh + 'h'); }
+		if (mm) { parts.push(mm + 'm'); }
+		if (ss) { parts.push(ss + 's'); }
+		t += parts.slice(0, 2).join(' ');
+	}
+	else if (months < 3) { 
+		var parts = [];
+		var dd = Math.floor(seconds / 86400);
+		var hh = Math.floor((seconds % 86400) / 3600);
+		var mm = Math.floor((seconds % 3600) / 60);
+		parts.push(dd + 'd');
+		if (hh) { parts.push(hh + 'h'); }
+		if (mm) { parts.push(mm + 'm'); }
+		t += parts.slice(0, 2).join(' ');
+	}
+	else {
+		var years = Math.floor(months / 12);
+		var leftover_months = months % 12;
+		if (years > 0) { t += years + 'y'; }
+		if (leftover_months > 0) {
+			t += (t ? ' ' : '') + leftover_months + 'M';
 		}
-		r = r - Math.floor(r);
-		if (Math.floor(r) > 0) {
-			t += ' ' + Math.floor(r * 60) + 's';
+		var leftover_days = Math.max(0, Math.floor(days - months * month_days));
+		if (leftover_days > 0) {
+			t += (t ? ' ' : '') + leftover_days + 'd';
 		}
 	}
-	if (hours > 75 && days <= 90) { 
-		t += Math.floor(days) + 'd';
-		var r = (days - Math.floor(days)) * 24;
-		if (Math.floor(r) > 0) {
-			t += ' ' + Math.floor(r) + 'h';
-		}
-		r = (r - Math.floor(r)) * 60;
-		if (Math.floor(r) > 0) {
-			t += ' ' + Math.floor(r) + 'm';
-		}
 
-	}
-	if (days > 90 && years < 1) { 
-		t += numeral(months).format('0,0.0000') + 'M';
-	}
-	if (years >= 1) { 
-		t += Math.floor(years) + 'y';
-		var r = years - Math.floor(years);
-		r = r * 12;
-		if (Math.floor(r) > 0) {
-			t += ' ' + Math.floor(r) + 'M';
-		}
-		r = numeral((r - Math.floor(r)) * 30).format('0.000');
-		if (Math.floor(r) > 0) {
-			t += ' ' + Math.floor(r) + 'd';
-		}
-
-	}
-
-
-
-	if (now < then) { t = 'in ' + t; since = Math.abs(since); }
+	if (future) { t = 'in ' + t; }
 	return t; 
 }
 
-function quality_inventory_exact(timestamp) {
-	var now = numeral(Date.now()).value();
-	if (timestamp === undefined || timestamp === null || isNaN(timestamp)) { return ''; }
-	var future = now < timestamp;
-	var s = Math.floor(Math.abs(now - timestamp) / 1000);
-	var units = [
-		['y', 365 * 24 * 60 * 60],
-		['M', 30 * 24 * 60 * 60],
-		['d', 24 * 60 * 60],
-		['h', 60 * 60],
-		['m', 60],
-		['s', 1]
-	];
-	var parts = [];
-	for (var i = 0; i < units.length; i++) {
-		var n = Math.floor(s / units[i][1]);
-		if (n > 0) {
-			parts.push(n + units[i][0]);
-			s -= n * units[i][1];
-		}
-	}
-	if (!parts.length) { parts.push('0s'); }
-	return (future ? 'in ' : '') + parts.join(' ');
+// A span of time read in one unit: all of it in hours with the minutes left
+// over, or all of it in minutes with the seconds left over.
+function jawnosDurationHours(ms) {
+	var s = Math.floor(Math.abs(Number(ms) || 0) / 1000);
+	var h = Math.floor(s / 3600);
+	var m = Math.floor((s % 3600) / 60);
+	return h + 'h' + (m ? ' ' + m + 'm' : '');
+}
+function jawnosDurationMinutes(ms) {
+	var s = Math.floor(Math.abs(Number(ms) || 0) / 1000);
+	var m = Math.floor(s / 60);
+	var sec = s % 60;
+	return m + 'm' + (sec ? ' ' + sec + 's' : '');
+}
+function quality_inventory_hours(timestamp) {
+	var now = Date.now();
+	var then = Number(timestamp);
+	if (timestamp === undefined || timestamp === null || timestamp === '' || isNaN(then)) { return ''; }
+	return (now < then ? 'in ' : '') + jawnosDurationHours(Math.abs(now - then));
+}
+function quality_inventory_minutes(timestamp) {
+	var now = Date.now();
+	var then = Number(timestamp);
+	if (timestamp === undefined || timestamp === null || timestamp === '' || isNaN(then)) { return ''; }
+	return (now < then ? 'in ' : '') + jawnosDurationMinutes(Math.abs(now - then));
 }
 
 // The view a display keeps for its time labels. Each window's app remembers
@@ -338,6 +339,26 @@ function timeDisplaySaved(display) {
 function timeDisplaySave(display, mode) {
 	var key = timeDisplayKey(display);
 	timeDisplayCache[key] = mode;
+	try { localStorage.setItem(key, mode); } catch (e) {}
+}
+
+// The Dur column has its own three readings (there is no fixed duration), and
+// its own remembered view per display.
+var durationDisplayCache = {};
+function durationDisplayKey(display) {
+	return display ? 'duration_display:' + display : 'duration_display';
+}
+function durationDisplaySaved(display) {
+	var key = durationDisplayKey(display);
+	if (!(key in durationDisplayCache)) {
+		try { durationDisplayCache[key] = localStorage.getItem(key) || ''; }
+		catch (e) { durationDisplayCache[key] = ''; }
+	}
+	return durationDisplayCache[key];
+}
+function durationDisplaySave(display, mode) {
+	var key = durationDisplayKey(display);
+	durationDisplayCache[key] = mode;
 	try { localStorage.setItem(key, mode); } catch (e) {}
 }
 
@@ -366,7 +387,7 @@ $(document).on('dblclick', '.time', function() {
 	localStorage.setItem('time_machine',ago);
 });
 
-$(document).on('click', '.time, .appointment_header, .since', function() {
+$(document).on('click', '.time, .appointment_header, .since, .appointment_detail_duration', function() {
 	var header = $(this);
 	// the outer appointment header carries the icon but no timestamp; the time
 	// inside it is the one that reads, so only that one turns the page
@@ -375,9 +396,19 @@ $(document).on('click', '.time, .appointment_header, .since', function() {
 		// before turning the page, so one gesture is not also a mode change.
 		clearTimeout(timeClickTimer);
 		timeClickTimer = setTimeout(function() {
+			var display = header.closest('.wind').attr('app') || '';
+			if (header.hasClass('appointment_detail_duration')) {
+				// a duration has no fixed reading: short, hours, minutes
+				var dmodes = [ 'dynamic', 'hours', 'minutes' ];
+				var dcurrent = durationDisplaySaved(display) || 'dynamic';
+				var dnext = dmodes[(dmodes.indexOf(dcurrent) + 1) % dmodes.length];
+				durationDisplaySave(display, dnext);
+				if (typeof jawnosDetailsDurationTick === 'function') { jawnosDetailsDurationTick(); }
+				return;
+			}
 			// drop the fixed-mode repaint gate so the new reading shows right away
 			header.removeAttr('next_check');
-			var modes = [ 'dynamic', 'exact', 'fixed' ];
+			var modes = [ 'dynamic', 'hours', 'minutes', 'fixed' ];
 			var current = header.attr('mode') || 'dynamic';
 			var next = modes[(modes.indexOf(current) + 1) % modes.length];
 			header.attr('mode', next);
@@ -385,7 +416,6 @@ $(document).on('click', '.time, .appointment_header, .since', function() {
 				var timestamp = numeral(header.attr('timestamp')).value();
 				header.attr('formatted_time', fixedTimeString(timestamp));
 			}
-			var display = header.closest('.wind').attr('app') || '';
 			timeDisplaySave(display, next);
 			appointment_chron();
 		}, 250);

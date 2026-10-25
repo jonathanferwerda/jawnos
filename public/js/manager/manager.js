@@ -2153,32 +2153,60 @@ $(window).on('resize', function () {
 });
 
 // The details list's Dur column ticks while a session is open: the row carries
-// its start and stop, and the same two-unit shape duration_sayer gives is
-// rebuilt here (1h 5s, 59m 59s, 1d 1m).
-function jawnosDurationText(seconds) {
+// its start, stop and duration, and the same two-unit shape duration_sayer
+// gives is rebuilt here (1h 5s, 59m 59s, 1d 1m). Clicking the cell turns the
+// reading through the same pages a time label has, short of fixed: hours hold
+// until seventy-five of them, the floor quality_inventory uses, then days.
+function jawnosDurationText(seconds, mode) {
 	seconds = Math.max(0, Math.floor(Number(seconds) || 0));
-	var d = Math.floor(seconds / 86400); seconds %= 86400;
-	var h = Math.floor(seconds / 3600); seconds %= 3600;
-	var m = Math.floor(seconds / 60);
+	var h = Math.floor(seconds / 3600);
+	var m = Math.floor((seconds % 3600) / 60);
 	var s = seconds % 60;
-	var parts = [];
-	if (d) { parts.push(d + 'd'); }
-	if (h) { parts.push(h + 'h'); }
-	if (m) { parts.push(m + 'm'); }
-	if (s) { parts.push(s + 's'); }
-	return parts.length ? parts.slice(0, 2).join(' ') : '0s';
+	if (mode == 'hours') {
+		return h + 'h' + (m ? ' ' + m + 'm' : '');
+	}
+	if (mode == 'minutes') {
+		return Math.floor(seconds / 60) + 'm' + (s ? ' ' + s + 's' : '');
+	}
+	if (h <= 75) {
+		var parts = [];
+		if (h) { parts.push(h + 'h'); }
+		if (m) { parts.push(m + 'm'); }
+		if (s) { parts.push(s + 's'); }
+		return parts.length ? parts.slice(0, 2).join(' ') : '0s';
+	}
+	var d = Math.floor(seconds / 86400);
+	var dh = Math.floor((seconds % 86400) / 3600);
+	var dm = Math.floor((seconds % 3600) / 60);
+	var bits = [ d + 'd' ];
+	if (dh) { bits.push(dh + 'h'); }
+	if (dm) { bits.push(dm + 'm'); }
+	return bits.slice(0, 2).join(' ');
 }
 
 function jawnosDetailsDurationTick() {
 	var now = Date.now();
 	$('.appointment_detail_duration').each(function () {
 		var cell = $(this);
-		if (cell.attr('stop_timestamp')) { return; }
 		var type = cell.attr('appt_type') || '';
-		if (type != 'start' && type != 'record') { return; }
 		var start = Number(cell.attr('timestamp')) || 0;
-		if (!start || start > now) { return; }
-		var text = jawnosDurationText((now - start) / 1000);
+		var stop = Number(cell.attr('stop_timestamp')) || 0;
+		var ms;
+		if (!stop && (type == 'start' || type == 'record')) {
+			// an open session grows from its start
+			if (!start || start > now) { return; }
+			ms = now - start;
+		}
+		else {
+			// a closed row keeps the duration the server worked out; fall back to
+			// its own start and stop when that duration was never written
+			ms = Math.abs(Number(cell.attr('duration')) || 0);
+			if (!ms && stop && start) { ms = Math.abs(stop - start); }
+			if (!ms) { return; }
+		}
+		var display = cell.closest('.wind').attr('app') || '';
+		var mode = durationDisplaySaved(display) || 'dynamic';
+		var text = jawnosDurationText(ms / 1000, mode);
 		if (cell.text() !== text) { cell.text(text); }
 	});
 }

@@ -976,6 +976,7 @@ our %topic = (
 			'Its header carries the record\'s controls; below it, the panels are drawn from the record\'s own data and the apps that reference it.',
 			'The details list carries the record\'s models and options. Tapping an option\'s name selects or clears it - the quantity and unit sit beside it - so the words no longer launch anything. The small view button beside the name is what opens that option\'s own app.',
 			'Each row in the details table shows when it began, its duration, its warranty and its own stamp. The duration of an open session ticks every second while the window is open, in the same two-unit shape the rest of the house uses (1h 5s, 59m 59s, 1d 1m); a closed row keeps the length it was given.',
+			'Clicking a time in the row turns its reading: the short form (5d 10h), all hours (130h 10m), all minutes (7810m 22s), then the fixed stamp. Clicking a duration turns it through the same three relative readings - a duration has no fixed form. Hours hold until seventy-five of them pass, then days take over. Each window remembers the reading it was left on, so a reload comes back the same way.',
 		],
 		steps => [
 			'Open an appointment by clicking it on the timeline, or a row in any app.',

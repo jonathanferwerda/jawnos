@@ -500,6 +500,12 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 	cursor: pointer;
 }
 
+/* the Dur column turns the same way a time does, so it wears the same hand and
+   never the text cursor its cell would otherwise show */
+.appointment_detail_duration {
+	cursor: pointer;
+}
+
 .window_action {
 	cursor: pointer;
 	/* the icon is the button: the set's chrome tiles cover it whole, so the
