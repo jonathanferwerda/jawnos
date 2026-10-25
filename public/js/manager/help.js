@@ -603,7 +603,28 @@ function jawnClipListen(opts) {
 		if (opts.onFail) { opts.onFail('no microphone'); }
 		return false;
 	}
-	navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+	// A level-based end-of-turn reader needs the room as it really is. Auto gain
+	// lifts a laptop fan or a steady hiss up to speech level (a floor read at
+	// 0.29 with the room at 0.4 is a room compressed nearly to full scale), and
+	// noise suppression pumps as it gates. Echo cancellation is kept so the
+	// guide's own spoken answer does not loop back as the person's turn.
+	var mic = navigator.mediaDevices.getUserMedia({ audio: {
+		echoCancellation: true,
+		noiseSuppression: false,
+		autoGainControl: false
+	} }).catch(function () {
+		// an engine that refuses the processing hints still gets a plain stream
+		return navigator.mediaDevices.getUserMedia({ audio: true });
+	});
+	mic.then(function (stream) {
+		// what the engine actually granted, in the same debug switch the room uses
+		try {
+			if (localStorage.getItem('jawn_room_debug') == 'on') {
+				var mic_track = stream.getAudioTracks ? stream.getAudioTracks()[0] : null;
+				var mic_settings = (mic_track && mic_track.getSettings) ? mic_track.getSettings() : {};
+				console.log('[mic] ' + JSON.stringify(mic_settings));
+			}
+		} catch (e) {}
 		jawn_clip.chunks = [];
 		var rec = new MediaRecorder(stream);
 		jawn_clip.recorder = rec;
