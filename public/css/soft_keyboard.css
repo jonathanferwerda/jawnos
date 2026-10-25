@@ -23,10 +23,22 @@
 	font-size: 15px;
 	user-select: none;
 	-webkit-user-select: none;
+	/* the dock slides up from the foot of the screen and back down again; the
+	   `soft_kb_up` class is the raised position */
+	transform: translateY(100%);
+	transition: transform .22s cubic-bezier(.22, .61, .36, 1);
+}
+
+.soft_kb.soft_kb_up {
+	transform: translateY(0);
 }
 
 .soft_kb[hidden] {
 	display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.soft_kb { transition: none; }
 }
 
 /* The floating dock normally steps aside while a window is being typed in, so
@@ -58,12 +70,14 @@ body.soft_kb_open .soft_kb_search_lifted {
 }
 
 /* A finger dragged across a field selects from where it landed, so the field
-   owns that gesture rather than the page's pan. */
+   owns a sideways gesture rather than the page's pan. A drag up or down still
+   scrolls the page (pan-y), so scrolling past a field does not grab it, raise
+   the keys or place the caret. */
 input[type="text"], input[type="search"], input[type="email"], input[type="url"],
 input[type="tel"], input[type="password"], textarea, [contenteditable="true"] {
 	-webkit-user-select: text;
 	user-select: text;
-	touch-action: none;
+	touch-action: pan-y pinch-zoom;
 }
 
 /* The status lights (red, yellow and green) live in the corner the keyboard

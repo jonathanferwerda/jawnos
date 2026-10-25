@@ -2116,7 +2116,9 @@ function jawnosSearchResultsPlace() {
 	var bound = vh;
 	var kb = $('#jawn_soft_keyboard');
 	if (kb.length && kb.is(':visible')) {
-		var kb_top = kb[0].getBoundingClientRect().top;
+		// measured from its height, not its top edge: the dock slides up, and
+		// while it rises its transformed box still starts off the screen
+		var kb_top = vh - (kb.outerHeight() || 0);
 		if (kb_top > 0 && kb_top < bound) { bound = kb_top; }
 	}
 	var gap = 6;

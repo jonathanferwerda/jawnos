@@ -21,6 +21,11 @@ var jawnSoftExpr = '';
 var jawnSoftSetting = false;
 var jawnSoftKeyAt = 0;
 var jawnSoftHideTimer = null;
+var jawnSoftSlideTimer = null;
+// A drag across a field focuses it so the selection is visible; that focus is
+// not a request for the keyboard, and neither is the click that ends the drag.
+var jawnSoftDragFocus = false;
+var jawnSoftDragClick = false;
 // A desk's keyboard is the one to type with. A browser cannot enumerate input
 // devices, but a fine pointer that hovers with no phone-shaped screen is a
 // desk, and one trusted key press settles it. `forced` is the person asking
@@ -481,6 +486,41 @@ function softKbContext(el) {
 	return 'text';
 }
 
+// The dock slides its own height in from the foot of the screen. `soft_kb_up`
+// is the raised position, and `hidden` is set only once it has finished going
+// down, so a hide is not cut off halfway. A show that arrives while it is
+// leaving clears the timer and rides it back up from wherever it is.
+function softKbSlideMs() {
+	try {
+		if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { return 0; }
+	} catch (err) {}
+	return 220;
+}
+
+function softKbSlideUp(dock) {
+	clearTimeout(jawnSoftSlideTimer);
+	jawnSoftSlideTimer = null;
+	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	if (dock.hasClass('soft_kb_up')) { return; }
+	// force the closed position to be laid out first, or the transition has no
+	// start to run from when the element has only just left display:none
+	void dock[0].offsetHeight;
+	dock.addClass('soft_kb_up');
+}
+
+function softKbSlideDown(dock) {
+	clearTimeout(jawnSoftSlideTimer);
+	jawnSoftSlideTimer = null;
+	dock.removeClass('soft_kb_up');
+	if (dock.prop('hidden')) { return; }
+	jawnSoftSlideTimer = setTimeout(function () {
+		jawnSoftSlideTimer = null;
+		// something asked for the keys again while they were leaving
+		if (dock.hasClass('soft_kb_up')) { return; }
+		dock.prop('hidden', true).attr('aria-hidden', 'true');
+	}, softKbSlideMs() + 40);
+}
+
 function softKbShow(el) {
 	if (!softKbOn()) { return; }
 	el = softKbRoot(el);
@@ -498,7 +538,7 @@ function softKbShow(el) {
 	}
 	softKbSuppress(el);
 	softKbPlace(el);
-	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	softKbSlideUp(dock);
 	// the chooser is a drawer over the keys; a new field starts with it shut
 	$('#soft_kb_layouts').prop('hidden', true);
 	$('#soft_kb_layout_button').attr('aria-expanded', 'false').removeClass('active');
@@ -526,7 +566,7 @@ function softKbHide() {
 	softKbDictateStop();
 	$('#soft_kb_layouts').prop('hidden', true);
 	$('#soft_kb_layout_button').attr('aria-expanded', 'false').removeClass('active');
-	$('#jawn_soft_keyboard').prop('hidden', true).attr('aria-hidden', 'true');
+	softKbSlideDown($('#jawn_soft_keyboard'));
 	$('body').removeClass('soft_kb_open soft_kb_dock_field soft_kb_bar_field soft_kb_search_field');
 	$('.soft_kb_search_lifted').removeClass('soft_kb_search_lifted');
 	$('.chat_shell').css('padding-bottom', '');
@@ -571,7 +611,9 @@ function softKbReserve() {
 	var scroller = chat.length ? chat : $(jawnSoftField).closest('.appointment_contents, .window_contents');
 	if (!scroller.length) { return; }
 	if (!chat.length && !scroller.closest('.wind').length) { return; }
-	var dockTop = dock[0].getBoundingClientRect().top;
+	// the dock rides the screen foot and slides, so its box is measured from
+	// its height rather than its (still transformed) top edge
+	var dockTop = window.innerHeight - (dock.outerHeight() || 0);
 	var box = scroller[0].getBoundingClientRect();
 	var bottom = Math.min(box.bottom, window.innerHeight);
 	var overlap = Math.max(0, bottom - dockTop);
@@ -2245,7 +2287,11 @@ $(document).on('pointermove', function (e) {
 	if (!d.moved) {
 		if (Math.abs(e.clientX - d.x) < 6 && Math.abs(e.clientY - d.y) < 6) { return; }
 		d.moved = true;
+		// the field is focused so the selection is visible, but the dock stays
+		// down: this is a selection, not a tap that asks to type
+		jawnSoftDragFocus = true;
 		try { d.el.focus({ preventScroll: true }); } catch (err) {}
+		setTimeout(function () { jawnSoftDragFocus = false; }, 0);
 		jawnTextDragAnchor(d);
 	}
 	e.preventDefault();
@@ -2257,6 +2303,11 @@ $(document).on('pointerup pointercancel', function (e) {
 	if (!d) { return; }
 	if (e && e.pointerId != null && d.pointerId != null && e.pointerId !== d.pointerId) { return; }
 	jawnTextDrag = null;
+	// the click that closes a drag ends a selection; it is not a tap on the field
+	if (d.moved) {
+		jawnSoftDragClick = true;
+		setTimeout(function () { jawnSoftDragClick = false; }, 350);
+	}
 });
 
 document.addEventListener('pointerdown', function (e) {
@@ -2292,11 +2343,16 @@ $(document).on('focusin', function (e) {
 	var el = e.target;
 	if (!softKbOn() || !softKbEditable(el)) { return; }
 	softKbSuppress(el);
+	// a drag across the field focuses it to show the selection; that focus must
+	// not raise the keys, so scrolling or selecting never opens the keyboard
+	if (jawnSoftDragFocus) { return; }
 	softKbShow(el);
 });
 
 $(document).on('click', 'input, textarea, [contenteditable="true"]', function () {
-	if (softKbOn() && softKbEditable(this)) { softKbShow(this); }
+	if (!softKbOn() || !softKbEditable(this)) { return; }
+	if (jawnSoftDragClick) { return; }
+	softKbShow(this);
 });
 
 $(document).on('focusout', function (e) {
