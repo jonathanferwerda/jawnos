@@ -924,6 +924,7 @@ async function keyboardMaker(data) {
 					if (typeof remote_uuid === 'string') { $('#remote_control_machine_select').val(remote_uuid); }
 					keyboardManagerButton();
 					jawnosVpnRefresh();
+					if (typeof jawnosRemoteInputInit == 'function') { jawnosRemoteInputInit(); }
 				}
 
 
@@ -953,6 +954,7 @@ async function keyboardMaker(data) {
 		$('#' + toggle).parent().remove();
 		if (toggle == 'remote_control') {
 			$('#search').val('');
+			if (typeof jawnosRemoteInputStop == 'function') { jawnosRemoteInputStop(); }
 		}
 	}
 	var togglerInterval = setInterval(function() {

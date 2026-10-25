@@ -61,6 +61,7 @@ no warnings 'uninitialized';
 no warnings 'once';
 require "./Websocket.pl";
 require "./subroutines.pl";
+require "./remote_input.pl";
 require "./tls.pl";
 require "./webauthn.pl";
 require "./Music.pl";
@@ -93,6 +94,7 @@ our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
+&remote_input::set_log($log);
 my $environment = $config->{'environment'};
 our $random_caching_string = &subs::jawn_version();
 my $duty_file = &subs::home('~/.president/on_duty');
@@ -6327,6 +6329,7 @@ hook after_static => sub {
 my @manager_bundle_files = qw(
 	/js/manager/stored.js
 	/js/manager/keyboard.js
+	/js/manager/remote_input.js
 	/js/manager/text_editor_variables.js
 	/js/manager/texture.js
 	/js/manager/clothesline.js
@@ -34057,6 +34060,144 @@ post '/manager/remote_command/send' => sub($c) {
 	$c->render(json => remote_command_send({
 		uuid => $uuid, text => $c->param('text'), verb => $c->param('verb'), args => $c->param('args')
 	}));
+};
+
+# Remote keyboard and mouse, the peer half: a linked machine that this house
+# already trusts sends one batch of pointer/key events and they are injected
+# here. It is the same path the T-Deck's teletype uses, shared through
+# remote_input.pl, so an X11 or Wayland backend installed for one serves both.
+#
+# The batch is small and arrives in order from the sending manager; moves are
+# absolute fractions of this screen, so a lost or reordered batch cannot leave
+# the pointer drifting.
+# The screen does not usually change between batches, and asking xprop for it
+# on every pointer move would add a process to each one. A ten-second memory
+# keeps a monitor that is plugged in from being missed for long.
+our $remote_input_geometry_at = 0;
+our $remote_input_geometry_cache;
+sub remote_input_geometry {
+	if (time - $remote_input_geometry_at > 10 || !$remote_input_geometry_cache) {
+		$remote_input_geometry_cache = &remote_input::screen_geometry();
+		$remote_input_geometry_at = time;
+	}
+	return $remote_input_geometry_cache;
+}
+
+post '/manager/remote_input' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	# Input is the most intimate thing a peer can ask for, so it sits on the
+	# Trusted rung rather than with the ordinary house actions.
+	unless (&subs::peer_allows($c, $rm, 'remote_control')) {
+		$c->render(json => { ok => 0, error => 'this machine needs Trusted access for remote input' });
+		return;
+	}
+	my $raw = $c->param('events') || '[]';
+	my $events = length($raw) <= 65536 ? eval { decode_json $raw } : undef;
+	unless (ref $events eq 'ARRAY') {
+		$c->render(json => { ok => 0, error => 'no events' });
+		return;
+	}
+	# Every event is a process for the backend, so one batch cannot be made to
+	# hold the worker for an unbounded time.
+	$#$events = 119 if @{$events} > 120;
+	my $backend = &remote_input::backend();
+	my $geometry = &remote_input_geometry();
+	my $applied = 0;
+	foreach my $e ( @{$events} ) {
+		next unless ref $e eq 'HASH';
+		my $t = $e->{'t'} || '';
+		if ($t eq 'move') {
+			next unless $geometry && $geometry->[0] && $geometry->[1];
+			my ($w, $h) = @{$geometry};
+			my $x = int(($e->{'x'} // 0) * $w);
+			my $y = int(($e->{'y'} // 0) * $h);
+			$x = 0 if $x < 0;
+			$y = 0 if $y < 0;
+			$x = $w - 1 if $x >= $w;
+			$y = $h - 1 if $y >= $h;
+			$applied++ if &remote_input::inject('move', $x, $y, $w, $h);
+		}
+		elsif ($t eq 'move_rel') {
+			my ($dx, $dy) = (int($e->{'dx'} // 0), int($e->{'dy'} // 0));
+			next unless $dx || $dy;
+			$applied++ if &remote_input::inject('move_rel', $dx, $dy);
+		}
+		elsif ($t eq 'button') {
+			my $button = lc($e->{'b'} // 'left');
+			$button = 'left' unless $button =~ /^(?:left|middle|right)$/;
+			$applied++ if &remote_input::inject($e->{'d'} ? 'mousedown' : 'mouseup', $button);
+		}
+		elsif ($t eq 'wheel') {
+			my ($dy, $dx) = (int($e->{'dy'} // 0), int($e->{'dx'} // 0));
+			next unless $dy || $dx;
+			$applied++ if &remote_input::inject('wheel', $dy, $dx);
+		}
+		elsif ($t eq 'key') {
+			# A key spec is a name, never a sentence: it is written to dotool's
+			# stdin, where a newline would queue a second action.
+			my $spec = $e->{'k'} // '';
+			next unless $spec =~ /^[A-Za-z0-9_+]{1,40}$/;
+			$applied++ if &remote_input::inject('key', $spec);
+		}
+		elsif ($t eq 'type') {
+			my $text = $e->{'s'} // '';
+			next unless length $text;
+			$applied++ if &remote_input::inject('type', substr($text, 0, 4096));
+		}
+		elsif ($t eq 'release') {
+			$applied++ if &remote_input::inject('release');
+		}
+	}
+	$c->render(json => {
+		ok => 1,
+		applied => $applied,
+		backend => $backend,
+		screen => ($geometry ? [ $geometry->[0], $geometry->[1] ] : undef)
+	});
+};
+
+# The local half: this machine's remote_control panel sends a batch for a peer.
+# The agent is kept per peer so a woken screen does not pay for a new signed
+# connection on every pointer move; a tunnel that moved is a new key.
+our %remote_input_ua;
+sub remote_input_send($data) {
+	my $uuid = $data->{'uuid'};
+	my $rm = &subs::remote_machine_lister({ uuid => $uuid, limit => 1 });
+	return { ok => 0, error => 'no such machine' } unless $rm && $rm->{'uuid'} && $rm->{'manager'};
+	my $cache_key = $uuid . '|' . $rm->{'manager'};
+	my $ua = $remote_input_ua{$cache_key};
+	unless ($ua) {
+		my $peer = &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm });
+		$ua = $peer->{'ua'};
+	}
+	return { ok => 0, error => 'that machine is not reachable' } unless $ua;
+	$remote_input_ua{$cache_key} = $ua;
+	$ua->inactivity_timeout(8);
+	my $res = eval {
+		$ua->post($rm->{'manager'} . '/manager/remote_input' => form => {
+			signatorial => &subs::signatorial_designer(),
+			events => $data->{'events'} || '[]',
+		})->result;
+	};
+	unless ($res && $res->is_success) {
+		my $status = $res ? $res->code : '';
+		return { ok => 0, error => 'no reply from ' . ($rm->{'hostname'} || $rm->{'fqdn'} || $uuid) . ($status ? " ($status)" : '') };
+	}
+	my $parsed = eval { decode_json $res->body };
+	return $parsed if ref $parsed eq 'HASH';
+	return { ok => 0, error => 'that machine did not understand the input' };
+}
+
+post '/manager/remote_input/send' => sub($c) {
+	my $uuid = $c->param('remote_uuid');
+	unless ($uuid) { $c->render(json => { ok => 0, error => 'no machine selected' }); return; }
+	my $events = $c->param('events') || '[]';
+	# The browser bounds its own queue; this is the server's backstop against a
+	# caller that ignores the rules.
+	if (length($events) > 65536) { $c->render(json => { ok => 0, error => 'too many events at once' }); return; }
+	$c->render(json => remote_input_send({ uuid => $uuid, events => $events }));
 };
 
 # The remote_control panel's VPN button. The exit node is a property of this

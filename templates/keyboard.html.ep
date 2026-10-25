@@ -39,6 +39,39 @@
 					<button type="button" id="remote_command_send">Send</button>
 					<div id="remote_command_reply" style="font-size:13px;opacity:0.85;"></div>
 				</div>
+				<%# Keyboard and mouse sharing: the screen picked above is treated as
+				    sitting on one side of this view. Taking control sends this
+				    machine's pointer and keys to that screen, and moving back to the
+				    far edge (or pressing Escape) returns them here. The setting is
+				    per peer, because a laptop is usually to one side and a table to
+				    another. %>
+				<% my $ri_on = &subs::setting_grabber({ app => 'me', setting => 'remote_control_input' }); %>
+				<% my $ri_edge = $remote_control ? &subs::setting_grabber({ app => 'me', setting => 'remote_control_edge', subsetting => $remote_control }) : ''; %>
+				<% $ri_edge = 'right' unless defined $ri_edge && $ri_edge =~ /^(?:left|right|top|bottom)$/; %>
+				<% my $ri_display = $selected_rm ? '' : 'display:none;'; %>
+				<div id="remote_input_controls" remote_uuid="<%= $remote_control %>" data-edge="<%= $ri_edge %>" style="<%= $ri_display %>margin-top:8px;border-top:1px solid rgba(128,128,128,.35);padding-top:6px;">
+					<label style="display:block;"><input type="checkbox" id="remote_input_enabled" <% if ($ri_on eq 'on') { %>checked="checked"<% } %>> <%= &subs::lang('remote_control.input') %></label>
+					<span id="remote_input_edge_row" style="display:block;margin-top:3px;opacity:<% if ($ri_on eq 'on') { %>1<% } else { %>.55<% } %>;">
+						<%= &subs::lang('remote_control.that_screen') %>
+						<select id="remote_input_edge">
+							<option value="left" <% if ($ri_edge eq 'left') { %>selected<% } %>><%= &subs::lang('remote_control.edge_left') %></option>
+							<option value="right" <% if ($ri_edge eq 'right') { %>selected<% } %>><%= &subs::lang('remote_control.edge_right') %></option>
+							<option value="top" <% if ($ri_edge eq 'top') { %>selected<% } %>><%= &subs::lang('remote_control.edge_top') %></option>
+							<option value="bottom" <% if ($ri_edge eq 'bottom') { %>selected<% } %>><%= &subs::lang('remote_control.edge_bottom') %></option>
+						</select>
+					</span>
+					<span style="display:block;margin-top:4px;">
+						<button type="button" id="remote_input_take" class="hover" hint="<%= &subs::ui('Send this machine\'s keyboard and mouse to the selected machine') %>"><%= &subs::lang('remote_control.take') %></button>
+						<button type="button" id="remote_input_return" class="hover" style="display:none;" hint="<%= &subs::ui('Bring the keyboard and mouse back to this machine') %>"><%= &subs::lang('remote_control.release') %></button>
+						<span id="remote_input_state" style="font-size:12px;opacity:.85;"></span>
+					</span>
+					<div id="remote_input_type_wrap" style="display:none;margin-top:4px;">
+						<input type="text" id="remote_input_type" style="width:65%;vertical-align:top;" placeholder="<%= &subs::ui('Type to that machine...') %>" autocomplete="off" autocapitalize="off" spellcheck="false">
+					</div>
+				</div>
+				<% if (!$selected_rm) { %>
+					<div style="font-size:12px;opacity:.7;margin-top:6px;"><%= &subs::ui('Pick a machine other than Me to control its keyboard and mouse.') %></div>
+				<% } %>
 			</div>
 			<div toggle="<%= $toggle %>" class="keyboard_config remote_control_configuration" style="display:none;width:100%;" remote_uuid="<%= $remote_control %>">
 				Keyboard Config
