@@ -125,10 +125,12 @@ $(document).on('click', '.permission_asker', function() {
 
 async function permissionAsker(kind) {
 	if (kind == 'location' || !kind) {
-
-		navigator.geolocation.getCurrentPosition((position) => {
-
-		});
+		// The app's GPS service, never navigator.geolocation: a WebView's
+		// location answer carries no provider, so it cannot be told apart
+		// from a Wi-Fi guess.
+		if (window.JawnLocation && typeof window.JawnLocation.start === 'function') {
+			window.JawnLocation.start();
+		}
 	}
 	if (kind == 'media' || !kind) {
 		var constraints = await constraintMaker();
@@ -1696,6 +1698,23 @@ $(document).on('change', '.utility_controller', function() {
 			// repaint from the server; the error dot names the failure
 			utilityControllerReloader();
 		}
+	});
+});
+
+$(document).on('change', '.utility_batch_group', function() {
+	var input = $(this);
+	$.ajax({
+		url: '/manager/configure/utility_batch_group/save',
+		type: 'POST',
+		data: { group: input.attr('group'), interval: input.val() },
+		success: function(response) {
+			if (response && response.html) {
+				$('#utility_controls_container').html(response.html);
+				appointment_chron();
+			}
+			else { utilityControllerReloader(); }
+		},
+		error: function() { utilityControllerReloader(); }
 	});
 });
 

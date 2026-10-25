@@ -1,5 +1,5 @@
 var campusProxy = {};
-var locationWatchers = {};
+
 var mapData = {};
 $(document).on('click', '#travel_toggle', function() {
 	travelToggle();
@@ -196,11 +196,36 @@ $(document).on('click', '#travel_home_plate', function() {
 });
 
 
-function continent_cancel(app) {
-	if (eval(navigator.geolocation) && locationWatchers[app]) {
-		navigator.geolocation.clearWatch(locationWatchers[app]['watch']);
-//		locationWatchers[app]['watch'] = null;
+// The page has one location source: the app's own GPS service. A WebView or
+// browser geolocation answer carries no provider, so a Wi-Fi/cell guess looks
+// exactly like a fix - which is what put the person in places they had never
+// been. Desktops have no GPS; they fall through to the anyway route, which can
+// ask a deck or teletype with a real one.
+$(document).ready(function () {
+	if (window.JawnLocation && typeof window.JawnLocation.start === 'function') {
+		// The service is the only place source; start it with the view so a real
+		// fix is ready before the first appointment or navigation request. The
+		// notification's Stop button turns it off again.
+		try { window.JawnLocation.start(); } catch (e) {}
 	}
+});
+
+function jawnGpsFix() {
+	if (!window.JawnLocation || typeof window.JawnLocation.latest !== 'function') { return null; }
+	var raw = '';
+	try { raw = window.JawnLocation.latest(); } catch (e) { return null; }
+	if (!raw) { return null; }
+	var fix = null;
+	try { fix = JSON.parse(raw); } catch (e) { return null; }
+	if (!fix || fix.provider !== 'gps' || !fix.latitude || !fix.longitude) { return null; }
+	var age = (typeof fix.elapsedMs === 'number') ? fix.elapsedMs : (Date.now() - (fix.time || 0));
+	if (!isFinite(age) || age < 0) { age = Date.now() - (fix.time || 0); }
+	fix.age = age;
+	return fix;
+}
+
+function continent_cancel(app) {
+	// The GPS service is shared and keeps its own pace; nothing per-app to cancel.
 }
 
 function continent_record(setter) {
@@ -219,87 +244,65 @@ function continent_record(setter) {
 	var protocol = $(location)[0]['protocol'];
 	var uuid = setter['uuid'];
 	var complete = typeof setter['complete'] == 'function' ? setter['complete'] : null;
-
-	var now = Date.now();
-	if (!locationWatchers[app]) {
-		locationWatchers[app] = { watch: undefined, timer: (now - numeral(navigation).value()) };
-	}
-	else {
-		navigator.geolocation.clearWatch(locationWatchers[app]['watch']);
-	}
-
-	// A fix counts while it still describes now. The old two-second gate threw
-	// away a desktop's or a cold phone's slightly cached answer and never asked
-	// again, so an appointment start could log no point at all. Keep what the
-	// API hands back while it is still a reasonable picture of where you are.
-	var usable = function(position) {
-		return (Date.now() - position.timestamp) < 60000;
-	};
-	var send = function(position, next) {
-		var data = position.coords;
-		var payload = {
-			latitude: data.latitude,
-			longitude: data.longitude,
-			altitude: data.altitude,
-			speed: data.speed,
-			accuracy: data.accuracy,
-			timestamp: position.timestamp,
-			user_agent: navigator.userAgent,
-			hostname: hostname,
-			pathname: pathname,
-			protocol: protocol,
-			purpose: purpose,
-			scope: scope,
-			app: app,
-			device: device,
-			uuid: uuid,
-			navigation: setter['navigation']
-		};
-		if (next) { payload['next_navigation'] = next; }
-		$.ajax({
-			url: '/manager/continent/record',
-			type: 'POST',
-			data: payload,
-			success: function(response) {
-				if (complete) { complete(response); }
-				return response;
-			},
-		});
-	};
 	var anyway = function() {
 		continent_record_anyway({ app: app, scope: scope, uuid: uuid, purpose: purpose, timestamp: timestamp, device: device }, complete);
 	};
 
-	if (!navigator.geolocation) {
-		if (complete) { complete(null); }
+	// A real GPS fix from the last fifteen minutes describes where the person is
+	// now. Older than that is a stale place, not a current one: hand the point
+	// to the anyway route rather than restamp an old coordinate as today's.
+	var fix = jawnGpsFix();
+	if (!fix || fix.age > 15 * 60 * 1000) {
+		// Ask the service to start (a first run has no fix yet) and file the point
+		// through the anyway route, which can ask a deck or teletype with a real
+		// GPS. Never a network estimate.
+		if (window.JawnLocation && typeof window.JawnLocation.start === 'function') {
+			try { window.JawnLocation.start(); } catch (e) {}
+		}
+		anyway();
 		return;
 	}
-	if (navigation == 'once' || navigation == undefined || navigation == 0) {
-		navigator.geolocation.getCurrentPosition(function(position) {
-			if (usable(position)) { send(position); }
-			else { anyway(); }
-		}, function(error) {
-			anyway();
-		}, {
-			maximumAge: 0, enableHighAccuracy: true, timeout: 20000
-		});
+
+	// A running appointment may ask for fixes faster than the service's resting
+	// pace. Retune it; the service keeps the GPS warm and the next fix arrives
+	// without a browser timer.
+	var pace = 0;
+	if (navigation && navigation != 'once') {
+		try { pace = numeral(navigation).value(); } catch (e) { pace = 0; }
+		if (pace > 0 && window.JawnLocation && typeof window.JawnLocation.startAt === 'function') {
+			window.JawnLocation.startAt(String(pace), '0');
+		}
 	}
-	else {
-		locationWatchers[app]['watch'] = navigator.geolocation.watchPosition(function(position) {
-			var now = Date.now();
-			// Only the slot that is due records, and a stale fix does not burn the
-			// slot: the next callback tries again instead of waiting a whole
-			// interval with nothing written.
-			if (now > locationWatchers[app]['timer'] && usable(position)) {
-				locationWatchers[app]['timer'] = (now + numeral(navigation).value());
-				send(position, locationWatchers[app]['timer']);
-			}
-		}, function(error) {
-			anyway();
-		}, {
-			maximumAge: 0, enableHighAccuracy: true, timeout: 20000
-		});
-	}
+
+	var payload = {
+		latitude: fix.latitude,
+		longitude: fix.longitude,
+		altitude: fix.altitude,
+		speed: fix.speed,
+		accuracy: fix.accuracy,
+		provider: 'gps',
+		timestamp: fix.time || Date.now(),
+		user_agent: navigator.userAgent,
+		hostname: hostname,
+		pathname: pathname,
+		protocol: protocol,
+		purpose: purpose,
+		scope: scope,
+		app: app,
+		device: device,
+		uuid: uuid,
+		navigation: setter['navigation']
+	};
+	if (pace > 0) { payload['next_navigation'] = Date.now() + pace; }
+	$.ajax({
+		url: '/manager/continent/record',
+		type: 'POST',
+		data: payload,
+		success: function(response) {
+			if (complete) { complete(response); }
+			return response;
+		},
+	});
 }
 
 // The start menu's navigation button: ask for a fix now, with no appointment

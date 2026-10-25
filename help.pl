@@ -425,7 +425,7 @@ our %topic = (
 		title => 'Travel', category => 'apps', app => 'travel',
 		templates => [ 'templates/travel/travel.html.ep', 'public/js/manager/travel.js', 'public/js/manager/mapengine.js', 'public/js/manager/mapmarkers.js', 'public/js/manager/continentprinter.js' ],
 		controls => [ 'Configure', 'Now', 'Delete', 'Guess the gaps' ],
-		verified => '2026-10-16',
+		verified => '2026-10-24',
 		summary => 'A pannable map of every map you have measured, with your history on it.',
 		body => [
 			'Travel logs where you have been and turns it into history: routes, distance covered, and speed. It draws on the fixes the phone feeds in as well as anything logged by hand, and lays them on a map.',
@@ -752,7 +752,7 @@ our %topic = (
 	'configure' => {
 		title => 'Configure', category => 'apps', app => 'configure',
 		templates => [ 'templates/configure/configure.html.ep', 'templates/configure/misc_setting_list.html.ep', 'templates/configure/device_lister.html.ep', 'public/js/manager/configure.js' ],
-		verified => '2026-10-23',
+		verified => '2026-10-24',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (themes, colour schemes, font, texture, icon set, zoom, bar heights, the window border and the button border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
@@ -1099,14 +1099,15 @@ our %topic = (
 	'utility_controller' => {
 		title => 'Utility controller', category => 'features',
 		templates => [ 'templates/configure/utility_controller.html.ep', 'templates/configure/system_setting_list.html.ep' ],
-		controls => [ 'Run this job', 'How often', 'Good', 'Bad' ],
+		controls => [ 'Run this job', 'How often', 'Good', 'Bad', 'Batch groups' ],
 		verified => '2026-10-24',
 		summary => 'The background jobs every machine runs, how often, and the house AI view above them.',
 		body => [
 			'Configure → Sys holds the Utility controller: one card per machine on the mesh, and under each card its background jobs — the utilities. A job has a switch to run it, a box for how often, the time it last ran, and a good/bad dot. Your own machine is the first card, named Me, above every peer; the peer cards follow, named by their hostname.',
 			'The dot is good (green) while the job has last run within five of its intervals, and bad (red) once it has not. A job that throws or runs past its timeout is stopped and logged rather than retried, and simply waits for its next turn.',
 			'Under each job a line says what its last run did - a count when it worked on something new, or that it found nothing - so a job that ran and found nothing does not read as one that never ran.',
-			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, the remote relay (which hands a change queued with no browser behind it on to the other machines), navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',
+			'At the top of the panel, Batch groups sets a whole group of jobs at once. Navigation (four minutes by default) is the GPS beat; Fast (fifteen minutes) carries presence, health, mail and the tunnels; Slow (one hour) carries the code sync, release and balances; Daily carries backups, housekeeping and expiry. Changing a group\'s box writes that interval to every job in it, so they wake together and the device gets one longer nap instead of several short ones. Each job\'s own box still overrides it afterwards.',
+			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, the remote relay (which hands a change queued with no browser behind it on to the other machines), the code sync (git fetch from the authority or a peer, every thirty minutes by default), navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',
 			'It is per machine: an interval or a switch set here applies to the machine whose card it is on, so one job can run every two minutes on the phone and hourly on the server.',
 			'The Sys panel also shows the house at a glance, above the Utility controller: one row per machine, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
 			'Below it is the API balances table, and it lists only the providers with an account on file — a key or account entered under Configure → Plat, under Provider access. For each of those it says what is left, where the provider reports it: OpenRouter and DeepSeek do; the rest — Ollama, Cloudflare, OpenAI, Anthropic, Google, xAI, Mistral and Groq — have no balance endpoint and read “no balance API”. A provider with no account entered is not listed. The read happens in the background every ten minutes, so the page never waits.'
@@ -1114,36 +1115,39 @@ our %topic = (
 		steps => [
 			'Open Configure and press Sys; the Utility controller is in that panel.',
 			'Find the machine whose jobs you want to change.',
+			'For a whole group, set its pace once in the Batch groups card; every job in that group takes the same interval.',
 			'Tick the switch to run a job, and set its interval in the box beside it (for example 2m).',
 			'Watch the last-run time and the good/bad dot to see whether it is keeping up.',
 			'In the Sys panel, read the house table and the API balances to see the AI work and what is left on each registered account.'
 		],
-		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, which lists only the providers with an account registered under Configure → Plat; only OpenRouter and DeepSeek report a balance and the rest read no balance API. Do not invent job names beyond the ones listed.',
+		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Batch groups card at the top sets a whole group at once - Navigation (four minutes), Fast (fifteen), Slow (one hour), Daily - and writes that interval to every job in the group so they wake together. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, which lists only the providers with an account registered under Configure → Plat; only OpenRouter and DeepSeek report a balance and the rest read no balance API. Do not invent job names beyond the ones listed.',
 		related => [ 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
 	},
 	'navigation' => {
 		title => 'Navigation (location logging)', category => 'features',
 		templates => [ 'templates/appointment_details.html.ep', 'templates/appointment_wrapper.html.ep', 'templates/start_menu/start_menu.html.ep', 'public/js/manager/travel.js' ],
-		verified => '2026-10-23',
-		summary => 'JawnOS records where a device is on a schedule, screen on or off.',
+		verified => '2026-10-24',
+		summary => 'JawnOS records where a device is on a schedule from its own GPS, screen on or off, and never from the network.',
 		body => [
-			'Navigation is the autonomous location log. On a handheld the backend asks for a fresh GPS fix once per navigation interval — whether or not the app is open and whether or not the screen is on, since the phone holds a wake lock for it — and writes that one point down as the machine\'s current position.',
+			'Navigation is the autonomous location log. On a handheld the Android app runs a GPS foreground service: it reads the GPS provider and nothing else, and writes each fix to a small file the manager reads. The navigation utility takes that fix once per navigation interval - four minutes by default, set in Configure → Sys, whether or not the app is open and whether or not the screen is on - and writes it down as the machine\'s current position. The service is a location foreground service, so Android wakes it when a fix arrives; the phone is not held awake between fixes.',
+			'Only a real GPS answer is ever used. The network provider is not asked, and the browser\'s geolocation is no longer used at all: a WebView or browser answer carries no provider, so a Wi-Fi or cell-tower guess looks exactly like a fix. If there is no fresh GPS fix - indoors, in a pocket - no place is recorded, and an older place is not restamped as today\'s.',
 			'An app can also carry its own pace. An app\'s navigation setting is none (never log), once (log only when you act on it), or an interval such as 1m. While an appointment of that app is running, a fix is filed against it at that interval, and the machine\'s own navigation pace follows the fastest running app: an app asking for a point a minute makes navigation run about a minute apart even when the Utility controller\'s navigation interval is longer. The navigation fast pace has a ten-second floor so a very short setting cannot hammer the GPS.',
 			'The current place holds until the next navigation run, so a private place stays private between fixes instead of falling back to public. When no automatic fix is due, the old five-minute warranty on the machine\'s position is what used to expire first; a fix now stays current through the next run, with a couple of minutes of grace for a late or failed one.',
 			'A handheld with a GPS also hands each fresh fix to the house\'s computers on the same local network, as the fix lands rather than on the next sync. A laptop with no GPS of its own records the same place at once and its site-type picture follows. The handover is a signed notice over the physical local network only - never the tunnel or the VPN - and the receiving machine writes the position down without starting or stopping an appointment, since the handheld\'s own navigation already logged the visit.',
 			'A machine without a real GPS never publishes a place. A phone, tablet or computer that has only ever seen a network estimate is not a source another machine may borrow from, and a computer\'s borrowed place is never lent on to a third machine. A handheld whose own GPS has answered keeps its own fix: a peer\'s borrowed place cannot overwrite it, so the site-type picture follows the real fix and the navigation button only confirms it.',
-			'To ask for a fix at once, press the navigation button at the foot of the Start menu, beside the Guide\'s associate button. On a computer with no GPS of its own it asks a phone or deck on the same local network for its current fix; if none answers there is no place to adopt, since a browser\'s network estimate on a machine without a GPS is not published as its place. The answer is recorded here as this machine\'s place, without starting or stopping an appointment. The site-type picture beside the button follows the answer. Starting an appointment also asks for a fix, and a fix the browser hands back a little late is kept rather than dropped, so a start reliably writes a point.',
+			'To ask for a fix at once, press the navigation button at the foot of the Start menu, beside the Guide\'s associate button. On a handheld it uses the app\'s latest GPS fix. On a computer with no GPS of its own it asks a phone or deck on the same local network for its current fix; if none answers there is no place to adopt. The answer is recorded here as this machine\'s place, without starting or stopping an appointment. The site-type picture beside the button follows the answer. Starting an appointment also asks for the latest GPS fix, and the app\'s fix is what is filed.',
 			'Those filed fixes are the Distance list on the appointment: open its details and the Distance section lists each point with its distance from home, the kilometres since the last one, and the speed between them.',
 			'Navigation also drives the home plate: when the device crosses a home plate\'s radius, that plate\'s duty can start or stop the matching appointment on its own.'
 		],
 		steps => [
 			'Give an app a navigation value in its settings: none never logs, once only logs when you act, and an interval (like 1m) logs while one of its appointments is running.',
+			'Set the navigation utility on and to four minutes in Configure → Sys so the phone has a GPS fix to answer with, with or without an appointment running.',
 			'Start an appointment of that app and carry the device; the backend files a fix each navigation interval, or at the app\'s faster interval while one of its appointments runs.',
 			'Press the navigation button at the foot of the Start menu whenever you want a fix now.',
 			'Open the appointment and read its Distance list for the points, the distance and the speed.',
 			'Set a home plate and a duty on it to let crossing that radius start or stop the appointment by itself.'
 		],
-		prompt => 'Explain JawnOS navigation: the backend logs one GPS fix per navigation interval, screen on or off, while the phone holds its wake lock; the per-app navigation setting is none / once / an interval; while an appointment with a shorter interval runs, navigation follows that faster pace (down to a ten-second floor); the current place holds until the next automatic fix so a private place does not fall back to public between runs; the Start menu has a navigation button beside the Guide\'s associate to take a fix now; and filed fixes appear in the appointment\'s Distance list (distance from home, kilometres since the last, speed). Do not describe it as a live map, and never guess a person\'s actual location.',
+		prompt => 'Explain JawnOS navigation: the Android app runs a GPS-only foreground service that writes each fix to a file the manager reads; the navigation utility takes one fix per navigation interval (four minutes by default, set in Configure → Sys), screen on or off and whether or not an appointment is running, and the phone sleeps between fixes because it holds no wake lock; the per-app navigation setting is none / once / an interval; while an appointment with a shorter interval runs, navigation follows that faster pace (down to a ten-second floor); the current place holds until the next automatic fix so a private place does not fall back to public between runs; the network provider and the browser geolocation are never used, so indoors there may be no fix at all; the Start menu has a navigation button beside the Guide\'s associate to take a fix now; and filed fixes appear in the appointment\'s Distance list (distance from home, kilometres since the last, speed). Do not describe it as a live map, and never guess a person\'s actual location.',
 		related => [ 'travel', 'appointments', 'devices_and_mesh' ]
 	},
 

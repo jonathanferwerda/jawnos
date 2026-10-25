@@ -14717,14 +14717,32 @@ sub continent_record($c) {
 	my $returner = {};
 	my $purpose = $c->param('purpose');
 	my $scope = $c->param('scope');
+	# A handheld's place comes from the app's GPS service, never from the posted
+	# coordinates: a browser/Wi-Fi answer carries no provider, so it is replaced
+	# by the file's real fix. With no proven GPS fix, file no place at all - the
+	# appointment's own bookkeeping is not this route's job.
+	my $provider = lc($c->param('provider') || '');
+	if ($device eq 'mobile' && $purpose ne 'home_plate') {
+		my $native = &subs::native_location({ max_age_ms => 15 * 60 * 1000 });
+		if ($native) {
+			$c->param('latitude', $native->{'latitude'});
+			$c->param('longitude', $native->{'longitude'});
+			$c->param('accuracy', $native->{'accuracy'});
+			$c->param('speed', $native->{'speed'}) if defined $native->{'speed'};
+			$c->param('altitude', $native->{'altitude'}) if defined $native->{'altitude'};
+			$provider = 'gps';
+		}
+		else {
+			$c->param('latitude', '');
+			$c->param('longitude', '');
+		}
+	}
 	# The machine's current place is only written by a machine that has a real
 	# GPS. A home plate is the person's own explicit mark, so that purpose keeps
-	# working anywhere; a navigation button pressed on a handheld is an explicit
-	# request for that device's own fix. A browser's network estimate on a
-	# computer has no place here.
+	# working anywhere; a browser's network estimate on a computer has no place
+	# here.
 	my $publishable_place = ($purpose eq 'home_plate'
-		|| &subs::navigation_gps_present()
-		|| ($purpose eq 'navigation' && $device eq 'mobile')) ? 1 : 0;
+		|| (($provider eq 'gps') && $device eq 'mobile')) ? 1 : 0;
 	my ($uuid,$pre_uuid);
 	if ($c->param('uuid')) {
 		$pre_uuid = $c->param('uuid');
@@ -18715,6 +18733,38 @@ post '/manager/configure/utility_controller/save' => sub($c) {
 
 	$c->render(json => { html => $html, controls => $controls });
 
+};
+
+post '/manager/configure/utility_batch_group/save' => sub($c) {
+	my $group = $c->param('group') || '';
+	my $value = $c->param('interval');
+	return $c->render(json => { error => 'unknown group' }) unless $gb::batch_groups->{$group};
+	# a bare number is seconds; a duration such as "15m" is translated, exactly
+	# like the per-job interval field
+	my $seconds = ($value =~ /^\s*-?\d+(\.\d+)?\s*$/)
+		? ($value + 0)
+		: &subs::time_abbrev_translator($value, &subs::rightNow()) / 1000;
+	$seconds = int($seconds);
+	return $c->render(json => { error => 'interval required' }) unless $seconds > 0;
+
+	my $signatorial = &subs::signatorial_designer();
+	my $controls = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
+	$controls->{$signatorial} = clone $gb::timeouts unless $controls->{$signatorial};
+	$controls->{$signatorial}->{'__batch_groups'} ||= {};
+	$controls->{$signatorial}->{'__batch_groups'}->{$group} = $seconds;
+	my $n = 0;
+	foreach my $t ( keys %{$gb::timeouts} ) {
+		next unless (($gb::timeouts->{$t}->{'group'} || '') eq $group);
+		$controls->{$signatorial}->{$t} ||= clone $gb::timeouts->{$t};
+		$controls->{$signatorial}->{$t}->{'interval'} = $seconds;
+		$n++;
+	}
+	my $now = &subs::rightNow();
+	$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
+	&subs::log_writer('utility batch: ' . $group . '=' . $seconds . 's for ' . $n . ' job(s)');
+	&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => encode_json($controls) });
+	my $html = $c->render_to_string(template => 'configure/utility_controller');
+	$c->render(json => { html => $html, group => $group, interval => $seconds });
 };
 
 

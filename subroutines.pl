@@ -15103,6 +15103,43 @@ sub navigation_gps_confirm {
 	return 1;
 }
 
+# The app's GPS service writes each fix to ~/.president/location.json. Only a
+# record that names provider=gps may become a place: a network fix looks like a
+# fix in every other field, which is how the phone was reported in places it had
+# never been. Returns the fix hash (aged by the fix's own timestamp) or undef.
+sub native_location {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $file = &subs::home('~/.president/location.json');
+	return undef unless -e $file;
+	my $raw = eval { read_file($file) };
+	return undef unless defined $raw && $raw =~ /\S/;
+	my $loc = eval { decode_json($raw) };
+	return undef unless ref $loc eq 'HASH';
+	return undef unless (($loc->{'provider'} || '') eq 'gps');
+	return undef unless (($loc->{'status'} || '') eq 'fix');
+	return undef unless defined $loc->{'latitude'} && defined $loc->{'longitude'};
+	return undef unless $loc->{'latitude'} =~ /^-?\d+(?:\.\d+)?$/ && abs($loc->{'latitude'}) <= 90;
+	return undef unless $loc->{'longitude'} =~ /^-?\d+(?:\.\d+)?$/ && abs($loc->{'longitude'}) <= 180;
+	my $now = &subs::rightNow();
+	my $age;
+	if (($loc->{'time'} || '') =~ /^\d+$/) {
+		$age = $now - $loc->{'time'};
+	}
+	elsif (($loc->{'elapsedMs'} || '') =~ /^\d+$/) {
+		$age = $loc->{'elapsedMs'};
+		$age += ($now - $loc->{'sampled'}) if (($loc->{'sampled'} || '') =~ /^\d+$/);
+	}
+	else {
+		return undef;
+	}
+	$age = 0 if $age < 0;
+	$loc->{'age_ms'} = $age;
+	my $max = defined $opts->{'max_age_ms'} ? $opts->{'max_age_ms'} : (10 * 60 * 1000);
+	return undef if $age > $max;
+	return $loc;
+}
+
 # The navigation utility's own pace, in seconds. President adopts this machine's
 # row from the utility controller at runtime, but Manager and the scripts do not
 # share that process, so read the same persisted row here.
@@ -15211,46 +15248,51 @@ sub headless_navigation() {
 		# so an open app reset the clock and this autonomous capture starved. It now
 		# records on its own cadence whether or not the browser just did.
 		if (&subs::device_setter() eq 'mobile') {
-			my $jloc = `termux-location`;
-			my $loc = eval { return decode_json $jloc } || {};
-			# A `gps` provider answer proves this machine has the hardware; a
-			# network answer does not. Only a machine with a real GPS publishes
-			# its place - a tablet or computer with no GPS must never become a
-			# source another machine borrows from.
-			&subs::navigation_gps_confirm($loc->{'provider'});
-			my $has_gps = &subs::navigation_gps_present();
-			# A walk gives plenty of perfectly usable fixes that are a couple of
-			# seconds old or a little loose. The old 1s / 100m gates threw them
-			# away silently, so the location stopped moving with the person; keep
-			# the good ones and say when a fix was dropped.
-			my $usable = $has_gps && $loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500;
-			# With the screen off the phone often cannot get a fresh GPS fix at all,
-			# so termux-location answers with a last-known one minutes old and the
-			# point was dropped - the position stopped moving and the home plate
-			# never fired. When the GPS fix is stale or loose, ask the network
-			# provider (a fresh, coarser fix) rather than throw the point away.
-			# This stays limited to a machine whose GPS has answered: on a device
-			# with none it would publish a cell-tower guess as a real place.
-			unless ($usable) {
-				my $nloc = eval { return decode_json `termux-location -p network` } || {};
-				if ($has_gps && $nloc->{'latitude'} && ($nloc->{'elapsedMs'} || 1e9) < 60000 && ($nloc->{'accuracy'} || 0) < 2000) {
-					$loc = $nloc;
-					$usable = 1;
+			# The app's GPS service keeps this machine's fix on disk, so there
+			# is no process to spawn and no wait; the file is as fresh as the
+			# navigation pace. A machine that has not run the service yet
+			# falls back to termux-location -p gps, never the network provider.
+			my $current_pace = &navigation_pace();
+			my $max_age = ($current_pace * 2 * 1000) + 120000;
+			$max_age = 5 * 60 * 1000 if $max_age < 5 * 60 * 1000;
+			$max_age = 15 * 60 * 1000 if $max_age > 15 * 60 * 1000;
+			my $loc = &subs::native_location({ max_age_ms => $max_age });
+			unless ($loc) {
+				my $jloc = `timeout 20 termux-location -p gps 2>/dev/null`;
+				my $j = eval { decode_json($jloc) } || {};
+				if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'}
+					&& ($j->{'elapsedMs'} || 1e9) <= $max_age) {
+					$loc = {
+						provider => 'gps',
+						latitude => $j->{'latitude'},
+						longitude => $j->{'longitude'},
+						accuracy => $j->{'accuracy'},
+						elapsedMs => $j->{'elapsedMs'},
+					};
 				}
 			}
+			# Only a `gps` provider answer proves this machine has the
+			# hardware; a machine with no GPS must never become a source
+			# another machine borrows from.
+			&subs::navigation_gps_confirm($loc->{'provider'}) if $loc;
+			my $has_gps = &subs::navigation_gps_present();
+			# The service already bounds the fix's age; a walk still gives
+			# perfectly usable fixes that are a little loose.
+			my $usable = $has_gps && $loc && $loc->{'latitude'}
+				&& ($loc->{'accuracy'} || 0) < 500;
 			if ($usable) {
 				$returner->{'latitude'} = $loc->{'latitude'};
 				$returner->{'longitude'} = $loc->{'longitude'};
-				$returner->{'accuracy'} = sprintf("%.2F", $loc->{'accuracy'});
+				$returner->{'accuracy'} = sprintf("%.2F", ($loc->{'accuracy'} || 0));
 				&subs::db_delete('continent', { type => 'temporary', signatorial => $signatorial });
 				my $treturner = clone $returner;
 				$treturner->{'uuid'} = &subs::random_string_creator(31);
 				&subs::db_insert('continent', $treturner);
 				$written = 1;
-				$note = 'fix ' . ($loc->{'provider'} || 'gps') . ' ' . ($returner->{'accuracy'} || '?') . 'm';
+				$note = 'fix gps ' . ($returner->{'accuracy'} || '?') . 'm';
 			}
 			else {
-				$log->info('navigation: termux-location gave no usable fix (' . ($loc->{'latitude'} ? 'elapsed ' . ($loc->{'elapsedMs'} || '?') . 'ms accuracy ' . ($loc->{'accuracy'} || '?') . 'm' : ($jloc || 'empty output')) . ')');
+				$log->info('navigation: no fresh GPS fix; no place recorded');
 				$note = 'no usable fix';
 			}
 		}
@@ -18044,26 +18086,29 @@ sub local_position {
 	return {} unless &subs::device_setter() eq 'mobile';
 	my $now = &subs::rightNow();
 	my $me = &subs::signatorial_designer();
-	my $row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and timestamp > ? order by server_time desc limit 1', 'temporary', $me, $now - 120000)->hashes->[0];
+	# The house asks for the cached place, not a new fix: accept the last fix for
+	# two navigation paces plus a little grace, then refuse rather than guess.
+	my $hold = (&subs::navigation_interval() * 2 * 1000) + 120000;
+	$hold = 5 * 60 * 1000 if $hold < 5 * 60 * 1000;
+	$hold = 15 * 60 * 1000 if $hold > 15 * 60 * 1000;
+	my $row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and timestamp > ? order by server_time desc limit 1', 'temporary', $me, $now - $hold)->hashes->[0];
 	if ($row && $row->{'latitude'} && &subs::navigation_gps_present()) {
 		return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
 	}
-	my $jloc = `timeout 3 termux-location`;
-	my $loc = eval { return decode_json $jloc } || {};
-	# Only a machine whose own GPS has answered may answer a peer. A device
-	# with none must not lend a network guess to the machine asking.
-	&subs::navigation_gps_confirm($loc->{'provider'});
-	my $has_gps = &subs::navigation_gps_present();
-	my $usable = $has_gps && $loc->{'latitude'} && ($loc->{'elapsedMs'} || 0) < 30000 && ($loc->{'accuracy'} || 0) < 500;
-	unless ($usable) {
-		my $nloc = eval { return decode_json `timeout 3 termux-location -p network` } || {};
-		if ($has_gps && $nloc->{'latitude'} && ($nloc->{'elapsedMs'} || 1e9) < 60000 && ($nloc->{'accuracy'} || 0) < 2000) {
-			$loc = $nloc;
-			$usable = 1;
-		}
+	# The app's GPS service keeps the latest fix on disk. Answer from it without
+	# waking anything, and without the network provider: a Wi-Fi guess is not a
+	# place, however plausible its accuracy looks.
+	my $loc = &subs::native_location({ max_age_ms => $hold });
+	if ($loc) {
+		&subs::navigation_gps_confirm('gps');
+		return { latitude => $loc->{'latitude'}, longitude => $loc->{'longitude'}, accuracy => sprintf("%.2F", ($loc->{'accuracy'} || 0)), timestamp => $loc->{'time'} || $now, source => 'gps', cached => 1 };
 	}
-	if ($usable) {
-		return { latitude => $loc->{'latitude'}, longitude => $loc->{'longitude'}, accuracy => sprintf("%.2F", ($loc->{'accuracy'} || 0)), timestamp => $now, source => ($loc->{'provider'} || 'gps') };
+	# A phone whose service has not run yet may still answer one GPS request.
+	my $jloc = `timeout 8 termux-location -p gps 2>/dev/null`;
+	my $j = eval { decode_json($jloc) } || {};
+	if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'} && ($j->{'elapsedMs'} || 1e9) <= $hold) {
+		&subs::navigation_gps_confirm('gps');
+		return { latitude => $j->{'latitude'}, longitude => $j->{'longitude'}, accuracy => sprintf("%.2F", ($j->{'accuracy'} || 0)), timestamp => $now, source => 'gps' };
 	}
 	return {} unless &subs::navigation_gps_present();
 	$row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and (warranty is null or warranty = ? or warranty > ?) order by server_time desc limit 1', 'temporary', $me, '', $now)->hashes->[0];

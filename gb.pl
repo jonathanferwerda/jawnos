@@ -79,25 +79,36 @@ our $capabilities = {
 };
 
 
+# The batch groups. Every utility names one; Configure -> Sys can set a group's
+# pace once, which writes that interval to every job in it so they wake together
+# and the device gets one longer nap instead of several short ones. Seconds.
+our $batch_groups = {
+	'navigation' => { label => 'Navigation', seconds => 4 * 60, hint => 'GPS fixes (the house metronome)' },
+	'fast'       => { label => 'Fast',       seconds => 15 * 60, hint => 'presence, health, mail, tunnels' },
+	'slow'       => { label => 'Slow',       seconds => 60 * 60, hint => 'code sync, release, balances' },
+	'daily'      => { label => 'Daily',      seconds => 24 * 60 * 60, hint => 'backups, housekeeping, expiry' },
+};
+
 our $timeouts = {
-	'alarm_haircut' => { interval => 10 * 60, toggle => 'off', timeout => 30 },
-	'housekeeping' => { interval => 60 * 60, toggle => 'off', timeout => 30 },
-	'warehouse_expiry' => { interval => 6 * 60 * 60, toggle => 'on', timeout => 300 },
-	'budget' => { interval => 60 * 20, toggle => 'off', timeout => 180 },
-	'clothesline' => { interval => 5 * 60, toggle => 'off', timeout => 180 },
-	'tasks' => { interval => 5 * 60, toggle => 'off', timeout => 180 },
-	'remote_machine_sync' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), toggle => 'off', timeout => 1000 },
-	'navigation' => { interval => 10 * 60, interval_divider => 10, last_run => &subs::rightNow(), toggle => 'off', timeout => 90 },
-	'sms' => { interval => 30 * 10, toggle => 'off', timeout => 90 },
-	'backups' => { interval => 1 * 60 * 60, toggle => 'on', timeout => 360 },
-	'headless_browser' => { interval => 10 * 60, toggle => 'off', timeout => 370 },
-	'telephone_check' => { interval => 1 * 60 * 5, toggle => 'off', timeout => 90 },
-	'email_sender' => { interval => 1 * 30, toggle => 'off', timeout => 90 },
-	'email_receiver' => { interval => 5 * 60, toggle => 'off', timeout => 390 },
-	'tunnels' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), ip_addresses => [], network => {}, toggle => 'off', timeout => 390 },
-	'remote_relay' => { interval => 60, toggle => 'on', timeout => 120 },
-	'htop' => { interval => 40, toggle => 'off', timeout => 360 },
-	'manager' => { interval => 15, last_run => &subs::rightNow(), toggle => 'off', timeout => 20 }
+	'alarm_haircut' => { interval => 10 * 60, toggle => 'off', timeout => 30, group => 'slow' },
+	'housekeeping' => { interval => 60 * 60, toggle => 'off', timeout => 30, group => 'daily' },
+	'warehouse_expiry' => { interval => 6 * 60 * 60, toggle => 'on', timeout => 300, group => 'daily' },
+	'budget' => { interval => 60 * 20, toggle => 'off', timeout => 180, group => 'fast' },
+	'clothesline' => { interval => 5 * 60, toggle => 'off', timeout => 180, group => 'fast' },
+	'tasks' => { interval => 5 * 60, toggle => 'off', timeout => 180, group => 'fast' },
+	'remote_machine_sync' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), toggle => 'off', timeout => 1000, group => 'fast' },
+	'navigation' => { interval => 4 * 60, interval_divider => 10, last_run => &subs::rightNow(), toggle => 'off', timeout => 90, group => 'navigation' },
+	'sms' => { interval => 30 * 10, toggle => 'off', timeout => 90, group => 'fast' },
+	'backups' => { interval => 1 * 60 * 60, toggle => 'on', timeout => 360, group => 'daily' },
+	'headless_browser' => { interval => 10 * 60, toggle => 'off', timeout => 370, group => 'fast' },
+	'telephone_check' => { interval => 1 * 60 * 5, toggle => 'off', timeout => 90, group => 'fast' },
+	'email_sender' => { interval => 1 * 30, toggle => 'off', timeout => 90, group => 'fast' },
+	'email_receiver' => { interval => 5 * 60, toggle => 'off', timeout => 390, group => 'fast' },
+	'tunnels' => { interval => (2 * 60), interval_divider => 10, last_run => &subs::rightNow(), ip_addresses => [], network => {}, toggle => 'off', timeout => 390, group => 'fast' },
+	'remote_relay' => { interval => 60, toggle => 'on', timeout => 120, group => 'fast' },
+	'htop' => { interval => 40, toggle => 'off', timeout => 360, group => 'fast' },
+	'git_sync' => { interval => 30 * 60, toggle => 'on', timeout => 180, group => 'slow' },
+	'manager' => { interval => 15, last_run => &subs::rightNow(), toggle => 'off', timeout => 20, group => 'slow' }
 };
 
 $gb::alarm_running = 0;

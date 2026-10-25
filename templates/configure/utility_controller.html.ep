@@ -31,6 +31,23 @@
 </style>
 
 <div id="utility_controls">
+	% my $batch = $controls->{$signatorial}->{'__batch_groups'} || {};
+	<div class="cfg-card" id="utility_batch_groups" hint="Batch groups">
+		<h4 class="utility_machine_name" hint="<%= &subs::ui('Batch groups') %>"><%= &subs::ui('Batch groups') %></h4>
+		<p class="cfg-note"><%= &subs::ui("Set a group's pace; every job in it takes that interval, so they wake together and the device naps between.") %></p>
+		<div class="utility_jobs">
+			<% foreach my $g ( qw/navigation fast slow daily/ ) { %>
+				% my $def = $gb::batch_groups->{$g} || {};
+				% my @members = grep { (($gb::timeouts->{$_}->{'group'} || '') eq $g) } sort keys %{$gb::timeouts};
+				<div class="utility_job">
+					<span class="utility_job_name"><%= &subs::ui($def->{'label'} || $g) %> <span class="utility_job_when"><%= join ', ', map { &subs::format_name($_) } @members %></span></span>
+					<div class="utility_job_controls">
+						<input class="utility_batch_group utility_controller_timeout" group="<%= $g %>" hint="<%= &subs::ui($def->{'hint'} || 'Pace for this group') %>" value="<%= &subs::duration_sayer($batch->{$g} || $def->{'seconds'}) %>">
+					</div>
+				</div>
+			<% } %>
+		</div>
+	</div>
 	% my @machine_keys = grep { $_ eq $signatorial || $_ =~ /^[0-9a-f]{32}$/ } keys %{$controls};
 	% my %machine_name;
 	% foreach my $mk ( @machine_keys ) {

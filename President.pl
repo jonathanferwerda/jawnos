@@ -300,15 +300,9 @@ sub manager_starter() {
 	# process is actually running. The forked servers inherit this memo, so an
 	# on-disk change does not move the answer until the next restart.
 	&subs::code_revision();
-	# Keep this machine on the current code without a hand: fetch origin and
-	# fast-forward when the tree is clean and strictly behind, then restart. Open
-	# tabs reload themselves - the websocket hands out the revision.
-	&subs::subprocessor(sub {
-		while (1) {
-			sleep 60;
-			eval { &subs::git_watcher_check(); };
-		}
-	}, { name => 'git watcher' });
+	# Code sync used to be a one-minute loop here. It is the `git_sync` utility
+	# now: Configure -> Sys paces it, it rides the slow batch, and a wake that is
+	# already running the mesh fetch does not need a separate timer every minute.
 
 	# The staged app releases (the APKs) reconcile on a slower tick: ask each
 	# reachable peer what it holds and pull the newest in, so every device becomes
@@ -1441,6 +1435,14 @@ sub utility_functions() {
 				&subs::headless_navigation();
 			};
 			return defined $r && !ref $r && length $r ? $r : undef;
+		};
+
+		# The code sync: fetch the authority (or a peer), fast-forward when the
+		# tree is clean and strictly behind, and ask for the restart. As a utility
+		# it gets the person's own pace and the slow batch's shared wake.
+		$gb::timeouts->{'git_sync'}->{'subroutine'} = sub {
+			eval { &subs::git_watcher_check(); };
+			return undef;
 		};
 
 		$gb::timeouts->{'manager'}->{'subroutine'} = sub {
