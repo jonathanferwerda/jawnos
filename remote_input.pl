@@ -200,8 +200,10 @@ sub inject($action, @args) {
 	if ($action eq 'release') {
 		my $backend = backend();
 		if ($backend eq 'xdotool') {
-			system('xdotool', 'keyup', 'Shift_L', 'Control_L', 'Alt_L', 'Super_L');
-			system('xdotool', 'mouseup', '1', '2', '3');
+			# xdotool takes one key or button per call; a list is read as more
+			# commands and the second word is rejected.
+			system('xdotool', 'keyup', $_) for qw/Shift_L Control_L Alt_L Super_L/;
+			system('xdotool', 'mouseup', $_) for 1, 2, 3;
 			return 1;
 		}
 		if ($backend eq 'dotool') {

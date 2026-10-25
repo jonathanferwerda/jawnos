@@ -50,8 +50,8 @@
 				<% $ri_edge = 'right' unless defined $ri_edge && $ri_edge =~ /^(?:left|right|top|bottom)$/; %>
 				<% my $ri_display = $selected_rm ? '' : 'display:none;'; %>
 				<div id="remote_input_controls" remote_uuid="<%= $remote_control %>" data-edge="<%= $ri_edge %>" style="<%= $ri_display %>margin-top:8px;border-top:1px solid rgba(128,128,128,.35);padding-top:6px;">
-					<label style="display:block;"><input type="checkbox" id="remote_input_enabled" <% if ($ri_on eq 'on') { %>checked="checked"<% } %>> <%= &subs::lang('remote_control.input') %></label>
-					<span id="remote_input_edge_row" style="display:block;margin-top:3px;opacity:<% if ($ri_on eq 'on') { %>1<% } else { %>.55<% } %>;">
+					<label style="display:block;"><input type="checkbox" id="remote_input_enabled" <% if (defined $ri_on && $ri_on eq 'on') { %>checked="checked"<% } %>> <%= &subs::lang('remote_control.input') %></label>
+					<span id="remote_input_edge_row" style="display:block;margin-top:3px;opacity:<% if (defined $ri_on && $ri_on eq 'on') { %>1<% } else { %>.55<% } %>;">
 						<%= &subs::lang('remote_control.that_screen') %>
 						<select id="remote_input_edge">
 							<option value="left" <% if ($ri_edge eq 'left') { %>selected<% } %>><%= &subs::lang('remote_control.edge_left') %></option>
