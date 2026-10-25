@@ -1080,6 +1080,17 @@ sub utility_functions() {
 					}
 				}
 			}
+			# The navigation default moved from ten minutes to four when the app's
+			# GPS service began writing fixes on its own. A row still carrying the
+			# old default with the job switched off takes the new pace; a row the
+			# person actually configured keeps its value.
+			if ($controls->{$signatorial}->{'navigation'}
+				&& ($controls->{$signatorial}->{'navigation'}->{'toggle'} || 'off') eq 'off'
+				&& ($controls->{$signatorial}->{'navigation'}->{'interval'} || 0) == 600
+				&& !$controls->{$signatorial}->{'__batch_groups'}) {
+				$controls->{$signatorial}->{'navigation'}->{'interval'} = 240;
+				$dirty = 1;
+			}
 			# A row that was never edited through Configure is only the built-in
 			# defaults cloned in when it was first created. Re-keying the rows from
 			# device types to signatorials left the person's switches on the old

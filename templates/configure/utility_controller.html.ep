@@ -39,10 +39,15 @@
 			<% foreach my $g ( qw/navigation fast slow daily/ ) { %>
 				% my $def = $gb::batch_groups->{$g} || {};
 				% my @members = grep { (($gb::timeouts->{$_}->{'group'} || '') eq $g) } sort keys %{$gb::timeouts};
+				% my $shown = $batch->{$g};
+				% if (!defined $shown && scalar @members) {
+				% 	my $iv = $controls->{$signatorial}->{$members[0]}->{'interval'};
+				% 	$shown = $iv if $iv && $iv > 0;
+				% }
 				<div class="utility_job">
 					<span class="utility_job_name"><%= &subs::ui($def->{'label'} || $g) %> <span class="utility_job_when"><%= join ', ', map { &subs::format_name($_) } @members %></span></span>
 					<div class="utility_job_controls">
-						<input class="utility_batch_group utility_controller_timeout" group="<%= $g %>" hint="<%= &subs::ui($def->{'hint'} || 'Pace for this group') %>" value="<%= &subs::duration_sayer($batch->{$g} || $def->{'seconds'}) %>">
+						<input class="utility_batch_group utility_controller_timeout" group="<%= $g %>" hint="<%= &subs::ui($def->{'hint'} || 'Pace for this group') %>" value="<%= &subs::duration_sayer($shown || $def->{'seconds'}) %>">
 					</div>
 				</div>
 			<% } %>
