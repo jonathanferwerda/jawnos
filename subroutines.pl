@@ -31615,6 +31615,9 @@ sub clock_preview_pidfile() {
 
 sub clock_preview_stop {
 	my $file = &clock_preview_pidfile();
+	if (&device_setter() eq 'mobile') {
+		&clock_device_broadcast('com.termux.app.JAWN_CLOCK_PREVIEW', stop => 1);
+	}
 	return 0 unless -e $file;
 	my $pid = eval { read_file($file) };
 	unlink $file;
@@ -31638,6 +31641,18 @@ sub clock_preview_play {
 	$volume = 5 if $volume < 5;
 	$volume = 100 if $volume > 100;
 	&clock_preview_stop();
+	if (&device_setter() eq 'mobile') {
+		# The app plays it on the alarm channel, as it plays the ring itself.
+		&clock_device_broadcast('com.termux.app.JAWN_CLOCK_PREVIEW',
+			uuid => 'preview',
+			file => 'public/sounds/' . $sound,
+			volume => $volume,
+			ramp => 0,
+			loop => 0,
+			guard => 10000,
+		);
+		return 1;
+	}
 	my $file = &clock_sound_file($sound);
 	my $level = sprintf('%.2f', $volume / 100);
 	# timeout is the stop that a forgotten preview cannot outlive; the pid file
@@ -31667,7 +31682,7 @@ sub clock_device_broadcast {
 		next unless defined $value && length $value;
 		$command .= ' --es ' . $key . ' ' . &quote($value);
 	}
-	foreach my $key ( qw/volume ramp loop guard/ ) {
+	foreach my $key ( qw/volume ramp loop guard stop/ ) {
 		my $value = $extra{$key};
 		next unless defined $value && "$value" =~ /^-?\d+$/;
 		$command .= ' --ei ' . $key . ' ' . int($value);
