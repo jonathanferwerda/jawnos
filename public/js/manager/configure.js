@@ -53,12 +53,52 @@ $(document).on('click', '.configure_toggle', function() {
 	// Even a tab that is already open stays the intent: its handler reloads the
 	// panel and gets to show it again when the new content arrives.
 	jawnos_configure_intent = this.id;
+	// Moving to another panel starts at its top. Refreshing the panel already on
+	// screen keeps the reader where they were.
+	if (!$('#' + keep).is(':visible')) { jawnosConfigureScrollTop(0); }
 	$.each(jawnos_configure_panels, function(button, panel) {
 		if (panel === keep) { return; }
 		$('#' + panel).hide();
 		$('#' + button).attr('status', 'inactive').text(jawnosConfigureLabel($('#' + button)));
 	});
 });
+
+// ---- the pinned bar and the scroll it follows ---------------------------------
+// The bar steps out of the way while a panel is read downward and returns the
+// moment the scroll turns back up; at the top it is always shown. Listen in the
+// capture phase because scroll does not bubble, and from the document because
+// #configure is re-created whenever the window is re-rendered (an icon-set
+// change, say) - one listener outlives every copy of the panel.
+window.jawnos_configure_bar_last = 0;
+document.addEventListener('scroll', function(event) {
+	var el = event.target;
+	if (!el || el.id !== 'configure') { return; }
+	var top = el.scrollTop || 0;
+	var last = window.jawnos_configure_bar_last || 0;
+	window.jawnos_configure_bar_last = top;
+	var bar = el.querySelector('.cfg_topbar');
+	if (!bar) { return; }
+	if (top <= 16) { bar.classList.remove('cfg_topbar_hidden'); return; }
+	if (top > last + 2) { bar.classList.add('cfg_topbar_hidden'); }
+	else if (top < last - 2) { bar.classList.remove('cfg_topbar_hidden'); }
+}, true);
+
+// Put a panel at a known offset without the bar treating the jump as a downward
+// read. Used by the tab switch (0) and by the window restore (the saved offset).
+function jawnosConfigureScrollTop(top) {
+	var el = $('#configure')[0];
+	if (!el) { return; }
+	el.scrollTop = top || 0;
+	window.jawnos_configure_bar_last = el.scrollTop || 0;
+	var bar = el.querySelector('.cfg_topbar');
+	if (bar) { bar.classList.remove('cfg_topbar_hidden'); }
+}
+
+// The window restore reads the offset back from jopen and hands it here once the
+// saved panel is on screen (windows.js calls this by name when it exists).
+function jawnosConfigureScrollRestore(at) {
+	jawnosConfigureScrollTop(at || 0);
+}
 
 async function configureToggle() {
 	var cb = $('#configure_balloon');

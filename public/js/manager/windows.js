@@ -569,7 +569,10 @@ function windowSaver() {
 		var headerUpdate = $(v).find('.appointment_header_background').attr('last_updated') || timestamp;
 		var scrollTop;
 		if (timestamp) {
-			scrollTop = $('#' + timestamp).scrollTop();
+			// Configure scrolls inside its own #configure panel, not in an element
+			// named for the window timestamp, so read the offset from the panel that
+			// actually moves (and hand it back through jopen).
+			scrollTop = (app == 'configure') ? $('#configure').scrollTop() : $('#' + timestamp).scrollTop();
 		}
 		var wc = $('#window_contents_' + timestamp).is(':visible');
 		var tnh = jawnosWindowSizeGet(timestamp, 'h');
@@ -983,6 +986,11 @@ function windowjOpenSaver(window) {
 				jopen[app]['containers'].push(no);
 			}
 		});
+		// The panel is tall and the reader may be deep in it; the offset rides
+		// with the open panel so a re-render (a theme's icon set, say) can put
+		// them back where they were.
+		var configure_scroller = window.find('#configure');
+		jopen[app]['scroll'] = configure_scroller.length ? (configure_scroller.scrollTop() || 0) : 0;
 	}
 	window.find('.appointment_list').each(function(i,v) {
 		if ($(v).is(':visible')) {
@@ -1057,7 +1065,18 @@ function windowjOpener(window,v) {
 				$.each(state.lists || [], function(i, s) {
 					$('.appointment_detail[uuid="' + s.uuid + '"]').find('.appointment_list[list="' + s.list + '"]').show();
 				});
-				if (window.attr('scrollTop') != undefined) {
+				if (app == 'configure') {
+					// the saved offset is the panel's own; restore it once the saved tab
+					// has drawn, and keep the bar visible for the jump
+					var at = (state.scroll != null) ? state.scroll : v.scrollTop;
+					if (typeof jawnosConfigureScrollRestore === 'function') {
+						jawnosConfigureScrollRestore(at || 0);
+					}
+					else {
+						window.find('#configure').scrollTop(at || 0);
+					}
+				}
+				else if (window.attr('scrollTop') != undefined) {
 					var scrollTop = window.attr('scrollTop');
 					$('#' + (window.attr('timestamp') || 'hey')).scrollTop(scrollTop);
 				}

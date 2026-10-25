@@ -778,7 +778,7 @@ our %topic = (
 		],
 		steps => [
 			'Open Configure.',
-			'Use the tabs to move between appearance, devices, utilities and the mesh. The tabs and the version badge stay pinned across the top of the window; pressing the tab that is already open reloads that panel in place rather than hiding it.',
+			'Use the tabs to move between appearance, devices, utilities and the mesh. The tabs and the version badge stay pinned across the top of the window in one row; the bar tucks itself away while you read downward and returns as soon as you scroll back up. Pressing the tab that is already open reloads that panel in place rather than hiding it, and a reload (a theme\'s icon set, say) reopens the same panel at the same scroll position.',
 			'The Plat tab has four pages: AI, which holds every AI model choice and provider key; OAuth2, where an app registration (a client id, secret and tenant) is added once with Add client and shared by any number of mail accounts; Crypto, which holds the assets, the rate snapshot and how a holding is valued; and DNS, where the DNS provider\'s API token is saved so the house can prove it owns its domain and renew a wildcard certificate without opening a port. The same page names the house domain and the name each machine answers on, so a ticket or a sign-in can use the public name while the house keeps calling itself on 127.0.0.1. The other tabs hold the rest of the house\'s settings.',
 			'For speech, pick a Say voice under Misc and press Preview to hear it.',
 			'Pick the interface language at the top of Misc; the page reloads in the language you chose, and every device in the house follows it.',
