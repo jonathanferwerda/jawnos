@@ -36654,6 +36654,9 @@ sub app_public_path {
 	return 1 if $path =~ m{^/public_view(?:/|$)};
 	return 1 if $path eq '/sesh_check' || $path eq '/gate';
 	return 1 if $path eq '/manager/health';
+	# A peer pushes its own row here after a scheduled wake; health_allowed is
+	# the gate (loopback, an approved session, or a signed peer).
+	return 1 if $path eq '/manager/health_report';
 	return 1 if $path =~ m{^/manager/webauthn/login/(?:begin|finish)$};
 	return 1 if $path =~ m{^/passkey(?:/|$)};
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/tunnel/ws';
@@ -37094,6 +37097,7 @@ sub padlock_gate_allows {
 	return 1 if $path =~ m{^/(?:css|js|images|icons|sounds|fonts|public)/};
 	return 1 if $path =~ m{^/(?:favicon\.ico|manifest\.json|service_worker\.js|robots\.txt)$};
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/health';
+	return 1 if $path eq '/manager/health_report';
 	return 1 if $path =~ m{^/(?:manager/)?box_office(?:/|$)};
 	# the device rail authenticates itself and must reach the gate's recovery
 	return 1 if $path =~ m{^/manager/device(?:/|$)};
@@ -42579,6 +42583,42 @@ sub health_human_uptime {
 get '/manager/health' => sub ($c) {
 	unless (&health_allowed($c)) { $c->rendered(403); return; }
 	$c->render(json => &health_report());
+};
+
+# A peer's scheduled wake ends by pushing the row it would show for itself, so a
+# handheld that is asleep for most of every four minutes still keeps its peers'
+# Levels card current. The row is merged into this machine's cached snapshot and
+# the embedded boards are rebuilt from the whole picture, exactly as a pull
+# would leave it.
+post '/manager/health_report' => sub ($c) {
+	unless (&health_allowed($c)) { $c->rendered(403); return; }
+	my $body = $c->req->json;
+	unless (ref $body eq 'HASH') { $c->render(json => { ok => 0, error => 'bad body' }); return; }
+	my $sig = $body->{'signatorial'} // '';
+	unless ($sig =~ /^[0-9a-f]{32}$/) { $c->render(json => { ok => 0, error => 'bad signatorial' }); return; }
+	# A machine reports only itself. Ignoring a push for our own row stops a
+	# stale or spoofed copy replacing the live reading this machine just took.
+	if ($sig eq &subs::signatorial_designer()) { $c->render(json => { ok => 1, ignored => 1 }); return; }
+	my $snap = &subs::cache_get({ app => '__president', context => 'levels', subcontext => 'current' });
+	$snap = { at => &subs::rightNow(), machines => [], devices => [] } unless ref $snap eq 'HASH';
+	$snap->{'machines'} = [] unless ref $snap->{'machines'} eq 'ARRAY';
+	my @machines = grep { ($_->{'signatorial'} || '') ne $sig } @{ $snap->{'machines'} };
+	my $hostname = $body->{'hostname'} // '';
+	$hostname = substr($hostname, 0, 120);
+	push @machines, {
+		signatorial => $sig,
+		hostname => ($hostname ne '' ? $hostname : 'machine'),
+		device => $body->{'device'} // '',
+		version => $body->{'version'} // '',
+		battery => (ref $body->{'battery'} eq 'HASH') ? $body->{'battery'} : {},
+		usage => (ref $body->{'usage'} eq 'HASH') ? $body->{'usage'} : undef,
+		embedded => (ref $body->{'embedded'} eq 'ARRAY') ? $body->{'embedded'} : [],
+		seen => &subs::rightNow(),
+	};
+	$snap->{'machines'} = \@machines;
+	$snap->{'devices'} = &subs::levels_devices(\@machines);
+	&subs::cache_set({ app => '__president', context => 'levels', subcontext => 'current', warranty => '-1d' }, $snap);
+	$c->render(json => { ok => 1 });
 };
 
 get '/manager/health/page' => sub ($c) {

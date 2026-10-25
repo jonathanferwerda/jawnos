@@ -4094,6 +4094,16 @@ sub house_levels_sync {
 		seen => &rightNow(),
 	});
 	my ($peers, $failed) = (0, 0);
+	# Push this machine's own row to the peers, so a handheld that slept through
+	# their poll still updates their cards. The pull above cannot reach a phone
+	# between its scheduled wakes, and waiting for a poll to coincide with a wake
+	# left its tile an hour old. A two-minute stamp keeps the fast (card-open)
+	# passes from turning this into a stream.
+	my $last_push = &cache_get({ app => '__president', context => 'levels', subcontext => 'pushed' }) || 0;
+	my $push = (!$last_push || &rightNow() - $last_push >= 120000) ? 1 : 0;
+	my $report = { %{ $machines[0] } };
+	delete $report->{'local'};
+	&cache_set({ app => '__president', context => 'levels', subcontext => 'pushed', warranty => '-1d' }, &rightNow()) if $push;
 	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
 		my $rsig = $rm->{'signatorial'} || '';
 		next unless $rsig && $rsig ne $me;
@@ -4117,6 +4127,12 @@ sub house_levels_sync {
 		unless ($ua) {
 			push @machines, { %{ $previous_machine{$rsig} }, hostname => $pname, stale => 1 } if $previous_machine{$rsig};
 			next;
+		}
+		if ($push) {
+			eval {
+				$ua->connect_timeout($connect_timeout)->inactivity_timeout($inactivity_timeout)
+					->post($p->{'manager'} . '/manager/health_report?signatorial=' . $me => json => $report)->result;
+			};
 		}
 		my $res = eval { $ua->connect_timeout($connect_timeout)->inactivity_timeout($inactivity_timeout)
 			->get($p->{'manager'} . '/manager/health?signatorial=' . $me)->result };
@@ -4149,8 +4165,26 @@ sub house_levels_sync {
 	}
 	# One board can be in several machines' neighbour tables. Keep the copy with
 	# a reading and the newest sighting, and name the machine that sees it.
+	my $device_list = &levels_devices(\@machines);
+	my $snapshot = {
+		at => &rightNow(),
+		machines => \@machines,
+		devices => $device_list,
+		peers => $peers,
+		failed => $failed,
+	};
+	&cache_set({ app => '__president', context => 'levels', subcontext => 'current', warranty => '-1d' }, $snapshot);
+	return $snapshot;
+}
+
+# The machine rows' embedded boards, deduplicated: one board may be in several
+# machines' neighbour tables. Both the pull (house_levels_sync) and a peer's push
+# (health_report) rebuild the list this way, so a pushed row cannot leave the
+# boards view disagreeing with the machines.
+sub levels_devices {
+	my $machines = shift || [];
 	my %device;
-	foreach my $m ( @machines ) {
+	foreach my $m ( @{$machines} ) {
 		foreach my $d ( @{ $m->{'embedded'} || [] } ) {
 			my $chip = $d->{'chip_id'} || $d->{'name'} || '';
 			next unless $chip;
@@ -4161,16 +4195,7 @@ sub house_levels_sync {
 			$device{$chip} = { %$d, host => $m->{'hostname'}, host_signatorial => $m->{'signatorial'} } if $better;
 		}
 	}
-	my @devices = sort { ($a->{'host'} || '') cmp ($b->{'host'} || '') || ($a->{'name'} || '') cmp ($b->{'name'} || '') } values %device;
-	my $snapshot = {
-		at => &rightNow(),
-		machines => \@machines,
-		devices => \@devices,
-		peers => $peers,
-		failed => $failed,
-	};
-	&cache_set({ app => '__president', context => 'levels', subcontext => 'current', warranty => '-1d' }, $snapshot);
-	return $snapshot;
+	return [ sort { ($a->{'host'} || '') cmp ($b->{'host'} || '') || ($a->{'name'} || '') cmp ($b->{'name'} || '') } values %device ];
 }
 
 # The card's read: the cached snapshot with this machine's reading refreshed.
