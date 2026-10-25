@@ -14105,7 +14105,8 @@ our @colour_scheme_order = (
 	'Blue', 'Blue Dark', 'Graphite', 'Graphite Dark', 'Green', 'Green Dark',
 	'Indigo', 'Indigo Dark', 'Steel', 'Steel Dark', 'Amber', 'Amber Dark',
 	'Teal', 'Teal Dark', 'Plum', 'Plum Dark', 'Rose', 'Rose Dark',
-	'Nord', 'Nord Dark', 'Sage', 'Sage Dark', 'Mocha', 'Mocha Dark'
+	'Nord', 'Nord Dark', 'Sage', 'Sage Dark', 'Mocha', 'Mocha Dark',
+	'Geek', 'Geek Dark'
 );
 our %colour_schemes = (
 	'Blue'          => [ '#eaf2fb', '#d6e5f7', '#b4cfef', '#86b0e0', '#4a90d9', '#0078d4' ],
@@ -14135,6 +14136,11 @@ our %colour_schemes = (
 	'Sage Dark'     => [ '#191f19', '#212921', '#2a332a', '#364337', '#4b7a45', '#6fa968' ],
 	'Mocha'         => [ '#f8f1eb', '#efe2d7', '#e0cabb', '#c9a891', '#b07d5f', '#8c5b3f' ],
 	'Mocha Dark'    => [ '#1f1915', '#29211c', '#332922', '#43352d', '#8c5b3f', '#c08562' ],
+	# The terminal register: phosphor green on near-black, and a pale
+	# green-tinted paper cut for daylight. Same six-step ramp as every other
+	# scheme, with the green reserved for the accent step.
+	'Geek'          => [ '#f4f8f1', '#e6efdf', '#d1e0c8', '#b4cba9', '#2f9e5b', '#1c7a42' ],
+	'Geek Dark'     => [ '#060a07', '#0b110d', '#101812', '#16211a', '#1f8a4c', '#3ee37c' ],
 );
 
 # ---- named themes ----------------------------------------------------------
@@ -14143,7 +14149,7 @@ our %colour_schemes = (
 # bundles; a person may save more (see theme_registry). A name found here is
 # what an appointment's Theme setting stores, so every machine that reads the
 # row paints the same room.
-our @theme_preset_order = qw/deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose/;
+our @theme_preset_order = qw/deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose geek/;
 our %theme_presets = (
 	deepin => {
 		name => 'Deepin', scheme => 'Blue Dark',
@@ -14204,6 +14210,13 @@ our %theme_presets = (
 		name => 'Rose', scheme => 'Rose',
 		icon_set => 'pastel', texture => 'paper',
 		font => 'Noto Sans, system-ui, sans-serif', corner => 16,
+	},
+	# Phosphor green, a monospace face, a CRT grain and square corners: the
+	# dressing a terminal-dweller reaches for.
+	geek => {
+		name => 'Geek', scheme => 'Geek Dark',
+		icon_set => 'neon', texture => 'sandglass',
+		font => 'JetBrains Mono, Courier New, monospace', corner => 2,
 	},
 );
 
