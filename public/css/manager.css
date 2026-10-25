@@ -29,7 +29,7 @@ html, body {
 	width: 46px;
 	z-index: 50000;
 	background-color:transparent;
-	border: 1px solid transparent; border-radius: 12px;
+	border: 1px solid transparent; border-radius: var(--jawnos-corner, 12px);
  }
 .jonathan:active, .save_appointment:active, button:active {
 	transform: translateY(1px);
@@ -44,7 +44,7 @@ html, body {
 	width: 46px;
 	z-index: 50000;
 	position:fixed;
-	border: 1px solid transparent; border-radius: 12px;
+	border: 1px solid transparent; border-radius: var(--jawnos-corner, 12px);
  }
 .jonathan_fixed:active {
 	transform: translateY(1px);
@@ -65,7 +65,7 @@ html, body {
    rounded corners, and a lift under the pointer */
 .pseudonym.bar {
 	border: 1px solid var(--line);
-	border-radius: 12px;
+	border-radius: var(--jawnos-corner, 12px);
 	box-shadow: var(--shadow-1, 0 1px 2px rgba(0,0,0,.06));
 	transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
@@ -77,7 +77,7 @@ html, body {
 	left: 50%;
 	background-color: var(--panel);
 	border: 1px solid var(--line);
-	border-radius: 16px;
+	border-radius: var(--jawnos-corner, 16px);
 	box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18));
 	padding-right: 30px;
 	padding-left: 30px;
@@ -367,7 +367,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 #start_menu_toggle.start {
 	border: solid 3px;
 	border-color: var(--ink-muted, rgba(0, 0, 0, 0.5));
-	border-radius: 9px;
+	border-radius: calc(var(--jawnos-corner, 12px) * .75);
 }
 /* the search, when the taskbar is its home: it rides on the right of the
    window list but takes a fifth of the bar at most, so the windows keep the
@@ -689,7 +689,7 @@ canvas.background {
 #music_player { overflow: scroll; }
 #browser { z-index: 101; position:fixed;}
 .little_window { font-size: 20px; position:fixed; bottom:10; right: 70px; height: 45px; width: 200px; background-color: var(--panel); border: 1px solid var(--line); border-radius: var(--jawnos-corner, 12px); box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18)); }
-.window_icon { vertical-align:top; border:solid; border-color: var(--line); border-radius:4px; border-width:1px; font-size:26px; }
+.window_icon { vertical-align:top; border:solid; border-color: var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .35); border-width:1px; font-size:26px; }
 /* Windows round their corners a touch. .wind carries the radius so its own
    panel background is clipped to it and the frame ring below inherits it; the
    title bar rounds only its top corners to match, so its square ones don't show
@@ -767,7 +767,7 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 .top_navbar .navbar_buttons .window_action { flex: 0 0 auto; width: calc(var(--navbar_h, 36px) - 6px); height: calc(var(--navbar_h, 36px) - 6px); min-width: calc(var(--navbar_h, 36px) - 6px); }
 #mouse_shadow { z-index:1; width: 100%; position:fixed; left: 0px; bottom: 0px; display:none;}
 #keyboard_container { z-index: 9100; }
-.keyboard { z-index: 9100; border:solid;border-radius:10px;border-width:3px; }
+.keyboard { z-index: 9100; border:solid;border-radius:var(--jawnos-corner, 10px);border-width:3px; }
 #ticket { 
 	width: 95%; 
 	text-align: center;
@@ -928,7 +928,7 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 #start_menu .window_icon {
 	box-sizing: border-box;
 	border: 1px solid var(--jawnos-texture-edge, var(--line));
-	border-radius: 10px;
+	border-radius: var(--jawnos-corner, 10px);
 }
 
 /* Mail the server accepted rings the envelope until the mailbox is opened: the

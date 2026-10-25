@@ -77,6 +77,13 @@
 				trackpad: '<%= &subs::setting_grabber({ app => 'keyboard', setting => 'trackpad_sensitivity' }) || '.02' %>',
 				clothesline: '<%= &subs::setting_grabber({ app => 'keyboard', setting => 'clothesline_sensitivity' }) || '.4' %>'
 			};
+			<%# the desk's corner: the Misc slider's own value, and the active theme's
+			    effective corner (the theme's own, or the Misc override on top of it) %>
+			<% my $corner_misc = &subs::misc_setting('corner_radius'); %>
+			<% $corner_misc = 12 unless defined $corner_misc && $corner_misc =~ /^\d{1,2}$/; %>
+			<% $corner_misc = 28 if $corner_misc > 28; %>
+			<% my $theme_bundle = &subs::active_theme_bundle(); %>
+			<% my $corner_theme_now = length($theme_bundle->{'slug'}) ? &subs::corner_radius() . 'px' : ''; %>
 			// where the dock and the taskbar live, which of the two the search rides
 			// in, which end of the bar the start button takes, and the clock's own
 			// face: the misc settings, seeded here so the bars are laid out right
@@ -109,6 +116,13 @@
 				// fabric, wood or metal; universal.css and the canvas clothesline both
 				// read it
 				texture: '<%= &subs::texture_name() %>',
+				// the desk's roundedness: the Misc slider (corner_radius) is what a desk
+				// with no theme wears, while a theme carries its own corner in
+				// corner_theme; corner_follow is that theme's own value, for the
+				// Follow theme button beside the slider
+				corner_radius: '<%= $corner_misc %>',
+				corner_theme: '<%= $corner_theme_now %>',
+				corner_follow: '<%= $theme_bundle->{'corner'} || '' %>',
 				// the bar's furniture and order ride as JSON so a quoted value does
 				// not come back HTML-escaped; a bad value falls back to null (default)
 				taskbar_order: <%== encode_json(eval { decode_json(&subs::misc_setting('taskbar_order')) } || undef) %>,
@@ -142,11 +156,9 @@
 <% my $theme_dark = &subs::theme_is_dark(); %>
   <% my $body_class = join ' ', grep { length } (($theme_dark ? 'dark_theme' : ''), ((&Manager::fingerprint_available() && &Manager::padlock_request_is_local($c)) ? '' : 'no_local_fingerprint')); %>
   <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>" data-texture="<%= &subs::texture_name() %>" data-icon-set="<%= &subs::icon_set() %>" data-theme-sig="<%= &subs::theme_signature() %>"<% if ($manager_appt_theme) { %> data-appt-theme="yes"<% } %>>
-  <% my $theme_bundle = &subs::active_theme_bundle(); %>
   <% my $title_font = $theme_bundle->{'font'} || &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
-  <% my $theme_corner = $theme_bundle->{'corner'} || ''; %>
   <style>
-    :root { --jawnos-font: <%= $title_font %>;<% if (length $theme_corner) { %> --jawnos-corner: <%= $theme_corner %>;<% } %> }
+    :root { --jawnos-font: <%= $title_font %>; --corner_radius: <%= $corner_misc %>px;<% if (length $corner_theme_now) { %> --jawnos-corner: <%= $corner_theme_now %>;<% } %> }
     /* the Misc → Font choice is the program's face, not just a few titles:
        the shell and the controls inherit it, while surfaces that declare their
        own family (the terminal, the IDE, mailed text) keep it. */

@@ -10961,10 +10961,11 @@ sub setting_setter() {
 		&cache_delete({ context => 'header' });
 		&appointment_theme_push() unless $sync;
 	}
-	elsif ($setting eq 'icon_set_override' || $setting eq 'texture_override') {
-		# an explicit choice on top of the active theme: the effective set or
-		# material moved, so the memo, the rendered pages and every open manager
-		# follow. The push carries the effective values, not the theme's defaults.
+	elsif ($setting eq 'icon_set_override' || $setting eq 'texture_override' || $setting eq 'corner_override') {
+		# an explicit choice on top of the active theme: the effective set,
+		# material or corner moved, so the memo, the rendered pages and every open
+		# manager follow. The push carries the effective values, not the theme's
+		# defaults.
 		&icon_set_forget();
 		&cache_delete({ app => '__president', context => 'config' });
 		&cache_delete({ context => 'template' });
@@ -11083,6 +11084,37 @@ sub texture_name() {
 	}
 	$value = 'round' if defined $value && $value eq 'plain';
 	$value = 'soft' unless defined $value && length $value;
+	return $value;
+}
+
+# The desk's corner radius, in pixels. A theme carries its own corner; an
+# explicit choice made from Misc while that theme is active (corner_override)
+# wins over it, and with no theme in charge the Misc slider (corner_radius) is
+# the value. It is held between 0 (square) and the 28px the theme editor allows,
+# so no surface is rounded past its own middle. The layout seeds it as
+# --corner_radius, which --jawnos-corner falls back to; every window, control
+# and panel rounds by that property.
+sub corner_radius() {
+	my $value;
+	my $bundle = &active_theme_bundle();
+	if ($bundle->{'slug'}) {
+		my $override = &misc_setting('corner_override');
+		if (defined $override && $override =~ /^\s*(\d{1,2})\s*(?:px)?\s*$/) {
+			$value = $1 + 0;
+		}
+		elsif (defined $bundle->{'corner'} && $bundle->{'corner'} =~ /^\s*(\d{1,2})\s*(?:px)?\s*$/) {
+			$value = $1 + 0;
+		}
+	}
+	unless (defined $value) {
+		my $misc = &misc_setting('corner_radius');
+		if (defined $misc && $misc =~ /^\s*(\d{1,2})\s*(?:px)?\s*$/) {
+			$value = $1 + 0;
+		}
+	}
+	$value = 12 unless defined $value;
+	$value = 0 if $value < 0;
+	$value = 28 if $value > 28;
 	return $value;
 }
 
@@ -14341,14 +14373,17 @@ sub appointment_theme_push {
 	&icon_set_forget();
 	my (undef, undef, $bg, $bundle, undef, $appointment) = &theme_state();
 	return unless defined $bg && length $bg;
-	# The effective values, not the bundle's defaults: an icon/texture override
-	# chosen on top of the theme is part of what the desk is wearing. The
+	# The effective values, not the bundle's defaults: an icon/texture/corner
+	# override chosen on top of the theme is part of what the desk is wearing. The
 	# signature lets the browser ignore a push that changes nothing - a start or
 	# stop on the same theme must not reload every window.
 	my $icon_set = &icon_set();
 	my $texture = &texture_name();
 	my $font = $bundle->{'font'} || &misc_setting('title_font') || 'system-ui, sans-serif';
-	my $corner = $bundle->{'corner'} || '';
+	# the corner the desk is wearing: the theme's own, or the Misc override on
+	# top of it. Empty with no theme, so the browser falls back to the Misc
+	# slider's --corner_radius there.
+	my $corner = $bundle->{'slug'} ? &corner_radius() . 'px' : '';
 	my $accent = $bundle->{'accent'} || '';
 	my $signature = &theme_signature();
 	my %send = (
@@ -14372,7 +14407,7 @@ sub theme_signature {
 	my $bundle = &active_theme_bundle();
 	my $bg = $bundle->{'background'} // '';
 	my $font = $bundle->{'font'} || &misc_setting('title_font') || 'system-ui, sans-serif';
-	my $corner = $bundle->{'corner'} || '';
+	my $corner = $bundle->{'slug'} ? &corner_radius() . 'px' : '';
 	my $accent = $bundle->{'accent'} || '';
 	return join '|', map { defined $_ ? $_ : '' } ( $bg, &icon_set(), &texture_name(), $font, $corner, $accent );
 }

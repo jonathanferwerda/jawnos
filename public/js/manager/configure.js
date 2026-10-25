@@ -1624,6 +1624,24 @@ $(document).on('change','.misc_setting', function() {
 
 });
 
+// The Corner Radius slider's Follow theme button, shown while a theme is in
+// charge: it drops the explicit override so the theme's own corner comes back.
+$(document).on('click', '#corner_follow_theme', function () {
+	var device = $(this).attr('device');
+	var corner = parseInt($(this).attr('theme_corner'), 10);
+	if (isNaN(corner)) { corner = 12; }
+	var slider = $('.misc_setting[setting="corner_override"][device="' + device + '"]');
+	slider.val(corner);
+	var readout = document.getElementById('corner_override_value_' + device);
+	if (readout) { readout.textContent = corner; }
+	if (typeof jawnosCornerApply == 'function') { jawnosCornerApply(corner, true); }
+	$.ajax({
+		url: '/manager/configure/misc_setting',
+		type: 'POST',
+		data: { setting: 'corner_override', value: '', device: device, timestamp: Date.now() }
+	});
+});
+
 $(document).on('change','.sys_setting', function() {
 	var timestamp = Date.now();
 	var set = $(this);

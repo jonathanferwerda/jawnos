@@ -365,8 +365,11 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 	// row of jelly beans.
 	if (kind === 'soft') {
 		var corner = 12;
-		try { corner = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--jawnos-corner')) || 12; } catch (e) { corner = 12; }
-		radius = Math.min(h / 2, Math.max(2, corner));
+		// the Misc → Corner Radius slider reaches the rail too; 0 is square, so a
+		// plain parse keeps it rather than falling back on a falsy 0
+		try { corner = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--jawnos-corner')); } catch (e) { corner = 12; }
+		if (isNaN(corner)) { corner = 12; }
+		radius = Math.min(h / 2, Math.max(0, corner));
 	}
 	var edge = jawnosButtonBorderWidth();
 	// the chosen Button Border colour, if any: it dresses every material's rim

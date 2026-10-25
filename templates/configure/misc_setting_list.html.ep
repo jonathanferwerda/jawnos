@@ -100,20 +100,20 @@
 	.misc_grid { grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
 	.misc_grid label { display:flex; flex-direction:column; gap:3px; }
 	.misc_grid label > b { font-size:13px; opacity:.85; }
-	.misc_grid label > select, .misc_grid label > input:not([type=color]) { width:100%; box-sizing:border-box; padding:7px 9px; border-radius:7px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+	.misc_grid label > select, .misc_grid label > input:not([type=color]) { width:100%; box-sizing:border-box; padding:7px 9px; border-radius:calc(var(--jawnos-corner, 12px) * .6); border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 	.misc_colour_chip { display:flex; flex-direction:column; align-items:center; width:118px; font-size:13px; text-align:center; }
 	.misc_colour_chip input[type=color] { width:110px; height:34px; }
 	/* ---- named themes: a gallery of whole dressings ---------------------- */
 	.theme_gallery { display:grid; grid-template-columns:repeat(auto-fill,minmax(152px,1fr)); gap:10px; margin:4px 0 10px; }
-	.theme_card { position:relative; display:flex; flex-direction:column; gap:7px; padding:10px; border:1px solid var(--line); border-radius:14px; background:var(--panel); cursor:pointer; text-align:left; color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.06); transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+	.theme_card { position:relative; display:flex; flex-direction:column; gap:7px; padding:10px; border:1px solid var(--line); border-radius:var(--jawnos-corner, 14px); background:var(--panel); cursor:pointer; text-align:left; color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.06); transition:border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
 	.theme_card:hover { border-color:var(--accent, #3b7ddd); box-shadow:0 8px 20px rgba(0,0,0,.14); transform:translateY(-1px); }
 	.theme_card.selected { border-color:var(--accent, #3b7ddd); box-shadow:0 0 0 2px var(--accent-soft, #e6effb); }
 	.theme_card.selected::after { content:'\2713'; position:absolute; top:6px; right:9px; color:var(--accent, #3b7ddd); font-weight:bold; }
-	.theme_swatches { display:flex; height:26px; border-radius:8px; overflow:hidden; border:1px solid rgba(0,0,0,.12); }
+	.theme_swatches { display:flex; height:26px; border-radius:calc(var(--jawnos-corner, 12px) * .65); overflow:hidden; border:1px solid rgba(0,0,0,.12); }
 	.theme_swatches span { flex:1 1 0; }
 	.theme_card_name { font-weight:600; font-size:14px; line-height:1.2; }
 	.theme_card_meta { font-size:12px; color:var(--ink-muted, #666); }
-	.theme_edit { position:absolute; bottom:6px; right:6px; height:20px; min-width:0; padding:0 7px; font-size:11px; border-width:1px !important; border-radius:6px; }
+	.theme_edit { position:absolute; bottom:6px; right:6px; height:20px; min-width:0; padding:0 7px; font-size:11px; border-width:1px !important; border-radius:calc(var(--jawnos-corner, 12px) * .5); }
 	.theme_form { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
 	.theme_form label { display:flex; flex-direction:column; gap:4px; font-size:13px; }
 	.theme_form input[type=text], .theme_form select { width:100%; box-sizing:border-box; font-size:14px; min-height:32px; padding:4px 8px; }
@@ -160,10 +160,25 @@
 			<% } %>
 		</select>
 	</div>
+	<% my $active_bundle = &subs::active_theme_bundle(); %>
+	<% my $active_theme = $active_bundle->{'slug'} // ''; %>
+	<%# A theme carries its own corner: with one in charge the slider is an
+	    override on top of it (and Follow theme clears it); with none it is the
+	    desk's own value. %>
+	<% my $corner_setting = $active_theme ? 'corner_override' : 'corner_radius'; %>
+	<% my $corner_stored = &subs::setting_grabber({ app => 'misc', setting => $corner_setting, device => $dev }) || ''; %>
+	<% my $corner_value = ($corner_stored =~ /^\s*(\d{1,2})/) ? $1 : &subs::corner_radius(); %>
+	<div class="cfg-row">
+		<label><b>Corner Radius <span id="<%= $corner_setting %>_value_<%= $dev %>"><%= $corner_value %></span>px</b></label>
+		<input type="range" class="misc_setting" setting="<%= $corner_setting %>" device="<%= $dev %>"
+			min="0" max="28" step="1" value="<%= $corner_value %>" oninput="jawnosMiscRangeInput(this);">
+		<% if (length $active_theme) { %>
+			<button type="button" id="corner_follow_theme" device="<%= $dev %>" theme_corner="<%= $active_bundle->{'corner'} || '12px' %>"><%= &subs::lang('configure.follow_theme') %></button>
+		<% } %>
+	</div>
+	<p class="cfg-note"><%= &subs::ui('Corner Radius rounds every surface: window frames and their title bars, inputs, dropdowns, textareas, buttons, checkboxes, and the desk\'s panels and cards. 0 is square and 28 is the softest; a theme carries its own corner, and Follow theme returns to it.') %></p>
 	<div class="cfg-row">
 		<label><b>Texture</b></label>
-		<% my $active_bundle = &subs::active_theme_bundle(); %>
-		<% my $active_theme = $active_bundle->{'slug'} // ''; %>
 		<% my $current_texture = $active_theme
 			? (&subs::setting_grabber({ app => 'misc', setting => 'texture_override', device => $dev }) || '')
 			: &subs::texture_name(); %>

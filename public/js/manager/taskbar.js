@@ -33,6 +33,12 @@ var jawnosBars = {
 	button_border_colour: jawnos_bar_settings['button_border_colour'] || '',
 	// the frame's colour: blank means follow the theme (the ring's own --line)
 	border_colour: jawnos_bar_settings['window_border_colour'] || '',
+	// the desk's roundedness: the Misc slider, and the theme's corner while a
+	// theme is in charge (corner_theme); corner_follow is that theme's own
+	// value, which the panel's Follow theme button restores
+	corner: jawnosBarSettingNumber('corner_radius', 12),
+	corner_theme: jawnos_bar_settings['corner_theme'] || '',
+	corner_follow: jawnos_bar_settings['corner_follow'] || '',
 	// the bar's furniture in order (drag/drop edit mode writes it), and whether
 	// the bar tucks itself away when idle
 	order: jawnosTaskbarOrderSetting(jawnos_bar_settings['taskbar_order']),
@@ -120,6 +126,26 @@ function jawnosButtonBorderRepaint() {
 		&& typeof hangingClothes != 'undefined' && hangingClothes == 0) {
 		clotheslineHanger(wardrobe);
 	}
+}
+// The desk's corner radius. Every window frame, input, dropdown, textarea,
+// button, checkbox and generic panel rounds by --jawnos-corner, which falls back
+// to the Misc slider's --corner_radius. `override` marks a change made while a
+// theme is in charge: it moves --jawnos-corner alone, so the Misc value is still
+// there when the theme stands down. The soft clothesline pill measures the
+// corner off the root, so the rail is repainted here too.
+function jawnosCornerApply(px, override) {
+	var v = parseInt(px, 10);
+	if (isNaN(v)) { return; }
+	v = Math.max(0, Math.min(28, v));
+	var root = document.documentElement.style;
+	if (!override) {
+		jawnosBars.corner = v;
+		root.setProperty('--corner_radius', v + 'px');
+	}
+	if (override || !jawnosBars.corner_theme) {
+		root.setProperty('--jawnos-corner', v + 'px');
+	}
+	jawnosButtonBorderRepaint();
 }
 function jawnosDockTop() {
 	return jawnosBars.dock == 'top';
@@ -381,6 +407,9 @@ function jawnosBarsApply() {
 	root.setProperty('--window_border', Math.max(0, jawnosBars.border) + 'px');
 	// the edge on buttons, image buttons, icons and the clothesline
 	root.setProperty('--button_border', Math.max(0, jawnosBars.button_border) + 'px');
+	// the desk's roundedness (a theme's own corner stays in charge until the
+	// Misc slider or its Follow theme button moves it)
+	jawnosCornerApply(jawnosBars.corner, false);
 	// and its colour, unless the theme's --line is asked for (a blank setting)
 	jawnosWindowBorderColourApply(jawnosBars.border_colour);
 	jawnosButtonBorderColourApply(jawnosBars.button_border_colour);
@@ -526,6 +555,12 @@ function jawnosMiscRangeInput(input) {
 	else if (setting == 'clothesline_height') {
 		if (typeof jawnosClotheslineHeightApply == 'function') { jawnosClotheslineHeightApply(value); }
 	}
+	else if (setting == 'corner_radius') {
+		jawnosCornerApply(value, false);
+	}
+	else if (setting == 'corner_override') {
+		jawnosCornerApply(value, true);
+	}
 }
 
 // A misc colour swatch (the window frame and the button edge): the input event
@@ -552,6 +587,8 @@ $(document).on('change', '.misc_setting', function () {
 	else if (setting == 'button_border_colour') { jawnosButtonBorderColourApply($(this).val()); return; }
 	else if (setting == 'texture') { if (typeof jawnosTextureApply == 'function') { jawnosTextureApply($(this).val()); } return; }
 	else if (setting == 'clothesline_height') { jawnosClotheslineHeightApply($(this).val()); return; }
+	else if (setting == 'corner_radius') { jawnosCornerApply($(this).val(), false); return; }
+	else if (setting == 'corner_override') { jawnosCornerApply($(this).val(), true); return; }
 	else if (setting == 'start_menu_icon') {
 		// the button's own face: ask the server where the path lives in the set
 		// that is showing, the same way a set change re-maps every jawnos_icon
