@@ -580,8 +580,18 @@ function jawnClipCleanup() {
 // end the clip now, or throw it away (the silence watch and the cap call this)
 function jawnClipStop(discard) {
 	if (discard) { jawn_clip.discard = true; }
-	jawnClipCleanup();
-	if (jawn_clip.recorder && jawn_clip.recorder.state !== 'inactive') { jawn_clip.recorder.stop(); }
+	// Silence the meter and the cap at once, but leave the audio context for
+	// onstop: closing it before the recorder stops starves the clip of its last
+	// chunk in WebKit, which sends an empty body.
+	if (jawn_clip.meter) { clearInterval(jawn_clip.meter); jawn_clip.meter = null; }
+	if (jawn_clip.maxtimer) { clearTimeout(jawn_clip.maxtimer); jawn_clip.maxtimer = null; }
+	if (jawn_clip.recorder && jawn_clip.recorder.state !== 'inactive') {
+		// ask for what is buffered before the stop: an engine that only hands
+		// data over on its own schedule still gives the clip a last chunk
+		try { if (jawn_clip.recorder.requestData) { jawn_clip.recorder.requestData(); } } catch (e) {}
+		jawn_clip.recorder.stop();
+	}
+	else { jawnClipCleanup(); }
 }
 
 // opts: { talking, owner, onText(text), onFail(reason), status(msg), onstart, onend }
@@ -706,7 +716,21 @@ function jawnClipListen(opts) {
 			} catch (e) { jawn_clip.audioctx = null; }
 		}
 		else if (opts.status) { opts.status('Listening — press Stop when you are done.'); }
-		rec.start();
+		try { rec.start(250); }
+		catch (err) {
+			// a timeslice makes the chunks arrive while the clip runs; if the
+			// engine will not take one, a plain start is still worth trying
+			try { rec.start(); }
+			catch (err2) {
+				jawn_clip.listening = false;
+				jawn_clip.recorder = null;
+				jawnClipCleanup();
+				stream.getTracks().forEach(function (t) { t.stop(); });
+				if (opts.status) { opts.status('I could not start the recorder.'); }
+				if (opts.onFail) { opts.onFail('recorder'); }
+				return;
+			}
+		}
 	}).catch(function () {
 		jawn_clip.listening = false;
 		if (opts.onend) { opts.onend(); }
@@ -741,6 +765,13 @@ function jawnEchoCheck(text, mine) {
 
 function jawnClipSend(blob, opts) {
 	opts = opts || {};
+	// diagnosing a clip that arrives empty: the same switch the room reader uses
+	try {
+		if (localStorage.getItem('jawn_room_debug') == 'on') {
+			console.log('[clip] type=' + (blob ? blob.type : 'none') + ' size=' + (blob ? blob.size : 0)
+				+ ' chunks=' + ((jawn_clip.chunks || []).length));
+		}
+	} catch (e) {}
 	if (!blob || !blob.size) { if (opts.status) { opts.status('I did not catch any audio.'); } if (opts.onFail) { opts.onFail('empty'); } return; }
 	if (opts.status) { opts.status('Transcribing…'); }
 	$.ajax({

@@ -540,8 +540,7 @@ sub guide_time_machine {
 			. 'If the phrase names no moment and asks for nothing, reply {"action":"time","when":"unknown"}';
 		my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $spec, &subs::ai_role_thinking('help_assistant'));
 		if ($text) {
-			my $action = eval { decode_json $text };
-			if (!$action && $text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+			my $action = &subs::json_from_model($text);
 			$action = { action => 'time', when => $text } unless $action && $action->{'action'};
 			my $act = $action->{'action'};
 			if ($act eq 'create' && $spec =~ /\b(?:start|begin|log|record|add|create|schedule|make|new|remind)\b/i) {
@@ -32864,10 +32863,7 @@ post '/manager/help/act' => sub($c) {
 			$c->render(json => { error => $err || 'the guide returned nothing readable' });
 			return;
 		}
-		my $action = eval { decode_json $text };
-		unless ($action && $action->{'action'}) {
-			if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
-		}
+		my $action = &subs::json_from_model($text);
 		# the allow-list is the same registry the prompt is built from, plus the
 		# runtime (learned) verbs, so the guide may pick either
 		my $allowed = &help::live_verb_names();
@@ -33964,8 +33960,7 @@ sub remote_command_run($c, $data) {
 		my %remote_verbs = map { $_ => 1 } qw/open_app play_music measure where_when say ask done/;
 		my $system = &help::actions_prompt(\%remote_verbs) . "\n\nRight now it is " . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
 		my ($out) = &subs::evaluation_model_call_role('help_assistant', $system, 'USER: ' . $text . "\n\nReply with the single JSON action.", &subs::ai_role_thinking('help_assistant'));
-		$action = $out ? eval { decode_json $out } : undef;
-		if (!$action && $out && $out =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
+		$action = $out ? &subs::json_from_model($out) : undef;
 		return { ok => 0, error => 'the guide returned nothing readable' } unless $action && $action->{'action'};
 	}
 	else {

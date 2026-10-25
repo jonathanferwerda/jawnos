@@ -7293,6 +7293,21 @@ sub json_from_model() {
 	};
 	my $parsed = $decode->($out);
 	$parsed = $decode->($1) if !$parsed && $out =~ /(\{.*\})/s;
+	# A model that answers with a single-quoted object is not JSON, but a
+	# conversational action still names the words to say. Pull them out rather
+	# than showing the object to the person.
+	if (!$parsed && $out =~ /['"]action['"]\s*:\s*['"](say|ask|done)['"]/) {
+		my $verb = $1;
+		my $text = '';
+		if ($out =~ /['"]text['"]\s*:\s*(['"])(.*)\1\s*[,}]/s) {
+			$text = $2;
+			$text =~ s/\\n/\n/g;
+			$text =~ s/\\t/\t/g;
+			$text =~ s/\\(['"\\])/$1/g;
+		}
+		$parsed = { action => $verb };
+		$parsed->{'text'} = $text if length $text;
+	}
 	return $parsed;
 }
 
