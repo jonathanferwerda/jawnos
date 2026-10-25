@@ -31604,6 +31604,55 @@ sub clock_alarm_stop_sound {
 	return 1;
 }
 
+# A ringtone preview is the alarm's own sound, played on this machine for a
+# few seconds while the person chooses. It is one process at a time, so
+# auditioning the next sound ends the last one.
+sub clock_preview_pidfile() {
+	my $dir = &home('~/.president');
+	eval { File::Path::make_path($dir); } unless -d $dir;
+	$dir = '/tmp' unless -d $dir;
+	return $dir . '/clock_preview.pid';
+}
+
+sub clock_preview_stop {
+	my $file = &clock_preview_pidfile();
+	return 0 unless -e $file;
+	my $pid = eval { read_file($file) };
+	unlink $file;
+	return 0 unless defined $pid;
+	$pid =~ s/\D//g;
+	return 0 unless length $pid;
+	return 0 unless -e '/proc/' . $pid;
+	# The preview's timeout command line names the player and the sounds
+	# directory; a recycled pid after a reboot does not.
+	my $cmdline = eval { read_file('/proc/' . $pid . '/cmdline') } // '';
+	return 0 unless $cmdline =~ /play/ && $cmdline =~ m{public/sounds};
+	eval { kill 'TERM', $pid; };
+	eval { kill 'KILL', $pid; };
+	return 1;
+}
+
+sub clock_preview_play {
+	my ($sound, $volume) = @_;
+	$sound = &clock_valid_alarm_sound($sound) || 'notifications/ring.mp3';
+	$volume = 70 unless defined $volume && "$volume" =~ /^\d+$/;
+	$volume = 5 if $volume < 5;
+	$volume = 100 if $volume > 100;
+	&clock_preview_stop();
+	my $file = &clock_sound_file($sound);
+	my $level = sprintf('%.2f', $volume / 100);
+	# timeout is the stop that a forgotten preview cannot outlive; the pid file
+	# is what a second press, or another sound, uses to end it early.
+	my $command = 'timeout 10 play -q -v ' . $level . ' ' . &quote($file) . ' fade t 1';
+	my $pidfile = &clock_preview_pidfile();
+	eval {
+		&subprocessor(sub {
+			system('sh', '-c', $command . ' & echo $! > ' . &quote($pidfile));
+		}, { name => 'clock preview' });
+	};
+	return 1;
+}
+
 # The phone app is the only device that can wake itself from Doze and put an
 # alarm in front of a locked screen. jawn hands it both the next alarm and the
 # moment one rings over these short broadcasts; the app's receivers do the rest.

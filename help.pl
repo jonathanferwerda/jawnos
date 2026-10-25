@@ -94,7 +94,7 @@ our %topic = (
 		steps => [
 			'Press the clock in the taskbar and choose Alarm, Stopwatch, Timer or World Clock, or open Clock from the start menu.',
 			'On Alarm, press Add alarm. Set its time, give it a name, and choose the days it should repeat on; leave every day off for a one-shot.',
-			'Choose a sound, a volume and a volume ramp. A ramp of 60 fades in over a minute.',
+			'Choose a sound, a volume and a volume ramp. A ramp of 60 fades in over a minute. Press Preview beside the sound to hear it on this machine.',
 			'Press Me, or any other machine, under Shared with to say where the alarm should ring.',
 			'To start an activity with the alarm, type its name in Linked appointment and pick it from the list.',
 			'On Timer, type a length (hours, minutes and seconds) or press a preset, name it, and link an appointment if the timer should run that activity.',

@@ -22801,6 +22801,21 @@ post '/manager/clock/alarm' => sub($c) {
 	$c->render(json => $state);
 };
 
+# Hear the alarm's chosen sound on this machine, or stop it. The sound belongs
+# to the operating system, as the ring itself does; the browser only asks.
+post '/manager/clock/preview' => sub($c) {
+	my $action = $c->param('action') || 'play';
+	if ($action eq 'stop') {
+		&subs::clock_preview_stop();
+		$c->render(json => { ok => 1 });
+		return;
+	}
+	my $sound = &subs::clock_valid_alarm_sound($c->param('sound')) || 'notifications/ring.mp3';
+	my $volume = $c->param('volume');
+	&subs::clock_preview_play($sound, $volume);
+	$c->render(json => { ok => 1, sound => $sound });
+};
+
 # One route for every timer change. A timer that names an appointment starts it
 # on the way in and stops that very session on the way out; the timer row keeps
 # the appointment's uuid so the stop names its own session and never another.

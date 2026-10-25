@@ -60,6 +60,12 @@
 	.clock_field input, .clock_field select { font:inherit; font-size:12px; width:100%; min-width:0; padding:3px 5px; color:inherit;
 		border:1px solid var(--line); border-radius:5px; background:var(--window, var(--panel)); }
 	.clock_field input[type=range] { padding:0; accent-color:#2f8f6d; }
+	.clock_sound_row { display:flex; align-items:center; gap:4px; min-width:0; }
+	.clock_sound_row select { flex:1 1 auto; width:auto; min-width:0; }
+	.clock_alarm_preview { flex:0 0 auto; font:inherit; font-size:11px; padding:3px 8px; cursor:pointer; color:inherit;
+		border:1px solid var(--line); border-radius:5px; background:var(--panel); }
+	.clock_alarm_preview:hover { background:var(--line); }
+	.clock_alarm_preview[data-playing=yes] { background-color:#2f8f6d; color:#fff; border-color:transparent; }
 	.clock_timer_new { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:9px; margin-bottom:10px; background:var(--panel); }
 	.clock_timer_new .clock_timer_label, .clock_timer_new .clock_timer_app, .clock_timer_new .clock_app_picker { grid-column:1 / -1; }
 	.clock_timer_new .clock_add_timer { grid-column:1 / -1; }
@@ -182,11 +188,14 @@
 							</label>
 							<label class="clock_field">
 								<span><%= &subs::lang('sound') %></span>
-								<select class="clock_alarm_sound">
-									<% foreach my $s ( @{$alarm_sounds} ) { %>
-										<option value="<%= $s->{'value'} %>"<%= ($alarm->{'sound'} || '') eq $s->{'value'} ? ' selected' : '' %>><%= $s->{'label'} %></option>
-									<% } %>
-								</select>
+								<div class="clock_sound_row">
+									<select class="clock_alarm_sound">
+										<% foreach my $s ( @{$alarm_sounds} ) { %>
+											<option value="<%= $s->{'value'} %>"<%= ($alarm->{'sound'} || '') eq $s->{'value'} ? ' selected' : '' %>><%= $s->{'label'} %></option>
+										<% } %>
+									</select>
+									<button type="button" class="clock_alarm_preview" hint="<%= &subs::lang('preview') %>"><%= &subs::lang('preview') %></button>
+								</div>
 							</label>
 							<label class="clock_field">
 								<span><%= &subs::lang('volume') %> · <%= $alarm->{'volume'} %>%</span>

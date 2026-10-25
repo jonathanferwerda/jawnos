@@ -53,6 +53,7 @@ function jawnosClockOpen(tab) {
 			if (typeof windowDimensionSetter == 'function') { windowDimensionSetter(existing); }
 		}
 		if (typeof topLevelNow == 'function') { topLevelNow(existing); }
+		existing.attr('data-clock-explicit', 'yes');
 		jawnosClockTab(tab);
 		jawnosClockFill();
 		return;
@@ -64,14 +65,27 @@ function jawnosClockOpen(tab) {
 		success: function (response) {
 			if (!response) { return; }
 			windowMaker(response);
+			$('.wind[app="clock"]').attr('data-clock-explicit', 'yes');
 			jawnosClockTab(tab);
 			jawnosClockFill();
 		}
 	});
 }
 
+// The face a person last used is remembered by this browser, so a window that
+// the manager rebuilds (a timer that starts an appointment redraws it) comes
+// back on the face that was open instead of on Alarm.
+function jawnosClockTabRemembered() {
+	try { return localStorage.getItem('jawnos_clock_tab') || ''; } catch (e) { return ''; }
+}
+
+function jawnosClockTabRemember(tab) {
+	try { localStorage.setItem('jawnos_clock_tab', tab || 'alarm'); } catch (e) {}
+}
+
 function jawnosClockTab(tab) {
 	tab = tab || 'alarm';
+	jawnosClockTabRemember(tab);
 	jawnosClockApp().each(function () {
 		var app = $(this);
 		app.attr('data-clock-tab', tab);
@@ -107,9 +121,15 @@ function jawnosClockFill() {
 		var app = $(this);
 		if (app.attr('data-clock-hydrated') == 'yes') { return; }
 		app.attr('data-clock-hydrated', 'yes');
+		var tab = app.attr('data-clock-tab') || 'alarm';
+		// A window the manager built on its own (a reload, or a redraw after an
+		// appointment) has no explicit choice, so it opens on the face last used.
+		if (app.attr('data-clock-explicit') != 'yes') {
+			tab = jawnosClockTabRemembered() || tab;
+		}
 		jawnosClockStopwatchLoad();
 		jawnosClockWorldLoad();
-		jawnosClockTab(app.attr('data-clock-tab') || 'alarm');
+		jawnosClockTab(tab);
 		jawnosClockRefresh(true);
 	});
 }
@@ -339,14 +359,14 @@ function jawnosClockAlarmHtml(alarm, state) {
 		html += '<button type="button" class="clock_machine' + (on ? ' on' : '') + '" data-machine="' + jawnosClockEsc(m.value) + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + jawnosClockEsc(m.label) + '</button>';
 	});
 	html += '</div></label>';
-	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('sound')) + '</span><select class="clock_alarm_sound">';
+	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('sound')) + '</span><div class="clock_sound_row"><select class="clock_alarm_sound">';
 	$.each((state && state.alarm_sounds) || (state && state.sounds) || [], function (i, s) {
-		var value = (typeof s === 'string') ? ('notifications/' + s) : (s.value || '');
-		var label = (typeof s === 'string') ? s.replace(/\.mp3$/, '') : (s.label || value);
-		if (typeof s === 'string') { label = label.charAt(0).toUpperCase() + label.slice(1); }
+		var value = (typeof s == 'string') ? ('notifications/' + s) : (s.value || '');
+		var label = (typeof s == 'string') ? s.replace(/\.mp3$/, '') : (s.label || value);
+		if (typeof s == 'string') { label = label.charAt(0).toUpperCase() + label.slice(1); }
 		html += '<option value="' + jawnosClockEsc(value) + '"' + (alarm.sound == value ? ' selected' : '') + '>' + jawnosClockEsc(label) + '</option>';
 	});
-	html += '</select></label>';
+	html += '</select><button type="button" class="clock_alarm_preview" hint="' + jawnosClockEsc(jawnosT('preview')) + '">' + jawnosClockEsc(jawnosT('preview')) + '</button></div></label>';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('volume')) + ' · ' + (alarm.volume || 70) + '%</span><input type="range" min="5" max="100" step="5" class="clock_alarm_volume" value="' + (alarm.volume || 70) + '"></label>';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('ramp')) + ' · ' + (alarm.ramp || 0) + 's</span><input type="number" min="0" max="600" step="5" class="clock_alarm_ramp" value="' + (alarm.ramp || 0) + '"></label>';
 	html += '</div></div>';
@@ -434,6 +454,30 @@ $(document).on('click', '.clock_machine', function () {
 		row.find('.clock_machine').first().addClass('on').attr('aria-pressed', 'true');
 	}
 	jawnosClockSaveAlarm(row);
+});
+
+// Audition a ringtone through the operating system. One plays at a time; the
+// second press on the same button stops it.
+$(document).on('click', '.clock_alarm_preview', function () {
+	var button = $(this);
+	var row = button.closest('.clock_alarm');
+	if (button.attr('data-playing') == 'yes') {
+		button.attr('data-playing', 'no');
+		$.ajax({ url: '/manager/clock/preview', type: 'POST', data: { action: 'stop' }, dataType: 'json' });
+		return;
+	}
+	button.attr('data-playing', 'yes');
+	setTimeout(function () { button.attr('data-playing', 'no'); }, 10500);
+	$.ajax({
+		url: '/manager/clock/preview',
+		type: 'POST',
+		dataType: 'json',
+		data: {
+			sound: row.find('.clock_alarm_sound').val() || 'notifications/ring.mp3',
+			volume: parseInt(row.find('.clock_alarm_volume').val() || 70, 10)
+		},
+		complete: function () {}
+	});
 });
 
 $(document).on('click', '.clock_day', function () {
