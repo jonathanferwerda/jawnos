@@ -14106,7 +14106,7 @@ our @colour_scheme_order = (
 	'Indigo', 'Indigo Dark', 'Steel', 'Steel Dark', 'Amber', 'Amber Dark',
 	'Teal', 'Teal Dark', 'Plum', 'Plum Dark', 'Rose', 'Rose Dark',
 	'Nord', 'Nord Dark', 'Sage', 'Sage Dark', 'Mocha', 'Mocha Dark',
-	'Geek', 'Geek Dark'
+	'Geek', 'Geek Dark', 'Phosphor', 'Phosphor Dark', 'Cyberpunk', 'Cyberpunk Dark'
 );
 our %colour_schemes = (
 	'Blue'          => [ '#eaf2fb', '#d6e5f7', '#b4cfef', '#86b0e0', '#4a90d9', '#0078d4' ],
@@ -14141,6 +14141,12 @@ our %colour_schemes = (
 	# scheme, with the green reserved for the accent step.
 	'Geek'          => [ '#f4f8f1', '#e6efdf', '#d1e0c8', '#b4cba9', '#2f9e5b', '#1c7a42' ],
 	'Geek Dark'     => [ '#060a07', '#0b110d', '#101812', '#16211a', '#1f8a4c', '#3ee37c' ],
+	# Two more terminal registers: amber phosphor on warm black (the VT220),
+	# and electric cyan on blue-black with a magenta accent (the cyberpunk).
+	'Phosphor'      => [ '#faf5e9', '#f2ead8', '#e6d9bf', '#d3c09c', '#c07f13', '#8f5c08' ],
+	'Phosphor Dark' => [ '#0a0805', '#110d08', '#17110a', '#21180e', '#8a5a12', '#ffb000' ],
+	'Cyberpunk'     => [ '#eef7fa', '#dceff5', '#c1e0ea', '#95c8d8', '#00a6c2', '#007a90' ],
+	'Cyberpunk Dark' => [ '#050a0c', '#0a1114', '#0e171c', '#142128', '#0e5f70', '#22e6ff' ],
 );
 
 # ---- named themes ----------------------------------------------------------
@@ -14149,7 +14155,7 @@ our %colour_schemes = (
 # bundles; a person may save more (see theme_registry). A name found here is
 # what an appointment's Theme setting stores, so every machine that reads the
 # row paints the same room.
-our @theme_preset_order = qw/deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose geek/;
+our @theme_preset_order = qw/deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose geek phosphor cyberpunk/;
 our %theme_presets = (
 	deepin => {
 		name => 'Deepin', scheme => 'Blue Dark',
@@ -14217,6 +14223,20 @@ our %theme_presets = (
 		name => 'Geek', scheme => 'Geek Dark',
 		icon_set => 'neon', texture => 'sandglass',
 		font => 'JetBrains Mono, Courier New, monospace', corner => 2,
+	},
+	# The VT220: amber on warm black, plain plates, outline glyphs, square
+	# corners and the Courier face the terminals actually printed in.
+	phosphor => {
+		name => 'Phosphor', scheme => 'Phosphor Dark',
+		icon_set => 'outline', texture => 'classic',
+		font => 'Courier New, monospace', corner => 0,
+	},
+	# Neon nights: cyan glass with a magenta accent and iridescent glyphs.
+	cyberpunk => {
+		name => 'Cyberpunk', scheme => 'Cyberpunk Dark',
+		icon_set => 'holographic', texture => 'glass',
+		font => 'JetBrains Mono, Courier New, monospace', corner => 10,
+		accent => '#ff3cc7',
 	},
 );
 
