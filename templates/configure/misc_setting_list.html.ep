@@ -168,9 +168,13 @@
 	<% my $corner_setting = $active_theme ? 'corner_override' : 'corner_radius'; %>
 	<% my $corner_stored = &subs::setting_grabber({ app => 'misc', setting => $corner_setting, device => $dev }) || ''; %>
 	<% my $corner_value = ($corner_stored =~ /^\s*(\d{1,2})/) ? $1 : &subs::corner_radius(); %>
+	<%# the desk's own corner, for the moment a theme is deselected while this
+	    panel is open: the slider then becomes the Misc one again %>
+	<% my $corner_misc = ((&subs::misc_setting('corner_radius') || '') =~ /^\s*(\d{1,2})/) ? $1 : 12; %>
 	<div class="cfg-row">
 		<label><b>Corner Radius <span id="<%= $corner_setting %>_value_<%= $dev %>"><%= $corner_value %></span>px</b></label>
 		<input type="range" class="misc_setting" setting="<%= $corner_setting %>" device="<%= $dev %>"
+			data-misc-corner="<%= $corner_misc %>"
 			min="0" max="28" step="1" value="<%= $corner_value %>" oninput="jawnosMiscRangeInput(this);">
 		<% if (length $active_theme) { %>
 			<button type="button" id="corner_follow_theme" device="<%= $dev %>" theme_corner="<%= $active_bundle->{'corner'} || '12px' %>"><%= &subs::lang('configure.follow_theme') %></button>
@@ -268,7 +272,7 @@
 			<div class="theme_card<% if ($current_theme eq $slug) { %> selected<% } %>" theme_slug="<%= $slug %>" data-builtin="<%= $b->{'builtin'} ? 1 : 0 %>" role="button" tabindex="0">
 				<span class="theme_swatches"><% foreach my $c ( @{$ramp} ) { %><span style="background:<%= $c %>"></span><% } %></span>
 				<span class="theme_card_name"><%= $b->{'name'} %></span>
-				<span class="theme_card_meta"><%= join ' · ', grep { length } ( $b->{'scheme'}, $gb::texture_labels{ $b->{'texture'} } ) %></span>
+				<span class="theme_card_meta"><%= join ' · ', grep { length } ( $b->{'scheme'}, $gb::texture_labels{ $b->{'texture'} }, $b->{'corner'} ) %></span>
 				<% if (!$b->{'builtin'}) { %><button type="button" class="theme_edit" theme_slug="<%= $slug %>"><%= &subs::lang('configure.edit_theme') %></button><% } %>
 			</div>
 		<% } %>
@@ -691,6 +695,7 @@
 		var meta = [];
 		if (theme && theme.scheme) { meta.push(theme.scheme); }
 		if (theme && theme.texture) { meta.push(theme.texture); }
+		if (theme && theme.corner) { meta.push(('' + theme.corner).replace('px', '') + 'px'); }
 		card.append($('<span class="theme_card_meta"></span>').text(meta.join(' \u00b7 ')));
 		if (theme && !theme.builtin && slug) {
 			card.append($('<button type="button" class="theme_edit"></button>').attr('theme_slug', slug).text(<%== encode_json(&subs::lang('configure.edit_theme')) %>));
@@ -716,6 +721,36 @@
 		$('#theme_editor').show();
 		$('#theme_name').trigger('focus');
 	}
+	// A card carries the theme's own corner, and the server hands the corner back
+	// to the theme when one is picked (an older override no longer masks it). Paint
+	// it at once and move this panel's slider with it, rather than waiting on the
+	// websocket push. System (no theme) hands the slider back to the Misc value,
+	// which is what the push falls back to as well.
+	function jawnosThemeCornerPanel(slug) {
+		var t = jawnos_themes[slug];
+		var corner = t ? parseInt(t.corner, 10) : NaN;
+		var dev = themePanelDevice();
+		var slider = $('.misc_setting[setting="corner_radius"], .misc_setting[setting="corner_override"]').first();
+		if (!slider.length) { return; }
+		var readout = document.getElementById('corner_radius_value_' + dev) || document.getElementById('corner_override_value_' + dev);
+		var follow = $('#corner_follow_theme');
+		if (isNaN(corner)) {
+			// System: the Misc slider is the desk's own value again
+			corner = parseInt(slider.attr('data-misc-corner'), 10);
+			if (isNaN(corner)) { corner = 12; }
+			slider.attr('setting', 'corner_radius').val(corner);
+			if (readout) { readout.id = 'corner_radius_value_' + dev; readout.textContent = corner; }
+			follow.hide();
+			if (typeof jawnosBars !== 'undefined' && jawnosBars) { jawnosBars.corner_theme = ''; }
+			if (typeof jawnosCornerApply == 'function') { jawnosCornerApply(corner, false); }
+			return;
+		}
+		slider.attr('setting', 'corner_override').val(corner);
+		if (readout) { readout.id = 'corner_override_value_' + dev; readout.textContent = corner; }
+		follow.attr('theme_corner', corner + 'px').show();
+		if (typeof jawnosBars !== 'undefined' && jawnosBars) { jawnosBars.corner_theme = corner + 'px'; }
+		if (typeof jawnosCornerApply == 'function') { jawnosCornerApply(corner, true); }
+	}
 	$(document).off('click.themeui').on('click.themeui', '.theme_card[theme_slug]', function (e) {
 		if ($(e.target).closest('.theme_edit').length) { return; }
 		var slug = $(this).attr('theme_slug') || '';
@@ -723,6 +758,8 @@
 		$(this).addClass('selected');
 		$.post('/manager/configure/misc_setting', {
 			setting: 'appearance_theme', value: slug, device: themePanelDevice(), timestamp: Date.now()
+		}, function () {
+			jawnosThemeCornerPanel(slug);
 		});
 	});
 	$(document).off('keydown.themeui').on('keydown.themeui', '.theme_card[theme_slug]', function (e) {

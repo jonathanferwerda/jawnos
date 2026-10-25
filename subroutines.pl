@@ -10959,6 +10959,25 @@ sub setting_setter() {
 		&cache_delete({ app => '__president', context => 'config' });
 		&cache_delete({ context => 'template' });
 		&cache_delete({ context => 'header' });
+		# A named theme carries its own corner. Picking one hands the corner back
+		# to the theme: an explicit Misc override chosen under the last theme would
+		# otherwise mask every theme's radius, so the gallery would look as if the
+		# radii were all the same. The slider is free again, and Follow theme stops
+		# being the only way back to the theme's own corner.
+		if (!$sync && defined $value && length $value) {
+			my %cleared;
+			foreach my $corner_device ( $dev, &signatorial_designer() ) {
+				next unless defined $corner_device && length $corner_device && !$cleared{$corner_device}++;
+				my $stale = &setting_grabber({ app => 'misc', setting => 'corner_override', device => $corner_device });
+				next unless defined $stale && length $stale;
+				# sync marks this as a follow-on write: the push below carries the
+				# effective corner once, not once per cleared row
+				&setting_setter({
+					app => 'misc', setting => 'corner_override', value => '',
+					device => $corner_device, timestamp => $timestamp, sync => 1
+				});
+			}
+		}
 		&appointment_theme_push() unless $sync;
 	}
 	elsif ($setting eq 'icon_set_override' || $setting eq 'texture_override' || $setting eq 'corner_override') {
