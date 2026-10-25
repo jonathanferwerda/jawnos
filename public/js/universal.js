@@ -240,13 +240,15 @@ function quality_inventory(timestamp) {
 	var t = "";
 
 	// A month is the average calendar month and a year the average calendar
-	// year, and the month count is taken in whole months with the days left
-	// over, so eleven months never rounds up into a twelfth: a year ago reads
-	// 1y, never 12.1333M. The half day keeps 91 days from reading 2M 30d, and
-	// three whole months is where the days reading gives way to months.
+	// year, and the month count is taken in whole months with the days left over,
+	// so eleven months never rounds up into a twelfth: a year ago reads 1y, never
+	// 12.1333M. The half day keeps 91 days from reading 2M 30d.
 	var month_days = 30.4375;
 	var months = Math.floor((days + 0.5) / month_days);
 
+	// The short form is not fixed to one denomination: it wears the one the span
+	// belongs to with the next smaller one beside it - hours under a day, then
+	// days, months and years, each turning over as soon as there is a whole one.
 	if (seconds < 60) { 
 		t += Math.floor(seconds) + 's';
 	}
@@ -257,7 +259,7 @@ function quality_inventory(timestamp) {
 			t += ' ' + r + 's';
 		}
 	}
-	else if (Math.floor(hours) <= 75) { 
+	else if (hours < 24) { 
 		var parts = [];
 		var hh = Math.floor(hours);
 		var mm = Math.floor((seconds % 3600) / 60);
@@ -267,7 +269,7 @@ function quality_inventory(timestamp) {
 		if (ss) { parts.push(ss + 's'); }
 		t += parts.slice(0, 2).join(' ');
 	}
-	else if (months < 3) { 
+	else if (months < 1) { 
 		var parts = [];
 		var dd = Math.floor(seconds / 86400);
 		var hh = Math.floor((seconds % 86400) / 3600);

@@ -2156,9 +2156,9 @@ $(window).on('resize', function () {
 
 // The details list's Dur column ticks while a session is open: the row carries
 // its start, stop and duration, and the same two-unit shape duration_sayer
-// gives is rebuilt here (1h 5s, 59m 59s, 1d 1m). Clicking the cell turns the
-// reading through the same pages a time label has, short of fixed: hours hold
-// until seventy-five of them, the floor quality_inventory uses, then days.
+// gives is rebuilt here (1h 5s, 59m 59s, 1d 1m). The short form is not fixed to
+// one denomination: it turns over to days once there is a whole day, then to
+// months and years, carrying the next smaller unit beside it.
 function jawnosDurationText(seconds, mode) {
 	seconds = Math.max(0, Math.floor(Number(seconds) || 0));
 	var h = Math.floor(seconds / 3600);
@@ -2170,20 +2170,33 @@ function jawnosDurationText(seconds, mode) {
 	if (mode == 'minutes') {
 		return Math.floor(seconds / 60) + 'm' + (s ? ' ' + s + 's' : '');
 	}
-	if (h <= 75) {
+	var days = seconds / 86400;
+	var month_days = 30.4375;
+	var months = Math.floor((days + 0.5) / month_days);
+	if (h < 24) {
 		var parts = [];
 		if (h) { parts.push(h + 'h'); }
 		if (m) { parts.push(m + 'm'); }
 		if (s) { parts.push(s + 's'); }
 		return parts.length ? parts.slice(0, 2).join(' ') : '0s';
 	}
-	var d = Math.floor(seconds / 86400);
-	var dh = Math.floor((seconds % 86400) / 3600);
-	var dm = Math.floor((seconds % 3600) / 60);
-	var bits = [ d + 'd' ];
-	if (dh) { bits.push(dh + 'h'); }
-	if (dm) { bits.push(dm + 'm'); }
-	return bits.slice(0, 2).join(' ');
+	if (months < 1) {
+		var dd = Math.floor(seconds / 86400);
+		var dh = Math.floor((seconds % 86400) / 3600);
+		var dm = Math.floor((seconds % 3600) / 60);
+		var bits = [ dd + 'd' ];
+		if (dh) { bits.push(dh + 'h'); }
+		if (dm) { bits.push(dm + 'm'); }
+		return bits.slice(0, 2).join(' ');
+	}
+	var years = Math.floor(months / 12);
+	var leftover_months = months % 12;
+	var leftover_days = Math.max(0, Math.floor(days - months * month_days));
+	var units = [];
+	if (years > 0) { units.push(years + 'y'); }
+	if (leftover_months > 0) { units.push(leftover_months + 'M'); }
+	if (leftover_days > 0) { units.push(leftover_days + 'd'); }
+	return units.length ? units.join(' ') : '0s';
 }
 
 // The span a duration element stands for: an open session grows from its start,
