@@ -332,10 +332,9 @@ function jawnosClockEditEnd(commit) {
 		jawnosClockAstrayApply();
 	}
 }
-$(document).on('click', '#taskbar_clock', function (e) {
-	if ($(e.target).is('.taskbar_clock_input')) { return; }
-	jawnosClockEditStart();
-});
+// The clock's plate opens the clock menu (alarm, stopwatch, timer, world clock
+// and the time machine); clock.js owns that menu, so the old press-to-type
+// handler lives there now.
 $(document).on('keydown keypress keyup', '.taskbar_clock_input', function (e) {
 	// keep the typed keys away from the app's own shortcut handlers
 	e.stopPropagation();
@@ -437,6 +436,8 @@ function jawnosBarsApply() {
 	if (typeof taskbarDisplayer == 'function') { taskbarDisplayer(); }
 	// a menu that is up follows its button when the bars move it
 	jawnosStartMenuPlace();
+	// the taskbar clock's own menu follows the clock the same way
+	if (typeof jawnosClockNavPlace == 'function') { jawnosClockNavPlace(); }
 }
 
 // The menu hangs from the button that opens it, wherever the bars have put that

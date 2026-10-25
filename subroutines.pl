@@ -17,6 +17,7 @@ use Time::Duration;
 use Date::Parse;
 use Time::Piece;
 use Time::Local;
+use Fcntl qw(:flock);
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
 use Crypt::Simple;
 use Crypt::PK::ECC;
@@ -31241,6 +31242,526 @@ sub payment_amount_matches {
 	return 1 if $x == $y;
 	return 0 unless $y != 0;
 	return abs($x - $y) / abs($y) <= 0.01 ? 1 : 0;
+}
+
+# ---------------------------------------------------------------------------
+# The Clock app: alarms, timers, and the little that has to live server-side.
+#
+# Alarms and timers are rows in the `settings` table under app 'clock' so they
+# survive a restart and ride the house's usual per-device sync. They are small
+# JSON arrays, capped at ten each. Every read-modify-write takes one flock so a
+# web worker saving an alarm cannot lose the alarm the firing loop just marked,
+# and the firing loop itself runs from Alarm.pl.
+# ---------------------------------------------------------------------------
+
+my @clock_sound_files = qw/chime.mp3 crystal.mp3 ding.mp3 pulse.mp3 rattle.mp3 ring.mp3 sonar.mp3/;
+our ($clock_apps_memo, $clock_apps_memo_at);
+
+sub clock_device() {
+	return &device_setter();
+}
+
+sub clock_sounds() {
+	return [ @clock_sound_files ];
+}
+
+sub clock_valid_sound {
+	my $sound = shift;
+	return '' unless defined $sound && length $sound;
+	return (grep { $_ eq $sound } @clock_sound_files) ? $sound : '';
+}
+
+sub clock_lock_path() {
+	my $dir = &home('~/.president');
+	unless (-d $dir) {
+		eval { File::Path::make_path($dir); };
+	}
+	$dir = '/tmp' unless -d $dir;
+	return $dir . '/.clock_lock';
+}
+
+sub clock_lock_take() {
+	my $path = &clock_lock_path();
+	my $fh;
+	open($fh, '>>', $path) or return undef;
+	flock($fh, LOCK_EX) or do { close($fh); return undef; };
+	return $fh;
+}
+
+sub clock_lock_drop {
+	my $fh = shift;
+	return unless $fh;
+	flock($fh, LOCK_UN);
+	close($fh);
+}
+
+sub clock_normalize_alarm {
+	my $in = shift;
+	$in = {} unless ref $in eq 'HASH';
+	my @raw_days = ref $in->{'days'} eq 'ARRAY' ? @{ $in->{'days'} } : split /,/, ($in->{'days'} // '');
+	my (@days, %seen);
+	foreach my $d (@raw_days) {
+		next unless defined $d && "$d" =~ /^\d+$/;
+		$d = int($d);
+		next if $d < 0 || $d > 6 || $seen{$d}++;
+		push @days, $d;
+	}
+	@days = sort { $a <=> $b } @days;
+	my $hour = (defined $in->{'hour'} && "$in->{'hour'}" =~ /^\d+$/) ? int($in->{'hour'}) : 7;
+	my $minute = (defined $in->{'minute'} && "$in->{'minute'}" =~ /^\d+$/) ? int($in->{'minute'}) : 0;
+	$hour = 23 if $hour > 23;
+	$minute = 59 if $minute > 59;
+	my $volume = (defined $in->{'volume'} && "$in->{'volume'}" =~ /^\d+$/) ? int($in->{'volume'}) : 70;
+	$volume = 5 if $volume < 5;
+	$volume = 100 if $volume > 100;
+	my $ramp = (defined $in->{'ramp'} && "$in->{'ramp'}" =~ /^\d+$/) ? int($in->{'ramp'}) : 60;
+	$ramp = 0 if $ramp < 0;
+	$ramp = 600 if $ramp > 600;
+	my $label = defined $in->{'label'} ? "$in->{'label'}" : 'Alarm';
+	$label =~ s/^\s+//;
+	$label =~ s/\s+$//;
+	$label = substr($label, 0, 120);
+	$label = 'Alarm' unless length $label;
+	my $sound = &clock_valid_sound($in->{'sound'}) || 'ring.mp3';
+	my $enabled = defined $in->{'enabled'} ? (($in->{'enabled'} && $in->{'enabled'} ne '0' && $in->{'enabled'} ne 'off') ? 1 : 0) : 1;
+	return {
+		uuid => ($in->{'uuid'} // ''),
+		hour => $hour,
+		minute => $minute,
+		days => \@days,
+		enabled => $enabled,
+		label => $label,
+		app => ($in->{'app'} // ''),
+		sound => $sound,
+		volume => $volume,
+		ramp => $ramp,
+		last_fire => int($in->{'last_fire'} || 0),
+		snooze_until => int($in->{'snooze_until'} || 0),
+		ringing => ($in->{'ringing'} ? 1 : 0),
+		ring_started => int($in->{'ring_started'} || 0),
+		ring_last => int($in->{'ring_last'} || 0),
+		created => int($in->{'created'} || 0),
+	};
+}
+
+sub clock_normalize_timer {
+	my $t = shift;
+	$t = {} unless ref $t eq 'HASH';
+	my $seconds = (defined $t->{'seconds'} && "$t->{'seconds'}" =~ /^\d+$/) ? int($t->{'seconds'}) : 300;
+	$seconds = 1 if $seconds < 1;
+	$seconds = 359999 if $seconds > 359999;
+	my $label = defined $t->{'label'} ? "$t->{'label'}" : 'Timer';
+	$label =~ s/^\s+//;
+	$label =~ s/\s+$//;
+	$label = substr($label, 0, 120);
+	$label = 'Timer' unless length $label;
+	my $state = $t->{'state'} // 'running';
+	$state = 'running' unless grep { $_ eq $state } qw/running done cancelled/;
+	return {
+		uuid => ($t->{'uuid'} // ''),
+		label => $label,
+		seconds => $seconds,
+		started_at => int($t->{'started_at'} || 0),
+		ends_at => int($t->{'ends_at'} || 0),
+		ended_at => int($t->{'ended_at'} || 0),
+		state => $state,
+		app => ($t->{'app'} // ''),
+		appt_uuid => ($t->{'appt_uuid'} // ''),
+		sound => &clock_valid_sound($t->{'sound'}) || 'chime.mp3',
+		created => int($t->{'created'} || 0),
+	};
+}
+
+sub clock_alarms_read() {
+	my $raw = eval { &setting_grabber({ app => 'clock', setting => 'alarms', device => &clock_device() }) };
+	my $list = (defined $raw && length $raw) ? eval { decode_json($raw) } : [];
+	$list = [] unless ref $list eq 'ARRAY';
+	return [ map { &clock_normalize_alarm($_) } @{$list} ];
+}
+
+sub clock_timers_read() {
+	my $raw = eval { &setting_grabber({ app => 'clock', setting => 'timers', device => &clock_device() }) };
+	my $list = (defined $raw && length $raw) ? eval { decode_json($raw) } : [];
+	$list = [] unless ref $list eq 'ARRAY';
+	return [ map { &clock_normalize_timer($_) } @{$list} ];
+}
+
+sub clock_alarms_write {
+	my $alarms = shift;
+	my $json = encode_json($alarms || []);
+	&setting_setter({ app => 'clock', setting => 'alarms', value => $json, device => &clock_device() });
+	return $alarms;
+}
+
+sub clock_timers_write {
+	my $timers = shift;
+	my $json = encode_json($timers || []);
+	&setting_setter({ app => 'clock', setting => 'timers', value => $json, device => &clock_device() });
+	return $timers;
+}
+
+# The next moment an alarm is due, strictly after $from. A day list of none is a
+# one-shot: the next such time, whatever day it lands on. The caller decides what
+# to do with a moment that has just gone by (the firing loop allows two minutes).
+sub clock_alarm_next_ms {
+	my ($alarm, $from) = @_;
+	my $hour = int($alarm->{'hour'} || 0);
+	my $minute = int($alarm->{'minute'} || 0);
+	my @days = @{ $alarm->{'days'} || [] };
+	$from = &rightNow() unless defined $from;
+	my @lt = localtime(int($from / 1000));
+	my ($mday, $mon, $year) = @lt[3, 4, 5];
+	for my $offset (0 .. 8) {
+		my $candidate = timelocal(0, $minute, $hour, $mday + $offset, $mon, $year) * 1000;
+		next if $candidate <= $from;
+		if (!scalar @days) { return $candidate; }
+		my @d = localtime(int($candidate / 1000));
+		return $candidate if grep { $_ == $d[6] } @days;
+	}
+	return undef;
+}
+
+sub clock_next_wake {
+	my ($alarms, $timers, $now) = @_;
+	$now = &rightNow() unless defined $now;
+	my $next;
+	foreach my $a (@{ $alarms || [] }) {
+		my $candidate;
+		if ($a->{'ringing'}) {
+			# The ring repeats every fifteen seconds, but never past five
+			# minutes from the first sound.
+			my $end = ($a->{'ring_started'} || $now) + 300000;
+			$candidate = ($a->{'ring_last'} || $now) + 15000;
+			$candidate = $end if $end < $candidate;
+			$candidate = $now + 1000 if $candidate <= $now;
+			$next = $candidate if $candidate && (!$next || $candidate < $next);
+			next;
+		}
+		if ($a->{'snooze_until'} && $a->{'snooze_until'} > $now) {
+			$candidate = $a->{'snooze_until'};
+		}
+		elsif ($a->{'enabled'}) {
+			$candidate = &clock_alarm_next_ms($a, $now);
+		}
+		$next = $candidate if $candidate && (!$next || $candidate < $next);
+	}
+	foreach my $t (@{ $timers || [] }) {
+		next unless ($t->{'state'} || '') eq 'running';
+		my $candidate = $t->{'ends_at'};
+		$next = $candidate if $candidate && (!$next || $candidate < $next);
+	}
+	return $next;
+}
+
+# Nudge the alarm worker so a save, a start or a cancel is reflected at once
+# rather than at the appointment it was already sleeping toward.
+sub clock_poke {
+	my $timestamp = shift;
+	$timestamp = &rightNow() unless defined $timestamp;
+	eval { &appt_alarm_setter({ uuid => 'clock', timestamp => $timestamp }) };
+	return 1;
+}
+
+sub clock_apps {
+	my $now = &rightNow();
+	my $memo = ($clock_apps_memo && $clock_apps_memo_at && ($now - $clock_apps_memo_at) < 60000) ? $clock_apps_memo : undef;
+	my (@out, %seen);
+	foreach my $name (qw/me misc music_folder_toggle teletype __president __DEBRIEFING__/) { $seen{$name} = 1; }
+	if ($memo) {
+		@out = @{ $memo };
+		foreach my $row (@out) { $seen{$row->{'value'}} = 1; }
+	}
+	else {
+		# The most recently used appointments make a useful picker without
+		# shipping the whole history: a house can name thousands of things and
+		# only the last hundred and fifty are likely to be linked to a clock.
+		my $rows = eval {
+			return &db_query('select app, max(timestamp) as last from appointments where app is not null and app != ? group by app order by last desc limit 150', '')->hashes;
+		} || [];
+		foreach my $r (@{ $rows || [] }) {
+			my $a = $r->{'app'};
+			next unless defined $a && length $a;
+			next if $a =~ /^__/;
+			next if $seen{$a}++;
+			push @out, { value => $a, label => &format_name($a) };
+		}
+		@out = sort { lc($a->{'label'}) cmp lc($b->{'label'}) } @out;
+		$clock_apps_memo = [ @out ];
+		$clock_apps_memo_at = $now;
+	}
+	# a link already on an alarm or timer stays offered even before that app has
+	# written an appointment of its own
+	foreach my $row (@{ &clock_alarms_read() }, @{ &clock_timers_read() }) {
+		my $a = $row->{'app'};
+		next unless defined $a && length $a;
+		next if $seen{$a}++;
+		push @out, { value => $a, label => &format_name($a) };
+	}
+	@out = sort { lc($a->{'label'}) cmp lc($b->{'label'}) } @out;
+	return \@out;
+}
+
+sub clock_state() {
+	my $now = &rightNow();
+	return {
+		now => $now,
+		alarms => &clock_alarms_read(),
+		timers => &clock_timers_read(),
+		apps => &clock_apps(),
+		sounds => &clock_sounds(),
+		max => 10,
+	};
+}
+
+sub clock_send_console {
+	my $script = shift;
+	return unless defined $script && length $script;
+	eval { &Websocket::send('tab', { console => $script, timestamp => &rightNow() }); };
+	return 1;
+}
+
+# How loud the OS alarm is at a moment in its ring: a little above silence at
+# the start, then the alarm's own volume by the end of its ramp. The browser
+# draws the ring card, but the sound belongs to the machine.
+sub clock_alarm_volume_at {
+	my ($alarm, $elapsed) = @_;
+	my $target = (($alarm->{'volume'} || 70) / 100);
+	my $ramp = ($alarm->{'ramp'} || 0) * 1000;
+	my $progress = 1;
+	if ($ramp > 0) {
+		$progress = $elapsed / $ramp;
+		$progress = 1 if $progress > 1;
+		$progress = 0 if $progress < 0;
+		$progress = 0.15 + (0.85 * $progress);
+	}
+	my $level = $target * $progress;
+	$level = 0.02 if $level < 0.02;
+	return sprintf('%.2f', $level);
+}
+
+# Play one ring through the operating system. The notification at the first
+# ring carries this same command; later rings use this one directly, so the
+# volume climbs across the ramp and no notification row is written each time.
+sub clock_alarm_sound {
+	my ($alarm, $elapsed) = @_;
+	$elapsed ||= 0;
+	my $sound = &clock_valid_sound($alarm->{'sound'}) || 'ring.mp3';
+	my $file = './public/sounds/notifications/' . $sound;
+	my $level = &clock_alarm_volume_at($alarm, $elapsed);
+	my $command = 'play -q -v ' . $level . ' ' . &quote($file) . ' fade t 1';
+	eval {
+		&subprocessor(sub { &run_command($command); }, { name => 'clock alarm sound' });
+	};
+	return $command;
+}
+
+sub clock_alarm_cmd {
+	my ($alarm, $fire_at, $now) = @_;
+	my $payload = {
+		uuid => $alarm->{'uuid'},
+		label => $alarm->{'label'},
+		hour => $alarm->{'hour'},
+		minute => $alarm->{'minute'},
+		sound => $alarm->{'sound'},
+		volume => $alarm->{'volume'},
+		ramp => $alarm->{'ramp'},
+		app => $alarm->{'app'},
+		fired_at => $fire_at,
+	};
+	my $json = encode_json($payload);
+	$json =~ s/\x{2028}/\\u2028/g;
+	$json =~ s/\x{2029}/\\u2029/g;
+	&clock_send_console('jawnosClockAlarmRing(' . $json . ');');
+	return $payload;
+}
+
+sub clock_alarm_ring {
+	my ($alarm, $fire_at, $now) = @_;
+	$now = &rightNow() unless defined $now;
+	# The ring begins here and is repeated by the firing loop until Dismiss or
+	# Snooze clears it (or the five-minute guard runs out).
+	$alarm->{'ringing'} = 1;
+	$alarm->{'ring_started'} = $now;
+	$alarm->{'ring_last'} = $now;
+	&clock_alarm_cmd($alarm, $fire_at, $now);
+
+	my $label = $alarm->{'label'} || 'Alarm';
+	my $app = $alarm->{'app'} || '';
+	my $message = $app ? $label . ' - ' . &format_name($app) : $label;
+	my $sound = $alarm->{'sound'} || 'ring.mp3';
+	my $file = './public/sounds/notifications/' . $sound;
+	my $play = 'play -q -v ' . &clock_alarm_volume_at($alarm, 0) . ' ' . &quote($file) . ' fade t 1';
+
+	# The alarm turns its linked appointment on. A session already running is the
+	# same activity and is left alone, so a late tick cannot open a second one.
+	if ($app && !&open_session_uuid($app)) {
+		eval {
+			&Manager::appointment_writer(undef, {
+				app => $app,
+				type => 'start',
+				timestamp => $now,
+				server_time => $now,
+			});
+		};
+	}
+
+	eval {
+		&Manager::notification_sender({
+			app => 'clock',
+			role => 'all',
+			type => 'clock',
+			title => $label,
+			message => $message,
+			image => '/icons/alarm.svg',
+			sound => $sound,
+			synth => $play,
+			words => ' ',
+		}, undef);
+	};
+	return 1;
+}
+
+sub clock_timer_finish {
+	my ($timer, $now) = @_;
+	$now = &rightNow() unless defined $now;
+	my $label = $timer->{'label'} || 'Timer';
+	my $app = $timer->{'app'} || '';
+	# The countdown's own end is when the activity ended, even when the alarm
+	# worker was asleep and reads it a little late; the server_time stays now so
+	# every machine takes the row in the usual order.
+	my $ended = $timer->{'ends_at'} || $now;
+
+	if ($app && $timer->{'appt_uuid'}) {
+		eval {
+			&Manager::appointment_writer(undef, {
+				app => $app,
+				type => 'stop',
+				uuid => $timer->{'appt_uuid'},
+				timestamp => $ended,
+				server_time => $now,
+			});
+		};
+	}
+
+	my $payload = {
+		uuid => $timer->{'uuid'},
+		label => $label,
+		app => $app,
+		seconds => $timer->{'seconds'},
+		ended_at => $timer->{'ends_at'},
+	};
+	my $json = encode_json($payload);
+	$json =~ s/\x{2028}/\\u2028/g;
+	$json =~ s/\x{2029}/\\u2029/g;
+	&clock_send_console('jawnosClockTimerDone(' . $json . ');');
+
+	my $sound = $timer->{'sound'} || 'chime.mp3';
+	my $file = './public/sounds/notifications/' . $sound;
+	my $play = 'play -q -v 0.7 ' . &quote($file);
+	eval {
+		&Manager::notification_sender({
+			app => 'clock',
+			role => 'all',
+			type => 'clock',
+			title => &lang('timer'),
+			message => $label . ($app ? ' - ' . &format_name($app) : '') . ' finished',
+			image => '/icons/timer.svg',
+			sound => $sound,
+			synth => $play,
+			words => ' ',
+		}, undef);
+	};
+	return 1;
+}
+
+# One pass of the clock's own clock. Called by Alarm.pl; returns the next moment
+# it should be woken for, or undef when there is nothing waiting.
+sub clock_tick() {
+	my $now = &rightNow();
+	my $lock = &clock_lock_take();
+	my ($next, $changed) = (undef, 0);
+	my @actions;
+	eval {
+		my $alarms = &clock_alarms_read();
+		my $timers = &clock_timers_read();
+		my $alarms_changed = 0;
+		my $timers_changed = 0;
+
+		foreach my $alarm (@{ $alarms }) {
+			next unless $alarm->{'enabled'} || $alarm->{'snooze_until'} || $alarm->{'ringing'};
+			if ($alarm->{'ringing'}) {
+				my $elapsed = $now - ($alarm->{'ring_started'} || $now);
+				if ($elapsed >= 300000) {
+					$alarm->{'ringing'} = 0;
+					$alarm->{'ring_started'} = 0;
+					$alarm->{'ring_last'} = 0;
+					$alarms_changed = 1;
+					$changed = 1;
+				}
+				elsif (!$alarm->{'ring_last'} || ($now - $alarm->{'ring_last'}) >= 15000) {
+					push @actions, [ 'sound', $alarm, $elapsed ];
+					$alarm->{'ring_last'} = $now;
+					$alarms_changed = 1;
+				}
+				next;
+			}
+			my $fire_at;
+			if ($alarm->{'snooze_until'} && $alarm->{'snooze_until'} <= $now && $now - $alarm->{'snooze_until'} <= 120000) {
+				$fire_at = $alarm->{'snooze_until'};
+			}
+			unless ($fire_at) {
+				my $candidate = &clock_alarm_next_ms($alarm, $now - 120000);
+				$fire_at = $candidate if $candidate && $candidate <= $now;
+			}
+			next unless $fire_at;
+			my $key = int($fire_at / 60000);
+			next if $alarm->{'last_fire'} && $alarm->{'last_fire'} == $key;
+			$alarm->{'last_fire'} = $key;
+			$alarm->{'snooze_until'} = 0;
+			$alarm->{'enabled'} = 0 unless scalar @{ $alarm->{'days'} || [] };
+			$alarm->{'ringing'} = 1;
+			$alarm->{'ring_started'} = $now;
+			$alarm->{'ring_last'} = $now;
+			$alarms_changed = 1;
+			$changed = 1;
+			push @actions, [ 'ring', $alarm, $fire_at, $now ];
+		}
+
+		foreach my $timer (@{ $timers }) {
+			next unless ($timer->{'state'} || '') eq 'running';
+			next unless $timer->{'ends_at'} && $timer->{'ends_at'} <= $now + 500;
+			$timer->{'state'} = 'done';
+			$timer->{'ended_at'} = $timer->{'ends_at'};
+			$timers_changed = 1;
+			$changed = 1;
+			push @actions, [ 'timer', $timer, $now ];
+		}
+
+		&clock_alarms_write($alarms) if $alarms_changed;
+		&clock_timers_write($timers) if $timers_changed;
+		$next = &clock_next_wake($alarms, $timers, $now);
+	};
+	warn 'clock tick: ' . $@ if $@;
+	&clock_lock_drop($lock);
+
+	# The ring, the repeated OS sound and the appointment stop all fork their
+	# own players; they run after the lock is released so a two-second chime
+	# cannot hold a save out of the alarm list.
+	foreach my $action (@actions) {
+		my $kind = $action->[0];
+		if ($kind eq 'ring') {
+			eval { &clock_alarm_ring($action->[1], $action->[2], $action->[3]); };
+		}
+		elsif ($kind eq 'sound') {
+			eval { &clock_alarm_sound($action->[1], $action->[2]); };
+		}
+		elsif ($kind eq 'timer') {
+			eval { &clock_timer_finish($action->[1], $action->[2]); };
+		}
+		warn 'clock action: ' . $@ if $@;
+	}
+	&clock_send_console('jawnosClockRefresh();') if $changed;
+	return $next;
 }
 
 1;

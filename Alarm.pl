@@ -252,9 +252,13 @@ sub alarm_clock() {
 			&subs::appointment_theme_push() if $theme_movement;
 		}
 
+		my $clock_next = &subs::clock_tick();
 		my $next_data = &subs::next_appointment_time({ now => $last_moment });
 		my $next_time = $next_data->{'next_time'};
 		$next_run = $next_data->{'next_run'};
+		# the clock app's own alarms and timers may be the next thing due, even
+		# when no appointment is waiting
+		$next_run = $clock_next if $clock_next && (!$next_run || $clock_next < $next_run);
 		return { next_run => $next_run, next_time => $next_time };
 	}
 

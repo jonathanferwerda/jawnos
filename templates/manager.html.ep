@@ -20,6 +20,25 @@
 	<span id="taskbar_icons"></span>
 	<span id="taskbar_clock"></span>
 </div>
+<%# The clock's own little menu, hung under or over the taskbar clock by
+    clock.js. It is outside #taskbar so opening it never disturbs the bar. %>
+<div id="clock_nav" class="clock_nav" role="menu" aria-label="<%= &subs::lang('clock') %>" style="display:none;">
+	<button type="button" class="clock_nav_item" role="menuitem" data-clock-open="alarm">
+		<img src="<%= &subs::icon_path('alarm', '/icons/alarm.svg') %>" alt=""><span><%= &subs::lang('alarm') %></span>
+	</button>
+	<button type="button" class="clock_nav_item" role="menuitem" data-clock-open="stopwatch">
+		<img src="<%= &subs::icon_path('stopwatch', '/icons/stopwatch.svg') %>" alt=""><span><%= &subs::lang('stopwatch') %></span>
+	</button>
+	<button type="button" class="clock_nav_item" role="menuitem" data-clock-open="timer">
+		<img src="<%= &subs::icon_path('timer', '/icons/timer.svg') %>" alt=""><span><%= &subs::lang('timer') %></span>
+	</button>
+	<button type="button" class="clock_nav_item" role="menuitem" data-clock-open="world">
+		<img src="<%= &subs::icon_path('world_clock', '/icons/world_clock.svg') %>" alt=""><span><%= &subs::lang('world_clock') %></span>
+	</button>
+	<button type="button" class="clock_nav_item clock_nav_time_machine" role="menuitem" data-clock-action="time_machine" style="grid-column:1 / -1;">
+		<img src="<%= &subs::icon_path('now', '/images/decipherable/now.png') %>" alt=""><span><%= &subs::lang('time_machine') %></span>
+	</button>
+</div>
 <canvas class="background" id="background"></canvas>
 <canvas class="background" id="leaderboard" style="height: 100vh;"></canvas>
 <canvas class="background" id="timeline"></canvas>

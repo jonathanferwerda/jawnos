@@ -6389,6 +6389,7 @@ my @manager_bundle_files = qw(
 	/js/manager/folders.js
 	/js/manager/desk.js
 	/js/manager/notes.js
+	/js/manager/clock.js
 	/js/manager/help.js
 	/js/manager/coding.js
 	/js/manager/agents.js
@@ -22605,6 +22606,259 @@ get '/manager/notes' => sub($c) {
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'notes', title => 'Notes', contents => $content }, $c->param('timestamp'));
 	$c->render(text => $contents);
+};
+
+# --- Clock: alarms, stopwatch, timers and world clocks ----------------------
+# The four faces share one window. Alarms and timers are stored server-side so
+# they fire, and can start and stop appointments, even when no browser is open;
+# the stopwatch and the world clock list are the browser's own.
+get '/manager/clock' => sub($c) {
+	my $tab = $c->param('tab') || 'alarm';
+	$tab = 'alarm' unless $tab =~ /^(?:alarm|stopwatch|timer|world)$/;
+	my $state = &subs::clock_state();
+	my $content = $c->render_to_string(
+		template => 'apps/clock',
+		tab => $tab,
+		alarms => $state->{'alarms'},
+		timers => $state->{'timers'},
+		apps => $state->{'apps'},
+		sounds => $state->{'sounds'},
+		max => $state->{'max'},
+	);
+	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'clock', title => &subs::lang('clock'), contents => $content }, $c->param('timestamp'));
+	$c->render(text => $contents);
+};
+
+get '/manager/clock/state' => sub($c) {
+	$c->render(json => &subs::clock_state());
+};
+
+# One route for every alarm edit. The client asks for the state back, so a save
+# and the list it lands in can never disagree.
+post '/manager/clock/alarm' => sub($c) {
+	my $action = $c->param('action') || 'save';
+	my $now = &subs::rightNow();
+	my $lock = &subs::clock_lock_take();
+	my $alarms = &subs::clock_alarms_read();
+	my $error = '';
+
+	if ($action eq 'add') {
+		if (scalar @{$alarms} >= 10) {
+			$error = 'full';
+		}
+		else {
+			my @lt = localtime(int($now / 1000));
+			my $hour = ($lt[2] + 1) % 24;
+			push @{$alarms}, &subs::clock_normalize_alarm({
+				uuid => &subs::random_string_creator(24),
+				hour => $hour,
+				minute => 0,
+				days => [],
+				enabled => 1,
+				label => &subs::lang('alarm'),
+				sound => 'ring.mp3',
+				volume => 70,
+				ramp => 60,
+				created => $now,
+			});
+		}
+	}
+	elsif ($action eq 'delete') {
+		my $uuid = $c->param('uuid') || '';
+		@{$alarms} = grep { ($_->{'uuid'} || '') ne $uuid } @{$alarms};
+	}
+	elsif ($action eq 'stop_all') {
+		foreach my $a (@{$alarms}) {
+			$a->{'snooze_until'} = 0;
+			$a->{'ringing'} = 0;
+			$a->{'ring_started'} = 0;
+			$a->{'ring_last'} = 0;
+		}
+	}
+	elsif ($action eq 'dismiss' || $action eq 'snooze') {
+		my $uuid = $c->param('uuid') || '';
+		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{$alarms};
+		if (!$alarm) {
+			$error = 'missing';
+		}
+		elsif ($action eq 'dismiss') {
+			$alarm->{'snooze_until'} = 0;
+			$alarm->{'ringing'} = 0;
+			$alarm->{'ring_started'} = 0;
+			$alarm->{'ring_last'} = 0;
+		}
+		else {
+			my $minutes = $c->param('minutes');
+			$minutes = 5 unless defined $minutes && $minutes =~ /^\d+$/;
+			$minutes = 1 if $minutes < 1;
+			$minutes = 60 if $minutes > 60;
+			$alarm->{'snooze_until'} = $now + ($minutes * 60000);
+			$alarm->{'ringing'} = 0;
+			$alarm->{'ring_started'} = 0;
+			$alarm->{'ring_last'} = 0;
+		}
+	}
+	elsif ($action eq 'toggle') {
+		my $uuid = $c->param('uuid') || '';
+		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{$alarms};
+		if (!$alarm) {
+			$error = 'missing';
+		}
+		else {
+			$alarm->{'enabled'} = ($c->param('enabled') && $c->param('enabled') ne '0' && $c->param('enabled') ne 'off') ? 1 : 0;
+			$alarm->{'last_fire'} = 0 unless $alarm->{'enabled'};
+			if (!$alarm->{'enabled'}) {
+				$alarm->{'ringing'} = 0;
+				$alarm->{'ring_started'} = 0;
+				$alarm->{'ring_last'} = 0;
+			}
+		}
+	}
+	elsif ($action eq 'save') {
+		my $uuid = $c->param('uuid') || '';
+		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{$alarms};
+		if (!$alarm) {
+			$error = 'missing';
+		}
+		else {
+			$alarm->{'hour'} = $c->param('hour') if defined $c->param('hour') && $c->param('hour') =~ /^\d+$/;
+			$alarm->{'minute'} = $c->param('minute') if defined $c->param('minute') && $c->param('minute') =~ /^\d+$/;
+			$alarm->{'label'} = $c->param('label') if defined $c->param('label');
+			if (defined $c->param('days')) {
+				$alarm->{'days'} = [ split /,/, $c->param('days') ];
+			}
+			if (defined $c->param('app')) {
+				my $app = $c->param('app');
+				$app =~ s/^\s+//; $app =~ s/\s+$//;
+				$alarm->{'app'} = length $app ? &subs::unformat_name($app) : '';
+			}
+			$alarm->{'sound'} = $c->param('sound') if defined $c->param('sound') && length &subs::clock_valid_sound($c->param('sound'));
+			$alarm->{'volume'} = $c->param('volume') if defined $c->param('volume') && $c->param('volume') =~ /^\d+$/;
+			$alarm->{'ramp'} = $c->param('ramp') if defined $c->param('ramp') && $c->param('ramp') =~ /^\d+$/;
+			$alarm->{'enabled'} = ($c->param('enabled') && $c->param('enabled') ne '0' && $c->param('enabled') ne 'off') ? 1 : 0 if defined $c->param('enabled');
+			$alarm = &subs::clock_normalize_alarm($alarm);
+			if (!$alarm->{'enabled'}) {
+				$alarm->{'ringing'} = 0;
+				$alarm->{'ring_started'} = 0;
+				$alarm->{'ring_last'} = 0;
+			}
+			for my $i (0 .. $#{$alarms}) {
+				if (($alarms->[$i]->{'uuid'} || '') eq $uuid) { $alarms->[$i] = $alarm; last; }
+			}
+		}
+	}
+
+	&subs::clock_alarms_write($alarms) unless length $error;
+	my $next = &subs::clock_next_wake($alarms, &subs::clock_timers_read(), $now);
+	&subs::clock_lock_drop($lock);
+	&subs::clock_poke($next || $now);
+	if ($action eq 'dismiss' || $action eq 'snooze' || $action eq 'stop_all') {
+		&subs::clock_send_console('jawnosClockAlarmStop();');
+	}
+	my $state = &subs::clock_state();
+	$state->{'ok'} = length $error ? 0 : 1;
+	$state->{'error'} = $error;
+	$c->render(json => $state);
+};
+
+# One route for every timer change. A timer that names an appointment starts it
+# on the way in and stops that very session on the way out; the timer row keeps
+# the appointment's uuid so the stop names its own session and never another.
+post '/manager/clock/timer' => sub($c) {
+	my $action = $c->param('action') || 'start';
+	my $now = &subs::rightNow();
+	my $lock = &subs::clock_lock_take();
+	my $timers = &subs::clock_timers_read();
+	my $error = '';
+	my $poke;
+
+	if ($action eq 'start') {
+		my $running = scalar grep { ($_->{'state'} || '') eq 'running' } @{$timers};
+		my $hours = ($c->param('hours') || 0) =~ /^\d+$/ ? int($c->param('hours') || 0) : 0;
+		my $minutes = ($c->param('minutes') || 0) =~ /^\d+$/ ? int($c->param('minutes') || 0) : 0;
+		my $seconds = ($c->param('seconds') || 0) =~ /^\d+$/ ? int($c->param('seconds') || 0) : 0;
+		my $length = ($hours * 3600) + ($minutes * 60) + $seconds;
+		if ($running >= 10) {
+			$error = 'full';
+		}
+		elsif ($length < 1 || $length > 359999) {
+			$error = 'time';
+		}
+		else {
+			my $label = $c->param('label') || &subs::lang('timer');
+			$label =~ s/^\s+//; $label =~ s/\s+$//;
+			my $app = $c->param('app') || '';
+			$app =~ s/^\s+//; $app =~ s/\s+$//;
+			$app = length $app ? &subs::unformat_name($app) : '';
+			my $sound = &subs::clock_valid_sound($c->param('sound')) || 'chime.mp3';
+			my $timer = &subs::clock_normalize_timer({
+				uuid => &subs::random_string_creator(24),
+				label => $label,
+				seconds => $length,
+				started_at => $now,
+				ends_at => $now + ($length * 1000),
+				state => 'running',
+				app => $app,
+				sound => $sound,
+				created => $now,
+			});
+			if ($app) {
+				my $open = &subs::open_session_uuid($app);
+				if ($open) {
+					$timer->{'appt_uuid'} = $open;
+				}
+				else {
+					my $started = &appointment_writer($c, {
+						app => $app,
+						type => 'start',
+						timestamp => $now,
+						server_time => $now,
+					});
+					$timer->{'appt_uuid'} = $started->{'uuid'} if $started->{'uuid'};
+				}
+			}
+			push @{$timers}, $timer;
+			$poke = $timer->{'ends_at'};
+		}
+	}
+	elsif ($action eq 'stop' || $action eq 'delete') {
+		my $uuid = $c->param('uuid') || '';
+		my ($timer) = grep { ($_->{'uuid'} || '') eq $uuid } @{$timers};
+		if (!$timer) {
+			$error = 'missing';
+		}
+		elsif (($timer->{'state'} || '') eq 'running') {
+			$timer->{'state'} = 'cancelled';
+			$timer->{'ended_at'} = $now;
+			if ($timer->{'app'} && $timer->{'appt_uuid'}) {
+				&appointment_writer($c, {
+					app => $timer->{'app'},
+					type => 'stop',
+					uuid => $timer->{'appt_uuid'},
+					timestamp => $now,
+					server_time => $now,
+				});
+			}
+			if ($action eq 'delete') {
+				@{$timers} = grep { ($_->{'uuid'} || '') ne $uuid } @{$timers};
+			}
+		}
+		elsif ($action eq 'delete') {
+			@{$timers} = grep { ($_->{'uuid'} || '') ne $uuid } @{$timers};
+		}
+	}
+	elsif ($action eq 'clear_finished') {
+		@{$timers} = grep { ($_->{'state'} || '') eq 'running' } @{$timers};
+	}
+
+	&subs::clock_timers_write($timers) unless length $error;
+	my $next = &subs::clock_next_wake(&subs::clock_alarms_read(), $timers, $now);
+	&subs::clock_lock_drop($lock);
+	&subs::clock_poke($poke || $next || $now);
+	my $state = &subs::clock_state();
+	$state->{'ok'} = length $error ? 0 : 1;
+	$state->{'error'} = $error;
+	$c->render(json => $state);
 };
 
 get '/manager/camera' => sub($c) {

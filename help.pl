@@ -76,6 +76,33 @@ our %topic = (
 		],
 		related => [ 'sealing_files', 'gallery', 'backup' ]
 	},
+	'clock' => {
+		title => 'Clock', category => 'apps', app => 'clock',
+		templates => [ 'templates/apps/clock.html.ep', 'public/js/manager/clock.js', 'templates/manager.html.ep' ],
+		verified => '2026-10-25',
+		summary => 'Alarms, a stopwatch, timers and world clocks, with alarms and timers that can start and stop appointments.',
+		body => [
+			'The Clock app has four faces. Alarm holds up to ten alarms, each with a time, a name, an optional sound and a linked appointment. Stopwatch counts up with laps. Timer holds up to ten countdowns, and several can run at once. World Clock shows the local time beside any time zones you add.',
+			'Press the clock in the taskbar for a small menu carrying the four faces and the time machine. The menu hangs below the clock when the taskbar is along the top or a side edge, and above it when the taskbar is along the bottom. Choosing a face opens the Clock window on that face; a window already open is brought forward instead of being replaced.',
+			'An alarm can be toggled on or off, and its seven day buttons say which days it repeats on. With no day chosen it is a one-shot: it rings at the next matching time and then switches itself off. Press Once to clear the days, or press the days the alarm should repeat on. Ten alarms are kept; add another only after deleting one.',
+			'The sound plays through the operating system, on the house\'s usual notification channel, not through the browser. It starts quietly and repeats every fifteen seconds while the volume climbs over the alarm\'s Volume ramp, up to five minutes or until Dismiss or Snooze. The Clock window shows a ring card with the same two buttons, but makes no sound of its own.',
+			'Linked appointment wires an alarm to an activity: when the alarm rings, that appointment is started, and any intelligent-automation outputs on it are switched on. An appointment already running is left alone, so the alarm cannot open a second session. A timer behaves the same way in both directions: starting it starts the linked appointment, and when the countdown reaches zero that same session is stopped. Cancelling a running timer stops the appointment too. A finished timer\'s notice and chime are played through the operating system, like an alarm\'s, not in the browser.',
+			'The stopwatch and the world-clock list are kept by this browser. The stopwatch keeps running when you switch faces or reload the page; world clocks are remembered per browser, with the local time always shown first and an extra day marker when a zone is on another date. Alarms and timers are kept by the machine itself, so they keep their time when the window is closed and are still there after a restart.',
+		],
+		steps => [
+			'Press the clock in the taskbar and choose Alarm, Stopwatch, Timer or World Clock, or open Clock from the start menu.',
+			'On Alarm, press Add alarm. Set its time, give it a name, and choose the days it should repeat on; leave every day off for a one-shot.',
+			'Choose a sound, a volume and a volume ramp. A ramp of 60 fades in over a minute.',
+			'To start an activity with the alarm, type its name in Linked appointment.',
+			'On Timer, type a length (hours, minutes and seconds) or press a preset, name it, and link an appointment if the timer should run that activity.',
+			'Press Add timer. Several timers can run at once; Stop ends one, and Clear finished tidies the list.',
+			'On Stopwatch, press Start to count up, Lap to record a split, and Reset to clear it.',
+			'On World Clock, type a city or time zone and press Add; the cross removes one.',
+			'When an alarm rings, press Dismiss to stop it or Snooze to hear it again in five minutes.',
+			'Press the clock in the taskbar and choose Time machine to carry the desk to another time, as the clock itself did before.',
+		],
+		related => [ 'appointments', 'taskbar', 'start_menu' ]
+	},
 	'gallery' => {
 		title => 'Gallery', category => 'apps', app => 'gallery',
 		templates => [ 'templates/apps/gallery.html.ep', 'public/js/images.js' ],

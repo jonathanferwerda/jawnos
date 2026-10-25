@@ -169,6 +169,12 @@ const GLYPHS = {
 	// --- app / start-menu glyphs ---
 	apps: '<g fill="{G}"><rect x="3" y="3" width="7.6" height="7.6" rx="1.6"/><rect x="13.4" y="3" width="7.6" height="7.6" rx="1.6"/><rect x="3" y="13.4" width="7.6" height="7.6" rx="1.6"/><rect x="13.4" y="13.4" width="7.6" height="7.6" rx="1.6"/></g>',
 	clock: '<path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" fill="{G}"/>',
+	// the Clock app's four faces: a twin-bell alarm clock, a stopwatch with
+	// its crown, a countdown dial, and a globe carrying the time
+	alarm: '<circle cx="12" cy="13" r="7.2" fill="{G}"/><circle cx="12" cy="13" r="5.5" fill="{D}"/><path d="M12 9.2v4.2l2.7 1.7" fill="none" stroke="{G}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.8 6.2 2.8 8.4M19.2 6.2l2 2.2" fill="none" stroke="{G}" stroke-width="2" stroke-linecap="round"/><path d="M4.2 20.1c1.3 1.4 2.8 2.3 4.4 2.7M19.8 20.1c-1.3 1.4-2.8 2.3-4.4 2.7" fill="none" stroke="{G}" stroke-width="1.7" stroke-linecap="round"/>',
+	stopwatch: '<circle cx="12" cy="13.4" r="7.2" fill="{G}"/><circle cx="12" cy="13.4" r="5.5" fill="{D}"/><path d="M12 10v3.4l2.5 1.6" fill="none" stroke="{G}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><rect x="10.4" y="2.2" width="3.2" height="3.2" rx="1" fill="{G}"/><path d="M12 5.4v1.2" stroke="{G}" stroke-width="1.4"/><path d="M18.6 7.6 20 6.2" fill="none" stroke="{G}" stroke-width="2" stroke-linecap="round"/>',
+	timer: '<circle cx="12" cy="13" r="7.4" fill="{G}"/><path d="M12 13V5.6a7.4 7.4 0 0 1 7.4 7.4z" fill="{D}"/><circle cx="12" cy="13" r="1.5" fill="{D}"/><rect x="10.3" y="2.2" width="3.4" height="3.1" rx="1.1" fill="{G}"/><path d="M9.2 2.6h5.6" stroke="{G}" stroke-width="1.4" stroke-linecap="round"/>',
+	world_clock: '<circle cx="12" cy="12" r="9" fill="{G}"/><g fill="none" stroke="{D}" stroke-width="1"><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3.4 9.2h17.2M3.4 14.8h17.2"/></g><circle cx="12" cy="12" r="3.6" fill="{D}"/><path d="M12 9.6v2.4l1.7 1.1" fill="none" stroke="{G}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>',
 	up: '<path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z" fill="{G}"/>',
 	pulse: '<path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" fill="{G}"/>',
 	folder: '<path d="M3 7a2 2 0 0 1 2-2h3.2l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" fill="{G}"/>',
@@ -300,6 +306,13 @@ const ICONS = {
 	// --- app / start-menu icons (named by the source file's basename) ---
 	'logo3': 'apps',
 	'new sun': 'clock',
+	// the Clock app and its four faces, reached by the names the app and the
+	// taskbar menu use for their buttons
+	'clock': 'clock',
+	'alarm': 'alarm',
+	'stopwatch': 'stopwatch',
+	'timer': 'timer',
+	'world_clock': 'world_clock',
 	'road ahead': 'up',
 	'nonsense': 'hourglass',
 	'water': 'pulse',
@@ -831,6 +844,13 @@ function hashHue(str) {
 // its own palette. The plain navigation arrows keep the green they share.
 // Window chrome is one calm blue, with the close in the red it has earned.
 const HUE_OVERRIDES = {
+	// the Clock app's faces keep one hue each, the same family as their plain
+	// fallback pictures: alarm red, stopwatch green, timer amber, world blue
+	clock: 210,
+	alarm: 6,
+	stopwatch: 152,
+	timer: 32,
+	world_clock: 210,
 	record: 0,
 	play: 120,
 	prev: 48,
