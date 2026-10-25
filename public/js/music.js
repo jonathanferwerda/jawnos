@@ -116,18 +116,17 @@ var musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0
 var musicVideoStats = { waits: 0, stalled_ms: 0, black_runs: 0, black_ms: 0, black_max_ms: 0,
 	in_black: 0, black_at: 0, waitAt: 0, waitCt: 0, canvas: null };
 
-// The Audio drawer's Video section. `remote` sends the picture to every active
-// peer (the server is left out); the audio stream follows it to the same
-// machines while a video plays. One setting, like the equalizer.
-var music_video = { preset: 'off', sharpen: 0, remote: 'on', quality: '720p', fps: 24 };
+// The Audio drawer's Video section. Each active peer has a TV box, and Me has
+// one too; the audio stream follows the picture to the same machines while a
+// video plays. One setting, like the equalizer.
+var music_video = { preset: 'off', sharpen: 0, quality: '720p', fps: 24, me: 1 };
 var music_video_machines = [];
 var music_video_peers = {};
 var music_video_save_timer = 0;
-var music_video_webp = null;
 var music_video_sub_last = '';
 var music_video_stream = {
-	ws: null, active: false, paused: false, timer: 0, encoding: false, seq: 0,
-	canvas: null, ctx: null, width: 0, height: 0, fps: 24, mime: 'image/jpeg', quality: 0.66
+	ws: null, active: false, paused: false, timer: 0, seq: 0,
+	width: 0, height: 0, fps: 24
 };
 var music_video_receiver = {
 	stream: '', ws: null, canvas: null, ctx: null, queue: [], timer: 0,
@@ -308,12 +307,15 @@ function musicStreamTapAttach() {
 					var pcm = d.pcm;
 					if (!pcm) { return; }
 					musicSyncStats.received++;
-					// A busy main thread (a high-quality video decoding) lets the
-					// worklet's queue grow; sending it afterwards would put a second
-					// of audio into pacat and leave the remote a second behind. Drop
-					// the stale frames and tell the remote to drop its buffer once.
+					// A busy main thread (a high-quality video decoding, or the
+					// manager pumping frames) lets the worklet's queue grow; sending it
+					// afterwards would put a second of audio into pacat and leave the
+					// remote a second behind. A video is allowed a deeper queue (its
+					// picture answers the delay), which rides out a short stall without
+					// the cut-out a music file's tight buffer forces.
+					var deep = (musicStream.type == 'video');
 					var age = musicVisual.ctx ? ((musicVisual.ctx.currentTime - (d.t || 0)) * 1000) : 0;
-					if (age > 150) {
+					if (age > (deep ? 400 : 150)) {
 						musicSyncStats.stale++;
 						if (!musicStream.gap) {
 							musicStream.gap = 1;
@@ -321,10 +323,10 @@ function musicStreamTapAttach() {
 						}
 						return;
 					}
-					if (musicStream.gap && age < 60) { musicStream.gap = 0; }
+					if (musicStream.gap && age < (deep ? 120 : 60)) { musicStream.gap = 0; }
 					if (musicStream.paused) { musicSyncStats.paused++; return; }
 					if (musicStream.ws && musicStream.ws.readyState == 1) {
-						if (musicStream.ws.bufferedAmount < 32768) {
+						if (musicStream.ws.bufferedAmount < (deep ? 262144 : 32768)) {
 							try { musicStream.ws.send(pcm.buffer); } catch (err) { musicSyncStats.sockdrop++; return; }
 							musicSyncStats.sent++;
 							musicSyncStats.sentBytes += pcm.byteLength || 0;
@@ -2452,6 +2454,7 @@ function mediaMaker(data) {
 
 					$('#album_cover').hide();
 				}
+				musicScreenApply();
 
 				tree.current_track = tree.past_songs.length + 1;
 
@@ -3922,8 +3925,8 @@ function musicVideoSet(v) {
 	music_video.preset = (p == 'clean' || p == 'hd' || p == 'cinema' || p == 'custom') ? p : 'off';
 	var s = parseFloat(v.sharpen);
 	music_video.sharpen = isFinite(s) ? Math.max(0, Math.min(100, s)) : 0;
-	music_video.remote = (v.remote == 'off') ? 'off' : 'on';
 	music_video.quality = (v.quality == '1080p') ? '1080p' : '720p';
+	if (v.me !== undefined) { music_video.me = (v.me === 0 || v.me === 'off' || v.me === false) ? 0 : 1; }
 	var f = parseInt(v.fps, 10);
 	music_video.fps = (f == 15 || f == 24 || f == 30) ? f : 24;
 }
@@ -3934,9 +3937,9 @@ function musicVideoLoad() {
 	musicVideoSet({
 		preset: el.getAttribute('preset'),
 		sharpen: el.getAttribute('sharpen'),
-		remote: el.getAttribute('remote'),
 		quality: el.getAttribute('quality'),
-		fps: el.getAttribute('fps')
+		fps: el.getAttribute('fps'),
+		me: el.getAttribute('me')
 	});
 	musicVideoPaint();
 	musicVideoEnhanceApply();
@@ -3948,16 +3951,15 @@ function musicVideoPaint() {
 	});
 	$('#music_video_sharpen').val(music_video.sharpen);
 	$('#music_video_sharpen_value').text(Math.round(music_video.sharpen) + '%');
-	var t = $('#music_video_remote_toggle');
-	if (t.length) {
-		t.attr('state', music_video.remote);
-		t.text(music_video.remote == 'on' ? (t.attr('data-on') || 'On') : (t.attr('data-off') || 'Off'));
-	}
 	$('#music_video_quality').val(music_video.quality);
 	$('#music_video_fps').val(String(music_video.fps));
-	$('#music_video_remote_count').text(musicVideoEnabledMachines().length + ' / ' + music_video_machines.length + ' ' + ($('#music_video_remote_count').attr('data-label') || ''));
+	// the TV boxes: Me's own screen and every peer's
 	$('#music_audio_output .music_output_box').each(function() {
 		var key = $(this).attr('value');
+		if (key == 'me') {
+			$(this).find('.music_video_output_select').attr('state', music_video.me ? 'on' : 'off');
+			return;
+		}
 		var m = musicVideoMachineByKey(key);
 		if (m) { $(this).find('.music_video_output_select').attr('state', m.enabled ? 'on' : 'off'); }
 	});
@@ -3989,7 +3991,7 @@ function musicVideoSendRaw(obj) {
 }
 
 function musicVideoOutputsSave() {
-	var mvo = {};
+	var mvo = { me: music_video.me ? 'on' : 'off' };
 	$.each(music_video_machines, function(i, m) {
 		if (m && m.key) { mvo[m.key] = m.enabled ? 'on' : 'off'; }
 	});
@@ -4010,10 +4012,8 @@ function musicVideoStatusPaint() {
 		var v = (typeof jawnosT === 'function') ? jawnosT(s) : s;
 		return (v === undefined || v === null || v === '') ? s : v;
 	};
-	if (music_video.remote != 'on') { el.textContent = t('Video is off'); return; }
 	var machines = musicVideoEnabledMachines();
-	if (!machines.length) { el.textContent = t('No screens selected'); return; }
-	if (!music_video_stream.active) { el.textContent = ''; return; }
+	if (!machines.length) { el.textContent = ''; return; }
 	var parts = [];
 	$.each(machines, function(i, m) {
 		var state = music_video_peers[m.key] || 'connect';
@@ -4032,7 +4032,6 @@ function musicVideoSave() {
 			value: JSON.stringify({
 				preset: music_video.preset,
 				sharpen: music_video.sharpen,
-				remote: music_video.remote,
 				quality: music_video.quality,
 				fps: music_video.fps
 			})
@@ -4117,17 +4116,6 @@ function musicVideoEnhanceApply(el) {
 	}
 }
 
-function musicVideoCanWebP() {
-	if (music_video_webp !== null) { return music_video_webp; }
-	try {
-		var c = document.createElement('canvas');
-		c.width = 1;
-		c.height = 1;
-		music_video_webp = (c.toDataURL('image/webp').indexOf('data:image/webp') === 0);
-	} catch (e) { music_video_webp = false; }
-	return music_video_webp;
-}
-
 function musicVideoMachinesLoad(cb) {
 	$.ajax({
 		url: '/music/video/outputs',
@@ -4136,6 +4124,7 @@ function musicVideoMachinesLoad(cb) {
 		cache: false,
 		success: function(r) {
 			music_video_machines = (r && r.machines) ? r.machines : [];
+			if (r && r.me !== undefined) { music_video.me = (r.me === 0 || r.me === 'off' || r.me === false) ? 0 : 1; }
 			// a start() call must not put an old saved setting back over a
 			// change the person just made; only the init pass reads settings
 			if (r && r.settings && !cb) { musicVideoSet(r.settings); musicVideoEnhanceApply(); }
@@ -4148,7 +4137,6 @@ function musicVideoMachinesLoad(cb) {
 
 function musicVideoStart() {
 	musicVideoStop();
-	if (music_video.remote != 'on') { return; }
 	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return; }
 	var v = tree && tree.sound;
 	if (!v || !v.tagName || v.tagName.toLowerCase() != 'video') { return; }
@@ -4179,13 +4167,6 @@ function musicVideoOpen(v, machines) {
 	var h = targetH;
 	var w = Math.round(h * aspect);
 	if (w > 1920) { w = 1920; h = Math.round(w / aspect); }
-	var cv = document.createElement('canvas');
-	cv.width = w;
-	cv.height = h;
-	var ctx = cv.getContext('2d');
-	if (!ctx) { return; }
-	music_video_stream.canvas = cv;
-	music_video_stream.ctx = ctx;
 	music_video_stream.width = w;
 	music_video_stream.height = h;
 	music_video_stream.fps = music_video.fps;
@@ -4196,14 +4177,6 @@ function musicVideoOpen(v, machines) {
 	music_video_peers = {};
 	$.each(machines, function(i, m) { if (m && m.key) { music_video_peers[m.key] = 'connect'; } });
 	musicVideoStatusPaint();
-	if (musicVideoCanWebP()) {
-		music_video_stream.mime = 'image/webp';
-		music_video_stream.quality = 0.72;
-	}
-	else {
-		music_video_stream.mime = 'image/jpeg';
-		music_video_stream.quality = 0.66;
-	}
 	var scheme = (location.protocol == 'https:') ? 'wss://' : 'ws://';
 	var ws;
 	try { ws = new WebSocket(scheme + location.host + '/manager/music/video?browser=1'); }
@@ -4221,10 +4194,15 @@ function musicVideoOpen(v, machines) {
 			ws.send(JSON.stringify({
 				type: 'hello',
 				outputs: $.map(machines, function(m) { return m.key; }),
+				file: (tree && tree.songs && tree.songs[0]) ? String(tree.songs[0].file || '') : '',
 				title: (tree && tree.songs && tree.songs[0]) ? String(tree.songs[0].file || '').split('/').pop() : '',
 				width: w,
 				height: h,
 				fps: music_video.fps,
+				quality: music_video.quality,
+				time: (v.currentTime || 0),
+				playing: (v.paused || v.ended) ? 0 : 1,
+				rate: (v.playbackRate || 1),
 				enhance: musicVideoEnhanceValues(),
 				delays: delays
 			}));
@@ -4252,6 +4230,7 @@ function musicVideoOpen(v, machines) {
 
 function musicVideoStop() {
 	var s = music_video_stream;
+	var was = s.active;
 	if (s.timer) { clearInterval(s.timer); s.timer = 0; }
 	music_video_sub_last = '';
 	if (s.ws && s.ws.readyState == 1) {
@@ -4261,12 +4240,10 @@ function musicVideoStop() {
 	s.ws = null;
 	s.active = false;
 	s.paused = false;
-	s.encoding = false;
 	s.stream = '';
-	s.canvas = null;
-	s.ctx = null;
 	music_video_peers = {};
 	musicVideoStatusPaint();
+	if (was && typeof musicScreenApply == 'function') { musicScreenApply(); }
 }
 
 function musicVideoControl(action, extra) {
@@ -4299,52 +4276,25 @@ function musicVideoResume() {
 function musicVideoLoop() {
 	var s = music_video_stream;
 	if (s.timer) { clearInterval(s.timer); }
-	var interval = Math.max(33, Math.round(1000 / Math.max(1, music_video.fps)));
-	s.timer = setInterval(musicVideoFrame, interval);
-}
-
-function musicVideoBlobBuffer(blob, cb) {
-	if (blob.arrayBuffer) {
-		blob.arrayBuffer().then(cb).catch(function() {});
-		return;
-	}
-	try {
-		var fr = new FileReader();
-		fr.onload = function() { cb(fr.result); };
-		fr.readAsArrayBuffer(blob);
-	} catch (e) {}
+	// the manager renders the frames; the browser only says where the player is
+	s.timer = setInterval(musicVideoFrame, 500);
 }
 
 function musicVideoFrame() {
 	var s = music_video_stream;
-	if (!s.active || s.paused || s.encoding) { return; }
-	if (!s.ws || s.ws.readyState != 1 || s.ws.bufferedAmount > 2_000_000) { return; }
+	if (!s.active) { return; }
 	var v = tree && tree.sound;
-	if (!v || v.paused || v.ended || v.readyState < 2 || !s.ctx) { return; }
-	s.encoding = true;
-	try { s.ctx.drawImage(v, 0, 0, s.width, s.height); }
-	catch (e) { s.encoding = false; return; }
-	try {
-		s.canvas.toBlob(function(blob) {
-			s.encoding = false;
-			if (!blob || !s.active || !s.ws || s.ws.readyState != 1) { return; }
-			if (s.ws.bufferedAmount > 2_000_000) { return; }
-			var seq = ++s.seq;
-			var head = new ArrayBuffer(16);
-			var dv = new DataView(head);
-			dv.setUint32(0, 0x4D564944, true);
-			dv.setFloat64(4, v.currentTime || 0, true);
-			dv.setUint32(12, seq, true);
-			musicVideoBlobBuffer(blob, function(buf) {
-				if (!s.active || !s.ws || s.ws.readyState != 1) { return; }
-				var out = new Uint8Array(16 + buf.byteLength);
-				out.set(new Uint8Array(head), 0);
-				out.set(new Uint8Array(buf), 16);
-				try { s.ws.send(out.buffer); } catch (e) {}
-			});
-			musicVideoSubtitles(v);
-		}, s.mime, s.quality);
-	} catch (e) { s.encoding = false; }
+	if (!v) { return; }
+	// The source manager draws the picture with ffmpeg: WebKitGTK cannot read a
+	// playing video back into a canvas. This heartbeat is the seek/drift signal.
+	musicVideoSendRaw({
+		type: 'control',
+		action: 'state',
+		time: (v.currentTime || 0),
+		playing: (v.paused || v.ended) ? 0 : 1,
+		rate: (v.playbackRate || 1)
+	});
+	if (!v.paused && !v.ended) { musicVideoSubtitles(v); }
 }
 
 function musicVideoSubtitles(v) {
@@ -4540,31 +4490,46 @@ $(document).on('input', '#music_video_sharpen', function() {
 	musicVideoSave();
 });
 
-$(document).on('click', '#music_video_remote_toggle', function(e) {
-	e.preventDefault();
-	music_video.remote = (music_video.remote == 'on') ? 'off' : 'on';
-	musicVideoPaint();
-	musicVideoSave();
-	if (music_video.remote == 'off') { musicVideoStop(); }
-	else if (tree && tree.sound && tree.sound.state == 1) { musicVideoStart(); }
-});
+// The picture on this machine is a screen of its own. With it off the video is
+// hidden and the player falls back to the way it shows a music file, while the
+// sound (and any other screen's picture) carries on.
+function musicScreenApply() {
+	var video = document.getElementById('video');
+	if (!video) { return; }
+	var is_video = !!(tree && tree.songs && tree.songs[0] && tree.songs[0].type == 'video');
+	if (!is_video) { return; }
+	if (music_video.me) {
+		video.style.visibility = '';
+		video.style.display = '';
+		$('#video').attr('type', 'video').show();
+		$('#album_cover').hide();
+	}
+	else {
+		// display:none keeps the element decoding and playing sound
+		$('#video').hide();
+		$('#video').attr('type', 'audio');
+		$('#album_cover').show();
+	}
+}
 
 $(document).on('click', '#music_audio_output .music_video_output_select', function(e) {
 	e.preventDefault();
 	var key = $(this).attr('value');
+	if (key == 'me') {
+		music_video.me = music_video.me ? 0 : 1;
+		musicVideoPaint();
+		musicVideoOutputsSave();
+		musicVideoSave();
+		musicScreenApply();
+		return;
+	}
 	var m = musicVideoMachineByKey(key);
 	if (!m) { return; }
 	m.enabled = m.enabled ? 0 : 1;
-	// a TV box turned on is a wish to see the picture, even if the master
-	// switch was left off
-	if (m.enabled && music_video.remote != 'on') {
-		music_video.remote = 'on';
-		musicVideoSave();
-	}
 	musicVideoPaint();
 	musicVideoOutputsSave();
 	if (tree && tree.sound && tree.sound.state == 1 && tree.songs && tree.songs[0] && tree.songs[0].type == 'video') {
-		if (!music_video_stream.active) { musicVideoStart(); }
+		if (!music_video_stream.active && musicVideoEnabledMachines().length) { musicVideoStart(); }
 		else { musicVideoOutputsUpdate(); }
 	}
 });
@@ -4594,6 +4559,7 @@ function musicAudioPanelLoad(show) {
 			// the drawer belongs to this machine, including the output list
 			if (r.mao) { mao = r.mao; }
 			if (r.video_machines) { music_video_machines = r.video_machines; }
+			if (r.video_me !== undefined) { music_video.me = (r.video_me === 0 || r.video_me === 'off' || r.video_me === false) ? 0 : 1; }
 			panel.html(r.html);
 			if (!musicEqualizerFromEqualizer(r.equalizer)) { musicEqualizerLoad(); }
 			musicSyncOffsetRead();
@@ -4607,6 +4573,7 @@ function musicAudioPanelLoad(show) {
 			}
 			musicEqualizerApply();
 			$.each(mao, function(k, v) { musicOutputPaint(k, v); });
+			musicScreenApply();
 		},
 		error: function() { /* keep whatever the drawer already holds */ },
 		complete: function() { music_audio_loading = false; }

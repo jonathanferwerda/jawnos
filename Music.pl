@@ -455,7 +455,7 @@ sub music_receiver_bytes_per_ms($st) {
 	return $rate * 2 * 2 / 1000;
 }
 
-sub music_pacat_command($rate) {
+sub music_pacat_command($st, $rate) {
 	my $pacat = `command -v pacat 2>/dev/null`;
 	chomp $pacat;
 	$pacat = 'pacat' unless $pacat;
@@ -463,10 +463,11 @@ sub music_pacat_command($rate) {
 		'--playback', '--raw', '--format=s16le',
 		'--rate=' . &music_stream_rate($rate),
 		'--channels=2',
-		# 30 ms of buffer on top of the sink's own latency: the pipe behind pacat
-		# absorbs a network stall, and a smaller sink buffer is the difference
-		# between a room that answers the screen and one that trails it.
-		'--latency-msec=30',
+		# A video's picture is delayed to match the sound, so its remote stream is
+		# allowed a deeper buffer: a Wi-Fi stall then plays through instead of
+		# cutting out. A music file has no picture to answer the extra delay, so it
+		# keeps the tight sink buffer.
+		'--latency-msec=' . &music_receiver_latency_ms($st),
 		# PulseAudio's stream-restore remembers a stream name's old level, so a
 		# receiver that was once turned down (or muted) came back silent while
 		# the Music app looked like it was playing. pacat names the level it
@@ -476,7 +477,20 @@ sub music_pacat_command($rate) {
 		'--stream-name=jawnos-music');
 }
 
-# --- the receiving side ------------------------------------------------------
+# A video can spend a few hundred milliseconds of buffer on lip-sync; a music
+# file cannot, because Me is playing the same sound with no picture to wait.
+sub music_receiver_latency_ms {
+	my $st = shift;
+	return ((($st && ($st->{'type'} || '') eq 'video')) ? 80 : 30);
+}
+
+sub music_receiver_pipe_bytes($st) {
+	return ((($st && ($st->{'type'} || '') eq 'video')) ? 32_768 : 8_192);
+}
+
+sub music_receiver_write_cap($st) {
+	return ((($st && ($st->{'type'} || '') eq 'video')) ? 65_536 : 16_384);
+}
 sub music_remote_audio_stop($st, $keep_state) {
 	# a report timer would otherwise outlive the stream it describes
 	&music_rx_report_stop($st);
@@ -529,7 +543,7 @@ sub music_remote_audio_start($st) {
 		my $filter = $pan ne '' ? ' -af "' . $pan . '"' : '';
 		my $pipeline = 'ffmpeg -hide_banner -loglevel error -fflags nobuffer -analyzeduration 0 -probesize 32k'
 			. ' -i pipe:0' . $filter . ' -f s16le -acodec pcm_s16le -ar 44100 -ac 2 pipe:1'
-			. ' | pacat --playback --raw --format=s16le --rate=44100 --channels=2 --latency-msec=30'
+			. ' | pacat --playback --raw --format=s16le --rate=44100 --channels=2 --latency-msec=' . &music_receiver_latency_ms($st)
 			. ' --volume=65536 --client-name=jawnos-music-opus --stream-name=jawnos-music';
 		@cmd = ('sh', '-c', $pipeline);
 	}
@@ -544,10 +558,10 @@ sub music_remote_audio_start($st) {
 			. ' -ar ' . $rate . ' -ac 2 -i pipe:0 -af "' . $pan . '"'
 			. ' -f s16le -acodec pcm_s16le -ar ' . $rate . ' -ac 2 pipe:1'
 			. ' | ' . $pacat . ' --playback --raw --format=s16le --rate=' . $rate
-			. ' --channels=2 --latency-msec=30 --volume=65536 --client-name=jawnos-music --stream-name=jawnos-music';
+			. ' --channels=2 --latency-msec=' . &music_receiver_latency_ms($st) . ' --volume=65536 --client-name=jawnos-music --stream-name=jawnos-music';
 		@cmd = ('sh', '-c', $pipeline);
 	}
-	else { @cmd = &music_pacat_command($st->{'rate'}); }
+	else { @cmd = &music_pacat_command($st, $st->{'rate'}); }
 	my $pid = open(my $fh, '|-', @cmd);
 	unless ($pid) {
 		$st->{'error'} = 'pacat';
@@ -559,7 +573,7 @@ sub music_remote_audio_start($st) {
 	# of audio a room is heard behind while the measured lag says a tenth of
 	# it. Shrink it so a slow player backs up into bytes_waiting, which is
 	# measured (the lead answers it, and PCM flushes when it runs away).
-	my $pipe_bytes = ((($st->{'codec'} || 'pcm') eq 'opus') || $pan ne '') ? 16_384 : 8_192;
+	my $pipe_bytes = ((($st->{'codec'} || 'pcm') eq 'opus') || $pan ne '') ? 65_536 : &music_receiver_pipe_bytes($st);
 	eval { fcntl($fh, F_SETPIPE_SZ, $pipe_bytes) };
 	$fh->blocking(0);
 	my $stream = Mojo::IOLoop::Stream->new($fh)->timeout(0);
@@ -612,9 +626,9 @@ sub music_remote_write($st, $bytes) {
 	# The kernel pipe is kept small in music_remote_audio_start, so this cap is
 	# most of the receiver's hidden buffer; about a tenth of a second of backlog
 	# is the point where a live stream is better off skipping than falling behind.
-	my $cap = (($st->{'codec'} || 'pcm') eq 'opus') ? 4_000_000 : 16_384;
+	my $cap = (($st->{'codec'} || 'pcm') eq 'opus') ? 4_000_000 : &music_receiver_write_cap($st);
 	# The gap between writes is the receiver's own measure of a starving stream:
-	# pacat's 60 ms buffer cannot hide a mesh stall longer than that.
+	# pacat's sink buffer and the pipe cannot hide a mesh stall longer than that.
 	my $now = &subs::rightNow();
 	if ($st->{'rx_last'}) {
 		my $gap = $now - $st->{'rx_last'};
@@ -937,7 +951,7 @@ sub music_source_close($st) {
 sub music_video_machines {
 	my $rows = &subs::remote_machine_lister({ self => 'no' }) || [];
 	my $me = &subs::signatorial_designer();
-	my $mvo = eval { decode_json(&subs::setting_grabber({ app => 'music', setting => 'mvo' }) // '') } || {};
+	my $mvo = &music_video_settings();
 	my (@out, %seen);
 	foreach my $rm ( @{$rows} ) {
 		next if (($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1');
@@ -957,6 +971,18 @@ sub music_video_machines {
 		};
 	}
 	return \@out;
+}
+
+# The TV boxes' on/off map. A missing key means on, which is how the section
+# behaved before the boxes; an explicit 'off' is a choice. 'me' is this
+# machine's own screen, keyed like a peer so one map holds both.
+sub music_video_settings {
+	return eval { decode_json(&subs::setting_grabber({ app => 'music', setting => 'mvo' }) // '') } || {};
+}
+
+sub music_video_local_enabled {
+	my $mvo = &music_video_settings();
+	return (defined $mvo->{'me'} && $mvo->{'me'} eq 'off') ? 0 : 1;
 }
 
 sub music_video_source_uri($rm) {
@@ -1078,10 +1104,149 @@ sub music_video_source_forward($st, $data) {
 
 sub music_video_source_close($st) {
 	delete $st->{'want'};
+	&music_video_pump_stop($st);
 	foreach my $key (keys %{$st->{'clients'}}) {
 		my $cl = delete $st->{'clients'}->{$key};
 		next unless $cl->{'tx'};
 		eval { $cl->{'tx'}->send({text => encode_json({ type => 'control', action => 'stop' })}); $cl->{'tx'}->finish; };
+	}
+}
+
+# ---- the frame pump ---------------------------------------------------------
+#
+# The browser cannot draw a playing <video> into a canvas on WebKitGTK: both
+# drawImage and createImageBitmap yield a blank frame, which is why a peer saw
+# a solid colour instead of the picture. The manager already holds the file and
+# ffmpeg, so it renders the frames itself and the browser's only job is to say
+# where the player is. Receivers are unchanged - they still draw JPEG frames.
+
+sub music_video_pump_stop($st) {
+	my $pid = delete $st->{'pump_pid'};
+	if ($st->{'pump_stream'}) {
+		$st->{'pump_stream'}->close;
+		delete $st->{'pump_stream'};
+	}
+	if ($st->{'pump_fh'}) {
+		eval { close $st->{'pump_fh'}; };
+		delete $st->{'pump_fh'};
+	}
+	if ($pid) {
+		eval { kill 'CONT', $pid; };
+		eval { kill 'TERM', $pid; };
+		Mojo::IOLoop->timer(0.2 => sub { waitpid($pid, 1); });
+	}
+	delete $st->{'pump_buf'};
+	delete $st->{'pump_frames'};
+	delete $st->{'pump_paused'};
+}
+
+sub music_video_pump_pause($st) {
+	return unless $st->{'pump_pid'};
+	return if $st->{'pump_paused'};
+	$st->{'pump_paused'} = 1;
+	eval { kill 'STOP', $st->{'pump_pid'}; };
+}
+
+sub music_video_pump_resume($st) {
+	return unless $st->{'pump_pid'};
+	return unless $st->{'pump_paused'};
+	delete $st->{'pump_paused'};
+	eval { kill 'CONT', $st->{'pump_pid'}; };
+}
+
+sub music_video_pump_emit($st, $jpeg) {
+	my $seq = ++$st->{'pump_frames'};
+	my $rate = $st->{'rate'} || 1;
+	my $media = ($st->{'pump_time'} || 0)
+		+ ((&subs::rightNow() - ($st->{'pump_started_at'} || &subs::rightNow())) / 1000) * $rate;
+	my $frame = pack('V d< V', 0x4D564944, $media, $seq) . $jpeg;
+	foreach my $key (keys %{$st->{'clients'}}) {
+		my $cl = $st->{'clients'}->{$key};
+		next unless $cl->{'up'} && $cl->{'tx'} && $cl->{'ready'};
+		next if length($cl->{'tx'}->{write} // '') > 1_000_000;
+		eval { $cl->{'tx'}->send({binary => $frame}); };
+	}
+}
+
+sub music_video_pump_start($st, $time) {
+	&music_video_pump_stop($st);
+	return unless $st->{'want'} && keys %{ $st->{'want'} };
+	return unless $st->{'file'} && -e $st->{'file'};
+	my $h = $st->{'hello'}->{'height'} || 720;
+	$h = 240 if $h < 240;
+	$h = 1080 if $h > 1080;
+	my $fps = $st->{'hello'}->{'fps'} || 24;
+	$fps = 24 unless grep { $_ == $fps } (15, 24, 30);
+	my $q = (($st->{'hello'}->{'quality'} || '') eq '1080p') ? 5 : 6;
+	my $rate = $st->{'rate'} || 1;
+	$rate = 1 unless $rate =~ /^\d+(?:\.\d+)?$/ && $rate >= 0.25 && $rate <= 4;
+	$time = 0 unless defined $time && $time =~ /^\d+(?:\.\d+)?$/;
+	my @cmd = ('ffmpeg', '-hide_banner', '-loglevel', 'error');
+	push @cmd, ('-ss', sprintf('%.3f', $time)) if $time > 0;
+	push @cmd, ($rate == 1 ? '-re' : '-readrate', ($rate == 1 ? () : $rate),
+		'-i', $st->{'file'}, '-an', '-threads', '4',
+		'-vf', 'scale=-2:' . $h, '-r', $fps, '-f', 'image2pipe',
+		'-vcodec', 'mjpeg', '-q:v', $q, 'pipe:1');
+	my $pid = open(my $fh, '-|', @cmd);
+	return unless $pid;
+	$st->{'pump_pid'} = $pid;
+	$st->{'pump_fh'} = $fh;
+	$st->{'pump_time'} = $time;
+	$st->{'pump_frames'} = 0;
+	$st->{'pump_buf'} = '';
+	$st->{'pump_started_at'} = &subs::rightNow();
+	$fh->blocking(0);
+	my $stream = Mojo::IOLoop::Stream->new($fh)->timeout(0);
+	$stream->start;
+	$st->{'pump_stream'} = $stream;
+	$stream->on(error => sub { });
+	$stream->on(read => sub {
+		my ($stream, $bytes) = @_;
+		return unless $st->{'pump_stream'} && $st->{'pump_stream'} == $stream;
+		$st->{'pump_buf'} .= $bytes;
+		if (length($st->{'pump_buf'}) > 8_000_000) {
+			# a stray start marker would otherwise grow forever
+			$st->{'pump_buf'} = substr($st->{'pump_buf'}, -4_000_000);
+		}
+		while (1) {
+			my $start = index($st->{'pump_buf'}, "\xFF\xD8");
+			last if $start < 0;
+			my $end = index($st->{'pump_buf'}, "\xFF\xD9", $start + 2);
+			last if $end < 0;
+			my $jpeg = substr($st->{'pump_buf'}, $start, $end - $start + 2);
+			$st->{'pump_buf'} = substr($st->{'pump_buf'}, $end + 2);
+			&music_video_pump_emit($st, $jpeg) if length $jpeg > 64;
+		}
+	});
+	$stream->on(close => sub {
+		delete $st->{'pump_stream'};
+		my $dead = delete $st->{'pump_pid'};
+		delete $st->{'pump_fh'};
+		Mojo::IOLoop->timer(0.3 => sub { waitpid($dead, 1) }) if $dead;
+	});
+}
+
+# The browser's heartbeat. A video that is playing wants a pump at its own
+# position; a seek or a long drift restarts it, a pause freezes the process.
+sub music_video_pump_sync($st, $time, $playing) {
+	return unless $st->{'want'} && keys %{ $st->{'want'} };
+	return unless $st->{'file'};
+	$time = 0 unless defined $time && $time =~ /^\d+(?:\.\d+)?$/;
+	if (!$playing) { &music_video_pump_pause($st); return; }
+	$st->{'reported_time'} = $time;
+	unless ($st->{'pump_pid'}) {
+		&music_video_pump_start($st, $time);
+		return;
+	}
+	&music_video_pump_resume($st);
+	my $rate = $st->{'rate'} || 1;
+	my $expected = ($st->{'pump_time'} || 0)
+		+ ((&subs::rightNow() - ($st->{'pump_started_at'} || &subs::rightNow())) / 1000) * $rate;
+	my $drift = $time - $expected;
+	my $now = &subs::rightNow();
+	if (abs($drift) > 1.5 && $now - ($st->{'pump_restart_at'} || 0) > 3000) {
+		$st->{'pump_restart_at'} = $now;
+		&music_video_pump_start($st, $time);
 	}
 }
 
@@ -1318,14 +1483,23 @@ websocket '/manager/music/video' => sub ($c) {
 		if ($type eq 'hello') {
 			$st->{'hello'} = $d;
 			$st->{'browser'} = $c;
+			$st->{'file'} = $d->{'file'} || '';
+			my $r = $d->{'rate'} || 1;
+			$st->{'rate'} = ($r =~ /^\d+(?:\.\d+)?$/ && $r >= 0.25 && $r <= 4) ? $r : 1;
+			$st->{'playing_hint'} = ($d->{'playing'} // 1) ? 1 : 0;
 			&music_video_source_sync_outputs($c, $st, $d->{'outputs'} || []);
 			eval { $c->tx->send({text => encode_json({ type => 'stream', stream => $st->{'stream' } })}); };
+			&music_video_pump_sync($st, $d->{'time'}, (($d->{'playing'} // 1) ? 1 : 0));
 		}
 		elsif ($type eq 'outputs') {
 			&music_video_source_sync_outputs($c, $st, $d->{'outputs'} || []);
+			my $n = scalar keys %{ $st->{'want'} || {} };
+			if (!$n) { &music_video_pump_stop($st); }
+			elsif ($st->{'file'} && !$st->{'pump_pid'}) { &music_video_pump_sync($st, $st->{'reported_time'} || 0, 1); }
 		}
 		elsif ($type eq 'control') {
-			if (($d->{'action'} || '') eq 'delay' && $d->{'key'}) {
+			my $action = $d->{'action'} || '';
+			if ($action eq 'delay' && $d->{'key'}) {
 				# a measured lip-sync correction; only that peer's picture waits
 				my $cl = $st->{'clients'}->{$d->{'key'}};
 				if ($cl && $cl->{'up'} && $cl->{'tx'}) {
@@ -1333,8 +1507,30 @@ websocket '/manager/music/video' => sub ($c) {
 				}
 				return;
 			}
+			if ($action eq 'state') {
+				my $r = $d->{'rate'} || 1;
+				my $rate = ($r =~ /^\d+(?:\.\d+)?$/ && $r >= 0.25 && $r <= 4) ? $r : 1;
+				my $rate_changed = (($st->{'rate'} || 1) != $rate);
+				$st->{'rate'} = $rate;
+				$st->{'playing_hint'} = $d->{'playing'} ? 1 : 0;
+				if ($rate_changed) { &music_video_pump_start($st, $d->{'time'} || 0); }
+				else { &music_video_pump_sync($st, $d->{'time'}, ($d->{'playing'} ? 1 : 0)); }
+				return;
+			}
+			if ($action eq 'seek') {
+				$st->{'reported_time'} = $d->{'time'} || 0;
+				&music_video_pump_start($st, $st->{'reported_time'});
+				&music_video_pump_pause($st) unless $st->{'playing_hint'};
+			}
+			elsif ($action eq 'pause') { $st->{'playing_hint'} = 0; &music_video_pump_pause($st); }
+			elsif ($action eq 'resume') {
+				$st->{'playing_hint'} = 1;
+				$st->{'reported_time'} = $d->{'time'} || 0;
+				if ($st->{'pump_pid'}) { &music_video_pump_resume($st); }
+				else { &music_video_pump_start($st, $st->{'reported_time'}); }
+			}
 			&music_video_source_forward($st, $d);
-			&music_video_source_close($st) if (($d->{'action'} || '') eq 'stop');
+			&music_video_source_close($st) if ($action eq 'stop');
 		}
 	});
 	$c->on(binary => sub {
@@ -2472,7 +2668,7 @@ post '/music/audio_output_select' => sub ($c) {
 get '/music/video/outputs' => sub ($c) {
 	unless ($c->session('authentication') eq 'approved') { $c->rendered(403); return; }
 	my $video = eval { return decode_json(&subs::setting_grabber({ app => 'music', setting => 'video' }) // '') } || {};
-	$c->render(json => { machines => &music_video_machines(), settings => $video });
+	$c->render(json => { machines => &music_video_machines(), settings => $video, me => &music_video_local_enabled() });
 };
 
 get '/music/audio' => sub ($c) {
@@ -2493,7 +2689,7 @@ get '/music/audio' => sub ($c) {
 		mvo => $mvo,
 		crate => { settings => $settings }
 	);
-	$c->render(json => { html => $html, equalizer => $eq, video => $video, mvo => $mvo, mao => $mao, video_machines => &music_video_machines() });
+	$c->render(json => { html => $html, equalizer => $eq, video => $video, mvo => $mvo, mao => $mao, video_machines => &music_video_machines(), video_me => &music_video_local_enabled() });
 };
 
 get '/music/configuration' => sub ($c) {

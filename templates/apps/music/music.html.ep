@@ -22,11 +22,12 @@
 	<%# the video enhancement and remote-video settings, read before the Audio
 	    drawer is opened (musicVideoLoad); the drawer edits the same values %>
 	<% my $video = eval { decode_json($crate->{'settings'}->{'video'} // '') } || {}; %>
+	<% my $mvo_data = eval { decode_json($crate->{'settings'}->{'mvo'} // '') } || {}; %>
 	<div id="music_video_data" style="display:none;"
 		preset="<%= $video->{'preset'} || 'off' %>"
 		sharpen="<%= defined $video->{'sharpen'} ? $video->{'sharpen'} : 0 %>"
-		remote="<%= ($video->{'remote'} // 'on') %>"
 		quality="<%= $video->{'quality'} || '720p' %>"
+		me="<%= ((defined $mvo_data->{'me'} && $mvo_data->{'me'} eq 'off') ? 'off' : 'on') %>"
 		fps="<%= $video->{'fps'} || 24 %>"></div>
 	<div id="interface" class="theme_surface" style="position:absolute;top:0px;background-color:<%= $background_colour %>; width:100%;	<% unless ($window_maker ne 'yes') { %>position:sticky;<% } %>">
 

@@ -61,10 +61,14 @@
 	<h4 class="music_cfg_heading"><%= &subs::lang('music.output') %></h4>
 	<div id="music_audio_output" class="music_cfg_chips">
 		<% my $me_channel = $output_channel->($mao->{'me'}); %>
-		<span class="music_output_group" value="me" state="<%= $me_channel %>">
-			<button class="music_audio_output_select music_output_left hover" value="me" channel="left" state="<%= $me_channel eq 'left' ? 'left' : 'off' %>" hint="Left speaker">L</button>
-			<button class="music_audio_output_select music_output_center hover" value="me" state="<%= $me_channel eq 'stereo' ? 'on' : 'off' %>" hint="Stereo"><%= &subs::format_name('me') %></button>
-			<button class="music_audio_output_select music_output_right hover" value="me" channel="right" state="<%= $me_channel eq 'right' ? 'right' : 'off' %>" hint="Right speaker">R</button>
+		<% my $me_vstate = ((defined $mvo->{'me'} && $mvo->{'me'} eq 'off') ? 'off' : 'on'); %>
+		<span class="music_output_box" value="me">
+			<button type="button" class="music_video_output_select hover" value="me" state="<%= $me_vstate %>" hint="<%= &subs::ui('Video on this machine') %>" aria-label="<%= &subs::ui('Video on this machine') %>"><span class="music_video_tv"></span></button>
+			<span class="music_output_group" value="me" state="<%= $me_channel %>">
+				<button class="music_audio_output_select music_output_left hover" value="me" channel="left" state="<%= $me_channel eq 'left' ? 'left' : 'off' %>" hint="Left speaker">L</button>
+				<button class="music_audio_output_select music_output_center hover" value="me" state="<%= $me_channel eq 'stereo' ? 'on' : 'off' %>" hint="Stereo"><%= &subs::format_name('me') %></button>
+				<button class="music_audio_output_select music_output_right hover" value="me" channel="right" state="<%= $me_channel eq 'right' ? 'right' : 'off' %>" hint="Right speaker">R</button>
+			</span>
 		</span>
 		<%# the server player hands the file to the machine's own player, so it has
 		    no channel split to offer - only on and off %>
@@ -89,6 +93,7 @@
 		<% } %>
 	</div>
 	<div class="music_cfg_note"><%= &subs::ui('The TV box sends the picture; L and R send the sound') %></div>
+	<div id="music_video_status" class="music_video_status" hint="Video status" title="<%= &subs::ui('A machine that says failed has not picked up the video route; restart or refresh it') %>"></div>
 </div>
 <div class="music_cfg_section">
 <h4 class="music_cfg_heading"><%= &subs::lang('music.playback') %></h4>
@@ -145,15 +150,7 @@
 			<span id="music_video_sharpen_value"><%= $video_sharpen %>%</span>
 		</div>
 	</div>
-	<div class="music_cfg_field music_cfg_field_wide">
-		<label class="music_cfg_label" hint="Video to other machines" title="<%= &subs::ui('Sends the picture to every active remote machine except the server') %>"><%= &subs::lang('music.video_remote') %></label>
-		<div class="music_sync_row">
-			<button type="button" id="music_video_remote_toggle" class="button hover" state="<%= $video_remote %>" data-on="<%= &subs::lang('music.video_on') %>" data-off="<%= &subs::lang('music.normalize_off') %>" hint="<%= &subs::ui('Sends the picture to every active remote machine except the server') %>"><%= $video_remote eq 'on' ? &subs::lang('music.video_on') : &subs::lang('music.normalize_off') %></button>
-			<span id="music_video_remote_count" data-label="<%= &subs::lang('music.video_machines') %>"><%= scalar @video_machines %> <%= &subs::lang('music.video_machines') %></span>
-		</div>
-		<div id="music_video_status" class="music_video_status" hint="Video status" title="<%= &subs::ui('A machine that says failed has not picked up the video route; restart or refresh it') %>"></div>
-	</div>
-	<div class="music_cfg_fields">
+<div class="music_cfg_fields">
 		<div class="music_cfg_field">
 			<label class="music_cfg_label" for="music_video_quality" hint="Quality" title="<%= &subs::ui('The size of the picture sent to other machines') %>"><%= &subs::lang('music.video_quality') %></label>
 			<select id="music_video_quality" hint="<%= &subs::ui('The size of the picture sent to other machines') %>">
