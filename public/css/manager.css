@@ -408,21 +408,14 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	object-fit: contain;
 }
 
-/* The window tiles' states: the one on top is tinted with the accent and
-   underlined, the rest that are open keep a hairline edge. A bevel and a sunk
-   plate read as a 1990s toolbar at this size; an accent line reads at a glance. */
+/* The window tiles' states: the one on top is tinted with the accent, the rest
+   that are open keep a hairline edge. A bevel and a sunk plate read as a 1990s
+   toolbar at this size; the tint reads at a glance without underlining the
+   tile. */
 #taskbar .window_toggle[state=active] {
 	background-color: var(--accent-soft, rgba(59,125,221,.18));
 	border-color: var(--accent-line, var(--line));
 	box-shadow: none;
-}
-#taskbar .window_toggle[state=active]::after {
-	content: '';
-	position: absolute;
-	left: 9px; right: 9px; bottom: 3px;
-	height: 2px;
-	border-radius: 2px;
-	background: var(--accent, #3b7ddd);
 }
 #taskbar .window_toggle[state=open] {
 	border-color: var(--line);
