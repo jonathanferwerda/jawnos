@@ -582,6 +582,8 @@ function assistantButtonLabel(panel) {
 function assistantConversationOn(panel) {
 	if (assistantTalking(panel)) { return; }
 	panel.attr('talking', 'yes');
+	// a new conversation reads the room afresh
+	if (typeof jawnRoomReset === 'function') { jawnRoomReset(); }
 	assistantButtonLabel(panel);
 	assistantChatAdd(panel, 'step', 'Conversation on — I will keep listening after each answer. Press End or say “bye jawn” to stop.');
 }

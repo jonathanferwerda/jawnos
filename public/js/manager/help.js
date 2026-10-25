@@ -613,8 +613,10 @@ function jawnClipListen(opts) {
 			jawnClipSend(new Blob(jawn_clip.chunks, { type: rec.mimeType || 'audio/webm' }), opts);
 		};
 		if (opts.talking) {
-			// hands-free: the clip ends by itself after a spell of speech and a
-			// moment of silence, so a conversation needs no Stop between turns
+			// hands-free: the clip ends by itself once speech has been heard and
+			// the room falls quiet. The quiet is the room's own floor, learned by the
+			// same reader the keyboard's dictation uses, rather than a fixed number
+			// a fan or a steady hiss would sit above forever.
 			if (opts.status) { opts.status('Listening…'); }
 			try {
 				var ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -623,15 +625,64 @@ function jawnClipListen(opts) {
 				an.fftSize = 1024;
 				src.connect(an);
 				var data = new Uint8Array(an.fftSize);
-				var heard = false, quiet_since = 0;
+				// the room reader lives with the keyboard's dictation; a page that
+				// has no soft keyboard still ends a turn on the old fixed floor
+				var has_room = (typeof jawnRoomThreshold === 'function');
+				var threshold = has_room ? jawnRoomThreshold : function (onset) { return onset ? 0.06 : 0.04; };
+				var learn = has_room ? jawnRoomLearn : function () {};
+				var room_read = has_room ? jawnRoomRead : function () { return 0; };
+				var read = has_room ? JAWN_ROOM_READ_FRAMES : 0;
+				// a conversational answer is short, so two ticks either side of a tap
+				// are enough to know the turn has begun
+				var onset_frames = has_room ? 2 : 1;
+				var fallback = has_room ? JAWN_ROOM_FALLBACK : 0.02;
+				var peak_ratio = has_room ? JAWN_ROOM_PEAK_RATIO : 3.5;
+				var heard = false, run = 0, quiet_since = 0, peak = 0, win = [];
 				jawn_clip.audioctx = ctx;
 				jawn_clip.meter = setInterval(function () {
 					an.getByteTimeDomainData(data);
 					var rms = 0;
 					for (var i = 0; i < data.length; i++) { var d = (data[i] - 128) / 128; rms += d * d; }
 					rms = Math.sqrt(rms / data.length);
-					if (rms > 0.04) { heard = true; quiet_since = 0; return; }
-					if (!heard) { return; }
+					// a turn opens by reading the room; the audio is already being
+					// recorded, so speech in this moment is not lost
+					if (read > 0) {
+						win.push(rms);
+						if (--read === 0) {
+							// a window that wobbled was a voice, not the room: the floor
+							// already known stands, and a short answer that arrived before
+							// the window closed still counts as the turn's start
+							var steady = (room_read(win) != null);
+							learn(win);
+							// wobble alone can be a very quiet room's own jitter, so the
+							// window must also hold a level a voice would reach
+							if (!heard && !steady && Math.max.apply(null, win) > threshold(false)) {
+								heard = true;
+								run = 0;
+								quiet_since = 0;
+								peak = Math.max.apply(null, win);
+							}
+						}
+						return;
+					}
+					var loud = (rms > threshold(false));
+					var quiet = (rms <= threshold(false));
+					if (!heard) {
+						// a tap does not hold for two ticks, so speech has to stay
+						// above the room before the turn is taken to have started
+						if (!loud) { run = 0; return; }
+						if (++run < onset_frames) { return; }
+						heard = true;
+						run = 0;
+						quiet_since = 0;
+						peak = rms;
+						return;
+					}
+					if (rms > peak) { peak = rms; }
+					// the pause is read against the room and against the turn's own
+					// peak, so a room that reads high or low still lets go
+					var hushed = (peak > fallback && rms * peak_ratio < peak);
+					if (!quiet && !hushed) { quiet_since = 0; return; }
 					if (!quiet_since) { quiet_since = Date.now(); return; }
 					if (Date.now() - quiet_since > 1100) { jawnClipStop(); }
 				}, 120);
@@ -730,6 +781,8 @@ function jawnConversationEnd() { helpConversationEnd(); }
 function helpConversationOn() {
 	if (jawnos_help_talking) { return; }
 	jawnos_help_talking = true;
+	// a new conversation reads the room afresh
+	if (typeof jawnRoomReset === 'function') { jawnRoomReset(); }
 	$('#help_converse').text('End').css({ 'border-color': '#e23b3b', 'color': '#e23b3b' }).attr('hint', 'End the conversation');
 	helpChatAdd('step', 'Conversation on — I will keep listening after each answer. Press End or say “bye jawn” to stop.');
 }
