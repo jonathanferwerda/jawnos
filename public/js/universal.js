@@ -88,18 +88,29 @@ $(document).on('keyup click change input', 'textarea, .text-editor', function() 
 });
 
 
+// Everything that paints time shares one second tick. The appointment clocks
+// and the duration readouts used to run two separate 1 Hz intervals, each
+// walking its own DOM; a page with both paid twice. A hidden page (or one
+// covered by a fullscreen video) paints nothing.
+var jawnos_tick_jobs = {};
+function jawnos_tick_register(name, fn) {
+	jawnos_tick_jobs[name] = fn;
+	if (!appointment_chronicler) {
+		appointment_chronicler = setInterval(function(){
+			if (jawn_resting()) { return; }
+			for (var key in jawnos_tick_jobs) {
+				try { jawnos_tick_jobs[key](); } catch (e) {}
+			}
+		},1000);
+	}
+}
+
 function appointment_chron() {
-	clearInterval(appointment_chronicler);
 	time_updater();
-	// durations are painted by the manager's own tick; give them a pass here too
-	// so a freshly loaded details panel wears its saved reading at once
+	// durations share the same tick; give them a pass here too so a freshly
+	// loaded details panel wears its saved reading at once
 	if (typeof jawnosDurationTick === 'function') { jawnosDurationTick(); }
-	appointment_chronicler = setInterval(function(){
-		// no point repainting clocks while the page isn't on screen, or while a
-		// fullscreen video is covering it
-		if (jawn_resting()) { return; }
-		time_updater();
-	},1000);
+	jawnos_tick_register('time', time_updater);
 	function time_updater() {
 		var now = Date.now();
 		$('.since, .time').each( function() {

@@ -2251,7 +2251,11 @@ function jawnosDurationTick() {
 }
 
 $(function () {
-	setInterval(jawnosDurationTick, 1000);
+	// the one shared second tick (universal.js) paints the duration readouts
+	// beside the appointment clocks instead of a second interval walking them
+	if (typeof jawnos_tick_register === 'function') {
+		jawnos_tick_register('duration', jawnosDurationTick);
+	}
 	jawnosDurationTick();
 });
 

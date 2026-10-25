@@ -2,11 +2,11 @@ var ws = {};
 var remote_ws = {};
 var heartbeat = {};
 // The liveness beat. Every beat is a network round trip that wakes the radio,
-// and an open tab has three or more sockets beating, so the cadence is
+// and an open tab has two or three sockets beating, so the cadence is
 // deliberately slow. A socket is only declared dead when the server has not
 // answered for two beats; the visibility/resume handlers rebuild at once, so a
 // locked phone never waits for this check.
-var stayingAliveInterval = 6000;
+var stayingAliveInterval = 10000;
 // The tab socket re-sends the (relatively costly) window layout on this cadence
 // even when nothing moved, and the localStorage debrief far more rarely.
 var windowResendInterval = 60000;
@@ -151,7 +151,10 @@ document.addEventListener('pointerdown', websocketWakeIfNeeded, { capture: true,
 function websocketStart(appt,address) {
 
 	var timestamp = Date.now();
-	var wappts = ['server','tab','music'];
+	// The music socket is opened by the music window itself (windows.js calls
+	// websocketStart(app)); an idle tab that is not playing music does not need a
+	// third connection beating for nothing.
+	var wappts = ['server','tab'];
 	var origin = 'self';
 	if (appt != undefined) {
 	//	wappts.push(appt);

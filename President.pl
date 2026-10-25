@@ -202,10 +202,12 @@ sub prefork_tune {
 # This supervisor watches those markers: when every worker in the pool has been
 # busy for two seconds it sends TTIN, which Mojo::Server::Prefork's manager
 # answers by adding a worker; when the pool has been quiet for half a minute it
-# sends TTOU and retires one. The phone may grow by one worker, a desktop or
-# server by two. The supervisor is a child of the prefork manager (the process
-# that becomes the manager when run() is called) so its signal names the manager
-# directly and it retires with it.
+# sends TTOU and retires one. Every machine may grow by two (a phone included:
+# a gallery or music window can open a burst of files at once, and letting the
+# phone grow while a burst is on screen beats pinning four idle workers all day).
+# The supervisor is a child of the prefork manager (the process that becomes the
+# manager when run() is called), so its signal names the manager directly and it
+# retires with it.
 sub prefork_autoscale {
 	my ($prefork, %opt) = @_;
 	my $min = $opt{'min'} || $prefork->workers;
@@ -320,18 +322,34 @@ sub manager_starter() {
 		}
 	}, { name => 'app release sync' });
 
-	# Each machine signs the house crest with its peer key and hands that signature
-	# to the other machines, which keep it on the sender's roster row. Every
-	# machine posts to every peer, so each one's People panel (and the card it
-	# hands out) can list the backers it has heard from. A pass soon after boot,
-	# then every five minutes.
+	# The slow background passes used to be one forked copy of the whole tree
+	# each: seven processes mostly asleep, about fifty megabytes of private heap
+	# apiece on a phone. None is time-critical at the minute level, so one
+	# process runs them in order on their own slots. The app release sync keeps
+	# its own process (pulling a 35MB APK can hold it for minutes), as do the
+	# short-tick discovery loops and the servers with live connections.
+	my @slow_loops = (
+		{ name => 'crest member cosign', first => 90, every => 300, run => sub { &subs::crest_member_cosig_sync(); } },
+		{ name => 'ollama models sync', first => 60, every => 600, run => sub { &subs::ollama_models_sync(); } },
+		{ name => 'error watch', first => 25, every => 60, run => sub { &subs::error_watch_tick(); } },
+		{ name => 'guide watch', first => 40, every => 60, run => sub { &subs::guide_watch_tick(); } },
+		{ name => 'records watch', first => 120, every => 7200, run => sub { &subs::records_watch_tick(); } },
+		{ name => 'ai balance', first => 30, every => 600, run => sub { &subs::ai_balance_refresh(); } },
+		{ name => 'crypto rates', first => 35, every => 1800, run => sub { &subs::crypto_rates_refresh(); } },
+	);
 	&subs::subprocessor(sub {
-		sleep 90;
+		my $started = time;
+		my %due = map { $_->{'name'} => $started + $_->{'first'} } @slow_loops;
 		while (1) {
-			eval { &subs::crest_member_cosig_sync(); };
-			sleep 300;
+			my $now = time;
+			foreach my $loop ( @slow_loops ) {
+				next if $now < $due{ $loop->{'name'} };
+				$due{ $loop->{'name'} } = $now + $loop->{'every'};
+				eval { $loop->{'run'}->(); };
+			}
+			sleep 5;
 		}
-	}, { name => 'crest member cosign' });
+	}, { name => 'slow loops' });
 
 	# The start menu's System card: every peer's battery and the embedded boards
 	# the house can see. The peers answer /manager/health; the boards answer
@@ -473,54 +491,13 @@ sub manager_starter() {
 		}, { name => 'wake schedule' });
 	}
 
-	# A peer's Ollama model list is cached on a slower tick, so Plat can offer
-	# models by the machine they run on without waiting on the network.
-	&subs::subprocessor(sub {
-		sleep 60;
-		while (1) {
-			eval { &subs::ollama_models_sync(); };
-			sleep 600;
-		}
-	}, { name => 'ollama models sync' });
 
-	# The error watch tails the tree's own output (the pty stream jawn tees into
-	# ~/pty.log, plus ~/manager.log) and stages a proposed fix per new error,
-	# for a person to apply from the IDE's coding chatbox. Off until Configure
-	# -> Plat switches it on; a first pass soon after boot, then every minute.
-	&subs::subprocessor(sub {
-		sleep 25;
-		while (1) {
-			eval { &subs::error_watch_tick(); };
-			sleep 60;
-		}
-	}, { name => 'error watch' });
 
-	# The guide watch reads the Guide's saved conversations (the same rows the
-	# Agents list reads back) for a turn that went nowhere - a thing not found, a
-	# command that could not run, a closing line that says so - and stages each
-	# like an error, so the same Coding agent adjusts the Guide's own training
-	# through the same propose/Apply loop. Off until Configure -> Plat ticks
-	# Watch the Guide; its first pass only takes a baseline.
-	&subs::subprocessor(sub {
-		sleep 40;
-		while (1) {
-			eval { &subs::guide_watch_tick(); };
-			sleep 60;
-		}
-	}, { name => 'guide watch' });
 
-	# The records watch audits the appointments table for the fault class that
-	# corrupts the person's numbers (one stop press closes one session) and stages
-	# each finding for review, the same shape as the error watch. It runs on a slow
-	# cadence - the sweep predates the fix by weeks, so a two-hourly pass is plenty.
-	# Off until Configure -> Plat ticks Records.
-	&subs::subprocessor(sub {
-		sleep 120;
-		while (1) {
-			eval { &subs::records_watch_tick(); };
-			sleep 7200;
-		}
-	}, { name => 'records watch' });
+
+
+
+
 
 	# The voice models ride the same mesh as the APKs, but they change rarely, so
 	# this is a single pass after boot rather than a loop: a device that lacks a
@@ -573,29 +550,9 @@ sub manager_starter() {
 		}
 	}, { name => 'whisper server' });
 
-	# The provider balances shown in Configure -> Sys. Only OpenRouter and DeepSeek
-	# publish an account balance, so this reads what it can and caches it for the
-	# page to show; a page load never waits on a provider. First pass soon after
-	# boot, then every ten minutes.
-	&subs::subprocessor(sub {
-		sleep 30;
-		while (1) {
-			eval { &subs::ai_balance_refresh(); };
-			sleep 600;
-		}
-	}, { name => 'ai balance' });
 
-	# The cached fiat and coin rates every currency conversion reads. One keyless
-	# Coinbase call every half hour keeps both the fiat exchanges and the wallets
-	# current; the loop leaves the last snapshot alone when it cannot reach a
-	# source, and does nothing at all while crypto is turned off.
-	&subs::subprocessor(sub {
-		sleep 35;
-		while (1) {
-			eval { &subs::crypto_rates_refresh(); };
-			sleep 1800;
-		}
-	}, { name => 'crypto rates' });
+
+
 
 	$ENV{'MOJO_MAX_LINE_SIZE'} = "64000";
 	if ($config->{'environment'} eq 'development') {
@@ -671,15 +628,16 @@ sub manager_starter() {
 			# A handheld runs this whole tree in a few hundred MB that Android's
 			# low-memory killer reclaims the moment the device tightens; the extra
 			# prefork workers are a server's concurrency, not a phone's. Two is the
-			# phone's resting count; the autoscaler adds one more while every worker
-			# is busy. A desktop rests at three and a server at four, each growing by
-			# two under a burst. `main_workers` in config.json overrides the resting
-			# count when a machine wants a different one.
+			# phone's resting count. A burst - a gallery opening a wall of thumbnails,
+			# a music window fetching covers - grows it by two, and the supervisor
+			# retires them after half a minute of quiet. A desktop rests at three
+			# and a server at four, each growing by two. `main_workers` in
+			# config.json overrides the resting count when a machine wants another.
 			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
 				? int($config->{'main_workers'}) : 0;
 			my $main_workers = $configured_workers || ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3));
 			$prefork->workers($main_workers);
-			&prefork_autoscale($prefork, min => $main_workers, max => $main_workers + ($device eq 'mobile' ? 1 : 2));
+			&prefork_autoscale($prefork, min => $main_workers, max => $main_workers + 2);
 			$prefork->run;
 			$log->info('after main server');
 		}, { name => 'Pro Main Server' });
