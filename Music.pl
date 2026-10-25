@@ -928,6 +928,162 @@ sub music_source_close($st) {
 	delete $st->{'started'};
 }
 
+# ---- remote video: frames, not a file --------------------------------------
+#
+# A picture needs a screen, so the receiver is the peer's own browser rather
+# than `pacat`. These are the peers that can show one: every active machine but
+# this one and the server. The synthetic 'me' row is the machine picker's, not a
+# peer, and a video never carries itself as an output.
+sub music_video_machines {
+	my $rows = &subs::remote_machine_lister({ self => 'no' }) || [];
+	my $me = &subs::signatorial_designer();
+	my (@out, %seen);
+	foreach my $rm ( @{$rows} ) {
+		next if (($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1');
+		next if $me && (($rm->{'signatorial'} || '') eq $me);
+		next if (($rm->{'device'} || '') eq 'server');
+		next unless (($rm->{'connection'} || '') eq 'active');
+		my $key = $rm->{'fqdn'} || $rm->{'ip'};
+		next unless $key && !$seen{$key}++;
+		push @out, {
+			key => $key,
+			label => &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key,
+			device => ($rm->{'device'} || ''),
+			uuid => ($rm->{'uuid'} || '')
+		};
+	}
+	return \@out;
+}
+
+sub music_video_source_uri($rm) {
+	my $host = $rm->{'ip'};
+	if (!$host) {
+		my $url = eval { Mojo::URL->new($rm->{'manager'}) };
+		$host = $url ? $url->host : '';
+	}
+	return unless $host;
+	my $port = $rm->{'ws_port'} || $config->{'ws_port'} || '';
+	return 'wss://' . $host . ($port ? ':' . $port : '') . '/manager/music/video';
+}
+
+sub music_video_source_retry($st, $key) {
+	return unless $st->{'want'} && $st->{'want'}->{$key};
+	my $n = ($st->{'retries'}->{$key} || 0);
+	return if $n >= 3;
+	$st->{'retries'}->{$key} = $n + 1;
+	my $browser = $st->{'browser'};
+	Mojo::IOLoop->timer(5 => sub {
+		return unless $browser && $browser->tx->is_websocket;
+		return unless $st->{'want'} && $st->{'want'}->{$key};
+		&music_video_source_client_open($browser, $st, $key) unless $st->{'clients'}->{$key};
+	});
+}
+
+sub music_video_source_client_open($c, $st, $key) {
+	return if $st->{'clients'}->{$key};
+	my $rm = &music_source_row($key);
+	unless ($rm && $rm->{'uuid'}) {
+		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'unreachable' })}) if $c->tx->is_websocket;
+		return;
+	}
+	return if (($rm->{'device'} || '') eq 'server');
+	my $url = &music_video_source_uri($rm);
+	return unless $url;
+	my $ua = Mojo::UserAgent->new()->insecure(1)->connect_timeout(5)->request_timeout(0)->inactivity_timeout(0);
+	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+	my $cl = { key => $key, rm => $rm, ua => $ua, up => 0, ready => 0 };
+	$st->{'clients'}->{$key} = $cl;
+	my $source = &subs::signatorial_designer();
+	my $full = $url . '?peer=1&signatorial=' . uri_encode($source)
+		. '&stream=' . uri_encode($st->{'stream'}) . '&from=' . uri_encode($key);
+	$ua->websocket($full => sub {
+		my ($ua, $tx) = @_;
+		if (!$tx->is_websocket) {
+			delete $st->{'clients'}->{$key};
+			$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'connect' })}) if $c->tx->is_websocket;
+			&music_video_source_retry($st, $key);
+			return;
+		}
+		$cl->{'tx'} = $tx;
+		$cl->{'up'} = 1;
+		delete $st->{'retries'}->{$key};
+		my $delays = ($st->{'hello'}->{'delays'} || {});
+		my $hello = {
+			type => 'hello',
+			stream => $st->{'stream'},
+			source => $source,
+			key => $key,
+			title => ($st->{'hello'}->{'title'} || ''),
+			width => ($st->{'hello'}->{'width'} || 0),
+			height => ($st->{'hello'}->{'height'} || 0),
+			fps => ($st->{'hello'}->{'fps'} || 24),
+			enhance => ($st->{'hello'}->{'enhance'} || {}),
+			# the audio path has already measured this peer; the picture waits
+			# that long in the receiver, so the lips and the words agree
+			delay_ms => (($delays && $delays->{$key}) || 100)
+		};
+		eval { $tx->send({text => encode_json($hello)}); };
+		$tx->on(text => sub {
+			my ($tx, $msg) = @_;
+			my $d = eval { decode_json $msg } || {};
+			if (($d->{'type'} || '') eq 'closed') { $cl->{'up'} = 0; }
+			if (($d->{'type'} || '') eq 'receiver') { $cl->{'ready'} = ($d->{'ready'} ? 1 : 0); }
+		});
+		$tx->on(finish => sub {
+			$cl->{'up'} = 0;
+			delete $st->{'clients'}->{$key};
+			# a peer that reboots or wakes is reopened while the picture is
+			# still wanted; three tries is enough to ride out a reboot
+			&music_video_source_retry($st, $key);
+		});
+	});
+}
+
+sub music_video_source_sync_outputs($c, $st, $outputs) {
+	my %want;
+	foreach my $key ( @{$outputs || []} ) {
+		next unless defined $key && length $key;
+		$want{$key} = 1;
+	}
+	$st->{'want'} = \%want;
+	foreach my $key (keys %want) {
+		&music_video_source_client_open($c, $st, $key) unless $st->{'clients'}->{$key};
+	}
+	foreach my $key (keys %{$st->{'clients'}}) {
+		next if exists $want{$key};
+		my $cl = delete $st->{'clients'}->{$key};
+		next unless $cl->{'tx'};
+		eval { $cl->{'tx'}->send({text => encode_json({ type => 'control', action => 'stop' })}); $cl->{'tx'}->finish; };
+	}
+}
+
+sub music_video_source_forward($st, $data) {
+	my $json = encode_json($data);
+	foreach my $key (keys %{$st->{'clients'}}) {
+		my $cl = $st->{'clients'}->{$key};
+		next unless $cl->{'up'} && $cl->{'tx'};
+		eval { $cl->{'tx'}->send({text => $json}); };
+	}
+}
+
+sub music_video_source_close($st) {
+	delete $st->{'want'};
+	foreach my $key (keys %{$st->{'clients'}}) {
+		my $cl = delete $st->{'clients'}->{$key};
+		next unless $cl->{'tx'};
+		eval { $cl->{'tx'}->send({text => encode_json({ type => 'control', action => 'stop' })}); $cl->{'tx'}->finish; };
+	}
+}
+
+# The receiver overlay is created by the peer's own browser. It is pushed on the
+# always-open `server` channel rather than `music`, so a machine that is not
+# showing the Music window still opens its screen.
+sub music_video_receiver_command($id, $info, $open) {
+	my $cmd = ($open ? 'musicVideoReceiverOpen(' : 'musicVideoReceiverClose(')
+		. encode_json($id) . ($open ? ',' . encode_json($info) : '') . ');';
+	&Websocket::send('server', { console => $cmd, timestamp => &subs::rightNow() });
+}
+
 # The browser's playback stream can come back from PulseAudio's stream-restore
 # at a remembered level - muted, or a few percent - and WebKit's element volume
 # is tied to that stream. The app's real level lives in the shared graph (or the
@@ -1035,6 +1191,145 @@ get '/manager/music/sync_diag' => sub($c) {
 # enabled remote with `peer=1&signatorial=...` and the peer signature, and the
 # remote turns the PCM into sound. The gate exempts this path (hooks.pl); each
 # role checks its caller here.
+# ---- remote video: a separate websocket -----------------------------------
+#
+# The source window draws its #video into a canvas and sends JPEG/WebP frames
+# with a 16-byte header (magic, media time, sequence). This window's manager
+# forwards each frame to every peer it was told about; a peer's ws worker hands
+# them to the receiver overlay its browser opened. Both sockets on a peer use
+# ws_port, which is one worker, so the relay is in-process. The source socket is
+# on the main port, exactly like the audio tap's.
+my %music_video_receivers;
+my %music_video_streams;
+
+websocket '/manager/music/video' => sub ($c) {
+	if ($c->param('peer')) {
+		my $signatorial = $c->param('signatorial');
+		my $rm = ($signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0] : undef);
+		unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+		my $id = $c->param('stream') || &subs::random_string_creator(20);
+		my $st = { id => $id, tx => $c->tx, info => {}, open => 0 };
+		$c->on(text => sub {
+			my ($c, $msg) = @_;
+			my $d = eval { decode_json $msg } || {};
+			my $type = $d->{'type'} || '';
+			if ($type eq 'hello') {
+				$st->{'info'} = $d;
+				$st->{'open'} = 1;
+				$music_video_streams{$id} = $st;
+				&music_video_receiver_command($id, {
+					stream => $id,
+					title => ($d->{'title'} || ''),
+					source => ($d->{'source'} || ''),
+					width => ($d->{'width'} || 0),
+					height => ($d->{'height'} || 0),
+					fps => ($d->{'fps'} || 24),
+					enhance => ($d->{'enhance'} || {}),
+					delay_ms => ($d->{'delay_ms'} || 100)
+				}, 1);
+				# a reconnecting source may find the screen already open
+				if ($music_video_receivers{$id} && keys %{$music_video_receivers{$id}}) {
+					eval { $c->tx->send({text => encode_json({ type => 'receiver', ready => 1 })}); };
+				}
+			}
+			elsif ($type eq 'control') {
+				# pause, resume, seek and the subtitle line ride the same socket as
+				# the frames; the overlay needs them in order with the picture
+				my $json = encode_json($d);
+				foreach my $tx ( values %{ $music_video_receivers{$id} || {} } ) {
+					next unless $tx && $tx->is_websocket;
+					eval { $tx->send({text => $json}); };
+				}
+				if (($d->{'action'} || '') eq 'stop') {
+					&music_video_receiver_command($id, {}, 0);
+					$st->{'open'} = 0;
+				}
+			}
+		});
+		$c->on(binary => sub {
+			my ($c, $msg) = @_;
+			return unless $st->{'open'};
+			foreach my $tx ( values %{ $music_video_receivers{$id} || {} } ) {
+				next unless $tx && $tx->is_websocket;
+				next if length($tx->{write} // '') > 2_000_000;
+				eval { $tx->send({binary => $msg}); };
+			}
+		});
+		$c->on(finish => sub {
+			&music_video_receiver_command($id, {}, 0) if $st->{'open'};
+			delete $music_video_receivers{$id};
+			delete $music_video_streams{$id};
+		});
+		return;
+	}
+
+	if ($c->param('local')) {
+		unless ($c->session('authentication') eq 'approved') { $c->rendered(403); return; }
+		my $id = $c->param('stream') || '';
+		return unless length $id;
+		my $tx = $c->tx;
+		$music_video_receivers{$id}->{$tx} = $tx;
+		# tell the source a screen is actually listening; until then it does not
+		# spend the link on frames nobody is showing
+		if (my $peer = $music_video_streams{$id}) {
+			if ($peer->{'tx'} && $peer->{'tx'}->is_websocket) {
+				eval { $peer->{'tx'}->send({text => encode_json({ type => 'receiver', ready => 1 })}); };
+			}
+		}
+		$c->on(finish => sub {
+			delete $music_video_receivers{$id}->{$tx};
+			if (!$music_video_receivers{$id} || !keys %{$music_video_receivers{$id}}) {
+				delete $music_video_receivers{$id};
+				if (my $peer = $music_video_streams{$id}) {
+					if ($peer->{'tx'} && $peer->{'tx'}->is_websocket) {
+						eval { $peer->{'tx'}->send({text => encode_json({ type => 'receiver', ready => 0 })}); };
+					}
+				}
+			}
+		});
+		return;
+	}
+
+	unless ($c->session('authentication') eq 'approved') { $c->rendered(403); return; }
+	my $st = { role => 'source', clients => {}, stream => &subs::random_string_creator(20), hello => {} };
+	$c->on(text => sub {
+		my ($c, $msg) = @_;
+		my $d = eval { decode_json $msg } || {};
+		my $type = $d->{'type'} || '';
+		if ($type eq 'hello') {
+			$st->{'hello'} = $d;
+			$st->{'browser'} = $c;
+			&music_video_source_sync_outputs($c, $st, $d->{'outputs'} || []);
+			eval { $c->tx->send({text => encode_json({ type => 'stream', stream => $st->{'stream' } })}); };
+		}
+		elsif ($type eq 'outputs') {
+			&music_video_source_sync_outputs($c, $st, $d->{'outputs'} || []);
+		}
+		elsif ($type eq 'control') {
+			if (($d->{'action'} || '') eq 'delay' && $d->{'key'}) {
+				# a measured lip-sync correction; only that peer's picture waits
+				my $cl = $st->{'clients'}->{$d->{'key'}};
+				if ($cl && $cl->{'up'} && $cl->{'tx'}) {
+					eval { $cl->{'tx'}->send({text => encode_json($d)}); };
+				}
+				return;
+			}
+			&music_video_source_forward($st, $d);
+			&music_video_source_close($st) if (($d->{'action'} || '') eq 'stop');
+		}
+	});
+	$c->on(binary => sub {
+		my ($c, $msg) = @_;
+		foreach my $key (keys %{$st->{'clients'}}) {
+			my $cl = $st->{'clients'}->{$key};
+			next unless $cl->{'up'} && $cl->{'tx'} && $cl->{'ready'};
+			next if length($cl->{'tx'}->{write} // '') > 1_000_000;
+			eval { $cl->{'tx'}->send({binary => $msg}); };
+		}
+	});
+	$c->on(finish => sub { &music_video_source_close($st); });
+};
+
 websocket '/manager/music/stream' => sub ($c) {
 	if ($c->param('peer')) {
 		my $signatorial = $c->param('signatorial');
@@ -2155,11 +2450,18 @@ post '/music/audio_output_select' => sub ($c) {
 # The Audio drawer belongs to this machine even when the library is remote: it
 # is rendered from this machine's settings and output list, so a remote render of
 # the Music window (which would carry the remote's mao) never supplies it.
+get '/music/video/outputs' => sub ($c) {
+	unless ($c->session('authentication') eq 'approved') { $c->rendered(403); return; }
+	my $video = eval { return decode_json(&subs::setting_grabber({ app => 'music', setting => 'video' }) // '') } || {};
+	$c->render(json => { machines => &music_video_machines(), settings => $video });
+};
+
 get '/music/audio' => sub ($c) {
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	my $jmao = $settings->{'mao'};
 	my $mao = eval { return decode_json $jmao } || {};
 	my $eq = eval { return decode_json($settings->{'equalizer'} // '') } || {};
+	my $video = eval { return decode_json($settings->{'video'} // '') } || {};
 	my $html = $c->render_to_string(
 		template => 'apps/music/audio',
 		folders => &Manager::misc_setting_list(),
@@ -2167,9 +2469,10 @@ get '/music/audio' => sub ($c) {
 		mao => $mao,
 		jmao => $jmao,
 		settings => $settings,
+		video_machines => &music_video_machines(),
 		crate => { settings => $settings }
 	);
-	$c->render(json => { html => $html, equalizer => $eq, mao => $mao });
+	$c->render(json => { html => $html, equalizer => $eq, video => $video, mao => $mao, video_machines => &music_video_machines() });
 };
 
 get '/music/configuration' => sub ($c) {

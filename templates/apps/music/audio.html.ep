@@ -37,6 +37,18 @@
 	$local_delay = 0 if $local_delay < 0;
 	$local_delay = 400 if $local_delay > 400;
 %>
+<% my $video = eval { decode_json($crate->{'settings'}->{'video'} // '') } || {};
+	my $video_preset = $video->{'preset'} || 'off';
+	$video_preset = 'off' unless $video_preset =~ /^(off|clean|hd|cinema|custom)$/;
+	my $video_sharpen = defined $video->{'sharpen'} ? $video->{'sharpen'} : 0;
+	$video_sharpen = 0 if $video_sharpen < 0;
+	$video_sharpen = 100 if $video_sharpen > 100;
+	my $video_remote = (($video->{'remote'} // 'on') eq 'off') ? 'off' : 'on';
+	my $video_quality = (($video->{'quality'} || '720p') eq '1080p') ? '1080p' : '720p';
+	my $video_fps = $video->{'fps'} || 24;
+	$video_fps = 24 unless grep { $_ == $video_fps } (15, 24, 30);
+	my @video_machines = @{ $video_machines || [] };
+%>
 <% my @eq_freq = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000); %>
 <% my @eq_label = ('31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'); %>
 <div class="music_cfg_bar" hint="Drag here to move this panel">
@@ -107,6 +119,45 @@
 				<input type="range" id="music_local_delay" min="0" max="400" step="10" value="<%= $local_delay %>" hint="Me audio delay">
 				<span id="music_local_delay_value"><%= $local_delay %> ms</span>
 			</div>
+		</div>
+	</div>
+</div>
+<div class="music_cfg_section">
+	<h4 class="music_cfg_heading" hint="Video enhancement"><%= &subs::lang('music.video_enhance') %></h4>
+	<div id="music_video_presets" class="music_eq_presets">
+		<% foreach my $p ( qw/off clean hd cinema/ ) { %>
+			<button type="button" class="music_eq_preset music_video_preset hover" data-preset="<%= $p %>" <% if ($video_preset eq $p) { %>state="on"<% } %>><%= &subs::lang('music.video_' . $p) %></button>
+		<% } %>
+	</div>
+	<div class="music_cfg_field music_cfg_field_wide">
+		<label class="music_cfg_label" for="music_video_sharpen" hint="Sharpness" title="<%= &subs::ui('Sharpens edges and lifts contrast so an SD picture reads closer to HD') %>"><%= &subs::lang('music.video_sharpen') %></label>
+		<div class="music_sync_row">
+			<input type="range" id="music_video_sharpen" min="0" max="100" step="1" value="<%= $video_sharpen %>" hint="<%= &subs::ui('Sharpens edges and lifts contrast so an SD picture reads closer to HD') %>">
+			<span id="music_video_sharpen_value"><%= $video_sharpen %>%</span>
+		</div>
+	</div>
+	<div class="music_cfg_field music_cfg_field_wide">
+		<label class="music_cfg_label" hint="Video to other machines" title="<%= &subs::ui('Sends the picture to every active remote machine except the server') %>"><%= &subs::lang('music.video_remote') %></label>
+		<div class="music_sync_row">
+			<button type="button" id="music_video_remote_toggle" class="button hover" state="<%= $video_remote %>" data-on="<%= &subs::lang('music.video_on') %>" data-off="<%= &subs::lang('music.normalize_off') %>" hint="<%= &subs::ui('Sends the picture to every active remote machine except the server') %>"><%= $video_remote eq 'on' ? &subs::lang('music.video_on') : &subs::lang('music.normalize_off') %></button>
+			<span id="music_video_remote_count" data-label="<%= &subs::lang('music.video_machines') %>"><%= scalar @video_machines %> <%= &subs::lang('music.video_machines') %></span>
+		</div>
+	</div>
+	<div class="music_cfg_fields">
+		<div class="music_cfg_field">
+			<label class="music_cfg_label" for="music_video_quality" hint="Quality" title="<%= &subs::ui('The size of the picture sent to other machines') %>"><%= &subs::lang('music.video_quality') %></label>
+			<select id="music_video_quality" hint="<%= &subs::ui('The size of the picture sent to other machines') %>">
+				<option value="720p" <% if ($video_quality eq '720p') { %>selected<% } %>>720p</option>
+				<option value="1080p" <% if ($video_quality eq '1080p') { %>selected<% } %>>1080p</option>
+			</select>
+		</div>
+		<div class="music_cfg_field">
+			<label class="music_cfg_label" for="music_video_fps" hint="Frame rate" title="<%= &subs::ui('Frames per second sent to other machines') %>"><%= &subs::lang('music.video_fps') %></label>
+			<select id="music_video_fps" hint="<%= &subs::ui('Frames per second sent to other machines') %>">
+				<% foreach my $fps ( 15, 24, 30 ) { %>
+					<option value="<%= $fps %>" <% if ($video_fps == $fps) { %>selected<% } %>><%= $fps %> fps</option>
+				<% } %>
+			</select>
 		</div>
 	</div>
 </div>

@@ -116,6 +116,23 @@ var musicSyncStats = { received: 0, stale: 0, sockdrop: 0, offline: 0, paused: 0
 var musicVideoStats = { waits: 0, stalled_ms: 0, black_runs: 0, black_ms: 0, black_max_ms: 0,
 	in_black: 0, black_at: 0, waitAt: 0, waitCt: 0, canvas: null };
 
+// The Audio drawer's Video section. `remote` sends the picture to every active
+// peer (the server is left out); the audio stream follows it to the same
+// machines while a video plays. One setting, like the equalizer.
+var music_video = { preset: 'off', sharpen: 0, remote: 'on', quality: '720p', fps: 24 };
+var music_video_machines = [];
+var music_video_save_timer = 0;
+var music_video_webp = null;
+var music_video_sub_last = '';
+var music_video_stream = {
+	ws: null, active: false, paused: false, timer: 0, encoding: false, seq: 0,
+	canvas: null, ctx: null, width: 0, height: 0, fps: 24, mime: 'image/jpeg', quality: 0.66
+};
+var music_video_receiver = {
+	stream: '', ws: null, canvas: null, ctx: null, queue: [], timer: 0,
+	lastSeq: -1, delay: 100
+};
+
 function musicStreamSupported() {
 	var Ctor = window.AudioContext || window.webkitAudioContext;
 	return !!(Ctor && location.protocol == 'https:' && (window.AudioWorkletNode || window.MediaRecorder));
@@ -141,6 +158,14 @@ function musicStreamOutputs() {
 		// stale self row, never a speaker to send a copy of the stream to
 		if (k && k != '127.0.0.1' && k.indexOf('.') >= 0 && musicOutputOn(v)) { outs.push(k); }
 	});
+	// A video playing to the remotes needs its sound there too. The video
+	// machines are an implicit set of outputs for the duration of the picture;
+	// the stored audio chips are left exactly as the person set them.
+	if (music_video.remote == 'on' && tree && tree.songs && tree.songs[0] && tree.songs[0].type == 'video') {
+		$.each(music_video_machines, function(i, m) {
+			if (m && m.key && outs.indexOf(m.key) < 0) { outs.push(m.key); }
+		});
+	}
 	return outs;
 }
 
@@ -205,6 +230,14 @@ function musicStreamSendJson(obj) {
 		try { musicStream.ws.send(JSON.stringify(obj)); return true; } catch (e) {}
 	}
 	return false;
+}
+
+// The audio outputs can change while a stream is running (a video's machines
+// join it when the picture starts, and leave when it stops). The manager needs
+// the new list; a plain track/resume control does not carry one.
+function musicStreamOutputsUpdate() {
+	if (!musicStream.active) { return; }
+	musicStreamSendJson({ type: 'outputs', outputs: musicStreamOutputs(), channels: musicStreamChannels() });
 }
 
 // Once the browser has created the playback stream for this start, ask the
@@ -383,6 +416,7 @@ function musicStreamConnect() {
 			musicStream.ready[d.key] = 1;
 			musicStream.latencies[d.key] = d.ms || 0;
 			if (d.ms > musicStream.latency) { musicStream.latency = d.ms; }
+			musicVideoDelayUpdate(d.key, d.ms || 0);
 			musicStreamOutputReady(d.key);
 			musicAheadRetarget();
 		}
@@ -2264,6 +2298,10 @@ async function musicInit(method) {
 	}
 	var mc = $('#music_configuration');
 	if (mc.is(':visible')) { musicConfigFloat(mc); }
+	// the video setting rides in the window markup, so the enhancement and the
+	// remote list are right before the Audio drawer is ever opened
+	musicVideoLoad();
+	musicVideoMachinesLoad();
 }
 function playerCacheSaver(type) {
 	var timestamp = Date.now();
@@ -2465,6 +2503,7 @@ function mediaMaker(data) {
 				}
 
 				tree.sound.src = url
+				musicVideoStop();
 				if (method != 'benign') { musicBaselineReset(); musicBaselineStart(); }
 				var st_url = url + '&subtitle=yes';
 				document.getElementById('video_subtitles').src = st_url;
@@ -2478,6 +2517,9 @@ function mediaMaker(data) {
 				tree.sound.queued = 0;
 				tree.sound.sync_cursor = null;
 				tree.sound.sync_wall = 0;
+				musicVideoEnhanceApply();
+				if (tree.songs[0] && tree.songs[0].type == 'video') { musicVideoStart(); }
+				else { musicVideoStop(); }
 				// the seek bar is only redrawn by the playing interval, which does not run
 				// while paused, so a paused restore would otherwise leave it sitting at 0
 				// even though the track is at its saved position
@@ -2509,6 +2551,7 @@ function mediaMaker(data) {
 						toggle: 'on',
 						seek: tree.sound.currentTime
 					});
+					musicStreamOutputsUpdate();
 				}
 			}
 			if ($('#video').attr('theatre_mode') == 'on') {
@@ -2519,6 +2562,7 @@ function mediaMaker(data) {
 			}
 			tree.sound.onplaying = function() {
 				tree.sound.state = 1;
+				musicVideoResume();
 				// The context is left running through a pause (see onpause), but a
 				// backgrounded tab or an interrupted context still needs resuming
 				// before the element's sound is expected.
@@ -2646,6 +2690,7 @@ function mediaMaker(data) {
 									toggle: 'seek',
 									seek: cursor
 								});
+								musicVideoControl('seek', { time: cursor });
 							}
 						}
 						$('#progress_bar').attr('value', cursor);
@@ -2662,6 +2707,7 @@ function mediaMaker(data) {
 				tree.sound.onpause = function() {
 					clearInterval(interval);
 					tree.sound.state = 0;
+					musicVideoPause();
 					musicKeepalive(false);
 					musicStreamControl('pause');
 					// The delay line still holds the picture-lag's worth of sound; without
@@ -2681,11 +2727,13 @@ function mediaMaker(data) {
 				};
 				tree.sound.onerror = function() {
 					musicKeepalive(false);
+					musicVideoStop();
 					musicStreamStop();
 					nextTrack();
 				};
 				tree.sound.onended = function() {
 					clearInterval(interval);
+					musicVideoStop();
 					musicStreamStop();
 					$('#progress_bar').attr('value', 0).attr('max', 0);
 					$('#total_progress').text(0);
@@ -3873,6 +3921,566 @@ $(document).on('input', '#music_local_delay', function() {
 	musicLocalDelaySave();
 });
 
+// ---- video enhancement and the remote picture ------------------------------
+//
+// The Audio drawer's Video section does two jobs. Locally it adds an unsharp
+// mask (an SVG feConvolveMatrix, built on demand) plus a little contrast and
+// saturation to #video, the way a television's "HD" upscaler reads: it cannot
+// invent detail, but edges and local contrast are what make an SD picture feel
+// sharper. Remotely it draws the same element into a canvas and sends JPEG
+// (WebP when the engine can encode it) frames to the manager, which forwards
+// them to every active peer except the server. The peer's own browser opens a
+// full-screen receiver and applies the sender's enhancement to the canvas.
+
+function musicVideoSet(v) {
+	if (!v) { return; }
+	var p = v.preset || 'off';
+	music_video.preset = (p == 'clean' || p == 'hd' || p == 'cinema' || p == 'custom') ? p : 'off';
+	var s = parseFloat(v.sharpen);
+	music_video.sharpen = isFinite(s) ? Math.max(0, Math.min(100, s)) : 0;
+	music_video.remote = (v.remote == 'off') ? 'off' : 'on';
+	music_video.quality = (v.quality == '1080p') ? '1080p' : '720p';
+	var f = parseInt(v.fps, 10);
+	music_video.fps = (f == 15 || f == 24 || f == 30) ? f : 24;
+}
+
+function musicVideoLoad() {
+	var el = document.getElementById('music_video_data');
+	if (!el) { return; }
+	musicVideoSet({
+		preset: el.getAttribute('preset'),
+		sharpen: el.getAttribute('sharpen'),
+		remote: el.getAttribute('remote'),
+		quality: el.getAttribute('quality'),
+		fps: el.getAttribute('fps')
+	});
+	musicVideoPaint();
+	musicVideoEnhanceApply();
+}
+
+function musicVideoPaint() {
+	$('#music_video_presets .music_video_preset').each(function() {
+		$(this).attr('state', $(this).attr('data-preset') == music_video.preset ? 'on' : 'off');
+	});
+	$('#music_video_sharpen').val(music_video.sharpen);
+	$('#music_video_sharpen_value').text(Math.round(music_video.sharpen) + '%');
+	var t = $('#music_video_remote_toggle');
+	if (t.length) {
+		t.attr('state', music_video.remote);
+		t.text(music_video.remote == 'on' ? (t.attr('data-on') || 'On') : (t.attr('data-off') || 'Off'));
+	}
+	$('#music_video_quality').val(music_video.quality);
+	$('#music_video_fps').val(String(music_video.fps));
+	$('#music_video_remote_count').text(music_video_machines.length + ' ' + ($('#music_video_remote_count').attr('data-label') || ''));
+}
+
+function musicVideoSave() {
+	clearTimeout(music_video_save_timer);
+	music_video_save_timer = setTimeout(function() {
+		settingSetter({
+			app: 'music',
+			setting: 'video',
+			value: JSON.stringify({
+				preset: music_video.preset,
+				sharpen: music_video.sharpen,
+				remote: music_video.remote,
+				quality: music_video.quality,
+				fps: music_video.fps
+			})
+		});
+	}, 250);
+}
+
+function musicVideoFilterEnsure() {
+	if (document.getElementById('music_video_filter_svg')) { return; }
+	var ns = 'http://www.w3.org/2000/svg';
+	var svg = document.createElementNS(ns, 'svg');
+	svg.id = 'music_video_filter_svg';
+	svg.setAttribute('width', '0');
+	svg.setAttribute('height', '0');
+	svg.setAttribute('aria-hidden', 'true');
+	svg.style.position = 'absolute';
+	svg.style.width = '0';
+	svg.style.height = '0';
+	svg.style.pointerEvents = 'none';
+	var filter = document.createElementNS(ns, 'filter');
+	filter.id = 'music_video_sharpen';
+	filter.setAttribute('color-interpolation-filters', 'sRGB');
+	filter.setAttribute('x', '0');
+	filter.setAttribute('y', '0');
+	filter.setAttribute('width', '100%');
+	filter.setAttribute('height', '100%');
+	var conv = document.createElementNS(ns, 'feConvolveMatrix');
+	conv.id = 'music_video_sharpen_matrix';
+	conv.setAttribute('order', '3');
+	conv.setAttribute('preserveAlpha', 'true');
+	conv.setAttribute('edgeMode', 'duplicate');
+	conv.setAttribute('kernelMatrix', '0 0 0 0 1 0 0 0 0');
+	filter.appendChild(conv);
+	svg.appendChild(filter);
+	(document.body || document.documentElement).appendChild(svg);
+}
+
+function musicVideoEnhanceValues() {
+	var c = 1, s = 1, b = 1;
+	if (music_video.preset == 'clean') { c = 1.04; s = 1.06; }
+	else if (music_video.preset == 'hd') { c = 1.08; s = 1.14; b = 1.02; }
+	else if (music_video.preset == 'cinema') { c = 1.12; s = 1.20; b = 1.02; }
+	var k = Math.max(0, Math.min(0.45, (music_video.sharpen / 100) * 0.45));
+	if (music_video.preset == 'off' && music_video.sharpen <= 0) { k = 0; }
+	return { contrast: c, saturate: s, brightness: b, k: k };
+}
+
+function musicVideoEnhanceApplyValues(el, e) {
+	if (!el) { return; }
+	musicVideoFilterEnsure();
+	var k = Math.max(0, Math.min(0.45, parseFloat(e && e.k) || 0));
+	var m = document.getElementById('music_video_sharpen_matrix');
+	if (m) { m.setAttribute('kernelMatrix', [0, -k, 0, -k, 1 + 4 * k, -k, 0, -k, 0].join(' ')); }
+	var c = parseFloat(e && e.contrast);
+	var s = parseFloat(e && e.saturate);
+	var b = parseFloat(e && e.brightness);
+	el.style.setProperty('--music_video_contrast', isFinite(c) ? c : 1);
+	el.style.setProperty('--music_video_saturate', isFinite(s) ? s : 1);
+	el.style.setProperty('--music_video_brightness', isFinite(b) ? b : 1);
+	if (k > 0 || (isFinite(c) && c != 1) || (isFinite(s) && s != 1) || (isFinite(b) && b != 1)) {
+		el.classList.add('music_video_enhanced');
+	} else {
+		el.classList.remove('music_video_enhanced');
+	}
+	if (k > 0) { el.classList.add('music_video_sharp'); }
+	else { el.classList.remove('music_video_sharp'); }
+}
+
+function musicVideoEnhanceApply(el) {
+	el = el || document.getElementById('video');
+	if (!el) { return; }
+	if (el.id == 'video') {
+		if (!(tree && tree.songs && tree.songs[0] && tree.songs[0].type == 'video')) {
+			el.classList.remove('music_video_enhanced');
+			return;
+		}
+	}
+	musicVideoEnhanceApplyValues(el, musicVideoEnhanceValues());
+	// a remote viewer follows a change to the preset or the slider live
+	if (el.id == 'video' && music_video_stream.active) {
+		musicVideoControl('enhance', { enhance: musicVideoEnhanceValues() });
+	}
+}
+
+function musicVideoCanWebP() {
+	if (music_video_webp !== null) { return music_video_webp; }
+	try {
+		var c = document.createElement('canvas');
+		c.width = 1;
+		c.height = 1;
+		music_video_webp = (c.toDataURL('image/webp').indexOf('data:image/webp') === 0);
+	} catch (e) { music_video_webp = false; }
+	return music_video_webp;
+}
+
+function musicVideoMachinesLoad(cb) {
+	$.ajax({
+		url: '/music/video/outputs',
+		type: 'GET',
+		dataType: 'json',
+		cache: false,
+		success: function(r) {
+			music_video_machines = (r && r.machines) ? r.machines : [];
+			// a start() call must not put an old saved setting back over a
+			// change the person just made; only the init pass reads settings
+			if (r && r.settings && !cb) { musicVideoSet(r.settings); musicVideoEnhanceApply(); }
+			musicVideoPaint();
+			if (cb) { cb(); }
+		},
+		error: function() { if (cb) { cb(); } }
+	});
+}
+
+function musicVideoStart() {
+	musicVideoStop();
+	if (music_video.remote != 'on') { return; }
+	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return; }
+	var v = tree && tree.sound;
+	if (!v || !v.tagName || v.tagName.toLowerCase() != 'video') { return; }
+	if (!v.videoWidth || !v.videoHeight) {
+		if (!v._musicVideoMeta) {
+			v._musicVideoMeta = 1;
+			v.addEventListener('loadedmetadata', function() {
+				v._musicVideoMeta = 0;
+				musicVideoStart();
+			});
+		}
+		return;
+	}
+	musicVideoMachinesLoad(function() {
+		if (!music_video_machines.length) { return; }
+		if (!tree || tree.sound !== v || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return; }
+		// the outputs may have arrived after the audio stream started; ask it
+		// again so the same machines hear the video
+		if (tree.sound.state == 1 && tree.songs[0]) {
+			remoteTrackToggle({ file: tree.songs[0].file, toggle: 'on', seek: tree.sound.currentTime });
+			musicStreamOutputsUpdate();
+		}
+		musicVideoOpen(v);
+	});
+}
+
+function musicVideoOpen(v) {
+	var targetH = (music_video.quality == '1080p') ? 1080 : 720;
+	var aspect = v.videoWidth / v.videoHeight;
+	if (!isFinite(aspect) || aspect <= 0) { return; }
+	var h = targetH;
+	var w = Math.round(h * aspect);
+	if (w > 1920) { w = 1920; h = Math.round(w / aspect); }
+	var cv = document.createElement('canvas');
+	cv.width = w;
+	cv.height = h;
+	var ctx = cv.getContext('2d');
+	if (!ctx) { return; }
+	music_video_stream.canvas = cv;
+	music_video_stream.ctx = ctx;
+	music_video_stream.width = w;
+	music_video_stream.height = h;
+	music_video_stream.fps = music_video.fps;
+	music_video_stream.seq = 0;
+	music_video_stream.encoding = false;
+	music_video_stream.paused = false;
+	music_video_stream.active = true;
+	if (musicVideoCanWebP()) {
+		music_video_stream.mime = 'image/webp';
+		music_video_stream.quality = 0.72;
+	}
+	else {
+		music_video_stream.mime = 'image/jpeg';
+		music_video_stream.quality = 0.66;
+	}
+	var scheme = (location.protocol == 'https:') ? 'wss://' : 'ws://';
+	var ws;
+	try { ws = new WebSocket(scheme + location.host + '/manager/music/video?browser=1'); }
+	catch (e) { music_video_stream.active = false; return; }
+	ws.binaryType = 'arraybuffer';
+	music_video_stream.ws = ws;
+	ws.onopen = function() {
+		if (!music_video_stream.active || music_video_stream.ws !== ws) { return; }
+		var delays = {};
+		$.each(music_video_machines, function(i, m) {
+			var ms = (musicStream.latencies && m && m.key) ? musicStream.latencies[m.key] : 0;
+			if (ms) { delays[m.key] = Math.max(0, Math.min(1500, ms)); }
+		});
+		try {
+			ws.send(JSON.stringify({
+				type: 'hello',
+				outputs: $.map(music_video_machines, function(m) { return m.key; }),
+				title: (tree && tree.songs && tree.songs[0]) ? String(tree.songs[0].file || '').split('/').pop() : '',
+				width: w,
+				height: h,
+				fps: music_video.fps,
+				enhance: musicVideoEnhanceValues(),
+				delays: delays
+			}));
+		} catch (e) {}
+		musicVideoLoop();
+	};
+	ws.onerror = function() {};
+	ws.onclose = function() {
+		if (music_video_stream.ws === ws) { music_video_stream.active = false; }
+	};
+}
+
+function musicVideoStop() {
+	var s = music_video_stream;
+	if (s.timer) { clearInterval(s.timer); s.timer = 0; }
+	music_video_sub_last = '';
+	if (s.ws && s.ws.readyState == 1) {
+		try { s.ws.send(JSON.stringify({ type: 'control', action: 'stop' })); } catch (e) {}
+	}
+	if (s.ws) { try { s.ws.close(); } catch (e) {} }
+	s.ws = null;
+	s.active = false;
+	s.paused = false;
+	s.encoding = false;
+	s.canvas = null;
+	s.ctx = null;
+}
+
+function musicVideoControl(action, extra) {
+	var s = music_video_stream;
+	if (!s.ws || s.ws.readyState != 1) { return; }
+	var d = { type: 'control', action: action };
+	if (extra) { $.extend(d, extra); }
+	try { s.ws.send(JSON.stringify(d)); } catch (e) {}
+}
+
+// The audio receiver has measured how late this peer's sound runs; the picture
+// waits the same amount. Sent per key, because each peer has its own pipeline.
+function musicVideoDelayUpdate(key, ms) {
+	if (!key || !music_video_stream.active) { return; }
+	musicVideoControl('delay', { key: key, ms: Math.max(0, Math.min(1500, ms || 0)) });
+}
+
+function musicVideoPause() {
+	if (!music_video_stream.active) { return; }
+	music_video_stream.paused = true;
+	musicVideoControl('pause');
+}
+
+function musicVideoResume() {
+	if (!music_video_stream.active) { musicVideoStart(); return; }
+	music_video_stream.paused = false;
+	musicVideoControl('resume', { time: (tree && tree.sound) ? tree.sound.currentTime : 0 });
+}
+
+function musicVideoLoop() {
+	var s = music_video_stream;
+	if (s.timer) { clearInterval(s.timer); }
+	var interval = Math.max(33, Math.round(1000 / Math.max(1, music_video.fps)));
+	s.timer = setInterval(musicVideoFrame, interval);
+}
+
+function musicVideoBlobBuffer(blob, cb) {
+	if (blob.arrayBuffer) {
+		blob.arrayBuffer().then(cb).catch(function() {});
+		return;
+	}
+	try {
+		var fr = new FileReader();
+		fr.onload = function() { cb(fr.result); };
+		fr.readAsArrayBuffer(blob);
+	} catch (e) {}
+}
+
+function musicVideoFrame() {
+	var s = music_video_stream;
+	if (!s.active || s.paused || s.encoding) { return; }
+	if (!s.ws || s.ws.readyState != 1 || s.ws.bufferedAmount > 2_000_000) { return; }
+	var v = tree && tree.sound;
+	if (!v || v.paused || v.ended || v.readyState < 2 || !s.ctx) { return; }
+	s.encoding = true;
+	try { s.ctx.drawImage(v, 0, 0, s.width, s.height); }
+	catch (e) { s.encoding = false; return; }
+	try {
+		s.canvas.toBlob(function(blob) {
+			s.encoding = false;
+			if (!blob || !s.active || !s.ws || s.ws.readyState != 1) { return; }
+			if (s.ws.bufferedAmount > 2_000_000) { return; }
+			var seq = ++s.seq;
+			var head = new ArrayBuffer(16);
+			var dv = new DataView(head);
+			dv.setUint32(0, 0x4D564944, true);
+			dv.setFloat64(4, v.currentTime || 0, true);
+			dv.setUint32(12, seq, true);
+			musicVideoBlobBuffer(blob, function(buf) {
+				if (!s.active || !s.ws || s.ws.readyState != 1) { return; }
+				var out = new Uint8Array(16 + buf.byteLength);
+				out.set(new Uint8Array(head), 0);
+				out.set(new Uint8Array(buf), 16);
+				try { s.ws.send(out.buffer); } catch (e) {}
+			});
+			musicVideoSubtitles(v);
+		}, s.mime, s.quality);
+	} catch (e) { s.encoding = false; }
+}
+
+function musicVideoSubtitles(v) {
+	var text = '';
+	try {
+		var tracks = v.textTracks || [];
+		for (var i = 0; i < tracks.length; i++) {
+			var cues = tracks[i].cues || [];
+			for (var j = 0; j < cues.length; j++) {
+				if (cues[j].startTime <= v.currentTime && cues[j].endTime >= v.currentTime) { text = cues[j].text || ''; break; }
+			}
+			if (text) { break; }
+		}
+	} catch (e) {}
+	// a WebVTT cue may carry inline markup; the native overlay draws it, the
+	// receiver's line is plain text
+	text = String(text || '').replace(/<[^>]*>/g, '');
+	if (text != music_video_sub_last) {
+		music_video_sub_last = text;
+		musicVideoControl('subtitle', { text: text });
+	}
+}
+
+// ---- the receiver ----------------------------------------------------------
+// This half runs on the machine being watched. It never needs the Music window:
+// the manager pushes musicVideoReceiverOpen() on the always-open server channel,
+// and the overlay connects its own socket to this machine's single ws worker.
+
+function musicVideoReceiverUrl(stream) {
+	var base = (typeof ws_url != 'undefined' && ws_url) ? ws_url : ('wss://' + location.host + '/manager/ws');
+	try {
+		var u = new URL(base, location.href);
+		u.pathname = '/manager/music/video';
+		u.search = '?local=1&stream=' + encodeURIComponent(stream);
+		u.hash = '';
+		return u.toString();
+	} catch (e) {
+		return base.replace('/manager/ws', '/manager/music/video') + '?local=1&stream=' + encodeURIComponent(stream);
+	}
+}
+
+function musicVideoReceiverOpen(stream, info) {
+	info = info || {};
+	// a new stream replaces any overlay already on this screen
+	musicVideoReceiverClose();
+	var r = music_video_receiver;
+	r.stream = stream || '';
+	r.delay = Math.max(0, Math.min(1500, parseFloat(info.delay_ms) || 100));
+	r.lastSeq = -1;
+	r.queue = [];
+	var wrap = document.createElement('div');
+	wrap.id = 'music_video_receiver';
+	wrap.setAttribute('stream', r.stream);
+	wrap.innerHTML = '<canvas></canvas><div class="music_video_receiver_subs"></div>'
+		+ '<div class="music_video_receiver_bar"><span class="music_video_receiver_label"></span>'
+		+ '<button type="button" class="music_video_receiver_close" aria-label="Close">&times;</button></div>';
+	(document.body || document.documentElement).appendChild(wrap);
+	var label = wrap.querySelector('.music_video_receiver_label');
+	if (label) { label.textContent = info.title || info.source || ''; }
+	var canvas = wrap.querySelector('canvas');
+	r.canvas = canvas;
+	r.ctx = canvas.getContext('2d');
+	musicVideoEnhanceApplyValues(canvas, info.enhance || {});
+	wrap.querySelector('.music_video_receiver_close').addEventListener('click', function() { musicVideoReceiverClose(); });
+	var ws;
+	try { ws = new WebSocket(musicVideoReceiverUrl(r.stream)); }
+	catch (e) { return; }
+	ws.binaryType = 'arraybuffer';
+	r.ws = ws;
+	ws.onmessage = function(e) {
+		if (typeof e.data == 'string') {
+			var d = null;
+			try { d = JSON.parse(e.data); } catch (err) {}
+			if (d && d.action == 'subtitle') { musicVideoReceiverSubs(d.text || ''); }
+			if (d && (d.action == 'seek' || d.action == 'resume')) { music_video_receiver.queue = []; }
+			if (d && d.action == 'delay') { music_video_receiver.delay = Math.max(0, Math.min(1500, parseFloat(d.ms) || 0)); }
+			if (d && d.action == 'enhance' && d.enhance) { musicVideoEnhanceApplyValues(r.canvas, d.enhance); }
+			if (d && d.action == 'stop') { musicVideoReceiverClose(); }
+			return;
+		}
+		musicVideoReceiverFrame(e.data);
+	};
+	ws.onclose = function() { if (music_video_receiver.ws === ws) { music_video_receiver.ws = null; } };
+	if (r.timer) { clearInterval(r.timer); }
+	r.timer = setInterval(musicVideoReceiverDraw, 33);
+}
+
+function musicVideoReceiverFrame(buf) {
+	if (!buf || buf.byteLength < 17) { return; }
+	var r = music_video_receiver;
+	var dv = new DataView(buf);
+	if (dv.getUint32(0, true) != 0x4D564944) { return; }
+	var seq = dv.getUint32(12, true);
+	if (seq <= r.lastSeq) { return; }
+	r.lastSeq = seq;
+	var blob = new Blob([new Uint8Array(buf, 16)], { type: 'image/jpeg' });
+	var item = { seq: seq, media: dv.getFloat64(4, true), due: Date.now() + r.delay, bitmap: null, img: null };
+	r.queue.push(item);
+	// a slow link or a busy decoder must not grow a second of pictures in memory
+	if (r.queue.length > 8) { r.queue.splice(0, r.queue.length - 8); }
+	if (window.createImageBitmap) {
+		createImageBitmap(blob).then(function(bm) { item.bitmap = bm; }).catch(function() {});
+	} else {
+		var img = new Image();
+		item.img = img;
+		img.onload = function() {};
+		try { img.src = URL.createObjectURL(blob); } catch (e) {}
+	}
+}
+
+function musicVideoReceiverDraw() {
+	var r = music_video_receiver;
+	if (!r.ctx || !r.queue.length) { return; }
+	var now = Date.now();
+	var pick = null, idx = -1;
+	for (var i = 0; i < r.queue.length; i++) {
+		var it = r.queue[i];
+		if (it.due > now) { break; }
+		if (it.bitmap || (it.img && it.img.complete && it.img.naturalWidth)) { pick = it; idx = i; }
+	}
+	if (!pick) { return; }
+	r.queue.splice(0, idx + 1);
+	var w = 0, h = 0;
+	if (pick.bitmap) { w = pick.bitmap.width; h = pick.bitmap.height; }
+	else if (pick.img) { w = pick.img.naturalWidth; h = pick.img.naturalHeight; }
+	if (!w || !h) { return; }
+	if (r.canvas.width != w || r.canvas.height != h) { r.canvas.width = w; r.canvas.height = h; }
+	try {
+		if (pick.bitmap) { r.ctx.drawImage(pick.bitmap, 0, 0); pick.bitmap.close(); }
+		else { r.ctx.drawImage(pick.img, 0, 0); try { URL.revokeObjectURL(pick.img.src); } catch (e) {} }
+	} catch (e) {}
+}
+
+function musicVideoReceiverSubs(text) {
+	var el = document.querySelector('#music_video_receiver .music_video_receiver_subs');
+	if (el) { el.textContent = text || ''; }
+}
+
+function musicVideoReceiverClose(stream) {
+	var r = music_video_receiver;
+	if (stream && r.stream && stream != r.stream) { return; }
+	if (r.timer) { clearInterval(r.timer); r.timer = 0; }
+	if (r.ws) { try { r.ws.close(); } catch (e) {} }
+	r.ws = null;
+	r.stream = '';
+	r.queue = [];
+	r.lastSeq = -1;
+	r.canvas = null;
+	r.ctx = null;
+	var el = document.getElementById('music_video_receiver');
+	if (el && el.parentNode) { el.parentNode.removeChild(el); }
+}
+
+$(document).on('click', '#music_video_presets .music_video_preset', function(e) {
+	e.preventDefault();
+	music_video.preset = $(this).attr('data-preset') || 'off';
+	if (music_video.preset == 'clean' || music_video.preset == 'hd' || music_video.preset == 'cinema') {
+		music_video.sharpen = { clean: 30, hd: 45, cinema: 60 }[music_video.preset];
+	}
+	else if (music_video.preset == 'off') { music_video.sharpen = 0; }
+	musicVideoPaint();
+	musicVideoEnhanceApply();
+	musicVideoSave();
+});
+
+$(document).on('input', '#music_video_sharpen', function() {
+	var v = parseFloat(this.value);
+	if (!isFinite(v)) { return; }
+	music_video.sharpen = Math.max(0, Math.min(100, v));
+	music_video.preset = 'custom';
+	$('#music_video_presets .music_video_preset').attr('state', 'off');
+	$('#music_video_sharpen_value').text(Math.round(music_video.sharpen) + '%');
+	musicVideoEnhanceApply();
+	musicVideoSave();
+});
+
+$(document).on('click', '#music_video_remote_toggle', function(e) {
+	e.preventDefault();
+	music_video.remote = (music_video.remote == 'on') ? 'off' : 'on';
+	musicVideoPaint();
+	musicVideoSave();
+	if (music_video.remote == 'off') {
+		musicVideoStop();
+		// the audio stream followed the picture to those machines; put its
+		// output list back to the stored chips now that the picture is gone
+		if (tree && tree.sound && tree.sound.state == 1 && tree.songs && tree.songs[0]) {
+			remoteTrackToggle({ file: tree.songs[0].file, toggle: 'on', seek: tree.sound.currentTime });
+			musicStreamOutputsUpdate();
+		}
+	}
+	else if (tree && tree.sound && tree.sound.state == 1) { musicVideoStart(); }
+});
+
+$(document).on('change', '#music_video_quality, #music_video_fps', function() {
+	music_video.quality = $('#music_video_quality').val() == '1080p' ? '1080p' : '720p';
+	var f = parseInt($('#music_video_fps').val(), 10);
+	music_video.fps = (f == 15 || f == 24 || f == 30) ? f : 24;
+	musicVideoSave();
+	if (tree && tree.sound && tree.sound.state == 1) { musicVideoStart(); }
+});
+
 function musicAudioPanelLoad(show) {
 	var panel = $('#music_audio_panel');
 	if (!panel.length) { return; }
@@ -3889,11 +4497,15 @@ function musicAudioPanelLoad(show) {
 			if (!r || !r.html) { return; }
 			// the drawer belongs to this machine, including the output list
 			if (r.mao) { mao = r.mao; }
+			if (r.video_machines) { music_video_machines = r.video_machines; }
 			panel.html(r.html);
 			if (!musicEqualizerFromEqualizer(r.equalizer)) { musicEqualizerLoad(); }
 			musicSyncOffsetRead();
 			musicLocalDelayRead();
 			musicRemoteDelayShow();
+			if (r.video) { musicVideoSet(r.video); }
+			musicVideoPaint();
+			musicVideoEnhanceApply();
 			if (musicEqualizerDirty() && musicGraphWanted() && !(musicVisual && musicVisual.limiter)) {
 				try { musicAudioGraph(); } catch (e) {}
 			}
