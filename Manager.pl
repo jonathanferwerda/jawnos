@@ -26351,10 +26351,26 @@ sub website_grabber($data) {
 }
 
 sub web_history_deleter($app) {
-	my $web_archives = &subs::setting_grabber({ app => $app, setting => 'web_archives' });
+	# The archive count is an app fact shared by every machine, like the URL and
+	# the selectors. Read the workspace's value rather than only this device's
+	# row: a machine that never saved its own (the server, once it became the
+	# headless browser) used to fall back to one row, erasing the other URL's
+	# last-run marker so the scheduler refetched it on the next tick.
+	my $web_archives = &subs::setting_value_for($app, 'web_archives');
+	$web_archives = 1 unless defined $web_archives && $web_archives =~ /^\d+$/ && $web_archives > 0;
+	# Never keep fewer rows than the app has distinct configured URLs: each URL
+	# needs its own last-run marker or it looks never fetched.
+	my %url;
+	foreach my $w ( @{ &subs::setting_rows_for($app, 'web') } ) {
+		my $u = $w->{'value'};
+		$url{$u} = 1 if defined $u && length $u;
+	}
+	my $keep = scalar keys %url;
+	$keep = $web_archives if $web_archives > $keep;
+	$keep = 1 if $keep < 1;
 	my $history = &subs::db_query('select * from websites where app=? order by timestamp desc', $app)->hashes;
 	if (scalar @{$history} > 1) {
-		for (my $n = scalar @{$history}; $n >= ($web_archives || 1); $n--) {
+		for (my $n = scalar @{$history}; $n >= $keep; $n--) {
 			if ($history->[$n]){
 				&deletion_registration({ table => 'websites', uuid => $history->[$n]->{'uuid'}, scope => 'single', server_time => $history->[$n]->{'server_time'} });
 				&subs::db_delete('websites', { uuid => $history->[$n]->{'uuid'}, app => $app });

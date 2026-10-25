@@ -16777,28 +16777,36 @@ sub headless_browser() {
 		my $app = $a->{'app'};
 		next unless defined $app && length $app;
 		my $rw = &subs::setting_rows_for($app, 'web_recurring')->[0] or next;
-		my $able_devices = [ grep {
-			my $v = defined $_->{'value'} ? $_->{'value'} : '';
-			$v eq $device || $v eq $signatorial || $v eq 'all';
-		} @{ &subs::setting_rows_for($app, 'web_headless_device') } ];
-		next unless scalar @{$able_devices};
-		my %seen_url;
-		foreach my $w ( @{ &subs::setting_rows_for($app, 'web') } ) {
-			my $url = $w->{'value'};
-			next unless defined $url && length $url;
-			next if $seen_url{$url}++;
-			my $history = &subs::db_query('select * from websites where app=? and url=? order by timestamp desc', $app, $url)->hashes;
-			my $last_run = $history->[0] ? $history->[0]->{'timestamp'} : 0;
-			my $recurrence = &time_abbrev_translator($rw->{'value'}) || '1M';
-			next unless &subs::rightNow() - $last_run > $recurrence;
-			my ($window,$internal_url,$uuid,$timestamp) = &Manager::website_grabber({
-				app => $app,
-				website => $url,
-				timestamp => &subs::rightNow(),
-				user_agent => $gb::user_agent,
-			});
-			$changes = 1;
-		}
+		# The newest choice wins. A machine keeps its own row and may also see a
+		# peer's, so an old row saying "mobile" would keep a phone fetching after
+		# the app was moved to the server. Read the newest row, not any row.
+		my ($wd) = sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) }
+			grep { defined $_->{'value'} && length $_->{'value'} }
+			@{ &subs::setting_rows_for($app, 'web_headless_device') };
+		next unless $wd;
+		my $headless_for = $wd->{'value'};
+		next unless $headless_for eq $device || $headless_for eq $signatorial || $headless_for eq 'all';
+		# One URL per app, and the newest configuration wins. These rows are per
+		# device, so an older machine can still carry a URL the app has moved on
+		# from; fetching every row pulled two feeds (a JSON API and its retired
+		# HTML page) at once. The history a fetch leaves behind is keyed by URL,
+		# so a second URL also kept resetting the first one's last_run.
+		my ($w) = sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) }
+			grep { defined $_->{'value'} && length $_->{'value'} }
+			@{ &subs::setting_rows_for($app, 'web') };
+		next unless $w;
+		my $url = $w->{'value'};
+		my $history = &subs::db_query('select * from websites where app=? and url=? order by timestamp desc', $app, $url)->hashes;
+		my $last_run = $history->[0] ? $history->[0]->{'timestamp'} : 0;
+		my $recurrence = &time_abbrev_translator($rw->{'value'}) || '1M';
+		next unless &subs::rightNow() - $last_run > $recurrence;
+		my ($window,$internal_url,$uuid,$timestamp) = &Manager::website_grabber({
+			app => $app,
+			website => $url,
+			timestamp => &subs::rightNow(),
+			user_agent => $gb::user_agent,
+		});
+		$changes = 1;
 	}
 	if ($changes == 1) {
 		my $c = &subs::controller_builder();
