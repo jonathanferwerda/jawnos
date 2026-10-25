@@ -22024,8 +22024,12 @@ sub budget_calculator($data) {
 				if ($circumstance eq 'duration') {
 					# a session overlaps this window when it starts before the window
 					# ends and stops after it begins; a running session has no stored
-					# duration, so it is read to now and always overlaps a past window
-					$query .= "and (timestamp >= ? or type in ('start','record') or (cast(timestamp as integer) + abs(cast(coalesce(duration,0) as real))) > ?) ";
+					# duration, so it is read to now and always overlaps a past window.
+					# The ends-at test is a number against the window bound: the bound
+					# must be cast, or DBD::SQLite binds it as text and SQLite ranks a
+					# number below text, so every session that began before the window
+					# and ran into it was dropped.
+					$query .= "and (timestamp >= ? or type in ('start','record') or (cast(timestamp as integer) + abs(cast(coalesce(duration,0) as real))) > cast(? as integer)) ";
 					push @params, $window_bt, $window_bt;
 				}
 				else {
