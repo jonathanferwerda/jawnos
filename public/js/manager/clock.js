@@ -147,6 +147,26 @@ function jawnosClockApplyState(state) {
 	jawnosClockRenderAlarms(state);
 	jawnosClockRenderTimers(state);
 	jawnosClockRenderApps(state);
+	jawnosClockSyncRinging(state);
+}
+
+// A ring card follows the server's ringing flag as well as the live push, so a
+// window opened (or reloaded) while an alarm is still sounding shows the card
+// again, and one dismissed on another screen closes here too.
+function jawnosClockSyncRinging(state) {
+	var ringing = $.grep(state.alarms || [], function (a) { return a.ringing; });
+	if (jawnosClockRingingCurrent) {
+		var still = $.grep(ringing, function (a) { return a.uuid == jawnosClockRingingCurrent.uuid; });
+		if (!still.length) { jawnosClockAlarmStop(); }
+		return;
+	}
+	if (ringing.length && !jawnosClockRinging.length) {
+		var a = ringing[0];
+		jawnosClockShowRing({
+			uuid: a.uuid, label: a.label, hour: a.hour, minute: a.minute,
+			sound: a.sound, volume: a.volume, ramp: a.ramp, app: a.app
+		});
+	}
 }
 
 function jawnosClockRefresh(force) {
