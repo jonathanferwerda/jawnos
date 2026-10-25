@@ -78,7 +78,10 @@ document.addEventListener('scroll', function(event) {
 	window.jawnos_configure_bar_last = top;
 	var bar = el.querySelector('.cfg_topbar');
 	if (!bar) { return; }
-	if (top <= 16) { bar.classList.remove('cfg_topbar_hidden'); return; }
+	// Until the bar's own flow space has scrolled away, hiding it would leave a
+	// gap where it used to sit; only tuck it away once it is fully past the top.
+	var limit = (bar.offsetHeight || 40) + 8;
+	if (top <= limit) { bar.classList.remove('cfg_topbar_hidden'); return; }
 	if (top > last + 2) { bar.classList.add('cfg_topbar_hidden'); }
 	else if (top < last - 2) { bar.classList.remove('cfg_topbar_hidden'); }
 }, true);
