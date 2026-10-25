@@ -693,6 +693,7 @@ var JAWN_ROOM_ONSET_FRAMES = 3;  // loud ticks before a phrase is taken to have 
 var JAWN_ROOM_READ_FRAMES = 5;   // the room is read over half a second at a phrase's start
 var JAWN_ROOM_CV = 0.4;          // a window spread above this is speech, not the room
 var JAWN_ROOM_PEAK_RATIO = 3.5;  // a pause is this far under the phrase's own peak
+var JAWN_ROOM_LEARN_RATIO = 2.5; // a window this much louder than the room is speech
 var jawnRoom = { floor: 0 };
 
 var jawnDictate = {
@@ -778,13 +779,32 @@ function jawnRoomRead(win) {
 	return mean;
 }
 
-// Learn the room from a read window. A window that wobbled is speech: the
-// floor already known stands, and a session that had none starts from the
-// window's middle reading.
-function jawnRoomLearn(win) {
-	var room = jawnRoomRead(win);
-	if (room != null && room > 0) { jawnRoom.floor = room; }
-	else if (!jawnRoom.floor) { jawnRoom.floor = win[Math.floor(win.length / 2)] || 0; }
+// Learn the room from a read window. With no room yet, a steady window is the
+// room; a wobbling window is taken at its median for a conversation (whose
+// first window, just after Converse is pressed, is clean) and at its quietest
+// tick for dictation (whose first phrase may already contain speech). Once a
+// room is known, a window only replaces it when it is not much louder: a voice,
+// or the guide's own reply, must not drag the floor up.
+function jawnRoomLearn(win, trust_wobble) {
+	var n = win.length, i, sum = 0;
+	for (i = 0; i < n; i++) { sum += win[i]; }
+	var mean = sum / n;
+	if (!jawnRoom.floor) {
+		var steady = jawnRoomRead(win);
+		if (steady != null && steady > 0) { jawnRoom.floor = steady; return; }
+		var pick;
+		if (trust_wobble) {
+			var sorted = win.slice().sort(function (a, b) { return a - b; });
+			pick = sorted[Math.floor(sorted.length / 2)];
+		}
+		else {
+			pick = win[0];
+			for (i = 1; i < n; i++) { if (win[i] < pick) { pick = win[i]; } }
+		}
+		jawnRoom.floor = pick || 0;
+		return;
+	}
+	if (mean > 0 && mean <= jawnRoom.floor * JAWN_ROOM_LEARN_RATIO) { jawnRoom.floor = mean; }
 }
 
 // A new session reads its own room: the machine may have been carried

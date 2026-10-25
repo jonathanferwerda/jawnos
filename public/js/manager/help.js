@@ -632,31 +632,43 @@ function jawnClipListen(opts) {
 				var learn = has_room ? jawnRoomLearn : function () {};
 				var room_read = has_room ? jawnRoomRead : function () { return 0; };
 				var read = has_room ? JAWN_ROOM_READ_FRAMES : 0;
-				// a conversational answer is short, so two ticks either side of a tap
-				// are enough to know the turn has begun
-				var onset_frames = has_room ? 2 : 1;
+				// the middle of three ticks already waits out a single tap, so one
+				// median-loud tick is a voice that held
+				var onset_frames = 1;
 				var fallback = has_room ? JAWN_ROOM_FALLBACK : 0.02;
-				var peak_ratio = has_room ? JAWN_ROOM_PEAK_RATIO : 3.5;
-				var heard = false, run = 0, quiet_since = 0, peak = 0, win = [];
+				// a conversation waits 1.1s before it lets go, so it can afford to
+				// read a drop further under the turn's peak than dictation does; this
+				// is the safety net when a fan sits above the floor it was given
+				var peak_ratio = 2.5;
+				var heard = false, run = 0, quiet_since = 0, peak = 0, win = [], recent = [], tick = 0;
+				// diagnosing a room that will not go quiet: set jawn_room_debug=on
+				// in the console and the level, floor and thresholds print once a second
+				var debug_room = false;
+				try { debug_room = (localStorage.getItem('jawn_room_debug') == 'on'); } catch (e) {}
 				jawn_clip.audioctx = ctx;
 				jawn_clip.meter = setInterval(function () {
 					an.getByteTimeDomainData(data);
 					var rms = 0;
 					for (var i = 0; i < data.length; i++) { var d = (data[i] - 128) / 128; rms += d * d; }
 					rms = Math.sqrt(rms / data.length);
+					recent.push(rms);
+					if (recent.length > 3) { recent.shift(); }
+					// the middle of three ticks: a fan's own peaks and a single tap do
+					// not read as speech, while a voice holds across the window
+					var sorted_recent = recent.slice().sort(function (a, b) { return a - b; });
+					var level = (sorted_recent.length >= 3) ? sorted_recent[1] : rms;
 					// a turn opens by reading the room; the audio is already being
 					// recorded, so speech in this moment is not lost
 					if (read > 0) {
 						win.push(rms);
 						if (--read === 0) {
-							// a window that wobbled was a voice, not the room: the floor
-							// already known stands, and a short answer that arrived before
-							// the window closed still counts as the turn's start
+							// a window that wobbled might be a voice, but a conversation's
+							// first window (just after Converse is pressed) is the room, so it
+							// may trust its middle reading. A short answer that arrived before
+							// the window closed still counts, if it is voice-loud.
 							var steady = (room_read(win) != null);
-							learn(win);
-							// wobble alone can be a very quiet room's own jitter, so the
-							// window must also hold a level a voice would reach
-							if (!heard && !steady && Math.max.apply(null, win) > threshold(false)) {
+							learn(win, true);
+							if (!heard && !steady && Math.max.apply(null, win) > threshold(true)) {
 								heard = true;
 								run = 0;
 								quiet_since = 0;
@@ -665,11 +677,15 @@ function jawnClipListen(opts) {
 						}
 						return;
 					}
-					var loud = (rms > threshold(false));
-					var quiet = (rms <= threshold(false));
+					var loud = (level > threshold(false));
+					var quiet = (level <= threshold(false));
+					if (debug_room && ((tick++ % 8) === 0)) {
+						console.log('[conversation room] floor=' + (has_room ? (jawnRoom.floor || 0) : 0).toFixed(4)
+							+ ' level=' + level.toFixed(4) + ' quiet<' + threshold(false).toFixed(4)
+							+ ' onset>' + threshold(true).toFixed(4) + ' heard=' + heard);
+					}
 					if (!heard) {
-						// a tap does not hold for two ticks, so speech has to stay
-						// above the room before the turn is taken to have started
+						// the median already waits out a single tap or fan peak
 						if (!loud) { run = 0; return; }
 						if (++run < onset_frames) { return; }
 						heard = true;
@@ -681,7 +697,7 @@ function jawnClipListen(opts) {
 					if (rms > peak) { peak = rms; }
 					// the pause is read against the room and against the turn's own
 					// peak, so a room that reads high or low still lets go
-					var hushed = (peak > fallback && rms * peak_ratio < peak);
+					var hushed = (peak > fallback && level * peak_ratio < peak);
 					if (!quiet && !hushed) { quiet_since = 0; return; }
 					if (!quiet_since) { quiet_since = Date.now(); return; }
 					if (Date.now() - quiet_since > 1100) { jawnClipStop(); }
