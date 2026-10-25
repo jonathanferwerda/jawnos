@@ -432,7 +432,7 @@
 									<td><%= $tally->{$app}->{'budget'}->{'occurences'}->{'formatted_budget'} %></td>
 								<% } %>
 								<% if (grep { $_ eq 'duration' } @{$columns}) { %>
-									<td style="background-color:<%= $tally->{$app}->{'budget'}->{'duration'}->{'colour'} %>" ><%= &subs::duration_sayer($tally->{$app}->{'totals'}->{'duration'} / 1000) %></td>
+									<td style="background-color:<%= $tally->{$app}->{'budget'}->{'duration'}->{'colour'} %>" ><%== &subs::duration_readout($tally->{$app}->{'totals'}->{'duration'}) %></td>
 								<% } %>
 								<% if (grep { $_ eq 'duration_budget' } @{$columns}) { %>
 									<td><%= $tally->{$app}->{'budget'}->{'duration'}->{'formatted_budget'} %></td>
@@ -480,7 +480,7 @@
 										<td></td>
 									<% } %>
 									<% if (grep { $_ eq 'duration' } @{$columns}) { %>
-										<td><%= &subs::duration_sayer($t->{'duration'} / 1000) %></td>
+										<td><%== &subs::duration_readout($t->{'duration'}) %></td>
 									<% } %>
 									<% if (grep { $_ eq 'duration_budget' } @{$columns}) { %>
 										<td></td>
@@ -540,7 +540,7 @@
 										<% if (grep { $_ eq $col } @{$dollas}) { %>
 											<u><%= &subs::price_formatter($totals->{'total'}->{$col}) %></u>
 										<% } elsif (grep { $_ eq $col } qw/duration/) { %>
-											<%= &subs::duration_sayer($totals->{'total'}->{$col} / 1000) %>
+											<%== &subs::duration_readout($totals->{'total'}->{$col}) %>
 										<% } else { %>
 											<%= $totals->{'total'}->{$col} %>
 										<% } %>

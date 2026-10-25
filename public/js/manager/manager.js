@@ -2184,36 +2184,48 @@ function jawnosDurationText(seconds, mode) {
 	return bits.slice(0, 2).join(' ');
 }
 
-function jawnosDetailsDurationTick() {
+// The Dur column and every duration readout a template hands us. A Dur cell
+// whose row is still open grows from its start; a closed row keeps the duration
+// the server worked out. A plain readout carries its span in `duration`, and
+// `sign="-"` keeps a shortfall reading as a shortfall.
+function jawnosDurationTick() {
 	var now = Date.now();
-	$('.appointment_detail_duration').each(function () {
+	$('.appointment_detail_duration, .jawnos_duration').each(function () {
 		var cell = $(this);
-		var type = cell.attr('appt_type') || '';
-		var start = Number(cell.attr('timestamp')) || 0;
-		var stop = Number(cell.attr('stop_timestamp')) || 0;
 		var ms;
-		if (!stop && (type == 'start' || type == 'record')) {
-			// an open session grows from its start
-			if (!start || start > now) { return; }
-			ms = now - start;
+		var sign = cell.attr('sign') == '-' ? '-' : '';
+		if (cell.hasClass('appointment_detail_duration')) {
+			var type = cell.attr('appt_type') || '';
+			var start = Number(cell.attr('timestamp')) || 0;
+			var stop = Number(cell.attr('stop_timestamp')) || 0;
+			if (!stop && (type == 'start' || type == 'record')) {
+				// an open session grows from its start
+				if (!start || start > now) { return; }
+				ms = now - start;
+			}
+			else {
+				// a closed row keeps the duration the server worked out; fall back to
+				// its own start and stop when that duration was never written
+				ms = Math.abs(Number(cell.attr('duration')) || 0);
+				if (!ms && stop && start) { ms = Math.abs(stop - start); }
+				if (!ms) { return; }
+			}
+			sign = '';
 		}
 		else {
-			// a closed row keeps the duration the server worked out; fall back to
-			// its own start and stop when that duration was never written
 			ms = Math.abs(Number(cell.attr('duration')) || 0);
-			if (!ms && stop && start) { ms = Math.abs(stop - start); }
 			if (!ms) { return; }
 		}
 		var display = cell.closest('.wind').attr('app') || '';
 		var mode = durationDisplaySaved(display) || 'dynamic';
-		var text = jawnosDurationText(ms / 1000, mode);
+		var text = sign + jawnosDurationText(ms / 1000, mode);
 		if (cell.text() !== text) { cell.text(text); }
 	});
 }
 
 $(function () {
-	setInterval(jawnosDetailsDurationTick, 1000);
-	jawnosDetailsDurationTick();
+	setInterval(jawnosDurationTick, 1000);
+	jawnosDurationTick();
 });
 
 function jawnosSearchRender(query) {

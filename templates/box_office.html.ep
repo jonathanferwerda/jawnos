@@ -170,7 +170,7 @@
 								<td><span class="ticket_timestamp time" timestamp="<%= $t->{'timestamp'} %>"></span></td>
 								<td>
 									<span class="ticket_warranty time" timestamp="<%= $t->{'warranty'} %>"></span>
-									<span class="ticket_duration duration bo_muted bo_duration" timestamp="<%= $t->{'duration'} %>"><%= &subs::duration_sayer($t->{'duration'} / 1000) %></span>
+									<%== &subs::duration_readout($t->{'duration'}, class => 'ticket_duration duration bo_muted bo_duration') %>
 								</td>
 								<td>
 									<% my @log = sort { ($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0) } @{$t->{'access_log'} || []}; %>

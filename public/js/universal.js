@@ -93,7 +93,7 @@ function appointment_chron() {
 	time_updater();
 	// durations are painted by the manager's own tick; give them a pass here too
 	// so a freshly loaded details panel wears its saved reading at once
-	if (typeof jawnosDetailsDurationTick === 'function') { jawnosDetailsDurationTick(); }
+	if (typeof jawnosDurationTick === 'function') { jawnosDurationTick(); }
 	appointment_chronicler = setInterval(function(){
 		// no point repainting clocks while the page isn't on screen, or while a
 		// fullscreen video is covering it
@@ -387,7 +387,7 @@ $(document).on('dblclick', '.time', function() {
 	localStorage.setItem('time_machine',ago);
 });
 
-$(document).on('click', '.time, .appointment_header, .since, .appointment_detail_duration', function() {
+$(document).on('click', '.time, .appointment_header, .since, .appointment_detail_duration, .jawnos_duration', function() {
 	var header = $(this);
 	// the outer appointment header carries the icon but no timestamp; the time
 	// inside it is the one that reads, so only that one turns the page
@@ -397,13 +397,13 @@ $(document).on('click', '.time, .appointment_header, .since, .appointment_detail
 		clearTimeout(timeClickTimer);
 		timeClickTimer = setTimeout(function() {
 			var display = header.closest('.wind').attr('app') || '';
-			if (header.hasClass('appointment_detail_duration')) {
+			if (header.hasClass('appointment_detail_duration') || header.hasClass('jawnos_duration')) {
 				// a duration has no fixed reading: short, hours, minutes
 				var dmodes = [ 'dynamic', 'hours', 'minutes' ];
 				var dcurrent = durationDisplaySaved(display) || 'dynamic';
 				var dnext = dmodes[(dmodes.indexOf(dcurrent) + 1) % dmodes.length];
 				durationDisplaySave(display, dnext);
-				if (typeof jawnosDetailsDurationTick === 'function') { jawnosDetailsDurationTick(); }
+				if (typeof jawnosDurationTick === 'function') { jawnosDurationTick(); }
 				return;
 			}
 			// drop the fixed-mode repaint gate so the new reading shows right away

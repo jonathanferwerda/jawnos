@@ -609,6 +609,27 @@ sub duration_sayer() {
 	return $sign . $duration;
 }
 
+# A duration a person can read several ways. The element carries the span in
+# milliseconds and the client turns it through the short form, all hours and all
+# minutes when it is clicked, remembering the reading for that window; the
+# server's own reading is the first paint. A negative span (a shortfall, a
+# moment read the other way) keeps its minus in `sign`, because the client's
+# readings fold a sign away when they take the size.
+sub duration_readout() {
+	my ($milliseconds, %option) = @_;
+	return '' unless defined $milliseconds && $milliseconds =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
+	my $negative = $milliseconds < 0 ? 1 : 0;
+	my $absolute = $negative ? -$milliseconds : $milliseconds;
+	my $class = 'jawnos_duration';
+	$class .= ' ' . $option{'class'} if defined $option{'class'} && length $option{'class'};
+	my $attributes = '';
+	$attributes .= ' style="' . $option{'style'} . '"' if defined $option{'style'} && length $option{'style'};
+	$attributes .= ' hint="' . $option{'hint'} . '"' if defined $option{'hint'} && length $option{'hint'};
+	return '<span class="' . $class . '" duration="' . $absolute . '"'
+		. ($negative ? ' sign="-"' : '') . $attributes . '>'
+		. &duration_sayer($milliseconds / 1000) . '</span>';
+}
+
 sub time_abbrev_translator() {
 	my $timing = shift;
 	my $timestamp = shift;

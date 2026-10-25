@@ -46,7 +46,7 @@
 				<% } else { %>
 					<%= &subs::format_name($app->{'type'}) %>
 				<% } %>	
-				<span class="time" mode="fixed" timestamp="<%= $app->{'timestamp'} %>"></span> <%= &subs::duration_sayer($app->{'duration'} / 1000) %><br>
+				<span class="time" mode="fixed" timestamp="<%= $app->{'timestamp'} %>"></span> <%== &subs::duration_readout($app->{'duration'}) %><br>
 				<% if ($app->{'start_notes'} || $app->{'notes'} || $app->{'end_notes'}) { %>
 					<%== &subs::note_retriever($app->{'app'}, $app->{'uuid'}) %>
 				<% } %>

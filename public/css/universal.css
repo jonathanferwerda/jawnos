@@ -501,8 +501,10 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 }
 
 /* the Dur column turns the same way a time does, so it wears the same hand and
-   never the text cursor its cell would otherwise show */
-.appointment_detail_duration {
+   never the text cursor its cell would otherwise show; every other duration
+   readout a template writes turns with it */
+.appointment_detail_duration,
+.jawnos_duration {
 	cursor: pointer;
 }
 

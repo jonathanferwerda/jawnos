@@ -21721,6 +21721,7 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 	my $improvement = {
 		share => $share,
 		difference => $value - $budget_share,
+		overall_value => $ov,
 		overall => &budget_value_formatter($circumstance, $ov),
 		formatted_difference => &budget_value_formatter($circumstance, $value - $budget_share),
 		percentage => eval { return &subs::percent_formatter(($value - $budget_share) / $typical_share) } || 0,
@@ -22221,6 +22222,7 @@ sub budget_calculator($data) {
 			# the own period wears the real window; another column keeps the nominal
 			# rate as its label, while its threshold below is scaled to the column
 			my $display_span = $same_width ? ($actual_scope || $returner->{'duration'}) : $returner->{'duration'};
+			$returner->{'budgeted_display_ms'} = $returner->{'expected'} * $display_span;
 			$returner->{'formatted_budgeted'} = &subs::duration_sayer($returner->{'expected'} * $display_span / 1000) . '/' . $returner->{'scope_name'};
 		}
 		else {
@@ -32037,6 +32039,7 @@ sub handbook_today {
 			type => &subs::format_name($type || 'event'),
 			timestamp => $appt->{'timestamp'},
 			duration => $duration,
+			duration_ms => (defined $appt->{'duration'} ? abs($appt->{'duration'}) : 0),
 			project => $appt->{'project'} || '',
 			uuid => $appt->{'uuid'} || '',
 			planted => $planted,
@@ -32067,7 +32070,7 @@ sub handbook_today {
 				next if $ghost_seen{$app . '|' . $stamp}++;
 				my $duration = '';
 				$duration = &subs::duration_sayer(abs($ghost->{'duration'}) / 1000) if $ghost->{'duration'};
-				push @ghosts, { app => $app, name => &subs::format_name($app), timestamp => $stamp, duration => $duration };
+				push @ghosts, { app => $app, name => &subs::format_name($app), timestamp => $stamp, duration => $duration, duration_ms => (defined $ghost->{'duration'} ? abs($ghost->{'duration'}) : 0) };
 			}
 			last if scalar @ghosts >= 12;
 		}

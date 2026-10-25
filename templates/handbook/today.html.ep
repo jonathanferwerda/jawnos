@@ -103,7 +103,7 @@
 							<span class="handbook_today_time time" mode="fixed" timestamp="<%= $appt->{'timestamp'} %>"></span>
 							<span class="handbook_today_appt_name"><%= $appt->{'name'} %></span>
 							<span class="handbook_today_appt_type"><%= $appt->{'type'} %></span>
-							<% if ($appt->{'duration'}) { %><span class="handbook_today_chip"><%= $appt->{'duration'} %></span><% } %>
+							<% if ($appt->{'duration'}) { %><span class="handbook_today_chip"><%== &subs::duration_readout($appt->{'duration_ms'}) %></span><% } %>
 							<% if ($appt->{'planted'}) { %><span class="handbook_today_chip handbook_today_planted_chip"><%= &subs::ui('planted') %></span><% } %>
 							<% if ($appt->{'project'}) { %><span class="handbook_today_chip"><%= &subs::format_name($appt->{'project'}) %></span><% } %>
 						</li>
@@ -122,7 +122,7 @@
 						<li class="handbook_today_appt handbook_today_ghost handbook_today_open_app hover" app="<%= $ghost->{'app'} %>">
 							<span class="handbook_today_time time" mode="fixed" timestamp="<%= $ghost->{'timestamp'} %>"></span>
 							<span class="handbook_today_appt_name"><%= $ghost->{'name'} %></span>
-							<% if ($ghost->{'duration'}) { %><span class="handbook_today_chip"><%= $ghost->{'duration'} %></span><% } %>
+							<% if ($ghost->{'duration'}) { %><span class="handbook_today_chip"><%== &subs::duration_readout($ghost->{'duration_ms'}) %></span><% } %>
 						</li>
 					<% } %>
 				</ul>
