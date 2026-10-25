@@ -60,7 +60,7 @@ function musicVolumeApply() {
 	// WebKit carries the element's volume onto its Pulse stream and remembers it
 	// for the role, so a track played with `me` off came back muted (or at 1%)
 	// on a later play. Build the graph when it can carry the zero.
-	if (!musicGraphTrying && musicLocalVolume() <= 0
+	if (musicGraphWanted() && !musicGraphTrying && musicLocalVolume() <= 0
 		&& !(musicVisual && musicVisual.localGain && musicVisual.el === tree.sound)) {
 		musicGraphTrying = true;
 		try { musicAudioGraph(); } catch (e) {}
@@ -142,6 +142,45 @@ function musicStreamOutputs() {
 		if (k && k != '127.0.0.1' && k.indexOf('.') >= 0 && musicOutputOn(v)) { outs.push(k); }
 	});
 	return outs;
+}
+
+// WebKitGTK (the desktop app's engine) advertises requestVideoFrameCallback but
+// never calls it, and its AudioContext reports no usable output timestamp. The
+// picture-lag measurement that holds a processed video in sync with its sound
+// therefore never runs there. A video played only to Me keeps the engine's own
+// audio path instead: no graph is built, so the browser keeps sound and picture
+// together. A left/right split, a manual Me delay or a remote output still asks
+// for the graph - those are choices the person made on purpose.
+function musicAppleWebKit() {
+	var ua = navigator.userAgent || '';
+	return !!(navigator.vendor && navigator.vendor.indexOf('Apple') === 0
+		&& typeof window.chrome === 'undefined'
+		&& ua.indexOf('Chrome') < 0 && ua.indexOf('Chromium') < 0);
+}
+// Whether the engine can say which frame is on screen at all. An engine with no
+// frame callback has no way to line processed sound up with the picture either.
+function musicPictureUnmeasurable() {
+	if (musicAppleWebKit()) { return true; }
+	return !(typeof HTMLVideoElement !== 'undefined'
+		&& HTMLVideoElement.prototype && HTMLVideoElement.prototype.requestVideoFrameCallback);
+}
+function musicNativeVideoWanted() {
+	if (!musicPictureUnmeasurable()) { return false; }
+	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return false; }
+	if (musicStreamOutputs().length) { return false; }
+	var side = musicOutputChannel(mao['me']);
+	if (side == 'left' || side == 'right') { return false; }
+	if (music_local_delay > 0) { return false; }
+	return true;
+}
+// Every automatic reason to build the shared graph asks here. The conditions
+// are the same ones the call sites used to spell out, except that a native
+// video (above) stands them down.
+function musicGraphWanted() {
+	if (musicNativeVideoWanted()) { return false; }
+	var side = musicOutputChannel(mao['me']);
+	return !!((music_normalize && music_normalize != 'off') || side == 'left' || side == 'right'
+		|| musicEqualizerDirty() || music_local_delay > 0);
 }
 
 // Which side each remote output should play. A remote that only receives one
@@ -1741,7 +1780,7 @@ function musicEqualizerChanged(preset) {
 	music_equalizer.preset = preset || 'custom';
 	// A non-flat curve needs the shared graph; flat leaves it alone (and does not
 	// build one just to multiply the sound by nothing).
-	if (musicEqualizerDirty() && !(musicVisual && musicVisual.limiter)) {
+	if (musicEqualizerDirty() && musicGraphWanted() && !(musicVisual && musicVisual.limiter)) {
 		try { musicAudioGraph(); } catch (e) {}
 	}
 	musicEqualizerApply();
@@ -2308,6 +2347,26 @@ $(document).on('keyup', '#music_search', function(e) {
 });
 
 
+// A media element can be captured by Web Audio only once. If an audio track (or
+// a shared output) has already captured #video, a video that wants the engine's
+// own clock needs a fresh element: the graph keeps its chain and simply loses
+// its source, and the next audio track can capture the new element.
+function musicNativeVideoElement() {
+	var el = document.getElementById('video');
+	if (!el) { return null; }
+	if (!musicVisual || !musicVisual.source || musicVisual.el !== el) { return el; }
+	var fresh = el.cloneNode(false);
+	var track = el.querySelector('track');
+	if (track) { fresh.appendChild(track.cloneNode(false)); }
+	try { el.pause(); } catch (e) {}
+	if (musicVisual.source) { try { musicVisual.source.disconnect(); } catch (e) {} }
+	musicVisual.source = null;
+	musicVisual.el = null;
+	if (el.parentNode) { el.parentNode.replaceChild(fresh, el); }
+	try { el.removeAttribute('src'); el.load(); } catch (e) {}
+	return fresh;
+}
+
 var interval;
 function mediaMaker(data) {
 	if (typeof data != 'object') { data = {}; }
@@ -2339,6 +2398,13 @@ function mediaMaker(data) {
 			// resumes when the player was left playing, overriding any stale src the
 			// served window carried, but does not re-announce it remotely.
 			if (method != 'benign') {
+
+				// a video that keeps the engine's own sound must not be loaded into an
+				// element an earlier track has already handed to Web Audio
+				if (musicNativeVideoWanted()) {
+					var native_element = musicNativeVideoElement();
+					if (native_element) { tree.sound = native_element; }
+				}
 
 				if (tree.songs[0].type == 'audio') {
 					$('#music_library').show();
@@ -2491,8 +2557,7 @@ function mediaMaker(data) {
 				// when both clocked through the audio graph. The resume re-anchors the
 				// delayed pair (musicResumeSync) and the stream's own measure; the old
 				// small seek here was not enough.
-				var local_side = musicOutputChannel(mao['me']);
-				if ((music_normalize && music_normalize != 'off') || local_side == 'left' || local_side == 'right' || musicEqualizerDirty() || music_local_delay > 0) { musicAudioGraph(); }
+				if (musicGraphWanted()) { musicAudioGraph(); }
 				musicBaselineStart();
 				var total = tree.sound.duration;
 				$('#progress_bar').attr('max', total);
@@ -3817,7 +3882,7 @@ function musicAudioPanelLoad(show) {
 			musicSyncOffsetRead();
 			musicLocalDelayRead();
 			musicRemoteDelayShow();
-			if (musicEqualizerDirty() && !(musicVisual && musicVisual.limiter)) {
+			if (musicEqualizerDirty() && musicGraphWanted() && !(musicVisual && musicVisual.limiter)) {
 				try { musicAudioGraph(); } catch (e) {}
 			}
 			musicEqualizerApply();
@@ -4068,6 +4133,10 @@ function musicAudioResume() {
 function musicAudioGraph() {
 	var el = document.getElementById('video');
 	if (!el) { return null; }
+	// A Me-only video on WebKit keeps the element native; capturing it here would
+	// take its sound away from the engine's own clock with no usable measurement
+	// to put it back. Only an element already captured may continue.
+	if (musicNativeVideoWanted() && !(musicVisual && musicVisual.source && musicVisual.el === el)) { return null; }
 	if (!musicVisual.ctx || musicVisual.ctx.state == 'closed') {
 		var Ctor = window.AudioContext || window.webkitAudioContext;
 		if (!Ctor) { return null; }
@@ -4426,7 +4495,7 @@ function musicNormalizeParams(chain) {
 function musicNormalizeApply() {
 	var setting = music_normalize || 'off';
 	if (setting != 'off') {
-		musicAudioGraph();
+		if (musicGraphWanted()) { musicAudioGraph(); }
 		musicNormalizeParams();
 		musicBaselineStart();
 		musicBaselineApply();
@@ -4442,14 +4511,14 @@ function musicNormalizeApply() {
 // reaches the window puts the graph in place and resumes it, so a restored track
 // is not left silent by a context that could not start on its own.
 $(document).on('pointerdown touchstart keydown', function() {
-	if ((music_normalize && music_normalize != 'off') || musicEqualizerDirty() || music_local_delay > 0) { musicAudioGraph(); }
+	if (musicGraphWanted()) { musicAudioGraph(); }
 	// a stream left muted by an older build or a failed autoplay is put right
 	// on the first gesture, when WebKit accepts the change
 	if ($('#music').length && tree && tree.sound) { musicVolumeApply(); }
 });
 // A phone pauses the graph when the app is put away; coming back resumes it.
 $(document).on('visibilitychange', function() {
-	if (!document.hidden && ((music_normalize && music_normalize != 'off') || musicEqualizerDirty() || music_local_delay > 0) && $('#music').length) {
+	if (!document.hidden && musicGraphWanted() && $('#music').length) {
 		musicAudioGraph();
 		musicVolumeApply();
 	}
