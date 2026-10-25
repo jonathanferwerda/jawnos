@@ -2186,41 +2186,45 @@ function jawnosDurationText(seconds, mode) {
 	return bits.slice(0, 2).join(' ');
 }
 
-// The Dur column and every duration readout a template hands us. A Dur cell
-// whose row is still open grows from its start; a closed row keeps the duration
-// the server worked out. A plain readout carries its span in `duration`, and
-// `sign="-"` keeps a shortfall reading as a shortfall.
+// The span a duration element stands for: an open session grows from its start,
+// a closed row keeps the duration the server worked out (falling back to its own
+// start and stop), and a plain readout carries its own `duration`. `sign` keeps
+// a shortfall reading as a shortfall.
+function jawnosDurationSpan(cell, now) {
+	now = now || Date.now();
+	var ms;
+	var sign = cell.attr('sign') == '-' ? '-' : '';
+	if (cell.hasClass('appointment_detail_duration')) {
+		var type = cell.attr('appt_type') || '';
+		var start = Number(cell.attr('timestamp')) || 0;
+		var stop = Number(cell.attr('stop_timestamp')) || 0;
+		if (!stop && (type == 'start' || type == 'record')) {
+			if (!start || start > now) { return null; }
+			ms = now - start;
+		}
+		else {
+			ms = Math.abs(Number(cell.attr('duration')) || 0);
+			if (!ms && stop && start) { ms = Math.abs(stop - start); }
+			if (!ms) { return null; }
+		}
+		sign = '';
+	}
+	else {
+		ms = Math.abs(Number(cell.attr('duration')) || 0);
+		if (!ms) { return null; }
+	}
+	return { ms: ms, sign: sign };
+}
+
 function jawnosDurationTick() {
 	var now = Date.now();
 	$('.appointment_detail_duration, .jawnos_duration').each(function () {
 		var cell = $(this);
-		var ms;
-		var sign = cell.attr('sign') == '-' ? '-' : '';
-		if (cell.hasClass('appointment_detail_duration')) {
-			var type = cell.attr('appt_type') || '';
-			var start = Number(cell.attr('timestamp')) || 0;
-			var stop = Number(cell.attr('stop_timestamp')) || 0;
-			if (!stop && (type == 'start' || type == 'record')) {
-				// an open session grows from its start
-				if (!start || start > now) { return; }
-				ms = now - start;
-			}
-			else {
-				// a closed row keeps the duration the server worked out; fall back to
-				// its own start and stop when that duration was never written
-				ms = Math.abs(Number(cell.attr('duration')) || 0);
-				if (!ms && stop && start) { ms = Math.abs(stop - start); }
-				if (!ms) { return; }
-			}
-			sign = '';
-		}
-		else {
-			ms = Math.abs(Number(cell.attr('duration')) || 0);
-			if (!ms) { return; }
-		}
+		var span = jawnosDurationSpan(cell, now);
+		if (!span) { return; }
 		var display = cell.closest('.wind').attr('app') || '';
 		var mode = durationDisplaySaved(display) || 'dynamic';
-		var text = sign + jawnosDurationText(ms / 1000, mode);
+		var text = span.sign + jawnosDurationText(span.ms / 1000, mode);
 		if (cell.text() !== text) { cell.text(text); }
 	});
 }

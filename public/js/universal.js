@@ -362,6 +362,43 @@ function durationDisplaySave(display, mode) {
 	try { localStorage.setItem(key, mode); } catch (e) {}
 }
 
+// A reading that would print exactly what the label already says is no turn at
+// all - two hours is "2h" in the short form and "2h" again in whole hours - so
+// a click steps past it to the first reading that says something new.
+function durationModeNext(ms, sign, current) {
+	var modes = [ 'dynamic', 'hours', 'minutes' ];
+	var start = modes.indexOf(current);
+	if (start < 0) { start = 0; }
+	sign = sign || '';
+	if (typeof jawnosDurationText !== 'function') { return modes[(start + 1) % modes.length]; }
+	var reading = sign + jawnosDurationText(ms / 1000, modes[start]);
+	for (var i = 1; i <= modes.length; i++) {
+		var candidate = modes[(start + i) % modes.length];
+		if ((sign + jawnosDurationText(ms / 1000, candidate)) !== reading) { return candidate; }
+	}
+	return modes[(start + 1) % modes.length];
+}
+
+// The same rule for a time label: the short form and whole hours both read "3h"
+// on an exact three hours, so the click carries on to the reading that differs.
+var timeModeReading = {
+	dynamic: function (timestamp) { return quality_inventory(timestamp); },
+	hours: function (timestamp) { return quality_inventory_hours(timestamp); },
+	minutes: function (timestamp) { return quality_inventory_minutes(timestamp); },
+	fixed: function (timestamp) { return fixedTimeString(timestamp); }
+};
+function timeModeNext(timestamp, current, modes) {
+	var start = modes.indexOf(current);
+	if (start < 0) { start = 0; }
+	var reading = timeModeReading[current] ? timeModeReading[current](timestamp) : '';
+	for (var i = 1; i <= modes.length; i++) {
+		var candidate = modes[(start + i) % modes.length];
+		if (!timeModeReading[candidate]) { continue; }
+		if (timeModeReading[candidate](timestamp) !== reading) { return candidate; }
+	}
+	return modes[(start + 1) % modes.length];
+}
+
 var months = [
 	{ 'abbrev': 'jan', name: 'January', days: 31, leap_days: 31 },
 	{ 'abbrev': 'feb', name: 'February', days: 28, leap_days: 29 },
@@ -399,10 +436,13 @@ $(document).on('click', '.time, .appointment_header, .since, .appointment_detail
 		timeClickTimer = setTimeout(function() {
 			var display = header.closest('.wind').attr('app') || '';
 			if (header.hasClass('appointment_detail_duration') || header.hasClass('jawnos_duration')) {
-				// a duration has no fixed reading: short, hours, minutes
-				var dmodes = [ 'dynamic', 'hours', 'minutes' ];
+				// a duration has no fixed reading: short, hours, minutes - and a
+				// reading that would print the same words is stepped past
 				var dcurrent = durationDisplaySaved(display) || 'dynamic';
-				var dnext = dmodes[(dmodes.indexOf(dcurrent) + 1) % dmodes.length];
+				var span = (typeof jawnosDurationSpan === 'function') ? jawnosDurationSpan(header, Date.now()) : null;
+				var dnext = span
+					? durationModeNext(span.ms, span.sign, dcurrent)
+					: ([ 'dynamic', 'hours', 'minutes' ][([ 'dynamic', 'hours', 'minutes' ].indexOf(dcurrent) + 1) % 3]);
 				durationDisplaySave(display, dnext);
 				if (typeof jawnosDurationTick === 'function') { jawnosDurationTick(); }
 				return;
@@ -411,7 +451,7 @@ $(document).on('click', '.time, .appointment_header, .since, .appointment_detail
 			header.removeAttr('next_check');
 			var modes = [ 'dynamic', 'hours', 'minutes', 'fixed' ];
 			var current = header.attr('mode') || 'dynamic';
-			var next = modes[(modes.indexOf(current) + 1) % modes.length];
+			var next = timeModeNext(numeral(header.attr('timestamp')).value(), current, modes);
 			header.attr('mode', next);
 			if (next == 'fixed') {
 				var timestamp = numeral(header.attr('timestamp')).value();
