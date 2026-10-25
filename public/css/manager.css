@@ -375,7 +375,9 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
    height, so the box and the button read as one control */
 #taskbar #search_entanglement { display: flex; align-items: center; gap: 4px; flex: 0 1 20%; max-width: 20%; min-width: 0; margin-left: 6px; }
 #taskbar #search { flex: 1 1 auto; width: auto; min-width: 0 !important; height: calc(var(--taskbar_h, 44px) - 12px); }
-#taskbar #search_toggle { flex: 0 0 auto; width: calc(var(--taskbar_h, 44px) - 12px); height: calc(var(--taskbar_h, 44px) - 12px); max-width: none; object-fit: contain; }
+/* a fixed square like the bar's other buttons: the Button Border draws inside
+   it, so a thick edge never grows the control past the bar */
+#taskbar #search_toggle { flex: 0 0 auto; width: calc(var(--taskbar_h, 44px) - 12px); height: calc(var(--taskbar_h, 44px) - 12px); max-width: none; object-fit: contain; box-sizing: border-box; }
 
 /* A pinned app or keyboard launcher: the same bare tile the bar's own buttons
    wear. (An app pin is a .window_toggle span, not an img, so this only sizes the
@@ -394,6 +396,10 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
    open the window button is parked inside it (see jawnosTaskbarPinsRefresh),
    otherwise it shows the app's own picture. */
 #taskbar .taskbar_app_pin { display: inline-flex; align-items: center; flex: 0 0 auto; }
+/* The slot is only a holder: the picture inside it - or the window button parked
+   in its place - wears the Button Border itself. A border on the slot would ring
+   an auto-height box, so a thicker setting would grow it past the bar's edges. */
+#taskbar .taskbar_pin.taskbar_app_pin { border-width: 0 !important; }
 #taskbar .taskbar_app_pin > img.taskbar_app_pin_icon {
 	box-sizing: border-box;
 	width: calc(var(--taskbar_h, 44px) - 4px);
