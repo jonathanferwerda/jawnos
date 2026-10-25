@@ -15211,7 +15211,22 @@ sub headless_navigation() {
 	my $running_appts = &subs::db_query('select app,uuid,type,warranty from appointments where (type = ? or type = ?) and timestamp < ?', 'start', 'record', $now)->hashes;
 	foreach my $appt ( @{$running_appts} ) {
 		my $navigation = &subs::setting_grabber({ app => $appt->{'app'}, setting => 'navigation' });
-		if ($navigation eq 'once' || $navigation eq 'none') {
+		if ($navigation eq 'none') {
+			next;
+		}
+		if ($navigation eq 'once') {
+			# `once` means "log when the person acts", but a start on a cold GPS
+			# can happen before the first fix arrives. If the running appointment
+			# still has no point of its own, give it the next real fix rather than
+			# losing the act.
+			my $has_point = &subs::db_query('select uuid from continent where app = ? and uuid like ? and latitude is not null and latitude != ? order by server_time desc limit 1', $appt->{'app'}, $appt->{'uuid'} . '%', '')->hashes->[0];
+			unless ($has_point) {
+				push @{$navigation_due}, {
+					app => $appt->{'app'},
+					uuid => $appt->{'uuid'},
+					warranty => $appt->{'warranty'},
+				};
+			}
 			next;
 		}
 		else {

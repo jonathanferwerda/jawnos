@@ -231,7 +231,7 @@ function jawnGpsFix() {
 }
 
 // Poll for a fix newer than the moment the person pressed. The sample is
-// asynchronous; twelve seconds is the same bound the old getCurrentPosition used.
+// asynchronous; twenty seconds is the same bound the old getCurrentPosition used.
 function jawnGpsWait(after, timeout, callback) {
 	var started = Date.now();
 	var tick = function () {
@@ -279,7 +279,11 @@ function continent_record(setter) {
 	var askedAt = Date.now();
 	try { window.JawnLocation.sample(); } catch (e) {}
 
-	jawnGpsWait(askedAt, 12000, function (fresh) {
+	// Wait up to twenty seconds for the sample to land. A cold GPS indoors can
+	// take that long; the appointment start or stop has already happened (its
+	// route ran), so this attaches the place when the fix answers. A cached fix
+	// is only used when no fresh one arrives, and its own timestamp is kept.
+	jawnGpsWait(askedAt, 20000, function (fresh) {
 		// A fresh fix is what the press asked for. A cached one is only used when
 		// the GPS did not answer in time, and its own timestamp is kept - never
 		// restamped as today's.
