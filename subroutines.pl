@@ -4210,6 +4210,44 @@ sub levels_devices {
 	return [ sort { ($a->{'host'} || '') cmp ($b->{'host'} || '') || ($a->{'name'} || '') cmp ($b->{'name'} || '') } values %device ];
 }
 
+# Tell each recently seen peer "I am awake and my rows have moved; pull me now".
+# A phone sleeps between beats, so a peer's own poll usually lands while it is
+# away; this is the announcement that lets the peer run its delta pull during
+# the seconds the phone is up. Returns how many peers said they need a pull.
+sub remote_available_announce {
+	my $me = &signatorial_designer();
+	my $newest = 0;
+	my $digest = &sync_digest_map();
+	foreach my $table ( values %{$digest} ) {
+		my $max = ($table->{'max'} || 0) + 0;
+		$newest = $max if $max > $newest;
+	}
+	my $pulled = 0;
+	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
+		my $rsig = $rm->{'signatorial'} || '';
+		next unless $rsig && $rsig ne $me;
+		# A phone's roster can be stale after sleep; a machine seen in the last
+		# quarter hour is still worth telling.
+		my $recent = (($rm->{'server_time'} || 0) + 15 * 60 * 1000) > &rightNow();
+		next unless ($rm->{'connection'} || '') eq 'active' || $recent;
+		my ($ua, $p) = &peer_useragent($rm);
+		next unless $ua;
+		my $res = eval {
+			$ua->connect_timeout(3)->inactivity_timeout(5)
+				->post($p->{'manager'} . '/manager/available?signatorial=' . $me
+					=> json => { signatorial => $me, newest => $newest })->result;
+		};
+		next unless $res && $res->is_success;
+		my $h = eval { decode_json $res->body } || {};
+		$pulled++ if $h->{'pull'};
+	}
+	if ($pulled) {
+		# A peer is pulling from us now: stay up long enough to answer it.
+		&cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &rightNow() + 30000);
+	}
+	return $pulled;
+}
+
 # The card's read: the cached snapshot with this machine's reading refreshed.
 # The local battery is cheap and should not wait for the next two-minute pass.
 sub levels_snapshot {

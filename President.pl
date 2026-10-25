@@ -989,6 +989,7 @@ sub utility_stopper() {
 # State lives in memory, so Ctrl+C or a restart-status teardown (both kill this
 # process) still stops every utility with it.
 our %utility_slots;
+our $announced_beat;
 sub utility_runner() {
 	return if $gb::utility_functions_watcher == 0;
 	# The app's scheduled wake wants to know when the due work is done so it can
@@ -996,6 +997,10 @@ sub utility_runner() {
 	# that ran nothing, and removed as soon as a job starts, so a reader can tell
 	# "everything due has finished" from "the tree is down or still working".
 	my $idle_file = &subs::home('~/.president/utility_idle');
+	# The app's beat marker: a new mtime is this machine's few seconds of being
+	# briefly available, which is when peers get told they may pull.
+	my $ready_file = &subs::home('~/.president/wake_ready');
+	my $ready_at = (-e $ready_file) ? ((stat($ready_file))[9] || 0) : 0;
 	my $ran = 0;
 	my $next_due;
 	# A job's next slot only ever moves by its interval. The old check measured
@@ -1046,11 +1051,26 @@ sub utility_runner() {
 		}
 		# a clock stepped backwards must not park a job longer than its interval
 		$slot->{'due'} = $now if $slot->{'due'} > $now + $period;
+		# A peer announced that it has new rows and is briefly up: run the sync
+		# pass now, through the ordinary path, so it counts as this interval's run
+		# (last_run is stamped below) and the panel's dot stays good.
+		my $nudged = 0;
+		if ($t eq 'remote_machine_sync') {
+			my $nudge = &cache_get({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }) || 0;
+			if ($nudge && $now - $nudge < 120000) {
+				$slot->{'due'} = $now;
+				$nudged = 1;
+			}
+		}
 		if ($now < $slot->{'due'}) {
 			$next_due = $slot->{'due'} if !defined $next_due || $slot->{'due'} < $next_due;
 			next;
 		}
 
+		if ($nudged) {
+			&cache_set({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }, 0);
+			$log->info('remote sync: a peer announced new rows; running the pass now');
+		}
 		$u->{'last_attempt'} = $now;
 		# The app's early-release reader must not mistake a running job for an
 		# idle tree: drop the marker before the work starts.
@@ -1094,16 +1114,34 @@ sub utility_runner() {
 		my $done = &subs::rightNow();
 		$slot->{'due'} = (int($done / $period) + 1) * $period;
 	}
+	# A new beat is also this machine's few seconds of availability. If the rows
+	# have moved since the last beat, tell the peers, so they can run their delta
+	# pull while we are up. The hold keeps utility_idle unwritten until they have
+	# had their chance; a peer that says it needs the rows extends it.
+	if ($ready_at > ($gb::announced_beat || 0)) {
+		$gb::announced_beat = $ready_at;
+		my $digest = &subs::sync_digest_map();
+		my $fingerprint = md5_sum(join ';', map {
+			my $table = $digest->{$_};
+			$_ . ':' . ($table->{'count'} || 0) . ':' . ($table->{'sum'} || 0) . ':' . ($table->{'max'} || 0)
+		} sort keys %{$digest});
+		my $announced = &cache_get({ app => '__president', context => 'wake', subcontext => 'announced' }) || '';
+		if ($fingerprint ne $announced) {
+			&cache_set({ app => '__president', context => 'wake', subcontext => 'announced', warranty => '-1d' }, $fingerprint);
+			&cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &subs::rightNow() + 8000);
+			&subs::subprocessor(sub { &subs::remote_available_announce(); }, { name => 'remote availability' });
+		}
+	}
 	# Nothing was due on this tick: everything this wake asked for has finished.
 	# The app's receiver reads the mtime and lets the phone sleep early. Write it
 	# only when a new beat has arrived since the last mark, not on every idle
 	# tick - a five-second write would keep the flash busy for nothing - and only
 	# when no job is about to fall due, so a release never skips a beat that is
-	# already at the door.
+	# already at the door. A hold defers it while peers pull the announced rows.
 	if (!$ran && (!defined $next_due || $next_due > &subs::rightNow() + 12000)) {
-		my $ready_at = (-e &subs::home('~/.president/wake_ready')) ? ((stat(&subs::home('~/.president/wake_ready')))[9] || 0) : 0;
 		my $idle_at = (-e $idle_file) ? ((stat($idle_file))[9] || 0) : 0;
-		eval { write_file($idle_file, &subs::rightNow()); } if $ready_at > $idle_at;
+		my $hold = &cache_get({ app => '__president', context => 'wake', subcontext => 'hold' }) || 0;
+		eval { write_file($idle_file, &subs::rightNow()); } if $ready_at > $idle_at && $hold <= &subs::rightNow();
 	}
 }
 

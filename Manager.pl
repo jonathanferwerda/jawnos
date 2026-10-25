@@ -36657,6 +36657,7 @@ sub app_public_path {
 	# A peer pushes its own row here after a scheduled wake; health_allowed is
 	# the gate (loopback, an approved session, or a signed peer).
 	return 1 if $path eq '/manager/health_report';
+	return 1 if $path eq '/manager/available';
 	return 1 if $path =~ m{^/manager/webauthn/login/(?:begin|finish)$};
 	return 1 if $path =~ m{^/passkey(?:/|$)};
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/tunnel/ws';
@@ -37098,6 +37099,7 @@ sub padlock_gate_allows {
 	return 1 if $path =~ m{^/(?:favicon\.ico|manifest\.json|service_worker\.js|robots\.txt)$};
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/health';
 	return 1 if $path eq '/manager/health_report';
+	return 1 if $path eq '/manager/available';
 	return 1 if $path =~ m{^/(?:manager/)?box_office(?:/|$)};
 	# the device rail authenticates itself and must reach the gate's recovery
 	return 1 if $path =~ m{^/manager/device(?:/|$)};
@@ -42630,6 +42632,30 @@ post '/manager/health_report' => sub ($c) {
 	$snap->{'devices'} = &subs::levels_devices(\@machines);
 	&subs::cache_set({ app => '__president', context => 'levels', subcontext => 'current', warranty => '-1d' }, $snap);
 	$c->render(json => { ok => 1 });
+};
+
+# A peer's scheduled wake is its few seconds of availability: it says "my rows
+# have moved" and this machine decides whether it needs to pull. The peer's
+# newest server_time against the watermark of our last pull from it is a cheap
+# answer; the ordinary remote_machine_sync pass then decides precisely and pulls
+# through the same path (and counts as that interval's scheduled run).
+post '/manager/available' => sub ($c) {
+	unless (&health_allowed($c)) { $c->rendered(403); return; }
+	my $body = $c->req->json;
+	$body = {} unless ref $body eq 'HASH';
+	my $sig = $c->param('signatorial') // '';
+	unless ($sig =~ /^[0-9a-f]{32}$/) { $c->render(json => { ok => 0, error => 'bad signatorial' }); return; }
+	my $wm = &subs::db_query('select server_time from backups where reason = ? and signatorial = ? and recipient = ? order by server_time desc limit 1',
+		'remote_upgraded', $sig, &subs::signatorial_designer())->hashes->[0] || {};
+	my $newest = ($body->{'newest'} || 0) + 0;
+	my $need = $newest > ($wm->{'server_time'} || 0) ? 1 : 0;
+	if ($need) {
+		my $now = &subs::rightNow();
+		my $pending = &subs::cache_get({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }) || 0;
+		&subs::cache_set({ app => '__president', context => 'remote_nudge', subcontext => 'pending', warranty => '-1d' }, $now)
+			unless $pending && $now - $pending < 30000;
+	}
+	$c->render(json => { ok => 1, pull => $need });
 };
 
 get '/manager/health/page' => sub ($c) {

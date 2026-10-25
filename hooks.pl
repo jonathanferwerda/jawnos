@@ -309,6 +309,9 @@ hook before_dispatch => sub {
 		# route is the gate (loopback, an approved session, or a signed peer),
 		# so a sessionless machine can reach that check
 		$path eq '/manager/health_report' ||
+		# a peer's scheduled wake announces that it is briefly up and its rows have
+		# moved; this machine's own sync pass decides and pulls over the same rail
+		$path eq '/manager/available' ||
 		# a computer's manual navigation button asks a same-LAN phone for its
 		# current fix. The route peer_verifies the caller against the roster and
 		# checks the source is on one of this machine's physical subnets itself
