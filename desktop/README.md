@@ -209,10 +209,12 @@ jawnosctl autostart enable    # start the BLE bridge at login
 ```
 
 `jawnos-desktop` is the same thing as a window, with a live status line, the
-folder setting, and the autostart / "BLE bridge with jawn" checkboxes. The
-window opens at two-thirds of the screen, in the screen's own orientation (a
-wide monitor gets a wide window); if you leave it fullscreen, it reopens
-fullscreen next time.
+folder setting, and the autostart / "BLE bridge with jawn" checkboxes. On its
+first run the window opens at two-thirds of the screen, in the screen's own
+orientation (a wide monitor gets a wide window); after that it reopens where it
+was left — same size and position, or maximized, or fullscreen if that is how
+you left it. (Position is remembered on X11; Wayland lets the compositor place
+windows, so only the size and the fullscreen/maximized state carry over there.)
 
 `watch` keeps a host on the code that is actually on disk: every minute it
 compares the running version (`/manager/health`) with `VERSION`, and restarts

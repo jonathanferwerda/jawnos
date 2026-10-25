@@ -75,25 +75,111 @@ def _apply_css():
         Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
 
+def _primary_workarea():
+    """The primary monitor's work area, or None when there is no screen."""
+    screen = Gdk.Screen.get_default()
+    if screen is None:
+        return None
+    monitor = screen.get_primary_monitor()
+    if monitor is None or monitor < 0:
+        monitor = 0
+    try:
+        return screen.get_monitor_workarea(monitor)
+    except Exception:
+        return screen.get_monitor_geometry(monitor)
+
+
 def _initial_size():
     """Two-thirds of the work area of the primary monitor.
 
     Scaling both dimensions by two-thirds keeps the window in the screen's
     orientation: a wide monitor gets a wide window, a tall one a tall window.
     The work area (not the raw geometry) is used so panels are not covered."""
-    screen = Gdk.Screen.get_default()
-    if screen is None:
+    geom = _primary_workarea()
+    if geom is None:
         return 640, 860
-    monitor = screen.get_primary_monitor()
-    if monitor is None or monitor < 0:
-        monitor = 0
-    try:
-        geom = screen.get_monitor_workarea(monitor)
-    except Exception:
-        geom = screen.get_monitor_geometry(monitor)
     width = max(480, int(geom.width * 2 / 3))
     height = max(480, int(geom.height * 2 / 3))
     return width, height
+
+
+def _workarea_at(x, y):
+    """The work area of the monitor under a point, or the primary monitor's."""
+    screen = Gdk.Screen.get_default()
+    if screen is None:
+        return None
+    if x is not None and y is not None:
+        monitor = screen.get_monitor_at_point(x, y)
+        if monitor is not None and monitor >= 0:
+            try:
+                return screen.get_monitor_workarea(monitor)
+            except Exception:
+                return screen.get_monitor_geometry(monitor)
+    return _primary_workarea()
+
+
+def _can_position_window():
+    """Whether this display lets a client place its own toplevel.
+
+    Wayland gives the compositor the last word, so Gtk.Window.move() is a no-op
+    there; only X11 is asked to remember and restore a position."""
+    display = Gdk.Display.get_default()
+    if display is None:
+        return False
+    try:
+        kind = display.__gtype__.name
+    except AttributeError:
+        kind = type(display).__name__
+    return "Wayland" not in kind
+
+
+def _position_on_screen(x, y, width, height):
+    """Whether a remembered top-left still lands on a connected monitor.
+
+    A window saved on a monitor that has since been unplugged must not be
+    restored off-screen, where it cannot be reached."""
+    screen = Gdk.Screen.get_default()
+    if screen is None:
+        return False
+    for index in range(screen.get_n_monitors()):
+        geom = screen.get_monitor_geometry(index)
+        if (x + width > geom.x and x < geom.x + geom.width
+                and y + height > geom.y and y < geom.y + geom.height):
+            return True
+    return False
+
+
+def _restore_geometry(settings):
+    """The remembered (width, height, x, y); x and y are None when unplaceable.
+
+    Falls back to the two-thirds box, clamps a remembered size to the work area
+    so a window from a larger monitor still fits, and drops a position that is
+    no longer on any monitor."""
+    width, height = _initial_size()
+    try:
+        saved_w = int(settings.get("window_width") or 0)
+        saved_h = int(settings.get("window_height") or 0)
+    except (TypeError, ValueError):
+        saved_w = saved_h = 0
+    if saved_w > 0 and saved_h > 0:
+        width, height = saved_w, saved_h
+    x = y = None
+    if _can_position_window():
+        try:
+            saved_x = int(settings.get("window_x"))
+            saved_y = int(settings.get("window_y"))
+        except (TypeError, ValueError):
+            saved_x = saved_y = None
+        if (saved_x is not None and saved_y is not None
+                and _position_on_screen(saved_x, saved_y, width, height)):
+            x, y = saved_x, saved_y
+    # Clamp to the work area of the monitor the window will open on, so a box
+    # from a larger screen still fits but one on a big second monitor is kept.
+    area = _workarea_at(x, y)
+    if area is not None:
+        width = min(width, area.width)
+        height = min(height, area.height)
+    return width, height, x, y
 
 
 class Dashboard(Gtk.Window):
@@ -113,7 +199,15 @@ class Dashboard(Gtk.Window):
         self._updating = False
         self._tailnet = {}
         self._tailnet_at = 0.0
-        self.set_default_size(*_initial_size())
+        self._geometry_timer = 0
+        # Geometry and state are recorded only once the launch's own state has
+        # been applied, so the events from mapping cannot overwrite it.
+        self._ready = False
+        width, height, x, y = _restore_geometry(settings)
+        self.set_default_size(width, height)
+        if x is not None:
+            # Before the window is shown, GTK hands the position to the WM.
+            self.move(x, y)
         # The CSS is scoped to this class so it cannot leak into GTK's popup
         # menus (which live in their own internal toplevel window).
         self.get_style_context().add_class("jawnos")
@@ -243,8 +337,10 @@ class Dashboard(Gtk.Window):
 
         self.connect("destroy", Gtk.main_quit)
         self.connect("key-press-event", self._on_key)
-        # Track fullscreen so it is remembered across launches.
+        # Track fullscreen/maximized and the normal size and position so they are
+        # remembered across launches.
         self.connect("window-state-event", self._on_window_state)
+        self.connect("configure-event", self._on_configure)
         # The tray icon keeps the app alive when its window is closed -- closing
         # is how it was being lost. With no tray available, closing quits.
         self._tray = _make_tray(self) if tray else None
@@ -426,6 +522,7 @@ class Dashboard(Gtk.Window):
 
     def _finish_quit(self, message):
         self._say(message)
+        self._flush_geometry()
         Gtk.main_quit()
         return False
 
@@ -439,6 +536,7 @@ class Dashboard(Gtk.Window):
         if self._quitting:
             return
         self._quitting = True
+        self._flush_geometry()
         Gtk.main_quit()
 
     # ---- update the app itself ----
@@ -567,14 +665,82 @@ class Dashboard(Gtk.Window):
         self.action_quit()
         return True
 
+    def finish_restore(self):
+        """Begin recording the window state once the launch's state is applied."""
+        self._ready = True
+        # Capture the geometry the window actually opened with: a first run has
+        # no remembered position, and the WM chose one.
+        self._schedule_geometry_save()
+
+    def _schedule_geometry_save(self):
+        if self._geometry_timer:
+            GLib.source_remove(self._geometry_timer)
+        self._geometry_timer = GLib.timeout_add(500, self._save_geometry)
+
     def _on_window_state(self, _widget, event):
-        # Remember fullscreen (whether F11 or the compositor put us there) so the
-        # next launch restores it instead of dropping to the default box.
-        fullscreen = bool(event.new_window_state & Gdk.WindowState.FULLSCREEN)
-        if fullscreen != bool(self.settings.get("fullscreen")):
-            self.settings["fullscreen"] = fullscreen
+        # Remember fullscreen and maximized (whether F11, a double-click or the
+        # compositor put us there) so the next launch restores it instead of
+        # dropping to the default box.
+        if not self._ready:
+            return False
+        changes = {
+            "fullscreen": bool(event.new_window_state & Gdk.WindowState.FULLSCREEN),
+            "maximized": bool(event.new_window_state & Gdk.WindowState.MAXIMIZED),
+        }
+        if any(value != bool(self.settings.get(key)) for key, value in changes.items()):
+            self.settings.update(changes)
             core.save_settings(self.settings)
         return False
+
+    def _on_configure(self, _widget, event):
+        # Size and position change on every step of a drag or resize; settle for
+        # half a second so a drag does not rewrite the settings file constantly.
+        # Child windows' configure events bubble up here too; only the toplevel's
+        # geometry is ours to keep.
+        if not self._ready or self._quitting or event.window != self.get_window():
+            return False
+        self._schedule_geometry_save()
+        return False
+
+    def _save_geometry(self):
+        self._geometry_timer = 0
+        self._record_geometry()
+        return False
+
+    def _flush_geometry(self):
+        """Write a geometry change that is still waiting out its settle time."""
+        if self._geometry_timer:
+            GLib.source_remove(self._geometry_timer)
+            self._geometry_timer = 0
+        self._record_geometry()
+
+    def _record_geometry(self):
+        """Store the last normal size and position.
+
+        While fullscreen or maximized the reported geometry is the screen's, and
+        keeping that as the "normal" box would leave the window unable to come
+        back where it was."""
+        win = self.get_window()
+        if win is None:
+            return
+        if win.get_state() & (Gdk.WindowState.FULLSCREEN | Gdk.WindowState.MAXIMIZED):
+            return
+        width, height = self.get_size()
+        if width < 1 or height < 1:
+            return
+        x, y = self.get_position() if _can_position_window() else (None, None)
+        changes = {}
+        if width != self.settings.get("window_width"):
+            changes["window_width"] = width
+        if height != self.settings.get("window_height"):
+            changes["window_height"] = height
+        if x is not None and x != self.settings.get("window_x"):
+            changes["window_x"] = x
+        if y is not None and y != self.settings.get("window_y"):
+            changes["window_y"] = y
+        if changes:
+            self.settings.update(changes)
+            core.save_settings(self.settings)
 
     def _on_key(self, _widget, event):
         # F11 toggles the whole app, including when the embedded view has focus.
@@ -941,10 +1107,17 @@ def _start_indicator(window, menu):
 def run_dashboard(settings=None, tray=True, show_web=False):
     settings = settings or core.load_settings()
     window = Dashboard(settings, show_web=show_web, tray=tray)
+    # Read the remembered state before the window is mapped: the state events
+    # from showing it would otherwise overwrite what is being restored.
+    want_fullscreen = bool(settings.get("fullscreen"))
+    want_maximized = bool(settings.get("maximized"))
     window.show_all()
-    # A remembered fullscreen is applied once the window is on screen.
-    if settings.get("fullscreen"):
+    # The remembered state is applied once the window is on screen.
+    if want_maximized:
+        window.maximize()
+    if want_fullscreen:
         window.fullscreen()
+    window.finish_restore()
     Gtk.main()
     return window
 

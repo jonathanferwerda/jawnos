@@ -118,9 +118,16 @@ def load_settings():
         "jawn_dir": default_jawn_dir(),
         "autostart": False,
         "ble_with_jawn": True,
-        # Whether the window was left fullscreen, so the next launch (and the
-        # post-update restart) comes back the same way.
+        # The window's state on the last quit, so the next launch (and the
+        # post-update restart) comes back the same way: fullscreen or
+        # maximized, otherwise at the last normal size and position. A size of
+        # 0 or a position of None means "not recorded yet".
         "fullscreen": False,
+        "maximized": False,
+        "window_width": 0,
+        "window_height": 0,
+        "window_x": None,
+        "window_y": None,
     }
     try:
         with open(settings_path(), "r", encoding="utf-8") as fh:
