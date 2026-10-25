@@ -3318,6 +3318,14 @@ $(document).on('click', '.dns_client_test', function() {
 		status.text((r && r.message) || (r && r.result) || 'no answer');
 	}, 'json');
 });
+$(document).on('change', '#public_ip_check_select', function() {
+	var status = $('#public_ip_check_status');
+	status.text('saving…');
+	settingSetter({ app: '__president', setting: 'public_ip_check', device: 'all', value: $(this).val() }).then(function() {
+		status.text('saved');
+		dnsPanelRefresh();
+	});
+});
 $(document).on('click', '.dns_client_from_ai, .dns_client_to_ai', function() {
 	var uuid = $(this).attr('uuid');
 	var to_ai = $(this).hasClass('dns_client_to_ai');

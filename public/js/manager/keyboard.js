@@ -1860,8 +1860,10 @@ function jawnosPublicIpPaint(ip) {
 
 function jawnosPublicIpRefresh(refresh) {
 	if (!$('#local_public_ip').length) { return; }
+	$('#local_public_ip_row').show();
 	$('#local_public_ip').text(jawnosT('checking…')).css('opacity', .65);
 	$.getJSON('/manager/public_ip' + (refresh ? '?refresh=1' : ''), function (r) {
+		if (r && r.disabled) { $('#local_public_ip_row').hide(); return; }
 		jawnosPublicIpPaint((r && r.ip) || '');
 	}).fail(function () { jawnosPublicIpPaint(''); });
 }

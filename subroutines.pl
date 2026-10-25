@@ -17712,6 +17712,46 @@ sub public_ip_only() {
 	return $ip;
 }
 
+# The public-IP echo services offered under Configure -> Plat -> DNS. `all`
+# asks each in turn so one service having a bad day does not leave the panel
+# blank; `none` stops the lookup entirely.
+sub public_ip_check_choice() {
+	my $choice = &setting_grabber({ app => '__president', setting => 'public_ip_check', device => 'all' });
+	$choice = &setting_grabber({ app => '__president', setting => 'public_ip_check' }) unless defined $choice && length $choice;
+	$choice = 'all' unless defined $choice && length $choice;
+	return $choice =~ /^(?:all|cloudflare|ipify|icanhazip|none)$/ ? $choice : 'all';
+}
+
+sub public_ip_check_urls() {
+	my $choice = &public_ip_check_choice();
+	return () if $choice eq 'none';
+	my %url = (
+		cloudflare => 'https://1.1.1.1/cdn-cgi/trace',
+		ipify      => 'https://api.ipify.org',
+		icanhazip  => 'https://icanhazip.com',
+	);
+	return ($url{$choice}) if $choice ne 'all';
+	return ($url{'cloudflare'}, $url{'ipify'}, $url{'icanhazip'});
+}
+
+# A machine's own public interface, without asking anyone outside. This is what
+# a server shows when the external check is off: its NIC carries the address
+# itself. A machine behind NAT has no public interface, so this returns ''.
+sub public_interface_address() {
+	my $rm = shift;
+	return '' unless ref $rm eq 'HASH';
+	my $net = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
+	if (ref $net eq 'HASH') {
+		foreach my $nic ( sort keys %{$net} ) {
+			next if $nic eq 'public_address';
+			next unless ref $net->{$nic} eq 'HASH';
+			my $public = &public_ip_only($net->{$nic}->{'ip'});
+			return $public if $public;
+		}
+	}
+	return &public_ip_only($rm->{'ip'});
+}
+
 # The address a remote machine presents on the public internet, as far as this
 # house knows it: the address a hub saw it dial from (kept in `public_address`,
 # or still inside the network blob), or one of its own interfaces when the
@@ -17726,14 +17766,8 @@ sub remote_public_address() {
 	if (ref $net eq 'HASH') {
 		$public = &public_ip_only($net->{'public_address'});
 		return $public if $public;
-		foreach my $nic ( sort keys %{$net} ) {
-			next if $nic eq 'public_address';
-			next unless ref $net->{$nic} eq 'HASH';
-			$public = &public_ip_only($net->{$nic}->{'ip'});
-			return $public if $public;
-		}
 	}
-	return &public_ip_only($rm->{'ip'});
+	return &public_interface_address($rm);
 }
 
 sub remote_machine_tunnel_processor() {

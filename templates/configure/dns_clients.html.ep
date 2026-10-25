@@ -30,6 +30,22 @@
 %>
 <p class="cfg-note">A wildcard certificate (<b>*.<%= length($house) ? $house : 'example.com' %></b>) can only be proved through a DNS TXT record, so the house writes that record and removes it again. No inbound port is opened, so a machine behind NAT can still renew. The token is sealed with the house key and is never shown again after it is saved. On a server that already runs the system <b>certbot-renew.timer</b>, that timer owns the renewal; this page's issuer is for a machine that has none. The certificate lands in <b>server/fullchain.pem</b> and <b>server/privkey.pem</b>, which the dock server already reads.</p>
 <div class="cfg-card">
+	<h3 style="margin-top:0;">Public IP check</h3>
+	<p class="cfg-note">The remote_control panel asks an outside service for this machine's public address, so the Me view can show whether the VPN is carrying its traffic. Pick the service to ask, or None to stop asking and hide the line on every machine and on Me. None still shows a server's own public address when one of its interfaces carries it; a server behind NAT has none to show.</p>
+	<div class="cfg-row">
+		<label>Service</label>
+		<% my $public_ip_choice = &subs::public_ip_check_choice(); %>
+		<select id="public_ip_check_select">
+			<option value="all" <% if ($public_ip_choice eq 'all') { %>selected<% } %>>All (Cloudflare, then ipify, then icanhazip)</option>
+			<option value="cloudflare" <% if ($public_ip_choice eq 'cloudflare') { %>selected<% } %>>Cloudflare (1.1.1.1)</option>
+			<option value="ipify" <% if ($public_ip_choice eq 'ipify') { %>selected<% } %>>ipify</option>
+			<option value="icanhazip" <% if ($public_ip_choice eq 'icanhazip') { %>selected<% } %>>icanhazip</option>
+			<option value="none" <% if ($public_ip_choice eq 'none') { %>selected<% } %>>None — hide public addresses</option>
+		</select>
+		<span class="cfg-note" id="public_ip_check_status" style="margin:0;"></span>
+	</div>
+</div>
+<div class="cfg-card">
 	<h3 style="margin-top:0;">House name</h3>
 	<p class="cfg-note">config.json's <b>domain</b> stays <b><%= $domain %></b> &mdash; it is the loopback the house calls itself on, not a public name. The public side is here: the house domain is the wildcard's zone and the WebAuthn RP ID, and each machine's name must sit under it. A machine reads its own entry, so one machine can name all of them.</p>
 	<div class="cfg-row">

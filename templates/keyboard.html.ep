@@ -23,14 +23,22 @@
 			<img class="jonathan little_thumb keyboard_config_toggle" onclick="keyboardConfigToggle('remote_control')" src="<%= &subs::icon_for('/images/decipherable/wrench.png') %>" hint="Configure"></img>
 			<br>
 			<div id="remote_control_view" class="keyboard_content">
+				<% my $public_ip_choice = &subs::public_ip_check_choice(); %>
 				<% if ( !$selected_rm ) { %>
 					ME!<br>
 					<%= &subs::device_setter() %><br>
-					<%= &subs::lang('remote_control.public_ip') %>: <span id="local_public_ip" class="clip" hint="<%= &subs::ui('Click to copy the public address') %>">…</span>
+					<% if ($public_ip_choice ne 'none') { %>
+						<span id="local_public_ip_row"><%= &subs::lang('remote_control.public_ip') %>: <span id="local_public_ip" class="clip" hint="<%= &subs::ui('Click to copy the public address') %>">…</span></span>
+					<% } elsif (&subs::device_setter() eq 'server') { %>
+						<% my $server_public_ip = &subs::public_interface_address({ network => &subs::network_interface_reporter() }); %>
+						<% if ($server_public_ip) { %><%= &subs::lang('remote_control.public_ip') %>: <span class="clip" hint="<%= &subs::ui('Click to copy the public address') %>"><%= $server_public_ip %></span><% } %>
+					<% } %>
 				<% } else { %>
 					<%= $selected_rm->{'hostname'} || $selected_rm->{'fqdn'} || $selected_rm->{'ip'} %><br>
 					<%= $selected_rm->{'ip'} %><br>
-					<% my $rm_public_ip = &subs::remote_public_address($selected_rm); %>
+					<% my $rm_public_ip = $public_ip_choice ne 'none'
+						? &subs::remote_public_address($selected_rm)
+						: (($selected_rm->{'device'} || '') eq 'server' ? &subs::public_interface_address($selected_rm) : ''); %>
 					<% if ($rm_public_ip) { %><%= &subs::lang('remote_control.public_ip') %>: <span id="remote_public_ip" class="clip" hint="<%= &subs::ui('Click to copy the public address') %>"><%= $rm_public_ip %></span><br><% } %>
 					<%= &subs::device_setter() %><br>
 					<%= $selected_rm->{'uuid'} %>

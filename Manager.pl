@@ -34723,12 +34723,17 @@ post '/manager/tailnet/exit' => sub($c) {
 # asynchronous, so a slow or unreachable echo service cannot stall the manager.
 our $public_ip_memo;
 get '/manager/public_ip' => sub($c) {
+	my $choice = &subs::public_ip_check_choice();
+	if ($choice eq 'none') {
+		$c->render(json => { ok => 0, ip => '', disabled => 1 });
+		return;
+	}
 	my $now = &subs::rightNow();
 	if (!$c->param('refresh') && $public_ip_memo && ($public_ip_memo->{'at'} || 0) > $now - 30000) {
 		$c->render(json => { ok => ($public_ip_memo->{'ip'} ? 1 : 0), ip => $public_ip_memo->{'ip'} || '', cached => 1 });
 		return;
 	}
-	my @urls = ( 'https://1.1.1.1/cdn-cgi/trace', 'https://api.ipify.org', 'https://icanhazip.com' );
+	my @urls = &subs::public_ip_check_urls();
 	my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 4, request_timeout => 5);
 	my $try;
 	$try = sub {
