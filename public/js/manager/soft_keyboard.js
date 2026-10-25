@@ -22,6 +22,7 @@ var jawnSoftSetting = false;
 var jawnSoftKeyAt = 0;
 var jawnSoftHideTimer = null;
 var jawnSoftSlideTimer = null;
+var jawnSoftSlideAt = 0;
 // A drag across a field focuses it so the selection is visible; that focus is
 // not a request for the keyboard, and neither is the click that ends the drag.
 var jawnSoftDragFocus = false;
@@ -506,6 +507,7 @@ function softKbSlideUp(dock) {
 	// start to run from when the element has only just left display:none
 	void dock[0].offsetHeight;
 	dock.addClass('soft_kb_up');
+	jawnSoftSlideAt = Date.now();
 }
 
 function softKbSlideDown(dock) {
@@ -562,6 +564,7 @@ function softKbShow(el) {
 }
 
 function softKbHide() {
+	softKbMagnifyHide();
 	softKbRepeatStop();
 	softKbDictateStop();
 	$('#soft_kb_layouts').prop('hidden', true);
@@ -646,6 +649,7 @@ function softKbTitleUpdate() {
 }
 
 function softKbModeSet(mode) {
+	softKbMagnifyHide();
 	if (jawnSoftNumeric && mode == 'letters') { mode = 'calc'; }
 	jawnSoftMode = mode;
 	var dock = $('#jawn_soft_keyboard');
@@ -2049,6 +2053,74 @@ function softKbEval(source) {
 	return result;
 }
 
+// ---- the magnified key under a finger --------------------------------------
+// While a character key is held, a large copy of it rides above the key, the
+// way a phone's own keyboard shows what the finger is covering. It lives on the
+// body rather than inside the dock so a window's overflow cannot clip it, and it
+// is shown only for keys that type a character - a modifier has no letter to
+// enlarge.
+var jawnSoftMagnify = null;
+
+function softKbMagnifyEl() {
+	if (!jawnSoftMagnify) {
+		jawnSoftMagnify = $('<div id="soft_kb_magnify" class="soft_kb_magnify" aria-hidden="true"></div>').appendTo('body');
+	}
+	if (!jawnSoftMagnify.parent().length || !$.contains(document.documentElement, jawnSoftMagnify[0])) {
+		jawnSoftMagnify.appendTo('body');
+	}
+	return jawnSoftMagnify;
+}
+
+function softKbMagnifyLabel(b) {
+	if (b.attr('data-kb_char') != null) {
+		var ch = String(b.attr('data-kb_char'));
+		return ch.length ? ch : null;
+	}
+	var k = b.attr('data-kb_key');
+	if (k == null) { return null; }
+	// only a key that types something: shift, the arrows, space and the like
+	// keep their ordinary pressed look
+	if (String(k).length != 1) { return null; }
+	// the key's printed face is what the finger is covering (the calculator's
+	// ÷ and × are drawn over a different data-kb_key)
+	var face = String(b.text() || '').replace(/\s+/g, ' ').trim();
+	return face || String(k);
+}
+
+// Place the bubble above the key, or below it when the key is near the top of
+// the screen, and never off the side of the viewport.
+function softKbMagnifyPlace(el, rect) {
+	var vw = window.innerWidth || $(window).width() || 0;
+	var vh = window.innerHeight || $(window).height() || 0;
+	var w = el.outerWidth() || 54;
+	var h = el.outerHeight() || 58;
+	var cx = rect.left + rect.width / 2;
+	var half = w / 2 + 6;
+	if (cx < half) { cx = half; }
+	if (vw && cx > vw - half) { cx = vw - half; }
+	var below = (rect.top - 8 - h) < 6;
+	var top = below ? (rect.bottom + 8) : (rect.top - 8);
+	if (vh && top > vh - 6) { top = vh - 6; }
+	el.toggleClass('soft_kb_magnify_below', below).css({ left: cx + 'px', top: top + 'px' });
+}
+
+function softKbMagnifyShow(b) {
+	var label = softKbMagnifyLabel(b);
+	if (label == null || !b.length || !b[0].getBoundingClientRect) { return; }
+	// a key pressed while the dock is still rising would leave the bubble where
+	// the key was mid-slide, so this press gets the plain pressed look instead
+	if (jawnSoftSlideAt && (Date.now() - jawnSoftSlideAt) < softKbSlideMs()) { return; }
+	var el = softKbMagnifyEl();
+	var rect = b[0].getBoundingClientRect();
+	el.text(label).prop('hidden', false).addClass('on');
+	softKbMagnifyPlace(el, rect);
+}
+
+function softKbMagnifyHide() {
+	if (!jawnSoftMagnify) { return; }
+	jawnSoftMagnify.removeClass('on soft_kb_magnify_below').prop('hidden', true);
+}
+
 // ---- keys ------------------------------------------------------------------
 function softKbKey(k) {
 	if (k == 'shift') { softKbShiftSet(!jawnSoftShift); return; }
@@ -2115,6 +2187,7 @@ $(document).on('pointerdown', '#jawn_soft_keyboard button', function (e) {
 	// act on the press and keep the caret in the field
 	e.preventDefault();
 	jawnSoftKeyAt = Date.now();
+	softKbMagnifyShow($(this));
 	if ($(this).attr('data-kb_key') == 'backspace') { softKbBackspaceDown(this); return; }
 	// any other key puts a hold on backspace away
 	softKbRepeatStop();
@@ -2133,9 +2206,11 @@ $(document).on('pointerup', '#jawn_soft_keyboard button', function (e) {
 	softKbPress($(start.el));
 });
 $(document).on('pointerup pointercancel', '#jawn_soft_keyboard button', function () {
+	softKbMagnifyHide();
 	softKbRepeatStop();
 });
-$(document).on('pointerup pointercancel', function () { if (jawnSoftChipStart) { jawnSoftChipAt = Date.now(); jawnSoftChipStart = null; } softKbRepeatStop(); });
+$(document).on('pointerup pointercancel', function () { softKbMagnifyHide(); if (jawnSoftChipStart) { jawnSoftChipAt = Date.now(); jawnSoftChipStart = null; } softKbRepeatStop(); });
+$(window).on('blur', function () { softKbMagnifyHide(); });
 $(document).on('click', '#jawn_soft_keyboard button', function () {
 	if (Date.now() - jawnSoftKeyAt < 600) { return; }
 	if (Date.now() - jawnSoftChipAt < 700) { return; }

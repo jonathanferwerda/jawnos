@@ -466,6 +466,83 @@ body.soft_kb_open .dot_info {
 	color: #fff;
 }
 
+/* The magnified key under a finger. It is a child of the body, not the dock, so
+   a window's overflow can never clip it; it is fixed, so it rides above the
+   key it belongs to however the dock is placed. */
+.soft_kb_magnify {
+	position: fixed;
+	left: 0;
+	top: 0;
+	z-index: 40005;
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 54px;
+	height: 58px;
+	padding: 0 12px;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--panel);
+	color: var(--ink);
+	font-size: 30px;
+	font-weight: 600;
+	line-height: 1;
+	pointer-events: none;
+	user-select: none;
+	-webkit-user-select: none;
+	box-shadow: 0 10px 26px rgba(0, 0, 0, .3), 0 2px 6px rgba(0, 0, 0, .18);
+	transform: translate(-50%, -100%) scale(.7);
+	transform-origin: 50% 100%;
+	opacity: 0;
+	transition: opacity .12s ease, transform .12s ease;
+}
+
+.soft_kb_magnify.on {
+	opacity: 1;
+	transform: translate(-50%, -100%) scale(1);
+}
+
+/* a key near the top of the screen carries its bubble underneath instead */
+.soft_kb_magnify.on.soft_kb_magnify_below {
+	transform: translate(-50%, 0) scale(1);
+	transform-origin: 50% 0;
+}
+
+.soft_kb_magnify[hidden] {
+	display: none;
+}
+
+/* the little tail pointing back at the key */
+.soft_kb_magnify::after {
+	content: '';
+	position: absolute;
+	left: 50%;
+	bottom: -6px;
+	width: 12px;
+	height: 12px;
+	margin-left: -6px;
+	background: var(--panel);
+	border-right: 1px solid var(--line);
+	border-bottom: 1px solid var(--line);
+	border-radius: 0 0 2px 0;
+	transform: rotate(45deg);
+}
+
+.soft_kb_magnify.soft_kb_magnify_below::after {
+	top: -6px;
+	bottom: auto;
+	border-right: 0;
+	border-bottom: 0;
+	border-left: 1px solid var(--line);
+	border-top: 1px solid var(--line);
+	border-radius: 2px 0 0 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.soft_kb_magnify { transition: none; }
+}
+
 /* the calculator */
 .soft_kb_display {
 	margin: 0 1px 6px;
