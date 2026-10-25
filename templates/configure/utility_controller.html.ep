@@ -25,27 +25,31 @@
 #utility_machines .utility_controller_timeout { width:78px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 #utility_machines .utility_job_when { opacity:.6; font-size:85%; white-space:nowrap; }
 #utility_machines .utility_job_effect { flex:1 1 100%; opacity:.7; font-size:82%; font-style:italic; }
-/* The batch pools: a drop zone per pool, and a chip per job. A chip is the job's
-   whole row in miniature - switch, name, dot, last run - so a pooled job needs no
-   second copy in the flat list below. */
-#utility_pools { display:flex; flex-direction:column; gap:10px; }
-#utility_pools .utility_pool { border:1px solid var(--line); border-radius:10px; padding:8px 10px; background:var(--panel); }
-#utility_pools .utility_pool_regular { border-style:dashed; }
+/* The batch pools: one card per pool in a responsive grid, and a grid of job
+   tiles inside each, so the functions line up and read as a set. A tile is the
+   job's whole row in miniature - switch, name, dot, last run - so a pooled job
+   needs no second copy in the flat list below. */
+#utility_pools { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap:10px; align-items:start; }
+#utility_pools .utility_pool { min-width:0; border:1px solid var(--line); border-radius:10px; padding:8px 10px; background:var(--panel); }
+#utility_pools .utility_pool_regular { grid-column:1 / -1; border-style:dashed; }
 #utility_pools .utility_pool_head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-#utility_pools .utility_pool_label { flex:1 1 120px; min-width:0; padding:4px 6px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--ink); font:inherit; font-weight:600; }
+#utility_pools .utility_pool_label { flex:1 1 110px; min-width:0; padding:4px 6px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--ink); font:inherit; font-weight:600; }
 #utility_pools .utility_pool_label:hover,
 #utility_pools .utility_pool_label:focus { border-color:var(--line); background:var(--field, var(--panel)); }
-#utility_pools .utility_pool_seconds { width:78px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+#utility_pools .utility_pool_seconds { width:76px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 #utility_pools .utility_pool_remove { border:0; background:transparent; color:inherit; opacity:.55; font-size:18px; line-height:1; padding:2px 6px; cursor:pointer; }
 #utility_pools .utility_pool_remove:hover { opacity:1; }
-#utility_pools .utility_pool_members { display:flex; flex-wrap:wrap; gap:6px; min-height:34px; padding:6px 0 0; }
+#utility_pools .utility_pool_members { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(150px, 100%), 1fr)); gap:6px; align-content:start; min-height:36px; padding:6px 0 0; }
 #utility_pools .utility_pool_members.utility_pool_over { outline:2px dashed var(--accent, #7aa7ff); outline-offset:2px; border-radius:8px; }
-#utility_pools .utility_pool_empty { opacity:.5; font-size:85%; font-style:italic; padding:6px 2px; }
-#utility_pools .utility_chip { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid var(--line); background:var(--panel); font-size:13px; cursor:grab; touch-action:none; user-select:none; }
+#utility_pools .utility_pool_empty { grid-column:1 / -1; opacity:.5; font-size:85%; font-style:italic; padding:6px 2px; }
+#utility_pools .utility_chip { display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px; min-width:0; padding:6px 8px; border-radius:8px; border:1px solid var(--line); background:var(--panel); font-size:13px; cursor:grab; touch-action:none; user-select:none; }
+#utility_pools .utility_chip:hover { border-color:var(--accent, #7aa7ff); }
 #utility_pools .utility_chip.utility_chip_dragging { opacity:.45; }
-#utility_pools .utility_chip .utility_job_when { opacity:.6; font-size:82%; white-space:nowrap; }
-#utility_pools .utility_pool_add { display:flex; gap:8px; flex-wrap:wrap; }
-#utility_pools .utility_pool_new_name { flex:1 1 160px; min-width:0; padding:5px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+#utility_pools .utility_chip_name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+#utility_pools .utility_chip_meta { flex:1 1 100%; display:flex; align-items:center; gap:6px; min-height:16px; }
+#utility_pools .utility_chip_meta .utility_job_when { margin-left:auto; opacity:.6; font-size:82%; white-space:nowrap; }
+#utility_batch_groups .utility_pool_add { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+#utility_batch_groups .utility_pool_new_name { flex:1 1 160px; min-width:0; padding:5px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 #utility_machines .utility_pool_group { border-top:1px solid var(--line); padding-top:4px; }
 #utility_machines .utility_pool_group_head { font-size:85%; opacity:.7; padding:4px 0 0; }
 @media (max-width:560px) {
