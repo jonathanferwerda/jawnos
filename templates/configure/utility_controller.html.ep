@@ -46,6 +46,7 @@
 #utility_pools .utility_chip:hover { border-color:var(--accent, #7aa7ff); }
 #utility_pools .utility_chip.utility_chip_dragging { opacity:.45; }
 #utility_pools .utility_chip_name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
+#utility_pools .utility_chip_interval { width:64px; box-sizing:border-box; padding:2px 5px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; font-size:12px; }
 #utility_pools .utility_chip_meta { flex:1 1 100%; display:flex; align-items:center; gap:6px; min-height:16px; }
 #utility_pools .utility_chip_meta .utility_job_when { margin-left:auto; opacity:.6; font-size:82%; white-space:nowrap; }
 #utility_batch_groups .utility_pool_add { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
@@ -79,19 +80,23 @@
 					</div>
 					<div class="utility_pool_members" data-pool="<%= $pool->{'id'} %>" hint="Drop jobs here">
 						<% if (scalar @members) { %>
-							<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t} %><% } %>
+							<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t}, show_interval => 0 %><% } %>
 						<% } else { %>
 							<span class="utility_pool_empty"><%= &subs::ui('Drop jobs here') %></span>
 						<% } %>
 					</div>
 				</div>
 			<% } %>
-			<% my @loose = grep { $controls->{$signatorial}->{$_} && !$my_member->($_) } sort keys %{$gb::timeouts}; %>
+			<% my @loose = sort {
+				(($controls->{$signatorial}->{$a}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
+					<=> (($controls->{$signatorial}->{$b}->{'toggle'} || 'off') eq 'on' ? 0 : 1)
+					|| $a cmp $b
+			} grep { $controls->{$signatorial}->{$_} && !$my_member->($_) } keys %{$gb::timeouts}; %>
 			<div class="utility_pool utility_pool_regular">
 				<div class="utility_pool_head"><span class="utility_pool_label" hint="Not in a pool"><%= &subs::ui('Not in a pool') %></span></div>
 				<div class="utility_pool_members" data-pool="" hint="Drop jobs here">
 					<% if (scalar @loose) { %>
-						<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t} %><% } %>
+						<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t}, show_interval => 1 %><% } %>
 					<% } else { %>
 						<span class="utility_pool_empty"><%= &subs::ui('Everything is in a pool') %></span>
 					<% } %>
@@ -107,11 +112,11 @@
 	% 	$machine_name{$mk} = $rm->{'hostname'} if $rm && $rm->{'hostname'};
 	% }
 	<div id="utility_machines">
-	% my @ordered_keys = sort { ($a eq $signatorial ? 0 : 1) <=> ($b eq $signatorial ? 0 : 1) || $a cmp $b } @machine_keys;
+	% my @ordered_keys = sort { $a cmp $b } @machine_keys;
 	<% foreach my $dt ( @ordered_keys ) { %>
-		<% my $is_me = ($dt eq $signatorial) ? 1 : 0; %>
+		% next if $dt eq $signatorial;
 		<div class="cfg-card utility_machine">
-			<h4 class="utility_machine_name"><%= $is_me ? 'Me' : ($machine_name{$dt} || $dt) %></h4>
+			<h4 class="utility_machine_name"><%= $machine_name{$dt} || $dt %></h4>
 			<div class="utility_jobs">
 				<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
 					% next unless $controls->{$dt}->{$t};
@@ -136,35 +141,33 @@
 					</div>
 				<% } %>
 			</div>
-			<% if (!$is_me) { %>
-				<% foreach my $pool ( @{ &subs::batch_pools($controls->{$dt}) } ) { %>
-					<% my @members = grep { my $p = &subs::batch_pool_of($controls->{$dt}, $_); $p && $p->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
-					<% next unless scalar @members; %>
-					<div class="utility_pool_group">
-						<div class="utility_pool_group_head"><%= &subs::ui($pool->{'label'}) %> · <%= &subs::duration_sayer($pool->{'seconds'}) %></div>
-						<div class="utility_jobs">
-							<% foreach my $t ( @members ) { %>
-								<div class="utility_job">
-									<span class="utility_job_name"><%= &subs::format_name($t) %></span>
-									<div class="utility_job_controls">
-										<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" hint="Run this job" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>>
-										<% if ($controls->{$dt}->{$t}->{'status'} eq 'good') { %>
-											<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
-										<% } elsif ($controls->{$dt}->{$t}->{'status'} eq 'bad') { %>
-											<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
-										<% } %>
-										<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
-											<span class="time utility_job_when" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
-										<% } %>
-										<% if ($controls->{$dt}->{$t}->{'last_effect'}) { %>
-											<span class="utility_job_effect" hint="what the last run did"><%= $controls->{$dt}->{$t}->{'last_effect'} %></span>
-										<% } %>
-									</div>
+			<% foreach my $pool ( @{ &subs::batch_pools($controls->{$dt}) } ) { %>
+				<% my @members = grep { my $p = &subs::batch_pool_of($controls->{$dt}, $_); $p && $p->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
+				<% next unless scalar @members; %>
+				<div class="utility_pool_group">
+					<div class="utility_pool_group_head"><%= &subs::ui($pool->{'label'}) %> · <%= &subs::duration_sayer($pool->{'seconds'}) %></div>
+					<div class="utility_jobs">
+						<% foreach my $t ( @members ) { %>
+							<div class="utility_job">
+								<span class="utility_job_name"><%= &subs::format_name($t) %></span>
+								<div class="utility_job_controls">
+									<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" hint="Run this job" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>>
+									<% if ($controls->{$dt}->{$t}->{'status'} eq 'good') { %>
+										<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
+									<% } elsif ($controls->{$dt}->{$t}->{'status'} eq 'bad') { %>
+										<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
+									<% } %>
+									<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
+										<span class="time utility_job_when" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
+									<% } %>
+									<% if ($controls->{$dt}->{$t}->{'last_effect'}) { %>
+										<span class="utility_job_effect" hint="what the last run did"><%= $controls->{$dt}->{$t}->{'last_effect'} %></span>
+									<% } %>
 								</div>
-							<% } %>
-						</div>
+							</div>
+						<% } %>
 					</div>
-				<% } %>
+				</div>
 			<% } %>
 		</div>
 	<% } %>

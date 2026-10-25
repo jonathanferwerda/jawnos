@@ -3,8 +3,11 @@
 <span class="utility_chip" draggable="true" data-job="<%= $job %>" data-device="<%= $device %>">
 	<input type="checkbox" class="utility_controller" control="<%= $job %>" device="<%= $device %>" setting="toggle" hint="Run this job" <% if ($row->{'toggle'} eq 'on') { %>checked="checked"<% } %>>
 	<span class="utility_chip_name"><%= &subs::format_name($job) %></span>
-	<% if ($row->{'status'} eq 'good' || $row->{'status'} eq 'bad' || $row->{'last_run'}) { %>
+	<% if ($show_interval || $row->{'status'} eq 'good' || $row->{'status'} eq 'bad' || $row->{'last_run'}) { %>
 		<span class="utility_chip_meta">
+			<% if ($show_interval) { %>
+				<input class="utility_controller utility_chip_interval" control="<%= $job %>" device="<%= $device %>" setting="interval" hint="How often" value="<%= &subs::duration_sayer($row->{'interval'}) %>">
+			<% } %>
 			<% if ($row->{'status'} eq 'good') { %>
 				<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
 			<% } elsif ($row->{'status'} eq 'bad') { %>
