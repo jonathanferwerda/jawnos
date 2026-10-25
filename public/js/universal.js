@@ -103,6 +103,12 @@ function appointment_chron() {
 			var header = $(this);
 			var mode = $(this).attr('mode');
 			var timestamp = $(this).attr('timestamp');
+			var display = header.closest('.wind').attr('app') || '';
+			var saved_mode = timeDisplaySaved(display);
+			if (saved_mode == 'dynamic' || saved_mode == 'exact' || saved_mode == 'fixed') {
+				mode = saved_mode;
+				header.attr('mode', saved_mode);
+			}
 
 			if (mode == 'fixed') {
 				// Fixed times never change, so paint one and skip the element for a
@@ -123,6 +129,23 @@ function appointment_chron() {
 					header.text(header.attr('formatted_time'));
 				}
 				header.attr('next_check', now + 3600000);
+			}
+			else if (mode == 'exact') {
+				// The long relative reading: every unit down to the second, so the
+				// same moment can also be read as "3d 3h 12m 5s".
+				if (header.is('input') && !header.hasClass('editing')) {
+					var value = quality_inventory_exact(timestamp);
+					if (header.val() != value) { header.val(value).css({'background-color': ''}); }
+				}
+				else if (header.hasClass('editing')) {
+					header.css({'background-color': ''});
+					return;
+				}
+				else {
+					var text = quality_inventory_exact(timestamp);
+					if (header.text() != text) { header.text(text); }
+				}
+				header.attr('mode', 'exact');
 			}
 			else {
 				// Dynamic times read "in 3m 12s" or "3d 4h ago", so they are worked out
@@ -272,6 +295,52 @@ function quality_inventory(timestamp) {
 	return t; 
 }
 
+function quality_inventory_exact(timestamp) {
+	var now = numeral(Date.now()).value();
+	if (timestamp === undefined || timestamp === null || isNaN(timestamp)) { return ''; }
+	var future = now < timestamp;
+	var s = Math.floor(Math.abs(now - timestamp) / 1000);
+	var units = [
+		['y', 365 * 24 * 60 * 60],
+		['M', 30 * 24 * 60 * 60],
+		['d', 24 * 60 * 60],
+		['h', 60 * 60],
+		['m', 60],
+		['s', 1]
+	];
+	var parts = [];
+	for (var i = 0; i < units.length; i++) {
+		var n = Math.floor(s / units[i][1]);
+		if (n > 0) {
+			parts.push(n + units[i][0]);
+			s -= n * units[i][1];
+		}
+	}
+	if (!parts.length) { parts.push('0s'); }
+	return (future ? 'in ' : '') + parts.join(' ');
+}
+
+// The view a display keeps for its time labels. Each window's app remembers
+// which reading it wore last, so a reload comes back the same way.
+var timeDisplayCache = {};
+var timeClickTimer;
+function timeDisplayKey(display) {
+	return display ? 'time_display:' + display : 'time_display';
+}
+function timeDisplaySaved(display) {
+	var key = timeDisplayKey(display);
+	if (!(key in timeDisplayCache)) {
+		try { timeDisplayCache[key] = localStorage.getItem(key) || ''; }
+		catch (e) { timeDisplayCache[key] = ''; }
+	}
+	return timeDisplayCache[key];
+}
+function timeDisplaySave(display, mode) {
+	var key = timeDisplayKey(display);
+	timeDisplayCache[key] = mode;
+	try { localStorage.setItem(key, mode); } catch (e) {}
+}
+
 var months = [
 	{ 'abbrev': 'jan', name: 'January', days: 31, leap_days: 31 },
 	{ 'abbrev': 'feb', name: 'February', days: 28, leap_days: 29 },
@@ -288,26 +357,38 @@ var months = [
 ];
 
 $(document).on('dblclick', '.time', function() {
-	var ago = $(this).attr('formatted_time');
+	var header = $(this);
+	if (!header.attr('timestamp')) { return; }
+	clearTimeout(timeClickTimer);
+	var timestamp = numeral(header.attr('timestamp')).value();
+	var ago = fixedTimeString(timestamp);
 	$('#time_machine').val(ago);
 	localStorage.setItem('time_machine',ago);
 });
 
-
 $(document).on('click', '.time, .appointment_header, .since', function() {
 	var header = $(this);
-	if (!header.is('input')) {
-		// drop the fixed-mode repaint gate so the switch shows up right away
-		header.removeAttr('next_check');
-		if (header.attr('mode') == 'fixed') {
-			header.attr('mode', 'dynamic');
-		}
-		else {
-			header.attr('mode', 'fixed');
-			var timestamp = numeral(header.attr('timestamp')).value();
-			header.attr('formatted_time', fixedTimeString(timestamp));
-		}
-		appointment_chron();
+	// the outer appointment header carries the icon but no timestamp; the time
+	// inside it is the one that reads, so only that one turns the page
+	if (!header.is('input') && header.attr('timestamp')) {
+		// A double-click carries the view to this time; wait out the second press
+		// before turning the page, so one gesture is not also a mode change.
+		clearTimeout(timeClickTimer);
+		timeClickTimer = setTimeout(function() {
+			// drop the fixed-mode repaint gate so the new reading shows right away
+			header.removeAttr('next_check');
+			var modes = [ 'dynamic', 'exact', 'fixed' ];
+			var current = header.attr('mode') || 'dynamic';
+			var next = modes[(modes.indexOf(current) + 1) % modes.length];
+			header.attr('mode', next);
+			if (next == 'fixed') {
+				var timestamp = numeral(header.attr('timestamp')).value();
+				header.attr('formatted_time', fixedTimeString(timestamp));
+			}
+			var display = header.closest('.wind').attr('app') || '';
+			timeDisplaySave(display, next);
+			appointment_chron();
+		}, 250);
 	}
 });
 
@@ -1663,11 +1744,18 @@ function jawnosThemeBundleApply(bundle, appt) {
 		document.documentElement.style.setProperty('--jawnos-font', bundle.font);
 	}
 	if (bundle.corner) {
+		window.jawnos_theme_corner = bundle.corner;
 		document.documentElement.style.setProperty('--jawnos-corner', bundle.corner);
 	}
 	else {
-		document.documentElement.style.removeProperty('--jawnos-corner');
+		// no theme corner: hand the property back to the desk's own value, so a
+		// theme that stands down while the page is open lands on the Misc slider
+		window.jawnos_theme_corner = '';
+		document.documentElement.style.setProperty('--jawnos-corner', 'var(--corner_radius, 12px)');
 	}
+	// the Misc panel's Corner slider follows whether a theme is in charge: with
+	// one, its changes are an override on top of the theme's corner
+	if (typeof jawnosBars !== 'undefined' && jawnosBars) { jawnosBars.corner_theme = window.jawnos_theme_corner || ''; }
 	if (bundle.texture && typeof jawnosTextureApply === 'function') {
 		jawnosTextureApply(bundle.texture);
 	}
