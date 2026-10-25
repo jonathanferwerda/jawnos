@@ -1436,6 +1436,8 @@ function textareaUpgrader() {
 					});
 
 					ta.hide();
+					// the editor exists now; a draft from another device can fill it
+					if (typeof jawnosAppDraftHydrate === 'function') { jawnosAppDraftHydrate(ta.attr('app')); }
 				}
 			});
 		}

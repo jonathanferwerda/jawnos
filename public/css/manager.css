@@ -1784,6 +1784,19 @@ img[src*="/icons/original/"] {
 	color: var(--ink-muted);
 }
 
+/* a note still being typed, shown in the Notes app under the appointment it
+   belongs to */
+.note_app {
+	display: inline-block;
+	margin-right: 6px;
+	padding: 0 6px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 700;
+	opacity: .8;
+}
+
 /* the legend has moved into the toolbox: it keeps to the row with the
    formatting buttons, and its panel opens upward from there - over the words
    and above the toolbox - so the whole panel is visible instead of reaching

@@ -211,7 +211,9 @@ our %topic = (
 		title => 'Editor', category => 'apps', app => 'editor',
 		summary => 'A rich text editor whose variables can answer for an appointment.',
 		body => [
-			'Editor is a rich text editor for letters, notes and documents. Its variables can pull live values — including values from an appointment — so a document can fill itself in from your data.'
+			'Editor is a rich text editor for letters, notes and documents. Its variables can pull live values — including values from an appointment — so a document can fill itself in from your data.',
+			'A microphone in the editor\'s toolbox dictates into the document: press it to listen and press it again to stop. It is the same dictation the keyboard uses - a pause ends the phrase, the house transcribes it and the Guide punctuates it - and the words join the text where the caret is.',
+			'While it is being typed, a note is kept as a draft: this browser holds a copy against a crash or a refresh, and the house holds one that reaches every machine, so the words are there again when the window reopens.'
 		],
 		steps => [
 			'Open Editor and start a document.',
@@ -372,20 +374,19 @@ our %topic = (
 	},
 	'notes' => {
 		title => 'Notes', category => 'apps', app => 'notes',
-		verified => '2026-10-14',
-		summary => 'Free-form notes you can scan, OCR and barcode.',
+		verified => '2026-10-24',
+		summary => 'Free-form notes, and the drafts of notes being typed in an appointment.',
 		body => [
-			'Notes is note-taking with a document-scanning streak. It can capture a page from a camera or scanner, read a barcode or QR code (zbar), run text recognition over a scan (Tesseract) and render documents to PDF.',
-			'Each note is an appointment like everything else, so a scanned page can carry attachments and be found from whatever it belongs to.'
+			'Notes is the house\'s free-form notebook. Every note is a row of its own, newest first: a watch that heard something that was not a command lands here, and so does anything typed in the box at the foot.',
+			'Notes ride the house sync, so a note written on one machine appears on the rest. Click a note to load it into the box for editing, drag one onto an appointment window to fold it into that app\'s notes, and the X is a two-click delete.',
+			'While an appointment\'s Notes field is being typed into, the words are kept as a draft: this browser holds a copy on every keystroke, against a crash or a refresh, and the house holds one in this same table so it reaches every machine. The list shows a draft under the appointment it belongs to, marked Draft, and the draft is cleared when the appointment is saved.'
 		],
 		steps => [
-			'Open Notes and start a new note.',
-			'To scan a document, use the scan action and pick the camera or a scanner; crop the page if you are offered it.',
-			'Turn on OCR to lift the text out of the scan, so the page becomes searchable.',
-			'For a barcode or QR code, use the scan action in its code mode instead — it reads the code and records it on the note.',
-			'Save the note; its scan and any recognised text travel with it.'
+			'Open Notes and type in the box at the foot; press Save (Enter saves on a desk, Shift+Enter makes a line).',
+			'Click a note to load it into the box and edit it; saving updates that row.',
+			'Drag a note onto an appointment window to fold it into that app\'s notes.',
+			'Press X twice to delete a note.'
 		],
-		prompt => 'The reader wants a genuine step-by-step for scanning a document into JawnOS. Walk them through it in order, naming the buttons as they appear, and keep each step to one action.',
 		related => [ 'editor', 'folders' ]
 	},
 	'tasks' => {

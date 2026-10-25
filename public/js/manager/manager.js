@@ -3267,12 +3267,12 @@ $(document).on('keyup', '.notes, .ago, .duration', function() {
 				jawnosAppFieldRemove(appointment, v);
 			}
 			input.trigger('change');
+			// a long note also goes to the server, so a crash or another device
+			// keeps it; the ago and duration stay in this browser only
+			if (v == 'notes' && typeof jawnosAppDraftSend === 'function') {
+				jawnosAppDraftSend(appointment, typed);
+			}
 		});
-		i.css({ "background-color": "yellow" });
-		clearTimeout(backy_color);
-		backy_color = setTimeout(function() {
-			i.css({ "background-color": "" });
-		},750);
 	},200);
 });
 
@@ -4381,6 +4381,8 @@ function managerReset(caller,e) {
 }
 
 function appClearer(app) {
+	// the note has been filed on the appointment: the draft it grew from is done
+	if (typeof jawnosAppDraftSend === 'function') { jawnosAppDraftSend(app, ''); }
 	$('.appointment[app="' + app + '"]').each(function(i,v) {
 		var container = $(v);
 		jawnosAppFieldRemove(app, 'notes');

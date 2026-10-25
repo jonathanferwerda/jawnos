@@ -9,10 +9,12 @@
 			<span style="font-size:18px;">No notes yet. Anything the watch hears that is not a command lands here.</span>
 		<% } %>
 		<% foreach my $n ( @{$notes} ) { %>
+			<% my $draft_of = $n->{'app'} || ''; %>
 			<div class="note hover" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:move;">
 				<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="Delete">X</button>
+				<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } %>
 				<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
-				<div class="note_text"><%= $n->{'text'} %></div>
+				<div class="note_text" style="white-space:pre-wrap;"><%= $n->{'text'} %></div>
 			</div>
 		<% } %>
 	</div>

@@ -22444,7 +22444,7 @@ get '/manager/notifications/list' => sub($c) {
 get '/manager/notes' => sub($c) {
 	# Every note, newest first: the plain rows subs::voice_note_store and the app's
 	# own input write. Notes are no longer appointments - a note is just its text.
-	my $notes = &subs::db_query('select text, timestamp, uuid from notes order by timestamp desc limit 300')->hashes;
+	my $notes = &subs::db_query("select text, timestamp, uuid, app from notes where coalesce(text, '') != '' order by timestamp desc limit 300")->hashes;
 	my $content = $c->render_to_string(
 		template => 'notes/notes',
 		notes => $notes
@@ -24249,6 +24249,72 @@ post '/manager/configure/notification_sound' => sub($c) {
 	$shown =~ s/\.[^.]*$//;
 	$log->info('notification sound added: ' . $file);
 	$c->render(json => { ok => 1, sound => './' . $file, name => &subs::format_name($shown) });
+};
+
+# The note an appointment window is still typing is a draft. It is the same
+# notes table the Notes app reads, which already rides the generic peer sync, so
+# a refresh, a crash or another machine finds the words again. The row's name is
+# derived from the app name, so every peer converges on one draft per app rather
+# than making a note for each keystroke. An empty text clears the draft once the
+# note has been filed on the appointment; the row is kept (and hidden) rather
+# than deleted, because a notes deletion is not carried by the sync tombstones.
+sub app_draft_uuid($app, $field) {
+	my $name = $app . '_' . $field;
+	if (length($name) > 150) {
+		require Digest::MD5;
+		utf8::encode($name) if utf8::is_utf8($name);
+		$name = Digest::MD5::md5_hex($name);
+	}
+	return 'appdraft_' . $name;
+}
+
+get '/manager/app_draft' => sub($c) {
+	my $app = $c->param('app') || '';
+	$app =~ s/[^[:print:]]//g;
+	my $field = ($c->param('field') || 'notes') =~ /^(notes|ago|duration)$/ ? $1 : 'notes';
+	return $c->render(json => { ok => 0 }) unless length $app;
+	my $row = &subs::db_select('notes', ['text', 'server_time', 'timestamp'], { uuid => &app_draft_uuid($app, $field) })->hash;
+	$c->render(json => {
+		ok => 1,
+		text => ($row ? ($row->{'text'} || '') : ''),
+		server_time => ($row ? ($row->{'server_time'} || '') : ''),
+		timestamp => ($row ? ($row->{'timestamp'} || '') : ''),
+	});
+};
+
+post '/manager/app_draft' => sub($c) {
+	my $app = $c->param('app') || '';
+	$app =~ s/[^[:print:]]//g;
+	$app = substr($app, 0, 200);
+	my $field = ($c->param('field') || 'notes') =~ /^(notes|ago|duration)$/ ? $1 : 'notes';
+	return $c->render(json => { ok => 0 }) unless length $app;
+	my $text = $c->param('text');
+	$text = '' unless defined $text;
+	$text = substr($text, 0, 200000);
+	my $uuid = &app_draft_uuid($app, $field);
+	my $now = &subs::rightNow();
+	my $row = &subs::db_select('notes', ['uuid', 'timestamp'], { uuid => $uuid })->hash;
+	my $fresh = !($row && $row->{'uuid'});
+	if ($text =~ /^\s*$/ || $text eq '<br>') {
+		&subs::db_update('notes', { text => '', server_time => $now }, { uuid => $uuid }) if !$fresh;
+		&Websocket::send('tab', { console => 'notesReload();' }) if !$fresh;
+		return $c->render(json => { ok => 1, cleared => 1 });
+	}
+	if (!$fresh) {
+		&subs::db_update('notes', { text => $text, server_time => $now }, { uuid => $uuid });
+	}
+	else {
+		&subs::db_insert('notes', {
+			uuid => $uuid,
+			app => $app,
+			text => $text,
+			timestamp => $now,
+			server_time => $now,
+			device => &subs::device_setter()
+		});
+		&Websocket::send('tab', { console => 'notesReload();' });
+	}
+	$c->render(json => { ok => 1, uuid => $uuid, server_time => $now });
 };
 
 post '/manager/note_save' => sub($c) {

@@ -11,6 +11,9 @@
 		<button class="teb_style hover" tag="i">i</button>
 		<button class="teb_style hover" tag="u">u</button>
 		<img src="<%= &subs::icon_for('/images/make believe/eat.png') %>" hint="Eat" class="tiny_thumb hover teb_style" utility="magic_wand" style="vertical-align:bottom;">
+		<%# the same dictation the keyboard's microphone gives, aimed at this editor;
+		    soft_keyboard.js keeps the caret in the words and shows its red state %>
+		<button type="button" class="text_editor_dictate hover" aria-pressed="false" aria-label="<%= &subs::ui('Start dictation') %>" hint="<%= &subs::ui('Dictate into this field') %>">🎤</button>
 		<%= include 'text_editor_legend', variables => $variables, source_id => $id, target => '' %>
 	</div>
 </div>

@@ -76,6 +76,81 @@ function jawnosAppFieldRemove(app, field) {
 	jawnosStore.remove('app_data', app + '_' + field, app + '_' + field);
 }
 
+// A note being typed is also a draft on the server, so it survives this browser
+// (a crash, a refresh, a different machine) and reaches every peer: the notes
+// table already rides the generic sync. The browser copy above is written on
+// every keystroke; the server copy waits for a pause, so typing does not become
+// a write per letter. Each app keeps one draft row, found by a name derived from
+// the app, so peers converge on the same row instead of making a note each.
+var jawnosDraftTimers = {};
+
+// The draft travels as words, not markup: the notes table is plain text (the
+// Notes app prints it as such), while this browser keeps the editor's HTML so a
+// refresh restores its lines and marks. Both conversions live here so the two
+// copies always agree.
+function jawnosDraftPlain(text) {
+	var s = String(text || '');
+	if (s.indexOf('<') >= 0) {
+		s = s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(div|p|li)>/gi, '\n').replace(/<[^>]*>/g, '');
+		s = $('<textarea>').html(s).text().replace(/\n+$/, '');
+	}
+	return s;
+}
+
+function jawnosDraftHtml(text) {
+	return $('<div>').text(String(text || '')).html().replace(/\n/g, '<br>');
+}
+
+function jawnosAppDraftSend(app, text) {
+	if (!app) { return; }
+	clearTimeout(jawnosDraftTimers[app]);
+	jawnosDraftTimers[app] = setTimeout(function () {
+		$.ajax({
+			url: '/manager/app_draft',
+			type: 'POST',
+			data: { app: app, field: 'notes', text: jawnosDraftPlain(text), timestamp: Date.now() },
+			dataType: 'json'
+		});
+	}, 1200);
+}
+
+// Fill an appointment's note from the server draft, but only when this browser
+// has nothing there: its own copy (written on every keystroke) is newer than the
+// last synced one, and a person already typing must not have words replaced.
+function jawnosAppDraftHydrate(app) {
+	if (!app) { return; }
+	$.ajax({
+		url: '/manager/app_draft',
+		type: 'GET',
+		data: { app: app, field: 'notes' },
+		dataType: 'json',
+		success: function (r) {
+			if (!r || !r.ok || !r.text) { return; }
+			$('.appointment[app="' + app + '"]').each(function (i, v) {
+				var boxes = $(v).find('.notes');
+				if (!boxes.length) { return; }
+				// the upgraded editor and its hidden source textarea can both wear the
+				// class for a moment; the editor is the one to fill
+				var el = boxes.filter('[contenteditable="true"]')[0] || boxes[0];
+				if (document.activeElement === el) { return; }
+				var current = el.isContentEditable ? $(el).text() : (el.value || '');
+				if (String(current).replace(/\s/g, '') != '') { return; }
+				if (el.isContentEditable) {
+					var html = jawnosDraftHtml(r.text);
+					$(el).html(html);
+					var source = el.getAttribute('source_id');
+					if (source && $('#' + source).length) { $('#' + source).val(r.text); }
+					jawnosAppFieldSet(app, 'notes', html);
+				}
+				else {
+					$(el).val(r.text);
+					jawnosAppFieldSet(app, 'notes', r.text);
+				}
+			});
+		}
+	});
+}
+
 // Where a panel was left (its drop spot) and the whole style dump it wears when
 // it opens again; the whiteboard's pen spot keeps them company.
 function jawnosWindowPlaceGet(id) {

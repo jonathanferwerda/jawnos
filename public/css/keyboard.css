@@ -95,6 +95,20 @@
 	background-color: yellow;
 }
 
+/* a rich text editor's microphone: the dock's dictation, and the same red while
+   it is listening */
+.text_editor_dictate {
+	border: solid 1px var(--line);
+	border-radius: 8px;
+	background-color: var(--panel);
+	vertical-align: bottom;
+}
+.text_editor_dictate.active {
+	background-color: #d84343;
+	border-color: #d84343;
+	color: #fff;
+}
+
 /* A keyboard panel is moved by the thin bar across its top: the body stays free
    for tapping buttons and typing, and the bar is the drag's anchor. The bar
    sticks so it stays in reach while a scrollable panel's contents move. */

@@ -649,8 +649,23 @@ var jawnDictate = {
 	session: 0
 };
 
+var jawnDictateFieldButton = null;
+
 function softKbDictateHint(text) {
 	$('#jawn_soft_keyboard .soft_kb_title').text(text || '');
+	// a rich editor's microphone is not in the dock, so the state it shows has to
+	// travel to the button that started it
+	$('.text_editor_container .text_editor_dictate').each(function () {
+		var box = $(this).closest('.text_editor_container').find('.text_editor')[0];
+		if (box && jawnDictate.target === box) { $(this).attr('title', text || ''); }
+	});
+	if (!jawnDictate.target && jawnDictateFieldButton && jawnDictateFieldButton.length) {
+		jawnDictateFieldButton.attr('title', text || '');
+	}
+	// with the dock closed there is no title to read, so a failure has to be said
+	// out loud; the progress words are not failures
+	var progress = (text == softKbLabel('Listening…') || text == softKbLabel('Transcribing…') || !text);
+	if (!progress && !softKbVisible() && typeof jawnosAlert === 'function') { jawnosAlert(text); }
 }
 
 function softKbDictateErrorText(code) {
@@ -668,6 +683,14 @@ function softKbMicState() {
 		.attr('aria-pressed', on ? 'true' : 'false')
 		.attr('aria-label', softKbLabel(on ? 'Stop dictation' : 'Start dictation'))
 		.attr('hint', softKbLabel(on ? 'Stop dictation' : 'Start dictation'));
+	// the same dictation can be started from a rich text editor's toolbox
+	$('.text_editor_container .text_editor_dictate').each(function () {
+		var btn = $(this);
+		var box = btn.closest('.text_editor_container').find('.text_editor')[0];
+		var live = on && jawnDictate.target && box === jawnDictate.target;
+		btn.toggleClass('active', !!live).attr('aria-pressed', live ? 'true' : 'false');
+		btn.attr('aria-label', softKbLabel(live ? 'Stop dictation' : 'Start dictation'));
+	});
 }
 
 function softKbDictateCut() {
@@ -870,6 +893,31 @@ function softKbDictateToggle() {
 		softKbDictateHint(softKbLabel('I could not reach the microphone'));
 	});
 }
+
+// Dictation aimed at a rich text editor's contenteditable, from the microphone
+// in its toolbox. It is the dock's own dictation: the editor becomes the field
+// being typed in, and each phrase joins the words where the caret is.
+function softKbDictateField(el) {
+	if (!el) { return; }
+	if (jawnSoftListening) { softKbDictateStop(); return; }
+	jawnSoftField = el;
+	jawnSoftNumeric = false;
+	jawnSoftContext = softKbContext(el);
+	jawnDictateFieldButton = $(el).closest('.text_editor_container').find('.text_editor_dictate');
+	softKbDictateToggle();
+}
+
+$(document).on('pointerdown', '.text_editor_dictate', function (e) {
+	if (e.button != null && e.button != 0) { return; }
+	// keep the caret in the words: a focused button would make the phrase append
+	e.preventDefault();
+});
+
+$(document).on('click', '.text_editor_dictate', function (e) {
+	e.preventDefault();
+	var box = $(this).closest('.text_editor_container').find('.text_editor')[0];
+	if (box) { softKbDictateField(box); }
+});
 
 function softKbNotify(el) {
 	if (!el) { return; }
@@ -1386,7 +1434,9 @@ function softKbConvertParse(text, strict) {
 	softKbUnitsLoad();
 	text = String(text || '');
 	var best = null;
-	var re = /(-?\d[\d,]*(?:\.\d+)?)([A-Za-z]{1,6})/g;
+	// a space between the number and its unit is ordinary prose ("32.33 L"), and
+	// a unit's own name can be longer than its code ("kilograms")
+	var re = /(-?\d[\d,]*(?:\.\d+)?)\s*([A-Za-z]{1,12})/g;
 	var m;
 	while ((m = re.exec(text))) {
 		if (/[A-Za-z]/.test(text.charAt(re.lastIndex))) { continue; }
@@ -1567,6 +1617,17 @@ function jawnMeasureText(el) {
 	return el.isContentEditable ? $(el).text() : (el.value || '');
 }
 
+// The template carries this row; a page that was rendered before it existed
+// still gets one, so the feature cannot depend on a stale template.
+function jawnMeasureRoot() {
+	var pop = $('#jawn_measure_pop');
+	if (!pop.length) {
+		pop = $('<div id="jawn_measure_pop" class="soft_kb_convert" hidden><span id="jawn_measure_pop_src" class="soft_kb_convert_src"></span><div id="jawn_measure_pop_rows" class="soft_kb_convert_rows"></div></div>');
+		$('body').append(pop);
+	}
+	return pop;
+}
+
 function jawnMeasureHide() {
 	clearTimeout(jawnMeasureTimer);
 	jawnMeasureSeq++;
@@ -1588,14 +1649,18 @@ function jawnMeasureUpdate() {
 	// the dock's own row is the one to read while the keys are up
 	if (softKbVisible()) { jawnMeasureHide(); return; }
 	// a time, a length, a warranty or a repeat names its own units; "5m" there
-	// is five minutes and must not be read as metres
+	// is five minutes and must not be read as metres. Another kind of quantity
+	// in such a field (32.33 L, $5) still converts - only the time-shaped units
+	// are left to the field.
 	var context = softKbContext(el);
-	if (context == 'password' || context == 'when' || context == 'duration' || context == 'warranty' || context == 'schedule') {
+	if (context == 'password') { jawnMeasureHide(); return; }
+	var hit = softKbConvertParse(jawnMeasureText(el), true);
+	if (!hit) { jawnMeasureHide(); return; }
+	if ((context == 'when' || context == 'duration' || context == 'warranty' || context == 'schedule')
+		&& /^(s|m|min|mins|h|hr|hrs|d|w|M|mo|y|yr)$/.test(hit.unit)) {
 		jawnMeasureHide();
 		return;
 	}
-	var hit = softKbConvertParse(jawnMeasureText(el), true);
-	if (!hit) { jawnMeasureHide(); return; }
 	jawnMeasureHit = hit;
 	var seq = ++jawnMeasureSeq;
 	clearTimeout(jawnMeasureTimer);
@@ -1611,8 +1676,7 @@ function jawnMeasureUpdate() {
 }
 
 function jawnMeasureRender(r, hit) {
-	var pop = $('#jawn_measure_pop');
-	if (!pop.length) { return; }
+	var pop = jawnMeasureRoot();
 	jawnSoftUnit = r.unit || (hit && hit.unit) || jawnSoftUnit;
 	try { localStorage.setItem('jawn_soft_calc_unit', jawnSoftUnit); } catch (err) {}
 	$('#jawn_measure_pop_src').text(r.text || ((r.value != null ? r.value : hit.value) + ' ' + jawnSoftUnit));
