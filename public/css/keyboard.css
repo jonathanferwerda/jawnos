@@ -98,10 +98,19 @@
 /* a rich text editor's microphone: the dock's dictation, and the same red while
    it is listening */
 .text_editor_dictate {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	padding: 1px 5px;
 	border: solid 1px var(--line);
 	border-radius: 8px;
 	background-color: var(--panel);
 	vertical-align: bottom;
+}
+.text_editor_dictate img {
+	display: block;
+	width: 18px;
+	height: 18px;
 }
 .text_editor_dictate.active {
 	background-color: #d84343;

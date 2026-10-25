@@ -79,7 +79,7 @@
 		<button type="button" class="soft_kb_mode" data-kb_mode="symbols">#+=</button>
 		<span class="soft_kb_title"></span>
 		<button type="button" id="soft_kb_layout_button" class="soft_kb_icon" data-kb_action="layouts" aria-expanded="false" aria-label="<%= &subs::ui('Keyboard layout') %>" hint="<%= &subs::ui('Choose keyboard layout') %>">🌐</button>
-		<button type="button" id="soft_kb_mic_button" class="soft_kb_icon" data-kb_action="dictate" aria-pressed="false" aria-label="<%= &subs::ui('Start dictation') %>" hint="<%= &subs::ui('Dictate into this field') %>">🎤</button>
+		<button type="button" id="soft_kb_mic_button" class="soft_kb_icon" data-kb_action="dictate" aria-pressed="false" aria-label="<%= &subs::ui('Start dictation') %>" hint="<%= &subs::ui('Dictate into this field') %>"><img class="soft_kb_mic_icon" src="<%= &subs::icon_for('/images/decipherable/speech to text.png') %>" alt=""></button>
 		<button type="button" class="soft_kb_close" data-kb_action="close" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
 	</div>
 

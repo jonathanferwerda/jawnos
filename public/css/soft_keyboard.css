@@ -238,6 +238,9 @@ body.soft_kb_open .dot_info {
 /* the bar's own controls: layout chooser, dictation, hide */
 .soft_kb_icon {
 	flex: 0 0 auto;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	width: 34px;
 	height: 30px;
 	padding: 0;
@@ -248,6 +251,14 @@ body.soft_kb_open .dot_info {
 	font-size: 15px;
 	line-height: 1;
 	cursor: pointer;
+}
+
+/* dictation wears the house's own microphone tile from the icon set, not an
+   emoji: a desk has no colour-emoji font, so the emoji was a blank key there */
+.soft_kb_mic_icon {
+	display: block;
+	width: 20px;
+	height: 20px;
 }
 
 .soft_kb_icon.active {
