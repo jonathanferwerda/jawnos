@@ -390,8 +390,9 @@ $(document).on('dblclick', '.time', function() {
 $(document).on('click', '.time, .appointment_header, .since, .appointment_detail_duration, .jawnos_duration', function() {
 	var header = $(this);
 	// the outer appointment header carries the icon but no timestamp; the time
-	// inside it is the one that reads, so only that one turns the page
-	if (!header.is('input') && header.attr('timestamp')) {
+	// inside it is the one that reads, so only that one turns the page. A
+	// templated duration carries its span instead, and turns the same way.
+	if (!header.is('input') && (header.attr('timestamp') || header.attr('duration'))) {
 		// A double-click carries the view to this time; wait out the second press
 		// before turning the page, so one gesture is not also a mode change.
 		clearTimeout(timeClickTimer);

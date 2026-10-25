@@ -40,7 +40,7 @@
 		<tr>
 			<td style="opacity:.6;white-space:nowrap;padding-right:8px;">Recommended</td>
 			<td style="text-align:right;white-space:nowrap;">
-				<button class="budget_autocalc_accept" app="<%= $autocalc->{'data'}->{'app'} %>" circumstance="<%= $circumstance %>" amount="<%= $form_amount %>" measure="<%= $form_measure %>" scope="<%= $form_scope %>" direction="<%= $budget->{'direction'} || 'floor' %>" previous="<%= $budget->{'budget'} %>" title="Set this budget" style="font:inherit;font-weight:700;color:#b8860b;background:rgba(184,134,11,.12);border:1px solid rgba(184,134,11,.5);border-radius:6px;padding:1px 8px;cursor:pointer;white-space:nowrap;"><% if ($circumstance eq 'duration') { %><%== &subs::duration_readout($autocalc->{$budget->{'scope_name'}}->{'result'} || 0) %><% } else { %><%= $suggested %><% } %></button>
+				<button class="budget_autocalc_accept" app="<%= $autocalc->{'data'}->{'app'} %>" circumstance="<%= $circumstance %>" amount="<%= $form_amount %>" measure="<%= $form_measure %>" scope="<%= $form_scope %>" direction="<%= $budget->{'direction'} || 'floor' %>" previous="<%= $budget->{'budget'} %>" title="Set this budget" style="font:inherit;font-weight:700;color:#b8860b;background:rgba(184,134,11,.12);border:1px solid rgba(184,134,11,.5);border-radius:6px;padding:1px 8px;cursor:pointer;white-space:nowrap;"><%= $suggested %></button>
 			</td>
 			<td style="opacity:.55;padding-left:6px;white-space:nowrap;">your typical <%= lc $scope %></td>
 		</tr>

@@ -1849,7 +1849,9 @@ $(document).on('click', '.bo_copy_link', function() {
 	bo_copy_text(b.attr('data-url') || '', b);
 });
 
-$(document).on('click', '.ticket', function() {
+$(document).on('click', '.ticket', function(e) {
+	// a ticket's duration is a reading, not the card's resize handle
+	if ($(e.target).closest('.jawnos_duration').length) { return; }
 	var t = $(this);
 	var width = t.width();
 	if (width < 200) {
@@ -4018,6 +4020,9 @@ $(document).on('keydown keypress keyup', '#handbook_today_date', function(e) {
 
 $(document).on('click', '.handbook_today_open_app', function(e) {
 	e.stopPropagation();
+	// a duration chip in the row is a reading that turns on its own click, not a
+	// way to open the appointment it sits beside
+	if ($(e.target).closest('.jawnos_duration').length) { return; }
 	var app = $(this).attr('app');
 	if (app) { appointmentGrabber(app); }
 });

@@ -605,8 +605,11 @@ function statisticPie(data, unit, mode) {
 	});
 }
 
-$(document).on('click', '.statistic_entry', function() {
+$(document).on('click', '.statistic_entry', function(e) {
 	var s = $(this);
+	// the reading in the cell turns on its own click; the rest of the cell is what
+	// opens that period's panel
+	if ($(e.target).closest('.jawnos_duration').length) { return; }
 	var ir = s.closest('.appointment');
 	var app = ir.attr('app');
 	var timestamp = s.attr('timestamp');
