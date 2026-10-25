@@ -4510,6 +4510,7 @@ function musicScreenApply() {
 	}
 	else {
 		// display:none keeps the element decoding and playing sound
+		$('#music_library').show();
 		$('#video').hide();
 		$('#video').attr('type', 'audio');
 		$('#album_cover').show();
