@@ -305,6 +305,10 @@ hook before_dispatch => sub {
 		# a session, or a peer signature itself (see Manager.pl).
 		$path eq '/manager/health' ||
 		$path eq '/manager/health/page' ||
+		# a peer's scheduled wake pushes its own row here; health_allowed at the
+		# route is the gate (loopback, an approved session, or a signed peer),
+		# so a sessionless machine can reach that check
+		$path eq '/manager/health_report' ||
 		# a computer's manual navigation button asks a same-LAN phone for its
 		# current fix. The route peer_verifies the caller against the roster and
 		# checks the source is on one of this machine's physical subnets itself
