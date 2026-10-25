@@ -8496,6 +8496,7 @@ get '/manager/backup_serve' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	&subs::sync_pull_touch();
 	my $path = &subs::home($c->param('file') || '');
 	unless ($path =~ /\.enc$/ && -f $path) { $c->rendered(404); return; }
 	# A remote backup's archive is a one-shot temp under ~/.president, made for
@@ -8553,6 +8554,7 @@ get '/manager/configure/backup_status' => sub($c) {
 		$c->rendered(403);
 		return;
 	}
+	&subs::sync_pull_touch();
 	my $job = $c->param('job') || '';
 	my $snap = ($job && &subs::db_select('sync_snapshots', undef, { uuid => $job, caller => $signatorial })->hashes->[0]);
 	unless ($snap) {
@@ -9648,6 +9650,9 @@ get '/manager/sync_rows' => sub ($c) {
 		$c->render(json => { ok => 0, error => 'unknown table' });
 		return;
 	}
+	# A peer is reading rows from this machine: the scheduled wake must not let
+	# the CPU go while the pull is in flight.
+	&subs::sync_pull_touch();
 	my $cut = $c->param('cut');
 	$cut = 0 unless defined $cut && $cut =~ /^[0-9]+$/;
 	my $limit = $c->param('limit');
@@ -9721,6 +9726,7 @@ get '/manager/sync_buckets' => sub ($c) {
 		$c->render(json => { ok => 0, error => 'unknown table' });
 		return;
 	}
+	&subs::sync_pull_touch();
 	my $band = $c->param('band');
 	# Refuse a tiny band before the group-by runs: a per-millisecond band would
 	# name a bucket per row and build a map the caller cannot use anyway. An

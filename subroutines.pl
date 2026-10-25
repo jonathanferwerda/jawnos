@@ -4250,6 +4250,21 @@ sub remote_available_announce {
 	return $pulled;
 }
 
+# Note that a peer is reading rows from this machine right now. The scheduled
+# wake checks this before releasing the CPU: a phone must not sleep in the
+# middle of a pull it is serving. The mtime is the signal, and utime updates it
+# without rewriting the file, so a multi-batch pull costs no flash writes.
+sub sync_pull_touch {
+	my $file = &home('~/.president/sync_pull');
+	unless (utime undef, undef, $file) {
+		if (open(my $fh, '>', $file)) {
+			print $fh &rightNow();
+			close $fh;
+		}
+	}
+	return 1;
+}
+
 # The card's read: the cached snapshot with this machine's reading refreshed.
 # The local battery is cheap and should not wait for the next two-minute pass.
 sub levels_snapshot {

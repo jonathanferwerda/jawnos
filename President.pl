@@ -997,6 +997,7 @@ sub utility_runner() {
 	# that ran nothing, and removed as soon as a job starts, so a reader can tell
 	# "everything due has finished" from "the tree is down or still working".
 	my $idle_file = &subs::home('~/.president/utility_idle');
+	my $pull_file = &subs::home('~/.president/sync_pull');
 	# The app's beat marker: a new mtime is this machine's few seconds of being
 	# briefly available, which is when peers get told they may pull.
 	my $ready_file = &subs::home('~/.president/wake_ready');
@@ -1141,7 +1142,11 @@ sub utility_runner() {
 	if (!$ran && (!defined $next_due || $next_due > &subs::rightNow() + 12000)) {
 		my $idle_at = (-e $idle_file) ? ((stat($idle_file))[9] || 0) : 0;
 		my $hold = &subs::cache_get({ app => '__president', context => 'wake', subcontext => 'hold' }) || 0;
-		eval { write_file($idle_file, &subs::rightNow()); } if $ready_at > $idle_at && $hold <= &subs::rightNow();
+		# A peer reading rows from us is the one reason a wake may outlive its
+		# hold: never let the app sleep in the middle of a pull we are serving.
+		my $pull_at = (-e $pull_file) ? ((stat($pull_file))[9] || 0) * 1000 : 0;
+		my $serving = ($pull_at && &subs::rightNow() - $pull_at < 15000) ? 1 : 0;
+		eval { write_file($idle_file, &subs::rightNow()); } if $ready_at > $idle_at && $hold <= &subs::rightNow() && !$serving;
 	}
 }
 
