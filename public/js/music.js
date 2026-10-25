@@ -4411,8 +4411,12 @@ function musicVideoReceiverFrame(buf) {
 	var blob = new Blob([new Uint8Array(buf, 16)], { type: 'image/jpeg' });
 	var item = { seq: seq, media: dv.getFloat64(4, true), due: Date.now() + r.delay, bitmap: null, img: null };
 	r.queue.push(item);
-	// a slow link or a busy decoder must not grow a second of pictures in memory
-	if (r.queue.length > 8) { r.queue.splice(0, r.queue.length - 8); }
+	// a slow link or a busy decoder must not grow a second of pictures in memory.
+	// The cap follows the lip-sync delay: at 24 fps a 500 ms delay needs its own
+	// 12 frames before the newest ones, and trimming below that would throw away
+	// pictures that are not due yet.
+	var cap = Math.max(8, Math.ceil((r.delay || 0) / 33) + 8);
+	if (r.queue.length > cap) { r.queue.splice(0, r.queue.length - cap); }
 	if (window.createImageBitmap) {
 		createImageBitmap(blob).then(function(bm) { item.bitmap = bm; }).catch(function() {});
 	} else {
