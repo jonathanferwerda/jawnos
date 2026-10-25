@@ -32150,7 +32150,7 @@ sub clock_skip_apply {
 		return 0;
 	}
 	my $at = int($data->{'at'} || 0);
-	$at = &clock_alarm_next_ms($alarm, $now) unless $at > $now;
+	$at = &clock_alarm_next_ms($alarm, $now) if $at <= 0;
 	$alarm->{'skip_fire'} = $at;
 	$alarm->{'snooze_until'} = 0;
 	$alarm->{'ringing'} = 0;
