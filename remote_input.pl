@@ -270,4 +270,59 @@ sub screen_geometry() {
 	return undef;
 }
 
+# --- clipboard ---------------------------------------------------------------
+# Text copied on the far screen has to come back to this one and the other way
+# round. X11 and Wayland each have a small tool for it; when none is installed
+# a paste still works by typing the text instead.
+sub clipboard_read() {
+	my $out = '';
+	if (which('xclip')) {
+		$out = `timeout 2 xclip -selection clipboard -o 2>/dev/null`;
+	}
+	elsif (which('xsel')) {
+		$out = `timeout 2 xsel --clipboard --output 2>/dev/null`;
+	}
+	elsif (which('wl-paste')) {
+		$out = `timeout 2 wl-paste --no-newline 2>/dev/null`;
+	}
+	utf8::decode($out) if defined $out && length $out && !utf8::is_utf8($out);
+	return $out;
+}
+
+sub clipboard_write($text) {
+	my $bytes = defined $text ? $text : '';
+	utf8::encode($bytes) if utf8::is_utf8($bytes);
+	if (which('xclip')) {
+		open(my $fh, '|-', 'xclip', '-selection', 'clipboard') or return 0;
+		print {$fh} $bytes;
+		close $fh;
+		return 1;
+	}
+	if (which('xsel')) {
+		open(my $fh, '|-', 'xsel', '--clipboard', '--input') or return 0;
+		print {$fh} $bytes;
+		close $fh;
+		return 1;
+	}
+	if (which('wl-copy')) {
+		open(my $fh, '|-', 'wl-copy') or return 0;
+		print {$fh} $bytes;
+		close $fh;
+		return 1;
+	}
+	return 0;
+}
+
+sub clipboard_paste($text) {
+	if (clipboard_write($text)) {
+		# the owner needs a moment to take the selection before the key arrives
+		select(undef, undef, undef, 0.08);
+		return inject('key', 'ctrl+v');
+	}
+	# no clipboard tool: type the text, which is a paste in plain form
+	my $bytes = defined $text ? $text : '';
+	utf8::encode($bytes) if utf8::is_utf8($bytes);
+	return inject('type', $bytes);
+}
+
 1;

@@ -95,6 +95,7 @@ my $thread_uuid = $tuuid->create_str();
 my $universal_splitter = $gb::universal_splitter;
 our $database;
 our $sql;
+our $remote_input_clipboard;
 our $config_file = read_file('./config.json');
 our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
@@ -34108,6 +34109,7 @@ sub remote_input_coalesce($events) {
 
 sub remote_input_apply($events) {
 	$events = &remote_input_coalesce($events);
+	$remote_input_clipboard = undef;
 	my $geometry = &remote_input_geometry();
 	my $applied = 0;
 	foreach my $e ( @{$events} ) {
@@ -34157,6 +34159,17 @@ sub remote_input_apply($events) {
 		elsif ($t eq 'release') {
 			$applied++ if &remote_input::inject('release');
 		}
+		elsif ($t eq 'clipboard_get') {
+			$remote_input_clipboard = &remote_input::clipboard_read();
+			$applied++;
+		}
+		elsif ($t eq 'clipboard_set' || $t eq 'paste') {
+			my $text = $e->{'s'} // '';
+			next unless length $text;
+			$applied++ if $t eq 'paste'
+				? &remote_input::clipboard_paste($text)
+				: &remote_input::clipboard_write($text);
+		}
 	}
 	return $applied;
 }
@@ -34187,7 +34200,8 @@ post '/manager/remote_input' => sub($c) {
 		ok => 1,
 		applied => $applied,
 		backend => $backend,
-		screen => ($geometry ? [ $geometry->[0], $geometry->[1] ] : undef)
+		screen => ($geometry ? [ $geometry->[0], $geometry->[1] ] : undef),
+		clipboard => $remote_input_clipboard
 	});
 };
 
@@ -34212,7 +34226,9 @@ websocket '/manager/remote_input/ws' => sub($c) {
 		$events = eval { decode_json $events } unless ref $events eq 'ARRAY';
 		return unless ref $events eq 'ARRAY';
 		$#$events = 119 if @{$events} > 120;
+		my $want_clipboard = grep { ref $_ eq 'HASH' && (($_->{'t'} || '') eq 'clipboard_get') } @{$events};
 		&remote_input_apply($events);
+		$ws->send(&remote_input_frame({ t => 'clipboard', text => ($remote_input_clipboard // '') })) if $want_clipboard;
 		# A release ends the session; the target closes the control socket so an
 		# idle authenticated channel does not outlive the hold.
 		if (grep { ref $_ eq 'HASH' && (($_->{'t'} || '') eq 'release') } @{$events}) {
@@ -34224,6 +34240,15 @@ websocket '/manager/remote_input/ws' => sub($c) {
 our %remote_input_ua;
 our %remote_input_ws;
 our %remote_input_rm;
+our %remote_input_ws_failed;
+
+# A peer that answered the handshake with a page or a refusal is not asked again
+# for a minute: the signed HTTP route still carries input, and an old peer must
+# not pay a dial on every batch.
+sub remote_input_socket_cooling($key) {
+	my $until = $remote_input_ws_failed{$key} || 0;
+	return $until > time ? 1 : 0;
+}
 
 # The roster row is read on every batch otherwise (a SQLite query per 6 ms of
 # typing). Ten seconds is long enough to save the work and short enough to
@@ -34282,23 +34307,21 @@ sub remote_input_http($rm, $events) {
 
 # One open control socket per peer. Signing the handshake is the expensive part
 # (openssl on each end), so it is paid once and the frames after it are cheap.
-# The handshake is asynchronous: a keyboard must not wait on a worker to dial
-# and sign before the next character is accepted. Batches that arrive while it
-# dials wait in `pending`; a handshake that fails sends them by the signed HTTP
-# route and tells the tab why.
+# Nothing is sent on the socket until the peer's `hello` arrives: until then the
+# signed HTTP route carries the input, so an old peer (or a handshake the gate
+# refused after the upgrade) costs latency but never control.
 sub remote_input_socket_for($rm, $browser_tab_id, $events) {
 	my $key = ($rm->{'uuid'} || $rm->{'signatorial'} || '') . '|' . ($rm->{'manager'} || '');
+	return 0 if &remote_input_socket_cooling($key);
 	my $entry = $remote_input_ws{$key};
 	if ($entry) {
 		$entry->{'browser_tab_id'} = $browser_tab_id if $browser_tab_id;
-		if ($entry->{'socket'}) {
+		if ($entry->{'ready'} && $entry->{'socket'}) {
 			$entry->{'socket'}->send(&remote_input_frame({ events => &remote_input_batch($events) }));
+			return 1;
 		}
-		else {
-			push @{$entry->{'pending'}}, $events;
-			splice(@{$entry->{'pending'}}, 0, @{$entry->{'pending'}} - 50) if @{$entry->{'pending'}} > 50;
-		}
-		return 1;
+		# still dialling: this batch goes through HTTP rather than waiting
+		return 0;
 	}
 	my $manager = $rm->{'manager'} || '';
 	return 0 unless $manager;
@@ -34323,62 +34346,70 @@ sub remote_input_socket_for($rm, $browser_tab_id, $events) {
 		ua => $ua,
 		uuid => $rm->{'uuid'} || '',
 		browser_tab_id => $browser_tab_id || '',
-		pending => [ $events ],
 	};
 	$remote_input_ws{$key} = $entry;
 	$ua->websocket($url => sub {
 		my ($ua, $tx) = @_;
 		my $socket = ($tx && $tx->is_websocket) ? $tx->res->websocket : undef;
 		unless ($socket) {
-			my $pending = delete $entry->{'pending'} || [];
 			delete $remote_input_ws{$key};
-			# One HTTP relay for everything that waited, in order.
-			my @all;
-			foreach my $batch (@{$pending}) {
-				push @all, @{ &remote_input_batch($batch) };
-			}
-			@all = @{ &remote_input_coalesce(\@all) };
-			$#all = 119 if @all > 120;
-			my $result = &remote_input_http($rm, encode_json(\@all));
-			my $dest = $entry->{'browser_tab_id'} || '';
-			if ($dest) {
-				&Websocket::send('server', {
-					%{$result},
-					type => 'remote_input_result',
-					destination => $dest,
-					remote_uuid => $entry->{'uuid'},
-				});
-			}
+			$remote_input_ws_failed{$key} = time + 60;
+			$log->info('remote input socket declined for ' . ($entry->{'uuid'} || '?') . ' code=' . ($tx && $tx->res->code ? $tx->res->code : 'none'));
 			return;
 		}
 		$entry->{'socket'} = $socket;
 		$entry->{'tx'} = $tx;
 		$ua->inactivity_timeout(0);
+		my $hello = 0;
+		my $timer = Mojo::IOLoop->timer(2 => sub {
+			return if $hello;
+			my $sock = delete $entry->{'socket'};
+			eval { $sock->finish } if $sock;
+			delete $remote_input_ws{$key};
+			$remote_input_ws_failed{$key} = time + 60;
+			$log->info('remote input socket silent for ' . ($entry->{'uuid'} || '?'));
+		});
 		$socket->on(message => sub($socket, $msg) {
 			my $m = eval { decode_json $msg } || {};
-			return unless (($m->{'t'} || '') eq 'hello');
-			my $dest = $entry->{'browser_tab_id'} || '';
-			return unless $dest;
-			&Websocket::send('server', {
-				type => 'remote_input_result',
-				destination => $dest,
-				ok => 1,
-				backend => $m->{'backend'},
-				screen => $m->{'screen'},
-				remote_uuid => $entry->{'uuid'},
-			});
+			my $kind = $m->{'t'} || '';
+			if ($kind eq 'hello') {
+				$hello = 1;
+				Mojo::IOLoop->remove($timer) if $timer;
+				$entry->{'ready'} = 1;
+				delete $remote_input_ws_failed{$key};
+				$log->info('remote input socket ready for ' . ($entry->{'uuid'} || '?'));
+				my $dest = $entry->{'browser_tab_id'} || '';
+				if ($dest) {
+					&Websocket::send('server', {
+						type => 'remote_input_result',
+						destination => $dest,
+						ok => 1,
+						backend => $m->{'backend'},
+						screen => $m->{'screen'},
+						remote_uuid => $entry->{'uuid'},
+						socket => 1,
+					});
+				}
+			}
+			elsif ($kind eq 'clipboard') {
+				my $dest = $entry->{'browser_tab_id'} || '';
+				return unless $dest;
+				&Websocket::send('server', {
+					type => 'remote_input_result',
+					destination => $dest,
+					ok => 1,
+					clipboard => $m->{'text'},
+					remote_uuid => $entry->{'uuid'},
+				});
+			}
 		});
-		$socket->on(finish => sub { delete $remote_input_ws{$key}; });
-		my $pending = delete $entry->{'pending'} || [];
-		my @all;
-		foreach my $batch (@{$pending}) {
-			push @all, @{ &remote_input_batch($batch) };
-		}
-		@all = @{ &remote_input_coalesce(\@all) };
-		$#all = 119 if @all > 120;
-		$socket->send(&remote_input_frame({ events => \@all })) if @all;
+		$socket->on(finish => sub {
+			Mojo::IOLoop->remove($timer) if $timer && !$hello;
+			delete $remote_input_ws{$key};
+			$remote_input_ws_failed{$key} = time + 60 unless $hello;
+		});
 	});
-	return 1;
+	return 0;
 }
 
 sub remote_input_send($data) {
@@ -34389,9 +34420,11 @@ sub remote_input_send($data) {
 	$events = encode_json($events) if ref $events eq 'ARRAY';
 	$events = '[]' unless defined $events && length $events;
 	if (&remote_input_socket_for($rm, $data->{'browser_tab_id'}, $events)) {
-		return { ok => 1, queued => 1 };
+		return { ok => 1, queued => 1, socket => 1 };
 	}
-	return &remote_input_http($rm, $events);
+	my $result = &remote_input_http($rm, $events);
+	$result->{'socket'} = 0 if ref $result eq 'HASH';
+	return $result;
 }
 
 post '/manager/remote_input/send' => sub($c) {

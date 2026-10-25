@@ -68,6 +68,7 @@
 					<div id="remote_input_type_wrap" style="display:none;margin-top:4px;">
 						<input type="text" id="remote_input_type" style="width:65%;vertical-align:top;" placeholder="<%= &subs::ui('Type to that machine...') %>" autocomplete="off" autocapitalize="off" spellcheck="false">
 					</div>
+					<textarea id="remote_input_clipboard" style="display:none;width:90%;height:48px;margin-top:4px;" placeholder="<%= &subs::ui('Clipboard from that machine') %>" spellcheck="false"></textarea>
 				</div>
 				<% if (!$selected_rm) { %>
 					<div style="font-size:12px;opacity:.7;margin-top:6px;"><%= &subs::ui('Pick a machine other than Me to control its keyboard and mouse.') %></div>

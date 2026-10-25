@@ -24,6 +24,8 @@
 		locked: false,
 		wantedLock: false,
 		edgeArmed: false,
+		edgeSince: 0,
+		lockRetry: false,
 		lastClient: { x: null, y: null },
 		lastScreen: { x: null, y: null },
 		lastMouseAt: 0,
@@ -33,6 +35,7 @@
 		flushDelay: null,
 		inFlight: false,
 		sending: false,
+		useSocket: false,
 		cooldownUntil: 0,
 		backend: '',
 		screen: null,
@@ -80,19 +83,16 @@
 		}
 		else if (R.controlling) {
 			var hint = R.locked
-				? jawnosT('Escape or the {0} edge returns here.', edgeLabel(R.edge))
-				: jawnosT('Press Release when you are done.');
+				? jawnosT('Move back to the {0} edge or press Escape.', edgeLabel(R.edge))
+				: jawnosT('Click or press a key to capture the pointer.');
 			var line = jawnosT('Controlling {0}. {1}', name, hint);
 			state.text(R.lastError ? (line + ' ' + R.lastError) : line);
 		}
 		else if (R.lastError) {
 			state.text(R.lastError);
 		}
-		else if (R.edgeArmed) {
-			state.text(jawnosT('Click to take control of {0}.', name));
-		}
 		else {
-			state.text(jawnosT('Ready. Click Take control, or click at the {0} edge.', edgeLabel(R.edge)));
+			state.text(jawnosT('Ready. Move into the {0} edge to control {1}.', edgeLabel(R.edge), name));
 		}
 		$('#remote_input_take').toggle(!R.controlling).prop('disabled', !R.on || !R.uuid);
 		$('#remote_input_return').toggle(R.controlling);
@@ -145,6 +145,7 @@
 	// it to the peer over one persistent control socket (the handshake is the
 	// expensive signed part), and the HTTP route remains the fallback.
 	function socketSend(events) {
+		if (!R.useSocket) { return false; }
 		if (typeof ws === 'undefined' || !ws || !ws['server'] || ws['server'].readyState !== 1) { return false; }
 		try {
 			ws['server'].send(JSON.stringify({
@@ -187,6 +188,7 @@
 				browser_tab_id: sessionStorage.getItem('browser_tab_id') || ''
 			},
 			success: function (r) {
+				if (r && typeof r.clipboard === 'string') { clipboardArrived(r.clipboard); }
 				if (!r || r.ok === 0 || r.ok === false) {
 					R.lastError = (r && r.error) || jawnosT('That machine refused the input.');
 					paints();
@@ -254,12 +256,36 @@
 	// change. Reading the wrong one is what pinned the other screen to an edge.
 	function onMove(e) {
 		if (!R.on) { return; }
+		var mx = numberOr(e.movementX, numberOr(e.webkitMovementX, 0));
+		var my = numberOr(e.movementY, numberOr(e.webkitMovementY, 0));
 		if (!R.controlling) {
-			var armed = !!(R.uuid && Date.now() > R.cooldownUntil && atEdge(e.clientX, e.clientY));
-			if (armed !== R.edgeArmed) {
-				R.edgeArmed = armed;
-				paints();
+			var now = Date.now();
+			var at = !!(R.uuid && now > R.cooldownUntil && atEdge(e.clientX, e.clientY) && !isControlTarget(e));
+			if (!at) {
+				R.edgeSince = 0;
+				if (R.edgeArmed) { R.edgeArmed = false; paints(); }
 			}
+			else {
+				if (!R.edgeSince) { R.edgeSince = now; }
+				if (!R.edgeArmed) { R.edgeArmed = true; paints(); }
+				// A short dwell keeps a scrollbar or a button at the edge from
+				// taking the screen; the outward push is the monitor boundary.
+				if (now - R.edgeSince >= 70) {
+					var outward = true;
+					if (R.edge === 'left') { outward = mx ? mx < 0 : true; }
+					else if (R.edge === 'right') { outward = mx ? mx > 0 : true; }
+					else if (R.edge === 'top') { outward = my ? my < 0 : true; }
+					else { outward = my ? my > 0 : true; }
+					if (outward) {
+						R.lastClient = { x: e.clientX, y: e.clientY };
+						R.lastScreen = { x: e.screenX, y: e.screenY };
+						take();
+						return;
+					}
+				}
+			}
+			R.lastClient = { x: e.clientX, y: e.clientY };
+			R.lastScreen = { x: e.screenX, y: e.screenY };
 			return;
 		}
 		var dx = 0, dy = 0;
@@ -320,27 +346,35 @@
 		return R.pos.y > 0.03;
 	}
 
+	function tryLock() {
+		if (!R.controlling || R.locked) { return; }
+		R.wantedLock = true;
+		try {
+			var target = document.documentElement;
+			if (!target.requestPointerLock) { R.wantedLock = false; R.lockRetry = true; return; }
+			var p = target.requestPointerLock();
+			if (p && p.catch) {
+				p.catch(function () { R.wantedLock = false; R.lockRetry = true; paints(); });
+			}
+		}
+		catch (e) { R.wantedLock = false; R.lockRetry = true; }
+	}
+
 	function take() {
 		if (!R.on || !R.uuid || R.controlling) { return; }
 		R.controlling = true;
 		R.lastError = '';
 		R.edgeArmed = false;
+		R.edgeSince = 0;
+		R.lockRetry = false;
 		R.pos = startPosition(R.edge);
 		R.returnArmed = false;
 		R.lastClient = { x: null, y: null };
 		R.lastScreen = { x: null, y: null };
 		R.wantedLock = true;
-		try {
-			var target = document.documentElement;
-			if (target.requestPointerLock) {
-				var p = target.requestPointerLock();
-				if (p && p.catch) { p.catch(function () { R.wantedLock = false; paints(); }); }
-			}
-			else {
-				R.wantedLock = false;
-			}
-		}
-		catch (e) { R.wantedLock = false; }
+		R.cursorWas = document.documentElement.style.cursor;
+		document.documentElement.style.cursor = 'none';
+		tryLock();
 		var type = $('#remote_input_type');
 		if (type.length) { type.val(''); }
 		try {
@@ -364,6 +398,8 @@
 		catch (e) {}
 		R.locked = false;
 		R.wantedLock = false;
+		R.lockRetry = false;
+		document.documentElement.style.cursor = R.cursorWas || '';
 		paints();
 	}
 
@@ -431,6 +467,43 @@
 		pushEvent({ t: 'type', s: text });
 	}
 
+	function clipboardArrived(text) {
+		text = (text === undefined || text === null) ? '' : String(text);
+		var box = $('#remote_input_clipboard');
+		if (box.length) { box.hide().val(''); }
+		if (navigator.clipboard && navigator.clipboard.writeText) {
+			navigator.clipboard.writeText(text).catch(function () { clipboardFallback(text); });
+			return;
+		}
+		clipboardFallback(text);
+	}
+
+	function clipboardFallback(text) {
+		var box = $('#remote_input_clipboard');
+		if (!box.length) { return; }
+		box.val(text).show().focus().select();
+	}
+
+	function clipboardGet() {
+		if (!R.controlling || !R.uuid) { return; }
+		pushEvent({ t: 'clipboard_get' });
+	}
+
+	function clipboardPaste() {
+		if (!R.controlling || !R.uuid) { return; }
+		if (navigator.clipboard && navigator.clipboard.readText) {
+			navigator.clipboard.readText().then(function (text) {
+				if (text) { pushEvent({ t: 'paste', s: text }); }
+				else { pushEvent({ t: 'key', k: 'ctrl+v' }); }
+			}).catch(function () {
+				// no local clipboard permission: let the remote paste its own
+				pushEvent({ t: 'key', k: 'ctrl+v' });
+			});
+			return;
+		}
+		pushEvent({ t: 'key', k: 'ctrl+v' });
+	}
+
 	// --------------------------------------------------------------- listeners
 
 	function bind() {
@@ -453,15 +526,11 @@
 
 		document.addEventListener('pointerdown', function (e) {
 			if (!R.on) { return; }
-			if (!R.controlling) {
-				if (R.edgeArmed && Date.now() > R.cooldownUntil && atEdge(e.clientX, e.clientY) && !isControlTarget(e)) {
-					e.preventDefault();
-					e.stopPropagation();
-					take();
-				}
-				return;
-			}
+			if (!R.controlling) { return; }
 			if (isControlTarget(e)) { return; }
+			// A click is a gesture, so it is the moment a free pointer can be
+			// captured and the other screen becomes the active one.
+			if (!R.locked) { tryLock(); }
 			var b = e.button === 2 ? 'right' : (e.button === 1 ? 'middle' : 'left');
 			e.preventDefault();
 			e.stopPropagation();
@@ -495,7 +564,8 @@
 
 		document.addEventListener('keydown', function (e) {
 			if (!R.on || !R.controlling) { return; }
-			if (e.target && e.target.id === 'remote_input_type') { return; }
+			if (e.target && (e.target.id === 'remote_input_type' || e.target.id === 'remote_input_clipboard')) { return; }
+			if (!R.locked) { tryLock(); }
 			if (e.key === 'Escape') {
 				e.preventDefault();
 				e.stopPropagation();
@@ -505,12 +575,26 @@
 			if (e.key === 'Control' || e.key === 'Shift' || e.key === 'Alt' || e.key === 'Meta') {
 				return;
 			}
+			var clip = e.ctrlKey || e.metaKey;
+			var pasteKey = clip && (e.code === 'KeyV' || e.key === 'v' || e.key === 'V');
+			if (pasteKey) {
+				e.preventDefault();
+				e.stopPropagation();
+				clipboardPaste();
+				return;
+			}
 			e.preventDefault();
 			e.stopPropagation();
 			var typedChar = typeFromKey(e);
 			if (typedChar) { typed(typedChar); return; }
 			var spec = keySpec(e);
-			if (spec) { pushEvent({ t: 'key', k: spec }); }
+			if (spec) {
+				pushEvent({ t: 'key', k: spec });
+				if (clip && (e.code === 'KeyC' || e.key === 'c' || e.key === 'C')) {
+					// let the far app copy, then bring its selection home
+					setTimeout(clipboardGet, 250);
+				}
+			}
 		}, true);
 
 		document.addEventListener('pointerlockchange', function () {
@@ -519,12 +603,20 @@
 				release('lock ended');
 			}
 			else {
+				if (R.locked) {
+					R.lockRetry = false;
+					R.wantedLock = true;
+					document.documentElement.style.cursor = 'none';
+				}
 				paints();
 			}
 		});
 
 		document.addEventListener('pointerlockerror', function () {
 			R.wantedLock = false;
+			R.lockRetry = true;
+			// leave the pointer visible so the next click can be aimed
+			document.documentElement.style.cursor = R.cursorWas || '';
 			paints();
 		});
 
@@ -563,6 +655,7 @@
 		$(document).on('change', '#remote_control_machine_select', function () {
 			// the panel re-renders for the new peer; never leave the old peer held
 			if (R.controlling) { release('machine changed'); }
+			R.useSocket = false;
 			R.uuid = $(this).val() || '';
 			R.lastError = '';
 			paints();
@@ -607,6 +700,9 @@
 	window.jawnosRemoteInputResult = function (data) {
 		if (!data) { return; }
 		if (data.remote_uuid && R.uuid && data.remote_uuid !== R.uuid) { return; }
+		if (data.socket === 1) { R.useSocket = true; }
+		else if (data.socket === 0) { R.useSocket = false; }
+		if (typeof data.clipboard === 'string') { clipboardArrived(data.clipboard); }
 		if (data.ok === 0 || data.ok === false) {
 			R.lastError = data.error || jawnosT('That machine refused the input.');
 			paints();
@@ -630,6 +726,7 @@
 		if (!p.length) { stop(); return; }
 		var uuid = selectedUuid();
 		if (R.controlling && uuid && R.uuid && uuid !== R.uuid) { release('machine changed'); }
+		if (uuid !== R.uuid) { R.useSocket = false; }
 		R.uuid = uuid;
 		R.edge = currentEdge();
 		R.on = $('#remote_input_enabled').is(':checked');
