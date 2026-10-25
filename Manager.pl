@@ -21680,6 +21680,21 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 		});
 	}
 
+	# A duration reading is a live meter while a session runs: the watcher only
+	# passes every twenty minutes, and a light is otherwise redrawn only on a
+	# start or stop, so an open panel would stand still while the session grows.
+	# Re-read it at the moment the panel is asked for; the cache is left to the
+	# watcher, so a poll cannot race it or leave a reading behind as the budget.
+	if ($circumstance eq 'duration' && ($budget->{'budget'} || '') =~ /[0-9]/ && &subs::open_session_uuid($app)) {
+		my $fresh = eval { return &budget_calculator({
+			app => $app,
+			circumstance => $circumstance,
+			scope => $budget->{'scope_name'},
+			budget => $budget->{'budget'},
+		}) };
+		$budget = $fresh if $fresh && ($fresh->{'is_scope'} || '') eq 'yes' && ($fresh->{'circumstance'} || '') eq $circumstance;
+	}
+
 	# Both comparisons are read for the same share of the period, so an hour or a
 	# day only part done is not held against the whole of its budget and its whole
 	# typical. A completed (or rolling) window has share 1 and reads as before.

@@ -1,6 +1,9 @@
 
 var budgetConfigTimeout;
 var timeStops = [];
+// one interval per app whose open duration light is following a running session
+var budgetLightIntervals = {};
+var budgetLightIntervalMs = 60000;
 $(document).on('click', '#budget, #budget_refresh', function() {
 	budgetInit()
 });
@@ -518,11 +521,51 @@ function budgetLightRestore(app) {
 	if (circumstance) { budgetLight(app, circumstance, 'open'); }
 }
 
+function budgetLightStopTimer(app) {
+	if (budgetLightIntervals[app]) {
+		clearInterval(budgetLightIntervals[app]);
+		delete budgetLightIntervals[app];
+	}
+}
+
+// An open duration light is a live meter. While the app has a session running,
+// re-read the panel so the time it shows grows with the session instead of
+// standing at the value from when it was opened (the watcher only passes every
+// twenty minutes, and a start or a stop is otherwise the only redraw).
+function budgetLightRefresh(app, circumstance, blci, wind) {
+	if (!blci.is(':visible') || blci.attr('circumstance') != circumstance) {
+		budgetLightStopTimer(app);
+		return;
+	}
+	var running = wind.find('.appointment_header_background').attr('running_uuid') || '';
+	if (!running) {
+		budgetLightStopTimer(app);
+		return;
+	}
+	if (blci.data('budget_light_refreshing')) { return; }
+	blci.data('budget_light_refreshing', true);
+	$.ajax({
+		url: '/manager/budget/current_information',
+		type: 'GET',
+		data: { timestamp: Date.now(), app: app, circumstance: circumstance },
+		success: function(response) {
+			if (blci.is(':visible') && blci.attr('circumstance') == circumstance) {
+				blci.html(response);
+				appointment_chron();
+			}
+		},
+		complete: function() {
+			blci.data('budget_light_refreshing', false);
+		}
+	});
+}
+
 function budgetLight(app,circumstance,status) {
 	var blci = $('.budget_current_information[app="' + app + '"]');
 	var wind = blci.closest('.wind');
 	var header;
 	if ((blci.is(':visible') && status != 'open') && blci.attr('circumstance') == circumstance) {
+		budgetLightStopTimer(app);
 		blci.hide();
 		blci.attr('status', 'closed');
 		circumstance = undefined;
@@ -532,6 +575,7 @@ function budgetLight(app,circumstance,status) {
 //		cacheSet({ 'app': app, 'context': 'header' }, { 'timestamp': timestamp, 'header': header });
 	}
 	else {
+		budgetLightStopTimer(app);
 		$.ajax({
 			url: '/manager/budget/current_information',
 			type: 'GET',
@@ -543,6 +587,17 @@ function budgetLight(app,circumstance,status) {
 				appointment_chron();
 				header = blci.html();
 //				cacheSet({ 'app': app, 'context': 'header' }, { 'timestamp': timestamp, 'header': header });
+				// only a duration budget grows on its own; the others read counts or
+				// money that a running session does not change
+				budgetLightStopTimer(app);
+				if (circumstance == 'duration') {
+					var running = wind.find('.appointment_header_background').attr('running_uuid') || '';
+					if (running) {
+						budgetLightIntervals[app] = setInterval(function() {
+							budgetLightRefresh(app, circumstance, blci, wind);
+						}, budgetLightIntervalMs);
+					}
+				}
 			}
 		});
 	}
