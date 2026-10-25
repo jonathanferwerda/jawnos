@@ -1128,7 +1128,7 @@ sub utility_runner() {
 		my $announced = &subs::cache_get({ app => '__president', context => 'wake', subcontext => 'announced' }) || '';
 		if ($fingerprint ne $announced) {
 			&subs::cache_set({ app => '__president', context => 'wake', subcontext => 'announced', warranty => '-1d' }, $fingerprint);
-			&subs::cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &subs::rightNow() + 8000);
+			&subs::cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &subs::rightNow() + 15000);
 			&subs::subprocessor(sub { &subs::remote_available_announce(); }, { name => 'remote availability' });
 		}
 	}

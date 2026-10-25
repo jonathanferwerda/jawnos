@@ -4223,27 +4223,29 @@ sub remote_available_announce {
 		$newest = $max if $max > $newest;
 	}
 	my $pulled = 0;
-	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
-		my $rsig = $rm->{'signatorial'} || '';
-		next unless $rsig && $rsig ne $me;
-		# A phone's roster can be stale after sleep; a machine seen in the last
-		# quarter hour is still worth telling.
-		my $recent = (($rm->{'server_time'} || 0) + 15 * 60 * 1000) > &rightNow();
-		next unless ($rm->{'connection'} || '') eq 'active' || $recent;
+	my @peers = grep {
+		my $rsig = $_->{'signatorial'} || '';
+		$rsig && $rsig ne $me
+			&& ((($_->{'connection'} || '') eq 'active')
+				|| (($_->{'server_time'} || 0) + 15 * 60 * 1000) > &rightNow())
+	} @{ &db_select('remote_machines')->hashes || [] };
+	# Active peers first: the hold that keeps us up is set when the first peer
+	# says it needs the rows, not after the slowest unreachable one has timed out.
+	@peers = sort { (($b->{'connection'} || '') eq 'active') <=> (($a->{'connection'} || '') eq 'active') } @peers;
+	foreach my $rm ( @peers ) {
 		my ($ua, $p) = &peer_useragent($rm);
 		next unless $ua;
 		my $res = eval {
-			$ua->connect_timeout(3)->inactivity_timeout(5)
+			$ua->connect_timeout(2)->inactivity_timeout(3)
 				->post($p->{'manager'} . '/manager/available?signatorial=' . $me
 					=> json => { signatorial => $me, newest => $newest })->result;
 		};
 		next unless $res && $res->is_success;
 		my $h = eval { decode_json $res->body } || {};
-		$pulled++ if $h->{'pull'};
-	}
-	if ($pulled) {
+		next unless $h->{'pull'};
+		$pulled++;
 		# A peer is pulling from us now: stay up long enough to answer it.
-		&cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &rightNow() + 30000);
+		&cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &rightNow() + 35000);
 	}
 	return $pulled;
 }
