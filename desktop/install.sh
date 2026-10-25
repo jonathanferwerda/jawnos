@@ -85,10 +85,10 @@ if command -v gst-inspect-1.0 >/dev/null 2>&1; then
 		with_va=1
 	fi
 fi
+os_id=$( . /etc/os-release 2>/dev/null || true; echo "${ID:-}${ID_LIKE:-}" )
 if [ "$with_view" -eq 0 ] || [ "$with_va" -eq 0 ]; then
 	echo "install.sh: the embedded view / video want WebKitGTK 4.1 and the"
 	echo "  GStreamer plugins (including a VA-API plugin for GPU decode):"
-	os_id=$( . /etc/os-release 2>/dev/null || true; echo "${ID:-}${ID_LIKE:-}" )
 	case "$os_id" in
 		*arch*|*manjaro*)
 			echo "  sudo pacman -S webkit2gtk-4.1 gst-plugins-base gst-plugins-good \\"
@@ -111,6 +111,20 @@ if [ "$with_view" -eq 0 ] || [ "$with_va" -eq 0 ]; then
 			echo "  VA-API plugin (gst-plugin-va / gstreamer1.0-vaapi). See desktop/README.md."
 			;;
 	esac
+fi
+
+# Chat carries SMS, and a phone's message is full of emoji: without a colour
+# emoji font every one is a blank box. Same non-fatal treatment as the view.
+# The dependency checker installs it with the other desktop extras (--desktop).
+if command -v fc-list >/dev/null 2>&1 && ! fc-list 2>/dev/null | grep -qi emoji; then
+	echo "install.sh: no colour emoji font found; Chat's emoji (SMS) will not draw."
+	case "$os_id" in
+		*arch*|*manjaro*) echo "  sudo pacman -S noto-fonts-emoji" ;;
+		*debian*|*ubuntu*) echo "  sudo apt install fonts-noto-color-emoji" ;;
+		*fedora*|*rhel*) echo "  sudo dnf install google-noto-emoji-color-fonts" ;;
+		*) echo "  install a colour emoji font (Noto Color Emoji) with your package manager" ;;
+	esac
+	echo "  or install the desktop extras: perl $REPO_ROOT/scripts/jawnos_deps.pl --desktop --install"
 fi
 fi
 

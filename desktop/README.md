@@ -13,8 +13,9 @@ normal Linux desktop.
 
 It runs on any distribution: the only requirements are `python3`, BlueZ, and —
 for the GUI — GTK 3 (`python3-gi`). The embedded JawnOS view (below) also wants
-WebKitGTK 4.1, and smooth video wants the GStreamer plugin set with a VA-API
-plugin. Everything is per-user; nothing needs root.
+WebKitGTK 4.1, smooth video wants the GStreamer plugin set with a VA-API
+plugin, and Chat's SMS emoji want a colour emoji font (Noto Color Emoji).
+Everything is per-user; nothing needs root.
 
 ## Layout
 
@@ -85,6 +86,19 @@ packages (the base table alone will not play video well — see
 `install.sh` checks for these and prints the right command for your distro if
 they are missing. On Arch the VA-API plugin used to be a separate
 `gst-plugin-va` package; on current Arch it ships inside `gst-plugins-bad`.
+
+Chat relays SMS through the phone, so its emoji are part of the conversation.
+If the system has no colour emoji font, every emoji draws as a blank box:
+
+| Distro | emoji font |
+|---|---|
+| Arch / Manjaro | `noto-fonts-emoji` |
+| Debian / Ubuntu | `fonts-noto-color-emoji` |
+| Fedora | `google-noto-emoji-color-fonts` |
+
+`install.sh` checks for it too, and `perl scripts/jawnos_deps.pl --desktop
+--install` installs it with the other desktop extras (the first run of `./jawn`
+does that automatically when a display is present).
 
 Every system also needs the **VA-API driver for its GPU** (below), or video
 decodes in software.

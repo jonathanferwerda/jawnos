@@ -390,7 +390,8 @@ the screen.
   models), and a `whisper.cpp` build with the base model (audio transcription).
 - Optional, for the Linux desktop app (`desktop/`, the phone's dashboard and BLE bridge on a
   computer): `python3-gi`, `python3-dbus`, BlueZ, **WebKitGTK 4.1** (the embedded view), the
-  **GStreamer** plugin set with the **VA-API** decode plugin, and — importantly — the **VA-API
+  **GStreamer** plugin set with the **VA-API** decode plugin, a **colour emoji font** (Noto Color
+  Emoji) so Chat's SMS emoji draw, and — importantly — the **VA-API
   driver for your GPU**. Without the driver the plugin exposes nothing and HD video falls back to
   software decode (choppy, and heavy on the CPU). See
   [`desktop/README.md`](desktop/README.md#media-and-video).
@@ -413,7 +414,8 @@ perl scripts/jawnos_deps.pl           # report, then offer to install
 perl scripts/jawnos_deps.pl --report  # report only; exits non-zero if anything is missing
 perl scripts/jawnos_deps.pl --sh      # print the install commands as a shell script
 perl scripts/jawnos_deps.pl --desktop # also check/install the desktop app's WebKitGTK
-                                      # and GStreamer media plugins (optional)
+                                      # and GStreamer media plugins, and the colour
+                                      # emoji font Chat's SMS emoji need (optional)
 ```
 
 ### Android (Termux)
@@ -494,7 +496,8 @@ tmux weasyprint autossh net-tools ollama
 # your GPU (pick one below), or HD video decodes in software and is choppy.
 sudo apt install python3-gi python3-dbus bluez gir1.2-webkit2-4.1 \
 gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
-gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-vaapi vainfo
+gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-vaapi vainfo \
+fonts-noto-color-emoji
 #   Intel (Gen8+):  sudo apt install intel-media-va-driver-non-free
 #   Intel (older):  sudo apt install i965-va-driver
 #   AMD / Mesa:     sudo apt install mesa-va-drivers
@@ -557,7 +560,7 @@ autossh lm_sensors ollama cmake python-pip
 # -- they pin each other exactly.
 sudo pacman -S webkit2gtk-4.1 python-gobject python-dbus bluez bluez-utils \
 gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly \
-gst-libav libva-utils
+gst-libav libva-utils noto-fonts-emoji
 #   Intel Gen8+:  sudo pacman -S intel-media-driver
 #   Intel older:  sudo pacman -S libva-intel-driver
 #   AMD:          sudo pacman -S libva-mesa-driver

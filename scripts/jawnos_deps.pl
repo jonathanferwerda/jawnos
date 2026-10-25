@@ -9,7 +9,8 @@
 #   perl scripts/jawnos_deps.pl --install  # install without prompting
 #   perl scripts/jawnos_deps.pl --desktop  # also check/install the desktop app's
 #                                          # WebKitGTK + GStreamer media packages
-#                                          # (optional: their absence is not fatal)
+#                                          # and a colour emoji font (optional:
+#                                          # their absence is not fatal)
 #   perl scripts/jawnos_deps.pl --extras-only --install  # only the optional apps
 #                                          # (Piper); run after a code update
 #   perl scripts/jawnos_deps.pl --no-extras # skip the optional apps
@@ -179,11 +180,12 @@ my @capabilities = (
 	}
 
 # --- desktop extras (opt-in: --desktop) -------------------------------------
-# The Linux desktop app's embedded view needs WebKitGTK, and it decodes media
+# The Linux desktop app's embedded view needs WebKitGTK, it decodes media
 # through system GStreamer (without a VA-API plugin, HD video is software-
-# decoded and choppy). These are optional -- a headless server or the phone does
-# not need them -- so a missing extra never fails the check. They are only
-# checked where there is a desktop and a package manager to install them.
+# decoded and choppy), and Chat draws SMS emoji with a colour emoji font. These
+# are optional -- a headless server or the phone does not need them -- so a
+# missing extra never fails the check. They are only checked where there is a
+# desktop and a package manager to install them.
 my @desktop = (
 	{ label => 'WebKitGTK 4.1 (embedded view)', check => \&have_webkit,
 	  apt => 'gir1.2-webkit2-4.1', pacman => 'webkit2gtk-4.1', termux => '' },
@@ -191,6 +193,8 @@ my @desktop = (
 	  apt => 'gstreamer1.0-vaapi', pacman => 'gst-plugin-va', termux => '' },
 	{ label => 'GStreamer tools', check => \&have_gst_tools,
 	  apt => 'gstreamer1.0-tools', pacman => 'gstreamer', termux => '' },
+	{ label => 'Colour emoji font (Chat, SMS and the interface)', check => \&have_emoji_font,
+	  apt => 'fonts-noto-color-emoji', pacman => 'noto-fonts-emoji', termux => '' },
 );
 
 # --- checks ------------------------------------------------------------------
@@ -277,6 +281,21 @@ sub have_gst_va {
 	return 0;
 }
 
+# A colour emoji font is what draws Chat's SMS emoji, the emoji picker and every
+# emoji in the interface. Fontconfig knows every installed face and an emoji
+# family always says "Emoji" in its name; the file globs cover a stale cache or a
+# fontconfig that is not installed at all.
+sub have_emoji_font {
+	my $out = `fc-list 2>/dev/null`;
+	return 1 if defined $out && $out =~ /emoji/i;
+	my $home = $ENV{'HOME'} || '';
+	foreach my $pat ( "$home/.local/share/fonts/*Emoji*", '/usr/share/fonts/*/*Emoji*', '/usr/share/fonts/*/*/*Emoji*' ) {
+		my @hit = glob($pat);
+		return 1 if scalar @hit;
+	}
+	return 0;
+}
+
 sub have_module {
 	my $m = shift;
 	my $ok = system("perl", "-M$m", "-e1", "2>/dev/null") == 0 ? 1 : 0;
@@ -360,7 +379,7 @@ if ($desktop && ($platform eq 'arch' || $platform eq 'debian')) {
 	}
 	else {
 		print "desktop extras missing (optional -- the dashboard works without the view,\n";
-		print "and video merely decodes in software):\n";
+		print "video merely decodes in software, and emoji fall back to the system):\n";
 		foreach my $d (@missing_desktop) {
 			printf "  - %-44s (%s)\n", $d->{'label'}, pkg_for($d);
 		}
