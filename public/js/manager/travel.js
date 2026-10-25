@@ -218,10 +218,30 @@ function jawnGpsFix() {
 	var fix = null;
 	try { fix = JSON.parse(raw); } catch (e) { return null; }
 	if (!fix || fix.provider !== 'gps' || !fix.latitude || !fix.longitude) { return null; }
-	var age = (typeof fix.elapsedMs === 'number') ? fix.elapsedMs : (Date.now() - (fix.time || 0));
-	if (!isFinite(age) || age < 0) { age = Date.now() - (fix.time || 0); }
+	// Age is measured from the fix's own wall-clock time, not the elapsedMs the
+	// file carried when it was written: a file written four minutes ago with
+	// elapsedMs 0 is a four-minute-old fix, not a fresh one.
+	var age;
+	if (fix.time) { age = Date.now() - fix.time; }
+	else if (typeof fix.elapsedMs === 'number') { age = fix.elapsedMs + (fix.sampled ? Date.now() - fix.sampled : 0); }
+	else { age = 0; }
+	if (!isFinite(age) || age < 0) { age = 0; }
 	fix.age = age;
 	return fix;
+}
+
+// Poll for a fix newer than the moment the person pressed. The sample is
+// asynchronous; twelve seconds is the same bound the old getCurrentPosition used.
+function jawnGpsWait(after, timeout, callback) {
+	var started = Date.now();
+	var tick = function () {
+		var fix = jawnGpsFix();
+		// A fix from a second or two before the press is still this place.
+		if (fix && fix.time && fix.time >= after - 2000) { callback(fix); return; }
+		if (Date.now() - started >= timeout) { callback(null); return; }
+		setTimeout(tick, 500);
+	};
+	tick();
 }
 
 function continent_cancel(app) {
@@ -248,60 +268,69 @@ function continent_record(setter) {
 		continent_record_anyway({ app: app, scope: scope, uuid: uuid, purpose: purpose, timestamp: timestamp, device: device }, complete);
 	};
 
-	// A real GPS fix from the last fifteen minutes describes where the person is
-	// now. Older than that is a stale place, not a current one: hand the point
-	// to the anyway route rather than restamp an old coordinate as today's.
-	var fix = jawnGpsFix();
-	if (!fix || fix.age > 15 * 60 * 1000) {
-		// Ask the service to start (a first run has no fix yet) and file the point
-		// through the anyway route, which can ask a deck or teletype with a real
-		// GPS. Never a network estimate.
-		if (window.JawnLocation && typeof window.JawnLocation.start === 'function') {
-			try { window.JawnLocation.start(); } catch (e) {}
-		}
+	// Ask for a fresh sample now: a start or stop is "where am I as I begin or
+	// end this", not the last four-minute beat. The appointment's own route has
+	// already run; this attaches the place when the GPS answers. A desktop has
+	// no bridge and goes straight to the anyway route (a deck or teletype).
+	if (!window.JawnLocation || typeof window.JawnLocation.sample !== 'function') {
 		anyway();
 		return;
 	}
+	var askedAt = Date.now();
+	try { window.JawnLocation.sample(); } catch (e) {}
 
-	// A running appointment may ask for fixes faster than the service's resting
-	// pace. Retune it; the service keeps the GPS warm and the next fix arrives
-	// without a browser timer.
-	var pace = 0;
-	if (navigation && navigation != 'once') {
-		try { pace = numeral(navigation).value(); } catch (e) { pace = 0; }
-		if (pace > 0 && window.JawnLocation && typeof window.JawnLocation.startAt === 'function') {
-			window.JawnLocation.startAt(String(pace), '0');
+	jawnGpsWait(askedAt, 12000, function (fresh) {
+		// A fresh fix is what the press asked for. A cached one is only used when
+		// the GPS did not answer in time, and its own timestamp is kept - never
+		// restamped as today's.
+		var fix = fresh || jawnGpsFix();
+		if (!fix || fix.age > 15 * 60 * 1000) {
+			// Indoors or in a pocket: file the appointment with no place rather
+			// than a guess.
+			anyway();
+			return;
 		}
-	}
 
-	var payload = {
-		latitude: fix.latitude,
-		longitude: fix.longitude,
-		altitude: fix.altitude,
-		speed: fix.speed,
-		accuracy: fix.accuracy,
-		provider: 'gps',
-		timestamp: fix.time || Date.now(),
-		user_agent: navigator.userAgent,
-		hostname: hostname,
-		pathname: pathname,
-		protocol: protocol,
-		purpose: purpose,
-		scope: scope,
-		app: app,
-		device: device,
-		uuid: uuid,
-		navigation: setter['navigation']
-	};
-	if (pace > 0) { payload['next_navigation'] = Date.now() + pace; }
-	$.ajax({
-		url: '/manager/continent/record',
-		type: 'POST',
-		data: payload,
-		success: function(response) {
-			if (complete) { complete(response); }
-			return response;
-		},
+		// A running appointment may ask for fixes faster than the service's
+		// resting pace. Retune it; the service keeps the GPS warm and the next
+		// fix arrives without a browser timer.
+		var pace = 0;
+		if (navigation && navigation != 'once') {
+			try { pace = numeral(navigation).value(); } catch (e) { pace = 0; }
+			if (pace > 0 && window.JawnLocation && typeof window.JawnLocation.startAt === 'function') {
+				window.JawnLocation.startAt(String(pace), '0');
+			}
+		}
+
+		var payload = {
+			latitude: fix.latitude,
+			longitude: fix.longitude,
+			altitude: fix.altitude,
+			speed: fix.speed,
+			accuracy: fix.accuracy,
+			provider: 'gps',
+			timestamp: fix.time || Date.now(),
+			user_agent: navigator.userAgent,
+			hostname: hostname,
+			pathname: pathname,
+			protocol: protocol,
+			purpose: purpose,
+			scope: scope,
+			app: app,
+			device: device,
+			uuid: uuid,
+			navigation: setter['navigation']
+		};
+		if (pace > 0) { payload['next_navigation'] = Date.now() + pace; }
+		$.ajax({
+			url: '/manager/continent/record',
+			type: 'POST',
+			data: payload,
+			success: function(response) {
+				if (complete) { complete(response); }
+				return response;
+			},
+		});
 	});
 }
 

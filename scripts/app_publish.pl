@@ -22,7 +22,7 @@ use FindBin;
 use Cwd qw(abs_path);
 use File::Slurp qw(read_file write_file);
 use Digest::SHA qw(sha256_hex);
-use Mojo::JSON qw(encode_json);
+use Mojo::JSON qw(encode_json decode_json);
 
 my $root = abs_path("$FindBin::Bin/..");
 my $dir  = "$root/releases";
@@ -129,6 +129,24 @@ foreach my $j (@jobs) {
 		system('gh', 'release', 'delete-asset', $tag, $name, '--repo', $repo, '--yes') == 0
 			and print "removed stale asset $name\n";
 	}
+}
+
+# Keep the release notes naming the builds that are actually on the release.
+# The notes used to be written only when the release was first created, so a
+# later publish left the body advertising an old versionCode while the assets
+# (and app_release.json) were current.
+my @current;
+foreach my $p ( 'app', 'api' ) {
+	my $path = "$dir/$MANIFEST{$p}";
+	next unless -f $path;
+	my $m = eval { decode_json(read_file($path)) } || next;
+	next unless $m->{'product'} && $m->{'versionName'};
+	push @current, "$m->{'product'} $m->{'versionName'} (versionCode $m->{'versionCode'})";
+}
+if (@current) {
+	my $notes = "The newest JawnOS app builds, served as release assets.\n\n" . join("\n", @current);
+	system('gh', 'release', 'edit', $tag, '--repo', $repo, '--notes', $notes) == 0
+		or warn "could not update the release notes for $tag\n";
 }
 
 print "published https://github.com/$repo/releases/tag/$tag\n";
