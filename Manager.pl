@@ -22716,6 +22716,30 @@ post '/manager/clock/alarm' => sub($c) {
 			$alarm->{'stop_at'} = $now;
 		}
 	}
+	elsif ($action eq 'skip') {
+		my $uuid = $c->param('uuid') || '';
+		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{$alarms};
+		if (!$alarm) {
+			$error = 'missing';
+		}
+		else {
+			# Skip the occurrence that is coming (or the snooze that stands in
+			# for it) without touching the days or the switch.
+			my $next;
+			if ($alarm->{'snooze_until'} && $alarm->{'snooze_until'} > $now) {
+				$next = $alarm->{'snooze_until'};
+			}
+			else {
+				$next = &subs::clock_alarm_next_ms($alarm, $now);
+			}
+			$alarm->{'skip_fire'} = $next || 0;
+			$alarm->{'snooze_until'} = 0;
+			$alarm->{'ringing'} = 0;
+			$alarm->{'ring_started'} = 0;
+			$alarm->{'ring_last'} = 0;
+			$alarm->{'stop_at'} = $now;
+		}
+	}
 	elsif ($action eq 'toggle') {
 		my $uuid = $c->param('uuid') || '';
 		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{$alarms};
@@ -22777,11 +22801,11 @@ post '/manager/clock/alarm' => sub($c) {
 	if ($action eq 'stop_all') {
 		foreach my $a (@{$alarms}) { &subs::clock_alarm_stop_sound($a->{'uuid'}); }
 	}
-	elsif ($action =~ /^(?:dismiss|snooze|toggle|save|delete)$/) {
+	elsif ($action =~ /^(?:dismiss|snooze|skip|toggle|save|delete)$/) {
 		&subs::clock_alarm_stop_sound($c->param('uuid') || '');
 	}
 	&subs::clock_poke($now);
-	my $rings_stopped = ($action =~ /^(?:dismiss|snooze|delete|stop_all)$/) ? 1 : 0;
+	my $rings_stopped = ($action =~ /^(?:dismiss|snooze|skip|delete|stop_all)$/) ? 1 : 0;
 	if (!$rings_stopped && ($action eq 'toggle' || $action eq 'save') && defined $c->param('enabled') && !$c->param('enabled')) {
 		$rings_stopped = 1;
 	}
@@ -40810,7 +40834,11 @@ sub notification_sender($m,$db) {
 	my $sound = $m->{'sound'} || 'ding.mp3';
 	my $sound_file = $m->{'settings'}->{$m->{'type'} . '_notification_sound'} || './public/sounds/notifications/' . $sound;
 	my $words = $m->{'words'} || $m->{'message'} || $m->{'settings'}->{$m->{'type'} ? $m->{'type'} . '_notification_text' : 'notification_text'};
-	if ($m->{'synth'}) {
+	if ($m->{'silent'}) {
+		# the caller already sounds this (the phone's alarm channel); the
+		# notification must not play a second sound over it
+	}
+	elsif ($m->{'synth'}) {
 		&subs::subprocessor(sub {
 			&subs::run_command($app, $m->{'synth'} . ' &');
 			if ($m->{'words'}) {
@@ -40852,7 +40880,8 @@ sub notification_sender($m,$db) {
 		my ($t, $b) = ($title, $message);
 		$t =~ s/"/'/g;
 		$b =~ s/"/'/g;
-		my $bc = `am broadcast -n com.termux/.app.JawnNotifyReceiver -a com.termux.app.JAWN_NOTIFY --es title "$t" --es message "$b" --es tag "$id" 2>&1`;
+		my $silent = $m->{'silent'} ? ' --ez silent true' : '';
+		my $bc = `am broadcast -n com.termux/.app.JawnNotifyReceiver -a com.termux.app.JAWN_NOTIFY --es title "$t" --es message "$b" --es tag "$id"$silent 2>&1`;
 		unless ($bc =~ /Broadcast completed/) {
 			`echo "$message" | termux-notification -i $id -t "$title" --vibrate "200,150,200,150" --image-path $image`;
 		}

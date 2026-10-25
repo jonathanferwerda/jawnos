@@ -29,8 +29,19 @@
 	.clock_add:hover, .clock_clear_finished:hover { background:var(--line); }
 	.clock_add[disabled] { opacity:.4; cursor:default; }
 	.clock_empty { opacity:.6; font-size:13px; padding:14px 4px; text-align:center; }
-	.clock_alarm { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:9px 10px; margin-bottom:9px; background:var(--panel); }
+	.clock_alarm { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:0; margin-bottom:9px; background:var(--panel); overflow:hidden; }
 	.clock_alarm.off { opacity:.58; }
+	.clock_alarm_head { display:flex; align-items:center; gap:8px; min-width:0; padding:8px 10px; cursor:pointer; }
+	.clock_alarm_head:hover { background:var(--line); }
+	.clock_alarm_caret { flex:0 0 auto; width:14px; height:14px; padding:0; border:none; background:transparent; color:inherit; cursor:pointer; font-size:0; line-height:0; }
+	.clock_alarm_caret::before { content:''; display:block; width:0; height:0; margin:0 auto; border-left:5px solid currentColor; border-top:4px solid transparent; border-bottom:4px solid transparent; transition:transform .15s; }
+	.clock_alarm.open .clock_alarm_caret::before { transform:rotate(90deg); }
+	.clock_alarm_head_time { flex:0 0 auto; font-size:19px; font-variant-numeric:tabular-nums; font-weight:600; }
+	.clock_alarm_head_label { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	.clock_alarm_head_devices { display:flex; gap:3px; flex-wrap:wrap; justify-content:flex-end; flex:0 1 auto; max-width:42%; }
+	.clock_machine_pill { font-size:10px; line-height:1.4; padding:1px 7px; border:1px solid var(--line); border-radius:999px; opacity:.85; white-space:nowrap; }
+	.clock_alarm_body { display:none; padding:0 10px 10px; }
+	.clock_alarm.open .clock_alarm_body { display:block; }
 	.clock_alarm_line { display:flex; align-items:center; gap:7px; }
 	.clock_alarm_time { font:inherit; font-size:25px; font-variant-numeric:tabular-nums; flex:0 0 auto; width:11ch; min-width:132px; padding:1px 4px;
 		border:1px solid transparent; border-radius:6px; background:transparent; color:inherit; }
@@ -49,6 +60,10 @@
 		background:transparent; color:inherit; opacity:.5; font-size:15px; line-height:1; }
 	.clock_alarm_delete:hover { opacity:1; background:var(--line); }
 	.clock_alarm_days { display:flex; align-items:center; gap:3px; margin:7px 0 2px; flex-wrap:wrap; }
+	.clock_alarm_when { display:flex; align-items:center; gap:8px; margin-top:7px; }
+	.clock_alarm_next { flex:1 1 auto; min-width:0; font-size:11px; opacity:.72; font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	.clock_alarm_skip { flex:0 0 auto; font:inherit; font-size:11px; padding:3px 9px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:999px; background:transparent; }
+	.clock_alarm_skip:hover { background:var(--line); }
 	.clock_day { font:inherit; font-size:11px; line-height:1; width:24px; height:24px; padding:0; cursor:pointer;
 		border:1px solid var(--line); border-radius:50%; background:transparent; color:inherit; opacity:.72; }
 	.clock_day.on { background-color:#2f8f6d; color:#fff; border-color:transparent; opacity:1; font-weight:700; }
@@ -153,12 +168,24 @@
 			<div class="clock_alarm_list">
 				<% foreach my $alarm ( @{$alarms} ) { %>
 					<% my $is_on = $alarm->{'enabled'} ? 1 : 0; %>
+					<% my %on_machine = map { $_ => 1 } @{ $alarm->{'machines'} || [] }; %>
 					<div class="clock_alarm<%= $is_on ? '' : ' off' %>" data-uuid="<%= $alarm->{'uuid'} %>" data-enabled="<%= $is_on %>">
+						<div class="clock_alarm_head" role="button" tabindex="0" aria-expanded="false">
+							<button type="button" class="clock_alarm_caret" tabindex="-1" aria-hidden="true"></button>
+							<span class="clock_alarm_head_time"><%= sprintf('%02d:%02d', $alarm->{'hour'}, $alarm->{'minute'}) %></span>
+							<span class="clock_alarm_head_label"><%= $alarm->{'label'} %></span>
+							<span class="clock_alarm_head_devices">
+								<% foreach my $m ( @{$machines} ) { %>
+									<% next unless $on_machine{$m->{'value'}}; %>
+									<span class="clock_machine_pill" data-machine="<%= $m->{'value'} %>"><%= $m->{'label'} %></span>
+								<% } %>
+							</span>
+							<label class="clock_switch" hint="<%= &subs::lang('alarm') %>"><input type="checkbox" class="clock_alarm_enabled"<%= $is_on ? ' checked' : '' %>></label>
+						</div>
+						<div class="clock_alarm_body">
 						<div class="clock_alarm_line">
 							<input type="time" class="clock_alarm_time" value="<%= sprintf('%02d:%02d', $alarm->{'hour'}, $alarm->{'minute'}) %>" aria-label="<%= &subs::lang('alarm') %>">
 							<input type="text" class="clock_alarm_label" value="<%= $alarm->{'label'} %>" maxlength="20" aria-label="<%= &subs::lang('label') %>">
-							<label class="clock_switch" hint="<%= &subs::lang('alarm') %>"><input type="checkbox" class="clock_alarm_enabled"<%= $is_on ? ' checked' : '' %>></label>
-							<button type="button" class="clock_alarm_delete" hint="<%= &subs::lang('delete') %>" aria-label="<%= &subs::lang('delete') %>">✕</button>
 						</div>
 						<div class="clock_alarm_days" role="group" aria-label="<%= &subs::lang('days') %>">
 							<% my $has_days = scalar @{ $alarm->{'days'} }; %>
@@ -167,6 +194,11 @@
 								<button type="button" class="clock_day<%= $on ? ' on' : '' %>" data-day="<%= $d %>" aria-pressed="<%= $on ? 'true' : 'false' %>"><%= $day_letters[$d] %></button>
 							<% } %>
 							<button type="button" class="clock_day clock_day_once<%= $has_days ? '' : ' on' %>" data-once="yes" aria-pressed="<%= $has_days ? 'false' : 'true' %>"><%= &subs::lang('once') %></button>
+						</div>
+						<div class="clock_alarm_when">
+							<span class="clock_alarm_next" data-next="<%= $alarm->{'next_at'} || 0 %>"></span>
+							<button type="button" class="clock_alarm_skip" hint="<%= &subs::lang('skip_today') %>"><%= &subs::lang('skip_today') %></button>
+							<button type="button" class="clock_alarm_delete" hint="<%= &subs::lang('delete') %>" aria-label="<%= &subs::lang('delete') %>">✕</button>
 						</div>
 						<div class="clock_alarm_extra">
 							<label class="clock_field">
@@ -179,7 +211,6 @@
 							<label class="clock_field clock_alarm_machines">
 								<span><%= &subs::lang('shared_with') %></span>
 								<div class="clock_machine_list" role="group" aria-label="<%= &subs::lang('shared_with') %>">
-									<% my %on_machine = map { $_ => 1 } @{ $alarm->{'machines'} || [] }; %>
 									<% foreach my $m ( @{$machines} ) { %>
 										<% my $on = $on_machine{$m->{'value'}} ? 1 : 0; %>
 										<button type="button" class="clock_machine<%= $on ? ' on' : '' %>" data-machine="<%= $m->{'value'} %>" aria-pressed="<%= $on ? 'true' : 'false' %>"><%= $m->{'label'} %></button>
@@ -205,6 +236,7 @@
 								<span><%= &subs::lang('ramp') %> · <%= $alarm->{'ramp'} %>s</span>
 								<input type="number" min="0" max="600" step="5" class="clock_alarm_ramp" value="<%= $alarm->{'ramp'} %>">
 							</label>
+						</div>
 						</div>
 					</div>
 				<% } %>

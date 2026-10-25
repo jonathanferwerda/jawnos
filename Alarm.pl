@@ -560,6 +560,13 @@ if ($ENV{PURPOSE} eq "alarm") {
 			$alarm_id = &alarm_timer();
 		}
 	});
+	# The phone's "Skip today" button leaves a small request here rather than
+	# calling the manager; apply it as soon as it appears. The file is absent
+	# nearly every time, so this is a stat, not a query.
+	Mojo::IOLoop->recurring(30 => sub {
+		eval { &subs::clock_skip_apply(); };
+		$log->error('clock skip: ' . $@) if $@;
+	});
 	# a cart left behind is remembered: every five minutes, remind if a cart stands
 	# and the house has left its vendors
 	Mojo::IOLoop->recurring(300 => sub {

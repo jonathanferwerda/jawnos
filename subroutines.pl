@@ -31662,10 +31662,15 @@ sub clock_device_broadcast {
 	if (defined $extra{'at'} && "$extra{'at'}" =~ /^\d+$/ && $extra{'at'} > 0) {
 		$command .= ' --el at ' . int($extra{'at'});
 	}
-	foreach my $key ( qw/uuid label app/ ) {
+	foreach my $key ( qw/uuid label app file/ ) {
 		my $value = $extra{$key};
 		next unless defined $value && length $value;
 		$command .= ' --es ' . $key . ' ' . &quote($value);
+	}
+	foreach my $key ( qw/volume ramp loop guard/ ) {
+		my $value = $extra{$key};
+		next unless defined $value && "$value" =~ /^-?\d+$/;
+		$command .= ' --ei ' . $key . ' ' . int($value);
 	}
 	eval {
 		&subprocessor(sub { `$command`; }, { name => 'clock device broadcast' });
@@ -31689,7 +31694,9 @@ sub clock_write_device_alarm {
 			$candidate = $alarm->{'snooze_until'};
 		}
 		elsif ($alarm->{'enabled'}) {
-			$candidate = &clock_alarm_next_ms($alarm, $now);
+			my $from = $now;
+			$from = $alarm->{'skip_fire'} if $alarm->{'skip_fire'} && $alarm->{'skip_fire'} > $now;
+			$candidate = &clock_alarm_next_ms($alarm, $from);
 		}
 		next unless $candidate;
 		if (!$next || $candidate < $next) {
@@ -31698,12 +31705,24 @@ sub clock_write_device_alarm {
 		}
 	}
 	my $file = &home('~/.president/clock_alarm.json');
-	my $payload = ($next && $next_alarm) ? {
-		at => $next,
-		uuid => ($next_alarm->{'uuid'} || ''),
-		label => ($next_alarm->{'label'} || ''),
-		app => ($next_alarm->{'app'} || ''),
-	} : undef;
+	my $payload;
+	if ($next && $next_alarm) {
+		my $sound = &clock_valid_alarm_sound($next_alarm->{'sound'}) || 'notifications/ring.mp3';
+		$payload = {
+			at => $next,
+			uuid => ($next_alarm->{'uuid'} || ''),
+			label => ($next_alarm->{'label'} || ''),
+			app => ($next_alarm->{'app'} || ''),
+			# The phone plays this itself on the alarm channel; the kind of
+			# sound and its ramp ride along so a reboot or an exact wake has
+			# them without another broadcast.
+			file => 'public/sounds/' . $sound,
+			volume => int($next_alarm->{'volume'} || 70),
+			ramp => int($next_alarm->{'ramp'} || 0),
+			loop => (&clock_sound_is_long($sound) ? 0 : 1),
+			guard => &clock_alarm_ring_length($next_alarm),
+		};
+	}
 	my $json = $payload ? encode_json($payload) : '';
 	my $old = -e $file ? (eval { read_file($file) } // '') : '';
 	return 0 if $old eq $json;
@@ -31720,11 +31739,39 @@ sub clock_write_device_alarm {
 sub clock_device_ring {
 	my ($alarm, $fire_at) = @_;
 	return 0 unless $alarm;
+	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
+	# The phone plays this itself, on the alarm channel: a chime repeats until
+	# Dismiss, and a long track plays once at the alarm's own volume.
 	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_RING',
 		uuid => ($alarm->{'uuid'} || ''),
 		label => ($alarm->{'label'} || ''),
 		app => ($alarm->{'app'} || ''),
 		at => ($fire_at || &rightNow()),
+		file => 'public/sounds/' . $sound,
+		volume => int($alarm->{'volume'} || 70),
+		ramp => int($alarm->{'ramp'} || 0),
+		loop => (&clock_sound_is_long($sound) ? 0 : 1),
+		guard => &clock_alarm_ring_length($alarm),
+	);
+	return 1;
+}
+
+# A timer's chime is the same promise as an alarm's; it goes through the same
+# alarm channel on a phone rather than the notification stream.
+sub clock_device_timer {
+	my $timer = shift;
+	return 0 unless $timer;
+	my $sound = &clock_valid_timer_sound($timer->{'sound'});
+	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_TIMER',
+		uuid => ($timer->{'uuid'} || ''),
+		label => ($timer->{'label'} || ''),
+		app => ($timer->{'app'} || ''),
+		at => ($timer->{'ends_at'} || &rightNow()),
+		file => 'public/sounds/' . $sound,
+		volume => 70,
+		ramp => 0,
+		loop => 0,
+		guard => 60000,
 	);
 	return 1;
 }
@@ -31815,6 +31862,7 @@ sub clock_normalize_alarm {
 		machines => \@machines,
 		last_fire => int($in->{'last_fire'} || 0),
 		snooze_until => int($in->{'snooze_until'} || 0),
+		skip_fire => int($in->{'skip_fire'} || 0),
 		stop_at => int($in->{'stop_at'} || 0),
 		ringing => ($in->{'ringing'} ? 1 : 0),
 		ring_started => int($in->{'ring_started'} || 0),
@@ -31960,7 +32008,9 @@ sub clock_next_wake {
 			$candidate = $a->{'snooze_until'};
 		}
 		elsif ($a->{'enabled'}) {
-			$candidate = &clock_alarm_next_ms($a, $now);
+			my $from = $now;
+			$from = $a->{'skip_fire'} if $a->{'skip_fire'} && $a->{'skip_fire'} > $now;
+			$candidate = &clock_alarm_next_ms($a, $from);
 		}
 		$next = $candidate if $candidate && (!$next || $candidate < $next);
 	}
@@ -32060,11 +32110,69 @@ sub clock_apps {
 	return \@out;
 }
 
+# The moment an alarm will next run, for the row's countdown. A snooze is the
+# next run; a skipped occurrence is not, so the search starts past it.
+sub clock_alarm_next_at {
+	my ($alarm, $now) = @_;
+	$now = &rightNow() unless defined $now;
+	return $alarm->{'snooze_until'} if $alarm->{'snooze_until'} && $alarm->{'snooze_until'} > $now;
+	return 0 unless $alarm->{'enabled'};
+	my $from = $now;
+	$from = $alarm->{'skip_fire'} if $alarm->{'skip_fire'} && $alarm->{'skip_fire'} > $now;
+	return &clock_alarm_next_ms($alarm, $from) || 0;
+}
+
+# The phone's "Skip today" button cannot call the manager, so it writes this
+# little file; the alarm worker picks it up and applies the same skip the
+# browser button does.
+sub clock_skip_file() {
+	my $dir = &home('~/.president');
+	eval { File::Path::make_path($dir); } unless -d $dir;
+	$dir = '/tmp' unless -d $dir;
+	return $dir . '/clock_skip.json';
+}
+
+sub clock_skip_apply {
+	my $file = &clock_skip_file();
+	return 0 unless -e $file;
+	my $raw = eval { read_file($file) } // '';
+	unlink $file;
+	my $data = eval { decode_json($raw) };
+	return 0 unless ref $data eq 'HASH';
+	my $uuid = $data->{'uuid'} || '';
+	return 0 unless length $uuid;
+	my $now = &rightNow();
+	my $lock = &clock_lock_take();
+	my $alarms = &clock_alarms_read();
+	my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{ $alarms };
+	if (!$alarm) {
+		&clock_lock_drop($lock);
+		return 0;
+	}
+	my $at = int($data->{'at'} || 0);
+	$at = &clock_alarm_next_ms($alarm, $now) unless $at > $now;
+	$alarm->{'skip_fire'} = $at;
+	$alarm->{'snooze_until'} = 0;
+	$alarm->{'ringing'} = 0;
+	$alarm->{'ring_started'} = 0;
+	$alarm->{'ring_last'} = 0;
+	&clock_alarms_write($alarms);
+	&clock_lock_drop($lock);
+	&clock_alarm_stop_sound($uuid);
+	&clock_write_device_alarm($alarms, $now);
+	&clock_poke($now);
+	return 1;
+}
+
 sub clock_state() {
 	my $now = &rightNow();
+	my $alarms = &clock_alarms_read();
+	foreach my $alarm (@{ $alarms }) {
+		$alarm->{'next_at'} = &clock_alarm_next_at($alarm, $now);
+	}
 	return {
 		now => $now,
-		alarms => &clock_alarms_read(),
+		alarms => $alarms,
 		timers => &clock_timers_read(),
 		apps => &clock_apps(),
 		sounds => &clock_sounds(),
@@ -32137,6 +32245,10 @@ sub clock_alarm_sound {
 	$elapsed ||= 0;
 	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
 	return '' if &clock_sound_is_long($sound);
+	# On a phone the app owns the sound: it loops the chime on the alarm channel
+	# and stops it on Dismiss. A Perl player here would sound on the media
+	# stream beside it.
+	return '' if &device_setter() eq 'mobile';
 	my $command = &clock_alarm_play_command($alarm, $elapsed);
 	eval {
 		&subprocessor(sub { &run_command('clock', $command); }, { name => 'clock alarm sound' });
@@ -32181,7 +32293,10 @@ sub clock_alarm_ring {
 	my $sound_path = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
 	my $sound = $sound_path;
 	$sound =~ s{.*/}{};
-	my $play = &clock_alarm_play_command($alarm, 0);
+	# On a phone the app sounds the alarm on the alarm channel; the Perl player
+	# would talk over it on the media stream.
+	my $mobile = (&device_setter() eq 'mobile') ? 1 : 0;
+	my $play = $mobile ? '' : &clock_alarm_play_command($alarm, 0);
 
 	# The alarm turns its linked appointment on. A session already running is the
 	# same activity and is left alone, so a late tick cannot open a second one.
@@ -32201,17 +32316,18 @@ sub clock_alarm_ring {
 	}
 
 	eval {
-		&Manager::notification_sender({
+		my %note = (
 			app => 'clock',
 			role => 'all',
 			type => 'clock',
 			title => $label,
 			message => $message,
 			image => '/icons/alarm.svg',
-			sound => $sound,
-			synth => $play,
 			words => ' ',
-		}, undef);
+		);
+		if ($mobile) { $note{'silent'} = 1; }
+		else { $note{'sound'} = $sound; $note{'synth'} = $play; }
+		&Manager::notification_sender(\%note, undef);
 	};
 	return 1;
 }
@@ -32255,18 +32371,22 @@ sub clock_timer_finish {
 	$sound =~ s{.*/}{};
 	my $file = &clock_sound_file($sound_path);
 	my $play = 'play -q -v 0.7 ' . &quote($file);
+	# A phone sounds the timer on the alarm channel through the app.
+	my $mobile = (&device_setter() eq 'mobile') ? 1 : 0;
+	&clock_device_timer($timer) if $mobile;
 	eval {
-		&Manager::notification_sender({
+		my %note = (
 			app => 'clock',
 			role => 'all',
 			type => 'clock',
 			title => &lang('timer'),
 			message => $label . ($app ? ' - ' . &format_name($app) : '') . ' finished',
 			image => '/icons/timer.svg',
-			sound => $sound,
-			synth => $play,
 			words => ' ',
-		}, undef);
+		);
+		if ($mobile) { $note{'silent'} = 1; }
+		else { $note{'sound'} = $sound; $note{'synth'} = $play; }
+		&Manager::notification_sender(\%note, undef);
 	};
 	return 1;
 }
@@ -32403,6 +32523,8 @@ sub clock_tick() {
 				$fire_at = $candidate if $candidate && $candidate <= $now;
 			}
 			next unless $fire_at;
+			# A skipped occurrence stays in the schedule but does not sound.
+			next if $alarm->{'skip_fire'} && $fire_at <= $alarm->{'skip_fire'};
 			# A fire that was dismissed (or snoozed) elsewhere before this machine
 			# got there does not ring late.
 			next if $alarm->{'stop_at'} && $fire_at <= $alarm->{'stop_at'};

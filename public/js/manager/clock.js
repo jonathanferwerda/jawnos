@@ -330,18 +330,47 @@ $(document).on('keydown', '.clock_alarm_app, .clock_timer_app', function (e) {
 });
 
 // ------------------------------------------------------------------ alarms
+// One alarm is open at a time; the header is the strip a person scans - time,
+// name and the machines that carry it - and the body is the editors.
+var jawnosClockOpenAlarm = null;
+
+function jawnosClockAlarmHeadDevicesHtml(alarm, state) {
+	var machines = alarm.machines || [];
+	var html = '';
+	$.each((state && state.machines) || [], function (i, m) {
+		if ($.inArray(m.value, machines) < 0) { return; }
+		html += '<span class="clock_machine_pill" data-machine="' + jawnosClockEsc(m.value) + '">' + jawnosClockEsc(m.label) + '</span>';
+	});
+	return html;
+}
+
+function jawnosClockAlarmHeadDevicesRefresh(row) {
+	var html = '';
+	row.find('.clock_machine.on').each(function () {
+		html += '<span class="clock_machine_pill" data-machine="' + jawnosClockEsc($(this).attr('data-machine')) + '">' + jawnosClockEsc($(this).text()) + '</span>';
+	});
+	row.find('.clock_alarm_head_devices').html(html);
+}
+
 function jawnosClockAlarmHtml(alarm, state) {
 	var days = alarm.days || [];
 	var has_days = days.length > 0;
 	var enabled = alarm.enabled ? 1 : 0;
+	var open = (jawnosClockOpenAlarm && jawnosClockOpenAlarm == alarm.uuid) ? ' open' : '';
 	var letters = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 	var html = '';
-	html += '<div class="clock_alarm' + (enabled ? '' : ' off') + '" data-uuid="' + jawnosClockEsc(alarm.uuid) + '" data-enabled="' + enabled + '">';
+	html += '<div class="clock_alarm' + (enabled ? '' : ' off') + open + '" data-uuid="' + jawnosClockEsc(alarm.uuid) + '" data-enabled="' + enabled + '">';
+	html += '<div class="clock_alarm_head" role="button" tabindex="0" aria-expanded="' + (open ? 'true' : 'false') + '">';
+	html += '<button type="button" class="clock_alarm_caret" tabindex="-1" aria-hidden="true"></button>';
+	html += '<span class="clock_alarm_head_time">' + jawnosClockTime(alarm.hour, alarm.minute) + '</span>';
+	html += '<span class="clock_alarm_head_label">' + jawnosClockEsc(alarm.label) + '</span>';
+	html += '<span class="clock_alarm_head_devices">' + jawnosClockAlarmHeadDevicesHtml(alarm, state) + '</span>';
+	html += '<label class="clock_switch" hint="' + jawnosClockEsc(jawnosT('alarm')) + '"><input type="checkbox" class="clock_alarm_enabled"' + (enabled ? ' checked' : '') + '></label>';
+	html += '</div>';
+	html += '<div class="clock_alarm_body">';
 	html += '<div class="clock_alarm_line">';
 	html += '<input type="time" class="clock_alarm_time" value="' + jawnosClockTime(alarm.hour, alarm.minute) + '" aria-label="' + jawnosClockEsc(jawnosT('alarm')) + '">';
 	html += '<input type="text" class="clock_alarm_label" value="' + jawnosClockEsc(alarm.label) + '" maxlength="20" aria-label="' + jawnosClockEsc(jawnosT('label')) + '">';
-	html += '<label class="clock_switch" hint="' + jawnosClockEsc(jawnosT('alarm')) + '"><input type="checkbox" class="clock_alarm_enabled"' + (enabled ? ' checked' : '') + '></label>';
-	html += '<button type="button" class="clock_alarm_delete" hint="' + jawnosClockEsc(jawnosT('delete')) + '" aria-label="' + jawnosClockEsc(jawnosT('delete')) + '">✕</button>';
 	html += '</div>';
 	html += '<div class="clock_alarm_days" role="group" aria-label="' + jawnosClockEsc(jawnosT('days')) + '">';
 	for (var d = 0; d < 7; d++) {
@@ -349,6 +378,11 @@ function jawnosClockAlarmHtml(alarm, state) {
 		html += '<button type="button" class="clock_day' + (on ? ' on' : '') + '" data-day="' + d + '" aria-pressed="' + (on ? 'true' : 'false') + '">' + letters[d] + '</button>';
 	}
 	html += '<button type="button" class="clock_day clock_day_once' + (has_days ? '' : ' on') + '" data-once="yes" aria-pressed="' + (has_days ? 'false' : 'true') + '">' + jawnosClockEsc(jawnosT('once')) + '</button>';
+	html += '</div>';
+	html += '<div class="clock_alarm_when">';
+	html += '<span class="clock_alarm_next" data-next="' + (alarm.next_at || 0) + '"></span>';
+	html += '<button type="button" class="clock_alarm_skip" hint="' + jawnosClockEsc(jawnosT('skip_today')) + '">' + jawnosClockEsc(jawnosT('skip_today')) + '</button>';
+	html += '<button type="button" class="clock_alarm_delete" hint="' + jawnosClockEsc(jawnosT('delete')) + '" aria-label="' + jawnosClockEsc(jawnosT('delete')) + '">✕</button>';
 	html += '</div>';
 	html += '<div class="clock_alarm_extra">';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('link_appointment')) + '</span><div class="clock_app_picker"><input type="text" class="clock_alarm_app" autocomplete="off" data-app="' + jawnosClockEsc(alarm.app || '') + '" value="' + jawnosClockEsc((alarm.app || '').replace(/_/g, ' ')) + '" placeholder="' + jawnosClockEsc(jawnosT('no_appointment')) + '"><button type="button" class="clock_app_toggle" tabindex="-1" aria-label="' + jawnosClockEsc(jawnosT('link_appointment')) + '">▾</button></div></label>';
@@ -369,14 +403,15 @@ function jawnosClockAlarmHtml(alarm, state) {
 	html += '</select><button type="button" class="clock_alarm_preview" hint="' + jawnosClockEsc(jawnosT('preview')) + '">' + jawnosClockEsc(jawnosT('preview')) + '</button></div></label>';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('volume')) + ' · ' + (alarm.volume || 70) + '%</span><input type="range" min="5" max="100" step="5" class="clock_alarm_volume" value="' + (alarm.volume || 70) + '"></label>';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('ramp')) + ' · ' + (alarm.ramp || 0) + 's</span><input type="number" min="0" max="600" step="5" class="clock_alarm_ramp" value="' + (alarm.ramp || 0) + '"></label>';
-	html += '</div></div>';
+	html += '</div></div></div>';
 	return html;
 }
 
 function jawnosClockRenderAlarms(state) {
 	var app = jawnosClockApp().first();
 	if (!app.length) { return; }
-	var focused = document.activeElement && $(document.activeElement).closest('.clock_app .clock_alarm').length;
+	var focused = document.activeElement && $(document.activeElement).closest('.clock_app .clock_alarm').length
+		&& /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName);
 	if (focused) { return; }
 	var list = app.find('.clock_alarm_list');
 	var alarms = state.alarms || [];
@@ -453,6 +488,7 @@ $(document).on('click', '.clock_machine', function () {
 	if (!row.find('.clock_machine.on').length) {
 		row.find('.clock_machine').first().addClass('on').attr('aria-pressed', 'true');
 	}
+	jawnosClockAlarmHeadDevicesRefresh(row);
 	jawnosClockSaveAlarm(row);
 });
 
@@ -477,6 +513,49 @@ $(document).on('click', '.clock_alarm_preview', function () {
 			volume: parseInt(row.find('.clock_alarm_volume').val() || 70, 10)
 		},
 		complete: function () {}
+	});
+});
+
+$(document).on('click', '.clock_alarm_head', function (e) {
+	if ($(e.target).closest('.clock_switch').length) { return; }
+	jawnosClockAlarmToggle($(this).closest('.clock_alarm'));
+});
+
+$(document).on('keydown', '.clock_alarm_head', function (e) {
+	if (e.key != 'Enter' && e.key != ' ') { return; }
+	if ($(e.target).closest('.clock_switch').length) { return; }
+	e.preventDefault();
+	jawnosClockAlarmToggle($(this).closest('.clock_alarm'));
+});
+
+$(document).on('click', '.clock_alarm_caret', function (e) {
+	e.stopPropagation();
+	jawnosClockAlarmToggle($(this).closest('.clock_alarm'));
+});
+
+function jawnosClockAlarmToggle(row) {
+	var open = row.hasClass('open');
+	$('.clock_app .clock_alarm.open').not(row).removeClass('open').children('.clock_alarm_head').attr('aria-expanded', 'false');
+	row.toggleClass('open', !open);
+	row.children('.clock_alarm_head').attr('aria-expanded', open ? 'false' : 'true');
+	jawnosClockOpenAlarm = open ? null : row.attr('data-uuid');
+}
+
+// The header is a summary of fields in the body; keep it in step while typing.
+$(document).on('input', '.clock_alarm_label', function () {
+	$(this).closest('.clock_alarm').find('.clock_alarm_head_label').text($(this).val());
+});
+
+$(document).on('change', '.clock_alarm_time', function () {
+	$(this).closest('.clock_alarm').find('.clock_alarm_head_time').text($(this).val() || '');
+});
+
+$(document).on('click', '.clock_alarm_skip', function (e) {
+	e.stopPropagation();
+	var row = $(this).closest('.clock_alarm');
+	jawnosClockPost('/manager/clock/alarm', { action: 'skip', uuid: row.attr('data-uuid') }, function (state) {
+		if (state && state.ok !== 0) { jawnosClockToast(jawnosT('skipped_today')); }
+		jawnosClockRefresh(true);
 	});
 });
 
@@ -624,9 +703,39 @@ $(document).on('click', '.clock_clear_finished', function () {
 });
 
 // ----------------------------------------------------------------- the tick
+// The next run's countdown, written into every alarm header.
+function jawnosClockCountdown(ms) {
+	var s = Math.max(0, Math.round(ms / 1000));
+	var d = Math.floor(s / 86400); s -= d * 86400;
+	var h = Math.floor(s / 3600); s -= h * 3600;
+	var m = Math.floor(s / 60); s -= m * 60;
+	if (d > 0) { return d + 'd ' + h + 'h'; }
+	if (h > 0) { return h + 'h ' + m + 'm'; }
+	if (m > 0) { return m + 'm ' + s + 's'; }
+	return s + 's';
+}
+
+function jawnosClockNextText(next) {
+	if (!next) { return ''; }
+	var when = new Date(next);
+	var day = '', time = '';
+	try { day = when.toLocaleDateString(undefined, { weekday: 'short' }); } catch (e) { day = ''; }
+	try { time = when.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }); } catch (e) { time = jawnosClockTime(when.getHours(), when.getMinutes()); }
+	return jawnosT('next') + ' ' + (day ? day + ' ' : '') + time + ' · ' + jawnosClockCountdown(next - jawnosClockNow());
+}
+
+function jawnosClockNextRefresh() {
+	$('.clock_app .clock_alarm_next').each(function () {
+		var next = parseInt($(this).attr('data-next'), 10) || 0;
+		if (!next) { $(this).text(''); return; }
+		$(this).text(jawnosClockNextText(next));
+	});
+}
+
 function jawnosClockTick() {
 	var app = jawnosClockApp().first();
 	if (!app.length) { return; }
+	jawnosClockNextRefresh();
 	if (document.activeElement && $(document.activeElement).closest('.clock_app').length) {
 		// still animate a running stopwatch while its own controls are in use
 		if (jawnosClockActiveTab() == 'stopwatch') { jawnosClockRenderStopwatch(); }
