@@ -18270,13 +18270,19 @@ sub father_time($data) {
 				$units *= $periods;
 			}
 			my $at = localtime($timestamp / 1000);
+			# The local minute and second into the hour, taken off the instant, are
+			# the same in both occurrences of the repeated hour when the clocks go
+			# back; timelocal() cannot tell them apart and always resolves to the
+			# first. Stepping back from the instant itself gives the second 01:00
+			# its own hour, and the half-hour zones their own :30 start.
+			my $base = int($timestamp);
 			my $period_start = sub {
 				my $offset = shift;
 				if ($unit eq 'minute') {
-					return timelocal(0, $at->min, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $offset * 60000;
+					return $base - ($at->sec * 1000 + $base % 1000) + $offset * 60000;
 				}
 				if ($unit eq 'hour') {
-					return timelocal(0, 0, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $offset * 3600000;
+					return $base - (($at->min * 60 + $at->sec) * 1000 + $base % 1000) + $offset * 3600000;
 				}
 				if ($unit eq 'year') {
 					return timelocal(0, 0, 0, 1, 0, $at->year + $offset) * 1000;

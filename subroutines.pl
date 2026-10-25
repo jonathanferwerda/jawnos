@@ -23678,13 +23678,18 @@ sub period_bounds {
 	$now = &rightNow() unless defined $now;
 	$week_start = 0 unless defined $week_start;
 	my $at = localtime($now / 1000);
+	# The minute/hour windows come off the instant, not timelocal(): the local
+	# minute and second are the same in both occurrences of the hour the clocks
+	# repeat at fall-back, and timelocal() always resolves to the first one. This
+	# gives each occurrence its own window and keeps a half-hour zone's :30 start.
+	my $base = int($now);
 	my $start = sub {
 		my $offset = shift;
 		if ($unit eq 'minute') {
-			return timelocal(0, $at->min, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $offset * 60000;
+			return $base - ($at->sec * 1000 + $base % 1000) + $offset * 60000;
 		}
 		if ($unit eq 'hour') {
-			return timelocal(0, 0, $at->hour, $at->mday, $at->mon - 1, $at->year) * 1000 + $offset * 3600000;
+			return $base - (($at->min * 60 + $at->sec) * 1000 + $base % 1000) + $offset * 3600000;
 		}
 		if ($unit eq 'year') {
 			return timelocal(0, 0, 0, 1, 0, $at->year + $offset) * 1000;
