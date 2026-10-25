@@ -633,7 +633,23 @@ function softKbShiftSet(on) {
 // speech service.
 var JAWN_DICTATE_SILENCE = 850;
 var JAWN_DICTATE_MAX = 20000;
-var JAWN_DICTATE_THRESHOLD = 0.035;
+// A laptop fan or a steady hiss sits above any fixed number that reads as
+// silence, so a fixed threshold never hears the pause and the phrase runs to the
+// cap. Instead the room is read from the microphone itself at the start of each
+// phrase: a fan or a hiss is steady, a voice is not, so a short window that
+// wobbles is speech and the room already known is kept. The floor that window
+// yields is what the phrase is measured against - the pause sits a margin above
+// it, and speech has to clear a wider margin to start, so the room's own jitter
+// does not read as a word. The floor is fixed once a phrase has begun, so a room
+// that drifts mid-sentence cannot cut it short.
+var JAWN_DICTATE_FLOOR_FALLBACK = 0.02; // until a room has been read
+var JAWN_DICTATE_FLOOR_MARGIN = 0.015;  // the pause sits at least this far above the room
+var JAWN_DICTATE_FLOOR_SCALE = 0.5;     // ... and half the room's own level, so a loud room scales
+var JAWN_DICTATE_ONSET_SCALE = 1.5;     // speech clears a wider margin than the pause
+var JAWN_DICTATE_ONSET_FRAMES = 3;      // loud ticks before a phrase is taken to have begun
+var JAWN_DICTATE_READ_FRAMES = 5;       // the room is read over half a second at a phrase's start
+var JAWN_DICTATE_ROOM_CV = 0.4;         // a window spread above this is speech, not the room
+var JAWN_DICTATE_PEAK_RATIO = 3.5;      // a pause is this far under the phrase's own peak
 var jawnDictate = {
 	stream: null,
 	audio: null,
@@ -644,6 +660,7 @@ var jawnDictate = {
 	maxTimer: null,
 	target: null,
 	lang: 'auto',
+	floor: 0,
 	segments: [],
 	sending: false,
 	session: 0
@@ -691,6 +708,30 @@ function softKbMicState() {
 		btn.toggleClass('active', !!live).attr('aria-pressed', live ? 'true' : 'false');
 		btn.attr('aria-label', softKbLabel(live ? 'Stop dictation' : 'Start dictation'));
 	});
+}
+
+// The level a phrase must cross to start (onset) or fall back under to end
+// (quiet): the room's own level plus a margin.
+function softKbDictateThreshold(onset) {
+	var floor = jawnDictate.floor || JAWN_DICTATE_FLOOR_FALLBACK;
+	var margin = floor * JAWN_DICTATE_FLOOR_SCALE;
+	if (margin < JAWN_DICTATE_FLOOR_MARGIN) { margin = JAWN_DICTATE_FLOOR_MARGIN; }
+	if (onset) { margin *= JAWN_DICTATE_ONSET_SCALE; }
+	return floor + margin;
+}
+
+// The room's own level from a short window of ticks: its mean when the window is
+// steady, or null when it wobbles like a voice. The spread is taken from the
+// same window, so a quiet room's floor is not thrown by a little jitter.
+function softKbDictateRoom(win) {
+	var n = win.length, sum = 0, i;
+	for (i = 0; i < n; i++) { sum += win[i]; }
+	var mean = sum / n;
+	if (!mean) { return 0; }
+	var spread = 0;
+	for (i = 0; i < n; i++) { var d = win[i] - mean; spread += d * d; }
+	if (Math.sqrt(spread / n) / mean > JAWN_DICTATE_ROOM_CV) { return null; }
+	return mean;
 }
 
 function softKbDictateCut() {
@@ -758,7 +799,7 @@ function softKbDictateSegment() {
 		try { rec = new MediaRecorder(jawnDictate.stream); }
 		catch (err2) { softKbDictateUnavailable(); return; }
 	}
-	var seg = { chunks: [], heard: false, quiet: 0, target: jawnDictate.target, mime: mime || rec.mimeType || 'audio/webm' };
+	var seg = { chunks: [], heard: false, run: 0, quiet: 0, peak: 0, read: JAWN_DICTATE_READ_FRAMES, win: [], target: jawnDictate.target, mime: mime || rec.mimeType || 'audio/webm' };
 	jawnDictate.recorder = rec;
 	rec.ondataavailable = function (e) { if (e.data && e.data.size) { seg.chunks.push(e.data); } };
 	rec.onstop = function () {
@@ -784,8 +825,37 @@ function softKbDictateSegment() {
 				rms += d * d;
 			}
 			rms = Math.sqrt(rms / jawnDictate.data.length);
-			if (rms > JAWN_DICTATE_THRESHOLD) { seg.heard = true; seg.quiet = 0; return; }
-			if (!seg.heard) { return; }
+			// a phrase opens by reading the room, before any of it is judged. The
+			// audio is already being recorded, so nothing said in this moment is lost.
+			if (seg.read > 0) {
+				seg.win.push(rms);
+				if (--seg.read === 0) {
+					var room = softKbDictateRoom(seg.win);
+					// a window that wobbled is speech; the room already known stands, and a
+					// session that had none starts from its middle reading
+					if (room != null && room > 0) { jawnDictate.floor = room; }
+					else if (!jawnDictate.floor) { jawnDictate.floor = seg.win[Math.floor(seg.win.length / 2)]; }
+				}
+				return;
+			}
+			var loud = (rms > softKbDictateThreshold(true));
+			var quiet = (rms <= softKbDictateThreshold(false));
+			if (!seg.heard) {
+				// one loud tick is the room or a tap, so speech has to hold before the
+				// phrase is taken to have started
+				if (!loud) { seg.run = 0; return; }
+				if (++seg.run < JAWN_DICTATE_ONSET_FRAMES) { return; }
+				seg.heard = true;
+				seg.run = 0;
+				seg.quiet = 0;
+				seg.peak = rms;
+				return;
+			}
+			// the pause is measured against the room read before the phrase, and
+			// against the phrase's own peak when that room reads high or low
+			if (rms > seg.peak) { seg.peak = rms; }
+			var hushed = (seg.peak > JAWN_DICTATE_FLOOR_FALLBACK && rms * JAWN_DICTATE_PEAK_RATIO < seg.peak);
+			if (!quiet && !hushed) { seg.quiet = 0; return; }
 			if (!seg.quiet) { seg.quiet = Date.now(); return; }
 			if (Date.now() - seg.quiet > JAWN_DICTATE_SILENCE) { softKbDictateFinishSegment(rec); }
 		}, 100);
@@ -876,6 +946,9 @@ function softKbDictateToggle() {
 			return;
 		}
 		jawnDictate.stream = stream;
+		// a session reads its own room: the machine may have been carried somewhere
+		// louder since the last one
+		jawnDictate.floor = 0;
 		try {
 			jawnDictate.audio = new (window.AudioContext || window.webkitAudioContext)();
 			var src = jawnDictate.audio.createMediaStreamSource(stream);
