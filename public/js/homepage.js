@@ -17,6 +17,9 @@ var warranty_chron;
 function warrantyChron() {
 	clearInterval(warranty_chron);
 	warranty_chron = setInterval(function() {
+		// nothing to cull while the page is off screen, and the tick is a walk
+		// over every article
+		if (document.hidden) { return; }
 		var wTimestamp = Date.now();
 		$('.article').each(function(i,v) {
 			if ($(v).attr('warranty') < wTimestamp) {

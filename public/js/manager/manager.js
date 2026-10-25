@@ -2234,6 +2234,10 @@ function jawnosDurationSpan(cell, now) {
 }
 
 function jawnosDurationTick() {
+	// A hidden page cannot paint a duration, and a locked phone was paying for
+	// this walk every second in the background. appointment_chron repaints on
+	// the way back in.
+	if (document.hidden) { return; }
 	var now = Date.now();
 	$('.appointment_detail_duration, .jawnos_duration').each(function () {
 		var cell = $(this);

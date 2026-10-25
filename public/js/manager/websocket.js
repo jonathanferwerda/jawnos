@@ -1,13 +1,19 @@
 var ws = {};
 var remote_ws = {};
 var heartbeat = {};
-var stayingAliveInterval = 2000;
+// The liveness beat. Every beat is a network round trip that wakes the radio,
+// and an open tab has three or more sockets beating, so the cadence is
+// deliberately slow. A socket is only declared dead when the server has not
+// answered for two beats; the visibility/resume handlers rebuild at once, so a
+// locked phone never waits for this check.
+var stayingAliveInterval = 6000;
 // The tab socket re-sends the (relatively costly) window layout on this cadence
 // even when nothing moved, and the localStorage debrief far more rarely.
 var windowResendInterval = 60000;
 var debrieferInterval = 300000;
 var windowWsWindows = '';
 var windowWsDebriefer = 0;
+var windowWsDebrieferJson = '';
 var windowVisible = 1;
 // A phone that was locked comes back with dead sockets, and a socket that died
 // silently still reads readyState 1, so waiting for the staleness check to
@@ -44,7 +50,8 @@ function wsStatusChecker() {
 	});
 }
 
-var wsStatusInterval = setInterval(wsStatusChecker, 3000);
+// One liveness pass per beat is enough to notice a missing answer.
+var wsStatusInterval = setInterval(wsStatusChecker, stayingAliveInterval);
 
 // A phone that was locked comes back with sockets that still read readyState 1
 // and send into the void. The only honest test is when the server last answered
@@ -83,7 +90,7 @@ function websocketRebuild() {
 // and put the status check on duty again.
 function websocketWake() {
 	windowVisible = 1;
-	if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, 3000); }
+	if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, stayingAliveInterval); }
 	var away = pageHiddenAt ? (Date.now() - pageHiddenAt) : 0;
 	pageHiddenAt = 0;
 	if (away > resumeRebuildAfter || websocketLooksDead()) {
@@ -123,11 +130,10 @@ document.addEventListener('visibilitychange', function() {
 			clearInterval(heartbeat[app]);
 			delete heartbeat[app];
 		});
-		Object.keys(heartbeating).forEach(function(app) {
-			clearInterval(heartbeating[app]);
-			delete heartbeating[app];
+		Object.keys(heartbeatSettle).forEach(function(app) {
+			clearTimeout(heartbeatSettle[app]);
+			delete heartbeatSettle[app];
 		});
-		clearTimeout(heartbeater);
 	}
 	else {
 		websocketWake();
@@ -267,7 +273,10 @@ function heartbeatSend(app) {
 			from: uA,
 			type: 'stayingAlive',
 			href: window.location.href,
-			pathname: window.location.pathname
+			pathname: window.location.pathname,
+			// the controller is the only thing that renders a neighbour list,
+			// so the server can answer with a bare liveness ack while it is shut
+			controller_visible: $('#controller').is(':visible') ? 'yes' : 'no'
 		};
 
 		if (app == 'tab' || apper == 'tab') {
@@ -281,10 +290,16 @@ function heartbeatSend(app) {
 				}
 				windowWsMouseMove = mm;
 			}
-			// the localStorage debrief is for auditing, not for liveness
+			// the localStorage debrief is for auditing, not for liveness. The
+			// snapshot is a whole-store blob written to a ticket row, so only ship
+			// it when the store actually moved since the last one.
 			if (now - windowWsDebriefer > debrieferInterval) {
 				windowWsDebriefer = now;
-				data['debriefer'] = JSON.stringify(localStorage);
+				var debrief = JSON.stringify(localStorage);
+				if (debrief != windowWsDebrieferJson) {
+					windowWsDebrieferJson = debrief;
+					data['debriefer'] = debrief;
+				}
 			}
 		}
 		else if ((app == 'music' || apper == 'music') && tree['music_data'] != undefined) {
@@ -298,9 +313,6 @@ function heartbeatSend(app) {
 			});
 			if (advertise_watching == 'on') {
 				data['jp_data'] = jpWatcher();
-			}
-			if ($('#controller').is(':visible')) {
-				data['controller_visible'] = 'yes';
 			}
 			if (errorInfo.length > 0) {
 				var errors = JSON.stringify(errorInfo);
@@ -1061,22 +1073,27 @@ function wsMessageHandler(event) {
 	}
 }
 
-var heartbeater;
-var heartbeating = {};
+// The pulse a heartbeat paints: one timeout per app settles the scale back. A
+// 200ms interval used to do this (and prune) for every app, forever - five DOM
+// passes a second just to animate a dot.
+var heartbeatSettle = {};
 function stayingAlive(data) {
 	var now = Date.now();
 
-	ws[data.app]['stayingAlive'] = now;
+	if (!data || !data.app) { return; }
+	if (ws[data.app]) { ws[data.app]['stayingAlive'] = now; }
+	// A slim beat is the server saying "still here; nothing on screen changed".
+	// There is no neighbour list to rebuild and no pulse to paint.
+	if (data.slim) { return; }
 	var closer = $('.close_appointment[app="' + data.app + '"]');
 	var neighbours = $('.neighbours[app="' + data.app + '"]');
 	neighbours.find('.neighbour').each((i,n) => { n.remove() });
-	clearTimeout(heartbeater);
-	clearInterval(heartbeating[data.app]);
+	clearTimeout(heartbeatSettle[data.app]);
 	$('#controller_toggle').css({'transform': 'transform 0.25s ease scale(1.1)', '-webkit-transform':'scale(1.1)' });
 	$('.heartbeating[app="' + data.app + '"]').css({'transform': 'transform 0.25s ease scale(1.1)', '-webkit-transform':'scale(1.1)' });
 	// this was a 200ms interval that kept running until the next heartbeat (or
 	// forever if heartbeats stopped) - a single timeout is all the pulse needs
-	heartbeater = setTimeout(function() {
+	heartbeatSettle[data.app] = setTimeout(function() {
 		$('#controller_toggle').css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
 		$('.heartbeating[app="' + data.app + '"]').css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
 	},250);
@@ -1203,18 +1220,8 @@ function stayingAlive(data) {
 			}
 		});
 
-		heartbeating[data.app] = setInterval(function() {
-			var beating = $('.heartbeating[app="' + data.app + '"]');
-			// nothing left to animate - stop ticking
-			if (beating.length == 0) { clearInterval(heartbeating[data.app]); delete heartbeating[data.app]; return; }
-			beating.css({'transform': 'transform 0.25s ease scale(1.0)', '-webkit-transform':'scale(1.0)' });
-			var now = Date.now();
-			$('.everything.heartbeating[app="' + data.app + '"]').each(function(i,v) {
-				if ($(v).attr('timestamp') < (now - (stayingAliveInterval * 5))) {
-					$(v).remove();
-				}
-			});
-		},200);
+		// No per-app interval here: the pulse is one 250ms settle, and stale
+		// buttons are pruned on each full (non-slim) beat below.
 		$('.heartbeating').each(function(i,v) {
 			if ($(v).attr('timestamp') < ( now - stayingAliveInterval * 7) ) {
 				$(v).remove();

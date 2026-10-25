@@ -25,6 +25,12 @@ use URI::Encode qw(uri_encode uri_decode);
 use List::Util qw(shuffle);
 plugin 'RenderFile';
 
+# A websocket beat refreshes its row's liveness column on a slow cadence (the
+# row itself is written only when something changed), so "still here" is judged
+# over a window wide enough to cover a missed refresh rather than the old
+# every-two-seconds beat. Rows are still deleted the moment a socket closes.
+our $ws_live_window = 60000;
+
 use Data::Dumper;
 use Mojo::Util qw/md5_sum html_unescape xml_escape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use File::Find;
@@ -3025,7 +3031,7 @@ get '/manager/market/cameras' => sub($c) {
 		return $c->rendered(403) unless $rm && &subs::peer_verify($c, $rm);
 	}
 	my $me = $c->param('browser_tab_id') || '';
-	my $since = &subs::rightNow() - 5000;
+	my $since = &subs::rightNow() - $ws_live_window;
 	my $rows = &subs::db_query("select browser_tab_id, user_agent, room, server_time from websockets where ( app = ? or app like ? ) and type = ? and server_time >= ? order by server_time desc", 'server', 'server@%', 'stayingAlive', $since)->hashes;
 	my (%seen, @devices);
 	foreach my $r ( @{$rows} ) {
@@ -34083,26 +34089,7 @@ sub remote_input_geometry {
 	return $remote_input_geometry_cache;
 }
 
-post '/manager/remote_input' => sub($c) {
-	my $signatorial = $c->param('signatorial');
-	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
-	# Input is the most intimate thing a peer can ask for, so it sits on the
-	# Trusted rung rather than with the ordinary house actions.
-	unless (&subs::peer_allows($c, $rm, 'remote_control')) {
-		$c->render(json => { ok => 0, error => 'this machine needs Trusted access for remote input' });
-		return;
-	}
-	my $raw = $c->param('events') || '[]';
-	my $events = length($raw) <= 65536 ? eval { decode_json $raw } : undef;
-	unless (ref $events eq 'ARRAY') {
-		$c->render(json => { ok => 0, error => 'no events' });
-		return;
-	}
-	# Every event is a process for the backend, so one batch cannot be made to
-	# hold the worker for an unbounded time.
-	$#$events = 119 if @{$events} > 120;
-	my $backend = &remote_input::backend();
+sub remote_input_apply($events) {
 	my $geometry = &remote_input_geometry();
 	my $applied = 0;
 	foreach my $e ( @{$events} ) {
@@ -34150,6 +34137,31 @@ post '/manager/remote_input' => sub($c) {
 			$applied++ if &remote_input::inject('release');
 		}
 	}
+	return $applied;
+}
+
+post '/manager/remote_input' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	# Input is the most intimate thing a peer can ask for, so it sits on the
+	# Trusted rung rather than with the ordinary house actions.
+	unless (&subs::peer_allows($c, $rm, 'remote_control')) {
+		$c->render(json => { ok => 0, error => 'this machine needs Trusted access for remote input' });
+		return;
+	}
+	my $raw = $c->param('events') || '[]';
+	my $events = length($raw) <= 65536 ? eval { decode_json $raw } : undef;
+	unless (ref $events eq 'ARRAY') {
+		$c->render(json => { ok => 0, error => 'no events' });
+		return;
+	}
+	# Every event is a process for the backend, so one batch cannot be made to
+	# hold the worker for an unbounded time.
+	$#$events = 119 if @{$events} > 120;
+	my $backend = &remote_input::backend();
+	my $geometry = &remote_input_geometry();
+	my $applied = &remote_input_apply($events);
 	$c->render(json => {
 		ok => 1,
 		applied => $applied,
@@ -45394,6 +45406,14 @@ websocket '/manager/ws' => sub ($c) {
 	}
 #	$c->send({json => $init_data});
 
+	# The beat is the busiest thing an open tab does. Writing the row on every
+	# beat turned an idle tab into a steady stream of SQLite writes, so remember
+	# what was written and write again only when something changed. The liveness
+	# column is refreshed on a slow cadence so a crashed tab still ages out.
+	my %ws_written;
+	my $ws_write_refresh = 30000;
+	my ($ws_neighbour_stamp, $ws_neighbour_at) = ('', 0);
+	my $ws_neighbour_refresh = 20000;
 	$c->on(message => sub ($ws, $msg) {
 		my $data = eval { return from_json $msg };
 		my $app = $data->{'app'};
@@ -45413,6 +45433,9 @@ websocket '/manager/ws' => sub ($c) {
 			my $connection_id = $connection->connection;
 			my $local_address = $ws->tx->local_address;
 			my $remote_address = $ws->tx->remote_address;
+			# The controller is the only view that renders neighbours. While it is
+			# shut, a beat only has to prove the socket is alive.
+			my $controller_visible = (($data->{'controller_visible'} || '') eq 'yes') ? 1 : 0;
 			if ($app eq 'music') {
 				$data->{'music_data'} = encode_json $data->{'music_data'} if $data->{'music_data'};
 			}
@@ -45426,7 +45449,7 @@ websocket '/manager/ws' => sub ($c) {
 			#	if ($remote_upgrade ne 'running' && $remote_connect_timer + 30000 < $timestamp) {
 			#		&remote_machine_reconnector($c);
 			#	}
-				if ($data->{'controller_visible'} eq 'yes') {
+				if ($controller_visible) {
 					my $remote_machine_query = &subs::db_query('select buttons,uuid,status,signatorial,ip,data,connection,fqdn from remote_machines' );
 					$remote_machines = $remote_machine_query->hashes;
 					foreach my $rm ( @{$remote_machines} ) {
@@ -45458,48 +45481,66 @@ websocket '/manager/ws' => sub ($c) {
 				}
 			}
 			# Only touch the heavy columns when the client actually sent them, so a
-			# light heartbeat doesn't blank out the last known layout.
-			my $ws_update = {
-				timestamp => $timestamp,
-				server_time => $server_time,
-				type => $data->{'type'},
-				connection_id => $connection_id,
-				local_address => $local_address,
-				remote_address => $remote_address,
-				href => $data->{'href'},
-				pathname => $data->{'pathname'}
-			};
-			foreach my $optional ( qw/windows music_data jp_data/ ) {
-				$ws_update->{$optional} = $data->{$optional} if defined $data->{$optional};
+			# light heartbeat doesn't blank out the last known layout. A beat that
+			# changes nothing is not a write: the row is refreshed on a slow
+			# cadence only so the liveness window has something to see.
+			my $ws_cache = $ws_written{ $data->{'app'} } ||= {};
+			my $ws_changed = 0;
+			foreach my $field ( qw/href pathname windows music_data jp_data/ ) {
+				next unless defined $data->{$field};
+				if (!defined $ws_cache->{$field} || $ws_cache->{$field} ne $data->{$field}) {
+					$ws_changed = 1;
+					last;
+				}
 			}
-			my $ws_updated = &subs::db_update('websockets', $ws_update, {
-				browser_tab_id => $browser_tab_id,
-				app => $data->{'app'}
-			});
-			# The row can vanish underneath a live socket: stale-row sweeps,
-			# warranty expiry while a tab slept, or older builds that deleted
-			# too broadly. A heartbeat that matched no row means the controller
-			# can no longer see this websocket, so put the row back.
-			unless ($ws_updated && $ws_updated->rows) {
-				# Same as the connect insert: warranty settings are negative
-				# offsets ('-1d' puts the row a day ahead), so alarm_haircut
-				# won't cull a freshly healed row.
-				my $app_warranty = &subs::setting_grabber({ app => $c->session('app'), setting => 'warranty' });
-				my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $server_time);
-				&subs::db_insert('websockets', {
-					%{$ws_update},
+			my $ws_due = (!$ws_cache->{'at'} || ($server_time - $ws_cache->{'at'}) >= $ws_write_refresh);
+			if ($ws_changed || $ws_due) {
+				my $ws_update = {
+					timestamp => $timestamp,
+					server_time => $server_time,
+					type => $data->{'type'},
+					connection_id => $connection_id,
+					local_address => $local_address,
+					remote_address => $remote_address,
+					href => $data->{'href'},
+					pathname => $data->{'pathname'}
+				};
+				foreach my $optional ( qw/windows music_data jp_data/ ) {
+					$ws_update->{$optional} = $data->{$optional} if defined $data->{$optional};
+				}
+				my $ws_updated = &subs::db_update('websockets', $ws_update, {
 					browser_tab_id => $browser_tab_id,
-					browser_tab => $browser_tab,
-					db => $database,
-					'uuid' => $uuid,
-					app => $data->{'app'},
-					connected => $init_data->{'connected'} || $timestamp,
-					hostname => $hostname,
-					user_agent => $user_agent,
-					random_string => &subs::random_string_creator(25),
-					ticket_uuid => $c->session('ticket_uuid'),
-					warranty => $warranty
+					app => $data->{'app'}
 				});
+				# The row can vanish underneath a live socket: stale-row sweeps,
+				# warranty expiry while a tab slept, or older builds that deleted
+				# too broadly. A heartbeat that matched no row means the controller
+				# can no longer see this websocket, so put the row back.
+				unless ($ws_updated && $ws_updated->rows) {
+					# Same as the connect insert: warranty settings are negative
+					# offsets ('-1d' puts the row a day ahead), so alarm_haircut
+					# won't cull a freshly healed row.
+					my $app_warranty = &subs::setting_grabber({ app => $c->session('app'), setting => 'warranty' });
+					my $warranty = &subs::ago_calc($app_warranty || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $server_time);
+					&subs::db_insert('websockets', {
+						%{$ws_update},
+						browser_tab_id => $browser_tab_id,
+						browser_tab => $browser_tab,
+						db => $database,
+						'uuid' => $uuid,
+						app => $data->{'app'},
+						connected => $init_data->{'connected'} || $timestamp,
+						hostname => $hostname,
+						user_agent => $user_agent,
+						random_string => &subs::random_string_creator(25),
+						ticket_uuid => $c->session('ticket_uuid'),
+						warranty => $warranty
+					});
+				}
+				foreach my $field ( qw/href pathname windows music_data jp_data/ ) {
+					$ws_cache->{$field} = $data->{$field} if defined $data->{$field};
+				}
+				$ws_cache->{'at'} = $server_time;
 			}
 			if ($data->{'debriefer'}) {
 				if ($c->session('ticket_uuid')) {
@@ -45511,17 +45552,34 @@ websocket '/manager/ws' => sub ($c) {
 					&subs::setting_setter({ app => '__DEBRIEFING__', setting => $hostname, value => $data->{'debriefer'} });
 				}
 			}
-			my $community = &subs::db_query('select * from websockets where ( app = ? or app like ? ) and type = ? and server_time >= ? order by server_time DESC',$app, $app . '@%', 'stayingAlive',$server_time - 5000);
-			my $neighbours = $community->hashes;
-			foreach my $n ( @{$neighbours} ) {
-				my $neighbour_windows = $n->{'windows'};
-				my $neighbourhood = eval { return decode_json $n->{'windows'} } || {};
-				$n->{'user_agent'} = &subs::abbreviate_name($n->{'user_agent'});
-				foreach my $nw ( keys %{$neighbourhood} ) {
-					$neighbourhood->{$nw}->{'formatted_name'} = &subs::format_name($neighbourhood->{$nw}->{'app'});
-					$neighbourhood->{$nw}->{'shorthand_name'} = &subs::shorthand_name($neighbourhood->{$nw}->{'formatted_name'});
+			# A sleeper's answer carries no neighbour payload. Building it (a query,
+			# a JSON decode and re-encode per neighbour, template rendering) is work
+			# nobody can see while the controller is shut, so the reply is a bare
+			# liveness ack. An open controller gets a full payload only when the
+			# neighbourhood moved, or on a slow refresh.
+			my ($neighbours, $full);
+			if ($controller_visible) {
+				my $community = &subs::db_query('select * from websockets where ( app = ? or app like ? ) and type = ? and server_time >= ? order by server_time DESC',$app, $app . '@%', 'stayingAlive',$server_time - $ws_live_window);
+				$neighbours = $community->hashes;
+				my $stamp = join('|', map {
+					($_->{'browser_tab_id'} // '') . ':' . ($_->{'server_time'} // '') . ':' . ($_->{'pathname'} // '') .
+					':' . length($_->{'windows'} // '') . ':' . length($_->{'music_data'} // '') . ':' . length($_->{'jp_data'} // '')
+				} @{$neighbours});
+				$full = 1 if ($stamp ne $ws_neighbour_stamp);
+				$full = 1 if (($server_time - $ws_neighbour_at) >= $ws_neighbour_refresh);
+				if ($full) {
+					$ws_neighbour_stamp = $stamp;
+					$ws_neighbour_at = $server_time;
+					foreach my $n ( @{$neighbours} ) {
+						my $neighbourhood = eval { return decode_json $n->{'windows'} } || {};
+						$n->{'user_agent'} = &subs::abbreviate_name($n->{'user_agent'});
+						foreach my $nw ( keys %{$neighbourhood} ) {
+							$neighbourhood->{$nw}->{'formatted_name'} = &subs::format_name($neighbourhood->{$nw}->{'app'});
+							$neighbourhood->{$nw}->{'shorthand_name'} = &subs::shorthand_name($neighbourhood->{$nw}->{'formatted_name'});
+						}
+						$n->{'windows'} = encode_json $neighbourhood;
+					}
 				}
-				$n->{'windows'} = encode_json $neighbourhood;
 			}
 
 			my $return_data = {
@@ -45530,7 +45588,6 @@ websocket '/manager/ws' => sub ($c) {
 				'uuid' => $uuid,
 				timestamp => $timestamp,
 				app => $data->{'app'},
-				neighbours => $neighbours,
 				from => $hostname,
 				connection_id => $connection_id,
 				user_agent => $user_agent,
@@ -45538,14 +45595,20 @@ websocket '/manager/ws' => sub ($c) {
 				local_address => $local_address,
 				remote_address => $remote_address,
 				input => $data->{'input'},
-				remote => $remote_machines
+				remote => $full ? $remote_machines : undef
 			};
-			if (-e './templates/websockets/' . &subs::path_name($app) . '.html.ep') {
-				$return_data->{'template'} = $c->render_to_string(
-					template => 'websockets/' . &subs::path_name($app),
-					ws => $return_data
-				);
-				if ($app eq 'server') { delete $return_data->{'remote'}; }
+			if ($full) {
+				$return_data->{'neighbours'} = $neighbours;
+				if (-e './templates/websockets/' . &subs::path_name($app) . '.html.ep') {
+					$return_data->{'template'} = $c->render_to_string(
+						template => 'websockets/' . &subs::path_name($app),
+						ws => $return_data
+					);
+					if ($app eq 'server') { delete $return_data->{'remote'}; }
+				}
+			}
+			else {
+				$return_data->{'slim'} = 1;
 			}
 
 			&Websocket::send($app,$return_data);

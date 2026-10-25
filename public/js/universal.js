@@ -542,13 +542,25 @@ $(document).on('click', '#error_dot', function() {
 });
 
 
+// Setting writes are a POST each, and callers fire them on clicks, keystrokes,
+// scrolls and resizes. The same value again is a wasted round trip and a
+// database write, so remember what this page last sent for each key and skip an
+// exact repeat. The first send for a key always goes through, and a failed one
+// is forgotten so the next caller retries it.
+var settingSetterSent = {};
 async function settingSetter(setter) {
 	var app = setter['app'];
 	var value = setter['value'];
 	var setting = setter['setting'];
 	var timestamp = Date.now();
 	var device = setter['device'];
-	return $.ajax({
+	var key = (device || '') + '\u0000' + app + '\u0000' + setting + '\u0000' + (setter['subsetting'] || '');
+	var encoded = (value === undefined || value === null) ? '' : String(value);
+	if (settingSetterSent[key] === encoded) {
+		return Promise.resolve(null);
+	}
+	settingSetterSent[key] = encoded;
+	var request = $.ajax({
 		url: '/manager/setting_setter',
 		type: 'POST',
 		data: { app: app, setting:setting, device: device, subsetting: setter['subsetting'], value:value, timestamp: timestamp},
@@ -556,6 +568,10 @@ async function settingSetter(setter) {
 			return response;
 		}
 	});
+	request.fail(function() {
+		if (settingSetterSent[key] === encoded) { delete settingSetterSent[key]; }
+	});
+	return request;
 }
 
 async function settingGrabber(setter) {
