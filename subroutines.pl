@@ -4104,6 +4104,18 @@ sub house_levels_sync {
 	my $report = { %{ $machines[0] } };
 	delete $report->{'local'};
 	&cache_set({ app => '__president', context => 'levels', subcontext => 'pushed', warranty => '-1d' }, &rightNow()) if $push;
+	# A failed pull keeps the last row, but a machine that pushed seconds ago is
+	# not stale: dim the tile only when the row is a few minutes old, so a phone
+	# that updates by push and never answers the poll still reads as current.
+	my $keep_previous = sub {
+		my ($rsig, $pname) = @_;
+		return unless $previous_machine{$rsig};
+		my %row = %{ $previous_machine{$rsig} };
+		my $seen = $row{'seen'} || 0;
+		$row{'stale'} = 1 if !$seen || &rightNow() - $seen > 300000;
+		$row{'hostname'} = $pname;
+		push @machines, \%row;
+	};
 	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
 		my $rsig = $rm->{'signatorial'} || '';
 		next unless $rsig && $rsig ne $me;
@@ -4125,7 +4137,7 @@ sub house_levels_sync {
 		$pname = $rm->{'hostname'} || $rsig
 			if !defined $pname || $pname eq '' || $pname =~ /^(?:localhost|127\.0\.0\.1)$/i;
 		unless ($ua) {
-			push @machines, { %{ $previous_machine{$rsig} }, hostname => $pname, stale => 1 } if $previous_machine{$rsig};
+			$keep_previous->($rsig, $pname);
 			next;
 		}
 		if ($push) {
@@ -4142,7 +4154,7 @@ sub house_levels_sync {
 			my $err = $@ ? do { my $e = $@; $e =~ s/\s+/ /g; substr($e, 0, 120) } : '';
 			$log->info('house levels: ' . $pname . ' '
 				. ($res ? ('HTTP ' . $res->code) : 'no answer') . ($err ne '' ? " ($err)" : ''));
-			push @machines, { %{ $previous_machine{$rsig} }, hostname => $pname, stale => 1 } if $previous_machine{$rsig};
+			$keep_previous->($rsig, $pname);
 			next;
 		}
 		$peers++;
