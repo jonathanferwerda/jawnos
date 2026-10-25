@@ -15832,68 +15832,40 @@ sub navigation_information() {
 	}
 }
 
-# A home plate only moves an appointment after three fixes in a row agree on
-# which side of its radius the device is on. One stray sample a few metres
-# outside the radius must not close a session that the next fix reopens: the
-# person never left, so neither the appointment nor its time should split.
-# Each call is one write - the navigation interval's own fix or a real GPS fix,
-# whichever arrives - and neither the same write seen again (an identical
-# timestamp) nor the same cached position reused on a later tick counts twice.
-# A gap longer than half an hour starts the count over, so a stale streak
-# cannot finish a fresh crossing. The streak lives in the cache (a repeated fix
-# otherwise could not be told from a new one) and is keyed by the fix's device
-# and the plate duty, since each duty has its own radius.
-sub navigation_plate_confirmed {
-	my $data = shift || {};
-	my $signatorial = $data->{'signatorial'} || '';
-	my $duty = $data->{'duty'} || '';
-	return 0 unless length $signatorial && length $duty;
-	my $side = $data->{'inside'} ? 'in' : 'out';
-	my $timestamp = 0 + ($data->{'timestamp'} || &subs::rightNow());
-	my $latitude = $data->{'latitude'};
-	my $longitude = $data->{'longitude'};
-	my $key = $signatorial . ':' . $duty;
-	my $streak = &subs::cache_get({ app => '__president', context => 'navigation_plate', subcontext => $key });
-	$streak = {} unless ref $streak eq 'HASH';
-	my $count = 0 + ($streak->{'count'} || 0);
-	my $last = 0 + ($streak->{'timestamp'} || 0);
-	# An older fix than the one already counted, or the very same write seen
-	# again, is not a new sample: leave the streak alone and do not act on it.
-	return 0 if $last && $timestamp <= $last;
-	# A tick can read the same fix file twice; the same place is not a second
-	# sample, so it must not help confirm a crossing either.
-	if (defined $latitude && defined $longitude
-		&& defined $streak->{'latitude'} && defined $streak->{'longitude'}
-		&& abs($latitude - $streak->{'latitude'}) < 1e-9
-		&& abs($longitude - $streak->{'longitude'}) < 1e-9) {
-		return 0;
-	}
-	if (($streak->{'side'} || '') ne $side || !$last || $timestamp - $last > 30 * 60 * 1000) {
-		$count = 1;
-	}
-	else {
-		$count++;
-	}
-	$last = $timestamp;
+# The plate remembers how its latest navigation stop happened. A departure more
+# than three radii away is certain - no ordinary GPS jitter brings a person back
+# from there - so a return must start a new session instead of reopening the one
+# it closed. A near-boundary stop stays resumable for the fifteen-minute window
+# in navigation_automation. The fact is transient (a cache entry), but it only
+# has to outlive the next fix and the resume window.
+sub navigation_plate_exit_set {
+	my ($app, $duty, $certain) = @_;
+	return unless $app && $duty;
 	&subs::cache_set({
 		app => '__president',
-		context => 'navigation_plate',
-		subcontext => $key,
+		context => 'navigation_plate_exit',
+		subcontext => $app . ':' . $duty,
 		warranty => '-1h'
-	}, {
-		side => $side,
-		count => $count,
-		timestamp => $last,
-		latitude => $latitude,
-		longitude => $longitude
-	});
-	return $count >= 3 ? 1 : 0;
+	}, { certain => ($certain ? 1 : 0), at => &subs::rightNow() });
 }
 
-# A fix more than three radii from a plate is a certain departure: no ordinary
-# GPS jitter brings a person back to that plate from there, so its stop need not
-# wait for the third fix. A loose fix is not certainty - 200 m is the house's
-# own bound on a usable place - so a coarse reading still has to be confirmed.
+sub navigation_plate_exit_certain {
+	my ($app, $duty) = @_;
+	return 0 unless $app && $duty;
+	my $exit = &subs::cache_get({ app => '__president', context => 'navigation_plate_exit', subcontext => $app . ':' . $duty });
+	return (ref $exit eq 'HASH' && $exit->{'certain'}) ? 1 : 0;
+}
+
+sub navigation_plate_exit_clear {
+	my ($app, $duty) = @_;
+	return unless $app && $duty;
+	&subs::cache_delete({ app => '__president', context => 'navigation_plate_exit', subcontext => $app . ':' . $duty });
+}
+
+# A departure more than three radii from a plate is a certain leave: no ordinary
+# GPS jitter brings a person back to that plate from there. A loose fix is not
+# certainty - 200 m is the house's own bound on a usable place - so a coarse
+# reading does not count.
 sub navigation_plate_certain_exit {
 	my $data = shift || {};
 	my $radius = 0 + ($data->{'radius'} || 0);
@@ -15936,27 +15908,14 @@ sub navigation_automation() {
 					my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $gb::planet_radius));
 					my $duty_key = $hp->{'uuid'};
 					$duty_key = join('|', $hpder->{'app'} || '', $app || '', $hp->{'placement'} || '', $hp->{'distance'} || '', $hp->{'action'} || '') unless $duty_key;
-					my $confirmed = &subs::navigation_plate_confirmed({
-						signatorial => $signatorial,
-						duty => $duty_key,
-						inside => ($distance <= $hp->{'distance'}) ? 1 : 0,
-						timestamp => $returner->{'timestamp'},
-						latitude => $returner->{'latitude'},
-						longitude => $returner->{'longitude'},
+					# A stop-side fix farther than three radii is a certain leave. The
+					# comparison only matters when the person comes back: that return
+					# starts a new session instead of reopening the closed one.
+					my $certain_exit = &subs::navigation_plate_certain_exit({
+						radius => $hp->{'distance'},
+						measured => $distance,
+						accuracy => $returner->{'accuracy'},
 					});
-					# A `within` duty stops when the device is outside its radius. Far
-					# outside it is a certain departure, so the stop does not wait for a
-					# third fix. The start side still needs the three-fix confirmation,
-					# as does a `without` duty (whose stop side is inside the radius).
-					my $certain_exit = ($hp->{'placement'} eq 'within'
-						&& &subs::navigation_plate_certain_exit({
-							radius => $hp->{'distance'},
-							measured => $distance,
-							accuracy => $returner->{'accuracy'},
-						})) ? 1 : 0;
-					# One or two fixes on the other side are not a crossing: wait for the
-					# third in a row before the plate starts or stops anything.
-					next unless $confirmed || $certain_exit;
 					my $actable = 0;
 					my $cactable = 0;
 
@@ -15975,14 +15934,16 @@ sub navigation_automation() {
 							#	&Manager::leave();
 							}
 							elsif ($tog ne 'on') {
-								# A return that follows a navigation stop by a few minutes is the
-								# same visit, not a new one. Three fixes now confirm the return, so
-								# the window must span that confirmation as well as the absence:
-								# fifteen minutes covers three four-minute fixes on each side of
-								# a short trip. Reopen only the newest stop - the one the person
-								# has just come back from - never every stop in the window.
+								# A return within fifteen minutes of a navigation stop is the
+								# same visit, so reopen that session rather than starting a new
+								# one. A leave farther than three radii was certain, so its
+								# return starts a new session even inside the window. Reopen
+								# only the newest stop - the one the person has just come back
+								# from - never every stop in the window.
 								my $lappts = &subs::db_query('select * from appointments where app = ? and subtype = ? and type = ? and stop_timestamp >= ? order by stop_timestamp desc limit 1', $app, 'navigation', 'stop', &subs::rightNow() - 15 * 60 * 1000)->hashes;
-								if (scalar @{$lappts} > 0) {
+								my $certain_leave = &subs::navigation_plate_exit_certain($app, $duty_key);
+								&subs::navigation_plate_exit_clear($app, $duty_key);
+								if (scalar @{$lappts} > 0 && !$certain_leave) {
 									foreach my $lapp ( @{$lappts} ) {
 										$hpdata->{'uuid'} = $lapp->{'uuid'};
 										# reopen the session it closed when the plate was left. stop_seen
@@ -16006,8 +15967,16 @@ sub navigation_automation() {
 									$cactable = 1;
 								}
 							}
+							else {
+								# Back inside with the session still running: the departure is
+								# over, so a later stop starts a fresh certainty.
+								&subs::navigation_plate_exit_clear($app, $duty_key);
+							}
 						}
 						else {
+							# A far fix upgrades the departure even when nothing was running
+							# to stop (a near first fix may already have closed the session).
+							&subs::navigation_plate_exit_set($app, $duty_key, 1) if $certain_exit;
 							if ($tog eq 'on') {
 								my $stoppable = 0;
 								my $lappts = &subs::db_query('select uuid,app,type,subtype,timestamp,server_time from appointments where app=? and (type = ? or type =?) and timestamp < ?', $app, 'start','record',$returner->{'timestamp'})->hashes;
@@ -16033,6 +16002,7 @@ sub navigation_automation() {
 									undef $hpdata->{'uuid'};
 									$actable = 1;
 									$cactable = 1;
+									&subs::navigation_plate_exit_set($app, $duty_key, $certain_exit);
 								}
 							}
 						}
