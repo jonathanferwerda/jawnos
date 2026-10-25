@@ -327,6 +327,34 @@ function jawnosTextureRim(kind, dark) {
 	return dark ? 'rgba(255,255,255,0.46)' : 'rgba(0,0,0,0.22)';
 }
 
+// The rail's tiles wear the desk's window shadow (.wind in manager.css): a soft
+// ambient spread and a tight contact line under the tile. Canvas carries one
+// shadow colour at a time, so the two layers are painted as two passes. Both
+// passes fill an opaque copy of the tile clipped to its outside (even-odd), so
+// the shadow is cast at full strength and the pane above keeps whatever
+// translucency its material gave it. Classic stays flat: it is the rail exactly
+// as it looked before the pills and materials.
+function jawnosTexturePillShadow(ctx, x, y, w, h, radius, dark) {
+	ctx.save();
+	ctx.beginPath();
+	ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
+	roundRectPath(ctx, x, y, w, h, radius);
+	ctx.clip('evenodd');
+	var layers = dark
+		? [ [ 'rgba(0,0,0,0.52)', 14, 4 ], [ 'rgba(0,0,0,0.32)', 4, 2 ] ]
+		: [ [ 'rgba(0,0,0,0.24)', 12, 4 ], [ 'rgba(0,0,0,0.12)', 4, 2 ] ];
+	ctx.fillStyle = '#000000';
+	for (var i = 0; i < layers.length; i++) {
+		ctx.beginPath();
+		roundRectPath(ctx, x, y, w, h, radius);
+		ctx.shadowColor = layers[i][0];
+		ctx.shadowBlur = layers[i][1];
+		ctx.shadowOffsetY = layers[i][2];
+		ctx.fill();
+	}
+	ctx.restore();
+}
+
 // A garment's pill: the material's pane, the app colour breathing through it,
 // the grain and sheen, and the lit rim.
 function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
@@ -361,17 +389,12 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 		return;
 	}
 	if (kind === 'round') {
+		jawnosTexturePillShadow(ctx, x, y, w, h, radius, dark);
 		ctx.save();
 		ctx.beginPath();
 		roundRectPath(ctx, x, y, w, h, radius);
-		ctx.shadowColor = 'rgba(0,0,0,0.38)';
-		ctx.shadowBlur = 7;
-		ctx.shadowOffsetY = 3;
 		ctx.fillStyle = colour;
 		ctx.fill();
-		ctx.shadowColor = 'transparent';
-		ctx.shadowBlur = 0;
-		ctx.shadowOffsetY = 0;
 		var gloss = ctx.createLinearGradient(0, y, 0, y + h);
 		gloss.addColorStop(0, 'rgba(255,255,255,0.36)');
 		gloss.addColorStop(0.45, 'rgba(255,255,255,0.06)');
@@ -388,17 +411,12 @@ function jawnosTexturePill(ctx, x, y, w, h, colour, dark) {
 		return;
 	}
 
+	jawnosTexturePillShadow(ctx, x, y, w, h, radius, dark);
 	ctx.save();
 	ctx.beginPath();
 	roundRectPath(ctx, x, y, w, h, radius);
-	ctx.shadowColor = kind === 'glass' ? 'rgba(0,0,0,0.50)' : (kind === 'soft' ? (dark ? 'rgba(0,0,0,0.42)' : 'rgba(0,0,0,0.16)') : 'rgba(0,0,0,0.38)');
-	ctx.shadowBlur = kind === 'glass' ? 12 : (kind === 'soft' ? 5 : 8);
-	ctx.shadowOffsetY = kind === 'soft' ? 2 : 3;
 	ctx.fillStyle = jawnosTextureBase(kind, dark);
 	ctx.fill();
-	ctx.shadowColor = 'transparent';
-	ctx.shadowBlur = 0;
-	ctx.shadowOffsetY = 0;
 	// the app colour is the garment, as it is on the title bar: the material is
 	// the 20% left over, and its grain and sheen carry the rest of the texture.
 	// The old 0.12 let the neutral pane swallow the colour, so every glass or

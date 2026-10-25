@@ -165,10 +165,14 @@ function clotheslineHanger(clothes) {
 		// plain is the original flat tile, round is a solid rounded pill, and the
 		// rest are panes of glass, paper, fabric, wood or metal with the app's
 		// colour breathing through them
-		var pad = 3;
+		var pad = 1;
 		// air between the top edge - or the taskbar when it takes the top edge - and
 		// the garments, so a top bar never tucks the rail under itself
 		var topGap = (typeof clothesLineTopGap != 'undefined') ? clothesLineTopGap : 6;
+		// the pill's window shadow (texture.js) needs air under the tile: the band
+		// is clipped at its foot, so a blur with nowhere to fall is cut off square
+		// where the rail meets the timeline
+		var shadowGap = Math.min(6, Math.max(2, Math.round(clothesLineHeight * 0.14)));
 		$.each(clothes, function(i,v) {
 
 			v['type'] = 'clothes';
@@ -186,7 +190,7 @@ function clotheslineHanger(clothes) {
 			var bx = startW + gap;
 			var by = minHeight + pad + topGap;
 			var bw = widths[i] - (gap * 2);
-			var bh = clothesLineHeight - (pad * 2) - topGap;
+			var bh = Math.max(8, clothesLineHeight - (pad * 2) - topGap - shadowGap);
 
 			var tile_colour = (typeof jawnosApptColour == 'function' ? jawnosApptColour(v) : v.colour) || 'yellow';
 			var darkTheme = (typeof jawnosContrastInk == 'function' && jawnosContrastInk(ink) === '#000000');
