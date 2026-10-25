@@ -1020,6 +1020,14 @@ sub utility_runner() {
 		if ($t eq 'navigation' && $interval > 0) {
 			my $pace = &subs::navigation_pace();
 			$interval = $pace if $pace && $pace < $interval;
+			# The app's GPS service reads this file for its own sampling and wake
+			# interval, so editing the navigation pool in Configure -> Sys moves
+			# the phone's pace too. Written only when the value changes.
+			my $export = int($pace || $interval);
+			if (!defined $gb::gps_pace_exported || $gb::gps_pace_exported != $export) {
+				eval { write_file(&subs::home('~/.president/gps_pace'), $export); };
+				$gb::gps_pace_exported = $export;
+			}
 		}
 		next if $interval <= 0;
 		# read per job: another job in this same pass may have run for minutes
