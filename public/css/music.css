@@ -1242,3 +1242,83 @@ body.dark_theme[data-texture]:not(:is([data-texture="plain"], [data-texture="rou
 	pointer-events: none;
 }
 #music_video_receiver .music_video_receiver_subs:empty { display: none; }
+
+/* ---- per-device video outputs (the TV box) --------------------------------- */
+/* The TV box sits above the L/name/R pill for the same machine. The audio
+   chips still choose the sound; this chooses whether the picture goes there. */
+#music_audio_output { align-items: flex-end; }
+.music_cfg_drawer .music_output_box {
+	display: inline-flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+}
+.music_cfg_drawer .music_video_output_select {
+	height: auto;
+	min-height: 0;
+	margin: 0;
+	padding: 3px 9px 6px;
+	border: 1px solid var(--music-line);
+	border-radius: 7px;
+	background: var(--panel);
+	color: var(--ink-muted);
+	box-shadow: none;
+	cursor: pointer;
+}
+.music_cfg_drawer .music_video_output_select:hover {
+	border-color: var(--music-accent);
+	color: var(--ink);
+}
+.music_cfg_drawer .music_video_output_select[state="on"] {
+	background: var(--music-on);
+	border-color: var(--music-on);
+	color: #fff;
+}
+.music_cfg_drawer .music_video_tv {
+	display: block;
+	width: 22px;
+	height: 14px;
+	border: 2px solid currentColor;
+	border-radius: 2px;
+	position: relative;
+}
+.music_cfg_drawer .music_video_tv::after {
+	content: '';
+	position: absolute;
+	left: 50%;
+	bottom: -5px;
+	width: 8px;
+	height: 3px;
+	border-bottom: 2px solid currentColor;
+	transform: translateX(-50%);
+}
+.music_cfg_drawer .music_video_status {
+	margin-top: 8px;
+	min-height: 1.4em;
+	font-size: 11px;
+	line-height: 1.4;
+	color: var(--ink-muted);
+}
+/* the drawer must sit above the picture in fullscreen/theatre, where the
+   theatre box follows it in the DOM and would otherwise paint over it */
+.music_cfg_drawer { z-index: 50000; }
+
+#music_video_receiver .music_video_receiver_wait {
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 50%;
+	transform: translateY(-50%);
+	text-align: center;
+	color: rgba(255, 255, 255, .68);
+	font-size: 18px;
+	letter-spacing: .01em;
+	pointer-events: none;
+}
+
+.music_cfg_drawer .music_cfg_note {
+	margin-top: 6px;
+	font-size: 11px;
+	line-height: 1.4;
+	color: var(--ink-muted);
+}

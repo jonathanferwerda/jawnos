@@ -937,6 +937,7 @@ sub music_source_close($st) {
 sub music_video_machines {
 	my $rows = &subs::remote_machine_lister({ self => 'no' }) || [];
 	my $me = &subs::signatorial_designer();
+	my $mvo = eval { decode_json(&subs::setting_grabber({ app => 'music', setting => 'mvo' }) // '') } || {};
 	my (@out, %seen);
 	foreach my $rm ( @{$rows} ) {
 		next if (($rm->{'hostname'} || '') eq 'me' && ($rm->{'ip'} || '') eq '127.0.0.1');
@@ -949,7 +950,10 @@ sub music_video_machines {
 			key => $key,
 			label => &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key,
 			device => ($rm->{'device'} || ''),
-			uuid => ($rm->{'uuid'} || '')
+			uuid => ($rm->{'uuid'} || ''),
+			# no row means the machine is on, which is how the section
+			# behaved before the TV boxes; an explicit 'off' is a choice
+			enabled => ((defined $mvo->{$key} && $mvo->{$key} eq 'off') ? 0 : 1)
 		};
 	}
 	return \@out;
@@ -1001,12 +1005,14 @@ sub music_video_source_client_open($c, $st, $key) {
 		if (!$tx->is_websocket) {
 			delete $st->{'clients'}->{$key};
 			$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'connect' })}) if $c->tx->is_websocket;
+			$c->tx->send({text => encode_json({ type => 'peer', key => $key, state => 'error' })}) if $c->tx->is_websocket;
 			&music_video_source_retry($st, $key);
 			return;
 		}
 		$cl->{'tx'} = $tx;
 		$cl->{'up'} = 1;
 		delete $st->{'retries'}->{$key};
+		$c->tx->send({text => encode_json({ type => 'peer', key => $key, state => 'open' })}) if $c->tx->is_websocket;
 		my $delays = ($st->{'hello'}->{'delays'} || {});
 		my $hello = {
 			type => 'hello',
@@ -1027,11 +1033,15 @@ sub music_video_source_client_open($c, $st, $key) {
 			my ($tx, $msg) = @_;
 			my $d = eval { decode_json $msg } || {};
 			if (($d->{'type'} || '') eq 'closed') { $cl->{'up'} = 0; }
-			if (($d->{'type'} || '') eq 'receiver') { $cl->{'ready'} = ($d->{'ready'} ? 1 : 0); }
+			if (($d->{'type'} || '') eq 'receiver') {
+				$cl->{'ready'} = ($d->{'ready'} ? 1 : 0);
+				$c->tx->send({text => encode_json({ type => 'peer', key => $key, state => ($cl->{'ready'} ? 'ready' : 'open') })}) if $c->tx->is_websocket;
+			}
 		});
 		$tx->on(finish => sub {
 			$cl->{'up'} = 0;
 			delete $st->{'clients'}->{$key};
+			$c->tx->send({text => encode_json({ type => 'peer', key => $key, state => 'closed' })}) if $c->tx->is_websocket;
 			# a peer that reboots or wakes is reopened while the picture is
 			# still wanted; three tries is enough to ride out a reboot
 			&music_video_source_retry($st, $key);
@@ -1217,7 +1227,7 @@ websocket '/manager/music/video' => sub ($c) {
 				$st->{'info'} = $d;
 				$st->{'open'} = 1;
 				$music_video_streams{$id} = $st;
-				&music_video_receiver_command($id, {
+				my $open_info = {
 					stream => $id,
 					title => ($d->{'title'} || ''),
 					source => ($d->{'source'} || ''),
@@ -1226,7 +1236,16 @@ websocket '/manager/music/video' => sub ($c) {
 					fps => ($d->{'fps'} || 24),
 					enhance => ($d->{'enhance'} || {}),
 					delay_ms => ($d->{'delay_ms'} || 100)
-				}, 1);
+				};
+				$st->{'open_info'} = $open_info;
+				&music_video_receiver_command($id, $open_info, 1);
+				# a lost push (or a tab that was still loading) gets one more try;
+				# once the receiver socket is here the timer does nothing
+				Mojo::IOLoop->timer(4 => sub {
+					return unless $st->{'open'};
+					return if $music_video_receivers{$id} && keys %{$music_video_receivers{$id}};
+					&music_video_receiver_command($id, $open_info, 1);
+				});
 				# a reconnecting source may find the screen already open
 				if ($music_video_receivers{$id} && keys %{$music_video_receivers{$id}}) {
 					eval { $c->tx->send({text => encode_json({ type => 'receiver', ready => 1 })}); };
@@ -2462,6 +2481,7 @@ get '/music/audio' => sub ($c) {
 	my $mao = eval { return decode_json $jmao } || {};
 	my $eq = eval { return decode_json($settings->{'equalizer'} // '') } || {};
 	my $video = eval { return decode_json($settings->{'video'} // '') } || {};
+	my $mvo = eval { return decode_json($settings->{'mvo'} // '') } || {};
 	my $html = $c->render_to_string(
 		template => 'apps/music/audio',
 		folders => &Manager::misc_setting_list(),
@@ -2470,9 +2490,10 @@ get '/music/audio' => sub ($c) {
 		jmao => $jmao,
 		settings => $settings,
 		video_machines => &music_video_machines(),
+		mvo => $mvo,
 		crate => { settings => $settings }
 	);
-	$c->render(json => { html => $html, equalizer => $eq, video => $video, mao => $mao, video_machines => &music_video_machines() });
+	$c->render(json => { html => $html, equalizer => $eq, video => $video, mvo => $mvo, mao => $mao, video_machines => &music_video_machines() });
 };
 
 get '/music/configuration' => sub ($c) {

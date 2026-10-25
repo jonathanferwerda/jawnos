@@ -250,6 +250,11 @@ hook before_dispatch => sub {
 		# checks whichever role the connection names. A peer has no session, so
 		# the gate must step aside for it to reach that check.
 		$path eq '/manager/music/stream' ||
+		# the video rail has the same three roles (this machine's browser, a
+		# peer's manager, and the peer's own receiver screen). A peer has no
+		# session, so the gate must step aside for the route's peer_verify - the
+		# same reason the audio path above is exempt.
+		$path eq '/manager/music/video' ||
 		# the tunnel control calls come from a peer's supervisor. A peer whose
 		# session cookie lapsed must still reserve and confirm its ports (the
 		# request would otherwise get the Gate page and the tunnel never form);

@@ -47,7 +47,8 @@
 	my $video_quality = (($video->{'quality'} || '720p') eq '1080p') ? '1080p' : '720p';
 	my $video_fps = $video->{'fps'} || 24;
 	$video_fps = 24 unless grep { $_ == $video_fps } (15, 24, 30);
-	my @video_machines = @{ $video_machines || [] };
+	<% my @video_machines = @{ $video_machines || [] };
+	my $mvo = $mvo || eval { decode_json($crate->{'settings'}->{'mvo'} // '') } || {};
 %>
 <% my @eq_freq = (31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000); %>
 <% my @eq_label = ('31', '62', '125', '250', '500', '1k', '2k', '4k', '8k', '16k'); %>
@@ -72,17 +73,25 @@
 			my $key = $rm->{'fqdn'} || $rm->{'ip'};
 			my $channel = $output_channel->($mao->{$key});
 			my $label = &subs::device_hostname_better($rm->{'hostname'}, '', $rm->{'fqdn'}) || $rm->{'hostname'} || $key;
+			my $is_server = (($rm->{'device'} || '') eq 'server');
+			my $vstate = ((defined $mvo->{$key} && $mvo->{$key} eq 'off') ? 'off' : 'on');
 		%>
-			<span class="music_output_group" value="<%= $key %>" state="<%= $channel %>">
-				<button class="music_audio_output_select music_output_left hover" value="<%= $key %>" channel="left" state="<%= $channel eq 'left' ? 'left' : 'off' %>" hint="Left speaker">L</button>
-				<button class="music_audio_output_select music_output_center hover" value="<%= $key %>" state="<%= $channel eq 'stereo' ? 'on' : 'off' %>" hint="Stereo"><%= $label %></button>
-				<button class="music_audio_output_select music_output_right hover" value="<%= $key %>" channel="right" state="<%= $channel eq 'right' ? 'right' : 'off' %>" hint="Right speaker">R</button>
+			<span class="music_output_box" value="<%= $key %>">
+				<% unless ($is_server) { %>
+					<button type="button" class="music_video_output_select hover" value="<%= $key %>" state="<%= $vstate %>" hint="<%= &subs::ui('Video on this machine') %>" aria-label="<%= &subs::ui('Video on this machine') %>"><span class="music_video_tv"></span></button>
+				<% } %>
+				<span class="music_output_group" value="<%= $key %>" state="<%= $channel %>">
+					<button class="music_audio_output_select music_output_left hover" value="<%= $key %>" channel="left" state="<%= $channel eq 'left' ? 'left' : 'off' %>" hint="Left speaker">L</button>
+					<button class="music_audio_output_select music_output_center hover" value="<%= $key %>" state="<%= $channel eq 'stereo' ? 'on' : 'off' %>" hint="Stereo"><%= $label %></button>
+					<button class="music_audio_output_select music_output_right hover" value="<%= $key %>" channel="right" state="<%= $channel eq 'right' ? 'right' : 'off' %>" hint="Right speaker">R</button>
+				</span>
 			</span>
 		<% } %>
 	</div>
+	<div class="music_cfg_note"><%= &subs::ui('The TV box sends the picture; L and R send the sound') %></div>
 </div>
 <div class="music_cfg_section">
-	<h4 class="music_cfg_heading"><%= &subs::lang('music.playback') %></h4>
+<h4 class="music_cfg_heading"><%= &subs::lang('music.playback') %></h4>
 	<div class="music_cfg_fields">
 		<div class="music_cfg_field music_cfg_field_wide">
 			<label class="music_cfg_label" for="music_normalize_select" hint="Volume normalization"><%= &subs::lang('music.normalize') %></label>
@@ -142,6 +151,7 @@
 			<button type="button" id="music_video_remote_toggle" class="button hover" state="<%= $video_remote %>" data-on="<%= &subs::lang('music.video_on') %>" data-off="<%= &subs::lang('music.normalize_off') %>" hint="<%= &subs::ui('Sends the picture to every active remote machine except the server') %>"><%= $video_remote eq 'on' ? &subs::lang('music.video_on') : &subs::lang('music.normalize_off') %></button>
 			<span id="music_video_remote_count" data-label="<%= &subs::lang('music.video_machines') %>"><%= scalar @video_machines %> <%= &subs::lang('music.video_machines') %></span>
 		</div>
+		<div id="music_video_status" class="music_video_status" hint="Video status" title="<%= &subs::ui('A machine that says failed has not picked up the video route; restart or refresh it') %>"></div>
 	</div>
 	<div class="music_cfg_fields">
 		<div class="music_cfg_field">
