@@ -42603,11 +42603,22 @@ post '/manager/health_report' => sub ($c) {
 	$snap = { at => &subs::rightNow(), machines => [], devices => [] } unless ref $snap eq 'HASH';
 	$snap->{'machines'} = [] unless ref $snap->{'machines'} eq 'ARRAY';
 	my @machines = grep { ($_->{'signatorial'} || '') ne $sig } @{ $snap->{'machines'} };
+	# The name the house knows a machine by: the OS hostname is often a bare
+	# "localhost" on a phone, while the roster's manager URL carries the label
+	# (phone.jonathanferwerda.com). Prefer the URL label when the pushed name is
+	# generic, exactly as a pull names the row.
 	my $hostname = $body->{'hostname'} // '';
 	$hostname = substr($hostname, 0, 120);
+	unless ($hostname ne '' && $hostname !~ /^(?:localhost|127\.0\.0\.1)$/i) {
+		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0];
+		my ($pname) = (($rm ? ($rm->{'manager'} // '') : '') =~ m{^https?://([^/:]+)});
+		$pname =~ s/\..*$// if defined $pname && $pname ne '' && $pname !~ /^\d{1,3}(?:\.\d{1,3}){3}$/ && $pname !~ /:/;
+		$hostname = $pname if defined $pname && $pname ne '';
+	}
+	$hostname = 'machine' if $hostname eq '';
 	push @machines, {
 		signatorial => $sig,
-		hostname => ($hostname ne '' ? $hostname : 'machine'),
+		hostname => $hostname,
 		device => $body->{'device'} // '',
 		version => $body->{'version'} // '',
 		battery => (ref $body->{'battery'} eq 'HASH') ? $body->{'battery'} : {},
