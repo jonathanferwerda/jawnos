@@ -8,7 +8,7 @@
     formatting the budget does - precomputed server-side so the lookup never
     writes a measure's key into %{$gb::budget_modes} %>
 <% my $diff = $improvement->{'formatted_difference'} || sprintf('%.3f', $improvement->{'difference'}); %>
-<div style="min-width:280px;font-size:95%;line-height:1.45;">
+<div data-budget-running="<%= ($running || 0) ? 1 : 0 %>" style="min-width:280px;font-size:95%;line-height:1.45;">
 	<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;">
 		<strong style="font-size:115%;"><%= $scope %> budget</strong>
 		<span style="background-color:<%= $status_colour %>;color:<%= &subs::contrast_ink($status_colour) %>;border-radius:9px;padding:1px 9px;font-weight:700;white-space:nowrap;"><%= &subs::format_name($budget->{'status'}) %></span>

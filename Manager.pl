@@ -21685,7 +21685,10 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 	# start or stop, so an open panel would stand still while the session grows.
 	# Re-read it at the moment the panel is asked for; the cache is left to the
 	# watcher, so a poll cannot race it or leave a reading behind as the budget.
-	if ($circumstance eq 'duration' && ($budget->{'budget'} || '') =~ /[0-9]/ && &subs::open_session_uuid($app)) {
+	# The panel is told whether it is live so its browser side can follow the
+	# session without reading the header, which can lag behind the write.
+	my $running = &subs::open_session_uuid($app) ? 1 : 0;
+	if ($circumstance eq 'duration' && ($budget->{'budget'} || '') =~ /[0-9]/ && $running) {
 		my $fresh = eval { return &budget_calculator({
 			app => $app,
 			circumstance => $circumstance,
@@ -21720,9 +21723,10 @@ sub budget_current_information($app,$circumstance,$timestamp) {
 		improvement => $improvement,
 		budget => $budget,
 		autocalc => $autocalc,
-		goal => $goal
+		goal => $goal,
+		running => $running
 	);
-	return { template => $template, circumstance => $circumstance, improvement => $improvement, autocalc => $autocalc, budget => $budget, goal => $goal };
+	return { template => $template, circumstance => $circumstance, improvement => $improvement, autocalc => $autocalc, budget => $budget, goal => $goal, running => $running };
 }
 
 sub budget_runner($app) {

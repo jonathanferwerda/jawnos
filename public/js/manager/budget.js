@@ -528,17 +528,23 @@ function budgetLightStopTimer(app) {
 	}
 }
 
+// The panel says whether it is live, so the browser side does not have to read
+// the header (which can lag a write).
+function budgetLightRunning(blci) {
+	var panel = blci.find('[data-budget-running]');
+	return panel.length ? panel.attr('data-budget-running') == '1' : false;
+}
+
 // An open duration light is a live meter. While the app has a session running,
 // re-read the panel so the time it shows grows with the session instead of
 // standing at the value from when it was opened (the watcher only passes every
 // twenty minutes, and a start or a stop is otherwise the only redraw).
-function budgetLightRefresh(app, circumstance, blci, wind) {
+function budgetLightRefresh(app, circumstance, blci) {
 	if (!blci.is(':visible') || blci.attr('circumstance') != circumstance) {
 		budgetLightStopTimer(app);
 		return;
 	}
-	var running = wind.find('.appointment_header_background').attr('running_uuid') || '';
-	if (!running) {
+	if (!budgetLightRunning(blci)) {
 		budgetLightStopTimer(app);
 		return;
 	}
@@ -552,6 +558,7 @@ function budgetLightRefresh(app, circumstance, blci, wind) {
 			if (blci.is(':visible') && blci.attr('circumstance') == circumstance) {
 				blci.html(response);
 				appointment_chron();
+				if (!budgetLightRunning(blci)) { budgetLightStopTimer(app); }
 			}
 		},
 		complete: function() {
@@ -590,13 +597,10 @@ function budgetLight(app,circumstance,status) {
 				// only a duration budget grows on its own; the others read counts or
 				// money that a running session does not change
 				budgetLightStopTimer(app);
-				if (circumstance == 'duration') {
-					var running = wind.find('.appointment_header_background').attr('running_uuid') || '';
-					if (running) {
-						budgetLightIntervals[app] = setInterval(function() {
-							budgetLightRefresh(app, circumstance, blci, wind);
-						}, budgetLightIntervalMs);
-					}
+				if (circumstance == 'duration' && budgetLightRunning(blci)) {
+					budgetLightIntervals[app] = setInterval(function() {
+						budgetLightRefresh(app, circumstance, blci);
+					}, budgetLightIntervalMs);
 				}
 			}
 		});
