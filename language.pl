@@ -337,6 +337,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'Bottom',
 		'remote_control.take' => 'Take control',
 		'remote_control.release' => 'Release',
+		'remote_control.public_ip' => 'Public IP',
 	},
 	zh => {
 		'clock' => '时钟',
@@ -600,6 +601,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => '下方',
 		'remote_control.take' => '接管控制',
 		'remote_control.release' => '释放',
+		'remote_control.public_ip' => '公网 IP',
 	},
 	fr => {
 		'clock' => 'Horloge',
@@ -863,6 +865,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'En dessous',
 		'remote_control.take' => 'Prendre le contrôle',
 		'remote_control.release' => 'Relâcher',
+		'remote_control.public_ip' => 'IP publique',
 	},
 	es => {
 		'clock' => 'Reloj',
@@ -1126,6 +1129,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'Abajo',
 		'remote_control.take' => 'Tomar el control',
 		'remote_control.release' => 'Soltar',
+		'remote_control.public_ip' => 'IP pública',
 	},
 	de => {
 		'clock' => 'Uhr',
@@ -1389,6 +1393,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'Unten',
 		'remote_control.take' => 'Steuerung übernehmen',
 		'remote_control.release' => 'Freigeben',
+		'remote_control.public_ip' => 'Öffentliche IP',
 	},
 	pt => {
 		'clock' => 'Relógio',
@@ -1652,6 +1657,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'Abaixo',
 		'remote_control.take' => 'Assumir o controlo',
 		'remote_control.release' => 'Libertar',
+		'remote_control.public_ip' => 'IP público',
 	},
 	hi => {
 		'clock' => 'घड़ी',
@@ -1902,6 +1908,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'नीचे',
 		'remote_control.take' => 'नियंत्रण लें',
 		'remote_control.release' => 'छोड़ें',
+		'remote_control.public_ip' => 'सार्वजनिक IP',
 	},
 	ar => {
 		'clock' => 'الساعة',
@@ -2152,6 +2159,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'أسفل',
 		'remote_control.take' => 'تولَّ التحكم',
 		'remote_control.release' => 'حرِّر',
+		'remote_control.public_ip' => 'عنوان IP العام',
 	},
 	bn => {
 		'clock' => 'ঘড়ি',
@@ -2402,6 +2410,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'নিচে',
 		'remote_control.take' => 'নিয়ন্ত্রণ নিন',
 		'remote_control.release' => 'ছেড়ে দিন',
+		'remote_control.public_ip' => 'পাবলিক IP',
 	},
 	ru => {
 		'clock' => 'Часы',
@@ -2652,6 +2661,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'Снизу',
 		'remote_control.take' => 'Взять управление',
 		'remote_control.release' => 'Отпустить',
+		'remote_control.public_ip' => 'Публичный IP',
 	},
 	ja => {
 		'clock' => '時計',
@@ -2902,6 +2912,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => '下',
 		'remote_control.take' => '操作を引き継ぐ',
 		'remote_control.release' => '解放',
+		'remote_control.public_ip' => 'パブリック IP',
 	},
 	pa => {
 		'clock' => 'ਘੜੀ',
@@ -3152,6 +3163,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'ਹੇਠਾਂ',
 		'remote_control.take' => 'ਕੰਟਰੋਲ ਲਓ',
 		'remote_control.release' => 'ਛੱਡੋ',
+		'remote_control.public_ip' => 'ਪਬਲਿਕ IP',
 	},
 	id => {
 		'clock' => 'Jam',
@@ -3402,6 +3414,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'Bawah',
 		'remote_control.take' => 'Ambil kendali',
 		'remote_control.release' => 'Lepaskan',
+		'remote_control.public_ip' => 'IP publik',
 	},
 	ko => {
 		'clock' => '시계',
@@ -3652,6 +3665,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => '아래',
 		'remote_control.take' => '제어 가져오기',
 		'remote_control.release' => '해제',
+		'remote_control.public_ip' => '공인 IP',
 	},
 	it => {
 		'clock' => 'Orologio',
@@ -3902,6 +3916,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'Sotto',
 		'remote_control.take' => 'Prendi il controllo',
 		'remote_control.release' => 'Rilascia',
+		'remote_control.public_ip' => 'IP pubblico',
 	},
 	tr => {
 		'clock' => 'Saat',
@@ -4152,6 +4167,7 @@ our %catalog = (
 		'remote_control.edge_bottom' => 'Altta',
 		'remote_control.take' => 'Kontrolü al',
 		'remote_control.release' => 'Bırak',
+		'remote_control.public_ip' => 'Genel IP',
 	},
 );
 

@@ -17588,6 +17588,35 @@ sub remote_machine_lister() {
 		}
 	}
 
+	# A hub that a peer dialled into records the address it dialled from in that
+	# peer's network blob and hands the row back as a mirror. The mirror itself is
+	# dropped below when the peer already has a row of its own, so carry its
+	# public address onto that row first: on a machine that is not the hub this is
+	# the only place a NATed peer's public address is known.
+	my %mirror_public;
+	foreach my $rm ( @{$remote_machines} ) {
+		next unless $rm->{'mirrors'};
+		my $mirrors = eval { return decode_json $rm->{'mirrors'} } || [];
+		foreach my $mirror ( @{$mirrors} ) {
+			next unless ref $mirror eq 'HASH';
+			my $net = ref $mirror->{'network'} eq 'HASH' ? $mirror->{'network'} : (eval { decode_json $mirror->{'network'} } || {});
+			my $public = &public_ip_only($net->{'public_address'});
+			next unless $public;
+			foreach my $id ( $mirror->{'signatorial'}, $mirror->{'uuid'} ) {
+				next unless defined $id && $id ne '';
+				$mirror_public{$id} = $public;
+			}
+		}
+	}
+	foreach my $rm ( @{$remote_machines} ) {
+		next if $rm->{'public_address'};
+		foreach my $id ( $rm->{'signatorial'}, $rm->{'uuid'} ) {
+			next unless defined $id && $id ne '' && $mirror_public{$id};
+			$rm->{'public_address'} = $mirror_public{$id};
+			last;
+		}
+	}
+
 	# a mirror entry is how a machine the source knows about is reached through
 	# it; when that machine already has a row of its own the list would show the
 	# same machine twice (once, three times, with overlapping mirror sources),
@@ -17671,6 +17700,41 @@ sub remote_machine_lister() {
 
 }
 
+
+# A plain public IPv4 address, or '' for loopback, private, carrier-grade NAT
+# and anything that is not an address at all.
+sub public_ip_only() {
+	my $ip = shift || '';
+	return '' unless $ip =~ /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+	return '' if $1 > 255 || $2 > 255 || $3 > 255 || $4 > 255;
+	return '' if $ip =~ /^(?:0\.|127\.)/;
+	return '' if &ip_is_private($ip);
+	return $ip;
+}
+
+# The address a remote machine presents on the public internet, as far as this
+# house knows it: the address a hub saw it dial from (kept in `public_address`,
+# or still inside the network blob), or one of its own interfaces when the
+# machine sits directly on a public address (a hosted server). Returns '' for a
+# machine behind a router that no hub has seen.
+sub remote_public_address() {
+	my $rm = shift;
+	return '' unless ref $rm eq 'HASH';
+	my $public = &public_ip_only($rm->{'public_address'});
+	return $public if $public;
+	my $net = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
+	if (ref $net eq 'HASH') {
+		$public = &public_ip_only($net->{'public_address'});
+		return $public if $public;
+		foreach my $nic ( sort keys %{$net} ) {
+			next if $nic eq 'public_address';
+			next unless ref $net->{$nic} eq 'HASH';
+			$public = &public_ip_only($net->{$nic}->{'ip'});
+			return $public if $public;
+		}
+	}
+	return &public_ip_only($rm->{'ip'});
+}
 
 sub remote_machine_tunnel_processor() {
 	my $rm = shift;
