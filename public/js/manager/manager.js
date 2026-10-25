@@ -2952,55 +2952,6 @@ $(document).on('keyup', '.timed_input', function(e) {
 	}
 });
 
-$(document).on('click','.voice_prompt',function() {
-	var timestamp = Date.now();
-	$.ajax({
-		url: '/manager/voice_prompt',
-		data: { timestamp: timestamp, repeater: 'no' },
-		success: function(res) {
-
-
-		},
-		error: function(err) { console.log("adder error",err); }
-	});
-});
-
-$(document).on('dblclick', '.voice_prompt', function() {
-
-	$.ajax({
-		url: '/manager/voice_prompt',
-		data: { timestamp: timestamp, repeater: 'yes' },
-		success: function(res) {
-
-		},
-		error: function(err) { console.log("adder error",err); }
-	});
-});
-
-function said_it(text) {
-	if (focused_input.not(':visible')) {
-		focused_input = $('#search');
-	}
-
-
-	if (text) {
-		if (focused_input.attr('id') == 'search' || typeof focused_input == "undefined") {
-			$('#search').val(text);
-			$('#search').trigger(jQuery.Event('keyup', { keyCode: 13 }));
-		}
-		else {
-			var pretext = focused_input.val();
-			if (pretext) {
-				pretext += '. ';
-			}
-			focused_input.val(pretext + text);
-			focused_input.trigger('keyup');
-		//	focused_input.trigger(jQuery.Event('keyup', { keyCode: 13 }));
-		}
-	}
-
-}
-
 $(document).on('click', '.appointment_list_toggle', function() {
 	var list = $(this).attr('list');
 	var l = $(this).closest('.appointment_detail').find('.appointment_list[list="' + list + '"]');

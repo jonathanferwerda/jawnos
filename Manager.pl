@@ -13925,30 +13925,6 @@ sub log_reader {
 	return $appts;
 }
 
-get '/manager/voice_prompt' => sub ($c) {
- # &subs::subprocessor(sub {
-		if ($device eq 'mobile') {
-			my $text;
-			if ($c->param('repeater') eq 'yes') {
-
-				while ( lc $text ne 'cancel' && $text ne '' ) {
-					my $json = `termux-dialog speech`;
-					$json = eval { return decode_json $json } || {};
-					$text = $json->{'text'};
-					&Websocket::send('server', { console => 'said_it(\'' . $text . '\')' });
-					sleep 1;
-				}
-			}
-			else {
-				$text = `termux-speech-to-text`;
-				chomp($text);
-				&Websocket::send('server', { console => 'said_it(\'' . $text . '\')' });
-			}
-		}
-	#}, { name => 'voice_prompt' });
-	$c->render('text' => 'ok');
-};
-
 get '/download_program' => sub($c) {
 	unless ($c->session('downloading_program')) {
 		my $download_count = &subs::setting_grabber({ app => '__president', setting => 'download_count' }) || 0;
@@ -24315,6 +24291,46 @@ post '/manager/app_draft' => sub($c) {
 		&Websocket::send('tab', { console => 'notesReload();' });
 	}
 	$c->render(json => { ok => 1, uuid => $uuid, server_time => $now });
+};
+
+# A one-time sweep from the browsers: every manager page that still holds notes
+# in its localStorage offers them up. The first browser to report an app wins and
+# a draft that already exists is kept, so an old copy on a machine that was left
+# off cannot overwrite newer words. The client clears its local copies once this
+# answers, and the house becomes the authority.
+post '/manager/app_draft/backfill' => sub($c) {
+	my $raw = $c->param('drafts');
+	my $list = eval { decode_json($raw || '') } || [];
+	$list = [] unless ref $list eq 'ARRAY';
+	my ($added, $kept) = (0, 0);
+	my $now = &subs::rightNow();
+	my $seen = 0;
+	foreach my $d ( @{$list} ) {
+		last if ++$seen > 500;
+		next unless ref $d eq 'HASH';
+		my $app = $d->{'app'} || '';
+		$app =~ s/[^[:print:]]//g;
+		$app = substr($app, 0, 200);
+		next unless length $app;
+		my $text = $d->{'text'};
+		$text = '' unless defined $text;
+		$text = substr($text, 0, 200000);
+		next if $text =~ /^\s*$/ || $text eq '<br>';
+		my $uuid = &app_draft_uuid($app, 'notes');
+		my $row = &subs::db_select('notes', ['uuid'], { uuid => $uuid })->hash;
+		if ($row && $row->{'uuid'}) { $kept++; next; }
+		&subs::db_insert('notes', {
+			uuid => $uuid,
+			app => $app,
+			text => $text,
+			timestamp => $now,
+			server_time => $now,
+			device => &subs::device_setter()
+		});
+		$added++;
+	}
+	&Websocket::send('tab', { console => 'notesReload();' }) if $added;
+	$c->render(json => { ok => 1, added => $added, kept => $kept });
 };
 
 post '/manager/note_save' => sub($c) {

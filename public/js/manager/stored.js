@@ -151,6 +151,66 @@ function jawnosAppDraftHydrate(app) {
 	});
 }
 
+// A browser that was typing notes before the server kept drafts still holds them
+// in this store. Once, on load, every non-empty one is offered to the notes
+// table, so the words turn up in the Notes app instead of being hunted down in
+// each web UI. The server takes the first copy of each app and never overwrites
+// a draft, so a machine that was left off cannot undo newer words; once the
+// sweep is accepted its local copies are cleared, because the house is the
+// authority now (the next keystroke writes the local buffer again).
+var jawnosDraftBackfillTried = false;
+
+function jawnosDraftBackfill() {
+	var done = null;
+	try { done = localStorage.getItem('jawnos_draft_backfill'); } catch (err) {}
+	if (done == 'done' || jawnosDraftBackfillTried) { return; }
+	jawnosDraftBackfillTried = true;
+	var data = jawnosStore.read('app_data');
+	var found = {};
+	var add = function (key, value) {
+		if (!key || value == null) { return; }
+		var m = /^(.+)_(notes?)$/.exec(key);
+		if (!m) { return; }
+		var app = m[1];
+		var text = jawnosDraftPlain(value);
+		if (text.replace(/\s/g, '') == '') { return; }
+		// the plural key is the appointment's own field; the singular is the older
+		// window's note, so it only fills a gap
+		if (found[app] && m[2] == 'note') { return; }
+		found[app] = text;
+	};
+	for (var k in data) { add(k, data[k]); }
+	// raw keys that were never folded into app_data (a page opened before the
+	// store learned to fold them, or a browser holding only the old keys)
+	try {
+		for (var i = 0; i < localStorage.length; i++) {
+			var key = localStorage.key(i);
+			if (!key || key == 'app_data' || data[key] !== undefined) { continue; }
+			add(key, localStorage.getItem(key));
+		}
+	} catch (err) {}
+	var list = [];
+	for (var app in found) { list.push({ app: app, text: found[app] }); }
+	var mark = function () {
+		try { localStorage.setItem('jawnos_draft_backfill', 'done'); } catch (err) {}
+		for (var app in found) {
+			jawnosStore.remove('app_data', app + '_notes');
+			jawnosStore.remove('app_data', app + '_note');
+		}
+	};
+	if (!list.length) { mark(); return; }
+	$.ajax({
+		url: '/manager/app_draft/backfill',
+		type: 'POST',
+		data: { drafts: JSON.stringify(list) },
+		dataType: 'json',
+		success: mark,
+		error: function () { jawnosDraftBackfillTried = false; }
+	});
+}
+
+$(function () { setTimeout(jawnosDraftBackfill, 1500); });
+
 // Where a panel was left (its drop spot) and the whole style dump it wears when
 // it opens again; the whiteboard's pen spot keeps them company.
 function jawnosWindowPlaceGet(id) {

@@ -379,7 +379,8 @@ our %topic = (
 		body => [
 			'Notes is the house\'s free-form notebook. Every note is a row of its own, newest first: a watch that heard something that was not a command lands here, and so does anything typed in the box at the foot.',
 			'Notes ride the house sync, so a note written on one machine appears on the rest. Click a note to load it into the box for editing, drag one onto an appointment window to fold it into that app\'s notes, and the X is a two-click delete.',
-			'While an appointment\'s Notes field is being typed into, the words are kept as a draft: this browser holds a copy on every keystroke, against a crash or a refresh, and the house holds one in this same table so it reaches every machine. The list shows a draft under the appointment it belongs to, marked Draft, and the draft is cleared when the appointment is saved.'
+			'While an appointment\'s Notes field is being typed into, the words are kept as a draft: this browser holds a copy on every keystroke, against a crash or a refresh, and the house holds one in this same table so it reaches every machine. The draft is rewritten in place as the words grow - it is one row, not a new note per save - and the list shows it under the appointment it belongs to, marked Draft, until the appointment is saved, which clears it.',
+			'A browser that still held older notes in its own storage hands every non-empty one over the first time it opens the manager after this, so they turn up here under their appointment names instead of having to be found by hand. A draft the house already has is kept, so an old copy cannot undo newer words.'
 		],
 		steps => [
 			'Open Notes and type in the box at the foot; press Save (Enter saves on a desk, Shift+Enter makes a line).',

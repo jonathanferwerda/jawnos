@@ -63,7 +63,7 @@ function jawnosTaskbarPress(sel) {
 // and one or two wear a different name, so those are spelled out here.
 function jawnosTaskbarAppForToggle(id) {
 	if (!id) { return null; }
-	var action = { backup_now: 1, stop_all: 1, upload: 1, voice_prompt: 1, nfc_benign_reader: 1, sms_list_check: 1, permission_asker: 1, torch_toggle: 1, now_toggle: 1 };
+	var action = { backup_now: 1, stop_all: 1, upload: 1, nfc_benign_reader: 1, sms_list_check: 1, permission_asker: 1, torch_toggle: 1, now_toggle: 1 };
 	if (action[id]) { return null; }
 	var alias = { image_toggle: 'gallery', ticketmaker: 'box_office' };
 	if (alias[id]) { return alias[id]; }
