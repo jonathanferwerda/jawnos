@@ -34314,6 +34314,13 @@ sub remote_input_socket_for($rm, $browser_tab_id, $events) {
 	$url .= '/manager/remote_input/ws?signatorial=' . uri_encode(&subs::signatorial_designer());
 	my $ua = Mojo::UserAgent->new;
 	$ua->insecure(1);
+	# The auth gate needs the stored peer session, not only the signature: a
+	# signed handshake passes the app gate, but a session-less one still gets the
+	# Gate page. Carry the same cookie jar remote_command uses.
+	my $peer = eval { &remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm }) };
+	if ($peer && $peer->{'ua'} && $peer->{'ua'}->cookie_jar) {
+		$ua->cookie_jar($peer->{'ua'}->cookie_jar);
+	}
 	$ua->connect_timeout(4);
 	$ua->inactivity_timeout(20);
 	$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
@@ -45866,7 +45873,7 @@ websocket '/manager/ws' => sub ($c) {
 				&terminal_session_resize($data->{'terminal_id'}, $rows, $cols);
 			}
 		}
-		elsif (($data->{'type'} || '') eq 'remote_input') {
+		elsif (($data->{'type'} || '') eq 'remote_input' && $app eq 'server') {
 			# The remote_control panel sends its pointer/key batches over this
 			# already-open socket: one frame, no request and no openssl per
 			# character. A peer that has no live control socket yet (or fell

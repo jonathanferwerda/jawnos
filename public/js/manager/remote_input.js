@@ -270,8 +270,12 @@
 		else {
 			dx = numberOr(e.movementX, numberOr(e.webkitMovementX, numberOr(e.mozMovementX, 0)));
 			dy = numberOr(e.movementY, numberOr(e.webkitMovementY, numberOr(e.mozMovementY, 0)));
-			if (!dx && !dy && R.lastScreen.x !== null && typeof e.screenX === 'number') {
+			// A browser can lose one axis under lock (movementX stays 0 while
+			// movementY works); the screen position still carries that axis.
+			if (!dx && R.lastScreen.x !== null && typeof e.screenX === 'number') {
 				dx = e.screenX - R.lastScreen.x;
+			}
+			if (!dy && R.lastScreen.y !== null && typeof e.screenY === 'number') {
 				dy = e.screenY - R.lastScreen.y;
 			}
 		}
