@@ -75,7 +75,7 @@
 					</div>
 					<div class="utility_pool_members" data-pool="<%= $pool->{'id'} %>" hint="Drop jobs here">
 						<% if (scalar @members) { %>
-							<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', { job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t} } %><% } %>
+							<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t} %><% } %>
 						<% } else { %>
 							<span class="utility_pool_empty"><%= &subs::ui('Drop jobs here') %></span>
 						<% } %>
@@ -87,7 +87,7 @@
 				<div class="utility_pool_head"><span class="utility_pool_label" hint="Not in a pool"><%= &subs::ui('Not in a pool') %></span></div>
 				<div class="utility_pool_members" data-pool="" hint="Drop jobs here">
 					<% if (scalar @loose) { %>
-						<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', { job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t} } %><% } %>
+						<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t} %><% } %>
 					<% } else { %>
 						<span class="utility_pool_empty"><%= &subs::ui('Everything is in a pool') %></span>
 					<% } %>
