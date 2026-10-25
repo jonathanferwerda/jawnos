@@ -25,32 +25,74 @@
 #utility_machines .utility_controller_timeout { width:78px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 #utility_machines .utility_job_when { opacity:.6; font-size:85%; white-space:nowrap; }
 #utility_machines .utility_job_effect { flex:1 1 100%; opacity:.7; font-size:82%; font-style:italic; }
+/* The batch pools: a drop zone per pool, and a chip per job. A chip is the job's
+   whole row in miniature - switch, name, dot, last run - so a pooled job needs no
+   second copy in the flat list below. */
+#utility_pools { display:flex; flex-direction:column; gap:10px; }
+#utility_pools .utility_pool { border:1px solid var(--line); border-radius:10px; padding:8px 10px; background:var(--panel); }
+#utility_pools .utility_pool_regular { border-style:dashed; }
+#utility_pools .utility_pool_head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+#utility_pools .utility_pool_label { flex:1 1 120px; min-width:0; padding:4px 6px; border-radius:6px; border:1px solid transparent; background:transparent; color:var(--ink); font:inherit; font-weight:600; }
+#utility_pools .utility_pool_label:hover,
+#utility_pools .utility_pool_label:focus { border-color:var(--line); background:var(--field, var(--panel)); }
+#utility_pools .utility_pool_seconds { width:78px; box-sizing:border-box; padding:4px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+#utility_pools .utility_pool_remove { border:0; background:transparent; color:inherit; opacity:.55; font-size:18px; line-height:1; padding:2px 6px; cursor:pointer; }
+#utility_pools .utility_pool_remove:hover { opacity:1; }
+#utility_pools .utility_pool_members { display:flex; flex-wrap:wrap; gap:6px; min-height:34px; padding:6px 0 0; }
+#utility_pools .utility_pool_members.utility_pool_over { outline:2px dashed var(--accent, #7aa7ff); outline-offset:2px; border-radius:8px; }
+#utility_pools .utility_pool_empty { opacity:.5; font-size:85%; font-style:italic; padding:6px 2px; }
+#utility_pools .utility_chip { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid var(--line); background:var(--panel); font-size:13px; cursor:grab; touch-action:none; user-select:none; }
+#utility_pools .utility_chip.utility_chip_dragging { opacity:.45; }
+#utility_pools .utility_chip .utility_job_when { opacity:.6; font-size:82%; white-space:nowrap; }
+#utility_pools .utility_pool_add { display:flex; gap:8px; flex-wrap:wrap; }
+#utility_pools .utility_pool_new_name { flex:1 1 160px; min-width:0; padding:5px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
+#utility_machines .utility_pool_group { border-top:1px solid var(--line); padding-top:4px; }
+#utility_machines .utility_pool_group_head { font-size:85%; opacity:.7; padding:4px 0 0; }
 @media (max-width:560px) {
 	#utility_machines .utility_job_name { flex:1 1 100%; }
 }
 </style>
 
 <div id="utility_controls">
-	% my $batch = $controls->{$signatorial}->{'__batch_groups'} || {};
+	<% my $my_pools = &subs::batch_pools($controls->{$signatorial}); %>
+	<% my %my_pool = map { $_->{'id'} => $_ } @{$my_pools}; %>
+	<% my $my_member = sub { my $job = shift; my $group = $controls->{$signatorial}->{$job}->{'group'} || ''; return ($group ne '' && $my_pool{$group}) ? $my_pool{$group} : undef; }; %>
 	<div class="cfg-card" id="utility_batch_groups" hint="Batch groups">
-		<h4 class="utility_machine_name" hint="<%= &subs::ui('Batch groups') %>"><%= &subs::ui('Batch groups') %></h4>
-		<p class="cfg-note"><%= &subs::ui("Set a group's pace; every job in it takes that interval, so they wake together and the device naps between.") %></p>
-		<div class="utility_jobs">
-			<% foreach my $g ( qw/navigation fast slow daily/ ) { %>
-				% my $def = $gb::batch_groups->{$g} || {};
-				% my @members = grep { (($gb::timeouts->{$_}->{'group'} || '') eq $g) } sort keys %{$gb::timeouts};
-				% my $shown = $batch->{$g};
-				% if (!defined $shown && scalar @members) {
-				% 	my $iv = $controls->{$signatorial}->{$members[0]}->{'interval'};
-				% 	$shown = $iv if $iv && $iv > 0;
-				% }
-				<div class="utility_job">
-					<span class="utility_job_name"><%= &subs::ui($def->{'label'} || $g) %> <span class="utility_job_when"><%= join ', ', map { &subs::format_name($_) } @members %></span></span>
-					<div class="utility_job_controls">
-						<input class="utility_batch_group utility_controller_timeout" group="<%= $g %>" hint="<%= &subs::ui($def->{'hint'} || 'Pace for this group') %>" value="<%= &subs::duration_sayer($shown || $def->{'seconds'}) %>">
+		<h4 class="utility_machine_name" hint="Batch pools"><%= &subs::ui('Batch pools') %></h4>
+		<p class="cfg-note"><%= &subs::ui('Drop a job into a pool and it runs on that pool\'s pace, so the whole pool wakes together and the device naps between. A job outside every pool keeps its own interval, further down.') %></p>
+		<div class="utility_pool_add">
+			<input class="utility_pool_new_name" hint="New pool name" placeholder="<%= &subs::ui('New pool name') %>">
+			<button type="button" class="utility_pool_add_button" hint="Add a pool"><%= &subs::ui('Add a pool') %></button>
+		</div>
+		<div id="utility_pools">
+			<% foreach my $pool ( @{$my_pools} ) { %>
+				<% my @members = grep { $controls->{$signatorial}->{$_} && ($my_member->($_) || {})->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
+				<div class="utility_pool" data-pool="<%= $pool->{'id'} %>">
+					<div class="utility_pool_head">
+						<input class="utility_pool_label" data-pool="<%= $pool->{'id'} %>" hint="Pool name" value="<%= $pool->{'label'} %>">
+						<input class="utility_pool_seconds" data-pool="<%= $pool->{'id'} %>" hint="Pace for this pool" value="<%= &subs::duration_sayer($pool->{'seconds'}) %>">
+						<button type="button" class="utility_pool_remove" data-pool="<%= $pool->{'id'} %>" hint="Remove this pool">&times;</button>
+					</div>
+					<div class="utility_pool_members" data-pool="<%= $pool->{'id'} %>" hint="Drop jobs here">
+						<% if (scalar @members) { %>
+							<% foreach my $t ( @members ) { %><%= include 'configure/utility_chip', { job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t} } %><% } %>
+						<% } else { %>
+							<span class="utility_pool_empty"><%= &subs::ui('Drop jobs here') %></span>
+						<% } %>
 					</div>
 				</div>
 			<% } %>
+			<% my @loose = grep { $controls->{$signatorial}->{$_} && !$my_member->($_) } sort keys %{$gb::timeouts}; %>
+			<div class="utility_pool utility_pool_regular">
+				<div class="utility_pool_head"><span class="utility_pool_label" hint="Not in a pool"><%= &subs::ui('Not in a pool') %></span></div>
+				<div class="utility_pool_members" data-pool="" hint="Drop jobs here">
+					<% if (scalar @loose) { %>
+						<% foreach my $t ( @loose ) { %><%= include 'configure/utility_chip', { job => $t, device => $signatorial, row => $controls->{$signatorial}->{$t} } %><% } %>
+					<% } else { %>
+						<span class="utility_pool_empty"><%= &subs::ui('Everything is in a pool') %></span>
+					<% } %>
+				</div>
+			</div>
 		</div>
 	</div>
 	% my @machine_keys = grep { $_ eq $signatorial || $_ =~ /^[0-9a-f]{32}$/ } keys %{$controls};
@@ -63,11 +105,13 @@
 	<div id="utility_machines">
 	% my @ordered_keys = sort { ($a eq $signatorial ? 0 : 1) <=> ($b eq $signatorial ? 0 : 1) || $a cmp $b } @machine_keys;
 	<% foreach my $dt ( @ordered_keys ) { %>
+		<% my $is_me = ($dt eq $signatorial) ? 1 : 0; %>
 		<div class="cfg-card utility_machine">
-			<h4 class="utility_machine_name"><%= $signatorial eq $dt ? 'Me' : ($machine_name{$dt} || $dt) %></h4>
+			<h4 class="utility_machine_name"><%= $is_me ? 'Me' : ($machine_name{$dt} || $dt) %></h4>
 			<div class="utility_jobs">
 				<% foreach my $t ( sort keys %{$gb::timeouts} ) { %>
 					% next unless $controls->{$dt}->{$t};
+					% next if &subs::batch_pool_of($controls->{$dt}, $t);
 					<div class="utility_job">
 						<span class="utility_job_name"><%= &subs::format_name($t) %></span>
 						<div class="utility_job_controls">
@@ -88,6 +132,36 @@
 					</div>
 				<% } %>
 			</div>
+			<% if (!$is_me) { %>
+				<% foreach my $pool ( @{ &subs::batch_pools($controls->{$dt}) } ) { %>
+					<% my @members = grep { my $p = &subs::batch_pool_of($controls->{$dt}, $_); $p && $p->{'id'} eq $pool->{'id'} } sort keys %{$gb::timeouts}; %>
+					<% next unless scalar @members; %>
+					<div class="utility_pool_group">
+						<div class="utility_pool_group_head"><%= &subs::ui($pool->{'label'}) %> · <%= &subs::duration_sayer($pool->{'seconds'}) %></div>
+						<div class="utility_jobs">
+							<% foreach my $t ( @members ) { %>
+								<div class="utility_job">
+									<span class="utility_job_name"><%= &subs::format_name($t) %></span>
+									<div class="utility_job_controls">
+										<input type="checkbox" class="utility_controller" control="<%= $t %>" device="<%= $dt %>" setting="toggle" hint="Run this job" <% if ($controls->{$dt}->{$t}->{'toggle'} eq 'on') { %>checked="checked"<% } %>>
+										<% if ($controls->{$dt}->{$t}->{'status'} eq 'good') { %>
+											<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
+										<% } elsif ($controls->{$dt}->{$t}->{'status'} eq 'bad') { %>
+											<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
+										<% } %>
+										<% if ($controls->{$dt}->{$t}->{'last_run'}) { %>
+											<span class="time utility_job_when" timestamp="<%= $controls->{$dt}->{$t}->{'last_run'} %>"></span>
+										<% } %>
+										<% if ($controls->{$dt}->{$t}->{'last_effect'}) { %>
+											<span class="utility_job_effect" hint="what the last run did"><%= $controls->{$dt}->{$t}->{'last_effect'} %></span>
+										<% } %>
+									</div>
+								</div>
+							<% } %>
+						</div>
+					</div>
+				<% } %>
+			<% } %>
 		</div>
 	<% } %>
 	</div>

@@ -1,0 +1,14 @@
+<% no warnings 'uninitialized'; %>
+<% my $row = $row || {}; %>
+<span class="utility_chip" draggable="true" data-job="<%= $job %>" data-device="<%= $device %>">
+	<input type="checkbox" class="utility_controller" control="<%= $job %>" device="<%= $device %>" setting="toggle" hint="Run this job" <% if ($row->{'toggle'} eq 'on') { %>checked="checked"<% } %>>
+	<span class="utility_chip_name"><%= &subs::format_name($job) %></span>
+	<% if ($row->{'status'} eq 'good') { %>
+		<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
+	<% } elsif ($row->{'status'} eq 'bad') { %>
+		<img class="good_status little_thumb circular_thumb" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
+	<% } %>
+	<% if ($row->{'last_run'}) { %>
+		<span class="time utility_job_when" timestamp="<%= $row->{'last_run'} %>"></span>
+	<% } %>
+</span>

@@ -79,6 +79,26 @@
 		</div>
 	</div>
 
+	<h3><%= &subs::ui('PPH comparator') %></h3>
+	<p class="cfg-note"><%= &subs::ui('Discharging drain grouped by the lock that produced each sample. Needs a few hours in each state; it fills in as the phone runs.') %></p>
+	<% my $pph = &subs::pph_compare_report(); %>
+	<div class="cfg-scroll">
+		<table>
+			<thead><tr><th style="text-align:left;"><%= &subs::ui('State') %></th><th hint="Discharging samples"><%= &subs::ui('Points') %></th><th><%= &subs::ui('Hours') %></th><th hint="percent per hour while discharging"><%= &subs::ui('PPH') %></th></tr></thead>
+			<tbody>
+				<% foreach my $row ( @{$pph->{'rows'}} ) { %>
+					<tr>
+						<td style="text-align:left;"><%= &subs::ui($row->{'label'}) %></td>
+						<td><%= $row->{'points'} %></td>
+						<td><% if ($row->{'hours'}) { %><%= sprintf('%.1f', $row->{'hours'}) %><% } else { %>—<% } %></td>
+						<td><% if (defined $row->{'pph'}) { %><%= sprintf('%.2f', $row->{'pph'}) %><% } else { %>—<% } %></td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	</div>
+	<% if ($pph->{'note'}) { %><p class="cfg-note"><%= $pph->{'note'} %></p><% } %>
+
 	<% my $wake_schedule = &subs::setting_grabber({ app => '__president', setting => 'wake_schedule' }); %>
 	<% $wake_schedule = 'on' unless defined $wake_schedule && $wake_schedule =~ /\S/; %>
 	<h3><%= &subs::ui('Wake schedule') %></h3>

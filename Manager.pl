@@ -18741,12 +18741,62 @@ post '/manager/configure/utility_controller/save' => sub($c) {
 
 };
 
+post '/manager/configure/utility_pools/save' => sub($c) {
+	# The pool editor sends its whole state: the pools in the person's order and
+	# the pool each job sits in (an empty id means the regular list). Saving the
+	# whole thing keeps drag-and-drop, add, remove and rename to one route.
+	my $pools = eval { decode_json($c->param('pools') // '[]') };
+	$pools = [] unless ref $pools eq 'ARRAY';
+	my $members = eval { decode_json($c->param('members') // '{}') };
+	$members = {} unless ref $members eq 'HASH';
+
+	my (@clean, %seen);
+	foreach my $pool ( @{$pools} ) {
+		next unless ref $pool eq 'HASH';
+		my $id = $pool->{'id'} // '';
+		$id =~ s/[^a-z0-9_]//g;
+		$id = substr($id, 0, 40);
+		next if $id eq '' || $seen{$id}++;
+		my $raw = $pool->{'seconds'};
+		my $seconds = (defined $raw && $raw =~ /^\s*-?\d+(\.\d+)?\s*$/)
+			? int($raw)
+			: int(&subs::time_abbrev_translator($raw, &subs::rightNow()) / 1000);
+		$seconds = $gb::batch_groups->{$id}->{'seconds'} || 900 unless $seconds > 0;
+		my $label = $pool->{'label'} // '';
+		$label =~ s/^\s+|\s+$//g;
+		$label = substr($label, 0, 40);
+		$label = $id if $label eq '';
+		push @clean, { id => $id, label => $label, seconds => $seconds };
+	}
+
+	my $signatorial = &subs::signatorial_designer();
+	my $controls = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
+	$controls->{$signatorial} = clone $gb::timeouts unless $controls->{$signatorial};
+	$controls->{$signatorial}->{'__batch_groups'} = \@clean;
+	my $now = &subs::rightNow();
+	$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
+	my $moved = 0;
+	foreach my $t ( keys %{$gb::timeouts} ) {
+		next if $t =~ /^__/;
+		next unless ref $gb::timeouts->{$t} eq 'HASH';
+		$controls->{$signatorial}->{$t} = clone $gb::timeouts->{$t} unless $controls->{$signatorial}->{$t};
+		my $group = $members->{$t};
+		$group = '' unless defined $group && $seen{$group};
+		$controls->{$signatorial}->{$t}->{'group'} = $group;
+		$moved++;
+	}
+	&subs::log_writer('utility pools: ' . scalar(@clean) . ' pool(s), ' . $moved . ' job(s) placed');
+	&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => encode_json($controls) });
+	my $html = $c->render_to_string(template => 'configure/utility_controller');
+	$c->render(json => { html => $html, pools => \@clean });
+};
+
 post '/manager/configure/utility_batch_group/save' => sub($c) {
+	# The old pace box: kept for a page that still carries one, and it now writes
+	# the pool's pace rather than copying the interval onto every member.
 	my $group = $c->param('group') || '';
 	my $value = $c->param('interval');
 	return $c->render(json => { error => 'unknown group' }) unless $gb::batch_groups->{$group};
-	# a bare number is seconds; a duration such as "15m" is translated, exactly
-	# like the per-job interval field
 	my $seconds = ($value =~ /^\s*-?\d+(\.\d+)?\s*$/)
 		? ($value + 0)
 		: &subs::time_abbrev_translator($value, &subs::rightNow()) / 1000;
@@ -18756,18 +18806,13 @@ post '/manager/configure/utility_batch_group/save' => sub($c) {
 	my $signatorial = &subs::signatorial_designer();
 	my $controls = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
 	$controls->{$signatorial} = clone $gb::timeouts unless $controls->{$signatorial};
-	$controls->{$signatorial}->{'__batch_groups'} ||= {};
-	$controls->{$signatorial}->{'__batch_groups'}->{$group} = $seconds;
-	my $n = 0;
-	foreach my $t ( keys %{$gb::timeouts} ) {
-		next unless (($gb::timeouts->{$t}->{'group'} || '') eq $group);
-		$controls->{$signatorial}->{$t} ||= clone $gb::timeouts->{$t};
-		$controls->{$signatorial}->{$t}->{'interval'} = $seconds;
-		$n++;
+	my $pools = &subs::batch_pools($controls->{$signatorial});
+	foreach my $pool ( @{$pools} ) {
+		$pool->{'seconds'} = $seconds if $pool->{'id'} eq $group;
 	}
-	my $now = &subs::rightNow();
-	$controls->{$signatorial}->{'__settings'}->{'last_change'} = $now;
-	&subs::log_writer('utility batch: ' . $group . '=' . $seconds . 's for ' . $n . ' job(s)');
+	$controls->{$signatorial}->{'__batch_groups'} = $pools;
+	$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
+	&subs::log_writer('utility batch: ' . $group . '=' . $seconds . 's');
 	&subs::setting_setter({ app => '__president', setting => 'utility_controller', value => encode_json($controls) });
 	my $html = $c->render_to_string(template => 'configure/utility_controller');
 	$c->render(json => { html => $html, group => $group, interval => $seconds });

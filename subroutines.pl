@@ -3286,6 +3286,70 @@ sub battery_slope {
 	return ($median, $span, scalar @p, $lo, $hi, $movement);
 }
 
+# The PPH comparator: the same discharging history, grouped by the lock state
+# that produced each sample. A scheduled-wake reading and a permanent-lock
+# reading can then be compared without a separate measuring process (which would
+# itself keep the phone awake). The caller prints or renders the rows.
+sub pph_compare_report {
+	my $cached = &cache_get({ app => '__president', context => 'battery', subcontext => 'current' });
+	my $history = (ref $cached eq 'HASH' && ref $cached->{'history'} eq 'ARRAY') ? $cached->{'history'} : [];
+	# Points written before the state was recorded are assigned by the handoff
+	# marker's mtime: before it was written, the permanent lock was held.
+	my $release = &subs::home('~/.president/wake_lock_released');
+	my $released_at = -e $release ? ((stat($release))[9] || 0) * 1000 : 0;
+	my %group;
+	foreach my $point ( @{$history} ) {
+		next unless ref $point eq 'HASH' && defined $point->{'p'} && defined $point->{'t'};
+		next unless (($point->{'s'} || '') eq 'discharging');
+		my $state = $point->{'w'} || ($released_at && $point->{'t'} >= $released_at ? 'scheduled' : 'permanent');
+		push @{$group{$state}}, $point;
+	}
+	my @rows;
+	foreach my $state ( qw/scheduled permanent/ ) {
+		my @points = sort { $a->{'t'} <=> $b->{'t'} } @{$group{$state} || []};
+		# A jump of ten points or a gap over half an hour is a new segment (a
+		# battery swap, a bad read, a long shutdown), not drain to be fitted.
+		my @clean;
+		foreach my $point ( @points ) {
+			if (@clean && (abs($point->{'p'} - $clean[-1]->{'p'}) > 10
+				|| $point->{'t'} - $clean[-1]->{'t'} > 1800000)) {
+				@clean = ();
+			}
+			push @clean, $point;
+		}
+		my $pph;
+		my $hours = 0;
+		if (scalar @clean >= 3) {
+			my $base = $clean[0]->{'t'};
+			$hours = ($clean[-1]->{'t'} - $base) / 3600000;
+			my ($n, $sx, $sy, $sxx, $sxy) = (0, 0, 0, 0, 0);
+			foreach my $point ( @clean ) {
+				my $x = ($point->{'t'} - $base) / 3600000;
+				my $y = $point->{'p'} + 0;
+				$n++; $sx += $x; $sy += $y; $sxx += $x * $x; $sxy += $x * $y;
+			}
+			my $den = $n * $sxx - $sx * $sx;
+			if ($n >= 3 && $den > 0) {
+				my $slope = ($n * $sxy - $sx * $sy) / $den;
+				$pph = -$slope if $slope < 0;
+			}
+		}
+		push @rows, {
+			state => $state,
+			label => ($state eq 'scheduled' ? 'Scheduled wake' : 'Permanent lock'),
+			points => scalar @clean,
+			hours => $hours,
+			pph => $pph,
+		};
+	}
+	return {
+		rows => \@rows,
+		history => scalar @{$history},
+		released_at => $released_at,
+		note => (scalar @{$history} ? undef : 'No battery history yet.'),
+	};
+}
+
 # The card's one estimate, in hours, from whichever reading the pack gives.
 # The gauge (energy/power) is the only real measurement; a percentage slope is
 # an inference. Fills eta_kind (left/full), eta_hours, eta_lo/eta_hi (a band),
@@ -3552,7 +3616,14 @@ sub battery_sample {
 	if (defined $b->{'percentage'}) {
 		my $last_at = scalar(@{$history}) ? ($history->[-1]->{'t'} || 0) : 0;
 		if ($now - $last_at >= 30000) {
-			push @{$history}, { t => $now, p => $b->{'percentage'} + 0, s => lc($b->{'status'} || '') };
+			# w records which lock produced the reading: the PPH comparator groups
+			# the drain by it (scheduled wake vs the old permanent lock).
+			push @{$history}, {
+				t => $now,
+				p => $b->{'percentage'} + 0,
+				s => lc($b->{'status'} || ''),
+				w => (-e &subs::home('~/.president/wake_lock_released') ? 'scheduled' : 'permanent'),
+			};
 			splice @{$history}, 0, scalar(@{$history}) - 360 if scalar @{$history} > 360;
 		}
 	}
@@ -15216,12 +15287,79 @@ sub native_location {
 }
 
 # The navigation utility's own pace, in seconds. President adopts this machine's
+# Batch pools. A pool is a group of utilities that wake together on one pace;
+# the pace lives on the pool, not on each job, so moving a job between pools
+# (or out of all of them) changes only where it is written down. Stored in the
+# machine's utility row as a list, so the order is the person's:
+#   __batch_groups => [ { id, label, seconds }, ... ]
+# An older row stored a plain { id => seconds } map and reads the same; a row
+# that has never been edited has no pools of its own and takes gb.pl's defaults.
+sub batch_pools {
+	my $row = shift;
+	my $stored = (ref $row eq 'HASH') ? $row->{'__batch_groups'} : undef;
+	my @pools;
+	if (ref $stored eq 'ARRAY') {
+		my %seen;
+		foreach my $pool ( @{$stored} ) {
+			next unless ref $pool eq 'HASH';
+			my $id = $pool->{'id'} // '';
+			$id =~ s/[^a-z0-9_]//g;
+			next unless $id ne '' && !$seen{$id}++;
+			my $seconds = int($pool->{'seconds'} || 0);
+			$seconds = $gb::batch_groups->{$id}->{'seconds'} || 900 unless $seconds > 0;
+			my $label = $pool->{'label'} // '';
+			$label =~ s/^\s+|\s+$//g;
+			$label = $id if $label eq '';
+			push @pools, { id => $id, label => $label, seconds => $seconds };
+		}
+	}
+	elsif (ref $stored eq 'HASH') {
+		foreach my $id ( sort keys %{$stored} ) {
+			my $seconds = int($stored->{$id} || 0);
+			$seconds = $gb::batch_groups->{$id}->{'seconds'} || 900 unless $seconds > 0;
+			push @pools, { id => $id, label => ($gb::batch_groups->{$id}->{'label'} || $id), seconds => $seconds };
+		}
+	}
+	if (!defined $stored) {
+		foreach my $id ( @gb::batch_order, sort keys %{$gb::batch_groups} ) {
+			next if !$gb::batch_groups->{$id} || grep { $_ eq $id } map { $_->{'id'} } @pools;
+			push @pools, { id => $id, label => ($gb::batch_groups->{$id}->{'label'} || $id), seconds => $gb::batch_groups->{$id}->{'seconds'} || 900 };
+		}
+	}
+	return \@pools;
+}
+
+# The pool a job belongs to, or undef when it runs on its own interval.
+sub batch_pool_of {
+	my $row = shift;
+	my $job = shift;
+	return undef unless ref $row eq 'HASH' && ref $row->{$job} eq 'HASH';
+	my $group = $row->{$job}->{'group'} // '';
+	return undef if $group eq '';
+	foreach my $pool ( @{ &batch_pools($row) } ) {
+		return $pool if $pool->{'id'} eq $group;
+	}
+	return undef;
+}
+
+# The pace a job actually keeps: its pool's seconds, or undef when it is not in
+# a pool (the caller then uses the job's own interval).
+sub batch_interval {
+	my $row = shift;
+	my $job = shift;
+	my $pool = &batch_pool_of($row, $job);
+	return $pool ? $pool->{'seconds'} : undef;
+}
+
+# The machine's navigation interval, in seconds. The runtime adopts the stored
 # row from the utility controller at runtime, but Manager and the scripts do not
-# share that process, so read the same persisted row here.
+# share that process, so read the same persisted row here. A navigation job in a
+# batch pool keeps the pool's pace.
 sub navigation_interval {
 	my $signatorial = &subs::signatorial_designer();
 	my $controls = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
-	my $interval = $controls->{$signatorial}->{'navigation'}->{'interval'};
+	my $interval = &batch_interval($controls->{$signatorial}, 'navigation');
+	$interval = $controls->{$signatorial}->{'navigation'}->{'interval'} unless $interval && $interval > 0;
 	$interval = $gb::timeouts->{'navigation'}->{'interval'} unless $interval && $interval > 0;
 	return $interval || 600;
 }

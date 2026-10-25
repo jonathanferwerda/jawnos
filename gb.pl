@@ -82,6 +82,8 @@ our $capabilities = {
 # The batch groups. Every utility names one; Configure -> Sys can set a group's
 # pace once, which writes that interval to every job in it so they wake together
 # and the device gets one longer nap instead of several short ones. Seconds.
+# The order here is the order the default pools are listed in.
+our @batch_order = qw/navigation fast slow daily/;
 our $batch_groups = {
 	'navigation' => { label => 'Navigation', seconds => 4 * 60, hint => 'GPS fixes (the house metronome)' },
 	'fast'       => { label => 'Fast',       seconds => 15 * 60, hint => 'presence, health, mail, tunnels' },

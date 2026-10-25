@@ -1719,12 +1719,38 @@ $(document).on('change', '.utility_controller', function() {
 	});
 });
 
-$(document).on('change', '.utility_batch_group', function() {
-	var input = $(this);
+// The batch pools. The editor is one drop zone per pool plus a regular bin. The
+// whole state is saved at once, so a drag, a rename, a pace and a removal all
+// take the same route and the panel repaints from what the server stored.
+function utilityPoolState() {
+	var pools = [];
+	$('#utility_pools .utility_pool').each(function() {
+		var card = $(this);
+		var id = card.attr('data-pool');
+		if (!id) { return; }
+		pools.push({
+			id: id,
+			label: $.trim(card.find('.utility_pool_label').val() || '') || id,
+			seconds: $.trim(card.find('.utility_pool_seconds').val() || '')
+		});
+	});
+	var members = {};
+	$('#utility_pools .utility_chip').each(function() {
+		members[$(this).attr('data-job')] = $(this).closest('.utility_pool_members').attr('data-pool') || '';
+	});
+	return { pools: pools, members: members };
+}
+
+function utilityPoolsSave(pools, members) {
+	var state = utilityPoolState();
+	var data = {
+		pools: JSON.stringify(pools || state.pools),
+		members: JSON.stringify(members || state.members)
+	};
 	$.ajax({
-		url: '/manager/configure/utility_batch_group/save',
+		url: '/manager/configure/utility_pools/save',
 		type: 'POST',
-		data: { group: input.attr('group'), interval: input.val() },
+		data: data,
 		success: function(response) {
 			if (response && response.html) {
 				$('#utility_controls_container').html(response.html);
@@ -1734,6 +1760,126 @@ $(document).on('change', '.utility_batch_group', function() {
 		},
 		error: function() { utilityControllerReloader(); }
 	});
+}
+
+function utilityPoolPlace(chip, poolId) {
+	var zone = $('#utility_pools .utility_pool_members').filter(function() {
+		return ($(this).attr('data-pool') || '') === (poolId || '');
+	}).first();
+	if (!zone.length) { return; }
+	zone.find('.utility_pool_empty').remove();
+	chip.appendTo(zone);
+	utilityPoolsSave();
+}
+
+$(document).on('change', '.utility_pool_seconds, .utility_pool_label', function() {
+	// A pace that does not parse is put back rather than saved as zero; the
+	// server's own check is the second line of defence.
+	var input = $(this);
+	if (input.hasClass('utility_pool_seconds') && !$.trim(input.val())) {
+		utilityControllerReloader();
+		return;
+	}
+	utilityPoolsSave();
+});
+
+$(document).on('click', '.utility_pool_add_button', function() {
+	var input = $('#utility_batch_groups .utility_pool_new_name');
+	var label = $.trim(input.val() || '');
+	if (!label) { input.focus(); return; }
+	var base = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'pool';
+	var id = base, n = 2;
+	while ($('#utility_pools .utility_pool[data-pool="' + id + '"]').length) { id = base + '_' + (n++); }
+	var state = utilityPoolState();
+	state.pools.push({ id: id, label: label, seconds: '15m' });
+	utilityPoolsSave(state.pools, state.members);
+});
+
+$(document).on('keydown', '#utility_batch_groups .utility_pool_new_name', function(e) {
+	if (e.key === 'Enter') { e.preventDefault(); $(this).closest('#utility_batch_groups').find('.utility_pool_add_button').trigger('click'); }
+});
+
+$(document).on('click', '.utility_pool_remove', function() {
+	var id = $(this).attr('data-pool');
+	var state = utilityPoolState();
+	state.pools = $.grep(state.pools, function(pool) { return pool.id !== id; });
+	$.each(state.members, function(job, pool) {
+		if (pool === id) { state.members[job] = ''; }
+	});
+	utilityPoolsSave(state.pools, state.members);
+});
+
+// Mouse drag and drop.
+$(document).on('dragstart', '.utility_chip', function(e) {
+	var ev = e.originalEvent;
+	if (!ev.dataTransfer) { return; }
+	ev.dataTransfer.setData('text/plain', $(this).attr('data-job'));
+	ev.dataTransfer.effectAllowed = 'move';
+	$(this).addClass('utility_chip_dragging');
+});
+
+$(document).on('dragend', '.utility_chip', function() {
+	$(this).removeClass('utility_chip_dragging');
+	$('.utility_pool_members').removeClass('utility_pool_over');
+});
+
+$(document).on('dragover', '.utility_pool_members', function(e) {
+	e.preventDefault();
+	if (e.originalEvent.dataTransfer) { e.originalEvent.dataTransfer.dropEffect = 'move'; }
+	$('.utility_pool_members').removeClass('utility_pool_over');
+	$(this).addClass('utility_pool_over');
+});
+
+$(document).on('dragleave', '.utility_pool_members', function() {
+	$(this).removeClass('utility_pool_over');
+});
+
+$(document).on('drop', '.utility_pool_members', function(e) {
+	e.preventDefault();
+	var job = e.originalEvent.dataTransfer ? e.originalEvent.dataTransfer.getData('text/plain') : '';
+	var chip = $('.utility_chip').filter(function() { return $(this).attr('data-job') === job; }).first();
+	$(this).removeClass('utility_pool_over');
+	if (chip.length) { utilityPoolPlace(chip, $(this).attr('data-pool') || ''); }
+});
+
+// Touch drag and drop: a finger that moves past a few pixels lifts the chip and
+// follows it; a tap that stays still leaves the switch inside the chip to work.
+var utilityPoolDrag = null;
+$(document).on('pointerdown', '.utility_chip', function(e) {
+	if (e.originalEvent.pointerType === 'mouse') { return; }
+	if ($(e.target).is('input, img')) { return; }
+	utilityPoolDrag = {
+		chip: $(this),
+		id: e.originalEvent.pointerId,
+		x: e.originalEvent.clientX,
+		y: e.originalEvent.clientY,
+		moving: false
+	};
+});
+
+$(document).on('pointermove', '.utility_chip', function(e) {
+	if (!utilityPoolDrag || utilityPoolDrag.chip[0] !== this || utilityPoolDrag.id !== e.originalEvent.pointerId) { return; }
+	var dx = e.originalEvent.clientX - utilityPoolDrag.x;
+	var dy = e.originalEvent.clientY - utilityPoolDrag.y;
+	if (!utilityPoolDrag.moving && Math.abs(dx) + Math.abs(dy) < 8) { return; }
+	utilityPoolDrag.moving = true;
+	e.preventDefault();
+	utilityPoolDrag.chip.addClass('utility_chip_dragging');
+	$('.utility_pool_members').removeClass('utility_pool_over');
+	var zone = $(document.elementFromPoint(e.originalEvent.clientX, e.originalEvent.clientY)).closest('.utility_pool_members');
+	if (zone.length) { zone.addClass('utility_pool_over'); }
+});
+
+$(document).on('pointerup pointercancel', '.utility_chip', function(e) {
+	if (!utilityPoolDrag || utilityPoolDrag.chip[0] !== this || utilityPoolDrag.id !== e.originalEvent.pointerId) { return; }
+	var drag = utilityPoolDrag;
+	utilityPoolDrag = null;
+	drag.chip.removeClass('utility_chip_dragging');
+	$('.utility_pool_members').removeClass('utility_pool_over');
+	if (!drag.moving) { return; }
+	e.preventDefault();
+	var zone = $(document.elementFromPoint(e.originalEvent.clientX, e.originalEvent.clientY)).closest('.utility_pool_members');
+	if (zone.length) { utilityPoolPlace(drag.chip, zone.attr('data-pool') || ''); }
 });
 
 function utilityControllerReloader() {

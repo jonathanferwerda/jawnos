@@ -968,6 +968,7 @@ sub socket_watch() {
 
 sub utility_stopper() {
 	foreach my $t ( keys %{$gb::timeouts} ) {
+		next if $t =~ /^__/;
 		Mojo::IOLoop->remove($gb::timeouts->{$t}->{'loop'}) if $gb::timeouts->{$t}->{'loop'};
 		$gb::timeouts->{$t}->{'subroutine'} = undef if $gb::timeouts->{$t}->{'subroutine'};
 	}
@@ -990,6 +991,13 @@ sub utility_stopper() {
 our %utility_slots;
 sub utility_runner() {
 	return if $gb::utility_functions_watcher == 0;
+	# The app's scheduled wake wants to know when the due work is done so it can
+	# release the CPU before its 45s backstop. It is written only after a tick
+	# that ran nothing, and removed as soon as a job starts, so a reader can tell
+	# "everything due has finished" from "the tree is down or still working".
+	my $idle_file = &subs::home('~/.president/utility_idle');
+	my $ran = 0;
+	my $next_due;
 	# A job's next slot only ever moves by its interval. The old check measured
 	# the interval from the last completion, so every run started its interval
 	# late by its own duration plus the tick: a five-minute job slipped about
@@ -998,9 +1006,13 @@ sub utility_runner() {
 	# the epoch, so an hourly job keeps the same minute of the hour and a daily
 	# one the same time of day; a restart rebuilds the same slot from last_run.
 	foreach my $t ( sort keys %{$gb::timeouts} ) {
+		next if $t =~ /^__/;
 		my $u = $gb::timeouts->{$t};
 		next unless $u->{'subroutine'} && $u->{'toggle'} eq 'on';
-		my $interval = $u->{'interval'} || 0;
+		# A job in a batch pool runs on the pool's pace; one outside every pool
+		# keeps its own interval.
+		my $interval = &subs::batch_interval($gb::timeouts, $t);
+		$interval = $u->{'interval'} || 0 unless defined $interval;
 		# navigation keeps the machine's pace, but a running appointment whose app
 		# asks for fixes more often than that moves the slot up to the app's own
 		# rate (floored in subs::navigation_pace) instead of waiting for the slower
@@ -1026,9 +1038,18 @@ sub utility_runner() {
 		}
 		# a clock stepped backwards must not park a job longer than its interval
 		$slot->{'due'} = $now if $slot->{'due'} > $now + $period;
-		next if $now < $slot->{'due'};
+		if ($now < $slot->{'due'}) {
+			$next_due = $slot->{'due'} if !defined $next_due || $slot->{'due'} < $next_due;
+			next;
+		}
 
 		$u->{'last_attempt'} = $now;
+		# The app's early-release reader must not mistake a running job for an
+		# idle tree: drop the marker before the work starts.
+		if (!$ran) {
+			eval { unlink $idle_file; };
+			$ran = 1;
+		}
 		local $SIG{ALRM} = sub { die "TIMEOUT_EXCEEDED\n" };
 		my $success = 0;
 		my $effect;
@@ -1064,6 +1085,17 @@ sub utility_runner() {
 		# missed rather than firing twice.
 		my $done = &subs::rightNow();
 		$slot->{'due'} = (int($done / $period) + 1) * $period;
+	}
+	# Nothing was due on this tick: everything this wake asked for has finished.
+	# The app's receiver reads the mtime and lets the phone sleep early. Write it
+	# only when a new beat has arrived since the last mark, not on every idle
+	# tick - a five-second write would keep the flash busy for nothing - and only
+	# when no job is about to fall due, so a release never skips a beat that is
+	# already at the door.
+	if (!$ran && (!defined $next_due || $next_due > &subs::rightNow() + 12000)) {
+		my $ready_at = (-e &subs::home('~/.president/wake_ready')) ? ((stat(&subs::home('~/.president/wake_ready')))[9] || 0) : 0;
+		my $idle_at = (-e $idle_file) ? ((stat($idle_file))[9] || 0) : 0;
+		eval { write_file($idle_file, &subs::rightNow()); } if $ready_at > $idle_at;
 	}
 }
 
@@ -1197,6 +1229,7 @@ sub utility_functions() {
 			my $cur_lc = $gb::timeouts->{'__settings'}->{'last_change'} || 0;
 			if (!$gb::utility_adopted || $row_lc > $cur_lc) {
 				foreach my $t ( keys %{$gb::timeouts} ) {
+					next if $t =~ /^__/;
 					Mojo::IOLoop->remove($gb::timeouts->{$t}->{'loop'}) if $gb::timeouts->{$t}->{'loop'};
 				}
 				$gb::timeouts = $controls->{$signatorial};
@@ -1220,11 +1253,17 @@ sub utility_functions() {
 			my $now = &subs::rightNow();
 			my $writable = $dirty ? 1 : 0;
 			foreach my $t ( keys %{$controls->{$signatorial}} ) {
+				# private keys (__settings, __batch_groups) are not jobs
+				next if $t =~ /^__/;
 				# a utility added to gb.pl since this row was written is carried in the
 				# row before the runtime has adopted it, so $gb::timeouts may lack it yet
 				next unless $gb::timeouts->{$t};
 				if ($gb::timeouts->{$t}->{'toggle'} eq 'on') {
-					if ($now - $gb::timeouts->{$t}->{'last_run'} > $gb::timeouts->{$t}->{'interval'} * 5 * 1000) {
+					# A job in a pool has the pool's pace, so that is what its dot is
+					# measured against.
+					my $effective = &subs::batch_interval($gb::timeouts, $t);
+					$effective = $gb::timeouts->{$t}->{'interval'} unless defined $effective && $effective > 0;
+					if ($now - $gb::timeouts->{$t}->{'last_run'} > $effective * 5 * 1000) {
 						$controls->{$signatorial}->{$t}->{'status'} = 'bad';
 						$writable = 1;
 					}
@@ -1368,12 +1407,13 @@ sub utility_functions() {
 		$gb::timeouts->{'tunnels'}->{'subroutine'} = sub {
 			eval {
 				my $now = &subs::rightNow();
+				my $interval = &subs::batch_interval($gb::timeouts, 'tunnels') || $gb::timeouts->{'tunnels'}->{'interval'};
 				# utility_runner is the schedule; this second gate only guards a call
 				# from elsewhere. Allow the runner's tick of slack, or a call landing a
 				# few milliseconds before the interval looked elapsed and skipped a slot.
-				if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} >= ($gb::timeouts->{'tunnels'}->{'interval'} * 1000) - 5000) {
+				if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} >= ($interval * 1000) - 5000) {
 					my $duty;
-					if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} > ($gb::timeouts->{'tunnels'}->{'interval'} * 1000 * 12)) {
+					if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} > ($interval * 1000 * 12)) {
 						$duty = 'restart';
 					}
 					my $network = &subs::network_interface_reporter();
@@ -1397,15 +1437,16 @@ sub utility_functions() {
 					$gb::timeouts->{'tunnels'}->{'network'} = $network;
 					$gb::timeouts->{'tunnels'}->{'addresses'} = $addresses;
 					$gb::timeouts->{'tunnels'}->{'lasted_run'} = $now;
-					eval { &subs::tunnel_checker({ duty => $duty, interval => $gb::timeouts->{'tunnels'}->{'interval'} }); };
+					eval { &subs::tunnel_checker({ duty => $duty, interval => $interval }); };
 				}
 			};
 		};
 		$gb::timeouts->{'remote_machine_sync'}->{'subroutine'} = sub {
 			my $now = &subs::rightNow();
+			my $interval = &subs::batch_interval($gb::timeouts, 'remote_machine_sync') || $gb::timeouts->{'remote_machine_sync'}->{'interval'};
 			# utility_runner already holds this to its interval; the tolerance keeps
 			# a call that lands a few milliseconds early from skipping a whole slot.
-			if ($now - $gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} >= ($gb::timeouts->{'remote_machine_sync'}->{'interval'} * 1000) - 5000) {
+			if ($now - $gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} >= ($interval * 1000) - 5000) {
 				$gb::timeouts->{'remote_machine_sync'}->{'lasted_run'} = $now;
 				eval {
 					$gb::syncing = 1;
