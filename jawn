@@ -40,6 +40,7 @@ use IO::Select;
 use Fcntl qw/F_SETFD FD_CLOEXEC/;
 use POSIX qw/WNOHANG/;
 use File::Slurp;
+use File::Path qw/remove_tree/;
 use Cwd qw(abs_path);
 use Mojo::File 'path';
 use Mojo::Log;
@@ -83,7 +84,19 @@ if (-S $watch_path) {
 }
 
 my $dump_dir = &home('~/.president');
-`rm -R $dump_dir/*` if -e $dump_dir;
+# Wipe the tree's own run state, but keep the handshake files the Android app
+# and this tree exchange. The app's location service can write wake_ready a
+# moment before or after the master starts; deleting it here made the manager
+# take the permanent wake lock back and lose the batched-wake markers and the
+# navigation pace until the next beat.
+my %handshake = map { $_ => 1 } qw/wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json/;
+if (-e $dump_dir && opendir(my $dump, $dump_dir)) {
+	while (my $entry = readdir($dump)) {
+		next if $entry eq '.' || $entry eq '..' || $handshake{$entry};
+		remove_tree("$dump_dir/$entry");
+	}
+	closedir $dump;
+}
 `mkdir $dump_dir` unless -e $dump_dir;
 my $subprocesses = {};
 our $logfile = &home('~/manager.log');
