@@ -1056,7 +1056,7 @@ sub utility_runner() {
 		# (last_run is stamped below) and the panel's dot stays good.
 		my $nudged = 0;
 		if ($t eq 'remote_machine_sync') {
-			my $nudge = &cache_get({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }) || 0;
+			my $nudge = &subs::cache_get({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }) || 0;
 			if ($nudge && $now - $nudge < 120000) {
 				$slot->{'due'} = $now;
 				$nudged = 1;
@@ -1068,7 +1068,7 @@ sub utility_runner() {
 		}
 
 		if ($nudged) {
-			&cache_set({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }, 0);
+			&subs::cache_set({ app => '__president', context => 'remote_nudge', subcontext => 'pending' }, 0);
 			$log->info('remote sync: a peer announced new rows; running the pass now');
 		}
 		$u->{'last_attempt'} = $now;
@@ -1125,10 +1125,10 @@ sub utility_runner() {
 			my $table = $digest->{$_};
 			$_ . ':' . ($table->{'count'} || 0) . ':' . ($table->{'sum'} || 0) . ':' . ($table->{'max'} || 0)
 		} sort keys %{$digest});
-		my $announced = &cache_get({ app => '__president', context => 'wake', subcontext => 'announced' }) || '';
+		my $announced = &subs::cache_get({ app => '__president', context => 'wake', subcontext => 'announced' }) || '';
 		if ($fingerprint ne $announced) {
-			&cache_set({ app => '__president', context => 'wake', subcontext => 'announced', warranty => '-1d' }, $fingerprint);
-			&cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &subs::rightNow() + 8000);
+			&subs::cache_set({ app => '__president', context => 'wake', subcontext => 'announced', warranty => '-1d' }, $fingerprint);
+			&subs::cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &subs::rightNow() + 8000);
 			&subs::subprocessor(sub { &subs::remote_available_announce(); }, { name => 'remote availability' });
 		}
 	}
@@ -1140,7 +1140,7 @@ sub utility_runner() {
 	# already at the door. A hold defers it while peers pull the announced rows.
 	if (!$ran && (!defined $next_due || $next_due > &subs::rightNow() + 12000)) {
 		my $idle_at = (-e $idle_file) ? ((stat($idle_file))[9] || 0) : 0;
-		my $hold = &cache_get({ app => '__president', context => 'wake', subcontext => 'hold' }) || 0;
+		my $hold = &subs::cache_get({ app => '__president', context => 'wake', subcontext => 'hold' }) || 0;
 		eval { write_file($idle_file, &subs::rightNow()); } if $ready_at > $idle_at && $hold <= &subs::rightNow();
 	}
 }
