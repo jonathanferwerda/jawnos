@@ -79,6 +79,14 @@
 		</div>
 	</div>
 
+	<% my $wake_schedule = &subs::setting_grabber({ app => '__president', setting => 'wake_schedule' }); %>
+	<% $wake_schedule = 'on' unless defined $wake_schedule && $wake_schedule =~ /\S/; %>
+	<h3><%= &subs::ui('Wake schedule') %></h3>
+	<p class="cfg-note"><%= &subs::ui('The Android app wakes the CPU briefly for each utility beat and lets it sleep in between. Off restores the old permanent wake lock; music still holds it while playing.') %></p>
+	<div class="cfg-actions">
+		<label hint="Keep the scheduled wake"><input type="checkbox" class="appointment_setting" app="__president" setting="wake_schedule" <% if ($wake_schedule eq 'on') { %>checked="checked"<% } %>> <%= &subs::ui('Keep the scheduled wake') %></label>
+	</div>
+
 	<h3>Utility controller</h3>
 	<p class="cfg-note">Toggle each background job, set how often it runs, and watch its last result. Changes apply as you make them.</p>
 	<div id="utility_controls_container" class="cfg-card">

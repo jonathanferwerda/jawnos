@@ -125,6 +125,9 @@ my $domain = $config->{'domain'} || '127.0.0.1';
 
 my $device = &device_setter();
 if ($device eq 'mobile') {
+	# Take the lock for the boot. The wake-schedule worker below releases it as
+	# soon as the Android app proves it is arming the short scheduled wakes.
+	unlink &subs::home('~/.president/wake_lock_released');
 	`termux-wake-lock`;
 	`sshd`;
 }
@@ -427,6 +430,48 @@ sub manager_starter() {
 			sleep 30;
 		}
 	}, { name => 'ble adopt scan' });
+
+	# The Android app's scheduled wake (JawnWakeReceiver) holds the CPU for a
+	# short window each navigation interval. Once the app has proved it is
+	# arming them (wake_ready is fresh), release the permanent Termux lock a
+	# handheld used to need; take it back if the scheduler stops or the person
+	# switches the schedule off. Music's own count file keeps its stream lock
+	# safe: never release while a track is playing.
+	if ($device eq 'mobile') {
+		&subs::subprocessor(sub {
+			sleep 20;
+			my $ready_file = &subs::home('~/.president/wake_ready');
+			my $released_file = &subs::home('~/.president/wake_lock_released');
+			my $music_file = &subs::home('~/.president/music_stream_wake');
+			while (1) {
+				eval {
+					my $setting = &subs::setting_grabber({ app => '__president', setting => 'wake_schedule' });
+					$setting = 'on' unless defined $setting && $setting =~ /\S/;
+					my $ready = (-e $ready_file && (time - (stat($ready_file))[9] < 3600)) ? 1 : 0;
+					my $music = (-e $music_file) ? (read_file($music_file) + 0) : 0;
+					if ($setting eq 'on' && $ready && !$music) {
+						unless (-e $released_file) {
+							`termux-wake-unlock`;
+							# A track that started between the check and the unlock
+							# must keep its lock.
+							my $m2 = (-e $music_file) ? (read_file($music_file) + 0) : 0;
+							`termux-wake-lock` if $m2 > 0;
+							write_file($released_file, time());
+							$log->info('wake schedule: app scheduler ready; released the permanent wake lock');
+						}
+					}
+					elsif ($setting ne 'on' || !$ready) {
+						if (-e $released_file) {
+							`termux-wake-lock` unless $music;
+							unlink $released_file;
+							$log->info('wake schedule: taking the permanent wake lock back');
+						}
+					}
+				};
+				sleep 60;
+			}
+		}, { name => 'wake schedule' });
+	}
 
 	# A peer's Ollama model list is cached on a slower tick, so Plat can offer
 	# models by the machine they run on without waiting on the network.
