@@ -15690,7 +15690,7 @@ sub headless_navigation() {
 				$returner->{'type'} = 'app';
 				&subs::db_insert('continent', $returner);
 			}
-			&subs::navigation_automation($returner);
+			&subs::navigation_automation($returner, 'gps');
 
 		}
 	}
@@ -15890,10 +15890,29 @@ sub navigation_plate_confirmed {
 	return $count >= 3 ? 1 : 0;
 }
 
+# A fix more than three radii from a plate is a certain departure: no ordinary
+# GPS jitter brings a person back to that plate from there, so its stop need not
+# wait for the third fix. A loose fix is not certainty - 200 m is the house's
+# own bound on a usable place - so a coarse reading still has to be confirmed.
+sub navigation_plate_certain_exit {
+	my $data = shift || {};
+	my $radius = 0 + ($data->{'radius'} || 0);
+	return 0 unless $radius > 0;
+	my $measured = 0 + ($data->{'measured'} || 0);
+	my $accuracy = 0 + ($data->{'accuracy'} || 0);
+	return 0 if $accuracy >= 200;
+	return $measured > 3 * $radius ? 1 : 0;
+}
+
 sub navigation_automation() {
-	my $returner = shift;
+	my ($returner, $provider) = @_;
 	$returner->{'signatorial'} = &subs::signatorial_designer() unless $returner->{'signatorial'};
 	my $signatorial = $returner->{'signatorial'};
+
+	# Only a fix a real GPS produced may cross a plate. The browser's network
+	# estimate and a desktop's home-plate fallback carry no provider, and both
+	# are exactly the plausible-looking place that must not move an appointment.
+	return unless (($provider || '') eq 'gps');
 
 	my $cache = &subs::cache_get({ app => '__president', context => 'navigation_automation', subcontext => $signatorial });
 	return if $cache->{'timestamp'} + 5000 > &subs::rightNow();
@@ -15925,9 +15944,19 @@ sub navigation_automation() {
 						latitude => $returner->{'latitude'},
 						longitude => $returner->{'longitude'},
 					});
+					# A `within` duty stops when the device is outside its radius. Far
+					# outside it is a certain departure, so the stop does not wait for a
+					# third fix. The start side still needs the three-fix confirmation,
+					# as does a `without` duty (whose stop side is inside the radius).
+					my $certain_exit = ($hp->{'placement'} eq 'within'
+						&& &subs::navigation_plate_certain_exit({
+							radius => $hp->{'distance'},
+							measured => $distance,
+							accuracy => $returner->{'accuracy'},
+						})) ? 1 : 0;
 					# One or two fixes on the other side are not a crossing: wait for the
 					# third in a row before the plate starts or stops anything.
-					next unless $confirmed;
+					next unless $confirmed || $certain_exit;
 					my $actable = 0;
 					my $cactable = 0;
 

@@ -14843,7 +14843,7 @@ sub continent_record($c) {
 			&subs::setting_setter({ app => 'me', device => $device, setting => 'home_plate', value => $json });
 		}
 		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $pre_uuid . '\');' }) unless $purpose eq 'navigation';
-		&subs::navigation_automation($returner) if $returner->{'latitude'};
+		&subs::navigation_automation($returner, $provider) if $returner->{'latitude'};
 		# a manual navigation answers with the place it has just settled on, so
 		# the start menu's site-type picture follows the fresh fix at once
 		if ($purpose eq 'navigation') {
@@ -14902,6 +14902,9 @@ post '/manager/continent/record_anyway' => sub($c) {
 
 		my $scope = $c->param('scope');
 		$returner = &subs::embedded_location_grabber($returner);
+		# The deck answers /my_position from its own GPS. The home-plate fallback
+		# below is not a fix, so it gets no provider and cannot move an appointment.
+		my $fix_provider = $returner->{'latitude'} ? 'gps' : '';
 
 		unless ($returner->{'latitude'}) {
 			# navigation (like an appointment) is a place the person is standing in;
@@ -14947,7 +14950,7 @@ post '/manager/continent/record_anyway' => sub($c) {
 
 		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $pre_uuid .'\');' });
 
-		&subs::navigation_automation($returner) if $returner->{'latitude'};
+		&subs::navigation_automation($returner, $fix_provider) if $returner->{'latitude'};
 	}, { name => 'continent record anyway' });
 	$c->render('text' => 'ok');
 };
