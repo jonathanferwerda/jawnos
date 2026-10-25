@@ -145,29 +145,35 @@ function musicStreamOutputs() {
 }
 
 // WebKitGTK (the desktop app's engine) advertises requestVideoFrameCallback but
-// never calls it, and its AudioContext reports no usable output timestamp. The
-// picture-lag measurement that holds a processed video in sync with its sound
-// therefore never runs there. A video played only to Me keeps the engine's own
-// audio path instead: no graph is built, so the browser keeps sound and picture
-// together. A left/right split, a manual Me delay or a remote output still asks
-// for the graph - those are choices the person made on purpose.
+// its output timestamp is not usable, and capturing the main video element into
+// Web Audio makes the engine present the picture about a second behind the
+// element clock. A video therefore keeps the engine's own audio path on WebKit,
+// even while a remote output is on: the remote is fed from the hidden audio-only
+// lead instead (musicAhead), whose own chain carries normalization, equalizer
+// and the remote volume. A left/right split or a manual Me delay still needs the
+// main element in the graph; those are choices the person made on purpose.
 function musicAppleWebKit() {
 	var ua = navigator.userAgent || '';
 	return !!(navigator.vendor && navigator.vendor.indexOf('Apple') === 0
 		&& typeof window.chrome === 'undefined'
 		&& ua.indexOf('Chrome') < 0 && ua.indexOf('Chromium') < 0);
 }
-// Whether the engine can say which frame is on screen at all. An engine with no
-// frame callback has no way to line processed sound up with the picture either.
-function musicPictureUnmeasurable() {
+// Whether taking the main video's sound into Web Audio would break its picture
+// timing. WebKitGTK presents the picture about a second behind the element's
+// clock once the main element is captured; an engine without a frame callback
+// cannot line processed sound up at all.
+function musicMainCaptureUnsafe() {
 	if (musicAppleWebKit()) { return true; }
 	return !(typeof HTMLVideoElement !== 'undefined'
 		&& HTMLVideoElement.prototype && HTMLVideoElement.prototype.requestVideoFrameCallback);
 }
+// One-shot escape hatch for the remote fallback: if the lead element cannot
+// load, the main element is captured again so the room is not left silent.
+var musicNativeVideo = { capture: false };
 function musicNativeVideoWanted() {
-	if (!musicPictureUnmeasurable()) { return false; }
+	if (musicNativeVideo.capture) { return false; }
+	if (!musicMainCaptureUnsafe()) { return false; }
 	if (!tree || !tree.songs || !tree.songs[0] || tree.songs[0].type != 'video') { return false; }
-	if (musicStreamOutputs().length) { return false; }
 	var side = musicOutputChannel(mao['me']);
 	if (side == 'left' || side == 'right') { return false; }
 	if (music_local_delay > 0) { return false; }
@@ -252,10 +258,8 @@ function musicStreamTapActive(on, reset) {
 	try { musicStreamTap.node.port.postMessage({ active: !!on, reset: !!reset }); } catch (e) {}
 }
 
-// Build (once per page) the worklet tap. It hangs off the limiter in parallel
-// with the local gain, so the remote gets full-level, normalised audio while
-// this machine can still be muted; its own output is routed through a zero gain
-// so the graph pulls it without making a second sound.
+// Build the worklet tap. It hangs off the main limiter, or off the lead chain's
+// fade when a video on WebKit is fed from the lead rather than the main element.
 function musicStreamTapAttach() {
 	if (musicStreamTap.ready) { return Promise.resolve(true); }
 	if (musicStreamTap.loading) { return musicStreamTap.loading; }
@@ -1595,6 +1599,14 @@ function musicAheadFailed() {
 	musicAheadStop();
 	musicAheadSettle(false);
 	if (!musicStream.active) { return; }
+	// The tap falls back to the live picture. On an engine that keeps the main
+	// element native there is no live tap yet, so capture it now: a room that is
+	// a little out of step is better than one that is silent until the retry.
+	if (musicNativeVideoWanted() && !(musicVisual && musicVisual.source)) {
+		musicNativeVideo.capture = true;
+		try { musicAudioGraph(); } catch (e) {}
+		musicNativeVideo.capture = false;
+	}
 	// The tap falls back to the live picture, which is a whole picture-lag
 	// ahead of the room; the retarget below retries the lead after a rest.
 	if (musicStream.codec == 'opus') { musicAheadRestart(); return; }
@@ -4133,10 +4145,6 @@ function musicAudioResume() {
 function musicAudioGraph() {
 	var el = document.getElementById('video');
 	if (!el) { return null; }
-	// A Me-only video on WebKit keeps the element native; capturing it here would
-	// take its sound away from the engine's own clock with no usable measurement
-	// to put it back. Only an element already captured may continue.
-	if (musicNativeVideoWanted() && !(musicVisual && musicVisual.source && musicVisual.el === el)) { return null; }
 	if (!musicVisual.ctx || musicVisual.ctx.state == 'closed') {
 		var Ctor = window.AudioContext || window.webkitAudioContext;
 		if (!Ctor) { return null; }
@@ -4234,7 +4242,10 @@ function musicAudioGraph() {
 			return null;
 		}
 	}
-	if (musicVisual.el !== el || !musicVisual.source) {
+	// A video on WebKit keeps the element native even while a remote output is
+	// playing: the context and chain are built for the lead's tap, but the main
+	// element is not captured. Capturing it made the picture itself lag a second.
+	if (!musicNativeVideoWanted() && (musicVisual.el !== el || !musicVisual.source)) {
 		if (state != 'running') { return null; }
 		if (musicVisual.source) { try { musicVisual.source.disconnect(); } catch (e) {} }
 		musicVisual.source = null;
