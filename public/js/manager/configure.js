@@ -3,8 +3,9 @@ var configIntervals = { 'sysEvaluateInterval': '', 'sysEvaluateTimeout' : '' };
 
 // The Configure tabs behave like tabs: opening one panel closes the others, so
 // there is never a tall pile of half-scrolled panels. This runs before each
-// panel's own handler and only acts when that panel is about to OPEN, so
-// clicking the tab that is already open still closes it.
+// panel's own handler and makes the pressed tab the intent, so the panel may
+// show itself when its load lands. Clicking the tab that is already open asks
+// that panel to refresh in place rather than hiding it.
 var jawnos_configure_panels = {
 	me_settings: 'me_setting_list',
 	restore_list: 'backup_list',
@@ -49,7 +50,8 @@ $(document).on('click', '.configure_toggle', function() {
 	var keep = jawnos_configure_panels[this.id];
 	if (!keep) { return; }
 	jawnosConfigureLabel(b);
-	if ($('#' + keep).is(':visible')) { jawnos_configure_intent = null; return; }
+	// Even a tab that is already open stays the intent: its handler reloads the
+	// panel and gets to show it again when the new content arrives.
 	jawnos_configure_intent = this.id;
 	$.each(jawnos_configure_panels, function(button, panel) {
 		if (panel === keep) { return; }
@@ -323,10 +325,17 @@ $(document).on('change', '.update_method_select', function() {
 	});
 });
 
+// Paint the version the bar carries. The update route hands back the number it
+// read after the pull, so the top bar changes the moment an update lands.
+function jawnosConfigureVersion(version) {
+	if (!version) { return; }
+	$('#configure .jawn_version').text('v' + String(version).replace(/^v/i, ''));
+}
+
 // The manual update button. It uses the selected method's source, so a machine
 // left on Manual - GitHub or Manual - Peers can be updated without turning the
-// watcher back on. A dirty tree is reported first; the force path discards
-// tracked local changes only after a confirmation.
+// watcher back on. A dirty tree or local commits are reported first; either
+// force path discards what blocks the pull only after a confirmation.
 $(document).on('click', '#update_now_button', function() {
 	var button = $(this);
 	var status = $('#update_now_status');
@@ -342,6 +351,7 @@ $(document).on('click', '#update_now_button', function() {
 			data: { force: force ? 1 : 0, timestamp: Date.now() },
 			success: function(r) {
 				button.removeAttr('disabled');
+				if (r && r.version) { jawnosConfigureVersion(r.version); }
 				var s = (r && r.status) || 'unknown';
 				if (s == 'updated' || s == 'reset' || s == 'peer/updated') {
 					status.text(t('updated — restarting…'));
@@ -349,7 +359,17 @@ $(document).on('click', '#update_now_button', function() {
 				}
 				if (s == 'current') { status.text(t('already up to date')); return; }
 				if (s == 'none') { status.text(t('no newer code found')); return; }
-				if (s == 'ahead' || s == 'diverged') { status.text(t('local commits block the update')); return; }
+				if (s == 'ahead' || s == 'diverged' || s == 'peer/diverged') {
+					// The tree holds commits the authority does not have, so a plain pull
+					// cannot move it. Offer the force the server already knows how to do:
+					// reset the checkout hard to the authority's head.
+					if (!force && confirm(t('Local commits block the update. Discard them and pull the latest code anyway?'))) {
+						post(1);
+						return;
+					}
+					status.text(t('local commits block the update'));
+					return;
+				}
 				if (s == 'dirty') {
 					var files = ((r && r.output) || '').trim();
 					if (!force && confirm(t('Local changes block the update. Discard them and update anyway?'))) {
@@ -710,35 +730,28 @@ $(document).on('click', '#device_lister, .device_scan', function() {
 	}
 	b.text('* ' + text);
 	var c = $('#device_list');
-	if (c.is(':visible') && load_type == 'list') {
-		b.text(jawnosConfigureLabel(b));
-		c.hide();
-		b.attr('status', 'inactive');
-	}
-	else {
-		var timestamp = Date.now();
-		var ping = $('#ping_results').html();
-		$.ajax({
-			url: '/manager/configure/device_lister',
-			type: 'GET',
-			data: { timestamp: timestamp, load_type: load_type, host: host },
-			success: function(response) {
-				var keep = gimmeInputSnapshot($('#device_list'));
-				$('#device_list').html(response);
-				$('#ping_results').html(ping);
-				printerInkLoad($('#device_list'));
-				if (jawnosConfigureShow('device_lister', $('#device_list'))) {
-					b.attr('status', 'active');
-				}
-				b.text(text);
-				deviceListerRestoreButtons($('#device_list'));
-				gimmeInputRestore($('#device_list'), keep);
+	var timestamp = Date.now();
+	var ping = $('#ping_results').html();
+	$.ajax({
+		url: '/manager/configure/device_lister',
+		type: 'GET',
+		data: { timestamp: timestamp, load_type: load_type, host: host },
+		success: function(response) {
+			var keep = gimmeInputSnapshot($('#device_list'));
+			$('#device_list').html(response);
+			$('#ping_results').html(ping);
+			printerInkLoad($('#device_list'));
+			if (jawnosConfigureShow('device_lister', $('#device_list'))) {
+				b.attr('status', 'active');
 			}
-		}).fail(function(e) {
 			b.text(text);
-			$('#ping_results').text('scan failed (' + e.status + ')');
-		});
-	}
+			deviceListerRestoreButtons($('#device_list'));
+			gimmeInputRestore($('#device_list'), keep);
+		}
+	}).fail(function(e) {
+		b.text(text);
+		$('#ping_results').text('scan failed (' + e.status + ')');
+	});
 });
 
 // A manual nudge for the bridge's adopt scan. Adoption already runs every 30 s;
@@ -913,18 +926,10 @@ $(document).on('click', '#tunnel_lister', function() {
 	var b = $(this);
 	var timestamp = Date.now();
 	var c = $('#tunnel_list');
-
-	if (c.is(':visible')) {
-		b.text(jawnosConfigureLabel(b));
-		c.hide();
-		b.attr('status', 'inactive');
-	}
-	else {
-		b.text('* ' + jawnosConfigureLabel(b));
-		c.show();
-		tunnelLister('open');
-		b.attr('status', 'active');	
-	}
+	b.text('* ' + jawnosConfigureLabel(b));
+	c.show();
+	tunnelLister('open');
+	b.attr('status', 'active');
 });
 
 function tunnelLister(b) {
@@ -945,26 +950,19 @@ $(document).on('click', '#pseudonym_setting_lister', function() {
 	var timestamp = Date.now();
 	var b = $(this);
 	var c = $('#pseudonym_list');
-	if (c.is(':visible')) {
-		b.text(jawnosConfigureLabel(b));
-		c.hide();
-		b.attr('status', 'inactive');
-	}
-	else {
-		b.text('* ' + jawnosConfigureLabel(b));
-		$.ajax({
-			url: '/manager/configure/pseudonym_list',
-			type: 'GET',
-			data: { timestamp: timestamp },
-			success: function(response) {
-				c.html(response);
-				b.text(jawnosConfigureLabel(b));
-				if (jawnosConfigureShow('pseudonym_setting_lister', c)) {
-					b.attr('status', 'active');
-				}
+	b.text('* ' + jawnosConfigureLabel(b));
+	$.ajax({
+		url: '/manager/configure/pseudonym_list',
+		type: 'GET',
+		data: { timestamp: timestamp },
+		success: function(response) {
+			c.html(response);
+			b.text(jawnosConfigureLabel(b));
+			if (jawnosConfigureShow('pseudonym_setting_lister', c)) {
+				b.attr('status', 'active');
 			}
-		});
-	}
+		}
+	});
 });
 
 $(document).on('change', '.pseudonym_setting', function() {
@@ -1056,26 +1054,19 @@ $(document).on('click', '#store_setting_lister', function() {
 	var timestamp = Date.now();
 	var b = $(this);
 	var c = $('#store_list');
-	if (c.is(':visible')) {
-		b.text(jawnosConfigureLabel(b));
-		c.hide();
-		b.attr('status', 'inactive');
-	}
-	else {
-		b.text('* ' + jawnosConfigureLabel(b));
-		$.ajax({
-			url: '/manager/configure/store_list',
-			type: 'GET',
-			data: { timestamp: timestamp },
-			success: function(response) {
-				c.html(response);
-				b.text(jawnosConfigureLabel(b));
-				if (jawnosConfigureShow('store_setting_lister', c)) {
-					b.attr('status', 'active');
-				}
+	b.text('* ' + jawnosConfigureLabel(b));
+	$.ajax({
+		url: '/manager/configure/store_list',
+		type: 'GET',
+		data: { timestamp: timestamp },
+		success: function(response) {
+			c.html(response);
+			b.text(jawnosConfigureLabel(b));
+			if (jawnosConfigureShow('store_setting_lister', c)) {
+				b.attr('status', 'active');
 			}
-		});
-	}
+		}
+	});
 });
 
 
@@ -1449,46 +1440,34 @@ $(document).on('click', '.neighbour_filepicker', function() {
 
 $(document).on('click', '#misc_setting', function() {
 	var b = $(this);
-	if (!$('#misc_setting_list').is(':visible')) {
-		var timestamp = Date.now();
-		$.ajax({
-			url: '/manager/configure/misc_setting_list',
-			type:'GET',
-			data: { timestamp: timestamp },
-			success: function(response){
-				$('#misc_setting_list').html(response);
-				if (jawnosConfigureShow('misc_setting', $('#misc_setting_list'))) {
-					b.attr('status', 'active');
-				}
+	var timestamp = Date.now();
+	$.ajax({
+		url: '/manager/configure/misc_setting_list',
+		type:'GET',
+		data: { timestamp: timestamp },
+		success: function(response){
+			$('#misc_setting_list').html(response);
+			if (jawnosConfigureShow('misc_setting', $('#misc_setting_list'))) {
+				b.attr('status', 'active');
 			}
-		});
-	}
-	else {
-		$('#misc_setting_list').hide();
-		b.attr('status', 'inactive');
-	}
+		}
+	});
 });
 
 $(document).on('click', '#plat_setting', function() {
 		var b = $(this);
-		if (!$('#plat_setting_list').is(':visible')) {
-			var timestamp = Date.now();
-			$.ajax({
-				url: '/manager/configure/plat_setting_list',
-				type:'GET',
-				data: { timestamp: timestamp },
-				success: function(response){
-					$('#plat_setting_list').html(response);
-					if (jawnosConfigureShow('plat_setting', $('#plat_setting_list'))) {
-						b.attr('status', 'active');
-					}
+		var timestamp = Date.now();
+		$.ajax({
+			url: '/manager/configure/plat_setting_list',
+			type:'GET',
+			data: { timestamp: timestamp },
+			success: function(response){
+				$('#plat_setting_list').html(response);
+				if (jawnosConfigureShow('plat_setting', $('#plat_setting_list'))) {
+					b.attr('status', 'active');
 				}
-			});
-		}
-		else {
-			$('#plat_setting_list').hide();
-			b.attr('status', 'inactive');
-		}
+			}
+		});
 	});
 
 // the thinking choice rides beside an agent's model and is shown only while the
@@ -1995,23 +1974,17 @@ $(document).on('click', '#me_settings', function() {
 	var timestamp = Date.now();
 	var b = $(this);
 	var ml = $('#me_setting_list');
-	if (!ml.is(':visible')) {
-		$.ajax({
-			url: '/manager/configure/me_settings',
-			type: 'GET',
-			data: { timestamp: timestamp },
-			success: function(response) {
-				ml.html(response);
-				if (jawnosConfigureShow('me_settings', ml)) {
-					b.attr('status', 'active');
-				}
+	$.ajax({
+		url: '/manager/configure/me_settings',
+		type: 'GET',
+		data: { timestamp: timestamp },
+		success: function(response) {
+			ml.html(response);
+			if (jawnosConfigureShow('me_settings', ml)) {
+				b.attr('status', 'active');
 			}
-		});
-	}
-	else {
-		ml.hide();
-		b.attr('status', 'inactive');
-	}
+		}
+	});
 });
 
 $(document).on('change', '.me_setting', function() {
@@ -2074,26 +2047,19 @@ $(document).on('click', '#restore_list', function() {
 	var b = $(this);
 	var text = jawnosConfigureLabel(b);
 	b.text('* ' + text);
-	if (c.is(':visible')) {
-		b.text(jawnosConfigureLabel(b));
-		c.hide();
-		b.attr('status', 'inactive');
-	} 
-	else {
-		var president = $('#president').val();
-		$.ajax({
-			url: '/manager/configure/restore_list',
-			type: 'GET',
-			data: { 'president': president },
-			success:function(response) {
-				c.html(response);
-				if (jawnosConfigureShow('restore_list', c)) {
-					b.text(text);
-					b.attr('status', 'active');
-				}
+	var president = $('#president').val();
+	$.ajax({
+		url: '/manager/configure/restore_list',
+		type: 'GET',
+		data: { 'president': president },
+		success:function(response) {
+			c.html(response);
+			if (jawnosConfigureShow('restore_list', c)) {
+				b.text(text);
+				b.attr('status', 'active');
 			}
-		});
-	}
+		}
+	});
 });
 
 $(document).on('click', '#system_setting_lister', function() {
@@ -2102,31 +2068,24 @@ $(document).on('click', '#system_setting_lister', function() {
 	var text = jawnosConfigureLabel(b);
 	var local_storage = JSON.stringify(localStorage);
 	b.text('* ' + text);
-	if (c.is(':visible')) {
-		b.text(jawnosConfigureLabel(b));
-		c.hide();
-		b.attr('status', 'inactive');
-	}
-	else {
-		$.ajax({
-			url: '/manager/configure/system_list',
-			// POST: localStorage can be large, and in a GET query it would blow the
-			// manager's 64k request-line cap and the panel would come back as the Gate
-			type: 'POST',
-			data: { local_storage: local_storage },
-			success: function(response) {
-				c.html(response);
-				if (jawnosConfigureShow('system_setting_lister', c)) {
-					b.text(text);
-					b.attr('status', 'active');
-				}
-			},
-			error: function(e) {
-				b.text(jawnosConfigureLabel(b));
-				c.html('<div class="cfg-note">the Sys panel did not load (' + e.status + '); press Sys to try again</div>').show();
+	$.ajax({
+		url: '/manager/configure/system_list',
+		// POST: localStorage can be large, and in a GET query it would blow the
+		// manager's 64k request-line cap and the panel would come back as the Gate
+		type: 'POST',
+		data: { local_storage: local_storage },
+		success: function(response) {
+			c.html(response);
+			if (jawnosConfigureShow('system_setting_lister', c)) {
+				b.text(text);
+				b.attr('status', 'active');
 			}
-		});
-	}
+		},
+		error: function(e) {
+			b.text(jawnosConfigureLabel(b));
+			c.html('<div class="cfg-note">the Sys panel did not load (' + e.status + '); press Sys to try again</div>').show();
+		}
+	});
 });
 
 $(document).on('click', '.localstorage_delete', function() {
@@ -2141,23 +2100,17 @@ $(document).on('click', '#appointment_list_grabber', function() {
 	var text = jawnosConfigureLabel(b);
 	b.text('* ' + text);
 	var c = $('#configure_appointment_list');
-	if (c.is(':visible')) {
-		b.text(jawnosConfigureLabel(b));
-		c.hide();
-		b.attr('status', 'inactive');
-	} else {
-		$.ajax({
-			url: '/manager/configure/appointment_list',
-			type:'GET',
-			success:function(response) {
-				$('#configure_appointment_list').html(response);
-				if (jawnosConfigureShow('appointment_list_grabber', $('#configure_appointment_list'))) {
-					b.text(text);
-					b.attr('status', 'active');
-				}
-			},
-		});
-	}
+	$.ajax({
+		url: '/manager/configure/appointment_list',
+		type:'GET',
+		success:function(response) {
+			$('#configure_appointment_list').html(response);
+			if (jawnosConfigureShow('appointment_list_grabber', $('#configure_appointment_list'))) {
+				b.text(text);
+				b.attr('status', 'active');
+			}
+		},
+	});
 });
 
 $(document).on('click', '.appointment_configuration_grabber', function() {

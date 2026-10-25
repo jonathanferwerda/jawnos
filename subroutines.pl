@@ -29618,6 +29618,12 @@ sub update_now {
 		$out = `cd "$repo" && "$git" reset --hard HEAD 2>&1`;
 		$status = 'reset';
 	}
+	# A pull rewrites ./VERSION under this live process, so the cached number is
+	# the one from before the update. Forget it here and whoever asks next (the
+	# update route paints it into the Configure bar) reads the new version.
+	if ($status eq 'updated' || $status eq 'reset' || $status eq 'peer/updated') {
+		&subs::jawn_version_forget();
+	}
 	return { status => $status, output => $out, source => $source, method => $method };
 }
 

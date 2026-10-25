@@ -1434,6 +1434,8 @@ function jawnosRevisionArrived(parts, version, was) {
 // The stylesheet links and the record of each script tag point at the new build;
 // the windows re-render themselves. Nothing here reloads the page.
 function jawnosUpdateInPlace(version, what) {
+	// the Configure bar carries the number, so it moves with the code it names
+	if (version && typeof jawnosConfigureVersion === 'function') { jawnosConfigureVersion(version); }
 	if (version) {
 		var bust = function (sel, attr) {
 			$(sel).each(function () {
