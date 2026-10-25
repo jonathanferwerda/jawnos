@@ -33,6 +33,10 @@ function notesReload() {
 		success: function(response) {
 			var fresh = $(response).find('#notes_list');
 			if (fresh.length) { w.find('#notes_list').replaceWith(fresh); }
+			// The fresh rows carry blank .time spans; paint them now, in the same
+			// frame as the swap, instead of waiting for the next one-second tick.
+			// Otherwise the list is briefly one line shorter and then grows.
+			if (typeof appointment_chron === 'function') { appointment_chron(); }
 			notesDraggable();
 		}
 	});
