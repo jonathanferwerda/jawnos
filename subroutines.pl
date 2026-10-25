@@ -31255,6 +31255,23 @@ sub payment_amount_matches {
 # ---------------------------------------------------------------------------
 
 my @clock_sound_files = qw/chime.mp3 crystal.mp3 ding.mp3 pulse.mp3 rattle.mp3 ring.mp3 sonar.mp3/;
+# Long-form alarm tracks, kept under public/sounds/alarms/ and served to the
+# operating system's player. The labels are the titles the recordings came with.
+my %clock_long_alarm_files = (
+	'bros-and-monks-2.mp3' => 'Bros and Monks 2',
+	'bros-and-monks.mp3' => 'Bros and Monks',
+	'dolphin-chorus-singers-reuniting-tour.mp3' => 'Dolphin Chorus Singers Reuniting Tour',
+	'find-the-ship-learn-from-it.mp3' => 'Find the Ship, Learn From It',
+	'going-to-work-in-the-battery-factory.mp3' => 'Going to work in the battery factory',
+	'it-feels-so-right.mp3' => 'It Feels so Right',
+	'mans-gotta-bellow.mp3' => 'Man\'s Gotta Bellow!',
+	'music-to-gel-your-hair-to.mp3' => 'Music to gel your hair to',
+	'music-to-grow-a-mullet-to.mp3' => 'Music to grow a mullet to',
+	'our-heads-will-stay-up.mp3' => 'Our Heads Will Stay Up',
+	'the-hero-always-gets-the-squirrel.mp3' => 'The Hero Always Gets the Squirrel',
+	'we-celebrate-the-lives-of-those-with-gum-disease.mp3' => 'We Celebrate the Lives of Those with Gum Disease',
+	'were-all-professionals-here.mp3' => 'We\'re all Professionals Here',
+);
 our ($clock_apps_memo, $clock_apps_memo_at);
 
 sub clock_device() {
@@ -31265,10 +31282,181 @@ sub clock_sounds() {
 	return [ @clock_sound_files ];
 }
 
+# The alarm picker's library: the short chimes first, then the long recordings.
+sub clock_alarm_sounds() {
+	my @out;
+	foreach my $s (@clock_sound_files) {
+		my $label = $s;
+		$label =~ s/\.mp3$//;
+		$label = ucfirst $label;
+		push @out, { value => 'notifications/' . $s, label => $label };
+	}
+	foreach my $s (sort { lc($clock_long_alarm_files{$a}) cmp lc($clock_long_alarm_files{$b}) } keys %clock_long_alarm_files) {
+		push @out, { value => 'alarms/' . $s, label => $clock_long_alarm_files{$s} };
+	}
+	return \@out;
+}
+
+sub clock_sound_is_long {
+	my $sound = shift;
+	return 0 unless defined $sound && length $sound;
+	return $sound =~ m{^alarms/} ? 1 : 0;
+}
+
+# A stored alarm may be a chime's bare name from before the library grew, a
+# notifications/ path, or a long alarms/ path. Everything else is refused.
+sub clock_valid_alarm_sound {
+	my $sound = shift;
+	return '' unless defined $sound && length $sound;
+	$sound =~ s{^\./}{};
+	$sound =~ s{^/}{};
+	if ($sound =~ m{^(.*/)?([^/]+\.mp3)$}) {
+		my $dir = $1 || '';
+		my $base = $2;
+		return 'alarms/' . $base if $dir eq 'alarms/' && exists $clock_long_alarm_files{$base};
+		if (($dir eq 'notifications/' || $dir eq '') && grep { $_ eq $base } @clock_sound_files) {
+			return 'notifications/' . $base;
+		}
+	}
+	return '';
+}
+
+sub clock_valid_timer_sound {
+	my $sound = shift;
+	return 'notifications/chime.mp3' unless defined $sound && length $sound;
+	$sound =~ s{^\./}{};
+	$sound =~ s{^/}{};
+	$sound =~ s{^notifications/}{};
+	return 'notifications/' . $sound if grep { $_ eq $sound } @clock_sound_files;
+	return 'notifications/chime.mp3';
+}
+
 sub clock_valid_sound {
 	my $sound = shift;
 	return '' unless defined $sound && length $sound;
 	return (grep { $_ eq $sound } @clock_sound_files) ? $sound : '';
+}
+
+sub clock_sound_file {
+	my $sound = shift;
+	return './public/sounds/notifications/ring.mp3' unless defined $sound && length $sound;
+	return './public/sounds/' . $sound;
+}
+
+sub clock_alarm_pidfile {
+	my $uuid = shift || 'x';
+	$uuid =~ s/[^A-Za-z0-9_\-]//g;
+	my $dir = &home('~/.president');
+	$dir = '/tmp' unless -d $dir;
+	return $dir . '/clock_alarm_' . $uuid . '.pid';
+}
+
+# A long-form track is one process; Dismiss kills it through the pid its shell
+# wrote when it started. A short chime finishes on its own and has no pid file.
+sub clock_alarm_stop_sound {
+	my $uuid = shift;
+	return 0 unless defined $uuid && length $uuid;
+	my $file = &clock_alarm_pidfile($uuid);
+	return 0 unless -e $file;
+	my $pid = eval { read_file($file) };
+	unlink $file;
+	return 0 unless defined $pid;
+	$pid =~ s/\D//g;
+	return 0 unless length $pid;
+	# A stale pid file after a reboot must not kill whatever inherited the number.
+	# The player's command line still names play and the sounds directory.
+	if (-e '/proc/' . $pid . '/cmdline') {
+		my $cmdline = eval { read_file('/proc/' . $pid . '/cmdline') } // '';
+		return 0 unless $cmdline =~ /play/ && $cmdline =~ m{public/sounds};
+	}
+	else {
+		return 0;
+	}
+	eval { kill 'TERM', $pid; };
+	eval { kill 'KILL', $pid; };
+	return 1;
+}
+
+# The phone app is the only device that can wake itself from Doze and put an
+# alarm in front of a locked screen. jawn hands it both the next alarm and the
+# moment one rings over these short broadcasts; the app's receivers do the rest.
+sub clock_device_broadcast {
+	my ($action, %extra) = @_;
+	return 0 unless &device_setter() eq 'mobile';
+	my $command = 'am broadcast -a ' . $action;
+	if (defined $extra{'at'} && "$extra{'at'}" =~ /^\d+$/ && $extra{'at'} > 0) {
+		$command .= ' --el at ' . int($extra{'at'});
+	}
+	foreach my $key ( qw/uuid label app/ ) {
+		my $value = $extra{$key};
+		next unless defined $value && length $value;
+		$command .= ' --es ' . $key . ' ' . &quote($value);
+	}
+	eval {
+		&subprocessor(sub { `$command`; }, { name => 'clock device broadcast' });
+	};
+	return 1;
+}
+
+# Write the next alarm for the app, and only broadcast when it really moved.
+# The file is what survives a reboot; the broadcast is what arms it now.
+sub clock_write_device_alarm {
+	my ($alarms, $now) = @_;
+	$now = &rightNow() unless defined $now;
+	my ($next, $next_alarm);
+	foreach my $alarm (@{ $alarms || [] }) {
+		# A ringing alarm has already woken the phone; the next one is what the
+		# app should arm now.
+		next if $alarm->{'ringing'};
+		my $candidate;
+		if ($alarm->{'snooze_until'} && $alarm->{'snooze_until'} > $now) {
+			$candidate = $alarm->{'snooze_until'};
+		}
+		elsif ($alarm->{'enabled'}) {
+			$candidate = &clock_alarm_next_ms($alarm, $now);
+		}
+		next unless $candidate;
+		if (!$next || $candidate < $next) {
+			$next = $candidate;
+			$next_alarm = $alarm;
+		}
+	}
+	my $file = &home('~/.president/clock_alarm.json');
+	my $payload = ($next && $next_alarm) ? {
+		at => $next,
+		uuid => ($next_alarm->{'uuid'} || ''),
+		label => ($next_alarm->{'label'} || ''),
+		app => ($next_alarm->{'app'} || ''),
+	} : undef;
+	my $json = $payload ? encode_json($payload) : '';
+	my $old = -e $file ? (eval { read_file($file) } // '') : '';
+	return 0 if $old eq $json;
+	if (length $json) {
+		eval { write_file($file, $json); };
+	}
+	else {
+		unlink $file;
+	}
+	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_SYNC', %{ $payload || {} });
+	return 1;
+}
+
+sub clock_device_ring {
+	my ($alarm, $fire_at) = @_;
+	return 0 unless $alarm;
+	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_RING',
+		uuid => ($alarm->{'uuid'} || ''),
+		label => ($alarm->{'label'} || ''),
+		app => ($alarm->{'app'} || ''),
+		at => ($fire_at || &rightNow()),
+	);
+	return 1;
+}
+
+sub clock_device_dismissed {
+	my $uuid = shift;
+	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_DISMISSED', uuid => ($uuid || ''));
+	return 1;
 }
 
 sub clock_lock_path() {
@@ -31322,7 +31510,7 @@ sub clock_normalize_alarm {
 	$label =~ s/\s+$//;
 	$label = substr($label, 0, 120);
 	$label = 'Alarm' unless length $label;
-	my $sound = &clock_valid_sound($in->{'sound'}) || 'ring.mp3';
+	my $sound = &clock_valid_alarm_sound($in->{'sound'}) || 'notifications/ring.mp3';
 	my $enabled = defined $in->{'enabled'} ? (($in->{'enabled'} && $in->{'enabled'} ne '0' && $in->{'enabled'} ne 'off') ? 1 : 0) : 1;
 	return {
 		uuid => ($in->{'uuid'} // ''),
@@ -31367,7 +31555,7 @@ sub clock_normalize_timer {
 		state => $state,
 		app => ($t->{'app'} // ''),
 		appt_uuid => ($t->{'appt_uuid'} // ''),
-		sound => &clock_valid_sound($t->{'sound'}) || 'chime.mp3',
+		sound => &clock_valid_timer_sound($t->{'sound'}),
 		created => int($t->{'created'} || 0),
 	};
 }
@@ -31428,11 +31616,16 @@ sub clock_next_wake {
 	foreach my $a (@{ $alarms || [] }) {
 		my $candidate;
 		if ($a->{'ringing'}) {
-			# The ring repeats every fifteen seconds, but never past five
-			# minutes from the first sound.
-			my $end = ($a->{'ring_started'} || $now) + 300000;
-			$candidate = ($a->{'ring_last'} || $now) + 15000;
-			$candidate = $end if $end < $candidate;
+			# A chime repeats every fifteen seconds; a long track plays once and
+			# only needs a wake at the guard to clear the ring state.
+			my $end = ($a->{'ring_started'} || $now) + &clock_alarm_ring_length($a);
+			if (&clock_sound_is_long($a->{'sound'})) {
+				$candidate = $end;
+			}
+			else {
+				$candidate = ($a->{'ring_last'} || $now) + 15000;
+				$candidate = $end if $end < $candidate;
+			}
 			$candidate = $now + 1000 if $candidate <= $now;
 			$next = $candidate if $candidate && (!$next || $candidate < $next);
 			next;
@@ -31509,6 +31702,7 @@ sub clock_state() {
 		timers => &clock_timers_read(),
 		apps => &clock_apps(),
 		sounds => &clock_sounds(),
+		alarm_sounds => &clock_alarm_sounds(),
 		max => 10,
 	};
 }
@@ -31539,18 +31733,45 @@ sub clock_alarm_volume_at {
 	return sprintf('%.2f', $level);
 }
 
-# Play one ring through the operating system. The notification at the first
-# ring carries this same command; later rings use this one directly, so the
-# volume climbs across the ramp and no notification row is written each time.
+# A long-form track is one process; a chime is short enough to finish on its
+# own. The ring guard is longer for a track.
+sub clock_alarm_ring_length {
+	my $alarm = shift;
+	my $sound = &clock_valid_alarm_sound($alarm->{'sound'});
+	return &clock_sound_is_long($sound) ? 600000 : 300000;
+}
+
+# The command the OS player runs for this alarm. A long track is played once,
+# at the alarm's volume, with the ramp as its fade-in, and its pid is written so
+# Dismiss can stop it. A chime is played at the moment's ramped volume.
+sub clock_alarm_play_command {
+	my ($alarm, $elapsed) = @_;
+	$elapsed ||= 0;
+	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
+	my $file = &clock_sound_file($sound);
+	if (&clock_sound_is_long($sound)) {
+		my $target = sprintf('%.2f', ($alarm->{'volume'} || 70) / 100);
+		my $ramp = int($alarm->{'ramp'} || 0);
+		$ramp = 1 if $ramp < 1;
+		my $play = 'play -q -v ' . $target . ' ' . &quote($file) . ' fade t ' . $ramp;
+		return $play . ' & echo $! > ' . &clock_alarm_pidfile($alarm->{'uuid'});
+	}
+	my $level = &clock_alarm_volume_at($alarm, $elapsed);
+	return 'play -q -v ' . $level . ' ' . &quote($file) . ' fade t 1';
+}
+
+# Play one repetition of a short chime through the operating system. The
+# notification at the first ring carries the first sound; later rings use this
+# one directly, so the volume climbs across the ramp and no notification row is
+# written each time. A long-form track is never repeated this way.
 sub clock_alarm_sound {
 	my ($alarm, $elapsed) = @_;
 	$elapsed ||= 0;
-	my $sound = &clock_valid_sound($alarm->{'sound'}) || 'ring.mp3';
-	my $file = './public/sounds/notifications/' . $sound;
-	my $level = &clock_alarm_volume_at($alarm, $elapsed);
-	my $command = 'play -q -v ' . $level . ' ' . &quote($file) . ' fade t 1';
+	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
+	return '' if &clock_sound_is_long($sound);
+	my $command = &clock_alarm_play_command($alarm, $elapsed);
 	eval {
-		&subprocessor(sub { &run_command($command); }, { name => 'clock alarm sound' });
+		&subprocessor(sub { &run_command('clock', $command); }, { name => 'clock alarm sound' });
 	};
 	return $command;
 }
@@ -31584,13 +31805,15 @@ sub clock_alarm_ring {
 	$alarm->{'ring_started'} = $now;
 	$alarm->{'ring_last'} = $now;
 	&clock_alarm_cmd($alarm, $fire_at, $now);
+	&clock_device_ring($alarm, $fire_at);
 
 	my $label = $alarm->{'label'} || 'Alarm';
 	my $app = $alarm->{'app'} || '';
 	my $message = $app ? $label . ' - ' . &format_name($app) : $label;
-	my $sound = $alarm->{'sound'} || 'ring.mp3';
-	my $file = './public/sounds/notifications/' . $sound;
-	my $play = 'play -q -v ' . &clock_alarm_volume_at($alarm, 0) . ' ' . &quote($file) . ' fade t 1';
+	my $sound_path = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
+	my $sound = $sound_path;
+	$sound =~ s{.*/}{};
+	my $play = &clock_alarm_play_command($alarm, 0);
 
 	# The alarm turns its linked appointment on. A session already running is the
 	# same activity and is left alone, so a late tick cannot open a second one.
@@ -31655,8 +31878,10 @@ sub clock_timer_finish {
 	$json =~ s/\x{2029}/\\u2029/g;
 	&clock_send_console('jawnosClockTimerDone(' . $json . ');');
 
-	my $sound = $timer->{'sound'} || 'chime.mp3';
-	my $file = './public/sounds/notifications/' . $sound;
+	my $sound_path = &clock_valid_timer_sound($timer->{'sound'});
+	my $sound = $sound_path;
+	$sound =~ s{.*/}{};
+	my $file = &clock_sound_file($sound_path);
 	my $play = 'play -q -v 0.7 ' . &quote($file);
 	eval {
 		&Manager::notification_sender({
@@ -31691,14 +31916,17 @@ sub clock_tick() {
 			next unless $alarm->{'enabled'} || $alarm->{'snooze_until'} || $alarm->{'ringing'};
 			if ($alarm->{'ringing'}) {
 				my $elapsed = $now - ($alarm->{'ring_started'} || $now);
-				if ($elapsed >= 300000) {
+				my $long = &clock_sound_is_long($alarm->{'sound'});
+				if ($elapsed >= &clock_alarm_ring_length($alarm)) {
 					$alarm->{'ringing'} = 0;
 					$alarm->{'ring_started'} = 0;
 					$alarm->{'ring_last'} = 0;
 					$alarms_changed = 1;
 					$changed = 1;
+					push @actions, [ 'stop_sound', $alarm->{'uuid'} ] if $long;
+					push @actions, [ 'device_dismiss', $alarm->{'uuid'} ];
 				}
-				elsif (!$alarm->{'ring_last'} || ($now - $alarm->{'ring_last'}) >= 15000) {
+				elsif (!$long && (!$alarm->{'ring_last'} || ($now - $alarm->{'ring_last'}) >= 15000)) {
 					push @actions, [ 'sound', $alarm, $elapsed ];
 					$alarm->{'ring_last'} = $now;
 					$alarms_changed = 1;
@@ -31739,6 +31967,7 @@ sub clock_tick() {
 
 		&clock_alarms_write($alarms) if $alarms_changed;
 		&clock_timers_write($timers) if $timers_changed;
+		push @actions, [ 'device_sync', $alarms, $now ];
 		$next = &clock_next_wake($alarms, $timers, $now);
 	};
 	warn 'clock tick: ' . $@ if $@;
@@ -31754,6 +31983,15 @@ sub clock_tick() {
 		}
 		elsif ($kind eq 'sound') {
 			eval { &clock_alarm_sound($action->[1], $action->[2]); };
+		}
+		elsif ($kind eq 'stop_sound') {
+			eval { &clock_alarm_stop_sound($action->[1]); };
+		}
+		elsif ($kind eq 'device_dismiss') {
+			eval { &clock_device_dismissed($action->[1]); };
+		}
+		elsif ($kind eq 'device_sync') {
+			eval { &clock_write_device_alarm($action->[1], $action->[2]); };
 		}
 		elsif ($kind eq 'timer') {
 			eval { &clock_timer_finish($action->[1], $action->[2]); };

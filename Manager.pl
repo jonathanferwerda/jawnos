@@ -22623,6 +22623,7 @@ get '/manager/clock' => sub($c) {
 		timers => $state->{'timers'},
 		apps => $state->{'apps'},
 		sounds => $state->{'sounds'},
+		alarm_sounds => $state->{'alarm_sounds'},
 		max => $state->{'max'},
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'clock', title => &subs::lang('clock'), contents => $content }, $c->param('timestamp'));
@@ -22656,7 +22657,7 @@ post '/manager/clock/alarm' => sub($c) {
 				days => [],
 				enabled => 1,
 				label => &subs::lang('alarm'),
-				sound => 'ring.mp3',
+				sound => 'notifications/ring.mp3',
 				volume => 70,
 				ramp => 60,
 				created => $now,
@@ -22732,7 +22733,7 @@ post '/manager/clock/alarm' => sub($c) {
 				$app =~ s/^\s+//; $app =~ s/\s+$//;
 				$alarm->{'app'} = length $app ? &subs::unformat_name($app) : '';
 			}
-			$alarm->{'sound'} = $c->param('sound') if defined $c->param('sound') && length &subs::clock_valid_sound($c->param('sound'));
+			$alarm->{'sound'} = $c->param('sound') if defined $c->param('sound') && length &subs::clock_valid_alarm_sound($c->param('sound'));
 			$alarm->{'volume'} = $c->param('volume') if defined $c->param('volume') && $c->param('volume') =~ /^\d+$/;
 			$alarm->{'ramp'} = $c->param('ramp') if defined $c->param('ramp') && $c->param('ramp') =~ /^\d+$/;
 			$alarm->{'enabled'} = ($c->param('enabled') && $c->param('enabled') ne '0' && $c->param('enabled') ne 'off') ? 1 : 0 if defined $c->param('enabled');
@@ -22751,10 +22752,20 @@ post '/manager/clock/alarm' => sub($c) {
 	&subs::clock_alarms_write($alarms) unless length $error;
 	my $next = &subs::clock_next_wake($alarms, &subs::clock_timers_read(), $now);
 	&subs::clock_lock_drop($lock);
-	&subs::clock_poke($next || $now);
-	if ($action eq 'dismiss' || $action eq 'snooze' || $action eq 'stop_all') {
-		&subs::clock_send_console('jawnosClockAlarmStop();');
+	&subs::clock_write_device_alarm($alarms, $now) unless length $error;
+	if ($action eq 'stop_all') {
+		foreach my $a (@{$alarms}) { &subs::clock_alarm_stop_sound($a->{'uuid'}); }
 	}
+	elsif ($action =~ /^(?:dismiss|snooze|toggle|save|delete)$/) {
+		&subs::clock_alarm_stop_sound($c->param('uuid') || '');
+	}
+	&subs::clock_poke($next || $now);
+	my $rings_stopped = ($action =~ /^(?:dismiss|snooze|delete|stop_all)$/) ? 1 : 0;
+	if (!$rings_stopped && ($action eq 'toggle' || $action eq 'save') && defined $c->param('enabled') && !$c->param('enabled')) {
+		$rings_stopped = 1;
+	}
+	&subs::clock_send_console('jawnosClockAlarmStop();') if $rings_stopped;
+	&subs::clock_device_dismissed($action eq 'stop_all' ? '' : ($c->param('uuid') || '')) if $rings_stopped;
 	my $state = &subs::clock_state();
 	$state->{'ok'} = length $error ? 0 : 1;
 	$state->{'error'} = $error;
@@ -22790,7 +22801,7 @@ post '/manager/clock/timer' => sub($c) {
 			my $app = $c->param('app') || '';
 			$app =~ s/^\s+//; $app =~ s/\s+$//;
 			$app = length $app ? &subs::unformat_name($app) : '';
-			my $sound = &subs::clock_valid_sound($c->param('sound')) || 'chime.mp3';
+			my $sound = &subs::clock_valid_timer_sound($c->param('sound'));
 			my $timer = &subs::clock_normalize_timer({
 				uuid => &subs::random_string_creator(24),
 				label => $label,
@@ -40651,7 +40662,7 @@ sub notification_sender($m,$db) {
 	my $words = $m->{'words'} || $m->{'message'} || $m->{'settings'}->{$m->{'type'} ? $m->{'type'} . '_notification_text' : 'notification_text'};
 	if ($m->{'synth'}) {
 		&subs::subprocessor(sub {
-			&subs::run_command($m->{'synth'} . ' &');
+			&subs::run_command($app, $m->{'synth'} . ' &');
 			if ($m->{'words'}) {
 				&subs::say_it($m->{'words'});
 			}

@@ -239,10 +239,11 @@ function jawnosClockAlarmHtml(alarm, state) {
 	html += '<div class="clock_alarm_extra">';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('link_appointment')) + '</span><input list="clock_apps" class="clock_alarm_app" value="' + jawnosClockEsc((alarm.app || '').replace(/_/g, ' ')) + '" placeholder="' + jawnosClockEsc(jawnosT('no_appointment')) + '"></label>';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('sound')) + '</span><select class="clock_alarm_sound">';
-	$.each((state && state.sounds) || [], function (i, s) {
-		var label = s.replace(/\.mp3$/, '');
-		label = label.charAt(0).toUpperCase() + label.slice(1);
-		html += '<option value="' + jawnosClockEsc(s) + '"' + (alarm.sound == s ? ' selected' : '') + '>' + jawnosClockEsc(label) + '</option>';
+	$.each((state && state.alarm_sounds) || (state && state.sounds) || [], function (i, s) {
+		var value = (typeof s === 'string') ? ('notifications/' + s) : (s.value || '');
+		var label = (typeof s === 'string') ? s.replace(/\.mp3$/, '') : (s.label || value);
+		if (typeof s === 'string') { label = label.charAt(0).toUpperCase() + label.slice(1); }
+		html += '<option value="' + jawnosClockEsc(value) + '"' + (alarm.sound == value ? ' selected' : '') + '>' + jawnosClockEsc(label) + '</option>';
 	});
 	html += '</select></label>';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('volume')) + ' · ' + (alarm.volume || 70) + '%</span><input type="range" min="5" max="100" step="5" class="clock_alarm_volume" value="' + (alarm.volume || 70) + '"></label>';
@@ -282,7 +283,7 @@ function jawnosClockAlarmData(row) {
 		label: row.find('.clock_alarm_label').val() || '',
 		days: days.join(','),
 		app: row.find('.clock_alarm_app').val() || '',
-		sound: row.find('.clock_alarm_sound').val() || 'ring.mp3',
+		sound: row.find('.clock_alarm_sound').val() || 'notifications/ring.mp3',
 		volume: parseInt(row.find('.clock_alarm_volume').val() || 70, 10),
 		ramp: parseInt(row.find('.clock_alarm_ramp').val() || 0, 10),
 		enabled: row.find('.clock_alarm_enabled').is(':checked') ? 1 : 0

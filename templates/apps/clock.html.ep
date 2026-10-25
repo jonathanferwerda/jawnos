@@ -153,9 +153,8 @@
 							<label class="clock_field">
 								<span><%= &subs::lang('sound') %></span>
 								<select class="clock_alarm_sound">
-									<% foreach my $s ( @{$sounds} ) { %>
-										<% my $sl = $s; $sl =~ s/\.mp3$//; $sl = ucfirst $sl; %>
-										<option value="<%= $s %>"<%= ($alarm->{'sound'} || '') eq $s ? ' selected' : '' %>><%= $sl %></option>
+									<% foreach my $s ( @{$alarm_sounds} ) { %>
+										<option value="<%= $s->{'value'} %>"<%= ($alarm->{'sound'} || '') eq $s->{'value'} ? ' selected' : '' %>><%= $s->{'label'} %></option>
 									<% } %>
 								</select>
 							</label>
