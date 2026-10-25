@@ -1413,7 +1413,7 @@ async function clipboardGetter(s) {
 }
 
 $(document).on('click', '.clip', function() {
-	clipboardSetter(clip);
+	clipboardSetter($(this).text());
 });
 
 function clipboardSetter(clip) {
