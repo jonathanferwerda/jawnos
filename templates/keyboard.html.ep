@@ -25,7 +25,8 @@
 			<div id="remote_control_view" class="keyboard_content">
 				<% if ( !$selected_rm ) { %>
 					ME!<br>
-					<%= &subs::device_setter() %>
+					<%= &subs::device_setter() %><br>
+					<%= &subs::lang('remote_control.public_ip') %>: <span id="local_public_ip" class="clip" hint="<%= &subs::ui('Click to copy the public address') %>">…</span>
 				<% } else { %>
 					<%= $selected_rm->{'hostname'} || $selected_rm->{'fqdn'} || $selected_rm->{'ip'} %><br>
 					<%= $selected_rm->{'ip'} %><br>

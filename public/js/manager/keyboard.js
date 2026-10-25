@@ -924,6 +924,7 @@ async function keyboardMaker(data) {
 					if (typeof remote_uuid === 'string') { $('#remote_control_machine_select').val(remote_uuid); }
 					keyboardManagerButton();
 					jawnosVpnRefresh();
+					if (typeof jawnosPublicIpRefresh == 'function') { jawnosPublicIpRefresh(); }
 					if (typeof jawnosRemoteInputInit == 'function') { jawnosRemoteInputInit(); }
 				}
 
@@ -1843,6 +1844,28 @@ function jawnosVpnRefresh() {
 	});
 }
 
+// The Me view's public address. With a VPN exit node in force it is that
+// machine's address; without one it is this device's ISP address, so the line is
+// the quickest check that the VPN is really carrying the traffic.
+function jawnosPublicIpPaint(ip) {
+	var el = $('#local_public_ip');
+	if (!el.length) { return; }
+	if (ip) {
+		el.text(ip).css('opacity', 1);
+	}
+	else {
+		el.text(jawnosT('not known')).css('opacity', .65);
+	}
+}
+
+function jawnosPublicIpRefresh(refresh) {
+	if (!$('#local_public_ip').length) { return; }
+	$('#local_public_ip').text(jawnosT('checking…')).css('opacity', .65);
+	$.getJSON('/manager/public_ip' + (refresh ? '?refresh=1' : ''), function (r) {
+		jawnosPublicIpPaint((r && r.ip) || '');
+	}).fail(function () { jawnosPublicIpPaint(''); });
+}
+
 function jawnosVpnToggle() {
 	var picked = jawnosVpnSelected();
 	if (!picked.ip) { return; }
@@ -1860,6 +1883,12 @@ function jawnosVpnToggle() {
 		// The route can take a moment to appear in the tailnet status, so ask
 		// again rather than leaving the button reading "off" after a success.
 		setTimeout(jawnosVpnRefresh, 1200);
+		// The public address is the proof the route actually moved, so look it up
+		// again after the change settles instead of leaving the old ISP answer.
+		if (typeof jawnosPublicIpRefresh == 'function') {
+			$('#local_public_ip').text(jawnosT('checking…'));
+			setTimeout(function () { jawnosPublicIpRefresh(true); }, 1500);
+		}
 	};
 	if (window.JawnVPN && typeof window.JawnVPN.setExitNode === 'function') {
 		try { finish(JSON.parse(window.JawnVPN.setExitNode(target))); return; } catch (e) { finish({ ok: false, error: '' + e }); return; }
@@ -1868,3 +1897,8 @@ function jawnosVpnToggle() {
 }
 $(document).on('click', '#remote_command_send', function () { jawnosRemoteCommand(); });
 $(document).on('click', '#remote_control_vpn', function () { jawnosVpnToggle(); });
+// While the Me view is open, keep the public address fresh: the VPN can also be
+// switched from the desktop or another window, not only by this panel's button.
+setInterval(function () {
+	if ($('#local_public_ip').length && $('#local_public_ip').is(':visible')) { jawnosPublicIpRefresh(); }
+}, 60000);

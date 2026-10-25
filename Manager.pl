@@ -34715,6 +34715,50 @@ post '/manager/tailnet/exit' => sub($c) {
 	$c->render(json => &subs::tailnet_set_exit($c->param('ip')));
 };
 
+# The remote_control panel's Me view names this machine's public address, which is
+# the quickest proof that the VPN is really carrying the traffic: with an exit
+# node in force the echo service sees that machine, and without one it sees the
+# ISP. The answer is kept for 30 seconds; `refresh` skips it so toggling the VPN
+# repaints at once instead of showing the previous route's address. The lookup is
+# asynchronous, so a slow or unreachable echo service cannot stall the manager.
+our $public_ip_memo;
+get '/manager/public_ip' => sub($c) {
+	my $now = &subs::rightNow();
+	if (!$c->param('refresh') && $public_ip_memo && ($public_ip_memo->{'at'} || 0) > $now - 30000) {
+		$c->render(json => { ok => ($public_ip_memo->{'ip'} ? 1 : 0), ip => $public_ip_memo->{'ip'} || '', cached => 1 });
+		return;
+	}
+	my @urls = ( 'https://1.1.1.1/cdn-cgi/trace', 'https://api.ipify.org', 'https://icanhazip.com' );
+	my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 4, request_timeout => 5);
+	my $try;
+	$try = sub {
+		my $url = shift @urls;
+		unless ($url) {
+			$public_ip_memo = { ip => '', at => &subs::rightNow() };
+			$c->render(json => { ok => 0, ip => '' });
+			return;
+		}
+		$ua->get_p($url)->then(sub {
+			my $tx = shift;
+			my $ip = '';
+			if ($tx->res->is_success) {
+				my $text = $tx->res->text || '';
+				my ($marked) = $text =~ /^ip=(.+)$/m;
+				$ip = defined $marked ? $marked : $text;
+				$ip =~ s/^\s+|\s+$//g;
+			}
+			$ip = &subs::public_ip_only($ip);
+			if ($ip) {
+				$public_ip_memo = { ip => $ip, at => &subs::rightNow() };
+				$c->render(json => { ok => 1, ip => $ip });
+				return;
+			}
+			$try->();
+		})->catch(sub { $try->(); });
+	};
+	$try->();
+};
+
 # ---- the Guide's write path: stage, then promote or drop ------------------
 # The Guide never writes an appointment straight in. It stages a proposal, the
 # person sees it, and only a promote turns it into a real appointment.
