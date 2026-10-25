@@ -31370,10 +31370,54 @@ my %clock_long_alarm_files = (
 	'we-celebrate-the-lives-of-those-with-gum-disease.mp3' => 'We Celebrate the Lives of Those with Gum Disease',
 	'were-all-professionals-here.mp3' => 'We\'re all Professionals Here',
 );
-our ($clock_apps_memo, $clock_apps_memo_at);
+our ($clock_apps_memo, $clock_apps_memo_at, $clock_apps_memo_images);
 
 sub clock_device() {
 	return &device_setter();
+}
+
+# Alarms are the house's, not one machine's: they live in a single settings row
+# every machine reads, and each alarm names the machines that should ring it.
+# Timers stay on the machine that started them (they are a countdown in a hand).
+sub clock_alarm_store_device() {
+	return 'house';
+}
+
+# The machines an alarm can be shared with: this machine ("Me") first, then
+# every peer the mesh knows. The value is the machine's signatorial, because
+# that is the identity each machine compares against its own.
+sub clock_machines() {
+	my $self = &signatorial_designer() || '';
+	my @out;
+	if (length $self) {
+		push @out, { value => $self, label => &lang('me'), device => &clock_device(), me => 1 };
+	}
+	my %seen = ($self => 1);
+	my $rows = eval { &db_query('select hostname, fqdn, signatorial, device from remote_machines order by hostname')->hashes } || [];
+	foreach my $r (@{ $rows || [] }) {
+		my $sig = $r->{'signatorial'} || '';
+		next unless length $sig;
+		next if $seen{$sig}++;
+		# Android answers `hostname` with 'localhost', so a phone and a tablet
+		# both look like the same machine. The fqdn still says which is which.
+		my $label = &device_hostname_better($r->{'hostname'}, '', $r->{'fqdn'});
+		$label =~ s/^\s+|\s+$//g;
+		$label = &format_name($label) if length $label;
+		$label = $sig unless length $label;
+		push @out, { value => $sig, label => $label, device => ($r->{'device'} || ''), me => 0 };
+	}
+	return \@out;
+}
+
+# Does this alarm ring on this machine? An empty list is an alarm from before
+# sharing: every machine that held the row rang it, so keep that reading.
+sub clock_alarm_targets_me {
+	my $alarm = shift;
+	my $machines = $alarm->{'machines'};
+	return 1 unless ref $machines eq 'ARRAY' && scalar @{$machines};
+	my $self = &signatorial_designer() || '';
+	return 0 unless length $self;
+	return scalar grep { defined $_ && $_ eq $self } @{$machines};
 }
 
 sub clock_sounds() {
@@ -31504,7 +31548,8 @@ sub clock_write_device_alarm {
 	my ($next, $next_alarm);
 	foreach my $alarm (@{ $alarms || [] }) {
 		# A ringing alarm has already woken the phone; the next one is what the
-		# app should arm now.
+		# app should arm now. Only an alarm this machine carries is armed here.
+		next unless &clock_alarm_targets_me($alarm);
 		next if $alarm->{'ringing'};
 		my $candidate;
 		if ($alarm->{'snooze_until'} && $alarm->{'snooze_until'} > $now) {
@@ -31606,10 +31651,23 @@ sub clock_normalize_alarm {
 	my $label = defined $in->{'label'} ? "$in->{'label'}" : 'Alarm';
 	$label =~ s/^\s+//;
 	$label =~ s/\s+$//;
-	$label = substr($label, 0, 120);
+	# The name sits beside a wide time field; twenty characters is all the row
+	# can show, and nobody needs a sentence here.
+	$label = substr($label, 0, 20);
 	$label = 'Alarm' unless length $label;
 	my $sound = &clock_valid_alarm_sound($in->{'sound'}) || 'notifications/ring.mp3';
 	my $enabled = defined $in->{'enabled'} ? (($in->{'enabled'} && $in->{'enabled'} ne '0' && $in->{'enabled'} ne 'off') ? 1 : 0) : 1;
+	my $self = &signatorial_designer() || '';
+	my @raw_machines = ref $in->{'machines'} eq 'ARRAY' ? @{ $in->{'machines'} } : split /,/, ($in->{'machines'} // '');
+	my (@machines, %seen_machine);
+	foreach my $m (@raw_machines) {
+		next unless defined $m;
+		$m =~ s/^\s+|\s+$//g;
+		next unless length $m && $m =~ /^[A-Za-z0-9_\-]{1,64}$/;
+		$m = $self if $m eq 'me' && length $self;
+		next if $seen_machine{$m}++;
+		push @machines, $m;
+	}
 	return {
 		uuid => ($in->{'uuid'} // ''),
 		hour => $hour,
@@ -31621,8 +31679,10 @@ sub clock_normalize_alarm {
 		sound => $sound,
 		volume => $volume,
 		ramp => $ramp,
+		machines => \@machines,
 		last_fire => int($in->{'last_fire'} || 0),
 		snooze_until => int($in->{'snooze_until'} || 0),
+		stop_at => int($in->{'stop_at'} || 0),
 		ringing => ($in->{'ringing'} ? 1 : 0),
 		ring_started => int($in->{'ring_started'} || 0),
 		ring_last => int($in->{'ring_last'} || 0),
@@ -31658,8 +31718,37 @@ sub clock_normalize_timer {
 	};
 }
 
+# The house alarm list. Before sharing, each machine kept its own row under its
+# device type; a new install would see only its own. The first read moves every
+# such row into the single house row, and those alarms are addressed to the
+# machine doing the moving ("Me").
+sub clock_alarms_migrate {
+	my $store = &clock_alarm_store_device();
+	my $rows = eval { &db_query('select value, device, server_time from settings where app = ? and setting = ? and device != ? order by cast(server_time as integer) asc', 'clock', 'alarms', $store)->hashes } || [];
+	my $self = &signatorial_designer() || '';
+	my (@out, %seen);
+	foreach my $r (@{ $rows || [] }) {
+		my $list = eval { decode_json($r->{'value'} || '') } || [];
+		next unless ref $list eq 'ARRAY';
+		foreach my $a (@{ $list }) {
+			next unless ref $a eq 'HASH';
+			my $alarm = &clock_normalize_alarm($a);
+			next unless length($alarm->{'uuid'} || '');
+			next if $seen{$alarm->{'uuid'}}++;
+			$alarm->{'machines'} = [ $self ] if (!scalar @{ $alarm->{'machines'} || [] }) && length $self;
+			push @out, $alarm;
+		}
+	}
+	my $json = encode_json(\@out);
+	eval { &setting_setter({ app => 'clock', setting => 'alarms', value => $json, device => $store }) };
+	return $json;
+}
+
 sub clock_alarms_read() {
-	my $raw = eval { &setting_grabber({ app => 'clock', setting => 'alarms', device => &clock_device() }) };
+	my $raw = eval { &setting_grabber({ app => 'clock', setting => 'alarms', device => &clock_alarm_store_device() }) };
+	unless (defined $raw && length $raw) {
+		$raw = eval { &clock_alarms_migrate() };
+	}
 	my $list = (defined $raw && length $raw) ? eval { decode_json($raw) } : [];
 	$list = [] unless ref $list eq 'ARRAY';
 	return [ map { &clock_normalize_alarm($_) } @{$list} ];
@@ -31675,7 +31764,7 @@ sub clock_timers_read() {
 sub clock_alarms_write {
 	my $alarms = shift;
 	my $json = encode_json($alarms || []);
-	&setting_setter({ app => 'clock', setting => 'alarms', value => $json, device => &clock_device() });
+	&setting_setter({ app => 'clock', setting => 'alarms', value => $json, device => &clock_alarm_store_device() });
 	return $alarms;
 }
 
@@ -31708,20 +31797,26 @@ sub clock_alarm_next_ms {
 }
 
 sub clock_next_wake {
-	my ($alarms, $timers, $now) = @_;
+	my ($alarms, $timers, $now, $rings) = @_;
 	$now = &rightNow() unless defined $now;
 	my $next;
 	foreach my $a (@{ $alarms || [] }) {
+		next unless &clock_alarm_targets_me($a);
 		my $candidate;
 		if ($a->{'ringing'}) {
 			# A chime repeats every fifteen seconds; a long track plays once and
-			# only needs a wake at the guard to clear the ring state.
-			my $end = ($a->{'ring_started'} || $now) + &clock_alarm_ring_length($a);
+			# only needs a wake at the guard to clear the ring state. The machine's
+			# own ring record says when it last sounded, since the shared row is
+			# not rewritten on every repetition.
+			my $ring = ref $rings eq 'HASH' ? $rings->{ $a->{'uuid'} } : undef;
+			my $started = (ref $ring eq 'HASH' && $ring->{'started'}) ? $ring->{'started'} : ($a->{'ring_started'} || $now);
+			my $last = (ref $ring eq 'HASH' && $ring->{'last'}) ? $ring->{'last'} : ($a->{'ring_last'} || $now);
+			my $end = $started + &clock_alarm_ring_length($a);
 			if (&clock_sound_is_long($a->{'sound'})) {
 				$candidate = $end;
 			}
 			else {
-				$candidate = ($a->{'ring_last'} || $now) + 15000;
+				$candidate = $last + 15000;
 				$candidate = $end if $end < $candidate;
 			}
 			$candidate = $now + 1000 if $candidate <= $now;
@@ -31763,6 +31858,28 @@ sub clock_apps {
 		foreach my $row (@out) { $seen{$row->{'value'}} = 1; }
 	}
 	else {
+		# A hidden appointment must not be offered for linking. Visibility is a
+		# setting per app ("visible" = unchecked is hidden) and this machine's own
+		# row wins over the person's.
+		my $device = &clock_device();
+		my %visible;
+		my $vis_rows = eval { &db_query("select app, device, value from settings where setting = 'visible' and device in (?, 'me')", $device)->hashes } || [];
+		foreach my $v (@{ $vis_rows || [] }) {
+			my $a = $v->{'app'};
+			next unless defined $a && length $a;
+			if (($v->{'device'} || '') eq $device) { $visible{$a} = $v->{'value'}; }
+			elsif (!exists $visible{$a}) { $visible{$a} = $v->{'value'}; }
+		}
+		# One query for the album art the icon maker would otherwise ask for
+		# app by app.
+		my %main_image;
+		my $img_rows = eval { &db_query("select app, device, value from settings where setting = 'main_image' and device in (?, 'me')", $device)->hashes } || [];
+		foreach my $v (@{ $img_rows || [] }) {
+			my $a = $v->{'app'};
+			next unless defined $a && length $a && length($v->{'value'} || '');
+			if (($v->{'device'} || '') eq $device) { $main_image{$a} = $v->{'value'}; }
+			elsif (!exists $main_image{$a}) { $main_image{$a} = $v->{'value'}; }
+		}
 		# The most recently used appointments make a useful picker without
 		# shipping the whole history: a house can name thousands of things and
 		# only the last hundred and fifty are likely to be linked to a clock.
@@ -31773,13 +31890,16 @@ sub clock_apps {
 			my $a = $r->{'app'};
 			next unless defined $a && length $a;
 			next if $a =~ /^__/;
+			next if (($visible{$a} // 'checked') eq 'unchecked');
 			next if $seen{$a}++;
 			push @out, { value => $a, label => &format_name($a) };
 		}
 		@out = sort { lc($a->{'label'}) cmp lc($b->{'label'}) } @out;
 		$clock_apps_memo = [ @out ];
 		$clock_apps_memo_at = $now;
+		$clock_apps_memo_images = { %main_image };
 	}
+	my $images = $clock_apps_memo_images || {};
 	# a link already on an alarm or timer stays offered even before that app has
 	# written an appointment of its own
 	foreach my $row (@{ &clock_alarms_read() }, @{ &clock_timers_read() }) {
@@ -31789,6 +31909,21 @@ sub clock_apps {
 		push @out, { value => $a, label => &format_name($a) };
 	}
 	@out = sort { lc($a->{'label'}) cmp lc($b->{'label'}) } @out;
+	# The picker is a list of rows, not a datalist: each one carries the icon the
+	# app wears elsewhere in the house, so a person recognises it at a glance.
+	my $n = 0;
+	foreach my $row (@out) {
+		$n++;
+		next if defined $row->{'icon'} && length $row->{'icon'};
+		$row->{'icon'} = &main_icon_maker({
+			app => $row->{'value'},
+			timestamp => $now + $n,
+			size => 'little',
+			onclick => ' ',
+			hint => $row->{'label'},
+			settings => { main_image => ($images->{$row->{'value'}} || '') },
+		});
+	}
 	return \@out;
 }
 
@@ -31801,6 +31936,8 @@ sub clock_state() {
 		apps => &clock_apps(),
 		sounds => &clock_sounds(),
 		alarm_sounds => &clock_alarm_sounds(),
+		machines => &clock_machines(),
+		me => &signatorial_designer() || '',
 		max => 10,
 	};
 }
@@ -31915,11 +32052,15 @@ sub clock_alarm_ring {
 
 	# The alarm turns its linked appointment on. A session already running is the
 	# same activity and is left alone, so a late tick cannot open a second one.
+	# The uuid is derived from the alarm and the fire, so two machines that both
+	# ring the same alarm write the one start row instead of two.
 	if ($app && !&open_session_uuid($app)) {
+		my $start_uuid = 'clockalarm' . ($alarm->{'uuid'} || '') . int(($fire_at || $now) / 60000);
 		eval {
 			&Manager::appointment_writer(undef, {
 				app => $app,
 				type => 'start',
+				uuid => $start_uuid,
 				timestamp => $now,
 				server_time => $now,
 			});
@@ -31999,6 +32140,73 @@ sub clock_timer_finish {
 
 # One pass of the clock's own clock. Called by Alarm.pl; returns the next moment
 # it should be woken for, or undef when there is nothing waiting.
+# --------------------------------------------------------------------------
+# Per-machine ring state
+#
+# The alarm list is shared, but the sound is local. Each machine remembers the
+# fire it has already handled and when its own ring began, so a peer syncing
+# the row mid-ring cannot make it ring twice. A dismiss or snooze is carried on
+# the shared row (`stop_at`, `snooze_until`) and, for speed, relayed to the
+# machines the alarm names.
+sub clock_ring_file() {
+	my $dir = &home('~/.president');
+	eval { File::Path::make_path($dir); } unless -d $dir;
+	$dir = '/tmp' unless -d $dir;
+	return $dir . '/clock_rings.json';
+}
+
+sub clock_rings_read() {
+	my $file = &clock_ring_file();
+	return {} unless -e $file;
+	my $raw = eval { &read_file($file) } // '';
+	my $rings = eval { decode_json($raw) };
+	return ref $rings eq 'HASH' ? $rings : {};
+}
+
+sub clock_rings_write {
+	my $rings = shift || {};
+	eval { write_file(&clock_ring_file(), encode_json($rings)) };
+	return $rings;
+}
+
+# Hand a dismiss/snooze/stop_all to the machines that carry the alarm. The
+# shared settings row reaches them as well; this is what makes the stop
+# immediate rather than whenever the next sync runs. Quiet about a peer that is
+# away - the row will still catch it up.
+sub clock_relay {
+	my ($action, $uuid, $machines, %extra) = @_;
+	my $self = &signatorial_designer() || '';
+	my @want = grep { defined $_ && length $_ && $_ ne $self } @{ $machines || [] };
+	return 0 unless scalar @want;
+	my $rows = eval { &db_query('select hostname, signatorial, manager, ip, port from remote_machines')->hashes } || [];
+	my %by_sig;
+	foreach my $rm (@{ $rows || [] }) {
+		my $sig = $rm->{'signatorial'} || '';
+		next unless length $sig;
+		next unless $rm->{'manager'};
+		$by_sig{$sig} = $rm;
+	}
+	my @peers = grep { $by_sig{$_} } @want;
+	return 0 unless scalar @peers;
+	my %form = ( action => $action, relayed => 'yes', uuid => ($uuid || '') );
+	foreach my $key ( keys %extra ) {
+		next unless defined $extra{$key};
+		$form{$key} = $extra{$key};
+	}
+	eval {
+		&subprocessor(sub {
+			foreach my $sig (@peers) {
+				my $rm = $by_sig{$sig};
+				eval {
+					my $ua = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+					$ua->post($rm->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
+				};
+			}
+		}, { name => 'clock relay' });
+	};
+	return 1;
+}
+
 sub clock_tick() {
 	my $now = &rightNow();
 	my $lock = &clock_lock_take();
@@ -32007,42 +32215,76 @@ sub clock_tick() {
 	eval {
 		my $alarms = &clock_alarms_read();
 		my $timers = &clock_timers_read();
+		my $rings = &clock_rings_read();
 		my $alarms_changed = 0;
 		my $timers_changed = 0;
+		my $rings_changed = 0;
 
 		foreach my $alarm (@{ $alarms }) {
-			next unless $alarm->{'enabled'} || $alarm->{'snooze_until'} || $alarm->{'ringing'};
-			if ($alarm->{'ringing'}) {
-				my $elapsed = $now - ($alarm->{'ring_started'} || $now);
+			my $uuid = $alarm->{'uuid'} || '';
+			next unless length $uuid;
+			my $targeted = &clock_alarm_targets_me($alarm);
+			my $ring = ref $rings->{$uuid} eq 'HASH' ? $rings->{$uuid} : undef;
+
+			# Already sounding on this machine: repeat a chime, and stop when the
+			# ring guard runs out or a dismiss/snooze reached the shared row.
+			if ($ring && $ring->{'ringing'}) {
+				my $elapsed = $now - ($ring->{'started'} || $now);
 				my $long = &clock_sound_is_long($alarm->{'sound'});
-				if ($elapsed >= &clock_alarm_ring_length($alarm)) {
-					$alarm->{'ringing'} = 0;
-					$alarm->{'ring_started'} = 0;
-					$alarm->{'ring_last'} = 0;
-					$alarms_changed = 1;
+				my $stop_at = $alarm->{'stop_at'} || 0;
+				my $stopped = !$targeted || !$alarm->{'ringing'} || ($stop_at != ($ring->{'base'} || 0));
+				if ($stopped || $elapsed >= &clock_alarm_ring_length($alarm)) {
+					push @actions, [ 'stop_sound', $uuid ] if $long;
+					$ring->{'ringing'} = 0;
+					$ring->{'stopped'} = $now;
+					$rings_changed = 1;
 					$changed = 1;
-					push @actions, [ 'stop_sound', $alarm->{'uuid'} ] if $long;
-					push @actions, [ 'device_dismiss', $alarm->{'uuid'} ];
+					# Only the machine whose guard has run out clears the shared
+					# flag, so a peer that started a moment later is not cut short.
+					if ($alarm->{'ringing'} && $elapsed >= &clock_alarm_ring_length($alarm)) {
+						$alarm->{'ringing'} = 0;
+						$alarm->{'ring_started'} = 0;
+						$alarm->{'ring_last'} = 0;
+						$alarms_changed = 1;
+						push @actions, [ 'device_dismiss', $uuid ];
+					}
 				}
-				elsif (!$long && (!$alarm->{'ring_last'} || ($now - $alarm->{'ring_last'}) >= 15000)) {
+				elsif (!$long && (!$ring->{'last'} || ($now - $ring->{'last'}) >= 15000)) {
 					push @actions, [ 'sound', $alarm, $elapsed ];
-					$alarm->{'ring_last'} = $now;
-					$alarms_changed = 1;
+					$ring->{'last'} = $now;
+					$rings_changed = 1;
 				}
 				next;
 			}
+
+			next unless $targeted;
+			next unless $alarm->{'enabled'} || $alarm->{'snooze_until'};
+			# A snooze waiting in the future means the regular time is not due.
+			next if $alarm->{'snooze_until'} && $alarm->{'snooze_until'} > $now;
 			my $fire_at;
 			if ($alarm->{'snooze_until'} && $alarm->{'snooze_until'} <= $now && $now - $alarm->{'snooze_until'} <= 120000) {
 				$fire_at = $alarm->{'snooze_until'};
 			}
-			unless ($fire_at) {
+			elsif ($alarm->{'enabled'}) {
 				my $candidate = &clock_alarm_next_ms($alarm, $now - 120000);
 				$fire_at = $candidate if $candidate && $candidate <= $now;
 			}
 			next unless $fire_at;
-			my $key = int($fire_at / 60000);
-			next if $alarm->{'last_fire'} && $alarm->{'last_fire'} == $key;
-			$alarm->{'last_fire'} = $key;
+			# A fire that was dismissed (or snoozed) elsewhere before this machine
+			# got there does not ring late.
+			next if $alarm->{'stop_at'} && $fire_at <= $alarm->{'stop_at'};
+			# The local record is the guard, not the shared last_fire: every
+			# targeted machine rings the same fire once.
+			next if $ring && ($ring->{'fire'} || 0) >= $fire_at;
+			$rings->{$uuid} = {
+				fire => $fire_at,
+				started => $now,
+				last => $now,
+				base => ($alarm->{'stop_at'} || 0),
+				ringing => 1,
+			};
+			$rings_changed = 1;
+			$alarm->{'last_fire'} = int($fire_at / 60000);
 			$alarm->{'snooze_until'} = 0;
 			$alarm->{'enabled'} = 0 unless scalar @{ $alarm->{'days'} || [] };
 			$alarm->{'ringing'} = 1;
@@ -32051,6 +32293,16 @@ sub clock_tick() {
 			$alarms_changed = 1;
 			$changed = 1;
 			push @actions, [ 'ring', $alarm, $fire_at, $now ];
+		}
+
+		# Forget ring records a few days old so the little file cannot grow.
+		foreach my $u ( keys %{$rings} ) {
+			my $r = $rings->{$u};
+			next unless ref $r eq 'HASH';
+			my $when = $r->{'started'} || $r->{'fire'} || 0;
+			next unless $when && ($now - $when) > 259200000;
+			delete $rings->{$u};
+			$rings_changed = 1;
 		}
 
 		foreach my $timer (@{ $timers }) {
@@ -32065,8 +32317,9 @@ sub clock_tick() {
 
 		&clock_alarms_write($alarms) if $alarms_changed;
 		&clock_timers_write($timers) if $timers_changed;
+		&clock_rings_write($rings) if $rings_changed;
 		push @actions, [ 'device_sync', $alarms, $now ];
-		$next = &clock_next_wake($alarms, $timers, $now);
+		$next = &clock_next_wake($alarms, $timers, $now, $rings);
 	};
 	warn 'clock tick: ' . $@ if $@;
 	&clock_lock_drop($lock);

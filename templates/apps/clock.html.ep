@@ -32,10 +32,10 @@
 	.clock_alarm { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:9px 10px; margin-bottom:9px; background:var(--panel); }
 	.clock_alarm.off { opacity:.58; }
 	.clock_alarm_line { display:flex; align-items:center; gap:7px; }
-	.clock_alarm_time { font:inherit; font-size:25px; font-variant-numeric:tabular-nums; width:9ch; min-width:108px; padding:1px 4px;
+	.clock_alarm_time { font:inherit; font-size:25px; font-variant-numeric:tabular-nums; flex:0 0 auto; width:11ch; min-width:132px; padding:1px 4px;
 		border:1px solid transparent; border-radius:6px; background:transparent; color:inherit; }
 	.clock_alarm_time:hover, .clock_alarm_time:focus { border-color:var(--line); }
-	.clock_alarm_label { flex:1 1 auto; min-width:0; font:inherit; font-size:14px; padding:5px 7px; color:inherit;
+	.clock_alarm_label { flex:1 1 0; min-width:0; font:inherit; font-size:14px; padding:5px 7px; color:inherit;
 		border:1px solid transparent; border-radius:6px; background:transparent; }
 	.clock_alarm_label:hover, .clock_alarm_label:focus { border-color:var(--line); }
 	.clock_switch { position:relative; display:inline-flex; width:38px; height:21px; flex:0 0 auto; cursor:pointer; }
@@ -61,7 +61,7 @@
 		border:1px solid var(--line); border-radius:5px; background:var(--window, var(--panel)); }
 	.clock_field input[type=range] { padding:0; accent-color:#2f8f6d; }
 	.clock_timer_new { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:9px; margin-bottom:10px; background:var(--panel); }
-	.clock_timer_new .clock_timer_label, .clock_timer_new .clock_timer_app { grid-column:1 / -1; }
+	.clock_timer_new .clock_timer_label, .clock_timer_new .clock_timer_app, .clock_timer_new .clock_app_picker { grid-column:1 / -1; }
 	.clock_timer_new .clock_add_timer { grid-column:1 / -1; }
 	.clock_timer_new input, .clock_timer_new button { font:inherit; font-size:13px; min-width:0; padding:6px 8px; color:inherit;
 		border:1px solid var(--line); border-radius:6px; background:var(--window, var(--panel)); }
@@ -77,6 +77,23 @@
 	.clock_timer_app_text { display:block; font-size:11px; opacity:.65; margin-top:2px; }
 	.clock_timer_action { font:inherit; font-size:11px; padding:4px 9px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:6px; background:transparent; }
 	.clock_timer_action:hover { background:var(--line); }
+	.clock_timer_buttons { display:flex; flex-direction:column; gap:4px; flex:0 0 auto; }
+	.clock_alarm_machines { display:flex; flex-direction:column; gap:2px; min-width:0; }
+	.clock_alarm_extra .clock_alarm_machines { grid-column:1 / -1; }
+	.clock_machine_list { display:flex; flex-wrap:wrap; gap:4px; }
+	.clock_machine { font:inherit; font-size:11px; padding:3px 8px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:999px; background:transparent; opacity:.75; }
+	.clock_machine.on { background-color:#2f8f6d; color:#fff; border-color:transparent; opacity:1; font-weight:700; }
+	.clock_app_picker { position:relative; display:flex; align-items:center; gap:3px; }
+	.clock_app_picker input { flex:1 1 auto; }
+	.clock_app_toggle { flex:0 0 auto; font:inherit; font-size:11px; line-height:1; width:22px; height:22px; padding:0; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:5px; background:var(--panel); }
+	#clock_app_menu { position:fixed; z-index:40000; display:none; max-height:280px; overflow-y:auto; min-width:220px; padding:4px;
+		border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .45); background:var(--window, var(--panel)); box-shadow:0 8px 24px rgba(0,0,0,.28); }
+	#clock_app_menu.open { display:block; }
+	.clock_app_choice { display:flex; align-items:center; gap:7px; width:100%; font:inherit; font-size:12px; text-align:left; padding:4px 7px; cursor:pointer; color:inherit; border:none; border-radius:5px; background:transparent; }
+	.clock_app_choice:hover, .clock_app_choice.selected { background:var(--line); }
+	.clock_app_choice img, .clock_app_choice .window_icon { width:20px; height:20px; flex:0 0 auto; object-fit:contain; }
+	.clock_app_choice .window_icon { display:inline-block !important; font-size:9px; overflow:hidden; text-align:center; }
+	.clock_app_choice span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 	.clock_stopwatch { text-align:center; padding-top:18px; }
 	.clock_sw_display { font-size:44px; font-variant-numeric:tabular-nums; font-weight:600; letter-spacing:.5px; padding:14px 0; }
 	.clock_sw_buttons { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
@@ -133,7 +150,7 @@
 					<div class="clock_alarm<%= $is_on ? '' : ' off' %>" data-uuid="<%= $alarm->{'uuid'} %>" data-enabled="<%= $is_on %>">
 						<div class="clock_alarm_line">
 							<input type="time" class="clock_alarm_time" value="<%= sprintf('%02d:%02d', $alarm->{'hour'}, $alarm->{'minute'}) %>" aria-label="<%= &subs::lang('alarm') %>">
-							<input type="text" class="clock_alarm_label" value="<%= $alarm->{'label'} %>" maxlength="120" aria-label="<%= &subs::lang('label') %>">
+							<input type="text" class="clock_alarm_label" value="<%= $alarm->{'label'} %>" maxlength="20" aria-label="<%= &subs::lang('label') %>">
 							<label class="clock_switch" hint="<%= &subs::lang('alarm') %>"><input type="checkbox" class="clock_alarm_enabled"<%= $is_on ? ' checked' : '' %>></label>
 							<button type="button" class="clock_alarm_delete" hint="<%= &subs::lang('delete') %>" aria-label="<%= &subs::lang('delete') %>">✕</button>
 						</div>
@@ -148,7 +165,20 @@
 						<div class="clock_alarm_extra">
 							<label class="clock_field">
 								<span><%= &subs::lang('link_appointment') %></span>
-								<input list="clock_apps" class="clock_alarm_app" value="<%= $alarm->{'app'} ? &subs::format_name($alarm->{'app'}) : '' %>" placeholder="<%= &subs::lang('no_appointment') %>">
+								<div class="clock_app_picker">
+									<input type="text" class="clock_alarm_app" autocomplete="off" data-app="<%= $alarm->{'app'} %>" value="<%= $alarm->{'app'} ? &subs::format_name($alarm->{'app'}) : '' %>" placeholder="<%= &subs::lang('no_appointment') %>">
+									<button type="button" class="clock_app_toggle" tabindex="-1" aria-label="<%= &subs::lang('link_appointment') %>">▾</button>
+								</div>
+							</label>
+							<label class="clock_field clock_alarm_machines">
+								<span><%= &subs::lang('shared_with') %></span>
+								<div class="clock_machine_list" role="group" aria-label="<%= &subs::lang('shared_with') %>">
+									<% my %on_machine = map { $_ => 1 } @{ $alarm->{'machines'} || [] }; %>
+									<% foreach my $m ( @{$machines} ) { %>
+										<% my $on = $on_machine{$m->{'value'}} ? 1 : 0; %>
+										<button type="button" class="clock_machine<%= $on ? ' on' : '' %>" data-machine="<%= $m->{'value'} %>" aria-pressed="<%= $on ? 'true' : 'false' %>"><%= $m->{'label'} %></button>
+									<% } %>
+								</div>
 							</label>
 							<label class="clock_field">
 								<span><%= &subs::lang('sound') %></span>
@@ -197,7 +227,10 @@
 				<input type="number" class="clock_timer_minutes" min="0" max="59" step="1" placeholder="<%= &subs::lang('minutes') %>" aria-label="<%= &subs::lang('minutes') %>">
 				<input type="number" class="clock_timer_seconds" min="0" max="59" step="1" placeholder="<%= &subs::lang('seconds') %>" aria-label="<%= &subs::lang('seconds') %>">
 				<input type="text" class="clock_timer_label" maxlength="120" placeholder="<%= &subs::lang('label') %>" aria-label="<%= &subs::lang('label') %>">
-				<input type="text" list="clock_apps" class="clock_timer_app" placeholder="<%= &subs::lang('link_appointment') %>" aria-label="<%= &subs::lang('link_appointment') %>">
+				<div class="clock_app_picker">
+					<input type="text" class="clock_timer_app" autocomplete="off" data-app="" placeholder="<%= &subs::lang('link_appointment') %>" aria-label="<%= &subs::lang('link_appointment') %>">
+					<button type="button" class="clock_app_toggle" tabindex="-1" aria-label="<%= &subs::lang('link_appointment') %>">▾</button>
+				</div>
 				<button type="button" class="clock_add clock_add_timer"<%= $running_timers >= $max ? ' disabled' : '' %>><%= &subs::lang('add_timer') %></button>
 			</div>
 			<div class="clock_presets">
@@ -222,7 +255,10 @@
 							<% if ($state eq 'running') { %>
 								<button type="button" class="clock_timer_action clock_timer_stop" hint="<%= &subs::lang('stop') %>"><%= &subs::lang('stop') %></button>
 							<% } else { %>
-								<button type="button" class="clock_timer_action clock_timer_remove" hint="<%= &subs::lang('delete') %>"><%= &subs::lang('delete') %></button>
+								<div class="clock_timer_buttons">
+									<button type="button" class="clock_timer_action clock_timer_restore" hint="<%= &subs::lang('restore') %>"><%= &subs::lang('restore') %></button>
+									<button type="button" class="clock_timer_action clock_timer_remove" hint="<%= &subs::lang('delete') %>"><%= &subs::lang('delete') %></button>
+								</div>
 							<% } %>
 						</div>
 						<% if ($state ne 'running') { %>
@@ -248,9 +284,5 @@
 		</section>
 	</div>
 
-	<datalist id="clock_apps">
-		<% foreach my $app ( @{$apps} ) { %>
-			<option value="<%= $app->{'value'} %>"><%= $app->{'label'} %></option>
-		<% } %>
-	</datalist>
 </div>
+<div id="clock_app_menu" role="listbox" aria-label="<%= &subs::lang('link_appointment') %>"></div>

@@ -22624,6 +22624,7 @@ get '/manager/clock' => sub($c) {
 		apps => $state->{'apps'},
 		sounds => $state->{'sounds'},
 		alarm_sounds => $state->{'alarm_sounds'},
+		machines => $state->{'machines'},
 		max => $state->{'max'},
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'clock', title => &subs::lang('clock'), contents => $content }, $c->param('timestamp'));
@@ -22642,6 +22643,15 @@ post '/manager/clock/alarm' => sub($c) {
 	my $lock = &subs::clock_lock_take();
 	my $alarms = &subs::clock_alarms_read();
 	my $error = '';
+	# The machines that carry the alarm this request names, kept before a delete
+	# can remove the row. Everyone named gets the stop, so one person's Dismiss
+	# ends it on every machine.
+	my $relay_uuid = $c->param('uuid') || '';
+	my $relay_machines = [];
+	if (length $relay_uuid) {
+		my ($found) = grep { ($_->{'uuid'} || '') eq $relay_uuid } @{$alarms};
+		$relay_machines = $found->{'machines'} || [] if $found;
+	}
 
 	if ($action eq 'add') {
 		if (scalar @{$alarms} >= 10) {
@@ -22660,6 +22670,7 @@ post '/manager/clock/alarm' => sub($c) {
 				sound => 'notifications/ring.mp3',
 				volume => 70,
 				ramp => 60,
+				machines => [ &subs::signatorial_designer() || '' ],
 				created => $now,
 			});
 		}
@@ -22674,6 +22685,7 @@ post '/manager/clock/alarm' => sub($c) {
 			$a->{'ringing'} = 0;
 			$a->{'ring_started'} = 0;
 			$a->{'ring_last'} = 0;
+			$a->{'stop_at'} = $now;
 		}
 	}
 	elsif ($action eq 'dismiss' || $action eq 'snooze') {
@@ -22687,6 +22699,7 @@ post '/manager/clock/alarm' => sub($c) {
 			$alarm->{'ringing'} = 0;
 			$alarm->{'ring_started'} = 0;
 			$alarm->{'ring_last'} = 0;
+			$alarm->{'stop_at'} = $now;
 		}
 		else {
 			my $minutes = $c->param('minutes');
@@ -22697,6 +22710,7 @@ post '/manager/clock/alarm' => sub($c) {
 			$alarm->{'ringing'} = 0;
 			$alarm->{'ring_started'} = 0;
 			$alarm->{'ring_last'} = 0;
+			$alarm->{'stop_at'} = $now;
 		}
 	}
 	elsif ($action eq 'toggle') {
@@ -22712,6 +22726,7 @@ post '/manager/clock/alarm' => sub($c) {
 				$alarm->{'ringing'} = 0;
 				$alarm->{'ring_started'} = 0;
 				$alarm->{'ring_last'} = 0;
+				$alarm->{'stop_at'} = $now;
 			}
 		}
 	}
@@ -22733,6 +22748,9 @@ post '/manager/clock/alarm' => sub($c) {
 				$app =~ s/^\s+//; $app =~ s/\s+$//;
 				$alarm->{'app'} = length $app ? &subs::unformat_name($app) : '';
 			}
+			if (defined $c->param('machines') && length $c->param('machines')) {
+				$alarm->{'machines'} = [ split /,/, $c->param('machines') ];
+			}
 			$alarm->{'sound'} = $c->param('sound') if defined $c->param('sound') && length &subs::clock_valid_alarm_sound($c->param('sound'));
 			$alarm->{'volume'} = $c->param('volume') if defined $c->param('volume') && $c->param('volume') =~ /^\d+$/;
 			$alarm->{'ramp'} = $c->param('ramp') if defined $c->param('ramp') && $c->param('ramp') =~ /^\d+$/;
@@ -22742,6 +22760,7 @@ post '/manager/clock/alarm' => sub($c) {
 				$alarm->{'ringing'} = 0;
 				$alarm->{'ring_started'} = 0;
 				$alarm->{'ring_last'} = 0;
+				$alarm->{'stop_at'} = $now;
 			}
 			for my $i (0 .. $#{$alarms}) {
 				if (($alarms->[$i]->{'uuid'} || '') eq $uuid) { $alarms->[$i] = $alarm; last; }
@@ -22750,7 +22769,6 @@ post '/manager/clock/alarm' => sub($c) {
 	}
 
 	&subs::clock_alarms_write($alarms) unless length $error;
-	my $next = &subs::clock_next_wake($alarms, &subs::clock_timers_read(), $now);
 	&subs::clock_lock_drop($lock);
 	&subs::clock_write_device_alarm($alarms, $now) unless length $error;
 	if ($action eq 'stop_all') {
@@ -22759,13 +22777,24 @@ post '/manager/clock/alarm' => sub($c) {
 	elsif ($action =~ /^(?:dismiss|snooze|toggle|save|delete)$/) {
 		&subs::clock_alarm_stop_sound($c->param('uuid') || '');
 	}
-	&subs::clock_poke($next || $now);
+	&subs::clock_poke($now);
 	my $rings_stopped = ($action =~ /^(?:dismiss|snooze|delete|stop_all)$/) ? 1 : 0;
 	if (!$rings_stopped && ($action eq 'toggle' || $action eq 'save') && defined $c->param('enabled') && !$c->param('enabled')) {
 		$rings_stopped = 1;
 	}
 	&subs::clock_send_console('jawnosClockAlarmStop();') if $rings_stopped;
 	&subs::clock_device_dismissed($action eq 'stop_all' ? '' : ($c->param('uuid') || '')) if $rings_stopped;
+	# The shared settings row carries the stop to every machine in time; this
+	# relay is what ends the sound now rather than at the next sync. A request
+	# that arrived this way does not relay again.
+	if ($rings_stopped && !$c->param('relayed')) {
+		my $machines = $action eq 'stop_all'
+			? [ map { $_->{'value'} } @{ &subs::clock_machines() } ]
+			: $relay_machines;
+		my %extra;
+		$extra{'minutes'} = $c->param('minutes') if $action eq 'snooze';
+		&subs::clock_relay($action eq 'snooze' ? 'snooze' : 'dismiss', ($action eq 'stop_all' ? '' : $relay_uuid), $machines, %extra);
+	}
 	my $state = &subs::clock_state();
 	$state->{'ok'} = length $error ? 0 : 1;
 	$state->{'error'} = $error;
@@ -22858,14 +22887,52 @@ post '/manager/clock/timer' => sub($c) {
 			@{$timers} = grep { ($_->{'uuid'} || '') ne $uuid } @{$timers};
 		}
 	}
+	elsif ($action eq 'restore') {
+		my $uuid = $c->param('uuid') || '';
+		my ($timer) = grep { ($_->{'uuid'} || '') eq $uuid } @{$timers};
+		my $running = scalar grep { ($_->{'state'} || '') eq 'running' } @{$timers};
+		if (!$timer) {
+			$error = 'missing';
+		}
+		elsif (($timer->{'state'} || '') eq 'running') {
+			$error = 'running';
+		}
+		elsif ($running >= 10) {
+			$error = 'full';
+		}
+		else {
+			# A finished timer is a recipe: restore puts the same length, name and
+			# link back on the clock, and the appointment it names starts again.
+			$timer->{'state'} = 'running';
+			$timer->{'started_at'} = $now;
+			$timer->{'ends_at'} = $now + (($timer->{'seconds'} || 1) * 1000);
+			$timer->{'ended_at'} = 0;
+			$timer->{'appt_uuid'} = '';
+			if ($timer->{'app'}) {
+				my $open = &subs::open_session_uuid($timer->{'app'});
+				if ($open) {
+					$timer->{'appt_uuid'} = $open;
+				}
+				else {
+					my $started = &appointment_writer($c, {
+						app => $timer->{'app'},
+						type => 'start',
+						timestamp => $now,
+						server_time => $now,
+					});
+					$timer->{'appt_uuid'} = $started->{'uuid'} if $started->{'uuid'};
+				}
+			}
+			$poke = $timer->{'ends_at'};
+		}
+	}
 	elsif ($action eq 'clear_finished') {
 		@{$timers} = grep { ($_->{'state'} || '') eq 'running' } @{$timers};
 	}
 
 	&subs::clock_timers_write($timers) unless length $error;
-	my $next = &subs::clock_next_wake(&subs::clock_alarms_read(), $timers, $now);
 	&subs::clock_lock_drop($lock);
-	&subs::clock_poke($poke || $next || $now);
+	&subs::clock_poke($now);
 	my $state = &subs::clock_state();
 	$state->{'ok'} = length $error ? 0 : 1;
 	$state->{'error'} = $error;
