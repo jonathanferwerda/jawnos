@@ -1152,12 +1152,14 @@ function jawnosClockMathStart(card) {
 	jawnosClockRingMath = { a: m.a, b: m.b, c: m.c, answer: m.answer, solved: false };
 	card.find('.clock_ring_math_problem').text(m.a + ' × ' + m.b + ' − ' + m.c + ' = ?');
 	card.find('.clock_ring_math_input').val('').removeClass('ok bad');
-	card.find('.clock_ring_math_feedback').text('').removeClass('ok bad');
+	// The phone's alarm screen is where the math is enforced. This window is
+	// the acknowledged way past it (unlock the phone, answer from the Clock
+	// window), so the buttons here always work.
+	card.find('.clock_ring_math_feedback').removeClass('ok bad').text(jawnosT('The buttons below still snooze or dismiss from this window.'));
 	card.find('.clock_ring_math').show();
-	card.find('.clock_ring_buttons button').prop('disabled', true);
 }
 
-// Only an exact answer unlocks the card; the buttons stay disabled until then.
+// Type the answer for fun; it never locks the buttons, which are the bypass.
 function jawnosClockMathCheck(card) {
 	if (!jawnosClockRingMath) { return; }
 	var m = jawnosClockRingMath;
@@ -1167,21 +1169,18 @@ function jawnosClockMathCheck(card) {
 	if (isNaN(value)) {
 		m.solved = false;
 		input.removeClass('ok bad');
-		feedback.removeClass('ok bad').text('');
-		card.find('.clock_ring_buttons button').prop('disabled', true);
+		feedback.removeClass('ok bad').text(jawnosT('The buttons below still snooze or dismiss from this window.'));
 		return;
 	}
 	if (value === m.answer) {
 		m.solved = true;
 		input.addClass('ok').removeClass('bad');
 		feedback.addClass('ok').removeClass('bad').text(jawnosT('Correct'));
-		card.find('.clock_ring_buttons button').prop('disabled', false);
 	}
 	else {
 		m.solved = false;
 		input.addClass('bad').removeClass('ok');
 		feedback.addClass('bad').removeClass('ok').text(jawnosT('Try again'));
-		card.find('.clock_ring_buttons button').prop('disabled', true);
 	}
 }
 
@@ -1202,7 +1201,7 @@ function jawnosClockShowRing(payload) {
 	card.find('.clock_ring_snooze').text(jawnosClockSnoozeText(payload.snooze)).attr('title', jawnosClockSnoozeText(payload.snooze));
 	jawnosClockMathReset(card);
 	if (payload.nfc) {
-		card.find('.clock_ring_nfc_note').text(jawnosT('The NFC tag must be scanned on the phone to snooze or dismiss.')).show();
+		card.find('.clock_ring_nfc_note').text(jawnosT('The phone asks for the NFC tag; this window can still snooze or dismiss.')).show();
 	}
 	else {
 		card.find('.clock_ring_nfc_note').text('').hide();
@@ -1244,13 +1243,12 @@ $(document).on('input', '.clock_ring_math_input', function () {
 	if (!m) { return; }
 	$(this).removeClass('bad');
 	card.find('.clock_ring_math_feedback').removeClass('bad ok').text('');
-	// Editing an answer that had unlocked the card locks it again.
+	// Editing the answer never locks the window's buttons.
 	if (m.solved) {
 		var value = parseInt(String($(this).val() || '').replace(/[^0-9]/g, ''), 10);
 		if (isNaN(value) || value !== m.answer) {
 			m.solved = false;
 			$(this).removeClass('ok');
-			card.find('.clock_ring_buttons button').prop('disabled', true);
 		}
 	}
 });
@@ -1266,7 +1264,6 @@ $(document).on('keydown', '.clock_ring_math_input', function (e) {
 });
 
 $(document).on('click', '.clock_ring_dismiss', function () {
-	if (jawnosClockRingMath && !jawnosClockRingMath.solved) { return; }
 	if (!jawnosClockRingingCurrent) { return; }
 	var payload = jawnosClockRingingCurrent;
 	jawnosClockPost('/manager/clock/alarm', { action: 'dismiss', uuid: payload.uuid }, function () {
@@ -1276,7 +1273,6 @@ $(document).on('click', '.clock_ring_dismiss', function () {
 });
 
 $(document).on('click', '.clock_ring_snooze', function () {
-	if (jawnosClockRingMath && !jawnosClockRingMath.solved) { return; }
 	if (!jawnosClockRingingCurrent) { return; }
 	var payload = jawnosClockRingingCurrent;
 	jawnosClockPost('/manager/clock/alarm', { action: 'snooze', uuid: payload.uuid, minutes: jawnosClockSnoozeValue(payload.snooze) }, function () {
