@@ -73,7 +73,7 @@
 			$('#internet_usage_none').toggle(rows.length === 0);
 			$.each(rows, function (i, row) {
 				$('<tr>')
-					.append($('<td>').text(row.key))
+					.append($('<td>').text(row.key || row.key_name || ''))
 					.append($('<td>').text(window.internetDuration(row.total_ms)))
 					.appendTo(body);
 			});

@@ -107,7 +107,15 @@ app, uuid?, url?, selector, index?, html, title?
 - Padlock/app-gate rules are unchanged. A native surface is admitted exactly as
   the app it belongs to.
 
-## 6. Out of scope for this slice
+## 6. Android home widget (implemented)
+
+The launcher's **today** card reads `usage_sessions` directly from
+`database/jawnos.db`. The app and Termux share a UID, and the manager's session
+cookie is HttpOnly, so an HTTP request from the activity cannot see it. The card
+is therefore offline and independent of the manager. It filters
+`kind='site'` until the UsageStatsManager job lands.
+
+## 7. Out of scope for this slice
 
 - Android `UsageStatsManager` app-time (separate permission path).
 - Enforcement/blocking (overlay or device-owner).

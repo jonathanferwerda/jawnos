@@ -26900,7 +26900,7 @@ get '/manager/usage/summary' => sub($c) {
 	my $to = &usage_ms($c->param('to')) || &subs::rightNow();
 	my $from = &usage_ms($c->param('from')) || ($to - 24 * 60 * 60 * 1000);
 	my $rows = eval { &subs::db_query(q{
-		select key_name,
+		select key_name as key,
 			sum(max(0, cast(ended_at as integer) - cast(started_at as integer) - cast(coalesce(nullif(idle_ms, ''), '0') as integer))) as total_ms,
 			count(*) as sessions,
 			max(cast(ended_at as integer)) as last_at
@@ -26923,7 +26923,7 @@ get '/manager/usage/timeline' => sub($c) {
 	my $from = &usage_ms($c->param('from')) || ($to - 24 * 60 * 60 * 1000);
 	my $rows = eval { &subs::db_query(q{
 		select strftime('%Y-%m-%dT%H', cast(started_at as integer) / 1000, 'unixepoch', 'localtime') as hour,
-			key_name,
+			key_name as key,
 			sum(max(0, cast(ended_at as integer) - cast(started_at as integer) - cast(coalesce(nullif(idle_ms, ''), '0') as integer))) as total_ms
 		  from usage_sessions
 		 where device = ? and kind = ? and cast(ended_at as integer) >= ? and cast(started_at as integer) <= ?
