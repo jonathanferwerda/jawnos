@@ -250,6 +250,31 @@ def update_available(settings):
     return (name or "", code)
 
 
+def auto_update_available(settings):
+    """(versionName, versionCode) when a release makes this copy out of date.
+
+    The automatic path restarts the app (os.execv), so it must not fire for
+    every edit under the repo's desktop/ tree. A code sync, or a person writing
+    a file, changes the tree stamp without shipping anything; watching the
+    stamp alone restarted the app every minute or two while desktop/ was being
+    edited. A release is signalled by VERSION, the same app-store shape this
+    app already uses. The manual "Update app" button still calls
+    update_available(), which follows any edit."""
+    if not repo_desktop_ready(settings):
+        return None
+    info = installed_info()
+    code, name = desktop_version(settings.get("jawn_dir") or default_jawn_dir())
+    try:
+        installed_code = int(info.get("versionCode") or 0)
+    except (TypeError, ValueError):
+        installed_code = 0
+    if not code or code <= installed_code:
+        return None
+    if _tree_stamp(repo_desktop_dir(settings)) == info.get("stamp"):
+        return None
+    return (name or "", code)
+
+
 def apply_update(settings):
     """Copy the repo's desktop/ over this copy and record the new version.
 

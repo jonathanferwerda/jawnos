@@ -555,11 +555,11 @@ const STYLES = {
 		label: 'Outline',
 		render: (h, inner, state, is_dark) => svgWrap(wrap(sub(inner, hsl(h, 0.6, is_dark ? 0.78 : 0.45), hsl(h, 0.7, is_dark ? 0.54 : 0.72)))),
 	},
-	// --- the desktop looks: the shapes Windows, macOS and GNOME users know ---
-	// Windows 11 Fluent: a flat rounded square with a soft vertical lift, a light
+	// --- the desktop looks: the shapes Jawndows, Cuperjawno and GNOME users know ---
+	// Jawndows Fluent: a flat rounded square with a soft vertical lift, a light
 	// rim and a white glyph. Squared corners, calm, no gloss.
 	windows: {
-		label: 'Windows',
+		label: 'Jawndows',
 		render: (h, inner, state, is_dark) => {
 			const top = hsl(h, 0.66, is_dark ? 0.32 : 0.58), bot = hsl(h, 0.68, is_dark ? 0.18 : 0.42);
 			const defs = '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>';
@@ -568,10 +568,10 @@ const STYLES = {
 				+ glyphWithShadow(inner, 12, '#ffffff', 'rgba(0,0,0,0.14)', is_dark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.22)', 0, 5));
 		},
 	},
-	// macOS Big Sur: a glossy squircle - a strong vertical gradient, a diagonal
+	// Cuperjawno: a glossy squircle - a strong vertical gradient, a diagonal
 	// sheen over the top half and a bright rim, with a white glyph.
 	mac: {
-		label: 'macOS',
+		label: 'Cuperjawno',
 		render: (h, inner, state, is_dark) => {
 			const top = hsl(h, 0.78, is_dark ? 0.36 : 0.68), bot = hsl(h, 0.82, is_dark ? 0.2 : 0.46);
 			const defs = '<defs>'

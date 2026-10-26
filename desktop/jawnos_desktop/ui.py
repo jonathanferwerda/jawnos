@@ -559,12 +559,13 @@ class Dashboard(Gtk.Window):
         GLib.timeout_add(400, self._restart_self)
 
     def _auto_update(self, newer):
-        """Apply a newer desktop tree and restart onto it (no button press).
+        """Apply a newer desktop release and restart onto it (no button press).
 
         The check runs on the tick thread and calls this through the GTK loop;
         `_updating` stops a second apply while the first is copying, and the
         installed stamp `apply_update` writes means the next tick sees nothing
-        new, so this runs once per version.
+        new. auto_update_available only offers a *release* (a VERSION bump), so
+        a working-tree edit cannot restart the app.
         """
         if self._updating:
             return False
@@ -582,6 +583,9 @@ class Dashboard(Gtk.Window):
         try:
             os.execv(sys.executable, [sys.executable, os.path.realpath(sys.argv[0])] + sys.argv[1:])
         except Exception as exc:
+            # Let a later tick try again; leaving _updating set would silence
+            # every future auto-update for this process.
+            self._updating = False
             self._say("updated - close and reopen to run it (%s)" % exc)
         return False
 
@@ -817,10 +821,13 @@ class Dashboard(Gtk.Window):
                             							# restart for new code does not touch it. Reload it once the
                             							# tree is answering, so a page is never left on old JS.
                             							GLib.timeout_add_seconds(6, self._reload_web_view)
-                    # The dashboard's own copy follows the repo's desktop tree.
-                    # Apply only after the same result on two checks, so a sync
-                    # caught mid-write is not copied over a good install.
-                    newer = core.update_available(settings)
+                    # The dashboard's own copy follows the repo's desktop tree,
+                    # but only a VERSION bump may restart it: a working-tree
+                    # edit changes the stamp without shipping anything, and
+                    # watching the stamp alone restarted the app every minute
+                    # or two while desktop/ was being edited. The Update app
+                    # button still applies any edit on demand.
+                    newer = core.auto_update_available(settings)
                     if newer:
                         if self._update_pending == newer and now - self._update_pending_at >= 55:
                             GLib.idle_add(self._auto_update, newer)

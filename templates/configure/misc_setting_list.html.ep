@@ -75,8 +75,8 @@
 
 <%# ---- colour schemes: desktop looks in a light and a dark cut, named for
     their colour. Hand-picked and muted:
-      Blue     - Windows 11   (#0078d4 / dark #4cc2ff accent)
-      Graphite - macOS        (#6e6e73 chrome)
+      Blue     - Jawndows     (#0078d4 / dark #4cc2ff accent)
+      Graphite - Cuperjawno   (#6e6e73 chrome)
       Green    - Manjaro      (#35bf8b accent)
       Indigo   - GNOME        (#3584e4 Adwaita accent)
       Steel    - XFCE         (#3b6ea5 Greybird accent)
@@ -253,7 +253,7 @@
     to this device; the editor saves a named bundle that an appointment can
     wear later. Presets are read-only (builtin), custom ones are settings rows. %>
 <% my $theme_registry = &subs::theme_registry(); %>
-<% my $current_theme = &subs::setting_grabber({ app => 'misc', setting => 'appearance_theme', device => $dev }) || ''; %>
+<% my $current_theme = &subs::theme_canonical(&subs::setting_grabber({ app => 'misc', setting => 'appearance_theme', device => $dev })) || ''; %>
 <% my @theme_order = grep { $theme_registry->{$_} && $theme_registry->{$_}->{'builtin'} } @subs::theme_preset_order; %>
 <% my @custom_order = sort { lc($theme_registry->{$a}->{'name'} // $a) cmp lc($theme_registry->{$b}->{'name'} // $b) } grep { $theme_registry->{$_} && !$theme_registry->{$_}->{'builtin'} } keys %{$theme_registry}; %>
 <% push @theme_order, @custom_order; %>

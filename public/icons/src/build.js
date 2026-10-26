@@ -7,7 +7,7 @@
 //   node public/icons/src/build.js
 //
 // Glyphs are drawn on a 24x24 grid (like most icon sets) and scaled into place
-// so the whole set stays geometrically consistent. Each icon is a macOS-style
+// so the whole set stays geometrically consistent. Each icon is a Cuperjawno-style
 // rounded square with a subtle vertical gradient and a white glyph.
 
 const fs = require('fs');

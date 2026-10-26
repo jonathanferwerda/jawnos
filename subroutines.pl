@@ -9128,7 +9128,7 @@ sub tombstone_purge() {
 		return unless defined $c && $c =~ /^[0-9]+$/;
 		$floor = $c if !defined $floor || $c < $floor;
 	}
-	&db_query("delete from sync_log where id <= ? and coalesce(scope, '') ne 'file'", $floor) if defined $floor && $floor > 0;
+	&db_query("delete from sync_log where id <= ? and coalesce(scope, '') <> 'file'", $floor) if defined $floor && $floor > 0;
 }
 
 
@@ -14236,8 +14236,9 @@ sub theme_panel_css {
 	my $accent_hex = '';
 	my ($ah, $as, $al);
 	if (defined $accent && $accent =~ /^\#?([0-9a-fA-F]{6})$/) {
-		$accent_hex = '#' . lc $1;
-		($ah, $as, $al) = &_rgb_to_hsl(map { hex } ($accent_hex =~ /(..)(..)(..)/));
+		my $accent_rgb = lc $1;
+		$accent_hex = '#' . $accent_rgb;
+		($ah, $as, $al) = &_rgb_to_hsl(map { hex } ($accent_rgb =~ /(..)(..)(..)/));
 	}
 	else {
 		$ah = $h;
@@ -14304,7 +14305,7 @@ our %colour_schemes = (
 	'Rose'          => [ '#fdf0f3', '#f9dbe3', '#f2c2d0', '#e79cb3', '#d64570', '#b02853' ],
 	'Rose Dark'     => [ '#211419', '#2b1a21', '#36222b', '#462e39', '#b02853', '#d64570' ],
 	# Cool, warm and green neutrals: the desk needed a quiet register between
-	# Windows blue and the vivid accents. Each keeps the same six-step ramp as
+	# the Blue scheme and the vivid accents. Each keeps the same six-step ramp as
 	# every other scheme, so it works the Misc panel and the appointment picker.
 	'Nord'          => [ '#eef2f7', '#dfe6ef', '#c8d4e4', '#a7b8d0', '#5e81ac', '#4a6b94' ],
 	'Nord Dark'     => [ '#1a1f27', '#222933', '#2b3441', '#394658', '#5e81ac', '#81a5cf' ],
@@ -14331,15 +14332,22 @@ our %colour_schemes = (
 # bundles; a person may save more (see theme_registry). A name found here is
 # what an appointment's Theme setting stores, so every machine that reads the
 # row paints the same room.
-our @theme_preset_order = qw/deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose geek phosphor cyberpunk/;
+#
+# The four desktop looks are the house's own names: Jawndows, Cuperjawno,
+# Jawnfish and Deepjawn. They keep the schemes, icon sets and faces they always
+# had; only the borrowed name is gone. @theme_preset_order is what the gallery
+# and the appointment picker offer. %theme_aliases holds the slugs an older
+# database still carries, and theme_canonical() maps them onto the renamed
+# bundle, so a desk that was already wearing one does not lose its dressing.
+our @theme_preset_order = qw/deepjawn jawnfish adwaita cuperjawno jawndows mint nord sage mocha neon mono rose geek phosphor cyberpunk/;
 our %theme_presets = (
-	deepin => {
-		name => 'Deepin', scheme => 'Blue Dark',
+	deepjawn => {
+		name => 'Deepjawn', scheme => 'Blue Dark',
 		icon_set => 'gnome', texture => 'soft',
 		font => 'Noto Sans, system-ui, sans-serif', corner => 12,
 	},
-	cutefish => {
-		name => 'Cutefish', scheme => 'Teal',
+	jawnfish => {
+		name => 'Jawnfish', scheme => 'Teal',
 		icon_set => 'pastel', texture => 'soft',
 		font => 'Cantarell, system-ui, sans-serif', corner => 16,
 	},
@@ -14348,13 +14356,13 @@ our %theme_presets = (
 		icon_set => 'gnome', texture => 'soft',
 		font => 'Cantarell, system-ui, sans-serif', corner => 12,
 	},
-	macos => {
-		name => 'macOS', scheme => 'Graphite',
+	cuperjawno => {
+		name => 'Cuperjawno', scheme => 'Graphite',
 		icon_set => 'mac', texture => 'soft',
 		font => 'system-ui, sans-serif', corner => 12,
 	},
-	windows => {
-		name => 'Windows', scheme => 'Blue',
+	jawndows => {
+		name => 'Jawndows', scheme => 'Blue',
 		icon_set => 'windows', texture => 'soft',
 		font => 'Segoe UI, system-ui, sans-serif', corner => 8,
 	},
@@ -14416,6 +14424,32 @@ our %theme_presets = (
 	},
 );
 
+# The slugs written before the rename: a settings row, an appointment or an
+# old jawnos-theme.txt may still say one of these, and it must paint the same
+# room. Each is also kept in %theme_presets as an alias row so the save route,
+# which refuses a preset's name, cannot let a saved theme take one - but
+# theme_registry() skips alias rows, so the gallery and the appointment picker
+# list only the new names.
+our %theme_aliases = (
+	windows  => 'jawndows',
+	macos    => 'cuperjawno',
+	cutefish => 'jawnfish',
+	deepin   => 'deepjawn',
+);
+foreach my $old ( keys %theme_aliases ) {
+	my $renamed = $theme_aliases{$old};
+	$theme_presets{$old} = { %{ $theme_presets{$renamed} }, alias_to => $renamed };
+}
+
+# The slug whose bundle a name wears: a renamed preset's old slug resolves to
+# the new one, and every other name (a current preset, a saved theme or a bare
+# colour scheme) is returned untouched.
+sub theme_canonical {
+	my ($name) = @_;
+	return '' unless defined $name && length $name;
+	return $theme_aliases{$name} // $name;
+}
+
 # A saved theme lives as one settings row: app misc, setting
 # appearance_theme_custom, subsetting <slug>, value a small JSON document. The
 # row is house-wide (device 'all') because an appointment may name it on any
@@ -14427,6 +14461,9 @@ sub theme_registry() {
 	return $theme_registry_memo if $theme_registry_memo && $now - $theme_registry_time < 1000;
 	my %registry;
 	foreach my $slug ( keys %theme_presets ) {
+		# an alias row is a compatibility key, not a card: a renamed preset is
+		# offered once, under its new slug
+		next if $theme_presets{$slug}->{'alias_to'};
 		$registry{$slug} = { %{ $theme_presets{$slug} }, slug => $slug, builtin => 1 };
 	}
 	my $rows = eval {
@@ -14435,6 +14472,9 @@ sub theme_registry() {
 	foreach my $row ( @{$rows} ) {
 		my $slug = $row->{'subsetting'} // '';
 		next unless $slug =~ /^[a-z0-9][a-z0-9_-]{0,39}$/;
+		# a stale custom row under a pre-rename slug must not shadow the preset
+		# that slug now resolves to
+		next if $theme_aliases{$slug};
 		my $data = eval { decode_json($row->{'value'}) };
 		next unless ref $data eq 'HASH';
 		$registry{$slug} = { %{$data}, slug => $slug, builtin => 0 };
@@ -14445,10 +14485,12 @@ sub theme_registry() {
 }
 
 # A name an appointment may store: a saved/preset theme or a bare colour scheme
-# (the older values still in the table).
+# (the older values still in the table). A pre-rename preset slug is resolved to
+# the renamed bundle first, so an old row keeps dressing the desk.
 sub theme_known {
 	my ($name) = @_;
 	return 0 unless defined $name && length $name;
+	$name = &theme_canonical($name);
 	return 1 if $colour_schemes{$name};
 	my $registry = &theme_registry();
 	return $registry->{$name} ? 1 : 0;
@@ -14478,6 +14520,9 @@ sub theme_safe_corner {
 sub theme_bundle {
 	my ($name) = @_;
 	return {} unless defined $name && length $name;
+	# an old slug is the renamed bundle: the returned slug (and so the name the
+	# gallery, the push and the appointment label show) is the current one
+	$name = &theme_canonical($name);
 	my $registry = &theme_registry();
 	my $theme = $registry->{$name};
 	$theme = { scheme => $name } if !$theme && $colour_schemes{$name};
@@ -14526,9 +14571,9 @@ sub theme_bundle {
 # Misc Appearance choice. Blank means the Misc surfaces are in charge.
 sub active_theme_name {
 	my $theme = &running_appointment_theme();
-	return $theme if defined $theme && length $theme;
+	return &theme_canonical($theme) if defined $theme && length $theme;
 	my $picked = &misc_setting('appearance_theme');
-	return $picked if defined $picked && length $picked && &theme_known($picked);
+	return &theme_canonical($picked) if defined $picked && length $picked && &theme_known($picked);
 	return '';
 }
 sub active_theme_bundle {
@@ -14546,7 +14591,7 @@ sub active_theme_bundle {
 		foreach my $key ( qw/scheme background icon_set texture font corner accent name/ ) {
 			$merged{$key} = $over->{$key} if defined $over->{$key} && length $over->{$key};
 		}
-		$merged{'slug'} = $running;
+		$merged{'slug'} = &theme_canonical($running);
 		$merged{'appointment'} = 1;
 		return \%merged;
 	}
@@ -14907,7 +14952,7 @@ sub icon_set() {
 	# While a theme is in charge it names the glyphs; the Misc Icon Set is what a
 	# desk with no theme wears. An explicit override (chosen from the Misc panel
 	# while the theme is active) wins over the theme's own set, so a person can
-	# keep Deepin's paint and still use another set of icons.
+	# keep Deepjawn's paint and still use another set of icons.
 	my $bundle = &active_theme_bundle();
 	if ($bundle->{'slug'}) {
 		my $override = &misc_setting('icon_set_override');
@@ -23450,7 +23495,9 @@ sub pen_model_list() {
 
 sub cloudflare_model_list() {
 
-	my $ua = Mojo::UserAgent->new;
+	# A model-list poll is a background nicety, not a reason for a worker to
+	# miss the 200 s prefork heartbeat: bound the connect and the whole request.
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 8, request_timeout => 12);
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_token', 'cloudflare_account'] });
   my $cloudflare_account = $settings->{'cloudflare_account'};
   my $cloudflare_token = &subs::note_decrypter(&subs::suds_grabber(), $settings->{'cloudflare_token'}); # or cf_token

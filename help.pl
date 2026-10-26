@@ -322,6 +322,31 @@ our %topic = (
 		],
 		related => [ 'ide', 'process_monitor' ]
 	},
+	'network' => {
+		title => 'Network', category => 'apps', app => 'network',
+		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js' ],
+		verified => '2026-10-26',
+		summary => 'Interfaces, Wi-Fi, VPN, the machines on the mesh, and the phone.',
+		body => [
+			'Network is the app for the connection itself. It opens from the start menu and shows four things in one window: this machine\'s interfaces, its Wi-Fi, its VPN, and a read-only view of the machines on the mesh. A fifth section appears on a phone.',
+			'Interfaces lists every network interface with its state, MAC address, IPv4 and IPv6 addresses, whether the address came from DHCP or was set by hand, and the bytes received and sent. The list refreshes itself every fifteen seconds while the window is open, and Refresh reads it again at once. An interface carries an Up or Down button beside its state, for bringing a link up or taking it down.',
+			'Wi-Fi is driven through iwd. The Radio button turns the wireless adapter on or off, Scan lists the networks in range with their security and signal, and Connect takes a passphrase for a secured network. Disconnect drops the current network and Forget removes a saved one. A machine with no wireless adapter says so instead of showing an empty list.',
+			'VPN reports what is really running. When Tailscale is installed it shows whether the tailnet is up, its address and any exit node. WireGuard configurations in /etc/wireguard and OpenVPN client configurations in /etc/openvpn/client are listed with Start and Stop buttons that drive their systemd units. When none of these is configured the section says so; it never pretends a connection exists.',
+			'Devices and mesh is a compact, read-only summary: the machines the house knows and the interfaces each one reaches a network with, built from the same device listing the Dev panel uses. The button opens Configure -> Dev for the full panel - scanning, purposes, privileges and the router cards - so the Network app never duplicates it.',
+			'On Android, when the JawnOS app exposes its network bridge, the Android section shows the phone\'s current connection and VPN and offers Scan, Connect, Disconnect, and buttons that open the phone\'s own Wi-Fi and VPN settings. The Linux sections remain the machine\'s own network, not the phone\'s.',
+			'On the live image, systemd-networkd brings up wired and wireless interfaces over DHCP, iwd handles Wi-Fi, and systemd-resolved answers DNS. In QEMU with user-mode networking the guest receives 10.0.2.15 and a working gateway automatically.'
+		],
+		steps => [
+			'Open Network from the system category of the start menu.',
+			'Read the Interfaces table, or press Refresh to read it again.',
+			'In Wi-Fi, press Radio to turn the adapter on, then Scan.',
+			'Type the passphrase in a secured network\'s row and press Connect; Disconnect drops it and Forget removes it from the saved list.',
+			'In VPN, start or stop Tailscale, or a WireGuard or OpenVPN configuration that is already on the machine.',
+			'Press Open Configure -> Dev for the full machine and network panel.',
+			'On a phone, use the Android section to scan, connect or open the system Wi-Fi and VPN settings.'
+		],
+		related => [ 'devices_and_mesh', 'configure', 'terminal', 'start_menu' ]
+	},
 	'camera' => {
 		title => 'Camera', category => 'apps', app => 'camera',
 		templates => [ 'templates/apps/camera.html.ep' ],
@@ -1095,7 +1120,7 @@ our %topic = (
 			'The menu\'s other pages show running, upcoming, expiring and the house\'s system levels.',
 			'Help sits at the foot of the menu if you want to read about an app before opening it.'
 		],
-		related => [ 'search', 'taskbar', 'hints' ]
+		related => [ 'search', 'taskbar', 'hints', 'network' ]
 	},
 	'dock' => {
 		title => 'The dock', category => 'features',
@@ -1159,7 +1184,7 @@ our %topic = (
 		summary => 'Named dressings: paint, icons, material, face and corner under one name.',
 		body => [
 			'JawnOS ships a set of named colour schemes — Blue, Graphite, Green, Indigo, Steel, Amber, Teal, Plum, Rose, Nord, Sage, Mocha, Geek, Phosphor and Cyberpunk — and each has a light and a dark cut, so the chrome can range from near-white to near-black. A colour scheme is only the paint. A theme is the whole dressing: the scheme, the icon set, the material, the font and the corner radius, saved under one name.',
-			'Configure → Misc → Themes is a gallery. Each card shows its palette and names its scheme and material; one click applies the whole dressing to this device. System follows the Misc choices below and changes nothing on its own. The presets are Deepin, Cutefish, Adwaita, macOS, Windows, Mint, Nord, Sage, Mocha, Neon, Mono, Rose, Geek, Phosphor and Cyberpunk.',
+			'Configure → Misc → Themes is a gallery. Each card shows its palette and names its scheme and material; one click applies the whole dressing to this device. System follows the Misc choices below and changes nothing on its own. The presets are Deepjawn, Jawnfish, Adwaita, Cuperjawno, Jawndows, Mint, Nord, Sage, Mocha, Neon, Mono, Rose, Geek, Phosphor and Cyberpunk.',
 			'New theme opens the editor: give it a name, pick a colour scheme, an icon set, a material, a font and a corner radius, and save. A custom theme is a house-wide row, so it appears in the gallery on every machine; Edit and Delete sit on its own card. A theme may take the accent for its focus rings and active tiles from its scheme, or name one of its own.',
 			'An app can also carry its own Theme: while one of that app\'s start appointments is running the desktop wears the whole bundle — paint, icons, material, face and corner — the most recently started running app wins when more than one has a theme, and with none running the Misc theme or scheme comes back.',
 			'While a theme is active, the Icon Set and Texture pickers under Misc → Appearance show Follow theme. Choosing another set or material overrides just that piece for this machine and leaves the theme\'s paint, face and corner alone; Follow theme returns to the theme\'s own choice. The Corner Radius slider works the same way: with a theme in charge it overrides that theme\'s corner, and Follow theme beside it returns to the theme\'s own radius. Picking another theme from the gallery clears that override, so every theme shows its own radius again. The override belongs to this machine and is separate from the gallery\'s theme definition, so a preset is never edited by it.',
@@ -1460,7 +1485,7 @@ our %topic = (
 			'The yellow dot in the corner is the sync notice. While a machine pulls or serves a snapshot, a ring around the dot fills with the overall progress, and the panel it opens stacks a bar for each step — the export, the download, and each table as it merges. A finished sync shows a green check and a failed one a red cross; clicking the dot pins the panel until you click it again, after which the notice resumes its ordinary short life. The size beside a completed sync is the encrypted snapshot that actually moved, not the whole database, so a change-only pull is usually far smaller than the full copy. While the on-screen keyboard is up the dots step out of the way and return as soon as it closes.'
 		],
 		verified => '2026-10-25',
-		related => [ 'backup', 'ble_bridge', 'tickets' ]
+		related => [ 'backup', 'ble_bridge', 'tickets', 'network' ]
 	},
 
 	# ------------------------------------------------------------ devices

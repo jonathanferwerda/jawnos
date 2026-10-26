@@ -222,7 +222,10 @@ the tree when they differ — a code sync (git or a peer tar) replaces the files
 without touching the process, which is how a server could sit on old code while
 its `VERSION` already said the new one. The dashboard runs the same check on its
 own tick and also applies a newer `desktop/` tree and restarts itself, so a
-pushed version lands without pressing **Update app**.
+pushed version lands without pressing **Update app**. That automatic restart is
+tied to a `VERSION` bump, not to a file's modification time: an in-progress edit
+changes the tree stamp but ships nothing, and it must not take the app down.
+**Update app** still applies any edit under `desktop/` on demand.
 
 Add `--tray` for a status-tray icon: it carries jawn's state as a coloured dot
 in the corner of the icon — green running, amber starting/restarting, red

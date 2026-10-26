@@ -15,9 +15,11 @@
 # JAWNOS_THEME; anything left out takes the same default the wizard would.
 #
 # --theme names one of the curated themes in subroutines.pl::%theme_presets
-# (nord, cutefish, deepin, sage, neon, ...). It is validated here and written as
-# the house-wide appearance_theme row, which is the same value Configure ->
-# Appearance stores. An unknown name is an error rather than a silent fallback.
+# (nord, jawnfish, deepjawn, sage, neon, ...). It is validated here and written
+# as the house-wide appearance_theme row, which is the same value Configure ->
+# Appearance stores. A slug from before the four renamed presets (windows,
+# macos, cutefish, deepin) is still accepted and lands on the renamed bundle.
+# An unknown name is an error rather than a silent fallback.
 #
 # A small web app that walks a new user through:
 #   1. dependency status
@@ -163,8 +165,19 @@ sub default_search_engines {
 # repeated here rather than imported. A preset name is also a bare colour scheme
 # name for two of them (Nord, Sage), but only the theme slugs are accepted here.
 my @THEME_PRESETS = qw(
-	deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose
-	geek phosphor cyberpunk
+	deepjawn jawnfish adwaita cuperjawno jawndows mint nord sage mocha neon mono
+	rose geek phosphor cyberpunk
+);
+
+# Slugs written before Jawndows, Cuperjawno, Jawnfish and Deepjawn were renamed.
+# An older jawnos-theme.txt on an ESP partition, or a script carrying the old
+# name, must still select the same room; it is written as the new slug so a
+# fresh database never stores a borrowed name.
+my %THEME_ALIASES = (
+	windows  => 'jawndows',
+	macos    => 'cuperjawno',
+	cutefish => 'jawnfish',
+	deepin   => 'deepjawn',
 );
 
 sub valid_theme {
@@ -172,6 +185,7 @@ sub valid_theme {
 	return undef unless defined $name;
 	$name = lc $name;
 	$name =~ s/^\s+|\s+$//g;
+	$name = $THEME_ALIASES{$name} if $THEME_ALIASES{$name};
 	foreach my $preset (@THEME_PRESETS) {
 		return $preset if $name eq $preset;
 	}

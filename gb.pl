@@ -192,8 +192,8 @@ our @theme_fonts = (
 
 our %icon_set_labels = (
 	handdrawn    => 'Hand-drawn (original)',
-	windows      => 'Windows',
-	mac          => 'macOS',
+	windows      => 'Jawndows',
+	mac          => 'Cuperjawno',
 	gnome        => 'GNOME',
 	cartoon      => 'Cartoon',
 	dark         => 'Dark',
@@ -306,6 +306,7 @@ our $known_appts = {
 	cards => { icon => "/images/decipherable/cards.png" },
 	security => { icon => "/images/make believe/badge.png" },
 	terminal => { icon => "/images/decipherable/code.png" },
+	network => { icon => '/images/decipherable/server.png' },
 	ide => { icon => "/images/make believe/monitor.png" },
 	gallery => { icon => "/images/decipherable/gallery.png" },
 	synth => { icon => "/images/decipherable/piano.png" },

@@ -6,3 +6,7 @@ enable jawnos-grow.service
 enable jawnos-firstboot.service
 enable jawnos-theme-apply.service
 enable getty@tty1.service
+enable systemd-networkd.service
+enable systemd-resolved.service
+enable iwd.service
+enable jawnos-resolv.service

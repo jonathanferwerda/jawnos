@@ -23,7 +23,7 @@
 # app's own umask.
 set -eu
 
-VALID="deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose geek phosphor cyberpunk"
+VALID="deepjawn jawnfish adwaita cuperjawno jawndows mint nord sage mocha neon mono rose geek phosphor cyberpunk"
 
 DB=/home/jawn/jawnos/database/jawnos.db
 FILE=
@@ -56,6 +56,18 @@ lower() {
     printf '%s' "$1" | tr -d '[:space:]' | tr 'A-Z' 'a-z'
 }
 
+# The names written before the rename still dress the same room; store the
+# current slug so a theme row never keeps the borrowed name.
+canonical() {
+    case "$1" in
+        cutefish) printf '%s\n' jawnfish ;;
+        deepin)   printf '%s\n' deepjawn ;;
+        macos)    printf '%s\n' cuperjawno ;;
+        windows)  printf '%s\n' jawndows ;;
+        *)        printf '%s\n' "$1" ;;
+    esac
+}
+
 valid() {
     [ -n "$1" ] || return 1
     case " $VALID " in
@@ -81,6 +93,7 @@ parse_file() {
             value=$line
         fi
         value=$(lower "$value")
+        value=$(canonical "$value")
         if valid "$value"; then
             printf '%s\n' "$value"
             return 0
@@ -135,6 +148,7 @@ fi
 
 if [ -n "$THEME" ]; then
     THEME=$(lower "$THEME")
+    THEME=$(canonical "$THEME")
     if ! valid "$THEME"; then
         echo "jawnos-theme: unknown theme '$THEME'; choose one of: $VALID" >&2
         [ -n "${THEME_MNT:-}" ] && umount "$THEME_MNT" 2>/dev/null || true

@@ -1,0 +1,340 @@
+#!/bin/sh
+# jawnos-display - bring up a monitor that Sway or X11 left blank.
+#
+# An unfamiliar monitor on a ProDesk 600 G3 comes up black until a person runs
+#   xrandr -s 1366x768
+# The live image runs Sway (Wayland), where the same fix is
+#   swaymsg output <name> enable; swaymsg output <name> mode 1366x768
+# This script does that automatically at session start, and --cycle repeats it
+# from a key binding so an obscure monitor can be fixed without a terminal.
+#
+#   jawnos-display                 # once: fix outputs with no working mode
+#   jawnos-display --list          # show outputs and the modes they offer
+#   jawnos-display --cycle         # move to the next safe mode and print it
+#   jawnos-display --watch         # keep checking (run in a terminal)
+#
+# Safe modes are tried in this order:
+#   1366x768  1920x1080  1280x720  1024x768
+#
+# Wayland is recognised by SWAYSOCK; X11 by DISPLAY. Only an output that is
+# disabled or has no current mode is configured, so a working monitor is left
+# alone. The run is idempotent and exits 0 when there is nothing to do.
+#
+# This is meant to be called from a Sway `exec`, not run as a detached daemon.
+set -u
+
+SAFE_MODES="1366x768 1920x1080 1280x720 1024x768"
+# Unit separator, not a tab: with an IFS whitespace character `read` collapses
+# empty fields, and an output with no advertised modes has one.
+SEP=$(printf '\037')
+
+ACTION=once
+INTERVAL=${JAWNOS_DISPLAY_INTERVAL:-5}
+QUIET_NOOP=no
+
+LOG=/var/log/jawnos-display.log
+LOGGING=no
+if [ -n "${JAWNOS_DISPLAY_LOG:-}" ]; then
+    LOG=$JAWNOS_DISPLAY_LOG
+    LOGGING=yes
+elif [ -e /usr/local/bin/jawnos-install ] || [ "$(id -u)" = 0 ]; then
+    # The live image runs Sway as jawn, so /var/log is root-owned. sudo is
+    # passwordless there (see /etc/sudoers.d/10-jawn); write through it only
+    # when a plain append is not possible.
+    LOGGING=yes
+fi
+
+usage() {
+    cat >&2 <<'EOF'
+usage: jawnos-display [--once|--list|--cycle|--watch [--interval SECONDS]]
+
+  --once       bring up outputs with no working mode (default)
+  --list       print outputs and the modes they offer
+  --cycle      move to the next safe mode and print it
+  --watch      keep checking; run it in a terminal, not from the Sway config
+  --interval   seconds between --watch checks (default 5)
+EOF
+}
+
+log() {
+    printf 'jawnos-display: %s\n' "$*" >&2
+    [ "$LOGGING" = yes ] || return 0
+    line="$(date '+%Y-%m-%dT%H:%M:%S%z' 2>/dev/null || date) jawnos-display: $*"
+    if [ -w "$LOG" ] || { [ ! -e "$LOG" ] && [ -w "$(dirname "$LOG")" ]; }; then
+        printf '%s\n' "$line" >>"$LOG" 2>/dev/null && return 0
+    fi
+    if command -v sudo >/dev/null 2>&1; then
+        printf '%s\n' "$line" | sudo -n tee -a "$LOG" >/dev/null 2>&1 || true
+    fi
+}
+
+# swaymsg -t get_outputs -r, flattened to one line per output:
+#   name SEP status SEP current SEP modes SEP focused
+# status is "ok" when the output is active and has a non-zero current mode.
+PY_OUTPUTS='
+import json, sys
+try:
+    outs = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+if not isinstance(outs, list):
+    sys.exit(1)
+for o in outs:
+    try:
+        name = str(o.get("name") or "?")
+        cm = o.get("current_mode") or {}
+        w = int(cm.get("width") or 0)
+        h = int(cm.get("height") or 0)
+    except Exception:
+        w = 0
+        h = 0
+    cur = ("%dx%d" % (w, h)) if (w > 0 and h > 0) else "-"
+    active = bool(o.get("active"))
+    modes = []
+    for m in (o.get("modes") or []):
+        try:
+            mw = int(m.get("width") or 0)
+            mh = int(m.get("height") or 0)
+        except Exception:
+            continue
+        if mw > 0 and mh > 0:
+            s = "%dx%d" % (mw, mh)
+            if s not in modes:
+                modes.append(s)
+    focused = "1" if o.get("focused") else "0"
+    print("\x1f".join([name, "ok" if (active and cur != "-") else "needs",
+                      cur, ",".join(modes), focused]))
+'
+
+wayland_outputs() {
+    command -v swaymsg >/dev/null 2>&1 || { log "swaymsg not found"; return 1; }
+    command -v python3 >/dev/null 2>&1 || { log "python3 not found"; return 1; }
+    json=$(swaymsg -t get_outputs -r 2>/dev/null) || {
+        log "swaymsg -t get_outputs failed"
+        return 1
+    }
+    printf '%s\n' "$json" | python3 -c "$PY_OUTPUTS" 2>/dev/null || {
+        log "could not parse the sway output list"
+        return 1
+    }
+}
+
+# Try one mode, first the standard form and then Sway's custom-mode form. A
+# monitor that does not advertise 1366x768 in its EDID can still accept it.
+wayland_try_mode() {
+    name=$1
+    mode=$2
+    if swaymsg output "$name" mode "$mode" >/dev/null 2>&1; then
+        log "output $name: mode $mode"
+        return 0
+    fi
+    if swaymsg output "$name" mode --custom "$mode" >/dev/null 2>&1; then
+        log "output $name: custom mode $mode"
+        return 0
+    fi
+    return 1
+}
+
+wayland_set_output() {
+    name=$1
+    swaymsg output "$name" enable >/dev/null 2>&1 || true
+    for mode in $SAFE_MODES; do
+        wayland_try_mode "$name" "$mode" && return 0
+    done
+    log "output $name: no safe mode was accepted"
+    return 1
+}
+
+wayland_once() {
+    info=$(wayland_outputs) || return 1
+    changed=0
+    failed=0
+    while IFS="$SEP" read -r name status cur modes focused; do
+        [ -n "$name" ] || continue
+        [ "$status" = needs ] || continue
+        log "output $name has no working mode (current: $cur); trying ${SAFE_MODES}"
+        if wayland_set_output "$name"; then
+            changed=1
+        else
+            failed=1
+        fi
+    done <<EOF
+$info
+EOF
+    if [ "$changed" = 0 ] && [ "$failed" = 0 ] && [ "$QUIET_NOOP" != yes ]; then
+        log "all connected outputs already have a working mode"
+    fi
+    [ "$failed" = 0 ] || return 1
+    return 0
+}
+
+wayland_list() {
+    info=$(wayland_outputs) || return 1
+    while IFS="$SEP" read -r name status cur modes focused; do
+        [ -n "$name" ] || continue
+        printf '%s: %s' "$name" "$cur"
+        [ "$status" = needs ] && printf ' (disabled or no current mode)'
+        [ "$focused" = 1 ] && printf ' [focused]'
+        printf '\n'
+        [ -n "$modes" ] && printf '  modes: %s\n' "$(printf '%s' "$modes" | tr ',' ' ')"
+    done <<EOF
+$info
+EOF
+    return 0
+}
+
+next_mode() {
+    current=$1
+    seen=no
+    for mode in $SAFE_MODES; do
+        if [ "$seen" = yes ]; then
+            printf '%s\n' "$mode"
+            return 0
+        fi
+        [ "$mode" = "$current" ] && seen=yes
+    done
+    printf '%s\n' "${SAFE_MODES%% *}"
+}
+
+wayland_cycle() {
+    info=$(wayland_outputs) || return 1
+    name=
+    cur=-
+    # Prefer the focused output, then the first one Sway reports.
+    while IFS="$SEP" read -r n status c modes focused; do
+        [ -n "$n" ] || continue
+        if [ -z "$name" ]; then
+            name=$n
+            cur=$c
+        fi
+        if [ "$focused" = 1 ]; then
+            name=$n
+            cur=$c
+            break
+        fi
+    done <<EOF
+$info
+EOF
+    if [ -z "$name" ]; then
+        log "no outputs reported by Sway"
+        return 1
+    fi
+    mode=$(next_mode "$cur")
+    printf '%s\n' "$mode"
+    log "cycling output $name from $cur to $mode"
+    swaymsg output "$name" enable >/dev/null 2>&1 || true
+    wayland_try_mode "$name" "$mode" || return 1
+    return 0
+}
+
+x11_screen_size() {
+    xrandr --current 2>/dev/null \
+        | sed -n 's/.*current \([0-9][0-9]*\) x \([0-9][0-9]*\).*/\1x\2/p' \
+        | head -n 1
+}
+
+x11_outputs() {
+    xrandr --query 2>/dev/null | sed -n 's/^\([^ ]*\) connected.*/\1/p'
+}
+
+x11_once() {
+    command -v xrandr >/dev/null 2>&1 || { log "xrandr not found"; return 1; }
+    current=$(x11_screen_size)
+    # Only the first safe mode counts as settled. A display sitting at
+    # 1024x768 (or any other mode) may be the black-screen case itself, and the
+    # workaround is to move it to 1366x768, not to leave it alone.
+    if [ "$current" = "${SAFE_MODES%% *}" ]; then
+        [ "$QUIET_NOOP" = yes ] || log "X11: already at $current; leaving the display alone"
+        return 0
+    fi
+    log "X11: current mode ${current:-unknown}; running xrandr --auto"
+    xrandr --auto >/dev/null 2>&1 || true
+    for mode in $SAFE_MODES; do
+        if xrandr -s "$mode" >/dev/null 2>&1; then
+            log "X11: mode $mode"
+            return 0
+        fi
+        for out in $(x11_outputs); do
+            if xrandr --output "$out" --mode "$mode" >/dev/null 2>&1; then
+                log "X11: output $out mode $mode"
+                return 0
+            fi
+        done
+    done
+    log "X11: no safe mode was accepted"
+    return 1
+}
+
+x11_list() {
+    command -v xrandr >/dev/null 2>&1 || { log "xrandr not found"; return 1; }
+    printf 'current: %s\n' "$(x11_screen_size)"
+    xrandr --query
+    return 0
+}
+
+x11_cycle() {
+    command -v xrandr >/dev/null 2>&1 || { log "xrandr not found"; return 1; }
+    current=$(x11_screen_size)
+    mode=$(next_mode "$current")
+    printf '%s\n' "$mode"
+    log "X11: cycling from ${current:-unknown} to $mode"
+    if xrandr -s "$mode" >/dev/null 2>&1; then
+        return 0
+    fi
+    for out in $(x11_outputs); do
+        if xrandr --output "$out" --mode "$mode" >/dev/null 2>&1; then
+            return 0
+        fi
+    done
+    log "X11: mode $mode was rejected"
+    return 1
+}
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --once)        ACTION=once ;;
+        --list)        ACTION=list ;;
+        --cycle)       ACTION=cycle ;;
+        --watch)       ACTION=watch ;;
+        --interval)    shift; INTERVAL=${1:-5} ;;
+        --interval=*)  INTERVAL=${1#--interval=} ;;
+        -h|--help)     usage; exit 0 ;;
+        *)             log "unknown argument: $1"; usage; exit 2 ;;
+    esac
+    shift
+done
+
+case $INTERVAL in
+    ''|*[!0-9]*) INTERVAL=5 ;;
+esac
+[ "$INTERVAL" -ge 1 ] 2>/dev/null || INTERVAL=5
+
+if [ -n "${SWAYSOCK:-}" ]; then
+    SESSION=wayland
+elif [ -n "${DISPLAY:-}" ]; then
+    SESSION=x11
+else
+    log "neither SWAYSOCK nor DISPLAY is set; nothing to do"
+    exit 0
+fi
+
+case $ACTION in
+    list)
+        if [ "$SESSION" = wayland ]; then wayland_list; else x11_list; fi
+        ;;
+    cycle)
+        if [ "$SESSION" = wayland ]; then wayland_cycle; else x11_cycle; fi
+        ;;
+    watch)
+        QUIET_NOOP=yes
+        trap 'log "watch: stopping"; exit 0' INT TERM
+        log "watch: checking every ${INTERVAL}s"
+        while :; do
+            if [ "$SESSION" = wayland ]; then wayland_once; else x11_once; fi
+            sleep "$INTERVAL"
+        done
+        ;;
+    *)
+        if [ "$SESSION" = wayland ]; then wayland_once; else x11_once; fi
+        ;;
+esac

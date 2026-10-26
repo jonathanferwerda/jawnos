@@ -1,0 +1,8 @@
+# Wireless interfaces on the live image. iwd owns the association; once a
+# network is joined, systemd-networkd takes a DHCP lease on the interface the
+# same way it does on a wire.
+[Match]
+Name=wl*
+
+[Network]
+DHCP=yes

@@ -63,6 +63,7 @@ my $encoder = Sereal::Encoder->new({ compress => SRL_ZSTD, compress_level => 3 }
 my $decoder = Sereal::Decoder->new();
 use Minion;
 use IO::Socket::UNIX;
+use IPC::Open2 qw(open2);
 no warnings 'uninitialized';
 no warnings 'once';
 require "./Websocket.pl";
@@ -6553,6 +6554,7 @@ my @manager_bundle_files = qw(
 	/js/manager/marker.js
 	/js/pm.js
 	/js/manager/terminal.js
+	/js/manager/network.js
 	/js/manager/budget.js
 	/js/manager/embedded.js
 	/js/manager/travel.js
@@ -7060,6 +7062,149 @@ get '/manager/configure/device_lister' => sub($c) {
 		ip => $ip,
 		load_type => $load_type
 	);
+};
+
+# --- Network app ------------------------------------------------------------
+# The Network window is a thin client over scripts/jawnos_network.pl. The helper
+# owns the fixed Linux command set (iwctl, ip, tailscale, systemctl) and answers
+# JSON, so no interface name, SSID or passphrase ever reaches a shell. The phone
+# calls its own window.JawnNetwork bridge in the browser and never comes here.
+sub network_helper {
+	my ($arguments, $stdin) = @_;
+	my $script = 'scripts/jawnos_network.pl';
+	return { ok => 0, error => 'The network helper is missing.' } unless -e $script;
+	my ($output, $input);
+	my $pid = eval { open2($output, $input, $^X, $script, @{$arguments || []}) };
+	return { ok => 0, error => 'The network helper could not start.' } unless $pid;
+	if (defined $stdin) {
+		eval { print {$input} $stdin; };
+	}
+	eval { close $input; };
+	local $/;
+	my $json = eval { <$output> } // '';
+	eval { close $output; };
+	waitpid($pid, 0);
+	my $answer = eval { decode_json($json) };
+	return $answer if ref $answer eq 'HASH';
+	return { ok => 0, error => 'The network helper did not return a readable answer.' };
+}
+
+get '/manager/network' => sub($c) {
+	my $timestamp = $c->param('timestamp') || &subs::rightNow();
+	my $content = $c->render_to_string(template => 'apps/network');
+	my $contents = &window_maker({
+		user_agent => $c->param('user_agent'),
+		app => 'network',
+		title => &subs::lang('network'),
+		contents => $content
+	}, $timestamp);
+	$c->render(text => $contents);
+};
+
+get '/manager/network/status' => sub($c) {
+	my $answer = eval { &network_helper(['status']) };
+	$answer = { ok => 0, error => 'The network status could not be read.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+};
+
+post '/manager/network/wifi_scan' => sub($c) {
+	my $interface = $c->param('interface') // '';
+	if (length $interface && $interface !~ /^[A-Za-z0-9_.:-]{1,32}$/) {
+		$c->render(json => { ok => 0, error => 'That interface name is not valid.' });
+		return;
+	}
+	my $answer = eval { &network_helper(['wifi_scan', $interface]) };
+	$answer = { ok => 0, error => 'The scan could not be run.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+};
+
+post '/manager/network/wifi_connect' => sub($c) {
+	my $interface = $c->param('interface') // '';
+	my $ssid = $c->param('ssid') // '';
+	my $passphrase = $c->param('passphrase') // '';
+	my $error;
+	$error = 'That interface name is not valid.' unless $interface =~ /^[A-Za-z0-9_.:-]{1,32}$/;
+	$error = 'That network name is not valid.'
+		unless $error || (length $ssid && length($ssid) <= 32 && $ssid !~ /[\x00-\x1f\x7f]/);
+	$error = 'The passphrase must be 8 to 63 printable characters, or 64 hexadecimal digits.'
+		if !$error && length $passphrase
+			&& !($passphrase =~ /^[\x20-\x7e]{8,63}$/ || $passphrase =~ /^[0-9A-Fa-f]{64}$/);
+	if ($error) {
+		$c->render(json => { ok => 0, error => $error });
+		return;
+	}
+	my $answer = eval { &network_helper(['wifi_connect', $interface, $ssid], $passphrase) };
+	$answer = { ok => 0, error => 'The connection could not be attempted.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+};
+
+post '/manager/network/wifi_disconnect' => sub($c) {
+	my $forget = $c->param('forget') // '';
+	my $answer;
+	if ($forget eq '1') {
+		my $ssid = $c->param('ssid') // '';
+		unless (length $ssid && length($ssid) <= 32 && $ssid !~ /[\x00-\x1f\x7f]/) {
+			$c->render(json => { ok => 0, error => 'That network name is not valid.' });
+			return;
+		}
+		$answer = eval { &network_helper(['wifi_forget', $ssid]) };
+	}
+	else {
+		my $interface = $c->param('interface') // '';
+		unless ($interface =~ /^[A-Za-z0-9_.:-]{1,32}$/) {
+			$c->render(json => { ok => 0, error => 'That interface name is not valid.' });
+			return;
+		}
+		$answer = eval { &network_helper(['wifi_disconnect', $interface]) };
+	}
+	$answer = { ok => 0, error => 'The request could not be completed.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+};
+
+post '/manager/network/radio' => sub($c) {
+	my $state = $c->param('state') // '';
+	unless ($state =~ /^(?:on|off)$/) {
+		$c->render(json => { ok => 0, error => 'The radio can only be turned on or off.' });
+		return;
+	}
+	my $answer = eval { &network_helper(['radio', $state]) };
+	$answer = { ok => 0, error => 'The radio could not be changed.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+};
+
+post '/manager/network/interface' => sub($c) {
+	my $action = $c->param('action') // '';
+	my $name = $c->param('name') // '';
+	unless ($action =~ /^(?:up|down)$/ && $name =~ /^[A-Za-z0-9_.:-]{1,32}$/) {
+		$c->render(json => { ok => 0, error => 'The interface action is not valid.' });
+		return;
+	}
+	my $answer = eval { &network_helper(['interface', $action, $name]) };
+	$answer = { ok => 0, error => 'The interface could not be changed.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
+};
+
+post '/manager/network/vpn' => sub($c) {
+	my $action = $c->param('action') // '';
+	my $answer;
+	if ($action eq 'tailscale_up' || $action eq 'tailscale_down') {
+		$answer = eval { &network_helper(['vpn_tailscale', $action eq 'tailscale_up' ? 'up' : 'down']) };
+	}
+	elsif ($action eq 'vpn_start' || $action eq 'vpn_stop') {
+		my $kind = $c->param('kind') // '';
+		my $name = $c->param('name') // '';
+		unless ($kind =~ /^(?:wg|openvpn)$/ && $name =~ /^[A-Za-z0-9_=+.-]{1,64}$/) {
+			$c->render(json => { ok => 0, error => 'The VPN configuration is not valid.' });
+			return;
+		}
+		$answer = eval { &network_helper(['vpn_unit', $action eq 'vpn_start' ? 'start' : 'stop', $kind, $name]) };
+	}
+	else {
+		$c->render(json => { ok => 0, error => 'The VPN action is not valid.' });
+		return;
+	}
+	$answer = { ok => 0, error => 'The VPN request could not be completed.' } unless ref $answer eq 'HASH';
+	$c->render(json => $answer);
 };
 
 # A printer's own ink and toner, asked over IPP when its row in the Dev panel

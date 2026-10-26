@@ -1,0 +1,16 @@
+# Point /etc/resolv.conf at systemd-resolved, which receives the nameservers the
+# DHCP lease carries. If resolved is not on the image the unit leaves a working
+# public resolver behind instead of a dangling symlink, so DNS still answers.
+[Unit]
+Description=JawnOS resolv.conf for systemd-resolved
+After=systemd-resolved.service
+Before=network-online.target getty@tty1.service
+Wants=systemd-resolved.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'if [ -e /run/systemd/resolve/stub-resolv.conf ]; then ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf; else printf "nameserver 1.1.1.1\nnameserver 8.8.8.8\n" > /etc/resolv.conf; fi'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

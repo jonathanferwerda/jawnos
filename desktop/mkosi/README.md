@@ -100,7 +100,7 @@ is flashed directly) expands the state partition to fill the rest.
 
 ## Choosing a theme before installing
 
-The jawnos.ca download page offers five presets (Nord, Cutefish, Deepin, Sage,
+The jawnos.ca download page offers five presets (Jawnfish, Nord, Deepjawn, Sage,
 Neon) and generates a two-line `jawnos-theme.txt`:
 
 ```

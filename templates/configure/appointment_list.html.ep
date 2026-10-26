@@ -149,7 +149,7 @@
 								<option value="" <% if (!length($app_themes->{$a} || '')) { %>selected="selected"<% } %>>Follow system</option>
 								<optgroup label="<%= &subs::lang('configure.themes') %>">
 									<% foreach my $theme_name ( @theme_names ) { %>
-										<option value="<%= $theme_name %>" <% if (($app_themes->{$a} || '') eq $theme_name) { %>selected="selected"<% } %>><%= $theme_registry->{$theme_name}->{'name'} // &subs::format_name($theme_name) %></option>
+										<option value="<%= $theme_name %>" <% if (&subs::theme_canonical($app_themes->{$a}) eq $theme_name) { %>selected="selected"<% } %>><%= $theme_registry->{$theme_name}->{'name'} // &subs::format_name($theme_name) %></option>
 									<% } %>
 								</optgroup>
 								<optgroup label="<%= &subs::ui('Colour schemes') %>">

@@ -261,7 +261,7 @@ function jawnosTextureSheen(ctx, kind, dark, x, y, w, h) {
 	var g = ctx.createLinearGradient(0, y, 0, y + h);
 	if (kind === 'soft') {
 		// one breath of light along the top and a hairline shade at the foot: the
-		// deepin/Cutefish register, without the glass or sandglass gloss
+		// Deepjawn/Jawnfish register, without the glass or sandglass gloss
 		g.addColorStop(0, dark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.42)');
 		g.addColorStop(0.42, 'rgba(255,255,255,0)');
 		g.addColorStop(0.58, 'rgba(0,0,0,0)');

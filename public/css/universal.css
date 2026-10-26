@@ -574,7 +574,7 @@ body[data-texture="classic"] {
 }
 body[data-texture="soft"] {
 	/* The house default: a flat face with one breath of light and the shadow
-	   the design tokens use. No gloss, no grain - the deepin/Cutefish register. */
+	   the design tokens use. No gloss, no grain - the Deepjawn/Jawnfish register. */
 	--jawnos-texture: linear-gradient(180deg, rgba(255,255,255,.12), rgba(0,0,0,.025));
 	--jawnos-texture-size: 100% 100%;
 	--jawnos-texture-repeat: no-repeat;

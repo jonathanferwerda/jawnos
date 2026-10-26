@@ -1,0 +1,8 @@
+# Wired interfaces on the live image. systemd-networkd asks the network for an
+# address over DHCP; QEMU's user-mode networking answers with 10.0.2.15 and a
+# gateway at 10.0.2.2, and a real machine gets its router's lease.
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes

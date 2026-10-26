@@ -7,6 +7,10 @@ exec /home/jawn/jawnos/desktop/wayland/jawnos-session
 exec sh -c 'swaybg -i /home/jawn/Pictures/jawnos-wallpaper.png -m fill 2>/dev/null || swaybg -c "#2e3440"'
 exec waybar -c /home/jawn/jawnos/desktop/wayland/waybar.conf
 
+# An unfamiliar monitor can come up with no mode at all (a black screen). Try
+# the house's safe modes once Sway is up; $mod+Shift+d repeats it below.
+exec /usr/local/bin/jawnos-display --once
+
 # JawnOS owns the screen. This rule runs when the view maps; Sway also reflows
 # an already-fullscreen window when its output changes mode or size (a QEMU
 # window resize, or an EDID change on virtio-gpu), and the app repaints and
@@ -19,6 +23,9 @@ bindsym $mod+Return exec foot
 bindsym $mod+d exec fuzzel
 bindsym $mod+q kill
 bindsym $mod+Shift+r reload
+# Cycle the focused monitor through the safe modes (1366x768, 1920x1080,
+# 1280x720, 1024x768) and print the one it chose.
+bindsym $mod+Shift+d exec /usr/local/bin/jawnos-display --cycle
 bindsym $mod+Shift+e exec swaynag -t warning -m 'Leave Sway?' -B 'Yes, exit' 'swaymsg exit'
 
 font pango:monospace 10
