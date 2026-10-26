@@ -12219,6 +12219,83 @@ sub archive_reply {
 # are collected rather than thrown on the first bad file, so one unreadable
 # file does not hide the rest; a job with any of them fails at the end, and
 # Minion's retry skips what did land.
+# Send one file to the archive machine. A small file is one request; a large
+# one is cut into 64 MB pieces so no single upload has to survive a long
+# request or a whole film's worth of buffering. Each piece is written at its
+# offset, and a retry starts again at zero, so a dropped connection never
+# leaves a half-written file that looks complete. Returns (bytes, error).
+sub archive_send_file {
+	my $data = shift;
+	my $ua = $data->{'ua'};
+	my $manager = $data->{'manager'};
+	my $file = $data->{'file'};
+	my $total = -s $file;
+	my $chunk = 64 * 1024 * 1024;
+	my $post_chunk = sub {
+		my ($path, $offset, $final, $chunked) = @_;
+		my %form = (
+			location => $data->{'location'},
+			path => $data->{'relative'},
+			mtime => $data->{'mtime'},
+			file => { file => $path }
+		);
+		if ($chunked) {
+			$form{'offset'} = $offset;
+			$form{'total'} = $total;
+			$form{'final'} = $final ? 1 : 0;
+		}
+		my $tx = eval {
+			$ua->post($manager . '/manager/folders/archive/receive' => form => \%form)
+		};
+		return &archive_reply($tx);
+	};
+	if (!defined $total || $total <= $chunk) {
+		my ($res, $err) = $post_chunk->($file, 0, 1, 0);
+		return ($total || 0) if ($res && $res->{'status'} eq 'ok');
+		return (0, ($res && $res->{'error'}) || $err || 'the upload did not land');
+	}
+	my ($offset, $sent) = (0, 0);
+	while ($offset < $total) {
+		my $take = $total - $offset > $chunk ? $chunk : $total - $offset;
+		my $chunk_path = &peer_temp_file('archive_chunk');
+		my ($in, $out);
+		unless (open($in, '<:raw', $file)) {
+			unlink $chunk_path;
+			return (0, "cannot read $file");
+		}
+		seek($in, $offset, 0);
+		unless (open($out, '>:raw', $chunk_path)) {
+			close $in;
+			unlink $chunk_path;
+			return (0, 'cannot write a chunk for ' . $file);
+		}
+		my $left = $take;
+		my $buf;
+		while ($left > 0) {
+			my $want = $left > 1024 * 1024 ? 1024 * 1024 : $left;
+			my $n = read($in, $buf, $want);
+			last unless $n;
+			print $out $buf;
+			$left -= $n;
+		}
+		close $in;
+		close $out;
+		if ($left > 0) {
+			unlink $chunk_path;
+			return (0, "could not read $file at $offset bytes");
+		}
+		my $final = ($offset + $take >= $total) ? 1 : 0;
+		my ($res, $err) = $post_chunk->($chunk_path, $offset, $final, 1);
+		unlink $chunk_path;
+		if (!$res || $res->{'status'} ne 'ok') {
+			return (0, ($res && $res->{'error'}) || $err || "the upload stopped at $offset bytes");
+		}
+		$sent += $take;
+		$offset += $take;
+	}
+	return ($sent, undef);
+}
+
 sub archive_transfer_job {
 	my ($job, $data) = @_;
 	my $agent = &remote_agent_for($data->{'remote_uuid'});
@@ -12264,21 +12341,20 @@ sub archive_transfer_job {
 			next;
 		}
 
-		my $receive_tx = eval {
-			$ua->post($manager . '/manager/folders/archive/receive' => form => {
-				location => $data->{'location'},
-				path => $relative,
-				mtime => $mtime,
-				file => { file => $file }
-			})
-		};
-		my ($res, $res_error) = &archive_reply($receive_tx);
-		if (!$res || $res->{'status'} ne 'ok') {
-			push @errors, ($relative || $file) . ': ' . (($res && $res->{'error'}) || $res_error || 'the upload did not land');
+		my ($sent_bytes, $send_error) = &archive_send_file({
+			ua => $ua,
+			manager => $manager,
+			location => $data->{'location'},
+			relative => $relative,
+			file => $file,
+			mtime => $mtime
+		});
+		if ($send_error) {
+			push @errors, ($relative || $file) . ': ' . $send_error;
 			next;
 		}
 		$sent++;
-		$bytes += ($res->{'size'} || $size || 0);
+		$bytes += $sent_bytes;
 		push @rows, &archive_manifest_row({ path => $file, relative => $relative });
 		if ($count % 5 == 0) {
 			$job->note(progress => "sent $sent, skipped $skipped, $bytes bytes");

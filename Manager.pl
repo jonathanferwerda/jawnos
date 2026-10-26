@@ -6582,6 +6582,7 @@ my @manager_bundle_files = qw(
 	/js/manager/coding.js
 	/js/manager/agents.js
 	/js/manager/camera.js
+	/js/manager/internet.js
 	/js/manager/phone.js
 	/js/manager/people.js
 );
@@ -26844,6 +26845,145 @@ post '/manager/web/delete' => sub($c) {
 };
 
 
+# ---- Internet: usage and live-page measures ------------------------------
+# Browse is a native sibling of the manager (a WebKitGTK window on the desktop,
+# an activity on Android). It posts here as the installed app it belongs to, so
+# the ordinary app gate is the only credential; there is no second token.
+sub usage_ms {
+	my $value = shift;
+	return 0 unless defined $value && $value =~ /^\d+$/;
+	return int($value);
+}
+
+post '/manager/usage/session' => sub($c) {
+	my $kind = ($c->param('kind') // 'app') eq 'site' ? 'site' : 'app';
+	my $key = $c->param('key') // '';
+	$key =~ s/^\s+|\s+$//g;
+	$key = substr($key, 0, 500);
+	unless (length $key) { $c->render(json => { ok => 0, error => 'need a key' }); return; }
+	my $now = &subs::rightNow();
+	my $start = &usage_ms($c->param('started_at')) || $now;
+	my $end = &usage_ms($c->param('ended_at')) || $now;
+	$end = $now if $end > $now;
+	$start = $end if $start > $end;
+	my $span = $end - $start;
+	unless ($span >= 1000 && $span <= 12 * 60 * 60 * 1000) {
+		$c->render(json => { ok => 0, error => 'span out of range' });
+		return;
+	}
+	my $idle = &usage_ms($c->param('idle_ms'));
+	$idle = $span if $idle > $span;
+	my $source = substr(($c->param('source') // ''), 0, 25);
+	my $url = substr(($c->param('url') // ''), 0, 2000);
+	my $title = substr(($c->param('title') // ''), 0, 1000);
+	my $uuid = &subs::random_string_creator(15);
+	&subs::db_insert('usage_sessions', {
+		uuid => $uuid,
+		device => $device,
+		kind => $kind,
+		key_name => $key,
+		started_at => $start,
+		ended_at => $end,
+		idle_ms => $idle,
+		source => $source,
+		hostname => '',
+		title => $title,
+		url => $url,
+		server_time => $now,
+		ost => $now,
+	});
+	$c->render(json => { ok => 1, uuid => $uuid });
+};
+
+get '/manager/usage/summary' => sub($c) {
+	my $kind = ($c->param('kind') // 'app') eq 'site' ? 'site' : 'app';
+	my $to = &usage_ms($c->param('to')) || &subs::rightNow();
+	my $from = &usage_ms($c->param('from')) || ($to - 24 * 60 * 60 * 1000);
+	my $rows = eval { &subs::db_query(q{
+		select key_name,
+			sum(max(0, cast(ended_at as integer) - cast(started_at as integer) - cast(coalesce(nullif(idle_ms, ''), '0') as integer))) as total_ms,
+			count(*) as sessions,
+			max(cast(ended_at as integer)) as last_at
+		  from usage_sessions
+		 where device = ? and kind = ? and cast(ended_at as integer) >= ? and cast(started_at as integer) <= ?
+		 group by key_name
+		 order by total_ms desc
+	}, $device, $kind, $from, $to)->hashes } || [];
+	foreach my $row ( @{$rows} ) {
+		$row->{'total_ms'} = int($row->{'total_ms'} // 0);
+		$row->{'sessions'} = int($row->{'sessions'} // 0);
+		$row->{'last_at'} = int($row->{'last_at'} // 0);
+	}
+	$c->render(json => { from => $from, to => $to, kind => $kind, rows => $rows });
+};
+
+get '/manager/usage/timeline' => sub($c) {
+	my $kind = ($c->param('kind') // 'app') eq 'site' ? 'site' : 'app';
+	my $to = &usage_ms($c->param('to')) || &subs::rightNow();
+	my $from = &usage_ms($c->param('from')) || ($to - 24 * 60 * 60 * 1000);
+	my $rows = eval { &subs::db_query(q{
+		select strftime('%Y-%m-%dT%H', cast(started_at as integer) / 1000, 'unixepoch', 'localtime') as hour,
+			key_name,
+			sum(max(0, cast(ended_at as integer) - cast(started_at as integer) - cast(coalesce(nullif(idle_ms, ''), '0') as integer))) as total_ms
+		  from usage_sessions
+		 where device = ? and kind = ? and cast(ended_at as integer) >= ? and cast(started_at as integer) <= ?
+		 group by hour, key_name
+		 order by hour, total_ms desc
+	}, $device, $kind, $from, $to)->hashes } || [];
+	foreach my $row ( @{$rows} ) { $row->{'total_ms'} = int($row->{'total_ms'} // 0); }
+	$c->render(json => { from => $from, to => $to, kind => $kind, rows => $rows });
+};
+
+# The browser clicked an element in a live page. The document arrives as text
+# (never executed) and the same candidate finder the saved-page flow uses runs
+# over it, so a measure picked in Browse is the same shape as one picked in Web.
+post '/manager/web/measure/live' => sub($c) {
+	my $app = $c->param('app') // '';
+	my $uuid = $c->param('uuid') // '';
+	my $selector = $c->param('selector') // '';
+	my $index = $c->param('index') // 0;
+	my $measure = $c->param('measure') // '';
+	my $html = $c->param('html') // '';
+	my $url = substr(($c->param('url') // ''), 0, 2000);
+	my $title = substr(($c->param('title') // ''), 0, 1000);
+	unless (length $app && length $selector && length $html) {
+		$c->render(json => { ok => 0, error => 'need app, selector and html' });
+		return;
+	}
+	$html = substr($html, 0, 2_000_000);
+	my $dom = Mojo::DOM->new($html);
+	my $candidates = &subs::web_measure_candidates($dom, undef, $selector, $index);
+	my $confirmation = $c->render_to_string(
+		template => 'web/web_measure_confirm',
+		candidates => $candidates,
+		app => $app,
+		measure => $measure,
+		selector => $selector
+	);
+	$c->render(json => {
+		ok => 1,
+		app => $app,
+		uuid => $uuid,
+		selector => $selector,
+		index => $index,
+		candidates => $candidates,
+		confirmation => $confirmation,
+		url => $url,
+		title => $title,
+	});
+};
+
+get '/manager/internet' => sub ($c) {
+	my $timestamp = $c->param('timestamp');
+	my $contents = $c->render_to_string(
+		template => 'internet/internet',
+		app => 'internet'
+	);
+	my $website = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'internet', contents => $contents }, $timestamp);
+	$c->render(text => $website);
+};
+
+
 get '/manager/website_get' => sub ($c) {
 	my $app = $c->param('app');
 	my ($window,$internal_url,$uuid,$timestamp) = &website_grabber({
@@ -30106,15 +30246,73 @@ post '/manager/folders/archive/receive' => sub($c) {
 		return;
 	}
 	Mojo::File->new($dest->{'parent'})->make_path;
+	my $mtime = $c->param('mtime');
+	my $offset = $c->param('offset');
+	my $total = $c->param('total');
+	# A large file arrives in 64 MB pieces: each piece is written at its offset
+	# and only the final one stamps the source's time. A retry starts at zero,
+	# so a dropped connection never leaves a half file that looks complete.
+	my $chunked = (defined $offset && $offset =~ /^\d+$/ && defined $total && $total =~ /^\d+$/) ? 1 : 0;
+	my $written = 0;
+	if ($chunked) {
+		my $source = eval { $upload->asset->path };
+		unless ($source && -e $source) {
+			$c->render(json => { status => 'error', error => 'the upload has no file' });
+			return;
+		}
+		my $mode = ($offset > 0) ? '+<' : '>';
+		my ($in, $out);
+		unless (open($out, $mode, $dest->{'path'})) {
+			$c->render(json => { status => 'error', error => "cannot open $dest->{'path'}: $!", path => $dest->{'path'} });
+			return;
+		}
+		binmode $out;
+		seek($out, $offset, 0) if $offset > 0;
+		unless (open($in, '<:raw', $source)) {
+			close $out;
+			$c->render(json => { status => 'error', error => "cannot read the upload: $!", path => $dest->{'path'} });
+			return;
+		}
+		binmode $in;
+		my $buf;
+		while (my $n = read($in, $buf, 1024 * 1024)) {
+			print $out $buf;
+			$written += $n;
+		}
+		close $in;
+		close $out;
+		my $asset_size = -s $source;
+		if (defined $asset_size && $written != $asset_size) {
+			$c->render(json => { status => 'error', error => "chunk wrote $written of $asset_size bytes", path => $dest->{'path'} });
+			return;
+		}
+		if ($c->param('final') && ($offset + $written) != $total) {
+			$c->render(json => { status => 'error', error => 'the file is incomplete', path => $dest->{'path'}, size => -s $dest->{'path'} });
+			return;
+		}
+		my $size = -s $dest->{'path'};
+		if ($c->param('final') && $mtime && $mtime =~ /^\d+$/) {
+			utime $mtime, $mtime, $dest->{'path'};
+		}
+		$log->info('archive: received ' . $dest->{'path'} . ' (' . $size . ' bytes)') if $c->param('final');
+		$c->render(json => {
+			status => 'ok',
+			path => $dest->{'path'},
+			size => $size,
+			offset => 0 + $offset,
+			received => $written,
+			final => $c->param('final') ? 1 : 0
+		});
+		return;
+	}
 	eval { $upload->move_to($dest->{'path'}) };
 	if ($@) {
 		$c->render(json => { status => 'error', error => "$@", path => $dest->{'path'} });
 		return;
 	}
-	my $written = -s $dest->{'path'};
+	$written = -s $dest->{'path'};
 	# keep the source's time, so the next pass over the same folder can tell an
 	# unchanged file from a changed one by size and time instead of by the file
-	my $mtime = $c->param('mtime');
 	utime $mtime, $mtime, $dest->{'path'} if ($mtime && $mtime =~ /^\d+$/);
 	$log->info('archive: received ' . $dest->{'path'} . ' (' . $written . ' bytes)');
 	$c->render(json => { status => 'ok', path => $dest->{'path'}, size => $written });
@@ -38287,6 +38485,24 @@ sub app_schema_ensure {
 		when agent like '%AppleWebKit/605%' then 'webview'
 		else 'browser' end
 		where kind is null or kind = ''") };
+	# Usage is per device: the phone's site-time, the laptop's window-time and a
+	# server's headless work are different facts. The table is created here rather
+	# than in schema.sql alone so an existing house gains it on the next start.
+	eval { &subs::db_query('create table if not exists usage_sessions (
+		uuid VARCHAR(255) unique,
+		device VARCHAR(255),
+		kind VARCHAR(16),
+		key_name VARCHAR(500),
+		started_at VARCHAR(25),
+		ended_at VARCHAR(25),
+		idle_ms VARCHAR(25),
+		source VARCHAR(25),
+		hostname VARCHAR(500),
+		title VARCHAR(1000),
+		url VARCHAR(2000),
+		server_time VARCHAR(25),
+		ost VARCHAR(25))') };
+	eval { &subs::db_query('create index if not exists usage_sessions_started on usage_sessions(started_at)') };
 }
 
 # A lock is local to the machine that saw it, but an explicit unlock request
