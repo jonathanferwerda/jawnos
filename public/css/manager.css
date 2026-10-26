@@ -423,6 +423,41 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .clock_ring_title { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; opacity: .65; }
 .clock_ring_label { font-size: 26px; font-weight: 700; margin-top: 6px; }
 .clock_ring_time { font-size: 14px; opacity: .7; margin-top: 4px; }
+/* A hard alarm can ask for a little arithmetic before it lets go: the card
+   shows the problem near the top, keeps both buttons disabled, and turns the
+   answer green once it is right. */
+.clock_ring_math { margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: calc(var(--jawnos-corner, 12px) * .5); background-color: rgba(0,0,0,.05); }
+.clock_ring_math_problem { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.clock_ring_math_input {
+	width: 6.5ch;
+	box-sizing: border-box;
+	margin-top: 8px;
+	padding: 8px 10px;
+	font: inherit;
+	font-size: 22px;
+	font-weight: 600;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+	color: inherit;
+	background-color: var(--window, var(--panel));
+	border: 2px solid var(--line);
+	border-radius: calc(var(--jawnos-corner, 12px) * .45);
+}
+.clock_ring_math_input:focus { outline: none; border-color: #c94f4f; }
+.clock_ring_math_input.ok { border-color: #2f8f6d; }
+.clock_ring_math_input.bad { border-color: #c94f4f; }
+.clock_ring_math_feedback { min-height: 16px; margin-top: 5px; font-size: 12px; font-weight: 600; }
+.clock_ring_math_feedback.ok { color: #2f8f6d; }
+.clock_ring_math_feedback.bad { color: #c94f4f; }
+.clock_ring_nfc_note {
+	margin-top: 12px;
+	padding: 8px 10px;
+	font-size: 12px;
+	line-height: 1.35;
+	border: 1px solid var(--line);
+	border-radius: calc(var(--jawnos-corner, 12px) * .5);
+	background-color: rgba(47,143,109,.12);
+}
 .clock_ring_buttons { display: flex; gap: 8px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
 .clock_ring_buttons button {
 	flex: 1 1 0;
@@ -439,6 +474,8 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	border-radius: calc(var(--jawnos-corner, 12px) * .5);
 }
 .clock_ring_buttons button:hover { background-color: var(--line); }
+.clock_ring_buttons button:disabled { opacity: .4; cursor: not-allowed; background-color: var(--panel); }
+.clock_ring_buttons button:disabled:hover { background-color: var(--panel); }
 
 /* A machine that has already acknowledged the alarm: the pill keeps its shape
    and turns a quiet green, with a check mark added by the template/parser. */
@@ -2818,4 +2855,14 @@ body.dark_theme .folders_dialog, body.dark_theme .jawnos_dialog { --folders-acce
 	border-radius: 50%; background: var(--panel); color: var(--ink);
 	border: 1px solid var(--line); font-size: 10px; line-height: 14px;
 	text-align: center; pointer-events: none;
+}
+
+/* ---------------- Configure accordions (details.cfg-acc) ---------------- */
+/* The section styling lives in the Configure shell's own <style> block, beside
+   .cfg-details; these two rules are the host-level pieces that must follow a
+   section out of #configure (a detached window, a printout). Additive: they
+   only ever touch details.cfg-acc. */
+details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+	details.cfg-acc > summary::before { transition: none !important; }
 }

@@ -14,6 +14,9 @@ var jawnosClockObserverTimer = null;
 var jawnosClockSaveTimers = {};
 var jawnosClockStopwatch = null;
 var jawnosClockWorld = null;
+// The little arithmetic gate on the ring card: null when the alarm rings
+// plainly, otherwise { a, b, c, answer, solved }.
+var jawnosClockRingMath = null;
 
 function jawnosClockEsc(value) {
 	return $('<div>').text(value === undefined || value === null ? '' : String(value)).html();
@@ -234,7 +237,7 @@ function jawnosClockSyncRinging(state) {
 		jawnosClockShowRing({
 			uuid: a.uuid, label: a.label, hour: a.hour, minute: a.minute,
 			sound: a.sound, volume: a.volume, ramp: a.ramp, app: a.app,
-			snooze: a.snooze
+			snooze: a.snooze, play: a.play, nfc: (a.nfc_ready || 0), nfc_action: a.nfc_action
 		});
 	}
 }
@@ -337,6 +340,9 @@ $(document).on('focus click', '.clock_alarm_app, .clock_timer_app', function () 
 
 $(document).on('input', '.clock_alarm_app, .clock_timer_app', function () {
 	$(this).attr('data-app', '');
+	if ($(this).hasClass('clock_alarm_app')) {
+		jawnosClockNfcVisibility($(this).closest('.clock_alarm'), jawnosClockState);
+	}
 	if (jawnosClockAppTarget && jawnosClockAppTarget[0] == this) { jawnosClockAppsShow($(this)); }
 });
 
@@ -358,6 +364,9 @@ $(document).on('click', '.clock_app_choice', function () {
 	var app = $(this).attr('data-app') || '';
 	var label = $(this).find('span').first().text();
 	input.attr('data-app', app).val(app ? label : '');
+	if (input.hasClass('clock_alarm_app')) {
+		jawnosClockNfcVisibility(input.closest('.clock_alarm'), jawnosClockState);
+	}
 	jawnosClockAppsHide();
 	input.trigger('change');
 });
@@ -399,6 +408,26 @@ function jawnosClockAlarmHeadDevicesRefresh(row) {
 	row.find('.clock_alarm_head_devices').html(html);
 }
 
+// The NFC toggle is only useful when the linked appointment carries an NFC
+// start tag; the server says which apps do in state.nfc_apps. An alarm that is
+// already on keeps its field (and its checkbox live) even after the tag goes,
+// so it can be turned back off.
+function jawnosClockNfcVisibility(row, state) {
+	if (!row || !row.length) { return; }
+	var field = row.find('.clock_alarm_nfc_field');
+	if (!field.length) { return; }
+	state = state || jawnosClockState || {};
+	var app = row.find('.clock_alarm_app').attr('data-app') || '';
+	var tags = state.nfc_apps || {};
+	var has_tag = !!(app && tags[app]);
+	var box = field.find('.clock_alarm_nfc');
+	var on = box.is(':checked');
+	field.toggle(has_tag || on);
+	box.prop('disabled', !has_tag && !on);
+	field.find('.clock_nfc_hint').toggle(!has_tag);
+	field.find('.clock_alarm_nfc_action').toggle(on);
+}
+
 function jawnosClockAlarmHtml(alarm, state) {
 	var days = alarm.days || [];
 	var has_days = days.length > 0;
@@ -433,6 +462,23 @@ function jawnosClockAlarmHtml(alarm, state) {
 	html += '</div>';
 	html += '<div class="clock_alarm_extra">';
 	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('link_appointment')) + '</span><div class="clock_app_picker"><input type="text" class="clock_alarm_app" autocomplete="off" data-app="' + jawnosClockEsc(alarm.app || '') + '" value="' + jawnosClockEsc((alarm.app || '').replace(/_/g, ' ')) + '" placeholder="' + jawnosClockEsc(jawnosT('no_appointment')) + '"><button type="button" class="clock_app_toggle" tabindex="-1" aria-label="' + jawnosClockEsc(jawnosT('link_appointment')) + '">▾</button></div></label>';
+	var nfc_tags = (state && state.nfc_apps) || {};
+	var nfc_tag = (alarm.app && nfc_tags[alarm.app]) ? 1 : 0;
+	var nfc_on = alarm.nfc ? 1 : 0;
+	var nfc_action = (alarm.nfc_action == 'dismiss') ? 'dismiss' : 'snooze';
+	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('play_mode')) + '</span><select class="clock_alarm_play">';
+	html += '<option value=""' + ((alarm.play || '') == 'math' ? '' : ' selected') + '>' + jawnosClockEsc(jawnosT('none')) + '</option>';
+	html += '<option value="math"' + ((alarm.play || '') == 'math' ? ' selected' : '') + '>' + jawnosClockEsc(jawnosT('math')) + '</option>';
+	html += '</select></label>';
+	html += '<label class="clock_field clock_alarm_nfc_field"' + ((nfc_tag || nfc_on) ? '' : ' style="display:none;"') + '>';
+	html += '<span>' + jawnosClockEsc(jawnosT('use_nfc_to_snooze')) + '</span>';
+	html += '<div class="clock_nfc_row"><input type="checkbox" class="clock_alarm_nfc"' + (nfc_on ? ' checked' : '') + ((nfc_tag || nfc_on) ? '' : ' disabled') + '>';
+	html += '<select class="clock_alarm_nfc_action" aria-label="' + jawnosClockEsc(jawnosT('nfc_action')) + '"' + (nfc_on ? '' : ' style="display:none;"') + '>';
+	html += '<option value="snooze"' + (nfc_action == 'dismiss' ? '' : ' selected') + '>' + jawnosClockEsc(jawnosT('snooze')) + '</option>';
+	html += '<option value="dismiss"' + (nfc_action == 'dismiss' ? ' selected' : '') + '>' + jawnosClockEsc(jawnosT('dismiss')) + '</option>';
+	html += '</select></div>';
+	html += '<span class="clock_nfc_hint"' + (nfc_tag ? ' style="display:none;"' : '') + '>' + jawnosClockEsc(jawnosT('Link an appointment with an NFC start tag to use this.')) + '</span>';
+	html += '</label>';
 	var machines = alarm.machines || [];
 	html += '<label class="clock_field clock_alarm_machines"><span>' + jawnosClockEsc(jawnosT('shared_with')) + '</span><div class="clock_machine_list" role="group" aria-label="' + jawnosClockEsc(jawnosT('shared_with')) + '">';
 	$.each((state && state.machines) || [], function (i, m) {
@@ -469,6 +515,7 @@ function jawnosClockRenderAlarms(state) {
 		html = '<div class="clock_empty">' + jawnosClockEsc(jawnosT('No alarms yet - add one and it will be waiting for you here.')) + '</div>';
 	}
 	list.html(html);
+	list.find('.clock_alarm').each(function () { jawnosClockNfcVisibility($(this), state); });
 	app.find('.clock_count').first().text(alarms.length + '/' + (state.max || 10));
 	var add = app.find('.clock_add_alarm');
 	add.prop('disabled', alarms.length >= (state.max || 10));
@@ -494,6 +541,9 @@ function jawnosClockAlarmData(row) {
 		volume: parseInt(row.find('.clock_alarm_volume').val() || 70, 10),
 		ramp: parseInt(row.find('.clock_alarm_ramp').val() || 0, 10),
 		snooze: jawnosClockSnoozeValue(row.find('.clock_alarm_snooze').val()),
+		play: row.find('.clock_alarm_play').val() || '',
+		nfc: row.find('.clock_alarm_nfc').is(':checked') ? 1 : 0,
+		nfc_action: row.find('.clock_alarm_nfc_action').val() || 'snooze',
 		enabled: row.find('.clock_alarm_enabled').is(':checked') ? 1 : 0,
 		machines: machines.join(',')
 	};
@@ -511,12 +561,15 @@ function jawnosClockSaveAlarm(row, delay) {
 	}, delay || 0);
 }
 
-$(document).on('change', '.clock_alarm_time, .clock_alarm_label, .clock_alarm_app, .clock_alarm_sound, .clock_alarm_enabled', function () {
+$(document).on('change', '.clock_alarm_time, .clock_alarm_label, .clock_alarm_app, .clock_alarm_sound, .clock_alarm_enabled, .clock_alarm_play, .clock_alarm_nfc, .clock_alarm_nfc_action', function () {
 	var row = $(this).closest('.clock_alarm');
 	if ($(this).hasClass('clock_alarm_time')) {
 		var time = jawnosClockParseTime($(this).val());
 		$(this).val(jawnosClockTime(time[0], time[1]));
 		row.find('.clock_alarm_head_time').text(jawnosClockTime(time[0], time[1]));
+	}
+	if ($(this).hasClass('clock_alarm_app') || $(this).hasClass('clock_alarm_nfc')) {
+		jawnosClockNfcVisibility(row, jawnosClockState);
 	}
 	row.toggleClass('off', !row.find('.clock_alarm_enabled').is(':checked'));
 	jawnosClockSaveAlarm(row);
@@ -1071,6 +1124,12 @@ function jawnosClockRingCard() {
 		+ '<div class="clock_ring_title">' + jawnosClockEsc(jawnosT('alarm_ringing')) + '</div>'
 		+ '<div class="clock_ring_label"></div>'
 		+ '<div class="clock_ring_time"></div>'
+		+ '<div class="clock_ring_math" style="display:none;">'
+		+ '<div class="clock_ring_math_problem"></div>'
+		+ '<input type="text" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false" class="clock_ring_math_input" aria-label="' + jawnosClockEsc(jawnosT('math')) + '">'
+		+ '<div class="clock_ring_math_feedback"></div>'
+		+ '</div>'
+		+ '<div class="clock_ring_nfc_note" style="display:none;"></div>'
 		+ '<div class="clock_ring_buttons">'
 		+ '<button type="button" class="clock_ring_snooze" title="' + jawnosClockEsc(jawnosClockSnoozeText(5)) + '">' + jawnosClockEsc(jawnosClockSnoozeText(5)) + '</button>'
 		+ '<button type="button" class="clock_ring_dismiss">' + jawnosClockEsc(jawnosT('dismiss')) + '</button>'
@@ -1080,12 +1139,75 @@ function jawnosClockRingCard() {
 	return card;
 }
 
+// A basic problem with a non-negative answer: a x b - c.
+function jawnosClockMathMake() {
+	var a = 2 + Math.floor(Math.random() * 11);
+	var b = 2 + Math.floor(Math.random() * 11);
+	var c = Math.floor(Math.random() * (Math.min(12, a * b) + 1));
+	return { a: a, b: b, c: c, answer: a * b - c };
+}
+
+function jawnosClockMathStart(card) {
+	var m = jawnosClockMathMake();
+	jawnosClockRingMath = { a: m.a, b: m.b, c: m.c, answer: m.answer, solved: false };
+	card.find('.clock_ring_math_problem').text(m.a + ' × ' + m.b + ' − ' + m.c + ' = ?');
+	card.find('.clock_ring_math_input').val('').removeClass('ok bad');
+	card.find('.clock_ring_math_feedback').text('').removeClass('ok bad');
+	card.find('.clock_ring_math').show();
+	card.find('.clock_ring_buttons button').prop('disabled', true);
+}
+
+// Only an exact answer unlocks the card; the buttons stay disabled until then.
+function jawnosClockMathCheck(card) {
+	if (!jawnosClockRingMath) { return; }
+	var m = jawnosClockRingMath;
+	var input = card.find('.clock_ring_math_input');
+	var feedback = card.find('.clock_ring_math_feedback');
+	var value = parseInt(String(input.val() || '').replace(/[^0-9]/g, ''), 10);
+	if (isNaN(value)) {
+		m.solved = false;
+		input.removeClass('ok bad');
+		feedback.removeClass('ok bad').text('');
+		card.find('.clock_ring_buttons button').prop('disabled', true);
+		return;
+	}
+	if (value === m.answer) {
+		m.solved = true;
+		input.addClass('ok').removeClass('bad');
+		feedback.addClass('ok').removeClass('bad').text(jawnosT('Correct'));
+		card.find('.clock_ring_buttons button').prop('disabled', false);
+	}
+	else {
+		m.solved = false;
+		input.addClass('bad').removeClass('ok');
+		feedback.addClass('bad').removeClass('ok').text(jawnosT('Try again'));
+		card.find('.clock_ring_buttons button').prop('disabled', true);
+	}
+}
+
+function jawnosClockMathReset(card) {
+	jawnosClockRingMath = null;
+	card.find('.clock_ring_math').hide();
+	card.find('.clock_ring_math_problem').text('');
+	card.find('.clock_ring_math_input').val('').removeClass('ok bad');
+	card.find('.clock_ring_math_feedback').text('').removeClass('ok bad');
+	card.find('.clock_ring_buttons button').prop('disabled', false);
+}
+
 function jawnosClockShowRing(payload) {
 	jawnosClockRingingCurrent = payload;
 	var card = jawnosClockRingCard();
 	card.find('.clock_ring_label').text(payload.label || jawnosT('alarm'));
 	card.find('.clock_ring_time').text(jawnosClockTime(payload.hour, payload.minute) + (payload.app ? ' · ' + String(payload.app).replace(/_/g, ' ') : ''));
 	card.find('.clock_ring_snooze').text(jawnosClockSnoozeText(payload.snooze)).attr('title', jawnosClockSnoozeText(payload.snooze));
+	jawnosClockMathReset(card);
+	if (payload.nfc) {
+		card.find('.clock_ring_nfc_note').text(jawnosT('The NFC tag must be scanned on the phone to snooze or dismiss.')).show();
+	}
+	else {
+		card.find('.clock_ring_nfc_note').text('').hide();
+	}
+	if (payload.play == 'math') { jawnosClockMathStart(card); }
 	card.show();
 	$('.clock_alarm[data-uuid="' + payload.uuid + '"]').addClass('ringing');
 	// The sound is the server's: it plays through the operating system and
@@ -1105,13 +1227,46 @@ function jawnosClockAlarmRing(payload) {
 
 function jawnosClockAlarmStop() {
 	jawnosClockRingingCurrent = null;
+	var card = $('#clock_ring_overlay');
+	if (card.length) {
+		jawnosClockMathReset(card);
+		card.find('.clock_ring_nfc_note').text('').hide();
+	}
 	$('#clock_ring_overlay').hide();
 	$('.clock_alarm.ringing').removeClass('ringing');
 	jawnosClockShowTitle('');
 	if (jawnosClockRinging.length) { jawnosClockShowRing(jawnosClockRinging.shift()); }
 }
 
+$(document).on('input', '.clock_ring_math_input', function () {
+	var card = $(this).closest('#clock_ring_overlay');
+	var m = jawnosClockRingMath;
+	if (!m) { return; }
+	$(this).removeClass('bad');
+	card.find('.clock_ring_math_feedback').removeClass('bad ok').text('');
+	// Editing an answer that had unlocked the card locks it again.
+	if (m.solved) {
+		var value = parseInt(String($(this).val() || '').replace(/[^0-9]/g, ''), 10);
+		if (isNaN(value) || value !== m.answer) {
+			m.solved = false;
+			$(this).removeClass('ok');
+			card.find('.clock_ring_buttons button').prop('disabled', true);
+		}
+	}
+});
+
+$(document).on('change', '.clock_ring_math_input', function () {
+	jawnosClockMathCheck($(this).closest('#clock_ring_overlay'));
+});
+
+$(document).on('keydown', '.clock_ring_math_input', function (e) {
+	if (e.key != 'Enter') { return; }
+	e.preventDefault();
+	jawnosClockMathCheck($(this).closest('#clock_ring_overlay'));
+});
+
 $(document).on('click', '.clock_ring_dismiss', function () {
+	if (jawnosClockRingMath && !jawnosClockRingMath.solved) { return; }
 	if (!jawnosClockRingingCurrent) { return; }
 	var payload = jawnosClockRingingCurrent;
 	jawnosClockPost('/manager/clock/alarm', { action: 'dismiss', uuid: payload.uuid }, function () {
@@ -1121,6 +1276,7 @@ $(document).on('click', '.clock_ring_dismiss', function () {
 });
 
 $(document).on('click', '.clock_ring_snooze', function () {
+	if (jawnosClockRingMath && !jawnosClockRingMath.solved) { return; }
 	if (!jawnosClockRingingCurrent) { return; }
 	var payload = jawnosClockRingingCurrent;
 	jawnosClockPost('/manager/clock/alarm', { action: 'snooze', uuid: payload.uuid, minutes: jawnosClockSnoozeValue(payload.snooze) }, function () {

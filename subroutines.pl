@@ -31804,12 +31804,12 @@ sub clock_device_broadcast {
 	if (defined $extra{'at'} && "$extra{'at'}" =~ /^\d+$/ && $extra{'at'} > 0) {
 		$command .= ' --el at ' . int($extra{'at'});
 	}
-	foreach my $key ( qw/uuid label app file/ ) {
+	foreach my $key ( qw/uuid label app file play nfc_action reason/ ) {
 		my $value = $extra{$key};
 		next unless defined $value && length $value;
 		$command .= ' --es ' . $key . ' ' . &quote($value);
 	}
-	foreach my $key ( qw/volume ramp loop guard snooze stop/ ) {
+	foreach my $key ( qw/volume ramp loop guard snooze nfc stop/ ) {
 		my $value = $extra{$key};
 		next unless defined $value && "$value" =~ /^-?\d+$/;
 		$command .= ' --ei ' . $key . ' ' . int($value);
@@ -31866,6 +31866,9 @@ sub clock_write_device_alarm {
 			# five-minute guard, is what ends it.
 			loop => 1,
 			snooze => int($next_alarm->{'snooze'} || 5),
+			play => ($next_alarm->{'play'} || ''),
+			nfc => (($next_alarm->{'nfc'} || 0) && &clock_app_has_nfc_start($next_alarm->{'app'})) ? 1 : 0,
+			nfc_action => ($next_alarm->{'nfc_action'} || 'snooze'),
 			guard => &clock_alarm_ring_length($next_alarm),
 		};
 	}
@@ -31898,6 +31901,9 @@ sub clock_device_ring {
 		ramp => int($alarm->{'ramp'} || 0),
 		loop => 1,
 		snooze => int($alarm->{'snooze'} || 5),
+		play => ($alarm->{'play'} || ''),
+		nfc => (($alarm->{'nfc'} || 0) && &clock_app_has_nfc_start($alarm->{'app'})) ? 1 : 0,
+		nfc_action => ($alarm->{'nfc_action'} || 'snooze'),
 		guard => &clock_alarm_ring_length($alarm),
 	);
 	return 1;
@@ -31988,6 +31994,15 @@ sub clock_normalize_alarm {
 	my $snooze = (defined $in->{'snooze'} && "$in->{'snooze'}" =~ /^\d+$/) ? int($in->{'snooze'}) : 5;
 	$snooze = 1 if $snooze < 1;
 	$snooze = 60 if $snooze > 60;
+	# Play mode is the first step towards a wake-up game. Only math exists now;
+	# an unknown value reads as none so an old client cannot arm a puzzle the
+	# alarm screen does not know how to draw.
+	my $play = (($in->{'play'} // '') eq 'math') ? 'math' : '';
+	# NFC requires a tag assigned to the linked app. The action is what the tag
+	# does when it is scanned; snooze is the old default and dismiss is the
+	# Tasker-style "get out of bed" choice.
+	my $nfc = ($in->{'nfc'} && $in->{'nfc'} ne '0' && $in->{'nfc'} ne 'off') ? 1 : 0;
+	my $nfc_action = (($in->{'nfc_action'} // '') eq 'dismiss') ? 'dismiss' : 'snooze';
 	my $enabled = defined $in->{'enabled'} ? (($in->{'enabled'} && $in->{'enabled'} ne '0' && $in->{'enabled'} ne 'off') ? 1 : 0) : 1;
 	my $self = &signatorial_designer() || '';
 	my @raw_machines = ref $in->{'machines'} eq 'ARRAY' ? @{ $in->{'machines'} } : split /,/, ($in->{'machines'} // '');
@@ -32012,6 +32027,9 @@ sub clock_normalize_alarm {
 		volume => $volume,
 		ramp => $ramp,
 		snooze => $snooze,
+		play => $play,
+		nfc => $nfc,
+		nfc_action => $nfc_action,
 		machines => \@machines,
 		# An alarm written from a future appointment points back at it, so the next
 		# appointment replaces the same Clock row instead of adding another one.
@@ -32325,13 +32343,70 @@ sub clock_skip_apply {
 	return 1;
 }
 
+# Every NFC tag row for an app, across devices. A tag is written from the phone
+# that owns the reader, so its settings row may sit under that machine; the
+# alarm has to find it whichever machine is editing the Clock.
+sub clock_app_nfc_tags {
+	my ($app) = @_;
+	return [] unless defined $app && length $app;
+	my $rows = eval { &db_query("select device, value from settings where app = ? and setting = 'nfc'", $app)->hashes } || [];
+	my @tags;
+	foreach my $r (@{ $rows || [] }) {
+		my $list = eval { decode_json($r->{'value'} || '') } || [];
+		next unless ref $list eq 'ARRAY';
+		foreach my $t (@{$list}) {
+			next unless ref $t eq 'HASH' && length($t->{'uuid'} || '');
+			$t->{'device'} = $r->{'device'};
+			push @tags, $t;
+		}
+	}
+	return \@tags;
+}
+
+# The controls that start an app. A tag assigned for any of these can answer the
+# linked alarm; a tag that only records or commands does not count as the
+# waking-up tag.
+sub clock_nfc_control_starts {
+	my ($control) = @_;
+	return 0 unless defined $control && length $control;
+	return $control =~ /^(?:start|record|usual)$/ ? 1 : 0;
+}
+
+sub clock_app_has_nfc_start {
+	my ($app) = @_;
+	my $tags = &clock_app_nfc_tags($app);
+	return scalar grep { &clock_nfc_control_starts($_->{'control'}) } @{ $tags || [] };
+}
+
+# app => 1 for every app with a start tag; the alarm editor uses this to offer
+# the "Use NFC to snooze" box only where a tag really exists.
+sub clock_nfc_start_apps {
+	my $rows = eval { &db_query("select app, value from settings where setting = 'nfc'")->hashes } || [];
+	my %out;
+	foreach my $r (@{ $rows || [] }) {
+		my $app = $r->{'app'} || '';
+		next unless length $app;
+		my $list = eval { decode_json($r->{'value'} || '') } || [];
+		next unless ref $list eq 'ARRAY';
+		foreach my $t (@{$list}) {
+			next unless ref $t eq 'HASH';
+			if (&clock_nfc_control_starts($t->{'control'})) { $out{$app} = 1; last; }
+		}
+	}
+	return \%out;
+}
+
 sub clock_state() {
 	my $now = &rightNow();
 	my $me = &signatorial_designer() || '';
 	my $alarms = &clock_alarms_read();
 	my $acks = &clock_alarm_acks_read();
+	my $nfc_apps = &clock_nfc_start_apps();
 	foreach my $alarm (@{ $alarms }) {
 		$alarm->{'next_at'} = &clock_alarm_next_at($alarm, $now);
+		# A stale NFC flag on an alarm whose app no longer has a start tag must
+		# not leave the phone asking for a tag that cannot answer.
+		$alarm->{'nfc_ready'} = ($alarm->{'nfc'} && $nfc_apps->{$alarm->{'app'}}) ? 1 : 0;
 		my $delivered = {};
 		if (ref $acks->{ $alarm->{'uuid'} } eq 'HASH') {
 			$delivered = { %{ $acks->{ $alarm->{'uuid'} } } };
@@ -32349,6 +32424,7 @@ sub clock_state() {
 		sounds => &clock_sounds(),
 		alarm_sounds => &clock_alarm_sounds(),
 		machines => &clock_machines(),
+		nfc_apps => $nfc_apps,
 		me => $me,
 		max => 10,
 	};
@@ -32439,6 +32515,9 @@ sub clock_alarm_cmd {
 		volume => $alarm->{'volume'},
 		ramp => $alarm->{'ramp'},
 		snooze => int($alarm->{'snooze'} || 5),
+		play => ($alarm->{'play'} || ''),
+		nfc => (($alarm->{'nfc'} || 0) && &clock_app_has_nfc_start($alarm->{'app'})) ? 1 : 0,
+		nfc_action => ($alarm->{'nfc_action'} || 'snooze'),
 		app => $alarm->{'app'},
 		fired_at => $fire_at,
 	};
@@ -32896,6 +32975,23 @@ sub clock_control_apply {
 	elsif (length $uuid) {
 		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{$alarms};
 		if ($alarm) {
+			# An alarm can hand its snooze/dismiss to the NFC tag assigned to the
+			# linked app. The phone writes the tag's uuid with the request; a tag
+			# that is not assigned, or is assigned to another control, leaves the
+			# alarm ringing. The ring payload only asks for NFC when a start tag
+			# exists, so a deleted tag cannot strand the alarm.
+			my $nfc_required = ($alarm->{'nfc'} || 0) && &clock_app_has_nfc_start($alarm->{'app'});
+			if ($nfc_required) {
+				my $tag_uuid = $data->{'nfc_uuid'} || '';
+				my ($tag) = grep {
+					($_->{'uuid'} || '') eq $tag_uuid && &clock_nfc_control_starts($_->{'control'})
+				} @{ &clock_app_nfc_tags($alarm->{'app'}) };
+				unless ($tag) {
+					&clock_lock_drop($lock);
+					&clock_device_broadcast('com.termux.app.JAWN_CLOCK_REJECT', uuid => $uuid);
+					return 0;
+				}
+			}
 			$relay_machines = $alarm->{'machines'} || [];
 			$alarm->{'snooze_until'} = 0;
 			$alarm->{'ringing'} = 0;

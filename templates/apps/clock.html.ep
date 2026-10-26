@@ -77,6 +77,10 @@
 	.clock_field input[type=range] { padding:0; accent-color:#2f8f6d; }
 	.clock_sound_row { display:flex; align-items:center; gap:4px; min-width:0; }
 	.clock_sound_row select { flex:1 1 auto; width:auto; min-width:0; }
+	.clock_nfc_row { display:flex; align-items:center; gap:5px; min-width:0; }
+	.clock_nfc_row input[type=checkbox] { flex:0 0 auto; width:auto; padding:0; accent-color:#2f8f6d; }
+	.clock_nfc_row select { flex:1 1 auto; width:auto; min-width:0; }
+	.clock_nfc_hint { font-size:10px; opacity:.6; line-height:1.25; }
 	.clock_alarm_preview { flex:0 0 auto; font:inherit; font-size:11px; padding:3px 8px; cursor:pointer; color:inherit;
 		border:1px solid var(--line); border-radius:5px; background:var(--panel); }
 	.clock_alarm_preview:hover { background:var(--line); }
@@ -209,6 +213,28 @@
 									<input type="text" class="clock_alarm_app" autocomplete="off" data-app="<%= $alarm->{'app'} %>" value="<%= $alarm->{'app'} ? &subs::format_name($alarm->{'app'}) : '' %>" placeholder="<%= &subs::lang('no_appointment') %>">
 									<button type="button" class="clock_app_toggle" tabindex="-1" aria-label="<%= &subs::lang('link_appointment') %>">▾</button>
 								</div>
+							</label>
+							<% my $alarm_play = ($alarm->{'play'} || '') eq 'math' ? 'math' : ''; %>
+							<% my $alarm_nfc = $alarm->{'nfc'} ? 1 : 0; %>
+							<% my $alarm_nfc_action = ($alarm->{'nfc_action'} || '') eq 'dismiss' ? 'dismiss' : 'snooze'; %>
+							<% my $alarm_nfc_tag = ($nfc_apps && $alarm->{'app'} && $nfc_apps->{ $alarm->{'app'} }) ? 1 : 0; %>
+							<label class="clock_field">
+								<span><%= &subs::lang('play_mode') %></span>
+								<select class="clock_alarm_play">
+									<option value=""<%= $alarm_play eq 'math' ? '' : ' selected' %>><%= &subs::lang('none') %></option>
+									<option value="math"<%= $alarm_play eq 'math' ? ' selected' : '' %>><%= &subs::lang('math') %></option>
+								</select>
+							</label>
+							<label class="clock_field clock_alarm_nfc_field"<%= ($alarm_nfc_tag || $alarm_nfc) ? '' : ' style="display:none;"' %>>
+								<span><%= &subs::lang('use_nfc_to_snooze') %></span>
+								<div class="clock_nfc_row">
+									<input type="checkbox" class="clock_alarm_nfc"<%= $alarm_nfc ? ' checked' : '' %><%= ($alarm_nfc_tag || $alarm_nfc) ? '' : ' disabled' %>>
+									<select class="clock_alarm_nfc_action" aria-label="<%= &subs::lang('nfc_action') %>"<%= $alarm_nfc ? '' : ' style="display:none;"' %>>
+										<option value="snooze"<%= $alarm_nfc_action eq 'dismiss' ? '' : ' selected' %>><%= &subs::lang('snooze') %></option>
+										<option value="dismiss"<%= $alarm_nfc_action eq 'dismiss' ? ' selected' : '' %>><%= &subs::lang('dismiss') %></option>
+									</select>
+								</div>
+								<span class="clock_nfc_hint"<%= $alarm_nfc_tag ? ' style="display:none;"' : '' %>><%= &subs::ui('Link an appointment with an NFC start tag to use this.') %></span>
 							</label>
 							<label class="clock_field clock_alarm_machines">
 								<span><%= &subs::lang('shared_with') %></span>

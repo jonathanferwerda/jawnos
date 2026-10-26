@@ -22960,6 +22960,7 @@ get '/manager/clock' => sub($c) {
 		sounds => $state->{'sounds'},
 		alarm_sounds => $state->{'alarm_sounds'},
 		machines => $state->{'machines'},
+		nfc_apps => $state->{'nfc_apps'},
 		max => $state->{'max'},
 	);
 	my $contents = &window_maker({ user_agent => $c->param('user_agent'), app => 'clock', title => &subs::lang('clock'), contents => $content }, $c->param('timestamp'));
@@ -23183,6 +23184,9 @@ post '/manager/clock/alarm' => sub($c) {
 			$alarm->{'volume'} = $c->param('volume') if defined $c->param('volume') && $c->param('volume') =~ /^\d+$/;
 			$alarm->{'ramp'} = $c->param('ramp') if defined $c->param('ramp') && $c->param('ramp') =~ /^\d+$/;
 			$alarm->{'snooze'} = $c->param('snooze') if defined $c->param('snooze') && $c->param('snooze') =~ /^\d+$/;
+			$alarm->{'play'} = (($c->param('play') // '') eq 'math') ? 'math' : '' if defined $c->param('play');
+			$alarm->{'nfc'} = ($c->param('nfc') && $c->param('nfc') ne '0' && $c->param('nfc') ne 'off') ? 1 : 0 if defined $c->param('nfc');
+			$alarm->{'nfc_action'} = (($c->param('nfc_action') // '') eq 'dismiss') ? 'dismiss' : 'snooze' if defined $c->param('nfc_action');
 			$alarm->{'enabled'} = ($c->param('enabled') && $c->param('enabled') ne '0' && $c->param('enabled') ne 'off') ? 1 : 0 if defined $c->param('enabled');
 			$alarm->{'updated'} = $now;
 			$alarm = &subs::clock_normalize_alarm($alarm);
