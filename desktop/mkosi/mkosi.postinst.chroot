@@ -9,7 +9,11 @@
 set -eu
 
 export PERL_MM_USE_DEFAULT=1
-export PERL_CPANM_OPT='--notest'
+# The image build shares a memory-constrained host with the running manager.
+# Cap the compilers so a CPAN module cannot take the machine (and the build)
+# down with it; the previous unlimited build was killed by earlyoom.
+export MAKEFLAGS=${MAKEFLAGS:--j2}
+export PERL_CPANM_OPT='--notest --jobs 2'
 
 # Arch installs cpanm as /usr/bin/vendor_perl/cpanm; the post-install sandbox
 # has a bare PATH, so a plain `cpanm` is "command not found" and every module
@@ -23,7 +27,7 @@ perl scripts/jawnos_deps.pl --install --no-extras
 # package's pacman hook built it during the package transaction, before mkosi
 # copied mkosi.extra, so that initrd still has the stock hooks and shows the
 # kernel's initialization list. This run picks up /etc/mkinitcpio.conf's
-# sd-plymouth hook and the JawnOS theme, so the mark appears before the root
+# plymouth hook and the JawnOS theme, so the mark appears before the root
 # filesystem is mounted. mkosi then builds the UKI from this image.
 mkinitcpio -P
 

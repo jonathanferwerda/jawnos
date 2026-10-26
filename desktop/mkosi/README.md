@@ -163,7 +163,8 @@ instead of the kernel's initialization list, and `quiet splash` keeps the
 console quiet. `/etc/os-release`, `/etc/issue` and `/etc/motd` name JawnOS, so
 the login prompt says "Welcome to JawnOS" rather than Arch Linux. The theme's
 source images are in `mkosi.extra/usr/share/plymouth/themes/jawnos/`; the
-`sd-plymouth` mkinitcpio hook copies them into the initramfs.
+`plymouth` mkinitcpio hook copies them into the initramfs (Arch's name for it;
+Manjaro packages the same hook as `sd-plymouth`).
 
 The kernel command line is `systemd.volatile=overlay`: **the root is read-only
 and every change to it lives in RAM until reboot.** The house lives on partition
