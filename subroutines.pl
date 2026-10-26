@@ -32409,7 +32409,14 @@ sub clock_state() {
 		$alarm->{'nfc_ready'} = ($alarm->{'nfc'} && $nfc_apps->{$alarm->{'app'}}) ? 1 : 0;
 		my $delivered = {};
 		if (ref $acks->{ $alarm->{'uuid'} } eq 'HASH') {
-			$delivered = { %{ $acks->{ $alarm->{'uuid'} } } };
+			# Keep only confirmations of the row as it stands now: an ack from a
+			# previous edit is not a confirmation that the new edit arrived.
+			my $updated = int($alarm->{'updated'} || 0);
+			foreach my $sig ( keys %{ $acks->{ $alarm->{'uuid'} } } ) {
+				my $at = int($acks->{ $alarm->{'uuid'} }->{$sig} || 0);
+				next if !$at || ($updated && $at < $updated);
+				$delivered->{$sig} = $at;
+			}
 		}
 		# This machine holds the row it is showing, so its own pill is always
 		# confirmed; the check marks are for the machines the push reached.
@@ -32805,6 +32812,9 @@ sub clock_alarm_push {
 	return $result unless length $uuid;
 	$op = ($op || '') eq 'delete' ? 'delete' : 'upsert';
 	$now = &rightNow() unless defined $now;
+	# An acknowledgement belongs to one edit, so stamp it with the row's own
+	# `updated` value. A ✓ from an earlier edit must not outlive the change.
+	my $stamp = int($alarm->{'updated'} || $now);
 	$allow_forward = 1 unless defined $allow_forward;
 	my $self = &signatorial_designer() || '';
 	my %want;
@@ -32848,14 +32858,14 @@ sub clock_alarm_push {
 			if ($body->{'ok'} && ref $body->{'forwarded'} eq 'ARRAY') {
 				foreach my $fs ( @{ $body->{'forwarded'} } ) {
 					next unless defined $fs && length $fs;
-					&clock_alarm_mark_ack($uuid, $fs, $now);
+					&clock_alarm_mark_ack($uuid, $fs, $stamp);
 				}
 			}
 		};
 		$err = $@;
 		if ($ok) {
 			push @{ $result->{'delivered'} }, $sig;
-			&clock_alarm_mark_ack($uuid, $sig, $now);
+			&clock_alarm_mark_ack($uuid, $sig, $stamp);
 		}
 		else {
 			warn 'clock alarm push ' . $sig . ' failed: ' . ($err =~ s/\s+/ /gr) . "\n" if $err;
@@ -32898,7 +32908,7 @@ sub clock_alarm_push {
 				die "not ok\n" unless $body->{'ok'} && ref $body->{'forwarded'} eq 'ARRAY';
 				my %done = map { $_ => 1 } @{ $body->{'forwarded'} };
 				foreach my $fs ( keys %done ) {
-					&clock_alarm_mark_ack($uuid, $fs, $now);
+					&clock_alarm_mark_ack($uuid, $fs, $stamp);
 					push @{ $result->{'delivered'} }, $fs;
 				}
 				@still = grep { !$done{$_} } @still;
