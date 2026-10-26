@@ -1122,6 +1122,7 @@ sub utility_runner() {
 		if ($fingerprint ne $announced) {
 			&subs::cache_set({ app => '__president', context => 'wake', subcontext => 'announced', warranty => '-1d' }, $fingerprint);
 			&subs::cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &subs::rightNow() + 15000);
+			&subs::wake_hold_touch();
 			&subs::subprocessor(sub { &subs::remote_available_announce(); }, { name => 'remote availability' });
 		}
 	}

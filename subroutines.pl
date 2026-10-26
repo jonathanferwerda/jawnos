@@ -4247,6 +4247,7 @@ sub remote_available_announce {
 		$pulled++;
 		# A peer is pulling from us now: stay up long enough to answer it.
 		&cache_set({ app => '__president', context => 'wake', subcontext => 'hold', warranty => '-1d' }, &rightNow() + 35000);
+		&wake_hold_touch();
 	}
 	return $pulled;
 }
@@ -4255,6 +4256,22 @@ sub remote_available_announce {
 # wake checks this before releasing the CPU: a phone must not sleep in the
 # middle of a pull it is serving. The mtime is the signal, and utime updates it
 # without rewriting the file, so a multi-batch pull costs no flash writes.
+# The Android receiver's hard hold: while this file is fresh it renews the CPU
+# lock instead of letting the 45-second scheduled window expire. Touch it when a
+# peer is about to pull and for every row batch served; the receiver treats a
+# touch within 60s as a lease (the five-minute cap still bounds a runaway peer).
+# utime updates only the inode, so a multi-batch pull costs no flash writes.
+sub wake_hold_touch {
+	my $file = &home('~/.president/wake_hold');
+	unless (utime undef, undef, $file) {
+		if (open(my $fh, '>', $file)) {
+			print $fh &rightNow();
+			close $fh;
+		}
+	}
+	return 1;
+}
+
 sub sync_pull_touch {
 	my $file = &home('~/.president/sync_pull');
 	unless (utime undef, undef, $file) {
@@ -4263,6 +4280,8 @@ sub sync_pull_touch {
 			close $fh;
 		}
 	}
+	# A served batch is also the moment the scheduled window must not close.
+	&wake_hold_touch();
 	return 1;
 }
 
