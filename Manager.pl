@@ -37590,16 +37590,29 @@ sub app_access_mode {
 	# being unable to set up its unlock does not open (or close) the rest of the
 	# house. Peers read their own signatorial, so this row never becomes their
 	# answer.
-	my $sig = &subs::signatorial_designer();
-	if ($sig) {
-		my $own = &subs::setting_grabber({ app => '__president', setting => 'app_access', device => $sig });
-		return $own if defined $own && $own =~ /^(?:off|enforce|shadow)$/;
+	#
+	# This is asked on every private request, so the two candidate rows are read
+	# in one statement. Last row per device wins, exactly as the two
+	# setting_grabber calls this replaces did (SQLite returns equal app+setting
+	# keys in rowid order, so `order by rowid` is the same answer, made explicit).
+	my $sig = &subs::signatorial_designer() || '';
+	my $rows = eval {
+		&subs::db_query('select device, value from settings where app = ? and setting = ? and device in (?, ?) order by rowid',
+			'__president', 'app_access', $sig, 'all')->hashes
+	} || [];
+	my %mode;
+	foreach my $row ( @{$rows} ) {
+		next unless defined $row->{'device'};
+		$mode{$row->{'device'}} = $row->{'value'};
+	}
+	if ($sig && defined $mode{$sig} && $mode{$sig} =~ /^(?:off|enforce|shadow)$/) {
+		return $mode{$sig};
 	}
 	# The house-wide policy, shared as device 'all' so every machine and every
 	# device class that has no row of its own reads one answer.
-	my $mode = &subs::setting_grabber({ app => '__president', setting => 'app_access', device => 'all' });
-	return 'off' if defined $mode && $mode eq 'off';
-	return $mode eq 'enforce' ? 'enforce' : 'shadow';
+	my $house = $mode{'all'};
+	return 'off' if defined $house && $house eq 'off';
+	return (defined $house && $house eq 'enforce') ? 'enforce' : 'shadow';
 }
 
 sub app_public_path {
@@ -37658,7 +37671,7 @@ sub app_session_ok {
 		# A first-contact or pre-upgrade session carries no proved name; keep its
 		# existing access until it logs in again.
 		return 1 if $ssig eq '';
-		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $ssig })->hash;
+		my $rm = &subs::db_query('select * from remote_machines where signatorial = ?', $ssig)->hash;
 		# the row is gone: the session is revoked with it
 		return 0 unless $rm;
 		my $key = $rm->{'uuid'} || $rm->{'signatorial'};
@@ -37689,7 +37702,7 @@ sub app_peer_ok {
 	# linked machine's name, and a route's own request need not carry a name.
 	my $pub = eval { b64_decode($offered) } || '';
 	return 0 unless $pub && index($pub, '-----BEGIN PUBLIC KEY-----') == 0;
-	my $rm = &subs::db_select('remote_machines', undef, { pubkey => $pub })->hashes->[0];
+	my $rm = &subs::db_query('select * from remote_machines where pubkey = ?', $pub)->hashes->[0];
 	return 0 unless $rm;
 	return &subs::peer_verify($c, $rm) ? 1 : 0;
 }
@@ -38104,7 +38117,7 @@ sub padlock_gate_allows {
 sub padlock_device_locked {
 	my ($device_uuid) = @_;
 	return 0 unless $device_uuid;
-	return &subs::db_select('security', undef, { level => 'padlock_device', uuid => $device_uuid })->hashes->[0] ? 1 : 0;
+	return &subs::db_query('select 1 from security where level = ? and uuid = ? limit 1', 'padlock_device', $device_uuid)->hashes->[0] ? 1 : 0;
 }
 
 # The screen's own unlock stamp, used only when the whole house is locked: it
@@ -38113,7 +38126,7 @@ sub padlock_device_until {
 	my ($device_uuid) = @_;
 	return 0 unless $device_uuid;
 	my $row = &subs::db_query('select value from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', '__president', 'padlock_device_time', $device_uuid)->hashes->[0];
-	return $row ? (&padlock_time_value(&subs::suds_grabber(), $row->{'value'}) || 0) : 0;
+	return $row ? (&padlock_time_value(undef, $row->{'value'}) || 0) : 0;
 }
 
 sub padlock_device_set_time {
@@ -38142,19 +38155,33 @@ sub padlock_target_locked {
 }
 
 # The lock timers are milliseconds, not secrets: a plain number is readable by
-# every worker, and an older sealed value still decrypts.
+# every worker, and an older sealed value still decrypts. A sealed value is
+# opened once per worker rather than on every request: the answer is a pure
+# function of (key, ciphertext), so the memo is exact - a rotation or a re-seal
+# changes the key id or the ciphertext and misses. It is capped because a lock
+# stamp is rewritten whenever the timer moves.
+our %padlock_time_memo;
 sub padlock_time_value {
 	my ($suds, $raw) = @_;
 	return 0 unless defined $raw && length $raw;
 	return $raw if $raw =~ /^\d{10,}$/;
-	return &subs::decrypter($suds || &subs::suds_grabber(), $raw) || 0;
+	$suds = &subs::suds_grabber() unless $suds;
+	my $memo_key = &subs::suds_id($suds) . "\x1f" . $raw;
+	return $padlock_time_memo{$memo_key} if exists $padlock_time_memo{$memo_key};
+	my $value = &subs::decrypter($suds, $raw) || 0;
+	%padlock_time_memo = () if keys(%padlock_time_memo) > 512;
+	return $padlock_time_memo{$memo_key} = $value;
 }
 
+# $state is the truth this request has already established (see
+# authentication_passer): { row => the padlock security row, contexts => the
+# decoded padlock_contexts }. It saves the duplicate reads without changing
+# the answer; callers with nothing prefetched pass nothing.
 sub padlock_global_locked {
-	my ($c) = @_;
-	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	my ($c, $state) = @_;
+	my $padlock = $state ? $state->{'row'} : &subs::db_query('select * from security where level = ?', 'padlock')->hashes->[0];
 	return 0 unless $padlock;
-	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	my $contexts = $state ? $state->{'contexts'} : (eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || []);
 	return 0 unless grep { $_ eq 'general' } @{$contexts};
 	my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', '__president', 'pl_time')->hashes->[0];
 	# No stamp means this machine has never been locked since the gate was set;
@@ -38162,15 +38189,15 @@ sub padlock_global_locked {
 	# open. (A peer that has not pulled the row yet must not claim the house is
 	# locked and hide the phone's Unlock button.)
 	return 0 unless $row;
-	my $pl = &padlock_time_value(&subs::suds_grabber(), $row->{'value'}) || 0;
+	my $pl = &padlock_time_value(undef, $row->{'value'}) || 0;
 	return (&subs::rightNow() > $pl) ? 1 : 0;
 }
 
 sub padlock_locked_now {
-	my ($c, $device) = @_;
-	my $padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes->[0];
+	my ($c, $device, $state) = @_;
+	my $padlock = $state ? $state->{'row'} : &subs::db_query('select * from security where level = ?', 'padlock')->hashes->[0];
 	return 0 unless $padlock;
-	my $contexts = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || [];
+	my $contexts = $state ? $state->{'contexts'} : (eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'padlock_contexts' }) } || []);
 	return 0 unless grep { $_ eq 'general' } @{$contexts};
 	$device = $c->session('device_uuid') || '' unless defined $device;
 	if ($device) {
@@ -38178,7 +38205,7 @@ sub padlock_locked_now {
 		my $until = &padlock_device_until($device);
 		return (&subs::rightNow() > $until) ? 1 : 0 if $until;
 	}
-	return &padlock_global_locked($c);
+	return &padlock_global_locked($c, $state);
 }
 
 sub padlock_gate_shadow {
@@ -41093,19 +41120,32 @@ sub notification_sender($m,$db) {
 sub authentication_passer($c) {
 	my $server_time = &subs::rightNow();
 
+	# The path is asked for by several checks below (the app gate, the bootstrap
+	# door, the padlock gate), so read it once. A public path is answered by
+	# app_public_path alone: the gate lets it through whatever the policy says,
+	# so the two settings reads behind app_access_mode are skipped for every
+	# asset and public page instead of being paid on each of them.
+	my $app_path = $c->req->url->path->to_string;
+	my $app_public = &app_public_path($app_path) ? 1 : 0;
+	# Ensure the app columns exist before anything asks for them, public path or
+	# not. It is a no-op after the first call in a worker.
+	&app_schema_ensure();
+	my $app_mode = $app_public ? 'off' : &app_access_mode();
+
 	# The app gate runs before the login gate: a browser must not be handed the
 	# manager's login page or any private route at all. The public homepage,
 	# store and the embedded devices' own token rail are allowed through.
-	my $app_mode = &app_access_mode();
+	# app_session_ok/app_peer_ok are memoised here rather than called twice: a
+	# peer session's proof costs a roster read, and the bootstrap door below asks
+	# the same two questions.
+	my ($app_session, $app_peer);
 	if ($app_mode ne 'off') {
-		&app_schema_ensure();
-		my $app_path = $c->req->url->path->to_string;
 		# The Gate is the front door for a person without an app key. A browser
 		# that has not signed in must be able to see it, because the passkey is
 		# the login that then admits the session (webauthn=1). An approved
 		# session with no passkey is still refused, so the app-only rule holds.
 		my $gate_only = ($app_path eq '/manager' && (($c->session('authentication') || '') ne 'approved')) ? 1 : 0;
-		unless (&app_public_path($app_path) || &app_session_ok($c) || &app_peer_ok($c) || $c->session('webauthn') || $gate_only) {
+		unless (($app_session = &app_session_ok($c)) || ($app_peer = &app_peer_ok($c)) || $c->session('webauthn') || $gate_only) {
 			if ($app_mode eq 'enforce') {
 				$c->render(template => 'app_required', layout => undef,
 					device_uuid => ($c->session('device_uuid') || ''),
@@ -41121,14 +41161,22 @@ sub authentication_passer($c) {
 	# This holds even when app_access is off, so the password cannot reopen the
 	# door the app gate would otherwise leave open.
 	if (($c->session('bootstrap') || '') eq '1'
-		&& !&app_public_path($c->req->url->path->to_string)
-		&& !&app_session_ok($c)
-		&& !&app_peer_ok($c)) {
+		&& !$app_public
+		&& !($app_session //= &app_session_ok($c))
+		&& !($app_peer //= &app_peer_ok($c))) {
 		$c->render(template => 'app_required', layout => undef,
 			device_uuid => ($c->session('device_uuid') || ''),
 			signatorial => &subs::signatorial_designer());
 		return;
 	}
+
+	my $person_uuid = $c->session('person_uuid') || '';
+	my $device_uuid = $c->session('device_uuid') || '';
+	# The principal's two roster rows are read once: the fast path needs them to
+	# admit the request, and the full pass below would otherwise read the same
+	# two rows again to reach the same answer.
+	my $principal_active;
+	my $padlock_rows;
 
 	my $authentication = $c->session('authentication') || 'revoked';
 	if ($c->session('authentication') eq 'denial' || $c->session('reject_count') > 3 || ($c->stash('no') && $c->stash('no') == 1)) {
@@ -41139,8 +41187,8 @@ sub authentication_passer($c) {
 		return;
 	}
 	elsif ($authentication eq 'approved' && $c->session('server_time') > $server_time - 5100
-		&& &subs::session_principal_active($c->session('person_uuid'), $c->session('device_uuid'))
-		&& !&subs::db_select('security', undef, { level => 'padlock' })->hashes->[0]) {
+		&& ($principal_active = &subs::session_principal_active($person_uuid, $device_uuid))
+		&& !(($padlock_rows = &subs::db_query('select * from security where level = ?', 'padlock')->hashes)->[0])) {
 		# The fast path may skip the full auth pass, but never the padlock:
 		# every request refreshes session server_time, so a locked screen that
 		# kept a request in flight every few seconds returned here forever and
@@ -41155,7 +41203,7 @@ sub authentication_passer($c) {
 	my $warranty = $c->session('warranty');
 
 	my $visitor = $c->tx->local_address eq $c->tx->remote_address ? 'Me' : ($c->param('manager_file') || $c->tx->remote_address);
-	my $string = $c->tx->req->url->path->to_string;
+	my $string = $app_path;
 	unless ($c->stash('browser_tab_id') && ($authentication eq 'approved' || $authentication eq 'revoked')) {
 		# Not every retry deserves a Dingaling: a browser reconnecting after a
 		# network change hammers this, so alert at most once per visitor per
@@ -41181,23 +41229,24 @@ sub authentication_passer($c) {
 		unless ($current_suds && $suds_id && secure_compare($suds_id, &subs::suds_id($current_suds))) {
 			$authentication = 'revoked';
 		}
-		# a device session lives only while its roster row does: revoking the
-		# device revokes the cookie at the next check
-		if (my $device_uuid = $c->session('device_uuid')) {
-			my $device = &subs::db_select('paired_devices', undef, { uuid => $device_uuid, status => 'active' })->hashes->[0];
-			unless ($device) { $authentication = 'revoked'; }
+		# a device/person session lives only while its roster row does: revoking
+		# either revokes the cookie at the next check. The fast path above reads
+		# the same two rows, so reuse its answer instead of asking again.
+		unless (defined $principal_active) {
+			$principal_active = &subs::session_principal_active($person_uuid, $device_uuid);
 		}
-		# and a person session lives only while the person does; a revoked
-		# person's ticket or device session is refused here even if its cookie
-		# still names a live warranty
-		my $person_uuid = $c->session('person_uuid') || '';
-		if ($person_uuid && !&subs::person_active($person_uuid)) { $authentication = 'revoked'; }
-		my $pres_settings = &subs::settings_grabber({ app => '__president', settings => [ 'padlock_contexts', 'pl_time' ] });
+		$authentication = 'revoked' unless $principal_active;
+		# benign: the two values are all this needs, and the uuid ensure that
+		# settings_grabber would otherwise run is a write check that also flushed
+		# the per-request setting memo on every request.
+		my $pres_settings = &subs::settings_grabber({ app => '__president', settings => [ 'padlock_contexts', 'pl_time' ], benign => 1 });
 		my $padlock_sightings = eval { return decode_json $pres_settings->{'padlock_contexts'} } || [];
 		my $padlock = [];
 		my $padlock_time = $server_time;
+		my $padlock_state;
 		if ( grep { $_ eq 'general' } @{$padlock_sightings} ) {
-			$padlock = &subs::db_select('security', undef, { level => 'padlock' })->hashes;
+			# the fast path may already have read the row; reuse it when it did
+			$padlock = $padlock_rows // &subs::db_query('select * from security where level = ?', 'padlock')->hashes;
 
 			my $activity_timeout = &subs::setting_grabber({ app => 'me', setting => 'activity_timeout' }) || '-2h';
 			$activity_timeout = &subs::time_abbrev_translator($activity_timeout);
@@ -41208,9 +41257,13 @@ sub authentication_passer($c) {
 			# request look expired and started a lock out of nothing.
 			my $pl_raw = $pres_settings->{'pl_time'};
 			$padlock_time = (defined $pl_raw && length $pl_raw)
-				? (&padlock_time_value(&subs::suds_grabber(), $pl_raw) || 0)
+				? (&padlock_time_value(undef, $pl_raw) || 0)
 				: $server_time;
 
+			# What this request has already learned about the lock. The gate
+			# helpers below ask the same questions; handing them this answer
+			# keeps them from re-reading the row and re-decoding the contexts.
+			$padlock_state = { row => $padlock->[0], contexts => $padlock_sightings };
 			$c->stash('pl_time' => $padlock_time);
 		}
 
@@ -41220,7 +41273,7 @@ sub authentication_passer($c) {
 			# and not for a screen that was opened after a whole-house lock
 			my $did_lock = 0;
 			if ($server_time > $padlock_time) {
-				my $dev = $c->session('device_uuid') || '';
+				my $dev = $device_uuid;
 				my $until = $dev ? &padlock_device_until($dev) : 0;
 				# An unlocked screen has its own future stamp. A screen that is
 				# already locked (no stamp, or a past one) must not run the lock
@@ -41229,16 +41282,16 @@ sub authentication_passer($c) {
 				# again - a table with no fingerprint, sitting on a manager
 				# page, did exactly that on every poll. Answer the gate; do not
 				# re-lock what is already locked.
-				my $already = ($until && $until > $server_time) ? 1 : (&padlock_locked_now($c, $dev) ? 1 : 0);
+				my $already = ($until && $until > $server_time) ? 1 : (&padlock_locked_now($c, $dev, $padlock_state) ? 1 : 0);
 				$did_lock = &lock_session($c) unless $already;
 			}
 			# The request that meets the expired timer is the one that locked:
 			# gate it now. lock_session stamps pl_time = now, so re-checking the
 			# clock a moment later could still read it as open and render the
 			# page, with the lock overlay arriving after it had painted.
-			$locked_now = $did_lock ? 1 : &padlock_locked_now($c);
+			$locked_now = $did_lock ? 1 : &padlock_locked_now($c, $device_uuid, $padlock_state);
 			if ($locked_now) {
-				my $gate_path = $c->req->url->path->to_string;
+				my $gate_path = $app_path;
 				if (!&padlock_gate_allows($gate_path)) {
 					if (&padlock_gate_mode() eq 'enforce') {
 						&padlock_gate_answer($c);

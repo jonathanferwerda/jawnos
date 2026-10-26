@@ -22031,14 +22031,16 @@ sub person_privilege {
 sub person_active {
 	my ($person_uuid) = @_;
 	return 0 unless defined $person_uuid && length $person_uuid;
-	my $p = eval { &db_select('people', ['status'], { uuid => $person_uuid })->hash };
+	# Plain SQL, not db_select: this runs on the fast path of every request, and
+	# SQL::Abstract's select costs a few hundred microseconds per call.
+	my $p = eval { &db_query('select status from people where uuid = ?', $person_uuid)->hash };
 	return ($p && ($p->{'status'} || '') eq 'active') ? 1 : 0;
 }
 
 sub device_active {
 	my ($device_uuid) = @_;
 	return 0 unless defined $device_uuid && length $device_uuid;
-	my $d = eval { &db_select('paired_devices', ['status'], { uuid => $device_uuid })->hash };
+	my $d = eval { &db_query('select status from paired_devices where uuid = ?', $device_uuid)->hash };
 	return ($d && ($d->{'status'} || '') eq 'active') ? 1 : 0;
 }
 

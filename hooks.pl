@@ -11,6 +11,35 @@ our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
+# One UUID generator per worker. A fresh Data::UUID object per request costs far
+# more than the ids it makes (create_str on a kept object is sub-microsecond),
+# and hooks.pl makes two or three ids on every request.
+our $uuid_generator;
+# What each privilege may reach. A constant, built once per worker rather than
+# on every request.
+our $allowances = {
+	guest => [
+		'/js/mailbox.js',
+		'/',
+		'/js/jquery-ui.js',
+		'/js/jquery.ui.touch-punch.min.js',
+		'/js/universal.js',
+		'/js/screensaver.js',
+		'/js/homepage.js',
+		'/js/jquery.js',
+		'/js/numeral.min.js',
+		'/mail/ws',
+		'/mail/homepage_form'
+	],
+	resident => [
+		'manager'
+	],
+	citizen => [
+		'/configure',
+		'/security',
+		'/manager/magazine/publish',
+	]
+};
 
 
 hook before_dispatch => sub {
@@ -33,7 +62,7 @@ hook before_dispatch => sub {
 			$log->info('worker mem purpose=' . ($ENV{PURPOSE} || '?') . " pid=$pid rss=" . (defined $rss ? $rss : '?') . 'kB');
 		}
 	}
-	my $path = $c->req->url->path;
+	my $path = $c->req->url->path->to_string;
 	# Tell the worker supervisor (President.pl) that this worker is inside a
 	# request. Static assets are skipped: they are microseconds long, and a burst
 	# of them must not look like a full pool. The flag on the stash keeps the
@@ -49,17 +78,8 @@ hook before_dispatch => sub {
 		$c->render(text => 'ok');
 		return;
 	}
-	my $port = $c->req->url->base->port;
 	my $local_address = $c->tx->local_address;
 	my $remote_address = $c->tx->remote_address;
-	my $domain = $c->req->url->to_abs->host;
-
-	if ($domain =~ /[a-zA-Z]/gi && $domain ne $config->{'domain'}) {
-	}
-
-	if ($local_address ne $remote_address) {
-
-	}
 
 	$c->session('reject_count', 0) unless $c->session('reject_count');
 	if ($gb::database_holder->{'db'} && $local_address ne $remote_address) {
@@ -106,31 +126,6 @@ hook before_dispatch => sub {
 
 
 #	&subs::log_writer($remote_address . ' ' . $path);
-
-
-	my $allowances = {
-		guest => [
-			'/js/mailbox.js',
-			'/',
-			'/js/jquery-ui.js',
-			'/js/jquery.ui.touch-punch.min.js',
-			'/js/universal.js',
-			'/js/screensaver.js',
-			'/js/homepage.js',
-			'/js/jquery.js',
-			'/js/numeral.min.js',
-			'/mail/ws',
-			'/mail/homepage_form'
-		],
-		resident => [
-			'manager'
-		],
-		citizen => [
-			'/configure',
-			'/security',
-			'/manager/magazine/publish',
-		]
-	};
 
 
 	#if ($port eq $ENV{PORT_MAIN} && ($path ne '/') && $path !~ /^\/images\/jbuttons/ && $path ne '/css/store.css' && $path ne '/css/universal.css' && $path ne '/images/decipherable/envelope.png' && $path ne "/images/decipherable/gift.png" && $path ne '/payment' && $path ne '/play' && $path ne '/images/make%20believe/cancel_button.png'  && $path ne '/box_office/ticket_request') {
@@ -186,7 +181,7 @@ hook before_dispatch => sub {
 		}
 	}
 
-	my $ug = Data::UUID->new;
+	my $ug = $uuid_generator ||= Data::UUID->new;
 	unless ($c->param('browser_tab_id') || $c->session('browser_tab_id')) {
 		my $uuid = $ug->create_str();
 		$c->stash('browser_tab_id' => $uuid );
