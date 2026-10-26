@@ -6,12 +6,12 @@
 	<span style="text-align:center;">
 		<% if ($f->{'type'} eq 'audio') { %>
 			<% if (scalar @{$f->{'thumbs'}} > 0) { %>
-				<img loading="lazy" decoding="async" class="massive_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'thumbs'}->[0]) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
+				<img loading="lazy" decoding="async" class="massive_thumb music_file_thumb" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-artwork="/file_open?file=<%= &subs::url_escape_utf8($f->{'thumbs'}->[0]) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
 			<% } %>
 		<% } elsif ($f->{'type'} eq 'video' && $f->{'info'}->{'duration'}) { %>
 			<% if ($f->{'info'}->{'height'}) { %>
 				<% my $brother = &subs::random_string_creator(); %>
-				<img loading="lazy" decoding="async" class="video_preview_thumb massive_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
+				<img loading="lazy" decoding="async" class="video_preview_thumb massive_thumb music_file_thumb" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-artwork="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
 				<video autoplay loop muted potential_src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb massive_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
 			<% } %>
 		<% } %>
@@ -41,7 +41,7 @@
 					</th>
 				</thead>
 				<tbody><tr><td>
-					<img loading="lazy" decoding="async" class="video_preview_thumb large_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&start_time=<%= $ch->{'start_time'} %>&end_time=<%= $ch->{'end_time'} %>&id=<%= $ch->{'tags'}->{'title'} || $ch->{'id'} %>&chapter=ya&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" start_time="<%= $ch->{'start_time'} %>" end_time="<%= $ch->{'end_time'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
+					<img loading="lazy" decoding="async" class="video_preview_thumb large_thumb" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-artwork="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&start_time=<%= $ch->{'start_time'} %>&end_time=<%= $ch->{'end_time'} %>&id=<%= $ch->{'tags'}->{'title'} || $ch->{'id'} %>&chapter=ya&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" isa="img" file_uuid="<%= $f->{'file_uuid'} %>" type="<%= $f->{'type'} %>" start_time="<%= $ch->{'start_time'} %>" end_time="<%= $ch->{'end_time'} %>" id="<%= &subs::random_string_creator(20) %>" brother="<%= $brother %>">
 					<video autoplay loop muted potential_src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>" duration="<%= $f->{'info'}->{'duration'} %>" file_uuid="<%= $f->{'file_uuid'} %>" id="<%= &subs::random_string_creator(20) %>" isa="video" type="<%= $f->{'type'} %>" class="video_preview_thumb large_thumb" style="min-width:110px;border-color:yellow;display:none;" brother="<%= $brother %>"></video>
 					<br><%= &subs::duration_sayer($ch->{'start_time'}) %>
 				</td></tr></tbody>

@@ -657,15 +657,16 @@ sub manager_starter() {
 			$prefork->load_app('./Manager.pl');
 			# A handheld runs this whole tree in a few hundred MB that Android's
 			# low-memory killer reclaims the moment the device tightens; the extra
-			# prefork workers are a server's concurrency, not a phone's. Two is the
-			# phone's resting count. A burst - a gallery opening a wall of thumbnails,
-			# a music window fetching covers - grows it by two, and the supervisor
-			# retires them after half a minute of quiet. A desktop rests at three
-			# and a server at four, each growing by two. `main_workers` in
-			# config.json overrides the resting count when a machine wants another.
+			# prefork workers are a server's concurrency, not a phone's. Three is the
+			# phone's resting count: two left no worker free while a gallery or music
+			# window was reading pictures, so a single slow cover froze every route.
+			# A burst grows it by two, and the supervisor retires them after half a
+			# minute of quiet. A desktop rests at three and a server at four, each
+			# growing by two. `main_workers` in config.json overrides the resting
+			# count when a machine wants another.
 			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
 				? int($config->{'main_workers'}) : 0;
-			my $main_workers = $configured_workers || ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3));
+			my $main_workers = $configured_workers || ($device eq 'mobile' ? 3 : ($device eq 'server' ? 4 : 3));
 			$prefork->workers($main_workers);
 			&prefork_autoscale($prefork, min => $main_workers, max => $main_workers + 2);
 			$prefork->run;

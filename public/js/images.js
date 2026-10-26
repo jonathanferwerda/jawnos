@@ -71,8 +71,15 @@ function galleryLazyLoad(image) {
 	if (!image || !image.getAttribute) { return; }
 	var src = image.getAttribute('data-src');
 	if (!src) { return; }
-	image.setAttribute('src', src);
 	image.removeAttribute('data-src');
+	// The manager's artwork scheduler gathers a screenful of these into one
+	// /manager/thumbs request rather than one /file_open per tile. The store
+	// layout loads this file without that bundle, so it keeps the direct path.
+	if (window.jawnosArtwork && jawnosArtwork.load) {
+		jawnosArtwork.load(image, src);
+		return;
+	}
+	image.setAttribute('src', src);
 	// A thumb that is still being generated answers with a 1x1 placeholder. Ask
 	// again in a moment: the generation slot fills one per pass, so without this
 	// a cover stayed blank until the gallery was reopened.

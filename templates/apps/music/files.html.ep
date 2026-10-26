@@ -51,13 +51,13 @@
 					<div class="music_track_art">
 						<% if ($f->{'type'} eq 'audio') { %>
 							<% if (scalar @{$f->{'thumbs'}} > 0) { %>
-								<img loading="lazy" decoding="async" alt="" class="music_track_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'thumbs'}->[0]) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
+								<img loading="lazy" decoding="async" alt="" class="music_track_thumb music_file_thumb" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-artwork="/file_open?file=<%= &subs::url_escape_utf8($f->{'thumbs'}->[0]) %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
 							<% } else { %>
 								<img class="music_track_thumb music_file_thumb" alt="" src="<%= $icon_music %>">
 							<% } %>
 						<% } elsif ($f->{'type'} eq 'video' && $f->{'info'}->{'duration'} && $f->{'info'}->{'height'}) { %>
 							<%# a still frame of the video %>
-							<img loading="lazy" decoding="async" alt="" class="music_track_thumb music_file_thumb" src="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
+							<img loading="lazy" decoding="async" alt="" class="music_track_thumb music_file_thumb" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-artwork="/file_open?file=<%= &subs::url_escape_utf8($f->{'filename'}) %>&thumb=ya&duration=<%= $f->{'info'}->{'duration'} %>&remote_uuid=<%= $f->{remote_uuid} || $crate->{remote_uuid} %>">
 						<% } else { %>
 							<img class="music_track_thumb music_file_thumb" alt="" src="<%= $icon_video %>">
 						<% } %>

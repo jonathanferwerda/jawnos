@@ -1044,6 +1044,160 @@ get '/file_open' => sub($c) {
 #	$c->render(text => 'no') if $data eq 'no';
 };
 
+# A screenful of pictures, answered in one request.
+#
+# A music library or a photo grid asks for one picture per card. Every one of
+# those used to be its own /file_open: the session check, the appointment read,
+# the key walk and (on a phone) two prefork workers shared between them. A burst
+# of covers could therefore hold the whole pool until the last image answered,
+# and every other route - even a button press - queued behind it. This route does
+# the shared work once and returns the pictures as data URIs.
+#
+# It deliberately serves only what it can answer without side effects. A picture
+# that needs generating (no stored thumb), lives on a peer, or is not a plain
+# /file_open comes back in `defer`; the client asks /file_open for those few
+# through the existing single-flight and relay paths, at a small concurrency.
+# The caller is an approved session, exactly as /file_open requires.
+post '/manager/thumbs' => sub ($c) {
+	my $payload = eval { $c->req->json } || {};
+	$payload = {} unless ref $payload eq 'HASH';
+	my $urls = $payload->{'urls'};
+	unless (ref $urls eq 'ARRAY') {
+		$urls = eval { decode_json($c->param('urls') // '') } || [];
+	}
+	$urls = [] unless ref $urls eq 'ARRAY';
+	unless (($c->session('authentication') || '') eq 'approved'
+		&& &authentication_passer($c) eq 'approved') {
+		return $c->render(status => 403, json => { error => 'denied', items => {}, defer => [] });
+	}
+	# A batch is bounded in both items and bytes: it is one worker answering,
+	# and a tablet should not have a 30 MB JSON body decoded in its browser.
+	my $max_items = 80;
+	my $max_bytes = 8 * 1024 * 1024;
+	my $max_file  = 2 * 1024 * 1024;
+	my %items;
+	my @defer;
+	my %appt_cache;
+	my %secrets_cache;
+	my %standard_cache;
+	my $suds;
+	my ($bytes, $count) = (0, 0);
+	for my $i (0 .. $#$urls) {
+		if ($count >= $max_items || $bytes >= $max_bytes) {
+			push @defer, $i;
+			next;
+		}
+		my ($src, $size) = &thumbs_bundle_one($c, $urls->[$i], \%appt_cache, \%secrets_cache, \%standard_cache, \$suds, $max_file);
+		if (defined $src && length $src && $bytes + $size <= $max_bytes) {
+			$items{$i} = $src;
+			$bytes += $size;
+			$count++;
+		}
+		else {
+			push @defer, $i;
+		}
+	}
+	# A batch is content, not a session answer: the pictures themselves keep the
+	# long-lived cache header /file_open gives a thumb.
+	$c->res->headers->cache_control('private, max-age=3600');
+	$c->render(json => { items => \%items, defer => \@defer });
+};
+
+# One URL from a /manager/thumbs batch, as a data URI. Returns (src, raw size).
+# Everything that is not a cheap, local, already-existing picture is left to
+# /file_open: that is where thumbnail generation, archive lookup and peer relay
+# live, and each has its own guard there.
+sub thumbs_bundle_one {
+	my ($c, $raw, $appt_cache, $secrets_cache, $standard_cache, $suds_ref, $max_file) = @_;
+	return undef unless defined $raw && length $raw && length $raw < 8192;
+	my $url = eval { Mojo::URL->new($raw) };
+	return undef unless $url;
+	return undef unless ($url->path->to_string // '') eq '/file_open';
+	my $q = $url->query;
+	# A peer answer is a network wait, and a generated thumb is ImageMagick; both
+	# stay on their own single-flight path rather than multiplying inside a batch.
+	return undef if $q->param('remote_uuid');
+	return undef if $q->param('duty') || $q->param('loudness') || $q->param('as_is')
+		|| $q->param('subtitle') || $q->param('position') || $q->param('chapter');
+	my $file = $q->param('file') || $q->param('track') || '';
+	return undef unless length $file;
+	my $appt_uuid = $q->param('app_uuid') || $q->param('appt_uuid') || '';
+	my $file_uuid = $q->param('file_uuid') || '';
+	my $timestamp = $q->param('timestamp') || &subs::rightNow();
+	my ($appt, $file_data, $standard);
+	if ($appt_uuid) {
+		$appt = $appt_cache->{$appt_uuid};
+		unless ($appt) {
+			$appt = &subs::db_query('select * from appointments where uuid = ? limit 1', $appt_uuid)->hashes->[0] || {};
+			$appt_cache->{$appt_uuid} = $appt;
+		}
+		$standard = $appt->{'encryption_standard'} if length($appt->{'encryption_standard'} || '');
+	}
+	# A thumb request is answered from the stored thumb when there is one. When
+	# there is not, the caller wanted a generated image; leave that to /file_open,
+	# whose global slot keeps the whole house to one generation at a time.
+	if ($q->param('thumb')) {
+		my $files = ($appt && length($appt->{'file'} || '')) ? (eval { decode_json $appt->{'file'} } || []) : [];
+		foreach my $f ( @{$files} ) {
+			next if $file_uuid && ($f->{'uuid'} || '') ne $file_uuid;
+			next unless ($f->{'f'} || '') eq $file;
+			$file_data = $f;
+			last;
+		}
+		return undef unless $file_data;
+		return undef unless $file_data->{'thumb'} && -e $file_data->{'thumb'} && (-s $file_data->{'thumb'}) > 100;
+		$file = $file_data->{'thumb'};
+	}
+	return undef unless -e $file;
+	my @st = stat($file);
+	return undef unless @st && $st[7] > 0 && $st[7] <= $max_file;
+	if ($file !~ /\.enc$/i) {
+		my $data = read_file($file);
+		return undef unless defined $data && length $data;
+		my $type = &subs::plaintext_verdict(substr($data, 0, 65536)) || &thumbs_bundle_type($file);
+		return ('data:' . $type . ';base64,' . encode_base64($data, ''), length $data);
+	}
+	# The credentials depend on the appointment's time, not the request's; one
+	# read and one decryption per batch is the whole point of this route.
+	my $key = ($appt_uuid || '') . '|' . ($timestamp || 0);
+	my $secrets = $secrets_cache->{$key};
+	unless ($secrets) {
+		$$suds_ref = &subs::suds_grabber() || '' unless defined $$suds_ref;
+		my @list;
+		push @list, $$suds_ref if length $$suds_ref;
+		my $passwords = &subs::db_query('select * from security where level != ? and level != ? and timestamp <= ? order by timestamp DESC', 'padlock', 'door', $timestamp)->hashes;
+		foreach my $p ( @{$passwords} ) {
+			my $secret = &subs::decrypter($$suds_ref, $p->{'credential'}, $timestamp);
+			push @list, $secret if defined $secret && length $secret;
+		}
+		$secrets = $secrets_cache->{$key} = \@list;
+	}
+	my $std = $standard_cache->{$key};
+	unless (defined $std) {
+		$std = $standard || &subs::setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
+		$standard_cache->{$key} = $std;
+	}
+	my $opened = &subs::sealed_file_open($file, $secrets, [ $std ], 1, sub { return &subs::plaintext_verdict($_[0]) });
+	return undef unless $opened && defined $opened->{'data'} && length $opened->{'data'};
+	my $type = $opened->{'verdict'} || &subs::plaintext_verdict(substr($opened->{'data'}, 0, 65536)) || &thumbs_bundle_type($file);
+	return ('data:' . $type . ';base64,' . encode_base64($opened->{'data'}, ''), length $opened->{'data'});
+}
+
+# The data URI's type when the bytes themselves did not identify one. Sealed
+# files end in .enc, so look at the name they were sealed from.
+sub thumbs_bundle_type {
+	my ($file) = @_;
+	my $name = $file || '';
+	$name =~ s/\.enc$//i;
+	return 'image/jpeg' if $name =~ /\.jpe?g$/i;
+	return 'image/png' if $name =~ /\.png$/i;
+	return 'image/webp' if $name =~ /\.webp$/i;
+	return 'image/gif' if $name =~ /\.gif$/i;
+	return 'image/bmp' if $name =~ /\.bmp$/i;
+	return 'image/tiff' if $name =~ /\.tiff?$/i;
+	return 'application/octet-stream';
+}
+
 
 # The tag for a file response: path, inode, size and mtime. A reseal changes the
 # ciphertext (and the tag); an unchanged file revalidates without any decryption.
@@ -1386,15 +1540,36 @@ sub run_thumb_command {
 	return $out;
 }
 
+our %file_relay_down;
 sub rock_and_roll($c) {
 	my $man = 'rejected';
 	my $file = $c->param('file');
 	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
+		my $ru = $c->param('remote_uuid');
+		# A peer that just timed out on a picture is not asked again for a minute.
+		# Without this, a gallery of covers kept on an unreachable machine asked
+		# the same dead peer once per image, and each attempt held a worker for the
+		# connect timeout - exactly how a picture grid froze the whole manager.
+		if ($file_relay_down{$ru} && &subs::rightNow() - $file_relay_down{$ru} < 60) {
+			$c->render(text => 'none');
+			return;
+		}
 		$c->param('subprocess' => 'yes');
 		my $result = &remote_relay_request($c);
-
-		$result ? $c->render(data => $result) : $c->render(text => 'none');
-
+		if (defined $result && length $result) {
+			delete $file_relay_down{$ru};
+			# Relayed bytes carry no type or cache header at all, so the browser
+			# had to fetch every cover again on each window open. Name the type and
+			# let the picture be cached the way a local thumb is.
+			my $type = &subs::plaintext_verdict(substr($result, 0, 65536));
+			$c->res->headers->content_type($type) if defined $type && length $type;
+			$c->res->headers->cache_control('private, max-age=3600');
+			$c->render(data => $result);
+		}
+		else {
+			$file_relay_down{$ru} = &subs::rightNow() if $c->stash('remote_relay_error');
+			$c->render(text => 'none');
+		}
 		return;
 	}
 	# A thumbnail is a fixed frame of a file, so it can be cached; letting the
@@ -6352,6 +6527,7 @@ my @manager_bundle_files = qw(
 	/js/manager/manager.js
 	/js/manager/mapengine.js
 	/js/manager/mapmarkers.js
+	/js/manager/artwork.js
 	/js/music.js
 	/js/images.js
 	/js/manager/configure.js
@@ -15222,15 +15398,42 @@ sub remote_relay_request($c, $extra_params = {}) {
 					}
 
 					my $url = $rm->{'manager'} . $path . '?' . $params;
-      		$rm->{'ua'} = $rm->{'ua'}->max_response_size(0);
-					$res = $rm->{'ua'}->get($url);# => { Accept => '*/*' } => 'Content!');
+      			$rm->{'ua'} = $rm->{'ua'}->max_response_size(0);
+					# A picture relay is a bounded errand. The peer agent's timeout is
+					# generous because a snapshot pull may legitimately take minutes;
+					# inheriting that for a cover meant one unreachable peer could hold a
+					# worker for fifty minutes, and a grid of covers held every worker.
+					my $file_fetch = ($remote_uuid && ($path eq '/file_open' || $path eq '/play')) ? 1 : 0;
+					my ($old_inactive, $old_request, $old_connect);
+					if ($file_fetch) {
+						$old_inactive = $rm->{'ua'}->inactivity_timeout;
+						$old_request = $rm->{'ua'}->request_timeout;
+						$old_connect = $rm->{'ua'}->connect_timeout;
+						$rm->{'ua'}->inactivity_timeout(6);
+						# A picture is a bounded body; a track may legitimately be large, so
+						# only the picture path gets a total-time cap.
+						$rm->{'ua'}->request_timeout(20) if $path eq '/file_open';
+						$rm->{'ua'}->connect_timeout(4);
+					}
+					$res = eval { $rm->{'ua'}->get($url) };# => { Accept => '*/*' } => 'Content!');
+					if ($file_fetch) {
+						$rm->{'ua'}->inactivity_timeout($old_inactive) if defined $old_inactive;
+						$rm->{'ua'}->request_timeout($old_request) if defined $old_request;
+						$rm->{'ua'}->connect_timeout($old_connect) if defined $old_connect;
+					}
+					# Told apart from an empty file: rock_and_roll uses this to stop
+					# asking the same dead peer for every other picture on screen.
+					unless ($res) { $c->stash('remote_relay_error' => 1); return undef; }
+					if ($res->error) { $c->stash('remote_relay_error' => 1); }
 
 					if ($path eq '/file_open' || $path eq '/play') {
-						my $data = $res->res->content->asset->slurp;
-						return $data if $remote_uuid;
+						my $asset = $res->res ? $res->res->content->asset : undef;
+						my $data = $asset ? $asset->slurp : undef;
+						return $data if $remote_uuid && defined $data;
 					}
 					else {
-						return $res->result->body if $remote_uuid;
+						my $body = eval { $res->result->body };
+						return $body if $remote_uuid && defined $body;
 					}
 				}
 
@@ -37622,6 +37825,10 @@ sub app_public_path {
 	return 1 if $path =~ m{^/store(?:/|$)};
 	return 1 if $path =~ m{^/(?:css|js|images|icons|sounds|fonts|public|i18n)/};
 	return 1 if $path =~ m{^/(?:favicon\.ico|manifest\.json|service_worker\.js|robots\.txt|privacy|mugshot|payment|play|file_open|denial)$};
+	# A batch of file_open pictures, authenticated by the route itself the same
+	# way /file_open is. Without this the app gate would answer a phone's image
+	# burst with the app-required page before any picture was read.
+	return 1 if $path eq '/manager/thumbs';
 	return 1 if $path =~ m{^/(?:manager/)?box_office(?:/|$)};
 	return 1 if $path =~ m{^/public_view(?:/|$)};
 	return 1 if $path eq '/sesh_check' || $path eq '/gate';
