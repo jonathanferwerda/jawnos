@@ -32703,8 +32703,12 @@ sub clock_relay {
 			foreach my $sig (@peers) {
 				my $rm = $by_sig{$sig};
 				eval {
-					my $ua = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
-					$ua->post($rm->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
+					# remote_useragent_maker returns the peer row with a 'ua' and
+					# the tunnel-aware 'manager' url, not a bare agent.
+					my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+					if ($hop && $hop->{'ua'} && $hop->{'manager'}) {
+						$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
+					}
 				};
 			}
 		}, { name => 'clock relay' });
@@ -32814,10 +32818,14 @@ sub clock_alarm_push {
 		my $ok = 0;
 		my $err = '';
 		eval {
-			my $ua = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
-			die "no agent\n" unless $ua;
+			# The maker hands back the peer row (with 'ua' and the
+			# tunnel-aware 'manager' url); using it as an agent meant every
+			# immediate push died and no confirmation was ever possible.
+			my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+			die "no agent\n" unless $hop && $hop->{'ua'} && $hop->{'manager'};
+			my $ua = $hop->{'ua'}->insecure(1);
 			$ua->inactivity_timeout(4)->request_timeout(4);
-			my $res = $ua->post($rm->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
+			my $res = $ua->post($hop->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
 			die "no answer\n" unless $res && $res->is_success;
 			my $body = eval { decode_json($res->body) } || {};
 			$ok = 1 if $body->{'ok'};
@@ -32853,12 +32861,13 @@ sub clock_alarm_push {
 			my $rm = $rows->{$relay_sig};
 			next unless $rm;
 			eval {
-				my $ua = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $relay_sig });
-				die "no agent\n" unless $ua;
+				my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $relay_sig });
+				die "no agent\n" unless $hop && $hop->{'ua'} && $hop->{'manager'};
+				my $ua = $hop->{'ua'}->insecure(1);
 				$ua->inactivity_timeout(5)->request_timeout(5);
 				my %fwd = %form;
 				$fwd{'forward_to'} = join(',', @still);
-				my $res = $ua->post($rm->{'manager'} . '/manager/clock/alarm' => form => \%fwd)->result;
+				my $res = $ua->post($hop->{'manager'} . '/manager/clock/alarm' => form => \%fwd)->result;
 				die "no answer\n" unless $res && $res->is_success;
 				my $body = eval { decode_json($res->body) } || {};
 				die "not ok\n" unless $body->{'ok'} && ref $body->{'forwarded'} eq 'ARRAY';
