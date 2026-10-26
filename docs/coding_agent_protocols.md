@@ -32,13 +32,17 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 
 ## Crash-resilient agent work
 
-Zed's agent panel can grow the editor process to several GB in minutes and die mid-task; the JawnOS Coding agent can also lose a turn. Protect the work, not the chat:
+The Zed panel retains every byte it is shown and can grow the editor into the GBs; zram + earlyoom turn
+that into a slow patch instead of a frozen machine. Protect the work, not the chat:
 
-- **Checkpoint before and after each step** in `.shots/AGENT-CHECKPOINT.md` (gitignored): the goal, what is done (with paths), the exact next action, and the last commit.
-- **Commit each coherent step** (`git add -p`, `v<version> - <summary>`) so a crash cannot lose it. Never leave a day's work only in a buffer.
-- **After a crash, start a *fresh* thread** (a new Zed thread or a new Coding-agent conversation) and tell it to read `.shots/AGENT-CHECKPOINT.md` first. Resuming a multi-MB thread makes the next request larger and is a common cause of the next balloon.
-- Keep tool output small: use `grep`/`sed -n` and targeted `read_file` ranges, not whole 1 MB files; the agent panel retains every byte it is shown.
-- Delete the checkpoint when the task is complete.
+- **One thread = one task**, closed when done; fresh thread when the task changes or an approach fails —
+  long history degrades answers as well as memory. Keep output small (`grep`/`sed -n`, `read_file`
+  ranges, `--quiet`, `cmd > /tmp/x.log 2>&1; tail -40`), never a whole 1 MB file for a pointed question.
+- **Delegate** builds, test suites, `logcat` and repo-wide searches to a sub-agent returning finding +
+  `file:line` + reproduce command, no raw logs; keep edits in the main thread so the diff is visible.
+- **Checkpoint** each step in `.shots/AGENT-CHECKPOINT.md` (goal, done + paths, next action, last commit)
+  and **commit** it (`git add -p`, `v<version> - <summary>`). After a crash start a *fresh* thread that
+  reads it first; delete it when the task is done.
 
 
 ## Rules
@@ -70,31 +74,22 @@ Zed's agent panel can grow the editor process to several GB in minutes and die m
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with
   `cat VERSION` before `git push`. Existing pushes that skipped this were the oversight this rule fixes.
 - **Commit as you go**, staging only your own hunks (`git add -p`).
-- **Appointments that do not match what the person remembers - one still open from hours ago, a
-  session far longer than the app's usual, or one that looks cut short - are checked before anything is
-  edited.** `perl scripts/records_audit.pl` (dry run; `--all` for the whole history) is the records
-  watch's audit of the appointments table: **SWEEP** (one press closed more than one session),
-  **WRONG-END** (an older session left open while a newer one of the same app began, so the older row
-  took its end from a press that was not its own - a run of stops that each closed the wrong session),
-  **DUPES** (the same event written twice), **ORPHANS** and **IMPOSSIBLE**. This is the class a stop
-  bug makes: `subs::stop_target_row` closes the session a stop names, and the header names the app's
-  **running (newest)** session - a stale open session must never stand, or the next stop sweeps it.
-  Fixed in v0.1.591: a named stop is a hard match (a repeated or late copy is a no-op) and the header
-  never names a stale session. `perl scripts/records_audit.pl --apply` tombstones the dupes and repairs
-  a sweep; repair a WRONG-END row to its own start + the app's `duration` and stamp a current
-  `server_time` so every machine takes it. The watch (Configure -> Plat -> Watch records) stages
-  findings for a person to review; auto-apply covers exact duplicates only. Mark a genuinely long app
-  (an eight-month ailment) leave-alone rather than repairing it.
-  `perl scripts/records_recover.pl` (dry run) is the other direction - it compares
-  an older sealed snapshot against the live appointments table and lists every session a repair
-  shortened or dropped: `--backup <path>` names the snapshot (default the newest), `--apps a,b` the app
-  names that legitimately run long, `--older-than 1d` the length above which any app is listed. A
-  *shorter* live value is usually the **correct** repair (an app that runs three minutes was ended at
-  three minutes), so nothing is put back unless it is named: `perl scripts/records_recover.pl --backup
-  <path> --apps home,eczema --apply` restores only those, stamps each with a current `server_time` so
-  every machine takes it, and leaves the recovered apps alone by the audit. It refuses to write without
-  a snapshot younger than ten minutes and takes one if needed; a repair is otherwise permanent, and a
-  bulk restore of everything shorter would undo the good fixes.
+- **Appointments that do not match what the person remembers** (still open from hours ago, far longer
+  than the app's usual, or cut short) are checked before anything is edited.
+  `perl scripts/records_audit.pl` (dry run; `--all` for full history) finds **SWEEP** (one press closed
+  more than one session), **WRONG-END** (an older session left open while a newer one of the same app
+  began, so it took its end from a press that was not its own), **DUPES**, **ORPHANS**, **IMPOSSIBLE**.
+  That is the class a stop bug makes: `subs::stop_target_row` closes the session a stop names, so a stale
+  open session must never stand (fixed in v0.1.591: a named stop is a hard match and the header never
+  names a stale session). `--apply` tombstones dupes and repairs a sweep; repair a WRONG-END to its own
+  start + the app's `duration` and stamp a current `server_time`. The watch (Configure -> Plat -> Watch
+  records) stages findings for a person; auto-apply covers exact duplicates only. Mark a genuinely long
+  app leave-alone. `perl scripts/records_recover.pl` compares an older sealed snapshot with the live
+  table and lists every session a repair shortened or dropped (`--backup <path>`, `--apps a,b`,
+  `--older-than 1d`). A *shorter* live value is usually the **correct** repair, so nothing is restored
+  unless named: `--backup <path> --apps home,eczema --apply` restores only those, stamps `server_time`,
+  and is left alone by the audit. It refuses to write without a snapshot younger than ten minutes; a
+  repair is otherwise permanent, and a bulk restore would undo the good fixes.
 - **Finishing routine — ALWAYS run it: bump → commit → push → restart.** This is not optional and not
   "the norm": every piece of work ends this way, without being asked. Run `perl scripts/version_bump.pl`,
   stage only your own hunks (never someone else's WIP), commit as `v<version> - <summary>`, `git push`,

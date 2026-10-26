@@ -317,6 +317,13 @@ hook before_dispatch => sub {
 		# a peer's scheduled wake announces that it is briefly up and its rows have
 		# moved; this machine's own sync pass decides and pulls over the same rail
 		$path eq '/manager/available' ||
+		# the house address book: a machine reports where it is when it boots,
+		# changes network or wakes, a relay carries a signed notice for a peer that
+		# cannot reach the server, and a machine asks where a peer is now. All three
+		# routes peer_verify the caller themselves (see Manager.pl).
+		$path eq '/manager/address_report' ||
+		$path eq '/manager/address_directory' ||
+		$path eq '/manager/address_lookup' ||
 		# a computer's manual navigation button asks a same-LAN phone for its
 		# current fix. The route peer_verifies the caller against the roster and
 		# checks the source is on one of this machine's physical subnets itself

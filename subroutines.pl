@@ -17749,14 +17749,18 @@ sub remote_machine_lister() {
 		}
 		$rm->{'vip'} = $rm->{'ip'};
 		$rm = &subs::remote_machine_tunnel_processor($rm);
-		# The LAN address while the peer shares our network: a display value and
-		# the flag hub mode uses to keep a same-wifi peer in the pass. The stored
-		# row may already carry it in ip; this also finds it from network when the
-		# manager is a tunnel or fqdn.
+		# The LAN address while the peer shares our network: a display value, the
+		# flag hub mode uses to keep a same-wifi peer in the pass, and the route
+		# every lister-based caller should use. A stored manager can be a tailnet
+		# name whose node is offline, so prefer the LAN manager here the way the
+		# mirror block above does.
 		my $lan = &subs::peer_lan_address($rm, 1);
 		if ($lan) {
 			$rm->{'lan_ip'} = $lan->{'ip'};
 			$rm->{'lan'} = 'yes';
+			$rm->{'manager'} = $lan->{'manager'};
+			$rm->{'port'} = $lan->{'port'} || $rm->{'port'};
+			$rm->{'ip'} = $lan->{'ip'};
 		}
 	}
 	unless ( $data->{'self'} eq 'no' ) {
@@ -18062,8 +18066,10 @@ sub tailnet_address {
 # A peer advertises its own name as its manager. On a machine whose dnsmasq or
 # hosts map that name back to itself - or when a hub-tunnel manager sits at
 # 127.0.0.1 while we are a peer, not the hub - reaching it that way loops home.
-# When the manager host resolves to loopback, fall back to the LAN address the
-# peer reported in its network map, so same-net peers talk directly.
+# When the manager host resolves to loopback, or onto the tailnet, fall back to
+# the LAN address the peer reported in its network map, so same-net peers talk
+# directly. The tailnet counts because 100.64.0.0/10 is CGNAT: a node that is
+# offline blackholes the connection until the timeout rather than refusing it.
 sub peer_lan_address() {
 	my ($rm, $force) = @_;
 	return undef unless $rm && $rm->{'manager'};
@@ -18080,22 +18086,34 @@ sub peer_lan_address() {
 	unless ($force) {
 		my $loopback = 0;
 		my $resolved = 0;
+		my $tailnet = 0;
 		if ($host =~ /^127\./) { $loopback = 1; $resolved = 1; }
 		elsif ($host =~ /[a-zA-Z]/) {
 			require Socket;
 			my $packed = gethostbyname($host);
 			if ($packed) {
 				$resolved = 1;
-				$loopback = 1 if Socket::inet_ntoa($packed) =~ /^127\./;
+				my $addr = Socket::inet_ntoa($packed);
+				$loopback = 1 if $addr =~ /^127\./;
+				# 100.64.0.0/10 is the CGNAT range Tailscale hands out. A name that
+				# resolves onto the tailnet is only reachable while that node is up;
+				# when it is offline the request blackholes until the timeout. Treat
+				# it like an unresolved name and fall through to the LAN address.
+				$tailnet = 1 if $addr =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
 			}
 		}
-		else { $resolved = 1; }
+		else {
+			$resolved = 1;
+			# A literal manager address in that range is the same dead route.
+			$tailnet = 1 if $host =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+		}
 		# A name that resolves somewhere else is the peer's real address; keep
 		# it. A name that no longer resolves at all (the machine hopped to a
 		# network where its old router or tailnet DNS is gone) falls through to
 		# the LAN address it advertised, so the presence notice still finds it
-		# instead of every call waiting on a dead lookup.
-		return undef if $resolved && !$loopback;
+		# instead of every call waiting on a dead lookup. The same applies to a
+		# tailnet (CGNAT) address, which is only alive while that node is.
+		return undef if $resolved && !$loopback && !$tailnet;
 	}
 	# a mirror arrives already decoded; a normal row is a JSON string
 	my $you = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
@@ -18308,6 +18326,11 @@ sub lan_presence_accept {
 	# heard; the reply is the other half that lets both ends learn each other.
 	&lan_presence_reply($peer_ip) if $changed;
 	&lan_presence_wake() if $changed;
+	# Carry the signed notice to the house server on this peer's behalf. A phone
+	# whose tailnet is down still has a LAN peer that can reach the server, and the
+	# server is where another machine asks when its stored name goes stale. The
+	# call is self-throttled, so a failed forward retries on a later beacon.
+	eval { &AddressDirectory::relay_presence($msg, $peer_ip) } if defined &AddressDirectory::relay_presence;
 }
 
 # Fold a peer's presence into this machine's own devices row, so the Dev panel's

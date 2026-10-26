@@ -366,10 +366,26 @@ sub music_receiver_stop {
 # A Termux node must hold a wake lock or Android suspends it when the screen goes
 # off - which is exactly how a tablet or phone is used as a wireless speaker. The
 # count keeps two overlapping streams from releasing each other's lock.
+#
+# The count file is not self-describing: a manager restart or crash mid-stream
+# leaves the last count behind with nothing to decrement it. The receiver's state
+# file is the record of a stream that exists (written on start, removed on stop),
+# so with no state file the count is stale and the live count is zero.
+sub music_wake_live_count {
+	return 0 unless -e &music_stream_state_path();
+	my $path = &music_stream_wake_path();
+	return 0 unless -e $path;
+	return (read_file($path) + 0);
+}
+
 sub music_wake_lock($delta) {
 	return unless $device eq 'mobile';
 	my $path = &music_stream_wake_path();
-	my $count = (-e $path ? (read_file($path) + 0) : 0);
+	# Taking the lock starts from the live count, so a stale number from a stream
+	# that died with the manager does not carry into the new one. Releasing keeps
+	# the raw count: music_remote_audio_stop removes the state file before it
+	# decrements, and a stream still holding the lock must still be counted down.
+	my $count = $delta > 0 ? &music_wake_live_count() : ((-e $path) ? (read_file($path) + 0) : 0);
 	my $was = $count;
 	$count += $delta;
 	$count = 0 if $count < 0;

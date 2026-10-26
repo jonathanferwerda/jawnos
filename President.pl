@@ -83,6 +83,7 @@ my $cache_dir = &home('~/') . '.president';
 `mkdir -p $cache_dir` unless -e $cache_dir;
 
 require './gb.pl';
+require './AddressDirectory.pl';
 
 # The archive root (config.json archive_dir) gets one folder per location type,
 # made here if it is missing. A blank archive_dir means this machine is not an
@@ -455,24 +456,37 @@ sub manager_starter() {
 	# handheld used to need; take it back if the scheduler stops or the person
 	# switches the schedule off. Music's own count file keeps its stream lock
 	# safe: never release while a track is playing.
+	#
+	# The count only describes a stream while Music's state file exists: that
+	# file is written when a stream starts and removed when it stops, so its
+	# absence means no stream is being received and any count left in the wake
+	# file is stale (a restart or crash mid-stream never decrements it).
 	if ($device eq 'mobile') {
 		&subs::subprocessor(sub {
 			sleep 20;
 			my $ready_file = &subs::home('~/.president/wake_ready');
 			my $released_file = &subs::home('~/.president/wake_lock_released');
 			my $music_file = &subs::home('~/.president/music_stream_wake');
+			# Music.pl may not be loaded in this worker, so the state path is
+			# built here rather than through its helper.
+			my $music_state_file = &subs::home('~/.president/music_stream.json');
+			# A count with no stream behind it would otherwise keep the permanent
+			# lock forever. Repair it once at start and let the release path below
+			# do the actual unlock, so the lock is never dropped from here.
+			if (-e $music_file && !-e $music_state_file) { write_file($music_file, 0); }
 			while (1) {
 				eval {
 					my $setting = &subs::setting_grabber({ app => '__president', setting => 'wake_schedule' });
 					$setting = 'on' unless defined $setting && $setting =~ /\S/;
 					my $ready = (-e $ready_file && (time - (stat($ready_file))[9] < 3600)) ? 1 : 0;
-					my $music = (-e $music_file) ? (read_file($music_file) + 0) : 0;
+					# only a stream the state file still describes holds the lock
+					my $music = (-e $music_file && -e $music_state_file) ? (read_file($music_file) + 0) : 0;
 					if ($setting eq 'on' && $ready && !$music) {
 						unless (-e $released_file) {
 							`termux-wake-unlock`;
 							# A track that started between the check and the unlock
-							# must keep its lock.
-							my $m2 = (-e $music_file) ? (read_file($music_file) + 0) : 0;
+							# must keep its lock; the same live-count rule applies.
+							my $m2 = (-e $music_file && -e $music_state_file) ? (read_file($music_file) + 0) : 0;
 							`termux-wake-lock` if $m2 > 0;
 							write_file($released_file, time());
 							$log->info('wake schedule: app scheduler ready; released the permanent wake lock');
@@ -490,6 +504,22 @@ sub manager_starter() {
 			}
 		}, { name => 'wake schedule' });
 	}
+
+	# The house address book: this machine reports where it is when it boots and
+	# whenever its own interfaces change. The wake report in utility_runner covers
+	# a phone's scheduled beats; this covers a laptop moving between networks.
+	&subs::subprocessor(sub {
+		sleep 30;
+		eval { &AddressDirectory::report('boot'); };
+		my $last = eval { &AddressDirectory::fingerprint() } || '';
+		while (1) {
+			sleep 60;
+			my $now = eval { &AddressDirectory::fingerprint() } || '';
+			next if $now eq $last;
+			$last = $now;
+			eval { &AddressDirectory::report('network'); };
+		}
+	}, { name => 'address directory' });
 
 
 
@@ -1079,6 +1109,9 @@ sub utility_runner() {
 	# had their chance; a peer that says it needs the rows extends it.
 	if ($ready_at > ($gb::announced_beat || 0)) {
 		$gb::announced_beat = $ready_at;
+		# Tell the house server this machine is awake, even when its tables did
+		# not move: the directory is what peers ask when a stored name goes stale.
+		&subs::subprocessor(sub { eval { &AddressDirectory::report('wake'); }; }, { name => 'address report' });
 		my $digest = &subs::sync_digest_map();
 		my $fingerprint = md5_sum(join ';', map {
 			my $table = $digest->{$_};

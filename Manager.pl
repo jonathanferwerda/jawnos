@@ -67,6 +67,7 @@ no warnings 'uninitialized';
 no warnings 'once';
 require "./Websocket.pl";
 require "./subroutines.pl";
+require "./AddressDirectory.pl";
 require "./remote_input.pl";
 require "./tls.pl";
 require "./webauthn.pl";
@@ -9233,8 +9234,12 @@ sub sync_rows_batch {
 	}
 	$url .= '&after=' . Mojo::Util::url_escape($after) if defined $after && $after ne '';
 	my $res;
+	# A batch is a small request a live peer answers in well under a second. A
+	# dead route (an offline tailnet node, a peer that left the network) used to
+	# sit here for 60s an attempt, three attempts long, before the pull reported
+	# failure; bound it so the caller can fall back promptly.
 	for my $attempt (1 .. 3) {
-		$res = eval { $remote->{'ua'}->inactivity_timeout(60)->request_timeout(120)->get($url)->result };
+		$res = eval { $remote->{'ua'}->connect_timeout(3)->inactivity_timeout(10)->request_timeout(15)->get($url)->result };
 		last if $res && $res->is_success;
 		# A 4xx is the peer's answer (auth, an unknown table); retrying it only
 		# delays the fallback. A dropped link or a 5xx is worth another try.
@@ -9272,8 +9277,10 @@ sub sync_buckets_batch {
 		. '&table=' . Mojo::Util::url_escape($table)
 		. '&band=' . int($band);
 	my $res;
+	# Same bound as a row batch: the map is a few integers, so a live peer is
+	# instant and a dead route must not stall the tick for minutes.
 	for my $attempt (1 .. 3) {
-		$res = eval { $remote->{'ua'}->inactivity_timeout(60)->request_timeout(120)->get($url)->result };
+		$res = eval { $remote->{'ua'}->connect_timeout(3)->inactivity_timeout(10)->request_timeout(15)->get($url)->result };
 		last if $res && $res->is_success;
 		last if $res && $res->code < 500;
 		sleep 1 if $attempt < 3;
@@ -9304,6 +9311,23 @@ sub sync_rows_pull {
 	&update_database($c);
 	$subs::sync_table_cache = undef;
 	my $remote = $remote_machine || &remote_useragent_maker({ signatorial => $params->{'remote_signatorial'} });
+	# A tailnet name whose node is offline blackholes every request until the
+	# timeout, while the peer advertises a LAN manager that answers instantly.
+	# Prefer that manager when it differs: only the URL host changes, auth and
+	# signing still ride the same peer rail.
+	my $lan = &subs::peer_lan_address($remote, 1);
+	$remote->{'manager'} = $lan->{'manager'}
+		if $lan && $lan->{'manager'} && $lan->{'manager'} ne ($remote->{'manager'} || '');
+	# When the stored name is a tailnet address and no LAN route answered, ask the
+	# house server where the peer is now. The server is the authority for a machine
+	# that woke on a different network; its record carries the address the peer
+	# advertised, so the pull does not have to wait out a socket timeout.
+	if (!$lan && &AddressDirectory::manager_is_tailnet($remote->{'manager'})) {
+		my $resolved = eval { &AddressDirectory::lookup($remote->{'signatorial'}) };
+		if (ref $resolved eq 'HASH' && ($resolved->{'manager'} // '') ne '') {
+			$remote->{'manager'} = $resolved->{'manager'};
+		}
+	}
 	# The yellow panel names the job's phase, and this path has no export to wait
 	# on: it is reading and merging rows. Say so instead of leaving it at the
 	# snapshot phase the job was created with.
@@ -9856,8 +9880,12 @@ get '/manager/sync_buckets' => sub ($c) {
 		&subs::sync_job_step($job, 'export', { label => 'export', state => 'running', note => 'peer is building a snapshot' });
 		my $html = '<h2>Running Remote Backup</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $remote_machine->{'data'}->{'manager_colour'}, progress => -1, state => 'running', job => $job });
-
-
+		# The same LAN preference the row stream uses: a stored tailnet name can
+		# point at an offline node, while the peer advertised a reachable LAN
+		# manager. Only the URL host changes.
+		my $lan = &subs::peer_lan_address($remote_machine, 1);
+		$remote_machine->{'manager'} = $lan->{'manager'}
+			if $lan && $lan->{'manager'} && $lan->{'manager'} ne ($remote_machine->{'manager'} || '');
 		my $url = $remote_machine->{'manager'} . '/manager/configure/backup_now?reason=remote_update&async=1&timestamp=' . $timestamp . '&signatorial=' . $signatorial;
 		# The per-table plan: each table is exported only above the point the
 		# caller already holds. A table the plan omits still rides the legacy
@@ -37488,6 +37516,11 @@ sub app_public_path {
 	return 1 if $path eq '/manager/health_report';
 	return 1 if $path eq '/manager/available';
 	return 1 if $path =~ m{^/manager/webauthn/login/(?:begin|finish)$};
+	# The address directory rides the same signed peer rail; each handler does its
+	# own peer_verify (or accepts a loopback caller).
+	return 1 if $path eq '/manager/address_report';
+	return 1 if $path eq '/manager/address_directory';
+	return 1 if $path eq '/manager/address_lookup';
 	return 1 if $path =~ m{^/passkey(?:/|$)};
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/tunnel/ws';
 	# The padlock is its own small protocol: a locked screen must still be able
@@ -37929,6 +37962,9 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/health';
 	return 1 if $path eq '/manager/health_report';
 	return 1 if $path eq '/manager/available';
+	return 1 if $path eq '/manager/address_report';
+	return 1 if $path eq '/manager/address_directory';
+	return 1 if $path eq '/manager/address_lookup';
 	return 1 if $path =~ m{^/(?:manager/)?box_office(?:/|$)};
 	# the device rail authenticates itself and must reach the gate's recovery
 	return 1 if $path =~ m{^/manager/device(?:/|$)};
@@ -43491,6 +43527,16 @@ post '/manager/available' => sub ($c) {
 	}
 	$c->render(json => { ok => 1, pull => $need });
 };
+
+# The house address book. Every machine reports its signed presence here when it
+# boots, changes network or wakes; the server merges it and pushes the address
+# directory to the other machines. A peer that cannot reach the server relays
+# the same signed notice, and a machine whose stored name has gone stale asks
+# here rather than waiting out a timeout. All three routes authenticate the
+# caller with the signed peer rail (or a loopback caller) inside the handlers.
+post '/manager/address_report' => sub ($c) { &AddressDirectory::route_report($c); };
+post '/manager/address_directory' => sub ($c) { &AddressDirectory::route_directory($c); };
+get '/manager/address_lookup' => sub ($c) { &AddressDirectory::route_lookup($c); };
 
 get '/manager/health/page' => sub ($c) {
 	unless (&health_allowed($c)) { $c->rendered(403); return; }
