@@ -28265,7 +28265,15 @@ sub ai_house_heartbeat {
 			'alter table ai_jobs add column ost VARCHAR(255)',
 			'alter table ai_budget add column uuid VARCHAR(255)',
 			'alter table ai_budget add column ost VARCHAR(255)'
-		) { eval { &subs::db_query($sql) } }
+		) {
+			# an ADD COLUMN already in the schema is a warning SQLite prints to
+			# STDERR, not an exception; skip it so the log stays readable
+			if ($sql =~ /^\s*alter\s+table\s+(\w+)\s+add\s+column\s+(\w+)/i
+				&& &subs::db_query('select 1 from pragma_table_info(?) where name=?', $1, $2)->hashes->[0]) {
+				next;
+			}
+			eval { &subs::db_query($sql) };
+		}
 		# give the rows already here the natural-key uuid, so a peer's next write
 		# updates this row instead of colliding with the table's unique key
 		eval {

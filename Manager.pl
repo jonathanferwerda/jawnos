@@ -38230,6 +38230,11 @@ sub app_schema_ensure {
 		[ 'device_requests', 'app_kind', 'VARCHAR(16)' ],
 	) {
 		my ($table, $column, $type) = @{$spec};
+		# SQLite prints a "duplicate column name" warning straight to STDERR
+		# for an ADD COLUMN that is already satisfied; it is not an exception,
+		# so the eval below never saw it and every unlock filled the log. Skip
+		# the statement when the column is already there.
+		next if &subs::db_query('select 1 from pragma_table_info(?) where name=?', $table, $column)->hashes->[0];
 		eval { &subs::db_query("ALTER TABLE $table ADD COLUMN $column $type") };
 	}
 	# Backfill the rows that predate the column. Idempotent: only blanks move.
