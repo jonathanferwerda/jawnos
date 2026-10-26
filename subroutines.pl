@@ -12184,6 +12184,29 @@ sub remote_agent_for {
 	return { ua => $ua, manager => $rm->{'manager'}, hostname => $rm->{'hostname'}, rm => $rm };
 }
 
+# A manager-to-manager answer as JSON, with a readable failure when the far
+# machine returns an HTML error page instead (a missing archive folder, a
+# refused upload). Without this the sender only knows "the upload did not
+# land" and nobody sees the reason.
+sub archive_reply {
+	my $tx = shift;
+	return (undef, 'the archive machine did not answer') unless $tx;
+	my $res = $tx->res;
+	my $json = eval { $res->json };
+	return ($json, undef) if ref $json eq 'HASH';
+	my $body = $res->body || '';
+	$body =~ s{<script\b.*?</script>}{}gis;
+	$body =~ s{<style\b.*?</style>}{}gis;
+	$body =~ s{<[^>]+>}{ }g;
+	$body =~ s/&nbsp;/ /g;
+	$body =~ s/&amp;/&/g;
+	$body =~ s/\s+/ /g;
+	$body =~ s/^ //; $body =~ s/ $//;
+	$body = substr($body, 0, 300) if length $body > 300;
+	my $code = $res->code || 'no status';
+	return (undef, "the archive machine answered $code" . (length $body ? ": $body" : ''));
+}
+
 # The worker half of archiving: deliver one queued item. The far machine is
 # asked first whether it already has the file at that size and time, because a
 # retry after a failed folder re-runs the whole folder and everything already
@@ -12219,14 +12242,15 @@ sub archive_transfer_job {
 		my $size = -s $file;
 		my $mtime = (stat($file))[9];
 
-		my $probe = eval {
-			return $ua->post($manager . '/manager/folders/archive/probe' => form => {
+		my $probe_tx = eval {
+			$ua->post($manager . '/manager/folders/archive/probe' => form => {
 				location => $data->{'location'},
 				path => $relative
-			})->result->json;
+			})
 		};
+		my ($probe, $probe_error) = &archive_reply($probe_tx);
 		if (!$probe || $probe->{'status'} ne 'ok') {
-			push @errors, ($relative || $file) . ': ' . (($probe && $probe->{'error'}) || 'the archive machine did not answer');
+			push @errors, ($relative || $file) . ': ' . (($probe && $probe->{'error'}) || $probe_error || 'the archive machine did not answer');
 			next;
 		}
 		if ($probe->{'exists'} && defined $probe->{'size'} && defined $size && $probe->{'size'} == $size
@@ -12235,16 +12259,17 @@ sub archive_transfer_job {
 			next;
 		}
 
-		my $res = eval {
-			return $ua->post($manager . '/manager/folders/archive/receive' => form => {
+		my $receive_tx = eval {
+			$ua->post($manager . '/manager/folders/archive/receive' => form => {
 				location => $data->{'location'},
 				path => $relative,
 				mtime => $mtime,
 				file => { file => $file }
-			})->result->json;
+			})
 		};
+		my ($res, $res_error) = &archive_reply($receive_tx);
 		if (!$res || $res->{'status'} ne 'ok') {
-			push @errors, ($relative || $file) . ': ' . (($res && $res->{'error'}) || 'the upload did not land');
+			push @errors, ($relative || $file) . ': ' . (($res && $res->{'error'}) || $res_error || 'the upload did not land');
 			next;
 		}
 		$sent++;
@@ -12280,14 +12305,15 @@ sub archive_transfer_job {
 		for (my $n = 0; $n < scalar @rows; $n += $batch_size) {
 			my $last = ($n + $batch_size - 1 > $#rows) ? $#rows : $n + $batch_size - 1;
 			my @batch = @rows[$n .. $last];
-			my $res = eval {
-				return $ua->post($manager . '/manager/folders/archive/manifest/append' => form => {
+			my $manifest_tx = eval {
+				$ua->post($manager . '/manager/folders/archive/manifest/append' => form => {
 					location => $data->{'location'},
 					rows => encode_json \@batch
-				})->result->json;
+				})
 			};
+			my ($res, $res_error) = &archive_reply($manifest_tx);
 			if (!$res || $res->{'status'} ne 'ok') {
-				push @errors, 'manifest: ' . (($res && $res->{'error'}) || 'the listing could not be updated');
+				push @errors, 'manifest: ' . (($res && $res->{'error'}) || $res_error || 'the listing could not be updated');
 				last;
 			}
 		}
