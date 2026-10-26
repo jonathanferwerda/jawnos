@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=JawnOS VM
+GenericName=Virtual Machine
+Comment=Boot the latest built JawnOS image in QEMU (writes are discarded)
+Exec=/home/jawn/jawnos/scripts/jawnos_vm.sh
+Icon=/home/jawn/jawnos/public/icons/logos/WelcomeLogo.png
+Terminal=false
+StartupNotify=true
+Categories=System;Emulator;
+Keywords=jawnos;qemu;vm;virtual machine;

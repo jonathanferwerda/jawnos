@@ -46,6 +46,15 @@ sudo perl scripts/mkosi_build.pl --vm                  # 16G disk
 sudo perl scripts/mkosi_build.pl --vm --disk-size 32   # 32G disk
 ```
 
+To boot the image that is already built, without rebuilding it, use the
+launcher (it opens the newest `desktop/mkosi/output/*.raw` with a 4 GB RAM, a
+4-core KVM guest and `snapshot=on`, so the image is never modified):
+
+```sh
+scripts/jawnos_vm.sh            # or launch "JawnOS VM" from the applications menu
+scripts/jawnos_vm.sh --check    # show the image, firmware and command
+```
+
 mkosi boots the finished disk with QEMU and an OVMF firmware. `--disk-size N`
 passes `--runtime-size NG` to mkosi *and* `--ephemeral yes`: the VM runs on a
 temporary copy grown to N GB and the built artefact is never modified. The
