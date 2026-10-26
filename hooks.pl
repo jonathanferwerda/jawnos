@@ -350,6 +350,13 @@ hook before_dispatch => sub {
 		# the signed pull-now lever: a peer with a lapsed cookie asks this
 		# machine to pull from it, and the route peer_verifies the caller
 		$path eq '/manager/configure/remote_upgrade' ||
+		# the archive machine-to-machine routes: a sending machine probes,
+		# uploads and appends its manifest over the bare signed rail. A
+		# transfer has no session on the archive machine, so the login gate
+		# must step aside for the route's archive_peer_allowed check (an
+		# app-keyed session or a pinned peer key). Same reason as the
+		# remote_upgrade lever above.
+		$path =~ m{^/manager/folders/archive/(?:probe|receive|locate|manifest(?:/append|/rescan)?)$} ||
 		# the code-sync rail: rsync_pack serves the code tree and rsync_unpack
 		# receives one. Both require a pinned peer key (peer_verify, no
 		# trust-on-first-contact) and only accept the jawnos folder with the

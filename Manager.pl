@@ -29833,7 +29833,22 @@ post '/manager/folders/archive/retry' => sub($c) {
 # of the machine that owns the drive. A caller that only has a path on that
 # machine - a selection in folders, a track, a photo - asks this first, and the
 # answer is what a fetch needs.
+#
+# These archive routes are on the peer rail the way remote_upgrade is: a
+# sending machine has no session on the archive machine, so the login gate must
+# step aside for its pinned signature. archive_peer_allowed is their gate.
+sub archive_peer_allowed {
+	my $c = shift;
+	my $until = $c->session('app_until') || 0;
+	return 1 if (($c->session('authentication') || '') eq 'approved' && $until > &subs::rightNow());
+	return &app_peer_ok($c) ? 1 : 0;
+}
+
 post '/manager/folders/archive/locate' => sub($c) {
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
 	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
 		my $result = &Manager::remote_relay_request($c);
 		if (length $result) {
@@ -29850,7 +29865,7 @@ post '/manager/folders/archive/locate' => sub($c) {
 	my $path = $c->param('path');
 	$path =~ s{/+$}{} if defined $path;
 	foreach my $location ( &subs::location_types() ) {
-		my $folder = $root . '/' . $location;
+		my $folder = &subs::archive_location_folder($root, $location);
 		next unless (defined $path && $path =~ m{^\Q$folder\E/});
 		$c->render(json => {
 			status => 'ok',
@@ -29949,6 +29964,10 @@ get '/manager/folders/archive' => sub($c) {
 # Where a finished transfer puts what it delivered: one line for the whole job,
 # because the listing underneath is only rewritten when the journal piles up.
 post '/manager/folders/archive/manifest/append' => sub($c) {
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
 	my $location = $c->param('location');
 	my $rows = eval { return decode_json $c->param('rows') } || [];
 	my $dest = &subs::archive_destination({ location => $location, path => '' });
@@ -29983,6 +30002,10 @@ post '/manager/folders/archive/manifest/append' => sub($c) {
 # media facts, so a library can be built from one small request instead of a
 # walk over the tunnel.
 post '/manager/folders/archive/manifest' => sub($c) {
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
 	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
 		my $result = &Manager::remote_relay_request($c);
 		if (length $result) {
@@ -30010,6 +30033,10 @@ post '/manager/folders/archive/manifest' => sub($c) {
 # Read an archive location again from the drive, as a job, because it opens
 # every file it finds.
 post '/manager/folders/archive/manifest/rescan' => sub($c) {
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
 	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
 		my $result = &Manager::remote_relay_request($c);
 		if (length $result) {
@@ -30038,6 +30065,10 @@ get '/manager/folders/archive/dirs' => sub($c) {
 # whether the item is already there, so a second pass over a folder costs one
 # small request per file instead of the file itself.
 post '/manager/folders/archive/probe' => sub($c) {
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
 	my $dest = &subs::archive_destination({ location => $c->param('location'), path => $c->param('path') });
 	if ($dest->{'error'}) {
 		$c->render(json => { status => 'error', error => $dest->{'error'} });
@@ -30059,6 +30090,10 @@ post '/manager/folders/archive/probe' => sub($c) {
 # <archive root>/<location>/<path>, so transfers ride the same tunnel and
 # session as every other manager to manager request instead of rsync.
 post '/manager/folders/archive/receive' => sub($c) {
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
 	my @uploads = @{$c->req->uploads};
 	my $upload = $uploads[0];
 	unless ($upload) {
@@ -38186,7 +38221,19 @@ sub app_peer_ok {
 	# linked machine's name, and a route's own request need not carry a name.
 	my $pub = eval { b64_decode($offered) } || '';
 	return 0 unless $pub && index($pub, '-----BEGIN PUBLIC KEY-----') == 0;
-	my $rm = &subs::db_query('select * from remote_machines where pubkey = ?', $pub)->hashes->[0];
+	# A key file and a row copied by an older sync can wrap the same PEM
+	# differently; compare the key material without whitespace, or a valid
+	# peer looks unknown and every signed request is refused.
+	my $want = $pub;
+	$want =~ s/\s+//g;
+	my $rows = eval { &subs::db_select('remote_machines')->hashes } || [];
+	my $rm;
+	foreach my $row ( @{$rows} ) {
+		my $key = $row->{'pubkey'} // '';
+		next unless length $key;
+		$key =~ s/\s+//g;
+		if ($key eq $want) { $rm = $row; last; }
+	}
 	return 0 unless $rm;
 	return &subs::peer_verify($c, $rm) ? 1 : 0;
 }
