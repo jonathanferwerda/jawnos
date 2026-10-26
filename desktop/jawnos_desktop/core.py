@@ -157,13 +157,35 @@ def save_settings(settings):
 # update: the installed copy follows the repo's desktop/ tree, on the button
 # --------------------------------------------------------------------------
 
+# Build systems and their output live under desktop/ but are not part of the
+# app. desktop/mkosi in particular can hold a running image build's 1 GB tree;
+# counting or copying it made every build write look like a new desktop, so the
+# dashboard reinstalled itself and restarted every couple of minutes (and the
+# WebKit teardown aborted in Mesa each time).
+_TREE_SKIP_DIRS = {
+    "__pycache__",
+    ".git",
+    ".stage",
+    ".venv",
+    "mkosi",
+    "node_modules",
+    "output",
+}
+
+
+def _walk_installable(root):
+    """os.walk for the app's own tree, without build systems or caches."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _TREE_SKIP_DIRS)
+        yield dirpath, dirnames, filenames
+
+
 def _tree_stamp(root):
     """A stamp that changes when any file in the tree does: newest mtime and
     the file count."""
     newest = 0
     count = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+    for dirpath, dirnames, filenames in _walk_installable(root):
         for name in filenames:
             try:
                 newest = max(newest, os.path.getmtime(os.path.join(dirpath, name)))
@@ -238,8 +260,7 @@ def apply_update(settings):
         return (False, "", 0)
     repo = repo_desktop_dir(settings)
     import shutil
-    for dirpath, dirnames, filenames in os.walk(repo):
-        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+    for dirpath, dirnames, filenames in _walk_installable(repo):
         rel = os.path.relpath(dirpath, repo)
         dest = DESKTOP_DIR if rel == "." else os.path.join(DESKTOP_DIR, rel)
         try:
