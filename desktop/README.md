@@ -339,13 +339,12 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1
 WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
 ```
 
-Video still decodes through GStreamer; only compositing/repaint is software. To
-keep GPU rendering on such a machine anyway, put this in
-`~/.config/jawnos/webkit.env`:
-
-```sh
-JAWNOS_GPU=1
-```
+Video still decodes through GStreamer; only compositing/repaint is software.
+To keep GPU rendering on such a machine anyway, put `JAWNOS_GPU=1` in
+`~/.config/jawnos/webkit.env`. That is a real opt-in: it cancels the app's
+Skylake/X11 default **and** the software switches a live image's `webkit.env`
+sets (see below). A variable exported in the actual environment still wins and
+is never dropped.
 
 The same file remains the escape hatch for other drivers. Force the software
 path on any machine with:
@@ -357,6 +356,37 @@ echo 'WEBKIT_DISABLE_COMPOSITING_MODE=1' > ~/.config/jawnos/webkit.env
 
 `WEBKIT_DISABLE_DMABUF_RENDERER=1` is the other knob worth trying on a driver
 that mishandles the DMA-BUF renderer.
+
+### The live image and virtual displays
+
+The live image ships `~/.config/jawnos/webkit.env` with the whole software path
+on, because QEMU's virtio-gpu (and a simple framebuffer) renders a blank white
+view through WebKit's GPU paths:
+
+```sh
+WEBKIT_DISABLE_COMPOSITING_MODE=1
+WEBKIT_DISABLE_DMABUF_RENDERER=1
+WEBKIT_SKIA_ENABLE_CPU_RENDERING=1
+```
+
+Those three are WebKitGTK 2.52's complete software-renderer set; the library
+reads them when it initialises, so the app applies the file (and its own
+defaults) before it imports WebKit. The non-composited view repaints through
+GTK damage regions, and on a virtual display a resize could leave a stale
+horizontal band because the newly exposed area was never marked damaged. The
+view therefore asks for a whole-widget repaint on every `size-allocate`, on
+`map`, after a page load, and when GDK reports that the monitor layout changed.
+The GPU path is untouched: the compositor presents whole frames and the extra
+repaint is not scheduled.
+
+Resizing the QEMU window is a host-side operation: the display backend scales
+or letterboxes the guest framebuffer in the window; it does not change the
+guest's output mode (only a display protocol with a resize agent, such as SPICE
+with its guest agent, can do that). Sway reflows a fullscreen window whenever
+the guest output itself changes size, and the embedded view follows that
+allocation, but no guest-side code can make a host-window drag change the page
+viewport. mkosi 27 boots the image with `-device virtio-vga` (EDID on by
+default) and `-display sdl,gl=on`.
 
 ## Windows
 

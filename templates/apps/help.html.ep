@@ -168,6 +168,7 @@
 			<label style="display:flex;align-items:center;gap:4px;font-size:12px;opacity:.8;cursor:pointer;" hint="Switch the composer to the Coding agent, which edits and ships the JawnOS code"><input type="checkbox" id="help_coding"> Coding</label>
 			<span id="help_context" style="font-size:12px;opacity:.7;"></span>
 			<button id="help_topics_back" class="button" hint="Back to the topics" style="display:none;margin-left:auto;padding:4px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;">Topics</button>
+			<button id="help_tour" class="button" hint="Take the tour" style="margin-left:8px;padding:4px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;"><%= &subs::ui('Take the tour') %></button>
 		</div>
 		<div class="help_agent_row" style="display:flex;gap:8px;align-items:flex-end;margin-top:6px;">
 			<textarea id="help_question" rows="1" placeholder="Ask the guide — or tell it what you want to do…" data-default="<%= $default_question %>"

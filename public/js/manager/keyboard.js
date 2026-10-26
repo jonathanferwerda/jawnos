@@ -85,6 +85,310 @@ function jawnosDockIconState(toggle) {
 	}
 	return state;
 }
+
+// ---- apps on the dock ------------------------------------------------------
+// The server renders the dock from the pseudonym list, so an app with no
+// pseudonym cannot be one of its faces. The apps a person adds are kept by this
+// browser (localStorage family dock_apps, keyed by the app's own name) as
+// { hint, src }, and drawn as ordinary .pseudonym.bar tiles beside the server's
+// faces: they take a slot in the row or the side stack, shrink with the rest,
+// and follow the same on/off and tuck rules. The trade-off is deliberate - the
+// dock's app faces, like each icon's on/off, belong to this browser's profile,
+// not to the whole house; the pseudonym list itself is the house's.
+function jawnosDockApps() {
+	var data = (typeof jawnosStore != 'undefined') ? (jawnosStore.read('dock_apps') || {}) : {};
+	var list = [];
+	$.each(data, function(app, raw) {
+		if (!app || raw === undefined || raw === null) { return; }
+		var info = raw;
+		if (typeof raw == 'string') {
+			try { info = JSON.parse(raw) || {}; } catch (e) { info = {}; }
+		}
+		if (typeof info != 'object') { info = {}; }
+		list.push({ app: app, hint: info.hint || app, src: info.src || '' });
+	});
+	return list;
+}
+function jawnosDockAppHas(app) {
+	if (!app) { return false; }
+	var data = (typeof jawnosStore != 'undefined') ? (jawnosStore.read('dock_apps') || {}) : {};
+	return Object.prototype.hasOwnProperty.call(data, app);
+}
+// The dock face the house already ships under this name, if any. An app whose
+// name is already a pseudonym is added and removed by flipping that face's
+// dock_icons state rather than growing a second, identical face.
+function jawnosDockPseudonymFor(name) {
+	var found = null;
+	if (!name) { return found; }
+	$('#pseudonym_bar .pseudonym').not('.dock_app').each(function() {
+		var p = $(this);
+		if (p.attr('toggle') === name || p.attr('name') === name) { found = p; return false; }
+	});
+	return found;
+}
+// Is this name on the dock, whether as a pseudonym face or a browser-added app?
+function jawnosDockHas(name) {
+	if (jawnosDockAppHas(name)) { return true; }
+	var ps = jawnosDockPseudonymFor(name);
+	if (ps) { return jawnosDockIconState(ps.attr('toggle')) == 'on'; }
+	return false;
+}
+function jawnosDockAppSave(app, info) {
+	if (!app || typeof jawnosStore == 'undefined') { return; }
+	info = info || {};
+	jawnosStore.set('dock_apps', app, JSON.stringify({ hint: info.hint || app, src: info.src || '' }));
+}
+function jawnosDockAppAdd(app, hint, src) {
+	if (!app) { return; }
+	var ps = jawnosDockPseudonymFor(app);
+	if (ps) {
+		// one face, not two: a pseudonym of the same name wins
+		if (typeof jawnosStore != 'undefined') {
+			jawnosStore.remove('dock_apps', app);
+			jawnosStore.remove('dock_icons', 'app:' + app);
+		}
+		jawnosDockAppsRender();
+		jawnosDockIconSet(ps.attr('toggle'), 'on');
+		jawnosDockReveal();
+		return;
+	}
+	jawnosDockAppSave(app, { hint: hint, src: src });
+	jawnosDockAppsRender();
+	jawnosDockReveal();
+}
+function jawnosDockAppRemove(app) {
+	if (!app) { return; }
+	var ps = jawnosDockPseudonymFor(app);
+	if (typeof jawnosStore != 'undefined' && jawnosDockAppHas(app)) {
+		jawnosStore.remove('dock_apps', app);
+		jawnosStore.remove('dock_icons', 'app:' + app);
+		jawnosDockAppsRender();
+	}
+	if (ps) {
+		jawnosDockIconSet(ps.attr('toggle'), 'off');
+		if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+		return;
+	}
+	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+}
+function jawnosDockAppToggle(entry) {
+	if (!entry || !entry.app) { return; }
+	if (jawnosDockHas(entry.app)) { jawnosDockAppRemove(entry.app); }
+	else { jawnosDockAppAdd(entry.app, entry.hint, entry.src); }
+}
+// Draw (or redraw) the browser's own app faces at the end of the row. The
+// server's pseudonyms stay where the template put them; these are appended.
+function jawnosDockAppsRender() {
+	var bar = $('#pseudonym_bar');
+	if (!bar.length) { return; }
+	bar.children('.draggable_icon.dock_app_wrap').remove();
+	$.each(jawnosDockApps(), function(i, entry) {
+		var src = entry.src || '/images/decipherable/gear.png';
+		var icon = $('<img class="ps bar pseudonym keyboard hover theme_surface dock_app">').attr({
+			'id': 'dock_app_' + encodeURIComponent(entry.app) + '_toggle',
+			'dock_app': entry.app,
+			'name': entry.app,
+			'hint': entry.hint || entry.app,
+			'toggle': 'app:' + entry.app,
+			'src': src,
+			'jawnos_icon': src
+		});
+		icon.css('background-color', 'var(--panel-2)');
+		bar.append($('<div class="draggable_icon dock_app_wrap"></div>').append(icon));
+	});
+}
+// Call the dock back out after an add: a tucked row or side pill must show the
+// new face instead of staying away until the pointer finds the strip again.
+function jawnosDockReveal() {
+	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+	if (typeof jawnosSideDock == 'function' && jawnosSideDock()) {
+		if (typeof pseudonymSideSettle == 'function') { pseudonymSideSettle(0); }
+		return;
+	}
+	if (typeof jawnosDockTop == 'function' && jawnosDockTop()) {
+		$('#pseudonym_home').css({ 'top': (typeof jawnosDockTopOffset == 'function') ? jawnosDockTopOffset() : 0 });
+	}
+	else {
+		$('#pseudonym_home').css({ 'bottom': (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0 });
+	}
+	if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+}
+// A press on an app face opens its window, or raises/minimises it the way the
+// taskbar's own tile does. The app's name is compared as an attribute, never
+// pasted into a selector, so a name with a quote is safe.
+function jawnosDockAppOpen(app) {
+	if (!app) { return; }
+	var win = $('.wind').filter(function() { return $(this).attr('app') === app; }).first();
+	if (win.length) {
+		if (!win.is(':visible') && typeof windowRestorer == 'function') { windowRestorer(Date.now(), app); }
+		else if (typeof topWindow == 'function' && typeof windowMinimizer == 'function' && topWindow() == app) { windowMinimizer(Date.now(), app); }
+		else if (typeof topLevelNow == 'function') { topLevelNow(win); }
+		return;
+	}
+	if (typeof appWindowOpener == 'function') { appWindowOpener(app, Date.now(), { visible: 'yes' }); }
+	else if (typeof deskOpenApp == 'function') { deskOpenApp(app); }
+	else if (typeof windowRestorer == 'function') { windowRestorer(Date.now(), app); }
+}
+
+// ---- the dock's own context menu ------------------------------------------
+// One menu for a dock face (remove it), the dock's empty background (add a face
+// back) and an app in the start menu or on the taskbar (add it to the dock). It
+// borrows the taskbar context menu's classes, so it looks and closes the same
+// way; the rows are built when it opens so the labels go through jawnosT.
+function jawnosDockText(key, english) {
+	if (typeof jawnosT == 'function') {
+		var s = jawnosT(key);
+		if (s !== key) { return s; }
+	}
+	return english || key;
+}
+function jawnosDockMenuRow(menu, opts) {
+	var row = $('<div class="taskbar_context_selection"></div>').attr('act', opts.act || '');
+	if (opts.app) { row.attr('dock_app', opts.app); }
+	if (opts.toggle) { row.attr('dock_toggle', opts.toggle); }
+	if (opts.hint) { row.attr('dock_hint', opts.hint); }
+	if (opts.src) { row.attr('dock_src', opts.src); }
+	if (opts.icon) {
+		$('<img class="miniscule_thumb">').attr('src', opts.icon).css({ width: '20px', height: '20px', objectFit: 'contain' }).appendTo(row);
+	}
+	$('<span></span>').text(opts.label || '').appendTo(row);
+	menu.append(row);
+	return row;
+}
+function jawnosDockMenuOpen(x, y, rows, label) {
+	$('.taskbar_context').remove();
+	if (!rows || !rows.length) { return; }
+	var menu = $('<div class="taskbar_context"></div>');
+	if (label) { $('<div class="taskbar_context_label"></div>').text(label).appendTo(menu); }
+	$.each(rows, function(i, row) { jawnosDockMenuRow(menu, row); });
+	$('body').append(menu);
+	var w = menu.outerWidth();
+	var h = menu.outerHeight();
+	var left = Math.max(4, Math.min(x, $(window).width() - w - 4));
+	var top = Math.max(4, Math.min(y, $(window).height() - h - 4));
+	menu.css({ left: left + 'px', top: top + 'px' });
+}
+// The app a start-menu picture opens, if it names one. The taskbar's own table
+// of aliases and actions is the authority; without it, a *_toggle class is the
+// app's name (a name with no _toggle has no app to add).
+function jawnosDockAppForImage(img) {
+	if (!img || !img.length) { return null; }
+	var id = img.attr('id');
+	var app = (typeof jawnosTaskbarAppForToggle == 'function') ? jawnosTaskbarAppForToggle(id) : null;
+	if (app) { return app; }
+	// Some menu pictures carry no id, only a *_toggle class (measures, market,
+	// warehouse, process monitor). Ask the same table about that toggle name so
+	// actions (torch, now) still resolve to nothing.
+	var classes = String(img.attr('class') || '').split(/\s+/);
+	for (var i = 0; i < classes.length; i++) {
+		var m = /^(.*)_toggle$/.exec(classes[i]);
+		if (!m) { continue; }
+		if (typeof jawnosTaskbarAppForToggle == 'function') {
+			var known = jawnosTaskbarAppForToggle(classes[i]);
+			if (known) { return known; }
+		}
+		else { return m[1]; }
+	}
+	return null;
+}
+function jawnosDockAppMenu(x, y, entry) {
+	if (!entry || !entry.app) { return; }
+	var on = jawnosDockHas(entry.app);
+	jawnosDockMenuOpen(x, y, [{
+		act: 'dock_app_toggle',
+		app: entry.app,
+		hint: entry.hint || entry.app,
+		src: entry.src || '',
+		icon: entry.src || '',
+		label: on ? jawnosDockText('dock.remove', 'Remove from dock') : jawnosDockText('dock.add', 'Add to dock')
+	}], entry.hint || entry.app);
+}
+$(document).on('click', '.taskbar_context_selection[act^="dock_"]', function() {
+	var row = $(this);
+	var act = row.attr('act');
+	if (act == 'dock_app_toggle') {
+		jawnosDockAppToggle({ app: row.attr('dock_app'), hint: row.attr('dock_hint'), src: row.attr('dock_src') });
+	}
+	else if (act == 'dock_app_remove') {
+		jawnosDockAppRemove(row.attr('dock_app'));
+	}
+	else if (act == 'dock_hide_toggle') {
+		var toggle = row.attr('dock_toggle');
+		if (toggle) {
+			jawnosDockIconSet(toggle, 'off');
+			if (typeof pseudonymFreeSpaceFinder == 'function') { pseudonymFreeSpaceFinder(); }
+		}
+	}
+	else if (act == 'dock_show_toggle') {
+		var show = row.attr('dock_toggle');
+		if (show) {
+			jawnosDockIconSet(show, 'on');
+			jawnosDockReveal();
+		}
+	}
+	$('.taskbar_context').remove();
+});
+// A right-click on a dock face: take it off the dock. An app face is removed
+// from this browser's list; a pseudonym face is switched off in dock_icons (the
+// server still ships it, and the background menu can bring it back).
+$(document).on('contextmenu', '#pseudonym_bar .pseudonym', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var icon = $(this);
+	var app = icon.attr('dock_app');
+	if (app) {
+		jawnosDockMenuOpen(e.clientX, e.clientY, [{
+			act: 'dock_app_remove', app: app, icon: icon.attr('src'),
+			label: jawnosDockText('dock.remove', 'Remove from dock')
+		}], icon.attr('hint') || app);
+		return;
+	}
+	var toggle = icon.attr('toggle');
+	if (!toggle) { return; }
+	jawnosDockMenuOpen(e.clientX, e.clientY, [{
+		act: 'dock_hide_toggle', toggle: toggle, icon: icon.attr('src'),
+		label: jawnosDockText('dock.remove', 'Remove from dock')
+	}], icon.attr('hint') || toggle);
+});
+// A right-click on the dock's own background (the pill, or the strip it keeps
+// while tucked) lists the faces this browser has switched off, so a removal can
+// be undone from the same bar. The search keeps its native menu (paste).
+$(document).on('contextmenu', '#pseudonym_home', function(e) {
+	if ($(e.target).closest('#search_entanglement, #pseudonym_bar .pseudonym').length) { return; }
+	var rows = [];
+	$('#pseudonym_bar .pseudonym').each(function() {
+		var p = $(this);
+		if (p.hasClass('dock_app')) { return; }
+		var toggle = p.attr('toggle');
+		if (!toggle) { return; }
+		if (jawnosDockIconState(toggle) == 'on') { return; }
+		rows.push({ act: 'dock_show_toggle', toggle: toggle, icon: p.attr('src'), label: p.attr('hint') || toggle });
+	});
+	if (!rows.length) { return; }
+	e.preventDefault();
+	jawnosDockMenuOpen(e.clientX, e.clientY, rows, jawnosDockText('dock.add', 'Add to dock'));
+});
+// A right-click on an app in the start menu offers the same add/remove. Only a
+// picture that names a real app is taken over; the rest keep the browser menu.
+$(document).on('contextmenu', '#start_menu .start_menu_main_display img', function(e) {
+	var img = $(this);
+	var app = jawnosDockAppForImage(img);
+	if (!app) { return; }
+	e.preventDefault();
+	e.stopPropagation();
+	jawnosDockAppMenu(e.clientX, e.clientY, { app: app, hint: img.attr('hint') || app, src: img.attr('src') || '' });
+});
+
+$(document).ready(function() {
+	jawnosDockAppsRender();
+});
+
+// A hold does what a right-click does on the dock and the start menu's apps.
+if (typeof jawnosContextMenuOn == 'function') {
+	jawnosContextMenuOn('#pseudonym_home');
+	jawnosContextMenuOn('#start_menu .start_menu_main_display');
+}
+
 function pseudonymFreeSpaceFinder(type) {
 	var w = $(window).width();
 	var h = $(window).height();
@@ -845,7 +1149,13 @@ async function keyboardMaker(data) {
 	var d = Number(numeral(pseudonym.width()).format()) * 1.07;
 	var bottom = h - o.top;
 
-	var av = await navigator.mediaDevices.enumerateDevices();
+	var av = [];
+	try {
+		if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+			av = await navigator.mediaDevices.enumerateDevices();
+		}
+	}
+	catch (e) { av = []; }
 	var avData = JSON.stringify(av);
 
 	if (toggle == 'walkboy') {
@@ -1173,6 +1483,12 @@ $(document).on('click', '.keyboard_base', function() {
 
 $(document).on('click','.pseudonym', function() {
 	var toggle = $(this).attr('toggle');
+	// A browser-added app face opens its app window (or raises/minimises it);
+	// it has no keyboard panel of its own.
+	if ($(this).hasClass('dock_app')) {
+		jawnosDockAppOpen($(this).attr('dock_app'));
+		return;
+	}
 	// The old floating keyboard and calculator are gone: both dock icons now
 	// open the JawnOS on-screen keyboard (the calculator on its own page).
 	if ((toggle == 'keyboard' || toggle == 'calculator') && typeof softKbDockOpen == 'function') {

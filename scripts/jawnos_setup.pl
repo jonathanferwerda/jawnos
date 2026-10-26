@@ -5,14 +5,19 @@
 #   perl scripts/jawnos_setup.pl [--port 3210] [--no-browser]
 #   perl scripts/jawnos_setup.pl --seed [--name NAME] [--email EMAIL]
 #         [--domain DOMAIN] [--archive-dir PATH] [--device computer|server|mobile]
-#         [--language en|zh|fr|...] [--code NNNN]
+#         [--language en|zh|fr|...] [--code NNNN] [--theme nord]
 #
 # --seed does the same work with no browser and no prompts: it writes config.json
 # and builds the database from the factory seed, printing the unlock code. That is
 # what a container or an appliance calls on first boot. Answers come from the
 # options above or from JAWNOS_NAME, JAWNOS_EMAIL, JAWNOS_DOMAIN,
-# JAWNOS_ARCHIVE_DIR, JAWNOS_DEVICE, JAWNOS_LANGUAGE and JAWNOS_UNLOCK_CODE;
-# anything left out takes the same default the wizard would.
+# JAWNOS_ARCHIVE_DIR, JAWNOS_DEVICE, JAWNOS_LANGUAGE, JAWNOS_UNLOCK_CODE and
+# JAWNOS_THEME; anything left out takes the same default the wizard would.
+#
+# --theme names one of the curated themes in subroutines.pl::%theme_presets
+# (nord, cutefish, deepin, sage, neon, ...). It is validated here and written as
+# the house-wide appearance_theme row, which is the same value Configure ->
+# Appearance stores. An unknown name is an error rather than a silent fallback.
 #
 # A small web app that walks a new user through:
 #   1. dependency status
@@ -61,6 +66,7 @@ GetOptions(
 	'device=s'      => \$seed_opt{'device'},
 	'language=s'    => \$seed_opt{'language'},
 	'code=s'        => \$seed_opt{'code'},
+	'theme=s'       => \$seed_opt{'theme'},
 ) or die "bad options\n";
 
 # ---------------------------------------------------------------------------
@@ -149,6 +155,27 @@ sub default_search_engines {
 		{ name => 'DuckDuckGo', url => 'https://duckduckgo.com/?q=' },
 		{ name => 'Wikipedia',  url => 'https://en.wikipedia.org/wiki/' },
 	];
+}
+
+# The curated themes a first boot may preselect. Kept in step with
+# subroutines.pl::@theme_preset_order; setup runs before that module can load
+# (it reads config.json and the database at compile time), so the slugs are
+# repeated here rather than imported. A preset name is also a bare colour scheme
+# name for two of them (Nord, Sage), but only the theme slugs are accepted here.
+my @THEME_PRESETS = qw(
+	deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose
+	geek phosphor cyberpunk
+);
+
+sub valid_theme {
+	my ($name) = @_;
+	return undef unless defined $name;
+	$name = lc $name;
+	$name =~ s/^\s+|\s+$//g;
+	foreach my $preset (@THEME_PRESETS) {
+		return $preset if $name eq $preset;
+	}
+	return undef;
 }
 
 # ---------------------------------------------------------------------------
@@ -267,6 +294,23 @@ sub make_database {
 		uuid        => randstr(20),
 	} );
 
+	# the theme chosen on the download page (or with --theme). appearance_theme is
+	# a per-device setting, and the image is a computer; the row replaces the
+	# factory intro theme instead of adding a second conflicting one.
+	my $theme = valid_theme( $params->{'theme'} );
+	if ( defined $theme ) {
+		$db->query( 'delete from settings where app = ? and setting = ? and device = ?', 'misc', 'appearance_theme', $this_device );
+		$db->insert( 'settings', {
+			app         => 'misc',
+			setting     => 'appearance_theme',
+			value       => $theme,
+			timestamp   => $now,
+			server_time => $now,
+			device      => $this_device,
+			uuid        => randstr(20),
+		} );
+	}
+
 	$db->query('PRAGMA wal_checkpoint(TRUNCATE)');
 	undef $db;
 	undef $sql;
@@ -354,11 +398,28 @@ sub run_setup {
 		$code = ( defined $in->{'code'} && $in->{'code'} =~ /^[0-9]{4,12}$/ )
 			? $in->{'code'}
 			: sprintf( '%08d', int( rand(100000000) ) );
-		my $made = make_database( $cfg, { code => $code } );
+		my $made = make_database( $cfg, { code => $code, theme => $in->{'theme'} } );
 		unless ( $made->{'ok'} ) {
 			return { ok => 0, error => $made->{'error'} || 'could not build the database' };
 		}
 		$created = 1;
+
+		# A theme chosen explicitly here (--theme / JAWNOS_THEME, or the wizard)
+		# is authoritative: leave the marker jawnos-theme-apply.service looks for,
+		# so a jawnos-theme.txt still sitting on the ESP cannot overwrite it on the
+		# next boot. Only in the image layout ($HOME/jawnos), where that marker
+		# lives beside the house.
+		my $theme = valid_theme( $in->{'theme'} );
+		my $home = $ENV{'HOME'} || '';
+		if ( defined $theme && length $home && $root eq "$home/jawnos" ) {
+			my @t = gmtime(time());
+			my $stamp = sprintf( '%04d-%02d-%02dT%02d:%02d:%02dZ',
+				$t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1], $t[0] );
+			eval {
+				write_file( "$home/.theme-applied", "$theme $stamp\n" );
+				chmod 0600, "$home/.theme-applied";
+			};
+		}
 	}
 
 	return { ok => 1, config => $cfg, signatorial => $sig, code => $code, created => $created };
@@ -624,7 +685,19 @@ if ($seed) {
 		archive_dir => $seed_opt{'archive_dir'} || $ENV{'JAWNOS_ARCHIVE_DIR'},
 		device      => $seed_opt{'device'}      || $ENV{'JAWNOS_DEVICE'},
 		code        => $seed_opt{'code'}        || $ENV{'JAWNOS_UNLOCK_CODE'},
+		theme       => $seed_opt{'theme'}       || $ENV{'JAWNOS_THEME'},
 	};
+
+	# An unknown theme is a typo, not a reason to quietly ship the factory theme.
+	if ( defined $in->{'theme'} && length $in->{'theme'} ) {
+		my $theme = valid_theme( $in->{'theme'} );
+		if ( !defined $theme ) {
+			print STDERR "jawnos_setup: unknown theme '$in->{'theme'}'; choose one of: "
+				. join( ', ', @THEME_PRESETS ) . "\n";
+			exit 1;
+		}
+		$in->{'theme'} = $theme;
+	}
 
 	my $res = run_setup($in);
 	if ( !$res->{'ok'} ) {
@@ -637,6 +710,7 @@ if ($seed) {
 	print "  config        $root/config.json\n";
 	print "  database      $root/database/jawnos.db\n";
 	print "  signatorial   " . ( $res->{'config'}->{'signatorial'} || '' ) . "\n";
+	print "  theme         " . ( $in->{'theme'} || 'factory (Nord)' ) . "\n";
 	if ( $res->{'created'} ) {
 		print "  unlock code   $res->{'code'}\n";
 		print "\n  The unlock code is the only key to the database. It is not\n";

@@ -2,5 +2,7 @@
 # the extra tree, and that pass removes wants-links written by hand, so the
 # preset is what actually turns these on in the image.
 enable home-jawn.mount
+enable jawnos-grow.service
 enable jawnos-firstboot.service
+enable jawnos-theme-apply.service
 enable getty@tty1.service

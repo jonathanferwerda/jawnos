@@ -979,6 +979,33 @@ our %topic = (
 	},
 
 	# ------------------------------------------------------------ features
+	'welcome' => {
+		title => 'Welcome to JawnOS', category => 'features',
+		templates => [ 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
+		controls => [ 'Take the tour' ],
+		verified => '2026-10-26',
+		summary => 'A short tour of the desktop: windows, the start menu and System page, the dock, Configure and this Guide.',
+		body => [
+			'JawnOS is a desktop made of apps. Everything you open is a window: drag it by its title bar, pull its edge to resize it, and use the buttons in the title bar to minimise, maximise or close it. The window you last touched comes to the front. Press the question mark in a window\'s title bar to ask this Guide about that window, or press F1 to read the help topic for whatever is in front.',
+			'The start menu is the round button at the corner of the desk. It opens on the apps you used most recently, with a category rail for the whole catalogue and a search box. Its other pages show what is running, what is upcoming, what is expiring, and a System page (the water-drop tab) with this machine\'s battery, CPU load and memory, every other machine in the house and the parking lot of saved sessions. A new install opens the menu on that System page, so the first press shows whether the house is well.',
+			'The dock is the bar along an edge of the desk. Its icons are its pseudonyms: each one has a name, an icon, a colour, a place and something it says, all edited under Configure → Pseud. Pin the apps you reach for most and the dock keeps them within a press.',
+			'Configure is the wrench on the start menu. Under Misc → Appearance you can pick a whole theme (paint, icons, material, font and corner radius) or a colour scheme on its own; it also sets the font, the corner and how long a lock waits before its screensaver. Under App, each app has a card for its colour, budgets, goals and notifications. Under Dev are the machines of the house: Scan finds them, and each row carries its privilege, its lease, Migrate and Go. The Pseud tab holds the dock pseudonyms.',
+			'The Guide is always one press away. Type in the box under this page and press Guide me: it can answer from these topics, search your records, play media, translate a page, and open or drive the apps. It asks before it writes while the Confirmation Requirement is on, and it stages each change so you can read it first. Press Converse to keep the microphone open, or the question mark in any window\'s title bar to ask about that window. Press Take the tour at the foot of this window to hear this walkthrough again.'
+		],
+		steps => [
+			'Read this page, or press Take the tour at the foot of the window to have the Guide walk you through it.',
+			'Press the round start button; on a new install the menu opens on the System page. Use its category rail or search box to find an app.',
+			'Open an app and move its window by the title bar; press the question mark in its title bar to ask the Guide about it.',
+			'Open Configure (the wrench) and look under Misc → Appearance for themes and colour schemes, Pseud for the dock icons, and Dev for the other machines.',
+			'Type a question under this page and press Guide me; ask it to do something and it opens the app or stages the change.',
+			'Come back to this topic any time from the Help rail, or press F1 while another window is in front.'
+		],
+		examples => [
+			{ open => 'app', app => 'configure' },
+			{ configure => 'pseud' }
+		],
+		related => [ 'windows', 'start_menu', 'dock', 'configure', 'themes', 'devices_and_mesh', 'help_app' ]
+	},
 	'voice' => {
 		title => 'Voice and wake words', category => 'features',
 		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
@@ -1072,9 +1099,22 @@ our %topic = (
 	},
 	'dock' => {
 		title => 'The dock', category => 'features',
-		summary => 'A second bar that slides away when idle.',
+		verified => '2026-10-26',
+		summary => 'A second bar for the keyboard panels and the apps you keep at hand.',
+		templates => [ 'templates/pseudonyms.html.ep', 'templates/keyboard.html.ep', 'public/js/manager/keyboard.js' ],
 		body => [
-			'The dock is a second bar you can place on any edge. It holds pinned apps and can host the search box; a side dock tucks itself away and slides back when you call for it.'
+			'The dock is a second bar you can place on any edge. Its faces are the house\'s pseudonyms - Remote control, the walkman (delorean), Walkboy, the on-screen keyboard, the calculator, Notifications, Sessions and the Controller - and any apps you add yourself. It can also host the search box; a side dock tucks itself away and slides back when you call for it.',
+			'A face opens its own panel: the keyboard and calculator faces open the JawnOS keyboard (the calculator straight to its page), and the others open their keyboard panel above the dock. Press the same face again to put its panel away.',
+			'Right-click (or long-press) a face to remove it from the dock, and right-click the dock\'s empty background to see the faces you have removed and put one back. Right-click an app in the start menu, or a taskbar window button or app pin, to add that app to the dock or take it off again. An app added this way opens its window from the dock, and raises or minimises it like its taskbar tile.',
+			'The dock\'s app faces and each face\'s on/off are kept by this browser, not by the house: another browser or machine sees the server\'s pseudonym list and starts with every face on. The pseudonym list itself - what exists, its icon and colour, and whether it is on the dock at all - is shared, and lives under Configure -> Pseud.',
+			'An appointment type\'s glyph (an invoice, a quote, the encrypt stamp and the rest) is not a dock face. Those have no panel of their own; they stay in the pseudonym list so the ledger can draw them on an appointment, and they start off the dock.',
+			'The dock keeps at least one face so it can always be called back: if every face is removed, Remote control returns.'
+		],
+		steps => [
+			'Press a face to open its panel, and press it again to close it.',
+			'Right-click a face to remove it from the dock.',
+			'Right-click an app in the start menu or on the taskbar to add it to the dock.',
+			'Right-click the dock background to put a removed face back.'
 		],
 		related => [ 'taskbar', 'search' ]
 	},
@@ -1474,9 +1514,9 @@ our %topic = (
 	'help_app' => {
 		title => 'This Help app', category => 'features',
 		summary => 'The map you are reading now, and its guide.',
-		verified => '2026-10-25',
+		verified => '2026-10-26',
 		body => [
-			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on. The question-mark button in a window\'s title bar opens a Guide associate for that window — the same Guide, in a chat of its own, already aware of the window it came from.',
+			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on. The question-mark button in a window\'s title bar opens a Guide associate for that window — the same Guide, in a chat of its own, already aware of the window it came from. The Take the tour button at the foot of the window replays a short tour of the desktop: its windows, the start menu and its System page, the dock and its pseudonyms, Configure, and how to ask the Guide.',
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Friends" plays every episode it matches, as a list. Asked "when did I last have a beer" or "when am I next free", it reads the oldest, newest and next matching appointment from your own records (across the appointments log and the other tables), and the time machine reads them the same way. It reports each step as it goes.',
 			'It writes only with your say-so: the Confirmation Requirement. Ask it for an appointment and it stages the proposal and shows you what it would save; nothing is written until you confirm. Ask it to change one you already have — "delay email test by 5 minutes", "make it last 10 minutes", "move it to tomorrow at 3pm" — and it stages that too, then applies it in place. "Stop email test", "stop it in 10 minutes" or "stop it at 5pm" stops the running one at once; "delete the email test one that\'s coming up" (or "the one from yesterday at 3:30pm", "the one a week from now") deletes one, staged for a yes. Say "undo that" and it puts your last change back. The Guide\'s associate - the small chat in the corner, the same Guide and so carrying every one of these powers - carries a Confirm tick beside its close button: untick it and the Guide saves what it proposes without asking. Its configure button also holds Staged: everything the Guide is holding for a yes shows there, each row with a thumbs-up to save it and a trash to throw it away, showing what it is, when, and - when you gave one - how long it lasts, and the chat you left is still there when you come back. It never sends or pays, and never deletes without a yes.',
 			'It can give an appointment or a bill a recurrence in your own words too: "every third Saturday of the month", "every Tuesday for the next 6 weeks except on holidays", "the next five full moons", "my mom\'s next 5 birthdays", or "every anniversary of the birth of Abraham Lincoln until my mom is 80". The appointment you are starting is always the first occurrence. If a detail is missing - a birthday it does not have, or which Tuesday you meant - it opens an associate to ask, and the schedule finishes once you answer.',
@@ -1756,6 +1796,34 @@ sub key {
 sub get {
 	my ($id) = @_;
 	return $topic{ help::key($id) };
+}
+
+# ---- first run ------------------------------------------------------------
+# The welcome tour is shown once per install. The flag is a settings row whose
+# absence means first run; it lives in __president, one of the protected
+# (machine-local) apps, so it belongs to this database rather than to a
+# browser's localStorage. Reading it without a device matches any row, which is
+# what keeps it per install when a person uses more than one browser.
+sub welcome_seen {
+	my $row = eval {
+		&subs::db_query(
+			'select value from settings where app = ? and setting = ? order by server_time desc limit 1',
+			'__president', 'welcome_tour'
+		)->hashes->[0];
+	};
+	return (ref $row eq 'HASH' && defined $row->{'value'} && length $row->{'value'}) ? 1 : 0;
+}
+
+sub welcome_mark {
+	my $value = shift;
+	$value = &subs::rightNow() unless defined $value && length $value;
+	eval {
+		&subs::setting_setter({
+			app => '__president', setting => 'welcome_tour', value => $value,
+			device => &subs::device_setter()
+		});
+	};
+	return 1;
 }
 
 # One live value, or 'unavailable' when it cannot be read. Kept private so the

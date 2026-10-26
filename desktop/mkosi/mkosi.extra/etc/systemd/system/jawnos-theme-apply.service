@@ -1,0 +1,18 @@
+# Apply the theme chosen on jawnos.ca. The download page writes a two-line
+# jawnos-theme.txt; the person drops it on the FAT jawnos-esp partition, which
+# every OS can read. This runs once after the house is seeded and then leaves a
+# marker on the state partition, so a later choice in Configure -> Appearance
+# is never overwritten by the file still sitting on the stick.
+[Unit]
+Description=Apply the theme chosen on jawnos.ca
+Requires=home-jawn.mount
+After=home-jawn.mount jawnos-grow.service jawnos-firstboot.service
+ConditionPathExists=!/home/jawn/.theme-applied
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jawnos-theme --seed
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

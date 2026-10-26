@@ -28,15 +28,7 @@ import json
 import os
 from urllib.parse import urljoin, urlparse
 
-import gi
-
-gi.require_version("Gtk", "3.0")
-gi.require_version("Gdk", "3.0")
-gi.require_version("WebKit2", "4.1")
-from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
-
-from . import DESKTOP_DIR, core, keepawake  # noqa: E402
-
+from . import DESKTOP_DIR, core  # noqa: E402
 
 # One shared context so the session cookie survives window closes and reloads.
 _context = None
@@ -54,6 +46,16 @@ _SKYLAKE_IDS = frozenset({
     "0x1921", "0x1923", "0x1926", "0x1927", "0x192a", "0x192b",
     "0x1932", "0x193a", "0x193b", "0x193d",
 })
+
+# WebKitGTK 2.52's complete set of software-renderer switches, read by
+# libwebkit2gtk when it initialises. The live image sets all three in
+# ~/.config/jawnos/webkit.env; treating them as one group is what lets
+# JAWNOS_GPU=1 opt back out of the file's defaults (see _apply_webkit_env).
+_SOFTWARE_RENDERER_KEYS = (
+    "WEBKIT_DISABLE_COMPOSITING_MODE",
+    "WEBKIT_DISABLE_DMABUF_RENDERER",
+    "WEBKIT_SKIA_ENABLE_CPU_RENDERING",
+)
 
 
 # Report whether the page is playing audio or video. WebKit's
@@ -127,19 +129,28 @@ def _is_skylake_x11():
     return False
 
 
+def _truthy(value):
+    """A shell-style boolean: unset, empty, 0/false/no/off are false."""
+    return bool(value) and value.strip().lower() not in ("0", "false", "no", "off")
+
+
 def _apply_webkit_env():
     """Apply WebKit environment overrides from webkit.env and safe defaults.
 
-    WebKit reads these at initialisation, so they have to be in the environment
-    before the first WebView is made. The file (one KEY=VALUE per line, '#'
-    comments) is an escape hatch for rendering and video tuning without editing
-    code -- e.g. WEBKIT_DISABLE_COMPOSITING_MODE=1 on an X11/Intel driver that
-    corrupts the window when another program forces a redraw, or
-    WEBKIT_DISABLE_DMABUF_RENDERER=1 on a driver that mishandles the DMABUF
+    WebKit reads these when it initialises, so they have to be in the
+    environment before the WebKit typelib is imported (the import sits below
+    this call on purpose). The file (one KEY=VALUE per line, '#' comments) is
+    an escape hatch for rendering and video tuning without editing code -- e.g.
+    WEBKIT_DISABLE_COMPOSITING_MODE=1 on an X11/Intel driver that corrupts the
+    window when another program forces a redraw, or
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 on a driver that mishandles the DMA-BUF
     renderer. Existing environment variables always win over the file.
 
-    The file also wins over the automatic Skylake/X11 fallback below (including
-    JAWNOS_GPU=1 to keep the GPU path on such a machine)."""
+    JAWNOS_GPU=1 (environment or file) asks for the GPU path. It suppresses the
+    automatic Skylake/X11 fallback and drops the file's three software-renderer
+    switches, so a machine that shares the live image's webkit.env can opt back
+    in. A switch set in the real environment is never dropped: only values this
+    function copied in from the file are removed."""
     values = {}
     path = os.path.join(core.config_dir(), "webkit.env")
     try:
@@ -157,14 +168,39 @@ def _apply_webkit_env():
     for key, value in values.items():
         if key not in real:
             os.environ[key] = value
-    opt_out = (os.environ.get("JAWNOS_GPU") or "").strip().lower()
-    if not opt_out or opt_out in ("0", "false", "no", "off"):
-        if _is_skylake_x11():
-            os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
-            os.environ.setdefault("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1")
+    if _truthy(os.environ.get("JAWNOS_GPU")):
+        for key in _SOFTWARE_RENDERER_KEYS:
+            if key not in real:
+                os.environ.pop(key, None)
+        return
+    if _is_skylake_x11():
+        os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+        os.environ.setdefault("WEBKIT_SKIA_ENABLE_CPU_RENDERING", "1")
 
 
+# Apply before importing WebKit: loading the typelib is when libwebkit2gtk
+# reads the renderer switches. Do not move this call below the gi imports.
 _apply_webkit_env()
+
+
+def _software_rendering():
+    """Whether the view is on WebKit's software path (see _apply_webkit_env).
+
+    Read after _apply_webkit_env has run, so the answer includes the live
+    image's webkit.env and the Skylake/X11 fallback. Only the software path
+    needs WebViewPanel's extra resize repaint: the GPU path presents whole
+    frames through the compositor."""
+    return any(_truthy(os.environ.get(key)) for key in _SOFTWARE_RENDERER_KEYS)
+
+
+import gi  # noqa: E402
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+gi.require_version("WebKit2", "4.1")
+from gi.repository import Gdk, GLib, Gtk, WebKit2  # noqa: E402
+
+from . import keepawake  # noqa: E402
 
 
 def _context_get():
@@ -372,11 +408,29 @@ class WebViewPanel(Gtk.Box):
         # property; either one holds the screen awake.
         self._js_media = {}
         self._webkit_audio = False
-        self.connect("destroy", lambda *_: self._inhibitor.uninhibit())
+        # The pending full-repaint timeout (see _schedule_full_repaint).
+        self._repaint_source = 0
+        self.connect("destroy", self._on_destroy)
 
         self.view = WebKit2.WebView.new_with_context(_context_get())
         self._configure(self.view)
         self.pack_start(self.view, True, True, 0)
+
+        # The software path (no compositor) presents through GTK damage
+        # regions. A virtual display (QEMU/virtio, no GPU) can leave a stale
+        # horizontal band after a resize or a tab reveal because the newly
+        # exposed area was never marked damaged. Ask for a whole-widget
+        # repaint whenever the size settles, and again when the monitor layout
+        # changes. On the GPU path the compositor presents whole frames, so
+        # _software_rendering keeps this off there (see _apply_webkit_env).
+        self.view.connect("size-allocate", self._on_view_size_allocate)
+        self.view.connect("map", self._on_view_map)
+        try:
+            screen = self.get_screen() or Gdk.Screen.get_default()
+            if screen is not None:
+                screen.connect("monitors-changed", self._on_monitors_changed)
+        except Exception:
+            pass
 
         # The ticket URL logs in and redirects; loading it and then heading to
         # /manager guarantees the session cookie is set even if the ticket page
@@ -573,6 +627,49 @@ class WebViewPanel(Gtk.Box):
         except Exception:
             pass
 
+    # ---- a full repaint after a resize or display change (software path) ----
+
+    def _on_view_size_allocate(self, _view, _allocation):
+        if _software_rendering():
+            self._schedule_full_repaint()
+        return False
+
+    def _on_view_map(self, _view):
+        # A notebook tab reveal maps the view again; give it a clean frame.
+        if _software_rendering():
+            self._schedule_full_repaint()
+        return False
+
+    def _on_monitors_changed(self, _screen):
+        # A mode, resolution or scale change reallocates every window. The
+        # compositor needs a moment to settle before the final size is known.
+        if self._software_rendering():
+            self._schedule_full_repaint(delay=150)
+        return False
+
+    def _schedule_full_repaint(self, delay=50):
+        """Coalesce the burst of allocations a resize produces into one draw."""
+        if self._repaint_source:
+            return
+        self._repaint_source = GLib.timeout_add(delay, self._full_repaint)
+
+    def _full_repaint(self):
+        self._repaint_source = 0
+        try:
+            # No area: invalidate the whole widget, so WebKit repaints every
+            # tile rather than trusting a damage region that no longer matches
+            # the new allocation.
+            self.view.queue_draw()
+        except Exception:
+            pass
+        return False
+
+    def _on_destroy(self, *_args):
+        if self._repaint_source:
+            GLib.source_remove(self._repaint_source)
+            self._repaint_source = 0
+        self._inhibitor.uninhibit()
+
     def _on_playing_audio(self, view, _param):
         try:
             self._webkit_audio = bool(view.get_property("is-playing-audio"))
@@ -593,6 +690,11 @@ class WebViewPanel(Gtk.Box):
             return
         # a load that reached FINISHED is a good one: let a later drop retry again
         self._load_retries = 0
+        # The first software-rendered frame can be assembled before the final
+        # layout settles; one whole-widget draw after the load clears a band
+        # left by an earlier partial frame.
+        if _software_rendering():
+            self._schedule_full_repaint(delay=200)
         if self._login_pending:
             # WebKit needs a moment to commit the session cookie the ticket set,
             # or the /manager navigation races ahead of it and lands on the

@@ -4,9 +4,14 @@
 set $mod Mod4
 
 exec /home/jawn/jawnos/desktop/wayland/jawnos-session
-exec sh -c 'swaybg -i /home/jawn/Pictures/jawnos-wallpaper.png -m fill 2>/dev/null || swaybg -c "#0e837e"'
+exec sh -c 'swaybg -i /home/jawn/Pictures/jawnos-wallpaper.png -m fill 2>/dev/null || swaybg -c "#2e3440"'
 exec waybar -c /home/jawn/jawnos/desktop/wayland/waybar.conf
 
+# JawnOS owns the screen. This rule runs when the view maps; Sway also reflows
+# an already-fullscreen window when its output changes mode or size (a QEMU
+# window resize, or an EDID change on virtio-gpu), and the app repaints and
+# re-fills the WebKit surface when GDK reports the change. No per-resolution
+# output stanza is needed.
 for_window [app_id="^jawnos-desktop$"] fullscreen enable
 for_window [app_id="^foot$"] floating enable, resize set 900 600
 

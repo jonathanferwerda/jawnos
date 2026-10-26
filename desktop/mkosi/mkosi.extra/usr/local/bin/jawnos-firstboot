@@ -38,11 +38,11 @@ for d in Desktop Documents Downloads Music Pictures Public Templates Videos Reco
     mkdir -p "$STATE/$d"
 done
 
-# The live image's wallpaper: the JawnOS hand on the Teal ramp. Generated from
+# The live image's wallpaper: the JawnOS hand on the Nord ramp. Generated from
 # the image's own logo; skipped quietly when ImageMagick or the logo is missing
 # (swaybg has a solid fallback).
 if [ -f "$STATE/jawnos/public/icons/logos/WelcomeLogo.png" ] && command -v convert >/dev/null 2>&1; then
-    convert -size 1920x1080 gradient:'#0e837e-#2fa8a2' \
+    convert -size 1920x1080 gradient:'#2e3440-#4c566a' \
         \( "$STATE/jawnos/public/icons/logos/WelcomeLogo.png" -resize 380x380 \) \
         -gravity center -composite "$STATE/Pictures/jawnos-wallpaper.png" 2>/dev/null || true
 fi

@@ -12187,10 +12187,17 @@ sub start_menu_forget($key) {
 
 sub start_menu_maker($c) {
 	my $returner = {};
-	my $menu = $c->param('menu');
+	my $menu = $c->param('menu') // '';
+	$menu = '' unless $menu =~ /^(?:app|run|up|exp|view)$/;
+	# A new install opens on the System page (the water-drop tab), which is the
+	# quickest way to see that the house is well. A saved choice always wins:
+	# the browser only sends nothing while it has none. Once the welcome tour has
+	# been shown the ordinary fallback is the app list.
+	my $first_run = &help::welcome_seen() ? 0 : 1;
+	$menu = $first_run ? 'view' : 'app' unless length $menu;
 
 	# Opening the System view is what asks the levels loop for quick passes.
-	&subs::levels_fast_request() if ($menu || '') eq 'view';
+	&subs::levels_fast_request() if $menu eq 'view';
 	my $html = $c->render_to_string(
 		template => 'start_menu/start_menu',
 		parking_lot => &parking_lot_grabber($c),
@@ -12208,7 +12215,7 @@ sub start_menu_maker($c) {
 		$html =~ s{src="(/[^"]*\.(?:png|jpe?g|gif))"}{'src="' . &subs::icon_for($1, $set) . '"'}ge;
 	}
 	$html =~ s/"([^"]*\.(?:png|jpe?g|gif|svg))"/"$1?v=$v"/g;
-	$returner = { html => $html };
+	$returner = { html => $html, menu => $menu, first_run => $first_run };
 
 	return $returner;
 }
@@ -12288,9 +12295,19 @@ sub pseudonym_maker($context,$app) {
 		my %retired = map { $_ => 1 } qw/beacon/;
 		my @kept = grep { !$_->{'name'} || !$retired{$_->{'name'}} } @{$ps};
 		if (scalar @kept != scalar @{$ps}) { $ps = \@kept; $renamed = 1; }
+		# The ledger's own type glyphs (invoice, quote, encrypt, assign, reset,
+		# software) are icons for appointment types, not dock faces: they have
+		# no panel to open. Older cached lists carried them as 'on', which put
+		# six dead icons in the dock; take them out but keep them in the
+		# viewer's list, where the ledger reads them by name.
+		my %dockless = map { $_ => 1 } qw/invoice quote encrypt assign reset software/;
 		foreach my $p ( @{$ps} ) {
 			if ($p->{'name'} && $p->{'name'} eq 'console') {
 				$p->{'name'} = 'sessions';
+				$renamed = 1;
+			}
+			if ($p->{'name'} && $dockless{$p->{'name'}} && ($p->{'status'} || '') eq 'on') {
+				$p->{'status'} = 'off';
 				$renamed = 1;
 			}
 		}
@@ -12306,16 +12323,19 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'on', name => "notifications", icon => "bell", speech => 'where are your friends now?' },
 		{ status => 'on', name => "sessions", icon => "windows", speech => 'i watch the baytch' },
 		{ status => 'on', name => "controller", icon => "heart", speech => 'Run for it Marty!' },
-		# the ledger's own types wear the set's glyphs of the same name: a quote,
-		# an invoice, the encrypt stamp and the rest of the appointment types
-		# that had no pseudonym (they showed no icon in the details and the
-		# timeline until now)
-		{ status => 'on', name => "invoice", icon => "invoice" },
-		{ status => 'on', name => "quote", icon => "quote" },
-		{ status => 'on', name => "encrypt", icon => "encrypt" },
-		{ status => 'on', name => "assign", icon => "assign" },
-		{ status => 'on', name => "reset", icon => "reset" },
-		{ status => 'on', name => "software", icon => "software" },
+		# The ledger's own types wear the set's glyphs of the same name: a quote,
+		# an invoice, the encrypt stamp and the rest of the appointment types that
+		# had no pseudonym (they showed no icon in the details and the timeline
+		# until now). They are glyphs, not dock faces: viewer context keeps every
+		# status, so the ledger still reads them by name, while 'off' keeps them out
+		# of the dock (Configure -> Pseud reads on and off, so their glyph is still
+		# theirs to change).
+		{ status => 'off', name => "invoice", icon => "invoice" },
+		{ status => 'off', name => "quote", icon => "quote" },
+		{ status => 'off', name => "encrypt", icon => "encrypt" },
+		{ status => 'off', name => "assign", icon => "assign" },
+		{ status => 'off', name => "reset", icon => "reset" },
+		{ status => 'off', name => "software", icon => "software" },
 		{ status => 'button', name => 'record', icon => 'record', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'text', icon => 'love letter', colour => '#ffec1f', place => 'top' },
 		{ status => 'button', name => 'start', icon => 'play', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
@@ -33490,6 +33510,20 @@ get '/manager/help/body' => sub($c) {
 		selected_model => ''
 	);
 	$c->render(text => $html);
+};
+
+# Whether this install has met the welcome tour yet. The flag is a settings row
+# (see help::welcome_seen), so it is per install rather than per browser; the
+# Help window asks this on load and opens the tour once when it is absent.
+# Marking it is a separate press so a page that never reaches the tour does not
+# spend the first run.
+get '/manager/help/welcome' => sub($c) {
+	$c->render(json => { first_run => (&help::welcome_seen() ? 0 : 1) });
+};
+
+post '/manager/help/welcome' => sub($c) {
+	&help::welcome_mark();
+	$c->render(json => { ok => 1, first_run => 0 });
 };
 
 # The Help agent: the topic's own entry, plus what the reader was looking at,

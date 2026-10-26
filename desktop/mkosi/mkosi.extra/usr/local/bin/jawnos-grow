@@ -1,0 +1,62 @@
+#!/bin/sh
+# Grow the state partition (and its ext4) to fill the disk we booted from.
+#
+# The image is built at its minimum size (1G ESP + 5G root + 2G state). A stick
+# or a QEMU disk is usually larger, and `mkosi vm --runtime-size` only makes the
+# file larger - it does not move the partition table with it. This service does
+# the useful half: it grows jawnos-state, which holds /home/jawn, into the free
+# space at the end of the disk.
+#
+# Only the state partition is touched. The root is mounted read-only
+# (systemd.volatile=overlay), and a read-only ext4 cannot grow online; the
+# system never needs more room than the 5G it was built with. The run is
+# idempotent - on a disk with no free space systemd-repart says "No changes".
+set -eu
+
+# Resolve the state partition from the mounted /home/jawn. `blkid -L` alone is
+# ambiguous when a second JawnOS disk (or a just-installed target) is attached.
+state=$(findmnt -no SOURCE /home/jawn 2>/dev/null || true)
+dev=
+if [ -n "$state" ] && [ -b "$state" ]; then
+    state=$(readlink -f "$state")
+    disk=$(lsblk -no PKNAME "$state" 2>/dev/null | head -n 1)
+    if [ -n "$disk" ]; then
+        dev="/dev/$disk"
+    fi
+fi
+if [ -z "$dev" ]; then
+    root=$(blkid -L jawnos-root 2>/dev/null || true)
+    [ -n "$root" ] || exit 0
+    root=$(readlink -f "$root")
+    disk=$(lsblk -no PKNAME "$root" 2>/dev/null | head -n 1)
+    [ -n "$disk" ] || exit 0
+    dev="/dev/$disk"
+    state=
+    for p in "$dev"?* "$dev"p*; do
+        [ -b "$p" ] || continue
+        got=$(blkid -s LABEL -o value "$p" 2>/dev/null || true)
+        got=$(printf '%s' "$got" | tr 'A-Z' 'a-z')
+        if [ "$got" = jawnos-state ]; then
+            state=$p
+            break
+        fi
+    done
+fi
+[ -n "$state" ] && [ -b "$state" ] || exit 0
+
+# systemd-repart cannot grow a filesystem on a generic partition type, so the
+# growth and the resize2fs are two explicit steps. A missing free-space area or
+# a busy partition table is not a boot failure: the next boot retries.
+defs=/run/jawnos-grow
+mkdir -p "$defs"
+cp /usr/lib/jawnos/repart/30-state.conf "$defs/" 2>/dev/null || exit 0
+systemd-repart --dry-run=no --definitions="$defs" --empty=allow --offline=yes "$dev" >/dev/null 2>&1 || true
+# If the kernel did not take the new size, nudge the partition nodes.
+partx -u "$dev" 2>/dev/null || true
+udevadm settle 2>/dev/null || true
+
+# The device node keeps its path; only its size changed.
+resize2fs "$state" >/dev/null 2>&1 || true
+
+echo "jawnos-grow: $state now $(blockdev --getsize64 "$state" 2>/dev/null || echo '?') bytes"
+exit 0

@@ -272,9 +272,10 @@ function jawnosTaskbarAppPins() {
 }
 
 // The keyboards off the dock: each pseudonym opens its own keyboard when pressed.
+// App faces added to the dock are apps, and already appear in the Apps list.
 function jawnosTaskbarKeyboardPins() {
 	var pins = [];
-	$('#pseudonym_home .pseudonym').each(function () {
+	$('#pseudonym_home .pseudonym').not('.dock_app').each(function () {
 		var p = $(this);
 		var id = p.attr('id');
 		if (!id) { return; }
@@ -512,6 +513,7 @@ function jawnosWindowMaximized(app) {
 // of the bar's menu.
 function jawnosWindowContextBuild(app) {
 	var selected = function (on) { return on ? '✓' : ''; };
+	var t = function (key, english) { return (typeof jawnosDockText == 'function') ? jawnosDockText(key, english) : (english || key); };
 	var context = $('<div class="taskbar_context"></div>');
 	context.append('<div class="taskbar_context_selection" act="win_close" app="' + app + '">Close</div>');
 	context.append('<div class="taskbar_context_selection" act="win_max" app="' + app + '">' + (jawnosWindowMaximized(app) ? 'Restore' : 'Maximize') + '</div>');
@@ -521,6 +523,23 @@ function jawnosWindowContextBuild(app) {
 	context.append('<div class="taskbar_context_label">Taskbar</div>');
 	var pinned = jawnosTaskbarAppPinned(app);
 	context.append('<div class="taskbar_context_selection" act="pin_app" app="' + app + '">' + (pinned ? 'Unpin from taskbar' : 'Pin to taskbar') + '</div>');
+	// The same app can ride the dock instead of (or as well as) the taskbar.
+	// dock_app_toggle is handled in keyboard.js, beside the dock's own faces;
+	// the hint and icon are taken from the window button the menu was raised on.
+	if (typeof jawnosDockHas == 'function') {
+		var docked = jawnosDockHas(app);
+		var wbtn = $('#taskbar .window_toggle').filter(function () { return $(this).attr('app') == app; }).first();
+		var dock_src = wbtn.find('.window_toggle_icon').attr('src') || '';
+		var dock_hint = wbtn.attr('formatted_name') || ((typeof format_name == 'function') ? format_name(app) : app);
+		var dockrow = $('<div class="taskbar_context_selection" act="dock_app_toggle"></div>')
+			.attr('dock_app', app).attr('dock_hint', dock_hint).attr('dock_src', dock_src);
+		if (dock_src) {
+			$('<img class="miniscule_thumb">').attr('src', dock_src)
+				.css({ width: '20px', height: '20px', objectFit: 'contain' }).appendTo(dockrow);
+		}
+		$('<span></span>').text(docked ? t('dock.remove', 'Remove from dock') : t('dock.add', 'Add to dock')).appendTo(dockrow);
+		context.append(dockrow);
+	}
 	return context;
 }
 
@@ -538,6 +557,16 @@ function jawnosTaskbarContextOpen(x, y, app) {
 
 $(document).on('contextmenu', '#taskbar', function (e) {
 	e.preventDefault();
+	// An app pin is a launcher, not a window: its menu is the dock's add/remove.
+	var pin = $(e.target).closest('.taskbar_app_pin');
+	if (pin.length && typeof jawnosDockAppMenu == 'function') {
+		jawnosDockAppMenu(e.clientX, e.clientY, {
+			app: pin.attr('app'),
+			hint: pin.attr('hint'),
+			src: pin.find('img').attr('src') || ''
+		});
+		return;
+	}
 	// the app under the pointer, if the press landed on a window button
 	var win = $(e.target).closest('.window_toggle');
 	var app = win.length ? win.attr('app') : null;

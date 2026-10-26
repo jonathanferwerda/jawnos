@@ -17,6 +17,7 @@
 <div class="cfg">
 	<h2>Pseudonyms</h2>
 	<p class="cfg-note">The named faces of the dock and the ledger: each one's icon, colour, place and speech. Changes save as you make them; Default restores the built-in look.</p>
+	<p class="cfg-note"><%= &subs::ui('Off keeps a face out of the dock; it is still available to the ledger. Apps can be added to the dock from the start menu or the taskbar, and that choice is kept by this browser.') %></p>
 	<div class="ps_list">
 		<% foreach my $p ( @{$pseudonyms} ) { %>
 			<div class="cfg-card ps_card" pseudonym_name="<%= $p->{'name'} %>">

@@ -18,3 +18,8 @@ export PATH="/usr/bin/vendor_perl:$PATH"
 
 cd /opt/jawnos/tree
 perl scripts/jawnos_deps.pl --install --no-extras
+
+# cpanm keeps its tarballs and work directories under /root. Nothing at runtime
+# reads them, and the cache was ~200 MB in every image - a large slice of the
+# download and of the 5G root partition. Remove it after the modules are built.
+rm -rf /root/.cpanm /root/.cache 2>/dev/null || true

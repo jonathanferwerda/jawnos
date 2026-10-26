@@ -136,6 +136,138 @@ function helpTopicsBack() {
 	helpBody(jawnos_help_topic_current);
 }
 
+// ---- the welcome tour ------------------------------------------------------
+// The first load of a new install opens Help and walks through the desktop.
+// Take the tour replays the same sequence at any time. The walkthrough is
+// scripted, not a model turn: each step is a Guide bubble and, where it helps,
+// a button that drives the real control through helpDoAction. The install flag
+// is server-side (see help::welcome_mark), so the tour is offered once per
+// install rather than once per browser.
+var jawnos_help_tour_index = 0;
+
+function jawnosHelpTourText(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+var jawnos_help_tour_steps = [
+	{
+		text: 'Welcome to JawnOS. I am the Guide. Everything here opens in a window: drag it by its title bar, pull an edge to resize it, and use the title bar buttons to minimise, maximise or close it. I will walk you through the main parts in a few steps; you can stop whenever you like.'
+	},
+	{
+		text: 'The start menu is the round button at the corner of the desk. It opens on your recent apps, with a category rail and a search box. Its other pages show what is running, upcoming and expiring, and the water-drop tab is System: this machine\'s battery, CPU and memory, every other machine in the house, and the parking lot of saved sessions. A new install starts there.',
+		verb: 'Show the System page',
+		run: function (done) {
+			localStorage.setItem('start_menu_menu', 'view');
+			if (typeof startMenuToggle === 'function') {
+				$('#start_menu').attr('toggled', 'closed');
+				startMenuToggle({ source: 'tour' });
+			}
+			done('Opened the start menu on the System page.');
+		}
+	},
+	{
+		text: 'The dock is the bar along an edge of the desk, and its icons are its pseudonyms: each can be given a name, icon, colour, place and speech. Pin the apps you reach for most so they stay one press away.'
+	},
+	{
+		text: 'Configure is the wrench on the start menu. Under Misc → Appearance holds the theme gallery (paint, icons, material, font and corner), the colour schemes, the font, the corner and the lock screensaver. Under App, each app has a card for its colour, budgets, goals and notifications. Under Dev are the machines of the house: Scan finds them, and each row carries its privilege, lease, Migrate and Go. The Pseud tab is where the dock pseudonyms are edited.',
+		verb: 'Open Configure',
+		action: { action: 'open_app', app: 'configure' }
+	},
+	{
+		text: 'I am in the box at the foot of this window. Ask me a question about a topic, or tell me to do something: I can search your records, play media, translate a page, and open or drive the apps. With the Confirmation Requirement on I stage each change first, so nothing is written until you say yes. Press Converse to keep the microphone open, or the question mark in any window\'s title bar to ask about that window.'
+	},
+	{
+		text: 'That is the tour. Open Help again from the start menu, or press F1 while another window is in front. Press Take the tour whenever you want to hear this again.'
+	}
+];
+
+function helpTourReset() {
+	jawnos_help_tour_index = 0;
+	var log = helpChatLog();
+	if (log.length) { log.empty(); }
+	// the tour is scripted; drop any model thread so the two do not mix
+	jawnos_help_chat = [];
+}
+
+function helpTourShowStep() {
+	var log = helpChatLog();
+	if (!log.length) { return; }
+	log.find('.help_tour_controls').remove();
+	var step = jawnos_help_tour_steps[jawnos_help_tour_index];
+	if (!step) { return; }
+	helpChatAdd('guide', jawnosHelpTourText(step.text));
+	var controls = $('<div class="help_tour_controls" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;margin:8px 0 6px;"></div>');
+	log.append(controls);
+	if (step.verb) {
+		var act = $('<button class="button hover" style="padding:5px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;"></button>')
+			.text(jawnosHelpTourText(step.verb));
+		act.on('click', function () {
+			var done = function (obs) { helpChatAdd('step', jawnosHelpTourText(obs || 'Done.')); };
+			if (step.action && typeof helpDoAction === 'function') { helpDoAction(step.action, done); }
+			else if (typeof step.run === 'function') { step.run(done); }
+		});
+		controls.append(act);
+	}
+	var last = (jawnos_help_tour_index >= jawnos_help_tour_steps.length - 1);
+	var next = $('<button class="button hover" style="padding:5px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;"></button>')
+		.text(last ? jawnosHelpTourText('Finish') : jawnosHelpTourText('Next'));
+	next.on('click', function () {
+		if (last) {
+			log.find('.help_tour_controls').remove();
+			helpChatAdd('step', jawnosHelpTourText('The tour is finished. Press Take the tour any time to see it again.'));
+			return;
+		}
+		jawnos_help_tour_index++;
+		helpTourShowStep();
+	});
+	controls.append(next);
+	log.scrollTop(log[0].scrollHeight);
+}
+
+function helpTourStart() {
+	// The button lives in the window, and the first-run check waits for the
+	// window it already asked for; this only ever runs on a window that is up.
+	if (!$('.wind[app="help"]').length) { return; }
+	// The tour is about to be shown, so this install has now met it. Marking
+	// before the first bubble would spend the first run on a window that never
+	// arrived; marking here means a failed open leaves the tour to try again.
+	helpTourMarkSeen();
+	jawnos_help_topic_current = 'welcome';
+	helpShowChat(true);
+	helpTourReset();
+	helpTourShowStep();
+}
+
+function helpTourMarkSeen() {
+	if (window.__jawnosWelcomeMarked) { return; }
+	window.__jawnosWelcomeMarked = true;
+	$.post('/manager/help/welcome', { seen: 1 });
+}
+
+// One question to the server on the manager's first load: has this install met
+// the tour? The absence of the row is the first run, and helpTourStart marks it
+// once the window is actually on screen.
+function helpFirstRunCheck() {
+	if (window.__jawnosWelcomeChecked) { return; }
+	window.__jawnosWelcomeChecked = true;
+	$.get('/manager/help/welcome', function (r) {
+		if (!r || !r.first_run) { return; }
+		// keep this browser's start menu on the System page the first run chose
+		if (!localStorage.getItem('start_menu_menu')) { localStorage.setItem('start_menu_menu', 'view'); }
+		if ($('.wind[app="help"]').length) { helpTourStart(); return; }
+		helpOpener('welcome');
+		// A cold worker can take a moment to render the window. Wait for the one
+		// that was asked for rather than opening a second; a window that never
+		// arrives leaves the flag unspent, so the next load offers the tour again.
+		var tries = 0;
+		var wait = function () {
+			if ($('.wind[app="help"]').length) { helpTourStart(); return; }
+			if (tries++ < 20) { setTimeout(wait, 250); }
+		};
+		setTimeout(wait, 400);
+	});
+}
+
 // A guide answer, with a small good/or-not pair under it: the person's verdict
 // on the reply is the one bit of feedback we keep. It names the question it is
 // answering so the record reads on its own.
@@ -1110,6 +1242,10 @@ $(document).on('click', '#help_toggle', function () {
 	helpOpener();
 });
 
+$(document).on('click', '#help_tour', function () {
+	helpTourStart();
+});
+
 $(document).on('click', '.help_button', function (e) {
 	e.stopPropagation();
 	var app = $(this).attr('app');
@@ -1187,4 +1323,11 @@ $(document).on('mouseleave', '[help]', function () {
 
 $(document).on('keydown', function (e) {
 	if (e.key === 'F1') { e.preventDefault(); helpOpenContext(); }
+});
+
+// The manager has loaded and put its windows back; ask once whether this install
+// has seen the welcome tour. The delay lets a restored conversation settle so
+// the tour does not race the startup windows.
+$(document).ready(function () {
+	setTimeout(helpFirstRunCheck, 1200);
 });

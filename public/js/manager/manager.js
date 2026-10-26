@@ -2600,7 +2600,7 @@ function startMenuToggle(data) {
 	var source = data['source'];
 	var st = $('#start_menu_toggle');
 	var start_menu = $('#start_menu');
-	var menu = localStorage.getItem('start_menu_menu');
+	var menu = localStorage.getItem('start_menu_menu') || '';
 	clearTimeout(startMenuTimeout);
 	if ((st.attr('toggled') == 'open' || start_menu.is(':visible')) && !source) {
 		startMenuCloser(0);
@@ -2624,7 +2624,14 @@ function startMenuToggle(data) {
 			data: { menu: menu },
 			success: function(response) {
 				if (response.html) {
-					startMenuHtml[menu] = response.html;
+					// The server resolves an empty menu to this install's default
+					// (the System page on a first run, the app list afterwards), so
+					// the cache and the saved choice follow what was actually drawn.
+					var shown = response.menu || menu || '';
+					if (shown && !localStorage.getItem('start_menu_menu')) {
+						localStorage.setItem('start_menu_menu', shown);
+					}
+					startMenuHtml[shown] = response.html;
 					startMenuRender(response.html, st);
 				}
 			}

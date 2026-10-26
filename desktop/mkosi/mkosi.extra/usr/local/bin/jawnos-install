@@ -1,114 +1,312 @@
 #!/bin/sh
-# Copy the running live system onto a disk and carry the house with it.
+# Install the running live system onto a disk and carry the house with it.
 #
-#   jawnos-install              show the plan, change nothing
-#   jawnos-install --yes /dev/sdX
+#   jawnos-install                       show the plan, change nothing
+#   sudo jawnos-install --yes /dev/sdX   install, keeping the live session
+#   sudo jawnos-install --yes --theme nord /dev/sdX
 #
-# The image is copied byte for byte, so the ESP, systemd-boot and the kernel
-# travel with it; the partitions are then grown to fill the disk; and the live
-# session's /home/jawn is copied onto the new jawnos-state partition. That last
-# step is what keeps the changes made while trying the live USB.
+# The target is repartitioned from the image's own repart definitions, so the
+# state partition (the house: /home/jawn) is created at the full size of the
+# disk from the start. The ESP and the read-only system partition are copied
+# byte for byte from the running stick, so the bootloader and kernel travel
+# with them, and /home/jawn is copied as files so the live session's changes
+# are kept.
+#
+# The theme chosen on jawnos.ca travels in jawnos-theme.txt on the stick's
+# jawnos-esp partition. It is read here and written into the new machine's
+# database; --theme overrides it. An explicit theme wins over the file.
 set -eu
 
 CONFIRM=no
 NEW_SIG=no
+THEME=
+THEME_EXPLICIT=no
 TARGET=
-for arg in "$@"; do
-    case "$arg" in
-        --yes) CONFIRM=yes ;;
+
+usage() {
+    echo "usage: jawnos-install [--yes] [--new-signatorial] [--theme SLUG] /dev/sdX" >&2
+    echo "  themes: nord cutefish deepin sage neon ..." >&2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --yes)             CONFIRM=yes ;;
         --new-signatorial) NEW_SIG=yes ;;
-        /dev/*) TARGET="$arg" ;;
-        *) echo "unknown argument: $arg" >&2; exit 2 ;;
+        --theme)           shift; THEME=${1:-}; THEME_EXPLICIT=yes ;;
+        --theme=*)         THEME=${1#--theme=}; THEME_EXPLICIT=yes ;;
+        -h|--help)         usage; exit 0 ;;
+        /dev/*)            TARGET=$1 ;;
+        *)                 echo "unknown argument: $1" >&2; usage; exit 2 ;;
     esac
+    shift
 done
 
 if [ -z "$TARGET" ]; then
-    echo "usage: jawnos-install [--yes] [--new-signatorial] /dev/sdX" >&2
+    usage
     exit 2
 fi
 if [ ! -b "$TARGET" ]; then
     echo "not a block device: $TARGET" >&2
     exit 2
 fi
-
-# Never write over the stick this system is running from.
-ROOTPART=$(blkid -L jawnos-root || true)
-if [ -z "$ROOTPART" ]; then
-    echo "cannot find the live root (label jawnos-root)" >&2
+# Accept /dev/disk/by-id/... paths and compare the real node below.
+TARGET=$(readlink -f "$TARGET")
+if [ ! -b "$TARGET" ]; then
+    echo "not a block device: $TARGET" >&2
+    exit 2
+fi
+if [ "$(lsblk -no TYPE "$TARGET" | head -n 1)" != disk ] \
+    && [ "$(lsblk -no TYPE "$TARGET" | head -n 1)" != loop ]; then
+    echo "$TARGET is a partition or virtual node, not a whole disk" >&2
+    exit 2
+fi
+# Never repartition a disk with a mounted filesystem on it. --yes confirms
+# erasure; it does not make a live disk safe to overwrite.
+if lsblk -no MOUNTPOINT "$TARGET" 2>/dev/null | grep -q .; then
+    echo "refusing: $TARGET has mounted filesystems; unmount them first" >&2
     exit 1
 fi
-LIVEDISK=$(lsblk -no PKNAME "$ROOTPART" | head -n 1)
+
+# Resolve a partition on a specific disk by filesystem label. `blkid -L` is not
+# enough: a second JawnOS disk carries the same labels, and after repartitioning
+# the target and the live stick both have a jawnos-esp until the stick is out.
+part_by_label() {
+    disk=$1
+    label=$2
+    for p in "$disk"?* "$disk"p*; do
+        [ -b "$p" ] || continue
+        # vfat upper-cases its filesystem label (JAWNOS-ESP), so compare
+        # case-insensitively; ext4 labels keep the lower-case spelling.
+        got=$(blkid -s LABEL -o value "$p" 2>/dev/null || true)
+        got=$(printf '%s' "$got" | tr 'A-Z' 'a-z')
+        if [ "$got" = "$label" ]; then
+            printf '%s\n' "$p"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Never write over the stick this system is running from. Anchor on the
+# mounted state partition: `blkid -L` becomes ambiguous after a first install
+# or when a second JawnOS disk is attached, because both carry the labels.
+STATE_SRC=$(findmnt -no SOURCE /home/jawn 2>/dev/null || true)
+if [ -n "$STATE_SRC" ] && [ -b "$STATE_SRC" ]; then
+    LIVEDISK=$(lsblk -no PKNAME "$(readlink -f "$STATE_SRC")" | head -n 1)
+else
+    ROOTPART=$(blkid -L jawnos-root 2>/dev/null || true)
+    if [ -z "$ROOTPART" ]; then
+        echo "cannot find the live root (label jawnos-root)" >&2
+        exit 1
+    fi
+    LIVEDISK=$(lsblk -no PKNAME "$(readlink -f "$ROOTPART")" | head -n 1)
+fi
 if [ -n "$LIVEDISK" ] && [ "/dev/$LIVEDISK" = "$TARGET" ]; then
     echo "refusing to install over the live media ($TARGET)" >&2
     exit 1
 fi
+if [ -z "$LIVEDISK" ]; then
+    echo "cannot resolve the live disk" >&2
+    exit 1
+fi
 
-echo "live system: $ROOTPART on /dev/$LIVEDISK"
-echo "target:      $TARGET"
-echo "this erases $TARGET, then copies the live system and its house onto it"
+LIVE_ESP=$(part_by_label "/dev/$LIVEDISK" jawnos-esp || true)
+LIVE_ROOT=$(part_by_label "/dev/$LIVEDISK" jawnos-root || true)
+if [ -z "$LIVE_ESP" ] || [ ! -b "$LIVE_ESP" ]; then
+    echo "cannot find the live ESP (label jawnos-esp)" >&2
+    exit 1
+fi
+if [ -z "$LIVE_ROOT" ] || [ ! -b "$LIVE_ROOT" ]; then
+    echo "cannot find the live root (label jawnos-root)" >&2
+    exit 1
+fi
+
+# The three partitions at their minimum sizes (see mkosi.repart), plus the
+# GPT/alignment overhead: the built image is ~8.1GiB. A nominal 8GB stick is
+# smaller than that once marketed capacities are rounded, so require 9GiB and
+# point people at 16GB.
+TARGET_BYTES=$(blockdev --getsize64 "$TARGET")
+MIN_BYTES=$(( 9 * 1024 * 1024 * 1024 ))
+if [ "$TARGET_BYTES" -lt "$MIN_BYTES" ]; then
+    echo "$TARGET is $((TARGET_BYTES / 1024 / 1024 / 1024 ))G; JawnOS needs at least 9G (16G recommended)" >&2
+    exit 1
+fi
+
+# Read the theme before anything is written. A file on the ESP is the normal
+# route from jawnos.ca; --theme is the explicit route. A missing file is fine.
+THEME_FILE=
+ESP_MNT=/run/jawnos-install/esp
+mkdir -p "$ESP_MNT"
+if [ -z "$THEME" ] && mount -t vfat -o ro "$LIVE_ESP" "$ESP_MNT" 2>/dev/null; then
+    if [ -f "$ESP_MNT/jawnos-theme.txt" ]; then
+        cp "$ESP_MNT/jawnos-theme.txt" /run/jawnos-install/theme.txt
+        THEME_FILE=/run/jawnos-install/theme.txt
+    elif [ -f "$ESP_MNT/JAWNOS-THEME.TXT" ]; then
+        cp "$ESP_MNT/JAWNOS-THEME.TXT" /run/jawnos-install/theme.txt
+        THEME_FILE=/run/jawnos-install/theme.txt
+    fi
+    umount "$ESP_MNT" 2>/dev/null || true
+fi
+if [ -n "$THEME" ]; then
+    THEME=$(/usr/local/bin/jawnos-theme --theme "$THEME" --print)
+elif [ -n "$THEME_FILE" ]; then
+    THEME=$(/usr/local/bin/jawnos-theme --file "$THEME_FILE" --print 2>/dev/null || true)
+    [ -n "$THEME" ] || echo "note: $THEME_FILE has no known theme; using the factory theme" >&2
+fi
+
+# The live stick may already have applied the file (jawnos-theme-apply.service)
+# and then the person may have changed the theme in Configure. The marker
+# records what the file applied; a database value that differs from it is a
+# later, deliberate choice and must survive the install. Only re-apply the file
+# when there is no marker, or the marker still matches the live choice.
+KEEP_LIVE_THEME=no
+if [ -z "$THEME" ] || [ "$THEME_EXPLICIT" = yes ]; then
+    :
+else
+    LIVE_DB=/home/jawn/jawnos/database/jawnos.db
+    CURRENT=
+    if [ -f "$LIVE_DB" ]; then
+        CURRENT=$(sqlite3 "$LIVE_DB" "select value from settings where app='misc' and setting='appearance_theme' and device='computer' limit 1;" 2>/dev/null || true)
+    fi
+    MARKER=
+    if [ -f /home/jawn/.theme-applied ]; then
+        MARKER=$(cut -d' ' -f1 /home/jawn/.theme-applied 2>/dev/null || true)
+    fi
+    if [ -n "$CURRENT" ] && [ -n "$MARKER" ] && [ "$CURRENT" != "$MARKER" ]; then
+        KEEP_LIVE_THEME=yes
+        THEME=$CURRENT
+    fi
+fi
+
+echo "live system: $LIVE_ROOT on /dev/$LIVEDISK"
+echo "target:      $TARGET ($((TARGET_BYTES / 1024 / 1024 / 1024))G)"
+if [ "$KEEP_LIVE_THEME" = yes ]; then
+    echo "theme:       $THEME (chosen in the live session; the ESP file is ignored)"
+else
+    echo "theme:       ${THEME:-factory default (Nord)}"
+fi
+echo "this erases $TARGET, then installs the system and carries the house onto it"
 
 if [ "$CONFIRM" != yes ]; then
     echo "dry run: nothing was written. Re-run with --yes to proceed." >&2
     exit 0
 fi
 
-echo "copying the image..."
-dd if="/dev/$LIVEDISK" of="$TARGET" bs=16M status=progress conv=fsync
+# Build a fresh partition table sized to the target. CopyFiles= in the build
+# definitions describes how mkosi fills a *new image* (`CopyFiles=/` would copy
+# the running root); the installer copies the two system partitions itself, so
+# strip those lines and keep only geometry, type, format and label.
+DEFS=/run/jawnos-install/repart
+rm -rf "$DEFS"
+mkdir -p "$DEFS"
+for f in /usr/lib/jawnos/repart/*.conf; do
+    sed '/^[[:space:]]*CopyFiles=/d' "$f" > "$DEFS/${f##*/}"
+done
 
-echo "growing the partitions..."
-systemd-repart --dry-run=no --definitions=/usr/lib/jawnos/repart --size=auto "$TARGET"
+echo "partitioning $TARGET..."
+systemd-repart --dry-run=no --definitions="$DEFS" --empty=force --offline=yes "$TARGET"
+udevadm settle
+# On a disk whose kernel did not get a partition-table reread (a loop device
+# without partscan, a stubborn controller), nudge it; then give udev a moment to
+# publish the new nodes.
+partx -u "$TARGET" 2>/dev/null || true
 udevadm settle
 
-STATE=
-for p in "$TARGET"?*; do
-    [ -b "$p" ] || continue
-    if [ "$(blkid -s LABEL -o value "$p" 2>/dev/null || true)" = jawnos-state ]; then
-        STATE="$p"
+TARGET_ESP=
+TARGET_ROOT=
+TARGET_STATE=
+for try in 1 2 3 4 5; do
+    TARGET_ESP=$(part_by_label "$TARGET" jawnos-esp || true)
+    TARGET_ROOT=$(part_by_label "$TARGET" jawnos-root || true)
+    TARGET_STATE=$(part_by_label "$TARGET" jawnos-state || true)
+    if [ -n "$TARGET_ESP" ] && [ -n "$TARGET_ROOT" ] && [ -n "$TARGET_STATE" ]; then
+        break
     fi
+    udevadm settle 2>/dev/null || true
+    sleep 1
 done
-if [ -z "$STATE" ]; then
-    echo "the new disk has no jawnos-state partition" >&2
+if [ -z "$TARGET_ESP" ] || [ -z "$TARGET_ROOT" ] || [ -z "$TARGET_STATE" ]; then
+    echo "the new partition table is missing an expected partition" >&2
     exit 1
 fi
 
-echo "carrying the house onto $STATE..."
-mkdir -p /mnt/jawnos-state
-mount "$STATE" /mnt/jawnos-state
-rsync -a --delete /home/jawn/ /mnt/jawnos-state/
+# The boot medium and the system partition are never grown in place, so a plain
+# copy of each partition is complete. The state partition is not copied: it is
+# created full-size and filled from the live /home/jawn, which also captures
+# anything the session changed since the stick booted.
+echo "copying the boot and system partitions..."
+dd if="$LIVE_ESP" of="$TARGET_ESP" bs=16M status=progress conv=fsync
+dd if="$LIVE_ROOT" of="$TARGET_ROOT" bs=16M status=progress conv=fsync
+
+# A future image may allow a larger root than the one being copied; grow the
+# filesystem offline when that is the case. (Today both are a fixed 5G.)
+if [ "$(blockdev --getsize64 "$TARGET_ROOT")" -gt "$(blockdev --getsize64 "$LIVE_ROOT")" ]; then
+    e2fsck -fy "$TARGET_ROOT" >/dev/null 2>&1 || true
+    resize2fs "$TARGET_ROOT" >/dev/null 2>&1 || true
+fi
+
+STATE_MNT=/mnt/jawnos-state
+mkdir -p "$STATE_MNT"
+umount "$STATE_MNT" 2>/dev/null || true
+mount "$TARGET_STATE" "$STATE_MNT"
+
+echo "carrying the house onto $TARGET_STATE..."
+rsync -a --delete /home/jawn/ "$STATE_MNT"/
+chown -R jawn:jawn "$STATE_MNT" 2>/dev/null || true
+
+DB="$STATE_MNT/jawnos/database/jawnos.db"
+if [ -n "$THEME" ] && [ "$KEEP_LIVE_THEME" = no ] && [ -f "$DB" ]; then
+    if /usr/local/bin/jawnos-theme --theme "$THEME" --database "$DB"; then
+        # Mark it so the installed system does not re-apply a file that is
+        # still sitting on the live stick's ESP.
+        printf '%s %s\n' "$THEME" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            > "$STATE_MNT/.theme-applied"
+        chown jawn:jawn "$STATE_MNT/.theme-applied" 2>/dev/null || true
+        chmod 600 "$STATE_MNT/.theme-applied" 2>/dev/null || true
+    else
+        echo "note: could not write the theme; the installed system keeps its current theme" >&2
+    fi
+elif [ "$KEEP_LIVE_THEME" = yes ]; then
+    echo "keeping the live session's theme ($THEME)"
+elif [ -n "$THEME" ]; then
+    echo "note: no database to write the theme into; it will seed with the factory theme" >&2
+fi
 
 # A live image's config opens its own desktop without the gate (the "live"
 # flag). The installed machine is not the demo, so drop it and get the gate
 # back. A kept signatorial keeps the live session's cookie valid; a newly
 # minted one starts clean and the first login is the Gate or a pairing.
-if [ -f /mnt/jawnos-state/jawnos/config.json ]; then
+if [ -f "$STATE_MNT/jawnos/config.json" ]; then
     perl -MJSON::PP -0777 -i -pe '
         my $j = eval { decode_json($_) };
         if (ref $j eq "HASH") { delete $j->{live}; $_ = JSON::PP->new->canonical->pretty->encode($j); }
-    ' /mnt/jawnos-state/jawnos/config.json
+    ' "$STATE_MNT/jawnos/config.json"
 fi
 
 if [ "$NEW_SIG" = yes ]; then
     NEW=$(openssl rand -hex 32)
-    printf '%s\n' "$NEW" > /mnt/jawnos-state/.jawnos_signatorial
+    printf '%s\n' "$NEW" > "$STATE_MNT/.jawnos_signatorial"
     ID=$(printf '%s' "$NEW" | md5sum | cut -d' ' -f1)
-    mkdir -p /mnt/jawnos-state/jawnos/database
-    printf '%s\n' "$ID" > /mnt/jawnos-state/.jawnos_signatorial_id
-    printf '%s\n' "$ID" > /mnt/jawnos-state/jawnos/database/.jawnos_signatorial_id
-    chmod 600 /mnt/jawnos-state/.jawnos_signatorial \
-        /mnt/jawnos-state/.jawnos_signatorial_id \
-        /mnt/jawnos-state/jawnos/database/.jawnos_signatorial_id 2>/dev/null || true
-    chown jawn:jawn /mnt/jawnos-state/.jawnos_signatorial \
-        /mnt/jawnos-state/.jawnos_signatorial_id \
-        /mnt/jawnos-state/jawnos/database/.jawnos_signatorial_id 2>/dev/null || true
+    mkdir -p "$STATE_MNT/jawnos/database"
+    printf '%s\n' "$ID" > "$STATE_MNT/.jawnos_signatorial_id"
+    printf '%s\n' "$ID" > "$STATE_MNT/jawnos/database/.jawnos_signatorial_id"
+    chmod 600 "$STATE_MNT/.jawnos_signatorial" \
+        "$STATE_MNT/.jawnos_signatorial_id" \
+        "$STATE_MNT/jawnos/database/.jawnos_signatorial_id" 2>/dev/null || true
+    chown jawn:jawn "$STATE_MNT/.jawnos_signatorial" \
+        "$STATE_MNT/.jawnos_signatorial_id" \
+        "$STATE_MNT/jawnos/database/.jawnos_signatorial_id" 2>/dev/null || true
     echo "minted a new signatorial for the installed machine"
 else
     echo "carried the live install's signatorial"
 fi
 
-umount /mnt/jawnos-state
+sync
+umount "$STATE_MNT"
 
-# An NVRAM entry for the new disk. A machine that ignores it can still pick the
-# disk from its own boot menu, so a failure here is not fatal.
-efibootmgr -c -d "$TARGET" -p 1 -L "JawnOS" -l '\EFI\systemd\systemd-bootx64.efi' >/dev/null 2>&1 || true
+# An NVRAM entry for the new disk. The image boots through the firmware's own
+# fallback path (EFI/BOOT/BOOTX64.EFI), so a machine that ignores this entry
+# can still pick the disk from its boot menu.
+efibootmgr -c -d "$TARGET" -p 1 -L "JawnOS" -l '\EFI\BOOT\BOOTX64.EFI' >/dev/null 2>&1 || true
 
 echo "done. Remove the live media and boot $TARGET."

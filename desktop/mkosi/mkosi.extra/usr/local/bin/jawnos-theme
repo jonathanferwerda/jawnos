@@ -1,0 +1,195 @@
+#!/bin/sh
+# Read the theme a person chose on jawnos.ca and write it into a JawnOS
+# database.
+#
+#   jawnos-theme --seed                     # jawnos-theme.txt on the ESP -> live DB
+#   jawnos-theme --seed --print             # print the slug, change nothing
+#   jawnos-theme --file F --database DB     # apply a file to another database
+#   jawnos-theme --theme nord --database DB # apply a named preset
+#
+# The file is tiny text, so it fits on the FAT jawnos-esp partition that every
+# operating system can see:
+#
+#   # JawnOS install theme
+#   theme=nord
+#
+# Only the curated presets from subroutines.pl::%theme_presets are accepted. A
+# missing file, a file with no theme, or an unknown name is a no-op: the image
+# keeps its factory intro theme rather than failing a boot over a typo.
+#
+# The database write is a settings row (app 'misc', setting 'appearance_theme')
+# because that is exactly what Configure -> Appearance stores; no running
+# manager is needed. Files are left owned by jawn and mode 600, matching the
+# app's own umask.
+set -eu
+
+VALID="deepin cutefish adwaita macos windows mint nord sage mocha neon mono rose geek phosphor cyberpunk"
+
+DB=/home/jawn/jawnos/database/jawnos.db
+FILE=
+THEME=
+PRINT=no
+SEED=no
+MARKER=no
+
+usage() {
+    echo "usage: jawnos-theme [--seed] [--print] [--file FILE] [--theme SLUG] [--database DB]" >&2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --seed)       SEED=yes ;;
+        --print)      PRINT=yes ;;
+        --file)       shift; FILE=${1:-} ;;
+        --file=*)     FILE=${1#--file=} ;;
+        --theme)      shift; THEME=${1:-} ;;
+        --theme=*)    THEME=${1#--theme=} ;;
+        --database)   shift; DB=${1:-} ;;
+        --database=*) DB=${1#--database=} ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            echo "jawnos-theme: unknown argument: $1" >&2; usage; exit 2 ;;
+    esac
+    shift
+done
+
+lower() {
+    printf '%s' "$1" | tr -d '[:space:]' | tr 'A-Z' 'a-z'
+}
+
+valid() {
+    [ -n "$1" ] || return 1
+    case " $VALID " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
+}
+
+# Print the first valid theme named in a small text file. Accepts "theme=nord",
+# "theme = Nord", or a bare "nord"; ignores comments, blanks and CRLF endings.
+parse_file() {
+    [ -f "$1" ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=$(printf '%s' "$line" | tr -d '\r')
+        case "$line" in
+            ''|\#*) continue ;;
+        esac
+        if printf '%s' "$line" | grep -q '='; then
+            key=$(printf '%s' "${line%%=*}" | tr -d '[:space:]' | tr 'A-Z' 'a-z')
+            [ "$key" = theme ] || continue
+            value=${line#*=}
+        else
+            value=$line
+        fi
+        value=$(lower "$value")
+        if valid "$value"; then
+            printf '%s\n' "$value"
+            return 0
+        fi
+    done < "$1"
+    return 1
+}
+
+# Find the ESP on the disk that holds the mounted /home/jawn, rather than
+# trusting `blkid -L` (ambiguous the moment a second JawnOS disk is attached).
+esp_for_boot() {
+    state=$(findmnt -no SOURCE /home/jawn 2>/dev/null || true)
+    if [ -n "$state" ] && [ -b "$state" ]; then
+        state=$(readlink -f "$state")
+    else
+        state=$(blkid -L jawnos-root 2>/dev/null || true)
+        [ -n "$state" ] || return 1
+        state=$(readlink -f "$state")
+    fi
+    disk=$(lsblk -no PKNAME "$state" 2>/dev/null | head -n 1)
+    [ -n "$disk" ] || return 1
+    for p in "/dev/$disk"?* "/dev/$disk"p*; do
+        [ -b "$p" ] || continue
+        got=$(blkid -s LABEL -o value "$p" 2>/dev/null || true)
+        got=$(printf '%s' "$got" | tr 'A-Z' 'a-z')
+        if [ "$got" = jawnos-esp ]; then
+            printf '%s\n' "$p"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# --seed (or no explicit source): read jawnos-theme.txt from the boot ESP.
+if [ "$SEED" = yes ] || { [ -z "$THEME" ] && [ -z "$FILE" ]; }; then
+    SEED=yes
+    MARKER=yes
+    if esp=$(esp_for_boot); then
+        mnt=/run/jawnos-theme/esp
+        mkdir -p "$mnt"
+        if mount -t vfat -o ro "$esp" "$mnt" 2>/dev/null; then
+            if [ -f "$mnt/jawnos-theme.txt" ]; then
+                FILE="$mnt/jawnos-theme.txt"
+            elif [ -f "$mnt/JAWNOS-THEME.TXT" ]; then
+                FILE="$mnt/JAWNOS-THEME.TXT"
+            fi
+        fi
+        # The file is read below; unmount after this block.
+        THEME_MNT=$mnt
+    fi
+fi
+
+if [ -n "$THEME" ]; then
+    THEME=$(lower "$THEME")
+    if ! valid "$THEME"; then
+        echo "jawnos-theme: unknown theme '$THEME'; choose one of: $VALID" >&2
+        [ -n "${THEME_MNT:-}" ] && umount "$THEME_MNT" 2>/dev/null || true
+        exit 2
+    fi
+elif [ -n "$FILE" ]; then
+    # No theme in the file is not an error: the factory default stands.
+    THEME=$(parse_file "$FILE" 2>/dev/null || true)
+fi
+
+[ -n "${THEME_MNT:-}" ] && umount "$THEME_MNT" 2>/dev/null || true
+
+if [ -z "$THEME" ]; then
+    [ "$PRINT" = yes ] || echo "jawnos-theme: no theme file found; leaving the factory theme" >&2
+    exit 0
+fi
+
+if [ "$PRINT" = yes ]; then
+    printf '%s\n' "$THEME"
+    exit 0
+fi
+
+if [ ! -f "$DB" ]; then
+    echo "jawnos-theme: no database at $DB yet; will retry on the next boot" >&2
+    exit 0
+fi
+
+NOW=$(date +%s)000
+UUID=$(od -An -N10 -tx1 /dev/urandom | tr -d ' \n')
+
+# appearance_theme is a computer (desktop) setting in the factory seed; the
+# installer and the live image are both computers, so replace that row and
+# leave any mobile/server rows alone.
+sqlite3 "$DB" >/dev/null <<SQL
+PRAGMA journal_mode=WAL;
+BEGIN;
+DELETE FROM settings WHERE app = 'misc' AND setting = 'appearance_theme' AND device = 'computer';
+INSERT INTO settings (app, setting, value, timestamp, server_time, device, uuid)
+VALUES ('misc', 'appearance_theme', '$THEME', '$NOW', '$NOW', 'computer', '$UUID');
+COMMIT;
+PRAGMA wal_checkpoint(TRUNCATE);
+SQL
+
+# The database is a secret and belongs to the person, not to root.
+for f in "$DB" "$DB-wal" "$DB-shm"; do
+    [ -e "$f" ] || continue
+    chmod 600 "$f" 2>/dev/null || true
+    chown jawn:jawn "$f" 2>/dev/null || true
+done
+
+if [ "$MARKER" = yes ]; then
+    state=$(dirname "$(dirname "$(dirname "$DB")")")
+    printf '%s %s\n' "$THEME" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$state/.theme-applied"
+    chmod 600 "$state/.theme-applied" 2>/dev/null || true
+    chown jawn:jawn "$state/.theme-applied" 2>/dev/null || true
+fi
+
+echo "jawnos-theme: applied '$THEME'"

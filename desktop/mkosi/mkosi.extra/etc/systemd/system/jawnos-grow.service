@@ -1,0 +1,18 @@
+# Grow the house partition into whatever free space the disk has. Partition
+# tables are grown from the minimum image size (8G) to the stick or QEMU disk;
+# only jawnos-state is touched, because the read-only root cannot grow online.
+# Runs before firstboot so the seed lands on the full-size filesystem.
+[Unit]
+Description=Grow the JawnOS state partition to fill the disk
+Requires=home-jawn.mount
+After=home-jawn.mount
+Before=jawnos-firstboot.service
+ConditionPathExists=/usr/lib/jawnos/repart/30-state.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jawnos-grow
+RemainAfterExit=yes
+
+[Install]
+WantedBy=local-fs.target
