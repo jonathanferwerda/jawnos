@@ -32,6 +32,21 @@ if [ -d "$SEED_TREE" ] && [ ! -d "$STATE/jawnos" ]; then
     fi
 fi
 
+# The standard desktop folders, so the file browser and the media apps have
+# somewhere to look the moment the live session opens.
+for d in Desktop Documents Downloads Music Pictures Public Templates Videos Recordings; do
+    mkdir -p "$STATE/$d"
+done
+
+# The live image's wallpaper: the JawnOS hand on the Teal ramp. Generated from
+# the image's own logo; skipped quietly when ImageMagick or the logo is missing
+# (swaybg has a solid fallback).
+if [ -f "$STATE/jawnos/public/icons/logos/WelcomeLogo.png" ] && command -v convert >/dev/null 2>&1; then
+    convert -size 1920x1080 gradient:'#0e837e-#2fa8a2' \
+        \( "$STATE/jawnos/public/icons/logos/WelcomeLogo.png" -resize 380x380 \) \
+        -gravity center -composite "$STATE/Pictures/jawnos-wallpaper.png" 2>/dev/null || true
+fi
+
 # The partition is written as root; hand it to the person who uses it.
 chown -R jawn:jawn "$STATE" 2>/dev/null || true
 

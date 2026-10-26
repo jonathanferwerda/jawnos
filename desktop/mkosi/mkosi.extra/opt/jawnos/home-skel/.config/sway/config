@@ -4,7 +4,7 @@
 set $mod Mod4
 
 exec /home/jawn/jawnos/desktop/wayland/jawnos-session
-exec swaybg -c '#0d0d12'
+exec sh -c 'swaybg -i /home/jawn/Pictures/jawnos-wallpaper.png -m fill 2>/dev/null || swaybg -c "#0e837e"'
 exec waybar -c /home/jawn/jawnos/desktop/wayland/waybar.conf
 
 for_window [app_id="^jawnos-desktop$"] fullscreen enable

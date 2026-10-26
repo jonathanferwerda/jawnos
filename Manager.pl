@@ -41455,10 +41455,32 @@ sub authentication_passer($c) {
 	# asset and public page instead of being paid on each of them.
 	my $app_path = $c->req->url->path->to_string;
 	my $app_public = &app_public_path($app_path) ? 1 : 0;
+	# A live boot belongs to whoever is at the machine: its own loopback (the
+	# desktop app's view) is the house, so it opens the manager without a
+	# ticket or code. This is the live image only - an installed disk has the
+	# flag removed, and a remote caller is never loopback.
+	my $live_local = (($config->{'live'} // '') && $c->tx->local_address eq $c->tx->remote_address) ? 1 : 0;
+	if ($live_local && ($c->session('authentication') || '') ne 'approved') {
+		my ($ldb,$ldatabase) = &subs::database_grabber();
+		if ($ldb && $ldatabase) {
+			my $lsuds = eval { &subs::suds_grabber() } || '';
+			$c->session('authentication' => 'approved');
+			$c->session('database' => $ldatabase);
+			$c->session('suds_id' => $lsuds ? &subs::suds_id($lsuds) : 'live-local');
+			$c->session('warranty' => &subs::forever_warranty());
+			$c->session('server_time' => &subs::rightNow());
+			$c->session('name' => &subs::setting_grabber({ app => 'me', setting => 'name' }) || 'Me');
+			$c->session('privilege' => 'resident');
+			$c->session('role' => 'resident');
+			$c->session('source' => 'local_ticket');
+			$c->session('bootstrap' => undef);
+			$c->session('peer' => undef);
+		}
+	}
 	# Ensure the app columns exist before anything asks for them, public path or
 	# not. It is a no-op after the first call in a worker.
 	&app_schema_ensure();
-	my $app_mode = $app_public ? 'off' : &app_access_mode();
+	my $app_mode = ($app_public || $live_local) ? 'off' : &app_access_mode();
 
 	# The app gate runs before the login gate: a browser must not be handed the
 	# manager's login page or any private route at all. The public homepage,
@@ -41490,6 +41512,10 @@ sub authentication_passer($c) {
 	# door the app gate would otherwise leave open.
 	if (($c->session('bootstrap') || '') eq '1'
 		&& !$app_public
+		# A live boot is the machine in someone's hands: its own loopback login
+		# (the printed unlock code, or the local ticket route) may open the
+		# manager. An installed disk has the live flag removed.
+		&& !(($config->{'live'} // '') && $c->tx->local_address eq $c->tx->remote_address)
 		&& !($app_session //= &app_session_ok($c))
 		&& !($app_peer //= &app_peer_ok($c))) {
 		$c->render(template => 'app_required', layout => undef,
@@ -41554,7 +41580,9 @@ sub authentication_passer($c) {
 		my ($db,$database,$sql) = &subs::database_grabber();
 		my $current_suds = eval { &subs::suds_grabber() };
 		my $suds_id = $c->session('suds_id');
-		unless ($current_suds && $suds_id && secure_compare($suds_id, &subs::suds_id($current_suds))) {
+		# A live loopback session has no vault key to compare yet; its desk is
+		# local and the encrypted features ask for the code when they need it.
+		unless ($live_local || ($current_suds && $suds_id && secure_compare($suds_id, &subs::suds_id($current_suds)))) {
 			$authentication = 'revoked';
 		}
 		# a device/person session lives only while its roster row does: revoking

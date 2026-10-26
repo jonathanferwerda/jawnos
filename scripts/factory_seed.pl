@@ -18,6 +18,7 @@ use Cwd ();
 use FindBin qw($Bin);
 use Mojo::SQLite;
 use Crypt::Simple;
+use JSON::PP ();
 use File::Path qw(make_path);
 
 my $root = Cwd::abs_path("$Bin/..");
@@ -95,6 +96,7 @@ my %factory_look = (
 
 # configuration only the desktop kinds carry
 my %factory_computer = (
+	appearance_theme    => 'cutefish',
 	clock_format        => '12',
 	clock_notifications => 'on',
 	enc                 => 'on',
@@ -104,6 +106,23 @@ my %factory_computer = (
 	taskbar_position    => 'top',
 	ui_zoom             => '100',
 );
+
+# The clothesline a new house wakes up with: the day's ordinary shape. Each
+# entry is a pill that starts that appointment; the colours are the Teal ramp
+# and its neighbours, so the rail belongs to the Cutefish intro theme.
+my @factory_clothesline = (
+	{ app => 'sleep',     name => 'sleep',     formatted_name => 'Sleep',     colour => '#cdecea', dark_colour => '#1a2c2a' },
+	{ app => 'walk',      name => 'walk',      formatted_name => 'Walk',      colour => '#a8dcd9', dark_colour => '#223836' },
+	{ app => 'breakfast', name => 'breakfast', formatted_name => 'Breakfast', colour => '#f8e3c8', dark_colour => '#e67e22' },
+	{ app => 'lunch',     name => 'lunch',     formatted_name => 'Lunch',     colour => '#c9ecdf', dark_colour => '#3f9d76' },
+	{ app => 'dinner',    name => 'dinner',    formatted_name => 'Dinner',    colour => '#e5d8f5', dark_colour => '#8b5cf6' },
+	{ app => 'water',     name => 'water',     formatted_name => 'Water',     colour => '#d6e5f7', dark_colour => '#3f83b5' },
+	{ app => 'read',      name => 'read',      formatted_name => 'Read',      colour => '#dfe6ef', dark_colour => '#81a5cf' },
+	{ app => 'stretch',   name => 'stretch',   formatted_name => 'Stretch',   colour => '#f9dbe3', dark_colour => '#d64570' },
+	{ app => 'meditate',  name => 'meditate',  formatted_name => 'Meditate',  colour => '#e2ebdd', dark_colour => '#6fa968' },
+	{ app => 'wind_down', name => 'wind_down', formatted_name => 'Wind Down', colour => '#f2c2d0', dark_colour => '#b02853' },
+);
+my $factory_clothesline_json = JSON::PP->new->canonical->encode(\@factory_clothesline);
 
 my @rows;
 foreach my $s ( sort keys %factory_common ) {
@@ -143,6 +162,17 @@ foreach my $r ( @rows ) {
 		setting     => $r->[1],
 		value       => $r->[2],
 		device      => $r->[3],
+		timestamp   => $now,
+		server_time => $now,
+		uuid        => randstr(20),
+	} );
+}
+foreach my $dev ( qw/computer mobile server/ ) {
+	$db->insert( 'settings', {
+		app         => '__president',
+		setting     => 'clothesline',
+		value       => $factory_clothesline_json,
+		device      => $dev,
 		timestamp   => $now,
 		server_time => $now,
 		uuid        => randstr(20),

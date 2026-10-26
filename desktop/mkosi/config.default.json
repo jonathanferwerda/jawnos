@@ -6,6 +6,7 @@
 	"domain": "127.0.0.1",
 	"email": "me@email.com",
 	"environment": "production",
+	"live": true,
 	"logfile": "~/manager.log",
 	"port": "3000",
 	"working_port": "45545",
@@ -14,11 +15,15 @@
 	"open_browser": "no",
 	"archive_dir": "",
 	"folders": [
-		"~/Music",
+		"~/Desktop",
+		"~/Documents",
 		"~/Downloads",
-		"~/Videos",
+		"~/Music",
 		"~/Pictures",
-		"~/Documents"
+		"~/Public",
+		"~/Templates",
+		"~/Videos",
+		"~/Recordings"
 	],
 	"scanners": [],
 	"search_engines": [

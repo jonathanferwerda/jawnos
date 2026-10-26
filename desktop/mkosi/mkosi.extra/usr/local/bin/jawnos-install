@@ -11,17 +11,19 @@
 set -eu
 
 CONFIRM=no
+NEW_SIG=no
 TARGET=
 for arg in "$@"; do
     case "$arg" in
         --yes) CONFIRM=yes ;;
+        --new-signatorial) NEW_SIG=yes ;;
         /dev/*) TARGET="$arg" ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
 done
 
 if [ -z "$TARGET" ]; then
-    echo "usage: jawnos-install [--yes] /dev/sdX" >&2
+    echo "usage: jawnos-install [--yes] [--new-signatorial] /dev/sdX" >&2
     exit 2
 fi
 if [ ! -b "$TARGET" ]; then
@@ -73,6 +75,36 @@ echo "carrying the house onto $STATE..."
 mkdir -p /mnt/jawnos-state
 mount "$STATE" /mnt/jawnos-state
 rsync -a --delete /home/jawn/ /mnt/jawnos-state/
+
+# A live image's config opens its own desktop without the gate (the "live"
+# flag). The installed machine is not the demo, so drop it and get the gate
+# back. A kept signatorial keeps the live session's cookie valid; a newly
+# minted one starts clean and the first login is the Gate or a pairing.
+if [ -f /mnt/jawnos-state/jawnos/config.json ]; then
+    perl -MJSON::PP -0777 -i -pe '
+        my $j = eval { decode_json($_) };
+        if (ref $j eq "HASH") { delete $j->{live}; $_ = JSON::PP->new->canonical->pretty->encode($j); }
+    ' /mnt/jawnos-state/jawnos/config.json
+fi
+
+if [ "$NEW_SIG" = yes ]; then
+    NEW=$(openssl rand -hex 32)
+    printf '%s\n' "$NEW" > /mnt/jawnos-state/.jawnos_signatorial
+    ID=$(printf '%s' "$NEW" | md5sum | cut -d' ' -f1)
+    mkdir -p /mnt/jawnos-state/jawnos/database
+    printf '%s\n' "$ID" > /mnt/jawnos-state/.jawnos_signatorial_id
+    printf '%s\n' "$ID" > /mnt/jawnos-state/jawnos/database/.jawnos_signatorial_id
+    chmod 600 /mnt/jawnos-state/.jawnos_signatorial \
+        /mnt/jawnos-state/.jawnos_signatorial_id \
+        /mnt/jawnos-state/jawnos/database/.jawnos_signatorial_id 2>/dev/null || true
+    chown jawn:jawn /mnt/jawnos-state/.jawnos_signatorial \
+        /mnt/jawnos-state/.jawnos_signatorial_id \
+        /mnt/jawnos-state/jawnos/database/.jawnos_signatorial_id 2>/dev/null || true
+    echo "minted a new signatorial for the installed machine"
+else
+    echo "carried the live install's signatorial"
+fi
+
 umount /mnt/jawnos-state
 
 # An NVRAM entry for the new disk. A machine that ignores it can still pick the

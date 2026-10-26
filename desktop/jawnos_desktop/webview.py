@@ -200,6 +200,9 @@ def manager_url(jawn_dir, ticket=None):
             host = "127.0.0.1"
     else:
         host = core.manager_host()
+    # A live image opens its own desktop without the gate: the manager trusts
+    # its loopback while "live" is set, and an installed disk (the flag
+    # removed) gets the gate back.
     return "https://%s:%d/manager" % (host, port)
 
 

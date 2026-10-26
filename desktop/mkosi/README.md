@@ -42,15 +42,20 @@ sudo perl scripts/mkosi_build.pl --vm
 
 mkosi boots the finished disk with QEMU and an OVMF firmware. The first boot
 seeds `config.json` from [`config.default.json`](config.default.json), builds a
-fresh encrypted database, and writes a generated unlock code to
-`~/UNLOCK-CODE.txt`. In the VM, open a terminal with `Mod+Return` and read it:
+fresh encrypted database, creates the standard desktop folders, paints a
+JawnOS wallpaper, and writes a generated unlock code to `~/UNLOCK-CODE.txt`.
 
-```sh
-cat ~/UNLOCK-CODE.txt
-```
+The live desktop **opens the manager directly**: while `config.json` carries
+`"live": true`, the manager trusts the machine's own loopback, so the view is
+the house rather than the gate. The intro is deliberate, not a blank install:
+the **Cutefish** theme (Teal, pastel icons, soft material), a ten-item
+clothesline (sleep, walk, breakfast, lunch, dinner, water, read, stretch,
+meditate, wind down), and the standard XDG folders. The unlock code in
+`~/UNLOCK-CODE.txt` is still the key to the vault and to an installed machine.
 
-That code is a demo convenience, not a secret: delete the file once you have
-changed the code, and never carry it on a disk you keep.
+`jawnos-install` removes the `live` flag, so the installed disk gets the real
+Gate back, and offers `--new-signatorial` to mint a fresh identity (the default
+carries the live install's own).
 
 The defaults are deliberately plain: machine name `JawnOS`, device `computer`,
 language `en`, domain `127.0.0.1`, web ports 3000 and 45545, SSH 8022, no
