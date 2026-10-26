@@ -8,11 +8,12 @@ Arch is the first backend. Debian is the second (see the end).
 
 ## Build
 
-`mkosi` is **not installed on this machine yet**, so nothing here has been built
-or booted. Install it on the build box first:
+`mkosi` is not part of this tree. Install it on the build box first; nothing
+here has been built or booted yet.
 
 ```sh
-pip install mkosi                 # or: sudo pacman -S mkosi
+sudo pacman -S mkosi qemu-desktop edk2-ovmf   # Arch: build and boot in a VM
+# or: pip install mkosi                       # plus your distro's qemu/OVMF
 ```
 
 Then:
@@ -20,10 +21,43 @@ Then:
 ```sh
 perl scripts/mkosi_build.pl --dry-run     # stage the tree, print the command
 perl scripts/mkosi_build.pl               # build desktop/mkosi/output/jawnos-live.raw
+perl scripts/mkosi_build.pl --vm          # build, then boot it in QEMU
 ```
 
 The build needs root (mkosi uses a container/chroot), network access to the Arch
 mirrors, and a few GB of room. `--stage-only` stages without touching mkosi.
+
+## Try it in a VM
+
+```sh
+sudo perl scripts/mkosi_build.pl --vm
+```
+
+mkosi boots the finished disk with QEMU and an OVMF firmware. The first boot
+seeds `config.json` from [`config.default.json`](config.default.json), builds a
+fresh encrypted database, and writes a generated unlock code to
+`~/UNLOCK-CODE.txt`. In the VM, open a terminal with `Mod+Return` and read it:
+
+```sh
+cat ~/UNLOCK-CODE.txt
+```
+
+That code is a demo convenience, not a secret: delete the file once you have
+changed the code, and never carry it on a disk you keep.
+
+The defaults are deliberately plain: machine name `JawnOS`, device `computer`,
+language `en`, domain `127.0.0.1`, web ports 3000 and 45545, SSH 8022, no
+scanners and three public search engines. Change them in Configure after the
+first login, or edit `config.default.json` before a build. The builder's own
+`config.json` is **excluded** from the image, so a distributable image never
+carries someone else's identity, domain or signatorial.
+
+To boot an image you already built without rebuilding, run mkosi directly:
+
+```sh
+sudo mkosi -C desktop/mkosi --profile live --extra-tree desktop/mkosi/.stage/extra \
+    --output-dir desktop/mkosi/output vm
+```
 
 Write it to a stick:
 
@@ -45,8 +79,10 @@ and every change to it lives in RAM until reboot.** The house lives on partition
 still there after a reboot. That is the "live with persistence" part.
 
 On first boot `jawnos-firstboot` copies `/opt/jawnos/tree` and
-`/opt/jawnos/home-skel` onto the state partition, then hands it to `jawn`. A
-second boot finds the checkout and does nothing.
+`/opt/jawnos/home-skel` onto the state partition, then runs
+`scripts/jawnos_setup.pl --seed` as `jawn` to write `config.json` and the
+machine's database from the factory seed. A second boot finds `~/.seeded` and
+does nothing; a first boot that failed is retried.
 
 ## Install to disk
 
@@ -77,8 +113,9 @@ Recorded honestly, because none of this has run yet:
 - The image seeds the tree **without `.git`**, so code sync is off until the
   installed disk joins a checkout (`git init` + a remote, or clone fresh). The
   live stick is for seeing JawnOS, not for being the authority.
-- `config.json` is seeded from `config.json.example` when present; the first-run
-  wizard may still ask for the things an example cannot know.
+- `config.json` and the database are seeded at first boot from the image's
+  defaults (`config.default.json`); both steps still need a real boot to prove
+  themselves.
 
 ## Debian, second
 

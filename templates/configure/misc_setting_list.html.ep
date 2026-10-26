@@ -33,7 +33,7 @@
 	<% my @tl = @{ $translation_languages || [] }; %>
 	<% my $default_tr = &subs::language() ne 'en' ? &subs::language() : 'fr'; %>
 	<details class="cfg-details">
-		<summary>Translate this window</summary>
+		<summary><%= &subs::lang('configure.translate_window') %></summary>
 		<div class="cfg-row">
 			<label><b>Target language</b></label>
 			<select id="translate_target">
@@ -50,7 +50,7 @@
 		<p class="cfg-note">Uses the Guide's model<% if ($translation_model) { %> (<b><%= $translation_model %></b><% if ($translation_model_fallback) { %>; fallback <b><%= $translation_model_fallback %></b><% } %>)<% } else { %> (no model is set under Plat)<% } %>. The visible labels, buttons and help text are translated on demand and cached; the saved interface language above is not changed.</p>
 	</details>
 	<details class="cfg-details">
-		<summary>Languages the Guide can translate (<%= scalar @tl %>)</summary>
+		<summary><%= sprintf(&subs::lang('configure.translate_languages'), scalar @tl) %></summary>
 		<p class="cfg-note">The engine offers these; the model above does the translating, so quality varies by language.</p>
 		<div style="columns:2;column-gap:18px;font-size:13px;">
 			<% foreach my $l ( @tl ) { %>
@@ -131,7 +131,7 @@
 </div>
 
 <details class="cfg-acc" data-acc="misc-appearance" open>
-	<summary>Appearance</summary>
+	<summary><%= &subs::lang('configure.appearance') %></summary>
 <div class="misc_section cfg-card">
 	<div class="cfg-row">
 		<label><b>Zoom <span id="ui_zoom_value"><%= &subs::misc_setting('ui_zoom') || 100 %></span>%</b></label>
@@ -342,7 +342,7 @@
 		<h3><%= $device_name %></h3>
 
 		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-general" open>
-			<summary>General</summary>
+			<summary><%= &subs::lang('configure.general') %></summary>
 			<div class="cfg-grid misc_grid">
 			<% my @general = (
 				[ 'max_files', 'Max Files', [ 0..5000 ] ],
@@ -374,7 +374,7 @@
 	</details>
 
 	<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-bars">
-		<summary>Bars</summary>
+		<summary><%= &subs::lang('configure.bars') %></summary>
 		<div class="cfg-grid misc_grid">
 			<% my @bars = (
 				[ 'dock_position', 'Dock', [ 'bottom', 'top', 'left', 'right', 'hidden' ] ],
@@ -439,7 +439,7 @@
 	</details>
 
 	<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-speech" open>
-		<summary>Speech</summary>
+		<summary><%= &subs::lang('configure.speech') %></summary>
 		<div class="cfg-grid misc_grid">
 			<%# say_it's voice for this device. The piper choices read neural models
 			    staged under voices/; the eSpeak choices need nothing installed. %>
@@ -462,7 +462,7 @@
 		<% my @locations = &subs::location_types(); %>
 		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
 		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-locations">
-			<summary>Locations</summary>
+			<summary><%= &subs::lang('configure.locations') %></summary>
 			<div class="cfg-grid misc_grid">
 			<% foreach my $l (@locations) { %>
 				<%# these two come straight out of the settings table, which may not carry
@@ -492,7 +492,7 @@
 		</details>
 
 		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-archive">
-			<summary>Archive Root</summary>
+			<summary><%= &subs::lang('configure.archive_root') %></summary>
 			<div class="cfg-row">
 			<label><b>archive_dir</b></label>
 			<% my $current_archive_dir = $settings->{$dt}->{'archive_dir'} || ''; %>
@@ -506,7 +506,7 @@
 		</details>
 
 		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-colours">
-			<summary>Colours</summary>
+			<summary><%= &subs::lang('configure.colours') %></summary>
 			<div class="cfg-actions" style="flex-wrap:wrap;gap:8px;">
 			<% my @colours = @gb::misc_settings; %>
 			<% foreach my $k ( @colours ) { %>

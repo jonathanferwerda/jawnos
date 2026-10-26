@@ -2,12 +2,14 @@
 # Stage and build the JawnOS image with mkosi.
 #
 #   perl scripts/mkosi_build.pl               # stage, then build the live image
+#   perl scripts/mkosi_build.pl --vm          # build, then boot it in a VM
 #   perl scripts/mkosi_build.pl --dry-run     # stage and print the command
 #   perl scripts/mkosi_build.pl --stage-only  # stage only (no mkosi needed)
 #
-# mkosi must be installed on the machine that runs this (it is not installed
-# here): `pip install mkosi`, or the distro's `mkosi` package. Building also
-# needs root, network access to the Arch mirrors, and room in desktop/mkosi.
+# mkosi must be installed on the machine that runs this: `pip install mkosi`,
+# or the distro's `mkosi` package. Building also needs root, network access to
+# the Arch mirrors, and room in desktop/mkosi. Booting the result with --vm also
+# needs qemu and an OVMF firmware package.
 #
 # Everything this script stages is output, not source: the tree copy, the repart
 # definitions the installed system reuses, and the two systemd wants-links that
@@ -27,13 +29,15 @@ my $output = "$mkosi_dir/output";
 my $profile = 'live';
 my $dry = 0;
 my $stage_only = 0;
+my $vm = 0;
 
 GetOptions(
 	'profile=s'   => \$profile,
 	'output-dir=s'=> \$output,
 	'dry-run'     => \$dry,
 	'stage-only'  => \$stage_only,
-) or die "usage: $0 [--profile live] [--output-dir DIR] [--dry-run] [--stage-only]\n";
+	'vm'          => \$vm,
+) or die "usage: $0 [--profile live] [--output-dir DIR] [--dry-run] [--stage-only] [--vm]\n";
 
 sub need {
 	my ($cmd) = @_;
@@ -55,23 +59,30 @@ make_path("$stage/opt/jawnos", "$stage/usr/lib/jawnos/repart");
 my $tree = "$stage/opt/jawnos/tree";
 make_path($tree);
 
-# The tree, without the parts that are machine state or build output. `releases/`
-# is a blob store and `database/` carries one machine's own view; neither may be
-# baked into a distributable image.
+# The tree, without the parts that are machine state, secrets or build output.
+# `releases/` is a blob store; the live database and its backups are this
+# machine's own view; and `config.json` carries this builder's name, domain and
+# signatorial - none of that may be baked into a distributable image. The
+# database *sources* (schema.sql, initial.enc) do travel: first boot needs them
+# to build a fresh database of its own.
 my @exclude = (
-	'.git', 'releases', 'database', '.shots', '.secrets', '.president',
+	'.git', 'releases', '.shots', '.secrets', '.president', 'config.json',
 	'desktop/mkosi/.stage', 'desktop/mkosi/output', 'node_modules',
+	'database/*.db', 'database/*.db-shm', 'database/*.db-wal',
+	'database/backups', 'database/.thumbs', 'database/.jawnos_signatorial_id',
 );
 my @args = ('-a');
 foreach my $skip (@exclude) { push @args, '--exclude=' . $skip; }
 print "staging the tree...\n";
 system($rsync, @args, "$root/", "$tree/") == 0 or die "mkosi_build: rsync failed\n";
 
-# First-run defaults, so the live image boots with options rather than a blank
-# wizard. A real config.json (never committed) is left alone.
-if (!-e "$tree/config.json" && -e "$tree/config.json.example") {
-	system('cp', "$tree/config.json.example", "$tree/config.json") == 0
-		or warn "mkosi_build: could not seed config.json\n";
+# First-run defaults, so the live image boots with a real config.json rather
+# than a blank wizard. The defaults are the image's own (config.default.json),
+# never this machine's config.json - that one was excluded above.
+my $default_config = "$mkosi_dir/config.default.json";
+if (!-e "$tree/config.json" && -e $default_config) {
+	system('cp', $default_config, "$tree/config.json") == 0
+		or die "mkosi_build: could not seed config.json\n";
 }
 
 # The installer reuses these definitions with `systemd-repart --size=auto`.
@@ -112,16 +123,26 @@ if ($stage_only) {
 }
 
 my $mkosi = need('mkosi');
-if (!$mkosi) {
+if (!$mkosi && !$dry) {
 	print STDERR "mkosi is not installed. Install it (pip install mkosi, or your\n"
-		. "distro's mkosi package) and run this again. The stage is ready at:\n"
-		. "  $stage\n";
+		. "distro's mkosi package) and run this again. On Arch:\n"
+		. "  sudo pacman -S mkosi\n"
+		. "The stage is ready at:\n  $stage\n";
+	exit 1;
+}
+
+# Booting is a separate dependency. Check it before a long build rather than
+# after, so a missing qemu does not cost half an hour of package fetching.
+if ($vm && !$dry && !need('qemu-system-x86_64')) {
+	print STDERR "qemu is not installed, so the image cannot be booted here.\n"
+		. "On Arch: sudo pacman -S qemu-desktop edk2-ovmf\n"
+		. "Or build only (without --vm) and boot the .raw on another machine.\n";
 	exit 1;
 }
 
 my @cmd = (
-	$mkosi, "-C", $mkosi_dir, "--force", "--profile", $profile,
-	"--extra-tree", $stage, "--output-dir", $output, "build",
+	($mkosi || 'mkosi'), "-C", $mkosi_dir, "--force", "--profile", $profile,
+	"--extra-tree", $stage, "--output-dir", $output, ($vm ? 'vm' : 'build'),
 );
 if ($dry) {
 	print "would run:\n  " . join(' ', @cmd) . "\n";

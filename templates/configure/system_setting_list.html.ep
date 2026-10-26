@@ -6,7 +6,7 @@
 		<% if ($c->stash('pl_time')) { %><p class="cfg-note" style="margin:0 0 6px;">PL TIME: <span class="time" timestamp="<%= $c->stash('pl_time') %>"></span></p><% } %>
 		<p class="cfg-note" style="margin:0;">Uptime: <span class="time" timestamp="<%= $last_restart %>"></span></p>
 		<details class="cfg-details">
-			<summary>Database totals (<%= scalar @{$stats} %> tables)</summary>
+			<summary><%= sprintf(&subs::lang('configure.database_totals'), scalar @{$stats}) %></summary>
 			<div id="stats" class="cfg-actions">
 				<% foreach my $s ( @{$stats} ) { %>
 					<span class="stat" id="<%= $s->{'table'} %>_stat"><b><%= $s->{'formatted_table'} %>:</b> <%= $s->{'count'} %></span>
@@ -21,7 +21,7 @@
 	<% my $machines = &subs::remote_machine_lister({ self => 'yes', mirrors => 'none' }); %>
 	<% my %machine_name; foreach my $m ( @{$machines} ) { $machine_name{$m->{'signatorial'}} = ((($m->{'hostname'} || '') eq 'me') ? 'me (this machine)' : ($m->{'hostname'} || $m->{'signatorial'})); } %>
 	<details class="cfg-acc" data-acc="sys-house">
-		<summary>The house</summary>
+		<summary><%= &subs::lang('configure.the_house') %></summary>
 		<div class="cfg-card">
 			<p class="cfg-note">
 			<b><%= $ai_house->{'members'} %></b> <%= ($ai_house->{'members'} == 1 ? 'machine' : 'machines') %> can take AI work ·
@@ -51,7 +51,7 @@
 	<%# The provider balances: only an account on file is a row, and only a couple
 	   of those publish a balance, so the rest read — %>
 	<details class="cfg-acc" data-acc="sys-balances">
-		<summary>API balances</summary>
+		<summary><%= &subs::lang('configure.api_balances') %></summary>
 		<div class="cfg-card">
 			<p class="cfg-note">
 			<%= &subs::ui('What is left on each provider account you have registered, where the provider reports it.') %>
@@ -116,7 +116,7 @@
 	</details>
 
 	<details class="cfg-acc" data-acc="sys-utility" open>
-		<summary>Utility controller</summary>
+		<summary><%= &subs::lang('configure.utility_controller') %></summary>
 		<p class="cfg-note">Toggle each background job, set how often it runs, and watch its last result. Changes apply as you make them.</p>
 		<div id="utility_controls_container" class="cfg-card">
 			<%= include 'configure/utility_controller' %>
@@ -124,7 +124,7 @@
 	</details>
 
 	<details class="cfg-acc" data-acc="sys-settings-source">
-		<summary>Settings list source</summary>
+		<summary><%= &subs::lang('configure.settings_source') %></summary>
 		<p class="cfg-note">Which copy of the settings list this browser reads.</p>
 		<div class="cfg-actions">
 			<% foreach my $b ( qw/none localstorage cache eval/ ) { %>

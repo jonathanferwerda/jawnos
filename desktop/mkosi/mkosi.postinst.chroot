@@ -1,0 +1,15 @@
+#!/bin/sh
+# Install the Perl modules the app needs, inside the image, so the first boot
+# can seed config.json and the database without a network round trip. The
+# distribution packages (compiler, cpanminus, the command line tools) come from
+# mkosi.conf; this only covers the CPAN side.
+#
+# A failure here leaves an image that boots but cannot start JawnOS, so it fails
+# the build instead of hiding the problem in a log.
+set -eu
+
+export PERL_MM_USE_DEFAULT=1
+export PERL_CPANM_OPT='--notest'
+
+cd /opt/jawnos/tree
+perl scripts/jawnos_deps.pl --install --no-extras

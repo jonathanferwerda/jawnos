@@ -1,0 +1,29 @@
+{
+	"name": "JawnOS",
+	"language": "en",
+	"birthday": "Jan. 1 2000 12pm",
+	"device": "computer",
+	"domain": "127.0.0.1",
+	"email": "me@email.com",
+	"environment": "production",
+	"logfile": "~/manager.log",
+	"port": "3000",
+	"working_port": "45545",
+	"ws_port": "3001",
+	"ssh_port": "8022",
+	"open_browser": "yes",
+	"archive_dir": "",
+	"folders": [
+		"~/Music",
+		"~/Downloads",
+		"~/Videos",
+		"~/Pictures",
+		"~/Documents"
+	],
+	"scanners": [],
+	"search_engines": [
+		{ "name": "Google", "url": "https://www.google.com/search?q=" },
+		{ "name": "DuckDuckGo", "url": "https://duckduckgo.com/?q=" },
+		{ "name": "Wikipedia", "url": "https://en.wikipedia.org/wiki/" }
+	]
+}

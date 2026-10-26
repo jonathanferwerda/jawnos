@@ -1,12 +1,13 @@
 # Seed the house once: copy the image's read-only tree and home skeleton onto
-# the state partition. ConditionPathExists with `!` means "run only while the
-# checkout is absent", so a second boot never overwrites a person's work.
+# the state partition, then build a database from the image's defaults. The
+# condition is the completion marker rather than the checkout, so a first boot
+# that copied the tree but failed to seed is retried instead of skipped.
 [Unit]
 Description=JawnOS first boot - seed the house
 Requires=home-jawn.mount
 After=home-jawn.mount
 Before=getty@tty1.service
-ConditionPathExists=!/home/jawn/jawnos
+ConditionPathExists=!/home/jawn/.seeded
 
 [Service]
 Type=oneshot
