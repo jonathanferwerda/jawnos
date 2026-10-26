@@ -12168,6 +12168,11 @@ sub remote_agent_for {
 	$ua->max_response_size(0);
 	$ua->insecure(1);
 	$ua->inactivity_timeout(3000);
+	# A machine-to-machine archive request proves itself with the same pinned
+	# peer signature the rest of the rail uses. The stored session cookie alone
+	# is refused once the app gate is enforced, which is how an upload started
+	# failing with the app-required page instead of reaching the archive route.
+	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
 	if ($rm->{'cookie'}) {
 		my $cookies = eval { return decode_json $rm->{'cookie'} } || [];
 		foreach my $cookie ( @{$cookies} ) {
