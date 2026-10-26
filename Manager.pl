@@ -41117,6 +41117,25 @@ sub notification_sender($m,$db) {
 
 }
 
+# The app gate in shadow mode writes what it would refuse. A browser with no app
+# key sends every request through here, so a repeating poll wrote the same line
+# on every tick (tens of thousands of lines in the log). Name each
+# (method, path, caller) once a minute instead: a route that would be refused is
+# still recorded, without the repeated write becoming a per-request cost.
+our %app_gate_shadow_seen;
+sub app_gate_shadow_log {
+	my ($c, $path) = @_;
+	my $method = $c->req->method || 'GET';
+	my $remote = $c->tx->remote_address || '?';
+	my $key = $method . "\x1f" . $path . "\x1f" . $remote;
+	my $now = &subs::rightNow();
+	return if defined $app_gate_shadow_seen{$key} && $now - $app_gate_shadow_seen{$key} < 60000;
+	# a long-lived worker must not keep a key for every path a scanner invents
+	%app_gate_shadow_seen = () if keys(%app_gate_shadow_seen) > 1024;
+	$app_gate_shadow_seen{$key} = $now;
+	$log->info('app gate shadow: would deny ' . $method . ' ' . $path . ' from ' . $remote);
+}
+
 sub authentication_passer($c) {
 	my $server_time = &subs::rightNow();
 
@@ -41152,7 +41171,7 @@ sub authentication_passer($c) {
 					signatorial => &subs::signatorial_designer());
 				return;
 			}
-			$log->info('app gate shadow: would deny ' . $c->req->method . ' ' . $app_path . ' from ' . ($c->tx->remote_address || '?'));
+			&app_gate_shadow_log($c, $app_path);
 		}
 	}
 
