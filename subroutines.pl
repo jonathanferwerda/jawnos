@@ -14018,8 +14018,51 @@ sub db_select() {
 	my $params = shift;
 	my $filters = shift;
 	my ($db,$database,$sql) = &database_grabber();
+	return unless $db;
 
-	return $db->select($table,$columns,$params,$filters) if $db;
+	# SQL::Abstract re-derives the same statement on every call (hundreds of
+	# microseconds), while almost every caller asks for one table, a flat hash of
+	# scalar conditions, and no ORDER BY. Build that statement directly. Anything
+	# this cannot express exactly - a $filters/ORDER BY, a ref condition value
+	# (IN, operators), a non-identifier name, or a non-hash $params - falls
+	# through to SQL::Abstract unchanged.
+	if (!$filters && defined $table && $table =~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
+		my $ok = 1;
+		my @bind;
+		my $where = '';
+		if (defined $params && !(!ref($params) && $params eq '')) {
+			if (ref($params) eq 'HASH') {
+				my @w;
+				foreach my $k (sort keys %{$params}) {
+					my $v = $params->{$k};
+					if (ref $v || $k !~ /^[A-Za-z_][A-Za-z0-9_]*$/) { $ok = 0; last; }
+					if (defined $v) { push @w, qq{"$k" = ?}; push @bind, $v; }
+					else { push @w, qq{"$k" is null}; }
+				}
+				$where = ' where ( ' . join(' and ', @w) . ' )' if $ok && @w;
+			}
+			else { $ok = 0; }
+		}
+		my $cols = '*';
+		if ($ok && defined $columns) {
+			if (ref($columns) eq 'ARRAY') {
+				my @c;
+				foreach my $col ( @{$columns} ) {
+					if (ref $col || $col !~ /^[A-Za-z_][A-Za-z0-9_]*$/) { $ok = 0; last; }
+					push @c, qq{"$col"};
+				}
+				$cols = join(', ', @c) if $ok;
+			}
+			# a scalar $columns is handed through unquoted, exactly as
+			# SQL::Abstract does (it is how callers pass an expression); an empty
+			# one means every column there too
+			elsif (!ref($columns)) { $cols = length($columns) ? $columns : '*'; }
+			else { $ok = 0; }
+		}
+		return $db->query('select ' . $cols . ' from "' . $table . '"' . $where, @bind) if $ok;
+	}
+
+	return $db->select($table,$columns,$params,$filters);
 }
 
 # A raw-SQL fast path for the common db_select shape: one table, equality
@@ -32030,7 +32073,10 @@ sub clock_alarm_next_ms {
 	my @lt = localtime(int($from / 1000));
 	my ($mday, $mon, $year) = @lt[3, 4, 5];
 	for my $offset (0 .. 8) {
-		my $candidate = timelocal(0, $minute, $hour, $mday + $offset, $mon, $year) * 1000;
+		# POSIX::mktime normalises a day past the end of the month (Oct 31 + 1
+		# is Nov 1). Time::Local::timelocal croaks on day 32, which made the
+		# whole Clock state 500 for the last week of every month.
+		my $candidate = POSIX::mktime(0, $minute, $hour, $mday + $offset, $mon, $year) * 1000;
 		next if $candidate <= $from;
 		if (!scalar @days) { return $candidate; }
 		my @d = localtime(int($candidate / 1000));
