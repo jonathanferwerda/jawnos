@@ -31,6 +31,7 @@ input[type=number] {
 	--ink: #111417; --ink-muted: #5b6169;
 	--panel: #ffffff; --panel-2: #f2f3f5; --window: #f7f7f9; --line: #d7d9de;
 	--time-fixed: #ddffee;
+	--chat-bubble-me: #cdeccd; --chat-bubble-them: #cfe3f5;
 	--accent: #3b7ddd; --accent-soft: #e6effb; --accent-line: #2f6cc4; --accent-ink: #ffffff;
 	--jawnos-corner: var(--corner_radius, 12px);
 	--button_border: 1px;
@@ -98,7 +99,7 @@ body {
    autofill wash itself. Without it a dark desktop still opened a white
    <select> menu and pale native fields, whatever the control's own surface
    said. The variables below are the same surfaces the rules further down use. */
-body.dark_theme { --ink: #e6e6e6; --ink-muted: #9a9a9a; --panel: #1b1d21; --panel-2: #24272c; --line: #3a3f47; --time-fixed: #1f3a2a; color-scheme: dark; }
+body.dark_theme { --ink: #e6e6e6; --ink-muted: #9a9a9a; --panel: #1b1d21; --panel-2: #24272c; --line: #3a3f47; --time-fixed: #1f3a2a; --chat-bubble-me: #2b4a33; --chat-bubble-them: #24394f; color-scheme: dark; }
 body.dark_theme {
 	background-image: linear-gradient(180deg, rgba(255,255,255,.035), rgba(0,0,0,.18));
 }

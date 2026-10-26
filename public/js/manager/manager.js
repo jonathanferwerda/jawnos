@@ -388,7 +388,7 @@ function assistantChatAdd(panel, role, text) {
 	else {
 		var mine = (role === 'user');
 		var bubble = '<span class="chat_bubble" style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;'
-			+ (mine ? 'background:#cdeccd;' : 'background:#cfe3f5;') + '">' + safe + '</span>';
+			+ (mine ? 'background:var(--chat-bubble-me);' : 'background:var(--chat-bubble-them);') + '">' + safe + '</span>';
 		log.append($('<div style="display:flex;margin:4px 0;' + (mine ? 'justify-content:flex-end;' : 'justify-content:flex-start;') + '">' + bubble + '</div>'));
 	}
 	log.scrollTop(log[0].scrollHeight);
@@ -400,7 +400,7 @@ function assistantAnswerBubble(panel) {
 	var log = assistantLog(panel);
 	if (!log.length) { return $(); }
 	var el = $('<div style="display:flex;margin:4px 0;justify-content:flex-start;">'
-		+ '<span class="chat_bubble" style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;background:#cfe3f5;">'
+		+ '<span class="chat_bubble" style="display:inline-block;max-width:84%;overflow-wrap:break-word;border-radius:10px;padding:6px 10px;background:var(--chat-bubble-them);">'
 		+ '<span class="assistant_content" style="opacity:.7;">…</span></span></div>');
 	log.append(el);
 	log.scrollTop(log[0].scrollHeight);
@@ -661,7 +661,7 @@ function assistantDrop(panel, media) {
 	if (media.image) {
 		var log = assistantLog(panel);
 		log.append($('<div style="display:flex;margin:4px 0;justify-content:flex-end;">'
-			+ '<span style="display:inline-block;max-width:84%;border-radius:10px;padding:5px;background:#cdeccd;">'
+			+ '<span style="display:inline-block;max-width:84%;border-radius:10px;padding:5px;background:var(--chat-bubble-me);">'
 			+ '<img style="display:block;max-width:180px;max-height:180px;border-radius:6px;" src="' + media.image + '"></span></div>'));
 		log.scrollTop(log[0].scrollHeight);
 		assistantRemember(panel, 'user', '(I showed you a picture)');
