@@ -1,0 +1,6 @@
+# Enable the house units. mkosi runs `systemctl preset-all` after installing
+# the extra tree, and that pass removes wants-links written by hand, so the
+# preset is what actually turns these on in the image.
+enable home-jawn.mount
+enable jawnos-firstboot.service
+enable getty@tty1.service

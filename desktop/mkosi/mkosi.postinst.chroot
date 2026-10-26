@@ -11,5 +11,10 @@ set -eu
 export PERL_MM_USE_DEFAULT=1
 export PERL_CPANM_OPT='--notest'
 
+# Arch installs cpanm as /usr/bin/vendor_perl/cpanm; the post-install sandbox
+# has a bare PATH, so a plain `cpanm` is "command not found" and every module
+# would appear missing. Put the vendor Perl bin directory back on the path.
+export PATH="/usr/bin/vendor_perl:$PATH"
+
 cd /opt/jawnos/tree
 perl scripts/jawnos_deps.pl --install --no-extras

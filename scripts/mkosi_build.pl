@@ -11,9 +11,8 @@
 # the Arch mirrors, and room in desktop/mkosi. Booting the result with --vm also
 # needs qemu and an OVMF firmware package.
 #
-# Everything this script stages is output, not source: the tree copy, the repart
-# definitions the installed system reuses, and the two systemd wants-links that
-# would otherwise be symlinks in git. `.stage/` is gitignored.
+# Everything this script stages is output, not source: the tree copy and the
+# repart definitions the installed system reuses. `.stage/` is gitignored.
 
 use strict;
 use warnings;
@@ -91,25 +90,6 @@ foreach my $def ( glob("$mkosi_dir/mkosi.repart/*.conf") ) {
 		or die "mkosi_build: could not stage $def\n";
 }
 
-# Units that must be on without a preset pass. mkosi copies the tree verbatim,
-# and git cannot carry a symlink through this script's staging, so make them here.
-my $wants = {
-	"$stage/etc/systemd/system/local-fs.target.wants" => {
-		'home-jawn.mount' => '../home-jawn.mount',
-	},
-	"$stage/etc/systemd/system/multi-user.target.wants" => {
-		'jawnos-firstboot.service' => '../jawnos-firstboot.service',
-		'getty@tty1.service'       => '/usr/lib/systemd/system/getty@tty1.service',
-	},
-};
-foreach my $dir ( keys %{$wants} ) {
-	make_path($dir);
-	foreach my $name ( keys %{ $wants->{$dir} } ) {
-		symlink($wants->{$dir}->{$name}, "$dir/$name")
-			or warn "mkosi_build: could not link $dir/$name: $!\n";
-	}
-}
-
 # Executables the overlay carries. The repo keeps them 0755, but a fresh checkout
 # on a filesystem that drops the bit would otherwise bake a non-runnable script.
 foreach my $exe ( glob("$mkosi_dir/mkosi.extra/usr/local/bin/*") ) {
@@ -126,7 +106,7 @@ my $mkosi = need('mkosi');
 if (!$mkosi && !$dry) {
 	print STDERR "mkosi is not installed. Install it (pip install mkosi, or your\n"
 		. "distro's mkosi package) and run this again. On Arch:\n"
-		. "  sudo pacman -S mkosi\n"
+		. "  sudo pacman -S mkosi qemu-desktop edk2-ovmf systemd-ukify python-pefile mtools\n"
 		. "The stage is ready at:\n  $stage\n";
 	exit 1;
 }

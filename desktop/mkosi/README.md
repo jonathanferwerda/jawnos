@@ -8,24 +8,31 @@ Arch is the first backend. Debian is the second (see the end).
 
 ## Build
 
-`mkosi` is not part of this tree. Install it on the build box first; nothing
-here has been built or booted yet.
+`mkosi` is not part of this tree. Install it on the build box first:
 
 ```sh
-sudo pacman -S mkosi qemu-desktop edk2-ovmf   # Arch: build and boot in a VM
-# or: pip install mkosi                       # plus your distro's qemu/OVMF
+sudo pacman -S mkosi qemu-desktop edk2-ovmf \
+    systemd-ukify python-pefile mtools
+# or: pip install mkosi   (plus the host tools mkosi calls: qemu, OVMF, ukify,
+#                          python-pefile, mtools)
 ```
 
 Then:
 
 ```sh
-perl scripts/mkosi_build.pl --dry-run     # stage the tree, print the command
-perl scripts/mkosi_build.pl               # build desktop/mkosi/output/jawnos-live.raw
-perl scripts/mkosi_build.pl --vm          # build, then boot it in QEMU
+sudo perl scripts/mkosi_build.pl --dry-run     # stage the tree, print the command
+sudo perl scripts/mkosi_build.pl               # build desktop/mkosi/output/jawnos-live_0.1.raw
+sudo perl scripts/mkosi_build.pl --vm          # build, then boot it in QEMU
 ```
 
 The build needs root (mkosi uses a container/chroot), network access to the Arch
-mirrors, and a few GB of room. `--stage-only` stages without touching mkosi.
+mirrors and to CPAN, and a few GB of room. `--stage-only` stages without
+touching mkosi.
+
+> **Built and booted on 2026-10-26.** The Arch image builds under mkosi 27 and
+> boots in QEMU to a login prompt; the first boot seeds `config.json`, the
+> database and the unlock code as described below. The installer, the A/B
+> update path and a real USB boot are still unverified.
 
 ## Try it in a VM
 
@@ -62,14 +69,14 @@ sudo mkosi -C desktop/mkosi --profile live --extra-tree desktop/mkosi/.stage/ext
 Write it to a stick:
 
 ```sh
-sudo dd if=desktop/mkosi/output/jawnos-live.raw of=/dev/sdX bs=16M status=progress conv=fsync
+sudo dd if=desktop/mkosi/output/jawnos-live_0.1.raw of=/dev/sdX bs=16M status=progress conv=fsync
 ```
 
 ## What the image is
 
 | Partition | Label | Holds |
 | --- | --- | --- |
-| 1 | `jawnos-esp` | kernel, initramfs, systemd-boot |
+| 1 | `jawnos-esp` | one unified kernel image at `EFI/BOOT/BOOTX64.EFI` (kernel, initrd, command line) |
 | 2 | `jawnos-root` | the system, read-only at boot |
 | 3 | `jawnos-state` | `/home/jawn`: the checkout, `config.json`, the database |
 
@@ -100,22 +107,24 @@ The installer refuses to write to the stick it is running from, and needs
 
 ## The parts still unverified
 
-Recorded honestly, because none of this has run yet:
+Recorded honestly:
 
-- `mkosi` itself is untested on this tree. The package list, the repart layout
-  and the profile syntax follow mkosi's documented shapes but have never been
-  built here.
-- `systemd.volatile=overlay` + a separately mounted `/home/jawn` is a standard
-  pair, but the ordering (mount before firstboot, firstboot before getty) has not
-  been watched on a real boot.
-- The `dd`-then-`systemd-repart --size=auto` growth path is the least certain
-  step; a fallback is to `parted`/`growpart` the root and `resize2fs` it.
+- The image builds and boots in QEMU (mkosi 27, OVMF), and first boot seeds the
+  house. A boot from a real USB stick has not been tried.
+- `systemd.volatile=overlay` + a separately mounted `/home/jawn` works; the boot
+  log shows the state partition mounted before firstboot, and the house present
+  on it afterwards.
+- The `dd`-then-`systemd-repart --size=auto` growth path (the installer) is the
+  least certain step; a fallback is to `parted`/`growpart` the root and
+  `resize2fs` it. `jawnos-install` has not been run.
+- The A/B root, dm-verity and systemd-sysupdate update path is still roadmap,
+  not code.
 - The image seeds the tree **without `.git`**, so code sync is off until the
   installed disk joins a checkout (`git init` + a remote, or clone fresh). The
   live stick is for seeing JawnOS, not for being the authority.
 - `config.json` and the database are seeded at first boot from the image's
-  defaults (`config.default.json`); both steps still need a real boot to prove
-  themselves.
+  defaults (`config.default.json`); the code is a demo convenience written to
+  `~/UNLOCK-CODE.txt` and should be replaced on a machine you keep.
 
 ## Debian, second
 

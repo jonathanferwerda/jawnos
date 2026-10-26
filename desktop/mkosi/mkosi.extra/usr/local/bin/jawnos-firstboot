@@ -48,8 +48,13 @@ if [ ! -e "$STATE/jawnos/database/jawnos.db" ]; then
     CODE=$(printf '%s' "$CODE" | cut -c1-8)
     LOG=/var/log/jawnos-firstboot.log
     if HOME=/home/jawn runuser -u jawn -- sh -c \
-        "cd '$STATE/jawnos' && perl scripts/jawnos_setup.pl --seed --name JawnOS --code '$CODE'" \
+        "umask 077; cd '$STATE/jawnos' && perl scripts/jawnos_setup.pl --seed --name JawnOS --code '$CODE'" \
         >>"$LOG" 2>&1; then
+        # runuser's PAM stack resets the umask, so the files it just made may be
+        # group/world readable. The database and the code are this machine's
+        # secrets; tighten them the way the app's own umask 077 does.
+        chmod 600 "$STATE/jawnos/config.json" 2>/dev/null || true
+        chmod -R go-rwx "$STATE/jawnos/database" 2>/dev/null || true
         printf '%s\n' "$CODE" > "$STATE/UNLOCK-CODE.txt"
         chown jawn:jawn "$STATE/UNLOCK-CODE.txt"
         chmod 600 "$STATE/UNLOCK-CODE.txt"
