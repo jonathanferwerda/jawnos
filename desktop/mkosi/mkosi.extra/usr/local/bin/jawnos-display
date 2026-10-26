@@ -14,16 +14,23 @@
 #   jawnos-display --watch         # keep checking (run in a terminal)
 #
 # Safe modes are tried in this order:
-#   1366x768  1920x1080  1280x720  1024x768
+#   1360x768  1366x768  1920x1080  1280x720  1024x768
+# 1360x768 is what the virtio-vga EDID actually advertises; 1366x768 is the
+# ProDesk panel's mode and is kept for X11 (where it is the black-screen
+# workaround). A mode command that Sway accepts but does not apply is treated
+# as a failure and the next mode is tried.
 #
-# Wayland is recognised by SWAYSOCK; X11 by DISPLAY. Only an output that is
-# disabled or has no current mode is configured, so a working monitor is left
-# alone. The run is idempotent and exits 0 when there is nothing to do.
+# Wayland is recognised by SWAYSOCK; X11 by DISPLAY. An output that is disabled
+# or has no current mode, or one smaller than 1024x768, is configured; a
+# genuinely working 1024x768-or-larger monitor is left alone. The run is
+# idempotent and exits 0 when there is nothing to do.
 #
 # This is meant to be called from a Sway `exec`, not run as a detached daemon.
 set -u
 
-SAFE_MODES="1366x768 1920x1080 1280x720 1024x768"
+SAFE_MODES="1360x768 1366x768 1920x1080 1280x720 1024x768"
+# X11 keeps the ProDesk's 1366x768 first; xrandr accepts 1366 on that panel.
+X11_SAFE_MODES="1366x768 1360x768 1920x1080 1280x720 1024x768"
 # Unit separator, not a tab: with an IFS whitespace character `read` collapses
 # empty fields, and an output with no advertised modes has one.
 SEP=$(printf '\037')
@@ -119,20 +126,58 @@ wayland_outputs() {
     }
 }
 
+# Read the mode Sway actually applied. `swaymsg output ... mode` exits 0 even
+# for a mode the output cannot use, so the answer must come back from
+# get_outputs, not from the command's status.
+wayland_current_mode() {
+    wanted=$1
+    wayland_outputs 2>/dev/null | while IFS="$SEP" read -r n status cur modes focused; do
+        if [ "$n" = "$wanted" ]; then
+            printf '%s\n' "$cur"
+            return 0
+        fi
+    done
+}
+
 # Try one mode, first the standard form and then Sway's custom-mode form. A
 # monitor that does not advertise 1366x768 in its EDID can still accept it.
 wayland_try_mode() {
     name=$1
     mode=$2
     if swaymsg output "$name" mode "$mode" >/dev/null 2>&1; then
-        log "output $name: mode $mode"
-        return 0
+        now=$(wayland_current_mode "$name")
+        if [ "$now" = "$mode" ]; then
+            log "output $name: mode $mode"
+            return 0
+        fi
+        log "output $name: mode $mode was accepted but current is ${now:-unknown}"
     fi
     if swaymsg output "$name" mode --custom "$mode" >/dev/null 2>&1; then
-        log "output $name: custom mode $mode"
-        return 0
+        now=$(wayland_current_mode "$name")
+        if [ "$now" = "$mode" ]; then
+            log "output $name: custom mode $mode"
+            return 0
+        fi
+        log "output $name: custom mode $mode was accepted but current is ${now:-unknown}"
     fi
     return 1
+}
+
+# A live VM comes up at 640x480; that is "working" by Sway's definition but
+# too small for the manager, so --once upgrades it. A genuinely working
+# 1024x768-or-larger output is left alone.
+mode_is_small() {
+    case "$1" in
+        ''|*[!0-9x]*) return 0 ;;
+        *x*) ;;
+        *) return 0 ;;
+    esac
+    w=${1%%x*}
+    h=${1#*x}
+    case "$w$h" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    [ "$w" -lt 1024 ] || [ "$h" -lt 768 ]
 }
 
 wayland_set_output() {
@@ -151,8 +196,13 @@ wayland_once() {
     failed=0
     while IFS="$SEP" read -r name status cur modes focused; do
         [ -n "$name" ] || continue
-        [ "$status" = needs ] || continue
-        log "output $name has no working mode (current: $cur); trying ${SAFE_MODES}"
+        if [ "$status" = needs ]; then
+            log "output $name has no working mode (current: $cur); trying ${SAFE_MODES}"
+        elif mode_is_small "$cur"; then
+            log "output $name is $cur (below 1024x768); trying ${SAFE_MODES}"
+        else
+            continue
+        fi
         if wayland_set_output "$name"; then
             changed=1
         else
@@ -185,15 +235,16 @@ EOF
 
 next_mode() {
     current=$1
+    list=${2:-$SAFE_MODES}
     seen=no
-    for mode in $SAFE_MODES; do
+    for mode in $list; do
         if [ "$seen" = yes ]; then
             printf '%s\n' "$mode"
             return 0
         fi
         [ "$mode" = "$current" ] && seen=yes
     done
-    printf '%s\n' "${SAFE_MODES%% *}"
+    printf '%s\n' "${list%% *}"
 }
 
 wayland_cycle() {
@@ -243,13 +294,13 @@ x11_once() {
     # Only the first safe mode counts as settled. A display sitting at
     # 1024x768 (or any other mode) may be the black-screen case itself, and the
     # workaround is to move it to 1366x768, not to leave it alone.
-    if [ "$current" = "${SAFE_MODES%% *}" ]; then
+    if [ "$current" = "${X11_SAFE_MODES%% *}" ]; then
         [ "$QUIET_NOOP" = yes ] || log "X11: already at $current; leaving the display alone"
         return 0
     fi
     log "X11: current mode ${current:-unknown}; running xrandr --auto"
     xrandr --auto >/dev/null 2>&1 || true
-    for mode in $SAFE_MODES; do
+    for mode in $X11_SAFE_MODES; do
         if xrandr -s "$mode" >/dev/null 2>&1; then
             log "X11: mode $mode"
             return 0
@@ -275,7 +326,7 @@ x11_list() {
 x11_cycle() {
     command -v xrandr >/dev/null 2>&1 || { log "xrandr not found"; return 1; }
     current=$(x11_screen_size)
-    mode=$(next_mode "$current")
+    mode=$(next_mode "$current" "$X11_SAFE_MODES")
     printf '%s\n' "$mode"
     log "X11: cycling from ${current:-unknown} to $mode"
     if xrandr -s "$mode" >/dev/null 2>&1; then

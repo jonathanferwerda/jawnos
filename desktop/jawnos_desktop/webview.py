@@ -57,6 +57,13 @@ _SOFTWARE_RENDERER_KEYS = (
     "WEBKIT_SKIA_ENABLE_CPU_RENDERING",
 )
 
+# GPU-path workarounds copied in from webkit.env that JAWNOS_GPU=1 should also
+# drop. Forcing WebKit's DMABUF renderer onto shared memory is the virtio-gpu
+# fix; a real GPU can take the plain path.
+_GPU_WORKAROUND_KEYS = (
+    "WEBKIT_DMABUF_RENDERER_FORCE_SHM",
+)
+
 
 # Report whether the page is playing audio or video. WebKit's
 # is-playing-audio only covers sound, so a muted video (or one with a silent
@@ -169,7 +176,7 @@ def _apply_webkit_env():
         if key not in real:
             os.environ[key] = value
     if _truthy(os.environ.get("JAWNOS_GPU")):
-        for key in _SOFTWARE_RENDERER_KEYS:
+        for key in _SOFTWARE_RENDERER_KEYS + _GPU_WORKAROUND_KEYS:
             if key not in real:
                 os.environ.pop(key, None)
         return

@@ -47,11 +47,12 @@ sudo perl scripts/mkosi_build.pl --vm --disk-size 32   # 32G disk
 ```
 
 mkosi boots the finished disk with QEMU and an OVMF firmware. `--disk-size N`
-passes `--runtime-size NG` to mkosi: the temporary VM copy is grown to N GB.
-The guest's `jawnos-grow` service then grows `jawnos-state` (and its ext4)
-into the free space, so the house has the whole disk. Only the state partition
-grows; the root is a read-only overlay and cannot grow online. The build itself
-is not enlarged, so a VM run never turns the published image into a 32G file.
+passes `--runtime-size NG` to mkosi *and* `--ephemeral yes`: the VM runs on a
+temporary copy grown to N GB and the built artefact is never modified. The
+guest's `jawnos-grow` service grows `jawnos-state` (and its ext4) into the free
+space, so the house has the whole disk. Only the state partition grows; the
+root is a read-only overlay and cannot grow online. A VM run therefore never
+turns the published image into a 32G file.
 
 The first boot seeds `config.json` from [`config.default.json`](config.default.json),
 builds a fresh encrypted database, creates the standard desktop folders, paints a

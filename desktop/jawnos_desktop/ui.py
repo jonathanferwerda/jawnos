@@ -610,9 +610,14 @@ class Dashboard(Gtk.Window):
             return None
         panel.on_admin = self._show_dashboard
         panel.attach_keys(self)
+        # Record the panel *before* packing and showing it. show_all() re-emits
+        # the notebook's switch-page for the current page, and that handler calls
+        # straight back into _ensure_web_view(); with the guard assigned last the
+        # re-entrant call saw None and packed a second WebView, which split the
+        # viewport in two and painted the manager twice.
+        self._web_panel = panel
         self.web_page.pack_start(panel, True, True, 0)
         self.web_page.show_all()
-        self._web_panel = panel
         self._view_version = self._manager_version()
         return panel
 

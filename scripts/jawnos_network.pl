@@ -54,6 +54,19 @@ sub clean {
 	return $text;
 }
 
+# iwctl decorates its table output with colour/weight escapes even when stdout
+# is a pipe. Strip the control sequences before any parser sees the rows; the
+# status JSON used to carry "\u001B[1;90m" as an adapter name. This keeps the
+# layout (spaces/newlines) so the column parsers still work.
+sub strip_ansi {
+	my ($text) = @_;
+	return '' unless defined $text;
+	$text =~ s/\e\[[0-9;?]*[ -\/]*[@-~]//g;   # CSI ... final byte
+	$text =~ s/\e\][^\a]*(?:\a|\e\\)//g;         # OSC ... BEL/ST
+	$text =~ s/\e[@-Z\\-_]//g;                # other two-byte escapes
+	return $text;
+}
+
 sub slurp {
 	my ($path) = @_;
 	open my $fh, '<', $path or return '';
@@ -180,10 +193,12 @@ sub run_read {
 sub run_iwctl_read {
 	my (@command) = @_;
 	my ($stdout, $stderr, $status) = run_read(@command);
-	return ($stdout, $stderr, $status) if $status == 0 || $> == 0;
+	if ($status == 0 || $> == 0) {
+		return (strip_ansi($stdout), strip_ansi($stderr), $status);
+	}
 	my ($sudo_stdout, $sudo_stderr, $sudo_status) = run_read('sudo', '-n', @command);
-	return ($sudo_stdout, $sudo_stderr, $sudo_status) if $sudo_status == 0;
-	return ($stdout, $stderr, $status);
+	return (strip_ansi($sudo_stdout), strip_ansi($sudo_stderr), $sudo_status) if $sudo_status == 0;
+	return (strip_ansi($stdout), strip_ansi($stderr), $status);
 }
 
 # Mutating commands: try directly, then through sudo -n. The live image gives
@@ -601,6 +616,13 @@ sub vpn_unit {
 
 my $command = shift @ARGV;
 $command = '' unless defined $command;
+
+if ($command eq '--test-ansi') {
+	my $raw = "Adapters \e[1;90mphy0\e[0m\n";
+	my $got = strip_ansi($raw);
+	print $got;
+	exit($got eq "Adapters phy0\n" ? 0 : 1);
+}
 
 if ($command eq 'status') {
 	my $interfaces = interface_report();

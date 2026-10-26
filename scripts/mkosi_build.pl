@@ -9,9 +9,11 @@
 #   perl scripts/mkosi_build.pl --stage-only  # stage only (no mkosi needed)
 #
 # --disk-size GROWS the QEMU disk only; the built artefact stays at its minimum
-# size (1G ESP + 5G root + 2G state) so the download stays small. The image's
-# jawnos-grow service expands the state partition into the extra space at boot,
-# exactly as it does on a USB stick.
+# size (1G ESP + 5G root + 2G state) so the download stays small. --vm boots a
+# temporary copy (--ephemeral) so that growth, and anything the guest writes,
+# never touches the file that gets published. The image's jawnos-grow service
+# expands the state partition into the extra space at boot, exactly as it does
+# on a USB stick.
 #
 # mkosi must be installed on the machine that runs this: `pip install mkosi`,
 # or the distro's `mkosi` package. Building also needs root, network access to
@@ -92,7 +94,9 @@ make_path($tree);
 # the state partition firstboot copies them to.
 my @exclude = (
 	'.git', 'releases', '.shots', '.secrets', '.president', 'config.json',
-	'desktop/mkosi/.stage', 'desktop/mkosi/output', 'node_modules',
+	'desktop/mkosi/.stage', 'desktop/mkosi/output',
+	'desktop/mkosi/mkosi.key', 'desktop/mkosi/mkosi.crt',
+	'node_modules',
 	'database/*.db', 'database/*.db-shm', 'database/*.db-wal',
 	'database/backups', 'database/.thumbs', 'database/.jawnos_signatorial_id',
 	'jt/.pio', 'jt/build', 'jw/.pio', 'jw/build', 'jp/alarmclock/.pio',
@@ -150,7 +154,7 @@ if ($vm && !$dry && !need('qemu-system-x86_64')) {
 my @cmd = (
 	($mkosi || 'mkosi'), "-C", $mkosi_dir, "--force", "--profile", $profile,
 	"--extra-tree", $stage, "--output-dir", $output,
-	($vm ? ('--runtime-size', "${disk_size}G") : ()),
+	($vm ? ('--ephemeral', 'yes', '--runtime-size', "${disk_size}G") : ()),
 	($vm ? 'vm' : 'build'),
 );
 if ($dry) {
