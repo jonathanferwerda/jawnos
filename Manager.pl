@@ -29226,6 +29226,52 @@ sub folders_entry_names {
 	return sort { lc($a) cmp lc($b) || $a cmp $b } @names;
 }
 
+# The archive's copy of the folder being read, for the badge on a local item
+# that also has a copy on the archive machine. The manifest is asked for once
+# per location and cached briefly; an unreachable archive leaves the listing
+# unmarked rather than failing it.
+sub folders_archive_index($folder) {
+	my $misc = &misc_setting_list();
+	my $device = &subs::device_setter();
+	my $settings = $misc->{$device} || {};
+	my $machines = &subs::remote_machine_lister({ self => 'no' });
+	my ($match, $base);
+	foreach my $location ( &subs::location_types() ) {
+		my $b = $settings->{$location . '_location'};
+		next unless defined $b && length $b;
+		$b = &subs::home($b);
+		$b =~ s{/+$}{};
+		next unless ($folder eq $b || $folder =~ m{^\Q$b\E/});
+		if (!defined $base || length($b) > length($base)) {
+			$match = $location;
+			$base = $b;
+		}
+	}
+	return {} unless $match;
+	my $rm = &subs::archive_machine_for($match, $settings, $machines);
+	return {} unless ($rm && $rm->{'uuid'} && ($rm->{'connection'} || '') eq 'active');
+	my $manifest = &subs::archive_manifest_cached({
+		remote_uuid => $rm->{'uuid'},
+		location => $match,
+		timeout => 5
+	});
+	return {} if $manifest->{'error'};
+	my %rows = map { $_->{'relative'} => 1 }
+		grep { defined $_->{'relative'} && length $_->{'relative'} } @{$manifest->{'rows'} || []};
+	# a folder is archived when any file under it is
+	my %dirs;
+	foreach my $rel ( keys %rows ) {
+		my @parts = split m{/}, $rel;
+		pop @parts;
+		my $prefix = '';
+		foreach my $p ( @parts ) {
+			$prefix = length $prefix ? $prefix . '/' . $p : $p;
+			$dirs{$prefix} = 1;
+		}
+	}
+	return { location => $match, base => $base, rows => \%rows, dirs => \%dirs };
+}
+
 # One folder read as the app (and the desktop behind it) shows it: its entries,
 # the folders apart from the files and the disk's own figures. The padlock rule
 # is the same one the gallery reads, so a not-visible app's files stay out until
@@ -29251,6 +29297,22 @@ sub folders_listing($folder, $unlocked, $c, $show_hidden) {
 		my $sealed_name = (!$unlocked && ($_->{'name'} // '') =~ /\.enc$/i && (!$app || help_app_hidden($app)));
 		!$hidden && !$sealed_name;
 	} @{$files};
+	my $archive_index = &folders_archive_index($folder);
+	if ($archive_index->{'rows'}) {
+		my $base_len = length($archive_index->{'base'}) + 1;
+		foreach my $file ( @{$files} ) {
+			my $path = $file->{'path'} // '';
+			next unless length $path;
+			my $rel = substr($path, $base_len);
+			next unless defined $rel && length $rel;
+			if (($file->{'type'} || '') eq 'folder') {
+				$file->{'archived'} = $archive_index->{'dirs'}->{$rel} ? 1 : 0;
+			}
+			else {
+				$file->{'archived'} = $archive_index->{'rows'}->{$rel} ? 1 : 0;
+			}
+		}
+	}
 	my @folders = grep { $_->{'type'} eq 'folder' } @{$files};
 	@{$files} = grep { $_->{'type'} ne 'folder' } @{$files};
 	# the names the house gave its own folders and seals, for the eye only: the

@@ -132,7 +132,7 @@
 					<% my $is_folder = (($f->{'type'} || '') eq 'folder'); %>
 					<% my $display = $f->{'display'} || $f->{'name'}; %>
 					<div class="folders_file" path="<%= $f->{'path'} %>" type="<%= $f->{'type'} %>" data-name="<%= $display %>" tabindex="-1" role="option" aria-selected="false">
-						<span class="folders_thumb"><img src="<%= $f->{'icon'} %>" alt="" draggable="false"></span>
+						<span class="folders_thumb"><img src="<%= $f->{'icon'} %>" alt="" draggable="false"><% if ($f->{'archived'}) { %><img class="folders_archived_badge" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" alt="" hint="<%= &subs::ui('Archived copy') %>"><% } %></span>
 						<span class="folders_label" title="<%= $display %>"><%= $display %></span>
 						<span class="folders_kind"><%= &subs::format_name($f->{'type'} || 'file') %></span>
 						<span class="folders_size"><%= $is_folder ? '' : &subs::data_size($f->{'size'} || 0) %></span>

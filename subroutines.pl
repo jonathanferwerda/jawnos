@@ -12551,6 +12551,12 @@ sub archive_manifest_fetch {
 	my $data = shift;
 	my $agent = &remote_agent_for($data->{'remote_uuid'});
 	return { error => $agent->{'error'} } if $agent->{'error'};
+	# A listing that only wants the badge cannot wait on a dead peer; its own
+	# caller passes a short bound. The archive transfer keeps the long one.
+	if ($data->{'timeout'}) {
+		$agent->{'ua'}->request_timeout($data->{'timeout'});
+		$agent->{'ua'}->inactivity_timeout($data->{'timeout'});
+	}
 	my $res = eval {
 		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/archive/manifest' => form => {
 			location => $data->{'location'}
@@ -12558,6 +12564,23 @@ sub archive_manifest_fetch {
 	};
 	return { error => 'the archive machine did not answer' } unless ($res && $res->{'status'} eq 'ok');
 	return { %{$res}, hostname => $agent->{'hostname'} };
+}
+
+# A short-lived copy of a manifest for callers that only need to know which
+# local paths have an archived copy. Folders re-reads on every navigation, so
+# one small request per location per fifteen seconds is enough; a finished
+# archive shows up on the next read after that.
+our %archive_manifest_memo;
+sub archive_manifest_cached {
+	my $data = shift;
+	my $key = ($data->{'remote_uuid'} || '') . '|' . ($data->{'location'} || '');
+	my $now = &rightNow();
+	my $hit = $archive_manifest_memo{$key};
+	return $hit->{'manifest'} if ($hit && $now - $hit->{'at'} < 15000);
+	my $manifest = &archive_manifest_fetch($data);
+	$archive_manifest_memo{$key} = { at => $now, manifest => $manifest };
+	%archive_manifest_memo = () if keys(%archive_manifest_memo) > 32;
+	return $manifest;
 }
 
 # Where a photo that has left this disk can still be found. The archive machine

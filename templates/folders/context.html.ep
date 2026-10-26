@@ -79,6 +79,7 @@
 		open_tab => &subs::ui('Open in new tab'),
 		open_window => &subs::ui('Open in new window'),
 		open_trash => &subs::ui('Open Recycle Bin'),
+		archive => &subs::ui('Archive'),
 		restore_trash => &subs::ui('Restore'),
 		empty_trash => &subs::ui('Empty Recycle Bin'),
 		toggle_hidden => ($folders->{'show_hidden'} ? &subs::lang('folders.hide_hidden') : &subs::lang('folders.show_hidden')),
@@ -87,8 +88,10 @@
 		<% foreach my $o ( keys %{$co} ) { %>
 			% unless (($co->{$o}->{'visible'} || 'yes') eq 'no') {
 				<div class="folders_context_selection hover_showing" command="<%= $o %>">
-					<% if ($gb::known_icons->{$o}) { %>
-						<img src="<%= $gb::known_icons->{$o} %>" class="miniscule_thumb">
+					<% my $known_icon = $gb::known_icons->{$o}; %>
+					<% $known_icon = &subs::icon_for($known_icon) if ($o eq 'archive' && defined $known_icon); %>
+					<% if ($known_icon) { %>
+						<img src="<%= $known_icon %>" class="miniscule_thumb">
 					<% } %>
 					<span style="vertical-align:top;"><%= $command_labels{$o} || &subs::format_name($o) %></span>
 				</div>

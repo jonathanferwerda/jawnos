@@ -435,6 +435,7 @@ our @coding_tools = (
 our $known_icons = {
 	file => '/images/decipherable/file.png',
 	folder => '/images/decipherable/folder.png',
+	archive => '/images/decipherable/diskette.png',
 	'delete' => '/icons/trash.png',
 	cut => '/images/palette/crop.png',
 	encrypt => '/images/make believe/lock.png',
