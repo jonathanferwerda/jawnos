@@ -5371,7 +5371,33 @@ our %catalog = (
 	},
 );
 
-# fill any missing key from English so a catalog may grow one line at a time
+# Internet's own labels. They are written in every interface language here
+# rather than left to the English backfill, because they are core labels the
+# app's toolbar and tab strip show on every machine.
+my @internet_keys = qw( internet browse web open_browser measure_page usage_today time_spent usage_none );
+my %internet_labels = (
+	en => [ 'Internet', 'Browse', 'Web', 'Open browser', 'Measure this page', 'Site time today', 'Time spent', 'No times recorded yet' ],
+	zh => [ '互联网', '浏览', '网页', '打开浏览器', '测量此页面', '今日网站时间', '所用时间', '尚无记录' ],
+	fr => [ 'Internet', 'Parcourir', 'Web', 'Ouvrir le navigateur', 'Mesurer cette page', 'Temps passé aujourd\'hui', 'Temps passé', 'Aucun temps enregistré' ],
+	es => [ 'Internet', 'Navegar', 'Web', 'Abrir el navegador', 'Medir esta página', 'Tiempo en sitios hoy', 'Tiempo empleado', 'Aún no hay tiempos registrados' ],
+	de => [ 'Internet', 'Surfen', 'Web', 'Browser öffnen', 'Diese Seite messen', 'Website-Zeit heute', 'Verbrachte Zeit', 'Noch keine Zeiten erfasst' ],
+	pt => [ 'Internet', 'Navegar', 'Web', 'Abrir navegador', 'Medir esta página', 'Tempo em sites hoje', 'Tempo gasto', 'Ainda não há tempos registrados' ],
+	hi => [ 'इंटरनेट', 'ब्राउज़ करें', 'वेब', 'ब्राउज़र खोलें', 'इस पृष्ठ को मापें', 'आज साइट पर समय', 'बिताया समय', 'अभी कोई समय दर्ज नहीं' ],
+	ar => [ 'الإنترنت', 'تصفح', 'الويب', 'افتح المتصفح', 'قياس هذه الصفحة', 'وقت المواقع اليوم', 'الوقت المستغرق', 'لا توجد أوقات مسجلة بعد' ],
+	bn => [ 'ইন্টারনেট', 'ব্রাউজ', 'ওয়েব', 'ব্রাউজার খুলুন', 'এই পৃষ্ঠাটি মাপুন', 'আজ সাইটে সময়', 'ব্যয়িত সময়', 'এখনও কোনো সময় রেকর্ড হয়নি' ],
+	ru => [ 'Интернет', 'Обзор', 'Веб', 'Открыть браузер', 'Измерить эту страницу', 'Время на сайтах сегодня', 'Затраченное время', 'Время ещё не записано' ],
+	ja => [ 'インターネット', 'ブラウズ', 'ウェブ', 'ブラウザを開く', 'このページを測定', '今日のサイト時間', '費やした時間', 'まだ記録がありません' ],
+	pa => [ 'ਇੰਟਰਨੈੱਟ', 'ਬ੍ਰਾਊਜ਼', 'ਵੈੱਬ', 'ਬ੍ਰਾਊਜ਼ਰ ਖੋਲ੍ਹੋ', 'ਇਸ ਪੰਨੇ ਨੂੰ ਮਾਪੋ', 'ਅੱਜ ਸਾਈਟ ਦਾ ਸਮਾਂ', 'ਬਿਤਾਇਆ ਸਮਾਂ', 'ਹਾਲੇ ਕੋਈ ਸਮਾਂ ਦਰਜ ਨਹੀਂ' ],
+	id => [ 'Internet', 'Jelajah', 'Web', 'Buka peramban', 'Ukur halaman ini', 'Waktu situs hari ini', 'Waktu terpakai', 'Belum ada waktu tercatat' ],
+	ko => [ '인터넷', '탐색', '웹', '브라우저 열기', '이 페이지 측정', '오늘의 사이트 시간', '사용한 시간', '아직 기록된 시간이 없습니다' ],
+	it => [ 'Internet', 'Naviga', 'Web', 'Apri il browser', 'Misura questa pagina', 'Tempo sui siti oggi', 'Tempo trascorso', 'Nessun tempo registrato' ],
+	tr => [ 'İnternet', 'Göz at', 'Web', 'Tarayıcıyı aç', 'Bu sayfayı ölç', 'Bugün site süresi', 'Geçirilen süre', 'Henüz süre kaydedilmedi' ],
+);
+foreach my $code ( keys %internet_labels ) {
+	my %add;
+	@add{@internet_keys} = @{$internet_labels{$code}};
+	$catalog{$code} = { %{$catalog{$code} || {}}, %add };
+}
 foreach my $code ( keys %catalog ) {
 	next if $code eq 'en';
 	foreach my $key ( keys %{$catalog{'en'}} ) {

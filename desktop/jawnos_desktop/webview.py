@@ -26,6 +26,8 @@ import base64
 import glob
 import json
 import os
+import shutil
+import sys
 from urllib.parse import urljoin, urlparse
 
 from . import DESKTOP_DIR, core  # noqa: E402
@@ -70,6 +72,30 @@ _GPU_WORKAROUND_KEYS = (
 # track) left the desktop's own power manager to blank the display while it
 # played. The page posts this to the same `jawnos` handler the key bridge uses;
 # _on_message reconciles it with WebKit's own audio flag.
+# The Internet app's Browse tab calls JawnBrowse.open(url, mode, app, uuid).
+# This shim is the desktop half of that contract: a real browser window is a
+# sibling process, so the manager page can only ask this app to start it. The
+# handler is separate from the `jawnos` channel, which is the app-key/window
+# bridge the manager already uses.
+_BROWSE_BRIDGE_JS = """
+(function () {
+    if (window.JawnBrowse) { return; }
+    window.JawnBrowse = {
+        open: function (url, mode, app, uuid) {
+            try {
+                window.webkit.messageHandlers.jawnos_browse.postMessage(JSON.stringify({
+                    action: 'browse',
+                    url: String(url || ''),
+                    mode: mode === 'measure' ? 'measure' : 'browse',
+                    app: String(app || ''),
+                    uuid: String(uuid || '')
+                }));
+            } catch (e) {}
+        }
+    };
+})();
+"""
+
 _MEDIA_MONITOR_JS = """
 (function () {
     var last = '';
@@ -357,6 +383,24 @@ def _app_sign_b64(message_b64):
     return base64.b64encode(_app_private_key().sign(raw)).decode("ascii")
 
 
+def browse_launcher():
+    """The jawnos-browse entry beside this package, or one on PATH.
+
+    A copy whose executable bit did not survive a copy is still runnable with
+    this interpreter, so an installed tree keeps working through an update."""
+    candidates = [
+        os.path.join(DESKTOP_DIR, "jawnos-browse"),
+        shutil.which("jawnos-browse"),
+    ]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return [candidate]
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return [sys.executable or "python3", candidate]
+    return None
+
+
 def ticket_url():
     """The stored login ticket, if any.
 
@@ -621,6 +665,22 @@ class WebViewPanel(Gtk.Box):
             ))
         except Exception:
             pass
+        # The page -> app channel for "open a native Browse window". A failure
+        # here must not disturb the view's other handlers, so it has its own
+        # guard.
+        try:
+            content = view.get_user_content_manager()
+            content.register_script_message_handler("jawnos_browse")
+            content.connect("script-message-received::jawnos_browse",
+                            self._on_browse_message)
+            content.add_script(WebKit2.UserScript.new(
+                _BROWSE_BRIDGE_JS,
+                WebKit2.UserContentInjectedFrames.TOP_FRAME,
+                WebKit2.UserScriptInjectionTime.START,
+                None, None,
+            ))
+        except Exception:
+            pass
         view.connect("load-changed", self._on_load_changed)
         view.connect("load-failed", self._on_load_failed)
         view.connect("load-failed-with-tls-errors", self._on_tls_error)
@@ -832,6 +892,47 @@ class WebViewPanel(Gtk.Box):
                 % (json.dumps(msg_id), json.dumps(reply)),
                 -1, None, None, None, None, None)
         except Exception:
+            pass
+        return False
+
+    def _on_browse_message(self, _content, result):
+        raw = _js_string(result) or ""
+        try:
+            message = json.loads(raw)
+        except (ValueError, TypeError):
+            return False
+        if not isinstance(message, dict) or message.get("action") != "browse":
+            return False
+        # Only the manager's own origin may start a native window. The shim is
+        # injected into the top frame, but a public page loaded in this view
+        # must not be able to borrow it.
+        try:
+            host = urlparse(self.view.get_uri() or "").hostname or ""
+        except ValueError:
+            host = ""
+        if host not in (self._manager_host, "127.0.0.1", "localhost", "::1"):
+            return False
+        url = message.get("url") or ""
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return False
+        mode = "measure" if message.get("mode") == "measure" else "browse"
+        app = str(message.get("app") or "")[:200]
+        uuid = str(message.get("uuid") or "")[:200]
+        launcher = browse_launcher()
+        if not launcher:
+            return False
+        argv = launcher + [
+            "--manager", self._manager_url,
+            "--url", url,
+            "--mode", mode,
+            "--app", app,
+            "--uuid", uuid,
+        ]
+        try:
+            core.spawn_detached(argv, DESKTOP_DIR,
+                                os.path.join(core.state_dir(), "browse.log"))
+        except OSError:
             pass
         return False
 

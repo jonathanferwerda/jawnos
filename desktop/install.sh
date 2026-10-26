@@ -133,7 +133,7 @@ echo "Installing to $DEST"
 mkdir -p "$DEST"
 cp -R "$DESKTOP_SRC/." "$DEST/"
 find "$DEST" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-chmod +x "$DEST/jawnosctl" "$DEST/jawnos-desktop" "$DEST/jawnos-bt-daemon" "$DEST/install-wallet.sh"
+chmod +x "$DEST/jawnosctl" "$DEST/jawnos-desktop" "$DEST/jawnos-bt-daemon" "$DEST/install-wallet.sh" "$DEST/jawnos-browse" "$DEST/jawnos-shell" "$DEST/jawnos-usage"
 # Record what was installed, so the app's own Update button offers only a newer
 # repo tree - a plain install is "up to date" from the start.
 "$PYTHON" -c "import sys; sys.path.insert(0, r'$DEST'); from jawnos_desktop import core; core.apply_update(dict(jawn_dir=r'$JAWN_DIR'))" >/dev/null 2>&1 || true
@@ -144,10 +144,10 @@ if [ "$WITH_HEADLESS" -eq 1 ]; then
 	ln -sf "$DEST/jawnosctl" "$BIN/jawnosctl"
 	echo "Linked jawnosctl into $BIN"
 else
-	for tool in jawnosctl jawnos-desktop jawnos-bt-daemon; do
+	for tool in jawnosctl jawnos-desktop jawnos-bt-daemon jawnos-browse jawnos-shell jawnos-usage; do
 		ln -sf "$DEST/$tool" "$BIN/$tool"
 	done
-	echo "Linked jawnosctl, jawnos-desktop, jawnos-bt-daemon into $BIN"
+	echo "Linked jawnosctl, jawnos-desktop, jawnos-bt-daemon, jawnos-browse, jawnos-shell, jawnos-usage into $BIN"
 fi
 
 # --- icon and desktop entry -------------------------------------------------

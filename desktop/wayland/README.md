@@ -1,30 +1,33 @@
 # JawnOS as a Sway shell
 
 A starting point for the kiosk-style setup: **Sway** owns the windows, **JawnOS is
-the session** (its embedded view fills the screen), and a taskbar lists the apps
-you launch — Zed included. Read `desktop/README.md` first; this builds on it.
+the session** (its embedded view is an ordinary tiled window, with `jawnos-shell`
+as the top bar), and the bar names the app in front. Zed included. Read
+`desktop/README.md` first; this builds on it.
 
-> These files are a **starting point, not a verified configuration**. They have
-> not been run on a Sway box. The app ids in `sway.conf` (`jawnos-desktop`,
-> `zed`, `foot`) come from the programs' own names — check yours with
-> `swaymsg -t get_tree` and adjust.
+> These files are a **starting point, not a verified configuration**. The bar and
+> config compile in this tree, but they have not been run on a Sway box here
+> (`sway` is not installed in this checkout). The app ids in `sway.conf`
+> (`jawnos-desktop`, `zed`, `foot`) come from the programs' own names — check
+> yours with `swaymsg -t get_tree` and adjust.
 
 ## Why Sway, and what it does and does not give you
 
 The browser gives you windows, a taskbar and a top navbar — but only for things
 *inside the page*. A native app like Zed is a **separate Wayland surface**, and
 only the **compositor** can position, layer or drag a surface. So the fastest
-route is to let a real compositor be the window manager and keep JawnOS as the
-fullscreen "desktop":
+route is to let a real compositor be the window manager, keep JawnOS's view as a
+normal window, and give the session its own bar:
 
 | You wanted | How it is met here |
 |---|---|
-| Zed appears in a taskbar | `waybar`'s `wlr/taskbar` module lists every toplevel |
-| a top navbar **over** Zed's window | `waybar` sits in the layer-shell `top` layer, above normal windows |
+| Zed named in the bar | `jawnos-shell` reads Sway's focused container and shows its icon and name |
+| a top navbar **over** Zed's window | `jawnos-shell` sits in the layer-shell `top` layer, above normal windows, with an exclusive zone |
 | drag Zed around the desktop | `for_window … floating enable` — Sway drags floating windows |
 
-That is waybar's bar, not JawnOS's DOM one. **Making it JawnOS's** is the next
-step (see below); it is a small local app, not a change to the web UI.
+That is **JawnOS's own bar**, not waybar's. It is a small GTK app
+(`desktop/jawnos_desktop/shell.py`), not a change to the web UI; `waybar.conf`
+is kept only as a fallback.
 
 ## The machine: HP ProDesk/EliteDesk G3, i5-6500T
 
@@ -46,9 +49,13 @@ Boot is off (or sign the kernel) before installing.
 sudo pacman -S mesa vulkan-intel intel-media-driver libva-utils
 
 # the session
-sudo pacman -S sway swaybg swayidle swaylock waybar \
+sudo pacman -S sway swaybg swayidle swaylock gtk-layer-shell \
   foot fuzzel mako wl-clipboard grim slurp \
   xdg-desktop-portal-wlr polkit-gnome wireplumber pipewire
+# optional: now-playing in the bar
+sudo pacman -S playerctl
+# fallback only: waybar (jawnos-shell replaced it as the session bar)
+# sudo pacman -S waybar
 
 # JawnOS's own deps (server + the desktop app's view and media)
 sudo pacman -S python-gobject python-dbus webkit2gtk-4.1 bluez bluez-utils
@@ -62,11 +69,65 @@ sudo pacman -S zed
 
 | File | Goes to | What it does |
 |---|---|---|
-| `sway.conf` | `~/.config/sway/config` | floats Zed/foot, fullscreens JawnOS, keybinds, starts the session |
-| `waybar.conf` | anywhere (`waybar -c …`) | a top bar with a **taskbar** (`wlr/taskbar`) and a clock |
-| `jawnos-session` | run from `sway.conf`'s `exec` | starts jawn (and the BLE bridge), waits for the port, then opens the fullscreen view |
+| `sway.conf` | `~/.config/sway/config` | floats Zed/foot/Nautilus, leaves the manager an ordinary tiled window, keybinds, starts the session and the bar |
+| `waybar.conf` | anywhere (`waybar -c …`) | legacy fallback bar; `sway.conf` no longer starts it |
+| `jawnos-session` | run from `sway.conf`'s `exec` | starts jawn (and the BLE bridge), waits for the port, then opens the view |
+| `../jawnos-shell` | run from `sway.conf`'s `exec` | the JawnOS session bar (launcher, workspaces, focused app, today's app time, clock, optional now-playing) |
+| `../jawnos_desktop/shell.py` | imported by `jawnos-shell` | the bar's implementation |
 
 Adjust the `~/jawnos` paths in `sway.conf` to wherever the tree lives on the box.
+
+## The session bar (`jawnos-shell`)
+
+`sway.conf` starts the bar instead of waybar. It is a GTK 3 panel in the
+wlr-layer-shell `top` layer with an exclusive zone, so tiled windows stop at its
+lower edge instead of sliding under it. Left to right:
+
+- **Jawn** — runs `fuzzel`; if fuzzel is not installed it opens a plain GTK
+  command entry instead.
+- **Workspace buttons** — read from `swaymsg -t get_workspaces`; a click runs
+  `swaymsg workspace <name>`.
+- **Focused app** — icon and name from Sway's tree (`app_id`, else the X11
+  class), refreshed on Sway window and workspace events.
+- **Today's app time** — the manager's `/manager/usage/summary` total for today,
+  refreshed every 60 s and shown with `usage.format_duration` (`Today 1h 05m`).
+  It shows `Today —` when the manager is not answering.
+- **Now playing** — `playerctl` metadata while a track is playing; the line is
+  absent when playerctl or a player is missing.
+- **Clock and date**.
+
+All slow work (the Sway event subscription, the periodic Sway read, the manager
+request and playerctl) runs on daemon threads and hands results to GTK through
+`GLib.idle_add`, so the bar never blocks its main loop and never busy-waits.
+`swaymsg`, `playerctl` and the manager are each optional: a missing tool
+removes its widget or leaves it empty, and the bar keeps running. `swayidle` is
+not used by the bar itself; it is the optional session idle/lock timer.
+
+If the `GtkLayerShell` typelib is absent the bar falls back to an undecorated
+window (a dock on X11) and logs the reason. On Wayland that fallback cannot
+reserve screen space, so Sway will simply tile it; the fix is the
+`gtk-layer-shell` package, not a config change:
+
+```sh
+sudo pacman -S gtk-layer-shell
+```
+
+The mkosi image's package list (`desktop/mkosi/mkosi.conf`) predates the bar:
+add **`gtk-layer-shell`** there before the next image build, plus **`playerctl`**
+if now-playing is wanted. `swayidle` and `swaylock` are likewise absent from that
+list in this tree, so idle lock/DPMS is a config comment in `sway.conf` until
+they are added. `waybar` is still in the image list but is no longer started.
+
+**The manager is no longer fullscreen.** `sway.conf` used to carry
+`for_window [app_id="^jawnos-desktop$"] fullscreen enable`, which made the
+manager pretend to be the whole desktop. It is now an ordinary tiled window;
+the bar owns the screen edge. A floating resize rule is documented in
+`sway.conf` but commented out, because tiled is the intended default.
+
+One caveat: the desktop app also remembers its own fullscreen/maximized state in
+`~/.config/jawnos/desktop.json`. If `fullscreen` is `true` there (F11 was used),
+the app will still request fullscreen on launch; press F11 to leave it. Removing
+the Sway rule only stops the compositor forcing fullscreen.
 
 Log in and start Sway:
 
@@ -143,10 +204,10 @@ Caveats specific to JawnOS:
 
 ## What is still open
 
-1. **JawnOS's own bar.** Replace waybar with a thin **layer-shell** surface that
-   renders JawnOS's chrome (a transparent webview pinned to the `top` layer, with
-   `wl_surface.set_input_region` so clicks pass through the gaps). That is what
-   makes the navbar *JawnOS's* and puts it over Zed.
+1. **JawnOS's own bar** is now `desktop/jawnos-shell` (see above): a GTK 3
+   layer-shell panel with the launcher, workspaces, focused app, today's app time
+   and clock. It is native chrome, not the DOM; item 2 is what would bring the
+   window list into the HTML taskbar.
 2. **JawnOS's DOM taskbar for native apps.** A small helper subscribes to
    `zwlr_foreign_toplevel_management` (the client list, titles, activation) and
    relays it to JawnOS over a websocket, so the HTML taskbar can render Zed and

@@ -292,17 +292,36 @@ our %topic = (
 		],
 		related => [ 'editor', 'terminal' ]
 	},
+	'internet' => {
+		title => 'Internet', category => 'apps', app => 'internet',
+		templates => [ 'templates/internet/internet.html.ep', 'templates/web/web.html.ep', 'public/js/manager/internet.js' ],
+		verified => '2026-10-26',
+		summary => 'Web and Browse: saved pages with measures, and a real browser that counts site time.',
+		body => [
+			'Internet has two components. Web holds the pages the house fetched; each can be opened, or measured with the Measures tool. Browse opens a real browser in its own window on a computer (or its own screen on a phone), because a live page cannot run inside the manager window.',
+			'Browse counts the time each site is in front, but only in the JawnOS browser: a page opened in another browser is not counted, and neither is the Facebook app. The Browse tab shows today\'s site time, and the time is kept per machine so the phone and the laptop do not blur together.',
+			'To measure a live page, open a saved page from the Web tab with the measure icon. The browser opens with the picker on; click the value you want. JawnOS offers the shapes it can read and saves the one you pick, exactly as the Measures tool does for a fetched page.',
+			'The browser is a separate surface on purpose: it has its own cookies and history, keeps the manager\'s bridges away from the pages you visit, and cannot reach the house\'s local address.'
+		],
+		steps => [
+			'Open Internet from the start menu.',
+			'Web lists the pages the house fetched; use the browser icon to open one, or the measures icon to point at a value in it.',
+			'Browse takes an address and opens the JawnOS browser; time on each site appears under Site time today.',
+			'A page opened in another browser is not counted; the count is per machine.'
+		],
+		related => [ 'web' ]
+	},
 	'web' => {
 		title => 'Web', category => 'apps', app => 'web',
 		templates => [ 'templates/web/web.html.ep', 'templates/web/web_measure_confirm.html.ep' ],
-		verified => '2026-10-18',
-		summary => 'A browser in a window, with measures.',
+		verified => '2026-10-26',
+		summary => 'The pages the house fetched, with measures.',
 		body => [
-			'Web is a browser window, useful for pulling a page up beside your work without leaving the desktop.',
+			'Web is the saved-page component of Internet, useful for pulling a page up beside your work without leaving the desktop.',
 			'To watch a number on a page, open the page in Web and click the Measures icon in its toolbar. Pick the measure from the list, then click the value on the page. Web tests the click and offers the shapes it can read: a JSON path for a feed, the table row and cell that hold the value, a label with the value beside it, or the plain element. Pick the shape whose Value column shows the number you want, then press Save.',
 			'The shape is stored, not a page position, so a table that gains a row keeps reading the right cell; a JSON feed keeps the exact key. A measure reads from the workspace as a whole, so the phone can fetch the page while the selectors stay on the computer.'
 		],
-		related => [ 'terminal' ]
+		related => [ 'internet', 'terminal' ]
 	},
 	'terminal' => {
 		title => 'Terminal', category => 'apps', app => 'terminal',

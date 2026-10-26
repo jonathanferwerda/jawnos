@@ -1,0 +1,14 @@
+#!/usr/bin/env python3
+"""jawnos-usage -- the Sway app-focus watcher."""
+import os
+import sys
+
+# Resolve symlinks so the script works when linked into ~/.local/bin.
+_here = os.path.dirname(os.path.realpath(__file__))
+if _here not in sys.path:
+    sys.path.insert(0, _here)
+
+from jawnos_desktop.usage import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

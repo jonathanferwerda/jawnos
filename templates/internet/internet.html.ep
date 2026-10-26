@@ -1,0 +1,46 @@
+<%
+	my $websites = &subs::db_query('select * from websites order by timestamp desc')->hashes || [];
+%>
+<div id="internet" style="position:relative;width:100%;height:100%;background-color:var(--panel);">
+	<div id="internet_tabs" style="display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);">
+		<span class="internet_tab selected" data-internet-tab="web" onclick="internetTab('web');"><%= &subs::lang('web') %></span>
+		<span class="internet_tab" data-internet-tab="browse" onclick="internetTab('browse');"><%= &subs::lang('browse') %></span>
+	</div>
+
+	<div id="internet_web" class="internet_pane" style="padding:10px;overflow:auto;height:calc(100% - 50px);">
+		<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+			<img class="little_thumb hover" src="<%= &subs::icon_for('/images/decipherable/measures.png') %>" hint="<%= &subs::lang('open_browser') %>" onclick="internetOpenWeb();">
+			<span><%= &subs::ui('Pages the house fetched, ready to open or measure.') %></span>
+		</div>
+		<table style="width:100%;">
+			<thead><tr><th>App</th><th>Address</th><th><%= &subs::lang('time_spent') %></th><th></th></tr></thead>
+			<tbody>
+				<% foreach my $web ( @{$websites} ) { %>
+					<tr class="internet_saved" data-url="<%= &subs::html_text($web->{'url'}) %>" data-app="<%= &subs::html_text($web->{'app'}) %>" data-uuid="<%= &subs::html_text($web->{'uuid'}) %>">
+						<td><%= &subs::format_name($web->{'app'}) %></td>
+						<td style="word-break:break-all;"><%= &subs::html_text($web->{'url'}) %></td>
+						<td class="time" timestamp="<%= $web->{'timestamp'} %>"></td>
+						<td style="white-space:nowrap;">
+							<img class="tiny_thumb hover" src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="<%= &subs::lang('open_browser') %>" onclick="internetOpenSaved(this,'browse');">
+							<img class="tiny_thumb hover" src="<%= &subs::icon_for('/images/decipherable/measures.png') %>" hint="<%= &subs::lang('measure_page') %>" onclick="internetOpenSaved(this,'measure');">
+						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+	</div>
+
+	<div id="internet_browse" class="internet_pane" style="display:none;padding:10px;overflow:auto;height:calc(100% - 50px);">
+		<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+			<input id="internet_url" type="text" placeholder="https://" style="flex:1;padding:8px;" onkeydown="if(event.key==='Enter'){internetGo();}">
+			<button onclick="internetGo();"><%= &subs::lang('open_browser') %></button>
+		</div>
+		<p style="opacity:0.75;"><%= &subs::ui('Time is counted in the JawnOS browser only. Other browsers are not counted.') %></p>
+		<h4><%= &subs::lang('usage_today') %></h4>
+		<table id="internet_usage" style="width:100%;">
+			<thead><tr><th><%= &subs::ui('Site') %></th><th><%= &subs::lang('time_spent') %></th></tr></thead>
+			<tbody></tbody>
+		</table>
+		<p id="internet_usage_none" style="display:none;opacity:0.75;"><%= &subs::lang('usage_none') %></p>
+	</div>
+</div>

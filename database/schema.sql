@@ -277,6 +277,20 @@ illegal_content LONGTEXT,
 timestamp,
 app VARCHAR(500),
 internal_url VARCHAR(50), server_time VARCHAR(25), warranty VARCHAR(25), uuid VARCHAR(255) unique, ost VARCHAR(25));
+CREATE TABLE "usage_sessions" (
+	uuid VARCHAR(255) unique,
+	device VARCHAR(255),
+	kind VARCHAR(16),
+	key_name VARCHAR(500),
+	started_at VARCHAR(25),
+	ended_at VARCHAR(25),
+	idle_ms VARCHAR(25),
+	source VARCHAR(25),
+	hostname VARCHAR(500),
+	title VARCHAR(1000),
+	url VARCHAR(2000),
+	server_time VARCHAR(25),
+	ost VARCHAR(25));
 CREATE TABLE "websocket_messages" (
 timestamp VARCHAR(255),
 server_time VARCHAR(255),
