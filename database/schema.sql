@@ -352,8 +352,73 @@ CREATE INDEX idx2_backups on backups (recipient,signatorial);
 CREATE INDEX idx3_backups on backups (recipient,signatorial,ost,reason);
 CREATE INDEX idx4_backups on backups (recipient,signatorial,reason);
 
-CREATE TABLE IF NOT EXISTS staged_appointments (uuid VARCHAR(255) unique, staged_time VARCHAR(255), source VARCHAR(255), app VARCHAR(500), type VARCHAR(500), timestamp VARCHAR(25), title VARCHAR(500), notes LONGTEXT, data LONGTEXT, duration VARCHAR(25), device VARCHAR(255), status VARCHAR(25));
+CREATE TABLE IF NOT EXISTS staged_appointments (
+	uuid VARCHAR(255) unique,
+	staged_time VARCHAR(255),
+	source VARCHAR(255),
+	app VARCHAR(500),
+	type VARCHAR(500),
+	timestamp VARCHAR(25),
+	title VARCHAR(500),
+	notes LONGTEXT,
+	data LONGTEXT,
+	device VARCHAR(255),
+	status VARCHAR(25),
+	server_time VARCHAR(255),
+	ost VARCHAR(25),
+	duration VARCHAR(25),
+	kind VARCHAR(25),
+	target_uuid VARCHAR(255),
+	changes LONGTEXT
+);
 CREATE INDEX IF NOT EXISTS idx1_staged on staged_appointments (status, staged_time);
-ALTER TABLE staged_appointments ADD COLUMN server_time VARCHAR(255);
-ALTER TABLE staged_appointments ADD COLUMN ost VARCHAR(25);
-ALTER TABLE staged_appointments ADD COLUMN duration VARCHAR(25);
+
+-- The sync bookkeeping tables. Manager.pl also creates these as a migration,
+-- but President.pl reads sync_jobs at boot, before Manager runs, so a fresh
+-- database built from this schema (and the factory seed made from it) must
+-- carry them or the first boot dies on "no such table: sync_jobs".
+CREATE TABLE IF NOT EXISTS sync_log (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	server_time VARCHAR(255),
+	signatorial VARCHAR(500),
+	tbl VARCHAR(255),
+	app VARCHAR(255),
+	uuid VARCHAR(255),
+	scope VARCHAR(255),
+	ost VARCHAR(255),
+	additional LONGTEXT
+);
+CREATE TABLE IF NOT EXISTS sync_cursors (
+	signatorial VARCHAR(500) PRIMARY KEY,
+	cursor VARCHAR(50)
+);
+CREATE TABLE IF NOT EXISTS sync_jobs (
+	uuid VARCHAR(255) PRIMARY KEY,
+	direction VARCHAR(25),
+	peer VARCHAR(500),
+	phase VARCHAR(255),
+	current INTEGER,
+	total INTEGER,
+	state VARCHAR(25),
+	note LONGTEXT,
+	steps LONGTEXT,
+	started VARCHAR(25),
+	updated VARCHAR(25)
+);
+CREATE INDEX IF NOT EXISTS idx1_sync_jobs on sync_jobs (state, updated);
+CREATE TABLE IF NOT EXISTS sync_snapshots (
+	uuid VARCHAR(255) PRIMARY KEY,
+	job VARCHAR(255),
+	caller VARCHAR(500),
+	state VARCHAR(25),
+	archive_path VARCHAR(1000),
+	result LONGTEXT,
+	size VARCHAR(25),
+	sha256 VARCHAR(100),
+	error LONGTEXT,
+	timestamp VARCHAR(25),
+	server_time VARCHAR(25),
+	updated VARCHAR(25),
+	ost VARCHAR(25)
+);
+CREATE INDEX IF NOT EXISTS idx1_sync_snapshots on sync_snapshots (state, updated);

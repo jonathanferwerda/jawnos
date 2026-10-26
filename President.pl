@@ -143,8 +143,11 @@ if ($config->{'open_browser'} eq 'yes') {
 		});
 	}
 	elsif ($device eq 'computer') {
-		threads->create(sub() { 
-			`export DISPLAY=:0`;
+		threads->create(sub() {
+			# The child inherits the environment; `export DISPLAY=:0` in backticks
+			# was exec'd as a program (no shell metacharacter), so the export
+			# failed and chromium never saw the display.
+			local $ENV{'DISPLAY'} = ':0';
 			my $chrome = `chromium https://$domain:$random_number/manager &`;
 		});
 	}

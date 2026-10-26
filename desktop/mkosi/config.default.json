@@ -11,7 +11,7 @@
 	"working_port": "45545",
 	"ws_port": "3001",
 	"ssh_port": "8022",
-	"open_browser": "yes",
+	"open_browser": "no",
 	"archive_dir": "",
 	"folders": [
 		"~/Music",
