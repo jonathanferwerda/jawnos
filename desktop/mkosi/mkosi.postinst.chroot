@@ -19,6 +19,14 @@ export PATH="/usr/bin/vendor_perl:$PATH"
 cd /opt/jawnos/tree
 perl scripts/jawnos_deps.pl --install --no-extras
 
+# Rebuild the initramfs now that the image's own files are in place. The kernel
+# package's pacman hook built it during the package transaction, before mkosi
+# copied mkosi.extra, so that initrd still has the stock hooks and shows the
+# kernel's initialization list. This run picks up /etc/mkinitcpio.conf's
+# sd-plymouth hook and the JawnOS theme, so the mark appears before the root
+# filesystem is mounted. mkosi then builds the UKI from this image.
+mkinitcpio -P
+
 # cpanm keeps its tarballs and work directories under /root. Nothing at runtime
 # reads them, and the cache was ~200 MB in every image - a large slice of the
 # download and of the 5G root partition. Remove it after the modules are built.

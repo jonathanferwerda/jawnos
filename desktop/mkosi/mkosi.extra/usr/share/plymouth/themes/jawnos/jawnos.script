@@ -1,0 +1,46 @@
+# JawnOS boot splash.
+#
+# A Nord-night gradient, the welcome mark centred, and a soft accent halo behind
+# it that breathes with Math.Cos. There is no text: the mark is the message.
+# The logo itself never scales or blurs -- only the halo's opacity moves, so the
+# art stays crisp on every panel.
+
+# Nord Polar Night, top to bottom (#2e3440 -> #21262f).
+Window.SetBackgroundTopColor (0.180, 0.204, 0.251);
+Window.SetBackgroundBottomColor (0.129, 0.149, 0.184);
+
+logo.image = Image ("jawnos-logo.png");
+glow.image = Image ("jawnos-glow.png");
+
+glow.sprite = Sprite (glow.image);
+logo.sprite = Sprite (logo.image);
+
+# Halo pulse: 0.16..0.42 opacity, ~0.35 Hz at the script engine's 50 fps.
+glow_min = 0.22;
+glow_max = 0.62;
+glow_angle = 0;
+glow_step = (2 * 3.14159 / 50) * 0.35;
+
+# The mark fades in over its first frames instead of popping on.
+logo_fade = 0;
+logo_fade_frames = 35;
+
+fun refresh_callback ()
+  {
+    # Recentre every frame: the splash may start before the mode is final, and
+    # a later hotplug/resize would otherwise leave the mark off-centre. One
+    # argument list per line keeps this inside the script grammar.
+    glow.sprite.SetPosition (Window.GetX() + Window.GetWidth() / 2 - glow.image.GetWidth() / 2, Window.GetY() + Window.GetHeight() / 2 - glow.image.GetHeight() / 2, 1);
+    logo.sprite.SetPosition (Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2, Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2, 2);
+
+    glow_angle += glow_step;
+    if (glow_angle > 6.28318)
+      glow_angle -= 6.28318;
+    glow.sprite.SetOpacity (glow_min + ((Math.Cos (glow_angle) + 1) / 2) * (glow_max - glow_min));
+
+    if (logo_fade < logo_fade_frames)
+      logo_fade += 1;
+    logo.sprite.SetOpacity (logo_fade / logo_fade_frames);
+  }
+
+Plymouth.SetRefreshFunction (refresh_callback);

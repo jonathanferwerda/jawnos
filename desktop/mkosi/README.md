@@ -96,8 +96,8 @@ sudo mkosi -C desktop/mkosi --profile live --extra-tree desktop/mkosi/.stage/ext
 Write it to a stick, and (optionally) put the theme file on it:
 
 ```sh
-# after downloading every jawnos-live.raw.zst.part* from the release:
-cat jawnos-live.raw.zst.part* | zstd -d > jawnos-live.raw
+# after downloading the single jawnos-live.raw.zst:
+zstd -d jawnos-live.raw.zst
 sudo dd if=jawnos-live.raw of=/dev/sdX bs=16M status=progress conv=fsync
 # then copy jawnos-theme.txt (from jawnos.ca) to the root of the JAWNOS-ESP
 # partition that appears as a small FAT drive
@@ -107,6 +107,14 @@ A stick needs at least 9 GB (the built image is ~8.1 GiB, and marketed
 capacities round down); 16 GB or more is comfortable. The built image is
 written at its minimum size, and the installer (or `jawnos-grow`, when the image
 is flashed directly) expands the state partition to fill the rest.
+
+> **Ventoy:** booting this raw image from Ventoy is read-only. Ventoy presents
+the image through a loop device, so the live session starts but nothing it
+writes (including the database) survives a reboot. For persistence, write the
+image directly with `dd`/balenaEtcher, or boot the live session and run
+`jawnos-install` onto a disk. A Ventoy-aware persistence image would need a
+separate writable state partition on the Ventoy stick; this image does not
+look for one.
 
 ## Choosing a theme before installing
 
@@ -148,6 +156,14 @@ The ESP and root are fixed sizes on purpose: every byte they do not take is a
 byte the state partition can use on a stick. systemd-repart cannot grow a
 filesystem on a generic partition type, so `jawnos-grow` runs `resize2fs`
 explicitly after growing the partition.
+
+The boot is JawnOS-branded: Plymouth runs the `jawnos` theme from the initramfs
+(the welcome mark on a Nord-night background, with a breathing accent halo)
+instead of the kernel's initialization list, and `quiet splash` keeps the
+console quiet. `/etc/os-release`, `/etc/issue` and `/etc/motd` name JawnOS, so
+the login prompt says "Welcome to JawnOS" rather than Arch Linux. The theme's
+source images are in `mkosi.extra/usr/share/plymouth/themes/jawnos/`; the
+`sd-plymouth` mkinitcpio hook copies them into the initramfs.
 
 The kernel command line is `systemd.volatile=overlay`: **the root is read-only
 and every change to it lives in RAM until reboot.** The house lives on partition

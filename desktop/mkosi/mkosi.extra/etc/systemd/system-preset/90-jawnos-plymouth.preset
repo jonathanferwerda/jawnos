@@ -1,0 +1,7 @@
+# Plymouth owns the boot splash. Keep its units enabled even if a distribution
+# preset would turn them off: the package ships the .wants links, and this
+# preset makes `systemctl preset-all` agree.
+enable plymouth-start.service
+enable plymouth-read-write.service
+enable plymouth-quit.service
+enable plymouth-quit-wait.service

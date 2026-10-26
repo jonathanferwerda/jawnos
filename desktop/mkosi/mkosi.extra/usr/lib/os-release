@@ -1,0 +1,14 @@
+NAME="JawnOS"
+PRETTY_NAME="JawnOS"
+ID=jawnos
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;2;129;165;207"
+HOME_URL="https://jawnos.ca/"
+DOCUMENTATION_URL="https://jawnos.ca/"
+SUPPORT_URL="https://jawnos.ca/"
+BUG_REPORT_URL="https://github.com/jonathanferwerda/jawnos/issues"
+PRIVACY_POLICY_URL="https://jawnos.ca/"
+LOGO=jawnos-logo
+IMAGE_ID=jawnos-live
+IMAGE_VERSION=0.1

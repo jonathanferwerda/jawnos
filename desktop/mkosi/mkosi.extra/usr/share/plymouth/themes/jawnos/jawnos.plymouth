@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=JawnOS
+Description=The JawnOS welcome mark on a Nord night, with a breathing accent halo
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/jawnos
+ScriptFile=/usr/share/plymouth/themes/jawnos/jawnos.script
