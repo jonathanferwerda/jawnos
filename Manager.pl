@@ -2269,6 +2269,14 @@ sub appointment_writer($c,$app) {
 
 	&subs::appointment_theme_push() if (($theme_movement // '') =~ /^(?:start|stop|record)$/);
 
+	# A future appointment in an app whose notification panel has Alarm on belongs
+	# in the Clock. The hook is here rather than in the header render so a written
+	# appointment creates (or moves) its one Clock alarm immediately, and an ordinary
+	# past action costs nothing.
+	if (($app->{'timestamp'} || 0) > &subs::rightNow() + 1000 && ($app->{'app'} || '') ne '') {
+		eval { &subs::clock_appointment_sync($app); };
+	}
+
 	return $app;
 }
 
@@ -22671,9 +22679,49 @@ get '/manager/clock/state' => sub($c) {
 post '/manager/clock/alarm' => sub($c) {
 	my $action = $c->param('action') || 'save';
 	my $now = &subs::rightNow();
+	# The route is on the peer rail too: a machine has no session cookie, so the
+	# signed request (or its pinned key) is what authorizes an incoming edit.
+	my $peer_sig = $c->param('signatorial') || '';
+	my $peer_rm = $peer_sig ? &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hash : undef;
+	unless ($c->session('authentication') eq 'approved' || ($peer_rm && &subs::peer_verify($c, $peer_rm)) || &app_peer_ok($c)) {
+		return $c->rendered(403);
+	}
+	# An edit a peer hands over is applied here and, when it names a third
+	# machine, forwarded once. It never writes through the UI branches below.
+	if ($action eq 'remote_apply') {
+		my $op = ($c->param('op') || '') eq 'delete' ? 'delete' : 'upsert';
+		my $uuid = $c->param('uuid') || '';
+		my $alarm = {};
+		if ($op eq 'upsert') {
+			my $raw = $c->param('alarm') || '';
+			$alarm = eval { decode_json($raw) } || {};
+			$alarm = {} unless ref $alarm eq 'HASH';
+			$alarm->{'uuid'} = $uuid if length $uuid;
+			$alarm->{'updated'} = int($c->param('updated') || $alarm->{'updated'} || $now);
+		}
+		else {
+			$alarm = { uuid => $uuid, updated => int($c->param('updated') || $now) };
+		}
+		my $applied = &subs::clock_apply_remote_alarm($alarm, $op, $now);
+		my $forwarded = [];
+		my $forward_to = $c->param('forward_to') || '';
+		if (length $forward_to) {
+			my @targets = grep { defined $_ && length $_ } split /,/, $forward_to;
+			if (scalar @targets) {
+				my $res = &subs::clock_alarm_push($alarm, $op, \@targets, $now, 0);
+				$forwarded = $res->{'delivered'} || [];
+			}
+		}
+		$c->render(json => { ok => 1, applied => $applied, forwarded => $forwarded, server_time => $now });
+		return;
+	}
 	my $lock = &subs::clock_lock_take();
 	my $alarms = &subs::clock_alarms_read();
 	my $error = '';
+	# What changed, so the same edit can be pushed to the named machines at once.
+	my $changed_alarm;
+	my $changed_op = '';
+	my $push_machines = [];
 	# The machines that carry the alarm this request names, kept before a delete
 	# can remove the row. Everyone named gets the stop, so one person's Dismiss
 	# ends it on every machine.
@@ -22701,14 +22749,22 @@ post '/manager/clock/alarm' => sub($c) {
 				sound => 'notifications/ring.mp3',
 				volume => 70,
 				ramp => 60,
+				snooze => 5,
 				machines => [ &subs::signatorial_designer() || '' ],
+				updated => $now,
 				created => $now,
 			});
+			$changed_alarm = $alarms->[-1];
+			$changed_op = 'upsert';
+			$push_machines = $changed_alarm->{'machines'} || [];
 		}
 	}
 	elsif ($action eq 'delete') {
 		my $uuid = $c->param('uuid') || '';
 		@{$alarms} = grep { ($_->{'uuid'} || '') ne $uuid } @{$alarms};
+		$changed_alarm = { uuid => $uuid, updated => $now };
+		$changed_op = 'delete';
+		$push_machines = $relay_machines;
 	}
 	elsif ($action eq 'stop_all') {
 		foreach my $a (@{$alarms}) {
@@ -22717,7 +22773,10 @@ post '/manager/clock/alarm' => sub($c) {
 			$a->{'ring_started'} = 0;
 			$a->{'ring_last'} = 0;
 			$a->{'stop_at'} = $now;
+			$a->{'updated'} = $now;
 		}
+		$changed_op = 'stop_all';
+		$push_machines = [ map { $_->{'value'} } @{ &subs::clock_machines() } ];
 	}
 	elsif ($action eq 'dismiss' || $action eq 'snooze') {
 		my $uuid = $c->param('uuid') || '';
@@ -22731,10 +22790,12 @@ post '/manager/clock/alarm' => sub($c) {
 			$alarm->{'ring_started'} = 0;
 			$alarm->{'ring_last'} = 0;
 			$alarm->{'stop_at'} = $now;
+			$alarm->{'updated'} = $now;
 		}
 		else {
 			my $minutes = $c->param('minutes');
-			$minutes = 5 unless defined $minutes && $minutes =~ /^\d+$/;
+			$minutes = $alarm->{'snooze'} unless defined $minutes && "$minutes" =~ /^\d+$/;
+			$minutes = 5 unless defined $minutes && "$minutes" =~ /^\d+$/;
 			$minutes = 1 if $minutes < 1;
 			$minutes = 60 if $minutes > 60;
 			$alarm->{'snooze_until'} = $now + ($minutes * 60000);
@@ -22742,7 +22803,11 @@ post '/manager/clock/alarm' => sub($c) {
 			$alarm->{'ring_started'} = 0;
 			$alarm->{'ring_last'} = 0;
 			$alarm->{'stop_at'} = $now;
+			$alarm->{'updated'} = $now;
 		}
+		$changed_alarm = $alarm;
+		$changed_op = 'upsert';
+		$push_machines = $alarm->{'machines'} || $relay_machines;
 	}
 	elsif ($action eq 'skip') {
 		my $uuid = $c->param('uuid') || '';
@@ -22770,6 +22835,10 @@ post '/manager/clock/alarm' => sub($c) {
 			$alarm->{'ring_started'} = 0;
 			$alarm->{'ring_last'} = 0;
 			$alarm->{'stop_at'} = $now;
+			$alarm->{'updated'} = $now;
+			$changed_alarm = $alarm;
+			$changed_op = 'upsert';
+			$push_machines = $alarm->{'machines'} || $relay_machines;
 		}
 	}
 	elsif ($action eq 'toggle') {
@@ -22787,6 +22856,10 @@ post '/manager/clock/alarm' => sub($c) {
 				$alarm->{'ring_last'} = 0;
 				$alarm->{'stop_at'} = $now;
 			}
+			$alarm->{'updated'} = $now;
+			$changed_alarm = $alarm;
+			$changed_op = 'upsert';
+			$push_machines = $alarm->{'machines'} || $relay_machines;
 		}
 	}
 	elsif ($action eq 'save') {
@@ -22813,8 +22886,11 @@ post '/manager/clock/alarm' => sub($c) {
 			$alarm->{'sound'} = $c->param('sound') if defined $c->param('sound') && length &subs::clock_valid_alarm_sound($c->param('sound'));
 			$alarm->{'volume'} = $c->param('volume') if defined $c->param('volume') && $c->param('volume') =~ /^\d+$/;
 			$alarm->{'ramp'} = $c->param('ramp') if defined $c->param('ramp') && $c->param('ramp') =~ /^\d+$/;
+			$alarm->{'snooze'} = $c->param('snooze') if defined $c->param('snooze') && $c->param('snooze') =~ /^\d+$/;
 			$alarm->{'enabled'} = ($c->param('enabled') && $c->param('enabled') ne '0' && $c->param('enabled') ne 'off') ? 1 : 0 if defined $c->param('enabled');
+			$alarm->{'updated'} = $now;
 			$alarm = &subs::clock_normalize_alarm($alarm);
+			$alarm->{'updated'} = $now;
 			if (!$alarm->{'enabled'}) {
 				$alarm->{'ringing'} = 0;
 				$alarm->{'ring_started'} = 0;
@@ -22824,6 +22900,9 @@ post '/manager/clock/alarm' => sub($c) {
 			for my $i (0 .. $#{$alarms}) {
 				if (($alarms->[$i]->{'uuid'} || '') eq $uuid) { $alarms->[$i] = $alarm; last; }
 			}
+			$changed_alarm = $alarm;
+			$changed_op = 'upsert';
+			$push_machines = $alarm->{'machines'} || $relay_machines;
 		}
 	}
 
@@ -22853,6 +22932,29 @@ post '/manager/clock/alarm' => sub($c) {
 		my %extra;
 		$extra{'minutes'} = $c->param('minutes') if $action eq 'snooze';
 		&subs::clock_relay($action eq 'snooze' ? 'snooze' : 'dismiss', ($action eq 'stop_all' ? '' : $relay_uuid), $machines, %extra);
+	}
+	# The row sync is eventual; this is the immediate, confirmed push. It runs in
+	# the background so a slow peer never holds the person's save open, and each
+	# answer lands in the alarm's delivered map for the next state read.
+	if (!length $error && !$c->param('relayed') && $changed_op) {
+		my @jobs;
+		if ($changed_op eq 'stop_all') {
+			@jobs = map { [ $_, 'upsert' ] } @{$alarms};
+		}
+		elsif ($changed_alarm) {
+			@jobs = ( [ $changed_alarm, $changed_op ] );
+		}
+		my $wanted = scalar @{$push_machines}
+			? $push_machines
+			: [ map { $_->{'value'} } @{ &subs::clock_machines() } ];
+		my $machines = [ grep { defined $_ && length $_ } @{$wanted} ];
+		if (scalar @jobs) {
+			&subs::subprocessor(sub {
+				foreach my $job (@jobs) {
+					eval { &subs::clock_alarm_push($job->[0], $job->[1], $machines, $now); };
+				}
+			}, { name => 'clock alarm push' });
+		}
 	}
 	my $state = &subs::clock_state();
 	$state->{'ok'} = length $error ? 0 : 1;
@@ -37515,7 +37617,12 @@ sub app_public_path {
 	# the gate (loopback, an approved session, or a signed peer).
 	return 1 if $path eq '/manager/health_report';
 	return 1 if $path eq '/manager/available';
-	return 1 if $path =~ m{^/manager/webauthn/login/(?:begin|finish)$};
+	# The Clock's alarm rail: a peer pushes an edit and its confirmation here, and
+	# a machine whose shared-alarm row has not caught up yet must still ring. The
+	# route verifies the caller's session or its pinned signature itself (the
+	# signed request carries the signatorial). This has to sit in the app gate too:
+	# a peer answered with the app-required page never reaches that check.
+	return 1 if $path eq '/manager/clock/alarm';
 	# The address directory rides the same signed peer rail; each handler does its
 	# own peer_verify (or accepts a loopback caller).
 	return 1 if $path eq '/manager/address_report';
@@ -37962,6 +38069,9 @@ sub padlock_gate_allows {
 	return 1 if $path eq '/manager/ws' || $path eq '/manager/health';
 	return 1 if $path eq '/manager/health_report';
 	return 1 if $path eq '/manager/available';
+	# an alarm edit from a linked machine is not a UI action; the route verifies
+	# the peer signature, so a locked screen can still receive its schedule
+	return 1 if $path eq '/manager/clock/alarm';
 	return 1 if $path eq '/manager/address_report';
 	return 1 if $path eq '/manager/address_directory';
 	return 1 if $path eq '/manager/address_lookup';

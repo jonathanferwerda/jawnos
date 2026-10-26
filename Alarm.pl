@@ -560,10 +560,13 @@ if ($ENV{PURPOSE} eq "alarm") {
 			$alarm_id = &alarm_timer();
 		}
 	});
-	# The phone's "Skip today" button leaves a small request here rather than
-	# calling the manager; apply it as soon as it appears. The file is absent
+	# The phone's notification buttons and lock-screen gestures leave a small
+	# request here rather than calling the manager; apply it as soon as it appears.
+	# Two seconds keeps Dismiss and Snooze feeling immediate. The files are absent
 	# nearly every time, so this is a stat, not a query.
-	Mojo::IOLoop->recurring(30 => sub {
+	Mojo::IOLoop->recurring(2 => sub {
+		eval { &subs::clock_control_apply(); };
+		$log->error('clock control: ' . $@) if $@;
 		eval { &subs::clock_skip_apply(); };
 		$log->error('clock skip: ' . $@) if $@;
 	});

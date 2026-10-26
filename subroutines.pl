@@ -11212,6 +11212,12 @@ sub setting_setter() {
 		# when boot or their next settings sync brings them the change
 		&subs::nightly_evaluation_reconcile();
 	}
+	if ($setting eq 'alarm' && !$sync && $app) {
+		# the appointment panel's Alarm box: turning it on (or off) moves the app's
+		# single automatic Clock alarm right away, without waiting for the next
+		# appointment write
+		eval { &clock_appointment_sync({ app => $app }); };
+	}
 	return { app => $app, timestamp => $timestamp, setting => $setting, value => $value, device => $dev, browser_tab_id => $browser_tab_id };
 }
 
@@ -31705,7 +31711,7 @@ sub clock_device_broadcast {
 		next unless defined $value && length $value;
 		$command .= ' --es ' . $key . ' ' . &quote($value);
 	}
-	foreach my $key ( qw/volume ramp loop guard stop/ ) {
+	foreach my $key ( qw/volume ramp loop guard snooze stop/ ) {
 		my $value = $extra{$key};
 		next unless defined $value && "$value" =~ /^-?\d+$/;
 		$command .= ' --ei ' . $key . ' ' . int($value);
@@ -31757,7 +31763,11 @@ sub clock_write_device_alarm {
 			file => 'public/sounds/' . $sound,
 			volume => int($next_alarm->{'volume'} || 70),
 			ramp => int($next_alarm->{'ramp'} || 0),
-			loop => (&clock_sound_is_long($sound) ? 0 : 1),
+			# Every alarm sound repeats now: a long recording loops at the alarm's
+			# volume, a chime loops on the alarm channel. Dismiss/Snooze, or the
+			# five-minute guard, is what ends it.
+			loop => 1,
+			snooze => int($next_alarm->{'snooze'} || 5),
 			guard => &clock_alarm_ring_length($next_alarm),
 		};
 	}
@@ -31788,7 +31798,8 @@ sub clock_device_ring {
 		file => 'public/sounds/' . $sound,
 		volume => int($alarm->{'volume'} || 70),
 		ramp => int($alarm->{'ramp'} || 0),
-		loop => (&clock_sound_is_long($sound) ? 0 : 1),
+		loop => 1,
+		snooze => int($alarm->{'snooze'} || 5),
 		guard => &clock_alarm_ring_length($alarm),
 	);
 	return 1;
@@ -31874,6 +31885,11 @@ sub clock_normalize_alarm {
 	$label = substr($label, 0, 20);
 	$label = 'Alarm' unless length $label;
 	my $sound = &clock_valid_alarm_sound($in->{'sound'}) || 'notifications/ring.mp3';
+	# How long Snooze waits. Each alarm carries its own length so a morning alarm
+	# and a nap alarm can differ; five minutes is the old fixed behaviour.
+	my $snooze = (defined $in->{'snooze'} && "$in->{'snooze'}" =~ /^\d+$/) ? int($in->{'snooze'}) : 5;
+	$snooze = 1 if $snooze < 1;
+	$snooze = 60 if $snooze > 60;
 	my $enabled = defined $in->{'enabled'} ? (($in->{'enabled'} && $in->{'enabled'} ne '0' && $in->{'enabled'} ne 'off') ? 1 : 0) : 1;
 	my $self = &signatorial_designer() || '';
 	my @raw_machines = ref $in->{'machines'} eq 'ARRAY' ? @{ $in->{'machines'} } : split /,/, ($in->{'machines'} // '');
@@ -31897,7 +31913,13 @@ sub clock_normalize_alarm {
 		sound => $sound,
 		volume => $volume,
 		ramp => $ramp,
+		snooze => $snooze,
 		machines => \@machines,
+		# An alarm written from a future appointment points back at it, so the next
+		# appointment replaces the same Clock row instead of adding another one.
+		appt_uuid => ($in->{'appt_uuid'} // ''),
+		source => ($in->{'source'} // ''),
+		updated => int($in->{'updated'} || 0),
 		last_fire => int($in->{'last_fire'} || 0),
 		snooze_until => int($in->{'snooze_until'} || 0),
 		skip_fire => int($in->{'skip_fire'} || 0),
@@ -32204,9 +32226,19 @@ sub clock_skip_apply {
 
 sub clock_state() {
 	my $now = &rightNow();
+	my $me = &signatorial_designer() || '';
 	my $alarms = &clock_alarms_read();
+	my $acks = &clock_alarm_acks_read();
 	foreach my $alarm (@{ $alarms }) {
 		$alarm->{'next_at'} = &clock_alarm_next_at($alarm, $now);
+		my $delivered = {};
+		if (ref $acks->{ $alarm->{'uuid'} } eq 'HASH') {
+			$delivered = { %{ $acks->{ $alarm->{'uuid'} } } };
+		}
+		# This machine holds the row it is showing, so its own pill is always
+		# confirmed; the check marks are for the machines the push reached.
+		$delivered->{$me} = $now if length $me && &clock_alarm_targets_me($alarm);
+		$alarm->{'delivered'} = $delivered;
 	}
 	return {
 		now => $now,
@@ -32216,7 +32248,7 @@ sub clock_state() {
 		sounds => &clock_sounds(),
 		alarm_sounds => &clock_alarm_sounds(),
 		machines => &clock_machines(),
-		me => &signatorial_designer() || '',
+		me => $me,
 		max => 10,
 	};
 }
@@ -32247,12 +32279,13 @@ sub clock_alarm_volume_at {
 	return sprintf('%.2f', $level);
 }
 
-# A long-form track is one process; a chime is short enough to finish on its
-# own. The ring guard is longer for a track.
+# A long-form track loops until Dismiss, Snooze or the five-minute guard. The
+# old reading played a recording once and left the person asleep after it ended;
+# `repeat` makes the operating-system player carry the alarm the same way a
+# phone's alarm channel does. The pid file still lets Dismiss stop it.
 sub clock_alarm_ring_length {
 	my $alarm = shift;
-	my $sound = &clock_valid_alarm_sound($alarm->{'sound'});
-	return &clock_sound_is_long($sound) ? 600000 : 300000;
+	return 300000;
 }
 
 # The command the OS player runs for this alarm. A long track is played once,
@@ -32267,7 +32300,7 @@ sub clock_alarm_play_command {
 		my $target = sprintf('%.2f', ($alarm->{'volume'} || 70) / 100);
 		my $ramp = int($alarm->{'ramp'} || 0);
 		$ramp = 1 if $ramp < 1;
-		my $play = 'play -q -v ' . $target . ' ' . &quote($file) . ' fade t ' . $ramp;
+		my $play = 'play -q -v ' . $target . ' ' . &quote($file) . ' fade t ' . $ramp . ' repeat 1000';
 		return $play . ' & echo $! > ' . &clock_alarm_pidfile($alarm->{'uuid'});
 	}
 	my $level = &clock_alarm_volume_at($alarm, $elapsed);
@@ -32304,6 +32337,7 @@ sub clock_alarm_cmd {
 		sound => $alarm->{'sound'},
 		volume => $alarm->{'volume'},
 		ramp => $alarm->{'ramp'},
+		snooze => int($alarm->{'snooze'} || 5),
 		app => $alarm->{'app'},
 		fired_at => $fire_at,
 	};
@@ -32479,7 +32513,7 @@ sub clock_relay {
 	}
 	my @peers = grep { $by_sig{$_} } @want;
 	return 0 unless scalar @peers;
-	my %form = ( action => $action, relayed => 'yes', uuid => ($uuid || '') );
+	my %form = ( action => $action, relayed => 'yes', signatorial => ($self || ''), uuid => ($uuid || '') );
 	foreach my $key ( keys %extra ) {
 		next unless defined $extra{$key};
 		$form{$key} = $extra{$key};
@@ -32495,6 +32529,395 @@ sub clock_relay {
 			}
 		}, { name => 'clock relay' });
 	};
+	return 1;
+}
+
+# ---- confirmed, immediate alarm sharing -------------------------------------
+# The shared settings row carries an alarm to the other machines eventually, on
+# the normal sync pass. These helpers push a single edit now, wait for the peer
+# to answer, and record who confirmed. A peer that does not answer directly is
+# offered the edit through another reachable machine, one hop only.
+sub clock_alarm_ack_file() {
+	my $dir = &home('~/.president');
+	eval { File::Path::make_path($dir); } unless -d $dir;
+	$dir = '/tmp' unless -d $dir;
+	return $dir . '/clock_acks.json';
+}
+
+sub clock_alarm_acks_read() {
+	my $file = &clock_alarm_ack_file();
+	return {} unless -e $file;
+	my $raw = eval { &read_file($file) } // '';
+	my $acks = eval { decode_json($raw) };
+	return ref $acks eq 'HASH' ? $acks : {};
+}
+
+sub clock_alarm_acks_write {
+	my $acks = shift || {};
+	eval { write_file(&clock_alarm_ack_file(), encode_json($acks)) };
+	return $acks;
+}
+
+sub clock_alarm_mark_ack {
+	my ($uuid, $sig, $now) = @_;
+	return 0 unless defined $uuid && length $uuid && defined $sig && length $sig;
+	$now = &rightNow() unless defined $now;
+	my $acks = &clock_alarm_acks_read();
+	$acks->{$uuid} = {} unless ref $acks->{$uuid} eq 'HASH';
+	$acks->{$uuid}->{$sig} = int($now);
+	# keep the little file from growing; a ring older than a week is history
+	foreach my $u ( keys %{$acks} ) {
+		next unless ref $acks->{$u} eq 'HASH';
+		my $newest = 0;
+		foreach my $s ( keys %{ $acks->{$u} } ) {
+			$newest = $acks->{$u}->{$s} if ($acks->{$u}->{$s} || 0) > $newest;
+		}
+		delete $acks->{$u} if !$newest || ($now - $newest) > 604800000;
+	}
+	&clock_alarm_acks_write($acks);
+	return 1;
+}
+
+# The roster rows a push can reach, by signatorial. A same-LAN row may carry no
+# manager URL; the lister builds one when the push finds it missing.
+sub clock_alarm_peers() {
+	my $rows = eval { &db_query('select hostname, signatorial, manager, ip, port from remote_machines')->hashes } || [];
+	my %by_sig;
+	foreach my $rm (@{ $rows || [] }) {
+		my $sig = $rm->{'signatorial'} || '';
+		next unless length $sig;
+		$by_sig{$sig} = $rm;
+	}
+	return \%by_sig;
+}
+
+# Push one alarm edit. Returns { delivered => [...], failed => [...] }. The
+# ack file is written here, so the next /manager/clock/state already shows the ✓.
+sub clock_alarm_push {
+	my ($alarm, $op, $machines, $now, $allow_forward) = @_;
+	$alarm = {} unless ref $alarm eq 'HASH';
+	my $uuid = $alarm->{'uuid'} || '';
+	my $result = { delivered => [], failed => [] };
+	return $result unless length $uuid;
+	$op = ($op || '') eq 'delete' ? 'delete' : 'upsert';
+	$now = &rightNow() unless defined $now;
+	$allow_forward = 1 unless defined $allow_forward;
+	my $self = &signatorial_designer() || '';
+	my %want;
+	foreach my $sig ( @{ $machines || [] } ) {
+		next unless defined $sig && length $sig && $sig ne $self;
+		$want{$sig} = 1;
+	}
+	return $result unless scalar keys %want;
+	my $rows = &clock_alarm_peers();
+	my %form = (
+		action => 'remote_apply',
+		relayed => 'yes',
+		signatorial => ($self || ''),
+		op => $op,
+		uuid => $uuid,
+		server_time => $now,
+	);
+	if ($op eq 'upsert') { $form{'alarm'} = encode_json($alarm); }
+	else { $form{'updated'} = int($alarm->{'updated'} || $now); }
+
+	my @failed;
+	foreach my $sig ( sort keys %want ) {
+		my $rm = $rows->{$sig};
+		# A same-LAN row may carry no manager URL; the lister builds one from
+		# the address it knows, exactly as the rest of the peer rail does.
+		if (!$rm || !$rm->{'manager'}) {
+			my $resolved = eval { &remote_machine_lister({ signatorial => $sig, limit => 1 }) };
+			$rm = $resolved if ref $resolved eq 'HASH' && $resolved->{'manager'};
+		}
+		if (!$rm || !$rm->{'manager'}) { push @failed, $sig; next; }
+		my $ok = 0;
+		my $err = '';
+		eval {
+			my $ua = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+			die "no agent\n" unless $ua;
+			$ua->inactivity_timeout(4)->request_timeout(4);
+			my $res = $ua->post($rm->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
+			die "no answer\n" unless $res && $res->is_success;
+			my $body = eval { decode_json($res->body) } || {};
+			$ok = 1 if $body->{'ok'};
+			if ($body->{'ok'} && ref $body->{'forwarded'} eq 'ARRAY') {
+				foreach my $fs ( @{ $body->{'forwarded'} } ) {
+					next unless defined $fs && length $fs;
+					&clock_alarm_mark_ack($uuid, $fs, $now);
+				}
+			}
+		};
+		$err = $@;
+		if ($ok) {
+			push @{ $result->{'delivered'} }, $sig;
+			&clock_alarm_mark_ack($uuid, $sig, $now);
+		}
+		else {
+			warn 'clock alarm push ' . $sig . ' failed: ' . ($err =~ s/\s+/ /gr) . "\n" if $err;
+			push @failed, $sig unless grep { $_ eq $sig } @failed;
+		}
+	}
+
+	# A machine that did not answer directly may still be reachable from another
+	# peer. Ask a reachable third machine to hand the same edit on, and trust its
+	# own delivered list. One hop only, so two disconnected machines cannot loop.
+	if ($allow_forward && scalar @failed) {
+		my %failed = map { $_ => 1 } @failed;
+		my @relays = grep { !$failed{$_} && !$want{$_} && $_ ne $self } sort keys %{ $rows };
+		my $tries = 0;
+		my @still = @failed;
+		foreach my $relay_sig (@relays) {
+			last if !scalar @still || $tries >= 3;
+			$tries++;
+			my $rm = $rows->{$relay_sig};
+			next unless $rm;
+			eval {
+				my $ua = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $relay_sig });
+				die "no agent\n" unless $ua;
+				$ua->inactivity_timeout(5)->request_timeout(5);
+				my %fwd = %form;
+				$fwd{'forward_to'} = join(',', @still);
+				my $res = $ua->post($rm->{'manager'} . '/manager/clock/alarm' => form => \%fwd)->result;
+				die "no answer\n" unless $res && $res->is_success;
+				my $body = eval { decode_json($res->body) } || {};
+				die "not ok\n" unless $body->{'ok'} && ref $body->{'forwarded'} eq 'ARRAY';
+				my %done = map { $_ => 1 } @{ $body->{'forwarded'} };
+				foreach my $fs ( keys %done ) {
+					&clock_alarm_mark_ack($uuid, $fs, $now);
+					push @{ $result->{'delivered'} }, $fs;
+				}
+				@still = grep { !$done{$_} } @still;
+			};
+		}
+		@failed = @still;
+	}
+	$result->{'failed'} = [ @failed ];
+	return $result;
+}
+
+# Apply an edit that arrived from a peer. A per-alarm `updated` stamp decides
+# between two copies; the shared row still converges later either way.
+sub clock_apply_remote_alarm {
+	my ($alarm, $op, $now) = @_;
+	return 0 unless ref $alarm eq 'HASH' && length($alarm->{'uuid'} || '');
+	my $uuid = $alarm->{'uuid'};
+	$op = ($op || '') eq 'delete' ? 'delete' : 'upsert';
+	$now = &rightNow() unless defined $now;
+	my $incoming = int($alarm->{'updated'} || $now);
+	my $lock = &clock_lock_take();
+	my $alarms = &clock_alarms_read();
+	my ($idx) = grep { ($alarms->[$_] || {})->{'uuid'} eq $uuid } 0 .. $#$alarms;
+	my $changed = 0;
+	my $kept;
+	if ($op eq 'delete') {
+		if (defined $idx && int($alarms->[$idx]->{'updated'} || 0) <= $incoming) {
+			splice(@{$alarms}, $idx, 1);
+			$changed = 1;
+		}
+	}
+	else {
+		my $next = &clock_normalize_alarm($alarm);
+		$next->{'updated'} = $incoming;
+		if (defined $idx) {
+			if (int($alarms->[$idx]->{'updated'} || 0) <= $incoming) {
+				$alarms->[$idx] = $next;
+				$changed = 1;
+			}
+			$kept = $alarms->[$idx];
+		}
+		else {
+			push @{$alarms}, $next;
+			$kept = $next;
+			$changed = 1;
+		}
+	}
+	if ($changed) {
+		&clock_alarms_write($alarms);
+		# a stop that arrived on the peer rail must end this machine's sound now
+		if ($op eq 'delete' || !$kept || !$kept->{'ringing'}) {
+			my $rings = &clock_rings_read();
+			if (ref $rings->{$uuid} eq 'HASH' && $rings->{$uuid}->{'ringing'}) {
+				$rings->{$uuid}->{'ringing'} = 0;
+				$rings->{$uuid}->{'stopped'} = $now;
+				&clock_rings_write($rings);
+			}
+		}
+	}
+	&clock_lock_drop($lock);
+	if ($changed) {
+		&clock_alarm_stop_sound($uuid) if ($op eq 'delete' || !$kept || !$kept->{'ringing'});
+		&clock_device_dismissed($uuid) if ($op eq 'delete' || !$kept || !$kept->{'ringing'});
+		&clock_write_device_alarm($alarms, $now);
+		&clock_poke($now);
+		&clock_send_console('jawnosClockRefresh();');
+	}
+	return $changed;
+}
+
+# The phone's notification buttons and the lock-screen gestures cannot call the
+# manager, so they leave a small request here; the alarm worker applies it within
+# a couple of seconds. The file holds one request and is removed as it is read.
+sub clock_control_file() {
+	my $dir = &home('~/.president');
+	eval { File::Path::make_path($dir); } unless -d $dir;
+	$dir = '/tmp' unless -d $dir;
+	return $dir . '/clock_control.json';
+}
+
+sub clock_control_apply {
+	my $file = &clock_control_file();
+	return 0 unless -e $file;
+	my $raw = eval { read_file($file) } // '';
+	unlink $file;
+	my $data = eval { decode_json($raw) };
+	return 0 unless ref $data eq 'HASH';
+	my $action = lc($data->{'action'} || '');
+	return 0 unless $action =~ /^(?:dismiss|snooze|stop_all)$/;
+	my $uuid = $data->{'uuid'} || '';
+	my $now = &rightNow();
+	my $lock = &clock_lock_take();
+	my $alarms = &clock_alarms_read();
+	my $relay_machines = [];
+	my $changed = 0;
+	if ($action eq 'stop_all') {
+		foreach my $a ( @{$alarms} ) {
+			$a->{'snooze_until'} = 0;
+			$a->{'ringing'} = 0;
+			$a->{'ring_started'} = 0;
+			$a->{'ring_last'} = 0;
+			$a->{'stop_at'} = $now;
+			$a->{'updated'} = $now;
+			$changed = 1;
+		}
+		$relay_machines = [ map { $_->{'value'} } @{ &clock_machines() } ];
+	}
+	elsif (length $uuid) {
+		my ($alarm) = grep { ($_->{'uuid'} || '') eq $uuid } @{$alarms};
+		if ($alarm) {
+			$relay_machines = $alarm->{'machines'} || [];
+			$alarm->{'snooze_until'} = 0;
+			$alarm->{'ringing'} = 0;
+			$alarm->{'ring_started'} = 0;
+			$alarm->{'ring_last'} = 0;
+			$alarm->{'stop_at'} = $now;
+			if ($action eq 'snooze') {
+				my $minutes = $data->{'minutes'};
+				$minutes = $alarm->{'snooze'} unless defined $minutes && "$minutes" =~ /^\d+$/;
+				$minutes = 5 unless defined $minutes && "$minutes" =~ /^\d+$/;
+				$minutes = 1 if $minutes < 1;
+				$minutes = 60 if $minutes > 60;
+				$alarm->{'snooze_until'} = $now + ($minutes * 60000);
+				$data->{'minutes'} = $minutes;
+			}
+			$alarm->{'updated'} = $now;
+			$changed = 1;
+		}
+	}
+	&clock_alarms_write($alarms) if $changed;
+	&clock_lock_drop($lock);
+	return 0 unless $changed;
+	if ($action eq 'stop_all') { foreach my $a (@{$alarms}) { &clock_alarm_stop_sound($a->{'uuid'}); } }
+	else { &clock_alarm_stop_sound($uuid); }
+	&clock_write_device_alarm($alarms, $now);
+	&clock_send_console('jawnosClockAlarmStop();');
+	&clock_device_dismissed($action eq 'stop_all' ? '' : $uuid);
+	&clock_relay($action eq 'snooze' ? 'snooze' : 'dismiss', ($action eq 'stop_all' ? '' : $uuid), $relay_machines,
+		($action eq 'snooze' ? (minutes => $data->{'minutes'} || 5) : ()));
+	my @push = grep { $action eq 'stop_all' || ($_->{'uuid'} || '') eq $uuid } @{$alarms};
+	if (scalar @push) {
+		&subprocessor(sub {
+			foreach my $a (@push) { eval { &clock_alarm_push($a, 'upsert', $relay_machines, $now); }; }
+		}, { name => 'clock control push' });
+	}
+	&clock_poke($now);
+	return 1;
+}
+
+# A future appointment in an app whose notification panel has Alarm on becomes
+# one Clock alarm, linked back to that appointment. Re-saving the appointment
+# moves the same Clock row; the next future one replaces it, so an app never
+# collects a pile of stale alarms.
+sub clock_appointment_sync {
+	my ($appt) = @_;
+	my $row = ref $appt eq 'HASH' ? $appt : {};
+	my $app = $row->{'app'} || (defined $appt && !ref $appt ? "$appt" : '');
+	$app =~ s/^\s+|\s+$//g if defined $app;
+	return 0 unless defined $app && length $app;
+	my $want = eval { &setting_grabber({ app => $app, setting => 'alarm' }) };
+	$want = (defined $want && $want =~ /^(?:on|yes|1|checked)$/i) ? 1 : 0;
+	my $now = &rightNow();
+	my $lock = &clock_lock_take();
+	my $alarms = &clock_alarms_read();
+	my ($auto) = grep { ($_->{'source'} || '') eq 'appointment' && ($_->{'app'} || '') eq $app } @{$alarms};
+	my $next;
+	if ($want) {
+		$next = eval { &db_query('select uuid, timestamp from appointments where app = ? and timestamp > ? order by timestamp asc limit 1', $app, $now)->hash };
+	}
+	if (!$want || !$next || !($next->{'timestamp'} || 0)) {
+		if ($auto && ($auto->{'enabled'} || $auto->{'appt_uuid'})) {
+			$auto->{'enabled'} = 0;
+			$auto->{'appt_uuid'} = '';
+			$auto->{'ringing'} = 0;
+			$auto->{'ring_started'} = 0;
+			$auto->{'ring_last'} = 0;
+			$auto->{'updated'} = $now;
+			&clock_alarms_write($alarms);
+			&clock_lock_drop($lock);
+			&clock_write_device_alarm($alarms, $now);
+			my $disabled = $auto;
+			&subprocessor(sub { eval { &clock_alarm_push($disabled, 'upsert', $disabled->{'machines'}, $now); }; }, { name => 'clock appointment push' });
+			&clock_poke($now);
+			return 1;
+		}
+		&clock_lock_drop($lock);
+		return 0;
+	}
+	my @lt = localtime(int($next->{'timestamp'} / 1000));
+	my ($hour, $minute) = ($lt[2], $lt[3]);
+	my $label = &format_name($app) || $app;
+	$label = substr($label, 0, 20);
+	$label = 'Alarm' unless length $label;
+	if ($auto) {
+		# nothing moved: leave the row (and its confirmation stamps) alone
+		if (int($auto->{'hour'}) == $hour && int($auto->{'minute'}) == $minute
+			&& ($auto->{'appt_uuid'} || '') eq ($next->{'uuid'} || '') && $auto->{'enabled'}) {
+			&clock_lock_drop($lock);
+			return 0;
+		}
+	}
+	else {
+		if (scalar @{$alarms} >= 10) { &clock_lock_drop($lock); return 0; }
+		$auto = &clock_normalize_alarm({
+			uuid => &random_string_creator(24),
+			snooze => 5,
+			volume => 70,
+			ramp => 60,
+			sound => 'notifications/ring.mp3',
+			machines => [ &signatorial_designer() || '' ],
+			created => $now,
+		});
+		push @{$alarms}, $auto;
+	}
+	$auto->{'hour'} = $hour;
+	$auto->{'minute'} = $minute;
+	$auto->{'days'} = [];
+	$auto->{'enabled'} = 1;
+	$auto->{'label'} = $label;
+	$auto->{'app'} = $app;
+	$auto->{'appt_uuid'} = $next->{'uuid'} || '';
+	$auto->{'source'} = 'appointment';
+	$auto->{'snooze_until'} = 0;
+	$auto->{'ringing'} = 0;
+	$auto->{'ring_started'} = 0;
+	$auto->{'ring_last'} = 0;
+	$auto->{'updated'} = $now;
+	$auto->{'machines'} = [ &signatorial_designer() || '' ] unless scalar @{ $auto->{'machines'} || [] };
+	&clock_alarms_write($alarms);
+	&clock_lock_drop($lock);
+	&clock_write_device_alarm($alarms, $now);
+	&subprocessor(sub { eval { &clock_alarm_push($auto, 'upsert', $auto->{'machines'}, $now); }; }, { name => 'clock appointment push' });
+	&clock_poke($now);
 	return 1;
 }
 

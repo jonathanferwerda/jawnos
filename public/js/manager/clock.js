@@ -28,6 +28,45 @@ function jawnosClockTime(hour, minute) {
 	return jawnosClockPad(hour) + ':' + jawnosClockPad(minute);
 }
 
+// The alarm time field is a plain text box so the JawnOS soft keyboard shows
+// digits (a native time picker is hard to use on the phone and WebKit's own
+// picker is not the app's). Accept 7, 730, 0730, 7:30 and 07:30 alike and clamp
+// to a real clock time, falling back to 07:00 when there is nothing to read.
+function jawnosClockParseTime(value) {
+	var digits = String(value === undefined || value === null ? '' : value).replace(/[^0-9]/g, '');
+	var hour = 7;
+	var minute = 0;
+	if (digits.length) {
+		if (digits.length <= 2) {
+			hour = parseInt(digits, 10);
+		}
+		else {
+			if (digits.length == 3) { digits = '0' + digits; }
+			hour = parseInt(digits.slice(0, 2), 10);
+			minute = parseInt(digits.slice(2, 4), 10);
+		}
+	}
+	if (isNaN(hour)) { hour = 7; }
+	if (isNaN(minute)) { minute = 0; }
+	return [Math.min(23, Math.max(0, hour)), Math.min(59, Math.max(0, minute))];
+}
+
+function jawnosClockSnoozeValue(minutes) {
+	minutes = parseInt(minutes, 10);
+	if (isNaN(minutes) || minutes < 1) { minutes = 5; }
+	return Math.min(60, minutes);
+}
+
+function jawnosClockSnoozeText(minutes) {
+	return jawnosT('snooze') + ' ' + jawnosClockSnoozeValue(minutes) + ' ' + jawnosT('minutes');
+}
+
+function jawnosClockDeliveredTime(ms) {
+	var when = new Date(parseInt(ms, 10));
+	if (isNaN(when.getTime())) { return ''; }
+	return jawnosClockTime(when.getHours(), when.getMinutes());
+}
+
 function jawnosClockNow() {
 	return Date.now() + jawnosClockOffset;
 }
@@ -154,7 +193,10 @@ $(document).ready(function () {
 	}
 	jawnosClockPollTimer = setInterval(function () {
 		if (document.hidden) { return; }
-		if (jawnosClockApp().length) { jawnosClockRefresh(); }
+		// The state is fetched even with no Clock window open, so a phone sitting
+		// on the manager (or another app) still learns an alarm is ringing and
+		// draws the ring card.
+		jawnosClockRefresh();
 	}, 5000);
 	jawnosClockTickTimer = setInterval(jawnosClockTick, 250);
 });
@@ -191,13 +233,13 @@ function jawnosClockSyncRinging(state) {
 		var a = ringing[0];
 		jawnosClockShowRing({
 			uuid: a.uuid, label: a.label, hour: a.hour, minute: a.minute,
-			sound: a.sound, volume: a.volume, ramp: a.ramp, app: a.app
+			sound: a.sound, volume: a.volume, ramp: a.ramp, app: a.app,
+			snooze: a.snooze
 		});
 	}
 }
 
 function jawnosClockRefresh(force) {
-	if (!jawnosClockApp().length) { return; }
 	var focused = document.activeElement && $(document.activeElement).closest('.clock_app').length;
 	if (focused && !force) { return; }
 	$.ajax({
@@ -336,10 +378,15 @@ var jawnosClockOpenAlarm = null;
 
 function jawnosClockAlarmHeadDevicesHtml(alarm, state) {
 	var machines = alarm.machines || [];
+	var delivered = alarm.delivered || {};
 	var html = '';
 	$.each((state && state.machines) || [], function (i, m) {
 		if ($.inArray(m.value, machines) < 0) { return; }
-		html += '<span class="clock_machine_pill" data-machine="' + jawnosClockEsc(m.value) + '">' + jawnosClockEsc(m.label) + '</span>';
+		var ack = delivered[m.value];
+		var ack_time = (ack === undefined || ack === null) ? '' : jawnosClockDeliveredTime(ack);
+		html += '<span class="clock_machine_pill' + (ack_time ? ' confirmed' : '') + '" data-machine="' + jawnosClockEsc(m.value) + '"';
+		if (ack_time) { html += ' title="' + jawnosClockEsc(jawnosT('delivered') + ' ' + ack_time) + '"'; }
+		html += '>' + jawnosClockEsc(m.label) + (ack_time ? ' ✓' : '') + '</span>';
 	});
 	return html;
 }
@@ -369,7 +416,7 @@ function jawnosClockAlarmHtml(alarm, state) {
 	html += '</div>';
 	html += '<div class="clock_alarm_body">';
 	html += '<div class="clock_alarm_line">';
-	html += '<input type="time" class="clock_alarm_time" value="' + jawnosClockTime(alarm.hour, alarm.minute) + '" aria-label="' + jawnosClockEsc(jawnosT('alarm')) + '">';
+	html += '<input type="text" inputmode="numeric" maxlength="5" autocomplete="off" pattern="[0-9:]*" placeholder="HH:MM" class="clock_alarm_time" value="' + jawnosClockTime(alarm.hour, alarm.minute) + '" aria-label="' + jawnosClockEsc(jawnosT('alarm')) + '">';
 	html += '<input type="text" class="clock_alarm_label" value="' + jawnosClockEsc(alarm.label) + '" maxlength="20" aria-label="' + jawnosClockEsc(jawnosT('label')) + '">';
 	html += '</div>';
 	html += '<div class="clock_alarm_days" role="group" aria-label="' + jawnosClockEsc(jawnosT('days')) + '">';
@@ -401,8 +448,9 @@ function jawnosClockAlarmHtml(alarm, state) {
 		html += '<option value="' + jawnosClockEsc(value) + '"' + (alarm.sound == value ? ' selected' : '') + '>' + jawnosClockEsc(label) + '</option>';
 	});
 	html += '</select><button type="button" class="clock_alarm_preview" hint="' + jawnosClockEsc(jawnosT('preview')) + '">' + jawnosClockEsc(jawnosT('preview')) + '</button></div></label>';
-	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('volume')) + ' · ' + (alarm.volume || 70) + '%</span><input type="range" min="5" max="100" step="5" class="clock_alarm_volume" value="' + (alarm.volume || 70) + '"></label>';
-	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('ramp')) + ' · ' + (alarm.ramp || 0) + 's</span><input type="number" min="0" max="600" step="5" class="clock_alarm_ramp" value="' + (alarm.ramp || 0) + '"></label>';
+	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('volume')) + ' · ' + (alarm.volume || 70) + '%</span><input type="range" min="5" max="100" step="5" class="clock_alarm_volume" inputmode="none" data-soft_keyboard="off" aria-label="' + jawnosClockEsc(jawnosT('volume')) + '" value="' + (alarm.volume || 70) + '"></label>';
+	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('ramp')) + ' · ' + (alarm.ramp || 0) + 's</span><input type="number" inputmode="numeric" min="0" max="600" step="5" class="clock_alarm_ramp" value="' + (alarm.ramp || 0) + '"></label>';
+	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('snooze_length')) + '</span><input type="number" inputmode="numeric" min="1" max="60" step="1" class="clock_alarm_snooze" value="' + jawnosClockSnoozeValue(alarm.snooze) + '" aria-label="' + jawnosClockEsc(jawnosT('snooze')) + '"></label>';
 	html += '</div></div></div>';
 	return html;
 }
@@ -428,7 +476,7 @@ function jawnosClockRenderAlarms(state) {
 
 function jawnosClockAlarmData(row) {
 	var uuid = row.attr('data-uuid');
-	var time = (row.find('.clock_alarm_time').val() || '07:00').split(':');
+	var time = jawnosClockParseTime(row.find('.clock_alarm_time').val());
 	var days = [];
 	row.find('.clock_day[data-day].on').each(function () { days.push($(this).attr('data-day')); });
 	var machines = [];
@@ -437,14 +485,15 @@ function jawnosClockAlarmData(row) {
 	return {
 		action: 'save',
 		uuid: uuid,
-		hour: parseInt(time[0] || 7, 10),
-		minute: parseInt(time[1] || 0, 10),
+		hour: time[0],
+		minute: time[1],
 		label: row.find('.clock_alarm_label').val() || '',
 		days: days.join(','),
 		app: app_input.attr('data-app') || app_input.val() || '',
 		sound: row.find('.clock_alarm_sound').val() || 'notifications/ring.mp3',
 		volume: parseInt(row.find('.clock_alarm_volume').val() || 70, 10),
 		ramp: parseInt(row.find('.clock_alarm_ramp').val() || 0, 10),
+		snooze: jawnosClockSnoozeValue(row.find('.clock_alarm_snooze').val()),
 		enabled: row.find('.clock_alarm_enabled').is(':checked') ? 1 : 0,
 		machines: machines.join(',')
 	};
@@ -464,6 +513,11 @@ function jawnosClockSaveAlarm(row, delay) {
 
 $(document).on('change', '.clock_alarm_time, .clock_alarm_label, .clock_alarm_app, .clock_alarm_sound, .clock_alarm_enabled', function () {
 	var row = $(this).closest('.clock_alarm');
+	if ($(this).hasClass('clock_alarm_time')) {
+		var time = jawnosClockParseTime($(this).val());
+		$(this).val(jawnosClockTime(time[0], time[1]));
+		row.find('.clock_alarm_head_time').text(jawnosClockTime(time[0], time[1]));
+	}
 	row.toggleClass('off', !row.find('.clock_alarm_enabled').is(':checked'));
 	jawnosClockSaveAlarm(row);
 });
@@ -478,6 +532,16 @@ $(document).on('input change', '.clock_alarm_ramp', function () {
 	var row = $(this).closest('.clock_alarm');
 	row.find('.clock_alarm_ramp').closest('.clock_field').find('span').first().text(jawnosT('ramp') + ' · ' + $(this).val() + 's');
 	jawnosClockSaveAlarm(row, 450);
+});
+
+$(document).on('input', '.clock_alarm_snooze', function () {
+	jawnosClockSaveAlarm($(this).closest('.clock_alarm'), 450);
+});
+
+$(document).on('change', '.clock_alarm_snooze', function () {
+	var minutes = jawnosClockSnoozeValue($(this).val());
+	$(this).val(minutes);
+	jawnosClockSaveAlarm($(this).closest('.clock_alarm'), 450);
 });
 
 $(document).on('click', '.clock_machine', function () {
@@ -1008,7 +1072,7 @@ function jawnosClockRingCard() {
 		+ '<div class="clock_ring_label"></div>'
 		+ '<div class="clock_ring_time"></div>'
 		+ '<div class="clock_ring_buttons">'
-		+ '<button type="button" class="clock_ring_snooze" title="5 ' + jawnosClockEsc(jawnosT('minutes')) + '">' + jawnosClockEsc(jawnosT('snooze')) + '</button>'
+		+ '<button type="button" class="clock_ring_snooze" title="' + jawnosClockEsc(jawnosClockSnoozeText(5)) + '">' + jawnosClockEsc(jawnosClockSnoozeText(5)) + '</button>'
 		+ '<button type="button" class="clock_ring_dismiss">' + jawnosClockEsc(jawnosT('dismiss')) + '</button>'
 		+ '</div>'
 		+ '</div></div>');
@@ -1021,7 +1085,7 @@ function jawnosClockShowRing(payload) {
 	var card = jawnosClockRingCard();
 	card.find('.clock_ring_label').text(payload.label || jawnosT('alarm'));
 	card.find('.clock_ring_time').text(jawnosClockTime(payload.hour, payload.minute) + (payload.app ? ' · ' + String(payload.app).replace(/_/g, ' ') : ''));
-	card.find('.clock_ring_snooze').attr('title', '5 ' + jawnosT('minutes'));
+	card.find('.clock_ring_snooze').text(jawnosClockSnoozeText(payload.snooze)).attr('title', jawnosClockSnoozeText(payload.snooze));
 	card.show();
 	$('.clock_alarm[data-uuid="' + payload.uuid + '"]').addClass('ringing');
 	// The sound is the server's: it plays through the operating system and
@@ -1059,7 +1123,7 @@ $(document).on('click', '.clock_ring_dismiss', function () {
 $(document).on('click', '.clock_ring_snooze', function () {
 	if (!jawnosClockRingingCurrent) { return; }
 	var payload = jawnosClockRingingCurrent;
-	jawnosClockPost('/manager/clock/alarm', { action: 'snooze', uuid: payload.uuid, minutes: 5 }, function () {
+	jawnosClockPost('/manager/clock/alarm', { action: 'snooze', uuid: payload.uuid, minutes: jawnosClockSnoozeValue(payload.snooze) }, function () {
 		jawnosClockAlarmStop();
 	});
 	jawnosClockAlarmStop();

@@ -243,6 +243,12 @@
 										<% } %>
 									<% } elsif ($b eq 'notifications') { %>
 										<div class="app_notification_configurator" app="<%= $a %>">
+											<h4><%= &subs::lang('alarm_for_future_appointments') %></h4>
+											<div class="cfg-row">
+												<label><%= &subs::ui('Set a Clock alarm for future appointments') %></label>
+												<span app="<%= $a %>"><input type="checkbox" app="<%= $a %>" setting="alarm" class="configure_input" value="on" <% if ($appts->{$a}->{'setting'}->{'alarm'} eq 'on') { %> checked="checked" <% } %>></span>
+											</div>
+											<div class="cfg-note" style="margin-bottom:10px;"><%= &subs::ui('A future appointment with this on adds its time to the Clock as an alarm, linked back to this appointment.') %></div>
 											<% foreach my $when ( ('','start_','stop_','budget_')) { %>
 												<h4><%= &subs::format_name($when || 'default') %></h4>
 												<select class="app_notification_sound_selector configure_input" setting="<%= $when %>notification_sound" when="<%= $when %>" app="<%= $a %>">

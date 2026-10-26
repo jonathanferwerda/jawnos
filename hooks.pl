@@ -410,6 +410,10 @@ hook before_dispatch => sub {
 		# the box office: no session exists yet when they are used
 		$path =~ m{^/passkey(?:/|$)} ||
 		$path =~ m{^/manager/webauthn/login/(?:begin|finish)$} ||
+		# the clock alarm rail: a peer pushes an alarm edit and its confirmation, or
+		# a dismiss/snooze stop, with no session cookie. The route authenticates the
+		# caller against the roster (peer_verify) before it writes anything.
+		$path eq '/manager/clock/alarm' ||
 		$path eq '/', ) {
 
 		my $device = &subs::device_setter();

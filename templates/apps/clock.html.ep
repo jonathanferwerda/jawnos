@@ -177,14 +177,16 @@
 							<span class="clock_alarm_head_devices">
 								<% foreach my $m ( @{$machines} ) { %>
 									<% next unless $on_machine{$m->{'value'}}; %>
-									<span class="clock_machine_pill" data-machine="<%= $m->{'value'} %>"><%= $m->{'label'} %></span>
+									<% my $ack = $alarm->{'delivered'} ? $alarm->{'delivered'}{$m->{'value'}} : undef; %>
+									<% my $ack_time = (defined $ack && $ack) ? sprintf('%02d:%02d', (localtime($ack / 1000))[2], (localtime($ack / 1000))[1]) : ''; %>
+									<span class="clock_machine_pill<%= $ack_time ne '' ? ' confirmed' : '' %>" data-machine="<%= $m->{'value'} %>"<% if ($ack_time ne '') { %> title="<%= &subs::lang('delivered') %> <%= $ack_time %>"<% } %>><%= $m->{'label'} %><%= $ack_time ne '' ? ' ✓' : '' %></span>
 								<% } %>
 							</span>
 							<label class="clock_switch" hint="<%= &subs::lang('alarm') %>"><input type="checkbox" class="clock_alarm_enabled"<%= $is_on ? ' checked' : '' %>></label>
 						</div>
 						<div class="clock_alarm_body">
 						<div class="clock_alarm_line">
-							<input type="time" class="clock_alarm_time" value="<%= sprintf('%02d:%02d', $alarm->{'hour'}, $alarm->{'minute'}) %>" aria-label="<%= &subs::lang('alarm') %>">
+							<input type="text" inputmode="numeric" maxlength="5" autocomplete="off" pattern="[0-9:]*" placeholder="HH:MM" class="clock_alarm_time" value="<%= sprintf('%02d:%02d', $alarm->{'hour'}, $alarm->{'minute'}) %>" aria-label="<%= &subs::lang('alarm') %>">
 							<input type="text" class="clock_alarm_label" value="<%= $alarm->{'label'} %>" maxlength="20" aria-label="<%= &subs::lang('label') %>">
 						</div>
 						<div class="clock_alarm_days" role="group" aria-label="<%= &subs::lang('days') %>">
@@ -230,11 +232,15 @@
 							</label>
 							<label class="clock_field">
 								<span><%= &subs::lang('volume') %> · <%= $alarm->{'volume'} %>%</span>
-								<input type="range" min="5" max="100" step="5" class="clock_alarm_volume" value="<%= $alarm->{'volume'} %>">
+								<input type="range" min="5" max="100" step="5" class="clock_alarm_volume" inputmode="none" data-soft_keyboard="off" aria-label="<%= &subs::lang('volume') %>" value="<%= $alarm->{'volume'} %>">
 							</label>
 							<label class="clock_field">
 								<span><%= &subs::lang('ramp') %> · <%= $alarm->{'ramp'} %>s</span>
-								<input type="number" min="0" max="600" step="5" class="clock_alarm_ramp" value="<%= $alarm->{'ramp'} %>">
+								<input type="number" inputmode="numeric" min="0" max="600" step="5" class="clock_alarm_ramp" value="<%= $alarm->{'ramp'} %>">
+							</label>
+							<label class="clock_field">
+								<span><%= &subs::lang('snooze_length') %></span>
+								<input type="number" inputmode="numeric" min="1" max="60" step="1" class="clock_alarm_snooze" value="<%= $alarm->{'snooze'} || 5 %>" aria-label="<%= &subs::lang('snooze') %>">
 							</label>
 						</div>
 						</div>
@@ -264,9 +270,9 @@
 				<button type="button" class="clock_clear_finished"><%= &subs::lang('clear_finished') %></button>
 			</div>
 			<div class="clock_timer_new">
-				<input type="number" class="clock_timer_hours" min="0" max="99" step="1" placeholder="<%= &subs::lang('hours') %>" aria-label="<%= &subs::lang('hours') %>">
-				<input type="number" class="clock_timer_minutes" min="0" max="59" step="1" placeholder="<%= &subs::lang('minutes') %>" aria-label="<%= &subs::lang('minutes') %>">
-				<input type="number" class="clock_timer_seconds" min="0" max="59" step="1" placeholder="<%= &subs::lang('seconds') %>" aria-label="<%= &subs::lang('seconds') %>">
+				<input type="number" inputmode="numeric" class="clock_timer_hours" min="0" max="99" step="1" placeholder="<%= &subs::lang('hours') %>" aria-label="<%= &subs::lang('hours') %>">
+				<input type="number" inputmode="numeric" class="clock_timer_minutes" min="0" max="59" step="1" placeholder="<%= &subs::lang('minutes') %>" aria-label="<%= &subs::lang('minutes') %>">
+				<input type="number" inputmode="numeric" class="clock_timer_seconds" min="0" max="59" step="1" placeholder="<%= &subs::lang('seconds') %>" aria-label="<%= &subs::lang('seconds') %>">
 				<input type="text" class="clock_timer_label" maxlength="120" placeholder="<%= &subs::lang('label') %>" aria-label="<%= &subs::lang('label') %>">
 				<div class="clock_app_picker">
 					<input type="text" class="clock_timer_app" autocomplete="off" data-app="" placeholder="<%= &subs::lang('link_appointment') %>" aria-label="<%= &subs::lang('link_appointment') %>">

@@ -407,6 +407,7 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	align-items: flex-start;
 	justify-content: center;
 	padding-top: 9vh;
+	padding-top: calc(max(72px, 9vh) + env(safe-area-inset-top, 0px));
 	background-color: rgba(0,0,0,.28);
 }
 .clock_ring_card {
@@ -424,8 +425,12 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 .clock_ring_time { font-size: 14px; opacity: .7; margin-top: 4px; }
 .clock_ring_buttons { display: flex; gap: 8px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
 .clock_ring_buttons button {
+	flex: 1 1 0;
+	box-sizing: border-box;
+	min-width: 0;
+	min-height: 48px;
 	font: inherit;
-	font-size: 13px;
+	font-size: 15px;
 	padding: 9px 15px;
 	cursor: pointer;
 	color: inherit;
@@ -434,6 +439,16 @@ body.dark_theme #taskbar { background-image: linear-gradient(rgba(255,255,255,.0
 	border-radius: calc(var(--jawnos-corner, 12px) * .5);
 }
 .clock_ring_buttons button:hover { background-color: var(--line); }
+
+/* A machine that has already acknowledged the alarm: the pill keeps its shape
+   and turns a quiet green, with a check mark added by the template/parser. */
+.clock_machine_pill.confirmed {
+	border-color: #2f8f6d;
+	color: #2f8f6d;
+	background-color: rgba(47,143,109,.14);
+	font-weight: 600;
+	opacity: 1;
+}
 
 #clock_toast {
 	position: fixed;
