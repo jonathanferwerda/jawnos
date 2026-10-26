@@ -18,9 +18,11 @@
 		<span><input type="checkbox" class="anchor_all_settings" setting_type="me"></span>
 	</div>
 
+	<% my $me_device = &subs::device_setter(); %>
 	<% foreach my $d ( @gb::device_types ) { %>
-		<div class="cfg-card">
-			<h3><%= $d %></h3>
+		<details class="cfg-acc" data-acc="me-<%= &subs::html_name($d) %>"<% if ($d eq $me_device) { %> open<% } %>>
+			<summary><%= $d %></summary>
+			<div class="cfg-card">
 
 			<div class="me_grid">
 				<% foreach my $m ( sort keys %{$me->{$d}} ) { %>
@@ -116,6 +118,7 @@
 					<textarea class="me_setting" setting="information" device="<%= $d %>"><%= $me->{$d}->{'information'} %></textarea>
 				</div>
 			<% } %>
-		</div>
+			</div>
+		</details>
 	<% } %>
 </div>

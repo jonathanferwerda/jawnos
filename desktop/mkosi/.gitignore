@@ -1,0 +1,4 @@
+# Build scratch and images: neither belongs in git (a disk image is hundreds of
+# MB, and the APK rule already says binaries ride the mesh, not the history).
+.stage/
+output/

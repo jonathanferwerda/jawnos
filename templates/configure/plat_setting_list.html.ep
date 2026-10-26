@@ -69,7 +69,8 @@
 	<div id="plat_ai" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_ai' ? '' : 'display:none;' %>">
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
 
-	<h3>Agent models</h3>
+	<details class="cfg-acc" data-acc="plat-ai" open>
+		<summary>Agent models</summary>
 	<p class="cfg-note">Which model each assistant uses. Each list offers only models that fit the role, and marks whether a model is free or paid. The language agents — the Help guide, Evaluation, Vision, the Pen and Coding — each carry a Thinking choice beside their model: none lets it answer as it always has, and low/high/max ask it to reason longer first; a model that ignores the hint simply answers as before. Image generation has no such knob.</p>
 	<% if (@down) { %>
 		<p class="cfg-note">Out of credit just now, so their paid models are hidden:
@@ -184,8 +185,10 @@
 	<% if (@not_ready) { %>
 		<p class="cfg-note">Not offered until they can answer: <% foreach my $p (@not_ready) { %><b><%= $p->{'label'} %></b><%= ($p->{'id'} eq 'ollama' ? ' (not running)' : ' (no key)') %><%= ($p->{'id'} eq $not_ready[-1]->{'id'} ? '' : ', ') %><% } %>. Paste a key under Provider access and press Plat again, or start Ollama for the local models.</p>
 	<% } %>
+	</details>
 
-	<h3>Self-healing</h3>
+	<details class="cfg-acc" data-acc="plat-self-healing">
+		<summary>Self-healing</summary>
 	<p class="cfg-note">With a Coding model set, the tree's own error output is watched (the pty log and manager.log). Each new error appears in the IDE's coding panel with a fix the Coding agent proposes; nothing is written until you press Apply there. Tick Apply automatically and each proposal is written, checked (perl -c, with a rollback if it fails) and shipped at once - a file with uncommitted work stands down and waits for you, and the day's token budget still applies. Tick Watch the Guide and the Guide's own saved conversations are read the same way: a turn that went nowhere - a thing not found, a command that could not run, a closing line that says so - is staged for the Coding agent to adjust the Guide's training itself (its rules and verbs). Fixed so far, under the tick, is the record: press review to read every error that has been fixed and shipped. Tick Watch records and the appointments table is audited on the same principle: the fixed audit finds a session that one stop press closed along with others, a row written twice, and an open session run far past its app's length, and stages each finding here for review - nothing is written until you Apply. Only two rows that are the same event written twice are ever applied for you (they are provably one event); a sweep or a long-open session is a judgement call, because a real appointment can be surprisingly long, so each finding waits for you - and you can put any finding to the Coding agent to read before you decide. "Leave this app alone" silences an app you know runs long. The window is how far back it looks (0 is all time).</p>
 	<div class="cfg-card">
 		<div class="cfg-row">
@@ -217,7 +220,7 @@
 				<span class="cfg-note" style="margin:0;"><%= $fixed_n ? "$fixed_n fixed" : 'nothing yet' %></span>
 			</span>
 		</div>
-		<div id="coding_fixed_list" style="display:none;margin:2px 0 8px;padding:6px 0 0;border-top:1px solid var(--line);max-height:320px;overflow:auto;font-size:12px;line-height:1.35;"></div>
+			<div id="coding_fixed_list" style="display:none;margin:2px 0 8px;padding:6px 0 0;border-top:1px solid var(--line);max-height:320px;overflow:auto;font-size:12px;line-height:1.35;"></div>
 		<div class="cfg-row">
 			<label>Tokens/day</label>
 			<% my $watch_budget = (&subs::setting_grabber({ app => 'mail', setting => 'error_watch_budget' }) // ''); %>
@@ -264,8 +267,10 @@
 		</div>
 		<div id="records_fixed_list" style="display:none;margin:2px 0 8px;padding:6px 0 0;border-top:1px solid var(--line);max-height:320px;overflow:auto;font-size:12px;line-height:1.35;"></div>
 	</div>
+	</details>
 
-	<h3>Provider access</h3>
+	<details class="cfg-acc" data-acc="plat-providers">
+		<summary>Provider access</summary>
 	<p class="cfg-note">Keys and accounts for each provider. Secrets are stored encrypted: a key that is already set shows “••• set” — leave it alone to keep it, or type a new value to replace it.</p>
 	<% foreach my $p ( @{$providers} ) { %>
 		<% my $set_up = scalar( grep { my $v = $key_values->{$_->[0]}; defined $v && length $v } @{ $p->{'keys'} } ); %>
@@ -296,14 +301,17 @@
 		</div>
 	<% } %>
 	<p class="cfg-note">Ollama and Cloudflare model lists are read from each service when this panel opens; the other providers' lists are built in. Models are addressed as <code>provider:model</code> — a bare name goes to Ollama, and <code>@cf/…</code> to Cloudflare. The lists only offer providers that can answer: a key entered (and an account not out of credit), or a local Ollama that is running.</p>
+	</details>
 
-	<h3>Guide commands (runtime)</h3>
+	<details class="cfg-acc" data-acc="plat-guide-commands">
+		<summary>Guide commands (runtime)</summary>
 	<p class="cfg-note">Extra verbs the Guide can run, added without a code change. Each entry is JSON: a <code>name</code>, a <code>desc</code>, an optional <code>args</code> map, and a <code>primitive</code> with its <code>params</code>. The primitives are <code>say</code>, <code>open_app</code>, <code>set_setting</code>, <code>run_command</code>, <code>toggle</code>, <code>stage</code>, <code>find</code> and <code>play_music</code>; a param value may contain <code>{name}</code> to take one of the model's arguments. The list is a setting, so it syncs to every machine and they all learn the verb.</p>
 	<textarea id="guide_verbs_json" spellcheck="false" style="width:100%;box-sizing:border-box;min-height:140px;font-family:monospace;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:8px;"><%= &subs::setting_grabber({ app => '__president', setting => 'guide_verbs', device => 'all' }) || '[]' %></textarea>
 	<div class="cfg-row">
 		<button id="guide_verbs_save" class="button" style="padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">Save commands</button>
 		<span id="guide_verbs_status" class="cfg-note" style="margin:0;"></span>
 	</div>
+	</details>
 	</div>
 	<div id="plat_oauth" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_oauth' ? '' : 'display:none;' %>">
 		<%= include 'configure/oauth_clients' %>

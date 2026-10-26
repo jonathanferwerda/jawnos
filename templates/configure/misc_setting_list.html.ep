@@ -18,8 +18,9 @@
     the "all" row and every machine and device tab follows it; the install writes
     the same value into config.json and the database. %>
 <% my $current_language = ($settings->{'all'} || {})->{'language'} || $me_row->{'language'} || ($settings->{$dev} || {})->{'language'} || $config->{'language'} || 'en'; %>
+<details class="cfg-acc" data-acc="misc-language" open>
+	<summary><%= &subs::lang('configure.language') %></summary>
 <div class="misc_section cfg-card">
-	<h3><%= &subs::lang('configure.language') %></h3>
 	<div class="cfg-row">
 		<label><b><%= &subs::lang('configure.language') %></b></label>
 		<select id="language" class="misc_setting" setting="language" device="all">
@@ -58,6 +59,7 @@
 		</div>
 	</details>
 </div>
+</details>
 <% my @fonts = (
 	'system-ui, sans-serif',
 	'Arial, sans-serif',
@@ -128,8 +130,9 @@
 	<% } %>
 </div>
 
+<details class="cfg-acc" data-acc="misc-appearance" open>
+	<summary>Appearance</summary>
 <div class="misc_section cfg-card">
-	<h3>Appearance</h3>
 	<div class="cfg-row">
 		<label><b>Zoom <span id="ui_zoom_value"><%= &subs::misc_setting('ui_zoom') || 100 %></span>%</b></label>
 		<input type="range" class="misc_setting" setting="ui_zoom" device="<%= $dev %>" min="20" max="200" step="10" value="<%= &subs::misc_setting('ui_zoom') || 100 %>" oninput="jawnosZoomApply(this.value); document.getElementById('ui_zoom_value').textContent = this.value;">
@@ -243,6 +246,7 @@
 		<span id="appt_colour_update_status" style="font-size:13px;"></span>
 	</div>
 </div>
+</details>
 
 <%# ---- named themes ------------------------------------------------------
     A theme is the whole dressing, not just the paint. The gallery applies one
@@ -254,8 +258,9 @@
 <% my @custom_order = sort { lc($theme_registry->{$a}->{'name'} // $a) cmp lc($theme_registry->{$b}->{'name'} // $b) } grep { $theme_registry->{$_} && !$theme_registry->{$_}->{'builtin'} } keys %{$theme_registry}; %>
 <% push @theme_order, @custom_order; %>
 <% my @current_palette = &subs::theme_palette(); %>
+<details class="cfg-acc" data-acc="misc-themes" open>
+	<summary><%= &subs::lang('configure.themes') %></summary>
 <div class="misc_section cfg-card" id="theme_gallery_card">
-	<h3><%= &subs::lang('configure.themes') %></h3>
 	<p class="cfg-note"><%= &subs::ui('A theme dresses the whole desktop: its colours, its icon set, its material, its face and its corner. Pick one for this machine, or save one of your own; an appointment can then wear it while it runs.') %></p>
 	<div class="theme_gallery">
 		<div class="theme_card<% if (!length $current_theme) { %> selected<% } %>" theme_slug="" role="button" tabindex="0">
@@ -281,6 +286,7 @@
 		<button type="button" id="theme_new"><%= &subs::lang('configure.new_theme') %></button>
 	</div>
 </div>
+</details>
 
 <div class="misc_section cfg-card" id="theme_editor" style="display:none;">
 	<h3><%= &subs::lang('configure.edit_theme') %></h3>
@@ -335,8 +341,9 @@
 	<div class="misc_section misc_device_block cfg-card" device="<%= $dt %>">
 		<h3><%= $device_name %></h3>
 
-		<h4>General</h4>
-		<div class="cfg-grid misc_grid">
+		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-general" open>
+			<summary>General</summary>
+			<div class="cfg-grid misc_grid">
 			<% my @general = (
 				[ 'max_files', 'Max Files', [ 0..5000 ] ],
 				[ 'photo_size', 'Photo Size', [ '', @{$photo_sizes} ] ],
@@ -364,8 +371,10 @@
 				</label>
 			<% } %>
 		</div>
+	</details>
 
-		<h4>Bars</h4>
+	<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-bars">
+		<summary>Bars</summary>
 		<div class="cfg-grid misc_grid">
 			<% my @bars = (
 				[ 'dock_position', 'Dock', [ 'bottom', 'top', 'left', 'right', 'hidden' ] ],
@@ -427,8 +436,10 @@
 				<% } %>
 			<% } %>
 		</div>
+	</details>
 
-		<h4>Speech</h4>
+	<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-speech" open>
+		<summary>Speech</summary>
 		<div class="cfg-grid misc_grid">
 			<%# say_it's voice for this device. The piper choices read neural models
 			    staged under voices/; the eSpeak choices need nothing installed. %>
@@ -446,11 +457,13 @@
 				<button type="button" class="hover say_voice_test" device="<%= $dt %>">Say test phrase</button>
 			</label>
 		</div>
+		</details>
 
 		<% my @locations = &subs::location_types(); %>
 		<% my $remote_machines = &subs::remote_machine_lister({ archive => 'yes' }); %>
-		<h4>Locations</h4>
-		<div class="cfg-grid misc_grid">
+		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-locations">
+			<summary>Locations</summary>
+			<div class="cfg-grid misc_grid">
 			<% foreach my $l (@locations) { %>
 				<%# these two come straight out of the settings table, which may not carry
 				    the key at all; an unset one compares as blank rather than undef %>
@@ -475,10 +488,12 @@
 					</label>
 				</div>
 			<% } %>
-		</div>
+			</div>
+		</details>
 
-		<h4>Archive Root</h4>
-		<div class="cfg-row">
+		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-archive">
+			<summary>Archive Root</summary>
+			<div class="cfg-row">
 			<label><b>archive_dir</b></label>
 			<% my $current_archive_dir = $settings->{$dt}->{'archive_dir'} || ''; %>
 			<select id="archive_dir" class="misc_setting" device="<%= $dt %>" setting="archive_dir">
@@ -488,9 +503,11 @@
 			</select>
 		</div>
 		<p class="cfg-note">The drive this machine archives to, out of the folders in config.json. Blank means it is not an archive.</p>
+		</details>
 
-		<h4>Colours</h4>
-		<div class="cfg-actions" style="flex-wrap:wrap;gap:8px;">
+		<details class="cfg-acc cfg-acc-sub" data-acc="misc-<%= &subs::html_name($dt) %>-colours">
+			<summary>Colours</summary>
+			<div class="cfg-actions" style="flex-wrap:wrap;gap:8px;">
 			<% my @colours = @gb::misc_settings; %>
 			<% foreach my $k ( @colours ) { %>
 				<label class="misc_colour_chip">
@@ -499,6 +516,7 @@
 				</label>
 			<% } %>
 		</div>
+		</details>
 	</div>
 <% } %>
 </div>

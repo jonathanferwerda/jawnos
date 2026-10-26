@@ -75,6 +75,7 @@ require "./Music.pl";
 require "./hooks.pl";
 require "./tunnel.pl";
 require "./help.pl";
+require "./crew.pl";
 { package gb; }
 
 # Run the schema migrations once per worker when the app comes up: a git pull
@@ -9335,6 +9336,98 @@ post '/manager/ollama_chat' => sub($c) {
 		$c->render(data => $res->body);
 	})->catch(sub {
 		$c->render(json => { error => 'the local Ollama did not answer' });
+	});
+};
+
+# ---------------------------------------------------------------------------
+# The Crew: what each machine can do and where a job runs. crew.pl owns the
+# ability registry and the job kinds; these routes carry it between machines.
+# state and job are peer routes - the same roster check as app_download - and
+# the job route also verifies the signature, because it executes work. A kind
+# must be in crew::job_kind's registry; nothing here accepts a command, a path
+# or a sub name from the caller.
+# ---------------------------------------------------------------------------
+get '/manager/crew/state' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm) { $c->rendered(403); return; }
+	$c->render(json => &crew::state());
+};
+
+post '/manager/crew/job' => sub($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	# A job payload is bounded: a peer is trusted, but a 4 GB prompt must not be
+	# read into a worker's memory before the kind is even looked at.
+	my $declared = $c->req->headers->content_length || 0;
+	if ($declared > 64 * 1024 * 1024) {
+		$log->info('crew job refused: ' . $declared . ' bytes from ' . ($signatorial || '?'));
+		$c->render(status => 413, json => { ok => 0, error => 'the payload is too large' });
+		return;
+	}
+	my $body = eval { $c->req->json } || {};
+	$body = {} unless ref $body eq 'HASH';
+	my $kind = defined $body->{'kind'} ? $body->{'kind'} : '';
+	my $spec = &crew::job_kind($kind);
+	unless ($spec) {
+		$log->info('crew job refused: unknown kind "' . substr($kind, 0, 60) . '" from ' . ($signatorial || '?'));
+		$c->render(status => 400, json => { ok => 0, error => 'unknown job kind' });
+		return;
+	}
+	my $payload = ref $body->{'payload'} eq 'HASH' ? $body->{'payload'} : {};
+	my $origin = defined $body->{'origin'} ? $body->{'origin'} : '';
+	# A guarded origin is what keeps a job from bouncing between two machines.
+	$origin =~ s/[^0-9a-zA-Z]//g;
+	my $job_id = defined $body->{'job_id'} ? $body->{'job_id'} : '';
+	$job_id =~ s/[^A-Za-z0-9_.-]//g;
+	$job_id = substr($job_id, 0, 80);
+	$job_id = &crew::new_job_id($kind) unless length $job_id;
+	# The same job_id that already ran successfully answers from the cache, so a
+	# retried request does not run the work twice.
+	my $cached = &crew::job_cached($job_id);
+	if ($cached) {
+		$log->info('crew job ' . $kind . ' ' . $job_id . ' answered from the cache');
+		$c->render(json => $cached);
+		return;
+	}
+	$log->info('crew job accepted: ' . $kind . ' ' . $job_id . ' from ' . ($origin || 'this machine'));
+	&crew::queue_note($job_id, $kind, $origin);
+	# The work runs in a forked child (the same pattern as the AI routes here),
+	# so a model call or a transcription cannot hold this worker's event loop.
+	&subs::render_in_subprocess($c, sub {
+		return &crew::job_run($kind, $payload,
+			timeout => $spec->{'timeout'},
+			job_id  => $job_id,
+			origin  => $origin,
+		);
+	}, sub {
+		my ($c, $result) = @_;
+		$result ||= { ok => 0, error => 'the job did not finish' };
+		&crew::queue_done($job_id);
+		&crew::job_store($job_id, $result) if $result->{'ok'};
+		$log->info('crew job ' . $kind . ' ' . $job_id . ($result->{'ok'}
+			? ' done'
+			: ' failed: ' . substr($result->{'error'} || 'no reason', 0, 160)));
+		$c->render(json => $result);
+	});
+};
+
+# The Configure panel's "Advertise now": refresh this machine's own facts and
+# pull every reachable peer's advert in the background, so the section can
+# repaint without the request waiting on a sleeping machine.
+post '/manager/crew/advertise' => sub($c) {
+	unless ($c->session('authentication') eq 'approved') { $c->rendered(403); return; }
+	my $abilities = &crew::tick();
+	&subs::subprocessor(sub {
+		eval { &crew::advert_sync(); };
+	}, { name => 'crew advert (on demand)' });
+	$c->render(json => {
+		ok          => 1,
+		signatorial => &subs::signatorial_designer(),
+		hostname    => $abilities->{'hostname'},
+		abilities   => $abilities,
+		at          => &subs::rightNow(),
 	});
 };
 

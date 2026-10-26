@@ -101,7 +101,138 @@ function jawnosConfigureScrollTop(top) {
 // saved panel is on screen (windows.js calls this by name when it exists).
 function jawnosConfigureScrollRestore(at) {
 	jawnosConfigureScrollTop(at || 0);
+	// Opening a section changes the panel's height, so the accordion state settles
+	// after the saved offset is back in place, never before it.
+	if (typeof jawnosAccRestore === 'function') { jawnosAccRestore(); }
 }
+
+// ---- collapsible Configure sections -----------------------------------------
+// Contract, used by the *_setting_list templates and any partial that wants a
+// collapsible block:
+//
+//   <details class="cfg-acc" data-acc="plat-ai" open>
+//     <summary>Section title</summary>
+//     ...section body...
+//   </details>
+//
+// data-acc is a stable `<tab>-<section>` id and never the visible title, so a
+// translation cannot move a stored choice. `open` is the first-render default.
+// localStorage['jawnos:accordions'] is a JSON object of id -> 1 recording the
+// sections the person has opened; an absent id keeps the markup default, so the
+// map stays a whitelist. It is capped at jawnos_acc_max entries, which keeps an
+// id that has left the markup from growing the map without bound.
+var jawnos_acc_key = 'jawnos:accordions';
+var jawnos_acc_max = 200;
+var jawnos_acc_observer = null;
+var jawnos_acc_panel = null;
+var jawnos_acc_root_observer = null;
+
+function jawnosAccRead() {
+	var map = {};
+	try {
+		map = JSON.parse(localStorage.getItem(jawnos_acc_key) || '{}');
+	}
+	catch (e) { map = {}; }
+	return (map && typeof map === 'object' && !(map instanceof Array)) ? map : {};
+}
+
+function jawnosAccWrite(map) {
+	var keys = Object.keys(map);
+	while (keys.length > jawnos_acc_max) { delete map[keys.shift()]; }
+	try { localStorage.setItem(jawnos_acc_key, JSON.stringify(map)); } catch (e) {}
+}
+
+function jawnosAccRemember(id, open) {
+	if (!id) { return; }
+	var map = jawnosAccRead();
+	if (open) { map[id] = 1; }
+	else { delete map[id]; }
+	jawnosAccWrite(map);
+}
+
+function jawnosAccBind(section) {
+	if (section.jawnosAccBound) { return; }
+	section.jawnosAccBound = true;
+	// `toggle` does not bubble in WebKitGTK, so a delegated handler on document
+	// would never see it: bind each section directly, exactly once.
+	section.addEventListener('toggle', function () {
+		jawnosAccRemember(this.getAttribute('data-acc'), this.open);
+	});
+}
+
+// Apply the stored choices to every .cfg-acc under root. Idempotent and cheap:
+// only the sections whose state actually differs are touched, and each section
+// gets its toggle listener once.
+function jawnosAccRestore(root) {
+	var scope = (root && root.querySelectorAll) ? root : document;
+	var sections = scope.querySelectorAll('details.cfg-acc');
+	if (!sections.length) { return; }
+	var map = jawnosAccRead();
+	for (var i = 0; i < sections.length; i++) {
+		var section = sections[i];
+		var id = section.getAttribute('data-acc');
+		if (!id) { continue; }
+		// A stored choice wins; otherwise the markup's own `open` stands.
+		if (Object.prototype.hasOwnProperty.call(map, id)) {
+			var open = !!map[id];
+			if (section.open !== open) { section.open = open; }
+		}
+		jawnosAccBind(section);
+	}
+}
+
+// A panel's HTML arrives over AJAX and is swapped in, so the observer has to
+// outlive each render. It watches #configure for added .cfg-acc nodes and
+// restores in a microtask - after any synchronous scroll restore has run.
+function jawnosAccWatch() {
+	var panel = document.getElementById('configure');
+	if (!panel || panel === jawnos_acc_panel) { return; }
+	if (jawnos_acc_observer) { jawnos_acc_observer.disconnect(); }
+	jawnos_acc_panel = panel;
+	if (window.MutationObserver) {
+		jawnos_acc_observer = new MutationObserver(function (records) {
+			for (var i = 0; i < records.length; i++) {
+				var added = records[i].addedNodes;
+				for (var j = 0; j < added.length; j++) {
+					var node = added[j];
+					if (node.nodeType !== 1) { continue; }
+					if ((node.matches && node.matches('details.cfg-acc')) || node.querySelector('details.cfg-acc')) {
+						jawnosAccRestore(panel);
+						return;
+					}
+				}
+			}
+		});
+		jawnos_acc_observer.observe(panel, { childList: true, subtree: true });
+	}
+	jawnosAccRestore(panel);
+}
+
+function jawnosAccBoot() {
+	jawnosAccWatch();
+	// The window maker rebuilds the Configure shell (an icon-set change, say) and
+	// the observer would go with the old copy. Watch the body for a fresh
+	// #configure and re-bind. `open` is an attribute, not a child, so this never
+	// sees the restore's own writes and cannot loop.
+	if (window.MutationObserver && !jawnos_acc_root_observer) {
+		jawnos_acc_root_observer = new MutationObserver(function (records) {
+			for (var i = 0; i < records.length; i++) {
+				var added = records[i].addedNodes;
+				for (var j = 0; j < added.length; j++) {
+					var node = added[j];
+					if (node.nodeType !== 1) { continue; }
+					if (node.id === 'configure' || (node.querySelector && node.querySelector('#configure'))) {
+						jawnosAccWatch();
+						return;
+					}
+				}
+			}
+		});
+		jawnos_acc_root_observer.observe(document.body, { childList: true, subtree: true });
+	}
+}
+
+$(jawnosAccBoot);
 
 async function configureToggle() {
 	var cb = $('#configure_balloon');

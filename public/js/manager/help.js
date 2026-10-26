@@ -1127,6 +1127,31 @@ $(document).on('click', '.help_open_app', function () {
 	if (app && typeof appWindowOpener === 'function') { appWindowOpener(app, Date.now(), {}); }
 });
 
+// A live doc's runnable example: open Configure and press the tab the example
+// names. Opening the window is appWindowOpener's job and the tab is the same
+// .configure_toggle button a person would press, so this adds no second way to
+// open an app or a panel.
+$(document).on('click', '.help_example_configure', function () {
+	var tab = $(this).attr('configure');
+	if (!tab || !/^[a-z][a-z0-9_]*$/.test(tab)) { return; }
+	var press = function () {
+		var target = $('#' + tab + '.configure_toggle');
+		if (!target.length) { return false; }
+		target.trigger('click');
+		return true;
+	};
+	if (typeof appWindowOpener !== 'function') { press(); return; }
+	// Opening (or re-raising) the window and then pressing the real tab keeps
+	// this on the same path a person uses; the tab is not there until the
+	// window's own load lands, so wait for it.
+	appWindowOpener('configure', Date.now(), {});
+	var tries = 0;
+	var wait = setInterval(function () {
+		tries++;
+		if (press() || tries >= 60) { clearInterval(wait); }
+	}, 125);
+});
+
 $(document).on('click', '#help_ask', function () { helpAsk(); });
 $(document).on('click', '#help_topics_back', function () { helpTopicsBack(); });
 

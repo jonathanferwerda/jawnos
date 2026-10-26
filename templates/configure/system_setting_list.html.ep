@@ -20,9 +20,10 @@
 	    synced ai_house and ai_budget rows, so every machine shows the same picture. %>
 	<% my $machines = &subs::remote_machine_lister({ self => 'yes', mirrors => 'none' }); %>
 	<% my %machine_name; foreach my $m ( @{$machines} ) { $machine_name{$m->{'signatorial'}} = ((($m->{'hostname'} || '') eq 'me') ? 'me (this machine)' : ($m->{'hostname'} || $m->{'signatorial'})); } %>
-	<div class="cfg-card">
-		<h3>The house</h3>
-		<p class="cfg-note">
+	<details class="cfg-acc" data-acc="sys-house">
+		<summary>The house</summary>
+		<div class="cfg-card">
+			<p class="cfg-note">
 			<b><%= $ai_house->{'members'} %></b> <%= ($ai_house->{'members'} == 1 ? 'machine' : 'machines') %> can take AI work ·
 			today <%= $ai_house->{'spent'} %> tokens<%= ($ai_house->{'budget'} ? ' of ' . $ai_house->{'budget'} : ' (no cap)') %>.
 			Each job runs once for the house; a machine that goes quiet hands its job on.
@@ -45,12 +46,14 @@
 			</table>
 		</div>
 	</div>
+</details>
 
 	<%# The provider balances: only an account on file is a row, and only a couple
 	   of those publish a balance, so the rest read — %>
-	<div class="cfg-card">
-		<h3>API balances</h3>
-		<p class="cfg-note">
+	<details class="cfg-acc" data-acc="sys-balances">
+		<summary>API balances</summary>
+		<div class="cfg-card">
+			<p class="cfg-note">
 			<%= &subs::ui('What is left on each provider account you have registered, where the provider reports it.') %>
 			<% if (!$ai_balance->{'at'}) { %>Not read yet — this fills in a moment after boot.<% } %>
 		</p>
@@ -78,8 +81,10 @@
 			</table>
 		</div>
 	</div>
+</details>
 
-	<h3><%= &subs::ui('PPH comparator') %></h3>
+<details class="cfg-acc" data-acc="sys-pph">
+	<summary><%= &subs::ui('PPH comparator') %></summary>
 	<p class="cfg-note"><%= &subs::ui('Discharging drain grouped by the lock that produced each sample. Needs a few hours in each state; it fills in as the phone runs.') %></p>
 	<% my $pph = &subs::pph_compare_report(); %>
 	<div class="cfg-scroll">
@@ -97,30 +102,36 @@
 			</tbody>
 		</table>
 	</div>
-	<% if ($pph->{'note'}) { %><p class="cfg-note"><%= $pph->{'note'} %></p><% } %>
+		<% if ($pph->{'note'}) { %><p class="cfg-note"><%= $pph->{'note'} %></p><% } %>
+	</details>
 
-	<% my $wake_schedule = &subs::setting_grabber({ app => '__president', setting => 'wake_schedule' }); %>
-	<% $wake_schedule = 'on' unless defined $wake_schedule && $wake_schedule =~ /\S/; %>
-	<h3><%= &subs::ui('Wake schedule') %></h3>
-	<p class="cfg-note"><%= &subs::ui('The Android app wakes the CPU briefly for each utility beat and lets it sleep in between. Off restores the old permanent wake lock; music still holds it while playing.') %></p>
+	<details class="cfg-acc" data-acc="sys-wake" open>
+		<summary><%= &subs::ui('Wake schedule') %></summary>
+		<% my $wake_schedule = &subs::setting_grabber({ app => '__president', setting => 'wake_schedule' }); %>
+		<% $wake_schedule = 'on' unless defined $wake_schedule && $wake_schedule =~ /\S/; %>
+		<p class="cfg-note"><%= &subs::ui('The Android app wakes the CPU briefly for each utility beat and lets it sleep in between. Off restores the old permanent wake lock; music still holds it while playing.') %></p>
 	<div class="cfg-actions">
 		<label hint="Keep the scheduled wake"><input type="checkbox" class="appointment_setting" app="__president" setting="wake_schedule" <% if ($wake_schedule eq 'on') { %>checked="checked"<% } %>> <%= &subs::ui('Keep the scheduled wake') %></label>
 	</div>
+	</details>
 
-	<h3>Utility controller</h3>
-	<p class="cfg-note">Toggle each background job, set how often it runs, and watch its last result. Changes apply as you make them.</p>
-	<div id="utility_controls_container" class="cfg-card">
-		<%= include 'configure/utility_controller' %>
-	</div>
+	<details class="cfg-acc" data-acc="sys-utility" open>
+		<summary>Utility controller</summary>
+		<p class="cfg-note">Toggle each background job, set how often it runs, and watch its last result. Changes apply as you make them.</p>
+		<div id="utility_controls_container" class="cfg-card">
+			<%= include 'configure/utility_controller' %>
+		</div>
+	</details>
 
-	<h3>Settings list source</h3>
-	<p class="cfg-note">Which copy of the settings list this browser reads.</p>
-	<div class="cfg-actions">
-		<% foreach my $b ( qw/none localstorage cache eval/ ) { %>
-			<button class="sys_setting_option" onclick="settingSetter({'app': '__president', 'setting': 'system_settings_list_view', 'value': '<%= $b %>' });" 
-				option="<%= $b %>" style="<% if ($b eq $settings->{$device}->{'system_settings_list_view'}) { %>background-color:yellow;<% } %>"><%= &subs::format_name($b) %></button>
-		<% } %>
-	</div>
+	<details class="cfg-acc" data-acc="sys-settings-source">
+		<summary>Settings list source</summary>
+		<p class="cfg-note">Which copy of the settings list this browser reads.</p>
+		<div class="cfg-actions">
+			<% foreach my $b ( qw/none localstorage cache eval/ ) { %>
+				<button class="sys_setting_option" onclick="settingSetter({'app': '__president', 'setting': 'system_settings_list_view', 'value': '<%= $b %>' });" 
+					option="<%= $b %>" style="<% if ($b eq $settings->{$device}->{'system_settings_list_view'}) { %>background-color:yellow;<% } %>"><%= &subs::format_name($b) %></button>
+			<% } %>
+		</div>
 
 	<% if ($settings->{$device}->{'system_settings_list_view'} eq 'localstorage') { %>
 		<div class="cfg-scroll">
@@ -177,5 +188,6 @@
 				</div>
 			</div>
 		<% } %>
-	<% } %>
+		<% } %>
+	</details>
 </div>

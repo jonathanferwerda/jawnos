@@ -1,0 +1,36 @@
+#!/bin/sh
+# Seed the house on first boot. /home/jawn is the jawnos-state partition; the
+# image carries a read-only copy of the tree and a home skeleton under
+# /opt/jawnos. Nothing here deletes: a second run finds the checkout and the
+# unit's ConditionPathExists keeps it from running at all.
+set -eu
+
+STATE=/home/jawn
+SEED_TREE=/opt/jawnos/tree
+SEED_HOME=/opt/jawnos/home-skel
+
+mkdir -p "$STATE"
+
+if [ -d "$SEED_HOME" ]; then
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a "$SEED_HOME"/ "$STATE"/
+    else
+        cp -a "$SEED_HOME"/. "$STATE"/
+    fi
+fi
+
+if [ -d "$SEED_TREE" ] && [ ! -d "$STATE/jawnos" ]; then
+    mkdir -p "$STATE/jawnos"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a "$SEED_TREE"/ "$STATE/jawnos"/
+    else
+        cp -a "$SEED_TREE"/. "$STATE/jawnos"/
+    fi
+fi
+
+# The partition is written as root; hand it to the person who uses it.
+chown -R jawn:jawn "$STATE" 2>/dev/null || true
+
+date +%s > "$STATE/.seeded"
+echo "jawnos-firstboot: house seeded in $STATE"
+exit 0

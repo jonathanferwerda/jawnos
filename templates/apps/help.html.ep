@@ -60,9 +60,28 @@
 			<div class="help_body" style="flex:1;min-height:0;overflow-y:auto;padding:14px 20px 40px;box-sizing:border-box;">
 				<% if ($shown) { %>
 					<h2 style="margin:4px 0 2px;font-size:24px;"><%= $shown->{'title'} %></h2>
-					<div style="opacity:.7;font-style:italic;margin-bottom:12px;"><%= $shown->{'summary'} %></div>
+					<div style="opacity:.7;font-style:italic;margin-bottom:12px;"><%== &help::render_live($shown->{'summary'}) %></div>
 					<% foreach my $para ( @{ $shown->{'body'} } ) { %>
-						<p style="line-height:1.5;margin:0 0 12px;"><%= $para %></p>
+						<p style="line-height:1.5;margin:0 0 12px;"><%== &help::render_live($para) %></p>
+					<% } %>
+					<% my @examples = grep { $_ } map { &help::example($_) } grep { ref $_ eq 'HASH' } @{ $shown->{'examples'} || [] }; %>
+					<% if (@examples) { %>
+						<div class="help_examples" style="margin:2px 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;">
+							<div style="font-weight:bold;margin-bottom:6px;">Try it</div>
+							<% foreach my $ex ( @examples ) { %>
+								<% if ($ex->{'kind'} eq 'app') { %>
+									<span class="help_open_app button hover" app="<%= $ex->{'value'} %>" hint="<%= &subs::ui('Open') %> <%= $ex->{'label'} %>"
+										style="display:inline-block;margin:2px 8px 4px 0;padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
+										<%= &subs::ui('Open') %> <%= $ex->{'label'} %>
+									</span>
+								<% } else { %>
+									<span class="help_example_configure button hover" configure="<%= $ex->{'value'} %>" hint="<%= &subs::ui('Open') %> <%= $ex->{'label'} %>"
+										style="display:inline-block;margin:2px 8px 4px 0;padding:6px 12px;border-radius:8px;border:2px solid var(--line);cursor:pointer;font-weight:bold;">
+										<%= &subs::ui('Open') %> <%= $ex->{'label'} %>
+									</span>
+								<% } %>
+							<% } %>
+						</div>
 					<% } %>
 					<% if (@own_shortcuts) { %>
 						<div style="margin:16px 0 6px;font-weight:bold;">Keyboard shortcuts</div>
@@ -96,7 +115,7 @@
 							<div style="font-weight:bold;margin-bottom:6px;">Step by step</div>
 							<ol style="margin:0 0 6px 18px;padding:0;line-height:1.5;">
 								<% foreach my $step ( @{ $shown->{'steps'} } ) { %>
-									<li style="margin-bottom:5px;"><%= $step %></li>
+									<li style="margin-bottom:5px;"><%== &help::render_live($step) %></li>
 								<% } %>
 							</ol>
 						</div>

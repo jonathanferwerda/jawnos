@@ -1,0 +1,5 @@
+# The live session's user has passwordless sudo, like any live CD: the stick is
+# disposable and nothing on it is a secret. An installed disk inherits this
+# file, so treat the machine as trusted until a real password and a stricter
+# sudoers are set.
+jawn ALL=(ALL) NOPASSWD: ALL

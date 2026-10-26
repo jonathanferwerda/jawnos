@@ -1,0 +1,21 @@
+# The live image's Sway session. Deliberately shorter than
+# desktop/wayland/sway.conf: it only has to put JawnOS on the screen and give a
+# way out, because the tree it starts may be a version that predates a setting.
+set $mod Mod4
+
+exec /home/jawn/jawnos/desktop/wayland/jawnos-session
+exec swaybg -c '#0d0d12'
+exec waybar -c /home/jawn/jawnos/desktop/wayland/waybar.conf
+
+for_window [app_id="^jawnos-desktop$"] fullscreen enable
+for_window [app_id="^foot$"] floating enable, resize set 900 600
+
+bindsym $mod+Return exec foot
+bindsym $mod+d exec fuzzel
+bindsym $mod+q kill
+bindsym $mod+Shift+r reload
+bindsym $mod+Shift+e exec swaynag -t warning -m 'Leave Sway?' -B 'Yes, exit' 'swaymsg exit'
+
+font pango:monospace 10
+default_border pixel 2
+floating_modifier $mod

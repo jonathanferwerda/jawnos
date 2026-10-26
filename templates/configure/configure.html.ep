@@ -57,6 +57,20 @@
 	.cfg .cfg-details { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .65); background:var(--panel); padding:2px 10px; margin-top:8px; }
 	.cfg .cfg-details > summary { cursor:pointer; font-size:13px; padding:6px 0; }
 	.cfg .cfg-details[open] > summary { border-bottom:1px solid var(--line); margin-bottom:8px; }
+	/* Collapsible sections. A .cfg-acc is one section heading and its body;
+	   data-acc names it in localStorage (never the visible text). The chevron
+	   turns when the section is open and the rule under the summary marks the
+	   seam. A nested .cfg-acc (a device card's General/Bars/...) is quieter. */
+	.cfg .cfg-acc { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .65); background:var(--panel); padding:0 10px 2px; margin:12px 0; }
+	.cfg .cfg-acc > summary { display:flex; align-items:center; gap:8px; cursor:pointer; font-size:16px; font-weight:bold; padding:8px 0; list-style:none; }
+	.cfg .cfg-acc > summary::-webkit-details-marker { display:none; }
+	.cfg .cfg-acc > summary::before { content:'\25B8'; flex:0 0 auto; font-size:.8em; opacity:.7; transition:transform .15s ease; }
+	.cfg .cfg-acc[open] > summary::before { transform:rotate(90deg); }
+	.cfg .cfg-acc[open] > summary { border-bottom:1px solid var(--line); margin-bottom:8px; }
+	.cfg .cfg-acc > .cfg-card { border:0; background:transparent; padding:0; margin:0 0 6px; }
+	.cfg .cfg-acc-sub { border:0; border-top:1px solid var(--line); border-radius:0; background:transparent; padding:0; margin:10px 0 0; }
+	.cfg .cfg-acc-sub > summary { font-size:14px; padding:7px 0; }
+	@media (prefers-reduced-motion: reduce) { .cfg .cfg-acc > summary::before { transition:none; } }
 	@media (max-width:560px) {
 		.cfg-row { flex-direction:column; align-items:stretch; }
 		.cfg-row > label, .cfg-label { min-width:0; }

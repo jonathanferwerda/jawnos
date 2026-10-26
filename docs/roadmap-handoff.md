@@ -1017,3 +1017,31 @@ not processes.
   `database/backups/jawnos_<ms>.enc`; **beware `subs::vacuum($app)`** —
   `delete_app` runs it and it wipes *all* of an app's settings when the app has no
   appointments and is not `permanent`.
+
+## Operating system backbones
+
+The aim is for JawnOS to be what a machine boots into, not only the desk on top
+of a distro. mkosi builds the image; nothing here needs Yocto.
+
+- **mkosi, Arch first, Debian second.** Arch is the small, current base the
+  house's packages track; Debian follows as the conservative build for machines
+  that must sit still.
+- **Live USB with a `jawnos-state` partition.** The stick boots read-only and
+  keeps the house on its own labelled partition, so a reboot keeps settings,
+  data and the sealed vault instead of starting over.
+- **Install to disk carries that state.** The installer copies the running
+  system and adopts the same `jawnos-state` partition (or creates one), so a
+  person can try the live USB and then keep exactly what they tried.
+- **Updates: A/B root, dm-verity, systemd-sysupdate.** The root is read-only and
+  verified; an update writes the spare slot, verifies it and switches on reboot,
+  with the previous slot left for rollback. `jawnos-state` is untouched.
+
+**Yocto is explicitly out of scope now.** It is recorded only for a future
+sealed Linux appliance, where a one-purpose image and its BSP are the product;
+Buildroot is its lighter sibling for the same job. Neither is a desktop path,
+and pulling either in now would duplicate what mkosi already builds.
+
+**TempleOS is a VM curiosity, not a backbone.** Its DolDoc-style live documents
+are the idea behind Help's live fields and runnable examples (see
+[`docs/help-livedocs.md`](help-livedocs.md)); the OS itself is kept as something
+to boot in a VM and read, never as a base for JawnOS.

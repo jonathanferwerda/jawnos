@@ -53,12 +53,81 @@
 #utility_batch_groups .utility_pool_new_name { flex:1 1 160px; min-width:0; padding:5px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; }
 #utility_machines .utility_pool_group { border-top:1px solid var(--line); padding-top:4px; }
 #utility_machines .utility_pool_group_head { font-size:85%; opacity:.7; padding:4px 0 0; }
+/* The Crew: this machine's abilities and each peer's advert as chips, so a
+   machine's contribution to the house reads at a glance. The accordion frame
+   itself (.cfg-acc) is shared and defined elsewhere. */
+#crew_self .crew_chips, #crew_peers .crew_chips { display:flex; flex-wrap:wrap; gap:6px; }
+.crew_chip { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border:1px solid var(--line); border-radius:999px; background:var(--panel); font-size:12px; white-space:nowrap; }
+.crew_chip_dim { opacity:.5; }
+.crew_peer { display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; padding:7px 0; border-top:1px solid var(--line); }
+.crew_peer:first-of-type { border-top:0; }
+.crew_peer_name { flex:0 1 170px; min-width:0; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.crew_peer_meta { opacity:.7; font-size:85%; white-space:nowrap; }
+.crew_advertise { padding:5px 10px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); font:inherit; cursor:pointer; }
+.crew_advertise:hover { border-color:var(--accent, #7aa7ff); }
+.crew_advertise:disabled { opacity:.5; cursor:default; }
 @media (max-width:560px) {
 	#utility_machines .utility_job_name { flex:1 1 100%; }
 }
 </style>
 
 <div id="utility_controls">
+	<% my $crew_abilities = eval { &crew::abilities() } || {}; %>
+	<% my $crew_peers = eval { &crew::advert_list() } || []; %>
+	<% my $crew_now = &subs::rightNow(); %>
+	<details class="cfg-acc" data-acc="crew-abilities" open>
+		<summary hint="Crew"><%= &subs::ui('Crew') %></summary>
+		<div class="cfg-card" id="crew_self">
+			<h4 class="utility_machine_name" hint="This machine"><%= &subs::ui('This machine') %> — <%= $crew_abilities->{'hostname'} || &subs::ui('unknown') %></h4>
+			<p class="cfg-note"><%= &subs::ui('What this machine contributes to the house. The Crew places a job on a machine that can run it, so a device never calls a model it does not hold or cannot pay for.') %></p>
+			<div class="crew_chips">
+				<span class="crew_chip" hint="Processor cores"><%= &subs::ui('Cores') %>: <%= $crew_abilities->{'cores'} || '?' %></span>
+				<span class="crew_chip" hint="One-minute load average"><%= &subs::ui('Load') %>: <%= defined $crew_abilities->{'load1'} ? sprintf('%.2f', $crew_abilities->{'load1'}) : '?' %></span>
+				<span class="crew_chip" hint="Free and total memory"><%= &subs::ui('Memory') %>: <%= $crew_abilities->{'ram_free_mb'} || 0 %> / <%= $crew_abilities->{'ram_mb'} || 0 %> MB</span>
+				<span class="crew_chip" hint="Free disk space"><%= &subs::ui('Disk') %>: <%= $crew_abilities->{'disk_free_mb'} || 0 %> MB <%= &subs::ui('free') %></span>
+				<% if (defined $crew_abilities->{'battery_percent'}) { %>
+					<span class="crew_chip" hint="Battery"><%= &subs::ui('Battery') %>: <%= $crew_abilities->{'battery_percent'} %>%<%= $crew_abilities->{'on_ac'} ? ' · ' . &subs::ui('on AC') : '' %></span>
+				<% } %>
+				<span class="crew_chip" hint="Operating system"><%= $crew_abilities->{'os'} || '?' %> · <%= $crew_abilities->{'arch'} || '?' %></span>
+				<span class="crew_chip" hint="Device type"><%= $crew_abilities->{'device_type'} || '?' %></span>
+				<span class="crew_chip<%= $crew_abilities->{'ollama'} ? '' : ' crew_chip_dim' %>" hint="Local AI models">Ollama: <%= $crew_abilities->{'ollama'} ? scalar(@{ $crew_abilities->{'ollama_models'} || [] }) . ' ' . &subs::ui('models') : &subs::ui('none') %></span>
+				<% my $crew_models = $crew_abilities->{'ollama_models'} || []; %>
+				<% foreach my $crew_model ( @{ $crew_models }[0 .. ($#{$crew_models} > 7 ? 7 : $#{$crew_models})] ) { %>
+					<% next unless defined $crew_model; %>
+					<span class="crew_chip" hint="AI model"><%= $crew_model %></span>
+				<% } %>
+				<% if (scalar @{$crew_models} > 8) { %><span class="crew_chip" hint="More models">+<%= scalar(@{$crew_models}) - 8 %></span><% } %>
+				<% my $crew_tools = $crew_abilities->{'tools'} || {}; %>
+				<% foreach my $crew_tool ( sort keys %{$crew_tools} ) { %>
+					<span class="crew_chip<%= $crew_tools->{$crew_tool} ? '' : ' crew_chip_dim' %>" hint="Tool"><%= $crew_tool %></span>
+				<% } %>
+				<% my $crew_kinds = eval { &crew::kinds_for($crew_abilities) } || []; %>
+				<% if (scalar @{$crew_kinds}) { %><span class="crew_chip" hint="Job kinds this machine can run"><%= &subs::ui('Job kinds') %>: <%= join ', ', @{$crew_kinds} %></span><% } %>
+			</div>
+		</div>
+		<div class="cfg-card" id="crew_peers">
+			<h4 class="utility_machine_name" hint="Peers"><%= &subs::ui('Peers') %></h4>
+			<% if (scalar @{$crew_peers}) { %>
+				<% foreach my $crew_peer ( sort { ($b->{'read_at'} || 0) <=> ($a->{'read_at'} || 0) } @{$crew_peers} ) { %>
+					<% my $crew_a = $crew_peer->{'abilities'} || {}; %>
+					<% my $crew_age = $crew_now - ($crew_peer->{'read_at'} || $crew_now); %>
+					<% my $crew_peer_kinds = eval { &crew::kinds_for($crew_a) } || []; %>
+					<div class="crew_peer">
+						<span class="crew_peer_name" hint="Peer machine"><%= $crew_a->{'hostname'} || $crew_peer->{'signatorial'} %></span>
+						<span class="crew_peer_meta" hint="How long ago this peer advertised"><%= &subs::ui('last heard') %> <%= $crew_age > 120000 ? int($crew_age / 60000) . ' ' . &subs::ui('min ago') : int($crew_age / 1000) . ' ' . &subs::ui('sec ago') %></span>
+						<span class="crew_peer_meta" hint="Peer load"><%= &subs::ui('Load') %>: <%= defined $crew_a->{'load1'} ? sprintf('%.2f', $crew_a->{'load1'}) : '?' %></span>
+						<span class="crew_chip" hint="Peer AI models">Ollama: <%= scalar(@{ $crew_a->{'ollama_models'} || [] }) %> <%= &subs::ui('models') %></span>
+						<% if (scalar @{$crew_peer_kinds}) { %><span class="crew_chip" hint="Job kinds this peer can run"><%= join ', ', @{$crew_peer_kinds} %></span><% } else { %><span class="crew_chip crew_chip_dim" hint="No job kind fits this peer"><%= &subs::ui('no job kind fits') %></span><% } %>
+					</div>
+				<% } %>
+			<% } else { %>
+				<p class="cfg-note"><%= &subs::ui('No peer has advertised yet. Each machine is asked every five minutes, and Advertise now asks at once.') %></p>
+			<% } %>
+			<p class="cfg-note">
+				<button type="button" class="crew_advertise" hint="Advertise now" onclick="var b=this;b.disabled=true;fetch('/manager/crew/advertise',{method:'POST'}).then(function(r){return r.json();}).then(function(){if(typeof utilityControllerReloader==='function'){utilityControllerReloader();}else{location.reload();}}).catch(function(){b.disabled=false;});"><%= &subs::ui('Advertise now') %></button>
+			</p>
+		</div>
+	</details>
 	<% my $my_pools = &subs::batch_pools($controls->{$signatorial}); %>
 	<% my %my_pool = map { $_->{'id'} => $_ } @{$my_pools}; %>
 	<% my $my_member = sub { my $job = shift; my $group = $controls->{$signatorial}->{$job}->{'group'} || ''; return ($group ne '' && $my_pool{$group}) ? $my_pool{$group} : undef; }; %>

@@ -25184,7 +25184,9 @@ sub ai_chat_parts {
 		if ($free) { &subs::say_it('AI: ' . $model . ' is stood down (no credit); using the free model ' . $free); $model = $free; }
 	}
 	my ($body, $err) = &ai_chat_raw($model, $messages, $thinking);
-	$ai_last_model = $model;
+	# The record moves only when a call answered. It used to be stamped before
+	# the error check, so a failed call left "last model" naming a model that
+	# never replied - one reason a device reported it had got an answer.
 	# a fresh credit failure (marked down inside the call) also falls back, once
 	if ($err && &ai_model_paid($model)) {
 		my $free = &ai_free_model();
@@ -25194,6 +25196,7 @@ sub ai_chat_parts {
 		}
 	}
 	return (undef, $err) if $err;
+	$ai_last_model = $model;
 	my @parts;
 	my $text = &ai_response_text($body);
 	push @parts, { type => 'text', text => $text } if defined $text && length $text;
@@ -25296,18 +25299,49 @@ sub ai_role_models {
 	return (defined $primary ? $primary : '', defined $fallback ? $fallback : '');
 }
 
-# One role's chat call, retried on the role's fallback model when the primary
-# errors (an outage). The fallback is the same catalogue minus the primary, set
-# in Configure -> Plat beside the model.
+# One role's chat call. Before it is made, the Crew places it (crew::choose_model):
+# a role naming a peer that no longer holds the model, a paid bucket that is
+# stood down, or a local model this device never pulled is answered by what the
+# house can actually reach, and a peer's own Ollama carries the call. The call
+# still retries the role's fallback (then the primary) when the placed model
+# errors - an outage is not a placement mistake. A role with nothing viable is
+# reported rather than sent to a model that cannot answer.
 sub ai_chat_parts_role {
 	my ($role, $messages, $thinking) = @_;
 	my ($primary, $fallback) = &ai_role_models($role);
 	return (undef, "no $role model is set") unless $primary;
-	my ($parts, $err) = &ai_chat_parts($primary, $messages, $thinking);
+
+	my ($placed, $placed_why, $placed_ok);
+	if (defined &crew::choose_model) {
+		my @chosen = eval { &crew::choose_model($role) };
+		if ($@) {
+			# A roster or advert read that failed is not a reason to stop calling:
+			# fall back to the configured model, which is the old behaviour.
+			$log->info('AI: role ' . $role . ' could not be placed: ' . ($@ =~ s/\s+/ /gr)) if $log;
+		}
+		else {
+			$placed_ok = 1;
+			($placed, $placed_why) = @chosen;
+		}
+	}
+	if (!$placed_ok) { $placed = $primary; }
+	elsif (!defined $placed || !length $placed) {
+		return (undef, "no viable model for $role: " . ($placed_why || 'nothing is reachable'));
+	}
+
+	my $device = &ai_model_device($placed);
+	$log->info('AI: role ' . $role . ' placed on ' . $placed . ' on ' . ($device || &device_setter())) if $log;
+	if ($placed ne $primary && $placed_why) {
+		$log->info('AI: role ' . $role . ' left ' . $primary . ': ' . $placed_why) if $log;
+	}
+
+	my ($parts, $err) = &ai_chat_parts($placed, $messages, $thinking);
 	return ($parts, undef) unless $err;
-	if ($fallback && $fallback ne $primary) {
-		&subs::say_it('AI: ' . $role . ' failed (' . $err . '); trying the fallback ' . $fallback);
-		return &ai_chat_parts($fallback, $messages, $thinking);
+	foreach my $next ( grep { defined $_ && length $_ && $_ ne $placed } ($fallback, $primary) ) {
+		&subs::say_it('AI: ' . $role . ' failed (' . $err . '); trying ' . $next);
+		my ($next_parts, $next_err) = &ai_chat_parts($next, $messages, $thinking);
+		return ($next_parts, undef) unless $next_err;
+		($parts, $err) = ($next_parts, $next_err);
 	}
 	return (undef, $err);
 }

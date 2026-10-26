@@ -84,6 +84,9 @@ my $cache_dir = &home('~/') . '.president';
 
 require './gb.pl';
 require './AddressDirectory.pl';
+# The Crew: this machine's abilities and the house's job placement. It calls
+# &subs::... at run time and needs nothing loaded before it.
+require './crew.pl';
 
 # The archive root (config.json archive_dir) gets one folder per location type,
 # made here if it is missing. A blank archive_dir means this machine is not an
@@ -330,6 +333,8 @@ sub manager_starter() {
 	# its own process (pulling a 35MB APK can hold it for minutes), as do the
 	# short-tick discovery loops and the servers with live connections.
 	my @slow_loops = (
+		{ name => 'crew advert sync', first => 45, every => 300, run => \&crew::advert_sync },
+		{ name => 'crew queue tick', first => 20, every => 60, run => \&crew::tick },
 		{ name => 'crest member cosign', first => 90, every => 300, run => sub { &subs::crest_member_cosig_sync(); } },
 		{ name => 'ollama models sync', first => 60, every => 600, run => sub { &subs::ollama_models_sync(); } },
 		{ name => 'error watch', first => 25, every => 60, run => sub { &subs::error_watch_tick(); } },

@@ -1,0 +1,82 @@
+#!/bin/sh
+# Copy the running live system onto a disk and carry the house with it.
+#
+#   jawnos-install              show the plan, change nothing
+#   jawnos-install --yes /dev/sdX
+#
+# The image is copied byte for byte, so the ESP, systemd-boot and the kernel
+# travel with it; the partitions are then grown to fill the disk; and the live
+# session's /home/jawn is copied onto the new jawnos-state partition. That last
+# step is what keeps the changes made while trying the live USB.
+set -eu
+
+CONFIRM=no
+TARGET=
+for arg in "$@"; do
+    case "$arg" in
+        --yes) CONFIRM=yes ;;
+        /dev/*) TARGET="$arg" ;;
+        *) echo "unknown argument: $arg" >&2; exit 2 ;;
+    esac
+done
+
+if [ -z "$TARGET" ]; then
+    echo "usage: jawnos-install [--yes] /dev/sdX" >&2
+    exit 2
+fi
+if [ ! -b "$TARGET" ]; then
+    echo "not a block device: $TARGET" >&2
+    exit 2
+fi
+
+# Never write over the stick this system is running from.
+ROOTPART=$(blkid -L jawnos-root || true)
+if [ -z "$ROOTPART" ]; then
+    echo "cannot find the live root (label jawnos-root)" >&2
+    exit 1
+fi
+LIVEDISK=$(lsblk -no PKNAME "$ROOTPART" | head -n 1)
+if [ -n "$LIVEDISK" ] && [ "/dev/$LIVEDISK" = "$TARGET" ]; then
+    echo "refusing to install over the live media ($TARGET)" >&2
+    exit 1
+fi
+
+echo "live system: $ROOTPART on /dev/$LIVEDISK"
+echo "target:      $TARGET"
+echo "this erases $TARGET, then copies the live system and its house onto it"
+
+if [ "$CONFIRM" != yes ]; then
+    echo "dry run: nothing was written. Re-run with --yes to proceed." >&2
+    exit 0
+fi
+
+echo "copying the image..."
+dd if="/dev/$LIVEDISK" of="$TARGET" bs=16M status=progress conv=fsync
+
+echo "growing the partitions..."
+systemd-repart --dry-run=no --definitions=/usr/lib/jawnos/repart --size=auto "$TARGET"
+udevadm settle
+
+STATE=
+for p in "$TARGET"?*; do
+    [ -b "$p" ] || continue
+    if [ "$(blkid -s LABEL -o value "$p" 2>/dev/null || true)" = jawnos-state ]; then
+        STATE="$p"
+    fi
+done
+if [ -z "$STATE" ]; then
+    echo "the new disk has no jawnos-state partition" >&2
+    exit 1
+fi
+
+echo "carrying the house onto $STATE..."
+mkdir -p /mnt/jawnos-state
+mount "$STATE" /mnt/jawnos-state
+rsync -a --delete /home/jawn/ /mnt/jawnos-state/
+umount /mnt/jawnos-state
+
+# An NVRAM entry for the new disk. A machine that ignores it can still pick the
+# disk from its own boot menu, so a failure here is not fatal.
+efibootmgr -c -d "$TARGET" -p 1 -L "JawnOS" -l '\EFI\systemd\systemd-bootx64.efi' >/dev/null 2>&1 || true
+
+echo "done. Remove the live media and boot $TARGET."

@@ -22,6 +22,7 @@ package help;
 
 use strict;
 no warnings;
+use Mojo::Util qw(xml_escape);
 
 # The date every topic is considered vetted as of, unless it carries its own
 # `verified`. The auditor compares this against the git history of the app's
@@ -796,7 +797,8 @@ our %topic = (
 		verified => '2026-10-25',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
-			'Configure is where the desktop is made yours. Appearance (themes, colour schemes, font, texture, icon set, zoom, bar heights, the window border and the button border), the device lister, the utility controller and the remote-machine and mesh settings all live here.',
+			'Configure is where the desktop is made yours. Appearance (themes, colour schemes, font, texture, icon set, zoom, bar heights, the window border and the button border), the device lister, the utility controller and the remote-machine and mesh settings all live here. This copy is JawnOS {{live:version}}, running on {{live:machine}}.',
+			'The panels are built from collapsible sections. Press a section\'s heading to fold it away and press it again to open it; the arrow beside the heading says which way it will go. Which sections are open is remembered on this screen, so reloading the window - or coming back to it later - returns to the same shape. A section with no remembered choice keeps the default it ships with, so a fresh screen is never empty and an old choice never hides a section you have not opened yet.',
 			'The Dev panel lists the devices by the network they are on: a section per network, named by its subnet, with the machines and interfaces that reach it and a table of the devices found there. Scan sweeps the local network first, so a device nobody has talked to yet - a printer, a fresh appliance - still appears and can be given its purpose.',
 			'The Dev panel carries the mesh switch too. Sync topology sets how this house talks to itself: Auto keeps the hub in charge while the server is live and falls back to a full mesh when it is not, Mesh makes every peer dial every other peer, and Hub only makes the spokes dial the server. The choice is a house setting - every machine picks it up on its next sync - and Auto still lets machines on the same network talk directly.',
 			'Update Method, beside Sync topology, sets where a machine takes its own code from. None leaves the watcher off; Manual - GitHub and Manual - Peers also leave it off, and the Update now button beside the select applies a pull from that source when you press it. GitHub follows origin/main alone; Peers takes only a true fast-forward from another machine on the mesh; and Any, the default, tries GitHub first and falls back to a peer. It is a house setting as well, and the watcher reads it on its next pass, so a change takes effect within about a minute. Update now reports a dirty tree or local commits rather than discarding them; for either a dirty tree or local commits that block the pull it asks before discarding them, and a forced pull resets the checkout hard to the authority\'s head.',
@@ -1142,8 +1144,8 @@ our %topic = (
 	'utility_controller' => {
 		title => 'Utility controller', category => 'features',
 		templates => [ 'templates/configure/utility_controller.html.ep', 'templates/configure/system_setting_list.html.ep' ],
-		controls => [ 'Run this job', 'How often', 'Good', 'Bad', 'Batch groups', 'Batch pools', 'New pool name', 'Add a pool', 'Pool name', 'Pace for this pool', 'Remove this pool', 'Drop jobs here', 'Not in a pool', 'Keep the scheduled wake', 'Discharging samples', 'percent per hour while discharging' ],
-		verified => '2026-10-24',
+		controls => [ 'Crew', 'This machine', 'Peers', 'Advertise now', 'Processor cores', 'One-minute load average', 'Free and total memory', 'Job kinds this machine can run', 'Peer machine', 'Peer load', 'Run this job', 'How often', 'Good', 'Bad', 'Batch groups', 'Batch pools', 'New pool name', 'Add a pool', 'Pool name', 'Pace for this pool', 'Remove this pool', 'Drop jobs here', 'Not in a pool', 'Keep the scheduled wake', 'Discharging samples', 'percent per hour while discharging' ],
+		verified => '2026-10-25',
 		summary => 'The background jobs every machine runs, how often, and the house AI view above them.',
 		body => [
 			'Configure → Sys holds the Utility controller. Your own jobs are at the top: the Batch pools grid, and a Not in a pool bin for everything outside them. Every job is a tile carrying its switch, its name, the time it last ran and a good/bad dot; a job outside every pool also carries its own interval box, and the bin lists the switched-on jobs before the switched-off ones. A peer machine follows as a card named by its hostname, with its jobs and pools beneath it.',
@@ -1166,8 +1168,31 @@ our %topic = (
 			'Watch the last-run time and the good/bad dot to see whether it is keeping up.',
 			'In the Sys panel, read the house table and the API balances to see the AI work and what is left on each registered account.'
 		],
-		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Batch pools card at the top holds pools of jobs - Navigation (four minutes), Fast (fifteen), Slow (one hour), Daily - and a job dropped into a pool runs on the pool\'s pace instead of its own interval, so the pool wakes together. A job outside every pool keeps its own interval. Pools can be added, renamed, retimed and removed; removing one returns its jobs to the regular bin. Above that, Wake schedule releases the phone\'s CPU as soon as a scheduled wake has finished its work, and the PPH comparator compares battery drain between the scheduled wake and the old permanent lock. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, which lists only the providers with an account registered under Configure → Plat; only OpenRouter and DeepSeek report a balance and the rest read no balance API. Do not invent job names beyond the ones listed.',
-		related => [ 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
+		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Batch pools card at the top holds pools of jobs - Navigation (four minutes), Fast (fifteen), Slow (one hour), Daily - and a job dropped into a pool runs on the pool\'s pace instead of its own interval, so the pool wakes together. A job outside every pool keeps its own interval. Pools can be added, renamed, retimed and removed; removing one returns its jobs to the regular bin. The Crew section at the top of the panel is not a job list: it is what this machine can do and what the peers have advertised, and it is what decides where a job runs. Above that, Wake schedule releases the phone\'s CPU as soon as a scheduled wake has finished its work, and the PPH comparator compares battery drain between the scheduled wake and the old permanent lock. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, which lists only the providers with an account registered under Configure → Plat; only OpenRouter and DeepSeek report a balance and the rest read no balance API. Do not invent job names beyond the ones listed.',
+		related => [ 'crew', 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
+	},
+	'crew' => {
+		title => 'Crew', category => 'features',
+		templates => [ 'crew.pl', 'templates/configure/utility_controller.html.ep', 'templates/configure/plat_setting_list.html.ep' ],
+		controls => [ 'This machine', 'Peers', 'Advertise now', 'Processor cores', 'One-minute load average', 'Free and total memory', 'Job kinds this machine can run', 'Peer machine', 'Peer load' ],
+		verified => '2026-10-25',
+		summary => 'What each machine in the house can do, and where a job is sent to run.',
+		body => [
+			'The Crew is the house\'s account of its own machines. Each one advertises what it can do - processor cores, one-minute load, memory, free disk, operating system and architecture, battery state when the hardware reports one, the AI models its local Ollama lists, and the tools it has such as a browser, ffmpeg, tesseract and whisper - and the house keeps the most recent advert from every reachable peer. Configure → Sys → Crew shows this machine\'s own facts first, then one line per peer with its load, its model count and the job kinds it can take. Advertise now asks this machine to re-read its facts and pulls every reachable peer\'s advert in at once, instead of waiting for the five-minute pass.',
+			'An advert goes stale after fifteen minutes, so a peer that has gone quiet stops being offered. Nothing is invented: a machine that cannot read its battery says nothing about a battery, and a peer that never answered is simply absent rather than shown as idle.',
+			'The Crew is also what the assistants consult before they call a model. A role names a primary model and a fallback in Configure → Plat, but naming one is not proof it can answer here. Before a call, the house checks that the model can really be reached: a peer\'s own model must appear in that peer\'s advert, a paid provider must have its key or account on file and its budget not stood down, and a local Ollama model must be in this machine\'s own list. If the named model fails that check the fallback is tried, then the free model, then a model of the same family on a peer that holds one. When nothing is viable the assistant says so rather than reporting an answer, so a device no longer claims it heard from a model it does not have. A call that answered is the only one recorded as the last model used.',
+			'Work is described as a job kind, never as a command. The registry is fixed and small: a no-op and an echo that prove the rail, ai.evaluate for an assistant call, and whisper.transcribe for a recording. A peer route may only run a kind in that registry, the caller must be a machine on the roster and sign the request, and the payload is bounded before it is read. A finished job is remembered by its id for half an hour, so a retry is answered from the result instead of doing the work twice. This is deliberately narrower than a shell: nothing in a job names a path, a program or a line of code, and adding a kind means editing the registry.',
+			'Placement prefers this machine when it can run the kind and is not already at its cores, then the able peer with the lowest load. A heavy kind - a model call, a transcription - is kept off a machine already busy at its core count, while a light one tolerates a busier box. A job is never sent back to the machine that dispatched it, so two peers cannot bounce it between them.',
+			'Today the Crew carries the assistant calls and transcription. The same rail is meant for the housekeeping that should happen once rather than on every device - the task pass, the budget pass, a headless browser - and those are not moved onto it yet. The Crew section is honest about that: it lists the kinds this machine can actually run now.',
+		],
+		steps => [
+			'Open Configure, press Sys, and open the Crew section at the top of the Utility controller.',
+			'Read This machine for what this box contributes, then each peer\'s line for its load and models.',
+			'Press Advertise now after connecting a machine or pulling a model, so the house sees it without waiting five minutes.',
+			'If an assistant stops answering, read its model under Configure → Plat against the Crew list: a model no machine advertises is the usual reason.',
+		],
+		prompt => 'Explain the Crew: what each machine advertises (cores, load, memory, disk, OS and architecture, battery when reported, local Ollama models, tools), that a peer advert goes stale after fifteen minutes, and that the panel lives at Configure → Sys → Crew above the job tiles. The Crew is what chooses a model for an assistant role, so a role naming a model no machine holds is reported rather than called; the order is the role primary, its fallback, the free model, then the same family on a peer. Work is a small fixed registry of job kinds, not commands: noop, echo, ai.evaluate and whisper.transcribe today. A job is signed, bounded, and deduplicated by job id. Placement prefers this machine, then the least loaded able peer, never the dispatcher. Do not claim that tasks, budgets or a headless browser already run through the Crew; they are the next step.',
+		related => [ 'utility_controller', 'platform', 'devices_and_mesh', 'help_app' ]
 	},
 	'navigation' => {
 		title => 'Navigation (location logging)', category => 'features',
@@ -1464,6 +1489,24 @@ our %topic = (
 		related => [ 'hints', 'handbook', 'assistant' ]
 	},
 
+	'live_docs' => {
+		title => 'Live docs', category => 'functions',
+		templates => [ 'help.pl', 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
+		verified => '2026-10-25',
+		summary => 'Help pages that carry a value read when the page is drawn, and examples that open what they describe.',
+		body => [
+			'Most help is written once and read later, so a version number typed into a sentence goes stale. A live doc fills the value when the page is drawn instead: this page was drawn on {{live:machine}} running JawnOS {{live:version}}, and it is one of {{live:topics}} topics. Open the topic again and the value is read again.',
+			'A live value is written as {{live:example_token}}, with a name from the list between the braces. Only these names are filled: version (the installed JawnOS version), machine (this machine\'s name), now (this machine\'s clock at the moment of drawing), ollama (whether a local Ollama answers here), models (how many assistant roles have a model set), languages (how many languages the translator offers), topics (how many help topics this copy carries) and crew (the crew abilities, where that module is loaded). Anything else - a misspelling such as {{live:versoin}}, say - is left on the page exactly as written, so it is visible and does nothing.',
+			'Every value is read from the running system, and every one of them is inert text: it is escaped along with the rest of the paragraph, so a machine name can never become markup. Nothing is evaluated, looped over or read from a file a person did not add to the token list by hand.',
+			'A topic can also carry runnable examples. Press the button and JawnOS opens the app, or Configure on the named tab, at the place the line describes - the same path the Open button and the Configure tabs already use. There are only two shapes, an app to open and a Configure tab to show; an example holds no URL, no shell command and no path.',
+		],
+		examples => [
+			{ open => 'app', app => 'music' },
+			{ configure => 'plat' },
+		],
+		related => [ 'help_app', 'configure', 'platform' ]
+	},
+
 	'keyboard_shortcuts' => {
 		title => 'Keyboard shortcuts', category => 'features',
 		summary => 'The keys that move windows and drive each app, gathered on one sheet.',
@@ -1476,6 +1519,115 @@ our %topic = (
 		],
 		related => [ 'windows', 'start_menu', 'search', 'folders', 'terminal', 'hints' ]
 	}
+);
+
+# ---- live docs: values a page reads when it is drawn ------------------------
+# A live doc is still ordinary help text, but it may carry a placeholder written
+# {{live:name}}. Only a name in this table is filled; every value is a
+# no-argument sub returning a plain string. There is deliberately no eval and no
+# string interpolation here, so a token can never run code or reach anything a
+# person did not add to this file by hand. A name that is not listed is left on
+# the page exactly as written, so a misspelling is visible and harmless.
+our $live_ollama_memo;
+our %live_token = (
+	version => sub {
+		my $v = defined &subs::jawn_version ? eval { &subs::jawn_version() } : undef;
+		# A bare `require help.pl` (the auditor, a one-liner) has no subroutines.pl
+		# loaded, so fall back to the same file the app reads.
+		if (!defined $v || $v !~ /\S/) {
+			$v = eval {
+				my $fh;
+				open $fh, '<', './VERSION' or die;
+				local $/;
+				<$fh>;
+			};
+			$v = '' unless defined $v;
+			$v =~ s/\s+$//;
+		}
+		return (defined $v && $v =~ /\S/) ? $v : 'unknown';
+	},
+	machine => sub {
+		my $v = eval { &subs::machine_name() };
+		$v = eval { &subs::device_setter() } if !defined $v || $v !~ /\S/;
+		return (defined $v && $v =~ /\S/) ? $v : 'unknown';
+	},
+	now => sub {
+		my $ms = eval { &subs::rightNow() };
+		return 'unknown' unless defined $ms && $ms =~ /^\d+$/;
+		my @t = localtime(int($ms / 1000));
+		return sprintf('%04d-%02d-%02d %02d:%02d:%02d',
+			$t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
+	},
+	ollama => sub {
+		# A connect probe, not a shelled command and not a model fetch: the local
+		# API is asked once a minute at most, because one help page may be drawn
+		# many times in a row.
+		my $now = time;
+		return $live_ollama_memo->{'value'}
+			if $live_ollama_memo && $live_ollama_memo->{'at'} > $now - 60;
+		my $up = 0;
+		eval {
+			require IO::Socket::INET;
+			my $sock = IO::Socket::INET->new(
+				PeerHost => '127.0.0.1', PeerPort => 11434,
+				Proto => 'tcp', Timeout => 0.3
+			);
+			if ($sock) { $up = 1; close $sock; }
+		};
+		my $value = $up ? 'running' : 'not running';
+		$live_ollama_memo = { at => $now, value => $value };
+		return $value;
+	},
+	models => sub {
+		my @roles = qw/help_assistant eval_assistant visual_assistant
+			text_to_image_assistant text_to_audio_assistant
+			text_to_video_assistant coding_assistant transcription_assistant/;
+		my $n = eval {
+			my $s = &subs::settings_grabber({ app => 'mail', settings => [ @roles ] }) || {};
+			scalar grep { defined $s->{$_} && $s->{$_} =~ /\S/ } @roles;
+		};
+		return defined $n ? "$n" : 'unknown';
+	},
+	languages => sub {
+		my $n = eval {
+			my $l = &language::translation_languages();
+			ref $l eq 'ARRAY' ? scalar @{$l} : undef;
+		};
+		return defined $n ? "$n" : 'unknown';
+	},
+	topics => sub { return scalar keys %topic },
+	crew => sub {
+		my $n = eval {
+			return 'unavailable' unless defined &crew::abilities;
+			my $a = &crew::abilities();
+			return ref $a eq 'ARRAY' ? scalar @{$a}
+				: ref $a eq 'HASH' ? scalar keys %{$a}
+				: 'unavailable';
+		};
+		return (defined $n && length $n) ? $n : 'unavailable';
+	},
+);
+
+# ---- live docs: runnable examples ------------------------------------------
+# A topic may carry `examples`, each in one of two fixed shapes:
+#
+#   { open => 'app', app => 'music' }   opens that app's window
+#   { configure => 'plat' }             opens Configure on that tab
+#
+# The tab names below are the tab ids the Configure window itself uses, so an
+# example travels the same path as a press on that tab. Nothing else is
+# accepted: no URL, no shell, no path.
+our %example_configure_tab = (
+	me    => [ 'me_settings', 'Me' ],
+	enc   => [ 'restore_list', 'Enc' ],
+	system => [ 'system_setting_lister', 'Sys' ],
+	misc  => [ 'misc_setting', 'Misc' ],
+	plat  => [ 'plat_setting', 'Plat' ],
+	app   => [ 'appointment_list_grabber', 'App' ],
+	dev   => [ 'device_lister', 'Dev' ],
+	tun   => [ 'tunnel_lister', 'Tun' ],
+	pseud => [ 'pseudonym_setting_lister', 'Pseud' ],
+	store => [ 'store_setting_lister', 'Store' ],
 );
 
 # Keyboard shortcuts, keyed by the topic they belong to. Each row is
@@ -1600,6 +1752,55 @@ sub key {
 sub get {
 	my ($id) = @_;
 	return $topic{ help::key($id) };
+}
+
+# One live value, or 'unavailable' when it cannot be read. Kept private so the
+# only public way into the registry is render_live below.
+sub _live_value {
+	my ($name) = @_;
+	my $sub = $live_token{$name};
+	return 'unavailable' unless $sub;
+	my $value = eval { $sub->() };
+	return (defined $value && length $value) ? $value : 'unavailable';
+}
+
+# Fill the live placeholders in one piece of help text and return HTML-ready
+# text. The whole string is escaped first, exactly as the template used to do;
+# a recognised token is then replaced with its value, which is escaped too so a
+# machine name or a version can never become markup. An unknown token is left
+# verbatim. The template prints the result with <%== %> precisely because the
+# escaping has already happened here.
+sub render_live {
+	my ($text) = @_;
+	return '' unless defined $text && length $text;
+	my $html = xml_escape($text);
+	$html =~ s{\{\{live:([a-z][a-z0-9_]*)\}\}}{
+		my $name = $1;
+		exists $live_token{$name} ? xml_escape(_live_value($name)) : "{{live:$name}}"
+	}ge;
+	return $html;
+}
+
+# Resolve one runnable example to the values the template and help.js use, or
+# undef when it is not one of the two shapes above. The label is the app's own
+# topic title (a proper name) or the Configure tab's printed name, so the
+# template can put the existing "Open" label in front of it.
+sub example {
+	my ($spec) = @_;
+	return undef unless ref $spec eq 'HASH';
+	if (($spec->{'open'} // '') eq 'app') {
+		my $app = $spec->{'app'} // '';
+		return undef unless $app =~ /^[a-z][a-z0-9_]*$/;
+		return { kind => 'app', value => $app, label => ($topic{$app}{'title'} || $app) };
+	}
+	if (defined $spec->{'configure'}) {
+		my $tab = $spec->{'configure'} // '';
+		return undef unless $tab =~ /^[a-z][a-z0-9_]*$/;
+		my ($id, $label) = @{ $example_configure_tab{$tab} || [ $tab, $tab ] };
+		return undef unless $id =~ /^[a-z][a-z0-9_]*$/;
+		return { kind => 'configure', value => $id, label => 'Configure: ' . $label };
+	}
+	return undef;
 }
 
 # The whole catalogue as plain records, for the index and for search.
