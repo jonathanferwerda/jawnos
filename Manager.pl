@@ -29931,20 +29931,16 @@ get '/manager/folders/archive' => sub($c) {
 	my $misc = &Manager::misc_setting_list();
 	my $device = &subs::device_setter();
 	my $machines = &subs::remote_machine_lister({ self => 'no' });
-	my %machine_for;
-	foreach my $rm ( @{$machines} ) {
-		$machine_for{$rm->{'signatorial'}} = $rm if $rm->{'signatorial'};
-	}
 	my @locations;
 	foreach my $location ( &subs::location_types() ) {
 		my $where = $misc->{$device}->{$location . '_location'};
-		my $archive = $misc->{$device}->{$location . '_archive'};
-		next unless ($where && $archive);
+		my $rm = &subs::archive_machine_for($location, $misc->{$device} || {}, $machines);
+		next unless ($where && $rm);
 		push @locations, {
 			location => $location,
 			where => $where,
-			remote_uuid => $machine_for{$archive} ? $machine_for{$archive}->{'uuid'} : '',
-			remote_hostname => $machine_for{$archive} ? $machine_for{$archive}->{'hostname'} : $archive
+			remote_uuid => $rm->{'uuid'} || '',
+			remote_hostname => $rm->{'hostname'} || ''
 		};
 	}
 	$c->render(json => { status => 'ok', jobs => \@jobs, locations => \@locations });

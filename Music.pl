@@ -1770,17 +1770,10 @@ sub music_archive_entries($data) {
 	my $misc = $data->{'misc_settings'} || &Manager::misc_setting_list();
 	my $device = &subs::device_setter();
 	my $machines = &subs::remote_machine_lister({ self => 'no' });
-	my %machine_for;
-	foreach my $rm ( @{$machines} ) {
-		$machine_for{$rm->{'signatorial'}} = $rm if $rm->{'signatorial'};
-		$machine_for{$rm->{'uuid'}} = $rm if $rm->{'uuid'};
-	}
 	my @lookups;
 	foreach my $pick ( @{$picked} ) {
 		if ($pick->{'location'}) {
-			my $archive = $misc->{$device}->{$pick->{'location'} . '_archive'};
-			next unless $archive;
-			my $rm = $machine_for{$archive};
+			my $rm = &subs::archive_machine_for($pick->{'location'}, $misc->{$device} || {}, $machines);
 			next unless ($rm && $rm->{'uuid'});
 			push @lookups, { location => $pick->{'location'}, remote_uuid => $rm->{'uuid'}, prefix => '' };
 		}
