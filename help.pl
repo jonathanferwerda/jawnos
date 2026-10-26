@@ -80,7 +80,7 @@ our %topic = (
 	'clock' => {
 		title => 'Clock', category => 'apps', app => 'clock',
 		templates => [ 'templates/apps/clock.html.ep', 'public/js/manager/clock.js', 'templates/manager.html.ep' ],
-		verified => '2026-10-25',
+		verified => '2026-10-26',
 		summary => 'Alarms, a stopwatch, timers and world clocks, with alarms and timers that can start and stop appointments.',
 		body => [
 			'The Clock app has four faces. Alarm holds up to ten alarms, each with a time, a name, an optional sound and a linked appointment. Each alarm is a folded row: the strip shows its time, its name and the machines that carry it as pills, with the on/off switch at its end. Press the strip (or the arrow) to open the alarm and see the editors - the time and name, the days, the next run, the sound and Play mode - and press it again to fold it away; only one alarm is open at a time. Stopwatch counts up with laps. Timer holds up to ten countdowns, and several can run at once. World Clock shows the local time beside any time zones you add.',

@@ -282,6 +282,19 @@ function jawnosClockRenderApps(state) {
 	if (jawnosClockAppTarget) { jawnosClockAppsFill(jawnosClockAppTarget); }
 }
 
+// The name a linked appointment wears in the picker and in the alarm row. The
+// state carries the house's own label (format_name), so the row and the menu
+// agree; an app that has not written an appointment yet falls back to its key.
+function jawnosClockAppLabel(app) {
+	app = app || '';
+	if (!app) { return ''; }
+	var label = '';
+	$.each(jawnosClockApps || [], function (i, a) {
+		if ((a.value || '') == app) { label = a.label || a.value || ''; return false; }
+	});
+	return label || app.replace(/_/g, ' ');
+}
+
 // The linked-appointment picker. A datalist cannot carry a picture, and the
 // house's icons are half the recognition, so this is a small popup list with
 // each app's own icon. One menu is shared by every picker in the window.
@@ -307,8 +320,11 @@ function jawnosClockAppsFill(input) {
 		if (term && label.toLowerCase().indexOf(term) < 0 && (app.value || '').toLowerCase().indexOf(term) < 0) { return; }
 		if (n >= 80) { return; }
 		n++;
-		html += '<button type="button" class="clock_app_choice' + (app.value == chosen ? ' selected' : '') + '" data-app="' + jawnosClockEsc(app.value) + '">';
-		html += (app.icon || '') + '<span>' + jawnosClockEsc(label) + '</span></button>';
+		html += '<button type="button" class="clock_app_choice' + (app.value == chosen ? ' selected' : '') + '" data-app="' + jawnosClockEsc(app.value) + '" data-label="' + jawnosClockEsc(label) + '">';
+		// The icon may be a span of initials ("WU") when the app has no picture,
+		// so the label carries its own class; selecting the first span picked the
+		// icon and put "WU" in the field instead of "Wake Up".
+		html += (app.icon || '') + '<span class="clock_app_choice_label">' + jawnosClockEsc(label) + '</span></button>';
 	});
 	menu.html(html);
 }
@@ -362,8 +378,9 @@ $(document).on('click', '.clock_app_choice', function () {
 	var input = jawnosClockAppTarget;
 	if (!input) { return; }
 	var app = $(this).attr('data-app') || '';
-	var label = $(this).find('span').first().text();
-	input.attr('data-app', app).val(app ? label : '');
+	var label = $(this).attr('data-label') || $(this).find('.clock_app_choice_label').first().text();
+	if (!label) { label = $(this).find('span').last().text(); }
+	input.attr('data-app', app).attr('data-label', label || '').val(app ? label : '');
 	if (input.hasClass('clock_alarm_app')) {
 		jawnosClockNfcVisibility(input.closest('.clock_alarm'), jawnosClockState);
 	}
@@ -461,7 +478,7 @@ function jawnosClockAlarmHtml(alarm, state) {
 	html += '<button type="button" class="clock_alarm_delete" hint="' + jawnosClockEsc(jawnosT('delete')) + '" aria-label="' + jawnosClockEsc(jawnosT('delete')) + '">✕</button>';
 	html += '</div>';
 	html += '<div class="clock_alarm_extra">';
-	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('link_appointment')) + '</span><div class="clock_app_picker"><input type="text" class="clock_alarm_app" autocomplete="off" data-app="' + jawnosClockEsc(alarm.app || '') + '" value="' + jawnosClockEsc((alarm.app || '').replace(/_/g, ' ')) + '" placeholder="' + jawnosClockEsc(jawnosT('no_appointment')) + '"><button type="button" class="clock_app_toggle" tabindex="-1" aria-label="' + jawnosClockEsc(jawnosT('link_appointment')) + '">▾</button></div></label>';
+	html += '<label class="clock_field"><span>' + jawnosClockEsc(jawnosT('link_appointment')) + '</span><div class="clock_app_picker"><input type="text" class="clock_alarm_app" autocomplete="off" data-app="' + jawnosClockEsc(alarm.app || '') + '" value="' + jawnosClockEsc(jawnosClockAppLabel(alarm.app)) + '" placeholder="' + jawnosClockEsc(jawnosT('no_appointment')) + '"><button type="button" class="clock_app_toggle" tabindex="-1" aria-label="' + jawnosClockEsc(jawnosT('link_appointment')) + '">▾</button></div></label>';
 	var nfc_tags = (state && state.nfc_apps) || {};
 	var nfc_tag = (alarm.app && nfc_tags[alarm.app]) ? 1 : 0;
 	var nfc_on = alarm.nfc ? 1 : 0;
@@ -557,6 +574,11 @@ function jawnosClockSaveAlarm(row, delay) {
 		delete jawnosClockSaveTimers[uuid];
 		jawnosClockPost('/manager/clock/alarm', jawnosClockAlarmData(row), function () {
 			jawnosClockRefresh(true);
+			// The delivery confirmations are written by the background push, which
+			// answers after this save does. Look again shortly so the ✓ marks appear
+			// as the machines confirm instead of waiting for the five-second poll.
+			setTimeout(function () { jawnosClockRefresh(true); }, 1200);
+			setTimeout(function () { jawnosClockRefresh(true); }, 3200);
 		});
 	}, delay || 0);
 }

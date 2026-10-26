@@ -23202,7 +23202,12 @@ post '/manager/clock/alarm' => sub($c) {
 			}
 			$changed_alarm = $alarm;
 			$changed_op = 'upsert';
-			$push_machines = $alarm->{'machines'} || $relay_machines;
+			# A save can remove a machine as well as add one, and the machine taken
+			# off still has the alarm armed (or ringing) until the row sync reaches
+			# it. Push to both the old and the new selection so every affected
+			# machine hears about the change now.
+			my %push_to = map { $_ => 1 } (@{ $alarm->{'machines'} || [] }, @{ $relay_machines || [] });
+			$push_machines = [ keys %push_to ];
 		}
 	}
 

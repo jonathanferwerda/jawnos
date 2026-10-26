@@ -32683,15 +32683,14 @@ sub clock_relay {
 	my $self = &signatorial_designer() || '';
 	my @want = grep { defined $_ && length $_ && $_ ne $self } @{ $machines || [] };
 	return 0 unless scalar @want;
-	my $rows = eval { &db_query('select hostname, signatorial, manager, ip, port from remote_machines')->hashes } || [];
-	my %by_sig;
-	foreach my $rm (@{ $rows || [] }) {
-		my $sig = $rm->{'signatorial'} || '';
-		next unless length $sig;
-		next unless $rm->{'manager'};
-		$by_sig{$sig} = $rm;
+	# Resolve each target through the peer lister, not the raw roster row: a
+	# phone advertises its own 127.0.0.1 as the manager, which is unreachable
+	# from the machine pressing Dismiss. The lister swaps it for the LAN address.
+	my @peers;
+	foreach my $sig (@want) {
+		my $rm = &clock_alarm_peer_row($sig);
+		push @peers, [ $sig, $rm ] if $rm && $rm->{'manager'};
 	}
-	my @peers = grep { $by_sig{$_} } @want;
 	return 0 unless scalar @peers;
 	my %form = ( action => $action, relayed => 'yes', signatorial => ($self || ''), uuid => ($uuid || '') );
 	foreach my $key ( keys %extra ) {
@@ -32700,8 +32699,8 @@ sub clock_relay {
 	}
 	eval {
 		&subprocessor(sub {
-			foreach my $sig (@peers) {
-				my $rm = $by_sig{$sig};
+			foreach my $peer (@peers) {
+				my ($sig, $rm) = @{$peer};
 				eval {
 					# remote_useragent_maker returns the peer row with a 'ua' and
 					# the tunnel-aware 'manager' url, not a bare agent.
@@ -32765,7 +32764,7 @@ sub clock_alarm_mark_ack {
 # The roster rows a push can reach, by signatorial. A same-LAN row may carry no
 # manager URL; the lister builds one when the push finds it missing.
 sub clock_alarm_peers() {
-	my $rows = eval { &db_query('select hostname, signatorial, manager, ip, port from remote_machines')->hashes } || [];
+	my $rows = eval { &db_query('select hostname, signatorial, manager, ip, port, device, network from remote_machines')->hashes } || [];
 	my %by_sig;
 	foreach my $rm (@{ $rows || [] }) {
 		my $sig = $rm->{'signatorial'} || '';
@@ -32773,6 +32772,27 @@ sub clock_alarm_peers() {
 		$by_sig{$sig} = $rm;
 	}
 	return \%by_sig;
+}
+
+# One target's row, resolved the way the rest of the peer rail resolves a peer.
+# A machine advertises the manager it answers on, which on an Android handset is
+# its own 127.0.0.1: using that verbatim made every alarm push to the phone fail
+# with "Connection refused" and no confirmation was ever recorded. The lister
+# swaps a loopback or dead tailnet manager for the LAN address the peer
+# advertised, so a phone on the house network is reached directly.
+sub clock_alarm_peer_row {
+	my ($sig) = @_;
+	return undef unless defined $sig && length $sig;
+	my $row = eval {
+		&remote_machine_lister({ signatorial => $sig, limit => 1, mirrors => 'none', self => 'no' });
+	};
+	if (ref $row eq 'HASH' && ($row->{'signatorial'} || '') eq $sig && ($row->{'manager'} || '') =~ m{^https?://}) {
+		return $row;
+	}
+	my $fallback = eval {
+		&db_query('select hostname, signatorial, manager, ip, port, device, network from remote_machines where signatorial = ?', $sig)->hash;
+	};
+	return ref $fallback eq 'HASH' ? $fallback : undef;
 }
 
 # Push one alarm edit. Returns { delivered => [...], failed => [...] }. The
@@ -32807,13 +32827,9 @@ sub clock_alarm_push {
 
 	my @failed;
 	foreach my $sig ( sort keys %want ) {
-		my $rm = $rows->{$sig};
-		# A same-LAN row may carry no manager URL; the lister builds one from
-		# the address it knows, exactly as the rest of the peer rail does.
-		if (!$rm || !$rm->{'manager'}) {
-			my $resolved = eval { &remote_machine_lister({ signatorial => $sig, limit => 1 }) };
-			$rm = $resolved if ref $resolved eq 'HASH' && $resolved->{'manager'};
-		}
+		# Always resolve through the lister: a stored manager can be the peer's
+		# own loopback (Android) or a tailnet name whose node is away.
+		my $rm = &clock_alarm_peer_row($sig);
 		if (!$rm || !$rm->{'manager'}) { push @failed, $sig; next; }
 		my $ok = 0;
 		my $err = '';
@@ -32852,14 +32868,23 @@ sub clock_alarm_push {
 	# own delivered list. One hop only, so two disconnected machines cannot loop.
 	if ($allow_forward && scalar @failed) {
 		my %failed = map { $_ => 1 } @failed;
-		my @relays = grep { !$failed{$_} && !$want{$_} && $_ ne $self } sort keys %{ $rows };
+		# Candidates are the peers that are not targets and did not fail. Ask the
+		# server first: when two machines cannot see each other (different
+		# networks, a phone whose LAN address a peer cannot route), the server is
+		# the one place both can reach, so it forwards the edit for us.
+		my @relays = grep { !$failed{$_} && !$want{$_} && $_ ne $self } keys %{ $rows };
+		@relays = sort {
+			my $ad = (($rows->{$a} || {})->{'device'} || '') eq 'server' ? 0 : 1;
+			my $bd = (($rows->{$b} || {})->{'device'} || '') eq 'server' ? 0 : 1;
+			$ad <=> $bd || $a cmp $b;
+		} @relays;
 		my $tries = 0;
 		my @still = @failed;
 		foreach my $relay_sig (@relays) {
 			last if !scalar @still || $tries >= 3;
 			$tries++;
-			my $rm = $rows->{$relay_sig};
-			next unless $rm;
+			my $rm = &clock_alarm_peer_row($relay_sig);
+			next unless $rm && $rm->{'manager'};
 			eval {
 				my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $relay_sig });
 				die "no agent\n" unless $hop && $hop->{'ua'} && $hop->{'manager'};
