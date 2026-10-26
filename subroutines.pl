@@ -11809,6 +11809,15 @@ sub file_device_renamer() {
 	return ($destination,$asset,$type,$app);
 }
 
+# Put an arbitrary filesystem path into a shell command literally. Single
+# quotes carry spaces, brackets, parentheses, ampersands and quotes, and the
+# one character that cannot appear inside them is escaped the usual way.
+sub shell_quote {
+	my $s = shift // '';
+	$s =~ s/'/'\\''/g;
+	return "'" . $s . "'";
+}
+
 sub file_media_information() {
 	my $file_data = shift;
 	my $file = shift || $file_data->{'f'};
@@ -11816,7 +11825,7 @@ sub file_media_information() {
 
 
 	if ($file_data->{'type'} eq 'image') {
-		my $command = 'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 ' . $file;
+		my $command = 'ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 ' . &shell_quote($file);
 		my $res = `$command`;
 		chomp $res;
 		my @res = split ',', $res;
@@ -11824,7 +11833,7 @@ sub file_media_information() {
 	}
 	elsif ($file_data->{'type'} eq 'audio') {
 
-		my $command = 'ffprobe -print_format json -show_entries stream=codec_name:format -select_streams a:0 -v quiet ' . $file;
+		my $command = 'ffprobe -print_format json -show_entries stream=codec_name:format -select_streams a:0 -v quiet ' . &shell_quote($file);
 
 		my $jres = `$command`;
 		my $res = eval { return decode_json $jres } || {};
@@ -11833,7 +11842,7 @@ sub file_media_information() {
 			$file_data->{'info'} = $format;
 		}
 		else {
-			my $command = 'ffprobe -v error -select_streams a:0 -show_entries stream=duration -of csv=p=0 ' . $file;
+			my $command = 'ffprobe -v error -select_streams a:0 -show_entries stream=duration -of csv=p=0 ' . &shell_quote($file);
 			my $res = `$command`;
 			chomp $res;
 			my @res = split ',', $res;
@@ -11842,7 +11851,7 @@ sub file_media_information() {
 		}
 	}
 	elsif ($file_data->{'type'} eq 'video') {
-		my $command = 'ffprobe -print_format json -show_chapters -show_entries stream=height,width,duration,codec_name:format -select_streams v:0 -v quiet ' . $file;
+		my $command = 'ffprobe -print_format json -show_chapters -show_entries stream=height,width,duration,codec_name:format -select_streams v:0 -v quiet ' . &shell_quote($file);
 		my $jres = `$command`;
 		my $res = eval { return decode_json $jres } || {};
 		my $format = $res->{'format'};
