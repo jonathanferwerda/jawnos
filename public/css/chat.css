@@ -896,6 +896,8 @@
 .jg_room:hover { background: var(--line); }
 .jg_room_name { font-weight: 700; }
 .jg_scope { font-size: 11px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.jg_canonical_row { align-items: baseline; }
+.jg_canonical { color: var(--accent, #4a90d9); font-weight: 600; }
 .jg_badge { display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; }
 .jg_detail { border-top: 1px solid var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 .jg_detail_head { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }

@@ -165,6 +165,10 @@
 				<label><span><%= $construct_label->($kind->{'name'}) %></span><input class="jg_pick" kind="<%= $kind->{'name'} %>" placeholder="<%= &subs::format_name($kind->{'def'}) %>"></label>
 			<% } %>
 		</div>
+		<div class="jg_row jg_canonical_row">
+			<span class="jg_scope"><%= &subs::ui('One room in every language') %></span>
+			<span id="jg_canonical" class="jg_scope jg_canonical" aria-live="polite"></span>
+		</div>
 		<details class="jg_relations">
 			<summary><%= &subs::ui('People in the house') %></summary>
 			<div class="jg_row">
