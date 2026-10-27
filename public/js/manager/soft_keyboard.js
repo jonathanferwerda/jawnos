@@ -356,7 +356,11 @@ function softKbOn() {
 	// was left on last time; only an explicit ask (below) brings it back
 	if (softKbDesk()) { return false; }
 	if (stored == 'on') { return true; }
-	if (typeof windowPhoneChecker == 'function') { return windowPhoneChecker(); }
+	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) { return true; }
+	// A tablet is a touch device with no hovering pointer, so the dock is its
+	// keyboard exactly as it is a phone's. softKbDesk above already refused a
+	// real desk; this is the touch case the phone test misses.
+	if (/Android|iPad|Tablet/i.test(navigator.userAgent || '')) { return true; }
 	return /Android|iPhone|iPad|iPod|Tablet|Mobile/i.test(navigator.userAgent || '');
 }
 
