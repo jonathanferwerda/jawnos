@@ -155,6 +155,40 @@ foreach my $j (@jobs) {
 	}
 }
 
+# The site is static and its host has no outbound network, so it reads this one
+# small file from raw.githubusercontent (the only cross-origin place a browser
+# can read). Update it after a real upload; the routine that publishes also
+# commits it, which is what makes jawnos.ca see the new build.
+sub update_downloads_json {
+	my ($j) = @_;
+	return unless ($j->{'product'} || '') eq 'app';
+	my $path = "$root/downloads.json";
+	my $data = {};
+	if (-f $path) {
+		my $text = eval { read_file($path) };
+		$data = eval { decode_json($text) } || {} if defined $text && length $text;
+	}
+	my @t = gmtime(time());
+	$data->{'generated'} = sprintf('%04d-%02d-%02dT%02d:%02d:%02dZ', $t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
+	$data->{'app'} = {
+		'ok' => Mojo::JSON::true,
+		'url' => "https://github.com/$repo/releases/download/$tag/" . $j->{'filename'},
+		'filename' => $j->{'filename'},
+		'versionName' => $j->{'vn'},
+		'versionCode' => $j->{'vc'} + 0,
+		'size' => $j->{'size'} + 0,
+		'sha256' => $j->{'sha'},
+		'source' => 'https://github.com/jonathanferwerda/termux-app',
+		'license' => 'GPL-2.0',
+	};
+	write_file($path, encode_json($data));
+	print "updated downloads.json (commit it so jawnos.ca sees this build)\n";
+}
+
+foreach my $j (@jobs) {
+	update_downloads_json($j);
+}
+
 # Keep the release notes naming the builds that are actually on the release.
 # The notes used to be written only when the release was first created, so a
 # later publish left the body advertising an old versionCode while the assets
