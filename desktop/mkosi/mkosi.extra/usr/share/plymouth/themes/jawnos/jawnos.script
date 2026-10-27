@@ -42,7 +42,10 @@ global.bullet_count = 0;
 fun password_dialog_setup ()
   {
     global.bullet_image = Image.Text ("*", 0.533, 0.753, 0.816);
-    global.dialog_prompt_sprite = Sprite ();
+    # A Sprite needs an image at construction; a blank one is replaced by the
+    # real prompt text in display_password_callback.
+    global.dialog_prompt_image = Image.Text (" ", 0.847, 0.871, 0.914);
+    global.dialog_prompt_sprite = Sprite (global.dialog_prompt_image);
     global.dialog_prompt_sprite.SetOpacity (0);
     for (i = 0; i < 96; i++)
       {
