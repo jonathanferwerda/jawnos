@@ -11,9 +11,17 @@ This build makes the app feel like the system it is meant to be, rather than a
 browser wrapped around the manager.
 
 - **JawnOS home.** A native home screen with a clock, search, app grid, dock
-  and a "today" usage card. The JawnOS row above the grid lists the manager's
-  own apps — Marker, Music, Gallery, IDE, Box Office and the rest — so they are
-  one tap away without opening the manager first.
+  and a "today" usage card. The JawnOS row is now the start menu's own app
+  list, so it matches what the desk offers. A second row is the clothesline:
+  the apps the house is running now, refreshed while Home is on screen.
+- **System app shelves.** The installed apps are grouped into Communication,
+  Games, System, Accessories and Other. Long-press an app, drag it onto a
+  shelf chip, and it stays there on this device. Android's own app category
+  and the system flag choose the starting shelf.
+- **The launcher wears the desk's theme.** Its background, the ink (black on a
+  light desk, white/light grey on a dark one), the cards, the dock and the
+  system bars all follow the manager's background colour, re-read every ten
+  seconds so a theme an app changes shows up on the home screen too.
 - **Single-app windows.** Tapping a JawnOS app opens just that app, full
   screen. Each app goes through the start menu's own opener, so Box Office
   opens the ticket maker, Budget the ledger, Clock the alarms, Gallery the
