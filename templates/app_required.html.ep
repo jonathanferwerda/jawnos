@@ -49,9 +49,17 @@
 				try { last = parseInt(sessionStorage.getItem('jawn_app_reload') || '0', 10) || 0; } catch (e) { last = 0; }
 				if (last && Date.now() - last < 5000) {
 					status(<%== &subs::json_chars(&subs::ui('Still signing in...')) %>);
+					// The session cookie can land just after the first load. Retry a
+					// couple of times, bounded, instead of stranding the page here.
+					var tries = 0;
+					try { tries = parseInt(sessionStorage.getItem('jawn_app_reload_tries') || '0', 10) || 0; } catch (e) { tries = 0; }
+					if (tries < 3) {
+						try { sessionStorage.setItem('jawn_app_reload_tries', String(tries + 1)); } catch (e) {}
+						setTimeout(function () { window.location.reload(); }, 2500);
+					}
 					return;
 				}
-				try { sessionStorage.setItem('jawn_app_reload', String(Date.now())); } catch (e) {}
+				try { sessionStorage.setItem('jawn_app_reload', String(Date.now())); sessionStorage.removeItem('jawn_app_reload_tries'); } catch (e) {}
 				status(<%== &subs::json_chars(&subs::ui('Signed in. Loading...')) %>);
 				setTimeout(function () { window.location.reload(); }, 400);
 			}
