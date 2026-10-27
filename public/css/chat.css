@@ -898,6 +898,9 @@
 .jg_scope { font-size: 11px; color: var(--ink-muted); overflow-wrap: anywhere; }
 .jg_canonical_row { align-items: baseline; }
 .jg_canonical { color: var(--accent, #4a90d9); font-weight: 600; }
+.jg_unknown { color: #a06a00; }
+.jg_media { align-items: baseline; min-height: 0; }
+.jg_mute { padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 12px; }
 .jg_badge { display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; }
 .jg_detail { border-top: 1px solid var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }
 .jg_detail_head { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
