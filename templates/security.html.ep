@@ -10,6 +10,17 @@
 		<button class="security_view_select" view="passkeys" style="<% if ($president->{'security_view'} eq 'passkeys') { %>background-color:lightgreen;<% } %>">Passkeys</button>
 	</div>
 	<div class="security_view" view="padlock" style="<% unless ( $president->{'security_view'} eq 'padlock' ) { %>display:none;<% } %>">
+		<% if ($lockdown_active) { %>
+			<div class="security_lockdown" style="border:2px solid #b0342e;border-radius:10px;padding:14px;margin:0 0 14px;max-width:680px;">
+				<h2 style="margin-top:0;"><%= &subs::ui('Lockdown') %></h2>
+				<p style="line-height:1.5;"><%= &subs::ui('An enemy is present, or this is a dangerous place. Other apps are closed. Confirm with your fingerprint to reveal the appointment so you can stop it.') %></p>
+				<% if (scalar @{ $lockdown_apps || [] }) { %>
+					<p><%= &subs::ui('Hidden appointment') %>: <%== join ', ', map { &subs::html_text(&subs::format_name($_)) } @{ $lockdown_apps || [] } %></p>
+				<% } %>
+				<button id="lockdown_unlock" type="button"><%= &subs::ui('Confirm with fingerprint') %></button>
+				<div id="lockdown_unlock_note" style="min-height:22px;color:darkred;"></div>
+			</div>
+		<% } %>
 		<% my $padlock = &subs::db_query('select * from security where level=? limit 1', 'padlock')->hashes->[0]; %>
 		<div class="padlock_intro">
 			<h2>The gate</h2>

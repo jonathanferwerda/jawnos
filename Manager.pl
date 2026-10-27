@@ -2600,6 +2600,11 @@ sub appointment_writer($c,$app) {
 		eval { &subs::clock_appointment_sync($app); };
 	}
 
+	# A start or stop can change who is present. If that begins or ends a
+	# lockdown, close the windows the rule no longer allows at once rather than
+	# waiting for the next poll.
+	eval { &subs::visibility_cache_clear(); &subs::lockdown_sweep({ force => 1 }) } if (($app->{'type'} || '') =~ /^(?:start|stop)$/);
+
 	return $app;
 }
 
@@ -14085,7 +14090,9 @@ post '/manager/configure/site_type/manual_change' => sub($c) {
 			&subs::setting_setter({ app => '__president', setting => $signatorial . '_site_rating', value => $gb::site_types->{$new_site}->{'rating'} });
 		}
 		&subs::cache_delete({ app => 'travel', context => 'navigation_information', subcontext => $signatorial });
+		&subs::visibility_cache_clear();
 		$navigation_information = &subs::navigation_information({ signatorial => $signatorial });
+		&subs::lockdown_sweep({ force => 1 });
 	}
 	$c->render(json => $gb::site_types->{$navigation_information->{$signatorial}->{'site_type'}} );
 };
@@ -14650,8 +14657,7 @@ sub log_reader {
 	# card is the deliberate exception: it must stay readable so a person can
 	# turn visibility back on.
 	if ($data->{'view'} ne 'appointment_display') {
-		my $exposure = &subs::visibility_exposure();
-		if (&subs::visibility_hidden_for($appts->{$a->{'app'}}->{'setting'}->{'visible'}, $exposure)) {
+		if (&subs::app_hidden_now($a->{'app'})) {
 			push @{$disallowable}, $a->{'app'};
 		}
 	}
@@ -26152,7 +26158,7 @@ get '/manager/appointment_viewer' => sub($c) {
 	my @results;
 	my @log_watch;
 	foreach my $a (@{$chosen_appts}) {
-		next if &subs::visibility_hidden_for($appts->{$a}->{'setting'}->{'visible'});
+		next if &subs::app_hidden_now($a);
 
 
 
@@ -26235,7 +26241,7 @@ get '/manager/appointment_viewer' => sub($c) {
 		my $ghost_now = &subs::rightNow();
 		my $ghost_end = (defined $period && $period) ? ($timestamp + ($timestamp - $period)) : $timestamp;
 		foreach my $a (@{$chosen_appts}) {
-			next if &subs::visibility_hidden_for($appts->{$a}->{'setting'}->{'visible'});
+			next if &subs::app_hidden_now($a);
 			my $g = &subs::ghost_rows_for($a, $ghost_now, $ghost_end);
 			$appts->{$a}->{'ghosts'} = $g if scalar @{$g};
 		}
@@ -26957,6 +26963,7 @@ get '/manager/search_index' => sub($c) {
 	);
 	foreach my $app ( sort keys %builtin ) {
 		next if $indexed{$app};
+		next if &help_app_hidden($app);
 		# a built-in with no visible row is always an app; one the person has
 		# explicitly hidden stays hidden
 		next if $settings_by_app{$app} && $settings_by_app{$app}->{'visible'};
@@ -27551,7 +27558,8 @@ sub internet_app_catalog {
 		next if $visible_only && &subs::app_hidden_now($app);
 		push @apps, { app => $app, title => &subs::format_name($app) };
 	}
-	unshift @apps, { app => 'internet', title => &subs::lang('internet') };
+	unshift @apps, { app => 'internet', title => &subs::lang('internet') }
+		unless $visible_only && &subs::app_hidden_now('internet');
 	my %seen = map { $_->{'app'} => 1 } @apps;
 	# The person's own apps: an app with a main_image is one the manager draws as an
 	# app. The appointments table holds every record's app, and `pos` is shared by
@@ -27570,7 +27578,7 @@ sub internet_app_catalog {
 # data). The search index is richer but gated, and the launcher has to draw its
 # JawnOS row before a session exists.
 get '/apps/list' => sub($c) {
-	my $apps = &internet_app_catalog();
+	my $apps = &internet_app_catalog({ visible_only => 1 });
 	foreach my $entry ( @{$apps} ) {
 		my $app = $entry->{'app'};
 		my $icon = ($app eq 'internet')
@@ -27608,6 +27616,7 @@ get '/apps/start' => sub($c) {
 		next if $skip{$id};
 		my $app = $special{$id} || ($id =~ /^(.*)_toggle\z/ ? $1 : '');
 		next unless length $app;
+		next if &help_app_hidden($app);
 		next if $seen{$app}++;
 		my ($hint) = $attr =~ /\bhint="([^"]*)"/;
 		my ($src)  = $attr =~ /\bsrc="([^"]*)"/;
@@ -27636,6 +27645,7 @@ get '/manager/home_status' => sub($c) {
 		next unless ref $item eq 'HASH';
 		my $app = $item->{'app'} || $item->{'name'} || '';
 		next unless length $app;
+		next if &help_app_hidden($app);
 		next if $seen{$app}++;
 		my $icon = ($app eq 'internet')
 			? '/images/make believe/web_button.png'
@@ -27982,6 +27992,17 @@ sub window_maker($type,$timestamp) {
 	$timestamp = &subs::rightNow() unless $timestamp;
 	my $window = "Window";
 	my $app = $type->{'app'};
+	# Lockdown: an app the rule does not allow is not drawn, even when its static
+	# start-menu icon is still on screen. Security is the way in, a Dangerous app
+	# is deliberately kept, and an Enemy's app appears only after a fingerprint.
+	if ($app && &subs::lockdown_active() && &subs::app_hidden_now($app)) {
+		$type->{'contents'} = '<div class="lockdown_window" style="padding:22px;line-height:1.5;max-width:640px;">'
+			. '<h2>' . &subs::ui('Lockdown') . '</h2>'
+			. '<p>' . &subs::ui('An enemy is present, or this is a dangerous place. Open Security and confirm with your fingerprint to reveal the appointment so you can stop it.') . '</p>'
+			. '</div>';
+		$type->{'title'} = &subs::ui('Lockdown');
+		$type->{'window_name'} = &subs::ui('Lockdown');
+	}
 	my $window_settings = [ 'pos', 'main_image', 'dimensions', 'colour', 'dark_colour', 'uuid', 'navigation', 'ci', 'scrollTop', 'jopen' ];
 	my $settings = $type->{'settings'} || &subs::settings_grabber({ app => $app, settings => $window_settings });
 	my $temp_s = {};
@@ -28422,8 +28443,8 @@ get '/manager/gallery/data' => sub ($c) {
 		# gallery's albums, so its names are not filtered again here.
 		if (!$explicit) {
 			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
-			my $app_visible = &subs::visibility_hidden_for($aset->{'visible'}) ? 0 : 1;
-			return undef if !$permissive && !$app_visible && $path =~ /\.enc$/i;
+			my $app_visible = &subs::app_hidden_now($app) ? 0 : 1;
+			return undef if !$app_visible && $path =~ /\.enc$/i && (!$permissive || &subs::lockdown_active());
 		}
 		if (!-e $path && !$f->{'remote_uuid'}) {
 			return undef unless ($settings->{'archive'} || '') eq 'on';
@@ -28489,7 +28510,7 @@ get '/manager/gallery/data' => sub ($c) {
 			my $app = $appt->{'app'} || '';
 			next if scalar @{$apps} && !grep { $_ eq $app } @{$apps};
 			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
-			if (&subs::visibility_hidden_for($aset->{'visible'}) && $revealed == 0) { $hidden_albums{$app} = 1; next; }
+			if (&subs::app_hidden_now($app) && ($revealed == 0 || &subs::lockdown_active())) { $hidden_albums{$app} = 1; next; }
 			my $files = eval { return decode_json $appt->{'file'} } || [];
 			foreach my $f ( @{$files} ) {
 				next if $search && index(lc($app), $search) < 0 && index(lc($f->{'f'} || ''), $search) < 0;
@@ -30041,8 +30062,8 @@ sub folders_listing($folder, $unlocked, $c, $show_hidden) {
 	# visible; only a name belonging to a hidden app waits for the unlock
 	@{$files} = grep {
 		my $app = folders_owning_app($_->{'path'});
-		my $hidden = ($app && help_app_hidden($app) && !$revealed);
-		my $sealed_name = (!$unlocked && ($_->{'name'} // '') =~ /\.enc$/i && (!$app || help_app_hidden($app)));
+		my $hidden = ($app && help_app_hidden($app) && (!$revealed || &subs::lockdown_active()));
+		my $sealed_name = ((!$unlocked || &subs::lockdown_active()) && ($_->{'name'} // '') =~ /\.enc$/i && (!$app || help_app_hidden($app)));
 		!$hidden && !$sealed_name;
 	} @{$files};
 	my $archive_index = &folders_archive_index($folder);
@@ -33579,7 +33600,7 @@ sub travel_atlas_points {
 		my $key = $app . '|' . $con->{'latitude'} . '|' . $con->{'longitude'};
 		next if $seen->{$key}++;
 		my $set = $set_cache{$app} ||= &subs::settings_grabber({ app => $app });
-		next if &subs::visibility_hidden_for($set->{'visible'}); # the same places the travel viewer shows
+		next if &subs::app_hidden_now($app); # the same places the travel viewer shows
 		push @{$points}, {
 			latitude => $con->{'latitude'} + 0,
 			longitude => $con->{'longitude'} + 0,
@@ -33612,7 +33633,7 @@ sub travel_atlas_appointments {
 		next if $seen->{$fix->{'app'}}++;
 		next if !$fix->{'latitude'} || $fix->{'latitude'} eq '';
 		my $set = $set_cache{$fix->{'app'}} ||= &subs::settings_grabber({ app => $fix->{'app'} });
-		next if &subs::visibility_hidden_for($set->{'visible'});
+		next if &subs::app_hidden_now($fix->{'app'});
 		push @{$out}, {
 			app => $fix->{'app'},
 			name => &subs::format_name($set->{'name'} || $fix->{'app'}),
@@ -33967,7 +33988,7 @@ get '/manager/travel/viewer' => sub($c) {
 		# the map says a name the way the rest of the app does (the grouped marker's
 		# list reads straight off this)
 		$sl->{'name'} = &subs::format_name($sl->{'settings'}->{'name'} || $sl->{'app'});
-		next if &subs::visibility_hidden_for($sl->{'settings'}->{'visible'});
+		next if &subs::app_hidden_now($sl->{'app'});
 		my $radius = 6372.8;
 		my @visitor = NESW($sl->{'longitude'}, $sl->{'latitude'});
 		$sl->{'rad'} = clone \@visitor;
@@ -35277,16 +35298,18 @@ sub media_unlock_open($c, $app, $max_age = undef) {
 }
 
 # An app is hidden when the visibility rule says it is hidden here and now:
-# off, or a place level below the room's exposure. The rule is shared with the
-# rest of the house (subs::app_hidden_now) so a gallery album, a clothesline
-# chip and an Internet suggestion all answer alike.
+# a place level below the room's exposure, or the lockdown (a dangerous place or
+# an Enemy present). During a lockdown Security stays, a Dangerous app stays,
+# and an Enemy's running app waits for the fingerprint reveal.
 sub help_app_hidden($app) {
 	return 0 unless defined $app && length $app;
 	return &subs::app_hidden_now($app) ? 1 : 0;
 }
 
-# What the guide may reach: an app it is not hidden, or the reveal rule holds.
+# What the guide may reach: an app the rule shows, or the reveal rule holds.
+# A lockdown is not opened by an old media padlock grant.
 sub help_app_visible($app, $device = undef) {
+	return 0 if &subs::lockdown_active() && &subs::app_hidden_now($app);
 	return 1 unless help_app_hidden($app);
 	return help_media_revealed($device);
 }
@@ -38203,6 +38226,8 @@ sub security_initializer($c) {
 	if ($c->param('security_view')) {
 		$president->{'security_view'} = $c->param('security_view');
 	}
+	# A lockdown opens on the one view that can end it.
+	$president->{'security_view'} = 'padlock' if &subs::lockdown_active();
 	$president->{'padlock_contexts'} = eval { return decode_json $president->{'padlock_contexts'} } || [];
 	my $contents = $c->render_to_string(
 		president => $president,
@@ -38227,7 +38252,9 @@ sub security_initializer($c) {
 		share_pending => $share_pending,
 		share_mine => $share_mine,
 		requests => $requests,
-		config => $config
+		config => $config,
+		lockdown_active => &subs::lockdown_active(),
+		lockdown_apps => [ sort keys %{ &subs::lockdown_enemy_apps() } ]
 	);
 	my $padlocker = &subs::db_select('security', undef, { level => 'padlock' })->hashes || [];
 	if (scalar @{$padlocker} == 0) {
@@ -39189,6 +39216,31 @@ post '/manager/security/gate/disable' => sub ($c) {
 	&Websocket::send('server', { padlock_gate => 0, timestamp => &subs::rightNow() });
 	my $sec = &security_initializer($c);
 	$c->render(json => { ok => 1, html => $sec->{'html'}, has_padlock => 0 });
+};
+
+# Lockdown's one way forward: a fresh fingerprint on this device reveals the
+# Enemy's running app. It does not lift the lockdown - other apps stay shut and
+# the grant lapses on its own - so stopping that appointment is still what ends
+# the lockdown.
+post '/manager/security/lockdown_unlock' => sub ($c) {
+	unless ($c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen') {
+		return $c->render(json => { ok => 0, error => 'citizen only' });
+	}
+	unless (&subs::lockdown_active()) {
+		return $c->render(json => { ok => 0, error => 'there is no lockdown' });
+	}
+	my $enemies = &subs::lockdown_enemy_apps();
+	unless (scalar keys %{$enemies}) {
+		return $c->render(json => { ok => 0, error => 'no hidden appointment to reveal' });
+	}
+	unless (&security_action_open($c)) {
+		return $c->render(json => { ok => 0, error => 'confirm with your fingerprint first', need_biometric => 1 });
+	}
+	# Keyed the same way the visibility rule reads it (subs::device_setter), so
+	# app_hidden_now finds the grant without a request's session uuid.
+	my $until = &subs::lockdown_reveal_store();
+	&Websocket::send('server', { console => 'if (typeof calculator === "function") { calculator(); }' });
+	$c->render(json => { ok => 1, until => $until, apps => [ sort keys %{$enemies} ] });
 };
 
 post '/manager/security/padlock_pull' => sub($c) {
@@ -48232,6 +48284,12 @@ websocket '/manager/ws' => sub ($c) {
 			}
 
 			&Websocket::send($app,$return_data);
+
+			# A lockdown is continuous, not a one-off setting: the beat is the
+			# backstop that closes a window opened before the rule changed, and keeps
+			# the start menu's own face in step.
+			eval { &subs::lockdown_sweep({ browser_tab_id => $browser_tab_id }) };
+			&Websocket::send('server', { console => '$("#start_menu").toggleClass("lockdown", ' . (&subs::lockdown_active() ? 'true' : 'false') . ');', browser_tab_id => $browser_tab_id });
 
 		}
 		elsif (($data->{'type'} || '') eq 'terminal_open' && $app eq 'server') {

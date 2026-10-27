@@ -10467,10 +10467,13 @@ sub setting_is_default {
 	my ($setting, $app, $value) = @_;
 	return 0 unless defined $value && length $value;
 	my %fixed = (
-		visible => 'checked', permanent => 'checked', cost => '0', enc => 'on',
+		permanent => 'checked', cost => '0', enc => 'on',
 		public => 'off', schedule => 'once', navigation => 'none',
 	);
 	return 1 if exists $fixed{$setting} && $value eq $fixed{$setting};
+	# a new app is born public; `checked` and `on` are the older defaults, kept
+	# so a row written before the levels is still read as nothing anybody chose
+	return 1 if $setting eq 'visible' && ($value eq 'public' || $value eq 'checked' || $value eq 'on');
 	return 1 if $setting eq 'notification_text' && $value eq &subs::format_name($app || '');
 	return 0 unless grep { $_ eq $setting } qw/worth duration currency unit warranty/;
 	unless (scalar keys %setting_defaults_memo) {
@@ -15396,7 +15399,7 @@ sub setting_initializer() {
 		'colour' => $colour,
 		'dark_colour' => &dark_colour_for($colour),
 		'worth' => $me_settings->{'worth'},
-		'visible' => 'checked',
+		'visible' => 'public',
 		'permanent' => 'checked',
 		'pos' => $type,
 		'duration' => $me_settings->{'duration'},
@@ -16179,10 +16182,11 @@ sub navigation_information() {
 # ---- Visibility -----------------------------------------------------------
 #
 # A thing's visibility is no longer a checkbox. The setting (`visible`) is one
-# of: off, private, public, dangerous, or on. The three place words are the
-# site types in gb.pl, and places are numbered 1 (private), 2 (public) and 3
-# (dangerous): a place-visible thing is shown while the room is at or below
-# that number. `on` ignores the room, `off` is never shown.
+# of three place words: private, public or dangerous. They are the site types in
+# gb.pl, and places are numbered 1 (private), 2 (public) and 3 (dangerous): a
+# thing is shown while the room is at or below its number. There is no `on` or
+# `off` any more; private is the least visible level, and public is what a new
+# app is born with.
 #
 # A person's relationship is numbered on the same scale - friend 1 (private),
 # stranger 2 (public), enemy 3 (dangerous) - so an enemy's presence raises the
@@ -16295,14 +16299,11 @@ sub person_relationships {
 # Who is present: a person app with an appointment still running. junderground
 # starts one for each other person in a room it has joined, and a person's own
 # open appointment is a presence too, so this is the house's one local signal.
-# Only an enemy (rating 3) changes the room; the number is kept whole so a
-# stranger could be given a place meaning later without a second rule.
-our $presence_relationship_cache;
-sub present_relationship_rating {
+our $present_person_apps_cache;
+sub present_person_apps {
 	my ($opts) = @_;
 	$opts ||= {};
-	return $presence_relationship_cache if defined $presence_relationship_cache && !$opts->{'refresh'};
-	$presence_relationship_cache = 0;
+	return $present_person_apps_cache if defined $present_person_apps_cache && !$opts->{'refresh'};
 	my $rows = eval {
 		&db_query(q{
 			select distinct a.app as app
@@ -16317,13 +16318,129 @@ sub present_relationship_rating {
 			   )
 		})->hashes;
 	} || [];
+	my @apps = map { $_->{'app'} } grep { defined $_->{'app'} && length $_->{'app'} } @{$rows};
+	$present_person_apps_cache = \@apps;
+	return $present_person_apps_cache;
+}
+
+our $presence_relationship_cache;
+sub present_relationship_rating {
+	my ($opts) = @_;
+	$opts ||= {};
+	return $presence_relationship_cache if defined $presence_relationship_cache && !$opts->{'refresh'};
 	my $rating = 0;
-	foreach my $row ( @{$rows} ) {
-		my $r = &person_relationship_rating($row->{'app'});
+	foreach my $app ( @{ &present_person_apps($opts) } ) {
+		my $r = &person_relationship_rating($app);
 		$rating = $r if $r > $rating;
 	}
 	$presence_relationship_cache = $rating;
 	return $rating;
+}
+
+# A person with an Enemy relationship and an open appointment. During lockdown
+# these are the only apps a fingerprint may reveal, one at a time, so the
+# person can be seen and stopped.
+our $lockdown_enemy_apps_cache;
+sub lockdown_enemy_apps {
+	my ($opts) = @_;
+	$opts ||= {};
+	return $lockdown_enemy_apps_cache if defined $lockdown_enemy_apps_cache && !$opts->{'refresh'};
+	my %apps;
+	foreach my $app ( @{ &present_person_apps($opts) } ) {
+		$apps{$app} = 1 if &person_relationship_rating($app) >= 3;
+	}
+	$lockdown_enemy_apps_cache = \%apps;
+	return $lockdown_enemy_apps_cache;
+}
+
+# A dangerous place and an Enemy present are the same thing: the house locks
+# down. There is deliberately no destructive "leave" here - the emergency wipe
+# is a separate act, never something a sensor can trigger.
+sub lockdown_active {
+	return &visibility_exposure() >= 3 ? 1 : 0;
+}
+
+# The fingerprint reveal. It is a short grant on this device, not a change to
+# the room: other apps stay shut, only the Enemy's running app appears, and the
+# grant lapses on its own so the lockdown comes back if nothing is stopped.
+sub lockdown_revealed {
+	my ($device) = @_;
+	$device = &device_setter() unless defined $device && length $device;
+	return 0 unless $device;
+	my $now = &rightNow();
+	my $rows = eval {
+		&db_query("select data from cache where context = 'lockdown_reveal' and device = ? order by server_time desc", $device)->hashes;
+	} || [];
+	foreach my $row ( @{$rows} ) {
+		my $d = eval { decode_json($row->{'data'}) } || {};
+		return 1 if ($d->{'until'} || 0) > $now;
+	}
+	return 0;
+}
+
+sub lockdown_reveal_store {
+	my ($device, $until) = @_;
+	$device = &device_setter() unless defined $device && length $device;
+	return 0 unless $device;
+	my $now = &rightNow();
+	$until = $now + 120000 unless defined $until && $until > $now;
+	&db_query("delete from cache where context = 'lockdown_reveal' and device = ?", $device);
+	&db_insert('cache', {
+		uuid => &random_string_creator(25),
+		context => 'lockdown_reveal',
+		app => 'security',
+		device => $device,
+		data => encode_json({ until => $until }),
+		timestamp => $now,
+		server_time => $now,
+	});
+	return $until;
+}
+
+sub lockdown_reveal_clear {
+	my ($device) = @_;
+	$device = &device_setter() unless defined $device && length $device;
+	return 0 unless $device;
+	&db_query("delete from cache where context = 'lockdown_reveal' and device = ?", $device);
+	return 1;
+}
+
+# Close every window the lockdown does not allow, now. Security stays (it is
+# the way to the fingerprint), an app marked dangerous stays, and the Enemy's
+# own app stays only while this device holds a fresh reveal.
+our %lockdown_sweep_at;
+sub lockdown_sweep {
+	my ($opts) = @_;
+	$opts ||= {};
+	return 0 unless &lockdown_active();
+	my $now = &rightNow();
+	my $device = $opts->{'device'};
+	$device = &device_setter() unless defined $device;
+	my $tab = $opts->{'browser_tab_id'};
+	my $key = ($device || '') . "\x1f" . ($tab || '');
+	return 0 if !$opts->{'force'} && defined $lockdown_sweep_at{$key} && $now - $lockdown_sweep_at{$key} < 3000;
+	$lockdown_sweep_at{$key} = $now;
+	my $revealed = &lockdown_revealed($device);
+	my $enemies = &lockdown_enemy_apps();
+	&Websocket::send('server', { console => '$("#start_menu").addClass("lockdown");', browser_tab_id => $tab });
+	my $rows = eval {
+		&db_query("select distinct app, browser_tab_id from websockets where type = 'stayingAlive'")->hashes;
+	} || [];
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} // next;
+		my $row_tab = $row->{'browser_tab_id'} || '';
+		next if defined $tab && length $tab && $row_tab ne $tab;
+		next if $app =~ /^(?:server|tab|manager)\z/;
+		next if $app eq 'security';
+		if ($enemies->{$app}) {
+			next if $revealed;
+		}
+		elsif (&visibility_normalize(&app_visibility_value($app)) eq 'dangerous') {
+			next;
+		}
+		&window_closer($app, $row_tab);
+	}
+	return 1;
 }
 
 # The numeric rating of the room now: the place's own number, raised to 3 when
@@ -16346,36 +16463,32 @@ sub visibility_exposure {
 	return $visibility_exposure_cache;
 }
 
-# Normalise the visible setting. `checked`/`unchecked` are the old checkbox;
-# unchecked meant "hidden outside a private place", which is what private now
-# says, so an existing row keeps behaving as its owner remembers.
+# Normalise the visible setting. The three levels are the numbered place scale.
+# `checked`/`on` become public (the new default); `unchecked` and the retired
+# `off` become private, the least visible level that still exists.
 sub visibility_normalize {
 	my ($value) = @_;
 	my $v = lc($value // '');
 	$v =~ s/^\s+|\s+$//g;
-	return 'off' if $v eq 'off' || $v eq 'hidden' || $v eq 'none' || $v eq 'no';
-	return 'private' if $v eq 'private' || $v eq 'unchecked' || $v eq '1';
-	return 'public' if $v eq 'public' || $v eq '2';
+	return 'private' if $v eq 'private' || $v eq 'unchecked' || $v eq 'off' || $v eq 'hidden' || $v eq 'none' || $v eq 'no' || $v eq '1';
 	return 'dangerous' if $v eq 'dangerous' || $v eq '3';
-	return 'on';
+	return 'public';
 }
 
 sub visibility_rank {
 	my ($value) = @_;
 	my $v = &visibility_normalize($value);
-	return 0 if $v eq 'off';
 	return 1 if $v eq 'private';
-	return 2 if $v eq 'public';
 	return 3 if $v eq 'dangerous';
-	return 4;
+	return 2;
 }
 
 # This device's row wins, then the house's `all` row, then the person's `me`
-# row, then the newest. No row at all is the historical default: visible.
+# row, then the newest. No row at all is the new-app default: public.
 our %app_visibility_cache;
 sub app_visibility_value {
 	my ($app) = @_;
-	return 'on' unless defined $app && length $app;
+	return 'public' unless defined $app && length $app;
 	my $device = &device_setter();
 	my $cache_key = $device . "\x1f" . $app;
 	return $app_visibility_cache{$cache_key} if exists $app_visibility_cache{$cache_key};
@@ -16399,14 +16512,22 @@ sub app_visibility_value {
 sub visibility_hidden_for {
 	my ($value, $exposure) = @_;
 	my $rank = &visibility_rank($value);
-	return 1 if $rank <= 0;
-	return 0 if $rank >= 4;
 	$exposure = &visibility_exposure() unless defined $exposure;
 	return $exposure > $rank ? 1 : 0;
 }
 
 sub app_hidden_now {
 	my ($app) = @_;
+	return 0 unless defined $app && length $app;
+	if (&lockdown_active()) {
+		return 0 if $app eq 'security';
+		my $device = &device_setter();
+		if (&lockdown_enemy_apps()->{$app}) {
+			return &lockdown_revealed($device) ? 0 : 1;
+		}
+		return 0 if &visibility_normalize(&app_visibility_value($app)) eq 'dangerous';
+		return 1;
+	}
 	return &visibility_hidden_for(&app_visibility_value($app));
 }
 
@@ -16421,6 +16542,8 @@ sub visibility_cache_clear {
 	%app_visibility_cache = ();
 	$visibility_exposure_cache = undef;
 	$presence_relationship_cache = undef;
+	$present_person_apps_cache = undef;
+	$lockdown_enemy_apps_cache = undef;
 	return 1;
 }
 
@@ -16741,7 +16864,7 @@ sub hang_to_dry() {
 				if (grep { $_ eq $ft || $_ eq 'all' } @{$time_plinko->{$time_plinkos->[$n]->{'name'}}}) {
 					$cl_count++;
 					if ($cl_count == $count) {
-						if (!&visibility_hidden_for($settings->{'visible'})) {
+						if (!&app_hidden_now($app)) {
 							push @{$returner}, $app_data;
 						}
 
@@ -16813,7 +16936,7 @@ sub hang_to_dry() {
 			next unless $routine->{'hour_days'} >= 7;
 			next unless $routine->{'hour'} == $cur_hour;
 			my $aset = &settings_grabber({ app => $app });
-			next if &visibility_hidden_for($aset->{'visible'});
+			next if &app_hidden_now($app);
 			push @{$returner}, { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
 		}
 	}
@@ -28321,6 +28444,23 @@ sub guide_message_warranty() {
 			&say_it("backfill relationship_types_v1: normalised $n relationship value(s)");
 			return 1;
 		},
+		'visibility_levels_v1' => sub {
+			# Visibility is private/public/dangerous now. The old checkbox words and
+			# the retired on/off map to the three levels: checked/on to public (the
+			# new default), unchecked/off to private (the least visible level).
+			my $rows = &db_query("select uuid, app, value from settings where setting = 'visible'")->hashes || [];
+			my $n = 0;
+			foreach my $row ( @{$rows} ) {
+				my $old = $row->{'value'} // '';
+				my $new = &visibility_normalize($old);
+				next if lc($old) eq $new;
+				&db_update('settings', { value => $new, server_time => &rightNow() }, { uuid => $row->{'uuid'} });
+				$n++;
+			}
+			&visibility_cache_clear();
+			&say_it("backfill visibility_levels_v1: rewrote $n visibility row(s)");
+			return 1;
+		},
 		'settings_dedupe_null_keys' => sub {
 			# A settings row is keyed by (app, setting, device, subsetting), but the
 			# setter's delete used '=', so an undef in any key column (a missing
@@ -34081,7 +34221,7 @@ sub clock_apps {
 			my $a = $r->{'app'};
 			next unless defined $a && length $a;
 			next if $a =~ /^__/;
-			next if &visibility_hidden_for($visible{$a});
+			next if &app_hidden_now($a);
 			next if $seen{$a}++;
 			push @out, { value => $a, label => &format_name($a) };
 		}

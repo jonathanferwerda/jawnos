@@ -161,11 +161,11 @@
 							</select>
 						</span>
 						<span class="app_checks">
-							<span class="app_visibility_field" hint="<%= &subs::ui('On is always visible. Private, Public and Dangerous follow the place you are in; an enemy present hides the place levels below Dangerous.') %>">
+							<span class="app_visibility_field" hint="<%= &subs::ui('New apps are Public. A place level shows the app while the place you are in is at or below it. During lockdown only Security and apps marked Dangerous stay open; an Enemy\'s running app waits for a fingerprint.') %>">
 								<label><%= &subs::ui('Visibility') %></label>
 								<% my $vis = &subs::visibility_normalize($appts->{$a}->{'setting'}->{'visible'}); %>
 								<select app="<%= $a %>" class="configure_visibility" setting="visible">
-									<% foreach my $opt ( qw/off on private public dangerous/ ) { %>
+									<% foreach my $opt ( qw/private public dangerous/ ) { %>
 										<option value="<%= $opt %>" <% if ($vis eq $opt) { %>selected="selected"<% } %>><%= &subs::ui(ucfirst($opt)) %></option>
 									<% } %>
 								</select>
