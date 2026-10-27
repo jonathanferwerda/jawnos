@@ -27026,8 +27026,91 @@ get '/apps/list' => sub($c) {
 	$c->render(json => { apps => $apps });
 };
 
-# Domain -> app, so everything under facebook.com counts as the Facebook app.
-# Stored as one settings value, so it rides the house's normal sync.
+# The start-menu app list, for the native home's JawnOS row (public: app
+# names, titles and icon paths only). The list is the start menu's own markup,
+# extracted here so the launcher shows exactly what the start menu offers and
+# a new icon appears in both places from one edit.
+get '/apps/start' => sub($c) {
+	$c->param('menu' => 'app');
+	# The start menu template reads the device from the stash (the manager
+	# layout normally sets it); this route is public, so set it here too.
+	$c->stash(device => &subs::device_setter());
+	my $menu = &start_menu_maker($c);
+	my $html = $menu->{'html'} || '';
+	# The handful of icons whose id is not <app>_toggle: the ticket maker is
+	# Box Office, budget has a bare id, the gallery wears image_toggle, and the
+	# gear is Configure.
+	my %special = ( ticketmaker => 'box_office', budget => 'budget', image_toggle => 'gallery', main_logo => 'configure' );
+	# Things that are actions or tools, not apps the launcher opens.
+	my %skip = map { $_ => 1 } qw( home_toggle torch_toggle sms_list_check web_toggle );
+	my (@apps, %seen);
+	while ($html =~ /<img\b([^>]*)>/g) {
+		my $attr = $1;
+		my ($id) = $attr =~ /\bid="([^"]*)"/;
+		next unless defined $id && length $id;
+		next if $skip{$id};
+		my $app = $special{$id} || ($id =~ /^(.*)_toggle\z/ ? $1 : '');
+		next unless length $app;
+		next if $seen{$app}++;
+		my ($hint) = $attr =~ /\bhint="([^"]*)"/;
+		my ($src)  = $attr =~ /\bsrc="([^"]*)"/;
+		# The start menu's src has already been swapped to the icon set, which
+		# is often SVG - and Android's BitmapFactory cannot decode SVG. The raw
+		# PNG path the catalog uses is what the native row can draw.
+		my $icon = $gb::known_appts->{$app}->{'icon'} || $src || '';
+		$icon =~ s/ /%20/g if length $icon;
+		push @apps, {
+			app   => $app,
+			title => ($hint || &subs::format_name($app)),
+			icon  => $icon,
+		};
+	}
+	$c->render(json => { apps => \@apps });
+};
+
+# The native home's live half: the clothesline of running apps and the theme
+# the manager is using, polled while the home is on screen. Gated like the
+# manager (it carries the person's running apps), so the home sends its session
+# cookie; before a session exists the start row still draws from /apps/start.
+get '/manager/home_status' => sub($c) {
+	my $clothesline = eval { decode_json &subs::setting_grabber({ app => '__president', setting => 'clothesline' }) } || [];
+	my (@running, %seen);
+	foreach my $item (ref $clothesline eq 'ARRAY' ? @{$clothesline} : ()) {
+		next unless ref $item eq 'HASH';
+		my $app = $item->{'app'} || $item->{'name'} || '';
+		next unless length $app;
+		next if $seen{$app}++;
+		my $icon = ($app eq 'internet')
+			? '/images/make believe/web_button.png'
+			: ($gb::known_appts->{$app}->{'icon'} || '');
+		$icon =~ s/ /%20/g if length $icon;
+		push @running, {
+			app    => $app,
+			title  => ($item->{'formatted_name'} || &subs::format_name($app)),
+			colour => ($item->{'colour'} || ''),
+			icon   => $icon,
+		};
+	}
+	my $bg = &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour' });
+	unless (defined $bg && $bg =~ /^\#?[0-9a-fA-F]{6}\z/) {
+		my @palette = &subs::theme_palette();
+		$bg = $palette[0] if scalar @palette && defined $palette[0];
+	}
+	$bg = '#f7f7f7' unless defined $bg && $bg =~ /^\#?[0-9a-fA-F]{6}\z/;
+	$bg = '#' . $1 if $bg =~ /^([0-9a-fA-F]{6})\z/;
+	my $ink = &subs::contrast_ink($bg);
+	$c->render(json => {
+		running => \@running,
+		theme => {
+			background => $bg,
+			ink        => $ink,
+			muted      => ($ink eq '#ffffff' ? '#c9c9c9' : '#3a3a3a'),
+			dark       => ($ink eq '#ffffff' ? 1 : 0),
+		},
+		timestamp => &subs::rightNow(),
+	});
+};
+
 sub internet_domain_apps {
 	my $value = &subs::setting_grabber({ app => 'internet', setting => 'domain_apps' });
 	my $map = eval { decode_json($value || '{}') } || {};

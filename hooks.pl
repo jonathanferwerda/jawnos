@@ -417,8 +417,10 @@ hook before_dispatch => sub {
 		# caller against the roster (peer_verify) before it writes anything.
 		$path eq '/manager/clock/alarm' ||
 		# the launcher's JawnOS row is drawn before a session exists, and the
-		# catalog carries only app names and icon paths
+		# catalog carries only app names and icon paths. The start list is the
+		# same data, extracted from the start menu's own app markup.
 		$path eq '/apps/list' ||
+		$path eq '/apps/start' ||
 		$path eq '/', ) {
 
 		my $device = &subs::device_setter();
