@@ -16048,9 +16048,9 @@ sub navigation_information() {
 	my $data = shift;
 	my $current_locations;
 	if ($data->{'signatorial'}) {
-		$current_locations = &subs::db_query('select * from continent where type=? and signatorial =? and warranty > ?','temporary',$data->{'signatorial'},&subs::rightNow())->hashes;
+		$current_locations = &subs::db_query('select * from continent where type=? and signatorial =? and cast(warranty as integer) > cast(? as integer)','temporary',$data->{'signatorial'},&subs::rightNow())->hashes;
 	} else {
-		$current_locations = &subs::db_query('select * from continent where type=? and warranty > ?','temporary',&subs::rightNow())->hashes;
+		$current_locations = &subs::db_query('select * from continent where type=? and cast(warranty as integer) > cast(? as integer)','temporary',&subs::rightNow())->hashes;
 	}
 	my $navigation_information = {};
 	my $runs = 0;
@@ -19400,7 +19400,7 @@ sub local_position {
 		return { latitude => $j->{'latitude'}, longitude => $j->{'longitude'}, accuracy => sprintf("%.2F", ($j->{'accuracy'} || 0)), timestamp => $now, source => 'gps' };
 	}
 	return {} unless &subs::navigation_gps_present();
-	$row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and (warranty is null or warranty = ? or warranty > ?) order by server_time desc limit 1', 'temporary', $me, '', $now)->hashes->[0];
+	$row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and (warranty is null or warranty = ? or cast(warranty as integer) > cast(? as integer)) order by server_time desc limit 1', 'temporary', $me, '', $now)->hashes->[0];
 	return {} unless $row && $row->{'latitude'};
 	return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
 }

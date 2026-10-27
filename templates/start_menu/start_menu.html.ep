@@ -207,7 +207,7 @@
 						if ($menu eq 'run') {
 							$query = &subs::db_query('select * from appointments where (type=? or type=?) and timestamp <= ? order by timestamp desc', 'start','record', &subs::rightNow())->hashes;
 						} elsif ($menu eq 'exp') {
-							$query = &subs::db_query('select * from appointments where warranty >= ? order by warranty asc limit 20', &subs::rightNow())->hashes;
+							$query = &subs::db_query('select * from appointments where cast(warranty as integer) >= cast(? as integer) order by cast(warranty as integer) asc limit 20', &subs::rightNow())->hashes;
 						} else { 
 							$query = &subs::db_query('select * from appointments where timestamp >= ? order by timestamp asc limit 20', &subs::rightNow())->hashes;
 						} %>

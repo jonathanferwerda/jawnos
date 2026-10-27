@@ -2695,7 +2695,7 @@ sub homepage_maker($c) {
 	my $port = $c->req->url->base->port;
 	my $server_time = &subs::rightNow();
 	my $name = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || 'Home';
-	$articulation = &subs::db_query('select * from magazine where status=? and timestamp <= ? and warranty >= ? order by timestamp DESC','publish', $server_time, $server_time);
+	$articulation = &subs::db_query('select * from magazine where status=? and timestamp <= ? and cast(warranty as integer) >= cast(? as integer) order by timestamp DESC','publish', $server_time, $server_time);
 	my $magazine_categories = [];# = $mag_cat->hashes;
 	my $articles = $articulation->hashes;
 	foreach my $mc ( @{$articles} ) {
@@ -2704,10 +2704,10 @@ sub homepage_maker($c) {
 		}
 	}
 	if ($c->param('category')) {
-		$articulation = &subs::db_query('select * from magazine where status=? and category=? and timestamp <= ? and warranty >= ? order by timestamp DESC','publish',$c->param('category'), $server_time, $server_time);
+		$articulation = &subs::db_query('select * from magazine where status=? and category=? and timestamp <= ? and cast(warranty as integer) >= cast(? as integer) order by timestamp DESC','publish',$c->param('category'), $server_time, $server_time);
 	}
 	else {
-		$articulation = &subs::db_query('select * from magazine where status=? and timestamp <= ? and warranty >= ? order by timestamp DESC','publish', $server_time, $server_time);
+		$articulation = &subs::db_query('select * from magazine where status=? and timestamp <= ? and cast(warranty as integer) >= cast(? as integer) order by timestamp DESC','publish', $server_time, $server_time);
 	}
 	$articles = $articulation->hashes;
 	foreach my $mc ( @{$articles} ) {
@@ -33798,7 +33798,7 @@ sub travel_atlas_maps {
 # place the phone left hours ago. Writers always stamp a warranty; a legacy row
 # with none is still read.
 sub travel_here_position {
-	my $row = &subs::db_query('select * from continent where type = ? and latitude is not null and (warranty is null or warranty = ? or warranty > ?) order by server_time desc limit 1', 'temporary', '', &subs::rightNow())->hashes->[0];
+	my $row = &subs::db_query('select * from continent where type = ? and latitude is not null and (warranty is null or warranty = ? or cast(warranty as integer) > cast(? as integer)) order by server_time desc limit 1', 'temporary', '', &subs::rightNow())->hashes->[0];
 	return ($row && $row->{'latitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0, label => 'You are here' } : undef;
 }
 
