@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-27
 
+- v0.1.1480 - appointment fields: the rich-text upgrader that replaces the note textarea now keeps the note's height and draws its placeholder at the same 20px as every other field, so the note no longer shrinks a moment after the editor loads. A contenteditable placeholder is a ::before, not a form control's ::placeholder, so it needed its own size.
 - v0.1.1479 - appointment fields: the note's placeholder now matches the other placeholders at the sheet's 20px; the note's typed text keeps the 15px field size. The note-specific placeholder rule added in v0.1.1477 had made it smaller than the fields around it.
 - v0.1.1478 - lockdown: a dangerous place with no Enemy says so in Security instead of offering a reveal that cannot succeed, and the start menu's note names the way out.
 - v0.1.1477 - lockdown: the fingerprint reveals the Enemy's appointment, and Security now offers Open beside it so the revealed app can actually be opened and stopped; before this the panel only printed its name and the locked start menu had no way to reach it. The appointment note's placeholder wears the same face and size as the fields above it, and the start menu's lockdown note names Dangerous apps as staying open.
