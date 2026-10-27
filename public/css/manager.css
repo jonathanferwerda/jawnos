@@ -827,6 +827,14 @@ input[type="checkbox"]:hover {
 /* the notes follow the theme's panel: a pinned white page made a dark
    theme's near-white ink unreadable */
 .notes { width:100%; background-color:var(--panel-2, #ffffff); color:var(--ink); }
+/* A textarea's stock face is monospace, so the note's placeholder read
+   differently from the fields above it. The note and the fields take the
+   card's own face at the same size, and the placeholder inherits exactly what
+   its field wears. */
+.main_inputs_row .main_input,
+.notes { font-family: inherit; font-size: 15px; }
+.main_inputs_row .main_input::placeholder,
+.notes::placeholder { font: inherit; }
 /* The appointment's own fields keep their shape: ago, duration and quantity
    share one row, schedule and warranty the next, and the note gets its own
    line. Inline flex bases kept the old single row squashed inside a narrow

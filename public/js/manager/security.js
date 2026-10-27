@@ -857,6 +857,29 @@ $(document).on('click', '.signatorial_selection', function() {
 		});
 	});
 
+	// The lockdown names the hidden appointment; this opens it. The route is the
+	// same fingerprint reveal, and a grant already minted (Security itself was
+	// just opened) lets it through without a second prompt.
+	$(document).on('click', '.lockdown_open_app', function () {
+		var b = $(this);
+		var app = b.attr('data-app') || '';
+		if (!app) { return; }
+		var note = $('#lockdown_unlock_note');
+		b.prop('disabled', true);
+		$.post('/manager/security/lockdown_unlock', { timestamp: Date.now() }, function (r) {
+			b.prop('disabled', false);
+			if (!r || !r.ok) {
+				note.css('color', 'darkred').text((r && r.error) || 'could not unlock');
+				return;
+			}
+			note.css('color', '#2f6f3f').text(typeof jawnosT === 'function' ? jawnosT('Unlocked. Opening the appointment; stopping it ends the lockdown.') : 'Unlocked. Opening the appointment; stopping it ends the lockdown.');
+			if (typeof appointmentGrabber === 'function') { appointmentGrabber(app, Date.now()); }
+		}, 'json').fail(function () {
+			b.prop('disabled', false);
+			note.css('color', 'darkred').text('could not unlock');
+		});
+	});
+
 	var guarded = /^\/manager\/security\/(lockdown_unlock|rotate_key|legacy_reseal|recovery\/create|shares\/create|shares\/wrap|shares\/release)/;
 	var guarded_key = /^\/manager\/webauthn\/(register\/begin|register\/finish|remove)/;
 	$(document).ajaxSuccess(function (event, xhr, settings) {

@@ -78,7 +78,7 @@
 				<span class="start_menu_main_display" recent="<%= join ',', @{$recent} %>">
 					<div class="start_menu_lockdown_note" style="display:none;padding:18px;line-height:1.5;max-width:520px;">
 						<h2><%= &subs::ui('Lockdown') %></h2>
-						<p><%= &subs::ui('An enemy is present, or this is a dangerous place. Only Security is open. Open Security, confirm with your fingerprint, then stop the appointment.') %></p>
+						<p><%= &subs::ui('An enemy is present, or this is a dangerous place. Only Security and apps marked Dangerous stay open. Open Security, confirm with your fingerprint, then stop the appointment.') %></p>
 					</div>
 					<%# the app menu is the recent list; until a press fills it, the note
 					    stands where the rows will - startMenuView() toggles it %>
