@@ -45,15 +45,19 @@
 		$.ajax({
 			url: path, type: 'POST', dataType: 'json',
 			data: { incoming_data: JSON.stringify(payload || {}) }
-		}).done(done).fail(function () {
-			$('#jg_status').text(jgT('Could not reach the switch.'));
-		});
+			}).done(done).fail(function () {
+				$('#jg_status').text(jgT('Could not reach the switch.'));
+				$('#jg_canonical').text('');
+			});
 	}
 
 	function jgDial() {
 		$('#jg_status').text(jgT('Dialling…'));
+		$('#jg_canonical').text('');
 		jgPost('/manager/junderground/dial', { picks: jgPicks() }, function (r) {
 			$('#jg_status').text(r.error || '');
+			var canonical = r.error ? '' : jgScope(r.dial);
+			$('#jg_canonical').text(canonical);
 			var box = $('#jg_rooms').empty();
 			var rooms = r.rooms || [];
 			if (!rooms.length) {
