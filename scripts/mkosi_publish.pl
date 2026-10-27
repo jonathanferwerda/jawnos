@@ -287,12 +287,21 @@ if ($r2) {
 	# A public bucket (or custom domain) must answer; a 404 here usually means
 	# public access is off or the DNS record is missing, not that the PUT failed.
 	my $head = `curl -fsSI --max-time 20 $public_base/$asset 2>/dev/null`;
-	if ($head =~ m{^HTTP/\S+\s+2\d\d}m) {
+	my $public_ok = ($head =~ m{^HTTP/\S+\s+2\d\d}m) ? 1 : 0;
+	if ($public_ok) {
 		print "verified  the object is publicly reachable\n";
 	}
 	else {
 		print "note: $public_base/$asset did not answer yet; check R2 public access and the DNS record.\n";
 	}
+	&write_downloads_json(
+		$public_ok,
+		"$public_base/$asset",
+		"$public_base/desktop_release.json",
+		$version,
+		-s $out,
+		$compressed_sha
+	);
 	exit 0;
 }
 
@@ -384,6 +393,38 @@ sub upload_r2 {
 	close $fh;
 	die "mkosi_publish: uploading $key to R2 failed\n" if $?;
 	print "uploaded $key\n";
+}
+
+# jawnos.ca is static and its host has no outbound network, so the page reads
+# this one small file from raw.githubusercontent. A successful publish records
+# the image; the routine that runs the publish commits the file, which is what
+# makes the site see it.
+sub write_downloads_json {
+	my ($ok, $url, $manifest_url, $version, $size, $sha) = @_;
+	my $path = "$root/downloads.json";
+	my $data = {};
+	if (-f $path) {
+		my $text = '';
+		if (open(my $fh, '<', $path)) { local $/; $text = <$fh>; close $fh; }
+		$data = eval { JSON::PP->new->decode($text) } || {} if length $text;
+	}
+	my @t = gmtime(time());
+	$data->{'generated'} = sprintf('%04d-%02d-%02dT%02d:%02d:%02dZ', $t[5] + 1900, $t[4] + 1, $t[3], $t[2], $t[1], $t[0]);
+	$data->{'desktop'} = {
+		'ok' => $ok ? JSON::PP::true : JSON::PP::false,
+		'url' => $url,
+		'manifest' => $manifest_url,
+		'size' => $size + 0,
+		'sha256' => $sha,
+		'version' => $version,
+		'label' => 'One file, no parts',
+	};
+	my $json = JSON::PP->new->canonical->pretty->encode($data);
+	if (open(my $fh, '>', $path)) {
+		print {$fh} $json;
+		close $fh;
+		print "updated downloads.json (commit it so jawnos.ca sees this image)\n";
+	}
 }
 
 sub download_url {
