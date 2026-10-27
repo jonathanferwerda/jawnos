@@ -4,8 +4,8 @@
 # that copied the tree but failed to seed is retried instead of skipped.
 [Unit]
 Description=JawnOS first boot - seed the house
-Requires=home-jawn.mount
-After=home-jawn.mount
+Requires=home-jawn.service
+After=home-jawn.service
 Before=getty@tty1.service
 ConditionPathExists=!/home/jawn/.seeded
 

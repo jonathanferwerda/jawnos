@@ -1,0 +1,3 @@
+# Enable the boot-time self-update. Kept out of 50-jawnos.preset so it can be
+# enabled or masked on its own while the image's other units stay put.
+enable jawnos-update.service

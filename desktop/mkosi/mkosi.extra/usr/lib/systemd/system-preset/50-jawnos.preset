@@ -1,8 +1,13 @@
-# Enable the house units. mkosi runs `systemctl preset-all` after installing
-# the extra tree, and that pass removes wants-links written by hand, so the
-# preset is what actually turns these on in the image.
-enable home-jawn.mount
+# Enable the house units. mkosi runs `systemctl preset-all` after installing the
+# extra tree, and that pass removes wants-links written by hand, so the preset is
+# what actually turns these on in the image.
+#
+# home-jawn.service mounts /home/jawn through jawnos-state-mount: a real
+# partition labelled jawnos-state (a Ventoy stick with reserved space) first,
+# then the image's own jawnos-state-img, then a tmpfs fallback.
+enable home-jawn.service
 enable jawnos-grow.service
+enable jawnos-host-drives.service
 enable jawnos-firstboot.service
 enable jawnos-theme-apply.service
 enable getty@tty1.service

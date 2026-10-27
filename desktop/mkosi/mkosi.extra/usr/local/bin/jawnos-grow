@@ -4,50 +4,128 @@
 # The image is built at its minimum size (1G ESP + 5G root + 2G state). A stick
 # or a QEMU disk is usually larger, and `mkosi vm --runtime-size` only makes the
 # file larger - it does not move the partition table with it. This service does
-# the useful half: it grows jawnos-state, which holds /home/jawn, into the free
-# space at the end of the disk.
+# the useful half: it grows jawnos-state-img, which holds /home/jawn, into the
+# free space at the end of the disk.
 #
-# Only the state partition is touched. The root is mounted read-only
-# (systemd.volatile=overlay), and a read-only ext4 cannot grow online; the
-# system never needs more room than the 5G it was built with. The run is
-# idempotent - on a disk with no free space systemd-repart says "No changes".
+# Only the image/installed state partition is touched. The root is mounted
+# read-only (systemd.volatile=overlay), and a read-only ext4 cannot grow online.
+# Two states are deliberately never grown:
+#
+#   - a loop-backed state (the raw image Ventoy booted): the partition table
+#     lives in a file on the stick, and repartitioning it would corrupt or
+#     enlarge that file;
+#   - an external `jawnos-state` partition (the Ventoy reserve): it belongs to
+#     the stick's partition table, which Ventoy owns.
+#
+# jawnos-state-mount calls this after mounting, and the jawnos-grow.service unit
+# may run in the same boot, so a lock serialises the two. The run is idempotent:
+# on a disk with no free space systemd-repart says "No changes".
 set -eu
 
-# Resolve the state partition from the mounted /home/jawn. `blkid -L` alone is
+TARGET=${JAWNOS_STATE_TARGET:-/home/jawn}
+RUN=${JAWNOS_STATE_RUN:-/run}
+GROW_LABEL=${JAWNOS_STATE_IMAGE_LABEL:-jawnos-state-img}
+
+mkdir -p "$RUN" 2>/dev/null || true
+# Serialise with the jawnos-grow.service unit (both may run in one boot).
+# Re-execing under flock avoids an `exec 9>file` redirection, which would exit
+# this script if the lock could not be created.
+if [ -z "${JAWNOS_GROW_LOCKED:-}" ] && command -v flock >/dev/null 2>&1 && [ -w "$RUN" ]; then
+    JAWNOS_GROW_LOCKED=1 exec flock -w 60 "$RUN/jawnos-grow.lock" /bin/sh "$0" "$@"
+fi
+
+# The top-level disk (or loop) a device belongs to.
+top_disk() {
+    cur=$1
+    while :; do
+        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        if [ -z "$parent" ]; then
+            printf '%s\n' "$cur"
+            return 0
+        fi
+        cur=$parent
+    done
+}
+
+# The disk the kernel booted from. A loop here means the running system is an
+# image (Ventoy); a real disk means a direct dd, QEMU, or an installed machine.
+live_disk() {
+    r=
+    for word in $(cat /proc/cmdline 2>/dev/null); do
+        case "$word" in
+            root=PARTUUID=*) r=/dev/disk/by-partuuid/${word#root=PARTUUID=} ;;
+            root=UUID=*)     r=/dev/disk/by-uuid/${word#root=UUID=} ;;
+            root=LABEL=*)    r=/dev/disk/by-label/${word#root=LABEL=} ;;
+            root=/dev/*)     r=${word#root=} ;;
+        esac
+    done
+    [ -n "$r" ] && r=$(readlink -f "$r" 2>/dev/null || true)
+    if [ -z "$r" ] || [ ! -b "$r" ]; then
+        r=$(blkid -L jawnos-root 2>/dev/null | head -n 1 || true)
+        [ -n "$r" ] && r=$(readlink -f "$r" 2>/dev/null || true)
+    fi
+    [ -n "$r" ] && [ -b "$r" ] || return 0
+    top_disk "${r#/dev/}"
+}
+
+# True when the device, or one of its parents, is a loop device.
+loop_ancestor() {
+    cur=$1
+    # A whole loop device has no parent, so check the device itself too.
+    if [ "$(lsblk -dno TYPE "/dev/$cur" 2>/dev/null | head -n 1)" = loop ]; then
+        return 0
+    fi
+    while :; do
+        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        [ -n "$parent" ] || return 1
+        if [ "$(lsblk -dno TYPE "/dev/$parent" 2>/dev/null | head -n 1)" = loop ]; then
+            return 0
+        fi
+        cur=$parent
+    done
+}
+
+# Resolve the state partition from the mounted house. `blkid -L` alone is
 # ambiguous when a second JawnOS disk (or a just-installed target) is attached.
-state=$(findmnt -no SOURCE /home/jawn 2>/dev/null || true)
-dev=
-if [ -n "$state" ] && [ -b "$state" ]; then
-    state=$(readlink -f "$state")
-    disk=$(lsblk -no PKNAME "$state" 2>/dev/null | head -n 1)
-    if [ -n "$disk" ]; then
-        dev="/dev/$disk"
+state=$(findmnt -no SOURCE "$TARGET" 2>/dev/null | head -n 1 || true)
+[ -n "$state" ] && [ -b "$state" ] || exit 0
+state=$(readlink -f "$state")
+state_top=$(top_disk "${state#/dev/}")
+live=$(live_disk)
+
+# The state on the live, non-loop disk is the machine's own (a direct dd, QEMU,
+# or an installed disk). It may carry the older `jawnos-state` label and still
+# needs growing; an external partition does not.
+internal=no
+if [ -n "$live" ] && [ "$state_top" = "$live" ] \
+    && [ "$(lsblk -dno TYPE "/dev/$live" 2>/dev/null | head -n 1)" != loop ]; then
+    internal=yes
+fi
+
+if [ "$internal" != yes ]; then
+    label=$(blkid -s LABEL -o value "$state" 2>/dev/null | head -n 1 || true)
+    label=$(printf '%s' "$label" | tr 'A-Z' 'a-z')
+    if [ "$label" != "$GROW_LABEL" ]; then
+        # An external Ventoy reserve, or a state this script did not create;
+        # leave its partition table alone.
+        echo "jawnos-grow: $state is '${label:-unlabelled}', not $GROW_LABEL; not growing"
+        exit 0
+    fi
+
+    if loop_ancestor "${state#/dev/}"; then
+        echo "jawnos-grow: $state is inside a disk image; not growing it"
+        exit 0
     fi
 fi
-if [ -z "$dev" ]; then
-    root=$(blkid -L jawnos-root 2>/dev/null || true)
-    [ -n "$root" ] || exit 0
-    root=$(readlink -f "$root")
-    disk=$(lsblk -no PKNAME "$root" 2>/dev/null | head -n 1)
-    [ -n "$disk" ] || exit 0
-    dev="/dev/$disk"
-    state=
-    for p in "$dev"?* "$dev"p*; do
-        [ -b "$p" ] || continue
-        got=$(blkid -s LABEL -o value "$p" 2>/dev/null || true)
-        got=$(printf '%s' "$got" | tr 'A-Z' 'a-z')
-        if [ "$got" = jawnos-state ]; then
-            state=$p
-            break
-        fi
-    done
-fi
-[ -n "$state" ] && [ -b "$state" ] || exit 0
+
+disk=$(lsblk -no PKNAME "$state" 2>/dev/null | head -n 1 || true)
+[ -n "$disk" ] || exit 0
+dev="/dev/$disk"
 
 # systemd-repart cannot grow a filesystem on a generic partition type, so the
 # growth and the resize2fs are two explicit steps. A missing free-space area or
 # a busy partition table is not a boot failure: the next boot retries.
-defs=/run/jawnos-grow
+defs=$RUN/jawnos-grow-defs
 mkdir -p "$defs"
 cp /usr/lib/jawnos/repart/30-state.conf "$defs/" 2>/dev/null || exit 0
 systemd-repart --dry-run=no --definitions="$defs" --empty=allow --offline=yes "$dev" >/dev/null 2>&1 || true

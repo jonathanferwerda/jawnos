@@ -1,8 +1,14 @@
 #!/bin/sh
-# Seed the house on first boot. /home/jawn is the jawnos-state partition; the
-# image carries a read-only copy of the tree and a home skeleton under
-# /opt/jawnos. Nothing here deletes: a second run finds the checkout and the
-# unit's ConditionPathExists (/home/jawn/.seeded) keeps it from running at all.
+# Seed the house on first boot. /home/jawn is mounted by jawnos-state-mount
+# (a real partition, the image's own state, or a tmpfs fallback); the image
+# carries a read-only copy of the tree and a home skeleton under /opt/jawnos.
+# Nothing here deletes: a second run finds the checkout and the unit's
+# ConditionPathExists (/home/jawn/.seeded) keeps it from running at all.
+#
+# jawnos-host-drives runs before this unit. It may already have copied another
+# machine's database (and config.json) into the live tree, and it records a
+# discovered archive in /run/jawnos/host-archive-dir. Both are honoured here so
+# the seed does not replace them.
 set -eu
 
 # The app makes everything it writes private by default; keep the same posture
@@ -12,8 +18,19 @@ umask 077
 STATE=/home/jawn
 SEED_TREE=/opt/jawnos/tree
 SEED_HOME=/opt/jawnos/home-skel
+HOST_RUN=${JAWNOS_HOST_RUN:-/run/jawnos}
+ARCHIVE_FILE=$HOST_RUN/host-archive-dir
+LOG=/var/log/jawnos-firstboot.log
 
 mkdir -p "$STATE"
+
+# What discovery left here. An adopted config is this session's deliberate
+# identity and must not be replaced by the image's config.json (which carries
+# the live flag); an adopted database must not be seeded over.
+HAD_CONFIG=no
+[ -f "$STATE/jawnos/config.json" ] && HAD_CONFIG=yes
+HAD_DB=no
+[ -f "$STATE/jawnos/database/jawnos.db" ] && HAD_DB=yes
 
 if [ -d "$SEED_HOME" ]; then
     if command -v rsync >/dev/null 2>&1; then
@@ -23,12 +40,25 @@ if [ -d "$SEED_HOME" ]; then
     fi
 fi
 
-if [ -d "$SEED_TREE" ] && [ ! -d "$STATE/jawnos" ]; then
+# The tree. Test for the entry point rather than the directory: host-drive
+# adoption may already have created jawnos/database/ before the checkout exists.
+if [ -d "$SEED_TREE" ] && [ ! -f "$STATE/jawnos/Manager.pl" ]; then
     mkdir -p "$STATE/jawnos"
+    # Keep an adopted config through the copy. The image's config.json is the
+    # live-flag default and would otherwise overwrite the host's identity.
+    SAVED_CONFIG=
+    if [ "$HAD_CONFIG" = yes ]; then
+        SAVED_CONFIG=$STATE/.host-config.$$
+        cp -p "$STATE/jawnos/config.json" "$SAVED_CONFIG" 2>/dev/null || SAVED_CONFIG=
+    fi
     if command -v rsync >/dev/null 2>&1; then
         rsync -a "$SEED_TREE"/ "$STATE/jawnos"/
     else
         cp -a "$SEED_TREE"/. "$STATE/jawnos"/
+    fi
+    if [ -n "$SAVED_CONFIG" ] && [ -f "$SAVED_CONFIG" ]; then
+        cp -p "$SAVED_CONFIG" "$STATE/jawnos/config.json"
+        rm -f "$SAVED_CONFIG"
     fi
 fi
 
@@ -50,35 +80,75 @@ fi
 # The partition is written as root; hand it to the person who uses it.
 chown -R jawn:jawn "$STATE" 2>/dev/null || true
 
+# The archive discovered on a host drive (if any). Passing it to the seed is how
+# a fresh config.json learns about it; --apply-config below covers the case
+# where an adopted config was kept instead.
+ARCHIVE=
+if [ -f "$ARCHIVE_FILE" ]; then
+    ARCHIVE=$(sed -n '1p' "$ARCHIVE_FILE" 2>/dev/null || true)
+    [ -n "$ARCHIVE" ] && [ -d "$ARCHIVE" ] || ARCHIVE=
+fi
+
 # The image ships defaults, not a person's settings. Seed config.json and a
 # fresh encrypted database now, with a code generated on this boot, so the live
 # session opens a login instead of a wizard. The code is written beside the
 # house for a demo image: read it in a terminal with `cat ~/UNLOCK-CODE.txt`,
 # then delete the file once you have chosen a code of your own.
-if [ ! -e "$STATE/jawnos/database/jawnos.db" ]; then
+#
+# A seed is needed when either half is missing. jawnos_setup.pl leaves an
+# existing database alone, so an adopted database survives even when only
+# config.json has to be written. Only a database this run actually created gets
+# the unlock code: an adopted one has another machine's code.
+NEW_DB=no
+if [ "$HAD_CONFIG" = no ] || [ "$HAD_DB" = no ]; then
     CODE=
-    while [ "${#CODE}" -lt 8 ]; do
-        CODE="$CODE$(head -c 16 /dev/urandom | tr -dc '0-9')"
-    done
-    CODE=$(printf '%s' "$CODE" | cut -c1-8)
-    LOG=/var/log/jawnos-firstboot.log
+    if [ "$HAD_DB" = no ]; then
+        NEW_DB=yes
+        while [ "${#CODE}" -lt 8 ]; do
+            CODE="$CODE$(head -c 16 /dev/urandom | tr -dc '0-9')"
+        done
+        CODE=$(printf '%s' "$CODE" | cut -c1-8)
+    fi
+
+    set -- --seed --name JawnOS
+    if [ -n "$CODE" ]; then
+        set -- "$@" --code "$CODE"
+    fi
+    if [ -n "$ARCHIVE" ]; then
+        set -- "$@" --archive-dir "$ARCHIVE"
+    fi
     if HOME=/home/jawn runuser -u jawn -- sh -c \
-        "umask 077; cd '$STATE/jawnos' && perl scripts/jawnos_setup.pl --seed --name JawnOS --code '$CODE'" \
-        >>"$LOG" 2>&1; then
-        # runuser's PAM stack resets the umask, so the files it just made may be
-        # group/world readable. The database and the code are this machine's
-        # secrets; tighten them the way the app's own umask 077 does.
-        chmod 600 "$STATE/jawnos/config.json" 2>/dev/null || true
-        chmod -R go-rwx "$STATE/jawnos/database" 2>/dev/null || true
-        printf '%s\n' "$CODE" > "$STATE/UNLOCK-CODE.txt"
-        chown jawn:jawn "$STATE/UNLOCK-CODE.txt"
-        chmod 600 "$STATE/UNLOCK-CODE.txt"
-        echo "jawnos-firstboot: unlock code in $STATE/UNLOCK-CODE.txt"
+        'umask 077; cd "$1" || exit 1; shift; exec perl scripts/jawnos_setup.pl "$@"' \
+        sh "$STATE/jawnos" "$@" >>"$LOG" 2>&1; then
+        :
     else
         echo "jawnos-firstboot: setup failed; see $LOG" >&2
         exit 1
     fi
 fi
+
+if [ "$NEW_DB" = yes ]; then
+    printf '%s\n' "$CODE" > "$STATE/UNLOCK-CODE.txt"
+    chown jawn:jawn "$STATE/UNLOCK-CODE.txt"
+    chmod 600 "$STATE/UNLOCK-CODE.txt"
+    echo "jawnos-firstboot: unlock code in $STATE/UNLOCK-CODE.txt"
+elif [ "$HAD_DB" = yes ]; then
+    echo "jawnos-firstboot: kept the adopted host database (see $STATE/HOST-DATABASE.txt)"
+fi
+
+# Apply the archive/folder choices discovery made. This is the path for an
+# adopted config (no seed ran) and for a fresh config whose archive was set by
+# the seed; it never overrides an archive_dir that already exists.
+if [ -x /usr/local/bin/jawnos-host-drives ]; then
+    JAWNOS_STATE_TARGET="$STATE" /usr/local/bin/jawnos-host-drives --apply-config \
+        >>"$LOG" 2>&1 || true
+fi
+
+# runuser's PAM stack resets the umask, so the files it just made may be
+# group/world readable. The database, the adopted host snapshot and the config
+# are this machine's secrets; tighten them the way the app's own umask 077 does.
+chmod 600 "$STATE/jawnos/config.json" 2>/dev/null || true
+chmod -R go-rwx "$STATE/jawnos/database" 2>/dev/null || true
 
 date +%s > "$STATE/.seeded"
 echo "jawnos-firstboot: house seeded in $STATE"

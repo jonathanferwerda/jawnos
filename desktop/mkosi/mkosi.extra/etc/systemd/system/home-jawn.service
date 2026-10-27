@@ -1,0 +1,23 @@
+# The house sits on its own partition, so the root can be replaced (an update,
+# a reinstall) without touching anything a person made. jawnos-state-mount does
+# the mount: it prefers a real partition labelled jawnos-state (the Ventoy
+# reserved partition), falls back to the image's own jawnos-state-img, and
+# finally to a tmpfs so the boot never fails. `DefaultDependencies=no` is
+# required: local-fs.target is ordered after sysinit.target, so a normal
+# service with `Before=local-fs.target` would form an ordering cycle.
+[Unit]
+Description=JawnOS house state
+DefaultDependencies=no
+After=systemd-udevd.service systemd-journald.socket
+Before=local-fs.target shutdown.target
+Conflicts=shutdown.target
+Wants=systemd-udevd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jawnos-state-mount
+RemainAfterExit=yes
+TimeoutStartSec=180
+
+[Install]
+WantedBy=local-fs.target

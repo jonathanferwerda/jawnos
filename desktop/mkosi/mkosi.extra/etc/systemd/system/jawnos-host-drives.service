@@ -1,0 +1,22 @@
+# Mount the computer's other drives (read-only) and use them for the live
+# session: an archive found by its manifest, and a JawnOS database to adopt
+# when the live house has none yet. The boot stick is never touched.
+#
+# It runs after the house is mounted and before firstboot, because firstboot
+# must see an adopted database and pass the discovered archive to
+# `jawnos_setup.pl --seed`. The unit is idempotent and the script always exits
+# 0, so a sick host drive cannot fail the boot.
+[Unit]
+Description=Discover the host computer's drives (live session)
+After=home-jawn.service
+Before=jawnos-firstboot.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jawnos-host-drives
+ExecStop=/usr/local/bin/jawnos-host-drives --unmount
+RemainAfterExit=yes
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

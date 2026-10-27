@@ -13,6 +13,10 @@
 #                                          # their absence is not fatal)
 #   perl scripts/jawnos_deps.pl --extras-only --install  # only the optional apps
 #                                          # (Piper); run after a code update
+#   perl scripts/jawnos_deps.pl --local-lib DIR --install
+#                                          # install missing modules into DIR
+#                                          # (a local::lib, e.g. ~/perl5) as the
+#                                          # current user; never runs sudo
 #   perl scripts/jawnos_deps.pl --no-extras # skip the optional apps
 #
 # It also reports which key-derivation features OpenSSL offers (Argon2id,
@@ -26,7 +30,7 @@ use warnings;
 use Getopt::Long qw(GetOptions);
 use JSON::PP ();
 
-my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras);
+my ($report_only, $json, $sh, $install, $yes, $desktop, $extras_only, $no_extras, $local_lib);
 GetOptions(
 	'report'      => \$report_only,
 	'json'        => \$json,
@@ -36,9 +40,34 @@ GetOptions(
 	'desktop'     => \$desktop,
 	'extras-only' => \$extras_only,
 	'no-extras'   => \$no_extras,
+	'local-lib=s' => \$local_lib,
 ) or die "bad options\n";
 
 $install = 1 if $yes;
+
+# Arch keeps cpanm in /usr/bin/vendor_perl, which is not on a login PATH and is
+# certainly not on a systemd service's; the update path has modules to install
+# and must be able to find it. PATH is only used for command lookup here.
+$ENV{'PATH'} = join(':', grep { defined && length } $ENV{'PATH'}, '/usr/bin/vendor_perl');
+
+# --local-lib is the self-update path: a person installing only for themselves,
+# into the local::lib `jawn` already puts on @INC. The modules there count as
+# present for the checks, and the arch subdirectories match what jawn adds.
+if (defined $local_lib && length $local_lib) {
+	my $base = "$local_lib/lib/perl5";
+	my @dirs = ($base);
+	if (opendir(my $dh, $base)) {
+		for my $name (sort readdir $dh) {
+			next if $name eq '.' || $name eq '..';
+			my $dir = "$base/$name";
+			push @dirs, $dir if -d $dir && ($name =~ /-linux-/ || $name =~ /-linux$/ || $name =~ /^[0-9]+\.[0-9]+/);
+		}
+		closedir $dh;
+	}
+	unshift @INC, @dirs;
+	my $lib = join ':', @dirs;
+	$ENV{'PERL5LIB'} = $ENV{'PERL5LIB'} ? "$lib:$ENV{'PERL5LIB'}" : $lib;
+}
 
 my $platform = detect_platform();
 
@@ -426,6 +455,9 @@ sub run {
 }
 
 sub sudo {
+	# --local-lib is a user-scoped install by contract: no package manager and
+	# no sudo, whatever the caller's privileges.
+	return () if defined $local_lib && length $local_lib;
 	return () if $platform eq 'termux';
 	return ('sudo') if -x '/usr/bin/sudo';
 	return ();
@@ -434,7 +466,10 @@ sub sudo {
 {
 	# Core tools and any opted-in desktop extras in one transaction.
 	my @pkgs = grep { defined $_ && $_ ne '' } map { pkg_for($_) } (@missing_tools, @missing_desktop);
-	if (@pkgs) {
+	if (@pkgs && defined $local_lib && length $local_lib) {
+		print "Skipping system packages in --local-lib mode: " . join(' ', @pkgs) . "\n";
+	}
+	elsif (@pkgs) {
 		if ($platform eq 'debian') {
 			run( sudo(), 'apt-get', 'update' );
 			run( sudo(), 'apt-get', 'install', '-y', @pkgs );
@@ -457,8 +492,14 @@ unless (which('cpanm')) {
 
 if (@missing_modules) {
 	my $cpanm = which('cpanm') || 'cpanm';
-	my @cmd = ($cpanm, '--notest', '--force', @missing_modules);
-	unshift @cmd, sudo() unless $platform eq 'termux';
+	my @cmd = ($cpanm, '--notest', '--force');
+	if (defined $local_lib && length $local_lib) {
+		push @cmd, '--local-lib', $local_lib;
+	}
+	else {
+		unshift @cmd, sudo() unless $platform eq 'termux';
+	}
+	push @cmd, @missing_modules;
 	run(@cmd);
 }
 
@@ -501,7 +542,11 @@ sub install_script {
 	push @lines, '';
 
 	my @pkgs = grep { defined $_ && $_ ne '' } map { pkg_for($_) } (@missing_tools, @missing_desktop);
-	if (@pkgs) {
+	if (@pkgs && defined $local_lib && length $local_lib) {
+		push @lines, '# system packages skipped: --local-lib installs for this user only';
+		push @lines, '';
+	}
+	elsif (@pkgs) {
 		push @lines, '# command line tools' . (@missing_desktop ? ' and desktop extras' : '');
 		if ($platform eq 'debian') {
 			push @lines, join(' ', sudo(), 'apt-get', 'update');
@@ -524,7 +569,12 @@ sub install_script {
 		push @lines, '# perl modules';
 		push @lines, 'command -v cpanm >/dev/null 2>&1 || curl -L https://cpanmin.us | perl - App::cpanminus';
 		my @cpanm = ( which('cpanm') || 'cpanm' );
-		unshift @cpanm, sudo() unless $platform eq 'termux';
+		if (defined $local_lib && length $local_lib) {
+			push @cpanm, '--local-lib', $local_lib;
+		}
+		else {
+			unshift @cpanm, sudo() unless $platform eq 'termux';
+		}
 		push @lines, join(' ', @cpanm, '--notest', '--force', @missing_modules);
 		push @lines, '';
 	}

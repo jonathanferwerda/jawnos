@@ -1,0 +1,23 @@
+# Turn the seeded tree into a real checkout and follow GitHub on every boot.
+# jawnos-firstboot copies /opt/jawnos/tree onto the state partition once, and
+# that copy has no .git, so without this unit a stick-installed image could
+# never update its app code or its Perl modules. It runs before the graphical
+# session (getty@tty1 runs ~/.bash_profile, which execs sway), so the session
+# opens on the tree that was just updated. A missing network is not a failure:
+# the updater leaves the seeded tree alone and exits 0.
+[Unit]
+Description=JawnOS boot self-update - follow GitHub
+Requires=home-jawn.service
+After=home-jawn.service jawnos-firstboot.service network-online.target
+Wants=network-online.target
+Before=getty@tty1.service
+ConditionPathExists=/home/jawn/jawnos
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jawnos-update
+RemainAfterExit=yes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

@@ -4,8 +4,8 @@
 # Runs before firstboot so the seed lands on the full-size filesystem.
 [Unit]
 Description=Grow the JawnOS state partition to fill the disk
-Requires=home-jawn.mount
-After=home-jawn.mount
+Requires=home-jawn.service
+After=home-jawn.service
 Before=jawnos-firstboot.service
 ConditionPathExists=/usr/lib/jawnos/repart/30-state.conf
 

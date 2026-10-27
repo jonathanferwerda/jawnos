@@ -12,6 +12,13 @@
 # with them, and /home/jawn is copied as files so the live session's changes
 # are kept.
 #
+# The image's state partition is labelled `jawnos-state-img` (Ventoy presents
+# the image's own partition read-only; a real Ventoy reserve is `jawnos-state`).
+# The target keeps that label, and jawnos-state-mount finds it on later boots.
+# The live media is resolved from the running root, not from /home/jawn: on
+# Ventoy /home/jawn may be the reserve on the stick, and without persistence it
+# is a tmpfs.
+#
 # The theme chosen on jawnos.ca travels in jawnos-theme.txt on the stick's
 # jawnos-esp partition. It is read here and written into the new machine's
 # database; --theme overrides it. An explicit theme wins over the file.
@@ -87,28 +94,81 @@ part_by_label() {
     return 1
 }
 
-# Never write over the stick this system is running from. Anchor on the
-# mounted state partition: `blkid -L` becomes ambiguous after a first install
-# or when a second JawnOS disk is attached, because both carry the labels.
-STATE_SRC=$(findmnt -no SOURCE /home/jawn 2>/dev/null || true)
-if [ -n "$STATE_SRC" ] && [ -b "$STATE_SRC" ]; then
-    LIVEDISK=$(lsblk -no PKNAME "$(readlink -f "$STATE_SRC")" | head -n 1)
-else
-    ROOTPART=$(blkid -L jawnos-root 2>/dev/null || true)
-    if [ -z "$ROOTPART" ]; then
-        echo "cannot find the live root (label jawnos-root)" >&2
-        exit 1
-    fi
-    LIVEDISK=$(lsblk -no PKNAME "$(readlink -f "$ROOTPART")" | head -n 1)
+# Never write over the stick this system is running from. The root partition
+# is the reliable anchor: on Ventoy /home/jawn may be a reserved partition on
+# the stick, and on a no-persistence boot it is a tmpfs. The root= line (or the
+# jawnos-root label) names the running image even when it is a loop device.
+root_device() {
+    r=
+    for word in $(cat /proc/cmdline 2>/dev/null); do
+        case "$word" in
+            root=PARTUUID=*) r=/dev/disk/by-partuuid/${word#root=PARTUUID=} ;;
+            root=UUID=*)     r=/dev/disk/by-uuid/${word#root=UUID=} ;;
+            root=LABEL=*)    r=/dev/disk/by-label/${word#root=LABEL=} ;;
+            root=/dev/*)     r=${word#root=} ;;
+        esac
+    done
+    [ -n "$r" ] && printf '%s\n' "$r"
+    # Always succeed: the caller falls back to the jawnos-root label, and this
+    # script runs under `set -e`.
+    return 0
+}
+
+top_disk() {
+    cur=$1
+    while :; do
+        parent=$(lsblk -no PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        [ -n "$parent" ] || { printf '%s\n' "$cur"; return 0; }
+        cur=$parent
+    done
+}
+
+ROOTPART=$(root_device)
+[ -n "$ROOTPART" ] && ROOTPART=$(readlink -f "$ROOTPART" 2>/dev/null || true)
+if [ -z "$ROOTPART" ] || [ ! -b "$ROOTPART" ]; then
+    ROOTPART=$(blkid -L jawnos-root 2>/dev/null | head -n 1 || true)
+    [ -n "$ROOTPART" ] && ROOTPART=$(readlink -f "$ROOTPART" 2>/dev/null || true)
 fi
-if [ -n "$LIVEDISK" ] && [ "/dev/$LIVEDISK" = "$TARGET" ]; then
-    echo "refusing to install over the live media ($TARGET)" >&2
+if [ -z "$ROOTPART" ] || [ ! -b "$ROOTPART" ]; then
+    echo "cannot find the live root (label jawnos-root)" >&2
     exit 1
 fi
+LIVEDISK=$(lsblk -no PKNAME "$ROOTPART" 2>/dev/null | head -n 1 || true)
 if [ -z "$LIVEDISK" ]; then
     echo "cannot resolve the live disk" >&2
     exit 1
 fi
+
+# Refuse the boot medium itself. On Ventoy the running image is loop0, but its
+# bytes live in a file on the stick's data partition, so the physical disk
+# behind the loop is protected too. The disk holding the mounted state (the
+# Ventoy reserve) is the same stick to protect.
+PROTECTED=$(mktemp /run/jawnos-protected.XXXXXX)
+protect_disk() {
+    d=$1
+    [ -n "$d" ] || return 0
+    grep -qx "$d" "$PROTECTED" 2>/dev/null || printf '%s\n' "$d" >> "$PROTECTED"
+}
+protect_disk "$LIVEDISK"
+STATE_SRC=$(findmnt -no SOURCE /home/jawn 2>/dev/null | head -n 1 || true)
+if [ -n "$STATE_SRC" ] && [ -b "$STATE_SRC" ]; then
+    protect_disk "$(top_disk "$(basename "$(readlink -f "$STATE_SRC")")")"
+fi
+if [ "$(lsblk -dno TYPE "/dev/$LIVEDISK" 2>/dev/null | head -n 1)" = loop ]; then
+    BACKING=$(cat "/sys/block/$LIVEDISK/loop/backing_file" 2>/dev/null || true)
+    if [ -n "$BACKING" ]; then
+        BACKING_SRC=$(findmnt -T "$BACKING" -no SOURCE 2>/dev/null | head -n 1 || true)
+        if [ -n "$BACKING_SRC" ] && [ -b "$BACKING_SRC" ]; then
+            protect_disk "$(top_disk "$(basename "$(readlink -f "$BACKING_SRC")")")"
+        fi
+    fi
+fi
+if grep -qx "${TARGET#/dev/}" "$PROTECTED" 2>/dev/null; then
+    echo "refusing to install over the live media ($TARGET)" >&2
+    rm -f "$PROTECTED"
+    exit 1
+fi
+rm -f "$PROTECTED"
 
 LIVE_ESP=$(part_by_label "/dev/$LIVEDISK" jawnos-esp || true)
 LIVE_ROOT=$(part_by_label "/dev/$LIVEDISK" jawnos-root || true)
@@ -218,7 +278,9 @@ TARGET_STATE=
 for try in 1 2 3 4 5; do
     TARGET_ESP=$(part_by_label "$TARGET" jawnos-esp || true)
     TARGET_ROOT=$(part_by_label "$TARGET" jawnos-root || true)
-    TARGET_STATE=$(part_by_label "$TARGET" jawnos-state || true)
+    # The image's state label, not `jawnos-state`: that one names the external
+    # Ventoy reserve, which the target must never inherit.
+    TARGET_STATE=$(part_by_label "$TARGET" jawnos-state-img || true)
     if [ -n "$TARGET_ESP" ] && [ -n "$TARGET_ROOT" ] && [ -n "$TARGET_STATE" ]; then
         break
     fi

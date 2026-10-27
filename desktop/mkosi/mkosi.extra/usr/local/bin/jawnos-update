@@ -1,0 +1,21 @@
+#!/bin/sh
+# Boot-time self-update. The implementation lives in the app tree so the boot
+# unit and Dev -> Update now run exactly the same code; this wrapper only finds
+# it and makes Arch's cpanm visible (it lives in /usr/bin/vendor_perl, which a
+# systemd service's bare PATH does not include).
+set -eu
+
+REPO=${JAWNOS_REPO:-/home/jawn/jawnos}
+UPDATER="$REPO/scripts/jawnos_update.pl"
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/bin/vendor_perl
+export PATH
+
+# A boot with a failed first boot has no tree to update; leave it to the next
+# boot rather than marking this unit failed.
+if [ ! -f "$UPDATER" ]; then
+    echo "jawnos-update: no updater at $UPDATER" >&2
+    exit 0
+fi
+
+exec perl "$UPDATER" "$@"

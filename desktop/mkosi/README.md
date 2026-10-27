@@ -108,13 +108,50 @@ capacities round down); 16 GB or more is comfortable. The built image is
 written at its minimum size, and the installer (or `jawnos-grow`, when the image
 is flashed directly) expands the state partition to fill the rest.
 
-> **Ventoy:** booting this raw image from Ventoy is read-only. Ventoy presents
-the image through a loop device, so the live session starts but nothing it
-writes (including the database) survives a reboot. For persistence, write the
-image directly with `dd`/balenaEtcher, or boot the live session and run
-`jawnos-install` onto a disk. A Ventoy-aware persistence image would need a
-separate writable state partition on the Ventoy stick; this image does not
-look for one.
+> **Ventoy persistence:** Ventoy boots this raw image through a loop device, so
+> the image's own state partition (`jawnos-state-img`; ext4 allows only 16 bytes
+> in a filesystem label, so the longer "state-image" spelling does not fit) is
+> read-only. Install Ventoy with **“reserve space at the end of the disk”**, then
+> format the reserved partition ext4 with the label `jawnos-state`:
+>
+> ```sh
+> sudo mkfs.ext4 -L jawnos-state /dev/sdX3   # the reserved partition
+> ```
+>
+> At boot `jawnos-state-mount` prefers that real partition over the image's own
+> one, so everything in `/home/jawn` survives a reboot. If several partitions
+> carry the label, the one on the largest disk wins. Without a reserve the
+> session still boots, but `/home/jawn` is a tmpfs and
+> `/run/jawnos-no-persistence` says so. Writing the image directly with
+> `dd`/balenaEtcher also persists: the image's own partition is then writable and
+> is used. `jawnos-install` remains the path to a permanent machine.
+
+### Booting on someone else's computer
+
+`jawnos-host-drives.service` runs after the house is mounted and before the
+first-boot seed. It mounts the computer's unmounted ext4/btrfs/xfs/vfat/exfat
+volumes read-only under `/run/jawnos/host/<label>`, and skips the boot stick,
+loop-backed images, LUKS, swap and optical media. Most NTFS volumes are skipped
+too; the kernel's `ntfs3` driver is tried and the volume is dropped if that
+fails. Every decision goes to `/run/jawnos/host-drives.log`.
+
+- **Archive:** if a volume has `Music/manifest.json` (or
+  Downloads/Photos/Documents/Videos/Scans/Recordings, including the lower-case
+  spellings), that volume becomes the archive when `config.json`'s
+  `archive_dir` is blank, `null`, or points at a missing path. It is added to
+  `folders` and that one mount is remounted read-write. A deliberately
+  configured archive_dir that exists is never overridden.
+- **Database:** if a volume has `home/*/jawnos/database/jawnos.db` (or
+  `root/jawnos/database/jawnos.db`) and the live house has no database yet, the
+  database, its `-wal`/`-shm` and its `config.json` are copied into the live
+  tree before the seed. `/home/jawn/HOST-DATABASE.txt` names the source and warns
+  that the database is a snapshot of **another machine's identity**; the unlock
+  code is that machine's, not one shown by this session. Nothing is ever written
+  back to the host drive.
+
+`jawnos-host-drives --status` prints the mounts, the chosen archive and whether
+anything is persistent. `jawnos-host-drives --apply-config` merges the choices
+into `config.json` (firstboot calls it after seeding).
 
 ## Choosing a theme before installing
 
@@ -150,7 +187,7 @@ Both call `/usr/local/bin/jawnos-theme`, which accepts `theme=nord`, a bare
 | --- | --- | --- | --- |
 | 1 | 1G fixed | `jawnos-esp` | one unified kernel image at `EFI/BOOT/BOOTX64.EFI` (kernel, initrd, command line); reads `jawnos-theme.txt` from its root when the person puts one there |
 | 2 | 5G fixed | `jawnos-root` | the system, read-only at boot |
-| 3 | 2G min → disk | `jawnos-state` | `/home/jawn`: the checkout, `config.json`, the database |
+| 3 | 2G min → disk | `jawnos-state-img` | `/home/jawn`: the checkout, `config.json`, the database. Ventoy can only read it; a real partition labelled `jawnos-state` (the Ventoy reserve) takes its place when present |
 
 The ESP and root are fixed sizes on purpose: every byte they do not take is a
 byte the state partition can use on a stick. systemd-repart cannot grow a
@@ -171,13 +208,18 @@ and every change to it lives in RAM until reboot.** The house lives on partition
 3, so the settings, data and sealed vault you make while trying the stick are
 still there after a reboot. That is the "live with persistence" part.
 
-On first boot `jawnos-grow` first expands `jawnos-state` into whatever free
-space the disk has, then `jawnos-firstboot` copies `/opt/jawnos/tree` and
-`/opt/jawnos/home-skel` onto the state partition and runs
+On first boot `home-jawn.service` mounts the house (a real `jawnos-state`
+partition if one is present, otherwise the image's `jawnos-state-img`; a tmpfs
+keeps the boot alive if neither is writable). `jawnos-host-drives` then mounts
+the host's other drives and records any archive or database it found, and
+`jawnos-grow` expands `jawnos-state-img` into whatever free space the disk has
+(never a loop-backed image, never the Ventoy reserve). `jawnos-firstboot` copies
+`/opt/jawnos/tree` and `/opt/jawnos/home-skel` onto the state partition and runs
 `scripts/jawnos_setup.pl --seed` as `jawn` to write `config.json` and the
-machine's database from the factory seed. `jawnos-theme-apply` then applies a
-theme file if one is on the ESP. A second boot finds `~/.seeded` and does
-nothing; a first boot that failed is retried.
+machine's database from the factory seed; an adopted host database is kept and
+the discovered archive is passed as `--archive-dir`. `jawnos-theme-apply` then
+applies a theme file if one is on the ESP. A second boot finds `~/.seeded` and
+does nothing; a first boot that failed is retried.
 
 ## Install to disk
 
@@ -189,17 +231,22 @@ sudo jawnos-install --yes --theme nord /dev/sdX   # override the file on the ESP
 
 It creates a fresh partition table on the target from the same repart
 definitions the image was built with, sized to the whole device: 1G ESP, 5G
-root, and a `jawnos-state` that takes everything left. It then copies the ESP
-and root **partitions** byte for byte (the bootloader and kernel travel with
-them), copies `/home/jawn` **as files** (so the live session's changes are kept),
-and applies the theme from `jawnos-theme.txt` on the live ESP. The house
-partition is already full-size, so there is no post-copy grow step to get wrong.
+root, and a `jawnos-state-img` that takes everything left (the installed disk
+keeps the image label; `jawnos-state` is reserved for a Ventoy reserve). It then
+copies the ESP and root **partitions** byte for byte (the bootloader and kernel
+travel with them), copies `/home/jawn` **as files** (so the live session's
+changes are kept), and applies the theme from `jawnos-theme.txt` on the live
+ESP. The house partition is already full-size, so there is no post-copy grow
+step to get wrong.
 
 The installer refuses to write to the stick it is running from, needs `--yes`
 before it touches anything, refuses a disk with mounted filesystems on it, and
 refuses a target smaller than 9G. It copies only the two system partitions, not
 the live stick's grown state partition, so installing from a 64G live stick to
-a 32G target is fine.
+a 32G target is fine. The running system is found from the kernel's root=
+(through `jawnos-root`), not from `/home/jawn`, because on Ventoy the house may
+be the reserve on the stick; the physical disk behind a loop-backed image is
+protected from being used as the target as well.
 
 Partition nodes are refreshed after repart (`partx -u` plus a udev settle) and
 the target partitions are found by filesystem label on the target disk, not with
@@ -280,6 +327,13 @@ Recorded honestly:
 
 - The image builds and boots in QEMU (mkosi 27, OVMF), and first boot seeds the
   house. A boot from a real USB stick has not been tried.
+- Ventoy persistence and host-drive discovery were exercised on loop devices in
+  a sandbox (a reserved partition labelled `jawnos-state`, the image's
+  `jawnos-state-img`, the tmpfs fallback, an archive manifest found and
+  remounted read-write, and a host database adopted with `-wal`/`-shm`). A real
+  Ventoy stick and a real second computer are still the missing proof; on
+  Ventoy the boot stick's data partition is protected via the loop's
+  `backing_file`, which cannot be resolved if Ventoy unmounts that partition.
 - The install path was exercised end to end on **loop devices** in a sandbox:
   a 32G target was repartitioned to 1G/5G/26G, the ESP and root were copied,
   the house was rsynced, the theme row landed, and the live flag was dropped.

@@ -1,0 +1,356 @@
+#!/bin/sh
+# Mount the house (/home/jawn) on whatever this boot can actually write.
+#
+# The image's own state partition is labelled jawnos-state-img. Under Ventoy the
+# image is a loop device, so that partition is read-only and a reserved real
+# partition labelled jawnos-state is the house instead. On a direct dd, a QEMU
+# disk or an installed machine, the image's own state is the house, and a
+# Ventoy stick that happens to be attached must never take it over.
+#
+# The choice follows the live root: a loop-backed root (Ventoy) prefers the real
+# partition, everything else prefers the image's own label. If neither can be
+# mounted read-write (Ventoy with no reserve, a damaged filesystem), a tmpfs
+# keeps the session usable and /run/jawnos-no-persistence records that nothing
+# survives a reboot.
+#
+# This runs before local-fs.target, so it must never fail the boot: every
+# failure falls through to the next choice and, at worst, to the tmpfs.
+#
+# Test hooks (all optional): JAWNOS_STATE_TARGET, JAWNOS_STATE_RUN,
+# JAWNOS_STATE_DEV, JAWNOS_STATE_IMAGE_DEV, JAWNOS_STATE_ALLOW_LOOP,
+# JAWNOS_STATE_LIVE_IS_LOOP, JAWNOS_STATE_NO_GROW, JAWNOS_GROW.
+set -u
+
+TARGET=${JAWNOS_STATE_TARGET:-/home/jawn}
+RUN=${JAWNOS_STATE_RUN:-/run}
+REAL_LABEL=${JAWNOS_STATE_REAL_LABEL:-jawnos-state}
+IMAGE_LABEL=${JAWNOS_STATE_IMAGE_LABEL:-jawnos-state-img}
+ALLOW_LOOP=${JAWNOS_STATE_ALLOW_LOOP:-0}
+NO_GROW=${JAWNOS_STATE_NO_GROW:-0}
+GROW=${JAWNOS_GROW:-/usr/local/bin/jawnos-grow}
+LOGDIR=$RUN/jawnos
+LOG=$LOGDIR/state-mount.log
+MARKER=$RUN/jawnos-no-persistence
+
+mkdir -p "$LOGDIR" 2>/dev/null || true
+
+log() {
+    line="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date) jawnos-state-mount: $*"
+    printf '%s\n' "$line" >&2
+    printf '%s\n' "$line" >>"$LOG" 2>/dev/null || true
+}
+
+# lsblk --pairs hex-escapes a label's dangerous bytes (a quote becomes \x22), so
+# the value between the quotes cannot forge another KEY="..." pair. The leading
+# space lets the first key match the same pattern as the rest.
+field() {
+    printf ' %s\n' "$1" | sed -n "s/.* $2=\"\([^\"]*\)\".*/\1/p"
+}
+
+# The top-level disk (or loop) a device belongs to.
+top_disk() {
+    cur=$1
+    while :; do
+        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        if [ -z "$parent" ]; then
+            printf '%s\n' "$cur"
+            return 0
+        fi
+        cur=$parent
+    done
+}
+
+# True when the device, or one of its parents, is a loop device: the state then
+# lives inside a disk image rather than on real hardware.
+loop_ancestor() {
+    cur=$1
+    # A whole loop device has no parent, so check the device itself too.
+    if [ "$(lsblk -dno TYPE "/dev/$cur" 2>/dev/null | head -n 1)" = loop ]; then
+        return 0
+    fi
+    while :; do
+        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        [ -n "$parent" ] || return 1
+        if [ "$(lsblk -dno TYPE "/dev/$parent" 2>/dev/null | head -n 1)" = loop ]; then
+            return 0
+        fi
+        cur=$parent
+    done
+}
+
+is_mounted() { findmnt -n -M "$TARGET" >/dev/null 2>&1; }
+mount_source() { findmnt -n -o SOURCE -M "$TARGET" 2>/dev/null | head -n 1; }
+
+clear_target() {
+    is_mounted || return 0
+    umount "$TARGET" 2>/dev/null || umount -l "$TARGET" 2>/dev/null || true
+    is_mounted && return 1
+    return 0
+}
+
+# A mount command must not hang the boot on a dying disk. util-linux's timeout
+# is the only extra tool used; without it the command still runs.
+run_limited() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 20 "$@"
+    else
+        "$@"
+    fi
+}
+
+# The running image's own disk (loop0 on Ventoy, the stick or VM disk on a
+# direct boot). Used only to prefer the image's own state over a second
+# attached JawnOS image; it is never grown or written.
+live_disk() {
+    root=
+    for word in $(cat /proc/cmdline 2>/dev/null); do
+        case "$word" in
+            root=PARTUUID=*) root=/dev/disk/by-partuuid/${word#root=PARTUUID=} ;;
+            root=UUID=*)     root=/dev/disk/by-uuid/${word#root=UUID=} ;;
+            root=LABEL=*)    root=/dev/disk/by-label/${word#root=LABEL=} ;;
+            root=/dev/*)     root=${word#root=} ;;
+        esac
+    done
+    if [ -n "$root" ]; then
+        root=$(readlink -f "$root" 2>/dev/null || true)
+    fi
+    if [ -z "$root" ] || [ ! -b "$root" ]; then
+        root=$(blkid -L jawnos-root 2>/dev/null | head -n 1 || true)
+        [ -n "$root" ] && root=$(readlink -f "$root" 2>/dev/null || true)
+    fi
+    if [ -z "$root" ] || [ ! -b "$root" ]; then
+        root=$(blkid -L "$IMAGE_LABEL" 2>/dev/null | head -n 1 || true)
+        [ -n "$root" ] && root=$(readlink -f "$root" 2>/dev/null || true)
+    fi
+    [ -n "$root" ] && [ -b "$root" ] || return 0
+    top_disk "${root#/dev/}"
+}
+
+# Print "live|disk-size|partition-size|name" for every usable partition with
+# the wanted label. The caller sorts; nothing here depends on device order.
+collect() {
+    want=$1
+    allow_loop=$2
+    lsblk -P -o NAME,TYPE,FSTYPE,LABEL,UUID,PKNAME,MOUNTPOINTS,SIZE 2>/dev/null \
+    | while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        [ "$(field "$line" LABEL)" = "$want" ] || continue
+        name=$(field "$line" NAME)
+        type=$(field "$line" TYPE)
+        fstype=$(field "$line" FSTYPE)
+        mnt=$(field "$line" MOUNTPOINTS)
+        [ -n "$name" ] || continue
+        case "$type" in
+            part|disk) ;;
+            # In production a loop device is an image and is never the state;
+            # the test hook admits it so small loop images can stand in.
+            loop) [ "$allow_loop" = 1 ] || continue ;;
+            *) continue ;;
+        esac
+        case "$fstype" in ext2|ext3|ext4) ;; *) continue ;; esac
+        # A partition that is already mounted is not ours to steal.
+        [ -z "$mnt" ] || continue
+        if [ "$allow_loop" != 1 ] && loop_ancestor "$name"; then
+            log "skipping /dev/$name (label $want): it is inside a disk image"
+            continue
+        fi
+        disk=$(top_disk "$name")
+        dsize=$(blockdev --getsize64 "/dev/$disk" 2>/dev/null || echo 0)
+        psize=$(blockdev --getsize64 "/dev/$name" 2>/dev/null || echo 0)
+        live=0
+        if [ -n "$LIVE_DISK" ] && [ "$disk" = "$LIVE_DISK" ]; then
+            live=1
+        fi
+        printf '%s|%s|%s|%s\n' "$live" "$dsize" "$psize" "$name"
+    done
+}
+
+# Deterministic duplicate resolution: the running image first, then the disk
+# with the largest size, then the largest partition, then the device name.
+choose() {
+    want=$1
+    allow_loop=$2
+    collect "$want" "$allow_loop" \
+        | LC_ALL=C sort -t'|' -k1,1nr -k2,2nr -k3,3nr -k4,4 \
+        | head -n 1 | cut -d'|' -f4
+}
+
+# A read-only block device still accepts `mount -o rw`: the kernel quietly
+# downgrades the mount to ro. Prove a write reaches the medium with dd (an
+# external command, so a redirection error cannot exit this non-fatal script).
+writable() {
+    if dd if=/dev/zero of="$TARGET/.jawnos-write-test" bs=4096 count=1 conv=fsync \
+        >/dev/null 2>&1; then
+        rm -f "$TARGET/.jawnos-write-test" 2>/dev/null || true
+        return 0
+    fi
+    rm -f "$TARGET/.jawnos-write-test" 2>/dev/null || true
+    return 1
+}
+
+mount_state() {
+    dev=$1
+    [ -b "$dev" ] || return 1
+    if ! clear_target; then
+        log "could not clear $TARGET before mounting $dev"
+        return 1
+    fi
+    if run_limited mount -t ext4 -o rw,nofail "$dev" "$TARGET" >>"$LOG" 2>&1; then
+        if writable; then
+            return 0
+        fi
+        log "$dev mounted but is not writable"
+        umount "$TARGET" 2>/dev/null || umount -l "$TARGET" 2>/dev/null || true
+    else
+        log "could not mount $dev read-write"
+    fi
+    return 1
+}
+
+grow_house() {
+    rm -f "$MARKER" 2>/dev/null || true
+    if [ "$NO_GROW" = 1 ]; then
+        log "growth skipped (JAWNOS_STATE_NO_GROW=1)"
+        return 0
+    fi
+    if [ ! -x "$GROW" ]; then
+        log "no grow helper at $GROW"
+        return 0
+    fi
+    log "growing the state partition"
+    JAWNOS_STATE_TARGET="$TARGET" JAWNOS_STATE_RUN="$RUN" "$GROW" >>"$LOG" 2>&1 \
+        || log "grow helper reported a problem (continuing)"
+}
+
+fallback_tmpfs() {
+    clear_target || log "could not clear $TARGET before the tmpfs fallback"
+    if run_limited mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs "$TARGET" >>"$LOG" 2>&1; then
+        chown jawn:jawn "$TARGET" 2>/dev/null || true
+        {
+            printf 'JawnOS is running without a writable state partition.\n'
+            printf '/home/jawn is a tmpfs, so everything written in this session\n'
+            printf 'is lost on reboot. On Ventoy, reserve space at the end of the\n'
+            printf 'stick and format that partition ext4 with the label jawnos-state.\n'
+        } >"$MARKER" 2>/dev/null || true
+        log "no writable state; $TARGET is a tmpfs and nothing survives a reboot"
+        return 0
+    fi
+    {
+        printf 'JawnOS is running without a writable state partition, and the\n'
+        printf 'tmpfs fallback could not be mounted. Nothing written survives.\n'
+    } >"$MARKER" 2>/dev/null || true
+    log "no writable state and no tmpfs; $TARGET stays on the volatile root"
+    return 0
+}
+
+LIVE_DISK=$(live_disk)
+# The test harness can name the boot mode directly; on a real boot the live
+# root's device decides (a loop means Ventoy, anything else is a real disk).
+LIVE_IS_LOOP=${JAWNOS_STATE_LIVE_IS_LOOP:-0}
+if [ -z "${JAWNOS_STATE_LIVE_IS_LOOP:-}" ] && [ -n "$LIVE_DISK" ] \
+    && [ "$(lsblk -dno TYPE "/dev/$LIVE_DISK" 2>/dev/null | head -n 1)" = loop ]; then
+    LIVE_IS_LOOP=1
+fi
+log "live image disk: ${LIVE_DISK:-unknown} (loop=$LIVE_IS_LOOP)"
+
+mkdir -p "$TARGET" 2>/dev/null || true
+
+# A mount left at the target by an earlier attempt is not the state unless it is
+# a writable block device; a tmpfs or a vanished device is stale and must not
+# hide the partition this boot should use.
+if is_mounted; then
+    src=$(mount_source)
+    if [ -n "$src" ] && [ -b "$src" ] && writable; then
+        log "already mounted on $src; leaving it"
+        grow_house
+        exit 0
+    fi
+    log "clearing a stale mount at $TARGET (${src:-unknown source})"
+    clear_target || log "could not unmount $TARGET"
+fi
+
+# Which label means "the house" depends on how this boot was made. Under
+# Ventoy the image is a loop device, so its own state is read-only and the real
+# reserved partition (jawnos-state) is the house. On a direct dd or an
+# installed disk, the image's own state (jawnos-state-img) is the house, and a
+# Ventoy stick that happens to be plugged in must never take it over.
+if [ "$LIVE_IS_LOOP" = 1 ]; then
+    FIRST_LABEL=$REAL_LABEL
+    FIRST_KIND=external
+    SECOND_LABEL=$IMAGE_LABEL
+    SECOND_KIND=image
+else
+    FIRST_LABEL=$IMAGE_LABEL
+    FIRST_KIND=image
+    SECOND_LABEL=$REAL_LABEL
+    SECOND_KIND=external
+fi
+
+picked=
+kind=
+if [ -n "${JAWNOS_STATE_DEV:-}" ] && [ -b "${JAWNOS_STATE_DEV:-}" ]; then
+    picked=$JAWNOS_STATE_DEV
+    kind=$FIRST_KIND
+    log "using forced state device $picked"
+fi
+
+if [ -z "$picked" ]; then
+    picked=$(choose "$FIRST_LABEL" "$ALLOW_LOOP")
+    if [ -n "$picked" ]; then
+        kind=$FIRST_KIND
+        log "using $FIRST_LABEL: $picked"
+    fi
+fi
+
+if [ -z "$picked" ]; then
+    if [ -n "${JAWNOS_STATE_IMAGE_DEV:-}" ] && [ -b "${JAWNOS_STATE_IMAGE_DEV:-}" ]; then
+        picked=$JAWNOS_STATE_IMAGE_DEV
+        kind=image
+        log "using forced image state device $picked"
+    else
+        picked=$(choose "$SECOND_LABEL" "$ALLOW_LOOP")
+        if [ -n "$picked" ]; then
+            kind=$SECOND_KIND
+            log "using $SECOND_LABEL: $picked"
+        fi
+    fi
+fi
+
+# lsblk names are bare (`loop0`, `nvme0n1p3`); mount needs /dev/.
+if [ -n "$picked" ]; then
+    case "$picked" in
+        /dev/*) ;;
+        *) picked=/dev/$picked ;;
+    esac
+fi
+
+if [ -n "$picked" ] && mount_state "$picked"; then
+    log "house mounted on $picked ($kind state)"
+    grow_house
+    exit 0
+fi
+
+# A first choice that exists but cannot be written (a write-protected stick, a
+# damaged filesystem, a stale reserve) must not hide the other one.
+if [ -n "$picked" ]; then
+    if [ "$kind" = "$FIRST_KIND" ]; then
+        alt_label=$SECOND_LABEL
+    else
+        alt_label=$FIRST_LABEL
+    fi
+    alt=$(choose "$alt_label" "$ALLOW_LOOP")
+    if [ -n "$alt" ]; then
+        case "$alt" in
+            /dev/*) ;;
+            *) alt=/dev/$alt ;;
+        esac
+        if mount_state "$alt"; then
+            log "house mounted on $alt ($alt_label; $picked was unusable)"
+            grow_house
+            exit 0
+        fi
+    fi
+fi
+
+fallback_tmpfs
+exit 0

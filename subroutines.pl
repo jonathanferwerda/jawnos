@@ -28326,6 +28326,24 @@ sub install_extras {
 	}
 }
 
+# New versions name new Perl modules, and the image's system Perl only has the
+# ones it shipped with. A pull cannot install system packages as the person who
+# runs the app, so the modules go in ~/perl5 - the local::lib `jawn` already
+# puts on @INC, which lives on the state partition and therefore survives a
+# reboot. Best effort: a failure is logged and the code update stands.
+sub install_local_modules {
+	my ($repo) = @_;
+	$repo = '.' unless defined $repo && length $repo;
+	return unless -f "$repo/scripts/jawnos_deps.pl";
+	my $lib = &subs::home('~/perl5');
+	my $out = `cd "$repo" && perl scripts/jawnos_deps.pl --local-lib "$lib" --no-extras --install 2>&1`;
+	if ($subs::logfile && defined $out && $out =~ /\S/) {
+		open(my $fh, '>>', $subs::logfile);
+		print $fh &subs::rightNow() . " modules: " . join(' ', grep { /\S/ } split "\n", $out) . "\n";
+		close $fh;
+	}
+}
+
 # ---- the error watch: the Coding agent's ears -------------------------
 # The running tree prints its warnings and errors to the pty that the master
 # (`./jawn`) reads, and jawn tees that stream into ~/pty.log. This watcher tails
@@ -30292,6 +30310,40 @@ sub git_peer_update_best {
 	return ($last_status, $last_out, undef);
 }
 
+# A tree seeded from the image has no .git, so git_repo_update can only answer
+# no-repo. The boot unit owns turning it into a checkout; the Update now button
+# delegates to that same program, so a fresh image can update without a
+# re-image and both paths agree. The program's final JAWNOS_UPDATE_STATUS line
+# speaks the vocabulary update_now already uses.
+sub git_bootstrap_update {
+	my ($opts) = @_;
+	my $repo = $opts->{'repo'} || &subs::home('~/jawnos');
+	require Cwd;
+	$repo = eval { Cwd::abs_path($repo) } || $repo;
+	my $installed = '/usr/local/bin/jawnos-update';
+	my @command;
+	if (-x $installed) {
+		@command = ($installed);
+	}
+	elsif (-f "$repo/scripts/jawnos_update.pl") {
+		@command = ($^X, "$repo/scripts/jawnos_update.pl");
+	}
+	else {
+		return ('no-repo', '');
+	}
+	local $ENV{'JAWNOS_REPO'} = $repo;
+	local $ENV{'JAWNOS_HOME'} = &subs::home('~');
+	open(my $fh, '-|', @command) or return ('error', "cannot run the updater: $!");
+	local $/;
+	my $out = <$fh>;
+	close $fh;
+	my $code = $? >> 8;
+	$out = '' unless defined $out;
+	my ($status) = $out =~ /^JAWNOS_UPDATE_STATUS=([A-Za-z-]+)/m;
+	$out =~ s/^JAWNOS_UPDATE_STATUS=\S+\s*$//mg;
+	return ($status || ($code ? 'error' : 'current'), $out);
+}
+
 # An explicit update, from the Dev panel's button. Unlike the watcher this may
 # run whichever source the method names, and for None (or Any) it tries GitHub
 # first and then a peer: pressing the button is the person's own instruction,
@@ -30309,7 +30361,15 @@ sub update_now {
 		$was_dirty = ($d =~ /\S/) ? 1 : 0;
 	}
 	my ($status, $out, $source) = ('none', '', '');
-	if ($method eq 'github' || $method eq 'manual_github') {
+	# A seeded image's tree has no .git. The boot unit bootstraps it, and this
+	# button hands the job to the same program; the program installs the new
+	# modules before its own perl -c check (that check needs them).
+	my $bootstrapped = (-d "$repo/.git") ? 0 : 1;
+	if ($bootstrapped) {
+		($status, $out) = &subs::git_bootstrap_update({ repo => $repo });
+		$source = 'github';
+	}
+	elsif ($method eq 'github' || $method eq 'manual_github') {
 		($status, $out) = &subs::git_repo_update({ repo => $repo, force => $force });
 		$source = 'github';
 	}
@@ -30334,6 +30394,11 @@ sub update_now {
 		$out = `cd "$repo" && "$git" reset --hard HEAD 2>&1`;
 		$status = 'reset';
 	}
+	# New code may `use` a module the image did not ship. The updater already
+	# installed it before its syntax check; this run covers the checkout path and
+	# is a cheap no-op after the updater.
+	&subs::install_local_modules($repo)
+		if $status eq 'updated' || $status eq 'reset' || $status eq 'peer/updated';
 	# A pull rewrites ./VERSION under this live process, so the cached number is
 	# the one from before the update. Forget it here and whoever asks next (the
 	# update route paints it into the Configure bar) reads the new version.
@@ -30346,6 +30411,9 @@ sub update_now {
 our $git_watcher_blocked_note;
 
 sub git_watcher_check {
+	# A tree seeded from the image has no .git until jawnos-update.service
+	# bootstraps it; that unit owns the first checkout, so staying silent here is
+	# correct (an hourly no-repo note would only be noise).
 	return unless -d '.git';
 	# Update method is the house's choice of authority: none stops auto-update,
 	# the manual modes leave it off for the Dev panel's Update now button, github
@@ -30409,8 +30477,10 @@ sub git_watcher_check {
 	if (-d &subs::home('~/.local/share/jawnos/desktop') && -x './desktop/install.sh') {
 		`./desktop/install.sh >/dev/null 2>&1`;
 	}
-	# a new version may name a new application to install (Piper, say)
+	# a new version may name a new application to install (Piper, say) or a new
+	# Perl module to `use`; both are user-side and best effort
 	&subs::install_extras();
+	&subs::install_local_modules('.');
 	write_file(&subs::home('~/.president/status'), 'restart');
 }
 

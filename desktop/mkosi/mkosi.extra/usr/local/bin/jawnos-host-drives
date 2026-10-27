@@ -1,0 +1,550 @@
+#!/bin/sh
+# Discover the drives of the computer a live JawnOS was booted on.
+#
+# The live USB is a guest on someone else's machine. This mounts the machine's
+# other filesystems read-only under /run/jawnos/host, looks for a JawnOS archive
+# (a <Location>/manifest.json) and for a JawnOS database this session can adopt,
+# and records its decisions. It never writes to a host volume except the one
+# archive mount it remounts read-write, and it never touches the boot stick,
+# LUKS, swap or optical media.
+#
+# The script is non-fatal by design: every failure is logged and skipped, and
+# the process exits 0 on the discovery path.
+#
+# Modes: (none) discover, --status, --apply-config, --unmount.
+#
+# Test hooks (all optional): JAWNOS_STATE_TARGET, JAWNOS_HOST_RUN,
+# JAWNOS_HOST_ROOT, JAWNOS_HOST_LOG, JAWNOS_HOST_CONFIG, JAWNOS_HOST_DB,
+# JAWNOS_HOST_ALLOW_LOOP, JAWNOS_HOST_DEV.
+set -u
+
+STATE=${JAWNOS_STATE_TARGET:-/home/jawn}
+RUN=${JAWNOS_HOST_RUN:-/run/jawnos}
+HOSTROOT=${JAWNOS_HOST_ROOT:-$RUN/host}
+LOG=${JAWNOS_HOST_LOG:-$RUN/host-drives.log}
+CONFIG=${JAWNOS_HOST_CONFIG:-$STATE/jawnos/config.json}
+LIVE_DB=${JAWNOS_HOST_DB:-$STATE/jawnos/database/jawnos.db}
+ALLOW_LOOP=${JAWNOS_HOST_ALLOW_LOOP:-0}
+ARCHIVE_FILE=$RUN/host-archive-dir
+PROTECT_FILE=$RUN/protected-disks
+MOUNT_LIST=$RUN/host-mount-list
+DB_LIST=$RUN/host-db-list
+
+mkdir -p "$RUN" "$HOSTROOT" 2>/dev/null || true
+
+log() {
+    line="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date) jawnos-host-drives: $*"
+    printf '%s\n' "$line" >&2
+    printf '%s\n' "$line" >>"$LOG" 2>/dev/null || true
+}
+
+usage() {
+    echo "usage: jawnos-host-drives [--status|--apply-config|--unmount]" >&2
+}
+
+# lsblk --pairs hex-escapes a label's dangerous bytes (a quote becomes \x22), so
+# the value between the quotes cannot forge another KEY="..." pair. The leading
+# space lets the first key match the same pattern as the rest.
+field() {
+    printf ' %s\n' "$1" | sed -n "s/.* $2=\"\([^\"]*\)\".*/\1/p"
+}
+
+top_disk() {
+    cur=$1
+    while :; do
+        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        if [ -z "$parent" ]; then
+            printf '%s\n' "$cur"
+            return 0
+        fi
+        cur=$parent
+    done
+}
+
+loop_ancestor() {
+    cur=$1
+    # A whole loop device has no parent, so check the device itself too.
+    if [ "$(lsblk -dno TYPE "/dev/$cur" 2>/dev/null | head -n 1)" = loop ]; then
+        return 0
+    fi
+    while :; do
+        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        [ -n "$parent" ] || return 1
+        if [ "$(lsblk -dno TYPE "/dev/$parent" 2>/dev/null | head -n 1)" = loop ]; then
+            return 0
+        fi
+        cur=$parent
+    done
+}
+
+run_limited() {
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 20 "$@"
+    else
+        "$@"
+    fi
+}
+
+resolve_root() {
+    r=
+    for word in $(cat /proc/cmdline 2>/dev/null); do
+        case "$word" in
+            root=PARTUUID=*) r=/dev/disk/by-partuuid/${word#root=PARTUUID=} ;;
+            root=UUID=*)     r=/dev/disk/by-uuid/${word#root=UUID=} ;;
+            root=LABEL=*)    r=/dev/disk/by-label/${word#root=LABEL=} ;;
+            root=/dev/*)     r=${word#root=} ;;
+        esac
+    done
+    [ -n "$r" ] && printf '%s\n' "$r"
+}
+
+protect_disk() {
+    d=$1
+    [ -n "$d" ] || return 0
+    grep -qx "$d" "$PROTECT_FILE" 2>/dev/null || printf '%s\n' "$d" >>"$PROTECT_FILE"
+}
+
+protect_dev() {
+    dev=$1
+    [ -n "$dev" ] || return 0
+    [ -b "$dev" ] || return 0
+    protect_disk "$(top_disk "$(basename "$(readlink -f "$dev")")")"
+}
+
+# Build the list of disks this run must not touch: the disk holding the running
+# root/state, and the physical disk behind a loop-backed image (Ventoy keeps the
+# image in a file on the stick's data partition).
+build_protection() {
+    printf '' >"$PROTECT_FILE" 2>/dev/null || true
+    LIVE_ROOT=$(resolve_root)
+    if [ -n "$LIVE_ROOT" ]; then
+        LIVE_ROOT=$(readlink -f "$LIVE_ROOT" 2>/dev/null || true)
+    fi
+    if [ -z "$LIVE_ROOT" ] || [ ! -b "$LIVE_ROOT" ]; then
+        LIVE_ROOT=$(blkid -L jawnos-root 2>/dev/null | head -n 1 || true)
+        [ -n "$LIVE_ROOT" ] && LIVE_ROOT=$(readlink -f "$LIVE_ROOT" 2>/dev/null || true)
+    fi
+    if [ -z "$LIVE_ROOT" ] || [ ! -b "$LIVE_ROOT" ]; then
+        LIVE_ROOT=$(blkid -L jawnos-state-img 2>/dev/null | head -n 1 || true)
+        [ -n "$LIVE_ROOT" ] && LIVE_ROOT=$(readlink -f "$LIVE_ROOT" 2>/dev/null || true)
+    fi
+    printf '%s\n' "$LIVE_ROOT" >"$RUN/live-root"
+
+    if [ -n "$LIVE_ROOT" ] && [ -b "$LIVE_ROOT" ]; then
+        protect_dev "$LIVE_ROOT"
+        live_top=$(top_disk "$(basename "$LIVE_ROOT")")
+        if [ "$(lsblk -dno TYPE "/dev/$live_top" 2>/dev/null | head -n 1)" = loop ]; then
+            backing=$(cat "/sys/block/$live_top/loop/backing_file" 2>/dev/null || true)
+            resolved=no
+            if [ -n "$backing" ]; then
+                bsrc=$(findmnt -T "$backing" -no SOURCE 2>/dev/null | head -n 1 || true)
+                if [ -n "$bsrc" ] && [ -b "$bsrc" ]; then
+                    protect_dev "$bsrc"
+                    resolved=yes
+                fi
+                log "live image $live_top comes from $backing${bsrc:+ on $bsrc}"
+            fi
+            if [ "$resolved" = no ]; then
+                # Without a visible path the physical stick cannot be named. Skip
+                # every removable disk this run rather than risk mounting the
+                # boot USB (and remounting its data partition read-write).
+                printf '#removable\n' >>"$PROTECT_FILE"
+                log "WARNING: $live_top has no resolvable backing file; skipping removable disks this run"
+            fi
+            # Ventoy mounts the stick's data partition here on some builds.
+            for mp in /isodevice /run/ventoy /ventoy; do
+                [ -d "$mp" ] || continue
+                s=$(findmnt -T "$mp" -no SOURCE 2>/dev/null | head -n 1 || true)
+                [ -n "$s" ] && protect_dev "$s"
+            done
+        fi
+    fi
+
+    # The mounted state may itself be the Ventoy reserve on the boot stick.
+    src=$(findmnt -no SOURCE -M "$STATE" 2>/dev/null | head -n 1 || true)
+    [ -n "$src" ] && protect_dev "$src"
+    log "protected disks: $(tr '\n' ' ' <"$PROTECT_FILE" 2>/dev/null)"
+}
+
+# Merge the discovered archive and folder into config.json. Only an archive_dir
+# that is blank or points at a missing path is replaced; a deliberate setting is
+# never overridden. The archive mount is added to folders when absent.
+apply_config() {
+    [ -f "$CONFIG" ] || return 0
+    archive=
+    if [ -f "$ARCHIVE_FILE" ]; then
+        archive=$(sed -n '1p' "$ARCHIVE_FILE" 2>/dev/null || true)
+    fi
+    if [ -n "$archive" ] && [ ! -d "$archive" ]; then
+        archive=
+    fi
+    owner=$(stat -c '%u:%g' "$CONFIG" 2>/dev/null || true)
+    perl - "$CONFIG" "$archive" "$STATE" <<'PERL' 2>/dev/null || return 0
+use strict;
+use warnings;
+use JSON::PP;
+
+my ($file, $archive, $state) = @ARGV;
+open my $fh, '<', $file or exit 0;
+my $raw = do { local $/; <$fh> };
+close $fh;
+my $cfg = eval { JSON::PP->new->decode($raw) };
+exit 0 unless ref $cfg eq 'HASH';
+
+my $changed = 0;
+
+if (defined $archive && length $archive && -d $archive) {
+    my $cur = defined $cfg->{'archive_dir'} ? $cfg->{'archive_dir'} : '';
+    my $probe = $cur;
+    if ($probe =~ s{^~/}{}) {
+        $probe = "$state/$probe";
+    }
+    if ($cur eq '' || !-e $probe) {
+        $cfg->{'archive_dir'} = $archive;
+        $changed = 1;
+    }
+
+    my $folders = $cfg->{'folders'};
+    $folders = [] unless ref $folders eq 'ARRAY';
+    my %have = map { defined $_ ? ($_ => 1) : () } @$folders;
+    unless ($have{$archive}) {
+        push @$folders, $archive;
+        $changed = 1;
+    }
+    $cfg->{'folders'} = $folders;
+}
+
+if ($changed) {
+    my $tmp = "$file.tmp.$$";
+    open my $out, '>', $tmp or exit 0;
+    print $out JSON::PP->new->canonical->pretty->encode($cfg);
+    close $out;
+    chmod 0600, $tmp;
+    rename $tmp, $file or unlink $tmp;
+}
+exit 0;
+PERL
+    if [ -n "$owner" ]; then
+        chown "$owner" "$CONFIG" 2>/dev/null || true
+    fi
+    chmod 600 "$CONFIG" 2>/dev/null || true
+    log "config.json updated from the host-drive discovery"
+}
+
+# Adopt a JawnOS database from the host, but only when the live house has none.
+# The database and its WAL are copied as a set: a database without a non-empty
+# WAL is a torn snapshot. Nothing is ever written back to the host.
+adopt_database() {
+    if [ -f "$LIVE_DB" ]; then
+        log "the live house already has a database; not adopting one"
+        return 0
+    fi
+    [ -s "$MOUNT_LIST" ] || return 0
+
+    printf '' >"$DB_LIST" 2>/dev/null || true
+    while IFS= read -r mp; do
+        for f in "$mp"/home/*/jawnos/database/jawnos.db "$mp"/root/jawnos/database/jawnos.db; do
+            [ -f "$f" ] && printf '%s\n' "$f" >>"$DB_LIST"
+        done
+    done <"$MOUNT_LIST"
+    if [ ! -s "$DB_LIST" ]; then
+        log "no JawnOS database on the host drives"
+        return 0
+    fi
+
+    LC_ALL=C sort "$DB_LIST" >"$DB_LIST.sorted"
+    while IFS= read -r f; do
+        log "candidate database: $f"
+    done <"$DB_LIST.sorted"
+    src=$(head -n 1 "$DB_LIST.sorted")
+
+    dst_dir=${LIVE_DB%/*}
+    mkdir -p "$dst_dir" 2>/dev/null || {
+        log "cannot create $dst_dir; not adopting $src"
+        return 0
+    }
+    tmp=$(mktemp -d "$dst_dir/.host-adopt.XXXXXX" 2>/dev/null || true)
+    if [ -z "$tmp" ]; then
+        log "could not stage the adopted database"
+        return 0
+    fi
+
+    [ -s "$src-wal" ] && log "the database has a non-empty WAL; copying it with the database"
+    ok=yes
+    cp "$src" "$tmp/jawnos.db" 2>/dev/null || ok=no
+    if [ -e "$src-wal" ]; then
+        # A WAL must be a regular readable file, and it must travel with the
+        # database: without it the copy is a torn snapshot.
+        if [ -f "$src-wal" ]; then
+            cp "$src-wal" "$tmp/jawnos.db-wal" 2>/dev/null || ok=no
+        else
+            log "the WAL at $src-wal is not a regular file"
+            ok=no
+        fi
+    fi
+    if [ -e "$src-shm" ] && [ -f "$src-shm" ]; then
+        cp "$src-shm" "$tmp/jawnos.db-shm" 2>/dev/null || ok=no
+    fi
+    if [ "$ok" != yes ]; then
+        log "refused to adopt $src: the database and its WAL could not be copied as a set"
+        rm -rf "$tmp"
+        return 0
+    fi
+
+    if ! mv "$tmp/jawnos.db" "$LIVE_DB" 2>/dev/null; then
+        log "could not move the adopted database into place"
+        rm -rf "$tmp"
+        return 0
+    fi
+    [ -f "$tmp/jawnos.db-wal" ] && mv "$tmp/jawnos.db-wal" "$LIVE_DB-wal" 2>/dev/null || true
+    [ -f "$tmp/jawnos.db-shm" ] && mv "$tmp/jawnos.db-shm" "$LIVE_DB-shm" 2>/dev/null || true
+    rm -rf "$tmp"
+    chown jawn:jawn "$LIVE_DB" "$LIVE_DB-wal" "$LIVE_DB-shm" 2>/dev/null || true
+
+    jawnos_dir=${src%/database/jawnos.db}
+    host_cfg=$jawnos_dir/config.json
+    cfg_copy=
+    if [ -f "$host_cfg" ]; then
+        if [ -f "$CONFIG" ]; then
+            log "keeping the live config; not replacing it with $host_cfg"
+        else
+            mkdir -p "${CONFIG%/*}" 2>/dev/null || true
+            if cp "$host_cfg" "$CONFIG" 2>/dev/null; then
+                chown jawn:jawn "$CONFIG" 2>/dev/null || true
+                chmod 600 "$CONFIG" 2>/dev/null || true
+                cfg_copy=$host_cfg
+                log "adopted config: $host_cfg"
+            else
+                log "could not copy $host_cfg"
+            fi
+        fi
+    fi
+
+    if ! cat >"$STATE/HOST-DATABASE.txt" 2>/dev/null <<EOF
+Adopted database: $src
+Adopted config:   ${cfg_copy:-none (the live config was kept)}
+Copied at:        $(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)
+
+This is a snapshot of another machine's JawnOS identity. It was read from the
+host drive and copied into this live session; nothing is written back to the
+host. The unlock code is the code of the machine the database came from, not a
+code shown by this session. Delete this file, and decide whether to keep the
+database, before treating this session as your own.
+EOF
+    then
+        log "could not write $STATE/HOST-DATABASE.txt"
+    fi
+    chown jawn:jawn "$STATE/HOST-DATABASE.txt" 2>/dev/null || true
+    chmod 600 "$STATE/HOST-DATABASE.txt" 2>/dev/null || true
+    log "adopted $src (see $STATE/HOST-DATABASE.txt)"
+    apply_config
+}
+
+discover() {
+    log "looking for host drives (state $STATE)"
+    build_protection
+    # Start from whatever is already mounted under the host root. A second run
+    # in the same boot must still see the volumes and the archive it chose; it
+    # must not treat "already mounted" as "not a host drive".
+    printf '' >"$MOUNT_LIST" 2>/dev/null || true
+    if [ -d "$HOSTROOT" ]; then
+        for d in "$HOSTROOT"/*; do
+            [ -d "$d" ] || continue
+            findmnt -n -M "$d" >/dev/null 2>&1 && printf '%s\n' "$d" >>"$MOUNT_LIST"
+        done
+    fi
+    LC_ALL=C sort -u -o "$MOUNT_LIST" "$MOUNT_LIST"
+    cand=$RUN/host-candidates
+    printf '' >"$cand" 2>/dev/null || true
+
+    forced=${JAWNOS_HOST_DEV:-}
+    if [ -n "$forced" ] && [ -b "$forced" ]; then
+        # Debug/test path: one named device, no enumeration. Production leaves
+        # this unset and walks every block device below.
+        n=$(basename "$(readlink -f "$forced")")
+        fstype=$(blkid -s TYPE -o value "/dev/$n" 2>/dev/null | head -n 1 || true)
+        label=$(blkid -s LABEL -o value "/dev/$n" 2>/dev/null | head -n 1 || true)
+        uuid=$(blkid -s UUID -o value "/dev/$n" 2>/dev/null | head -n 1 || true)
+        disk=$(top_disk "$n")
+        if [ "$ALLOW_LOOP" != 1 ] && loop_ancestor "$n"; then
+            log "refusing forced host device $forced: it is inside a disk image"
+        elif grep -qx "$disk" "$PROTECT_FILE" 2>/dev/null; then
+            log "refusing forced host device $forced: boot medium ($disk)"
+        else
+            printf '%s\037%s\037%s\037%s\037%s\n' "$n" "$fstype" "$label" "$uuid" "$disk" >>"$cand"
+            log "forced host device $forced"
+        fi
+    else
+        lsblk -P -o NAME,TYPE,FSTYPE,LABEL,UUID,PKNAME,MOUNTPOINTS,SIZE 2>/dev/null \
+        | while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            name=$(field "$line" NAME)
+            type=$(field "$line" TYPE)
+            fstype=$(field "$line" FSTYPE)
+            label=$(field "$line" LABEL)
+            uuid=$(field "$line" UUID)
+            mnt=$(field "$line" MOUNTPOINTS)
+            [ -n "$name" ] || continue
+            case "$type" in
+                part|disk) ;;
+                loop) [ "$ALLOW_LOOP" = 1 ] || continue ;;
+                *) continue ;;
+            esac
+            case "$fstype" in
+                ext2|ext3|ext4|btrfs|xfs|vfat|exfat|ntfs) ;;
+                *) continue ;;
+            esac
+            # Anything already mounted belongs to the host's own session.
+            [ -z "$mnt" ] || continue
+            if [ "$ALLOW_LOOP" != 1 ] && loop_ancestor "$name"; then
+                log "skip /dev/$name ($fstype ${label:-$uuid}): inside a disk image"
+                continue
+            fi
+            disk=$(top_disk "$name")
+            if grep -qx "$disk" "$PROTECT_FILE" 2>/dev/null; then
+                log "skip /dev/$name ($fstype ${label:-$uuid}): boot medium ($disk)"
+                continue
+            fi
+            if grep -qx '#removable' "$PROTECT_FILE" 2>/dev/null \
+                && [ "$(lsblk -dno RM "/dev/$disk" 2>/dev/null | head -n 1)" = 1 ]; then
+                log "skip /dev/$name ($fstype ${label:-$uuid}): removable disk while the boot medium is unresolved"
+                continue
+            fi
+            printf '%s\037%s\037%s\037%s\037%s\n' "$name" "$fstype" "$label" "$uuid" "$disk" >>"$cand"
+        done
+    fi
+
+    LC_ALL=C sort "$cand" >"$cand.sorted"
+    while IFS=$(printf '\037') read -r name fstype label uuid disk; do
+        dev=/dev/$name
+        [ -b "$dev" ] || continue
+        if [ -n "$label" ]; then
+            base=$label
+        elif [ -n "$uuid" ]; then
+            base=$uuid
+        else
+            base=$name
+        fi
+        safe=$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_' | cut -c 1-48)
+        [ -n "$safe" ] || safe=$name
+        mp=$HOSTROOT/$safe
+        if findmnt -n -M "$mp" >/dev/null 2>&1; then
+            log "skip $dev: $mp is already mounted"
+            # discover() seeded the list from existing mounts above, so the
+            # archive detection still sees it.
+            continue
+        fi
+        if [ -e "$mp" ] && [ ! -d "$mp" ]; then
+            mp=$HOSTROOT/$safe-$name
+        fi
+        mkdir -p "$mp" 2>/dev/null || {
+            log "cannot create $mp; skipping $dev"
+            continue
+        }
+        opts=ro,nosuid,nodev,nofail
+        ok=no
+        case "$fstype" in
+            ntfs)
+                # The kernel's ntfs3 only; the FUSE driver is not in the image.
+                run_limited mount -t ntfs3 -o "$opts" "$dev" "$mp" >>"$LOG" 2>&1 && ok=yes
+                ;;
+            xfs)
+                # XFS may need to replay its log before it is readable; with a
+                # read-only mount that is what norecovery is for.
+                run_limited mount -o "$opts,norecovery" "$dev" "$mp" >>"$LOG" 2>&1 && ok=yes
+                ;;
+            *)
+                run_limited mount -o "$opts" "$dev" "$mp" >>"$LOG" 2>&1 && ok=yes
+                ;;
+        esac
+        if [ "$ok" = yes ]; then
+            log "mounted $dev ($fstype) on $mp (read-only)"
+            printf '%s\n' "$mp" >>"$MOUNT_LIST"
+        else
+            rmdir "$mp" 2>/dev/null || true
+            log "could not mount $dev ($fstype); skipped"
+        fi
+    done <"$cand.sorted"
+
+    archive=
+    if [ -s "$MOUNT_LIST" ]; then
+        while IFS= read -r mp; do
+            for loc in Music Downloads Photos Documents Videos Scans Recordings \
+                       music downloads photos documents videos scans recordings; do
+                if [ -f "$mp/$loc/manifest.json" ]; then
+                    log "archive manifest: $mp/$loc/manifest.json"
+                    if [ -z "$archive" ]; then
+                        archive=$mp
+                    fi
+                fi
+            done
+        done <"$MOUNT_LIST"
+    fi
+
+    if [ -n "$archive" ]; then
+        printf '%s\n' "$archive" >"$ARCHIVE_FILE"
+        log "archive: $archive"
+        if run_limited mount -o remount,rw "$archive" >>"$LOG" 2>&1; then
+            log "archive remounted read-write"
+        else
+            log "WARNING: could not remount the archive read-write; it stays read-only"
+        fi
+    else
+        rm -f "$ARCHIVE_FILE" 2>/dev/null || true
+        log "no archive manifest found"
+    fi
+
+    adopt_database
+    apply_config
+    log "host drive discovery complete"
+}
+
+status() {
+    echo "host drives:"
+    found=no
+    if [ -d "$HOSTROOT" ]; then
+        for d in "$HOSTROOT"/*; do
+            [ -d "$d" ] || continue
+            if findmnt -n -M "$d" >/dev/null 2>&1; then
+                found=yes
+                findmnt -n -M "$d" -o TARGET,SOURCE,FSTYPE,OPTIONS 2>/dev/null | sed 's/^/  /'
+            fi
+        done
+    fi
+    [ "$found" = yes ] || echo "  (none mounted)"
+    archive=
+    if [ -f "$ARCHIVE_FILE" ]; then
+        archive=$(sed -n '1p' "$ARCHIVE_FILE" 2>/dev/null || true)
+    fi
+    echo "archive: ${archive:-none}"
+    if [ -f "$STATE/HOST-DATABASE.txt" ]; then
+        echo "adopted database: yes (see $STATE/HOST-DATABASE.txt)"
+    else
+        echo "adopted database: no"
+    fi
+    if [ -f "${JAWNOS_STATE_RUN:-/run}/jawnos-no-persistence" ]; then
+        echo "persistence: none this boot (tmpfs state)"
+    fi
+}
+
+unmount_all() {
+    [ -d "$HOSTROOT" ] || return 0
+    for d in "$HOSTROOT"/*; do
+        [ -d "$d" ] || continue
+        if findmnt -n -M "$d" >/dev/null 2>&1; then
+            umount "$d" 2>/dev/null || umount -l "$d" 2>/dev/null || true
+        fi
+        rmdir "$d" 2>/dev/null || true
+    done
+    rmdir "$HOSTROOT" 2>/dev/null || true
+    log "unmounted the host drives"
+}
+
+case "${1:-}" in
+    --status) status; exit 0 ;;
+    --apply-config) apply_config; exit 0 ;;
+    --unmount) unmount_all; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    "") discover; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+esac

@@ -5,8 +5,8 @@
 # is never overwritten by the file still sitting on the stick.
 [Unit]
 Description=Apply the theme chosen on jawnos.ca
-Requires=home-jawn.mount
-After=home-jawn.mount jawnos-grow.service jawnos-firstboot.service
+Requires=home-jawn.service
+After=home-jawn.service jawnos-grow.service jawnos-firstboot.service
 ConditionPathExists=!/home/jawn/.theme-applied
 
 [Service]
