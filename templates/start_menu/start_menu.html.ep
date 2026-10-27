@@ -1,6 +1,22 @@
 % my $signatorial = &subs::signatorial_designer();
 % my $navigation_information = &subs::navigation_information({ cache => 'yes', signatorial => $signatorial });
-<div id="start_menu" class="theme_surface" style="display:none;max-width:100%;overflow:hidden;background-color:<%= $config->{$device}->{'start_menu'}->{'background_colour'} || 'yellow' %>;">
+% my $lockdown = &subs::lockdown_active() ? 1 : 0;
+<style>
+#start_menu.lockdown .start_menu_categories,
+#start_menu.lockdown .start_menu_menu,
+#start_menu.lockdown .start_menu_main_display > *:not(#security_toggle):not(.start_menu_lockdown_note),
+#start_menu.lockdown #running_start,
+#start_menu.lockdown .start_menu_view_content,
+#start_menu.lockdown #main_logo,
+#start_menu.lockdown #now_toggle,
+#start_menu.lockdown #assistant,
+#start_menu.lockdown #navigation_now,
+#start_menu.lockdown .fuck_you,
+#start_menu.lockdown #admin_console_toggle,
+#start_menu.lockdown .leave { display:none !important; }
+#start_menu.lockdown .start_menu_lockdown_note { display:block !important; }
+</style>
+<div id="start_menu" class="theme_surface<% if ($lockdown) { %> lockdown<% } %>" style="display:none;max-width:100%;overflow:hidden;background-color:<%= $config->{$device}->{'start_menu'}->{'background_colour'} || 'yellow' %>;">
 	<span style="float:right;width:20%;position:absolute;right:0px;top:0px;text-align:right;">
 
 		<% my $images = {
@@ -60,6 +76,10 @@
 					<% } %>
 				</span>
 				<span class="start_menu_main_display" recent="<%= join ',', @{$recent} %>">
+					<div class="start_menu_lockdown_note" style="display:none;padding:18px;line-height:1.5;max-width:520px;">
+						<h2><%= &subs::ui('Lockdown') %></h2>
+						<p><%= &subs::ui('An enemy is present, or this is a dangerous place. Only Security is open. Open Security, confirm with your fingerprint, then stop the appointment.') %></p>
+					</div>
 					<%# the app menu is the recent list; until a press fills it, the note
 					    stands where the rows will - startMenuView() toggles it %>
 					<span class="start_menu_empty" style="display:none;">No recent apps yet - the ones you open from here land here</span>
@@ -191,7 +211,7 @@
 						} else { 
 							$query = &subs::db_query('select * from appointments where timestamp >= ? order by timestamp asc limit 20', &subs::rightNow())->hashes;
 						} %>
-						<% foreach my $app ( @{$query} ) { %>
+						<% foreach my $app ( grep { !&subs::app_hidden_now($_->{'app'}) } @{$query} ) { %>
 							<tr>
 								<td><%== &subs::main_icon_maker({ app => $app->{'app'}, timestamp => &subs::rightNow(), size => 'little' }) %></td>
 								<td>

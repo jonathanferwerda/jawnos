@@ -838,7 +838,26 @@ $(document).on('click', '.signatorial_selection', function() {
 		}, 'json');
 	});
 
-	var guarded = /^\/manager\/security\/(rotate_key|legacy_reseal|recovery\/create|shares\/create|shares\/wrap|shares\/release)/;
+	$(document).on('click', '#lockdown_unlock', function () {
+		var b = $(this);
+		var note = $('#lockdown_unlock_note');
+		b.prop('disabled', true);
+		note.css('color', 'darkred').text(typeof jawnosT === 'function' ? jawnosT('Touch the fingerprint reader…') : 'Touch the fingerprint reader…');
+		$.post('/manager/security/lockdown_unlock', { timestamp: Date.now() }, function (r) {
+			b.prop('disabled', false);
+			if (!r || !r.ok) {
+				note.css('color', 'darkred').text((r && r.error) || 'could not unlock');
+				return;
+			}
+			note.css('color', '#2f6f3f').text(typeof jawnosT === 'function' ? jawnosT('Unlocked. Open the appointment and stop it; the lockdown ends with it.') : 'Unlocked. Open the appointment and stop it; the lockdown ends with it.');
+			if (typeof calculator === 'function') { calculator(); }
+		}, 'json').fail(function () {
+			b.prop('disabled', false);
+			note.css('color', 'darkred').text('could not unlock');
+		});
+	});
+
+	var guarded = /^\/manager\/security\/(lockdown_unlock|rotate_key|legacy_reseal|recovery\/create|shares\/create|shares\/wrap|shares\/release)/;
 	var guarded_key = /^\/manager\/webauthn\/(register\/begin|register\/finish|remove)/;
 	$(document).ajaxSuccess(function (event, xhr, settings) {
 		var r = xhr.responseJSON || {};

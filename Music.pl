@@ -67,18 +67,16 @@ sub playable_enc_name($name) {
 	return playable_name(substr($name, 0, -4));
 }
 
-# An album's own visibility decides whether its sealed tracks need the padlock.
-# The album is the folder above the file, the same part the walk names as `app`.
-my %app_visible_cache;
+# An album's own visibility decides whether its sealed tracks need the
+# padlock. The album is the folder above the file, the same part the walk names
+# as `app`. The shared rule is read fresh: a cached answer would keep a track
+# visible after a lockdown began or a place changed.
 sub music_app_visible($name) {
 	my @part = split '/', $name;
 	return 1 unless scalar @part >= 2;
 	my $app = &subs::unformat_name($part[-2]);
 	return 1 unless defined $app && length $app;
-	unless (exists $app_visible_cache{$app}) {
-		$app_visible_cache{$app} = &Manager::help_app_hidden($app) ? 0 : 1;
-	}
-	return $app_visible_cache{$app};
+	return &Manager::help_app_hidden($app) ? 0 : 1;
 }
 
 sub process_file($name) {

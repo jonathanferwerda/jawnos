@@ -827,13 +827,13 @@ input[type="checkbox"]:hover {
 /* the notes follow the theme's panel: a pinned white page made a dark
    theme's near-white ink unreadable */
 .notes { width:100%; background-color:var(--panel-2, #ffffff); color:var(--ink); }
-/* The appointment's own fields wrap at any width. Five controls in one row
-   were squashed inside a narrow centre view; the phone already wrapped them
-   two to a line. The notes field joins the same group so its placeholder sits
-   with the others instead of floating on a separate line. */
-.main_inputs_row { display:flex; flex-wrap:wrap; gap:3px; width:100%; align-items:flex-start; }
-.main_inputs_row .main_input { flex:1 1 120px; min-width:120px; }
-.main_inputs_row .notes { flex:1 1 100%; width:100%; min-width:100%; }
+/* The appointment's own fields keep their shape: ago, duration and quantity
+   share one row, schedule and warranty the next, and the note gets its own
+   line. Inline flex bases kept the old single row squashed inside a narrow
+   centre view. */
+.main_inputs_row { display:flex; gap:3px; width:100%; align-items:flex-start; }
+.main_inputs_row + .main_inputs_row { margin-top:3px; }
+.main_inputs_row .main_input { flex:1 1 0; min-width:0; }
 canvas { overflow: scroll; z-index: 99; }
 /* A background canvas is a control, not a document. It answers a drag with the
    printer's own pan, so the browser must not start a selection there: a native
@@ -966,12 +966,6 @@ body.dark_theme .top_navbar .name_text { color: var(--ink) !important; }
 	#ticket { width: 100% }
 	.window_view { width: 100%; }
 	.appointment { width: 100%; }
-	/* The appointment's own fields: five in a row is unreadable on a phone, so
-	   they wrap two to a line and the last one takes the rest. */
-	.main_inputs_row { flex-wrap: wrap; }
-	.main_inputs_row .main_input { flex: 1 1 calc(50% - 3px) !important; min-width: calc(50% - 3px) !important; }
-	.main_inputs_row .main_input:last-of-type { flex-basis: 100% !important; }
-	.main_inputs_row .notes { flex-basis: 100% !important; min-width: 100% !important; }
 	#music_player { width: 100%; }
 	.pseudonym { 
 		z-index: 40000; 
