@@ -692,16 +692,19 @@ install_encrypted() {
     if [ -f "$LIVE_ROOT_MNT/boot/initramfs-linux.img" ]; then
         cp "$LIVE_ROOT_MNT/boot/initramfs-linux.img" "$TARGET_ESP_MNT/initramfs-linux.img"
     else
-        # The live /boot is part of the writable overlay, so build the initramfs
-        # with this image's hook set (mkinitcpio.conf carries sd-encrypt).
+        # Build straight onto the new ESP. The live /boot is a RAM overlay, so
+        # the old path held the initramfs twice in memory (temp + output) and
+        # could OOM a 2 GB guest; the state partition is mounted and has room
+        # for mkinitcpio's work directory, and the ESP takes the finished file.
         # autodetect is skipped: it would bake in the live machine's storage
         # drivers, and the installed disk may sit behind a controller this USB
         # boot never touched. The installed system's own later mkinitcpio runs
         # (kernel updates) keep autodetect, which is correct there.
-        echo "building a generic initramfs on the live system..."
-        mkdir -p /boot
-        "$MKINITCPIO" -S autodetect -g /boot/initramfs-linux.img
-        cp /boot/initramfs-linux.img "$TARGET_ESP_MNT/initramfs-linux.img"
+        echo "building a generic initramfs onto the new ESP..."
+        mkdir -p "$STATE_MNT/.tmp"
+        TMPDIR="$STATE_MNT/.tmp" "$MKINITCPIO" -S autodetect \
+            -g "$TARGET_ESP_MNT/initramfs-linux.img"
+        rm -rf "$STATE_MNT/.tmp"
     fi
 
     # The live system's own systemd-boot binary; --no-variables leaves NVRAM to
