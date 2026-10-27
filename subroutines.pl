@@ -28307,11 +28307,13 @@ sub guide_message_warranty() {
 				next unless ref $am eq 'HASH' && exists $am->{'relationship'};
 				my $old = ref $am->{'relationship'} eq 'HASH' ? $am->{'relationship'}->{'value'} : $am->{'relationship'};
 				my $new = &subs::relationship_value($old);
-				next unless length $new;
-				my $current = ref $am->{'relationship'} eq 'HASH' ? ($am->{'relationship'}->{'value'} // '') : ($am->{'relationship'} // '');
-				next if "$current" eq $new;
-				if (ref $am->{'relationship'} eq 'HASH') { $am->{'relationship'}->{'value'} = $new; }
-				else { $am->{'relationship'} = { value => $new }; }
+				# The stored measure definition is old (a multiple_select with the long
+				# word list). Replace it with the single select gb.pl now declares, so
+				# the card is one choice even before the render-time override runs.
+				my $gb_rel = $gb::pos->{'person'}->{'app_measures'}->{'relationship'};
+				my %def = ref $gb_rel eq 'HASH' ? %{$gb_rel} : ( type => 'select', options => [ 'friend', 'stranger', 'enemy' ], ratings => { friend => 1, stranger => 2, enemy => 3 } );
+				$def{'value'} = $new if length $new;
+				$am->{'relationship'} = \%def;
 				&db_update('settings', { value => encode_json($am), server_time => &rightNow() }, { uuid => $row->{'uuid'} });
 				$n++;
 			}
