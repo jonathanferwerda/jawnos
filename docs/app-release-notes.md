@@ -5,6 +5,23 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-10-27 — Home NFC, named Recents cards, Browser + Search, and the JawnOS keyboard
+
+- **Home NFC.** The home screen reads NFC tags through Android's reader mode and
+  posts the same tap the manager's Web NFC shim would, so a start, stop or
+  command tag works from the launcher without opening the manager first.
+- **Recents.** A JawnOS app opens in its own task, so Android's Recents shows a
+  card named for the app instead of one manager entry. An "Opening <app>"
+  cover holds the screen while the manager boots; the chrome is hidden as the
+  page finishes, and the poll runs every 100 ms.
+- **Search from the Browser.** The tabs row gains + Search: it asks the house
+  for the page's OpenSearch template (or the search parameter already in its
+  address) and adds the site to Search's engines. Search's gear panel switches
+  engines on and off, and a custom engine can be removed there.
+- **JawnOS keyboard.** A native JawnOS IME ships for every app. Enable it once
+  in Android's settings from the dashboard's Keyboard card; the desk's own
+  dock still serves the manager.
+
 ## 2026-10-26 — launcher, single-app windows and the printer widget
 
 This build makes the app feel like the system it is meant to be, rather than a
