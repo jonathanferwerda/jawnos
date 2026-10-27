@@ -169,9 +169,13 @@
 			publish: {},
 			captions: {},
 			lines: {},
+			sources: {},
+			sourcePromises: {},
+			published: {},
 			camera: null,
 			cameraPromise: null,
 			stream: null,
+			share: 'camera',
 			muted: false,
 			ready: Promise.resolve(null)
 		};
@@ -321,7 +325,7 @@
 		} else if (msg.type === 'ice') {
 			jgAddIce(handle, room, msg);
 		} else if (msg.type === 'video') {
-			if (msg.want === 'on') { jgVideoPublish(handle, room, msg.from_jti); }
+			if (msg.want === 'on') { jgVideoPublish(handle, room, msg.from_jti, msg.source); }
 			else { jgVideoUnpublish(handle, room, msg.from_jti); }
 		}
 	}
@@ -372,6 +376,14 @@
 		} else {
 			$('<span class="jg_scope">').text(jgT('Listening only')).appendTo(box);
 		}
+		$('<span class="jg_scope">').text(jgT('Sharing') + ':').appendTo(box);
+		var share = $('<select id="jg_share_source" class="jg_person_source">')
+			.attr({ handle: handle, room: room });
+		jgSourceKinds().forEach(function (pair) {
+			$('<option>').attr('value', pair[0]).text(pair[1]).appendTo(share);
+		});
+		share.val(call.share || 'camera').appendTo(box);
+		$('<span class="jg_scope">').text(jgT('only when someone asks')).appendTo(box);
 	}
 
 
@@ -450,7 +462,9 @@
 		$('#jg_detail .jg_person').each(function () {
 			var card = $(this);
 			var jti = card.attr('jti') || '';
-			if (call.video[jti]) { card.find('.jg_person_video_toggle').addClass('on').text(jgT('Video on')); }
+			if (call.video[jti]) {
+				card.find('.jg_person_video_toggle').addClass('on').text(jgT('Watching'));
+			}
 			if (call.captions[jti] && !call.captions[jti].waiting) {
 				card.find('.jg_person_caption_toggle').addClass('on').text(jgT('Translated'));
 			}
@@ -470,21 +484,6 @@
 		});
 	}
 
-	function jgCamera(call) {
-		if (call.camera) { return Promise.resolve(call.camera); }
-		if (call.cameraPromise) { return call.cameraPromise; }
-		if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-			return Promise.resolve(null);
-		}
-		call.cameraPromise = navigator.mediaDevices.getUserMedia({ video: true }).then(function (stream) {
-			call.camera = stream;
-			return stream;
-		}).catch(function () {
-			return null;
-		});
-		return call.cameraPromise;
-	}
-
 	function jgRenegotiate(handle, room, jti, pc) {
 		pc.createOffer().then(function (offer) {
 			return pc.setLocalDescription(offer);
@@ -499,33 +498,112 @@
 		var want = !call.video[jti];
 		call.video[jti] = want;
 		jgSend(handle, room, { type: 'video', want: want ? 'on' : 'off', to: jti });
-		$(button).toggleClass('on', want).text(want ? jgT('Video on') : jgT('Video'));
+		$(button).toggleClass('on', want).text(want ? jgT('Watching') : jgT('Video'));
 		if (!want) { jgDetachVideo(jti); }
 	}
 
-	function jgVideoPublish(handle, room, jti) {
+	function jgVideoPublish(handle, room, jti, kind) {
 		var call = jgCall(handle, room);
 		if (!call || !jti) { return; }
-		call.publish[jti] = true;
-		jgCamera(call).then(function (stream) {
+		kind = kind || call.share || 'camera';
+		if (call.published[jti] === kind && call.pcs[jti]) { return; }
+		call.publish[jti] = kind;
+		jgSourceStream(call, kind).then(function (stream) {
 			if (!stream || jgCalls[jgKey(handle, room)] !== call || !call.publish[jti]) { return; }
 			var pc = jgPeer(handle, room, jti);
 			if (!pc) { return; }
-			var already = pc.getSenders().some(function (sender) {
-				return sender.track && sender.track.kind === 'video';
+			pc.getSenders().forEach(function (sender) {
+				if (sender.track && sender.track.kind === 'video') {
+					try { pc.removeTrack(sender); } catch (e) {}
+				}
 			});
-			if (already) { return; }
 			var track = stream.getVideoTracks()[0];
 			if (!track) { return; }
 			pc.addTrack(track, stream);
+			call.published[jti] = kind;
 			jgRenegotiate(handle, room, jti, pc);
 		});
+	}
+
+	// Where a picture comes from. Camera and screen are the device's; music and
+	// marker are canvases already on this page; studio is the app's own window
+	// (or a source it registers on window.jawnosMediaSources).
+	function jgSourceKinds() {
+		var kinds = [['camera', jgT('Camera')], ['studio', jgT('Studio')], ['music', jgT('#video')], ['marker', jgT('Marker')]];
+		if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+			kinds.splice(1, 0, ['screen', jgT('Screen')]);
+		}
+		return kinds;
+	}
+
+	function jgCanvasById(id) {
+		var el = document.getElementById(id);
+		if (!el) { return null; }
+		if (el.tagName && el.tagName.toLowerCase() === 'canvas' && el.captureStream) { return el; }
+		return null;
+	}
+
+	function jgMusicCanvas() {
+		var player = document.getElementById('video');
+		var miss = player ? (player.getAttribute('miss') || '') : '';
+		return (miss && jgCanvasById(miss + '_visualizer')) || jgCanvasById('video') || null;
+	}
+
+	function jgSourceStream(call, kind) {
+		if (call.sources[kind]) { return Promise.resolve(call.sources[kind]); }
+		if (call.sourcePromises[kind]) { return call.sourcePromises[kind]; }
+
+		var promise;
+
+		if (kind === 'camera') {
+			promise = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+				? navigator.mediaDevices.getUserMedia({ video: true })
+				: Promise.reject();
+		} else if (kind === 'screen' || kind === 'studio') {
+			var registered = (window.jawnosMediaSources || {})[kind];
+			if (typeof registered === 'function') {
+				promise = Promise.resolve(registered());
+			} else if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+				promise = navigator.mediaDevices.getDisplayMedia({ video: true });
+			} else {
+				promise = Promise.reject();
+			}
+		} else if (kind === 'music') {
+			promise = Promise.resolve(jgMusicCanvas() ? jgMusicCanvas().captureStream(30) : null);
+		} else if (kind === 'marker') {
+			promise = Promise.resolve(jgCanvasById('whiteboard') ? jgCanvasById('whiteboard').captureStream(30) : null);
+		} else {
+			promise = Promise.reject();
+		}
+
+		call.sourcePromises[kind] = promise.then(function (stream) {
+			if (!stream) { return null; }
+			call.sources[kind] = stream;
+			return stream;
+		}).catch(function () { return null; });
+
+		return call.sourcePromises[kind];
+	}
+
+	// Video is a pull: the source is stopped the moment nobody asks for it.
+	function jgSourceRelease(call, kind) {
+		if (!kind) { return; }
+		var wanted = Object.keys(call.publish).some(function (jti) { return call.publish[jti] === kind; });
+		if (wanted) { return; }
+		var stream = call.sources[kind];
+		if (stream) {
+			stream.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+		}
+		delete call.sources[kind];
+		delete call.sourcePromises[kind];
 	}
 
 	function jgVideoUnpublish(handle, room, jti) {
 		var call = jgCall(handle, room);
 		if (!call) { return; }
+		var kind = call.publish[jti];
 		delete call.publish[jti];
+		delete call.published[jti];
 		var pc = call.pcs[jti];
 		if (pc) {
 			pc.getSenders().forEach(function (sender) {
@@ -535,6 +613,7 @@
 			});
 			jgRenegotiate(handle, room, jti, pc);
 		}
+		jgSourceRelease(call, kind);
 		if (!Object.keys(call.publish).length && call.camera) {
 			call.camera.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
 			call.camera = null;
@@ -864,6 +943,20 @@
 
 	$(document).on('click', '.jg_person_friend', function () {
 		jgFriend($(this).attr('handle'), $(this).attr('handle'), this);
+	});
+
+	$(document).on('change', '#jg_share_source', function () {
+		var handle = $(this).attr('handle');
+		var room = $(this).attr('room');
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+		call.share = $(this).val() || 'camera';
+		Object.keys(call.publish).forEach(function (jti) {
+			jgVideoPublish(handle, room, jti, call.share);
+		});
+		Object.keys(call.sources).forEach(function (kind) {
+			if (kind !== call.share) { jgSourceRelease(call, kind); }
+		});
 	});
 
 	$(document).on('click', '#jg_mute', function () {

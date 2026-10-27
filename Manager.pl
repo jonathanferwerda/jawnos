@@ -30963,7 +30963,25 @@ post '/manager/junderground/friend' => sub ($c) {
 	return $c->render(json => { error => 'no house' }) unless length $handle;
 	my $init = &subs::setting_initializer($handle, &subs::rightNow());
 	&subs::setting_setter({ app => $init->{'app'}, setting => 'friend', value => 'yes' });
-	$c->render(json => { ok => 1, app => $init->{'app'} });
+
+	# The house record the switch keeps carries the peer's crest; import it, so
+	# the friend shows up in People beside the crests this house already holds.
+	my $placed = 0;
+	my $house = &jg_house($c, $handle);
+	my $record = (ref $house->{'record'} eq 'HASH') ? $house->{'record'} : {};
+	my $crest = (ref $record->{'crest'} eq 'HASH') ? $record->{'crest'} : {};
+	if (($crest->{'uuid'} || '') ne '' && ($crest->{'pubkey'} || '') ne '') {
+		$crest->{'name'} = $record->{'name'} || $init->{'app'} unless ($crest->{'name'} || '') ne '';
+		$crest->{'fingerprint'} = &subs::construct_crest_fingerprint($crest) unless length($crest->{'fingerprint'} || '');
+		my $existing = &subs::crest_peer_find($crest->{'uuid'});
+		my $entry = $existing || { imported_at => &subs::rightNow(), status => 'imported' };
+		$entry->{'crest'} = $crest;
+		$entry->{'source'} = 'junderground';
+		$entry->{'junderground'} = &jg_url();
+		$placed = &subs::crest_peer_upsert($entry) ? 1 : 0;
+	}
+
+	$c->render(json => { ok => 1, app => $init->{'app'}, people => $placed, crest => (($crest->{'uuid'} || '') ne '' ? 1 : 0) });
 };
 
 # Captions: the listener records the peer's audio, transcribes it through the
