@@ -1,9 +1,11 @@
 #!/bin/sh
 # Install the running live system onto a disk and carry the house with it.
 #
-#   jawnos-install                       show the plan, change nothing
-#   sudo jawnos-install --yes /dev/sdX   install, keeping the live session
+#   jawnos-install                              show the plan, change nothing
+#   sudo jawnos-install --yes /dev/sdX          install, keeping the live session
 #   sudo jawnos-install --yes --theme nord /dev/sdX
+#   sudo jawnos-install --yes --encrypt /dev/sdX
+#   sudo jawnos-install --yes --encrypt --filesystem btrfs /dev/sdX
 #
 # The target is repartitioned from the image's own repart definitions, so the
 # state partition (the house: /home/jawn) is created at the full size of the
@@ -12,16 +14,28 @@
 # with them, and /home/jawn is copied as files so the live session's changes
 # are kept.
 #
+# --encrypt makes the installed disk full-disk encrypted: the ESP stays vfat
+# (the firmware reads it), while root and state are LUKS2 containers opened by
+# the initramfs (root) and systemd-cryptsetup (state). The live USB itself is
+# never encrypted or altered. The path builds a systemd-boot ESP instead of
+# copying the image's UKI, because the kernel command line has to name the
+# encrypted root's LUKS UUID.
+#
 # The image's state partition is labelled `jawnos-state-img` (Ventoy presents
 # the image's own partition read-only; a real Ventoy reserve is `jawnos-state`).
-# The target keeps that label, and jawnos-state-mount finds it on later boots.
-# The live media is resolved from the running root, not from /home/jawn: on
-# Ventoy /home/jawn may be the reserve on the stick, and without persistence it
-# is a tmpfs.
+# The unencrypted target keeps that label, and jawnos-state-mount finds it on
+# later boots. The live media is resolved from the running root, not from
+# /home/jawn: on Ventoy /home/jawn may be the reserve on the stick, and without
+# persistence it is a tmpfs.
 #
 # The theme chosen on jawnos.ca travels in jawnos-theme.txt on the stick's
 # jawnos-esp partition. It is read here and written into the new machine's
 # database; --theme overrides it. An explicit theme wins over the file.
+#
+# Test hooks (never set in production): JAWNOS_INSTALL_LIVE_ROOT and
+# JAWNOS_INSTALL_LIVE_ESP force the live media, JAWNOS_INSTALL_REPART_DIR names
+# the repart definitions, JAWNOS_INSTALL_MKINITCPIO overrides mkinitcpio, and
+# JAWNOS_INSTALL_HOME names the house source.
 set -eu
 
 CONFIRM=no
@@ -29,25 +43,83 @@ NEW_SIG=no
 THEME=
 THEME_EXPLICIT=no
 TARGET=
+ENCRYPT=no
+FS_TYPE=ext4
+FS_EXPLICIT=no
+PASSFILE=
+REPART_DIR=${JAWNOS_INSTALL_REPART_DIR:-/usr/lib/jawnos/repart}
+MKINITCPIO=${JAWNOS_INSTALL_MKINITCPIO:-mkinitcpio}
+# Test hook only: the harness points this at a small fixture instead of the real
+# /home/jawn, so an install test does not copy a whole home directory.
+HOME_SRC=${JAWNOS_INSTALL_HOME:-/home/jawn}
+
+# Cleanup state. Every flag stays "no" until this run actually created/mounted
+# the thing, so the trap can never tear down something it did not set up.
+KEYTMP=
+ROOT_OPENED=no
+STATE_OPENED=no
+LIVE_ROOT_MOUNTED=no
+TARGET_ROOT_MOUNTED=no
+STATE_MOUNTED=no
+TARGET_ESP_MOUNTED=no
+PROTECTED=
+LIVE_ROOT_MNT=/run/jawnos-install/live-root
+ROOT_MNT=/run/jawnos-install/target-root
+STATE_MNT=/mnt/jawnos-state
+TARGET_ESP_MNT=/run/jawnos-install/target-esp
+
+cleanup() {
+    status=$?
+    if [ "$TARGET_ESP_MOUNTED" = yes ]; then umount "$TARGET_ESP_MNT" 2>/dev/null || true; fi
+    if [ "$STATE_MOUNTED" = yes ]; then umount "$STATE_MNT" 2>/dev/null || true; fi
+    if [ "$TARGET_ROOT_MOUNTED" = yes ]; then umount "$ROOT_MNT" 2>/dev/null || true; fi
+    if [ "$LIVE_ROOT_MOUNTED" = yes ]; then umount "$LIVE_ROOT_MNT" 2>/dev/null || true; fi
+    if [ "$STATE_OPENED" = yes ]; then cryptsetup close jawnos-state 2>/dev/null || true; fi
+    if [ "$ROOT_OPENED" = yes ]; then cryptsetup close jawnos-root 2>/dev/null || true; fi
+    if [ -n "$KEYTMP" ]; then rm -f "$KEYTMP" 2>/dev/null || true; fi
+    if [ -n "$PROTECTED" ]; then rm -f "$PROTECTED" 2>/dev/null || true; fi
+    stty echo 2>/dev/null || true
+    exit "$status"
+}
+trap cleanup EXIT INT TERM
 
 usage() {
-    echo "usage: jawnos-install [--yes] [--new-signatorial] [--theme SLUG] /dev/sdX" >&2
+    echo "usage: jawnos-install [--yes] [--encrypt] [--filesystem ext4|btrfs]" >&2
+    echo "                       [--passphrase-file PATH] [--new-signatorial]" >&2
+    echo "                       [--theme SLUG] /dev/sdX" >&2
     echo "  themes: nord jawnfish deepjawn sage neon ..." >&2
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --yes)             CONFIRM=yes ;;
-        --new-signatorial) NEW_SIG=yes ;;
-        --theme)           shift; THEME=${1:-}; THEME_EXPLICIT=yes ;;
-        --theme=*)         THEME=${1#--theme=}; THEME_EXPLICIT=yes ;;
-        -h|--help)         usage; exit 0 ;;
-        /dev/*)            TARGET=$1 ;;
-        *)                 echo "unknown argument: $1" >&2; usage; exit 2 ;;
+        --yes)               CONFIRM=yes ;;
+        --encrypt)           ENCRYPT=yes ;;
+        --filesystem)        shift; FS_TYPE=${1:-}; FS_EXPLICIT=yes ;;
+        --filesystem=*)      FS_TYPE=${1#--filesystem=}; FS_EXPLICIT=yes ;;
+        --passphrase-file)   shift; PASSFILE=${1:-} ;;
+        --passphrase-file=*) PASSFILE=${1#--passphrase-file=} ;;
+        --new-signatorial)   NEW_SIG=yes ;;
+        --theme)             shift; THEME=${1:-}; THEME_EXPLICIT=yes ;;
+        --theme=*)           THEME=${1#--theme=}; THEME_EXPLICIT=yes ;;
+        -h|--help)           usage; exit 0 ;;
+        /dev/*)              TARGET=$1 ;;
+        *)                   echo "unknown argument: $1" >&2; usage; exit 2 ;;
     esac
     shift
 done
 
+case "$FS_TYPE" in
+    ext4|btrfs) ;;
+    *) echo "--filesystem must be ext4 or btrfs" >&2; exit 2 ;;
+esac
+if [ "$FS_EXPLICIT" = yes ] && [ "$ENCRYPT" != yes ]; then
+    echo "--filesystem names the encrypted state's filesystem; use it with --encrypt" >&2
+    exit 2
+fi
+if [ -n "$PASSFILE" ] && [ "$ENCRYPT" != yes ]; then
+    echo "--passphrase-file requires --encrypt" >&2
+    exit 2
+fi
 if [ -z "$TARGET" ]; then
     usage
     exit 2
@@ -94,6 +166,15 @@ part_by_label() {
     return 1
 }
 
+# The target's partitions in table order. The repart definitions are applied in
+# filename order, and the encrypted path needs root and state by position: they
+# are bare (no filesystem label yet), so only the ESP can be found by label.
+partitions() {
+    lsblk -lnpo NAME,PARTN "$1" 2>/dev/null \
+        | awk 'NF == 2 && $2 ~ /^[0-9]+$/ { print $2, $1 }' \
+        | sort -n | cut -d' ' -f2
+}
+
 # Never write over the stick this system is running from. The root partition
 # is the reliable anchor: on Ventoy /home/jawn may be a reserved partition on
 # the stick, and on a no-persistence boot it is a tmpfs. The root= line (or the
@@ -124,6 +205,15 @@ top_disk() {
 }
 
 ROOTPART=$(root_device)
+# A test harness can name the live root directly (a loop partition on a build
+# box); production never sets this.
+if [ -n "${JAWNOS_INSTALL_LIVE_ROOT:-}" ]; then
+    if [ ! -b "${JAWNOS_INSTALL_LIVE_ROOT:-}" ]; then
+        echo "JAWNOS_INSTALL_LIVE_ROOT is not a block device: $JAWNOS_INSTALL_LIVE_ROOT" >&2
+        exit 1
+    fi
+    ROOTPART=$JAWNOS_INSTALL_LIVE_ROOT
+fi
 [ -n "$ROOTPART" ] && ROOTPART=$(readlink -f "$ROOTPART" 2>/dev/null || true)
 if [ -z "$ROOTPART" ] || [ ! -b "$ROOTPART" ]; then
     ROOTPART=$(blkid -L jawnos-root 2>/dev/null | head -n 1 || true)
@@ -150,7 +240,7 @@ protect_disk() {
     grep -qx "$d" "$PROTECTED" 2>/dev/null || printf '%s\n' "$d" >> "$PROTECTED"
 }
 protect_disk "$LIVEDISK"
-STATE_SRC=$(findmnt -no SOURCE /home/jawn 2>/dev/null | head -n 1 || true)
+STATE_SRC=$(findmnt -no SOURCE "$HOME_SRC" 2>/dev/null | head -n 1 || true)
 if [ -n "$STATE_SRC" ] && [ -b "$STATE_SRC" ]; then
     protect_disk "$(top_disk "$(basename "$(readlink -f "$STATE_SRC")")")"
 fi
@@ -166,12 +256,24 @@ fi
 if grep -qx "${TARGET#/dev/}" "$PROTECTED" 2>/dev/null; then
     echo "refusing to install over the live media ($TARGET)" >&2
     rm -f "$PROTECTED"
+    PROTECTED=
     exit 1
 fi
 rm -f "$PROTECTED"
+PROTECTED=
 
 LIVE_ESP=$(part_by_label "/dev/$LIVEDISK" jawnos-esp || true)
 LIVE_ROOT=$(part_by_label "/dev/$LIVEDISK" jawnos-root || true)
+if [ -n "${JAWNOS_INSTALL_LIVE_ESP:-}" ]; then
+    if [ ! -b "${JAWNOS_INSTALL_LIVE_ESP:-}" ]; then
+        echo "JAWNOS_INSTALL_LIVE_ESP is not a block device: $JAWNOS_INSTALL_LIVE_ESP" >&2
+        exit 1
+    fi
+    LIVE_ESP=$JAWNOS_INSTALL_LIVE_ESP
+fi
+if [ -n "${JAWNOS_INSTALL_LIVE_ROOT:-}" ]; then
+    LIVE_ROOT=$(readlink -f "$JAWNOS_INSTALL_LIVE_ROOT")
+fi
 if [ -z "$LIVE_ESP" ] || [ ! -b "$LIVE_ESP" ]; then
     echo "cannot find the live ESP (label jawnos-esp)" >&2
     exit 1
@@ -194,10 +296,11 @@ fi
 
 # Read the theme before anything is written. A file on the ESP is the normal
 # route from jawnos.ca; --theme is the explicit route. A missing file is fine.
+# The file is also copied onto an encrypted target's new ESP below.
 THEME_FILE=
 ESP_MNT=/run/jawnos-install/esp
 mkdir -p "$ESP_MNT"
-if [ -z "$THEME" ] && mount -t vfat -o ro "$LIVE_ESP" "$ESP_MNT" 2>/dev/null; then
+if mount -t vfat -o ro "$LIVE_ESP" "$ESP_MNT" 2>/dev/null; then
     if [ -f "$ESP_MNT/jawnos-theme.txt" ]; then
         cp "$ESP_MNT/jawnos-theme.txt" /run/jawnos-install/theme.txt
         THEME_FILE=/run/jawnos-install/theme.txt
@@ -223,14 +326,14 @@ KEEP_LIVE_THEME=no
 if [ -z "$THEME" ] || [ "$THEME_EXPLICIT" = yes ]; then
     :
 else
-    LIVE_DB=/home/jawn/jawnos/database/jawnos.db
+    LIVE_DB=$HOME_SRC/jawnos/database/jawnos.db
     CURRENT=
     if [ -f "$LIVE_DB" ]; then
         CURRENT=$(sqlite3 "$LIVE_DB" "select value from settings where app='misc' and setting='appearance_theme' and device='computer' limit 1;" 2>/dev/null || true)
     fi
     MARKER=
-    if [ -f /home/jawn/.theme-applied ]; then
-        MARKER=$(cut -d' ' -f1 /home/jawn/.theme-applied 2>/dev/null || true)
+    if [ -f "$HOME_SRC/.theme-applied" ]; then
+        MARKER=$(cut -d' ' -f1 "$HOME_SRC/.theme-applied" 2>/dev/null || true)
     fi
     if [ -n "$CURRENT" ] && [ -n "$MARKER" ] && [ "$CURRENT" != "$MARKER" ]; then
         KEEP_LIVE_THEME=yes
@@ -240,6 +343,12 @@ fi
 
 echo "live system: $LIVE_ROOT on /dev/$LIVEDISK"
 echo "target:      $TARGET ($((TARGET_BYTES / 1024 / 1024 / 1024))G)"
+if [ "$ENCRYPT" = yes ]; then
+    echo "encryption:  standard full-disk encryption (ESP unencrypted, root and state LUKS2)"
+    echo "state fs:    $FS_TYPE"
+else
+    echo "encryption:  none"
+fi
 if [ "$KEEP_LIVE_THEME" = yes ]; then
     echo "theme:       $THEME (chosen in the live session; the ESP file is ignored)"
 else
@@ -252,123 +361,393 @@ if [ "$CONFIRM" != yes ]; then
     exit 0
 fi
 
-# Build a fresh partition table sized to the target. CopyFiles= in the build
-# definitions describes how mkosi fills a *new image* (`CopyFiles=/` would copy
-# the running root); the installer copies the two system partitions itself, so
-# strip those lines and keep only geometry, type, format and label.
-DEFS=/run/jawnos-install/repart
-rm -rf "$DEFS"
-mkdir -p "$DEFS"
-for f in /usr/lib/jawnos/repart/*.conf; do
-    sed '/^[[:space:]]*CopyFiles=/d' "$f" > "$DEFS/${f##*/}"
-done
+mkdir -p /run/jawnos-install
 
-echo "partitioning $TARGET..."
-systemd-repart --dry-run=no --definitions="$DEFS" --empty=force --offline=yes "$TARGET"
-udevadm settle
-# On a disk whose kernel did not get a partition-table reread (a loop device
-# without partscan, a stubborn controller), nudge it; then give udev a moment to
-# publish the new nodes.
-partx -u "$TARGET" 2>/dev/null || true
-udevadm settle
-
-TARGET_ESP=
-TARGET_ROOT=
-TARGET_STATE=
-for try in 1 2 3 4 5; do
-    TARGET_ESP=$(part_by_label "$TARGET" jawnos-esp || true)
-    TARGET_ROOT=$(part_by_label "$TARGET" jawnos-root || true)
-    # The image's state label, not `jawnos-state`: that one names the external
-    # Ventoy reserve, which the target must never inherit.
-    TARGET_STATE=$(part_by_label "$TARGET" jawnos-state-img || true)
-    if [ -n "$TARGET_ESP" ] && [ -n "$TARGET_ROOT" ] && [ -n "$TARGET_STATE" ]; then
-        break
+# The passphrase is only ever held in a mode-600 file under /run, and the trap
+# removes it (and restores the terminal echo) on every exit path.
+read_passphrase() {
+    KEYTMP=$(mktemp /run/jawnos-install/pass.XXXXXX)
+    chmod 600 "$KEYTMP"
+    if [ -n "$PASSFILE" ]; then
+        if [ ! -r "$PASSFILE" ]; then
+            echo "cannot read the passphrase file: $PASSFILE" >&2
+            exit 1
+        fi
+        cat "$PASSFILE" > "$KEYTMP"
+        return 0
     fi
-    udevadm settle 2>/dev/null || true
-    sleep 1
-done
-if [ -z "$TARGET_ESP" ] || [ -z "$TARGET_ROOT" ] || [ -z "$TARGET_STATE" ]; then
-    echo "the new partition table is missing an expected partition" >&2
-    exit 1
-fi
+    if [ ! -t 0 ]; then
+        echo "no terminal for the passphrase; use --passphrase-file" >&2
+        exit 1
+    fi
+    printf 'Passphrase: ' >&2
+    stty -echo 2>/dev/null || true
+    IFS= read -r _p1 || { stty echo 2>/dev/null || true; printf '\n' >&2; exit 1; }
+    stty echo 2>/dev/null || true
+    printf '\n' >&2
+    printf 'Repeat passphrase: ' >&2
+    stty -echo 2>/dev/null || true
+    IFS= read -r _p2 || { stty echo 2>/dev/null || true; printf '\n' >&2; exit 1; }
+    stty echo 2>/dev/null || true
+    printf '\n' >&2
+    if [ "$_p1" != "$_p2" ]; then
+        echo "passphrases do not match" >&2
+        exit 1
+    fi
+    if [ -z "$_p1" ]; then
+        echo "an empty passphrase is not allowed" >&2
+        exit 1
+    fi
+    printf '%s' "$_p1" > "$KEYTMP"
+    _p1=; _p2=
+}
 
-# The boot medium and the system partition are never grown in place, so a plain
-# copy of each partition is complete. The state partition is not copied: it is
-# created full-size and filled from the live /home/jawn, which also captures
-# anything the session changed since the stick booted.
-echo "copying the boot and system partitions..."
-dd if="$LIVE_ESP" of="$TARGET_ESP" bs=16M status=progress conv=fsync
-dd if="$LIVE_ROOT" of="$TARGET_ROOT" bs=16M status=progress conv=fsync
+# Write the theme and identity into a mounted state filesystem. Shared by both
+# install paths so the encrypted one cannot drift from the plain one.
+finish_state() {
+    DB="$STATE_MNT/jawnos/database/jawnos.db"
+    if [ -n "$THEME" ] && [ "$KEEP_LIVE_THEME" = no ] && [ -f "$DB" ]; then
+        if /usr/local/bin/jawnos-theme --theme "$THEME" --database "$DB"; then
+            # Mark it so the installed system does not re-apply a file that is
+            # still sitting on the live stick's ESP.
+            printf '%s %s\n' "$THEME" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                > "$STATE_MNT/.theme-applied"
+            chown jawn:jawn "$STATE_MNT/.theme-applied" 2>/dev/null || true
+            chmod 600 "$STATE_MNT/.theme-applied" 2>/dev/null || true
+        else
+            echo "note: could not write the theme; the installed system keeps its current theme" >&2
+        fi
+    elif [ "$KEEP_LIVE_THEME" = yes ]; then
+        echo "keeping the live session's theme ($THEME)"
+    elif [ -n "$THEME" ]; then
+        echo "note: no database to write the theme into; it will seed with the factory theme" >&2
+    fi
 
-# A future image may allow a larger root than the one being copied; grow the
-# filesystem offline when that is the case. (Today both are a fixed 5G.)
-if [ "$(blockdev --getsize64 "$TARGET_ROOT")" -gt "$(blockdev --getsize64 "$LIVE_ROOT")" ]; then
-    e2fsck -fy "$TARGET_ROOT" >/dev/null 2>&1 || true
-    resize2fs "$TARGET_ROOT" >/dev/null 2>&1 || true
-fi
+    # A live image's config opens its own desktop without the gate (the "live"
+    # flag). The installed machine is not the demo, so drop it and get the gate
+    # back. A kept signatorial keeps the live session's cookie valid; a newly
+    # minted one starts clean and the first login is the Gate or a pairing.
+    if [ -f "$STATE_MNT/jawnos/config.json" ]; then
+        perl -MJSON::PP -0777 -i -pe '
+            my $j = eval { decode_json($_) };
+            if (ref $j eq "HASH") { delete $j->{live}; $_ = JSON::PP->new->canonical->pretty->encode($j); }
+        ' "$STATE_MNT/jawnos/config.json"
+    fi
 
-STATE_MNT=/mnt/jawnos-state
-mkdir -p "$STATE_MNT"
-umount "$STATE_MNT" 2>/dev/null || true
-mount "$TARGET_STATE" "$STATE_MNT"
-
-echo "carrying the house onto $TARGET_STATE..."
-rsync -a --delete /home/jawn/ "$STATE_MNT"/
-chown -R jawn:jawn "$STATE_MNT" 2>/dev/null || true
-
-DB="$STATE_MNT/jawnos/database/jawnos.db"
-if [ -n "$THEME" ] && [ "$KEEP_LIVE_THEME" = no ] && [ -f "$DB" ]; then
-    if /usr/local/bin/jawnos-theme --theme "$THEME" --database "$DB"; then
-        # Mark it so the installed system does not re-apply a file that is
-        # still sitting on the live stick's ESP.
-        printf '%s %s\n' "$THEME" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            > "$STATE_MNT/.theme-applied"
-        chown jawn:jawn "$STATE_MNT/.theme-applied" 2>/dev/null || true
-        chmod 600 "$STATE_MNT/.theme-applied" 2>/dev/null || true
+    if [ "$NEW_SIG" = yes ]; then
+        NEW=$(openssl rand -hex 32)
+        printf '%s\n' "$NEW" > "$STATE_MNT/.jawnos_signatorial"
+        ID=$(printf '%s' "$NEW" | md5sum | cut -d' ' -f1)
+        mkdir -p "$STATE_MNT/jawnos/database"
+        printf '%s\n' "$ID" > "$STATE_MNT/.jawnos_signatorial_id"
+        printf '%s\n' "$ID" > "$STATE_MNT/jawnos/database/.jawnos_signatorial_id"
+        chmod 600 "$STATE_MNT/.jawnos_signatorial" \
+            "$STATE_MNT/.jawnos_signatorial_id" \
+            "$STATE_MNT/jawnos/database/.jawnos_signatorial_id" 2>/dev/null || true
+        chown jawn:jawn "$STATE_MNT/.jawnos_signatorial" \
+            "$STATE_MNT/.jawnos_signatorial_id" \
+            "$STATE_MNT/jawnos/database/.jawnos_signatorial_id" 2>/dev/null || true
+        echo "minted a new signatorial for the installed machine"
     else
-        echo "note: could not write the theme; the installed system keeps its current theme" >&2
+        echo "carried the live install's signatorial"
     fi
-elif [ "$KEEP_LIVE_THEME" = yes ]; then
-    echo "keeping the live session's theme ($THEME)"
-elif [ -n "$THEME" ]; then
-    echo "note: no database to write the theme into; it will seed with the factory theme" >&2
-fi
+}
 
-# A live image's config opens its own desktop without the gate (the "live"
-# flag). The installed machine is not the demo, so drop it and get the gate
-# back. A kept signatorial keeps the live session's cookie valid; a newly
-# minted one starts clean and the first login is the Gate or a pairing.
-if [ -f "$STATE_MNT/jawnos/config.json" ]; then
-    perl -MJSON::PP -0777 -i -pe '
-        my $j = eval { decode_json($_) };
-        if (ref $j eq "HASH") { delete $j->{live}; $_ = JSON::PP->new->canonical->pretty->encode($j); }
-    ' "$STATE_MNT/jawnos/config.json"
-fi
+# The unencrypted install: today's behaviour, byte for byte. The ESP and root
+# partitions are copied whole (the UKI bootloader travels with them) and the
+# state is created full-size and filled from /home/jawn.
+install_plain() {
+    # Build a fresh partition table sized to the target. CopyFiles= in the build
+    # definitions describes how mkosi fills a *new image* (`CopyFiles=/` would
+    # copy the running root); the installer copies the two system partitions
+    # itself, so strip those lines and keep only geometry, type, format, label.
+    DEFS=/run/jawnos-install/repart
+    rm -rf "$DEFS"
+    mkdir -p "$DEFS"
+    for f in "$REPART_DIR"/*.conf; do
+        [ -f "$f" ] || continue
+        sed '/^[[:space:]]*CopyFiles=/d' "$f" > "$DEFS/${f##*/}"
+    done
 
-if [ "$NEW_SIG" = yes ]; then
-    NEW=$(openssl rand -hex 32)
-    printf '%s\n' "$NEW" > "$STATE_MNT/.jawnos_signatorial"
-    ID=$(printf '%s' "$NEW" | md5sum | cut -d' ' -f1)
-    mkdir -p "$STATE_MNT/jawnos/database"
-    printf '%s\n' "$ID" > "$STATE_MNT/.jawnos_signatorial_id"
-    printf '%s\n' "$ID" > "$STATE_MNT/jawnos/database/.jawnos_signatorial_id"
-    chmod 600 "$STATE_MNT/.jawnos_signatorial" \
-        "$STATE_MNT/.jawnos_signatorial_id" \
-        "$STATE_MNT/jawnos/database/.jawnos_signatorial_id" 2>/dev/null || true
-    chown jawn:jawn "$STATE_MNT/.jawnos_signatorial" \
-        "$STATE_MNT/.jawnos_signatorial_id" \
-        "$STATE_MNT/jawnos/database/.jawnos_signatorial_id" 2>/dev/null || true
-    echo "minted a new signatorial for the installed machine"
+    echo "partitioning $TARGET..."
+    systemd-repart --dry-run=no --definitions="$DEFS" --empty=force --offline=yes "$TARGET"
+    udevadm settle
+    # On a disk whose kernel did not get a partition-table reread (a loop device
+    # without partscan, a stubborn controller), nudge it; then give udev a moment
+    # to publish the new nodes.
+    partx -u "$TARGET" 2>/dev/null || true
+    udevadm settle
+
+    TARGET_ESP=$(part_by_label "$TARGET" jawnos-esp || true)
+    TARGET_ROOT=
+    TARGET_STATE=
+    for try in 1 2 3 4 5; do
+        TARGET_ESP=$(part_by_label "$TARGET" jawnos-esp || true)
+        TARGET_ROOT=$(part_by_label "$TARGET" jawnos-root || true)
+        # The image's state label, not `jawnos-state`: that one names the
+        # external Ventoy reserve, which the target must never inherit.
+        TARGET_STATE=$(part_by_label "$TARGET" jawnos-state-img || true)
+        if [ -n "$TARGET_ESP" ] && [ -n "$TARGET_ROOT" ] && [ -n "$TARGET_STATE" ]; then
+            break
+        fi
+        udevadm settle 2>/dev/null || true
+        sleep 1
+    done
+    if [ -z "$TARGET_ESP" ] || [ -z "$TARGET_ROOT" ] || [ -z "$TARGET_STATE" ]; then
+        echo "the new partition table is missing an expected partition" >&2
+        exit 1
+    fi
+
+    # The boot medium and the system partition are never grown in place, so a
+    # plain copy of each partition is complete. The state partition is not
+    # copied: it is created full-size and filled from the live /home/jawn, which
+    # also captures anything the session changed since the stick booted.
+    echo "copying the boot and system partitions..."
+    dd if="$LIVE_ESP" of="$TARGET_ESP" bs=16M status=progress conv=fsync
+    dd if="$LIVE_ROOT" of="$TARGET_ROOT" bs=16M status=progress conv=fsync
+
+    # A future image may allow a larger root than the one being copied; grow the
+    # filesystem offline when that is the case. (Today both are a fixed 5G.)
+    if [ "$(blockdev --getsize64 "$TARGET_ROOT")" -gt "$(blockdev --getsize64 "$LIVE_ROOT")" ]; then
+        e2fsck -fy "$TARGET_ROOT" >/dev/null 2>&1 || true
+        resize2fs "$TARGET_ROOT" >/dev/null 2>&1 || true
+    fi
+
+    mkdir -p "$STATE_MNT"
+    umount "$STATE_MNT" 2>/dev/null || true
+    mount "$TARGET_STATE" "$STATE_MNT"
+    STATE_MOUNTED=yes
+
+    echo "carrying the house onto $TARGET_STATE..."
+    rsync -a --delete "$HOME_SRC"/ "$STATE_MNT"/
+    chown -R jawn:jawn "$STATE_MNT" 2>/dev/null || true
+
+    finish_state
+
+    sync
+    umount "$STATE_MNT"
+    STATE_MOUNTED=no
+
+    # An NVRAM entry for the new disk. The image boots through the firmware's
+    # own fallback path (EFI/BOOT/BOOTX64.EFI), so a machine that ignores this
+    # entry can still pick the disk from its boot menu.
+    efibootmgr -c -d "$TARGET" -p 1 -L "JawnOS" -l '\EFI\BOOT\BOOTX64.EFI' >/dev/null 2>&1 || true
+
+    echo "done. Remove the live media and boot $TARGET."
+}
+
+# The encrypted install: LUKS2 on root and state, the ESP stays vfat. The root
+# is filled from the live root partition (not the running overlay) and booted
+# by systemd-boot, whose entry names the root LUKS UUID.
+install_encrypted() {
+    read_passphrase
+
+    DEFS=/run/jawnos-install/repart
+    rm -rf "$DEFS"
+    mkdir -p "$DEFS"
+    for f in "$REPART_DIR"/*.conf; do
+        [ -f "$f" ] || continue
+        base=${f##*/}
+        case "$base" in
+            *esp*)
+                # The ESP is still formatted vfat by repart; its files are
+                # written later by bootctl, so CopyFiles= is not wanted.
+                sed '/^[[:space:]]*CopyFiles=/d' "$f" > "$DEFS/$base"
+                ;;
+            *)
+                # Root and state are left bare for cryptsetup. Removing
+                # Format= is what stops repart creating an ext4 filesystem
+                # underneath the LUKS header.
+                sed -e '/^[[:space:]]*CopyFiles=/d' \
+                    -e '/^[[:space:]]*Format=/d' "$f" > "$DEFS/$base"
+                ;;
+        esac
+    done
+
+    echo "partitioning $TARGET..."
+    systemd-repart --dry-run=no --definitions="$DEFS" --empty=force --offline=yes "$TARGET"
+    udevadm settle
+    partx -u "$TARGET" 2>/dev/null || true
+    udevadm settle
+
+    TARGET_ESP=$(part_by_label "$TARGET" jawnos-esp || true)
+    PARTS=$(partitions "$TARGET")
+    P1=$(printf '%s\n' "$PARTS" | sed -n '1p')
+    P2=$(printf '%s\n' "$PARTS" | sed -n '2p')
+    P3=$(printf '%s\n' "$PARTS" | sed -n '3p')
+    P4=$(printf '%s\n' "$PARTS" | sed -n '4p')
+    if [ -z "$TARGET_ESP" ] || [ -z "$P1" ] || [ -z "$P2" ] || [ -z "$P3" ] || [ -n "$P4" ]; then
+        echo "the new partition table is not the expected ESP/root/state layout" >&2
+        exit 1
+    fi
+    if [ "$TARGET_ESP" != "$P1" ]; then
+        echo "the new ESP is not the first partition; refusing the layout" >&2
+        exit 1
+    fi
+    # The definitions are applied in filename order: 1 ESP, 2 root, 3 state.
+    TARGET_ROOT=$P2
+    TARGET_STATE=$P3
+
+    if [ -e /dev/mapper/jawnos-root ] || [ -e /dev/mapper/jawnos-state ]; then
+        echo "a jawnos-root or jawnos-state mapper already exists; refusing" >&2
+        exit 1
+    fi
+
+    echo "encrypting the root and state partitions..."
+    cryptsetup luksFormat --type luks2 --batch-mode --label jawnos-root \
+        --key-file="$KEYTMP" "$TARGET_ROOT"
+    cryptsetup luksFormat --type luks2 --batch-mode --label jawnos-state \
+        --key-file="$KEYTMP" "$TARGET_STATE"
+    # The boot entry must name the LUKS UUID, never the partition or its
+    # filesystem: those change when the container is reformatted.
+    ROOT_UUID=$(cryptsetup luksUUID "$TARGET_ROOT")
+    STATE_UUID=$(cryptsetup luksUUID "$TARGET_STATE")
+    if [ -z "$ROOT_UUID" ] || [ -z "$STATE_UUID" ]; then
+        echo "cryptsetup did not report the LUKS UUIDs" >&2
+        exit 1
+    fi
+
+    cryptsetup open --key-file="$KEYTMP" "$TARGET_ROOT" jawnos-root
+    ROOT_OPENED=yes
+    cryptsetup open --key-file="$KEYTMP" "$TARGET_STATE" jawnos-state
+    STATE_OPENED=yes
+
+    echo "creating filesystems..."
+    mkfs.ext4 -q -F -L jawnos-root /dev/mapper/jawnos-root
+    if [ "$FS_TYPE" = btrfs ]; then
+        mkfs.btrfs -q -f -L jawnos-state /dev/mapper/jawnos-state
+    else
+        mkfs.ext4 -q -F -L jawnos-state /dev/mapper/jawnos-state
+    fi
+
+    mkdir -p "$ROOT_MNT" "$LIVE_ROOT_MNT"
+    mount /dev/mapper/jawnos-root "$ROOT_MNT"
+    TARGET_ROOT_MOUNTED=yes
+    # The live root partition, not the running overlay: with
+    # systemd.volatile=overlay, / is the RAM copy, and the disk copy is what the
+    # installed machine should inherit.
+    mount -o ro "$LIVE_ROOT" "$LIVE_ROOT_MNT"
+    LIVE_ROOT_MOUNTED=yes
+
+    echo "copying the live system onto the encrypted root..."
+    # --one-file-system keeps /home/jawn out: it is the separately mounted
+    # house, and the state copy below is what carries it.
+    rsync -aHAX --numeric-ids --one-file-system \
+        --exclude='/proc' --exclude='/sys' --exclude='/dev' \
+        --exclude='/run' --exclude='/tmp' --exclude='/mnt' --exclude='/boot' \
+        "$LIVE_ROOT_MNT"/ "$ROOT_MNT"/
+
+    # The installed machine gets its own machine-id; a copied one would make it
+    # look like the live session to every service that keys off it.
+    mkdir -p "$ROOT_MNT/etc/jawnos" "$ROOT_MNT/etc/kernel" "$ROOT_MNT/boot"
+    : > "$ROOT_MNT/etc/machine-id"
+
+    # A random keyfile on the encrypted root opens the state volume at boot; the
+    # passphrase stays in its own LUKS slot as the recovery key.
+    head -c 64 /dev/urandom > "$ROOT_MNT/etc/jawnos/state.key"
+    chmod 600 "$ROOT_MNT/etc/jawnos/state.key"
+    chown root:root "$ROOT_MNT/etc/jawnos/state.key" 2>/dev/null || true
+    cryptsetup luksAddKey --key-file="$KEYTMP" "$TARGET_STATE" \
+        "$ROOT_MNT/etc/jawnos/state.key"
+
+    ESP_UUID=$(blkid -s UUID -o value "$TARGET_ESP" | head -n 1)
+    if [ -z "$ESP_UUID" ]; then
+        echo "cannot read the new ESP's UUID" >&2
+        exit 1
+    fi
+
+    printf 'jawnos-state UUID=%s /etc/jawnos/state.key luks,discard\n' \
+        "$STATE_UUID" > "$ROOT_MNT/etc/crypttab"
+    printf 'UUID=%s /boot vfat fmask=0137,dmask=0027 0 2\n' \
+        "$ESP_UUID" > "$ROOT_MNT/etc/fstab"
+    printf '%s\n' \
+        "rd.luks.name=$ROOT_UUID=jawnos-root root=/dev/mapper/jawnos-root rw systemd.firstboot=no quiet splash loglevel=3 plymouth.ignore-serial-consoles" \
+        > "$ROOT_MNT/etc/kernel/cmdline"
+
+    mkdir -p "$STATE_MNT"
+    umount "$STATE_MNT" 2>/dev/null || true
+    mount /dev/mapper/jawnos-state "$STATE_MNT"
+    STATE_MOUNTED=yes
+
+    echo "carrying the house onto the encrypted state..."
+    rsync -aHAX "$HOME_SRC"/ "$STATE_MNT"/
+    chown -R jawn:jawn "$STATE_MNT" 2>/dev/null || true
+
+    finish_state
+
+    # systemd-boot and a plain (non-UKI) kernel/initramfs on the ESP. The live
+    # image's UKI cannot be reused: its command line is baked in and names a
+    # read-only overlay root, not the encrypted mapper.
+    mkdir -p "$TARGET_ESP_MNT"
+    mount "$TARGET_ESP" "$TARGET_ESP_MNT"
+    TARGET_ESP_MOUNTED=yes
+
+    KERNEL=$(ls -1 "$LIVE_ROOT_MNT"/usr/lib/modules/*/vmlinuz 2>/dev/null | sort -V | tail -n 1 || true)
+    if [ -z "$KERNEL" ] || [ ! -f "$KERNEL" ]; then
+        echo "cannot find a kernel under the live root's /usr/lib/modules" >&2
+        exit 1
+    fi
+    cp "$KERNEL" "$TARGET_ESP_MNT/vmlinuz-linux"
+
+    if [ -f "$LIVE_ROOT_MNT/boot/initramfs-linux.img" ]; then
+        cp "$LIVE_ROOT_MNT/boot/initramfs-linux.img" "$TARGET_ESP_MNT/initramfs-linux.img"
+    else
+        # The live /boot is part of the writable overlay, so build the initramfs
+        # with this image's hook set (mkinitcpio.conf carries sd-encrypt).
+        # autodetect is skipped: it would bake in the live machine's storage
+        # drivers, and the installed disk may sit behind a controller this USB
+        # boot never touched. The installed system's own later mkinitcpio runs
+        # (kernel updates) keep autodetect, which is correct there.
+        echo "building a generic initramfs on the live system..."
+        mkdir -p /boot
+        "$MKINITCPIO" -S autodetect -g /boot/initramfs-linux.img
+        cp /boot/initramfs-linux.img "$TARGET_ESP_MNT/initramfs-linux.img"
+    fi
+
+    # The live system's own systemd-boot binary; --no-variables leaves NVRAM to
+    # the efibootmgr fallback entry below, which any firmware can ignore.
+    bootctl --esp-path="$TARGET_ESP_MNT" --no-variables install >/dev/null
+
+    mkdir -p "$TARGET_ESP_MNT/loader/entries"
+    printf 'default jawnos.conf\ntimeout 3\n' \
+        > "$TARGET_ESP_MNT/loader/loader.conf"
+    {
+        printf 'title JawnOS\n'
+        printf 'linux /vmlinuz-linux\n'
+        printf 'initrd /initramfs-linux.img\n'
+        printf 'options rd.luks.name=%s=jawnos-root root=/dev/mapper/jawnos-root rw systemd.firstboot=no quiet splash loglevel=3 plymouth.ignore-serial-consoles\n' \
+            "$ROOT_UUID"
+    } > "$TARGET_ESP_MNT/loader/entries/jawnos.conf"
+
+    if [ -n "$THEME_FILE" ] && [ -f "$THEME_FILE" ]; then
+        cp "$THEME_FILE" "$TARGET_ESP_MNT/jawnos-theme.txt"
+    fi
+
+    sync
+    umount "$TARGET_ESP_MNT"
+    TARGET_ESP_MOUNTED=no
+    umount "$STATE_MNT"
+    STATE_MOUNTED=no
+    umount "$ROOT_MNT"
+    TARGET_ROOT_MOUNTED=no
+    umount "$LIVE_ROOT_MNT"
+    LIVE_ROOT_MOUNTED=no
+    cryptsetup close jawnos-state
+    STATE_OPENED=no
+    cryptsetup close jawnos-root
+    ROOT_OPENED=no
+    rm -f "$KEYTMP"
+    KEYTMP=
+
+    efibootmgr -c -d "$TARGET" -p 1 -L "JawnOS" -l '\EFI\BOOT\BOOTX64.EFI' >/dev/null 2>&1 || true
+
+    echo "done. Remove the live media and boot $TARGET."
+    echo "The passphrase opens the encrypted disk at boot; the state is opened by"
+    echo "/etc/jawnos/state.key, and the passphrase stays as its recovery key slot."
+}
+
+if [ "$ENCRYPT" = yes ]; then
+    install_encrypted
 else
-    echo "carried the live install's signatorial"
+    install_plain
 fi
-
-sync
-umount "$STATE_MNT"
-
-# An NVRAM entry for the new disk. The image boots through the firmware's own
-# fallback path (EFI/BOOT/BOOTX64.EFI), so a machine that ignores this entry
-# can still pick the disk from its boot menu.
-efibootmgr -c -d "$TARGET" -p 1 -L "JawnOS" -l '\EFI\BOOT\BOOTX64.EFI' >/dev/null 2>&1 || true
-
-echo "done. Remove the live media and boot $TARGET."

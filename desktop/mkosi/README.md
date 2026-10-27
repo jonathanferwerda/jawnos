@@ -266,6 +266,8 @@ does nothing; a first boot that failed is retried.
 jawnos-install            # prints the plan, writes nothing
 sudo jawnos-install --yes /dev/sdX
 sudo jawnos-install --yes --theme nord /dev/sdX   # override the file on the ESP
+sudo jawnos-install --yes --encrypt /dev/sdX     # root + state in LUKS2
+sudo jawnos-install --yes --encrypt --filesystem btrfs /dev/sdX
 ```
 
 It creates a fresh partition table on the target from the same repart
@@ -291,6 +293,49 @@ Partition nodes are refreshed after repart (`partx -u` plus a udev settle) and
 the target partitions are found by filesystem label on the target disk, not with
 `blkid -L` (a second JawnOS disk carries the same labels). Note that vfat
 upper-cases its label (`JAWNOS-ESP`), so labels are compared case-insensitively.
+
+### Encrypting the installed disk
+
+`--encrypt` (off by default) gives the installed machine **full-disk
+encryption** in its standard form: every partition except the ESP is a LUKS2
+container. The **live USB is never encrypted and is not changed**; only a disk
+this command installs to gets the treatment.
+
+| Partition | Encryption | Filesystem | Holds |
+| --- | --- | --- | --- |
+| 1 (ESP) | none (firmware must read it) | vfat | systemd-boot (`EFI/BOOT/BOOTX64.EFI`), `vmlinuz-linux`, `initramfs-linux.img`, `loader/` |
+| 2 (root) | LUKS2, label `jawnos-root` | ext4 | the system |
+| 3 (state) | LUKS2, label `jawnos-state` | ext4 (default) or btrfs (`--filesystem btrfs`) | `/home/jawn` |
+
+- **One passphrase at boot.** The initramfs (`sd-encrypt`) asks once and unlocks
+the root through `rd.luks.name=<root-uuid>=jawnos-root`; the state is opened
+afterwards from `/etc/crypttab`.
+- **State keyfile.** The installer writes `/etc/jawnos/state.key` (64 random
+bytes, mode 600) on the encrypted root and adds it to the state volume with
+`cryptsetup luksAddKey`. `/etc/crypttab` uses it, so the passphrase is asked
+only for the root.
+- **Recovery.** The passphrase remains in its own key slot as the **recovery
+key** for the state container (the keyfile is the other slot). If the keyfile
+is lost, `cryptsetup open <state-partition> jawnos-state` with the boot
+passphrase still opens it; re-add a keyfile with `cryptsetup luksAddKey` and
+update `/etc/crypttab`. The root has the passphrase slot only, so **keep the
+passphrase safe** — it is the recovery key for the whole machine.
+- **Bootloader.** The image's UKI is not copied: its command line is baked in
+and describes the read-only live overlay. The installer writes a plain kernel
+and initramfs to the ESP and installs **systemd-boot** there, with
+`loader/entries/jawnos.conf` naming the root LUKS UUID (taken from
+`cryptsetup luksUUID`). It also keeps the firmware fallback path
+(`EFI/BOOT/BOOTX64.EFI`), so no NVRAM entry is required.
+- **`--passphrase-file PATH`** reads the passphrase from a file instead of
+prompting twice on the terminal. It exists for automated tests; the passphrase
+is copied to a mode-600 file under `/run` and deleted on exit, and is never
+printed.
+- **`--filesystem ext4|btrfs`** chooses the **state** filesystem (`ext4` is the
+default). The installed root is always ext4. It is only meaningful with
+`--encrypt`.
+- **Growing.** `jawnos-grow` grows the LUKS partition, runs `cryptsetup resize`,
+then grows the inner filesystem (`resize2fs`, or `btrfs filesystem resize max`
+for btrfs).
 
 ## Publish the download
 

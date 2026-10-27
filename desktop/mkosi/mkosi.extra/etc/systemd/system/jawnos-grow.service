@@ -2,6 +2,12 @@
 # tables are grown from the minimum image size (8G) to the stick or QEMU disk;
 # only jawnos-state is touched, because the read-only root cannot grow online.
 # Runs before firstboot so the seed lands on the full-size filesystem.
+#
+# home-jawn.service is now ordered after the encrypted state's cryptsetup unit,
+# so it lives in the multi-user transaction rather than before local-fs.target.
+# This unit must follow it there: remains enabled, remains After=home-jawn, but
+# no longer pulls home-jawn into the earlier local-fs transaction (which would
+# be an ordering cycle).
 [Unit]
 Description=Grow the JawnOS state partition to fill the disk
 Requires=home-jawn.service
@@ -15,4 +21,4 @@ ExecStart=/usr/local/bin/jawnos-grow
 RemainAfterExit=yes
 
 [Install]
-WantedBy=local-fs.target
+WantedBy=multi-user.target

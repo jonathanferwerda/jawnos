@@ -7,6 +7,11 @@
 # disk or an installed machine, the image's own state is the house, and a
 # Ventoy stick that happens to be attached must never take it over.
 #
+# An encrypted install (jawnos-install --encrypt) presents the house as a LUKS
+# mapper named jawnos-state. Its filesystem keeps the label jawnos-state, so the
+# partition scan accepts TYPE=crypt as well, and the mount is type-agnostic
+# (ext4 or btrfs).
+#
 # The choice follows the live root: a loop-backed root (Ventoy) prefers the real
 # partition, everything else prefers the image's own label. If neither can be
 # mounted read-write (Ventoy with no reserve, a damaged filesystem), a tmpfs
@@ -47,13 +52,37 @@ field() {
     printf ' %s\n' "$1" | sed -n "s/.* $2=\"\([^\"]*\)\".*/\1/p"
 }
 
+# lsblk names a crypt mapper without its /dev/mapper/ prefix; /dev/<name> does
+# not exist for it. Resolve a bare name or path to something mount/lsblk accept.
+dev_path() {
+    case "$1" in
+        /dev/*) printf '%s\n' "$1" ;;
+        *) if [ -e "/dev/$1" ]; then printf '/dev/%s\n' "$1"; else printf '/dev/mapper/%s\n' "$1"; fi ;;
+    esac
+}
+
+# The device a node is built on. A plain partition reports PKNAME; a
+# device-mapper node (LUKS, dm-crypt) reports no PKNAME, and its backing
+# devices are listed under /sys/block/<name>/slaves (for example loop0p3).
+parent_of() {
+    path=$(dev_path "$1")
+    parent=$(lsblk -ndo PKNAME "$path" 2>/dev/null | head -n 1)
+    if [ -z "$parent" ]; then
+        base=$(basename "$(readlink -f "$path")")
+        if [ -d "/sys/block/$base/slaves" ]; then
+            parent=$(ls "/sys/block/$base/slaves" 2>/dev/null | head -n 1)
+        fi
+    fi
+    printf '%s\n' "$parent"
+}
+
 # The top-level disk (or loop) a device belongs to.
 top_disk() {
     cur=$1
     while :; do
-        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        parent=$(parent_of "$cur")
         if [ -z "$parent" ]; then
-            printf '%s\n' "$cur"
+            printf '%s\n' "$(basename "$(readlink -f "$(dev_path "$cur")")")"
             return 0
         fi
         cur=$parent
@@ -64,16 +93,13 @@ top_disk() {
 # lives inside a disk image rather than on real hardware.
 loop_ancestor() {
     cur=$1
-    # A whole loop device has no parent, so check the device itself too.
-    if [ "$(lsblk -dno TYPE "/dev/$cur" 2>/dev/null | head -n 1)" = loop ]; then
-        return 0
-    fi
     while :; do
-        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
-        [ -n "$parent" ] || return 1
-        if [ "$(lsblk -dno TYPE "/dev/$parent" 2>/dev/null | head -n 1)" = loop ]; then
+        path=$(dev_path "$cur")
+        if [ "$(lsblk -dno TYPE "$path" 2>/dev/null | head -n 1)" = loop ]; then
             return 0
         fi
+        parent=$(parent_of "$cur")
+        [ -n "$parent" ] || return 1
         cur=$parent
     done
 }
@@ -142,12 +168,18 @@ collect() {
         [ -n "$name" ] || continue
         case "$type" in
             part|disk) ;;
+            # An encrypted install's state is a dm-crypt mapper whose filesystem
+            # carries the jawnos-state label (systemd-cryptsetup names it
+            # jawnos-state as well).
+            crypt) ;;
             # In production a loop device is an image and is never the state;
             # the test hook admits it so small loop images can stand in.
             loop) [ "$allow_loop" = 1 ] || continue ;;
             *) continue ;;
         esac
-        case "$fstype" in ext2|ext3|ext4) ;; *) continue ;; esac
+        # ext4/btrfs: the installed state can be either, and an encrypted
+        # mapper's contents are reported by lsblk as the inner filesystem.
+        case "$fstype" in ext2|ext3|ext4|btrfs) ;; *) continue ;; esac
         # A partition that is already mounted is not ours to steal.
         [ -z "$mnt" ] || continue
         if [ "$allow_loop" != 1 ] && loop_ancestor "$name"; then
@@ -155,13 +187,13 @@ collect() {
             continue
         fi
         disk=$(top_disk "$name")
-        dsize=$(blockdev --getsize64 "/dev/$disk" 2>/dev/null || echo 0)
-        psize=$(blockdev --getsize64 "/dev/$name" 2>/dev/null || echo 0)
+        dsize=$(blockdev --getsize64 "$(dev_path "$disk")" 2>/dev/null || echo 0)
+        psize=$(blockdev --getsize64 "$(dev_path "$name")" 2>/dev/null || echo 0)
         live=0
         if [ -n "$LIVE_DISK" ] && [ "$disk" = "$LIVE_DISK" ]; then
             live=1
         fi
-        printf '%s|%s|%s|%s\n' "$live" "$dsize" "$psize" "$name"
+        printf '%s|%s|%s|%s\n' "$live" "$dsize" "$psize" "$(dev_path "$name")"
     done
 }
 
@@ -195,7 +227,7 @@ mount_state() {
         log "could not clear $TARGET before mounting $dev"
         return 1
     fi
-    if run_limited mount -t ext4 -o rw,nofail "$dev" "$TARGET" >>"$LOG" 2>&1; then
+    if run_limited mount -t auto -o rw,nofail "$dev" "$TARGET" >>"$LOG" 2>&1; then
         if writable; then
             return 0
         fi

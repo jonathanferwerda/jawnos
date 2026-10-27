@@ -2,15 +2,19 @@
 # a reinstall) without touching anything a person made. jawnos-state-mount does
 # the mount: it prefers a real partition labelled jawnos-state (the Ventoy
 # reserved partition), falls back to the image's own jawnos-state-img, and
-# finally to a tmpfs so the boot never fails. `DefaultDependencies=no` is
-# required: local-fs.target is ordered after sysinit.target, so a normal
-# service with `Before=local-fs.target` would form an ordering cycle.
+# finally to a tmpfs so the boot never fails.
+#
+# On an encrypted install the state is a LUKS mapper unlocked from /etc/crypttab
+# after the encrypted root is up, so this unit is ordered after
+# systemd-cryptsetup@jawnos-state.service (and cryptsetup.target). On the live
+# USB that unit does not exist and the ordering is a no-op. Normal dependencies
+# stay enabled: local-fs.target is ordered after sysinit.target, and this unit
+# no longer needs to run before local-fs.target.
 [Unit]
 Description=JawnOS house state
-DefaultDependencies=no
 After=systemd-udevd.service systemd-journald.socket
-Before=local-fs.target shutdown.target
-Conflicts=shutdown.target
+After=systemd-cryptsetup@jawnos-state.service cryptsetup.target
+Before=jawnos-firstboot.service getty@tty1.service
 Wants=systemd-udevd.service
 
 [Service]
@@ -20,4 +24,4 @@ RemainAfterExit=yes
 TimeoutStartSec=180
 
 [Install]
-WantedBy=local-fs.target
+WantedBy=multi-user.target

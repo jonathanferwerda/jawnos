@@ -1,5 +1,6 @@
 #!/bin/sh
-# Grow the state partition (and its ext4) to fill the disk we booted from.
+# Grow the state partition (and its filesystem) to fill the disk we booted
+# from.
 #
 # The image is built at its minimum size (1G ESP + 5G root + 2G state). A stick
 # or a QEMU disk is usually larger, and `mkosi vm --runtime-size` only makes the
@@ -17,14 +18,25 @@
 #   - an external `jawnos-state` partition (the Ventoy reserve): it belongs to
 #     the stick's partition table, which Ventoy owns.
 #
+# An encrypted install's state is a LUKS mapper over the real partition. There
+# the partition is grown first, then cryptsetup resize enlarges the mapping,
+# and only then is the inner filesystem grown (resize2fs for ext4,
+# `btrfs filesystem resize max` for btrfs).
+#
 # jawnos-state-mount calls this after mounting, and the jawnos-grow.service unit
 # may run in the same boot, so a lock serialises the two. The run is idempotent:
 # on a disk with no free space systemd-repart says "No changes".
+#
+# Test hooks (never set in production): JAWNOS_GROW_ALLOW_LOOP admits a
+# loop-backed state, JAWNOS_GROW_REPART_DIR names the repart definitions, and
+# JAWNOS_GROW_KEYFILE supplies the LUKS key to cryptsetup resize.
 set -eu
 
 TARGET=${JAWNOS_STATE_TARGET:-/home/jawn}
 RUN=${JAWNOS_STATE_RUN:-/run}
 GROW_LABEL=${JAWNOS_STATE_IMAGE_LABEL:-jawnos-state-img}
+REPART_DIR=${JAWNOS_GROW_REPART_DIR:-/usr/lib/jawnos/repart}
+ALLOW_LOOP=${JAWNOS_GROW_ALLOW_LOOP:-0}
 
 mkdir -p "$RUN" 2>/dev/null || true
 # Serialise with the jawnos-grow.service unit (both may run in one boot).
@@ -34,13 +46,37 @@ if [ -z "${JAWNOS_GROW_LOCKED:-}" ] && command -v flock >/dev/null 2>&1 && [ -w 
     JAWNOS_GROW_LOCKED=1 exec flock -w 60 "$RUN/jawnos-grow.lock" /bin/sh "$0" "$@"
 fi
 
+# lsblk names a crypt mapper without its /dev/mapper/ prefix; /dev/<name> does
+# not exist for it. Resolve a bare name or path to something lsblk accepts.
+dev_path() {
+    case "$1" in
+        /dev/*) printf '%s\n' "$1" ;;
+        *) if [ -e "/dev/$1" ]; then printf '/dev/%s\n' "$1"; else printf '/dev/mapper/%s\n' "$1"; fi ;;
+    esac
+}
+
+# The device a node is built on. A plain partition reports PKNAME; a
+# device-mapper node (LUKS, dm-crypt) reports no PKNAME, and its backing
+# devices are listed under /sys/block/<name>/slaves (for example loop0p3).
+parent_of() {
+    path=$(dev_path "$1")
+    parent=$(lsblk -ndo PKNAME "$path" 2>/dev/null | head -n 1)
+    if [ -z "$parent" ]; then
+        base=$(basename "$(readlink -f "$path")")
+        if [ -d "/sys/block/$base/slaves" ]; then
+            parent=$(ls "/sys/block/$base/slaves" 2>/dev/null | head -n 1)
+        fi
+    fi
+    printf '%s\n' "$parent"
+}
+
 # The top-level disk (or loop) a device belongs to.
 top_disk() {
     cur=$1
     while :; do
-        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        parent=$(parent_of "$cur")
         if [ -z "$parent" ]; then
-            printf '%s\n' "$cur"
+            printf '%s\n' "$(basename "$(readlink -f "$(dev_path "$cur")")")"
             return 0
         fi
         cur=$parent
@@ -65,32 +101,33 @@ live_disk() {
         [ -n "$r" ] && r=$(readlink -f "$r" 2>/dev/null || true)
     fi
     [ -n "$r" ] && [ -b "$r" ] || return 0
-    top_disk "${r#/dev/}"
+    top_disk "$r"
 }
 
 # True when the device, or one of its parents, is a loop device.
 loop_ancestor() {
     cur=$1
-    # A whole loop device has no parent, so check the device itself too.
-    if [ "$(lsblk -dno TYPE "/dev/$cur" 2>/dev/null | head -n 1)" = loop ]; then
-        return 0
-    fi
     while :; do
-        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
-        [ -n "$parent" ] || return 1
-        if [ "$(lsblk -dno TYPE "/dev/$parent" 2>/dev/null | head -n 1)" = loop ]; then
+        path=$(dev_path "$cur")
+        if [ "$(lsblk -dno TYPE "$path" 2>/dev/null | head -n 1)" = loop ]; then
             return 0
         fi
+        parent=$(parent_of "$cur")
+        [ -n "$parent" ] || return 1
         cur=$parent
     done
 }
 
-# Resolve the state partition from the mounted house. `blkid -L` alone is
-# ambiguous when a second JawnOS disk (or a just-installed target) is attached.
-state=$(findmnt -no SOURCE "$TARGET" 2>/dev/null | head -n 1 || true)
-[ -n "$state" ] && [ -b "$state" ] || exit 0
-state=$(readlink -f "$state")
-state_top=$(top_disk "${state#/dev/}")
+# Resolve the state from the mounted house. `blkid -L` alone is ambiguous when
+# a second JawnOS disk (or a just-installed target) is attached. The SOURCE may
+# be a LUKS mapper; keep the path findmnt reported (for the mapper name) as
+# well as its resolved device (for blockdev/resize2fs).
+state_src=$(findmnt -no SOURCE "$TARGET" 2>/dev/null | head -n 1 || true)
+[ -n "$state_src" ] && [ -b "$state_src" ] || exit 0
+state=$(readlink -f "$state_src")
+is_crypt=no
+[ "$(lsblk -dno TYPE "$state" 2>/dev/null | head -n 1)" = crypt ] && is_crypt=yes
+state_top=$(top_disk "$state")
 live=$(live_disk)
 
 # The state on the live, non-loop disk is the machine's own (a direct dd, QEMU,
@@ -112,29 +149,92 @@ if [ "$internal" != yes ]; then
         exit 0
     fi
 
-    if loop_ancestor "${state#/dev/}"; then
+    if [ "$ALLOW_LOOP" != 1 ] && loop_ancestor "$state"; then
         echo "jawnos-grow: $state is inside a disk image; not growing it"
         exit 0
     fi
 fi
 
-disk=$(lsblk -no PKNAME "$state" 2>/dev/null | head -n 1 || true)
+# The key that opened the mapper. At boot the state comes from /etc/crypttab
+# with /etc/jawnos/state.key; cryptsetup 2.8 needs that key again to resize a
+# LUKS2 mapping (it re-reads the header). JAWNOS_GROW_KEYFILE is the test hook.
+resize_keyfile() {
+    name=$1
+    if [ -n "${JAWNOS_GROW_KEYFILE:-}" ] && [ -r "$JAWNOS_GROW_KEYFILE" ]; then
+        printf '%s\n' "$JAWNOS_GROW_KEYFILE"
+        return 0
+    fi
+    if [ -r /etc/crypttab ]; then
+        k=$(awk -v n="$name" '$1 == n { print $3; exit }' /etc/crypttab 2>/dev/null)
+        case "$k" in
+            ""|none|-|/dev/urandom) ;;
+            *) if [ -r "$k" ]; then printf '%s\n' "$k"; return 0; fi ;;
+        esac
+    fi
+    if [ -r /etc/jawnos/state.key ]; then
+        printf '%s\n' /etc/jawnos/state.key
+        return 0
+    fi
+    return 1
+}
+
+# For a LUKS state, the partition to grow is the mapper's backing partition,
+# and the disk is that partition's parent.
+if [ "$is_crypt" = yes ]; then
+    underlying=$(parent_of "$state")
+    [ -n "$underlying" ] || exit 0
+    disk=$(lsblk -ndo PKNAME "/dev/$underlying" 2>/dev/null | head -n 1 || true)
+else
+    disk=$(lsblk -no PKNAME "$state" 2>/dev/null | head -n 1 || true)
+fi
 [ -n "$disk" ] || exit 0
 dev="/dev/$disk"
 
 # systemd-repart cannot grow a filesystem on a generic partition type, so the
-# growth and the resize2fs are two explicit steps. A missing free-space area or
-# a busy partition table is not a boot failure: the next boot retries.
+# growth and the filesystem resize are explicit steps. A missing free-space
+# area or a busy partition table is not a boot failure: the next boot retries.
+#
+# The definition's Format= must be dropped for a LUKS state: repart would
+# otherwise see no ext4 inside and reformat the container away.
 defs=$RUN/jawnos-grow-defs
 mkdir -p "$defs"
-cp /usr/lib/jawnos/repart/30-state.conf "$defs/" 2>/dev/null || exit 0
+source_def=$REPART_DIR/30-state.conf
+[ -f "$source_def" ] || exit 0
+if [ "$is_crypt" = yes ]; then
+    sed -e '/^[[:space:]]*Format=/d' -e '/^[[:space:]]*CopyFiles=/d' \
+        "$source_def" > "$defs/30-state.conf"
+else
+    cp "$source_def" "$defs/30-state.conf"
+fi
 systemd-repart --dry-run=no --definitions="$defs" --empty=allow --offline=yes "$dev" >/dev/null 2>&1 || true
 # If the kernel did not take the new size, nudge the partition nodes.
 partx -u "$dev" 2>/dev/null || true
 udevadm settle 2>/dev/null || true
 
-# The device node keeps its path; only its size changed.
-resize2fs "$state" >/dev/null 2>&1 || true
+# The partition node keeps its path; only its size changed. Enlarge the mapping
+# before its inner filesystem, or the filesystem sees the old size.
+if [ "$is_crypt" = yes ]; then
+    case "$state_src" in
+        /dev/mapper/*) mapper=${state_src#/dev/mapper/} ;;
+        *) mapper=$(lsblk -dno NAME "$state" 2>/dev/null | head -n 1 || true) ;;
+    esac
+    [ -n "$mapper" ] || mapper=$(basename "$state_src")
+    keyfile=$(resize_keyfile "$mapper" || true)
+    if [ -n "$keyfile" ]; then
+        cryptsetup resize --key-file="$keyfile" "$mapper" >/dev/null 2>&1 \
+            || echo "jawnos-grow: could not resize $mapper" >&2
+    else
+        cryptsetup resize "$mapper" </dev/null >/dev/null 2>&1 \
+            || echo "jawnos-grow: could not resize $mapper (no key available)" >&2
+    fi
+fi
+
+fstype=$(findmnt -no FSTYPE -M "$TARGET" 2>/dev/null | head -n 1 || true)
+case "$fstype" in
+    ext2|ext3|ext4) resize2fs "$state" >/dev/null 2>&1 || true ;;
+    btrfs)          btrfs filesystem resize max "$TARGET" >/dev/null 2>&1 || true ;;
+    *)              : ;;
+esac
 
 echo "jawnos-grow: $state now $(blockdev --getsize64 "$state" 2>/dev/null || echo '?') bytes"
 exit 0
