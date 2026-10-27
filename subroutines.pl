@@ -11092,7 +11092,12 @@ sub setting_setter() {
 		# rendered bucket to drop here any more.
 	}
 	if ($setting eq 'toggle' && $settings->{'source'} eq 'panel' && !$sync) {
-		&intelligent_automation_toggle({ app => $app });
+		# The panel has already written the new value. Pass it through: with no
+		# state, embedded_toggle treats each output as a fresh toggle, reads the
+		# value back and inverts it, so one click flipped the app (and every
+		# relay/LED wired to it) once per output instead of setting them all to
+		# the state the person just chose.
+		&intelligent_automation_toggle({ app => $app, 'state' => $value, timestamp => $timestamp });
 
 	}
 	if ($setting eq 'toggle' && !$sync) {
