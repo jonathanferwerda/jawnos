@@ -211,6 +211,13 @@ sub jg_dial {
 	return $second->{'error'} ? $first : $second;
 }
 
+sub jg_house {
+	my ($c, $handle) = @_;
+	my $h = &jg_slug($handle);
+	return { error => 'no house' } unless length $h;
+	return &jg_call($c, 'GET', '/v1/houses/' . $h, '', 0);
+}
+
 sub jg_room {
 	my ($c, $handle, $room) = @_;
 	my $h = &jg_slug($handle);
