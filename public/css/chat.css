@@ -918,6 +918,12 @@
 .jg_person_feed { display: none; width: 100%; max-height: 200px; border-radius: 8px; background: #000; }
 .jg_person_feed.on { display: block; }
 .jg_person_captions { display: flex; flex-direction: column; gap: 1px; font-size: 12px; color: var(--ink-muted); }
+.jg_person_streams { display: flex; flex-direction: column; gap: 4px; }
+.jg_person_stream { display: flex; flex-direction: column; gap: 1px; }
+.jg_person_stream audio { width: 100%; }
+.jg_broadcast { display: flex; flex-direction: column; gap: 4px; }
+.jg_broadcast_row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+
 
 .jg_mute { padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 12px; }
 .jg_badge { display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; }

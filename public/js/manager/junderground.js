@@ -175,7 +175,13 @@
 			camera: null,
 			cameraPromise: null,
 			stream: null,
+			role: hello.role || '',
 			share: 'camera',
+			broadcastOn: false,
+			broadcastStreams: {},
+			broadcastTracks: {},
+			remoteBroadcast: {},
+			remotes: {},
 			muted: false,
 			ready: Promise.resolve(null)
 		};
@@ -211,6 +217,24 @@
 		pc.ontrack = function (e) {
 			var call = jgCall(handle, room);
 			if (call) { call.remote[jti] = e.streams[0]; }
+
+			// A broadcast stream is announced ahead of its tracks; attach it to
+			// the element the announcement made for it.
+			var sid = (e.streams && e.streams[0]) ? e.streams[0].id : '';
+			if (call && sid) {
+				call.remotes[sid] = e.streams[0];
+				var hook = null;
+				document.querySelectorAll('[data-stream]').forEach(function (el) {
+					if (el.getAttribute('data-stream') === sid) { hook = el; }
+				});
+				if (hook) {
+					hook.srcObject = e.streams[0];
+					var p = hook.play();
+					if (p && p.catch) { p.catch(function () {}); }
+					jgRenderMedia(handle, room);
+					return;
+				}
+			}
 
 			if (e.track && e.track.kind === 'video') {
 				jgAttachVideo(handle, room, jti, e.streams[0]);
@@ -321,12 +345,16 @@
 			if (!pc) { return; }
 			pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp }).then(function () {
 				return jgFlushIce(call, msg.from_jti);
+			}).then(function () {
+				jgBroadcastTo(handle, room, msg.from_jti);
 			}).catch(function () {});
 		} else if (msg.type === 'ice') {
 			jgAddIce(handle, room, msg);
 		} else if (msg.type === 'video') {
 			if (msg.want === 'on') { jgVideoPublish(handle, room, msg.from_jti, msg.source); }
 			else { jgVideoUnpublish(handle, room, msg.from_jti); }
+		} else if (msg.type === 'broadcast') {
+			jgBroadcastSeen(handle, room, msg);
 		}
 	}
 
@@ -346,6 +374,9 @@
 		var key = jgKey(handle, room);
 		var call = jgCalls[key];
 		if (!call) { return; }
+		Object.keys(call.broadcastStreams || {}).forEach(function (id) {
+			call.broadcastStreams[id].getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+		});
 		delete jgCalls[key];
 		Object.keys(call.pcs).forEach(function (jti) {
 			try { call.pcs[jti].close(); } catch (e) {}
@@ -430,6 +461,7 @@
 			.text(jgFriends[subject] ? jgT('Friend') : jgT('Add friend')).appendTo(actions);
 
 		$('<video class="jg_person_feed" playsinline autoplay></video>').appendTo(card);
+		$('<div class="jg_person_streams"></div>').appendTo(card);
 		$('<div class="jg_person_captions"></div>').appendTo(card);
 		return card;
 	}
@@ -791,6 +823,222 @@
 		Object.keys(jgVisits).forEach(jgVisitStop);
 	}
 
+
+	// ---- broadcast -----------------------------------------------------
+	// The room's citizen (the renter) may send many streams at once. Each one is
+	// a separate track on every listener's connection, announced by id so the
+	// listener can name them; the microphone is still its own track. Nothing is
+	// captured until the citizen presses Broadcast.
+
+	function jgBroadcastSources() {
+		var list = [
+			{ id: 'camera', label: jgT('Camera'), kind: 'video', get: function () {
+				return navigator.mediaDevices.getUserMedia({ video: true });
+			} },
+			{ id: 'marker', label: jgT('Marker'), kind: 'video', get: function () {
+				var canvas = jgCanvasById('whiteboard');
+				return Promise.resolve(canvas ? canvas.captureStream(30) : null);
+			} },
+			{ id: 'music', label: jgT('#video'), kind: 'video', get: function () {
+				var canvas = jgMusicCanvas();
+				return Promise.resolve(canvas ? canvas.captureStream(30) : null);
+			} }
+		];
+
+		if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+			list.splice(1, 0, { id: 'screen', label: jgT('Screen'), kind: 'video', get: function () {
+				return navigator.mediaDevices.getDisplayMedia({ video: true });
+			} });
+		}
+
+		var studio = window.jawnosMediaSources || {};
+
+		if (typeof studio.studio === 'function') {
+			list.push({ id: 'studio', label: jgT('Studio master'), kind: 'audio', get: function () {
+				return Promise.resolve(studio.studio());
+			} });
+		}
+
+		if (typeof studio.studioChannels === 'function') {
+			studio.studioChannels().forEach(function (channel) {
+				list.push({ id: channel.id, label: channel.label, kind: channel.kind || 'audio', get: function () {
+					return Promise.resolve(channel.stream);
+				} });
+			});
+		}
+
+		return list;
+	}
+
+	function jgRenderBroadcast(handle, room) {
+		var box = $('#jg_broadcast').empty();
+		var call = jgCall(handle, room);
+		if (!call || call.role !== 'citizen') { return; }
+
+		$('<div class="jg_scope">').text(jgT('Broadcast for the room')).appendTo(box);
+
+		jgBroadcastSources().forEach(function (source) {
+			var row = $('<label class="jg_broadcast_row">').appendTo(box);
+			var tick = $('<input type="checkbox">').attr({ 'data-source': source.id }).appendTo(row);
+			if (call.broadcastStreams[source.id]) { tick.prop('checked', true); }
+			$('<span>').text(source.label + ' · ' + jgT(source.kind)).appendTo(row);
+		});
+
+		$('<button type="button" id="jg_broadcast_go" class="jg_person_btn">')
+			.attr({ handle: handle, room: room })
+			.text(call.broadcastOn ? jgT('Stop broadcast') : jgT('Broadcast'))
+			.appendTo(box);
+	}
+
+	function jgBroadcastTo(handle, room, jti) {
+		var call = jgCall(handle, room);
+		if (!call || !call.broadcastOn || !jti) { return; }
+		var pc = jgPeer(handle, room, jti);
+		if (!pc) { return; }
+
+		var added = false;
+		Object.keys(call.broadcastStreams).forEach(function (id) {
+			var stream = call.broadcastStreams[id];
+			stream.getTracks().forEach(function (track) {
+				var there = pc.getSenders().some(function (sender) { return sender.track === track; });
+				if (there) { return; }
+				pc.addTrack(track, stream);
+				added = true;
+			});
+		});
+
+		if (added) { jgRenegotiate(handle, room, jti, pc); }
+	}
+
+	function jgBroadcastStop(handle, room, announce) {
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+		call.broadcastOn = false;
+
+		Object.keys(call.pcs).forEach(function (jti) {
+			var pc = call.pcs[jti];
+			if (!pc) { return; }
+			pc.getSenders().forEach(function (sender) {
+				if (sender.track && call.broadcastTracks[sender.track.id]) {
+					try { pc.removeTrack(sender); } catch (e) {}
+				}
+			});
+			jgRenegotiate(handle, room, jti, pc);
+		});
+
+		Object.keys(call.broadcastStreams).forEach(function (id) {
+			call.broadcastStreams[id].getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+		});
+
+		call.broadcastStreams = {};
+		call.broadcastTracks = {};
+		if (announce !== false) {
+			jgSend(handle, room, { type: 'broadcast', on: 'no', streams: [] });
+		}
+		jgRenderBroadcast(handle, room);
+	}
+
+	function jgBroadcastToggle(handle, room) {
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+		if (call.broadcastOn) { jgBroadcastStop(handle, room, true); return; }
+
+		var chosen = [];
+		$('#jg_broadcast input[data-source]:checked').each(function () {
+			chosen.push($(this).attr('data-source'));
+		});
+		if (!chosen.length) {
+			$('#jg_status').text(jgT('Choose something to broadcast.'));
+			return;
+		}
+
+		var sources = jgBroadcastSources().filter(function (source) {
+			return chosen.indexOf(source.id) >= 0;
+		});
+
+		Promise.all(sources.map(function (source) {
+			return Promise.resolve(source.get()).then(function (stream) {
+				return stream ? { source: source, stream: stream } : null;
+			}).catch(function () { return null; });
+		})).then(function (got) {
+			if (jgCalls[jgKey(handle, room)] !== call) { return; }
+			var live = got.filter(function (item) { return item; });
+			if (!live.length) {
+				$('#jg_status').text(jgT('Nothing could be captured.'));
+				return;
+			}
+
+			call.broadcastStreams = {};
+			call.broadcastTracks = {};
+			live.forEach(function (item) {
+				call.broadcastStreams[item.source.id] = item.stream;
+				item.stream.getTracks().forEach(function (track) { call.broadcastTracks[track.id] = 1; });
+			});
+			call.broadcastOn = true;
+
+			jgSend(handle, room, {
+				type: 'broadcast',
+				on: 'yes',
+				streams: live.map(function (item) {
+					return { id: item.stream.id, label: item.source.label, kind: item.source.kind };
+				})
+			});
+
+			Object.keys(call.pcs).forEach(function (jti) { jgBroadcastTo(handle, room, jti); });
+			jgRenderBroadcast(handle, room);
+			$('#jg_status').text(jgT('Broadcasting'));
+		});
+	}
+
+	function jgBroadcastSeen(handle, room, msg) {
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+		call.remoteBroadcast = call.remoteBroadcast || {};
+		call.remoteBroadcast[msg.from_jti] = (msg.on === 'no') ? [] : (msg.streams || []);
+		jgRenderBroadcasts(handle, room);
+	}
+
+	function jgRenderBroadcasts(handle, room) {
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+
+		$('#jg_detail .jg_person').each(function () {
+			var card = $(this);
+			var jti = card.attr('jti') || '';
+			var streams = (call.remoteBroadcast && call.remoteBroadcast[jti]) || [];
+			var box = card.find('.jg_person_streams');
+
+			if (!streams.length) {
+				if (box.children().length) { box.empty(); box.removeAttr('count'); }
+				return;
+			}
+
+			var signature = streams.map(function (s) { return s.id; }).join(',');
+			if (box.attr('count') != signature) {
+				box.empty();
+				box.attr('count', signature);
+				streams.forEach(function (stream) {
+					var row = $('<div class="jg_person_stream">').appendTo(box);
+					var el = (stream.kind === 'video')
+						? $('<video class="jg_person_feed on" playsinline autoplay>')
+						: $('<audio autoplay>');
+					el.attr('data-stream', stream.id).appendTo(row);
+					$('<div class="jg_scope">').text(stream.label || '').appendTo(row);
+				});
+			}
+
+			box.find('[data-stream]').each(function () {
+				var id = $(this).attr('data-stream');
+				var stream = call.remotes[id];
+				if (stream && this.srcObject !== stream) {
+					this.srcObject = stream;
+					var playing = this.play();
+					if (playing && playing.catch) { playing.catch(function () {}); }
+				}
+			});
+		});
+	}
+
 	function jgPost(path, payload, done) {
 		$.ajax({
 			url: path, type: 'POST', dataType: 'json',
@@ -884,6 +1132,8 @@
 
 		jgRenderMedia(handle, room);
 		jgRestoreMedia(handle, room);
+		jgRenderBroadcast(handle, room);
+		jgRenderBroadcasts(handle, room);
 		jgVisitsSync(handle, room, roster, !!jgPresence[jgKey(handle, room)]);
 
 		var actions = $('<div class="jg_row">').appendTo(box);
@@ -926,6 +1176,8 @@
 		$('#jg_status').text(jgT('Joining…'));
 		jgPost('/manager/junderground/join', { handle: handle, room: room, ticket: ticket }, function (r) {
 			if (r.error) { $('#jg_status').text(r.error); return; }
+			var call = jgCall(handle, room);
+			if (call && r.role) { call.role = r.role; }
 			jgPresence[handle + '/' + room] = r.presence_id;
 			$('#jg_status').text((r.role || 'guest') + (r.ticketed ? ' · ' + jgT('pass') : ''));
 			jgSocketOpen(handle, room, r.grant);
@@ -957,6 +1209,10 @@
 		Object.keys(call.sources).forEach(function (kind) {
 			if (kind !== call.share) { jgSourceRelease(call, kind); }
 		});
+	});
+
+	$(document).on('click', '#jg_broadcast_go', function () {
+		jgBroadcastToggle($(this).attr('handle'), $(this).attr('room'));
 	});
 
 	$(document).on('click', '#jg_mute', function () {
