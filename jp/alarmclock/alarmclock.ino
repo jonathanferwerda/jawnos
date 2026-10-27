@@ -204,6 +204,26 @@ static int64_t jint(JSONVar v) {
 
 static bool pin_ok(int pin) { return pin >= 0 && pin <= 29; }
 
+// The local switch/relay map. JSONVar drops both nested assignments and object
+// assignments into config, so the pins the board actually reads and drives live
+// in plain arrays rebuilt from the manager's internal_jobs string.
+#define LOCAL_IN_MAX 16
+#define LOCAL_OUT_MAX 4
+struct local_in_t {
+  int pin;
+  bool is_switch;
+  String name;
+  int out_pin[LOCAL_OUT_MAX];
+  int out_inv[LOCAL_OUT_MAX];
+  String out_comp[LOCAL_OUT_MAX];
+  int out_n;
+};
+static local_in_t local_ins[LOCAL_IN_MAX];
+static int local_in_count = 0;
+static int local_sw_state[30];
+static bool local_sw_seen[30];
+static int local_btn_pressed[30];
+
 // A JSONVar left undefined or null serializes as an empty token, which makes
 // the whole config file invalid on the next boot. Treat both as missing.
 static bool cfg_missing(JSONVar v) {
@@ -335,26 +355,27 @@ static void ble_apply_app_state(String app, String state) {
 static void ble_apply_board_config(JSONVar ctp) {
   if (JSON.typeof(ctp) != "object") { return; }
   JSONVar keys = ctp.keys();
-  // A partial push (only __specs, or a truncated frame) must never erase the
-  // role: the board would come back with no relays and no local switch map.
-  bool has_components = false;
+  // A partial push (a lost BLE part, or a payload with no components) must
+  // never erase the role. The manager states how many components it sent.
+  int found_components = 0;
   for (int i = 0; i < keys.length(); i++) {
     String k = String(keys[i]);
-    if (!k.startsWith("__")) { has_components = true; break; }
+    if (!k.startsWith("__")) { found_components++; }
   }
-  if (!has_components) {
-    Serial.println("[cfg] ignored board_config with no components");
+  int expected_components = (int)jint(ctp["__specs"]["component_count"]);
+  if (found_components == 0 || (expected_components > 0 && found_components < expected_components)) {
+    Serial.println("[cfg] ignored incomplete board_config");
     return;
   }
   Serial.println("[cfg] applying " + String(keys.length()) + " keys");
-  config["button"] = undefined;
-  config["pot"] = undefined;
-  config["led"] = undefined;
-  config["servo"] = undefined;
-  config["relay"] = undefined;
-  config["switch"] = undefined;
-  config["outputs"] = undefined;
-  config["internal_jobs"] = undefined;
+  config["button"] = JSON.parse("{}");
+  config["pot"] = JSON.parse("{}");
+  config["led"] = JSON.parse("{}");
+  config["servo"] = JSON.parse("{}");
+  config["relay"] = JSON.parse("{}");
+  config["switch"] = JSON.parse("{}");
+  config["outputs"] = JSON.parse("{}");
+  config["internal_jobs"] = "";
   for (int i = 0; i < keys.length(); i++) {
     String name = String(keys[i]);
     if (name == "__specs" || name == "__shutup") { continue; }
@@ -597,7 +618,17 @@ static void usb_config_loop() {
         String json = line.substring(8);
         JSONVar incoming = JSON.parse(json);
         if (JSON.typeof(incoming) == "object") {
+          // A USB provision carries WiFi and the token, not the role. Keep the
+          // existing relays/switches so rejoining does not leave the board with
+          // dead pins until the next BLE or /watch push.
+          JSONVar prior = config;
           config = incoming;
+          const char *keep_keys[] = { "relay", "led", "button", "switch", "pot", "servo", "outputs", "internal_jobs", "houses", "__specs" };
+          for (size_t ki = 0; ki < sizeof(keep_keys) / sizeof(keep_keys[0]); ki++) {
+            if (cfg_missing(config[keep_keys[ki]]) && !cfg_missing(prior[keep_keys[ki]])) {
+              config[keep_keys[ki]] = prior[keep_keys[ki]];
+            }
+          }
           // The file is the source of truth now: set the live identity from it.
           // The role is not written here; it comes back over BLE (board_config)
           // or from /watch once the network is up. This keeps the USB line small
@@ -1382,11 +1413,101 @@ void wifi_supervise() {
   }
 }
 
+static void local_apply(int idx, const String &state) {
+  local_in_t &in = local_ins[idx];
+  for (int o = 0; o < in.out_n; o++) {
+    int op = in.out_pin[o];
+    String st = state;
+    if (in.out_inv[o] == 1) { st = (st == "on") ? "off" : "on"; }
+    pinMode(op, OUTPUT);
+    digitalWrite(op, st == "on" ? HIGH : LOW);
+    if (in.out_comp[o] == "relay") { config["relay"][String(op)] = st; }
+    else if (in.out_comp[o] == "led") { config["led"][String(op)] = st; }
+  }
+}
+
+static void local_input_scanner() {
+  static int raw[LOCAL_IN_MAX];
+  static uint32_t raw_at[LOCAL_IN_MAX];
+  static bool raw_seen[LOCAL_IN_MAX];
+  for (int i = 0; i < local_in_count; i++) {
+    local_in_t &in = local_ins[i];
+    int r = digitalRead(in.pin);
+    if (!raw_seen[i] || raw[i] != r) {
+      raw_seen[i] = true;
+      raw[i] = r;
+      raw_at[i] = millis();
+      continue;
+    }
+    if ((uint32_t)(millis() - raw_at[i]) < 30) { continue; }
+    if (in.is_switch) {
+      if (local_sw_seen[in.pin] && r == local_sw_state[in.pin]) { continue; }
+      local_sw_seen[in.pin] = true;
+      local_sw_state[in.pin] = r;
+      String state = r ? "on" : "off";
+      local_apply(i, state);
+      if (ble_up && ble_notify_enabled) {
+        JSONVar sm;
+        sm["type"] = "switch";
+        sm["chip_id"] = String(rp2040.getChipID());
+        sm["edt"] = "microcontroller";
+        JSONVar sd;
+        sd["room"] = "1";
+        sd["switch"] = String(in.pin);
+        sd["state"] = state;
+        sd["timestamp"] = event_timestamp();
+        sm["data"] = sd;
+        ble_send_json(JSON.stringify(sm));
+      }
+      else {
+        String jobTime = String(millis());
+        coreJobs[jobTime]["type"] = "https";
+        coreJobs[jobTime]["url"] = "https://" + homebaseIP +
+          "/watch/switch?room=1&switch=" + String(in.pin) + "&state=" + state;
+        coreJobs[jobTime]["response"] = "switch";
+      }
+      config_writer();
+    }
+    else {
+      if (r == 1 && local_btn_pressed[in.pin] == 0) {
+        local_btn_pressed[in.pin] = 1;
+        String nstate = "on";
+        if (in.out_n > 0) { nstate = (digitalRead(in.out_pin[0]) == HIGH) ? "off" : "on"; }
+        local_apply(i, nstate);
+        String toggle = (nstate == "on") ? "1" : "0";
+        if (ble_up && ble_notify_enabled) {
+          JSONVar bm;
+          bm["type"] = "button";
+          bm["chip_id"] = String(rp2040.getChipID());
+          bm["edt"] = "microcontroller";
+          JSONVar bp;
+          bp["room"] = "1";
+          bp["button"] = String(in.pin);
+          bp["toggle"] = toggle;
+          bp["timestamp"] = event_timestamp();
+          bm["payload"] = bp;
+          ble_send_json(JSON.stringify(bm));
+        }
+        else {
+          String jobTime = String(millis());
+          coreJobs[jobTime]["type"] = "https";
+          coreJobs[jobTime]["url"] = "https://" + homebaseIP +
+            "/watch/button?room=1&button=" + String(in.pin) + "&toggle=" + toggle;
+          coreJobs[jobTime]["response"] = "button";
+        }
+        config_writer();
+      }
+      else if (r == 0) { local_btn_pressed[in.pin] = 0; }
+    }
+  }
+}
+
 void input_scanner() {
   if (input_working == 1) {
     return;
   }
   input_working = 1;
+  local_input_scanner();
   JSONVar buttonKeys = config["button"].keys();
   for (int i = 0; i < buttonKeys.length(); i++) {
     String spin = buttonKeys[i];
@@ -1874,8 +1995,51 @@ void config_writer() {
 //  Serial.println(jconfig);
 }
 
+static void local_jobs_load() {
+  local_in_count = 0;
+  String ij_s = jstr(config["internal_jobs"]);
+  JSONVar ij = JSON.parse(ij_s);
+  if (JSON.typeof(ij) != "object") { return; }
+  JSONVar keys = ij.keys();
+  for (int i = 0; i < keys.length() && local_in_count < LOCAL_IN_MAX; i++) {
+    String name = String(keys[i]);
+    bool is_sw = name.startsWith("switch");
+    bool is_bt = name.startsWith("button");
+    if (!is_sw && !is_bt) { continue; }
+    int pin = name.substring(6).toInt();
+    if (!pin_ok(pin)) { continue; }
+    local_in_t &in = local_ins[local_in_count++];
+    in.pin = pin;
+    in.is_switch = is_sw;
+    in.name = name;
+    in.out_n = 0;
+    input_begin(pin);
+    local_sw_state[pin] = digitalRead(pin);
+    local_sw_seen[pin] = true;
+    local_btn_pressed[pin] = 0;
+    JSONVar jobs = ij[name];
+    for (int j = 0; j < jobs.length() && in.out_n < LOCAL_OUT_MAX; j++) {
+      String comp = jstr(jobs[j]["component"]);
+      int op = (int)jint(jobs[j]["numero"]);
+      int inv = (int)jint(jobs[j]["inverted"]);
+      int tog = (int)jint(jobs[j]["toggle"]);
+      if (!pin_ok(op)) { continue; }
+      if (comp != "relay" && comp != "led") { continue; }
+      String st = (tog == 1) ? "on" : "off";
+      if (inv == 1) { st = (st == "on") ? "off" : "on"; }
+      pinMode(op, OUTPUT);
+      digitalWrite(op, st == "on" ? HIGH : LOW);
+      in.out_pin[in.out_n] = op;
+      in.out_inv[in.out_n] = inv;
+      in.out_comp[in.out_n] = comp;
+      in.out_n++;
+    }
+  }
+}
+
 void config_init() {
   config_ensure();
+  local_jobs_load();
   Serial.println("Config init");
   JSONVar relayKeys = config["relay"].keys();
   for (int i = 0; i < relayKeys.length(); i++) {
@@ -2057,22 +2221,24 @@ void call_the_president() {
         JSONVar ctp = JSON.parse(before_me);
         JSONVar ctpKeys = ctp.keys();
         bool has_components = false;
+        int found_components = 0;
         for (int i = 0; i < ctpKeys.length(); i++) {
           String k = String(ctpKeys[i]);
-          if (!k.startsWith("__")) { has_components = true; break; }
+          if (!k.startsWith("__")) { has_components = true; found_components++; }
         }
-        if (!has_components) {
-          Serial.println("[watch] no components; keeping the current role");
+        int expected_components = (int)jint(ctp["__specs"]["component_count"]);
+        if (!has_components || (expected_components > 0 && found_components < expected_components)) {
+          Serial.println("[watch] incomplete role; keeping the current one");
           return;
         }
-        config["button"] = undefined;
-        config["pot"] = undefined;
-        config["led"] = undefined;
-        config["servo"] = undefined;
-        config["relay"] = undefined;
-        config["switch"] = undefined;
-        config["outputs"] = undefined;
-        config["internal_jobs"] = undefined;
+        config["button"] = JSON.parse("{}");
+        config["pot"] = JSON.parse("{}");
+        config["led"] = JSON.parse("{}");
+        config["servo"] = JSON.parse("{}");
+        config["relay"] = JSON.parse("{}");
+        config["switch"] = JSON.parse("{}");
+        config["outputs"] = JSON.parse("{}");
+        config["internal_jobs"] = "";
         for (int i = 0; i < ctpKeys.length(); i++) {
           String numero = String((long)jint(ctp[ctpKeys[i]]["numero"]));
           String component = jstr(ctp[ctpKeys[i]]["component"]);

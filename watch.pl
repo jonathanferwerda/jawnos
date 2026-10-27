@@ -135,6 +135,7 @@ get '/watch' => sub($c) {
 			$watch_settings->{$k}->{'toggle'} = &subs::setting_grabber({ app => $watch_settings->{$k}->{'app'}, setting => 'toggle' }) eq 'on' ? 1 : 0;
 		}
 		$watch_settings = &subs::embedded_internal_jobs($watch_settings);
+		$watch_settings->{'__specs'}->{'component_count'} = scalar(grep { !/^__/ } keys %{$watch_settings});
 	#	$log->info(Dumper $watch_settings);
 		$c->render('json' => $watch_settings);
 		&Websocket::send('tab', { console => 'nowMeSuccess(\'' . $edt . '\',\'' . $chip_id . '\')', browser_tab_id => $c->param('browser_tab_id') });
