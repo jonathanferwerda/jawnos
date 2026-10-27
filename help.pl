@@ -638,38 +638,67 @@ our %topic = (
 	},
 	'crypto' => {
 		title => 'Crypto wallets and rates', category => 'functions',
-		verified => '2026-10-21',
-		templates => [ 'templates/configure/crypto_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/store/crypto_payment.html.ep', 'templates/store/printer/header.html.ep', 'templates/store/list.html.ep', 'public/js/manager/configure.js', 'public/js/manager/transaction.js', 'public/js/store.js' ],
+		verified => '2026-10-27',
+		templates => [ 'templates/configure/pay_setting_list.html.ep', 'templates/configure/crypto_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/store/crypto_payment.html.ep', 'templates/store/printer/header.html.ep', 'templates/store/pay_box.html.ep', 'templates/store/list.html.ep', 'public/js/manager/configure.js', 'public/js/manager/transaction.js', 'public/js/store.js' ],
 		summary => 'Wallet accounts that hold a coin, per-invoice receiving addresses from an xpub, live fiat and coin rates, and cost or market valuation.',
 		body => [
 			'A wallet is an ordinary account whose Payment Type is crypto. It keeps a public address and the coin it holds, and it records transactions, transfers and statements like any other account. JawnOS never holds a key, cannot spend from a wallet, and refuses anything that looks like a seed phrase or a private key; if a page ever asks for one, it is not JawnOS.',
 			'A hardware wallet is the right home for coins you are not about to spend: the device keeps the key, and JawnOS only ever sees the public address. For the widest coin coverage, Ledger Nano S Plus or Flex; for open-source firmware, Trezor Safe 3/5 or BitBox02; if it is Bitcoin only, Coldcard or Blockstream Jade. Buy direct from the maker, never a reseller or a marketplace, and never trust a device that arrives already set up. Write the recovery phrase on paper or steel, keep it offline, and never type it into a computer or a website. Review this recommendation every three to six months, and update the device firmware in the same pass: devices, prices and coin support move.',
 			'A wallet can issue a fresh receiving address for every invoice. In Configure -> App, paste the Bitcoin account xpub (xpub, ypub or zpub) into Account xpub; it is public, so it can derive addresses and cannot spend. The invoice then owns its own address: the first time it is written, and again when it is opened for payment or saved after the key was added, JawnOS derives the next unused address at /0/index and keeps it with the invoice. A wallet with no xpub keeps the single saved address. If the wallet\'s own app does not show an xpub (Ledger Live does not), connect the device to Sparrow or Electrum on the laptop and copy the account xpub from there. Compare the first five addresses with the wallet app\'s Receive list; if they do not match, the path or script type is wrong, so clear the key and check the wallet. Only Bitcoin is supported for this so far.',
 			'A crypto payment cannot be reversed or refused by this server. The QR on an invoice carries the exact amount, and the invoice panel refuses to record a payment once the balance is zero, so the ledger cannot count a second payment twice. Coins sent a second time still arrive, though: the wallet shows them, and the payment panel reports an overpayment so the seller can return the extra deliberately.',
-			'Configure -> Plat -> Crypto owns the shared parts: which coins may be used, the cached exchange rates, and how a holding is valued. Cost is the money recorded when the coin arrived, which is the safe figure for statements. Market is the native holding at today\'s rate, which moves with the price. The wallet list shows both so the difference is visible.',
+			'Configure -> Plat -> Pay -> Crypto owns the shared parts: which coins may be used, the cached exchange rates, and how a holding is valued. Cost is the money recorded when the coin arrived, which is the safe figure for statements. Market is the native holding at today\'s rate, which moves with the price. The wallet list shows both so the difference is visible.',
 			'Every conversion in the app now reads the same rate snapshot, including a measure typed as 5USD to CAD or 0.01BTC to CAD. One public, keyless call to Coinbase returns every fiat code and every coin; the snapshot keeps the most-used fiat currencies (the top 50 the source answers) and the enabled coins. A half-hour loop refreshes it, and Refresh now asks at once. While no snapshot has been read, the older built-in constants still answer. An offline house keeps its last snapshot rather than losing its rates.',
 			'Currency tracking keeps a history without an appointment. Tick it and every six hours one measure appointment is written into the app chosen under History app - Canadian Dollar by default, since that is the app this house already used, or Markets if you prefer - with a value for every tracked fiat code. The Measures app charts those points. Choosing a different History app while tracking is on writes the first point there at once. Stop the old app\'s own appointment once the tick is on, or both will write. The same snapshot also fills the Measures app\'s PV column: every currency row, plus a row for each enabled coin, shows one unit valued in the reporting currency.',
 			'In a transaction, a wallet account is read in its own coin: type the native amount and the form shows what it is worth, while the ledger stores the house\'s reporting-currency value so every budget and statement still sums one currency. A transfer between two wallets must stay in the same coin on both sides; moving between a wallet and a bank is a sale and a purchase, not a transfer, and the app will say so rather than write a wrong figure.',
 			'An invoice in the Store carries a crypto action when a wallet exists. It shows the coin, the amount for the balance, the invoice\'s own receiving address and a QR. The printed or on-screen invoice carries one QR: a BIP21 payment request (bitcoin:address?amount=...) when it is a single unpaid invoice with a Bitcoin wallet, and the public invoice link otherwise. After the buyer sends the coin, type the amount and txid and press Verify & record. A payer\'s PAY1Z proof, when pasted, is checked against their crest and countersigned with this house\'s; the txid is carried, not checked against the chain. On a device with a fingerprint the record asks for it; a device without one (a laptop, or a tablet with only a PIN) asks another fingerprinted device in the house. Only when the house has no fingerprinted device does the signed-in citizen record it.',
 			'The coin list carries Bitcoin, Ethereum, USD Coin, Tether, Litecoin, Solana, Dogecoin, XRP, Cardano, BNB, TRON, Avalanche, Chainlink, Polkadot, Bitcoin Cash, Stellar, Cosmos and Toncoin. Only the ticked ones appear when a wallet or a payment picks a coin.',
-			'To pay another house, open Configure -> Plat -> Crypto -> Make a payment proof: paste the seller\'s crest uuid (their Store crypto panel shows it), the invoice ref, coin, amount, address and txid, then sign with this house\'s crest. Hand the PAY1Z code (or its QR) to the seller; their panel verifies it and countersigns the same bytes.',
+			'To pay another house, open Configure -> Plat -> Pay -> Crypto -> Make a payment proof: paste the seller\'s crest uuid (their Store crypto panel shows it), the invoice ref, coin, amount, address and txid, then sign with this house\'s crest. Hand the PAY1Z code (or its QR) to the seller; their panel verifies it and countersigns the same bytes.',
 		],
 		steps => [
-			'Open Configure -> Plat -> Crypto and make sure the coins you want are ticked.',
+			'Open Configure -> Plat -> Pay and make sure the coins you want are ticked.',
 			'Press Refresh now once; the rate table and the last-read time show what the house will use.',
 			'In Configure -> App, make the account, turn on Payment Type, set it to crypto, then fill in the coin, network, public address and a label.',
 			'Use a receive address from a hardware wallet you control, not an exchange deposit address; copy it into the wallet card, confirm it on the device screen, and send a small test amount before relying on it.',
 			'For a fresh address on every invoice, paste the Bitcoin account xpub into Account xpub and compare the next invoice address it reports with the wallet app\'s Receive list. Bitcoin only, and never a private key or seed phrase.',
 			'Record a transaction from that account in the app: the amount is in the coin, and the line beside it shows the money value before you save.',
-			'Read the wallet list in Plat -> Crypto for the holding, its cost and its market value; choose which one the rest of the page treats as the value.',
+			'Read the wallet list in Plat -> Pay -> Crypto for the holding, its cost and its market value; choose which one the rest of the page treats as the value.',
 			'Tick Currency tracking if you want rate history: it writes a point every six hours into the selected History app (Canadian Dollar or Markets by default), and the Measures app charts it.',
 			'Pick a different History app if the currency measures should live elsewhere; selecting one while tracking is on writes the first point there straight away.',
 			'To take a crypto payment, open the customer\'s invoices in the Store, press the wallet icon on the invoice, send the shown amount to the address, then fill in the amount and txid (and paste the buyer\'s PAY1Z proof if they gave one) and press Verify & record.',
 			'Print or open an unpaid invoice: its single QR is the exact-amount payment request. A second send cannot be stopped on the chain; the panel will not record it after the balance reaches zero, so return any excess from the wallet.',
-			'To pay another house, build a PAY1Z proof under Configure -> Plat -> Crypto -> Make a payment proof and give the seller the code; they verify and countersign it when they record the payment.',
+			'To pay another house, build a PAY1Z proof under Configure -> Plat -> Pay -> Crypto -> Make a payment proof and give the seller the code; they verify and countersign it when they record the payment.',
 			'Stop the currency app\'s old updating appointment once tracking is on, so the history has one writer.'
 		],
 		related => [ 'budget', 'store', 'configure' ]
+	},
+	'pay' => {
+		title => 'Taking payment online', category => 'functions', verified => '2026-10-27',
+		templates => [ 'templates/configure/pay_setting_list.html.ep', 'templates/configure/crypto_setting_list.html.ep', 'templates/store/pay_box.html.ep', 'templates/store/printer/header.html.ep', 'templates/pay/message.html.ep', 'templates/pay/return.html.ep', 'public/js/manager/configure.js' ],
+		summary => 'Stripe, Square, PayPal and Interac e-Transfer on a public invoice, beside the crypto wallets they share a page with.',
+		body => [
+			'Configure -> Plat -> Pay is one page with Crypto as its first section and the hosted checkouts below it. The switch at the top turns every online method on or off; the currency is the house reporting currency, and the public address is what a provider redirects back to and what it posts a webhook to. Leave the address blank to use this house\'s public name on port 3000, or set it when a tunnel or proxy answers on another address.',
+			'Stripe, Square and PayPal each create a hosted checkout for the exact invoice balance. The customer types card or PayPal details on the provider\'s page, never here, and returns to this house. The return page asks the provider what happened and records the payment; a webhook does the same when the house is reachable from the internet. Either path is safe to repeat: the provider reference is stored on the payment, so a return and a webhook cannot count the same money twice.',
+			'Keys are sealed in the same way as an AI provider key. A secret field left blank keeps the saved value; type a new one to replace it, or press Clear. Test keys asks the provider a harmless question and reports whether it answered. Stripe needs the secret key and, for webhooks, the signing secret. Square needs the access token, a location id, the signature key, and the exact webhook URL Square shows if it differs from the one this page prints. PayPal needs the client id, the secret, and the webhook id.',
+			'Every payment is booked as an ordinary income transaction on the account chosen for that provider, so a statement, budget or reconciliation sees it like any other money. Without a chosen account the first matching credit account is used, and Interac looks for an interac account first. The payment is also pushed onto the invoice, which falls by the amount and closes at zero. A partial payment leaves the invoice open for the rest.',
+			'Interac e-Transfer has no consumer API, so JawnOS reads the notification letters that already arrive in the mailbox. With Autodeposit on, the money lands without a question and the invoice is matched by its reference, then by the exact amount, then by the sender. A notification is staged for a person unless Record automatically is ticked, and even then only when the money is already deposited and exactly one invoice carries the reference. Without Autodeposit the sender\'s security question has to be answered by a person; record the transfer after it has landed. A bank or payment service that can forward the same facts can POST amount, currency, sender, reference, memo, deposited and an optional invoice to the Forwarder URL, whose token is a password.',
+			'An unpaid invoice\'s public page carries the pay buttons. A provider appears only when it is switched on and has its keys, so a half-finished panel never offers a button that cannot complete. The e-Transfer section prints the receiving address, the amount and the invoice reference, and the invoice\'s QR still carries its public link. Nothing is charged until the customer confirms on the provider\'s page.',
+			'JawnOS records the gross amount the provider reports. A provider fee, a refund or a chargeback is handled at the provider; refunding there and deleting the payment\'s income transaction here puts the invoice balance back and reopens it. Card data never touches this machine, and a webhook is only believed after its signature verifies against the key saved on this page.'
+		],
+		steps => [
+			'Open Configure -> Plat -> Pay and tick Online payments.',
+			'Set the public address if the house is reached through a tunnel or a name other than its own; otherwise leave it blank.',
+			'For cards, open Stripe, paste the secret key and the webhook signing secret, choose the account the money books to, and press Test keys.',
+			'For Square, paste the access token, choose Production or Sandbox, set the location id, paste the signature key, and press Test keys.',
+			'For PayPal, paste the client id, secret and webhook id, choose the account, and press Test keys.',
+			'Add the printed webhook URL at the provider (Stripe: checkout.session.completed and checkout.session.async_payment_succeeded; Square: payment.updated; PayPal: CHECKOUT.ORDER.APPROVED and PAYMENT.CAPTURE.COMPLETED).',
+			'For e-Transfer, set the receiving email, tick Autodeposit when the address has it, choose the account, and tick Watch the inbox.',
+			'Open an unpaid invoice\'s public page (the link in its QR or the emailed sheet) and press a pay button; finish on the provider\'s page and come back.',
+			'Check the invoice: the payment is listed, the balance has fallen, and the income transaction is on the chosen account.',
+			'For e-Transfer, open Pay after the notification arrives, choose the invoice if the match is ambiguous, and press Record; or tick Record automatically once the references are reliable.',
+			'To refund, refund at the provider, then delete the payment\'s income transaction so the invoice reopens.',
+			'For crypto wallets and rates, read the Crypto section on the same page; it behaves exactly as it did under Plat -> Crypto.'
+		],
+		related => [ 'crypto', 'store', 'invoices_payments', 'configure' ]
 	},
 	'warehouse' => {
 		title => 'Warehouse', category => 'apps', app => 'warehouse',
@@ -1363,16 +1392,17 @@ our %topic = (
 		summary => 'A document that closes itself when it is paid.',
 		body => [
 			'A quote or invoice is built from store items and prints to a house-styled sheet. Recording a payment against it writes the matching income transaction and pushes a payment onto the document, updating the balance and closing it when the balance reaches zero.',
-			'Deleting that transaction unwinds the payment: the balance goes back up, and a document that had closed reopens.'
+			'Deleting that transaction unwinds the payment: the balance goes back up, and a document that had closed reopens.',
+			'An unpaid invoice\'s public page also carries the online ways to settle it when Configure -> Plat -> Pay has a method ready: a hosted checkout for cards or PayPal, and the e-Transfer address with the invoice reference. The buttons are on the public page only; the printed sheet and the emailed attachment carry the QR that opens it.'
 		],
 		steps => [
 			'Build the document in Store from items and options.',
 			'Move a quote to an invoice when it is accepted.',
-			'Send or print the invoice.',
-			'Record a payment against it; the balance falls.',
+			'Send or print the invoice; its QR opens the public page, where a ready online method can be used.',
+			'Record a payment against it, or let the provider\'s return or webhook record an online one; the balance falls.',
 			'At zero it closes. Delete the payment\'s transaction and it reopens, balance restored.'
 		],
-		related => [ 'store', 'budget', 'moves_ledger' ]
+		related => [ 'store', 'budget', 'moves_ledger', 'pay' ]
 	},
 	'moves_ledger' => {
 		title => 'The moves ledger', category => 'functions',

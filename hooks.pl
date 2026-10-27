@@ -398,6 +398,9 @@ hook before_dispatch => sub {
 		# the homepage shows the mugshot to visitors, so it is served without a login
 		$path eq '/mugshot' ||
 		$path =~ '^/public_view' ||
+		# the public invoice's pay buttons and the providers' return pages carry
+		# no session; each route reads the provider's own record before it writes
+		$path =~ m{^/pay(?:/|$)} ||
 		# the privacy notice is linked from the public homepage and the store, and
 		# a visitor must be able to read it before asking for a ticket
 		$path eq '/privacy' ||

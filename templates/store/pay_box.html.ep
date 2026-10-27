@@ -1,0 +1,77 @@
+<% no warnings 'uninitialized'; %>
+<% if ($pay_links) { %>
+	<% my $interac = $pay_links->{'interac'}; %>
+	<div class="pay_box">
+		<div class="pay_box_head">
+			<h2><%= &subs::ui('Pay this invoice') %></h2>
+			<div class="pay_box_amount"><%= &subs::price_formatter($pay_links->{'amount'}) %> <span><%= $pay_links->{'currency'} %></span></div>
+		</div>
+		<% if (scalar @{ $pay_links->{'methods'} || [] }) { %>
+			<div class="pay_box_methods">
+				<% foreach my $m ( @{ $pay_links->{'methods'} } ) { %>
+					<a class="pay_box_button" href="<%= $m->{'url'} %>"><%= &subs::ui($m->{'label'}) %></a>
+				<% } %>
+			</div>
+			<p class="pay_box_note"><%= &subs::ui('You will finish on the provider\'s secure page and come back here. Nothing is charged until you confirm there.') %></p>
+		<% } %>
+		<% if ($interac) { %>
+			<div class="pay_box_interac">
+				<h3><%= &subs::ui('Interac e-Transfer') %></h3>
+				<p><%= &subs::ui('Send') %> <b><%= &subs::price_formatter($pay_links->{'amount'}) %></b> <%= &subs::ui('to') %>
+					<b id="pay_box_interac_email"><%= $interac->{'email'} %></b><% if ($interac->{'name'}) { %> (<%= $interac->{'name'} %>)<% } %>.</p>
+				<p><%= &subs::ui('Use the reference') %> <b><%= $interac->{'reference'} %></b> <%= &subs::ui('in the message, so the payment finds this invoice.') %></p>
+				<% if ($interac->{'autodeposit'}) { %>
+					<p><%= &subs::ui('This address has Autodeposit on, so the money arrives without a security question.') %></p>
+				<% } else { %>
+					<p><%= &subs::ui('If the address asks a security question, the seller has to accept the transfer by hand; the invoice is recorded once the money has landed.') %></p>
+				<% } %>
+				<% if ($interac->{'instructions'}) { %><p><%= $interac->{'instructions'} %></p><% } %>
+				<div class="pay_box_actions">
+					<button type="button" id="pay_box_copy_email"><%= &subs::ui('Copy address') %></button>
+					<button type="button" id="pay_box_copy_ref"><%= &subs::ui('Copy reference') %></button>
+					<span id="pay_box_copy_status" class="pay_box_note"></span>
+				</div>
+			</div>
+		<% } %>
+	</div>
+	<script>
+		(function() {
+			function copyText(text, status) {
+				if (!text) { return; }
+				var input = document.createElement('input');
+				input.value = text;
+				document.body.appendChild(input);
+				input.select();
+				try { document.execCommand('copy'); status.textContent = 'Copied.'; }
+				catch (e) { status.textContent = 'Select it above to copy.'; }
+				document.body.removeChild(input);
+			}
+			var status = document.getElementById('pay_box_copy_status');
+			var email = document.getElementById('pay_box_interac_email');
+			if (email) {
+				document.getElementById('pay_box_copy_email').addEventListener('click', function() { copyText(email.textContent, status); });
+			}
+			var refButton = document.getElementById('pay_box_copy_ref');
+			if (refButton) {
+				var ref = <%= Mojo::JSON::encode_json($interac ? $interac->{'reference'} : '') %>;
+				refButton.addEventListener('click', function() { copyText(ref, status); });
+			}
+		})();
+	</script>
+	<style>
+		.pay_box { max-width: 21cm; margin: 18px auto 60px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px 24px; box-shadow: 0 8px 26px rgba(0,0,0,.10); }
+		.pay_box_head { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+		.pay_box h2 { margin: 0; font-size: 22px; }
+		.pay_box_amount { font-size: 26px; font-weight: 700; }
+		.pay_box_amount span { font-size: 14px; font-weight: 500; opacity: .7; }
+		.pay_box_methods { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 6px; }
+		.pay_box_button { display: inline-block; padding: 11px 18px; border-radius: 10px; background: var(--accent, #2f6f4f); color: var(--accent-ink, #fff); text-decoration: none; font-weight: 700; }
+		.pay_box_button:hover { filter: brightness(1.08); }
+		.pay_box_note { font-size: 13px; opacity: .72; margin: 6px 0 0; }
+		.pay_box_interac { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+		.pay_box_interac h3 { margin: 0 0 8px; font-size: 17px; }
+		.pay_box_interac p { margin: 0 0 8px; line-height: 1.45; }
+		.pay_box_actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+		.pay_box_actions button { font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2, var(--panel)); color: var(--ink); cursor: pointer; }
+	</style>
+<% } %>

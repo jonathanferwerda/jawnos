@@ -345,6 +345,10 @@ sub manager_starter() {
 		{ name => 'records watch', first => 120, every => 7200, run => sub { &subs::records_watch_tick(); } },
 		{ name => 'ai balance', first => 30, every => 600, run => sub { &subs::ai_balance_refresh(); } },
 		{ name => 'crypto rates', first => 35, every => 1800, run => sub { &subs::crypto_rates_refresh(); } },
+		# Interac e-Transfer has no API: the notification letters are the record.
+		# A few-minute pass stages one for a person, or records it when the house
+		# asked for that and the match is unmistakable.
+		{ name => 'interac watch', first => 75, every => 300, run => sub { &subs::pay_interac_scan(); } },
 	);
 	&subs::subprocessor(sub {
 		my $started = time;

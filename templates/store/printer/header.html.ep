@@ -1,3 +1,4 @@
+<% use Time::Piece; %>
 <span id="printer_title" style="<% if ($visibility ne 'show') { %>display:none;<% } %>"><%= &subs::format_name($cx->{'app'}) %> <%== $id %></span>
 <div class="paper">
 
@@ -200,5 +201,7 @@
 		body { background: #ffffff !important; color: #000000 !important; --ink: #000000 !important; --ink-muted: #333333 !important; --panel: #ffffff !important; --panel-2: #f0f0f0 !important; --line: #c9c9c9 !important; }
 		#everything { background-color: #ffffff !important; color: #000000 !important; }
 		.paper { padding: 0; max-width: none; }
-	}
-</style>
+			.pay_box { display: none; }
+		}
+	</style>
+	<%= include 'store/pay_box', pay_links => $pay_links %>
