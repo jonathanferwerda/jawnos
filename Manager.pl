@@ -27005,7 +27005,7 @@ get '/manager/keyup_search' => sub($c) {
 };
 
 # The Search app: one window with three contexts. Apps reads the house's own
-# records, Web reads the domains in config.json's search_engines, and AI asks the
+# records, Web reads the engines that are switched on, and AI asks the
 # Guide's model. The window is the same for all three; the client remembers the
 # tab and asks only that one.
 get '/manager/search' => sub($c) {
@@ -27071,10 +27071,220 @@ get '/manager/search/apps' => sub($c) {
 	$c->render(json => { apps => $apps });
 };
 
-# The Web tab. Each configured engine is fetched for the words and its links are
-# read back as results. The page is never shown as-is: a result is a title and an
-# address, and the click opens it in the house's own browser. Four engines at
-# most keeps one query from holding a worker for a minute.
+# ---- search engines -------------------------------------------------------
+# The engines live in code (gb.pl) and the person's own are in one setting:
+# which are on, and any added from the Browser. `device => 'all'` keeps the
+# choice for the whole house, like the language.
+
+sub search_engine_state {
+	my $raw = &subs::setting_grabber({ app => 'search', setting => 'engines', device => 'all' });
+	my $state = eval { decode_json $raw } || {};
+	$state->{'custom'} = [] unless ref $state->{'custom'} eq 'ARRAY';
+	# no stored choice means the defaults; an empty list is the person turning
+	# every engine off, which is a real choice and stays empty
+	$state->{'enabled'} = [ @gb::search_default_engines ] unless ref $state->{'enabled'} eq 'ARRAY';
+	return $state;
+}
+
+sub search_engine_all {
+	my $state = &search_engine_state();
+	my %enabled = map { $_ => 1 } @{ $state->{'enabled'} };
+	my %custom = map { $_->{'id'} => 1 } grep { ref $_ eq 'HASH' } @{ $state->{'custom'} };
+	my @out;
+	foreach my $e ( @gb::search_engines ) {
+		next if $custom{$e->{'id'}};
+		my $group = &search_engine_group($e->{'group'});
+		push @out, { %$e, group => $group, group_label => &subs::lang("search.group.$group"), enabled => $enabled{$e->{'id'}} ? 1 : 0, custom => 0 };
+	}
+	foreach my $e ( @{ $state->{'custom'} } ) {
+		next unless ref $e eq 'HASH' && ($e->{'id'} // '') ne '';
+		my $group = &search_engine_group($e->{'group'});
+		push @out, { %$e, group => $group, group_label => &subs::lang("search.group.$group"), enabled => $enabled{$e->{'id'}} ? 1 : 0, custom => 1 };
+	}
+	return (\@out, $state);
+}
+
+# The five catalogue sections, plus custom for a site added from the Browser.
+# The label is a core interface label so it comes back in the house language.
+sub search_engine_group($group) {
+	return (defined $group && $group =~ /^(?:general|reference|media|shopping|news|custom)$/) ? $group : 'custom';
+}
+
+sub search_engine_save($state) {
+	&subs::setting_setter({ app => 'search', setting => 'engines', value => encode_json($state), device => 'all' });
+}
+
+sub search_engine_url($engine, $q) {
+	my $url = $engine->{'url'} // '';
+	my $esc = url_escape($q);
+	return $url =~ /\{q\}/ ? ($url =~ s/\{q\}/$esc/gr) : $url . $esc;
+}
+
+# The engines the Web tab asks, in the order they sit in the settings panel.
+sub search_enabled_engines {
+	my ($all) = &search_engine_all();
+	return [ grep { $_->{'enabled'} } @{$all} ];
+}
+
+get '/manager/search/engines' => sub($c) {
+	my ($all, $state) = &search_engine_all();
+	$c->render(json => {
+		engines => $all,
+		enabled => [ map { $_->{'id'} } grep { $_->{'enabled'} } @{$all} ],
+		defaults => [ @gb::search_default_engines ]
+	});
+};
+
+post '/manager/search/engines/toggle' => sub($c) {
+	my $id = $c->param('id') // '';
+	my $on = ($c->param('enabled') // '') =~ /^(?:1|on|yes|true)$/i ? 1 : 0;
+	my ($all, $state) = &search_engine_all();
+	unless (grep { $_->{'id'} eq $id } @{$all}) {
+		$c->render(json => { ok => 0, error => 'unknown engine' });
+		return;
+	}
+	my %enabled = map { $_ => 1 } @{ $state->{'enabled'} };
+	if ($on) { $enabled{$id} = 1; }
+	else { delete $enabled{$id}; }
+	$state->{'enabled'} = [ sort keys %enabled ];
+	&search_engine_save($state);
+	$c->render(json => { ok => 1, enabled => $state->{'enabled'} });
+};
+
+post '/manager/search/engines/remove' => sub($c) {
+	my $id = $c->param('id') // '';
+	my ($all, $state) = &search_engine_all();
+	my ($engine) = grep { $_->{'id'} eq $id && $_->{'custom'} } @{$all};
+	unless ($engine) {
+		$c->render(json => { ok => 0, error => 'not a custom engine' });
+		return;
+	}
+	@{$state->{'custom'}} = grep { ($_->{'id'} // '') ne $id } @{$state->{'custom'}};
+	$state->{'enabled'} = [ grep { $_ ne $id } @{ $state->{'enabled'} } ];
+	&search_engine_save($state);
+	$c->render(json => { ok => 1 });
+};
+
+# Add one engine the person named, or (from the Browser) one found on the page
+# they are reading. Both end in the same custom entry.
+sub search_engine_add_custom($name, $url) {
+	my $state = &search_engine_state();
+	$name =~ s/^\s+|\s+$//g;
+	$url =~ s/^\s+|\s+$//g;
+	$name = length($name) ? substr($name, 0, 80) : 'Search';
+	$url =~ s/\{searchTerms\}/\{q\}/g;
+	$url .= '{q}' unless $url =~ /\{q\}/;
+	my ($all) = &search_engine_all();
+	my ($existing) = grep { ($_->{'url'} // '') eq $url } @{$all};
+	if ($existing) {
+		my %enabled = map { $_ => 1 } @{ $state->{'enabled'} };
+		$enabled{$existing->{'id'}} = 1;
+		$state->{'enabled'} = [ sort keys %enabled ];
+		&search_engine_save($state);
+		return $existing;
+	}
+	my $id = 'custom_' . lc(&subs::random_string_creator(8));
+	my $entry = { id => $id, name => $name, url => $url, kind => 'html', group => 'custom' };
+	push @{ $state->{'custom'} }, $entry;
+	push @{ $state->{'enabled'} }, $id unless grep { $_ eq $id } @{ $state->{'enabled'} };
+	&search_engine_save($state);
+	return $entry;
+}
+
+post '/manager/search/engines/add' => sub($c) {
+	my $name = $c->param('name') // '';
+	my $url = $c->param('url') // '';
+	unless ($url =~ m{^https?://}i) {
+		$c->render(json => { ok => 0, error => 'the engine needs an http(s) address' });
+		return;
+	}
+	my $entry = &search_engine_add_custom($name, $url);
+	$c->render(json => { ok => 1, id => $entry->{'id'}, name => $entry->{'name'}, url => $entry->{'url'} });
+};
+
+# The Browser's + Search button: look at the page the person is on for its
+# OpenSearch description, then for a search parameter already in the address.
+# Failing both, a plain /search?q= guess is offered; it can be removed from the
+# settings panel if the site does not use it.
+post '/manager/search/engine/probe' => sub($c) {
+	my $page = $c->param('url') // '';
+	my $given = $c->param('name') // '';
+	unless ($page =~ m{^https?://}i) {
+		$c->render(json => { ok => 0, error => 'only an http(s) page can be added' });
+		return;
+	}
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 6, request_timeout => 9, max_redirects => 5);
+	$ua->transactor->name($user_agent);
+	my ($name, $template);
+	my $res = eval { $ua->get($page)->result };
+	my $dom = ($res && $res->is_success) ? eval { Mojo::DOM->new($res->text || '') } : undef;
+	my $base = Mojo::URL->new($page);
+	if ($dom) {
+		foreach my $link ( $dom->find('link[rel="search"]')->each ) {
+			my $type = lc($link->attr('type') // '');
+			my $href = $link->attr('href') // '';
+			next unless $href =~ m{^https?://}i || $href =~ m{^/};
+			next unless $type eq '' || $type =~ /opensearchdescription/;
+			my $abs = eval { Mojo::URL->new($href)->to_abs($base)->to_string };
+			next unless $abs;
+			my $xres = eval { $ua->get($abs)->result };
+			next unless $xres && $xres->is_success;
+			my $xdom = eval { Mojo::DOM->new($xres->body || '') } || Mojo::DOM->new('');
+			$name ||= eval { $xdom->at('ShortName')->text };
+			foreach my $u ( $xdom->find('Url')->each ) {
+				my $t = $u->attr('template') // '';
+				next unless $t =~ /\{searchTerms\}/;
+				my $utype = lc($u->attr('type') // '');
+				next unless $utype eq '' || $utype eq 'text/html';
+				$t =~ s/&amp;/&/g;
+				$t =~ s/\{searchTerms\}/\{q\}/g;
+				$template = $t;
+				last;
+			}
+			last if $template;
+		}
+	}
+	# a search parameter already in the address is the next best evidence
+	if (!$template) {
+		my $u = Mojo::URL->new($page);
+		my $params = $u->query;
+		foreach my $key (qw(q query search searchText search_text s keyword keywords text term terms k wd p)) {
+			if ($params->param($key)) {
+				$params->param($key => '{q}');
+				$template = $u->to_string;
+				last;
+			}
+		}
+	}
+	if (!$template) {
+		my $u = Mojo::URL->new($page);
+		my $origin = $u->scheme . '://' . $u->host . ($u->port ? ':' . $u->port : '');
+		$template = $origin . '/search?q={q}';
+	}
+	if (!$name) {
+		$name = $given;
+		if (!$name && $dom) {
+			my $title = eval { $dom->at('title')->text } || '';
+			$title =~ s/\s+/ /g;
+			$title =~ s/^\s+|\s+$//g;
+			$title =~ s/\s*[|\-–—]\s*[^|\-–—]{1,40}$//;
+			$name = $title;
+		}
+		$name ||= eval { Mojo::URL->new($page)->host } || 'Search';
+	}
+	my $entry = &search_engine_add_custom($name, $template);
+	$c->render(json => {
+		ok => 1,
+		id => $entry->{'id'},
+		name => $entry->{'name'},
+		url => $entry->{'url'}
+	});
+};
+
+# The Web tab. Every enabled engine is asked for the words and its links are
+# read back as results. The page is never shown as-is: a result is a title and
+# an address, and the click opens it in the house's own browser. Eight engines
+# at most keeps one query from holding a worker for a minute.
 sub search_web_matches($q) {
 	my @engines;
 	my $ua = Mojo::UserAgent->new(
@@ -27092,21 +27302,38 @@ sub search_web_matches($q) {
 		'about', 'help', 'images', 'videos', 'news', 'maps', 'shopping', 'more',
 		'next', 'previous', 'advertise', 'business', 'how search works'
 	);
-	my $count = 0;
-	foreach my $se ( @{ $config->{'search_engines'} || [] } ) {
-		last if $count >= 4;
-		next unless ref $se eq 'HASH' && (($se->{'url'} // '') =~ m{^https?://}i);
-		$count++;
-		my $name = $se->{'name'} || 'Web';
-		my $url = $se->{'url'} . url_escape($q);
-		my $host = '';
-		eval { $host = Mojo::URL->new($se->{'url'})->host || '' };
+	my $wanted = &search_enabled_engines();
+	splice @{$wanted}, 8 if scalar @{$wanted} > 8;
+	foreach my $engine ( @{$wanted} ) {
+		my $name = $engine->{'name'} || 'Web';
+		my $kind = $engine->{'kind'} || 'html';
+		my $url = &search_engine_url($engine, $q);
 		my (@results, $error);
-		$host = lc($host || '');
+		my $host = '';
+		eval { $host = Mojo::URL->new($engine->{'url'} || '')->host || '' };
 
-		if ($host =~ /(?:^|\.)duckduckgo\.com$/) {
-			# The page itself answers a bot with a JavaScript shell, but the
-			# Instant Answer API is the same index and answers plainly.
+		if ($kind eq 'rss') {
+			my $feed = ($engine->{'rss'} // '') ne '' ? &search_engine_url({ url => $engine->{'rss'} }, $q) : $url;
+			my $res = eval { $ua->get($feed)->result };
+			if (!$res || !$res->is_success) {
+				$error = 'could not reach ' . ($res ? $res->code : 'the site');
+			}
+			else {
+				my $dom = eval { Mojo::DOM->new($res->text || '') } || Mojo::DOM->new('');
+				foreach my $item ( $dom->find('item')->each ) {
+					my $title = eval { $item->at('title')->text } || '';
+					my $link = eval { $item->at('link')->text } || '';
+					my $desc = eval { $item->at('description')->text } || '';
+					$desc =~ s/<[^>]+>//g;
+					$title =~ s/\s+/ /g; $title =~ s/^\s+|\s+$//g;
+					$desc =~ s/\s+/ /g; $desc =~ s/^\s+|\s+$//g;
+					next unless length($title) && $link =~ m{^https?://}i;
+					push @results, { title => $title, url => $link, snippet => $desc };
+					last if scalar @results >= 8;
+				}
+			}
+		}
+		elsif ($kind eq 'ddg') {
 			my $api = 'https://api.duckduckgo.com/?q=' . url_escape($q)
 				. '&format=json&no_html=1&skip_disambig=1';
 			my $res = eval { $ua->get($api)->result };
@@ -27129,10 +27356,9 @@ sub search_web_matches($q) {
 				$error = 'could not reach ' . ($res ? $res->code : 'the site');
 			}
 		}
-		elsif ($host =~ /(?:^|\.)wikipedia\.org$/) {
-			# Wikipedia's configured address is an article path, not a query:
-			# ask its search API so the result is a list of articles.
-			my $api = 'https://' . $host . '/w/api.php?action=query&list=search&format=json&srlimit=8&srsearch=' . url_escape($q);
+		elsif ($kind eq 'mediawiki') {
+			my $h = $host || 'en.wikipedia.org';
+			my $api = 'https://' . $h . '/w/api.php?action=query&list=search&format=json&srlimit=8&srsearch=' . url_escape($q);
 			my $res = eval { $ua->get($api)->result };
 			if ($res && $res->is_success) {
 				my $j = eval { $res->json } || {};
@@ -27142,7 +27368,7 @@ sub search_web_matches($q) {
 					(my $path = $title) =~ s/ /_/g;
 					my $snippet = $hit->{'snippet'} || '';
 					$snippet =~ s/<[^>]+>//g;
-					push @results, { title => $title, url => 'https://' . $host . '/wiki/' . url_escape($path), snippet => $snippet };
+					push @results, { title => $title, url => 'https://' . $h . '/wiki/' . url_escape($path), snippet => $snippet };
 					last if scalar @results >= 8;
 				}
 			}
@@ -27156,7 +27382,7 @@ sub search_web_matches($q) {
 				$error = 'could not reach ' . ($res ? $res->code : 'the site');
 			}
 			else {
-				my $dom = eval { Mojo::DOM->new($res->body || '') } || Mojo::DOM->new('');
+				my $dom = eval { Mojo::DOM->new($res->text || '') } || Mojo::DOM->new('');
 				my $base = Mojo::URL->new($url);
 				my %seen;
 				foreach my $a ( $dom->find('a[href]')->each ) {
@@ -27189,7 +27415,7 @@ sub search_web_matches($q) {
 		# An engine that hands back only a JavaScript shell still belongs in the
 		# list: one row for the words, which opens that engine in the browser.
 		push @results, { title => $q, url => $url } unless scalar @results;
-		push @engines, { name => $name, url => $url, results => \@results, error => $error };
+		push @engines, { id => $engine->{'id'}, name => $name, url => $url, results => \@results, error => $error };
 	}
 	return \@engines;
 }

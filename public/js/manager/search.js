@@ -1,15 +1,16 @@
 // Search is one window with three contexts: Apps (the house's appointments and
-// apps), Web (the domains in config.json's search_engines), and AI (the Guide's
-// model). Only the active tab is asked, and the tab is remembered, so a search
-// never mixes the three. A web result opens the JawnOS Browser - the Search
-// window itself stays where it is.
+// apps), Web (the engines that are switched on), and AI (the Guide's model).
+// Only the active tab is asked, and the tab is remembered, so a search never
+// mixes the three. A web result opens the JawnOS Browser - the Search window
+// itself stays where it is. The gear on the tabs row opens the engine settings
+// (searchable, enabled engines first) and a Browser button can add a site.
 ( function () {
 	if (window.jawnosSearchAppOpen) { return; }
 
 	function T(text) { return (typeof jawnosT === 'function') ? jawnosT(text) : text; }
 
 	var TAB_KEY = 'jawnos_search_tab';
-	var state = { tab: 'apps', seq: 0, timer: null, lastAI: '' };
+	var state = { tab: 'apps', seq: 0, timer: null, lastAI: '', engines: null, enginesFilter: '' };
 
 	function storedTab() {
 		var tab = '';
@@ -75,8 +76,68 @@
 				box.append(row);
 			});
 		});
-		if (!any) { note(T('No web results.')); return; }
+		if (!any) { noEngines(); return; }
 		results().empty().append(box);
+	}
+
+	function noEngines() {
+		var root = results().empty();
+		root.append($('<div class="search_app_note"></div>')
+			.append($('<span></span>').text(T('No search engines are on.')))
+			.append($('<button type="button" class="search_app_open_settings"></button>')
+				.text(T('Choose search engines'))));
+	}
+
+	function engineEnabled() {
+		if (!state.engines) { return true; }
+		return state.engines.some(function (e) { return !!e.enabled; });
+	}
+
+	function loadEngines(draw) {
+		$.getJSON('/manager/search/engines', function (data) {
+			state.engines = (data && data.engines) || [];
+			if (draw !== false) { renderEngines(); }
+		}).fail(function () {
+			if (draw !== false) { $('#search_app_engine_list').empty().append($('<div class="search_app_note"></div>').text(T('The engines did not load.'))); }
+		});
+	}
+
+	function renderEngines() {
+		var list = (state.engines || []).slice();
+		var filter = $.trim(state.enginesFilter || '').toLowerCase();
+		list.sort(function (a, b) {
+			if (!!a.enabled !== !!b.enabled) { return a.enabled ? -1 : 1; }
+			return String(a.name || a.id).localeCompare(String(b.name || b.id));
+		});
+		var box = $('#search_app_engine_list').empty();
+		var shown = 0;
+		$.each(list, function (i, engine) {
+			var hay = (engine.name + ' ' + engine.id + ' ' + (engine.group || '') + ' ' + (engine.group_label || '')).toLowerCase();
+			if (filter && hay.indexOf(filter) < 0) { return; }
+			shown++;
+			var row = $('<div class="search_app_engine_row"></div>').toggleClass('on', !!engine.enabled);
+			row.append($('<input type="checkbox" class="search_app_engine_toggle">')
+				.attr('data-id', engine.id).prop('checked', !!engine.enabled));
+			row.append($('<span class="search_app_engine_name"></span>').text(engine.name || engine.id));
+			if (engine.custom) {
+				row.append($('<span class="search_app_engine_remove" title="' + T('Remove') + '"></span>')
+					.attr('data-id', engine.id).text('\u00d7'));
+			}
+			else {
+				row.append($('<span class="search_app_engine_group"></span>').text(engine.group_label || engine.group || ''));
+			}
+			box.append(row);
+		});
+		if (!shown) {
+			box.append($('<div class="search_app_note"></div>').text(T('No engine matches that.')));
+		}
+	}
+
+	function settingsOpen(open) {
+		var root = $('#search_app');
+		var next = (open === undefined) ? !root.hasClass('settings_open') : !!open;
+		root.toggleClass('settings_open', next);
+		if (next) { loadEngines(true); }
 	}
 
 	function run() {
@@ -106,6 +167,7 @@
 
 		if (tab === 'web') {
 			if (q.length < 2) { note(T('Type at least two letters.')); return; }
+			if (!engineEnabled()) { noEngines(); return; }
 			busy(T('Searching the web...'));
 			$.getJSON('/manager/search/web', { q: q }, function (data) {
 				if (seq !== state.seq) { return; }
@@ -143,6 +205,7 @@
 		markTabs();
 		// An empty query draws the tab's own hint; a query handed over by the
 		// dock's magnifier is searched at once, whichever tab was last used.
+		loadEngines(false);
 		run();
 	}
 
@@ -167,6 +230,45 @@
 		saveTab(tab);
 		state.lastAI = '';
 		run();
+	});
+
+	$(document).on('click', '#search_app_gear', function (e) {
+		e.preventDefault();
+		settingsOpen();
+	});
+
+	$(document).on('click', '#search_app_engines_refresh', function (e) {
+		e.preventDefault();
+		loadEngines(true);
+	});
+
+	$(document).on('input', '#search_app_engine_filter', function () {
+		state.enginesFilter = $(this).val() || '';
+		renderEngines();
+	});
+
+	$(document).on('change', '.search_app_engine_toggle', function () {
+		var id = $(this).attr('data-id');
+		var on = $(this).is(':checked') ? 1 : 0;
+		$.each(state.engines || [], function (i, engine) {
+			if (engine.id === id) { engine.enabled = on; }
+		});
+		renderEngines();
+		$.post('/manager/search/engines/toggle', { id: id, enabled: on }, function () {
+			if (state.tab === 'web') { run(); }
+		}).fail(function () { loadEngines(true); });
+	});
+
+	$(document).on('click', '.search_app_engine_remove', function (e) {
+		e.preventDefault();
+		e.stopPropagation();
+		var id = $(this).attr('data-id');
+		$.post('/manager/search/engines/remove', { id: id }, function () { loadEngines(true); });
+	});
+
+	$(document).on('click', '.search_app_open_settings', function (e) {
+		e.preventDefault();
+		settingsOpen(true);
 	});
 
 	$(document).on('input', '#search_app_input', function () {

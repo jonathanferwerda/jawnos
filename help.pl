@@ -1202,14 +1202,17 @@ our %topic = (
 		body => [
 			'The search box in the start menu, the taskbar or the dock still filters apps as you type. The magnifier beside it opens Search, the app: it keeps your words and lets you choose what to search.',
 			'Apps finds the house\'s own apps and the appointments you have made, showing each app\'s own icon beside its name; press a result to open it.',
-			'Web asks each search engine named in config.json (Google, DuckDuckGo, Wikipedia and any others listed there) and shows the links it finds under the engine\'s name. A link opens in the JawnOS Browser; the Search window stays where it is.',
+			'Web asks the search engines that are switched on and shows the links each one finds under its name. Bing, Brave, DuckDuckGo and Wikipedia are on to begin with; the settings panel lists dozens more under General, Reference, Media, Shopping and News. A link opens in the JawnOS Browser; the Search window stays where it is.',
+			'The gear on the tab row opens the engine settings. Type in Find an engine to narrow the list, tick an engine to switch it on or off, and press the × on a custom engine to remove it. The choice is kept for the whole house, so every machine searches with the same engines; with none ticked the Web tab says so and offers the panel.',
+			'In the browser on a phone, + Search adds the site you are reading: the server reads the page\'s OpenSearch description, then a search parameter already in the address, and offers a plain /search?q= guess if neither is there. An engine that answers a server with a JavaScript shell still appears in the list, and its row opens that engine in the browser.',
 			'AI asks the model chosen for the Guide under Configure → Plat. It answers in plain text in the same window; press Enter to ask, so typing a question does not spend a call on every letter.',
 			'Only the tab you are on is searched, and the app remembers that tab the next time it opens. Type to search Apps and Web; Enter asks the AI.'
 		],
 		steps => [
 			'Type in the dock\'s search box and press the magnifier, or open Search from the start menu.',
 			'Choose Apps, Web or AI across the top and type your words.',
-			'Press a result to open the app, or a web link to read it in the JawnOS Browser.'
+			'Press a result to open the app, or a web link to read it in the JawnOS Browser.',
+			'Use the gear to choose which engines Web asks; in the phone\'s browser, + Search adds the site you are reading.'
 		],
 		related => [ 'start_menu', 'dock', 'internet', 'assistant' ]
 	},
