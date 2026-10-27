@@ -2327,6 +2327,12 @@ sub appointment_writer($c,$app) {
 	$app->{'browser_tab_id'} = $c->param('browser_tab_id') if $c->param('browser_tab_id') && !$app->{'browser_tab_id'};
 	my $remote_address = $app->{'remote_address'};
 	delete $app->{'remote_address'};
+	# The board that produced a switch/button event already drove its own
+	# outputs locally; this tells intelligent_automation_toggle not to echo the
+	# command back to that same chip. It is not a column, so keep it out of the
+	# insert/update below.
+	my $source_chip_id = $app->{'source_chip_id'};
+	delete $app->{'source_chip_id'};
 	my $timestamp = $app->{'timestamp'};
 	my $server_time = $app->{'server_time'};
 	$app->{'device'} = $device;
@@ -2457,7 +2463,7 @@ sub appointment_writer($c,$app) {
 
 
 
-			&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'off', timestamp => $app->{'timestamp'}, remote_address => $remote_address });
+			&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'off', timestamp => $app->{'timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id });
 			my $sources = &subs::db_select('appointments', undef, { source_uuid => $app->{'uuid'} })->hashes;
 			my $options = eval { return decode_json $appt->{'options'} } || [];
 			my $model = eval { return decode_json $appt->{'model'} } || {};
@@ -2494,7 +2500,7 @@ sub appointment_writer($c,$app) {
 
 					&subs::db_update('appointments', $so_data, { source_uuid => $so->{'source_uuid'}, uuid => $so->{'uuid'}, app => $so->{'app'} });
 					&budget_runner($so->{'app'});
-					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $ts, remote_address => $remote_address });
+					&subs::intelligent_automation_toggle({ appt_uuid => $so->{'uuid'}, app => $so->{'app'}, 'state' => 'off', timestamp => $ts, remote_address => $remote_address, source_chip_id => $source_chip_id });
 					&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $so->{'app'} . '\',\'' . $so->{'uuid'} .'\');'});
 				}
 			}
@@ -2523,9 +2529,9 @@ sub appointment_writer($c,$app) {
 	}
 	else {
 		if ($app->{'type'} eq 'start' || $app->{'type'} eq 'record') {
-			&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'on', timestamp => $app->{'timestamp'}, remote_address => $remote_address });
+			&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'on', timestamp => $app->{'timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id });
 			if ($app->{'stop_timestamp'}) {
-				&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'off', timestamp => $app->{'stop_timestamp'}, remote_address => $remote_address });
+				&subs::intelligent_automation_toggle({ appt_uuid => $app->{'uuid'}, app => $app->{'app'}, 'state' => 'off', timestamp => $app->{'stop_timestamp'}, remote_address => $remote_address, source_chip_id => $source_chip_id });
 			}
 
 			if ($app->{'type'} eq 'record') {
@@ -44353,9 +44359,10 @@ post '/manager/embedded/usb_provision' => sub($c) {
 
 	# The homebase a board calls is this machine, at the port /watch listens on.
 	my $address = &subs::network_interface_reporter();
-	my ($my_ip) = map { $address->{$_}->{'ip'} }
-		grep { $address->{$_}->{'ip'} && $address->{$_}->{'ip'} !~ /^127\./ } keys %{$address};
-	$my_ip ||= '127.0.0.1';
+	my @my_ips = map { $address->{$_}->{'ip'} }
+		grep { $_ !~ /^(?:lo|tailscale)/ && $address->{$_}->{'ip'} && $address->{$_}->{'ip'} !~ /^127\./ }
+		sort keys %{$address};
+	my $my_ip = $my_ips[0] || '127.0.0.1';
 
 	# Small on purpose: WiFi, identity and the token are all the board needs to
 	# rejoin. Its role (components and internal jobs) is the manager's copy and

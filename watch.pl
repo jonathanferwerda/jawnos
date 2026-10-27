@@ -213,7 +213,12 @@ get '/watch/button' => sub($c) {
 
 
 
-		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $toggle });
+		my $syl_count = 10;
+		$syl_count = 1 unless $edt eq 'microcontroller';
+		my $b = $watch_settings->{&subs::shorthand_name('button', $syl_count) . $button} || {};
+		# The pre-press state, written without a push; edt_button_presser writes
+		# the final toggle once and excludes the originating chip below.
+		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $toggle, sync => 1, source_chip_id => $chip_id });
 
 		my $returner = &subs::edt_button_presser({
 			timestamp => $timestamp,
@@ -263,7 +268,10 @@ get '/watch/switch' => sub($c) {
 		my $syl_count = 10;
 		$syl_count = 1 unless $edt eq 'microcontroller';
 		my $b = $watch_settings->{&subs::shorthand_name('switch', $syl_count) . $button} || {};
-		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $state });
+		# This is the state before the switch moved; edt_button_presser reads it
+		# to decide start/stop. Write it without pushing it: pushing the inverted
+		# intermediate is what made the relay click twice and the toggle flash.
+		&subs::setting_setter({ app => $b->{'app'}, setting => 'toggle', value => $state, sync => 1, source_chip_id => $chip_id });
 		my $data = {
 			timestamp => $timestamp,
 			room => $room,
@@ -275,12 +283,10 @@ get '/watch/switch' => sub($c) {
 			remote_address => $remote_address
 		};
 		$data->{'switch'} = $button;
-		if ($data->{'toggle'} == 1) {
-			$data->{'state'} = 'on';
-		}
-		else {
-			$data->{'state'} = 'off';
-		}
+		# edt_button_presser's toggler is the pre-press state, exactly like the
+		# button route. It then writes the final (opposite) toggle once.
+		$data->{'toggle'} = $state;
+		$data->{'state'} = $state;
 		my $returner = &subs::edt_button_presser($data);
 		$c->render(json => $returner);
 	}

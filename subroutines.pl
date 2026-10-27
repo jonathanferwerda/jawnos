@@ -4387,7 +4387,8 @@ sub edt_button_presser() {
 		warranty => &subs::ago_calc(&subs::setting_grabber({ app => $app, setting => 'warranty' }) || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $server_time),
 		project => $settings->{'t_project'},
 		pos => $settings->{'pos'},
-		remote_address => $remote_address
+		remote_address => $remote_address,
+		source_chip_id => $chip_id
 	};
 	if ($saved_toggle eq 'on') {
 		$b->{'toggle'} = 0;
@@ -4431,7 +4432,7 @@ sub edt_button_presser() {
 		}
 
 	}
-	&subs::setting_setter({ app => $app, setting => 'toggle', value => $toggle });
+	&subs::setting_setter({ app => $app, setting => 'toggle', value => $toggle, source_chip_id => $chip_id });
 	$db_data->{'seen'} = 'yes';
 	my $c = &subs::controller_builder();
 	my $returner;
@@ -6799,6 +6800,7 @@ sub watch_toggle_pusher() {
 	return unless &subs::ble_bridge_enabled();
 	my $app = $data->{'app'} || return;
 	my $state = ($data->{'value'} || '') eq 'on' ? 'on' : 'off';
+	my $exclude_chip = $data->{'exclude_chip'} || '';
 	# The device walk is the expensive half (it reads every sighting and, for a
 	# BLE-only device, asks for this machine's address), so it belongs in the
 	# worker: the request that changed the toggle must not wait on the bridge.
@@ -6817,6 +6819,10 @@ sub watch_toggle_pusher() {
 			next unless ref $devices eq 'ARRAY';
 			foreach my $w ( @{$devices} ) {
 				next unless ref $w eq 'HASH' && $w->{'chip_id'};
+				# The board that produced the switch/button event already applied
+				# it locally; pushing it back is a second flash write and a
+				# second relay command for the same hardware.
+				next if $exclude_chip && $w->{'chip_id'} eq $exclude_chip;
 				next if $seen{ $edt . '|' . $w->{'chip_id'} }++;
 				push @targets, { chip_id => $w->{'chip_id'}, edt => $edt };
 			}
@@ -10264,11 +10270,15 @@ sub intelligent_automation_toggle() {
 	my $remote_address = $data->{'remote_address'};
 	my $now = &subs::rightNow();
 	my $measure = $data->{'measure'};
+	my $source_chip_id = $data->{'source_chip_id'} || '';
 	my $asets = &subs::settings_grabber({ app => $app, settings => ['ia','toggle'] });
 	my $jia = $asets->{'ia'};
 	my $ia = eval { return decode_json $jia } || {};
 	my $counted = 0;
 	foreach my $chip ( keys %{$ia} ) {
+		# A switch/button is applied locally by the board that owns it; the
+		# automation layer is for the output devices that are not that board.
+		next if $source_chip_id && $chip eq $source_chip_id;
 		foreach my $i ( keys %{$ia->{$chip}} ) {
 			next if $remote_address && $ia->{$chip}->{$i}->{'ip'} eq $remote_address;
 			if ($ia->{$chip}->{$i}->{'direction'} eq 'output') {
@@ -11110,7 +11120,7 @@ sub setting_setter() {
 			? 'background-color:green;border-color:green;box-shadow:0 0 8px 2px green;'
 			: 'background-color:#555555;border-color:#555555;opacity:0.45;filter:grayscale(1);';
 		&Websocket::send('tab', { console => '$(\'.appointment[app="' . $app . '"]\').find(\'.enabler[type="toggle"\').attr(\'status\',\'' . $value . '\').attr(\'src\', \'' . $toggle_src . '\').attr(\'style\', \'' . $toggle_style . '\');' });
-		&subs::watch_toggle_pusher({ app => $app, value => $value });
+		&subs::watch_toggle_pusher({ app => $app, value => $value, exclude_chip => $settings->{'source_chip_id'} });
 	}
 	if ($setting eq 'site_type') {
 		&subs::db_delete('cache', { context => 'navigation_information' });
