@@ -8,6 +8,57 @@
 	function jgTime(ts) { return ts ? new Date(ts * 1000).toLocaleString() : ''; }
 
 	var jgPresence = {};
+	var jgSockets = {};
+
+	// The signaling socket goes straight to the switch (the browser cannot ask
+	// the Perl side to hold a WebSocket). The grant is short-lived and rides
+	// the query string because a WebSocket handshake cannot carry a header.
+	function jgWsBase() {
+		var url = $.trim($('#jg_url').val() || '');
+		if (!/^https?:\/\//i.test(url)) { return ''; }
+		return url.replace(/\/+$/, '').replace(/^http/i, 'ws');
+	}
+
+	function jgSocketClose(handle, room) {
+		var key = handle + '/' + room;
+		var ws = jgSockets[key];
+		delete jgSockets[key];
+		if (!ws) { return; }
+		try { ws.close(); } catch (e) {}
+	}
+
+	function jgSocketOpen(handle, room, grant) {
+		jgSocketClose(handle, room);
+		var base = jgWsBase();
+		if (!base || !grant) { return; }
+		var key = handle + '/' + room;
+		var ws;
+		try {
+			ws = new WebSocket(base + '/v1/rooms/' + encodeURIComponent(handle) + '/' +
+				encodeURIComponent(room) + '/ws?grant=' + encodeURIComponent(grant));
+		} catch (e) {
+			$('#jg_status').text(jgT('The signaling channel did not open.'));
+			return;
+		}
+		jgSockets[key] = ws;
+		ws.onopen = function () { $('#jg_status').text(jgT('Signal open')); };
+		ws.onmessage = function (event) {
+			var msg;
+			try { msg = JSON.parse(event.data); } catch (e) { return; }
+			if (!msg || !msg.type) { return; }
+			if (msg.type === 'hello') {
+				$('#jg_status').text(jgT('Live') + ' · ' + (msg.peers || 1) + ' ' + jgT('in the room'));
+			} else if (msg.type === 'error') {
+				$('#jg_status').text(msg.error || '');
+			} else if (msg.type === 'join' || msg.type === 'leave') {
+				jgOpen(handle, room);
+			}
+		};
+		ws.onerror = function () { $('#jg_status').text(jgT('The signaling channel did not open.')); };
+		ws.onclose = function () {
+			if (jgSockets[key] === ws) { delete jgSockets[key]; }
+		};
+	}
 
 	function jgConfigLoad() {
 		if (!$('#jg_panel').length) { return; }
@@ -169,6 +220,7 @@
 			if (r.error) { $('#jg_status').text(r.error); return; }
 			jgPresence[handle + '/' + room] = r.presence_id;
 			$('#jg_status').text((r.role || 'guest') + (r.ticketed ? ' · ' + jgT('pass') : ''));
+			jgSocketOpen(handle, room, r.grant);
 			jgOpen(handle, room);
 		});
 	});
@@ -181,6 +233,7 @@
 			handle: handle, room: room, presence_id: jgPresence[key] || ''
 		}, function (r) {
 			delete jgPresence[key];
+			jgSocketClose(handle, room);
 			$('#jg_status').text(r.error || jgT('Left the room'));
 			jgOpen(handle, room);
 		});
