@@ -271,16 +271,16 @@ sub alarm_haircut() {
 	return unless $dber;
 	my $timestamp = &subs::rightNow();
 	$last_moment = &subs::rightNow();
-	my $ticket_query = &subs::db_query('select count(*) from tickets where status = ? and warranty < ?', 'active', $timestamp);
+	my $ticket_query = &subs::db_query('select count(*) from tickets where status = ? and cast(warranty as integer) < cast(? as integer)', 'active', $timestamp);
 	my $t_count = $ticket_query->text;
 	if ($t_count > 0) {
-		my $ticket_update_query = &subs::db_query('update tickets set status = ? where status = ? and warranty < ?', 'expired', 'active', $timestamp);
+		my $ticket_update_query = &subs::db_query('update tickets set status = ? where status = ? and cast(warranty as integer) < cast(? as integer)', 'expired', 'active', $timestamp);
 		my $msg = { app => 'box_office', console => 'ticket_list()' };
 		my $server_time = &subs::rightNow();
 		&Websocket::send('server', $msg);
 	}
 
-	my $warranty_query = &subs::db_query('select * from appointments where warranty < ?',$timestamp);
+	my $warranty_query = &subs::db_query('select * from appointments where cast(warranty as integer) < cast(? as integer)',$timestamp);
 	my $haircut = $warranty_query->hashes;
 
 	foreach my $h ( @{$haircut} ) {
@@ -302,7 +302,7 @@ sub alarm_haircut() {
 		#&subs::db_delete('backups', { uuid => $b->{'uuid'} });
 	}
 
-	my $paper_q = &subs::db_query('select * from magazine where status=? and timestamp >= ? and timestamp <= ? and warranty >=?', 'publish',$last_paper_moment, $timestamp,$timestamp);
+	my $paper_q = &subs::db_query('select * from magazine where status=? and timestamp >= ? and timestamp <= ? and cast(warranty as integer) >= cast(? as integer)', 'publish',$last_paper_moment, $timestamp,$timestamp);
 	my $papers = $paper_q->hashes;
 	foreach my $paper ( @{$papers} ) {
 		my $c = &subs::controller_builder();
@@ -310,12 +310,12 @@ sub alarm_haircut() {
 		&Manager::paperRoute($paper);
 	}
 	$last_paper_moment = &subs::rightNow();
-	&subs::db_query('delete from magazine where warranty < ?', $timestamp);
-	&subs::db_query('delete from continent where warranty < ?', $timestamp);
-	&subs::db_query('delete from websites where warranty < ?', $timestamp);
-	&subs::db_query('delete from cache where warranty < ?', $timestamp);
+	&subs::db_query('delete from magazine where cast(warranty as integer) < cast(? as integer)', $timestamp);
+	&subs::db_query('delete from continent where cast(warranty as integer) < cast(? as integer)', $timestamp);
+	&subs::db_query('delete from websites where cast(warranty as integer) < cast(? as integer)', $timestamp);
+	&subs::db_query('delete from cache where cast(warranty as integer) < cast(? as integer)', $timestamp);
 
-	my $websocks = &subs::db_query('select * from websockets where warranty < ?', $timestamp);
+	my $websocks = &subs::db_query('select * from websockets where cast(warranty as integer) < cast(? as integer)', $timestamp);
 	foreach my $webs (@{$websocks->hashes}) {
 		my $art_query = &subs::db_query('delete from drawings where browser_tab_id = ?', $webs->{'browser_tab_id'});
 		my $del_query = &subs::db_query('delete from websockets where browser_tab_id = ?', $webs->{'browser_tab_id'});
