@@ -196,6 +196,13 @@ static int64_t jint(JSONVar v) {
 
 static bool pin_ok(int pin) { return pin >= 0 && pin <= 29; }
 
+// A switch/button input must never float. In this firmware HIGH means on (a
+// switch to 3V3) or pressed, so an unconnected pin is pulled down: otherwise it
+// picks up noise, reports a stream of phantom switch changes, and the app's
+// internal jobs click the relay once per change. A switch to 3V3 and any
+// external pull-up still overcome the internal ~50k pull-down.
+static void input_begin(int pin) { pinMode(pin, INPUT_PULLDOWN); }
+
 static void ble_request_send();
 
 static void ble_can_send(void *ctx) {
@@ -319,7 +326,7 @@ static void ble_apply_board_config(JSONVar ctp) {
       config["button"][numero]["lastPress"] = String(millis());
       config["button"][numero]["toggle"] = String((long)jint(e["toggle"]));
       config["button"][numero]["name"] = name;
-      pinMode(pin, INPUT);
+      input_begin(pin);
     }
     else if (component == "pot") {
       config["pot"][numero]["lastMove"] = String(millis());
@@ -330,7 +337,7 @@ static void ble_apply_board_config(JSONVar ctp) {
       config["switch"][numero]["lastChange"] = String(millis());
       config["switch"][numero]["lastSend"] = String(millis());
       config["switch"][numero]["name"] = name;
-      pinMode(pin, INPUT);
+      input_begin(pin);
     }
     else if (component == "relay" || component == "led" || component == "servo") {
       String state = ((long)jint(e["toggle"]) == 1) ? "on" : "off";
@@ -1427,12 +1434,27 @@ void input_scanner() {
       config_writer();
     }
   }
+  // A settled level, per pin: a floating or bouncing line must hold for
+  // SETTLE_MS before it counts as a switch change. Without this one noise
+  // burst sent a burst of switch events (and one relay click each).
+  static int switch_raw[30];
+  static uint32_t switch_raw_at[30];
+  static bool switch_raw_seen[30];
+  const uint32_t SETTLE_MS = 30;
   JSONVar switchKeys = config["switch"].keys();
   for (int i = 0; i < switchKeys.length(); i++) {
     String spin = switchKeys[i];
     int pin = spin.toInt();
     if (!pin_ok(pin)) { continue; }
-    int switchState = digitalRead(pin);
+    int raw = digitalRead(pin);
+    if (!switch_raw_seen[pin] || switch_raw[pin] != raw) {
+      switch_raw_seen[pin] = true;
+      switch_raw[pin] = raw;
+      switch_raw_at[pin] = millis();
+      continue;
+    }
+    if ((uint32_t)(millis() - switch_raw_at[pin]) < SETTLE_MS) { continue; }
+    int switchState = raw;
     String state;
     if (switchState == 1) {
       state = "on";
@@ -1868,18 +1890,23 @@ void config_init() {
     String spin = buttonKeys[i];
     int pin = spin.toInt();
     if (!pin_ok(pin)) { continue; }
-    pinMode(pin, INPUT);    
+    input_begin(pin);
+    // Remember the level we booted at. Otherwise the first scan sees a
+    // difference from the stored value and treats it as a press.
+    config["button"][spin]["pressed"] = (digitalRead(pin) == HIGH) ? "yes" : "no";
   }
   JSONVar switchKeys = config["switch"].keys();
   for (int i = 0; i < switchKeys.length(); i++) {
-    String state = config["switch"][switchKeys[i]]["state"];
     config["switch"][switchKeys[i]]["lastChange"] = String(millis());
     config["switch"][switchKeys[i]]["lastSend"] = String(millis());
     String spin = switchKeys[i];
     int pin = spin.toInt();
     if (!pin_ok(pin)) { continue; }
 
-    pinMode(pin, INPUT);
+    input_begin(pin);
+    // Adopt the level present at boot: a reboot must not look like the switch
+    // just changed and fire its internal job at the relay.
+    config["switch"][spin]["state"] = (digitalRead(pin) == HIGH) ? "on" : "off";
   }
   JSONVar potKeys = config["pot"].keys();
   for (int i = 0; i < potKeys.length(); i++) {
@@ -2022,7 +2049,7 @@ void call_the_president() {
             config["button"][numero]["lastPress"] = String(millis());
             config["button"][numero]["toggle"] = toggle;
             config["button"][numero]["name"] = name;
-            pinMode(pin, INPUT);
+            input_begin(pin);
 
           }
           else if (component == "pot") {
@@ -2035,7 +2062,7 @@ void call_the_president() {
             config["switch"][numero]["lastChange"] = String(millis());
             config["switch"][numero]["lastSend"] = String(millis());
             config["switch"][numero]["name"] = name;
-            pinMode(pin, INPUT);
+            input_begin(pin);
           }
           else if (component == "relay" || component == "led" || component == "servo") {
             String toggle = String((long)jint(ctp[ctpKeys[i]]["toggle"]));
