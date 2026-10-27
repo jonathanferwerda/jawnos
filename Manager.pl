@@ -1655,6 +1655,10 @@ sub remote_relay_media($c) {
 	my $stream_headers = {};
 	$stream_headers->{'Range'} = "bytes=$start-$end" if defined $size;
 	my $tx = $ua->build_tx(GET => $url, $stream_headers);
+	# the user agent must outlive this call: its destructor closes every open
+	# connection, and the route returns before the first body chunk. The
+	# controller keeps it (and the transaction) until the stream finishes.
+	$c->stash('relay_media' => { ua => $ua, tx => $tx });
 	my $client_gone = 0;
 	$c->on(finish => sub { $client_gone = 1 });
 	$tx->res->content->on(read => sub {
@@ -1665,7 +1669,10 @@ sub remote_relay_media($c) {
 	# mark the response dynamic before the first byte arrives, so the request is
 	# not finished empty while the peer is still opening the file
 	$c->write(undef);
-	$ua->start($tx => sub { $c->finish unless $client_gone });
+	$ua->start($tx => sub {
+		$c->stash('relay_media' => undef);
+		$c->finish unless $client_gone;
+	});
 }
 
 sub rock_and_roll($c) {
