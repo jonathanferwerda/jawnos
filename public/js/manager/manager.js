@@ -1606,7 +1606,7 @@ function boxOffice() {
 // Ticket requests raise a dot on the start menu's Tickets icon until the box
 // office is opened, exactly as a letter rings the envelope.
 function ticketDotSet(message) {
-	localStorage.setItem('ticket_waiting', message || 'Ticket request');
+	localStorage.setItem('ticket_waiting', message || 'Pass request');
 	ticketDotPaint();
 }
 
@@ -1785,21 +1785,21 @@ function qrcode_generator(app) {
 		success: function(response) {
 			if (response && !response.error && response.uuid) {
 				var who = response.name || name || 'visitor';
-				status.empty().text(jawnosT('Ticket issued for') + ' ' + who + ' (' + chosen_app + '). ');
+				status.empty().text(jawnosT('Pass issued for') + ' ' + who + ' (' + chosen_app + '). ');
 				if (response.url) {
 					$('<a>').attr({ href: response.url, target: '_blank', rel: 'noopener' }).text(jawnosT('Open')).appendTo(status);
 				}
 				ticket_list();
 			}
 			else {
-				status.text(jawnosT('The ticket could not be issued.'));
+				status.text(jawnosT('The pass could not be issued.'));
 			}
 		},
 		error: function() {
-			status.text(jawnosT('The ticket could not be issued.'));
+			status.text(jawnosT('The pass could not be issued.'));
 		},
 		complete: function() {
-			if (button.length) { button.prop('disabled', false).text(jawnosT('Issue ticket')); }
+			if (button.length) { button.prop('disabled', false).text(jawnosT('Issue pass')); }
 		}
 	});
 }

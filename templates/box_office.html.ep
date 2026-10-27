@@ -40,12 +40,12 @@
 			<img class="bo_mark" src="<%= &subs::icon_for($gb::known_appts->{'box_office'}->{'icon'}) %>" alt="">
 			<div>
 				<h2 class="bo_title"><%= &subs::ui('Box Office') %></h2>
-				<div class="bo_sub"><%= &subs::ui('Issue access tickets and answer requests.') %></div>
+				<div class="bo_sub"><%= &subs::ui('Issue access passes and answer requests.') %></div>
 			</div>
 		</div>
 		<div class="bo_tabs" role="tablist">
 			<button type="button" class="bo_tab <% if ($view eq 'tickets') { %>on<% } %>" view="tickets" role="tab" aria-selected="<%= $view eq 'tickets' ? 'true' : 'false' %>">
-				<%= &subs::ui('Tickets') %><span class="bo_count" id="bo_ticket_count"><%= scalar @tickets_shown %></span>
+				<%= &subs::ui('Passes') %><span class="bo_count" id="bo_ticket_count"><%= scalar @tickets_shown %></span>
 			</button>
 			<button type="button" class="bo_tab <% if ($view eq 'requests') { %>on<% } %>" view="requests" role="tab" aria-selected="<%= $view eq 'requests' ? 'true' : 'false' %>">
 				<%= &subs::ui('Requests') %><% if (scalar @{$requests || []}) { %><span class="bo_count bo_count_alert"><%= scalar @{$requests || []} %></span><% } %>
@@ -56,7 +56,7 @@
 	<% if ($view eq 'tickets') { %>
 		<section class="bo_card bo_issue_card">
 			<div class="bo_card_head">
-				<h3><%= &subs::ui('Issue a ticket') %></h3>
+				<h3><%= &subs::ui('Issue a pass') %></h3>
 				<span class="bo_muted"><%= &subs::ui('Choose who it is for and what it opens, then issue it.') %></span>
 			</div>
 			<div class="bo_form">
@@ -99,7 +99,7 @@
 					<input type="text" id="ticket_warranty" value="<%= $warranty %>" placeholder="-1d, -1y, forever">
 				</label>
 				<div class="bo_form_action">
-					<button type="button" id="ticket_issue" class="bo_primary" hint="<%= &subs::ui('Issue a ticket now') %>"><%= &subs::ui('Issue ticket') %></button>
+					<button type="button" id="ticket_issue" class="bo_primary" hint="<%= &subs::ui('Issue a pass now') %>"><%= &subs::ui('Issue pass') %></button>
 					<span id="ticket_issue_status" class="bo_statusline" aria-live="polite"></span>
 				</div>
 			</div>
@@ -119,7 +119,7 @@
 						</select>
 					</label>
 					<div class="bo_ip_line">
-						<span class="bo_muted"><%= &subs::ui('The ticket link will point at') %></span>
+						<span class="bo_muted"><%= &subs::ui('The pass link will point at') %></span>
 						<span id="ticket_network_ip"><%= $selected_ip %></span>
 					</div>
 				</div>
@@ -128,15 +128,15 @@
 
 		<section class="bo_card bo_list_card">
 			<div class="bo_card_head">
-				<h3><%= &subs::ui('Issued tickets') %></h3>
-				<span class="bo_muted"><%= &subs::ui('A ticket is a single-use link that signs its holder in.') %></span>
+				<h3><%= &subs::ui('Issued passes') %></h3>
+				<span class="bo_muted"><%= &subs::ui('A pass is a single-use link that signs its holder in.') %></span>
 			</div>
 			<div class="bo_table_wrap">
 				<table id="ticket_list" class="bo_table">
 					<thead>
 						<tr>
 							<th class="bo_qr_cell"><%= &subs::ui('QR') %></th>
-							<th><%= &subs::ui('Ticket') %></th>
+							<th><%= &subs::ui('Pass') %></th>
 							<th><%= &subs::ui('Status') %></th>
 							<th><%= &subs::ui('Privilege') %></th>
 							<th><%= &subs::ui('Project') %></th>
@@ -151,7 +151,7 @@
 							<% my $status = $t->{'status'} || 'expired'; %>
 							<tr class="ticket_holder" uuid="<%= $t->{'uuid'} %>" data-status="<%= $status %>">
 								<td class="bo_qr_cell">
-									<img class="little_thumb ticket bo_qr" src="<%= $t->{'image'} %>" alt="<%= &subs::ui('Ticket QR code') %>" title="<%= &subs::ui('Click to enlarge') %>">
+									<img class="little_thumb ticket bo_qr" src="<%= $t->{'image'} %>" alt="<%= &subs::ui('Pass QR code') %>" title="<%= &subs::ui('Click to enlarge') %>">
 								</td>
 								<td>
 									<span class="ticket_name bo_ticket_name"><%= &subs::format_name($t->{'name'}) %></span>
@@ -160,7 +160,7 @@
 								<td><span class="bo_status ticket_status" data-status="<%= $status %>"><%= $status %></span></td>
 								<td>
 									<span class="ticket_privilege bo_chip"><%= &subs::format_name($t->{'privilege'}) %></span>
-									<select class="ticket_privilege_change bo_select_sm" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Change this ticket\'s privilege') %>">
+									<select class="ticket_privilege_change bo_select_sm" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Change this pass\'s privilege') %>">
 										<% foreach my $chair ( sort { $gb::chairs->{$a}->{'rank'} <=> $gb::chairs->{$b}->{'rank'} } keys %{$gb::chairs} ) { %>
 											<option value="<%= $chair %>" <% if (($t->{'privilege'} || '') eq $chair) { %>selected<% } %>><%= &subs::format_name($chair) %></option>
 										<% } %>
@@ -191,23 +191,23 @@
 									<% } %>
 								</td>
 								<td class="bo_actions">
-									<a class="bo_link" href="<%= $t->{'url'} %>" target="_blank" rel="noopener" hint="<%= &subs::ui('Open the ticket link') %>"><%= &subs::ui('Link') %></a>
-									<button type="button" class="bo_copy_link bo_small" data-url="<%= $t->{'url'} %>" hint="<%= &subs::ui('Copy the ticket link') %>"><%= &subs::ui('Copy') %></button>
+									<a class="bo_link" href="<%= $t->{'url'} %>" target="_blank" rel="noopener" hint="<%= &subs::ui('Open the pass link') %>"><%= &subs::ui('Link') %></a>
+									<button type="button" class="bo_copy_link bo_small" data-url="<%= $t->{'url'} %>" hint="<%= &subs::ui('Copy the pass link') %>"><%= &subs::ui('Copy') %></button>
 									<% if ($status eq 'active') { %>
-										<button type="button" class="suspend_ticket bo_small" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Suspend this ticket') %>"><%= &subs::ui('Suspend') %></button>
+										<button type="button" class="suspend_ticket bo_small" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Suspend this pass') %>"><%= &subs::ui('Suspend') %></button>
 									<% } %>
 									<% if ($status eq 'suspended') { %>
-										<button type="button" class="reinstate_ticket bo_small" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Reinstate this ticket') %>"><%= &subs::ui('Reinstate') %></button>
+										<button type="button" class="reinstate_ticket bo_small" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Reinstate this pass') %>"><%= &subs::ui('Reinstate') %></button>
 									<% } %>
 									<% if ($status ne 'suspended') { %>
 										<button type="button" class="renew_ticket bo_small" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Renew using the warranty in the form above') %>"><%= &subs::ui('Renew') %></button>
 									<% } %>
-									<button type="button" class="delete_ticket bo_small bo_danger" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Delete this ticket (press twice)') %>"><%= &subs::ui('Delete') %></button>
+									<button type="button" class="delete_ticket bo_small bo_danger" uuid="<%= $t->{'uuid'} %>" hint="<%= &subs::ui('Delete this pass (press twice)') %>"><%= &subs::ui('Delete') %></button>
 								</td>
 							</tr>
 						<% } %>
 						<% if (!scalar @tickets_shown) { %>
-							<tr><td colspan="9" class="bo_empty"><%= &subs::ui('No tickets yet. Issue one above.') %></td></tr>
+							<tr><td colspan="9" class="bo_empty"><%= &subs::ui('No passes yet. Issue one above.') %></td></tr>
 						<% } %>
 					</tbody>
 				</table>
@@ -218,7 +218,7 @@
 			<div class="bo_card_head">
 				<h3><%= &subs::ui('Blocked numbers') %></h3>
 			</div>
-			<div id="blocked_numbers_hint" class="bo_hint"><%= &subs::ui('A call from a number here is turned away before it rings. The same list is the door\'s blacklist, so a blocked number is refused a ticket request as well.') %></div>
+			<div id="blocked_numbers_hint" class="bo_hint"><%= &subs::ui('A call from a number here is turned away before it rings. The same list is the door\'s blacklist, so a blocked number is refused a pass request as well.') %></div>
 			<div id="blocked_numbers_add" class="bo_inline_form">
 				<input type="text" id="blocked_number_input" placeholder="<%= &subs::ui('number') %>">
 				<input type="text" id="blocked_number_note" placeholder="<%= &subs::ui('why (optional)') %>">
@@ -243,10 +243,10 @@
 		<section class="bo_card">
 			<div class="bo_card_head">
 				<h3><%= &subs::ui('Request policy') %></h3>
-				<span class="bo_muted"><%= &subs::ui('How the public ticket form is answered.') %></span>
+				<span class="bo_muted"><%= &subs::ui('How the public pass form is answered.') %></span>
 			</div>
 			<div id="ticket_request_policy" class="bo_policy">
-				<label class="bo_check"><input type="checkbox" id="ticket_policy_auto" <% if ($policy->{'issue_guest_on_request'}) { %>checked<% } %>> <span><%= &subs::ui('Issue guest tickets on request') %></span></label>
+				<label class="bo_check"><input type="checkbox" id="ticket_policy_auto" <% if ($policy->{'issue_guest_on_request'}) { %>checked<% } %>> <span><%= &subs::ui('Issue guest passes on request') %></span></label>
 				<label class="bo_field bo_field_inline">
 					<span><%= &subs::ui('Guest warranty') %></span>
 					<input type="text" id="ticket_policy_warranty" value="<%= $policy->{'guest_warranty'} %>" placeholder="-1d">

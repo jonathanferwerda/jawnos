@@ -276,7 +276,7 @@
 	<div class="security_view" view="recovery" style="text-align:center;<% unless ( $president->{'security_view'} eq 'recovery' ) { %>display:none;<% } %>">
 		<h2>Recovery code</h2>
 		<p style="max-width:640px;margin:0 auto;">
-			If every ticket is lost and no paired device is at hand, the recovery code is the way back in:
+			If every pass is lost and no paired device is at hand, the recovery code is the way back in:
 			type it at the house's gate and that device is paired on the spot. It is shown once, so write it
 			on paper and keep it with your important documents. It stays good until the house key itself is rotated.
 		</p>
