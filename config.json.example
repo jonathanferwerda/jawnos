@@ -41,20 +41,5 @@
 		"address": "hpaio:/net/officejet_3830_series?ip=192.168.2.6",
 		"resolution": "300",
 		"feeds": [ "ADF", "Flatbed" ]
-	}],
-	"search_engines": [
-		{ "name": "Google", "url": "https://www.google.com/search?q=" },
-		{ "name": "DuckDuckGo", "url": "https://duckduckgo.com/?q=" },
-		{ "name": "Bing", "url": "https://bing.com/?q=", "view":"iframe" },
-		{ "name": "CTV", "url": "https://www.ctv.ca/search/", "view":"iframe" },
-		{ "name": "CBC", "url": "https://www.cbc.ca/search?q=", "view":"iframe" },
-		{ "name": "NP", "url": "https://nationalpost.com/search/?search_text=", "view":"iframe" },
-		{ "name": "Global", "url": "https://globalnews.ca/?s=", "view":"iframe" },
-		{ "name": "Sarnia Observer", "url": "https://www.theobserver.ca/search/?search_text=", "view":"iframe" },
-		{ "name": "LFPress", "url": "https://lfpress.com/search/?search_text=", "view":"iframe" },
-		{ "name": "Toronto Star", "url": "https://www.thestar.com/search/?q=", "view":"iframe" },
-		{ "name": "NASA", "url": "https://nasasearch.nasa.gov/search?affiliate=nasa&utf8=✓&query=" },
-		{ "name": "Wikipedia", "url": "https://en.wikipedia.org/wiki/" },
-		{ "name": "Kijiji", "url": "https://en.wikipedia.org/wiki/" }
-	]
+	}]
 }

@@ -365,8 +365,14 @@ function softKbOn() {
 // counts as a desk - its screen is not what the dock is for.
 function softKbDesk() {
 	if (typeof windowPhoneChecker == 'function' && windowPhoneChecker()) { return false; }
+	// An Android or iPad tablet is a touch device even when it reports a
+	// hovering S Pen or a keyboard case; the dock is the keyboard it should get.
+	if (/Android|iPad|Tablet/i.test(navigator.userAgent || '')) { return false; }
 	try {
-		if (window.matchMedia) { return window.matchMedia('(hover: hover) and (any-pointer: fine)').matches; }
+		if (window.matchMedia) {
+			if (window.matchMedia('(any-pointer: coarse)').matches) { return false; }
+			return window.matchMedia('(hover: hover) and (any-pointer: fine)').matches;
+		}
 	} catch (err) {}
 	return false;
 }

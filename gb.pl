@@ -346,6 +346,80 @@ our $known_appts = {
 	help => { icon => "/images/decipherable/question mark.png" }
 };
 
+# The Search app's built-in engines. `url` is what the words are appended to
+# (or a template carrying {q}); `kind` says how to read the answer: rss (a
+# feed), ddg (DuckDuckGo's Instant Answer API), mediawiki (a MediaWiki search
+# API), or html (links read from the page). `rss` is the feed form when the
+# engine offers one. `group` keeps the configuration list tidy.
+#
+# These are the engines we can reach without a key. An engine that answers a
+# server with a JavaScript shell still appears: its row is a link that opens
+# that engine in the JawnOS Browser. A person can add another engine from the
+# Browser (the + Search button), and enable or disable any of them in Search's
+# settings panel.
+our @search_default_engines = qw(bing brave duckduckgo wikipedia);
+our @search_engines = (
+	{ id => 'bing',       name => 'Bing',            group => 'general',   kind => 'rss',       url => 'https://www.bing.com/search?q=', rss => 'https://www.bing.com/search?format=rss&q=' },
+	{ id => 'brave',      name => 'Brave Search',    group => 'general',   kind => 'html',      url => 'https://search.brave.com/search?q=', home => 'https://search.brave.com/' },
+	{ id => 'duckduckgo', name => 'DuckDuckGo',      group => 'general',   kind => 'ddg',       url => 'https://duckduckgo.com/?q=', home => 'https://duckduckgo.com/' },
+	{ id => 'google',     name => 'Google',          group => 'general',   kind => 'html',      url => 'https://www.google.com/search?q=', home => 'https://www.google.com/' },
+	{ id => 'startpage',  name => 'Startpage',       group => 'general',   kind => 'html',      url => 'https://www.startpage.com/sp/search?query=', home => 'https://www.startpage.com/' },
+	{ id => 'ecosia',     name => 'Ecosia',          group => 'general',   kind => 'html',      url => 'https://www.ecosia.org/search?q=', home => 'https://www.ecosia.org/' },
+	{ id => 'qwant',      name => 'Qwant',           group => 'general',   kind => 'html',      url => 'https://www.qwant.com/?q=', home => 'https://www.qwant.com/' },
+	{ id => 'mojeek',     name => 'Mojeek',          group => 'general',   kind => 'html',      url => 'https://www.mojeek.com/search?q=', home => 'https://www.mojeek.com/' },
+	{ id => 'yahoo',      name => 'Yahoo',           group => 'general',   kind => 'html',      url => 'https://search.yahoo.com/search?p=', home => 'https://search.yahoo.com/' },
+	{ id => 'yandex',     name => 'Yandex',          group => 'general',   kind => 'html',      url => 'https://yandex.com/search/?text=', home => 'https://yandex.com/' },
+	{ id => 'baidu',      name => 'Baidu',           group => 'general',   kind => 'html',      url => 'https://www.baidu.com/s?wd=', home => 'https://www.baidu.com/' },
+	{ id => 'naver',      name => 'Naver',           group => 'general',   kind => 'html',      url => 'https://search.naver.com/search.naver?query=', home => 'https://search.naver.com/' },
+	{ id => 'seznam',     name => 'Seznam',          group => 'general',   kind => 'html',      url => 'https://search.seznam.cz/?q=', home => 'https://search.seznam.cz/' },
+	{ id => 'swisscows',  name => 'Swisscows',       group => 'general',   kind => 'html',      url => 'https://swisscows.com/en/web?query=', home => 'https://swisscows.com/' },
+	{ id => 'metager',    name => 'MetaGer',         group => 'general',   kind => 'html',      url => 'https://metager.org/meta/meta.ger3?eingabe=', home => 'https://metager.org/' },
+	{ id => 'marginalia', name => 'Marginalia',      group => 'general',   kind => 'html',      url => 'https://search.marginalia.nu/search?query=', home => 'https://search.marginalia.nu/' },
+	{ id => 'stract',     name => 'Stract',          group => 'general',   kind => 'html',      url => 'https://stract.com/search?q=', home => 'https://stract.com/' },
+	{ id => 'wiby',       name => 'Wiby',            group => 'general',   kind => 'html',      url => 'https://wiby.me/?q=', home => 'https://wiby.me/' },
+	{ id => 'rightdao',   name => 'Right Dao',       group => 'general',   kind => 'html',      url => 'https://rightdao.com/search?query=', home => 'https://rightdao.com/' },
+	{ id => 'presearch',  name => 'Presearch',       group => 'general',   kind => 'html',      url => 'https://presearch.com/search?q=', home => 'https://presearch.com/' },
+	{ id => 'searx',      name => 'SearXNG',         group => 'general',   kind => 'html',      url => 'https://searx.be/search?q=', home => 'https://searx.be/' },
+	{ id => 'aol',        name => 'AOL',             group => 'general',   kind => 'html',      url => 'https://search.aol.com/aol/search?q=', home => 'https://search.aol.com/' },
+	{ id => 'ask',        name => 'Ask',             group => 'general',   kind => 'html',      url => 'https://www.ask.com/web?q=', home => 'https://www.ask.com/' },
+	{ id => 'dogpile',    name => 'Dogpile',         group => 'general',   kind => 'html',      url => 'https://www.dogpile.com/serp?q=', home => 'https://www.dogpile.com/' },
+	{ id => 'lycos',      name => 'Lycos',           group => 'general',   kind => 'html',      url => 'https://search.lycos.com/web/?q=', home => 'https://search.lycos.com/' },
+	{ id => 'yep',        name => 'Yep',             group => 'general',   kind => 'html',      url => 'https://yep.com/web?q=', home => 'https://yep.com/' },
+	{ id => 'wikipedia',  name => 'Wikipedia',       group => 'reference', kind => 'mediawiki', url => 'https://en.wikipedia.org/w/index.php?search=', home => 'https://en.wikipedia.org/' },
+	{ id => 'wiktionary', name => 'Wiktionary',      group => 'reference', kind => 'mediawiki', url => 'https://en.wiktionary.org/w/index.php?search=', home => 'https://en.wiktionary.org/' },
+	{ id => 'scholar',    name => 'Google Scholar',  group => 'reference', kind => 'html',      url => 'https://scholar.google.com/scholar?q=', home => 'https://scholar.google.com/' },
+	{ id => 'wolfram',    name => 'Wolfram Alpha',   group => 'reference', kind => 'html',      url => 'https://www.wolframalpha.com/input?i=', home => 'https://www.wolframalpha.com/' },
+	{ id => 'dictionary', name => 'Dictionary',      group => 'reference', kind => 'html',      url => 'https://www.dictionary.com/browse/', home => 'https://www.dictionary.com/' },
+	{ id => 'thesaurus',  name => 'Thesaurus',       group => 'reference', kind => 'html',      url => 'https://www.thesaurus.com/browse/', home => 'https://www.thesaurus.com/' },
+	{ id => 'arxiv',      name => 'arXiv',           group => 'reference', kind => 'html',      url => 'https://arxiv.org/search/?query=', home => 'https://arxiv.org/' },
+	{ id => 'pubmed',     name => 'PubMed',          group => 'reference', kind => 'html',      url => 'https://pubmed.ncbi.nlm.nih.gov/?term=', home => 'https://pubmed.ncbi.nlm.nih.gov/' },
+	{ id => 'openlibrary',name => 'Open Library',    group => 'reference', kind => 'html',      url => 'https://openlibrary.org/search?q=', home => 'https://openlibrary.org/' },
+	{ id => 'archive',    name => 'Internet Archive',group => 'reference', kind => 'html',      url => 'https://archive.org/search?query=', home => 'https://archive.org/' },
+	{ id => 'stackoverflow',name => 'Stack Overflow',group => 'reference', kind => 'html',     url => 'https://stackoverflow.com/search?q=', home => 'https://stackoverflow.com/' },
+	{ id => 'github',     name => 'GitHub',          group => 'reference', kind => 'html',      url => 'https://github.com/search?q=', home => 'https://github.com/' },
+	{ id => 'hn',         name => 'Hacker News',     group => 'reference', kind => 'html',      url => 'https://hn.algolia.com/?q=', home => 'https://news.ycombinator.com/' },
+	{ id => 'youtube',    name => 'YouTube',         group => 'media',     kind => 'html',      url => 'https://www.youtube.com/results?search_query=', home => 'https://www.youtube.com/' },
+	{ id => 'spotify',    name => 'Spotify',         group => 'media',     kind => 'html',      url => 'https://open.spotify.com/search/', home => 'https://open.spotify.com/' },
+	{ id => 'bandcamp',   name => 'Bandcamp',        group => 'media',     kind => 'html',      url => 'https://bandcamp.com/search?q=', home => 'https://bandcamp.com/' },
+	{ id => 'soundcloud', name => 'SoundCloud',      group => 'media',     kind => 'html',      url => 'https://soundcloud.com/search?q=', home => 'https://soundcloud.com/' },
+	{ id => 'imdb',       name => 'IMDb',            group => 'media',     kind => 'html',      url => 'https://www.imdb.com/find/?q=', home => 'https://www.imdb.com/' },
+	{ id => 'rottentomatoes',name => 'Rotten Tomatoes',group => 'media',   kind => 'html',      url => 'https://www.rottentomatoes.com/search?search=', home => 'https://www.rottentomatoes.com/' },
+	{ id => 'reddit',     name => 'Reddit',          group => 'media',     kind => 'html',      url => 'https://www.reddit.com/search/?q=', home => 'https://www.reddit.com/' },
+	{ id => 'amazon',     name => 'Amazon',          group => 'shopping',  kind => 'html',      url => 'https://www.amazon.ca/s?k=', home => 'https://www.amazon.ca/' },
+	{ id => 'bestbuy',    name => 'Best Buy',        group => 'shopping',  kind => 'html',      url => 'https://www.bestbuy.ca/en-ca/search?searchText=', home => 'https://www.bestbuy.ca/' },
+	{ id => 'ebay',       name => 'eBay',            group => 'shopping',  kind => 'html',      url => 'https://www.ebay.ca/sch/i.html?_nkw=', home => 'https://www.ebay.ca/' },
+	{ id => 'walmart',    name => 'Walmart',         group => 'shopping',  kind => 'html',      url => 'https://www.walmart.ca/search?q=', home => 'https://www.walmart.ca/' },
+	{ id => 'costco',     name => 'Costco',          group => 'shopping',  kind => 'html',      url => 'https://www.costco.ca/CatalogSearch?keyword=', home => 'https://www.costco.ca/' },
+	{ id => 'homedepot',  name => 'Home Depot',      group => 'shopping',  kind => 'html',      url => 'https://www.homedepot.ca/search?q=', home => 'https://www.homedepot.ca/' },
+	{ id => 'ikea',       name => 'IKEA',            group => 'shopping',  kind => 'html',      url => 'https://www.ikea.com/ca/en/search/?q=', home => 'https://www.ikea.com/ca/en/' },
+	{ id => 'ctv',        name => 'CTV News',        group => 'news',      kind => 'html',      url => 'https://www.ctv.ca/search/', home => 'https://www.ctv.ca/' },
+	{ id => 'cbc',        name => 'CBC',             group => 'news',      kind => 'html',      url => 'https://www.cbc.ca/search?q=', home => 'https://www.cbc.ca/' },
+	{ id => 'bbc',        name => 'BBC',             group => 'news',      kind => 'html',      url => 'https://www.bbc.co.uk/search?q=', home => 'https://www.bbc.co.uk/' },
+	{ id => 'reuters',    name => 'Reuters',         group => 'news',      kind => 'html',      url => 'https://www.reuters.com/site-search/?query=', home => 'https://www.reuters.com/' },
+	{ id => 'perplexity', name => 'Perplexity',      group => 'general',   kind => 'html',      url => 'https://www.perplexity.ai/search?q=', home => 'https://www.perplexity.ai/' },
+	{ id => 'kagi',       name => 'Kagi',            group => 'general',   kind => 'html',      url => 'https://kagi.com/search?q=', home => 'https://kagi.com/' },
+);
+
 # The Guide's tools, declared once. Each entry names the action the model may
 # choose, the arguments it takes, and what it does; the prompt, the allow-list
 # and (in time) the remote verb channel are all generated from this, so adding a

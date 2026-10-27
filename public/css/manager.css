@@ -853,6 +853,13 @@ canvas.background {
    panel background is clipped to it and the frame ring below inherits it; the
    title bar rounds only its top corners to match, so its square ones don't show
    through where the panel curves away. */
+/* The Internet app owns its tabs: the window's title bar would be a second bar
+   in the same place, so this window draws without one and its contents fill it.
+   This lives here, in the sheet every page loads, rather than only in the app's
+   own markup: the window then never flashes a title bar while it opens. */
+.wind[app="internet"] .top_navbar { display: none !important; }
+.wind[app="internet"] .window_contents { padding-top: 0 !important; height: 100% !important; }
+
 .wind { border-radius: var(--window_radius, var(--jawnos-corner, 12px)); background-color: var(--window, var(--panel)); box-shadow: 0 20px 50px rgba(0,0,0,.24), 0 2px 8px rgba(0,0,0,.12); }
 body.dark_theme .wind { box-shadow: 0 22px 56px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.35); }
 /* Inside a window every surface that asked for the panel surface gets the

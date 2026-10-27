@@ -1,17 +1,3 @@
-<% if ($from =~ 'search') { %>
-	<% my $search = $c->param('search') || $c->param('s'); %>
-	% title 'Manager Search: ' . $search;
-	<div id="search_entanglement" style="background-color:var(--panel);display:block;">
-		<% foreach my $se ( @{$config->{'search_engines'}} ) { %>
-			<button type="button" class="search_engine_grabber" search="<%= $search %>" view="<%= $se->{'view'} %>" name="<%= $se->{'name'} %>" url="<%= $se->{'url'} %>"><%= $se->{'name'} %></button>
-		<% } %>
-		<div id="search_engines"></div>
-		<% if (@{$appointments} == 0) { %>
-			<h2>No Results</h2><button type="button" class="appointment_adder">Add</button>
-		<% } %>
-	</div>
-
-<% } %>
 <% no warnings 'uninitialized'; %>
 <% my $pseudonyms; %>
 <%# the house's tickets by name, newest first, so an appointment's Chat button
