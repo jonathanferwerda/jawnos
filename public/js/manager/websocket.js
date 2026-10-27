@@ -203,15 +203,24 @@ function wsOpener(event,app,origin) {
 	var uA = navigator.userAgent;
 	ws[app]['status'] = 'open';
 	// A reconnected socket may be a restarted tree, whose boot dropped every
-	// media grant. Re-check the open app windows by REFETCHING - never by
-	// clearing their tokens: a socket that flaps must leave an open padlock
-	// alone. Only a gap long enough to be a restart, not a reconnect, triggers
-	// the check.
+	// media grant. The real test is the server's boot stamp (handled in
+	// wsMessageHandler): a socket that merely flapped keeps the same boot, so
+	// it must not re-fetch the media windows. Until a server that sends one has
+	// answered, fall back to the old gap check - but only for a window that is
+	// actually unlocked, which is the only one that has a grant to lose. A
+	// locked window was already locked, so re-rendering it changed nothing but
+	// cost a fresh listing every time a flapping socket came back.
 	if (app === 'server') {
 		var media_now = Date.now();
-		if (window.jawnosMediaServerAt && media_now - window.jawnosMediaServerAt > 20000
+		if (!window.jawnosMediaBoot && window.jawnosMediaServerAt
+			&& media_now - window.jawnosMediaServerAt > 20000
 			&& typeof jawnosMediaRefresh === 'function') {
-			jawnosMediaRefresh(['gallery', 'music', 'folders']);
+			var unlocked = [];
+			$.each(['gallery', 'music', 'folders'], function (i, name) {
+				var root = $('#' + name);
+				if (root.length && root.attr('unlock')) { unlocked.push(name); }
+			});
+			if (unlocked.length) { jawnosMediaRefresh(unlocked); }
 		}
 		window.jawnosMediaServerAt = media_now;
 	}
@@ -573,6 +582,17 @@ function wsMessageHandler(event) {
 			var rv = sessionStorage.getItem('jawnos_revision');
 			sessionStorage.setItem('jawnos_revision', data['revision']);
 			jawnosRevisionArrived(data['revision_parts'], data['version'], rv);
+		}
+		// Every connect carries the tree's boot stamp. A new boot is the one
+		// event that drops a media grant, so that - not the length of a socket
+		// outage - is what re-fetches the open media windows. The first stamp of
+		// a page load only records; a reconnect in the same boot re-lists nothing.
+		if (data['boot']) {
+			var boot = window.jawnosMediaBoot;
+			window.jawnosMediaBoot = data['boot'];
+			if (boot && boot !== data['boot'] && typeof jawnosMediaRefresh === 'function') {
+				jawnosMediaRefresh(['gallery', 'music', 'folders']);
+			}
 		}
 		// The Terminal toolbar names the machine its shell is running on, and a
 		// connect or a dropped ssh link changes that without re-rendering anything.

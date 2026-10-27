@@ -12556,6 +12556,9 @@ sub archive_manifest_fetch {
 	if ($data->{'timeout'}) {
 		$agent->{'ua'}->request_timeout($data->{'timeout'});
 		$agent->{'ua'}->inactivity_timeout($data->{'timeout'});
+		# a sleeping machine must not spend the long connect default either;
+		# a reachable one that is slow to answer still answers inside the bound
+		$agent->{'ua'}->connect_timeout($data->{'timeout'});
 	}
 	my $res = eval {
 		return $agent->{'ua'}->post($agent->{'manager'} . '/manager/folders/archive/manifest' => form => {

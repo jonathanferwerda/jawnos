@@ -201,7 +201,7 @@ our %topic = (
 		title => 'Music', category => 'apps', app => 'music',
 		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/audio.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization', 'Volume normalization', 'Remote audio format', 'Sync offset', 'Me audio delay', 'Remote delay', 'Left speaker', 'Stereo', 'Right speaker', 'Video enhancement', 'Sharpness', 'Quality', 'Frame rate', 'Video status' ],
-		verified => '2026-10-26',
+		verified => '2026-10-27',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
