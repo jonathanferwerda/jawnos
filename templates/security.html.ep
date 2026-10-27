@@ -13,9 +13,14 @@
 		<% if ($lockdown_active) { %>
 			<div class="security_lockdown" style="border:2px solid #b0342e;border-radius:10px;padding:14px;margin:0 0 14px;max-width:680px;">
 				<h2 style="margin-top:0;"><%= &subs::ui('Lockdown') %></h2>
-				<p style="line-height:1.5;"><%= &subs::ui('An enemy is present, or this is a dangerous place. Other apps are closed. Confirm with your fingerprint to reveal the appointment so you can stop it.') %></p>
+				<p style="line-height:1.5;"><%= &subs::ui('An enemy is present, or this is a dangerous place. Other apps are closed. Confirm with your fingerprint, then open the hidden appointment to stop it.') %></p>
 				<% if (scalar @{ $lockdown_apps || [] }) { %>
-					<p><%= &subs::ui('Hidden appointment') %>: <%== join ', ', map { &subs::html_text(&subs::format_name($_)) } @{ $lockdown_apps || [] } %></p>
+					<p><%= &subs::ui('Hidden appointment') %>:</p>
+					<p class="lockdown_apps">
+					<% foreach my $lockdown_app ( sort @{ $lockdown_apps || [] } ) { %>
+						<button type="button" class="lockdown_open_app" data-app="<%= &subs::html_text($lockdown_app) %>"><%= &subs::lang('common.open') %> <%= &subs::html_text(&subs::format_name($lockdown_app)) %></button>
+					<% } %>
+					</p>
 				<% } %>
 				<button id="lockdown_unlock" type="button"><%= &subs::ui('Confirm with fingerprint') %></button>
 				<div id="lockdown_unlock_note" style="min-height:22px;color:darkred;"></div>
