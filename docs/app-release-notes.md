@@ -15,8 +15,12 @@ browser wrapped around the manager.
   own apps — Marker, Music, Gallery, IDE, Box Office and the rest — so they are
   one tap away without opening the manager first.
 - **Single-app windows.** Tapping a JawnOS app opens just that app, full
-  screen, with a Back bar. The window is the manager's own window pinned over
-  the desktop chrome, so the app keeps its exact behaviour and its live state.
+  screen. Each app goes through the start menu's own opener, so Box Office
+  opens the ticket maker, Budget the ledger, Clock the alarms, Gallery the
+  albums, Music the player — not a generic appointment window. The app's title
+  bar and the native bar are both removed, so the app owns the whole screen;
+  Android's Back gesture or button leaves it. A person's own app (Autumn,
+  Coffee and the rest) still opens its appointment window.
   Fixed: the view could stay black because the manager had paused WebView
   timers process-wide; it now resumes them before loading.
 - **Printer widget.** The clockface printer is available as a home-screen
