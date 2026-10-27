@@ -270,45 +270,66 @@ sub jg_people_key {
 }
 
 # The house grades the roster; the switch never sees the relationship map.
+# Relationships are numbered on the place scale - friend 1, stranger 2,
+# enemy 3 - and the same numbered measure People writes is read here. The
+# hand-typed lists in the Rooms panel remain as a fallback (they are the way a
+# house names a handle it has not made a person yet).
 sub jg_grade {
 	my ($roster) = @_;
 	my %rel;
-	foreach my $key (qw/blacklist hostile known/) {
-		my $relation = $key eq 'blacklist' ? 'blacklist' : $key;
+	my $set = sub {
+		my ($key, $rating) = @_;
 		foreach my $value (split /,/, &jg_setting($key)) {
 			my $k = &jg_people_key($value);
-			$rel{$k} = $relation if length $k;
+			next unless length $k;
+			$rel{$k} = $rating if $rating > ($rel{$k} || 0);
+		}
+	};
+	&$set('known', 1);
+	&$set('hostile', 3);
+	&$set('blacklist', 3);
+	# The house's own People rows win when they are more specific (an enemy is
+	# still an enemy), and a friend here is not overridden by a stale manual list.
+	my $people = eval { &subs::person_relationships() } || {};
+	foreach my $app ( keys %{$people} ) {
+		my $rating = $people->{$app}->{'rating'} || 0;
+		next unless $rating;
+		foreach my $name ( $app, &subs::format_name($app) ) {
+			foreach my $k ( &jg_people_key($name), &jg_slug($name) ) {
+				next unless defined $k && length $k;
+				$rel{$k} = $rating if $rating > ($rel{$k} || 0);
+			}
 		}
 	}
 
 	my @subjects = grep { defined $_ && length $_ } map { $_->{'subject'} } @{$roster || []};
-	my %count = (known => 0, blacklisted => 0, hostile => 0, unknown => 0);
+	my %count = (friend => 0, stranger => 0, enemy => 0);
+	my %relations;
 	foreach my $subject (@subjects) {
-		my $relation = $rel{&jg_people_key($subject)} || '';
-		if ($relation eq 'blacklist') { $count{'blacklisted'}++ }
-		elsif ($relation eq 'hostile') { $count{'hostile'}++ }
-		elsif ($relation eq 'known') { $count{'known'}++ }
-		else { $count{'unknown'}++ }
+		my $rating = $rel{&jg_people_key($subject)} || $rel{&jg_slug($subject)} || 0;
+		my $value = $rating == 1 ? 'friend' : $rating == 3 ? 'enemy' : 'stranger';
+		$count{$value}++;
+		$relations{$subject} = { value => $value, rating => $rating || 2 };
 	}
 
 	my @flags;
-	push @flags, 'blacklisted' if $count{'blacklisted'};
-	push @flags, 'hostile' if $count{'hostile'};
-	push @flags, 'stranger' if $count{'unknown'};
+	push @flags, 'enemy' if $count{'enemy'};
+	push @flags, 'stranger' if $count{'stranger'};
 
 	my $grade = 'empty';
 	if (!@subjects) { $grade = 'empty' }
-	elsif ($count{'blacklisted'} || $count{'hostile'}) { $grade = 'hostile' }
-	elsif ($count{'unknown'} == scalar @subjects) { $grade = 'strangers' }
-	elsif ($count{'unknown'}) { $grade = 'mixed' }
-	elsif ($count{'known'} == scalar @subjects) { $grade = 'known' }
-	else { $grade = 'trusted' }
+	elsif ($count{'enemy'}) { $grade = 'hostile' }
+	elsif ($count{'stranger'} == scalar @subjects) { $grade = 'strangers' }
+	elsif ($count{'stranger'}) { $grade = 'mixed' }
+	elsif ($count{'friend'} == scalar @subjects) { $grade = 'known' }
+	else { $grade = 'mixed' }
 
 	return {
 		grade => $grade,
 		flags => \@flags,
-		block => ($count{'blacklisted'} ? 1 : 0),
+		block => ($count{'enemy'} ? 1 : 0),
 		counts => \%count,
+		relations => \%relations,
 		subjects => \@subjects,
 	};
 }

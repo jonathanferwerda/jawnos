@@ -10994,6 +10994,8 @@ sub name_change_history_apply_plan {
 sub setting_setter() {
 	%setting_memo = ();
 	my $settings = shift;
+	# a visibility or relationship change is read back by the same request
+	&visibility_cache_clear() if (($settings->{'setting'} // '') =~ /^(?:visible|app_measures)$/);
 	# a language change must be seen by the next page in this same worker
 	&language_reset() if (($settings->{'setting'} // '') eq 'language');
 	my $app = $settings->{'app'};
@@ -16174,6 +16176,254 @@ sub navigation_information() {
 	}
 }
 
+# ---- Visibility -----------------------------------------------------------
+#
+# A thing's visibility is no longer a checkbox. The setting (`visible`) is one
+# of: off, private, public, dangerous, or on. The three place words are the
+# site types in gb.pl, and places are numbered 1 (private), 2 (public) and 3
+# (dangerous): a place-visible thing is shown while the room is at or below
+# that number. `on` ignores the room, `off` is never shown.
+#
+# A person's relationship is numbered on the same scale - friend 1 (private),
+# stranger 2 (public), enemy 3 (dangerous) - so an enemy's presence raises the
+# room to dangerous. Strangers are not negative and do not change the room.
+our %relationship_rating = (friend => 1, stranger => 2, enemy => 3);
+our @relationship_order = qw/friend stranger enemy/;
+
+# A relationship value as a number. Understands the new single values, the old
+# multiple_select JSON list and the old relationship words, so a row written by
+# an older build still reads. The most negative word in a list decides.
+sub relationship_part_rating {
+	my ($part) = @_;
+	$part = lc($part // '');
+	$part =~ s/^\s+|\s+$//g;
+	return 0 unless length $part;
+	return $relationship_rating{$part} if exists $relationship_rating{$part};
+	return 3 if $part =~ /^(?:enemy|hostile|combative|adversarial|blacklist|blacklisted|blocked)$/;
+	return 2 if $part =~ /^(?:stranger|unknown|indifferent|neutral|competitive)$/;
+	return 1 if $part =~ /^(?:friend|friendly|self|familial|amicable|professional|sexual|marital|holy)$/;
+	return 0;
+}
+
+sub relationship_rating {
+	my ($value) = @_;
+	$value = $value->{'value'} if ref $value eq 'HASH';
+	$value = join ',', @{$value} if ref $value eq 'ARRAY';
+	return 0 unless defined $value;
+	my $v = "$value";
+	$v = lc $v;
+	$v =~ s/^\s+|\s+$//g;
+	return $relationship_rating{$v} if exists $relationship_rating{$v};
+	if ($v =~ /^\s*\[/) {
+		my $list = eval { decode_json($v) };
+		$v = ref $list eq 'ARRAY' ? join ',', @{$list} : '';
+	}
+	my $rating = 0;
+	foreach my $part (split /[,\s]+/, $v) {
+		my $r = &relationship_part_rating($part);
+		$rating = $r if $r > $rating;
+	}
+	return $rating;
+}
+
+sub relationship_value {
+	my ($value) = @_;
+	my $rating = &relationship_rating($value);
+	return '' unless $rating;
+	return ('', 'friend', 'stranger', 'enemy')[$rating];
+}
+
+sub relationship_options {
+	return [ map { {
+		value => $_,
+		rating => $relationship_rating{$_},
+		label => &format_name($_),
+	} } @relationship_order ];
+}
+
+# The newest app_measures row for an app, across devices: a relationship is a
+# fact about the person, not about the phone it was typed on.
+sub person_relationship_value {
+	my ($app) = @_;
+	return '' unless defined $app && length $app;
+	my $row = eval {
+		&db_query("select value from settings where app = ? and setting = 'app_measures' order by cast(server_time as integer) desc limit 1", $app)->hashes->[0];
+	};
+	my $am = $row ? (eval { decode_json($row->{'value'}) } || {}) : {};
+	my $value = &relationship_value($am->{'relationship'}->{'value'} // '');
+	unless (length $value) {
+		my $direct = eval {
+			&db_query("select value from settings where app = ? and setting = 'relationship' order by cast(server_time as integer) desc limit 1", $app)->hashes->[0];
+		};
+		$value = &relationship_value($direct->{'value'} // '') if $direct;
+	}
+	return $value;
+}
+
+sub person_relationship_rating {
+	my ($app) = @_;
+	return &relationship_rating(&person_relationship_value($app));
+}
+
+# Every app that carries a relationship, newest row wins. Used by the
+# junderground grade so the room reads the house's own relationship map rather
+# than a second hand-typed list.
+sub person_relationships {
+	my %map;
+	my $rows = eval {
+		&db_query("select app, value from settings where setting = 'app_measures' and value like '%relationship%' order by cast(server_time as integer)")->hashes;
+	} || [];
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} // next;
+		my $am = eval { decode_json($row->{'value'}) } || {};
+		my $value = &relationship_value($am->{'relationship'}->{'value'} // '');
+		next unless length $value;
+		$map{$app} = { value => $value, rating => $relationship_rating{$value} };
+	}
+	my $direct = eval {
+		&db_query("select app, value from settings where setting = 'relationship' order by cast(server_time as integer)")->hashes;
+	} || [];
+	foreach my $row ( @{$direct} ) {
+		my $app = $row->{'app'} // next;
+		my $value = &relationship_value($row->{'value'});
+		next unless length $value;
+		$map{$app} = { value => $value, rating => $relationship_rating{$value} };
+	}
+	return \%map;
+}
+
+# Who is present: a person app with an appointment still running. junderground
+# starts one for each other person in a room it has joined, and a person's own
+# open appointment is a presence too, so this is the house's one local signal.
+# Only an enemy (rating 3) changes the room; the number is kept whole so a
+# stranger could be given a place meaning later without a second rule.
+our $presence_relationship_cache;
+sub present_relationship_rating {
+	my ($opts) = @_;
+	$opts ||= {};
+	return $presence_relationship_cache if defined $presence_relationship_cache && !$opts->{'refresh'};
+	$presence_relationship_cache = 0;
+	my $rows = eval {
+		&db_query(q{
+			select distinct a.app as app
+			  from appointments a
+			 where (a.stop_timestamp is null or a.stop_timestamp = '')
+			   and a.type in ('start','record')
+			   and exists (
+			       select 1 from settings s
+			        where s.app = a.app
+			          and s.setting in ('pos','mab')
+			          and s.value = 'person'
+			   )
+		})->hashes;
+	} || [];
+	my $rating = 0;
+	foreach my $row ( @{$rows} ) {
+		my $r = &person_relationship_rating($row->{'app'});
+		$rating = $r if $r > $rating;
+	}
+	$presence_relationship_cache = $rating;
+	return $rating;
+}
+
+# The numeric rating of the room now: the place's own number, raised to 3 when
+# an enemy is present. A house with no fix reads as public, the same default
+# the manual place switch and the guide use.
+our $visibility_exposure_cache;
+sub visibility_site_rating {
+	my $sig = &signatorial_designer();
+	my $nav = eval { &navigation_information({ signatorial => $sig, cache => 'yes' }) } || {};
+	my $rating = $nav->{$sig}->{'site_rating'};
+	return ($rating =~ /^\d+$/ && $rating > 0) ? $rating + 0 : 2;
+}
+
+sub visibility_exposure {
+	return $visibility_exposure_cache if defined $visibility_exposure_cache;
+	my $place = &visibility_site_rating();
+	my $presence = &present_relationship_rating();
+	$place = 3 if $presence >= 3;   # an enemy is a dangerous room
+	$visibility_exposure_cache = $place;
+	return $visibility_exposure_cache;
+}
+
+# Normalise the visible setting. `checked`/`unchecked` are the old checkbox;
+# unchecked meant "hidden outside a private place", which is what private now
+# says, so an existing row keeps behaving as its owner remembers.
+sub visibility_normalize {
+	my ($value) = @_;
+	my $v = lc($value // '');
+	$v =~ s/^\s+|\s+$//g;
+	return 'off' if $v eq 'off' || $v eq 'hidden' || $v eq 'none' || $v eq 'no';
+	return 'private' if $v eq 'private' || $v eq 'unchecked' || $v eq '1';
+	return 'public' if $v eq 'public' || $v eq '2';
+	return 'dangerous' if $v eq 'dangerous' || $v eq '3';
+	return 'on';
+}
+
+sub visibility_rank {
+	my ($value) = @_;
+	my $v = &visibility_normalize($value);
+	return 0 if $v eq 'off';
+	return 1 if $v eq 'private';
+	return 2 if $v eq 'public';
+	return 3 if $v eq 'dangerous';
+	return 4;
+}
+
+# This device's row wins, then the house's `all` row, then the person's `me`
+# row, then the newest. No row at all is the historical default: visible.
+our %app_visibility_cache;
+sub app_visibility_value {
+	my ($app) = @_;
+	return 'on' unless defined $app && length $app;
+	my $device = &device_setter();
+	my $cache_key = $device . "\x1f" . $app;
+	return $app_visibility_cache{$cache_key} if exists $app_visibility_cache{$cache_key};
+	my $rows = eval {
+		&db_query("select value, device from settings where app = ? and setting = 'visible' order by cast(server_time as integer) desc", $app)->hashes;
+	} || [];
+	my ($own, $all, $me, $latest);
+	foreach my $row ( @{$rows} ) {
+		my $d = $row->{'device'} // '';
+		$latest = $row->{'value'} unless defined $latest;
+		$all = $row->{'value'} if $d eq 'all';
+		$me = $row->{'value'} if $d eq 'me';
+		$own = $row->{'value'} if $d eq $device;
+	}
+	my $value = defined $own ? $own : defined $all ? $all : defined $me ? $me : $latest;
+	$value = &visibility_normalize($value);
+	$app_visibility_cache{$cache_key} = $value;
+	return $value;
+}
+
+sub visibility_hidden_for {
+	my ($value, $exposure) = @_;
+	my $rank = &visibility_rank($value);
+	return 1 if $rank <= 0;
+	return 0 if $rank >= 4;
+	$exposure = &visibility_exposure() unless defined $exposure;
+	return $exposure > $rank ? 1 : 0;
+}
+
+sub app_hidden_now {
+	my ($app) = @_;
+	return &visibility_hidden_for(&app_visibility_value($app));
+}
+
+sub app_visible_now {
+	my ($app) = @_;
+	return &app_hidden_now($app) ? 0 : 1;
+}
+
+# A settings write or a presence change must be seen by the rest of this
+# request; a worker serves one request at a time, so these are request caches.
+sub visibility_cache_clear {
+	%app_visibility_cache = ();
+	$visibility_exposure_cache = undef;
+	$presence_relationship_cache = undef;
+	return 1;
+}
+
 # The plate remembers how its latest navigation stop happened. A departure more
 # than three radii away is certain - no ordinary GPS jitter brings a person back
 # from there - so a return must start a new session instead of reopening the one
@@ -16491,7 +16741,7 @@ sub hang_to_dry() {
 				if (grep { $_ eq $ft || $_ eq 'all' } @{$time_plinko->{$time_plinkos->[$n]->{'name'}}}) {
 					$cl_count++;
 					if ($cl_count == $count) {
-						if ($settings->{'visible'} eq 'checked') {
+						if (!&visibility_hidden_for($settings->{'visible'})) {
 							push @{$returner}, $app_data;
 						}
 
@@ -16563,7 +16813,7 @@ sub hang_to_dry() {
 			next unless $routine->{'hour_days'} >= 7;
 			next unless $routine->{'hour'} == $cur_hour;
 			my $aset = &settings_grabber({ app => $app });
-			next unless (($aset->{'visible'} || '') eq 'checked');
+			next if &visibility_hidden_for($aset->{'visible'});
 			push @{$returner}, { name => $app, app => $app, formatted_name => &format_name($app), colour => $aset->{'colour'}, dark_colour => $aset->{'dark_colour'} };
 		}
 	}
@@ -28045,6 +28295,30 @@ sub guide_message_warranty() {
 			&subs::say_it("backfill guide_message_warranty: stamped $n guide message(s)");
 			return 1;
 		},
+		'relationship_types_v1' => sub {
+			# Relationships are one of friend/stranger/enemy now, numbered on the
+			# place scale. The old multiple_select lists and their words are mapped
+			# (the most negative word in a list wins), so a person's card opens on
+			# the right choice instead of a blank select.
+			my $rows = &db_query("select uuid, app, value from settings where setting = 'app_measures' and value like '%relationship%'")->hashes || [];
+			my $n = 0;
+			foreach my $row ( @{$rows} ) {
+				my $am = eval { decode_json($row->{'value'}) } || {};
+				next unless ref $am eq 'HASH' && exists $am->{'relationship'};
+				my $old = ref $am->{'relationship'} eq 'HASH' ? $am->{'relationship'}->{'value'} : $am->{'relationship'};
+				my $new = &subs::relationship_value($old);
+				next unless length $new;
+				my $current = ref $am->{'relationship'} eq 'HASH' ? ($am->{'relationship'}->{'value'} // '') : ($am->{'relationship'} // '');
+				next if "$current" eq $new;
+				if (ref $am->{'relationship'} eq 'HASH') { $am->{'relationship'}->{'value'} = $new; }
+				else { $am->{'relationship'} = { value => $new }; }
+				&db_update('settings', { value => encode_json($am), server_time => &rightNow() }, { uuid => $row->{'uuid'} });
+				$n++;
+			}
+			&visibility_cache_clear();
+			&say_it("backfill relationship_types_v1: normalised $n relationship value(s)");
+			return 1;
+		},
 		'settings_dedupe_null_keys' => sub {
 			# A settings row is keyed by (app, setting, device, subsetting), but the
 			# setter's delete used '=', so an undef in any key column (a missing
@@ -32606,7 +32880,7 @@ sub clock_apps {
 			my $a = $r->{'app'};
 			next unless defined $a && length $a;
 			next if $a =~ /^__/;
-			next if (($visible{$a} // 'checked') eq 'unchecked');
+			next if &visibility_hidden_for($visible{$a});
 			next if $seen{$a}++;
 			push @out, { value => $a, label => &format_name($a) };
 		}

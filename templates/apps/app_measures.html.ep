@@ -32,10 +32,12 @@
 		<% next if $m->{'type'} eq 'none'; %>
 		<b><%= &subs::format_name($meas) %></b><br>
 		<% if ($m->{'type'} eq 'select') { %>
-			<select class="app_measure" measure="<%= $meas %>" value="<%= $am->{$meas}->{'value'} %>" unit="<%= $am->{$meas}->{'unit'} %>" style="width:100%;">
+			<% my $mval = $am->{$meas}->{'value'}; %>
+			<% $mval = &subs::relationship_value($mval) if $meas eq 'relationship'; %>
+			<select class="app_measure" measure="<%= $meas %>" value="<%= $mval %>" unit="<%= $am->{$meas}->{'unit'} %>" style="width:100%;">
 				<option value=""></option>
 				<% foreach my $me ( sort @{$m->{'options'}} ) { %>
-					<option <% if ($me eq $am->{$meas}) { %>selected <% } %> value="<%= $me %>"><%= &subs::format_name($me) %></option>
+					<option <% if (defined $mval && $me eq $mval) { %>selected <% } %> value="<%= $me %>"><%= &subs::format_name($me) %></option>
 				<% } %>
 			</select>
 		<% } elsif ($m->{'type'} eq 'multiple_select') { %>

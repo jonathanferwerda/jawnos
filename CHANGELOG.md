@@ -3,6 +3,11 @@
 Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 (`v<version> - ...`) mark the points where `VERSION` was bumped.
 
+## 2026-10-27
+
+- v0.1.1466 - visibility: an app's visibility is a dropdown (Off, On, Private, Public, Dangerous), not a checkbox, and its levels are the numbered place scale (private 1, public 2, dangerous 3). A place level shows the app while the room is at or below it; On ignores the room, Off always hides. A person's relationship is one numbered measure - Friend 1, Stranger 2, Enemy 3 - set on their People card; an Enemy present raises the room to dangerous, so it hides Private and Public apps but not Dangerous or On. junderground grades its roster from the same People map and keeps Friends/Enemies as a fallback. The Internet domain-to-app picker suggests only apps visible here and now, and Configure's list includes hidden apps so they can be turned back on.
+- v0.1.1466 - relationship backfill: the old multiple_select relationship lists and their words are normalised to Friend, Stranger or Enemy (the most negative word wins), so a person's card opens on the right choice instead of a blank select. Gallery, Folders, Music, Clock, search, Travel and the evaluation all read the same shared visibility rule.
+
 ## 2026-10-26
 
 - v0.1.1459 - launcher: the native home's JawnOS row is now the start menu's own app list (a public `/apps/start` extracts the names, titles and PNG icon paths from that markup), a second row shows the clothesline of running apps, and the installed apps are grouped into Communication, Games, System, Accessories and Other with drag-and-drop between the shelves. The home wears the manager's background colour and ink, and re-reads them every ten seconds so a theme change lands on the launcher. The clothesline and the theme are read from the house database, because the manager session is HttpOnly and the app gate refuses an HTTP poll from the home.

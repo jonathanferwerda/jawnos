@@ -51,6 +51,7 @@
 	#configuration_container .app_block_name .name_change { width:100%; font-weight:600; }
 	#configuration_container .app_checks { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin:8px 0; font-size:13px; }
 	#configuration_container .app_checks > span { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border:1px solid var(--line); border-radius:999px; background:var(--panel-2, var(--panel)); }
+	#configuration_container .app_checks > .app_visibility_field select { padding:3px 7px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); font:inherit; font-size:13px; }
 	#configuration_container .app_abilities { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:6px; margin-top:10px; align-items:start; }
 	#configuration_container .app_abilities_title { grid-column:1 / -1; margin:8px 0 0; font-size:15px; opacity:.85; }
 	#configuration_container .configuration_ability_container { display:block; min-width:0; }
@@ -160,7 +161,16 @@
 							</select>
 						</span>
 						<span class="app_checks">
-							<% foreach my $check_set ( qw/visible unique permanent/ ) { %>
+							<span class="app_visibility_field" hint="<%= &subs::ui('On is always visible. Private, Public and Dangerous follow the place you are in; an enemy present hides the place levels below Dangerous.') %>">
+								<label><%= &subs::ui('Visibility') %></label>
+								<% my $vis = &subs::visibility_normalize($appts->{$a}->{'setting'}->{'visible'}); %>
+								<select app="<%= $a %>" class="configure_visibility" setting="visible">
+									<% foreach my $opt ( qw/off on private public dangerous/ ) { %>
+										<option value="<%= $opt %>" <% if ($vis eq $opt) { %>selected="selected"<% } %>><%= &subs::ui(ucfirst($opt)) %></option>
+									<% } %>
+								</select>
+							</span>
+							<% foreach my $check_set ( qw/unique permanent/ ) { %>
 								<span>
 									<input app="<%= $a %>" class="configure_checkbox" value="checked" type="checkbox" 
 										<% if ($appts->{$a}->{'setting'}->{$check_set} eq "checked") { %> checked="checked" <% } %> setting="<%= $check_set %>" id="configure_visibility_<%= $a %>"></input> <%= &subs::format_name($check_set) %>

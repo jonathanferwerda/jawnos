@@ -76,7 +76,7 @@
 	<% foreach my $a ( keys %{$ghome} ) {
 		<% foreach my $f ( @{$ghome->{$a}} ) { %>
 			<% my $aset = $asettings->{$f->{'app'}} || &subs::settings_grabber({ app => $f->{'app'}, settings => ['main_image','visible'] }); %>
-			<% next if $aset->{'visible'} ne 'checked' && $revealed == 0; %>
+			<% next if &subs::visibility_hidden_for($aset->{'visible'}) && $revealed == 0; %>
 			<% unless (-e $f->{'f'} || $f->{'remote_uuid'}){ $subtractors++; next; } %>
 			<% next if grep { $_->{'uuid'} eq $f->{'uuid'} } @{$processed_files};	push @{$processed_files}, $f; %>
 			<%# a stored thumbnail is decrypted directly: asking /file_open for a

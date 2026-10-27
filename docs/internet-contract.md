@@ -123,8 +123,10 @@ is therefore offline and independent of the manager. It filters
 - `POST /manager/internet/site/app` with `domain`, `app` (empty clears) stores
   the mapping in settings `internet.domain_apps` (JSON, synced).
 - In the page, the domain opens the native browser, the app opens
-  `appointmentGrabber(app)`, and a select assigns the app. The active tab is
-  remembered in `localStorage.internet_tab`.
+  `appointmentGrabber(app)`, and a type-in picker assigns the app. The picker
+  offers only the apps the visibility rule shows here and now (an app turned
+  off, or kept out of sight by the current place or an enemy present, is not
+  suggested). The active tab is remembered in `localStorage.internet_tab`.
 - Cookies persist in both browsers: Android's WebView cookie store (flushed on
   pause/stop) and the desktop browser's own `WebsiteDataManager` under
   `~/.local/share/jawnos/browser`.

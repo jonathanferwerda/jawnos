@@ -83,7 +83,6 @@
 			$('#jg_handle').val(r.handle || '');
 			$('#jg_known').val(r.known || '');
 			$('#jg_blacklist').val(r.blacklist || '');
-			$('#jg_hostile').val(r.hostile || '');
 			jgFriends = {};
 			(r.friends || []).forEach(function (who) { jgFriends[who] = 1; });
 		});
@@ -1119,7 +1118,7 @@
 		var gradeBox = $('<div class="jg_row">').appendTo(box);
 		$('<span class="jg_grade">').attr('data-grade', grade.grade || 'empty')
 			.text(jgT(grade.grade || 'empty')).appendTo(gradeBox);
-		if (grade.block) { $('<span class="jg_block">').text(jgT('Blacklisted person in this room')).appendTo(gradeBox); }
+		if (grade.block) { $('<span class="jg_block">').text(jgT('An enemy is in this room')).appendTo(gradeBox); }
 
 		var self = jgSelfFor(handle, room);
 		var others = roster.filter(function (entry) { return entry.subject && entry.subject !== self; });
@@ -1148,7 +1147,7 @@
 	$(document).on('click', '#jg_save', function () {
 		jgPost('/manager/junderground/config', {
 			url: $('#jg_url').val(), handle: $('#jg_handle').val(),
-			known: $('#jg_known').val(), blacklist: $('#jg_blacklist').val(), hostile: $('#jg_hostile').val()
+			known: $('#jg_known').val(), blacklist: $('#jg_blacklist').val()
 		}, function (r) {
 			$('#jg_status').text(r.ok ? jgT('Saved') : (r.error || ''));
 		});
