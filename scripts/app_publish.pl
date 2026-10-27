@@ -32,6 +32,7 @@ my ($repo, $tag, $apk, $dry_run, $product_opt) = ('jonathanferwerda/jawnos', 're
 # (a real changelog, written when the build is made) plus the version codes
 # that are actually staged below it. A release with no notes still publishes,
 # but the text is then only the build list.
+our $release_date = '';
 sub release_notes {
 	my (@current) = @_;
 	my $notes_path = "$root/docs/app-release-notes.md";
@@ -40,6 +41,7 @@ sub release_notes {
 		my $text = read_file($notes_path);
 		if ($text =~ /^##\s+(.+?)\n(.*?)(?=^##\s+|\z)/ms) {
 			my ($heading, $section) = ($1, $2);
+			($release_date) = $heading =~ /^(\d{4}-\d{2}-\d{2})/;
 			$section =~ s/\s+\z//;
 			$body = "## $heading\n\n$section";
 		}
@@ -130,10 +132,11 @@ if ($dry_run) {
 # Create the release once (empty on first use), then upload each product's APK
 # and manifest. A fixed tag means the download URLs never move.
 my @initial = map { "$_->{'product'} $_->{'vn'} (versionCode $_->{'vc'})" } @jobs;
+my $initial_notes = release_notes(@initial);
 my $exists = system('gh', 'release', 'view', $tag, '--repo', $repo) == 0;
 unless ($exists) {
 	system('gh', 'release', 'create', $tag, '--repo', $repo,
-		'--title', 'JawnOS app releases', '--notes', release_notes(@initial), '--latest') == 0
+		'--title', 'JawnOS app releases' . ($release_date ? " — $release_date" : ''), '--notes', $initial_notes, '--latest') == 0
 		or die "publish failed: could not create release $tag\n";
 }
 
@@ -165,7 +168,9 @@ foreach my $p ( 'app', 'api' ) {
 	push @current, "$m->{'product'} $m->{'versionName'} (versionCode $m->{'versionCode'})";
 }
 if (@current) {
-	system('gh', 'release', 'edit', $tag, '--repo', $repo, '--notes', release_notes(@current)) == 0
+	my $notes = release_notes(@current);
+	my @title = $release_date ? ('--title', "JawnOS app releases — $release_date") : ();
+	system('gh', 'release', 'edit', $tag, '--repo', $repo, @title, '--notes', $notes) == 0
 		or warn "could not update the release notes for $tag\n";
 }
 
