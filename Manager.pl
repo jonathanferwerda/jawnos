@@ -1545,10 +1545,144 @@ sub run_thumb_command {
 }
 
 our %file_relay_down;
+# A remote track is streamed to the player as it arrives. The ordinary relay
+# reads the whole body into a scalar and hands it to render(): a film on an
+# archive drive is gigabytes, so the browser waited for the entire download,
+# the manager held two copies of it, and every seek re-read the whole file.
+# The peer's Range answer is passed through, so <video> can start at once and
+# seek; only /play takes this path (pictures stay on the bounded relay above).
+sub remote_relay_media($c) {
+	my $agent = &subs::remote_agent_for($c->param('remote_uuid'));
+	if ($agent->{'error'} || !$agent->{'manager'}) {
+		$c->render(text => 'none');
+		return;
+	}
+	my $ua = $agent->{'ua'};
+	my $url = Mojo::URL->new($agent->{'manager'} . '/play');
+	my $params = $c->req->query_params->to_hash;
+	# the peer has no session for this window: the peer signature is the proof,
+	# and a forwarded token would be meaningless there
+	delete @{$params}{qw/remote_uuid unlock subprocess/};
+	$params->{'remoted'} = 'yes';
+	$url->query($params);
+
+	# Ask for one byte first. The answer carries the file's length, its type and
+	# whether the peer really speaks Range - and it cannot flood this worker even
+	# if the peer ignores Range, because the probe aborts after a few kilobytes.
+	# The player's own Range is then answered from those numbers, so the status
+	# and Content-Range are set before the first body byte: Mojolicious sends its
+	# headers with the first write and cannot change them afterwards.
+	my $probe = $ua->inactivity_timeout(8)->connect_timeout(6)->request_timeout(12)->max_response_size(4096)
+		->get($url, { Range => 'bytes=0-0' });
+	my $pres = $probe ? $probe->res : undef;
+	my $type = $pres ? $pres->headers->content_type : undef;
+	my $size;
+	if ($pres && !$pres->error) {
+		my $content_range = $pres->headers->header('Content-Range');
+		if (defined $content_range && $content_range =~ m{^bytes\s+\d+-\d+/(\d+)}i) {
+			$size = $1;
+		}
+		elsif ($pres->code == 200) {
+			my $length = $pres->headers->content_length;
+			$size = $length if defined $length && $length =~ /^\d+$/;
+		}
+	}
+	# a peer that ignores Range answers the probe with the whole file; the probe's
+	# size cap ends that read, and the stream below falls back to a plain 200.
+	# A peer that has not been updated (or whose own gate refused) answers its
+	# app-required page with a tiny body instead; that is not a track.
+	if ($pres && !$pres->error && $pres->code == 200) {
+		my $ctype = $pres->headers->content_type || '';
+		if ($ctype =~ m{^text/html} && length($pres->body // '') < 64) {
+			$c->render(text => 'none');
+			return;
+		}
+	}
+	unless ($pres && $pres->code && $pres->code < 400) {
+		$c->render(text => 'none');
+		return;
+	}
+
+	# what the player asked for, clamped to what the peer said it holds
+	my ($start, $end) = (0, defined $size ? $size - 1 : 0);
+	my $ask = $c->req->headers->range;
+	my $client_ranged = 0;
+	if (defined $size && defined $ask && $ask =~ m{^bytes=(\d*)-(\d*)}i) {
+		my ($s, $e) = ($1, $2);
+		if ($s eq '' && $e ne '') {
+			$start = $size - int($e);
+			$start = 0 if $start < 0;
+			$end = $size - 1;
+			$client_ranged = 1;
+		}
+		elsif ($s ne '') {
+			$start = int($s);
+			$end = ($e ne '') ? int($e) : $size - 1;
+			$client_ranged = 1;
+		}
+		$start = 0 if $start < 0;
+		$end = $size - 1 if $end > $size - 1;
+	}
+	if (defined $size && $start >= $size) {
+		$c->res->code(416);
+		$c->res->headers->header('Content-Range' => 'bytes */' . $size);
+		$c->render(text => '');
+		return;
+	}
+
+	$c->res->headers->content_type($type) if defined $type && length $type;
+	$c->res->headers->cache_control('private, no-cache');
+	if (defined $size && $client_ranged) {
+		$c->res->code(206);
+		$c->res->headers->header('Content-Range' => "bytes $start-$end/$size");
+		$c->res->headers->content_length($end - $start + 1);
+		$c->res->headers->accept_ranges('bytes');
+	}
+	elsif (defined $size) {
+		$c->res->code(200);
+		$c->res->headers->content_length($size);
+		$c->res->headers->accept_ranges('bytes');
+	}
+	else {
+		# the peer answered a Range probe with the whole file: stream it as a
+		# plain 200, because there is no length to divide up (no seeking)
+		$c->res->code(200);
+	}
+
+	# the stream itself: a paused player sends nothing for a while, so only a
+	# stalled peer trips the inactivity bound; the client ends the session
+	$ua->inactivity_timeout(30)->connect_timeout(10)->request_timeout(0)->max_response_size(0);
+	my $stream_headers = {};
+	$stream_headers->{'Range'} = "bytes=$start-$end" if defined $size;
+	my $tx = $ua->build_tx(GET => $url, $stream_headers);
+	my $client_gone = 0;
+	$c->on(finish => sub { $client_gone = 1 });
+	$tx->res->content->on(read => sub {
+		my ($content, $bytes) = @_;
+		return if $client_gone;
+		$c->write($bytes);
+	});
+	# mark the response dynamic before the first byte arrives, so the request is
+	# not finished empty while the peer is still opening the file
+	$c->write(undef);
+	$ua->start($tx => sub { $c->finish unless $client_gone });
+}
+
 sub rock_and_roll($c) {
 	my $man = 'rejected';
 	my $file = $c->param('file');
+	# A pinned peer is a house machine: the archive rail already trusts one by
+	# signature, and a remote library's covers and tracks come through this same
+	# relay. Its stored session cookie dies with that machine's own tree, so a
+	# track used to answer "no" while the signed manifest still worked. The
+	# signature is the stronger proof, so it admits a file read on its own.
+	my $peer_signed = &app_peer_ok($c) ? 1 : 0;
 	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
+		# a track is streamed; everything else on this relay is a bounded body
+		if ($c->req->url->path eq '/play') {
+			&remote_relay_media($c);
+			return;
+		}
 		my $ru = $c->param('remote_uuid');
 		# A peer that just timed out on a picture is not asked again for a minute.
 		# Without this, a gallery of covers kept on an unreachable machine asked
@@ -1590,7 +1724,10 @@ sub rock_and_roll($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();
 
 	my $mag;
-	unless ( $c->session('authentication') eq 'approved' ) {
+	if ($peer_signed) {
+		$man = 'approved';
+	}
+	elsif ( $c->session('authentication') ne 'approved' ) {
 		my $uuid = $c->param('uuid');
 		my $fq = &subs::db_query('select * from magazine where uuid = ?',$uuid );
 		$mag = $fq->hashes->[0];
@@ -47344,6 +47481,17 @@ websocket '/manager/ws' => sub ($c) {
 	my $connection_id = $c->tx;
 	$connection_id = $connection_id->connection;
 	my $code_rev = &subs::code_revision();
+	# The tree's boot, so the client can tell a restart from a socket that merely
+	# flapped. A restart clears every media grant (padlock_seed_default); the pid
+	# file is written once by the master at boot, so its pid and mtime change only
+	# then. Keyed on both, because a quick restart can reuse a pid.
+	my $boot_file = &subs::home('~/.president/pid');
+	my $boot_stamp = '';
+	if (-e $boot_file) {
+		my $boot_pid = eval { read_file($boot_file) } // '';
+		$boot_pid =~ s/\s+//g;
+		$boot_stamp = ((stat($boot_file))[9] || 0) . '-' . $boot_pid;
+	}
 	my $init_data = {
 		browser_tab_id => $browser_tab_id,
 		browser_tab => $browser_tab,
@@ -47403,6 +47551,10 @@ websocket '/manager/ws' => sub ($c) {
 	# version the client compares before deciding how to follow an update
 	$init_data->{'revision_parts'} = $code_rev->{'parts'};
 	$init_data->{'version'} = &subs::jawn_version();
+	# the boot rides the wire like the revision: the websockets row is a session
+	# record, and an insert that carries a column the table does not have is
+	# refused
+	$init_data->{'boot'} = $boot_stamp;
 	&Websocket::send($app, $init_data);
 	if ($c->param('app') eq 'music') {
 		if ($log_me eq 'on') {

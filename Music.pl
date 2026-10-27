@@ -1793,7 +1793,9 @@ sub music_archive_entries($data) {
 		my $key = $lookup->{'location'} . '|' . $lookup->{'remote_uuid'};
 		my $manifest = $fetched{$key};
 		unless (defined $manifest) {
-			$manifest = &subs::archive_manifest_fetch({ remote_uuid => $lookup->{'remote_uuid'}, location => $lookup->{'location'} });
+			# the listing is an errand, not a transfer: a sleeping archive machine
+			# must not hold the worker (and the window) for the long default
+			$manifest = &subs::archive_manifest_fetch({ remote_uuid => $lookup->{'remote_uuid'}, location => $lookup->{'location'}, timeout => 6 });
 			$fetched{$key} = $manifest;
 		}
 		next if $manifest->{'error'};
@@ -2275,7 +2277,7 @@ sub song_maker($data) {
 	my $computer_name = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' });
 	my $file_informations = {};
 	my ($cache_artists,$cache_albums);
-	if ($data->{'settings'}-{'all_albums'} eq 'yes') {
+	if ($data->{'settings'}->{'all_albums'} eq 'yes') {
 		$cache_albums = &subs::cache_get({ app => 'music', context => 'albums' }) || {};
 	}
 	if ($data->{'settings'}->{'all_artists'} eq 'yes') {
@@ -2305,7 +2307,27 @@ sub song_maker($data) {
 	# covers live in the album folder, so tracks that share one are listed once
 	my %thumb_cache;
 
-	splice @local_files, $max_files;
+	# An archived track is not in the local walk's count, and its path lives on
+	# another machine ('/mnt/...' sorts after this disk's '/home/...'), so
+	# slicing the combined list outright dropped every archive row: a library
+	# with more than max_files local tracks never showed what the archive held.
+	# Spend the budget on local files and keep every archive row.
+	if (%{$archive}) {
+		my $local_budget = $max_files - scalar(keys %{$archive});
+		$local_budget = 0 if $local_budget < 0;
+		my (@kept, $locals);
+		$locals = 0;
+		foreach my $path ( @local_files ) {
+			if ($archive->{$path}) { push @kept, $path; next; }
+			next if $locals >= $local_budget;
+			push @kept, $path;
+			$locals++;
+		}
+		@local_files = @kept;
+	}
+	else {
+		splice @local_files, $max_files;
+	}
 	if ($now_playing->{'file'}) {
 		my @is = grep { $_ eq $now_playing->{'file'} } @local_files;
 		unshift @local_files, $now_playing->{'file'} unless grep { $_ eq $now_playing->{'file'} } @local_files;
