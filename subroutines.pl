@@ -6787,6 +6787,9 @@ sub watch_room_payload() {
 		$watch_settings->{$k}->{'toggle'} = &subs::setting_grabber({ app => $watch_settings->{$k}->{'app'}, setting => 'toggle' }) eq 'on' ? 1 : 0;
 	}
 	$watch_settings = &subs::embedded_internal_jobs($watch_settings);
+	# The board refuses a payload that has fewer components than this: a BLE
+	# reassembly that loses a part must not replace a full role with a partial one.
+	$watch_settings->{'__specs'}->{'component_count'} = scalar(grep { !/^__/ } keys %{$watch_settings});
 	return $watch_settings;
 }
 
@@ -10250,7 +10253,17 @@ sub embedded_internal_jobs() {
 			foreach my $ko ( keys %{$op_d} ) {
 				if ($op_d->{$ko}->{'app'} eq $op_d->{$k}->{'app'} && $gb::embedded_components->{$op_d->{$ko}->{'component'}}->{'direction'} eq 'output') {
 					$op_d->{'__specs'}->{'internal_jobs'}->{$k} = [] if !$op_d->{'__specs'}->{'internal_jobs'}->{$k};
-					push @{$op_d->{'__specs'}->{'internal_jobs'}->{$k}}, $op_d->{$ko};
+					# The board only needs the wiring. rgb is an array, and the Pico's
+					# JSONVar re-stringify turns [190,253,231] into invalid [,,], which
+					# makes the whole internal_jobs unreadable on the device.
+					my %job = %{$op_d->{$ko}};
+					delete @job{qw/colour rgb shorthand_name direction measure movement/};
+					# Strings only: the Pico re-stringifies this map, and JSONVar writes a
+					# numeric value as an empty token, which makes the map unparseable.
+					$job{'toggle'} = (($job{'toggle'} // 0) ? '1' : '0');
+					$job{'inverted'} = (defined $job{'inverted'} ? ($job{'inverted'} ? '1' : '0') : '0');
+					$job{'numero'} = '' . ($job{'numero'} // '');
+					push @{$op_d->{'__specs'}->{'internal_jobs'}->{$k}}, \%job;
 				}
 			}
 		}
