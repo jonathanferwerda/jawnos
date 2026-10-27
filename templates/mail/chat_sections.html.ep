@@ -182,6 +182,7 @@
 		<div id="jg_rooms" class="jg_rooms"></div>
 		<div id="jg_detail" class="jg_detail"></div>
 		<div id="jg_media" class="jg_row jg_media" aria-live="polite"></div>
+		<div id="jg_broadcast" class="jg_broadcast"></div>
 	</div>
 <% } elsif ($settings->{'subsection'} eq 'lora') { %>
 	<% my $lw = $lorawan || {}; %>

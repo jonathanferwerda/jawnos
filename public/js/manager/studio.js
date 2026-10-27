@@ -3245,3 +3245,28 @@ $(document).on('change', '.studio_config', function() {
 		studioRetriever();
 	}
 });
+
+// A junderground room can broadcast the studio: the master mix as one stream,
+// and every live channel's recorded signal as its own, so a listener can hear
+// the parts separately (the same signal the recorder gets, post-pedal).
+window.jawnosMediaSources = window.jawnosMediaSources || {};
+
+window.jawnosMediaSources.studio = function () {
+	var ctx = studioContext();
+	if (!ctx) { return null; }
+	if (!studioAudio.broadcastDest) {
+		studioAudio.broadcastDest = ctx.createMediaStreamDestination();
+		studioAudio.master.connect(studioAudio.broadcastDest);
+	}
+	return studioAudio.broadcastDest.stream;
+};
+
+window.jawnosMediaSources.studioChannels = function () {
+	var out = [];
+	Object.keys(studioAudio.channels).sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (ch) {
+		var c = studioAudio.channels[ch];
+		if (!c || !c.recDest || !c.recDest.stream) { return; }
+		out.push({ id: 'studio_' + ch, label: 'Studio ' + ch, kind: 'audio', stream: c.recDest.stream });
+	});
+	return out;
+};
