@@ -29,6 +29,7 @@
 
 		<% $am->{$meas} = {} unless eval { keys %{$am->{$meas}} }; %>
 		<% my $m = $am->{$meas} || $gb::pos->{$settings->{'pos'}}->{'app_measures'}->{$meas}; %>
+		<% if ($meas eq 'relationship') { my $gbrel = $gb::pos->{'person'}->{'app_measures'}->{'relationship'}; $m = $gbrel if $gbrel; } %>
 		<% next if $m->{'type'} eq 'none'; %>
 		<b><%= &subs::format_name($meas) %></b><br>
 		<% if ($m->{'type'} eq 'select') { %>
