@@ -762,23 +762,6 @@ our %topic = (
 		],
 		related => [ 'mailbox', 'phone', 'email' ]
 	},
-	'pen' => {
-		title => 'Pen', category => 'apps', app => 'pen',
-		templates => [ 'templates/apps/pen.html.ep', 'templates/mail/pen_sections.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/pen.js' ],
-		verified => '2026-10-16',
-		summary => 'The assistant conversations, each with its own model and voice.',
-		body => [
-			'Pen is the house\'s assistant, split out of the mailbox as an app of its own: a row of conversations, each a picked model with its own name and system message, and one thread of letters per conversation.',
-			'Tick a conversation to read and write on it; the newest row (no tick) is a new one waiting for its name. The trash arms first, so a slip does not throw a conversation away.',
-			'Model choices and provider keys live under Configure → Plat, so every assistant is set in one place - a conversation without a model of its own uses the one picked there.'
-		],
-		steps => [
-			'Open Pen from the start menu.',
-			'Pick a conversation, or name the new one and choose its model.',
-			'Write in the box below the conversation and send; the reply lands on the same thread.'
-		],
-		related => [ 'mailbox', 'configure', 'assistant' ]
-	},
 	'email' => {
 		title => 'Email', category => 'apps', app => 'email',
 		templates => [ 'templates/apps/email.html.ep', 'templates/mail/email_rail.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_rows.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/email.js' ],
@@ -1182,17 +1165,23 @@ our %topic = (
 		related => [ 'appointments', 'tasks' ]
 	},
 	'search' => {
-		title => 'Search', category => 'features',
-		verified => '2026-10-22',
-		summary => 'Find an app by name, from wherever the box sits.',
+		title => 'Search', category => 'apps', app => 'search',
+		templates => [ 'templates/apps/search.html.ep', 'public/js/manager/search.js' ],
+		verified => '2026-10-27',
+		summary => 'One window for the house, the web and the Guide, with a tab for each.',
 		body => [
-			'Search finds apps by name. The box can live in the start menu, the taskbar or the dock, and it filters the catalogue as you type.',
-			'It searches the house\'s real apps - the ones the menu opens and the appointments you have made - not just the ones already on screen. Each result shows the app\'s own icon beside its name.',
-			'The list follows the house while it is open: an app whose appointment and settings are deleted drops out, and a changed pos or main image shows the new picture without a reload.',
-			'The list puts the apps you have opened from it most recently at the top, so the one you reach for keeps coming back under the box. An exact name still wins: typing Music puts Music first.',
-			'Press the down or up arrow to walk the results and Enter to open the one you have landed on; Escape closes the list. Typing again clears the choice, and Enter with no highlighted result keeps the box\'s usual behaviour for the typed name.'
+			'The search box in the start menu, the taskbar or the dock still filters apps as you type. The magnifier beside it opens Search, the app: it keeps your words and lets you choose what to search.',
+			'Apps finds the house\'s own apps and the appointments you have made, showing each app\'s own icon beside its name; press a result to open it.',
+			'Web asks each search engine named in config.json (Google, DuckDuckGo, Wikipedia and any others listed there) and shows the links it finds under the engine\'s name. A link opens in the JawnOS Browser; the Search window stays where it is.',
+			'AI asks the model chosen for the Guide under Configure → Plat. It answers in plain text in the same window; press Enter to ask, so typing a question does not spend a call on every letter.',
+			'Only the tab you are on is searched, and the app remembers that tab the next time it opens. Type to search Apps and Web; Enter asks the AI.'
 		],
-		related => [ 'start_menu', 'dock' ]
+		steps => [
+			'Type in the dock\'s search box and press the magnifier, or open Search from the start menu.',
+			'Choose Apps, Web or AI across the top and type your words.',
+			'Press a result to open the app, or a web link to read it in the JawnOS Browser.'
+		],
+		related => [ 'start_menu', 'dock', 'internet', 'assistant' ]
 	},
 	'hints' => {
 		title => 'Hints', category => 'features',

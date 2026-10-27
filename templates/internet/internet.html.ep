@@ -1,6 +1,20 @@
 <%
 	my $websites = &subs::db_query('select * from websites order by timestamp desc')->hashes || [];
 %>
+<style>
+/* The Browser owns its tabs: the window's title bar would be a second bar in
+   the same place, so this window draws without one and its contents fill it. */
+.wind[app="internet"] .top_navbar { display:none !important; }
+.wind[app="internet"] .window_contents { padding-top:0 !important; height:100% !important; }
+/* The site's app is picked by typing, the way the dock's search works: an
+   input, and the matching apps under it. */
+.internet_site_picker { position:relative; display:inline-block; min-width:120px; width:100%; }
+.internet_site_app_input { width:100%; box-sizing:border-box; padding:4px 6px; }
+.internet_app_results { position:absolute; left:0; right:0; top:100%; z-index:60; background:var(--panel); border:1px solid var(--line); max-height:190px; overflow:auto; display:none; }
+.internet_app_result { padding:5px 7px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.internet_app_result:hover, .internet_app_result.selected { background:var(--panel-2); }
+.internet_app_clear { opacity:0.7; }
+</style>
 <div id="internet" style="position:relative;width:100%;height:100%;background-color:var(--panel);">
 	<div id="internet_tabs" style="display:flex;gap:6px;padding:8px 10px;border-bottom:1px solid var(--line);">
 		<span class="internet_tab selected" data-internet-tab="web" onclick="internetTab('web');"><%= &subs::lang('web') %></span>
