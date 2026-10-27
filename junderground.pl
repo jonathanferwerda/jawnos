@@ -161,7 +161,7 @@ sub jg_register {
 	return &jg_call($c, 'POST', '/v1/houses', $jg_json->encode($signed), 0);
 }
 
-sub jg_dial {
+sub jg_dial_query {
 	my ($c, $picks) = @_;
 	my @qs;
 	foreach my $kind (sort keys %{$picks || {}}) {
@@ -172,6 +172,43 @@ sub jg_dial {
 	}
 	my $path = '/v1/dial' . (@qs ? '?' . join('&', @qs) : '');
 	return &jg_call($c, 'GET', $path, '', 0);
+}
+
+# The switch's identity for a room is a slug, and its *name* is in the
+# administrator's language. A value the switch does not know comes back in
+# `unknown`, so it is translated here (through the Guide's engine, cached) and
+# the dial is repeated once: two houses dialling Munich in two languages then
+# arrive at the same room. With no model configured the first answer stands.
+sub jg_dial {
+	my ($c, $picks) = @_;
+	my $first = &jg_dial_query($c, $picks);
+	return $first if $first->{'error'};
+	return $first unless ref $first->{'unknown'} eq 'HASH' && %{ $first->{'unknown'} };
+
+	my $target = $first->{'language'} || '';
+	my $house = &subs::language();
+	return $first unless length $target && $target ne $house;
+
+	my @values = grep { defined $_ && length $_ } values %{ $first->{'unknown'} };
+	return $first unless @values;
+
+	my $engine = &subs::translate_engine({ to => $target, strings => \@values });
+	return $first unless $engine->{'ok'} && ref $engine->{'translations'} eq 'HASH';
+
+	my %next = %{ $picks || {} };
+	my $changed = 0;
+	foreach my $kind (keys %{ $first->{'unknown'} }) {
+		my $value = $first->{'unknown'}{$kind};
+		next unless defined $value && length $value;
+		my $translated = $engine->{'translations'}{$value};
+		next unless defined $translated && length $translated && $translated ne $value;
+		$next{$kind} = $translated;
+		$changed = 1;
+	}
+	return $first unless $changed;
+
+	my $second = &jg_dial_query($c, \%next);
+	return $second->{'error'} ? $first : $second;
 }
 
 sub jg_room {

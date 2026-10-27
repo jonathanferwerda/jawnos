@@ -168,6 +168,7 @@
 		<div class="jg_row jg_canonical_row">
 			<span class="jg_scope"><%= &subs::ui('One room in every language') %></span>
 			<span id="jg_canonical" class="jg_scope jg_canonical" aria-live="polite"></span>
+			<span id="jg_unknown" class="jg_scope jg_unknown" aria-live="polite"></span>
 		</div>
 		<details class="jg_relations">
 			<summary><%= &subs::ui('People in the house') %></summary>
@@ -180,6 +181,7 @@
 		<input id="jg_ticket" class="jg_ticket" placeholder="<%= &subs::ui('Ticket or pass code (optional)') %>">
 		<div id="jg_rooms" class="jg_rooms"></div>
 		<div id="jg_detail" class="jg_detail"></div>
+		<div id="jg_media" class="jg_row jg_media" aria-live="polite"></div>
 	</div>
 <% } elsif ($settings->{'subsection'} eq 'lora') { %>
 	<% my $lw = $lorawan || {}; %>
