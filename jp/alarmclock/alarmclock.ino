@@ -90,6 +90,14 @@ int64_t now_ms() {
   return epoch_ms + (uint32_t)(millis() - epoch_ref);
 }
 
+// The house stores UTC; now_ms() is local (the LCD uses it). An event carries
+// UTC seconds so an appointment written from a switch or button is not hours
+// old. Zero means "no clock yet" and the manager falls back to its own time.
+String event_timestamp() {
+  if (!time_defined) { return "0"; }
+  return String((double)((now_ms() / 1000) - offset), 0);
+}
+
 void set_epoch_seconds(int64_t seconds) {
   epoch_ms = seconds * 1000LL;
   epoch_ref = millis();
@@ -117,8 +125,8 @@ int rebooting = 0;
 // reassembler reads them unchanged. The stack runs on the CYW43 async context,
 // so there is no run loop to service here.
 struct jawn_time;
-String led_toggle(int pin, String state);
-String relay_toggle(int pin, String state);
+String led_toggle(int pin, String state, bool persist = true);
+String relay_toggle(int pin, String state, bool persist = true);
 String servo_toggle(int pin, String state);
 void config_writer();
 void config_init();
@@ -195,6 +203,31 @@ static int64_t jint(JSONVar v) {
 }
 
 static bool pin_ok(int pin) { return pin >= 0 && pin <= 29; }
+
+// A JSONVar left undefined or null serializes as an empty token, which makes
+// the whole config file invalid on the next boot. Treat both as missing.
+static bool cfg_missing(JSONVar v) {
+  String t = JSON.typeof(v);
+  return (t == "undefined" || t == "null");
+}
+
+// Give every optional config key a defined type before it is read or written.
+static void config_ensure() {
+  const char *obj_keys[] = { "relay", "led", "button", "switch", "pot", "servo", "outputs", "jobs", "__specs" };
+  for (size_t i = 0; i < sizeof(obj_keys) / sizeof(obj_keys[0]); i++) {
+    if (cfg_missing(config[obj_keys[i]])) { config[obj_keys[i]] = JSON.parse("{}"); }
+  }
+  const char *str_keys[] = { "houses", "ssid", "password", "ap_ssid", "ap_password", "authorization", "homebase", "homebaseIP", "homebasePreferredIP", "name", "chip_id", "purpose", "model", "pins", "uptime" };
+  for (size_t i = 0; i < sizeof(str_keys) / sizeof(str_keys[0]); i++) {
+    if (cfg_missing(config[str_keys[i]])) { config[str_keys[i]] = ""; }
+  }
+  if (cfg_missing(config["internal_jobs"])) { config["internal_jobs"] = "{}"; }
+  if (cfg_missing(config["offset"])) { config["offset"] = String((long)offset); }
+  if (cfg_missing(config["timestamp"])) { config["timestamp"] = String((long)(now_ms() / 1000)); }
+  // uptime is a diagnostic. A numeric assignment through JSONVar serializes as
+  // an empty token and corrupts the file, so never persist it.
+  config["uptime"] = "";
+}
 
 // A switch/button input must never float. In this firmware HIGH means on (a
 // switch to 3V3) or pressed, so an unconnected pin is pulled down: otherwise it
@@ -302,6 +335,17 @@ static void ble_apply_app_state(String app, String state) {
 static void ble_apply_board_config(JSONVar ctp) {
   if (JSON.typeof(ctp) != "object") { return; }
   JSONVar keys = ctp.keys();
+  // A partial push (only __specs, or a truncated frame) must never erase the
+  // role: the board would come back with no relays and no local switch map.
+  bool has_components = false;
+  for (int i = 0; i < keys.length(); i++) {
+    String k = String(keys[i]);
+    if (!k.startsWith("__")) { has_components = true; break; }
+  }
+  if (!has_components) {
+    Serial.println("[cfg] ignored board_config with no components");
+    return;
+  }
   Serial.println("[cfg] applying " + String(keys.length()) + " keys");
   config["button"] = undefined;
   config["pot"] = undefined;
@@ -671,6 +715,7 @@ void setup() {
   // token. The length is enough to see whether a restore actually persisted.
   Serial.println("[cfg] boot read " + String(jconfig.length()) + " bytes");
   config = JSON.parse(jconfig);
+  if (JSON.typeof(config) != "object") { config = JSON.parse("{}"); }
   config_init();
   Serial.println();
   Serial.println();
@@ -738,8 +783,6 @@ void setup() {
 
       ssid = t_ssid;
       password = t_password;
-      Serial.println(ssid);
-      Serial.println(password);      
       config["ssid"] = ssid;
       config["password"] = password;
       config_writer();
@@ -756,18 +799,20 @@ void setup() {
 
   server.on("/device_query", []() {
     config["chip_id"] = rp2040.getChipID();
-    config["uptime"] = millis();
     config["purpose"] = "microcontroller";
     config["model"] = "Raspberry Pi Pico 2W";
     config["pins"] = "28";
     JSONVar jonfig = config;
+    // uptime is for the reply only, and as a string so JSONVar never mangles it.
+    jonfig["uptime"] = String(millis());
     jonfig["ssid"] = undefined;
     jonfig["password"] = undefined;
     jonfig["ap_password"] = undefined;
     jonfig["ap_ssid"] = undefined;
     String gs = JSON.stringify(jonfig);
     server.send(200, "text/plain", gs);
-    config_writer();
+    // Do not persist the diagnostics (uptime especially): this route used to
+    // write them into config.txt on every query.
   });
 
   server.on("/jobs", []() {
@@ -792,7 +837,6 @@ void setup() {
     config["name"] = server.arg("name");
     Serial.println(server.arg("name"));
     browser_tab_id = server.arg("browser_tab_id");
-    Serial.println(server.arg("authorization"));
     Serial.println(config["name"]);
     // Read the epoch wide. String::toInt() is a 32-bit long, which wraps in
     // 2038; parsing as int64_t keeps the value honest even though time_t in
@@ -984,8 +1028,6 @@ void wifi_start() {
     Serial.println("Got the goods");
     ssid = String((const char *)config["ssid"]);
     password = String((const char *)config["password"]);
-    Serial.println(ssid);
-    Serial.println(password);
     multi.addAP(ssid.c_str(), password.c_str());
   }
   if (multi.run() == WL_CONNECTED && config["ssid"] != "" && config["password"] != "") {
@@ -994,7 +1036,6 @@ void wifi_start() {
     Serial.println("WiFi connected");
     Serial.println("IP address: ");
     Serial.println(WiFi.localIP());    
-    Serial.println(ssid);
     Serial.println("ok");
     wifiState = "connected";
     Serial.println(wifiState);
@@ -1123,9 +1164,11 @@ void handleCreateProcess() {
   }
 }
 void loop() {
+  // Switches first. A board's own switch must not wait behind an HTTP request
+  // or the LCD, and the local internal job below is the fast path to its relay.
+  input_scanner();
   server.handleClient();
   read_time();
-  input_scanner();
   // USB serial: echo (as before) and accept a "JAWNCFG <json>" line from the
   // manager, which writes the stored WiFi and role and then reboots us.
   usb_config_loop();
@@ -1365,17 +1408,13 @@ void input_scanner() {
 
       String name = String(config["button"][buttonKeys[i]]["name"]);
       String jij = config["internal_jobs"];
-      Serial.println(jij);
-      Serial.println(config["button"][buttonKeys[i]]["name"]);
       JSONVar ij = JSON.parse(jij);
       if (ij[name].length() > 0) {
-        Serial.println("I have job for this");
         for (int j = 0; j < ij[name].length(); j++) {
           int p = String(ij[name][j]["numero"]).toInt();
           int inv = String(ij[name][j]["inverted"]).toInt();
           String comp = String(ij[name][j]["component"]);
           String tog = String(config[comp][String(ij[name][j]["numero"])]);
-          Serial.println(comp + " " + String(ij[name][j]["numero"]) + " " + tog);
           String jState = "off";
           toggle = "0";
           if (inv == 1) {
@@ -1396,17 +1435,15 @@ void input_scanner() {
               toggle = "0";
             }
           }
-          Serial.println(comp + " " + String(ij[name][j]["numero"]) + " " + jState + " after");
           if (comp == "relay") {
-            relay_toggle(p, jState);
+            relay_toggle(p, jState, false);
           }
           if (comp == "led") {
-            led_toggle(p, jState);
+            led_toggle(p, jState, false);
           }
         }
 
       }
-      config_writer();
 
       // Prefer the bridge when it is up: a board off its access point still
       // reports its taps, and the machine holding the link applies them. Fall
@@ -1420,7 +1457,7 @@ void input_scanner() {
         bp["room"] = "1";
         bp["button"] = String(spin.toInt());
         bp["toggle"] = String(toggle.toInt());
-        bp["timestamp"] = String((double)(now_ms() / 1000), 0);
+        bp["timestamp"] = event_timestamp();
         bm["payload"] = bp;
         ble_send_json(JSON.stringify(bm));
       }
@@ -1470,11 +1507,8 @@ void input_scanner() {
 
       String name = String(config["switch"][switchKeys[i]]["name"]);
       String jij = config["internal_jobs"];
-      Serial.println(jij);
-      Serial.println(config["switch"][switchKeys[i]]["name"]);
       JSONVar ij = JSON.parse(jij);
       if (ij[name].length() > 0) {
-        Serial.println("I have job for this");
         for (int j = 0; j < ij[name].length(); j++) {
           int p = String(ij[name][j]["numero"]).toInt();
           int inv = String(ij[name][j]["inverted"]).toInt();
@@ -1488,10 +1522,10 @@ void input_scanner() {
             }
           }
           if (String(ij[name][j]["component"]) == "relay") {
-            relay_toggle(p, jState);
+            relay_toggle(p, jState, false);
           }
           if (String(ij[name][j]["component"]) == "led") {
-            led_toggle(p, jState);
+            led_toggle(p, jState, false);
           }
         }
       }
@@ -1505,7 +1539,7 @@ void input_scanner() {
         sd["room"] = "1";
         sd["switch"] = String(spin.toInt());
         sd["state"] = state;
-        sd["timestamp"] = String((double)(now_ms() / 1000), 0);
+        sd["timestamp"] = event_timestamp();
         sm["data"] = sd;
         ble_send_json(JSON.stringify(sm));
       }
@@ -1544,11 +1578,9 @@ void input_scanner() {
         config["pot"][spin]["lastMove"] = String(millis());
         lastMove = millis();
         lastMove = lastMove;// + 300;
-        Serial.println(bs);
 
         String name = String(config["pot"][potKeys[i]]["name"]);
         String jij = config["internal_jobs"];
-        Serial.println(config["pot"][potKeys[i]]["name"]);
         JSONVar ij = JSON.parse(jij);
         if (ij[name].length() > 0) {
           config["pot"][spin]["lastValue"] = bs;          
@@ -1559,11 +1591,7 @@ void input_scanner() {
             String tp = String(ij[name][j]["threshold_percentage"]);
             double thresh = tp.toDouble();
             
-            
-            Serial.println(potState);
-
             thresh = ( thresh / 100 ) * 1024;
-            Serial.println(thresh);
             String jState = "off";
             if (inv == 1) {
               if (potState <= thresh) {
@@ -1576,10 +1604,10 @@ void input_scanner() {
               }
             }
             if (String(ij[name][j]["component"]) == "relay") {
-              relay_toggle(p, jState);
+              relay_toggle(p, jState, false);
             }
             if (String(ij[name][j]["component"]) == "led") {
-              led_toggle(p, jState);
+              led_toggle(p, jState, false);
             }
           }
           
@@ -1623,7 +1651,7 @@ void input_scanner() {
           md["measure"] = bs;
           md["min"] = "0";
           md["max"] = "1024";
-          md["timestamp"] = String((double)(now_ms() / 1000), 0);
+          md["timestamp"] = event_timestamp();
           mm["data"] = md;
           ble_send_json(JSON.stringify(mm));
         }
@@ -1642,7 +1670,7 @@ void input_scanner() {
   input_working = 0;
 }
 
-String led_toggle(int pin, String state) {
+String led_toggle(int pin, String state, bool persist) {
 
   pinMode(pin, OUTPUT);
 
@@ -1654,11 +1682,11 @@ String led_toggle(int pin, String state) {
   }
   String spin = String(pin);
   config["led"][spin] = state;
-  config_writer();
+  if (persist) { config_writer(); }
   return state;
 }
 
-String relay_toggle(int pin, String state) {
+String relay_toggle(int pin, String state, bool persist) {
 
   pinMode(pin, OUTPUT);
 
@@ -1670,7 +1698,7 @@ String relay_toggle(int pin, String state) {
   }
   String spin = String(pin);
   config["relay"][spin] = state;
-  config_writer();
+  if (persist) { config_writer(); }
   return state;
 }
 
@@ -1765,6 +1793,9 @@ void handle_jobs() {
 
         int64_t timestamp = (int64_t)(double)timers["timestamp"];
         int64_t offset_s = (int64_t)(double)timers["offset"];
+        // Keep the offset, not just the adjusted epoch: a switch/button event
+        // must subtract it to send UTC, while the LCD keeps showing local time.
+        offset = offset_s;
         set_epoch_seconds(timestamp + offset_s);  
       }
 
@@ -1828,10 +1859,7 @@ void read_time() {
 }
 
 void config_writer() {
-  // Do not persist uptime: assigning millis() through this JSONVar build
-  // serialized as an empty value, which made the whole file invalid and sent a
-  // rebooted board back to its provisioning AP. uptime is a diagnostic; the
-  // /device_query route adds it to the reply without saving it.
+  config_ensure();
   String jconfig = JSON.stringify(config);
   // Replace, do not overwrite in place: LittleFS's "w" was leaving the old
   // tail behind, so a short (cleared) config still read back as the previous
@@ -1847,6 +1875,7 @@ void config_writer() {
 }
 
 void config_init() {
+  config_ensure();
   Serial.println("Config init");
   JSONVar relayKeys = config["relay"].keys();
   for (int i = 0; i < relayKeys.length(); i++) {
@@ -1931,24 +1960,28 @@ void config_init() {
     
     myservo.attach(pin);
   }
-  authorization = (const char * )config["authorization"];
-  homebase = String(config["homebase"]);
-  homebaseIP = String(config["homebaseIP"]);
-  homebasePreferredIP = String(config["homebasePreferredIP"]);
+  authorization = jstr(config["authorization"]);
+  homebase = jstr(config["homebase"]);
+  homebaseIP = jstr(config["homebaseIP"]);
+  homebasePreferredIP = jstr(config["homebasePreferredIP"]);
   if (homebasePreferredIP == "") { homebasePreferredIP = homebaseIP; }
-  houseLearnJson(String(config["houses"]));
+  houseLearnJson(jstr(config["houses"]));
   // JSONVar::operator bool() is true only for a JSON boolean, not for a
   // non-empty string. The old `if (config["ssid"] && config["password"])` was
   // therefore always false, so a board that rebooted read its saved WiFi (and
   // its saved AP credentials) but never used them and came up in the default
   // provisioning AP. Compare against the empty string instead.
-  if (config["ssid"] != "" && config["password"] != "") {
-    ssid = String((const char *)config["ssid"]);
-    password = String((const char *)config["password"]);
+  String saved_ssid = jstr(config["ssid"]);
+  String saved_password = jstr(config["password"]);
+  if (saved_ssid != "" && saved_password != "") {
+    ssid = saved_ssid;
+    password = saved_password;
   }
-  if (config["ap_ssid"] != "" && config["ap_password"] != "") {
-    ap_ssid = String((const char *)config["ap_ssid"]);
-    ap_password = String((const char *)config["ap_password"]);
+  String saved_ap_ssid = jstr(config["ap_ssid"]);
+  String saved_ap_password = jstr(config["ap_password"]);
+  if (saved_ap_ssid != "" && saved_ap_password != "") {
+    ap_ssid = saved_ap_ssid;
+    ap_password = saved_ap_password;
   }
 
 /*    
@@ -1980,19 +2013,11 @@ String https_request(String url) {
     return "no ping";
   }
   url = url_maker(url);
-  Serial.println("In the https request");
-  Serial.println(url);
   connexion -> setInsecure();
-  Serial.print("homebase online ");
-  Serial.println(homebaseOnline);
   if (connexion && homebaseOnline > 0) {
     {
-      Serial.println("Starting connexion");
       if (https.begin(*connexion, url)) {
-        
-        Serial.println("Right after connexion");
         int httpCode = https.GET();
-        Serial.println(httpCode);
         if (httpCode > 0) {
 
           if (httpCode == HTTP_CODE_OK) {
@@ -2024,12 +2049,22 @@ void call_the_president() {
     String req = "https://" + homebaseIP + "/watch?room=1&browser_tab_id=" + browser_tab_id;
     Serial.println(req);
     String watchRequest = https_request(req);
-    Serial.println(watchRequest);
+    // Never print the payload: it carries the device authorization token.
+    Serial.println("[watch] " + String(watchRequest.length()) + " bytes");
     if (watchRequest != "failure") {
       before_me = watchRequest;
       if (before_me != "No!") {
         JSONVar ctp = JSON.parse(before_me);
         JSONVar ctpKeys = ctp.keys();
+        bool has_components = false;
+        for (int i = 0; i < ctpKeys.length(); i++) {
+          String k = String(ctpKeys[i]);
+          if (!k.startsWith("__")) { has_components = true; break; }
+        }
+        if (!has_components) {
+          Serial.println("[watch] no components; keeping the current role");
+          return;
+        }
         config["button"] = undefined;
         config["pot"] = undefined;
         config["led"] = undefined;
@@ -2083,9 +2118,8 @@ void call_the_president() {
           }
           else if (name == "__specs") {
             String ij = JSON.stringify(ctp[ctpKeys[i]]["internal_jobs"]);
-            Serial.println(ij);
             config["internal_jobs"] = ij;
-            Serial.println("this is an inside job");
+            Serial.println("internal jobs loaded");
           }
           Serial.println(name);
         }
