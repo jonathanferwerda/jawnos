@@ -33092,6 +33092,7 @@ sub pay_interac_looks_like {
 	return 1 if $from =~ /\@(?:[a-z0-9-]+\.)*interac\.ca\b/;
 	my $text = lc(($subject || '') . ' ' . ($body || ''));
 	return 1 if $text =~ /interac\s*e-?transfer/;
+	return 1 if $text =~ /transfert\s*(?:electronique|électronique)/;
 	return 0;
 }
 
@@ -33106,20 +33107,25 @@ sub pay_interac_parse {
 	$text =~ s/&[a-z]+;/ /gi;
 	$text =~ s/\s+/ /g;
 	my $amount = '';
-	if ($text =~ /sent you\s+\$?\s*([0-9][0-9,]*\.[0-9]{2})/i) { $amount = $1; }
+	if ($text =~ /(?:sent you|vous a envoyé)\s+\$?\s*([0-9][0-9.,]*[.,][0-9]{2})/i) { $amount = $1; }
+	elsif ($text =~ /([0-9][0-9.,]*[.,][0-9]{2})\s*\$/) { $amount = $1; }
 	elsif ($text =~ /\$([0-9][0-9,]*\.[0-9]{2})/) { $amount = $1; }
-	$amount =~ s/,//g if length $amount;
+	if (length $amount) {
+		if ($amount =~ /,/ && $amount =~ /\./) { $amount =~ s/,//g; }
+		elsif ($amount =~ /,/) { $amount =~ s/,/./g; }
+		$amount =~ s/[^0-9.]//g;
+	}
 	my $sender = '';
-	if ($subject =~ /INTERAC\s*e-?Transfer\s*:\s*(.+?)\s+(?:has\s+)?sent you/i) { $sender = $1; }
-	elsif ($text =~ /([A-Z][A-Za-z0-9 .'-]{1,70})\s+(?:has\s+)?sent you\s+\$?[0-9]/) { $sender = $1; }
+	if ($subject =~ /INTERAC\s*e-?Transfert?\s*:\s*(.+?)\s+(?:(?:has\s+)?sent you|vous a envoyé)/i) { $sender = $1; }
+	elsif ($text =~ /([A-Z][A-Za-z0-9 .'-]{1,70})\s+(?:(?:has\s+)?sent you|vous a envoyé)\s+\$?[0-9]/) { $sender = $1; }
 	$sender =~ s/^\s+|\s+$//g;
 	my $reference = '';
-	$reference = $1 if $text =~ /Reference\s*(?:Number|No\.?)?\s*:?\s*([A-Z0-9]{6,})/i;
+	$reference = $1 if $text =~ /(?:Reference|Numéro de référence)\s*(?:Number|No\.?)?\s*:?\s*([A-Z0-9]{6,})/i;
 	my $memo = '';
-	$memo = $1 if $text =~ /(?:Message|Memo)\s*:?\s*(.{0,200}?)(?:\s+Reference\s|\s+To deposit\s|\s+Autodeposit\s|\s+You can deposit\s|$)/i;
+	$memo = $1 if $text =~ /(?:Message|Memo)\s*:?\s*(.{0,200}?)(?:\s+Reference\s|\s+Numéro de référence\s|\s+To deposit\s|\s+Pour déposer\s|\s+Autodeposit\s|\s+Dépôt automatique\s|\s+You can deposit\s|$)/i;
 	$memo =~ s/^\s+|\s+$//g;
-	my $deposited = ($text =~ /automatically deposited|has been deposited|deposited to your account|was deposited/i) ? 1 : 0;
-	my $pending = ($text =~ /security question|answer the question|to deposit your money|deposit your money|claim your money/i) ? 1 : 0;
+	my $deposited = ($text =~ /automatically deposited|has been deposited|deposited to your account|was deposited|automatic deposit|déposé automatiquement|a été déposé|déposé dans votre compte|dépôt automatique|dépôt direct/i) ? 1 : 0;
+	my $pending = ($text =~ /security question|answer the question|to deposit your money|deposit your money|claim your money|question de sécurité|répondez à la question|pour déposer votre argent/i) ? 1 : 0;
 	return {
 		amount => 0 + ($amount || 0),
 		sender => $sender,
