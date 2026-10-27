@@ -1,6 +1,6 @@
 # Roadmap / handoff
 
-The remaining plan, as of **v0.1.796** (2026-10-18). Done work is marked so it is
+The remaining plan, as of **v0.1.1441** (2026-10-26). Done work is marked so it is
 not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
@@ -456,6 +456,95 @@ Still to do:
   runs only on Scan).
 - A device's abilities are shown but not yet acted on (the `App`/Embedded panels
   do not yet read `capabilities` to offer only what a device can do).
+
+## Handheld / Controller — Odroid Go Ultra (deferred)
+
+**Not started (2026-10-26).** The idea: a handheld becomes a **Controller** — a
+paired device that takes a game (Twirl today, Wheels next) and its scores from the
+house, plays it **offline**, and hands the scores back when it reconnects. The
+same device is also a selectable **music output**.
+
+**Target hardware.** Odroid Go Ultra Clear: Amlogic S922X, 2 GB RAM, 5" 854×480,
+Ubuntu 20.04 stock (EmulationStation-first), the optional USB Wi-Fi/Bluetooth
+dongle (present), a Linux gamepad, a mono speaker and stereo headphone jack, one
+USB-A host; no touch, no HDMI. The internal memory can be wiped for a clean Linux
+install.
+
+**The flow.** In a game window (Twirl, Wheels) press **Play on Controller**: the
+house builds a bundle of the game + its current scores, sends it to the paired
+Controller, and the Controller opens it offline. On reconnect the Controller
+uploads the scores it collected; the house merges them into the game's table.
+The Controller lists the games it holds and can reopen them without the house.
+
+**What exists.** Twirl is a canvas game in `public/js/manager/twirl.js` +
+`templates/twirl.html.ep`; its top-5 table is a house setting (`app=twirl`) and
+it is keyboard-only (arrows, Space, Esc, Enter, C). `Music.pl` already sends
+audio to a linked machine (L/name/R rows) and video to another screen (TV boxes),
+so a Controller is a natural output. `desktop/` is the Linux house app;
+`jawnos-bt-daemon` is the BLE bridge.
+
+**Decisions to make before code.**
+
+1. **Controller shell.** A clean Ubuntu 24.04/Debian 12 image with WebKitGTK 4.1
+   (the JawnOS desktop app fits) vs. the stock 20.04 (WebKitGTK 4.0, so the
+   desktop app's embedded view needs a fallback) vs. a thin kiosk browser. A wipe
+   is allowed.
+2. **Node or thin receiver.** A full JawnOS node gives Music/Video outputs, peer
+   sync and the app store for free; a thin game/music receiver is lighter on 2 GB
+   but needs a new receiver protocol. Recommend the node first, with the game
+   bundle offline so play does not depend on it.
+3. **Standalone-first games.** Twirl is written for the manager's window/setting
+   APIs. Extract the game into a self-contained bundle (HTML/JS/assets) with a
+   storage adapter — house settings when online, IndexedDB/localStorage when
+   offline — so the Controller runs the same code, not a fork. Wheels should be
+   built this way from the start.
+4. **Bundle contract.** Game id, game version, build hash, the score table, a
+   bundle id, and the house's signature; the Controller verifies it before
+   installing. Decide whether a bundle carries the whole game or a delta, and
+   whether updates are pulled on Play, on reconnect, or both.
+5. **Offline scores.** Per-run UUID, game version, initials/score, local time;
+   merge on reconnect into the game's table (top-N per game/track; dedupe by run
+   UUID; highest score wins, ties keep the earlier run; stamp `server_time` on the
+   house). Decide what happens when the same initials exist on two Controllers.
+6. **Music output.** Reuse the Music output rows; the Controller's own
+   speaker/headphone jack is an output, and its Music panel can pick the house
+   output (or itself). Store the choice per device. Decide whether a thin receiver
+   can be an output without a full node.
+7. **Wheels scope.** Wacky-kart game, controller-first: 2D/2.5D? tracks, AI,
+   local split-screen or single-player? Are scores per track, per cup, or per
+   session? Does it need the house data at all, or is the bundle a static game +
+   score table?
+8. **Controller identity.** A paired device with purpose `controller`, not a
+   phone/desktop; it gets its own installed-games/scores rows and appears in
+   Devices & networks. Its gamepad is read through the Gamepad API (Linux evdev)
+   so the same code works in a browser, not a per-image keymapper.
+9. **Transport.** LAN/Tailnet for the bundle and score sync; USB as an offline
+   fallback (copy the bundle to the device). Decide whether the Controller pulls
+   or the house pushes.
+
+**Gate note.** A browser-only Controller dies if the house sets
+`app_access=enforce`; the node/desktop path enrolls an app key. The offline game
+bundle must not depend on the gate.
+
+**First cut (if pursued).**
+
+1. Add a Gamepad API layer to Twirl (D-pad/left stick → move/down/rotate; A →
+   drop; Start/Select → pause/restart) so the Controller plays without a
+   keymapper.
+2. Extract Twirl's game loop into a standalone bundle with a storage adapter;
+   keep the manager embedding it.
+3. Add `GET /manager/controller/games` and a signed bundle download; a **Play on
+   Controller** button in the game window.
+4. A tiny Controller shell (kiosk browser or the desktop app) that lists bundles,
+   runs them offline, stores scores in IndexedDB, and POSTs them back on
+   reconnect.
+5. Then Wheels, built standalone-first.
+
+**File map.** `public/js/manager/twirl.js`, `templates/twirl.html.ep`,
+`templates/start_menu/start_menu.html.ep`, `Manager.pl` (the `/manager/twirl`
+route and settings), `Music.pl` (outputs/video), `desktop/` (shell),
+`scripts/app_release.pl` / `releases/` (only if the Controller is an Android app;
+it is not, on the stock Ubuntu).
 
 ## T-Deck parity (from the watch)
 
