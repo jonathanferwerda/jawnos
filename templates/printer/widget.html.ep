@@ -1,0 +1,189 @@
+% use Mojo::JSON qw/encode_json/;
+% my $theme_bundle = &subs::active_theme_bundle();
+% my ($manager_bg, $manager_appt_theme) = &subs::active_manager_background();
+% my $theme_dark = &subs::theme_is_dark();
+% my $panel_css = &subs::theme_panel_css($manager_bg);
+% my $title_font = $theme_bundle->{'font'} || &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif';
+%# The printer page an Android widget captures. It is deliberately standalone:
+%# it loads the same universal.js, numeral and manager bundle the desktop does,
+%# provides the few globals and DOM nodes the printers expect, then draws the
+%# real printer on a canvas sized to the widget. The page reports completion
+%# through document.title and window.__jawnPrinterReady for the WebView poll.
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0, user-scalable=0">
+	<title>printer</title>
+	<link rel="stylesheet" href="/css/universal.css" />
+	<style>
+		html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-image: none; }
+		body {
+			background-color: <%= $manager_bg %>;
+			<%= $panel_css %>
+			--jawnos-font: <%= $title_font %>;
+			color: var(--ink);
+			font-family: var(--jawnos-font);
+		}
+		canvas { position: absolute; left: 0; top: 0; display: block; }
+		#background { width: <%= $w %>px; height: <%= $h %>px; z-index: 1; }
+		#clockface, #timeline, #leaderboard, #calendar, #narrator, #continent {
+			width: <%= $w %>px; z-index: 2;
+		}
+		/* headerPrinter would print the clock into #header and reserve a band;
+		   a widget has no taskbar, so the title text is not wanted over the art */
+		#header, #clothesline, #taskbar, #taskbar_clock { display: none !important; }
+	</style>
+	<script src="/js/jquery.js"></script>
+	<script>
+		// The page is sized by the widget, not by the WebView's own viewport:
+		// the printers read $(window).height() and $('#background').width().
+		window.__jawnWidgetW = <%= $w %>;
+		window.__jawnWidgetH = <%= $h %>;
+		window.__jawnPrinterReady = 0;
+		(function () {
+			var w = window.__jawnWidgetW, h = window.__jawnWidgetH;
+			var originalWidth = $.fn.width;
+			var originalHeight = $.fn.height;
+			$.fn.width = function () {
+				if (this[0] === window) { return w; }
+				return originalWidth.apply(this, arguments);
+			};
+			$.fn.height = function () {
+				if (this[0] === window) { return h; }
+				return originalHeight.apply(this, arguments);
+			};
+		})();
+		// The globals the layout normally seeds. A hidden bar and no clothesline
+		// leave the printers a full canvas (headerHeight/clothesLineHeight = 0).
+		var jawnos_bar_settings = {
+			clothesline_on: 'off',
+			clothesline_height: '40',
+			taskbar_position: 'hidden',
+			dock_position: 'hidden'
+		};
+		var jawnos_clock_format = '24';
+		var jawnos_clock_timezone = '';
+		var device = '';
+		var signatorial = '';
+		window.jawnos_lang = window.jawnos_lang || {};
+		window.jawnos_lang_code = 'en';
+		window.jawnos_lang_dir = 'ltr';
+		try {
+			// This page shares its origin (and therefore its DOM storage) with the
+			// manager the person is using. The printers read a few keys from
+			// localStorage, so answer those reads for this page only and make the
+			// writes no-ops: a widget update must never move the user's scope,
+			// layout, timeshift or zoom.
+			var overrides = {
+				scope: <%== encode_json($scope) %>,
+				layout: <%== encode_json($layout) %>,
+				timeshift: '0',
+				timeshift_scope: 's',
+				time_machine: '',
+				scrollPositioner: '.4',
+				background_images: ''
+			};
+			var originalGet = Storage.prototype.getItem;
+			Storage.prototype.getItem = function (key) {
+				if (Object.prototype.hasOwnProperty.call(overrides, key)) {
+					var value = overrides[key];
+					return (value === undefined || value === null) ? null : String(value);
+				}
+				return originalGet.call(this, key);
+			};
+			Storage.prototype.setItem = function (key, value) {
+				// no writes from a widget render: the manager's stored state is the
+				// person's, not this capture's
+				return;
+			};
+			Storage.prototype.removeItem = function (key) {
+				return;
+			};
+		} catch (e) {}
+	</script>
+	<script src="/js/universal.js"></script>
+	<script src="/js/numeral.min.js"></script>
+	<script src="/js/manager/bundle.js"></script>
+</head>
+<body class="<%= $theme_dark ? 'dark_theme' : '' %>" data-texture="<%= &subs::texture_name() %>">
+	<canvas id="background" class="background"></canvas>
+	<canvas id="clockface" class="background"></canvas>
+	<canvas id="timeline" class="background" style="display: none;"></canvas>
+	<canvas id="leaderboard" class="background" style="display: none;"></canvas>
+	<canvas id="calendar" class="background" style="display: none;"></canvas>
+	<canvas id="narrator" class="background" style="display: none;"></canvas>
+	<canvas id="continent" class="background" style="display: none;"></canvas>
+	<span id="header"></span>
+	<div id="clothesline"></div>
+	<span id="taskbar_clock"></span>
+
+	<script>
+	(function () {
+		var kind = <%== encode_json($kind) %>;
+		var scope = <%== encode_json($scope) %>;
+		var started = false;
+		var scriptTries = 0;
+
+		function finishError(message) {
+			window.__jawnPrinterError = String(message || 'error');
+			document.title = 'error';
+		}
+		function finishReady() {
+			window.__jawnPrinterReady = 1;
+			document.title = 'ready';
+		}
+		function draw(appts) {
+			try {
+				if (kind === 'timeline') { timelinePrinter(appts, 'size', 0); }
+				else if (kind === 'leaderboard') { leaderboardPrinter(appts); }
+				else if (kind === 'calendar') { calendarPrinter(appts, 'size'); }
+				else if (kind === 'narrator') { narratorPrinter(appts); }
+				else if (kind === 'continent') { continentPrinter(appts, 'size'); }
+				else { clockfacePrinter(appts); }
+			} catch (e) {
+				finishError('draw: ' + (e && e.message ? e.message : e));
+				return;
+			}
+			// a timeline's pseudonym icons draw when they decode; a short grace lets
+			// them land before the WebView is captured
+			setTimeout(finishReady, 140);
+		}
+		function start() {
+			if (started) { return; }
+			if (typeof $ === 'undefined' || typeof clockfacePrinter !== 'function') {
+				if (scriptTries++ < 40) { setTimeout(start, 250); }
+				else { finishError('scripts did not load'); }
+				return;
+			}
+			started = true;
+			$.ajax({
+				url: '/manager/appointment_viewer',
+				type: 'GET',
+				dataType: 'json',
+				cache: false,
+				data: {
+					timestamp: Date.now(),
+					scope: scope,
+					layout: kind,
+					readable: 1
+				},
+				success: function (respons) {
+					if (!respons || typeof respons !== 'object' || !respons.appts) {
+						finishError('no payload');
+						return;
+					}
+					draw(respons.appts);
+				},
+				error: function (xhr, status, err) {
+					finishError('fetch: ' + status + (err ? ' ' + err : ''));
+				}
+			});
+		}
+		$(window).on('load', function () { setTimeout(start, 40); });
+		// a resource that never settles must not leave the widget waiting forever
+		setTimeout(start, 7000);
+	})();
+	</script>
+</body>
+</html>

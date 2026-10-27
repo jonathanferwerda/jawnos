@@ -3,6 +3,12 @@
 Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 (`v<version> - ...`) mark the points where `VERSION` was bumped.
 
+## 2026-10-26
+
+- v0.1.1445 - Internet remembers its tab and treats a domain as a bookmark. Web and Browse are the two halves of one app: the tab you left is the tab you return to, each visited domain is a bookmark (a saved page keeps its extracted values), and any domain can be assigned to a JawnOS app. Time counted in the JawnOS browser for that domain is added to the app, so Facebook minutes land under the app that owns facebook.com; the site table reads the per-device usage rows and shows today's minutes beside each domain. The launcher's JawnOS row is fed by a public `/apps/list` (names and icon paths only) and the native home draws the same manager apps one tap away.
+- v0.1.1445 - printers: a standalone `/manager/printer` page draws any background printer (clockface, timeline, leaderboard, calendar, narrator, continent) at a requested size, which is what a widget captures. The Android home hosts the clockface card in a real `AppWidgetHost` slot and falls back to a native face when the page cannot be captured.
+- v0.1.1445 - Android: a JawnOS app opens as its own full-screen window from the home row. The blank view was a process-wide `WebView.pauseTimers()` left by the manager view; the single-app activity (and the widget renderer) now resume timers before loading, so the manager parses and draws again. The app-gate sign-in is retried once when its first attempt loses the race with the key bridge.
+
 ## 2026-10-20
 
 - v0.1.933 - records audit: a derived child row is not a duplicate. One record fans out through model and option characteristics, and two children can legitimately share app/type/time while belonging to different parents (fructis saved once under shampoo and once under conditioner). DUPES now groups by `source_uuid` as well, so those children are not tombstoned as a repeated write; a true repeat copies the source uuid and is still caught.

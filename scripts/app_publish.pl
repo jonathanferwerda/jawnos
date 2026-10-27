@@ -27,6 +27,28 @@ use Mojo::JSON qw(encode_json decode_json);
 my $root = abs_path("$FindBin::Bin/..");
 my $dir  = "$root/releases";
 my ($repo, $tag, $apk, $dry_run, $product_opt) = ('jonathanferwerda/jawnos', 'releases', undef, 0, 'all');
+
+# The release body is the newest dated section of docs/app-release-notes.md
+# (a real changelog, written when the build is made) plus the version codes
+# that are actually staged below it. A release with no notes still publishes,
+# but the text is then only the build list.
+sub release_notes {
+	my (@current) = @_;
+	my $notes_path = "$root/docs/app-release-notes.md";
+	my $body = '';
+	if (-f $notes_path) {
+		my $text = read_file($notes_path);
+		if ($text =~ /^##\s+(.+?)\n(.*?)(?=^##\s+|\z)/ms) {
+			my ($heading, $section) = ($1, $2);
+			$section =~ s/\s+\z//;
+			$body = "## $heading\n\n$section";
+		}
+	}
+	my $list = join("\n", map { "- $_" } @current);
+	return "The newest JawnOS app builds, served as release assets.\n\n"
+		. ($body ? "$body\n\n" : '')
+		. "---\n\n**Builds in this release:**\n\n$list\n";
+}
 while ( defined(my $arg = shift @ARGV) ) {
 	if ($arg eq '--repo')    { $repo = shift @ARGV; next; }
 	if ($arg eq '--tag')     { $tag = shift @ARGV; next; }
@@ -107,12 +129,11 @@ if ($dry_run) {
 
 # Create the release once (empty on first use), then upload each product's APK
 # and manifest. A fixed tag means the download URLs never move.
+my @initial = map { "$_->{'product'} $_->{'vn'} (versionCode $_->{'vc'})" } @jobs;
 my $exists = system('gh', 'release', 'view', $tag, '--repo', $repo) == 0;
 unless ($exists) {
-	my $notes = "The newest JawnOS app builds, served as release assets.\n\n";
-	$notes .= join("\n", map { "$_->{'product'} $_->{'vn'} (versionCode $_->{'vc'})" } @jobs);
 	system('gh', 'release', 'create', $tag, '--repo', $repo,
-		'--title', 'JawnOS app releases', '--notes', $notes, '--latest') == 0
+		'--title', 'JawnOS app releases', '--notes', release_notes(@initial), '--latest') == 0
 		or die "publish failed: could not create release $tag\n";
 }
 
@@ -144,8 +165,7 @@ foreach my $p ( 'app', 'api' ) {
 	push @current, "$m->{'product'} $m->{'versionName'} (versionCode $m->{'versionCode'})";
 }
 if (@current) {
-	my $notes = "The newest JawnOS app builds, served as release assets.\n\n" . join("\n", @current);
-	system('gh', 'release', 'edit', $tag, '--repo', $repo, '--notes', $notes) == 0
+	system('gh', 'release', 'edit', $tag, '--repo', $repo, '--notes', release_notes(@current)) == 0
 		or warn "could not update the release notes for $tag\n";
 }
 

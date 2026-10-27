@@ -77,6 +77,7 @@ require "./hooks.pl";
 require "./tunnel.pl";
 require "./help.pl";
 require "./crew.pl";
+require "./printers.pl";
 { package gb; }
 
 # Run the schema migrations once per worker when the app comes up: a git pull
@@ -26983,6 +26984,111 @@ get '/manager/internet' => sub ($c) {
 	$c->render(text => $website);
 };
 
+# The apps the launcher and the Internet tab choose from: the house's own
+# catalog first, then any app a person has made. Kept in one place so the
+# manager and the phone never disagree about what an app is called.
+sub internet_app_catalog {
+	my @apps;
+	my %skip = map { $_ => 1 } qw(citizen resident guest blacklisted web);
+	foreach my $app ( sort { lc($a) cmp lc($b) } keys %{$gb::known_appts} ) {
+		next if $skip{$app};
+		push @apps, { app => $app, title => &subs::format_name($app) };
+	}
+	unshift @apps, { app => 'internet', title => &subs::lang('internet') };
+	my %seen = map { $_->{'app'} => 1 } @apps;
+	# The person's own apps: an app with a main_image is one the manager draws as an
+	# app. The appointments table holds every record's app, and `pos` is shared by
+	# products, files and tiles, so neither is the launcher's list.
+	my $rows = eval { &subs::db_query("select distinct app from settings where app is not null and app != '' and setting = 'main_image'")->hashes } || [];
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} || next;
+		next if $app =~ /^__/ || $seen{$app}++;
+		push @apps, { app => $app, title => &subs::format_name($app) };
+	}
+	return \@apps;
+}
+
+# One JSON catalog for the launcher (public: app names and icons, no house
+# data). The search index is richer but gated, and the launcher has to draw its
+# JawnOS row before a session exists.
+get '/apps/list' => sub($c) {
+	my $apps = &internet_app_catalog();
+	foreach my $entry ( @{$apps} ) {
+		my $app = $entry->{'app'};
+		my $icon = ($app eq 'internet')
+			? '/images/make believe/web_button.png'
+			: ($gb::known_appts->{$app}->{'icon'} || '');
+		$entry->{'icon'} = length $icon ? $icon : '';
+		$entry->{'icon'} =~ s/ /%20/g if length $entry->{'icon'};
+	}
+	$c->render(json => { apps => $apps });
+};
+
+# Domain -> app, so everything under facebook.com counts as the Facebook app.
+# Stored as one settings value, so it rides the house's normal sync.
+sub internet_domain_apps {
+	my $value = &subs::setting_grabber({ app => 'internet', setting => 'domain_apps' });
+	my $map = eval { decode_json($value || '{}') } || {};
+	return ref $map eq 'HASH' ? $map : {};
+}
+
+get '/manager/internet/sites' => sub($c) {
+	my $now = &subs::rightNow();
+	my $from = $now - 30 * 24 * 60 * 60 * 1000;
+	my $map = &internet_domain_apps();
+	my %sites;
+	my $rows = eval { &subs::db_query(q{
+		select key_name,
+			sum(max(0, cast(ended_at as integer) - cast(started_at as integer) - cast(coalesce(nullif(idle_ms, ''), '0') as integer))) as total_ms,
+			max(cast(ended_at as integer)) as last_at,
+			max(url) as url
+		  from usage_sessions
+		 where device = ? and kind = 'site' and cast(ended_at as integer) >= ?
+		 group by key_name
+	}, $device, $from)->hashes } || [];
+	foreach my $row ( @{$rows} ) {
+		my $domain = $row->{'key_name'} || next;
+		$sites{$domain} = {
+			domain => $domain,
+			total_ms => int($row->{'total_ms'} // 0),
+			last_at => int($row->{'last_at'} // 0),
+			url => $row->{'url'} || '',
+		};
+	}
+	# a saved page is a bookmark even before it has been browsed for a minute
+	my $saved = eval { &subs::db_query('select url from websites')->hashes } || [];
+	foreach my $row ( @{$saved} ) {
+		my $url = $row->{'url'} || next;
+		my ($domain) = $url =~ m{^https?://([^/]+)}i;
+		next unless $domain;
+		$domain = lc $domain;
+		$domain =~ s/^www\.//;
+		$sites{$domain} ||= { domain => $domain, total_ms => 0, last_at => 0, url => $url };
+	}
+	my @out;
+	foreach my $domain ( sort { ($sites{$b}->{'total_ms'} <=> $sites{$a}->{'total_ms'}) || ($a cmp $b) } keys %sites ) {
+		my $site = $sites{$domain};
+		$site->{'app'} = $map->{$domain} || '';
+		$site->{'url'} = 'https://' . $domain . '/' unless length $site->{'url'};
+		push @out, $site;
+	}
+	$c->render(json => { sites => \@out, apps => &internet_app_catalog() });
+};
+
+post '/manager/internet/site/app' => sub($c) {
+	my $domain = lc($c->param('domain') // '');
+	$domain =~ s{^https?://}{}i;
+	$domain =~ s{/.*$}{};
+	$domain =~ s/^www\.//;
+	my $app = &subs::unformat_name($c->param('app') // '');
+	unless (length $domain) { $c->render(json => { ok => 0, error => 'need a domain' }); return; }
+	my $map = &internet_domain_apps();
+	if (length $app) { $map->{$domain} = $app; }
+	else { delete $map->{$domain}; }
+	&subs::setting_setter({ app => 'internet', setting => 'domain_apps', value => encode_json($map) });
+	$c->render(json => { ok => 1, domain => $domain, app => $app });
+};
+
 
 get '/manager/website_get' => sub ($c) {
 	my $app = $c->param('app');
@@ -38395,6 +38501,9 @@ sub app_public_path {
 	return 0 unless defined $path;
 	return 1 if $path eq '/' || $path eq '/homepage' || $path eq '/index.html';
 	return 1 if $path =~ m{^/store(?:/|$)};
+	# The launcher's JawnOS row is drawn before any session exists, and it carries
+	# only app names and icons.
+	return 1 if $path eq '/apps/list';
 	return 1 if $path =~ m{^/(?:css|js|images|icons|sounds|fonts|public|i18n)/};
 	return 1 if $path =~ m{^/(?:favicon\.ico|manifest\.json|service_worker\.js|robots\.txt|privacy|mugshot|payment|play|file_open|denial)$};
 	# A batch of file_open pictures, authenticated by the route itself the same

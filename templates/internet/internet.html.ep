@@ -13,12 +13,12 @@
 			<span><%= &subs::ui('Pages the house fetched, ready to open or measure.') %></span>
 		</div>
 		<table style="width:100%;">
-			<thead><tr><th>App</th><th>Address</th><th><%= &subs::lang('time_spent') %></th><th></th></tr></thead>
+			<thead><tr><th><%= &subs::ui('App') %></th><th><%= &subs::ui('Address') %></th><th><%= &subs::ui('Saved') %></th><th></th></tr></thead>
 			<tbody>
 				<% foreach my $web ( @{$websites} ) { %>
 					<tr class="internet_saved" data-url="<%= &subs::html_text($web->{'url'}) %>" data-app="<%= &subs::html_text($web->{'app'}) %>" data-uuid="<%= &subs::html_text($web->{'uuid'}) %>">
-						<td><%= &subs::format_name($web->{'app'}) %></td>
-						<td style="word-break:break-all;"><%= &subs::html_text($web->{'url'}) %></td>
+						<td><a href="#" class="internet_open_app" data-app="<%= &subs::html_text($web->{'app'}) %>"><%= &subs::format_name($web->{'app'}) %></a></td>
+						<td style="word-break:break-all;"><a href="#" class="internet_open_url" data-url="<%= &subs::html_text($web->{'url'}) %>"><%= &subs::html_text($web->{'url'}) %></a></td>
 						<td class="time" timestamp="<%= $web->{'timestamp'} %>"></td>
 						<td style="white-space:nowrap;">
 							<img class="tiny_thumb hover" src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="<%= &subs::lang('open_browser') %>" onclick="internetOpenSaved(this,'browse');">
@@ -37,8 +37,8 @@
 		</div>
 		<p style="opacity:0.75;"><%= &subs::ui('Time is counted in the JawnOS browser only. Other browsers are not counted.') %></p>
 		<h4><%= &subs::lang('usage_today') %></h4>
-		<table id="internet_usage" style="width:100%;">
-			<thead><tr><th><%= &subs::ui('Site') %></th><th><%= &subs::lang('time_spent') %></th></tr></thead>
+		<table id="internet_sites" style="width:100%;">
+			<thead><tr><th><%= &subs::ui('Site') %></th><th><%= &subs::ui('App') %></th><th><%= &subs::lang('time_spent') %></th><th></th></tr></thead>
 			<tbody></tbody>
 		</table>
 		<p id="internet_usage_none" style="display:none;opacity:0.75;"><%= &subs::lang('usage_none') %></p>

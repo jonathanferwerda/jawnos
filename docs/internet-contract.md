@@ -115,7 +115,39 @@ cookie is HttpOnly, so an HTTP request from the activity cannot see it. The card
 is therefore offline and independent of the manager. It filters
 `kind='site'` until the UsageStatsManager job lands.
 
-## 7. Out of scope for this slice
+## 7. Internet bookmarks and domain -> app
+
+- `GET /manager/internet/sites` returns `{ sites, apps }`; each site is
+  `{ domain, url, app, total_ms, last_at }`. `apps` is the catalog
+  (`{app,title}`).
+- `POST /manager/internet/site/app` with `domain`, `app` (empty clears) stores
+  the mapping in settings `internet.domain_apps` (JSON, synced).
+- In the page, the domain opens the native browser, the app opens
+  `appointmentGrabber(app)`, and a select assigns the app. The active tab is
+  remembered in `localStorage.internet_tab`.
+- Cookies persist in both browsers: Android's WebView cookie store (flushed on
+  pause/stop) and the desktop browser's own `WebsiteDataManager` under
+  `~/.local/share/jawnos/browser`.
+
+## 8. Launcher apps and single-app view
+
+- `GET /apps/list` is public (app names and icon paths only):
+  `{ apps: [ { app, title, icon } ] }`, built from the system catalog plus apps
+  with a `main_image` setting (not every record's app).
+- A JawnOS app opens as a single window at
+  `GET /manager/centre_view?app=<name>&timestamp=<ms>&source=ws` (app-gated;
+  the WebView's session cookie is the credential). Fallback: the manager page.
+
+## 9. Printer widgets
+
+- `GET /manager/printer?kind=<clockface|timeline|leaderboard|calendar|narrator|continent>&w=<px>&h=<px>`
+  (app-gated) renders a standalone page that draws the real printer on a canvas
+  and sets `window.__jawnPrinterReady = 1` / `document.title = 'ready'`.
+- The Android widget uses a headless WebView with the app's session, waits for
+  ready, captures the WebView to a Bitmap and pushes it through RemoteViews.
+  Update every 30 minutes; tap opens the manager.
+
+## 10. Out of scope for this slice
 
 - Android `UsageStatsManager` app-time (separate permission path).
 - Enforcement/blocking (overlay or device-owner).

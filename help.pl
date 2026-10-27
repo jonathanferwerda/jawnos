@@ -298,8 +298,9 @@ our %topic = (
 		verified => '2026-10-26',
 		summary => 'Web and Browse: saved pages with measures, and a real browser that counts site time.',
 		body => [
-			'Internet has two components. Web holds the pages the house fetched; each can be opened, or measured with the Measures tool. Browse opens a real browser in its own window on a computer (or its own screen on a phone), because a live page cannot run inside the manager window.',
-			'Browse counts the time each site is in front, but only in the JawnOS browser: a page opened in another browser is not counted, and neither is the Facebook app. The Browse tab shows today\'s site time, and the time is kept per machine so the phone and the laptop do not blur together.',
+			'Internet has two components. Web holds the pages the house fetched; each can be opened, or measured with the Measures tool. Browse opens a real browser in its own window on a computer (or its own screen on a phone), because a live page cannot run inside the manager window. The tab you used last is the tab Internet opens, so Web and Browse do not keep switching places.',
+			'Browse counts the time each site is in front, but only in the JawnOS browser: a page opened in another browser is not counted, and neither is the Facebook app. Every domain you visit is also a bookmark. Press a domain to open it in the browser, or choose a JawnOS app beside it and press Assign: the time counted on that domain is then added to that app, so facebook.com minutes land under the app you chose. Use the empty choice to stop counting the domain against an app.',
+			'A domain you assigned opens two ways: its link opens the browser at the saved address, and the app name beside it opens that app in the manager exactly as its own window. The Browse tab shows today\'s site time beside each domain, and the time is kept per machine so the phone and the laptop do not blur together.',
 			'To measure a live page, open a saved page from the Web tab with the measure icon. The browser opens with the picker on; click the value you want. JawnOS offers the shapes it can read and saves the one you pick, exactly as the Measures tool does for a fetched page.',
 			'The browser is a separate surface on purpose: it has its own cookies and history, keeps the manager\'s bridges away from the pages you visit, and cannot reach the house\'s local address.'
 		],
@@ -307,6 +308,7 @@ our %topic = (
 			'Open Internet from the start menu.',
 			'Web lists the pages the house fetched; use the browser icon to open one, or the measures icon to point at a value in it.',
 			'Browse takes an address and opens the JawnOS browser; time on each site appears under Site time today.',
+			'To make a domain count toward an app, choose the app in its row and press Assign; press the domain to open it, or the app name to open that app.',
 			'A page opened in another browser is not counted; the count is per machine.'
 		],
 		related => [ 'web' ]

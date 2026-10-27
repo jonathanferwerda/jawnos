@@ -416,6 +416,9 @@ hook before_dispatch => sub {
 		# a dismiss/snooze stop, with no session cookie. The route authenticates the
 		# caller against the roster (peer_verify) before it writes anything.
 		$path eq '/manager/clock/alarm' ||
+		# the launcher's JawnOS row is drawn before a session exists, and the
+		# catalog carries only app names and icon paths
+		$path eq '/apps/list' ||
 		$path eq '/', ) {
 
 		my $device = &subs::device_setter();
