@@ -32532,12 +32532,20 @@ sub pay_options_for {
 	}
 	my $interac;
 	if (&pay_provider_ready('interac')) {
+		# The invoice balance is in the house currency; an e-Transfer is made in
+		# the currency the receiving account uses, so show the customer that.
+		my $icur = &pay_interac_currency();
+		my $base_cur = &pay_currency();
+		my $irate = ($icur eq $base_cur) ? 1 : &exchange_rate($base_cur, $icur);
+		my $iamount = (defined $irate && $irate > 0) ? ($balance * $irate) : $balance;
 		$interac = {
 			email => &pay_setting('interac_email', ''),
 			name => &pay_setting('interac_name', ''),
 			reference => &pay_invoice_ref($data),
 			instructions => &pay_setting('interac_instructions', ''),
 			autodeposit => (&pay_setting('interac_autodeposit', 'off') eq 'on' ? 1 : 0),
+			amount => $iamount,
+			currency => $icur,
 		};
 	}
 	return undef unless scalar @methods || $interac;

@@ -17,7 +17,7 @@
 		<% if ($interac) { %>
 			<div class="pay_box_interac">
 				<h3><%= &subs::ui('Interac e-Transfer') %></h3>
-				<p><%= &subs::ui('Send') %> <b><%= &subs::price_formatter($pay_links->{'amount'}) %></b> <%= &subs::ui('to') %>
+				<p><%= &subs::ui('Send') %> <b><%= sprintf('%.2f', $interac->{'amount'}) %> <%= $interac->{'currency'} %></b> <%= &subs::ui('to') %>
 					<b id="pay_box_interac_email"><%= $interac->{'email'} %></b><% if ($interac->{'name'}) { %> (<%= $interac->{'name'} %>)<% } %>.</p>
 				<p><%= &subs::ui('Use the reference') %> <b><%= $interac->{'reference'} %></b> <%= &subs::ui('in the message, so the payment finds this invoice.') %></p>
 				<% if ($interac->{'autodeposit'}) { %>
