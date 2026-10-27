@@ -1,9 +1,14 @@
 # JawnOS boot splash.
 #
 # A Nord-night gradient, the welcome mark centred, and a soft accent halo behind
-# it that breathes with Math.Cos. There is no text: the mark is the message.
+# it that breathes with Math.Cos. There is no text until a passphrase is asked
+# for: the mark is the message.
 # The logo itself never scales or blurs -- only the halo's opacity moves, so the
 # art stays crisp on every panel.
+#
+# When systemd-ask-password asks on the splash (the host-drive unlock), a clean
+# dialog appears under the mark: the prompt in Snow Storm and one Frost bullet
+# per typed character. Emptying the prompt hides it again.
 
 # Nord Polar Night, top to bottom (#2e3440 -> #21262f).
 Window.SetBackgroundTopColor (0.180, 0.204, 0.251);
@@ -25,6 +30,90 @@ glow_step = (2 * 3.14159 / 50) * 0.35;
 logo_fade = 0;
 logo_fade_frames = 35;
 
+# --- Password dialog -------------------------------------------------------
+# Only LUKS unlock uses this. Nord Snow Storm prompt, Frost bullets, centred
+# under the mark at z=10. Everything is created lazily on the first prompt so a
+# normal boot never allocates the sprites.
+global.password_ready = 0;
+global.dialog_visible = 0;
+global.prompt_text = "";
+global.bullet_count = 0;
+
+fun password_dialog_setup ()
+  {
+    global.bullet_image = Image.Text ("*", 0.533, 0.753, 0.816);
+    global.dialog_prompt_sprite = Sprite ();
+    global.dialog_prompt_sprite.SetOpacity (0);
+    for (i = 0; i < 96; i++)
+      {
+        global.dialog_bullet[i] = Sprite (global.bullet_image);
+        global.dialog_bullet[i].SetOpacity (0);
+      }
+    global.password_ready = 1;
+  }
+
+fun display_password_callback (prompt, bullets)
+  {
+    if (!global.password_ready)
+      {
+        password_dialog_setup ();
+      }
+
+    if (prompt == "")
+      {
+        # systemd-ask-password hides its dialog by emptying the prompt.
+        global.dialog_visible = 0;
+        global.prompt_text = "";
+        global.bullet_count = 0;
+        global.dialog_prompt_sprite.SetOpacity (0);
+        for (i = 0; i < 96; i++)
+          {
+            global.dialog_bullet[i].SetOpacity (0);
+          }
+      }
+    else
+      {
+        global.prompt_text = prompt;
+        global.dialog_prompt_image = Image.Text (prompt, 0.847, 0.871, 0.914);
+        global.dialog_prompt_sprite.SetImage (global.dialog_prompt_image);
+        global.bullet_count = bullets;
+        if (global.bullet_count > 96)
+          {
+            global.bullet_count = 96;
+          }
+        global.dialog_visible = 1;
+        global.dialog_prompt_sprite.SetOpacity (1);
+        for (i = 0; i < 96; i++)
+          {
+            if (i < global.bullet_count)
+              {
+                global.dialog_bullet[i].SetOpacity (1);
+              }
+            else
+              {
+                global.dialog_bullet[i].SetOpacity (0);
+              }
+          }
+      }
+  }
+
+fun display_normal_callback ()
+  {
+    # The password prompt is over; leave the mark alone and hide the dialog.
+    global.dialog_visible = 0;
+    if (global.password_ready)
+      {
+        global.dialog_prompt_sprite.SetOpacity (0);
+        for (i = 0; i < 96; i++)
+          {
+            global.dialog_bullet[i].SetOpacity (0);
+          }
+      }
+  }
+
+Plymouth.SetDisplayPasswordFunction (display_password_callback);
+Plymouth.SetDisplayNormalFunction (display_normal_callback);
+
 fun refresh_callback ()
   {
     # Recentre every frame: the splash may start before the mode is final, and
@@ -41,6 +130,33 @@ fun refresh_callback ()
     if (logo_fade < logo_fade_frames)
       logo_fade += 1;
     logo.sprite.SetOpacity (logo_fade / logo_fade_frames);
+
+    # The dialog is positioned from the same window centre as the mark, so a
+    # resize keeps the prompt under the logo.
+    if (global.dialog_visible)
+      {
+        prompt_w = global.dialog_prompt_image.GetWidth ();
+        prompt_h = global.dialog_prompt_image.GetHeight ();
+        prompt_x = Window.GetX() + Window.GetWidth() / 2 - prompt_w / 2;
+        prompt_y = Window.GetY() + Window.GetHeight() / 2 + logo.image.GetHeight() / 2 + 24;
+        global.dialog_prompt_sprite.SetPosition (prompt_x, prompt_y, 10);
+
+        bullet_w = global.bullet_image.GetWidth ();
+        bullet_gap = 4;
+        total_w = global.bullet_count * (bullet_w + bullet_gap) - bullet_gap;
+        bullet_x = Window.GetX() + Window.GetWidth() / 2 - total_w / 2;
+        bullet_y = prompt_y + prompt_h + 8;
+        for (i = 0; i < 96; i++)
+          {
+            if (i < global.bullet_count)
+              {
+                global.dialog_bullet[i].SetPosition (bullet_x + i * (bullet_w + bullet_gap), bullet_y, 11);
+                global.dialog_bullet[i].SetOpacity (1);
+              }
+            else
+              global.dialog_bullet[i].SetOpacity (0);
+          }
+      }
   }
 
 Plymouth.SetRefreshFunction (refresh_callback);

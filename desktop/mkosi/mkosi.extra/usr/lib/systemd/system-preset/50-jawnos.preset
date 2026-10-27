@@ -7,6 +7,8 @@
 # then the image's own jawnos-state-img, then a tmpfs fallback.
 enable home-jawn.service
 enable jawnos-grow.service
+enable jawnos-host-crypt.service
+enable systemd-ask-password-plymouth.path
 enable jawnos-host-drives.service
 enable jawnos-firstboot.service
 enable jawnos-theme-apply.service

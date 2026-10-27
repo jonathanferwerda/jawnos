@@ -131,7 +131,8 @@ is flashed directly) expands the state partition to fill the rest.
 `jawnos-host-drives.service` runs after the house is mounted and before the
 first-boot seed. It mounts the computer's unmounted ext4/btrfs/xfs/vfat/exfat
 volumes read-only under `/run/jawnos/host/<label>`, and skips the boot stick,
-loop-backed images, LUKS, swap and optical media. Most NTFS volumes are skipped
+loop-backed images, swap and optical media. Encrypted host volumes are opened
+first by `jawnos-host-crypt.service` (see below). Most NTFS volumes are skipped
 too; the kernel's `ntfs3` driver is tried and the volume is dropped if that
 fails. Every decision goes to `/run/jawnos/host-drives.log`.
 
@@ -152,6 +153,44 @@ fails. Every decision goes to `/run/jawnos/host-drives.log`.
 `jawnos-host-drives --status` prints the mounts, the chosen archive and whether
 anything is persistent. `jawnos-host-drives --apply-config` merges the choices
 into `config.json` (firstboot calls it after seeding).
+
+### Unlocking encrypted host drives
+
+If the computer has LUKS containers the live session could use,
+`jawnos-host-crypt.service` runs before host-drive discovery. For each one it
+asks on the boot splash:
+
+> Unlock <name> to use your files (Enter to skip)
+
+The passphrase is fed to `cryptsetup open --key-file=-` on stdin; it is never
+written to a file, placed on a command line, or logged (neither is its length).
+A volume opens as `/dev/mapper/jawnos-host-<first 8 hex digits of its UUID>`.
+The first passphrase that works is reused for the remaining volumes, so a person
+who uses one passphrase is asked only once.
+
+- **Skip and timeout:** pressing Enter or waiting 45 seconds skips a volume. One
+  skip stops the remaining prompts for that boot, but the passphrase that
+  already worked is still tried on the other volumes. A wrong passphrase gets at
+  most two prompts for that volume.
+- **No splash:** if Plymouth is not running, `systemd-ask-password` falls back to
+  a real console. With neither a splash nor a console, nothing is prompted and
+  the volumes stay closed.
+- **Only LUKS:** LUKS1 and LUKS2 are discovered. BitLocker, VeraCrypt and plain
+  dm-crypt have no LUKS header and are not touched.
+- **Mounting:** `jawnos-host-drives` mounts every opened volume read-only under
+  `/run/jawnos/host`. Only the volume chosen as the archive is remounted
+  read-write. `jawnos-host-crypt --status` lists what is open and its source
+  device; `jawnos-host-crypt --close` closes every `jawnos-host-*` mapper at
+  shutdown. Decisions go to `/run/jawnos/host-crypt.log`.
+
+> **Risk:** unlocking a volume that a hibernated host still has open can
+> expose a filesystem whose journal is mid-flight. The live session mounts it
+> read-only, and the archive remount is the only write, so prefer resuming or
+> shutting the host down cleanly before booting this image on it.
+
+Also note that unlocking a volume makes its contents readable to anything in
+this live session (including its root shell). Treat a borrowed machine's drives
+as data you were given, not data you own.
 
 ## Choosing a theme before installing
 

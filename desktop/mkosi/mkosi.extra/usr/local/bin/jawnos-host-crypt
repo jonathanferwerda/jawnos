@@ -1,0 +1,444 @@
+#!/bin/sh
+# Unlock the encrypted volumes of the computer a live JawnOS booted on.
+#
+# The live USB is a guest on someone else's machine. If that machine has LUKS
+# containers the live session could use, this asks for the passphrase on the
+# boot splash, opens them under /dev/mapper/jawnos-host-<uuid8>, and leaves the
+# mounting to jawnos-host-drives (read-only, except the one archive mount).
+#
+# The passphrase is held only in a shell variable and fed to cryptsetup on
+# stdin (--key-file=-). It is never written to a file, placed in argv, or
+# logged -- and neither is its length.
+#
+# Only LUKS1 and LUKS2 are supported. BitLocker, VeraCrypt and plain dm-crypt
+# have no LUKS header and are not discovered.
+#
+# The script is non-fatal by design: every failure is logged and skipped, and
+# the process exits 0 on the unlock path.
+#
+# Modes: (none) unlock, --status, --close.
+#
+# Test hooks (all optional): JAWNOS_CRYPT_DEV (comma-separated device list),
+# JAWNOS_CRYPT_PASSFILE (passphrase for the open attempt), JAWNOS_CRYPT_NO_PROMPT=1,
+# JAWNOS_CRYPT_LOG, JAWNOS_CRYPT_ALLOW_LOOP=1. JAWNOS_CRYPT_RUN,
+# JAWNOS_HOST_RUN and JAWNOS_STATE_TARGET are honoured so a harness can share
+# the run directory.
+set -u
+
+STATE=${JAWNOS_STATE_TARGET:-/home/jawn}
+RUN=${JAWNOS_CRYPT_RUN:-${JAWNOS_HOST_RUN:-/run/jawnos}}
+LOG=${JAWNOS_CRYPT_LOG:-$RUN/host-crypt.log}
+FORCED=${JAWNOS_CRYPT_DEV:-}
+PASSFILE=${JAWNOS_CRYPT_PASSFILE:-}
+NO_PROMPT=${JAWNOS_CRYPT_NO_PROMPT:-0}
+ALLOW_LOOP=${JAWNOS_CRYPT_ALLOW_LOOP:-0}
+PROTECT_FILE=$RUN/host-crypt-protected
+STATE_FILE=$RUN/host-crypt-state
+CAND_FILE=$RUN/host-crypt-candidates
+PROMPT_TIMEOUT=45
+MAX_PROMPTS=2
+SEP=$(printf '\037')
+
+mkdir -p "$RUN" 2>/dev/null || true
+# The log names devices, not passphrases; keep it root-only. Do not change the
+# run directory's mode -- the manager runs as `jawn` and may read it.
+if [ ! -e "$LOG" ]; then
+    ( umask 077; : >"$LOG" ) 2>/dev/null || true
+fi
+
+log() {
+    line="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date) jawnos-host-crypt: $*"
+    printf '%s\n' "$line" >&2
+    printf '%s\n' "$line" >>"$LOG" 2>/dev/null || true
+}
+
+usage() {
+    echo "usage: jawnos-host-crypt [--status|--close]" >&2
+}
+
+# Resolve an lsblk/kernel name to a block device we can open. dm-crypt children
+# are named by their mapper name (e.g. jawnos-host-1a2b3c4d), but the node is
+# /dev/mapper/<name>; /dev/<name> does not exist.
+dev_path() {
+    if [ -b "/dev/$1" ]; then
+        printf '/dev/%s\n' "$1"
+    elif [ -b "/dev/mapper/$1" ]; then
+        printf '/dev/mapper/%s\n' "$1"
+    else
+        printf '/dev/%s\n' "$1"
+    fi
+}
+
+top_disk() {
+    cur=$1
+    while :; do
+        parent=$(lsblk -ndo PKNAME "$(dev_path "$cur")" 2>/dev/null | head -n 1)
+        if [ -z "$parent" ]; then
+            printf '%s\n' "$cur"
+            return 0
+        fi
+        cur=$parent
+    done
+}
+
+loop_ancestor() {
+    cur=$1
+    # A whole loop device has no parent, so check the device itself too.
+    if [ "$(lsblk -dno TYPE "$(dev_path "$cur")" 2>/dev/null | head -n 1)" = loop ]; then
+        return 0
+    fi
+    while :; do
+        parent=$(lsblk -ndo PKNAME "$(dev_path "$cur")" 2>/dev/null | head -n 1)
+        [ -n "$parent" ] || return 1
+        if [ "$(lsblk -dno TYPE "$(dev_path "$parent")" 2>/dev/null | head -n 1)" = loop ]; then
+            return 0
+        fi
+        cur=$parent
+    done
+}
+
+resolve_root() {
+    r=
+    for word in $(cat /proc/cmdline 2>/dev/null); do
+        case "$word" in
+            root=PARTUUID=*) r=/dev/disk/by-partuuid/${word#root=PARTUUID=} ;;
+            root=UUID=*)     r=/dev/disk/by-uuid/${word#root=UUID=} ;;
+            root=LABEL=*)    r=/dev/disk/by-label/${word#root=LABEL=} ;;
+            root=/dev/*)     r=${word#root=} ;;
+        esac
+    done
+    [ -n "$r" ] && printf '%s\n' "$r"
+}
+
+protect_disk() {
+    d=$1
+    [ -n "$d" ] || return 0
+    grep -qx "$d" "$PROTECT_FILE" 2>/dev/null || printf '%s\n' "$d" >>"$PROTECT_FILE"
+}
+
+protect_dev() {
+    dev=$1
+    [ -n "$dev" ] || return 0
+    resolved=$(readlink -f "$dev" 2>/dev/null || printf '%s' "$dev")
+    [ -b "$resolved" ] || return 0
+    protect_disk "$(top_disk "$(basename "$resolved")")"
+}
+
+# Build the list of disks this run must not touch: the disk holding the running
+# root/state, and the physical disk behind a loop-backed image (Ventoy keeps the
+# image in a file on the stick's data partition). This mirrors
+# jawnos-host-drives so the two services agree on what is the boot medium.
+build_protection() {
+    printf '' >"$PROTECT_FILE" 2>/dev/null || true
+    LIVE_ROOT=$(resolve_root)
+    if [ -n "$LIVE_ROOT" ]; then
+        LIVE_ROOT=$(readlink -f "$LIVE_ROOT" 2>/dev/null || true)
+    fi
+    if [ -z "$LIVE_ROOT" ] || [ ! -b "$LIVE_ROOT" ]; then
+        LIVE_ROOT=$(blkid -L jawnos-root 2>/dev/null | head -n 1 || true)
+        [ -n "$LIVE_ROOT" ] && LIVE_ROOT=$(readlink -f "$LIVE_ROOT" 2>/dev/null || true)
+    fi
+    if [ -z "$LIVE_ROOT" ] || [ ! -b "$LIVE_ROOT" ]; then
+        LIVE_ROOT=$(blkid -L jawnos-state-img 2>/dev/null | head -n 1 || true)
+        [ -n "$LIVE_ROOT" ] && LIVE_ROOT=$(readlink -f "$LIVE_ROOT" 2>/dev/null || true)
+    fi
+    printf '%s\n' "$LIVE_ROOT" >"$RUN/live-root"
+
+    if [ -n "$LIVE_ROOT" ] && [ -b "$LIVE_ROOT" ]; then
+        protect_dev "$LIVE_ROOT"
+        live_top=$(top_disk "$(basename "$LIVE_ROOT")")
+        if [ "$(lsblk -dno TYPE "$(dev_path "$live_top")" 2>/dev/null | head -n 1)" = loop ]; then
+            backing=$(cat "/sys/block/$live_top/loop/backing_file" 2>/dev/null || true)
+            resolved=no
+            if [ -n "$backing" ]; then
+                bsrc=$(findmnt -T "$backing" -no SOURCE 2>/dev/null | head -n 1 || true)
+                if [ -n "$bsrc" ] && [ -b "$bsrc" ]; then
+                    protect_dev "$bsrc"
+                    resolved=yes
+                fi
+                log "live image $live_top comes from $backing${bsrc:+ on $bsrc}"
+            fi
+            if [ "$resolved" = no ]; then
+                # Without a visible path the physical stick cannot be named. Skip
+                # every removable disk this run rather than risk unlocking (and
+                # exposing) the boot stick.
+                printf '#removable\n' >>"$PROTECT_FILE"
+                log "WARNING: $live_top has no resolvable backing file; skipping removable disks this run"
+            fi
+            # Ventoy mounts the stick's data partition here on some builds.
+            for mp in /isodevice /run/ventoy /ventoy; do
+                [ -d "$mp" ] || continue
+                s=$(findmnt -T "$mp" -no SOURCE 2>/dev/null | head -n 1 || true)
+                [ -n "$s" ] && protect_dev "$s"
+            done
+        fi
+    fi
+
+    # The mounted state may itself be the Ventoy reserve on the boot stick.
+    src=$(findmnt -no SOURCE -M "$STATE" 2>/dev/null | head -n 1 || true)
+    [ -n "$src" ] && protect_dev "$src"
+    log "protected disks: $(tr '\n' ' ' <"$PROTECT_FILE" 2>/dev/null)"
+}
+
+# One candidate per line: size, device, mapper name, label, uuid. The boot
+# medium, loop-backed images, already-open devices, optical media and anything
+# that is not crypto_LUKS are dropped before the sort. A 32-character UUID with
+# its dashes removed gives the stable 8-character suffix (16 dashes remain for
+# a 36-character UUID). The underlying device's LUKS UUID is used, not the
+# inner filesystem's.
+candidates() {
+    if [ -n "$FORCED" ]; then
+        printf '%s\n' "$FORCED" | tr ',' '\n'
+    else
+        blkid -t TYPE=crypto_LUKS -o device 2>/dev/null
+    fi | while IFS= read -r dev; do
+        dev=$(printf '%s' "$dev" | tr -d ' \t')
+        [ -n "$dev" ] || continue
+        dev=$(readlink -f "$dev" 2>/dev/null || printf '%s' "$dev")
+        [ -b "$dev" ] || continue
+        name=$(basename "$dev")
+
+        fstype=$(blkid -s TYPE -o value "$dev" 2>/dev/null | head -n 1 || true)
+        if [ "$fstype" != crypto_LUKS ]; then
+            log "skip $dev: type '${fstype:-none}', not LUKS"
+            continue
+        fi
+        type=$(lsblk -dno TYPE "$dev" 2>/dev/null | head -n 1 || true)
+        if [ "$type" = rom ]; then
+            log "skip $dev: optical media"
+            continue
+        fi
+        holders=$(ls "/sys/class/block/$name/holders" 2>/dev/null || true)
+        if [ -n "$holders" ]; then
+            log "skip $dev: already open ($(printf '%s' "$holders" | tr '\n' ' '))"
+            continue
+        fi
+        if cryptsetup status "$dev" >/dev/null 2>&1; then
+            log "skip $dev: cryptsetup reports it active"
+            continue
+        fi
+        if grep -qs "^$dev " /proc/swaps 2>/dev/null; then
+            log "skip $dev: swap"
+            continue
+        fi
+        if [ "$ALLOW_LOOP" != 1 ] && loop_ancestor "$name"; then
+            log "skip $dev: inside a disk image"
+            continue
+        fi
+        disk=$(top_disk "$name")
+        if grep -qx "$disk" "$PROTECT_FILE" 2>/dev/null; then
+            log "skip $dev: boot medium ($disk)"
+            continue
+        fi
+        if grep -qx '#removable' "$PROTECT_FILE" 2>/dev/null \
+            && [ "$(lsblk -dno RM "$disk" 2>/dev/null | head -n 1)" = 1 ]; then
+            log "skip $dev: removable disk while the boot medium is unresolved"
+            continue
+        fi
+
+        uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null | head -n 1 || true)
+        label=$(blkid -s LABEL -o value "$dev" 2>/dev/null | head -n 1 || true)
+        size=$(lsblk -bndo SIZE "$dev" 2>/dev/null | head -n 1 || true)
+        [ -n "$size" ] || size=0
+        short=$(printf '%s' "${uuid:-$name}" | tr -d '-' | cut -c 1-8)
+        [ -n "$short" ] || short=$name
+        # The label is host-controlled: never let a newline or the field
+        # separator forge a candidate line or a state-file row. (UTF-8 bytes
+        # are kept; only the three dangerous controls become underscores.)
+        label=$(printf '%s' "${label:-${uuid:-$name}}" | tr '\n\r\037' '___')
+        printf '%s\037%s\037%s\037%s\037%s\n' \
+            "$size" "$dev" "jawnos-host-$short" "$label" "$uuid"
+    done | LC_ALL=C sort -t "$SEP" -k1,1nr -k2,2
+}
+
+record_open() {
+    name=$1
+    dev=$2
+    label=$3
+    tmp=$STATE_FILE.tmp.$$
+    if [ -f "$STATE_FILE" ]; then
+        grep -v "^$name$SEP" "$STATE_FILE" 2>/dev/null >"$tmp" || : >"$tmp"
+    else
+        : >"$tmp"
+    fi
+    printf '%s\037%s\037%s\n' "$name" "$dev" "$label" >>"$tmp"
+    mv "$tmp" "$STATE_FILE" 2>/dev/null || rm -f "$tmp"
+    chmod 600 "$STATE_FILE" 2>/dev/null || true
+}
+
+# The passphrase reaches cryptsetup on stdin, never in argv.
+try_open() {
+    dev=$1
+    name=$2
+    pass=$3
+    printf '%s' "$pass" | cryptsetup open --type luks --key-file=- "$dev" "$name" >>"$LOG" 2>&1
+}
+
+# Ask once. With the splash alive, systemd-ask-password draws on it through
+# systemd-ask-password-plymouth.path; otherwise a real console may still ask.
+# With neither, no prompt is attempted at all.
+ask_pass() {
+    label=$1
+    dev=$2
+    if ! command -v systemd-ask-password >/dev/null 2>&1; then
+        log "systemd-ask-password is not installed; cannot ask for a passphrase"
+        return 1
+    fi
+    prompt="Unlock $label to use your files (Enter to skip)"
+    if command -v plymouth >/dev/null 2>&1 && plymouth --ping >/dev/null 2>&1; then
+        systemd-ask-password --no-tty --timeout="$PROMPT_TIMEOUT" \
+            --id="cryptsetup:$dev" "$prompt" 2>/dev/null
+        return $?
+    fi
+    if ( : </dev/tty ) 2>/dev/null; then
+        systemd-ask-password --timeout="$PROMPT_TIMEOUT" "$prompt" 2>/dev/null
+        return $?
+    fi
+    log "no splash or console is available to ask for a passphrase"
+    return 1
+}
+
+unlock_all() {
+    build_protection
+
+    cached_pass=
+    if [ -n "$PASSFILE" ]; then
+        if [ -r "$PASSFILE" ]; then
+            cached_pass=$(sed -n '1p' "$PASSFILE" 2>/dev/null || true)
+            if [ -n "$cached_pass" ]; then
+                log "trying the passphrase from the test passphrase file first"
+            else
+                log "the test passphrase file is empty; ignoring it"
+            fi
+        else
+            log "the test passphrase file is not readable; ignoring it"
+        fi
+    fi
+
+    list_file=$CAND_FILE
+    candidates >"$list_file"
+    chmod 600 "$list_file" 2>/dev/null || true
+    if [ ! -s "$list_file" ]; then
+        log "no LUKS volumes to unlock"
+        rm -f "$list_file" 2>/dev/null || true
+        return 0
+    fi
+
+    opened=0
+    total=0
+    skipped=0
+    while IFS="$SEP" read -r size dev name label uuid; do
+        [ -b "$dev" ] || continue
+        total=$((total + 1))
+        if [ -e "/dev/mapper/$name" ]; then
+            log "skip $dev: /dev/mapper/$name already exists"
+            continue
+        fi
+        holders=$(ls "/sys/class/block/$(basename "$dev")/holders" 2>/dev/null || true)
+        if [ -n "$holders" ]; then
+            log "skip $dev: already open ($(printf '%s' "$holders" | tr '\n' ' '))"
+            continue
+        fi
+
+        # One person, one passphrase: reuse the key that worked on an earlier
+        # device before asking again.
+        if [ -n "$cached_pass" ]; then
+            if try_open "$dev" "$name" "$cached_pass"; then
+                log "opened $dev as /dev/mapper/$name (cached passphrase)"
+                record_open "$name" "$dev" "$label"
+                opened=$((opened + 1))
+                continue
+            fi
+            log "the cached passphrase did not open $dev"
+        fi
+
+        if [ "$NO_PROMPT" = 1 ]; then
+            log "skip $dev: prompting disabled"
+            continue
+        fi
+        if [ "$skipped" = 1 ]; then
+            log "skip $dev: an earlier prompt was skipped"
+            continue
+        fi
+
+        tries=0
+        pass=
+        while [ "$tries" -lt "$MAX_PROMPTS" ]; do
+            if pass=$(ask_pass "$label" "$dev") && [ -n "$pass" ]; then
+                :
+            else
+                skipped=1
+                log "no passphrase for $dev (timeout or Enter); skipping the remaining prompts"
+                break
+            fi
+            tries=$((tries + 1))
+            if try_open "$dev" "$name" "$pass"; then
+                cached_pass=$pass
+                log "opened $dev as /dev/mapper/$name (prompted, attempt $tries)"
+                record_open "$name" "$dev" "$label"
+                opened=$((opened + 1))
+                break
+            fi
+            log "the passphrase did not open $dev (attempt $tries of $MAX_PROMPTS)"
+        done
+    done <"$list_file"
+    rm -f "$list_file" 2>/dev/null || true
+
+    log "unlock complete: $opened opened, $total candidate(s)"
+}
+
+close_all() {
+    found=0
+    for m in /dev/mapper/jawnos-host-*; do
+        [ -e "$m" ] || continue
+        found=1
+        name=$(basename "$m")
+        if cryptsetup close "$name" >>"$LOG" 2>&1; then
+            log "closed $name"
+        else
+            log "could not close $name (busy?)"
+        fi
+    done
+    [ "$found" = 1 ] || log "no jawnos-host mappers to close"
+    rm -f "$STATE_FILE" 2>/dev/null || true
+}
+
+state_source() {
+    name=$1
+    [ -f "$STATE_FILE" ] || return 0
+    while IFS="$SEP" read -r n dev label; do
+        if [ "$n" = "$name" ]; then
+            printf '%s\n' "$dev"
+            return 0
+        fi
+    done <"$STATE_FILE"
+}
+
+status() {
+    echo "host crypt:"
+    found=no
+    for m in /dev/mapper/jawnos-host-*; do
+        [ -e "$m" ] || continue
+        found=yes
+        name=$(basename "$m")
+        src=$(state_source "$name")
+        dev=$(cryptsetup status "$name" 2>/dev/null \
+            | sed -n 's/^ *device:  *//p' | head -n 1)
+        if [ -n "$src" ]; then
+            echo "  $name -> $src (opened by jawnos-host-crypt)"
+        elif [ -n "$dev" ]; then
+            echo "  $name -> $dev (opened elsewhere; no recorded source)"
+        else
+            echo "  $name (source unknown)"
+        fi
+    done
+    [ "$found" = yes ] || echo "  (none open)"
+}
+
+case "${1:-}" in
+    --status) status; exit 0 ;;
+    --close) close_all; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
+    "") unlock_all; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+esac

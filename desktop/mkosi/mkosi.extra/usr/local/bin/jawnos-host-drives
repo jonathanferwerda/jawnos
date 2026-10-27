@@ -6,7 +6,8 @@
 # (a <Location>/manifest.json) and for a JawnOS database this session can adopt,
 # and records its decisions. It never writes to a host volume except the one
 # archive mount it remounts read-write, and it never touches the boot stick,
-# LUKS, swap or optical media.
+# swap or optical media. LUKS containers are opened by jawnos-host-crypt first;
+# this script mounts the resulting /dev/mapper/jawnos-host-* devices read-only.
 #
 # The script is non-fatal by design: every failure is logged and skipped, and
 # the process exits 0 on the discovery path.
@@ -49,10 +50,23 @@ field() {
     printf ' %s\n' "$1" | sed -n "s/.* $2=\"\([^\"]*\)\".*/\1/p"
 }
 
+# Resolve an lsblk/kernel name to a block device we can open. dm-crypt children
+# are named by their mapper name (e.g. jawnos-host-1a2b3c4d), but the node is
+# /dev/mapper/<name>; /dev/<name> does not exist.
+dev_path() {
+    if [ -b "/dev/$1" ]; then
+        printf '/dev/%s\n' "$1"
+    elif [ -b "/dev/mapper/$1" ]; then
+        printf '/dev/mapper/%s\n' "$1"
+    else
+        printf '/dev/%s\n' "$1"
+    fi
+}
+
 top_disk() {
     cur=$1
     while :; do
-        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        parent=$(lsblk -ndo PKNAME "$(dev_path "$cur")" 2>/dev/null | head -n 1)
         if [ -z "$parent" ]; then
             printf '%s\n' "$cur"
             return 0
@@ -64,13 +78,13 @@ top_disk() {
 loop_ancestor() {
     cur=$1
     # A whole loop device has no parent, so check the device itself too.
-    if [ "$(lsblk -dno TYPE "/dev/$cur" 2>/dev/null | head -n 1)" = loop ]; then
+    if [ "$(lsblk -dno TYPE "$(dev_path "$cur")" 2>/dev/null | head -n 1)" = loop ]; then
         return 0
     fi
     while :; do
-        parent=$(lsblk -ndo PKNAME "/dev/$cur" 2>/dev/null | head -n 1)
+        parent=$(lsblk -ndo PKNAME "$(dev_path "$cur")" 2>/dev/null | head -n 1)
         [ -n "$parent" ] || return 1
-        if [ "$(lsblk -dno TYPE "/dev/$parent" 2>/dev/null | head -n 1)" = loop ]; then
+        if [ "$(lsblk -dno TYPE "$(dev_path "$parent")" 2>/dev/null | head -n 1)" = loop ]; then
             return 0
         fi
         cur=$parent
@@ -386,7 +400,7 @@ discover() {
             mnt=$(field "$line" MOUNTPOINTS)
             [ -n "$name" ] || continue
             case "$type" in
-                part|disk) ;;
+                part|disk|crypt) ;;
                 loop) [ "$ALLOW_LOOP" = 1 ] || continue ;;
                 *) continue ;;
             esac
@@ -416,7 +430,7 @@ discover() {
 
     LC_ALL=C sort "$cand" >"$cand.sorted"
     while IFS=$(printf '\037') read -r name fstype label uuid disk; do
-        dev=/dev/$name
+        dev=$(dev_path "$name")
         [ -b "$dev" ] || continue
         if [ -n "$label" ]; then
             base=$label

@@ -43,6 +43,10 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
 - **Checkpoint** each step in `.shots/AGENT-CHECKPOINT.md` (goal, done + paths, next action, last commit)
   and **commit** it (`git add -p`, `v<version> - <summary>`). After a crash start a *fresh* thread that
   reads it first; delete it when the task is done.
+- **The checkpoint file may be shared.** More than one agent can be writing `.shots/AGENT-CHECKPOINT.md`
+  at the same time, so **identify yourself** — put an agent id/model and a timestamp on your section,
+  re-read before you write, and only replace your own entry. Never overwrite another agent's section or
+  delete the file while someone else's work is still in it; if you are unsure who owns a line, leave it.
 
 
 ## Rules

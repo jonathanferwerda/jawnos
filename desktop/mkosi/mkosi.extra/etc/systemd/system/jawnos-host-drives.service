@@ -8,7 +8,7 @@
 # 0, so a sick host drive cannot fail the boot.
 [Unit]
 Description=Discover the host computer's drives (live session)
-After=home-jawn.service
+After=home-jawn.service jawnos-host-crypt.service
 Before=jawnos-firstboot.service
 
 [Service]

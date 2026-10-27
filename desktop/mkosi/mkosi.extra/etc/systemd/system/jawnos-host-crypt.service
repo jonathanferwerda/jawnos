@@ -1,0 +1,22 @@
+# Ask on the boot splash for the passphrase of the host computer's LUKS
+# volumes and open them for the live session. It runs after the house is
+# mounted (so the splash is up and the state is known) and before host-drive
+# discovery, which mounts the opened volumes read-only.
+#
+# The script never writes the passphrase anywhere, always exits 0, and skips a
+# device it cannot open, so a locked or unavailable volume cannot fail the boot.
+[Unit]
+Description=Unlock encrypted host drives (live session)
+Requires=home-jawn.service
+After=home-jawn.service systemd-udevd.service
+Before=jawnos-host-drives.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=240
+ExecStart=/usr/local/bin/jawnos-host-crypt
+ExecStop=/usr/local/bin/jawnos-host-crypt --close
+
+[Install]
+WantedBy=multi-user.target
