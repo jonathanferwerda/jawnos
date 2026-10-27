@@ -30901,6 +30901,7 @@ my $jg_body = sub ($c) {
 
 get '/manager/junderground/config' => sub ($c) {
 	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	my @friends = map { $_->{'app'} } @{ &subs::db_query('select app from settings where setting = ? and value = ?', 'friend', 'yes')->hashes };
 	$c->render(json => {
 		url => &jg_setting('url'),
 		handle => &jg_setting('handle'),
@@ -30908,6 +30909,7 @@ get '/manager/junderground/config' => sub ($c) {
 		known => &jg_setting('known'),
 		blacklist => &jg_setting('blacklist'),
 		hostile => &jg_setting('hostile'),
+		friends => \@friends,
 	});
 };
 
@@ -30950,6 +30952,33 @@ post '/manager/junderground/leave' => sub ($c) {
 	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
 	my $body = $jg_body->($c);
 	$c->render(json => &jg_leave($c, $body->{'handle'}, $body->{'room'}, $body->{'presence_id'}));
+};
+
+# "Friend": make this house into one of our appointments (the app and its
+# settings), so the room history has a name and a duration to hang on.
+post '/manager/junderground/friend' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	my $body = $jg_body->($c);
+	my $handle = &jg_slug($body->{'handle'});
+	return $c->render(json => { error => 'no house' }) unless length $handle;
+	my $init = &subs::setting_initializer($handle, &subs::rightNow());
+	&subs::setting_setter({ app => $init->{'app'}, setting => 'friend', value => 'yes' });
+	$c->render(json => { ok => 1, app => $init->{'app'} });
+};
+
+# Captions: the listener records the peer's audio, transcribes it through the
+# house's dictation pipeline, and the text is translated into this house's
+# language here (the Guide's engine, cached).
+post '/manager/junderground/translate' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	my $body = $jg_body->($c);
+	my $text = defined $body->{'text'} ? "$body->{'text'}" : '';
+	$text =~ s/^\s+|\s+$//g;
+	return $c->render(json => { error => 'no text' }) unless length $text;
+	my $to = $body->{'to'} || &subs::language();
+	my $res = &subs::translate_engine({ to => $to, text => $text });
+	return $c->render(json => { error => $res->{'error'} || 'could not translate' }) unless $res->{'ok'};
+	$c->render(json => { ok => 1, text => $res->{'translation'}, to => $to });
 };
 
 get '/manager/pen' => sub ($c) {

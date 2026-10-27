@@ -900,6 +900,23 @@
 .jg_canonical { color: var(--accent, #4a90d9); font-weight: 600; }
 .jg_unknown { color: #a06a00; }
 .jg_media { align-items: baseline; min-height: 0; }
+.jg_roster { display: flex; flex-direction: column; gap: 6px; }
+.jg_person { border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px;
+	background: var(--panel); display: flex; flex-direction: column; gap: 5px; }
+.jg_person_head { display: flex; align-items: center; gap: 6px; }
+.jg_person_avatar { width: 26px; height: 26px; border-radius: 50%; display: flex;
+	align-items: center; justify-content: center; font-weight: 700; color: #fff;
+	font-size: 13px; flex: 0 0 auto; }
+.jg_person_name { font-weight: 600; flex: 1 1 auto; overflow-wrap: anywhere; }
+.jg_person_badge { font-size: 10px; border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+.jg_person_actions { display: flex; flex-wrap: wrap; gap: 4px; }
+.jg_person_btn { font-size: 11px; padding: 2px 8px; border-radius: 999px;
+	border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
+.jg_person_btn.on { background: var(--accent, #4a90d9); color: #fff; border-color: transparent; }
+.jg_person_feed { display: none; width: 100%; max-height: 200px; border-radius: 8px; background: #000; }
+.jg_person_feed.on { display: block; }
+.jg_person_captions { display: flex; flex-direction: column; gap: 1px; font-size: 12px; color: var(--ink-muted); }
+
 .jg_mute { padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 12px; }
 .jg_badge { display: inline-block; margin-top: 2px; padding: 0 6px; border-radius: 999px; border: 1px solid var(--line); font-size: 10px; }
 .jg_detail { border-top: 1px solid var(--line); padding-top: 6px; display: flex; flex-direction: column; gap: 4px; }

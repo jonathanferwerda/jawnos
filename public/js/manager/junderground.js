@@ -11,6 +11,8 @@
 	var jgSockets = {};
 	var jgNames = {};
 	var jgCalls = {};
+	var jgFriends = {};
+	var jgVisits = {};
 
 	// The signaling socket goes straight to the switch (the browser cannot ask
 	// the Perl side to hold a WebSocket). The grant is short-lived and rides
@@ -69,6 +71,7 @@
 			if (jgSockets[key] === ws) {
 				delete jgSockets[key];
 				jgMediaStop(handle, room);
+				jgVisitsStopAll();
 			}
 		};
 	}
@@ -81,6 +84,8 @@
 			$('#jg_known').val(r.known || '');
 			$('#jg_blacklist').val(r.blacklist || '');
 			$('#jg_hostile').val(r.hostile || '');
+			jgFriends = {};
+			(r.friends || []).forEach(function (who) { jgFriends[who] = 1; });
 		});
 	}
 
@@ -156,6 +161,15 @@
 			ice: hello.ice_servers || [],
 			pcs: {},
 			pending: {},
+			remote: {},
+			tracked: {},
+			answered: {},
+			video: {},
+			publish: {},
+			captions: {},
+			lines: {},
+			camera: null,
+			cameraPromise: null,
 			stream: null,
 			muted: false,
 			ready: Promise.resolve(null)
@@ -190,27 +204,40 @@
 		};
 
 		pc.ontrack = function (e) {
-			var id = 'jg_audio_' + jgSafeId(jti);
-			var audio = document.getElementById(id);
-			if (!audio) {
-				audio = document.createElement('audio');
-				audio.id = id;
-				audio.autoplay = true;
-				jgAudioRoot().appendChild(audio);
+			var call = jgCall(handle, room);
+			if (call) { call.remote[jti] = e.streams[0]; }
+
+			if (e.track && e.track.kind === 'video') {
+				jgAttachVideo(handle, room, jti, e.streams[0]);
+				e.track.onended = function () { jgDetachVideo(jti); };
+			} else {
+				var id = 'jg_audio_' + jgSafeId(jti);
+				var audio = document.getElementById(id);
+				if (!audio) {
+					audio = document.createElement('audio');
+					audio.id = id;
+					audio.autoplay = true;
+					jgAudioRoot().appendChild(audio);
+				}
+				audio.srcObject = e.streams[0];
+				var playing = audio.play();
+				if (playing && playing.catch) { playing.catch(function () {}); }
 			}
-			audio.srcObject = e.streams[0];
-			var playing = audio.play();
-			if (playing && playing.catch) { playing.catch(function () {}); }
+
 			jgRenderMedia(handle, room);
+			jgRestoreMedia(handle, room);
 		};
 
 		pc.onconnectionstatechange = function () { jgRenderMedia(handle, room); };
 		return pc;
 	}
 
-	function jgAddTracks(pc, stream) {
+	function jgAddTracks(handle, room, pc, stream, jti) {
+		var call = jgCall(handle, room);
+		if (!call || call.tracked[jti]) { return; }
+		call.tracked[jti] = true;
 		if (stream) {
-			stream.getTracks().forEach(function (track) { pc.addTrack(track, stream); });
+			stream.getAudioTracks().forEach(function (track) { pc.addTrack(track, stream); });
 		} else {
 			pc.addTransceiver('audio', { direction: 'recvonly' });
 		}
@@ -223,7 +250,7 @@
 			if (jgCalls[jgKey(handle, room)] !== call || call.pcs[jti]) { return; }
 			var pc = jgPeer(handle, room, jti);
 			if (!pc) { return; }
-			jgAddTracks(pc, stream);
+			jgAddTracks(handle, room, pc, stream, jti);
 			pc.createOffer().then(function (offer) {
 				return pc.setLocalDescription(offer);
 			}).then(function () {
@@ -240,7 +267,10 @@
 			if (jgCalls[jgKey(handle, room)] !== call) { return; }
 			var pc = jgPeer(handle, room, jti);
 			if (!pc) { return; }
-			jgAddTracks(pc, stream);
+			if (!call.answered[jti]) {
+				call.answered[jti] = true;
+				jgAddTracks(handle, room, pc, stream, jti);
+			}
 			pc.setRemoteDescription({ type: 'offer', sdp: msg.sdp }).then(function () {
 				return jgFlushIce(call, jti);
 			}).then(function () {
@@ -289,6 +319,9 @@
 			}).catch(function () {});
 		} else if (msg.type === 'ice') {
 			jgAddIce(handle, room, msg);
+		} else if (msg.type === 'video') {
+			if (msg.want === 'on') { jgVideoPublish(handle, room, msg.from_jti); }
+			else { jgVideoUnpublish(handle, room, msg.from_jti); }
 		}
 	}
 
@@ -338,6 +371,337 @@
 		} else {
 			$('<span class="jg_scope">').text(jgT('Listening only')).appendTo(box);
 		}
+	}
+
+
+	// ---- people --------------------------------------------------------
+	// Every other house in the room gets a card. Video is pulled: the feed is
+	// not sent until this side asks for it, and the publisher adds the camera
+	// only to that peer's connection. Captions are made here, from the audio
+	// that already arrived: transcribe, then translate into this house's
+	// language through the Guide, and show it under the person.
+
+	function jgSelf() { return $.trim($('#jg_handle').val() || '').toLowerCase(); }
+
+	function jgPersonKey(jti) { return jgSafeId(jti); }
+
+	function jgPersonCard(entry, handle, room) {
+		var jti = entry.jti || '';
+		var subject = entry.subject || '';
+		var card = $('<div class="jg_person">').attr({ jti: jti, subject: subject });
+		var initial = (subject || '?').slice(0, 1).toUpperCase();
+		var head = $('<div class="jg_person_head">').appendTo(card);
+		$('<span class="jg_person_avatar">').text(initial)
+			.css('background', 'hsl(' + jgHue(subject) + ', 55%, 42%)').appendTo(head);
+		$('<span class="jg_person_name">').text(subject || '?').appendTo(head);
+		if (entry.ticketed) {
+			$('<span class="jg_person_badge">').text(jgT('pass')).appendTo(head);
+		}
+
+		var actions = $('<div class="jg_person_actions">').appendTo(card);
+		$('<button type="button" class="jg_person_btn jg_person_video_toggle">')
+			.attr({ jti: jti, handle: handle, room: room })
+			.text(jgT('Video')).appendTo(actions);
+		$('<button type="button" class="jg_person_btn jg_person_caption_toggle">')
+			.attr({ jti: jti, handle: handle, room: room })
+			.text(jgT('Translate')).appendTo(actions);
+		$('<button type="button" class="jg_person_btn jg_person_friend">')
+			.attr('handle', subject)
+			.text(jgFriends[subject] ? jgT('Friend') : jgT('Add friend')).appendTo(actions);
+
+		$('<video class="jg_person_feed" playsinline autoplay></video>').appendTo(card);
+		$('<div class="jg_person_captions"></div>').appendTo(card);
+		return card;
+	}
+
+	function jgHue(value) {
+		var h = 0;
+		var text = String(value || '');
+		for (var i = 0; i < text.length; i++) { h = (h * 31 + text.charCodeAt(i)) % 360; }
+		return h;
+	}
+
+	function jgAttachVideo(handle, room, jti, stream) {
+		var card = $('.jg_person[jti="' + jgSafeId(jti) + '"]');
+		var video = card.find('video.jg_person_feed').first();
+		if (!video.length) { return; }
+		video[0].srcObject = stream;
+		video.addClass('on');
+		var playing = video[0].play();
+		if (playing && playing.catch) { playing.catch(function () {}); }
+	}
+
+	function jgDetachVideo(jti) {
+		var card = $('.jg_person[jti="' + jgSafeId(jti) + '"]');
+		card.find('video.jg_person_feed').removeClass('on').each(function () { this.srcObject = null; });
+	}
+
+	function jgRestoreMedia(handle, room) {
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+		$('#jg_detail .jg_person').each(function () {
+			var card = $(this);
+			var jti = card.attr('jti') || '';
+			if (call.video[jti]) { card.find('.jg_person_video_toggle').addClass('on').text(jgT('Video on')); }
+			if (call.captions[jti] && !call.captions[jti].waiting) {
+				card.find('.jg_person_caption_toggle').addClass('on').text(jgT('Translated'));
+			}
+			var lines = call.lines[jti] || [];
+			var box = card.find('.jg_person_captions').empty();
+			lines.forEach(function (line) { $('<div>').text(line).appendTo(box); });
+			if (call.remote[jti]) {
+				var video = card.find('video.jg_person_feed').first();
+				if (video.length) {
+					video[0].srcObject = call.remote[jti];
+					video.addClass('on');
+				}
+			}
+			if (call.captions[jti] && call.captions[jti].waiting && call.remote[jti]) {
+				jgCaptionStart(handle, room, jti);
+			}
+		});
+	}
+
+	function jgCamera(call) {
+		if (call.camera) { return Promise.resolve(call.camera); }
+		if (call.cameraPromise) { return call.cameraPromise; }
+		if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+			return Promise.resolve(null);
+		}
+		call.cameraPromise = navigator.mediaDevices.getUserMedia({ video: true }).then(function (stream) {
+			call.camera = stream;
+			return stream;
+		}).catch(function () {
+			return null;
+		});
+		return call.cameraPromise;
+	}
+
+	function jgRenegotiate(handle, room, jti, pc) {
+		pc.createOffer().then(function (offer) {
+			return pc.setLocalDescription(offer);
+		}).then(function () {
+			jgSend(handle, room, { type: 'offer', sdp: pc.localDescription.sdp, to: jti });
+		}).catch(function () {});
+	}
+
+	function jgVideoToggle(handle, room, jti, button) {
+		var call = jgCall(handle, room);
+		if (!call || !jti) { return; }
+		var want = !call.video[jti];
+		call.video[jti] = want;
+		jgSend(handle, room, { type: 'video', want: want ? 'on' : 'off', to: jti });
+		$(button).toggleClass('on', want).text(want ? jgT('Video on') : jgT('Video'));
+		if (!want) { jgDetachVideo(jti); }
+	}
+
+	function jgVideoPublish(handle, room, jti) {
+		var call = jgCall(handle, room);
+		if (!call || !jti) { return; }
+		call.publish[jti] = true;
+		jgCamera(call).then(function (stream) {
+			if (!stream || jgCalls[jgKey(handle, room)] !== call || !call.publish[jti]) { return; }
+			var pc = jgPeer(handle, room, jti);
+			if (!pc) { return; }
+			var already = pc.getSenders().some(function (sender) {
+				return sender.track && sender.track.kind === 'video';
+			});
+			if (already) { return; }
+			var track = stream.getVideoTracks()[0];
+			if (!track) { return; }
+			pc.addTrack(track, stream);
+			jgRenegotiate(handle, room, jti, pc);
+		});
+	}
+
+	function jgVideoUnpublish(handle, room, jti) {
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+		delete call.publish[jti];
+		var pc = call.pcs[jti];
+		if (pc) {
+			pc.getSenders().forEach(function (sender) {
+				if (sender.track && sender.track.kind === 'video') {
+					try { pc.removeTrack(sender); } catch (e) {}
+				}
+			});
+			jgRenegotiate(handle, room, jti, pc);
+		}
+		if (!Object.keys(call.publish).length && call.camera) {
+			call.camera.getTracks().forEach(function (track) { try { track.stop(); } catch (e) {} });
+			call.camera = null;
+			call.cameraPromise = null;
+		}
+	}
+
+	function jgCaptionToggle(handle, room, jti, button) {
+		var call = jgCall(handle, room);
+		if (!call || !jti) { return; }
+		var state = call.captions[jti];
+		if (state && !state.waiting) {
+			state.active = false;
+			try { if (state.rec && state.rec.state === 'recording') { state.rec.stop(); } } catch (e) {}
+			try { if (state.ctx && state.ctx.close) { state.ctx.close(); } } catch (e) {}
+			delete call.captions[jti];
+			$(button).removeClass('on').text(jgT('Translate'));
+			return;
+		}
+		$(button).addClass('on').text(jgT('Translating'));
+		jgCaptionStart(handle, room, jti);
+	}
+
+	function jgCaptionStart(handle, room, jti) {
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+		if (call.captions[jti] && !call.captions[jti].waiting) { return; }
+		var stream = call.remote[jti];
+		if (!stream) { call.captions[jti] = { waiting: true }; return; }
+
+		var ctx = null;
+		var analyser = null;
+		var buf = null;
+
+		try {
+			ctx = new (window.AudioContext || window.webkitAudioContext)();
+			analyser = ctx.createAnalyser();
+			analyser.fftSize = 1024;
+			ctx.createMediaStreamSource(stream).connect(analyser);
+			buf = new Float32Array(analyser.fftSize);
+		} catch (e) {
+			ctx = null;
+		}
+
+		var state = { waiting: false, active: true, ctx: ctx, analyser: analyser, buf: buf, stream: stream, busy: false };
+		call.captions[jti] = state;
+		jgCaptionCycle(handle, room, jti, state);
+	}
+
+	function jgCaptionCycle(handle, room, jti, state) {
+		if (!state.active) { return; }
+		var rec = null;
+		try { rec = new MediaRecorder(state.stream); } catch (e) { rec = null; }
+		if (!rec) { state.active = false; return; }
+
+		var chunks = [];
+		var loud = false;
+		var started = Date.now();
+		state.rec = rec;
+		rec.ondataavailable = function (e) { if (e.data && e.data.size) { chunks.push(e.data); } };
+
+		var sample = function () {
+			if (!state.active || !state.analyser) { return; }
+			state.analyser.getFloatTimeDomainData(state.buf);
+			var sum = 0;
+			for (var i = 0; i < state.buf.length; i++) { sum += state.buf[i] * state.buf[i]; }
+			if (Math.sqrt(sum / state.buf.length) > 0.012) { loud = true; }
+			if (Date.now() - started < 3800) { setTimeout(sample, 100); }
+		};
+
+		rec.onstop = function () {
+			if (!state.active) { return; }
+			state.rec = null;
+			if (loud && !state.busy) {
+				var blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+				if (blob.size > 1200) { jgCaptionSend(handle, room, jti, state, blob); }
+			}
+			setTimeout(function () { jgCaptionCycle(handle, room, jti, state); }, 250);
+		};
+
+		rec.start();
+		sample();
+		setTimeout(function () {
+			if (state.active && rec.state === 'recording') { try { rec.stop(); } catch (e) {} }
+		}, 4000);
+	}
+
+	function jgCaptionSend(handle, room, jti, state, blob) {
+		state.busy = true;
+		$.ajax({
+			url: '/manager/dictate?lang=auto',
+			type: 'POST',
+			data: blob,
+			processData: false,
+			contentType: blob.type || 'audio/webm'
+		}).done(function (r) {
+			var text = r && r.text;
+			if (!text) { state.busy = false; return; }
+			jgCaptionLine(handle, room, jti, text);
+			$.ajax({
+				url: '/manager/junderground/translate',
+				type: 'POST',
+				data: { incoming_data: JSON.stringify({ text: text }) }
+			}).done(function (t) {
+				if (t && t.ok && t.text && t.text !== text) { jgCaptionLine(handle, room, jti, t.text); }
+			}).always(function () { state.busy = false; });
+		}).fail(function () { state.busy = false; });
+	}
+
+	function jgCaptionLine(handle, room, jti, text) {
+		var call = jgCall(handle, room);
+		if (!call) { return; }
+		var lines = call.lines[jti] = call.lines[jti] || [];
+		lines.push(String(text));
+		while (lines.length > 3) { lines.shift(); }
+		var box = $('.jg_person[jti="' + jgSafeId(jti) + '"] .jg_person_captions').empty();
+		lines.forEach(function (line) { $('<div>').text(line).appendTo(box); });
+	}
+
+	function jgFriend(handle, subject, button) {
+		$.ajax({
+			url: '/manager/junderground/friend',
+			type: 'POST',
+			data: { incoming_data: JSON.stringify({ handle: subject }) }
+		}).done(function (r) {
+			if (r && r.ok) {
+				jgFriends[subject] = 1;
+				$(button).addClass('on').text(jgT('Friend'));
+			}
+		});
+	}
+
+	function jgVisitsSync(handle, room, roster, joined) {
+		var self = jgSelf();
+		var present = {};
+		(roster || []).forEach(function (entry) {
+			if (entry.subject && entry.subject !== self) { present[entry.subject] = 1; }
+		});
+		var here = jgKey(handle, room);
+		Object.keys(jgVisits).forEach(function (who) {
+			if (!joined || !present[who] || jgVisits[who].room !== here) { jgVisitStop(who); }
+		});
+		if (!joined) { return; }
+		Object.keys(present).forEach(function (who) {
+			if (!jgVisits[who] || jgVisits[who].room !== here) { jgVisitStart(who, here); }
+		});
+	}
+
+	function jgVisitStart(who, room_key) {
+		if (jgVisits[who]) { return; }
+		jgVisits[who] = { room: room_key, uuid: '' };
+		$.ajax({
+			url: '/manager/appointment/writer',
+			type: 'POST',
+			dataType: 'json',
+			data: { app: who, type: 'start', source: 'Chat', timestamp: Date.now() }
+		}).done(function (r) {
+			if (jgVisits[who] && r && r.uuid) { jgVisits[who].uuid = r.uuid; }
+		});
+	}
+
+	function jgVisitStop(who) {
+		var visit = jgVisits[who];
+		if (!visit) { return; }
+		delete jgVisits[who];
+		$.ajax({
+			url: '/manager/appointment/writer',
+			type: 'POST',
+			dataType: 'json',
+			data: { app: who, type: 'stop', source: 'Chat', uuid: visit.uuid || '', timestamp: Date.now() }
+		});
+	}
+
+	function jgVisitsStopAll() {
+		Object.keys(jgVisits).forEach(jgVisitStop);
 	}
 
 	function jgPost(path, payload, done) {
@@ -422,14 +786,18 @@
 			.text(jgT(grade.grade || 'empty')).appendTo(gradeBox);
 		if (grade.block) { $('<span class="jg_block">').text(jgT('Blacklisted person in this room')).appendTo(gradeBox); }
 
-		if (roster.length) {
+		var self = jgSelf();
+		var others = roster.filter(function (entry) { return entry.subject && entry.subject !== self; });
+		if (others.length) {
 			var rosterBox = $('<div class="jg_roster">').appendTo(box);
-			roster.forEach(function (entry) {
-				$('<div>').text(entry.subject + (entry.ticketed ? ' · ' + jgT('pass') : '')).appendTo(rosterBox);
+			others.forEach(function (entry) {
+				jgPersonCard(entry, handle, room).appendTo(rosterBox);
 			});
 		}
 
 		jgRenderMedia(handle, room);
+		jgRestoreMedia(handle, room);
+		jgVisitsSync(handle, room, roster, !!jgPresence[jgKey(handle, room)]);
 
 		var actions = $('<div class="jg_row">').appendTo(box);
 		$('<button type="button" id="jg_join">').attr({ handle: handle, room: room })
@@ -478,6 +846,18 @@
 		});
 	});
 
+	$(document).on('click', '.jg_person_video_toggle', function () {
+		jgVideoToggle($(this).attr('handle'), $(this).attr('room'), $(this).attr('jti'), this);
+	});
+
+	$(document).on('click', '.jg_person_caption_toggle', function () {
+		jgCaptionToggle($(this).attr('handle'), $(this).attr('room'), $(this).attr('jti'), this);
+	});
+
+	$(document).on('click', '.jg_person_friend', function () {
+		jgFriend($(this).attr('handle'), $(this).attr('handle'), this);
+	});
+
 	$(document).on('click', '#jg_mute', function () {
 		var handle = $(this).attr('handle');
 		var room = $(this).attr('room');
@@ -496,6 +876,7 @@
 			handle: handle, room: room, presence_id: jgPresence[key] || ''
 		}, function (r) {
 			delete jgPresence[key];
+			jgVisitsStopAll();
 			jgSocketClose(handle, room);
 			$('#jg_status').text(r.error || jgT('Left the room'));
 			jgOpen(handle, room);
