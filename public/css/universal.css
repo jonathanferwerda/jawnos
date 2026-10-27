@@ -231,9 +231,13 @@ body.dark_theme option { background-color: var(--panel-2); color: var(--ink); }
 .text_editor:empty:not(:focus):before {
   content: attr(placeholder);
 	opacity: .6;
-	display: flex; 
-	justify-content: center; 
-	align-items: center; 
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	/* The rich editor's placeholder is a ::before, not a form control's
+	   ::placeholder, so it does not pick up the sheet's 20px placeholder rule.
+	   It states the same size here, and the field's own text keeps its size. */
+	font-size: 20px;
 }
 #ticket_request_viewer {
 	position: fixed;

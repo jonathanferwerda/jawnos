@@ -1714,6 +1714,24 @@ function textareaUpgrader() {
 
 			var placeholder = ta.attr('placeholder');
 			var contents = ta.val();
+			// A textarea's rows make its height; a contenteditable div has no rows,
+			// so keep the height the person was already looking at. Without this the
+			// three-line note collapsed to one line when the editor replaced it.
+			// A drawer upgraded before it is shown measures zero, so rows and the
+			// textarea's own line box are the fallback.
+			var ta_height = ta.outerHeight();
+			if (!(ta_height > 0)) {
+				var rows = parseInt(ta.attr('rows'), 10);
+				if (rows > 0) {
+					var line = parseFloat(ta.css('line-height'));
+					if (!(line > 0)) { line = (parseFloat(ta.css('font-size')) || 15) * 1.4; }
+					ta_height = rows * line
+						+ (parseFloat(ta.css('padding-top')) || 0)
+						+ (parseFloat(ta.css('padding-bottom')) || 0)
+						+ (parseFloat(ta.css('border-top-width')) || 0)
+						+ (parseFloat(ta.css('border-bottom-width')) || 0);
+				}
+			}
 			$.ajax({
 				url: '/manager/text_editor/create',
 				type: 'GET',
@@ -1734,6 +1752,9 @@ function textareaUpgrader() {
 							$('#' + p_id).attr(io, vo);
 						}
 					});
+					if (ta_height > 0) {
+						$('#' + p_id).css('min-height', ta_height + 'px');
+					}
 					// The container is not a scroll box: its heights are all auto, so the
 					// overflow only ever clipped. The variable legend lives in the toolbox
 					// now and opens upward from there, and nothing may cut it at the edge.
