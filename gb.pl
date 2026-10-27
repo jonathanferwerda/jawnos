@@ -333,9 +333,9 @@ our $known_appts = {
 	clock => { icon => '/icons/clock.svg' },
 	people => { icon => '/images/make believe/people.png' },
 	email => { icon => '/images/decipherable/envelope.png' },
-	chat => { icon => '/images/make believe/phone_sms.png' },
-	pen => { icon => '/icons/edit.png' },
-	help => { icon => '/images/decipherable/question mark.png' }
+	chat => { icon => "/images/make believe/phone_sms.png" },
+	search => { icon => '/images/make believe/search_button.png' },
+	help => { icon => "/images/decipherable/question mark.png" }
 };
 
 # The Guide's tools, declared once. Each entry names the action the model may

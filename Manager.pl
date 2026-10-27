@@ -6730,6 +6730,7 @@ my @manager_bundle_files = qw(
 	/js/manager/agents.js
 	/js/manager/camera.js
 	/js/manager/internet.js
+	/js/manager/search.js
 	/js/manager/phone.js
 	/js/manager/people.js
 );
@@ -26724,7 +26725,7 @@ get '/manager/search_index' => sub($c) {
 	my %builtin = map { $_ => 1 } qw(
 		configure handbook budget travel mailbox music embedded box_office cards security
 		terminal ide gallery synth editor marker twirl studio store relational web warehouse
-		measures folders process_monitor market notes phone people email chat pen help
+		measures folders process_monitor market notes phone people email chat internet search help
 	);
 	foreach my $app ( sort keys %builtin ) {
 		next if $indexed{$app};
@@ -26761,56 +26762,223 @@ get '/manager/keyup_search' => sub($c) {
 	}
 };
 
+# The Search app: one window with three contexts. Apps reads the house's own
+# records, Web reads the domains in config.json's search_engines, and AI asks the
+# Guide's model. The window is the same for all three; the client remembers the
+# tab and asks only that one.
 get '/manager/search' => sub($c) {
-	my $search = &subs::unformat_name($c->param('search')) || &subs::unformat_name($c->param('s'));
-	my $chosen_appts = $c->param('chosen_appts');
-	my $timestamp = $c->param('timestamp');
+	my $q = $c->param('q') || $c->param('search') || '';
+	my $timestamp = $c->param('timestamp') || &subs::rightNow();
+	my $contents = $c->render_to_string(
+		template => 'apps/search',
+		app => 'search',
+		q => $q
+	);
+	my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => 'search', contents => $contents }, $timestamp);
+	$c->render(text => $window);
+};
 
-	my $appts = &log_reader({ search => $search }) if $search;
+# The Apps tab. An app matches when its own name (or the name a person reads)
+# carries the words, and it is one the house knows: an appointment record, a
+# visible app, or a built-in the menu opens.
+sub search_app_matches($search) {
+	$search = &subs::unformat_name($search || '');
+	return [] unless length $search;
+	my $like = '%' . $search . '%';
+	my %seen;
+	my @apps;
+	my $push = sub {
+		my ($app) = @_;
+		return unless defined $app && length $app;
+		return if $app =~ /^__/;
+		return if $seen{$app}++;
+		push @apps, $app;
+	};
+	foreach my $row ( @{ &subs::db_query('select distinct app from appointments where app is not null and app != ? and app like ?', '', $like)->hashes || [] } ) {
+		$push->($row->{'app'});
+	}
+	foreach my $row ( @{ &subs::db_query("select distinct app from settings where app is not null and app != '' and app like ? and setting in ('visible','main_image')", $like)->hashes || [] } ) {
+		$push->($row->{'app'});
+	}
+	foreach my $app ( keys %{$gb::known_appts} ) {
+		$push->($app) if $app =~ /\Q$search\E/i;
+	}
+	my $plain = sub { my $s = lc($_[0] // ''); $s =~ s/_/ /g; return $s };
+	my $needle = $plain->($search);
+	@apps = sort {
+		my $na = $plain->($a); my $nb = $plain->($b);
+		my $ra = ($na eq $needle) ? 0 : (index($na, $needle) == 0 ? 1 : 2);
+		my $rb = ($nb eq $needle) ? 0 : (index($nb, $needle) == 0 ? 1 : 2);
+		$ra <=> $rb || $na cmp $nb
+	} @apps;
+	splice @apps, 40 if scalar @apps > 40;
+	my @out;
+	foreach my $app ( @apps ) {
+		push @out, {
+			app => $app,
+			name => &subs::format_name($app),
+			icon => &search_index_icon({ app => $app })
+		};
+	}
+	return \@out;
+}
 
-	my (@s_appointments);
-	my ($template);
+get '/manager/search/apps' => sub($c) {
+	my $apps = &search_app_matches($c->param('search'));
+	$c->render(json => { apps => $apps });
+};
 
-	if ($search) {
-		while (my ($a, $value) = each %{$appts}) {
+# The Web tab. Each configured engine is fetched for the words and its links are
+# read back as results. The page is never shown as-is: a result is a title and an
+# address, and the click opens it in the house's own browser. Four engines at
+# most keeps one query from holding a worker for a minute.
+sub search_web_matches($q) {
+	my @engines;
+	my $ua = Mojo::UserAgent->new(
+		connect_timeout => 4,
+		inactivity_timeout => 6,
+		request_timeout => 9,
+		max_redirects => 5
+	);
+	$ua->transactor->name($user_agent);
+	# Navigation, consent and footer links are not results. A search page's
+	# real rows are thousands of characters of news; these words are the chrome
+	# every engine puts around them.
+	my %deny = map { $_ => 1 } (
+		'here', 'feedback', 'sign in', 'log in', 'settings', 'privacy', 'terms',
+		'about', 'help', 'images', 'videos', 'news', 'maps', 'shopping', 'more',
+		'next', 'previous', 'advertise', 'business', 'how search works'
+	);
+	my $count = 0;
+	foreach my $se ( @{ $config->{'search_engines'} || [] } ) {
+		last if $count >= 4;
+		next unless ref $se eq 'HASH' && (($se->{'url'} // '') =~ m{^https?://}i);
+		$count++;
+		my $name = $se->{'name'} || 'Web';
+		my $url = $se->{'url'} . url_escape($q);
+		my $host = '';
+		eval { $host = Mojo::URL->new($se->{'url'})->host || '' };
+		my (@results, $error);
+		$host = lc($host || '');
 
-			if ($a eq $search) {
-				unshift @s_appointments, $a unless grep { lc $_ eq lc $appts->{$a}->{'formatted_name'}} @s_appointments;
-				$appts->{$a}->{'header'} = 	&subs::appt_header_printer({ app => $a, timestamp => $timestamp });
+		if ($host =~ /(?:^|\.)duckduckgo\.com$/) {
+			# The page itself answers a bot with a JavaScript shell, but the
+			# Instant Answer API is the same index and answers plainly.
+			my $api = 'https://api.duckduckgo.com/?q=' . url_escape($q)
+				. '&format=json&no_html=1&skip_disambig=1';
+			my $res = eval { $ua->get($api)->result };
+			if ($res && $res->is_success) {
+				my $j = eval { $res->json } || {};
+				push @results, { title => ($j->{'Heading'} || $q), url => $j->{'AbstractURL'} }
+					if ($j->{'AbstractURL'} // '') ne '';
+				my @topics = @{ $j->{'RelatedTopics'} || [] };
+				while (scalar @topics && scalar @results < 8) {
+					my $t = shift @topics;
+					next unless ref $t eq 'HASH';
+					if (ref $t->{'Topics'} eq 'ARRAY') { unshift @topics, @{$t->{'Topics'}}; next; }
+					next unless ($t->{'FirstURL'} // '') ne '';
+					my $text = $t->{'Text'} || $t->{'FirstURL'};
+					$text =~ s/<[^>]+>//g;
+					push @results, { title => $text, url => $t->{'FirstURL'} };
+				}
 			}
-			elsif ($a =~ /($search)/) {
-
-				push @s_appointments, $a unless grep { lc $_ eq lc $appts->{$a}->{'formatted_name'}} @s_appointments;
-				$appts->{$a}->{'header'} = 	&subs::appt_header_printer({ app => $a, timestamp => $timestamp });
+			else {
+				$error = 'could not reach ' . ($res ? $res->code : 'the site');
 			}
 		}
-		@appointments = @s_appointments;
+		elsif ($host =~ /(?:^|\.)wikipedia\.org$/) {
+			# Wikipedia's configured address is an article path, not a query:
+			# ask its search API so the result is a list of articles.
+			my $api = 'https://' . $host . '/w/api.php?action=query&list=search&format=json&srlimit=8&srsearch=' . url_escape($q);
+			my $res = eval { $ua->get($api)->result };
+			if ($res && $res->is_success) {
+				my $j = eval { $res->json } || {};
+				foreach my $hit ( @{ $j->{'query'}->{'search'} || [] } ) {
+					my $title = $hit->{'title'} || '';
+					next unless length $title;
+					(my $path = $title) =~ s/ /_/g;
+					my $snippet = $hit->{'snippet'} || '';
+					$snippet =~ s/<[^>]+>//g;
+					push @results, { title => $title, url => 'https://' . $host . '/wiki/' . url_escape($path), snippet => $snippet };
+					last if scalar @results >= 8;
+				}
+			}
+			else {
+				$error = 'could not reach ' . ($res ? $res->code : 'the site');
+			}
+		}
+		else {
+			my $res = eval { $ua->get($url)->result };
+			if (!$res || !$res->is_success) {
+				$error = 'could not reach ' . ($res ? $res->code : 'the site');
+			}
+			else {
+				my $dom = eval { Mojo::DOM->new($res->body || '') } || Mojo::DOM->new('');
+				my $base = Mojo::URL->new($url);
+				my %seen;
+				foreach my $a ( $dom->find('a[href]')->each ) {
+					my $href = $a->attr('href') // '';
+					my $text = $a->text // '';
+					$text =~ s/\s+/ /g;
+					$text =~ s/^\s+|\s+$//g;
+					next if length($text) < 3;
+					next if $deny{lc $text};
+					next if $href =~ /^(?:javascript:|mailto:|tel:|#)/i;
+					my $abs = eval { Mojo::URL->new($href)->to_abs($base)->to_string };
+					next unless defined $abs && $abs =~ m{^https?://}i;
+					# Google and DuckDuckGo wrap the real address in their own link
+					if ($abs =~ m{^https?://(?:www\.)?google\.[^/]+/url\?(?:[^#]*&)?q=([^&]+)}i) {
+						$abs = url_unescape($1);
+						$abs =~ s/\+/ /g;
+					}
+					elsif ($abs =~ m{^https?://(?:[a-z0-9.-]*\.)?duckduckgo\.com/l/\?(?:[^#]*&)?uddg=([^&]+)}i) {
+						$abs = url_unescape($1);
+					}
+					next unless $abs =~ m{^https?://}i;
+					next if $abs =~ m{^https?://(?:www\.)?(?:google|duckduckgo|bing|wikipedia)\.[^/]+/(?:search|images|videos|news|maps|preferences|settings|account|html)\b}i;
+					next if $seen{$abs}++;
+					push @results, { title => $text, url => $abs };
+					last if scalar @results >= 8;
+				}
+			}
+		}
+
+		# An engine that hands back only a JavaScript shell still belongs in the
+		# list: one row for the words, which opens that engine in the browser.
+		push @results, { title => $q, url => $url } unless scalar @results;
+		push @engines, { name => $name, url => $url, results => \@results, error => $error };
 	}
-	else { }
-	$template = 'appointment_wrapper';
-	$appts->{'__stash'}->{'header'} = 'yes';
-	my $search_engines = $config->{'search_engines'};
-	my $contents;
-	if ($timestamp =~ /[0-9]/) {
-		$contents = $c->render_to_string(
-			template => $template,
-			appointments => \@appointments,
-			appts => $appts,
-			timestamp => $timestamp,
-			search => $search,
-			device => $device,
-			from => 'search',
-			config => &subs::config_reader(),
-			measures => $gb::measures,
-			header => '',
-			search_engines => $search_engines
-		);
+	return \@engines;
+}
 
-		$contents = &window_maker({ user_agent => $c->param('user_agent'), app => $search, title => 'search', contents => $contents },$timestamp);
-
-
+get '/manager/search/web' => sub($c) {
+	my $q = $c->param('q') // '';
+	$q =~ s/^\s+|\s+$//g;
+	if (length($q) < 2) {
+		$c->render(json => { engines => [] });
+		return;
 	}
-	$c->render(text => $contents);
+	$c->render(json => { engines => &search_web_matches($q) });
+};
+
+# The AI tab: the Guide's own model answers in plain text. It is asked on Enter,
+# not on every letter, so a search does not spend a call per keystroke.
+post '/manager/search/ai' => sub($c) {
+	my $q = $c->param('q') // '';
+	$q =~ s/^\s+|\s+$//g;
+	if (!length $q) {
+		$c->render(json => { ok => 0, error => &subs::ui('Ask something first.') });
+		return;
+	}
+	my $system = 'You are the Search app\'s AI inside JawnOS, a personal, self-hosted operating environment. '
+		. 'Answer the question directly in a few short paragraphs of plain text. '
+		. 'No headings, no bullet lists, no markdown and no preamble. If you are unsure, say so plainly.';
+	my ($text, $err) = &subs::evaluation_model_call_role('help_assistant', $system, $q, &subs::ai_role_thinking('help_assistant'));
+	unless (defined $text && length $text) {
+		$c->render(json => { ok => 0, error => ($err || &subs::ui('The AI did not answer.')) });
+		return;
+	}
+	$c->render(json => { ok => 1, answer => $text });
 };
 
 post '/manager/configure/environment/qr' => sub ($c) {
@@ -27182,11 +27350,12 @@ get '/apps/start' => sub($c) {
 	my $menu = &start_menu_maker($c);
 	my $html = $menu->{'html'} || '';
 	# The handful of icons whose id is not <app>_toggle: the ticket maker is
-	# Box Office, budget has a bare id, the gallery wears image_toggle, and the
-	# gear is Configure.
-	my %special = ( ticketmaker => 'box_office', budget => 'budget', image_toggle => 'gallery', main_logo => 'configure' );
+	# Box Office, budget has a bare id, the gallery wears image_toggle, the
+	# gear is Configure, and the Search app's icon carries search_app_toggle.
+	my %special = ( ticketmaker => 'box_office', budget => 'budget', image_toggle => 'gallery', main_logo => 'configure', search_app_toggle => 'search' );
 	# Things that are actions or tools, not apps the launcher opens.
-	my %skip = map { $_ => 1 } qw( home_toggle torch_toggle sms_list_check web_toggle );
+	my %skip = map { $_ => 1 } qw( home_toggle torch_toggle sms_list_check web_toggle
+		now_toggle site_type_toggle admin_console_toggle browser_toggle );
 	my (@apps, %seen);
 	while ($html =~ /<img\b([^>]*)>/g) {
 		my $attr = $1;

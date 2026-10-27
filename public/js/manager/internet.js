@@ -80,6 +80,7 @@
 		$.getJSON('/manager/internet/sites', function (data) {
 			var apps = (data && data.apps) || [];
 			var sites = (data && data.sites) || [];
+			window.internetApps = apps;
 			var body = $('#internet_sites tbody').empty();
 			$('#internet_usage_none').toggle(sites.length === 0);
 			$.each(sites, function (i, site) {
@@ -93,17 +94,19 @@
 						.text(window.internetAppTitle(apps, site.app)));
 					appCell.append(' ');
 				}
-				var select = $('<select>').addClass('internet_site_select').attr('data-domain', site.domain);
-				select.append($('<option>').val('').text('-'));
-				$.each(apps, function (j, entry) {
-					var opt = $('<option>').val(entry.app).text(entry.title || entry.app);
-					if (entry.app === site.app) { opt.prop('selected', true); }
-					select.append(opt);
-				});
-				appCell.append(select);
+				// Type to find the app this site belongs to. The old select listed
+				// every app the house knew in one long menu; the box filters the
+				// same catalogue as you type, and a dash clears the mapping.
+				var picker = $('<span class="internet_site_picker"></span>');
+				picker.append($('<input type="text" autocomplete="off">')
+					.addClass('internet_site_app_input themed_input')
+					.attr('data-domain', site.domain)
+					.attr('placeholder', window.internetAppTitle(apps, site.app) || 'App'));
+				picker.append($('<div class="internet_app_results"></div>'));
+				appCell.append(picker);
 				row.append(appCell);
 				row.append($('<td>').text(window.internetDuration(site.total_ms)));
-				row.append($('<td>').append($('<button>').addClass('internet_site_assign').text('Assign')));
+				row.append($('<td>'));
 				row.appendTo(body);
 			});
 		});
@@ -120,14 +123,52 @@
 		if (app && typeof appointmentGrabber === 'function') { appointmentGrabber(app); }
 	});
 
-	$(document).on('click', '.internet_site_assign', function (e) {
+	$(document).on('input', '.internet_site_app_input', function () {
+		var input = $(this);
+		var box = input.siblings('.internet_app_results');
+		var q = $.trim(input.val() || '').toLowerCase().replace(/_/g, ' ');
+		var apps = window.internetApps || [];
+		var shown = 0;
+		box.empty();
+		// a dash is the way to clear the mapping; picking an app replaces it
+		box.append($('<div class="internet_app_result internet_app_clear">')
+			.attr('data-app', '').text('-'));
+		$.each(apps, function (i, entry) {
+			if (shown >= 12) { return false; }
+			var hay = (entry.app + ' ' + (entry.title || '')).toLowerCase().replace(/_/g, ' ');
+			if (q && hay.indexOf(q) < 0) { return; }
+			box.append($('<div class="internet_app_result">').attr('data-app', entry.app)
+				.text(entry.title || entry.app));
+			shown++;
+		});
+		box.show();
+	});
+
+	// mousedown, not click: the input's blur happens first on a phone and would
+	// take the list away before the press landed
+	$(document).on('mousedown', '.internet_app_result', function (e) {
 		e.preventDefault();
-		var select = $(this).closest('tr').find('.internet_site_select');
-		var domain = select.attr('data-domain') || '';
-		var app = select.val() || '';
+		var row = $(this).closest('tr');
+		var input = row.find('.internet_site_app_input');
+		var domain = input.attr('data-domain') || '';
+		var app = $(this).attr('data-app') || '';
+		row.find('.internet_app_results').hide();
 		$.post('/manager/internet/site/app', { domain: domain, app: app }, function () {
 			window.internetLoadSites();
 		});
+	});
+
+	$(document).on('keydown', '.internet_site_app_input', function (e) {
+		var box = $(this).siblings('.internet_app_results');
+		if (e.keyCode == 27) { box.hide(); return; }
+		if (e.keyCode != 13) { return; }
+		e.preventDefault();
+		box.find('.internet_app_result').first().trigger('mousedown');
+	});
+
+	$(document).on('focusout', '.internet_site_app_input', function () {
+		var box = $(this).siblings('.internet_app_results');
+		setTimeout(function () { box.hide(); }, 150);
 	});
 
 	$(document).on('click', '#internet_toggle', function () {

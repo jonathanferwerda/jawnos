@@ -690,3 +690,16 @@ $(document).on('click', '.image_fetch_home', function() {
 		data: { path: item['f'], remote_uuid: item['remote_uuid'] }
 	});
 });
+
+// Back inside the Gallery's single-app view: a photo closes to its album, and
+// an album closes to the albums page. Once there, the app activity's own Back
+// leaves the app.
+function galleryBack() {
+	if ($('#gallery_viewer').is(':visible')) { galleryCloseViewer(); return true; }
+	if (gallery.view == 'grid') {
+		$('#gallery_home_tab').trigger('click');
+		return true;
+	}
+	return false;
+}
+if (typeof jawnosRegisterBack === 'function') { jawnosRegisterBack('gallery', galleryBack); }

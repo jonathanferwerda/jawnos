@@ -2418,39 +2418,15 @@ $(document).on('click', '.search_toggle', function(i,e) {
 		jawnosSideSearchShow(1);
 		return;
 	}
-	$('body').css({ 'cursor': 'progress' });
-	clearTimeout(searchTimeout);
-	var search = $('#search').val();
-	var timestamp = Date.now();
-	localStorage.setItem('lastSearchTime',timestamp);
+	// The magnifier opens the Search app: one window with the Apps, Web and AI
+	// contexts, remembering the last tab. The dock's box stays where it is and
+	// keeps its own dropdown while typing; this press hands the query over.
+	var search = $('#search').val() || '';
+	localStorage.setItem('lastSearchTime', Date.now());
 	localStorage.setItem('search', search);
 	$('#search_results').html('').hide();
-	var chosen_appts = [];
-	$('.appointments').each(function(i,val) {
-		chosen_appts.push($(this).attr('app'));
-	});
-	if (search) {
-		searchTimeout = setTimeout(function() {
-			if ($('#search').val() == search) {
-				$.ajax({
-					url: '/manager/search',
-					data: { search: search, timestamp: timestamp, chosen_appts: chosen_appts },
-					success: function(response) {
-						var res = $(response);
-
-						var lastSearchTime = localStorage.getItem('lastSearchTime');
-					//	if (res.find('.appointment').attr('timestamp') == lastSearchTime) {
-							windowMaker(response);
-							appointment_chron();
-							$('body').css({ 'cursor': 'auto' });
-					//	}
-					}
-				});
-			}
-		},1300);
-	}
-	else {
-		$('.wind[title=search]').remove();
+	if (typeof window.jawnosSearchAppOpen === 'function') {
+		window.jawnosSearchAppOpen(search);
 	}
 });
 
@@ -4475,6 +4451,21 @@ function appointmentGrabber(app,timestamp,source) {
 }
 
 var windows = [];
+
+// ---------------------------------------------------------------- app back
+// A launched single-app view (JawnAppActivity) asks this before leaving the
+// app: the app's own view history answers first, so Back walks a Gallery photo
+// to its album to the albums page instead of jumping straight to Home. An app
+// with no handler falls through to the WebView's history and then the activity.
+var jawnosBackHandlers = {};
+function jawnosRegisterBack(app, handler) {
+	if (app && typeof handler === 'function') { jawnosBackHandlers[app] = handler; }
+}
+function jawnosAppBack(app) {
+	var handler = jawnosBackHandlers[app];
+	if (typeof handler !== 'function') { return false; }
+	try { return handler() === true; } catch (e) { return false; }
+}
 var top_level_now = 100;
 var winLine = 0;
 var fullXCount = 0;
