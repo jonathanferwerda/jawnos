@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-27
 
+- v0.1.1486 - tablet keyboard: softKbOn now answers true for an Android/iPad tablet, so a tablet with no hovering mouse gets the JawnOS dock instead of no keyboard at all. The single-app shell also keeps that dock above its pinned window and leaves the native IME to the other Android apps.
 - v0.1.1480 - appointment fields: the rich-text upgrader that replaces the note textarea now keeps the note's height and draws its placeholder at the same 20px as every other field, so the note no longer shrinks a moment after the editor loads. A contenteditable placeholder is a ::before, not a form control's ::placeholder, so it needed its own size.
 - v0.1.1479 - appointment fields: the note's placeholder now matches the other placeholders at the sheet's 20px; the note's typed text keeps the 15px field size. The note-specific placeholder rule added in v0.1.1477 had made it smaller than the fields around it.
 - v0.1.1478 - lockdown: a dangerous place with no Enemy says so in Security instead of offering a reveal that cannot succeed, and the start menu's note names the way out.
