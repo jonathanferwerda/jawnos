@@ -154,11 +154,26 @@ fails. Every decision goes to `/run/jawnos/host-drives.log`.
 anything is persistent. `jawnos-host-drives --apply-config` merges the choices
 into `config.json` (firstboot calls it after seeding).
 
-### Unlocking encrypted host drives
+### Using the computer's drives (live session)
 
-If the computer has LUKS containers the live session could use,
-`jawnos-host-crypt.service` runs before host-drive discovery. For each one it
-asks on the boot splash:
+A live JawnOS is a guest on someone else's machine, so it asks before it reads
+anything. `jawnos-host-crypt.service` runs first and puts this on the boot
+splash:
+
+> Use this computer's drives? Files appear in Gallery, Music, Folders and the
+> IDE. Type yes, or Enter to keep them private.
+
+That is the whole consent: **yes** lets the session mount the machine's other
+filesystems read-only, find the archive drive, adopt an existing JawnOS
+database when the live house has none, and unlock LUKS volumes. **Enter, a
+timeout (20 seconds), no prompt at all, or any other answer leaves everything
+private** — nothing is mounted, no passphrase is asked, and no database is
+copied. The question is only asked when there is another drive to offer, and
+only on a live boot (`systemd.volatile=overlay`); an installed machine never
+sees it.
+
+After a yes, if the computer has LUKS containers the live session could use,
+it asks on the same splash:
 
 > Unlock <name> to use your files (Enter to skip)
 

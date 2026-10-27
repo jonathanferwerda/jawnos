@@ -1,12 +1,12 @@
-# Ask on the boot splash for the passphrase of the host computer's LUKS
-# volumes and open them for the live session. It runs after the house is
-# mounted (so the splash is up and the state is known) and before host-drive
-# discovery, which mounts the opened volumes read-only.
+# Before anything on the host is read, ask on the splash whether the person
+# wants their drives used at all: a yes makes their files available in Gallery,
+# Music, Folders, the IDE and the archive. Only a yes goes on to unlock the LUKS
+# volumes and to let jawnos-host-drives mount anything.
 #
 # The script never writes the passphrase anywhere, always exits 0, and skips a
 # device it cannot open, so a locked or unavailable volume cannot fail the boot.
 [Unit]
-Description=Unlock encrypted host drives (live session)
+Description=Offer the host computer's drives (consent + unlock)
 Requires=home-jawn.service
 After=home-jawn.service systemd-udevd.service
 Before=jawnos-host-drives.service

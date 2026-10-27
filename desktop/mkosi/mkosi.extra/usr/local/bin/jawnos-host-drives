@@ -16,7 +16,8 @@
 #
 # Test hooks (all optional): JAWNOS_STATE_TARGET, JAWNOS_HOST_RUN,
 # JAWNOS_HOST_ROOT, JAWNOS_HOST_LOG, JAWNOS_HOST_CONFIG, JAWNOS_HOST_DB,
-# JAWNOS_HOST_ALLOW_LOOP, JAWNOS_HOST_DEV.
+# JAWNOS_HOST_ALLOW_LOOP, JAWNOS_HOST_DEV, JAWNOS_HOST_CONSENT=yes (bypass the
+# boot-time consent file, for the harness).
 set -u
 
 STATE=${JAWNOS_STATE_TARGET:-/home/jawn}
@@ -30,6 +31,8 @@ ARCHIVE_FILE=$RUN/host-archive-dir
 PROTECT_FILE=$RUN/protected-disks
 MOUNT_LIST=$RUN/host-mount-list
 DB_LIST=$RUN/host-db-list
+CONSENT_FILE=${JAWNOS_HOST_CONSENT_FILE:-$RUN/host-consent}
+CONSENT=${JAWNOS_HOST_CONSENT:-}
 
 mkdir -p "$RUN" "$HOSTROOT" 2>/dev/null || true
 
@@ -356,6 +359,20 @@ EOF
 
 discover() {
     log "looking for host drives (state $STATE)"
+    # The person said yes on the boot splash (jawnos-host-crypt writes this file).
+    # Anything else -- declined, timed out, no prompt, not a live session -- is
+    # a no: nothing on the host is read, mounted or adopted.
+    allowed=no
+    [ "$CONSENT" = yes ] && allowed=yes
+    if [ -f "$CONSENT_FILE" ] && [ "$(sed -n '1p' "$CONSENT_FILE" 2>/dev/null)" = yes ]; then
+        allowed=yes
+    fi
+    if [ "$allowed" != yes ]; then
+        printf '' >"$MOUNT_LIST" 2>/dev/null || true
+        rm -f "$ARCHIVE_FILE" 2>/dev/null || true
+        log "host drives are not allowed this boot; leaving them private"
+        return 0
+    fi
     build_protection
     # Start from whatever is already mounted under the host root. A second run
     # in the same boot must still see the volumes and the archive it chose; it

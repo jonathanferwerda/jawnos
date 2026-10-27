@@ -1,10 +1,11 @@
 #!/bin/sh
 # Unlock the encrypted volumes of the computer a live JawnOS booted on.
 #
-# The live USB is a guest on someone else's machine. If that machine has LUKS
-# containers the live session could use, this asks for the passphrase on the
-# boot splash, opens them under /dev/mapper/jawnos-host-<uuid8>, and leaves the
-# mounting to jawnos-host-drives (read-only, except the one archive mount).
+# The live USB is a guest on someone else's machine. Before anything is read
+# from that machine, it asks on the splash whether the person wants their
+# drives used at all: yes makes their files available in Gallery, Music,
+# Folders, the IDE and the archive; Enter/timeout leaves them private. Only a
+# yes goes on to the passphrase prompts and the read-only mounts.
 #
 # The passphrase is held only in a shell variable and fed to cryptsetup on
 # stdin (--key-file=-). It is never written to a file, placed in argv, or
@@ -22,7 +23,8 @@
 # JAWNOS_CRYPT_PASSFILE (passphrase for the open attempt), JAWNOS_CRYPT_NO_PROMPT=1,
 # JAWNOS_CRYPT_LOG, JAWNOS_CRYPT_ALLOW_LOOP=1. JAWNOS_CRYPT_RUN,
 # JAWNOS_HOST_RUN and JAWNOS_STATE_TARGET are honoured so a harness can share
-# the run directory.
+# the run directory. JAWNOS_HOST_LIVE=yes|no overrides the live-boot detection,
+# JAWNOS_CRYPT_CONSENT=yes|no|ask overrides the drive-use question.
 set -u
 
 STATE=${JAWNOS_STATE_TARGET:-/home/jawn}
@@ -35,7 +37,11 @@ ALLOW_LOOP=${JAWNOS_CRYPT_ALLOW_LOOP:-0}
 PROTECT_FILE=$RUN/host-crypt-protected
 STATE_FILE=$RUN/host-crypt-state
 CAND_FILE=$RUN/host-crypt-candidates
+CONSENT_FILE=$RUN/host-consent
+CONSENT=${JAWNOS_CRYPT_CONSENT:-ask}
+LIVE=${JAWNOS_HOST_LIVE:-auto}
 PROMPT_TIMEOUT=45
+CONSENT_TIMEOUT=20
 MAX_PROMPTS=2
 SEP=$(printf '\037')
 
@@ -54,6 +60,13 @@ log() {
 
 usage() {
     echo "usage: jawnos-host-crypt [--status|--close]" >&2
+}
+
+# lsblk --pairs hex-escapes a label's dangerous bytes (a quote becomes \x22), so
+# the value between the quotes cannot forge another KEY="..." pair. The leading
+# space lets the first key match the same pattern as the rest.
+field() {
+    printf ' %s\n' "$1" | sed -n "s/.* $2=\"\([^\"]*\)\".*/\1/p"
 }
 
 # Resolve an lsblk/kernel name to a block device we can open. dm-crypt children
@@ -298,7 +311,119 @@ ask_pass() {
     return 1
 }
 
+# A host-drive question belongs to a live session, not an installed machine:
+# an installed JawnOS has its own drives and archive settings, and asking on
+# every boot would be noise.
+is_live() {
+    case "$LIVE" in
+        yes) return 0 ;;
+        no) return 1 ;;
+    esac
+    grep -q 'systemd.volatile=overlay' /proc/cmdline 2>/dev/null
+}
+
+# Is there anything on this machine other than the stick we booted from? The
+# protected list names the live disk; a filesystem or LUKS container anywhere
+# else is something the person could choose to use.
+has_other_media() {
+    build_protection
+    lsblk -P -o NAME,TYPE,FSTYPE,PKNAME 2>/dev/null \
+    | while IFS= read -r line; do
+        name=$(field "$line" NAME)
+        type=$(field "$line" TYPE)
+        fstype=$(field "$line" FSTYPE)
+        [ -n "$name" ] || continue
+        case "$type" in
+            part|disk|crypt) ;;
+            loop) [ "$ALLOW_LOOP" = 1 ] || continue ;;
+            *) continue ;;
+        esac
+        case "$fstype" in
+            ext2|ext3|ext4|btrfs|xfs|vfat|exfat|crypto_LUKS) ;;
+            *) continue ;;
+        esac
+        if [ "$ALLOW_LOOP" != 1 ] && loop_ancestor "$name"; then
+            continue
+        fi
+        disk=$(top_disk "$name")
+        grep -qx "$disk" "$PROTECT_FILE" 2>/dev/null && continue
+        if grep -qx '#removable' "$PROTECT_FILE" 2>/dev/null \
+            && [ "$(lsblk -dno RM "$disk" 2>/dev/null | head -n 1)" = 1 ]; then
+            continue
+        fi
+        printf 'yes\n'
+        break
+    done | head -n 1
+}
+
+# The question uses the same splash surface as the passphrase prompt. A masked
+# answer is fine: the prompt says to type yes. Anything else, including a
+# timeout, is No -- privacy is the default.
+ask_consent() {
+    prompt="Use this computer's drives? Files appear in Gallery, Music, Folders and the IDE. Type yes, or Enter to keep them private."
+    if ! command -v systemd-ask-password >/dev/null 2>&1; then
+        log "systemd-ask-password is not installed; leaving the host drives alone"
+        return 1
+    fi
+    if command -v plymouth >/dev/null 2>&1 && plymouth --ping >/dev/null 2>&1; then
+        systemd-ask-password --no-tty --echo=yes --timeout="$CONSENT_TIMEOUT" \
+            --id="jawnos:host-drives" "$prompt" 2>/dev/null
+        return $?
+    fi
+    if ( : </dev/tty ) 2>/dev/null; then
+        systemd-ask-password --echo=yes --timeout="$CONSENT_TIMEOUT" "$prompt" 2>/dev/null
+        return $?
+    fi
+    log "no splash or console is available to ask about the host drives"
+    return 1
+}
+
+# Write the answer once so jawnos-host-drives can obey it without asking again.
+# 600: the file names a choice, not a secret, but nothing else needs to read it.
+consent_gate() {
+    if ! is_live; then
+        printf 'no\n' >"$CONSENT_FILE" 2>/dev/null || true
+        log "not a live session; the host drives stay private"
+        return 1
+    fi
+    case "$CONSENT" in
+        no)
+            printf 'no\n' >"$CONSENT_FILE" 2>/dev/null || true
+            log "host drives declined (JAWNOS_CRYPT_CONSENT=no)"
+            return 1
+            ;;
+        yes)
+            printf 'yes\n' >"$CONSENT_FILE" 2>/dev/null || true
+            log "host drives allowed (JAWNOS_CRYPT_CONSENT=yes)"
+            return 0
+            ;;
+    esac
+    if [ -z "$(has_other_media)" ]; then
+        printf 'no\n' >"$CONSENT_FILE" 2>/dev/null || true
+        log "no drives other than the boot medium; nothing to offer"
+        return 1
+    fi
+    answer=$(ask_consent || true)
+    case "$(printf '%s' "$answer" | tr 'A-Z' 'a-z')" in
+        y|yes)
+            printf 'yes\n' >"$CONSENT_FILE" 2>/dev/null || true
+            chmod 600 "$CONSENT_FILE" 2>/dev/null || true
+            log "host drives allowed by the person"
+            return 0
+            ;;
+        *)
+            printf 'no\n' >"$CONSENT_FILE" 2>/dev/null || true
+            chmod 600 "$CONSENT_FILE" 2>/dev/null || true
+            log "host drives declined; leaving them private"
+            return 1
+            ;;
+    esac
+}
+
 unlock_all() {
+    if ! consent_gate; then
+        return 0
+    fi
     build_protection
 
     cached_pass=
