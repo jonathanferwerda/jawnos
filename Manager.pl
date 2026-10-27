@@ -6637,6 +6637,9 @@ post '/manager/editor/delete' => sub ($c) {
 hook before_dispatch => sub {
 	my ($c) = @_;
 	$c->session(expiration => 604800);
+	# visibility and presence are read many times in one request; the caches
+	# must not outlive it (a worker serves many people over its life)
+	&subs::visibility_cache_clear();
 };
 
 
@@ -12273,8 +12276,7 @@ sub lock_session($c, $explicit = 0, $scope = '') {
 			next;
 		}
 		if ($ws->{'href'} =~ /\Q$port/gi) {
-			my $settings = &subs::settings_grabber({ app => $ws->{'app'}, settings => [ 'visibility' ] });
-			if ($settings->{'visible'} ne 'checked') {
+			if (&help_app_hidden($ws->{'app'})) {
 				&subs::window_closer($ws->{'app'}, $close_tab);
 			}
 		}
@@ -14295,7 +14297,7 @@ sub log_reader {
 		my @app_settings = @{&subs::db_raw($s_query, @app_names)};
 
 		if ($data->{'view'} eq 'appointment_viewer') {
-			if (my @invisible = grep { $_->{'setting'} eq 'visible' && $_->{'value'} ne 'checked' } @app_settings) {
+			if (my @invisible = grep { $_->{'setting'} eq 'visible' && &help_app_hidden($_->{'app'}) } @app_settings) {
 				foreach my $invisible ( @invisible ) {
 					@{$appointments} = grep { $_->{'app'} ne $invisible->{'app'} } @{$appointments};
 					@app_settings = grep { $_->{'app'} ne $invisible->{'app'} } @app_settings;
@@ -14427,9 +14429,15 @@ sub log_reader {
 		if (!$appts->{$a->{'app'}}->{'setting'}->{'dark_colour'}) {
 			$appts->{$a->{'app'}}->{'setting'}->{'dark_colour'} = &subs::dark_colour_for($appts->{$a->{'app'}}->{'setting'}->{'colour'});
 		}
-		if ($appts->{$a->{'app'}}->{'setting'}->{'visible'} eq 'unchecked' && $navigation_information->{$signatorial}->{'site_rating'} >= 2) {
+	# A hidden appointment is not drawn in the timeline either. The Configure
+	# card is the deliberate exception: it must stay readable so a person can
+	# turn visibility back on.
+	if ($data->{'view'} ne 'appointment_display') {
+		my $exposure = &subs::visibility_exposure();
+		if (&subs::visibility_hidden_for($appts->{$a->{'app'}}->{'setting'}->{'visible'}, $exposure)) {
 			push @{$disallowable}, $a->{'app'};
 		}
+	}
 
 		foreach my $at ( qw/model option option_category/ ) {
 			$appts->{$a->{'app'}}->{$at} = $appt_table_lookup{$at}->{$a->{'app'}} || [];
@@ -19030,8 +19038,10 @@ post '/manager/configure/colour_update' => sub($c) {
 
 get '/manager/configure/appointment_list' => sub($c) {
 	my ($db,$database,$sql) = &subs::database_grabber();
-	my $results = &subs::db_query("select distinct app from settings where setting=? and value=?",'visible','checked');
-	my $appointments = $results->hashes;
+	# Every app that has a visibility or kind row, not only the visible ones: an
+	# app turned off must still be listed so the dropdown can turn it back on.
+	my $results = &subs::db_query("select distinct app from settings where setting in ('visible','pos','mab') and app is not null and app != '' and substr(app,1,2) <> '__' order by app")->hashes;
+	my $appointments = $results;
 	foreach my $a (@{$appointments}) {
 		$a->{'app'} = &subs::unformat_name($a->{'app'});
 		$a->{'formatted_name'} = &subs::format_name($a->{'app'});
@@ -24519,6 +24529,8 @@ get '/manager/people' => sub($c) {
 		$person->{'chips'} = &people_chips($index, $app);
 		$person->{'image'} = &people_crest_image($app);
 		$person->{'formatted_name'} = &subs::format_name($app);
+		$person->{'relationship'} = &subs::person_relationship_value($app);
+		$person->{'relationship_rating'} = &subs::relationship_rating($person->{'relationship'});
 		push @people, $person;
 	}
 	@people = sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @people;
@@ -24812,6 +24824,7 @@ get '/manager/people/person' => sub($c) {
 		template => 'apps/people_person',
 		person => $person,
 		app => $app,
+		relationship => &subs::person_relationship_value($app),
 		chips => $chips,
 		crest => $crest,
 		crest_uuid => $crest_uuid,
@@ -25922,7 +25935,7 @@ get '/manager/appointment_viewer' => sub($c) {
 	my @results;
 	my @log_watch;
 	foreach my $a (@{$chosen_appts}) {
-		next if $appts->{$a}->{'setting'}->{'visible'} eq 'unchecked';
+		next if &subs::visibility_hidden_for($appts->{$a}->{'setting'}->{'visible'});
 
 
 
@@ -26005,7 +26018,7 @@ get '/manager/appointment_viewer' => sub($c) {
 		my $ghost_now = &subs::rightNow();
 		my $ghost_end = (defined $period && $period) ? ($timestamp + ($timestamp - $period)) : $timestamp;
 		foreach my $a (@{$chosen_appts}) {
-			next if $appts->{$a}->{'setting'}->{'visible'} eq 'unchecked';
+			next if &subs::visibility_hidden_for($appts->{$a}->{'setting'}->{'visible'});
 			my $g = &subs::ghost_rows_for($a, $ghost_now, $ghost_end);
 			$appts->{$a}->{'ghosts'} = $g if scalar @{$g};
 		}
@@ -26706,9 +26719,7 @@ get '/manager/search_index' => sub($c) {
 	my (@apps, %indexed);
 	foreach my $app ( sort keys %settings_by_app ) {
 		my $s = $settings_by_app{$app};
-		my $vis_entry = &search_index_setting($s->{'visible'}, $device);
-		my $visible = defined $vis_entry ? (ref $vis_entry eq 'HASH' ? $vis_entry->{'value'} : $vis_entry) : 'checked';
-		next if (($visible // '') ne 'checked');
+		next if &help_app_hidden($app);
 		# a known app stays even when it has gallery rows; those rows are its work
 		next if $gallery->{$app} && !$gb::known_appts->{$app};
 		my $pos_entry = &search_index_setting($s->{'pos'}, $device);
@@ -26751,11 +26762,18 @@ get '/manager/keyup_search' => sub($c) {
 		$search = '%' . $search . '%';
 		my ($db) = &subs::database_grabber();
 		# the music player writes the tracks it plays with account gallery, and the
-		# dock's search is not the place for those to surface as apps
-		my $results = &subs::db_query('select DISTINCT(app) from settings where device = ? and setting=? and value = ? and app like ? and app not in (select distinct app from appointments where account = ? and app is not null) LIMIT 7', $device, 'visible','checked', $search, 'gallery')->hashes;
-		my $resulted = $c->render_to_string(template => 'search/manager', results => $results);
+		# dock's search is not the place for those to surface as apps. Visibility is
+		# read through the same rule as everywhere else, not as one exact value.
+		my $rows = &subs::db_query('select DISTINCT(app) from settings where device = ? and setting=? and app like ? and app not in (select distinct app from appointments where account = ? and app is not null) LIMIT 40', $device, 'visible', $search, 'gallery')->hashes;
+		my @apps;
+		foreach my $row ( @{$rows} ) {
+			next unless &help_app_hidden($row->{'app'}) == 0;
+			push @apps, $row;
+			last if scalar @apps >= 7;
+		}
+		my $resulted = $c->render_to_string(template => 'search/manager', results => \@apps);
 
-		$c->render(json => { results => $resulted, count => scalar @{$results}, timestamp => $timestamp });
+		$c->render(json => { results => $resulted, count => scalar @apps, timestamp => $timestamp });
 	}
 	else {
 		$c->render(json => { count => 0, timestamp => $timestamp });
@@ -26792,6 +26810,7 @@ sub search_app_matches($search) {
 		return unless defined $app && length $app;
 		return if $app =~ /^__/;
 		return if $seen{$app}++;
+		return if &help_app_hidden($app);
 		push @apps, $app;
 	};
 	foreach my $row ( @{ &subs::db_query('select distinct app from appointments where app is not null and app != ? and app like ?', '', $like)->hashes || [] } ) {
@@ -27301,11 +27320,18 @@ get '/manager/internet' => sub ($c) {
 # The apps the launcher and the Internet tab choose from: the house's own
 # catalog first, then any app a person has made. Kept in one place so the
 # manager and the phone never disagree about what an app is called.
+#
+# visible_only is for a picker that assigns a thing to an app: it leaves out an
+# app the visibility rule hides here and now (off, or a place level below the
+# room), so a suggestion never offers what the house is keeping out of sight.
 sub internet_app_catalog {
+	my ($opts) = @_;
+	my $visible_only = $opts && $opts->{'visible_only'};
 	my @apps;
 	my %skip = map { $_ => 1 } qw(citizen resident guest blacklisted web);
 	foreach my $app ( sort { lc($a) cmp lc($b) } keys %{$gb::known_appts} ) {
 		next if $skip{$app};
+		next if $visible_only && &subs::app_hidden_now($app);
 		push @apps, { app => $app, title => &subs::format_name($app) };
 	}
 	unshift @apps, { app => 'internet', title => &subs::lang('internet') };
@@ -27317,6 +27343,7 @@ sub internet_app_catalog {
 	foreach my $row ( @{$rows} ) {
 		my $app = $row->{'app'} || next;
 		next if $app =~ /^__/ || $seen{$app}++;
+		next if $visible_only && &subs::app_hidden_now($app);
 		push @apps, { app => $app, title => &subs::format_name($app) };
 	}
 	return \@apps;
@@ -27470,7 +27497,7 @@ get '/manager/internet/sites' => sub($c) {
 		$site->{'url'} = 'https://' . $domain . '/' unless length $site->{'url'};
 		push @out, $site;
 	}
-	$c->render(json => { sites => \@out, apps => &internet_app_catalog() });
+	$c->render(json => { sites => \@out, apps => &internet_app_catalog({ visible_only => 1 }) });
 };
 
 post '/manager/internet/site/app' => sub($c) {
@@ -28178,7 +28205,7 @@ get '/manager/gallery/data' => sub ($c) {
 		# gallery's albums, so its names are not filtered again here.
 		if (!$explicit) {
 			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
-			my $app_visible = (($aset->{'visible'} || '') eq 'checked') ? 1 : 0;
+			my $app_visible = &subs::visibility_hidden_for($aset->{'visible'}) ? 0 : 1;
 			return undef if !$permissive && !$app_visible && $path =~ /\.enc$/i;
 		}
 		if (!-e $path && !$f->{'remote_uuid'}) {
@@ -28245,7 +28272,7 @@ get '/manager/gallery/data' => sub ($c) {
 			my $app = $appt->{'app'} || '';
 			next if scalar @{$apps} && !grep { $_ eq $app } @{$apps};
 			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
-			if ((($aset->{'visible'}) || '') ne 'checked' && $revealed == 0) { $hidden_albums{$app} = 1; next; }
+			if (&subs::visibility_hidden_for($aset->{'visible'}) && $revealed == 0) { $hidden_albums{$app} = 1; next; }
 			my $files = eval { return decode_json $appt->{'file'} } || [];
 			foreach my $f ( @{$files} ) {
 				next if $search && index(lc($app), $search) < 0 && index(lc($f->{'f'} || ''), $search) < 0;
@@ -33335,7 +33362,7 @@ sub travel_atlas_points {
 		my $key = $app . '|' . $con->{'latitude'} . '|' . $con->{'longitude'};
 		next if $seen->{$key}++;
 		my $set = $set_cache{$app} ||= &subs::settings_grabber({ app => $app });
-		next if $set->{'visible'} ne 'checked'; # the same places the travel viewer shows
+		next if &subs::visibility_hidden_for($set->{'visible'}); # the same places the travel viewer shows
 		push @{$points}, {
 			latitude => $con->{'latitude'} + 0,
 			longitude => $con->{'longitude'} + 0,
@@ -33368,7 +33395,7 @@ sub travel_atlas_appointments {
 		next if $seen->{$fix->{'app'}}++;
 		next if !$fix->{'latitude'} || $fix->{'latitude'} eq '';
 		my $set = $set_cache{$fix->{'app'}} ||= &subs::settings_grabber({ app => $fix->{'app'} });
-		next if $set->{'visible'} ne 'checked';
+		next if &subs::visibility_hidden_for($set->{'visible'});
 		push @{$out}, {
 			app => $fix->{'app'},
 			name => &subs::format_name($set->{'name'} || $fix->{'app'}),
@@ -33723,7 +33750,7 @@ get '/manager/travel/viewer' => sub($c) {
 		# the map says a name the way the rest of the app does (the grouped marker's
 		# list reads straight off this)
 		$sl->{'name'} = &subs::format_name($sl->{'settings'}->{'name'} || $sl->{'app'});
-		next if $sl->{'settings'}->{'visible'} ne 'checked';
+		next if &subs::visibility_hidden_for($sl->{'settings'}->{'visible'});
 		my $radius = 6372.8;
 		my @visitor = NESW($sl->{'longitude'}, $sl->{'latitude'});
 		$sl->{'rad'} = clone \@visitor;
@@ -35032,14 +35059,13 @@ sub media_unlock_open($c, $app, $max_age = undef) {
 	return 0;
 }
 
-# An app is hidden when any device marks it not visible: a thing hidden anywhere
-# is hidden everywhere (the toggle syncs, so the phone gets it too).
+# An app is hidden when the visibility rule says it is hidden here and now:
+# off, or a place level below the room's exposure. The rule is shared with the
+# rest of the house (subs::app_hidden_now) so a gallery album, a clothesline
+# chip and an Internet suggestion all answer alike.
 sub help_app_hidden($app) {
 	return 0 unless defined $app && length $app;
-	my $rows = &subs::db_select('settings', ['value'], { app => $app, setting => 'visible' })->hashes;
-	return 0 unless scalar @{$rows};
-	foreach my $r ( @{$rows} ) { return 1 unless (($r->{'value'} // '') eq 'checked'); }
-	return 0;
+	return &subs::app_hidden_now($app) ? 1 : 0;
 }
 
 # What the guide may reach: an app it is not hidden, or the reveal rule holds.

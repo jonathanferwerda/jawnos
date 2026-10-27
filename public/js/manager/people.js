@@ -828,6 +828,34 @@ $(document).on('click', '.people_person_link_crest', function() {
 	});
 });
 
+// A person's relationship is one of Friend, Stranger or Enemy. It is the same
+// numbered measure the visibility rule reads, so an Enemy present can lower the
+// room's exposure.
+$(document).on('change', '.people_relationship_select', function() {
+	var sel = $(this);
+	var app = sel.attr('app') || '';
+	if (!app) { return; }
+	var value = sel.val() || '';
+	var label = sel.find('option:selected').text();
+	var rating = sel.find('option:selected').attr('data-rating') || '';
+	peopleStatus(peopleT('Saving…'));
+	$.ajax({
+		url: '/manager/app_measures',
+		type: 'POST',
+		data: { app: app, measure: 'relationship', value: value, just_one: 1, setting_only: 'yes', timestamp: Date.now() },
+		success: function() {
+			peopleStatus(peopleT('Saved.'));
+			var row = $('.people_person_row[app="' + app + '"] .people_relationship');
+			if (row.length) {
+				if (value) { row.text(label).attr('data-rating', rating).show(); }
+				else { row.hide(); }
+			}
+			sel.closest('.people_relationship_row').find('.people_relationship_rating').text(rating);
+		},
+		error: function() { peopleStatus(peopleT('Could not save.')); }
+	});
+});
+
 $(document).on('click', '.people_person_relational', function() {
 	var app = $(this).attr('app') || '';
 	if (typeof relationalOpener === 'function') { relationalOpener(app); }

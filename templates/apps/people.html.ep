@@ -89,6 +89,14 @@
 	.people_empty { color:var(--muted,#8e8e8e); font-size:13px; padding:10px 0; }
 	.people_person_row { cursor:pointer; }
 	.people_person_row:hover, .people_construct_row:hover, .people_member_row:hover { background:var(--line); }
+	.people_relationship { display:inline-block; margin-top:4px; padding:2px 8px; border:1px solid var(--line); border-radius:999px;
+		font-size:11px; background:var(--panel); }
+	.people_relationship[data-rating="1"] { border-color:#3f8f5f; }
+	.people_relationship[data-rating="2"] { opacity:.75; }
+	.people_relationship[data-rating="3"] { border-color:#b0342e; color:#b0342e; }
+	.people_relationship_row { display:flex; align-items:center; gap:8px; margin-top:8px; font-size:13px; }
+	.people_relationship_row select { padding:5px 8px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:inherit; font:inherit; }
+	.people_relationship_rating { font-family:monospace; opacity:.65; }
 	.people_chips { display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
 	.people_chip { display:inline-block; padding:2px 8px; border:1px solid var(--line); border-radius:999px;
 		font-size:11px; cursor:pointer; background:var(--panel); }
@@ -256,6 +264,9 @@
 						<span class="people_row_name">
 							<%= $person->{'name'} %>
 							<div class="people_row_sub"><%= $person->{'formatted_name'} %> &middot; <span class="people_fp"><%= $person->{'app'} %></span></div>
+							<% if ($person->{'relationship'}) { %>
+								<span class="people_relationship" data-rating="<%= $person->{'relationship_rating'} %>"><%= &subs::ui(ucfirst($person->{'relationship'})) %></span>
+							<% } %>
 							<% if (@{$person->{'chips'}}) { %>
 								<div class="people_chips">
 									<% foreach my $chip ( @{$person->{'chips'}} ) { %>

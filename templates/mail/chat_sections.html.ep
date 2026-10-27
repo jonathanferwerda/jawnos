@@ -173,10 +173,10 @@
 		<details class="jg_relations">
 			<summary><%= &subs::ui('People in the house') %></summary>
 			<div class="jg_row">
-				<label class="jg_field"><span><%= &subs::ui('Known') %></span><input id="jg_known" placeholder="alpha, beta"></label>
-				<label class="jg_field"><span><%= &subs::ui('Blacklist') %></span><input id="jg_blacklist"></label>
-				<label class="jg_field"><span><%= &subs::ui('Hostile') %></span><input id="jg_hostile"></label>
+				<label class="jg_field"><span><%= &subs::ui('Friends') %></span><input id="jg_known" placeholder="alpha, beta"></label>
+				<label class="jg_field"><span><%= &subs::ui('Enemies') %></span><input id="jg_blacklist" placeholder="gamma, delta"></label>
 			</div>
+			<p class="jg_hint" style="opacity:.7;font-size:12px;margin:6px 0 0;"><%= &subs::ui('Everyone else is a stranger. A person with an Enemy relationship is also read from People, and an enemy present can hide what the visibility rule keeps out of sight.') %></p>
 		</details>
 		<input id="jg_ticket" class="jg_ticket" placeholder="<%= &subs::ui('Ticket or pass code (optional)') %>">
 		<div id="jg_rooms" class="jg_rooms"></div>
