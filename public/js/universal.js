@@ -1836,7 +1836,6 @@ function jawnosThemeBundleApply(bundle, appt) {
 	var sig = ('signature' in bundle) ? ('' + bundle.signature) : '';
 	var current = document.body.getAttribute('data-theme-sig') || '';
 	if (sig && sig === current) { return; }
-	var icon_now = document.body.getAttribute('data-icon-set') || '';
 	if (bundle.background) {
 		document.body.style.backgroundColor = bundle.background;
 	}
@@ -1859,16 +1858,16 @@ function jawnosThemeBundleApply(bundle, appt) {
 	if (bundle.texture && typeof jawnosTextureApply === 'function') {
 		jawnosTextureApply(bundle.texture);
 	}
-	// Paint, material and face repaint live. Only a different icon set needs the
-	// server's path translation, and that is what re-renders open windows, so it
-	// is kept for an icon-set change alone.
+	// Paint, material and face repaint live. The server-rendered surfaces - the
+	// window title bars, the appointment wrapper and the start menu - also carry
+	// theme colours and icon paths, so a real dressing change asks for their
+	// HTML again. The early return above filtered an unchanged push, so a start
+	// or stop on the same theme still reloads nothing.
 	window.jawnos_theme_suppress_icon_reload = true;
 	jawnosApplyInk(bundle.accent || '');
 	window.jawnos_theme_suppress_icon_reload = false;
-	if (('icon_set' in bundle) && (bundle.icon_set || '') !== icon_now && typeof jawnosReloadIcons === 'function') {
-		document.body.setAttribute('data-icon-set', bundle.icon_set || '');
-		setTimeout(jawnosReloadIcons, 60);
-	}
+	if ('icon_set' in bundle) { document.body.setAttribute('data-icon-set', bundle.icon_set || ''); }
+	if (typeof jawnosReloadIcons === 'function') { setTimeout(jawnosReloadIcons, 60); }
 	if (sig) { document.body.setAttribute('data-theme-sig', sig); }
 }
 $(function () { jawnosApplyInk('', true); });
@@ -1894,16 +1893,25 @@ function nowIconApply(state) {
 	button.attr('src', match[1] + 'now' + (state == 'time_machine' ? ' time machine' : ' here') + '.svg');
 }
 
+// Coalesces the server re-render a theme change asks for: the ink pass and the
+// bundle can arrive together, and one round of windows is enough.
+var jawnos_icon_redraw_timer = null;
+
 function jawnosReloadIcons() {
 	try {
 		// The desktop's own buttons were rendered with the old set, and only the
 		// server knows where a path lives in the new one, so ask it for those
-		// paths again and swap the sources.
-		var nodes = $('[jawnos_icon]');
+		// paths again and swap the sources. Icons rendered through icon_path()
+		// and icon_for() - the taskbar, the start menu, window titles and the
+		// appointment wrapper - carry no jawnos_icon attribute, so their current
+		// src is asked for instead: the server re-maps its basename into the cut
+		// that is now showing. Without them a light/dark change left those icons
+		// on the old cut (the yellow taskbar tiles were the visible case).
+		var nodes = $('[jawnos_icon], img[src*="/icons/sets/"], img[src*="/icons/original/"]');
 		if (nodes.length > 0) {
 			var paths = [];
 			nodes.each(function () {
-				var p = $(this).attr('jawnos_icon');
+				var p = $(this).attr('jawnos_icon') || $(this).attr('src');
 				if (p && paths.indexOf(p) == -1) { paths.push(p); }
 			});
 			$.ajax({
@@ -1912,7 +1920,7 @@ function jawnosReloadIcons() {
 				data: { paths: JSON.stringify(paths), refresh: 1 },
 				success: function (response) {
 					nodes.each(function () {
-						var p = $(this).attr('jawnos_icon');
+						var p = $(this).attr('jawnos_icon') || $(this).attr('src');
 						if (response.icons && response.icons[p]) { $(this).attr('src', response.icons[p]); }
 					});
 					// that swap put the plain now tile back; let it answer the state
@@ -1920,24 +1928,36 @@ function jawnosReloadIcons() {
 				}
 			});
 		}
-		$('.wind').each(function () {
-			var app = $(this).attr('app');
-			if (!app) { return; }
-			if (typeof appWindowOpener === 'function') {
-				appWindowOpener(app, Date.now(), { visible: 'yes' });
+		// The start menu keeps its markup per tab, so the paths baked into it are
+		// stale the moment the cut changes; drop that cache now so reopening a tab
+		// cannot put the old cut back.
+		if (typeof startMenuHtmlFlush === 'function') { startMenuHtmlFlush(); }
+		// Re-reading a window asks the server to render it again, and a prefork
+		// worker that rendered an icon within the last second still holds the
+		// previous cut in its one-second memo. Wait that out before asking, or a
+		// stale worker can replace the swap above with the old cut. The icons on
+		// screen are already correct from the src swap, so the wait is invisible.
+		clearTimeout(jawnos_icon_redraw_timer);
+		jawnos_icon_redraw_timer = setTimeout(function () {
+			$('.wind').each(function () {
+				var app = $(this).attr('app');
+				if (!app) { return; }
+				if (typeof appWindowOpener === 'function') {
+					appWindowOpener(app, Date.now(), { visible: 'yes' });
+				}
+				else if (typeof appointmentGrabber === 'function') {
+					appointmentGrabber(app);
+				}
+			});
+			// refresh an open start menu (passing `source` skips the close branch)
+			if (typeof startMenuToggle === 'function' && $('#start_menu').is(':visible')) {
+				startMenuToggle({ source: 'icon_refresh' });
 			}
-			else if (typeof appointmentGrabber === 'function') {
-				appointmentGrabber(app);
+			if (typeof startMenuListify === 'function') { startMenuListify(); }
+			if (typeof taskbarDisplayer === 'function') {
+				setTimeout(function () { taskbarDisplayer(); }, 1200);
 			}
-		});
-		// refresh an open start menu (passing `source` skips the close branch)
-		if (typeof startMenuToggle === 'function' && $('#start_menu').is(':visible')) {
-			startMenuToggle({ source: 'icon_refresh' });
-		}
-		if (typeof startMenuListify === 'function') { startMenuListify(); }
-		if (typeof taskbarDisplayer === 'function') {
-			setTimeout(function () { taskbarDisplayer(); }, 1200);
-		}
+		}, 1200);
 	} catch (e) {}
 }
 

@@ -11170,6 +11170,10 @@ sub setting_setter() {
 		&cache_delete({ app => '__president', context => 'config' });
 		&cache_delete({ context => 'template' });
 		&cache_delete({ context => 'header' });
+		# every open manager on every machine repaints: the same bundle push a
+		# theme change uses, so the paint, the icon cut and the surfaces cross
+		# the line together instead of only the window that made the change
+		&appointment_theme_push() unless $sync;
 	}
 	elsif ($setting eq 'appearance_theme') {
 		# the whole dressing changed: paint, glyphs, material and face. Every
@@ -15277,15 +15281,26 @@ sub icon_plate_colours() {
 }
 
 # A fingerprint of everything that gets baked into cached window/header HTML:
-# the icon set and the device's theme colours. Cached renders whose signature no
-# longer matches are discarded, so closed windows don't come back looking stale.
+# the icon set, the active theme's dressing and the device's theme colours.
+# Cached renders whose signature no longer matches are discarded, so closed
+# windows don't come back looking stale.
 sub render_signature() {
 	my $device = &device_setter();
 	my $config = &config_reader();
+	# The active theme's own dressing belongs in the signature: two themes can
+	# share an icon set and still paint their surfaces from different ramps, and
+	# a window rendered under the old ramp must not come back from the cache.
+	# theme_state() is memoised on the same short TTL as icon_set(), so this adds
+	# no query to a warm render.
+	my ( $theme_dark, undef, $theme_bg, $theme_bundle ) = &theme_state();
+	my @theme_parts = ( $theme_dark, $theme_bg );
+	if (ref $theme_bundle eq 'HASH') {
+		push @theme_parts, map { $theme_bundle->{$_} } qw/scheme texture font corner accent/;
+	}
 	# the version is part of the signature so every release (each push bumps it)
 	# discards cached appointment renders - without it a template change to an
 	# appointment window would sit behind a cache row that matched forever
-	my @parts = ( &icon_set() || '', &jawn_version() );
+	my @parts = ( &icon_set() || '', &jawn_version(), join '|', map { defined $_ ? $_ : '' } @theme_parts );
 	foreach my $k ( @gb::misc_settings ) {
 		push @parts, $k . '=' . ($config->{$device}->{$k}->{'background_colour'} || '');
 	}

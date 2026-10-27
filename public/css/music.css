@@ -215,7 +215,10 @@ body.dark_theme .music_cfg_drawer {
 	box-sizing: border-box;
 	border-bottom: 1px solid var(--music-line);
 	box-shadow: var(--music-shadow);
-	z-index: 5;
+	/* above the theatre picture (and the player bar's tools panel at 20): the
+	   top drawer doors are the only ones now, so they must stay clickable in
+	   fullscreen; the configuration sheets sit far above at 900000 */
+	z-index: 40;
 }
 /* one row: transport, search taking the slack, the time, then the two options -
    nothing is laid over anything else, so the search can never cover the clock */

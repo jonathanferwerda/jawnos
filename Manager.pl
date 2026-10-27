@@ -12629,14 +12629,14 @@ sub pseudonym_maker($context,$app) {
 		{ status => 'off', name => "assign", icon => "assign" },
 		{ status => 'off', name => "reset", icon => "reset" },
 		{ status => 'off', name => "software", icon => "software" },
-		{ status => 'button', name => 'record', icon => 'record', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'text', icon => 'love letter', colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'start', icon => 'play', classmates => "medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'prev', icon => 'prev', classmates => "medium_thumb time_jump", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'next', icon => 'next', classmates => "medium_thumb time_jump", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'stop', icon => 'stop', classmates => "medium_thumb save_appointment", click => "", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'note', icon => 'Mr. President', classmates => "br medium_thumb save_appointment", colour => '#ffec1f', place => 'top' },
-		{ status => 'button', name => 'msg', icon => 'mailbox', colour => '#ffec1f', place => 'top' },
+		{ status => 'button', name => 'record', icon => 'record', classmates => "medium_thumb save_appointment", colour => '', place => 'top' },
+		{ status => 'button', name => 'text', icon => 'love letter', colour => '', place => 'top' },
+		{ status => 'button', name => 'start', icon => 'play', classmates => "medium_thumb save_appointment", colour => '', place => 'top' },
+		{ status => 'button', name => 'prev', icon => 'prev', classmates => "medium_thumb time_jump", colour => '', place => 'top' },
+		{ status => 'button', name => 'next', icon => 'next', classmates => "medium_thumb time_jump", colour => '', place => 'top' },
+		{ status => 'button', name => 'stop', icon => 'stop', classmates => "medium_thumb save_appointment", click => "", colour => '', place => 'top' },
+		{ status => 'button', name => 'note', icon => 'Mr. President', classmates => "br medium_thumb save_appointment", colour => '', place => 'top' },
+		{ status => 'button', name => 'msg', icon => 'mailbox', colour => '', place => 'top' },
 		# the appointment's own buttons live behind three group buttons now: the
 		# media clapper, the extra ellipsis and the linked pair. The group key says
 		# which door a button sits behind, and the wrapper renders each row from it
