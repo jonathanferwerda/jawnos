@@ -13,6 +13,7 @@
 	dial => &subs::lang('chat.dial'),
 	list => &subs::lang('chat.list'),
 	tickets => &subs::lang('chat.tickets'),
+	rooms => &subs::lang('chat.rooms'),
 	lora => &subs::lang('chat.lora'),
 ); %>
 <% my $chat_panel_label = $chat_section_label{$active} || &subs::format_name($active); %>
@@ -76,7 +77,7 @@
 					<div class="chat_rail_list" data-chat_group_body="sections" data-chat-scroll="sections">
 						<% if ($privilege eq 'citizen') { %>
 							<div class="chat_nav">
-								<% foreach my $ss ( qw/sms dial list tickets lora/ ) { %>
+								<% foreach my $ss ( qw/sms dial list tickets rooms lora/ ) { %>
 									<button type="button" class="mail_subsection <% if ( $ss eq $settings->{'subsection'} ) { %>active <% } %>" section="<%= $ss %>"><%= &subs::lang('chat.' . $ss) %></button>
 								<% } %>
 								<img src="<%= &subs::icon_for('/images/make believe/telephone line.png') %>" hint="LoRa mesh broadcast" class="little_thumb hover" id="mailbox_lora_toggle" toggle="<%= $settings->{'lora_toggle'} %>" style="vertical-align:bottom;">

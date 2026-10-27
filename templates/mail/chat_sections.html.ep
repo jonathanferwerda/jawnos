@@ -148,6 +148,35 @@
 			</tbody>
 		</table>
 	</div>
+<% } elsif ($settings->{'subsection'} eq 'rooms') { %>
+	<div id="jg_panel" class="jg_panel">
+		<div class="jg_row">
+			<label class="jg_field"><span><%= &subs::ui('Junderground') %></span><input id="jg_url" placeholder="https://..."></label>
+			<label class="jg_field"><span><%= &subs::ui('Handle') %></span><input id="jg_handle"></label>
+		</div>
+		<div class="jg_row">
+			<button type="button" id="jg_save"><%= &subs::ui('Save') %></button>
+			<button type="button" id="jg_register"><%= &subs::ui('Register this house') %></button>
+			<button type="button" id="jg_dial"><%= &subs::ui('Dial') %></button>
+			<span id="jg_status" class="jg_status"></span>
+		</div>
+		<div class="jg_constructs">
+			<% foreach my $kind ( sort { $a->{'order'} <=> $b->{'order'} } values %{$sc} ) { %>
+				<label><span><%= $construct_label->($kind->{'name'}) %></span><input class="jg_pick" kind="<%= $kind->{'name'} %>" placeholder="<%= &subs::format_name($kind->{'def'}) %>"></label>
+			<% } %>
+		</div>
+		<details class="jg_relations">
+			<summary><%= &subs::ui('People in the house') %></summary>
+			<div class="jg_row">
+				<label class="jg_field"><span><%= &subs::ui('Known') %></span><input id="jg_known" placeholder="alpha, beta"></label>
+				<label class="jg_field"><span><%= &subs::ui('Blacklist') %></span><input id="jg_blacklist"></label>
+				<label class="jg_field"><span><%= &subs::ui('Hostile') %></span><input id="jg_hostile"></label>
+			</div>
+		</details>
+		<input id="jg_ticket" class="jg_ticket" placeholder="<%= &subs::ui('Ticket or pass code (optional)') %>">
+		<div id="jg_rooms" class="jg_rooms"></div>
+		<div id="jg_detail" class="jg_detail"></div>
+	</div>
 <% } elsif ($settings->{'subsection'} eq 'lora') { %>
 	<% my $lw = $lorawan || {}; %>
 	<% my @bands = qw/EU433 EU868 US915 AU915 AS923 AS923_2 AS923_3 AS923_4 KR920 IN865 CN470/; %>

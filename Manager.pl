@@ -68,6 +68,7 @@ no warnings 'uninitialized';
 no warnings 'once';
 require "./Websocket.pl";
 require "./subroutines.pl";
+require "./junderground.pl";
 require "./AddressDirectory.pl";
 require "./remote_input.pl";
 require "./tls.pl";
@@ -6542,6 +6543,7 @@ my @manager_bundle_files = qw(
 	/js/manager/email.js
 	/js/manager/soft_keyboard.js
 	/js/manager/chat.js
+	/js/manager/junderground.js
 	/js/manager/pen.js
 	/js/manager/clockfaceprinter.js
 	/js/manager/leaderboardprinter.js
@@ -30889,6 +30891,67 @@ get '/manager/chat' => sub ($c) {
 	$c->render(text => $website);
 };
 
+# ---- junderground client ---------------------------------------------------
+# The Chat Rooms section talks to these; every call is signed on this side with
+# the house crest key, so the browser never sees it.
+my $jg_body = sub ($c) {
+	my $raw = $c->param('incoming_data') || '{}';
+	return eval { decode_json($raw) } || {};
+};
+
+get '/manager/junderground/config' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	$c->render(json => {
+		url => &jg_setting('url'),
+		handle => &jg_setting('handle'),
+		insecure => &jg_setting('insecure'),
+		known => &jg_setting('known'),
+		blacklist => &jg_setting('blacklist'),
+		hostile => &jg_setting('hostile'),
+	});
+};
+
+post '/manager/junderground/config' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	my $body = $jg_body->($c);
+	foreach my $key (qw/url handle insecure known blacklist hostile/) {
+		next unless exists $body->{$key};
+		my $value = defined $body->{$key} ? $body->{$key} : '';
+		$value =~ s/\s+$//;
+		&jg_setting($key, $value);
+	}
+	$c->render(json => { ok => 1 });
+};
+
+post '/manager/junderground/register' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	$c->render(json => &jg_register($c));
+};
+
+post '/manager/junderground/dial' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	my $body = $jg_body->($c);
+	$c->render(json => &jg_dial($c, $body->{'picks'} || {}));
+};
+
+post '/manager/junderground/room' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	my $body = $jg_body->($c);
+	$c->render(json => &jg_room($c, $body->{'handle'}, $body->{'room'}));
+};
+
+post '/manager/junderground/join' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	my $body = $jg_body->($c);
+	$c->render(json => &jg_join($c, $body->{'handle'}, $body->{'room'}, $body->{'ticket'}));
+};
+
+post '/manager/junderground/leave' => sub ($c) {
+	return $c->render(json => { error => 'denied' }) unless ($c->session('privilege') || '') eq 'citizen';
+	my $body = $jg_body->($c);
+	$c->render(json => &jg_leave($c, $body->{'handle'}, $body->{'room'}, $body->{'presence_id'}));
+};
+
 get '/manager/pen' => sub ($c) {
 	# The Pen app: the assistant conversations, the last section out of the
 	# mailbox umbrella. Same shared render, scoped to the pen group, so its
@@ -31942,7 +32005,7 @@ sub mail_scope_sections($scope) {
 	return () unless $scope;
 	my %groups = (
 		email => [qw/email/],
-		chat  => [qw/sms dial list tickets lora/],
+		chat  => [qw/sms dial list tickets rooms lora/],
 		pen   => [qw/pen/],
 	);
 	return @{ $groups{$scope} || [$scope] };
