@@ -158,6 +158,7 @@
 		jgMediaStop(handle, room);
 		var call = {
 			self: hello.jti || '',
+			selfSubject: hello.subject || '',
 			ice: hello.ice_servers || [],
 			pcs: {},
 			pending: {},
@@ -382,6 +383,13 @@
 	// language through the Guide, and show it under the person.
 
 	function jgSelf() { return $.trim($('#jg_handle').val() || '').toLowerCase(); }
+
+	// hello names this house too; it is the better answer when the handle field
+	// has not been filled in yet.
+	function jgSelfFor(handle, room) {
+		var call = jgCall(handle, room);
+		return (call && call.selfSubject) ? call.selfSubject : jgSelf();
+	}
 
 	function jgPersonKey(jti) { return jgSafeId(jti); }
 
@@ -660,7 +668,7 @@
 	}
 
 	function jgVisitsSync(handle, room, roster, joined) {
-		var self = jgSelf();
+		var self = jgSelfFor(handle, room);
 		var present = {};
 		(roster || []).forEach(function (entry) {
 			if (entry.subject && entry.subject !== self) { present[entry.subject] = 1; }
@@ -786,7 +794,7 @@
 			.text(jgT(grade.grade || 'empty')).appendTo(gradeBox);
 		if (grade.block) { $('<span class="jg_block">').text(jgT('Blacklisted person in this room')).appendTo(gradeBox); }
 
-		var self = jgSelf();
+		var self = jgSelfFor(handle, room);
 		var others = roster.filter(function (entry) { return entry.subject && entry.subject !== self; });
 		if (others.length) {
 			var rosterBox = $('<div class="jg_roster">').appendTo(box);
