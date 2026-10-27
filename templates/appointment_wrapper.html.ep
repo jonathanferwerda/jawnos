@@ -52,7 +52,13 @@
 				<% foreach my $p ( @{$pseudonyms} ) { %>
 					<% if ($p->{'classmates'}) { %>
 						<% if ($p->{'place'} eq 'top') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"
+							<%# the transport row has no plate of its own; a list built before
+							    that change is still cached (keyed by icon set) with the old
+							    yellow, so drop that one legacy value here rather than showing
+							    white glyphs on yellow until the cache is rebuilt %>
+							<% my $plate = $p->{'colour'} || ''; %>
+							<% $plate = '' if lc($plate) eq '#ffec1f'; %>
+							<img class="<%= $p->{'classmates'} %>"<% if (length $plate) { %> style="background-color:<%= $plate %>;"<% } %> onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>"
 							>
 						<% } %>
 

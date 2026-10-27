@@ -108,6 +108,16 @@ body.dark_theme .medium_thumb, body.dark_theme .large_thumb, body.dark_theme .hu
 body.dark_theme .massive_thumb, body.dark_theme .gigantic_thumb, body.dark_theme .miniscule_thumb {
 	background-color: var(--panel-2);
 }
+/* An icon button can carry its plate as an inline background-color (the
+   appointment action rows, the Configure pseudonym cards, the now tile). On a
+   dark desktop the icon sets switch to their light cut, whose emblems have
+   almost no contrast on a plate picked for a light desk. The plate keeps its
+   hue and a translucent dark layer rides over it - the same wash a theme
+   surface gets - so the light glyph reads. Semantic enablers keep their own
+   green/red/black, so they are left alone. */
+body.dark_theme img[class*="thumb"][style*="background-color"]:not(.enabler) {
+	background-image: linear-gradient(rgba(14,15,18,0.58), rgba(14,15,18,0.58));
+}
 /* ---- dark themes darken the misc surfaces by themselves --------------------
    A misc surface (the dock, Configure, the keyboard, the bars ...) carries its
    configured colour as an inline background-color, which is a face picked for a

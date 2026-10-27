@@ -1949,14 +1949,24 @@ function musicConfigFront(panel) {
 // the content slides under it. Move the sheet onto the window's frame: it is
 // still the window's child (removed and minimised with it) but sits above the
 // bar and is free to cross the whole screen.
+//
+// In fullscreen the window is not the top layer: only the fullscreen element
+// and its descendants are, so a sheet parked on the window would vanish
+// behind the picture. Inside #music (the element the player fullscreens) the
+// sheet is a child of the fullscreen element and its z-index carries it above
+// #video.
 function musicConfigFloat(panel) {
 	var win = panel.closest('.wind');
 	if (!win.length) { return; }
 	panel.attr('music_window', win.attr('id'));
-	if (panel.parent()[0] !== win[0]) { win.append(panel); }
+	var fs = document.fullscreenElement || document.webkitFullscreenElement;
+	var music = document.getElementById('music');
+	var in_music_fs = !!(fs && music && (fs === music || (fs.contains && fs.contains(music))));
+	var host = in_music_fs ? $(music) : win;
+	if (panel.parent()[0] !== host[0]) { host.append(panel); }
 	// above the title bar (top_level_now + 2) and below the window's frame ring
 	panel.css('z-index', 900000);
-	if (typeof topLevelNow == 'function') { topLevelNow(win); }
+	if (!in_music_fs && typeof topLevelNow === 'function') { topLevelNow(win); }
 }
 function musicConfigShow(panel) {
 	if (!panel.length || panel.is(':visible')) { return; }
@@ -2878,8 +2888,13 @@ function musicPictureBig() {
 }
 
 // In and out of fullscreen the player's own picture is put back where it
-// belongs; the visualiser's picture is placed by its own frame loop.
+// belongs; the visualiser's picture is placed by its own frame loop. The two
+// floating sheets move into the fullscreen element too, so they stay visible
+// over the picture, and return to the window frame when the player leaves it.
 $(document).on('fullscreenchange webkitfullscreenchange', function() {
+	$('#music_configuration, #music_audio_panel').filter(':visible').each(function() {
+		musicConfigFloat($(this));
+	});
 	var v = $('#video');
 	if (v.length && v.attr('type') == 'video' && v.attr('theatre_mode') != 'on') {
 		v.attr('style', v.attr(musicPictureBig() ? 'big_style' : 'thumb_style'));
@@ -4592,18 +4607,9 @@ $(document).on('click', '#music_audio_toggle', function() {
 	musicAudioPanelLoad(true);
 });
 
-// The player bar's equalizer sits in the fullscreen/theatre controls, where the
-// top interface (and so its own equalizer) is put away. It always opens the
-// sheet; the close button is the way out.
-$(document).on('click', '#music_audio_toggle_bar', function(e) {
-	e.preventDefault();
-	musicAudioPanelLoad(true);
-});
-
-$(document).on('click', '#music_configuration_toggle_bar', function(e) {
-	e.preventDefault();
-	$('#music_configuration_toggle').trigger('click');
-});
+// The player bar's equalizer and gear toggles were removed: the top interface
+// carries both and rides into fullscreen with the player, so the bar has one
+// set of doors only.
 
 $(document).on('click', '#music_audio_close', function(e) {
 	e.preventDefault();
