@@ -12944,11 +12944,11 @@ sub ticket_request_notify($c, $request, $info) {
 	my $who = $info->{'name'} || $info->{'email'} || 'Someone';
 	my $awaiting = scalar @{ &subs::db_query('select uuid from tickets where status=?', 'request')->hashes };
 	my (undef,$database) = &subs::database_grabber();
-	&Websocket::send('tab', { type => 'ticket_request_arrival', count => $awaiting, message => $who . ' asks for a ticket' });
+	&Websocket::send('tab', { type => 'ticket_request_arrival', count => $awaiting, message => $who . ' asks for a pass' });
 	# an open box office refreshes itself; the visible test keeps a hidden window
 	# from rebuilding under the user
 	&Websocket::send('server', { console => '$("#box_office").is(":visible") && typeof boxOffice == "function" ? boxOffice() : 0;' });
-	&notification_sender({ app => 'box_office', role => 'citizen', title => 'Ticket Request', message => $who . ' asks for a ticket', image => $gb::known_appts->{'box_office'}->{'icon'} }, $database);
+	&notification_sender({ app => 'box_office', role => 'citizen', title => 'Pass Request', message => $who . ' asks for a pass', image => $gb::known_appts->{'box_office'}->{'icon'} }, $database);
 }
 
 sub ticket_peer_signatorial($c) {

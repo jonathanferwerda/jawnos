@@ -78,7 +78,7 @@
 
 				<img id="music_toggle" category="media" src="<%= &subs::icon_for('/images/make believe/music.png') %>" hint="Music" class="jonathan music"></img>
 				<img id="embedded_toggle" category="system" src="<%= &subs::icon_for('/images/decipherable/microchip.png') %>" hint="Embedded" class="jonathan embedded"></img>
-				<span><img id="ticketmaker" class="jonathan little_thumb" category="business" src="<%= &subs::icon_for('/images/decipherable/ticket.png') %>" hint="Tickets"></span>
+				<span><img id="ticketmaker" class="jonathan little_thumb" category="business" src="<%= &subs::icon_for('/images/decipherable/ticket.png') %>" hint="Passes"></span>
 				<img id="cards_toggle" category="games" src="<%= &subs::icon_for('/images/decipherable/cards.png') %>" hint="Cards" class="jonathan cards">
 				<img class="jonathan" category="media" src="<%= &subs::icon_for('/images/make believe/web_button.png') %>" hint="Web" id="web_toggle"></img>
 				<br>
