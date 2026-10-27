@@ -1,5 +1,6 @@
 <% use Mojo::JSON qw/decode_json/; %>
 <% no warnings 'uninitialized'; %>
+<% my $pay_section = $c->stash('embedded_in_pay') ? 1 : 0; %>
 <%
 	# Configure -> Plat -> Crypto. A wallet is an account app, so the panel lists
 	# them but the App tab is where one is made. This page owns the assets that
@@ -31,8 +32,12 @@
 		$rate_of{ $a->{'code'} } = (defined $v && defined $to_base && $to_base > 0) ? $v / $to_base : undef;
 	}
 %>
+<% if ($pay_section) { %>
+<div class="crypto_panel" style="max-width:none;padding:0;">
+<% } else { %>
 <div class="cfg crypto_panel" style="max-width:none;padding:0;">
 	<h2>Crypto</h2>
+<% } %>
 	<p class="cfg-note">A wallet is an account that holds a coin. JawnOS keeps its public address and reads what it holds at the shared rate — it never holds a key, cannot spend, and will refuse anything that looks like a seed phrase. Every conversion in the app (including a currency measure typed as <b>x USD to CAD</b>) reads the same live snapshot below.</p>
 
 	<div class="cfg-card">

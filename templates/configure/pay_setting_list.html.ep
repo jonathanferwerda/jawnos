@@ -1,0 +1,285 @@
+<% use Mojo::JSON qw/decode_json/; %>
+<% no warnings 'uninitialized'; %>
+<%
+	# Configure -> Plat -> Pay. Crypto is the first section, with the wallet and
+	# rate tools it always had; the rest are hosted checkouts and Interac
+	# e-Transfer. A provider is offered to a customer only when it is switched on
+	# here and has the keys it needs.
+	my $pay_on = &subs::pay_on();
+	my $pay_currency = &subs::pay_currency();
+	my $pay_accounts = &subs::pay_accounts();
+	my $pay_receipts = &subs::pay_interac_receipts();
+	my $pay_base_url = &subs::pay_public_base($c);
+	my $pay_setting_of = sub { &subs::pay_setting($_[0], defined $_[1] ? $_[1] : '') };
+	my $pay_secret_set = sub { my $n = shift; return length(&subs::pay_secret_read($n)) ? 1 : 0; };
+	my $pay_account_picker = sub {
+		my ($name, $fallback) = @_;
+		my $chosen = &subs::pay_setting($name, '');
+		my $html = '<select class="pay_setting" setting="' . &subs::xml_escape($name) . '">';
+		$html .= '<option value=""' . ($chosen eq '' ? ' selected' : '') . '>— first ' . &subs::xml_escape($fallback) . ' account —</option>';
+		foreach my $acct ( @{$pay_accounts} ) {
+			my $label = $acct->{'name'} . ($acct->{'payment_type'} ? ' · ' . $acct->{'payment_type'} : '');
+			$html .= '<option value="' . &subs::xml_escape($acct->{'app'}) . '"' . ($chosen eq $acct->{'app'} ? ' selected' : '') . '>' . &subs::xml_escape($label) . '</option>';
+		}
+		return $html . '</select>';
+	};
+%>
+<div class="cfg pay_panel" style="max-width:none;padding:0;">
+	<h2>Pay</h2>
+	<p class="cfg-note"><%= &subs::ui('Ways for a customer to pay an invoice from its public page. Stripe, Square and PayPal open the provider\'s own secure checkout for the exact balance and record the payment when the provider confirms it; Interac e-Transfer is read from the notification letters already arriving in the mailbox. Every method records an ordinary income transaction on the account chosen below, so statements and budgets keep working.') %></p>
+
+	<div class="cfg-card">
+		<div class="cfg-row">
+			<label>Online payments</label>
+			<input type="checkbox" class="pay_setting" setting="enabled" value="on" <% if ($pay_on) { %>checked<% } %>>
+			<span class="cfg-note" style="margin:0;"><%= &subs::ui('Off hides every pay button on an invoice. Keys already saved are kept.') %></span>
+		</div>
+		<div class="cfg-row">
+			<label>Public address</label>
+			<input type="text" class="pay_setting" setting="base_url" value="<%= $pay_setting_of->('base_url') %>" placeholder="<%= $pay_base_url %>" autocomplete="off" spellcheck="false">
+			<span class="cfg-note" style="margin:0;"><%= &subs::ui('Where a provider sends the customer back and where it posts a webhook. Leave it blank to use this house\'s public name on port 3000; set it when a tunnel or proxy answers on another address.') %></span>
+		</div>
+		<div class="cfg-row">
+			<label>Currency</label>
+			<b><%= $pay_currency %></b>
+			<span class="cfg-note" style="margin:0;"><%= &subs::ui('The house reporting currency. The checkout asks for the invoice balance in this currency. Change it under Configure -> Misc.') %></span>
+		</div>
+	</div>
+
+	<h3>Crypto</h3>
+	<%= include 'configure/crypto_setting_list', embedded_in_pay => 1 %>
+
+	<h3>Cards and wallets</h3>
+	<p class="cfg-note"><%= &subs::ui('A hosted checkout keeps card data off this machine: the customer types it on the provider\'s page, and JawnOS only learns that the invoice was paid. Use the provider\'s test mode first, then paste the live keys.') %></p>
+
+	<details class="cfg-acc" data-acc="pay-stripe" open>
+		<summary>Stripe</summary>
+		<div class="cfg-card">
+			<div class="cfg-row">
+				<label>Stripe</label>
+				<input type="checkbox" class="pay_setting" setting="stripe_enabled" value="on" <% if ($pay_setting_of->('stripe_enabled') eq 'on') { %>checked<% } %>>
+				<span class="cfg-note" style="margin:0;"><%= &subs::ui('Cards, Apple Pay and Google Pay through Stripe Checkout.') %></span>
+			</div>
+			<div class="cfg-row">
+				<label>Secret key</label>
+				<% my $stripe_secret = $pay_secret_set->('stripe_secret'); %>
+				<input type="password" class="pay_secret" setting="stripe_secret" value="" placeholder="<%= $stripe_secret ? '••• set — type to replace' : 'sk_live_… or sk_test_…' %>" autocomplete="off" spellcheck="false">
+				<button type="button" class="pay_secret_clear" setting="stripe_secret" <% if (!$stripe_secret) { %>style="display:none;"<% } %>>Clear</button>
+			</div>
+			<div class="cfg-row">
+				<label>Webhook secret</label>
+				<% my $stripe_hook = $pay_secret_set->('stripe_webhook_secret'); %>
+				<input type="password" class="pay_secret" setting="stripe_webhook_secret" value="" placeholder="<%= $stripe_hook ? '••• set — type to replace' : 'whsec_…' %>" autocomplete="off" spellcheck="false">
+				<button type="button" class="pay_secret_clear" setting="stripe_webhook_secret" <% if (!$stripe_hook) { %>style="display:none;"<% } %>>Clear</button>
+			</div>
+			<div class="cfg-row">
+				<label>Book to</label>
+				<%== $pay_account_picker->('stripe_account', 'credit') %>
+			</div>
+			<div class="cfg-row">
+				<label>Webhook URL</label>
+				<input type="text" readonly value="<%= &subs::pay_webhook_url($c, 'stripe') %>" onclick="this.select();" style="font-family:monospace;font-size:12px;">
+			</div>
+			<p class="cfg-note" style="margin:0;"><%= &subs::ui('In Stripe, add an endpoint for checkout.session.completed and checkout.session.async_payment_succeeded at that address. A webhook is only needed when this house is reachable from the internet; pressing the return page also asks Stripe directly, so a payment is still recorded without one.') %></p>
+			<div class="cfg-actions">
+				<button type="button" class="pay_test" provider="stripe">Test keys</button>
+				<span class="pay_test_status cfg-note" provider="stripe" style="margin:0;"></span>
+			</div>
+		</div>
+	</details>
+
+	<details class="cfg-acc" data-acc="pay-square" open>
+		<summary>Square</summary>
+		<div class="cfg-card">
+			<div class="cfg-row">
+				<label>Square</label>
+				<input type="checkbox" class="pay_setting" setting="square_enabled" value="on" <% if ($pay_setting_of->('square_enabled') eq 'on') { %>checked<% } %>>
+				<span class="cfg-note" style="margin:0;"><%= &subs::ui('A Square payment link for the invoice balance.') %></span>
+			</div>
+			<div class="cfg-row">
+				<label>Mode</label>
+				<select class="pay_setting" setting="square_mode">
+					<option value="production" <% if ($pay_setting_of->('square_mode', 'production') eq 'production') { %>selected<% } %>>Production</option>
+					<option value="sandbox" <% if ($pay_setting_of->('square_mode') eq 'sandbox') { %>selected<% } %>>Sandbox</option>
+				</select>
+			</div>
+			<div class="cfg-row">
+				<label>Access token</label>
+				<% my $square_token = $pay_secret_set->('square_access_token'); %>
+				<input type="password" class="pay_secret" setting="square_access_token" value="" placeholder="<%= $square_token ? '••• set — type to replace' : 'the access token' %>" autocomplete="off" spellcheck="false">
+				<button type="button" class="pay_secret_clear" setting="square_access_token" <% if (!$square_token) { %>style="display:none;"<% } %>>Clear</button>
+			</div>
+			<div class="cfg-row">
+				<label>Location ID</label>
+				<input type="text" class="pay_setting" setting="square_location_id" value="<%= $pay_setting_of->('square_location_id') %>" placeholder="the location payments land in" autocomplete="off" spellcheck="false">
+			</div>
+			<div class="cfg-row">
+				<label>Webhook signature key</label>
+				<% my $square_key = $pay_secret_set->('square_webhook_key'); %>
+				<input type="password" class="pay_secret" setting="square_webhook_key" value="" placeholder="<%= $square_key ? '••• set — type to replace' : 'the signature key from Square' %>" autocomplete="off" spellcheck="false">
+				<button type="button" class="pay_secret_clear" setting="square_webhook_key" <% if (!$square_key) { %>style="display:none;"<% } %>>Clear</button>
+			</div>
+			<div class="cfg-row">
+				<label>Webhook URL</label>
+				<input type="text" readonly value="<%= &subs::pay_webhook_url($c, 'square') %>" onclick="this.select();" style="font-family:monospace;font-size:12px;">
+			</div>
+			<div class="cfg-row">
+				<label>Exact webhook URL</label>
+				<input type="text" class="pay_setting" setting="square_webhook_url" value="<%= $pay_setting_of->('square_webhook_url') %>" placeholder="paste the URL Square shows for the subscription" autocomplete="off" spellcheck="false">
+				<span class="cfg-note" style="margin:0;"><%= &subs::ui('Square signs the exact address it posts to. Paste the same URL here if it differs from the one above, or the signature will not verify.') %></span>
+			</div>
+			<div class="cfg-row">
+				<label>Book to</label>
+				<%== $pay_account_picker->('square_account', 'credit') %>
+			</div>
+			<div class="cfg-actions">
+				<button type="button" class="pay_test" provider="square">Test keys</button>
+				<span class="pay_test_status cfg-note" provider="square" style="margin:0;"></span>
+			</div>
+		</div>
+	</details>
+
+	<details class="cfg-acc" data-acc="pay-paypal" open>
+		<summary>PayPal</summary>
+		<div class="cfg-card">
+			<div class="cfg-row">
+				<label>PayPal</label>
+				<input type="checkbox" class="pay_setting" setting="paypal_enabled" value="on" <% if ($pay_setting_of->('paypal_enabled') eq 'on') { %>checked<% } %>>
+				<span class="cfg-note" style="margin:0;"><%= &subs::ui('A PayPal order for the invoice balance. The customer may pay with a PayPal balance or a card.') %></span>
+			</div>
+			<div class="cfg-row">
+				<label>Mode</label>
+				<select class="pay_setting" setting="paypal_mode">
+					<option value="live" <% if ($pay_setting_of->('paypal_mode', 'live') eq 'live') { %>selected<% } %>>Live</option>
+					<option value="sandbox" <% if ($pay_setting_of->('paypal_mode') eq 'sandbox') { %>selected<% } %>>Sandbox</option>
+				</select>
+			</div>
+			<div class="cfg-row">
+				<label>Client ID</label>
+				<input type="text" class="pay_setting" setting="paypal_client_id" value="<%= $pay_setting_of->('paypal_client_id') %>" autocomplete="off" spellcheck="false">
+			</div>
+			<div class="cfg-row">
+				<label>Secret</label>
+				<% my $paypal_secret = $pay_secret_set->('paypal_secret'); %>
+				<input type="password" class="pay_secret" setting="paypal_secret" value="" placeholder="<%= $paypal_secret ? '••• set — type to replace' : 'the client secret' %>" autocomplete="off" spellcheck="false">
+				<button type="button" class="pay_secret_clear" setting="paypal_secret" <% if (!$paypal_secret) { %>style="display:none;"<% } %>>Clear</button>
+			</div>
+			<div class="cfg-row">
+				<label>Webhook ID</label>
+				<% my $paypal_hook = $pay_secret_set->('paypal_webhook_id'); %>
+				<input type="password" class="pay_secret" setting="paypal_webhook_id" value="" placeholder="<%= $paypal_hook ? '••• set — type to replace' : 'the webhook id PayPal shows' %>" autocomplete="off" spellcheck="false">
+				<button type="button" class="pay_secret_clear" setting="paypal_webhook_id" <% if (!$paypal_hook) { %>style="display:none;"<% } %>>Clear</button>
+			</div>
+			<div class="cfg-row">
+				<label>Webhook URL</label>
+				<input type="text" readonly value="<%= &subs::pay_webhook_url($c, 'paypal') %>" onclick="this.select();" style="font-family:monospace;font-size:12px;">
+				<span class="cfg-note" style="margin:0;"><%= &subs::ui('Subscribe to CHECKOUT.ORDER.APPROVED and PAYMENT.CAPTURE.COMPLETED. Without the webhook, the return page still captures and records the payment.') %></span>
+			</div>
+			<div class="cfg-row">
+				<label>Brand name</label>
+				<input type="text" class="pay_setting" setting="paypal_brand" value="<%= $pay_setting_of->('paypal_brand') %>" placeholder="the name shown on PayPal" autocomplete="off" spellcheck="false">
+			</div>
+			<div class="cfg-row">
+				<label>Book to</label>
+				<%== $pay_account_picker->('paypal_account', 'credit') %>
+			</div>
+			<div class="cfg-actions">
+				<button type="button" class="pay_test" provider="paypal">Test keys</button>
+				<span class="pay_test_status cfg-note" provider="paypal" style="margin:0;"></span>
+			</div>
+		</div>
+	</details>
+
+	<h3>Interac e-Transfer</h3>
+	<p class="cfg-note"><%= &subs::ui('No consumer bank offers an e-Transfer API, so JawnOS chooses the honest path: it reads the notification letters that already arrive in the mailbox. Autodeposit is the one that settles without a person answering a security question; with a question, the seller must deposit it by hand and then record it here or in the invoice. A bank or payment service that can forward the same facts can post them to the address below instead.') %></p>
+	<div class="cfg-card">
+		<div class="cfg-row">
+			<label>Interac e-Transfer</label>
+			<input type="checkbox" class="pay_setting" setting="interac_enabled" value="on" <% if ($pay_setting_of->('interac_enabled') eq 'on') { %>checked<% } %>>
+			<span class="cfg-note" style="margin:0;"><%= &subs::ui('Show the e-Transfer address and reference on an unpaid invoice.') %></span>
+		</div>
+		<div class="cfg-row">
+			<label>Receive at</label>
+			<input type="text" class="pay_setting" setting="interac_email" value="<%= $pay_setting_of->('interac_email') %>" placeholder="the email your bank receives transfers at" autocomplete="off" spellcheck="false">
+		</div>
+		<div class="cfg-row">
+			<label>Name</label>
+			<input type="text" class="pay_setting" setting="interac_name" value="<%= $pay_setting_of->('interac_name') %>" placeholder="the name the sender will see" autocomplete="off" spellcheck="false">
+		</div>
+		<div class="cfg-row">
+			<label>Currency</label>
+			<input type="text" class="pay_setting" setting="interac_currency" value="<%= $pay_setting_of->('interac_currency', 'CAD') %>" placeholder="CAD" maxlength="3" style="width:80px;text-transform:uppercase;">
+			<span class="cfg-note" style="margin:0;"><%= &subs::ui('What the notification is denominated in. It is converted to the house currency when it is recorded.') %></span>
+		</div>
+		<div class="cfg-row">
+			<label>Autodeposit</label>
+			<input type="checkbox" class="pay_setting" setting="interac_autodeposit" value="on" <% if ($pay_setting_of->('interac_autodeposit') eq 'on') { %>checked<% } %>>
+			<span class="cfg-note" style="margin:0;"><%= &subs::ui('Tick this when the receiving address has Autodeposit on. The invoice then tells the customer no security question is needed.') %></span>
+		</div>
+		<div class="cfg-row">
+			<label>Watch the inbox</label>
+			<input type="checkbox" class="pay_setting" setting="interac_watch" value="on" <% if ($pay_setting_of->('interac_watch') eq 'on') { %>checked<% } %>>
+			<span class="cfg-note" style="margin:0;"><%= &subs::ui('Read Interac notifications from the mailbox every few minutes. A letter is matched by the invoice reference, then by the exact amount, then by the sender.') %></span>
+		</div>
+		<div class="cfg-row">
+			<label>Record automatically</label>
+			<input type="checkbox" class="pay_setting" setting="interac_auto" value="on" <% if ($pay_setting_of->('interac_auto') eq 'on') { %>checked<% } %>>
+			<span class="cfg-note" style="margin:0;"><%= &subs::ui('Only when the money is already deposited and exactly one invoice carries the reference. Otherwise the notification waits below for a person.') %></span>
+		</div>
+		<div class="cfg-row">
+			<label>Book to</label>
+			<%== $pay_account_picker->('interac_account', 'interac') %>
+		</div>
+		<div class="cfg-row">
+			<label>Note for the customer</label>
+			<textarea class="pay_setting" setting="interac_instructions" style="width:100%;min-height:62px;" placeholder="optional words shown under the e-Transfer address"><%= $pay_setting_of->('interac_instructions') %></textarea>
+		</div>
+		<div class="cfg-row">
+			<label>Forwarder URL</label>
+			<input type="text" readonly value="<%= $pay_base_url %>/pay/interac/hook?token=<%= &subs::pay_interac_token() %>" onclick="this.select();" style="font-family:monospace;font-size:12px;word-break:break-all;">
+			<button type="button" id="pay_interac_token_new">New token</button>
+		</div>
+		<p class="cfg-note" style="margin:0;"><%= &subs::ui('A service that can see the notification can POST JSON with amount, currency, sender, reference, memo, deposited and (optionally) invoice to that address. The token is this house\'s own; treat the URL as a password.') %></p>
+		<div class="cfg-actions">
+			<button type="button" class="pay_test" provider="interac">Check</button>
+			<button type="button" id="pay_interac_scan">Read the inbox now</button>
+			<span id="pay_interac_scan_status" class="cfg-note" style="margin:0;"><% if (my $at = $pay_setting_of->('interac_scanned_at')) { %>Last read <span class="time" mode="fixed" timestamp="<%= $at %>"></span>.<% } %></span>
+		</div>
+	</div>
+
+	<% if (scalar @{$pay_receipts}) { %>
+		<h3>Waiting e-transfers</h3>
+		<div class="cfg-scroll">
+			<table>
+				<thead><tr><th>When</th><th>Amount</th><th>From</th><th>Reference</th><th>Invoice</th><th></th></tr></thead>
+				<tbody>
+					<% foreach my $r ( @{$pay_receipts} ) { %>
+						<tr class="pay_interac_row" receipt="<%= $r->{'id'} %>">
+							<td class="time" mode="fixed" timestamp="<%= $r->{'at'} %>"></td>
+							<td><b><%= &subs::price_formatter($r->{'amount'}) %></b> <%= $r->{'currency'} %><% if ($r->{'memo'}) { %><div class="cfg-note" style="margin:0;"><%= $r->{'memo'} %></div><% } %></td>
+							<td><%= $r->{'sender'} || $r->{'email'} %><% if (!$r->{'deposited'}) { %><div class="cfg-note" style="margin:0;color:#b33;"><%= &subs::ui('not deposited yet — the sender still has to be answered') %></div><% } %></td>
+							<td style="font-family:monospace;font-size:12px;"><%= $r->{'reference'} %></td>
+							<td>
+								<% if (scalar @{ $r->{'candidates'} }) { %>
+									<select class="pay_interac_invoice" receipt="<%= $r->{'id'} %>" style="max-width:260px;">
+										<% my $ci = 0; foreach my $c ( @{ $r->{'candidates'} } ) { %>
+											<option value="<%= $c->{'uuid'} %>" <% if ($ci == 0) { %>selected<% } %>><%= &subs::format_name($c->{'id'}) %> · <%= $c->{'customer'} %> · <%= &subs::price_formatter($c->{'balance'}) %></option>
+										<% $ci++; } %>
+									</select>
+								<% } else { %>
+									<span class="cfg-note" style="margin:0;"><%= &subs::ui('no open invoice matches') %></span>
+								<% } %>
+							</td>
+							<td style="white-space:nowrap;">
+								<button type="button" class="pay_interac_record" receipt="<%= $r->{'id'} %>"><%= &subs::ui('Record') %></button>
+								<button type="button" class="pay_interac_ignore" receipt="<%= $r->{'id'} %>"><%= &subs::ui('Ignore') %></button>
+								<div class="cfg-note pay_interac_status" style="margin:0;"></div>
+							</td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+		</div>
+		<p class="cfg-note"><%= &subs::ui('Record books the money against the chosen invoice and hides the notification. Ignore hides it without recording; the letter stays in the mailbox.') %></p>
+	<% } %>
+</div>

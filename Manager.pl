@@ -5642,7 +5642,8 @@ get '/public_view/:type/:uuid/:cx_uuid' => sub ($c) {
 	my $printer = &store_printer({
 		uuid => $uuid,
 		type => $type,
-		cx_uuid => $cx_uuid
+		cx_uuid => $cx_uuid,
+		public => 1
 	});
 	$printer->{'layout'} = 'public_view';
 	$c->render(
@@ -5755,6 +5756,17 @@ sub store_printer($data) {
 	$qr_img = '' unless defined $qr_img && length $qr_img;
 	$qr_img = 'data:image/png;base64,' . encode_base64($qr_img) if length $qr_img;
 
+	# The public invoice page also offers the online ways to settle it. The
+	# printable sheet and the emailed attachment do not carry buttons, so only
+	# the public route asks for them.
+	my $pay_links;
+	if ($data->{'public'} && ($type || '') eq 'invoice' && $uuid ne 'all' && scalar @{$registers} == 1) {
+		$pay_links = &subs::pay_options_for(
+			$c, $registers->[0], $registers->[0]->{'data'},
+			$registers->[0]->{'data'}->{'numbers'}->{'balance'}, $cx_uuid
+		);
+	}
+
 	my $returner = {
 		template => '/store/printer/header',
 		registers => $registers,
@@ -5767,6 +5779,7 @@ sub store_printer($data) {
 		qr_img => $qr_img,
 		pay_note => $pay ? $pay->{'amount'} : '',
 		pay_address => $pay ? $pay->{'address'} : '',
+		pay_links => $pay_links,
 		id => $id,
 		totals => $totals,
 		payments => $payments,
@@ -7466,6 +7479,92 @@ post '/manager/configure/crypto_refresh' => sub($c) {
 	$c->render(json => $result);
 };
 
+# ---- pay (Configure -> Plat -> Pay) ----------------------------------------
+# The panel is one page: Crypto first, then the hosted checkouts and Interac.
+# A provider's keys are sealed the same way an AI key is; a blank secret field
+# means "keep what is saved", so the panel never has to carry a key back out.
+get '/manager/configure/pay_panel' => sub($c) {
+	$c->render(text => $c->render_to_string('configure/pay_setting_list'));
+};
+
+sub pay_setting_allowed {
+	my ($name) = @_;
+	return 0 unless defined $name && length $name;
+	my @allowed = qw(
+		enabled base_url
+		stripe_enabled stripe_secret stripe_webhook_secret stripe_account
+		square_enabled square_mode square_access_token square_location_id
+		square_webhook_key square_webhook_url square_account
+		paypal_enabled paypal_mode paypal_client_id paypal_secret paypal_webhook_id
+		paypal_brand paypal_account
+		interac_enabled interac_email interac_name interac_account interac_watch
+		interac_auto interac_currency interac_instructions interac_autodeposit
+	);
+	return (grep { $_ eq $name } @allowed) ? 1 : 0;
+}
+
+post '/manager/pay/setting' => sub($c) {
+	my $name = $c->param('setting') || '';
+	unless (pay_setting_allowed($name)) {
+		return $c->render(json => { ok => 0, error => 'that setting is not part of Pay' });
+	}
+	my $value = $c->param('value');
+	$value = '' unless defined $value;
+	if ($name eq 'interac_currency') {
+		$value = uc($value);
+		$value = 'CAD' unless $value =~ /^[A-Z]{3}$/;
+	}
+	if ($name eq 'base_url' && length $value) {
+		$value =~ s{/+$}{};
+		unless ($value =~ m{^https?://}i) {
+			return $c->render(json => { ok => 0, error => 'the public address must start with http:// or https://' });
+		}
+	}
+	my $sealed = 0;
+	if (grep { $_ eq $name } &subs::pay_secret_names()) {
+		if (length $value) {
+			my $s = eval { &subs::note_encrypter(&subs::suds_grabber(), $value) };
+			return $c->render(json => { ok => 0, error => 'the vault is locked, so the value cannot be sealed' }) unless defined $s && length $s;
+			$value = $s;
+			$sealed = 1;
+		}
+	}
+	&subs::setting_setter({
+		app => 'pay', setting => $name, value => $value,
+		device => 'all', timestamp => $c->param('timestamp'),
+	});
+	$c->render(json => { ok => 1, setting => $name, sealed => $sealed });
+};
+
+post '/manager/pay/test' => sub($c) {
+	$c->render(json => &subs::pay_test_provider($c->param('provider') || ''));
+};
+
+post '/manager/pay/interac/scan' => sub($c) {
+	$c->render(json => &subs::pay_interac_scan());
+};
+
+post '/manager/pay/interac/record' => sub($c) {
+	$c->render(json => &subs::pay_interac_record($c->param('id') || '', $c->param('uuid') || '', $c->session('name') || ''));
+};
+
+post '/manager/pay/interac/ignore' => sub($c) {
+	$c->render(json => &subs::pay_interac_ignore($c->param('id') || ''));
+};
+
+post '/manager/pay/interac/token' => sub($c) {
+	my $token = &subs::random_string_creator(40);
+	my $sealed = eval { &subs::note_encrypter(&subs::suds_grabber(), $token) };
+	unless (defined $sealed && length $sealed) {
+		return $c->render(json => { ok => 0, error => 'the vault is locked, so the token cannot be sealed' });
+	}
+	&subs::setting_setter({
+		app => 'pay', setting => 'interac_hook_token',
+		value => $sealed, device => 'all',
+	});
+	$c->render(json => { ok => 1 });
+};
+
 # Type-ahead for the History app: a house has thousands of apps, so the list is
 # searched on the server and only the matches travel.
 get '/manager/crypto/apps' => sub($c) {
@@ -7872,6 +7971,124 @@ get '/manager/crypto/payment_request' => sub($c) {
 		by => $request->{'approved_name'} || '',
 		expired => $expired,
 	});
+};
+
+# ---- public payment pages --------------------------------------------------
+# These carry no session: the customer is a stranger on the invoice link. The
+# checkout start reads the invoice, the return reads the provider (never the
+# browser's word), and a webhook verifies the provider's own signature.
+get '/pay/:provider/start' => sub($c) {
+	my $provider = $c->stash('provider');
+	my $uuid = $c->param('uuid') || '';
+	my $cx = $c->param('cx') || '';
+	my $out = &subs::pay_start($provider, $c, $uuid, $cx);
+	if (!$out->{'ok'}) {
+		my $back = (length $uuid && length $cx)
+			? '/public_view/invoice/' . url_escape($uuid) . '/' . url_escape($cx)
+			: '';
+		return $c->render(
+			template => 'pay/message', layout => 'public_view',
+			title => 'Payment', message => ($out->{'error'} || 'That payment method is not available.'),
+			back => $back,
+		);
+	}
+	$c->redirect_to($out->{'url'});
+};
+
+get '/pay/:provider/return' => sub($c) {
+	my $provider = $c->stash('provider');
+	my $out = &subs::pay_return_handle($provider, $c);
+	my $message = $out->{'message'} || '';
+	if ($out->{'ok'}) {
+		if ($out->{'duplicate'}) {
+			$message = 'This payment was already recorded.';
+		}
+		elsif (defined $out->{'balance'} && $out->{'balance'} <= 0) {
+			$message = 'Payment received in full. Thank you.';
+		}
+		elsif (defined $out->{'balance'}) {
+			$message = 'Payment received. The invoice balance is now ' . &subs::price_formatter($out->{'balance'}) . '.';
+		}
+		else {
+			$message = 'Payment received. Thank you.';
+		}
+	}
+	$c->render(
+		template => 'pay/return', layout => 'public_view',
+		ok => $out->{'ok'} ? 1 : 0,
+		pending => $out->{'pending'} ? 1 : 0,
+		message => $message,
+		provider => $provider,
+		invoice_url => ($out->{'invoice_url'} || ''),
+	);
+};
+
+any '/pay/:provider/webhook' => sub($c) {
+	my $provider = $c->stash('provider');
+	my $body = $c->req->body // '';
+	my $out;
+	if ($provider eq 'stripe') {
+		my $sig = $c->req->headers->header('Stripe-Signature') || '';
+		unless (&subs::pay_stripe_signature_ok($body, $sig)) {
+			return $c->render(status => 400, json => { ok => 0, error => 'bad signature' });
+		}
+		my $event = eval { decode_json($body) } || {};
+		$out = &subs::pay_stripe_webhook($event);
+	}
+	elsif ($provider eq 'square') {
+		my $sig = $c->req->headers->header('x-square-hmacsha256-signature') || '';
+		my $url = &subs::pay_setting('square_webhook_url', '') || &subs::pay_webhook_url($c, 'square');
+		unless (&subs::pay_square_signature_ok($body, $sig, $url)) {
+			return $c->render(status => 400, json => { ok => 0, error => 'bad signature' });
+		}
+		my $event = eval { decode_json($body) } || {};
+		$out = &subs::pay_square_webhook($event);
+	}
+	elsif ($provider eq 'paypal') {
+		my $event = eval { decode_json($body) } || {};
+		my %h;
+		foreach my $k ( qw/paypal-auth-algo paypal-cert-url paypal-transmission-id paypal-transmission-sig paypal-transmission-time/ ) {
+			$h{$k} = $c->req->headers->header($k) || '';
+		}
+		my $verified = &subs::pay_paypal_webhook_verify($event, \%h);
+		$out = &subs::pay_paypal_webhook($event, $verified);
+	}
+	else {
+		return $c->render(status => 404, json => { ok => 0, error => 'unknown payment method' });
+	}
+	$c->render(
+		status => ($out->{'ok'} ? 200 : 400),
+		json => {
+			ok => $out->{'ok'} ? 1 : 0,
+			error => $out->{'error'},
+			ignored => $out->{'ignored'},
+			duplicate => $out->{'duplicate'},
+		},
+	);
+};
+
+# A bank or payment service that can see e-Transfer notifications posts the
+# facts here. The task token is the gate, like the LoRaWAN uplink's.
+post '/pay/interac/hook' => sub($c) {
+	my $token = $c->param('token') || '';
+	my $body = eval { $c->req->json } || {};
+	$body = {} unless ref $body eq 'HASH';
+	if (!scalar keys %{$body}) {
+		foreach my $k ( qw/amount currency sender reference memo message invoice email deposited pending text/ ) {
+			my $v = $c->param($k);
+			$body->{$k} = $v if defined $v;
+		}
+	}
+	my $out = &subs::pay_interac_hook($body, $token, $c);
+	$c->render(
+		status => ($out->{'ok'} ? 200 : 403),
+		json => {
+			ok => $out->{'ok'} ? 1 : 0,
+			error => $out->{'error'},
+			staged => $out->{'staged'},
+			recorded => $out->{'recorded'},
+		},
+	);
 };
 
 # The payer's half of a payment proof: this house signs what it sent, naming the
@@ -39044,6 +39261,8 @@ sub app_public_path {
 	return 1 if $path eq '/manager/thumbs';
 	return 1 if $path =~ m{^/(?:manager/)?box_office(?:/|$)};
 	return 1 if $path =~ m{^/public_view(?:/|$)};
+	# the public invoice's pay buttons and a provider's webhook/return
+	return 1 if $path =~ m{^/pay(?:/|$)};
 	return 1 if $path eq '/sesh_check' || $path eq '/gate';
 	return 1 if $path eq '/manager/health';
 	# A peer pushes its own row here after a scheduled wake; health_allowed is

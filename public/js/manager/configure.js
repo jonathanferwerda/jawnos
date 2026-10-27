@@ -3514,9 +3514,96 @@ $(document).on('click', '#tls_issue_now', function() {
 // ---- crypto (Configure -> Plat -> Crypto) ----------------------------------
 // Wallets are accounts; this page owns the asset list, the rate snapshot and the
 // valuation. A wallet field saves to its own app and never leaves the panel.
-function cryptoPanelRefresh() {
-	$.get('/manager/configure/crypto_panel', function(r) { $('#plat_crypto').html(r); });
+// ---- pay (Configure -> Plat -> Pay) ----------------------------------------
+// The Pay page is one panel: Crypto is its first section, then the hosted
+// checkouts and Interac e-Transfer. Any change reloads the panel so a provider
+// that just became ready is reflected at once.
+function payPanelRefresh() {
+	$.get('/manager/configure/pay_panel', function(r) { $('#plat_pay').html(r); });
 }
+
+function cryptoPanelRefresh() { payPanelRefresh(); }
+
+function paySettingSave(setting, value, done) {
+	$.post('/manager/pay/setting', {
+		setting: setting, value: value, timestamp: Date.now()
+	}, function(r) {
+		if (!r || !r.ok) { alert((r && r.error) || 'could not save'); }
+		if (done) { done(r); }
+	}, 'json');
+}
+
+$(document).on('change', '.pay_setting', function() {
+	var el = $(this);
+	var setting = el.attr('setting');
+	var value = el.attr('type') === 'checkbox' ? (el.prop('checked') ? 'on' : 'off') : el.val();
+	paySettingSave(setting, value);
+});
+
+$(document).on('change', '.pay_secret', function() {
+	var el = $(this);
+	if (!el.val()) { return; }
+	var setting = el.attr('setting');
+	paySettingSave(setting, el.val(), function(r) {
+		if (!r || !r.ok) { return; }
+		el.val('').attr('placeholder', '••• set — type to replace');
+		$('.pay_secret_clear[setting="' + setting + '"]').show();
+	});
+});
+
+$(document).on('click', '.pay_secret_clear', function() {
+	var setting = $(this).attr('setting');
+	if (!confirm('Clear the saved value?')) { return; }
+	paySettingSave(setting, '', function() { payPanelRefresh(); });
+});
+
+$(document).on('click', '.pay_test', function() {
+	var btn = $(this);
+	var provider = btn.attr('provider');
+	var status = $('.pay_test_status[provider="' + provider + '"]');
+	status.text('asking…');
+	$.post('/manager/pay/test', { provider: provider, timestamp: Date.now() }, function(r) {
+		status.text((r && r.message) || 'no answer');
+	}, 'json').fail(function() { status.text('could not ask'); });
+});
+
+$(document).on('click', '#pay_interac_scan', function() {
+	var status = $('#pay_interac_scan_status');
+	status.text('reading…');
+	$.post('/manager/pay/interac/scan', { timestamp: Date.now() }, function(r) {
+		if (!r || !r.ok) { status.text((r && r.error) || 'could not read'); return; }
+		status.text('read ' + r.found + ' notification' + (r.found === 1 ? '' : 's') + ' · staged ' + r.staged + ' · recorded ' + r.recorded);
+		setTimeout(payPanelRefresh, 700);
+	}, 'json').fail(function() { status.text('could not read'); });
+});
+
+$(document).on('click', '.pay_interac_record', function() {
+	var scope = $(this).closest('.pay_interac_row');
+	var status = scope.find('.pay_interac_status');
+	status.text('recording…');
+	$.post('/manager/pay/interac/record', {
+		id: $(this).attr('receipt'),
+		uuid: scope.find('.pay_interac_invoice').val() || '',
+		timestamp: Date.now()
+	}, function(r) {
+		if (!r || !r.ok) { status.text((r && r.error) || 'could not record'); return; }
+		status.text(r.duplicate ? 'already recorded' : 'recorded');
+		setTimeout(payPanelRefresh, 700);
+	}, 'json').fail(function() { status.text('could not record'); });
+});
+
+$(document).on('click', '.pay_interac_ignore', function() {
+	var scope = $(this).closest('.pay_interac_row');
+	var status = scope.find('.pay_interac_status');
+	$.post('/manager/pay/interac/ignore', { id: $(this).attr('receipt'), timestamp: Date.now() }, function() {
+		scope.remove();
+	}, 'json');
+});
+
+$(document).on('click', '#pay_interac_token_new', function() {
+	if (!confirm('Make a new forwarding token? Any service using the old URL will stop working.')) { return; }
+	$.post('/manager/pay/interac/token', { timestamp: Date.now() }, function() { payPanelRefresh(); }, 'json');
+});
 
 function cryptoSettingSave(setting, value, done) {
 	$.post('/manager/setting_setter', {
