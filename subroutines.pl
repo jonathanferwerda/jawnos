@@ -18497,18 +18497,20 @@ sub warehouse_item_expires {
 	return '';
 }
 
-# Where does an item live? Most specific first: an explicit 'place' setting on
-# the item, a 'default_place' on the item's packaging, a 'place' setting on the
-# app, the app itself when it is a place (pos=place), and finally wherever we
-# currently are. Returns '' when nothing resolves, and callers treat that as
-# "do not touch stock".
+# Where does an item live? Most specific first: a 'stock_place' setting on the
+# item (or its app), then the older 'place' setting on either, a 'default_place'
+# on the item's packaging, the app itself when it is a place (pos=place), and
+# finally wherever we currently are. Returns '' when nothing resolves, and
+# callers treat that as "do not touch stock".
 sub warehouse_place_for {
 	my ($app,$item) = @_;
 	foreach my $subject ( $item, $app ) {
 		next unless $subject;
-		my $q = &db_query('select value from settings where app=? and setting=? limit 1', $subject, 'place');
-		my $s = $q ? $q->hashes->[0] : undef;
-		return $s->{'value'} if $s->{'value'} && $s->{'value'} ne '';
+		foreach my $key ( qw/stock_place place/ ) {
+			my $q = &db_query('select value from settings where app=? and setting=? limit 1', $subject, $key);
+			my $s = $q ? $q->hashes->[0] : undef;
+			return $s->{'value'} if $s->{'value'} && $s->{'value'} ne '';
+		}
 	}
 	if ($item) {
 		my $packaging = eval { return decode_json &setting_grabber({ app => $item, setting => 'packaging' }) } || {};
