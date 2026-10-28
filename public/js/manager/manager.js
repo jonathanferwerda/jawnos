@@ -4758,6 +4758,47 @@ $(document).on('click','.edit_app_submit', function() {
 	});
 });
 
+$(document).on('click', '.edit_app_clone', function() {
+	var b = $(this);
+	var app = b.attr('app');
+	var ea = b.closest('.appointment_edit_area');
+	var status = ea.find('.edit_app_status');
+	var name = $.trim(ea.find('[attribute="clone_name"]').val() || '');
+	if (!name) { status.text('Type a name for the clone.'); return; }
+	status.text('Cloning...');
+	$.ajax({
+		url: '/manager/clone_app',
+		type: 'POST',
+		data: { app: app, new: name, timestamp: Date.now() },
+		success: function(response) {
+			if (response && response.ok) { status.text('Cloned to ' + response.app + '.'); }
+			else { status.text((response && response.error) || 'Could not clone.'); }
+		},
+		error: function(xhr) { status.text(xhr && xhr.status == 409 ? 'That name is already in use.' : 'Could not clone.'); }
+	});
+});
+
+$(document).on('click', '.edit_app_delete', function() {
+	var b = $(this);
+	if (!confirm('Delete this appointment?')) { return; }
+	if (!confirm('Delete it for good? This is copied to every machine.')) { return; }
+	var app = b.attr('app');
+	var uuid = b.attr('uuid');
+	var ea = b.closest('.appointment_edit_area');
+	var status = ea.find('.edit_app_status');
+	status.text('Deleting...');
+	$.ajax({
+		url: '/manager/delete_app',
+		type: 'POST',
+		data: { app: app, uuid: uuid, timestamp: b.attr('timestamp'), type: b.attr('type'), server_time: Date.now() },
+		success: function() {
+			$('[uuid="' + uuid + '"]').closest('.appointment').remove();
+			ea.html('').hide();
+		},
+		error: function() { status.text('Could not delete.'); }
+	});
+});
+
 $(document).on('click', '.delete_app', function() {
 	var a = $(this);
 	var app = a.attr('app');

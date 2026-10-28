@@ -8,6 +8,7 @@
 var jawnosTimePreviewTimers = {};
 var jawnosTimePreviewDeep = {};
 var jawnosTimePreviewSeq = {};
+var jawnosTimePreviewBusy = {};
 
 function jawnosTimePreviewFields(appointment) {
 	var app = appointment.attr('app') || '';
@@ -20,6 +21,7 @@ function jawnosTimePreviewFields(appointment) {
 		duration: appointment.find('.duration').val() || '',
 		schedule: appointment.find('.schedule').val() || '',
 		warranty: appointment.find('.warranty').val() || '',
+		quantity: appointment.find('.quantity').val() || '',
 		transaction: appointment.find('.app_details').is(':visible') ? 1 : 0,
 		deep: 0
 	};
@@ -35,11 +37,14 @@ function jawnosTimePreviewPaint(appointment, response) {
 	put('.duration_preview', response.duration);
 	put('.schedule_preview', response.schedule);
 	put('.warranty_preview', response.warranty);
+	put('.quantity_preview', response.quantity);
 }
 
 function jawnosTimePreviewRequest(appointment, deep) {
 	if (!appointment || !appointment.length) { return; }
 	var app = appointment.attr('app') || '';
+	if (jawnosTimePreviewBusy[app]) { return; }
+	jawnosTimePreviewBusy[app] = 1;
 	var data = jawnosTimePreviewFields(appointment);
 	data.deep = deep ? 1 : 0;
 	jawnosTimePreviewSeq[app] = (jawnosTimePreviewSeq[app] || 0) + 1;
@@ -50,6 +55,7 @@ function jawnosTimePreviewRequest(appointment, deep) {
 		data: data,
 		dataType: 'json',
 		success: function(response) {
+			delete jawnosTimePreviewBusy[app];
 			if (mine !== jawnosTimePreviewSeq[app]) { return; }
 			jawnosTimePreviewPaint(appointment, response);
 			if (deep) { return; }
@@ -64,16 +70,27 @@ function jawnosTimePreviewRequest(appointment, deep) {
 					jawnosTimePreviewRequest(appointment, true);
 				}, 1200);
 			}
-		}
+		},
+		error: function() { delete jawnosTimePreviewBusy[app]; }
 	});
 }
+
+// The ago reading has to follow the clock: "10 minutes ago" resolves to a
+// different moment every second, and an absolute time counts down to it. While
+// a person is editing the ago field, ask the fast parser again each second.
+setInterval(function() {
+	if (document.hidden) { return; }
+	var field = $('.appointment .ago:focus');
+	if (!field.length || !$.trim(field.val() || '')) { return; }
+	jawnosTimePreviewRequest(field.closest('.appointment'), false);
+}, 1000);
 
 function jawnosTimePreviewPaintApp(app) {
 	var appointment = $('.appointment[app="' + app + '"]').first();
 	if (appointment.length) { jawnosTimePreviewRequest(appointment, false); }
 }
 
-$(document).on('input', '.appointment .ago, .appointment .duration, .appointment .warranty, .appointment .schedule', function() {
+$(document).on('input', '.appointment .ago, .appointment .duration, .appointment .warranty, .appointment .schedule, .appointment .quantity', function() {
 	var appointment = $(this).closest('.appointment');
 	var app = appointment.attr('app') || '';
 	clearTimeout(jawnosTimePreviewTimers[app]);
@@ -83,7 +100,7 @@ $(document).on('input', '.appointment .ago, .appointment .duration, .appointment
 	}, 350);
 });
 
-$(document).on('change', '.appointment .ago, .appointment .duration, .appointment .warranty, .appointment .schedule', function() {
+$(document).on('change', '.appointment .ago, .appointment .duration, .appointment .warranty, .appointment .schedule, .appointment .quantity', function() {
 	var appointment = $(this).closest('.appointment');
 	var app = appointment.attr('app') || '';
 	clearTimeout(jawnosTimePreviewTimers[app]);

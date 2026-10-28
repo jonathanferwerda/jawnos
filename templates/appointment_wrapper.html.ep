@@ -79,35 +79,40 @@
 					<img class="little_thumb group_toggle" group="connect" hint="Connect" src="<%= &subs::icon_path('connect', '/images/make believe/web_button.png') %>" app="<%= $a %>">
 				</span><br>
 				<div class="group_contents media_group_contents" app="<%= $a %>" style="display:none;">
-					<% foreach my $p ( @{$pseudonyms} ) { %>
-						<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'media') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" <% if ($p->{'name'} =~ /^(?:video|audio|screen)$/) { %>media_group="record" <% } %>app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+					<span class="media_row">
+						<% foreach my $p ( @{$pseudonyms} ) { %>
+							<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'media') { %>
+								<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" <% if ($p->{'name'} =~ /^(?:video|audio|screen)$/) { %>media_group="record" <% } %>app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+							<% } %>
 						<% } %>
-					<% } %>
-					<%# video / audio / screen: which machine records (it runs jp there) %>
-					<select class="media_machine" group="record" app="<%= $a %>" hint="<%= &subs::ui('Which machine records this') %>">
-						<option value="" <% if (!length($media_default{'record'})) { %>selected<% } %>><%= &subs::lang('network.this_machine') %></option>
-						<% foreach my $rm ( @media_machines ) { next unless ($rm->{'device'} || '') =~ /^(?:mobile|computer)$/; %>
-							<option value="<%= $rm->{'uuid'} %>" data-signatorial="<%= $rm->{'signatorial'} %>" <% if ($media_default{'record'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
-						<% } %>
-					</select>
-					<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
-						<img class="little_thumb save_appointment row_gap" camera="0" type="camera" media_group="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
-						<img class="little_thumb save_appointment" camera="1" type="camera" media_group="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
-						<select class="media_machine" group="camera" app="<%= $a %>" hint="<%= &subs::ui('Where the picture is taken') %>">
-							<option value="" <% if (!length($media_default{'camera'})) { %>selected<% } %>><%= &subs::lang('network.this_machine') %></option>
-							<% foreach my $rm ( grep { ($_->{'device'} || '') eq 'mobile' } @media_machines ) { %>
-								<option value="<%= $rm->{'uuid'} %>" data-signatorial="<%= $rm->{'signatorial'} %>" <% if ($media_default{'camera'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
+						<%# video / audio / screen: which machine records (it runs jp there) %>
+						<select class="media_machine" group="record" app="<%= $a %>" hint="<%= &subs::ui('Which machine records this') %>">
+							<option value="" <% if (!length($media_default{'record'})) { %>selected<% } %>><%= &subs::lang('network.this_machine') %></option>
+							<% foreach my $rm ( @media_machines ) { next unless ($rm->{'device'} || '') =~ /^(?:mobile|computer)$/; %>
+								<option value="<%= $rm->{'uuid'} %>" data-signatorial="<%= $rm->{'signatorial'} %>" <% if ($media_default{'record'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
 							<% } %>
 						</select>
-					<% } %>
-					<%# the app's own camera: opens the OS camera or the OS video recorder
-					    (window.JawnCamera) - a viewfinder you can see, and the camera's own
-					    processing. Shown only in the app (the rules at the foot of this
-					    template key off the html.jawn-app class manager.js sets). %>
-					<img class="little_thumb native_capture" capture="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (native)">
-					<img class="little_thumb native_video" type="video" app="<%= $a %>" src="<%= &subs::icon_path('media', '/images/make believe/camera.png') %>" hint="Video (native)">
+					</span>
+					<span class="media_row">
+						<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
+							<img class="little_thumb save_appointment row_gap" camera="0" type="camera" media_group="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
+							<img class="little_thumb save_appointment" camera="1" type="camera" media_group="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
+							<select class="media_machine" group="camera" app="<%= $a %>" hint="<%= &subs::ui('Where the picture is taken') %>">
+								<option value="" <% if (!length($media_default{'camera'})) { %>selected<% } %>><%= &subs::lang('network.this_machine') %></option>
+								<% foreach my $rm ( grep { ($_->{'device'} || '') eq 'mobile' } @media_machines ) { %>
+									<option value="<%= $rm->{'uuid'} %>" data-signatorial="<%= $rm->{'signatorial'} %>" <% if ($media_default{'camera'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
+								<% } %>
+							</select>
+						<% } %>
+						<%# the app's own camera: opens the OS camera or the OS video recorder
+						    (window.JawnCamera) - a viewfinder you can see, and the camera's own
+						    processing. Shown only in the app (the rules at the foot of this
+						    template key off the html.jawn-app class manager.js sets). %>
+						<img class="little_thumb native_capture" capture="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (native)">
+						<img class="little_thumb native_video" type="video" app="<%= $a %>" src="<%= &subs::icon_path('media', '/images/make believe/camera.png') %>" hint="Video (native)">
+					</span>
 					<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
+					<span class="media_row">
 						<img class="little_thumb save_appointment row_gap" type="scan" feed="flatbed" media_group="scan" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
 						<img class="little_thumb save_appointment" type="scan" feed="adf" media_group="scan" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">
 						<img class="little_thumb save_appointment" camera="webcam" type="camera" media_group="scan" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>" hint="Webcam">
@@ -117,6 +122,7 @@
 								<option value="<%= $rm->{'uuid'} %>" data-signatorial="<%= $rm->{'signatorial'} %>" <% if ($media_default{'scan'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
 							<% } %>
 						</select>
+					</span>
 					<% } %>
 				</div>
 				<div class="group_contents extra_group_contents" app="<%= $a %>" style="display:none;">
@@ -160,6 +166,7 @@
 				</span>
 				<span class="main_input_field">
 					<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="quantity">
+					<span class="main_input_preview quantity_preview" app="<%= $a %>"></span>
 				</span>
 			</div>
 			<div class="main_inputs_row" app="<%= $a %>">
@@ -255,6 +262,14 @@
 	   (public view, web) never sees them */
 	.native_capture, .native_video { display: none; }
 	html.jawn-app .native_capture, html.jawn-app .native_video { display: inline-block; }
+	/* The media group is three short rows (record / camera / scan); each row keeps
+	   its buttons and its machine picker together and wraps on a narrow window. */
+	.media_group_contents { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+	.media_group_contents .media_row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+	.media_group_contents .media_row > * { flex: 0 0 auto; }
+	.media_group_contents .media_machine { max-width: 100%; min-height: 0; height: 30px; padding: 2px 7px;
+		border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+		color: var(--ink); font: inherit; font-size: 13px; }
 	.model {
 		background-color: pink;
 		border-width: 3px;
