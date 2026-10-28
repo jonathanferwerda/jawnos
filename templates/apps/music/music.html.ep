@@ -109,10 +109,14 @@
 	</div>
 
 </div>
-<div id="music_padlock" style="display:none;width:100%;background-color:black;height:100%;max-height:100%;top:60px;object-fit:contain;">
+<div id="music_padlock" style="display:none;width:100%;background-color:black;height:100%;max-height:100%;top:60px;object-fit:contain;overflow:auto;">
 	<img src="<%= &subs::icon_path('cancel_button', '/images/make believe/cancel_button.png') %>" hint="Close" class="little_thumb" id="music_cancel_padlock" style="position:absolute;top:35px;right:5px;">
+	<% $c->stash('compact' => 1); %>
 	<%= include 'padlock', mode => 'music', fingerprint => 1 %>
 </div>
+<style>
+#music_padlock .padlock_frame.padlock_compact { top:8px !important; transform:translateX(-50%) !important; }
+</style>
 
 <script>
 	mao = JSON.parse('<%== $jmao %>');
