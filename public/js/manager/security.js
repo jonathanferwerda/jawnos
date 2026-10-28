@@ -91,7 +91,7 @@ $(document).on('click', '#security_private_lock', function() {
 		device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
 		browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : ''
 	}, function() {
-		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(); }
+		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(0); }
 		$('#security_private_status').text((typeof jawnosT === 'function') ? jawnosT('Private apps are hidden again.') : 'Private apps are hidden again.');
 	}, 'json');
 });

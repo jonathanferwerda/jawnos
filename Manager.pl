@@ -28700,6 +28700,12 @@ post '/manager/window_closer' => sub($c) {
 		my $device = &media_unlock_device($c);
 		&media_unlock_clear($device, $app) if length $device;
 	}
+	# Closing a private app relocks private at once: the device grant goes and
+	# any other private window in this tab closes, so the next look needs a
+	# fresh fingerprint (the same rule Gallery already follows).
+	if (&subs::app_private_now($app) && &subs::private_revealed()) {
+		&private_relock($c, $c->param('browser_tab_id'), $app);
+	}
 	&subs::window_closer($app, $c->param('browser_tab_id'));
 	my $settings = &subs::settings_grabber({ app => &subs::unformat_name($app) });
 
@@ -35569,6 +35575,31 @@ sub media_unlock_clear {
 	return $q ? $q->rows : 0;
 }
 
+# Closing a private window, or five minutes without movement, relocks private
+# everywhere on this screen: drop the grant, close the tab's other private
+# windows, and redraw the lists. $skip_app is the window whose own close
+# already triggered this, so it is not asked to close twice.
+sub private_relock {
+	my ($c, $tab, $skip_app) = @_;
+	my $device = &media_unlock_device($c);
+	&media_unlock_clear($device, 'private') if length $device;
+	$tab = '' unless defined $tab && $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
+	if (length $tab) {
+		my $rows = eval {
+			&subs::db_query("select distinct app from websockets where type = 'stayingAlive' and browser_tab_id = ?", $tab)->hashes;
+		} || [];
+		foreach my $row ( @{$rows} ) {
+			my $open_app = $row->{'app'} // next;
+			next if $open_app =~ /^(?:server|tab|manager)$/;
+			next if defined $skip_app && length $skip_app && $open_app eq $skip_app;
+			next unless &subs::app_private_now($open_app);
+			&subs::window_closer($open_app, $tab);
+		}
+		&Websocket::send('server', { console => 'jawnosPrivateRefresh(0);', browser_tab_id => $tab });
+	}
+	return 1;
+}
+
 # Mint one window's grant. Only one grant stands per app and device: a second
 # unlock replaces the first, which is what makes a new window open locked even
 # while another was open a moment ago.
@@ -40526,10 +40557,17 @@ post '/manager/security/media_lock' => sub ($c) {
 	my $tab = $c->param('browser_tab_id') || '';
 	$tab = '' unless $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
 	&media_unlock_clear($device, $app) if length $device;
-	my @apps = $app ? ($app) : (@media_unlock_apps, 'private');
-	foreach my $a ( @apps ) {
-		my $js = ($a eq 'private') ? 'jawnosPrivateRefresh();' : 'jawnosMediaLockdown("' . $a . '")';
-		&Websocket::send('server', { console => $js, browser_tab_id => $tab }) if length $tab;
+	if ($app eq 'private') {
+		# A deliberate Hide, or the five-minute idle timer: clear the grant,
+		# close this tab's private windows, and redraw the lists.
+		&private_relock($c, $tab);
+	}
+	else {
+		my @apps = $app ? ($app) : (@media_unlock_apps, 'private');
+		foreach my $a ( @apps ) {
+			my $js = ($a eq 'private') ? 'jawnosPrivateRefresh(0);' : 'jawnosMediaLockdown("' . $a . '")';
+			&Websocket::send('server', { console => $js, browser_tab_id => $tab }) if length $tab;
+		}
 	}
 	$c->render(json => { ok => 1, app => $app, device => $device });
 };

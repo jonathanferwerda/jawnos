@@ -4,7 +4,7 @@
 <div id="denial_window"<% if ($private_denial) { %> class="denial_private"<% } %>>
 	<%= include 'denial_image' %>
 	<% if ($private_denial) { %>
-		<% $c->stash(no_denial_image => 1, mode => 'private', target => '', fingerprint => 1, open_app => $denial_app, open_timestamp => $denial_timestamp); %>
+		<% $c->stash(no_denial_image => 1, quiet_denial => 1, mode => 'private', target => '', fingerprint => 1, open_app => $denial_app, open_timestamp => $denial_timestamp); %>
 		<%= include 'padlock' %>
 	<% } %>
 </div>
@@ -20,17 +20,24 @@
    Folders and Music under the denial picture. The padlock keeps its own
    hand-drawn lock for the reading animation, so only its copy of the denial
    image is hidden. */
-#denial_window.denial_private { overflow:auto; padding:10px 0 24px; }
-#denial_window.denial_private > .denial_image { max-height:42% !important; }
+#denial_window.denial_private { overflow:auto; padding:6px 0 12px; }
+#denial_window.denial_private > .denial_image { max-height:30% !important; }
 #denial_window.denial_private .padlock_frame {
 	position:relative !important;
 	inset:auto !important;
 	top:auto !important;
 	left:auto !important;
 	transform:none !important;
-	margin:12px auto 0 !important;
-	width:min(300px, 92%) !important;
+	margin:6px auto 0 !important;
+	width:min(300px, 94%) !important;
 }
-#denial_window.denial_private .padlock_emblem { min-height:110px; }
+#denial_window.denial_private .padlock_frame h1 { font-size:16px; margin:0 0 2px; }
+#denial_window.denial_private .padlock_message { font-size:15px; line-height:1.25; margin:4px 0 2px; }
+#denial_window.denial_private .padlock_emblem { min-height:64px; }
 #denial_window.denial_private .padlock_emblem .denial_image { display:none; }
+#denial_window.denial_private .padlock_ask_phone,
+#denial_window.denial_private .padlock_fingerprint,
+#denial_window.denial_private .padlock_biometric { margin:6px auto 0; font-size:14px; padding:6px 10px; }
+#denial_window.denial_private .padlock_fingerprint_status { min-height:16px; font-size:12px; }
+#denial_window.denial_private .padlock_phone_key { display:inline-block; margin-top:4px; font-size:12px; }
 </style>
