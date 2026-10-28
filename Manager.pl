@@ -362,7 +362,7 @@ sub warranty_resolve {
 	my $ms = &subs::resolve_when($spec, $anchor);
 	return $ms if defined $ms;
 	my $past_words = $spec =~ /\b(?:ago|last|before|past|yesterday)\b/i;
-	my $length = &guide_duration_ms($spec, '');
+	my $length = &guide_duration_ms($spec, '', $anchor);
 	return $anchor + abs($length) if defined $length && $length && !$past_words;
 	return undef unless $deep;
 	my $read = &time_machine_read($spec, $anchor, 1);
@@ -423,7 +423,7 @@ sub guide_when_ms {
 # minute. A model writes words, so both forms are read here, and a phrase may name
 # several parts ("1 hour 30 minutes").
 sub guide_duration_ms {
-	my ($phrase, $type) = @_;
+	my ($phrase, $type, $anchor) = @_;
 	return undef unless defined $phrase && $phrase =~ /\S/;
 	$phrase = &subs::number_words_to_digits($phrase);
 	my %mult = (
@@ -453,7 +453,7 @@ sub guide_duration_ms {
 				: $lower =~ /^decade/ ? 'D'
 				: $lower =~ /^centur/ ? 'c'
 				: $lower;
-			my $ms = eval { &subs::time_abbrev_translator($n . $unit, &subs::rightNow()) };
+			my $ms = eval { &subs::time_abbrev_translator($n . $unit, $anchor || &subs::rightNow()) };
 			next unless defined $ms && $ms =~ /^-?[0-9.]+$/;
 			$m = int($ms) / $n;
 		}
