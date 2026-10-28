@@ -2657,9 +2657,42 @@ $(document).on('click', function (e) {
 // a text label from its hint, and the breaks in between go away. The rows are kept
 // in alphabetical order and read icon first, so the icons line up in a column
 // against the left edge. Safe to call again on the same markup.
+// The built-in icons the start menu draws, keyed by the app they open. A
+// private app is not drawn at all; the server sends its key in hidden_apps, and
+// the icon is removed before the rows are assembled (so the recents list cannot
+// put it back). A custom app is not in this grid, and its running rows are
+// filtered server-side.
+var startMenuIconApps = {
+	internet_toggle: 'internet', search_app_toggle: 'search', folders_toggle: 'folders',
+	budget: 'budget', travel_toggle: 'travel', relational_toggle: 'relational', people_toggle: 'people',
+	mailbox_toggle: 'mailbox', email_toggle: 'email', chat_toggle: 'chat', music_toggle: 'music',
+	embedded_toggle: 'embedded', ticketmaker: 'box_office', cards_toggle: 'cards', web_toggle: 'web',
+	backup_now: 'backup', security_toggle: 'security', terminal_toggle: 'terminal', network_toggle: 'network',
+	ide_toggle: 'ide', image_toggle: 'gallery', camera_toggle: 'camera', phone_toggle: 'phone',
+	synth_toggle: 'synth', editor_toggle: 'editor', marker_toggle: 'marker', notes_toggle: 'notes',
+	clock_toggle: 'clock', home_toggle: 'home', store_toggle: 'store', process_monitor_toggle: 'process_monitor'
+};
+
+function startMenuHidePrivate(main) {
+	var hidden = (main.attr('hidden_apps') || '').split('|');
+	if (!hidden.length || (hidden.length == 1 && !hidden[0])) { return; }
+	$.each(startMenuIconApps, function (id, app) {
+		if ($.inArray(app, hidden) < 0) { return; }
+		main.find('#' + id).each(function () {
+			var img = $(this);
+			var row = img.closest('.start_menu_item');
+			if (row.length) { row.remove(); return; }
+			var parent = img.parent();
+			img.remove();
+			if (parent.length && !parent.children().length && !parent.text().replace(/\s+/g, '').length) { parent.remove(); }
+		});
+	});
+}
+
 function startMenuListify() {
 	var main = $('.start_menu_main_display');
 	if (main.length == 0) { return; }
+	startMenuHidePrivate(main);
 	main.find('br').remove();
 	main.find('img').each(function () {
 		var img = $(this);

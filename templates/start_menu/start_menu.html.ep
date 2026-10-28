@@ -75,7 +75,7 @@
 						<img class="start_menu_category hover" category="<%= $category %>" hint="<%= &subs::format_name($category) %>" src="<%= &subs::icon_path($category, $category_icons->{$category}) %>">
 					<% } %>
 				</span>
-				<span class="start_menu_main_display" recent="<%= join ',', @{$recent} %>">
+				<span class="start_menu_main_display" recent="<%= join ',', @{$recent} %>" hidden_apps="<%= join '|', @{$hidden_apps || []} %>">
 					<div class="start_menu_lockdown_note" style="display:none;padding:18px;line-height:1.5;max-width:520px;">
 						<h2><%= &subs::ui('Lockdown') %></h2>
 						<p><%= &subs::ui('An enemy is present, or this is a dangerous place. Only Security and apps marked Dangerous stay open. Open Security for the way out.') %></p>
@@ -211,7 +211,8 @@
 						} else { 
 							$query = &subs::db_query('select * from appointments where timestamp >= ? order by timestamp asc limit 20', &subs::rightNow())->hashes;
 						} %>
-						<% foreach my $app ( grep { !&subs::app_hidden_now($_->{'app'}) } @{$query} ) { %>
+						<% my $private_open = &subs::private_reachable_now() && &subs::private_revealed(); %>
+						<% foreach my $app ( grep { !&subs::app_hidden_now($_->{'app'}) && (!&subs::appointment_private_now($_) || $private_open) } @{$query} ) { %>
 							<tr>
 								<td><%== &subs::main_icon_maker({ app => $app->{'app'}, timestamp => &subs::rightNow(), size => 'little' }) %></td>
 								<td>

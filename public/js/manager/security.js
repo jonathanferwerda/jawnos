@@ -72,6 +72,30 @@ $(document).on('change', '#padlock_contexts', function() {
 	settingSetter({ 'app': '__president', 'setting': 'padlock_contexts', 'value': contexts });
 });
 
+// Private is a lock turned by a fingerprint, not a place level. The padlock
+// partial in the overlay is the same one Gallery, Folders and Music use, so the
+// computer's reader, the phone and the recovery path all land in the same place.
+$(document).on('click', '#security_private_unlock', function() {
+	$('#security_private_status').text('');
+	$('#security_private_padlock').show();
+});
+
+$(document).on('click', '#security_private_close', function() {
+	$('#security_private_padlock').hide();
+});
+
+$(document).on('click', '#security_private_lock', function() {
+	$('#security_private_padlock').hide();
+	$.post('/manager/security/media_lock', {
+		app: 'private',
+		device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
+		browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : ''
+	}, function() {
+		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(); }
+		$('#security_private_status').text((typeof jawnosT === 'function') ? jawnosT('Private apps are hidden again.') : 'Private apps are hidden again.');
+	}, 'json');
+});
+
 $(document).on('change', '#padlock_gate', function() {
 	settingSetter({ 'app': '__president', 'setting': 'padlock_gate', 'value': $(this).val() });
 });
