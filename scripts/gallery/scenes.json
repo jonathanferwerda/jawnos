@@ -1,0 +1,218 @@
+{
+  "defaults": {
+    "window": [77, 97, 1766, 886],
+    "settle": 2400,
+    "theme": "nord"
+  },
+  "scenes": [
+    {
+      "id": "01-desktop",
+      "kind": "composite",
+      "prep": { "layout": "timeline", "scope": "day", "sorts": "timestamp", "bg": "off" },
+      "windows": [
+        { "app": "measures", "rect": [0, 86, 480, 900], "z": 1 },
+        { "app": "configure", "rect": [300, 230, 560, 520], "z": 2 },
+        { "app": "studio", "rect": [410, 420, 560, 560], "z": 3 },
+        { "app": "folders", "rect": [460, 500, 520, 520], "z": 4 }
+      ],
+      "site": {
+        "include": true,
+        "lead": true,
+        "slug": "the-desktop",
+        "crop": "full",
+        "title": "The desktop",
+        "description": "Windows stack and snap, the day's routines hang across the top, and the search bar waits at the bottom of every screen.",
+        "alt": "The JawnOS desktop with several app windows open, a row of routine buttons along the top and a search bar at the bottom."
+      }
+    },
+    {
+      "id": "02-start-menu",
+      "kind": "start-menu"
+    },
+    {
+      "id": "03-handbook",
+      "kind": "app",
+      "app": "handbook",
+      "site": {
+        "include": true,
+        "slug": "handbook",
+        "crop": "window",
+        "title": "Handbook",
+        "description": "Today at a glance: money, the state of life, the day's records and what they predict.",
+        "alt": "The JawnOS Handbook for Tuesday, 27 October 2026, showing money spent, state of life, the day's records and what the records predict."
+      }
+    },
+    {
+      "id": "04-measures",
+      "kind": "app",
+      "app": "measures",
+      "site": {
+        "include": true,
+        "slug": "measures",
+        "crop": "window",
+        "title": "Measures",
+        "description": "Units and formulas, converted in place — currencies, temperatures, lengths and more.",
+        "alt": "The JawnOS Measures table, listing power, temperature, currency and volume conversions with their formulas."
+      }
+    },
+    {
+      "id": "05-gallery",
+      "kind": "app",
+      "app": "gallery",
+      "settle": 5000
+    },
+    {
+      "id": "06-music",
+      "kind": "app",
+      "app": "music"
+    },
+    {
+      "id": "07-mail",
+      "kind": "app",
+      "app": "email"
+    },
+    {
+      "id": "08-people",
+      "kind": "app",
+      "app": "people",
+      "window": [0, 76, 1920, 1004],
+      "site": {
+        "include": true,
+        "slug": "people-and-things",
+        "crop": "full",
+        "title": "The whole picture",
+        "description": "Routines, people and things as connected nodes, split across two columns.",
+        "alt": "A two-column map of routines, people and things, drawn as connected nodes over the desktop."
+      }
+    },
+    {
+      "id": "09-account",
+      "kind": "app",
+      "app": "account"
+    },
+    {
+      "id": "10-store",
+      "kind": "app",
+      "app": "store"
+    },
+    {
+      "id": "11-warehouse",
+      "kind": "app",
+      "app": "warehouse",
+      "site": {
+        "include": true,
+        "slug": "warehouse",
+        "crop": "window",
+        "title": "Warehouse",
+        "description": "Levels, quantities and a search across everything in the house.",
+        "alt": "The JawnOS Warehouse listing accounts and stocked items, from paper and canvas to coffee and packing tape."
+      }
+    },
+    {
+      "id": "12-configure",
+      "kind": "app",
+      "app": "configure"
+    },
+    {
+      "id": "13-files",
+      "kind": "app",
+      "app": "folders",
+      "site": {
+        "include": true,
+        "slug": "files",
+        "crop": "window",
+        "title": "Files",
+        "description": "A folder grid with sizes, free space and a machine picker.",
+        "alt": "The JawnOS Files window showing folders in the home directory, including Desktop, Documents, Music, Pictures, Templates and Videos."
+      }
+    },
+    {
+      "id": "14-clock",
+      "kind": "app",
+      "app": "clock",
+      "site": {
+        "include": true,
+        "slug": "clock",
+        "crop": "window",
+        "title": "Clock",
+        "description": "Alarms, stopwatch, timer and world clock in one window.",
+        "alt": "The JawnOS Clock app with three alarms, each with a switch."
+      }
+    },
+    {
+      "id": "15-marker",
+      "kind": "app",
+      "app": "marker"
+    },
+    {
+      "id": "16-synth",
+      "kind": "app",
+      "app": "synth",
+      "site": {
+        "include": true,
+        "slug": "synth",
+        "crop": "window",
+        "title": "Synth",
+        "description": "A playable synth, a filter and a step sequencer, with the MIDI device picker.",
+        "alt": "The JawnOS Synth app with a piano keyboard, effect sliders and a 16-step sequencer."
+      }
+    },
+    {
+      "id": "17-studio",
+      "kind": "app",
+      "app": "studio",
+      "site": {
+        "include": true,
+        "slug": "studio",
+        "crop": "window",
+        "title": "Studio",
+        "description": "Four tracks, a transport, a tempo wheel and the synth patched in above.",
+        "alt": "The JawnOS Studio with four recording tracks, transport controls, a tempo wheel and the synth above them."
+      }
+    },
+    {
+      "id": "18-timeline-sage",
+      "kind": "layout",
+      "prep": { "layout": "timeline", "scope": "day", "sorts": "timestamp", "bg": "on", "opacity": "0.42", "theme": "sage" },
+      "site": {
+        "include": true,
+        "slug": "sage-theme",
+        "crop": "full",
+        "title": "Sage",
+        "description": "The Sage theme: green paper, soft corners and the whole stack of windows.",
+        "alt": "A stack of JawnOS windows over the Sage theme's pale green paper background."
+      }
+    },
+    {
+      "id": "19-leaderboard-deepjawn",
+      "kind": "layout",
+      "prep": { "layout": "leaderboard", "scope": "day", "sorts": "duration", "bg": "on", "opacity": "0.40", "theme": "deepjawn" }
+    },
+    {
+      "id": "20-continent",
+      "kind": "layout",
+      "prep": { "layout": "continent", "scope": "day", "sorts": "timestamp", "bg": "off", "theme": "mocha" },
+      "site": {
+        "include": true,
+        "slug": "light-desktop",
+        "crop": "full",
+        "title": "Light scheme",
+        "description": "Windows in a stack over a plain, bright desktop.",
+        "alt": "Cascading JawnOS windows on a plain light desktop, with a column of linked labels on the right."
+      }
+    },
+    {
+      "id": "21-desk",
+      "kind": "layout",
+      "prep": { "layout": "desk", "scope": "day", "sorts": "timestamp", "bg": "on", "opacity": "0.50", "theme": "rose" },
+      "site": {
+        "include": true,
+        "slug": "wallpaper",
+        "crop": "full",
+        "title": "Wallpaper",
+        "description": "A photograph behind the windows, with the palette to match.",
+        "alt": "The JawnOS desktop over a soft, blurred photographic wallpaper, with the Files window open."
+      }
+    }
+  ]
+}
