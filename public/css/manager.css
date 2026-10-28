@@ -845,7 +845,7 @@ input[type="checkbox"]:hover {
    row's equal share; the input fills it. */
 .main_inputs_row .main_input_field { flex:1 1 0; min-width:0; display:flex; flex-direction:column; }
 .main_inputs_row .main_input_field .main_input { flex:none; width:100%; }
-.main_input_preview { display:block; min-height:14px; margin-top:2px; font-size:11px; line-height:1.25; opacity:.68; white-space:normal; overflow-wrap:anywhere; }
+.main_input_preview { display:block; min-height:14px; margin-top:2px; font-size:12px; line-height:1.25; opacity:.68; text-align:left; white-space:normal; overflow-wrap:anywhere; }
 canvas { overflow: scroll; z-index: 99; }
 /* A background canvas is a control, not a document. It answers a drag with the
    printer's own pan, so the browser must not start a selection there: a native
