@@ -1419,6 +1419,27 @@ our %topic = (
 		],
 		related => [ 'warehouse', 'invoices_payments', 'budget' ]
 	},
+	'transactions' => {
+		title => 'Recording a transaction', category => 'functions', verified => '2026-10-28',
+		summary => 'Enter what you spent or received from the record\'s own window.',
+		templates => [ 'templates/apps/app_details.html.ep', 'templates/apps/transaction/expense.html.ep', 'templates/apps/transaction/income.html.ep', 'templates/apps/transaction/transfer.html.ep', 'templates/apps/transaction/inventory.html.ep', 'templates/apps/transaction/models.html.ep', 'templates/apps/app_transaction.html.ep', 'public/js/manager/transaction.js' ],
+		body => [
+			'A transaction is the money side of a record. Open the app\'s window and press Transaction (the coin beside Measures and Tasks) to open the form; it opens with the type, project and account already chosen from the app\'s own settings.',
+			'The form reads from the top down. Vendor names who was paid, or who paid you. Item says what it was for; several things can be separated with commas, or each one put on its own line with Add item. Total is the figure on the receipt or the invoice; the amount and tax are worked out from it at the house tax rate. Typing Amount instead works the other way and fills the total.',
+			'Each line carries its own quantity and unit, and Add item starts another line. The totals under the lines add every line together, and that is the figure saved. More details holds the inventory side of a line: manufacturer, model, state, an extra charge such as a deposit or tip, and the switches for whether the amount is for the whole line and whether the price includes tax.',
+			'When the account is a cash account, Cash given takes the notes handed over and Change shows what came back. That pair is kept with the transaction for counting a drawer; the ledger still records only the total that left the account. Remember vendor and Remember item create or reuse an app for that name so its history gathers in one place; leave them clear to record the words on this transaction only.',
+			'Save writes the transaction. Repeat last fills the form from the last transaction in the same app, which is the quickest way to enter a regular purchase; Cancel empties the form after a confirming press.'
+		],
+		steps => [
+			'Open the app\'s window and press Transaction.',
+			'Check the type, project and paid-from account, then name the vendor.',
+			'Enter the total from the receipt, or the amount and let the total follow.',
+			'Put the items on the line; use Add item for more lines.',
+			'For cash, enter what you handed over and check the change.',
+			'Press Save.'
+		],
+		related => [ 'budget', 'warehouse', 'moves_ledger', 'market' ]
+	},
 	'evaluation' => {
 		title => 'Evaluation', category => 'functions', verified => '2026-10-22',
 		summary => 'A model-backed appraisal of an app\'s activity.',

@@ -26,14 +26,14 @@
 			<% } %>
 		</select>
 	<% } %>
-	<select class="appointment_model_selector <%= $class_list %>" attribute="model" name="model" style="width:50%;">
+	<select class="appointment_model_selector<% if ($source eq 'transaction') { %> model<% } %> <%= $class_list %>" attribute="model" name="model" style="width:50%;">
 		<option value="">Main</option>
 		<% foreach my $m (@models_by_name) { %>
 			<option <% if ($l->{'model'}->{'uuid'} eq $m->{'uuid'} || $m->{'uuid'} eq $l->{'data'}->{'model'}->{'uuid'}  || $l->{'data'}->{'model'}->{'def'} eq 'on' ) { %>selected<% } %> value="<%= $m->{'uuid'} %>"><%= &subs::format_name($m->{'name'}) %></option>
 		<% } %>
 	</select>
-	<input class="appointment_model_quantity <%= $class_list %>" attribute="quantity" name="quantity" value="<%= $l->{'quantity'} || $l->{'model'}->{'quantity'} || 1 %>" style="width:10%;">
-	<select class="appointment_model_unit <%= $class_list %>" attribute="unit" name="unit" value="<%= $l->{'unit'} || $l->{'model'}->{'unit'} || $l->{'app'} %>" style="width:28%;">
+	<input class="appointment_model_quantity<% if ($source eq 'transaction') { %> quantity<% } %> <%= $class_list %>" attribute="quantity" name="quantity" value="<%= $l->{'quantity'} || $l->{'model'}->{'quantity'} || 1 %>" style="width:10%;">
+	<select class="appointment_model_unit<% if ($source eq 'transaction') { %> unit<% } %> <%= $class_list %>" attribute="unit" name="unit" value="<%= $l->{'unit'} || $l->{'model'}->{'unit'} || $l->{'app'} %>" style="width:28%;">
 		<option value="<%= $l->{'app'} %>"><%= &subs::format_name($l->{'app'}) %></option>
 		<% if ($settings->{'source_app'}) { %>
 			<option value="<%= $settings->{'source_app'} %>"><%= &subs::format_name($settings->{'source_app'}) %></option>

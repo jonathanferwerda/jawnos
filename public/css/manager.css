@@ -2895,3 +2895,45 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
 @media (prefers-reduced-motion: reduce) {
 	details.cfg-acc > summary::before { transition: none !important; }
 }
+
+/* ---------------- Transaction entry ---------------- */
+/* The form is one record's money: what was bought, and what it came to. The
+   primary fields stay on screen; the inventory paperwork (manufacturer, model,
+   state, deposits) lives behind More details. */
+.app_details { text-align: left; }
+.app_details .tx_line_body { display: block; text-align: left; width: 100%; box-sizing: border-box; }
+.app_details .tx_row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin: 6px 0; text-align: left; }
+.app_details .tx_field { display: flex; flex-direction: column; gap: 2px; min-width: 80px; }
+.app_details .tx_field > label { font-size: 12px; letter-spacing: .03em; opacity: .72; line-height: 1.2; }
+.app_details .tx_field > input, .app_details .tx_field > select { font-size: 17px; min-height: 34px; }
+.app_details .tx_vendor_field { flex: 1 1 220px; }
+.app_details .tx_item_field { flex: 1 1 240px; }
+.app_details .tx_item_field > input { width: 100%; }
+.app_details .tx_qty { min-width: 52px; max-width: 72px; }
+.app_details .tx_qty input { width: 100%; text-align: center; }
+.app_details .tx_money_row .tx_field { flex: 1 1 90px; }
+.app_details .tx_total input { font-size: 23px; font-weight: 700; }
+.app_details .tx_check { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; opacity: .8; white-space: normal; padding-bottom: 7px; max-width: 100%; }
+.app_details .tx_check input { min-height: 0; }
+.app_details .tx_model_row { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; flex: 2 1 260px; }
+.app_details .tx_model_row > select, .app_details .tx_model_row > input { margin: 0; }
+.app_details .tx_more { display: block; margin: 8px 0 2px; }
+.app_details .tx_more > summary { cursor: pointer; font-size: 13px; opacity: .7; padding: 3px 0; }
+.app_details .tx_more[open] > summary { opacity: 1; margin-bottom: 4px; }
+.app_details .tx_more .tx_row { margin: 4px 0; }
+.app_details .tx_aux_description { flex: 1 1 220px; }
+.app_details .tx_switches { gap: 8px; align-items: center; }
+.app_details .tx_switches button { height: 32px; }
+.app_details .tx_add_row { text-align: left; margin: 4px 0 2px; }
+.app_details .tx_add_row button { font-size: 15px; padding: 0 14px; }
+.app_details .tx_remove { margin: 4px 0 0; font-size: 13px; height: 26px; }
+.app_details .tx_tender { display: none; text-align: left; margin: 8px 0; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
+.app_details .tx_tender.tx_tender_on { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end; }
+.app_details .tx_change_field .tx_change { font-size: 24px; font-weight: 700; min-height: 34px; line-height: 34px; }
+.app_details .tx_change_field .tx_change.tx_short { color: #c94f4f; }
+.app_details table.tx_summary { width: 100%; height: auto; margin: 10px 0 4px; background: var(--panel); border-top: 1px solid var(--line); }
+.app_details table.tx_summary th { font-size: 11px; opacity: .7; font-weight: 400; padding: 2px 4px; }
+.app_details table.tx_summary td { font-size: 20px; padding: 2px 4px; }
+.app_details .tx_actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 6px; }
+.app_details .tx_actions .tx_save { font-weight: 700; background: var(--accent-soft, var(--panel-2)); border-color: var(--accent-line, var(--line)); }
+.purchase_details.tx_added_line .tx_header_only { display: none; }

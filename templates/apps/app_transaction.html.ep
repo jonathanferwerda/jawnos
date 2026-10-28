@@ -64,6 +64,13 @@
 
 			</div>
 		<% } %>
+		<% my $totals = $app->{'data'}->{$app->{'movement'}}->{'totals'} || {}; %>
+		<% if ($totals->{'tendered'}) { %>
+			<span><b><%= &subs::ui('Cash given') %>:</b> <%= &subs::price_formatter($totals->{'tendered'}) %></span><br>
+			<% if (defined $totals->{'change'} && $totals->{'change'} ne '') { %>
+				<span><b><%= &subs::ui('Change') %>:</b> <%= &subs::price_formatter($totals->{'change'}) %></span><br>
+			<% } %>
+		<% } %>
 		<% if ($app->{'documentation'}) { %>
 			<span><b>Note:</b> <%= $app->{'documentation'} %></span><br>
 		<% } %>
