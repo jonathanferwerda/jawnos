@@ -10,7 +10,7 @@
 		<img src="<%= &subs::icon_for('/images/decipherable/gear.png') %>" hint="Configure" class="little_thumb email_config_toggle hover" style="">
 	<% } %>
 	<span style="font-size:20px;"><%= $main_title %></span>
-	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
+	<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data, chat_ui => 0 %>
 	<% my $privilege = $c->session('privilege'); %>
 	<% if ($privilege eq 'citizen' || $privilege eq 'resident' || $privilege eq 'guest') { %>
 		<div id="mail_sidebar" class="theme_surface" style="width:100%;height:100%;<% if ($incoming_data->{'sidebar'} != 1) { %>display:none;<% } %>background-color:<%= $config->{$device}->{'mail_sidebar_container'}->{'background_colour'} || 'var(--panel)' %>;border:solid;border-radius:20px;border-width:3px;overflow:scroll;"">

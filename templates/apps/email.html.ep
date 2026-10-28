@@ -74,7 +74,7 @@
 					</div>
 					<div id="mail_reader_content"></div>
 				</div>
-				<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data %>
+				<%= include 'mail/conversation', mail => $mail, incoming_data => $incoming_data, chat_ui => 0 %>
 			</div>
 		<% } %>
 	</div>
