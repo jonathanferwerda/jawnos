@@ -2,10 +2,8 @@
 	my $websites = &subs::db_query('select * from websites order by timestamp desc')->hashes || [];
 %>
 <style>
-/* The Browser owns its tabs: the window's title bar would be a second bar in
-   the same place, so this window draws without one and its contents fill it. */
-.wind[app="internet"] .top_navbar { display:none !important; }
-.wind[app="internet"] .window_contents { padding-top:0 !important; height:100% !important; }
+/* The Web/Browse tabs sit under the window's own title bar, like every other
+   app, so the window can be moved, minimised and closed from its bar. */
 /* The site's app is picked by typing, the way the dock's search works: an
    input, and the matching apps under it. */
 .internet_site_picker { position:relative; display:inline-block; min-width:120px; width:100%; }

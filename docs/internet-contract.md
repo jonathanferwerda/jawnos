@@ -128,6 +128,11 @@ is therefore offline and independent of the manager. It filters
   offers every appointment the visibility rule shows here and now (the place's
   level and the running people set it; a hidden appointment stays out of the
   suggestions). The active tab is remembered in `localStorage.internet_tab`.
+- A mapped domain is a session: while a native browser keeps posting site spans
+  for it, the assigned app's appointment runs. The manager's slow loop
+  (`subs::internet_site_appointment_tick`) starts it at the run's first span and,
+  once no span has arrived for 60 seconds, stops it at the last span's end. A
+  session the person started by hand is never stopped by this rule.
 - Cookies persist in both browsers: Android's WebView cookie store (flushed on
   pause/stop) and the desktop browser's own `WebsiteDataManager` under
   `~/.local/share/jawnos/browser`.
