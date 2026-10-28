@@ -42658,6 +42658,23 @@ get '/manager/keyboard/convert' => sub($c) {
 	$c->render(json => &measure_conversion_rows($c->param('unit'), 0 + $value));
 };
 
+# The Android input method's page. It is the manager's own soft keyboard, not a
+# copy: the same template the dock uses (so the layouts, the symbol page, the
+# calculator and the field-aware rows are the same code), the same stylesheet and
+# the same soft_keyboard.js. The service's WebView loads this over loopback and
+# adds `window.JawnIme` before the page parses; soft_keyboard.js then commits
+# keys through that bridge instead of into a DOM field. Serving it here keeps the
+# units, the live rates and the labels identical to the dock's.
+get '/manager/keyboard/ime' => sub($c) {
+	my ($manager_bg) = &subs::active_manager_background();
+	$c->render(
+		template => 'ime',
+		layout => undef,
+		body_class => (&subs::theme_is_dark() ? 'dark_theme' : ''),
+		manager_bg => $manager_bg,
+	);
+};
+
 # Is a measure code a currency (a fiat code, a coin, or a crypto asset)?
 sub currency_unit($unit) {
 	return 0 unless defined $unit && length $unit;

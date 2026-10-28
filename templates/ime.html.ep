@@ -1,0 +1,86 @@
+<!doctype html>
+<%# The Android input method's keyboard page.
+
+    It is not a second keyboard: the manager's own `soft_keyboard` fragment is
+    included verbatim, and the same soft_keyboard.js draws and drives it. The
+    service's WebView adds `window.JawnIme` before the page parses, so the script
+    commits keys through that bridge (instead of into a DOM field) and reads the
+    editor's text back for the conversion and recommendation rows. Because the
+    page is served by the manager, the units registry, the live rates and the
+    labels are the ones the dock itself uses. %>
+<% my $theme_bundle = &subs::active_theme_bundle(); %>
+<% my $title_font = $theme_bundle->{'font'} || &subs::setting_grabber({ app => 'misc', setting => 'title_font' }) || 'system-ui, sans-serif'; %>
+<html>
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+	<title>JawnOS Keyboard</title>
+	<link rel="stylesheet" href="/css/universal.css">
+	<link rel="stylesheet" href="/css/soft_keyboard.css">
+	<style>
+		html, body {
+			height: 100%;
+			margin: 0;
+			padding: 0;
+			overflow: hidden;
+			background: var(--panel);
+			/* the keyboard is a surface, not a document: no text selection, no
+			   magnifier bubble of its own, no tap highlight */
+			-webkit-user-select: none;
+			user-select: none;
+			-webkit-tap-highlight-color: transparent;
+		}
+		:root { --jawnos-font: <%= $title_font %>; }
+		body, button { font-family: var(--jawnos-font); }
+		/* the input method has no field to reserve room for and no taskbar; the
+		   dock is the whole page */
+		#jawn_soft_keyboard { position: fixed; }
+		/* dictation is the dock's own microphone, which asks the manager for a
+		   transcript; an input method cannot hand it a field, so it is not offered */
+		#soft_kb_mic_button { display: none; }
+	</style>
+</head>
+<body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>">
+<%= include 'soft_keyboard' %>
+<script src="/js/jquery.js"></script>
+<script>
+	/* Read by soft_keyboard.js at parse time; it then claims the dock for the
+	   input method instead of attaching to DOM fields. */
+	window.jawnSoftIme = true;
+</script>
+<script src="/js/manager/soft_keyboard.js"></script>
+<script>
+	(function () {
+		"use strict";
+		var dock = document.getElementById('jawn_soft_keyboard');
+		if (!dock) { return; }
+		var lastHeight = 0;
+		/* The input method's window is sized by the service; tell it the dock's
+		   real height whenever the conversion/recommendation rows, a page change
+		   or the layout chooser change it. Only the height is sent, in CSS px,
+		   which are dp in this viewport. */
+		function report() {
+			var h = Math.ceil(dock.getBoundingClientRect().height || 0);
+			if (h <= 0 || h === lastHeight) { return; }
+			lastHeight = h;
+			if (window.JawnIme && typeof window.JawnIme.resize === 'function') {
+				window.JawnIme.resize(h);
+			}
+		}
+		function start() {
+			if (typeof softKbImeStart === 'function') { softKbImeStart(); }
+			report();
+			if (window.ResizeObserver) {
+				new ResizeObserver(report).observe(dock);
+			}
+			setTimeout(report, 60);
+		}
+		if (document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', start);
+		}
+		else { start(); }
+		window.addEventListener('resize', report);
+	})();
+</script>
+</body>
+</html>
