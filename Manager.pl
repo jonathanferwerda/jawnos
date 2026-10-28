@@ -16701,7 +16701,9 @@ sub manager_reset($c) {
 		my $jdata;
 		if ($type eq 'record') {
 			my $recording_type = &subs::setting_grabber({ app => $app, setting => 'record' });
-			my $dat = { recorder => $recording_type };
+			my $machine = $c->param('remote_signatorial') || '';
+			my $here = ($machine eq '' || $machine eq &subs::signatorial_designer()) ? 1 : 0;
+			my $dat = { recorder => $recording_type, machine => $machine };
 			if ($recording_type eq 'video') {
 				$seen = undef;
 				$dat->{'camera'} = $camera;
@@ -16716,10 +16718,10 @@ sub manager_reset($c) {
 				$dat->{'camera'} = $camera;
 			}
 			elsif ($recording_type eq 'security') {
-				&record_video({ app => $app, uuid => $uuid, timestamp => $timestamp }) if $seen eq 'yes';
+				&record_video({ app => $app, uuid => $uuid, timestamp => $timestamp }) if $seen eq 'yes' && $here;
 			}
 			else {
-				&record_audio({ app => $app, uuid => $uuid, timestamp => $timestamp }) if $seen eq 'yes';
+				&record_audio({ app => $app, uuid => $uuid, timestamp => $timestamp }) if $seen eq 'yes' && $here;
 			}
 			$jdata = encode_json $dat;
 		}
