@@ -34,6 +34,12 @@ var jawnSoftDragClick = false;
 var jawnSoftHardware = false;
 var jawnSoftForced = false;
 try { jawnSoftHardware = localStorage.getItem('jawn_soft_keyboard_hw') == 'on'; } catch (err) {}
+// The Android input method serves this same file on a page of its own and adds
+// window.JawnIme before it parses. There is no DOM field to type into then: the
+// keys commit through the bridge, and the service reports the editor's text
+// back after each edit so the conversion and recommendation rows read it.
+var jawnSoftIme = !!window.jawnSoftIme;
+var jawnImeText = '';
 
 // ---- layouts ---------------------------------------------------------------
 // The keys a phone's own keyboard puts where. A layout is rows of tokens: a
@@ -347,6 +353,8 @@ function softKbDockOpen(mode) {
 }
 
 function softKbOn() {
+	// the input method page is the keyboard, always: there is no desk to test
+	if (jawnSoftIme) { return true; }
 	var stored = null;
 	try { stored = localStorage.getItem('jawn_soft_keyboard'); } catch (err) {}
 	if (stored == 'off') { return false; }
@@ -654,7 +662,7 @@ function softKbTitleUpdate() {
 	var mode = jawnSoftMode;
 	var title = mode == 'calc' ? softKbLabel('Calculator')
 		: (mode == 'symbols' ? softKbLabel('Special characters')
-		: (jawnSoftField ? softKbLayout().name : softKbLabel('Tap a field to type')));
+		: ((jawnSoftField || jawnSoftIme) ? softKbLayout().name : softKbLabel('Tap a field to type')));
 	dock.find('.soft_kb_title').text(title);
 }
 
@@ -1114,7 +1122,48 @@ function softKbNotify(el) {
 	}
 }
 
+// ---- the Android input method ---------------------------------------------
+// window.JawnIme is the service's bridge. Every write asks it to report the
+// editor's text back (imeText below) so the rows follow what the app holds, the
+// same way a DOM field's input event does in the manager.
+function softKbImeSync() {
+	if (window.JawnIme && typeof window.JawnIme.sync === 'function') { window.JawnIme.sync(); }
+}
+
+function softKbImeSend(text) {
+	if (window.JawnIme && typeof window.JawnIme.send === 'function') { window.JawnIme.send(String(text)); }
+	softKbImeSync();
+}
+
+function softKbImeBackspace() {
+	if (window.JawnIme && typeof window.JawnIme.backspace === 'function') { window.JawnIme.backspace(); }
+	softKbImeSync();
+}
+
+function softKbImeDeleteBack(count) {
+	count = Math.max(1, count | 0);
+	if (window.JawnIme && typeof window.JawnIme.deleteBack === 'function') { window.JawnIme.deleteBack(count); }
+	else if (window.JawnIme && typeof window.JawnIme.backspace === 'function') {
+		for (var i = 0; i < count; i++) { window.JawnIme.backspace(); }
+	}
+	softKbImeSync();
+}
+
+// A number field holds one answer, so the calculator's operand replaces it
+// rather than being appended (the dock does this by assigning field.value).
+function softKbImeSetNumber(value) {
+	if (window.JawnIme && typeof window.JawnIme.setNumber === 'function') { window.JawnIme.setNumber(String(value)); }
+	else if (window.JawnIme && typeof window.JawnIme.replaceAll === 'function') { window.JawnIme.replaceAll(String(value)); }
+	softKbImeSync();
+}
+
+function softKbImeReplace(value) {
+	if (window.JawnIme && typeof window.JawnIme.replaceAll === 'function') { window.JawnIme.replaceAll(String(value)); }
+	softKbImeSync();
+}
+
 function softKbInsert(text, target, nofocus) {
+	if (jawnSoftIme) { softKbImeSend(text); return; }
 	var el = target || jawnSoftField;
 	if (!el) { return; }
 	if (el.isContentEditable) {
@@ -1163,6 +1212,7 @@ function softKbInsert(text, target, nofocus) {
 }
 
 function softKbBackspace() {
+	if (jawnSoftIme) { softKbImeBackspace(); return; }
 	var el = jawnSoftField;
 	if (!el) { return; }
 	if (el.isContentEditable) {
@@ -1220,6 +1270,14 @@ function softKbDeleteSpan(el, start, end) {
 
 // backward to the start of the previous word, trailing spaces included
 function softKbDeleteWord() {
+	if (jawnSoftIme) {
+		var words = jawnImeText || '';
+		var i = words.length;
+		while (i > 0 && /\s/.test(words.charAt(i - 1))) { i--; }
+		while (i > 0 && !/\s/.test(words.charAt(i - 1))) { i--; }
+		if (i < words.length) { softKbImeDeleteBack(words.length - i); }
+		return;
+	}
 	var el = jawnSoftField;
 	if (!el) { return; }
 	if (el.isContentEditable) { softKbDeleteGranularity('word'); return; }
@@ -1262,7 +1320,7 @@ function softKbRepeatStop() {
 function softKbRepeatBegin() {
 	var hold = jawnSoftHold;
 	if (!hold) { return; }
-	if (!jawnSoftField) { softKbRepeatStop(); return; }
+	if (!jawnSoftField && !jawnSoftIme) { softKbRepeatStop(); return; }
 	if (hold.mode == 'calc') {
 		softKbRepeatStart(hold, JAWN_SOFT_CHAR_FIRST, JAWN_SOFT_CHAR_MIN, function () { softKbCalcKey('backspace'); });
 		return;
@@ -1284,7 +1342,7 @@ function softKbRepeatStart(hold, every, min, fn) {
 
 function softKbRepeatStep(hold) {
 	if (jawnSoftHold !== hold) { return; }
-	if (!jawnSoftField) { softKbRepeatStop(); return; }
+	if (!jawnSoftField && !jawnSoftIme) { softKbRepeatStop(); return; }
 	hold.fn();
 	hold.every = Math.max(hold.min, Math.round(hold.every * JAWN_SOFT_ACCEL));
 	hold.timer = setTimeout(function () { softKbRepeatStep(hold); }, hold.every);
@@ -1306,7 +1364,7 @@ function softKbBackspaceDown(el) {
 		softKbDeleteWord();
 	}
 	else { softKbBackspaceOnce(); }
-	if (!jawnSoftField) { return; }
+	if (!jawnSoftField && !jawnSoftIme) { return; }
 	jawnSoftHold = {
 		mode: (jawnSoftMode == 'calc') ? 'calc' : (double ? 'word' : 'char'),
 		started: now,
@@ -1316,8 +1374,12 @@ function softKbBackspaceDown(el) {
 }
 
 function softKbEnter() {
-	var el = jawnSoftField;
 	if (jawnSoftMode == 'calc') { softKbCalcEquals(); return; }
+	if (jawnSoftIme) {
+		if (window.JawnIme && typeof window.JawnIme.enter === 'function') { window.JawnIme.enter(); }
+		return;
+	}
+	var el = jawnSoftField;
 	if (!el) { return; }
 	if (el.tagName == 'TEXTAREA' || el.isContentEditable) { softKbInsert('\n'); return; }
 	$(el).trigger($.Event('keydown', { key: 'Enter', keyCode: 13, which: 13 }));
@@ -1352,11 +1414,13 @@ function softKbCalcKey(k) {
 // expression (a number input cannot hold '+' or '('). Backspace therefore edits
 // the field as well as the calculator screen.
 function softKbCalcSyncNumeric() {
-	if (!jawnSoftNumeric || !jawnSoftField) { return; }
+	if (!jawnSoftNumeric) { return; }
 	var m = jawnSoftExpr.match(/(-?\d*\.?\d*)$/);
 	var value = m ? m[1] : '';
 	if (value == '-' || value == '.') { value = ''; }
 	if (/\.$/.test(value)) { value = value.slice(0, -1); }
+	if (jawnSoftIme) { softKbImeSetNumber(value); return; }
+	if (!jawnSoftField) { return; }
 	jawnSoftSetting = true;
 	jawnSoftField.value = value;
 	$(jawnSoftField).trigger('input');
@@ -1383,7 +1447,12 @@ function softKbCalcEquals() {
 	$('#soft_kb_expr').text(out);
 	$('#soft_kb_result').text('');
 	softKbHistoryAdd(expr, out);
-	if (jawnSoftNumeric && jawnSoftField) {
+	if (jawnSoftNumeric && (jawnSoftField || jawnSoftIme)) {
+		if (jawnSoftIme) {
+			softKbCalcRender();
+			softKbImeSetNumber(out);
+			return;
+		}
 		jawnSoftSetting = true;
 		jawnSoftField.value = out;
 		try { jawnSoftField.focus({ preventScroll: true }); } catch (err) { jawnSoftField.focus(); }
@@ -1451,11 +1520,11 @@ function softKbHistoryRender() {
 
 function softKbHistoryPick(out) {
 	if (!out) { return; }
-	if (jawnSoftNumeric && jawnSoftField) {
+	if (jawnSoftNumeric && (jawnSoftField || jawnSoftIme)) {
 		jawnSoftExpr = out;
 		softKbCalcRender();
 		softKbCalcSyncNumeric();
-		try { jawnSoftField.focus({ preventScroll: true }); } catch (err) {}
+		if (jawnSoftField) { try { jawnSoftField.focus({ preventScroll: true }); } catch (err) {} }
 		return;
 	}
 	if (jawnSoftMode == 'calc') {
@@ -1586,8 +1655,9 @@ function softKbConvertParse(text, strict) {
 
 function softKbConvertText() {
 	var el = jawnSoftField;
-	if (el && (el.getAttribute('type') || '').toLowerCase() == 'password') { return ''; }
+	if (!jawnSoftIme && el && (el.getAttribute('type') || '').toLowerCase() == 'password') { return ''; }
 	if (jawnSoftMode == 'calc') { return jawnSoftExpr || ''; }
+	if (jawnSoftIme) { return jawnImeText; }
 	if (!el) { return ''; }
 	return el.isContentEditable ? $(el).text() : (el.value || '');
 }
@@ -1697,11 +1767,11 @@ function softKbConvertPick(unit, value) {
 		} catch (err) {}
 	}
 	if (value == null) { return; }
-	if (jawnSoftNumeric && jawnSoftField) {
+	if (jawnSoftNumeric && (jawnSoftField || jawnSoftIme)) {
 		jawnSoftExpr = String(value);
 		softKbCalcRender();
 		softKbCalcSyncNumeric();
-		try { jawnSoftField.focus({ preventScroll: true }); } catch (err) {}
+		if (jawnSoftField) { try { jawnSoftField.focus({ preventScroll: true }); } catch (err) {} }
 		softKbConvertUpdate();
 		return;
 	}
@@ -1952,6 +2022,7 @@ var jawnSoftSuggestDefs = {
 };
 
 function softKbSuggestText() {
+	if (jawnSoftIme) { return jawnImeText; }
 	var el = jawnSoftField;
 	if (!el) { return ''; }
 	return el.isContentEditable ? $(el).text() : (el.value || '');
@@ -1981,7 +2052,7 @@ function softKbSuggestItems(def) {
 function softKbSuggestSync() {
 	var wrap = $('#soft_kb_suggest');
 	var def = jawnSoftSuggestDefs[jawnSoftContext];
-	if (!def || !jawnSoftField) {
+	if (!def || (!jawnSoftField && !jawnSoftIme)) {
 		if (wrap.length && !wrap.prop('hidden')) { wrap.prop('hidden', true); softKbReserve(); }
 		return;
 	}
@@ -2000,8 +2071,20 @@ function softKbSuggestSync() {
 }
 
 function softKbSuggestPick(value) {
+	if (value == null) { return; }
+	if (jawnSoftIme) {
+		if (jawnSoftNumeric) {
+			jawnSoftExpr = value;
+			softKbCalcRender();
+			softKbImeSetNumber(value);
+		}
+		else { softKbImeReplace(value); }
+		softKbConvertUpdate();
+		softKbSuggestSync();
+		return;
+	}
 	var el = jawnSoftField;
-	if (!el || value == null) { return; }
+	if (!el) { return; }
 	if (el.isContentEditable) { softKbInsert(value); return; }
 	el.value = value;
 	try { el.focus({ preventScroll: true }); el.setSelectionRange(value.length, value.length); } catch (err) {}
@@ -2156,7 +2239,7 @@ function softKbChar(c) {
 		else if (c == '±') { softKbCalcKey('sign'); }
 		return;
 	}
-	if (jawnSoftField && !jawnSoftNumeric) { softKbInsert(c); }
+	if ((jawnSoftField || jawnSoftIme) && !jawnSoftNumeric) { softKbInsert(c); }
 }
 
 function softKbPress(b) {
@@ -2165,7 +2248,14 @@ function softKbPress(b) {
 	if (b.attr('data-kb_action') == 'layouts') { softKbLayoutsToggle(); return; }
 	if (b.attr('data-kb_action') == 'layouts_close') { softKbLayoutsToggle(false); return; }
 	if (b.attr('data-kb_action') == 'dictate') { softKbDictateToggle(); return; }
-	if (b.attr('data-kb_action') == 'close') { jawnSoftForced = false; softKbHide(); return; }
+	if (b.attr('data-kb_action') == 'close') {
+		jawnSoftForced = false;
+		// the input method's close is Android's own hide, not a slide-down: the
+		// service owns the window and re-shows this page on the next field
+		if (jawnSoftIme && window.JawnIme && typeof window.JawnIme.hide === 'function') { window.JawnIme.hide(); return; }
+		softKbHide();
+		return;
+	}
 	if (b.attr('data-kb_action') == 'clear_history') {
 		jawnSoftHistory = [];
 		softKbHistorySave();
@@ -2476,6 +2566,55 @@ $(document).on('click', '#send_it', function () {
 });
 
 $(window).on('resize', function () { if (softKbVisible()) { softKbReserve(); } jawnMeasurePlace(); });
+
+// ---- the input method's own entry points ----------------------------------
+// Called by templates/ime.html.ep after this file has run. The service calls
+// imeConfigure when a field starts and imeText after every edit; both drive the
+// same panels the dock uses, with no DOM field in between.
+function softKbImeStart() {
+	if (!jawnSoftIme) { return; }
+	var dock = $('#jawn_soft_keyboard');
+	if (!dock.length) { return; }
+	jawnSoftField = null;
+	softKbPlace(null);
+	dock.prop('hidden', false).attr('aria-hidden', 'false');
+	$('body').addClass('soft_kb_open');
+	softKbModeSet(jawnSoftNumeric ? 'calc' : 'letters');
+	softKbSlideUp(dock);
+	softKbTitleUpdate();
+	softKbConvertUpdate();
+	softKbSuggestSync();
+}
+
+// numeric: the field is a number/phone editor, so the calculator page opens.
+// context: what kind of value the field names, when the app tells us (Android's
+// EditorInfo hint or class); the recommendation row uses it.
+window.imeConfigure = function (numeric, context, text) {
+	if (!jawnSoftIme) { return; }
+	jawnSoftNumeric = !!numeric;
+	jawnSoftContext = context || '';
+	jawnSoftField = null;
+	jawnSoftExpr = '';
+	// the field's own text, read when it begins: a number field seeds the
+	// calculator with what it already holds instead of the last field's words
+	if (text != null) { jawnImeText = String(text); }
+	if (jawnSoftNumeric) { jawnSoftExpr = jawnImeText || ''; }
+	softKbShiftSet(false);
+	softKbModeSet(jawnSoftNumeric ? 'calc' : 'letters');
+	softKbTitleUpdate();
+	softKbConvertUpdate();
+	softKbSuggestSync();
+};
+
+// The service's report of the editor text before the caret. A conversion reads
+// the quantity being typed, and the recommendation row reads the same words a
+// DOM field would have offered.
+window.imeText = function (before) {
+	if (!jawnSoftIme) { return; }
+	jawnImeText = String(before == null ? '' : before);
+	softKbConvertUpdate();
+	softKbSuggestSync();
+};
 
 $(function () {
 	softKbHistoryRender();
