@@ -278,6 +278,7 @@ my %time_machine_guide_cache;
 sub time_machine_read {
 	my ($spec, $timestamp, $deep) = @_;
 	return undef unless defined $spec && $spec =~ /\S/;
+	$timestamp = &subs::rightNow() unless defined $timestamp;
 	my $ms = &subs::resolve_when($spec, $timestamp);
 	# a date with a name still attached ("sept 11 attacks") is an event, not that
 	# date: the guide reads it, and the plain date is kept only if it has nothing
@@ -343,6 +344,7 @@ sub time_machine_read {
 
 sub time_machine_resolve {
 	my ($spec, $timestamp) = @_;
+	$timestamp = &subs::rightNow() unless defined $timestamp;
 	return $timestamp unless defined $spec && $spec =~ /\S/;
 	my $ms = &time_machine_read($spec, $timestamp, 1);
 	$ms = $timestamp unless defined $ms;
@@ -705,7 +707,7 @@ sub guide_time_machine {
 }
 
 sub timestamp_adjuster($c) {
-	my $timestamp = $c->param('timestamp');
+	my $timestamp = $c->param('timestamp') || &subs::rightNow();
 	my $time_machine = $c->param('time_machine');
 	my $timeshift = $c->param('timeshift');
 	my $ago = $c->param('ago');
