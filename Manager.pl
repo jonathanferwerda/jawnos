@@ -5112,7 +5112,8 @@ get '/manager/warehouse/listing' => sub($c) {
 post '/manager/warehouse/stock_in' => sub($c) {
 	my $item = &subs::unformat_name($c->param('item'));
 	my $place = $c->param('place');
-	my ($qty, $unit) = &subs::quantity_unit_split($c->param('quantity'), 'each', 1);
+	my $default_unit = &subs::setting_grabber({ app => $item, setting => 'unit' }) || 'each';
+	my ($qty, $unit) = &subs::quantity_unit_split($c->param('quantity'), $default_unit, 1);
 	my $reason = $c->param('reason') || 'gift';
 	$reason = 'other' unless $reason =~ /^(?:gift|found|transfer|other)$/;
 	return $c->render(json => { ok => 0, error => 'item' }) unless length $item;
