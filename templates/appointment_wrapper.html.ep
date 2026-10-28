@@ -57,7 +57,7 @@
 			    play / stop / note buttons above %>
 			<img app="<%= $a %>" class="app_act measures little_thumb" src="<%= &subs::icon_path('measures', '/images/decipherable/measures.png') %>" hint="Measures" />
 			<img app="<%= $a %>" class="app_act tasks little_thumb" src="<%= &subs::icon_path('checkmark', '/images/decipherable/checkmark.png') %>" hint="Tasks" />
-			<img app="<%= $a %>" class="app_act little_thumb reset" src="<%= &subs::icon_path('cash', '/images/decipherable/cash.png') %>" hint="Reset" />
+			<img app="<%= $a %>" class="app_act little_thumb reset" src="<%= &subs::icon_path('cash', '/images/decipherable/cash.png') %>" hint="<%= &subs::ui('Transaction') %>" />
 			<img app="<%= $a %>" class="app_act little_thumb appointment_configuration_grabber" src="<%= &subs::icon_path('gear', '/images/decipherable/gear.png') %>" hint="Configure" />
 			<img app="<%= $a %>" class="app_act little_thumb inventory" src="<%= &subs::icon_path('spreadsheet', '/images/decipherable/spreadsheet.png') %>" hint="Inventory" />
 			<img app="<%= $a %>" class="app_act det little_thumb" src="<%= &subs::icon_path('list', '/images/decipherable/list.png') %>" hint="Details" />

@@ -4,105 +4,135 @@
 	@{$purchases} = grep { $_->{'status'} eq 'delivered' } @{$purchases};
 	my $informations = $purchases;
 	my $units = &Manager::measures_all();
+	my $has_models = scalar @{$appts->{$a}->{'model'}} > 0;
 	no warnings 'uninitialized';
 %>
-<input  type="text" name="vendor" attribute="vendor" style="vertical-align:bottom;width:81.28%" class="vendor purchase_input" placeholder="Vendor"
-	value="<%= &subs::format_name($app->{'vendor'} || $appts->{$a}->{'last_transaction'}->{'vendor'}) %>">
-<input type="checkbox" class="record_vendor purchase_input" app="<%= $a %>" attribute="record_vendor" name="record_vendor"
-	<% if ($appts->{$a}->{'setting'}->{'record_vendor'} eq 'on') { %>checked<% } %>><br>
-<span class="appointment_model_selector_container" attribute="vendor" app="<%= $a %>"></span>
-<span class="appointment_option_selector_container" attribute="vendor" app="<%= $a %>"></span>
+<div class="tx_line_body">
 
-<select style="<% if (scalar @{$informations} == 0) { %>display:none;<% } %>" class="transaction_information purchase_input" attribute="information" app="<%= $a %>">
-	<option value="none">None</option>
-	<% foreach my $i ( @{$informations} ) { %>
-		<option value="<%= $i->{'uuid'} %>"><%= $i->{'data'}->{'id'} %> - <%= &subs::price_formatter($i->{'data'}->{'numbers'}->{'total'}) %></option>
-	<% } %>
-</select>
-<span style="width:100%;display:none;" class="transaction_information_viewer" app="<%= $a %>"></span>
-<input type="text" name="manufacturer" attribute="manufacturer" style="vertical-align:bottom;width:81.28%" class="manufacturer purchase_input" placeholder="Manufacturer"
-	value="<%= &subs::format_name($app->{'manufacturer'} || $appts->{$a}->{'last_transaction'}->{'manufacturer'}) %>">
-	<input type="checkbox" class="record_manufacturer purchase_input" app="<%= $a %>" attribute="record_manufacturer" name="record_manufacturer"
-		<% if ($appts->{$a}->{'setting'}->{'record_manufacturer'} eq 'on') { %>checked<% } %>>
+	<div class="tx_row tx_header_only">
+		<span class="tx_field tx_vendor_field">
+			<label><%= &subs::ui('Vendor') %></label>
+			<input type="text" name="vendor" attribute="vendor" class="vendor purchase_input"
+				placeholder="<%= &subs::ui('Who did you pay?') %>"
+				value="<%= &subs::format_name($app->{'vendor'} || $appts->{$a}->{'last_transaction'}->{'vendor'}) %>">
+		</span>
+		<label class="tx_check" title="<%= &subs::ui('Create a vendor app for this name') %>">
+			<input type="checkbox" class="record_vendor purchase_input" app="<%= $a %>" attribute="record_vendor" name="record_vendor"
+				<% if ($appts->{$a}->{'setting'}->{'record_vendor'} eq 'on') { %>checked<% } %>>
+			<%= &subs::ui('Remember vendor') %>
+		</label>
+	</div>
+	<span class="appointment_model_selector_container" attribute="vendor" app="<%= $a %>"></span>
+	<span class="appointment_option_selector_container" attribute="vendor" app="<%= $a %>"></span>
 
-<span class="appointment_model_selector_container" attribute="manufacturer" app="<%= $a %>">
-	<% if (scalar @{$appts->{$a}->{'model'}} == 0) { %>
-		<span class="appointment_model_selector_container" attribute="manufacturer" app="<%= $a %>">
-			<% if ($appts->{$a}->{'models'} != undef) { %>
-				<select name="model" class="model purchase_input app_setting" app="<%= $a %>" attribute="model">
-					<% foreach my $mod ( @{$appts->{$a}->{'models'}}) { %>
-						<option value="<%= $mod->{'uuid'} %>" <% if ($app->{'model'} eq $mod->{'uuid'}) { %>selected<% } %>><%= &subs::format_name($mod->{'name'}) %></option>
-					<% } %>
-				</select>
-			<% } %>
-			<input  type="text" name="quantity" attribute="quantity" style="width: 12.56%" class="quantity purchase_input" placeholder="#"
-				value="<%= ($app->{'quantity'} || $appts->{$a}->{'last_transaction'}->{'quantity'}) || 1 %>">
-			<select class="transaction purchase_input unit app_setting" app="<%= $a %>" attribute="unit" name="unit">
-				<option value="<%= $a %>" <% if (!($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'}) || $a eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($a) %></option>
-				<% foreach my $u ( sort keys %{$units} ) { %>
-					<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($units->{$u}->{'name'} || $u) %></option>
+	<div class="tx_row tx_invoice_row" style="<% if (scalar @{$informations} == 0) { %>display:none;<% } %>">
+		<span class="tx_field">
+			<label><%= &subs::ui('Bill or invoice') %></label>
+			<select class="transaction_information purchase_input" attribute="information" app="<%= $a %>">
+				<option value="none"><%= &subs::ui('None') %></option>
+				<% foreach my $i ( @{$informations} ) { %>
+					<option value="<%= $i->{'uuid'} %>"><%= $i->{'data'}->{'id'} %> - <%= &subs::price_formatter($i->{'data'}->{'numbers'}->{'total'}) %></option>
 				<% } %>
 			</select>
 		</span>
-	<% } else { %>
-		
-	<% } %>
-</span>
-<span class="appointment_option_selector_container" attribute="manufacturer" app="<%= $a %>">
+	</div>
+	<span style="width:100%;display:none;" class="transaction_information_viewer" app="<%= $a %>"></span>
 
-</span>
-
-
-<input  type="text" name="item" attribute="item" style="vertical-align:bottom;width: 81.28%" class="purchase_input" placeholder="Item" 
-	value="<%= &subs::format_name($app->{'item'} || $appts->{$a}->{'last_transaction'}->{'item'}) %>"></input>
-<input type="checkbox" class="record_item purchase_input" app="<%= $a %>" attribute="record_item" name="record_item"
-	<% if ($appts->{$a}->{'setting'}->{'record_input'} eq 'on') { %>checked<% } %>>
-<br>
-
-<span class="appointment_model_selector_container" attribute="item" app="<%= $a %>">
-	<% if (scalar @{$appts->{$a}->{'model'}} == 0) { %>
-
-		<% if ($appts->{$a}->{'models'} != undef) { %>
-			<select name="model" class="model purchase_input app_setting" app="<%= $a %>" attribute="model">
-				<% foreach my $mod ( @{$appts->{$a}->{'models'}}) { %>
-					<option value="<%= $mod->{'uuid'} %>" <% if ($app->{'model'} eq $mod->{'uuid'}) { %>selected<% } %>><%= &subs::format_name($mod->{'name'}) %></option>
-				<% } %>
-			</select>
-		<% } %>
-		<input  type="text" name="quantity" attribute="quantity" style="width: 12.56%" class="quantity purchase_input" placeholder="#"
-			value="<%= ($app->{'quantity'} || $appts->{$a}->{'last_transaction'}->{'quantity'}) || 1 %>">
-		<select class="transaction purchase_input unit app_setting" app="<%= $a %>" attribute="unit" name="unit">
-			<option value="<%= $a %>" <% if (!($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'}) || $a eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($a) %></option>
-			<% foreach my $u ( sort keys %{$units} ) { %>
-				<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($units->{$u}->{'name'} || $u) %></option>
+	<div class="tx_row tx_item_row">
+		<span class="tx_field tx_item_field">
+			<label><%= &subs::ui('Item') %></label>
+			<input type="text" name="item" attribute="item" class="item purchase_input"
+				placeholder="<%= &subs::ui('What did you buy?') %>"
+				hint="<%= &subs::ui('Separate several items with commas, or add a line for each one.') %>"
+				value="<%= &subs::format_name($app->{'item'} || $appts->{$a}->{'last_transaction'}->{'item'}) %>">
+		</span>
+		<label class="tx_check" title="<%= &subs::ui('Record this item as its own app') %>">
+			<input type="checkbox" class="record_item purchase_input" app="<%= $a %>" attribute="record_item" name="record_item"
+				<% if ($appts->{$a}->{'setting'}->{'record_item'} eq 'on') { %>checked<% } %>>
+			<%= &subs::ui('Remember item') %>
+		</label>
+		<span class="appointment_model_selector_container tx_model_row" attribute="item" app="<%= $a %>">
+			<% if ($has_models) { %>
+				<%= include 'apps/transaction/models',
+					settings => &subs::settings_grabber({ app => $a }),
+					models => &subs::db_select('model', undef, { app => $a})->hashes,
+					l => $appts->{$a}->{'list'}->[0],
+					source => 'transaction'
+				%>
+			<% } else { %>
+				<span class="tx_field tx_qty">
+					<label><%= &subs::ui('Qty') %></label>
+					<input type="text" name="quantity" attribute="quantity" class="quantity purchase_input"
+						value="<%= ($app->{'quantity'} || $appts->{$a}->{'last_transaction'}->{'quantity'}) || 1 %>">
+				</span>
+				<span class="tx_field">
+					<label><%= &subs::ui('Unit') %></label>
+					<select class="transaction purchase_input unit app_setting" app="<%= $a %>" attribute="unit" name="unit">
+						<option value="<%= $a %>" <% if (!($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'}) || $a eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($a) %></option>
+						<% foreach my $u ( sort keys %{$units} ) { %>
+							<option value="<%= $u %>" <% if ($u eq ($app->{'unit'} || $appts->{$a}->{'setting'}->{'unit'})) { %>selected<% } %>><%= &subs::format_name($units->{$u}->{'name'} || $u) %></option>
+						<% } %>
+					</select>
+				</span>
+				<button class="add_packaging_measure" app="<%= $a %>" hint="<%= &subs::ui('New packaging') %>" style="font-size:12px;vertical-align:bottom;" type="button">+</button>
 			<% } %>
-		</select>
-		<button class="add_packaging_measure" app="<%= $a %>" hint="New packaging" style="font-size:12px;vertical-align:bottom;" type="button">+</button>
+		</span>
+	</div>
+	<span class="appointment_option_selector_container" attribute="item" app="<%= $a %>"></span>
 
-	<% } else { %>
-		<%= include 'apps/transaction/models', 
-			settings => &subs::settings_grabber({ app => $a }), 
-			models => &subs::db_select('model', undef, { app => $a})->hashes, 
-			l => $appts->{$a}->{'list'}->[0], 
-			source => 'transaction' 
-		%><br>		
-	<% } %>
-</span>
+	<div class="tx_row tx_money_row">
+		<span class="tx_field">
+			<label><%= &subs::ui('Amount') %></label>
+			<input type="text" name="amount" attribute="amount" value="<%= $app->{'amount'} %>" class="purchase_input amount" placeholder="0.00">
+		</span>
+		<span class="tx_field">
+			<label><%= &subs::ui('Tax') %></label>
+			<input type="text" name="tax" attribute="tax" value="<%= $app->{'tax'} %>" class="purchase_input tax" placeholder="0.00">
+		</span>
+		<span class="tx_field tx_total">
+			<label><%= &subs::ui('Total') %></label>
+			<input type="text" name="total" attribute="total" value="<%= $app->{'total'} %>" class="purchase_input total" placeholder="0.00">
+		</span>
+	</div>
 
-<span class="appointment_option_selector_container" attribute="item" app="<%= $a %>"></span>
-<select class="state purchase_config app_setting" app="<%= $a %>" attribute="state" name="state">
-	<% foreach my $state ( @{$gb::inventory_states} ) { %>
-		<option value="<%= $state %>" <% if (($app->{'state'} || $appts->{$a}->{'setting'}->{'state'}) eq $state) { %>selected<% } %>><%= &subs::format_name($state) %></option>
-	<% } %>
-</select>
-<br><br>
-
-<input  type="text" name="amount" attribute="amount" style="width: 31.28%" value="<%= $app->{'amount'} %>" class="purchase_input amount" placeholder="amount"></input>
-<input  type="text" name="tax" attribute="tax" style="width: 31.28%" value="<%= $app->{'tax'} %>" class="purchase_input tax" placeholder="Tax"></input><br>
-<input  type="text" name="aux" attribute="aux" style="width: 31.28%" value="<%= $app->{'aux'} %>" class="purchase_input aux" placeholder="Aux"></input>
-<input  type="text" name="aux_description" attribute="aux_description" style="width: 100%;display:none;" value="<%= $app->{'aux_description'} %>" class="purchase_input aux" placeholder="Aux Description"></input>
-<input  type="text" name="total" attribute="total" style="width: 31.28%" value="<%= $app->{'total'} %>" class="purchase_input total" placeholder="total"></input><br>
-<button class="purchase_config" attribute="has_totes" config="totes" <% if (($app->{'has_totes'} || $appts->{$a}->{'setting'}->{'has_totes'}) ne 'off') { %>enabled="on" style="background-color:lightgreen;"<% } %>>Totes</button>
-<button class="purchase_config" attribute="has_tax" config="tax" <% if (($app->{'has_tax'} || $appts->{$a}->{'setting'}->{'has_tax'}) ne 'off') { %>enabled="on" style="background-color:lightgreen;"<% } %>>Tax</button>
-<button class="plusminus">+/-</button>
-
+	<details class="tx_more">
+		<summary><%= &subs::ui('More details') %></summary>
+		<div class="tx_row">
+			<span class="tx_field tx_manufacturer_field">
+				<label><%= &subs::ui('Manufacturer') %></label>
+				<input type="text" name="manufacturer" attribute="manufacturer" class="manufacturer purchase_input"
+					value="<%= &subs::format_name($app->{'manufacturer'} || $appts->{$a}->{'last_transaction'}->{'manufacturer'}) %>">
+			</span>
+			<label class="tx_check" title="<%= &subs::ui('Record this manufacturer as its own app') %>">
+				<input type="checkbox" class="record_manufacturer purchase_input" app="<%= $a %>" attribute="record_manufacturer" name="record_manufacturer"
+					<% if ($appts->{$a}->{'setting'}->{'record_manufacturer'} eq 'on') { %>checked<% } %>>
+				<%= &subs::ui('Remember manufacturer') %>
+			</label>
+			<span class="appointment_model_selector_container" attribute="manufacturer" app="<%= $a %>"></span>
+			<span class="appointment_option_selector_container" attribute="manufacturer" app="<%= $a %>"></span>
+		</div>
+		<div class="tx_row">
+			<span class="tx_field">
+				<label><%= &subs::ui('State') %></label>
+				<select class="state purchase_config app_setting" app="<%= $a %>" attribute="state" name="state">
+					<% foreach my $state ( @{$gb::inventory_states} ) { %>
+						<option value="<%= $state %>" <% if (($app->{'state'} || $appts->{$a}->{'setting'}->{'state'}) eq $state) { %>selected<% } %>><%= &subs::format_name($state) %></option>
+					<% } %>
+				</select>
+			</span>
+			<span class="tx_field">
+				<label><%= &subs::ui('Extra charge') %></label>
+				<input type="text" name="aux" attribute="aux" value="<%= $app->{'aux'} %>" class="purchase_input aux" placeholder="0.00">
+			</span>
+			<span class="tx_field tx_aux_description">
+				<label><%= &subs::ui('Extra charge description') %></label>
+				<input type="text" name="aux_description" attribute="aux_description" value="<%= $app->{'aux_description'} %>" class="purchase_input aux_description" placeholder="<%= &subs::ui('deposit, tip, delivery') %>">
+			</span>
+		</div>
+		<div class="tx_row tx_switches">
+			<button class="purchase_config" attribute="has_totes" config="totes" title="<%= &subs::ui('The amount is for the whole line, not one unit') %>" <% if (($app->{'has_totes'} || $appts->{$a}->{'setting'}->{'has_totes'}) ne 'off') { %>enabled="on" style="background-color:lightgreen;"<% } %>><%= &subs::ui('Amount covers the line') %></button>
+			<button class="purchase_config" attribute="has_tax" config="tax" title="<%= &subs::ui('The price includes tax') %>" <% if (($app->{'has_tax'} || $appts->{$a}->{'setting'}->{'has_tax'}) ne 'off') { %>enabled="on" style="background-color:lightgreen;"<% } %>><%= &subs::ui('Price includes tax') %></button>
+			<button class="plusminus" title="<%= &subs::ui('Flip the sign for a refund') %>"><%= &subs::ui('Refund') %></button>
+		</div>
+	</details>
+</div>

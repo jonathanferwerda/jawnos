@@ -23,6 +23,8 @@ $(document).on('change', '.purchase_input', function() {
 				type: 'GET',
 				data: { attribute: attribute, name: name, timestamp: timestamp, app: app, value: value, movement: movement },
 				success: function(response) {
+					var scope = pd.length ? pd : ad;
+					if (!originalTransactionAutofills[app]) { originalTransactionAutofills[app] = { 'model': {}, 'option': {} }; }
 					if (response.unformatted) {
 						if (response.formatted) {
 							input.val(response.formatted);
@@ -37,12 +39,12 @@ $(document).on('change', '.purchase_input', function() {
 						if (name == 'quantity' && response.unit) {
 							pd.find('.purchase_input[attribute="unit"]').val(response.unit);
 						}
-						var ti = pd.find('.transaction_information[app="' + app + '"]');
+						var ti = scope.find('.transaction_information[app="' + app + '"]');
 						if (name == 'vendor' && response.informations.length > 0) {
 							var informations = response.informations || [];
 							var htmls = [];
 							var seen_htmls = [];
-							pd.find('.purchase_input[attribute="information"]').each(function(i,v) {
+							scope.find('.purchase_input[attribute="information"]').each(function(i,v) {
 								var okay = $.grep(seen_htmls, function(t,i) { return i == $(v).attr('uuid') });
 
 								if (okay.length == 0) {
@@ -60,38 +62,40 @@ $(document).on('change', '.purchase_input', function() {
 							});
 							ti.html(htmls.join(''));
 							ti.show();
+							ad.find('.tx_invoice_row').show();
 						}
 						else if (name == 'vendor' && response.informations == 0) {
 							ti.html('').hide();
 							ti.val('');
-							container.find('.transaction_information').val(undefined).html('').hide();
+							ad.find('.tx_invoice_row').hide();
 						}
 					}
 					else {
 					//	container.find('.transaction_information').val(undefined).html('').hide();
 					}
 
-					var amsc = $('.appointment_model_selector_container[attribute="' + name + '"]');
+					var amsc = scope.find('.appointment_model_selector_container[attribute="' + name + '"]');
+					var line_key = (pd.attr('uuid') || ad.attr('uuid')) + '|' + name;
 					if (response.models && response.unformatted != '') {
 
-						if (amsc.html().match('[a-zA-Z]') && !originalTransactionAutofills[app]['model'][name]) {
-							originalTransactionAutofills[app]['model'][name] = amsc.html();
+						if (amsc.html().match('[a-zA-Z]') && !originalTransactionAutofills[app]['model'][line_key]) {
+							originalTransactionAutofills[app]['model'][line_key] = amsc.html();
 						}
 						amsc.html(response.models);
 					}
 					else {
-						amsc.html(originalTransactionAutofills[app]['model'][name]);
+						amsc.html(originalTransactionAutofills[app]['model'][line_key]);
 					}
-					var asoc = pd.find('.appointment_option_selector_container[attribute="' + name + '"]');
+					var asoc = scope.find('.appointment_option_selector_container[attribute="' + name + '"]');
 					if (response.options && response.unformatted != '') {
 
-						if (amsc.html().match('[a-zA-Z]') && !originalTransactionAutofills[app]['option'][name]) {
-							originalTransactionAutofills[app]['option'][name] = amsc.html();
+						if (amsc.html().match('[a-zA-Z]') && !originalTransactionAutofills[app]['option'][line_key]) {
+							originalTransactionAutofills[app]['option'][line_key] = amsc.html();
 						}
 						asoc.html(response.options);
 					}
 					else {
-						asoc.html(originalTransactionAutofills[app]['option'][name]);
+						asoc.html(originalTransactionAutofills[app]['option'][line_key]);
 					}
 				}
 			});
@@ -253,6 +257,7 @@ $(document).on('change', '.purchase_input', function() {
 		tax_in.val(numeral(tax).format('0.00'));
 	}
 	me_tax = original_me_tax;
+	txTenderChange(iq.closest('.app_details'));
 	transactionStorageSaver(app);
 
 });
@@ -285,7 +290,12 @@ $(document).on('keyup click', '.purchase_input', function() {
 				ac.attr('attribute', attribute);
 				ac.attr('timestamp', now);
 				ac.height(30 * response.length);
-				ac.css({ 'top': offset.top - ac.height() - 3, 'left': offset.left, 'width': width });
+				// the list is fixed to the viewport, so measure the input the same
+				// way; above the field normally, below it when there is no room
+				var rect = me[0].getBoundingClientRect();
+				var list_top = rect.top - ac.height() - 3;
+				if (list_top < 8) { list_top = rect.bottom + 3; }
+				ac.css({ 'top': list_top, 'left': rect.left, 'width': width });
 				me.attr('temp_uuid', random);
 			}
 		});
@@ -328,6 +338,12 @@ function transactionStorageSaver(app) {
 	if (!storage[movement]) {
 		storage[movement] = {};
 		storage[movement]['totals'] = { uuid: uuid, vendor: vendor, information: information };
+		// cash handed over and the change given back: not part of the ledger, but
+		// kept with the transaction so a cash drawer can be checked against it
+		var tendered = appt.find('.tx_tendered').val() || '';
+		var change = appt.find('.tx_change').text() || '';
+		storage[movement]['totals']['tendered'] = tendered;
+		storage[movement]['totals']['change'] = (change == '\u2014' ? '' : change);
 	}
 	$('.purchase_details[app="' + app + '"]').each(function(i,v) {
 		var uuid = $(v).attr('uuid');
@@ -375,6 +391,55 @@ function transactionStorageSaver(app) {
 	}
 	return storage;
 }
+
+// Cash handled over the counter is not a ledger figure - the transaction is the
+// total that left the account - but it is worth keeping beside the record so a
+// drawer can be counted. The fields appear only for a cash account.
+function txTenderPaint(ad) {
+	if (!ad || !ad.length) { return; }
+	var movement = ad.find('.movement').val();
+	var opt = ad.find('.account option:selected');
+	var label = ((opt.attr('data-payment') || '') + ' ' + (opt.text() || '')).toLowerCase();
+	var cash = (movement == 'expense' || movement == 'income') && label.indexOf('cash') !== -1;
+	ad.find('.tx_tender').toggleClass('tx_tender_on', cash);
+	txTenderChange(ad);
+}
+
+function txTenderChange(ad) {
+	if (!ad || !ad.length) { return; }
+	var paid = numeral(ad.find('.tx_tendered').val()).value();
+	var total = 0;
+	ad.find('.purchase_details .total').each(function() { total += numeral($(this).val()).value(); });
+	var change = paid - total;
+	var out = ad.find('.tx_change');
+	if (!paid || !total) { out.text('').removeClass('tx_short'); return; }
+	out.text(numeral(change).format('0.00')).toggleClass('tx_short', change < 0);
+}
+
+$(document).on('input change', '.tx_tendered', function() {
+	var ad = $(this).closest('.app_details');
+	txTenderChange(ad);
+	transactionStorageSaver(ad.attr('app'));
+});
+
+$(document).on('change', '.app_details .account', function() {
+	txTenderPaint($(this).closest('.app_details'));
+});
+
+$(document).on('change', '.app_details .movement', function() {
+	txTenderPaint($(this).closest('.app_details'));
+});
+
+$(function() {
+	$('.app_details').each(function() {
+		var ad = $(this);
+		txTenderPaint(ad);
+		var movement = ad.find('.movement').val();
+		if (movement == 'transfer' || movement == 'inventory') {
+			ad.closest('.appointment').find('.tx_add_row, .tx_summary').hide();
+		}
+	});
+});
 
 function transactionStorageRetriever(app) {
 	var appt = $('.appointment[app="' + app + '"]');
@@ -433,9 +498,12 @@ function transactionStorageRetriever(app) {
 			// clones that block
 			appt.find('.app_details').attr('uuid', items[0].uuid);
 		}
-		if (storage[movement]['totals']['uuid']) {
-			appt.find('.vendor.purchase_input').val(storage[movement]['totals']['vendor']);
+		var totals = storage[movement]['totals'] || {};
+		if (totals['uuid']) {
+			appt.find('.vendor.purchase_input').val(totals['vendor']);
 		}
+		if (totals['tendered']) { appt.find('.tx_tendered').val(totals['tendered']); }
+		txTenderPaint(appt.find('.app_details'));
 	}
 	// the vendor's change brings the open invoices for that vendor back into
 	// the picker; when the stored transaction had one chosen, choose it again
@@ -470,6 +538,8 @@ function transactionStorageDeleter(app) {
 	});
 	appt.find('.transaction_information').html('').val('').hide();
 	appt.find('.transaction_information_viewer').html('').hide();
+	appt.find('.tx_tendered').val('');
+	appt.find('.tx_change').text('').removeClass('tx_short');
 	// Only the transaction form's own pickers are reset here. The appointment
 	// details list carries model/option selectors of its own; clearing those made
 	// the model dropdown vanish until the next refresh (the GPS fix), which is the
@@ -515,13 +585,16 @@ $(document).on('click', '.add_transaction_item', function() {
 	var pdhtml = pd.clone();
 	var uuid = Math.random();
 	pdhtml.attr('uuid', uuid);
+	pdhtml.addClass('tx_added_line');
 	pdhtml.find('.purchase_input').each(function(i,v) {
 		if (!$(v).is('select')) {
 			$(v).val('');
 		}
 	});
-	pdhtml.append('<img src="/icons/trash.png" class="little_thumb remove_transaction_item" uuid="' + uuid + '" app="' + app + '">');
+	var remove_label = (typeof jawnosT === 'function') ? jawnosT('Remove') : 'Remove';
+	pdhtml.append('<button type="button" class="remove_transaction_item tx_remove" uuid="' + uuid + '" app="' + app + '">' + remove_label + '</button>');
 	$(this).closest('.app_details').find('.transaction_movement_container').append(pdhtml);
+	pdhtml.find('.item').focus();
 
 });
 
@@ -702,6 +775,8 @@ $(document).on('change', '.transaction.movement', function() {
 
 	var app = $(this).closest('.app_details').attr('app');
 	var movement = $(this).val();
+	var appointment = $(this).closest('.appointment');
+	appointment.find('.tx_add_row, .tx_summary').toggle(!(movement == 'transfer' || movement == 'inventory'));
 	if (movement == 'transfer') {
 		$('.transferable_transaction').show();
 		$('.purchase_details').hide();
@@ -776,17 +851,21 @@ $(document).on('click', '.record_purchase', function() {
 	var state = iq.find('.state').val();
 	var manufacturer = iq.find('.manufacturer').val();
 	var vendor = iq.find('.vendor').val();
-	var record_vendor = iq.find('.record_vendor').val();
-	if (record_vendor == true) {
-		record_vendor = 'on';
-	}
+	var record_vendor = iq.find('.record_vendor').prop('checked') ? 'on' : 'off';
 	var tax = iq.find('.tax').val();
 	var has_tax = iq.find('.purchase_config[config="tax"]').attr('enabled');
 	var has_totes = iq.find('.purchase_config[config="totes"]').attr('enabled');
 	var aux = iq.find('.aux').val();
+	var aux_description = iq.find('.aux_description').val();
 	var item = iq.find('.item').val();
 	var model = iq.find('.model').val();
 	var total = iq.find('.total').val();
+
+	var sum_total = numeral(iq.find('.transaction_total[attribute="total"]').text()).value();
+	if ($.trim(total || '') === '' && $.trim(amount || '') === '' && sum_total === 0) {
+		alert((typeof jawnosT === 'function') ? jawnosT('Enter the amount or the total before saving.') : 'Enter the amount or the total before saving.');
+		return;
+	}
 
 	var unit = iq.find('.unit').val() || 1;
 
@@ -814,6 +893,7 @@ $(document).on('click', '.record_purchase', function() {
 		model: model,
 		tax: tax,
 		aux: aux,
+		aux_description: aux_description,
 		total: total,
 		manufacturer: manufacturer,
 		vendor: vendor,

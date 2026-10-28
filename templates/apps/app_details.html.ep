@@ -4,7 +4,7 @@
 
 	<label>Type</label>
 	<select class="transaction movement app_setting" app="<%= $a %>" attribute="movement">
-		<% foreach my $mov (keys %{$gb::transaction_types}) { %>
+		<% foreach my $mov (sort keys %{$gb::transaction_types}) { %>
 			<option value="<%= $mov %>" <% if ($mov eq ($app->{'movement'} || $appts->{$a}->{'setting'}->{'movement'})) { %>selected<%}%>><%= &subs::format_name($mov) %></option>
 		<% } %>
 	</select>
@@ -29,7 +29,7 @@
 	</select>
 	<br>
 	<br>
-	<label>From</label>
+	<label><%= &subs::ui('Paid from') %></label>
 	<% my $accounts_list = $appts->{'__accounts'} || []; %>
 	<% my $current_account = $app->{'account'} || $appts->{$a}->{'setting'}->{'account'} || $appts->{$a}->{'last_account'} || ''; %>
 	<% $current_account = '' if length($current_account) && !grep { $_->{'app'} eq $current_account } @{$accounts_list}; %>
@@ -45,6 +45,7 @@
 				value="<%= $ap->{'app'} %>"
 				label="<%= $ap->{'formatted_name'} %>"
 				<% if ($ap->{'crypto_asset'}) { %>data-crypto="1" data-asset="<%= $ap->{'crypto_asset'} %>"<% } %>
+				<% if ($ap->{'payment_type'}) { %>data-payment="<%= $ap->{'payment_type'} %>"<% } %>
 				<% if ($ap->{'app'} eq $current_account) { %>
 					selected
 				<% } %>
@@ -54,19 +55,34 @@
 	</select>
 	<span class="crypto_hint" style="<%= $current_asset ? '' : 'display:none;' %>font-size:13px;margin-left:6px;" data-asset="<%= $current_asset %>">amount in <b class="crypto_asset_name"><%= $current_asset %></b> — <span class="crypto_fiat"></span></span>
 
+	<div class="tx_tender" app="<%= $a %>">
+		<span class="tx_field">
+			<label for="<%= $random_string %>_tendered"><%= &subs::ui('Cash given') %></label>
+			<input id="<%= $random_string %>_tendered" type="text" class="tx_tendered" inputmode="decimal" placeholder="0.00" value="">
+		</span>
+		<span class="tx_field tx_change_field">
+			<label><%= &subs::ui('Change') %></label>
+			<span class="tx_change"></span>
+		</span>
+	</div>
+
 
 
 	<span style="display:none;position:fixed;background-color:var(--panel);border:solid;border-radius:2px;font-size:20px;" class="transaction_autocomplete"></span>
 	<span class="transaction_movement_container" app="<%= $a %>">
-		<span class="purchase_details" uuid="<%= $random_string %>" app="<%= $a %>" style=""><br><br>
+		<span class="purchase_details" uuid="<%= $random_string %>" app="<%= $a %>" style="">
 			<%= include 'apps/transaction/' . $appts->{$a}->{'setting'}->{'movement'}, appts => $appts, a => $a, app => {}, source => 'transaction' %>
 		</span>
 	</span>
-	<table style="position:absolute;height:60px;width:100%;bottom:0px;background-color:var(--panel);">
+	<div class="tx_add_row">
+		<button type="button" class="add_transaction_item"><%= &subs::ui('+ Add item') %></button>
+	</div>
+	<table class="tx_summary">
 		<thead>
 			<% my @th = qw/amount tax aux total/; %>
+			<% my %th_label = ( amount => 'Amount', tax => 'Tax', aux => 'Extra', total => 'Total' ); %>
 			<% foreach my $th ( @th ) { %>
-				<th><%= &subs::format_name(&subs::shorthand_name($th,3)) %></th>
+				<th><%= &subs::ui($th_label{$th}) %></th>
 			<% } %>
 		</thead>
 		<tbody>
@@ -79,12 +95,13 @@
 	</table>
 	<br>
 
-	<img src="<%= &subs::icon_for('/images/decipherable/windows.png') %>" hint="Window" timestamp="" app="<%= $a %>" class="little_thumb transaction_history_retriever hover" style="vertical-align:bottom;">
-	<img src="<%= &subs::icon_for('/images/make believe/add.png') %>" hint="Add" class="little_thumb add_transaction_item hover" style="vertical-align:bottom;float:right;">
-	<img src="<%= &subs::icon_for('/images/decipherable/the bird.png') %>" hint="Flip the bird" class="little_thumb cancel_transaction hover" style="vertical-align:bottom;float:left;" app="<%= $a %>">
-	<% unless ($app->{'timestamp'}) { %>
-		<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" type="button" name="record_purchase" class="hover record_purchase little_thumb" style="vertical-align:bottom;float:right;">
-	<% } %>
+	<div class="tx_actions">
+		<button type="button" class="transaction_history_retriever" timestamp="" app="<%= $a %>" title="<%= &subs::ui('Fill the form from the last transaction in this app') %>"><%= &subs::ui('Repeat last') %></button>
+		<button type="button" class="cancel_transaction" app="<%= $a %>"><%= &subs::ui('Cancel') %></button>
+		<% unless ($app->{'timestamp'}) { %>
+			<button type="button" name="record_purchase" class="record_purchase tx_save"><%= &subs::ui('Save') %></button>
+		<% } %>
+	</div>
 	<br>
 </span>
 <span class="appointment_display" style="display:none;" app="<%= $a %>"></span>
