@@ -118,15 +118,16 @@ is therefore offline and independent of the manager. It filters
 ## 7. Internet bookmarks and domain -> app
 
 - `GET /manager/internet/sites` returns `{ sites, apps }`; each site is
-  `{ domain, url, app, total_ms, last_at }`. `apps` is the catalog
-  (`{app,title}`).
+  `{ domain, url, app, total_ms, last_at }`. `apps` is the picker's catalog
+  (`{app,title}`): the house's built-ins and every appointment, so a site can
+  belong to any app the house knows.
 - `POST /manager/internet/site/app` with `domain`, `app` (empty clears) stores
   the mapping in settings `internet.domain_apps` (JSON, synced).
 - In the page, the domain opens the native browser, the app opens
   `appointmentGrabber(app)`, and a type-in picker assigns the app. The picker
-  offers only the apps the visibility rule shows here and now (a place level
-  below the current place, or a lockdown, keeps an app out of the suggestions).
-  The active tab is remembered in `localStorage.internet_tab`.
+  offers every appointment the visibility rule shows here and now (the place's
+  level and the running people set it; a hidden appointment stays out of the
+  suggestions). The active tab is remembered in `localStorage.internet_tab`.
 - Cookies persist in both browsers: Android's WebView cookie store (flushed on
   pause/stop) and the desktop browser's own `WebsiteDataManager` under
   `~/.local/share/jawnos/browser`.
