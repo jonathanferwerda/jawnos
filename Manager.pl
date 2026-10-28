@@ -16007,8 +16007,9 @@ sub schedule_maker($c,$schedule,$timestamp) {
 	$schedule = '' unless defined $schedule;
 
 	my $settings = &subs::settings_grabber({ app => $app });
-	my $warranty = $settings->{'warranty'};
-	$warranty = '-10y' unless defined $warranty && length $warranty;
+	my $warranty = $c->param('warranty');
+	$warranty = $settings->{'warranty'} unless defined $warranty && $warranty =~ /\S/;
+	$warranty = '-10y' unless defined $warranty && $warranty =~ /\S/;
 	my $default_until = &warranty_resolve($warranty, $original_timestamp, 1);
 	$default_until = &subs::ago_calc($warranty, $original_timestamp) unless defined $default_until;
 

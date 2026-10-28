@@ -2161,8 +2161,10 @@ sub resolve_when {
 	# the day moves whole days and the written hour pins the time, so the fast
 	# reader answers it without the Guide
 	if ($t =~ /^(yesterday|today|tonight|tomorrow|tom|yes)\b\s*(?:at|around|about|by|@)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$/) {
-		my ($day, $hour, $min, $ap) = ($day_word{$1}, $2 + 0, ($3 // 0) + 0, $4);
-		$hour += 12 if defined $ap && lc($ap) eq 'pm' && $hour < 12;
+		my ($word, $hour, $min, $ap) = ($1, $2 + 0, ($3 // 0) + 0, $4);
+		my $day = $day_word{$word};
+		$hour += 12 if (defined $ap && lc($ap) eq 'pm' && $hour < 12)
+			|| (!defined $ap && $word eq 'tonight' && $hour < 12);
 		$hour = 0 if defined $ap && lc($ap) eq 'am' && $hour == 12;
 		my @d = localtime(($now + $day * 86400000) / 1000);
 		my $e = eval { int(POSIX::mktime(0, $min, $hour, $d[3], $d[4], $d[5])) };
