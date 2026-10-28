@@ -18,9 +18,15 @@ under a dated heading; older sections stay as history.
   for the page's OpenSearch template (or the search parameter already in its
   address) and adds the site to Search's engines. Search's gear panel switches
   engines on and off, and a custom engine can be removed there.
-- **JawnOS keyboard.** A native JawnOS IME ships for every app. Enable it once
-  in Android's settings from the dashboard's Keyboard card; the desk's own
-  dock still serves the manager.
+- **JawnOS keyboard.** The JawnOS IME is now the manager's own keyboard drawn
+  as an HTML page in a WebView: the light panel, white keys with a soft edge,
+  grey specials and the yellow return, with abc / 123 / #+= pages and a number
+  page that comes up by itself in a number field. Enable it once in Android's
+  settings from the dashboard's Keyboard card; the desk's own dock still
+  serves JawnOS apps.
+- **Home search.** The home screen no longer raises the keyboard by itself when
+  it returns from an app, and Enter hands the words to the manager's Search app
+  instead of only filtering the installed list.
 
 ## 2026-10-26 — launcher, single-app windows and the printer widget
 
