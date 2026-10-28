@@ -19932,6 +19932,10 @@ post '/manager/configure' => sub ($c) {
 	# the rename has relabelled the surviving rows, so a planned drop can now be
 	# tombstoned under the name every peer will be using
 	&subs::name_change_history_apply_plan($renamed_to, $history_plan) if $history_plan && $renamed_to;
+	# The rename has moved every row to the new name. Re-rendering the old one
+	# here would make setting_initializer re-create it with default settings - a
+	# phantom app, which then made renaming back fail as "exists".
+	$c->param('app' => $renamed_to) if $renamed_to && $renamed_to ne $c->param('app');
 	# changing the theme of an app that is running re-paints the desktop now
 	&subs::appointment_theme_push() if $setting eq 'theme';
 	undef @appointments;
@@ -42512,7 +42516,7 @@ post '/manager/delete_app' => sub($c) {
 
 };
 
-sub delete_app($app,$uuid,$server_time,$reason,$silent) {
+sub delete_app($app,$uuid,$server_time,$reason,$silent = 0) {
 	# The rows are fetched before the websocket send, not after it: send dials the
 	# database, and the kept handle finishes whatever statement was left unfetched
 	# on its way past, so a result read after it comes back empty. Fetched late,
@@ -42825,15 +42829,20 @@ post '/manager/edit_app' => sub($c) {
 	return $c->render(text => 'not found', status => 404)
 		unless $appt && defined $appt->{'uuid'} && (($appt->{'app'} // '') eq $app);
 
-	# A rename reuses the same full relabel the Configure panel uses; a target
-	# that already exists is refused here rather than silently merged.
+	# This form edits one record. A new name moves *this row* to that app and
+	# leaves the old app's settings and every other record alone; Configure's own
+	# name field is the whole-app relabel. A target that already exists is a
+	# legitimate reassignment (the row joins that app), so it is not refused.
 	my $new_app = &subs::unformat_name($c->param('app_name'));
 	if (defined $c->param('app_name') && length $new_app && $new_app ne $app) {
-		my $taken = &subs::db_select('settings', undef, { app => $new_app, setting => 'uuid' })->hashes->[0]
-			|| &subs::db_select('appointments', undef, { app => $new_app })->hashes->[0];
-		return $c->render(json => { ok => 0, error => 'exists' }, status => 409) if $taken;
-		&subs::setting_setter({ app => $app, setting => 'name_change', value => $new_app });
+		&subs::db_update('appointments', { app => $new_app, server_time => $server_time }, { uuid => $uuid });
+		# a name nobody knows yet is a new app; give it its defaults at once so it
+		# is listed and configurable rather than waiting for the next reader
+		my $known = &subs::db_query('select 1 from settings where app = ? limit 1', $new_app)->hashes->[0];
+		&subs::setting_initializer($new_app, $server_time) unless $known;
 		$app = $new_app;
+		$appt->{'app'} = $new_app;
+		$c->param('app' => $new_app);
 	}
 
 	# The form names the controls it actually rendered. An absent control is
@@ -42970,6 +42979,10 @@ post '/manager/delete_whole_app' => sub($c) {
 	return $c->render(json => { ok => 0, error => 'app' }, status => 400) unless length $app;
 	my %reserved = map { $_ => 1 } qw/me misc config camera warehouse mail app sale purchase store terminal security ime people notes handbook studio music clock alarm padlock folders market budget crypto/;
 	return $c->render(json => { ok => 0, error => 'reserved' }, status => 403) if $reserved{$app};
+	# Deleting an app is destructive and reaches every machine, so it is only done
+	# from Configure and only when the person has typed the app's own name.
+	return $c->render(json => { ok => 0, error => 'confirm' }, status => 400)
+		unless (($c->param('confirm_name') // '') eq $app);
 	my $server_time = $c->param('server_time') || &subs::rightNow();
 	my $appts = &subs::db_select('appointments', undef, { app => $app })->hashes || [];
 	foreach my $a ( @{$appts} ) {
