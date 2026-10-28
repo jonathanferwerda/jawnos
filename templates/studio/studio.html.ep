@@ -153,7 +153,7 @@
 
 		</span>
 		<span class="jog_wheel_frame">
-			<img class="jog_wheel" hint="Jog wheel" id="studio_jog_wheel" src="/images/studio/jog wheel tye dye.png">
+			<img class="jog_wheel" hint="Jog wheel" id="studio_jog_wheel" src="<%= &subs::icon_for('/images/studio/jog wheel tye dye.png') %>">
 			<span class="jog_wheel_centre" style="width:5px;height:5px;"></span>
 		</span>
 	</div>

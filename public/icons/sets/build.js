@@ -528,6 +528,275 @@ function frame(fill, opts) {
 	return '<rect x="' + inset + '" y="' + inset + '" width="' + w + '" height="' + w + '" rx="' + rx + '" fill="' + fill + '"' + stroke + '/>';
 }
 
+// --- jog wheels ----------------------------------------------------------------
+// The two jog-wheel pictures are round controls, not square buttons. They are
+// drawn as a full-bleed disc in the set's own palette - rim, grip notches,
+// grooves, a hub and an off-centre marker that makes a scrub read as a turn -
+// and the players clip them to a circle. Drawing them here (rather than leaving
+// the hand-drawn PNGs in place) is what lets the music player and the studio
+// follow the chosen set like every other control.
+function jogWheel(h, is_dark, opts) {
+	const o = opts || {};
+	const disc = o.disc == null ? 244 : o.disc;
+	const faceR = o.faceR == null ? 200 : o.faceR;
+	const detail = o.detail || '#ffffff';
+	let defs = o.defs || '';
+	defs += '<clipPath id="jogDisc"><circle cx="256" cy="256" r="' + disc + '"/></clipPath>'
+		+ '<clipPath id="jogFace"><circle cx="256" cy="256" r="' + faceR + '"/></clipPath>';
+	let body = '';
+	if (o.shadow) {
+		body += '<circle cx="' + (256 + o.shadow[0]) + '" cy="' + (256 + o.shadow[1]) + '" r="' + disc + '" fill="' + o.shadow[2] + '"/>';
+	}
+	body += '<circle cx="256" cy="256" r="' + disc + '" fill="' + (o.rim || 'none') + '"'
+		+ (o.rimEdge ? ' stroke="' + o.rimEdge + '" stroke-width="' + (o.rimWidth || 8) + '"' : '') + '/>';
+	if (o.rimArt) { body += '<g clip-path="url(#jogDisc)">' + o.rimArt + '</g>'; }
+	if (o.notches !== false) {
+		for (let i = 0; i < 24; i++) {
+			body += '<path d="M' + polar(disc - 2, i * 15) + ' L' + polar(faceR + 6, i * 15) + '" fill="none" stroke="' + detail
+				+ '" stroke-width="' + (o.notchWidth || 7) + '" stroke-linecap="round" opacity="' + (o.notchOpacity || 0.5) + '"/>';
+		}
+	}
+	body += '<circle cx="256" cy="256" r="' + faceR + '" fill="' + (o.face || 'none') + '"'
+		+ (o.faceEdge ? ' stroke="' + o.faceEdge + '" stroke-width="' + (o.faceWidth || 5) + '"' : '') + '/>';
+	if (o.faceArt) { body += '<g clip-path="url(#jogFace)">' + o.faceArt + '</g>'; }
+	if (o.grooves !== false) {
+		const rings = o.grooves || [faceR * 0.88, faceR * 0.77, faceR * 0.66];
+		rings.forEach(r => {
+			body += '<circle cx="256" cy="256" r="' + r.toFixed(1) + '" fill="none" stroke="' + detail
+				+ '" stroke-width="' + (o.grooveWidth || 3) + '" opacity="' + (o.grooveOpacity || 0.22) + '"/>';
+		});
+	}
+	const hubR = o.hubR == null ? 72 : o.hubR;
+	body += '<circle cx="256" cy="256" r="' + hubR + '" fill="' + (o.hub || detail) + '"'
+		+ (o.hubEdge ? ' stroke="' + o.hubEdge + '" stroke-width="' + (o.hubWidth || 5) + '"' : '') + '/>';
+	body += '<circle cx="256" cy="256" r="' + (hubR * 0.64).toFixed(1) + '" fill="none" stroke="' + detail
+		+ '" stroke-width="' + (o.hubGrooveWidth || 3) + '" opacity="0.4"/>';
+	if (o.cap !== false) { body += '<circle cx="256" cy="256" r="' + (o.capR || 20) + '" fill="' + (o.cap || detail) + '"/>'; }
+	if (o.markerMarkup) {
+		body += o.markerMarkup;
+	}
+	else {
+		body += '<circle cx="256" cy="' + (256 - faceR * 0.76).toFixed(1) + '" r="' + (o.markerR || 15) + '" fill="' + (o.marker || detail) + '"/>';
+	}
+	if (o.after) { body += o.after; }
+	if (o.glow) { body = '<g filter="url(#jogGlow)">' + body + '</g>'; }
+	return svgWrap(defs + body);
+}
+
+// One wheel per style, built from the same colours the style uses for its tiles.
+const JOG_WHEELS = {
+	cartoon: (h, is_dark) => jogWheel(h, is_dark, {
+		rim: hsl(h, 0.85, is_dark ? 0.24 : 0.63),
+		rimEdge: is_dark ? hsl(h, 0.5, 0.42) : '#1b1b1b', rimWidth: 16,
+		face: is_dark ? hsl(h, 0.3, 0.95) : '#ffffff',
+		faceEdge: '#1b1b1b', faceWidth: 8,
+		detail: is_dark ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.35)',
+		hub: hsl(h, 0.85, is_dark ? 0.24 : 0.63), hubEdge: '#1b1b1b', hubWidth: 8,
+		marker: hsl(h, 0.95, is_dark ? 0.55 : 0.35),
+		notchWidth: 9, notchOpacity: 0.8, grooveOpacity: 0.35,
+	}),
+	dark: (h, is_dark) => {
+		const top = hsl(h, 0.22, is_dark ? 0.18 : 0.24), bot = hsl(h, 0.2, is_dark ? 0.1 : 0.14);
+		return jogWheel(h, is_dark, {
+			defs: '<defs><linearGradient id="jogBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>',
+			rim: 'url(#jogBg)',
+			rimEdge: hsl(h, 0.25, is_dark ? 0.32 : 0.38), rimWidth: 5,
+			face: hsl(h, 0.22, is_dark ? 0.12 : 0.17),
+			faceEdge: hsl(h, 0.25, is_dark ? 0.3 : 0.36), faceWidth: 4,
+			detail: hsl(h, 0.25, 0.9),
+			hub: hsl(h, 0.2, is_dark ? 0.2 : 0.26), hubEdge: hsl(h, 0.25, 0.9), hubWidth: 4,
+			marker: hsl(h, 0.9, is_dark ? 0.6 : 0.66), notchOpacity: 0.35, grooveOpacity: 0.2,
+		});
+	},
+	light: (h, is_dark) => jogWheel(h, is_dark, {
+		rim: is_dark ? hsl(h, 0.38, 0.22) : hsl(h, 0.5, 0.96),
+		rimEdge: is_dark ? hsl(h, 0.4, 0.42) : hsl(h, 0.4, 0.74), rimWidth: 6,
+		face: is_dark ? hsl(h, 0.3, 0.16) : '#ffffff',
+		faceEdge: is_dark ? hsl(h, 0.4, 0.42) : hsl(h, 0.4, 0.74), faceWidth: 5,
+		detail: is_dark ? hsl(h, 0.45, 0.9) : hsl(h, 0.45, 0.3),
+		hub: is_dark ? hsl(h, 0.38, 0.27) : hsl(h, 0.5, 0.9), hubEdge: is_dark ? hsl(h, 0.4, 0.42) : hsl(h, 0.4, 0.74), hubWidth: 4,
+		marker: hsl(h, 0.7, is_dark ? 0.55 : 0.45), notchOpacity: 0.35,
+	}),
+	outline: (h, is_dark) => jogWheel(h, is_dark, {
+		rim: 'none', rimEdge: hsl(h, 0.6, is_dark ? 0.78 : 0.45), rimWidth: 9,
+		face: 'none', faceEdge: hsl(h, 0.6, is_dark ? 0.78 : 0.45), faceWidth: 6,
+		detail: hsl(h, 0.7, is_dark ? 0.54 : 0.72),
+		hub: 'none', hubEdge: hsl(h, 0.7, is_dark ? 0.6 : 0.5), hubWidth: 6,
+		cap: hsl(h, 0.7, is_dark ? 0.6 : 0.5),
+		marker: hsl(h, 0.8, is_dark ? 0.6 : 0.55), notchOpacity: 0.9, grooveOpacity: 0.55,
+	}),
+	windows: (h, is_dark) => {
+		const top = hsl(h, 0.66, is_dark ? 0.32 : 0.58), bot = hsl(h, 0.68, is_dark ? 0.18 : 0.42);
+		return jogWheel(h, is_dark, {
+			defs: '<defs><linearGradient id="jogBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>',
+			rim: 'url(#jogBg)',
+			rimEdge: is_dark ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.35)', rimWidth: 3,
+			face: is_dark ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.18)',
+			detail: '#ffffff', hub: 'rgba(255,255,255,0.22)', hubEdge: 'rgba(255,255,255,0.6)', hubWidth: 3,
+			marker: '#ffffff', notchOpacity: 0.35,
+		});
+	},
+	mac: (h, is_dark) => {
+		const top = hsl(h, 0.78, is_dark ? 0.36 : 0.68), bot = hsl(h, 0.82, is_dark ? 0.2 : 0.46);
+		const defs = '<defs><linearGradient id="jogBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient>'
+			+ '<linearGradient id="jogSheen" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="rgba(255,255,255,' + (is_dark ? '0.24' : '0.55') + ')"/><stop offset="0.55" stop-color="rgba(255,255,255,' + (is_dark ? '0.05' : '0.06') + ')"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></linearGradient></defs>';
+		const sheen = '<path d="M-40 540 L232 -40 L342 -40 L70 540 Z" fill="url(#jogSheen)"/>';
+		return jogWheel(h, is_dark, {
+			defs, rim: 'url(#jogBg)', rimArt: sheen,
+			rimEdge: 'rgba(255,255,255,' + (is_dark ? 0.32 : 0.5) + ')', rimWidth: 3,
+			face: 'rgba(0,0,0,0.08)', faceArt: sheen, faceEdge: 'rgba(255,255,255,0.3)', faceWidth: 3,
+			detail: '#ffffff', hub: 'rgba(255,255,255,0.22)', hubEdge: 'rgba(255,255,255,0.6)', hubWidth: 3,
+			marker: '#ffffff', notchOpacity: 0.35,
+		});
+	},
+	gnome: (h, is_dark) => {
+		const top = hsl(h, 0.34, is_dark ? 0.28 : 0.93), bot = hsl(h, 0.4, is_dark ? 0.18 : 0.8);
+		return jogWheel(h, is_dark, {
+			defs: '<defs><linearGradient id="jogBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>',
+			rim: 'url(#jogBg)',
+			rimEdge: is_dark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)', rimWidth: 3,
+			face: is_dark ? hsl(h, 0.3, 0.18) : 'rgba(255,255,255,0.55)',
+			faceEdge: is_dark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.1)', faceWidth: 3,
+			detail: is_dark ? hsl(h, 0.5, 0.86) : hsl(h, 0.6, 0.36),
+			hub: is_dark ? hsl(h, 0.34, 0.3) : 'rgba(255,255,255,0.7)',
+			hubEdge: is_dark ? hsl(h, 0.5, 0.86) : hsl(h, 0.6, 0.36), hubWidth: 4,
+			marker: is_dark ? hsl(h, 0.6, 0.7) : hsl(h, 0.7, 0.4), notchOpacity: 0.3,
+		});
+	},
+	neon: (h, is_dark) => jogWheel(h, is_dark, {
+		defs: '<defs><filter id="jogGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
+		rim: is_dark ? '#07090d' : '#0c0f14',
+		rimEdge: hsl(h, 1, is_dark ? 0.5 : 0.6), rimWidth: 4,
+		face: is_dark ? '#07090d' : '#0c0f14',
+		faceEdge: hsl(h, 1, is_dark ? 0.5 : 0.6), faceWidth: 3,
+		detail: hsl(h, 1, is_dark ? 0.56 : 0.62),
+		hub: is_dark ? '#07090d' : '#0c0f14', hubEdge: hsl(h, 1, is_dark ? 0.5 : 0.6), hubWidth: 3,
+		marker: hsl(h, 1, is_dark ? 0.7 : 0.75), glow: true, notchOpacity: 0.75, grooveOpacity: 0.5,
+	}),
+	pastel: (h, is_dark) => jogWheel(h, is_dark, {
+		rim: is_dark ? hsl(h, 0.32, 0.24) : hsl(h, 0.6, 0.85),
+		face: is_dark ? hsl(h, 0.3, 0.18) : '#ffffff',
+		detail: is_dark ? hsl(h, 0.4, 0.9) : hsl(h, 0.35, 0.34),
+		hub: is_dark ? hsl(h, 0.32, 0.28) : hsl(h, 0.6, 0.92),
+		marker: is_dark ? hsl(h, 0.6, 0.6) : hsl(h, 0.5, 0.45), notchOpacity: 0.4,
+	}),
+	mono: (h, is_dark) => jogWheel(h, is_dark, {
+		rim: is_dark ? '#111111' : '#ffffff', rimEdge: is_dark ? '#e8e8e8' : '#111111', rimWidth: 14,
+		face: is_dark ? '#111111' : '#ffffff', faceEdge: is_dark ? '#e8e8e8' : '#111111', faceWidth: 10,
+		detail: is_dark ? '#ffffff' : '#111111',
+		hub: is_dark ? '#111111' : '#ffffff', hubEdge: is_dark ? '#e8e8e8' : '#111111', hubWidth: 10,
+		marker: is_dark ? '#ffffff' : '#111111', notchWidth: 11, notchOpacity: 1, grooveWidth: 4, grooveOpacity: 0.6,
+	}),
+	sunburst: (h, is_dark) => {
+		const defs = '<defs><path id="jogRay" d="M256 256 L' + polar(500, -7) + ' L' + polar(500, 7) + ' Z"/>'
+			+ '<radialGradient id="jogBg" cx="0.5" cy="0.4" r="0.8"><stop offset="0" stop-color="' + hsl(h, 0.95, is_dark ? 0.32 : 0.6) + '"/><stop offset="1" stop-color="' + hsl(h + 24, 0.9, is_dark ? 0.2 : 0.44) + '"/></radialGradient></defs>';
+		let rays = '';
+		for (let i = 0; i < 18; i++) {
+			rays += '<use href="#jogRay" transform="rotate(' + (i * 20) + ' 256 256)" fill="rgba(255,255,255,' + (is_dark ? 0.1 : 0.22) + ')"/>';
+		}
+		return jogWheel(h, is_dark, {
+			defs, rim: 'url(#jogBg)', rimArt: rays,
+			rimEdge: is_dark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.22)', rimWidth: 8,
+			face: hsl(h, 0.9, is_dark ? 0.22 : 0.42), faceEdge: 'rgba(255,255,255,0.4)', faceWidth: 4,
+			detail: '#ffffff', hub: 'rgba(255,255,255,0.18)', hubEdge: '#ffffff', hubWidth: 5,
+			marker: '#ffffff', notchOpacity: 0.35,
+		});
+	},
+	holographic: (h, is_dark) => {
+		const offs = [0, 0.22, 0.45, 0.68, 1];
+		let stops = '';
+		for (let i = 0; i < offs.length; i++) {
+			stops += '<stop offset="' + offs[i] + '" stop-color="' + hsl(h - 50 + i * 64, 0.95, is_dark ? (i % 2 ? 0.44 : 0.3) : (i % 2 ? 0.72 : 0.56)) + '"/>';
+		}
+		const defs = '<defs><linearGradient id="jogBg" x1="0" y1="0" x2="1" y2="1">' + stops + '</linearGradient>'
+			+ '<linearGradient id="jogSheen" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="rgba(255,255,255,' + (is_dark ? '0.2' : '0.4') + ')"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></linearGradient></defs>';
+		const sheen = '<path d="M-40 540 L232 -40 L342 -40 L70 540 Z" fill="url(#jogSheen)"/>';
+		return jogWheel(h, is_dark, {
+			defs, rim: 'url(#jogBg)', rimArt: sheen,
+			rimEdge: 'rgba(255,255,255,' + (is_dark ? 0.34 : 0.55) + ')', rimWidth: 6,
+			face: 'rgba(0,0,0,0.1)', faceArt: sheen, faceEdge: 'rgba(255,255,255,0.3)', faceWidth: 3,
+			detail: '#ffffff', hub: 'rgba(255,255,255,0.18)', hubEdge: '#ffffff', hubWidth: 4,
+			marker: '#ffffff', notchOpacity: 0.3,
+		});
+	},
+	sticker: (h, is_dark) => {
+		let grip = '';
+		for (let i = 0; i < 24; i++) {
+			grip += '<path d="M' + polar(193, i * 15) + ' L' + polar(176, i * 15) + '" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" opacity="0.55"/>';
+		}
+		return jogWheel(h, is_dark, {
+			shadow: [7, 9, 'rgba(0,0,0,0.2)'],
+			rim: '#ffffff', rimEdge: 'rgba(0,0,0,0.12)', rimWidth: 3,
+			face: hsl(h, 0.95, is_dark ? 0.38 : 0.58), faceEdge: '#ffffff', faceWidth: 12,
+			faceArt: grip, detail: '#ffffff', notches: false,
+			hub: 'rgba(0,0,0,0.18)', hubEdge: '#ffffff', hubWidth: 10,
+			marker: '#ffffff', grooveOpacity: 0.3,
+		});
+	},
+	psychedelic: (h, is_dark) => {
+		let ring = '';
+		for (let s = 0; s <= 60; s++) {
+			const a = s / 60 * Math.PI * 2;
+			const r = 100 + 3 * Math.sin(3 * a) + 1.3 * Math.sin(5 * a + 0.8);
+			ring += (s ? 'L' : 'M') + (r * Math.cos(a)).toFixed(1) + ' ' + (r * Math.sin(a)).toFixed(1);
+		}
+		const defs = '<defs><path id="jogRing" d="' + ring + ' Z"/></defs>';
+		const hues = [0, 72, 144, 216, 288];
+		let bands = '';
+		for (let i = 0; i < 9; i++) {
+			const R = 250 - i * 27;
+			bands += '<use href="#jogRing" transform="translate(256,256) scale(' + (R / 100).toFixed(3) + ') rotate(' + (i * 17) + ')" fill="' + hsl(h + hues[i % hues.length], 0.92, is_dark ? (i % 2 ? 0.32 : 0.22) : (i % 2 ? 0.62 : 0.46)) + '"/>';
+		}
+		return jogWheel(h, is_dark, {
+			defs, rim: hsl(h, 0.92, is_dark ? 0.22 : 0.46), rimArt: bands,
+			face: 'rgba(0,0,0,0.08)', faceEdge: 'rgba(255,255,255,0.3)', faceWidth: 3,
+			detail: is_dark ? hsl(h + 200, 0.6, 0.86) : hsl(h + 200, 0.5, 0.12),
+			hub: is_dark ? hsl(h + 200, 0.5, 0.3) : hsl(h + 200, 0.5, 0.2),
+			hubEdge: is_dark ? hsl(h + 200, 0.6, 0.86) : hsl(h + 200, 0.5, 0.12), hubWidth: 5,
+			marker: is_dark ? '#ffffff' : hsl(h + 200, 0.5, 0.12), grooves: false, notchOpacity: 0.4,
+		});
+	},
+	kaleidoscope: (h, is_dark) => {
+		const defs = '<defs><path id="jogWedge" d="M256 256 L' + polar(500, -0.7) + ' L' + polar(500, 30.7) + ' Z"/>'
+			+ '<path id="jogLead" d="M256 256 L' + polar(500, 0) + '"/>'
+			+ '<radialGradient id="jogShine" cx="0.32" cy="0.26" r="1"><stop offset="0" stop-color="#ffffff" stop-opacity="' + (is_dark ? 0.26 : 0.55) + '"/><stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/></radialGradient></defs>';
+		let facets = '';
+		for (let i = 0; i < 12; i++) {
+			facets += '<use href="#jogWedge" transform="rotate(' + (i * 30) + ' 256 256)" fill="' + hsl(h + i * 14, 0.92, is_dark ? (i % 2 ? 0.34 : 0.22) : (i % 2 ? 0.48 : 0.64)) + '"/>'
+				+ '<use href="#jogLead" transform="rotate(' + (i * 30) + ' 256 256)" stroke="rgba(255,255,255,' + (is_dark ? 0.24 : 0.4) + ')" stroke-width="5"/>';
+		}
+		return jogWheel(h, is_dark, {
+			defs, rim: hsl(h, 0.92, is_dark ? 0.24 : 0.55), rimArt: facets,
+			face: 'rgba(0,0,0,0.08)', faceArt: '<circle cx="256" cy="256" r="200" fill="url(#jogShine)"/>',
+			faceEdge: 'rgba(255,255,255,0.3)', faceWidth: 4,
+			detail: '#ffffff', hub: 'rgba(255,255,255,0.18)', hubEdge: '#ffffff', hubWidth: 5,
+			marker: '#ffffff', grooves: false, notchOpacity: 0.3,
+		});
+	},
+	clown: (h, is_dark) => {
+		const dim = l => is_dark ? Math.max(0.16, l * 0.55) : l;
+		const clash = [0, 180, 40, 220, 80, 300];
+		let stops = '';
+		for (let i = 0; i < clash.length; i++) {
+			stops += '<stop offset="' + Math.round(i / (clash.length - 1) * 100) + '%" stop-color="' + hsl(h + clash[i], 1, dim(i % 2 ? 0.55 : 0.67)) + '"/>';
+		}
+		const defs = '<defs><linearGradient id="jogBg" x1="0" y1="0" x2="1" y2="1">' + stops + '</linearGradient>'
+			+ '<pattern id="jogHazard" width="64" height="64" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+			+ '<rect width="32" height="64" fill="' + hsl(h + 130, 1, dim(0.52)) + '"/>'
+			+ '<rect x="32" width="32" height="64" fill="' + hsl(h + 310, 1, dim(0.6)) + '"/>'
+			+ '</pattern></defs>';
+		return jogWheel(h, is_dark, {
+			defs, rim: 'url(#jogBg)',
+			rimArt: '<rect x="-80" y="-80" width="672" height="672" fill="url(#jogHazard)" opacity="' + (is_dark ? 0.38 : 0.6) + '"/>',
+			rimEdge: is_dark ? '#f2f2f2' : '#000000', rimWidth: 16,
+			face: hsl(h + 50, 1, dim(0.62)), faceEdge: '#ffffff', faceWidth: 8,
+			detail: '#ffffff', hub: '#ffffff', hubEdge: '#000000', hubWidth: 8, cap: '#000000',
+			marker: hsl(h + 180, 1, dim(0.72)), notchOpacity: 0.5, grooveOpacity: 0.5,
+		});
+	},
+};
+const JOG_NAMES = { 'jog wheel': 1, 'jog wheel tye dye': 1 };
+
 const STYLES = {
 	// bright, thick black outline, sticker-ish
 	cartoon: {
@@ -905,7 +1174,11 @@ for (const style of styleKeys) {
 		for (const name of iconNames) {
 			const glyph = GLYPHS[ICONS[name]];
 			if (!glyph) { throw new Error('Missing glyph for ' + name); }
-			const svg = STYLES[style].render(hueFor(name), glyph, 0, cut.dark);
+			// The jog wheels are round controls with their own full-bleed art, not
+			// square tiles with the glyph inside one.
+			const svg = JOG_NAMES[name]
+				? JOG_WHEELS[style](hueFor(name), cut.dark)
+				: STYLES[style].render(hueFor(name), glyph, 0, cut.dark);
 			fs.writeFileSync(path.join(dir, name + '.svg'), svg);
 			written++;
 		}
