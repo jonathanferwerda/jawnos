@@ -105,7 +105,7 @@ def note(app, ts, text, typ="note", project=""):
     appt(app, typ, ts, duration="600000", notes=text, project=project, pos="idea")
 
 
-def transaction(app, ts, amount, vendor, account, movement, memo="", unit="ea", quantity="1"):
+def transaction(app, ts, amount, vendor, account, movement, memo="", unit="ea", quantity="1", item=""):
     sign = 1 if movement == "income" else -1
     total = round(amount * sign, 2)
     data = {
@@ -117,7 +117,21 @@ def transaction(app, ts, amount, vendor, account, movement, memo="", unit="ea", 
     row = appt(app, "transaction", ts, amount=str(total), total=str(total),
                vendor=vendor, account=account, movement=movement,
                quantity=quantity, unit=unit, data=data, notes=memo,
-               pos="thing")
+               item=item or memo, pos="thing")
+    # The warehouse is the ledger the budget and the double-entry journal read
+    # (kind='money'), so mirror the transaction exactly as the manager does when
+    # it records one. Without this row the statement has money in the
+    # appointments and nothing in the books.
+    cur.execute(
+        "insert or replace into warehouse (timestamp,server_time,item,uuid,ost,device,"
+        "quantity,unit,type,movement,app,account,vendor,currency,amount,tax,aux,total,"
+        "kind,data,project,source_uuid,app_uuid,warranty) "
+        "values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (str(ts), str(ts + 1000), item or memo, row["uuid"], str(ts + 1000), "computer",
+         quantity, unit, "transaction", movement, app, account, vendor, "CAD",
+         str(total), "0", "0", str(total), "money", json.dumps(data), "", "",
+         row["uuid"], "-10d"),
+    )
     return row["uuid"], total, vendor, memo
 
 
@@ -152,6 +166,7 @@ APP_META = {
     "people":      ("People", "People", "#88dddd", "#62b3b3", "10m", "", "idea"),
     "tasks":       ("Work", "Tasks", "#40bfbf", "#2f8f8f", "10m", "", "idea"),
     "account":     ("Money", "Accounting", "#e7aefe", "#b785c4", "15m", "", "service"),
+    "chequing":    ("Money", "Bank", "#9fd6b0", "#6fae83", "15m", "", "account"),
     "store":       ("Money", "Store", "#c5f1f1", "#93c4c4", "10m", "", "thing"),
     "warehouse":   ("Money", "Stock", "#e7aefe", "#b785c4", "10m", "", "thing"),
     "market":      ("Home", "Shopping", "#d7dbd9", "#a9b0ac", "10m", "", "thing"),
@@ -212,6 +227,16 @@ setting("me", "app_measures", {
     "steps": {"type": "number", "unit": "steps", "value": "9000"},
     "speed": {"type": "number", "unit": "km/h", "value": "0"},
 })
+
+# The Music player only walks a location it has been given: these switches are
+# what make ~/Music part of its library, and the budget's own period is what
+# keeps the Accounting window on a readable month instead of 1969.
+setting("music_folder_toggle", "music_location", "on")
+setting("budget", "display", "income_statement")
+setting("budget", "scope", "month")
+setting("budget", "time_when", "this")
+setting("budget", "increments", "30")
+setting("chequing", "minimum", "500")
 
 # ---------------------------------------------------------------- clothesline
 clothesline = [
@@ -422,26 +447,29 @@ for i in range(34, -1, -1):
         )
 
 # ---------------------------------------------------------------- money
+# Each ledger account names the app that owns it, so a journal rebuilt from the
+# warehouse lands on the same account the seeded entries use: the bank is the
+# account app, and each kind of income or expense is the app it was logged in.
 accounts = [
-    ("1000", "Cash", "asset", "debit"),
-    ("1100", "Accounts Receivable", "asset", "debit"),
-    ("2000", "Accounts Payable", "liability", "credit"),
-    ("3000", "Owner's Equity", "equity", "credit"),
-    ("4000", "Design Income", "income", "credit"),
-    ("5000", "Art Supplies", "expense", "debit"),
-    ("5010", "Software", "expense", "debit"),
-    ("5020", "Studio Rent", "expense", "debit"),
-    ("5030", "Groceries", "expense", "debit"),
+    ("1000", "Cash", "asset", "debit", "chequing"),
+    ("1100", "Accounts Receivable", "asset", "debit", ""),
+    ("2000", "Accounts Payable", "liability", "credit", ""),
+    ("3000", "Owner's Equity", "equity", "credit", ""),
+    ("4000", "Design Income", "income", "credit", "programming"),
+    ("5000", "Art Supplies", "expense", "debit", "drawing"),
+    ("5010", "Software", "expense", "debit", "ide"),
+    ("5020", "Studio Rent", "expense", "debit", "account"),
+    ("5030", "Groceries", "expense", "debit", "market"),
 ]
-for code, name, typ, normal in accounts:
+for code, name, typ, normal, app in accounts:
     cur.execute(
         "insert or replace into ledger_accounts (uuid,code,name,type,normal,app,parent,active,server_time,ost) "
         "values (?,?,?,?,?,?,?,?,?,?)",
-        (uid(24), code, name, typ, normal, "account", "", "on", now, now),
+        (uid(24), code, name, typ, normal, app, "", "on", now, now),
     )
 
 
-def post(ts, debit_code, credit_code, amount, memo, source_uuid, app="account", cash="1000"):
+def post(ts, debit_code, credit_code, amount, memo, source_uuid, app, cash="chequing"):
     entry = source_uuid
     cur.execute(
         "insert into journal (uuid,entry_uuid,timestamp,account_code,debit,credit,currency,memo,"
@@ -461,35 +489,37 @@ money_rows = []
 for i in range(34, -1, -1):
     d0 = day_start - i * DAY
     weekday = datetime.datetime.utcfromtimestamp(d0 / 1000).weekday()
-    if weekday == 0 and i % 7 == 0:
-        src, total, vendor, memo = transaction("account", d0 + 10 * 3600000, 2400.00,
+    # Two commissions a fortnight, pinned to the day count rather than the
+    # weekday: a seed run on any day must still put money in the books.
+    if i % 14 == 0:
+        src, total, vendor, memo = transaction("programming", d0 + 10 * 3600000, 2400.00,
                                                "Northlight Gallery", "chequing", "income",
                                                "Commission — harbour series")
-        post(d0 + 10 * 3600000, "1000", "4000", 2400.00, "Commission", src)
+        post(d0 + 10 * 3600000, "1000", "4000", 2400.00, "Commission", src, "programming")
         money_rows.append((d0, "income", 2400.00, "Northlight Gallery"))
-    if weekday == 3 and i % 7 == 0:
-        src, total, vendor, memo = transaction("account", d0 + 10 * 3600000, 1800.00,
+    if i % 14 == 4:
+        src, total, vendor, memo = transaction("programming", d0 + 10 * 3600000, 1800.00,
                                                "Meridian Health", "chequing", "income",
                                                "Lobby artwork")
-        post(d0 + 10 * 3600000, "1000", "4000", 1800.00, "Lobby artwork", src)
+        post(d0 + 10 * 3600000, "1000", "4000", 1800.00, "Lobby artwork", src, "programming")
         money_rows.append((d0, "income", 1800.00, "Meridian Health"))
     if i % 6 == 0:
-        src, total, vendor, memo = transaction("account", d0 + 14 * 3600000, 186.40,
+        src, total, vendor, memo = transaction("drawing", d0 + 14 * 3600000, 186.40,
                                                "Harbour Art Supply", "chequing", "expense",
                                                "Archival paper and ink")
-        post(d0 + 14 * 3600000, "5000", "1000", 186.40, "Paper and ink", src)
+        post(d0 + 14 * 3600000, "5000", "1000", 186.40, "Paper and ink", src, "drawing")
         money_rows.append((d0, "expense", 186.40, "Harbour Art Supply"))
     if i == 34 or i == 4:
         src, total, vendor, memo = transaction("account", d0 + 9 * 3600000, 1450.00,
                                                "Ravine Studio", "chequing", "expense",
                                                "Studio rent")
-        post(d0 + 9 * 3600000, "5020", "1000", 1450.00, "Studio rent", src)
+        post(d0 + 9 * 3600000, "5020", "1000", 1450.00, "Studio rent", src, "account")
         money_rows.append((d0, "expense", 1450.00, "Ravine Studio"))
     if weekday in (0, 4):
-        src, total, vendor, memo = transaction("account", d0 + 17 * 3600000, 84.20,
+        src, total, vendor, memo = transaction("market", d0 + 17 * 3600000, 84.20,
                                                "Market", "chequing", "expense",
                                                "Groceries")
-        post(d0 + 17 * 3600000, "5030", "1000", 84.20, "Groceries", src)
+        post(d0 + 17 * 3600000, "5030", "1000", 84.20, "Groceries", src, "market")
         money_rows.append((d0, "expense", 84.20, "Market"))
 
 # ---------------------------------------------------------------- stock

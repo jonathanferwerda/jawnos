@@ -1,0 +1,76 @@
+{
+  "scenes": [
+    {
+      "id": "home",
+      "activity": "home",
+      "file": "home",
+      "slug": "android-home",
+      "title": "Home",
+      "description": "The house's own launcher: running apps on a clothesline, then the JawnOS apps and the phone's own.",
+      "alt": "The JawnOS Android home screen: a JawnOS app row, a clothesline of running apps and the phone's own app grid."
+    },
+    {
+      "id": "gallery",
+      "app": "gallery",
+      "file": "gallery",
+      "slug": "android-gallery",
+      "title": "Gallery",
+      "description": "Five albums with their painted covers, counted and opened in place.",
+      "alt": "The JawnOS Gallery on Android, showing five albums with painted covers and a photo count for each."
+    },
+    {
+      "id": "music",
+      "app": "music",
+      "file": "music",
+      "slug": "android-music",
+      "title": "Music",
+      "description": "Three albums from the studio, their covers and tracks, played from the house's own library.",
+      "alt": "The JawnOS Music player on Android, listing three albums with covers and the tracks inside them."
+    },
+    {
+      "id": "synth",
+      "app": "studio",
+      "file": "studio",
+      "slug": "android-synth",
+      "title": "Synth",
+      "description": "A playable keyboard, effects and a step sequencer, squeezed into a thumb.",
+      "alt": "The JawnOS Synth on Android, with a piano keyboard, effect sliders and a step sequencer."
+    },
+    {
+      "id": "handbook",
+      "app": "handbook",
+      "file": "handbook",
+      "slug": "android-handbook",
+      "title": "Handbook",
+      "description": "Today at a glance: money, the state of life and the records that fill the day.",
+      "alt": "The JawnOS Handbook on Android: today's money, the state of life and the day's records."
+    },
+    {
+      "id": "accounting",
+      "app": "budget",
+      "file": "accounting",
+      "slug": "android-accounting",
+      "title": "Accounting",
+      "description": "An income statement that ties to the ledger: income, expenses and the net between them.",
+      "alt": "The JawnOS Accounting income statement on Android, with income, expenses and net income for the month."
+    },
+    {
+      "id": "travel",
+      "app": "travel",
+      "file": "travel",
+      "slug": "android-travel",
+      "title": "Travel",
+      "description": "A hand-drawn map plate, the day's track across it and where the phone is now.",
+      "alt": "The JawnOS Travel map on Android, showing a hand-drawn harbour plate, a walk track and a you-are-here marker."
+    },
+    {
+      "id": "clock",
+      "app": "clock",
+      "file": "clock",
+      "slug": "android-clock",
+      "title": "Clock",
+      "description": "Alarms, wake ramps and a wind-down, each with its own switch.",
+      "alt": "The JawnOS Clock on Android, with three alarms, each with its own switch."
+    }
+  ]
+}

@@ -10,7 +10,7 @@
 # files do not matter as long as the album folders exist.
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 STAGE=${STAGE:-$ROOT/.shots/demo_media}
 TABLE=${TABLE:-jawn@table.jonathanferwerda.com}
 TABLE_SSH=${TABLE_SSH:-8022}
@@ -24,7 +24,7 @@ IMG=$(command -v magick || command -v convert || true)
 rm -rf "$STAGE"
 mkdir -p "$STAGE/Pictures/T-Watch" "$STAGE/Pictures/T-Deck" \
   "$STAGE/Pictures/Studio" "$STAGE/Pictures/Plein Air" "$STAGE/Pictures/Portraits" \
-  "$STAGE/Pictures/Maps" "$STAGE/Pictures/Backgrounds" \
+  "$STAGE/Pictures/Maps" "$STAGE/Pictures/travel" "$STAGE/Pictures/Backgrounds" \
   "$STAGE/Music/Night Studio" "$STAGE/Music/Morning Light" "$STAGE/Music/Field Notes" \
   "$STAGE/Documents"
 
@@ -60,28 +60,51 @@ photo "$STAGE/Pictures/Portraits/03.jpg"   '#1a1f27' '#8fbcbb' '#a3be8c' 'Jonah'
 photo "$STAGE/Pictures/Portraits/04.jpg"   '#2e3440' '#5e81ac' '#bf616a' 'Self, winter' 'portrait'
 
 # ---- maps and wallpapers --------------------------------------------------
-"$IMG" -size 1600x1200 plasma:'#2b3a31-#45503c' -blur 0x2 \
-  -fill '#17293a' -draw "path 'M 0,0 L 420,0 C 372,180 450,330 395,520 C 342,700 458,880 410,1200 L 0,1200 Z'" \
-  -fill '#233b46' -draw "path 'M 0,0 L 405,0 C 360,180 435,330 382,520 C 331,700 443,880 397,1200 L 0,1200 Z'" \
-  -fill '#3b4a35' -draw "path 'M 412,0 C 366,180 442,330 388,520 C 336,700 450,880 404,1200 L 470,1200 C 516,880 402,700 454,520 C 508,330 432,180 478,0 Z'" \
-  -fill '#4a5c3f' -draw 'circle 1180,280 1180,90' \
-  -fill '#3f5238' -draw 'roundrectangle 620,700 980,1060 40,40' \
-  -stroke '#6b7269' -strokewidth 9 -draw 'line 560,0 610,1200' \
-  -draw 'line 760,0 800,1200' -draw 'line 980,0 1010,1200' \
-  -draw 'line 1220,0 1240,1200' -draw 'line 1420,0 1440,1200' \
-  -strokewidth 6 -draw 'line 500,420 1600,380' -draw 'line 460,640 1600,610' \
-  -strokewidth 14 -stroke '#8a8b7f' -draw 'line 470,760 1600,700' \
-  -fill '#c9c6ad' -stroke none -pointsize 30 -gravity northwest -annotate +60+60 'SARNIA' \
-  -pointsize 20 -annotate +60+100 'HARBOURFRONT' \
-  -blur 0x0.4 "$STAGE/Pictures/Maps/harbour.png"
+# A printed street map: paper ground, water on the west, a grid of streets, a
+# park and the labels a person would letter onto it. The map engine draws the
+# plate at 0.92 alpha over its own canvas, so the art stays light and legible.
+"$IMG" -size 1600x1200 xc:'#e9e5d9' \
+  -fill '#b9d3dd' -draw "path 'M 0,0 L 300,0 C 250,180 330,330 275,520 C 222,700 320,880 268,1200 L 0,1200 Z'" \
+  -fill '#a9c8d4' -draw "path 'M 0,0 L 210,0 C 165,180 240,330 190,520 C 140,700 232,880 185,1200 L 0,1200 Z'" \
+  -fill '#cbdcc0' -draw 'roundrectangle 1020,150 1500,470 26,26' \
+  -fill '#c6d9ba' -draw 'circle 1140,780 1140,690' \
+  -fill '#dcd8ca' -draw 'roundrectangle 360,180 760,360 8,8' \
+  -draw 'roundrectangle 830,520 1110,700 8,8' \
+  -draw 'roundrectangle 400,820 700,1060 8,8' \
+  -draw 'roundrectangle 1180,880 1480,1080 8,8' \
+  -stroke '#ffffff' -strokewidth 22 -fill none \
+  -draw 'line 340,90 340,1200' -draw 'line 520,90 520,1200' \
+  -draw 'line 700,90 700,1200' -draw 'line 880,90 880,1200' \
+  -draw 'line 1060,90 1060,1200' -draw 'line 1240,90 1240,1200' \
+  -draw 'line 360,110 1600,110' -draw 'line 360,300 1600,300' \
+  -draw 'line 360,500 1600,500' -draw 'line 360,700 1600,700' \
+  -draw 'line 360,900 1600,900' -draw 'line 360,1090 1600,1090' \
+  -stroke '#f0c98a' -strokewidth 26 -draw 'line 320,760 1600,690' \
+  -stroke '#e3b877' -strokewidth 18 -draw 'line 600,0 660,1200' \
+  -stroke '#b9b3a1' -strokewidth 5 \
+  -draw 'line 340,0 276,520' -draw 'line 276,520 185,1200' \
+  -fill '#5d5c54' -stroke none -pointsize 46 -gravity northwest -annotate +380+26 'SARNIA' \
+  -pointsize 22 -annotate +384+76 'HARBOURFRONT' \
+  -pointsize 20 -fill '#77766c' -annotate +700+340 'MARKET' -annotate +1030+470 'PARK' \
+  -annotate +120+560 'HARBOUR' -annotate +60+640 'MARINA' \
+  -fill '#8a8878' -pointsize 15 -annotate +560+286 'MARKET ST' -annotate +560+486 'QUEEN ST' \
+  -annotate +560+686 'HARBOUR RD' -annotate +560+886 'RAVINE RD' \
+  "$STAGE/Pictures/travel/harbour.jpg"
 
-"$IMG" -size 1200x900 plasma:'#34452f-#55684a' -blur 0x2 \
-  -fill '#2d5a62' -draw "path 'M 120,0 C 210,140 160,260 250,380 C 340,500 300,640 400,760 C 470,848 520,870 560,900 L 700,900 C 640,840 600,780 540,690 C 450,560 500,430 410,300 C 330,180 370,80 310,0 Z'" \
-  -fill '#3f5a36' -draw 'circle 900,220 900,80' -draw 'circle 280,720 280,600' \
-  -stroke '#b3ad8d' -strokewidth 8 -fill none \
+"$IMG" -size 1200x900 xc:'#e6e8da' \
+  -fill '#c3d9bd' -draw 'roundrectangle 60,60 1140,840 40,40' \
+  -fill '#b2cfc9' -draw "path 'M 120,0 C 210,140 160,260 250,380 C 340,500 300,640 400,760 C 470,848 520,870 560,900 L 700,900 C 640,840 600,780 540,690 C 450,560 500,430 410,300 C 330,180 370,80 310,0 Z'" \
+  -fill '#a8c6a0' -draw 'circle 900,220 900,80' -draw 'circle 280,720 280,600' \
+  -stroke '#d8c9a0' -strokewidth 9 -fill none \
   -draw "path 'M 0,500 C 220,480 360,520 560,470 C 760,420 920,460 1200,400'" \
-  -fill '#c9c6ad' -stroke none -pointsize 30 -gravity northwest -annotate +54+54 'RAVINE PARK' \
-  -blur 0x0.4 "$STAGE/Pictures/Maps/ravine.png"
+  -stroke '#c9a877' -strokewidth 7 \
+  -draw "path 'M 150,880 C 320,720 430,640 560,540 C 700,430 830,300 1000,120'" \
+  -stroke '#e9e2cf' -strokewidth 4 -draw "path 'M 640,760 C 720,660 820,600 960,560 C 1040,540 1120,500 1180,460'" \
+  -fill '#4f5447' -stroke none -pointsize 40 -gravity northwest -annotate +72+72 'RAVINE PARK' \
+  -pointsize 18 -fill '#6d7364' -annotate +76+124 'river trail · 4.2 km loop' \
+  -annotate +620+560 'THE BEND' -annotate +300+700 'CEDAR STAND' \
+  -fill '#7e8374' -pointsize 15 -annotate +210+470 'RIVER PATH' \
+  "$STAGE/Pictures/travel/ravine.jpg"
 
 "$IMG" -size 1920x1080 gradient:'#101a26-#3b5570' -blur 0x1 \
   -fill '#6d8496' -draw 'circle 1450,220 1450,90' \
