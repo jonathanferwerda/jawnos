@@ -205,6 +205,10 @@ get '/watch/button' => sub($c) {
 		my $timestamp = $c->param('timestamp') * 1000 || &subs::rightNow();
 		my $room = $c->param('room');
 		my $toggle = $c->param('toggle');
+		# A board that delivered this tap twice must not flip twice.
+		if (&subs::event_duplicate(join('|', 'button', $chip_id // '', $button // '', $toggle // ''))) {
+			return $c->render(text => 'ok');
+		}
 		if ($toggle == 1) {
 			$toggle = 'off'
 		}
@@ -260,6 +264,10 @@ get '/watch/switch' => sub($c) {
 		my $toggle = $c->param('toggle');
 		my $timestamp = $c->param('timestamp') * 1000 || &subs::rightNow();
 		my $room = $c->param('room');
+		# A board that delivered this movement twice must not flip twice.
+		if (&subs::event_duplicate(join('|', 'switch', $chip_id // '', $button // '', $state // ''))) {
+			return $c->render(text => 'ok');
+		}
 		if ($state eq 'on') {
 			$state = 'off'
 		}

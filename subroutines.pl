@@ -70,6 +70,12 @@ our $device = &device_setter();
 # utility processes never serve stale settings.
 our %setting_memo;
 our $setting_memo_on = 0;
+# Two radios (the desktop bridge daemon and the manager's own listener, or an
+# older board that still ran both of its input scanners) can deliver the same
+# physical switch/button event twice. One flick then toggles the app - and
+# clicks the relay - twice. Remember what was applied for a moment so the same
+# event is only acted on once.
+our %ble_event_seen;
 sub format_name() {
 	my $name = shift || "";
 	# Work on characters, not bytes: a name in Chinese, Arabic or French must
@@ -4371,6 +4377,7 @@ sub edt_button_presser() {
 	my $saved_toggle = $settings->{'toggle'};
 	my $toggle;
 	my $duration = &subs::time_abbrev_translator($settings->{'duration'});
+	$log->info('edt press: ' . ($app || '?') . ' ' . $component . ' saved=' . ($saved_toggle // '-') . ' toggler=' . (defined $toggler ? $toggler : '-') . ' movement=' . ($movement // '-')) if $log;
 
 	if (($movement eq 'start' || $movement eq 'record') && ($saved_toggle eq 'on' || $toggler eq 'on' || $saved_toggle == 1)) {
 		$movement = 'stop';
@@ -6804,6 +6811,7 @@ sub watch_toggle_pusher() {
 	my $app = $data->{'app'} || return;
 	my $state = ($data->{'value'} || '') eq 'on' ? 'on' : 'off';
 	my $exclude_chip = $data->{'exclude_chip'} || '';
+	$log->info('toggle push: ' . $app . ' -> ' . $state . ' exclude=' . ($exclude_chip || '-'));
 	# The device walk is the expensive half (it reads every sighting and, for a
 	# BLE-only device, asks for this machine's address), so it belongs in the
 	# worker: the request that changed the toggle must not wait on the bridge.
@@ -6832,6 +6840,7 @@ sub watch_toggle_pusher() {
 		}
 		return unless scalar @targets;
 		foreach my $t ( @targets ) {
+			$log->info('toggle push send: ' . $t->{'chip_id'} . ' (' . $t->{'edt'} . ') ' . $app . ' -> ' . $state);
 			&subs::bluetooth_sender({
 				intent => 'com.jawn.president.bt.connect',
 				chip_id => $t->{'chip_id'},
@@ -6876,8 +6885,14 @@ sub ble_rehome_check() {
 	my $addrs = &subs::network_interface_reporter();
 	my @ips = grep { $_ && $_ !~ /^127\./ } map { $addrs->{$_}->{'ip'} } keys %{$addrs};
 	return unless scalar @ips;
-	my ($mine_ip) = grep { $stored_host && &subs::same_net_test($_, $stored_host, '127.0.0.1') eq 'yes' } @ips;
-	$mine_ip ||= $ips[0];
+	# A board on the house WiFi cannot route to the Tailscale (100.64/10)
+	# address, so handing it that one over BLE "works" until its next /watch,
+	# which then fails and leaves it on the radio alone. Prefer a real LAN
+	# address; fall back to the Tailscale one only when that is all we have.
+	my @lan = grep { $_ !~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./ } @ips;
+	my @usable = @lan ? @lan : @ips;
+	my ($mine_ip) = grep { $stored_host && &subs::same_net_test($_, $stored_host, '127.0.0.1') eq 'yes' } @usable;
+	$mine_ip ||= $usable[0];
 	return if defined $stored_host && $stored_host eq $mine_ip;
 	my $now = &subs::rightNow();
 	$gb::ble_rehome_at ||= {};
@@ -7549,6 +7564,24 @@ sub voice_ingest() {
 	return { status => 'done', app => $app, want => $cmd->{'want'}, said => $text };
 }
 
+sub event_duplicate {
+	# True when this physical event was already applied a moment ago. Two bridge
+	# radios (or an older board that ran both of its input scanners) can deliver
+	# the same movement twice; acting on it twice is a toggle that flashes and a
+	# relay that clicks. Key on the board, the component and the state, never on
+	# the arrival time. A person cannot complete a full off/on cycle inside the
+	# window, so a real second press is never swallowed.
+	my ($key, $ttl) = @_;
+	$ttl = 2 unless defined $ttl;
+	my $now = time();
+	foreach my $k ( keys %ble_event_seen ) {
+		delete $ble_event_seen{$k} if $now - $ble_event_seen{$k} > 10;
+	}
+	return 1 if $ble_event_seen{$key} && $now - $ble_event_seen{$key} < $ttl;
+	$ble_event_seen{$key} = $now;
+	return 0;
+}
+
 sub ble_message_processor() {
 	my ($data, $mac) = @_;
 	$mac = &ble_link_key($mac);
@@ -7802,12 +7835,26 @@ sub ble_message_processor() {
 		# never lands (or lands with no chip) is invisible in the log. This is the
 		# one line that tells the two apart.
 		$log->info('BLE button for ' . ($chip_id || '?') . ': room ' . ($payload->{'room'} || '?') . ', button ' . ($payload->{'button'} || '?'));
+		# The same tap can arrive twice (two bridge radios, or an older board
+		# that scanned its buttons twice). Apply it once.
+		my $ekey = join('|', 'button', $chip_id // '', $payload->{'button'} // '', $payload->{'toggle'} // '', $payload->{'timestamp'} // '');
+		if (&subs::event_duplicate($ekey)) {
+			$log->info('BLE button for ' . ($chip_id || '?') . ': duplicate tap ignored');
+			return;
+		}
 		my $ws = eval { decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
 		if (!$ws->{'__specs'}) {
 			$log->info('BLE button for ' . ($chip_id || '?') . ': no placed settings, dropped');
 			return;
 		}
 		my $tog = (($payload->{'toggle'} || 0) == 1) ? 'off' : 'on';
+		# Write the pre-press state without a push before edt_button_presser
+		# flips it, exactly like /watch/button. Without this the press flips
+		# whatever the app happened to hold (one flip per output, and the
+		# board's own relay clicked), instead of landing on the tap's state.
+		my $btn_syl = ($edt eq 'microcontroller') ? 10 : 1;
+		my $btn_b = $ws->{ &subs::shorthand_name('button', $btn_syl) . $payload->{'button'} } || {};
+		&subs::setting_setter({ app => $btn_b->{'app'}, setting => 'toggle', value => $tog, sync => 1, source_chip_id => $chip_id }) if $btn_b->{'app'};
 		# Applying a tap reaches the network (a command relayed to another machine)
 		# and the database. On the listener's own reader that held up every message
 		# behind it, so the next tap was not even logged until the relay returned -
@@ -7838,7 +7885,7 @@ sub ble_message_processor() {
 					message => { type => 'button', data => $returner }
 				});
 			}
-		}, { name => 'ble button press' });
+		}, { name => 'ble button press', sync => 1 });
 		return;
 	}
 	if ($type && $type eq 'switch') {
@@ -7851,6 +7898,14 @@ sub ble_message_processor() {
 		my $chip_id = $msg->{'chip_id'};
 		my $button = $payload->{'switch'} || $payload->{'button'};
 		my $state = $payload->{'state'} || '';
+		# The same movement can arrive twice (two bridge radios, or an older
+		# board that still ran both of its input scanners). One flick applied
+		# twice is a toggle that flashes and a relay that clicks on and off.
+		my $ekey = join('|', 'switch', $chip_id // '', $button // '', $state);
+		if (&subs::event_duplicate($ekey)) {
+			$log->info('BLE switch for ' . ($chip_id || '?') . ': duplicate ' . ($state || '?') . ' ignored');
+			return;
+		}
 		my $ws = eval { decode_json &subs::embedded_operator_door($edt, $chip_id) } || {};
 		if (!$ws->{'__specs'} || !defined $button) {
 			$log->info('BLE switch for ' . ($chip_id || '?') . ': no placed settings, dropped');
@@ -7859,12 +7914,16 @@ sub ble_message_processor() {
 		my $syl_count = ($edt eq 'microcontroller') ? 10 : 1;
 		my $b = $ws->{ &subs::shorthand_name('switch', $syl_count) . $button } || {};
 		my $toggle = ($state eq 'on') ? 'off' : 'on';
-		$log->info('BLE switch for ' . ($chip_id || '?') . ': switch ' . $button . ' -> ' . $toggle);
+		$log->info('BLE switch for ' . ($chip_id || '?') . ': switch ' . $button . ' -> ' . $toggle . ' @' . ($payload->{'ms'} // '?'));
 		# Same reason as a button: the movement can relay a command or run one.
 		my ($sw_edt, $sw_chip, $sw_ws, $sw_button, $sw_b, $sw_payload, $sw_toggle)
 			= ($edt, $chip_id, $ws, $button, $b, $payload, $toggle);
 		&subs::subprocessor(sub {
-			&subs::setting_setter({ app => $sw_b->{'app'}, setting => 'toggle', value => $sw_toggle }) if $sw_b->{'app'};
+			# The board already applied its own relay locally; write the pre-press
+			# state without a push and with this chip excluded, exactly like
+			# /watch/switch. Pushing the intermediate state back was a second relay
+			# command (pin -1, or a visible click) and the flash the person saw.
+			&subs::setting_setter({ app => $sw_b->{'app'}, setting => 'toggle', value => $sw_toggle, sync => 1, source_chip_id => $sw_chip }) if $sw_b->{'app'};
 			eval {
 				&subs::edt_button_presser({
 					timestamp => (($sw_payload->{'timestamp'} || 0) * 1000) || &subs::rightNow(),
@@ -7874,11 +7933,13 @@ sub ble_message_processor() {
 					component => 'switch',
 					edt => $sw_edt,
 					chip_id => $sw_chip,
-					remote_address => 'bluetooth'
+					remote_address => 'bluetooth',
+					toggle => $sw_toggle,
+					state => $sw_toggle
 				});
 			};
 			$log->error('BLE switch press failed: ' . $@) if $@;
-		}, { name => 'ble switch press' });
+		}, { name => 'ble switch press', sync => 1 });
 		return;
 	}
 	if ($type && $type eq 'measure') {
@@ -10284,6 +10345,8 @@ sub intelligent_automation_toggle() {
 	my $now = &subs::rightNow();
 	my $measure = $data->{'measure'};
 	my $source_chip_id = $data->{'source_chip_id'} || '';
+	$log->info('ia toggle: ' . ($app || '?') . ' state=' . (defined $data->{'state'} ? $data->{'state'} : '-') .
+		' source_chip=' . ($source_chip_id || '-') . ' remote=' . ($remote_address || '-'));
 	my $asets = &subs::settings_grabber({ app => $app, settings => ['ia','toggle'] });
 	my $jia = $asets->{'ia'};
 	my $ia = eval { return decode_json $jia } || {};
