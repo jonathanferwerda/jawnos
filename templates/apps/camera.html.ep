@@ -13,6 +13,15 @@
 	html.camera-native .camera_app_no_camera,
 	html.camera-webcam .camera_app_no_camera { display: none; }
 
+	/* Which camera the next photo or video comes from. The app's OS camera picks
+	   its own; the desktop lists front/back and every local video input. */
+	.camera_app_source_row { display: none; align-items: center; gap: 7px; justify-content: center;
+	                         margin: 0 auto 10px; font-size: 13px; }
+	html.camera-webcam .camera_app_source_row { display: flex; }
+	.camera_app_source { max-width: 260px; min-height: 0; height: 30px; padding: 2px 7px;
+	                     border: 1px solid var(--line); border-radius: 6px;
+	                     background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; }
+
 	/* the pool of unclaimed media waiting to be filed onto an appointment */
 	.camera_unclaimed_pool { display: flex; flex-wrap: wrap; gap: 8px; }
 	.camera_unclaimed_item { position: relative; width: 104px; border: 1px solid var(--line);
@@ -39,6 +48,11 @@
 	<div class="camera_app_actions">
 		<img class="medium_thumb camera_app_photo" hint="Take a photo" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>">
 		<img class="medium_thumb camera_app_video" hint="Record a video" src="<%= &subs::icon_path('media', '/images/make believe/camera.png') %>">
+	</div>
+
+	<div class="camera_app_source_row">
+		<label for="camera_app_source" hint="<%= &subs::ui('Which camera the next photo or video comes from') %>"><%= &subs::lang('camera_source') %></label>
+		<select id="camera_app_source" class="camera_app_source"></select>
 	</div>
 
 	<video class="camera_app_preview" autoplay playsinline muted></video>

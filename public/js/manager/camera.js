@@ -2,7 +2,63 @@
 // video recorder); in the desktop's embedded view - and any browser - it falls
 // back to the machine's own webcam through getUserMedia. Either way the capture
 // is posted to the ordinary upload route under the 'camera' app.
-var jawnCameraApp = { stream: null, rec: null, chunks: [] };
+var jawnCameraApp = { stream: null, rec: null, chunks: [], source: 'auto', devices: [] };
+
+function jawnCameraAppSourceLoad() {
+	var saved = '';
+	try { saved = localStorage.getItem('jawnos:camera_source') || ''; } catch (e) {}
+	if (saved) { jawnCameraApp.source = saved; }
+}
+function jawnCameraAppSourceSave(value) {
+	jawnCameraApp.source = value || 'auto';
+	try { localStorage.setItem('jawnos:camera_source', jawnCameraApp.source); } catch (e) {}
+	renderCameraSource();
+}
+// Front/back names are all a browser gives us before permission; the label and
+// facingMode are best-effort hints, and every real device is listed by id too.
+function cameraSourceLabel(device, i) {
+	var label = (device.label || '').replace(/\s+/g, ' ').trim();
+	if (!label) { label = 'Camera ' + (i + 1); }
+	return label;
+}
+function renderCameraSource() {
+	var row = $('#camera_app .camera_app_source_row');
+	if (!row.length) { return; }
+	var sel = row.find('.camera_app_source');
+	var chosen = jawnCameraApp.source || 'auto';
+	var opts = [];
+	$.each([['auto', 'camera_auto'], ['front', 'camera_front'], ['back', 'camera_back']], function (i, pair) {
+		opts.push($('<option>').val(pair[0]).text(cameraT(pair[1])).prop('outerHTML'));
+	});
+	$.each(jawnCameraApp.devices, function (i, d) {
+		opts.push($('<option>').val(d.deviceId).text(cameraSourceLabel(d, i)).prop('outerHTML'));
+	});
+	sel.html(opts.join(''));
+	sel.val(chosen);
+	if ((sel.val() || '') !== chosen) { sel.val('auto'); jawnCameraApp.source = 'auto'; }
+}
+function jawnCameraAppRefreshSources() {
+	if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) { return Promise.resolve(); }
+	return navigator.mediaDevices.enumerateDevices().then(function (list) {
+		jawnCameraApp.devices = $.grep(list || [], function (d) { return d.kind == 'videoinput'; });
+		renderCameraSource();
+	});
+}
+function jawnCameraAppConstraints() {
+	var source = jawnCameraApp.source || 'auto';
+	if (source == 'front') { return { video: { facingMode: 'user' }, audio: true }; }
+	if (source == 'back') { return { video: { facingMode: { ideal: 'environment' } }, audio: true }; }
+	if (source && source != 'auto') { return { video: { deviceId: { exact: source } }, audio: true }; }
+	return { video: true, audio: true };
+}
+function jawnCameraAppStreamStop() {
+	if (jawnCameraApp.stream) {
+		jawnCameraApp.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+		jawnCameraApp.stream = null;
+	}
+	var v = document.querySelector('#camera_app .camera_app_preview');
+	if (v) { try { v.srcObject = null; } catch (e) {} v.style.display = 'none'; }
+}
 
 function jawnCameraAppNative() {
 	return !!(window.JawnCamera && window.JawnCamera.available && window.JawnCamera.available() === 'yes');
@@ -13,11 +69,23 @@ function jawnCameraAppWebcam() {
 function jawnCameraAppStatus(text) {
 	$('#camera_app .camera_app_status').text(text);
 }
+function cameraT(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
 
 $(document).ready(function () {
+	jawnCameraAppSourceLoad();
 	// the panel's buttons render for whichever camera this machine has
 	if (jawnCameraAppNative()) { document.documentElement.classList.add('camera-native'); }
 	else if (jawnCameraAppWebcam()) { document.documentElement.classList.add('camera-webcam'); }
+	if (jawnCameraAppWebcam()) {
+		jawnCameraAppRefreshSources();
+		// a phone only learns its front/back at first permission, so ask once and
+		// then fill the picker with the real names
+		if (typeof navigator.mediaDevices.addEventListener == 'function') {
+			navigator.mediaDevices.addEventListener('devicechange', function () { jawnCameraAppRefreshSources(); });
+		}
+	}
 });
 
 $(document).on('click', '#camera_toggle', function () {
@@ -25,19 +93,43 @@ $(document).on('click', '#camera_toggle', function () {
 		url: '/manager/camera',
 		type: 'GET',
 		data: { timestamp: Date.now(), window_maker: 'yes' },
-		success: function (response) { windowMaker(response); jawnCameraAppPool(); }
+		success: function (response) { windowMaker(response); jawnCameraAppPool(); jawnCameraAppRefreshSources(); }
 	});
 });
 
 function jawnCameraAppStreamStart() {
 	if (jawnCameraApp.stream) { return Promise.resolve(jawnCameraApp.stream); }
-	return navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(function (stream) {
+	return navigator.mediaDevices.getUserMedia(jawnCameraAppConstraints()).then(function (stream) {
 		jawnCameraApp.stream = stream;
 		var v = document.querySelector('#camera_app .camera_app_preview');
 		if (v) { v.srcObject = stream; v.style.display = 'inline-block'; if (v.play) { v.play(); } }
+		// permission just revealed the real device names
+		jawnCameraAppRefreshSources();
 		return stream;
+	}).catch(function (err) {
+		// a remembered device that is gone must not lock the Camera app out
+		if (jawnCameraApp.source && jawnCameraApp.source != 'auto' && jawnCameraApp.source != 'front' && jawnCameraApp.source != 'back') {
+			jawnCameraAppSourceSave('auto');
+			return navigator.mediaDevices.getUserMedia(jawnCameraAppConstraints()).then(function (stream) {
+				jawnCameraApp.stream = stream;
+				var v = document.querySelector('#camera_app .camera_app_preview');
+				if (v) { v.srcObject = stream; v.style.display = 'inline-block'; if (v.play) { v.play(); } }
+				return stream;
+			});
+		}
+		throw err;
 	});
 }
+
+$(document).on('change', '#camera_app .camera_app_source', function () {
+	jawnCameraAppSourceSave($(this).val());
+	if (jawnCameraApp.stream) {
+		jawnCameraAppStreamStop();
+		jawnCameraAppStatus(cameraT('Switching camera...'));
+		jawnCameraAppStreamStart().then(function () { jawnCameraAppStatus(''); })
+			.catch(function () { jawnCameraAppStatus(cameraT('Could not reach that camera.')); });
+	}
+});
 
 function jawnCameraAppUpload(blob, name, kind) {
 	var formData = new FormData();

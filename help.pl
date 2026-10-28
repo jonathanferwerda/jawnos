@@ -374,17 +374,19 @@ our %topic = (
 	},
 	'camera' => {
 		title => 'Camera', category => 'apps', app => 'camera',
-		templates => [ 'templates/apps/camera.html.ep' ],
+		'templates' => [ 'templates/apps/camera.html.ep', 'public/js/manager/camera.js' ],
 		controls => [ 'Take a photo', 'Record a video', 'Unclaimed media', 'Select all', 'Approved' ],
-		verified => '2026-10-16',
+		verified => '2026-10-28',
 		summary => 'The device camera and video recorder, plus the pool of unclaimed media waiting to be filed.',
 		body => [
 			'Camera takes a photo or records a video. In the app it opens the device camera and its video recorder (window.JawnCamera), so you get a viewfinder you can see and the camera\'s own processing. On the desktop and in a browser it uses the machine\'s own webcam through getUserMedia.',
 			'A capture is filed under the Camera app. In the app the same pair of buttons also rides in an appointment\'s media group - Camera (native) and Video (native) - where the capture lands on the appointment instead.',
-			'A capture taken in the Camera app itself - and media an agent generated without an appointment - waits in Unclaimed media with a one-week warranty. Tick the items you want (or Select all), then search for an appointment name and press Approved, or drop them onto the drop zone.'
+			'A capture taken in the Camera app itself - and media an agent generated without an appointment - waits in Unclaimed media with a one-week warranty. Tick the items you want (or Select all), then search for an appointment name and press Approved, or drop them onto the drop zone.',
+			'On the desktop and in a browser, Source chooses which camera the next capture uses: Auto, Front or Back, and then every video input the machine reports by name. The choice is remembered on that machine, so the same lens is used next time. On a phone the OS camera chooses its own lens.'
 		],
 		steps => [
 			'Open Camera from the start menu, or pin it to the taskbar.',
+			'Choose a Source when the machine has more than one camera.',
 			'Tap Take a photo or Record a video; the OS camera opens.',
 			'The capture is saved when you accept it in the camera.',
 			'To file unclaimed media onto an appointment, tick items, search for the appointment name, and press Approved.'

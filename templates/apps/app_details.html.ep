@@ -74,7 +74,7 @@
 	<span style="display:none;position:fixed;background-color:var(--panel);border:solid;border-radius:2px;font-size:20px;" class="transaction_autocomplete"></span>
 	<span class="transaction_movement_container" app="<%= $a %>">
 		<span class="purchase_details" uuid="<%= $random_string %>" app="<%= $a %>" style="">
-			<%= include 'apps/transaction/' . $movement_choice, appts => $appts, a => $a, app => {}, source => 'transaction' %>
+			<%= include 'apps/transaction/' . $movement_choice, appts => $appts, a => $a, app => $app, source => 'transaction' %>
 		</span>
 	</span>
 	<div class="tx_add_row">
