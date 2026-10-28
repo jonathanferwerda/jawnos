@@ -16483,11 +16483,13 @@ sub manager_reset($c) {
 	my $unit = $c->param('unit');
 
 	my $quantity = $c->param('quantity');
-	if ($quantity =~ /[a-zA-Z]/) {
-		my $gunit = $quantity;
-		$gunit =~ s/[^a-zA-Z]//gi;
-		$unit = $gunit if grep { $_ eq $gunit } keys %{$gb::measures};
-		$quantity =~ s/[a-zA-Z]//gi;
+	if (defined $quantity && $quantity =~ /[a-zA-Z]/) {
+		# a hybrid quantity carries its own unit ("355 mL", "355ml"); the shared
+		# splitter canonicalises the case, so a typed unit reaches the warehouse as
+		# the measure it names instead of the app's default
+		my ($typed_quantity, $typed_unit) = &subs::quantity_unit_split($quantity);
+		$quantity = $typed_quantity;
+		$unit = $typed_unit if defined $typed_unit && length $typed_unit;
 	}
 
 	my $manufacturer = $c->param('manufacturer');
@@ -16621,7 +16623,7 @@ sub manager_reset($c) {
 		if (!$unit && $model->{'unit'}) {
 			$unit = $model->{'unit'};
 		}
-		elsif ($init->{'unit'}) {
+		elsif (!$unit && $init->{'unit'}) {
 			$unit = $init->{'unit'};
 		}
 		if (!$quantity && $model->{'quantity'}) {
@@ -16874,13 +16876,13 @@ sub manager_reset($c) {
 		if (!$unit && $model->{'unit'}) {
 			$unit = $model->{'unit'};
 		}
-		elsif ($init->{'unit'}) {
+		elsif (!$unit && $init->{'unit'}) {
 			$unit = $init->{'unit'};
 		}
 		if (!$quantity && $model->{'quantity'}) {
-			$quantity = $model->{'quantity'} ;
+			$quantity = $model->{'quantity'};
 		}
-		elsif ($init->{'quantity'}) {
+		elsif (!$quantity && $init->{'quantity'}) {
 			$quantity = $init->{'quantity'};
 		}
 		if (!$manufacturer && $model->{'manufacturer'}) {
@@ -42332,11 +42334,12 @@ sub delete_app($app,$uuid,$server_time,$reason) {
 			}
 			&subs::db_delete('appointments', { uuid => $app->{'uuid'} });
 			# a deleted row takes its warehouse rows with it - the money move, the
-			# balance anchor, and the stock movement it recorded (each is keyed to the
+			# balance anchor, and the stock and usage it recorded (each is keyed to the
 			# source uuid, so nothing else is touched)
 			&subs::db_query('delete from warehouse where kind = ? and uuid = ?', 'money', $app->{'uuid'});
 			&subs::db_query("delete from warehouse where kind = 'inventory' and app_uuid = ?", $app->{'uuid'});
 			&subs::db_query("delete from warehouse where kind = 'stock' and app_uuid = ?", $app->{'uuid'});
+			&subs::db_query("delete from warehouse where kind = 'usage' and app_uuid = ?", $app->{'uuid'});
 		}
 
 		&embedded_app_deleter({ appt_uuid => $uuid });
