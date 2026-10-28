@@ -18416,7 +18416,10 @@ sub warehouse_on_hand_at {
 	return 0 unless defined $item && length $item;
 	$unit = 'each' unless defined $unit && length $unit;
 	my $q = &db_query("select coalesce(sum(cast(quantity as real)),0) as q from warehouse where item=? and unit=? and place=? and coalesce(nullif(kind,''),'stock')='stock'", $item, $unit, $place);
-	return ($q && $q->hashes->[0]) ? $q->hashes->[0]->{'q'} + 0 : 0;
+	# hashes drains the result set, so read it once: asking twice made the second
+	# read empty and every consumption look like it had no stock to take
+	my $rows = $q ? $q->hashes : undef;
+	return ($rows && $rows->[0]) ? $rows->[0]->{'q'} + 0 : 0;
 }
 
 # What an item has on hand right now: its signed stock rows summed per unit, the
