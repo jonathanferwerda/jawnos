@@ -832,11 +832,12 @@ $(document).on('click', '.record_purchase', function() {
 
 
 	var iq = $(this).closest('.app_details');
+	var appointment = iq.closest('.appointment');
 	var app = iq.attr('app');
-	var ago = iq.find('.ago').val();
-	var warranty = iq.find('.warranty').val();
-	var schedule = iq.find('.schedule').val();
-	var duration = iq.find('.duration').val() || '';
+	var ago = appointment.find('.ago').val();
+	var warranty = appointment.find('.warranty').val();
+	var schedule = appointment.find('.schedule').val();
+	var duration = appointment.find('.duration').val() || '';
 	var navigation = iq.closest('.appointment').attr('navigation');
 	var transaction_information = iq.find('.transaction_information').val();
 

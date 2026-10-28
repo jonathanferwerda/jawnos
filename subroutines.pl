@@ -579,6 +579,53 @@ sub numeric_formatter() {
 	return $number
 }
 
+# Numbers people write as words, turned into digits so the same duration reader
+# can take "five minutes" or "2 hours". Only the number itself is rewritten; the
+# rest of the phrase is left for the unit reader.
+sub number_words_to_digits {
+	my ($text) = @_;
+	return $text unless defined $text && $text =~ /[a-z]/i;
+	my $original = $text;
+	$text =~ s/([a-z])-([a-z])/$1 $2/gi;   # twenty-one -> twenty one
+	my %small = (
+		zero => 0, one => 1, two => 2, three => 3, four => 4, five => 5,
+		six => 6, seven => 7, eight => 8, nine => 9, ten => 10,
+		eleven => 11, twelve => 12, thirteen => 13, fourteen => 14,
+		fifteen => 15, sixteen => 16, seventeen => 17, eighteen => 18,
+		nineteen => 19, twenty => 20, thirty => 30, forty => 40, fifty => 50,
+		sixty => 60, seventy => 70, eighty => 80, ninety => 90,
+	);
+	my %scale = (hundred => 100, thousand => 1000, million => 1000000);
+	my (@out, $current, $total, $in_number, $changed);
+	$current = $total = $in_number = $changed = 0;
+	foreach my $word ( split /\s+/, $text ) {
+		my $clean = lc($word);
+		$clean =~ s/[^a-z]//g;
+		if ($clean eq 'a' || $clean eq 'an') {
+			$current += 1; $in_number = 1; $changed = 1; next;
+		}
+		if (defined $small{$clean}) {
+			$current += $small{$clean}; $in_number = 1; $changed = 1; next;
+		}
+		if (defined $scale{$clean}) {
+			$current = ($current || 1) * $scale{$clean};
+			if ($clean eq 'thousand' || $clean eq 'million') {
+				$total += $current; $current = 0;
+			}
+			$in_number = 1; $changed = 1; next;
+		}
+		if ($clean eq 'and' && $in_number) { next; }
+		if ($in_number) {
+			push @out, $total + $current;
+			$current = $total = $in_number = 0;
+		}
+		push @out, $word;
+	}
+	push @out, $total + $current if $in_number;
+	return $original unless $changed;
+	return join(' ', @out);
+}
+
 sub duration_sayer() {
 	my $durational = shift;
 	my $timestamp = &subs::rightNow();
@@ -2110,6 +2157,17 @@ sub resolve_when {
 	# here so ago_calc's string surgery (which mangles "yesterday") is not used
 	my %day_word = (today => 0, tonight => 0, tomorrow => 1, tom => 1, yesterday => -1, yes => -1);
 	return $now + $day_word{$t} * 86400000 if defined $day_word{$t};
+	# a day-word with a time of day ("yesterday around 6pm", "tomorrow at 9"):
+	# the day moves whole days and the written hour pins the time, so the fast
+	# reader answers it without the Guide
+	if ($t =~ /^(yesterday|today|tonight|tomorrow|tom|yes)\b\s*(?:at|around|about|by|@)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*$/) {
+		my ($day, $hour, $min, $ap) = ($day_word{$1}, $2 + 0, ($3 // 0) + 0, $4);
+		$hour += 12 if defined $ap && lc($ap) eq 'pm' && $hour < 12;
+		$hour = 0 if defined $ap && lc($ap) eq 'am' && $hour == 12;
+		my @d = localtime(($now + $day * 86400000) / 1000);
+		my $e = eval { int(POSIX::mktime(0, $min, $hour, $d[3], $d[4], $d[5])) };
+		return $e * 1000 if defined $e;
+	}
 	# a leading modifier moves the whole date a year: "last dec 25", "next jul 16";
 	# "this christmas" pins it to this year
 	my $year_shift = 0;

@@ -397,6 +397,7 @@ function windowMaker(response) {
 				$(val).find('.duration').val(duration);
 			});
 			transactionStorageRetriever(app);
+			if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
 			// A terminal rendered or re-rendered by the window manager gets its
 			// engine bound here; its own opener has already done this on a fresh open.
 			if (typeof terminalInit === 'function' && win.find('.terminal_app').length) { terminalInit(); }
@@ -540,6 +541,7 @@ function windowReorganizer(window_id) {
 		win.find('.notes').val(note);
 		win.find('.ago').val(ago);
 		win.find('.duration').val(duration);
+		if (typeof jawnosTimePreviewPaintApp === 'function') { jawnosTimePreviewPaintApp(app); }
 	});
 	startMenuDisplayer();
 }

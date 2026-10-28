@@ -275,13 +275,13 @@ my %time_machine_guide_cache;
 # relative offset are read by subs::resolve_when / ago_calc; anything else - a
 # phrase neither can read, or one that lands exactly on the epoch without naming
 # it - is handed to the guide to interpret, and the view travels where it says.
-sub time_machine_resolve {
-	my ($spec, $timestamp) = @_;
-	return $timestamp unless defined $spec && $spec =~ /\S/;
+sub time_machine_read {
+	my ($spec, $timestamp, $deep) = @_;
+	return undef unless defined $spec && $spec =~ /\S/;
 	my $ms = &subs::resolve_when($spec, $timestamp);
 	# a date with a name still attached ("sept 11 attacks") is an event, not that
 	# date: the guide reads it, and the plain date is kept only if it has nothing
-	if (defined $ms && &subs::date_leftover($subs::resolve_when_residual)) {
+	if (defined $ms && &subs::date_leftover($subs::resolve_when_residual) && $deep) {
 		my $guide = &guide_time_machine($spec, $timestamp);
 		$ms = $guide if defined $guide;
 	}
@@ -294,6 +294,34 @@ sub time_machine_resolve {
 		$ms = &subs::ago_calc($spec, $timestamp) if $relative;
 	}
 	if (!defined $ms) {
+		# a length written in words ("five days ago", "in two hours", "6 months"):
+		# a bare length points into the past, "in" into the future and "ago" into
+		# the past, the same reading the time machine's Guide makes
+		my $words = &subs::number_words_to_digits($spec);
+		if ($words =~ /^\s*(in\s+)?(\d+(?:\.\d+)?)\s*(milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|mins?|secs?|hrs?|mos?|wks?|yrs?|ms|s|m|h|d|w|M|y)(?:\s+ago)?\s*$/i) {
+			my ($ahead, $count, $unit) = ($1, $2, $3);
+			my %unit_key = (s => 's', m => 'm', h => 'h', d => 'd', w => 'w', y => 'y', ms => 'ms', M => 'M');
+			my $lower = lc($unit);
+			my $key = $unit_key{$unit}
+				|| ($lower =~ /^month/ ? 'M'
+				: $lower =~ /^year/ ? 'y'
+				: $lower =~ /^minute/ ? 'm'
+				: $lower =~ /^min/ ? 'm'
+				: $lower =~ /^second/ ? 's'
+				: $lower =~ /^sec/ ? 's'
+				: $lower =~ /^hour/ ? 'h'
+				: $lower =~ /^hr/ ? 'h'
+				: $lower =~ /^day/ ? 'd'
+				: $lower =~ /^week/ ? 'w'
+				: $lower =~ /^wk/ ? 'w'
+				: $lower =~ /^mo/ ? 'M'
+				: $lower =~ /^yr/ ? 'y'
+				: substr($lower, 0, 1));
+			my $length = &subs::time_abbrev_translator($count . $key, $timestamp);
+			$ms = $ahead ? $timestamp + abs($length) : $timestamp - abs($length) if defined $length && $length;
+		}
+	}
+	if (!defined $ms) {
 		# a time of day that is a habit ("breakfast", "next coffee time"): the hour
 		# the person usually does it, from their own records, else a plain hour
 		$ms = &subs::usual_ritual_time($spec, $timestamp);
@@ -303,12 +331,74 @@ sub time_machine_resolve {
 		# the years counted here
 		$ms = &person_birthday_of($spec, $timestamp);
 	}
-	if (!defined $ms || ($ms == 0 && $spec !~ /\b(?:1970|epoch|unix)\b/i)) {
+	# ago_calc's old string surgery can land on the epoch for a phrase it did not
+	# really read; that is not a moment the person named
+	$ms = undef if defined $ms && $ms == 0 && $spec !~ /\b(?:1970|epoch|unix)\b/i;
+	if (!defined $ms && $deep) {
 		my $guide = &guide_time_machine($spec, $timestamp);
 		$ms = $guide if defined $guide;
 	}
+	return $ms;
+}
+
+sub time_machine_resolve {
+	my ($spec, $timestamp) = @_;
+	return $timestamp unless defined $spec && $spec =~ /\S/;
+	my $ms = &time_machine_read($spec, $timestamp, 1);
 	$ms = $timestamp unless defined $ms;
 	return $ms;
+}
+
+# A warranty is a moment ahead of the record: the same reader as the time
+# machine, but a bare length ("2 years", "-2y") runs forward rather than back.
+sub warranty_resolve {
+	my ($spec, $anchor, $deep) = @_;
+	return undef unless defined $spec && $spec =~ /\S/;
+	return $spec + 0 if $spec =~ /^\s*\d{12,}\s*$/;
+	$anchor = &subs::rightNow() unless defined $anchor;
+	my $ms = &subs::resolve_when($spec, $anchor);
+	return $ms if defined $ms;
+	my $past_words = $spec =~ /\b(?:ago|last|before|past|yesterday)\b/i;
+	my $length = &guide_duration_ms($spec, '');
+	return $anchor + abs($length) if defined $length && $length && !$past_words;
+	return undef unless $deep;
+	my $read = &time_machine_read($spec, $anchor, 1);
+	return undef unless defined $read;
+	# a bare length the guide read as past points forward for a warranty
+	$read = $anchor + ($anchor - $read) if $read < $anchor && !$past_words;
+	return $read;
+}
+
+# A duration in milliseconds, from the compact form ("5m", "1h 30m") or the
+# words ("five minutes", "an hour and a half"). Always a positive length; the
+# caller applies the start/record accrual sign.
+sub duration_read {
+	my ($spec) = @_;
+	return undef unless defined $spec && $spec =~ /\S/;
+	return $spec + 0 if $spec =~ /^\s*\d{12,}\s*$/;
+	my $ms = &guide_duration_ms($spec, '');
+	return $ms if defined $ms;
+	my $compact = &subs::time_abbrev_translator($spec);
+	return $compact if defined $compact && $compact =~ /^-?[0-9.]+$/ && $compact != 0;
+	return undef;
+}
+
+sub time_preview_date {
+	my ($ms) = @_;
+	return &subs::ui('not read') unless defined $ms;
+	return localtime(int($ms / 1000))->strftime('%A, %B %d %Y at %I:%M%p');
+}
+
+sub time_preview_schedule {
+	my ($result) = @_;
+	return { text => &subs::ui('Once'), read => 1 } unless $result;
+	if ($result->{'ask'}) {
+		return { text => &subs::ui('Needs a question when saved'), ask => $result->{'ask'}, read => 1 };
+	}
+	my $dates = $result->{'dates'} || [];
+	return { text => &subs::ui('Once'), read => 1 } unless scalar @{$dates};
+	my @say = map { localtime(int($_ / 1000))->strftime('%a %b %d') } @{$dates};
+	return { text => &subs::ui('Next') . ': ' . join(', ', @say), dates => \@say, read => 1 };
 }
 
 # A staged appointment's time, read the same way the time machine reads a typed
@@ -332,6 +422,7 @@ sub guide_when_ms {
 sub guide_duration_ms {
 	my ($phrase, $type) = @_;
 	return undef unless defined $phrase && $phrase =~ /\S/;
+	$phrase = &subs::number_words_to_digits($phrase);
 	my %mult = (
 		ms => 1, millisecond => 1, milliseconds => 1,
 		s => 1000, sec => 1000, secs => 1000, second => 1000, seconds => 1000,
@@ -342,14 +433,24 @@ sub guide_duration_ms {
 	);
 	my $total = 0;
 	my $seen = 0;
-	while ($phrase =~ /(\d+(?:\.\d+)?)\s*([a-z]*)/gi) {
-		my ($n, $u) = ($1, lc($2 || ''));
-		$u = 'm' if $u eq '';   # a bare number is minutes, as the app's own input reads it
-		my $m = $mult{$u};
+	while ($phrase =~ /(\d+(?:\.\d+)?)\s*([a-zA-Z]*)/g) {
+		my $n = $1;
+		my $u = $2 || '';
+		my $lower = lc($u);
+		$lower = 'm' if $lower eq '';   # a bare number is minutes, as the app's own input reads it
+		# an upper-case M is months; a lower-case m is minutes
+		my $m = ($u eq 'M') ? undef : $mult{$lower};
 		if (!defined $m) {
-			# a unit we do not know (months, years): let the app's own parser, whose
-			# month/year handling counts real calendar days, read just this part
-			my $ms = eval { &subs::time_abbrev_translator($n . $u, &subs::rightNow()) };
+			# months and years are calendar lengths, so the app's own parser reads
+			# them; pass it the compact unit, or a plural word loses its last 's'
+			# to the seconds branch
+			my $unit = $u eq 'M' ? 'M'
+				: $lower =~ /^month/ ? 'M'
+				: $lower =~ /^year/ ? 'y'
+				: $lower =~ /^decade/ ? 'D'
+				: $lower =~ /^centur/ ? 'c'
+				: $lower;
+			my $ms = eval { &subs::time_abbrev_translator($n . $unit, &subs::rightNow()) };
 			next unless defined $ms && $ms =~ /^-?[0-9.]+$/;
 			$m = int($ms) / $n;
 		}
@@ -617,7 +718,7 @@ sub timestamp_adjuster($c) {
 		}
 	}
 	if ($ago) {
-		$timestamp = &subs::ago_calc($ago,$timestamp);
+		$timestamp = &time_machine_resolve($ago,$timestamp);
 	}
 	return $timestamp;
 }
@@ -2391,7 +2492,7 @@ sub appointment_writer($c,$app) {
 	}
 
 	my $warranty_holder = $app->{'timestamp'} > $app->{'server_time'} ? $app->{'timestamp'} : $app->{'server_time'};
-	$app->{'warranty'} = $app->{'warranty'} || &subs::ago_calc(($init->{'warranty'} || '-10y'), $warranty_holder);
+	$app->{'warranty'} = $app->{'warranty'} || &warranty_resolve(($init->{'warranty'} || '-10y'), $warranty_holder, 1) || &subs::ago_calc(($init->{'warranty'} || '-10y'), $warranty_holder);
 	$app->{'project'} = $settings->{'t_project'} unless $app->{'project'};
 	$app->{'pos'} = $settings->{'pos'} unless $app->{'pos'};
 
@@ -6771,6 +6872,7 @@ my @manager_bundle_files = qw(
 	/js/store.js
 	/js/manager/twirl.js
 	/js/manager/transaction.js
+	/js/manager/time_preview.js
 	/js/manager/relational.js
 	/js/manager/warehouse.js
 	/js/manager/market.js
@@ -15904,7 +16006,8 @@ sub schedule_maker($c,$schedule,$timestamp) {
 	my $settings = &subs::settings_grabber({ app => $app });
 	my $warranty = $settings->{'warranty'};
 	$warranty = '-10y' unless defined $warranty && length $warranty;
-	my $default_until = &subs::ago_calc($warranty, $original_timestamp);
+	my $default_until = &warranty_resolve($warranty, $original_timestamp, 1);
+	$default_until = &subs::ago_calc($warranty, $original_timestamp) unless defined $default_until;
 
 	# One entry point: the compact interval syntax stays on the fast parser, and
 	# a phrase in words is read by the Guide and expanded here.
@@ -15930,8 +16033,9 @@ sub schedule_maker($c,$schedule,$timestamp) {
 	my $dates = $result->{'dates'} || [];
 	my $usual_duration = $settings->{'duration'};
 	$c->param('duration', $usual_duration) if ($c->param('lockingStatus') || '') eq 'on';
-	my $duration = &subs::time_abbrev_translator($c->param('duration'));
-	$duration = &subs::time_abbrev_translator($usual_duration) unless $c->param('duration') =~ /[a-z0-9A-Z]/;
+	my $duration = &duration_read($c->param('duration'));
+	$duration = &duration_read($usual_duration) unless defined $duration;
+	$duration = 0 unless defined $duration;
 	$duration = $duration * -1 if $type eq 'start' || $type eq 'record';
 
 	my $base_uuid = $c->param('uuid');
@@ -16268,9 +16372,9 @@ sub manager_reset($c) {
 	  Mojo::IOLoop->reset;
 		&remote_relay_request($c, { dissemination => 'yes' });
 	}, { name => 'reset remote relay' });
-	my $duration = &subs::time_abbrev_translator($c->param('duration'));
-
-	$duration = &subs::time_abbrev_translator($usual_duration) unless $c->param('duration') =~ /[a-z0-9A-Z]/;
+	my $duration = &duration_read($c->param('duration'));
+	$duration = &duration_read($usual_duration) unless defined $duration;
+	$duration = 0 unless defined $duration;
 	$c->param('uuid' => $uuid);
 	#&subs::setting_setter({ app => $app, setting => 'duration', value => $c->param('duration'), timestamp => $timestamp }) unless $usual_duration;
 
@@ -16325,7 +16429,11 @@ sub manager_reset($c) {
 
 	my $warranty_holder = $timestamp;
 	$warranty_holder = $server_time if $server_time > $timestamp;
-	my $warranty = &subs::ago_calc(($c->param('warranty') || &subs::setting_grabber({ app => $app, setting => 'warranty' }) || '-10y'),$warranty_holder);
+	my $warranty_spec = $c->param('warranty');
+	$warranty_spec = &subs::setting_grabber({ app => $app, setting => 'warranty' }) unless defined $warranty_spec && $warranty_spec =~ /\S/;
+	$warranty_spec = '-10y' unless defined $warranty_spec && $warranty_spec =~ /\S/;
+	my $warranty = &warranty_resolve($warranty_spec, $warranty_holder, 1);
+	$warranty = &subs::ago_calc($warranty_spec, $warranty_holder) unless defined $warranty;
 	$returner->{'warranty'} = $warranty;
 	my $usual_schedule = &subs::setting_grabber({ app => $app, setting => 'schedule' });
 	my $schedule = &schedule_maker($c,$c->param('schedule'),$timestamp);
@@ -16725,7 +16833,8 @@ sub manager_reset($c) {
 		my $appt = &subs::db_select('appointments', undef, {app => $app, type => ['record','start'] }, { -desc => 'timestamp' })->hashes->[0];
 		my $timestamp1 = $appt->{'timestamp'};
 		$duration = $appt->{'duration'} ? $appt->{'duration'} : $timestamp - $appt->{'timestamp'};
-		my $stop_timestamp = $c->param('duration') =~ /[a-z0-9A-Z]/ ? $timestamp + (abs &subs::time_abbrev_translator($c->param('duration') )) : $appt->{'stop_timestamp'} ? $timestamp + (abs $duration): undef;
+		my $delay = &duration_read($c->param('duration'));
+		my $stop_timestamp = defined $delay ? $timestamp + abs($delay) : $appt->{'stop_timestamp'} ? $timestamp + (abs $duration): undef;
 		$uuid = $appt->{'uuid'};
 		&subs::db_update('appointments', {
 			unit => $unit,
@@ -16807,7 +16916,7 @@ sub manager_reset($c) {
 		# own newer copy will arrive by sync. Guessing "the newest" here could
 		# reopen a different session.
 		if ($old->[0]) {
-			$duration = $c->param('duration') =~ /0-9a-zA-Z/ ? (abs $c->param('duration') * -1) : $timestamp - $old->[0]->{'timestamp'};
+			$duration = $c->param('duration') =~ /[a-z0-9A-Z]/ ? (abs($duration) * -1) : $timestamp - $old->[0]->{'timestamp'};
 			$uuid = $old->[0]->{'uuid'};
 			&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $old->[0]->{'app'}, 'state' => 'on', timestamp => $old->[0]->{'timestamp'} });
 			&subs::db_update('appointments', {
@@ -16823,7 +16932,7 @@ sub manager_reset($c) {
 					source => $source,
 					seen => $seen,
 					duration => ((abs $duration) * -1),
-					stop_timestamp => $c->param('duration') =~ /[a-zA-Z0-9]/ ? $old->[0]->{'timestamp'} - ((abs &subs::time_abbrev_translator($c->param('duration'))) * -1) : undef,
+					stop_timestamp => $c->param('duration') =~ /[a-zA-Z0-9]/ ? $old->[0]->{'timestamp'} + abs(&duration_read($c->param('duration')) // 0) : undef,
 					stop_seen => undef
 				}, {
 					app => $app,
@@ -17271,11 +17380,13 @@ post '/manager/transaction/record' => sub($c) {
 	my $timestamp = &timestamp_adjuster($c);
 
 	my $server_time = &subs::rightNow();
-	my $duration = $c->param('duration') || 5000;
+	my $duration = &duration_read($c->param('duration'));
+	$duration = 5000 unless defined $duration;
 	my $notes = &subs::note_encrypter(&subs::session_suds($c),$c->param('notes'));
 	my $movement = $c->param('movement');
 	my $transaction_information = $c->param('transaction_information');
-	my $warranty = &subs::ago_calc($c->param('warranty') || '-7y' || &subs::setting_grabber({ app => $app, setting => 'warranty' }), $timestamp);
+	my $warranty = &warranty_resolve($c->param('warranty'), $timestamp, 1);
+	$warranty = &subs::ago_calc('-7y', $timestamp) unless defined $warranty;
 
 	my $uuid = &subs::random_string_creator(40);
 	my $currency = $c->param('currency') || &subs::setting_grabber({ app => $app, setting => 'currency' });
@@ -42341,7 +42452,8 @@ post '/manager/edit_app' => sub($c) {
 	my $account = &subs::unformat_name($c->param('account'));
 	my $project = &subs::unformat_name($c->param('project'));
 	my $timestamp = $c->param('timestamp');
-	my $duration = &subs::time_abbrev_translator($c->param('duration'));
+	my $duration = &duration_read($c->param('duration'));
+	$duration = 0 unless defined $duration;
 	my $warranty = $c->param('warranty');
 	my $movement = $c->param('movement');
 	my $amount = $c->param('amount');
@@ -46810,10 +46922,95 @@ get '/manager/settings_grabber' => sub($c) {
 	$c->render(json => $s);
 };
 
+get '/manager/time_preview' => sub ($c) {
+	my $app = &subs::unformat_name($c->param('app'));
+	my $now = $c->param('timestamp') || &subs::rightNow();
+	my $deep = $c->param('deep') ? 1 : 0;
+	my $time_machine = $c->param('time_machine');
+	my $timeshift = $c->param('timeshift');
+	my $anchor = $now;
+	if ($time_machine) { $anchor = &time_machine_resolve($time_machine, $anchor); }
+	if ($timeshift && $timeshift =~ /[0-9]/) { $anchor = &subs::ago_calc($timeshift, $anchor); }
+
+	my $ago_spec = $c->param('ago') // '';
+	my $ago_ms = $anchor;
+	my $ago_read = 1;
+	if ($ago_spec =~ /\S/) {
+		my $read = &time_machine_read($ago_spec, $anchor, $deep);
+		if (defined $read) { $ago_ms = $read; }
+		else { $ago_read = 0; }
+	}
+
+	my $settings = $app ? &subs::settings_grabber({ app => $app }) : {};
+	my $is_transaction = $c->param('transaction') ? 1 : 0;
+	my $warranty_spec = $c->param('warranty') // '';
+	my $warranty_default = 0;
+	if ($warranty_spec !~ /\S/) {
+		$warranty_spec = $is_transaction ? '-7y' : ($settings->{'warranty'} || '-10y');
+		$warranty_default = 1;
+	}
+	my $warranty_ms = &warranty_resolve($warranty_spec, $ago_ms, $deep);
+
+	my $duration_spec = $c->param('duration') // '';
+	my $duration_default = 0;
+	my $duration_ms;
+	if ($duration_spec !~ /\S/ && $is_transaction) {
+		$duration_ms = 5000;
+		$duration_default = 1;
+	}
+	elsif ($duration_spec !~ /\S/) {
+		$duration_spec = $settings->{'duration'} // '';
+		$duration_default = 1;
+	}
+	$duration_ms = ($duration_spec =~ /\S/) ? &duration_read($duration_spec) : $duration_ms;
+
+	my $schedule_spec = $c->param('schedule') // '';
+	my $schedule = { text => &subs::ui('Once') };
+	if ($schedule_spec =~ /\S/) {
+		my $compact = &subs::schedule_parse($schedule_spec);
+		if ($compact->{'once'}) {
+			$schedule = { text => &subs::ui('Once') };
+		}
+		elsif ($deep || !$compact->{'error'}) {
+			my $result = &subs::schedule_from_text($schedule_spec, $ago_ms,
+				app => $app, default_until => $warranty_ms, max => 3);
+			$schedule = &time_preview_schedule($result);
+		}
+		else {
+			$schedule = { text => &subs::ui('Read when saved'), read => 0 };
+		}
+	}
+
+	$c->render(json => {
+		ago => {
+			text => $ago_read
+				? (&subs::ui('Saves') . ' ' . &time_preview_date($ago_ms))
+				: ($deep ? &subs::ui('Could not read a time') : &subs::ui('Reading the words...')),
+			timestamp => $ago_ms,
+			read => $ago_read,
+		},
+		warranty => {
+			text => ($warranty_default ? &subs::ui('Default') . ': ' : &subs::ui('Expires') . ' ')
+				. (defined $warranty_ms ? &time_preview_date($warranty_ms) : ($deep ? &subs::ui('Could not read a warranty') : &subs::ui('Reading the words...'))),
+			timestamp => $warranty_ms,
+			default => $warranty_default,
+			read => (defined $warranty_ms ? 1 : 0),
+		},
+		duration => {
+			text => ($duration_default ? &subs::ui('Usual length') : &subs::ui('Length')) . ': '
+				. (defined $duration_ms ? &subs::duration_sayer(abs($duration_ms) / 1000) : &subs::ui('none')),
+			milliseconds => $duration_ms,
+			default => $duration_default,
+			read => (defined $duration_ms ? 1 : 0),
+		},
+		schedule => $schedule,
+	});
+};
+
 get '/manager/ago' => sub ($c) {
 	my $ago = $c->param('ago');
 	my $timestamp = $c->param('timestamp') || &subs::rightNow();
-	$timestamp = &subs::ago_calc($ago,$timestamp);
+	$timestamp = &time_machine_resolve($ago,$timestamp);
 	$c->render(text => $timestamp);
 };
 

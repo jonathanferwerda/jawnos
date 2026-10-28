@@ -125,13 +125,27 @@
 				</div>
 			<% } %>
 			<div class="main_inputs_row" app="<%= $a %>">
-				<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" />
-				<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="duration" />
-				<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="quantity">
+				<span class="main_input_field">
+					<input type="text" class="ago main_input" app="<%= $a %>" text="ago" placeholder="ago" />
+					<span class="main_input_preview ago_preview" app="<%= $a %>"></span>
+				</span>
+				<span class="main_input_field">
+					<input type="text" class="duration main_input" app="<%= $a %>" text="duration" placeholder="duration" />
+					<span class="main_input_preview duration_preview" app="<%= $a %>"></span>
+				</span>
+				<span class="main_input_field">
+					<input type="text" class="quantity main_input" app="<%= $a %>" text="quantity" placeholder="quantity">
+				</span>
 			</div>
 			<div class="main_inputs_row" app="<%= $a %>">
-				<input type="text" class="schedule main_input" app="<%= $a %>" text="schedule" placeholder="1d for -2w" hint="Repeat in an interval or plain words: 1d for -2w is every day for two weeks; every third Saturday, the next 5 full moons." />
-				<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="warranty" />
+				<span class="main_input_field">
+					<input type="text" class="schedule main_input" app="<%= $a %>" text="schedule" placeholder="<%= &subs::ui('Schedule') %>" hint="Repeat in an interval or plain words: 1d for -2w is every day for two weeks; every third Saturday, the next 5 full moons." />
+					<span class="main_input_preview schedule_preview" app="<%= $a %>"></span>
+				</span>
+				<span class="main_input_field">
+					<input type="text" class="warranty main_input" app="<%= $a %>" text="warranty" placeholder="warranty" />
+					<span class="main_input_preview warranty_preview" app="<%= $a %>"></span>
+				</span>
 			</div>
 			<br>
 			<textarea class="timed_input notes" rows="3" app="<%= $a %>" text="notes" placeholder="note" upgradeable="yes" magic_vars="appointment:<%= $a %>"></textarea>
