@@ -41,8 +41,11 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
 - **Split large files — a `413 payload too large` means the request was the problem, not the tool.**
   Never retry it unchanged. Read source/JSON/logs by line range or with `sed -n`; read a log by its
   tail. Never pull a raw screenshot, PDF, audio or video into context: downscale first
-  (`magick in.png -resize 1024x1024\> /tmp/small.png` — aim under ~150 KB), then look at the small one.
-  A capture PNG is 0.2–2.7 MB and its base64 is larger still; that is what a 413 is made of. For a
+  (`magick in.png -resize 1024x1024\> -quality 82 /tmp/small.webp` — aim under ~150 KB), then look at the
+  small one. **Write screenshots as WebP, not PNG:** a WebP capture is typically 3–10× smaller than the
+  same PNG and the image reader accepts it, so it is far less likely to hit the payload limit; prefer
+  `.webp` for every `.shots` capture you create. A capture PNG is 0.2–2.7 MB and its base64 is larger
+  still; that is what a 413 is made of. For a
   large write, generate it with a script (`write_file`/heredoc in sections), not by echoing the whole
   body through the model. If an HTTP upload answers 413, send one file per request or in parts. Compress,
   crop and thumbnail as its own step (see `scripts/gallery/`), then inspect the contact sheet.
