@@ -121,6 +121,15 @@ if ($device eq 'mobile' && `ps -e | grep sshd` eq '') {
 	`sshd`;
 }
 
+# A record press may name its source (the media group's video/audio/screen
+# buttons do). Only the sources this build can actually run are accepted; an
+# empty or unknown value falls back to the app's own setting.
+sub record_source_param($source) {
+	$source = '' unless defined $source;
+	return '' unless $source =~ /^(?:video|video_front|audio|screen|security|system)$/;
+	return $source;
+}
+
 sub record_video($data) {
 	return if $device eq 'mobile';
 	my $app = $data->{'app'};
@@ -875,6 +884,10 @@ sub take_picture($c,$data) {
 		return ('denial','denial');
 	}
 	if (!grep { $_ eq $data->{'camera'} } @{$gb::capabilities->{&subs::device_setter()}->{'camera'}}) {
+		# A person who named a machine pointed at that machine: if it has no such
+		# camera, the capture simply does not happen. Only an unpointed press
+		# looks around the house for a camera that can take it.
+		return ('denial','denial') if ($remote_uuid ne '');
 		&remote_relay_request($c);
 		return ('denial','denial');
 	}
@@ -1040,6 +1053,9 @@ sub scan($c,$scandata) {
 		return 'denial';
 	}
 	if (!grep { $_ eq $scandata->{'feed'} } @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] }) {
+		# as with a picture: a named machine that cannot scan with this feeder is
+		# the end of the request, not a reason to scan somewhere else
+		return 'denial' if ($remote_uuid ne '');
 		&remote_relay_request($c);
 		return 'denial';
 	}
@@ -2514,7 +2530,11 @@ sub appointment_writer($c,$app) {
 
 
 	if ($app->{'type'} eq 'record') {
-		my $recording_type = &subs::setting_grabber({ app => $app->{'app'}, setting => 'record' });
+		# a press may name the source on the row itself (see manager_reset); a
+		# scheduled or synced record keeps the app's setting
+		my $recording_type = &record_source_param($app->{'recorder'})
+			|| &subs::setting_grabber({ app => $app->{'app'}, setting => 'record' })
+			|| 'system';
 		my $dat = { recorder => $recording_type };
 
 		if ($recording_type eq 'video') {
@@ -16611,6 +16631,13 @@ sub manager_reset($c) {
 		}
 	}
 	my $returner = { app => $app, timestamp => $timestamp, server_time => $server_time, init => $init, uuid => $uuid };
+	# A media press names the machine that does the work (the camera, scan and
+	# record dropdowns carry its signatorial). The request is relayed to that
+	# machine, which reads its own signatorial back and captures; this one only
+	# writes the row. Without the guard both ends capture - the duplicate
+	# pictures the old "any camera in the house" path produced.
+	my $capture_machine = $c->param('remote_signatorial') || '';
+	my $capture_here = ($capture_machine eq '' || $capture_machine eq &subs::signatorial_designer()) ? 1 : 0;
 	my $source = $c->param('source');
 	my $measure_is_open = $c->param('measure_is_open');
 	my $usual_duration = $init->{'duration'};
@@ -16700,9 +16727,15 @@ sub manager_reset($c) {
 	if ($type eq 'start' || $type eq 'record') {
 		my $jdata;
 		if ($type eq 'record') {
-			my $recording_type = &subs::setting_grabber({ app => $app, setting => 'record' });
+			# A media button names its source on the press itself (video, audio,
+			# screen); a plain record press follows the app's own setting. Only a
+			# source this build knows is written, so a stray parameter cannot put
+			# an unknown recorder in the row the Alarm loop later reads.
+			my $recording_type = &record_source_param($c->param('recorder'))
+				|| &subs::setting_grabber({ app => $app, setting => 'record' })
+				|| 'system';
 			my $machine = $c->param('remote_signatorial') || '';
-			my $here = ($machine eq '' || $machine eq &subs::signatorial_designer()) ? 1 : 0;
+			my $here = $capture_here;
 			my $dat = { recorder => $recording_type, machine => $machine };
 			if ($recording_type eq 'video') {
 				$seen = undef;
@@ -17267,7 +17300,7 @@ sub manager_reset($c) {
 		};
 		&subs::db_insert('appointments', $data);
 		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
-		if ($seen eq 'yes') {
+		if ($seen eq 'yes' && $capture_here) {
 			my ($file,$ocr) = &take_picture($c,{ timestamp => $timestamp, camera => $camera, uuid => $uuid });
 		}
 	}
@@ -17299,7 +17332,7 @@ sub manager_reset($c) {
 			browser_tab_id => $browser_tab_id
 		});
 		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
-		if ($seen eq 'yes') {
+		if ($seen eq 'yes' && $capture_here) {
 			my $file = &scan($c, $scandata);
 		}
 	}
@@ -42751,10 +42784,31 @@ get '/manager/edit_app' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $uuid = $c->param('uuid');
 	my $select = &subs::db_select('appointments', undef, { app => $app, uuid => $uuid, timestamp => $timestamp })->hashes->[0];
+	return $c->render(text => 'not found', status => 404) unless $select && defined $select->{'uuid'};
 	my $s = &subs::session_suds($c);
 	foreach my $note_type (qw/start_notes notes end_notes/) {
 		$select->{$note_type} = &subs::note_decrypter($s, $select->{$note_type},$select->{'ost'}) if eval { &subs::note_decrypter($s, $select->{$note_type},$select->{'ost'}) };
 	}
+	# The editor previews the row's own file. A media row keeps a JSON list of
+	# {f,uuid,...}; an older row may hold a plain path. Preparing it here keeps
+	# the template free of decode logic (and of the log reader's row globals).
+	my @edit_files;
+	my $raw_file = $select->{'file'} // '';
+	if (length $raw_file) {
+		my $list = eval { return decode_json $raw_file };
+		$list = [ $list ] if ref $list eq 'HASH' && defined $list->{'f'};
+		if (ref $list ne 'ARRAY') { $list = [ { f => $raw_file } ]; }
+		foreach my $f ( @{$list} ) {
+			next unless ref $f eq 'HASH' && defined $f->{'f'} && length $f->{'f'};
+			my $ext = lc($f->{'f'});
+			my $file_type = $ext =~ /\.(?:jpe?g|png|bmp|tiff|gif|webp)(?:\?|$)/ ? 'img'
+				: $ext =~ /\.(?:wav|mp3|aiff|weba|m4a|flac|ogg)(?:\?|$)/ ? 'snd'
+				: $ext =~ /\.(?:mp4|avi|mov|webm|mkv)(?:\?|$)/ ? 'vid' : 'file';
+			push @edit_files, { file => $f->{'f'}, uuid => $f->{'uuid'}, function => $f->{'function'}, type => $f->{'type'}, name => $f->{'name'}, file_type => $file_type };
+		}
+	}
+	$select->{'files'} = \@edit_files;
+	$select->{'data_hash'} = (eval { return decode_json $select->{'data'} }) || {};
 	my $appts = &log_reader({ app => $app, view => 'appointment_display' });
 	# The form renders against one app key; without it every $appts->{$a} lookup
 	# in the details block resolved to the empty key and the form came back blank,

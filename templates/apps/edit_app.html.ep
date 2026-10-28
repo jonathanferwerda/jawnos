@@ -1,7 +1,23 @@
+<% no warnings 'uninitialized'; %>
+<%# The editor follows the row's own type: a transaction keeps the money form,
+    a start/record keeps its session fields (where a quantity edit documents a
+    shelf move), a picture/recording keeps its preview, and a note keeps notes.
+    Only the controls actually rendered are saved (manager.js sends `sent`), so
+    a narrower form can never blank a column it does not show. %>
+<% my $type = $app->{'type'} || 'usual'; %>
+<% my %money = map { $_ => 1 } qw/transaction purchase quote invoice sale expense income/; %>
+<% my %session = map { $_ => 1 } qw/start record stop usual measure resume renew pause complete delay cancel/; %>
+<% my %media = map { $_ => 1 } qw/image video audio scan camera snapshot/; %>
+<% my $server_time = &subs::rightNow(); %>
+<span class="edit_app_type" type="<%= $type %>" style="display:block;font-size:13px;opacity:.8;margin-bottom:4px;"><%= &subs::format_name($type) %></span>
 App: <input attribute="app" value="<%= &subs::format_name($app->{'app'}) %>"><br>
 Timestamp: <input attribute="timestamp" class="time" timestamp="<%= $app->{'timestamp'} %>"><br>
-Duration: <input attribute="duration" value="<% if ($app->{'duration'} < 0) { %>-<% } %><%= &subs::duration_sayer($app->{'duration'} / 1000) %>"><br>
 Warranty: <input attribute="warranty" class="time" timestamp="<%= $app->{'warranty'} %>"><br>
+<% if ($session{$type}) { %>
+	Duration: <input attribute="duration" value="<% if ($app->{'duration'} < 0) { %>-<% } %><%= &subs::duration_sayer($app->{'duration'} / 1000) %>"><br>
+	Quantity: <input attribute="quantity" class="quantity" value="<%= $app->{'quantity'} %>" placeholder="<%= &subs::ui('Quantity') %>">
+	Unit: <input attribute="unit" value="<%= $app->{'unit'} %>" placeholder="<%= &subs::ui('Unit') %>" style="max-width:90px;"><br>
+<% } %>
 <img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="medium_thumb edit_app_submit hover" uuid="<%= $app->{'uuid'} %>" app="<%= $app->{'app'} %>">
 <span class="edit_app_extras" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;margin-left:12px;">
 	<input attribute="clone_name" placeholder="<%= &subs::ui('New name for a clone') %>" style="min-width:150px;">
@@ -9,10 +25,32 @@ Warranty: <input attribute="warranty" class="time" timestamp="<%= $app->{'warran
 	<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete app" class="medium_thumb edit_app_delete hover" uuid="<%= $app->{'uuid'} %>" app="<%= $app->{'app'} %>" timestamp="<%= $app->{'timestamp'} %>" type="<%= $app->{'type'} %>">
 	<span class="edit_app_status" style="font-size:12px;opacity:.75;"></span>
 </span>
-<%= include 'apps/app_details', appts => $appts, a => $app->{'app'}, app => $app %>
-<br>
+<% if ($media{$type}) { %>
+	<%# what the row actually holds: the picture, the recording, or the scan %>
+	<span class="edit_app_media" app="<%= $app->{'app'} %>" style="display:block;margin:6px 0;">
+		<% foreach my $f ( @{ $app->{'files'} || [] } ) { %>
+			<% if ($f->{'file_type'} eq 'img') { %>
+				<img class="detail_image" src="/file_open?app=<%= $app->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $server_time %>" style="max-width:240px;max-height:160px;vertical-align:top;">
+			<% } elsif ($f->{'file_type'} eq 'snd') { %>
+				<audio controls src="/file_open?app=<%= $app->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $server_time %>"></audio>
+			<% } elsif ($f->{'file_type'} eq 'vid') { %>
+				<video controls src="/file_open?app=<%= $app->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $server_time %>" style="max-width:240px;max-height:160px;"></video>
+			<% } else { %>
+				<span style="font-size:12px;opacity:.75;"><%= $f->{'file'} %></span>
+			<% } %>
+		<% } %>
+		<% if (!scalar @{ $app->{'files'} || [] }) { %>
+			<span style="font-size:12px;opacity:.75;"><%= &subs::ui('No file is attached to this record yet.') %></span>
+		<% } %>
+	</span>
+	<% my $data = $app->{'data_hash'} || {}; %>
+	<% if ($data->{'recorder'}) { %><span style="font-size:12px;opacity:.75;"><%= &subs::ui('Recorded as') %>: <%= &subs::format_name($data->{'recorder'}) %><% if ($data->{'machine'}) { %> &#183; <%= $data->{'machine'} %><% } %></span><br><% } %>
+	<% if ($data->{'camera'} || $app->{'camera'}) { %><span style="font-size:12px;opacity:.75;"><%= &subs::ui('Camera') %>: <%= $data->{'camera'} // $app->{'camera'} %></span><br><% } %>
+<% } %>
+<% if ($money{$type}) { %>
+	<%= include 'apps/app_details', appts => $appts, a => $app->{'app'}, app => $app %>
+<% } %>
 <% foreach my $note_type ( qw/start_notes notes end_notes/ ) { %>
 	<%= &subs::format_name($note_type) %><br>
 	<textarea attribute="<%= $note_type %>"><%= $app->{$note_type} %></textarea><br>
 <% } %><br>
-

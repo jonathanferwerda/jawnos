@@ -4354,8 +4354,20 @@ function managerReset(caller,e) {
 	var club = form.find('.club').val();
 	var camera = details.attr('camera');
 	var feed = details.attr('feed');
-	// which machine the media button names (a peer uuid, empty for this one)
+	var type = details.attr('type');
+	// the media group's video/audio/screen buttons are record presses: the button
+	// names the source, the row is a type=record like any other (so it moves
+	// stock, stops, and edits the same way). A plain record press reads the
+	// record row's machine too, so the dropdown governs every way of recording.
+	var recorder = '';
 	var media_group = details.attr('media_group') || '';
+	if (media_group == 'record' && (type == 'video' || type == 'audio' || type == 'screen')) {
+		recorder = type;
+		type = 'record';
+	}
+	else if (!media_group && type == 'record') {
+		media_group = 'record';
+	}
 	var media_machine = media_group ? container.find('.media_machine[group="' + media_group + '"]').first() : $();
 	var remote_uuid = media_machine.length ? (media_machine.val() || '') : '';
 	var remote_signatorial = media_machine.length ? (media_machine.find('option:selected').attr('data-signatorial') || '') : '';
@@ -4368,7 +4380,6 @@ function managerReset(caller,e) {
 	var quantity = container.find('.main_input.quantity').val();
 	var notes = container.find('.text_editor').html();
 	var now = Date.now();
-	var type = details.attr('type');
 	// a stop names the session it closes: the appointment header carries the open
 	// session's uuid, so the server stops that row on every machine and not
 	// whichever open session each machine happens to hold (which left a stale one
@@ -4408,6 +4419,7 @@ function managerReset(caller,e) {
 		feed: feed,
 		remote_uuid: remote_uuid,
 		remote_signatorial: remote_signatorial,
+		recorder: recorder,
 		digits: digits,
 		schedule: schedule,
 		movement: movement,
