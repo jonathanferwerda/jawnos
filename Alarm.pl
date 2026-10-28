@@ -95,6 +95,14 @@ sub alarm_clock() {
 				(( $_->{'timestamp'} <= $timestamp && $_->{'seen'} ne 'yes' ) ||
 				( $_->{'stop_timestamp'} && $_->{'stop_timestamp'} <= $timestamp && $_->{'stop_seen'} ne 'yes' &&  grep { $a->{'type'} eq $_ } qw/start video audio screen record/) )
 			} @{$alarm};
+			# A record that names a machine is that machine's work. Every machine
+			# reads the same row over the mesh, so only the named one may claim it
+			# (and mark it seen) - otherwise whichever wakes first wins.
+			@{$alarm} = grep {
+				my $d = eval { decode_json $_->{'data'} } || {};
+				my $m = $d->{'machine'} || '';
+				$m eq '' || $m eq &subs::signatorial_designer();
+			} @{$alarm};
 			$current_alarm = scalar @{$alarm};
 			my $interval = 'second';
 			my $default_warranty = &subs::setting_grabber({ app => 'me', setting => 'warranty' }) || '-10d';
