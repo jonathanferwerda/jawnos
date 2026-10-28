@@ -73,9 +73,8 @@
     },
     {
       "id": "08-people",
-      "kind": "app",
-      "app": "people",
-      "window": [0, 76, 1920, 1004],
+      "kind": "layout",
+      "prep": { "layout": "timeline", "scope": "day", "sorts": "timestamp", "bg": "off", "theme": "nord" },
       "site": {
         "include": true,
         "slug": "people-and-things",

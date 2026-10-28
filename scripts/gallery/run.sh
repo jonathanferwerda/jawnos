@@ -194,7 +194,7 @@ if [ $i -ge 30 ]; then echo "guest did not come back after the seed" >&2; exit 1
 python3 demo_extra_seed.py jawnos/database/jawnos.db
 python3 gallery_seed.py jawnos/database/jawnos.db
 echo "guest appointments: $(sqlite3 jawnos/database/jawnos.db 'select count(*) from appointments')"
-echo "guest albums:       $(sqlite3 jawnos/database/jawnos.db \"select app from appointments where app in ('t-watch','t-deck','studio','plein_air','portraits') group by app\" | wc -l)"
+echo "guest albums:       $(sqlite3 jawnos/database/jawnos.db \"select count(distinct app) from appointments where app='t-watch' or app='t-deck' or app='studio' or app='plein_air' or app='portraits'\")"
 REMOTE
   say "seed: $(elapsed "$T0")"
 fi
