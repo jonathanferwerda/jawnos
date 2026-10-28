@@ -21,12 +21,14 @@
 <%# Cartoon world is the new look; art is the older drifting logo. %>
 <% my $screensaver_style = &subs::setting_grabber({ app => 'misc', setting => 'screensaver_style' }) || 'cartoon'; %>
 <% $screensaver_style = 'cartoon' unless $screensaver_style =~ /^(?:cartoon|art)$/; %>
-<div class="padlock_frame" mode="<%= $frame_mode %>" target="<%= $frame_target %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
+<% my $open_app = $c->stash('open_app') || ''; %>
+<% my $open_timestamp = $c->stash('open_timestamp') || ''; %>
+<div class="padlock_frame" mode="<%= $frame_mode %>" target="<%= $frame_target %>" data-open-app="<%= &subs::html_text($open_app) %>" data-open-timestamp="<%= &subs::html_text($open_timestamp) %>" style="background-color:<%= &subs::random_colour_grabber() %>;">
 	<h1 id="padlock_taunts"></h1>
 	<% my $scope = $frame_mode eq 'private' ? 'Private apps are locked.' : $frame_mode =~ /^(?:gallery|music|folders)$/ ? 'This app is locked.' : ($frame_target ? 'This screen is locked.' : 'The house is locked.'); %>
 	<div class="padlock_message"><%= $scope %><br><%= &subs::ui('Unlock on your phone, with a fingerprint, or with the recovery code.') %></div>
 	<div class="padlock_emblem">
-		<%= include 'denial_image' %>
+		<% unless ($c->stash('no_denial_image')) { %><%= include 'denial_image' %><% } %>
 		<div class="padlock_lock_art" style="display:none;">
 			<img class="padlock_locked" src="<%= &subs::icon_drawn('/images/jbuttons/padlock lock.png') %>" alt="Locked">
 			<img class="padlock_unlocked" src="<%= &subs::icon_drawn('/images/jbuttons/padlock unlock.png') %>" alt="Unlocked">

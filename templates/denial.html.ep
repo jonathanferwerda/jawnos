@@ -1,5 +1,12 @@
-<div id="denial_window" >
+<% my $private_denial = $c->stash('private_denial') ? 1 : 0; %>
+<% my $denial_app = $c->stash('denial_app') || ''; %>
+<% my $denial_timestamp = $c->stash('denial_timestamp') || ''; %>
+<div id="denial_window"<% if ($private_denial) { %> class="denial_private"<% } %>>
 	<%= include 'denial_image' %>
+	<% if ($private_denial) { %>
+		<% $c->stash(no_denial_image => 1, mode => 'private', target => '', fingerprint => 1, open_app => $denial_app, open_timestamp => $denial_timestamp); %>
+		<%= include 'padlock' %>
+	<% } %>
 </div>
 <style>
 #denial_window {
@@ -9,4 +16,21 @@
 	width: 100%;
 	height: 100%;
 }
+/* A private app opened in a private place shows the same padlock as Gallery,
+   Folders and Music under the denial picture. The padlock keeps its own
+   hand-drawn lock for the reading animation, so only its copy of the denial
+   image is hidden. */
+#denial_window.denial_private { overflow:auto; padding:10px 0 24px; }
+#denial_window.denial_private > .denial_image { max-height:42% !important; }
+#denial_window.denial_private .padlock_frame {
+	position:relative !important;
+	inset:auto !important;
+	top:auto !important;
+	left:auto !important;
+	transform:none !important;
+	margin:12px auto 0 !important;
+	width:min(300px, 92%) !important;
+}
+#denial_window.denial_private .padlock_emblem { min-height:110px; }
+#denial_window.denial_private .padlock_emblem .denial_image { display:none; }
 </style>

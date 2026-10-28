@@ -1135,7 +1135,7 @@ sub thumbs_bundle_one {
 	my $bundle_owner = &subs::unformat_name($q->param('app') || '');
 	$bundle_owner = &folders_owning_app($file) unless length $bundle_owner;
 	if (length $bundle_owner && &subs::app_private_now($bundle_owner)
-		&& (!&subs::private_reachable_now() || !&subs::private_revealed())) {
+		&& (!&subs::private_reachable_now() || !&media_grant_open($c))) {
 		return undef;
 	}
 	my $appt_uuid = $q->param('app_uuid') || $q->param('appt_uuid') || '';
@@ -1697,6 +1697,21 @@ sub rock_and_roll($c) {
 	# track used to answer "no" while the signed manifest still worked. The
 	# signature is the stronger proof, so it admits a file read on its own.
 	my $peer_signed = &app_peer_ok($c) ? 1 : 0;
+	# A private app's files are not served outside a private place, and inside one
+	# they wait for a fingerprint: the private grant, or the Gallery/Folders/Music
+	# padlock on this screen. The check is before the peer relay and before as_is,
+	# so no route variant bypasses it. A signed peer relay is allowed through
+	# because the asking machine already applied the same rule to its own screen.
+	my $requested_file = $c->param('file') || $c->param('track') || '';
+	my $private_owner = &subs::unformat_name($c->param('app') || '');
+	$private_owner = &folders_owning_app($requested_file) unless length $private_owner;
+	if (length $private_owner && &subs::app_private_now($private_owner)) {
+		my $relay_trusted = $peer_signed && (($c->param('remoted') || '') eq 'yes' || ($c->param('subprocess') || '') eq 'yes');
+		if (!$relay_trusted && (!&subs::private_reachable_now() || !&media_grant_open($c))) {
+			$c->render(text => 'none');
+			return;
+		}
+	}
 	if ($c->param('remote_uuid') && $c->param('remoted') ne 'yes') {
 		# a track is streamed; everything else on this relay is a bounded body
 		if ($c->req->url->path eq '/play') {
@@ -1782,16 +1797,6 @@ sub rock_and_roll($c) {
 		}
 		my @ext = split /\./, $file;
 		my $ext = $ext[-1];
-		# A private app's files are not served outside a private place, and inside
-		# one they wait for the fingerprint grant. The check comes before as_is and
-		# the decrypt/thumbs paths so no route variant can bypass it.
-		my $owner = &subs::unformat_name($c->param('app') || '');
-		$owner = &folders_owning_app($file) unless length $owner;
-		if (length $file && length $owner && &subs::app_private_now($owner)
-			&& (!&subs::private_reachable_now() || !&subs::private_revealed())) {
-			$c->render(text => 'none');
-			return;
-		}
 		my $timestamp = $c->param('timestamp') || &subs::rightNow();
 		my $filename = $file;
 	#	return 'no' unless -e &subs::terminal_name($file);
@@ -26923,8 +26928,23 @@ sub centre_view_grabber($data) {
 		# fetch the same set again
 		my $appts = $data->{'appts'} || &log_reader({ app => $app, view => 'centre_view'  });
 		if (!$appts->{$app}) {
+			# A private app the person may unlock here (a private place with no
+			# enemy) gets the same fingerprint padlock the media apps carry, under
+			# the denial picture. Outside such a place there is nothing to unlock,
+			# so the plain denial stays.
+			my $private_denial = (&subs::app_private_now($app) && &subs::private_reachable_now()) ? 1 : 0;
+			# The denial template reads these from the stash (render_to_string args
+			# are template locals), so set them here before it is drawn.
+			$c->stash(
+				private_denial => $private_denial,
+				denial_app => $app,
+				denial_timestamp => $timestamp,
+			);
 			$string = $c->render_to_string(
 				template => 'denial',
+				private_denial => $private_denial,
+				denial_app => $app,
+				denial_timestamp => $timestamp,
 			);
 			$app = 'Denied';
 		} else {
@@ -35620,6 +35640,19 @@ sub help_media_revealed {
 	return help_media_unlocked($device) ? 1 : 0;
 }
 
+# A file read is not an app window: /file_open and /play do not carry the media
+# app's own unlock token. Any live media grant on this screen is still a
+# fingerprint, so a private file loads after Gallery, Folders or Music was
+# unlocked (or after Security's Private apps grant). The place gate is checked
+# by the caller.
+sub media_grant_open($c) {
+	return 1 if &subs::private_revealed();
+	return 0 unless $c;
+	my $device = &media_unlock_device($c) || $subs::request_device_uuid;
+	return 0 unless defined $device && length $device;
+	return &help_media_unlocked($device) ? 1 : 0;
+}
+
 # Whether one page's `unlock` token opens one media app's padlock. The token is
 # checked against the grant stored for this device: a token minted on another
 # screen or another machine is no proof here, and a fresh open carries none and
@@ -40413,7 +40446,7 @@ sub padlock_mark_unlocked {
 					: ($mode eq 'security')
 					? 'if (typeof jawnosSecurityGrant === "function") { jawnosSecurityGrant("' . $token . '"); }'
 					: ($mode eq 'private')
-					? '$("#security_private_padlock").hide(); if (typeof jawnosPrivateRefresh === "function") { jawnosPrivateRefresh(); }'
+					? '$("#security_private_padlock").hide(); if (typeof jawnosPrivateRefresh === "function") { jawnosPrivateRefresh(1); }'
 					: '$("#folders").attr("unlock", "' . $token . '"); if (typeof foldersOpener === "function") { foldersOpener(); }';
 				# one window's message, so another tab of the same screen stays
 				# shut and no peer is told to drop a token it never held

@@ -913,8 +913,10 @@ function jawnosMediaLockBeacon(app) {
 
 // Private apps belong to a private place and still need a fingerprint. A grant
 // is device-wide (the Security padlock or an app's own lock); this redraws every
-// surface that lists apps without changing which window is in front.
-function jawnosPrivateRefresh() {
+// surface that lists apps without changing which window is in front. opened=1
+// says a grant was just made, so a denial window that was asking for one can
+// now open the app it named.
+function jawnosPrivateRefresh(opened) {
 	if (typeof calculator === 'function') { calculator(); }
 	if (typeof appointment_chron === 'function') { appointment_chron(); }
 	if (typeof galleryFetch === 'function' && $('#gallery').length) { galleryFetch(true); }
@@ -924,6 +926,17 @@ function jawnosPrivateRefresh() {
 	// naming a private app until the cache is dropped
 	if (typeof startMenuHtml !== 'undefined') { startMenuHtml = {}; }
 	if ($('#start_menu').is(':visible') && typeof startMenuToggle === 'function') { startMenuToggle({ source: 'private' }); }
+	if (opened === 1) {
+		var frame = $('.padlock_frame[data-open-app]').filter(':visible').first();
+		if (frame.length) {
+			var app = frame.attr('data-open-app') || '';
+			var ts = frame.attr('data-open-timestamp') || Date.now();
+			var deny = frame.closest('.wind');
+			var deny_id = deny.attr('id') || '';
+			if (/^window_/.test(deny_id) && typeof closeWindow === 'function') { closeWindow(deny_id.replace('window_', '')); }
+			if (app && typeof appointmentGrabber === 'function') { appointmentGrabber(app, ts); }
+		}
+	}
 }
 
 // Clear the visible state at once and ask the app to draw its locked view when
@@ -968,7 +981,7 @@ function jawnosMediaApplyToken(app, token, target) {
 	// Private has no window of its own: its grant changes what the server will
 	// list, so every surface is redrawn instead of one app's token attribute.
 	if (app === 'private') {
-		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(); }
+		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(1); }
 		return;
 	}
 	var root = $('#' + app);
