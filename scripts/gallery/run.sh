@@ -2,6 +2,7 @@
 # One command for the jawnos.ca screenshot gallery.
 #
 #   scripts/gallery/run.sh                 capture the live guest + publish the site
+#   scripts/gallery/run.sh --boot          start the demo VM on the table first
 #   scripts/gallery/run.sh --all           reseed the guest first, then do both
 #   scripts/gallery/run.sh --sync          fast-forward the guest tree to origin/main
 #   scripts/gallery/run.sh --seed          only rebuild the guest's demo database
@@ -42,6 +43,7 @@ DO_SEED=0
 DO_SHOOT=0
 DO_PUBLISH=0
 DO_SYNC=0
+DO_BOOT=0
 DEPLOY=${DEPLOY:-}
 NO_TUNNEL=0
 DRY=0
@@ -54,6 +56,7 @@ for arg in "$@"; do
     --shoot) DO_SHOOT=1 ;;
     --publish) DO_PUBLISH=1 ;;
     --sync) DO_SYNC=1 ;;
+    --boot) DO_BOOT=1 ;;
     --deploy) DO_PUBLISH=1; DEPLOY=pages ;;
     --deploy-50webs) DO_PUBLISH=1; DEPLOY=50webs ;;
     --deploy-both) DO_PUBLISH=1; DEPLOY=both ;;
@@ -75,7 +78,7 @@ for arg in "$@"; do
   [ "$arg" = "--only" ] || PREV=$arg
 done
 
-if [ "$DO_SEED" = 0 ] && [ "$DO_SHOOT" = 0 ] && [ "$DO_PUBLISH" = 0 ] && [ "$DO_SYNC" = 0 ]; then
+if [ "$DO_SEED" = 0 ] && [ "$DO_SHOOT" = 0 ] && [ "$DO_PUBLISH" = 0 ] && [ "$DO_SYNC" = 0 ] && [ "$DO_BOOT" = 0 ]; then
   DO_SHOOT=1
   DO_PUBLISH=1
 fi
@@ -108,6 +111,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [ "$DRY" = 1 ]; then
+  say "boot:    $DO_BOOT"
   say "sync:    $DO_SYNC"
   say "seed:    $DO_SEED ($DEMO_SEED -> $DEMO_DB)"
   say "shoot:   $DO_SHOOT ($SHOTS)"
@@ -117,6 +121,28 @@ if [ "$DRY" = 1 ]; then
 fi
 
 T0=$(now)
+
+# ---------------------------------------------------------------- boot ------
+if [ "$DO_BOOT" = 1 ]; then
+  phase "boot the demo VM"
+  scp -q -P "$TABLE_SSH" -o BatchMode=yes \
+    "$ROOT/scripts/gallery/vm_boot.sh" "$TABLE:/tmp/jawnos-gallery-vm.sh"
+  ssh -p "$TABLE_SSH" -o BatchMode=yes "$TABLE" "sh /tmp/jawnos-gallery-vm.sh"
+  i=0
+  while [ $i -lt 90 ]; do
+    if ssh -p "$TABLE_SSH" -o BatchMode=yes "$TABLE" \
+      "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p $GUEST_SSH jawn@127.0.0.1 true" >/dev/null 2>&1; then
+      break
+    fi
+    i=$((i+1)); sleep 2
+  done
+  if [ $i -ge 90 ]; then
+    echo "run.sh: the guest did not open ssh on $GUEST_SSH" >&2
+    echo "        check: ssh -p $TABLE_SSH $TABLE 'tail -40 /tmp/ser-demo.log'" >&2
+    exit 1
+  fi
+  echo "guest ssh is up"
+fi
 
 # ---------------------------------------------------------------- sync ------
 if [ "$DO_SYNC" = 1 ]; then
@@ -217,11 +243,11 @@ if [ "$DO_SHOOT" = 1 ]; then
       -L "$LOCAL_PORT:127.0.0.1:$TABLE_PORT" &
     FWD_PID=$!
     i=0
-    while [ $i -lt 30 ]; do
+    while [ $i -lt 90 ]; do
       if curl -sk "https://127.0.0.1:$LOCAL_PORT/manager" 2>/dev/null | grep -q 'taskbar'; then break; fi
       i=$((i+1)); sleep 1
     done
-    if [ $i -ge 30 ]; then
+    if [ $i -ge 90 ]; then
       echo "run.sh: the guest manager did not answer through the tunnel." >&2
       echo "        check: ssh -p $TABLE_SSH $TABLE 'pgrep -af qemu'" >&2
       exit 1

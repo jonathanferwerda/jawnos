@@ -4,6 +4,7 @@ One command captures the JawnOS UI from the demo VM on the table and rebuilds
 the `#screenshots` wall on jawnos.ca.
 
 ```sh
+scripts/gallery/run.sh --boot --sync --all --deploy-both   # from a cold table
 scripts/gallery/run.sh --all --sync            # update the guest, reseed, capture, publish
 scripts/gallery/run.sh                         # capture + publish only
 scripts/gallery/run.sh --shoot --only 14-clock # one scene, for a quick check
@@ -33,6 +34,10 @@ makes the citizen-only apps (People) render; without it they are empty.
 
 ## Stages
 
+- `--boot` — copies `vm_boot.sh` to the table and starts QEMU if it is not
+  already running, then waits for the guest's sshd on port 2222. The image must
+  be the prepared demo image (`/etc/jawnos-demo-image`, sshd, tty1 autologin);
+  `table_prepare_demo.sh` is the one-time preparation.
 - `--sync` — `git reset --hard origin/main` in the guest's `~/jawnos`, then
   restart the tree. Use it whenever the UI has moved since the image was built.
   The guest's database and `config.json` are gitignored and survive.
