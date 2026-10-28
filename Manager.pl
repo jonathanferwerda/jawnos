@@ -40031,6 +40031,23 @@ sub app_schema_ensure {
 		server_time VARCHAR(25),
 		ost VARCHAR(25))') };
 	eval { &subs::db_query('create index if not exists usage_sessions_started on usage_sessions(started_at)') };
+	# The keyboard's vault. Created here so an existing house gains it on the next
+	# start; `server_time` is what puts it on the ordinary sync rail.
+	eval { &subs::db_query('create table if not exists credentials (
+		uuid VARCHAR(255) unique,
+		app VARCHAR(255),
+		origin VARCHAR(500),
+		kind VARCHAR(25),
+		label VARCHAR(255),
+		hints LONGTEXT,
+		payload LONGTEXT,
+		has_user VARCHAR(5),
+		has_password VARCHAR(5),
+		device VARCHAR(255),
+		timestamp VARCHAR(25),
+		server_time VARCHAR(25),
+		ost VARCHAR(25))') };
+	eval { &subs::db_query('create index if not exists idx1_credentials on credentials (app, origin)') };
 }
 
 # A lock is local to the machine that saw it, but an explicit unlock request
@@ -42787,6 +42804,203 @@ get '/manager/keyboard/ime' => sub($c) {
 		body_class => (&subs::theme_is_dark() ? 'dark_theme' : ''),
 		manager_bg => $manager_bg,
 	);
+};
+
+# ---- the keyboard's vault ---------------------------------------------------
+# A saved login or field is one row: the non-secret metadata used to offer it
+# (app, origin, kind, label, hints) and a note_encrypter() payload holding the
+# values. The payload is sealed with the house key, so it rides the ordinary
+# sync rail - and a remote backup - without the secrets being readable there.
+#
+# Scope is the security rule: a row with an `origin` belongs to that site and is
+# only offered for that site; a row without one belongs to that app package. A
+# browser package may not save a password without a site, because the keyboard
+# cannot see the address bar and a package-wide Chrome password would be offered
+# on every site (the Autofill service is what reads the web domain).
+
+our %credential_browser_app = map { $_ => 1 } qw(
+	com.android.chrome com.brave.browser com.microsoft.emmx org.mozilla.firefox
+	com.sec.android.app.sbrowser com.opera.browser com.opera.mini.native
+	com.duckduckgo.mobile.android com.vivaldi.browser com.ecosia.android
+);
+
+sub credential_hints_clean($raw) {
+	my @hints;
+	if (ref $raw eq 'ARRAY') { @hints = @$raw; }
+	elsif (defined $raw && length $raw) {
+		my $decoded = eval { decode_json $raw };
+		@hints = ref $decoded eq 'ARRAY' ? @$decoded : split /,/, $raw;
+	}
+	my @out;
+	foreach my $h ( @hints ) {
+		next unless defined $h;
+		$h = lc $h;
+		$h =~ s/^\s+|\s+$//g;
+		$h = substr($h, 0, 120);
+		next unless length $h;
+		push @out, $h unless grep { $_ eq $h } @out;
+		last if scalar @out >= 30;
+	}
+	return \@out;
+}
+
+sub credential_gate($c) {
+	return 'auth' unless ($c->session('authentication') || '') eq 'approved';
+	return 'locked' if &padlock_locked_now($c);
+	return '';
+}
+
+sub credential_payload_read($suds, $row) {
+	return {} unless $suds && ref $row eq 'HASH' && defined $row->{'payload'} && length $row->{'payload'};
+	my $plain = &subs::note_decrypter($suds, $row->{'payload'});
+	return {} unless defined $plain && length $plain;
+	my $data = eval { decode_json $plain };
+	return ref $data eq 'HASH' ? $data : {};
+}
+
+get '/manager/credentials/status' => sub($c) {
+	my $gate = &credential_gate($c);
+	if (length $gate) {
+		return $c->render(json => { ok => 0, locked => ($gate eq 'locked' ? 1 : 0), error => $gate, matches => [] });
+	}
+	my $app = lc($c->param('app') || '');
+	my $origin = lc($c->param('origin') || '');
+	my $hints = &credential_hints_clean($c->param('hints'));
+	my %want = map { $_ => 1 } @$hints;
+	# With neither an app nor a site there is nothing to scope a match to; an
+	# empty answer is safer than the whole vault.
+	if (!length $app && !length $origin) {
+		return $c->render(json => { ok => 1, locked => 0, matches => [] });
+	}
+	my $rows = &subs::db_query('select uuid,app,origin,kind,label,hints,has_user,has_password,server_time from credentials order by cast(server_time as integer) desc')->hashes || [];
+	my @matches;
+	foreach my $r ( @$rows ) {
+		my $row_origin = lc($r->{'origin'} || '');
+		my $row_app = lc($r->{'app'} || '');
+		# a site row is only ever offered to that site
+		next if length $row_origin && ($origin eq '' || $row_origin ne $origin);
+		# an app row is only ever offered to that app
+		next if !length $row_origin && length $row_app && ($app eq '' || $row_app ne $app);
+		my $score = 0;
+		$score += 6 if length $row_origin;
+		$score += 4 if length $row_app && $row_app eq $app;
+		my $entry_hints = &credential_hints_clean($r->{'hints'});
+		my $hits = 0;
+		foreach my $h ( @$entry_hints ) { $hits++ if $want{$h}; }
+		# A row that names its fields is only offered to a field it names: a
+		# password entry must not surface for a notes box just because the app is
+		# the same. Rows with no hints still answer the app/site as a whole.
+		next if scalar(@$hints) && scalar(@$entry_hints) && !$hits;
+		$score += $hits * 3;
+		push @matches, {
+			uuid => $r->{'uuid'},
+			label => ($r->{'label'} || $row_origin || $row_app || 'Saved'),
+			app => $r->{'app'},
+			origin => $r->{'origin'},
+			kind => $r->{'kind'},
+			hints => $entry_hints,
+			has_user => ($r->{'has_user'} ? 1 : 0),
+			has_password => ($r->{'has_password'} ? 1 : 0),
+			score => $score,
+		};
+	}
+	@matches = sort { $b->{'score'} <=> $a->{'score'} } @matches;
+	$c->res->headers->cache_control('no-store, max-age=0');
+	$c->render(json => { ok => 1, locked => 0, matches => \@matches });
+};
+
+post '/manager/credentials/save' => sub($c) {
+	my $gate = &credential_gate($c);
+	if (length $gate) {
+		return $c->render(json => { ok => 0, locked => ($gate eq 'locked' ? 1 : 0), error => $gate });
+	}
+	my $suds = &subs::suds_grabber();
+	return $c->render(json => { ok => 0, error => 'no-vault' }) unless $suds;
+	my %fields;
+	foreach my $key ( qw/username password value/ ) {
+		my $v = $c->param($key);
+		$fields{$key} = $v if defined $v && length $v;
+	}
+	my $raw_fields = $c->param('fields');
+	my $more = (defined $raw_fields && length $raw_fields) ? eval { decode_json $raw_fields } : undef;
+	if (ref $more eq 'HASH') {
+		foreach my $k ( keys %$more ) {
+			next unless defined $more->{$k} && length $more->{$k};
+			next if $k =~ /[^A-Za-z0-9_.:-]/;
+			$fields{'fields'}->{$k} = $more->{$k};
+		}
+	}
+	return $c->render(json => { ok => 0, error => 'empty' }) unless scalar keys %fields;
+	my $app = substr(lc($c->param('app') || ''), 0, 250);
+	my $origin = substr(lc($c->param('origin') || ''), 0, 450);
+	$origin =~ s{^https?://}{};
+	$origin =~ s{/.*$}{};
+	my $kind = $c->param('kind') || (exists $fields{'password'} ? 'password' : 'field');
+	$kind = 'login' if exists $fields{'username'} && exists $fields{'password'};
+	$kind = 'field' unless $kind =~ /^(?:login|password|field)$/;
+	if (($kind eq 'login' || $kind eq 'password') && !length $origin && $credential_browser_app{$app}) {
+		return $c->render(json => { ok => 0, error => 'site-required' });
+	}
+	my $payload = &subs::note_encrypter($suds, encode_json \%fields);
+	return $c->render(json => { ok => 0, error => 'seal' }) unless $payload;
+	my $label = substr($c->param('label') || '', 0, 250);
+	$label = ($origin || $app || 'Saved') unless length $label;
+	my $hints = &credential_hints_clean($c->param('hints'));
+	my $uuid = $c->param('uuid') || '';
+	$uuid = '' unless $uuid =~ /^[A-Za-z0-9]{8,64}$/;
+	my $existing = $uuid ? &subs::db_select('credentials', undef, { uuid => $uuid })->hashes->[0] : undef;
+	my %row = (
+		app => $app,
+		origin => $origin,
+		kind => $kind,
+		label => $label,
+		hints => encode_json($hints),
+		payload => $payload,
+		has_user => (exists $fields{'username'} ? 1 : 0),
+		has_password => (exists $fields{'password'} ? 1 : 0),
+		device => &subs::device_setter(),
+		timestamp => &subs::rightNow(),
+		server_time => &subs::rightNow(),
+	);
+	if ($existing) {
+		&subs::db_update('credentials', \%row, { uuid => $uuid });
+	}
+	else {
+		$uuid = &subs::random_string_creator(40) unless length $uuid;
+		$row{'uuid'} = $uuid;
+		&subs::db_insert('credentials', \%row);
+	}
+	$c->res->headers->cache_control('no-store, max-age=0');
+	$c->render(json => { ok => 1, uuid => $uuid });
+};
+
+post '/manager/credentials/fill' => sub($c) {
+	my $gate = &credential_gate($c);
+	if (length $gate) {
+		return $c->render(json => { ok => 0, locked => ($gate eq 'locked' ? 1 : 0), error => $gate });
+	}
+	my $uuid = $c->param('uuid') || '';
+	my $row = $uuid ? &subs::db_select('credentials', undef, { uuid => $uuid })->hashes->[0] : undef;
+	return $c->render(json => { ok => 0, error => 'missing' }) unless $row;
+	my $suds = &subs::suds_grabber();
+	return $c->render(json => { ok => 0, error => 'no-vault' }) unless $suds;
+	my $fields = &credential_payload_read($suds, $row);
+	return $c->render(json => { ok => 0, error => 'unseal' }) unless scalar keys %$fields;
+	$c->res->headers->cache_control('no-store, max-age=0');
+	$c->render(json => { ok => 1, uuid => $uuid, label => $row->{'label'}, kind => $row->{'kind'}, fields => $fields });
+};
+
+post '/manager/credentials/forget' => sub($c) {
+	my $gate = &credential_gate($c);
+	if (length $gate) {
+		return $c->render(json => { ok => 0, locked => ($gate eq 'locked' ? 1 : 0), error => $gate });
+	}
+	my $uuid = $c->param('uuid') || '';
+	my $row = $uuid ? &subs::db_select('credentials', undef, { uuid => $uuid })->hashes->[0] : undef;
+	return $c->render(json => { ok => 0, error => 'missing' }) unless $row;
+	&subs::tombstone_writer({ table => 'credentials', app => ($row->{'app'} || ''), uuid => $uuid, scope => 'single' });
+	&subs::db_delete('credentials', { uuid => $uuid });
+	$c->render(json => { ok => 1 });
 };
 
 # Is a measure code a currency (a fiat code, a coin, or a crypto asset)?

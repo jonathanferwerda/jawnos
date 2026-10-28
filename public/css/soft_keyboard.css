@@ -700,3 +700,136 @@ body.soft_kb_open .dot_info {
 		height: 44px;
 	}
 }
+
+/* The vault: the bar's fill/save keys and the small drawer that names a saved
+   entry. The drawer is a .soft_kb_layouts, so it shares the chooser's height,
+   border and scroll. */
+.soft_kb_vault_icon {
+	font-size: 15px;
+	line-height: 1;
+}
+
+.soft_kb_vault_icon[hidden] {
+	display: none;
+}
+
+.soft_kb_vault_list {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.soft_kb_vault_item {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 36px;
+	padding: 4px 6px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+}
+
+.soft_kb_vault_item_name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--ink);
+	font-size: 13px;
+	font-weight: 700;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.soft_kb_vault_item_meta {
+	color: var(--ink-muted);
+	font-size: 10px;
+	font-weight: 400;
+}
+
+.soft_kb_vault_item button {
+	flex: 0 0 auto;
+	height: 28px;
+	padding: 0 9px;
+	font-size: 12px;
+}
+
+.soft_kb_vault_item .soft_kb_vault_forget {
+	color: #d84343;
+}
+
+.soft_kb_vault_form {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 2px 1px 4px;
+}
+
+.soft_kb_vault_form[hidden] {
+	display: none;
+}
+
+.soft_kb_vault_form label {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--ink-muted);
+	font-size: 12px;
+}
+
+.soft_kb_vault_form label[hidden] {
+	display: none;
+}
+
+.soft_kb_vault_form label > span {
+	flex: 0 0 78px;
+}
+
+.soft_kb_vault_form input {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 30px;
+	padding: 0 8px;
+	border: 1px solid var(--line);
+	border-radius: 8px;
+	background: var(--panel);
+	color: var(--ink);
+	font: inherit;
+	font-size: 14px;
+	user-select: text;
+	-webkit-user-select: text;
+}
+
+.soft_kb_vault_form input.soft_kb_vault_active {
+	border-color: #4f8cff;
+	box-shadow: 0 0 0 2px rgba(79, 140, 255, .22);
+}
+
+.soft_kb_vault_actions {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 2px;
+}
+
+.soft_kb_vault_actions .soft_kb_vault_primary {
+	background: #4f8cff;
+	border-color: #4f8cff;
+	color: #fff;
+	font-weight: 700;
+}
+
+.soft_kb_vault_note {
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--ink-muted);
+	font-size: 11px;
+	text-align: right;
+}
+
+/* the vault drawer owns the space while it is open: the calculator's display
+   and history would only push the form away */
+body.soft_kb_vault_open .soft_kb_display,
+body.soft_kb_vault_open .soft_kb_history_wrap {
+	display: none;
+}

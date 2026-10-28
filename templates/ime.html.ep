@@ -36,9 +36,7 @@
 		   dock is the whole page (the service's bottom inset keeps it above the
 		   system navigation bar) */
 		#jawn_soft_keyboard { position: fixed; }
-		/* dictation is the dock's own microphone, which asks the manager for a
-		   transcript; an input method cannot hand it a field, so it is not offered */
-		#soft_kb_mic_button { display: none; }
+
 	</style>
 </head>
 <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>">
