@@ -33,8 +33,9 @@
 		:root { --jawnos-font: <%= $title_font %>; }
 		body, button { font-family: var(--jawnos-font); }
 		/* the input method has no field to reserve room for and no taskbar; the
-		   dock is the whole page */
-		#jawn_soft_keyboard { position: fixed; }
+		   dock is the whole page, lifted above the system navigation bar by the
+		   inset the service reports */
+		#jawn_soft_keyboard { position: fixed; bottom: var(--jawn-ime-inset-bottom, 0px); }
 		/* dictation is the dock's own microphone, which asks the manager for a
 		   transcript; an input method cannot hand it a field, so it is not offered */
 		#soft_kb_mic_button { display: none; }
@@ -55,11 +56,20 @@
 		var dock = document.getElementById('jawn_soft_keyboard');
 		if (!dock) { return; }
 		var lastHeight = 0;
+		/* The service's navigation-bar strip, in CSS px, at the foot of the
+		   viewport; the keyboard's window includes it, so the dock sits above it. */
+		window.imeInset = function (css) {
+			document.documentElement.style.setProperty('--jawn-ime-inset-bottom', (Number(css) || 0) + 'px');
+			report();
+		};
 		/* The input method's window is sized by the service; tell it the dock's
 		   real height whenever the conversion/recommendation rows, a page change
 		   or the layout chooser change it. Only the height is sent, in CSS px,
 		   which are dp in this viewport. */
 		function report() {
+			/* an input method's WebView can be scrolled by the focus machinery;
+			   the dock is fixed, so any scroll only desyncs the keys from the page */
+			window.scrollTo(0, 0);
 			var h = Math.ceil(dock.getBoundingClientRect().height || 0);
 			if (h <= 0 || h === lastHeight) { return; }
 			lastHeight = h;
@@ -68,6 +78,7 @@
 			}
 		}
 		function start() {
+			window.scrollTo(0, 0);
 			if (typeof softKbImeStart === 'function') { softKbImeStart(); }
 			report();
 			if (window.ResizeObserver) {
