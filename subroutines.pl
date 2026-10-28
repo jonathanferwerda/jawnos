@@ -18388,6 +18388,37 @@ sub current_place() {
 	return $inventory || $fallback || '';
 }
 
+# Split a typed quantity from its unit: "355mL" -> (355, mL), "12" ->
+# (12, default). A known measure is returned in its canonical spelling (mL, not
+# ml); with keep_unknown an unrecognised letter unit is returned as written so a
+# caller can refuse it rather than silently count it as a bare number.
+sub quantity_unit_split {
+	my ($raw, $default_unit, $keep_unknown) = @_;
+	$raw = '' unless defined $raw;
+	my $unit = '';
+	my $letters = $raw;
+	$letters =~ s/[^a-zA-Z]//g;
+	if (length $letters) {
+		my ($match) = grep { lc($_) eq lc($letters) } keys %{$gb::measures};
+		$unit = $match || ($keep_unknown ? $letters : '');
+		$raw =~ s/[a-zA-Z]//g;
+	}
+	my $quantity = &numeric_formatter($raw) + 0;
+	$unit = $default_unit unless length $unit;
+	return ($quantity, $unit);
+}
+
+# What an item has on hand at one place and unit: the same signed stock rows the
+# Levels view sums, but scoped so a consumption can take only what is on that
+# shelf. Usage rows are history, not stock, and are left out.
+sub warehouse_on_hand_at {
+	my ($item, $unit, $place) = @_;
+	return 0 unless defined $item && length $item;
+	$unit = 'each' unless defined $unit && length $unit;
+	my $q = &db_query("select coalesce(sum(cast(quantity as real)),0) as q from warehouse where item=? and unit=? and place=? and coalesce(kind,'stock')='stock'", $item, $unit, $place);
+	return ($q && $q->hashes->[0]) ? $q->hashes->[0]->{'q'} + 0 : 0;
+}
+
 # What an item has on hand right now: its signed stock rows summed per unit, the
 # same figure the warehouse Levels view shows. A money row (it names an account)
 # and a balance anchor (kind inventory) are not stock and are left out, the way
@@ -18534,6 +18565,35 @@ sub warehouse_movement {
 	return $wdata;
 }
 
+# Record consumption that had no stock to take from. It is a history row, not a
+# stock row: the Levels view and every balance ignore it, while the moves view
+# and the item's journal still show that the amount was used. This is the drink
+# that came from outside the warehouse - counted, but not owed to it.
+sub warehouse_usage {
+	my $d = shift;
+	my $item = $d->{'item'};
+	my $quantity = &numeric_formatter($d->{'quantity'}) + 0;
+	return unless $item && $quantity;
+	my $wdata = {
+		timestamp => $d->{'timestamp'} || &rightNow(),
+		server_time => &rightNow(),
+		item => $item,
+		model => $d->{'model'},
+		options => $d->{'options'},
+		uuid => &random_string_creator(40),
+		quantity => $quantity,
+		unit => $d->{'unit'} || 'each',
+		place => $d->{'place'},
+		kind => 'usage',
+		type => 'usage',
+		project => $d->{'project'},
+		app_uuid => $d->{'app_uuid'},
+		data => &warehouse_journal_entry($d)
+	};
+	&db_insert('warehouse', $wdata);
+	return $wdata;
+}
+
 # FIFO-walk the stock and write off whatever has outlived its packaging shelf
 # life. Runs on a timer (see President.pl). Each write-off references the lot it
 # expired via app_uuid, and since the write-off is itself a negative movement,
@@ -18545,6 +18605,7 @@ sub warehouse_expiry_sweep() {
 	my %lots;
 	foreach my $r ( @{$rows} ) {
 		my $unit = $r->{'unit'} || 'each';
+		next if (($r->{'kind'} || '') eq 'usage');
 		my $types = $gb::measures->{$unit}->{'types'} || [];
 		next if ($r->{'account'} && $r->{'account'} ne '') || (grep { $_ eq 'currency' } @{$types});
 		my $qty = &numeric_formatter($r->{'quantity'}) + 0;

@@ -10,6 +10,7 @@
 			<% } %>
 		</select>
 		<input type="text" id="warehouse_search" placeholder="Search items" style="width:50%;vertical-align:top;">
+		<button type="button" id="warehouse_stock_in" style="vertical-align:top;" hint="<%= &subs::ui('Add stock that arrived without a purchase: a gift, something found, a transfer in.') %>"><%= &subs::ui('+ Stock') %></button>
 		<select id="warehouse_place" class="warehouse_config" config="place" multiple style="height:100px;max-width:45%;">
 			<option value="all" <% if (grep { $_ eq 'all' } @{$settings->{'place'}}) { %>selected<% } %>>All</option>
 			<% foreach my $p ( sort { $a->{'app'} cmp $b->{'app'} } @{$places} ) { %>

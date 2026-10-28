@@ -785,6 +785,8 @@ our $abilities = {
 	unit => { config => 'select', options => [ sort keys %{$measures} ]},
 	manufacturer => { config => 'select', options => [ ], formatted => 'yes' },
 	inventory_method => { config => 'select', options => [ 'none', 'fifo', 'lifo', 'depreciate' ], formatted => 'yes' },
+	stock_movement => { config => 'select', options => [ 'off', 'consume', 'produce' ], formatted => 'yes' },
+	stock_item => {},
 	quantity => {},
 	home_plate => {},
 	nfc => {},

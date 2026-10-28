@@ -4872,6 +4872,7 @@ sub warehouse_grabber($opts) {
 		my $kind = $r->{'kind'};
 		$kind = ($r->{'type'} eq 'inventory' ? 'inventory' : (($r->{'account'} && $r->{'account'} ne '') ? 'money' : 'stock')) if !defined $kind || $kind eq '';
 		if ($kind eq 'money') { next; }
+		next if $kind eq 'usage';
 		if ($kind eq 'inventory') {
 			my $acct = $r->{'account'} || $r->{'item'} || 'cash';
 			my $cur = $r->{'currency'} || $unit;
@@ -4930,6 +4931,30 @@ sub warehouse_moves($opts) {
 			source_uuid => $j->{'source_uuid'} || $r->{'app_uuid'},
 		};
 	}
+	# usage moves: consumption that had no shelf to take from. They are not part
+	# of the balance, but they are part of the story, so the moves view shows them
+	my $ufilter = "where kind = 'usage'";
+	my @uargs;
+	if (scalar @places) {
+		$ufilter .= ' and place in (' . join(',', map { '?' } @places) . ')';
+		push @uargs, @places;
+	}
+	if (defined $search && $search ne '') { $ufilter .= ' and item like ?'; push @uargs, '%' . $search . '%'; }
+	push @uargs, $limit;
+	foreach my $r ( @{ &subs::db_query('select * from warehouse ' . $ufilter . ' order by timestamp desc limit ?', @uargs)->hashes } ) {
+		my $j = eval { return decode_json($r->{'data'}) } || {};
+		push @moves, {
+			timestamp => &subs::numeric_formatter($r->{'timestamp'}) + 0,
+			kind => 'usage',
+			item => $r->{'item'},
+			place => $r->{'place'},
+			quantity => &subs::numeric_formatter($r->{'quantity'}) + 0,
+			unit => $r->{'unit'} || 'each',
+			reason => $j->{'reason'} || 'usage',
+			source => $j->{'source'},
+			source_uuid => $j->{'source_uuid'} || $r->{'app_uuid'},
+		};
+	}
 	# money moves: the ledger's own rows, mirrored from the transactions that
 	# carried them, so both this view and the budget read one store
 	my $mfilter = "where kind = 'money'";
@@ -4967,6 +4992,57 @@ sub warehouse_moves($opts) {
 # kind='money' marks it; type and movement keep what the transaction was.
 sub warehouse_money_mirror($row) {
 	return &subs::warehouse_money_mirror($row);
+}
+
+# An appointment's own quantity can move stock. The app names the item, unless
+# its Stock Item setting names another. A record moves at once; a start/stop
+# session moves when it stops, using the amount typed at the start, so a
+# cancelled session never touches the shelf. A consume takes only what is on
+# hand at that place; the rest is usage - the Coke that came from outside the
+# warehouse is counted, but does not make the shelf negative.
+sub appointment_stock_movement {
+	my ($c, $app, $type, $quantity, $unit, $timestamp, $uuid) = @_;
+	return unless defined $app && length $app;
+	return unless defined $type && $type =~ /^(?:record|stop)$/;
+	my $mode = &subs::setting_grabber({ app => $app, setting => 'stock_movement' }) || 'off';
+	return unless $mode eq 'consume' || $mode eq 'produce';
+	my $default_unit = &subs::setting_grabber({ app => $app, setting => 'unit' }) || 'each';
+	my ($qty, $qunit) = &subs::quantity_unit_split($quantity, $unit || $default_unit);
+	return unless $qty > 0;
+	return unless $gb::measures->{$qunit};   # a length, a currency or an unknown word is not stock
+	my $types = $gb::measures->{$qunit}->{'types'} || [];
+	return if grep { $_ eq 'currency' or $_ eq 'time' } @{$types};
+	my $item = &subs::setting_grabber({ app => $app, setting => 'stock_item' });
+	$item = $app unless defined $item && $item =~ /\S/;
+	$item = &subs::unformat_name($item);
+	my $place = &subs::warehouse_place_for($app, $item);
+	return unless $place;
+	my $stamp = $timestamp || &subs::rightNow();
+	if ($mode eq 'produce') {
+		&subs::warehouse_movement({
+			item => $item, quantity => $qty, unit => $qunit, place => $place,
+			timestamp => $stamp, app_uuid => $uuid, type => 'stock',
+			reason => 'produced', source => $app, source_uuid => $uuid,
+		});
+		return;
+	}
+	my $on_hand = &subs::warehouse_on_hand_at($item, $qunit, $place);
+	my $take = $on_hand > 0 ? ($on_hand < $qty ? $on_hand : $qty) : 0;
+	if ($take > 0) {
+		&subs::warehouse_movement({
+			item => $item, quantity => $take * -1, unit => $qunit, place => $place,
+			timestamp => $stamp, app_uuid => $uuid, type => 'stock',
+			reason => 'consumed', source => $app, source_uuid => $uuid,
+		});
+	}
+	my $rest = $qty - $take;
+	if ($rest > 0) {
+		&subs::warehouse_usage({
+			item => $item, quantity => $rest, unit => $qunit, place => $place,
+			timestamp => $stamp, app_uuid => $uuid,
+			reason => 'consumed_unstocked', source => $app, source_uuid => $uuid,
+		});
+	}
 }
 
 get '/manager/warehouse' => sub($c) {
@@ -5028,6 +5104,27 @@ get '/manager/warehouse/listing' => sub($c) {
 		search => $search || ''
 	);
 	$c->render(json => { html => $html, search => $search });
+};
+
+# Add stock that arrived without a purchase: a gift, something found, or a
+# transfer in. It is a stock row with no account, so it raises the shelf without
+# touching the money ledger.
+post '/manager/warehouse/stock_in' => sub($c) {
+	my $item = &subs::unformat_name($c->param('item'));
+	my $place = $c->param('place');
+	my ($qty, $unit) = &subs::quantity_unit_split($c->param('quantity'), 'each', 1);
+	my $reason = $c->param('reason') || 'gift';
+	$reason = 'other' unless $reason =~ /^(?:gift|found|transfer|other)$/;
+	return $c->render(json => { ok => 0, error => 'item' }) unless length $item;
+	return $c->render(json => { ok => 0, error => 'place' }) unless defined $place && $place ne '';
+	return $c->render(json => { ok => 0, error => 'unit' }) unless $gb::measures->{$unit};
+	return $c->render(json => { ok => 0, error => 'quantity' }) unless $qty > 0;
+	my $row = &subs::warehouse_movement({
+		item => $item, quantity => $qty, unit => $unit, place => $place,
+		timestamp => $c->param('timestamp') || &subs::rightNow(),
+		type => 'stock_in', reason => $reason, source => 'warehouse',
+	});
+	$c->render(json => { ok => 1, uuid => $row->{'uuid'}, item => $item, quantity => $qty, unit => $unit });
 };
 
 get '/manager/warehouse/journal' => sub($c) {
@@ -16539,6 +16636,7 @@ sub manager_reset($c) {
 			$manufacturer = $init->{'manufacturer'};
 		}
 		&subs::db_update('appointments', { server_time => &subs::rightNow(), model => $jmodel, options => $joptions, unit => $unit, quantity => $quantity, manufacturer => $manufacturer }, { uuid => $uuid, app => $app });
+		&appointment_stock_movement($c, $app, $type, $quantity, $unit, $timestamp, $uuid) if $type eq 'record';
 		if ($stop_timestamp) {
 			&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_timestamp });
 		}
@@ -16644,6 +16742,12 @@ sub manager_reset($c) {
 				});
 			}
 			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+			# a start carries the amount; this stop is when the session is finished,
+			# so it is the one movement the session makes. A record moved at creation
+			# and is not moved again here.
+			if (($o->{'type'} || '') eq 'start') {
+				&appointment_stock_movement($c, $app, 'stop', $o->{'quantity'}, $o->{'unit'}, $timestamp, $uuid);
+			}
 			&subs::intelligent_automation_toggle({ appt_uuid => $o->{'uuid'}, app => $app, 'state' => 'off', timestamp => $timestamp });
 			my $sources = &subs::db_select('appointments', undef, { source_uuid => $o->{'uuid'} })->hashes;
 			my $options = eval { return decode_json $o->{'options'} } || [];
@@ -17182,6 +17286,7 @@ post '/manager/configure/stop_all_appointments' => sub($c) {
 			app => $a->{'app'},
 			uuid => $a->{'uuid'}
 		});
+		&appointment_stock_movement($c, $a->{'app'}, 'stop', $a->{'quantity'}, $a->{'unit'}, $timestamp, $a->{'uuid'}) if ($a->{'type'} || '') eq 'start';
 	}
 	# stopping every running start/record changes which theme owns the desktop
 	&subs::appointment_theme_push();
