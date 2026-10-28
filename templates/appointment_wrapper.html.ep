@@ -200,6 +200,17 @@
 	<% } %>
 </span>
 <style>
+	/* The wrapper is the window's whole content. Without a flex basis it kept its
+	   content width and sat against the left edge, leaving the rest of a widened
+	   window empty. It now takes the room and scrolls inside it. */
+	.appointment_contents {
+		display: block;
+		flex: 1 1 auto;
+		width: 100%;
+		min-width: 0;
+		height: 100%;
+		box-sizing: border-box;
+	}
 	/* the app's own camera buttons (window.JawnCamera) show only inside the app:
 	   manager.js puts jawn-app on <html> when the bridge answers, so a browser
 	   (public view, web) never sees them */

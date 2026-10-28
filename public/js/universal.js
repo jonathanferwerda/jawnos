@@ -916,7 +916,54 @@ function jawnosMediaLockBeacon(app) {
 // surface that lists apps without changing which window is in front. opened=1
 // says a grant was just made, so a denial window that was asking for one can
 // now open the app it named.
+var jawnosPrivateIdleTimer = null;
+var jawnosPrivateIdleAt = 0;
+var jawnosPrivateIdleMs = 5 * 60 * 1000;
+
+function jawnosPrivateIdleStop() {
+	if (jawnosPrivateIdleTimer) { clearTimeout(jawnosPrivateIdleTimer); }
+	jawnosPrivateIdleTimer = null;
+	jawnosPrivateIdleAt = 0;
+}
+
+function jawnosPrivateIdleStart() {
+	jawnosPrivateIdleStop();
+	jawnosPrivateIdleAt = Date.now();
+	jawnosPrivateIdleTimer = setTimeout(jawnosPrivateIdleExpire, jawnosPrivateIdleMs);
+}
+
+// Five minutes with no movement on the screen relocks private: drop the grant
+// on the server, close this tab's private windows, and redraw the lists.
+function jawnosPrivateIdleExpire() {
+	jawnosPrivateIdleStop();
+	$.ajax({
+		url: '/manager/security/media_lock',
+		type: 'POST',
+		data: {
+			app: 'private',
+			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
+			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : ''
+		},
+		complete: function () {
+			if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(0); }
+		}
+	});
+}
+
+function jawnosPrivateIdleTouch() {
+	if (!jawnosPrivateIdleTimer) { return; }
+	var now = Date.now();
+	if (now - jawnosPrivateIdleAt < 1000) { return; }
+	jawnosPrivateIdleStart();
+}
+
+$(document).on('mousemove mousedown keydown touchstart scroll wheel', function () {
+	jawnosPrivateIdleTouch();
+});
+
 function jawnosPrivateRefresh(opened) {
+	if (opened === 1) { jawnosPrivateIdleStart(); }
+	else if (opened === 0) { jawnosPrivateIdleStop(); }
 	if (typeof calculator === 'function') { calculator(); }
 	if (typeof appointment_chron === 'function') { appointment_chron(); }
 	if (typeof galleryFetch === 'function' && $('#gallery').length) { galleryFetch(true); }
@@ -998,6 +1045,7 @@ function jawnosMediaApplyToken(app, token, target) {
 // app is opened again, and no peer is touched.
 window.addEventListener('pagehide', function () {
 	if (typeof jawnosMediaLockdown === 'function') { jawnosMediaLockdown('', true); }
+	if (typeof jawnosPrivateIdleStop === 'function') { jawnosPrivateIdleStop(); }
 	jawnosMediaLockBeacon('');
 });
 
