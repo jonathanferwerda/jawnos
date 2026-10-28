@@ -6,6 +6,12 @@
 <% my $ticket_rows = &subs::db_query('select uuid, name from tickets order by server_time desc')->hashes; %>
 <% my %ticket_uuid_by_name; %>
 <% foreach my $t (@{$ticket_rows}) { $ticket_uuid_by_name{lc($t->{'name'} || '')} ||= $t->{'uuid'}; } %>
+<%# The machines a media button may be pointed at. One lister call for the whole
+    wrapper; the old per-appointment query was narrow and repeated per row. The
+    synthetic 'me' row and mirrors are local views, not targets. %>
+<% my $media_machine_rows = &subs::remote_machine_lister({ connection => 'active' }); %>
+<% my @media_machines = grep { ($_->{'mirror'} || '') ne 'yes' && ($_->{'hostname'} || '') ne 'me' } @{$media_machine_rows}; %>
+<% my %media_default = map { $_ => (&subs::setting_grabber({ app => 'me', setting => 'media_machine_' . $_ }) || '') } qw/camera record scan/; %>
 
 <span timestamp="<%= $timestamp %>" id="<%= $timestamp %>" class="appointment_contents" app="<%= $appointments->[0] %>" style="overflow:scroll; background-color:var(--panel);">
 	<% foreach my $a (@{$appointments}) { %>
@@ -75,12 +81,25 @@
 				<div class="group_contents media_group_contents" app="<%= $a %>" style="display:none;">
 					<% foreach my $p ( @{$pseudonyms} ) { %>
 						<% if ($p->{'classmates'} && ($p->{'group'} || '') eq 'media') { %>
-							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
+							<img class="<%= $p->{'classmates'} %>" style="background-color:<%= $p->{'colour'} %>;" onClick="<%= $p->{'click'} %>" name="<%= $p->{'name'} %>" hint="<%= &subs::format_name($p->{'name'}) %>" type="<%= $p->{'name'} %>" <% if ($p->{'name'} =~ /^(?:video|audio|screen)$/) { %>media_group="record" <% } %>app="<%= $a %>" timestamp="<%= $appts->{$a}->{'timestamp'} %>" src="<%= $p->{'icon'} %>" />
 						<% } %>
 					<% } %>
+					<%# video / audio / screen: which machine records (it runs jp there) %>
+					<select class="media_machine" group="record" app="<%= $a %>" hint="<%= &subs::ui('Which machine records this') %>">
+						<option value="" <% if (!length($media_default{'record'})) { %>selected<% } %>><%= &subs::lang('network.this_machine') %></option>
+						<% foreach my $rm ( @media_machines ) { next unless ($rm->{'device'} || '') =~ /^(?:mobile|computer)$/; %>
+							<option value="<%= $rm->{'uuid'} %>" data-signatorial="<%= $rm->{'signatorial'} %>" <% if ($media_default{'record'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
+						<% } %>
+					</select>
 					<% if ($device eq 'mobile' || grep { $_->{'device'} eq 'mobile' } @{$remote_machines} ) { %>
-						<img class="little_thumb save_appointment row_gap" camera="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
-						<img class="little_thumb save_appointment" camera="1" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
+						<img class="little_thumb save_appointment row_gap" camera="0" type="camera" media_group="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (rear)">
+						<img class="little_thumb save_appointment" camera="1" type="camera" media_group="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_front', '/images/decipherable/camera front.png') %>" hint="Camera (front)">
+						<select class="media_machine" group="camera" app="<%= $a %>" hint="<%= &subs::ui('Where the picture is taken') %>">
+							<option value="" <% if (!length($media_default{'camera'})) { %>selected<% } %>><%= &subs::lang('network.this_machine') %></option>
+							<% foreach my $rm ( grep { ($_->{'device'} || '') eq 'mobile' } @media_machines ) { %>
+								<option value="<%= $rm->{'uuid'} %>" data-signatorial="<%= $rm->{'signatorial'} %>" <% if ($media_default{'camera'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
+							<% } %>
+						</select>
 					<% } %>
 					<%# the app's own camera: opens the OS camera or the OS video recorder
 					    (window.JawnCamera) - a viewfinder you can see, and the camera's own
@@ -89,9 +108,15 @@
 					<img class="little_thumb native_capture" capture="0" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('camera_back', '/images/decipherable/camera back.png') %>" hint="Camera (native)">
 					<img class="little_thumb native_video" type="video" app="<%= $a %>" src="<%= &subs::icon_path('media', '/images/make believe/camera.png') %>" hint="Video (native)">
 					<% if ($device eq 'computer' || $device eq 'server' || grep { $_->{'device'} eq 'computer' || $_->{'device'} eq 'server' } @{$remote_machines} ) { %>
-						<img class="little_thumb save_appointment row_gap" type="scan" feed="flatbed" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
-						<img class="little_thumb save_appointment" type="scan" feed="adf" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">
-						<img class="little_thumb save_appointment" camera="webcam" type="camera" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>" hint="Webcam">
+						<img class="little_thumb save_appointment row_gap" type="scan" feed="flatbed" media_group="scan" app="<%= $a %>" src="<%= &subs::icon_path('flatbed', '/images/decipherable/flatbed.png') %>" hint="Scan (flatbed)">
+						<img class="little_thumb save_appointment" type="scan" feed="adf" media_group="scan" app="<%= $a %>" src="<%= &subs::icon_path('feeder', '/images/decipherable/feeder.png') %>" hint="Scan (feeder)">
+						<img class="little_thumb save_appointment" camera="webcam" type="camera" media_group="scan" app="<%= $a %>" src="<%= &subs::icon_path('eye', '/images/make believe/eye.png') %>" hint="Webcam">
+						<select class="media_machine" group="scan" app="<%= $a %>" hint="<%= &subs::ui('Which machine scans') %>">
+							<option value="" <% if (!length($media_default{'scan'})) { %>selected<% } %>><%= &subs::lang('network.this_machine') %></option>
+							<% foreach my $rm ( grep { ($_->{'device'} || '') eq 'computer' } @media_machines ) { %>
+								<option value="<%= $rm->{'uuid'} %>" data-signatorial="<%= $rm->{'signatorial'} %>" <% if ($media_default{'scan'} eq $rm->{'uuid'}) { %>selected<% } %>><%= $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'ip'} %></option>
+							<% } %>
+						</select>
 					<% } %>
 				</div>
 				<div class="group_contents extra_group_contents" app="<%= $a %>" style="display:none;">

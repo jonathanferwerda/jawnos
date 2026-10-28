@@ -3232,6 +3232,20 @@ $(document).on('click', '.group_toggle', function() {
 	if (!open) { contents.show(); }
 });
 
+// The media machine choice is a preference of this person at this screen, like
+// the keyboard's own device picks; remembering it in `me` makes the next
+// appointment open on the same machine.
+$(document).on('change', '.media_machine', function() {
+	var sel = $(this);
+	var group = sel.attr('group') || '';
+	if (!group) { return; }
+	$.ajax({
+		url: '/manager/configure',
+		type: 'POST',
+		data: { app: 'me', setting: 'media_machine_' + group, value: sel.val() || '', timestamp: Date.now() }
+	});
+});
+
 $(document).on('click','#calculate_it', function() {
 	clearInterval(calculateInterval);
 	calculator();
@@ -4340,6 +4354,11 @@ function managerReset(caller,e) {
 	var club = form.find('.club').val();
 	var camera = details.attr('camera');
 	var feed = details.attr('feed');
+	// which machine the media button names (a peer uuid, empty for this one)
+	var media_group = details.attr('media_group') || '';
+	var media_machine = media_group ? container.find('.media_machine[group="' + media_group + '"]').first() : $();
+	var remote_uuid = media_machine.length ? (media_machine.val() || '') : '';
+	var remote_signatorial = media_machine.length ? (media_machine.find('option:selected').attr('data-signatorial') || '') : '';
 	var digits = details.attr('digits');
 	var item = form.find('.item').val();
 	var amount = form.find('.amount').val();
@@ -4387,6 +4406,8 @@ function managerReset(caller,e) {
 		timeshift: timeshift,
 		camera: camera,
 		feed: feed,
+		remote_uuid: remote_uuid,
+		remote_signatorial: remote_signatorial,
 		digits: digits,
 		schedule: schedule,
 		movement: movement,
@@ -4692,6 +4713,8 @@ $(document).on('click','.edit_app_submit', function() {
 		payload.sent.push(name);
 	};
 	put('duration');
+	var name_input = ea.find('[attribute="app"]').first();
+	if (name_input.length) { payload.app_name = name_input.val() || ''; payload.sent.push('app_name'); }
 	put('account');
 	put('project');
 	put('start_notes');
@@ -4728,6 +4751,9 @@ $(document).on('click','.edit_app_submit', function() {
 				edit.removeClass('large_thumb');
 				edit.addClass('medium_thumb');
 			}, 2000);
+		},
+		error: function(xhr) {
+			if (xhr && xhr.status == 409) { alert('That name is already in use.'); }
 		},
 	});
 });

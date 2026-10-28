@@ -11181,6 +11181,9 @@ sub setting_setter() {
 		my $tables = `sqlite3 $database .tables`;
 		my @u = sort split ' ', $tables;
 		foreach my $t ( @u ) {
+			# a rename is a fact about the app, not about history: the sync log is
+			# the record of deletions already made and must keep its own names
+			next if $t eq 'sync_log';
 			if (eval { $db->query('select app from ' . $t . ' limit 1') } ) {
 				&db_update($t, { app => $value, server_time => $server_time }, { app => $app });
 			}

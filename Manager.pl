@@ -867,6 +867,13 @@ sub take_picture($c,$data) {
 		$c->stash('app' => $app);
 		$c->stash('uuid' => $uuid);
 	}
+	# A named machine takes the picture; this one only hands the request over.
+	# remoted=yes is the peer that received it, and it must not relay again.
+	my $remote_uuid = $c->param('remote_uuid') || '';
+	if (($c->param('remoted') || '') ne 'yes' && $remote_uuid ne '' && $remote_uuid ne &subs::signatorial_designer()) {
+		&remote_relay_request($c, { remote_uuid => $remote_uuid });
+		return ('denial','denial');
+	}
 	if (!grep { $_ eq $data->{'camera'} } @{$gb::capabilities->{&subs::device_setter()}->{'camera'}}) {
 		&remote_relay_request($c);
 		return ('denial','denial');
@@ -1026,6 +1033,12 @@ sub scan($c,$scandata) {
 	my $source = $scandata->{'source'};
 	my $app = $scandata->{'app'} || $c->param('app');
 	my $app_path = &subs::path_name($app);
+	# A named machine scans; this one only hands the request over (see take_picture).
+	my $remote_uuid = $c->param('remote_uuid') || '';
+	if (($c->param('remoted') || '') ne 'yes' && $remote_uuid ne '' && $remote_uuid ne &subs::signatorial_designer()) {
+		&remote_relay_request($c, { remote_uuid => $remote_uuid });
+		return 'denial';
+	}
 	if (!grep { $_ eq $scandata->{'feed'} } @{ $gb::capabilities->{&subs::device_setter()}->{'scan'} || [] }) {
 		&remote_relay_request($c);
 		return 'denial';
@@ -5045,12 +5058,32 @@ sub appointment_stock_movement {
 	}
 }
 
-# An edit to a record adjusts the movement that press already made. It never
-# writes a second movement: the rows for this appointment are removed and the
-# same movement is written again at the appointment's own timestamp. (The shelf
-# split is recomputed against today's shelf, so an old edit can move the line
-# between stock and Usage; the total consumed is what the edit names.)
-# A money row is keyed by the appointment's own uuid, so it is updated in place.
+# An edit to a record documents the difference as a move: a return to the shelf or
+# a take from it, never a rewrite of the original rows. The levels end up where the
+# edit says, and the ledger still shows what happened. The original movement keeps
+# its uuid, time and reason; the adjustment carries reason 'returned_to_shelf',
+# 'taken_from_shelf' or 'edit_adjust_unstocked'.
+sub appointment_edit_stock_row {
+	my ($app, $uuid, $item, $unit, $place, $quantity, $reason, $timestamp) = @_;
+	return unless defined $item && length $item && $quantity;
+	return unless defined $place && length $place;
+	&subs::warehouse_movement({
+		item => $item, quantity => $quantity, unit => $unit, place => $place,
+		timestamp => $timestamp, app_uuid => $uuid, type => 'stock',
+		reason => $reason, source => $app, source_uuid => $uuid,
+	});
+}
+sub appointment_edit_usage_row {
+	my ($app, $uuid, $item, $unit, $place, $quantity, $reason, $timestamp) = @_;
+	return unless defined $item && length $item && $quantity;
+	return unless defined $place && length $place;
+	&subs::warehouse_usage({
+		item => $item, quantity => $quantity, unit => $unit, place => $place,
+		timestamp => $timestamp, app_uuid => $uuid,
+		reason => $reason, source => $app, source_uuid => $uuid,
+	});
+}
+
 sub appointment_edit_ledger($c, $before, $sdata) {
 	my $uuid = $before->{'uuid'};
 	return unless defined $uuid && length $uuid;
@@ -5058,21 +5091,85 @@ sub appointment_edit_ledger($c, $before, $sdata) {
 	my $after = { %{$before}, %{$sdata} };
 	my $app = $after->{'app'};
 	my $type = $after->{'type'} || '';
+	my $now = &subs::rightNow();
 
 	# --- stock: quantity, unit, item or time changed on a movement the row owns
 	if (grep { $touched{$_} } qw/quantity unit item timestamp/ ) {
 		my $mode = &subs::setting_grabber({ app => $app, setting => 'stock_movement' }) || 'off';
 		if (($mode eq 'consume' || $mode eq 'produce') && $type =~ /^(?:record|stop)$/) {
-			my $existing = &subs::db_select('warehouse', undef, { app_uuid => $uuid, kind => 'stock' })->hashes || [];
-			my $usage    = &subs::db_select('warehouse', undef, { app_uuid => $uuid, kind => 'usage' })->hashes || [];
-			if (scalar @{$existing} || scalar @{$usage}) {
-				# A deleted movement row must be tombstoned, or a peer still holding
-				# it pushes it back and the edit is silently undone on the next sync.
-				foreach my $w ( @{$existing}, @{$usage} ) {
-					&deletion_registration({ table => 'warehouse', uuid => $w->{'uuid'}, scope => 'single', server_time => $w->{'server_time'} });
+			my $default_unit = &subs::setting_grabber({ app => $app, setting => 'unit' }) || 'each';
+			my $q = &subs::db_query("select * from warehouse where app_uuid = ? and kind in ('stock','usage') order by timestamp", $uuid)->hashes || [];
+			my @stock = grep { ($_->{'kind'} || '') eq 'stock' } @{$q};
+			my @usage = grep { ($_->{'kind'} || '') eq 'usage' } @{$q};
+			my ($old_item, $old_unit, $old_place) = ('', '', '');
+			foreach my $r ( @{$q} ) {
+				$old_item = $r->{'item'} if $old_item eq '';
+				$old_unit = $r->{'unit'} if $old_unit eq '';
+				$old_place = $r->{'place'} if $old_place eq '';
+			}
+			my ($old_stock, $old_usage) = (0, 0);
+			$old_stock += &subs::numeric_formatter($_->{'quantity'}) + 0 foreach @stock;
+			$old_usage += &subs::numeric_formatter($_->{'quantity'}) + 0 foreach @usage;
+			my $old_total = ($mode eq 'consume') ? (($old_stock * -1) + $old_usage) : $old_stock;
+
+			my ($qty, $qunit) = &subs::quantity_unit_split($after->{'quantity'}, $after->{'unit'} || $default_unit);
+			my $item = &subs::setting_grabber({ app => $app, setting => 'stock_item' });
+			$item = $app unless defined $item && $item =~ /\S/;
+			$item = &subs::unformat_name($item);
+			my $place = &subs::warehouse_place_for($app, $item);
+
+			# A time-only edit follows the row: the movement keeps its amount and
+			# reason, only the stamp moves.
+			if (!grep { $touched{$_} } qw/quantity unit item/ ) {
+				&subs::db_query('update warehouse set timestamp = ? where app_uuid = ? and kind in (\'stock\',\'usage\')', $after->{'timestamp'}, $uuid)
+					if defined $after->{'timestamp'};
+			}
+			elsif ($place) {
+				my $qty_changed = $touched{'quantity'};
+				my $place_changed = (($old_item // '') ne $item || ($old_unit // '') ne $qunit);
+				my $old_place_use = $old_place ne '' ? $old_place : $place;
+				if ($place_changed && scalar @{$q}) {
+					# the movement named another item/unit: give the old one back,
+					# then take the new one - two documented moves, no rewrite
+					if ($mode eq 'consume') {
+						&appointment_edit_stock_row($app, $uuid, $old_item, $old_unit, $old_place_use, ($old_stock * -1), 'returned_to_shelf', $now);
+						&appointment_edit_usage_row($app, $uuid, $old_item, $old_unit, $old_place_use, ($old_usage * -1), 'edit_adjust_unstocked', $now);
+					}
+					else {
+						&appointment_edit_stock_row($app, $uuid, $old_item, $old_unit, $old_place_use, ($old_stock * -1), 'taken_from_shelf', $now);
+					}
+					$old_total = 0;
+					$old_stock = 0;
+					$old_usage = 0;
 				}
-				&subs::db_query("delete from warehouse where app_uuid = ? and kind in ('stock','usage')", $uuid);
-				&appointment_stock_movement($c, $app, 'record', $after->{'quantity'}, $after->{'unit'}, $after->{'timestamp'}, $uuid);
+				if ($mode eq 'produce') {
+					my $delta = $qty - $old_total;
+					if ($delta > 0) {
+						&appointment_edit_stock_row($app, $uuid, $item, $qunit, $place, $delta, 'produced_adjust', $now);
+					}
+					elsif ($delta < 0) {
+						&appointment_edit_stock_row($app, $uuid, $item, $qunit, $place, $delta, 'taken_from_shelf', $now);
+					}
+				}
+				else {
+					my $delta = $qty - $old_total;
+					if ($delta > 0) {
+						# more consumed: the shelf first, the rest as usage
+						my $on_hand = &subs::warehouse_on_hand_at($item, $qunit, $place);
+						my $take = $on_hand > 0 ? ($on_hand < $delta ? $on_hand : $delta) : 0;
+						&appointment_edit_stock_row($app, $uuid, $item, $qunit, $place, ($take * -1), 'taken_from_shelf', $now) if $take > 0;
+						&appointment_edit_usage_row($app, $uuid, $item, $qunit, $place, ($delta - $take), 'edit_adjust_unstocked', $now) if $delta - $take > 0;
+					}
+					elsif ($delta < 0) {
+						# less consumed: undo unshelved use first, then return to the shelf
+						my $back = $delta * -1;
+						my $from_usage = $old_usage < $back ? $old_usage : $back;
+						&appointment_edit_usage_row($app, $uuid, $item, $qunit, $place, ($from_usage * -1), 'edit_adjust_unstocked', $now) if $from_usage > 0;
+						my $to_shelf = $back - $from_usage;
+						&appointment_edit_stock_row($app, $uuid, $item, $qunit, $place, $to_shelf, 'returned_to_shelf', $now) if $to_shelf > 0;
+					}
+				}
+				&subs::accounting_journal_maybe_rebuild();
 			}
 		}
 	}
@@ -42637,6 +42734,17 @@ post '/manager/edit_app' => sub($c) {
 	my $appt = defined $uuid ? &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0] : undef;
 	return $c->render(text => 'not found', status => 404)
 		unless $appt && defined $appt->{'uuid'} && (($appt->{'app'} // '') eq $app);
+
+	# A rename reuses the same full relabel the Configure panel uses; a target
+	# that already exists is refused here rather than silently merged.
+	my $new_app = &subs::unformat_name($c->param('app_name'));
+	if (defined $c->param('app_name') && length $new_app && $new_app ne $app) {
+		my $taken = &subs::db_select('settings', undef, { app => $new_app, setting => 'uuid' })->hashes->[0]
+			|| &subs::db_select('appointments', undef, { app => $new_app })->hashes->[0];
+		return $c->render(json => { ok => 0, error => 'exists' }, status => 409) if $taken;
+		&subs::setting_setter({ app => $app, setting => 'name_change', value => $new_app });
+		$app = $new_app;
+	}
 
 	# The form names the controls it actually rendered. An absent control is
 	# "unchanged", not "cleared"; a rendered blank is a deliberate clear. A
