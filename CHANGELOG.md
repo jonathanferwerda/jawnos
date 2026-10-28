@@ -5,6 +5,7 @@ Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 
 ## 2026-10-27
 
+- v0.1.1489 - app 1148 (0.118.149): Home no longer raises the keyboard when it resumes; its search still filters the installed apps, and Enter now hands the words to the manager's Search app (the house's apps and appointments). The native JawnOS IME wears the manager's light key palette instead of black.
 - v0.1.1488 - app 1147 (0.118.148) and api 1051 (0.53.49) are published: a tap on an installed app in the JawnOS home now opens it (the drag long-press had been eating the click), and the single-app shell keeps the keyboard dock above its pinned window.
 - v0.1.1486 - tablet keyboard: softKbOn now answers true for an Android/iPad tablet, so a tablet with no hovering mouse gets the JawnOS dock instead of no keyboard at all. The single-app shell also keeps that dock above its pinned window and leaves the native IME to the other Android apps.
 - v0.1.1480 - appointment fields: the rich-text upgrader that replaces the note textarea now keeps the note's height and draws its placeholder at the same 20px as every other field, so the note no longer shrinks a moment after the editor loads. A contenteditable placeholder is a ::before, not a form control's ::placeholder, so it needed its own size.
