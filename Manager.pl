@@ -47166,7 +47166,8 @@ get '/manager/time_preview' => sub ($c) {
 		$warranty_spec = $is_transaction ? '-7y' : ($settings->{'warranty'} || '-10y');
 		$warranty_default = 1;
 	}
-	my $warranty_ms = &warranty_resolve($warranty_spec, $ago_ms, $deep);
+	my $warranty_ms = &warranty_resolve($warranty_spec,
+		$is_transaction ? $ago_ms : ($ago_ms > $now ? $ago_ms : $now), $deep);
 
 	my $duration_spec = $c->param('duration') // '';
 	my $duration_default = 0;
