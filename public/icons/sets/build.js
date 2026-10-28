@@ -381,6 +381,7 @@ const ICONS = {
 	'distorjawn': 'pedal',
 	'delayed': 'pedal',
 	'reverb2': 'pedal',
+	'synth': 'pedal',
 	'cord': 'cord',
 	'jack': 'jack',
 	'slider': 'groove',
@@ -797,6 +798,275 @@ const JOG_WHEELS = {
 };
 const JOG_NAMES = { 'jog wheel': 1, 'jog wheel tye dye': 1 };
 
+// --- studio knobs and pedals ---------------------------------------------------
+// Knobs and pedal backdrops are hardware too, not buttons. A knob is a round
+// disc with a knurled rim, a hub and a pointer at twelve o'clock (the studio
+// rotates it from there); a pedal is a chassis in the pedal's own aspect ratio,
+// so the percentage-positioned controls still land where the session expects.
+// Both are generated from one per-style palette, so the mixer follows the set.
+const PEDAL_SIZES = {
+	jtune: [380, 464],
+	compressionX: [352, 404],
+	distorjawn: [361, 450],
+	delayed: [352, 404],
+	reverb2: [344, 408],
+	synth: [256, 256],
+};
+const PEDAL_LABELS = { synth: 'JawnSynth' };
+const pedalLabel = name => PEDAL_LABELS[name] || (name.charAt(0).toUpperCase() + name.slice(1));
+const PEDAL_NAMES = {};
+Object.keys(PEDAL_SIZES).forEach(n => { PEDAL_NAMES[n] = 1; });
+const KNOB_NAMES = {};
+Object.keys(ICONS).forEach(n => { if (n.indexOf('knob_') === 0) { KNOB_NAMES[n] = 1; } });
+const xmlText = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+const HARDWARE = {
+	cartoon: (h, d) => ({
+		rim: hsl(h, 0.85, d ? 0.24 : 0.63),
+		rimEdge: d ? hsl(h, 0.5, 0.42) : '#1b1b1b', edgeW: 14,
+		face: d ? hsl(h, 0.3, 0.95) : '#ffffff', faceEdge: '#1b1b1b', faceW: 8,
+		detail: d ? 'rgba(0,0,0,0.5)' : 'rgba(0,0,0,0.35)',
+		hub: hsl(h, 0.85, d ? 0.24 : 0.63), hubEdge: '#1b1b1b', hubW: 8,
+		marker: hsl(h, 0.95, d ? 0.55 : 0.35), text: '#111111', notchOpacity: 0.8,
+	}),
+	dark: (h, d) => {
+		const top = hsl(h, 0.22, d ? 0.18 : 0.24), bot = hsl(h, 0.2, d ? 0.1 : 0.14);
+		const detail = hsl(h, 0.25, 0.9);
+		return {
+			defs: '<defs><linearGradient id="hwBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>',
+			rim: 'url(#hwBg)', rimEdge: hsl(h, 0.25, d ? 0.32 : 0.38), edgeW: 5,
+			face: hsl(h, 0.22, d ? 0.12 : 0.17), faceEdge: hsl(h, 0.25, d ? 0.3 : 0.36), faceW: 4,
+			detail, hub: hsl(h, 0.2, d ? 0.2 : 0.26), hubEdge: detail, hubW: 4,
+			marker: hsl(h, 0.9, d ? 0.6 : 0.66), text: detail, notchOpacity: 0.35,
+		};
+	},
+	light: (h, d) => {
+		const edge = d ? hsl(h, 0.4, 0.42) : hsl(h, 0.4, 0.74);
+		const detail = d ? hsl(h, 0.45, 0.9) : hsl(h, 0.45, 0.3);
+		return {
+			rim: d ? hsl(h, 0.38, 0.22) : hsl(h, 0.5, 0.96), rimEdge: edge, edgeW: 6,
+			face: d ? hsl(h, 0.3, 0.16) : '#ffffff', faceEdge: edge, faceW: 5,
+			detail, hub: d ? hsl(h, 0.38, 0.27) : hsl(h, 0.5, 0.9), hubEdge: edge, hubW: 4,
+			marker: hsl(h, 0.7, d ? 0.55 : 0.45), text: detail, notchOpacity: 0.35,
+		};
+	},
+	outline: (h, d) => {
+		const c = hsl(h, 0.6, d ? 0.78 : 0.45), v = hsl(h, 0.7, d ? 0.54 : 0.72);
+		return {
+			rim: 'none', rimEdge: c, edgeW: 9, face: 'none', faceEdge: c, faceW: 6,
+			detail: v, hub: 'none', hubEdge: hsl(h, 0.7, d ? 0.6 : 0.5), hubW: 6,
+			marker: hsl(h, 0.8, d ? 0.6 : 0.55), text: v, notchOpacity: 0.9,
+		};
+	},
+	windows: (h, d) => {
+		const top = hsl(h, 0.66, d ? 0.32 : 0.58), bot = hsl(h, 0.68, d ? 0.18 : 0.42);
+		return {
+			defs: '<defs><linearGradient id="hwBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>',
+			rim: 'url(#hwBg)', rimEdge: d ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.35)', edgeW: 3,
+			face: d ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.18)',
+			detail: '#ffffff', hub: 'rgba(255,255,255,0.22)', hubEdge: 'rgba(255,255,255,0.6)', hubW: 3,
+			marker: '#ffffff', text: '#ffffff', notchOpacity: 0.35,
+		};
+	},
+	mac: (h, d) => {
+		const top = hsl(h, 0.78, d ? 0.36 : 0.68), bot = hsl(h, 0.82, d ? 0.2 : 0.46);
+		const defs = '<defs><linearGradient id="hwBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient>'
+			+ '<linearGradient id="hwSheen" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="rgba(255,255,255,' + (d ? '0.24' : '0.55') + ')"/><stop offset="0.55" stop-color="rgba(255,255,255,' + (d ? '0.05' : '0.06') + ')"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></linearGradient></defs>';
+		return {
+			defs, rim: 'url(#hwBg)', art: '<path d="M-40 540 L232 -40 L342 -40 L70 540 Z" fill="url(#hwSheen)"/>',
+			rimEdge: 'rgba(255,255,255,' + (d ? 0.32 : 0.5) + ')', edgeW: 3,
+			face: 'rgba(0,0,0,0.08)', detail: '#ffffff', hub: 'rgba(255,255,255,0.22)', hubEdge: 'rgba(255,255,255,0.6)', hubW: 3,
+			marker: '#ffffff', text: '#ffffff', notchOpacity: 0.35,
+		};
+	},
+	gnome: (h, d) => {
+		const top = hsl(h, 0.34, d ? 0.28 : 0.93), bot = hsl(h, 0.4, d ? 0.18 : 0.8);
+		const detail = d ? hsl(h, 0.5, 0.86) : hsl(h, 0.6, 0.36);
+		return {
+			defs: '<defs><linearGradient id="hwBg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + top + '"/><stop offset="1" stop-color="' + bot + '"/></linearGradient></defs>',
+			rim: 'url(#hwBg)', rimEdge: d ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.12)', edgeW: 3,
+			face: d ? hsl(h, 0.3, 0.18) : 'rgba(255,255,255,0.55)', faceEdge: d ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.1)', faceW: 3,
+			detail, hub: d ? hsl(h, 0.34, 0.3) : 'rgba(255,255,255,0.7)', hubEdge: detail, hubW: 4,
+			marker: d ? hsl(h, 0.6, 0.7) : hsl(h, 0.7, 0.4), text: detail, notchOpacity: 0.3,
+		};
+	},
+	neon: (h, d) => ({
+		defs: '<defs><filter id="hwGlow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>',
+		rim: d ? '#07090d' : '#0c0f14', rimEdge: hsl(h, 1, d ? 0.5 : 0.6), edgeW: 4,
+		face: d ? '#07090d' : '#0c0f14', faceEdge: hsl(h, 1, d ? 0.5 : 0.6), faceW: 3,
+		detail: hsl(h, 1, d ? 0.56 : 0.62), hub: d ? '#07090d' : '#0c0f14', hubEdge: hsl(h, 1, d ? 0.5 : 0.6), hubW: 3,
+		marker: hsl(h, 1, d ? 0.7 : 0.75), text: hsl(h, 1, d ? 0.56 : 0.62), glow: true, notchOpacity: 0.75,
+	}),
+	pastel: (h, d) => {
+		const detail = d ? hsl(h, 0.4, 0.9) : hsl(h, 0.35, 0.34);
+		return {
+			rim: d ? hsl(h, 0.32, 0.24) : hsl(h, 0.6, 0.85), face: d ? hsl(h, 0.3, 0.18) : '#ffffff',
+			detail, hub: d ? hsl(h, 0.32, 0.28) : hsl(h, 0.6, 0.92),
+			marker: d ? hsl(h, 0.6, 0.6) : hsl(h, 0.5, 0.45), text: detail, notchOpacity: 0.4,
+		};
+	},
+	mono: (h, d) => ({
+		rim: d ? '#111111' : '#ffffff', rimEdge: d ? '#e8e8e8' : '#111111', edgeW: 14,
+		face: d ? '#111111' : '#ffffff', faceEdge: d ? '#e8e8e8' : '#111111', faceW: 10,
+		detail: d ? '#ffffff' : '#111111', hub: d ? '#111111' : '#ffffff', hubEdge: d ? '#e8e8e8' : '#111111', hubW: 10,
+		marker: d ? '#ffffff' : '#111111', text: d ? '#ffffff' : '#111111', notchOpacity: 1,
+	}),
+	sunburst: (h, d) => {
+		const defs = '<defs><path id="hwRay" d="M256 256 L' + polar(500, -7) + ' L' + polar(500, 7) + ' Z"/>'
+			+ '<radialGradient id="hwBg" cx="0.5" cy="0.4" r="0.8"><stop offset="0" stop-color="' + hsl(h, 0.95, d ? 0.32 : 0.6) + '"/><stop offset="1" stop-color="' + hsl(h + 24, 0.9, d ? 0.2 : 0.44) + '"/></radialGradient></defs>';
+		let rays = '';
+		for (let i = 0; i < 18; i++) {
+			rays += '<use href="#hwRay" transform="rotate(' + (i * 20) + ' 256 256)" fill="rgba(255,255,255,' + (d ? 0.1 : 0.22) + ')"/>';
+		}
+		return {
+			defs, rim: 'url(#hwBg)', art: rays, rimEdge: d ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.22)', edgeW: 8,
+			face: hsl(h, 0.9, d ? 0.22 : 0.42), faceOpacity: 0.8, faceEdge: 'rgba(255,255,255,0.4)', faceW: 4,
+			detail: '#ffffff', hub: 'rgba(255,255,255,0.18)', hubEdge: '#ffffff', hubW: 5,
+			marker: '#ffffff', text: '#ffffff', notchOpacity: 0.35,
+		};
+	},
+	holographic: (h, d) => {
+		const offs = [0, 0.22, 0.45, 0.68, 1];
+		let stops = '';
+		for (let i = 0; i < offs.length; i++) {
+			stops += '<stop offset="' + offs[i] + '" stop-color="' + hsl(h - 50 + i * 64, 0.95, d ? (i % 2 ? 0.44 : 0.3) : (i % 2 ? 0.72 : 0.56)) + '"/>';
+		}
+		const defs = '<defs><linearGradient id="hwBg" x1="0" y1="0" x2="1" y2="1">' + stops + '</linearGradient>'
+			+ '<linearGradient id="hwSheen" x1="0" y1="0" x2="0.4" y2="1"><stop offset="0" stop-color="rgba(255,255,255,' + (d ? '0.2' : '0.4') + ')"/><stop offset="1" stop-color="rgba(255,255,255,0)"/></linearGradient></defs>';
+		return {
+			defs, rim: 'url(#hwBg)', art: '<path d="M-40 540 L232 -40 L342 -40 L70 540 Z" fill="url(#hwSheen)"/>',
+			rimEdge: 'rgba(255,255,255,' + (d ? 0.34 : 0.55) + ')', edgeW: 6,
+			face: 'rgba(0,0,0,0.14)', detail: '#ffffff', hub: 'rgba(255,255,255,0.18)', hubEdge: '#ffffff', hubW: 4,
+			marker: '#ffffff', text: '#ffffff', notchOpacity: 0.3,
+		};
+	},
+	sticker: (h, d) => ({
+		rim: '#ffffff', rimEdge: 'rgba(0,0,0,0.12)', edgeW: 3,
+		face: hsl(h, 0.95, d ? 0.38 : 0.58), faceEdge: '#ffffff', faceW: 12,
+		detail: 'rgba(0,0,0,0.45)', hub: 'rgba(0,0,0,0.18)', hubEdge: '#ffffff', hubW: 10,
+		marker: '#ffffff', text: d ? '#ffffff' : 'rgba(0,0,0,0.6)', notchOpacity: 0.4,
+	}),
+	psychedelic: (h, d) => {
+		let ring = '';
+		for (let s = 0; s <= 60; s++) {
+			const a = s / 60 * Math.PI * 2;
+			const r = 100 + 3 * Math.sin(3 * a) + 1.3 * Math.sin(5 * a + 0.8);
+			ring += (s ? 'L' : 'M') + (r * Math.cos(a)).toFixed(1) + ' ' + (r * Math.sin(a)).toFixed(1);
+		}
+		const defs = '<defs><path id="hwRing" d="' + ring + ' Z"/></defs>';
+		const hues = [0, 72, 144, 216, 288];
+		let bands = '';
+		for (let i = 0; i < 9; i++) {
+			const R = 250 - i * 27;
+			bands += '<use href="#hwRing" transform="translate(256,256) scale(' + (R / 100).toFixed(3) + ') rotate(' + (i * 17) + ')" fill="' + hsl(h + hues[i % hues.length], 0.92, d ? (i % 2 ? 0.32 : 0.22) : (i % 2 ? 0.62 : 0.46)) + '"/>';
+		}
+		const detail = d ? hsl(h + 200, 0.6, 0.86) : hsl(h + 200, 0.5, 0.12);
+		return {
+			defs, rim: hsl(h, 0.92, d ? 0.22 : 0.46), art: bands, rimEdge: 'rgba(255,255,255,0.3)', edgeW: 3,
+			face: 'rgba(0,0,0,0.18)', faceOpacity: 0.85, detail,
+			hub: d ? hsl(h + 200, 0.5, 0.3) : hsl(h + 200, 0.5, 0.2), hubEdge: detail, hubW: 5,
+			marker: d ? '#ffffff' : hsl(h + 200, 0.5, 0.12), text: detail, notchOpacity: 0.4,
+		};
+	},
+	kaleidoscope: (h, d) => {
+		const defs = '<defs><path id="hwWedge" d="M256 256 L' + polar(500, -0.7) + ' L' + polar(500, 30.7) + ' Z"/>'
+			+ '<path id="hwLead" d="M256 256 L' + polar(500, 0) + '"/>'
+			+ '<radialGradient id="hwShine" cx="0.32" cy="0.26" r="1"><stop offset="0" stop-color="#ffffff" stop-opacity="' + (d ? 0.26 : 0.55) + '"/><stop offset="0.6" stop-color="#ffffff" stop-opacity="0"/></radialGradient></defs>';
+		let facets = '';
+		for (let i = 0; i < 12; i++) {
+			facets += '<use href="#hwWedge" transform="rotate(' + (i * 30) + ' 256 256)" fill="' + hsl(h + i * 14, 0.92, d ? (i % 2 ? 0.34 : 0.22) : (i % 2 ? 0.48 : 0.64)) + '"/>'
+				+ '<use href="#hwLead" transform="rotate(' + (i * 30) + ' 256 256)" stroke="rgba(255,255,255,' + (d ? 0.24 : 0.4) + ')" stroke-width="5"/>';
+		}
+		return {
+			defs, rim: hsl(h, 0.92, d ? 0.24 : 0.55), art: facets, rimEdge: 'rgba(255,255,255,0.3)', edgeW: 4,
+			face: 'rgba(0,0,0,0.12)', faceOpacity: 0.8, detail: '#ffffff',
+			hub: 'rgba(255,255,255,0.18)', hubEdge: '#ffffff', hubW: 5,
+			marker: '#ffffff', text: '#ffffff', notchOpacity: 0.3,
+		};
+	},
+	clown: (h, d) => {
+		const dim = l => d ? Math.max(0.16, l * 0.55) : l;
+		const clash = [0, 180, 40, 220, 80, 300];
+		let stops = '';
+		for (let i = 0; i < clash.length; i++) {
+			stops += '<stop offset="' + Math.round(i / (clash.length - 1) * 100) + '%" stop-color="' + hsl(h + clash[i], 1, dim(i % 2 ? 0.55 : 0.67)) + '"/>';
+		}
+		const defs = '<defs><linearGradient id="hwBg" x1="0" y1="0" x2="1" y2="1">' + stops + '</linearGradient>'
+			+ '<pattern id="hwHazard" width="64" height="64" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+			+ '<rect width="32" height="64" fill="' + hsl(h + 130, 1, dim(0.52)) + '"/>'
+			+ '<rect x="32" width="32" height="64" fill="' + hsl(h + 310, 1, dim(0.6)) + '"/>'
+			+ '</pattern></defs>';
+		return {
+			defs, rim: 'url(#hwBg)', art: '<rect x="-80" y="-80" width="672" height="672" fill="url(#hwHazard)" opacity="' + (d ? 0.38 : 0.6) + '"/>',
+			rimEdge: d ? '#f2f2f2' : '#000000', edgeW: 16,
+			face: hsl(h + 50, 1, dim(0.62)), faceOpacity: 0.85, faceEdge: '#ffffff', faceW: 8,
+			detail: '#ffffff', hub: '#ffffff', hubEdge: '#000000', hubW: 8,
+			marker: hsl(h + 180, 1, dim(0.72)), text: '#ffffff', textStroke: '#000000', notchOpacity: 0.5,
+		};
+	},
+};
+
+function knobArt(style, h, is_dark) {
+	const p = (HARDWARE[style] || HARDWARE.cartoon)(h, is_dark);
+	let defs = p.defs || '';
+	defs += '<clipPath id="knobDisc"><circle cx="256" cy="256" r="250"/></clipPath>';
+	let body = '<circle cx="256" cy="256" r="250" fill="' + (p.rim || 'none') + '"'
+		+ (p.rimEdge ? ' stroke="' + p.rimEdge + '" stroke-width="' + (p.edgeW || 8) + '"' : '') + '/>';
+	if (p.art) { body += '<g clip-path="url(#knobDisc)">' + p.art + '</g>'; }
+	for (let i = 0; i < 36; i++) {
+		body += '<path d="M' + polar(249, i * 10) + ' L' + polar(224, i * 10) + '" fill="none" stroke="' + p.detail
+			+ '" stroke-width="9" stroke-linecap="round" opacity="' + (p.notchOpacity == null ? 0.45 : p.notchOpacity) + '"/>';
+	}
+	body += '<circle cx="256" cy="256" r="222" fill="none" stroke="' + (p.faceEdge || p.detail) + '" stroke-width="' + (p.faceW || 6) + '" opacity="0.55"/>';
+	body += '<circle cx="256" cy="256" r="196" fill="' + (p.face || 'none') + '"'
+		+ (p.faceEdge ? ' stroke="' + p.faceEdge + '" stroke-width="' + (p.faceW || 6) + '"' : '')
+		+ (p.faceOpacity ? ' fill-opacity="' + p.faceOpacity + '"' : '') + '/>';
+	body += '<circle cx="256" cy="256" r="148" fill="none" stroke="' + p.detail + '" stroke-width="4" opacity="0.3"/>';
+	// the pointer, under the hub so it reads as coming out from beneath it
+	body += '<rect x="235" y="62" width="42" height="132" rx="21" fill="' + (p.marker || p.detail) + '"/>';
+	body += '<circle cx="256" cy="36" r="14" fill="' + (p.marker || p.detail) + '"/>';
+	body += '<circle cx="256" cy="256" r="72" fill="' + (p.hub || p.detail) + '"'
+		+ (p.hubEdge ? ' stroke="' + p.hubEdge + '" stroke-width="' + (p.hubW || 5) + '"' : '') + '/>';
+	body += '<circle cx="256" cy="256" r="38" fill="none" stroke="' + p.detail + '" stroke-width="4" opacity="0.35"/>';
+	if (p.glow) { body = '<g filter="url(#hwGlow)">' + body + '</g>'; }
+	return svgWrap(defs + body);
+}
+
+function pedalArt(style, name, h, is_dark) {
+	const p = (HARDWARE[style] || HARDWARE.cartoon)(h, is_dark);
+	const size = PEDAL_SIZES[name] || [352, 404];
+	const w = size[0], hh = size[1];
+	const label = pedalLabel(name);
+	const rad = Math.min(w, hh) * 0.055;
+	let defs = p.defs || '';
+	defs += '<clipPath id="pedalBody"><rect x="0" y="0" width="' + w + '" height="' + hh + '" rx="' + rad.toFixed(1) + '"/></clipPath>';
+	let body = '<rect x="0" y="0" width="' + w + '" height="' + hh + '" rx="' + rad.toFixed(1) + '" fill="' + (p.rim || 'none') + '"'
+		+ (p.rimEdge ? ' stroke="' + p.rimEdge + '" stroke-width="' + (p.edgeW || 6) + '"' : '') + '/>';
+	if (p.art) {
+		body += '<g clip-path="url(#pedalBody)"><g transform="scale(' + (w / 512) + ',' + (hh / 512) + ')">' + p.art + '</g></g>';
+	}
+	const fx = w * 0.055, fy = hh * 0.06, fw = w * 0.89, fh = hh * 0.88, fr = rad * 0.7;
+	body += '<rect x="' + fx.toFixed(1) + '" y="' + fy.toFixed(1) + '" width="' + fw.toFixed(1) + '" height="' + fh.toFixed(1) + '" rx="' + fr.toFixed(1) + '" fill="' + (p.face || 'none') + '"'
+		+ (p.faceEdge ? ' stroke="' + p.faceEdge + '" stroke-width="' + (p.faceW || 6) + '"' : '')
+		+ (p.faceOpacity ? ' fill-opacity="' + p.faceOpacity + '"' : '') + '/>';
+	const fs = Math.min(hh * 0.135, (fw * 0.9) / (label.length * 0.6));
+	body += '<text x="' + (w / 2).toFixed(1) + '" y="' + (hh * 0.16).toFixed(1) + '" text-anchor="middle" font-family="DejaVu Sans, Noto Sans, sans-serif" font-weight="700" font-size="' + fs.toFixed(1) + '" fill="' + (p.text || p.detail) + '"'
+		+ (p.textStroke ? ' stroke="' + p.textStroke + '" stroke-width="' + (fs * 0.12).toFixed(1) + '" paint-order="stroke"' : '') + '>' + xmlText(label) + '</text>';
+	const gx = w * 0.16, gy = hh * 0.70, gw = w * 0.68, gh = hh * 0.18;
+	body += '<rect x="' + gx.toFixed(1) + '" y="' + gy.toFixed(1) + '" width="' + gw.toFixed(1) + '" height="' + gh.toFixed(1) + '" rx="' + (gh * 0.18).toFixed(1) + '" fill="' + (p.hub || p.detail) + '"'
+		+ (p.hubEdge ? ' stroke="' + p.hubEdge + '" stroke-width="' + (p.hubW || 5) + '"' : '') + '/>';
+	for (let i = 0; i < 4; i++) {
+		const ly = gy + gh * (0.18 + i * 0.19), lh = gh * 0.07;
+		body += '<rect x="' + (gx + gw * 0.08).toFixed(1) + '" y="' + ly.toFixed(1) + '" width="' + (gw * 0.84).toFixed(1) + '" height="' + lh.toFixed(1) + '" rx="' + (lh / 2).toFixed(1) + '" fill="' + p.detail + '" opacity="0.3"/>';
+	}
+	const m = Math.min(w, hh) * 0.035, sr = Math.min(w, hh) * 0.014;
+	[[m, m], [w - m, m], [m, hh - m], [w - m, hh - m]].forEach(([x, y]) => {
+		body += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="' + sr.toFixed(1) + '" fill="' + p.detail + '" opacity="0.55"/>';
+	});
+	if (p.glow) { body = '<g filter="url(#hwGlow)">' + body + '</g>'; }
+	return svgWrapBox(defs + body, w, hh);
+}
+
 const STYLES = {
 	// bright, thick black outline, sticker-ish
 	cartoon: {
@@ -1099,6 +1369,11 @@ function sub(inner, g, d) {
 function svgWrap(body) {
 	return '<svg xmlns="http://www.w3.org/2000/svg" width="' + SIZE + '" height="' + SIZE + '" viewBox="0 0 512 512">' + body + '</svg>\n';
 }
+// Pedal backdrops keep the aspect ratio of the hand-drawn picture they replace,
+// so the percentage-positioned knobs and footswitch still land in the same place.
+function svgWrapBox(body, w, h) {
+	return '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">' + body + '</svg>\n';
+}
 
 // --- generate ------------------------------------------------------------------
 function hashHue(str) {
@@ -1145,6 +1420,33 @@ const HUE_OVERRIDES = {
 	restore: 216,
 	maximize: 216,
 	close: 0,
+	// The studio's knobs keep the colour their name promises, so the channel
+	// strip still reads gain-cyan, treble-yellow, mid-green, bass-red, pan-blue
+	// in every set; the sets dress them in their own shapes and light.
+	knob_aqua_logo: 182,
+	knob_blue: 220,
+	knob_cyan: 185,
+	knob_fire_j: 18,
+	knob_green: 130,
+	knob_green_rounded: 140,
+	knob_grey_plain: 210,
+	knob_navy: 226,
+	knob_orange_grower: 28,
+	knob_orange: 30,
+	knob_pink: 330,
+	knob_red_numbered: 0,
+	knob_red: 0,
+	knob_star_trek: 50,
+	knob_teal_rounded: 178,
+	knob_white: 210,
+	knob_yellow: 55,
+	// The six pedal backdrops keep the colour of the pedal they replace.
+	jtune: 190,
+	compressionX: 0,
+	distorjawn: 350,
+	delayed: 130,
+	reverb2: 22,
+	synth: 265,
 	// the paperwork keeps one calm hue: a quote, an invoice, a receipt and
 	// their kin are the same family of paper
 	quote: 210,
@@ -1174,11 +1476,15 @@ for (const style of styleKeys) {
 		for (const name of iconNames) {
 			const glyph = GLYPHS[ICONS[name]];
 			if (!glyph) { throw new Error('Missing glyph for ' + name); }
-			// The jog wheels are round controls with their own full-bleed art, not
-			// square tiles with the glyph inside one.
+			// Jog wheels, knobs and pedal backdrops are hardware with their own
+			// full-bleed art, not square tiles with the glyph inside one.
 			const svg = JOG_NAMES[name]
-				? JOG_WHEELS[style](hueFor(name), cut.dark)
-				: STYLES[style].render(hueFor(name), glyph, 0, cut.dark);
+				? (JOG_WHEELS[style] || JOG_WHEELS.cartoon)(hueFor(name), cut.dark)
+				: PEDAL_NAMES[name]
+					? pedalArt(style, name, hueFor(name), cut.dark)
+					: KNOB_NAMES[name]
+						? knobArt(style, hueFor(name), cut.dark)
+						: STYLES[style].render(hueFor(name), glyph, 0, cut.dark);
 			fs.writeFileSync(path.join(dir, name + '.svg'), svg);
 			written++;
 		}
