@@ -42479,7 +42479,7 @@ post '/manager/delete_app' => sub($c) {
 
 };
 
-sub delete_app($app,$uuid,$server_time,$reason) {
+sub delete_app($app,$uuid,$server_time,$reason,$silent) {
 	# The rows are fetched before the websocket send, not after it: send dials the
 	# database, and the kept handle finishes whatever statement was left unfetched
 	# on its way past, so a result read after it comes back empty. Fetched late,
@@ -42536,11 +42536,11 @@ sub delete_app($app,$uuid,$server_time,$reason) {
 		}
 		&Websocket::send('tab', { console => '$(\'.appointment_detail[app="' . $app . '"][uuid="' . $uuid . '"]\').remove();'});
 		&deletion_registration({ table => 'appointments', app => $app, uuid => $uuid, scope => 'single', server_time => $server_time });
-		&subs::vacuum($app);
+		&subs::vacuum($app) unless $silent;
 		&subs::log_writer('deletion ' . $app . ' '  . $reason);
 
 		&budget_runner($app);
-		&centre_view_grabber({ c => &subs::controller_builder(), app => $app, timestamp => &subs::rightNow(), cached => 'no' });
+		&centre_view_grabber({ c => &subs::controller_builder(), app => $app, timestamp => &subs::rightNow(), cached => 'no' }) unless $silent;
 	}
 	return { appts => $appts, status => $status };
 }
@@ -42905,6 +42905,43 @@ post '/manager/clone_app' => sub($c) {
 		}
 	}
 	$c->render(json => { ok => 1, app => $new });
+};
+
+# Delete an app: every appointment through the ordinary delete (files, invoice
+# payments, continuation rows, warehouse rows, one tombstone each), then the
+# app-scoped settings/models/options/continent rows, each tombstoned so peers
+# drop their copies instead of pushing them back. Core house apps are refused.
+post '/manager/delete_whole_app' => sub($c) {
+	my $app = &subs::unformat_name($c->param('app'));
+	return $c->render(json => { ok => 0, error => 'app' }, status => 400) unless length $app;
+	my %reserved = map { $_ => 1 } qw/me misc config camera warehouse mail app sale purchase store terminal security ime people notes handbook studio music clock alarm padlock folders market budget crypto/;
+	return $c->render(json => { ok => 0, error => 'reserved' }, status => 403) if $reserved{$app};
+	my $server_time = $c->param('server_time') || &subs::rightNow();
+	my $appts = &subs::db_select('appointments', undef, { app => $app })->hashes || [];
+	foreach my $a ( @{$appts} ) {
+		&delete_app($app, $a->{'uuid'}, $a->{'server_time'} || $server_time, 'whole app delete', 1);
+	}
+	my $tombstoned = 0;
+	foreach my $t ( qw/settings model option option_category subcategory continent cache mailbox tickets websites websockets/ ) {
+		my $rows = eval { &subs::db_select($t, undef, { app => $app })->hashes } || [];
+		foreach my $r ( @{$rows} ) {
+			next unless defined $r->{'uuid'} && length $r->{'uuid'};
+			&deletion_registration({ table => $t, app => $app, uuid => $r->{'uuid'}, scope => 'single', server_time => $r->{'server_time'} || $server_time });
+			$tombstoned++;
+		}
+		&subs::db_query('delete from ' . $t . ' where app = ?', $app);
+	}
+	# Stock in rows name the item rather than an appointment; take them too.
+	my $wh = &subs::db_query('select uuid, server_time from warehouse where item = ? or data like ?', $app, '%"source":"' . $app . '"%')->hashes || [];
+	foreach my $w ( @{$wh} ) {
+		next unless defined $w->{'uuid'} && length $w->{'uuid'};
+		&deletion_registration({ table => 'warehouse', app => $app, uuid => $w->{'uuid'}, scope => 'single', server_time => $w->{'server_time'} || $server_time });
+		$tombstoned++;
+	}
+	&subs::db_query('delete from warehouse where item = ? or data like ?', $app, '%"source":"' . $app . '"%');
+	&Websocket::send('server', { console => '$(".' . &subs::html_name($app) . '_close_button").trigger("click");', timestamp => &subs::rightNow() });
+	&subs::log_writer('deletion app ' . $app);
+	$c->render(json => { ok => 1, app => $app, appointments => scalar @{$appts}, tombstones => $tombstoned });
 };
 
 get '/manager/configure/adopt_app' => sub($c) {

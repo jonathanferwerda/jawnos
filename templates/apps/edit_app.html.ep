@@ -6,7 +6,7 @@ Warranty: <input attribute="warranty" class="time" timestamp="<%= $app->{'warran
 <span class="edit_app_extras" style="display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;margin-left:12px;">
 	<input attribute="clone_name" placeholder="<%= &subs::ui('New name for a clone') %>" style="min-width:150px;">
 	<img src="<%= &subs::icon_for('/images/decipherable/adopt.png') %>" hint="Clone" class="medium_thumb edit_app_clone hover" uuid="<%= $app->{'uuid'} %>" app="<%= $app->{'app'} %>">
-	<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="medium_thumb edit_app_delete hover" uuid="<%= $app->{'uuid'} %>" app="<%= $app->{'app'} %>" timestamp="<%= $app->{'timestamp'} %>" type="<%= $app->{'type'} %>">
+	<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete app" class="medium_thumb edit_app_delete hover" uuid="<%= $app->{'uuid'} %>" app="<%= $app->{'app'} %>" timestamp="<%= $app->{'timestamp'} %>" type="<%= $app->{'type'} %>">
 	<span class="edit_app_status" style="font-size:12px;opacity:.75;"></span>
 </span>
 <%= include 'apps/app_details', appts => $appts, a => $app->{'app'}, app => $app %>
