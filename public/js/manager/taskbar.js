@@ -327,6 +327,8 @@ function jawnosClockEditEnd(commit) {
 		jawnosClockAstrayApply();
 		// one fetch, the same the poll makes: the view slides to the new centre
 		if (typeof calculator == 'function') { calculator(); }
+		// the readings under an open window's fields follow the same centre
+		if (typeof jawnosTimePreviewRefreshAll == 'function') { jawnosTimePreviewRefreshAll(); }
 	}
 	else {
 		jawnosClockAstrayApply();

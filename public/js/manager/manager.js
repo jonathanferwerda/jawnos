@@ -48,6 +48,9 @@ if ('serviceWorker' in navigator) {
 $(document).on('change', '#time_machine',function() {
 	var ts = $(this).val();
 	localStorage.setItem('time_machine',ts);
+	// the words under the record controls are anchored on the view, so the open
+	// windows must be asked again now that the centre has moved
+	if (typeof jawnosTimePreviewRefreshAll == 'function') { jawnosTimePreviewRefreshAll(); }
 });
 
 

@@ -75,11 +75,41 @@ function jawnosTimePreviewRequest(appointment, deep) {
 	});
 }
 
+// Where the view stands: the time machine's words and the timeshift. Every
+// reading under a field is anchored here, so the open windows have to be asked
+// again when it moves - whether the change came from #time_machine, the
+// taskbar clock, a timeline drag, a past-life jump or the now button.
+function jawnosTimePreviewCentre() {
+	var time_machine = $('#time_machine').val() || localStorage.getItem('time_machine') || '';
+	var timeshift = (localStorage.getItem('timeshift') || '') + (localStorage.getItem('timeshift_scope') || '');
+	return time_machine + '\u0000' + timeshift;
+}
+var jawnosTimePreviewCentreAt = null;
+function jawnosTimePreviewRefreshAll() {
+	$('.appointment').each(function() {
+		var appointment = $(this);
+		var app = appointment.attr('app') || '';
+		// an answer asked for the old centre must not hold the new one back; the
+		// sequence check in the request keeps it from painting over the answer
+		delete jawnosTimePreviewBusy[app];
+		jawnosTimePreviewRequest(appointment, false);
+	});
+}
+
 // The ago reading has to follow the clock: "10 minutes ago" resolves to a
 // different moment every second, and an absolute time counts down to it. While
 // a person is editing the ago field, ask the fast parser again each second.
+// The same tick watches the view's centre so a time-machine change reaches
+// every open window without waiting for the next poll or a keystroke.
 setInterval(function() {
 	if (document.hidden) { return; }
+	var centre = jawnosTimePreviewCentre();
+	if (jawnosTimePreviewCentreAt === null) { jawnosTimePreviewCentreAt = centre; }
+	else if (centre !== jawnosTimePreviewCentreAt) {
+		jawnosTimePreviewCentreAt = centre;
+		jawnosTimePreviewRefreshAll();
+		return;
+	}
 	var field = $('.appointment .ago:focus');
 	if (!field.length || !$.trim(field.val() || '')) { return; }
 	jawnosTimePreviewRequest(field.closest('.appointment'), false);
