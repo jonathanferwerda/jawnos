@@ -3,7 +3,7 @@
 
 Run inside the demo VM after the base seed is in place:
     python3 demo_extra_seed.py /home/jawn/jawnos/database/jawnos.db
-The map/background files are expected under ~/Pictures/Maps and
+The map/background files are expected under ~/Pictures/travel and
 ~/Pictures/Backgrounds (copied by the capture setup).
 """
 import json
@@ -44,13 +44,13 @@ def setting(app, key, value, device='computer', subsetting=''):
 # pixel. The bounds are the arithmetic Manager.pl's travel_map_bounds() uses.
 MAPS = [
     {
-        'uuid': 'demo-harbour', 'name': 'Harbourfront', 'file': 'Maps/harbour.jpg',
+        'uuid': 'demo-harbour', 'name': 'Harbourfront', 'file': 'travel/harbour.jpg',
         'w': 1600, 'h': 1200, 'lat': 42.9750, 'lon': -82.4050,
         'ppm': 1.25, 'bar_px': 400, 'bar_m': 500,
     },
     {
-        'uuid': 'demo-ravine', 'name': 'Ravine Park', 'file': 'Maps/ravine.jpg',
-        'w': 1200, 'h': 900, 'lat': 42.9805, 'lon': -82.3995,
+        'uuid': 'demo-ravine', 'name': 'Ravine Park', 'file': 'travel/ravine.jpg',
+        'w': 1200, 'h': 900, 'lat': 42.9750, 'lon': -82.3885,
         'ppm': 0.8, 'bar_px': 400, 'bar_m': 320,
     },
 ]

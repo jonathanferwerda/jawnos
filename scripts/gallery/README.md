@@ -65,7 +65,7 @@ The repo does not carry these (they are gitignored or media):
 | --- | --- |
 | `.shots/seed.db` | a pristine schema+settings database from the live image, no personal rows |
 | `~/Pictures/{T-Watch,T-Deck,Studio,Plein Air,Portraits}` in the guest | album photos; `scripts/gallery/seed/media.sh` generates and copies them |
-| `~/Pictures/{Maps,Backgrounds}` in the guest | map art and wallpapers for the layout scenes |
+| `~/Pictures/{travel,Backgrounds}` in the guest | map art and wallpapers for the layout scenes |
 | `scripts/gallery/scenes.json` | scenes, crops, and the site's copy |
 
 `media.sh` needs ImageMagick and ffmpeg:
@@ -99,3 +99,89 @@ Then open the sheet. The full-size files are for the browser, not for review.
 An app that needs a citizen session (People) gets 45 s. Other apps get 12 s.
 If a scene still fails, run it alone (`--shoot --only 08-people`) and check the
 manager log in the guest (`~/manager.log`).
+
+## Android screenshots
+
+The Android app (`~/jawnos-app/termux-app`) runs the same tree on a phone. The
+capture host is the table's x86_64 emulator:
+
+```
+table.jonathanferwerda.com (SSH 8022)
+  ~/android-sdk                    SDK + emulator
+  ~/.android/avd/jawnos.avd        AVD (android-36, x86_64, 1080x2400)
+    com.termux (jawnos-x86.apk)    the app; tree at files/home/jawnos
+```
+
+Start it headless with
+`~/android-sdk/emulator/emulator -avd jawnos -no-window -no-audio -no-boot-anim
+-gpu swiftshader_indirect -memory 3072 -cores 4 -no-snapshot`, then `adb root`
+and `adb shell settings put global settings_enable_monitor_phantom_procs false`
+(the emulator kills the Perl workers as "phantom processes" otherwise). `jawn`
+also now falls back to `~/.president` when `/tmp` exists but is not writable,
+which is the case on this emulator.
+
+Dependencies: the app's first launch runs
+`perl scripts/jawnos_deps.pl --install`. On this emulator `IO::Pty` fails
+cpanm's configure once; build it by hand from the cached `IO-Tty-*` directory,
+then install `Mojo::IOLoop::ReadWriteFork`.
+
+Seed the phone-side demo database:
+
+```sh
+scripts/gallery/seed/media.sh --stage-only
+python3 scripts/gallery/seed/phone_seed.py \
+  --home /data/data/com.termux/files/home
+```
+
+`phone_seed.py` runs the extra and gallery seeds, gives each album an app-named
+copy (`Pictures/plein_air`, etc.) with its `.thumbs`, and points every row at
+the phone's own home. Push `Pictures`, `Music` and `Documents` from
+`.shots/demo_media` plus `.shots/phone-demo.db` into the app tree. The emulator's
+app cannot read `/sdcard`; exchange files through `/data/local/tmp`, which
+`run-as com.termux` can read. Copy the database over
+`database/jawnos.db` while jawn is stopped, and set `"live": true` in
+`config.json` so the app's own loopback opens the manager without a ticket (the
+demo database's vault canary does not match this emulator's key). Restart from
+the admin panel (`JawnDashboardActivity`): Stop, copy the database, Start.
+
+Capture: `--es app <name>` opens the manager and then the app's own window. Use
+`--activity-clear-task`, or Android just redelivers the intent to the last
+instance:
+
+```sh
+adb shell am start -n com.termux/com.termux.app.JawnAppActivity \
+  --activity-clear-task --es app gallery
+adb shell screencap -p /sdcard/android-gallery.png
+```
+
+The native home is `JawnHomeActivity`, the admin panel is
+`JawnDashboardActivity`. `scripts/gallery/android.sh --shoot` captures the
+home, gallery, music, synth, handbook, accounting, travel and clock screens.
+Accounting opens with `--es app budget` (the window's start-menu icon is
+`#budget`); the app named `account` is an ordinary app and falls back to an
+appointment window.
+
+Publish: `scripts/gallery/android.sh --publish` writes
+`assets/gallery/android-*.webp` and rewrites the `android:generated` block in
+the site's `index.html`; add `--deploy` to upload. The site keeps the
+screenshots **high-definition**: the full image is the capture's native width
+(1080x2400, quality 94) and the wall thumb is 420 px tall (quality 82).
+
+**When an agent needs to look at a capture, do not open the PNG** (a 1080x2400
+screenshot is 0.3-0.7 MB and its base64 is larger still; that is what a
+`413 payload too large` is made of). Downscale to a small WebP first:
+
+```sh
+magick in.png -resize 360x -quality 80 /tmp/small.webp   # then read /tmp/small.webp
+magick montage *.png -tile 4x2 -geometry 270x600+6+6 -quality 78 sheet.webp
+```
+
+That rule is for the agent's own eyes only - never publish those downscaled
+copies.
+
+Known app bug (0.118.158): `JawnAppActivity.injectApp` looks up the start-menu
+icon by `id`, but several icons are class-only (`warehouse_toggle`,
+`account_toggle`, `weather_toggle`), so those apps fall back to a plain
+appointment window. Apps whose icons carry an id (gallery, studio, clock, email,
+mailbox, handbook, folders, music, notes) open normally. Fix: look up
+`#' + app + '_toggle, .' + app + '_toggle'` and rebuild the APK.

@@ -117,7 +117,9 @@ our $pty_log_fh;
 	}
 }
 my $tmp_dir = '/tmp';
-unless ( -d $tmp_dir ) {
+# Android's root /tmp exists on an emulator but belongs to the shell user, so
+# a writable check matters as much as the directory check.
+unless ( -d $tmp_dir && -w $tmp_dir ) {
 	$tmp_dir = &home('~/.president/');
 }
 `mkdir $tmp_dir/ws` unless -e $tmp_dir . '/ws';

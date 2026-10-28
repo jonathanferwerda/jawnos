@@ -193,7 +193,7 @@ if [ "$DO_SEED" = 1 ]; then
 set -eu
 cd /home/jawn
 test -e /etc/jawnos-demo-image || { echo "refusing to seed: not the demo image (no /etc/jawnos-demo-image)" >&2; exit 1; }
-for d in Portraits "Plein Air" Studio T-Deck T-Watch Maps Backgrounds; do
+for d in Portraits "Plein Air" Studio T-Deck T-Watch travel Backgrounds; do
   test -d "Pictures/$d" || { echo "missing ~/Pictures/$d; stage the demo media first (scripts/gallery/seed/media.sh)" >&2; exit 1; }
 done
 mkdir -p jawnos/database/backups
