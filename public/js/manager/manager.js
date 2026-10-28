@@ -4780,22 +4780,21 @@ $(document).on('click', '.edit_app_clone', function() {
 
 $(document).on('click', '.edit_app_delete', function() {
 	var b = $(this);
-	if (!confirm('Delete this appointment?')) { return; }
-	if (!confirm('Delete it for good? This is copied to every machine.')) { return; }
 	var app = b.attr('app');
-	var uuid = b.attr('uuid');
+	if (!confirm('Delete the app "' + app + '"?')) { return; }
+	if (!confirm('Delete every record, setting and piece of stock in "' + app + '"? This is copied to every machine.')) { return; }
 	var ea = b.closest('.appointment_edit_area');
 	var status = ea.find('.edit_app_status');
 	status.text('Deleting...');
 	$.ajax({
-		url: '/manager/delete_app',
+		url: '/manager/delete_whole_app',
 		type: 'POST',
-		data: { app: app, uuid: uuid, timestamp: b.attr('timestamp'), type: b.attr('type'), server_time: Date.now() },
+		data: { app: app, timestamp: Date.now(), server_time: Date.now() },
 		success: function() {
-			$('[uuid="' + uuid + '"]').closest('.appointment').remove();
+			$('.appointment[app="' + app + '"]').remove();
 			ea.html('').hide();
 		},
-		error: function() { status.text('Could not delete.'); }
+		error: function(xhr) { status.text(xhr && xhr.status == 403 ? 'That is a house app and cannot be deleted here.' : 'Could not delete.'); }
 	});
 });
 
