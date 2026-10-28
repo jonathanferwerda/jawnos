@@ -161,7 +161,7 @@
 							</select>
 						</span>
 						<span class="app_checks">
-							<span class="app_visibility_field" hint="<%= &subs::ui('New apps are Public. A place level shows the app while the place you are in is at or below it. During lockdown only Security and apps marked Dangerous stay open; an Enemy\'s running app waits for a fingerprint.') %>">
+							<span class="app_visibility_field" hint="<%= &subs::ui('New apps are Public. Public is shown as usual; Dangerous is also kept open during a lockdown. Private is a lock: the app and its appointments are hidden everywhere, even at home, never appear on the timeline, and can only be found in a private place with no Enemy present after a fingerprint (Security, Private apps). An appointment also inherits the strictest level of every social construct it belongs to (team, project, club, community, institution, government, corporation, place, vendor, event, account).') %>">
 								<label><%= &subs::ui('Visibility') %></label>
 								<% my $vis = &subs::visibility_normalize($appts->{$a}->{'setting'}->{'visible'}); %>
 								<select app="<%= $a %>" class="configure_visibility" setting="visible">

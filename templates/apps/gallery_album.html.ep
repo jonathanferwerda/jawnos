@@ -15,6 +15,7 @@
 } %>
 <% no warnings 'uninitialized'; %>
 <% foreach my $appt ( @{$appts} ) {
+	next if &subs::appointment_private_now($appt) && !(&subs::private_reachable_now() && ($revealed || &subs::private_revealed()));
 	if (!$ghome->{$appt->{'app'}}) { $ghome->{$appt->{'app'}} = []; } 
 	my $files = eval { return decode_json $appt->{'file'} } || [];
 	if ($settings->{'search'}) {
@@ -76,6 +77,8 @@
 	<% foreach my $a ( keys %{$ghome} ) {
 		<% foreach my $f ( @{$ghome->{$a}} ) { %>
 			<% my $aset = $asettings->{$f->{'app'}} || &subs::settings_grabber({ app => $f->{'app'}, settings => ['main_image','visible'] }); %>
+			<%# outside a private place a private album is not listed, even with a padlock token %>
+			<% next if &subs::app_private_now($f->{'app'}) && !&subs::private_reachable_now(); %>
 			<% next if &subs::app_hidden_now($f->{'app'}) && ($revealed == 0 || &subs::lockdown_active()); %>
 			<% unless (-e $f->{'f'} || $f->{'remote_uuid'}){ $subtractors++; next; } %>
 			<% next if grep { $_->{'uuid'} eq $f->{'uuid'} } @{$processed_files};	push @{$processed_files}, $f; %>

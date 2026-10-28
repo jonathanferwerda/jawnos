@@ -47,6 +47,13 @@ hook before_dispatch => sub {
 	# a fresh settings memo for this request (see subroutines::setting_grabber)
 	%subs::setting_memo = ();
 	$subs::setting_memo_on = 1;
+	# The screen this request speaks for, and the request-scoped visibility
+	# caches that read it. A private fingerprint grant is keyed by the paired
+	# device uuid, not the machine's device kind, so record the browser's own
+	# uuid here (the same precedence media_unlock_device uses).
+	$subs::request_device_uuid = $c->session('device_uuid') || $c->param('device_uuid') || $c->session('app_device') || '';
+	$subs::request_device_uuid = '' unless $subs::request_device_uuid =~ /^[A-Za-z0-9]{8,64}$/;
+	&subs::visibility_cache_clear();
 	$c->inactivity_timeout(300); 
 	# A handheld's workers grow their Perl heap over uptime until Android's
 	# low-memory killer reaps the tree. Log each worker's own RSS with its
@@ -530,12 +537,16 @@ hook after_render => sub  {
   };
 
   	# The settings memo lives for one request only.
-  	hook after_dispatch => sub {
-  		my ($c) = @_;
-  		&subs::request_busy_change(-1) if $c->stash('request_busy');
-  		%subs::setting_memo = ();
-  		$subs::setting_memo_on = 0;
-  	};
+	hook after_dispatch => sub {
+		my ($c) = @_;
+		&subs::request_busy_change(-1) if $c->stash('request_busy');
+		%subs::setting_memo = ();
+		$subs::setting_memo_on = 0;
+		# Work outside a request (a background sub, a worker between jobs) must
+		# not inherit the screen a previous request spoke for.
+		$subs::request_device_uuid = '';
+		&subs::visibility_cache_clear();
+	};
 
   hook after_dispatch => sub {
   	my ($c) = @_;

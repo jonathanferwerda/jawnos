@@ -3,6 +3,10 @@
 Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 (`v<version> - ...`) mark the points where `VERSION` was bumped.
 
+## 2026-10-28
+
+- v0.1.1495 - visibility: Private is a lock, not a place level. A private app and its appointments are hidden everywhere, even at home, never appear on the timeline, and can only be found in a private place with no Enemy present - and even there they need a fingerprint on this screen (Security -> Private apps). In a public or dangerous place, or with an Enemy present, they cannot be found at all, including the start menu, Gallery, Folders, Music and search. The private grant is per device and is dropped when the screen or window goes away. Appointments also inherit the strictest level of every social construct they belong to (team, project, club, community, institution, government, corporation, place, vendor, event, account and the rest, plus the constructs those belong to): the lowest number wins, so a record filed under a private project is Private even when its app is Public. Gallery, Folders, Music, the Guide's search and the start menu read the same rule.
+
 ## 2026-10-27
 
 - v0.1.1489 - app 1148 (0.118.149): Home no longer raises the keyboard when it resumes; its search still filters the installed apps, and Enter now hands the words to the manager's Search app (the house's apps and appointments). The native JawnOS IME wears the manager's light key palette instead of black.

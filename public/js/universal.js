@@ -911,6 +911,21 @@ function jawnosMediaLockBeacon(app) {
 	$.ajax({ url: '/manager/security/media_lock', type: 'POST', async: false, data: { app: app || '', device_uuid: jawnDeviceUuid(), browser_tab_id: jawnosMediaTab() } });
 }
 
+// Private apps belong to a private place and still need a fingerprint. A grant
+// is device-wide (the Security padlock or an app's own lock); this redraws every
+// surface that lists apps without changing which window is in front.
+function jawnosPrivateRefresh() {
+	if (typeof calculator === 'function') { calculator(); }
+	if (typeof appointment_chron === 'function') { appointment_chron(); }
+	if (typeof galleryFetch === 'function' && $('#gallery').length) { galleryFetch(true); }
+	if (typeof foldersOpener === 'function' && $('#folders').length) { foldersOpener(); }
+	if (typeof searchMusic === 'function' && $('#music').length) { searchMusic(); }
+	// the start menu's markup is cached per tab, so a locked menu would keep
+	// naming a private app until the cache is dropped
+	if (typeof startMenuHtml !== 'undefined') { startMenuHtml = {}; }
+	if ($('#start_menu').is(':visible') && typeof startMenuToggle === 'function') { startMenuToggle({ source: 'private' }); }
+}
+
 // Clear the visible state at once and ask the app to draw its locked view when
 // the page is visible; a hidden tab defers the draw until it comes back.
 function jawnosMediaLockdown(app, defer) {
@@ -933,6 +948,7 @@ function jawnosMediaLockdown(app, defer) {
 	window.jawnosMediaLockPending = apps;
 	if (defer || document.hidden) { return; }
 	jawnosMediaRefresh(apps);
+	if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(); }
 }
 
 function jawnosMediaRefresh(apps) {
@@ -949,6 +965,12 @@ function jawnosMediaRefresh(apps) {
 function jawnosMediaApplyToken(app, token, target) {
 	if (!app || !token) { return; }
 	if (target && target !== jawnDeviceUuid()) { return; }
+	// Private has no window of its own: its grant changes what the server will
+	// list, so every surface is redrawn instead of one app's token attribute.
+	if (app === 'private') {
+		if (typeof jawnosPrivateRefresh === 'function') { jawnosPrivateRefresh(); }
+		return;
+	}
 	var root = $('#' + app);
 	if (!root.length) { return; }
 	root.attr('unlock', token);
@@ -1114,6 +1136,7 @@ function jawnPadlockContext(mode) {
 	if (mode === 'gallery') { return jawnPadlockPromptText('Gallery'); }
 	if (mode === 'music') { return jawnPadlockPromptText('Music'); }
 	if (mode === 'folders') { return jawnPadlockPromptText('Folders'); }
+	if (mode === 'private') { return jawnPadlockPromptText('Private apps'); }
 	return jawnPadlockPromptText('Manager');
 }
 

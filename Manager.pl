@@ -427,9 +427,13 @@ sub help_search($q, $device = undef) {
 	my $visible_count = 0;
 	my $fpat = join('.*', map { quotemeta } split /\s+/, lc $q);
 	if (length $q) {
-		my $rows = &subs::db_query('select app, uuid, file, notes, timestamp from appointments where (app like ? or file like ? or notes like ?) limit 80', $like, $like, $like)->hashes;
+		my $rows = &subs::db_query('select app, uuid, file, notes, timestamp, project, club, account, vendor from appointments where (app like ? or file like ? or notes like ?) limit 80', $like, $like, $like)->hashes;
+		my $private_open = &subs::private_reachable_now() && &subs::private_revealed($device);
 		foreach my $r ( @{$rows} ) {
 			next unless help_app_visible($r->{'app'}, $device);
+			# A record filed under a private construct is not named by the Guide
+			# outside a private place, or without this screen's fingerprint grant.
+			next if &subs::appointment_private_now($r) && !$private_open;
 			$visible_count++;
 			$apps{ $r->{'app'} }++ if $r->{'app'};
 			my $fl = eval { decode_json $r->{'file'} } || [];
@@ -1125,6 +1129,15 @@ sub thumbs_bundle_one {
 		|| $q->param('subtitle') || $q->param('position') || $q->param('chapter');
 	my $file = $q->param('file') || $q->param('track') || '';
 	return undef unless length $file;
+	# The batch route reads local files directly, so it applies the same private
+	# rule as /file_open: a private app's pictures are never bundled outside a
+	# private place or without the fingerprint grant.
+	my $bundle_owner = &subs::unformat_name($q->param('app') || '');
+	$bundle_owner = &folders_owning_app($file) unless length $bundle_owner;
+	if (length $bundle_owner && &subs::app_private_now($bundle_owner)
+		&& (!&subs::private_reachable_now() || !&subs::private_revealed())) {
+		return undef;
+	}
 	my $appt_uuid = $q->param('app_uuid') || $q->param('appt_uuid') || '';
 	my $file_uuid = $q->param('file_uuid') || '';
 	my $timestamp = $q->param('timestamp') || &subs::rightNow();
@@ -1769,6 +1782,16 @@ sub rock_and_roll($c) {
 		}
 		my @ext = split /\./, $file;
 		my $ext = $ext[-1];
+		# A private app's files are not served outside a private place, and inside
+		# one they wait for the fingerprint grant. The check comes before as_is and
+		# the decrypt/thumbs paths so no route variant can bypass it.
+		my $owner = &subs::unformat_name($c->param('app') || '');
+		$owner = &folders_owning_app($file) unless length $owner;
+		if (length $file && length $owner && &subs::app_private_now($owner)
+			&& (!&subs::private_reachable_now() || !&subs::private_revealed())) {
+			$c->render(text => 'none');
+			return;
+		}
 		my $timestamp = $c->param('timestamp') || &subs::rightNow();
 		my $filename = $file;
 	#	return 'no' unless -e &subs::terminal_name($file);
@@ -12709,6 +12732,25 @@ sub start_menu_forget($key) {
 	return $recent;
 }
 
+# The start menu's static icon grid is the house's built-in apps, so a private
+# one must disappear from it too. The client matches these keys against the
+# icon map; a custom app is not in the grid, and its running rows are filtered
+# by appointment_private_now in the template.
+sub start_menu_hidden_apps {
+	my (%seen, @apps);
+	foreach my $app ( keys %{ $gb::known_appts || {} } ) {
+		push @apps, $app unless $seen{$app}++;
+	}
+	my $rows = eval {
+		&subs::db_query("select distinct app from settings where setting in ('visible','pos','mab') and app is not null and app != '' and substr(app,1,2) <> '__'")->hashes;
+	} || [];
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} // next;
+		push @apps, $app unless $seen{$app}++;
+	}
+	return grep { &subs::app_hidden_now($_) } @apps;
+}
+
 sub start_menu_maker($c) {
 	my $returner = {};
 	my $menu = $c->param('menu') // '';
@@ -12728,7 +12770,8 @@ sub start_menu_maker($c) {
 		config => &subs::config_reader(),
 		padlock => &subs::db_select('security', ['level'], { level => 'padlock' })->hashes,
 		menu => $menu,
-		recent => &start_menu_recent()
+		recent => &start_menu_recent(),
+		hidden_apps => [ &start_menu_hidden_apps() ]
 	);
 	# Static files carry no Cache-Control, so browsers cached the icons
 	# heuristically and kept showing stale ones. Version the local images
@@ -14428,11 +14471,11 @@ sub log_reader {
 		# stamp needs the numeric cast: "-441..." reads above "-315...", so if the
 		# newest candidate is negative, ask again numerically. The oldest-at-or-after-
 		# now query needs no fallback, since a negative stamp can never qualify.
-		$appointments = &subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector <=? order by $timestamp_selector DESC limit 1", $chosen_app,$time_definition);
+		$appointments = &subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,club,account,vendor from appointments where app is not null and app=? and $timestamp_selector <=? order by $timestamp_selector DESC limit 1", $chosen_app,$time_definition);
 		if ($appointments->[0] && ($appointments->[0]->{$timestamp_selector} || '') =~ /^-/) {
-			$appointments = &subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and cast($timestamp_selector as integer) <=? order by cast($timestamp_selector as integer) DESC limit 1", $chosen_app,$time_definition);
+			$appointments = &subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,club,account,vendor from appointments where app is not null and app=? and cast($timestamp_selector as integer) <=? order by cast($timestamp_selector as integer) DESC limit 1", $chosen_app,$time_definition);
 		}
-		push @{$appointments}, @{&subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,account from appointments where app is not null and app=? and $timestamp_selector >=? order by $timestamp_selector limit 1", $chosen_app,$time_definition)};
+		push @{$appointments}, @{&subs::db_raw("select timestamp,stop_timestamp,file,server_time,app,duration,type,status,amount,unit,project,club,account,vendor from appointments where app is not null and app=? and $timestamp_selector >=? order by $timestamp_selector limit 1", $chosen_app,$time_definition)};
 
 
 		@{$appointments} = grep { $_->{'app'} eq $chosen_app } @{$appointments};
@@ -14495,6 +14538,20 @@ sub log_reader {
 		return 0;
 	}
 
+	# An appointment inherits the strictest visibility of its app and the
+	# social constructs named on the row (project, club, account, vendor). The
+	# timeline never shows a private record, even while the fingerprint grant is
+	# live; every other view hides it unless this is a private place and the
+	# screen holds the grant. Configure's own card is the exception below, so the
+	# level can be changed.
+	if (($data->{'view'} || '') ne 'appointment_display') {
+		my $timeline = (($data->{'view'} || '') eq 'appointment_viewer');
+		my $private_open = &subs::private_reachable_now() && &subs::private_revealed();
+		@{$appointments} = grep {
+			!&subs::appointment_private_now($_) || (!$timeline && $private_open);
+		} @{$appointments};
+	}
+
 	# The pos/mab markers are the app's place in the world (idea, product, ...).
 	# They build __accounts/__projects, which only the details/wrapper windows
 	# draw: the JSON viewer never uses them, and a header-only fetch does not
@@ -14527,7 +14584,7 @@ sub log_reader {
 		my @app_settings = @{&subs::db_raw($s_query, @app_names)};
 
 		if ($data->{'view'} eq 'appointment_viewer') {
-			if (my @invisible = grep { $_->{'setting'} eq 'visible' && &help_app_hidden($_->{'app'}) } @app_settings) {
+			if (my @invisible = grep { $_->{'setting'} eq 'visible' && (&subs::app_private_now($_->{'app'}) || &help_app_hidden($_->{'app'})) } @app_settings) {
 				foreach my $invisible ( @invisible ) {
 					@{$appointments} = grep { $_->{'app'} ne $invisible->{'app'} } @{$appointments};
 					@app_settings = grep { $_->{'app'} ne $invisible->{'app'} } @app_settings;
@@ -14572,7 +14629,8 @@ sub log_reader {
 		# the work a one-second poll would otherwise redo - can be skipped. Markers
 		# it did not send stay undefined, so a half-known request never reads as "no".
 		my $same =
-			   defined $stats->{'appts'}->{'count'} && defined $stats->{'appts'}->{'first'} && defined $stats->{'appts'}->{'last'}
+			   !&subs::private_revealed()
+			&& defined $stats->{'appts'}->{'count'} && defined $stats->{'appts'}->{'first'} && defined $stats->{'appts'}->{'last'}
 			&& defined $stats->{'settings'}->{'first'} && defined $stats->{'settings'}->{'last'}
 			&& scalar @{$appointments} == $stats->{'appts'}->{'count'}
 			&& $appt_server_last  <= $stats->{'appts'}->{'last'}
@@ -14659,11 +14717,16 @@ sub log_reader {
 		if (!$appts->{$a->{'app'}}->{'setting'}->{'dark_colour'}) {
 			$appts->{$a->{'app'}}->{'setting'}->{'dark_colour'} = &subs::dark_colour_for($appts->{$a->{'app'}}->{'setting'}->{'colour'});
 		}
-	# A hidden appointment is not drawn in the timeline either. The Configure
-	# card is the deliberate exception: it must stay readable so a person can
-	# turn visibility back on.
+	# A private appointment never appears on the timeline, even while the
+	# private fingerprint grant is live and even at home. Configure's own card is
+	# the deliberate exception: it must stay readable so the level can be changed.
+	# Every other view (a centre view, a header) reads the ordinary rule, so a
+	# private app opened from the start menu in a private place still opens.
 	if ($data->{'view'} ne 'appointment_display') {
-		if (&subs::app_hidden_now($a->{'app'})) {
+		if (($data->{'view'} || '') eq 'appointment_viewer' && &subs::app_private_now($a->{'app'})) {
+			push @{$disallowable}, $a->{'app'};
+		}
+		elsif (&subs::app_hidden_now($a->{'app'})) {
 			push @{$disallowable}, $a->{'app'};
 		}
 	}
@@ -26176,7 +26239,7 @@ get '/manager/appointment_viewer' => sub($c) {
 	my @results;
 	my @log_watch;
 	foreach my $a (@{$chosen_appts}) {
-		next if &subs::app_hidden_now($a);
+		next if &subs::app_private_now($a) || &subs::app_hidden_now($a);
 
 
 
@@ -26259,7 +26322,7 @@ get '/manager/appointment_viewer' => sub($c) {
 		my $ghost_now = &subs::rightNow();
 		my $ghost_end = (defined $period && $period) ? ($timestamp + ($timestamp - $period)) : $timestamp;
 		foreach my $a (@{$chosen_appts}) {
-			next if &subs::app_hidden_now($a);
+			next if &subs::app_private_now($a) || &subs::app_hidden_now($a);
 			my $g = &subs::ghost_rows_for($a, $ghost_now, $ghost_end);
 			$appts->{$a}->{'ghosts'} = $g if scalar @{$g};
 		}
@@ -26837,11 +26900,21 @@ sub centre_view_grabber($data) {
 
 	if ($app) {
 		my $appointments = [ $app ];
-		my $signature = &subs::render_signature();
-		if (my $cache_data = &subs::cache_get({ context => 'template', app => $app })) {
-			if (($cache_data->{'signature'} || '') eq $signature && ($data->{'cached'} ne 'no' || $cache_data->{'timestamp'} + 200 > $server_time)) {
-				my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => $app, contents => $cache_data->{'contents'} }, $timestamp);
-				return $window;
+		# The wrapper is cached by template signature, but what it may draw also
+		# depends on this screen's private grant and the app's own level. Put both
+		# in the key, so a wrapper built while private was open is not served after
+		# the grant closes (and one built before it opens is not reused).
+		my $private_open = (&subs::private_reachable_now() && &subs::private_revealed()) ? 1 : 0;
+		my $signature = &subs::render_signature() . '|vis:' . &subs::app_visibility_value($app) . '|open:' . $private_open;
+		# A cached wrapper belongs to a window that was allowed when it was built.
+		# Private is a lock, so a hidden app never reads the cache: the request
+		# falls through to log_reader, which draws the denial for this moment.
+		if (!&subs::app_hidden_now($app)) {
+			if (my $cache_data = &subs::cache_get({ context => 'template', app => $app })) {
+				if (($cache_data->{'signature'} || '') eq $signature && ($data->{'cached'} ne 'no' || $cache_data->{'timestamp'} + 200 > $server_time)) {
+					my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => $app, contents => $cache_data->{'contents'} }, $timestamp);
+					return $window;
+				}
 			}
 		}
 		my $string;
@@ -28252,16 +28325,25 @@ sub window_maker($type,$timestamp) {
 	$timestamp = &subs::rightNow() unless $timestamp;
 	my $window = "Window";
 	my $app = $type->{'app'};
-	# Lockdown: an app the rule does not allow is not drawn, even when its static
-	# start-menu icon is still on screen. Security is the way in, a Dangerous app
-	# is deliberately kept, and an Enemy's app appears only after a fingerprint.
-	if ($app && &subs::lockdown_active() && &subs::app_hidden_now($app)) {
+	# An app the rule does not allow is not drawn, even when its static start-menu
+	# icon is still on screen. A private app is a lock: outside a private place it
+	# says why it cannot be found, and inside one it asks for the fingerprint.
+	# During lockdown Security is the way in, a Dangerous app is deliberately
+	# kept, and an Enemy's app appears only after a fingerprint.
+	if ($app && &subs::app_hidden_now($app)) {
+		my ($heading, $message) = (&subs::ui('Lockdown'), &subs::ui('An enemy is present, or this is a dangerous place. Open Security and confirm with your fingerprint to reveal the appointment so you can stop it.'));
+		if (&subs::app_private_now($app)) {
+			$heading = &subs::ui('Private apps');
+			$message = &subs::private_reachable_now()
+				? &subs::ui('This app is private. Open Security and confirm with your fingerprint to show private apps on this screen.')
+				: &subs::ui('This app is private. It can only be found in a private place, with no enemy present.');
+		}
 		$type->{'contents'} = '<div class="lockdown_window" style="padding:22px;line-height:1.5;max-width:640px;">'
-			. '<h2>' . &subs::ui('Lockdown') . '</h2>'
-			. '<p>' . &subs::ui('An enemy is present, or this is a dangerous place. Open Security and confirm with your fingerprint to reveal the appointment so you can stop it.') . '</p>'
+			. '<h2>' . $heading . '</h2>'
+			. '<p>' . $message . '</p>'
 			. '</div>';
-		$type->{'title'} = &subs::ui('Lockdown');
-		$type->{'window_name'} = &subs::ui('Lockdown');
+		$type->{'title'} = $heading;
+		$type->{'window_name'} = $heading;
 	}
 	my $window_settings = [ 'pos', 'main_image', 'dimensions', 'colour', 'dark_colour', 'uuid', 'navigation', 'ci', 'scrollTop', 'jopen' ];
 	my $settings = $type->{'settings'} || &subs::settings_grabber({ app => $app, settings => $window_settings });
@@ -28679,6 +28761,9 @@ get '/manager/gallery/data' => sub ($c) {
 		my ($app, $appt, $f, $explicit) = @_;
 		my $path = $f->{'f'} || '';
 		return undef unless length $path;
+		# A private album is not served at all outside a private place, whatever
+		# padlock grant an old window still holds.
+		return undef if &subs::app_private_now($app) && !&subs::private_reachable_now();
 		my $type = $f->{'type'} || $appt->{'type'} || 'image';
 		my $server_time = $f->{'server_time'} || $appt->{'server_time'} || 0;
 		# The app's own timestamp is when the thing happened; server_time is when
@@ -28770,7 +28855,18 @@ get '/manager/gallery/data' => sub ($c) {
 			my $app = $appt->{'app'} || '';
 			next if scalar @{$apps} && !grep { $_ eq $app } @{$apps};
 			my $aset = $aset_cache{$app} ||= &subs::settings_grabber({ app => $app, settings => ['main_image', 'visible'] });
+			# Private is a lock, and the place is checked first: outside a private
+			# place the album is not listed and not counted, so no Unlock button
+			# offers a way to it either.
+			next if &subs::app_private_now($app) && !&subs::private_reachable_now();
 			if (&subs::app_hidden_now($app) && ($revealed == 0 || &subs::lockdown_active())) { $hidden_albums{$app} = 1; next; }
+			# A record filed under a private project/club/account inherits that
+			# lock even when its app is Public. The place is checked first, then a
+			# fingerprint grant (this window's gallery lock or Security's private
+			# grant).
+			my $row_private = &subs::appointment_private_now($appt);
+			next if $row_private && !&subs::private_reachable_now();
+			next if $row_private && $revealed == 0 && !&subs::private_revealed();
 			my $files = eval { return decode_json $appt->{'file'} } || [];
 			foreach my $f ( @{$files} ) {
 				next if $search && index(lc($app), $search) < 0 && index(lc($f->{'f'} || ''), $search) < 0;
@@ -30322,9 +30418,12 @@ sub folders_listing($folder, $unlocked, $c, $show_hidden) {
 	# visible; only a name belonging to a hidden app waits for the unlock
 	@{$files} = grep {
 		my $app = folders_owning_app($_->{'path'});
+		# Private is a lock, not a place level: outside a private place its files
+		# are not listed at all, whatever the Folders padlock still holds.
+		my $private_unreachable = $app && &subs::app_private_now($app) && !&subs::private_reachable_now();
 		my $hidden = ($app && help_app_hidden($app) && (!$revealed || &subs::lockdown_active()));
 		my $sealed_name = ((!$unlocked || &subs::lockdown_active()) && ($_->{'name'} // '') =~ /\.enc$/i && (!$app || help_app_hidden($app)));
-		!$hidden && !$sealed_name;
+		!$private_unreachable && !$hidden && !$sealed_name;
 	} @{$files};
 	my $archive_index = &folders_archive_index($folder);
 	if ($archive_index->{'rows'}) {
@@ -35570,6 +35669,13 @@ sub help_app_hidden($app) {
 # A lockdown is not opened by an old media padlock grant.
 sub help_app_visible($app, $device = undef) {
 	return 0 if &subs::lockdown_active() && &subs::app_hidden_now($app);
+	# A private app is not even readable by the Guide outside a private place, and
+	# inside one only after the private fingerprint grant (an app's own media
+	# padlock is not the same door).
+	if (&subs::app_private_now($app)) {
+		return 0 unless &subs::private_reachable_now();
+		return &subs::private_revealed($device) ? 1 : 0;
+	}
 	return 1 unless help_app_hidden($app);
 	return help_media_revealed($device);
 }
@@ -40236,7 +40342,7 @@ sub security_action_open {
 sub padlock_mark_unlocked {
 	my ($c, $mode, $target, $tab_override) = @_;
 	$mode ||= 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security|private)$/;
 	my $suds = &subs::suds_grabber() || &subs::session_suds($c) || $gb::suds;
 	return 0 unless $suds;
 	# Opening an app's padlock makes that app one of the lock's contexts. A
@@ -40275,7 +40381,7 @@ sub padlock_mark_unlocked {
 	}
 	$c->session('pl_time' => $new_timeout);
 	&subs::setting_setter({ app => '__president', setting => 'padlock_pulls', value => &subs::note_encrypter($suds, 0) });
-	if ($mode =~ /^(?:gallery|music|folders|security)$/) {
+	if ($mode =~ /^(?:gallery|music|folders|security|private)$/) {
 		my $device = $target || &media_unlock_device($c);
 		my $request = &padlock_request_for_target($device);
 		# the request row names the screen that pressed Unlock; the caller's own
@@ -40306,6 +40412,8 @@ sub padlock_mark_unlocked {
 					? '$("#music").attr("unlock", "' . $token . '"); $("#music").show(); $("#music_padlock").hide(); if (typeof searchMusic === "function") { searchMusic(); }'
 					: ($mode eq 'security')
 					? 'if (typeof jawnosSecurityGrant === "function") { jawnosSecurityGrant("' . $token . '"); }'
+					: ($mode eq 'private')
+					? '$("#security_private_padlock").hide(); if (typeof jawnosPrivateRefresh === "function") { jawnosPrivateRefresh(); }'
 					: '$("#folders").attr("unlock", "' . $token . '"); if (typeof foldersOpener === "function") { foldersOpener(); }';
 				# one window's message, so another tab of the same screen stays
 				# shut and no peer is told to drop a token it never held
@@ -40337,7 +40445,7 @@ post '/manager/security/padlock_watch' => sub ($c) {
 # device that is already open is never sent away from the page it is on.
 post '/manager/security/padlock_phone_show' => sub ($c) {
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security|private)$/;
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $device_name = '';
@@ -40381,13 +40489,14 @@ post '/manager/security/padlock_request_cancel' => sub ($c) {
 post '/manager/security/media_lock' => sub ($c) {
 	my $device = &media_unlock_device($c);
 	my $app = $c->param('app') || '';
-	$app = '' unless $app =~ /^(?:gallery|music|folders)$/;
+	$app = '' unless $app =~ /^(?:gallery|music|folders|private)$/;
 	my $tab = $c->param('browser_tab_id') || '';
 	$tab = '' unless $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
 	&media_unlock_clear($device, $app) if length $device;
-	my @apps = $app ? ($app) : @media_unlock_apps;
+	my @apps = $app ? ($app) : (@media_unlock_apps, 'private');
 	foreach my $a ( @apps ) {
-		&Websocket::send('server', { console => 'jawnosMediaLockdown("' . $a . '")', browser_tab_id => $tab }) if length $tab;
+		my $js = ($a eq 'private') ? 'jawnosPrivateRefresh();' : 'jawnosMediaLockdown("' . $a . '")';
+		&Websocket::send('server', { console => $js, browser_tab_id => $tab }) if length $tab;
 	}
 	$c->render(json => { ok => 1, app => $app, device => $device });
 };
@@ -40429,7 +40538,7 @@ post '/manager/security/fingerprint_unlock' => sub ($c) {
 	}
 	else {
 		$mode = $c->param('mode') || 'locker';
-		$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
+		$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security|private)$/;
 		$device = &media_unlock_device($c) unless length $device;
 		# the reader opens the screen it is attached to: an app padlock names that
 		# screen too, so the unlock never becomes a house-wide one
@@ -40528,7 +40637,7 @@ get '/manager/security/fingerprint_unlock_status' => sub ($c) {
 	# the print was accepted: open the screen and padlock it was asked for
 	my $device = $c->session('device_uuid') || $d->{'device'} || '';
 	my $mode = $d->{'mode'} || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security|private)$/;
 	my $target = $d->{'target'} || $device;
 	if ($mode ne 'locker' && !length $target) {
 		return $c->render(json => { ok => 0, error => 'no device' });
@@ -40840,7 +40949,7 @@ post '/manager/security/biometric_unlock' => sub ($c) {
 	my $nonce = $c->param('nonce') || '';
 	my $signature = $c->param('signature') || '';
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security|private)$/;
 	# The phone may confirm an unlock for ANOTHER screen (the person presses
 	# Unlock on the laptop, then touches the phone). The target is bound into the
 	# signed message, so a signature made for one screen cannot be replayed for
@@ -40924,7 +41033,7 @@ post '/manager/security/padlock_unlock' => sub ($c) {
 	my $nonce = $c->param('nonce') || '';
 	my $signature = $c->param('signature') || '';
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|private)$/;
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $house = $c->param('house') ? 1 : 0;
@@ -41011,7 +41120,7 @@ get '/manager/security/padlock_open_peer' => sub ($c) {
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|security|private)$/;
 	my $opened = &padlock_mark_unlocked($c, $mode, $target);
 	&padlock_request_clear($target);
 	$log->info('padlock: peer unlock from ' . ($rm->{'hostname'} || $signatorial) . ' mode=' . $mode . ($target ? ' target=' . $target : ' house'));
@@ -41058,7 +41167,7 @@ post '/manager/security/padlock_key_show_peer' => sub ($c) {
 		return $c->rendered(403);
 	}
 	my $mode = $c->param('mode') || 'locker';
-	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|go)$/;
+	$mode = 'locker' unless $mode =~ /^(?:locker|gallery|music|folders|private|go)$/;
 	my $target = $c->param('target') || '';
 	$target = '' unless $target =~ /^[A-Za-z0-9]{8,64}$/;
 	my $show = $c->param('show') ? 1 : 0;

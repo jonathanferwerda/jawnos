@@ -113,7 +113,7 @@
 <!-- the menu hangs off the corner itself rather than out of the button box: it
      must stand over the dock and the taskbar, which the box it used to live in
      sits under -->
-<%= include 'start_menu/start_menu', parking_lot => {} %>
+<%= include 'start_menu/start_menu', parking_lot => {}, hidden_apps => [ &Manager::start_menu_hidden_apps() ] %>
 <div id="start_menu_backlog"></div>
 <div id="bottom_left_buttons">
 

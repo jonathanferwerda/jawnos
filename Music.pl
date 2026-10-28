@@ -67,24 +67,42 @@ sub playable_enc_name($name) {
 	return playable_name(substr($name, 0, -4));
 }
 
-# An album's own visibility decides whether its sealed tracks need the
-# padlock. The album is the folder above the file, the same part the walk names
-# as `app`. The shared rule is read fresh: a cached answer would keep a track
-# visible after a lockdown began or a place changed.
-sub music_app_visible($name) {
+# An album's own visibility decides whether its tracks need the padlock. The
+# album is the folder above the file, the same part the walk names as `app`.
+# The shared rule is read fresh: a cached answer would keep a track visible after
+# a lockdown began or a place changed.
+sub music_app_name($name) {
 	my @part = split '/', $name;
-	return 1 unless scalar @part >= 2;
+	return '' unless scalar @part >= 2;
 	my $app = &subs::unformat_name($part[-2]);
-	return 1 unless defined $app && length $app;
+	return (defined $app && length $app) ? $app : '';
+}
+
+sub music_app_private($name) {
+	my $app = &music_app_name($name);
+	return 0 unless length $app;
+	return &subs::app_private_now($app) ? 1 : 0;
+}
+
+sub music_app_visible($name) {
+	my $app = &music_app_name($name);
+	return 1 unless length $app;
 	return &Manager::help_app_hidden($app) ? 0 : 1;
 }
 
 sub process_file($name) {
+	# A private album is a lock, not a place level. Outside a private place its
+	# tracks are not listed at all; inside one they still need a fingerprint (its
+	# own Music padlock or the Security private grant).
+	if (&music_app_private($name)) {
+		return unless &subs::private_reachable_now();
+		return unless $permissive == 1 || &subs::private_revealed();
+	}
 	return unless playable_name($name)
 		|| (($permissive == 1 || music_app_visible($name)) && playable_enc_name($name));
 	# A directory walk hands names back as UTF-8 bytes, but the music window is a
 	# character string: an undecoded name gets upgraded as Latin-1 and served
-	# double-encoded (Æ -> Ã), which the player then cannot open. Decode only the
+	# double-encoded (Æ -> Ã), so the player then cannot open it. Decode only the
 	# names that are kept, so the rest of the app sees them as the browser does.
 	# Invalid UTF-8 is left as bytes, which is what it was before.
 	utf8::decode($name) unless utf8::is_utf8($name);

@@ -16272,16 +16272,23 @@ sub navigation_information() {
 
 # ---- Visibility -----------------------------------------------------------
 #
-# A thing's visibility is no longer a checkbox. The setting (`visible`) is one
-# of three place words: private, public or dangerous. They are the site types in
-# gb.pl, and places are numbered 1 (private), 2 (public) and 3 (dangerous): a
-# thing is shown while the room is at or below its number. There is no `on` or
-# `off` any more; private is the least visible level, and public is what a new
-# app is born with.
+# A thing's visibility is one of three words. `public` is shown as usual and
+# `dangerous` is shown and stays open during a lockdown. `private` is a lock,
+# not a place level:
 #
-# A person's relationship is numbered on the same scale - friend 1 (private),
-# stranger 2 (public), enemy 3 (dangerous) - so an enemy's presence raises the
-# room to dangerous. Strangers are not negative and do not change the room.
+#   * it is hidden at every place, including home, and never appears on the
+#     timeline;
+#   * it may only be located in a private place (rating 1) with no enemy
+#     present - a public or dangerous place denies it entirely, even to an old
+#     media padlock grant;
+#   * even there it needs a live fingerprint grant on this screen (Security ->
+#     Private apps, or the app's own padlock). No grant, no entry anywhere.
+#
+# The place rating is still read by the lockdown (a dangerous place, or an enemy
+# present, closes the house). A person's relationship is numbered on the same
+# scale - friend 1 (private), stranger 2 (public), enemy 3 (dangerous) - so an
+# enemy's presence raises the room to dangerous. Strangers are not negative and
+# do not change the room.
 our %relationship_rating = (friend => 1, stranger => 2, enemy => 3);
 our @relationship_order = qw/friend stranger enemy/;
 
@@ -16574,74 +16581,223 @@ sub visibility_rank {
 	return 2;
 }
 
-# This device's row wins, then the house's `all` row, then the person's `me`
-# row, then the newest. No row at all is the new-app default: public.
-our %app_visibility_cache;
+# Visibility is inherited from the social constructs an app is part of, and
+# the lowest-numbered level wins (Private 1, Public 2, Dangerous 3). A private
+# row anywhere also locks the app everywhere: a stale row on another device (or
+# one made before the app was hidden) must never expose it. Public and Dangerous
+# are still read this device first, then the house's `all` row, then the
+# person's `me` row, then the newest. No row at all is Public.
+our (%app_visibility_cache, %app_visibility_own_cache, %app_visibility_rank_cache, %appointment_visibility_cache,
+	%visibility_graph_links, %visibility_graph_uuid_app);
+our $visibility_graph_ready = 0;
+
+# One request-wide read of the visibility rows and the construct links. The
+# links live in settings: a construct's own `uuid`, and the `sc_<kind>` arrays
+# naming the constructs of that kind it is part of. The workspace writes both
+# sides of a link, so the map is followed both ways and a private construct
+# reaches every appointment filed under it.
+sub visibility_graph_build {
+	return 1 if $visibility_graph_ready;
+	$visibility_graph_ready = 1;
+	my $device = &device_setter();
+	my $rows = eval {
+		&db_query("select app, value, device from settings where setting = 'visible'")->hashes;
+	} || [];
+	my (%own, %all, %me, %latest, %private);
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} // next;
+		next unless length $app;
+		my $d = $row->{'device'} // '';
+		my $value = $row->{'value'};
+		$private{$app} = 1 if &visibility_normalize($value) eq 'private';
+		$latest{$app} = $value unless defined $latest{$app};
+		$all{$app} = $value if $d eq 'all';
+		$me{$app} = $value if $d eq 'me';
+		$own{$app} = $value if $d eq $device;
+	}
+	foreach my $app ( keys %latest ) {
+		$app_visibility_own_cache{$app} = $private{$app} ? 'private'
+			: &visibility_normalize(defined $own{$app} ? $own{$app}
+				: defined $all{$app} ? $all{$app}
+				: defined $me{$app} ? $me{$app}
+				: $latest{$app});
+	}
+	my $links = eval {
+		&db_query("select app, setting, value from settings where setting = 'uuid' or substr(setting,1,3) = 'sc_'")->hashes;
+	} || [];
+	my %social_sing = map { $_->{'sing'} => 1 } values %{$gb::social_constructs};
+	foreach my $row ( @{$links} ) {
+		my $app = $row->{'app'} // next;
+		next unless length $app;
+		next unless ($row->{'setting'} // '') eq 'uuid';
+		my $uuid = $row->{'value'} // '';
+		next unless defined $uuid && length $uuid;
+		$visibility_graph_uuid_app{$uuid} = $app;
+	}
+	foreach my $row ( @{$links} ) {
+		my $app = $row->{'app'} // next;
+		next unless length $app;
+		my $setting = $row->{'setting'} // '';
+		next unless $setting =~ /^sc_(.+)$/;
+		# Only social-construct links inherit privacy. The same sc_* arrays also
+		# carry taxonomies (idea, action, product, service, thing); an ingredient
+		# linked to a private idea is not part of that idea, so those are left out.
+		my $sing = $1;
+		next unless $social_sing{$sing};
+		my $list = eval { decode_json($row->{'value'} // '') } || [];
+		next unless ref $list eq 'ARRAY';
+		foreach my $uuid ( @{$list} ) {
+			next unless defined $uuid && length $uuid;
+			my $related = $visibility_graph_uuid_app{$uuid} // next;
+			next if $related eq $app;
+			$visibility_graph_links{$app}->{$related} = 1;
+		}
+	}
+	return 1;
+}
+
+sub app_visibility_own_value {
+	my ($app) = @_;
+	return 'public' unless defined $app && length $app;
+	&visibility_graph_build();
+	return $app_visibility_own_cache{$app} || 'public';
+}
+
+# The strictest level in the app's construct component, itself included.
+sub app_visibility_rank_effective {
+	my ($app, $seen) = @_;
+	return 4 unless defined $app && length $app;
+	&visibility_graph_build();
+	my $device = &device_setter();
+	my $cache_key = $device . "\x1f" . $app;
+	return $app_visibility_rank_cache{$cache_key} if exists $app_visibility_rank_cache{$cache_key};
+	my $root = !defined $seen;
+	$seen ||= {};
+	return 4 if $seen->{$app}++;
+	my $rank = &visibility_rank(&app_visibility_own_value($app));
+	my $links = $visibility_graph_links{$app} || {};
+	foreach my $related ( keys %{$links} ) {
+		my $r = &app_visibility_rank_effective($related, $seen);
+		$rank = $r if $r < $rank;
+	}
+	$app_visibility_rank_cache{$cache_key} = $rank if $root;
+	return $rank;
+}
+
 sub app_visibility_value {
 	my ($app) = @_;
 	return 'public' unless defined $app && length $app;
 	my $device = &device_setter();
 	my $cache_key = $device . "\x1f" . $app;
 	return $app_visibility_cache{$cache_key} if exists $app_visibility_cache{$cache_key};
-	my $rows = eval {
-		&db_query("select value, device from settings where app = ? and setting = 'visible' order by cast(server_time as integer) desc", $app)->hashes;
-	} || [];
-	my ($own, $all, $me, $latest);
-	foreach my $row ( @{$rows} ) {
-		my $d = $row->{'device'} // '';
-		$latest = $row->{'value'} unless defined $latest;
-		$all = $row->{'value'} if $d eq 'all';
-		$me = $row->{'value'} if $d eq 'me';
-		$own = $row->{'value'} if $d eq $device;
-	}
-	my $value = defined $own ? $own : defined $all ? $all : defined $me ? $me : $latest;
-	$value = &visibility_normalize($value);
+	my $rank = &app_visibility_rank_effective($app);
+	my $value = $rank <= 1 ? 'private' : $rank >= 3 ? 'dangerous' : 'public';
 	$app_visibility_cache{$cache_key} = $value;
 	return $value;
 }
 
 # A picker can ask about hundreds of apps at once (every appointment in the
-# house). Read their visibility rows in one query and fill the same request
-# cache app_visibility_value uses, so each app's check costs no query.
+# house). The graph is read once and every app's answer comes from the same
+# request cache, so each check costs no query.
 sub app_visibility_preload {
 	my ($apps) = @_;
 	return 0 unless ref $apps eq 'ARRAY' && scalar @{$apps};
-	my $device = &device_setter();
-	my %wanted;
+	&visibility_graph_build();
+	my $seen = 0;
 	foreach my $app ( @{$apps} ) {
 		next unless defined $app && length $app;
-		$wanted{$app} = 1;
+		&app_visibility_value($app);
+		$seen++;
 	}
-	return 0 unless scalar keys %wanted;
-	my $rows = eval {
-		&db_query("select app, value, device from settings where setting = 'visible' order by cast(server_time as integer) desc")->hashes;
-	} || [];
-	my (%own, %all, %me, %latest);
-	foreach my $row ( @{$rows} ) {
-		my $app = $row->{'app'} // next;
-		next unless $wanted{$app};
-		my $d = $row->{'device'} // '';
-		my $value = $row->{'value'};
-		$latest{$app} = $value unless defined $latest{$app};
-		$all{$app} = $value if $d eq 'all';
-		$me{$app} = $value if $d eq 'me';
-		$own{$app} = $value if $d eq $device;
-	}
-	foreach my $app ( keys %wanted ) {
-		my $value = defined $own{$app} ? $own{$app}
-			: defined $all{$app} ? $all{$app}
-			: defined $me{$app} ? $me{$app}
-			: $latest{$app};
-		$app_visibility_cache{$device . "\x1f" . $app} = &visibility_normalize($value);
-	}
-	return 1;
+	return $seen ? 1 : 0;
 }
 
+# An appointment's level is the strictest of its own app and every social
+# construct named on the row. The field names come from $gb::social_constructs,
+# so every kind - community, club, team, person, project, institution,
+# government, corporation, place, vendor, event - is read, not a fixed list;
+# `account` is included too. The lowest number wins, so a private project makes
+# the record private even when its app is Public.
+sub appointment_visibility_rank {
+	my ($row) = @_;
+	return 4 unless ref $row eq 'HASH';
+	my @apps;
+	push @apps, $row->{'app'} if defined $row->{'app'} && length $row->{'app'};
+	my %field = ( account => 1 );
+	foreach my $scons ( values %{$gb::social_constructs} ) {
+		my $sing = $scons->{'sing'} // '';
+		$field{$sing} = 1 if length $sing;
+		my $name = $scons->{'name'} // '';
+		$field{$name} = 1 if length $name;
+	}
+	foreach my $field ( sort keys %field ) {
+		my $value = $row->{$field};
+		next unless defined $value && length $value;
+		$value = &unformat_name($value);
+		next unless length $value && $value ne 'all';
+		push @apps, $value;
+	}
+	return 4 unless scalar @apps;
+	my $device = &device_setter();
+	my $cache_key = $device . "\x1f" . join("\x1f", @apps);
+	return $appointment_visibility_cache{$cache_key} if exists $appointment_visibility_cache{$cache_key};
+	my $rank = 4;
+	foreach my $app ( @apps ) {
+		my $r = &app_visibility_rank_effective($app);
+		$rank = $r if $r < $rank;
+	}
+	$appointment_visibility_cache{$cache_key} = $rank;
+	return $rank;
+}
+
+sub appointment_private_now {
+	my ($row) = @_;
+	return &appointment_visibility_rank($row) <= 1 ? 1 : 0;
+}
+
+# Private is not a place level any more: it is a lock. A private thing is
+# hidden everywhere, including at home, and only a live fingerprint grant on
+# this screen can show it - and even then only in a private place with no
+# enemy present. The place words stay because a lockdown reads the rating.
 sub visibility_hidden_for {
-	my ($value, $exposure) = @_;
-	my $rank = &visibility_rank($value);
-	$exposure = &visibility_exposure() unless defined $exposure;
-	return $exposure > $rank ? 1 : 0;
+	my ($value) = @_;
+	return &visibility_normalize($value) eq 'private' ? 1 : 0;
+}
+
+# A private thing may only be located in a private place during no lockdown.
+# An unknown place reads as public, so a lost fix denies rather than reveals.
+sub private_reachable_now {
+	return 0 if &lockdown_active();
+	return &visibility_exposure() <= 1 ? 1 : 0;
+}
+
+sub app_private_now {
+	my ($app) = @_;
+	return 0 unless defined $app && length $app;
+	return &visibility_normalize(&app_visibility_value($app)) eq 'private' ? 1 : 0;
+}
+
+# The screen a request speaks for. media_unlock_store keys a fingerprint grant
+# by the paired device uuid, not by the machine's device kind (device_setter),
+# so the request boundary records the browser's own uuid here.
+our $request_device_uuid = '';
+our %private_revealed_cache;
+sub private_revealed {
+	my ($device) = @_;
+	$device = $request_device_uuid unless defined $device && length $device;
+	return 0 unless defined $device && $device =~ /^[A-Za-z0-9]{8,64}$/;
+	return $private_revealed_cache{$device} if exists $private_revealed_cache{$device};
+	my $now = &rightNow();
+	my $rows = eval {
+		&db_query("select data from cache where context = 'media_unlock' and app = 'private' and device = ? order by server_time desc", $device)->hashes;
+	} || [];
+	my $open = 0;
+	foreach my $row ( @{$rows} ) {
+		my $d = eval { decode_json($row->{'data'}) } || {};
+		if (($d->{'until'} || 0) > $now) { $open = 1; last; }
+	}
+	$private_revealed_cache{$device} = $open;
+	return $open;
 }
 
 sub app_hidden_now {
@@ -16656,7 +16812,9 @@ sub app_hidden_now {
 		return 0 if &visibility_normalize(&app_visibility_value($app)) eq 'dangerous';
 		return 1;
 	}
-	return &visibility_hidden_for(&app_visibility_value($app));
+	return 0 unless &app_private_now($app);
+	return 1 unless &private_reachable_now();
+	return &private_revealed() ? 0 : 1;
 }
 
 sub app_visible_now {
@@ -16811,6 +16969,13 @@ sub internet_site_appointment_tick {
 # request; a worker serves one request at a time, so these are request caches.
 sub visibility_cache_clear {
 	%app_visibility_cache = ();
+	%app_visibility_own_cache = ();
+	%app_visibility_rank_cache = ();
+	%appointment_visibility_cache = ();
+	%visibility_graph_links = ();
+	%visibility_graph_uuid_app = ();
+	$visibility_graph_ready = 0;
+	%private_revealed_cache = ();
 	$visibility_exposure_cache = undef;
 	$presence_relationship_cache = undef;
 	$present_person_apps_cache = undef;

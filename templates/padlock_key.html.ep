@@ -137,7 +137,7 @@
 		var pk = (location.search || '').match(/[?&]mode=([^&]+)/);
 		if (pk) {
 			var pm = decodeURIComponent(pk[1]);
-			if (/^(locker|gallery|music|folders|general)$/.test(pm)) { padlockKeyMode = pm; }
+			if (/^(locker|gallery|music|folders|general|private)$/.test(pm)) { padlockKeyMode = pm; }
 		}
 		var pt = (location.search || '').match(/[?&]target=([^&]+)/);
 		if (pt) { padlockKeyTarget = decodeURIComponent(pt[1]); }
