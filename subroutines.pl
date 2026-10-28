@@ -16601,7 +16601,7 @@ sub visibility_graph_build {
 	$visibility_graph_ready = 1;
 	my $device = &device_setter();
 	my $rows = eval {
-		&db_query("select app, value, device from settings where setting = 'visible'")->hashes;
+		&db_query("select app, value, device from settings where setting = 'visible' order by cast(server_time as integer) desc")->hashes;
 	} || [];
 	my (%own, %all, %me, %latest, %private);
 	foreach my $row ( @{$rows} ) {
@@ -16611,9 +16611,9 @@ sub visibility_graph_build {
 		my $value = $row->{'value'};
 		$private{$app} = 1 if &visibility_normalize($value) eq 'private';
 		$latest{$app} = $value unless defined $latest{$app};
-		$all{$app} = $value if $d eq 'all';
-		$me{$app} = $value if $d eq 'me';
-		$own{$app} = $value if $d eq $device;
+		$all{$app} = $value if $d eq 'all' && !defined $all{$app};
+		$me{$app} = $value if $d eq 'me' && !defined $me{$app};
+		$own{$app} = $value if $d eq $device && !defined $own{$app};
 	}
 	foreach my $app ( keys %latest ) {
 		$app_visibility_own_cache{$app} = $private{$app} ? 'private'
