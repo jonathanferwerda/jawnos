@@ -1,11 +1,14 @@
 <% my $random_string = &subs::random_string_creator(10); %>
 <% no warnings 'uninitialized'; %>
+<%# A record with no movement setting still needs the form: expense is the
+    common case, and the select's own first option is the same value. %>
+<% my $movement_choice = $app->{'movement'} || $appts->{$a}->{'setting'}->{'movement'} || 'expense'; %>
 <span class="app_details" uuid="<%= $random_string %>" app="<%= $a %>" <% unless ($app->{'timestamp'}) { %>style="display:none;" <% } %>><br>
 
 	<label>Type</label>
 	<select class="transaction movement app_setting" app="<%= $a %>" attribute="movement">
 		<% foreach my $mov (sort keys %{$gb::transaction_types}) { %>
-			<option value="<%= $mov %>" <% if ($mov eq ($app->{'movement'} || $appts->{$a}->{'setting'}->{'movement'})) { %>selected<%}%>><%= &subs::format_name($mov) %></option>
+			<option value="<%= $mov %>" <% if ($mov eq $movement_choice) { %>selected<%}%>><%= &subs::format_name($mov) %></option>
 		<% } %>
 	</select>
 	<select class="transaction currency app_setting" app="<%= $a %>" attribute="currency">
@@ -71,7 +74,7 @@
 	<span style="display:none;position:fixed;background-color:var(--panel);border:solid;border-radius:2px;font-size:20px;" class="transaction_autocomplete"></span>
 	<span class="transaction_movement_container" app="<%= $a %>">
 		<span class="purchase_details" uuid="<%= $random_string %>" app="<%= $a %>" style="">
-			<%= include 'apps/transaction/' . $appts->{$a}->{'setting'}->{'movement'}, appts => $appts, a => $a, app => {}, source => 'transaction' %>
+			<%= include 'apps/transaction/' . $movement_choice, appts => $appts, a => $a, app => {}, source => 'transaction' %>
 		</span>
 	</span>
 	<div class="tx_add_row">
