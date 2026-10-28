@@ -430,6 +430,7 @@ hook before_dispatch => sub {
 		# catalog carries only app names and icon paths. The start list is the
 		# same data, extracted from the start menu's own app markup.
 		$path eq '/apps/list' ||
+		$path eq '/apps/icon' ||
 		$path eq '/apps/start' ||
 		$path eq '/', ) {
 

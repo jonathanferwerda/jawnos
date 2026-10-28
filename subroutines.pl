@@ -3235,6 +3235,29 @@ sub watch_reply_stream() {
 	return $done;
 }
 
+# The picture an app's icon shows: the person's own main image when there is
+# one, else the active icon set's version of the app's known picture, else the
+# placeholder for its pos. main_icon_maker renders this in HTML; the native
+# home asks /apps/icon for the same answer as a PNG it can draw. Returns ''
+# when the app has no icon at all.
+sub main_icon_source() {
+	my $data = shift;
+	my $unformatted_name = $data->{'app'};
+	my $settings = $data->{'settings'};
+	$settings = &subs::settings_grabber({ app => $unformatted_name }) unless $settings;
+	if ($settings->{'main_image'}) {
+		my ($destination,$asset) = &subs::file_device_renamer({ file => $settings->{'main_image'}, app => $unformatted_name, type => 'image' });
+		return '/file_open?file=' . $destination . $asset if defined $destination && defined $asset && -e ($destination . $asset);
+	}
+	# the Internet app's picture lives under the web button's name
+	return &icon_for('/images/make believe/web_button.png') if $unformatted_name eq 'internet';
+	if ($gb::known_appts->{$unformatted_name} && $gb::known_appts->{$unformatted_name}->{'icon'}) {
+		return &icon_for($gb::known_appts->{$unformatted_name}->{'icon'});
+	}
+	return &icon_for('/icons/pos/' . $settings->{'pos'} . '.png') if $settings->{'pos'} && -e 'public/icons/pos/' . $settings->{'pos'} . '.png';
+	return '';
+}
+
 sub main_icon_maker() {
 	my $data = shift;
 	my $unformatted_name = $data->{'app'};
@@ -3249,21 +3272,10 @@ sub main_icon_maker() {
 	# a window may wear a name that is not its key (the accounting app is still
 	# stored under 'budget'), so the caller can name the hint it shows
 	my $hint = (defined $data->{'hint'} && length $data->{'hint'}) ? $data->{'hint'} : &subs::format_name($unformatted_name);
+	my $src = &subs::main_icon_source({ app => $unformatted_name, settings => $settings });
 	my $main_image = '<span id="window_icon_' . $timestamp . '" style="display:none;" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" ' . $onclick . '>' . &subs::initialize_name($hint) . '</span>';
-	my ($destination,$asset);
-	if ($settings->{'main_image'}) {
-		($destination,$asset) = &subs::file_device_renamer({ file => $settings->{'main_image'}, app => $unformatted_name, type => 'image' });
-		if (-e ($destination . $asset)) {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" src="/file_open?file=' . $destination . $asset . '" class="little_thumb" ' . $onclick . '>';
-		}
-	}
-	unless (-e $destination . $asset) {
-		if ($gb::known_appts->{$unformatted_name}) {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . &icon_for($gb::known_appts->{$unformatted_name}->{'icon'}) . '" class="little_thumb" ' . $onclick . '>';
-		}
-		elsif (-e 'public/icons/pos/' . $settings->{'pos'} . '.png') {
-			$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . &icon_for('/icons/pos/' . $settings->{'pos'} . '.png') . '" class="little_thumb" ' . $onclick . '>';
-		}
+	if (length $src) {
+		$main_image = '<img id="window_icon_' . $timestamp . '" class="window_icon ' . $size . '_thumb" app="' . $unformatted_name . '" hint="' . $hint . '" src="' . $src . '" class="little_thumb" ' . $onclick . '>';
 	}
 	return $main_image
 }

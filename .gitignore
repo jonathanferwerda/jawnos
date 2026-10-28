@@ -54,9 +54,10 @@ database/*.db
 database/*.db-shm
 database/*.db-wal
 database/backups/
-# the hidden thumbnail cache beside the database (phone avatars): generated
-# locally, never shared
+# the hidden thumbnail caches beside the database (phone avatars, and the
+# icon-set PNGs the native home requests): generated locally, never shared
 database/.thumbs/
+database/.icons/
 # the machine's own signatorial, mirrored beside the database so a restored
 # database (or a run with the wrong HOME) cannot change this machine's identity
 database/.jawnos_signatorial_id
