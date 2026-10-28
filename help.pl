@@ -1107,7 +1107,7 @@ our %topic = (
 		related => [ 'taskbar', 'start_menu', 'appointment_windows', 'help_app' ]
 	},
 	'appointment_windows' => {
-		title => 'Appointment windows', category => 'features',
+		title => 'Appointment windows', category => 'features', verified => '2026-10-28',
 		summary => 'The window that gathers everything about one record.',
 		body => [
 			'Opening an appointment — a task, an invoice, a scan, a note, a measurement — spawns a window built around that one record. It gathers what the record is (its details), what has happened to it, and the things that name it: files, mail, transactions, the apps it touches.',
@@ -1117,6 +1117,7 @@ our %topic = (
 			'Each row in the details table shows when it began, its duration, its warranty and its own stamp. The duration of an open session ticks every second while the window is open, in the same two-unit shape the rest of the house uses (1h 5s, 59m 59s, 1d 1m); a closed row keeps the length it was given.',
 			'Clicking a time in the row turns its reading: the short form (5d 10h), all hours (130h 10m), all minutes (7810m 22s), then the fixed stamp. Clicking a duration turns it through the same three relative readings - a duration has no fixed form. The short form is not fixed to one denomination: it turns over to days as soon as there is a whole day (1d 6h), then to months and years the same way (1M 15d, 1y 1M), so both denominations share the reading. A reading that would print exactly the same words as the one already showing is stepped past, so a click always changes something - two hours reads 2h in the short form and 2h again in whole hours, so it goes straight on to 120m. Each window remembers the reading it was left on, so a reload comes back the same way.',
 			'Every other duration the house prints turns the same way - an inventory card or column, a budget reading, a handbook row, a pass in the box office - because they all carry the span itself, not just the words for it.',
+			'The fields under the record controls take plain words. Ago reads the same language as the taskbar clock, so "five days ago", "yesterday around 6pm", "last christmas" and even a name or an event ("Abraham Lincoln\'s birthday") land on the moment they mean. Duration reads a length - "5m", "1 hour 30 minutes", "five minutes" - and Schedule reads a repeat, from a compact interval to "every third Saturday" or "the next 5 full moons". Warranty reads the same words as a moment ahead of the record, so "2 years" means two years from it, not two years before it. The line under each field says what the words will save to and updates as they are typed; a phrase the fast reader cannot read is handed to the Guide once typing pauses, and the line then shows the moment it found.'
 		],
 		steps => [
 			'Open an appointment by clicking it on the timeline, or a row in any app.',
