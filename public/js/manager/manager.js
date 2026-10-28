@@ -4669,57 +4669,58 @@ $(document).on('click','.edit_app_submit', function() {
 	var app = edit.attr('app');
 	var uuid = edit.attr('uuid');
 	var ea = $('.appointment_edit_area[uuid="' + uuid + '"]');
-	var app_name = ea.find('[attribute="app"]').val();
-	var timestamp = ea.find('[attribute="timestamp"]').attr('timestamp');
-	var duration = ea.find('[attribute="duration"]').val();
-	var warranty = ea.find('[attribute="warranty"]').attr('timestamp');
-	var account = ea.find('[attribute="account"]').val();
-	var project = ea.find('[attribute="project"]').val();
-	var start_notes = ea.find('[attribute="start_notes"]').val();
-	var notes = ea.find('[attribute="notes"]').val();
-	var end_notes = ea.find('[attribute="end_notes"]').val();
-	var movement = ea.find('[attribute="movement"]').val();
-	var amount = ea.find('[attribute="amount"]').val();
-	var tax = ea.find('[attribute="tax"]').val();
-	var aux = ea.find('[attribute="aux"]').val();
-	var total = ea.find('[attribute="total"]').val();
-	var vendor = ea.find('[attribute="vendor"]').val();
-	var unit = ea.find('[attribute="unit"]').val();
-	var quantity = ea.find('[attribute="quantity"]').val();
-	var has_tax = ea.find('.purchase_config[config="tax"]').attr('enabled');
-	var has_totes = ea.find('.purchase_config[config="totes"]').attr('enabled');
-	var item = ea.find('[attribute="item"]').val();
-	var model = ea.find('[attribute="model"]').val();
-	var state = ea.find('[attribute="state"]').val();
+	// Only the controls this form actually rendered are written. An absent
+	// control used to ride into the POST as '' (jQuery serialises undefined to
+	// key=), which blanked good columns; the `sent` list lets the route tell
+	// "unchanged" from "the person cleared this field".
+	var payload = { app: app, uuid: uuid, sent: [] };
+	var control = function (name) {
+		return ea.find('input[attribute="' + name + '"], select[attribute="' + name + '"], textarea[attribute="' + name + '"]').first();
+	};
+	var put = function (name) {
+		var f = control(name);
+		if (!f.length) { return; }
+		var v = (f.attr('type') == 'checkbox') ? (f.prop('checked') ? 'on' : 'off') : f.val();
+		payload[name] = (v === undefined || v === null) ? '' : v;
+		payload.sent.push(name);
+	};
+	var put_attr = function (name, attr) {
+		var f = control(name);
+		if (!f.length) { return; }
+		var v = f.attr(attr);
+		payload[name] = (v === undefined || v === null) ? '' : v;
+		payload.sent.push(name);
+	};
+	put('duration');
+	put('account');
+	put('project');
+	put('start_notes');
+	put('notes');
+	put('end_notes');
+	put('movement');
+	put('amount');
+	put('tax');
+	put('aux');
+	put('aux_description');
+	put('total');
+	put('vendor');
+	put('unit');
+	put('quantity');
+	put('item');
+	put('state');
+	put_attr('timestamp', 'timestamp');
+	put_attr('warranty', 'timestamp');
+	$.each({ tax: 'has_tax', totes: 'has_totes' }, function (config, name) {
+		var c = ea.find('.purchase_config[config="' + config + '"]');
+		if (!c.length) { return; }
+		payload[name] = c.attr('enabled') || 'off';
+		payload.sent.push(name);
+	});
+	payload.sent = payload.sent.join(',');
 	$.ajax({
 		url: '/manager/edit_app',
 		type: 'POST',
-		data: { 
-			app: app,
-			app_name: app_name,
-			uuid: uuid, 
-			timestamp: timestamp, 
-			duration: duration, 
-			warranty: warranty,
-			account: account,
-			project: project,
-			start_notes: start_notes,
-			notes: notes,
-			end_notes: end_notes,
-			movement: movement,
-			amount: amount,
-			tax: tax,
-			aux: aux,
-			total: total,
-			vendor: vendor,
-			unit: unit,
-			quantity: quantity,
-			item: item,
-			model: model,
-			has_tax: has_tax,
-			has_totes: has_totes,
-			state: state
-		},
+		data: payload,
 		success: function(response) {
 			edit.removeClass('medium_thumb');
 			edit.addClass('large_thumb');

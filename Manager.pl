@@ -5045,6 +5045,57 @@ sub appointment_stock_movement {
 	}
 }
 
+# An edit to a record adjusts the movement that press already made. It never
+# writes a second movement: the rows for this appointment are removed and the
+# same movement is written again at the appointment's own timestamp. (The shelf
+# split is recomputed against today's shelf, so an old edit can move the line
+# between stock and Usage; the total consumed is what the edit names.)
+# A money row is keyed by the appointment's own uuid, so it is updated in place.
+sub appointment_edit_ledger($c, $before, $sdata) {
+	my $uuid = $before->{'uuid'};
+	return unless defined $uuid && length $uuid;
+	my %touched = map { $_ => 1 } keys %{$sdata};
+	my $after = { %{$before}, %{$sdata} };
+	my $app = $after->{'app'};
+	my $type = $after->{'type'} || '';
+
+	# --- stock: quantity, unit, item or time changed on a movement the row owns
+	if (grep { $touched{$_} } qw/quantity unit item timestamp/ ) {
+		my $mode = &subs::setting_grabber({ app => $app, setting => 'stock_movement' }) || 'off';
+		if (($mode eq 'consume' || $mode eq 'produce') && $type =~ /^(?:record|stop)$/) {
+			my $existing = &subs::db_select('warehouse', undef, { app_uuid => $uuid, kind => 'stock' })->hashes || [];
+			my $usage    = &subs::db_select('warehouse', undef, { app_uuid => $uuid, kind => 'usage' })->hashes || [];
+			if (scalar @{$existing} || scalar @{$usage}) {
+				# A deleted movement row must be tombstoned, or a peer still holding
+				# it pushes it back and the edit is silently undone on the next sync.
+				foreach my $w ( @{$existing}, @{$usage} ) {
+					&deletion_registration({ table => 'warehouse', uuid => $w->{'uuid'}, scope => 'single', server_time => $w->{'server_time'} });
+				}
+				&subs::db_query("delete from warehouse where app_uuid = ? and kind in ('stock','usage')", $uuid);
+				&appointment_stock_movement($c, $app, 'record', $after->{'quantity'}, $after->{'unit'}, $after->{'timestamp'}, $uuid);
+			}
+		}
+	}
+
+	# --- money: the mirror is one row at uuid = the appointment's uuid
+	if (grep { $touched{$_} } qw/account project movement amount tax aux total item quantity unit timestamp/ ) {
+		my %m;
+		foreach my $k (qw/account project movement amount tax aux total item quantity unit timestamp/) {
+			$m{$k} = $after->{$k} if exists $sdata->{$k};
+		}
+		my $money = &subs::db_select('warehouse', undef, { kind => 'money', uuid => $uuid })->hashes->[0];
+		if ($money) {
+			&subs::db_update('warehouse', \%m, { kind => 'money', uuid => $uuid });
+			&subs::accounting_journal_maybe_rebuild();
+		}
+		elsif ($type eq 'transaction' && ($after->{'account'} // '') ne '') {
+			# the edit gave a row an account it did not have; one mirror, once
+			&subs::warehouse_money_mirror($after);
+			&subs::accounting_journal_maybe_rebuild();
+		}
+	}
+}
+
 get '/manager/warehouse' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $settings = &subs::settings_grabber({ app => 'warehouse' });
@@ -42572,92 +42623,86 @@ get '/manager/edit_app' => sub($c) {
 		$select->{$note_type} = &subs::note_decrypter($s, $select->{$note_type},$select->{'ost'}) if eval { &subs::note_decrypter($s, $select->{$note_type},$select->{'ost'}) };
 	}
 	my $appts = &log_reader({ app => $app, view => 'appointment_display' });
-	$c->render(template => 'apps/edit_app', app => $select, appts => $appts);
+	# The form renders against one app key; without it every $appts->{$a} lookup
+	# in the details block resolved to the empty key and the form came back blank,
+	# so a save posted blanks over good data.
+	$c->render(template => 'apps/edit_app', app => $select, a => $app, appts => $appts);
 };
 
 post '/manager/edit_app' => sub($c) {
 	my $app = &subs::unformat_name($c->param('app'));
-#	&subs::cache_delete({ app => $app, context => 'template' });
 	my $server_time = &subs::rightNow();
 	my $uuid = $c->param('uuid');
-	my $app_name = &subs::unformat_name($c->param('app_name'));
-	my $account = &subs::unformat_name($c->param('account'));
-	my $project = &subs::unformat_name($c->param('project'));
-	my $timestamp = $c->param('timestamp');
-	my $duration = &duration_read($c->param('duration'));
-	$duration = 0 unless defined $duration;
-	my $warranty = $c->param('warranty');
-	my $movement = $c->param('movement');
-	my $amount = $c->param('amount');
-	my $tax = $c->param('tax');
-	my $aux = $c->param('aux');
-	my $aux_description = $c->param('aux_description');
-	my $has_tax = $c->param('has_tax');
-	my $has_totes = $c->param('has_totes');
-	my $state = $c->param('state');
-	my $total = $c->param('total');
-	my $manufacturer = $c->param('manufacturer');
-	my $vendor = $c->param('vendor');
-	my $unit = $c->param('unit');
-	my $quantity = $c->param('quantity');
-	my $item = $c->param('item');
-	my $model = $c->param('model');
+	#Read the row first: an update that matches nothing must not answer 'ok'.
+	my $appt = defined $uuid ? &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0] : undef;
+	return $c->render(text => 'not found', status => 404)
+		unless $appt && defined $appt->{'uuid'} && (($appt->{'app'} // '') eq $app);
 
-	my $init = &subs::setting_initializer($app_name,$server_time);
-	$app_name = $init->{'app'};
-	my ($start_notes,$notes,$end_notes);
-	$start_notes = &subs::note_encrypter(&subs::session_suds($c),$c->param('start_notes')) if $c->param('start_notes');
-	$notes = &subs::note_encrypter(&subs::session_suds($c),$c->param('notes')) if $c->param('notes');
-	$end_notes = &subs::note_encrypter(&subs::session_suds($c),$c->param('end_notes')) if $c->param('end_notes');
-	my $seen = 'yes';
-	if ($timestamp > $server_time) {
-		$seen = undef;
+	# The form names the controls it actually rendered. An absent control is
+	# "unchanged", not "cleared"; a rendered blank is a deliberate clear. A
+	# caller that sends no list keeps the safer old rule (only a non-blank value
+	# may write).
+	my %sent;
+	if (defined $c->param('sent') && length $c->param('sent')) {
+		$sent{$_} = 1 foreach grep { length } split /\s*,\s*/, $c->param('sent');
 	}
-	my $data = {
-		timestamp => $timestamp,
-		duration => $duration,
-		warranty => $warranty,
-		seen => $seen,
-		app => $app_name,
-		account => $account,
-		project => $project,
-		start_notes => $start_notes,
-		notes => $notes,
-		end_notes => $end_notes,
-		movement => $movement,
-		amount => $amount,
-		tax => $tax,
-		aux => $aux,
-		aux_description => $aux_description,
-		total => $total,
-		manufacturer => $manufacturer,
-		vendor => $vendor,
-		unit => $unit,
-		quantity => $quantity,
-		item => $item,
-		model => $model,
-		has_tax => $has_tax,
-		has_totes => $has_totes,
-		'state' => $state,
-		server_time => $server_time
+	my $given = sub {
+		my $k = shift;
+		return $sent{$k} ? 1 : 0 if scalar keys %sent;
+		my $v = $c->param($k);
+		return (defined $v && length $v) ? 1 : 0;
 	};
-	my $sdata = {};
-	my $appt = &subs::db_select('appointments', undef, { uuid => $uuid })->hashes->[0];
-	if ($appt->{'uuid'}) {
-		foreach my $k ( keys %{$data} ) {
-			if ($appt->{$k} ne $data->{$k}) {
-				$sdata->{$k} = $data->{$k};
-			}
-		}
 
-		&subs::db_update('appointments', $sdata,
-		{
-			uuid => $uuid,
-			app => $app
-		});
+	my $data = {};
+	# A time is millisecond digits; anything else would blank the row's own time.
+	my $timestamp = $c->param('timestamp');
+	$data->{'timestamp'} = $timestamp if $given->('timestamp') && defined $timestamp && $timestamp =~ /^-?\d{10,}$/;
+	my $duration = &duration_read($c->param('duration'));
+	if ($given->('duration') && defined $duration) {
+		# start/record/stop durations are an accrual (negative); keep the sign
+		# the row already carries instead of flipping the history on a save
+		$duration = (abs $duration) * -1 if ($appt->{'duration'} // 0) < 0;
+		$data->{'duration'} = $duration;
+	}
+	$data->{'warranty'} = $c->param('warranty') if $given->('warranty');
+	foreach my $k (qw/account project movement amount tax aux aux_description total manufacturer vendor unit quantity item state has_tax has_totes/) {
+		next unless $given->($k);
+		my $v = $c->param($k);
+		$data->{$k} = defined $v ? $v : '';
+	}
+	# Notes are sealed at rest. A rendered empty clears the note; an absent note
+	# never does, and a seal that fails leaves the old ciphertext alone.
+	foreach my $k (qw/start_notes notes end_notes/) {
+		next unless $given->($k);
+		my $plain = $c->param($k) // '';
+		if (length $plain) {
+			my $sealed = &subs::note_encrypter(&subs::session_suds($c), $plain);
+			next unless defined $sealed && length $sealed;
+			$data->{$k} = $sealed;
+		}
+		else {
+			$data->{$k} = '';
+		}
+	}
+	# 'seen' is owned by the write path and the reminder sweep, so an edit must
+	# not finalise a pending row. 'model' is JSON and belongs to
+	# appointment_model_selector, not this scalar form. 'app_name' is not a
+	# rename: a rename touches settings, models and child rows, and doing it
+	# half-way here left later saves matching zero rows.
+
+	my $sdata = {};
+	foreach my $k ( keys %{$data} ) {
+		my $old = defined $appt->{$k} ? $appt->{$k} : '';
+		$sdata->{$k} = $data->{$k} if "$old" ne "$data->{$k}";
+	}
+	if (scalar keys %{$sdata}) {
+		$sdata->{'server_time'} = $server_time;
+		my $before = { %{$appt} };
+		&subs::db_update('appointments', $sdata, { uuid => $uuid });
+		&appointment_edit_ledger($c, $before, $sdata);
 	}
 
-	my $cv = &centre_view_grabber({ c => $c, app =>&subs::unformat_name($app), timestamp => $timestamp, cached => 'no' });
+	my $cv = &centre_view_grabber({ c => $c, app => $app, timestamp => ($sdata->{'timestamp'} // $appt->{'timestamp'}), cached => 'no' });
 	&budget_runner($app);
 	&padlock_time_extender($c);
 	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
