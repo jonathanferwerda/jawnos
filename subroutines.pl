@@ -18415,7 +18415,7 @@ sub warehouse_on_hand_at {
 	my ($item, $unit, $place) = @_;
 	return 0 unless defined $item && length $item;
 	$unit = 'each' unless defined $unit && length $unit;
-	my $q = &db_query("select coalesce(sum(cast(quantity as real)),0) as q from warehouse where item=? and unit=? and place=? and coalesce(kind,'stock')='stock'", $item, $unit, $place);
+	my $q = &db_query("select coalesce(sum(cast(quantity as real)),0) as q from warehouse where item=? and unit=? and place=? and coalesce(nullif(kind,''),'stock')='stock'", $item, $unit, $place);
 	return ($q && $q->hashes->[0]) ? $q->hashes->[0]->{'q'} + 0 : 0;
 }
 
