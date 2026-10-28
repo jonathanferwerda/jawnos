@@ -5,6 +5,20 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-10-28 — upright clothesline pictures and the app's own title bar
+
+- **Upright icons.** A camera photo keeps its pixels in the frame it was
+  stored in and carries an EXIF orientation tag; Android's decoder ignored the
+  tag, so the portrait main images (Vape, Coffee, Programming) lay on their
+  side in the clothesline. The launcher now applies the tag before drawing the
+  tile, and decodes at a quarter size first, so the row costs less memory than
+  it did.
+- **The title bar is back in the single-app view.** Opening an app from Home
+  keeps the window's own title bar - its icon and its name - so a custom app
+  is identifiable at a glance. Its window buttons are left out: Android's Back
+  leaves the app, and closing the only window would strand the view on the
+  desktop the manager hides.
+
 ## 2026-10-27 — Home NFC, named Recents cards, Browser + Search, and the JawnOS keyboard
 
 - **Home NFC.** The home screen reads NFC tags through Android's reader mode and
