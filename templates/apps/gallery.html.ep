@@ -57,6 +57,7 @@
 /* margin:auto centres a gate that fits and leaves it scrollable from the top
    when it does not; align-items:center cut the top off a tall one instead */
 #gallery_lock .padlock_frame { position:relative !important; inset:auto !important; transform:none !important; margin:auto; }
+#gallery_lock .padlock_frame.padlock_compact { margin:8px auto 0 !important; }
 </style>
 <div id="gallery" unlock="<%= $unlock %>" padlock="<%= scalar @{$padlock_sighting} ? 1 : 0 %>">
 	<div id="gallery_header">
@@ -89,6 +90,7 @@
 	</div>
 	<div id="gallery_lock" style="display:none;">
 		<button type="button" id="gallery_lock_close" hint="Close" style="position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;font-size:22px;border:0;border-radius:50%;background:#222;color:#eee;cursor:pointer;">×</button>
+		<% $c->stash('compact' => 1); %>
 		<%= include 'padlock', mode => 'gallery', fingerprint => 1 %>
 	</div>
 	<span id="gallery_info_anchor" class="gallery file_information_grabber" style="display:none;"></span>

@@ -28704,7 +28704,7 @@ post '/manager/window_closer' => sub($c) {
 	# any other private window in this tab closes, so the next look needs a
 	# fresh fingerprint (the same rule Gallery already follows).
 	if (&subs::app_private_now($app) && &subs::private_revealed()) {
-		&private_relock($c, $c->param('browser_tab_id'), $app);
+		&private_relock($c, $c->param('browser_tab_id'), { skip_app => $app, only_if_last => 1 });
 	}
 	&subs::window_closer($app, $c->param('browser_tab_id'));
 	my $settings = &subs::settings_grabber({ app => &subs::unformat_name($app) });
@@ -35575,15 +35575,17 @@ sub media_unlock_clear {
 	return $q ? $q->rows : 0;
 }
 
-# Closing a private window, or five minutes without movement, relocks private
-# everywhere on this screen: drop the grant, close the tab's other private
-# windows, and redraw the lists. $skip_app is the window whose own close
-# already triggered this, so it is not asked to close twice.
+# Closing a private window, or five minutes without movement, relocks private.
+# On a manual close, $opts->{'only_if_last'} keeps the grant and the other
+# private windows alive while any of them is still open (the person may just be
+# tidying the screen); the last close clears it. The idle lock passes
+# close_windows and closes them all.
 sub private_relock {
-	my ($c, $tab, $skip_app) = @_;
-	my $device = &media_unlock_device($c);
-	&media_unlock_clear($device, 'private') if length $device;
+	my ($c, $tab, $opts) = @_;
+	$opts ||= {};
+	my $skip_app = $opts->{'skip_app'};
 	$tab = '' unless defined $tab && $tab =~ /^[A-Za-z0-9_-]{1,64}$/;
+	my @private_open;
 	if (length $tab) {
 		my $rows = eval {
 			&subs::db_query("select distinct app from websockets where type = 'stayingAlive' and browser_tab_id = ?", $tab)->hashes;
@@ -35593,10 +35595,19 @@ sub private_relock {
 			next if $open_app =~ /^(?:server|tab|manager)$/;
 			next if defined $skip_app && length $skip_app && $open_app eq $skip_app;
 			next unless &subs::app_private_now($open_app);
+			push @private_open, $open_app;
+		}
+	}
+	# A manual close is not a lock while another private window is still open.
+	return 1 if $opts->{'only_if_last'} && scalar @private_open;
+	my $device = &media_unlock_device($c);
+	&media_unlock_clear($device, 'private') if length $device;
+	if ($opts->{'close_windows'}) {
+		foreach my $open_app ( @private_open ) {
 			&subs::window_closer($open_app, $tab);
 		}
-		&Websocket::send('server', { console => 'jawnosPrivateRefresh(0);', browser_tab_id => $tab });
 	}
+	&Websocket::send('server', { console => 'jawnosPrivateRefresh(0);', browser_tab_id => $tab }) if length $tab;
 	return 1;
 }
 
@@ -40560,7 +40571,7 @@ post '/manager/security/media_lock' => sub ($c) {
 	if ($app eq 'private') {
 		# A deliberate Hide, or the five-minute idle timer: clear the grant,
 		# close this tab's private windows, and redraw the lists.
-		&private_relock($c, $tab);
+		&private_relock($c, $tab, { close_windows => 1 });
 	}
 	else {
 		my @apps = $app ? ($app) : (@media_unlock_apps, 'private');
