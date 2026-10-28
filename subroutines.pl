@@ -16600,6 +16600,43 @@ sub app_visibility_value {
 	return $value;
 }
 
+# A picker can ask about hundreds of apps at once (every appointment in the
+# house). Read their visibility rows in one query and fill the same request
+# cache app_visibility_value uses, so each app's check costs no query.
+sub app_visibility_preload {
+	my ($apps) = @_;
+	return 0 unless ref $apps eq 'ARRAY' && scalar @{$apps};
+	my $device = &device_setter();
+	my %wanted;
+	foreach my $app ( @{$apps} ) {
+		next unless defined $app && length $app;
+		$wanted{$app} = 1;
+	}
+	return 0 unless scalar keys %wanted;
+	my $rows = eval {
+		&db_query("select app, value, device from settings where setting = 'visible' order by cast(server_time as integer) desc")->hashes;
+	} || [];
+	my (%own, %all, %me, %latest);
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} // next;
+		next unless $wanted{$app};
+		my $d = $row->{'device'} // '';
+		my $value = $row->{'value'};
+		$latest{$app} = $value unless defined $latest{$app};
+		$all{$app} = $value if $d eq 'all';
+		$me{$app} = $value if $d eq 'me';
+		$own{$app} = $value if $d eq $device;
+	}
+	foreach my $app ( keys %wanted ) {
+		my $value = defined $own{$app} ? $own{$app}
+			: defined $all{$app} ? $all{$app}
+			: defined $me{$app} ? $me{$app}
+			: $latest{$app};
+		$app_visibility_cache{$device . "\x1f" . $app} = &visibility_normalize($value);
+	}
+	return 1;
+}
+
 sub visibility_hidden_for {
 	my ($value, $exposure) = @_;
 	my $rank = &visibility_rank($value);

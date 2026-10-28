@@ -27792,9 +27792,14 @@ get '/manager/internet' => sub ($c) {
 # visible_only is for a picker that assigns a thing to an app: it leaves out an
 # app the visibility rule hides here and now (off, or a place level below the
 # room), so a suggestion never offers what the house is keeping out of sight.
+#
+# any_appt is for the Internet picker: a website may belong to any appointment
+# in the house, not only the house's built-in apps and launcher icons. The
+# visibility rule still decides which ones are offered.
 sub internet_app_catalog {
 	my ($opts) = @_;
 	my $visible_only = $opts && $opts->{'visible_only'};
+	my $any_appt = $opts && $opts->{'any_appt'};
 	my @apps;
 	my %skip = map { $_ => 1 } qw(citizen resident guest blacklisted web);
 	foreach my $app ( sort { lc($a) cmp lc($b) } keys %{$gb::known_appts} ) {
@@ -27814,6 +27819,19 @@ sub internet_app_catalog {
 		next if $app =~ /^__/ || $seen{$app}++;
 		next if $visible_only && &subs::app_hidden_now($app);
 		push @apps, { app => $app, title => &subs::format_name($app) };
+	}
+	# Every appointment is an app a site can belong to, not only the ones with a
+	# launcher icon. Visibility is loaded in one pass because this is the whole
+	# house's record list, not a handful of built-ins.
+	if ($any_appt) {
+		my $appt_rows = eval { &subs::db_query("select distinct app from appointments where app is not null and app != ''")->hashes } || [];
+		my @names = sort grep { defined $_ && length $_ && $_ !~ /^__/ } map { $_->{'app'} } @{$appt_rows};
+		&subs::app_visibility_preload(\@names) if $visible_only;
+		foreach my $app ( @names ) {
+			next if $seen{$app}++;
+			next if $visible_only && &subs::app_hidden_now($app);
+			push @apps, { app => $app, title => &subs::format_name($app) };
+		}
 	}
 	return \@apps;
 }
@@ -27968,7 +27986,7 @@ get '/manager/internet/sites' => sub($c) {
 		$site->{'url'} = 'https://' . $domain . '/' unless length $site->{'url'};
 		push @out, $site;
 	}
-	$c->render(json => { sites => \@out, apps => &internet_app_catalog({ visible_only => 1 }) });
+	$c->render(json => { sites => \@out, apps => &internet_app_catalog({ visible_only => 1, any_appt => 1 }) });
 };
 
 post '/manager/internet/site/app' => sub($c) {
