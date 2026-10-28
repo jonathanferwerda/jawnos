@@ -287,17 +287,10 @@ sub time_machine_read {
 		$ms = $guide if defined $guide;
 	}
 	if (!defined $ms) {
-		my $relative = 0;
-		if ($spec =~ /^\s*(?:now|today|tomorrow|yesterday|tonight|tom|yes|mon|tue|wed|thu|fri|sat|sun)\s*$/i) { $relative = 1; }
-		# a compact offset ("-3h", "3d 4h", "in 2h"); a spelled-out unit
-		# ("6 months") is left to the guide, which reads the words
-		elsif ($spec =~ /^\s*(?:in\s+)?[+-]?\d/ && $spec !~ /\b(?:second|minute|hour|day|week|month|year|decade|century)s?\b/i) { $relative = 1; }
-		$ms = &subs::ago_calc($spec, $timestamp) if $relative;
-	}
-	if (!defined $ms) {
-		# a length written in words ("five days ago", "in two hours", "6 months"):
-		# a bare length points into the past, "in" into the future and "ago" into
-		# the past, the same reading the time machine's Guide makes
+		# a length written in words or a compact unit ("five days ago", "5m ago",
+		# "in two hours", "6 months"): a bare length points into the past, "in"
+		# into the future and "ago" into the past, the same reading the time
+		# machine's Guide makes
 		my $words = &subs::number_words_to_digits($spec);
 		if ($words =~ /^\s*(in\s+)?(\d+(?:\.\d+)?)\s*(milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?|mins?|secs?|hrs?|mos?|wks?|yrs?|ms|s|m|h|d|w|M|y)(?:\s+ago)?\s*$/i) {
 			my ($ahead, $count, $unit) = ($1, $2, $3);
@@ -321,6 +314,14 @@ sub time_machine_read {
 			my $length = &subs::time_abbrev_translator($count . $key, $timestamp);
 			$ms = $ahead ? $timestamp + abs($length) : $timestamp - abs($length) if defined $length && $length;
 		}
+	}
+	if (!defined $ms) {
+		my $relative = 0;
+		if ($spec =~ /^\s*(?:now|today|tomorrow|yesterday|tonight|tom|yes|mon|tue|wed|thu|fri|sat|sun)\s*$/i) { $relative = 1; }
+		# a compact offset that is not a single length ("-3h", "3d 4h", "in 2h");
+		# a spelled-out unit ("6 months") was read above
+		elsif ($spec =~ /^\s*(?:in\s+)?[+-]?\d/ && $spec !~ /\b(?:second|minute|hour|day|week|month|year|decade|century)s?\b/i) { $relative = 1; }
+		$ms = &subs::ago_calc($spec, $timestamp) if $relative;
 	}
 	if (!defined $ms) {
 		# a time of day that is a habit ("breakfast", "next coffee time"): the hour
