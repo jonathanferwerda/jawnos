@@ -14221,7 +14221,7 @@ sub appts_marker_builder {
 			my $asset = &subs::crypto_asset($cs->{'crypto_asset'});
 			$wallet = $asset ? $asset->{'code'} : 'BTC';
 		}
-		push @{$appts->{$bucket}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}, crypto_asset => $wallet, payment_type => ($bucket eq '__accounts' ? ($cs->{'payment_type'} || '') : '') }
+		push @{$appts->{$bucket}}, { formatted_name => &subs::format_name($s->{'app'}), app => $s->{'app'}, crypto_asset => $wallet, payment_type => ($bucket eq '__accounts' && $cs ? ($cs->{'payment_type'} || '') : '') }
 			unless grep { $_->{'app'} eq $s->{'app'} } @{$appts->{$bucket} || []};
 	}
 	$appts->{'__specs'}->{'markers'} = 'yes' if ref $appts->{'__specs'} eq 'HASH';
