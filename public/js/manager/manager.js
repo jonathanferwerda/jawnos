@@ -4793,20 +4793,23 @@ $(document).on('click', '.edit_app_clone', function() {
 $(document).on('click', '.edit_app_delete', function() {
 	var b = $(this);
 	var app = b.attr('app');
-	if (!confirm('Delete the app "' + app + '"?')) { return; }
-	if (!confirm('Delete every record, setting and piece of stock in "' + app + '"? This is copied to every machine.')) { return; }
+	var uuid = b.attr('uuid');
+	// This editor edits one record, so its trash deletes that record and only it.
+	// Deleting a whole app lives in Configure -> the app's card, where the name
+	// has to be typed first.
+	if (!confirm('Delete this record?')) { return; }
+	if (!confirm('Delete it for good? This is copied to every machine.')) { return; }
 	var ea = b.closest('.appointment_edit_area');
 	var status = ea.find('.edit_app_status');
 	status.text('Deleting...');
 	$.ajax({
-		url: '/manager/delete_whole_app',
+		url: '/manager/delete_app',
 		type: 'POST',
-		data: { app: app, timestamp: Date.now(), server_time: Date.now() },
+		data: { app: app, uuid: uuid, timestamp: b.attr('timestamp'), type: b.attr('type'), server_time: Date.now() },
 		success: function() {
-			$('.appointment[app="' + app + '"]').remove();
 			ea.html('').hide();
 		},
-		error: function(xhr) { status.text(xhr && xhr.status == 403 ? 'That is a house app and cannot be deleted here.' : 'Could not delete.'); }
+		error: function() { status.text('Could not delete.'); }
 	});
 });
 
