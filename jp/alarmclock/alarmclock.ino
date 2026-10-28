@@ -93,9 +93,12 @@ int64_t now_ms() {
 // The house stores UTC; now_ms() is local (the LCD uses it). An event carries
 // UTC seconds so an appointment written from a switch or button is not hours
 // old. Zero means "no clock yet" and the manager falls back to its own time.
+static bool offset_sane(int64_t off);
 String event_timestamp() {
   if (!time_defined) { return "0"; }
-  return String((double)((now_ms() / 1000) - offset), 0);
+  // Never let a poisoned offset turn a real movement into an impossible time.
+  int64_t off = offset_sane(offset) ? offset : 0;
+  return String((double)((now_ms() / 1000) - off), 0);
 }
 
 void set_epoch_seconds(int64_t seconds) {
@@ -126,10 +129,12 @@ int rebooting = 0;
 // so there is no run loop to service here.
 struct jawn_time;
 String led_toggle(int pin, String state, bool persist = true);
-String relay_toggle(int pin, String state, bool persist = true);
+String relay_toggle(int pin, String state, bool persist = true, int src = 2);
 String servo_toggle(int pin, String state);
 void config_writer();
 void config_init();
+void run_local_jobs();
+static bool pin_is_switch_driven(int pin);
 void wifi_start();
 void call_the_president();
 
@@ -204,6 +209,32 @@ static int64_t jint(JSONVar v) {
 
 static bool pin_ok(int pin) { return pin >= 0 && pin <= 29; }
 
+// A pin arrives as a string ("28") from the manager's maps. Casting that with
+// jint fails and yields -1, which is how a relay command drove pin -1 and acked
+// `relay -1` while the real relay never moved. Read the string first, then a
+// real number; an empty token is not a pin.
+static int jpin(JSONVar v) {
+  String t = JSON.typeof(v);
+  if (t == "number") { return (int)(long)(double)v; }
+  String s = jstr(v);
+  if (s == "") { return -1; }
+  return s.toInt();
+}
+
+static int64_t jint64(JSONVar v) {
+  String t = JSON.typeof(v);
+  // Casting a String/undefined JSONVar with (double) yields NaN on this core,
+  // and (int64_t)NaN is INT64_MIN. That one value poisoned `offset`, and every
+  // switch event then carried a timestamp near -9.2e18 (the phantom records
+  // with impossible times). Read a string as a number instead.
+  if (t == "number") { return (int64_t)(double)v; }
+  String s = jstr(v);
+  if (s == "") { return 0; }
+  return (int64_t)s.toDouble();
+}
+
+static bool offset_sane(int64_t off) { return off > -50400 && off < 50400; }
+
 // The local switch/relay map. JSONVar drops both nested assignments and object
 // assignments into config, so the pins the board actually reads and drives live
 // in plain arrays rebuilt from the manager's internal_jobs string.
@@ -212,6 +243,7 @@ static bool pin_ok(int pin) { return pin >= 0 && pin <= 29; }
 struct local_in_t {
   int pin;
   bool is_switch;
+  int inverted;        // the switch is wired active-low: LOW means on
   String name;
   int out_pin[LOCAL_OUT_MAX];
   int out_inv[LOCAL_OUT_MAX];
@@ -223,6 +255,66 @@ static int local_in_count = 0;
 static int local_sw_state[30];
 static bool local_sw_seen[30];
 static int local_btn_pressed[30];
+
+// App-driven outputs. A board must apply an app's toggle to a relay/LED wired
+// to it even when no switch of its own drives that output, so this holds every
+// output component in the role, not just the ones named in internal_jobs. It
+// is a plain array for the same reason as local_ins: a JSONVar object
+// assignment loses the numeric pin, and the old map then drove pin -1.
+#define APP_OUT_MAX 16
+struct local_out_t {
+  int pin;
+  String comp;
+  String app;
+  int inv;
+};
+static local_out_t local_outs[APP_OUT_MAX];
+static int local_out_count = 0;
+// A relay coil switching couples into an input wire on the same board. Hold
+// input changes for a moment after any output moves, so the resulting glitch
+// is not reported as a switch change (which would click the relay again).
+static uint32_t local_out_changed_at = 0;
+static const uint32_t OUTPUT_BLANK_MS = 250;
+// LittleFS writes are slow enough to be felt in the switch path, so a change
+// only marks the config dirty and the main loop flushes it when idle.
+static bool config_dirty = false;
+static uint32_t config_dirty_at = 0;
+static bool config_reload_pending = false;
+
+// A small ring of pin events, dumped by JAWNCFG? - a relay that clicks on its
+// own has three possible authors (the local switch map, a manager `set`, or an
+// app `toggle` push) and this says which one, with the board's own millis().
+// Kept in RAM and never printed in the hot path: a USB write can block when no
+// host is draining the CDC.
+#define EVT_MAX 40
+struct evt_t { uint32_t ms; int pin; int state; int src; };
+static evt_t evt_ring[EVT_MAX];
+static int evt_head = 0;
+static int evt_count = 0;
+static void event_log(int pin, int state, int src) {
+  evt_ring[evt_head].ms = millis();
+  evt_ring[evt_head].pin = pin;
+  evt_ring[evt_head].state = state ? 1 : 0;
+  evt_ring[evt_head].src = src;
+  evt_head = (evt_head + 1) % EVT_MAX;
+  if (evt_count < EVT_MAX) { evt_count++; }
+}
+static String event_ring_dump() {
+  String out = "";
+  int n = evt_count < EVT_MAX ? evt_count : EVT_MAX;
+  for (int i = 0; i < n; i++) {
+    int idx = (evt_head - n + i + EVT_MAX * 2) % EVT_MAX;
+    if (i) { out += ";"; }
+    out += String(evt_ring[idx].ms) + "," + String(evt_ring[idx].pin) + "," +
+           String(evt_ring[idx].state) + "," + String(evt_ring[idx].src);
+  }
+  return out;
+}
+// loop() and loop1() used to write config.txt at once, and the two writes
+// interleaved into a doubled, unparseable file (the board then booted with no
+// role at all). All config mutation and every config_writer() now happens on
+// core 0: the scheduled-job pass and role application moved there too. Core 1
+// keeps only the blocking network work.
 
 // A JSONVar left undefined or null serializes as an empty token, which makes
 // the whole config file invalid on the next boot. Treat both as missing.
@@ -237,7 +329,7 @@ static void config_ensure() {
   for (size_t i = 0; i < sizeof(obj_keys) / sizeof(obj_keys[0]); i++) {
     if (cfg_missing(config[obj_keys[i]])) { config[obj_keys[i]] = JSON.parse("{}"); }
   }
-  const char *str_keys[] = { "houses", "ssid", "password", "ap_ssid", "ap_password", "authorization", "homebase", "homebaseIP", "homebasePreferredIP", "name", "chip_id", "purpose", "model", "pins", "uptime" };
+  const char *str_keys[] = { "houses", "ssid", "password", "ap_ssid", "ap_password", "authorization", "homebase", "homebaseIP", "homebasePreferredIP", "name", "chip_id", "purpose", "model", "pins", "uptime", "outputs_json" };
   for (size_t i = 0; i < sizeof(str_keys) / sizeof(str_keys[0]); i++) {
     if (cfg_missing(config[str_keys[i]])) { config[str_keys[i]] = ""; }
   }
@@ -324,31 +416,77 @@ static void ble_apply_now_me(JSONVar data) {
   if (ip != "") { homebase = ip; config["homebase"] = ip; }
   String auth = jstr(data["authorization"]);
   if (auth != "") { authorization = auth; config["authorization"] = auth; }
-  int64_t ts = jint(data["timestamp"]);
-  int64_t off = jint(data["offset"]);
-  if (ts > 0) {
-    offset = off;
+  int64_t ts = jint64(data["timestamp"]);
+  int64_t off = jint64(data["offset"]);
+  if (ts > 1600000000 && ts < 4102444800) {
+    if (offset_sane(off)) { offset = off; }
     config["timestamp"] = String((double)ts, 0);
-    config["offset"] = String((double)off, 0);
-    set_epoch_seconds(ts + off);
+    config["offset"] = String((double)offset, 0);
+    set_epoch_seconds(ts + offset);
   }
   config_writer();
   lcd.clear();
   lcd.print(config["name"]);
 }
 
+// Serialize the role's output components as a plain JSON string of strings.
+// Stored as a string (not a nested object) so the numeric pin survives: a
+// numeric JSONVar value re-stringifies as an empty token.
+static String local_outputs_build(JSONVar ctp) {
+  if (JSON.typeof(ctp) != "object") { return "[]"; }
+  String out = "[";
+  bool first = true;
+  JSONVar keys = ctp.keys();
+  for (int i = 0; i < keys.length(); i++) {
+    String name = String(keys[i]);
+    if (name.startsWith("__")) { continue; }
+    String component = jstr(ctp[keys[i]]["component"]);
+    if (component != "relay" && component != "led" && component != "servo") { continue; }
+    String numero = jstr(ctp[keys[i]]["numero"]);
+    if (numero == "") { numero = String((long)jint(ctp[keys[i]]["numero"])); }
+    int pin = numero.toInt();
+    if (!pin_ok(pin)) { continue; }
+    String inv = jstr(ctp[keys[i]]["inverted"]);
+    inv = (inv == "1" || inv == "true") ? "1" : "0";
+    if (!first) { out += ","; }
+    first = false;
+    out += "{\"c\":\"" + component + "\",\"p\":\"" + String(pin) +
+           "\",\"a\":\"" + jstr(ctp[keys[i]]["app"]) + "\",\"i\":\"" + inv + "\"}";
+  }
+  out += "]";
+  return out;
+}
+
+static void local_outputs_load() {
+  local_out_count = 0;
+  String raw = jstr(config["outputs_json"]);
+  if (raw == "") { return; }
+  JSONVar outs = JSON.parse(raw);
+  if (JSON.typeof(outs) != "array") { return; }
+  for (int i = 0; i < outs.length() && local_out_count < APP_OUT_MAX; i++) {
+    String comp = jstr(outs[i]["c"]);
+    int pin = jpin(outs[i]["p"]);
+    if (!pin_ok(pin)) { continue; }
+    local_out_t &o = local_outs[local_out_count++];
+    o.pin = pin;
+    o.comp = comp;
+    o.app = jstr(outs[i]["a"]);
+    o.inv = (jstr(outs[i]["i"]) == "1") ? 1 : 0;
+  }
+}
+
 static void ble_apply_app_state(String app, String state) {
   if (app == "") { return; }
-  JSONVar keys = config["outputs"].keys();
-  for (int i = 0; i < keys.length(); i++) {
-    JSONVar o = config["outputs"][keys[i]];
-    if (jstr(o["app"]) != app) { continue; }
-    String comp = jstr(o["component"]);
-    int pin = (int)jint(o["pin"]);
+  for (int i = 0; i < local_out_count; i++) {
+    local_out_t &o = local_outs[i];
+    if (o.app != app) { continue; }
+    // A switch on this board owns its output; the app push is for boards that
+    // do not have the switch.
+    if (pin_is_switch_driven(o.pin)) { continue; }
     String phys = state;
-    if (jstr(o["inverted"]) == "1") { phys = (phys == "on") ? "off" : "on"; }
-    if (comp == "relay") { relay_toggle(pin, phys); }
-    else if (comp == "led") { led_toggle(pin, phys); }
+    if (o.inv == 1) { phys = (phys == "on") ? "off" : "on"; }
+    if (o.comp == "relay") { relay_toggle(o.pin, phys, true, 3); }
+    else if (o.comp == "led") { led_toggle(o.pin, phys); }
   }
 }
 
@@ -374,7 +512,7 @@ static void ble_apply_board_config(JSONVar ctp) {
   config["servo"] = JSON.parse("{}");
   config["relay"] = JSON.parse("{}");
   config["switch"] = JSON.parse("{}");
-  config["outputs"] = JSON.parse("{}");
+  config["outputs_json"] = local_outputs_build(ctp);
   config["internal_jobs"] = "";
   for (int i = 0; i < keys.length(); i++) {
     String name = String(keys[i]);
@@ -386,11 +524,16 @@ static void ble_apply_board_config(JSONVar ctp) {
     int pin = numero.toInt();
     if (!pin_ok(pin)) { continue; }
     String inverted = jstr(e["inverted"]);
+    // `inverted` can arrive as the number 1/0. jstr only reads a string, and a
+    // number came back empty - which left an active-low switch treated as
+    // active-high (the relay followed the opposite of the switch).
+    if (inverted != "0" && inverted != "1") { inverted = jint(e["inverted"]) ? "1" : "0"; }
     String app = jstr(e["app"]);
     if (component == "button") {
       config["button"][numero]["lastPress"] = String(millis());
       config["button"][numero]["toggle"] = String((long)jint(e["toggle"]));
       config["button"][numero]["name"] = name;
+      config["button"][numero]["inverted"] = inverted;
       input_begin(pin);
     }
     else if (component == "pot") {
@@ -402,6 +545,7 @@ static void ble_apply_board_config(JSONVar ctp) {
       config["switch"][numero]["lastChange"] = String(millis());
       config["switch"][numero]["lastSend"] = String(millis());
       config["switch"][numero]["name"] = name;
+      config["switch"][numero]["inverted"] = inverted;
       input_begin(pin);
     }
     else if (component == "relay" || component == "led" || component == "servo") {
@@ -411,12 +555,6 @@ static void ble_apply_board_config(JSONVar ctp) {
       if (component == "relay") { config["relay"][numero] = state; }
       else if (component == "led") { config["led"][numero] = state; }
       else { config["servo"][numero] = state; }
-      JSONVar o;
-      o["component"] = component;
-      o["pin"] = pin;
-      o["app"] = app;
-      o["inverted"] = inverted;
-      config["outputs"][component + numero] = o;
       if (component != "servo") { pinMode(pin, OUTPUT); }
     }
   }
@@ -438,7 +576,7 @@ static void ble_apply_board_config(JSONVar ctp) {
 
 static void ble_apply_set(JSONVar data) {
   String comp = jstr(data["component"]);
-  int pin = (int)jint(data["pin"]);
+  int pin = jpin(data["pin"]);
   String state = jstr(data["state"]);
   if (comp == "relay") { state = relay_toggle(pin, state); }
   else if (comp == "led") { state = led_toggle(pin, state); }
@@ -608,6 +746,7 @@ static void usb_config_loop() {
         }
         Serial.println("JAWNCFG TYPES " + types);
         Serial.println("JAWNCFG MORE ssid=" + ssid + " ap_ssid=" + ap_ssid + " wifi=" + wifiState + " homebaseIP=" + homebaseIP);
+        Serial.println("JAWNCFG EVENTS " + event_ring_dump());
       }
       else if (line == "JAWNREBOOT") {
         Serial.println("JAWNCFG REBOOT");
@@ -724,8 +863,9 @@ static void ble_start() {
 }
 
 void setup1() {
-  Serial.begin(115200);
-  Serial.println("Core 1 started");
+  // Do NOT call Serial.begin() here: core 1 starts alongside setup() on core 0,
+  // and two concurrent USB initialisations wedge the CDC (the host then sees
+  // the port but reads nothing until a replug). Core 0 owns the USB stack.
 }
 
 void setup() {
@@ -944,7 +1084,7 @@ void setup() {
     String uuid = server.arg("uuid");
     String appt_uuid = server.arg("appt_uuid");
     if (when == "now") {
-      state = relay_toggle(pin,state);
+      state = relay_toggle(pin,state,true,4);
     }
     else {
       push_job(component,pin,state,timestamp,uuid, appt_uuid);
@@ -1204,6 +1344,19 @@ void loop() {
   // manager, which writes the stored WiFi and role and then reboots us.
   usb_config_loop();
   ble_loop();
+  if (config_reload_pending) {
+    config_reload_pending = false;
+    config_init();
+  }
+  // Scheduled output jobs read/write the config document, so they belong on
+  // this core with the switch scanner.
+  run_local_jobs();
+  // Persist a switch/relay change once it has been quiet for a moment. Doing
+  // it inline made a flick wait on a LittleFS rewrite.
+  if (config_dirty && (uint32_t)(millis() - config_dirty_at) > 2000) {
+    config_dirty = false;
+    config_writer();
+  }
 
   if (BOOTSEL) {
     File f = LittleFS.open("config.txt", "w");
@@ -1231,10 +1384,10 @@ void loop1() {
   if (rebooting == 1) {
     rp2040.reboot();
   }
-  // Once the network is up, pull the role (components and internal_jobs) from
-  // the house. Retry every ten seconds until it lands; a single early attempt
-  // used to fail before the first ping and leave the board with no relay map.
-  if (!president_loaded && wifiState == "connected" && homebaseIP != "" && (millis() - lastPresidentTry > 10000)) {
+  // Pull the role (components and internal_jobs) from the house. A blocking
+  // HTTPS call, so it runs on this core: putting it on core 0 spent most of a
+  // loop downloading a refusal page and starved the switch scanner.
+  if (!president_loaded && wifiState == "connected" && homebaseIP != "" && (millis() - lastPresidentTry > 20000)) {
     lastPresidentTry = millis();
     call_the_president();
   }
@@ -1423,6 +1576,34 @@ static void local_apply(int idx, const String &state) {
     digitalWrite(op, st == "on" ? HIGH : LOW);
     if (in.out_comp[o] == "relay") { config["relay"][String(op)] = st; }
     else if (in.out_comp[o] == "led") { config["led"][String(op)] = st; }
+    event_log(op, st == "on", 1);
+    local_out_changed_at = millis();
+  }
+}
+
+// Is this output pin driven by a switch on this board? If so the switch owns
+// it: an app toggle must not fight the physical position (that is what made a
+// replug flash the relay before the switch was read).
+static bool pin_is_switch_driven(int pin) {
+  for (int i = 0; i < local_in_count; i++) {
+    if (!local_ins[i].is_switch) { continue; }
+    for (int o = 0; o < local_ins[i].out_n; o++) {
+      if (local_ins[i].out_pin[o] == pin) { return true; }
+    }
+  }
+  return false;
+}
+
+// At boot or a role reload, put every switch-driven output at the position the
+// switch is actually in. Otherwise the relay is restored from the app's toggle
+// and the first scan fights it.
+static void local_inputs_apply_all() {
+  for (int i = 0; i < local_in_count; i++) {
+    local_in_t &in = local_ins[i];
+    if (!in.is_switch) { continue; }
+    int r = digitalRead(in.pin);
+    String state = ((r ^ in.inverted) ? "on" : "off");
+    local_apply(i, state);
   }
 }
 
@@ -1439,12 +1620,23 @@ static void local_input_scanner() {
       raw_at[i] = millis();
       continue;
     }
-    if ((uint32_t)(millis() - raw_at[i]) < 30) { continue; }
+    if ((uint32_t)(millis() - raw_at[i]) < 80) { continue; }
     if (in.is_switch) {
+      // The relay coil firing right now can glitch this line. Re-arm the
+      // settle timer instead of swallowing the change, so a real flick during
+      // the blanking window is still seen when it ends.
+      if ((uint32_t)(millis() - local_out_changed_at) < OUTPUT_BLANK_MS) {
+        raw_at[i] = millis();
+        continue;
+      }
       if (local_sw_seen[in.pin] && r == local_sw_state[in.pin]) { continue; }
       local_sw_seen[in.pin] = true;
       local_sw_state[in.pin] = r;
-      String state = r ? "on" : "off";
+      // The role says whether the input is active-low. A switch that reads
+      // HIGH when it is off otherwise reports the opposite of its position -
+      // and drives the relay the wrong way.
+      String state = ((r ^ in.inverted) ? "on" : "off");
+      event_log(in.pin, r, 0);
       local_apply(i, state);
       if (ble_up && ble_notify_enabled) {
         JSONVar sm;
@@ -1456,6 +1648,7 @@ static void local_input_scanner() {
         sd["switch"] = String(in.pin);
         sd["state"] = state;
         sd["timestamp"] = event_timestamp();
+        sd["ms"] = String(millis());
         sm["data"] = sd;
         ble_send_json(JSON.stringify(sm));
       }
@@ -1466,10 +1659,12 @@ static void local_input_scanner() {
           "/watch/switch?room=1&switch=" + String(in.pin) + "&state=" + state;
         coreJobs[jobTime]["response"] = "switch";
       }
-      config_writer();
+      config_dirty = true;
+      config_dirty_at = millis();
     }
     else {
-      if (r == 1 && local_btn_pressed[in.pin] == 0) {
+      bool pressed = (r ^ in.inverted) ? true : false;
+      if (pressed && local_btn_pressed[in.pin] == 0) {
         local_btn_pressed[in.pin] = 1;
         String nstate = "on";
         if (in.out_n > 0) { nstate = (digitalRead(in.out_pin[0]) == HIGH) ? "off" : "on"; }
@@ -1485,6 +1680,7 @@ static void local_input_scanner() {
           bp["button"] = String(in.pin);
           bp["toggle"] = toggle;
           bp["timestamp"] = event_timestamp();
+          bp["ms"] = String(millis());
           bm["payload"] = bp;
           ble_send_json(JSON.stringify(bm));
         }
@@ -1495,9 +1691,10 @@ static void local_input_scanner() {
             "/watch/button?room=1&button=" + String(in.pin) + "&toggle=" + toggle;
           coreJobs[jobTime]["response"] = "button";
         }
-        config_writer();
+        config_dirty = true;
+        config_dirty_at = millis();
       }
-      else if (r == 0) { local_btn_pressed[in.pin] = 0; }
+      else if (!pressed) { local_btn_pressed[in.pin] = 0; }
     }
   }
 }
@@ -1508,174 +1705,6 @@ void input_scanner() {
   }
   input_working = 1;
   local_input_scanner();
-  JSONVar buttonKeys = config["button"].keys();
-  for (int i = 0; i < buttonKeys.length(); i++) {
-    String spin = buttonKeys[i];
-    int pin = spin.toInt();
-    if (!pin_ok(pin)) { continue; }
-    int buttonState = digitalRead(pin);
-    String lastPress = config["button"][buttonKeys[i]]["lastPress"];
-    String pressed = config["button"][buttonKeys[i]]["pressed"];
-
-    uint32_t lp = (uint32_t)strtoul(lastPress.c_str(), nullptr, 10);
-    if (buttonState == 0 && pressed == "yes") {
-      config["button"][buttonKeys[i]]["pressed"] = "no";
-      config_writer();
-    }
-    if (buttonState == 1 && ((uint32_t)(millis() - lp) > 10) && pressed != "yes") {
-      config["button"][buttonKeys[i]]["lastPress"] = String(millis());
-      config["button"][buttonKeys[i]]["pressed"] = "yes";
-      String toggle = buttonKeys[buttonKeys[i]]["toggle"];
-
-      String name = String(config["button"][buttonKeys[i]]["name"]);
-      String jij = config["internal_jobs"];
-      JSONVar ij = JSON.parse(jij);
-      if (ij[name].length() > 0) {
-        for (int j = 0; j < ij[name].length(); j++) {
-          int p = String(ij[name][j]["numero"]).toInt();
-          int inv = String(ij[name][j]["inverted"]).toInt();
-          String comp = String(ij[name][j]["component"]);
-          String tog = String(config[comp][String(ij[name][j]["numero"])]);
-          String jState = "off";
-          toggle = "0";
-          if (inv == 1) {
-            if (tog == "off") {
-              jState = "on";
-              toggle = "0";
-            }
-            else {
-              toggle = "1";
-            }
-          }
-          else {
-            if (tog != "on") {
-              jState = "on";
-              toggle = "1";
-            }
-            else {
-              toggle = "0";
-            }
-          }
-          if (comp == "relay") {
-            relay_toggle(p, jState, false);
-          }
-          if (comp == "led") {
-            led_toggle(p, jState, false);
-          }
-        }
-
-      }
-
-      // Prefer the bridge when it is up: a board off its access point still
-      // reports its taps, and the machine holding the link applies them. Fall
-      // back to the HTTPS job (the LAN path) when there is no bridge.
-      if (ble_up && ble_notify_enabled) {
-        JSONVar bm;
-        bm["type"] = "button";
-        bm["chip_id"] = String(rp2040.getChipID());
-        bm["edt"] = "microcontroller";
-        JSONVar bp;
-        bp["room"] = "1";
-        bp["button"] = String(spin.toInt());
-        bp["toggle"] = String(toggle.toInt());
-        bp["timestamp"] = event_timestamp();
-        bm["payload"] = bp;
-        ble_send_json(JSON.stringify(bm));
-      }
-      else {
-        String jobTime = String(millis());
-        coreJobs[jobTime]["type"] = "https";
-        coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-          "/watch/button?room=1&button=" + spin + "&toggle=" + toggle;
-        coreJobs[jobTime]["response"] = "button";
-      }
-      config_writer();
-    }
-  }
-  // A settled level, per pin: a floating or bouncing line must hold for
-  // SETTLE_MS before it counts as a switch change. Without this one noise
-  // burst sent a burst of switch events (and one relay click each).
-  static int switch_raw[30];
-  static uint32_t switch_raw_at[30];
-  static bool switch_raw_seen[30];
-  const uint32_t SETTLE_MS = 30;
-  JSONVar switchKeys = config["switch"].keys();
-  for (int i = 0; i < switchKeys.length(); i++) {
-    String spin = switchKeys[i];
-    int pin = spin.toInt();
-    if (!pin_ok(pin)) { continue; }
-    int raw = digitalRead(pin);
-    if (!switch_raw_seen[pin] || switch_raw[pin] != raw) {
-      switch_raw_seen[pin] = true;
-      switch_raw[pin] = raw;
-      switch_raw_at[pin] = millis();
-      continue;
-    }
-    if ((uint32_t)(millis() - switch_raw_at[pin]) < SETTLE_MS) { continue; }
-    int switchState = raw;
-    String state;
-    if (switchState == 1) {
-      state = "on";
-    }
-    else {
-      state = "off";
-    }
-    String lastChange = config["switch"][switchKeys[i]]["lastChange"];
-    String lastState = String(config["switch"][switchKeys[i]]["state"]);
-    if (state != lastState) {
-      config["switch"][switchKeys[i]]["state"] = state;
-      config["switch"][switchKeys[i]]["lastChange"] = String(millis());
-
-      String name = String(config["switch"][switchKeys[i]]["name"]);
-      String jij = config["internal_jobs"];
-      JSONVar ij = JSON.parse(jij);
-      if (ij[name].length() > 0) {
-        for (int j = 0; j < ij[name].length(); j++) {
-          int p = String(ij[name][j]["numero"]).toInt();
-          int inv = String(ij[name][j]["inverted"]).toInt();
-          String jState = state;
-          if (inv == 1) {
-            if (state == "on") {
-              jState = "off";
-            }
-            else {
-              jState = "on";
-            }
-          }
-          if (String(ij[name][j]["component"]) == "relay") {
-            relay_toggle(p, jState, false);
-          }
-          if (String(ij[name][j]["component"]) == "led") {
-            led_toggle(p, jState, false);
-          }
-        }
-      }
-
-      if (ble_up && ble_notify_enabled) {
-        JSONVar sm;
-        sm["type"] = "switch";
-        sm["chip_id"] = String(rp2040.getChipID());
-        sm["edt"] = "microcontroller";
-        JSONVar sd;
-        sd["room"] = "1";
-        sd["switch"] = String(spin.toInt());
-        sd["state"] = state;
-        sd["timestamp"] = event_timestamp();
-        sm["data"] = sd;
-        ble_send_json(JSON.stringify(sm));
-      }
-      else {
-        String jobTime = String(millis());
-        coreJobs[jobTime]["type"] = "https";
-        coreJobs[jobTime]["url"] = "https://" + homebaseIP +
-          "/watch/switch?room=1&switch=" + spin + "&state=" + state;
-        coreJobs[jobTime]["response"] = "switch";
-      }
-      config["switch"][switchKeys[i]]["lastSend"] = String(millis());
-    //  config["button"][buttonKeys[i]]["state"] = returner["toggle"];
-      config_writer();
-    }
-  }
   JSONVar potKeys = config["pot"].keys();
   for (int i = 0; i < potKeys.length(); i++) {
     String spin = potKeys[i];
@@ -1725,7 +1754,7 @@ void input_scanner() {
               }
             }
             if (String(ij[name][j]["component"]) == "relay") {
-              relay_toggle(p, jState, false);
+              relay_toggle(p, jState, false, 6);
             }
             if (String(ij[name][j]["component"]) == "led") {
               led_toggle(p, jState, false);
@@ -1801,13 +1830,14 @@ String led_toggle(int pin, String state, bool persist) {
   else {
     digitalWrite(pin, LOW);
   }
+  local_out_changed_at = millis();
   String spin = String(pin);
   config["led"][spin] = state;
   if (persist) { config_writer(); }
   return state;
 }
 
-String relay_toggle(int pin, String state, bool persist) {
+String relay_toggle(int pin, String state, bool persist, int src) {
 
   pinMode(pin, OUTPUT);
 
@@ -1817,6 +1847,8 @@ String relay_toggle(int pin, String state, bool persist) {
   else {
     digitalWrite(pin, LOW);
   }
+  event_log(pin, state == "on", src);
+  local_out_changed_at = millis();
   String spin = String(pin);
   config["relay"][spin] = state;
   if (persist) { config_writer(); }
@@ -1853,7 +1885,10 @@ void push_job(String component,int pin, String state, String timestamp, String u
   config["jobs"][uuid]["appt_uuid"] = appt_uuid;
 }
 
-void handle_jobs() {
+// Scheduled output jobs. This reads and rewrites the config document, so it
+// runs on core 0 with the switch scanner; only the blocking network work below
+// stays on core 1.
+void run_local_jobs() {
   if (time_defined && config["jobs"].keys().length() > 0) {
     // local epoch -> the UTC milliseconds the appointments carry
     int64_t timestamp = now_ms() - (offset * 1000);
@@ -1873,19 +1908,27 @@ void handle_jobs() {
 
         int pin = spin.toInt();
         if (component == "relay") {
-          state = relay_toggle(pin,state);
+          state = relay_toggle(pin,state,false,5);
+          config_dirty = true;
+          config_dirty_at = millis();
         }
         else if (component == "led") {
-          state = led_toggle(pin,state);
+          state = led_toggle(pin,state,false);
+          config_dirty = true;
+          config_dirty_at = millis();
         }
         else if (component == "servo") {
           state = servo_toggle(pin,state);
         }
-        
+
         config["jobs"][uuid] = undefined;
       }
     }
   }
+}
+
+// The blocking half: core 1 only, no config document access.
+void handle_jobs() {
   JSONVar coreKeys = coreJobs.keys();
 
   for (int i = 0; i < coreKeys.length(); i++) {
@@ -1902,22 +1945,26 @@ void handle_jobs() {
       String response = https_request(url);
 
       if (String(coreJobs[coreKeys[i]]["response"]) == "button") {
-        JSONVar returner = JSON.parse(response);
-        config["button"][returner["button"]]["toggle"] = returner["toggle"];
+        // The board already applied the press locally; its own scanner reads
+        // the output pin, not this map. Nothing to write back here.
       }
       if (String(coreJobs[coreKeys[i]]["response"]) == "switch") {
-        JSONVar returner = JSON.parse(response);
-        config["switch"][returner["switch"]]["state"] = returner["state"];
+        // Same: local_sw_state is the scanner's source of truth.
       }
       if (String(coreJobs[coreKeys[i]]["response"]) == "time") {
         JSONVar timers = JSON.parse(response);
 
-        int64_t timestamp = (int64_t)(double)timers["timestamp"];
-        int64_t offset_s = (int64_t)(double)timers["offset"];
-        // Keep the offset, not just the adjusted epoch: a switch/button event
-        // must subtract it to send UTC, while the LCD keeps showing local time.
-        offset = offset_s;
-        set_epoch_seconds(timestamp + offset_s);  
+        int64_t timestamp = jint64(timers["timestamp"]);
+        int64_t offset_s = jint64(timers["offset"]);
+        // A denial page or a dead homebase is not a clock. Applying an empty
+        // answer used to set offset to INT64_MIN and every later switch event
+        // carried a timestamp near -9.2e18.
+        if (timestamp > 1600000000 && timestamp < 4102444800 && offset_sane(offset_s)) {
+          // Keep the offset, not just the adjusted epoch: a switch/button event
+          // must subtract it to send UTC, while the LCD keeps showing local time.
+          offset = offset_s;
+          set_epoch_seconds(timestamp + offset_s);
+        }
       }
 
     }
@@ -1979,6 +2026,8 @@ void read_time() {
   }
 }
 
+// The writer's body. Every caller is on core 0 now (see the note at the top of
+// the local map), so there is no concurrent writer to serialize.
 void config_writer() {
   config_ensure();
   String jconfig = JSON.stringify(config);
@@ -1999,42 +2048,55 @@ static void local_jobs_load() {
   local_in_count = 0;
   String ij_s = jstr(config["internal_jobs"]);
   JSONVar ij = JSON.parse(ij_s);
-  if (JSON.typeof(ij) != "object") { return; }
-  JSONVar keys = ij.keys();
-  for (int i = 0; i < keys.length() && local_in_count < LOCAL_IN_MAX; i++) {
-    String name = String(keys[i]);
-    bool is_sw = name.startsWith("switch");
-    bool is_bt = name.startsWith("button");
-    if (!is_sw && !is_bt) { continue; }
-    int pin = name.substring(6).toInt();
-    if (!pin_ok(pin)) { continue; }
-    local_in_t &in = local_ins[local_in_count++];
-    in.pin = pin;
-    in.is_switch = is_sw;
-    in.name = name;
-    in.out_n = 0;
-    input_begin(pin);
-    local_sw_state[pin] = digitalRead(pin);
-    local_sw_seen[pin] = true;
-    local_btn_pressed[pin] = 0;
-    JSONVar jobs = ij[name];
-    for (int j = 0; j < jobs.length() && in.out_n < LOCAL_OUT_MAX; j++) {
-      String comp = jstr(jobs[j]["component"]);
-      int op = (int)jint(jobs[j]["numero"]);
-      int inv = (int)jint(jobs[j]["inverted"]);
-      int tog = (int)jint(jobs[j]["toggle"]);
-      if (!pin_ok(op)) { continue; }
-      if (comp != "relay" && comp != "led") { continue; }
-      String st = (tog == 1) ? "on" : "off";
-      if (inv == 1) { st = (st == "on") ? "off" : "on"; }
-      pinMode(op, OUTPUT);
-      digitalWrite(op, st == "on" ? HIGH : LOW);
-      in.out_pin[in.out_n] = op;
-      in.out_inv[in.out_n] = inv;
-      in.out_comp[in.out_n] = comp;
-      in.out_n++;
+  bool have_jobs = (JSON.typeof(ij) == "object");
+  // Every switch/button in the role is an input, whether or not this board
+  // drives an output from it: a switch wired only to another board's relay
+  // still has to report its movement. internal_jobs adds the local outputs on
+  // top. Reading the inputs from the role (not from internal_jobs) is what
+  // makes one scanner enough, and one scanner is what stops every event
+  // arriving twice.
+  const char *in_keys[] = { "switch", "button" };
+  for (int c = 0; c < 2; c++) {
+    bool is_sw = String(in_keys[c]) == "switch";
+    JSONVar keys = config[in_keys[c]].keys();
+    for (int i = 0; i < keys.length() && local_in_count < LOCAL_IN_MAX; i++) {
+      int pin = String((const char *)keys[i]).toInt();
+      if (!pin_ok(pin)) { continue; }
+      String name = jstr(config[in_keys[c]][keys[i]]["name"]);
+      if (name == "") { name = String(in_keys[c]) + String(pin); }
+      local_in_t &in = local_ins[local_in_count++];
+      in.pin = pin;
+      in.is_switch = is_sw;
+      in.inverted = (jstr(config[in_keys[c]][keys[i]]["inverted"]) == "1") ? 1 : 0;
+      in.name = name;
+      in.out_n = 0;
+      input_begin(pin);
+      // Adopt the level present now. A role reload or reboot must not look
+      // like a press, and a button already held must not fire on boot.
+      int level = digitalRead(pin);
+      local_sw_state[pin] = level;
+      local_sw_seen[pin] = true;
+      local_btn_pressed[pin] = (level ^ in.inverted) ? 1 : 0;
+      if (have_jobs) {
+        JSONVar jobs = ij[name];
+        for (int j = 0; j < jobs.length() && in.out_n < LOCAL_OUT_MAX; j++) {
+          String comp = jstr(jobs[j]["component"]);
+          int op = jpin(jobs[j]["numero"]);
+          int inv = (int)jint(jobs[j]["inverted"]);
+          if (!pin_ok(op)) { continue; }
+          if (comp != "relay" && comp != "led") { continue; }
+          // Do not drive the output here. It is restored from config["relay"]
+          // / config["led"] in config_init(); driving it from this map used to
+          // click the relay on every role push.
+          in.out_pin[in.out_n] = op;
+          in.out_inv[in.out_n] = inv;
+          in.out_comp[in.out_n] = comp;
+          in.out_n++;
+        }
+      }
     }
   }
+  local_outputs_load();
 }
 
 void config_init() {
@@ -2098,9 +2160,15 @@ void config_init() {
 
     input_begin(pin);
     // Adopt the level present at boot: a reboot must not look like the switch
-    // just changed and fire its internal job at the relay.
-    config["switch"][spin]["state"] = (digitalRead(pin) == HIGH) ? "on" : "off";
+    // just changed and fire its internal job at the relay. The stored state is
+    // written in the same logical sense the scanner uses (active-low honoured).
+    int sinv = (jstr(config["switch"][spin]["inverted"]) == "1") ? 1 : 0;
+    config["switch"][spin]["state"] = ((digitalRead(pin) ^ sinv) ? "on" : "off");
   }
+  // The switch is the authority for the outputs it is wired to. Apply it after
+  // the app-derived relay restore above, so a reboot with the switch on leaves
+  // the relay on instead of flashing it to the app's stale state.
+  local_inputs_apply_all();
   JSONVar potKeys = config["pot"].keys();
   for (int i = 0; i < potKeys.length(); i++) {
     config["pot"][potKeys[i]]["lastMove"] = String(millis());
@@ -2181,6 +2249,7 @@ String https_request(String url) {
   if (connexion && homebaseOnline > 0) {
     {
       if (https.begin(*connexion, url)) {
+        https.setTimeout(8000);
         int httpCode = https.GET();
         if (httpCode > 0) {
 
@@ -2218,6 +2287,13 @@ void call_the_president() {
     if (watchRequest != "failure") {
       before_me = watchRequest;
       if (before_me != "No!") {
+        // A refusal is a template answered 200 with a huge body. Parsing and
+        // applying it never sets president_loaded, so it was retried every
+        // ten seconds (and on core 0 starved the switch loop). Reject it here.
+        if (before_me.length() > 64000 || before_me.indexOf("__specs") < 0) {
+          Serial.println("[watch] answer carries no role; retrying later");
+          return;
+        }
         JSONVar ctp = JSON.parse(before_me);
         JSONVar ctpKeys = ctp.keys();
         bool has_components = false;
@@ -2237,10 +2313,13 @@ void call_the_president() {
         config["servo"] = JSON.parse("{}");
         config["relay"] = JSON.parse("{}");
         config["switch"] = JSON.parse("{}");
-        config["outputs"] = JSON.parse("{}");
+        config["outputs_json"] = local_outputs_build(ctp);
         config["internal_jobs"] = "";
         for (int i = 0; i < ctpKeys.length(); i++) {
-          String numero = String((long)jint(ctp[ctpKeys[i]]["numero"]));
+          // The role carries numero as a string; a numeric JSONVar value would
+          // read back as 0 and map every component onto pin 0.
+          String numero = jstr(ctp[ctpKeys[i]]["numero"]);
+          if (numero == "") { numero = String((long)jint(ctp[ctpKeys[i]]["numero"])); }
           String component = jstr(ctp[ctpKeys[i]]["component"]);
           String name = String(ctpKeys[i]);
           int pin = numero.toInt();
@@ -2250,6 +2329,12 @@ void call_the_president() {
             config["button"][numero]["lastPress"] = String(millis());
             config["button"][numero]["toggle"] = toggle;
             config["button"][numero]["name"] = name;
+            config["button"][numero]["inverted"] = jstr(ctp[ctpKeys[i]]["inverted"]);
+            {
+              String bInv = jstr(ctp[ctpKeys[i]]["inverted"]);
+              if (bInv != "0" && bInv != "1") { bInv = jint(ctp[ctpKeys[i]]["inverted"]) ? "1" : "0"; }
+              config["button"][numero]["inverted"] = bInv;
+            }
             input_begin(pin);
 
           }
@@ -2263,6 +2348,12 @@ void call_the_president() {
             config["switch"][numero]["lastChange"] = String(millis());
             config["switch"][numero]["lastSend"] = String(millis());
             config["switch"][numero]["name"] = name;
+            config["switch"][numero]["inverted"] = jstr(ctp[ctpKeys[i]]["inverted"]);
+            {
+              String cInv = jstr(ctp[ctpKeys[i]]["inverted"]);
+              if (cInv != "0" && cInv != "1") { cInv = jint(ctp[ctpKeys[i]]["inverted"]) ? "1" : "0"; }
+              config["switch"][numero]["inverted"] = cInv;
+            }
             input_begin(pin);
           }
           else if (component == "relay" || component == "led" || component == "servo") {
@@ -2274,12 +2365,6 @@ void call_the_president() {
             if (component == "relay") { config["relay"][numero] = state; }
             else if (component == "led") { config["led"][numero] = state; }
             else { config["servo"][numero] = state; }
-            JSONVar o;
-            o["component"] = component;
-            o["pin"] = pin;
-            o["app"] = jstr(ctp[ctpKeys[i]]["app"]);
-            o["inverted"] = inverted;
-            config["outputs"][component + numero] = o;
             pinMode(pin, OUTPUT);
           }
           else if (name == "__specs") {
@@ -2291,8 +2376,12 @@ void call_the_president() {
         }
         president_loaded = true;
       }
-      config_writer();
-      config_init();
+      // The role was built on core 1; the config document and the local pin map
+      // belong to core 0. Mark both and let loop() do the write and the reload,
+      // so a blocking fetch never races the switch scanner here.
+      config_dirty = true;
+      config_dirty_at = millis();
+      config_reload_pending = true;
       coreJobs["president"]["type"] = "led";
       coreJobs["president"]["interval"] = "50";
       coreJobs["president"]["duration"] = "1000";

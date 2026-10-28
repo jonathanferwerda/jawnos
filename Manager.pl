@@ -20121,6 +20121,7 @@ sub merge_table_rows {
 	my $auuid = $ctx->{'auuid'};
 	my $colour = $ctx->{'colour'};
 	my $merge_short = 0;
+	my %toggle_changed;
 	# A peer on newer code can carry a column this database has not been migrated for.
 	# The insert then fails ("table X has no column named Y") and the same batch is
 	# pulled again on every tick - the column equivalent of the unknown-table skip in
@@ -20444,6 +20445,14 @@ sub merge_table_rows {
 									if ($q eq 'appointments' && (!$h->{'server_time'} || $r->{'server_time'} > $h->{'server_time'})) {
 										push @{$updateables}, { app => $r->{'app'}, uuid => $r->{'uuid'} } unless grep { $_->{'app'} eq $r->{'app'} } @{$updateables};
 									}
+									# A toggle that arrived from a peer is a real state change for the
+									# boards wired to that app. The merge writes rows quietly, so
+									# without this a tablet-side toggle never reaches a board served
+									# by another machine. Push it after the table is merged.
+									if ($q eq 'settings' && ($r->{'setting'} // '') eq 'toggle' && ($r->{'app'} // '') !~ /^__/
+										&& (scalar @resulters == 0 || !$h->{'server_time'} || $r->{'server_time'} > $h->{'server_time'})) {
+										$toggle_changed{$r->{'app'}} = $r->{'value'};
+									}
 								}
 							}
 		}
@@ -20467,6 +20476,9 @@ sub merge_table_rows {
 						if ($sync_job) {
 							&subs::sync_job_step($sync_job, 'merge:' . $q, { state => ($short || $merge_errors) ? 'failed' : 'done', current => ($results_size || $rows_read), total => ($results_size || $rows_read), note => $short ? 'read ' . $rows_read . ' of ' . $results_size : ($merge_errors ? $merge_errors . ' row errors' : '') });
 						}
+	foreach my $ta ( sort keys %toggle_changed ) {
+		&subs::watch_toggle_pusher({ app => $ta, value => $toggle_changed{$ta} });
+	}
 	return $merge_short;
 }
 
@@ -44597,6 +44609,27 @@ post '/manager/watch/setting' => sub($c) {
 	$c->render(json => $returner );
 };
 
+sub ia_entry_ensure {
+	# The wiring map (ia) is the app's view of every placed pin. A movement or
+	# measure change used to write its one key into a bare
+	# {"movement":"start"} stub when the entry had never been created (or was
+	# deleted), and that stub has no component/pin/edt/ip - so the panel showed
+	# a switch that drove nothing and the automation pass skipped it. Fill the
+	# identity from the board's own operator_door whenever it is missing.
+	my ($ia, $chip_id, $numero, $edt, $op_d, $syl, $component) = @_;
+	my $entry = $ia->{$chip_id}->{$numero} ||= {};
+	my $opd = $op_d->{$syl . $numero} || {};
+	if (!$entry->{'component'}) {
+		my $comp = $opd->{'component'} || $component;
+		$entry->{'component'} = $comp;
+		$entry->{'direction'} = $opd->{'direction'} || $gb::embedded_components->{$comp}->{'direction'} || 'input';
+		$entry->{'pin'} = $numero;
+		$entry->{'edt'} = $edt;
+		$entry->{'ip'} = $opd->{'ip'} || $op_d->{'__specs'}->{'ip'} || '';
+	}
+	return $entry;
+}
+
 sub watch_setting_save($c) {
 	my $edt = $c->param('edt');
 	my $timestamp = $c->param('timestamp');
@@ -44619,13 +44652,14 @@ sub watch_setting_save($c) {
 	my $json_od = encode_json $op_d;
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', value => $json_od, timestamp => $timestamp, subsetting => $chip_id });
 	my $jia = &subs::setting_grabber({ app => $app, setting => 'ia' });
-	if ($jia) {
-		my $ia = eval { return decode_json $jia } || {};
-		$ia->{$chip_id}->{$numero}->{$setting} = $movement;
+	if ($app) {
+		my $ia = ($jia && (eval { return decode_json $jia })) ? decode_json $jia : {};
+		my $entry = &ia_entry_ensure($ia, $chip_id, $numero, $edt, $op_d, $syl, $component);
+		$entry->{$setting} = $movement;
 		if ($percentage) {
-			$ia->{$chip_id}->{$numero}->{$setting . '_percentage'} = $percentage;
+			$entry->{$setting . '_percentage'} = $percentage;
 		}
-		my $jia = encode_json $ia;
+		$jia = encode_json $ia;
 		&subs::setting_setter({ app => $app, setting => 'ia', value => $jia });
 	}
 	my $returner = &embedded_pin_grabber({
@@ -44700,10 +44734,10 @@ post '/manager/watch/measure' => sub($c) {
 	my $jopd = encode_json $op_d;
 	&subs::setting_setter({ app => $edt, setting => 'operator_door', subsetting => $chip_id, value => $jopd });
 	my $jia = &subs::setting_grabber({ app => $app, setting => 'ia' });
-	if ($jia) {
-		my $ia = eval { return decode_json $jia } || {};
-		$ia->{$chip_id}->{$numero}->{'measure'} = $measure;
-
+	if ($app) {
+		my $ia = ($jia && (eval { return decode_json $jia })) ? decode_json $jia : {};
+		my $entry = &ia_entry_ensure($ia, $chip_id, $numero, $edt, $op_d, $syl, $component);
+		$entry->{'measure'} = $measure;
 		$jia = encode_json $ia;
 		&subs::setting_setter({ app => $app, setting => 'ia', value => $jia });
 	}
