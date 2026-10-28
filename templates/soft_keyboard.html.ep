@@ -78,6 +78,8 @@
 		<button type="button" class="soft_kb_mode" data-kb_mode="calc">123</button>
 		<button type="button" class="soft_kb_mode" data-kb_mode="symbols">#+=</button>
 		<span class="soft_kb_title"></span>
+		<button type="button" id="soft_kb_vault_fill" class="soft_kb_icon soft_kb_vault_icon" data-kb_action="vault_fill" aria-label="<%= &subs::ui('Fill from the vault') %>" hint="<%= &subs::ui('Fill this field from a saved entry') %>" hidden>🔑</button>
+		<button type="button" id="soft_kb_vault_save" class="soft_kb_icon soft_kb_vault_icon" data-kb_action="vault_save" aria-label="<%= &subs::ui('Save to the vault') %>" hint="<%= &subs::ui('Save this field in the vault') %>" hidden>💾</button>
 		<button type="button" id="soft_kb_layout_button" class="soft_kb_icon" data-kb_action="layouts" aria-expanded="false" aria-label="<%= &subs::ui('Keyboard layout') %>" hint="<%= &subs::ui('Choose keyboard layout') %>">🌐</button>
 		<button type="button" id="soft_kb_mic_button" class="soft_kb_icon" data-kb_action="dictate" aria-pressed="false" aria-label="<%= &subs::ui('Start dictation') %>" hint="<%= &subs::ui('Dictate into this field') %>"><img class="soft_kb_mic_icon" src="<%= &subs::icon_for('/images/decipherable/speech to text.png') %>" alt=""></button>
 		<button type="button" class="soft_kb_close" data-kb_action="close" aria-label="<%= &subs::ui('Hide keyboard') %>">⌄</button>
@@ -90,6 +92,26 @@
 		</div>
 		<div id="soft_kb_layouts_list" class="soft_kb_layouts_list"></div>
 		<div class="soft_kb_layouts_note"><%= &subs::ui('The layout is remembered on this device. The microphone dictates in the language of the chosen layout.') %></div>
+	</div>
+
+	<div id="soft_kb_vault" class="soft_kb_layouts soft_kb_vault" hidden>
+		<div class="soft_kb_layouts_head">
+			<span id="soft_kb_vault_head"><%= &subs::ui('The vault') %></span>
+			<button type="button" class="soft_kb_layouts_close" data-kb_action="vault_close" aria-label="<%= &subs::ui('Close') %>">×</button>
+		</div>
+		<div id="soft_kb_vault_list" class="soft_kb_vault_list"></div>
+		<div id="soft_kb_vault_form" class="soft_kb_vault_form" hidden>
+			<label><span><%= &subs::ui('Name') %></span><input id="soft_kb_vault_label" type="text" autocomplete="off" inputmode="none" spellcheck="false"></label>
+			<label id="soft_kb_vault_site_wrap"><span><%= &subs::ui('Site') %></span><input id="soft_kb_vault_site" type="text" autocomplete="off" inputmode="none" spellcheck="false" placeholder="example.com"></label>
+			<label id="soft_kb_vault_user_wrap"><span><%= &subs::ui('Username') %></span><input id="soft_kb_vault_user" type="text" autocomplete="off" inputmode="none" spellcheck="false"></label>
+			<label id="soft_kb_vault_secret_wrap"><span><%= &subs::ui('Password') %></span><input id="soft_kb_vault_secret" type="password" autocomplete="off" inputmode="none"></label>
+			<label id="soft_kb_vault_value_wrap"><span><%= &subs::ui('Value') %></span><input id="soft_kb_vault_value" type="text" autocomplete="off" inputmode="none" spellcheck="false"></label>
+			<div class="soft_kb_vault_actions">
+				<button type="button" class="soft_kb_vault_primary" data-kb_action="vault_save_commit"><%= &subs::ui('Save') %></button>
+				<button type="button" data-kb_action="vault_close"><%= &subs::ui('Cancel') %></button>
+				<span id="soft_kb_vault_note" class="soft_kb_vault_note"></span>
+			</div>
+		</div>
 	</div>
 
 	<div id="soft_kb_types" class="soft_kb_convert" hidden>

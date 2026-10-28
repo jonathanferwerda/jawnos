@@ -436,3 +436,26 @@ CREATE TABLE IF NOT EXISTS sync_snapshots (
 	ost VARCHAR(25)
 );
 CREATE INDEX IF NOT EXISTS idx1_sync_snapshots on sync_snapshots (state, updated);
+
+-- The keyboard's vault: one row per saved login or field. `payload` is a
+-- note_encrypter() container (the house key), so the secrets are unreadable
+-- without the vault; `app`, `origin`, `kind`, `label` and `hints` are the
+-- non-secret metadata used to offer the right entry. It carries `server_time`
+-- so the ordinary sync rail (and remote_upgrade) carries it between the
+-- machines of the house; the payload stays encrypted end to end.
+CREATE TABLE IF NOT EXISTS "credentials" (
+	uuid VARCHAR(255) unique,
+	app VARCHAR(255),
+	origin VARCHAR(500),
+	kind VARCHAR(25),
+	label VARCHAR(255),
+	hints LONGTEXT,
+	payload LONGTEXT,
+	has_user VARCHAR(5),
+	has_password VARCHAR(5),
+	device VARCHAR(255),
+	timestamp VARCHAR(25),
+	server_time VARCHAR(25),
+	ost VARCHAR(25)
+);
+CREATE INDEX IF NOT EXISTS idx1_credentials on credentials (app, origin);
