@@ -389,7 +389,7 @@ sub duration_read {
 sub time_preview_date {
 	my ($ms) = @_;
 	return &subs::ui('not read') unless defined $ms;
-	return localtime(int($ms / 1000))->strftime('%A, %B %d %Y at %I:%M%p');
+	return localtime(int($ms / 1000))->strftime('%A, %B %d %Y at %I:%M:%S%p');
 }
 
 sub time_preview_schedule {
@@ -28304,18 +28304,58 @@ sub internet_app_catalog {
 	return \@apps;
 }
 
+# The launcher's icon URL. The icon set ships SVG, which Android's
+# BitmapFactory cannot decode, and a person's own main image is sealed behind
+# /file_open; /apps/icon answers both with a PNG.
+sub app_icon_url {
+	my ($app) = @_;
+	return '' unless defined $app && length $app;
+	return '/apps/icon?app=' . &subs::path_name($app);
+}
+
+# A PNG for the native home's row and clothesline. main_icon_source answers
+# with the same picture main_icon_maker puts in the start menu and taskbar, so
+# the launcher, the menu and the taskbar wear one icon. A set glyph is
+# rasterised once per file change into database/.icons.
+get '/apps/icon' => sub($c) {
+	my $app = &subs::unformat_name($c->param('app') // '');
+	my $missing = sub {
+		$c->res->code(404);
+		$c->render(text => 'none');
+	};
+	return $missing->() unless length $app;
+	my $src = &subs::main_icon_source({ app => $app });
+	return $missing->() unless length $src;
+	# a person's own icon is sealed in the vault, and /file_open keeps the gate
+	return $c->redirect_to($src) if $src =~ m{\A/file_open};
+	# the hand-drawn set (and any set without a glyph) is already a PNG
+	return $c->redirect_to($src) unless $src =~ /\.svgz?\z/i;
+	my $file = 'public' . $src;
+	return $missing->() unless -e $file;
+	my @stat = stat($file);
+	my $dir = &subs::database_dir() . '/.icons';
+	mkdir $dir unless -d $dir;
+	require Digest::MD5;
+	my $cache = $dir . '/' . Digest::MD5::md5_hex($src . ':' . ($stat[7] // 0) . ':' . ($stat[9] // 0) . ':128') . '.png';
+	my $png = -e $cache ? eval { read_file($cache) } : undef;
+	unless (defined $png && length $png) {
+		my $quoted = quote($file);
+		$png = `rsvg-convert -w 128 -h 128 -o - $quoted 2>/dev/null`;
+		$png = `magick -background none $quoted -resize 128x128 png:- 2>/dev/null` unless defined $png && length $png;
+		return $missing->() unless defined $png && length $png;
+		write_file($cache, $png);
+	}
+	$c->res->headers->cache_control('private, max-age=60');
+	$c->render_file(data => $png, content_type => 'image/png');
+};
+
 # One JSON catalog for the launcher (public: app names and icons, no house
 # data). The search index is richer but gated, and the launcher has to draw its
 # JawnOS row before a session exists.
 get '/apps/list' => sub($c) {
 	my $apps = &internet_app_catalog({ visible_only => 1 });
 	foreach my $entry ( @{$apps} ) {
-		my $app = $entry->{'app'};
-		my $icon = ($app eq 'internet')
-			? '/images/make believe/web_button.png'
-			: ($gb::known_appts->{$app}->{'icon'} || '');
-		$entry->{'icon'} = length $icon ? $icon : '';
-		$entry->{'icon'} =~ s/ /%20/g if length $entry->{'icon'};
+		$entry->{'icon'} = &app_icon_url($entry->{'app'});
 	}
 	$c->render(json => { apps => $apps });
 };
@@ -28349,16 +28389,12 @@ get '/apps/start' => sub($c) {
 		next if &help_app_hidden($app);
 		next if $seen{$app}++;
 		my ($hint) = $attr =~ /\bhint="([^"]*)"/;
-		my ($src)  = $attr =~ /\bsrc="([^"]*)"/;
-		# The start menu's src has already been swapped to the icon set, which
-		# is often SVG - and Android's BitmapFactory cannot decode SVG. The raw
-		# PNG path the catalog uses is what the native row can draw.
-		my $icon = $gb::known_appts->{$app}->{'icon'} || $src || '';
-		$icon =~ s/ /%20/g if length $icon;
+		# The start menu's src is the icon set's SVG, which Android cannot
+		# decode; the route answers a PNG of the same picture.
 		push @apps, {
 			app   => $app,
 			title => ($hint || &subs::format_name($app)),
-			icon  => $icon,
+			icon  => &app_icon_url($app),
 		};
 	}
 	$c->render(json => { apps => \@apps });
@@ -28377,15 +28413,11 @@ get '/manager/home_status' => sub($c) {
 		next unless length $app;
 		next if &help_app_hidden($app);
 		next if $seen{$app}++;
-		my $icon = ($app eq 'internet')
-			? '/images/make believe/web_button.png'
-			: ($gb::known_appts->{$app}->{'icon'} || '');
-		$icon =~ s/ /%20/g if length $icon;
 		push @running, {
 			app    => $app,
 			title  => ($item->{'formatted_name'} || &subs::format_name($app)),
 			colour => ($item->{'colour'} || ''),
-			icon   => $icon,
+			icon   => &app_icon_url($app),
 		};
 	}
 	my $bg = &subs::setting_grabber({ app => 'misc', setting => 'manager_background_colour' });
@@ -40119,8 +40151,10 @@ sub app_public_path {
 	return 1 if $path eq '/' || $path eq '/homepage' || $path eq '/index.html';
 	return 1 if $path =~ m{^/store(?:/|$)};
 	# The launcher's JawnOS row is drawn before any session exists, and it carries
-	# only app names and icons.
+	# only app names and built-in icons. /apps/icon redirects a person's own
+	# main image to /file_open, whose own gate still applies.
 	return 1 if $path eq '/apps/list';
+	return 1 if $path eq '/apps/icon';
 	return 1 if $path =~ m{^/(?:css|js|images|icons|sounds|fonts|public|i18n)/};
 	return 1 if $path =~ m{^/(?:favicon\.ico|manifest\.json|service_worker\.js|robots\.txt|privacy|mugshot|payment|play|file_open|denial)$};
 	# A batch of file_open pictures, authenticated by the route itself the same
@@ -42817,6 +42851,60 @@ post '/manager/edit_app' => sub($c) {
 	&padlock_time_extender($c);
 	&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
 	$c->render(text => 'ok');
+};
+
+# Clone an app as a new app: its settings, models, options and categories, with
+# fresh uuids. No history and no stock - copying either would duplicate physical
+# levels and the mesh's own timeline. The new app gets its own identity uuid from
+# setting_initializer, so it is a distinct app on every machine.
+post '/manager/clone_app' => sub($c) {
+	my $app = &subs::unformat_name($c->param('app'));
+	my $new = &subs::unformat_name($c->param('new'));
+	return $c->render(json => { ok => 0, error => 'name' }, status => 400)
+		unless length $app && length $new && $new ne $app;
+	my $taken = &subs::db_select('settings', undef, { app => $new, setting => 'uuid' })->hashes->[0]
+		|| &subs::db_select('appointments', undef, { app => $new })->hashes->[0];
+	return $c->render(json => { ok => 0, error => 'exists' }, status => 409) if $taken;
+	my $now = &subs::rightNow();
+	# defaults first, including the new app's own uuid/construct_uuid
+	&subs::setting_initializer($new, $now);
+	my %skip = map { $_ => 1 } qw/uuid construct_uuid scrollTop jopen dimensions s_scroll ci toggle/;
+	my $rows = &subs::db_select('settings', undef, { app => $app })->hashes || [];
+	foreach my $r ( @{$rows} ) {
+		next if $skip{$r->{'setting'} || ''};
+		my $dev = $r->{'device'} || &subs::device_setter();
+		my $sub = defined $r->{'subsetting'} ? $r->{'subsetting'} : '';
+		my $value = $r->{'value'};
+		# a setting that named the app names the clone
+		$value = $new if defined $value && $value eq $app;
+		$value = &subs::format_name($new) if ($r->{'setting'} || '') eq 'notification_text' && ($value // '') eq &subs::format_name($app);
+		my $existing = &subs::db_query('select uuid from settings where app = ? and setting = ? and coalesce(subsetting, \'\') = ? and device = ? limit 1', $new, $r->{'setting'}, $sub, $dev)->hashes->[0];
+		if ($existing) {
+			&subs::db_update('settings', { value => $value, timestamp => $r->{'timestamp'}, server_time => $now }, { uuid => $existing->{'uuid'} });
+		}
+		else {
+			my %s = %{$r};
+			delete $s{'id'};
+			$s{'uuid'} = &subs::random_string_creator(40);
+			$s{'app'} = $new;
+			$s{'value'} = $value;
+			$s{'device'} = $dev;
+			$s{'server_time'} = $now;
+			&subs::db_insert('settings', \%s);
+		}
+	}
+	foreach my $t ( qw/model option option_category subcategory/ ) {
+		my $items = &subs::db_select($t, undef, { app => $app })->hashes || [];
+		foreach my $r ( @{$items} ) {
+			my %n = %{$r};
+			$n{'uuid'} = &subs::random_string_creator(40);
+			$n{'app'} = $new;
+			$n{'server_time'} = $now;
+			$n{'name'} = $new if ($n{'name'} // '') eq $app;
+			&subs::db_insert($t, \%n);
+		}
+	}
+	$c->render(json => { ok => 1, app => $new });
 };
 
 get '/manager/configure/adopt_app' => sub($c) {
@@ -47466,6 +47554,18 @@ get '/manager/time_preview' => sub ($c) {
 		}
 	}
 
+	my $quantity_spec = $c->param('quantity') // '';
+	my $quantity = { text => '', read => 1 };
+	if ($quantity_spec =~ /\S/) {
+		my ($q, $u) = &subs::quantity_unit_split($quantity_spec, $settings->{'unit'} || 'each', 1);
+		if (defined $u && length $u && $gb::measures->{$u}) {
+			$quantity = { text => $q . ' ' . $u, quantity => $q, unit => $u, read => 1 };
+		}
+		else {
+			$quantity = { text => &subs::ui('Not a measure') . (length $u ? ': ' . $u : ''), quantity => $q, unit => $u, read => 0 };
+		}
+	}
+
 	$c->render(json => {
 		ago => {
 			text => $ago_read
@@ -47489,6 +47589,7 @@ get '/manager/time_preview' => sub ($c) {
 			read => (defined $duration_ms ? 1 : 0),
 		},
 		schedule => $schedule,
+		quantity => $quantity,
 	});
 };
 
