@@ -24,10 +24,10 @@
 		<% foreach my $p ( @{$gb::studio->{'pedals'}} ) { %>
 			<span id="pedal_<%= $p->{'name'} %>" class="pedal" style="left:<%= $count * 175 %>px;">
 				<% my $ch = $p->{'name'}; %>
-				<img class="pedal_background" hint="<%= $p->{'name'} %>" src="/images/studio/<%= $p->{'image'} %>.png">
+				<img class="pedal_background" hint="<%= $p->{'name'} %>" src="<%= &subs::icon_for('/images/studio/' . $p->{'image'} . '.png') %>">
 				<% foreach my $k ( @{$p->{'knobs'}} ) { %>
 					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="/images/studio/knob_<%= $k->{'colour'} %>.png">
+					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
 
 				<% } %>
 				<% foreach my $b ( @{$p->{'buttons'}} ) { %>
@@ -89,7 +89,7 @@
 
 				<% foreach my $k ( grep { $_->{'placement'} eq 'channel' } @{$gb::studio->{'knobs'}}) { %>
 					<input type="range" channel="<%= $ch %>" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-					<img class="knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="/images/studio/knob_<%= $k->{'colour'} %>.png">
+					<img class="knob <%= $k->{'control'} %>" flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="<%= $ch %>" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
 					<span class="to_sound" channel="<%= $ch %>" >
 						<img class="cord draggable" hint="Cord" style="display:none;" control="input" channel="<%= $ch %>" src="<%= &subs::icon_for('/images/studio/cord.png') %>">
 					</span>
@@ -122,7 +122,7 @@
 				<input style="width:50px;vertical-align:top;" id="studio_signature" value="4/4">
 				<% foreach my $k ( grep { $_->{'placement'} eq 'metronome' } @{$gb::studio->{'knobs'}}) { %>
 					<input channel="metronome" type="range" name="<%= $k->{'control'} %>" control="<%= $k->{'control'} %>" class="knob_control <%= $k->{'control'} %>" style="display:none;left:3px;">
-					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="metronome" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="/images/studio/knob_<%= $k->{'colour'} %>.png">
+					<img class="knob <%= $k->{'control'} %>" style="position:absolute;width:<%= $k->{'width'} || '60px' %>;left:<%= $k->{'left'} %>;top:<%= $k->{'top'} %>;"  flip="<%= $k->{'flip'} %>" direction="<%= $k->{'direction'} %>" channel="metronome" control="<%= $k->{'control'} %>" hint="<%= &subs::format_name($k->{'control'}) %>" src="<%= &subs::icon_for('/images/studio/knob_' . $k->{'colour'} . '.png') %>">
 				<% } %>
 			</span>
 			<span style="left:2px;top:140px;position:absolute;">
