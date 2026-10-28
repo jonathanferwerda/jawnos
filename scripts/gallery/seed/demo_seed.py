@@ -260,6 +260,14 @@ for i, (label, prio, done, last_days) in enumerate(task_seed):
 setting("tasks", "tasks", json.dumps(tasks))
 
 # ---------------------------------------------------------------- people
+# The People app lists a person only when their app row says pos=person and a
+# `people` row names that same app; a row with an empty app is a dead record.
+# The app name is the person's name unformatted (a name becomes a filesystem
+# component and a DOM id, so spaces become underscores).
+def person_app(name):
+    return (name.lower().replace("'", "\u2019").replace('"', "\u201d")
+            .replace(" ", "_"))
+
 people = [
     ("Mara Ellison", "citizen"), ("Daniel Brooks", "citizen"),
     ("Priya Shah", "citizen"), ("Jonah Reed", "citizen"),
@@ -269,13 +277,18 @@ people = [
     ("Civic Works", "resident"), ("Harbourfront Arts", "guest"),
 ]
 for name, priv in people:
+    app = person_app(name)
+    person_uuid = uid(24)
     cur.execute(
         "insert or replace into people (uuid,name,privilege,status,created,ost,server_time,app) "
         "values (?,?,?,?,?,?,?,?)",
-        (uid(24), name, priv, "active", now - 400 * DAY, now, now, ""),
+        (person_uuid, name, priv, "active", now - 400 * DAY, now, now, app),
     )
-    setting(name, "colour", "#88dddd")
-    setting(name, "aka", name.lower().replace(" ", "_"))
+    setting(app, "pos", "person")
+    setting(app, "mab", "person")
+    setting(app, "uuid", person_uuid)
+    setting(app, "colour", "#88dddd")
+    setting(app, "aka", app)
 
 # ---------------------------------------------------------------- month
 client_projects = ["Northlight Gallery", "Meridian Health", "Civic Works", "Harbourfront Arts"]

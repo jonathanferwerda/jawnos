@@ -228,6 +228,14 @@ const getJson = (p) => new Promise((resolve, reject) => {
       await sleep(3000);
     }
 
+    // A scene may need one action after its window is open (pick a tab, open a
+    // panel). It runs before the settle wait so the shot shows the result.
+    if (scene.after) {
+      const after = await ev(scene.after);
+      if (typeof after === 'string' && after.startsWith('ERR:')) ok = false;
+      await sleep(scene.after_settle || 1500);
+    }
+
     await shot(scene.id);
     if (scene.kind === 'start-menu') {
       await ev("document.querySelector('#start_menu_toggle') && document.querySelector('#start_menu_toggle').click()");
