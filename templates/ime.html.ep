@@ -41,6 +41,13 @@
 </head>
 <body<% if (length $body_class) { %> class="<%= $body_class %>"<% } %> style="background-color:<%= $manager_bg %>;<%= &subs::theme_panel_css($manager_bg) %>">
 <%= include 'soft_keyboard' %>
+<script>
+	/* The manager's own labels and on-demand catalog, so the input method's bar
+	   and vault drawer speak the interface language too. */
+	window.jawnos_lang = <%== &subs::lang_js() %>;
+	window.jawnos_lang_code = '<%= &subs::language() %>';
+</script>
+<script src="/js/translate.js"></script>
 <script src="/js/jquery.js"></script>
 <script>
 	/* Read by soft_keyboard.js at parse time; it then claims the dock for the
