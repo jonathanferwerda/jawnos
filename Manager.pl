@@ -5009,7 +5009,7 @@ sub appointment_stock_movement {
 	my $default_unit = &subs::setting_grabber({ app => $app, setting => 'unit' }) || 'each';
 	my ($qty, $qunit) = &subs::quantity_unit_split($quantity, $unit || $default_unit);
 	return unless $qty > 0;
-	return unless $gb::measures->{$qunit};   # a length, a currency or an unknown word is not stock
+	return unless $gb::measures->{$qunit};   # an unknown word (hours, packs) is not stock
 	my $types = $gb::measures->{$qunit}->{'types'} || [];
 	return if grep { $_ eq 'currency' or $_ eq 'time' } @{$types};
 	my $item = &subs::setting_grabber({ app => $app, setting => 'stock_item' });
@@ -16747,7 +16747,9 @@ sub manager_reset($c) {
 			# so it is the one movement the session makes. A record moved at creation
 			# and is not moved again here.
 			if (($o->{'type'} || '') eq 'start') {
-				&appointment_stock_movement($c, $app, 'stop', $o->{'quantity'}, $o->{'unit'}, $timestamp, $uuid);
+				my $stock_qty = (defined $quantity && $quantity =~ /[0-9]/) ? $quantity : $o->{'quantity'};
+				my $stock_unit = (defined $unit && $unit ne '') ? $unit : $o->{'unit'};
+				&appointment_stock_movement($c, $app, 'stop', $stock_qty, $stock_unit, $timestamp, $uuid);
 			}
 			&subs::intelligent_automation_toggle({ appt_uuid => $o->{'uuid'}, app => $app, 'state' => 'off', timestamp => $timestamp });
 			my $sources = &subs::db_select('appointments', undef, { source_uuid => $o->{'uuid'} })->hashes;
