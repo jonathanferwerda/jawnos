@@ -16664,6 +16664,149 @@ sub app_visible_now {
 	return &app_hidden_now($app) ? 0 : 1;
 }
 
+# The domain -> app map the Internet app keeps. A site a person assigned to an
+# app is that app's session too, so both the manager and the browser tick read
+# the same map.
+sub internet_domain_app_map {
+	my $value = &setting_grabber({ app => 'internet', setting => 'domain_apps' });
+	my $map = eval { decode_json($value || '{}') } || {};
+	return ref $map eq 'HASH' ? $map : {};
+}
+
+# A browser posts a site span every half minute while its page is in front
+# (and as the page closes or loses focus). While a span for a mapped domain
+# keeps arriving, its app's session runs. A gap longer than the grace is a
+# person who left: the session stops at the last span's end, not at the next
+# tick, so the recorded time is the time actually spent on the site.
+our $internet_site_tick_at;
+sub internet_site_appointment_tick {
+	my ($opts) = @_;
+	$opts ||= {};
+	my $now = &rightNow();
+	return 0 if !$opts->{'force'} && defined $internet_site_tick_at && $now - $internet_site_tick_at < 2000;
+	$internet_site_tick_at = $now;
+	my $map = &internet_domain_app_map();
+	return 0 unless scalar keys %{$map};
+	my $grace = 60000;
+	my $from = $now - 15 * 60 * 1000;
+	my $rows = eval {
+		&db_query(q{
+			select key_name, started_at, ended_at
+			  from usage_sessions
+			 where kind = 'site' and cast(ended_at as integer) >= ?
+			 order by cast(started_at as integer) asc
+		}, $from)->hashes;
+	} || [];
+	my (%run_start, %run_end, %domains_for_app);
+	foreach my $domain ( keys %{$map} ) {
+		my $app = $map->{$domain} // next;
+		push @{$domains_for_app{$app}}, $domain if length $domain;
+	}
+	foreach my $row ( @{$rows} ) {
+		my $domain = lc($row->{'key_name'} // '');
+		$domain =~ s/^www\.//;
+		my $app = $map->{$domain} || next;
+		my $start = int($row->{'started_at'} // 0);
+		my $end = int($row->{'ended_at'} // 0);
+		next unless $start > 0 && $end > 0;
+		if (!defined $run_end{$app}) {
+			$run_start{$app} = $start;
+			$run_end{$app} = $end;
+		}
+		elsif ($start <= $run_end{$app} + $grace) {
+			$run_end{$app} = $end if $end > $run_end{$app};
+		}
+		else {
+			$run_start{$app} = $start;
+			$run_end{$app} = $end;
+		}
+	}
+	# Sessions this tick owns: close one whose site is no longer reported, or
+	# whose app the visibility rule now hides. Never touch a session the person
+	# started themselves.
+	my $open_rows = eval {
+		&db_query(q{
+			select app, uuid, timestamp from appointments
+			 where source = 'Internet' and (type = 'start' or type = 'record')
+			   and stop_seen is null
+		})->hashes;
+	} || [];
+	foreach my $open ( @{$open_rows} ) {
+		my $app = $open->{'app'} || next;
+		my $uuid = $open->{'uuid'} || next;
+		my $started = int($open->{'timestamp'} // 0);
+		my $last = $run_end{$app};
+		if (!defined $last) {
+			my $domains = $domains_for_app{$app} || [];
+			if (scalar @{$domains}) {
+				my $ph = join ',', map { '?' } @{$domains};
+				my $row = eval {
+					&db_query("select max(cast(ended_at as integer)) as last_end from usage_sessions where kind = 'site' and key_name in ($ph) and cast(ended_at as integer) >= ?", @{$domains}, $started)->hash;
+				} || {};
+				$last = int($row->{'last_end'}) if defined $row->{'last_end'} && $row->{'last_end'} ne '';
+			}
+		}
+		my $active = defined $last && ($now - $last) <= $grace && !&app_hidden_now($app);
+		next if $active;
+		my $stop_at = (defined $last && $last > $started) ? $last : $now;
+		my $duration = $stop_at - $started;
+		$duration = 0 if $duration < 0;
+		&db_update('appointments', {
+			type => 'stop',
+			stop_timestamp => $stop_at,
+			stop_seen => 'yes',
+			duration => $duration,
+			server_time => $now,
+		}, { uuid => $uuid, app => $app });
+		&intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_at });
+		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid . '\');' });
+	}
+	# Sessions to start: a mapped site that is still being reported and has no
+	# session of any kind running for its app.
+	foreach my $app ( sort keys %run_end ) {
+		next if $now - $run_end{$app} > $grace;
+		next if &app_hidden_now($app);
+		next if &open_session_uuid($app);
+		my $init = &setting_initializer($app, $run_start{$app});
+		my $name = (ref $init eq 'HASH' && $init->{'app'}) ? $init->{'app'} : $app;
+		next if $name ne $app && (&open_session_uuid($name) || &app_hidden_now($name));
+		my $start_at = $run_start{$app};
+		# A session that just ended (a person starting and stopping by hand while
+		# the page was open) must not be counted twice.
+		my $prev = eval {
+			&db_query("select max(cast(stop_timestamp as integer)) as last_end from appointments where app = ? and stop_timestamp is not null and stop_timestamp != '' and cast(stop_timestamp as integer) <= ?", $name, $now)->hash;
+		} || {};
+		my $prev_end = int($prev->{'last_end'} // 0);
+		$start_at = $prev_end if $prev_end > $start_at;
+		my $settings = &settings_grabber({ app => $name });
+		my $uuid = &random_string_creator(90);
+		my $row = {
+			app => $name,
+			uuid => $uuid,
+			type => 'start',
+			timestamp => $start_at,
+			server_time => $now,
+			device => &device_setter(),
+			source => 'Internet',
+			seen => 'yes',
+			project => $settings->{'t_project'},
+			pos => $settings->{'pos'},
+		};
+		$row->{'warranty'} = &ago_calc(($init->{'warranty'} || '-10y'), $now) if ref $init eq 'HASH';
+		&db_insert('appointments', $row);
+		my ($model, $options, $jmodel, $joptions) = &usual_appointment_maker($row, $settings);
+		$row->{'model'} = $jmodel if $jmodel;
+		$row->{'options'} = $joptions if $joptions;
+		$row->{'unit'} = $model->{'unit'} if $model->{'unit'} && !$row->{'unit'};
+		$row->{'quantity'} = $model->{'quantity'} if $model->{'quantity'} && !$row->{'quantity'};
+		&db_update('appointments', { model => $row->{'model'}, options => $row->{'options'}, unit => $row->{'unit'}, quantity => $row->{'quantity'} }, { uuid => $uuid, app => $name })
+			if $row->{'model'} || $row->{'options'} || $row->{'unit'} || $row->{'quantity'};
+		&intelligent_automation_toggle({ appt_uuid => $uuid, app => $name, 'state' => 'on', timestamp => $start_at });
+		&Websocket::send('tab', { console => 'appointmentDetailGrabber(\'' . $name . '\',\'' . $uuid . '\');' });
+	}
+	return 1;
+}
+
 # A settings write or a presence change must be seen by the rest of this
 # request; a worker serves one request at a time, so these are request caches.
 sub visibility_cache_clear {

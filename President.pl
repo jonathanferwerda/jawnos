@@ -349,6 +349,11 @@ sub manager_starter() {
 		# A few-minute pass stages one for a person, or records it when the house
 		# asked for that and the match is unmistakable.
 		{ name => 'interac watch', first => 75, every => 300, run => sub { &subs::pay_interac_scan(); } },
+		# A website assigned to an app is a session: a native browser posts its
+		# site spans every half minute, and the mapped app runs while they keep
+		# arriving. The tick stops the session at the last span's end after a
+		# quiet gap, so closing the tab or switching apps ends the appointment.
+		{ name => 'internet sites', first => 10, every => 10, run => sub { &subs::internet_site_appointment_tick(); } },
 	);
 	&subs::subprocessor(sub {
 		my $started = time;

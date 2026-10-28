@@ -27941,9 +27941,7 @@ get '/manager/home_status' => sub($c) {
 };
 
 sub internet_domain_apps {
-	my $value = &subs::setting_grabber({ app => 'internet', setting => 'domain_apps' });
-	my $map = eval { decode_json($value || '{}') } || {};
-	return ref $map eq 'HASH' ? $map : {};
+	return &subs::internet_domain_app_map();
 }
 
 get '/manager/internet/sites' => sub($c) {
