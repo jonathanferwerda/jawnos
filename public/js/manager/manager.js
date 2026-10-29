@@ -2,7 +2,10 @@ var nfc = {
 	scanning: false,
 	writing: false,
 	abort: new AbortController(),
-	initialized: false
+	initialized: false,
+	lastWrite: 0,
+	lastReadKey: '',
+	lastReadAt: 0
 };
 var assistant = {};
 if (typeof jawnNfcAvailable === 'function' && jawnNfcAvailable()) {
@@ -1072,11 +1075,30 @@ function jawnNfcAdapter() {
 			var records = $.map(message.records || [], function(r) {
 				return { recordType: r.recordType, mediaType: r.mediaType, encoding: r.encoding, data: jawnNfcBytesToBase64(r.data) };
 			});
+			// A second write while one waits for a tag replaces the first, so the
+			// first promise must settle instead of hanging the caller's state.
+			if (pendingWrite) {
+				var stale = pendingWrite;
+				pendingWrite = null;
+				try { stale.reject(new DOMException('superseded', 'AbortError')); } catch (e) {}
+			}
 			return new Promise(function(resolve, reject) {
 				pendingWrite = { resolve: resolve, reject: reject };
 				var result = window.JawnNFC.write(JSON.stringify({ records: records }));
 				if (result !== 'ok') { pendingWrite = null; reject(new Error('nfc write: ' + result)); }
 			});
+		},
+		// Tell the app to drop a write nobody is waiting for any more; otherwise
+		// the next unrelated tag tapped would silently be overwritten.
+		cancelWrite: function() {
+			if (pendingWrite) {
+				var w = pendingWrite;
+				pendingWrite = null;
+				try { w.reject(new DOMException('aborted', 'AbortError')); } catch (e) {}
+			}
+			if (window.JawnNFC && typeof window.JawnNFC.cancelWrite === 'function') {
+				try { window.JawnNFC.cancelWrite(); } catch (e) {}
+			}
 		}
 	};
 }
@@ -1248,23 +1270,38 @@ function nfcInitializer() {
 			nfc['scanning'] = false;
 		};
 		nfc['ndef'].addEventListener("reading", ({ message, serialNumber }) => {
+			// A tag seen while a write is armed belongs to that write, and a tag
+			// reported just after a successful write is the same tag being read
+			// back - neither is a tap, so neither may start or stop an app.
+			if (nfc['writing']) { return; }
+			if (nfc['lastWrite'] && Date.now() - nfc['lastWrite'] < 2500) { return; }
 
 			var md = [];
-			$.each(message.records, function(i,record) {
+			$.each(message.records || [], function(i,record) {
 				if (record.recordType === "text" || record.recordType === "url") {
 					// 6. Decode the binary DataView payload into a string
-					const textDecoder = new TextDecoder(record.encoding || "utf-8");
-					const decodedString = textDecoder.decode(record.data);
-					md.push({'text': decodedString });
+					try {
+						const textDecoder = new TextDecoder(record.encoding || "utf-8");
+						md.push({'text': textDecoder.decode(record.data) });
+					} catch (e) {}
 				}
-        if (record.mediaType === "application/json") {
-				  const decoder = new TextDecoder();
-					const json = JSON.parse(decoder.decode(record.data));
-					md.push(json);
-        }
+				if (record.mediaType === "application/json") {
+					try {
+						const decoder = new TextDecoder();
+						md.push(JSON.parse(decoder.decode(record.data)));
+					} catch (e) {}
+				}
 			});
+			if (!md.length) { return; }
 
 			var jmessage = JSON.stringify(md);
+			// Reader mode can report one presence twice (and a second reader
+			// object would double every tap); one tap must act only once.
+			var readKey = (serialNumber || '') + '|' + jmessage;
+			if (nfc['lastReadKey'] === readKey && Date.now() - (nfc['lastReadAt'] || 0) < 1500) { return; }
+			nfc['lastReadKey'] = readKey;
+			nfc['lastReadAt'] = Date.now();
+
 			var timestamp = Date.now();
 			var lastWrite = nfc['lastWrite'];
 
@@ -1310,58 +1347,106 @@ $(document).on('click', '.nfc_benign_reader', function() {
 });
 
 async function nfcListener() {
-	if (nfc['ndef'] && nfc.scanning == false && nfc.writing == false) {
-
-		try {
-			nfc.scanning = true;
-			nfc['abort'] = new AbortController();
-			nfc['ndef'].scan({ signal: nfc['abort'].signal }).then(() => {
-			}).catch(error => console.log(error));
-		} catch {
-			nfc.scanning = false;
+	if (!nfc['ndef'] || nfc.scanning || nfc.writing) { return; }
+	if (nfc.scanFailedAt && Date.now() - nfc.scanFailedAt < 2000) { return; }
+	nfc.scanning = true;
+	nfc['abort'] = new AbortController();
+	try {
+		await nfc['ndef'].scan({ signal: nfc['abort'].signal });
+	}
+	catch (error) {
+		// A refused scan (permission, a second tab, the reader still busy)
+		// must not wedge the reader: drop the flag and retry once after a
+		// beat, never in a tight loop on every mouse event.
+		nfc.scanning = false;
+		nfc.scanFailedAt = Date.now();
+		if (!nfc.scanRetry) {
+			nfc.scanRetry = setTimeout(function() {
+				nfc.scanRetry = null;
+				nfcListener();
+			}, 2000);
 		}
 	}
 }
 
+// Show a write's progress on its own tag card, so a failed or still-waiting
+// write is visible instead of leaving the button lit and the reader disarmed.
+function nfcText(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+function nfcWriteStatus(a, text, kind) {
+	if (!a || !a.length) { return; }
+	var row = a.closest('.nfc_settings');
+	if (!row.length) { return; }
+	row.find('.nfc_write_status').text(text || '').removeClass('on error').addClass(kind || '');
+}
+
+var nfcWriteTimer = null;
+var nfcWriteSession = 0;
+
 async function nfcWriter(msg,a) {
-	if (device == 'mobile') {
-		if (nfc.scanning == true) {
-			nfc.scanning = false;
-			nfc.abort.abort();
-			nfc['writing'] = true;
-			setTimeout(function() {
-				nfcWriter(msg,a);
-			},1000);
-		} else {
-			try {
-				a.addClass('active_background');
-				nfc['writing'] = true;
-				nfc.scanning = false;
-			  const encoder = new TextEncoder();
-				$.ajax({
-					url: '/manager/nfc/write',
-					type: 'POST',
-					data: msg,
-					success: function(response) {
-						msg = encoder.encode(JSON.stringify(response.nfc));
-						nfc['ndef'].write({
-							records: [{
-								recordType: 'mime',
-								mediaType: 'application/json',
-								data: msg
-							}] }).then(() => {
-							nfc['lastWrite'] = Date.now();
-							nfc['writing'] = false;
-							nfc['scanning'] = false;
-							a.removeClass('active_background');
-							nfcListener();
-						});
-					}
-				});
+	if (device != 'mobile') { return; }
+	if (!nfc['ndef'] || typeof nfc['ndef'].write !== 'function') {
+		nfcWriteStatus(a, nfcText('No NFC reader here.'), 'error');
+		return;
+	}
+	if (nfc.writing) { return; }
 
+	// The tag carries only the row uuid's first 12 characters. The old write
+	// embedded the whole settings row (control, taps, serials - hundreds of
+	// bytes), which no longer fit a 144-byte NTAG213 once the tap count grew;
+	// that is why a write would fail and only succeed on re-scan or on a
+	// larger tag.
+	var tag = String(msg.uuid || '').slice(0, 12);
+	if (!tag.length) { return; }
+	var encoder = new TextEncoder();
+	var session = ++nfcWriteSession;
+	nfc.writing = true;
+	a.addClass('active_background');
+	nfcWriteStatus(a, nfcText('Hold the tag to the phone…'), '');
 
-			} catch (error) {
-			}
+	var expiry = new Promise(function(resolve, reject) {
+		clearTimeout(nfcWriteTimer);
+		nfcWriteTimer = setTimeout(function() {
+			reject(new Error('timeout'));
+		}, 25000);
+	});
+
+	try {
+		// Web NFC's write must begin inside the click's gesture, so it is
+		// called before any network round trip.
+		await Promise.race([
+			nfc['ndef'].write({
+				records: [{
+					recordType: 'mime',
+					mediaType: 'application/json',
+					data: encoder.encode(JSON.stringify({ tag: tag }))
+				}]
+			}),
+			expiry
+		]);
+		nfc['lastWrite'] = Date.now();
+		nfcWriteStatus(a, nfcText('Tag saved.'), 'on');
+		// Stamp the write on the server after the tag itself is written; the
+		// tag needs nothing from this round trip.
+		$.ajax({ url: '/manager/nfc/write', type: 'POST', data: { uuid: msg.uuid, app: msg.app, type: msg.type } });
+	}
+	catch (error) {
+		try { if (nfc['ndef'].cancelWrite) { nfc['ndef'].cancelWrite(); } } catch (e) {}
+		if (error && error.message === 'timeout') {
+			nfcWriteStatus(a, nfcText('No tag found. Hold the tag to the phone and try again.'), 'error');
+		}
+		else if (!error || error.name !== 'AbortError') {
+			nfcWriteStatus(a, nfcText('Could not write the tag. Hold it still and try again.'), 'error');
+		}
+	}
+	finally {
+		clearTimeout(nfcWriteTimer);
+		nfcWriteTimer = null;
+		if (session == nfcWriteSession) {
+			nfc.writing = false;
+			a.removeClass('active_background');
+			nfcListener();
 		}
 	}
 }

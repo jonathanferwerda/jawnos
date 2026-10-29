@@ -12532,19 +12532,39 @@ post '/manager/nfc/read' => sub($c) {
 			}
 			next;
 		}
-		my $nfcs = &subs::db_query('select * from settings where setting=? and value like ? and device=?', 'nfc', '%' . $message->{'uuid'} . '%', &subs::device_setter())->hashes->[0];
+		# A tag carries either the full row uuid (older writes) or a short `tag`
+		# (the row uuid's first twelve characters). The short form is what a
+		# 144-byte NTAG213 can hold; find the row by whichever the tag has.
+		my $tag = $message->{'tag'} // '';
+		next unless length($tag) || length($message->{'uuid'} // '');
+		my $nfcs = length($tag)
+			? &subs::db_query('select * from settings where setting=? and value like ? and device=?', 'nfc', '%"uuid":"' . $tag . '%', &subs::device_setter())->hashes->[0]
+			: undef;
+		$nfcs ||= &subs::db_query('select * from settings where setting=? and value like ? and device=?', 'nfc', '%' . ($message->{'uuid'} // '') . '%', &subs::device_setter())->hashes->[0];
+		next unless $nfcs && $nfcs->{'app'};
 		my $app = $nfcs->{'app'};
 		my $settings = &subs::settings_grabber({ app => $app });
 
 		my $nfc = eval { return decode_json $nfcs->{'value'} } || [];
-		my ($n) = grep { $_->{'uuid'} eq $message->{'uuid'} } @{$nfc};
-		$n->{'serials'} = [] unless $n->{'serials'};
+		my ($n) = length($tag)
+			? grep { index($_->{'uuid'} || '', $tag) == 0 } @{$nfc}
+			: grep { ($_->{'uuid'} || '') eq ($message->{'uuid'} // '') } @{$nfc};
+		next unless $n && $n->{'uuid'};
+		# The short tag names the row; the rest of the route and the relay
+		# speak the full uuid, so every machine writes one action key.
+		$message->{'uuid'} = $n->{'uuid'};
+		$n->{'serials'} = [] unless ref $n->{'serials'} eq 'ARRAY';
 		if ($n->{'uuid'}) {
-			if ($timestamp - $last_write < 1000) {
+			if (defined $last_write && length $last_write && $timestamp - $last_write < 2500) {
 				$response->{'status'} = 'writing serial';
 
 
-				push @{$n->{'serials'}}, $serial unless grep { $_ eq $serial } @{$n->{'serials'}};
+				# Serials arrive in different shapes (Chrome's colon-separated
+				# hex, the app's plain hex), so store one normalized form.
+				my $norm = lc($serial // '');
+				$norm =~ s/[^0-9a-f]//g;
+				$norm = $serial if $norm eq '' && length($serial // '');
+				push @{$n->{'serials'}}, $norm unless !length($norm) || grep { (ref $_ eq 'HASH' ? ($_->{'serial'} // '') : $_) eq $norm } @{$n->{'serials'}};
 				$response->{'serials'} = $n->{'serials'};
 			} else {
 				if (1 == 1 || grep { $_ eq $serial } @{$n->{'serials'}}) {
@@ -12633,11 +12653,16 @@ post '/manager/nfc/write' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $nfc = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'nfc' }) } || [];
 
-	my ($n) = grep { $_->{'uuid'} eq $uuid } @{$nfc};
-	push @{$n->{'serials'}}, { timestamp => &subs::rightNow(), signatorial => $signatorial };
+	my ($n) = grep { ($_->{'uuid'} || '') eq ($uuid // '') } @{$nfc};
+	return $c->render(json => { ok => 0, error => 'no such tag' }) unless $n && $n->{'uuid'};
 
+	# The tag holds only its uuid prefix now (a whole settings row no longer
+	# fits a 144-byte NTAG213), so there is no serial to stamp here. Record
+	# the write for the panel; the row's own settings are left alone.
+	$n->{'written'} = &subs::rightNow();
+	&subs::setting_setter({ app => $app, setting => 'nfc', value => encode_json $nfc });
 
-	$c->render(json => { nfc => $n });
+	$c->render(json => { ok => 1, tag => substr($n->{'uuid'}, 0, 12), nfc => { uuid => $n->{'uuid'} } });
 };
 
 

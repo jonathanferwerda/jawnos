@@ -328,13 +328,20 @@ async function permissionAsker(kind) {
 		});
 	}
 	if ((kind == 'nfc' || !kind) && typeof jawnNfcAvailable === 'function' && jawnNfcAvailable()) {
-		nfc = {
-			scanning: false,
-			writing: false,
-			abort: new AbortController(),
-			initialized: false
-		};
-		nfc['ndef'] = jawnNfcMake();
+		// Never mint a second reader: the first one stays armed in the
+		// background, and two readers would report every tap twice.
+		if (!nfc || !nfc['ndef']) {
+			nfc = {
+				scanning: false,
+				writing: false,
+				abort: new AbortController(),
+				initialized: false,
+				lastWrite: 0,
+				lastReadKey: '',
+				lastReadAt: 0
+			};
+			nfc['ndef'] = jawnNfcMake();
+		}
 		nfcInitializer();
 		nfcListener();
 	}

@@ -471,33 +471,47 @@ async function peopleCrestNfcWrite(code) {
 		peopleStatus(peopleT('No NFC reader here.'));
 		return;
 	}
-	if (nfc.scanning) {
-		nfc.scanning = false;
-		if (nfc.abort) { nfc.abort.abort(); }
-		nfc.writing = true;
-		setTimeout(function() { nfc.writing = false; peopleCrestNfcWrite(code); }, 1000);
+	if (nfc.writing || typeof nfc.ndef.write !== 'function') {
+		peopleStatus(peopleT('Another tag is still waiting to be written.'));
 		return;
 	}
+	nfc.writing = true;
+	peopleStatus(peopleT('Hold the tag to the phone…'));
+	var timer = null;
 	try {
-		nfc.writing = true;
-		nfc.scanning = false;
 		var encoder = new TextEncoder();
-		await nfc.ndef.write({
-			records: [{
-				recordType: 'mime',
-				mediaType: 'application/json',
-				data: encoder.encode(JSON.stringify({ crest_code: code }))
-			}]
-		});
+		// The scan is left armed; the app gives a pending write precedence over
+		// a read, so a tag already on the reader is written instead of being
+		// read first and needing to be lifted and re-tapped.
+		await Promise.race([
+			nfc.ndef.write({
+				records: [{
+					recordType: 'mime',
+					mediaType: 'application/json',
+					data: encoder.encode(JSON.stringify({ crest_code: code }))
+				}]
+			}),
+			new Promise(function(resolve, reject) {
+				timer = setTimeout(function() { reject(new Error('timeout')); }, 25000);
+			})
+		]);
 		nfc.lastWrite = Date.now();
 		peopleStatus(peopleT('Written to the tag.'));
 	}
 	catch (error) {
-		peopleStatus(peopleT('Could not write the tag.'));
+		try { if (nfc.ndef.cancelWrite) { nfc.ndef.cancelWrite(); } } catch (e) {}
+		if (error && error.message === 'timeout') {
+			peopleStatus(peopleT('No tag found. Hold the tag to the phone and try again.'));
+		}
+		else {
+			peopleStatus(peopleT('Could not write the tag. The tag may be too small; try a larger one.'));
+		}
 	}
-	nfc.writing = false;
-	nfc.scanning = false;
-	if (typeof nfcListener === 'function') { nfcListener(); }
+	finally {
+		clearTimeout(timer);
+		nfc.writing = false;
+		if (typeof nfcListener === 'function') { nfcListener(); }
+	}
 }
 
 $(document).on('click', '#people_crest_qr_button', function() {

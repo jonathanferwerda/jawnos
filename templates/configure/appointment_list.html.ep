@@ -78,7 +78,31 @@
 	#configuration_container .home_plate_setting_container { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:6px 0; }
 	#configuration_container .packaging_config_container,
 	#configuration_container .home_plate_setting_container { padding:6px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2, var(--panel)); }
-	#configuration_container .nfc_settings { border:1px solid var(--line); border-radius:8px; padding:8px; margin:6px 0; }
+	#configuration_container .nfc_settings { display:flex; flex-direction:column; gap:8px; width:100%; box-sizing:border-box;
+		padding:12px; margin:8px 0; border:1px solid var(--line); border-radius:10px; background:var(--panel-2, var(--panel)); }
+	#configuration_container .nfc_settings.nfc_new { border-style:dashed; background:transparent; }
+	#configuration_container .nfc_top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+	#configuration_container .nfc_title { display:inline-flex; align-items:center; gap:8px; font-size:14px; font-weight:600; }
+	#configuration_container .nfc_title::before { content:""; width:8px; height:8px; border-radius:50%;
+		background:var(--accent, #3b7ddd); box-shadow:0 0 0 3px var(--accent-soft, #e6effb); }
+	#configuration_container .nfc_settings.nfc_new .nfc_title::before { background:var(--line); box-shadow:none; }
+	#configuration_container .nfc_taps { flex:0 0 auto; padding:2px 9px; border-radius:999px; font-size:12px; white-space:nowrap;
+		background:var(--accent-soft, #e6effb); color:var(--accent-line, #2f6cc4); }
+	#configuration_container .nfc_field { display:flex; flex-direction:column; gap:4px; min-width:0; font-size:12px; opacity:.9; }
+	#configuration_container .nfc_field select { width:100%; box-sizing:border-box; padding:8px 10px;
+		border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--ink); font:inherit; font-size:13px; }
+	#configuration_container .nfc_buttons { display:flex; flex-wrap:wrap; gap:8px; }
+	#configuration_container .nfc_btn { display:inline-flex; align-items:center; justify-content:center; gap:6px;
+		padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--ink);
+		font:inherit; font-size:13px; cursor:pointer; transition:background-color .15s ease, border-color .15s ease, transform .1s ease; }
+	#configuration_container .nfc_btn:hover { border-color:var(--accent, #3b7ddd); }
+	#configuration_container .nfc_btn:active { transform:translateY(1px); }
+	#configuration_container .nfc_btn.danger { color:#b3403a; }
+	#configuration_container .nfc_btn.active_background { background:var(--accent-soft, #e6effb); border-color:var(--accent-line, #2f6cc4); }
+	#configuration_container .nfc_help { margin:0; font-size:12px; line-height:1.4; opacity:.65; }
+	#configuration_container .nfc_write_status { min-height:16px; font-size:12px; line-height:1.3; color:var(--muted, #8e8e8e); }
+	#configuration_container .nfc_write_status.on { color:#2f8f6d; }
+	#configuration_container .nfc_write_status.error { color:#b3403a; }
 	#configuration_container .contact_list .contact_hint { margin:4px 0 8px; font-size:13px; opacity:.8; }
 	#configuration_container .contact_row { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:6px 0; }
 	#configuration_container .contact_row select.contact_field { flex:0 0 auto; min-width:110px; }
@@ -366,27 +390,38 @@
 											my $nfc = eval { return decode_json $appts->{$a}->{'setting'}->{'nfc'} } || [];
 											my $new_uuid = &subs::random_string_creator(100);
 											push @{$nfc}, { uuid => $new_uuid };
-											foreach my $n ( @{$nfc} ) { %>
-												<div class="nfc_settings" uuid="<%= $n->{'uuid'} %>" app="<%= $a %>" style="width:100%;">
-													<label>Control</label>
-													<select class="nfc_setting" setting="control" value="<%= $n->{'control'} %>">
-														<option value="" <% if ($n->{'control'} || $n->{'control'} eq '') { %>selected<% } %>></option>
-														<% foreach my $control ( sort qw/start record command usual/ ) { %>
-															<option value="<%= $control %>" <% if ($n->{'control'} eq $control) { %>selected<% } %>><%= &subs::format_name($control) %></option>
+											foreach my $n ( @{$nfc} ) {
+												my $is_new = ($n->{'uuid'} eq $new_uuid) ? 1 : 0; %>
+												<div class="nfc_settings<%= $is_new ? ' nfc_new' : '' %>" uuid="<%= $n->{'uuid'} %>" app="<%= $a %>">
+													<div class="nfc_top">
+														<span class="nfc_title"><%= $is_new ? &subs::lang('nfc_add_tag') : &subs::lang('nfc_tag') %></span>
+														<% if (!$is_new) { %>
+															<span class="nfc_taps" title="<%= &subs::lang('nfc_taps') %>"><%= &subs::lang('nfc_taps') %>: <%= $n->{'taps'} || 0 %></span>
 														<% } %>
-													</select>
-													<% if (&subs::device_setter() eq 'mobile' && $n->{'uuid'} ne $new_uuid) { %>
-														<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb nfc_appt_writer hover" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>">
-													<% } %>
-													<% if ($n->{'uuid'} ne $new_uuid) { %>
-														<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb nfc_deleter hover" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>">
-													<% } %>
-													<% if ($n->{'uuid'} ne $new_uuid) { %>
-														<br><label>Taps: </label> <%= $n->{'taps'} || 0 %>
-
+													</div>
+													<label class="nfc_field">
+														<span><%= &subs::lang('nfc_when_tapped') %></span>
+														<select class="nfc_setting" setting="control">
+															<option value=""<% if (!length($n->{'control'} // '')) { %> selected<% } %>><%= &subs::lang('nfc_choose_action') %></option>
+															<% foreach my $control ( sort qw/start record command usual/ ) { %>
+																<option value="<%= $control %>"<% if (($n->{'control'} // '') eq $control) { %> selected<% } %>><%= &subs::format_name($control) %></option>
+															<% } %>
+														</select>
+													</label>
+													<% if ($is_new) { %>
+														<p class="nfc_help"><%= &subs::ui('Choose an action to add this app to a tag; writing the tag needs the phone app.') %></p>
+													<% } else { %>
+														<p class="nfc_help"><%= &subs::ui('Tap this tag on a phone to start or stop this app.') %></p>
+														<div class="nfc_buttons">
+															<% if (&subs::device_setter() eq 'mobile') { %>
+																<button type="button" class="nfc_btn nfc_appt_writer" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>"><%= &subs::lang('nfc_write_tag') %></button>
+															<% } %>
+															<button type="button" class="nfc_btn danger nfc_deleter" app="<%= $a %>" uuid="<%= $n->{'uuid'} %>"><%= &subs::lang('delete') %></button>
+														</div>
+														<span class="nfc_write_status" role="status" aria-live="polite"></span>
 													<% } %>
 												</div>
-											<% } %>
+										<% } %>
 									<% } elsif ($b eq 'phones' || $b eq 'emails') { %>
 										<% my $kind = $b eq 'phones' ? 'phone' : 'email'; %>
 										<% my $primary = $appts->{$a}->{'setting'}->{$kind}; %>
