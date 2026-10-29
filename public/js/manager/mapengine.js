@@ -94,13 +94,24 @@ window.jawnosMap = (function () {
 		var ctx = canvas.getContext('2d');
 		// own the touch gestures: without this the page would scroll/zoom instead
 		try { canvas.style.touchAction = 'none'; } catch (e) {}
-		var view = { lat: opts.lat || 43.0, lon: opts.lon || -81.94, z: opts.z || 14 };
-		var maps = [];        // measured maps, each with a georeference
-		var points = [];      // { lat, lon, label, colour }
-		var here = null;      // the current position { lat, lon, accuracy }
 		var providerKey = opts.provider || 'none';
 		var customUrl = opts.customUrl || '';
 		var apiKeys = opts.keys || {};   // provider key -> the service's key
+		var ZMIN = 2, ZMAX = 21;
+		// The deepest tile zoom the selected service actually serves; a service with
+		// no stated ceiling (a pasted URL, or the offline maps only) keeps ZMAX.
+		function providerMaxZ() {
+			var p = providers[providerKey];
+			var m = (p && p.max) ? +p.max : ZMAX;
+			return Math.max(ZMIN, Math.min(ZMAX, m));
+		}
+		function clampZ(z) { return Math.max(ZMIN, Math.min(providerMaxZ(), z)); }
+		// The chosen service may stop before the engine's own ceiling (Esri Light
+		// ends at 16, OpenTopoMap at 17): the initial zoom is held to it too.
+		var view = { lat: opts.lat || 43.0, lon: opts.lon || -81.94, z: clampZ(opts.z || 14) };
+		var maps = [];        // measured maps, each with a georeference
+		var points = [];      // { lat, lon, label, colour }
+		var here = null;      // the current position { lat, lon, accuracy }
 		var tileCache = {};   // url -> Image (loaded) or true (loading) or null (failed)
 		var tileCount = 0;    // loaded tiles held; the cache is dropped past a cap
 		var imageCache = {};  // map file url -> loaded Image, so a refresh reuses it
@@ -139,7 +150,7 @@ window.jawnosMap = (function () {
 			var zLon = Math.log2((dim.w * 360) / (256 * spanLon));
 			var zLat = Math.log2((dim.h * 360 * Math.cos(lat * Math.PI / 180)) / (256 * spanLat));
 			var z = Math.min(zLon, zLat) - Math.log2(margin || 1.3);
-			view = { lat: lat, lon: lon, z: Math.max(2, Math.min(21, z)) };
+			view = { lat: lat, lon: lon, z: clampZ(z) };
 			draw();
 		}
 
@@ -333,8 +344,6 @@ window.jawnosMap = (function () {
 		}
 
 		// ---- interaction ----
-		var ZMIN = 2, ZMAX = 21;
-		function clampZ(z) { return Math.max(ZMIN, Math.min(ZMAX, z)); }
 
 		// Which tappable marker sits under a screen point: only points that carry an
 		// app (or a list of them, a grouped marker) answer - the plain places are
@@ -571,7 +580,7 @@ window.jawnosMap = (function () {
 			canvas: canvas,
 			draw: draw,
 			zoom: zoomBy,
-			setZoom: function (z) { view.z = Math.max(2, Math.min(21, z)); draw(); },
+			setZoom: function (z) { view.z = clampZ(z); draw(); },
 			center: function (lat, lon) { view.lat = lat; view.lon = lon; draw(); },
 			setProvider: function (key, url, keys) {
 				var nextUrl = (url === undefined || url === null) ? customUrl : url;
@@ -580,6 +589,9 @@ window.jawnosMap = (function () {
 				providerKey = key;
 				customUrl = nextUrl;
 				apiKeys = nextKeys;
+				// a service with a lower ceiling than the last one cannot be drawn past
+				// its deepest tile, so the view backs up to the new limit
+				view.z = clampZ(view.z);
 				tileCache = {};
 				tileCount = 0;
 				draw();
