@@ -48564,7 +48564,7 @@ get '/manager/sync_history' => sub($c) {
 		};
 		last if scalar @recent >= $limit;
 	}
-	my $lock = &subs::db_query('select value,server_time from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0] || {};
+	my $lock = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_backup_lock')->hashes->[0] || {};
 	my $upgrade = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
 	my ($u_flag, $u_pid) = split /:/, ($upgrade->{'value'} || ''), 2;
 	$u_flag ||= '';

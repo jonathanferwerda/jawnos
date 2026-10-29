@@ -8225,7 +8225,7 @@ sub backup_registry_prune() {
 		my $val = $self->{'val'};
 		$self->{'val'} = undef;
 		eval {
-			my $row = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
+			my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_backup_lock')->hashes->[0];
 			&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => '' }) if (($row->{'value'} || '') eq $val);
 		};
 	}
@@ -8307,7 +8307,12 @@ sub backup_now() {
 	my $backup_lock;
 	my $backup_lock_guard;
 	if ($reason eq 'remote_update') {
-		my $held = &subs::db_query('select value,server_time from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
+		# Order by the newest row: a snapshot merge can bring another machine's
+		# `remote_backup_lock` row (it is not in the durable settings subset, but a
+		# full merge copies every table), and a bare scan returns the oldest one.
+		# The claim was written to the newest row, so the confirm below must read
+		# that same row or every export loses to a phantom rival and answers busy.
+		my $held = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_backup_lock')->hashes->[0];
 		# The lock value carries the holding worker's pid. This tree restarts every
 		# few minutes under memory pressure, so an export's worker is often gone
 		# before the export finishes; a lock whose owner is dead is recovered at
@@ -8325,7 +8330,7 @@ sub backup_now() {
 		&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => $backup_lock });
 		# two workers can pass the check above in the same instant; the last writer
 		# keeps the lock and the loser steps aside rather than run a second export
-		my $confirm = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
+		my $confirm = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_backup_lock')->hashes->[0];
 		if (($confirm->{'value'} || '') ne $backup_lock) {
 			$log->info('remote backup claim lost to another worker; told ' . $c->tx->remote_address . ' to retry') if $log;
 			return { status => 'busy', reason => $reason };
@@ -8668,7 +8673,7 @@ sub backup_now() {
 		$returner->{'update_commands'} = &Manager::update_database({ duty => 'list' });
 	}
 	if ($backup_lock) {
-		my $lock_row = &subs::db_query('select value from settings where app = ? and setting = ?', '__president', 'remote_backup_lock')->hashes->[0];
+		my $lock_row = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_backup_lock')->hashes->[0];
 		&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => '' }) if ($lock_row->{'value'} || '') eq $backup_lock;
 	}
 	&subs::sync_job_step($job, 'export', { state => 'done', current => 1, total => 1 }) if $job;
