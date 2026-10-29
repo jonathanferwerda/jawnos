@@ -27700,22 +27700,23 @@ sub nightly_evaluation_reconcile {
 				next unless $interval;
 				my $key = 'eval:' . $app;
 				my $row = eval { &subs::db_select('ai_jobs', undef, { job => $key })->hashes->[0] };
+				my $dead_own = 0;
 				if ($row && (($row->{'at'} || 0) + 0) > ($now_ms - 30 * 60 * 1000)) {
 					# A claim this machine left behind before the last boot is not a
 					# live run; a crashed night must not block its own catch-up.
-					my $boot = $boot_ms;
-					my $dead_own = $boot
+					$dead_own = $boot_ms
 						&& (($row->{'owner'} // '') eq &subs::ai_house_me())
 						&& (($row->{'state'} // '') eq 'running')
-						&& (($row->{'at'} || 0) + 0) < $boot;
+						&& (($row->{'at'} || 0) + 0) < $boot_ms;
 					next unless $dead_own;
 				}
 				my $report = eval { decode_json(&subs::setting_grabber({ app => $app, setting => 'evaluation_report' }) || '') } || {};
 				my $last = ($report->{'timestamp'} || 0) + 0;
 				next if $last && ($now_ms - $last) < $interval * 1.15;
 				# one machine queues the catch-up: the same election the job uses,
-				# so a ready phone and a ready laptop do not both enqueue every scope
-				my $chosen = eval { &subs::ai_job_runner($key, 10 * 60 * 1000, 1, 0) };
+				# so a ready phone and a ready laptop do not both enqueue every scope.
+				# A dead claim of our own is not a live runner, so we queue it ourselves.
+				my $chosen = $dead_own ? &subs::ai_house_me() : eval { &subs::ai_job_runner($key, 10 * 60 * 1000, 1, 0) };
 				next unless defined $chosen && $chosen eq &subs::ai_house_me();
 				# the five-minute reconcile must not queue the same catch-up again
 				# while the first one is still waiting behind the worker's delay; hold
