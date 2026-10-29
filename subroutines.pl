@@ -25928,6 +25928,9 @@ sub ai_providers() {
 			models => [ qw/deepseek-flash deepseek-v4-pro/ ] },
 		{ id => 'mistral',    label => 'Mistral',               keys => [ [ 'mistral_key', 'API key' ] ],
 			models => [ qw/mistral-large-latest mistral-small-latest codestral-latest/ ] },
+		{ id => 'cohere',     label => 'Cohere',                keys => [ [ 'cohere_key', 'API key' ] ],
+			# compatibility API chat ids; check /models before bumping
+			models => [ qw/command-a-plus-05-2026 command-a-03-2025/ ] },
 		{ id => 'groq',       label => 'Groq',                  keys => [ [ 'groq_key', 'API key' ] ],
 			models => [ qw/llama-3.3-70b-versatile llama-3.1-8b-instant mixtral-8x7b-32768 whisper-large-v3-turbo playai-tts/ ] },
 		{ id => 'openrouter', label => 'OpenRouter',            keys => [ [ 'openrouter_key', 'API key' ] ],
@@ -26034,7 +26037,7 @@ sub ai_model_provider {
 	# a peer's own Ollama: @<device>/<model>, so a model can be picked by the
 	# machine that runs it
 	return 'ollama_remote' if $model =~ /^\@[^\/]+\/.+$/;
-	return $1 if $model =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter deepseek/;
+	return $1 if $model =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek/;
 	return 'ollama';
 }
 
@@ -26272,7 +26275,7 @@ sub ai_chat_raw {
 	if ($model =~ /^\@cf/) { ($provider, $real) = ('cloudflare', $model); }
 	elsif ($model =~ /^\@([^\/]+)\/(.+)$/) { ($provider, $real) = ('ollama_remote', $2); }
 	elsif ($model =~ /^([a-z]+):(.+)$/) {
-		if (grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter deepseek/) { ($provider, $real) = ($1, $2); }
+		if (grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek/) { ($provider, $real) = ($1, $2); }
 	}
 
 	my $system = '';
@@ -26335,14 +26338,16 @@ sub ai_chat_raw {
 			openai => 'https://api.openai.com/v1/chat/completions',
 			xai => 'https://api.x.ai/v1/chat/completions',
 			mistral => 'https://api.mistral.ai/v1/chat/completions',
+			cohere => 'https://api.cohere.ai/compatibility/v1/chat/completions',
 			groq => 'https://api.groq.com/openai/v1/chat/completions',
 			openrouter => 'https://openrouter.ai/api/v1/chat/completions',
 			deepseek => 'https://api.deepseek.com/chat/completions',
 		);
-		my %key = ( openai => 'openai_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
+		my %key = ( openai => 'openai_key', xai => 'xai_key', mistral => 'mistral_key', cohere => 'cohere_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
 		$url = $ep{$provider};
 		$headers = { 'Authorization' => 'Bearer ' . $secret->($settings->{ $key{$provider} }), 'Content-Type' => 'application/json' };
-		$payload = { model => $real, messages => [ { role => 'system', content => $system }, @wire ], stream => \0 };
+		my $system_role = ($provider eq 'cohere') ? 'developer' : 'system';
+		$payload = { model => $real, messages => [ { role => $system_role, content => $system }, @wire ], stream => \0 };
 	}
 
 	# Thinking effort (none/low/high/max): a hint each provider reads its own way.
@@ -26364,6 +26369,10 @@ sub ai_chat_raw {
 		}
 		elsif ($provider eq 'openrouter') {
 			$payload->{'reasoning'} = { effort => ($level eq 'max' ? 'high' : $level) };
+		}
+		elsif ($provider eq 'cohere') {
+			# the compatibility API knows only none and high; low is left off
+			$payload->{'reasoning_effort'} = 'high' if $level eq 'high' || $level eq 'max';
 		}
 		else {
 			# the OpenAI-compatible crowd reads reasoning_effort (high is every
@@ -26655,7 +26664,7 @@ sub evaluation_model_available {
 		return 0;
 	}
 	if ($provider ne 'ollama') {
-		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
+		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', cohere => 'cohere_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
 		my $setting = $key{$provider};
 		return 0 unless $setting;
 		my $settings = &subs::settings_grabber({ app => 'mail', settings => [ $setting ] });
