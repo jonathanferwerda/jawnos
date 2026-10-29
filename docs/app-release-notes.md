@@ -40,6 +40,45 @@ under a dated heading; older sections stay as history.
   leaves the app, and closing the only window would strand the view on the
   desktop the manager hides.
 
+## 2026-10-28 — the vault fills a whole form, and the keyboard fits its window
+
+- **One keyboard, not two.** The input method now loads the manager's own
+  `/manager/keyboard/ime` page - the same `soft_keyboard` fragment and script
+  the dock uses - so the layouts, shift, calculator, symbol page, magnified key,
+  hold-to-delete and conversion row cannot drift apart. It signs in with the
+  app's session (or the saved ticket), and falls back to the bundled keyboard
+  when the house is unreachable, retrying the manager page on the next field
+  once it is back. On a house with app access enforced it waits for the JawnOS
+  app's own sign-in and keeps the bundled keyboard usable until then.
+- **The keyboard fits its window.** Its WebView is the dock's height above the
+  system navigation strip, so the last key row is no longer behind the gesture
+  bar and the focus machinery cannot scroll the page away from the keys. The
+  fallback keyboard fills its window too.
+- **Dictation in the keyboard.** The microphone is offered in the input method,
+  not only the dock: it uses the manager's own `getUserMedia` +
+  `/manager/dictate` pipeline, and the phrase lands in the focused Android
+  editor through the same insert path as the keys.
+- **The vault.** The house gains a `credentials` table - the non-secret scope
+  (app, origin, kind, label, hints) beside a payload sealed with the house key -
+  and it syncs with the house like any other record. The keyboard bar's key
+  fills the focused field from a saved entry, or opens a save drawer typed into
+  with the keyboard's own keys; the Manager dock fills every field in the same
+  form. Entries are offered only to their site or app package and are refused
+  while the house is padlocked.
+- **Android autofill.** `JawnAutofillService` is the other half: Android hands
+  it a whole screen's form and a page's domain, so one dataset fills the
+  username and password together in Chrome and other apps, and the system save
+  prompt files a new password (Chrome keeps its own manager and never asks the
+  service to save). It talks to the manager over loopback with the app's
+  session and trusts the house certificate for that host only. A browser's
+  native toolbar has no web domain and is never offered the password. Enable it
+  once from the dashboard's Keyboard card.
+- **Home icons.** The clothesline and the JawnOS row now take each app's picture
+  from `/apps/icon` - the person's main image, else the active icon set's glyph
+  - cached for a minute so the ten-second poll does not refetch. Android cannot
+  decode the sets' SVG, so those are served as PNG; an app with no icon keeps
+  the initial-in-a-colour-circle tile.
+
 ## 2026-10-27 — Home NFC, named Recents cards, Browser + Search, and the JawnOS keyboard
 
 - **Home NFC.** The home screen reads NFC tags through Android's reader mode and
