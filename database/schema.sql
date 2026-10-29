@@ -19,7 +19,7 @@ item LONGTEXT,
 server_time VARCHAR(500),
 file LONGTEXT,
 device VARCHAR(255)
-, project VARCHAR(500), pos VARCHAR(25), club VARCHAR(500), warranty varchar(500), source VARCHAR(25), formulas LONGTEXT, position VARCHAR(25), toggle bool, uuid VARCHAR(255) unique, ticket_uuid VARCHAR(255) unique, browser_tab_id VARCHAR(500), seen VARCHAR(5), model LONGTEXT, option LONGTEXT, movement VARCHAR(25), aux VARCHAR(25), aux_description VARCHAR(500), state VARCHAR(25), has_tax VARCHAR(5), has_totes VARCHAR(5), ost VARCHAR(25), balance VARCHAR(25), measures LONGTEXT, manufacturer LONGTEXT, encryption_standard VARCHAR(25), options LONGTEXT, source_uuid VARCHAR(255), currency VARCHAR(10), stop_seen VARCHAR(5), stop_timestamp VARCHAR(255), duties LONGTEXT, next_duty VARCHAR(255), subtype VARCHAR(255), app_uuid VARCHAR(255));
+, project VARCHAR(500), pos VARCHAR(25), club VARCHAR(500), warranty varchar(500), source VARCHAR(25), formulas LONGTEXT, position VARCHAR(25), toggle bool, uuid VARCHAR(255) unique, ticket_uuid VARCHAR(255) unique, browser_tab_id VARCHAR(500), seen VARCHAR(5), model LONGTEXT, option LONGTEXT, movement VARCHAR(25), aux VARCHAR(25), aux_description VARCHAR(500), state VARCHAR(25), has_tax VARCHAR(5), has_totes VARCHAR(5), ost VARCHAR(25), balance VARCHAR(25), measures LONGTEXT, manufacturer LONGTEXT, encryption_standard VARCHAR(25), options LONGTEXT, source_uuid VARCHAR(255), currency VARCHAR(10), stop_seen VARCHAR(5), stop_timestamp VARCHAR(255), duties LONGTEXT, next_duty VARCHAR(255), subtype VARCHAR(255), app_uuid VARCHAR(255), autostop VARCHAR(10));
 CREATE TABLE "backups" (
 timestamp LONGTEXT,
 server_time LONGTEXT,

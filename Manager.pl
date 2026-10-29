@@ -27080,6 +27080,24 @@ post '/manager/delete_duty' => sub($c) {
 	$c->render(json => { duuid => $duuid });
 };
 
+# The Autostop bar on a running appointment. Only the open session can carry it:
+# a stopped or older row is history and must not be taught a new plate rule.
+# 'off' is the only value worth storing - an absent column means on, so the
+# default stays on for every row written before this existed.
+post '/manager/appointment/autostop' => sub($c) {
+	my $app = &subs::unformat_name($c->param('app'));
+	my $uuid = $c->param('uuid');
+	my $value = ($c->param('value') || '') eq 'off' ? 'off' : 'on';
+
+	return $c->render(json => { error => 'no app or session' }) unless $app && $uuid;
+	my $open = &subs::db_query('select uuid from appointments where app=? and uuid=? and (type=? or type=?) and stop_seen is null limit 1',
+		$app, $uuid, 'start', 'record')->hashes->[0];
+	return $c->render(json => { error => 'not running' }) unless $open;
+
+	&subs::db_update('appointments', { autostop => $value, server_time => &subs::rightNow() }, { app => $app, uuid => $uuid });
+	$c->render(json => { uuid => $uuid, autostop => $value });
+};
+
 post '/manager/configure/home_plate/save' => sub($c) {
 	my $app = $c->param('app');
 	my $uuid = $c->param('uuid');
@@ -47127,6 +47145,9 @@ sub update_database($data) {
 		# it can change and two houses can use the same label. Filled from the
 		# canonical construct_uuid setting on every new row.
 		'alter table appointments add column app_uuid VARCHAR(255)',
+		# The details bar can turn off the plate's automatic stop for the session
+		# that is running; an unset value means on, which is every older row.
+		'alter table appointments add column autostop VARCHAR(10)',
 		'alter table mailbox add column sender VARCHAR(25)',
 		'alter table mailbox add column email_server VARCHAR(255)',
 		# schema.sql has carried these two for a while, but the migration list

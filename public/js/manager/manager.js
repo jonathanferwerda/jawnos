@@ -3177,6 +3177,35 @@ $(document).on('click', '.delete_duty', function() {
 	}
 });
 
+// Autostop on a running appointment: ticked means the home plate stops it when
+// left, unticked leaves it running for a hand stop. The box is put back the way
+// it was when the write is refused, so the bar never lies about the session.
+$(document).on('change', '.appointment_autostop', function() {
+	var a = $(this);
+	var app = a.attr('app');
+	var uuid = a.attr('uuid');
+	var value = a.prop('checked') ? 'on' : 'off';
+	a.prop('disabled', true);
+	$.ajax({
+		url: '/manager/appointment/autostop',
+		type: 'POST',
+		data: { app: app, uuid: uuid, value: value },
+		success: function(response) {
+			a.prop('disabled', false);
+			if (!response || !response.autostop) {
+				a.prop('checked', !a.prop('checked'));
+				return;
+			}
+			a.prop('checked', response.autostop != 'off');
+			a.closest('.appointment_autostop_bar').attr('autostop', response.autostop);
+		},
+		error: function() {
+			a.prop('disabled', false);
+			a.prop('checked', !a.prop('checked'));
+		}
+	});
+});
+
 $(document).on('click', '.download', function() {
 	var d = $(this);
 	var file = d.attr('file');

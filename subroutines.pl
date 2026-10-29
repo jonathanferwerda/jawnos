@@ -17257,28 +17257,37 @@ sub navigation_automation() {
 							# to stop (a near first fix may already have closed the session).
 							&subs::navigation_plate_exit_set($app, $duty_key, 1) if $certain_exit;
 							if ($tog eq 'on') {
-								my $stoppable = 0;
-								my $lappts = &subs::db_query('select uuid,app,type,subtype,timestamp,server_time from appointments where app=? and (type = ? or type =?) and timestamp < ?', $app, 'start','record',$returner->{'timestamp'})->hashes;
+								my $stop_uuid;
+								# Newest first, so the session the person is running is the one
+								# the plate considers before any older open row.
+								my $lappts = &subs::db_query('select uuid,app,type,subtype,timestamp,server_time,autostop from appointments where app=? and (type = ? or type =?) and stop_seen is null and timestamp < ? order by timestamp desc', $app, 'start','record',$returner->{'timestamp'})->hashes;
 								foreach my $lappt ( @{$lappts} ) {
+									# The details bar can switch autostop off for this run: the
+									# plate must leave the session alone for a hand stop.
+									next if (($lappt->{'autostop'} || '') eq 'off');
 									# an appointment the navigation itself started was started
 									# here, so leaving the plate closes it; a hand-started one
 									# still needs a recorded in-plate fix before it is touched
 									if ($lappt->{'subtype'} eq 'navigation') {
-										$stoppable = 1;
-										next;
+										$stop_uuid = $lappt->{'uuid'};
+										last;
 									}
 									my $locals = &subs::db_query('select * from continent where app=? and uuid like ? and signatorial=?', $app, $lappt->{'uuid'} . '%',$signatorial)->hashes;
 									foreach my $local ( @{$locals} ) {
 										my @visitor = (deg2rad($local->{'longitude'}), deg2rad(90 - $local->{'latitude'}));
 										my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $gb::planet_radius));
 										if ($distance <= $hp->{'distance'}) {
-											$stoppable = 1;
+											$stop_uuid = $lappt->{'uuid'};
+											last;
 										}
 									}
+									last if $stop_uuid;
 								}
-								if ($stoppable == 1) {
+								if ($stop_uuid) {
 									$hpdata->{'type'} = 'stop';
-									undef $hpdata->{'uuid'};
+									# Name the row the plate checked, so the stop closes exactly it
+									# rather than whichever open session is newest.
+									$hpdata->{'uuid'} = $stop_uuid;
 									$actable = 1;
 									$cactable = 1;
 									&subs::navigation_plate_exit_set($app, $duty_key, $certain_exit);
@@ -17295,28 +17304,33 @@ sub navigation_automation() {
 						}
 						else {
 							if ($tog eq 'on') {
-								my $stoppable = 0;
-								my $lappts = &subs::db_query('select uuid,app,type,subtype,timestamp,server_time from appointments where app=? and (type = ? or type =?) and timestamp < ?', $app, 'start','record',$returner->{'timestamp'})->hashes;
+								my $stop_uuid;
+								my $lappts = &subs::db_query('select uuid,app,type,subtype,timestamp,server_time,autostop from appointments where app=? and (type = ? or type =?) and stop_seen is null and timestamp < ? order by timestamp desc', $app, 'start','record',$returner->{'timestamp'})->hashes;
 								foreach my $lappt ( @{$lappts} ) {
+									# Autostop off on the details bar keeps this run alive past
+									# the plate; the person will stop it by hand.
+									next if (($lappt->{'autostop'} || '') eq 'off');
 									# an appointment the navigation itself started was started
 									# here, so leaving the plate closes it; a hand-started one
 									# still needs a recorded in-plate fix before it is touched
 									if ($lappt->{'subtype'} eq 'navigation') {
-										$stoppable = 1;
-										next;
+										$stop_uuid = $lappt->{'uuid'};
+										last;
 									}
 									my $locals = &subs::db_query('select * from continent where app=? and uuid like ? and signatorial=?', $app, $lappt->{'uuid'} . '%',$signatorial)->hashes;
 									foreach my $local ( @{$locals} ) {
 										my @visitor = (deg2rad($local->{'longitude'}), deg2rad(90 - $local->{'latitude'}));
 										my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $gb::planet_radius));
 										if ($distance >= $hp->{'distance'}) {
-											$stoppable = 1;
+											$stop_uuid = $lappt->{'uuid'};
+											last;
 										}
 									}
+									last if $stop_uuid;
 								}
-								if ($stoppable == 1) {
+								if ($stop_uuid) {
 									$hpdata->{'type'} = 'stop';
-									undef $hpdata->{'uuid'};
+									$hpdata->{'uuid'} = $stop_uuid;
 									$actable = 1;
 									$cactable = 1;
 								}
