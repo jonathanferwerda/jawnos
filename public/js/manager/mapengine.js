@@ -23,19 +23,29 @@ window.jawnosMap = (function () {
 
 	// A provider is just an XYZ template plus its zoom range and credit. Add any
 	// service that speaks {z}/{x}/{y} (ArcGIS image servers use {z}/{y}/{x}).
-	// Google and Apple have no keyless tile endpoint — wire them through their own
-	// SDKs or a keyed URL — so the escape hatch here is "Custom URL" in the UI.
+	// `group` is the picker block: free (no key), key (paste the service's key,
+	// and {key} in the template is filled from it), url (paste a whole URL).
+	// `needs` says which of those two boxes the picker should show.
+	// Google and Apple have no keyless tile endpoint — Google Maps needs the
+	// Maps Tiles API (a key plus a session token, so not a plain template) — so
+	// they are not in this table; use another service, or a keyed URL you hold.
 	var providers = {
-		none:  { name: 'None (offline maps only)', url: null },
-		osm:   { name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors' },
-		topo:  { name: 'OpenTopoMap',   url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', max: 17, credit: '© OpenTopoMap (CC-BY-SA)' },
-		carto: { name: 'Carto Light',   url: 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', max: 20, credit: '© OpenStreetMap, © CARTO' },
-		esri:  { name: 'Esri Imagery',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri, Maxar, Earthstar Geographics' },
+		none:  { name: 'None (offline maps only)', url: null, group: 'none' },
+		osm:   { name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors', group: 'free' },
+		topo:  { name: 'OpenTopoMap',   url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', max: 17, credit: '© OpenTopoMap (CC-BY-SA)', group: 'free' },
+		carto: { name: 'Carto Light',   url: 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', max: 20, credit: '© OpenStreetMap, © CARTO', group: 'free' },
+		esri:  { name: 'Esri Imagery',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri, Maxar, Earthstar Geographics', group: 'free' },
+		// keyed services: pick one, paste the key it gives you, and the URL is made
+		// here — no need to assemble a template by hand
+		maptiler: { name: 'MapTiler', url: 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key={key}', max: 20, credit: '© MapTiler © OpenStreetMap', group: 'key', needs: 'key' },
+		mapbox: { name: 'Mapbox', url: 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token={key}', max: 20, credit: '© Mapbox © OpenStreetMap', group: 'key', needs: 'key' },
+		stadia: { name: 'Stadia Maps', url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png?api_key={key}', max: 20, credit: '© Stadia Maps © OpenStreetMap', group: 'key', needs: 'key' },
+		thunderforest: { name: 'Thunderforest', url: 'https://tile.thunderforest.com/cycle/{z}/{x}/{y}.png?apikey={key}', max: 22, credit: '© Thunderforest © OpenStreetMap', group: 'key', needs: 'key' },
 		// Lambton (or any county) GIS: paste the service's tile template here. Most
 		// ArcGIS REST services are .../MapServer/tile/{z}/{y}/{x} — note y before x.
-		lambton: { name: 'Lambton GIS', url: null, max: 19, credit: 'County of Lambton' },
+		lambton: { name: 'Lambton / county GIS', url: null, max: 19, group: 'url', needs: 'url' },
 		// any other service: paste its {z}/{x}/{y} template into the box next to this picker
-		custom: { name: 'Custom URL', url: null }
+		custom: { name: 'Custom URL', url: null, group: 'url', needs: 'url' }
 	};
 
 	// Web Mercator, in tiles and in world pixels at a given zoom.
@@ -84,6 +94,7 @@ window.jawnosMap = (function () {
 		var here = null;      // the current position { lat, lon, accuracy }
 		var providerKey = opts.provider || 'none';
 		var customUrl = opts.customUrl || '';
+		var apiKey = opts.key || '';
 		var tileCache = {};   // url -> Image (loaded) or true (loading) or null (failed)
 		var tileCount = 0;    // loaded tiles held; the cache is dropped past a cap
 		var imageCache = {};  // map file url -> loaded Image, so a refresh reuses it
@@ -132,6 +143,11 @@ window.jawnosMap = (function () {
 			// a provider with no baked-in URL (Lambton, or Custom) draws from the paste box
 			var tpl = (p && p.url) ? p.url : customUrl;
 			if (!tpl) { return null; }
+			// a keyed service draws nothing until its key is given
+			if (tpl.indexOf('{key}') >= 0) {
+				if (!apiKey) { return null; }
+				tpl = tpl.replace(/\{key\}/g, encodeURIComponent(apiKey));
+			}
 			return tpl.replace(/\{z\}/g, z).replace(/\{x\}/g, x).replace(/\{y\}/g, y);
 		}
 
@@ -294,7 +310,7 @@ window.jawnosMap = (function () {
 			drawMaps(o, dim.w, dim.h, view.z);
 			drawMarkers(o, dim.w, dim.h, view.z);
 			var p = providers[providerKey];
-			var credit = (providerKey === 'custom') ? 'Custom URL' : (p && p.credit);
+			var credit = (p && p.url) ? p.credit : ((p && p.needs === 'url') ? 'Custom tile service' : null);
 			if (credit) {
 				ctx.font = '11px Arial';
 				ctx.textAlign = 'right';
@@ -550,11 +566,13 @@ window.jawnosMap = (function () {
 			zoom: zoomBy,
 			setZoom: function (z) { view.z = Math.max(2, Math.min(21, z)); draw(); },
 			center: function (lat, lon) { view.lat = lat; view.lon = lon; draw(); },
-			setProvider: function (key, url) {
+			setProvider: function (key, url, mapKey) {
 				var nextUrl = (url === undefined || url === null) ? customUrl : url;
-				if (key === providerKey && nextUrl === customUrl) { return; }
+				var nextKey = (mapKey === undefined || mapKey === null) ? apiKey : mapKey;
+				if (key === providerKey && nextUrl === customUrl && nextKey === apiKey) { return; }
 				providerKey = key;
 				customUrl = nextUrl;
+				apiKey = nextKey;
 				tileCache = {};
 				tileCount = 0;
 				draw();

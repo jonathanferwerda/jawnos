@@ -66,15 +66,42 @@ function travelMapEngine() {
 }
 
 // Fill the provider picker from the engine's own table, so the two cannot drift.
+// The services are grouped by what they ask for: the free ones need nothing,
+// the keyed ones want a key pasted, the rest want a whole tile URL.
 function travelProviderFill() {
 	var sel = $('.travel_provider');
 	if (!sel.length || sel.attr('filled') == 'yes' || !window.jawnosMap) { return; }
 	sel.attr('filled', 'yes');
 	var engines = window.jawnosMap.providers;
+	var labels = { free: 'Built in — no key needed', key: 'Needs your key', url: 'Needs a tile URL' };
+	var holders = {};
 	for (var key in engines) {
-		$('<option></option>').attr('value', key).text(engines[key].name).appendTo(sel);
+		var p = engines[key];
+		var group = p.group || 'url';
+		if (group === 'none') {
+			$('<option></option>').attr('value', key).text(jawnosT(p.name)).appendTo(sel);
+			continue;
+		}
+		if (!holders[group]) { holders[group] = $('<optgroup></optgroup>').attr('label', jawnosT(labels[group] || group)).appendTo(sel); }
+		$('<option></option>').attr('value', key).text(jawnosT(p.name)).appendTo(holders[group]);
 	}
 	sel.val(sel.attr('provider') || 'none');
+	travelProviderFields();
+}
+
+// Show only the box the chosen service actually needs, and say what the map is
+// waiting for when it needs something the house does not have yet.
+function travelProviderFields() {
+	var sel = $('.travel_provider');
+	var p = (window.jawnosMap && window.jawnosMap.providers) ? window.jawnosMap.providers[sel.val()] : null;
+	var needs = p && p.needs;
+	$('#travel_map_key_wrap').toggle(needs === 'key');
+	$('#travel_map_url_wrap').toggle(needs === 'url');
+	var status = $('#travel_map_status');
+	if (!status.length) { return; }
+	if (needs === 'key' && !$.trim($('#travel_map_key').val())) { status.text(jawnosT('paste the key this service gave you')); }
+	else if (needs === 'url' && !$.trim($('#travel_custom_url').val())) { status.text(jawnosT('paste the service\'s tile URL')); }
+	else { status.text(''); }
 }
 
 function travelMapRender(response) {
@@ -82,7 +109,7 @@ function travelMapRender(response) {
 	travelProviderFill();
 	var engine = travelMapEngine();
 	if (!engine) { return; }
-	engine.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val());
+	engine.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val(), $('#travel_map_key').val());
 	engine.setMaps(response['all_maps'] || []);
 
 	// a guessed gap is a kept picture, not a picker entry: the newest one is named
@@ -477,13 +504,22 @@ $(document).on('click', '.delete_travel_map', function() {
 $(document).on('change', '.travel_provider', function() {
 	var value = $(this).val();
 	settingSetter({ 'app': 'travel', 'setting': 'map_provider', 'value': value });
-	if (travelMap) { travelMap.setProvider(value, $('#travel_custom_url').val()); }
+	travelProviderFields();
+	if (travelMap) { travelMap.setProvider(value, $('#travel_custom_url').val(), $('#travel_map_key').val()); }
 });
 
 $(document).on('change', '#travel_custom_url', function() {
 	var value = $(this).val();
 	settingSetter({ 'app': 'travel', 'setting': 'map_custom_url', 'value': value });
-	if (travelMap) { travelMap.setProvider($('.travel_provider').val() || 'none', value); }
+	travelProviderFields();
+	if (travelMap) { travelMap.setProvider($('.travel_provider').val() || 'none', value, $('#travel_map_key').val()); }
+});
+
+$(document).on('change', '#travel_map_key', function() {
+	var value = $(this).val();
+	settingSetter({ 'app': 'travel', 'setting': 'map_key', 'value': value });
+	travelProviderFields();
+	if (travelMap) { travelMap.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val(), value); }
 });
 
 $(document).on('click', '#travel_config_toggle', function() {

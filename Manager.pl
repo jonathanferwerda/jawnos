@@ -34573,7 +34573,8 @@ get '/manager/travel/continent' => sub($c) {
 		home_plates => $home_plates,
 		here => $here,
 		provider => $settings->{'map_provider'} || 'none',
-		custom_url => $settings->{'map_custom_url'} || ''
+		custom_url => $settings->{'map_custom_url'} || '',
+		key => $settings->{'map_key'} || ''
 	});
 };
 
