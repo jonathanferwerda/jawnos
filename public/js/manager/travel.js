@@ -522,8 +522,21 @@ $(document).on('click', '.delete_location', function() {
 			type: 'POST',
 			data: { uuid: uuid, server_time: server_time },
 			success:function(response) {
-
+				var detail = a.closest('.appointment_detail');
 				$('.appointment_distance_container[uuid="' + response.uuid + '"]').remove();
+				// the Dist map keeps its own copy of the fixes; drop the deleted one so
+				// a map opened afterwards does not draw a point that is gone
+				var data = detail.find('.appointment_distance_data');
+				if (data.length) {
+					var parsed = {};
+					try { parsed = JSON.parse(data.text() || '{}') || {}; } catch (e) { parsed = {}; }
+					if (parsed.points) {
+						parsed.points = $.grep(parsed.points, function(p) { return p.uuid != response.uuid; });
+						data.text(JSON.stringify(parsed));
+					}
+				}
+				var panel = detail.find('.appointment_distance_panel');
+				if (panel.length && panel.find('.appointment_dist_view').val() != 'fixes') { appointmentDistShow(panel); }
 			}
 		});
 	}

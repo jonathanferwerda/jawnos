@@ -192,36 +192,54 @@
 				</span>
 			<% } %>
 			<% if ($l->{'distance'}) { %>
-				<table class="appointment_list" list="distance" style="display:none;width:100%;">
-					<thead>
-						<th>Home Dist</th><th>Dist</th><th>Inc</th><th>Speed</th><th>Time</th><th>Del</th>
-					</thead>
-					<tbody>
-						<% foreach my $d ( @{$l->{'distance'}} ) { %>
-							<tr class="appointment_distance_container" uuid="<%= $d->{'uuid'} %>" server_time="<%= $d->{'server_time'} %>">
-								<td class=""><%= sprintf("%.3F", $d->{'home_distance'}) %>km</td>
-								<td class="appointment_distance hover" app="<%= $a %>" app_uuid="<%= $l->{'uuid'} %>" uuid="<%= $d->{'uuid'} %>">
-									<%= sprintf("%.3F", $d->{'distance'}) %>km
-								</td>
-								<td><%= $d->{'increment_distance'} %>km</td>
-								<td><%= $d->{'increment_speed'} %>km/h</td>
-								<td class="time" timestamp="<%= $d->{'timestamp'} %>"></td>
-								<td>
-									<img class="tiny_thumb delete_location hover" server_time="<%= $server_time %>" uuid="<%= $d->{'uuid'} %>" src="<%= &subs::icon_path('trash', '/icons/trash.png') %>" hint="Delete"><br>
-								</td>
-							</tr>
-						<% } %>
-					</tbody>
-				</table>
-			<% } %>
-			<% if (($l->{'type'} eq 'start' || $l->{'type'} eq 'record') && !$l->{'stop_seen'} && !$l->{'stop_timestamp'}) { %>
-				<div class="appointment_autostop_bar" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>" autostop="<%= (($l->{'autostop'} || 'on') eq 'off') ? 'off' : 'on' %>"
-					style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:6px 8px;margin:6px 0;border:1px solid var(--line);border-radius:8px;background:var(--panel-2,var(--panel));">
-					<label class="appointment_autostop_label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
-						<input type="checkbox" class="appointment_autostop" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>"<% unless (($l->{'autostop'} || 'on') eq 'off') { %> checked<% } %>>
-						<b><%= &subs::lang('autostop') %></b>
-					</label>
-					<span class="appointment_autostop_hint" style="font-size:12px;opacity:.7;"><%= &subs::ui('Stop this appointment when the home plate is left') %></span>
+				<% my $map_home = ($l->{'model'}->{'home_plate'}->{'latitude'} && $l->{'model'}->{'home_plate'}->{'longitude'})
+					? $l->{'model'}->{'home_plate'}
+					: (($settings->{'home_plate'}->{'latitude'} && $settings->{'home_plate'}->{'longitude'}) ? $settings->{'home_plate'} : $main_home_plate); %>
+				<% my @map_points = map { { latitude => $_->{'latitude'} + 0, longitude => $_->{'longitude'} + 0, distance => $_->{'distance'}, timestamp => $_->{'timestamp'}, uuid => $_->{'uuid'} } } grep { $_->{'latitude'} && $_->{'longitude'} } @{$l->{'distance'}}; %>
+				<div class="appointment_list appointment_distance_panel" list="distance" style="display:none;">
+					<div class="appointment_distance_toolbar" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0;">
+						<select class="appointment_dist_view" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>">
+							<option value="fixes"><%= &subs::ui('Fixes') %></option>
+						</select>
+					</div>
+					<span class="appointment_distance_data" style="display:none;"><%= encode_json({ home => { latitude => ($map_home->{'latitude'} // 0) + 0, longitude => ($map_home->{'longitude'} // 0) + 0 }, points => \@map_points }) %></span>
+					<% foreach my $mk ( @{$map_keys || []} ) { %>
+						<input type="hidden" class="appointment_map_key" provider="<%= $mk->{'provider'} %>" value="<%= $mk->{'value'} %>">
+					<% } %>
+					<% if (($l->{'type'} eq 'start' || $l->{'type'} eq 'record') && !$l->{'stop_seen'} && !$l->{'stop_timestamp'}) { %>
+						<div class="appointment_autostop_bar" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>" autostop="<%= (($l->{'autostop'} || 'on') eq 'off') ? 'off' : 'on' %>"
+							style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:6px 8px;margin:6px 0;border:1px solid var(--line);border-radius:8px;background:var(--panel-2,var(--panel));">
+							<label class="appointment_autostop_label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
+								<input type="checkbox" class="appointment_autostop" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>"<% unless (($l->{'autostop'} || 'on') eq 'off') { %> checked<% } %>>
+								<b><%= &subs::lang('autostop') %></b>
+							</label>
+							<span class="appointment_autostop_hint" style="font-size:12px;opacity:.7;"><%= &subs::ui('Stop this appointment when the home plate is left') %></span>
+						</div>
+					<% } %>
+					<table class="appointment_distance_fixes" style="width:100%;">
+						<thead>
+							<th>Home Dist</th><th>Dist</th><th>Inc</th><th>Speed</th><th>Time</th><th>Del</th>
+						</thead>
+						<tbody>
+							<% foreach my $d ( @{$l->{'distance'}} ) { %>
+								<tr class="appointment_distance_container" uuid="<%= $d->{'uuid'} %>" server_time="<%= $d->{'server_time'} %>">
+									<td class=""><%= sprintf("%.3F", $d->{'home_distance'}) %>km</td>
+									<td class="appointment_distance hover" app="<%= $a %>" app_uuid="<%= $l->{'uuid'} %>" uuid="<%= $d->{'uuid'} %>">
+										<%= sprintf("%.3F", $d->{'distance'}) %>km
+									</td>
+									<td><%= $d->{'increment_distance'} %>km</td>
+									<td><%= $d->{'increment_speed'} %>km/h</td>
+									<td class="time" timestamp="<%= $d->{'timestamp'} %>"></td>
+									<td>
+										<img class="tiny_thumb delete_location hover" server_time="<%= $server_time %>" uuid="<%= $d->{'uuid'} %>" src="<%= &subs::icon_path('trash', '/icons/trash.png') %>" hint="Delete"><br>
+									</td>
+								</tr>
+							<% } %>
+						</tbody>
+					</table>
+					<div class="appointment_distance_map" style="display:none;height:320px;position:relative;">
+						<canvas id="appointment_dist_map_<%= &subs::html_name($l->{'uuid'}) %>" class="appointment_dist_canvas" style="width:100%;height:100%;"></canvas>
+					</div>
 				</div>
 			<% } %>
 			<span class="appointment_model_selector_container" attribute="<%= $settings->{'pos'} %>">
