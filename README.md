@@ -27,10 +27,11 @@ reach into the physical world through home-automation hardware and network devic
 
 A few ideas hold the system together:
 
-- **One record type.** An appointment is the atom: a timestamped record with a type, status,
-  duration and a body. Files, invoices, measurements, notes, calls and mail are appointments
+- **One big table, and a few satellites.** An appointment is the atom: a timestamped record with a
+  type, status, duration and a body. Files, invoices, measurements, calls and notes are appointments
   under the hood, which is why they can refer to one another and why one window can gather
-  everything about a record.
+  everything about a record. A few things that are not events — stock moves, mail headers, places and
+  coordinates, reusable models, the encrypted vault — keep their own tables.
 - **One house, many machines.** Every device holds the same software and its own database. Code,
   data, app builds and backups move between them on a "newest wins" rule; a deletion travels as a
   tombstone until every device acknowledges it.
