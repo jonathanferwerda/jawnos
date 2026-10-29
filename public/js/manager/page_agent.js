@@ -24,6 +24,12 @@ function pageAgentApp(panel) {
 // The window the agent is attached to: the panel's own app when it has one,
 // otherwise whatever window is in front.
 function pageAgentRoot(panel) {
+	// the exact window the person pressed the button in, when it is still open
+	var stamp = (panel && panel.data) ? (panel.data('page_window') || '') : '';
+	if (stamp) {
+		var exact = document.getElementById('window_' + String(stamp).replace(/[^0-9]/g, ''));
+		if (exact && $(exact).hasClass('wind') && $(exact).is(':visible')) { return exact; }
+	}
 	var app = pageAgentApp(panel);
 	if (app) {
 		var safe = String(app).replace(/["\\]/g, '\\$&');
@@ -53,11 +59,13 @@ function pageAgentEnable(panel, app, on) {
 	panel.find('.assistant_page_badge').toggle(!!on);
 }
 
-// The title bar's button: add the Guide to this window's page.
-function pageAgentOpen(app) {
+// The title bar's button: add the Guide to this window's page. The timestamp is
+// the window's own id, so two windows of the same app keep their own form.
+function pageAgentOpen(app, timestamp) {
 	if (typeof assistantAppOpen !== 'function') { return; }
 	var panel = assistantAppOpen(app || '');
 	if (!panel || !panel.length) { return; }
+	panel.data('page_window', timestamp || '');
 	pageAgentEnable(panel, app || pageAgentApp(panel), true);
 	assistantOpenPanel(panel);
 	panel.find('.assistant_question').focus();
@@ -85,11 +93,22 @@ function pageAgentLabel(el) {
 	if (!text) { text = $e.attr('aria-label') || ''; }
 	if (!text) { text = $e.attr('placeholder') || ''; }
 	if (!text) { text = $e.attr('title') || ''; }
+	if (!text) { text = $e.attr('hint') || ''; }
+	if (!text) {
+		var hinted = $e.closest('[hint]');
+		if (hinted.length) { text = hinted.attr('hint') || ''; }
+	}
 	if (!text) { text = $e.attr('name') || ''; }
 	if (!text) { text = $e.attr('id') || ''; }
 	if (!text) {
 		var prev = $e.prevAll(':not(script):not(style)').first();
 		if (prev.length) { text = prev.text(); }
+	}
+	if (!text && typeof el.className === 'string') {
+		// a class is the last readable thing: clock_alarm_enabled says more than
+		// an empty label ever will
+		var cls = el.className.trim().split(/\s+/).filter(function (c) { return c && c !== 'hover' && c.indexOf('ui-') !== 0; });
+		if (cls.length) { text = cls[0].replace(/[_-]+/g, ' '); }
 	}
 	text = $.trim(String(text || '')).replace(/\s+/g, ' ');
 	return text.slice(0, 80);
@@ -119,6 +138,7 @@ function pageAgentSnapshot(panel) {
 		$(el).attr('data-page-agent-field', key);
 		var f = { field: key, label: pageAgentLabel(el), type: kind };
 		if (el.id) { f.id = String(el.id).slice(0, 80); }
+		if (typeof el.className === 'string' && el.className.trim()) { f.class = el.className.trim().split(/\s+/).slice(0, 2).join(' ').slice(0, 80); }
 		if (kind === 'select') {
 			var options = [];
 			$(el).find('option').each(function () {
@@ -320,6 +340,11 @@ function pageAgentDo(a, cb) {
 	}
 	// fill
 	var list = a.fields;
+	if (list && typeof list === 'object' && !$.isArray(list)) {
+		var map = [];
+		Object.keys(list).forEach(function (k) { map.push({ field: k, value: list[k] }); });
+		list = map;
+	}
 	if (!$.isArray(list)) {
 		list = [];
 		if (a.field != null) { list.push({ field: a.field, value: a.value }); }
@@ -327,7 +352,7 @@ function pageAgentDo(a, cb) {
 	var filled = [], missed = [];
 	list.forEach(function (row) {
 		if (!row || typeof row !== 'object') { return; }
-		var name = row.field || row.target || row.label || '';
+		var name = row.field || row.target || row.label || row.name || '';
 		var el = pageAgentFindField(root, name);
 		if (!el.length) { missed.push(name); return; }
 		if (el[0].readOnly) { missed.push(name + ' (read only)'); return; }
@@ -348,7 +373,7 @@ function pageAgentDo(a, cb) {
 
 $(document).on('click', '.page_agent_button', function (e) {
 	e.stopPropagation();
-	pageAgentOpen($(this).attr('app') || '');
+	pageAgentOpen($(this).attr('app') || '', $(this).attr('timestamp') || '');
 });
 
 $(document).on('change', '.assistant_page', function () {

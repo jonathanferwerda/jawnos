@@ -764,6 +764,7 @@ function assistantSpawn(source) {
 	clone.attr('id', '').attr('conversation', name).attr('spawned', '1');
 	clone.data('thread', []).data('greeted', 0).data('title', '');
 	clone.removeData('page_app');
+	clone.removeData('page_window');
 	clone.find('.assistant_page').prop('checked', false);
 	clone.find('.assistant_page_badge').hide();
 	clone.find('.assistant_chat_log').empty();
