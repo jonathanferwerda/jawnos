@@ -5,7 +5,7 @@
 	my $informations = $invoices;
 	my $units = &Manager::measures_all();
 	no warnings 'uninitialized';
-	my $has_models = scalar @{$appts->{$a}->{'model'}} > 0;
+	my $has_models = scalar @{$appts->{$a}->{'model'} || []} > 0;
 	foreach my $i ( @{$informations} ) {
 		$i->{'data'} = eval { return decode_json $i->{'data'} } || {};
 	}

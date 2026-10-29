@@ -8,7 +8,7 @@
 	</select>
 	<% if ($appts->{$a}->{'models'} != undef) { %>
 		<select name="model" class="model purchase_input app_setting" app="<%= $a %>" attribute="model">
-			<% foreach my $mod ( @{$appts->{$a}->{'models'}}) { %>
+			<% foreach my $mod ( @{$appts->{$a}->{'models'} || []}) { %>
 				<option value="<%= $mod->{'uuid'} %>" <% if ($app->{'model'} eq $mod->{'uuid'}) { %>selected<% } %>><%= &subs::format_name($mod->{'name'}) %></option>
 			<% } %>
 		</select>

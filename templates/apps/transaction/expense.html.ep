@@ -5,7 +5,7 @@
 	my $informations = $purchases;
 	my $units = &Manager::measures_all();
 	no warnings 'uninitialized';
-	my $has_models = scalar @{$appts->{$a}->{'model'}} > 0;
+	my $has_models = scalar @{$appts->{$a}->{'model'} || []} > 0;
 %>
 <div class="tx_line_body">
 
