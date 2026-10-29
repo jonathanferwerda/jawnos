@@ -35908,7 +35908,7 @@ post '/manager/help/act' => sub($c) {
 			push @page_buttons, $clean->($b->{'target'}, 20) . (length $label ? ' "' . $label . '"' : '') . (length $hint ? ' (' . $hint . ')' : '');
 		}
 		$system .= 'Buttons (use these exact keys in "target"): ' . join('; ', @page_buttons) . "\n" if @page_buttons;
-		$system .= "Fill only from the person's words, this conversation or their records - never invent a value. Never fill a password, and never press a send or pay button. After a fill, say what changed and stop unless they asked for it to be sent.\n";
+		$system .= "Fill only from the person's words, this conversation or their records - never invent a value. Never fill a password, and never press a send, pay or delete button. After a fill, say what changed and stop unless they asked for it to be sent.\n";
 	}
 	my @lines;
 	foreach my $m ( @{$transcript} ) {

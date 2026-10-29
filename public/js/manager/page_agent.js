@@ -225,6 +225,8 @@ function pageAgentSet(el, value) {
 	var $e = $(el);
 	var kind = pageAgentKind(el);
 	value = (value == null) ? '' : String(value);
+	// a password is never written by the agent, whatever the model asks
+	if (kind === 'password') { return false; }
 	if (kind === 'checkbox') {
 		var on = /^(1|true|yes|on|checked)$/i.test($.trim(value));
 		if ($e.prop('checked') !== on) { $e.prop('checked', on).trigger('change'); }
@@ -317,6 +319,14 @@ function pageAgentDo(a, cb) {
 		var button = pageAgentFindButton(root, target);
 		if (!button.length) { cb('I could not find a button called "' + target + '" on this page.'); return; }
 		var press_label = $.trim(button.text() || button.val() || target).slice(0, 60);
+		var press_hint = button.attr('hint') || button.attr('title') || '';
+		// A page button acts at once, so the page cannot stage a send, a payment
+		// or a delete the way the Guide's own verbs do. Refuse those in code, not
+		// only in the prompt.
+		if (/\b(send|pay|buy|purchase|checkout|transfer|withdraw|donate|subscribe|delete|remove)\b/i.test(press_label + ' ' + press_hint)) {
+			cb('I will not press "' + press_label + '" - sending, paying and deleting are not mine to do. I can fill the form, or press its save button instead.');
+			return;
+		}
 		button.trigger('click');
 		setTimeout(function () { cb('Pressed "' + press_label + '".'); }, 250);
 		return;
