@@ -27054,6 +27054,9 @@ get '/manager/appointment_details' => sub($c) {
 		options => $options,
 		option_categories => $option_categories,
 		map_keys => $map_keys,
+		# the template's map fallback draws the house's own home plate when neither
+		# the model nor the app has one, so hand it the decoded plate
+		main_home_plate => $main_home_plate,
 		device => $device,
 		remote_machines => &subs::db_select('remote_machines', undef, { connection => 'active' })->hashes
 	);
