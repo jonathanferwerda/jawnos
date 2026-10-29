@@ -36032,6 +36032,62 @@ get '/manager/help/find' => sub($c) {
 	$c->render(json => help_search($c->param('q') // '', &media_unlock_device($c)));
 };
 
+# A value the person already keeps in this house, for the page agent to fill in:
+# their own contact fields and notes from the appointments log, notes and mail.
+# Only rows whose app the visibility rule shows here are read, and credentials,
+# settings and device tables are never touched, so a lookup cannot hand a model
+# a secret. The words searched are the person's own.
+get '/manager/help/lookup' => sub($c) {
+	my $q = $c->param('q') // '';
+	$q =~ s/^\s+|\s+$//g;
+	if (length($q) < 2) {
+		$c->render(json => { ok => 0, rows => [], error => 'Give me a word to look up.' });
+		return;
+	}
+	my $device = &media_unlock_device($c);
+	my $like = '%' . join('%', split /\s+/, $q) . '%';
+	my $clean = sub {
+		my ($v) = @_;
+		return '' unless defined $v;
+		$v = "$v";
+		$v =~ s/\s+/ /g;
+		$v =~ s/^\s+|\s+$//g;
+		return substr($v, 0, 500);
+	};
+	my @rows;
+	my $appts = eval { &subs::db_query("select app, notes, phone, email, timestamp from appointments where app like ? or notes like ? or phone like ? or email like ? order by timestamp desc limit 12", $like, $like, $like, $like)->hashes } || [];
+	foreach my $r ( @{$appts} ) {
+		next unless &help_app_visible($r->{'app'}, $device);
+		next if &subs::appointment_private_now($r);
+		my @bits;
+		push @bits, 'phone ' . $clean->($r->{'phone'}) if length($r->{'phone'} // '');
+		push @bits, 'email ' . $clean->($r->{'email'}) if length($r->{'email'} // '');
+		push @bits, 'note ' . $clean->($r->{'notes'}) if length($r->{'notes'} // '');
+		next unless @bits;
+		push @rows, { source => 'appointment', app => $r->{'app'}, when => $r->{'timestamp'}, text => join('; ', @bits) };
+	}
+	my $notes = eval { &subs::db_query("select app, text, timestamp from notes where text like ? order by timestamp desc limit 10", $like)->hashes } || [];
+	foreach my $r ( @{$notes} ) {
+		next unless &help_app_visible($r->{'app'}, $device);
+		my $text = $clean->($r->{'text'});
+		next unless length $text;
+		push @rows, { source => 'note', app => $r->{'app'}, when => $r->{'timestamp'}, text => $text };
+	}
+	my $mail = eval { &subs::db_query("select app, subject, phone, email, body, timestamp from mailbox where subject like ? or body like ? order by timestamp desc limit 8", $like, $like)->hashes } || [];
+	foreach my $r ( @{$mail} ) {
+		next unless &help_app_visible($r->{'app'}, $device);
+		my @bits;
+		push @bits, 'subject ' . $clean->($r->{'subject'}) if length($r->{'subject'} // '');
+		push @bits, 'phone ' . $clean->($r->{'phone'}) if length($r->{'phone'} // '');
+		push @bits, 'email ' . $clean->($r->{'email'}) if length($r->{'email'} // '');
+		push @bits, 'body ' . $clean->($r->{'body'}) if length($r->{'body'} // '');
+		next unless @bits;
+		push @rows, { source => 'mail', app => $r->{'app'}, when => $r->{'timestamp'}, text => join('; ', @bits) };
+	}
+	@rows = @rows[0 .. 15] if @rows > 16;
+	$c->render(json => { ok => 1, rows => \@rows });
+};
+
 # ---- what the acting guide reads to answer, instead of guessing --------
 # These turn the model's words into an answer from data already on the machine
 # (the place fixes, the home plates, the logged measurements), so the guide can

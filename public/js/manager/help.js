@@ -304,6 +304,7 @@ $(document).on('click', '.help_chat_log span[verdict]', function () {
 
 function helpActionLabel(a) {
 	if (a.action === 'find') { return 'Searching for “' + (a.query || '') + '”…'; }
+	if (a.action === 'lookup') { return 'Looking up “' + (a.query || '') + '” in your records…'; }
 	if (a.action === 'open_app') { return 'Opening ' + (a.app || 'the app') + '…'; }
 	if (a.action === 'play_music') { return 'Looking for “' + (a.query || '') + '” to play…'; }
 	if (a.action === 'show_place') { return 'Finding ' + (a.place || 'the place') + ' on the map…'; }
@@ -417,6 +418,16 @@ function helpDoAction(a, cb) {
 			var files = (r.files || []).slice(0, 8).join(', ');
 			cb('Found ' + (r.count || 0) + ' record(s)' + (apps ? (' in apps: ' + apps) : '') + (files ? ('; files: ' + files) : '') + '.');
 		}).fail(function () { cb('The search failed.'); });
+		return;
+	}
+	if (a.action === 'lookup') {
+		$.get('/manager/help/lookup', { q: a.query || '' }, function (r) {
+			if (!r || r.ok === 0) { cb((r && r.error) || 'I could not look that up.'); return; }
+			var rows = (r.rows || []).slice(0, 8);
+			if (!rows.length) { cb('I found nothing in your records for “' + (a.query || '') + '”.'); return; }
+			var bits = rows.map(function (x) { return (x.source || 'record') + (x.app ? (' “' + x.app + '”') : '') + ': ' + (x.text || ''); });
+			cb('Records: ' + bits.join(' | ') + '.');
+		}).fail(function () { cb('I could not look that up.'); });
 		return;
 	}
 	if (a.action === 'create') {
