@@ -3,7 +3,7 @@
 <% no warnings 'uninitialized'; %>
 <div class="appointment_header_background" last_update="<%= $timestamp %>" running_uuid="<%= $running_uuid %>" style="">
 	<% if ( ref $appts->{$a}->{'list'} ) { %>
-		<% foreach my $n (@{$appts->{$a}->{'list'}}) { %>
+		<% foreach my $n (@{$appts->{$a}->{'list'} || []}) { %>
 			<%
 				$n->{'timestamp'} = $n->{'type'} eq 'stop' && $n->{'stop_timestamp'} && $n->{'stop_timestamp'} < $now ? $n->{'stop_timestamp'} : $n->{'timestamp'};
 				if ($n->{'timestamp'} > $now && $n->{'type'} eq 'usual') {
