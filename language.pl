@@ -437,6 +437,8 @@ our %catalog = (
 		'camera_auto' => 'Auto',
 		'camera_front' => 'Front',
 		'camera_back' => 'Back',
+		'page_agent' => 'Page agent',
+		'page_fill' => 'Read and fill this page',
 	},
 	zh => {
 		'clock' => '时钟',
@@ -800,6 +802,8 @@ our %catalog = (
 		'camera_auto' => '自动',
 		'camera_front' => '前置',
 		'camera_back' => '后置',
+		'page_agent' => '页面助手',
+		'page_fill' => '读取并填写此页面',
 	},
 	fr => {
 		'clock' => 'Horloge',
@@ -1163,6 +1167,8 @@ our %catalog = (
 		'camera_auto' => 'Auto',
 		'camera_front' => 'Avant',
 		'camera_back' => 'Arrière',
+		'page_agent' => 'Assistant de page',
+		'page_fill' => 'Lire et remplir cette page',
 	},
 	es => {
 		'clock' => 'Reloj',
@@ -1526,6 +1532,8 @@ our %catalog = (
 		'camera_auto' => 'Auto',
 		'camera_front' => 'Frontal',
 		'camera_back' => 'Trasera',
+		'page_agent' => 'Agente de página',
+		'page_fill' => 'Leer y rellenar esta página',
 	},
 	de => {
 		'clock' => 'Uhr',
@@ -1889,6 +1897,8 @@ our %catalog = (
 		'camera_auto' => 'Auto',
 		'camera_front' => 'Vorne',
 		'camera_back' => 'Hinten',
+		'page_agent' => 'Seitenassistent',
+		'page_fill' => 'Diese Seite lesen und ausfüllen',
 	},
 	pt => {
 		'clock' => 'Relógio',
@@ -2252,6 +2262,8 @@ our %catalog = (
 		'camera_auto' => 'Automático',
 		'camera_front' => 'Frontal',
 		'camera_back' => 'Traseira',
+		'page_agent' => 'Agente de página',
+		'page_fill' => 'Ler e preencher esta página',
 	},
 	hi => {
 		'clock' => 'घड़ी',
@@ -2602,6 +2614,8 @@ our %catalog = (
 		'camera_auto' => 'स्वचालित',
 		'camera_front' => 'सामने',
 		'camera_back' => 'पीछे',
+		'page_agent' => 'पेज एजेंट',
+		'page_fill' => 'यह पेज पढ़ें और भरें',
 	},
 	ar => {
 		'clock' => 'الساعة',
@@ -2952,6 +2966,8 @@ our %catalog = (
 		'camera_auto' => 'تلقائي',
 		'camera_front' => 'أمامي',
 		'camera_back' => 'خلفي',
+		'page_agent' => 'مساعد الصفحة',
+		'page_fill' => 'قراءة هذه الصفحة وتعبئتها',
 	},
 	bn => {
 		'clock' => 'ঘড়ি',
@@ -3302,6 +3318,8 @@ our %catalog = (
 		'camera_auto' => 'স্বয়ংক্রিয়',
 		'camera_front' => 'সামনে',
 		'camera_back' => 'পেছনে',
+		'page_agent' => 'পৃষ্ঠা সহায়ক',
+		'page_fill' => 'এই পৃষ্ঠাটি পড়ুন ও পূরণ করুন',
 	},
 	ru => {
 		'clock' => 'Часы',
@@ -3652,6 +3670,8 @@ our %catalog = (
 		'camera_auto' => 'Авто',
 		'camera_front' => 'Передняя',
 		'camera_back' => 'Задняя',
+		'page_agent' => 'Помощник страницы',
+		'page_fill' => 'Прочитать и заполнить эту страницу',
 	},
 	ja => {
 		'clock' => '時計',
@@ -4002,6 +4022,8 @@ our %catalog = (
 		'camera_auto' => '自動',
 		'camera_front' => '前面',
 		'camera_back' => '背面',
+		'page_agent' => 'ページエージェント',
+		'page_fill' => 'このページを読み取って入力する',
 	},
 	pa => {
 		'clock' => 'ਘੜੀ',
@@ -4352,6 +4374,8 @@ our %catalog = (
 		'camera_auto' => 'ਆਟੋ',
 		'camera_front' => 'ਅੱਗੇ',
 		'camera_back' => 'ਪਿੱਛੇ',
+		'page_agent' => 'ਪੇਜ ਏਜੰਟ',
+		'page_fill' => 'ਇਹ ਪੇਜ ਪੜ੍ਹੋ ਅਤੇ ਭਰੋ',
 	},
 	id => {
 		'clock' => 'Jam',
@@ -4702,6 +4726,8 @@ our %catalog = (
 		'camera_auto' => 'Otomatis',
 		'camera_front' => 'Depan',
 		'camera_back' => 'Belakang',
+		'page_agent' => 'Agen halaman',
+		'page_fill' => 'Baca dan isi halaman ini',
 	},
 	ko => {
 		'clock' => '시계',
@@ -5052,6 +5078,8 @@ our %catalog = (
 		'camera_auto' => '자동',
 		'camera_front' => '전면',
 		'camera_back' => '후면',
+		'page_agent' => '페이지 에이전트',
+		'page_fill' => '이 페이지를 읽고 채우기',
 	},
 	it => {
 		'clock' => 'Orologio',
@@ -5402,6 +5430,8 @@ our %catalog = (
 		'camera_auto' => 'Automatico',
 		'camera_front' => 'Anteriore',
 		'camera_back' => 'Posteriore',
+		'page_agent' => 'Agente di pagina',
+		'page_fill' => 'Leggi e compila questa pagina',
 	},
 	tr => {
 		'clock' => 'Saat',
@@ -5752,6 +5782,8 @@ our %catalog = (
 		'camera_auto' => 'Otomatik',
 		'camera_front' => 'Ön',
 		'camera_back' => 'Arka',
+		'page_agent' => 'Sayfa ajanı',
+		'page_fill' => 'Bu sayfayı oku ve doldur',
 	},
 );
 

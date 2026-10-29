@@ -1626,8 +1626,9 @@ our %topic = (
 	},
 	'help_app' => {
 		title => 'This Help app', category => 'features',
+		templates => [ 'public/js/manager/page_agent.js' ],
 		summary => 'The map you are reading now, and its guide.',
-		verified => '2026-10-26',
+		verified => '2026-10-28',
 		body => [
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on. The question-mark button in a window\'s title bar opens a Guide associate for that window — the same Guide, in a chat of its own, already aware of the window it came from. The Take the tour button at the foot of the window replays a short tour of the desktop: its windows, the start menu and its System page, the dock and its pseudonyms, Configure, and how to ask the Guide.',
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Friends" plays every episode it matches, as a list. Asked "when did I last have a beer" or "when am I next free", it reads the oldest, newest and next matching appointment from your own records (across the appointments log and the other tables), and the time machine reads them the same way. It reports each step as it goes.',
@@ -1636,12 +1637,18 @@ our %topic = (
 			'A name can mean more than one thing - "music" the app or a club called Music, or two people called John Smith. When that happens the Guide asks which one you mean instead of picking for you, and the action then runs on the one you chose. You can name the one you mean more exactly: app:music or club:music fixes the kind, maple/john the house, and john#7f3a the short id shown beside the name. The same rule applies to names spoken to a watch or sent to another machine.',
 			'You can also teach it your own word for a thing: say "call sleep zzz", "aka zzz for sleep", or "zzz means sleep", and the Guide remembers it; "forget zzz" drops it. In People, open a construct\'s row to see the other names it already answers to and add one; the x beside a chip forgets it. A word that already means something else is refused rather than made ambiguous. Aliases are kept with the house settings, so every machine understands them, and they work in the chat, on the watch and in commands sent to another machine.',
 			'There can be several associates at once: the + in a panel\'s bar opens another, each with its own thread. Double-pressing the Assistant button shows the Agents list, where every associate and coding conversation is kept, named by its own words, and a press away from being re-opened or thrown away (see Agents). Its config menu also carries Speak the replies; ticked, each answer is spoken as well as written, through the voice set under Configure → Misc → Speech (Piper first — the same voice the watch\'s answers use).',
+			'The small assistant button in a window\'s title bar, beside the question mark, adds the Guide to that page: it opens an associate attached to the window, and a Page badge appears on its bar. Attached, the Guide can read the visible fields and fill them in for you — from what you discussed in the conversation, from your records (an appointment, a measure, a place) or from another field on the same form — and can press the form\'s own buttons. Say "fill this in from what we talked about" or "put my phone number in there"; it reports each field it filled, and a green flash shows where the value landed. Tick Read and fill this page in the associate\'s config menu to attach or detach it yourself. It never fills a password field, and never presses Send or Pay.',
 			'A thing the visibility rule hides is neither named nor opened here unless its padlock is open, so a hidden album stays out of sight until you unlock it.',
 			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.',
 			'You can speak instead of typing: if you press Send with the box empty, the guide starts listening, and Stop turns what you said into words in the box. It uses the same speech-to-text the watch uses. The Converse button turns it into a conversation: the mic opens again after each answer, and the clip ends itself once you stop talking - the pause is measured against the room\'s own noise, learned from the microphone exactly as the keyboard\'s dictation learns it, so a fan or a steady hiss does not keep the mic open - and each thing you say is the next turn of the same thread. Say or type "hey jawn" (or "jawn do") to start one, and "bye jawn" or the End button to stop; while it is on, the button is red. An on-device "hey jawn" listener will call the same switch when its model lands.',
 			'Tick the Coding box in the composer (set its model under Configure → Plat → Coding) and the same box becomes the Coding agent. It can change JawnOS\'s own code, check it, and ship it - bumping the version, committing and pushing to GitHub, then restarting - so the program can mend itself from a plain request.',
 			'Under each answer is a small good / not-good pair. Press the one that fits and the verdict is kept with the question and the reply, so the guide\'s answers can be judged over time.',
 			'You can also teach it new verbs at runtime (Configure → Plat → Guide commands): each is a small JSON entry naming a primitive and its parameters, and because it is a setting it syncs, so every machine understands the same commands.'
+		],
+		steps => [
+			'Press the assistant button beside a window\'s question mark to attach the Guide to that page.',
+			'Ask it to fill the form — "fill this in from what we talked about" — and check the green flash on each field it filled.',
+			'Ask it to press the form\'s own save button when you want the change saved.'
 		],
 		related => [ 'hints', 'handbook', 'assistant' ]
 	},
@@ -2307,6 +2314,16 @@ $update_rule
   person named in "to". To translate what is on screen, use translate_page. If they
   ask which languages are offered, use translate_languages; never invent a language
   that is not in its list.
+- When a PAGE ON SCREEN block is given, you are attached to that window and may use
+  page to read it and fill it. Use the exact field keys (f1, f2) and button keys (b1)
+  from that block. Read what you need first (a page read, or find, measure and
+  where_when for the value), then fill. Take values only from the conversation, the
+  person's own records or the page itself - never invent one. Leave a password field
+  alone, and never press a send or pay button. After a fill, say what you filled and
+  stop unless the person asked for the form to be sent.
+- If the person asks you to fill in a form but no PAGE ON SCREEN block is given, say
+  they can add you to that window with the small assistant button in its title bar,
+  beside the question mark.
 - To play or watch anything (a song, an artist, an album, a show or its
   episodes), use play_music with the person's own words; it plays every match as
   a list. Set "shuffle":1 when they ask for a shuffle or a surprise. Do not

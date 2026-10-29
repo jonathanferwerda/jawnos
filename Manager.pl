@@ -7152,6 +7152,7 @@ my @manager_bundle_files = qw(
 	/js/manager/notes.js
 	/js/manager/clock.js
 	/js/manager/help.js
+	/js/manager/page_agent.js
 	/js/manager/coding.js
 	/js/manager/agents.js
 	/js/manager/camera.js
@@ -28925,6 +28926,9 @@ sub window_maker($type,$timestamp) {
 		my $icon = &subs::icon_path($name, '');
 		return $icon ? '<img class="window_control_icon" src="' . $icon . '">' : $glyph;
 	};
+	# The page agent's own button: the Guide's associate, opened against this
+	# window with page mode on, so it can read and fill the form in front of you.
+	my $page_agent_icon = &subs::icon_for('/images/make believe/assistant.png');
 	my $pre_dimensioned = 0;
 	if ($settings->{'dimensions'} && ($user_agent !~ /Android/gi || $user_agent !~ /Mobile/gi)) {
 		$settings->{'dimensions'} = eval { return decode_json $settings->{'dimensions'} } || {};
@@ -28966,6 +28970,7 @@ sub window_maker($type,$timestamp) {
 					<span class="name_text" data-appt-ink="yes" style="--appt-dark-ink:' . $window_dark_ink . ';color:' . $window_ink . ';"  app="' . $app_attr . '">' . $app_text . '</span>
 				</span>
 				<span class="navbar_buttons">
+					<button id="window_' . $timestamp . '_page_agent" class="' . $html_name . '_page_agent_button window_action page_agent_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Page agent — read and fill this window's form for you})) . '"><img class="window_control_icon" src="' . $page_agent_icon . '"></button>
 					<button id="window_' . $timestamp . '_help" class="' . $html_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="Help">' . $window_control->('help', '?') . '</button>
 					<button id="window_' . $timestamp . '_minify" class="' . $html_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $app_attr . '">' . $window_control->('minimize', '_') . '</button>
 					<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $html_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $app_attr . '">' . $window_control->('restore', '#') . '</button>
@@ -35863,6 +35868,46 @@ post '/manager/help/act' => sub($c) {
 		$system .= 'They are looking at the window \'' . $context->{'title'} . '\''
 			. ($context->{'view'} ? ' (view: ' . $context->{'view'} . ')' : '')
 			. ($context->{'appointment'} ? ' (appointment: ' . $context->{'appointment'} . ')' : '') . ".\n";
+	}
+	# The page agent: a window the person attached the Guide to. Its visible form
+	# is described here, keyed the way page_agent.js wrote it onto the elements, so
+	# the model names a real field rather than guessing a selector.
+	my $page_json = $c->param('page') // '';
+	utf8::encode($page_json) if utf8::is_utf8($page_json);
+	my $page = eval { decode_json $page_json } || {};
+	if (ref $page eq 'HASH' && length($page->{'title'} // $page->{'app'} // '')) {
+		my $clean = sub {
+			my ($v, $max) = @_;
+			$v = '' unless defined $v;
+			$v = "$v";
+			$v =~ s/[\r\n\t]+/ /g;
+			$v =~ s/"/'/g;
+			return substr($v, 0, $max || 120);
+		};
+		$system .= "\nPAGE ON SCREEN - the person added you to the window '" . $clean->($page->{'title'} || $page->{'app'}, 80) . "'. You may work with its form using the page action.\n";
+		$system .= "Fields (use these exact keys in \"field\"):\n";
+		my $seen = 0;
+		foreach my $f ( @{ $page->{'fields'} || [] } ) {
+			last if ++$seen > 60;
+			next unless ref $f eq 'HASH';
+			my $line = '- ' . $clean->($f->{'field'}, 20) . ': "' . $clean->($f->{'label'}, 80) . '" [' . $clean->($f->{'type'}, 20);
+			$line .= ', id ' . $clean->($f->{'id'}, 60) if length($f->{'id'} // '');
+			$line .= ', read only' if $f->{'readonly'};
+			$line .= ']';
+			$line .= ' options: ' . join(' | ', map { $clean->($_, 40) } @{ $f->{'options'} }) if ref $f->{'options'} eq 'ARRAY' && @{ $f->{'options'} };
+			$line .= ' now: "' . ($f->{'secret'} ? '(hidden)' : $clean->($f->{'value'}, 120)) . '"';
+			$system .= $line . "\n";
+		}
+		$system .= "(no fields are visible on this page)\n" if !$seen;
+		my @page_buttons;
+		foreach my $b ( @{ $page->{'buttons'} || [] } ) {
+			next unless ref $b eq 'HASH';
+			my $label = $clean->($b->{'label'}, 50);
+			my $hint = $clean->($b->{'hint'}, 60);
+			push @page_buttons, $clean->($b->{'target'}, 20) . (length $label ? ' "' . $label . '"' : '') . (length $hint ? ' (' . $hint . ')' : '');
+		}
+		$system .= 'Buttons (use these exact keys in "target"): ' . join('; ', @page_buttons) . "\n" if @page_buttons;
+		$system .= "Fill only from the person's words, this conversation or their records - never invent a value. Never fill a password, and never press a send or pay button. After a fill, say what changed and stop unless they asked for it to be sent.\n";
 	}
 	my @lines;
 	foreach my $m ( @{$transcript} ) {

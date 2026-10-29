@@ -528,16 +528,22 @@ function assistantGuideStep(panel, n) {
 		return;
 	}
 	var ctx = (typeof helpContextNow === 'function') ? helpContextNow() : {};
+	var data = {
+		transcript: JSON.stringify(assistantThread(panel)),
+		context: JSON.stringify(ctx),
+		topic: panel.data('topic') || '',
+		model: assistantModel(panel)
+	};
+	// page mode: hand the guide the visible form it was attached to, so it can
+	// read a value and fill the field in one turn
+	if (typeof pageAgentMode === 'function' && pageAgentMode(panel)) {
+		data.page = JSON.stringify(pageAgentSnapshot(panel));
+	}
 	$.ajax({
 		url: '/manager/help/act',
 		type: 'POST',
 		dataType: 'json',
-		data: {
-			transcript: JSON.stringify(assistantThread(panel)),
-			context: JSON.stringify(ctx),
-			topic: panel.data('topic') || '',
-			model: assistantModel(panel)
-		},
+		data: data,
 		success: function (r) {
 			if (r && r.error) { assistantChatAdd(panel, 'step', r.error); return; }
 			var a = (r && r.action) || {};
@@ -551,6 +557,7 @@ function assistantGuideStep(panel, n) {
 			assistantChatAdd(panel, 'step', (typeof helpActionLabel === 'function') ? helpActionLabel(a) : 'Working…');
 			assistantRemember(panel, 'assistant', JSON.stringify(a));
 			if (typeof helpDoAction !== 'function') { assistantChatAdd(panel, 'step', 'The guide is not available.'); return; }
+			jawnos_page_agent_panel = panel;
 			helpDoAction(a, function (obs, friendly) {
 				assistantRemember(panel, 'tool', obs);
 				if (friendly) {
@@ -756,6 +763,9 @@ function assistantSpawn(source) {
 	var clone = source.clone();
 	clone.attr('id', '').attr('conversation', name).attr('spawned', '1');
 	clone.data('thread', []).data('greeted', 0).data('title', '');
+	clone.removeData('page_app');
+	clone.find('.assistant_page').prop('checked', false);
+	clone.find('.assistant_page_badge').hide();
 	clone.find('.assistant_chat_log').empty();
 	clone.find('.assistant_staged_panel').hide();
 	clone.find('.assistant_chat_log, .assistant_input_row').show();

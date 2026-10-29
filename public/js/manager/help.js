@@ -312,6 +312,12 @@ function helpActionLabel(a) {
 	if (a.action === 'remote') { return 'Telling ' + (a.machine || 'the machine') + '…'; }
 	if (a.action === 'update') { return 'Changing “' + (a.app || a.title || 'the appointment') + '”…'; }
 	if (a.action === 'schedule') { return 'Working out the schedule…'; }
+	if (a.action === 'page') {
+		var op = String(a.do || a.operation || 'read').toLowerCase();
+		if (op === 'fill') { return 'Filling in the page…'; }
+		if (op === 'press' || op === 'click') { return 'Pressing “' + (a.target || a.field || 'the button') + '”…'; }
+		return 'Reading the page…';
+	}
 	if (a.action === 'undo') { return 'Putting the last change back…'; }
 	if (a.action === 'stop') { return 'Stopping ' + (a.app || 'the appointment') + '…'; }
 	if (a.action === 'delete') { return 'Finding the ' + (a.app || 'appointment') + ' to delete…'; }
@@ -610,6 +616,11 @@ function helpDoAction(a, cb) {
 	}
 	if (a.action === 'play_music') {
 		helpPlayMusic(a.query || '', cb, a.shuffle);
+		return;
+	}
+	if (a.action === 'page') {
+		if (typeof pageAgentDo !== 'function') { cb('The page agent is not loaded in this window.'); return; }
+		pageAgentDo(a, cb);
 		return;
 	}
 	if (a.action === 'remote') {
@@ -1208,6 +1219,7 @@ function helpAgentStep(n) {
 			}
 			helpChatAdd('step', helpActionLabel(a));
 			jawnos_help_chat.push({ role: 'assistant', content: JSON.stringify(a) });
+			if (typeof jawnos_page_agent_panel !== 'undefined') { jawnos_page_agent_panel = null; }
 			helpDoAction(a, function (obs, friendly) {
 				jawnos_help_chat.push({ role: 'tool', content: obs });
 				if (friendly) {
