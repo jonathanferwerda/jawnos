@@ -5,6 +5,27 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-10-29 — NFC tags that fit, and a write that lands on the first tap
+
+- **A tag payload that fits.** An appointment tag used to carry the whole
+  settings row - its action, tap count and stored serials - 150 bytes and
+  growing with every tap. That overran a 144-byte NTAG213, so a write worked on
+  a larger tag and failed on a small one, or stopped working once a tag had
+  been used enough. A tag now carries a short twelve-character tag id, and the
+  manager finds the row by it; tags written the old way still read by their
+  full uuid.
+- **The first tap writes.** Android's reader mode reports a tag once per
+  presence, so arming a write while the tag was already resting on the reader
+  waited for a tag that never came again - the tag had to be lifted and
+  re-tapped. The bridge restarts reader mode when it arms a write, so a present
+  tag is written straight away. A write that is abandoned now expires and can
+  be cancelled, so it cannot quietly overwrite the next unrelated tag tapped.
+- **A writer that never wedges.** A failed or timed-out write clears its state
+  and re-arms the reader, and the tag card shows "Hold the tag to the phone",
+  "Tag saved" or the reason it failed. A reader mode that reports one presence
+  twice now acts only once, and a tag seen during or just after a write is not
+  mistaken for a tap.
+
 ## 2026-10-28 — upright clothesline pictures and the app's own title bar
 
 - **Upright icons.** A camera photo keeps its pixels in the frame it was
