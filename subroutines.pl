@@ -15165,11 +15165,14 @@ sub appointment_theme_push {
 
 # The native surfaces (the launcher and the lock screen) wear the desk's paint.
 # They read the house database, not the WebSocket, so the effective bundle is
-# recorded there for them: background, accent, which theme is in charge and
-# whether a running appointment owns it. The launcher falls back to the Misc
-# manager colour when this row has never been written.
+# recorded where they can see it: ~/.president/native_theme.json. A FILE, not a
+# settings row, because a theme is this device's own (the phone and the laptop
+# pick different ones) and a shared row would let the newest sync win on every
+# machine. The launcher falls back to the Misc manager colour when the file has
+# never been written.
 sub native_theme_record {
 	my ($send) = @_;
+	my $file = &home('~/.president/native_theme.json');
 	my $value = encode_json({
 		background => $send->{'background'} // '',
 		accent => $send->{'accent'} // '',
@@ -15177,9 +15180,23 @@ sub native_theme_record {
 		theme => $send->{'theme'} // '',
 		signature => $send->{'signature'} // '',
 	});
-	my $current = &setting_grabber({ app => '__president', setting => 'native_theme', device => 'all' });
-	return if defined $current && length $current && $current eq $value;
-	&setting_setter({ app => '__president', setting => 'native_theme', device => 'all', value => $value });
+	my $current = '';
+	eval {
+		local $/;
+		open(my $in, '<', $file) or die;
+		$current = <$in>;
+		close $in;
+	};
+	return if defined $current && $current eq $value;
+	# Write beside and rename, so a launcher reading at the wrong moment never
+	# sees half a file.
+	my $tmp = $file . '.tmp';
+	eval {
+		open(my $fh, '>', $tmp) or die;
+		print $fh $value;
+		close $fh;
+		rename $tmp, $file or die;
+	};
 }
 
 # What the desk currently wears, as one comparable string: paint, effective
