@@ -7,7 +7,10 @@
 		<% } %><span style="vertical-align:top;"><%= &subs::format_name($app) %></span>
 	</h2>
 	<br>
-	<span class="time" timestamp="<%= $file->{'server_time'} %>"></span>
+	<%# the moment the photo belongs to is its appointment's, not the file's
+	    server_time (when the row was written or synced, which can be days
+	    later); the gallery dates by the appointment and this panel follows it %>
+	<span class="time" timestamp="<%= $appt->{'timestamp'} || $file->{'server_time'} %>"></span>
 	<% if ($file->{'ocr'}) { %>
 		<%== $file->{'ocr'} %>
 	<% } %>

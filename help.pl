@@ -125,13 +125,14 @@ our %topic = (
 		'title' => 'Gallery', category => 'apps', app => 'gallery',
 		templates => [ 'templates/apps/gallery.html.ep', 'public/js/images.js' ],
 		controls => [ 'Albums', 'All photos', 'Search', 'Newest first', 'Oldest first', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'Full screen', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
-		verified => '2026-10-28',
+		verified => '2026-10-29',
 		summary => 'Browse your photos and videos by album, in a grid, or one at a time.',
 		body => [
 			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
 			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe, a trackpad\'s sideways swipe, or the arrow keys) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home and Delete. Fetch home appears only for a photo that lives on another machine: it brings that photo back to this one.',
 			'A picture opened from Folders arrives in the viewer straight away, with the rest of that folder\'s pictures as the grid behind it - Close leaves you on the folder, not the album list.',
 			'Which photos appear is decided by the apps whose visibility shows them: a private album is hidden everywhere, even at home, and never appears on the timeline. It can only be found in a private place with no Enemy present, and even then it waits for the gallery lock. The search box finds photos by app or file name, and the sort button flips the order between newest and oldest first.',
+			'A photo is dated by the appointment that holds it — the moment it was taken or filed — not by when its record reached this machine, so the day headings, the viewer and File information all agree.',
 			'An album that is Public or Dangerous opens straight away, sealed photos and all. A private album stays out of the grid until the gallery is unlocked: press **Lock** to open the padlock view and unlock it with this phone or computer\'s fingerprint, or with the recovery code. Outside a private place - or with an Enemy present - no unlock brings it back. The unlock is for that screen and that window only, and the padlock shuts again as soon as the Gallery window closes, the screen goes away, or the house restarts.'
 		],
 		steps => [
