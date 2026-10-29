@@ -16965,7 +16965,7 @@ sub internet_site_appointment_tick {
 	my $open_rows = eval {
 		&db_query(q{
 			select app, uuid, timestamp from appointments
-			 where source = 'Internet' and (type = 'start' or type = 'record')
+			 where lower(source) = 'internet' and (type = 'start' or type = 'record')
 			   and stop_seen is null
 		})->hashes;
 	} || [];
@@ -16987,8 +16987,11 @@ sub internet_site_appointment_tick {
 		my $active = defined $last && ($now - $last) <= $grace && !&app_hidden_now($app);
 		next if $active;
 		my $stop_at = (defined $last && $last > $started) ? $last : $now;
-		my $duration = $stop_at - $started;
-		$duration = 0 if $duration < 0;
+		# A session's duration is the negative accrual (start - stop), the sign
+		# every other close path writes; a positive value paints the band before
+		# the start dot instead of running from it to the recorded end.
+		my $duration = $started - $stop_at;
+		$duration = 0 if $duration > 0;
 		&db_update('appointments', {
 			type => 'stop',
 			stop_timestamp => $stop_at,
@@ -17025,7 +17028,7 @@ sub internet_site_appointment_tick {
 			timestamp => $start_at,
 			server_time => $now,
 			device => &device_setter(),
-			source => 'Internet',
+			source => 'internet',
 			seen => 'yes',
 			project => $settings->{'t_project'},
 			pos => $settings->{'pos'},
