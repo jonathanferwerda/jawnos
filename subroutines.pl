@@ -15155,7 +15155,31 @@ sub appointment_theme_push {
 		accent => $accent,
 		signature => $signature,
 	);
+	# The launcher and the lock screen are native: they hold no manager session
+	# and cannot be sent a console line, so the same paint is written where they
+	# already read - the settings table. One house-wide row, and only when it
+	# changes, so a stop/start on the same theme does not churn sync.
+	&native_theme_record({ %send, theme => $bundle->{'slug'} // '' });
 	&Websocket::send('server', { console => 'jawnosThemeBundleApply(' . encode_json(\%send) . ');' });
+}
+
+# The native surfaces (the launcher and the lock screen) wear the desk's paint.
+# They read the house database, not the WebSocket, so the effective bundle is
+# recorded there for them: background, accent, which theme is in charge and
+# whether a running appointment owns it. The launcher falls back to the Misc
+# manager colour when this row has never been written.
+sub native_theme_record {
+	my ($send) = @_;
+	my $value = encode_json({
+		background => $send->{'background'} // '',
+		accent => $send->{'accent'} // '',
+		appointment => $send->{'appointment'} ? 1 : 0,
+		theme => $send->{'theme'} // '',
+		signature => $send->{'signature'} // '',
+	});
+	my $current = &setting_grabber({ app => '__president', setting => 'native_theme', device => 'all' });
+	return if defined $current && length $current && $current eq $value;
+	&setting_setter({ app => '__president', setting => 'native_theme', device => 'all', value => $value });
 }
 
 # What the desk currently wears, as one comparable string: paint, effective

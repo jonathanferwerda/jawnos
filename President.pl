@@ -308,6 +308,20 @@ sub manager_starter() {
 	# A house that has a paper recovery code starts gated (padlock row, General,
 	# Enforce). The marker makes it a default: Turn the gate off stays off.
 	&subs::padlock_seed_default();
+	# The native surfaces (the launcher and the lock screen) read the desk's paint
+	# from the settings table, not the WebSocket. Record it at boot so a machine
+	# that has never seen a theme change still wears the one in charge (a running
+	# appointment's, else the Misc choice).
+	eval {
+		my (undef, undef, $native_bg, $native_bundle, $native_name, $native_appointment) = &subs::theme_state();
+		&subs::native_theme_record({
+			background => $native_bg,
+			accent => (ref $native_bundle eq 'HASH' ? $native_bundle->{'accent'} : ''),
+			appointment => $native_appointment,
+			theme => $native_name,
+			signature => &subs::theme_signature()
+		});
+	};
 	# Freeze the code revision here, at boot, so /manager/version reports what this
 	# process is actually running. The forked servers inherit this memo, so an
 	# on-disk change does not move the answer until the next restart.
