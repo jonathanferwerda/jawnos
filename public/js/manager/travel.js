@@ -87,10 +87,75 @@ function travelMapEngine() {
 	return travelMap;
 }
 
-// ---- street view: Mapillary in an overlay, closed with its X ----
+// ---- nearby media: pictures and videos taken while the house was here ----
+var travelNearCache = {};
+var travelNearLists = {};
+
+function travelNearOpen(container, index) {
+	var items = travelNearLists[container] || [];
+	if (!items.length || typeof imageViewer !== 'function') { return; }
+	// the Gallery's own file list shape, so its window opens on these photos and
+	// its arrows step through the same set
+	var files = items.map(function(it) {
+		return { f: it.f, app: it.app, app_uuid: it.app_uuid, type: it.type, uuid: it.uuid, server_time: it.server_time, timestamp: it.timestamp, info: it.info || {} };
+	});
+	imageViewer({ files: files, target: files[index] ? files[index].f : undefined });
+}
+
+function travelNearRender(container, items) {
+	travelNearLists[container] = items;
+	var box = $('#' + container);
+	var strip = box.find('.travel_near_strip');
+	strip.empty();
+	if (!items.length) { box.hide(); return; }
+	$.each(items, function(i, it) {
+		$('<img>').addClass('travel_near_thumb').attr('src', it.thumb_url).attr('alt', it.label || '').attr('title', it.label || '')
+			.css({ width: '52px', height: '52px', objectFit: 'cover', borderRadius: '5px', marginRight: '3px', cursor: 'pointer', verticalAlign: 'middle', background: '#222' })
+			.on('click', function() { travelNearOpen(container, i); })
+			.appendTo(strip);
+	});
+	box.show();
+}
+
+function travelNearGallery(container, items) {
+	travelNearLists[container] = items;
+	var grid = $('#' + container);
+	grid.empty();
+	if (!items.length) { grid.hide(); return; }
+	$.each(items, function(i, it) {
+		$('<img>').addClass('travel_near_grid_thumb').attr('src', it.thumb_url).attr('alt', it.label || '').attr('title', it.label || '')
+			.css({ width: '100%', height: '96px', objectFit: 'cover', borderRadius: '5px', cursor: 'pointer', background: '#222' })
+			.on('click', function() { travelNearOpen(container, i); })
+			.appendTo(grid);
+	});
+	grid.css('display', 'grid');
+}
+
+function travelNearFetch(lat, lon, strip_id, gallery_id) {
+	var key = lat.toFixed(4) + ',' + lon.toFixed(4);
+	var finish = function(items) {
+		if (strip_id) { travelNearRender(strip_id, items); }
+		if (gallery_id) { travelNearGallery(gallery_id, items); }
+	};
+	if (travelNearCache[key]) { finish(travelNearCache[key]); return; }
+	$.ajax({
+		url: '/manager/travel/nearby',
+		type: 'GET',
+		data: { lat: lat, lon: lon },
+		success: function(r) {
+			var items = (r && r.items) || [];
+			travelNearCache[key] = items;
+			finish(items);
+		},
+		error: function() { finish([]); }
+	});
+}
+
+// ---- street view: Mapillary's nearest photo, with the house's own photos near it ----
 function travelStreetClose() {
-	$('#travel_street').hide();
+	$('#travel_street').css('display', 'none');
 	$('#travel_street_frame').attr('src', 'about:blank');
+	$('#travel_street_photo').removeAttr('src');
 }
 
 $(document).on('click', '#travel_street_close', travelStreetClose);
@@ -98,9 +163,8 @@ $(document).on('keyup', function(e) {
 	if (e.key == 'Escape' && $('#travel_street').is(':visible')) { travelStreetClose(); }
 });
 
-// The nearest photo the free Mapillary API knows, in growing rings around the
-// pressed ground. Without a token the embed still opens on the coverage map, so
-// the person can click a blue line and enter an image by hand.
+// The nearest photo in growing rings. It comes back with a plain image URL, so it
+// draws without the WebGL panorama that was showing black in the desktop engine.
 function travelStreetNearest(lat, lon, token, done) {
 	var spans = [0.0005, 0.002, 0.01];
 	var i = 0;
@@ -110,12 +174,12 @@ function travelStreetNearest(lat, lon, token, done) {
 		var bbox = (lon - d).toFixed(6) + ',' + (lat - d).toFixed(6) + ',' + (lon + d).toFixed(6) + ',' + (lat + d).toFixed(6);
 		$.ajax({
 			url: 'https://graph.mapillary.com/images',
-			data: { access_token: token, fields: 'id', bbox: bbox, limit: 1 },
+			data: { access_token: token, fields: 'id,thumb_2048_url,thumb_1024_url', bbox: bbox, limit: 1 },
 			dataType: 'json',
 			timeout: 8000,
 			success: function(r) {
 				var first = (r && r.data && r.data[0]) || null;
-				if (first) { done(first.id); } else { attempt(); }
+				if (first) { done(first); } else { attempt(); }
 			},
 			error: function() { done(null, 'error'); }
 		});
@@ -127,26 +191,65 @@ function travelStreetOpen(lat, lon) {
 	var x = (lon + 180) / 360;
 	var s = Math.sin(lat * Math.PI / 180);
 	var y = 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
-	var url = 'https://www.mapillary.com/embed?map_style=Mapillary%20streets'
+	var embed = 'https://www.mapillary.com/embed?map_style=Mapillary%20streets'
 		+ '&x=' + x.toFixed(7) + '&y=' + y.toFixed(7) + '&z=18';
-	var token = $('#travel_mapillary_token').val() || '';
+	var token = ($('#travel_mapillary_token').val() || '').trim();
 	var note = $('#travel_street_note');
 	$('#travel_street_title').text(jawnosT('Street view') + ' · ' + lat.toFixed(5) + ', ' + lon.toFixed(5));
-	$('#travel_street').show();
-	$('#travel_street_frame').attr('src', url);
+	$('#travel_street_photo').hide().removeAttr('src');
+	$('#travel_street_frame').hide().attr('src', 'about:blank');
+	$('#travel_street_gallery').hide().empty();
+	$('#travel_street_photos').hide();
+	$('#travel_street_pano').hide();
+	$('#travel_street').css('display', 'flex');
 	note.hide().text('');
+	travelNearFetch(lat, lon, 'travel_street_near', 'travel_street_gallery');
+
+	var showGallery = function() {
+		$('#travel_street_photo').hide();
+		$('#travel_street_frame').hide();
+		$('#travel_street_gallery').css('display', 'grid');
+		$('#travel_street_photos').hide();
+	};
 	if (!token) {
-		note.text(jawnosT('Mapillary: click a blue coverage line to step into an image. A free Mapillary token (Configure → Plat → Maps) opens the nearest photo directly.')).show();
+		note.text(jawnosT('No Mapillary token — the pictures below were taken by the house near here. A free Mapillary token (Configure → Plat → Maps) adds the nearest street-level photo.')).show();
+		$('#travel_street_pano').attr('embed', embed).show();
+		showGallery();
 		return;
 	}
-	travelStreetNearest(lat, lon, token, function(image_key, why) {
-		if (!image_key) {
-			note.text(jawnosT(why === 'error' ? 'Mapillary could not be asked for the nearest photo — click a blue coverage line to step in.' : 'No street-level photo near here.')).show();
+	travelStreetNearest(lat, lon, token, function(photo, why) {
+		if (!photo) {
+			note.text(jawnosT(why === 'error' ? 'Mapillary could not be asked for the nearest photo.' : 'Mapillary returned no street-level photo near here — the token may also lack image access.')).show();
+			$('#travel_street_pano').attr('embed', embed).show();
+			showGallery();
 			return;
 		}
-		$('#travel_street_frame').attr('src', url + '&image_key=' + encodeURIComponent(image_key));
+		var src = photo.thumb_2048_url || photo.thumb_1024_url || '';
+		if (!src) { showGallery(); return; }
+		$('#travel_street_photo').attr('src', src).show();
+		$('#travel_street_gallery').hide();
+		$('#travel_street_photos').show();
+		$('#travel_street_pano').attr('embed', embed + '&image_key=' + encodeURIComponent(photo.id)).show();
 	});
 }
+
+$(document).on('click', '#travel_street_pano', function() {
+	var url = $(this).attr('embed') || '';
+	if (!url) { return; }
+	$('#travel_street_photo').hide();
+	$('#travel_street_gallery').hide();
+	$('#travel_street_frame').attr('src', url).show();
+	$(this).hide();
+	$('#travel_street_photos').show();
+});
+
+$(document).on('click', '#travel_street_photos', function() {
+	$('#travel_street_photo').hide();
+	$('#travel_street_frame').hide();
+	$('#travel_street_gallery').css('display', 'grid');
+	$(this).hide();
+	$('#travel_street_pano').show();
+});
 
 // Fill the provider picker from the engine's own table, so the two cannot drift.
 // The services are grouped by what they ask for: the free ones need nothing,
@@ -320,6 +423,9 @@ function travelMapRender(response) {
 	var pos = response['position'];
 	var hasPos = pos && pos['latitude'];
 	engine.setPosition(hasPos ? { lat: parseFloat(pos['latitude']), lon: parseFloat(pos['longitude']), label: pos['label'] || 'You are here' } : null);
+	// what the house photographed around where it is now: a bar along the top
+	if (hasPos) { travelNearFetch(parseFloat(pos['latitude']), parseFloat(pos['longitude']), 'travel_near', null); }
+	else { $('#travel_near').hide(); }
 
 	// frame the current position (with the maps around it) the first time; after
 	// that leave the view where the user panned it

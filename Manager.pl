@@ -34044,6 +34044,119 @@ get '/manager/travel' => sub ($c) {
 	$c->render(text => $website);
 };
 
+# The pictures and videos taken while the house was at a place. A file carries no
+# coordinates of its own, so the media is joined to the position fixes the house
+# kept: a photo belongs to the point if a fix within the radius was recorded around
+# the time it was taken. That is the honest reading of "taken near here" for a
+# library whose photos have no GPS of their own.
+get '/manager/travel/nearby' => sub ($c) {
+	my $lat = 0 + ($c->param('lat') || 0);
+	my $lon = 0 + ($c->param('lon') || 0);
+	return $c->render(json => { items => [] }) unless $lat || $lon;
+	my $radius = 0 + ($c->param('radius') || 300);
+	$radius = 50 if $radius < 10;
+	$radius = 2000 if $radius > 2000;
+	my $window = 0 + ($c->param('window') || 1800000); # 30 minutes either side
+	my $limit = int($c->param('limit') || 24);
+	$limit = 24 if $limit < 1 || $limit > 60;
+
+	my $cos = cos($lat * 3.14159265358979 / 180);
+	$cos = 0.000001 if abs($cos) < 0.000001;
+	my $dlat = $radius / 111320;
+	my $dlon = $radius / (111320 * $cos);
+	my $fixes = &subs::db_query('select timestamp, latitude, longitude from continent where cast(latitude as real) between ? and ? and cast(longitude as real) between ? and ?', $lat - $dlat, $lat + $dlat, $lon - $dlon, $lon + $dlon)->hashes;
+	my @fix_times;
+	foreach my $fix ( @{$fixes} ) {
+		my $dy = (0 + $fix->{'latitude'} - $lat) * 111320;
+		my $dx = (0 + $fix->{'longitude'} - $lon) * 111320 * $cos;
+		next if (($dx * $dx) + ($dy * $dy)) > ($radius * $radius);
+		push @fix_times, 0 + $fix->{'timestamp'};
+	}
+	return $c->render(json => { items => [] }) unless scalar @fix_times;
+	@fix_times = sort { $a <=> $b } @fix_times;
+
+	# the nearest fix in time, by binary search over the sorted list
+	my $nearest_gap = sub {
+		my ($t) = @_;
+		my ($lo, $hi) = (0, scalar(@fix_times) - 1);
+		my $pos = scalar(@fix_times);
+		while ($lo <= $hi) {
+			my $mid = int(($lo + $hi) / 2);
+			if ($fix_times[$mid] < $t) { $lo = $mid + 1; }
+			else { $pos = $mid; $hi = $mid - 1; }
+		}
+		my $best;
+		foreach my $i ($pos - 1, $pos) {
+			next if $i < 0 || $i > $#fix_times;
+			my $gap = abs($fix_times[$i] - $t);
+			$best = $gap if !defined($best) || $gap < $best;
+		}
+		return $best;
+	};
+
+	my $uenc = sub {
+		my $v = shift;
+		return '' unless defined $v;
+		my $copy = "$v";
+		utf8::encode($copy) if utf8::is_utf8($copy);
+		return url_escape($copy, '^A-Za-z0-9\-._~/');
+	};
+
+	my $rows = &subs::db_query("select * from appointments where file is not null and (type = 'image' or type = 'video') order by cast(timestamp as integer) desc")->hashes;
+	my @items;
+	foreach my $appt ( @{$rows} ) {
+		last if scalar @items >= $limit;
+		my $t = 0 + ($appt->{'timestamp'} || 0);
+		my $gap = $nearest_gap->($t);
+		next unless defined $gap && $gap <= $window;
+		my $app = $appt->{'app'} || '';
+		next if &subs::app_private_now($app) && !&subs::private_reachable_now();
+		next if &subs::app_hidden_now($app) || &subs::lockdown_active();
+		next if &subs::appointment_private_now($appt) && !&subs::private_reachable_now();
+		my $files = eval { return decode_json $appt->{'file'} } || [];
+		foreach my $f ( @{$files} ) {
+			last if scalar @items >= $limit;
+			my $type = $f->{'type'} || $appt->{'type'} || 'image';
+			next unless $type eq 'image' || $type eq 'video';
+			my $path = $f->{'f'} || '';
+			next unless length $path;
+			if (!-e $path) {
+				my ($dir, $asset) = &subs::file_device_renamer({ file => $path, app => $app, type => $type });
+				my $local = (defined $dir && defined $asset) ? $dir . $asset : '';
+				$path = $local if length $local && -e $local;
+			}
+			next unless -e $path;
+			my $thumb_path = $f->{'thumb'} || '';
+			if (!length $thumb_path || !-e $thumb_path) {
+				my ($tdir, $tasset) = &subs::file_device_renamer({ file => $thumb_path, app => $app, type => $type });
+				my $tlocal = (defined $tdir && defined $tasset) ? $tdir . $tasset : '';
+				$thumb_path = $tlocal if length $tlocal && -e $tlocal;
+			}
+			my $thumb_ok = (length $thumb_path && -e $thumb_path && (-s $thumb_path) > 100) ? 1 : 0;
+			my $server_time = $f->{'server_time'} || $appt->{'server_time'} || 0;
+			my $thumb = '/file_open?file=' . $uenc->($thumb_ok ? $thumb_path : $path)
+				. '&app=' . $uenc->($app)
+				. '&app_uuid=' . $uenc->($appt->{'uuid'} || '')
+				. '&timestamp=' . $uenc->($server_time)
+				. ($f->{'uuid'} ? '&file_uuid=' . $uenc->($f->{'uuid'}) : '')
+				. ($thumb_ok ? '' : '&thumb=ya');
+			push @items, {
+				thumb_url => $thumb,
+				label => &subs::format_name($f->{'label'} || $app),
+				type => $type,
+				timestamp => $t,
+				f => $path,
+				app => $app,
+				app_uuid => $appt->{'uuid'} || '',
+				uuid => $f->{'uuid'} || '',
+				server_time => $server_time,
+				info => $f->{'info'} || {},
+			};
+		}
+	}
+	$c->render(json => { items => \@items, radius => $radius });
+};
+
 sub travel_grabber($c) {
 	my $timestamp = $c->param('timestamp');
 
