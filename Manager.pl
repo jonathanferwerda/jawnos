@@ -18754,6 +18754,9 @@ sub inventory_cell_summary($data) {
 	my $system = 'You summarise one period of one app\'s activity for someone glancing at a single statistic in JawnOS, a house that logs its life as timed appointments. A briefing follows: the app, the clock the period is on (scope: minute, hour, day, week, month or year), the period itself and whether it is the one now running (period_is_current), the measure the cell shows (measure) and its value, the budget if the app keeps one (budgeted, plus on_track, progress_percent, due_by_now and projected when the period is current), the recent counts of the same clock (recent_periods_counts, oldest first, the newest written count/percent so a part-run period is not read as a fall), and what the activity was made of (made_of: the appointment types that ran and how many). Write two to four short sentences, plain and specific, no headings, no bullets and no preamble: what the value is; whether it is on track for its budget, reading the pace when the period is current; how it sits against the recent periods (rising, falling, steady), naming the turn if there is one; and what most made up the number. Do not restate the labels or the raw figures as a list - say what they mean. Use only the numbers given.';
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'eval_assistant' });
 	my ($text, $error);
+	# a cell summary is a glance at a number, not a conversation: a model failure
+	# falls back to the plain sentence and must not speak on the device
+	local $subs::say_quiet = 1;
 	if ($model && &subs::evaluation_agent_ready()) {
 		($text, $error) = &subs::evaluation_model_call_role('eval_assistant', $system, encode_json($briefing), &subs::ai_role_thinking('eval_assistant'));
 	}
