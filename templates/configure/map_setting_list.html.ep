@@ -9,9 +9,10 @@
 		[ 'stadia',       'Stadia Maps',  'https://client.stadiamaps.com/dashboard/' ],
 		[ 'thunderforest','Thunderforest','https://manage.thunderforest.com/' ],
 		[ 'carto',        'Carto',        'https://carto.com/basemaps/apikey' ],
+		[ 'mapillary',    'Mapillary (street view)', 'https://www.mapillary.com/dashboard/developers' ],
 	);
 %>
-<p class="cfg-note">Map services that issue a key. Travel's Map picker reads these, so a key is typed once here and the map service can be chosen in any window, on any machine the settings reach. A service with no key stays unlisted in Travel until its key is saved. The free services (OpenStreetMap, OpenTopoMap, OSM Humanitarian, CyclOSM and the Esri basemaps) need no key and are not listed.</p>
+<p class="cfg-note">Map services that issue a key. Travel's Map picker reads these, so a key is typed once here and the map service can be chosen in any window, on any machine the settings reach. A service with no key stays unlisted in Travel until its key is saved. The free services (OpenStreetMap, OpenTopoMap, OSM Humanitarian, CyclOSM and the Esri basemaps) need no key and are not listed. The Mapillary token is free too: it lets a long press on the Travel map open the nearest street-level photo. Without it, the street view still opens on Mapillary's coverage map, where a blue line can be clicked by hand.</p>
 <div class="cfg-card">
 	<h3 style="margin-top:0;">Tile service keys</h3>
 	<% foreach my $service ( @services ) {

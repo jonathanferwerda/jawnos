@@ -35,19 +35,33 @@ var travelPendingMap;   // the map the picker just chose, to be framed once its 
 var travelAllMaps = [];      // the last atlas answer, so a checkbox redraws without asking again
 var travelHiddenMaps = [];   // measured maps the person has switched off
 var travelAnchorMap;         // the map distances are measured from (the remembered current_map)
+var travelViewSave;          // debounce for remembering the pan and zoom
+
+function travelViewPersist() {
+	if (!travelMap) { return; }
+	var v = travelMap.view();
+	settingSetter({ 'app': 'travel', 'setting': 'map_view', 'value': JSON.stringify({ lat: v.lat, lon: v.lon, z: v.z }) });
+}
 
 function travelMapEngine() {
 	var canvas = document.getElementById('travel_campus');
 	if (!canvas || !window.jawnosMap) { return null; }
 	if (travelMap && travelMap.canvas === canvas) { return travelMap; }
+	// where the map was left last time, so opening Travel returns to that ground
+	var saved = {};
+	try { saved = JSON.parse(canvas.getAttribute('view') || '{}') || {}; } catch (e) { saved = {}; }
 	// a fresh canvas (the window was reopened) needs a fresh engine
 	travelMap = window.jawnosMap.create('travel_campus', {
-		z: 16,
+		lat: saved.lat,
+		lon: saved.lon,
+		z: (typeof saved.z === 'number') ? saved.z : 16,
 		width: function() { return $('#travel_campus').parent().width() || 640; },
 		height: function() { return Math.max(240, Math.round($(window).height() * 0.6)); }
 	});
 	// a tap on a place opens its appointment window; a numbered one unfolds its list
 	travelMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, travelMap.canvas); });
+	// a still long press opens the street view of that ground
+	travelMap.onLongPress(function(lat, lon) { travelStreetOpen(lat, lon); });
 	// a right-click on a guessed gap offers to drop it (so the hat may fill that
 	// ground afresh); anywhere else the engine leaves the event alone
 	travelMap.onMapContext(function(m, sx, sy) {
@@ -56,6 +70,11 @@ function travelMapEngine() {
 		return 1;
 	});
 	travelMap.onChange(jawnosMarkerListHide);
+	// remember the pan and zoom (after the move settles) so the next open starts here
+	travelMap.onChange(function() {
+		clearTimeout(travelViewSave);
+		travelViewSave = setTimeout(travelViewPersist, 700);
+	});
 	// with the hat on, a pause in the pan asks for the empty ground on screen to
 	// be guessed (the server decides what is empty; a guess only ever shows where
 	// nothing is mapped)
@@ -64,8 +83,69 @@ function travelMapEngine() {
 		clearTimeout(travelGuessTimer);
 		travelGuessTimer = setTimeout(function() { travelGuessCheck(); }, 2500);
 	});
-	travelFramed = false;
+	travelFramed = (typeof saved.lat === 'number' && typeof saved.lon === 'number' && typeof saved.z === 'number');
 	return travelMap;
+}
+
+// ---- street view: Mapillary in an overlay, closed with its X ----
+function travelStreetClose() {
+	$('#travel_street').hide();
+	$('#travel_street_frame').attr('src', 'about:blank');
+}
+
+$(document).on('click', '#travel_street_close', travelStreetClose);
+$(document).on('keyup', function(e) {
+	if (e.key == 'Escape' && $('#travel_street').is(':visible')) { travelStreetClose(); }
+});
+
+// The nearest photo the free Mapillary API knows, in growing rings around the
+// pressed ground. Without a token the embed still opens on the coverage map, so
+// the person can click a blue line and enter an image by hand.
+function travelStreetNearest(lat, lon, token, done) {
+	var spans = [0.0005, 0.002, 0.01];
+	var i = 0;
+	function attempt() {
+		if (i >= spans.length) { done(null); return; }
+		var d = spans[i++];
+		var bbox = (lon - d).toFixed(6) + ',' + (lat - d).toFixed(6) + ',' + (lon + d).toFixed(6) + ',' + (lat + d).toFixed(6);
+		$.ajax({
+			url: 'https://graph.mapillary.com/images',
+			data: { access_token: token, fields: 'id', bbox: bbox, limit: 1 },
+			dataType: 'json',
+			timeout: 8000,
+			success: function(r) {
+				var first = (r && r.data && r.data[0]) || null;
+				if (first) { done(first.id); } else { attempt(); }
+			},
+			error: function() { done(null, 'error'); }
+		});
+	}
+	attempt();
+}
+
+function travelStreetOpen(lat, lon) {
+	var x = (lon + 180) / 360;
+	var s = Math.sin(lat * Math.PI / 180);
+	var y = 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
+	var url = 'https://www.mapillary.com/embed?map_style=Mapillary%20streets'
+		+ '&x=' + x.toFixed(7) + '&y=' + y.toFixed(7) + '&z=18';
+	var token = $('#travel_mapillary_token').val() || '';
+	var note = $('#travel_street_note');
+	$('#travel_street_title').text(jawnosT('Street view') + ' · ' + lat.toFixed(5) + ', ' + lon.toFixed(5));
+	$('#travel_street').show();
+	$('#travel_street_frame').attr('src', url);
+	note.hide().text('');
+	if (!token) {
+		note.text(jawnosT('Mapillary: click a blue coverage line to step into an image. A free Mapillary token (Configure → Plat → Maps) opens the nearest photo directly.')).show();
+		return;
+	}
+	travelStreetNearest(lat, lon, token, function(image_key, why) {
+		if (!image_key) {
+			note.text(jawnosT(why === 'error' ? 'Mapillary could not be asked for the nearest photo — click a blue coverage line to step in.' : 'No street-level photo near here.')).show();
+			return;
+		}
+		$('#travel_street_frame').attr('src', url + '&image_key=' + encodeURIComponent(image_key));
+	});
 }
 
 // Fill the provider picker from the engine's own table, so the two cannot drift.
@@ -215,7 +295,7 @@ function travelMapRender(response) {
 		});
 		travelPendingMap = undefined;
 		var bounds = chosen ? window.jawnosMap.mapBounds(chosen) : null;
-		if (bounds) { engine.fitBounds(bounds); travelFramed = true; }
+		if (bounds) { engine.fitBounds(bounds); travelFramed = true; travelViewPersist(); }
 	}
 
 	var points = [];

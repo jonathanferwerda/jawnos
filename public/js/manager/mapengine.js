@@ -94,6 +94,8 @@ window.jawnosMap = (function () {
 		var ctx = canvas.getContext('2d');
 		// own the touch gestures: without this the page would scroll/zoom instead
 		try { canvas.style.touchAction = 'none'; } catch (e) {}
+		// no text selection or callout on a long press: that press is the map's
+		try { canvas.style.webkitTouchCallout = 'none'; canvas.style.userSelect = 'none'; } catch (e) {}
 		var providerKey = opts.provider || 'none';
 		var customUrl = opts.customUrl || '';
 		var apiKeys = opts.keys || {};   // provider key -> the service's key
@@ -108,7 +110,11 @@ window.jawnosMap = (function () {
 		function clampZ(z) { return Math.max(ZMIN, Math.min(providerMaxZ(), z)); }
 		// The chosen service may stop before the engine's own ceiling (Esri Light
 		// ends at 16, OpenTopoMap at 17): the initial zoom is held to it too.
-		var view = { lat: opts.lat || 43.0, lon: opts.lon || -81.94, z: clampZ(opts.z || 14) };
+		var view = {
+			lat: (typeof opts.lat === 'number') ? opts.lat : 43.0,
+			lon: (typeof opts.lon === 'number') ? opts.lon : -81.94,
+			z: clampZ((typeof opts.z === 'number') ? opts.z : 14)
+		};
 		var maps = [];        // measured maps, each with a georeference
 		var points = [];      // { lat, lon, label, colour }
 		var here = null;      // the current position { lat, lon, accuracy }
@@ -119,6 +125,7 @@ window.jawnosMap = (function () {
 		var drawHooks = [];   // callbacks fired after every draw (overlays on the same canvas)
 		var markerHandler = null; // called with a tapped marker (a point carrying an app)
 		var contextHandler = null; // called with the map under a right-click; 1 = it was handled
+		var longPressHandler = null; // called with (lat, lon, sx, sy) after a still press
 
 		function size() {
 			var pw = typeof opts.width === 'function' ? opts.width() : opts.width;
@@ -438,6 +445,36 @@ window.jawnosMap = (function () {
 			else { fire(); }
 		}
 
+		// A long press asks the page for the ground under the finger (a street view,
+		// a pin, a note): the press must stay still, and a press that fired keeps the
+		// release from also being read as a tap or a zoom.
+		var pressTimer = null, press = null, pressFired = false;
+		function pressCancel() {
+			if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+			press = null;
+		}
+		function pressStart(sx, sy) {
+			pressCancel();
+			pressFired = false;
+			press = { x: sx, y: sy };
+			pressTimer = setTimeout(function () {
+				pressTimer = null;
+				var p = press;
+				press = null;
+				pressFired = true;
+				suppressClick = true;
+				if (!p || !longPressHandler) { return; }
+				var dim = size();
+				var o = originFor(view, dim.w, dim.h);
+				var g = geoAt(o.x + p.x, o.y + p.y, view.z);
+				try { longPressHandler(g.lat, g.lon, p.x, p.y); } catch (e) {}
+			}, 600);
+		}
+		function pressMove(sx, sy) {
+			if (!pressTimer || !press) { return; }
+			if (Math.abs(sx - press.x) > 8 || Math.abs(sy - press.y) > 8) { pressCancel(); }
+		}
+
 		// mouse: press-and-drag pans (a flick glides on release), a wheel zooms. A
 		// trackpad's two-finger scroll pans too, and its pinch (ctrl+wheel) zooms. A
 		// click that did not drag is a tap, and may open a marker's window.
@@ -449,12 +486,15 @@ window.jawnosMap = (function () {
 			stopGlide();
 			drag = { x: e.clientX, y: e.clientY, moved: 0, vx: 0, vy: 0 };
 			suppressClick = false;
+			if (e.button === 0) { pressStart(e.offsetX, e.offsetY); }
 			e.preventDefault();
 		});
 		window.addEventListener('mousemove', function (e) {
 			if (!drag) { return; }
 			var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
 			if (dx || dy) { drag.moved = 1; }
+			var r = canvas.getBoundingClientRect();
+			pressMove(e.clientX - r.left, e.clientY - r.top);
 			// the flick, damped, so the release can carry it on
 			drag.vx = (drag.vx * 0.7) + (dx * 0.3);
 			drag.vy = (drag.vy * 0.7) + (dy * 0.3);
@@ -463,8 +503,9 @@ window.jawnosMap = (function () {
 		});
 		window.addEventListener('mouseup', function () {
 			if (!drag) { return; }
+			pressCancel();
 			var moved = drag.moved, vx = drag.vx, vy = drag.vy;
-			suppressClick = moved ? true : false;
+			suppressClick = (moved || pressFired) ? true : false;
 			drag = null;
 			release(vx, vy, moved);
 		});
@@ -481,6 +522,9 @@ window.jawnosMap = (function () {
 		// it handled it is the event consumed - everywhere else the desktop's own
 		// menus still open over the map.
 		canvas.addEventListener('contextmenu', function (e) {
+			// a touch long press raises the browser's own menu before ours fires;
+			// swallow it and let the press through (a mouse right-click has no press)
+			if (pressTimer || pressFired) { e.preventDefault(); return; }
 			if (inBand(e.clientY)) { return; }
 			if (!contextHandler) { return; }
 			var r = canvas.getBoundingClientRect();
@@ -524,6 +568,8 @@ window.jawnosMap = (function () {
 			}
 			else {
 				touch = { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: 0, vx: 0, vy: 0 };
+				var tr = canvas.getBoundingClientRect();
+				pressStart(e.touches[0].clientX - tr.left, e.touches[0].clientY - tr.top);
 			}
 		}, { passive: true });
 		canvas.addEventListener('touchmove', function (e) {
@@ -543,6 +589,8 @@ window.jawnosMap = (function () {
 				var dx = t0.clientX - touch.x, dy = t0.clientY - touch.y;
 				touch.vx = (touch.vx * 0.7) + (dx * 0.3);
 				touch.vy = (touch.vy * 0.7) + (dy * 0.3);
+				var mr = canvas.getBoundingClientRect();
+				pressMove(t0.clientX - mr.left, t0.clientY - mr.top);
 				panBy(dx, dy);
 				touch.x = t0.clientX; touch.y = t0.clientY; touch.moved = 1;
 				e.preventDefault();
@@ -551,10 +599,12 @@ window.jawnosMap = (function () {
 		canvas.addEventListener('touchend', function (e) {
 			if (e.touches.length > 0) { return; }
 			lastTouch = Date.now();
+			var fired = pressFired;
+			pressCancel();
 			var tapped = false;
 			// a tap that lands on a marker opens it at once; anywhere else, two
 			// quick taps with no drag between zoom in one step
-			if (touch && !touch.moved) {
+			if (touch && !touch.moved && !fired) {
 				var r = canvas.getBoundingClientRect();
 				var pt = markerHandler ? markerAt(touch.x - r.left, touch.y - r.top) : null;
 				if (pt) {
@@ -570,6 +620,7 @@ window.jawnosMap = (function () {
 			}
 			var moved = touch ? touch.moved : 0, vx = touch ? touch.vx : 0, vy = touch ? touch.vy : 0;
 			touch = null; pinch = null;
+			pressFired = false;
 			// a marker tap already answered: firing here would hide the list it
 			// just unfolded
 			if (!tapped) { release(vx, vy, moved); }
@@ -667,6 +718,7 @@ window.jawnosMap = (function () {
 				fitBox(lat - h, lat + h, lon - h, lon + h, 1.15);
 			},
 			onMarkerClick: function (fn) { markerHandler = fn; },
+			onLongPress: function (fn) { longPressHandler = fn; },
 			onMapContext: function (fn) { contextHandler = fn; },
 			onDraw: function (fn) { drawHooks.push(fn); },
 			onChange: function (fn) { changing.push(fn); },
