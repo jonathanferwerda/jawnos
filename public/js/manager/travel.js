@@ -32,6 +32,9 @@ function travelToggle() {
 var travelMap;
 var travelFramed = false;
 var travelPendingMap;   // the map the picker just chose, to be framed once its atlas arrives
+var travelAllMaps = [];      // the last atlas answer, so a checkbox redraws without asking again
+var travelHiddenMaps = [];   // measured maps the person has switched off
+var travelAnchorMap;         // the map distances are measured from (the remembered current_map)
 
 function travelMapEngine() {
 	var canvas = document.getElementById('travel_campus');
@@ -89,28 +92,112 @@ function travelProviderFill() {
 	travelProviderFields();
 }
 
+// The keys live in one place, Configure -> Plat -> Maps, and ride into the page as
+// hidden inputs so the engine can build a keyed service's URL without a round trip.
+function travelProviderKeys() {
+var keys = {};
+$('.travel_map_key').each(function() { keys[$(this).attr('provider')] = $(this).val(); });
+return keys;
+}
+
 // Show only the box the chosen service actually needs, and say what the map is
 // waiting for when it needs something the house does not have yet.
 function travelProviderFields() {
-	var sel = $('.travel_provider');
-	var p = (window.jawnosMap && window.jawnosMap.providers) ? window.jawnosMap.providers[sel.val()] : null;
-	var needs = p && p.needs;
-	$('#travel_map_key_wrap').toggle(needs === 'key');
-	$('#travel_map_url_wrap').toggle(needs === 'url');
-	var status = $('#travel_map_status');
-	if (!status.length) { return; }
-	if (needs === 'key' && !$.trim($('#travel_map_key').val())) { status.text(jawnosT('paste the key this service gave you')); }
-	else if (needs === 'url' && !$.trim($('#travel_custom_url').val())) { status.text(jawnosT('paste the service\'s tile URL')); }
-	else { status.text(''); }
+var sel = $('.travel_provider');
+var p = (window.jawnosMap && window.jawnosMap.providers) ? window.jawnosMap.providers[sel.val()] : null;
+var needs = p && p.needs;
+$('#travel_map_url_wrap').toggle(needs === 'url');
+var status = $('#travel_map_status');
+if (!status.length) { return; }
+if (needs === 'key' && !travelProviderKeys()[sel.val()]) { status.text(jawnosT('set this service\'s key in Configure → Plat → Maps')); }
+else if (needs === 'url' && !$.trim($('#travel_custom_url').val())) { status.text(jawnosT('paste the service\'s tile URL')); }
+else { status.text(''); }
 }
+
+// ---- measured maps: a multi-select of the maps drawn on the canvas ----
+function travelMapsRestore() {
+var button = $('#travel_maps_button');
+if (!button.length || button.attr('ready') == 'yes') { return; }
+button.attr('ready', 'yes');
+travelHiddenMaps = [];
+	var saved = button.attr('hidden_maps');
+if (saved) { try { travelHiddenMaps = JSON.parse(saved) || []; } catch (e) { travelHiddenMaps = []; } }
+if (!(travelHiddenMaps instanceof Array)) { travelHiddenMaps = []; }
+$('.travel_maps_check').each(function() { $(this).prop('checked', travelHiddenMaps.indexOf($(this).val()) < 0); });
+travelMapsLabel();
+}
+
+function travelMapsLabel() {
+var total = $('.travel_maps_row').length;
+var shown = $('.travel_maps_check:checked').length;
+var text = total && shown === total ? jawnosT('Maps: all') : (shown ? jawnosT('Maps: {0} of {1}', shown, total) : jawnosT('Maps: none'));
+$('#travel_maps_button').text(text);
+}
+
+// Redraw from the last atlas answer: switching maps off never asks the server again.
+function travelMapsApply() {
+travelMapsLabel();
+settingSetter({ 'app': 'travel', 'setting': 'hidden_maps', 'value': JSON.stringify(travelHiddenMaps) });
+if (!travelMap || !travelAllMaps.length) { return; }
+var shown = $.grep(travelAllMaps, function(m) { return m['guessed'] || travelHiddenMaps.indexOf(m['uuid']) < 0; });
+travelMap.setMaps(shown);
+travelMap.draw();
+}
+
+$(document).on('click', '#travel_maps_button', function(e) {
+e.stopPropagation();
+$('#travel_maps_menu').toggle();
+});
+
+$(document).on('click', '#travel_maps_menu', function(e) { e.stopPropagation(); });
+$(document).on('click', function() { $('#travel_maps_menu').hide(); });
+
+$(document).on('change', '.travel_maps_check', function() {
+var uuid = $(this).val();
+var i = travelHiddenMaps.indexOf(uuid);
+if ($(this).prop('checked')) { if (i >= 0) { travelHiddenMaps.splice(i, 1); } }
+else if (i < 0) { travelHiddenMaps.push(uuid); }
+travelMapsApply();
+});
+
+$(document).on('click', '.travel_maps_all', function(e) {
+e.preventDefault();
+travelHiddenMaps = [];
+$('.travel_maps_check').prop('checked', true);
+travelMapsApply();
+});
+
+$(document).on('click', '.travel_maps_none', function(e) {
+e.preventDefault();
+travelHiddenMaps = [];
+$('.travel_maps_row').each(function() { travelHiddenMaps.push($(this).attr('uuid')); });
+$('.travel_maps_check').prop('checked', false);
+travelMapsApply();
+});
+
+// a map's name brings it into view (and turns it back on if it was off)
+$(document).on('click', '.travel_maps_frame', function() {
+var row = $(this).closest('.travel_maps_row');
+var uuid = row.attr('uuid');
+travelAnchorMap = uuid;
+settingSetter({ 'app': 'travel', 'setting': 'current_map', 'value': uuid });
+var i = travelHiddenMaps.indexOf(uuid);
+if (i >= 0) { travelHiddenMaps.splice(i, 1); row.find('.travel_maps_check').prop('checked', true); travelMapsApply(); }
+travelPendingMap = uuid;
+$('#travel_maps_menu').hide();
+setTimeout(function() { travelViewer({ timestamp: Date.now() }); }, 200);
+});
 
 function travelMapRender(response) {
 	if (!window.jawnosMap) { return; }
 	travelProviderFill();
 	var engine = travelMapEngine();
 	if (!engine) { return; }
-	engine.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val(), $('#travel_map_key').val());
-	engine.setMaps(response['all_maps'] || []);
+	travelMapsRestore();
+	engine.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val(), travelProviderKeys());
+	travelAllMaps = response['all_maps'] || [];
+	var shownMaps = $.grep(travelAllMaps, function(m) { return m['guessed'] || travelHiddenMaps.indexOf(m['uuid']) < 0; });
+	engine.setMaps(shownMaps);
 
 	// a guessed gap is a kept picture, not a picker entry: the newest one is named
 	// on the status line (and that is where it is deleted from)
@@ -177,10 +264,8 @@ function travelViewer(data) {
 		console.log(jsettings);
 	}
 	var time_scope = localStorage.getItem('scope');
-	var sel = $('.travel_map_selector').find('option[selected]');
-	var map = sel.val();
+	var map = travelAnchorMap || $('#travel_maps_button').attr('anchor') || '';
 	var tdata = { map: map, uuid: data['uuid'], time_scope: time_scope, timestamp: ts, settings: jsettings };
-	console.log(tdata);
 	$.ajax({
 		url: '/manager/travel/viewer',
 		type: 'GET',
@@ -453,29 +538,12 @@ $(document).on('click', '.delete_location', function() {
 	}
 });
 
-$(document).on('change', '.travel_map_selector', function() {
-	var uuid = $(this).val();
-	settingSetter({ 'app': 'travel', 'setting': 'current_map', 'value': uuid });
-
-	var s = $('.travel_map_selector').find('option[selected]').removeAttr('selected');
-
-	$('.travel_map_selector').find('option[value="' + uuid + '"]').attr('selected', 'yes');
-
-	// choosing a map brings it into view once the viewer answers with its bounds
-	travelPendingMap = uuid;
-	setTimeout(function() {
-		var timestamp = Date.now();
-		travelViewer({ timestamp: timestamp });
-	},200);
-});
-
-
 $(document).on('click', '.delete_travel_map', function() {
 	var a = $(this);
-	var sel = $('.travel_map_selector').find('option[selected]');
-	var uuid = sel.attr('value');
-	var app_uuid = sel.attr('app_uuid');
-	var app = sel.attr('app');
+	var row = a.closest('.travel_maps_row');
+	var uuid = row.attr('uuid');
+	var app_uuid = row.attr('app_uuid');
+	var app = row.attr('app');
 	if (a.attr('armed') == 'yes') {
 		var obg = a.attr('obg');
 		a.css({'background-color': obg });
@@ -505,21 +573,14 @@ $(document).on('change', '.travel_provider', function() {
 	var value = $(this).val();
 	settingSetter({ 'app': 'travel', 'setting': 'map_provider', 'value': value });
 	travelProviderFields();
-	if (travelMap) { travelMap.setProvider(value, $('#travel_custom_url').val(), $('#travel_map_key').val()); }
+	if (travelMap) { travelMap.setProvider(value, $('#travel_custom_url').val(), travelProviderKeys()); }
 });
 
 $(document).on('change', '#travel_custom_url', function() {
 	var value = $(this).val();
 	settingSetter({ 'app': 'travel', 'setting': 'map_custom_url', 'value': value });
 	travelProviderFields();
-	if (travelMap) { travelMap.setProvider($('.travel_provider').val() || 'none', value, $('#travel_map_key').val()); }
-});
-
-$(document).on('change', '#travel_map_key', function() {
-	var value = $(this).val();
-	settingSetter({ 'app': 'travel', 'setting': 'map_key', 'value': value });
-	travelProviderFields();
-	if (travelMap) { travelMap.setProvider($('.travel_provider').val() || 'none', $('#travel_custom_url').val(), value); }
+	if (travelMap) { travelMap.setProvider($('.travel_provider').val() || 'none', value, travelProviderKeys()); }
 });
 
 $(document).on('click', '#travel_config_toggle', function() {

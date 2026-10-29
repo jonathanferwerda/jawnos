@@ -33,10 +33,16 @@ window.jawnosMap = (function () {
 		none:  { name: 'None (offline maps only)', url: null, group: 'none' },
 		osm:   { name: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors', group: 'free' },
 		topo:  { name: 'OpenTopoMap',   url: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', max: 17, credit: '© OpenTopoMap (CC-BY-SA)', group: 'free' },
-		carto: { name: 'Carto Light',   url: 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', max: 20, credit: '© OpenStreetMap, © CARTO', group: 'free' },
+		osm_hot: { name: 'OSM Humanitarian', url: 'https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors, HOT', group: 'free' },
+		cyclosm: { name: 'CyclOSM', url: 'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', max: 19, credit: '© OpenStreetMap contributors, CyclOSM', group: 'free' },
 		esri:  { name: 'Esri Imagery',  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri, Maxar, Earthstar Geographics', group: 'free' },
-		// keyed services: pick one, paste the key it gives you, and the URL is made
-		// here — no need to assemble a template by hand
+		esri_street: { name: 'Esri Streets', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri', group: 'free' },
+		esri_topo: { name: 'Esri Topo', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}', max: 19, credit: 'Esri', group: 'free' },
+		esri_light: { name: 'Esri Light', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', max: 16, credit: 'Esri', group: 'free' },
+		esri_natgeo: { name: 'Esri NatGeo', url: 'https://server.arcgisonline.com/ArcGIS/rest/services/NatGeo_World_Map/MapServer/tile/{z}/{y}/{x}', max: 16, credit: 'Esri, National Geographic', group: 'free' },
+		// keyed services: pick one, set its key once under Configure -> Plat -> Maps,
+		// and the URL is made here — no need to assemble a template by hand
+		carto: { name: 'Carto Light', url: 'https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key={key}', max: 20, credit: '© OpenStreetMap, © CARTO', group: 'key', needs: 'key' },
 		maptiler: { name: 'MapTiler', url: 'https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key={key}', max: 20, credit: '© MapTiler © OpenStreetMap', group: 'key', needs: 'key' },
 		mapbox: { name: 'Mapbox', url: 'https://api.mapbox.com/styles/v1/mapbox/streets-v12/tiles/256/{z}/{x}/{y}?access_token={key}', max: 20, credit: '© Mapbox © OpenStreetMap', group: 'key', needs: 'key' },
 		stadia: { name: 'Stadia Maps', url: 'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}.png?api_key={key}', max: 20, credit: '© Stadia Maps © OpenStreetMap', group: 'key', needs: 'key' },
@@ -94,7 +100,7 @@ window.jawnosMap = (function () {
 		var here = null;      // the current position { lat, lon, accuracy }
 		var providerKey = opts.provider || 'none';
 		var customUrl = opts.customUrl || '';
-		var apiKey = opts.key || '';
+		var apiKeys = opts.keys || {};   // provider key -> the service's key
 		var tileCache = {};   // url -> Image (loaded) or true (loading) or null (failed)
 		var tileCount = 0;    // loaded tiles held; the cache is dropped past a cap
 		var imageCache = {};  // map file url -> loaded Image, so a refresh reuses it
@@ -145,6 +151,7 @@ window.jawnosMap = (function () {
 			if (!tpl) { return null; }
 			// a keyed service draws nothing until its key is given
 			if (tpl.indexOf('{key}') >= 0) {
+				var apiKey = apiKeys[providerKey] || '';
 				if (!apiKey) { return null; }
 				tpl = tpl.replace(/\{key\}/g, encodeURIComponent(apiKey));
 			}
@@ -566,13 +573,13 @@ window.jawnosMap = (function () {
 			zoom: zoomBy,
 			setZoom: function (z) { view.z = Math.max(2, Math.min(21, z)); draw(); },
 			center: function (lat, lon) { view.lat = lat; view.lon = lon; draw(); },
-			setProvider: function (key, url, mapKey) {
+			setProvider: function (key, url, keys) {
 				var nextUrl = (url === undefined || url === null) ? customUrl : url;
-				var nextKey = (mapKey === undefined || mapKey === null) ? apiKey : mapKey;
-				if (key === providerKey && nextUrl === customUrl && nextKey === apiKey) { return; }
+				var nextKeys = (keys && typeof keys === 'object') ? keys : apiKeys;
+				if (key === providerKey && nextUrl === customUrl && JSON.stringify(nextKeys) === JSON.stringify(apiKeys)) { return; }
 				providerKey = key;
 				customUrl = nextUrl;
-				apiKey = nextKey;
+				apiKeys = nextKeys;
 				tileCache = {};
 				tileCount = 0;
 				draw();

@@ -450,6 +450,18 @@ $(document).on('change', '.configure_visibility', function(e) {
 		}
 	});
 });
+$(document).on('change', '.map_key_input', function() {
+	// Configure -> Plat -> Maps: the tile-service keys are house settings, not an
+	// appointment setting, so they go through the plain setter and say so.
+	var input = $(this);
+	var status = $('#map_keys_status');
+	status.text('saving…');
+	settingSetter({ app: input.attr('app') || '__president', setting: input.attr('setting'), value: input.val() }).then(function() {
+		status.text('saved');
+		setTimeout(function() { if (status.text() == 'saved') { status.text(''); } }, 2500);
+	});
+});
+
 $(document).on('change', '.configure_input', function(e) {
 	var e = $(this);
 	url = '/manager/configure';

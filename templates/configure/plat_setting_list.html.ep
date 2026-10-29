@@ -58,7 +58,7 @@
 	my $plat_tab = &subs::setting_grabber({ app => '__president', setting => 'plat_tab' }) || 'plat_ai';
 	# an older build saved the crypto tab; the same page is Pay now
 	$plat_tab = 'plat_pay' if $plat_tab eq 'plat_crypto';
-	$plat_tab = 'plat_ai' unless $plat_tab =~ /^plat_(?:ai|oauth|pay|dns)$/;
+	$plat_tab = 'plat_ai' unless $plat_tab =~ /^plat_(?:ai|oauth|pay|dns|maps)$/;
 %>
 <div class="cfg">
 	<h2>Platform</h2>
@@ -67,6 +67,7 @@
 		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_oauth') { %>active<% } %>" tab="plat_oauth">OAuth2</button>
 		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_pay') { %>active<% } %>" tab="plat_pay">Pay</button>
 		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_dns') { %>active<% } %>" tab="plat_dns">DNS</button>
+		<button class="cfg_tab_toggle <% if ($plat_tab eq 'plat_maps') { %>active<% } %>" tab="plat_maps">Maps</button>
 	</div>
 	<div id="plat_ai" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_ai' ? '' : 'display:none;' %>">
 	<p class="cfg-note">Every AI model choice and provider key, in one place.</p>
@@ -323,5 +324,8 @@
 	</div>
 	<div id="plat_dns" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_dns' ? '' : 'display:none;' %>">
 		<%= include 'configure/dns_clients' %>
+	</div>
+	<div id="plat_maps" class="cfg_tab_panel" style="<%= $plat_tab eq 'plat_maps' ? '' : 'display:none;' %>">
+		<%= include 'configure/map_setting_list' %>
 	</div>
 </div>

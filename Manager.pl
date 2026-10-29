@@ -34566,6 +34566,11 @@ get '/manager/travel/continent' => sub($c) {
 	my $appointments = &travel_atlas_appointments($c->param('start'), $c->param('end'));
 	my $home_plates = &travel_atlas_home_plates();
 	my $here = &travel_here_position();
+	# the maps switched off in the Travel picker stay off on the background too
+	my $hidden_maps = eval { return decode_json $settings->{'hidden_maps'} } || [];
+	my %hidden = map { $_ => 1 } @{$hidden_maps};
+	$maps = [ grep { $_->{'guessed'} || !$hidden{ $_->{'uuid'} } } @{$maps} ];
+	my %map_keys = map { $_ => (&subs::setting_grabber({ app => '__president', setting => 'map_key_' . $_ }) || '') } qw(maptiler mapbox stadia thunderforest carto);
 	$c->render(json => {
 		maps => $maps,
 		points => $points,
@@ -34574,7 +34579,7 @@ get '/manager/travel/continent' => sub($c) {
 		here => $here,
 		provider => $settings->{'map_provider'} || 'none',
 		custom_url => $settings->{'map_custom_url'} || '',
-		key => $settings->{'map_key'} || ''
+		keys => \%map_keys
 	});
 };
 

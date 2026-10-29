@@ -1,0 +1,32 @@
+<%# Configure -> Plat -> Maps. The keys for the tile services Travel offers.
+    A service is only listed here when its tiles are a plain {z}/{x}/{y} URL;
+    Google Maps is not, because its Tiles API mints a session token first. %>
+<% no warnings 'uninitialized'; %>
+<%
+	my @services = (
+		[ 'maptiler',     'MapTiler',     'https://cloud.maptiler.com/account/keys/' ],
+		[ 'mapbox',       'Mapbox',       'https://account.mapbox.com/access-tokens/' ],
+		[ 'stadia',       'Stadia Maps',  'https://client.stadiamaps.com/dashboard/' ],
+		[ 'thunderforest','Thunderforest','https://manage.thunderforest.com/' ],
+		[ 'carto',        'Carto',        'https://carto.com/basemaps/apikey' ],
+	);
+%>
+<p class="cfg-note">Map services that issue a key. Travel's Map picker reads these, so a key is typed once here and the map service can be chosen in any window, on any machine the settings reach. A service with no key stays unlisted in Travel until its key is saved. The free services (OpenStreetMap, OpenTopoMap, OSM Humanitarian, CyclOSM and the Esri basemaps) need no key and are not listed.</p>
+<div class="cfg-card">
+	<h3 style="margin-top:0;">Tile service keys</h3>
+	<% foreach my $service ( @services ) {
+		my ($id, $name, $url) = @{$service};
+		my $value = &subs::setting_grabber({ app => '__president', setting => 'map_key_' . $id });
+	%>
+		<div class="cfg-row">
+			<label><%= $name %></label>
+			<input type="password" class="map_key_input" app="__president" setting="map_key_<%= $id %>" value="<%= $value %>" placeholder="paste the key" autocomplete="off" spellcheck="false" style="flex:1;min-width:14em;">
+			<a href="<%= $url %>" target="_blank" rel="noopener" style="font-size:12px;">get a key</a>
+		</div>
+	<% } %>
+	<p class="cfg-note" id="map_keys_status" style="font-size:12px;"></p>
+</div>
+<div class="cfg-card">
+	<h3>Google Maps</h3>
+	<p class="cfg-note">Google Maps is not offered in Travel. Its Maps Tiles API needs an API key <b>and</b> a short-lived session token minted for each session, and a Google Cloud billing account, so a key alone cannot be pasted into a tile URL. Use one of the services above, or a keyed tile URL you already hold from another provider.</p>
+</div>
