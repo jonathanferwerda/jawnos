@@ -262,7 +262,11 @@ sub master_time_looper() {
 		# the tree died without its terminal noticing - recover it rather than idle.
 		# This is exactly the case that used to leave the master alive
 		# with nothing on 3000/45545 and no President.pl.
-		if ($status eq 'started') {
+		# The boot watch owns the wait for a tree this master just started: it
+		# probes every 3s and restarts after 90s. Running the 30s watchdog as
+		# well would count the same slow boot twice and could tear down a tree
+		# that is still binding its main server.
+		if ($status eq 'started' && !$master_boot_watch) {
 			if ($woke) { $tree_ticks = 29 }   # probe on this very tick
 			if (++$tree_ticks >= 30) {
 				# after a wake the second probe follows in ~10s, not 30
@@ -318,6 +322,24 @@ sub master_time_looper() {
 					sleep 1;
 					print "... 1";
 					sleep 1;
+					# The old listeners are released asynchronously: a prefork
+					# manager can be signalled and still hold its socket for a few
+					# seconds. A boot that binds first loses the main server with
+					# "Address already in use" while the dock still answers - and
+					# it used to stay that way, because the liveness check only
+					# knew the dock. Wait until every configured port is free (a
+					# bind, not a connect: a stuck listener still answers a
+					# connect) or the deadline passes; the boot watch recovers a
+					# tree that could not come up.
+					my $free_deadline = time + 20;
+					while (time < $free_deadline) {
+						my $busy = 0;
+						foreach my $port ( &config_ports() ) {
+							$busy = 1 unless &port_free($port);
+						}
+						last unless $busy;
+						sleep .5;
+					}
 					$fork = undef;
 					$fork = &terminal_pty_runner({ 'program' => './President.pl' });
 					&arm_boot_watch();
@@ -600,16 +622,37 @@ sub reap_own_children {
 # Bring the tree up (or not): after a (re)start the master checks that the web
 # port answers, and if it does not within the window it restarts once more, up to
 # a few tries - so a boot that lost a race with another tear-down still recovers.
-sub config_port {
+# Every port the tree is meant to answer on: the dock (`port`, the locker
+# server) and the manager (`working_port`, the main server the app opens). They
+# are separate listeners, so a tree whose main server lost its bind to a
+# leftover listener still answers the dock; probing only the dock called that
+# "serving" and neither the boot watch nor the watchdog ever recovered the
+# screen the app was opening (2026-10-29: the phone's 45545 stayed dead while
+# 3000 answered, and the app sat black).
+sub config_ports {
 	my $file = -e './config.json' ? './config.json' : '';
-	return 0 unless $file;
+	return () unless $file;
 	my $cfg = eval { return decode_json scalar read_file($file) };
-	my $port = eval { $cfg->{'port'} } || 0;
-	return ($port =~ /^[0-9]+$/) ? $port : 0;
+	return () unless $cfg && ref $cfg eq 'HASH';
+	my @ports;
+	foreach my $key ( 'port', 'working_port' ) {
+		my $p = eval { $cfg->{$key} } || 0;
+		next unless $p =~ /^[0-9]+$/ && $p > 0;
+		next if grep { $_ == $p } @ports;
+		push @ports, $p;
+	}
+	return @ports;
 }
 
-sub tree_serving {
-	my $port = &config_port();
+# The dock port, kept for callers that name one port (the boot watch's early
+# return and the messages print it).
+sub config_port {
+	my @ports = &config_ports();
+	return @ports ? $ports[0] : 0;
+}
+
+sub port_answers {
+	my ($port) = @_;
 	return 0 unless $port;
 	require IO::Socket::INET;
 	my $ok = eval {
@@ -617,6 +660,33 @@ sub tree_serving {
 		$sock ? (close($sock), 1) : 0;
 	};
 	return $ok ? 1 : 0;
+}
+
+# True when nothing is bound to the port. A connect() is not the same question:
+# a stuck listener still completes (or queues) it, and a full accept queue just
+# times out, so the bind is what decides whether a boot can take the port.
+sub port_free {
+	my ($port) = @_;
+	return 0 unless $port;
+	require IO::Socket::INET;
+	my $sock = eval {
+		IO::Socket::INET->new(
+			LocalAddr => '0.0.0.0', LocalPort => $port,
+			Listen => 1, ReuseAddr => 1
+		);
+	};
+	return 0 unless $sock;
+	close $sock;
+	return 1;
+}
+
+sub tree_serving {
+	my @ports = &config_ports();
+	return 0 unless scalar @ports;
+	foreach my $port ( @ports ) {
+		return 0 unless &port_answers($port);
+	}
+	return 1;
 }
 
 sub arm_boot_watch {
