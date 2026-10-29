@@ -21,6 +21,7 @@ var gallery = {
 	sort: 'desc',
 	unlock: '',
 	files: null,
+	near: null,
 	items: [],
 	albums: [],
 	total: 0,
@@ -163,6 +164,10 @@ function imageViewer(data) {
 		gallery.view = 'grid';
 		gallery.app = '';
 	}
+	// a Gallery opened on the ground Travel is showing (its nearby strip): the
+	// data route filters to what was taken there, so a large set pages normally
+	if (data.near) { gallery.view = 'grid'; gallery.app = ''; }
+	gallery.near = data.near || null;
 	if (typeof data.unlock == 'string' && data.unlock) { gallery.unlock = data.unlock; }
 	if (data.file_uuid) { galleryTargetUuid = data.file_uuid; }
 	if (data.target) { galleryTargetFile = data.target; }
@@ -210,20 +215,29 @@ function galleryFetch(reset) {
 	}
 	gallery.loading = true;
 	$('#gallery_body').css('cursor', 'progress');
+	var gdata = {
+		offset: gallery.offset,
+		limit: 160,
+		sort: gallery.sort,
+		search: gallery.search,
+		unlock: gallery.unlock || '',
+		device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
+		browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : '',
+		apps: gallery.app ? JSON.stringify([gallery.app]) : '',
+		files: gallery.files ? JSON.stringify(gallery.files) : ''
+	};
+	if (gallery.near) {
+		gdata.near_lat = gallery.near.lat;
+		gdata.near_lon = gallery.near.lon;
+		gdata.near_nw_lat = gallery.near.nw_lat;
+		gdata.near_nw_lon = gallery.near.nw_lon;
+		gdata.near_se_lat = gallery.near.se_lat;
+		gdata.near_se_lon = gallery.near.se_lon;
+	}
 	$.ajax({
 		url: '/manager/gallery/data',
 		type: 'GET',
-		data: {
-			offset: gallery.offset,
-			limit: 160,
-			sort: gallery.sort,
-			search: gallery.search,
-			unlock: gallery.unlock || '',
-			device_uuid: (typeof jawnDeviceUuid === 'function') ? jawnDeviceUuid() : '',
-			browser_tab_id: (typeof jawnosMediaTab === 'function') ? jawnosMediaTab() : '',
-			apps: gallery.app ? JSON.stringify([gallery.app]) : '',
-			files: gallery.files ? JSON.stringify(gallery.files) : ''
-		},
+		data: gdata,
 		success: function(response) {
 			gallery.loading = false;
 			$('#gallery_body').css('cursor', '');

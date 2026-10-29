@@ -29281,6 +29281,21 @@ get '/manager/gallery/data' => sub ($c) {
 	my $apps = eval { return decode_json $c->param('apps') } || [];
 	$apps = [] unless ref $apps eq 'ARRAY';
 	my $jfiles = $c->param('files');
+	# a Gallery opened from Travel's nearby strip carries the ground: only the files
+	# taken inside it are listed, and the window pages through them like any album
+	my %near_key;
+	if ($c->param('near_lat') && $c->param('near_lon')) {
+		my $near = &travel_nearby_items(
+			lat => $c->param('near_lat'),
+			lon => $c->param('near_lon'),
+			limit => 3000,
+			nw_lat => $c->param('near_nw_lat'),
+			nw_lon => $c->param('near_nw_lon'),
+			se_lat => $c->param('near_se_lat'),
+			se_lon => $c->param('near_se_lon')
+		);
+		%near_key = map { ($_->{'app'} || '') . "\0" . ($_->{'app_uuid'} || '') . "\0" . ($_->{'uuid'} ? 'u:' . $_->{'uuid'} : 'f:' . ($_->{'f'} || '')) => 1 } @{$near};
+	}
 	my $settings = &subs::settings_grabber({ app => 'gallery' });
 	my @all;
 	my %albums;
@@ -29411,6 +29426,7 @@ get '/manager/gallery/data' => sub ($c) {
 			next if $row_private && $revealed == 0 && !&subs::private_revealed();
 			my $files = eval { return decode_json $appt->{'file'} } || [];
 			foreach my $f ( @{$files} ) {
+				next if %near_key && !$near_key{ ($app || '') . "\0" . ($appt->{'uuid'} || '') . "\0" . ($f->{'uuid'} ? 'u:' . $f->{'uuid'} : 'f:' . ($f->{'f'} || '')) };
 				next if $search && index(lc($app), $search) < 0 && index(lc($f->{'f'} || ''), $search) < 0;
 				my $tile = $tile_for->($app, $appt, $f);
 				next unless $tile;
@@ -34046,33 +34062,70 @@ get '/manager/travel' => sub ($c) {
 
 # The pictures and videos taken while the house was at a place. A file carries no
 # coordinates of its own, so the media is joined to the position fixes the house
-# kept: a photo belongs to the point if a fix within the radius was recorded around
-# the time it was taken. That is the honest reading of "taken near here" for a
-# library whose photos have no GPS of their own.
+# kept: a photo belongs to a place if a fix inside the area was recorded around the
+# time it was taken. The area is the ground the map is showing when the caller
+# names it, else a small circle around the point. That is the honest reading of
+# "taken near here" for a library whose photos have no GPS of their own.
 get '/manager/travel/nearby' => sub ($c) {
 	my $lat = 0 + ($c->param('lat') || 0);
 	my $lon = 0 + ($c->param('lon') || 0);
 	return $c->render(json => { items => [] }) unless $lat || $lon;
-	my $radius = 0 + ($c->param('radius') || 300);
+	my $items = &travel_nearby_items(
+		lat => $lat,
+		lon => $lon,
+		radius => $c->param('radius'),
+		window => $c->param('window'),
+		limit => $c->param('limit'),
+		nw_lat => $c->param('nw_lat'),
+		nw_lon => $c->param('nw_lon'),
+		se_lat => $c->param('se_lat'),
+		se_lon => $c->param('se_lon')
+	);
+	$c->render(json => { items => $items });
+};
+
+sub travel_nearby_items {
+	my (%p) = @_;
+	my $lat = 0 + ($p{'lat'} || 0);
+	my $lon = 0 + ($p{'lon'} || 0);
+	return [] unless $lat || $lon;
+	my $radius = 0 + ($p{'radius'} || 300);
 	$radius = 50 if $radius < 10;
 	$radius = 2000 if $radius > 2000;
-	my $window = 0 + ($c->param('window') || 1800000); # 30 minutes either side
-	my $limit = int($c->param('limit') || 24);
-	$limit = 24 if $limit < 1 || $limit > 60;
+	my $window = 0 + ($p{'window'} || 1800000); # 30 minutes either side
+	my $limit = int($p{'limit'} || 1000);
+	$limit = 1000 if $limit < 1 || $limit > 3000;
 
-	my $cos = cos($lat * 3.14159265358979 / 180);
-	$cos = 0.000001 if abs($cos) < 0.000001;
-	my $dlat = $radius / 111320;
-	my $dlon = $radius / (111320 * $cos);
-	my $fixes = &subs::db_query('select timestamp, latitude, longitude from continent where cast(latitude as real) between ? and ? and cast(longitude as real) between ? and ?', $lat - $dlat, $lat + $dlat, $lon - $dlon, $lon + $dlon)->hashes;
+	# the ground the map is showing, when the caller names it: only pictures taken
+	# inside that box are returned, so panning or zooming changes the set
+	my ($nw_lat, $nw_lon, $se_lat, $se_lon) = @p{qw(nw_lat nw_lon se_lat se_lon)};
+	my $boxed = (defined $nw_lat && defined $nw_lon && defined $se_lat && defined $se_lon)
+		&& abs($nw_lat) <= 90 && abs($se_lat) <= 90 && abs($nw_lon) <= 180 && abs($se_lon) <= 180;
+	my ($min_lat, $max_lat, $min_lon, $max_lon);
+	if ($boxed) {
+		($min_lat, $max_lat) = ($nw_lat < $se_lat) ? ($nw_lat, $se_lat) : ($se_lat, $nw_lat);
+		($min_lon, $max_lon) = ($nw_lon < $se_lon) ? ($nw_lon, $se_lon) : ($se_lon, $nw_lon);
+	}
+	else {
+		my $cos = cos($lat * 3.14159265358979 / 180);
+		$cos = 0.000001 if abs($cos) < 0.000001;
+		my $dlat = $radius / 111320;
+		my $dlon = $radius / (111320 * $cos);
+		$min_lat = $lat - $dlat; $max_lat = $lat + $dlat;
+		$min_lon = $lon - $dlon; $max_lon = $lon + $dlon;
+	}
+	my $fixes = &subs::db_query('select timestamp, latitude, longitude from continent where cast(latitude as real) between ? and ? and cast(longitude as real) between ? and ?', $min_lat, $max_lat, $min_lon, $max_lon)->hashes;
 	my @fix_times;
 	foreach my $fix ( @{$fixes} ) {
-		my $dy = (0 + $fix->{'latitude'} - $lat) * 111320;
-		my $dx = (0 + $fix->{'longitude'} - $lon) * 111320 * $cos;
-		next if (($dx * $dx) + ($dy * $dy)) > ($radius * $radius);
+		if (!$boxed) {
+			my $cos = cos($lat * 3.14159265358979 / 180);
+			my $dy = (0 + $fix->{'latitude'} - $lat) * 111320;
+			my $dx = (0 + $fix->{'longitude'} - $lon) * 111320 * $cos;
+			next if (($dx * $dx) + ($dy * $dy)) > ($radius * $radius);
+		}
 		push @fix_times, 0 + $fix->{'timestamp'};
 	}
-	return $c->render(json => { items => [] }) unless scalar @fix_times;
+	return [] unless scalar @fix_times;
 	@fix_times = sort { $a <=> $b } @fix_times;
 
 	# the nearest fix in time, by binary search over the sorted list
@@ -34154,8 +34207,8 @@ get '/manager/travel/nearby' => sub ($c) {
 			};
 		}
 	}
-	$c->render(json => { items => \@items, radius => $radius });
-};
+	return \@items;
+}
 
 sub travel_grabber($c) {
 	my $timestamp = $c->param('timestamp');

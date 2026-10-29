@@ -126,6 +126,7 @@ window.jawnosMap = (function () {
 		var markerHandler = null; // called with a tapped marker (a point carrying an app)
 		var contextHandler = null; // called with the map under a right-click; 1 = it was handled
 		var longPressHandler = null; // called with (lat, lon, sx, sy) after a still press
+		var clickHandler = null; // called with the ground under a plain tap (lat, lon, sx, sy)
 
 		function size() {
 			var pw = typeof opts.width === 'function' ? opts.width() : opts.width;
@@ -449,6 +450,7 @@ window.jawnosMap = (function () {
 		// a pin, a note): the press must stay still, and a press that fired keeps the
 		// release from also being read as a tap or a zoom.
 		var pressTimer = null, press = null, pressFired = false;
+		var clickTimer = null;   // a touch tap waits to see whether a second one arrives
 		function pressCancel() {
 			if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
 			press = null;
@@ -484,6 +486,7 @@ window.jawnosMap = (function () {
 		canvas.addEventListener('mousedown', function (e) {
 			if (inBand(e.clientY)) { return; }
 			stopGlide();
+			if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
 			drag = { x: e.clientX, y: e.clientY, moved: 0, vx: 0, vy: 0 };
 			suppressClick = false;
 			if (e.button === 0) { pressStart(e.offsetX, e.offsetY); }
@@ -512,10 +515,21 @@ window.jawnosMap = (function () {
 		canvas.addEventListener('click', function (e) {
 			if (suppressClick) { suppressClick = false; return; }
 			if (Date.now() - lastTouch < 500) { return; } // the touch tap already answered
-			if (!markerHandler) { return; }
-			var pt = markerAt(e.offsetX, e.offsetY);
-			if (pt) { markerHandler(pt, e.offsetX, e.offsetY); }
+			var pt = markerHandler ? markerAt(e.offsetX, e.offsetY) : null;
+			if (pt) { markerHandler(pt, e.offsetX, e.offsetY); return; }
+			fireMapClick(e.offsetX, e.offsetY);
 		});
+
+		// A plain tap asks the page for the ground under it (the pictures taken
+		// there); a marker still wins, and a touch tap waits a moment so a
+		// double-tap can still be read as a zoom.
+		function fireMapClick(sx, sy) {
+			if (!clickHandler) { return; }
+			var dim = size();
+			var o = originFor(view, dim.w, dim.h);
+			var g = geoAt(o.x + sx, o.y + sy, view.z);
+			try { clickHandler(g.lat, g.lon, sx, sy); } catch (e) {}
+		}
 
 		// A right-click on a map: the topmost one under the point goes to the page,
 		// which decides (a guessed gap offers to be dropped). Only when the page says
@@ -568,6 +582,7 @@ window.jawnosMap = (function () {
 			}
 			else {
 				touch = { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: 0, vx: 0, vy: 0 };
+				if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
 				var tr = canvas.getBoundingClientRect();
 				pressStart(e.touches[0].clientX - tr.left, e.touches[0].clientY - tr.top);
 			}
@@ -613,8 +628,20 @@ window.jawnosMap = (function () {
 				}
 				else {
 					var now = Date.now();
-					if (tapAt && now - lastTap < 300) { zoomAt(1, touch.x - r.left, touch.y - r.top); tapAt = null; }
-					else { tapAt = { x: touch.x, y: touch.y }; }
+					if (tapAt && now - lastTap < 300) {
+						if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+						zoomAt(1, touch.x - r.left, touch.y - r.top);
+						tapAt = null;
+					}
+					else {
+						tapAt = { x: touch.x, y: touch.y };
+						if (clickTimer) { clearTimeout(clickTimer); }
+						var sx = touch.x - r.left, sy = touch.y - r.top;
+						clickTimer = setTimeout(function() {
+							clickTimer = null;
+							fireMapClick(sx, sy);
+						}, 300);
+					}
 					lastTap = now;
 				}
 			}
@@ -718,6 +745,7 @@ window.jawnosMap = (function () {
 				fitBox(lat - h, lat + h, lon - h, lon + h, 1.15);
 			},
 			onMarkerClick: function (fn) { markerHandler = fn; },
+			onMapClick: function (fn) { clickHandler = fn; },
 			onLongPress: function (fn) { longPressHandler = fn; },
 			onMapContext: function (fn) { contextHandler = fn; },
 			onDraw: function (fn) { drawHooks.push(fn); },

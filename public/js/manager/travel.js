@@ -60,8 +60,10 @@ function travelMapEngine() {
 	});
 	// a tap on a place opens its appointment window; a numbered one unfolds its list
 	travelMap.onMarkerClick(function(pt, sx, sy) { jawnosMarkerTapped(pt, sx, sy, travelMap.canvas); });
-	// a still long press opens the street view of that ground
-	travelMap.onLongPress(function(lat, lon) { travelStreetOpen(lat, lon); });
+	// a single tap asks for the pictures taken on the ground the map is showing
+	travelMap.onMapClick(function(lat, lon) { travelNearShow(lat, lon); });
+	// a still long press offers a small street-view preview of that ground
+	travelMap.onLongPress(function(lat, lon, sx, sy) { travelStreetPreview(lat, lon, sx, sy); });
 	// a right-click on a guessed gap offers to drop it (so the hat may fill that
 	// ground afresh); anywhere else the engine leaves the event alone
 	travelMap.onMapContext(function(m, sx, sy) {
@@ -90,30 +92,49 @@ function travelMapEngine() {
 // ---- nearby media: pictures and videos taken while the house was here ----
 var travelNearCache = {};
 var travelNearLists = {};
+var travelNearScopes = {};   // container -> the point and view bounds its set came from
+var travelNearPreviewMax = 20;   // previews in the strip; Gallery still opens the whole set
 
 function travelNearOpen(container, index) {
 	var items = travelNearLists[container] || [];
 	if (!items.length || typeof imageViewer !== 'function') { return; }
-	// the Gallery's own file list shape, so its window opens on these photos and
-	// its arrows step through the same set
-	var files = items.map(function(it) {
-		return { f: it.f, app: it.app, app_uuid: it.app_uuid, type: it.type, uuid: it.uuid, server_time: it.server_time, timestamp: it.timestamp, info: it.info || {} };
-	});
-	imageViewer({ files: files, target: files[index] ? files[index].f : undefined });
+	var scope = travelNearScopes[container] || {};
+	var near = { lat: scope.lat, lon: scope.lon };
+	if (scope.bounds && scope.bounds.nw && scope.bounds.se) {
+		near.nw_lat = scope.bounds.nw.lat; near.nw_lon = scope.bounds.nw.lon;
+		near.se_lat = scope.bounds.se.lat; near.se_lon = scope.bounds.se.lon;
+	}
+	// the Gallery filters to the same ground server-side and pages through it, so
+	// a view holding hundreds of pictures opens without a huge URL
+	imageViewer({ near: near, target: items[index] ? items[index].f : undefined });
 }
 
-function travelNearRender(container, items) {
+function travelNearRender(container, items, show_empty) {
 	travelNearLists[container] = items;
 	var box = $('#' + container);
 	var strip = box.find('.travel_near_strip');
 	strip.empty();
-	if (!items.length) { box.hide(); return; }
-	$.each(items, function(i, it) {
+	var label = box.find('.travel_near_label');
+	if (label.length) { label.text(items.length ? jawnosT('Nearby') + ' · ' + items.length : jawnosT('Nearby')); }
+	if (!items.length) {
+		if (!show_empty) { box.hide(); return; }
+		strip.html('<span style="font-size:11px;opacity:.7;">' + jawnosT('No pictures taken in this view') + '</span>');
+		box.show();
+		return;
+	}
+	var shown = items.slice(0, travelNearPreviewMax);
+	$.each(shown, function(i, it) {
 		$('<img>').addClass('travel_near_thumb').attr('src', it.thumb_url).attr('alt', it.label || '').attr('title', it.label || '')
 			.css({ width: '52px', height: '52px', objectFit: 'cover', borderRadius: '5px', marginRight: '3px', cursor: 'pointer', verticalAlign: 'middle', background: '#222' })
 			.on('click', function() { travelNearOpen(container, i); })
 			.appendTo(strip);
 	});
+	if (items.length > shown.length) {
+		$('<span></span>').addClass('travel_near_more').text(jawnosT('+{0} more', items.length - shown.length))
+			.css({ fontSize: '11px', opacity: '.8', cursor: 'pointer', marginLeft: '6px', verticalAlign: 'middle' })
+			.on('click', function() { travelNearOpen(container, 0); })
+			.appendTo(strip);
+	}
 	box.show();
 }
 
@@ -122,26 +143,44 @@ function travelNearGallery(container, items) {
 	var grid = $('#' + container);
 	grid.empty();
 	if (!items.length) { grid.hide(); return; }
-	$.each(items, function(i, it) {
+	var shown = items.slice(0, travelNearPreviewMax);
+	$.each(shown, function(i, it) {
 		$('<img>').addClass('travel_near_grid_thumb').attr('src', it.thumb_url).attr('alt', it.label || '').attr('title', it.label || '')
 			.css({ width: '100%', height: '96px', objectFit: 'cover', borderRadius: '5px', cursor: 'pointer', background: '#222' })
 			.on('click', function() { travelNearOpen(container, i); })
 			.appendTo(grid);
 	});
+	if (items.length > shown.length) {
+		$('<div></div>').addClass('travel_near_grid_more').text(jawnosT('+{0} more', items.length - shown.length))
+			.css({ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '96px', borderRadius: '5px', cursor: 'pointer', background: '#222', color: '#ddd', fontSize: '12px' })
+			.on('click', function() { travelNearOpen(container, 0); })
+			.appendTo(grid);
+	}
 	grid.css('display', 'grid');
 }
 
-function travelNearFetch(lat, lon, strip_id, gallery_id) {
-	var key = lat.toFixed(4) + ',' + lon.toFixed(4);
+// The search area is the ground the map is showing, not a fixed circle: only the
+// pictures taken inside the current view come back. The route returns the whole
+// set (the Gallery opens all of them) and the strip previews the first 20.
+function travelNearFetch(lat, lon, bounds, strip_id, gallery_id, show_empty, cb) {
+	var data = { lat: lat, lon: lon, limit: 1000 };
+	var bkey = '';
+	if (bounds && bounds.nw && bounds.se) {
+		data.nw_lat = bounds.nw.lat; data.nw_lon = bounds.nw.lon;
+		data.se_lat = bounds.se.lat; data.se_lon = bounds.se.lon;
+		bkey = [bounds.nw.lat, bounds.nw.lon, bounds.se.lat, bounds.se.lon].map(function(v) { return (+v).toFixed(4); }).join(',');
+	}
+	var key = lat.toFixed(4) + ',' + lon.toFixed(4) + '|' + bkey;
 	var finish = function(items) {
-		if (strip_id) { travelNearRender(strip_id, items); }
-		if (gallery_id) { travelNearGallery(gallery_id, items); }
+		if (strip_id) { travelNearScopes[strip_id] = { lat: lat, lon: lon, bounds: bounds }; travelNearRender(strip_id, items, show_empty); }
+		if (gallery_id) { travelNearScopes[gallery_id] = { lat: lat, lon: lon, bounds: bounds }; travelNearGallery(gallery_id, items); }
+		if (cb) { cb(items); }
 	};
 	if (travelNearCache[key]) { finish(travelNearCache[key]); return; }
 	$.ajax({
 		url: '/manager/travel/nearby',
 		type: 'GET',
-		data: { lat: lat, lon: lon },
+		data: data,
 		success: function(r) {
 			var items = (r && r.items) || [];
 			travelNearCache[key] = items;
@@ -150,6 +189,71 @@ function travelNearFetch(lat, lon, strip_id, gallery_id) {
 		error: function() { finish([]); }
 	});
 }
+
+// a single tap asks for the pictures taken on the ground the map is showing
+function travelNearShow(lat, lon) {
+	$('#travel_street_preview').hide();
+	var bounds = travelMap ? travelMap.viewBounds() : null;
+	travelNearFetch(lat, lon, bounds, 'travel_near', null, true);
+}
+
+// ---- street view: a long press shows a small preview; pressing it opens the view ----
+var travelStreetPreviewAt = null;
+
+function travelStreetPreviewPlace(card, sx, sy) {
+	var t = $('#travel'), c = $('#travel_campus');
+	if (!t.length || !c.length) { return; }
+	var tr = t[0].getBoundingClientRect(), cr = c[0].getBoundingClientRect();
+	var x = cr.left - tr.left + sx, y = cr.top - tr.top + sy;
+	var w = card.outerWidth() || 210, h = card.outerHeight() || 150;
+	x = Math.max(6, Math.min(t.width() - w - 6, x - w / 2));
+	y = Math.max(6, Math.min(t.height() - h - 6, y - h - 10));
+	card.css({ left: x, top: y });
+}
+
+function travelStreetPreview(lat, lon, sx, sy) {
+	travelStreetPreviewAt = { lat: lat, lon: lon };
+	var card = $('#travel_street_preview');
+	$('#travel_street_preview_img').removeAttr('src').hide();
+	$('#travel_street_preview_text').text(jawnosT('Street view · loading…'));
+	travelStreetPreviewPlace(card, sx || 40, sy || 40);
+	card.show();
+	var token = ($('#travel_mapillary_token').val() || '').trim();
+	var fallback = function() {
+		if (!travelStreetPreviewAt) { return; }
+		var bounds = travelMap ? travelMap.viewBounds() : null;
+		travelNearFetch(travelStreetPreviewAt.lat, travelStreetPreviewAt.lon, bounds, null, null, false, function(items) {
+			if (!travelStreetPreviewAt || !items.length) {
+				$('#travel_street_preview_text').text(jawnosT('No street view here'));
+				return;
+			}
+			$('#travel_street_preview_img').attr('src', items[0].thumb_url).show();
+			$('#travel_street_preview_text').text(jawnosT('No street view · press for nearby pictures'));
+		});
+	};
+	if (!token) { fallback(); return; }
+	// a picture of the house shows at once; Mapillary's photo replaces it if one comes
+	fallback();
+	travelStreetNearest(lat, lon, token, function(photo) {
+		if (!travelStreetPreviewAt || travelStreetPreviewAt.lat != lat || travelStreetPreviewAt.lon != lon) { return; }
+		if (!photo || !(photo.thumb_1024_url || photo.thumb_2048_url)) { return; }
+		$('#travel_street_preview_img').attr('src', photo.thumb_1024_url || photo.thumb_2048_url).show();
+		$('#travel_street_preview_text').text(jawnosT('Street view · press to open'));
+	});
+}
+
+$(document).on('click', '#travel_street_preview', function(e) {
+	if ($(e.target).hasClass('travel_street_preview_close')) { return; }
+	var p = travelStreetPreviewAt;
+	$(this).hide();
+	if (p) { travelStreetOpen(p.lat, p.lon); }
+});
+
+$(document).on('click', '#travel_street_preview_close', function(e) {
+	e.stopPropagation();
+	travelStreetPreviewAt = null;
+	$('#travel_street_preview').hide();
+});
 
 // ---- street view: Mapillary's nearest photo, with the house's own photos near it ----
 function travelStreetClose() {
@@ -195,6 +299,7 @@ function travelStreetOpen(lat, lon) {
 		+ '&x=' + x.toFixed(7) + '&y=' + y.toFixed(7) + '&z=18';
 	var token = ($('#travel_mapillary_token').val() || '').trim();
 	var note = $('#travel_street_note');
+	$('#travel_street_preview').hide();
 	$('#travel_street_title').text(jawnosT('Street view') + ' · ' + lat.toFixed(5) + ', ' + lon.toFixed(5));
 	$('#travel_street_photo').hide().removeAttr('src');
 	$('#travel_street_frame').hide().attr('src', 'about:blank');
@@ -203,7 +308,8 @@ function travelStreetOpen(lat, lon) {
 	$('#travel_street_pano').hide();
 	$('#travel_street').css('display', 'flex');
 	note.hide().text('');
-	travelNearFetch(lat, lon, 'travel_street_near', 'travel_street_gallery');
+	var nearBounds = travelMap ? travelMap.viewBounds() : null;
+	travelNearFetch(lat, lon, nearBounds, 'travel_street_near', 'travel_street_gallery', false);
 
 	var showGallery = function() {
 		$('#travel_street_photo').hide();
@@ -423,8 +529,10 @@ function travelMapRender(response) {
 	var pos = response['position'];
 	var hasPos = pos && pos['latitude'];
 	engine.setPosition(hasPos ? { lat: parseFloat(pos['latitude']), lon: parseFloat(pos['longitude']), label: pos['label'] || 'You are here' } : null);
-	// what the house photographed around where it is now: a bar along the top
-	if (hasPos) { travelNearFetch(parseFloat(pos['latitude']), parseFloat(pos['longitude']), 'travel_near', null); }
+	// what the house photographed around here: a bar along the top
+	if (hasPos) {
+		travelNearFetch(parseFloat(pos['latitude']), parseFloat(pos['longitude']), engine.viewBounds(), 'travel_near', null, false);
+	}
 	else { $('#travel_near').hide(); }
 
 	// frame the current position (with the maps around it) the first time; after
