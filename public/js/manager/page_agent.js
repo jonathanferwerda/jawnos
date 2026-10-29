@@ -1,12 +1,13 @@
-// The page agent: the Guide attached to one window's form.
+// The page agent: the Guide attached to the Internet window's form.
 //
-// The button in a window's title bar opens an associate scoped to that window
-// and switches on page mode. While it is on, every turn carries a snapshot of
-// the window's visible fields and buttons to /manager/help/act, and the guide
-// may answer with a `page` action - fill, read or press - which is executed
-// here against the real DOM. Values the guide is told to enter can come from
-// the conversation itself, from the person's records (find, lookup, measure,
-// where_when) or from a value it read out of the form first.
+// The Internet window's title bar carries the button (it replaces the question
+// mark there); pressing it opens an associate scoped to that window and switches
+// page mode on. While it is on, every turn carries a snapshot of the window's
+// visible fields and buttons to /manager/help/act, and the guide may answer with
+// a `page` action - fill, read or press - which is executed here against the real
+// DOM. Values the guide is told to enter can come from the conversation itself,
+// from the person's records (find, lookup, measure, where_when) or from a value it
+// read out of the form first.
 //
 // The model never gets a selector, an eval or an event to run: it gets field
 // and button keys (f1, f2, b1) that this file wrote onto the elements when it
@@ -46,7 +47,7 @@ function pageAgentRoot(panel) {
 }
 
 function pageAgentMode(panel) {
-	return !!(panel && panel.length && panel.find('.assistant_page').is(':checked'));
+	return !!(panel && panel.length && panel.data('page_on'));
 }
 
 // Switch page mode on or off for a panel. The app is kept with the panel, so a
@@ -55,12 +56,12 @@ function pageAgentMode(panel) {
 function pageAgentEnable(panel, app, on) {
 	if (!panel || !panel.length) { return; }
 	if (app) { panel.data('page_app', app); }
-	panel.find('.assistant_page').prop('checked', !!on);
+	panel.data('page_on', !!on);
 	panel.find('.assistant_page_badge').toggle(!!on);
 }
 
-// The title bar's button: add the Guide to this window's page. The timestamp is
-// the window's own id, so two windows of the same app keep their own form.
+// The Internet window's button: add the Guide to that page. The timestamp is
+// the window's own id, so two Internet windows keep their own form.
 function pageAgentOpen(app, timestamp) {
 	if (typeof assistantAppOpen !== 'function') { return; }
 	var panel = assistantAppOpen(app || '');
@@ -384,16 +385,4 @@ function pageAgentDo(a, cb) {
 $(document).on('click', '.page_agent_button', function (e) {
 	e.stopPropagation();
 	pageAgentOpen($(this).attr('app') || '', $(this).attr('timestamp') || '');
-});
-
-$(document).on('change', '.assistant_page', function () {
-	var panel = $(this).closest('.assistant_view');
-	var on = $(this).is(':checked');
-	pageAgentEnable(panel, panel.data('page_app') || pageAgentApp(panel), on);
-	if (typeof assistantOpenPanel === 'function') { assistantOpenPanel(panel); }
-	if (typeof assistantChatAdd === 'function') {
-		assistantChatAdd(panel, 'step', on
-			? 'Attached to this window — I can read and fill it.'
-			: 'Detached from this window.');
-	}
 });

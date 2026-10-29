@@ -295,22 +295,24 @@ our %topic = (
 	},
 	'internet' => {
 		title => 'Internet', category => 'apps', app => 'internet',
-		templates => [ 'templates/internet/internet.html.ep', 'templates/web/web.html.ep', 'public/js/manager/internet.js' ],
-		verified => '2026-10-28',
+		templates => [ 'templates/internet/internet.html.ep', 'templates/web/web.html.ep', 'public/js/manager/internet.js', 'public/js/manager/page_agent.js' ],
+		verified => '2026-10-29',
 		summary => 'Web and Browse: saved pages with measures, and a real browser that counts site time.',
 		body => [
 			'Internet has two components. Web holds the pages the house fetched; each can be opened, or measured with the Measures tool. Browse opens a real browser in its own window on a computer (or its own screen on a phone), because a live page cannot run inside the manager window. The tab you used last is the tab Internet opens, so Web and Browse do not keep switching places.',
 			'Browse counts the time each site is in front, but only in the JawnOS browser: a page opened in another browser is not counted, and neither is the Facebook app. Every domain you visit is also a bookmark. Press a domain to open it in the browser, or type an app beside it: the box suggests any appointment in the house that the visibility rule shows here and now, so an app the rule hides (by place, or by a lockdown) is not offered. Pick one to assign the domain, so facebook.com minutes land under the app you chose. While the JawnOS browser stays on that domain, the app\'s appointment runs; when you leave the site, close the tab or change app, it stops at the last moment the page was in front. Type a dash to stop counting the domain against an app.',
 			'A domain you assigned opens two ways: its link opens the browser at the saved address, and the app name beside it opens that app in the manager exactly as its own window. The Browse tab shows today\'s site time beside each domain, and the time is kept per machine so the phone and the laptop do not blur together.',
 			'To measure a live page, open a saved page from the Web tab with the measure icon. The browser opens with the picker on; click the value you want. JawnOS offers the shapes it can read and saves the one you pick, exactly as the Measures tool does for a fetched page.',
-			'The browser is a separate surface on purpose: it has its own cookies and history, keeps the manager\'s bridges away from the pages you visit, and cannot reach the house\'s local address.'
+			'The browser is a separate surface on purpose: it has its own cookies and history, keeps the manager\'s bridges away from the pages you visit, and cannot reach the house\'s local address.',
+			'The Internet window\'s title bar carries the Guide\'s page-agent button in place of the question mark: press it and the Guide is attached to this window, able to read and fill its fields — the address in Browse, the app box beside a domain — from what you discussed, from your own records, or from another field. Closing the panel detaches it. Help for this window is still a press of F1 away, and every other window keeps its question mark.'
 		],
 		steps => [
 			'Open Internet from the start menu.',
 			'Web lists the pages the house fetched; use the browser icon to open one, or the measures icon to point at a value in it.',
 			'Browse takes an address and opens the JawnOS browser; time on each site appears under Site time today.',
 			'To make a domain count toward an app, type the app name in its row and pick it; type a dash to clear it. Press the domain to open it, or the app name to open that app.',
-			'A page opened in another browser is not counted; the count is per machine.'
+			'A page opened in another browser is not counted; the count is per machine.',
+			'Press the page-agent button in the title bar to have the Guide fill the address or the app box for you; close the panel to detach it.'
 		],
 		related => [ 'web' ]
 	},
@@ -1637,7 +1639,7 @@ our %topic = (
 			'A name can mean more than one thing - "music" the app or a club called Music, or two people called John Smith. When that happens the Guide asks which one you mean instead of picking for you, and the action then runs on the one you chose. You can name the one you mean more exactly: app:music or club:music fixes the kind, maple/john the house, and john#7f3a the short id shown beside the name. The same rule applies to names spoken to a watch or sent to another machine.',
 			'You can also teach it your own word for a thing: say "call sleep zzz", "aka zzz for sleep", or "zzz means sleep", and the Guide remembers it; "forget zzz" drops it. In People, open a construct\'s row to see the other names it already answers to and add one; the x beside a chip forgets it. A word that already means something else is refused rather than made ambiguous. Aliases are kept with the house settings, so every machine understands them, and they work in the chat, on the watch and in commands sent to another machine.',
 			'There can be several associates at once: the + in a panel\'s bar opens another, each with its own thread. Double-pressing the Assistant button shows the Agents list, where every associate and coding conversation is kept, named by its own words, and a press away from being re-opened or thrown away (see Agents). Its config menu also carries Speak the replies; ticked, each answer is spoken as well as written, through the voice set under Configure → Misc → Speech (Piper first — the same voice the watch\'s answers use).',
-			'The small assistant button in a window\'s title bar, beside the question mark, adds the Guide to that page: it opens an associate attached to the window, and a Page badge appears on its bar. Attached, the Guide can read the visible fields and fill them in for you — from what you discussed in the conversation, from your records (an appointment, a note, a message, a measure, a place) or from another field on the same form — and can press the form\'s own buttons. Say "fill this in from what we talked about" or "put my phone number in there"; it reports each field it filled, and a green flash shows where the value landed. Tick Read and fill this page in the associate\'s config menu to attach or detach it yourself. It never fills a password field, and never presses Send, Pay or Delete.',
+			'On the Internet window the question mark is replaced by the Guide\'s page-agent button: press it and the Guide is attached to that window\'s form — it can read the visible fields and fill them in for you, from what you discussed in the conversation, from your records (an appointment, a note, a message, a measure, a place) or from another field on the same form, and it can press the form\'s own buttons. Say "fill this in from what we talked about" or "put my phone number in there"; it reports each field it filled, and a green flash shows where the value landed. Closing the panel detaches it. Every other window keeps its question mark for help. It never fills a password field, and never presses Send, Pay or Delete.',
 			'A thing the visibility rule hides is neither named nor opened here unless its padlock is open, so a hidden album stays out of sight until you unlock it.',
 			'It can also tell another of your machines what to do, by name - "on the table, play Friends" - and that machine\'s own guide reads the command there, so it stays on that machine.',
 			'You can speak instead of typing: if you press Send with the box empty, the guide starts listening, and Stop turns what you said into words in the box. It uses the same speech-to-text the watch uses. The Converse button turns it into a conversation: the mic opens again after each answer, and the clip ends itself once you stop talking - the pause is measured against the room\'s own noise, learned from the microphone exactly as the keyboard\'s dictation learns it, so a fan or a steady hiss does not keep the mic open - and each thing you say is the next turn of the same thread. Say or type "hey jawn" (or "jawn do") to start one, and "bye jawn" or the End button to stop; while it is on, the button is red. An on-device "hey jawn" listener will call the same switch when its model lands.',
@@ -1646,9 +1648,9 @@ our %topic = (
 			'You can also teach it new verbs at runtime (Configure → Plat → Guide commands): each is a small JSON entry naming a primitive and its parameters, and because it is a setting it syncs, so every machine understands the same commands.'
 		],
 		steps => [
-			'Press the assistant button beside a window\'s question mark to attach the Guide to that page.',
+			'Press the page-agent button in the Internet window\'s title bar to attach the Guide to that page.',
 			'Ask it to fill the form — "fill this in from what we talked about" — and check the green flash on each field it filled.',
-			'Ask it to press the form\'s own save button when you want the change saved.'
+			'Ask it to press the form\'s own save or open button when you want the change carried out; close the panel to detach it.'
 		],
 		related => [ 'hints', 'handbook', 'assistant' ]
 	},
@@ -2234,8 +2236,9 @@ sub actions_prompt {
 	# $only, when given, is a hashref of tool names to offer: the remote channel has
 	# its own executor that runs only a few of these verbs, so it must not offer the
 	# rest - a model told it could "find" when nothing can run a find simply did
-	# nothing at all.
-	my ($only) = @_;
+	# nothing at all. $with_page offers the page verb; it is given only on a turn
+	# that carries the attached window's form, so no other associate sees it.
+	my ($only, $with_page) = @_;
 	# The Confirmation Requirement (the Confirm tick in the Guide's associate
 	# panel, stored as a setting so it is the same on every machine): off means
 	# a proposed appointment is saved as it is made, so promote and discard are
@@ -2246,6 +2249,7 @@ sub actions_prompt {
 	my $lines = '';
 	foreach my $t ( @gb::guide_tools ) {
 		next if $t->{'planned'};
+		next if $t->{'name'} eq 'page' && !$with_page;
 		next if $only && ref $only eq 'HASH' && !$only->{ $t->{'name'} };
 		next if $auto_save && ($t->{'name'} eq 'promote' || $t->{'name'} eq 'discard');
 		my $desc = $t->{'desc'};
