@@ -5,12 +5,12 @@
 // the window's visible fields and buttons to /manager/help/act, and the guide
 // may answer with a `page` action - fill, read or press - which is executed
 // here against the real DOM. Values the guide is told to enter can come from
-// the conversation itself, from the person's records (find/measure/where_when)
-// or from a value it read out of the form first.
+// the conversation itself, from the person's records (find, lookup, measure,
+// where_when) or from a value it read out of the form first.
 //
 // The model never gets a selector, an eval or an event to run: it gets field
 // and button keys (f1, f2, b1) that this file wrote onto the elements when it
-// took the snapshot. A made-up key finds nothing, so nothing is touched.
+// took the snapshot, and only a key (or a real id, name or label) can match.
 
 // The panel whose turn is running, so helpDoAction can find the right window.
 var jawnos_page_agent_panel = null;
