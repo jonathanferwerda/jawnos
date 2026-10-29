@@ -180,7 +180,7 @@
 				</span>
 			</div>
 			<br>
-			<textarea class="timed_input notes" rows="3" app="<%= $a %>" text="notes" placeholder="note" upgradeable="yes" magic_vars="appointment:<%= $a %>"></textarea>
+			<textarea class="timed_input notes" rows="1" app="<%= $a %>" text="notes" placeholder="note" upgradeable="yes" magic_vars="appointment:<%= $a %>"></textarea>
 			<br>
 			<div class="re_measures" app="<%= $a %>" style="display:none;vertical-align:top;width:100%">
 				<%= include 'apps/app_measures', settings => $appts->{$a}->{'setting'}, a => $a %>

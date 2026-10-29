@@ -26624,24 +26624,43 @@ sub evaluation_model_call() {
 }
 
 # Whether this machine can actually run the evaluation right now. The wish to
-# evaluate is shared but the queue is per-machine, so a machine with no ollama
-# or not carrying the chosen model would otherwise run the night and answer
-# with a connection error. A blank model is never available.
+# evaluate is shared but the queue is per-machine, so a machine with no ollama,
+# no model, or no key would otherwise run the night and answer with a connection
+# error. A blank model is never available.
 sub evaluation_model_available {
 	my ($model) = @_;
 	return 0 unless $model;
-	# ai_key_settings() answers as a list; @{} over the call would put it in
-	# scalar context and read the count ("11") as if it were a reference.
-	my @key_settings = &subs::ai_key_settings();
-	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token', @key_settings ] });
-	if ($model =~ /^\@cf/) {
+	my $provider = &ai_model_provider($model);
+	if ($provider eq 'cloudflare') {
+		my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'cloudflare_account', 'cloudflare_token' ] });
 		return ($settings->{'cloudflare_account'} && $settings->{'cloudflare_token'}) ? 1 : 0;
 	}
-	if ($model =~ /^([a-z]+):/) {
-		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
-		return $settings->{ $key{$1} } ? 1 : 0 if $key{$1};
+	# A peer's own Ollama: the advert is the truth, so a model the peer no
+	# longer lists is not called, however recently the role named it.
+	if ($provider eq 'ollama_remote') {
+		my ($device, $bare) = $model =~ /^\@([^\/]+)\/(.+)$/;
+		return 0 unless defined $device && length $device && length $bare;
+		my $advert = eval { defined &crew::advert_get ? &crew::advert_get($device) : undef };
+		return 0 unless $advert && ref $advert->{'abilities'} eq 'HASH';
+		foreach my $m ( @{ $advert->{'abilities'}->{'ollama_models'} || [] } ) {
+			return 1 if $m eq $bare;
+		}
+		return 0;
 	}
-	# ollama: the daemon has to answer and the model has to be one it knows
+	if ($provider ne 'ollama') {
+		my %key = ( openai => 'openai_key', anthropic => 'anthropic_key', google => 'google_key', xai => 'xai_key', mistral => 'mistral_key', groq => 'groq_key', openrouter => 'openrouter_key', deepseek => 'deepseek_key' );
+		my $setting = $key{$provider};
+		return 0 unless $setting;
+		my $settings = &subs::settings_grabber({ app => 'mail', settings => [ $setting ] });
+		return $settings->{$setting} ? 1 : 0;
+	}
+	# ollama: a :cloud model is billed through the same daemon and is only
+	# callable from a machine whose daemon knows it, so the listing is checked
+	# for every local model, cloud ones included.
+	my $abilities = eval { &crew::abilities() } || {};
+	foreach my $m ( @{ $abilities->{'ollama_models'} || [] } ) {
+		return 1 if $m eq $model;
+	}
 	my $ua = Mojo::UserAgent->new(connect_timeout => 3, inactivity_timeout => 5, request_timeout => 8);
 	my $res = eval { $ua->get('http://localhost:11434/api/tags')->result };
 	return 0 unless $res && $res->is_success;
@@ -26650,6 +26669,30 @@ sub evaluation_model_available {
 		return 1 if ($m->{'name'} || '') eq $model || ($m->{'model'} || '') eq $model;
 	}
 	return 0;
+}
+
+# Whether this machine can actually carry an evaluation now. The configured
+# model is only half the answer: the Crew may place the call on a peer's Ollama
+# (or step down to a free model), and a local :cloud model is useless without
+# the daemon that serves it. The heartbeat publishes this, and a job consults it
+# before it claims a run, so only a working agent is ever asked.
+my $evaluation_agent_ready_memo;
+sub evaluation_agent_ready {
+	my $now = time;
+	return $evaluation_agent_ready_memo->{'ready'} if $evaluation_agent_ready_memo && $evaluation_agent_ready_memo->{'at'} > $now - 60;
+	my ($primary) = &ai_role_models('eval_assistant');
+	my $ok = 0;
+	if ($primary) {
+		my $placed = $primary;
+		if (defined &crew::choose_model) {
+			my @chosen = eval { &crew::choose_model('eval_assistant') };
+			if ($@) { $placed = $primary; }
+			else { ($placed) = @chosen; }
+		}
+		$ok = (defined $placed && length $placed && &evaluation_model_available($placed)) ? 1 : 0;
+	}
+	$evaluation_agent_ready_memo = { at => $now, ready => $ok };
+	return $ok;
 }
 
 sub evaluation_period_span {
@@ -27107,8 +27150,11 @@ sub evaluation_agent() {
 		: ($measure_app ? $measure_instructions : 'Begin with a single headline line - at most twenty words, no label - that names what the numbers showed, then a blank line. Use previous, headlines and since_last to say what changed since the last run - what the numbers now show that they did not - and leave out what has not changed, since the report is read against the last one. Then answer under exactly three headings: Trends, Correlations, Predictions. Under Trends compare the windows to say how the pace is changing - is per_day rising or falling from all time and year to month and week? - and whether sessions are getting longer or shorter, naming the kinds, models and projects the activity was made of and the tasks it serves, and giving the durations. Say first what this appointment is for - what the activity is - reading it from its name, its constructs and its kinds. Where the appointment measures something consumed or done (water drunk, teeth brushed, cigarettes), the windows\' quantity and its amount_per_day (and volume_ml when the unit converts) are how much actually happened: give the generally recommended or typical daily figure for a person (for water, several glasses to a few litres a day; for coffee, a few cups), then say where the logged amount sits against it - a plain guide, not medical advice. This is where a real change of pace lives, so say it plainly and do not dress a steady habit as a trend. Where the app logs measurements, say where each reading is going - the latest reading against the average and the min and max for that window - and hold the range the app is set to expect against it. Where a window carries continent, say how far the app went and how fast, and whether that is rising or falling across the windows. Read trends too: say whether the recent periods are rising or falling, not only what the aggregate windows show, and name the period a turn began at. Where episodes ride along, give the typical onset hour and the median and longest episode, and say whether the episodes are getting longer, shorter, earlier or later. The newest period is still running - its count carries the percent elapsed - so do not read a part-run period as a fall: call it in progress and judge its pace against the percent. Where budget_pace rides along, say plainly whether the app is on track for its budget - read on_track and progress_percent against value and due_by_now, and give the projected figure - and never call a young period behind. Under Correlations weigh related (a Pearson r of the daily series) and around (things that happened at the same time of day, by lift) together: say what r means here and whether the lag suggests one follows the other, say what around says - what consistently runs beside this app and which way, reading offset_minutes - and treat a measure in different as a suspect even when no pair clears the bar; name what was out of the ordinary on the app\'s own days, and call a habit pair what it is - two daily routines, not a finding. If nothing stands out, say so. Under Predictions give two or three concrete, falsifiable predictions for the coming weeks, ones the windows\' pattern actually carries - never a rule invented from a single day. If, and only if, the Correlations make one relationship certain - a non-habit pair with |r| >= 0.8 - end the answer with one line "Link: <app>" naming the app this one should be related to; otherwise end with "Link: none". A wrong link mislabels what an app is, so name one only when the numbers leave no doubt. Plain text.');
 	my $user = $instructions . "\n\n" . encode_json($briefing);
 	my ($text, $error);
-	if ($model) {
+	if ($model && &evaluation_agent_ready()) {
 		($text, $error) = &evaluation_model_call_role('eval_assistant', $system, $user, &subs::ai_role_thinking('eval_assistant'));
+	}
+	elsif ($model) {
+		$error = 'no evaluation agent is reachable from this machine';
 	}
 	else {
 		$error = 'no evaluation model is chosen - pick one in the mailbox configuration';
@@ -27498,7 +27544,9 @@ sub evaluation_cadence {
 
 # Minion reads cron in UTC, and 0 7 * * ... is the small hours of the house
 # (3am EDT, 2am EST). The days select narrows daily and weekly; nothing picked
-# means every night for daily and Sunday for weekly.
+# means every night for daily and Sunday for weekly. Each scope gets its own
+# minute from its name, so the whole house does not hand the model twenty runs
+# at the same instant (which is what made a nightly batch time out).
 sub evaluation_schedule_cron {
 	my ($app, $cadence) = @_;
 	$cadence = &subs::evaluation_cadence($app) unless defined $cadence;
@@ -27509,12 +27557,29 @@ sub evaluation_schedule_cron {
 	my $days_setting = &subs::setting_grabber({ app => $scope, setting => 'nightly_evaluation_days' });
 	return undef if defined $days_setting && $days_setting =~ /^\s*none\s*$/i && ($cadence eq 'daily' || $cadence eq 'weekly');
 	my @days = @{ &subs::nightly_evaluation_days($app) };
-	return '0 * * * *' if $cadence eq 'hourly';
-	return '0 7 * * ' . (scalar @days ? join(',', @days) : '*') if $cadence eq 'daily';
-	return '0 7 * * ' . (scalar @days ? join(',', @days) : '0') if $cadence eq 'weekly';
-	return '0 7 1 * *' if $cadence eq 'monthly';
-	return '0 7 1 1 *' if $cadence eq 'yearly';
+	my $minute = 0;
+	if ($scope ne '__president') {
+		$minute += ord($_) for split //, $scope;
+		$minute %= 60;
+	}
+	return "$minute * * * *" if $cadence eq 'hourly';
+	return "$minute 7 * * " . (scalar @days ? join(',', @days) : '*') if $cadence eq 'daily';
+	return "$minute 7 * * " . (scalar @days ? join(',', @days) : '0') if $cadence eq 'weekly';
+	return "$minute 7 1 * *" if $cadence eq 'monthly';
+	return "$minute 7 1 1 *" if $cadence eq 'yearly';
 	return undef;
+}
+
+# How often a scope wants a report, in milliseconds. Zero for the cadences with
+# no interval to catch up (off, each_run).
+sub evaluation_cadence_interval {
+	my ($cadence) = @_;
+	return 3600 * 1000 if $cadence eq 'hourly';
+	return 86400 * 1000 if $cadence eq 'daily';
+	return 7 * 86400000 if $cadence eq 'weekly';
+	return 30 * 86400000 if $cadence eq 'monthly';
+	return 365 * 86400000 if $cadence eq 'yearly';
+	return 0;
 }
 
 # carry out one scope's cadence: schedule its cron, or clear it (off, each_run)
@@ -27612,6 +27677,41 @@ sub nightly_evaluation_reconcile {
 			next if $wanted{$app};
 			&subs::minion_grabber()->unschedule($name);
 		}
+		# The queue under ~/.president is wiped at boot, so schedule() computes
+		# the next future occurrence and a run that came due while the machine was
+		# asleep or restarting is never made up. A scope whose last stored report
+		# is older than its cadence gets one run now, spread over a few minutes so
+		# a wake does not start every scope at once. Only a machine that can reach
+		# the evaluation agent queues the catch-up; an unequipped phone stays out.
+		if (&subs::evaluation_agent_ready()) {
+			my $catchup_minion = &subs::minion_grabber();
+			my $now_ms = &subs::rightNow();
+			my $queued = 0;
+			foreach my $app ( sort keys %wanted ) {
+				my $cadence = &subs::evaluation_cadence($app);
+				my $interval = &subs::evaluation_cadence_interval($cadence);
+				next unless $interval;
+				my $key = 'eval:' . $app;
+				my $row = eval { &subs::db_select('ai_jobs', undef, { job => $key })->hashes->[0] };
+				next if $row && (($row->{'at'} || 0) + 0) > ($now_ms - 30 * 60 * 1000);
+				my $report = eval { decode_json(&subs::setting_grabber({ app => $app, setting => 'evaluation_report' }) || '') } || {};
+				my $last = ($report->{'timestamp'} || 0) + 0;
+				next if $last && ($now_ms - $last) < $interval * 1.15;
+				# one machine queues the catch-up: the same election the job uses,
+				# so a ready phone and a ready laptop do not both enqueue every scope
+				my $chosen = eval { &subs::ai_job_runner($key, 10 * 60 * 1000, 1, 0) };
+				next unless defined $chosen && $chosen eq &subs::ai_house_me();
+				# the five-minute reconcile must not queue the same catch-up again
+				# while the first one is still waiting behind the worker's delay; hold
+				# the lock for the cadence (capped at six hours) so a failed run is not
+				# retried every half hour
+				my $lock_for = int($interval / 1000);
+				$lock_for = 6 * 3600 if $lock_for > 6 * 3600;
+				next unless $catchup_minion->lock('evaluation_catchup_' . $app, $lock_for);
+				$catchup_minion->enqueue('appointment_evaluation' => [ { app => $app, catchup => 1 } ] => { attempts => 2, delay => 15 * $queued });
+				$queued++;
+			}
+		}
 	};
 	return;
 }
@@ -27626,6 +27726,17 @@ sub appointment_evaluation_job {
 	my $here = &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || '';
 	my $each_run = $data->{'each_run'} ? 1 : 0;
 	my $dispatch_mode = 0;
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
+	my $model = $settings->{'eval_assistant'};
+	# A machine that cannot reach the evaluation agent must not claim the night,
+	# queue a dispatch, or leave a failed note: that is how a tablet with no model
+	# ended up announcing an error every hour. Probe before any claim, so only a
+	# working machine becomes a candidate and a capable peer is asked instead.
+	unless (&subs::evaluation_agent_ready()) {
+		$log->info('evaluation ' . $app . ': no reachable evaluation agent on this machine; standing down') if defined $log;
+		$job->finish({ app => $app, skipped => 'no evaluation agent reachable here' });
+		return;
+	}
 	if (!$each_run) {
 		if (&ai_house_server_known()) {
 			# The server is the dispatcher: a worker runs only the assignment
@@ -27633,8 +27744,16 @@ sub appointment_evaluation_job {
 			# assignment and stands down, so the split house does not run twice.
 			$dispatch_mode = 1;
 			unless (&ai_job_dispatch_claim($key)) {
-				$job->finish({ app => $app, skipped => 'not addressed to this machine, or already running' });
-				return;
+				# The dispatcher may be asleep, restarting, or unable to run the
+				# evaluation itself. A ready worker may still take the run when no
+				# live assignment exists; the election claim stops a second machine.
+				if (&ai_job_may_run($key, 10 * 60 * 1000, 1, 0)) {
+					$dispatch_mode = 0;
+				}
+				else {
+					$job->finish({ app => $app, skipped => 'not addressed to this machine, or already running' });
+					return;
+				}
 			}
 		}
 		else {
@@ -27667,21 +27786,11 @@ sub appointment_evaluation_job {
 		# machine that recorded it; it is not a scheduled dispatch
 		&ai_job_claim($key);
 	}
-	# the wish is shared and the queue is per-machine: a machine that cannot
-	# reach the model would run the night and answer with an error, so it steps
-	# aside and lets a machine that can carry the wish instead. Either way the
-	# night leaves a durable note, so an empty morning has a witness.
-	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
-	my $model = $settings->{'eval_assistant'};
-	my $model_ready = eval { &subs::evaluation_model_available($model) };
-	unless ($model_ready) {
-		&ai_job_settle($key, $me, $dispatch_mode, 'failed');
-		&subs::evaluation_run_record($app, { timestamp => &subs::rightNow(), machine => $here, model => $model, outcome => 'skipped', note => 'no model reachable here' });
-		$job->finish({ app => $app, skipped => 'no evaluation model reachable here' });
-		return;
-	}
 	# the claim written above stays a 'running' lease while the model works, so a
-	# long report does not open the job to a second machine halfway through
+	# long report does not open the job to a second machine halfway through. The
+	# run is background work: a model failure is recorded, but must not speak on
+	# whichever device happened to carry it.
+	local $subs::say_quiet = 1;
 	my $report = &subs::evaluation_agent($app);
 	if ($report->{'error'}) {
 		&ai_job_settle($key, $me, $dispatch_mode, 'failed');
@@ -29463,9 +29572,7 @@ my $ai_eval_ready_memo;
 sub ai_house_eval_ready {
 	my $now = time;
 	return $ai_eval_ready_memo->{'ready'} if $ai_eval_ready_memo && $ai_eval_ready_memo->{'at'} > $now - 60;
-	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ 'eval_assistant' ] });
-	my $model = $settings->{'eval_assistant'};
-	my $ready = eval { &evaluation_model_available($model) } ? 1 : 0;
+	my $ready = eval { &evaluation_agent_ready() } ? 1 : 0;
 	$ai_eval_ready_memo = { at => $now, ready => $ready };
 	return $ready;
 }
@@ -29553,11 +29660,19 @@ sub ai_house_members {
 	my $rows = eval { &subs::db_select('ai_house')->hashes } || [];
 	foreach my $r ( @{$rows} ) {
 		next unless $r->{'machine'} && $r->{'has_model'};
+		# This machine's own row is a synced copy of what its last heartbeat
+		# said; the local probe above is the truth. Believing a stale self row
+		# let a machine whose model had gone away keep electing itself.
+		next if length $me && $r->{'machine'} eq $me;
 		next if $need_eval && !$r->{'eval_ready'};
 		next unless ($r->{'seen'} + 0) > ($now - 600000);
 		$member{ $r->{'machine'} } = 1;
 	}
-	$member{$me} = 1 if length $me && !%member;   # alone: this machine is the house
+	# alone: this machine is the house - but only when the job does not need
+	# the evaluation model. A device with no reachable evaluation agent must
+	# not be counted as a member, or it would claim the night and answer with
+	# an error (or a skip) while a capable peer was never asked.
+	$member{$me} = 1 if length $me && !%member && !$need_eval;
 	return sort keys %member;
 }
 
@@ -29632,6 +29747,9 @@ sub ai_house_roster_size {
 	my $rows = eval { &subs::db_select('ai_house')->hashes } || [];
 	foreach my $r ( @{$rows} ) {
 		next unless $r->{'machine'} && $r->{'has_model'};
+		# the local probe above is this machine's truth; a synced self row is
+		# only as fresh as the last heartbeat
+		next if length $me && $r->{'machine'} eq $me;
 		next if $need_eval && !$r->{'eval_ready'};
 		next unless ($r->{'seen'} + 0) > ($now - 7 * 86400000);
 		$roster{ $r->{'machine'} } = 1;
@@ -29665,7 +29783,10 @@ sub ai_house_quorum_ok {
 sub ai_job_runner {
 	my ($job, $ttl, $need_eval, $prefer_server) = @_;
 	my @house = &ai_house_members($need_eval);
-	return &ai_house_me() unless @house;
+	# A job that needs the evaluation model has no runner when no member can
+	# reach it. Returning the local machine anyway was the old fallback, and it
+	# made an unequipped device claim the run only to skip it.
+	return $need_eval ? undef : &ai_house_me() unless @house;
 	$ttl = 6 * 3600 * 1000 unless $ttl && $ttl > 0;
 	my $now = &subs::rightNow();
 	my $rows = eval { &subs::db_select('ai_jobs', undef, { job => $job })->hashes } || [];
