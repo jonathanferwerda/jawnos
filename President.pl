@@ -691,17 +691,20 @@ sub manager_starter() {
 			$prefork->heartbeat_timeout(200);
 			$prefork->load_app('./Manager.pl');
 			# A handheld runs this whole tree in a few hundred MB that Android's
-			# low-memory killer reclaims the moment the device tightens; the extra
-			# prefork workers are a server's concurrency, not a phone's. A phone rests
-			# at ONE worker and grows by two the moment it is busy: an idle worker is
-			# a whole Perl app (70-250MB on the phone tree) doing nothing, and the
-			# supervisor only raises the pool after two seconds of every worker being
-			# busy, so a gallery or music burst still gets its workers. A desktop
-			# rests at three and a server at four, each growing by two. `main_workers`
-			# in config.json overrides the resting count when a machine wants another.
+			# low-memory killer reclaims the moment the device tightens, so the pool
+			# stays small - but not one. A worker serves one request at a time, and on
+			# a phone the single worker was busy for 30-60s every couple of minutes
+			# (the log's autoscale lines), which queued the whole panel behind it:
+			# the "Manager is frozen" after picking the phone up. Two resting workers
+			# mean one slow request never holds the screen, and the pool grows to four
+			# only while both are busy, so the fork-and-retire churn a one-worker pool
+			# paid every few minutes is gone. A desktop rests at three and a server at
+			# four, each growing by two. `main_workers` in config.json overrides the
+			# resting count when a machine wants another (a phone short on RAM can ask
+			# for one).
 			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
 				? int($config->{'main_workers'}) : 0;
-			my $main_workers = $configured_workers || ($device eq 'mobile' ? 1 : ($device eq 'server' ? 4 : 3));
+			my $main_workers = $configured_workers || ($device eq 'mobile' ? 2 : ($device eq 'server' ? 4 : 3));
 			$prefork->workers($main_workers);
 			&prefork_autoscale($prefork, min => $main_workers, max => $main_workers + 2);
 			$prefork->run;
