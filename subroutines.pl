@@ -26966,7 +26966,13 @@ sub evaluation_agent() {
 	# has kept its share of it, and what the pace projects by the period's end.
 	# Without this a young period is read as a shortfall.
 	my $budget_pace;
-	if (!$global && !$measure_app && ($app_settings->{'budget'} || '') =~ /\S/ && ($app_settings->{'s_lock'} || '') eq 'on') {
+	# The nightly run is a Minion job in President's worker, where Manager.pl is
+	# not loaded; budget_calculator (and father_time under it) live there. Calling
+	# it unconditionally killed every scheduled evaluation with "Undefined
+	# subroutine &Manager::budget_calculator" before the model was ever asked.
+	# The web Evaluate button still gets the pace; the scheduled run reads the
+	# budget figure from settings_brief and leaves the pace out.
+	if (!$global && !$measure_app && ($app_settings->{'budget'} || '') =~ /\S/ && ($app_settings->{'s_lock'} || '') eq 'on' && defined &Manager::budget_calculator) {
 		foreach my $mode ( sort keys %{$gb::budget_modes} ) {
 			my $bp = &Manager::budget_calculator({
 				app => $app,
@@ -27744,10 +27750,14 @@ sub appointment_evaluation_job {
 			# assignment and stands down, so the split house does not run twice.
 			$dispatch_mode = 1;
 			unless (&ai_job_dispatch_claim($key)) {
-				# The dispatcher may be asleep, restarting, or unable to run the
-				# evaluation itself. A ready worker may still take the run when no
-				# live assignment exists; the election claim stops a second machine.
-				if (&ai_job_may_run($key, 10 * 60 * 1000, 1, 0)) {
+				# A retry of this machine's own crashed attempt, or a dispatcher
+				# that is asleep/restarting/unequipped. The own claim is taken back
+				# first; otherwise a ready worker may take the run when no live
+				# assignment exists.
+				if (&ai_job_own_claim($key, $me)) {
+					# keep the dispatch lease: settle marks a dispatch failed
+				}
+				elsif (&ai_job_may_run($key, 10 * 60 * 1000, 1, 0)) {
 					$dispatch_mode = 0;
 				}
 				else {
@@ -27776,8 +27786,12 @@ sub appointment_evaluation_job {
 				&ai_job_claim($key);
 			}
 			elsif (!&ai_job_may_run($key, 10 * 60 * 1000, 1, 0)) {
-				$job->finish({ app => $app, skipped => 'another machine runs this evaluation' });
-				return;
+				# the election found a live claim; if it is this machine's own
+				# crashed attempt, the retry takes it back
+				unless (&ai_job_own_claim($key, $me)) {
+					$job->finish({ app => $app, skipped => 'another machine runs this evaluation' });
+					return;
+				}
 			}
 		}
 	}
@@ -29820,6 +29834,22 @@ sub ai_job_claim {
 	my $now = &subs::rightNow();
 	eval { &subs::db_delete('ai_jobs', { job => $job }) };
 	eval { &subs::db_insert('ai_jobs', { uuid => &ai_job_uuid($job), job => $job, owner => &ai_house_me(), at => $now, state => 'running', server_time => $now }) };
+	return 1;
+}
+
+# A retry of a job this machine already claimed: the previous attempt died
+# before it could settle, and the queue runs one job at a time, so the claim
+# cannot belong to a live attempt here. A peer still sees the claim as live,
+# which is why the retry takes it back explicitly rather than through the
+# election (that could elect the peer and deadlock on this very row).
+sub ai_job_own_claim {
+	my ($job, $me) = @_;
+	return 0 unless length($job // '') && length($me // '');
+	my $row = eval { &subs::db_select('ai_jobs', undef, { job => $job })->hashes->[0] };
+	return 0 unless $row;
+	return 0 unless (($row->{'owner'} // '') eq $me) && (($row->{'state'} // '') eq 'running');
+	return 0 unless (($row->{'at'} || 0) + 0) > (&subs::rightNow() - 30 * 60 * 1000);
+	&ai_job_claim($job);
 	return 1;
 }
 
