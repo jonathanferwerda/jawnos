@@ -27692,6 +27692,7 @@ sub nightly_evaluation_reconcile {
 		if (&subs::evaluation_agent_ready()) {
 			my $catchup_minion = &subs::minion_grabber();
 			my $now_ms = &subs::rightNow();
+			my $boot_ms = &subs::ai_job_boot_ms();
 			my $queued = 0;
 			foreach my $app ( sort keys %wanted ) {
 				my $cadence = &subs::evaluation_cadence($app);
@@ -27699,7 +27700,16 @@ sub nightly_evaluation_reconcile {
 				next unless $interval;
 				my $key = 'eval:' . $app;
 				my $row = eval { &subs::db_select('ai_jobs', undef, { job => $key })->hashes->[0] };
-				next if $row && (($row->{'at'} || 0) + 0) > ($now_ms - 30 * 60 * 1000);
+				if ($row && (($row->{'at'} || 0) + 0) > ($now_ms - 30 * 60 * 1000)) {
+					# A claim this machine left behind before the last boot is not a
+					# live run; a crashed night must not block its own catch-up.
+					my $boot = $boot_ms;
+					my $dead_own = $boot
+						&& (($row->{'owner'} // '') eq &subs::ai_house_me())
+						&& (($row->{'state'} // '') eq 'running')
+						&& (($row->{'at'} || 0) + 0) < $boot;
+					next unless $dead_own;
+				}
 				my $report = eval { decode_json(&subs::setting_grabber({ app => $app, setting => 'evaluation_report' }) || '') } || {};
 				my $last = ($report->{'timestamp'} || 0) + 0;
 				next if $last && ($now_ms - $last) < $interval * 1.15;
@@ -29835,6 +29845,16 @@ sub ai_job_claim {
 	eval { &subs::db_delete('ai_jobs', { job => $job }) };
 	eval { &subs::db_insert('ai_jobs', { uuid => &ai_job_uuid($job), job => $job, owner => &ai_house_me(), at => $now, state => 'running', server_time => $now }) };
 	return 1;
+}
+
+# The moment this manager booted, in ms. A claim older than this cannot belong
+# to a live process: every worker was restarted after it was written.
+sub ai_job_boot_ms {
+	my $file = &subs::home('~/.president/on_duty');
+	my $v = -e $file ? eval { read_file($file) } : '';
+	$v = '' unless defined $v;
+	$v =~ s/\s+//g;
+	return ($v =~ /^\d{10,}$/) ? $v + 0 : 0;
 }
 
 # A retry of a job this machine already claimed: the previous attempt died
