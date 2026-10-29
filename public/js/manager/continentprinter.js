@@ -90,7 +90,7 @@ function continentPrinter(appts, sort) {
 		type: 'GET',
 		data: { start: specs['start'], end: specs['end'] },
 		success: function(response) {
-			engine.setProvider(response['provider'] || 'none', response['custom_url'] || '', response['key'] || '');
+			engine.setProvider(response['provider'] || 'none', response['custom_url'] || '', response['keys'] || {});
 			engine.setMaps(response['maps'] || []);
 			// the plain places first, then what answers a tap: the home plates
 			// (grouped where several share a spot) and the appointments in scope

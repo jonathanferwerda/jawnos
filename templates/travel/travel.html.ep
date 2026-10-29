@@ -8,21 +8,28 @@
 			<img class="little_thumb hover" id="travel_guess_gap" status="<%= $settings->{'guess_enabled'} %>" hint="Guess the gaps" src="<%= &subs::icon_for('/images/make believe/hat.png') %>" style="<% if (($settings->{'guess_enabled'} // '') eq 'enabled') { %>background-color:#2e7d32;border-radius:6px;<% } %>">
 			<span id="travel_guess_status" style="font-size:12px;opacity:.75;"></span>
 
-			<select class="travel_map_selector" value="<%= $settings->{'current_map'} %>">
-				<option value="">None</option>
-				<% foreach my $map ( @{$settings->{'maps'}} ) { %>
-					<% my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $map->{'f'}, app => $map->{'app'}, type => $map->{'type'} }); 
-						$map->{'f'} = $destination . $asset;
+			<span style="position:relative;display:inline-block;"><button id="travel_maps_button" anchor="<%= $settings->{'current_map'} // '' %>" hidden_maps="<%= $settings->{'hidden_maps'} // '' %>">Maps</button>
+				<div id="travel_maps_menu" style="display:none;position:absolute;top:100%;left:0;z-index:8;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px;min-width:15em;max-height:50vh;overflow:auto;box-shadow:0 4px 16px rgba(0,0,0,.25);">
+					<div style="display:flex;gap:6px;margin-bottom:4px;">
+						<button class="travel_maps_all" style="font-size:11px;">All</button>
+						<button class="travel_maps_none" style="font-size:11px;">None</button>
+					</div>
+					<% foreach my $map ( @{$settings->{'maps'}} ) {
+						next unless ($map->{'home_plate'} && $map->{'scale'});
 					%>
-					<% if ($map->{'home_plate'} && $map->{'scale'}) { %>
-						<option file="/file_open?timestamp=<%= $map->{'server_time'} %>&file=<%= $map->{'f'} %>&app=<%= $map->{'app'} %>" app="<%= $map->{'app'} %>" app_uuid="<%= $map->{'app_uuid'} %>" value="<%= $map->{'uuid'} %>" <% if ($settings->{'current_map'} eq $map->{'uuid'} ) { %>selected<% } %>><%= $map->{'guessed'} ? $map->{'name'} : &subs::format_name($map->{'name'} || $map->{'app'} || $map->{'uuid'}) %> <span class="time" timestamp="<%= $map->{'server_time'} %>"></span></option>
+						<div class="travel_maps_row" uuid="<%= $map->{'uuid'} %>" app="<%= $map->{'app'} %>" app_uuid="<%= $map->{'app_uuid'} %>" style="display:flex;align-items:center;gap:5px;white-space:nowrap;">
+							<input type="checkbox" class="travel_maps_check" value="<%= $map->{'uuid'} %>" checked>
+							<span class="travel_maps_frame" style="cursor:pointer;flex:1;"><%= &subs::format_name($map->{'name'} || $map->{'app'} || $map->{'uuid'}) %></span>
+							<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb hover delete_travel_map">
+						</div>
 					<% } %>
-				<% } %>
-			</select>
-			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb delete_travel_map">
+				</div>
+			</span>
+			<% foreach my $provider (qw(maptiler mapbox stadia thunderforest carto)) { %>
+				<input type="hidden" class="travel_map_key" provider="<%= $provider %>" value="<%= &subs::setting_grabber({ app => '__president', setting => 'map_key_' . $provider }) %>">
+			<% } %>
 
 			<span><b>Map</b> <select class="travel_provider" provider="<%= $settings->{'map_provider'} || 'none' %>"></select>
-				<span id="travel_map_key_wrap" style="display:none;"><input type="password" id="travel_map_key" value="<%= $settings->{'map_key'} %>" placeholder="paste the service's key" hint="Map key" autocomplete="off" style="width:14em;max-width:40vw;"></span>
 				<span id="travel_map_url_wrap" style="display:none;"><input type="text" id="travel_custom_url" value="<%= $settings->{'map_custom_url'} %>" placeholder="tile URL: .../{z}/{x}/{y} or ArcGIS .../{z}/{y}/{x}" hint="Tile URL" style="width:20em;max-width:60vw;"></span>
 				<span id="travel_map_status" style="font-size:12px;opacity:.75;"></span></span>
 
