@@ -214,6 +214,16 @@
 					</tbody>
 				</table>
 			<% } %>
+			<% if (($l->{'type'} eq 'start' || $l->{'type'} eq 'record') && !$l->{'stop_seen'} && !$l->{'stop_timestamp'}) { %>
+				<div class="appointment_autostop_bar" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>" autostop="<%= (($l->{'autostop'} || 'on') eq 'off') ? 'off' : 'on' %>"
+					style="display:flex;align-items:center;gap:10px;padding:6px 8px;margin:6px 0;border:1px solid var(--line);border-radius:8px;background:var(--panel-2,var(--panel));">
+					<label class="appointment_autostop_label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
+						<input type="checkbox" class="appointment_autostop" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>"<% unless (($l->{'autostop'} || 'on') eq 'off') { %> checked<% } %>>
+						<b><%= &subs::lang('autostop') %></b>
+					</label>
+					<span class="appointment_autostop_hint" style="font-size:12px;opacity:.7;"><%= &subs::ui('Stop this appointment when the home plate is left') %></span>
+				</div>
+			<% } %>
 			<span class="appointment_model_selector_container" attribute="<%= $settings->{'pos'} %>">
 				<%= include 'apps/transaction/models', settings => $settings, models => $models, l => $l, source => 'list' %>
 			</span>
