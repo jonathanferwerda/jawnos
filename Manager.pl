@@ -28928,7 +28928,13 @@ sub window_maker($type,$timestamp) {
 	};
 	# The page agent's own button: the Guide's associate, opened against this
 	# window with page mode on, so it can read and fill the form in front of you.
+	# Only the Internet window wears it, in place of the question mark: that is
+	# where a page is actually filled in (an address, an app for a domain). Every
+	# other window keeps Help.
 	my $page_agent_icon = &subs::icon_for('/images/make believe/assistant.png');
+	my $navbar_agent_control = ($app_attr eq 'internet')
+		? '<button id="window_' . $timestamp . '_page_agent" class="' . $html_name . '_page_agent_button window_action page_agent_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Page agent — read and fill this window's form for you})) . '"><img class="window_control_icon" src="' . $page_agent_icon . '"></button>'
+		: '<button id="window_' . $timestamp . '_help" class="' . $html_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="Help">' . $window_control->('help', '?') . '</button>';
 	my $pre_dimensioned = 0;
 	if ($settings->{'dimensions'} && ($user_agent !~ /Android/gi || $user_agent !~ /Mobile/gi)) {
 		$settings->{'dimensions'} = eval { return decode_json $settings->{'dimensions'} } || {};
@@ -28970,8 +28976,7 @@ sub window_maker($type,$timestamp) {
 					<span class="name_text" data-appt-ink="yes" style="--appt-dark-ink:' . $window_dark_ink . ';color:' . $window_ink . ';"  app="' . $app_attr . '">' . $app_text . '</span>
 				</span>
 				<span class="navbar_buttons">
-					<button id="window_' . $timestamp . '_page_agent" class="' . $html_name . '_page_agent_button window_action page_agent_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="' . xml_escape(&subs::ui(q{Page agent — read and fill this window's form for you})) . '"><img class="window_control_icon" src="' . $page_agent_icon . '"></button>
-					<button id="window_' . $timestamp . '_help" class="' . $html_name . '_help_button window_action help_button" timestamp="' . $timestamp . '" app="' . $app_attr . '" hint="Help">' . $window_control->('help', '?') . '</button>
+					' . $navbar_agent_control . '
 					<button id="window_' . $timestamp . '_minify" class="' . $html_name . '_minify_button window_action minimize_button" timestamp="'. $timestamp . '" app="' . $app_attr . '">' . $window_control->('minimize', '_') . '</button>
 					<button id="window_' . $timestamp . '_restore" style="display:none;" class="' . $html_name . '_restore_button window_action restore_button" timestamp="' . $timestamp . '" app="' . $app_attr . '">' . $window_control->('restore', '#') . '</button>
 					<button id="window_' . $timestamp . '_maximize" class="' . $html_name . '_maximize_button window_action maximize_button">' . $window_control->('maximize', '&#9634;') . '</button>
@@ -35856,7 +35861,16 @@ post '/manager/help/act' => sub($c) {
 		return;
 	}
 	my $t = $topic ? &help::get($topic) : undef;
-	my $system = &help::actions_prompt() . "\n\n";
+	# The page agent: a window the person attached the Guide to. Its visible form
+	# is described below, keyed the way page_agent.js wrote it onto the elements, so
+	# the model names a real field rather than guessing a selector. The page verb is
+	# only offered on a turn that actually carries a page, so no other associate is
+	# handed a form it cannot see.
+	my $page_json = $c->param('page') // '';
+	utf8::encode($page_json) if utf8::is_utf8($page_json);
+	my $page = eval { decode_json $page_json } || {};
+	my $page_on = (ref $page eq 'HASH' && length($page->{'title'} // $page->{'app'} // '')) ? 1 : 0;
+	my $system = &help::actions_prompt(undef, $page_on) . "\n\n";
 	# the guide is given the wall clock so it can turn "last year", "yesterday" and
 	# "next Friday" into the absolute dates where_when and create need
 	$system .= 'Right now it is ' . localtime(&subs::rightNow() / 1000)->strftime('%A, %B %d %Y, %I:%M%P') . ".\n";
@@ -35872,10 +35886,7 @@ post '/manager/help/act' => sub($c) {
 	# The page agent: a window the person attached the Guide to. Its visible form
 	# is described here, keyed the way page_agent.js wrote it onto the elements, so
 	# the model names a real field rather than guessing a selector.
-	my $page_json = $c->param('page') // '';
-	utf8::encode($page_json) if utf8::is_utf8($page_json);
-	my $page = eval { decode_json $page_json } || {};
-	if (ref $page eq 'HASH' && length($page->{'title'} // $page->{'app'} // '')) {
+	if ($page_on) {
 		my $clean = sub {
 			my ($v, $max) = @_;
 			$v = '' unless defined $v;
@@ -35950,6 +35961,7 @@ post '/manager/help/act' => sub($c) {
 		# the allow-list is the same registry the prompt is built from, plus the
 		# runtime (learned) verbs, so the guide may pick either
 		my $allowed = &help::live_verb_names();
+		delete $allowed->{'page'} unless $page_on;
 		if ($action && ref $action eq 'HASH') {
 			# Teaching a word for a thing is a write on this machine, not a client
 			# action: store it and answer in words.
