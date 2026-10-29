@@ -458,12 +458,16 @@ sub manager_starter() {
 	# it sits on the desk. Every JawnOS board advertises the Nordic UART service, so
 	# scan the radio for one whose address is unknown and connect, letting it name
 	# itself over the link - the "plug it in and it is known" path, with no wifi at
-	# all. Slower than the mDNS tick, since it holds the radio for a few seconds.
+	# all. This is discovery of an UNKNOWN board only: a watch that is already
+	# linked reconnects on its own (the BLE bridge holds that link), so a slower
+	# heartbeat costs nothing at the moment someone says "hey jawn". A scan holds
+	# the radio for eight seconds, and the old thirty-second beat was most of the
+	# phone's Bluetooth drain.
 	&subs::subprocessor(sub {
 		sleep 40;
 		while (1) {
 			eval { &subs::ble_adopt_scan(); };
-			sleep 30;
+			sleep 300;
 		}
 	}, { name => 'ble adopt scan' });
 
@@ -674,16 +678,16 @@ sub manager_starter() {
 			$prefork->load_app('./Manager.pl');
 			# A handheld runs this whole tree in a few hundred MB that Android's
 			# low-memory killer reclaims the moment the device tightens; the extra
-			# prefork workers are a server's concurrency, not a phone's. Three is the
-			# phone's resting count: two left no worker free while a gallery or music
-			# window was reading pictures, so a single slow cover froze every route.
-			# A burst grows it by two, and the supervisor retires them after half a
-			# minute of quiet. A desktop rests at three and a server at four, each
-			# growing by two. `main_workers` in config.json overrides the resting
-			# count when a machine wants another.
+			# prefork workers are a server's concurrency, not a phone's. A phone rests
+			# at ONE worker and grows by two the moment it is busy: an idle worker is
+			# a whole Perl app (70-250MB on the phone tree) doing nothing, and the
+			# supervisor only raises the pool after two seconds of every worker being
+			# busy, so a gallery or music burst still gets its workers. A desktop
+			# rests at three and a server at four, each growing by two. `main_workers`
+			# in config.json overrides the resting count when a machine wants another.
 			my $configured_workers = (defined $config->{'main_workers'} && $config->{'main_workers'} =~ /^\d+$/ && $config->{'main_workers'} > 0)
 				? int($config->{'main_workers'}) : 0;
-			my $main_workers = $configured_workers || ($device eq 'mobile' ? 3 : ($device eq 'server' ? 4 : 3));
+			my $main_workers = $configured_workers || ($device eq 'mobile' ? 1 : ($device eq 'server' ? 4 : 3));
 			$prefork->workers($main_workers);
 			&prefork_autoscale($prefork, min => $main_workers, max => $main_workers + 2);
 			$prefork->run;
