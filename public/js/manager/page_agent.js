@@ -163,7 +163,7 @@ function pageAgentSnapshot(panel) {
 		if (el.readOnly) { f.readonly = 1; }
 		fields.push(f);
 	});
-	$(root).find('button, input[type="button"], input[type="submit"], [role="button"], span.button').each(function () {
+	$(root).find('button, input[type="button"], input[type="submit"], [role="button"], span.button, span.internet_tab').each(function () {
 		if (buttons.length >= 30) { return false; }
 		var el = this;
 		if (!$(el).is(':visible') || el.disabled) { return; }
@@ -287,7 +287,7 @@ function pageAgentFindButton(root, name) {
 	if (hit.length) { return hit; }
 	var want = name.toLowerCase();
 	var found = $();
-	$(root).find('button, input[type="button"], input[type="submit"], [role="button"], span.button').each(function () {
+	$(root).find('button, input[type="button"], input[type="submit"], [role="button"], span.button, span.internet_tab').each(function () {
 		if (found.length || !$(this).is(':visible') || this.disabled) { return; }
 		if ($(this).closest('.top_navbar').length) { return; }
 		if ($(this).closest('.assistant_view').length) { return; }
