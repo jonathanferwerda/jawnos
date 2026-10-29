@@ -26933,6 +26933,16 @@ get '/manager/appointment_details' => sub($c) {
 	my $models = &subs::db_query('select * from model where app=? order by timestamp desc', $app)->hashes;
 	my $options = &subs::db_query('select * from option where app=? order by timestamp desc', $app)->hashes;
 	my $option_categories = &subs::db_query('select * from option_category where app=? order by timestamp desc', $app)->hashes;
+	# The Travel basemap keys live once under __president as map_key_<provider>;
+	# the appointment details' map picker offers a keyed service only when its
+	# key is already saved, so nothing asks for a key in two places.
+	my $map_key_rows = &subs::db_query("select setting, value from settings where app='__president' and setting like 'map_key_%' and value is not null and value != ''")->hashes;
+	my $map_keys = [];
+	foreach my $mkr ( @{$map_key_rows} ) {
+		my $provider = $mkr->{'setting'};
+		$provider =~ s/^map_key_//;
+		push @{$map_keys}, { provider => $provider, value => $mkr->{'value'} };
+	}
 	foreach my $mo ( @{$models}, @{$options} ) {
 		$mo->{'characteristics'} = eval { return decode_json $mo->{'characteristics'} } || [];
 		if (my @oc = grep { $_->{'name'} eq 'option_category' } @{$mo->{'characteristics'}}) {
@@ -27017,6 +27027,8 @@ get '/manager/appointment_details' => sub($c) {
 					server_time => $continent->{'server_time'},
 					home_distance => $continent->{'home_distance'},
 					distance => sprintf("%.4f", $distance),
+					latitude => $continent->{'latitude'},
+					longitude => $continent->{'longitude'},
 					uuid => $continent->{'uuid'},
 					timestamp => $continent->{'timestamp'},
 					increment_speed => sprintf("%.2f", $speed),
@@ -27041,6 +27053,7 @@ get '/manager/appointment_details' => sub($c) {
 		models => $models,
 		options => $options,
 		option_categories => $option_categories,
+		map_keys => $map_keys,
 		device => $device,
 		remote_machines => &subs::db_select('remote_machines', undef, { connection => 'active' })->hashes
 	);

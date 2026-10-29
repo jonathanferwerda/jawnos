@@ -3138,14 +3138,112 @@ $(document).on('keyup', '.timed_input', function(e) {
 	}
 });
 
+// ---- appointment distance: the fixes list or a Travel basemap ----
+// The Dist section is one panel. Its picker swaps the list of fixes for a canvas
+// map drawn by jawnosMap, and offers only the basemaps the house can actually
+// draw: the free services, or a keyed one whose key is already saved in Travel.
+function appointmentDistKeys(panel) {
+	var keys = {};
+	panel.find('.appointment_map_key').each(function() {
+		var provider = $(this).attr('provider');
+		var value = $(this).val();
+		if (provider && value) { keys[provider] = value; }
+	});
+	return keys;
+}
+
+function appointmentDistFill(detail) {
+	var panel = $(detail).find('.appointment_distance_panel');
+	if (!panel.length || !window.jawnosMap) { return; }
+	var sel = panel.find('.appointment_dist_view');
+	if (!sel.length || sel.attr('filled') == 'yes') { return; }
+	sel.attr('filled', 'yes');
+	var keys = appointmentDistKeys(panel);
+	var providers = window.jawnosMap.providers || {};
+	var group = $('<optgroup></optgroup>').attr('label', jawnosT('Map'));
+	var added = 0;
+	for (var key in providers) {
+		var p = providers[key] || {};
+		var kind = p.group || 'url';
+		if (kind === 'free' || (kind === 'key' && keys[key])) {
+			$('<option></option>').attr('value', key).text(jawnosT(p.name || key)).appendTo(group);
+			added++;
+		}
+	}
+	if (added) { sel.append(group); }
+}
+
+function appointmentDistShow(panel) {
+	if (!panel || !panel.length) { return; }
+	var kind = panel.find('.appointment_dist_view').val() || 'fixes';
+	panel.find('.appointment_distance_fixes').toggle(kind === 'fixes');
+	panel.find('.appointment_distance_map').toggle(kind !== 'fixes');
+	if (kind !== 'fixes') { appointmentDistMap(panel, kind); }
+}
+
+function appointmentDistMap(panel, provider) {
+	var canvas = panel.find('.appointment_dist_canvas')[0];
+	if (!canvas || !window.jawnosMap) { return; }
+	var data = {};
+	try { data = JSON.parse(panel.find('.appointment_distance_data').text() || '{}') || {}; }
+	catch (e) { data = {}; }
+	var engine = panel.data('appointmentDistMap');
+	if (!engine || engine.canvas !== canvas) {
+		engine = window.jawnosMap.create(canvas.id, {
+			z: 15,
+			width: function() { return $(canvas).parent().width() || 480; },
+			height: function() { return $(canvas).parent().height() || 320; }
+		});
+		panel.data('appointmentDistMap', engine);
+	}
+	engine.setProvider(provider, '', appointmentDistKeys(panel));
+	var points = [];
+	var fixes = data.points || [];
+	var home = data.home || {};
+	fixes.forEach(function(p) {
+		if (!p || !p.latitude || !p.longitude) { return; }
+		points.push({ lat: p.latitude, lon: p.longitude, colour: '#a0503f' });
+	});
+	if (home.latitude && home.longitude) {
+		points.push({ lat: home.latitude, lon: home.longitude, colour: '#6f4f9f', label: jawnosT('Home') });
+	}
+	engine.setPoints(points);
+	if (points.length) {
+		var lats = points.map(function(p) { return p.lat; });
+		var lons = points.map(function(p) { return p.lon; });
+		var minLat = Math.min.apply(null, lats), maxLat = Math.max.apply(null, lats);
+		var minLon = Math.min.apply(null, lons), maxLon = Math.max.apply(null, lons);
+		if (Math.max(maxLat - minLat, maxLon - minLon) < 0.006) {
+			var lat = (minLat + maxLat) / 2, lon = (minLon + maxLon) / 2;
+			engine.fitBounds({ nw: { lat: lat + 0.003, lon: lon - 0.003 }, se: { lat: lat - 0.003, lon: lon + 0.003 } }, 1);
+		}
+		else {
+			engine.fitBounds({ nw: { lat: maxLat, lon: minLon }, se: { lat: minLat, lon: maxLon } }, 1.25);
+		}
+	}
+	else if (home.latitude && home.longitude) {
+		engine.focusOn(home.latitude, home.longitude, 0.006);
+	}
+	engine.draw();
+}
+
+$(document).on('change', '.appointment_dist_view', function() {
+	appointmentDistShow($(this).closest('.appointment_distance_panel'));
+});
+
 $(document).on('click', '.appointment_list_toggle', function() {
 	var list = $(this).attr('list');
-	var l = $(this).closest('.appointment_detail').find('.appointment_list[list="' + list + '"]');
+	var detail = $(this).closest('.appointment_detail');
+	var l = detail.find('.appointment_list[list="' + list + '"]');
 	if (l.is(':visible')) {
 		l.hide();
 	}
 	else {
 		l.show();
+		if (list == 'distance') {
+			appointmentDistFill(detail);
+			appointmentDistShow(l.filter('.appointment_distance_panel'));
+		}
 	}
 
 });
