@@ -600,12 +600,18 @@ sub _candidate_viable {
 
 	# A local Ollama comes first, because a :cloud model is billed through the same
 	# daemon and has no key setting of its own to look up. Read as a paid
-	# provider instead, every :cloud model would be called unreachable.
+	# provider instead, every :cloud model would be called unreachable. But the
+	# daemon must still know the model: a phone that never pulled a :cloud model
+	# sent the call to its own localhost and answered with a connection error.
 	if ($provider eq 'ollama') {
 		if ($model =~ /:cloud\b/i) {
 			return (0, 'the ollama_cloud budget is stood down')
 				unless $ctx->{'bucket_ok'}->('ollama_cloud');
-			return (1, 'an Ollama cloud model');
+			return (0, 'this machine does not have ' . $model)
+				unless _lists_model($ctx->{'abilities'}, $model);
+			return (0, 'this machine is overloaded')
+				if _overloaded($ctx->{'abilities'}, 'heavy');
+			return (1, 'an Ollama cloud model installed here');
 		}
 		return (0, 'this machine does not have ' . $model)
 			unless _lists_model($ctx->{'abilities'}, $model);

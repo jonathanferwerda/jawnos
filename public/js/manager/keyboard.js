@@ -1716,7 +1716,7 @@ function textareaUpgrader() {
 			var contents = ta.val();
 			// A textarea's rows make its height; a contenteditable div has no rows,
 			// so keep the height the person was already looking at. Without this the
-			// three-line note collapsed to one line when the editor replaced it.
+			// note field collapsed when the editor replaced it.
 			// A drawer upgraded before it is shown measures zero, so rows and the
 			// textarea's own line box are the fallback.
 			var ta_height = ta.outerHeight();

@@ -398,7 +398,7 @@ sub duration_read {
 sub time_preview_date {
 	my ($ms) = @_;
 	return &subs::ui('not read') unless defined $ms;
-	return localtime(int($ms / 1000))->strftime('%A, %B %d %Y at %I:%M:%S%p');
+	return localtime(int($ms / 1000))->strftime('%m/%d/%y %H:%M:%S');
 }
 
 sub time_preview_schedule {
@@ -18754,8 +18754,11 @@ sub inventory_cell_summary($data) {
 	my $system = 'You summarise one period of one app\'s activity for someone glancing at a single statistic in JawnOS, a house that logs its life as timed appointments. A briefing follows: the app, the clock the period is on (scope: minute, hour, day, week, month or year), the period itself and whether it is the one now running (period_is_current), the measure the cell shows (measure) and its value, the budget if the app keeps one (budgeted, plus on_track, progress_percent, due_by_now and projected when the period is current), the recent counts of the same clock (recent_periods_counts, oldest first, the newest written count/percent so a part-run period is not read as a fall), and what the activity was made of (made_of: the appointment types that ran and how many). Write two to four short sentences, plain and specific, no headings, no bullets and no preamble: what the value is; whether it is on track for its budget, reading the pace when the period is current; how it sits against the recent periods (rising, falling, steady), naming the turn if there is one; and what most made up the number. Do not restate the labels or the raw figures as a list - say what they mean. Use only the numbers given.';
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'eval_assistant' });
 	my ($text, $error);
-	if ($model) {
+	if ($model && &subs::evaluation_agent_ready()) {
 		($text, $error) = &subs::evaluation_model_call_role('eval_assistant', $system, encode_json($briefing), &subs::ai_role_thinking('eval_assistant'));
+	}
+	elsif ($model) {
+		$error = 'no evaluation agent is reachable from this machine';
 	}
 	else {
 		$error = 'no evaluation model is chosen';
@@ -47673,21 +47676,21 @@ get '/manager/time_preview' => sub ($c) {
 	$c->render(json => {
 		ago => {
 			text => $ago_read
-				? (&subs::ui('Saves') . ' ' . &time_preview_date($ago_ms))
+				? &time_preview_date($ago_ms)
 				: ($deep ? &subs::ui('Could not read a time') : &subs::ui('Reading the words...')),
 			timestamp => $ago_ms,
 			read => $ago_read,
 		},
 		warranty => {
-			text => ($warranty_default ? &subs::ui('Default') . ': ' : &subs::ui('Expires') . ' ')
-				. (defined $warranty_ms ? &time_preview_date($warranty_ms) : ($deep ? &subs::ui('Could not read a warranty') : &subs::ui('Reading the words...'))),
+			text => defined $warranty_ms
+				? &time_preview_date($warranty_ms)
+				: ($deep ? &subs::ui('Could not read a warranty') : &subs::ui('Reading the words...')),
 			timestamp => $warranty_ms,
 			default => $warranty_default,
 			read => (defined $warranty_ms ? 1 : 0),
 		},
 		duration => {
-			text => ($duration_default ? &subs::ui('Usual length') : &subs::ui('Length')) . ': '
-				. (defined $duration_ms ? &subs::duration_sayer(abs($duration_ms) / 1000) : &subs::ui('none')),
+			text => defined $duration_ms ? &subs::duration_sayer(abs($duration_ms) / 1000) : &subs::ui('none'),
 			milliseconds => $duration_ms,
 			default => $duration_default,
 			read => (defined $duration_ms ? 1 : 0),
