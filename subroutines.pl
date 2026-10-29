@@ -17018,6 +17018,10 @@ sub internet_site_appointment_tick {
 			&db_query("select max(cast(stop_timestamp as integer)) as last_end from appointments where app = ? and stop_timestamp is not null and stop_timestamp != '' and cast(stop_timestamp as integer) <= ?", $name, $now)->hash;
 		} || {};
 		my $prev_end = int($prev->{'last_end'} // 0);
+		# A stop at or after the site's last activity is a person closing the
+		# session after the tab went quiet (or stopping it by hand). Do not
+		# reopen that same run; wait for a span that ends after the stop.
+		next if $prev_end >= $run_end{$app};
 		$start_at = $prev_end if $prev_end > $start_at;
 		my $settings = &settings_grabber({ app => $name });
 		my $uuid = &random_string_creator(90);
