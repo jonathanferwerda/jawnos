@@ -2705,6 +2705,21 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 }
 .folders_contents[data-view=list] .folders_size,
 .folders_contents[data-view=list] .folders_modified { text-align: right; font-variant-numeric: tabular-nums; }
+/* The list's five columns need about 390px. On a phone the window is narrower, and
+   the name column - the only flexible one - collapsed to nothing, leaving the type
+   column ("Folder", "file") reading as the name. Keep the name and drop the two
+   right-hand columns instead, for the header and its rows alike. */
+@media (max-width: 620px) {
+	.folders_list_header,
+	.folders_contents[data-view=list] .folders_file {
+		grid-template-columns: 26px minmax(72px, 1fr) auto;
+		gap: 0 8px;
+	}
+	.folders_list_header span:nth-child(4),
+	.folders_list_header span:nth-child(5),
+	.folders_contents[data-view=list] .folders_size,
+	.folders_contents[data-view=list] .folders_modified { display: none; }
+}
 .folders_empty, .desk_empty { grid-column: 1 / -1; padding: 28px 12px; text-align: center; opacity: .6; font-size: 14px; }
 .folders_contents[data-view=list] .folders_empty { display: block; }
 .folders_drawer {
