@@ -35892,6 +35892,7 @@ post '/manager/help/act' => sub($c) {
 			next unless ref $f eq 'HASH';
 			my $line = '- ' . $clean->($f->{'field'}, 20) . ': "' . $clean->($f->{'label'}, 80) . '" [' . $clean->($f->{'type'}, 20);
 			$line .= ', id ' . $clean->($f->{'id'}, 60) if length($f->{'id'} // '');
+			$line .= ', class ' . $clean->($f->{'class'}, 60) if length($f->{'class'} // '');
 			$line .= ', read only' if $f->{'readonly'};
 			$line .= ']';
 			$line .= ' options: ' . join(' | ', map { $clean->($_, 40) } @{ $f->{'options'} }) if ref $f->{'options'} eq 'ARRAY' && @{ $f->{'options'} };
