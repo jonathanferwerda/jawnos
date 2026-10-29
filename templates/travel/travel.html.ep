@@ -21,7 +21,10 @@
 			</select>
 			<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb delete_travel_map">
 
-			<span><b>Map</b> <select class="travel_provider" provider="<%= $settings->{'map_provider'} || 'none' %>"></select> <input type="text" id="travel_custom_url" value="<%= $settings->{'map_custom_url'} %>" placeholder="custom tile URL: .../{z}/{x}/{y} or ArcGIS .../{z}/{y}/{x}" style="width:20em;max-width:60vw;"></span>
+			<span><b>Map</b> <select class="travel_provider" provider="<%= $settings->{'map_provider'} || 'none' %>"></select>
+				<span id="travel_map_key_wrap" style="display:none;"><input type="password" id="travel_map_key" value="<%= $settings->{'map_key'} %>" placeholder="paste the service's key" hint="Map key" autocomplete="off" style="width:14em;max-width:40vw;"></span>
+				<span id="travel_map_url_wrap" style="display:none;"><input type="text" id="travel_custom_url" value="<%= $settings->{'map_custom_url'} %>" placeholder="tile URL: .../{z}/{x}/{y} or ArcGIS .../{z}/{y}/{x}" hint="Tile URL" style="width:20em;max-width:60vw;"></span>
+				<span id="travel_map_status" style="font-size:12px;opacity:.75;"></span></span>
 
 			<span><b>Search</b> <input id="travel_search" value="<%= $settings->{'search'} %>" style="width:8em;"></span>
 
