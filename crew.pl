@@ -667,6 +667,7 @@ sub _choice_context {
 			google     => 'google_key',
 			xai        => 'xai_key',
 			mistral    => 'mistral_key',
+			cohere     => 'cohere_key',
 			groq       => 'groq_key',
 			openrouter => 'openrouter_key',
 			deepseek   => 'deepseek_key',
@@ -691,7 +692,7 @@ sub model_family {
 	my $name = $model;
 	$name =~ s/^\@cf\///;
 	$name =~ s/^\@[^\/]+\///;
-	if ($name =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral groq openrouter deepseek/) {
+	if ($name =~ /^([a-z]+):/ && grep { $_ eq $1 } qw/openai anthropic google xai mistral cohere groq openrouter deepseek/) {
 		$name =~ s/^[a-z]+://;
 	}
 	$name =~ s/:.*$//;
