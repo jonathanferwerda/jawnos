@@ -83,6 +83,25 @@ if (-S $watch_path) {
 	}
 }
 
+# A master that is alive but too busy to answer the watch query in three
+# seconds is still a master. That is the phone being thawed after a freeze and
+# the laptop just out of suspend: the app's own port probe (and this one) can
+# lose to the scheduler, a second tree starts, wipes ~/.president under the
+# first, and the two then cycle over the ports - the black screen for a minute
+# or two after picking the phone up. The pid file names the boot master, and a
+# live pid whose command line still names jawn is proof enough to stand down.
+# A stale pid (a reboot, a recycled number) fails the command-line check, so a
+# real start is never blocked.
+my $boot_pid_file = &home('~/.president/pid');
+if (-e $boot_pid_file) {
+	my $boot_pid = eval { read_file($boot_pid_file) } // '';
+	$boot_pid =~ s/\s+//g;
+	if ($boot_pid =~ /^[0-9]+$/ && &pid_alive($boot_pid) && &pid_is_jawn($boot_pid)) {
+		print "\nAnother jawn's master (pid $boot_pid) is alive; this one is standing down.\n\n";
+		exit 0;
+	}
+}
+
 my $dump_dir = &home('~/.president');
 # Wipe the tree's own run state, but keep the handshake files the Android app
 # and this tree exchange. The app's location service can write wake_ready a
