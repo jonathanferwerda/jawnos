@@ -464,11 +464,12 @@ $(document).on('change', '.map_key_input', function() {
 
 $(document).on('change', '.movement_device_input', function() {
 	// Configure -> Plat -> Maps -> Movement: which device files an appointment's
-	// movement. A house setting like the tile keys, so it reaches every machine.
+	// movement. A house setting like the tile keys, so it reaches every machine —
+	// it is written as device 'all' because that is how it is read.
 	var input = $(this);
 	var status = $('#movement_device_status');
 	status.text('saving…');
-	settingSetter({ app: input.attr('app') || '__president', setting: input.attr('setting'), value: input.val() }).then(function() {
+	settingSetter({ app: input.attr('app') || '__president', setting: input.attr('setting'), device: 'all', value: input.val() }).then(function() {
 		status.text('saved');
 		setTimeout(function() { if (status.text() == 'saved') { status.text(''); } }, 2500);
 	});
