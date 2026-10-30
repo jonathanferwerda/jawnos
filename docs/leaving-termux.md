@@ -364,11 +364,18 @@ The milestone that actually leaves Termux.
   **The failure that test exists for:** the stage copy took run-as's umask, so
   every tool in the first archive was `0666` and the unpacked `perl` was not
   executable.
-- **Remaining (M3b):** the app unpacks this archive into `$PREFIX` instead of
-  `TermuxInstaller`'s bootstrap (same paths, so nothing the tree runs needs
-  relocating), verifies the pinned sha256, and deletes the bootstrap asset and
-  `libtermux-bootstrap.so`. Then the first run needs no `git` either: ship the
-  tree as an asset or fetch a tagged archive over HTTPS and verify its hash.
+- **Proven on a device (tablet, app 1192):** the archive unpacked to
+  `~/.jawnos/runtime` and `SessionService` prefers it — the master's
+  `/proc/<pid>/exe` is `…/.jawnos/runtime/bin/perl`, the tree reached
+  `status=good` with every worker up and 3000 answering, and Termux's perl stays
+  the fallback. That is the runtime half of leaving Termux done: the tree no
+  longer needs the prefix's interpreter.
+- **Remaining (M3b):** the app unpacks this archive into `$PREFIX` on first run
+  instead of `TermuxInstaller`'s bootstrap, verifies the pinned sha256, and
+  deletes the bootstrap asset and `libtermux-bootstrap.so`; then `PATH` moves off
+  the prefix too (the diet already carries `git`, `ssh`, `openssl`, `sqlite3`,
+  `curl`). The first run also needs no `git`: ship the tree as an asset or fetch
+  a tagged archive over HTTPS and verify its hash.
 
 - Build Perl for Android (aarch64) with `perl-cross` or Termux's own perl recipe, as
   `libjawnrt.so` (or `libperl.so` plus a `perl` wrapper) exec'd per Spike B.
