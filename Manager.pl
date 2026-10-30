@@ -166,7 +166,7 @@ sub record_audio($data) {
 
 	if ($device eq 'mobile') {
 		&subs::subprocessor(sub {
-			`termux-microphone-record -l 0 -e mp3 -f $filename`;
+			&subs::device_run('microphone-record', qq{-l 0 -e mp3 -f $filename});
 		}, { name => "Audio file converter" });
 	}
 	elsif ($device eq 'computer') {
@@ -231,7 +231,7 @@ sub record_audio_stop($data) {
 	my $filename;
 
 	if ($device eq 'mobile') {
-		`termux-microphone-record -q`;
+		&subs::device_run('microphone-record', '-q');
 	}
 	elsif ($device eq 'computer') {
 		`pkill rec`;
@@ -913,7 +913,7 @@ sub take_picture($c,$data) {
 
 
 	if ($device eq 'mobile' && ($camera eq 0 || $camera == 1)) {
-		`termux-camera-photo -c $camera $filename`;
+		&subs::device_run('camera-photo', qq{-c $camera $filename});
 	}
 	elsif ($device eq 'computer' && $camera eq 'webcam') {
 		eval { `ffmpeg -i /dev/video0 $filename` };
@@ -26104,7 +26104,7 @@ post '/manager/phone/dial' => sub($c) {
 	$number =~ s/[^\d+#*]//g;
 	unless ($number) { $c->render(json => { ok => 0, error => 'No number.' }); return; }
 	if (&subs::device_setter() eq 'mobile') {
-		my $out = `termux-telephony-call "$number" 2>&1`;
+		my $out = &subs::device_run('telephony-call', qq{"$number" 2>&1});
 		# a machine with no telephony (a wifi tablet is a 'mobile' device here too)
 		# answers this same route: report success only when the dial really went
 		# out, so a caller can fall through to the next mobile peer.
@@ -26532,7 +26532,7 @@ sub notification_grabber($data) {
 	my $q = &subs::db_query('select * from notifications order by timestamp DESC LIMIT 100');
 	my $more_notifications = $q->hashes;
 	if ($device eq 'mobile') {
-		my $nl = `termux-notification-list`;
+		my $nl = &subs::device_run('notification-list');
 		my $notifications = decode_json($nl);
 		my @fresh;
 		foreach my $n ( @{$notifications} ) {
@@ -26604,7 +26604,7 @@ post '/manager/notifications/remove' => sub($c) {
 	my $deletions = [];
 	if ($tag) {
 		if ($device eq 'mobile') {
-			`termux-notification-remove $tag`;
+			&subs::device_run('notification-remove', $tag);
 		}
 	}
 	if ($scope eq 'all') {
@@ -27378,7 +27378,7 @@ get '/manager/share' => sub($c) {
 	my $type = $c->param('type');
 	my $returner;
 	if ($device eq 'mobile') {
-		$returner = `termux-share -a $type -d $src`;
+		$returner = &subs::device_run('share', qq{-a $type -d $src});
 	}
 	$c->render('text' => $returner);
 };
@@ -27402,11 +27402,11 @@ get '/manager/torch' => sub($c) {
 	my $returner;
 	if ($device eq 'mobile') {
 		if ($torch eq 'off') {
-			`termux-torch on`;
+			&subs::device_run('torch', 'on');
 			$returner = 'on';
 		}
 		else {
-			`termux-torch off`;
+			&subs::device_run('torch', 'off');
 			$returner = 'off';
 		}
 	}
@@ -28127,7 +28127,7 @@ post '/manager/clipboard_setter' => sub ($c) {
 get '/manager/clipboard_getter' => sub ($c) {
 	my $returner;
 	if ($device eq 'mobile') {
-		$returner = `termux-clipboard-get`;
+		$returner = &subs::device_run('clipboard-get');
 	}
 	elsif ($device eq 'computer') {
 		$returner = eval { return `xclip -o` };
@@ -31703,7 +31703,7 @@ post '/manager/folders/open_with' => sub($c) {
 	my @paths = map { $_->{'path'} } grep { -e $_->{'path'} } &folders_command_items($folders);
 	&subs::subprocessor(sub {
 		my $opener;
-		if ($ENV{'TERMUX_VERSION'} || -d '/data/data/com.termux') { $opener = 'termux-open' }
+		if ($ENV{'TERMUX_VERSION'} || -d '/data/data/com.termux') { $opener = &subs::device_cmd('open') }
 		elsif (-x '/usr/bin/xdg-open') { $opener = '/usr/bin/xdg-open' }
 		return unless $opener;
 		foreach my $path ( @paths ) {
@@ -42508,7 +42508,7 @@ sub sms_mms_command($digits, $text, $parts, $jawn_uuid) {
 sub telephony_status() {
 	my $state = { telephony => 0, phone_type => 'none', sim_state => '', network_type => '' };
 	return $state unless &subs::device_setter() eq 'mobile';
-	my $json = `timeout 8 termux-telephony-deviceinfo 2>/dev/null`;
+	my $json = &subs::device_run('telephony-deviceinfo', '2>/dev/null', 'timeout 8 ');
 	my $info = eval { return decode_json $json } || {};
 	my $type = lc($info->{'phone_type'} || 'none');
 	my $sim = lc($info->{'sim_state'} || '');
@@ -42576,7 +42576,7 @@ sub sms_message_send($digits,$message) {
 			}
 			else {
 				$message =~ s/\$/\\\$/gi;
-				`termux-sms-send -n $digits "$message"`;
+				&subs::device_run('sms-send', qq{-n $digits "$message"});
 				$via = 'termux';
 			}
 		}
@@ -42609,7 +42609,7 @@ post '/manager/sms/termux_fallback' => sub($c) {
 	$digits =~ s/\S\d(?=\d{10})//;
 	if ($digits) {
 		$message =~ s/\$/\\\$/gi;
-		`termux-sms-send -n $digits "$message"`;
+		&subs::device_run('sms-send', qq{-n $digits "$message"});
 	}
 	$c->render(json => { ok => 1, via => 'termux' });
 };
@@ -43771,14 +43771,14 @@ get '/manager/volume_control' => sub($c) {
 		if (defined $stream && length $stream && defined $volume && length $volume) {
 			if ($device eq 'mobile') {
 				$stream = lc $stream;
-				`termux-volume $stream $volume`;
+				&subs::device_run('volume', qq{$stream $volume});
 			}
 			else {
 				`amixer set $stream $volume%`;
 			}
 		}
 		if ($device eq 'mobile') {
-			$return_volume = `termux-volume`;
+			$return_volume = &subs::device_run('volume');
 		}
 		else {
 			foreach my $control ( qw/Master Capture/ ) {
@@ -44554,7 +44554,7 @@ sub lock_screen($c) {
 sub unlock_screen($c) {
 	my $authentication = $c->session('authentication');
 	if (-e $database && $device eq 'mobile') {
-		my $finger = `termux-fingerprint`;
+		my $finger = &subs::device_run('fingerprint');
 		if (my $fingerprint = eval { return decode_json $finger }) {
 			if ($fingerprint->{'auth_result'} eq 'AUTH_RESULT_SUCCESS') {
 				$c->session('authentication' => 'approved');
@@ -44639,7 +44639,7 @@ sub notification_sender($m,$db) {
 		my $silent = $m->{'silent'} ? ' --ez silent true' : '';
 		my $bc = `am broadcast -n com.termux/.app.JawnNotifyReceiver -a com.termux.app.JAWN_NOTIFY --es title "$t" --es message "$b" --es tag "$id"$silent 2>&1`;
 		unless ($bc =~ /Broadcast completed/) {
-			`echo "$message" | termux-notification -i $id -t "$title" --vibrate "200,150,200,150" --image-path $image`;
+			&subs::device_run('notification', qq{-i $id -t "$title" --vibrate "200,150,200,150" --image-path $image}, qq{echo "$message" | });
 		}
 	}
 	elsif ( eval { $sql->db } && $sql->dsn !~ /:$/) {

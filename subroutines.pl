@@ -2945,7 +2945,7 @@ sub say_piper_argv() {
 # How to play a finished wav here. Android has no sox audio backend, so its
 # clips go through termux-media-player; everywhere else, the sox player.
 sub say_player_command() {
-	return 'termux-media-player play' if $device eq 'mobile';
+	return &subs::device_cmd('media-player', 'play') if $device eq 'mobile';
 	return 'play -q';
 }
 
@@ -3035,7 +3035,7 @@ sub say_it() {
 		}
 		# Fallbacks: Android's own engine where piper cannot run; espeak elsewhere.
 		if ($device eq 'mobile') {
-			`termux-tts-speak "$text"`;
+			&subs::device_run('tts-speak', qq{"$text"});
 			return;
 		}
 		# espeak: the chosen espeak voice, or the fallback when piper is missing.
@@ -3351,6 +3351,38 @@ sub device_setter() {
 	return $device;
 }
 
+# M0 contracts (docs/leaving-termux.md): one door for every Android device
+# command. A caller names the command without its "termux-" prefix and passes
+# the argument string exactly as the shell should see it, so wrapping a call
+# site changes nothing at runtime. M1 replaces these three bodies with the
+# DeviceService client and the call sites stay put. The literal "termux-"
+# now lives only here; scripts/termux_ledger.pl counts it.
+sub device_cmd {
+	my ($name, $args) = @_;
+	$name = '' unless defined $name;
+	$name =~ s/\Atermux-//;
+	my $cmd = "termux-$name";
+	return (defined $args && length $args) ? "$cmd $args" : $cmd;
+}
+
+# Run a device command through the shell. The optional prefix keeps a pipeline
+# or a timeout at the call site ("timeout 8 ", 'echo "$message" | ').
+sub device_run {
+	my ($name, $args, $prefix) = @_;
+	$prefix = '' unless defined $prefix;
+	my $cmd = &device_cmd($name, $args);
+	return `$prefix$cmd`;
+}
+
+# Where the Termux API app's command would be, for the capability probes that
+# ask "-x" before spawning one. M1 answers this from the bridge instead.
+sub device_bin {
+	my ($name) = @_;
+	$name = '' unless defined $name;
+	$name =~ s/\Atermux-//;
+	return "/data/data/com.termux/files/usr/bin/termux-$name";
+}
+
 # The machine's battery in one shape for the Monitor and the old System view.
 # termux-battery-status is a spawned API call, so a short shared cache keeps the
 # Monitor's two-second poll from spawning one per tick; Android denies the
@@ -3622,9 +3654,9 @@ sub battery_sample {
 		return $battery_sample_memo = \%fresh;
 	}
 	my $b = { sampled => $now, source => 'none' };
-	my $mobile = &device_setter() eq 'mobile' || -x '/data/data/com.termux/files/usr/bin/termux-battery-status';
+	my $mobile = &device_setter() eq 'mobile' || -x &subs::device_bin('battery-status');
 	if ($mobile) {
-		my $raw = `termux-battery-status 2>/dev/null`;
+		my $raw = &subs::device_run('battery-status', '2>/dev/null');
 		my $j = eval { decode_json($raw) } || {};
 		if (ref $j eq 'HASH' && defined $j->{'percentage'}) {
 			$b->{'source'} = 'termux';
@@ -9391,7 +9423,7 @@ my $returner = '';
 		my $timestamp = &subs::rightNow();
 		my $c = &subs::controller_builder();
 		my $suds = &suds_grabber();
-		my $json_list = `termux-sms-list -l 10 --message-sort-order="date DESC"` || '[]';
+		my $json_list = &subs::device_run('sms-list', '-l 10 --message-sort-order="date DESC"') || '[]';
 		my $list = decode_json $json_list;
 		foreach my $l (grep { $_->{'type'} eq 'draft' || $_->{'type'} eq 'sent' || $_->{'type'} eq 'inbox' } @{$list}) {
 			my $time = &subs::ago_calc($l->{'received'},$timestamp);
@@ -16389,7 +16421,7 @@ sub headless_navigation() {
 			$max_age = 15 * 60 * 1000 if $max_age > 15 * 60 * 1000;
 			my $loc = &subs::native_location({ max_age_ms => $max_age });
 			unless ($loc) {
-				my $jloc = `timeout 20 termux-location -p gps 2>/dev/null`;
+				my $jloc = &subs::device_run('location', '-p gps 2>/dev/null', 'timeout 20 ');
 				my $j = eval { decode_json($jloc) } || {};
 				if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'}
 					&& ($j->{'elapsedMs'} || 1e9) <= $max_age) {
@@ -18404,7 +18436,7 @@ sub telephone_contacts_check() {
 	return 0 unless $device eq 'mobile';
 
 	my $n = 0;
-	my $jcontacts = `termux-contact-list`;
+	my $jcontacts = &subs::device_run('contact-list');
 	my $contacts = eval { return decode_json $jcontacts } || [];
 	foreach my $contact ( @{$contacts} ) {
 		my $name = &subs::unformat_name($contact->{'name'});
@@ -18578,7 +18610,7 @@ sub telephone_call_log_check() {
 	return 0 unless $device eq 'mobile';
 
 	my $n = 0;
-	my $call_logs = `termux-call-log -l 30`;
+	my $call_logs = &subs::device_run('call-log', '-l 30');
 	my $calls = eval { return decode_json $call_logs } || [];
 
 	foreach my $call ( grep { $_->{'phone_number'} =~ /\d/ } @{$calls} ) {
@@ -20247,7 +20279,7 @@ sub local_position {
 		return { latitude => $loc->{'latitude'}, longitude => $loc->{'longitude'}, accuracy => sprintf("%.2F", ($loc->{'accuracy'} || 0)), timestamp => $loc->{'time'} || $now, source => 'gps', cached => 1 };
 	}
 	# A phone whose service has not run yet may still answer one GPS request.
-	my $jloc = `timeout 8 termux-location -p gps 2>/dev/null`;
+	my $jloc = &subs::device_run('location', '-p gps 2>/dev/null', 'timeout 8 ');
 	my $j = eval { decode_json($jloc) } || {};
 	if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'} && ($j->{'elapsedMs'} || 1e9) <= $hold) {
 		&subs::navigation_gps_confirm('gps');
