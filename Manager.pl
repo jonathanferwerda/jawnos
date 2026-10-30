@@ -49745,6 +49745,11 @@ sub remote_machine_online($data) {
 					# pass: the handshake that follows uses $rm->{manager}.
 					$rm->{'manager'} = $base;
 					$rm->{'port'} = $port if $port;
+					# remote_useragent_maker runs the tunnel processor, which
+					# prefers the peer's advertised LAN address whenever it is in
+					# our subnet. That address is exactly what just failed here;
+					# the flag keeps the address that answered.
+					$rm->{'manager_verified'} = 1;
 					$success = 1;
 					last;
 				}

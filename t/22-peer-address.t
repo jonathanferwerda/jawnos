@@ -76,4 +76,20 @@ is(subs::peer_live_manager({ manager => 'https://127.0.0.1:1' }),
 	'https://127.0.0.1:1',
 	'a loopback manager with no fqdn is left alone');
 
+# remote_useragent_maker runs the tunnel processor after the presence probe. It
+# used to prefer the peer's advertised LAN address whenever that address was in
+# our subnet - the very address the probe had just failed to reach.
+my $verified = {
+	manager => 'https://100.64.0.4:45545',
+	fqdn => 'phone.jonathanferwerda.com',
+	ip => '100.64.0.4',
+	port => 45545,
+	tunnel => 'no',
+	manager_verified => 1,
+	network => '{"lan":{"ip":"192.168.1.140","manager":"https://192.168.1.140:45545","port":"45545"}}',
+};
+my $kept = &subs::remote_machine_tunnel_processor({ %{$verified} });
+is($kept->{'manager'}, 'https://100.64.0.4:45545',
+	'a manager that answered the probe is not replaced by the advertised LAN address');
+
 done_testing();
