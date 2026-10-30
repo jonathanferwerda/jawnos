@@ -3,7 +3,8 @@
 **Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 is
 running with a native-first rule**: battery, notification, toast, clipboard,
 volume, torch, wake lock, contacts, SMS, call log, location, speech, telephony,
-media, share and open are answered by the app itself (build 1187 / 0.118.188) and proven on the tablet. The other commands, the single-app fold-in
+media, share, open, the notification shade and microphone recording are answered
+by the app itself (build 1188 / 0.118.189) and proven on the tablet. The other commands, the single-app fold-in
 and the `com.jawnos` identity are ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
@@ -152,7 +153,7 @@ shape M1 and M2 take.
 
 ### M1 — Device bridge (in progress: 9 of 24 commands native)
 
-- **Landed (app 1187 / 0.118.188):** `DeviceService` in the app
+- **Landed (app 1188 / 0.118.189):** `DeviceService` in the app
   (`com.termux.app`): loopback `127.0.0.1:46000`, newline-delimited JSON, a
   request id per call, one long-lived connection, and a token the app writes to
   `$HOME/.jawn/device.token` (mode 600; the app and Termux share one uid). It
@@ -209,6 +210,11 @@ shape M1 and M2 take.
   - `share.send` — `ACTION_SEND` through the existing FileProvider, with text
     and/or a file; accepts termux-share's mime-as-action shape.
   - `open.url` — `ACTION_VIEW` for a URL or a FileProvider file path.
+  - `notification.list` — `JawnNotificationListener`, a
+    `NotificationListenerService`; it connects only after the person grants
+    Notification access, and without the grant the tree falls back.
+  - `media.record` — `MediaRecorder`, MPEG-4/AAC into the path the tree names
+    `.mp3` (the container termux-microphone-record writes), start/stop.
   - Every flag (`silent`, `ongoing`, `dry_run`, `on`, `flush`) is read through a
     tolerant reader: Perl sends `1`/`0`, and `JSONObject.optBoolean` only reads
     a real JSON boolean.
@@ -236,10 +242,15 @@ shape M1 and M2 take.
   bug that read `1` as false was live on the tablet for one build; it made
   "silent" notifications noisy until 0.118.185. Build 1187 played and stopped
   `ding.mp3` (4.5 s) through `MediaPlayer`, shared a file (`shared=1`) and
-  opened the manager URL (Chrome, `opened=1`).
+  opened the manager URL (Chrome, `opened=1`). Build 1188, with the listener
+  granted for the test, read 6 active notifications (the bridge's own
+  foreground notification among them) and recorded a 2-second clip (16 KB) to a
+  file that was then deleted. The listener grant was removed again; enabling it
+  is the person's own toggle (Settings -> Apps -> Special access ->
+  Notification access).
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** the other 4 commands, with the native API each one should use
+- **Remaining:** the other 2 commands, with the native API each one should use
   (below), folding the API app in as each moves. The fallback and the ledger
   entry go in the same commit that proves a command.
 
@@ -321,7 +332,7 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | --- | --- | --- |
 | `battery-status` | `BatteryManager` + sticky intent | done |
 | `notification`, `notification-remove` | `NotificationManager` | done; icons, actions, progress, groups |
-| `notification-list` | `NotificationListenerService` | needs the user's notification-access grant |
+| `notification-list` | `NotificationListenerService` | done; the person must grant Notification access |
 | `toast` | `Toast` | done |
 | `clipboard-get` / `clipboard-set` | `ClipboardManager` | done |
 | `wake-lock` / `wake-unlock` | `PowerManager.WakeLock` | done |
@@ -333,7 +344,7 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | `call-log` | `CallLog.Calls` | done; empty on the Wi-Fi tablet |
 | `tts-speak` | `TextToSpeech` | done; Piper still first |
 | `camera-photo` | CameraX / Camera2 | granted; needs a camera-type foreground service |
-| `microphone-record` | `MediaRecorder` | granted; needs a microphone-type foreground service |
+| `microphone-record` | `MediaRecorder` | done; the service declares the microphone type |
 | `fingerprint` | `BiometricPrompt` | needs UI: a request/response pair over the bridge |
 | `volume` | `AudioManager` | done |
 | `torch` | `CameraManager.setTorchMode` | done; the tablet has no flash, so a phone still proves it |
