@@ -64,7 +64,8 @@ sub alarm_clock() {
 						type => $duty->{'duty'},
 						uuid => $dw->{'uuid'},
 						data => $jduty,
-						timestamp => $duty->{'timestamp'}
+						timestamp => $duty->{'timestamp'},
+						duty => 1
 					};
 					if ($duty->{'timestamp'} <= $timestamp) {
 						push @seen_duties, $duty->{'duuid'};
@@ -76,14 +77,11 @@ sub alarm_clock() {
 				foreach my $sd ( @seen_duties ) {
 					@{$duties} = grep { $_->{'duuid'} && $_->{'duuid'} ne $sd } @{$duties};
 				}
-				my $next_duty = $duties->[0]->{'timestamp'};
 				@{$duties} = grep { $_->{'duuid'} } @{$duties};
 				@{$duties} = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$duties};
 
-				my $jduties = encode_json $duties;
-				if (scalar @{$duties} == 0) {
-					$jduties = undef;
-				}
+				my $jduties = scalar @{$duties} ? encode_json $duties : undef;
+				my $next_duty = scalar @{$duties} ? $duties->[0]->{'timestamp'} : undef;
 				&subs::db_update('appointments', { duties => $jduties, next_duty => $next_duty }, { app => $dw->{'app'}, uuid => $dw->{'uuid'} });
 			}
 		}
@@ -112,7 +110,10 @@ sub alarm_clock() {
 			my $t1 = ($timestamp - $t);
 			foreach my $a ( @{$alarm} ) {
 #				&subs::db_query('update appointments set seen = ? where uuid=?', 'yes',$a->{'uuid'});
-				&subs::db_update('appointments', { seen => 'yes' }, { app => $a->{'app'}, uuid => $a->{'uuid'} });
+				# a duty is a child of the appointment, not the appointment: marking the
+				# parent seen here consumed its own alarm, so a 14:00 picture silenced a
+				# 15:00 start. The duties/next_duty rewrite above owns the duty's state
+				&subs::db_update('appointments', { seen => 'yes' }, { app => $a->{'app'}, uuid => $a->{'uuid'} }) unless $a->{'duty'};
 			#	&subs::cache_delete({ app => $a->{'app'}, context => 'template' });
 				my $type = $a->{'type'};
 
@@ -292,13 +293,7 @@ sub alarm_haircut() {
 	my $haircut = $warranty_query->hashes;
 
 	foreach my $h ( @{$haircut} ) {
-		foreach my $t ( qw/appointments/ ) {
-			&Manager::delete_app($h->{'app'}, $h->{'uuid'},$h->{'server_time'},'alarm runner');		
-			#&subs::db_delete($t, { app => $h->{'app'}, uuid => $h->{'uuid'} });
-		}
-		if (grep { $_ ne $h->{'app'} } qw/misc customs music __president me/) {
-			&subs::vacuum($h->{'app'});
-		}
+		&Manager::delete_app($h->{'app'}, $h->{'uuid'},$h->{'server_time'},'alarm runner');
 	}
 
 	my $backups = [];#&subs::db_query('select * from backups where warranty < ?', $timestamp)->hashes;
