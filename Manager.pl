@@ -915,7 +915,8 @@ sub take_picture($c,$data) {
 
 
 	if ($device eq 'mobile' && ($camera eq 0 || $camera == 1)) {
-		&subs::device_run('camera-photo', qq{-c $camera $filename});
+		&subs::device_call('camera.photo', { path => $filename, camera => $camera })
+			or &subs::device_run('camera-photo', qq{-c $camera $filename});
 	}
 	elsif ($device eq 'computer' && $camera eq 'webcam') {
 		eval { `ffmpeg -i /dev/video0 $filename` };
@@ -44610,9 +44611,13 @@ sub lock_screen($c) {
 sub unlock_screen($c) {
 	my $authentication = $c->session('authentication');
 	if (-e $database && $device eq 'mobile') {
-		my $finger = &subs::device_run('fingerprint');
-		if (my $fingerprint = eval { return decode_json $finger }) {
-			if ($fingerprint->{'auth_result'} eq 'AUTH_RESULT_SUCCESS') {
+		# The app runs BiometricPrompt (an Activity flow) and answers in
+		# termux-fingerprint's shape; a cancellation is an answer, not a reason to
+		# prompt again through the termux fallback.
+		my $finger = &subs::device_call('auth.fingerprint', { reason => 'Unlock JawnOS' });
+		my $fingerprint = $finger || eval { return decode_json(&subs::device_run('fingerprint')) } || {};
+		if (ref $fingerprint eq 'HASH') {
+			if (($fingerprint->{'auth_result'} || '') eq 'AUTH_RESULT_SUCCESS') {
 				$c->session('authentication' => 'approved');
 			}
 			else {
