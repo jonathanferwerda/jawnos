@@ -34167,8 +34167,10 @@ sub travel_nearby_items {
 		next unless defined $gap && $gap <= $window;
 		my $app = $appt->{'app'} || '';
 		next if &subs::app_private_now($app) && !&subs::private_reachable_now();
+		# a hidden album is never listed here, and a private row (a private project,
+		# club or account) needs the same grant the Gallery asks for
 		next if &subs::app_hidden_now($app) || &subs::lockdown_active();
-		next if &subs::appointment_private_now($appt) && !&subs::private_reachable_now();
+		next if &subs::appointment_private_now($appt) && (!&subs::private_reachable_now() || !&subs::private_revealed());
 		my $files = eval { return decode_json $appt->{'file'} } || [];
 		foreach my $f ( @{$files} ) {
 			last if scalar @items >= $limit;
