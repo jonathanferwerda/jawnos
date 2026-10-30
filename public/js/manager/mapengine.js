@@ -117,6 +117,7 @@ window.jawnosMap = (function () {
 		};
 		var maps = [];        // measured maps, each with a georeference
 		var points = [];      // { lat, lon, label, colour }
+		var lines = [];       // runs of fixes: { colour, points: [{lat,lon}] }
 		var here = null;      // the current position { lat, lon, accuracy }
 		var tileCache = {};   // url -> Image (loaded) or true (loading) or null (failed)
 		var tileCount = 0;    // loaded tiles held; the cache is dropped past a cap
@@ -326,6 +327,28 @@ window.jawnosMap = (function () {
 			}
 		}
 
+		function drawLines(o, w, h, z) {
+			if (!lines.length) { return; }
+			ctx.save();
+			ctx.lineJoin = 'round';
+			ctx.lineCap = 'round';
+			ctx.lineWidth = 2;
+			ctx.globalAlpha = 0.75;
+			for (var i = 0; i < lines.length; i++) {
+				var line = lines[i];
+				var pts = (line && line.points) || [];
+				if (pts.length < 2) { continue; }
+				ctx.strokeStyle = line.colour || '#a0503f';
+				ctx.beginPath();
+				for (var j = 0; j < pts.length; j++) {
+					var s = screenFor(pts[j].lat, pts[j].lon, o, z);
+					if (j === 0) { ctx.moveTo(s[0], s[1]); } else { ctx.lineTo(s[0], s[1]); }
+				}
+				ctx.stroke();
+			}
+			ctx.restore();
+		}
+
 		function draw() {
 			var dim = size();
 			var o = originFor(view, dim.w, dim.h);
@@ -334,6 +357,7 @@ window.jawnosMap = (function () {
 			ctx.fillRect(0, 0, dim.w, dim.h);
 			drawTiles(o, dim.w, dim.h);
 			drawMaps(o, dim.w, dim.h, view.z);
+			drawLines(o, dim.w, dim.h, view.z);
 			drawMarkers(o, dim.w, dim.h, view.z);
 			var p = providers[providerKey];
 			var credit = (p && p.url) ? p.credit : ((p && p.needs === 'url') ? 'Custom tile service' : null);
@@ -705,8 +729,10 @@ window.jawnosMap = (function () {
 				draw();
 			},
 			setPoints: function (list) { points = list || []; draw(); },
+			setLines: function (list) { lines = list || []; draw(); },
 			setPosition: function (pos) { here = pos || null; draw(); },
 			maps: function () { return maps; },
+			lines: function () { return lines; },
 			// Frame the measured maps (their home plates), else keep the centre.
 			fitToMaps: function () {
 				var lats = [], lons = [];

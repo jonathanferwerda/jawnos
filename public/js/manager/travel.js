@@ -224,6 +224,10 @@ function travelStreetPreview(lat, lon, sx, sy) {
 	card.show();
 	var mp = ($('#travel_mapillary_token').val() || '').trim();
 	var g = ($('#travel_google_token').val() || '').trim();
+	$('#travel_plate_form').hide();
+	$('#travel_plate_app').val('');
+	$('#travel_plate_apps').hide().empty();
+	$('#travel_plate_status').text('');
 	if (!mp && !g) {
 		$('#travel_street_preview_text').text(jawnosT('Set a Mapillary or Google Street View key in Configure → Plat → Maps'));
 		return;
@@ -241,6 +245,7 @@ function travelStreetPreview(lat, lon, sx, sy) {
 
 $(document).on('click', '#travel_street_preview', function(e) {
 	if ($(e.target).hasClass('travel_street_preview_close')) { return; }
+	if ($(e.target).closest('#travel_plate_form, #travel_plate_open').length) { return; }
 	var p = travelStreetPreviewAt;
 	$(this).hide();
 	if (p) { travelStreetOpen(p.lat, p.lon); }
@@ -250,6 +255,61 @@ $(document).on('click', '#travel_street_preview_close', function(e) {
 	e.stopPropagation();
 	travelStreetPreviewAt = null;
 	$('#travel_street_preview').hide();
+});
+
+// ---- a plate set from the map: an app search, a radius, and an action ----
+$(document).on('click', '#travel_plate_open', function(e) {
+	e.stopPropagation();
+	$('#travel_plate_form').toggle();
+});
+
+$(document).on('click', '#travel_plate_form', function(e) { e.stopPropagation(); });
+
+var travelPlateSearch;
+$(document).on('input', '#travel_plate_app', function() {
+	var q = $.trim($(this).val());
+	clearTimeout(travelPlateSearch);
+	travelPlateSearch = setTimeout(function() {
+		$.getJSON('/manager/apps/search', { q: q }, function(r) {
+			var list = (r && r.apps) || [];
+			var box = $('#travel_plate_apps').empty();
+			if (!list.length) { box.hide(); return; }
+			$.each(list, function(i, a) {
+				$('<div></div>').text(a.name).attr('data-app', a.app)
+					.css({ padding: '3px 6px', cursor: 'pointer', fontSize: '11px', color: '#ddd' })
+					.on('click', function(e) {
+						e.stopPropagation();
+						$('#travel_plate_app').val(a.app);
+						box.hide();
+					})
+					.appendTo(box);
+			});
+			box.show();
+		});
+	}, 200);
+});
+
+$(document).on('click', '#travel_plate_save', function(e) {
+	e.stopPropagation();
+	var p = travelStreetPreviewAt;
+	if (!p) { return; }
+	var app = $.trim($('#travel_plate_app').val());
+	var radius = parseFloat($('#travel_plate_radius').val()) || 200;
+	var action = $('#travel_plate_action').val() || 'start';
+	var status = $('#travel_plate_status');
+	if (!app) { status.text(jawnosT('choose an app')); return; }
+	status.text(jawnosT('saving…'));
+	$.ajax({
+		url: '/manager/travel/plate',
+		type: 'POST',
+		data: { app: app, latitude: p.lat, longitude: p.lon, radius: radius, action: action },
+		success: function(r) {
+			if (!r || r.error) { status.text((r && r.error) || jawnosT('could not save')); return; }
+			status.text(jawnosT('saved for {0}', r.name || app));
+			$('#travel_plate_form').hide();
+		},
+		error: function() { status.text(jawnosT('could not save')); }
+	});
 });
 
 // ---- street view: Mapillary's nearest photo, with the house's own photos near it ----
@@ -535,9 +595,9 @@ function travelMapRender(response) {
 
 	var points = [];
 	var places = [];
+	var fixesByApp = {};
 	$.each(response['near'] || [], function(i, point) {
 		if (!point || !point['latitude'] || !point['longitude']) { return; }
-		if (point['settings'] && point['settings']['visible'] && point['settings']['visible'] != 'checked') { return; }
 		var lat = parseFloat(point['latitude']);
 		var lon = parseFloat(point['longitude']);
 		var colour = (point['settings'] && point['settings']['colour']) || undefined;
@@ -549,8 +609,28 @@ function travelMapRender(response) {
 		else {
 			points.push({ lat: lat, lon: lon, label: point['app'] || '', colour: colour });
 		}
+		// every fix in time order, so a run of them can be joined by a line
+		if (point['app']) {
+			(fixesByApp[point['app']] = fixesByApp[point['app']] || []).push({ lat: lat, lon: lon, t: parseFloat(point['timestamp']) || 0, colour: colour });
+		}
 	});
 	engine.setPoints(points.concat(jawnosMarkerGroups(places, 50, '#2f6f9f')));
+
+	// a line through each app's consecutive fixes: a run of fixes in a row is one
+	// track. A gap over an hour starts a fresh track, so a walk yesterday is not
+	// joined to a drive today.
+	var lines = [];
+	$.each(fixesByApp, function(app, list) {
+		list.sort(function(a, b) { return a.t - b.t; });
+		var run = [];
+		var push = function() { if (run.length > 1) { lines.push({ colour: run[0].colour || '#a0503f', points: run }); } };
+		$.each(list, function(i, fix) {
+			if (run.length && (fix.t - run[run.length - 1].t) > 3600000) { push(); run = []; }
+			run.push({ lat: fix.lat, lon: fix.lon });
+		});
+		push();
+	});
+	engine.setLines(lines);
 
 	var pos = response['position'];
 	var hasPos = pos && pos['latitude'];

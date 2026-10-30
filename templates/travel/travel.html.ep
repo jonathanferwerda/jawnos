@@ -77,9 +77,25 @@
 		</div>
 	</div>
 
-	<div id="travel_street_preview" style="display:none;position:absolute;z-index:11;width:210px;border-radius:10px;overflow:hidden;box-shadow:0 6px 22px rgba(0,0,0,.45);background:#111;cursor:pointer;">
+	<div id="travel_street_preview" style="display:none;position:absolute;z-index:11;width:250px;border-radius:10px;overflow:hidden;box-shadow:0 6px 22px rgba(0,0,0,.45);background:#111;cursor:pointer;">
 		<img id="travel_street_preview_img" alt="Street view preview" style="display:none;width:100%;height:126px;object-fit:cover;background:#222;">
 		<div id="travel_street_preview_text" style="font-size:11px;color:#fff;padding:5px 7px;"></div>
+		<div id="travel_plate_open" style="padding:0 7px 6px;font-size:11px;color:#9cf;cursor:pointer;">+ Set a plate here</div>
+		<div id="travel_plate_form" style="display:none;padding:6px 7px;border-top:1px solid #333;">
+			<input id="travel_plate_app" placeholder="app" autocomplete="off" style="box-sizing:border-box;width:100%;margin-bottom:4px;font-size:11px;">
+			<div id="travel_plate_apps" style="display:none;max-height:120px;overflow:auto;background:#222;border-radius:4px;margin-bottom:4px;"></div>
+			<div style="display:flex;gap:4px;margin-bottom:4px;align-items:center;">
+				<input id="travel_plate_radius" type="number" min="10" max="5000" value="200" style="width:76px;font-size:11px;">
+				<span style="font-size:10px;opacity:.7;">metres</span>
+			</div>
+			<select id="travel_plate_action" style="box-sizing:border-box;width:100%;font-size:11px;margin-bottom:4px;">
+				<option value="start">start</option>
+				<option value="record">record</option>
+				<option value="stop">stop</option>
+			</select>
+			<button id="travel_plate_save" style="width:100%;font-size:11px;">Save plate</button>
+			<div id="travel_plate_status" style="font-size:10px;opacity:.75;margin-top:3px;"></div>
+		</div>
 		<button id="travel_street_preview_close" class="travel_street_preview_close" hint="Close preview" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.6);border:0;color:#fff;border-radius:5px;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px;">✕</button>
 	</div>
 

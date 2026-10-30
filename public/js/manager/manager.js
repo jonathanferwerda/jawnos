@@ -3200,29 +3200,34 @@ function appointmentDistMap(panel, provider) {
 	var points = [];
 	var fixes = data.points || [];
 	var home = data.home || {};
+	var fixPoints = [];
 	fixes.forEach(function(p) {
 		if (!p || !p.latitude || !p.longitude) { return; }
-		points.push({ lat: p.latitude, lon: p.longitude, colour: '#a0503f' });
+		fixPoints.push({ lat: +p.latitude, lon: +p.longitude, t: +p.timestamp || 0, colour: '#a0503f' });
 	});
+	fixPoints.sort(function(a, b) { return a.t - b.t; });
+	// a line through the run of fixes, the same track Travel draws
+	engine.setLines(fixPoints.length > 1 ? [{ colour: '#a0503f', points: fixPoints.map(function(p) { return { lat: p.lat, lon: p.lon }; }) }] : []);
+	fixPoints.forEach(function(p) { points.push({ lat: p.lat, lon: p.lon, colour: '#a0503f' }); });
 	if (home.latitude && home.longitude) {
 		points.push({ lat: home.latitude, lon: home.longitude, colour: '#6f4f9f', label: jawnosT('Home') });
 	}
 	engine.setPoints(points);
-	if (points.length) {
-		var lats = points.map(function(p) { return p.lat; });
-		var lons = points.map(function(p) { return p.lon; });
+	// frame the fixes themselves, so a home plate far away cannot shrink them to a
+	// dot; the home point still rides on the map when it is in view
+	var frame = fixPoints.length ? fixPoints : (home.latitude && home.longitude ? [{ lat: home.latitude, lon: home.longitude }] : []);
+	if (frame.length) {
+		var lats = frame.map(function(p) { return p.lat; });
+		var lons = frame.map(function(p) { return p.lon; });
 		var minLat = Math.min.apply(null, lats), maxLat = Math.max.apply(null, lats);
 		var minLon = Math.min.apply(null, lons), maxLon = Math.max.apply(null, lons);
-		if (Math.max(maxLat - minLat, maxLon - minLon) < 0.006) {
+		if (Math.max(maxLat - minLat, maxLon - minLon) < 0.002) {
 			var lat = (minLat + maxLat) / 2, lon = (minLon + maxLon) / 2;
-			engine.fitBounds({ nw: { lat: lat + 0.003, lon: lon - 0.003 }, se: { lat: lat - 0.003, lon: lon + 0.003 } }, 1);
+			engine.fitBounds({ nw: { lat: lat + 0.001, lon: lon - 0.001 }, se: { lat: lat - 0.001, lon: lon + 0.001 } }, 1);
 		}
 		else {
 			engine.fitBounds({ nw: { lat: maxLat, lon: minLon }, se: { lat: minLat, lon: maxLon } }, 1.25);
 		}
-	}
-	else if (home.latitude && home.longitude) {
-		engine.focusOn(home.latitude, home.longitude, 0.006);
 	}
 	engine.draw();
 }
