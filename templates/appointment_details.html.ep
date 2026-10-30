@@ -206,7 +206,7 @@
 								hint="<%= &subs::ui('The device that was with you. Only its fixes are joined into the line.') %>">
 								<%= &subs::lang('common.with') %> <b><%= &subs::format_name($l->{'carrier'}->{'name'}) %></b>
 								<% if (($l->{'carrier'}->{'devices'} || 0) > 1) { %>
-									&middot; <%= $l->{'carrier'}->{'devices'} %> <%= &subs::lang('common.devices') %>
+									&middot; <%= &subs::lang('common.devices') %>: <%= $l->{'carrier'}->{'devices'} %>
 								<% } %>
 								<% if (($l->{'carrier'}->{'path'} || 0) > 0) { %>
 									&middot; <%= ($l->{'carrier'}->{'path'} >= 1000)
