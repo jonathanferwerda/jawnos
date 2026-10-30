@@ -3035,7 +3035,8 @@ sub say_it() {
 		}
 		# Fallbacks: Android's own engine where piper cannot run; espeak elsewhere.
 		if ($device eq 'mobile') {
-			&subs::device_run('tts-speak', qq{"$text"});
+			&subs::device_call('speech.speak', { text => $text })
+				or &subs::device_run('tts-speak', qq{"$text"});
 			return;
 		}
 		# espeak: the chosen espeak voice, or the fallback when piper is missing.
@@ -16557,8 +16558,8 @@ sub headless_navigation() {
 			$max_age = 15 * 60 * 1000 if $max_age > 15 * 60 * 1000;
 			my $loc = &subs::native_location({ max_age_ms => $max_age });
 			unless ($loc) {
-				my $jloc = &subs::device_run('location', '-p gps 2>/dev/null', 'timeout 20 ');
-				my $j = eval { decode_json($jloc) } || {};
+				my $fix = &subs::device_call('location.current', { provider => 'gps', timeout_ms => 20000 });
+				my $j = $fix || eval { decode_json(&subs::device_run('location', '-p gps 2>/dev/null', 'timeout 20 ')) } || {};
 				if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'}
 					&& ($j->{'elapsedMs'} || 1e9) <= $max_age) {
 					$loc = {
@@ -20486,8 +20487,8 @@ sub local_position {
 		return { latitude => $loc->{'latitude'}, longitude => $loc->{'longitude'}, accuracy => sprintf("%.2F", ($loc->{'accuracy'} || 0)), timestamp => $loc->{'time'} || $now, source => 'gps', cached => 1 };
 	}
 	# A phone whose service has not run yet may still answer one GPS request.
-	my $jloc = &subs::device_run('location', '-p gps 2>/dev/null', 'timeout 8 ');
-	my $j = eval { decode_json($jloc) } || {};
+	my $fix = &subs::device_call('location.current', { provider => 'gps', timeout_ms => 8000 });
+	my $j = $fix || eval { decode_json(&subs::device_run('location', '-p gps 2>/dev/null', 'timeout 8 ')) } || {};
 	if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'} && ($j->{'elapsedMs'} || 1e9) <= $hold) {
 		&subs::navigation_gps_confirm('gps');
 		return { latitude => $j->{'latitude'}, longitude => $j->{'longitude'}, accuracy => sprintf("%.2F", ($j->{'accuracy'} || 0)), timestamp => $now, source => 'gps' };
