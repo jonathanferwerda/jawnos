@@ -26549,10 +26549,78 @@ sub ai_bucket_available {
 	return 0;
 }
 sub ai_bucket_mark_unavailable {
-	my ($bucket, $reason) = @_;
+	my ($bucket, $reason, $ms) = @_;
 	return unless $bucket;
-	&subs::setting_setter({ app => '__president', setting => 'ai_' . $bucket . '_unavailable', value => &subs::rightNow() + $AI_UNAVAILABLE_FOR });
-	&subs::say_it('AI: ' . $bucket . ' looks out of credit; standing it down for a while (' . substr($reason || '', 0, 80) . ')');
+	$ms = $AI_UNAVAILABLE_FOR unless defined $ms && $ms > 0;
+	&subs::setting_setter({ app => '__president', setting => 'ai_' . $bucket . '_unavailable', value => &subs::rightNow() + $ms });
+	my $for = $ms >= 60000 ? int($ms / 60000 + 0.5) . ' min' : int($ms / 1000) . 's';
+	&subs::say_it('AI: ' . $bucket . ' is paused for ' . $for . ' (' . substr($reason || '', 0, 80) . ')');
+}
+
+# A provider's own answer to "when may I call again". The stand-down above is
+# for a bucket that has run dry; a rate limit is not that - it clears in
+# seconds or at a stated clock time, and pausing the bucket for 30 minutes over
+# a 20-second per-minute limit both loses the model and misstates the cause.
+# Returns ($milliseconds, $why) when this response is a limit, () when it is
+# not. Every duration is clamped to 5s..24h, so a malformed hint can neither
+# lose a model for a week nor retry it in a hot loop.
+sub ai_limit_pause {
+	my ($code, $retry_after, $body, $now) = @_;
+	$now = &subs::rightNow() unless defined $now;
+	my $text = defined $body ? $body : '';
+	my $limit = ($code == 429 || $code == 529) ? 1 : 0;
+	$limit = 1 if !$limit && $text =~ /\b(?:rate.?limit|too many requests|try again in)\b/i;
+	return () unless $limit;
+
+	my ($ms, $why);
+	$retry_after = '' unless defined $retry_after;
+
+	# Retry-After: seconds, or an HTTP date (RFC 7231 allows both)
+	if ($retry_after =~ /^\s*(\d+(?:\.\d+)?)\s*$/ && $1 > 0) {
+		$ms = int($1 * 1000);
+		$why = 'retry-after ' . $1 . 's';
+	}
+	elsif ($retry_after =~ /^\s*[A-Za-z]{3},\s*(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})\s+GMT\s*$/) {
+		my %month = (jan => 0, feb => 1, mar => 2, apr => 3, may => 4, jun => 5,
+			jul => 6, aug => 7, sep => 8, oct => 9, nov => 10, dec => 11);
+		my $at = eval { Time::Local::timegm($6, $5, $4, $1, $month{lc $2}, $3) };
+		if (defined $at && $at > 0) {
+			$ms = $at * 1000 - $now;
+			$why = 'retry-after ' . substr($retry_after, 0, 40);
+		}
+	}
+
+	if (!defined $ms) {
+		if ($text =~ /try again in\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?)?/i) {
+			my ($n, $unit) = ($1, lc($2 || 's'));
+			$ms = $unit =~ /^ms|^milli/ ? $n : $unit =~ /^m/ ? $n * 60000 : $n * 1000;
+			$why = 'the provider asked to be retried in ' . $n . ' ' . ($2 || 's');
+		}
+		elsif ($text =~ /retry after\s+(\d+)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?)?/i) {
+			my ($n, $unit) = ($1, lc($2 || 's'));
+			$ms = $unit =~ /^ms|^milli/ ? $n : $unit =~ /^m/ ? $n * 60000 : $n * 1000;
+			$why = 'the provider asked to be retried after ' . $n . ' ' . ($2 || 's');
+		}
+		elsif ($text =~ /resets?\s+(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?/i) {
+			my ($hour, $minute, $meridiem) = (int($1), int($2), $3);
+			$hour = 0 if $meridiem && $hour == 12;
+			$hour += 12 if $meridiem && $meridiem =~ /^p/i;
+			my @lt = localtime(int($now / 1000));
+			my $at = eval { Time::Local::timelocal(0, $minute, $hour, $lt[3], $lt[4], $lt[5]) };
+			if (defined $at && $at > 0) {
+				# a clock time already past today is tomorrow's reset
+				$at += 86400 if $at * 1000 <= $now;
+				$ms = $at * 1000 - $now;
+				$why = 'the limit resets at ' . sprintf('%02d:%02d', $hour, $minute);
+			}
+		}
+	}
+
+	$ms = 60000 unless defined $ms && $ms > 0;
+	$why = 'the provider is rate limiting' unless $why;
+	$ms = 5000 if $ms < 5000;
+	$ms = 24 * 60 * 60 * 1000 if $ms > 24 * 60 * 60 * 1000;
+	return ($ms, $why);
 }
 
 # The cheapest thing that still answers: a local Ollama chat model, else a
@@ -26870,6 +26938,13 @@ sub ai_chat_raw {
 		# the panel hides its paid models and chat steps down to a free one
 		if ($res->code == 402 || $body =~ /(insufficient|credit|billing|payment|out of funds|no funds|balance|exceeded your current quota|exceeded your quota)/i) {
 			&ai_bucket_mark_unavailable(&ai_model_bucket($model), $res->code . ' ' . $body);
+		}
+		else {
+			# a rate limit clears on the provider's own clock: pause the bucket for
+			# exactly that long, so the next call steps down instead of hammering it
+			my $retry_after = $res->headers->header('retry-after');
+			my ($pause, $why) = &ai_limit_pause($res->code, $retry_after, $body);
+			&ai_bucket_mark_unavailable(&ai_model_bucket($model), $res->code . ' ' . ($why || ''), $pause) if defined $pause;
 		}
 		return (undef, 'the model answered ' . $res->code . ': ' . substr($res->body || '', 0, 200));
 	}
@@ -28378,6 +28453,11 @@ sub ai_text_to_image {
 			my $body = $res->body || '';
 			if ($res->code == 402 || $body =~ /(insufficient|credit|billing|payment|balance|quota)/i) {
 				&ai_bucket_mark_unavailable(&ai_model_bucket($model), $res->code . ' ' . $body);
+			}
+			else {
+				my $retry_after = $res->headers->header('retry-after');
+				my ($pause, $why) = &ai_limit_pause($res->code, $retry_after, $body);
+				&ai_bucket_mark_unavailable(&ai_model_bucket($model), $res->code . ' ' . ($why || ''), $pause) if defined $pause;
 			}
 			return (undef, undef, 'the image model answered ' . $res->code . ': ' . substr($body, 0, 200));
 		}
