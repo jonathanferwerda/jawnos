@@ -19588,21 +19588,25 @@ sub remote_machine_tunnel_processor() {
 		# when the tunnel actually reserved a port; otherwise leave the advertised
 		# manager (and the LAN fallback below) to reach the peer.
 		if ($tun->{'PORT_AHOY'}) {
-			$rm->{'ip'} = '127.0.0.1';
 			$rm->{'port_dock'} = $tun->{'PORT_DOCK'};
-			my $man = $rm->{'manager'};
-			$rm->{'manager'} = 'https://' . $rm->{'ip'} . ':' . $tun->{'PORT_AHOY'};
-			if ($man ne $rm->{'manager'}) {
-				&subs::db_update('remote_machines', {
-					manager => $rm->{'manager'},
-				}, { uuid => $rm->{'uuid'} });
+			unless ($rm->{'manager_verified'}) {
+				$rm->{'ip'} = '127.0.0.1';
+				my $man = $rm->{'manager'};
+				$rm->{'manager'} = 'https://' . $rm->{'ip'} . ':' . $tun->{'PORT_AHOY'};
+				if ($man ne $rm->{'manager'}) {
+					&subs::db_update('remote_machines', {
+						manager => $rm->{'manager'},
+					}, { uuid => $rm->{'uuid'} });
+				}
 			}
 		}
 	}
 	# If reaching the peer by its stored manager would loop back home (its name
 	# resolves to 127.0.0.1 on this box, or the hub tunnel points at 127.0.0.1
-	# while we are not the hub), use the LAN address it advertised instead.
-	my $lan = &subs::peer_lan_address($rm);
+	# while we are not the hub), use the LAN address it advertised instead. A
+	# manager that just answered the signed presence probe is kept: the caller
+	# has already proved it, and the advertised LAN address may be the dead one.
+	my $lan = $rm->{'manager_verified'} ? undef : &subs::peer_lan_address($rm);
 	if ($lan) {
 		$rm->{'ip'} = $lan->{'ip'};
 		$rm->{'manager'} = $lan->{'manager'};
@@ -19613,22 +19617,24 @@ sub remote_machine_tunnel_processor() {
 	# device's own DNS (CorpDNS=false), a peer's domain may not resolve away
 	# from its own LAN; its advertised 100.64.x address is the stable path.
 	# Use it only when the stored name does not resolve and no LAN address won.
-	my $tailnet = &subs::tailnet_address($rm);
-	if ($tailnet) {
-		$rm->{'tailnet_ip'} = $tailnet;
-		my $port = $rm->{'dock_port'} || $rm->{'port_dock'} || 3000;
-		$rm->{'tailnet_manager'} = 'https://' . $tailnet . ':' . $port . '/manager';
-		my ($host) = ($rm->{'manager'} || '') =~ m{^https?://([^/:]+)};
-		my $resolved = 0;
-		if ($host) {
-			require Socket;
-			$resolved = 1 if $host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
-			$resolved = 1 if gethostbyname($host);
-		}
-		if (!$resolved && !$lan) {
-			$rm->{'manager'} = $rm->{'tailnet_manager'};
-			$rm->{'ip'} = $tailnet;
-			$rm->{'vip'} = $tailnet;
+	unless ($rm->{'manager_verified'}) {
+		my $tailnet = &subs::tailnet_address($rm);
+		if ($tailnet) {
+			$rm->{'tailnet_ip'} = $tailnet;
+			my $port = $rm->{'dock_port'} || $rm->{'port_dock'} || 3000;
+			$rm->{'tailnet_manager'} = 'https://' . $tailnet . ':' . $port . '/manager';
+			my ($host) = ($rm->{'manager'} || '') =~ m{^https?://([^/:]+)};
+			my $resolved = 0;
+			if ($host) {
+				require Socket;
+				$resolved = 1 if $host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+				$resolved = 1 if gethostbyname($host);
+			}
+			if (!$resolved && !$lan) {
+				$rm->{'manager'} = $rm->{'tailnet_manager'};
+				$rm->{'ip'} = $tailnet;
+				$rm->{'vip'} = $tailnet;
+			}
 		}
 	}
 	return $rm;
