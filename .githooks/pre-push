@@ -10,6 +10,9 @@
 # BLOCK the push. Stale topics are printed as a to-do but do not block, so
 # tidying the code never traps anyone mid-refactor.
 #
+# Last, the regression suite in t/ runs (about eight seconds). A failing test
+# BLOCKS the push, so a behaviour change cannot ship without its test passing.
+#
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass for a moment:     git push --no-verify
 cd "$(git rev-parse --show-toplevel)" || exit 0
@@ -39,14 +42,24 @@ if [ "$verdict" -ne 0 ]; then
 fi
 
 # --- keep the Help registry honest (scripts/help_audit.pl) ---
-[ -f scripts/help_audit.pl ] || exit 0
-[ -f help.pl ] || exit 0
+if [ -f scripts/help_audit.pl ] && [ -f help.pl ]; then
+	out=$(perl scripts/help_audit.pl --quiet 2>&1)
+	status=$?
+	printf '%s\n' "$out"
+	if [ "$status" -ne 0 ]; then
+		printf '\nhelp_audit: the Help registry has errors (above). Fix them, or push with --no-verify.\n'
+		exit 1
+	fi
+fi
 
-out=$(perl scripts/help_audit.pl --quiet 2>&1)
-status=$?
-printf '%s\n' "$out"
-if [ "$status" -ne 0 ]; then
-	printf '\nhelp_audit: the Help registry has errors (above). Fix them, or push with --no-verify.\n'
-	exit 1
+# --- the regression suite must pass (t/) ---
+if [ -d t ] && command -v prove >/dev/null 2>&1; then
+	out=$(prove -l t 2>&1)
+	status=$?
+	if [ "$status" -ne 0 ]; then
+		printf '%s\n' "$out"
+		printf '\ntests: the regression suite failed (above). Fix it, or push with --no-verify.\n'
+		exit 1
+	fi
 fi
 exit 0

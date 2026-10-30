@@ -84,6 +84,12 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
 - **Translate help and UI text when you write it** — `subs::lang`/`subs::ui`/`jawnosT`, all sixteen core
   languages for labels, and the Guide engine for the rest. A feature that adds untranslatable text is not
   finished.
+- **Every behaviour change ships with a test.** Add or update the matching file
+  in `t/` when you change a function, a route, a template, a prompt or a setting
+  another part reads, and run `prove -l t` before the commit. A defect you find
+  but do not fix gets a `TODO` test naming the file and line — never a test that
+  asserts the broken behaviour. The pre-push hook runs the suite, so a regression
+  blocks the push.
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
 - **Bump the version on every push.** Run `perl scripts/version_bump.pl` (patch bump of `./VERSION`,
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with
