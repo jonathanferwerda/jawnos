@@ -55,6 +55,21 @@ is($jobs->{'manager'}, 'not a job', 'non-hash entries are not touched');
 my $again = subs::utility_adopt_runtime($jobs, $now + 5000, $process_start);
 is($again->{'tunnels'}->{'lasted_run'}, $now, 'a second adoption keeps this process marker');
 
+# Adoption is for boot and for someone else's edit, not for our own persist.
+is(subs::utility_row_needs_adoption(0, 10, 10), 1, 'boot always adopts');
+is(subs::utility_row_needs_adoption(1, 11, 10), 1, 'a newer stored row is adopted');
+is(subs::utility_row_needs_adoption(1, 10, 10), 0, 'the row we just wrote is not adopted back');
+is(subs::utility_row_needs_adoption(1, 9, 10), 0, 'an older stored row is not adopted');
+is(subs::utility_row_needs_adoption(1, undef, undef), 0, 'an unstamped row is not adopted');
+
+my $runtime = { __settings => { last_change => 5 }, tunnels => { toggle => 'on' } };
+is(subs::utility_runtime_stamped($runtime, 99), 99, 'stamping returns the stamp');
+is($runtime->{'__settings'}->{'last_change'}, 99, 'the runtime records the stamp it persisted');
+is($runtime->{'tunnels'}->{'toggle'}, 'on', 'stamping leaves the jobs alone');
+my $stampless = {};
+subs::utility_runtime_stamped($stampless, 7);
+is($stampless->{'__settings'}->{'last_change'}, 7, 'stamping creates __settings when absent');
+
 # A fresh install has no marker at all.
 is(subs::tunnels_stall_duty(undef, $now, 120), undef, 'no marker means not stalled');
 is(subs::tunnels_stall_duty($now - $day, $now, 120), 'restart', 'a day-old marker is a stall');

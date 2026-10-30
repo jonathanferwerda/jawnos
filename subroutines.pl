@@ -16221,6 +16221,28 @@ sub utility_adopt_runtime {
 	return $jobs;
 }
 
+# Does the runtime need to adopt the stored utility row? At boot, yes; after
+# that only when someone else stamped it (the Configure editor, a peer merge).
+# The controller writes its own row back with the same stamp it just stored
+# (utility_runtime_stamped), so its periodic persist no longer looks like an
+# edit and re-adoption cannot overwrite the live runtime with stale copies of
+# last_run/lasted_run.
+sub utility_row_needs_adoption {
+	my ($adopted, $row_lc, $runtime_lc) = @_;
+	return 1 unless $adopted;
+	return (($row_lc || 0) > ($runtime_lc || 0)) ? 1 : 0;
+}
+
+# Record on the runtime the last_change it just persisted, so the next tick's
+# comparison sees the row it wrote rather than a newer stranger's.
+sub utility_runtime_stamped {
+	my ($runtime, $stamp) = @_;
+	return $stamp unless ref $runtime eq 'HASH';
+	$runtime->{'__settings'} ||= {};
+	$runtime->{'__settings'}->{'last_change'} = $stamp;
+	return $stamp;
+}
+
 # Whether the tunnels worker has been stalled long enough to justify restarting
 # the tunnels on this run. No marker means this process has not run the worker
 # yet (a fresh install, or the tick right after adoption), which is not a stall.

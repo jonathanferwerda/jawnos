@@ -1309,7 +1309,7 @@ sub utility_functions() {
 			# edited - undef > undef - was never adopted at all.
 			my $row_lc = $controls->{$signatorial}->{'__settings'}->{'last_change'} || 0;
 			my $cur_lc = $gb::timeouts->{'__settings'}->{'last_change'} || 0;
-			if (!$gb::utility_adopted || $row_lc > $cur_lc) {
+			if (&subs::utility_row_needs_adoption($gb::utility_adopted, $row_lc, $cur_lc)) {
 				foreach my $t ( keys %{$gb::timeouts} ) {
 					next if $t =~ /^__/;
 					Mojo::IOLoop->remove($gb::timeouts->{$t}->{'loop'}) if $gb::timeouts->{$t}->{'loop'};
@@ -1387,6 +1387,11 @@ sub utility_functions() {
 					# the utility blob per key by __settings.last_change), and so the
 					# last-run time a peer's card shows tracks us.
 					$controls->{$signatorial}->{'__settings'}->{'last_change'} = &subs::rightNow();
+					# This row is the runtime's own now: record the stamp just written, or
+					# the next tick sees a newer stored value and adopts its own row back
+					# over the live one - throwing away the last_run/lasted_run a worker had
+					# just set, and re-attaching every job's subroutine, every few seconds.
+					&subs::utility_runtime_stamped($gb::timeouts, $controls->{$signatorial}->{'__settings'}->{'last_change'});
 					$jcontrols = encode_json $controls;
 					my $navnow = $controls->{$signatorial}->{'navigation'}->{'toggle'} // '-';
 					if (($utility_nav_seen{$signatorial} // '') ne $navnow) {
