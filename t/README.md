@@ -47,6 +47,7 @@ Exports: `root()`, `sandbox()`, `ts(year, month, day[, hour, minute, second])`
 | `12-schema.t` | `database/schema.sql` executes in SQLite, core tables, `ost`/`server_time` |
 | `15-tier.t` | `tier_needed`/`tier_denied`: citizen/resident/guest paths, anchoring, unknown privilege |
 | `16-sync-lock.t` | the pull marker: claim vs live pid bounds, dead/legacy markers, idle values |
+| `17-utility-runtime.t` | utility adoption: `lasted_run` is process state, and the tunnels stall bound |
 
 ## Rules for a new test
 

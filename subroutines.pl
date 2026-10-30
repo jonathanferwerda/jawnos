@@ -16197,6 +16197,38 @@ sub batch_interval {
 	return $pool ? $pool->{'seconds'} : undef;
 }
 
+# A job table adopted from the stored utility blob becomes this process's runtime.
+# `lasted_run` is process state - when this runtime last executed the job - but it
+# rides the blob, and the controller never copies the live value back (it persists
+# last_run, last_attempt, last_effect and status only), so the stored value can be
+# days old. Restoring it verbatim made the tunnels watchdog read "stuck for twelve
+# intervals" on the first tick after every boot, resetting every tunnel as the
+# mesh came up. Adoption starts each marker at now; the watchdog then measures
+# this process's own stall. Everything else (schedule, switches, network map) is
+# carried over untouched.
+sub utility_adopt_runtime {
+	my ($jobs, $now) = @_;
+	return $jobs unless ref $jobs eq 'HASH';
+	$now = &rightNow() unless defined $now;
+	foreach my $t ( keys %{$jobs} ) {
+		next if $t =~ /^__/;
+		next unless ref $jobs->{$t} eq 'HASH';
+		$jobs->{$t}->{'lasted_run'} = $now;
+	}
+	return $jobs;
+}
+
+# Whether the tunnels worker has been stalled long enough to justify restarting
+# the tunnels on this run. No marker means this process has not run the worker
+# yet (a fresh install, or the tick right after adoption), which is not a stall.
+sub tunnels_stall_duty {
+	my ($lasted_run, $now, $interval) = @_;
+	return undef unless defined $lasted_run && $lasted_run =~ /^\d+$/;
+	$interval = 120 unless defined $interval && $interval =~ /^\d+$/ && $interval > 0;
+	$now = &rightNow() unless defined $now;
+	return (($now - $lasted_run) > ($interval * 1000 * 12)) ? 'restart' : undef;
+}
+
 # The machine's navigation interval, in seconds. The runtime adopts the stored
 # row from the utility controller at runtime, but Manager and the scripts do not
 # share that process, so read the same persisted row here. A navigation job in a
