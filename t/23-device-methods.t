@@ -35,6 +35,8 @@ my %known = map { $_ => 1 } qw(
 	open.url
 	notification.list
 	media.record
+	camera.photo
+	auth.fingerprint
 );
 
 my $root = "$FindBin::Bin/..";

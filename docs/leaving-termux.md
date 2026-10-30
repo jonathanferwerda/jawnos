@@ -3,8 +3,9 @@
 **Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 is
 running with a native-first rule**: battery, notification, toast, clipboard,
 volume, torch, wake lock, contacts, SMS, call log, location, speech, telephony,
-media, share, open, the notification shade and microphone recording are answered
-by the app itself (build 1188 / 0.118.189) and proven on the tablet. The other commands, the single-app fold-in
+media, share, open, the notification shade, microphone recording, the camera
+and the biometric prompt are answered by the app itself (build 1189 /
+0.118.190) and proven on the tablet. The other commands, the single-app fold-in
 and the `com.jawnos` identity are ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
@@ -151,9 +152,9 @@ shape M1 and M2 take.
   `--check` exits 0 at 36 call sites / 24 commands / 0 raw sites, and
   `t/20-termux-ledger.t` runs the check inside `prove -l t`.
 
-### M1 — Device bridge (in progress: 9 of 24 commands native)
+### M1 — Device bridge (all 24 commands native; termux fallbacks still in place)
 
-- **Landed (app 1188 / 0.118.189):** `DeviceService` in the app
+- **Landed (app 1189 / 0.118.190):** `DeviceService` in the app
   (`com.termux.app`): loopback `127.0.0.1:46000`, newline-delimited JSON, a
   request id per call, one long-lived connection, and a token the app writes to
   `$HOME/.jawn/device.token` (mode 600; the app and Termux share one uid). It
@@ -215,6 +216,12 @@ shape M1 and M2 take.
     Notification access, and without the grant the tree falls back.
   - `media.record` — `MediaRecorder`, MPEG-4/AAC into the path the tree names
     `.mp3` (the container termux-microphone-record writes), start/stop.
+  - `camera.photo` — headless Camera2 + ImageReader, no preview surface, a JPEG
+    to the caller's path.
+  - `auth.fingerprint` — `BiometricPrompt`, which only runs in an Activity:
+    `JawnBridgeAuthActivity` is a translucent Activity the service starts, and
+    it hands the answer back in-process with termux-fingerprint's
+    `auth_result`.
   - Every flag (`silent`, `ongoing`, `dry_run`, `on`, `flush`) is read through a
     tolerant reader: Perl sends `1`/`0`, and `JSONObject.optBoolean` only reads
     a real JSON boolean.
@@ -247,12 +254,18 @@ shape M1 and M2 take.
   foreground notification among them) and recorded a 2-second clip (16 KB) to a
   file that was then deleted. The listener grant was removed again; enabling it
   is the person's own toggle (Settings -> Apps -> Special access ->
-  Notification access).
+  Notification access). Build 1189 captured a 352 KB JPEG from camera 0 (the
+  file then deleted), and the biometric prompt returned
+  `AUTH_RESULT_FAILURE: Face Unlock not set up` on the tablet — a definitive
+  answer, not a second prompt through termux.
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** the other 2 commands, with the native API each one should use
-  (below), folding the API app in as each moves. The fallback and the ledger
-  entry go in the same commit that proves a command.
+- **Remaining:** every command has a native method. What is left is the M1
+  exit: prove each one on the phone, then delete the termux fallback in the
+  same commit and uninstall the API app. Two methods are only partly proven on
+  the tablet (SMS send/list and call log need a SIM; the torch needs a flash;
+  the biometric prompt needs an enrolled fingerprint), so the phone run comes
+  first.
 
 ### M2 — Supervisor
 
@@ -343,9 +356,9 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | `telephony-deviceinfo` | `TelephonyManager` | done |
 | `call-log` | `CallLog.Calls` | done; empty on the Wi-Fi tablet |
 | `tts-speak` | `TextToSpeech` | done; Piper still first |
-| `camera-photo` | CameraX / Camera2 | granted; needs a camera-type foreground service |
+| `camera-photo` | Camera2 + ImageReader | done; the service declares the camera type |
 | `microphone-record` | `MediaRecorder` | done; the service declares the microphone type |
-| `fingerprint` | `BiometricPrompt` | needs UI: a request/response pair over the bridge |
+| `fingerprint` | `BiometricPrompt` | done; the translucent Activity half |
 | `volume` | `AudioManager` | done |
 | `torch` | `CameraManager.setTorchMode` | done; the tablet has no flash, so a phone still proves it |
 | `media-player` | `MediaPlayer` / `ExoPlayer` | done |
