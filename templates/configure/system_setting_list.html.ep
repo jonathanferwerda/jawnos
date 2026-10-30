@@ -80,6 +80,55 @@
 				</tbody>
 			</table>
 		</div>
+
+		<%# How fast the balance is falling. The ai balance job keeps a rolling
+		   week of samples; both windows are drawn from it, so switching a
+		   window never waits on a provider. %>
+		<% my $balance_chart = &subs::ai_balance_chart($ai_balance); %>
+		<div class="balance_chart">
+			<div class="balance_chart_head">
+				<b><%= &subs::lang('configure.balance_drop') %></b>
+				<span class="balance_windows">
+					<button type="button" class="balance_window" window="24h" status="active"><%= &subs::lang('configure.last_24h') %></button>
+					<button type="button" class="balance_window" window="7d"><%= &subs::lang('configure.last_7d') %></button>
+				</span>
+			</div>
+			<% if (scalar @{ $balance_chart->{'series'} }) { %>
+				<% foreach my $series ( @{ $balance_chart->{'series'} } ) { %>
+					<div class="balance_series">
+						<div class="balance_series_head">
+							<b><%= $series->{'label'} %></b>
+							<% if (defined $series->{'available'}) { %>
+								<span class="balance_now"><%= &subs::ai_balance_money($series->{'available'}) . ' ' . ($series->{'currency'} || '') %></span>
+							<% } %>
+						</div>
+						<% foreach my $window ( qw/24h 7d/ ) { %>
+							<% my $w = $series->{'windows'}->{$window}; %>
+							<div class="balance_plot" window="<%= $window %>"<% if ($window ne '24h') { %> style="display:none;"<% } %>>
+								<% if (!$w->{'points'} || scalar @{ $w->{'points'} } < 2) { %>
+									<p class="cfg-note"><%= &subs::lang('configure.balance_collecting') %></p>
+								<% } else { %>
+									<%== &subs::ai_balance_sparkline($w->{'points'}, $w->{'start'}, $w->{'now'}, 320, 80) %>
+									<p class="cfg-note balance_rate">
+										<% my $money = &subs::ai_balance_money(abs($w->{'per_day'} // 0)) . ' ' . ($series->{'currency'} || ''); %>
+										<% if (defined $w->{'per_day'} && $w->{'per_day'} > 0.005) { %>
+											<%= &subs::lang('configure.drop_per_day', $money) %>
+										<% } elsif (defined $w->{'per_day'} && $w->{'per_day'} < -0.005) { %>
+											<%= &subs::lang('configure.rise_per_day', $money) %>
+										<% } else { %>
+											<%= &subs::lang('configure.balance_flat') %>
+										<% } %>
+										· <%= &subs::ai_balance_span_label($w->{'hours'}) %>
+									</p>
+								<% } %>
+							</div>
+						<% } %>
+					</div>
+				<% } %>
+			<% } else { %>
+				<p class="cfg-note"><%= &subs::lang('configure.balance_collecting') %></p>
+			<% } %>
+		</div>
 	</div>
 </details>
 
