@@ -45,7 +45,6 @@ Exports: `root()`, `sandbox()`, `ts(year, month, day[, hour, minute, second])`
 | `10-language.t` | 16 languages, every label resolves, placeholders survive, `translate` |
 | `11-help.t` | every help topic is well-formed, its `related` links and `templates` resolve |
 | `12-schema.t` | `database/schema.sql` executes in SQLite, core tables, `ost`/`server_time` |
-| `90-known-issues.t` | TODO-pinned defects (see below) |
 
 ## Rules for a new test
 
@@ -55,14 +54,16 @@ Exports: `root()`, `sandbox()`, `ts(year, month, day[, hour, minute, second])`
   Fixture records go through the app's routes, never straight into a table.
 - Pin time: pass an explicit timestamp (`ts(...)`) to anything that accepts one;
   never assert against `right_now`.
-- If a test finds a real defect, add a `TODO` test under `90-known-issues.t`
-  naming the file and line, rather than asserting the broken behaviour.
+- If a test finds a real defect, pin it as a `TODO` test naming the file and
+  line, rather than asserting the broken behaviour. Add it to the file that
+  covers the area, and remove the `TODO` when the fix lands.
 - The probes used to establish expected values live in `.shots/` (gitignored).
 
-## Known issues
+## Fixed from the first probe run
 
-`90-known-issues.t` currently pins one: `time_abbrev_translator`
-(`subroutines.pl:687`) reads a unit only when it is a no-space shorthand. `2d`
-is two days, but `2 days`, `2days` and `1 hour 30 minutes` are misread. The
-`interval_parse` path already handles the spelled forms, so schedules are not
-affected; other callers are.
+`time_abbrev_translator` (`subroutines.pl`) used to read a unit only when it was
+written as a no-space shorthand. `2d` was two days, but `2 days` read as two
+minutes, `2days` as two seconds, and `1 hour 30 minutes` as thirty-one minutes.
+The reader now splits compact, joined and spaced forms into number/unit tokens,
+and `t/02-formatters.t` covers each spelling. `interval_parse` was already
+correct and is unchanged.

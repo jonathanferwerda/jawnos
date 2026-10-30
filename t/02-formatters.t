@@ -75,6 +75,36 @@ is(&subs::time_abbrev_translator('1y', $jan2024), 31622400000, 'a year across le
 is(&subs::time_abbrev_translator('1y', ts(2023, 1, 1)), 31536000000, 'a common year is 365 days');
 is(&subs::time_abbrev_translator('1M', $jan2024), 2678400000, 'a January month is 31 days');
 is(&subs::time_abbrev_translator('1M', ts(2024, 2, 1)), 2505600000, 'a leap February is 29 days');
+
+# Spelled and spaced units are the same lengths as the compact forms. These are
+# what a person types in the appointment, budget and padlock inputs, and what
+# the old reader misread as minutes or seconds.
+is(&subs::time_abbrev_translator('2 days', $jan2024),            172800000,  '"2 days" is two days');
+is(&subs::time_abbrev_translator('2days', $jan2024),             172800000,  '"2days" is two days');
+is(&subs::time_abbrev_translator('2 day', $jan2024),             172800000,  'a singular unit with a space');
+is(&subs::time_abbrev_translator('2 weeks', $jan2024),           1209600000, 'spelled weeks');
+is(&subs::time_abbrev_translator('2weeks', $jan2024),            1209600000, 'joined spelled weeks');
+is(&subs::time_abbrev_translator('1 hour 30 minutes', $jan2024), 5400000,    'a spelled compound adds up');
+is(&subs::time_abbrev_translator('1h30m', $jan2024),             5400000,    'a joined compact compound adds up');
+is(&subs::time_abbrev_translator('1hour30minutes', $jan2024),    5400000,    'a joined spelled compound adds up');
+is(&subs::time_abbrev_translator('1 year', $jan2024),            31622400000, 'a spelled year is a calendar year (leap)');
+is(&subs::time_abbrev_translator('1year', ts(2023, 1, 1)),       31536000000, 'a joined year in a common year');
+is(&subs::time_abbrev_translator('1 month', $jan2024),           2678400000,  'a spelled month is a calendar month');
+is(&subs::time_abbrev_translator('1month', ts(2024, 2, 1)),      2505600000,  'a joined month in a leap February');
+is(&subs::time_abbrev_translator('1.5d', $jan2024),              129600000,   'a fractional day keeps its fraction');
+is(&subs::time_abbrev_translator('a week', $jan2024),            604800000,   'an article reads as one');
+is(&subs::time_abbrev_translator('an hour', $jan2024),           3600000,     '"an" reads as one');
+is(&subs::time_abbrev_translator('in 2 days', $jan2024),         -172800000,  '"in" reads the length the other way');
+is(&subs::time_abbrev_translator('-3h', $jan2024),               -10800000,   'a leading minus is kept');
+is(&subs::time_abbrev_translator('2d 3h', $jan2024),             183600000,   'two pairs add up');
+is(&subs::time_abbrev_translator('2 days, 3 hours', $jan2024),   183600000,   'sentence punctuation does not hide a unit');
+is(&subs::time_abbrev_translator('5', $jan2024),                 300000,      'a bare number keeps its minutes default');
+is(&subs::time_abbrev_translator('1D', $jan2024),                315360000000, 'a capital D is a decade');
+is(&subs::time_abbrev_translator('1c', $jan2024),                3153600000000, 'a century in days');
+is(&subs::time_abbrev_translator('1ms', $jan2024),               1,           'a millisecond is one');
+is(&subs::time_abbrev_translator('2 seconds', $jan2024),         2000,        'spelled seconds');
+is(&subs::time_abbrev_translator('1m', $jan2024),                60000,       'a lower-case m is a minute');
+is(&subs::time_abbrev_translator('next week', $jan2024),         0,           'a unit with no number is not a length');
 is(&subs::time_abbrev_translator('Infinity'),    '1',       'a non-finite timing is one millisecond');
 ok(!defined &subs::time_abbrev_translator(''),             'an empty timing has no value');
 
