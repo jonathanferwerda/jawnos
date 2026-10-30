@@ -2374,7 +2374,10 @@ function jawnosCurrencyApply(select) {
 		var note = $(this);
 		var template = note.attr('data-template') || '';
 		if (template.indexOf('{0}') < 0) { return; }
-		note.text(template.replace('{0}', code));
+		// The provider's own figure needs no conversion note; the picker already
+		// says which currency it is.
+		if (code === (amount.attr('data-source') || '')) { note.hide().text(''); return; }
+		note.show().text(template.replace('{0}', code));
 	});
 }
 $(document).on('change', '.currency_picker', function () {
