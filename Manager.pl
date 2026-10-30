@@ -20,7 +20,7 @@ use Mojo::Parameters;
 use Mojo::DOM;
 use Mojo::URL;
 
-use Mojo::JSON qw(decode_json encode_json from_json);
+use Mojo::JSON qw(decode_json encode_json);
 use URI::Encode qw(uri_encode uri_decode);
 use List::Util qw(shuffle);
 plugin 'RenderFile';
@@ -26571,6 +26571,8 @@ sub notification_grabber($data) {
 	my $more_notifications = $q->hashes;
 	if ($device eq 'mobile') {
 		my $bridge_nl = &subs::device_call('notification.list');
+		# The listener answers only after the person grants notification access;
+		# hold the termux command until every device runs a build that has it.
 		my $notifications = ($bridge_nl && ref $bridge_nl->{'notifications'} eq 'ARRAY')
 			? $bridge_nl->{'notifications'}
 			: decode_json(&subs::device_run('notification-list') || '[]');
@@ -26644,8 +26646,7 @@ post '/manager/notifications/remove' => sub($c) {
 	my $deletions = [];
 	if ($tag) {
 		if ($device eq 'mobile') {
-			&subs::device_call('notification.remove', { id => $tag })
-				or &subs::device_run('notification-remove', $tag);
+			&subs::device_call('notification.remove', { id => $tag });
 		}
 	}
 	if ($scope eq 'all') {
@@ -27420,8 +27421,7 @@ get '/manager/share' => sub($c) {
 	my $returner;
 	if ($device eq 'mobile') {
 		$returner = &subs::device_call('share.send', { type => $type, path => $src })
-			? 'shared'
-			: &subs::device_run('share', qq{-a $type -d $src});
+			? 'shared' : '';
 	}
 	$c->render('text' => $returner);
 };
@@ -28169,7 +28169,7 @@ get '/manager/clipboard_getter' => sub ($c) {
 	my $returner;
 	if ($device eq 'mobile') {
 		my $clip = &subs::device_call('clipboard.get');
-		$returner = $clip ? ($clip->{'text'} // '') : &subs::device_run('clipboard-get');
+		$returner = $clip ? ($clip->{'text'} // '') : '';
 	}
 	elsif ($device eq 'computer') {
 		$returner = eval { return `xclip -o` };
@@ -31744,9 +31744,8 @@ post '/manager/folders/open_with' => sub($c) {
 	my $folders = eval { return decode_json $c->param('folders') } || {};
 	my @paths = map { $_->{'path'} } grep { -e $_->{'path'} } &folders_command_items($folders);
 	&subs::subprocessor(sub {
-		my $opener;
-		if ($ENV{'TERMUX_VERSION'} || -d '/data/data/com.termux') { $opener = &subs::device_cmd('open') }
-		elsif (-x '/usr/bin/xdg-open') { $opener = '/usr/bin/xdg-open' }
+		# The app opens it on Android; a desktop falls back to xdg-open.
+		my $opener = -x '/usr/bin/xdg-open' ? '/usr/bin/xdg-open' : undef;
 		foreach my $path ( @paths ) {
 			next if &subs::device_call('open.url', { path => $path });
 			system($opener, $path) if $opener;
@@ -43824,8 +43823,7 @@ get '/manager/volume_control' => sub($c) {
 		if (defined $stream && length $stream && defined $volume && length $volume) {
 			if ($device eq 'mobile') {
 				$stream = lc $stream;
-				&subs::device_call('audio.volume', { stream => $stream, volume => $volume })
-					or &subs::device_run('volume', qq{$stream $volume});
+				&subs::device_call('audio.volume', { stream => $stream, volume => $volume });
 			}
 			else {
 				`amixer set $stream $volume%`;
@@ -43833,7 +43831,6 @@ get '/manager/volume_control' => sub($c) {
 		}
 		if ($device eq 'mobile') {
 			$bridge_volume = &subs::device_call('audio.volume');
-			$return_volume = &subs::device_run('volume') unless $bridge_volume;
 		}
 		else {
 			foreach my $control ( qw/Master Capture/ ) {
@@ -44692,12 +44689,10 @@ sub notification_sender($m,$db) {
 		my $id = &subs::random_string_creator();
 		my $url = 'https://127.0.0.1:' . $ENV{PORT_AHOY} . '/manager?app=' . $m->{'app'} . '&timestamp=' . $m->{'timestamp'};
 		# The app posts it (JawnNotifyReceiver), so the badge lands on the app's
-		# own launcher icon; termux-notification belongs to the API app, which has
-		# no icon to badge, so it is only the fallback when the app is absent.
-		# Native first: the app builds and posts it through the device bridge, so
-		# the caller controls the small icon, the large picture, the actions, the
-		# progress and the group. The app's own receiver (a broadcast) and
-		# termux-notification stay as the fallbacks for an old app or none.
+		# own launcher icon. Native first: the app builds and posts it through the
+		# device bridge, so the caller controls the small icon, the large picture,
+		# the actions, the progress and the group. The app's own receiver (a
+		# broadcast) stays as the fallback for a build older than the bridge.
 		my $image_path = $image;
 		$image_path =~ s/\\ / /g;
 		my %nargs = (
@@ -44723,9 +44718,7 @@ sub notification_sender($m,$db) {
 			$b =~ s/"/'/g;
 			my $silent = $m->{'silent'} ? ' --ez silent true' : '';
 			my $bc = `am broadcast -n com.termux/.app.JawnNotifyReceiver -a com.termux.app.JAWN_NOTIFY --es title "$t" --es message "$b" --es tag "$id"$silent 2>&1`;
-			unless ($bc =~ /Broadcast completed/) {
-				&subs::device_run('notification', qq{-i $id -t "$title" --vibrate "200,150,200,150" --image-path $image}, qq{echo "$message" | });
-			}
+			$log->info("notification broadcast failed: $bc") unless $bc =~ /Broadcast completed/;
 		}
 	}
 	elsif ( eval { $sql->db } && $sql->dsn !~ /:$/) {
@@ -48498,7 +48491,7 @@ websocket '/observer/ws' => sub ($c) {
 	my $browser_tab_id = $c->param('browser_tab_id');
 	$gb::paperboy->{$browser_tab_id} = $c->tx;
 	$c->on(message => sub ($ows, $msg) {
-		my $m = from_json $msg;
+		my $m = decode_json $msg;
 		if ($m->{'type'} eq 'heartbeat') {
 			$ows->send($msg);
 		}
@@ -48536,7 +48529,7 @@ websocket '/mail/ws' => sub ($c) {
 	};
 	my $name = $c->session('name');
 	$c->on(message => sub ($mws, $msg) {
-		my $m = from_json $msg;
+		my $m = decode_json $msg;
 		$m->{'uuid'} = &subs::random_string_creator(35);
 
 		if ($m->{'type'} eq 'heartbeat') {
@@ -48594,7 +48587,7 @@ websocket '/mail/ws' => sub ($c) {
 				# address falls back to the ticket - the one thread the house
 				# opened for them. A guest speaks through the box, never through
 				# a phone number, a mailbox server or the Pen.
-				my $dialled = eval { return from_json $m->{'picker'} } || {};
+				my $dialled = eval { return decode_json $m->{'picker'} } || {};
 				if (&mail_public_channel_allows($dialled)) {
 					$m->{'picker'} = encode_json $dialled;
 					$m->{'mail_contact'} = undef;
@@ -48623,7 +48616,7 @@ websocket '/mail/ws' => sub ($c) {
 			$m->{'msg'} =~ s/\n/<br>/gi;
 			my $e_msg = &subs::note_encrypter(&subs::suds_grabber(),$m->{'msg'});
 
-			my $picker = eval { return from_json $m->{'picker'} } || {};
+			my $picker = eval { return decode_json $m->{'picker'} } || {};
 			# a phone is stored and read bare (digits only, no leading country
 			# code), whatever road wore it - the reader strips the same way, so the
 			# thread a message is filed on is the thread that reads it back
@@ -50187,7 +50180,7 @@ websocket '/manager/ws' => sub ($c) {
 	my ($ws_neighbour_stamp, $ws_neighbour_at) = ('', 0);
 	my $ws_neighbour_refresh = 20000;
 	$c->on(message => sub ($ws, $msg) {
-		my $data = eval { return from_json $msg };
+		my $data = eval { return decode_json $msg };
 		my $app = $data->{'app'};
 		my $apper = $data->{'app'};
 		if ($app =~ /@/gi) {
@@ -50232,7 +50225,7 @@ websocket '/manager/ws' => sub ($c) {
 			}
 			if ($app eq 'tab') {
 				if ($data->{'windows'}) {
-					my $windows = eval { return from_json $data->{'windows'} } || [];
+					my $windows = eval { return decode_json $data->{'windows'} } || [];
 
 					foreach my $w ( keys %{$windows} ) {
 						foreach my $set ( qw/scrollTop jopen/ ) {

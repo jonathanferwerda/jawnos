@@ -19,7 +19,7 @@ plugin 'RenderFile';
 require './gb.pl';
 require './subroutines.pl';
 require './Websocket.pl';
-&subs::device_call('toast.show', { message => 'hello' }) or &subs::device_run('toast', 'hello');
+&subs::device_call('toast.show', { message => 'hello' });
 my ($db) = &subs::database_grabber();
 my $timestamp = &subs::rightNow();
 my $dir = `pwd`;

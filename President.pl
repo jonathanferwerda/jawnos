@@ -132,15 +132,14 @@ if ($device eq 'mobile') {
 	# Take the lock for the boot. The wake-schedule worker below releases it as
 	# soon as the Android app proves it is arming the short scheduled wakes.
 	unlink &subs::home('~/.president/wake_lock_released');
-	&subs::device_call('power.wake_lock') or &subs::device_run('wake-lock');
+	&subs::device_call('power.wake_lock');
 	`sshd`;
 }
 
 if ($config->{'open_browser'} eq 'yes') {
 	if ($device eq 'mobile') {
 		threads->create(sub() { 
-			&subs::device_call('open.url', { url => "https://127.0.0.1:$random_number/manager" })
-				or &subs::device_run('open', "https://127.0.0.1:$random_number/manager &");
+			&subs::device_call('open.url', { url => "https://127.0.0.1:$random_number/manager" });
 		});
 	}
 	elsif ($device eq 'computer') {
@@ -519,12 +518,12 @@ sub manager_starter() {
 					my $music = (-e $music_file && -e $music_state_file) ? (read_file($music_file) + 0) : 0;
 					if ($setting eq 'on' && $ready && !$music) {
 						unless (-e $released_file) {
-							&subs::device_call('power.wake_unlock') or &subs::device_run('wake-unlock');
+							&subs::device_call('power.wake_unlock');
 							# A track that started between the check and the unlock
 							# must keep its lock; the same live-count rule applies.
 							my $m2 = (-e $music_file && -e $music_state_file) ? (read_file($music_file) + 0) : 0;
 							if ($m2 > 0) {
-								&subs::device_call('power.wake_lock') or &subs::device_run('wake-lock');
+								&subs::device_call('power.wake_lock');
 							}
 							write_file($released_file, time());
 							$log->info('wake schedule: app scheduler ready; released the permanent wake lock');
@@ -533,7 +532,7 @@ sub manager_starter() {
 					elsif ($setting ne 'on' || !$ready) {
 						if (-e $released_file) {
 							unless ($music) {
-								&subs::device_call('power.wake_lock') or &subs::device_run('wake-lock');
+								&subs::device_call('power.wake_lock');
 							}
 							unlink $released_file;
 							$log->info('wake schedule: taking the permanent wake lock back');

@@ -51,6 +51,20 @@ my $rc = $? >> 8;
 is($rc, 0, 'termux_ledger --check passes: no new termux dependency') or diag($out);
 like($out, qr/termux_ledger: ok/, 'the ledger reports its baseline counts');
 
+# M1 exit (docs/leaving-termux.md): the app's bridge answers a command or the
+# shell fallback is gone. This is the exact set still allowed to fall back, so
+# a command that silently regains a termux call fails here as well as in the
+# ledger, and the list reads as the to-do for the next device proof.
+my $held = join ' ', qw(
+	termux-call-log termux-camera-photo termux-fingerprint
+	termux-microphone-record termux-notification-list termux-open
+	termux-sms-list termux-sms-send termux-telephony-call
+	termux-telephony-deviceinfo termux-torch
+);
+my $record = qx{"$^X" "$ledger" --record 2>&1};
+my ($listed) = $record =~ /'command_list'\s*=>\s*'([^']*)'/;
+is(($listed // ''), $held, 'only the awaited commands still fall back to termux');
+
 # The one raw call site M0 deliberately leaves: the first-run wizard, which
 # loads no runtime module and goes away in M3.
 my $setup = do {

@@ -121,8 +121,8 @@ shape M1 and M2 take.
 
 | Milestone | Deliverable | Removes | Effort |
 | --- | --- | --- | --- |
-| **M0 Contracts** | dependency ledger + `subs::device()` wrapper at call sites, behaviour unchanged | nothing yet | ~1 week |
-| **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks |
+| **M0 Contracts** | dependency ledger + `subs::device()` wrapper at call sites, behaviour unchanged | nothing yet | ~1 week ✅ |
+| **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks — bridge done, exit in progress |
 | **M2 Supervisor** | own process supervisor + PTY only for Console | `TermuxService`, `RunCommandService`, `termux-am`, `termux-exec`, `bin/login` | ~2 weeks |
 | **M3 Runtime** | bundled Perl + XS modules + a decided tool set | bootstrap, `pkg`/`apt`/`dpkg`, `TermuxInstaller`, first-run `git clone` | 4–8 weeks |
 | **M4 Identity** | new app, new package name, no Termux code | `termux-shared`, `terminal-view`/`terminal-emulator`, plugin support, `sharedUserId`, GPL-3 | 2–3 weeks |
@@ -225,9 +225,22 @@ shape M1 and M2 take.
   - Every flag (`silent`, `ongoing`, `dry_run`, `on`, `flush`) is read through a
     tolerant reader: Perl sends `1`/`0`, and `JSONObject.optBoolean` only reads
     a real JSON boolean.
-  `notification_sender` and the clipboard/volume/torch/wake call sites ask the
-  bridge first and keep the termux commands as fallbacks, so an old app or tree
-  still works.
+  `notification_sender` and the clipboard/volume/torch/wake call sites asked the
+  bridge first and kept the termux commands as fallbacks through M1; the M1 exit
+  removed those fallbacks for every command proven on both devices.
+- **M1 exit (2026-10-30):** the fallback is gone for `battery.status`,
+  `notification.post`/`remove`, `toast.show`, `clipboard.get`, `audio.volume`,
+  `power.wake_lock`/`unlock`, `contact.list`, `location.current`, `speech.speak`,
+  `media.player`, `share.send` and `open.url` — `subs::device_call` is now the
+  only path, and a machine with no bridge reports nothing instead of spawning a
+  command that is no longer installed. `scripts/termux_ledger.pl` records the
+  thirteen call sites still holding a fallback: `sms.send`, `sms.list`,
+  `telephony.call_log`, `telephony.dial`, `telephony.deviceinfo`,
+  `hardware.torch`, `notification.list`, `media.record`, `camera.photo`,
+  `auth.fingerprint` and the first-run wizard's exempt `termux-open`.
+  `t/20-termux-ledger.t` pins that list, so a migrated command cannot quietly
+  regain a fallback. `notification.list` is held because the phone's build does
+  not carry the listener service yet.
 - **Proven on the tablet (2026-10-30):** build 1179 posted a native notification
   (`dumpsys notification` showed the title, text and progress 60/100 on
   `com.termux`) and `notification.remove` cleared it; `toast.show` returned ok.
@@ -267,13 +280,15 @@ shape M1 and M2 take.
   call was placed and no message sent.
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** every command has a native method, and the phone closed the
-  SIM/flash gaps. What is left is the M1 exit: delete each termux fallback (and
-  its ledger entry) once that command is proven on both devices, then uninstall
-  the API app. Still unproven: an actual `sms.send` (no message has been sent)
-  and a biometric success (needs an enrolled finger and a touch). The phone is
-  on 1187; the two newest methods (notification list, recording, camera,
-  biometric) are not on it until its own updater pulls 1189.
+- **Remaining:** the M1 exit removed every fallback that was proven on both
+  devices. The six commands above that are not in that list still fall back
+  (`sms.send`, `sms.list`, `telephony.call_log`, `telephony.dial`,
+  `telephony.deviceinfo`, `hardware.torch`), as do the four whose bridge method
+  the phone's 1187 build lacks (`notification.list`, `media.record`,
+  `camera.photo`, `auth.fingerprint`). They wait on the phone re-proving them
+  with the newest build. Still unproven: an actual `sms.send` (no message has
+  been sent) and a biometric success (needs an enrolled finger and a touch).
+  Next: uninstall the API app once nothing calls it, then M2.
 
 ### M2 — Supervisor
 
