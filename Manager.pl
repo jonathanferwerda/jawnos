@@ -10176,7 +10176,10 @@ get '/manager/code_bundle' => sub($c) {
 get '/manager/app_release' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	# The signatorial is public (it is rendered into DOM attributes), so naming
+	# one is not a credential: the request must carry the machine's signature.
+	# app_release_sync signs every call through peer_useragent.
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $hostname = `hostname`; chomp $hostname;
 	$c->render(json => { hostname => $hostname, signatorial => &subs::signatorial_designer(), releases => &app_release_lister() });
 };
@@ -10184,7 +10187,7 @@ get '/manager/app_release' => sub($c) {
 get '/manager/app_download' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
-	unless ($rm) { $c->rendered(403); return; }
+	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
 	my $product = $c->param('product') || 'app';
 	my $want = $c->param('versionCode');
 	my $pick;
@@ -13478,8 +13481,10 @@ sub ticket_desk_allowed($c) {
 	return 1 if $c->session('authentication') eq 'approved' && $c->session('privilege') eq 'citizen';
 	# The Dev panel's Go rides a stored peer session (resident, not citizen). That
 	# session already passed the peer gate; let it mint the ticket, and the
-	# signatorial below is what makes the ticket a vouch.
-	return 1 if ($c->session('peer') || '') eq '1';
+	# signatorial below is what makes the ticket a vouch. A guest-level ticket
+	# minted by a peer is still a guest, so the peer flag alone is not the desk.
+	return 1 if ($c->session('peer') || '') eq '1'
+		&& &subs::privilege_is_house($c->session('privilege'));
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	return 1 if $rm && $rm->{'pubkey'} && &subs::peer_verify($c, $rm);
@@ -24088,7 +24093,9 @@ post '/manager/clock/alarm' => sub($c) {
 	# signed request (or its pinned key) is what authorizes an incoming edit.
 	my $peer_sig = $c->param('signatorial') || '';
 	my $peer_rm = $peer_sig ? &subs::db_select('remote_machines', undef, { signatorial => $peer_sig })->hash : undef;
-	unless ($c->session('authentication') eq 'approved' || ($peer_rm && &subs::peer_verify($c, $peer_rm)) || &app_peer_ok($c)) {
+	unless (($c->session('authentication') eq 'approved'
+			&& !&subs::guest_browser_session($c->session('privilege'), $c->session('source')))
+		|| ($peer_rm && &subs::peer_verify($c, $peer_rm)) || &app_peer_ok($c)) {
 		return $c->rendered(403);
 	}
 	# An edit a peer hands over is applied here and, when it names a third
@@ -25535,11 +25542,14 @@ post '/manager/crest/cosign' => sub($c) {
 		: undef;
 	unless ($rm) { return $c->render(json => { ok => 0, error => 'no such machine' }); }
 	# A keyless row must not let an unsigned caller in: the cosignature is a
-	# signature, so the request has to carry one too.
+	# signature, so the request has to carry one too, and the row's own key must
+	# already be pinned. Without that precondition peer_verify(22456) would pin
+	# whatever X-Peer-Key the first caller offered, and a keyless signatorial
+	# could be claimed by whoever signs first.
 	unless ($c->req->headers->header('X-Peer-Signature')) {
 		return $c->render(json => { ok => 0, error => 'a signed request is required' });
 	}
-	unless (&subs::peer_verify($c, $rm)) {
+	unless ($rm->{'pubkey'} && &subs::peer_verify($c, $rm)) {
 		return $c->render(json => { ok => 0, error => 'the signature is not that machine' });
 	}
 	my $body = eval { $c->req->json } || {};
@@ -47231,9 +47241,12 @@ sub health_allowed {
 	my $local  = $c->tx->local_address // '';
 	# a loopback caller: the machine's own CLI and monitor, with no login
 	return 1 if $remote eq $local || $remote eq '127.0.0.1' || $remote eq '::1' || $remote =~ /^::ffff:127\.0\.0\.1$/;
-	# an approved browser session
+	# an approved session, but not a visitor's ticket: this rail writes the
+	# levels every monitor reads (health_report) and exposes the backup
+	# watermark (available), so a guest browser is not enough. A paired device
+	# with no person of its own is the machine's own face and stays.
 	my $auth = $c->session('authentication') // '';
-	return 1 if $auth eq 'approved';
+	return 1 if $auth eq 'approved' && !&subs::guest_browser_session($c->session('privilege'), $c->session('source'));
 	# a signed peer on the roster
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);

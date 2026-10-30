@@ -345,10 +345,11 @@ hook before_dispatch => sub {
 		$path eq '/manager/rsync_pack' ||
 		$path eq '/manager/rsync_unpack' ||
 		# the APK rail: app_release lists what this machine holds and app_download
-		# serves the blob, both to a peer that has no session. Their routes check
-		# the caller's signatorial against the roster themselves; without this the
-		# peer got the Gate page and the sync logged "did not answer with JSON",
-		# falling back to GitHub at the phone's ~24 KB/s (a 25-minute download).
+		# serves the blob, both to a peer that has no session. Their routes verify
+		# the caller's peer signature (a signatorial alone is public), so a peer
+		# reaches the check without the gate's cookie. Without this the peer got
+		# the Gate page and the sync logged "did not answer with JSON", falling
+		# back to GitHub at the phone's ~24 KB/s (a 25-minute download).
 		$path eq '/manager/app_release' ||
 		$path eq '/manager/app_download' ||
 		# a crest lookup is house to house: the caller presents its own signed

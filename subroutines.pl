@@ -23588,6 +23588,24 @@ sub tier_denied {
 	return $have < $tier_rank{$need} ? 1 : 0;
 }
 
+# Does this privilege reach the house's own rails (resident or above)? A guest
+# ticket minted by a peer is still a guest, and 'visitor' (the box office's
+# fallback default) is below a guest for this purpose.
+sub privilege_is_house {
+	my ($privilege) = @_;
+	return (( $tier_rank{ lc($privilege // '') } || 0 ) >= $tier_rank{'resident'}) ? 1 : 0;
+}
+
+# A person at a browser holding a ticket below house level, as opposed to a
+# paired device with no person of its own. Rails that are public only so a
+# device or a peer can reach them refuse the former; a device is the machine's
+# own face and keeps its door.
+sub guest_browser_session {
+	my ($privilege, $source) = @_;
+	return 0 if (($source || '') eq 'device');
+	return &privilege_is_house($privilege) ? 0 : 1;
+}
+
 # A revoked person is revoked for every session at once: the session carries
 # person_uuid and, for a device, device_uuid, so both are checked rather than
 # waiting for a cookie to expire.

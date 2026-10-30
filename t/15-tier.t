@@ -51,4 +51,20 @@ ok(&subs::tier_denied('/manager/configuredness', 'guest'), 'a guest may not reac
 ok(&subs::tier_denied('/manager/security/padlock_unlock', 'guest'),
 	'the table claims the padlock rail; the caller carves it out');
 
+# ------------------------------------------------------- privilege_is_house
+ok(&subs::privilege_is_house('citizen'),  'a citizen is house');
+ok(&subs::privilege_is_house('resident'), 'a resident is house');
+ok(!&subs::privilege_is_house('guest'),   'a guest is not');
+ok(!&subs::privilege_is_house('visitor'), 'the box-office visitor default is not');
+ok(!&subs::privilege_is_house(''),        'a missing privilege is not');
+ok(!&subs::privilege_is_house(undef),     'an undefined privilege is not');
+
+# ------------------------------------------------------ guest_browser_session
+ok(&subs::guest_browser_session('guest', 'ticket'),     'a guest ticket is a guest browser');
+ok(&subs::guest_browser_session('visitor', 'ticket'),   'a visitor ticket is too');
+ok(&subs::guest_browser_session(undef, ''),             'an unmarked session is refused');
+ok(!&subs::guest_browser_session('guest', 'device'),    'a paired device with no person keeps its door');
+ok(!&subs::guest_browser_session('resident', 'ticket'), 'a resident ticket is house');
+ok(!&subs::guest_browser_session('citizen', ''),        'a citizen is house');
+
 done_testing();
