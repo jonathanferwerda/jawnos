@@ -151,7 +151,7 @@ shape M1 and M2 take.
 
 ### M1 — Device bridge (in progress: skeleton + battery)
 
-- **Landed (tree v0.1.1614, app 1178 / 0.118.179):** `DeviceService` in the app
+- **Landed (tree v0.1.1615, app 1178 / 0.118.179):** `DeviceService` in the app
   (`com.termux.app`): loopback `127.0.0.1:46000`, newline-delimited JSON, a
   request id per call, one long-lived connection, and a token the app writes to
   `$HOME/.jawn/device.token` (mode 600; the app and Termux share one uid). It
