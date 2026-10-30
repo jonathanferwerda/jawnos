@@ -31130,31 +31130,60 @@ sub ai_balance_sparkline {
 }
 
 # The Sys panel's chart, assembled from the cached read. No provider call and no
-# database write happen here: the route has already loaded the same report.
+# database write happen here: the route has already loaded the same report. The
+# balances and the pace are shown in the house's reporting currency, converted
+# at the rate snapshot the rest of the app uses; a provider whose rate is not
+# loaded keeps its own currency rather than a wrong number.
 sub ai_balance_chart {
 	my ($report, $now) = @_;
 	$report = &ai_balance_report() unless ref $report eq 'HASH';
 	$now = &subs::rightNow() unless defined $now;
 	my $history = (ref $report->{'history'} eq 'HASH') ? $report->{'history'} : {};
-	my @series;
+	my $base = &crypto_report_currency();
+	my (@series, @unconverted);
+	my (%seen_unconverted, $converted_any);
 	foreach my $row ( @{ $report->{'rows'} || [] } ) {
 		my $provider = $row->{'provider'} || '';
 		my $points = $history->{$provider};
 		next unless ref $points eq 'ARRAY' && @{$points};
+		my $last = $points->[-1];
+		my $from = uc($row->{'currency'} || $last->{'c'} || 'USD');
+		my $rate = ($from eq $base) ? 1 : &exchange_rate($from, $base);
+		my $converted = ($from ne $base && defined $rate && $rate > 0) ? 1 : 0;
+		my @scaled;
+		if ($from eq $base) {
+			@scaled = @{$points};
+		}
+		elsif ($converted) {
+			@scaled = map { { t => $_->{'t'}, v => $_->{'v'} * $rate, c => $base } } @{$points};
+			$converted_any = 1;
+		}
+		else {
+			@scaled = @{$points};
+			push @unconverted, $from unless $seen_unconverted{$from}++;
+		}
 		my %windows;
 		foreach my $window ( qw/24h 7d/ ) {
-			$windows{$window} = &ai_balance_window($points, $window, $now);
+			$windows{$window} = &ai_balance_window(\@scaled, $window, $now);
 		}
-		my $last = $points->[-1];
 		push @series, {
-			provider  => $provider,
-			label     => ($row->{'label'} || $provider),
-			currency  => ($row->{'currency'} || $last->{'c'} || 'USD'),
-			available => $row->{'available'},
-			windows   => \%windows,
+			provider        => $provider,
+			label           => ($row->{'label'} || $provider),
+			currency        => ($converted ? $base : $from),
+			source_currency => $from,
+			converted       => $converted,
+			rate            => ($converted ? $rate : undef),
+			available       => (defined $row->{'available'} && $converted ? $row->{'available'} * $rate : $row->{'available'}),
+			windows         => \%windows,
 		};
 	}
-	return { at => ($report->{'at'} || 0), series => \@series };
+	return {
+		at          => ($report->{'at'} || 0),
+		base        => $base,
+		converted   => ($converted_any ? 1 : 0),
+		unconverted => \@unconverted,
+		series      => \@series,
+	};
 }
 
 # A span in the units that read best: minutes under an hour, hours under two

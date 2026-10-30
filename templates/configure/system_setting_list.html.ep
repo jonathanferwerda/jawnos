@@ -93,6 +93,11 @@
 					<button type="button" class="balance_window" window="7d"><%= &subs::lang('configure.last_7d') %></button>
 				</span>
 			</div>
+			<% if (@{ $balance_chart->{'unconverted'} || [] }) { %>
+				<p class="cfg-note"><%= &subs::lang('configure.balance_no_rate', $balance_chart->{'base'}, join(', ', @{ $balance_chart->{'unconverted'} })) %></p>
+			<% } elsif ($balance_chart->{'converted'}) { %>
+				<p class="cfg-note"><%= &subs::lang('configure.balance_in_currency', $balance_chart->{'base'}) %></p>
+			<% } %>
 			<% if (scalar @{ $balance_chart->{'series'} }) { %>
 				<% foreach my $series ( @{ $balance_chart->{'series'} } ) { %>
 					<div class="balance_series">

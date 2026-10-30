@@ -80,17 +80,46 @@ is &subs::ai_balance_money(0), '0.00', 'zero reads as zero';
 is &subs::ai_balance_money(undef), '', 'an unread balance has no number';
 
 # The assembled chart follows the rows, so a provider that left the settings
-# cannot leave a ghost line behind.
+# cannot leave a ghost line behind. It converts to the house currency at the
+# rate snapshot; the functions are pinned here so the assertion does not move
+# with the machine's real exchange rate.
 my $report = {
 	at => $now,
 	rows => [ { provider => 'deepseek', label => 'DeepSeek', available => 70, currency => 'USD' } ],
 	history => { deepseek => \@points, openrouter => \@points },
 };
-my $chart = &subs::ai_balance_chart($report, $now);
-is scalar @{ $chart->{'series'} }, 1, 'only the registered provider is charted';
-is $chart->{'series'}->[0]->{'provider'}, 'deepseek', 'with its own name';
-is $chart->{'series'}->[0]->{'currency'}, 'USD', 'and the currency the provider gave';
-ok defined $chart->{'series'}->[0]->{'windows'}->{'24h'}->{'per_day'}, 'both windows are worked out';
+{
+	local *subs::crypto_report_currency = sub { 'CAD' };
+	local *subs::exchange_rate = sub { return ($_[0] eq 'USD' && $_[1] eq 'CAD') ? 1.5 : undef };
+	my $chart = &subs::ai_balance_chart($report, $now);
+	is scalar @{ $chart->{'series'} }, 1, 'only the registered provider is charted';
+	is $chart->{'series'}->[0]->{'provider'}, 'deepseek', 'with its own name';
+	is $chart->{'base'}, 'CAD', 'the chart names the house currency';
+	is $chart->{'series'}->[0]->{'currency'}, 'CAD', 'and the balance is shown in it';
+	is $chart->{'series'}->[0]->{'source_currency'}, 'USD', 'the provider currency is kept';
+	ok $chart->{'converted'}, 'the chart records that it converted';
+	is_deeply $chart->{'unconverted'}, [], 'and nothing was left behind';
+	cmp_ok abs($chart->{'series'}->[0]->{'available'} - 105), '<', 0.001,
+		'70 USD at 1.5 is 105 CAD';
+	cmp_ok abs($chart->{'series'}->[0]->{'windows'}->{'24h'}->{'per_day'} - (90 - 10 / 13 - 70) * 1.5), '<', 0.001,
+		'and the pace is converted by the same rate';
+}
+{
+	local *subs::crypto_report_currency = sub { 'CAD' };
+	local *subs::exchange_rate = sub { undef };
+	my $chart = &subs::ai_balance_chart($report, $now);
+	is $chart->{'series'}->[0]->{'currency'}, 'USD', 'no rate keeps the provider currency';
+	ok !$chart->{'converted'}, 'and does not claim a conversion';
+	is_deeply $chart->{'unconverted'}, ['USD'], 'the missing rate is named';
+}
+{
+	local *subs::crypto_report_currency = sub { 'USD' };
+	local *subs::exchange_rate = sub { die 'no rate is needed when both are USD' };
+	my $chart = &subs::ai_balance_chart($report, $now);
+	is $chart->{'series'}->[0]->{'currency'}, 'USD', 'a provider already in house currency stays as it is';
+	ok !$chart->{'converted'}, 'with no conversion claimed';
+	is_deeply $chart->{'unconverted'}, [], 'and no missing rate';
+}
 
 my $no_rows = &subs::ai_balance_chart({ at => $now, rows => [], history => { deepseek => \@points } }, $now);
 is scalar @{ $no_rows->{'series'} }, 0, 'history without a registered row draws nothing';
