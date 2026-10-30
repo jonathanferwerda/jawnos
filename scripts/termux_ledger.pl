@@ -210,6 +210,7 @@ sub is_execution {
 
 my @files = tracked_files();
 my @sites;
+my @bridge;
 my @mentions;
 my %tool_files;
 my %tool_exec;
@@ -251,6 +252,11 @@ for my $file (@files) {
 				file => $file, line => $n, command => "termux-$2",
 				how => 'wrapped', text => trim($line, 72),
 			};
+		}
+
+		# An M1 bridge call answers from the app instead of spawning anything.
+		while (!$comment && $line =~ /device_call\s*\(\s*(['"])([A-Za-z0-9_.-]+)\1/g) {
+			push @bridge, { file => $file, line => $n, method => $2 };
 		}
 
 		# Anything still spelling out the prefix.
@@ -385,6 +391,12 @@ if (@exempt_sites) {
 		} @exempt_sites ],
 	);
 }
+
+print "\n## Bridge call sites (" . scalar(@bridge) . ")\n\n";
+print table(
+	[ 'File:line', 'Method' ],
+	[ map { [ "$_->{'file'}:$_->{'line'}", $_->{'method'} ] } @bridge ],
+);
 
 my @not_calls = grep { $_->{'class'} ne 'command' } @mentions;
 my %mention_meaning = (

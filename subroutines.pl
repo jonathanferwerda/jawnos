@@ -3383,6 +3383,116 @@ sub device_bin {
 	return "/data/data/com.termux/files/usr/bin/termux-$name";
 }
 
+# M1 device bridge (docs/leaving-termux.md): ask the host app directly instead
+# of spawning a termux-* command. One JSON line in, one back, with a request
+# id, on a loopback socket the app opens (the jawn-bt pattern). Returns the
+# decoded result, or undef when the bridge is not there - every caller keeps
+# the termux command as its fallback, so an old app with a new tree and a new
+# app with an old tree both work.
+#
+# The token is the app's: it writes $HOME/.jawn/device.token (mode 600) because
+# the app and Termux share one uid. JAWNOS_DEVICE_TOKEN/BRIDGE_PORT exist for
+# the tests and an unusual install.
+our $device_bridge_sock;
+our $device_bridge_memo;   # { until => epoch } after a transport failure
+our $device_bridge_seq = 0;
+
+sub device_bridge_token_file {
+	my $env = $ENV{'JAWNOS_DEVICE_TOKEN'};
+	return $env if defined $env && length $env;
+	return &home('~/.jawn/device.token');
+}
+
+sub device_bridge_port {
+	my $port = $ENV{'JAWNOS_DEVICE_BRIDGE_PORT'};
+	return $port + 0 if defined $port && $port =~ /^\d+$/;
+	return 46000;
+}
+
+sub device_bridge_connect {
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(
+		PeerAddr => '127.0.0.1',
+		PeerPort => &device_bridge_port(),
+		Proto    => 'tcp',
+		Timeout  => 1,
+	);
+	return $sock;
+}
+
+sub device_call {
+	my ($method, $args) = @_;
+	return undef unless defined $method && length $method;
+
+	my $now = time;
+	return undef if $device_bridge_memo && ($device_bridge_memo->{'until'} || 0) > $now;
+
+	my $token = '';
+	my $token_file = &device_bridge_token_file();
+	if (open(my $tf, '<', $token_file)) {
+		$token = <$tf> // '';
+		close $tf;
+		$token =~ s/\s+//g;
+	}
+	unless (length $token) {
+		$device_bridge_memo = { until => $now + 30 };
+		return undef;
+	}
+
+	my $sock = $device_bridge_sock;
+	unless ($sock) {
+		$sock = &device_bridge_connect();
+		unless ($sock) {
+			$device_bridge_memo = { until => $now + 30 };
+			return undef;
+		}
+		$sock->autoflush(1);
+		$device_bridge_sock = $sock;
+	}
+
+	my $id = ++$device_bridge_seq;
+	my $request = eval {
+		encode_json({
+			id     => $id,
+			token  => $token,
+			method => $method,
+			args   => (ref $args eq 'HASH' ? $args : {}),
+		});
+	};
+	if (!defined $request) { return undef; }
+
+	my $wrote = eval {
+		local $SIG{'PIPE'} = 'IGNORE';
+		print {$sock} $request . "\n";
+	};
+	if (!$wrote) {
+		close $sock;
+		$device_bridge_sock = undef;
+		$device_bridge_memo = { until => $now + 30 };
+		return undef;
+	}
+
+	my $answer;
+	my $select = IO::Select->new($sock);
+	if ($select->can_read(2)) {
+		$answer = <$sock>;
+	}
+	unless (defined $answer) {
+		close $sock;
+		$device_bridge_sock = undef;
+		$device_bridge_memo = { until => $now + 30 };
+		return undef;
+	}
+	$answer =~ s/\s+$//;
+	my $reply = eval { decode_json($answer) };
+	unless (ref $reply eq 'HASH' && $reply->{'ok'} && ref $reply->{'result'} eq 'HASH') {
+		# A refusal or a malformed answer is not a transport failure: fall back
+		# to the termux command now, but leave the bridge enabled.
+		return undef;
+	}
+	return $reply->{'result'};
+}
+
 # The machine's battery in one shape for the Monitor and the old System view.
 # termux-battery-status is a spawned API call, so a short shared cache keeps the
 # Monitor's two-second poll from spawning one per tick; Android denies the
@@ -3654,12 +3764,19 @@ sub battery_sample {
 		return $battery_sample_memo = \%fresh;
 	}
 	my $b = { sampled => $now, source => 'none' };
-	my $mobile = &device_setter() eq 'mobile' || -x &subs::device_bin('battery-status');
-	if ($mobile) {
-		my $raw = &subs::device_run('battery-status', '2>/dev/null');
-		my $j = eval { decode_json($raw) } || {};
-		if (ref $j eq 'HASH' && defined $j->{'percentage'}) {
-			$b->{'source'} = 'termux';
+	my $j = &subs::device_call('battery.status');
+	my $from_bridge = ref $j eq 'HASH' ? 1 : 0;
+	my $mobile = 0;
+	unless ($from_bridge) {
+		$j = {};
+		$mobile = &device_setter() eq 'mobile' || -x &subs::device_bin('battery-status');
+		if ($mobile) {
+			my $raw = &subs::device_run('battery-status', '2>/dev/null');
+			$j = eval { decode_json($raw) } || {};
+		}
+	}
+	if (ref $j eq 'HASH' && defined $j->{'percentage'}) {
+			$b->{'source'} = $from_bridge ? 'bridge' : 'termux';
 			$b->{'present'} = $j->{'present'} ? 1 : 0;
 			$b->{'percentage'} = $j->{'percentage'} + 0;
 			$b->{'temperature'} = defined $j->{'temperature'} ? $j->{'temperature'} + 0 : undef;
@@ -3681,8 +3798,7 @@ sub battery_sample {
 			# moment the cable goes in - no five-minute slope needed.
 			&battery_gauge_eta($b);
 		}
-	}
-	elsif (-e '/sys/class/power_supply/BAT0/capacity') {
+	elsif (!$from_bridge && !$mobile && -e '/sys/class/power_supply/BAT0/capacity') {
 		my $base = '/sys/class/power_supply/BAT0';
 		my $read = sub {
 			my $path = shift;
