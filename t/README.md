@@ -45,6 +45,7 @@ Exports: `root()`, `sandbox()`, `ts(year, month, day[, hour, minute, second])`
 | `10-language.t` | 16 languages, every label resolves, placeholders survive, `translate` |
 | `11-help.t` | every help topic is well-formed, its `related` links and `templates` resolve |
 | `12-schema.t` | `database/schema.sql` executes in SQLite, core tables, `ost`/`server_time` |
+| `15-tier.t` | `tier_needed`/`tier_denied`: citizen/resident/guest paths, anchoring, unknown privilege |
 
 ## Rules for a new test
 

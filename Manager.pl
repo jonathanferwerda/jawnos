@@ -13471,10 +13471,11 @@ post '/manager/configure/pseudonym_icon_changer' => sub ($c) {
 };
 
 # Ticket management is the citizen's desk: minting, deleting, suspending,
-# renewing and reinstating are the owner's acts, and the hooks' path
-# allowances do not enforce that on their own. A neighbouring machine on the
-# mesh is admitted too, over the same signed rail the other peer routes use: it
-# names itself in `signatorial` and peer_verify checks its signature. The desk
+# renewing and reinstating are the owner's acts, and the hook's tier check only
+# knows that /manager is resident territory, not who the owner is. A
+# neighbouring machine on the mesh is admitted too, over the same signed rail
+# the other peer routes use: it names itself in `signatorial` and peer_verify
+# checks its signature. The desk
 # is exactly the thing a device without a ticket of its own needs, and the
 # request it holds may live on a neighbour's database, so the owner must be
 # able to answer it from a machine that is not the citizen session itself.
@@ -19896,6 +19897,12 @@ post '/manager/configure/permissions' => sub($c) {
 };
 
 get '/manager/configure' => sub($c) {
+	# Citizen-only. The hook already refuses a lower tier; this is the second
+	# lock so a future change to the hook cannot reopen the settings desk.
+	unless (($c->session('privilege') || '') eq 'citizen') {
+		return $c->render(template => 'guest_layouts/denial', layout => undef,
+			message => '... access denied.', status => 403);
+	}
 	my $timestamp = $c->param('timestamp');
 	my ($db,$database,$sql) = &subs::database_grabber();
 
@@ -19919,7 +19926,11 @@ get '/manager/configure' => sub($c) {
 
 
 post '/manager/configure' => sub ($c) {
-
+	# This writes any setting, so it carries its own citizen check: the route
+	# must not depend on the hook alone.
+	unless (($c->session('privilege') || '') eq 'citizen') {
+		return $c->render(status => 403, json => { ok => 0, error => 'citizen only' });
+	}
 	my $app = $c->param('app');
 #	&subs::cache_delete({ app => $app });
 	my $setting = $c->param('setting');
@@ -39615,6 +39626,13 @@ post '/manager/handbook/settings' => sub ($c) {
 };
 
 get '/manager/security' => sub ($c) {
+	# Citizen-only, and the padlock's own unlock check sits on top of it. The
+	# hook refuses a lower tier first; this guard keeps the page shut if the
+	# hook's table ever changes.
+	unless (($c->session('privilege') || '') eq 'citizen') {
+		return $c->render(template => 'guest_layouts/denial', layout => undef,
+			message => '... access denied.', status => 403);
+	}
 	# The app opens locked: only a grant minted by a fingerprint - this phone's
 	# own reader, or the screen's padlock confirmed on a paired device - draws the
 	# contents. Rotating the key and the share actions ask again on top of this.

@@ -15,31 +15,6 @@ our $log = Mojo::Log->new(path => $logfile);
 # more than the ids it makes (create_str on a kept object is sub-microsecond),
 # and hooks.pl makes two or three ids on every request.
 our $uuid_generator;
-# What each privilege may reach. A constant, built once per worker rather than
-# on every request.
-our $allowances = {
-	guest => [
-		'/js/mailbox.js',
-		'/',
-		'/js/jquery-ui.js',
-		'/js/jquery.ui.touch-punch.min.js',
-		'/js/universal.js',
-		'/js/screensaver.js',
-		'/js/homepage.js',
-		'/js/jquery.js',
-		'/js/numeral.min.js',
-		'/mail/ws',
-		'/mail/homepage_form'
-	],
-	resident => [
-		'manager'
-	],
-	citizen => [
-		'/configure',
-		'/security',
-		'/manager/magazine/publish',
-	]
-};
 
 
 hook before_dispatch => sub {
@@ -168,24 +143,22 @@ hook before_dispatch => sub {
 		$c->stash('no' => 1);
 	}
 
-	my $privilege = $c->session('privilege');
-	my @a_loud_thing;
-	if ($privilege) {
-		if ((@a_loud_thing = grep { $path =~ $_ } @{$allowances->{'citizen'}}) && $privilege ne 'citizen') {
-			if (scalar @a_loud_thing == 0) {
-				$c->stash('no' => 1);
-			}
-		}
-		elsif ((@a_loud_thing = grep { $path =~ $_ } @{$allowances->{'resident'}}) && ($privilege ne 'citizen' && $privilege ne 'resident')) {
-			if (scalar @a_loud_thing == 0) {
-				$c->stash('no' => 1);
-			}
-		}
-		elsif ((@a_loud_thing = grep { $path eq $_ } @{$allowances->{'guest'}}) && ($privilege ne 'citizen' && $privilege ne 'resident' && $privilege eq 'guest')) {
-			if (scalar @a_loud_thing == 0) {
-				$c->stash('no' => 1);
-			}
-		}
+	# The tier check. A path's required privilege comes from subs::tier_required;
+	# a session that falls short is refused here, before the route runs, rather
+	# than relying on every handler to guard itself. Two carve-outs keep a rail
+	# that authenticates itself working: the device/padlock/box-office routes
+	# already answer to a device key or a peer signature (app_public_path is the
+	# same list the app gate uses), and the media-lock poll is the locked
+	# screen's own heartbeat, which a guest-privileged phone still needs.
+	# Rendering here (not stash('no')) leaves the session alone: a resident who
+	# follows a citizen link is refused this request, not logged out.
+	my $privilege = $c->session('privilege') || '';
+	if ($privilege && &subs::tier_denied($path, $privilege)
+		&& !&app_public_path($path)
+		&& $path ne '/manager/security/media_lock') {
+		$c->render(template => 'guest_layouts/denial', layout => undef,
+			message => '... access denied.', status => 403);
+		return;
 	}
 
 	my $ug = $uuid_generator ||= Data::UUID->new;
