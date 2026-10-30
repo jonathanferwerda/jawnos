@@ -858,15 +858,15 @@ var mailwsSignature = '';
 
 // ---- the app's own messaging (window.JawnSms) ------------------------
 // The phone is the device with the radio, so the server asks its page to send:
-// the page bridges it natively (SmsManager), or falls back to the phone's own
-// termux-sms-send while the app that carries the bridge has not landed yet.
+// the page bridges it natively (SmsManager). A page outside the app's WebView
+// posts to /manager/sms/device, where the tree asks the same bridge itself.
 function jawnSmsSend(digits, message) {
 	if (window.JawnSms && window.JawnSms.send) {
 		window.JawnSms.send(digits, message);
 		return 'bridge';
 	}
-	$.post('/manager/sms/termux_fallback', { digits: digits, message: message });
-	return 'termux';
+	$.post('/manager/sms/device', { digits: digits, message: message });
+	return 'bridge';
 }
 
 // An attachment on the sms road is one picture message: the words ride the mms

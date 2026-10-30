@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# jawn-bt: client for the JawnOS BLE bridge (JawnBleService in the JawnOS API app).
+# jawn-bt: client for the JawnOS BLE bridge (JawnBleService in the JawnOS app).
 #
 #   jawn-bt scan [seconds]                     list BLE devices
 #   jawn-bt connect <mac> [--service U] [--rx U] [--tx U] [--mtu N] [--compress 0|1]
@@ -60,7 +60,7 @@ sub start_daemon {
 	# on Termux's PATH in every environment jawn is started from (a background
 	# session, the boot path), and a missing `am` made every start fail into
 	# /dev/null.
-	system('sh', '-c', am_path() . ' start-foreground-service -n com.termux.api/.JawnBleService >/dev/null 2>&1');
+	system('sh', '-c', am_path() . ' start-foreground-service -n com.termux/.app.JawnBleService >/dev/null 2>&1');
 }
 
 sub wake_app {

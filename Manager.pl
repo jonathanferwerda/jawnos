@@ -19909,11 +19909,12 @@ post '/manager/configure/permissions' => sub($c) {
 			$av->{'icon'} = 'speaker';
 		}
 	}
-	# On the phone the browser prompts are not the whole story: the termux-*
-	# commands need Android runtime permissions too, so also raise the JawnOS API
-	# grant-all screen, which owns them (it is exported for exactly this).
+	# On the phone the browser prompts are not the whole story: the device
+	# utilities need Android runtime permissions too, so also open the app's own
+	# grant-all screen, which requests them in the app's own name (M2: it used to
+	# live in the API app). The activity is exported for exactly this.
 	if (&subs::device_setter() eq 'mobile') {
-		system('/system/bin/am', 'start', '-n', 'com.termux.api/com.termux.api.JawnGrantAllActivity');
+		system('/system/bin/am', 'start', '-n', 'com.termux/.app.JawnPermissionsActivity');
 	}
 	$c->render(json => { av_data => $av_data, constraints => $constraints });
 };
@@ -26130,20 +26131,12 @@ post '/manager/phone/dial' => sub($c) {
 	$number =~ s/[^\d+#*]//g;
 	unless ($number) { $c->render(json => { ok => 0, error => 'No number.' }); return; }
 	if (&subs::device_setter() eq 'mobile') {
-		# ACTION_CALL first; termux-telephony-call is the fallback for an old app.
+		# The caller reports a dial only when the app really placed it: a wifi
+		# tablet answers this same route, so a caller can fall through to the next
+		# mobile peer.
 		my $dial = &subs::device_call('telephony.dial', { number => $number });
-		my ($ok, $out);
-		if ($dial) {
-			$ok = 1;
-			$out = 'dialed (bridge)';
-		}
-		else {
-			$out = &subs::device_run('telephony-call', qq{"$number" 2>&1});
-			# a machine with no telephony (a wifi tablet is a 'mobile' device here too)
-			# answers this same route: report success only when the dial really went
-			# out, so a caller can fall through to the next mobile peer.
-			$ok = ($out =~ /error|exception|unable|denied|not found|no service/i) ? 0 : 1;
-		}
+		my $ok = ($dial && $dial->{'dialed'}) ? 1 : 0;
+		my $out = $ok ? 'dialed (bridge)' : 'the app could not place the call';
 		$c->render(json => { ok => $ok, number => $number, out => $out });
 		return;
 	}
@@ -42542,12 +42535,12 @@ sub sms_mms_command($digits, $text, $parts, $jawn_uuid) {
 
 # This machine's radio. termux-telephony-deviceinfo is the same source the
 # Phone app trusts: a phone answers phone_type=gsm/cdma with a ready SIM, a
-# wifi-only tablet answers phone_type=none, and a desktop has no termux at all.
+# wifi-only tablet answers phone_type=none. Which is why a caller that needs a
+# radio asks the bridge rather than the platform name.
 sub telephony_status() {
 	my $state = { telephony => 0, phone_type => 'none', sim_state => '', network_type => '' };
 	return $state unless &subs::device_setter() eq 'mobile';
-	my $info = &subs::device_call('telephony.deviceinfo');
-	$info = eval { return decode_json(&subs::device_run('telephony-deviceinfo', '2>/dev/null', 'timeout 8 ')) } || {} unless $info;
+	my $info = &subs::device_call('telephony.deviceinfo') || {};
 	my $type = lc($info->{'phone_type'} || 'none');
 	my $sim = lc($info->{'sim_state'} || '');
 	$state->{'phone_type'} = $type;
@@ -42613,12 +42606,9 @@ sub sms_message_send($digits,$message) {
 				$via = 'bridge';
 			}
 			else {
+				# No page open to bridge through, so the tree asks the device itself.
 				my $native = &subs::device_call('sms.send', { number => $digits, message => $message });
-				unless ($native) {
-					$message =~ s/\$/\\\$/gi;
-					&subs::device_run('sms-send', qq{-n $digits "$message"});
-				}
-				$via = $native ? 'bridge' : 'termux';
+				$via = $native ? 'bridge' : 'none';
 			}
 		}
 	}
@@ -42641,25 +42631,15 @@ sub sms_message_send($digits,$message) {
 	return ($digits,$message,$via);
 }
 
-# The page's fallback when the app that carries the JawnSms bridge has not
-# landed yet: the phone's own termux sends it the old way, so a message still
-# goes out during the hand-over. Retires with termux-sms-send itself.
-post '/manager/sms/termux_fallback' => sub($c) {
+# The page's road when it is not inside the app's WebView (no window.JawnSms):
+# the tree asks the device bridge itself. This was the app-that-has-not-landed
+# fallback, termux-sms-send; the bridge is the only sender now.
+post '/manager/sms/device' => sub($c) {
 	my $digits = $c->param('digits') || '';
 	my $message = $c->param('message') || '';
 	$digits =~ s/\S\d(?=\d{10})//;
-	my $via = 'termux';
-	if ($digits) {
-		my $native = &subs::device_call('sms.send', { number => $digits, message => $message });
-		if ($native) {
-			$via = 'bridge';
-		}
-		else {
-			$message =~ s/\$/\\\$/gi;
-			&subs::device_run('sms-send', qq{-n $digits "$message"});
-		}
-	}
-	$c->render(json => { ok => 1, via => $via });
+	my $native = $digits ? &subs::device_call('sms.send', { number => $digits, message => $message }) : undef;
+	$c->render(json => { ok => $native ? 1 : 0, via => $native ? 'bridge' : 'none' });
 };
 
 # The bridge's answer (window.__jawnSmsResult posts here): the send is logged,
