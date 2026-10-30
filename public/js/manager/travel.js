@@ -623,12 +623,12 @@ function travelMapRender(response) {
 		else {
 			points.push({ lat: lat, lon: lon, label: point['app'] || '', colour: colour });
 		}
-		// every fix in time order, so a run of them can be joined by a line. A place
-		// record (a home plate, a viewer bookkeeping row) is not a fix, and a fix
-		// with no time cannot be put in order.
+		// every fix that names an appointment, in time order: a track is a session,
+		// not an app's whole history. A fix that belongs to no appointment is left
+		// out of the lines (it is still a dot on the map).
 		var stamp = parseFloat(point['timestamp']) || 0;
-		if (point['app'] && stamp) {
-			var fixKey = point['app'] + '|' + (point['signatorial'] || '');
+		if (point['app'] && point['appointment_uuid'] && stamp) {
+			var fixKey = point['appointment_uuid'];
 			(fixesByApp[fixKey] = fixesByApp[fixKey] || []).push({ lat: lat, lon: lon, t: stamp, colour: colour });
 		}
 	});
@@ -636,18 +636,15 @@ function travelMapRender(response) {
 	travelPlaceGroups = jawnosMarkerGroups(places, 50, '#2f6f9f');
 	travelPointsDraw();
 
-	// a line through each app's consecutive fixes: a run of fixes in a row is one
-	// track. A gap over half an hour starts a fresh track, so yesterday's walk is
-	// not joined to today's drive, and a repeated point does not become a segment.
+	// a line joins the fixes that share an appointment's uuid, in the order they
+	// were taken, so a line is one session. Repeated points are skipped and a run
+	// that never leaves one spot is jitter, not a track.
 	var lines = [];
-	$.each(fixesByApp, function(app, list) {
+	$.each(fixesByApp, function(session, list) {
 		list.sort(function(a, b) { return a.t - b.t; });
 		var run = [];
-		var lastT = 0;
 		var push = function() {
 			if (run.length < 2) { return; }
-			// a run that never leaves one spot is jitter, not a track: it would only
-			// paint a spoke from the place. Require the run to cover some ground.
 			var span = 0;
 			for (var i = 1; i < run.length; i++) {
 				if (typeof jawnosMarkerMetres === 'function') { span = Math.max(span, jawnosMarkerMetres(run[0], run[i])); }
@@ -657,10 +654,8 @@ function travelMapRender(response) {
 		};
 		$.each(list, function(i, fix) {
 			var last = run.length ? run[run.length - 1] : null;
-			if (last && fix.lat === last.lat && fix.lon === last.lon) { lastT = fix.t; return; }
-			if (last && (fix.t - lastT) > 1800000) { push(); run = []; }
+			if (last && fix.lat === last.lat && fix.lon === last.lon) { return; }
 			run.push({ lat: fix.lat, lon: fix.lon });
-			lastT = fix.t;
 		});
 		push();
 	});

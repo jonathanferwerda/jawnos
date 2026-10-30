@@ -34773,6 +34773,22 @@ sub travel_atlas_maps {
 # has run out: a fix borrowed from a phone must not leave the laptop claiming a
 # place the phone left hours ago. Writers always stamp a warranty; a legacy row
 # with none is still read.
+# A filed fix carries its appointment's uuid as a prefix (uuid => appt . '-' .
+# random). Find that prefix when it names a real appointment; a fix that names no
+# session is not part of a track.
+sub travel_appointment_uuid {
+	my ($uuid, $set) = @_;
+	return '' unless defined $uuid && length $uuid;
+	return $uuid if $set->{$uuid};
+	my $pos = 0;
+	while (($pos = index($uuid, '-', $pos)) >= 0) {
+		my $cand = substr($uuid, 0, $pos);
+		return $cand if $set->{$cand};
+		$pos++;
+	}
+	return '';
+}
+
 sub travel_here_position {
 	my $row = &subs::db_query('select * from continent where type = ? and latitude is not null and (warranty is null or warranty = ? or cast(warranty as integer) > cast(? as integer)) order by server_time desc limit 1', 'temporary', '', &subs::rightNow())->hashes->[0];
 	return ($row && $row->{'latitude'}) ? { latitude => $row->{'latitude'} + 0, longitude => $row->{'longitude'} + 0, label => 'You are here' } : undef;
@@ -35183,6 +35199,11 @@ get '/manager/travel/viewer' => sub($c) {
 		$locations = $q->hashes;
 	}
 
+	# A filed fix carries its appointment's uuid as a prefix; a track is drawn only
+	# inside one appointment, so fixes from different sessions are never joined.
+	my $appt_rows = &subs::db_query('select uuid from appointments where (timestamp between ? and ?) or (stop_timestamp between ? and ?) or (stop_timestamp is null and type in (?,?) and timestamp > 0 and timestamp <= ?)', $t, $t2, $t, $t2, 'start', 'record', $t2)->hashes;
+	my %travel_appt_uuid = map { $_->{'uuid'} => 1 } @{$appt_rows};
+
   sub NESW { deg2rad($_[0]), deg2rad(90 - $_[1]) }
 	&subs::setting_setter({ app => 'travel', setting => 'time_scope', value => $time_scope });
 
@@ -35191,6 +35212,7 @@ get '/manager/travel/viewer' => sub($c) {
 	my @home_plate = NESW($main_map->{'home_plate'}->{'longitude'}, $main_map->{'home_plate'}->{'latitude'});
 
 	foreach my $sl (@{$locations}) {
+		$sl->{'appointment_uuid'} = &travel_appointment_uuid($sl->{'uuid'}, \%travel_appt_uuid);
 		$universal_settings->{$sl->{'app'}} = &subs::settings_grabber({ app => $sl->{'app'} }) unless $universal_settings->{$sl->{'app'}};
 		$sl->{'settings'} = $universal_settings->{$sl->{'app'}};
 		# the map says a name the way the rest of the app does (the grouped marker's
