@@ -2942,10 +2942,11 @@ sub say_piper_argv() {
 	return ($piper);
 }
 
-# How to play a finished wav here. Android has no sox audio backend, so its
-# clips go through termux-media-player; everywhere else, the sox player.
+# How to play a finished wav here. Android has no sox audio backend; the app
+# plays the clip through the bridge instead, so there is no shell player on a
+# handheld and the caller passes an empty command.
 sub say_player_command() {
-	return &subs::device_cmd('media-player', 'play') if $device eq 'mobile';
+	return '' if $device eq 'mobile';
 	return 'play -q';
 }
 
@@ -3027,20 +3028,20 @@ sub say_it() {
 			my $wav = &subs::say_render_wav($text, $pick);
 			if ($wav) {
 				my $player = &subs::say_player_command();
-				# the app plays it natively on a phone; the termux player is the fallback
+				# the app plays it natively on a phone; only a desktop has a
+				# shell player to fall back to
 				my $played = $device eq 'mobile'
 					? &subs::device_call('media.player', { action => 'play', path => $wav })
 					: 0;
 				# a headless server has no sink; a failed play is not our problem
-				`$player "$wav" 2>/dev/null` unless $played;
+				`$player "$wav" 2>/dev/null` if !$played && length $player;
 				unlink $wav;
 				return;
 			}
 		}
 		# Fallbacks: Android's own engine where piper cannot run; espeak elsewhere.
 		if ($device eq 'mobile') {
-			&subs::device_call('speech.speak', { text => $text })
-				or &subs::device_run('tts-speak', qq{"$text"});
+			&subs::device_call('speech.speak', { text => $text });
 			return;
 		}
 		# espeak: the chosen espeak voice, or the fallback when piper is missing.
@@ -3769,19 +3770,13 @@ sub battery_sample {
 		return $battery_sample_memo = \%fresh;
 	}
 	my $b = { sampled => $now, source => 'none' };
+	# M1: the app answers through the bridge. A machine with no bridge (a
+	# desktop, or an Android host that is not the app) has no power-supply
+	# sysfs to read either, so it reports source 'none' rather than spawning
+	# a termux command that is no longer installed.
 	my $j = &subs::device_call('battery.status');
-	my $from_bridge = ref $j eq 'HASH' ? 1 : 0;
-	my $mobile = 0;
-	unless ($from_bridge) {
-		$j = {};
-		$mobile = &device_setter() eq 'mobile' || -x &subs::device_bin('battery-status');
-		if ($mobile) {
-			my $raw = &subs::device_run('battery-status', '2>/dev/null');
-			$j = eval { decode_json($raw) } || {};
-		}
-	}
 	if (ref $j eq 'HASH' && defined $j->{'percentage'}) {
-			$b->{'source'} = $from_bridge ? 'bridge' : 'termux';
+			$b->{'source'} = 'bridge';
 			$b->{'present'} = $j->{'present'} ? 1 : 0;
 			$b->{'percentage'} = $j->{'percentage'} + 0;
 			$b->{'temperature'} = defined $j->{'temperature'} ? $j->{'temperature'} + 0 : undef;
@@ -3803,7 +3798,7 @@ sub battery_sample {
 			# moment the cable goes in - no five-minute slope needed.
 			&battery_gauge_eta($b);
 		}
-	elsif (!$from_bridge && !$mobile && -e '/sys/class/power_supply/BAT0/capacity') {
+	elsif (-e '/sys/class/power_supply/BAT0/capacity') {
 		my $base = '/sys/class/power_supply/BAT0';
 		my $read = sub {
 			my $path = shift;
@@ -16554,16 +16549,15 @@ sub headless_navigation() {
 		if (&subs::device_setter() eq 'mobile') {
 			# The app's GPS service keeps this machine's fix on disk, so there
 			# is no process to spawn and no wait; the file is as fresh as the
-			# navigation pace. A machine that has not run the service yet
-			# falls back to termux-location -p gps, never the network provider.
+			# navigation pace. A machine that has not run the service yet asks
+			# the bridge for one GPS fix - never the network provider.
 			my $current_pace = &navigation_pace();
 			my $max_age = ($current_pace * 2 * 1000) + 120000;
 			$max_age = 5 * 60 * 1000 if $max_age < 5 * 60 * 1000;
 			$max_age = 15 * 60 * 1000 if $max_age > 15 * 60 * 1000;
 			my $loc = &subs::native_location({ max_age_ms => $max_age });
 			unless ($loc) {
-				my $fix = &subs::device_call('location.current', { provider => 'gps', timeout_ms => 20000 });
-				my $j = $fix || eval { decode_json(&subs::device_run('location', '-p gps 2>/dev/null', 'timeout 20 ')) } || {};
+				my $j = &subs::device_call('location.current', { provider => 'gps', timeout_ms => 20000 }) || {};
 				if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'}
 					&& ($j->{'elapsedMs'} || 1e9) <= $max_age) {
 					$loc = {
@@ -18602,7 +18596,7 @@ sub telephone_contacts_check() {
 	my $bridge_contacts = &subs::device_call('contact.list');
 	my $contacts = ($bridge_contacts && ref $bridge_contacts->{'contacts'} eq 'ARRAY')
 		? $bridge_contacts->{'contacts'}
-		: (eval { return decode_json(&subs::device_run('contact-list')) } || []);
+		: [];
 	foreach my $contact ( @{$contacts} ) {
 		my $name = &subs::unformat_name($contact->{'name'});
 		my $number = $contact->{'number'};
@@ -20491,8 +20485,7 @@ sub local_position {
 		return { latitude => $loc->{'latitude'}, longitude => $loc->{'longitude'}, accuracy => sprintf("%.2F", ($loc->{'accuracy'} || 0)), timestamp => $loc->{'time'} || $now, source => 'gps', cached => 1 };
 	}
 	# A phone whose service has not run yet may still answer one GPS request.
-	my $fix = &subs::device_call('location.current', { provider => 'gps', timeout_ms => 8000 });
-	my $j = $fix || eval { decode_json(&subs::device_run('location', '-p gps 2>/dev/null', 'timeout 8 ')) } || {};
+	my $j = &subs::device_call('location.current', { provider => 'gps', timeout_ms => 8000 }) || {};
 	if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'} && ($j->{'elapsedMs'} || 1e9) <= $hold) {
 		&subs::navigation_gps_confirm('gps');
 		return { latitude => $j->{'latitude'}, longitude => $j->{'longitude'}, accuracy => sprintf("%.2F", ($j->{'accuracy'} || 0)), timestamp => $now, source => 'gps' };

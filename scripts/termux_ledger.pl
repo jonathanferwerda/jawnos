@@ -137,19 +137,22 @@ my @PTY_PATTERNS = (
 );
 
 # --- baseline ---------------------------------------------------------------
-# Recorded by this script's --record output at v0.1.1611, the M0 commit. Counts
-# only go down from here; a new call site, command, tool or module fails
-# --check. The lists catch a swap that leaves the totals unchanged.
+# Recorded by this script's --record output. Counts only go down from here; a
+# new call site, command, tool or module fails --check. The lists catch a swap
+# that leaves the totals unchanged. M1 removed the call sites for every command
+# proven on both devices (docs/leaving-termux.md), so the list below holds only
+# the commands still falling back: the ones the phone has not re-proven with the
+# newest build, plus the first-run wizard's documented termux-open.
 my %BASELINE = (
 	'version'  => '0.1.1611',
 	'raw' => 0,
 	'exempt' => 1,
-	'logical' => 35,
-	'commands' => 24,
+	'logical' => 13,
+	'commands' => 11,
 	'tools' => 21,
 	'modules' => 39,
 	'pty' => 12,
-	'command_list' => 'termux-battery-status termux-call-log termux-camera-photo termux-clipboard-get termux-contact-list termux-fingerprint termux-location termux-media-player termux-microphone-record termux-notification termux-notification-list termux-notification-remove termux-open termux-share termux-sms-list termux-sms-send termux-telephony-call termux-telephony-deviceinfo termux-toast termux-torch termux-tts-speak termux-volume termux-wake-lock termux-wake-unlock',
+	'command_list' => 'termux-call-log termux-camera-photo termux-fingerprint termux-microphone-record termux-notification-list termux-open termux-sms-list termux-sms-send termux-telephony-call termux-telephony-deviceinfo termux-torch',
 	'tool_list' => 'argon2 autossh convert cpanm curl espeak ffmpeg git node openssl perl qrencode rsync sox sqlite3 ssh sshpass tesseract tmux zbarimg zip',
 	'module_list' => 'Authen::SASL Crypt::AuthEnc::GCM Crypt::KeyDerivation Crypt::PK::Ed25519 Crypt::PK::X25519 Crypt::PRNG Crypt::Simple CryptX DBD::SQLite Data::UUID Date::Parse Digest::SHA Email::Stuffer Encode File::Slurp File::Type HTML::Strip Hash::Merge LWP::Protocol::https LWP::UserAgent MIME::Parser Math::BigInt Minion Minion::Backend::SQLite Mojo::IOLoop::ReadWriteFork Mojo::SQLite Mojolicious::Lite Mojolicious::Plugin::RenderFile Net::IMAP::Client Net::SSLeay Number::Format SQL::Abstract Sereal::Decoder Sereal::Encoder Time::Duration Time::Piece URI::Encode URI::Escape WWW::Mechanize',
 );

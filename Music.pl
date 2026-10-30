@@ -406,16 +406,10 @@ sub music_wake_lock($delta) {
 	$count += $delta;
 	$count = 0 if $count < 0;
 	write_file($path, $count);
-	my $cmd = $count > 0 ? &subs::device_cmd('wake-lock') : &subs::device_cmd('wake-unlock');
 	if (($was == 0 && $count > 0) || ($was > 0 && $count == 0)) {
-		# The app holds its own partial wake lock; the termux command is only
-		# for an old app.
-		my $done = &subs::device_call($count > 0 ? 'power.wake_lock' : 'power.wake_unlock');
-		unless ($done) {
-			my $found = `command -v $cmd 2>/dev/null`;
-			chomp $found;
-			`$cmd >/dev/null 2>&1` if $found;
-		}
+		# The app holds its own partial wake lock; the tree asks for it through
+		# the bridge and has no shell command to fall back to.
+		&subs::device_call($count > 0 ? 'power.wake_lock' : 'power.wake_unlock');
 	}
 }
 
