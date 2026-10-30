@@ -406,7 +406,7 @@ sub music_wake_lock($delta) {
 	$count += $delta;
 	$count = 0 if $count < 0;
 	write_file($path, $count);
-	my $cmd = $count > 0 ? 'termux-wake-lock' : 'termux-wake-unlock';
+	my $cmd = $count > 0 ? &subs::device_cmd('wake-lock') : &subs::device_cmd('wake-unlock');
 	if (($was == 0 && $count > 0) || ($was > 0 && $count == 0)) {
 		my $found = `command -v $cmd 2>/dev/null`;
 		chomp $found;

@@ -1,7 +1,8 @@
 # Leaving Termux — building the JawnOS app from scratch
 
-**Status:** draft 2026-10-30. Nothing started. Two spikes, then five milestones; each
-one ships on its own and can stop.
+**Status:** draft 2026-10-30. **M0 landed** in v0.1.1611: the ledger, the
+`subs::device_*` door and the ratchet test exist. Next: Spike A and Spike B, then
+M1. Nothing in the app has changed yet.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
 sections in the long run), `AGENTS.md` → App releases.
@@ -54,7 +55,9 @@ Neither is the hard part — the runtime is.
 
 ## Spikes (before M0)
 
-Two experiments, a day each, settle decisions that are expensive to unmake.
+Two experiments, a day each, settle decisions that are expensive to unmake. M0 did
+not wait for them: it changes only this tree, and the spikes decide the app-side
+shape M1 and M2 take.
 
 ### Spike A — does jawn need a tty?
 
@@ -94,16 +97,29 @@ Two experiments, a day each, settle decisions that are expensive to unmake.
 | **M4 Identity** | new app, new package name, no Termux code | `termux-shared`, `terminal-view`/`terminal-emulator`, plugin support, `sharedUserId`, GPL-3 | 2–3 weeks |
 | **M5 Distribution** | signed AAB/APK + update channel | — | ~1 week |
 
-### M0 — Contracts
+### M0 — Contracts ✅ (v0.1.1611)
 
-- Build the ledger (template below): every `termux-*` call site, every tool and module
-  actually used, every place the PTY is touched.
-- Add `subs::device()` in `subroutines.pl` with the current `termux-*` calls behind it.
-  No behaviour change; the point is that M1 replaces one function, not 170 call sites.
-- Confirm which tools are real. `jawnos_deps.pl` lists `node`, `tmux`, `sox`, `ffmpeg`,
-  `tesseract`, `qrencode`, `zbarimg`, `espeak` — some may be vestigial, some may be
-  replaceable by an Android API. Decide per tool in M3, but mark intent now.
-- **Exit:** `perl scripts/termux_ledger.pl` (new) prints the ledger and the baseline counts.
+- Ledger: `scripts/termux_ledger.pl` prints every device call site (file:line,
+  command, M1 replacement, wrapped/raw), the tool and module tables read from
+  `scripts/jawnos_deps.pl`, the PTY touch points and the Termux-runtime shebangs.
+  `--check` is the ratchet; `--record` prints the `%BASELINE` stanza to paste.
+- The door is **three** functions in `subroutines.pl`, because a call site needs
+  three different things: `subs::device_cmd` returns the shell command,
+  `subs::device_run` runs it (with an optional `timeout`/pipe prefix), and
+  `subs::device_bin` names the binary for the `-x` capability probes. The literal
+  `termux-` now lives only in those three bodies.
+- One call site is deliberately exempt: `scripts/jawnos_setup.pl:755` opens the
+  first-run wizard in a browser before the tree is serving and without loading a
+  runtime module. M3 replaces that first-run path, so it stays raw until then and
+  the ledger allows exactly that one.
+- The tool table answers "which tools are real" mechanically, and it corrected
+  two guesses: `qrencode` **is** spawned (the QR share), while `autossh`, `tmux`,
+  `zbarimg` and `node` are never spawned by the runtime (only the deps list or
+  dev scripts), so they are drop candidates. The intent for each tool is the
+  script's `%TOOL_INTENT`.
+- **Exit:** `perl scripts/termux_ledger.pl` prints the ledger and the baseline;
+  `--check` exits 0 at 36 call sites / 24 commands / 0 raw sites, and
+  `t/20-termux-ledger.t` runs the check inside `prove -l t`.
 
 ### M1 — Device bridge
 
@@ -191,7 +207,8 @@ the fallback throughout.
 
 ## Dependency ledger
 
-`scripts/termux_ledger.pl` produces it; fill the decisions in by hand.
+`scripts/termux_ledger.pl` produces it. The replacement names and the tool
+intent are maps at the top of that script, so recording a decision is one line.
 
 Per call site:
 
@@ -209,12 +226,14 @@ Per tool and module:
 
 ## Ratchet
 
-A check that stops the dependency from growing while it is being removed:
+A check that stops the dependency from growing while it is being removed. It is
+live: `t/20-termux-ledger.t` runs it, so `prove -l t` and the pre-push hook catch
+a new dependency the day it is added.
 
-- `scripts/termux_ledger.pl --check` fails when the count of `termux-*` call sites, or the
-  tool/module lists, exceed the recorded baseline.
-- Wire it into `t/` (a single test that shells out) so `prove -l t` and the pre-push hook
-  catch a new dependency the day it is added.
+- `scripts/termux_ledger.pl --check` fails when the count of raw `termux-*` call
+  sites, the logical call sites, or the tool/module lists exceed the recorded
+  baseline — and when a command, tool or module is swapped for one that is not in
+  the baseline lists (a swap that leaves the totals unchanged).
 - The baseline in the script is decremented in the same commit as each migration.
 
 ## Risks

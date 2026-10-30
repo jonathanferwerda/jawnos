@@ -1,6 +1,5 @@
 #!/data/data/com.termux/files/usr/bin
 
-`termux-toast hello`;
 my $app = shift;
 my $action = shift;
 use strict;
@@ -20,6 +19,7 @@ plugin 'RenderFile';
 require './gb.pl';
 require './subroutines.pl';
 require './Websocket.pl';
+&subs::device_run('toast', 'hello');
 my ($db) = &subs::database_grabber();
 my $timestamp = &subs::rightNow();
 my $dir = `pwd`;

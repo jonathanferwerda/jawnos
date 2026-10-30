@@ -132,14 +132,14 @@ if ($device eq 'mobile') {
 	# Take the lock for the boot. The wake-schedule worker below releases it as
 	# soon as the Android app proves it is arming the short scheduled wakes.
 	unlink &subs::home('~/.president/wake_lock_released');
-	`termux-wake-lock`;
+	&subs::device_run('wake-lock');
 	`sshd`;
 }
 
 if ($config->{'open_browser'} eq 'yes') {
 	if ($device eq 'mobile') {
 		threads->create(sub() { 
-			`termux-open https://127.0.0.1:$random_number/manager & `
+			&subs::device_run('open', "https://127.0.0.1:$random_number/manager &");
 		});
 	}
 	elsif ($device eq 'computer') {
@@ -518,18 +518,18 @@ sub manager_starter() {
 					my $music = (-e $music_file && -e $music_state_file) ? (read_file($music_file) + 0) : 0;
 					if ($setting eq 'on' && $ready && !$music) {
 						unless (-e $released_file) {
-							`termux-wake-unlock`;
+							&subs::device_run('wake-unlock');
 							# A track that started between the check and the unlock
 							# must keep its lock; the same live-count rule applies.
 							my $m2 = (-e $music_file && -e $music_state_file) ? (read_file($music_file) + 0) : 0;
-							`termux-wake-lock` if $m2 > 0;
+							&subs::device_run('wake-lock') if $m2 > 0;
 							write_file($released_file, time());
 							$log->info('wake schedule: app scheduler ready; released the permanent wake lock');
 						}
 					}
 					elsif ($setting ne 'on' || !$ready) {
 						if (-e $released_file) {
-							`termux-wake-lock` unless $music;
+							&subs::device_run('wake-lock') unless $music;
 							unlink $released_file;
 							$log->info('wake schedule: taking the permanent wake lock back');
 						}
