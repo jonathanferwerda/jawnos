@@ -167,10 +167,23 @@ get '/manager/music' => sub ($c) {
 				return;
 			}
 		}
+		# The shell is only kept for the running code revision, so a deploy (and
+		# every push bumps one) misses it. The queue itself is data, not markup:
+		# replay the files the window was last showing, in the order it showed
+		# them, rather than re-searching. That is what brings back a list the
+		# guide, the folders app or an artist pick put together - the saved
+		# search cannot reproduce any of those.
+		my $remembered = &music_queue_recall($settings, $unlocked);
+		if ($remembered) {
+			$files = $remembered;
+			$same_order = 1;
+		}
 	}
 	my $crate = &music_search({ settings => $settings, c => $c, search => $search, now_playing => {}, port => $port, misc_settings => $misc_settings, files => $files, same_order => $same_order, permissive => $unlocked });
 	$crate->{'unlock'} = $unlock;
 	$crate->{'unlocked'} = $unlocked;
+	# whatever this render put on screen is the queue a reopen should replay
+	&music_queue_remember($crate, $settings, $unlocked);
 	my $timestamp = &subs::rightNow();
 	my $jmao = &subs::setting_grabber({ app => 'music', setting => 'mao' });
 	my $player = &subs::cache_get({ app => 'music', context => 'player' });
@@ -1839,6 +1852,39 @@ sub music_archive_entries($data) {
 	return { entries => \@entries };
 }
 
+# The queue the window is showing, remembered as data rather than as the rendered
+# shell. A list put together by the guide's play, by the folders app or by an
+# artist pick cannot be reconstructed from the saved search, and the shell that
+# used to carry it is only kept for the running code revision - so a deploy lost
+# the list. These files are the list itself, in the order it was shown.
+sub music_queue_remember($crate, $settings, $permissive) {
+	return unless $crate && ref $crate->{'songs'} eq 'ARRAY';
+	my @files = map { $_->{'filename'} } grep { $_->{'filename'} } @{ $crate->{'songs'} };
+	# an empty result is not a queue: keep the one that is still worth coming
+	# back to rather than storing a window with nothing in it
+	return unless scalar @files;
+	&subs::cache_set({ app => 'music', context => 'queue', warranty => '-6M' }, {
+		files => \@files,
+		library => ($settings->{'library'} || 'local'),
+		# a queue assembled in an unlocked window can name sealed tracks, so it is
+		# only ever replayed into a window with the same grant
+		permissive => ($permissive ? 1 : 0),
+		saved => &subs::rightNow(),
+	});
+}
+
+# The queue to replay when the window shell is not in the cache. Undef means
+# "search as before": the remembered queue is from another library, from a
+# window with a different grant, or the archive is on (a replayed list would
+# wear its rows as plain local files, because the manifest walk is what gives
+# them their machine).
+sub music_queue_recall($settings, $unlocked) {
+	return undef if (($settings->{'archive'} // '') eq 'on');
+	my $queue = &subs::cache_get({ app => 'music', context => 'queue' });
+	return undef unless &subs::music_queue_applies($queue, $settings->{'library'}, $unlocked);
+	return $queue->{'files'};
+}
+
 sub music_search($data) {
 	my $search = $data->{'search'};
 	my $now_playing = $data->{'now_playing'};
@@ -2611,6 +2657,9 @@ post '/music/search' => sub ($c) {
 	}
 	$crate->{'unlock'} = $unlocked ? $unlock : '';
 	$crate->{'unlocked'} = $unlocked;
+	# a search, a folder pick and a layout change all land here, and each of them
+	# leaves a queue on the screen that a reopen should come back to
+	&music_queue_remember($crate, $settings, $unlocked);
 	
 	my @interface_color= qw/yellow green blue orange black fuschia pink navy purple brown/;
 	my $random_number = rand(0..8);
