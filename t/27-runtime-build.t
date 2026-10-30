@@ -141,4 +141,17 @@ my $deps = qx{PREFIX="$marked" "$^X" "$root/scripts/jawnos_deps.pl" --install 2>
 is($? >> 8, 0, 'the dependency install is a no-op inside the app runtime') or diag($deps);
 like($deps, qr/runtime 9\.9\.9 supplies every module/, 'and it says why');
 
+# A named tool is often a link to a multi-call binary the diet never names: the
+# target must come along or the unpacked tool dangles (bin/sh -> dash, bin/cat
+# -> coreutils). This is the defect that shipped once.
+my $multi = tempdir(CLEANUP => 1);
+write_file_at("$multi/bin/perl", "#!/bin/sh\n", 0755);
+write_file_at("$multi/bin/coreutils", "ELF\n", 0755);
+write_file_at("$multi/lib/perl5/5.42.0/aarch64-android/CORE/libperl.so", "ELF\n", 0755);
+symlink('coreutils', "$multi/bin/cat") or plan skip_all => 'no symlinks here';
+my $mlist = qx{"$^X" "$build" --from "$multi" --list 2>&1};
+my %m = map { $_ => 1 } split /\n/, $mlist;
+ok($m{'bin/cat'}, 'a named tool that is a symlink is shipped');
+ok($m{'bin/coreutils'}, 'and the multi-call binary it points at comes with it');
+
 done_testing();

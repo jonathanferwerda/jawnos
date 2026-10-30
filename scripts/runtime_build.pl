@@ -24,6 +24,7 @@ use File::Temp qw(tempdir);
 use File::Find ();
 use File::Path qw(make_path remove_tree);
 use File::Basename qw(basename dirname);
+use File::Spec ();
 use JSON::PP;
 use Digest::SHA qw(sha256_hex);
 
@@ -110,6 +111,18 @@ $out ||= "$root/releases/jawnrt-aarch64-$version.zip";
 sub wanted_path {
 	my ($rel) = @_;
 	return 1 if $rel =~ m{^bin/[^/]+$} && $TOOL{ basename($rel) } && !$NEVER{ basename($rel) };
+	# Every shared object that sits directly in lib/: an interpreter or a tool
+	# links against whatever its build needed (Termux's perl needs
+	# libandroid-utimes.so, which no name list would have guessed), and these
+	# are a few MB against a 90 MB payload. The directories beside them
+	# (python3.x, clang, perl5) are still decided by @LIB_DIRS.
+	if ($rel =~ m{^lib/[^/]+\.so(?:\.[0-9]+)*$}) {
+		# ... but not a compiler toolchain someone installed beside it. Those
+		# are the biggest files in a prefix (libLLVM alone is over 100 MB) and
+		# nothing jawn runs links against them.
+		return 0 if $rel =~ m{^lib/(?:libLLVM|libclang|libpython|libnode|libtcc|libgcc)_?};
+		return 1;
+	}
 	foreach my $d (@LIB_DIRS, @SHARE_DIRS) {
 		my $re = $d;
 		$re =~ s{([.\[\](){}*+?^$|\\])}{\\$1}g;
@@ -138,9 +151,49 @@ for my $top (qw(bin lib share etc)) {
 		},
 	}, $dir);
 }
+# A tool in bin/ is often a symlink to a shared multi-call binary (busybox,
+# coreutils, gawk), and the diet's name list never mentions that binary: the
+# archive then unpacks into dangling symlinks and `sh` or `awk` cannot run.
+# Pull in whatever a selected symlink points at, inside the prefix, until
+# nothing new appears. A target the diet forbids stays out (the symlink is
+# reported below instead).
+my %have = map { $_ => 1 } @files;
+my @pruned = ();
+my $grew = 1;
+while ($grew) {
+	$grew = 0;
+	foreach my $rel (@files) {
+		next unless -l "$from/$rel";
+		my $target = readlink "$from/$rel";
+		next unless defined $target && length $target;
+		next if $target =~ m{^/};            # outside the prefix
+		my $abs = File::Spec->rel2abs($target, dirname("$from/$rel"));
+		my $trel = $abs;
+		$trel =~ s{^\Q$from\E/}{};
+		next if $trel eq $abs;               # resolved outside $from
+		next if $have{$trel};
+		next if $NEVER{ basename($trel) };
+		push @files, $trel;
+		$have{$trel} = 1;
+		$grew = 1;
+	}
+}
 @files = sort @files;
 
 if ($list) { print "$_\n" foreach @files; exit 0 }
+
+# A symlink whose target is still missing would unpack broken; say so rather
+# than ship it silently.
+foreach my $rel (@files) {
+	next unless -l "$from/$rel";
+	my $target = readlink "$from/$rel";
+	next unless defined $target && length $target;
+	my $abs = File::Spec->rel2abs($target, dirname("$from/$rel"));
+	my $trel = $abs;
+	$trel =~ s{^\Q$from\E/}{};
+	push @pruned, $rel if $trel eq $abs || !$have{$trel};
+}
+print "runtime_build: warning: " . scalar(@pruned) . " symlink(s) point outside the runtime: @pruned\n" if @pruned;
 
 my $total = scalar @files;
 my $mb = sprintf '%.1f', $source_bytes / (1024 * 1024);
