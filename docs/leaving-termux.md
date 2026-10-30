@@ -5,7 +5,7 @@ running with a native-first rule**: battery, notification, toast, clipboard,
 volume, torch, wake lock, contacts, SMS, call log, location, speech, telephony,
 media, share, open, the notification shade, microphone recording, the camera
 and the biometric prompt are answered by the app itself (build 1189 /
-0.118.190) and proven on the tablet. The other commands, the single-app fold-in
+0.118.190), and the phone-only gaps were closed on a Galaxy S24 FE (Android 17) and proven on the tablet. The other commands, the single-app fold-in
 and the `com.jawnos` identity are ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
@@ -258,14 +258,22 @@ shape M1 and M2 take.
   file then deleted), and the biometric prompt returned
   `AUTH_RESULT_FAILURE: Face Unlock not set up` on the tablet — a definitive
   answer, not a second prompt through termux.
+
+  On the phone (SM-S721W, Android 17, app 1187) the same bridge answered
+  `phone_type=gsm, sim_state=ready, network_type=lte`, read 10 SMS and 30 call
+  log rows (counts only, no contents), reported `would_dial=1` for a dry run,
+  and spoke through the TTS engine. The torch turned on and then off
+  (`on=1`, `0`), confirming the tablet's failure was a missing flash unit. No
+  call was placed and no message sent.
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** every command has a native method. What is left is the M1
-  exit: prove each one on the phone, then delete the termux fallback in the
-  same commit and uninstall the API app. Two methods are only partly proven on
-  the tablet (SMS send/list and call log need a SIM; the torch needs a flash;
-  the biometric prompt needs an enrolled fingerprint), so the phone run comes
-  first.
+- **Remaining:** every command has a native method, and the phone closed the
+  SIM/flash gaps. What is left is the M1 exit: delete each termux fallback (and
+  its ledger entry) once that command is proven on both devices, then uninstall
+  the API app. Still unproven: an actual `sms.send` (no message has been sent)
+  and a biometric success (needs an enrolled finger and a touch). The phone is
+  on 1187; the two newest methods (notification list, recording, camera,
+  biometric) are not on it until its own updater pulls 1189.
 
 ### M2 — Supervisor
 
