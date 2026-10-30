@@ -9425,6 +9425,24 @@ sub sync_backoff_clear {
 	&db_query('delete from cache where context = ? and uuid = ?', 'sync_backoff', $peer);
 }
 
+# A sync pass starts at most one pull: the marker holds the slot until the
+# forked child claims it. Roster order therefore decides who gets to sync, and
+# a busy first peer (the laptop in daily use) takes every pass while a peer that
+# has been behind for days never gets a turn. Order the pass by the last
+# confirmed pull instead: the peer with the oldest watermark (or none at all)
+# goes first. Ties are broken by signatorial so the order is stable.
+sub sync_peer_order {
+	my ($machines, $synced_at) = @_;
+	$synced_at ||= {};
+	return [
+		sort {
+			($synced_at->{$a->{'signatorial'} || ''} || 0)
+				<=> ($synced_at->{$b->{'signatorial'} || ''} || 0)
+				|| (($a->{'signatorial'} || '') cmp ($b->{'signatorial'} || ''))
+		} @{ $machines || [] }
+	];
+}
+
 # This machine's pull marker. The value is either
 #   running:<pid>   a forked pull that owns the work, or
 #   running:claim   a caller's claim made just before it forks, or

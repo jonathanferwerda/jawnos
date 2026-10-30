@@ -49314,6 +49314,18 @@ sub remote_machine_reconnector($c) {
 		my $hub_ok = ($device eq 'server') ? 1 : &sync_hub_status($hub_row);
 		my $hub_mode = ($device ne 'server' && $hub_sig && ($topology eq 'hub' || ($topology eq 'auto' && $hub_ok))) ? 1 : 0;
 
+		# One pull per pass (the marker holds the slot until the forked child
+		# claims it), so roster order decides who syncs. Start with the peer
+		# whose last confirmed pull is oldest instead of whichever peer the
+		# table happened to list first - a busy laptop otherwise takes every pass.
+		my %synced_at;
+		foreach my $rm ( @{$remote_machines} ) {
+			next unless $rm->{'signatorial'};
+			my $seen = &subs::db_query('select server_time from backups where reason=? and signatorial=? and recipient=? order by server_time desc limit 1', 'remote_upgraded', $rm->{'signatorial'}, $signatorial)->hashes->[0] || {};
+			$synced_at{$rm->{'signatorial'}} = $seen->{'server_time'} || 0;
+		}
+		$remote_machines = &subs::sync_peer_order($remote_machines, \%synced_at);
+
 		# A peer's stored session cookie lapses unnoticed: the handshake below is
 		# signed and gate-exempt, so it keeps answering JSON while every relayed
 		# request to a gated route comes back as the Gate page, and the relay quietly
