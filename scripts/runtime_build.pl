@@ -52,17 +52,16 @@ my %NEVER = map { $_ => 1 } qw(
 
 # Directory trees outside bin/ that ship. Anything not named here is left out,
 # which is the point: a prefix carries a lot of history.
+# Libraries are not decided here: whichever file in the selection names a
+# library in its DT_NEEDED gets it (see elf_needed below), transitively. That is
+# what shipped libandroid-utimes.so when no name list had heard of it.
 my @LIB_DIRS = (
 	'lib/perl5',          # core, site and vendor modules (+ CORE/libperl.so)
-	'lib/libcrypto*',     # OpenSSL, for CryptX / Net::SSLeay
-	'lib/libssl*',
-	'lib/libsqlite3*',    # DBD::SQLite
-	'lib/libz.*', 'lib/libz.so*',
-	'lib/libffi*',
-	'lib/libncursesw*',
-	'lib/libpanelw*',
-	'lib/libreadline*',
-	'lib/libc++_shared*',
+);
+# git runs its subcommands and its https helper out of libexec/git-core (all
+# symlinks to bin/git, plus the one real git-remote-http).
+my @LIBEXEC_DIRS = (
+	'libexec/git-core',
 );
 my @SHARE_DIRS = (
 	'share/terminfo',     # TERM=xterm-256color resolves here
@@ -79,10 +78,11 @@ my @PRUNE = (
 );
 
 # --- options ----------------------------------------------------------------
-my ($from, $out, $dry, $list, $help);
+my ($from, $out, $dry, $list, $help, $abi);
 while ( defined(my $a = shift @ARGV) ) {
 	if ($a eq '--from') { $from = shift @ARGV }
 	elsif ($a eq '--out') { $out = shift @ARGV }
+	elsif ($a eq '--abi') { $abi = shift @ARGV }
 	elsif ($a eq '--dry-run') { $dry = 1 }
 	elsif ($a eq '--list') { $list = 1 }
 	elsif ($a eq '--help' || $a eq '-h') { $help = 1 }
@@ -90,10 +90,11 @@ while ( defined(my $a = shift @ARGV) ) {
 }
 if ($help) {
 	print <<'USAGE';
-perl scripts/runtime_build.pl --from PREFIX [--out FILE] [--dry-run] [--list]
+perl scripts/runtime_build.pl --from PREFIX [--out FILE] [--abi ABI] [--dry-run] [--list]
 
   --from     the built prefix to pack (a device's $PREFIX, or a staging dir)
-  --out      the archive to write (default releases/jawnrt-aarch64-<VERSION>.zip)
+  --out      the archive to write (default releases/jawnrt-<abi>-<VERSION>.zip)
+  --abi      the archive's ABI, for the manifest (default aarch64)
   --dry-run  print the plan and the size; write nothing
   --list     print every path that would ship, one per line
 USAGE
@@ -102,28 +103,18 @@ USAGE
 die "runtime_build.pl: --from is required\n" unless defined $from && length $from;
 die "runtime_build.pl: no such prefix: $from\n" unless -d $from;
 $from = abs_path($from);
+$abi ||= 'aarch64';
+die "runtime_build.pl: --abi looks wrong: $abi\n" unless $abi =~ m{^[A-Za-z0-9_]+$};
 
 my $version = 'unknown';
 if (open(my $vf, '<', "$root/VERSION")) { $version = <$vf> // 'unknown'; close $vf; $version =~ s/\s+//g }
-$out ||= "$root/releases/jawnrt-aarch64-$version.zip";
+$out ||= "$root/releases/jawnrt-$abi-$version.zip";
 
 # --- select ----------------------------------------------------------------
 sub wanted_path {
 	my ($rel) = @_;
 	return 1 if $rel =~ m{^bin/[^/]+$} && $TOOL{ basename($rel) } && !$NEVER{ basename($rel) };
-	# Every shared object that sits directly in lib/: an interpreter or a tool
-	# links against whatever its build needed (Termux's perl needs
-	# libandroid-utimes.so, which no name list would have guessed), and these
-	# are a few MB against a 90 MB payload. The directories beside them
-	# (python3.x, clang, perl5) are still decided by @LIB_DIRS.
-	if ($rel =~ m{^lib/[^/]+\.so(?:\.[0-9]+)*$}) {
-		# ... but not a compiler toolchain someone installed beside it. Those
-		# are the biggest files in a prefix (libLLVM alone is over 100 MB) and
-		# nothing jawn runs links against them.
-		return 0 if $rel =~ m{^lib/(?:libLLVM|libclang|libpython|libnode|libtcc|libgcc)_?};
-		return 1;
-	}
-	foreach my $d (@LIB_DIRS, @SHARE_DIRS) {
+	foreach my $d (@LIB_DIRS, @SHARE_DIRS, @LIBEXEC_DIRS) {
 		my $re = $d;
 		$re =~ s{([.\[\](){}*+?^$|\\])}{\\$1}g;
 		$re =~ s/\\\*/.*/g;
@@ -133,8 +124,7 @@ sub wanted_path {
 }
 
 my @files;
-my $source_bytes = 0;
-for my $top (qw(bin lib share etc)) {
+for my $top (qw(bin lib libexec share etc)) {
 	my $dir = "$from/$top";
 	next unless -d $dir;
 	File::Find::find({
@@ -147,38 +137,132 @@ for my $top (qw(bin lib share etc)) {
 			return unless wanted_path($rel);
 			return if !-l $path && grep { $rel =~ $_ } @PRUNE;
 			push @files, $rel;
-			$source_bytes += -l $path ? 0 : (-s $path || 0);
 		},
 	}, $dir);
 }
+# --- what an ELF file asks the loader for -----------------------------------
+# A runtime has to carry the libraries its own tools and modules link against.
+# A name list cannot know them: the shipped perl needed libandroid-utimes.so,
+# which nothing in the diet had ever mentioned, so `perl` refused to start after
+# an unpack that looked perfect. Read DT_NEEDED straight out of the ELF header
+# instead: it works on a device (where there is no readelf) and on the desktop
+# alike, and it is the only list that cannot go stale.
+sub elf_needed {
+	my ($path) = @_;
+	open(my $fh, '<', $path) or return ();
+	binmode $fh;
+	my $hdr = '';
+	return () unless read($fh, $hdr, 64) == 64;
+	return () unless substr($hdr, 0, 4) eq "\x7fELF";
+	my $class = ord(substr($hdr, 4, 1));   # 1 = 32-bit, 2 = 64-bit
+	my $data  = ord(substr($hdr, 5, 1));   # 1 = little endian (all of Android, both ABIs)
+	return () unless $data == 1 && ($class == 1 || $class == 2);
+	my $u32 = sub { unpack('V', $_[0]) };
+	my $u64 = sub { unpack('Q<', $_[0]) };
+	my $shoff = $class == 2 ? $u64->(substr($hdr, 0x28, 8)) : $u32->(substr($hdr, 0x20, 4));
+	my $shentsize = unpack('v', substr($hdr, $class == 2 ? 0x3A : 0x2E, 2));
+	my $shnum = unpack('v', substr($hdr, $class == 2 ? 0x3C : 0x30, 2));
+	return () unless $shoff && $shnum && $shentsize >= ($class == 2 ? 64 : 40);
+	seek($fh, $shoff, 0) or return ();
+	my @sh;
+	for (1 .. $shnum) {
+		my $s = '';
+		last unless read($fh, $s, $shentsize) == $shentsize;
+		push @sh, {
+			type   => $u32->(substr($s, 4, 4)),
+			offset => $class == 2 ? $u64->(substr($s, 0x18, 8)) : $u32->(substr($s, 0x10, 4)),
+			size   => $class == 2 ? $u64->(substr($s, 0x20, 8)) : $u32->(substr($s, 0x14, 4)),
+			link   => $u32->($class == 2 ? substr($s, 0x28, 4) : substr($s, 0x18, 4)),
+		};
+	}
+	my ($dyn) = grep { $_->{type} == 6 } @sh;   # SHT_DYNAMIC
+	return () unless $dyn && $dyn->{link} < @sh && $dyn->{size} && $dyn->{size} < (1 << 20);
+	my $str = $sh[$dyn->{link}];
+	return () unless $str->{size} && $str->{size} < (1 << 24);
+	my ($blob, $strblob) = ('', '');
+	seek($fh, $dyn->{offset}, 0) or return ();
+	read($fh, $blob, $dyn->{size}) or return ();
+	seek($fh, $str->{offset}, 0) or return ();
+	read($fh, $strblob, $str->{size}) or return ();
+	my $entsize = $class == 2 ? 16 : 8;
+	my @need;
+	for (my $o = 0; $o + $entsize <= length($blob); $o += $entsize) {
+		my $tag = $class == 2 ? unpack('q<', substr($blob, $o, 8)) : unpack('l<', substr($blob, $o, 4));
+		last if $tag == 0;                       # DT_NULL
+		next unless $tag == 1;                   # DT_NEEDED
+		my $val = $class == 2 ? $u64->(substr($blob, $o + 8, 8)) : $u32->(substr($blob, $o + 4, 4));
+		my $name = substr($strblob, $val);
+		$name =~ s/\0.*//s;
+		push @need, $name if length $name;
+	}
+	close $fh;
+	return @need;
+}
+
 # A tool in bin/ is often a symlink to a shared multi-call binary (busybox,
 # coreutils, gawk), and the diet's name list never mentions that binary: the
 # archive then unpacks into dangling symlinks and `sh` or `awk` cannot run.
-# Pull in whatever a selected symlink points at, inside the prefix, until
-# nothing new appears. A target the diet forbids stays out (the symlink is
-# reported below instead).
+# Likewise every binary and module names the libraries it loads. Pull in what
+# the selection points at, inside the prefix, until nothing new appears. A
+# target the diet forbids stays out (the symlink is reported below instead).
 my %have = map { $_ => 1 } @files;
 my @pruned = ();
-my $grew = 1;
-while ($grew) {
-	$grew = 0;
-	foreach my $rel (@files) {
-		next unless -l "$from/$rel";
-		my $target = readlink "$from/$rel";
-		next unless defined $target && length $target;
-		next if $target =~ m{^/};            # outside the prefix
-		my $abs = File::Spec->rel2abs($target, dirname("$from/$rel"));
-		my $trel = $abs;
-		$trel =~ s{^\Q$from\E/}{};
-		next if $trel eq $abs;               # resolved outside $from
-		next if $have{$trel};
-		next if $NEVER{ basename($trel) };
-		push @files, $trel;
-		$have{$trel} = 1;
-		$grew = 1;
+my @linked = ();
+# Android supplies these; everything else a shipped ELF names has to be in the
+# archive, or the tool dies on the device with "library not found".
+my %SYSTEM = map { $_ => 1 } qw(
+	libc.so libm.so libdl.so liblog.so libandroid.so libstdc++.so
+	libz.so libEGL.so libGLESv1_CM.so libGLESv2.so libvulkan.so
+	libOpenSLES.so libmediandk.so libnativewindow.so libsync.so libui.so
+);
+my %missing = ();
+for (my $i = 0; $i < @files; $i++) {
+	my $rel = $files[$i];
+	my $path = "$from/$rel";
+	my @add;
+	if (-l $path) {
+		my $target = readlink $path;
+		if (defined $target && length $target && $target !~ m{^/}) {
+			my $abs = File::Spec->rel2abs($target, dirname($path));
+			my $trel = $abs;
+			$trel =~ s{^\Q$from\E/}{};
+			@add = ($trel) if $trel ne $abs && !$NEVER{ basename($trel) };
+		}
+	}
+	else {
+		my @need = elf_needed($path);
+		foreach my $name (@need) {
+			next unless $name =~ m{\.so(?:\.\d+)*$};
+			# Only the prefix's own libraries: libc, libm, libdl and liblog
+			# belong to Android, and shipping one would shadow the device's.
+			if (!-f "$from/lib/$name") {
+				$missing{$name} = 1 unless $SYSTEM{$name};
+				next;
+			}
+			push @add, "lib/$name";
+			push @linked, $name unless $have{"lib/$name"};
+		}
+	}
+	foreach my $rel2 (@add) {
+		next if $have{$rel2};
+		push @files, $rel2;
+		$have{$rel2} = 1;
 	}
 }
 @files = sort @files;
+@linked = sort keys %{{ map { $_ => 1 } @linked }};
+print "runtime_build: +" . scalar(@linked) . " linked librar" . (@linked == 1 ? 'y' : 'ies') . ": @linked\n" if @linked;
+
+# A library nobody in the prefix provides is a broken runtime: say which, and
+# refuse. The source prefix, not this script, has to grow.
+if (%missing) {
+	print "runtime_build: missing libraries: " . join(' ', sort keys %missing) . "\n";
+	print "  nothing in $from/lib provides those\n";
+	exit 1;
+}
+
+my $source_bytes = 0;
+$source_bytes += -l "$from/$_" ? 0 : (-s "$from/$_" || 0) foreach @files;
 
 if ($list) { print "$_\n" foreach @files; exit 0 }
 
@@ -270,7 +354,7 @@ my $sha = sha256_hex(do { open(my $fh, '<', $out) or die $!; binmode $fh; local 
 
 my $manifest = {
 	'product'  => 'runtime',
-	'abi'      => 'aarch64',
+	'abi'      => $abi,
 	'version'  => $version,
 	'built'    => time,
 	'filename' => basename($out),

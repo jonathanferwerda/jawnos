@@ -348,22 +348,41 @@ The milestone that actually leaves Termux.
   the diet from a built prefix and `scripts/runtime_zip.pl` packs it. The diet is
   executable rather than prose: a tool allow-list (perl, openssl, sqlite3,
   curl, ssh, git, the shell utilities; no `pkg`/`apt`/`dpkg`, no `cpanm`, no
-  editors), `lib/perl5`, the shared libraries the XS modules link (crypto, ssl,
-  sqlite3, z), `share/terminfo` and the CA bundle, with every pod, man page and
-  `CORE/*.h` pruned. From the tablet's prefix that is **3,075 files / 101.6 MB
-  uncompressed / 33.2 MB zipped**, packed in 12 seconds. The zip keeps Unix
-  modes and symlinks in the central directory (the app must read that record
-  itself — `ZipInputStream` exposes neither).
+  editors), `lib/perl5`, `libexec/git-core`, `share/terminfo` and the CA bundle,
+  with every pod, man page and `CORE/*.h` pruned. From the tablet's prefix that is
+  **3,313 files / 128.7 MB uncompressed / 44.9 MB zipped**.
+- **Libraries are read, not listed.** The diet resolves every shipped ELF's
+  `DT_NEEDED` (a ~60-line header parse, so it works on a device with no
+  `readelf`) and adds what the prefix carries, transitively; a name the prefix
+  cannot provide is a **build failure that names it**, never a silent gap. A name
+  list cannot work here: the first archive shipped without
+  `libandroid-utimes.so`, so the unpacked `perl` would not start. The same rule
+  replaced a blanket `lib/*.so*` that had dragged in ~240 MB of things nothing
+  links (`libonnxruntime`, `libicudata`, the ffmpeg and `libvulkan` stacks). The
+  38 libraries a complete aarch64 runtime actually needs are `libcurl`,
+  `libssl`/`libcrypto`, `libsqlite3`, `libz`, `libandroid-*`, the ssh chain and
+  git's `libpcre2`/`libiconv`/`libzstd`.
 - **Proven (tablet, 2026-10-30):** the archive was unpacked into an empty
   directory and ran from there, away from `$PREFIX`, with only
-  `LD_LIBRARY_PATH` and `PERL5LIB`:
-  `perl v5.42.0` plus `Sereal::Encoder`, `Sereal::Decoder`, `DBD::SQLite`,
-  `CryptX`, `Net::SSLeay`, `LWP::Protocol::https`, `URI::Encode`, `JSON::PP`,
-  `Mojolicious`, `Minion` and `Mojo::SQLite` all loaded. `t/27-runtime-build.t`
-  pins the diet, the refusal of an incomplete prefix, and the modes/symlinks.
+  `LD_LIBRARY_PATH` and `PERL5LIB`: `perl v5.42.0` plus `Sereal::Encoder`,
+  `Sereal::Decoder`, `DBD::SQLite`, `CryptX`, `Net::SSLeay`, `LWP::Protocol::https`,
+  `URI::Encode`, `JSON::PP`, `Mojolicious`, `Minion` and `Mojo::SQLite` all loaded
+  from the runtime's own tree. `curl`, `git`, `openssl`, `sqlite3`, `ssh`, `dash`,
+  `bash`, `awk`, `sed`, `grep`, `zip`/`unzip`, `tar`, `rsync` and `zstd` all run;
+  `https://github.com` answers 200 through both `curl` and `LWP`, and
+  `git ls-remote` works, so the CA bundle and `git-remote-http` are in place.
+  `t/27-runtime-build.t` pins the diet, the `DT_NEEDED` closure, the refusal of an
+  incomplete prefix and of a missing library, and the modes/symlinks.
   **The failure that test exists for:** the stage copy took run-as's umask, so
   every tool in the first archive was `0666` and the unpacked `perl` was not
   executable.
+- **x86_64 has no source prefix (2026-10-30).** Its `com.termux` prefix was wiped
+  on the emulator, and Termux packages `perl` but **no CPAN module** — every module
+  the tree needs came from `cpanm` on the device. So the x86_64 runtime can only be
+  built by standing up a prefix on the emulator (`bootstrap` + `pkg install perl`
+  and the XS toolchain, then `cpanm` the 40 modules in
+  `scripts/jawnos_deps.pl`) and packing that. Until it exists the published
+  manifest's x86_64 pin is stale; aarch64 is the only ABI with a good archive.
 - **Proven on a device (tablet, app 1192):** the archive unpacked to
   `~/.jawnos/runtime` and `SessionService` prefers it — the master's
   `/proc/<pid>/exe` is `…/.jawnos/runtime/bin/perl`, the tree reached
