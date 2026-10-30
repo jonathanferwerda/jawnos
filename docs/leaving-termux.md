@@ -122,8 +122,8 @@ shape M1 and M2 take.
 | Milestone | Deliverable | Removes | Effort |
 | --- | --- | --- | --- |
 | **M0 Contracts** | dependency ledger + `subs::device()` wrapper at call sites, behaviour unchanged | nothing yet | ~1 week ✅ |
-| **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks — bridge done, exit in progress |
-| **M2 Supervisor** | own process supervisor + PTY only for Console | `TermuxService`, `RunCommandService`, `termux-am`, `termux-exec`, `bin/login` | ~2 weeks |
+| **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks ✅ (fallbacks gone except the SMS/call five) |
+| **M2 Supervisor** | own process supervisor + PTY only for Console | `TermuxService`, `RunCommandService`, `termux-am`, `termux-exec`, `bin/login` | ~2 weeks ✅ (`bin/login`, `termux-exec` gone; `TermuxService` left for the Console) |
 | **M3 Runtime** | bundled Perl + XS modules + a decided tool set | bootstrap, `pkg`/`apt`/`dpkg`, `TermuxInstaller`, first-run `git clone` | 4–8 weeks |
 | **M4 Identity** | new app, new package name, no Termux code | `termux-shared`, `terminal-view`/`terminal-emulator`, plugin support, `sharedUserId`, GPL-3 | 2–3 weeks |
 | **M5 Distribution** | signed AAB/APK + update channel | — | ~1 week |
@@ -239,8 +239,14 @@ shape M1 and M2 take.
   `hardware.torch`, `notification.list`, `media.record`, `camera.photo`,
   `auth.fingerprint` and the first-run wizard's exempt `termux-open`.
   `t/20-termux-ledger.t` pins that list, so a migrated command cannot quietly
-  regain a fallback. `notification.list` is held because the phone's build does
-  not carry the listener service yet.
+  regain a fallback.
+- **M1 exit, second pass (2026-10-30, builds 1190 on both devices):** the phone
+  caught up to the app build that carries all 25 methods, so the last four
+  fallbacks (`notification.list`, `media.record`, `camera.photo`,
+  `auth.fingerprint`) and `hardware.torch` are gone too. What still falls back:
+  `sms.send`, `sms.list`, `telephony.call_log`, `telephony.dial`,
+  `telephony.deviceinfo` and the wizard's exempt `termux-open` — the SMS and
+  call commands wait on a real send and a real call, which are held on purpose.
 - **Proven on the tablet (2026-10-30):** build 1179 posted a native notification
   (`dumpsys notification` showed the title, text and progress 60/100 on
   `com.termux`) and `notification.remove` cleared it; `toast.show` returned ok.
@@ -281,29 +287,46 @@ shape M1 and M2 take.
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
 - **Remaining:** the M1 exit removed every fallback that was proven on both
-  devices. The six commands above that are not in that list still fall back
-  (`sms.send`, `sms.list`, `telephony.call_log`, `telephony.dial`,
-  `telephony.deviceinfo`, `hardware.torch`), as do the four whose bridge method
-  the phone's 1187 build lacks (`notification.list`, `media.record`,
-  `camera.photo`, `auth.fingerprint`). They wait on the phone re-proving them
-  with the newest build. Still unproven: an actual `sms.send` (no message has
-  been sent) and a biometric success (needs an enrolled finger and a touch).
-  Next: uninstall the API app once nothing calls it, then M2.
+  devices. Only `sms.send`, `sms.list`, `telephony.call_log`, `telephony.dial`
+  and `telephony.deviceinfo` still fall back, waiting on a real send and a real
+  call (both held on purpose; no message has been sent and no call placed).
+  Next: uninstall the API app once nothing calls it, then M2 (which follows
+  immediately — see below).
 
-### M2 — Supervisor
+### M2 — Supervisor — done for the tree
 
-- Own `SessionService`: fork/exec, explicit env (`HOME`, `PATH`, `TMPDIR`, `PERL5LIB`,
-  `TERM`), pipes into `~/manager.log`, signal delivery, respawn, the
-  `~/.president/status` restart loop.
-- `JawnLauncher` execs Perl directly. No `login`, no `bash`, no `termux-exec`; the
-  `#!/data/data/...` shebangs disappear with the runtime in M3, so the supervisor must
-  exec the interpreter by absolute path.
-- Keep a PTY only when the Console opens; attach to the live session rather than starting
-  a second one.
-- Replace `RunCommandService`/`termux-am` with the same service API (`jawn-wake`,
-  notifications, BLE come from M1's bridge or M2's service).
-- **Exit:** jawn starts, restarts and stops with the app; the Console still scrolls; no
-  `bin/login` in any process tree.
+- `SessionService` (app): fork/exec `perl ./jawn` with an explicit environment
+  (`HOME`, `PREFIX`, `PATH` with `$PREFIX/bin` plus `/system/bin`, `TMPDIR`,
+  `LANG`, `TERM`, `PWD`, `TERMUX_VERSION`; `LD_PRELOAD` removed), one merged
+  stdout/stderr pipe appended to `~/manager.log`, and a thread that keeps
+  exactly one master: it stands down while `~/.president/pid` still answers,
+  respawns an unexpected exit with a 2/5/10/30/60 s backoff (reset after a
+  minute of uptime), and never touches `~/.president/status` — the tree's own
+  loop still owns restarts. Stop sends the master SIGINT (`/system/bin/kill
+  -INT`), runs `manager_killer.pl master` as mop-up, and stops the service.
+  `JawnLauncher` routes Start/Restart/Stop and the boot receiver through it; the
+  dashboard gains "Run jawn under the app's own supervisor" (default on, old
+  Termux session as the rollback).
+- `jawn` names the interpreter it is running under (`exec '$^X'
+  ./President.pl`) instead of letting the pty shell resolve President.pl's
+  `#!/usr/bin/perl`, which only worked through termux-exec.
+- **No PTY is created.** Spike A proved the tree needs no tty, so the supervisor
+  uses pipes; the Console button opens the live `~/manager.log` (the same file
+  the app's Log button tails) rather than starting a second shell session. A
+  PTY is only worth adding when a real console is wanted.
+- **Proven on the tablet (SM-X400, app 1190, tree 0.1.1640):** woke into
+  `com.termux → perl ./jawn → perl ./President.pl` with **no `bin/login`**, port
+  3000 listening and status `good`; the notification sits on the `jawn-session`
+  channel. `printf restart > ~/.president/status` went back to `good` in ~45 s
+  (master re-exec keeps its pid). `kill -INT` on the master was noticed and the
+  supervisor respawned it (log: "jawn exited (status 0 after 140s); restarting
+  in 2s" → "jawn started"). `am force-stop com.termux` took the tree down with
+  the app; relaunching brought it back. The same start was repeated on the
+  phone (SM-S721W, app 1190, tree 0.1.1640): status `good`, no `bin/login`.
+- **Exit:** jawn starts, restarts and stops with the app; the Console shows the
+  tree's live output; no `bin/login` in any process tree. Remaining for M3:
+  `RunCommandService`/`termux-am` and `TermuxService` itself (the Console), and
+  the `#!/usr/bin/perl` shebang in `scripts/app_displayer.pl`.
 
 ### M3 — Runtime
 
