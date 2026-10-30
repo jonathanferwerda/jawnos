@@ -195,7 +195,7 @@
 				<% my $map_home = ($l->{'model'}->{'home_plate'}->{'latitude'} && $l->{'model'}->{'home_plate'}->{'longitude'})
 					? $l->{'model'}->{'home_plate'}
 					: (($settings->{'home_plate'}->{'latitude'} && $settings->{'home_plate'}->{'longitude'}) ? $settings->{'home_plate'} : $main_home_plate); %>
-				<% my @map_points = map { { latitude => $_->{'latitude'} + 0, longitude => $_->{'longitude'} + 0, distance => $_->{'distance'}, timestamp => $_->{'timestamp'}, uuid => $_->{'uuid'} } } grep { $_->{'latitude'} && $_->{'longitude'} } @{$l->{'distance'}}; %>
+				<% my @map_points = map { { latitude => $_->{'latitude'} + 0, longitude => $_->{'longitude'} + 0, distance => $_->{'distance'}, timestamp => $_->{'timestamp'}, signatorial => $_->{'signatorial'}, uuid => $_->{'uuid'} } } grep { $_->{'latitude'} && $_->{'longitude'} } @{$l->{'distance'}}; %>
 				<div class="appointment_list appointment_distance_panel" list="distance" style="display:none;">
 					<div class="appointment_distance_toolbar" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:4px 0;">
 						<select class="appointment_dist_view" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>">
