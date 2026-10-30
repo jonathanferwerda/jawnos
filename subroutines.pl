@@ -1337,7 +1337,18 @@ sub subprocessor() {
 	if ($gb::subprocessed > 1 && !$params->{'fork'}) {
 		$wrapped_subroutine->();
 	} else {
-		Mojo::IOLoop->subprocess->run_p($wrapped_subroutine)
+		# run_p forks on the next tick and reports a failed pipe or fork only
+		# through its promise. Nothing used to read it, so a job that never
+		# started - and the pull claim its caller had already written - failed
+		# in silence. Name it.
+		my $promise = Mojo::IOLoop->subprocess->run_p($wrapped_subroutine);
+		eval {
+			$promise->catch(sub {
+				my $why = join ' ', grep { defined } @_;
+				$why =~ s/\s+/ /g;
+				eval { $log->error('subprocessor ' . ($params->{'name'} || '?') . ' could not start: ' . $why) } if $log;
+			});
+		};
 	}
 
 }
@@ -9264,6 +9275,56 @@ sub sync_backoff_clear {
 	my ($peer) = @_;
 	return unless $peer;
 	&db_query('delete from cache where context = ? and uuid = ?', 'sync_backoff', $peer);
+}
+
+# This machine's pull marker. The value is either
+#   running:<pid>   a forked pull that owns the work, or
+#   running:claim   a caller's claim made just before it forks, or
+#   <anything else> idle ('' or the panel's 'inactive').
+# Mojo::IOLoop::subprocess forks on the next tick, not when subprocessor is
+# called, so a claim is written before any child exists. If that tick never
+# happens - a tree restart, a torn-down loop, a failed fork - the claim used to
+# keep the marker looking like a live owner (it carried the caller's pid, and a
+# long-lived worker's pid never dies), which blocked every automatic pull for
+# the full thirty-minute bound and made the Upgrade button answer "already
+# running". A claim now gets its own short bound; only a real pid, still alive,
+# holds the long one.
+sub remote_upgrade_marker_state {
+	my ($value, $server_time, $now, $alive) = @_;
+	$value = '' unless defined $value;
+	$server_time = 0 unless defined $server_time && $server_time =~ /^\d+$/;
+	$now = &rightNow() unless defined $now;
+	my ($flag, $pid) = split /:/, $value, 2;
+	$flag ||= '';
+	$pid = '' unless defined $pid;
+	my $is_pid = ($pid =~ /^\d+$/ && $pid > 1) ? 1 : 0;
+	my $live = ($flag eq 'running' && $is_pid && $alive) ? 1 : 0;
+	# 'claim' (or a bare 'running' from an older build) cannot be checked with
+	# kill 0, so it is a claim with the short bound.
+	my $claim = ($flag eq 'running' && !$is_pid) ? 1 : 0;
+	my $age = $now - $server_time;
+	my $bound = $claim ? 120000 : ($live ? 1800000 : 600000);
+	my $busy = ($flag eq 'running' && ($claim || $live) && $age < $bound) ? 1 : 0;
+	return {
+		flag => $flag,
+		pid => $pid,
+		live => $live,
+		claim => $claim,
+		age => $age,
+		bound => $bound,
+		busy => $busy,
+		value => $value,
+		server_time => $server_time,
+	};
+}
+
+sub remote_upgrade_lock_state {
+	my $row = &db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+	my $value = $row->{'value'} || '';
+	my ($flag, $pid) = split /:/, $value, 2;
+	$flag ||= '';
+	my $alive = ($flag eq 'running' && defined $pid && $pid =~ /^\d+$/ && $pid > 1 && kill(0, $pid)) ? 1 : 0;
+	return &remote_upgrade_marker_state($value, $row->{'server_time'}, &rightNow(), $alive);
 }
 
 
@@ -20235,37 +20296,30 @@ sub remote_machine_negotiator() {
 	$c->session('gimme' => $data->{'gimme'});
 
 
-	my $remote_upgrade = &subs::setting_grabber({ app => '__president', setting => 'remote_upgrade' });
 	my $remote_connect_timer =  &subs::setting_grabber({ app => '__president', setting => 'remote_connect_timer' }) || 0;
-	# A sync that dies mid-run leaves "running" behind. The old clear keyed off a
-	# different timer (remote_connect_timer) and waited a blind seven minutes -
-	# on a machine whose servers restart every few minutes that is most of the
-	# time, so the sync rarely got to run. Bound the lock by its own age instead,
-	# and read the pid the marker carries: a bare 'running' from an older build
-	# still trusts the age, but a dead owner is cleared at once.
-	my ($up_flag, $up_pid) = split /:/, ($remote_upgrade || ''), 2;
-	$up_flag ||= '';
-	if ($up_flag eq 'running') {
-		my $lock = &subs::db_query('select server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0];
-		my $owner_dead = ($up_pid && $up_pid =~ /^\d+$/ && $up_pid > 1 && !kill(0, $up_pid)) ? 1 : 0;
-		my $bound = (($gb::timeouts->{'remote_machine_sync'}->{'interval'} || 120) * 1000) * 2;
-		if ($owner_dead || !$lock->{'server_time'} || $lock->{'server_time'} + $bound < &subs::rightNow()) {
-			&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
-			$remote_upgrade = '';
-			$up_flag = '';
-		}
+	# A sync that dies mid-run leaves a marker behind. Its state is read in one
+	# place (subs::remote_upgrade_lock_state): a live pid keeps the long bound,
+	# because a 110k-row merge can outlast the old four-minute reap and clearing
+	# it let a second pull start against the same peer; a claim whose fork never
+	# ran expires on its own short bound; a dead owner is cleared at once.
+	my $up_state = &subs::remote_upgrade_lock_state();
+	if ($up_state->{'flag'} eq 'running' && !$up_state->{'busy'}) {
+		&subs::log_writer('pull marker released: ' . $up_state->{'value'} . ' (' . int($up_state->{'age'} / 1000) . 's old)');
+		&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+		$up_state = &subs::remote_upgrade_lock_state();
 	}
+	my $bridled = $up_state->{'busy'} ? 1 : 0;
 	# A pull job row can outlive the marker that owned it: a forked pull that dies
 	# after clearing its marker (or before writing one) leaves a 'running' row that
 	# nothing will ever finish, and the sync panel then reads as if a pull were
 	# still in flight. When no pull owns the marker, no worker is pulling, so any
 	# pull row still running is orphaned. Ten minutes keeps a pull that was just
 	# started - and has not written its marker yet - from being cut short.
-	if ($up_flag ne 'running') {
+	if (!$bridled) {
 		my $reaped = &subs::sync_jobs_reap(600000, 'pull', 'no pull owned it');
 		$log->info('sync jobs reaped: ' . $reaped . ' pull job(s) with no owner') if $reaped;
 	}
-	if (($remote_upgrade || '') ne 'running' && $remote_connect_timer + 10000 < &subs::rightNow()) {
+	if (!$bridled && $remote_connect_timer + 10000 < &subs::rightNow()) {
 		&Manager::remote_machine_reconnector($c);
 	}
 	#&system_monitor({
