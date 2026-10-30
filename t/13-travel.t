@@ -97,4 +97,72 @@ my $jitter = &subs::carrier_device( [
 cmp_ok( $jitter->{'metres'}, '>', 250, 'a real step after a shuffle is still counted' );
 cmp_ok( $jitter->{'metres'}, '<', 350, 'the shuffle itself adds nothing' );
 
+# ------------------------------------------------------ who records the trip
+# One device files an appointment's movement. movement_choice is the decision
+# with the rows already read, so it is tested without a database.
+
+is( &subs::movement_choice({ choice => 'every', signatorial => 'phone' }), 'phone',
+	'"every device" lets this device record' );
+is( &subs::movement_choice({ choice => 'tablet', signatorial => 'phone' }), 'tablet',
+	'a named device is the recorder' );
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone' }), 'phone',
+	'with no fixes yet, the device that is filing records' );
+
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 900000, rows => [
+	fix( 1000, 'phone', 43.0000, -81 ),
+	fix( 2000, 'phone', 43.0027, -81 ),
+] }), 'phone', 'a lone moving device records its own trip' );
+
+# The tablet is in the house writing jitter; the phone went for the walk.
+my @walking = (
+	fix( 1000, 'tablet', 43.00240, -81.9419 ),
+	fix( 2000, 'tablet', 43.00245, -81.9419 ),
+	fix( 3000, 'tablet', 43.00240, -81.9419 ),
+	fix( 4000, 'phone',  43.00000, -81.9400 ),
+	fix( 5000, 'phone',  43.00270, -81.9400 ),
+);
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 6000, rows => [@walking] }), 'phone',
+	'the moving device takes the trip from the one left at home' );
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'tablet', now => 6000, rows => [@walking] }), 'phone',
+	'and the device at home defers even when it has more fixes' );
+
+# Both travelled together: the first to start recording keeps the trip, so the
+# role does not swap from fix to fix.
+my @together = (
+	fix( 1000, 'tablet', 43.0000, -81 ),
+	fix( 2000, 'tablet', 43.0027, -81 ),
+	fix( 2500, 'phone',  43.0000, -81 ),
+	fix( 3000, 'phone',  43.0030, -81 ),
+);
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 4000, rows => [@together] }), 'tablet',
+	'when both are moving, the one that started recording keeps it' );
+
+# The recorder left its fixes behind a quarter of an hour ago: hand the trip on
+# rather than lose it.
+my @gone = (
+	fix( 1000, 'tablet', 43.0000, -81 ),
+	fix( 2000, 'tablet', 43.0027, -81 ),
+	fix( 1000 + 20 * 60 * 1000, 'phone', 43.0000, -81 ),
+);
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 1000 + 20 * 60 * 1000, rows => [@gone] }), 'phone',
+	'a recorder that went quiet is replaced' );
+
+# Both parked: it does not matter which one records, but it must be one of them.
+my @parked = ( fix( 1, 'tablet', 43.0024, -81.9419 ), fix( 2, 'phone', 43.0024, -81.9419 ) );
+is( &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 3, rows => [@parked] }), 'tablet',
+	'with nothing moving the earliest recorder keeps it' );
+
+# A device parked for hours can creep a hundred metres of jitter without going
+# anywhere. It must not take a real walk from the device that recorded it, even
+# if it was writing first.
+my @creep = ( fix( 1000, 'tablet', 43.00000, -81 ), fix( 2000, 'tablet', 43.00024, -81 ) );
+for my $i ( 3 .. 6 ) {
+	push @creep, fix( $i * 1000, 'tablet', ( $i % 2 ? 43.00024 : 43.00000 ), -81 );
+}
+push @creep, fix( 7000, 'phone', 43.0000, -81 ), fix( 8000, 'phone', 43.0020, -81 ),
+	fix( 9000, 'phone', 43.0040, -81 ), fix( 10000, 'phone', 43.0060, -81 ),
+	fix( 11000, 'phone', 43.0080, -81 );
+my $creep = &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 12000, rows => [@creep] });
+is( $creep, 'phone', 'a creeping device does not take a real walk' );
+
 done_testing();

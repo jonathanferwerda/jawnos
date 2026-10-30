@@ -16089,6 +16089,16 @@ sub continent_record($c) {
 		$uuid = &subs::random_string_creator(25);
 		$pre_uuid = $uuid;
 	}
+	# One device records an appointment's movement. When another machine is already
+	# carrying this appointment, the fix still updates this machine's place and
+	# still runs its home plates, but it is not filed into the appointment: two
+	# devices travelling together would otherwise count the trip twice.
+	my $movement_here = 1;
+	my $recorder_of;
+	if ($purpose eq 'app' && $c->param('uuid')) {
+		$recorder_of = &subs::movement_recorder({ app => $app, appt => $pre_uuid, signatorial => $signatorial, timestamp => $timestamp });
+		$movement_here = 0 if length $recorder_of && $recorder_of ne $signatorial;
+	}
 	if ($navigation ne 'once') {
 		my $continentals = &subs::db_query('select * from continent where app = ? and uuid = ? order by server_time DESC LIMIT 1', $app, $uuid)->hashes;
 		if ($continentals->[0]->{'latitude'} eq $c->param('latitude') && $continentals->[0]->{'longitude'} eq $c->param('longitude')) {
@@ -16126,10 +16136,12 @@ sub continent_record($c) {
 			warranty => $warranty,
 			signatorial => $signatorial
 		};
-		&subs::db_insert('continent', $returner);
+		&subs::db_insert('continent', $returner) if $movement_here;
+		$returner->{'recorded'} = 0 unless $movement_here;
+		$returner->{'recorder'} = $recorder_of if defined $recorder_of && !$movement_here;
 		# the speed a fix carried is saved as a measure on the appointment it was
 		# recorded against, so the evaluation reads it with the rest of the readings
-		&subs::continent_speed_measure($app, $pre_uuid, $speed, $timestamp) if defined $speed && $speed =~ /\S/;
+		&subs::continent_speed_measure($app, $pre_uuid, $speed, $timestamp) if $movement_here && defined $speed && $speed =~ /\S/;
 		if ($returner->{'accuracy'} < 200 && $publishable_place) {
 			my $treturner = clone $returner;
 			$treturner->{'type'} = 'temporary';
@@ -16210,6 +16222,13 @@ post '/manager/continent/record_anyway' => sub($c) {
 		my $publishable_place = ($purpose eq 'home_plate'
 			|| &subs::navigation_gps_present()
 			|| ($purpose eq 'navigation' && &subs::device_setter() eq 'mobile')) ? 1 : 0;
+		# the same one-device rule as the ordinary record route: a fix filed
+		# "anyway" is still movement, and must not be counted twice
+		my $movement_here = 1;
+		if ($purpose eq 'app' && $c->param('uuid')) {
+			my $recorder = &subs::movement_recorder({ app => $app, appt => $pre_uuid, signatorial => $signatorial, timestamp => $timestamp });
+			$movement_here = 0 if length $recorder && $recorder ne $signatorial;
+		}
 
 		my $returner = {
 			timestamp => $timestamp,
@@ -16243,7 +16262,7 @@ post '/manager/continent/record_anyway' => sub($c) {
 			}
 		}
 		else {
-			&subs::db_insert('continent', $returner);
+			&subs::db_insert('continent', $returner) if $movement_here;
 			if ($returner->{'accuracy'} < 200 && $publishable_place) {
 				my $treturner = clone $returner;
 				$treturner->{'type'} = 'temporary';
@@ -26916,25 +26935,9 @@ get '/manager/appointment_details' => sub($c) {
 	my $settings = $appts->{$app}->{'setting'};
 	$settings->{'home_plate'} = eval { return decode_json $settings->{'home_plate'} } || {};
 	my $main_home_plate = eval { return decode_json &subs::setting_grabber({ app => 'me', setting => 'home_plate' }) } || {};
-	# A device's signatorial as the name the house knows it by: the first label of
-	# its house address (phone, tablet, laptop), then a peer's hostname, and this
-	# machine's own name when neither is known. The Dist section's carrier line
-	# reads these names.
-	my %carrier_names;
-	my $device_hosts = &subs::device_hosts();
-	foreach my $sig ( keys %{$device_hosts} ) {
-		my ($label) = split /\./, ($device_hosts->{$sig} || '');
-		$carrier_names{$sig} = &subs::format_name($label) if defined $label && length $label;
-	}
-	foreach my $d ( @{ &subs::remote_machine_lister() } ) {
-		my $sig = $d->{'signatorial'} || '';
-		my $host = $d->{'hostname'} || '';
-		next if $carrier_names{$sig};
-		next unless length $sig && length $host && $host !~ /^(?:me|localhost)$/i;
-		$carrier_names{$sig} = &subs::format_name($host);
-	}
-	my $my_carrier = &subs::signatorial_designer();
-	$carrier_names{$my_carrier} ||= &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || 'this device';
+	# A device's signatorial as the name the house knows it by, so the carrier line
+	# under the fixes names a machine the way the movement picker does.
+	my $carrier_names = &subs::device_labels();
 	push @details, @{$appts->{$app}->{'list'}} if $appts->{$app}->{'list'};
 	my $sum = scalar @details;
 	foreach my $d ( @details ) {
@@ -27001,7 +27004,7 @@ get '/manager/appointment_details' => sub($c) {
 		if ($carrier) {
 			$l->{'carrier'} = {
 				signatorial => $carrier->{'signatorial'},
-				name => $carrier_names{ $carrier->{'signatorial'} } || substr($carrier->{'signatorial'}, 0, 10),
+				name => $carrier_names->{ $carrier->{'signatorial'} } || substr($carrier->{'signatorial'}, 0, 10),
 				path => $carrier->{'metres'},
 				fixes => $carrier->{'fixes'},
 				devices => $carrier->{'devices'},
