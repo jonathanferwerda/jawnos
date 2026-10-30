@@ -2377,6 +2377,9 @@ Rules:
 - Work in small steps: read the file you are about to change first, then write it
   whole, then run "perl -c <file>" (or a test) to check it before you commit.
 - Never commit code that failed its check. Fix it and check again.
+- When you change behaviour, add or update the tests in t/ and run "prove -l t"
+  before you commit. A defect you find but do not fix gets a TODO test naming the
+  file and line, never a test that asserts the broken behaviour.
 - The finishing routine is: bump, then commit with a short message, then push,
   then restart. Do each as its own action, in that order. Commit as the subject
   "v<version> - <summary>" once bumped.
