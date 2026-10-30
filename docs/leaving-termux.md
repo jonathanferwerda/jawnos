@@ -1,7 +1,7 @@
 # Leaving Termux — building the JawnOS app from scratch
 
-**Status:** draft 2026-10-30. **M0 landed** in v0.1.1611 and **Spike B passed**
-the same day (§Spikes). Next: Spike A, then M1. Nothing in the app has changed yet.
+**Status:** draft 2026-10-30. **M0 landed** in v0.1.1611 and **both spikes
+passed** the same day. Next: M1. Nothing in the app has changed yet.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
 sections in the long run), `AGENTS.md` → App releases.
@@ -52,25 +52,37 @@ Neither is the hard part — the runtime is.
    `subs::app_release_sync` (`subroutines.pl:31871`) pulls APKs from peers. Play requires
    all of that to become bundled or Play-delivered. Sideloading does not care.
 
-## Spikes (before M0)
+## Spikes (done before M1)
 
 Two experiments, a day each, settle decisions that are expensive to unmake. M0 did
 not wait for them: it changes only this tree, and the spikes decide the app-side
 shape M1 and M2 take.
 
-### Spike A — does jawn need a tty?
+### Spike A — does jawn need a tty? ✅ 2026-10-30
 
-- **Method:** start `President.pl` through the existing `TermuxService` background path
-  with piped stdout into `~/manager.log` instead of a terminal session (or a
-  `ProcessBuilder` from a scratch Activity). Watch one full restart cycle and one websocket
-  client.
-- **Accept:** the tree starts, workers run, `restart` via `~/.president/status` works,
-  websockets connect, and the log looks like a PTY run's.
-- **Then:** if it passes, the supervisor is a plain process manager and the PTY becomes a
-  Console-only feature. If it fails, M2 keeps a PTY per session and the supervising logic
-  wraps `terminal-emulator` instead of replacing it.
-- **Also check:** `Mojo::IOLoop::ReadWriteFork` and signal handling (`WNOHANG`, `INT`/`TERM`)
-  behave the same with a pipe; anything that calls `isatty` or `TIOCGWINSZ`.
+- **Method:** a disposable `git clone` of the tree, its own `HOME`, a fresh
+  database built from `database/schema.sql`, a throwaway TLS cert, ports
+  3900/3901, all inside `unshare -rn` (a network namespace with only loopback
+  up), and `jawn`'s `ReadWriteFork` conduit changed from `type => "pty"` to
+  `type => "pipe"`. stdout/stderr went to a file, so no terminal existed
+  anywhere. The scripts are `.shots/spike-a/` (scratch, not committed).
+- **Result:** the tree starts in 2 s (`/manager` answers 200), President and
+  its workers run (25 president processes, 9 manager workers at the peak), one
+  `/manager/ws` client upgrades and stays connected, `restart` through
+  `~/.president/status` completes (status `good`, a new President pid after
+  ~46 s — the master's 3 s delay plus boot), the manager and the websocket work
+  again on the new tree, and SIGINT makes the master exit clean and leave no
+  child behind ("leftover check: clean").
+- **No tty calls:** the runtime has no `isatty`, `TIOCGWINSZ`, `tcgetattr` or
+  `-t STD*` (only `scripts/jawnos_network.pl`, a CLI helper, checks `-t STDIN`).
+  Bash on a pipe prints no job-control noise, and the master's tee still fills
+  `~/pty.log` (466 lines), so the error watch keeps its copy.
+- **Then:** the supervisor is a plain process manager; the PTY becomes a
+  Console-only feature. M2 can drop `bin/login` and the terminal session from
+  the boot path.
+- **Caveat:** the sandbox used `"live": "yes"` so a loopback client is
+  approved the way the live image approves it (the fresh database has no ticket
+  to seed). That key affects authentication, not the tty question.
 
 ### Spike B — how do you execute a bundled interpreter? ✅ 2026-10-30
 
