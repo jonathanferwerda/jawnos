@@ -376,6 +376,20 @@ The milestone that actually leaves Termux.
   **The failure that test exists for:** the stage copy took run-as's umask, so
   every tool in the first archive was `0666` and the unpacked `perl` was not
   executable.
+- **Media tools stay bundled (2026-10-30).** `ffmpeg`, `ffprobe`, `magick` and
+  `convert` are in the diet on purpose. The plan was MediaCodec and
+  BitmapFactory, but those replace a codec call, not the 51 places the tree pipes
+  a file through `ffmpeg -i … -vframes 1 | magick - -resize` for a thumbnail, the
+  loudness pass, subtitle extraction or Music's video stream. Dropping them would
+  not be a diet, it would be a regression. The cost is real: they drag in **161
+  libraries** (the av* stack, x265/aom/rav1e/SVT-AV1/dav1d/vpx, and ImageMagick's
+  cairo/pango/harfbuzz/fontconfig/freetype/rsvg/ghostscript/OpenEXR/jxl/heif), so
+  the archive goes **128.7 MB → 291.6 MB raw and 44.9 MB → 109.5 MB zipped**.
+  Two cheaper shapes if that first download matters: a separate “media pack”
+  fetched after the tree is up (the app already knows how to fetch, verify and
+  unpack one archive), or a custom ffmpeg/ImageMagick build without the codecs
+  nothing here encodes. A native resize in the device bridge would remove all of
+  ImageMagick on its own.
 - **x86_64 has no source prefix (2026-10-30).** Its `com.termux` prefix was wiped
   on the emulator, and Termux packages `perl` but **no CPAN module** — every module
   the tree needs came from `cpanm` on the device. So the x86_64 runtime can only be
