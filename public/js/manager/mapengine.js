@@ -277,6 +277,23 @@ window.jawnosMap = (function () {
 			ctx.stroke();
 		}
 
+		function drawHome(x, y, colour) {
+			ctx.save();
+			ctx.fillStyle = colour || '#6f4f9f';
+			ctx.strokeStyle = '#fff';
+			ctx.lineWidth = 1.5;
+			ctx.beginPath();
+			ctx.moveTo(x - 8, y);
+			ctx.lineTo(x, y - 8);
+			ctx.lineTo(x + 8, y);
+			ctx.closePath();
+			ctx.fill();
+			ctx.stroke();
+			ctx.fillRect(x - 6, y, 12, 8);
+			ctx.strokeRect(x - 6, y, 12, 8);
+			ctx.restore();
+		}
+
 		function drawMarkers(o, w, h, z) {
 			// a dense set of places (the continent knows every app) turns into a cloud of
 			// labels that bury the map; keep the dots, drop the labels, and shrink them
@@ -287,7 +304,10 @@ window.jawnosMap = (function () {
 				var pt = points[i];
 				var s = screenFor(pt.lat, pt.lon, o, z);
 				if (s[0] < -20 || s[1] < -20 || s[0] > w + 20 || s[1] > h + 20) { continue; }
-				if (pt.count > 1) {
+				if (pt.home) {
+					drawHome(s[0], s[1], pt.colour);
+				}
+				else if (pt.count > 1) {
 					// a group in one spot: a bigger disc wearing the count, so the map
 					// stays readable and the tap can unfold what is under it
 					ctx.beginPath();
@@ -388,7 +408,7 @@ window.jawnosMap = (function () {
 				var pt = points[i];
 				if (!pt.app && !(pt.list && pt.list.length)) { continue; }
 				var s = screenFor(pt.lat, pt.lon, o, view.z);
-				var reach = (pt.count > 1) ? 20 : 14;
+				var reach = (pt.count > 1) ? 26 : 16;
 				var d = Math.sqrt(((s[0] - sx) * (s[0] - sx)) + ((s[1] - sy) * (s[1] - sy)));
 				if (d <= reach && d < bestD) { bestD = d; best = pt; }
 			}
@@ -536,6 +556,12 @@ window.jawnosMap = (function () {
 			drag = null;
 			release(vx, vy, moved);
 		});
+		canvas.addEventListener('mousemove', function (e) {
+			if (drag) { return; }
+			var pt = markerHandler ? markerAt(e.offsetX, e.offsetY) : null;
+			canvas.style.cursor = pt ? 'pointer' : '';
+		});
+
 		canvas.addEventListener('click', function (e) {
 			if (suppressClick) { suppressClick = false; return; }
 			if (Date.now() - lastTouch < 500) { return; } // the touch tap already answered
@@ -733,6 +759,7 @@ window.jawnosMap = (function () {
 			setPosition: function (pos) { here = pos || null; draw(); },
 			maps: function () { return maps; },
 			lines: function () { return lines; },
+			points: function () { return points; },
 			// Frame the measured maps (their home plates), else keep the centre.
 			fitToMaps: function () {
 				var lats = [], lons = [];
