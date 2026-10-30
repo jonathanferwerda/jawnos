@@ -36,6 +36,11 @@ var travelAllMaps = [];      // the last atlas answer, so a checkbox redraws wit
 var travelHiddenMaps = [];   // measured maps the person has switched off
 var travelAnchorMap;         // the map distances are measured from (the remembered current_map)
 var travelViewSave;          // debounce for remembering the pan and zoom
+var travelBasePoints = [];   // the places and fixes the last render produced
+var travelPlaceGroups = [];
+var travelPlateList = [];    // home plates in the current view (lazy-loaded)
+var travelPlatesCache = {};
+var travelPlatesTimer;
 
 function travelViewPersist() {
 	if (!travelMap) { return; }
@@ -76,6 +81,11 @@ function travelMapEngine() {
 	travelMap.onChange(function() {
 		clearTimeout(travelViewSave);
 		travelViewSave = setTimeout(travelViewPersist, 700);
+	});
+	// home plates are fetched for the ground on screen, after the view settles
+	travelMap.onChange(function() {
+		clearTimeout(travelPlatesTimer);
+		travelPlatesTimer = setTimeout(travelPlatesLoad, 500);
 	});
 	// with the hat on, a pause in the pan asks for the empty ground on screen to
 	// be guessed (the server decides what is empty; a guess only ever shows where
@@ -598,6 +608,10 @@ function travelMapRender(response) {
 	var fixesByApp = {};
 	$.each(response['near'] || [], function(i, point) {
 		if (!point || !point['latitude'] || !point['longitude']) { return; }
+		// only an actual fix or place row; a home-plate record, a viewer's own
+		// bookkeeping row and the transient position are not marks on the map
+		var kind = point['type'] || '';
+		if (kind !== '' && kind !== 'app') { return; }
 		var lat = parseFloat(point['latitude']);
 		var lon = parseFloat(point['longitude']);
 		var colour = (point['settings'] && point['settings']['colour']) || undefined;
@@ -609,24 +623,44 @@ function travelMapRender(response) {
 		else {
 			points.push({ lat: lat, lon: lon, label: point['app'] || '', colour: colour });
 		}
-		// every fix in time order, so a run of them can be joined by a line
-		if (point['app']) {
-			(fixesByApp[point['app']] = fixesByApp[point['app']] || []).push({ lat: lat, lon: lon, t: parseFloat(point['timestamp']) || 0, colour: colour });
+		// every fix in time order, so a run of them can be joined by a line. A place
+		// record (a home plate, a viewer bookkeeping row) is not a fix, and a fix
+		// with no time cannot be put in order.
+		var stamp = parseFloat(point['timestamp']) || 0;
+		if (point['app'] && stamp) {
+			var fixKey = point['app'] + '|' + (point['signatorial'] || '');
+			(fixesByApp[fixKey] = fixesByApp[fixKey] || []).push({ lat: lat, lon: lon, t: stamp, colour: colour });
 		}
 	});
-	engine.setPoints(points.concat(jawnosMarkerGroups(places, 50, '#2f6f9f')));
+	travelBasePoints = points;
+	travelPlaceGroups = jawnosMarkerGroups(places, 50, '#2f6f9f');
+	travelPointsDraw();
 
 	// a line through each app's consecutive fixes: a run of fixes in a row is one
-	// track. A gap over an hour starts a fresh track, so a walk yesterday is not
-	// joined to a drive today.
+	// track. A gap over half an hour starts a fresh track, so yesterday's walk is
+	// not joined to today's drive, and a repeated point does not become a segment.
 	var lines = [];
 	$.each(fixesByApp, function(app, list) {
 		list.sort(function(a, b) { return a.t - b.t; });
 		var run = [];
-		var push = function() { if (run.length > 1) { lines.push({ colour: run[0].colour || '#a0503f', points: run }); } };
+		var lastT = 0;
+		var push = function() {
+			if (run.length < 2) { return; }
+			// a run that never leaves one spot is jitter, not a track: it would only
+			// paint a spoke from the place. Require the run to cover some ground.
+			var span = 0;
+			for (var i = 1; i < run.length; i++) {
+				if (typeof jawnosMarkerMetres === 'function') { span = Math.max(span, jawnosMarkerMetres(run[0], run[i])); }
+			}
+			if (span < 50) { return; }
+			lines.push({ colour: run[0].colour || '#a0503f', points: run });
+		};
 		$.each(list, function(i, fix) {
-			if (run.length && (fix.t - run[run.length - 1].t) > 3600000) { push(); run = []; }
+			var last = run.length ? run[run.length - 1] : null;
+			if (last && fix.lat === last.lat && fix.lon === last.lon) { lastT = fix.t; return; }
+			if (last && (fix.t - lastT) > 1800000) { push(); run = []; }
 			run.push({ lat: fix.lat, lon: fix.lon });
+			lastT = fix.t;
 		});
 		push();
 	});
@@ -648,7 +682,43 @@ function travelMapRender(response) {
 		else if ((response['all_maps'] || []).length) { engine.fitToMaps(); }
 		travelFramed = true;
 	}
+	travelPlatesLoad();
 	engine.draw();
+}
+
+// the home plates on screen sit above the places, with a house glyph
+function travelPointsDraw() {
+	if (!travelMap) { return; }
+	var plats = $.map(travelPlateList || [], function(p) {
+		var lat = +p.latitude, lon = +p.longitude;
+		if (!isFinite(lat) || !isFinite(lon)) { return null; }
+		return { lat: lat, lon: lon, app: p.app, name: p.name || p.app, colour: '#6f4f9f' };
+	});
+	var plates = jawnosMarkerGroups(plats, 12, '#6f4f9f');
+	$.each(plates, function(i, g) { g.home = 1; });
+	travelMap.setPoints(travelBasePoints.concat(travelPlaceGroups).concat(plates));
+}
+
+// fetched for the ground on screen, cached by the view, so panning into a place
+// only asks for the plates there
+function travelPlatesLoad() {
+	if (!travelMap) { return; }
+	var b = travelMap.viewBounds();
+	if (!b || !b.nw || !b.se) { return; }
+	var key = [b.nw.lat, b.nw.lon, b.se.lat, b.se.lon].map(function(v) { return (+v).toFixed(3); }).join(',');
+	if (travelPlatesCache[key]) { travelPlateList = travelPlatesCache[key]; travelPointsDraw(); return; }
+	$.ajax({
+		url: '/manager/home_plates',
+		type: 'GET',
+		data: { nw_lat: b.nw.lat, nw_lon: b.nw.lon, se_lat: b.se.lat, se_lon: b.se.lon },
+		success: function(r) {
+			var list = (r && r.plates) || [];
+			if (Object.keys(travelPlatesCache).length > 40) { travelPlatesCache = {}; }
+			travelPlatesCache[key] = list;
+			travelPlateList = list;
+			travelPointsDraw();
+		}
+	});
 }
 
 function travelViewer(data) {

@@ -34217,25 +34217,82 @@ sub travel_nearby_items {
 	return \@items;
 }
 
-# The apps a person may put a plate on: the ones the house knows and has not hidden.
+# The apps a person may put a plate on: the house's own app list, not every string
+# that ever appeared in a settings row. A display name is offered once.
 get '/manager/apps/search' => sub ($c) {
 	my $q = lc($c->param('q') || '');
-	my %seen;
+	my %seen_app;
 	my @apps;
-	foreach my $row ( @{&subs::db_query("select distinct app from appointments where app is not null and app != ''")->hashes} ) {
-		next if $seen{ $row->{'app'} }++;
-		push @apps, $row->{'app'};
+	foreach my $app ( keys %{ $gb::known_appts || {} } ) {
+		next unless length $app;
+		next if $seen_app{$app}++;
+		push @apps, $app;
 	}
-	foreach my $row ( @{&subs::db_query("select distinct app from settings where app is not null and app != '' and app != '__president'")->hashes} ) {
-		next if $seen{ $row->{'app'} }++;
+	my $rows = &subs::db_query("select distinct app from settings where setting in ('visible','pos','mab') and app is not null and app != '' and substr(app,1,2) <> '__'")->hashes;
+	foreach my $row ( @{$rows} ) {
+		next if $seen_app{ $row->{'app'} }++;
 		push @apps, $row->{'app'};
 	}
 	@apps = grep { !&subs::app_hidden_now($_) } @apps;
 	@apps = grep { !&subs::app_private_now($_) || &subs::private_reachable_now() } @apps;
-	@apps = sort { lc(&subs::format_name($a)) cmp lc(&subs::format_name($b)) } @apps;
 	@apps = grep { !length $q || index(lc($_), $q) >= 0 || index(lc(&subs::format_name($_)), $q) >= 0 } @apps;
-	@apps = @apps[0 .. 19] if scalar @apps > 20;
-	$c->render(json => { apps => [ map { { app => $_, name => &subs::format_name($_) } } @apps ] });
+	@apps = sort { lc(&subs::format_name($a)) cmp lc(&subs::format_name($b)) } @apps;
+	my %seen_name;
+	my @out;
+	foreach my $app ( @apps ) {
+		my $name = &subs::format_name($app);
+		next if $seen_name{ lc($name) }++;
+		push @out, { app => $app, name => $name };
+		last if scalar @out >= 20;
+	}
+	$c->render(json => { apps => \@out });
+};
+
+# Every home plate the map can see: the lazy home markers. A plate is a duty with
+# its own ground, else the app's base home_plate; hidden apps are left out.
+get '/manager/home_plates' => sub ($c) {
+	my @out;
+	my %covered;
+	my $rows = &subs::db_query("select app, value from settings where setting='home_plate_duties' and value is not null and value != '[]'")->hashes;
+	foreach my $row ( @{$rows} ) {
+		my $app = $row->{'app'} || next;
+		my $duties = eval { return decode_json $row->{'value'} } || [];
+		next unless ref $duties eq 'ARRAY';
+		my $base = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'home_plate' }) } || {};
+		foreach my $d ( @{$duties} ) {
+			my $lat = $d->{'latitude'} || $base->{'latitude'};
+			my $lon = $d->{'longitude'} || $base->{'longitude'};
+			next unless $lat && $lon;
+			$covered{$app} = 1;
+			push @out, {
+				app => $app, name => &subs::format_name($app),
+				latitude => 0 + $lat, longitude => 0 + $lon,
+				radius => 0 + ($d->{'distance'} || 0), action => $d->{'action'} || '',
+				uuid => $d->{'uuid'} || '', plate => 1
+			};
+		}
+	}
+	my $base_rows = &subs::db_query("select app, value from settings where setting='home_plate' and value is not null and value != ''")->hashes;
+	foreach my $row ( @{$base_rows} ) {
+		my $app = $row->{'app'} || next;
+		next if $covered{$app};
+		my $b = eval { return decode_json $row->{'value'} } || {};
+		next unless $b->{'latitude'} && $b->{'longitude'};
+		push @out, {
+			app => $app, name => &subs::format_name($app),
+			latitude => 0 + $b->{'latitude'}, longitude => 0 + $b->{'longitude'},
+			radius => 0, action => '', uuid => $b->{'uuid'} || '', plate => 1
+		};
+	}
+	@out = grep { !&subs::app_hidden_now($_->{'app'}) } @out;
+	my ($nw_lat, $nw_lon, $se_lat, $se_lon) = map { $c->param($_) } qw(nw_lat nw_lon se_lat se_lon);
+	if (defined $nw_lat && defined $nw_lon && defined $se_lat && defined $se_lon) {
+		my ($min_lat, $max_lat) = ($nw_lat < $se_lat) ? ($nw_lat, $se_lat) : ($se_lat, $nw_lat);
+		my ($min_lon, $max_lon) = ($nw_lon < $se_lon) ? ($nw_lon, $se_lon) : ($se_lon, $nw_lon);
+		@out = grep { $_->{'latitude'} >= $min_lat && $_->{'latitude'} <= $max_lat && $_->{'longitude'} >= $min_lon && $_->{'longitude'} <= $max_lon } @out;
+	}
+	@out = @out[0 .. 499] if scalar @out > 500;
+	$c->render(json => { plates => \@out });
 };
 
 # A plate set from the map: it joins the app's own home_plate_duties with its own
