@@ -27414,7 +27414,9 @@ get '/manager/share' => sub($c) {
 	my $type = $c->param('type');
 	my $returner;
 	if ($device eq 'mobile') {
-		$returner = &subs::device_run('share', qq{-a $type -d $src});
+		$returner = &subs::device_call('share.send', { type => $type, path => $src })
+			? 'shared'
+			: &subs::device_run('share', qq{-a $type -d $src});
 	}
 	$c->render('text' => $returner);
 };
@@ -31740,9 +31742,9 @@ post '/manager/folders/open_with' => sub($c) {
 		my $opener;
 		if ($ENV{'TERMUX_VERSION'} || -d '/data/data/com.termux') { $opener = &subs::device_cmd('open') }
 		elsif (-x '/usr/bin/xdg-open') { $opener = '/usr/bin/xdg-open' }
-		return unless $opener;
 		foreach my $path ( @paths ) {
-			system($opener, $path);
+			next if &subs::device_call('open.url', { path => $path });
+			system($opener, $path) if $opener;
 		}
 	}, { name => 'folders open with' });
 	$c->render(json => { status => 'ok', opened => scalar @paths });

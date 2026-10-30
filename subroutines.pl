@@ -3027,8 +3027,12 @@ sub say_it() {
 			my $wav = &subs::say_render_wav($text, $pick);
 			if ($wav) {
 				my $player = &subs::say_player_command();
+				# the app plays it natively on a phone; the termux player is the fallback
+				my $played = $device eq 'mobile'
+					? &subs::device_call('media.player', { action => 'play', path => $wav })
+					: 0;
 				# a headless server has no sink; a failed play is not our problem
-				`$player "$wav" 2>/dev/null`;
+				`$player "$wav" 2>/dev/null` unless $played;
 				unlink $wav;
 				return;
 			}

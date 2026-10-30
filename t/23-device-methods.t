@@ -30,6 +30,9 @@ my %known = map { $_ => 1 } qw(
 	speech.speak
 	telephony.dial
 	telephony.deviceinfo
+	media.player
+	share.send
+	open.url
 );
 
 my $root = "$FindBin::Bin/..";
