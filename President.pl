@@ -1315,6 +1315,15 @@ sub utility_functions() {
 					Mojo::IOLoop->remove($gb::timeouts->{$t}->{'loop'}) if $gb::timeouts->{$t}->{'loop'};
 				}
 				$gb::timeouts = $controls->{$signatorial};
+				# `lasted_run` belongs to this process, not to the stored config: it says
+				# when this runtime last actually executed a job. The controller copies
+				# only last_run/last_attempt/status back into the blob, so the stored
+				# value can sit for days. Adoption used to restore it verbatim, and the
+				# tunnels watchdog read a days-old marker as "the worker has been stuck
+				# for twelve intervals" on the first tick after every boot - resetting
+				# every tunnel right when the mesh needed them. Start at now; the
+				# watchdog then measures this process's own stall.
+				&subs::utility_adopt_runtime($gb::timeouts, &subs::rightNow());
 				$gb::utility_adopted = 1;
 				$gb::utility_running = 0;
 			}
@@ -1493,11 +1502,10 @@ sub utility_functions() {
 				# utility_runner is the schedule; this second gate only guards a call
 				# from elsewhere. Allow the runner's tick of slack, or a call landing a
 				# few milliseconds before the interval looked elapsed and skipped a slot.
-				if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} >= ($interval * 1000) - 5000) {
-					my $duty;
-					if ($now - $gb::timeouts->{'tunnels'}->{'lasted_run'} > ($interval * 1000 * 12)) {
-						$duty = 'restart';
-					}
+				if ($now - ($gb::timeouts->{'tunnels'}->{'lasted_run'} || 0) >= ($interval * 1000) - 5000) {
+					# An undefined marker is a fresh process, not a stall: a new install
+					# has never run this worker, and adoption just set it to now.
+					my $duty = &subs::tunnels_stall_duty($gb::timeouts->{'tunnels'}->{'lasted_run'}, $now, $interval);
 					my $network = &subs::network_interface_reporter();
 					my $addresses;
 					my $old_addresses = $gb::timeouts->{'tunnels'}->{'addresses'};
