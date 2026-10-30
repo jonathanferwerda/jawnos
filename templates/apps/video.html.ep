@@ -481,15 +481,20 @@
 						if (v.currentTime > vid.attr('loop_end')) {
 							v.currentTime = vid.attr('loop_start') || 0;
 						}
-						$('#<%= $miss %>_position').val(v.currentTime / v.duration * 100);
-						$('#<%= $id %>_time_display').text(numeral(v.currentTime).format('00:00:00'));
-						<% if ($source eq 'music') { %>
-						// the title is placed and wrapped by its own css now; sizing it here
-						// every tick made it either dwarf the toolbar or duck under the
-						// buttons, and it never wrapped
-						$('#<%= $id %>_full_title').text($('.playing').find('.full_title').text());
-						<% } %>
 					}
+					// The bar shows what the element is doing, not what a saved flag says.
+					// These used to sit inside the state == 1 test above, so a stale state
+					// (a resumed track, a play promise WebKit refused) froze the seek bar and
+					// the title while the sound played on normally. A paused track just
+					// holds its place.
+					$('#<%= $miss %>_position').val(v.duration ? v.currentTime / v.duration * 100 : 0);
+					$('#<%= $id %>_time_display').text(numeral(v.currentTime).format('00:00:00'));
+					<% if ($source eq 'music') { %>
+					// the title is placed and wrapped by its own css now; sizing it here
+					// every tick made it either dwarf the toolbar or duck under the
+					// buttons, and it never wrapped
+					$('#<%= $id %>_full_title').text($('.playing').find('.full_title').text());
+					<% } %>
 				}, 1000);
 			}
 			var <%= $miss %>Tools = { toolbarTimeout: 0, toolbarReset: 0, lastX: 0, lastY: 0 };
@@ -649,7 +654,7 @@
 					// playback on the click the browser ends the touch with
 					if (<%= $miss %>Touch.moved) { <%= $miss %>Touch.moved = false; return; }
 					var v = document.getElementById('<%= $id %>');
-					if (v.state == 0) {
+					if (v.paused) {
 						<% if ($source eq 'music') { %>if (typeof musicVolumeApply == 'function') { musicVolumeApply(); }<% } %>
 						v.play();
 						v.state = 1;
