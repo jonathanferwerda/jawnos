@@ -70,6 +70,19 @@
 	.cfg .cfg-acc > .cfg-card { border:0; background:transparent; padding:0; margin:0 0 6px; }
 	.cfg .cfg-acc-sub { border:0; border-top:1px solid var(--line); border-radius:0; background:transparent; padding:0; margin:10px 0 0; }
 	.cfg .cfg-acc-sub > summary { font-size:14px; padding:7px 0; }
+	/* API balance chart: a border seam above it, the two window buttons on the
+	   right, and one thin line per provider. The line wears the accent through
+	   currentColor, so a scheme or a dark cut repaints it with everything else. */
+	.balance_chart { border-top:1px solid var(--line); margin-top:12px; padding-top:10px; }
+	.balance_chart_head { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-bottom:8px; }
+	.balance_windows { display:flex; gap:6px; }
+	.cfg .balance_window { padding:3px 9px; font-size:12px; }
+	.cfg .balance_window[status="active"] { background:var(--accent, var(--line)); border-color:var(--accent-line, var(--accent, var(--line))); color:var(--accent-ink, #fff); font-weight:bold; }
+	.balance_series { margin:0 0 12px; }
+	.balance_series_head { display:flex; gap:8px; justify-content:space-between; font-size:13px; margin-bottom:2px; }
+	.balance_now { opacity:.8; font-variant-numeric:tabular-nums; }
+	.balance_spark { display:block; width:100%; height:80px; color:var(--accent, currentColor); }
+	.balance_rate { margin:4px 0 0; font-variant-numeric:tabular-nums; }
 	@media (prefers-reduced-motion: reduce) { .cfg .cfg-acc > summary::before { transition:none; } }
 	@media (max-width:560px) {
 		.cfg-row { flex-direction:column; align-items:stretch; }

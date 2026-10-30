@@ -31005,9 +31005,177 @@ sub ai_balance_refresh {
 			note      => $m ? $m->{'note'} : 'no balance API',
 		};
 	}
-	my $report = { at => &subs::rightNow(), rows => \@rows };
-	&subs::cache_set({ app => '__president', context => 'ai_balance', warranty => '-1d' }, $report);
+	# Keep a rolling week of what each account held. The job reads every ten
+	# minutes, so a week is about a thousand points per provider; a failed read
+	# is skipped rather than recorded as zero, and a provider that leaves the
+	# settings loses its line. The warranty outlives the window so the hair
+	# cutter does not take the row (and the week) out from under it.
+	my $now = &subs::rightNow();
+	my $previous = &subs::cache_get({ app => '__president', context => 'ai_balance' });
+	my $history = (ref $previous eq 'HASH' && ref $previous->{'history'} eq 'HASH') ? $previous->{'history'} : {};
+	my $floor = $now - 7 * 24 * 60 * 60 * 1000;
+	my %listed = map { ($_->{'provider'} || '') => 1 } @rows;
+	foreach my $provider ( keys %{$history} ) {
+		delete $history->{$provider} unless $listed{$provider};
+	}
+	foreach my $row ( @rows ) {
+		my $series = $history->{ $row->{'provider'} };
+		$series = $history->{ $row->{'provider'} } = [] unless ref $series eq 'ARRAY';
+		@{$series} = grep { ref $_ eq 'HASH' && defined $_->{'t'} && ($_->{'t'} || 0) >= $floor } @{$series};
+		next unless defined $row->{'available'} && $row->{'available'} =~ /^-?\d+(?:\.\d+)?$/;
+		my $last = $series->[-1];
+		if ($last && $now - ($last->{'t'} || 0) < 300000) {
+			# a manual or second read inside the job's own interval replaces the
+			# point instead of drawing a second one at the same minute
+			$last->{'v'} = $row->{'available'} + 0;
+			$last->{'c'} = $row->{'currency'} || $last->{'c'};
+		}
+		else {
+			push @{$series}, { t => $now, v => $row->{'available'} + 0, c => ($row->{'currency'} || '') };
+		}
+	}
+	my $report = { at => $now, rows => \@rows, history => $history };
+	&subs::cache_set({ app => '__president', context => 'ai_balance', warranty => '-8d' }, $report);
 	return $report;
+}
+
+# One point of the balance history, at a known time. Pure so a test can pin
+# both the series and the clock. The drawn points carry a synthetic point at
+# the window's left edge, interpolated from the last sample before it, so a
+# 24h line starts where the window does instead of at its first sample.
+# `change` is positive when the balance fell; `per_day` is the pace in money.
+sub ai_balance_window {
+	my ($points, $window, $now) = @_;
+	$window = '7d' if defined $window && $window eq '7d';
+	$window = '24h' unless defined $window;
+	$now = &subs::rightNow() unless defined $now;
+	my $span = $window eq '7d' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+	my $start = $now - $span;
+	my @all = sort { $a->{'t'} <=> $b->{'t'} }
+		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} && $_->{'t'} <= $now }
+		@{ ref $points eq 'ARRAY' ? $points : [] };
+	my @in = grep { $_->{'t'} >= $start } @all;
+	my $window_data = { window => $window, span => $span, start => $start, now => $now, points => [] };
+	return $window_data unless @in;
+	my ($anchor) = reverse grep { $_->{'t'} < $start } @all;
+	my @draw = @in;
+	if ($anchor && $in[0]->{'t'} > $start) {
+		my $dt = $in[0]->{'t'} - $anchor->{'t'};
+		my $v = $anchor->{'v'};
+		$v += ($in[0]->{'v'} - $anchor->{'v'}) * (($start - $anchor->{'t'}) / $dt) if $dt > 0;
+		unshift @draw, { t => $start, v => $v };
+	}
+	my $first = $draw[0];
+	my $last = $draw[-1];
+	my $hours = ($last->{'t'} - $first->{'t'}) / 3600000;
+	my $change = $first->{'v'} - $last->{'v'};
+	$window_data->{'points'} = \@draw;
+	$window_data->{'first'} = $first;
+	$window_data->{'last'} = $last;
+	$window_data->{'hours'} = $hours;
+	$window_data->{'change'} = $change;
+	$window_data->{'per_day'} = $hours > 0 ? $change / $hours * 24 : undef;
+	return $window_data;
+}
+
+# A line for one provider over one window. currentColor means it follows the
+# theme, and a flat balance gets a little headroom so it does not sit on the
+# floor. Only the caller's numbers reach the markup.
+sub ai_balance_sparkline {
+	my ($points, $start, $now, $width, $height) = @_;
+	$width ||= 320;
+	$height ||= 80;
+	my @p = grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} } @{ ref $points eq 'ARRAY' ? $points : [] };
+	return '' unless @p;
+	my $span = ($now // 0) - ($start // 0);
+	$span = 1 if $span <= 0;
+	my ($min, $max) = ($p[0]->{'v'}, $p[0]->{'v'});
+	foreach my $pt ( @p ) {
+		$min = $pt->{'v'} if $pt->{'v'} < $min;
+		$max = $pt->{'v'} if $pt->{'v'} > $max;
+	}
+	my $pad = ($max - $min) * 0.12;
+	$pad = 0.01 unless $pad > 0;
+	$min -= $pad;
+	$max += $pad;
+	my $top = 6;
+	my $bottom = $height - 6;
+	my $range = $max - $min;
+	$range = 1 unless $range > 0;
+	# A few pixels of inset keep the end dot and its stroke off the edge.
+	my $inset = 3;
+	my $plot = $width - 2 * $inset;
+	my @xy;
+	foreach my $pt ( @p ) {
+		my $x = $inset + (($pt->{'t'} - $start) / $span) * $plot;
+		$x = $inset if $x < $inset;
+		$x = $width - $inset if $x > $width - $inset;
+		my $y = $bottom - (($pt->{'v'} - $min) / $range) * ($bottom - $top);
+		push @xy, sprintf('%.1f,%.1f', $x, $y);
+	}
+	my ($fx) = split /,/, $xy[0];
+	my ($lx, $ly) = split /,/, $xy[-1];
+	my $area = 'M ' . join(' L ', @xy) . sprintf(' L %s,%.1f L %s,%.1f Z', $lx, $bottom, $fx, $bottom);
+	my $grid = '';
+	foreach my $f ( 0.25, 0.5, 0.75 ) {
+		my $y = $top + ($bottom - $top) * $f;
+		$grid .= sprintf('<line x1="0" y1="%.1f" x2="%d" y2="%.1f" stroke="currentColor" stroke-opacity="0.10" stroke-width="1" vector-effect="non-scaling-stroke"/>', $y, $width, $y);
+	}
+	return '<svg class="balance_spark" viewBox="0 0 ' . $width . ' ' . $height . '" preserveAspectRatio="none" aria-hidden="true">'
+		. $grid
+		. '<path d="' . $area . '" fill="currentColor" fill-opacity="0.12" stroke="none"/>'
+		. '<polyline points="' . join(' ', @xy) . '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'
+		. '<circle cx="' . $lx . '" cy="' . $ly . '" r="2.2" fill="currentColor"/>'
+		. '</svg>';
+}
+
+# The Sys panel's chart, assembled from the cached read. No provider call and no
+# database write happen here: the route has already loaded the same report.
+sub ai_balance_chart {
+	my ($report, $now) = @_;
+	$report = &ai_balance_report() unless ref $report eq 'HASH';
+	$now = &subs::rightNow() unless defined $now;
+	my $history = (ref $report->{'history'} eq 'HASH') ? $report->{'history'} : {};
+	my @series;
+	foreach my $row ( @{ $report->{'rows'} || [] } ) {
+		my $provider = $row->{'provider'} || '';
+		my $points = $history->{$provider};
+		next unless ref $points eq 'ARRAY' && @{$points};
+		my %windows;
+		foreach my $window ( qw/24h 7d/ ) {
+			$windows{$window} = &ai_balance_window($points, $window, $now);
+		}
+		my $last = $points->[-1];
+		push @series, {
+			provider  => $provider,
+			label     => ($row->{'label'} || $provider),
+			currency  => ($row->{'currency'} || $last->{'c'} || 'USD'),
+			available => $row->{'available'},
+			windows   => \%windows,
+		};
+	}
+	return { at => ($report->{'at'} || 0), series => \@series };
+}
+
+# A span in the units that read best: minutes under an hour, hours under two
+# days, then days. The chart's first hours are a short line, and "3 h" says
+# more than "0 d".
+sub ai_balance_span_label {
+	my ($hours) = @_;
+	$hours = 0 unless defined $hours && $hours > 0;
+	return sprintf('%.0f min', $hours * 60) if $hours < 1;
+	return sprintf('%.0f h', $hours) if $hours < 48;
+	return sprintf('%.0f d', $hours / 24);
+}
+
+# Money in a chart label: two decimals are right for a balance, but a slow
+# spend is often cents a day and would read as 0.00, so small values keep four.
+sub ai_balance_money {
+	my ($value) = @_;
+	return '' unless defined $value;
+	my $abs = abs($value);
+	return sprintf('%.4f', $value) if $abs > 0 && $abs < 0.1;
+	return sprintf('%.2f', $value);
 }
 
 # Auto-approve, kept on a leash: at most 8 auto-applies a day (each one is a

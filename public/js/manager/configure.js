@@ -2296,6 +2296,7 @@ $(document).on('click', '#system_setting_lister', function() {
 		data: { local_storage: local_storage },
 		success: function(response) {
 			c.html(response);
+			if (typeof jawnosBalanceWindowRestore === 'function') { jawnosBalanceWindowRestore(c[0]); }
 			if (jawnosConfigureShow('system_setting_lister', c)) {
 				b.text(text);
 				b.attr('status', 'active');
@@ -2306,6 +2307,35 @@ $(document).on('click', '#system_setting_lister', function() {
 			c.html('<div class="cfg-note">the Sys panel did not load (' + e.status + '); press Sys to try again</div>').show();
 		}
 	});
+});
+
+// The API balance chart keeps two plots in the panel: last 24 hours and last 7
+// days. Both are drawn from the same background samples, so switching is a
+// show/hide and never another provider read. The choice is kept per browser so
+// reopening Sys returns to the window last used.
+function jawnosBalanceWindowPick(scope, win) {
+	$(scope).find('.balance_window').removeAttr('status');
+	$(scope).find('.balance_window[window="' + win + '"]').attr('status', 'active');
+	$(scope).find('.balance_plot').each(function () {
+		$(this).css('display', ($(this).attr('window') || '') === win ? '' : 'none');
+	});
+}
+function jawnosBalanceWindowRestore(root) {
+	var win = '24h';
+	try { win = localStorage.getItem('jawnos:balance_window') || '24h'; } catch (e) {}
+	var scope = (root && root.querySelectorAll) ? root : document;
+	var charts = scope.querySelectorAll ? scope.querySelectorAll('.balance_chart') : [];
+	for (var i = 0; i < charts.length; i++) {
+		if (!charts[i].querySelector('.balance_window[window="' + win + '"]')) { win = '24h'; }
+		jawnosBalanceWindowPick(charts[i], win);
+	}
+}
+$(document).on('click', '.balance_window', function() {
+	var button = $(this);
+	var chart = button.closest('.balance_chart');
+	var win = button.attr('window') || '24h';
+	jawnosBalanceWindowPick(chart, win);
+	try { localStorage.setItem('jawnos:balance_window', win); } catch (e) {}
 });
 
 $(document).on('click', '.localstorage_delete', function() {
