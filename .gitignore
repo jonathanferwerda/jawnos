@@ -61,3 +61,6 @@ database/.icons/
 # the machine's own signatorial, mirrored beside the database so a restored
 # database (or a run with the wrong HOME) cannot change this machine's identity
 database/.jawnos_signatorial_id
+
+# generated: chunks of Manager.pl for the xerj index (see scripts/xerj_manager_mirror.pl)
+xerj-mirror/
