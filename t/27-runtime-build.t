@@ -28,6 +28,34 @@ sub write_file_at {
 	chmod($mode, $path) if $mode;
 }
 
+# A small but real 64-bit ELF shared object whose DT_NEEDED names @needed.
+# The diet finds libraries by reading this, not by matching names, so the
+# fixture has to be a real ELF: a text file proves nothing about the parser.
+sub elf_so {
+	my (@needed) = @_;
+	my $str = "\0";
+	my @off;
+	foreach my $n (@needed) { push @off, length $str; $str .= "$n\0" }
+	my $dyn = join('', map { pack('q<Q<', 1, $_) } @off) . pack('q<Q<', 0, 0);
+	my $dynstr_off = 64;
+	my $dyn_off = $dynstr_off + length $str;
+	my $shoff = $dyn_off + length $dyn;
+	my $ehdr = "\x7fELF" . pack('C4', 2, 1, 1, 0) . ("\0" x 8)
+		. pack('v', 3) . pack('v', 183) . pack('V', 1)     # ET_DYN, AArch64, v1
+		. pack('Q<', 0) . pack('Q<', 0) . pack('Q<', $shoff)  # entry, phoff, shoff
+		. pack('V', 0) . pack('v', 64) . pack('v', 56) . pack('v', 0)
+		. pack('v', 64) . pack('v', 3) . pack('v', 2);         # shensize, shnum, shstrndx
+	die 'bad ehdr' unless length($ehdr) == 64;
+	my $shdr = sub {
+		my ($type, $offset, $size, $link) = @_;
+		pack('V V Q< Q< Q< Q< V V Q< Q<', 0, $type, 0, 0, $offset, $size, $link, 0, 1, 0);
+	};
+	return $ehdr . $str . $dyn
+		. ("\0" x 64)                                    # SHT_NULL
+		. $shdr->(3, $dynstr_off, length $str, 0)         # SHT_STRTAB
+		. $shdr->(6, $dyn_off, length $dyn, 1);           # SHT_DYNAMIC -> strtab 1
+}
+
 # A prefix shaped like Termux's, carrying one of each interesting case: a tool
 # that ships, a tool that must never ship (pkg), a file outside the diet, a
 # pruned pod, and the two things a runtime is useless without.
@@ -40,7 +68,9 @@ write_file_at("$src/lib/perl5/5.42.0/aarch64-android/CORE/libperl.so", "ELF\n", 
 write_file_at("$src/lib/perl5/5.42.0/Foo.pm", "package Foo; 1;\n", 0644);
 write_file_at("$src/lib/perl5/5.42.0/Foo.pod", "=head1 Foo\n", 0644);
 write_file_at("$src/lib/perl5/pod/perlfunc.pod", "=head1 perlfunc\n", 0644);
-write_file_at("$src/lib/libssl.so", "ELF\n", 0644);
+write_file_at("$src/lib/perl5/5.42.0/auto/Foo/Foo.so", elf_so('libssl.so.3'), 0755);
+write_file_at("$src/lib/libssl.so.3", elf_so(), 0644);
+write_file_at("$src/lib/libLLVM.so", elf_so(), 0644);
 write_file_at("$src/share/terminfo/x/xterm", "term\n", 0644);
 
 my $listing = qx{"$^X" "$build" --from "$src" --list 2>&1};
@@ -55,7 +85,8 @@ ok($listed{'lib/perl5/5.42.0/aarch64-android/CORE/libperl.so'}, 'the core librar
 ok($listed{'lib/perl5/5.42.0/Foo.pm'}, 'a module ships');
 ok(!$listed{'lib/perl5/5.42.0/Foo.pod'}, 'a module pod is pruned');
 ok(!$listed{'lib/perl5/pod/perlfunc.pod'}, 'perls own pods are pruned');
-ok($listed{'lib/libssl.so'}, 'a shared library the XS modules link ships');
+ok($listed{'lib/libssl.so.3'}, 'a library an XS module names in its DT_NEEDED ships');
+ok(!$listed{'lib/libLLVM.so'}, 'and a heavy library nothing in the diet names does not');
 ok($listed{'share/terminfo/x/xterm'}, 'terminfo ships');
 
 # An incomplete prefix is refused, named, and non-zero - the runtime is not
@@ -65,6 +96,17 @@ write_file_at("$half/bin/perl", "#!/bin/sh\n", 0755);
 my $refused = qx{"$^X" "$build" --from "$half" --dry-run 2>&1};
 isnt($? >> 8, 0, 'a prefix without CORE/libperl.so is refused');
 like($refused, qr/bin\/perl: yes, CORE\/libperl\.so: NO/, 'and it says which half is missing');
+
+# A library a shipped module names but the prefix does not carry cannot appear
+# on the device later: refuse the build and name it, rather than ship a runtime
+# that dies with "library not found" on first use.
+my $gap = tempdir(CLEANUP => 1);
+write_file_at("$gap/bin/perl", "#!/bin/sh\n", 0755);
+write_file_at("$gap/lib/perl5/5.42.0/aarch64-android/CORE/libperl.so", "ELF\n", 0755);
+write_file_at("$gap/lib/perl5/5.42.0/auto/Bar/Bar.so", elf_so('libgone.so.2'), 0755);
+my $gapped = qx{"$^X" "$build" --from "$gap" --dry-run 2>&1};
+isnt($? >> 8, 0, 'a library nothing in the prefix provides is refused');
+like($gapped, qr/missing libraries: libgone\.so\.2/, 'and the refusal names it');
 
 # --- the archive itself -----------------------------------------------------
 my $out = tempdir(CLEANUP => 1) . '/rt.zip';
@@ -77,6 +119,7 @@ open(my $mf, '<', "$out.json") or die $!;
 my $manifest = <$mf>;
 close $mf;
 like($manifest, qr/"product":"runtime"/, 'the manifest names the runtime product');
+like($manifest, qr/"abi":"aarch64"/, 'the manifest carries the ABI');
 like($manifest, qr/"sha256":"[0-9a-f]{64}"/, 'the manifest pins a sha256');
 
 # Read it back the way the app must: the central directory, whose external
