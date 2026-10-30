@@ -17528,6 +17528,28 @@ sub navigation_plate_certain_exit {
 	return $measured > 3 * $radius ? 1 : 0;
 }
 
+# The details bar offers autostop only where navigation_automation can act on it:
+# a duty needs a radius and an action, and a place for the plate to measure from -
+# its own coordinates, or the app's base plate, or the house's. A duty with no
+# radius, or with its action left on none, never moves a session, so a switch
+# built for it would promise something no fix ever acts on.
+sub home_plate_stop_armed() {
+	my $data = shift || {};
+	my $duties = $data->{'duties'};
+	return 0 unless ref $duties eq 'ARRAY';
+	my $plate = (ref $data->{'plate'} eq 'HASH') ? $data->{'plate'} : {};
+	my $house = (ref $data->{'house'} eq 'HASH') ? $data->{'house'} : {};
+	my $origin = ($plate->{'latitude'} && $plate->{'longitude'}) || ($house->{'latitude'} && $house->{'longitude'});
+	foreach my $duty ( @{$duties} ) {
+		next unless ref $duty eq 'HASH';
+		next unless (0 + ($duty->{'distance'} || 0)) > 0;
+		next unless (($duty->{'action'} || 'none') ne 'none');
+		next unless $origin || ($duty->{'latitude'} && $duty->{'longitude'});
+		return 1;
+	}
+	return 0;
+}
+
 sub navigation_automation() {
 	my ($returner, $provider) = @_;
 	$returner->{'signatorial'} = &subs::signatorial_designer() unless $returner->{'signatorial'};
