@@ -12357,17 +12357,19 @@ sub music_transmitter {
 }
 
 # A remembered music queue (see music_queue_remember in Music.pl) is replayed
-# into a reopened window only when it still describes the same situation: the
-# same library, because a peer's paths mean nothing on this machine, and the
-# same grant, because a queue assembled in an unlocked window can name sealed
-# tracks. Pure, so those rules are testable without a database.
+# into a reopened window only when it still describes the same library: a peer's
+# paths mean nothing on this machine. What a window may *list* is a different
+# question - sealed and private tracks are filtered out of the queue by the
+# window it is being replayed into (music_queue_file_visible), the same rule the
+# folder walk applies, so a list assembled while unlocked still comes back in a
+# locked window instead of being thrown away. Pure, so the rule is testable
+# without a database.
 sub music_queue_applies {
-	my ($queue, $library, $unlocked) = @_;
+	my ($queue, $library) = @_;
 	return 0 unless $queue && ref $queue eq 'HASH' && ref $queue->{'files'} eq 'ARRAY';
 	return 0 unless scalar @{ $queue->{'files'} };
 	$library = 'local' unless defined $library && length $library;
 	return 0 unless ($queue->{'library'} || 'local') eq $library;
-	return 0 unless ($queue->{'permissive'} ? 1 : 0) == ($unlocked ? 1 : 0);
 	return 1;
 }
 
