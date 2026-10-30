@@ -27029,6 +27029,7 @@ get '/manager/appointment_details' => sub($c) {
 					distance => sprintf("%.4f", $distance),
 					latitude => $continent->{'latitude'},
 					longitude => $continent->{'longitude'},
+					signatorial => $continent->{'signatorial'},
 					uuid => $continent->{'uuid'},
 					timestamp => $continent->{'timestamp'},
 					increment_speed => sprintf("%.2f", $speed),

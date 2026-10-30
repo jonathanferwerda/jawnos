@@ -624,11 +624,12 @@ function travelMapRender(response) {
 			points.push({ lat: lat, lon: lon, label: point['app'] || '', colour: colour });
 		}
 		// every fix that names an appointment, in time order: a track is a session,
-		// not an app's whole history. A fix that belongs to no appointment is left
-		// out of the lines (it is still a dot on the map).
+		// not an app's whole history. Two devices can file fixes under the same
+		// appointment (one stays home while the other drives), so the device is part
+		// of the key too — otherwise their points interleave into zigzags.
 		var stamp = parseFloat(point['timestamp']) || 0;
 		if (point['app'] && point['appointment_uuid'] && stamp) {
-			var fixKey = point['appointment_uuid'];
+			var fixKey = point['appointment_uuid'] + '|' + (point['signatorial'] || '');
 			(fixesByApp[fixKey] = fixesByApp[fixKey] || []).push({ lat: lat, lon: lon, t: stamp, colour: colour });
 		}
 	});

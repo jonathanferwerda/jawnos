@@ -3203,11 +3203,30 @@ function appointmentDistMap(panel, provider) {
 	var fixPoints = [];
 	fixes.forEach(function(p) {
 		if (!p || !p.latitude || !p.longitude) { return; }
-		fixPoints.push({ lat: +p.latitude, lon: +p.longitude, t: +p.timestamp || 0, colour: '#a0503f' });
+		fixPoints.push({ lat: +p.latitude, lon: +p.longitude, t: +p.timestamp || 0, dev: p.signatorial || '', colour: '#a0503f' });
 	});
-	fixPoints.sort(function(a, b) { return a.t - b.t; });
-	// a line through the run of fixes, the same track Travel draws
-	engine.setLines(fixPoints.length > 1 ? [{ colour: '#a0503f', points: fixPoints.map(function(p) { return { lat: p.lat, lon: p.lon }; }) }] : []);
+	// two devices can file fixes under one appointment (one at home, one driving),
+	// so each device gets its own line; their points would otherwise zigzag
+	var byDev = {};
+	fixPoints.forEach(function(p) { (byDev[p.dev] = byDev[p.dev] || []).push(p); });
+	var lines = [];
+	$.each(byDev, function(dev, list) {
+		list.sort(function(a, b) { return a.t - b.t; });
+		var run = [];
+		$.each(list, function(i, p) {
+			var last = run.length ? run[run.length - 1] : null;
+			if (last && p.lat === last.lat && p.lon === last.lon) { return; }
+			run.push(p);
+		});
+		if (run.length < 2) { return; }
+		var span = 0;
+		for (var i = 1; i < run.length; i++) {
+			if (typeof jawnosMarkerMetres === 'function') { span = Math.max(span, jawnosMarkerMetres(run[0], run[i])); }
+		}
+		if (span < 50) { return; }
+		lines.push({ colour: '#a0503f', points: run.map(function(p) { return { lat: p.lat, lon: p.lon }; }) });
+	});
+	engine.setLines(lines);
 	fixPoints.forEach(function(p) { points.push({ lat: p.lat, lon: p.lon, colour: '#a0503f' }); });
 	if (home.latitude && home.longitude) {
 		points.push({ lat: home.latitude, lon: home.longitude, colour: '#6f4f9f', label: jawnosT('Home') });
