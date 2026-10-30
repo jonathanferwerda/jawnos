@@ -2,8 +2,8 @@
 
 **Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 is
 running with a native-first rule**: battery, notification, toast, clipboard,
-volume, torch, wake lock, contacts, SMS, call log, location, speech and
-telephony are answered by the app itself (build 1184 / 0.118.185) and proven on the tablet. The other commands, the single-app fold-in
+volume, torch, wake lock, contacts, SMS, call log, location, speech, telephony,
+media, share and open are answered by the app itself (build 1187 / 0.118.188) and proven on the tablet. The other commands, the single-app fold-in
 and the `com.jawnos` identity are ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
@@ -152,7 +152,7 @@ shape M1 and M2 take.
 
 ### M1 — Device bridge (in progress: 9 of 24 commands native)
 
-- **Landed (app 1184 / 0.118.185):** `DeviceService` in the app
+- **Landed (app 1187 / 0.118.188):** `DeviceService` in the app
   (`com.termux.app`): loopback `127.0.0.1:46000`, newline-delimited JSON, a
   request id per call, one long-lived connection, and a token the app writes to
   `$HOME/.jawn/device.token` (mode 600; the app and Termux share one uid). It
@@ -204,6 +204,11 @@ shape M1 and M2 take.
   - `telephony.dial` — `Intent.ACTION_CALL`; a `dry_run` only resolves a handler.
   - `telephony.deviceinfo` — `TelephonyManager` (phone type, SIM state, network
     type).
+  - `media.player` — `MediaPlayer`, one clip at a time (jawn's Piper WAV and
+    notification sounds), play/stop.
+  - `share.send` — `ACTION_SEND` through the existing FileProvider, with text
+    and/or a file; accepts termux-share's mime-as-action shape.
+  - `open.url` — `ACTION_VIEW` for a URL or a FileProvider file path.
   - Every flag (`silent`, `ongoing`, `dry_run`, `on`, `flush`) is read through a
     tolerant reader: Perl sends `1`/`0`, and `JSONObject.optBoolean` only reads
     a real JSON boolean.
@@ -229,10 +234,12 @@ shape M1 and M2 take.
   old — the caller's age check discards it). The silent notification was
   verified on `jawn_notifications_silent` (importance 2, no sound). The flag
   bug that read `1` as false was live on the tablet for one build; it made
-  "silent" notifications noisy until 0.118.185.
+  "silent" notifications noisy until 0.118.185. Build 1187 played and stopped
+  `ding.mp3` (4.5 s) through `MediaPlayer`, shared a file (`shared=1`) and
+  opened the manager URL (Chrome, `opened=1`).
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** the other 7 commands, with the native API each one should use
+- **Remaining:** the other 4 commands, with the native API each one should use
   (below), folding the API app in as each moves. The fallback and the ledger
   entry go in the same commit that proves a command.
 
@@ -330,14 +337,20 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | `fingerprint` | `BiometricPrompt` | needs UI: a request/response pair over the bridge |
 | `volume` | `AudioManager` | done |
 | `torch` | `CameraManager.setTorchMode` | done; the tablet has no flash, so a phone still proves it |
-| `media-player` | `MediaPlayer` / `ExoPlayer` | no permission |
-| `share` | `Intent.ACTION_SEND` | no permission |
-| `open` | `Intent.ACTION_VIEW` | no permission |
+| `media-player` | `MediaPlayer` / `ExoPlayer` | done |
+| `share` | `Intent.ACTION_SEND` | done; FileProvider alias note below |
+| `open` | `Intent.ACTION_VIEW` | done |
 | `contact-list` | `ContactsContract` | done |
 
 What stays native-only and has no termux equivalent today: notification actions
 and progress, a large icon from any file, grouped notifications, a torch that
 reports its state, and TTS with per-utterance voice control.
+
+Two device quirks found while migrating share/open: `/data/data` and
+`/data/user/0` are bind-mounted aliases and `getCanonicalPath` can keep the
+tree's `/data/data` spelling, so the FileProvider names that root explicitly;
+and `Intent.createChooser` needs `FLAG_ACTIVITY_NEW_TASK` on the chooser itself
+when a service starts it.
 
 ## Dependency ledger
 

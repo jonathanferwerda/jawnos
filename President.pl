@@ -139,7 +139,8 @@ if ($device eq 'mobile') {
 if ($config->{'open_browser'} eq 'yes') {
 	if ($device eq 'mobile') {
 		threads->create(sub() { 
-			&subs::device_run('open', "https://127.0.0.1:$random_number/manager &");
+			&subs::device_call('open.url', { url => "https://127.0.0.1:$random_number/manager" })
+				or &subs::device_run('open', "https://127.0.0.1:$random_number/manager &");
 		});
 	}
 	elsif ($device eq 'computer') {
