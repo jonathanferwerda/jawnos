@@ -33,6 +33,8 @@ my %known = map { $_ => 1 } qw(
 	media.player
 	share.send
 	open.url
+	notification.list
+	media.record
 );
 
 my $root = "$FindBin::Bin/..";

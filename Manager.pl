@@ -166,7 +166,8 @@ sub record_audio($data) {
 
 	if ($device eq 'mobile') {
 		&subs::subprocessor(sub {
-			&subs::device_run('microphone-record', qq{-l 0 -e mp3 -f $filename});
+			&subs::device_call('media.record', { action => 'start', path => $filename })
+				or &subs::device_run('microphone-record', qq{-l 0 -e mp3 -f $filename});
 		}, { name => "Audio file converter" });
 	}
 	elsif ($device eq 'computer') {
@@ -231,7 +232,8 @@ sub record_audio_stop($data) {
 	my $filename;
 
 	if ($device eq 'mobile') {
-		&subs::device_run('microphone-record', '-q');
+		&subs::device_call('media.record', { action => 'stop' })
+			or &subs::device_run('microphone-record', '-q');
 	}
 	elsif ($device eq 'computer') {
 		`pkill rec`;
@@ -26567,8 +26569,10 @@ sub notification_grabber($data) {
 	my $q = &subs::db_query('select * from notifications order by timestamp DESC LIMIT 100');
 	my $more_notifications = $q->hashes;
 	if ($device eq 'mobile') {
-		my $nl = &subs::device_run('notification-list');
-		my $notifications = decode_json($nl);
+		my $bridge_nl = &subs::device_call('notification.list');
+		my $notifications = ($bridge_nl && ref $bridge_nl->{'notifications'} eq 'ARRAY')
+			? $bridge_nl->{'notifications'}
+			: decode_json(&subs::device_run('notification-list') || '[]');
 		my @fresh;
 		foreach my $n ( @{$notifications} ) {
 			if ($n->{'title'} && !grep { $_->{'id'} eq $n->{'id'} } @{$more_notifications}) {
