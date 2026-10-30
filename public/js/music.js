@@ -2048,6 +2048,9 @@ $(document).on('click touchend', '.close_button[app="music"]', function() {
 	document.querySelectorAll('[data-jawnos-seek-preview]').forEach(function(n) { n.remove(); });
 });
 $(window).on('pagehide', function(e) {
+	// last chance to remember the track and where it was; best effort, since the
+	// socket may already be going, but the once-a-second save covers the rest
+	try { playerCacheSaver(undefined, true); } catch (err) {}
 	musicKeepalive(false);
 	// a real unload/reload releases the context and its Pulse stream; a page
 	// parked in the back/forward cache (a phone putting the app away) keeps it,
@@ -2300,10 +2303,14 @@ async function musicInit(method) {
 	musicVideoLoad();
 	musicVideoMachinesLoad();
 }
-function playerCacheSaver(type) {
+function playerCacheSaver(type, force) {
 	var timestamp = Date.now();
 	var jpd;
-	if (timestamp - tree.lastCache >= 5000) {
+	// A track change, a pause or a page going away must not wait for the five
+	// second throttle: closing the window soon after picking a track used to come
+	// back to the previous track, at its beginning, because that was the last
+	// thing written.
+	if (force || tree.cache_dirty || timestamp - tree.lastCache >= 5000) {
 		var unlocked = 0;
 		if ($('#music').attr('unlock')) { unlocked = 1; }
 		var playerData = { 
@@ -2324,7 +2331,7 @@ function playerCacheSaver(type) {
 			visualization: musicVisual.mode,
 			normalize: music_normalize,
 			method: 'playerCache',
-			subtitle_mode: tree.sound.textTracks[0].mode
+			subtitle_mode: (tree.sound.textTracks && tree.sound.textTracks[0]) ? tree.sound.textTracks[0].mode : 'hidden'
 		};
 		jpd = JSON.stringify(playerData);
 
@@ -2338,6 +2345,7 @@ function playerCacheSaver(type) {
 		}
 		$('#music_player_data').text(jpd);
 		tree.lastCache = timestamp;
+		tree.cache_dirty = false;
 	}
 	return jpd;
 }
@@ -2573,6 +2581,9 @@ function mediaMaker(data) {
 				tree.sound.playbackRate = 1;
 				tree.sound.currentTime = time || 0;
 				tree.sound.queued = 0;
+				// a new track, so the saved position must be rewritten at once rather
+				// than up to five seconds later
+				tree.cache_dirty = true;
 				tree.sound.sync_cursor = null;
 				tree.sound.sync_wall = 0;
 				musicVideoEnhanceApply();
@@ -2769,6 +2780,8 @@ function mediaMaker(data) {
 					// simply holds its place: currentTime does not move, so the bar redraws
 					// the same value.
 					tree.sound.state = 0;
+					// the position the person stopped at is the one to come back to
+					tree.cache_dirty = true;
 					musicVideoPause();
 					musicKeepalive(false);
 					musicStreamControl('pause');
