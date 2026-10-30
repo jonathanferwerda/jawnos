@@ -2338,6 +2338,56 @@ $(document).on('click', '.balance_window', function() {
 	try { localStorage.setItem('jawnos:balance_window', win); } catch (e) {}
 });
 
+// ---- currency amounts -------------------------------------------------------
+// Every amount rendered through configure/currency_amount carries its value in
+// the house currency and a picker of the currencies the rate snapshot carries.
+// A change converts that one amount in place; inside a balance series it also
+// redoes the pace line and the "showing" note, using the translated templates
+// stored on those elements. No round trip, and the chart's SVG never redraws
+// because a line's shape does not depend on the unit it is counted in.
+function jawnosCurrencyValue(value) {
+	if (!isFinite(value)) { return ''; }
+	var abs = Math.abs(value);
+	return (abs > 0 && abs < 0.1) ? value.toFixed(4) : value.toFixed(2);
+}
+function jawnosCurrencyApply(select) {
+	var picker = $(select);
+	var option = select.options[select.selectedIndex];
+	var rate = option ? parseFloat(option.getAttribute('data-rate')) : NaN;
+	var amount = picker.closest('.currency_amount');
+	var base = parseFloat(amount.attr('data-base-amount'));
+	if (!isFinite(rate) || !isFinite(base)) { return; }
+	var code = option.getAttribute('value') || select.value || '';
+	amount.find('.currency_value').text(jawnosCurrencyValue(base * rate));
+	var series = picker.closest('.balance_series');
+	if (!series.length) { return; }
+	series.find('.balance_rate').each(function () {
+		var line = $(this);
+		var perDay = parseFloat(line.attr('data-base-per-day'));
+		var template = line.attr('data-template') || '';
+		if (!isFinite(perDay) || template.indexOf('{0}') < 0) { return; }
+		var money = jawnosCurrencyValue(Math.abs(perDay * rate)) + ' ' + code;
+		var span = line.attr('data-span') || '';
+		line.text(template.replace('{0}', money) + (span ? ' · ' + span : ''));
+	});
+	series.find('.balance_currency_note').each(function () {
+		var note = $(this);
+		var template = note.attr('data-template') || '';
+		if (template.indexOf('{0}') < 0) { return; }
+		note.text(template.replace('{0}', code));
+	});
+}
+$(document).on('change', '.currency_picker', function () {
+	jawnosCurrencyApply(this);
+});
+$(document).on('change', '.balance_provider', function () {
+	var chart = $(this).closest('.balance_chart');
+	var provider = $(this).val() || '';
+	chart.find('.balance_series').each(function () {
+		$(this).css('display', ($(this).attr('data-provider') || '') === provider ? '' : 'none');
+	});
+});
+
 $(document).on('click', '.localstorage_delete', function() {
 	var key = $(this).attr('key');
 	localStorage.removeItem(key);
