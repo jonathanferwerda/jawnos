@@ -1,9 +1,10 @@
 # Leaving Termux — building the JawnOS app from scratch
 
 **Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 is
-running with a native-first rule**: battery, notification and toast are answered by
-the app itself (build 1179 / 0.118.180) and proven on the tablet. The other
-commands, the single-app fold-in and the `com.jawnos` identity are ahead.
+running with a native-first rule**: battery, notification, toast, clipboard,
+volume, torch and wake lock are answered by the app itself (build 1180 /
+0.118.181) and proven on the tablet. The other commands, the single-app fold-in
+and the `com.jawnos` identity are ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
 sections in the long run), `AGENTS.md` → App releases.
@@ -149,7 +150,7 @@ shape M1 and M2 take.
   `--check` exits 0 at 36 call sites / 24 commands / 0 raw sites, and
   `t/20-termux-ledger.t` runs the check inside `prove -l t`.
 
-### M1 — Device bridge (in progress: skeleton + battery)
+### M1 — Device bridge (in progress: 9 of 24 commands native)
 
 - **Landed (tree v0.1.1615, app 1178 / 0.118.179):** `DeviceService` in the app
   (`com.termux.app`): loopback `127.0.0.1:46000`, newline-delimited JSON, a
@@ -179,17 +180,30 @@ shape M1 and M2 take.
     vibration pattern, colour, ongoing.
   - `notification.remove` — `NotificationManager.cancel(tag)`.
   - `toast.show` — native `Toast`.
-  `notification_sender` asks the bridge first and keeps the app's broadcast
-  receiver and termux-notification as fallbacks, so an old app or tree still
-  works.
+  - `clipboard.get` / `clipboard.set` — `ClipboardManager`. Background reads are
+    allowed because the app still targets 28; the day it moves to 35+ a read
+    needs focus (or the default-IME route), which is a note for M4/M5.
+  - `audio.volume` — `AudioManager`; the six termux streams, set and read, in
+    termux-volume's shape.
+  - `hardware.torch` — `CameraManager.setTorchMode` on the first camera with a
+    flash unit.
+  - `power.wake_lock` / `power.wake_unlock` — one named `PARTIAL_WAKE_LOCK`
+    (`jawnos:device-bridge`), released on destroy.
+  `notification_sender` and the clipboard/volume/torch/wake call sites ask the
+  bridge first and keep the termux commands as fallbacks, so an old app or tree
+  still works.
 - **Proven on the tablet (2026-10-30):** build 1179 posted a native notification
   (`dumpsys notification` showed the title, text and progress 60/100 on
   `com.termux`) and `notification.remove` cleared it; `toast.show` returned ok.
   The battery proof (build 1178) showed `subs::battery_sample` with
-  `source => 'bridge'`.
+  `source => 'bridge'`. Build 1180 then round-tripped the clipboard text,
+  returned all six audio streams (and set one to its current value),
+  acquired/released `jawnos:device-bridge` (visible and then cleared in
+  `dumpsys power`), and reported `{on:false}` for the torch — this Wi-Fi tablet
+  has no flash unit, so the torch still needs a phone to prove.
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** the other 21 commands, with the native API each one should use
+- **Remaining:** the other 15 commands, with the native API each one should use
   (below), folding the API app in as each moves. The fallback and the ledger
   entry go in the same commit that proves a command.
 
@@ -273,8 +287,8 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | `notification`, `notification-remove` | `NotificationManager` | done; icons, actions, progress, groups |
 | `notification-list` | `NotificationListenerService` | needs the user's notification-access grant |
 | `toast` | `Toast` | done |
-| `clipboard-get` / `clipboard-set` | `ClipboardManager` | granted |
-| `wake-lock` / `wake-unlock` | `PowerManager.WakeLock` | the foreground service already holds one |
+| `clipboard-get` / `clipboard-set` | `ClipboardManager` | done |
+| `wake-lock` / `wake-unlock` | `PowerManager.WakeLock` | done |
 | `sms-send` | `SmsManager` | granted |
 | `sms-list` | `Telephony.Sms` / content provider | granted |
 | `location` | `LocationManager` / the app's `JawnLocationService` | already native in the app |
@@ -285,8 +299,8 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | `camera-photo` | CameraX / Camera2 | granted; needs a camera-type foreground service |
 | `microphone-record` | `MediaRecorder` | granted; needs a microphone-type foreground service |
 | `fingerprint` | `BiometricPrompt` | needs UI: a request/response pair over the bridge |
-| `volume` | `AudioManager` | granted |
-| `torch` | `CameraManager.setTorchMode` | granted |
+| `volume` | `AudioManager` | done |
+| `torch` | `CameraManager.setTorchMode` | done; the tablet has no flash, so a phone still proves it |
 | `media-player` | `MediaPlayer` / `ExoPlayer` | no permission |
 | `share` | `Intent.ACTION_SEND` | no permission |
 | `open` | `Intent.ACTION_VIEW` | no permission |

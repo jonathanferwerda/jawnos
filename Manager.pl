@@ -27428,14 +27428,12 @@ get '/manager/torch' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $returner;
 	if ($device eq 'mobile') {
-		if ($torch eq 'off') {
-			&subs::device_run('torch', 'on');
-			$returner = 'on';
-		}
-		else {
-			&subs::device_run('torch', 'off');
-			$returner = 'off';
-		}
+		# The parameter is inverted on purpose: the page sends the state it is
+		# leaving, and this route has always answered with the new one.
+		my $on = $torch eq 'off' ? 1 : 0;
+		&subs::device_call('hardware.torch', { on => $on })
+			or &subs::device_run('torch', $on ? 'on' : 'off');
+		$returner = $on ? 'on' : 'off';
 	}
 	return $c->render(text => $returner);
 };
@@ -28154,7 +28152,8 @@ post '/manager/clipboard_setter' => sub ($c) {
 get '/manager/clipboard_getter' => sub ($c) {
 	my $returner;
 	if ($device eq 'mobile') {
-		$returner = &subs::device_run('clipboard-get');
+		my $clip = &subs::device_call('clipboard.get');
+		$returner = $clip ? ($clip->{'text'} // '') : &subs::device_run('clipboard-get');
 	}
 	elsif ($device eq 'computer') {
 		$returner = eval { return `xclip -o` };
@@ -43795,17 +43794,20 @@ get '/manager/volume_control' => sub($c) {
 		$md = eval { return decode_json $data->{'md'} } || {};
 	}
 	else {
+		my $bridge_volume;
 		if (defined $stream && length $stream && defined $volume && length $volume) {
 			if ($device eq 'mobile') {
 				$stream = lc $stream;
-				&subs::device_run('volume', qq{$stream $volume});
+				&subs::device_call('audio.volume', { stream => $stream, volume => $volume })
+					or &subs::device_run('volume', qq{$stream $volume});
 			}
 			else {
 				`amixer set $stream $volume%`;
 			}
 		}
 		if ($device eq 'mobile') {
-			$return_volume = &subs::device_run('volume');
+			$bridge_volume = &subs::device_call('audio.volume');
+			$return_volume = &subs::device_run('volume') unless $bridge_volume;
 		}
 		else {
 			foreach my $control ( qw/Master Capture/ ) {
@@ -43826,7 +43828,9 @@ get '/manager/volume_control' => sub($c) {
 
 		}
 		if ($device eq 'mobile') {
-			$json_vol = decode_json $return_volume;
+			$json_vol = ($bridge_volume && ref $bridge_volume->{'streams'} eq 'ARRAY')
+				? $bridge_volume->{'streams'}
+				: decode_json $return_volume;
 		}
 
 		foreach my $j ( @{$json_vol} ) {
