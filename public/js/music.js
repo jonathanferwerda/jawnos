@@ -2702,7 +2702,12 @@ function mediaMaker(data) {
 					
 				};
 				tree.sound.onpause = function() {
-					clearInterval(interval);
+					// The display interval is deliberately left running across a pause. It
+					// is only ever started again when a track is loaded, so clearing it
+					// here meant that resuming the same track played on with the title
+					// and the seek bar frozen at the moment of the pause. A paused track
+					// simply holds its place: currentTime does not move, so the bar redraws
+					// the same value.
 					tree.sound.state = 0;
 					musicVideoPause();
 					musicKeepalive(false);
