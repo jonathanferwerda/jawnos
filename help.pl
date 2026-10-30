@@ -81,7 +81,7 @@ our %topic = (
 	'clock' => {
 		title => 'Clock', category => 'apps', app => 'clock',
 		templates => [ 'templates/apps/clock.html.ep', 'public/js/manager/clock.js', 'templates/manager.html.ep' ],
-		verified => '2026-10-27',
+		verified => '2026-10-30',
 		summary => 'Alarms, a stopwatch, timers and world clocks, with alarms and timers that can start and stop appointments.',
 		body => [
 			'The Clock app has four faces. Alarm holds up to ten alarms, each with a time, a name, an optional sound and a linked appointment. Each alarm is a folded row: the strip shows its time, its name and the machines that carry it as pills, with the on/off switch at its end. Press the strip (or the arrow) to open the alarm and see the editors - the time and name, the days, the next run, the sound and Play mode - and press it again to fold it away; only one alarm is open at a time. Stopwatch counts up with laps. Timer holds up to ten countdowns, and several can run at once. World Clock shows the local time beside any time zones you add.',
@@ -125,12 +125,12 @@ our %topic = (
 		'title' => 'Gallery', category => 'apps', app => 'gallery',
 		templates => [ 'templates/apps/gallery.html.ep', 'public/js/images.js' ],
 		controls => [ 'Albums', 'All photos', 'Search', 'Newest first', 'Oldest first', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'Full screen', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
-		verified => '2026-10-29',
+		verified => '2026-10-30',
 		summary => 'Browse your photos and videos by album, in a grid, or one at a time.',
 		body => [
 			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
 			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe, a trackpad\'s sideways swipe, or the arrow keys) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home and Delete. Fetch home appears only for a photo that lives on another machine: it brings that photo back to this one.',
-			'A picture opened from Folders arrives in the viewer straight away, with the rest of that folder\'s pictures as the grid behind it - Close leaves you on the folder, not the album list.',
+			'A picture opened from Folders arrives in the viewer straight away, with the rest of that folder\'s pictures as the grid behind it - Close leaves you on the folder, not the album list. A picture opened from Travel\'s Nearby strip is the same: the whole mapped ground\'s pictures are the set behind it, so pressing the Nearby count and then one picture keeps the rest of that view a swipe away.',
 			'Which photos appear is decided by the apps whose visibility shows them: a private album is hidden everywhere, even at home, and never appears on the timeline. It can only be found in a private place with no Enemy present, and even then it waits for the gallery lock. The search box finds photos by app or file name, and the sort button flips the order between newest and oldest first.',
 			'A photo is dated by the appointment that holds it — the moment it was taken or filed — not by when its record reached this machine, so the day headings, the viewer and File information all agree.',
 			'An album that is Public or Dangerous opens straight away, sealed photos and all. A private album stays out of the grid until the gallery is unlocked: press **Lock** to open the padlock view and unlock it with this phone or computer\'s fingerprint, or with the recovery code. Outside a private place - or with an Enemy present - no unlock brings it back. The unlock is for that screen and that window only, and the padlock shuts again as soon as the Gallery window closes, the screen goes away, or the house restarts.'
@@ -148,6 +148,7 @@ our %topic = (
 	},
 	'marker' => {
 		title => 'Marker', category => 'apps', app => 'marker',
+		verified => '2026-10-30',
 		summary => 'A layered paint board for drawing and annotation.',
 		body => [
 			'Marker is a layered paint board with pencil, paintbrush, spray, fill and matching erase tools, plus undo and redo, zoom and pan.',
@@ -203,7 +204,7 @@ our %topic = (
 		'title' => 'Music', category => 'apps', app => 'music',
 		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/audio.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization', 'Volume normalization', 'Remote audio format', 'Sync offset', 'Me audio delay', 'Remote delay', 'Left speaker', 'Stereo', 'Right speaker', 'Video enhancement', 'Sharpness', 'Quality', 'Frame rate', 'Video status' ],
-		verified => '2026-10-28',
+		verified => '2026-10-30',
 		summary => 'A player, a library, and the place music is organised.',
 		body => [
 			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
@@ -246,7 +247,7 @@ our %topic = (
 	},
 	'video' => {
 		title => 'Video', category => 'apps', app => 'video',
-		verified => '2026-10-21',
+		verified => '2026-10-30',
 		summary => 'Play video from your media folders.',
 		body => [
 			'Video plays your files in the window. Playback quality is the browser\'s (or, in the desktop app, GStreamer\'s) — the desktop app page covers the hardware-decode setup that keeps HD smooth.'
@@ -277,7 +278,7 @@ our %topic = (
 		title => 'IDE', category => 'apps', app => 'ide',
 		templates => [ 'templates/apps/coding_chat.html.ep', 'public/js/manager/coding.js' ],
 		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
-		verified => '2026-10-16',
+		verified => '2026-10-30',
 		body => [
 			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.',
 			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate, and it reopens where you left it. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the manager\'s scripts or its shell asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it). Double-press the Assistant button for the Agents list: every coding conversation and guide associate, named, with history a press away.',
@@ -332,7 +333,7 @@ our %topic = (
 	'terminal' => {
 		title => 'Terminal', category => 'apps', app => 'terminal',
 		summary => 'A shell, in a window - on this machine or another one.',
-		verified => '2026-10-21',
+		verified => '2026-10-30',
 		body => [
 			'Terminal is a real shell attached to the machine running JawnOS. It is where you do the hands-on work: scripts, checks, and the occasional bit of archaeology.',
 			'The toolbar at the foot of the window switches views. Shell is the live session: click it and type straight into it, with colour, cursor keys, Backspace, Tab, Ctrl+C and the rest behaving as they do in a desktop terminal. Commands holds a short history of what you sent to the shell. Errors and Log are readable lists, each with its own Clear button in the header; the newest entry is always in view, and the list follows new entries while you are at the bottom.',
@@ -353,7 +354,7 @@ our %topic = (
 	'network' => {
 		title => 'Network', category => 'apps', app => 'network',
 		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js' ],
-		verified => '2026-10-26',
+		verified => '2026-10-30',
 		summary => 'Interfaces, Wi-Fi, VPN, the machines on the mesh, and the phone.',
 		body => [
 			'Network is the app for the connection itself. It opens from the start menu and shows four things in one window: this machine\'s interfaces, its Wi-Fi, its VPN, and a read-only view of the machines on the mesh. A fifth section appears on a phone.',
@@ -379,7 +380,7 @@ our %topic = (
 		title => 'Camera', category => 'apps', app => 'camera',
 		'templates' => [ 'templates/apps/camera.html.ep', 'public/js/manager/camera.js' ],
 		controls => [ 'Take a photo', 'Record a video', 'Unclaimed media', 'Select all', 'Approved' ],
-		verified => '2026-10-28',
+		verified => '2026-10-30',
 		summary => 'The device camera and video recorder, plus the pool of unclaimed media waiting to be filed.',
 		body => [
 			'Camera takes a photo or records a video. In the app it opens the device camera and its video recorder (window.JawnCamera), so you get a viewfinder you can see and the camera\'s own processing. On the desktop and in a browser it uses the machine\'s own webcam through getUserMedia.',
@@ -427,7 +428,7 @@ our %topic = (
 		title => 'People', category => 'apps', app => 'people',
 		templates => [ 'templates/apps/people.html.ep', 'templates/apps/people_person.html.ep', 'public/js/manager/people.js' ],
 		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Save card here', 'Show QR', 'Write to NFC tag', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh', 'Publish', 'Published', 'Upload a logo', 'Open their page' ],
-		verified => '2026-10-27',
+		verified => '2026-10-30',
 		summary => 'The house crest, and the people the house knows.',
 		body => [
 			'People holds the house crest: the one hand-drawn picture that names it to other houses. The picture is what a person recognises; it is not the proof. A house key signs a record that pins the drawing\'s hashes, and the short fingerprint on the card is what another house compares. Keep the original drawing - the scan is a copy.',
@@ -476,7 +477,7 @@ our %topic = (
 	},
 	'notes' => {
 		title => 'Notes', category => 'apps', app => 'notes',
-		verified => '2026-10-24',
+		verified => '2026-10-30',
 		summary => 'Free-form notes, and the drafts of notes being typed in an appointment.',
 		body => [
 			'Notes is the house\'s free-form notebook. Every note is a row of its own, newest first: a watch that heard something that was not a command lands here, and so does anything typed in the box at the foot.',
@@ -600,7 +601,7 @@ our %topic = (
 	},
 	'budget' => {
 		title => 'Accounting', category => 'apps', app => 'budget',
-		verified => '2026-10-24',
+		verified => '2026-10-30',
 		templates => [ 'templates/budget.html.ep', 'templates/budget_reconcile.html.ep', 'public/js/manager/budget.js' ],
 		summary => 'Accrual income statement and balance sheet, cash flow, account activity, trial balance, receivables, scheduled payables, the ledger and bank reconciliation.',
 		body => [
@@ -630,7 +631,7 @@ our %topic = (
 	},
 	'store' => {
 		title => 'Store', category => 'apps', app => 'store',
-		verified => '2026-10-21',
+		verified => '2026-10-30',
 		templates => [ 'templates/store/store.html.ep', 'templates/store/category.html.ep', 'templates/store/item.html.ep', 'templates/store/item_selection.html.ep', 'templates/store/list.html.ep', 'templates/store/register.html.ep', 'templates/store/correspondence.html.ep', 'templates/store/customer.html.ep', 'public/css/store.css', 'public/js/store.js' ],
 		summary => 'Items, models, options, quotes and invoices.',
 		body => [
@@ -639,7 +640,7 @@ our %topic = (
 			'Choosing an item opens its details in a pane beside the grid rather than over it, so the shelves stay in view; Back to items (or the close button) returns to them. The price summary stays pinned to the foot of that pane while the models and options scroll, and it can be tapped to edit a price.',
 			'With a customer loaded, the foot of the window carries four labelled actions. Quotes and Invoices list the documents themselves. Register is a sales journal: every invoice or sale for that customer with its total, amount paid and balance, and each payment indented beneath the document it settled. Correspondence is the other journal: the emails and chats the house and that customer exchanged, newest first, showing the channel, direction, subject and a readable preview.',
 			'The movement dropdown uses the house\'s own words: Selling (an income movement) is what this house has available, and Buying (an expense movement) is a purchase the house makes. The stored movement values are unchanged, so existing quotes, invoices and reports keep working.',
-			'Recording a payment against a document updates its balance and closes it when the balance reaches zero.',
+			'Recording a payment against a document updates its balance and closes it when the balance reaches zero. A document row also carries a wallet icon when the house has a crypto wallet: it opens the crypto payment panel, which shows the coin, the amount for the balance, the invoice\'s own receiving address and a QR (see Crypto wallets and rates).',
 			'A visitor who asks for a ticket sees the privacy notice before the form and must acknowledge it; the acknowledgement is stored with the request. The store and the public homepage both link to the full privacy policy, which names the controller, the data processed, the legal basis, retention, the cookies and local storage used, and how to exercise a data right.'
 		],
 		steps => [
@@ -654,7 +655,7 @@ our %topic = (
 	},
 	'crypto' => {
 		title => 'Crypto wallets and rates', category => 'functions',
-		verified => '2026-10-27',
+		verified => '2026-10-30',
 		templates => [ 'templates/configure/pay_setting_list.html.ep', 'templates/configure/crypto_setting_list.html.ep', 'templates/configure/appointment_list.html.ep', 'templates/store/crypto_payment.html.ep', 'templates/store/printer/header.html.ep', 'templates/store/pay_box.html.ep', 'templates/store/list.html.ep', 'public/js/manager/configure.js', 'public/js/manager/transaction.js', 'public/js/store.js' ],
 		summary => 'Wallet accounts that hold a coin, per-invoice receiving addresses from an xpub, live fiat and coin rates, and cost or market valuation.',
 		body => [
@@ -688,7 +689,7 @@ our %topic = (
 		related => [ 'budget', 'store', 'configure' ]
 	},
 	'pay' => {
-		title => 'Taking payment online', category => 'functions', verified => '2026-10-27',
+		title => 'Taking payment online', category => 'functions', verified => '2026-10-30',
 		templates => [ 'templates/configure/pay_setting_list.html.ep', 'templates/configure/crypto_setting_list.html.ep', 'templates/store/pay_box.html.ep', 'templates/store/printer/header.html.ep', 'templates/pay/message.html.ep', 'templates/pay/return.html.ep', 'public/js/manager/configure.js' ],
 		summary => 'Stripe, Square, PayPal and Interac e-Transfer on a public invoice, beside the crypto wallets they share a page with.',
 		body => [
@@ -697,7 +698,7 @@ our %topic = (
 			'Keys are sealed in the same way as an AI provider key. A secret field left blank keeps the saved value; type a new one to replace it, or press Clear. Test keys asks the provider a harmless question and reports whether it answered. Stripe needs the secret key and, for webhooks, the signing secret. Square needs the access token, a location id, the signature key, and the exact webhook URL Square shows if it differs from the one this page prints. PayPal needs the client id, the secret, and the webhook id.',
 			'Every payment is booked as an ordinary income transaction on the account chosen for that provider, so a statement, budget or reconciliation sees it like any other money. Without a chosen account the first matching credit account is used, and Interac looks for an interac account first. The payment is also pushed onto the invoice, which falls by the amount and closes at zero. A partial payment leaves the invoice open for the rest.',
 			'Interac e-Transfer has no consumer API, so JawnOS reads the notification letters that already arrive in the mailbox. English and French notices are both understood. With Autodeposit on, the money lands without a question and the invoice is matched by its reference, then by the exact amount, then by the sender. A notification is staged for a person unless Record automatically is ticked, and even then only when the money is already deposited and exactly one invoice carries the reference. Without Autodeposit the sender\'s security question has to be answered by a person; record the transfer after it has landed. A bank or payment service that can forward the same facts can POST amount, currency, sender, reference, memo, deposited and an optional invoice to the Forwarder URL, whose token is a password.',
-			'An unpaid invoice\'s public page carries the pay buttons. A provider appears only when it is switched on and has its keys, so a half-finished panel never offers a button that cannot complete. The e-Transfer section prints the receiving address, the amount and the invoice reference, and the invoice\'s QR still carries its public link. Nothing is charged until the customer confirms on the provider\'s page.',
+			'An unpaid invoice\'s public page carries the pay buttons. A provider appears only when it is switched on and has its keys, so a half-finished panel never offers a button that cannot complete. The e-Transfer section prints the receiving address, the amount in the receiving account\'s own currency, and the invoice reference, and the invoice\'s QR still carries its public link. Nothing is charged until the customer confirms on the provider\'s page.',
 			'JawnOS records the gross amount the provider reports. A provider fee, a refund or a chargeback is handled at the provider; refunding there and deleting the payment\'s income transaction here puts the invoice balance back and reopens it. Card data never touches this machine, and a webhook is only believed after its signature verifies against the key saved on this page.'
 		],
 		steps => [
@@ -718,6 +719,7 @@ our %topic = (
 	},
 	'warehouse' => {
 		title => 'Warehouse', category => 'apps', app => 'warehouse',
+		verified => '2026-10-30',
 		summary => 'Money and goods tracked per place.',
 		body => [
 			'Warehouse tracks stock per place: what is where and how much of it. Packaging carries real quantities (a carton of twelve, a box of nails by weight), and shelf life means expired stock is swept up on its own.',
@@ -738,7 +740,7 @@ our %topic = (
 	},
 	'market' => {
 		title => 'Market', category => 'apps', app => 'market',
-		'verified' => '2026-10-17',
+		'verified' => '2026-10-30',
 		templates => [ 'templates/market/market.html.ep', 'public/js/manager/market.js' ],
 		summary => 'The shopping list and the shopping run.',
 		body => [
@@ -770,7 +772,7 @@ our %topic = (
 	},
 	'inventory' => {
 		title => 'Inventory', category => 'apps', app => 'inventory',
-		verified => '2026-10-24',
+		verified => '2026-10-30',
 		summary => 'An app\'s own record of what it holds and has been up to.',
 		body => [
 			'Inventory is the shared surface behind the apps: it holds the entries an app has recorded — a measure, a document, a report — and shows them together, with statistics. The Evaluation report and the controls that run it live at the foot of the app itself.',
@@ -781,7 +783,7 @@ our %topic = (
 	'chat' => {
 		title => 'Chat', category => 'apps', app => 'chat',
 		templates => [ 'templates/apps/chat.html.ep', 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'templates/mail/chat_sections.html.ep', 'templates/soft_keyboard.html.ep', 'templates/ime.html.ep', 'public/js/manager/chat.js', 'public/js/manager/soft_keyboard.js', 'public/css/chat.css', 'public/css/soft_keyboard.css' ],
-		verified => '2026-10-28',
+		verified => '2026-10-30',
 		summary => 'The house\'s conversations: sms, the dial, pass threads and lora.',
 		body => [
 			'Chat gathers the ways the house talks, split out of the mailbox as an app of its own: sms to phones, the dial (the house\'s radio, where a set of appointments picked across the social construct groups names one thread and a tab only hears messages addressed to the set it is tuned to), the list of those sets, the pass threads the house opens for its guests, lora, and Rooms — a junderground dial for other houses.',
@@ -793,7 +795,7 @@ our %topic = (
 			'The lists live in a drawer. The menu at the top left opens and closes them - on a phone the drawer starts closed so the thread has the room, and picking a conversation puts it away again. Inside, subheadings group the lists: People, Sections, then the open section\'s own list. Press a subheading to fold that list away, and it stays folded. The rail remembers the place you left it, and keeps a separate place for each section, so coming back to Sms returns to the row you were reading rather than the top. In the phone-number list, Known and Unknown are subheadings of their own: Known holds the numbers the house has named, Unknown the bare numbers it has not, and either can be folded away.',
 			'The transport is remembered per person. Pick sms for someone once and their thread opens on sms from then on, with their phone number under their name in place of the section name, until another road is picked. The thread itself stays theirs - a pass-holder keeps their pass thread while the next message goes by phone. Opening a thread lands on its newest message; a page of mail is decrypted before it is drawn, so the conversation is whole when the window appears rather than filling in bubble by bubble, and the thread follows its newest message while the composer grows and while the phone\'s keyboard changes the window\'s height. A deliberate scroll up stops it following until you return to the bottom.',
 			'The JawnOS keyboard is the default on a phone: tapping into any text field raises a docked keyboard - it slides up from the foot of the screen and slides away again when it closes - and keeps the system keyboard away, so the page never reshapes itself around a field. While it is up it owns the foot of the screen: the keys sit at the very bottom, and the floating dock (or the taskbar, when the search rides there) rises above them while you type into its search, so the bar is never covered and never covers the space bar. It has three pages - letters, a calculator and a page of special characters (currency, maths, punctuation, arrows, fractions and symbols). A number field opens on the calculator; any other field has a 123 button to switch to it and an abc button to come back. The calculator has a display, digits, + - x /, parentheses, percent, sign, clear, backspace and =; the answer goes into a number field or, in a text field, at the caret. A quantity that names a unit - $32.31, 5jpy, 32.33L - brings up a row of conversions to the other units of that kind: currencies use the live rate snapshot, and distance, volume, mass, weight, temperature and speed use the Measures units, with each formula read both ways so a litre reaches a teaspoon. Tap a conversion to use its answer. The calculator first offers the kinds of measure - Currency, Weight, Volume, Distance, Temperature, Speed and the rest - and shows the conversions for the chosen kind below; the units used most come first, and a bare number converts from the unit remembered for that kind. The last unit used is remembered, so a bare number keeps converting without typing usd again. Each answer is also kept in a row of sums above the keys, newest first and remembered across sessions: press one to use its answer again, or the x to clear them. Backspace and C edit the number field as well as the display while the calculator is typing into it. The keyboard also reads the field it is in: a time field (ago, timestamp) offers now, 5m, 1h, 4h, 1d, yesterday, today, tomorrow and in 1h, and the row follows a number already typed (5 becomes 5s, 5m, 5h, 5d, 5w, 5M, 5y before the fixed chips); a duration offers the usual spans the same way; a warranty offers -1d through -10y; a schedule offers once and the repeat intervals; and a notes box keeps the plain keys. In those fields a typed 5m means five minutes, so the unit conversions stay out of the way. A sideways swipe along a row of chips pans it; a chip only answers a tap. Dragging a finger sideways across a field selects the text from where it landed and highlights as it moves, without raising the keys; dragging up or down scrolls the page past the field, and only a tap into it places the caret and opens the keyboard. Holding backspace, after a short wait, repeats characters and gets faster the longer it is held; a double tap takes a whole word at once, and holding after it keeps taking words. The keys answer on the press rather than waiting for the server. A character key that is held also shows a large copy of itself above the finger, so the key stays readable while it is covered. A desk keeps its own keyboard: the dock stays closed there even if it was left on last time, and the first real key press puts it away when it is open; the Chat composer\'s keyboard button or the dock\'s keyboard icon turns it on for that visit. A desk still gets the conversions - a quantity that names a unit brings the same row in a small panel just above the field being typed in, and tapping one replaces the typed quantity, unit and all, with the answer, while a bare number is left alone.',
-			'The bar above the keys carries the layout chooser and the microphone, beside the hide key. The globe offers the keyboard you already know - Samsung (One UI), iOS, Gboard and US QWERTY - and layouts for French, German, Spanish, Italian, Portuguese, Turkish, Russian, Arabic, Hindi and Bengali; the chosen one is remembered on the device. Each keeps the key shape its people expect, and a language\'s accented letters (or the characters another script needs) ride their own row above the letters, scrolled sideways when there are more than a screenful. The layout\'s language is also the one dictation listens for. The microphone speaks into the field you are typing in: press it to listen and press it again to stop, and the key turns red while it is on. The house does the listening itself: a phrase is recorded, ended by a pause, and sent to the transcription role chosen under Configure -> Plat (whisper.cpp on this machine or the chosen cloud Whisper); the pause is measured against the room\'s own noise, learned while it listens, so a laptop fan or a steady hiss still lets a phrase end; the Guide\'s model then restores punctuation and capital letters without changing a word. The next phrase begins listening at once, while the last is transcribed, so talking continues without pressing anything; the transcript joins the field where the microphone was opened. Nothing goes to a phone or browser speech service. The dock\'s keyboard and calculator icons open this same dock, the calculator straight to its page.',
+			'The bar above the keys carries the layout chooser and the microphone, beside the hide key; the keyboard\'s own labels are read in the interface language. The globe offers the keyboard you already know - Samsung (One UI), iOS, Gboard and US QWERTY - and layouts for French, German, Spanish, Italian, Portuguese, Turkish, Russian, Arabic, Hindi and Bengali; the chosen one is remembered on the device. Each keeps the key shape its people expect, and a language\'s accented letters (or the characters another script needs) ride their own row above the letters, scrolled sideways when there are more than a screenful. The layout\'s language is also the one dictation listens for. The microphone speaks into the field you are typing in: press it to listen and press it again to stop, and the key turns red while it is on. The house does the listening itself: a phrase is recorded, ended by a pause, and sent to the transcription role chosen under Configure -> Plat (whisper.cpp on this machine or the chosen cloud Whisper); the pause is measured against the room\'s own noise, learned while it listens, so a laptop fan or a steady hiss still lets a phrase end; the Guide\'s model then restores punctuation and capital letters without changing a word. The next phrase begins listening at once, while the last is transcribed, so talking continues without pressing anything; the transcript joins the field where the microphone was opened. Nothing goes to a phone or browser speech service. The dock\'s keyboard and calculator icons open this same dock, the calculator straight to its page.',
 			'The bar also carries the vault. A key appears when a saved entry matches the field in hand; press it to fill that field, or to choose among several. A lock (a password field) or a disk (any other field) saves what is there: a browser password asks for its site, because the keyboard cannot read the address bar. The entries live in the house\'s credentials table, sealed with the house key, and ride the ordinary sync between the machines of the house; while the house is padlocked nothing can be saved or filled. On Android, choose JawnOS Autofill in the dashboard\'s Keyboard card to fill a whole login form at once - the input method alone can only reach the field that has focus.',
 			
 			'LoRa mode is its own section and its own road. Configure the network in the LoRa panel: band, sub-band, Join EUI, Dev EUI, App key, port and whether uplinks are confirmed. Save and configure pushes the credentials to the T-Deck on the LAN; Join network asks its SX1262 to join; Send test sends one uplink. A message written in the LoRa section travels through the LoRaWAN node and is filed on the LoRa thread, and a network server forwards downlinks to the webhook URL shown in the panel. LoRaWAN and the old raw-LoRa mesh are alternatives: while LoRaWAN is on, the deck\'s point-to-point broadcast and receive stand down.',
@@ -817,7 +819,7 @@ our %topic = (
 	'email' => {
 		title => 'Email', category => 'apps', app => 'email',
 		templates => [ 'templates/apps/email.html.ep', 'templates/mail/email_rail.html.ep', 'templates/mail/email_folder.html.ep', 'templates/mail/email_rows.html.ep', 'templates/mail/email_compose.html.ep', 'templates/mail/email_configure.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/manager/email.js' ],
-		verified => '2026-10-16',
+		verified => '2026-10-30',
 		summary => 'A mail client: folders, a paged and searchable list, and the letter or the draft in the pane.',
 		body => [
 			'Email is the mailbox\'s mail half as an app of its own: it speaks IMAP and SMTP directly, so mail arrives on the desktop, and a new message raises the dot in the start menu.',
@@ -844,7 +846,7 @@ our %topic = (
 	'mailbox' => {
 		title => 'Mailbox', category => 'apps', app => 'mailbox',
 		templates => [ 'templates/mail/mailbox.html.ep', 'templates/mail/conversation.html.ep', 'templates/mail/message.html.ep', 'public/js/mailbox.js' ],
-		verified => '2026-10-21',
+		verified => '2026-10-30',
 		summary => 'The whole mailbox in one window — email, sms, lora, the dial, the list, pass threads and the pen.',
 		body => [
 			'Mailbox speaks IMAP and SMTP directly. Mail arrives on the desktop rather than in a separate client: a new message raises the mailbox dot in the start menu and, if no mailbox is watching, a notification.',
@@ -855,7 +857,7 @@ our %topic = (
 		],
 		steps => [
 			'Open Mailbox and choose a section from the sidebar — sms, email, lora, list, dial, pen or passes.',
-			'For email, pick a folder (contacts, inbox, drafts, outbox, sent) and an address.',
+			'For email, pick a folder (inbox, starred, drafts, sent, outbox, archive, trash and contacts) and an address.',
 			'Compose with the new-file button; attachments are filed and sealed when you send.',
 			'On the dial, pick a set and press Advertise to open it to guests; press Advertised to close it again.',
 			'As a guest on the public page, open Mailbox, tune an advertised set from the Dial section, and write; the house\'s replies stay, and so does the pass thread — your words in the rooms are only heard.'
@@ -883,7 +885,7 @@ our %topic = (
 	'configure' => {
 		'title' => 'Configure', category => 'apps', app => 'configure',
 		templates => [ 'templates/configure/configure.html.ep', 'templates/configure/misc_setting_list.html.ep', 'templates/configure/device_lister.html.ep', 'templates/configure/plat_setting_list.html.ep', 'templates/configure/map_setting_list.html.ep', 'templates/configure/dns_clients.html.ep', 'public/js/manager/configure.js' ],
-		verified => '2026-10-28',
+		verified => '2026-10-30',
 		summary => 'Settings: the look, the devices, the utilities and the mesh.',
 		body => [
 			'Configure is where the desktop is made yours. Appearance (themes, colour schemes, font, texture, icon set, zoom, bar heights, the window border and the button border), the device lister, the utility controller and the remote-machine and mesh settings all live here. This copy is JawnOS {{live:version}}, running on {{live:machine}}.',
@@ -912,7 +914,7 @@ our %topic = (
 		steps => [
 			'Open Configure.',
 			'Use the tabs to move between appearance, devices, utilities and the mesh. The tabs and the version badge stay pinned across the top of the window in one row; the bar tucks itself away while you read downward and returns as soon as you scroll back up. Pressing the tab that is already open reloads that panel in place rather than hiding it, and a reload (a theme\'s icon set, say) reopens the same panel at the same scroll position.',
-			'The Plat tab has four pages: AI, which holds every AI model choice and provider key; OAuth2, where an app registration (a client id, secret and tenant) is added once with Add client and shared by any number of mail accounts; Crypto, which holds the assets, the rate snapshot and how a holding is valued; and DNS, where the DNS provider\'s API token is saved so the house can prove it owns its domain and renew a wildcard certificate without opening a port. The same page names the house domain and the name each machine answers on, so a ticket or a sign-in can use the public name while the house keeps calling itself on 127.0.0.1. It also picks the outside service the remote_control panel asks for this machine\'s public address, or None to stop the lookup. The other tabs hold the rest of the house\'s settings.',
+			'The Plat tab has five pages: AI, which holds every AI model choice and provider key; OAuth2, where an app registration (a client id, secret and tenant) is added once with Add client and shared by any number of mail accounts; Pay, which puts the crypto wallets and rates first and the hosted checkouts and e-Transfer below them; DNS, where the DNS provider\'s API token is saved so the house can prove it owns its domain and renew a wildcard certificate without opening a port; and Maps, where Tile service keys are saved once for every Travel window - MapTiler, Mapbox, Stadia Maps, Thunderforest and Carto - beside the free Mapillary token for street-view previews and a paid Google Street View key (an API key, not OAuth2). The same page names the house domain and the name each machine answers on, so a ticket or a sign-in can use the public name while the house keeps calling itself on 127.0.0.1. It also picks the outside service the remote_control panel asks for this machine\'s public address, or None to stop the lookup. The other tabs hold the rest of the house\'s settings.',
 			'For speech, pick a Say voice under Misc and press Preview to hear it.',
 			'Pick the interface language at the top of Misc; the page reloads in the language you chose, and every device in the house follows it.',
 			'To give an app a ringtone, open its card on the App panel, tap Notifications, and pick a sound — or add your own sound from there.',
@@ -948,7 +950,7 @@ our %topic = (
 	'translation' => {
 		title => 'Translation', category => 'features',
 		templates => [ 'templates/configure/misc_setting_list.html.ep', 'public/js/translate.js', 'public/js/manager/help.js' ],
-		verified => '2026-10-19',
+		verified => '2026-10-30',
 		summary => 'Translate text or the visible window on demand with the Guide\'s model.',
 		body => [
 			'JawnOS ships English plus fifteen interface languages (Mandarin, French, Spanish, German, Portuguese, Hindi, Arabic, Bengali, Russian, Japanese, Punjabi, Indonesian, Korean, Italian and Turkish). The Language selector at the top of Configure -> Misc changes the saved interface language, and the page reloads in it.',
@@ -994,7 +996,7 @@ our %topic = (
 	'box_office' => {
 		title => 'Box Office', category => 'apps', app => 'box_office',
 		templates => [ 'templates/box_office.html.ep', 'templates/store/ticket_request.html.ep', 'public/js/manager/manager.js', 'public/js/homepage.js' ],
-		verified => '2026-10-22',
+		verified => '2026-10-30',
 		summary => 'Issue, suspend, renew and revoke passes.',
 		body => [
 			'The Box Office manages passes — the single-use links that log a visitor in. The Passes tab opens on an issue form: choose who the pass is for, the app it opens, its privilege, an optional project and the warranty, then press Issue pass. Nothing has to be dragged onto a window any more; the app is a field on the form.',
@@ -1024,12 +1026,12 @@ our %topic = (
 	'handbook' => {
 		title => 'Handbook', category => 'apps', app => 'handbook',
 		templates => [ 'templates/handbook/handbook.html.ep', 'templates/handbook/today.html.ep' ],
-		verified => '2026-10-21',
+		verified => '2026-10-30',
 		summary => 'The day as a journal, and chaptered notes about the system itself.',
 		body => [
 			'Handbook opens on Today: the day read as a journal. It gathers what the house already knows - what money moved and what bills are due, the shape of the day, the latest measures and notes, the projects that have moved recently, and the people named in the day\'s plans - so the day can be read in one place.',
 			'The day header is also a time machine: type a day (today, yesterday, jul 16, 2025-10-21) and press Enter, or use the arrows to step one day at a time. Today reads the same stores the rest of the program writes to, so nothing is copied or typed twice.',
-			'The Journal box writes an entry for the day being read. Save entry keeps it as a note for that day. Plant with the Guide asks the configured Guide model to read the journal (the last 30 days and the entry you just typed) and to plant the ideas, plans and dreams that point forward: each becomes a quiet Journal appointment on the day it belongs to, marked planted, so it appears when you turn Today to that day. Nothing is invented - the Guide quotes the entry - and a planted entry can be opened, edited or deleted like any other appointment.',
+			'The Journal box writes an entry for the day being read. Save entry writes it into the Journal app for that day, as an encrypted note like that app\'s own entries, so the journal is reachable outside Handbook too; Today reads the Journal app and any older Handbook notes together. Plant with the Guide asks the configured Guide model to read the journal (the last 30 days and the entry you just typed) and to plant the ideas, plans and dreams that point forward: each becomes a quiet Journal appointment on the day it belongs to, marked planted, so it appears when you turn Today to that day. Nothing is invented - the Guide quotes the entry - and a planted entry can be opened, edited or deleted like any other appointment.',
 			'Predicted by your records is the ghost appointments\' view of the day: the times an app\'s own history says it is likely to happen, drawn faded and without writing anything. They are the same predictions the desktop timeline, calendar and clockface draw, read here for the one day.',
 			'Below Today, Handbook is still the reference shelf: chaptered pages about how JawnOS works, with diagrams. It is the longer-form cousin of this Help app.'
 		],
@@ -1047,12 +1049,12 @@ our %topic = (
 	'embedded' => {
 		title => 'Embedded', category => 'apps', app => 'embedded',
 		templates => [ 'templates/embedded/embedded.html.ep', 'templates/embedded/component.html.ep' ],
-		verified => '2026-10-17',
+		verified => '2026-10-30',
 		summary => 'The device fleet, from the desktop.',
 		body => [
 			'Embedded is the fleet view: it lists the JawnOS devices on your network, their purposes and models, and lets you query one, send a room to a watch, deck or board, and set how a device behaves.',
 			'A watch or board that is off its network but bridged over Bluetooth still appears, and stays listed while the bridge holds it: its row reads Bluetooth in place of an address, its buttons are shown so they can be changed, and its Now Me and settings go out over that bridge. The bridge holds four radios by default, and a machine with a capable adapter can be set to hold more (up to 25), so a whole desk of watches, decks and boards can stay linked together.',
-			'A board that crashed into its provisioning AP can be recovered without joining it: plug it in over USB and press Restore over USB on its row. The manager writes the stored WiFi and role into the board\'s config file, the board acknowledges and reboots, and it comes back with its switches and relays already set. A board on the Bluetooth bridge gets the same role as a compact board config, so it can resume before it has any network at all.',
+			'A board that crashed into its provisioning AP can be recovered without joining it: plug it in over USB and press Restore over USB on its row. The manager writes the stored WiFi, name and token into the board\'s config file - the USB link is too narrow to carry the whole role - the board acknowledges and reboots onto its network. Its role arrives as a compact board config over the Bluetooth bridge or the watch channel, so a board on the bridge resumes with its switches and relays already set before it has any network at all.',
 			'Picking a device shows its controls: its name, Now Me (send it a fresh copy of its settings and screens) and Query (ask a board what it is). A watch or t-deck row also carries the Voice select, which chooses how the device listens (see Voice and wake words), and the Noise floor select, which sets how quiet the room has to go before a recorded command is taken to have ended. A watch or t-deck row carries its room count and screen timeout, and the Audio replies toggle, which decides whether the guide associate answers a spoken request out loud on the device or only on its screen.'
 		],
 		steps => [
@@ -1071,14 +1073,14 @@ our %topic = (
 		title => 'Welcome to JawnOS', category => 'features',
 		templates => [ 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
 		controls => [ 'Take the tour' ],
-		verified => '2026-10-26',
+		verified => '2026-10-30',
 		summary => 'A short tour of the desktop: windows, the start menu and System page, the dock, Configure and this Guide.',
 		body => [
 			'JawnOS is a desktop made of apps. Everything you open is a window: drag it by its title bar, pull its edge to resize it, and use the buttons in the title bar to minimise, maximise or close it. The window you last touched comes to the front. Press the question mark in a window\'s title bar to ask this Guide about that window, or press F1 to read the help topic for whatever is in front.',
 			'The start menu is the round button at the corner of the desk. It opens on the apps you used most recently, with a category rail for the whole catalogue and a search box. Its other pages show what is running, what is upcoming, what is expiring, and a System page (the water-drop tab) with this machine\'s battery, CPU load and memory, every other machine in the house and the parking lot of saved sessions. A new install opens the menu on that System page, so the first press shows whether the house is well.',
 			'The dock is the bar along an edge of the desk. Its icons are its pseudonyms: each one has a name, an icon, a colour, a place and something it says, all edited under Configure → Pseud. Pin the apps you reach for most and the dock keeps them within a press.',
 			'Configure is the wrench on the start menu. Under Misc → Appearance you can pick a whole theme (paint, icons, material, font and corner radius) or a colour scheme on its own; it also sets the font, the corner and how long a lock waits before its screensaver. Under App, each app has a card for its colour, budgets, goals and notifications. Under Dev are the machines of the house: Scan finds them, and each row carries its privilege, its lease, Migrate and Go. The Pseud tab holds the dock pseudonyms.',
-			'The Guide is always one press away. Type in the box under this page and press Guide me: it can answer from these topics, search your records, play media, translate a page, and open or drive the apps. It asks before it writes while the Confirmation Requirement is on, and it stages each change so you can read it first. Press Converse to keep the microphone open, or the question mark in any window\'s title bar to ask about that window. Press Take the tour at the foot of this window to hear this walkthrough again.'
+			'The Guide is always one press away. Type in the box under this page and press Guide me: it can answer from these topics, search your records, play media, translate a page, and open or drive the apps. It asks before it writes while the Confirmation Requirement is on, and it stages each change so you can read it first. Press Converse to keep the microphone open, or the question mark in any window\'s title bar to ask about that window. On a new install Help comes up on its own and walks the tour the first time; press Take the tour at the foot of this window to hear this walkthrough again.'
 		],
 		steps => [
 			'Read this page, or press Take the tour at the foot of the window to have the Guide walk you through it.',
@@ -1097,7 +1099,7 @@ our %topic = (
 	'voice' => {
 		title => 'Voice and wake words', category => 'features',
 		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
-		verified => '2026-10-17',
+		verified => '2026-10-30',
 		summary => 'Speak to the watch or t-deck; it listens for a phrase and files the rest.',
 		body => [
 			'A watch or a t-deck can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
@@ -1188,7 +1190,7 @@ our %topic = (
 	},
 	'dock' => {
 		title => 'The dock', category => 'features',
-		verified => '2026-10-26',
+		verified => '2026-10-30',
 		summary => 'A second bar for the keyboard panels and the apps you keep at hand.',
 		templates => [ 'templates/pseudonyms.html.ep', 'templates/keyboard.html.ep', 'public/js/manager/keyboard.js' ],
 		body => [
@@ -1223,7 +1225,7 @@ our %topic = (
 	'search' => {
 		title => 'Search', category => 'apps', app => 'search',
 		templates => [ 'templates/apps/search.html.ep', 'public/js/manager/search.js' ],
-		verified => '2026-10-27',
+		verified => '2026-10-30',
 		summary => 'One window for the house, the web and the Guide, with a tab for each.',
 		body => [
 			'The search box in the start menu, the taskbar or the dock still filters apps as you type. The magnifier beside it opens Search, the app: it keeps your words and lets you choose what to search.',
@@ -1287,7 +1289,7 @@ our %topic = (
 		title => 'Utility controller', category => 'features',
 		templates => [ 'templates/configure/utility_controller.html.ep', 'templates/configure/system_setting_list.html.ep' ],
 		controls => [ 'Crew', 'This machine', 'Peers', 'Advertise now', 'Processor cores', 'One-minute load average', 'Free and total memory', 'Job kinds this machine can run', 'Peer machine', 'Peer load', 'Run this job', 'How often', 'Good', 'Bad', 'Batch groups', 'Batch pools', 'New pool name', 'Add a pool', 'Pool name', 'Pace for this pool', 'Remove this pool', 'Drop jobs here', 'Not in a pool', 'Keep the scheduled wake', 'Discharging samples', 'percent per hour while discharging' ],
-		verified => '2026-10-25',
+		verified => '2026-10-30',
 		summary => 'The background jobs every machine runs, how often, and the house AI view above them.',
 		body => [
 			'Configure → Sys holds the Utility controller. Your own jobs are at the top: the Batch pools grid, and a Not in a pool bin for everything outside them. Every job is a tile carrying its switch, its name, the time it last ran and a good/bad dot; a job outside every pool also carries its own interval box, and the bin lists the switched-on jobs before the switched-off ones. A peer machine follows as a card named by its hostname, with its jobs and pools beneath it.',
@@ -1317,7 +1319,7 @@ our %topic = (
 		title => 'Crew', category => 'features',
 		templates => [ 'crew.pl', 'templates/configure/utility_controller.html.ep', 'templates/configure/plat_setting_list.html.ep' ],
 		controls => [ 'This machine', 'Peers', 'Advertise now', 'Processor cores', 'One-minute load average', 'Free and total memory', 'Job kinds this machine can run', 'Peer machine', 'Peer load' ],
-		verified => '2026-10-25',
+		verified => '2026-10-30',
 		summary => 'What each machine in the house can do, and where a job is sent to run.',
 		body => [
 			'The Crew is the house\'s account of its own machines. Each one advertises what it can do - processor cores, one-minute load, memory, free disk, operating system and architecture, battery state when the hardware reports one, the AI models its local Ollama lists, and the tools it has such as a browser, ffmpeg, tesseract and whisper - and the house keeps the most recent advert from every reachable peer. Configure → Sys → Crew shows this machine\'s own facts first, then one line per peer with its load, its model count and the job kinds it can take. Advertise now asks this machine to re-read its facts and pulls every reachable peer\'s advert in at once, instead of waiting for the five-minute pass.',
@@ -1373,7 +1375,7 @@ our %topic = (
 	'appointments' => {
 		'title' => 'Appointments', category => 'functions',
 		templates => [ 'templates/appointment_wrapper.html.ep', 'templates/apps/edit_app.html.ep' ],
-		verified => '2026-10-28',
+		verified => '2026-10-30',
 		summary => 'The one record everything else hangs from.',
 		body => [
 			'An appointment is the atom of JawnOS: a timestamped record with a type, a status, a duration and an app-specific body. Files, invoices, measurements, notes and mail are all appointments under the hood, which is why they can refer to one another.',
@@ -1452,7 +1454,7 @@ our %topic = (
 		related => [ 'warehouse', 'invoices_payments', 'budget' ]
 	},
 	'transactions' => {
-		title => 'Recording a transaction', category => 'functions', verified => '2026-10-28',
+		title => 'Recording a transaction', category => 'functions', verified => '2026-10-30',
 		summary => 'Enter what you spent or received from the record\'s own window.',
 		templates => [ 'templates/apps/app_details.html.ep', 'templates/apps/transaction/expense.html.ep', 'templates/apps/transaction/income.html.ep', 'templates/apps/transaction/transfer.html.ep', 'templates/apps/transaction/inventory.html.ep', 'templates/apps/transaction/models.html.ep', 'templates/apps/app_transaction.html.ep', 'public/js/manager/transaction.js' ],
 		body => [
@@ -1503,10 +1505,10 @@ our %topic = (
 	'agents' => {
 		title => 'Agents (associates and coding)', category => 'functions',
 		templates => [ 'public/js/manager/agents.js' ],
-		verified => '2026-10-16',
+		verified => '2026-10-30',
 		summary => 'Every Guide associate and Coding agent conversation, named and kept.',
 		body => [
-			'Double-press the Assistant button — the taskbar pin, the start menu\'s icon, or an associate\'s own corner icon — and the Agents list opens against the button it was pressed on: beneath it, or just above when there is no room below — or wherever you last left it, if you have dragged it. A double-press shows the list only — the chat panel itself waits for a single press. The list holds every conversation the Guide\'s associate and the Coding agent have had, newest first; a row whose panel is on screen says open, and the rest are history, re-opened with what was said replayed into them when pressed.',
+			'Double-press the Assistant button — the taskbar pin, the start menu\'s icon, or an associate\'s own corner icon — and the Agents list opens against the button it was pressed on: beneath it, or just above when there is no room below — or wherever you last left it, if you have dragged it. A double-press shows the list only — the chat panel itself waits for a single press. The list holds every conversation the Guide\'s associate and the Coding agent have had, newest first; a row whose panel is on screen says open, and the rest are history, re-opened with what was said replayed into them when pressed. A panel is moved by its header, which wears the keyboard\'s grip - an open hand at rest, a closed one while dragging - and it reopens where you left it.',
 			'Every conversation names itself the way a chat thread does: shortly after the first thing is said, the assistant\'s model gives it a title of two to five words (a plain cut of the words when no model is set), and that name follows it in the list and on the panel\'s bar.',
 			'Conversations live in the app\'s settings, so they sync like the rest and a thread begun on one machine is in the list on another. The list\'s + guide and + coding make fresh conversations; the + in an open panel\'s own bar does the same. The chat panels themselves stand larger on a desk, with bigger text; on a small screen they keep the compact size.',
 			'A work claim says which machine is on which job, so two agents do not take the same one: a job (the ghost appointments, say) is claimed by name, and the claim rides the \'claims\' app - not one of the protected apps - so the mesh carries it to every machine, the same way appointments stay in step. The walkman\'s Configure shows who holds the ghosts claim, with take and release.',
@@ -1523,7 +1525,7 @@ our %topic = (
 		title => 'Platform (AI providers)', category => 'functions',
 		templates => [ 'templates/configure/plat_setting_list.html.ep' ],
 		summary => 'Choose the model each assistant uses, add provider keys, and teach the Guide runtime commands.',
-		verified => '2026-10-19',
+		verified => '2026-10-30',
 		body => [
 			'Configure → Plat gathers every AI choice in one place: which model each assistant uses, and the key or account each provider needs. On this machine {{live:models}} assistant roles have a model set, and the local Ollama is {{live:ollama}}.',
 			'Providers include the local Ollama, Cloudflare Workers AI, OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok), DeepSeek, Mistral, Groq and OpenRouter. A model is addressed as provider:model — a bare name goes to Ollama, and @cf/… to Cloudflare.',
@@ -1644,7 +1646,7 @@ our %topic = (
 		title => 'This Help app', category => 'features',
 		templates => [ 'public/js/manager/page_agent.js' ],
 		summary => 'The map you are reading now, and its guide.',
-		verified => '2026-10-28',
+		verified => '2026-10-30',
 		body => [
 			'Help is the built-in guide. Search it, browse by category, or open it contextually: press F1 to read about the window you are focused on. The question-mark button in a window\'s title bar opens a Guide associate for that window — the same Guide, in a chat of its own, already aware of the window it came from. The Take the tour button at the foot of the window replays a short tour of the desktop: its windows, the start menu and its System page, the dock and its pseudonyms, Configure, and how to ask the Guide.',
 			'Each topic hands you to the Guide along the foot: pick a model and ask. It answers in a chat, and it can also act on the screen. "Show me pictures of George Michael" searches your records and opens the photo browser on them; "how far have I walked this month" and "when am I expected to be 180" are read from your own logs; "show Sarnia on a map" centres the travel map; "where was I on September 18th" reads the recorded place fixes; and "play Friends" plays every episode it matches, as a list. Asked "when did I last have a beer" or "when am I next free", it reads the oldest, newest and next matching appointment from your own records (across the appointments log and the other tables), and the time machine reads them the same way. It reports each step as it goes.',
@@ -1672,7 +1674,7 @@ our %topic = (
 	'live_docs' => {
 		title => 'Live docs', category => 'functions',
 		templates => [ 'help.pl', 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
-		verified => '2026-10-25',
+		verified => '2026-10-30',
 		summary => 'Help pages that carry a value read when the page is drawn, and examples that open what they describe.',
 		body => [
 			'Most help is written once and read later, so a version number typed into a sentence goes stale. A live doc fills the value when the page is drawn instead: this page was drawn on {{live:machine}} running JawnOS {{live:version}}, and it is one of {{live:topics}} topics. Open the topic again and the value is read again.',
