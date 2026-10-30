@@ -31171,6 +31171,7 @@ sub ai_balance_chart {
 			label           => ($row->{'label'} || $provider),
 			currency        => ($converted ? $base : $from),
 			source_currency => $from,
+			source_available => $row->{'available'},
 			converted       => $converted,
 			rate            => ($converted ? $rate : undef),
 			available       => (defined $row->{'available'} && $converted ? $row->{'available'} * $rate : $row->{'available'}),
@@ -31197,14 +31198,64 @@ sub ai_balance_span_label {
 	return sprintf('%.0f d', $hours / 24);
 }
 
-# Money in a chart label: two decimals are right for a balance, but a slow
-# spend is often cents a day and would read as 0.00, so small values keep four.
-sub ai_balance_money {
+# Money in a label: two decimals are right for a balance, but a slow spend is
+# often cents a day and would read as 0.00, so small values keep four.
+sub currency_money {
 	my ($value) = @_;
 	return '' unless defined $value;
 	my $abs = abs($value);
 	return sprintf('%.4f', $value) if $abs > 0 && $abs < 0.1;
 	return sprintf('%.2f', $value);
+}
+
+# Kept for the balance chart's existing callers. New displays use currency_money.
+sub ai_balance_money {
+	return &currency_money($_[0]);
+}
+
+# The fiat currencies a picker may offer, and what one unit of the house
+# currency is worth in each. The order is deliberate: the house currency first,
+# the amount's own currency second, then the rest of the fiat table in its own
+# order. A code the rate snapshot does not carry is left out - offering it would
+# be a promise the conversion cannot keep. `rate` is target units per one base.
+sub currency_options {
+	my ($from) = @_;
+	$from = uc($from || '');
+	my $base = &crypto_report_currency();
+	my $r = &crypto_rates_read();
+	my $table = $r->{'rates'} || {};
+	my $base_v = $table->{$base};
+	$base_v = 1 unless defined $base_v && $base_v > 0;
+	my (@codes, %seen);
+	my $add = sub {
+		my ($code) = @_;
+		$code = uc($code || '');
+		return unless $code =~ /^[A-Z]{3}$/;
+		return if $seen{$code}++;
+		my $v = $table->{$code};
+		my $rate;
+		if ($code eq $base) { $rate = 1; }
+		elsif (defined $v && $v > 0) { $rate = $base_v / $v; }
+		else { return; }
+		push @codes, { code => $code, rate => $rate };
+	};
+	$add->($base);
+	$add->($from) if length $from;
+	foreach my $f ( @{ &crypto_fiat_codes() } ) { $add->($f); }
+	return ($base, \@codes);
+}
+
+# An amount in its own currency as the house currency. Returns undef when no
+# rate is loaded, so a caller can show the original figure instead of a guess.
+sub currency_amount_base {
+	my ($amount, $from, $to) = @_;
+	return undef unless defined $amount;
+	$from = uc($from || '');
+	$to = uc($to || &crypto_report_currency());
+	$from = $to unless length $from;
+	return $amount if $from eq $to;
+	my $rate = &exchange_rate($from, $to);
+	return (defined $rate && $rate > 0) ? $amount * $rate : undef;
 }
 
 # Auto-approve, kept on a leash: at most 8 auto-applies a day (each one is a

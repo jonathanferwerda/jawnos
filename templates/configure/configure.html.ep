@@ -75,12 +75,19 @@
 	   currentColor, so a scheme or a dark cut repaints it with everything else. */
 	.balance_chart { border-top:1px solid var(--line); margin-top:12px; padding-top:10px; }
 	.balance_chart_head { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; margin-bottom:8px; }
+	.balance_title { display:inline-flex; gap:8px; align-items:center; flex-wrap:wrap; }
+	.cfg .balance_provider { font:inherit; font-size:12.5px; padding:2px 6px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--ink); }
 	.balance_windows { display:flex; gap:6px; }
 	.cfg .balance_window { padding:3px 9px; font-size:12px; }
 	.cfg .balance_window[status="active"] { background:var(--accent, var(--line)); border-color:var(--accent-line, var(--accent, var(--line))); color:var(--accent-ink, #fff); font-weight:bold; }
 	.balance_series { margin:0 0 12px; }
-	.balance_series_head { display:flex; gap:8px; justify-content:space-between; font-size:13px; margin-bottom:2px; }
-	.balance_now { opacity:.8; font-variant-numeric:tabular-nums; }
+	.balance_series_head { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; font-size:13px; margin-bottom:2px; }
+	.balance_currency_note { margin:0; font-size:11.5px; opacity:.65; }
+	/* One amount and the picker that names its currency. The value is tabular so
+	   a changing number does not shift the control beside it. */
+	.cfg .currency_amount { display:inline-flex; gap:4px; align-items:baseline; white-space:nowrap; }
+	.cfg .currency_value { font-variant-numeric:tabular-nums; }
+	.cfg .currency_picker { font:inherit; font-size:12px; line-height:1.2; padding:1px 4px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--ink); }
 	.balance_spark { display:block; width:100%; height:80px; color:var(--accent, currentColor); }
 	.balance_rate { margin:4px 0 0; font-variant-numeric:tabular-nums; }
 	@media (prefers-reduced-motion: reduce) { .cfg .cfg-acc > summary::before { transition:none; } }

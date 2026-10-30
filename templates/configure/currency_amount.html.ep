@@ -1,0 +1,19 @@
+<%# One currency amount with the picker that says which currency it is in.
+   `amount` is in `from`; the house currency is the first option and the
+   default. When no rate can reach the house currency the original figure is
+   shown without a picker, never a converted guess. %>
+<% my $source = (defined $from && length $from) ? uc($from) : &subs::crypto_report_currency(); %>
+<% my ($base, $codes) = &subs::currency_options($source); %>
+<% my $base_amount = &subs::currency_amount_base($amount, $source, $base); %>
+<% if (!defined $base_amount) { %>
+	<span class="currency_amount currency_fixed"><%= &subs::currency_money($amount) %> <span class="currency_code"><%= $source %></span></span>
+<% } else { %>
+	<span class="currency_amount" data-base-amount="<%= sprintf('%.6f', $base_amount) %>" data-base="<%= $base %>" data-source="<%= $source %>">
+		<span class="currency_value"><%= &subs::currency_money($base_amount) %></span>
+		<select class="currency_picker" aria-label="<%= &subs::lang('configure.currency') %>">
+			<% foreach my $c ( @{$codes} ) { %>
+				<option value="<%= $c->{'code'} %>" data-rate="<%= sprintf('%.10f', $c->{'rate'}) %>"<% if ($c->{'code'} eq $base) { %> selected<% } %>><%= $c->{'code'} %></option>
+			<% } %>
+		</select>
+	</span>
+<% } %>

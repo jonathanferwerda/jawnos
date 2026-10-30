@@ -70,7 +70,7 @@
 						<% foreach my $b ( @balance_rows ) { %>
 							<tr>
 								<td style="text-align:left;"><%= $b->{'label'} %></td>
-								<td><%= (defined $b->{'available'} ? (sprintf('%.2f', $b->{'available'}) . ' ' . ($b->{'currency'} || '')) : ($b->{'note'} || '—')) %></td>
+								<td style="text-align:left;"><% if (defined $b->{'available'}) { %><%= include 'configure/currency_amount', amount => $b->{'available'}, from => ($b->{'currency'} || 'USD') %><% } else { %><%= $b->{'note'} || '—' %><% } %></td>
 								<td><% if ($ai_balance->{'at'}) { %><span class="time" timestamp="<%= $ai_balance->{'at'} %>"></span><% } else { %>—<% } %></td>
 							</tr>
 						<% } %>
@@ -83,28 +83,39 @@
 
 		<%# How fast the balance is falling. The ai balance job keeps a rolling
 		   week of samples; both windows are drawn from it, so switching a
-		   window never waits on a provider. %>
+		   window never waits on a provider. The provider picker chooses which
+		   account's line is shown; each line carries its own currency picker. %>
 		<% my $balance_chart = &subs::ai_balance_chart($ai_balance); %>
+		<% my @balance_series = @{ $balance_chart->{'series'} }; %>
 		<div class="balance_chart">
 			<div class="balance_chart_head">
-				<b><%= &subs::lang('configure.balance_drop') %></b>
+				<span class="balance_title">
+					<b><%= &subs::lang('configure.balance_drop') %></b>
+					<% if (@balance_series) { %>
+						<select class="balance_provider" aria-label="<%= &subs::lang('configure.provider') %>">
+							<% foreach my $series ( @balance_series ) { %>
+								<option value="<%= $series->{'provider'} %>"><%= $series->{'label'} %></option>
+							<% } %>
+						</select>
+					<% } %>
+				</span>
 				<span class="balance_windows">
 					<button type="button" class="balance_window" window="24h" status="active"><%= &subs::lang('configure.last_24h') %></button>
 					<button type="button" class="balance_window" window="7d"><%= &subs::lang('configure.last_7d') %></button>
 				</span>
 			</div>
-			<% if (@{ $balance_chart->{'unconverted'} || [] }) { %>
-				<p class="cfg-note"><%= &subs::lang('configure.balance_no_rate', $balance_chart->{'base'}, join(', ', @{ $balance_chart->{'unconverted'} })) %></p>
-			<% } elsif ($balance_chart->{'converted'}) { %>
-				<p class="cfg-note"><%= &subs::lang('configure.balance_in_currency', $balance_chart->{'base'}) %></p>
-			<% } %>
-			<% if (scalar @{ $balance_chart->{'series'} }) { %>
-				<% foreach my $series ( @{ $balance_chart->{'series'} } ) { %>
-					<div class="balance_series">
+			<% if (@balance_series) { %>
+				<% my $first = 1; %>
+				<% foreach my $series ( @balance_series ) { %>
+					<div class="balance_series" data-provider="<%= $series->{'provider'} %>"<% if (!$first) { %> style="display:none;"<% } %>>
 						<div class="balance_series_head">
-							<b><%= $series->{'label'} %></b>
-							<% if (defined $series->{'available'}) { %>
-								<span class="balance_now"><%= &subs::ai_balance_money($series->{'available'}) . ' ' . ($series->{'currency'} || '') %></span>
+							<% if (defined $series->{'source_available'}) { %>
+								<%= include 'configure/currency_amount', amount => $series->{'source_available'}, from => $series->{'source_currency'} %>
+							<% } %>
+							<% if ($series->{'converted'}) { %>
+								<span class="cfg-note balance_currency_note" data-template="<%= &subs::lang('configure.balance_in_currency', '{0}') %>"><%= &subs::lang('configure.balance_in_currency', $balance_chart->{'base'}) %></span>
+							<% } elsif (($series->{'source_currency'} || '') ne $balance_chart->{'base'}) { %>
+								<span class="cfg-note balance_currency_note"><%= &subs::lang('configure.balance_no_rate', $balance_chart->{'base'}, $series->{'source_currency'}) %></span>
 							<% } %>
 						</div>
 						<% foreach my $window ( qw/24h 7d/ ) { %>
@@ -114,21 +125,27 @@
 									<p class="cfg-note"><%= &subs::lang('configure.balance_collecting') %></p>
 								<% } else { %>
 									<%== &subs::ai_balance_sparkline($w->{'points'}, $w->{'start'}, $w->{'now'}, 320, 80) %>
-									<p class="cfg-note balance_rate">
-										<% my $money = &subs::ai_balance_money(abs($w->{'per_day'} // 0)) . ' ' . ($series->{'currency'} || ''); %>
-										<% if (defined $w->{'per_day'} && $w->{'per_day'} > 0.005) { %>
-											<%= &subs::lang('configure.drop_per_day', $money) %>
-										<% } elsif (defined $w->{'per_day'} && $w->{'per_day'} < -0.005) { %>
-											<%= &subs::lang('configure.rise_per_day', $money) %>
-										<% } else { %>
-											<%= &subs::lang('configure.balance_flat') %>
-										<% } %>
-										· <%= &subs::ai_balance_span_label($w->{'hours'}) %>
-									</p>
+									<% my $span = &subs::ai_balance_span_label($w->{'hours'}); %>
+									<% my ($rate_template, $rate_money);
+									   if (defined $w->{'per_day'} && $w->{'per_day'} > 0.005) {
+									       $rate_template = &subs::lang('configure.drop_per_day', '{0}');
+									       $rate_money = &subs::currency_money(abs($w->{'per_day'})) . ' ' . ($balance_chart->{'base'} || '');
+									   } elsif (defined $w->{'per_day'} && $w->{'per_day'} < -0.005) {
+									       $rate_template = &subs::lang('configure.rise_per_day', '{0}');
+									       $rate_money = &subs::currency_money(abs($w->{'per_day'})) . ' ' . ($balance_chart->{'base'} || '');
+									   } else {
+									       $rate_template = &subs::lang('configure.balance_flat');
+									   }
+									   my $rate_text = $rate_template;
+									   $rate_text =~ s/\{0\}/$rate_money/ if defined $rate_money;
+									   $rate_text .= ' · ' . $span;
+									%>
+									<p class="cfg-note balance_rate" data-base-per-day="<%= defined $w->{'per_day'} ? sprintf('%.6f', $w->{'per_day'}) : '' %>" data-template="<%= $rate_template %>" data-span="<%= $span %>"><%= $rate_text %></p>
 								<% } %>
 							</div>
 						<% } %>
 					</div>
+					<% $first = 0; %>
 				<% } %>
 			<% } else { %>
 				<p class="cfg-note"><%= &subs::lang('configure.balance_collecting') %></p>

@@ -78,6 +78,38 @@ is &subs::ai_balance_money(12.345), '12.35', 'normal money keeps two decimals';
 is &subs::ai_balance_money(0.0042), '0.0042', 'a slow spend keeps four';
 is &subs::ai_balance_money(0), '0.00', 'zero reads as zero';
 is &subs::ai_balance_money(undef), '', 'an unread balance has no number';
+is &subs::currency_money(12.345), '12.35', 'currency_money is the general formatter';
+is &subs::currency_money(0.0042), '0.0042', 'and keeps four decimals for a slow spend';
+
+# The currency picker: the house currency first, the amount's own currency
+# second, then the fiat table. Rates are target units per one house unit, so a
+# base amount times the option rate is the amount in that currency.
+{
+	local *subs::crypto_report_currency = sub { 'CAD' };
+	local *subs::crypto_rates_read = sub {
+		return { base => 'CAD', at => 1, rates => { CAD => 1, USD => 1.40, EUR => 1.55, JPY => 200 } };
+	};
+	my ($base, $codes) = &subs::currency_options('USD');
+	is $base, 'CAD', 'the picker names the house currency';
+	is $codes->[0]->{'code'}, 'CAD', 'which is the first option';
+	is $codes->[1]->{'code'}, 'USD', "and the amount's own currency is second";
+	cmp_ok abs($codes->[0]->{'rate'} - 1), '<', 0.000001, 'the house currency is one to one';
+	cmp_ok abs($codes->[1]->{'rate'} - (1 / 1.40)), '<', 0.000001, 'USD is one over the CAD-per-USD rate';
+	my ($eur) = grep { $_->{'code'} eq 'EUR' } @{$codes};
+	ok $eur, 'a currency with a rate is offered';
+	cmp_ok abs($eur->{'rate'} - (1 / 1.55)), '<', 0.000001, 'with its own converted rate';
+	my %seen;
+	is scalar(grep { $seen{$_->{'code'}}++ } @{$codes}), 0, 'no currency is listed twice';
+	ok !grep({ $_->{'code'} eq 'BTC' } @{$codes}), 'coins are not offered as currencies';
+}
+{
+	local *subs::crypto_report_currency = sub { 'CAD' };
+	local *subs::exchange_rate = sub { return ($_[0] eq 'USD' && $_[1] eq 'CAD') ? 1.4 : undef };
+	is &subs::currency_amount_base(70, 'USD', 'CAD'), 98, '70 USD becomes 98 CAD';
+	is &subs::currency_amount_base(70, 'CAD', 'CAD'), 70, 'the house currency is already itself';
+	ok !defined &subs::currency_amount_base(70, 'XYZ', 'CAD'), 'an unknown currency has no base value';
+	is &subs::currency_amount_base(70, 'USD'), 98, 'the house currency is the default target';
+}
 
 # The assembled chart follows the rows, so a provider that left the settings
 # cannot leave a ghost line behind. It converts to the house currency at the
@@ -97,6 +129,7 @@ my $report = {
 	is $chart->{'base'}, 'CAD', 'the chart names the house currency';
 	is $chart->{'series'}->[0]->{'currency'}, 'CAD', 'and the balance is shown in it';
 	is $chart->{'series'}->[0]->{'source_currency'}, 'USD', 'the provider currency is kept';
+	is $chart->{'series'}->[0]->{'source_available'}, 70, 'and the provider figure is kept for the picker';
 	ok $chart->{'converted'}, 'the chart records that it converted';
 	is_deeply $chart->{'unconverted'}, [], 'and nothing was left behind';
 	cmp_ok abs($chart->{'series'}->[0]->{'available'} - 105), '<', 0.001,

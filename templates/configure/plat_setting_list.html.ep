@@ -282,7 +282,8 @@
 				<span><%= $p->{'label'} %></span>
 				<%# the account's money, where the provider reports it, beside its key(s) %>
 				<% if ($set_up) { %>
-					<span class="cfg-note" style="margin:0;font-weight:normal;font-size:12px;white-space:nowrap;">balance <%= $balance_of->($p->{'id'}) %><% if ($balance->{'at'}) { %> · <span class="time" timestamp="<%= $balance->{'at'} %>"></span><% } %></span>
+					<% my $balance_row = $balance_for{$p->{'id'}}; %>
+					<span class="cfg-note" style="margin:0;font-weight:normal;font-size:12px;white-space:nowrap;">balance <% if ($balance_row && defined $balance_row->{'available'}) { %><%= include 'configure/currency_amount', amount => $balance_row->{'available'}, from => ($balance_row->{'currency'} || 'USD') %><% } else { %><%= $balance_of->($p->{'id'}) %><% } %><% if ($balance->{'at'}) { %> · <span class="time" timestamp="<%= $balance->{'at'} %>"></span><% } %></span>
 				<% } %>
 			</h4>
 			<% foreach my $k ( @{ $p->{'keys'} } ) { %>
