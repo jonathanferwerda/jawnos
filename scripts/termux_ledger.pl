@@ -139,20 +139,19 @@ my @PTY_PATTERNS = (
 # --- baseline ---------------------------------------------------------------
 # Recorded by this script's --record output. Counts only go down from here; a
 # new call site, command, tool or module fails --check. The lists catch a swap
-# that leaves the totals unchanged. M1 removed the call sites for every command
-# proven on both devices (docs/leaving-termux.md), so the list below holds only
-# the telephony and SMS commands that wait on a real send or call, plus the
-# first-run wizard's documented termux-open.
+# that leaves the totals unchanged. M1 is finished: every device command is
+# answered by the app's bridge, and the only termux-* call site left is the
+# first-run wizard's documented termux-open, which M3 replaces.
 my %BASELINE = (
 	'version'  => '0.1.1611',
 	'raw' => 0,
 	'exempt' => 1,
-	'logical' => 7,
-	'commands' => 6,
+	'logical' => 1,
+	'commands' => 1,
 	'tools' => 21,
 	'modules' => 39,
 	'pty' => 12,
-	'command_list' => 'termux-call-log termux-open termux-sms-list termux-sms-send termux-telephony-call termux-telephony-deviceinfo',
+	'command_list' => 'termux-open',
 	'tool_list' => 'argon2 autossh convert cpanm curl espeak ffmpeg git node openssl perl qrencode rsync sox sqlite3 ssh sshpass tesseract tmux zbarimg zip',
 	'module_list' => 'Authen::SASL Crypt::AuthEnc::GCM Crypt::KeyDerivation Crypt::PK::Ed25519 Crypt::PK::X25519 Crypt::PRNG Crypt::Simple CryptX DBD::SQLite Data::UUID Date::Parse Digest::SHA Email::Stuffer Encode File::Slurp File::Type HTML::Strip Hash::Merge LWP::Protocol::https LWP::UserAgent MIME::Parser Math::BigInt Minion Minion::Backend::SQLite Mojo::IOLoop::ReadWriteFork Mojo::SQLite Mojolicious::Lite Mojolicious::Plugin::RenderFile Net::IMAP::Client Net::SSLeay Number::Format SQL::Abstract Sereal::Decoder Sereal::Encoder Time::Duration Time::Piece URI::Encode URI::Escape WWW::Mechanize',
 );

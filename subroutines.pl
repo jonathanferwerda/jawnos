@@ -9560,7 +9560,7 @@ my $returner = '';
 		my $bridge_sms = &subs::device_call('sms.list', { limit => 10 });
 		my $list = ($bridge_sms && ref $bridge_sms->{'messages'} eq 'ARRAY')
 			? $bridge_sms->{'messages'}
-			: decode_json(&subs::device_run('sms-list', '-l 10 --message-sort-order="date DESC"') || '[]');
+			: [];
 		foreach my $l (grep { $_->{'type'} eq 'draft' || $_->{'type'} eq 'sent' || $_->{'type'} eq 'inbox' } @{$list}) {
 			my $time = &subs::ago_calc($l->{'received'},$timestamp);
 			my $phone = $l->{'number'};
@@ -18789,7 +18789,7 @@ sub telephone_call_log_check() {
 	my $bridge_calls = &subs::device_call('telephony.call_log', { limit => 30 });
 	my $calls = ($bridge_calls && ref $bridge_calls->{'calls'} eq 'ARRAY')
 		? $bridge_calls->{'calls'}
-		: (eval { return decode_json(&subs::device_run('call-log', '-l 30')) } || []);
+		: [];
 
 	foreach my $call ( grep { $_->{'phone_number'} =~ /\d/ } @{$calls} ) {
 		my $name = &subs::unformat_name($call->{'name'});

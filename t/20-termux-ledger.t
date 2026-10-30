@@ -52,13 +52,10 @@ is($rc, 0, 'termux_ledger --check passes: no new termux dependency') or diag($ou
 like($out, qr/termux_ledger: ok/, 'the ledger reports its baseline counts');
 
 # M1 exit (docs/leaving-termux.md): the app's bridge answers a command or the
-# shell fallback is gone. This is the exact set still allowed to fall back, so
-# a command that silently regains a termux call fails here as well as in the
-# ledger, and the list reads as the to-do for the next device proof.
-my $held = join ' ', qw(
-	termux-call-log termux-open termux-sms-list termux-sms-send
-	termux-telephony-call termux-telephony-deviceinfo
-);
+# shell fallback is gone. Every device command is native now; the one site still
+# allowed to spell the prefix is the first-run wizard's termux-open, which runs
+# before the tree is serving and goes away with M3.
+my $held = 'termux-open';
 my $record = qx{"$^X" "$ledger" --record 2>&1};
 my ($listed) = $record =~ /'command_list'\s*=>\s*'([^']*)'/;
 is(($listed // ''), $held, 'only the awaited commands still fall back to termux');

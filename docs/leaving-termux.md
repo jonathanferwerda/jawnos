@@ -122,7 +122,7 @@ shape M1 and M2 take.
 | Milestone | Deliverable | Removes | Effort |
 | --- | --- | --- | --- |
 | **M0 Contracts** | dependency ledger + `subs::device()` wrapper at call sites, behaviour unchanged | nothing yet | ~1 week ✅ |
-| **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks ✅ (fallbacks gone except the SMS/call five) |
+| **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks ✅ (all 24 native; API app retired) |
 | **M2 Supervisor** | own process supervisor + PTY only for Console | `TermuxService`, `RunCommandService`, `termux-am`, `termux-exec`, `bin/login` | ~2 weeks ✅ (`bin/login`, `termux-exec` gone; `TermuxService` left for the Console) |
 | **M3 Runtime** | bundled Perl + XS modules + a decided tool set | bootstrap, `pkg`/`apt`/`dpkg`, `TermuxInstaller`, first-run `git clone` | 4–8 weeks |
 | **M4 Identity** | new app, new package name, no Termux code | `termux-shared`, `terminal-view`/`terminal-emulator`, plugin support, `sharedUserId`, GPL-3 | 2–3 weeks |
@@ -286,12 +286,24 @@ shape M1 and M2 take.
   call was placed and no message sent.
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** the M1 exit removed every fallback that was proven on both
-  devices. Only `sms.send`, `sms.list`, `telephony.call_log`, `telephony.dial`
-  and `telephony.deviceinfo` still fall back, waiting on a real send and a real
-  call (both held on purpose; no message has been sent and no call placed).
-  Next: uninstall the API app once nothing calls it, then M2 (which follows
-  immediately — see below).
+- **Remaining:** nothing. Every one of the 24 commands is answered by the app
+  and its fallback is deleted; `scripts/termux_ledger.pl` finds exactly one
+  `termux-*` call site, the first-run wizard's exempt `termux-open`. The last
+  proofs (2026-10-30, app 1190/1191): a real outgoing call to the one sanctioned
+  number (`PLACE_OUTGOING_CALL` → `DIALING` → ended), one SMS sent through
+  `sms.send`, `sms.list` 10 rows, `telephony.call_log` 30 rows,
+  `deviceinfo` gsm/ready/lte.
+- **API app retirement (2026-10-30):** the two things the main app still needed
+  `com.termux.api` for moved in. `JawnBleService` is now `com.termux.app`'s (the
+  v2 multi-link NUS daemon on `127.0.0.1:45999`, same wire format, so
+  `scripts/jawn-bt` and the tree are unchanged beyond the component name), and
+  `JawnGrantAllActivity` became `JawnPermissionsActivity`, which requests the
+  runtime permissions in the app's own name. `JawnLauncher.startBle` also sends
+  the legacy daemon its stop action so two bridges never fight for the port.
+  Proven on both devices: the new service binds and answers `jawn-bt status`
+  (`{"protocol":2,"links":[]}`), and `jawn-bt scan` returns real advertisements.
+  Nothing in the tree calls a termux-* command now, so the API app is only a
+  fallback and can be uninstalled.
 
 ### M2 — Supervisor — done for the tree
 
