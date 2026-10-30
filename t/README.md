@@ -48,6 +48,7 @@ Exports: `root()`, `sandbox()`, `ts(year, month, day[, hour, minute, second])`
 | `15-tier.t` | `tier_needed`/`tier_denied`/`privilege_is_house`/`guest_browser_session`: tiers, anchoring, unknown privilege |
 | `16-sync-lock.t` | the pull marker: claim vs live pid bounds, dead/legacy markers, idle values |
 | `17-utility-runtime.t` | utility adoption: `lasted_run` is process state, and the tunnels stall bound |
+| `22-peer-address.t` | peer manager candidates: stale LAN/loopback managers fall back to the fqdn, tunnel rows keep theirs |
 
 ## Rules for a new test
 
