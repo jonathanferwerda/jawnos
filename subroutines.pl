@@ -9557,8 +9557,10 @@ my $returner = '';
 		my $timestamp = &subs::rightNow();
 		my $c = &subs::controller_builder();
 		my $suds = &suds_grabber();
-		my $json_list = &subs::device_run('sms-list', '-l 10 --message-sort-order="date DESC"') || '[]';
-		my $list = decode_json $json_list;
+		my $bridge_sms = &subs::device_call('sms.list', { limit => 10 });
+		my $list = ($bridge_sms && ref $bridge_sms->{'messages'} eq 'ARRAY')
+			? $bridge_sms->{'messages'}
+			: decode_json(&subs::device_run('sms-list', '-l 10 --message-sort-order="date DESC"') || '[]');
 		foreach my $l (grep { $_->{'type'} eq 'draft' || $_->{'type'} eq 'sent' || $_->{'type'} eq 'inbox' } @{$list}) {
 			my $time = &subs::ago_calc($l->{'received'},$timestamp);
 			my $phone = $l->{'number'};
@@ -18570,8 +18572,10 @@ sub telephone_contacts_check() {
 	return 0 unless $device eq 'mobile';
 
 	my $n = 0;
-	my $jcontacts = &subs::device_run('contact-list');
-	my $contacts = eval { return decode_json $jcontacts } || [];
+	my $bridge_contacts = &subs::device_call('contact.list');
+	my $contacts = ($bridge_contacts && ref $bridge_contacts->{'contacts'} eq 'ARRAY')
+		? $bridge_contacts->{'contacts'}
+		: (eval { return decode_json(&subs::device_run('contact-list')) } || []);
 	foreach my $contact ( @{$contacts} ) {
 		my $name = &subs::unformat_name($contact->{'name'});
 		my $number = $contact->{'number'};
@@ -18744,8 +18748,10 @@ sub telephone_call_log_check() {
 	return 0 unless $device eq 'mobile';
 
 	my $n = 0;
-	my $call_logs = &subs::device_run('call-log', '-l 30');
-	my $calls = eval { return decode_json $call_logs } || [];
+	my $bridge_calls = &subs::device_call('telephony.call_log', { limit => 30 });
+	my $calls = ($bridge_calls && ref $bridge_calls->{'calls'} eq 'ARRAY')
+		? $bridge_calls->{'calls'}
+		: (eval { return decode_json(&subs::device_run('call-log', '-l 30')) } || []);
 
 	foreach my $call ( grep { $_->{'phone_number'} =~ /\d/ } @{$calls} ) {
 		my $name = &subs::unformat_name($call->{'name'});
