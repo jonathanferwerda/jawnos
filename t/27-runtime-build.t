@@ -131,4 +131,14 @@ my $lmodes = zip_modes($lout);
 is($lmodes->{'bin/awk'}, 0120777, 'a symlink is stored with S_IFLNK');
 is(zip_body($lout, 'bin/awk'), 'perl', 'and its target is the entry body');
 
+# --- the runtime declares itself complete -----------------------------------
+# The first-run wizard runs `perl scripts/jawnos_deps.pl --install`; on a
+# device whose prefix is this runtime there is no package manager and nothing
+# missing, so it must succeed without trying to install anything.
+my $marked = tempdir(CLEANUP => 1);
+write_file_at("$marked/etc/jawnos-runtime.json", '{"version":"9.9.9"}', 0644);
+my $deps = qx{PREFIX="$marked" "$^X" "$root/scripts/jawnos_deps.pl" --install 2>&1};
+is($? >> 8, 0, 'the dependency install is a no-op inside the app runtime') or diag($deps);
+like($deps, qr/runtime 9\.9\.9 supplies every module/, 'and it says why');
+
 done_testing();
