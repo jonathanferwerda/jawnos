@@ -12060,6 +12060,11 @@ sub music_transmitter {
 
 sub vacuum() {
 	my $app = shift;
+	# the house's own apps are not a use case that ends: me carries name, warranty
+	# and budget_alarm, __president carries ws_pa and cache_folders, music and misc
+	# their own house settings. None is rebuilt by opening the app again, so an
+	# expired last appointment must never take them with it
+	return if grep { $_ eq $app } qw/misc customs music __president me/;
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $timestamp = rightNow();
 	my $app_q = &db_query('select * from appointments where app=?',$app);

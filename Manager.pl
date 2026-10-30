@@ -27087,12 +27087,18 @@ post '/manager/delete_duty' => sub($c) {
 	my $app = &subs::unformat_name($c->param('app'));
 
 	my $appt = &subs::db_select('appointments', undef, { uuid => $app_uuid, app => $app })->hashes->[0];
+	return $c->render(json => { duuid => $duuid }) unless $appt;
 	my $duties = eval { return decode_json $appt->{'duties'} } || [];
-	@{$duties} = grep { $_->{'duuid'} ne $duuid } @{$duties};
+	@{$duties} = grep { $_->{'duuid'} && $_->{'duuid'} ne $duuid } @{$duties};
+	@{$duties} = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$duties};
 
-	my $jduties = encode_json $duties;
+	# NULL, not []: an empty array still matches "duties is not null", so the row
+	# stayed in the duty watch every 2 seconds with a next_duty already in the past
+	my $next_duty = scalar @{$duties} ? $duties->[0]->{'timestamp'} : undef;
+	my $jduties = scalar @{$duties} ? encode_json $duties : undef;
 
-	&subs::db_update('appointments', { duties => $jduties, server_time => &subs::rightNow() }, { app => $app, uuid => $appt->{'uuid'} });
+	&subs::db_update('appointments', { duties => $jduties, next_duty => $next_duty, server_time => &subs::rightNow() }, { app => $app, uuid => $appt->{'uuid'} });
+	&subs::appt_alarm_setter(&subs::db_select('appointments', undef, { app => $app, uuid => $appt->{'uuid'} })->hashes->[0]);
 	$c->render(json => { duuid => $duuid });
 };
 
