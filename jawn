@@ -274,7 +274,9 @@ sub master_time_looper() {
 				if (&tree_serving()) { $tree_misses = 0; $tree_dead_since = undef }
 				elsif (++$tree_misses >= 2) {
 					$tree_dead_since ||= $tick_now;
-					print "the web port has been dead for ~" . ($tick_now - $tree_dead_since) . "s with status 'started'; recovering\n";
+					my $dump = &wedge_dump();
+					print "the web port has been dead for ~" . ($tick_now - $tree_dead_since) . "s with status 'started'; recovering"
+						. ($dump ne '' ? " (what it was doing: $dump)" : '') . "\n";
 					$tree_misses = 0;
 					$tree_dead_since = undef;
 					$status = 'frozen';
@@ -654,12 +656,54 @@ sub config_port {
 sub port_answers {
 	my ($port) = @_;
 	return 0 unless $port;
+	# A connect() proves only that a listening socket exists: a tree whose event
+	# loop is blocked (a wedged database write, a handler waiting on a lock) still
+	# completes the handshake into the accept queue, so this watchdog read exactly
+	# the failure it exists to catch as healthy and never recovered the tree.
+	# port_free() below draws the same distinction for the one question a bind
+	# answers. Ask for an HTTP answer instead; probe.pl asks it, and the route it
+	# asks reads the database.
+	eval { require './probe.pl' };
+	return probe::serving($port, 'timeout' => 2) if defined &probe::serving;
+	# No probe module (a half-copied tree): keep the socket test rather than call
+	# a healthy tree dead and restart the house over a missing file.
 	require IO::Socket::INET;
 	my $ok = eval {
 		my $sock = IO::Socket::INET->new(PeerAddr => '127.0.0.1', PeerPort => $port, Timeout => 2);
 		$sock ? (close($sock), 1) : 0;
 	};
 	return $ok ? 1 : 0;
+}
+
+# What the tree was doing when it stopped answering. The master holds no
+# database handle and cannot see inside a stuck worker, so record the outside
+# view before the restart destroys it: the process table with each process's
+# kernel wait channel (D = disk, S = sleeping in a syscall), the database and
+# its WAL, and the log's tail. The error watch reads this path from the pty.
+sub wedge_dump {
+	my $path = &home('~/.president') . '/wedge-' . time . '.txt';
+	my @out = ('tree wedged ' . localtime() . " - the ports stopped answering\n\n");
+	my $ps = `ps -eo pid,ppid,stat,wchan:24,etime,args 2>/dev/null`;
+	my @tree = grep { /\b(?:President|Manager|Websocket|teletype|watch|Music|Alarm|pen)\.pl\b/ }
+		split(/\n/, defined $ps ? $ps : '');
+	push @out, "PROCESSES\n", (map { "$_\n" } @tree), "\n" if @tree;
+	foreach my $file ( glob('database/jawnos.db*') ) {
+		my $bytes = -s $file;
+		$bytes = 0 unless defined $bytes;
+		push @out, sprintf("%-34s %12d bytes\n", $file, $bytes);
+	}
+	push @out, "\n";
+	my $log_path = $logfile;
+	if (-e $log_path && open(my $fh, '<', $log_path)) {
+		my $size = -s $fh || 0;
+		seek($fh, $size > 16384 ? $size - 16384 : 0, 0);
+		my @tail = <$fh>;
+		close $fh;
+		splice(@tail, 0, @tail - 40) if @tail > 40;
+		push @out, "LOG (last 40 lines of $log_path)\n", @tail;
+	}
+	my $ok = eval { write_file($path, join('', @out)); chmod 0600, $path; 1 };
+	return $ok ? $path : '';
 }
 
 # True when nothing is bound to the port. A connect() is not the same question:
