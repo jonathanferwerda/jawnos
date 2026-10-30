@@ -10513,16 +10513,17 @@ sub sync_rows_pull {
 	my $remote = $remote_machine || &remote_useragent_maker({ signatorial => $params->{'remote_signatorial'} });
 	# A tailnet name whose node is offline blackholes every request until the
 	# timeout, while the peer advertises a LAN manager that answers instantly.
-	# Prefer that manager when it differs: only the URL host changes, auth and
-	# signing still ride the same peer rail.
-	my $lan = &subs::peer_lan_address($remote, 1);
+	# Prefer that manager when it differs - unless the caller already proved a
+	# manager with the signed presence probe; the LAN address it advertises may
+	# be the one that just failed.
+	my $lan = $remote->{'manager_verified'} ? undef : &subs::peer_lan_address($remote, 1);
 	$remote->{'manager'} = $lan->{'manager'}
 		if $lan && $lan->{'manager'} && $lan->{'manager'} ne ($remote->{'manager'} || '');
 	# When the stored name is a tailnet address and no LAN route answered, ask the
 	# house server where the peer is now. The server is the authority for a machine
 	# that woke on a different network; its record carries the address the peer
 	# advertised, so the pull does not have to wait out a socket timeout.
-	if (!$lan && &AddressDirectory::manager_is_tailnet($remote->{'manager'})) {
+	if (!$lan && !$remote->{'manager_verified'} && &AddressDirectory::manager_is_tailnet($remote->{'manager'})) {
 		my $resolved = eval { &AddressDirectory::lookup($remote->{'signatorial'}) };
 		if (ref $resolved eq 'HASH' && ($resolved->{'manager'} // '') ne '') {
 			$remote->{'manager'} = $resolved->{'manager'};
@@ -11058,12 +11059,14 @@ get '/manager/sync_buckets' => sub ($c) {
 	# the peer unreachable.
 	if ($params->{'manager'}) {
 		$remote_machine->{'manager'} = $params->{'manager'};
+		$remote_machine->{'manager_verified'} = 1;
 	}
 	else {
 		my $donor = &subs::remote_machine_lister({ signatorial => $remote_signatorial, limit => 1 });
 		if ($donor && &remote_machine_online({ rm => $donor, ip => $donor->{'ip'}, port => $donor->{'port'}, signatorial => $remote_signatorial })) {
 			$remote_machine->{'manager'} = $donor->{'manager'};
 			$remote_machine->{'ip'} = $donor->{'ip'};
+			$remote_machine->{'manager_verified'} = 1;
 		}
 	}
 	my $auuid = &subs::random_string_creator(10);
@@ -11095,7 +11098,7 @@ get '/manager/sync_buckets' => sub ($c) {
 		# The same LAN preference the row stream uses: a stored tailnet name can
 		# point at an offline node, while the peer advertised a reachable LAN
 		# manager. Only the URL host changes.
-		my $lan = &subs::peer_lan_address($remote_machine, 1);
+		my $lan = $remote_machine->{'manager_verified'} ? undef : &subs::peer_lan_address($remote_machine, 1);
 		$remote_machine->{'manager'} = $lan->{'manager'}
 			if $lan && $lan->{'manager'} && $lan->{'manager'} ne ($remote_machine->{'manager'} || '');
 		my $url = $remote_machine->{'manager'} . '/manager/configure/backup_now?reason=remote_update&async=1&timestamp=' . $timestamp . '&signatorial=' . $signatorial;
