@@ -1,7 +1,9 @@
 # Leaving Termux — building the JawnOS app from scratch
 
-**Status:** draft 2026-10-30. **M0 landed** in v0.1.1611 and **both spikes
-passed** the same day. Next: M1. Nothing in the app has changed yet.
+**Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 has
+started**: the app-side bridge and `battery.status` are in build 1178 / 0.118.179,
+the Perl side calls it with the termux command as a fallback, and the device
+proof is still to do. Nothing on the live devices has been replaced yet.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
 sections in the long run), `AGENTS.md` → App releases.
@@ -147,20 +149,32 @@ shape M1 and M2 take.
   `--check` exits 0 at 36 call sites / 24 commands / 0 raw sites, and
   `t/20-termux-ledger.t` runs the check inside `prove -l t`.
 
-### M1 — Device bridge
+### M1 — Device bridge (in progress: skeleton + battery)
 
-- App side: a foreground `DeviceService` listening on a unix socket in `$HOME/.jawn/`
-  (the `jawn-bt` service already proves the pattern). JSON in, JSON out, one long-lived
-  connection, a request id per call.
-- Perl side: `subs::device_call('sms.send', {...})`; the `termux-*` implementation stays
-  behind a flag until the replacement is proven on the phone.
-- Order: `battery`, `notification`, `toast`, `clipboard`, `wake-lock`, `sms-send`,
-  `sms-list`, `location`, `telephony`, `call-log`, `tts`, `camera-photo`, `fingerprint`,
-  `volume`, `torch`, `media-player`, `share`, `open`, `contact-list`, then the rest.
-- Fold the API app into the service as each command moves. Do not merge first and migrate
-  second — move the command, then delete the code path.
-- **Exit:** grep finds no `termux-*` outside the fallback shim; the API app is uninstalled
-  on both devices and nothing noticed.
+- **Landed (tree v0.1.1614, app 1178 / 0.118.179):** `DeviceService` in the app
+  (`com.termux.app`): loopback `127.0.0.1:46000`, newline-delimited JSON, a
+  request id per call, one long-lived connection, and a token the app writes to
+  `$HOME/.jawn/device.token` (mode 600; the app and Termux share one uid). It
+  starts and stops with jawn, beside the BLE bridge, and answers `ping` and
+  `battery.status` in the termux-battery-status shape.
+- **Perl side:** `subs::device_call($method, $args)` dials the bridge and returns
+  the decoded result, or undef on any failure; `battery_sample` prefers it and
+  keeps `subs::device_run('battery-status', ...)` as the fallback. An old app
+  with a new tree and a new app with an old tree both work, which is why the app
+  can ship before the device proof. `t/21-device-bridge.t` pins the protocol
+  against a reference server, and the ledger lists bridge call sites.
+- **Transport decided: loopback plus a token, not a filesystem unix socket.**
+  `android.net.LocalServerSocket` binds the abstract namespace only; a
+  filesystem listener needs JNI, and `jawn-bt` already uses loopback. The token
+  is the part jawn-bt lacks. This settles open decision 4 unless a later
+  milestone wants the JNI.
+- **Not yet proven on a device.** The app compiles and is published, but the
+  live phone and tablet were deliberately not touched. The first device proof
+  installs 1178 when the tree can be restarted on purpose, then confirms
+  `ping` + `battery.status` and that the Monitor shows `source => 'bridge'`.
+- **Remaining:** the other 23 commands, in the order below, folding the API app
+  in as each one moves. The fallback (and the ledger entry) goes in the same
+  commit that proves a command.
 
 ### M2 — Supervisor
 
@@ -281,6 +295,7 @@ a new dependency the day it is added.
    absolute path from `nativeLibraryDir`, at targetSdk 35/36.
 2. Bundle the runtime in the APK, or host our own package repo (a package manager we own)?
 3. The tool diet, per tool.
-4. Device transport: unix socket (recommended, matches `jawn-bt`) or broadcasts.
+4. Device transport — **decided:** loopback TCP plus a token (see M1). A
+   filesystem unix socket would need JNI for the listening side.
 5. Update channel: Play, GitHub, or F-Droid — and when the peer APK sync ends.
 6. Cut-over plan for the two devices, and how long the `com.termux` build stays installed.
