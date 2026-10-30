@@ -157,6 +157,9 @@ get '/manager/music' => sub ($c) {
 	unless ($files || $c->param('library_name')) {
 		if (my $cache = &subs::cache_get({ app => 'music', context => 'content', subcontext => $content_cache })) {
 			if ($cache->{'contents'}) {
+				# one line per app open: the three ways a window can come back are
+				# worth telling apart when someone reports the wrong list
+				$log->info('music queue: window served from the cached shell');
 				if ($c->param('window_maker')) {
 					my $website = &Manager::window_maker({ app => 'music', title => 'music', contents => $cache->{'contents'} }, &subs::rightNow());
 					$c->render(text => $website);
@@ -177,6 +180,10 @@ get '/manager/music' => sub ($c) {
 		if ($remembered) {
 			$files = $remembered;
 			$same_order = 1;
+			$log->info('music queue: replayed ' . scalar @{$remembered} . ' file(s) after a shell miss');
+		}
+		else {
+			$log->info('music queue: no replayable queue, searching');
 		}
 	}
 	my $crate = &music_search({ settings => $settings, c => $c, search => $search, now_playing => {}, port => $port, misc_settings => $misc_settings, files => $files, same_order => $same_order, permissive => $unlocked });
@@ -1874,15 +1881,36 @@ sub music_queue_remember($crate, $settings, $permissive) {
 }
 
 # The queue to replay when the window shell is not in the cache. Undef means
-# "search as before": the remembered queue is from another library, from a
-# window with a different grant, or the archive is on (a replayed list would
+# "search as before": the remembered queue is from another library, nothing in
+# it may be listed in this window, or the archive is on (a replayed list would
 # wear its rows as plain local files, because the manifest walk is what gives
 # them their machine).
 sub music_queue_recall($settings, $unlocked) {
 	return undef if (($settings->{'archive'} // '') eq 'on');
 	my $queue = &subs::cache_get({ app => 'music', context => 'queue' });
-	return undef unless &subs::music_queue_applies($queue, $settings->{'library'}, $unlocked);
-	return $queue->{'files'};
+	return undef unless &subs::music_queue_applies($queue, $settings->{'library'});
+	# The queue is data, so it is filtered by the same rule the folder walk uses
+	# rather than by the grant that happened to be on the window when it was
+	# assembled. That is what lets a list built while unlocked come back in a
+	# locked window - the ordinary case, since every window is reopened without a
+	# token - while a sealed or private track still never appears in one that may
+	# not list it.
+	my @keep = grep { &music_queue_file_visible($_, $unlocked) } @{ $queue->{'files'} };
+	return undef unless scalar @keep;
+	return \@keep;
+}
+
+# Would the folder walk have listed this file in a window holding this grant?
+# The same tests process_file applies, so a replayed queue cannot show a name
+# the walk would have hidden.
+sub music_queue_file_visible($name, $permissive) {
+	if (&music_app_private($name)) {
+		return 0 unless &subs::private_reachable_now();
+		return 0 unless $permissive == 1 || &subs::private_revealed();
+	}
+	return 1 if &playable_name($name);
+	return 0 unless ($permissive == 1 || &music_app_visible($name)) && &playable_enc_name($name);
+	return 1;
 }
 
 sub music_search($data) {
