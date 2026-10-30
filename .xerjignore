@@ -1,0 +1,39 @@
+# XERJ index scope. Same syntax as .gitignore; read only by `xerj autoindex`.
+# Goal: keep the code and prose an agent would search for, and leave out the
+# blobs — icons alone were ~50k of 68k records, and a staged dist tree plus a
+# 7.6 GB mkosi image would swamp every real hit.
+
+# Media and icon blobs (~130 MB, ~5,600 files)
+public/icons/
+public/images/
+public/sounds/
+public/fonts/
+docs/screenshots/
+
+# Piper voice data: multi-MB text dictionaries, not code (one is over the
+# engine's 8 MiB per-document limit and aborts the whole run)
+voices/
+
+# Built images, staged dist trees, APKs
+desktop/mkosi/
+releases/
+.pio/
+build/
+*.apk
+*.raw
+*.zst
+*.img
+*.initrd
+
+# Local state. schema.sql stays in scope; the databases do not.
+database/*.db
+database/*.db-wal
+database/*.db-shm
+database/initial.enc
+database/backups/
+
+# Generated chunks of Manager.pl (scripts/xerj_manager_mirror.pl). They are
+# gitignored so they are never committed, and re-included here because xerj
+# reads .gitignore and would otherwise skip them too - the whole point of the
+# mirror is to make Manager.pl searchable past the 2 MiB per-file cap.
+!xerj-mirror/
