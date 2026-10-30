@@ -2219,7 +2219,7 @@ async function musicInit(method) {
 			var mf = pd.file ? $('.music_file[file="' + pd.file + '"]') : $();
 			mf.addClass('playing');
 			var playing = $('.playing');
-			tree.current_track = playing.attr('number');
+			tree.current_track = musicKey(playing);
 			thisTrack(playing.closest('.track_item'));
 			$('#video_full_title').text(playing.find('.full_title').text());
 
@@ -2307,7 +2307,7 @@ function playerCacheSaver(type) {
 		var unlocked = 0;
 		if ($('#music').attr('unlock')) { unlocked = 1; }
 		var playerData = { 
-			number: tree.current_track, 
+			key: tree.current_track, 
 			'currentTime': tree.sound.currentTime, 
 			file: (tree.songs[0] ? tree.songs[0].file : ''), 
 			volume: master_volume, 
@@ -2342,44 +2342,101 @@ function playerCacheSaver(type) {
 	return jpd;
 }
 
+// A track is identified by its file_uuid, or by its filename when the server has
+// no uuid for it. The ordinal #track_N is a rendering detail: a search re-renders
+// the list and renumbers every card, so anything that remembers a number starts
+// pointing at whichever track now sits in that spot. Everything that has to
+// survive a re-render keys the track instead.
+function musicKey(el) {
+	var n = $(el);
+	return n.attr('file_uuid') || n.attr('file') || '';
+}
+
+function musicSongKey(song) {
+	if (!song) { return ''; }
+	return song.file_uuid || song.file || '';
+}
+
+function musicCardByKey(key) {
+	var found = $();
+	if (!key) { return found; }
+	// filtered in JS rather than in a selector: a filename can carry quotes
+	$('.music_file').each(function () {
+		if (musicKey(this) === key) { found = $(this); return false; }
+	});
+	return found;
+}
+
 function treeMaker() {
-	tree = {
-		files: $('#files').find('.file'),
-		songs: [],
-		past_songs: [],
-		all_songs: [],
-		seek: 0,
-		song_id: 0,
-		current_track: 0,
-		sound: document.getElementById('video'),
-		lastCache: 0
-	};
-	for (n = 0; n <= tree.files.length - 1; n++) {
-		if (tree.files[n].textContent !== undefined) {
-			var info;
-			if (isJson($('.file_json[file_uuid="' + $(tree.files[n]).attr('file_uuid') + '"]').text())) {
-				info = JSON.parse($('.file_json[file_uuid="' + $(tree.files[n]).attr('file_uuid') + '"]').text());
-			}
-			var data = { 
-				encodedFile: encodeURI(tree.files[n].textContent), 
-				file: tree.files[n].textContent, 
-				type: $(tree.files[n]).attr('type'), 
-				app: $(tree.files[n]).attr('app'),
-				remote_uuid: $(tree.files[n]).attr('remote_uuid'),
-				computer_name: $(tree.files[n]).attr('computer_name'),
-				colour: $(tree.files[n]).attr('colour'),
-				info: info,
-			};
-			tree.songs.push(data);
-			tree.all_songs.push(data);
-		}
+	var files = $('#files').find('.file');
+	var keys = [];
+	files.each(function () { keys.push(musicKey(this)); });
+	var signature = keys.join('\u0001');
+	var prev = (typeof tree == 'object' && tree) ? tree : null;
+	var sound = document.getElementById('video');
+	// The list only changes when it is re-rendered (a search, a crate change). Any
+	// other call keeps what it already has: rebuilding threw the queue away on
+	// every call, and that is why the position had to be remembered as a number in
+	// the list rather than as the track itself.
+	if (prev && prev.signature === signature) {
+		prev.files = files;
+		prev.sound = sound;
+		return prev;
 	}
+	var queue = prev ? prev.songs.map(musicSongKey) : [];
+	var past = prev ? prev.past_songs.map(musicSongKey) : [];
+	var all = [];
+	var by_key = {};
+	files.each(function () {
+		var card = $(this).closest('.music_file');
+		// scoped to the card: the old global [file_uuid=...] query ran once per
+		// file, which made building the list quadratic in the tracks on screen
+		var json = card.find('.file_json').first().text();
+		var info = isJson(json) ? JSON.parse(json) : undefined;
+		var song = {
+			file_uuid: $(this).attr('file_uuid'),
+			encodedFile: encodeURI(this.textContent),
+			file: this.textContent,
+			type: $(this).attr('type'),
+			app: $(this).attr('app'),
+			remote_uuid: $(this).attr('remote_uuid'),
+			computer_name: $(this).attr('computer_name'),
+			colour: $(this).attr('colour'),
+			info: info
+		};
+		all.push(song);
+		by_key[musicSongKey(song)] = song;
+	});
+	var pick = function (list) {
+		var out = [];
+		$.each(list, function (i, k) { if (by_key[k]) { out.push(by_key[k]); } });
+		return out;
+	};
+	// a queue whose tracks are still on screen survives the re-render; one whose
+	// tracks have all gone (a search that excluded them) starts again from the top
+	var songs = pick(queue);
+	var past_songs = pick(past);
+	if (songs.length == 0) { songs = all.slice(); past_songs = []; }
+	tree = {
+		files: files,
+		songs: songs,
+		past_songs: past_songs,
+		all_songs: all,
+		songs_by_key: by_key,
+		signature: signature,
+		seek: prev ? prev.seek : 0,
+		song_id: prev ? prev.song_id : 0,
+		current_track: prev ? prev.current_track : '',
+		sound: sound,
+		lastCache: prev ? prev.lastCache : 0
+	};
 	$('.file_duration').each(function(i,v) {
 		if ($(v).attr('initialized') != 'yes') {
 			$(v).text(numeral($(v).text()).format('00:00:00'));
 			$(v).attr('initialized', 'yes');
 		}
 	});
+	return tree;
 }
 treeMaker();
 
@@ -2466,7 +2523,7 @@ function mediaMaker(data) {
 				}
 				musicScreenApply();
 
-				tree.current_track = tree.past_songs.length + 1;
+				tree.current_track = musicSongKey(tree.songs[0]);
 
 				if (data['state'] != 0) {
 					tree.sound.state = 1;
@@ -2626,10 +2683,10 @@ function mediaMaker(data) {
 					}
 					else {
 						var playing = $('.playing');
-						var current_track = playing.attr('number');
+						var current_track = musicKey(playing);
 						treeMaker();
 						thisTrack(playing.closest('.track_item'));
-						tree.current_track = current_track;
+						tree.current_track = current_track || musicSongKey(tree.songs[0]);
 						playing_now('update');
 					}
 					vidControls['video'] = [];
@@ -3113,19 +3170,18 @@ $(document).on('click', '.track_item', function(e) {
 });
 
 function thisTrack(item) {
-	var number = item.attr("number");
 	var unformatted_filename = item.find('.file').text();
 	var filename = encodeURI(unformatted_filename);
 	treeMaker();
-	for (var n = 0; n <= tree.all_songs.length; n++) {
-		if (tree.all_songs[n]) {
-			if (tree.all_songs[n].encodedFile == filename) {
-				tree.past_songs = tree.all_songs.slice(0, number - 1);
-				tree.songs = tree.all_songs.slice(number - 1);
-				return;
-			}
+	for (var n = 0; n < tree.all_songs.length; n++) {
+		if (tree.all_songs[n] && tree.all_songs[n].encodedFile == filename) {
+			tree.past_songs = tree.all_songs.slice(0, n);
+			tree.songs = tree.all_songs.slice(n);
+			return;
 		}
 	}
+	// nothing on screen matches: leave the queue as it was rather than emptying it
+	// (a restored track the current search no longer shows)
 }
 
 function musicInformation(file) {
@@ -3566,6 +3622,7 @@ function searchMusic(data) {
 				var playing = $('.playing');
 				// the media element is the one that has been playing all along, so
 				// its src, position and style need no restore
+				tree.current_track = musicKey(playing) || musicSongKey(tree.songs[0]);
 				$('#video').attr('type', nowPlaying['type']);
 				if (nowPlaying['type'] == 'audio') {
 					$('#video').hide();
@@ -3573,7 +3630,6 @@ function searchMusic(data) {
 				else {
 					$('#video').show();
 				}
-				tree.current_track = playing.attr('number');
 				musicVolumeApply();
 				thisTrack(playing.closest('.track_item'));
 				mediaMaker({ src: v.src, currentTime: v.currentTime, method: 'benign', timestamp: timestamp });
@@ -3608,11 +3664,15 @@ function searchMusic(data) {
 function playing_now(movement) {
 	if (movement != 'update') {
 		musicAppointmentWriter('stop');
-		$('.playing').removeClass('playing');
 	}
-	$('#track_' + tree.current_track).parent().addClass('playing');
+	// Marked by key, never by #track_<number>: after a search re-render the numbers
+	// have moved on, so a number marked whichever track now sat there - or nothing
+	// at all - and the bar kept the previous track's title.
+	$('.playing').removeClass('playing');
+	var card = musicCardByKey(tree.current_track || musicSongKey(tree.songs[0]));
+	card.addClass('playing');
 	$('.track_description').each(function() { $(this).hide() });
-	$('#track_' + tree.current_track).parent().find('.track_description').show();
+	card.find('.track_description').show();
 
 	return tree.current_track;
 
