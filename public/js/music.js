@@ -2372,7 +2372,10 @@ function treeMaker() {
 	var keys = [];
 	files.each(function () { keys.push(musicKey(this)); });
 	var signature = keys.join('\u0001');
-	var prev = (typeof tree == 'object' && tree) ? tree : null;
+	// only a tree this file built is worth carrying over: the manager keeps its
+	// own global called tree, and reading it as if it were the player's crashed
+	// the whole page before anything rendered
+	var prev = (typeof tree == 'object' && tree && Array.isArray(tree.songs) && Array.isArray(tree.past_songs)) ? tree : null;
 	var sound = document.getElementById('video');
 	// The list only changes when it is re-rendered (a search, a crate change). Any
 	// other call keeps what it already has: rebuilding threw the queue away on
