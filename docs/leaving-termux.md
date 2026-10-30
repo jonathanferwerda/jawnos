@@ -1,9 +1,9 @@
 # Leaving Termux — building the JawnOS app from scratch
 
-**Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 has
-started**: the app-side bridge and `battery.status` are in build 1178 / 0.118.179,
-the Perl side calls it with the termux command as a fallback, and the device
-proof is still to do. Nothing on the live devices has been replaced yet.
+**Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1's
+first command is proven on a device** (build 1178 / 0.118.179, `battery.status`
+through `subs::battery_sample` with `source => 'bridge'`). The other 23 commands,
+the single-app fold-in and the `com.jawnos` identity are still ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
 sections in the long run), `AGENTS.md` → App releases.
@@ -168,10 +168,15 @@ shape M1 and M2 take.
   filesystem listener needs JNI, and `jawn-bt` already uses loopback. The token
   is the part jawn-bt lacks. This settles open decision 4 unless a later
   milestone wants the JNI.
-- **Not yet proven on a device.** The app compiles and is published, but the
-  live phone and tablet were deliberately not touched. The first device proof
-  installs 1178 when the tree can be restarted on purpose, then confirms
-  `ping` + `battery.status` and that the Monitor shows `source => 'bridge'`.
+- **Proven on the tablet (2026-10-30):** app 1178 installed over 1177 (the tree
+  restarted, ~1 minute), the tree fast-forwarded to 0.1.1616 and restarted
+  again. A `run-as com.termux` probe inside Termux then showed `ping` answering
+  as `com.termux` on sdk 36, `battery.status` returning real data (72%,
+  CHARGING, PLUGGED_USB, 4124 mV), `subs::device_call` returning it, and
+  `subs::battery_sample` with `source => 'bridge'`. The token was 32 hex chars
+  at mode 600; no termux command ran.
+- **Rollback:** 1177 is no longer staged or on GitHub. Rebuild it from the app
+  repo at commit `02f3314a` if the new build ever has to be reverted.
 - **Remaining:** the other 23 commands, in the order below, folding the API app
   in as each one moves. The fallback (and the ledger entry) goes in the same
   commit that proves a command.
