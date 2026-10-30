@@ -179,11 +179,20 @@ $SIG{INT} = sub {
 };
 
 my ($master_boot_watch, $master_boot_tries);
+# The command the pty shell runs. It names the interpreter rather than relying
+# on President.pl's "#!" line: a shebang of /usr/bin/perl only resolves through
+# termux-exec's LD_PRELOAD, and the app's own supervisor (docs/leaving-termux.md
+# M2) runs this tree without termux-exec. $^X is the perl already running here.
+sub president_command() {
+	my $interp = $^X;
+	$interp = 'perl' unless defined $interp && length $interp;
+	return "exec '$interp' ./President.pl";
+}
 # A re-exec keeps this master's pid, so any child it fathered before exec is
 # still ours - and nobody else can reap it. Clear a stale pty shell (and any
 # defunct child) before this incarnation starts one of its own.
 &reap_own_children();
-$fork = &terminal_pty_runner({ 'program' => './President.pl' });
+$fork = &terminal_pty_runner({ 'program' => &president_command() });
 &arm_boot_watch();
 
 my $status = 'off';
@@ -343,7 +352,7 @@ sub master_time_looper() {
 						sleep .5;
 					}
 					$fork = undef;
-					$fork = &terminal_pty_runner({ 'program' => './President.pl' });
+					$fork = &terminal_pty_runner({ 'program' => &president_command() });
 					&arm_boot_watch();
 				}
 				1;

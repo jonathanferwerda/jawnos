@@ -74,4 +74,17 @@ my $setup = do {
 };
 like($setup, qr/system\("termux-open /, 'the wizard still opens the browser the old way (exempt)');
 
+# M2 (docs/leaving-termux.md): the master names the interpreter it is running
+# under instead of letting the shell resolve President.pl's "#!" line, which on
+# a device only works through termux-exec's LD_PRELOAD. The app's supervisor
+# runs the tree without termux-exec, so this is what keeps it launching.
+my $master = do {
+	open(my $jf, '<', "$FindBin::Bin/../jawn") or die $!;
+	local $/;
+	<$jf>;
+};
+like($master, qr/sub president_command/, 'the master builds the tree command itself');
+like($master, qr/exec '\$interp' \.\/President\.pl/, 'and it execs the interpreter by path');
+unlike($master, qr/'program'\s*=>\s*'\.\/President\.pl'/, 'nothing relies on the shebang');
+
 done_testing();
