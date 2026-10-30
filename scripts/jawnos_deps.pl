@@ -71,6 +71,25 @@ if (defined $local_lib && length $local_lib) {
 
 my $platform = detect_platform();
 
+# The app's own runtime (docs/leaving-termux.md M3) already carries every
+# module and tool the tree loads, and it has no package manager at all: the
+# app writes this marker when it unpacks the archive, and an install is then a
+# no-op rather than a `pkg` call that cannot exist. Piper (the one extra) ships
+# as TextToSpeech through the device bridge on such a device.
+my $runtime_marker = ($ENV{'PREFIX'} || '') . '/etc/jawnos-runtime.json';
+if ($install && -f $runtime_marker) {
+	my $version = '?';
+	if (open(my $rf, '<', $runtime_marker)) {
+		local $/;
+		my $text = <$rf>;
+		close $rf;
+		($version) = $text =~ /"version"\s*:\s*"([^"]*)"/;
+		$version = '?' unless defined $version && length $version;
+	}
+	print "JawnOS runtime $version supplies every module and tool; nothing to install.\n";
+	exit 0;
+}
+
 # --- optional applications (extras) -----------------------------------------
 # Tools JawnOS wants that are not a distribution package, so the installer
 # fetches them itself. Idempotent (present => skipped) and non-fatal (a device
