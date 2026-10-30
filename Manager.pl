@@ -9906,18 +9906,12 @@ post '/manager/configure/remote_rsync' => sub ($c) {
 };
 
 post '/manager/configure/remote_upgrade' => sub($c) {
-	# The marker carries the owner's pid (see remote_upgrade); compare the flag,
-	# not the whole value, or a live 'running:<pid>' never matched. A live owner
-	# only blocks inside the same ten-minute bound the pull itself honours.
-	my $up_state = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
-	my ($up_flag, $up_pid) = split /:/, ($up_state->{'value'} || ''), 2;
-	$up_flag ||= '';
-	my $up_live = ($up_flag eq 'running' && $up_pid && $up_pid =~ /^\d+$/ && $up_pid > 1 && kill(0, $up_pid)) ? 1 : 0;
-	# A live owner blocks for longer than any merge: the old ten-minute bound
-	# let a second full pull start while the first was still merging 110k rows.
-	# A bare 'running' (no pid) keeps the short bound.
-	my $up_bound = $up_live ? 1800000 : 600000;
-	if ($up_flag eq 'running' && (!$up_pid || $up_live) && int($up_state->{'server_time'} || 0) + $up_bound > &subs::rightNow()) {
+	# The marker is either a forked pull's pid or the short-lived claim made by
+	# the caller just before forking one. Only a real owner holds the button;
+	# a claim whose fork never started (a restart took the tick) expires in two
+	# minutes instead of reading as "already running" for half an hour.
+	my $up = &subs::remote_upgrade_lock_state();
+	if ($up->{'busy'}) {
 		$c->render('text' => 'already running');
 		$c->rendered;
 		return;
@@ -9951,12 +9945,12 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 		full => $full,
 		remote_signatorial => $remote_signatorial,
 		remote_device => $remote_device,
-		marker => 'running:' . $$
+		marker => 'running:claim'
 	};
 	# Claim the marker here, not in the child: the reconnector can walk several
 	# peers in one tick, and a child that has not run yet leaves the next one
 	# free to fork. The child adopts this claim and replaces it with its own pid.
-	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => 'running:' . $$ });
+	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => 'running:claim' });
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		&remote_upgrade($c,$params);
@@ -10069,6 +10063,7 @@ post '/manager/self_deploy' => sub($c) {
 		`cd "$repo" && ./desktop/install.sh >/dev/null 2>&1`;
 	}
 	&subs::install_extras();
+	$log->info('self_deploy from ' . ($signatorial || '?') . ': ' . ($status || '?') . ($c->param('force') ? ' (force)' : '')) if $log;
 	write_file(&subs::home('~/.president/status'), 'restart');
 	$c->render(text => "deployed $status\n" . ($out || ''));
 };
@@ -10991,28 +10986,24 @@ get '/manager/sync_buckets' => sub ($c) {
 };
 
 	sub remote_upgrade($c,$params) {
-	# The marker carries the worker's pid. A restart or a crash is the common case
-	# here, and a bare 'running' left behind by a dead worker used to block every
-	# pull for the full ten-minute age bound. Only a live owner blocks, and the
-	# age bound remains for a pid that was recycled. The caller that has already
-	# claimed the marker passes it as `marker`; this child adopts that claim and
-	# replaces it with its own pid, so the race window between fork and claim is
-	# closed.
+	# The marker is either a forked pull's pid or the short-lived claim its caller
+	# wrote before the fork (see subs::remote_upgrade_lock_state). A restart or a
+	# crash is the common case here: a bare 'running' left behind by a dead worker
+	# used to block every pull for the full ten-minute age bound, and a claim that
+	# never produced a child did the same for half an hour. Only a live owner, or
+	# a claim inside its two-minute window, blocks now. The caller that has
+	# already claimed the marker passes it as `marker`; this child adopts that
+	# claim and replaces it with its own pid, so the race window between fork and
+	# claim is closed.
 	my $adopt = $params->{'marker'} ? 1 : 0;
-	my $up_state = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
-	my ($up_flag, $up_pid) = split /:/, ($up_state->{'value'} || ''), 2;
-	$up_flag ||= '';
-	my $up_live = ($up_flag eq 'running' && $up_pid && $up_pid =~ /^\d+$/ && $up_pid > 1 && kill(0, $up_pid)) ? 1 : 0;
-	my $up_bound = $up_live ? 1800000 : 600000;
-	if (!$adopt && $up_flag eq 'running' && (!$up_pid || $up_live) && int($up_state->{'server_time'} || 0) + $up_bound > &subs::rightNow()) {
-		return;
-	}
+	my $up_state = &subs::remote_upgrade_lock_state();
+	return if (!$adopt && $up_state->{'busy'});
 	my $up_value = 'running:' . $$;
 	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => $up_value });
 	# Two forked pulls can pass the check above in the same instant; the last
 	# writer keeps the marker and the loser walks away instead of running a
 	# second export against the same peer.
-	my $up_confirm = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
+	my $up_confirm = &subs::remote_upgrade_lock_state();
 	return 'busy' if (($up_confirm->{'value'} || '') ne $up_value);
 	my $up_guard = Jawn::RemoteUpgradeLock->new($up_value);
 	# One job row drives the yellow dot: its ring is the overall percent and its
@@ -48948,6 +48939,10 @@ post '/manager/president' => sub($c) {
 };
 
 post '/manager/president/restart' => sub($c) {
+	# Name the caller: a restart request is deliberate, and this route used to
+	# leave no trace at all, so a tree that rebooted on its own was impossible to
+	# attribute (the syncs it interrupted looked like a broken scheduler).
+	$log->info('president restart requested from ' . ($c->tx->remote_address || '?')) if $log;
 	&president_restarter();
 	$c->render(text => 'restarting');
 };
@@ -49269,6 +49264,8 @@ sub remote_machine_reconnector($c) {
 	my $browser_tab = $c->param('browser_tab');
 	my $ws_auth;
 	my $signatorial = &subs::signatorial_designer();
+	# one log line per held pull marker, not one per peer per tick
+	my %own_busy_seen;
 	eval {
 		my $remote_machines = &subs::remote_machine_lister({ });
 		# Hub-and-spoke while the server is live: a spoke stops dialling peers it
@@ -49515,11 +49512,19 @@ sub remote_machine_reconnector($c) {
 						# itself, but the reconnector can fork several children before the first
 						# has written its marker; they then queue on the peer's single export
 						# lock and starve one another (and fill the job list with waiters).
-						my $own_up = &subs::db_query('select value,server_time from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_upgrade')->hashes->[0] || {};
-						my ($own_flag, $own_pid) = split /:/, ($own_up->{'value'} || ''), 2;
-						$own_flag ||= '';
-						my $own_live = ($own_flag eq 'running' && $own_pid && $own_pid =~ /^\d+$/ && $own_pid > 1 && kill(0, $own_pid)) ? 1 : 0;
-						my $own_busy = ($own_live && int($own_up->{'server_time'} || 0) + 1800000 > &subs::rightNow()) ? 1 : 0;
+						# The marker is either a real pull's pid or the short-lived claim the
+						# caller below writes before it forks (see
+						# subs::remote_upgrade_lock_state).
+						my $own_up = &subs::remote_upgrade_lock_state();
+						my $own_busy = $own_up->{'busy'} ? 1 : 0;
+						# Name the hold once per marker: "nothing is pulling" has to be
+						# distinguishable from "a pull is running" in the log.
+						if (($has_new || $deep) && $own_busy) {
+							my $stamp = $own_up->{'value'} . '@' . $own_up->{'server_time'};
+							if (!$own_busy_seen{$stamp}++) {
+								$log->info('sync hold: this machine owns a pull (' . $own_up->{'value'} . ', ' . int($own_up->{'age'} / 1000) . 's old)');
+							}
+						}
 						if (($has_new || $deep) && !$own_busy && $rj->{'merging'} ne 'running' && !&subs::sync_backoff_active($rj->{'signatorial'})) {
 							my $whoami = `whoami`;
 							chomp $whoami;
@@ -49544,8 +49549,11 @@ sub remote_machine_reconnector($c) {
 							};
 							if ($ENV{PORT_ENV} eq 'production' && $rj->{'env'} eq 'production') {
 								# Claim the marker before the fork, so the next peer in this
-								# tick sees a live owner even if the child has not run yet.
-								my $up_marker = 'running:' . $$;
+								# tick sees a busy owner even if the child has not run yet. The
+								# value is a claim, not this worker's pid: run_p forks on the
+								# next tick, and a claim whose fork never happens must not
+								# look like a live pull for half an hour.
+								my $up_marker = 'running:claim';
 								&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => $up_marker });
 								$params->{'marker'} = $up_marker;
 								# Name the decision: a pull that falls back to the snapshot path is
