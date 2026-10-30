@@ -42,7 +42,15 @@ my %TOOL = map { $_ => 1 } qw(
 	basename dirname readlink stat id whoami uname hostname printf echo test [
 	pgrep pkill ps kill killall nohup tee which
 	sshd scp sftp ssh-keygen
+	ffmpeg ffprobe magick convert
 );
+# ffmpeg and ImageMagick stay on purpose (2026-10-30). The plan was MediaCodec
+# and BitmapFactory, but those cover a codec call, not the 51 places the tree
+# pipes a film through `ffmpeg -i ... -vframes 1 | magick - -resize` for a
+# thumbnail, or the loudness pass, or subtitle extraction, or Music's video
+# stream. Dropping them today would not be a diet, it would be a regression;
+# when a native path exists for a call site, that call site moves and the
+# binary follows it out.
 
 # Never ship, even if the source has it: the package manager and its state.
 my %NEVER = map { $_ => 1 } qw(
