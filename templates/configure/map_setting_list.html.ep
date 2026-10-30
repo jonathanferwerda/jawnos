@@ -29,6 +29,33 @@
 	<p class="cfg-note" id="map_keys_status" style="font-size:12px;"></p>
 </div>
 <div class="cfg-card">
+	<h3><%= &subs::lang('configure.movement') %></h3>
+	<p class="cfg-note">One device files an appointment's movement. Two machines carried together would each write the trip down and the appointment's distance would be counted twice, so the others keep their own current place and still run their home plates, they just do not file the appointment's fixes. <b>Automatic</b> takes the device that has actually covered ground in the last hour, preferring the one that has been recording longest — a tablet left in the house never wins a trip from the phone that went for the walk — and hands the trip over if that device goes quiet for a quarter of an hour. <b>Every device</b> is the old behaviour: each machine records and the distances double.</p>
+	<% my $movement_pick = &subs::setting_grabber({ app => '__president', setting => 'movement_device', device => 'all' }) || 'auto';
+		my $labels = &subs::device_labels();
+		my @movement_devices;
+		my %movement_seen;
+		foreach my $d ( @{ &subs::remote_machine_lister({ self => 'yes', mirrors => 'none' }) } ) {
+			my $sig = $d->{'signatorial'} || '';
+			next unless length $sig && !$movement_seen{$sig}++;
+			push @movement_devices, [ $sig, $labels->{$sig} || $d->{'hostname'} || substr($sig, 0, 8) ];
+		}
+		push @movement_devices, [ $movement_pick, $labels->{$movement_pick} || &subs::ui('a device this house no longer lists') ]
+			if $movement_pick !~ /^(?:auto|every)$/ && !$movement_seen{$movement_pick};
+	%>
+	<div class="cfg-row">
+		<label><%= &subs::ui('Recorded by') %></label>
+		<select class="movement_device_input" app="__president" setting="movement_device">
+			<option value="auto"<% if ($movement_pick eq 'auto') { %> selected<% } %>><%= &subs::lang('common.automatic') %></option>
+			<option value="every"<% if ($movement_pick eq 'every') { %> selected<% } %>><%= &subs::lang('common.every_device') %></option>
+			<% foreach my $d ( @movement_devices ) { %>
+				<option value="<%= $d->[0] %>"<% if ($movement_pick eq $d->[0]) { %> selected<% } %>><%= $d->[1] %></option>
+			<% } %>
+		</select>
+	</div>
+	<p class="cfg-note" id="movement_device_status" style="font-size:12px;"></p>
+</div>
+<div class="cfg-card">
 	<h3>Google Maps and Street View</h3>
 	<p class="cfg-note"><b>Not OAuth2:</b> a Google Maps or Street View key is a Google Cloud <b>API key</b> with billing switched on, not an OAuth2 client. Enable <b>Street View Static API</b> for the street-level still above. The key can be restricted to this house's web addresses in the Google Cloud console. Google's <b>Map Tiles API</b> (a pannable basemap) needs a session token minted per session, so the Map picker does not offer it; the still image and the street-level photo are what this key serves.</p>
 </div>

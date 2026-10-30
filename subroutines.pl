@@ -25548,6 +25548,117 @@ sub carrier_device {
 	};
 }
 
+# A device's signatorial as the name the house knows it by: the first label of
+# its house address (phone, tablet, laptop), then a peer's hostname, and this
+# machine's own name when neither is known. One place, so a carrier line, the
+# movement picker and anything else name a machine the same way.
+sub device_labels {
+	my %names;
+	my $hosts = &device_hosts();
+	foreach my $sig ( keys %{$hosts} ) {
+		my ($label) = split /\./, ($hosts->{$sig} || '');
+		$names{$sig} = &format_name($label) if defined $label && length $label;
+	}
+	foreach my $d ( @{ &remote_machine_lister() } ) {
+		my $sig = $d->{'signatorial'} || '';
+		my $host = $d->{'hostname'} || '';
+		next if $names{$sig};
+		next unless length $sig && length $host && $host !~ /^(?:me|localhost)$/i;
+		$names{$sig} = &format_name($host);
+	}
+	my $mine = &signatorial_designer();
+	$names{$mine} ||= &setting_grabber({ app => 'me', setting => 'my_name' }) || 'this device';
+	return \%names;
+}
+
+sub device_label {
+	my ($sig) = @_;
+	return '' unless defined $sig && length $sig;
+	my $names = &device_labels();
+	return $names->{$sig} || substr($sig, 0, 8);
+}
+
+# Which device records an appointment's movement. Two machines carried together
+# would each file their own fixes and the appointment's distance would be
+# counted twice; one device records and the rest keep their own current place
+# and their home plates, they just do not file the appointment's movement.
+#
+#   my $sig = &subs::movement_recorder({ app => $app, appt => $uuid, signatorial => $me, timestamp => $t });
+#
+# The house setting movement_device answers: a signatorial names that machine,
+# 'every' lets them all record (the old way), and 'auto' (the default) takes the
+# device that has actually covered ground in the last hour, preferring the one
+# that has been recording the appointment longest. A device standing still never
+# wins over one that is moving, so a tablet left in the house cannot take a trip
+# away from the phone that went for the walk.
+sub movement_recorder {
+	my ($p) = @_;
+	$p ||= {};
+	my $sig = $p->{'signatorial'} || '';
+	my $choice = &setting_grabber({ app => '__president', setting => 'movement_device', device => 'all' });
+	$choice = 'auto' unless defined $choice && length $choice;
+	return &movement_choice({ choice => $choice, signatorial => $sig }) if $choice ne 'auto';
+	my $appt = $p->{'appt'} || '';
+	return $sig unless length $appt && length $p->{'app'};
+	my $now = $p->{'timestamp'} || &rightNow();
+	my $rows = &db_query(
+		'select latitude, longitude, timestamp, signatorial from continent where app = ? and uuid like ? and cast(timestamp as integer) >= ? order by cast(timestamp as integer)',
+		$p->{'app'}, $appt . '-%', $now - 3600000)->hashes;
+	return &movement_choice({ choice => 'auto', signatorial => $sig, rows => $rows, now => $now });
+}
+
+# The decision behind movement_recorder with the rows already read, so it can be
+# tested without a database. An explicit choice answers at once; 'auto' reads
+# the appointment's fixes from the last hour and picks the device that went
+# somewhere, the longest-recording one first.
+sub movement_choice {
+	my ($p) = @_;
+	$p ||= {};
+	my $sig = $p->{'signatorial'} || '';
+	my $choice = $p->{'choice'} || 'auto';
+	return $sig if $choice eq 'every' || $choice eq 'all';
+	return $choice if $choice ne 'auto';
+	my @rows = grep { ref $_ eq 'HASH' } @{ $p->{'rows'} || [] };
+	return $sig unless scalar @rows;
+	my $now = 0 + ( $p->{'now'} || 0 );
+	my (%first, %last, %devs);
+	foreach my $r ( @rows ) {
+		my $dev = defined $r->{'signatorial'} ? $r->{'signatorial'} : '';
+		my $ts = 0 + ( $r->{'timestamp'} || 0 );
+		$first{$dev} = $ts if !defined $first{$dev} || $ts < $first{$dev};
+		$last{$dev} = $ts if !defined $last{$dev} || $ts > $last{$dev};
+		push @{ $devs{$dev} }, $r;
+	}
+	my %metres;
+	foreach my $dev ( keys %devs ) {
+		my $carrier = &carrier_device( $devs{$dev} );
+		$metres{$dev} = $carrier ? $carrier->{'metres'} : 0;
+	}
+	# A device is travelling only when it has gone somewhere. The jitter floor in
+	# carrier_device takes the small shuffles out, but a device parked for hours
+	# can still creep a hundred metres, so a mover must also be a real share of
+	# the furthest one: a tablet left at home never takes a 1 km walk from the
+	# phone that recorded it.
+	my $furthest = 0;
+	foreach my $dev ( keys %metres ) {
+		$furthest = $metres{$dev} if ( $metres{$dev} || 0 ) > $furthest;
+	}
+	my @movers = grep {
+		( $metres{$_} || 0 ) >= 100 && ( $metres{$_} || 0 ) >= $furthest * 0.25
+	} keys %devs;
+	my @pool = scalar @movers ? @movers : keys %devs;
+	my ($win) = sort {
+		( $first{$a} || 0 ) <=> ( $first{$b} || 0 )
+			|| ( $metres{$b} || 0 ) <=> ( $metres{$a} || 0 )
+			|| $a cmp $b
+	} @pool;
+	return $sig unless defined $win;
+	# a recorder that has gone quiet for a quarter of an hour has left: the device
+	# that is here takes the trip over rather than losing it
+	return $sig if $win ne $sig && $now && ( $now - ( $last{$win} || 0 ) ) > 900000;
+	return $win;
+}
+
 # The places an app went, read from the continent table the GPS fills. A walk's
 # track is a run of latitude/longitude rows tied to the appointment; summed here
 # into what a report can use: how many places, how far (km), for how long, the
