@@ -10,14 +10,15 @@ use JawnOSTest;
 # stored utility row means to a fresh process.
 #
 # Regression: `lasted_run` is process state, but it rides the stored
-# utility_controller blob, and the controller never copies the live value back
-# (it persists last_run/last_attempt/last_effect/status only). Adoption restored
-# the stored value verbatim - 103 hours old on one machine - and the tunnels
-# watchdog read that as "the worker has been stuck for twelve intervals", so it
-# reset every tunnel on the first tick after every boot. An absent marker is a
-# fresh process, not a stall.
+# utility_controller blob. Adoption restored the stored value verbatim - 103
+# hours old on one machine - and the tunnels watchdog read that as "the worker
+# has been stuck for twelve intervals", so it reset every tunnel on the first
+# tick after every boot. A marker from a previous process is meaningless now;
+# a marker this process wrote must be kept, or the periodic re-adoption would
+# reset the clock every few seconds and no gate would ever elapse.
 
 my $now = JawnOSTest::ts(2026, 10, 30, 12, 0, 0);
+my $process_start = $now - (10 * 60 * 1000);   # this process has been up 10 min
 my $day = 24 * 60 * 60 * 1000;
 
 my $jobs = {
@@ -32,13 +33,15 @@ my $jobs = {
 		addresses => [ { ip => '127.0.0.1', gw => '' } ],
 	},
 	navigation => { toggle => 'on', interval => 240 },
+	remote_machine_sync => { toggle => 'on', interval => 120, lasted_run => $now - 30000 },
 	manager => 'not a job',
 };
 
-my $returned = subs::utility_adopt_runtime($jobs, $now);
+my $returned = subs::utility_adopt_runtime($jobs, $now, $process_start);
 is($returned, $jobs, 'returns the job table it was given');
-is($jobs->{'tunnels'}->{'lasted_run'}, $now, 'adoption resets a stale runtime marker');
-is($jobs->{'navigation'}->{'lasted_run'}, $now, 'adoption sets a missing runtime marker');
+is($jobs->{'tunnels'}->{'lasted_run'}, $now, 'a marker from a previous process starts at now');
+is($jobs->{'navigation'}->{'lasted_run'}, $now, 'a missing marker starts at now');
+is($jobs->{'remote_machine_sync'}->{'lasted_run'}, $now - 30000, 'a marker this process wrote is kept');
 is($jobs->{'tunnels'}->{'last_run'}, $now - 300000, 'the schedule stamp is left alone');
 is($jobs->{'tunnels'}->{'interval'}, 120, 'the interval is left alone');
 is($jobs->{'tunnels'}->{'toggle'}, 'on', 'the switch is left alone');
@@ -47,6 +50,10 @@ ok(ref $jobs->{'tunnels'}->{'network'} eq 'HASH', 'the network map is left alone
 ok(!exists $jobs->{'__settings'}->{'lasted_run'}, 'private keys are not touched');
 is_deeply($jobs->{'__batch_groups'}, [ { id => 'fast', seconds => 120 } ], 'batch pools are not touched');
 is($jobs->{'manager'}, 'not a job', 'non-hash entries are not touched');
+
+# Re-adoption in the same process must not reset a marker it just advanced.
+my $again = subs::utility_adopt_runtime($jobs, $now + 5000, $process_start);
+is($again->{'tunnels'}->{'lasted_run'}, $now, 'a second adoption keeps this process marker');
 
 # A fresh install has no marker at all.
 is(subs::tunnels_stall_duty(undef, $now, 120), undef, 'no marker means not stalled');
