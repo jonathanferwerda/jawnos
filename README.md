@@ -14,10 +14,10 @@ loops. If JawnOS is useful to you, sponsoring is the most direct way to keep it 
 ## About
 
 JawnOS is not an operating system in the kernel sense. It is a self-hosted personal environment
-that runs as an ordinary application and presents itself through the browser. A single Perl
-codebase sits behind the Linux desktop app, the headless server daemon and the Android build that
-runs under Termux; each machine keeps its own local database, and the machines keep one another
-in step over the network without a central authority.
+that runs as an ordinary application and presents itself through the browser. One Perl codebase
+sits behind the Linux desktop app, the headless server daemon and the Android build that runs
+under Termux; each machine keeps its own local database, and the machines keep one another in
+step over the network without a central authority.
 
 The aim is to gather the things one person actually does with a computer into one place: files
 and media, appointments and tasks, budgets and invoices, inventory and mail, notes and location
@@ -30,8 +30,8 @@ A few ideas hold the system together:
 - **One big table, and a few satellites.** An appointment is the atom: a timestamped record with a
   type, status, duration and a body. Files, invoices, measurements, calls and notes are appointments
   under the hood, which is why they can refer to one another and why one window can gather
-  everything about a record. A few things that are not events — stock moves, mail headers, places and
-  coordinates, reusable models, the encrypted vault — keep their own tables.
+  everything about a record. Stock moves, mail headers, places and coordinates, reusable models
+  and the encrypted vault keep their own tables.
 - **One house, many machines.** Every device holds the same software and its own database. Code,
   data, app builds and backups move between them on a "newest wins" rule; a deletion travels as a
   tombstone until every device acknowledges it.
@@ -39,7 +39,7 @@ A few ideas hold the system together:
   budgets, rules and settings. The catalogue is data, so an app can be renamed, merged, themed or
   hidden without a new build.
 - **Local first, AI optional.** The core runs offline against a local SQLite database. AI features
-  use a local Ollama model or a chosen provider, and are configured in one place.
+  use a local Ollama model or a chosen provider, configured in one place.
 - **The interface can be reshaped.** Bars, borders, materials, colour schemes, icon sets,
   languages and zoom are all settings, and the built-in help explains each one.
 
@@ -53,30 +53,28 @@ JawnOS is a windowed desktop that lives in a browser tab. Windows open, stack, m
 maximise, snap to half the screen and enter a move mode from their own drop-down menu, and the
 furniture around them is largely user-defined:
 
-- **A configurable taskbar.** The bar is an ordered list of slots — the open windows, the clock,
-  the start button, the search box and any pinned apps or keyboards — that can be rearranged in
-  an edit mode. Right-clicking (or long-pressing on touch) opens a context menu for the bar, its
-  tiles and each window; the bar can be shown, hidden or set to auto-hide, and the clock offers
-  12- or 24-hour time and a choice of time zone.
-- **A desk.** A configurable desktop folder whose icons line up down the left side, with Computer
-  and the Recycle Bin always in reach. Files can be dragged onto it, apps can be pinned to it,
-  and any folder can be made the desk folder. The background can be the appointment view or the
-  continent map, and the desk's own clock sits with it.
+- **A configurable taskbar.** An ordered list of slots — open windows, the clock, the start
+  button, the search box and pinned apps or keyboards — rearranged in an edit mode. Right-clicking
+  (or long-pressing on touch) opens a context menu for the bar, its tiles and each window; the bar
+  can be shown, hidden or set to auto-hide, and the clock offers 12- or 24-hour time and a time zone.
+- **A desk.** A configurable desktop folder whose icons fill the left side, with Computer and the
+  Recycle Bin always in reach. Files can be dragged onto it, apps pinned to it, and any folder made
+  the desk folder. The background can be the appointment view or the continent map.
 - **A start menu** with recently used apps, a category rail, pages for what is running, upcoming
-  and expiring, and a System view of the house's CPU, memory, battery and device levels.
-- **Instant search.** A search box that can ride the menu, the taskbar or the dock, finding real
-  apps by name as you type, with icons, recency and keyboard control.
+  and expiring, and a System view of CPU, memory, battery and device levels.
+- **Instant search** for apps by name as you type, with icons, recency and keyboard control; it can
+  ride the menu, the taskbar or the dock.
 - **A dock** that can be placed on any edge and slides away when idle.
-- **A "clothesline"** — a rail along the top of the screen that hangs the routines and rituals
-  that belong at the current hour, in the order they usually happen. It can be switched off, and
-  each pill is drawn in the chosen material.
-- **Dialogs as windows.** Alerts, folder questions and background job progress each get a
-  taskbar tile, so they can be raised, minimised and dismissed like anything else.
+- **A "clothesline"** — a top rail hanging the routines that belong at the current hour, in the
+  order they usually happen. It can be switched off.
+- **Dialogs as windows.** Alerts, folder questions and background job progress each get a taskbar
+  tile, so they can be raised, minimised and dismissed like anything else.
 - **Global display zoom** (20%–200%), adjustable bar heights, configurable window and button
-  borders (width and colour), and a screensaver.
-- **Nine colour schemes** — Blue, Graphite, Green, Indigo, Steel, Amber, Teal, Plum and Rose —
-  each in a light and a dark cut, **seventeen selectable icon sets**, and a choice of textures
-  (plain, round, sandglass, glass, paper, fabric, wood and metal) layered over every surface.
+  borders, and a screensaver.
+- **Fifteen colour schemes** — Blue, Graphite, Green, Indigo, Steel, Amber, Teal, Plum, Rose,
+  Nord, Sage, Mocha, Geek, Phosphor and Cyberpunk — each in a light and a dark cut, **seventeen
+  selectable icon sets**, and a choice of nine textures (plain, round, soft, sandglass, glass,
+  paper, fabric, wood and metal) layered over every surface.
 - **Sixteen interface languages** — English plus Mandarin, French, Spanish, German, Portuguese,
   Hindi, Arabic, Bengali, Russian, Japanese, Punjabi, Indonesian, Korean, Italian and Turkish —
   and an on-demand translator that reaches 107 languages through the Guide's model.
@@ -84,50 +82,44 @@ furniture around them is largely user-defined:
 ### The desktop app (a computer)
 
 The phone's app has a Linux counterpart: a per-user dashboard that starts, stops and restarts
-jawn, opens its UI, tails the log and drives the Bluetooth bridge — the same two jobs, on a
-computer. It embeds the whole JawnOS UI in the same window through **WebKitGTK**, logging in with
-a ticket you import once (kept encrypted in your keyring), with camera and microphone access,
-F11 fullscreen and hardware-accelerated video. Its Bluetooth LE bridge is a real BlueZ central
-speaking the phone's protocol, so a watch links to whichever machine is in range. The dashboard
-and the embedded view are one window; the app can come up as a kiosk session (a starting Sway
-configuration ships in `desktop/wayland/`) or sit in the tray, and it holds the machine awake
-while media plays. The app updates itself in place, and reports the house version it is running.
+jawn, opens its UI, tails the log and drives the Bluetooth bridge. It embeds the whole JawnOS UI
+in the same window through **WebKitGTK**, logging in with a ticket you import once (kept encrypted
+in your keyring), with camera and microphone access, F11 fullscreen and hardware-accelerated
+video. Its Bluetooth LE bridge is a real BlueZ central speaking the phone's protocol, so a watch
+links to whichever machine is in range. The app can come up as a kiosk session (a starting Sway
+configuration ships in `desktop/wayland/`) or sit in the tray, holds the machine awake while
+media plays, updates itself in place, and reports the house version it is running.
 
 ### Files, media & creation
 
-- **Folders** — the file manager. It browses your media locations with a Places sidebar, tabs and
-  extra windows, a grid or list view, full multi-select and keyboard shortcuts, and a complete
-  right-click menu (new file and folder, rename, open, open with, copy, cut, paste, delete,
-  shred, archive and properties). Drag and drop moves a selection; Ctrl copies instead. Deletes
-  go to a **Recycle Bin** that can restore or empty, Properties shows dates, permissions and
-  owner, and the toolbar can browse another machine and its archive. Files can be **sealed** —
-  encrypted with your credentials under a name of their own — and opened again from the same
-  menu, with long jobs reporting their progress. Moving, sealing, opening or deleting a file
-  carries the appointments, mail attachments and store entries that named it along with it. A
-  per-app media padlock keeps not-visible folders out of sight until it is unlocked.
-- **Gallery** — the photo and video browser, opening on one album cover per app with an All
-  photos view. The grid loads as you scroll, search and sort find an item, and the full-screen
-  viewer offers Previous, Next, file information, Set as main image, Fetch home and Delete.
-  Hidden albums wait behind a padlock that unlocks with a paired device's fingerprint or the
-  recovery code.
-- **Camera** — capture from the device's own camera or a desktop webcam, with an unclaimed media
-  pool in which to list, search and claim what has been captured.
-- **Marker** — a layered paint board with pencil, paintbrush, spray, fill and matching erase
-  tools, undo/redo, and zoom and pan. It reads stylus pressure, ignores your palm on a tablet,
-  draws straight from the last point, and autosaves so a refresh does not lose a painting;
-  sessions can be saved and reopened.
-- **Music and studio** — a multitrack studio with takes, crossfades, waveform clips and a
-  pedalboard routed onto channels; a polyphonic **Synth** with a full 88-key range, playable from
-  the screen, your computer keyboard or a USB MIDI controller (twelve instruments and 240 presets,
-  an arpeggiator, a step sequencer and MIDI learn) that can also be routed as a channel or a
-  pedal; and a music player with a seek bar, volume, a theatre view, resume after a refresh, and
-  visualisers for tracks that carry no artwork. On a phone it keeps playing with the screen off.
-- **Video** — a player for the files in your media folders, with scrubbing by wheel, swipe or
-  drag, volume by vertical swipe, and fullscreen.
+- **Folders** — the file manager: Places sidebar, tabs and extra windows, grid or list view,
+  multi-select, keyboard shortcuts and a full right-click menu (new, rename, open, open with,
+  copy, cut, paste, delete, shred, archive, properties). Drag and drop moves; Ctrl copies. Deletes
+  go to a **Recycle Bin** that restores or empties, and Properties shows dates, permissions and
+  owner. Files can be **sealed** — encrypted under your credentials — and opened again from the
+  same menu, with long jobs reporting progress. Moving, sealing, opening or deleting a file carries
+  the appointments, mail attachments and store entries that named it. A per-app padlock hides
+  private folders until it is unlocked.
+- **Gallery** — photos and video, opening on one album cover per app with an All photos view.
+  The grid loads as you scroll; search and sort find an item; the full-screen viewer offers
+  Previous, Next, information, Set as main image, Fetch home and Delete. Hidden albums wait behind
+  a padlock opened by a paired device's fingerprint or the recovery code.
+- **Camera** — capture from the device's camera or a desktop webcam, with an unclaimed media pool
+  to list, search and claim.
+- **Marker** — layered paint with pencil, brush, spray, fill and matching erase, undo/redo, zoom
+  and pan. It reads stylus pressure, ignores your palm on a tablet, and autosaves; sessions can be
+  saved and reopened.
+- **Music and studio** — a multitrack studio with takes, crossfades, waveform clips and a pedalboard
+  routed onto channels; a polyphonic **Synth** with a full 88-key range, playable from the screen,
+  your computer keyboard or a USB MIDI controller (twelve instruments, 240 presets, an arpeggiator,
+  a step sequencer and MIDI learn); and a music player with a seek bar, volume, a theatre view,
+  resume after refresh and visualisers. On a phone it keeps playing with the screen off.
+- **Video** — a player for the files in your media folders, with scrubbing by wheel, swipe or drag,
+  volume by vertical swipe, and fullscreen.
 - **Text, code and shell** — a rich text editor whose variables can answer for a `self`
-  appointment; a colour-coded IDE for Perl, JavaScript, HTML and templates; a web browser that can
-  also watch a number on a page as a measure; and a **Terminal** with a real VT screen, independent
-  sessions per window, readable command and error lists, and remote shells to other machines.
+  appointment; a colour-coded IDE for Perl, JavaScript, HTML and templates; a browser that can
+  watch a number on a page as a measure; and a **Terminal** with a real VT screen, independent
+  sessions per window, command and error lists, and remote shells to other machines.
 - **Cards and Twirl** — a small deck drawn from your own records, and a quiet interactive toy.
 
 ### Appointments, tasks & routines
@@ -135,19 +127,20 @@ while media plays. The app updates itself in place, and reports the house versio
 - **Appointments & scheduling** — a full calendaring system with alarms, recurring appointments,
   reminders and calendar export. Opening one spawns a centre view that gathers the record, its
   history and every file, mail, transaction and other appointment that names it. Occurrences your
-  own habits imply but nobody has scheduled are drawn as faded **ghost appointments** ahead of
-  now, and the taskbar clock is a **time machine**: type "-3h", "jul 16", "last dec 25" or a
-  habitual phrase such as "next coffee time" to travel there.
+  habits imply but nobody scheduled are drawn as faded **ghost appointments**, and the taskbar
+  clock is a **time machine**: type "-3h", "jul 16", "last dec 25" or "next coffee time".
+- **Clock** — alarms, stopwatch, timer and world clock in one window, also reachable from the
+  taskbar clock.
 - **Tasks** — nested checklists whose items carry a colour, a priority, a renewal interval and a
   budget, and that can record the matching appointment when you tick one off.
 - **The wardrobe (clothesline)** — apps and routines are "hung" on the rail for the hours they
   belong to, with automatic hanging of the routines the history shows you actually perform.
 - **Measures** — record a number against a time and chart it: ranges, multiple-selects and free
-  values, read back over a day, a week, a month or a year, and legible to the evaluation.
+  values, read back over a day, week, month or year, and legible to the evaluation.
 - **Handbook** — the day as a journal. Today gathers what the house already knows (money moved,
   bills due, the day's shape, recent measures, notes, projects and people), and a header steps
   through days or jumps to a typed date. The Journal box saves an entry, and **Plant with the
-  Guide** turns its forward-looking ideas into quiet appointments on the days they belong to.
+  Guide** turns forward-looking ideas into quiet appointments on the days they belong to.
   Predicted by your records shows the same ghost appointments for that day.
 
 ### People, places & navigation
@@ -156,17 +149,17 @@ while media plays. The app updates itself in place, and reports the house versio
   fingerprint and a card another house can check. A crest can be scanned or uploaded, shown as a
   QR code, written to an NFC tag, imported from another house, vouched for, and backed by the
   house's other machines. A construct can carry its own signed logo. Every person the house knows
-  gets a card with their crest, their memberships and the ways to reach them.
-- **Relational** — the social structure behind People: people, teams, clubs, communities,
-  projects, institutions, governments, corporations, places, vendors and events, linked in both
-  directions on a drag-and-drop workspace. Constructs can answer to more than one name, and the
-  house can publish their name and members to another house that looks it up.
-- **Travel** — a pannable map of every map you have measured. Store a map image, measure its
-  scale and home plate by hand, by OCR or by asking the vision model, and it lands at its true
-  place on the globe; an optional tile basemap (OpenStreetMap, OpenTopoMap, Carto, Esri, a county
-  GIS, or a custom URL) can lie over it. Routes, distance and speed are drawn from logged
-  position fixes, and the blanks between measured maps can be conservatively guessed by the
-  image model. The same map is the continent desktop background.
+  gets a card with their crest, memberships and contact routes.
+- **Relational** — the social structure behind People: people, teams, clubs, communities, projects,
+  institutions, governments, corporations, places, vendors and events, linked in both directions
+  on a drag-and-drop workspace. Constructs can answer to more than one name, and the house can
+  publish their name and members to another house that looks it up.
+- **Travel** — a pannable map of every map you have measured. Store an image, measure its scale
+  and home plate by hand, OCR or the vision model, and it lands at its true place on the globe; an
+  optional tile basemap (OpenStreetMap, OpenTopoMap, Carto, Esri, a county GIS or a custom URL)
+  can lie over it. Routes, distance and speed come from logged position fixes, and the blanks
+  between measured maps can be conservatively guessed by the image model. The same map is the
+  continent desktop background.
 - **Navigation** — the autonomous location log: one GPS fix per interval, screen on or off, filed
   against a running appointment, with each point's distance, leg length and speed listed on the
   record. Crossing a home plate can start or stop the matching appointment on its own.
@@ -174,85 +167,82 @@ while media plays. The app updates itself in place, and reports the house versio
 ### Money, stock & documents
 
 - **Accounting** — accrual **income statement**, **balance sheet**, **cash flow**, account
-  activity, receivables and payables, read from a real double-entry journal with a **trial
-  balance**. It also holds the ledger, the document ledger of invoices and quotes, a day book,
-  and a **bank reconciliation** that imports CSV, QIF or OFX, matches lines by amount and date,
-  and sets the account's balance from the statement. Bills can repeat on a fixed or written
-  schedule and be paid in part; a payment named in a bank notification books itself. Each app
-  keeps its own budget light, read as a **pace** against the part of its period that has run.
-- **Store & invoicing** — a store of items, models and options that each carry their own prices,
-  browsed as shelves with filters, search and a docked detail pane. Quotes and invoices are built
-  from them, print to a white, house-styled paper, and can be delivered by email; a **Register**
-  journals sales and payments per customer, and **Correspondence** journals the mail and chats
-  exchanged with them. Recording a payment updates the balance and closes the document at zero;
-  deleting the transaction reopens it.
-- **Crypto** — wallet accounts that hold a coin, per-invoice Bitcoin receiving addresses derived
-  from an account xpub, live fiat and coin rates, and cost or market valuation. JawnOS never holds
-  a key and cannot spend; a payment is recorded against an invoice with its txid, and a payer's
-  signed **PAY1Z** proof can be verified against their crest. Currency tracking writes rate
-  history as measures.
-- **Warehouse & stock** — money and goods tracked per place: what is where and how much of it,
-  packaging that carries real quantities (a carton of twelve, a box of nails by weight) and
-  shelf life so expired stock is swept up on its own, a journal of every stock movement and its
-  reason, and a **moves ledger** that folds stock and money into one signed list. On-hand is read
-  in an item's own unit, and a target turns into a package-aware restock plan.
+  activity, receivables and payables, read from a double-entry journal with a **trial balance**.
+  It also holds the ledger, the document ledger of invoices and quotes, a day book, and a **bank
+  reconciliation** that imports CSV, QIF or OFX, matches lines by amount and date, and sets the
+  account's balance from the statement. Bills can repeat on a fixed or written schedule and be
+  paid in part; a payment named in a bank notification books itself. Each app keeps its own budget
+  light, read as a **pace** against the part of its period that has run.
+- **Store & invoicing** — a store of items, models and options with their own prices, browsed as
+  shelves with filters, search and a docked detail pane. Quotes and invoices are built from them,
+  print to white, house-styled paper and can be emailed; a **Register** journals sales and
+  payments per customer, and **Correspondence** journals the mail and chats exchanged with them.
+  Recording a payment updates the balance and closes the document at zero; deleting the
+  transaction reopens it.
+- **Crypto** — wallet accounts that hold a coin, per-invoice Bitcoin addresses derived from an
+  account xpub, live fiat and coin rates, and cost or market valuation. JawnOS never holds a key
+  and cannot spend; a payment is recorded against an invoice with its txid, and a payer's signed
+  **PAY1Z** proof can be verified against their crest. Currency tracking writes rate history as
+  measures.
+- **Warehouse & stock** — money and goods tracked per place: what is where and how much, packaging
+  that carries real quantities (a carton of twelve, a box of nails by weight) and shelf life so
+  expired stock is swept up on its own, a journal of every movement and its reason, and a **moves
+  ledger** that folds stock and money into one signed list. On-hand is read in an item's own unit,
+  and a target turns into a package-aware restock plan.
 - **Market** — the shopping side: lists by kind and vendor, a need/want dial on each row, and a
-  Shopping view filtered to needs, wants or all. An item the warehouse is short of is raised to
-  a need on its own. A barcode can be scanned by a phone or a webcam, a whole paper receipt can
-  be read by the vision model, and Checkout opens the purchase transaction filled line by line
-  from the cart, with each purchase writing its stock move.
+  Shopping view filtered to needs, wants or all. An item the warehouse is short of is raised to a
+  need on its own. A barcode can be scanned by a phone or webcam, a paper receipt read by the
+  vision model, and Checkout opens the purchase transaction filled line by line from the cart,
+  with each purchase writing its stock move.
 - **Inventory** — each app's own record of what it holds and has been up to: its measures,
   documents and reports together, with charts, a share wheel and the **Evaluation** reports.
-- **Notes & documents** — note-taking with document scanning, OCR (Tesseract), barcode/QR
-  reading (zbar) and PDF rendering (WeasyPrint). A note is an appointment like everything else,
-  can be dragged onto an appointment to attach it, and is where speech that named no command
-  lands.
+- **Notes & documents** — note-taking with document scanning, OCR (Tesseract), barcode/QR reading
+  (zbar) and PDF rendering (WeasyPrint). A note is an appointment like everything else, can be
+  dragged onto an appointment to attach it, and is where speech that named no command lands.
 
 ### Communication & assistance
 
-- **Mailbox** — email over IMAP/SMTP, SMS, LoRaWAN, the house's radio "dial", its ticket threads
-  and the **Pen** assistant, gathered in one window and also available as separate **Email**,
-  **Chat**, **Phone** and **Pen** apps. Mail arrives on the desktop, threads by message headers,
-  searches the body as well as the subject, and files sent mail back onto the recipient's app
-  with its attachments sealed. Chat keeps one thread per person across transports, with SMS,
-  MMS and LoRaWAN roads. Phone adds recent calls, contacts, multiple lines per person, a dial pad,
-  caller ID and blocking. Pen holds assistant conversations, each with its own model and voice.
+- **Mailbox** — email over IMAP/SMTP, SMS, LoRaWAN, the house's radio "dial", ticket threads
+  and the **Pen** assistant in one window, also available as separate **Email**, **Chat**,
+  **Phone** and **Pen** apps. Mail arrives on the desktop, threads by message headers, searches
+  the body as well as the subject, and files sent mail back onto the recipient's app with its
+  attachments sealed. Chat keeps one thread per person across transports, with SMS, MMS and
+  LoRaWAN roads. Phone adds recent calls, contacts, multiple lines per person, a dial pad, caller
+  ID and blocking. Pen holds assistant conversations, each with its own model and voice.
 - **AI assistance** — chat and image generation through local [Ollama](https://ollama.com)
   models, Cloudflare Workers AI and OpenAI, Anthropic (Claude), Google (Gemini), xAI (Grok),
   DeepSeek, Mistral, Groq and OpenRouter, with multimodal chat (images, and the shapes for audio
   and video); plus speech ([Piper](https://github.com/rhasspy/piper), with espeak as a fallback)
   and transcription (cloud ASR from Cloudflare or Groq, falling back to a local whisper.cpp
   build). A model can be pinned to one machine, an agent can hold a thinking level and a fallback
-  model for when a provider is out of credit, and Configure → Plat shows each provider's balance
-  beside its key against the house's shared AI ledger.
-- **The Guide** — the help agent you can ask in words. It answers, and it can also act: search
-  your records, open an app, bring up photos, play a track, centre a map, reporting each step as
-  it goes. It reads the calendar and the clock for you — written and relative dates, holidays,
-  birthdays and ages, past or future — and it can create, change, delay, stop or delete an
-  appointment, each change staged for you to confirm and undoable. You can also hold a spoken
-  conversation with it, turn after turn, without repeating the wake word.
+  model, and Configure → Plat shows each provider's balance beside its key against the house's
+  shared AI ledger.
+- **The Guide** — the help agent you can ask in words. It answers and it acts: searches your
+  records, opens an app, brings up photos, plays a track, centres a map, reporting each step. It
+  reads the calendar and clock for you — written and relative dates, holidays, birthdays and ages,
+  past or future — and can create, change, delay, stop or delete an appointment, each change
+  staged for confirmation and undoable. You can also hold a spoken conversation with it, turn
+  after turn, without repeating the wake word.
 - **Agents** — the Guide can call associates for a second opinion, and a **Coding agent** chatbox
   sits in the Terminal and the IDE, with several agents able to work at once, each with its own
   conversation.
 - **Evaluation** — a model-backed appraisal of any app's activity, run on demand over a chosen
-  range or on a nightly cadence, that reads what the app is and what it has been doing, weighs
-  day, week, month and year together, notices the conditions and relationships around each
-  occurrence, and leaves a report beside the app with a headline and links to everything it names.
+  range or nightly, that reads what the app is and what it has been doing, weighs day, week,
+  month and year together, notices the conditions around each occurrence, and leaves a report
+  beside the app with a headline and links to everything it names.
 - **Translation** — a target-language picker under Configure → Misc can translate the visible
   window on demand, and the Guide can translate a phrase or a window in any of its 107 languages.
-  Translations are cached on the server and the device and never change the saved interface
-  language.
+  Translations are cached on the server and device and never change the saved interface language.
 
 ### Voice and the wake word
 
 The T-Watch and T-Deck can listen for you. They detect speech — or a wake phrase — record a
-short clip and ship it to JawnOS over Bluetooth or Wi-Fi, where the clip is transcribed and either
-run as a command or kept as a note. The wake phrases are custom-trained for JawnOS rather than
-stock — **Hey Jawn**, and **Jawn Do** on the watch — and each device's mode (off, any speech, or a
-phrase) is chosen from its row in the Embedded panel, beside a noise floor that can be automatic
-or pinned. Listening continues with the screen off, and the screen wakes with a chime when it
-hears you. JawnOS answers aloud through a neural **Piper** voice, and the reply streams to the
-device as it is written — the text on screen and the spoken clip in parts over the bridge, so the
+short clip and ship it to JawnOS over Bluetooth or Wi-Fi, where it is transcribed and either
+run as a command or kept as a note. The wake phrases are custom-trained — **Hey Jawn**, and
+**Jawn Do** on the watch — and each device's mode (off, any speech, or a phrase) is chosen from
+its row in the Embedded panel, beside a noise floor that can be automatic or pinned. Listening
+continues with the screen off, and the screen wakes with a chime when it hears you. JawnOS
+answers aloud through a neural **Piper** voice, streaming the reply as it is written, so the
 first word lands in about a second and a half. A watch carries two-way audio with an **Audio
 replies** toggle on its row, and the T-Deck runs the same code with its own microphone.
 
@@ -262,6 +252,8 @@ replies** toggle on its row, and the T-Deck runs the same code with its own micr
   graphs, a sortable process list, and a health strip with load, uptime, sync, database size and
   battery charge, temperature, voltage and per-hour draw. The server grows a worker under load
   and retires it when the burst passes, so a slow model call does not queue the whole interface.
+- **Network** — this machine's interfaces, Wi-Fi, VPN and a read-only view of the mesh in one
+  window; a fifth section appears on a phone.
 - **The Utility controller** — every background chore (backups, mail, tunnels, sync, navigation,
   alarms, budgets, stock expiry and more) with a run switch, an interval, a last-run time and a
   good/bad reading, set per machine.
@@ -269,9 +261,9 @@ replies** toggle on its row, and the T-Deck runs the same code with its own micr
   the new revision; a machine with no route to the source pulls the tree as a git bundle from the
   newest reachable peer instead. Backups and restores are built in.
 - **The mesh** — several machines keep one another in step without a central authority: code,
-  app builds, data and deletions all move the same way ("whoever has the newest is the authority"),
+  app builds, data and deletions move the same way ("whoever has the newest is the authority"),
   over whatever network they share or a tunnel when one is behind a router. Sync topology can be
-  automatic, a full mesh or a hub, and the transfer repairs only the blocks or weekly bands that
+  automatic, a full mesh or a hub, and transfers repair only the blocks or weekly bands that
   differ. Every machine can be logged into from another with a ticket, with a privilege of guest,
   resident, trusted or citizen, and a new machine can be migrated the whole house at once.
 - **Security** — a screen padlock unlocked by a paired phone's fingerprint, this computer's reader,
@@ -285,9 +277,9 @@ replies** toggle on its row, and the T-Deck runs the same code with its own micr
   approving mints a ticket, declining forgets it, and blacklisting or blocking a number keeps it
   out at the door and off the phone.
 - **Built-in help** — a **Help** app that explains any app, feature, function or device in plain
-  language: hover (or long-press) a control for a hint, press **F1** for whatever window you are
-  focused on, or use the question-mark button in a window's title bar. Its **Guide** is the chat
-  that can also drive the screen, and **Handbook** is its longer-form, chaptered cousin.
+  language: hover (or long-press) a control for a hint, press **F1** for whatever window is in
+  front, or use the question-mark button in a window's title bar. Its **Guide** is the chat that
+  can also drive the screen, and **Handbook** is its longer-form, chaptered cousin.
 - **The self-healing watch & the coding agent** — a watcher reads the server and browser logs (and
   the Guide's own conversations), catches the faults, and stages a fix, compile-checking and
   applying it only when you approve — or on its own, within a daily token budget — and listing
@@ -306,29 +298,60 @@ replies** toggle on its row, and the T-Deck runs the same code with its own micr
 
 ## Screenshots
 
-**The desktop.** The clothesline runs along the top, hanging the routines that belong at the
-current hour; the taskbar and the dock share the edges.
+**The desktop.** Several windows over the linked picture of routines, people and things; the
+clothesline runs along the top and the search bar sits at the bottom.
 
-![The JawnOS desktop](docs/screenshots/desktop.png)
+![The JawnOS desktop](docs/screenshots/desktop.webp)
 
-**The start menu.** It opens on the recent apps, with a category rail for the whole catalogue and
-a search that can ride the menu, the taskbar or the dock.
+**Files.** A folder grid with sizes, free space and a machine picker.
 
-![The start menu](docs/screenshots/start-menu.png)
+![Files](docs/screenshots/files.webp)
 
-**The taskbar's context menu.** From here the bar is rearranged, repositioned, set to auto-hide
-and repopulated with pinned apps and keyboards; the clock's format and time zone live here too.
+**Handbook.** Today at a glance: money spent, the state of life, the day's records and what
+they predict.
 
-![The taskbar's context menu](docs/screenshots/taskbar-menu.png)
+![Handbook](docs/screenshots/handbook.webp)
 
-**Process Monitor.** Live CPU and memory readings, per-core graphs and a sortable process list.
+**Measures.** Units and formulas, converted in place — currencies, temperatures, lengths and more.
 
-![The Process Monitor](docs/screenshots/monitor.png)
+![Measures](docs/screenshots/measures.webp)
 
-**On a phone.** The bars can be moved, hidden or set to auto-hide, and the interface scales to
-the screen.
+**Relational.** Routines, people and things as connected nodes, laid out across the desk.
 
-![JawnOS on a phone](docs/screenshots/phone.png)
+![Relational](docs/screenshots/relational.webp)
+
+**Warehouse.** Accounts, levels and quantities, with a search across everything in the house.
+
+![Warehouse](docs/screenshots/warehouse.webp)
+
+**Synth.** A playable keyboard, effect sliders, a step sequencer and the MIDI device picker.
+
+![Synth](docs/screenshots/synth.webp)
+
+**Studio.** Four recording tracks, a transport, a tempo wheel and the synth patched in above.
+
+![Studio](docs/screenshots/studio.webp)
+
+**Schemes and materials.** The Sage scheme: green paper, soft corners and a stack of windows,
+with the window and button borders, textures and corner radius that dress every surface.
+
+![The Sage scheme](docs/screenshots/sage-theme.webp)
+
+**The desk background.** A photograph behind the windows, with the palette left open to match.
+
+![A photographic desk background](docs/screenshots/wallpaper.webp)
+
+### On a phone
+
+The bars can be moved, hidden or set to auto-hide, and the interface scales to the screen.
+
+![JawnOS on a phone](docs/screenshots/phone-home.webp)
+
+![Gallery on a phone](docs/screenshots/phone-gallery.webp)
+
+![Accounting on a phone](docs/screenshots/phone-accounting.webp)
+
+![Travel on a phone](docs/screenshots/phone-travel.webp)
 
 ## How it's built
 
@@ -632,18 +655,19 @@ perl scripts/jawnos_setup.pl --no-browser # don't try to open a browser
 
 ## Status
 
-JawnOS is a work in progress. It ships sixteen interface languages, seventeen selectable icon
-sets, hover and long-press hints throughout the interface, and an in-app guide that explains
-every topic. Development is continuous and the tree changes daily, so expect rough edges,
-particularly in the newest apps.
+JawnOS is a work in progress. It ships sixteen interface languages, fifteen colour schemes in
+light and dark cuts, seventeen selectable icon sets, hover and long-press hints throughout the
+interface, and an in-app guide that explains every topic. Development is continuous and the tree
+changes daily, so expect rough edges, particularly in the newest apps.
 
 Recent work has gone into the **Folders** file manager and the desk (tabs, Places, the Recycle
 Bin and desk shortcuts); into **Gallery** (albums, lazy grids and a full-screen viewer); into the
 money side (**Accounting** with its double-entry journal and bank reconciliation, **Crypto**
 wallets, and the Store's Register); into **People** and **Relational** (the signed house crest,
-construct crests and cross-house lookup); into **Handbook**; and into the mesh's band-level sync
-repair. Voice and the wake word, the Guide and its agents, and the self-healing watch remain
-active areas.
+construct crests and cross-house lookup); into **Handbook**, **Clock**, **Synth** and **Studio**;
+into the colour schemes, textures and corner radius that dress the desktop; and into the mesh's
+band-level sync repair. Voice and the wake word, the Guide and its agents, and the self-healing
+watch remain active areas.
 
 ## License
 
