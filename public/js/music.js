@@ -2069,6 +2069,10 @@ var lastMusicRawHtml, lastMusicCacheHtml;
 // first and showed a stale row until the restore caught up. Nothing is sent
 // unless the stored shell actually changed.
 function musicContentCache(html) {
+	// a save can arrive after the window has closed (pagehide, the once-a-second
+	// beat): there is no window content left to store, and storing the undefined
+	// it returns would replay an empty window on the next open
+	if (typeof html != 'string' || !html.length) { return; }
 	if (html == lastMusicRawHtml) { return; }
 	lastMusicRawHtml = html;
 	// innerHTML never runs scripts; $('<div/>').html(html) would execute the
@@ -2313,9 +2317,21 @@ function playerCacheSaver(type, force) {
 	if (force || tree.cache_dirty || timestamp - tree.lastCache >= 5000) {
 		var unlocked = 0;
 		if ($('#music').attr('unlock')) { unlocked = 1; }
+		// A media element that has not read its metadata yet reports 0:00 for a
+		// position it was only asked to start at. Writing that zero would forget
+		// the place the person left off: a paused restore is loaded but never
+		// played, so no playing beat ever corrects it and the next open starts the
+		// track (or the one before it) from the beginning. Keep the position that
+		// was asked for until the element can answer for itself.
+		var at = tree.sound.currentTime;
+		if (tree.sound.readyState < 1) {
+			if (tree.sound.start_at == null) { tree.sound.start_at = at; }
+			at = tree.sound.start_at;
+		}
+		else { tree.sound.start_at = null; }
 		var playerData = { 
 			key: tree.current_track, 
-			'currentTime': tree.sound.currentTime, 
+			'currentTime': at, 
 			file: (tree.songs[0] ? tree.songs[0].file : ''), 
 			volume: master_volume, 
 			muted: music_muted, 
@@ -2489,6 +2505,10 @@ function mediaMaker(data) {
 	var timestamp = data['timestamp'] || Date.now();
 	var method = data['method'];
 	var file = data['file'] || (tree.songs[0] ? tree.songs[0].file : undefined);
+	// a restore hands its position over as `currentTime` (a chapter seek hands
+	// it over as `time`); the element is told where to start either way, so it
+	// never plays the first second of the track before the seek lands
+	if (time === undefined) { time = data['currentTime']; }
 	var uri_track = encodeURIComponent(file);
 	if (mao['srv'] == 'on') {
 		$.ajax({
@@ -2580,6 +2600,7 @@ function mediaMaker(data) {
 				tree.sound.html5 = true;
 				tree.sound.playbackRate = 1;
 				tree.sound.currentTime = time || 0;
+				tree.sound.start_at = (time || 0);
 				tree.sound.queued = 0;
 				// a new track, so the saved position must be rewritten at once rather
 				// than up to five seconds later
@@ -2598,6 +2619,9 @@ function mediaMaker(data) {
 					if (bar.length && tree.sound.duration) {
 						bar.val(tree.sound.currentTime / tree.sound.duration * 100);
 					}
+					// the element can answer for its position now, so a paused restore
+					// is written for real instead of the zero saved while loading
+					if (tree.sound.state == 0) { playerCacheSaver(undefined, true); }
 				};
 				// A seek empties the element's buffered sound; the Me delay line still
 				// holds the pre-seek moment and would replay it. Drop it and measure the
