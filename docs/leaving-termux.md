@@ -221,7 +221,7 @@ The milestone that actually leaves Termux.
 
 ### M4 — Identity
 
-- New package (`org.jawnos` suggested; `com.jawnos` is fine if unclaimed), no `sharedUserId`.
+- New package **`com.jawnos`** (the chosen name; one app replaces both Termux forks), no `sharedUserId`.
 - Replace or vendor `terminal-view`/`terminal-emulator` (Apache-2.0, keep notices) into our
   namespace; delete `termux-shared`, the settings fragments for Boot/Float/Styling/Tasker/
   Widget, plugin detection, and `com.termux` strings in `TermuxConstants`, `strings.xml` and
