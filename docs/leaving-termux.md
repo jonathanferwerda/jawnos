@@ -1,0 +1,240 @@
+# Leaving Termux — building the JawnOS app from scratch
+
+**Status:** draft 2026-10-30. Nothing started. Two spikes, then five milestones; each
+one ships on its own and can stop.
+**Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
+`~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
+sections in the long run), `AGENTS.md` → App releases.
+
+## The goal
+
+The phone app becomes ours: no `termux-app`, no `termux-api`, no `termux-shared`, no
+bootstrap archive, no `pkg`/`apt`. The Perl tree still runs, the Manager and Web UI do
+not change. The app is only the host.
+
+Not the goal:
+
+- rewriting jawn in Kotlin/Java;
+- changing what the app does for the person;
+- a big-bang rewrite. Every milestone is shippable and reversible.
+
+## What actually depends on Termux
+
+Four hooks, in ascending order of cost.
+
+| Hook | Where it lives | Cost |
+| --- | --- | --- |
+| Launcher shells out to `login -lc … perl` | `JawnLauncher.java:301-327` | small |
+| PTY and the session model | `TerminalSession` → `terminal-emulator/src/main/jni/termux.c` (`open("/dev/ptmx")` + fork/exec), `TermuxService` | small |
+| `termux-*` device commands | ~24 distinct commands across the tree; e.g. `subroutines.pl:3571`, `scripts/jawn-bt:63`, `Manager.pl:19864` | medium |
+| The runtime | `app/src/main/cpp/bootstrap-aarch64.zip` (29 MB), `pkg`/`apt`/`dpkg`, 21 CLI tools and 40 Perl modules (`scripts/jawnos_deps.pl:103-175`) | **the project** |
+
+The login shell exists only to export `PATH`, `LD_PRELOAD` (termux-exec) and `PERL5LIB`
+before `exec perl ./jawn`. A supervisor sets those itself. The PTY exists so the Console
+can show a terminal; jawn writes to `~/manager.log` and does not obviously need a tty.
+Neither is the hard part — the runtime is.
+
+## The constraints that decide the shape
+
+1. **Exec from app data is blocked on targetSdk 29+** (Android 10 W^X). Termux pins
+   `targetSdkVersion=28` in `gradle.properties` for exactly this reason. A bundled
+   interpreter must run from the APK's read-only native lib directory (`jniLibs`, with
+   `extractNativeLibs="true"`, already set in the manifest). Whether that works is
+   **Spike B**; it decides whether the finished app can ever target 35/36 or reach Play.
+2. **Native payloads must be 16 KB-page aligned** for targetSdk 35+, so the runtime is
+   built with a current NDK, not the fork's `ndkVersion 22.1.7171670`.
+3. **Licensing moves with the rewrite.** `termux-app` is GPL-3;
+   `terminal-view`/`terminal-emulator` are Apache-2.0 (`~/jawnos-app/PLAN.md` §7). Once
+   M4 removes the GPL parts the app can be BSD-2 like the Perl tree — but only if no GPL
+   code is copied forward.
+4. **The download policy follows the same line.** `JawnFirstRun.java:92` runs
+   `pkg install git` and clones the tree, `JawnUpdater` installs APKs, and
+   `subs::app_release_sync` (`subroutines.pl:31871`) pulls APKs from peers. Play requires
+   all of that to become bundled or Play-delivered. Sideloading does not care.
+
+## Spikes (before M0)
+
+Two experiments, a day each, settle decisions that are expensive to unmake.
+
+### Spike A — does jawn need a tty?
+
+- **Method:** start `President.pl` through the existing `TermuxService` background path
+  with piped stdout into `~/manager.log` instead of a terminal session (or a
+  `ProcessBuilder` from a scratch Activity). Watch one full restart cycle and one websocket
+  client.
+- **Accept:** the tree starts, workers run, `restart` via `~/.president/status` works,
+  websockets connect, and the log looks like a PTY run's.
+- **Then:** if it passes, the supervisor is a plain process manager and the PTY becomes a
+  Console-only feature. If it fails, M2 keeps a PTY per session and the supervising logic
+  wraps `terminal-emulator` instead of replacing it.
+- **Also check:** `Mojo::IOLoop::ReadWriteFork` and signal handling (`WNOHANG`, `INT`/`TERM`)
+  behave the same with a pipe; anything that calls `isatty` or `TIOCGWINSZ`.
+
+### Spike B — how do you execute a bundled interpreter?
+
+- **Method:** put a trivial aarch64 PIE binary (or a bundled `perl`) in
+  `app/src/main/jniLibs/arm64-v8a/libjawnrt.so`, keep `extractNativeLibs="true"`, and exec
+  it from `context.getApplicationInfo().nativeLibraryDir`.
+- **Accept on two builds:** the current `targetSdk 28` build, and a throwaway
+  `targetSdk 36` build.
+- **Then:** if both run, the final app can target 35/36 and Play is possible. If only 28
+  runs, the new app is permanently sideload-only with `targetSdk 28` and the plan gets
+  smaller (no AAB, no Play declarations, no 16 KB requirement).
+- **Also check:** SELinux denials in `logcat` (`avc: denied { execute }`), `/proc/self/maps`,
+  and whether the file survives an APK update.
+
+## Milestones
+
+| Milestone | Deliverable | Removes | Effort |
+| --- | --- | --- | --- |
+| **M0 Contracts** | dependency ledger + `subs::device()` wrapper at call sites, behaviour unchanged | nothing yet | ~1 week |
+| **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks |
+| **M2 Supervisor** | own process supervisor + PTY only for Console | `TermuxService`, `RunCommandService`, `termux-am`, `termux-exec`, `bin/login` | ~2 weeks |
+| **M3 Runtime** | bundled Perl + XS modules + a decided tool set | bootstrap, `pkg`/`apt`/`dpkg`, `TermuxInstaller`, first-run `git clone` | 4–8 weeks |
+| **M4 Identity** | new app, new package name, no Termux code | `termux-shared`, `terminal-view`/`terminal-emulator`, plugin support, `sharedUserId`, GPL-3 | 2–3 weeks |
+| **M5 Distribution** | signed AAB/APK + update channel | — | ~1 week |
+
+### M0 — Contracts
+
+- Build the ledger (template below): every `termux-*` call site, every tool and module
+  actually used, every place the PTY is touched.
+- Add `subs::device()` in `subroutines.pl` with the current `termux-*` calls behind it.
+  No behaviour change; the point is that M1 replaces one function, not 170 call sites.
+- Confirm which tools are real. `jawnos_deps.pl` lists `node`, `tmux`, `sox`, `ffmpeg`,
+  `tesseract`, `qrencode`, `zbarimg`, `espeak` — some may be vestigial, some may be
+  replaceable by an Android API. Decide per tool in M3, but mark intent now.
+- **Exit:** `perl scripts/termux_ledger.pl` (new) prints the ledger and the baseline counts.
+
+### M1 — Device bridge
+
+- App side: a foreground `DeviceService` listening on a unix socket in `$HOME/.jawn/`
+  (the `jawn-bt` service already proves the pattern). JSON in, JSON out, one long-lived
+  connection, a request id per call.
+- Perl side: `subs::device_call('sms.send', {...})`; the `termux-*` implementation stays
+  behind a flag until the replacement is proven on the phone.
+- Order: `battery`, `notification`, `toast`, `clipboard`, `wake-lock`, `sms-send`,
+  `sms-list`, `location`, `telephony`, `call-log`, `tts`, `camera-photo`, `fingerprint`,
+  `volume`, `torch`, `media-player`, `share`, `open`, `contact-list`, then the rest.
+- Fold the API app into the service as each command moves. Do not merge first and migrate
+  second — move the command, then delete the code path.
+- **Exit:** grep finds no `termux-*` outside the fallback shim; the API app is uninstalled
+  on both devices and nothing noticed.
+
+### M2 — Supervisor
+
+- Own `SessionService`: fork/exec, explicit env (`HOME`, `PATH`, `TMPDIR`, `PERL5LIB`,
+  `TERM`), pipes into `~/manager.log`, signal delivery, respawn, the
+  `~/.president/status` restart loop.
+- `JawnLauncher` execs Perl directly. No `login`, no `bash`, no `termux-exec`; the
+  `#!/data/data/...` shebangs disappear with the runtime in M3, so the supervisor must
+  exec the interpreter by absolute path.
+- Keep a PTY only when the Console opens; attach to the live session rather than starting
+  a second one.
+- Replace `RunCommandService`/`termux-am` with the same service API (`jawn-wake`,
+  notifications, BLE come from M1's bridge or M2's service).
+- **Exit:** jawn starts, restarts and stops with the app; the Console still scrolls; no
+  `bin/login` in any process tree.
+
+### M3 — Runtime
+
+The milestone that actually leaves Termux.
+
+- Build Perl for Android (aarch64) with `perl-cross` or Termux's own perl recipe, as
+  `libjawnrt.so` (or `libperl.so` plus a `perl` wrapper) exec'd per Spike B.
+- Cross-build the XS modules: `Sereal::Encoder`/`Decoder`, `DBD::SQLite` (for
+  `Mojo::SQLite`/`Minion`), `CryptX` (and its `Crypt::*` users), `Net::SSLeay`,
+  `LWP::Protocol::https`. The pure-Perl remainder ships as a `.pm` tree in assets or a
+  packed archive.
+- Tool diet, decided here:
+
+  | Keep bundled (candidates) | Replace with an Android API (candidates) | Droppable? |
+  | --- | --- | --- |
+  | `openssl`, `sqlite3`, `argon2`, `curl`, `ssh`, `sshpass`, `autossh`, `rsync`, `git`, `zip` | `espeak`/piper → `TextToSpeech`, `tesseract` → ML Kit, `convert` → `BitmapFactory`, `ffmpeg`/`sox` → `MediaCodec` | `node`, `tmux`, `qrencode`, `zbarimg` — confirm before cutting |
+
+- First run without `git`: ship the tree as an asset or fetch a versioned archive over
+  HTTPS and verify a pinned hash. Decide whether that is acceptable under the distribution
+  model chosen in M5.
+- Remove `TermuxInstaller`, the bootstrap zip, `pkg` sources, `termux-exec`.
+- **Exit:** a clean install on a device with no Termux runs the wizard, installs nothing,
+  and starts jawn; the APK has no `assets/bootstrap*` and no `libtermux-bootstrap.so`.
+
+### M4 — Identity
+
+- New package (`org.jawnos` suggested; `com.jawnos` is fine if unclaimed), no `sharedUserId`.
+- Replace or vendor `terminal-view`/`terminal-emulator` (Apache-2.0, keep notices) into our
+  namespace; delete `termux-shared`, the settings fragments for Boot/Float/Styling/Tasker/
+  Widget, plugin detection, and `com.termux` strings in `TermuxConstants`, `strings.xml` and
+  `shortcuts.xml`.
+- The WebView host is already ours (`JawnBrowserActivity`), as is the dashboard.
+- **Exit:** `grep -r com.termux` in the app repo returns only upstream notices and license
+  files; the app can be relicensed BSD-2 (`~/jawnos-app/PLAN.md` §7 has the GPL obligations
+  for the fork until this lands).
+
+### M5 — Distribution
+
+- If Spike B passed: targetSdk 36, AAB, Play App Signing, no self-update on the Play build.
+  If not: sideload/GitHub/F-Droid with `targetSdk 28`, a verified self-updater, and a
+  documented warning that the install floor may rise.
+- One signing key forever; publish the corresponding source for the exact built revision.
+
+## Order and the one thing not to do
+
+Sequence is M0 → M1 → M2 → M3 → M4 → M5. M1 is the biggest visible win and the lowest
+risk; M3 is the project.
+
+**Do not relocate the bootstrap.** `~/jawnos-app/PLAN.md` §2/§6 Route B (same-length
+`com.termux` → `org.jawnos` replacement inside the 29 MB bootstrap, plus a `pkg` wrapper)
+is wasted work under this roadmap: M3 deletes the bootstrap and everything it relocated.
+Keep `com.termux` until M4, ship M1–M3 to your own devices on the current build, and mint
+the new identity when there is no prefix left to migrate. The old app stays installed as
+the fallback throughout.
+
+## Dependency ledger
+
+`scripts/termux_ledger.pl` produces it; fill the decisions in by hand.
+
+Per call site:
+
+| File:line | Command | Args | Output parsed | Replacement (`subs::device_call`) | Status |
+| --- | --- | --- | --- | --- | --- |
+| `subroutines.pl:3571` | `termux-battery-status` | — | JSON `percentage`, `plugged` | `battery.status` | todo |
+
+Per tool and module:
+
+| Name | Used by | Core? | Decision |
+| --- | --- | --- | --- |
+| `perl` | everything | yes | bundle (M3) |
+| `git` | `JawnFirstRun`, self-update | no | drop or bundle (M3) |
+| `termux-api` | device commands | yes | bridge (M1) |
+
+## Ratchet
+
+A check that stops the dependency from growing while it is being removed:
+
+- `scripts/termux_ledger.pl --check` fails when the count of `termux-*` call sites, or the
+  tool/module lists, exceed the recorded baseline.
+- Wire it into `t/` (a single test that shells out) so `prove -l t` and the pre-push hook
+  catch a new dependency the day it is added.
+- The baseline in the script is decremented in the same commit as each migration.
+
+## Risks
+
+- **Upstream drift** disappears once M4 lands, but the rebase cost between now and then is
+  real; keep the fork deltas small and logged in `~/jawnos-app/JAWNOS.md`.
+- **XS build pain** is the likeliest M3 overrun: `CryptX`, `Sereal` and `DBD::SQLite` all
+  need working NDK toolchains and matching `perl` config.
+- **Runtime size**: Perl plus modules plus tools can exceed 100 MB, which changes the update
+  story and the store listing.
+- **The install floor**: if Android stops installing targetSdk 28, the pre-M3 app is
+  stranded; Spike B's answer bounds the damage.
+- **Samsung's cgroup demotion** (`~/jawnos-app/PLAN.md` §0) is unaffected by any of this —
+  the dot and the foreground service stay as they are.
+
+## Open decisions
+
+1. Exec model — Spike B's result.
+2. Bundle the runtime in the APK, or host our own package repo (a package manager we own)?
+3. The tool diet, per tool.
+4. Device transport: unix socket (recommended, matches `jawn-bt`) or broadcasts.
+5. Update channel: Play, GitHub, or F-Droid — and when the peer APK sync ends.
+6. Cut-over plan for the two devices, and how long the `com.termux` build stays installed.
