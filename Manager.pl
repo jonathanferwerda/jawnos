@@ -17150,19 +17150,28 @@ sub manager_reset($c) {
 	}
 	elsif ($type eq 'renew') {
 
-		my $appt_db = &subs::db_query('select * from appointments where app = ?',$app);
-		my $sames = $appt_db->hashes;
-		my $app_warranty = &subs::ago_calc(&subs::setting_grabber({ app => $app, setting => 'warranty' }), $timestamp);
-		foreach my $same (@{$sames}) {
-			my $new_warranty = $app_warranty - $timestamp + $same->{'timestamp'};
-			&subs::db_update('appointments', {
-				warranty => $new_warranty,
-				server_time => &subs::rightNow()
-			},
-			{
-				app => $same->{'app'},
-				uuid => $same->{'uuid'}
-			});
+		# Renew re-anchors every record's warranty to the one just chosen: the value
+		# typed in the card, or the app's setting when the field was blank, resolved
+		# once above. The old branch re-read the stored setting and ignored the typed
+		# value, so a renewal silently restored the old warranty to every record - and
+		# it read a bare length the opposite way from warranty_resolve, which could
+		# put a whole app's history in the past. A renewal that resolves behind now
+		# would be swept by alarm_haircut, so nothing is written in that case.
+		my $renew_ok = &subs::warranty_renewal_ok($warranty, &subs::rightNow());
+		$log->info('renew for ' . $app . ' refused: warranty ' . ($warranty // '') . ' is not ahead of now') unless $renew_ok;
+		if ($renew_ok) {
+			my $appt_db = &subs::db_query('select * from appointments where app = ?',$app);
+			my $sames = $appt_db->hashes;
+			foreach my $same (@{$sames}) {
+				my $new_warranty = &subs::warranty_renewed($warranty, $warranty_holder, $same->{'timestamp'});
+				&subs::db_update('appointments', {
+					warranty => $new_warranty,
+					server_time => &subs::rightNow()
+				},
+				{
+					app => $same->{'app'},
+					uuid => $same->{'uuid'}
+				});
 			my $websockets = &subs::db_query('select * from websockets where windows like ? and server_time > ? and windows is not null order by timestamp DESC',
 				'%app":"' . $app . '%', $server_time - 5000)->hashes;
 			if (scalar @{$websockets} > 0) {
@@ -17170,7 +17179,8 @@ sub manager_reset($c) {
 			}
 		}
 	}
-	elsif ($type eq 'delay') {
+}
+elsif ($type eq 'delay') {
 		my $appt = &subs::db_select('appointments', undef, {app => $app, type => ['record','start'] }, { -desc => 'timestamp' })->hashes->[0];
 		my $timestamp1 = $appt->{'timestamp'};
 		$duration = $appt->{'duration'} ? $appt->{'duration'} : $timestamp - $appt->{'timestamp'};
@@ -19976,9 +19986,9 @@ post '/manager/configure' => sub ($c) {
 		&subs::name_change_apply($app, $new_app, $choices) if scalar keys %{$choices};
 	}
 	my $setting_data = { app => $app, setting => $setting, value => $value, timestamp => $timestamp, source => 'panel' };
-	# an appointment type's theme is a property of the type, not of the machine
-	# that happened to pick it: keep it on the house-wide row
-	$setting_data->{'device'} = 'all' if $setting eq 'theme';
+	# an appointment type's theme and its warranty are properties of the type, not
+	# of the machine that happened to set them: keep both on the house-wide row
+	$setting_data->{'device'} = 'all' if $setting eq 'theme' || $setting eq 'warranty';
 	&subs::setting_setter($setting_data);
 	# the rename has relabelled the surviving rows, so a planned drop can now be
 	# tombstoned under the name every peer will be using

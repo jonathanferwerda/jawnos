@@ -3,6 +3,10 @@
 Every commit to JawnOS, newest first and grouped by day. Version-tagged subjects
 (`v<version> - ...`) mark the points where `VERSION` was bumped.
 
+## 2026-10-30
+
+- v0.1.1598 - renew keeps the warranty you typed, and a warranty belongs to the house. `manager_reset`'s renew branch re-read the app's stored warranty setting and ignored the warranty typed in the app card, so renewing silently restored the old value to every record (driving's 266 rows were re-anchored to 70 months from the phone's `-70M` while the card held a different value); it now re-anchors to the value every other action resolves, and `warranty_renewal_ok` refuses a warranty already in the past, which `alarm_haircut` would sweep. A warranty is stored on the `all` device row like the language and theme, read house-first with a per-device row only as the fallback, seeded house-wide by `setting_initializer`, and collapsed by the `warranty_house_wide` backfill to the value written most recently. Driving is re-anchored to `-10y`. `t/14-warranty.t` covers the offset arithmetic, the past guard and the house-row read, write and backfill.
+
 ## 2026-10-29
 
 - v0.1.1550 - page agent: look values up from the person's own records. `GET /manager/help/lookup` searches the appointments log (phone, email and notes), the `notes` table and the mailbox for the words the person named and returns at most sixteen rows with their source and time. Only rows whose app the visibility rule shows on this device are read, and the credentials, settings and device tables are never touched, so a lookup cannot hand the model a secret. The Guide is told to use it before filling a page with a value the person already keeps.
