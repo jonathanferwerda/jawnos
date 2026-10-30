@@ -56,10 +56,8 @@ like($out, qr/termux_ledger: ok/, 'the ledger reports its baseline counts');
 # a command that silently regains a termux call fails here as well as in the
 # ledger, and the list reads as the to-do for the next device proof.
 my $held = join ' ', qw(
-	termux-call-log termux-camera-photo termux-fingerprint
-	termux-microphone-record termux-notification-list termux-open
-	termux-sms-list termux-sms-send termux-telephony-call
-	termux-telephony-deviceinfo termux-torch
+	termux-call-log termux-open termux-sms-list termux-sms-send
+	termux-telephony-call termux-telephony-deviceinfo
 );
 my $record = qx{"$^X" "$ledger" --record 2>&1};
 my ($listed) = $record =~ /'command_list'\s*=>\s*'([^']*)'/;

@@ -166,8 +166,7 @@ sub record_audio($data) {
 
 	if ($device eq 'mobile') {
 		&subs::subprocessor(sub {
-			&subs::device_call('media.record', { action => 'start', path => $filename })
-				or &subs::device_run('microphone-record', qq{-l 0 -e mp3 -f $filename});
+			&subs::device_call('media.record', { action => 'start', path => $filename });
 		}, { name => "Audio file converter" });
 	}
 	elsif ($device eq 'computer') {
@@ -232,8 +231,7 @@ sub record_audio_stop($data) {
 	my $filename;
 
 	if ($device eq 'mobile') {
-		&subs::device_call('media.record', { action => 'stop' })
-			or &subs::device_run('microphone-record', '-q');
+		&subs::device_call('media.record', { action => 'stop' });
 	}
 	elsif ($device eq 'computer') {
 		`pkill rec`;
@@ -915,8 +913,7 @@ sub take_picture($c,$data) {
 
 
 	if ($device eq 'mobile' && ($camera eq 0 || $camera == 1)) {
-		&subs::device_call('camera.photo', { path => $filename, camera => $camera })
-			or &subs::device_run('camera-photo', qq{-c $camera $filename});
+		&subs::device_call('camera.photo', { path => $filename, camera => $camera });
 	}
 	elsif ($device eq 'computer' && $camera eq 'webcam') {
 		eval { `ffmpeg -i /dev/video0 $filename` };
@@ -26572,10 +26569,11 @@ sub notification_grabber($data) {
 	if ($device eq 'mobile') {
 		my $bridge_nl = &subs::device_call('notification.list');
 		# The listener answers only after the person grants notification access;
-		# hold the termux command until every device runs a build that has it.
+		# without the grant there is nothing to read, so the list stays empty.
+		my $bridge_nl = &subs::device_call('notification.list');
 		my $notifications = ($bridge_nl && ref $bridge_nl->{'notifications'} eq 'ARRAY')
 			? $bridge_nl->{'notifications'}
-			: decode_json(&subs::device_run('notification-list') || '[]');
+			: [];
 		my @fresh;
 		foreach my $n ( @{$notifications} ) {
 			if ($n->{'title'} && !grep { $_->{'id'} eq $n->{'id'} } @{$more_notifications}) {
@@ -27447,8 +27445,7 @@ get '/manager/torch' => sub($c) {
 		# The parameter is inverted on purpose: the page sends the state it is
 		# leaving, and this route has always answered with the new one.
 		my $on = $torch eq 'off' ? 1 : 0;
-		&subs::device_call('hardware.torch', { on => $on })
-			or &subs::device_run('torch', $on ? 'on' : 'off');
+		&subs::device_call('hardware.torch', { on => $on });
 		$returner = $on ? 'on' : 'off';
 	}
 	return $c->render(text => $returner);
@@ -44610,9 +44607,8 @@ sub unlock_screen($c) {
 	if (-e $database && $device eq 'mobile') {
 		# The app runs BiometricPrompt (an Activity flow) and answers in
 		# termux-fingerprint's shape; a cancellation is an answer, not a reason to
-		# prompt again through the termux fallback.
-		my $finger = &subs::device_call('auth.fingerprint', { reason => 'Unlock JawnOS' });
-		my $fingerprint = $finger || eval { return decode_json(&subs::device_run('fingerprint')) } || {};
+		# ask again.
+		my $fingerprint = &subs::device_call('auth.fingerprint', { reason => 'Unlock JawnOS' }) || {};
 		if (ref $fingerprint eq 'HASH') {
 			if (($fingerprint->{'auth_result'} || '') eq 'AUTH_RESULT_SUCCESS') {
 				$c->session('authentication' => 'approved');
