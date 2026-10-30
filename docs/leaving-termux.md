@@ -124,7 +124,7 @@ shape M1 and M2 take.
 | **M0 Contracts** | dependency ledger + `subs::device()` wrapper at call sites, behaviour unchanged | nothing yet | ~1 week ✅ |
 | **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks ✅ (all 24 native; API app retired) |
 | **M2 Supervisor** | own process supervisor + PTY only for Console | `TermuxService`, `RunCommandService`, `termux-am`, `termux-exec`, `bin/login` | ~2 weeks ✅ (`bin/login`, `termux-exec` gone; `TermuxService` left for the Console) |
-| **M3 Runtime** | bundled Perl + XS modules + a decided tool set | bootstrap, `pkg`/`apt`/`dpkg`, `TermuxInstaller`, first-run `git clone` | 4–8 weeks |
+| **M3 Runtime** | bundled Perl + XS modules + a decided tool set | bootstrap, `pkg`/`apt`/`dpkg`, `TermuxInstaller`, first-run `git clone` | 4–8 weeks — diet + archive done (M3a), app unpack next |
 | **M4 Identity** | new app, new package name, no Termux code | `termux-shared`, `terminal-view`/`terminal-emulator`, plugin support, `sharedUserId`, GPL-3 | 2–3 weeks |
 | **M5 Distribution** | signed AAB/APK + update channel | — | ~1 week |
 
@@ -343,6 +343,32 @@ shape M1 and M2 take.
 ### M3 — Runtime
 
 The milestone that actually leaves Termux.
+
+- **M3a — the runtime archive (2026-10-30):** `scripts/runtime_build.pl` decides
+  the diet from a built prefix and `scripts/runtime_zip.pl` packs it. The diet is
+  executable rather than prose: a tool allow-list (perl, openssl, sqlite3,
+  curl, ssh, git, the shell utilities; no `pkg`/`apt`/`dpkg`, no `cpanm`, no
+  editors), `lib/perl5`, the shared libraries the XS modules link (crypto, ssl,
+  sqlite3, z), `share/terminfo` and the CA bundle, with every pod, man page and
+  `CORE/*.h` pruned. From the tablet's prefix that is **3,075 files / 101.6 MB
+  uncompressed / 33.2 MB zipped**, packed in 12 seconds. The zip keeps Unix
+  modes and symlinks in the central directory (the app must read that record
+  itself — `ZipInputStream` exposes neither).
+- **Proven (tablet, 2026-10-30):** the archive was unpacked into an empty
+  directory and ran from there, away from `$PREFIX`, with only
+  `LD_LIBRARY_PATH` and `PERL5LIB`:
+  `perl v5.42.0` plus `Sereal::Encoder`, `Sereal::Decoder`, `DBD::SQLite`,
+  `CryptX`, `Net::SSLeay`, `LWP::Protocol::https`, `URI::Encode`, `JSON::PP`,
+  `Mojolicious`, `Minion` and `Mojo::SQLite` all loaded. `t/27-runtime-build.t`
+  pins the diet, the refusal of an incomplete prefix, and the modes/symlinks.
+  **The failure that test exists for:** the stage copy took run-as's umask, so
+  every tool in the first archive was `0666` and the unpacked `perl` was not
+  executable.
+- **Remaining (M3b):** the app unpacks this archive into `$PREFIX` instead of
+  `TermuxInstaller`'s bootstrap (same paths, so nothing the tree runs needs
+  relocating), verifies the pinned sha256, and deletes the bootstrap asset and
+  `libtermux-bootstrap.so`. Then the first run needs no `git` either: ship the
+  tree as an asset or fetch a tagged archive over HTTPS and verify its hash.
 
 - Build Perl for Android (aarch64) with `perl-cross` or Termux's own perl recipe, as
   `libjawnrt.so` (or `libperl.so` plus a `perl` wrapper) exec'd per Spike B.
