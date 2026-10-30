@@ -23470,6 +23470,38 @@ sub person_privilege {
 	return ($person && ref $person eq 'HASH' && $person->{'privilege'}) ? $person->{'privilege'} : 'guest';
 }
 
+# What a session's privilege must be to reach a path. A citizen reaches
+# everything; a resident everything except the citizen's desk; a guest nothing
+# under /manager (the public and device rails are carved out by the caller, in
+# hooks.pl, because they authenticate themselves). The patterns are anchored on
+# purpose: the old unanchored strings also matched any path that merely
+# contained them.
+our $tier_required = [
+	[ 'citizen',  qr{^/manager/(?:configure|security|magazine/publish)(?:/|$)} ],
+	[ 'resident', qr{^/manager(?:/|$)} ],
+];
+our %tier_rank = ( guest => 1, resident => 2, citizen => 3 );
+
+# The privilege a path needs, or '' when no tier claims it.
+sub tier_needed {
+	my ($path) = @_;
+	return '' unless defined $path && length $path;
+	for my $tier ( @{$tier_required} ) {
+		return $tier->[0] if $path =~ $tier->[1];
+	}
+	return '';
+}
+
+# Does this session fall short of the path's tier? An unknown or missing
+# privilege has no rank and is refused, never waved through.
+sub tier_denied {
+	my ($path, $privilege) = @_;
+	my $need = tier_needed($path);
+	return 0 unless length $need;
+	my $have = $tier_rank{ lc($privilege // '') } || 0;
+	return $have < $tier_rank{$need} ? 1 : 0;
+}
+
 # A revoked person is revoked for every session at once: the session carries
 # person_uuid and, for a device, device_uuid, so both are checked rather than
 # waiting for a cookie to expire.
