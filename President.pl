@@ -1365,6 +1365,11 @@ sub utility_functions() {
 					$controls->{$signatorial}->{$t}->{'last_run'} = $gb::timeouts->{$t}->{'last_run'};
 					$controls->{$signatorial}->{$t}->{'last_attempt'} = $gb::timeouts->{$t}->{'last_attempt'};
 					$controls->{$signatorial}->{$t}->{'last_effect'} = $gb::timeouts->{$t}->{'last_effect'};
+					# `lasted_run` is the runtime's real-execution marker, and the signal
+					# the tunnels watchdog measures. It used to stay only in memory and
+					# adoption restored whatever the blob held, so the marker never aged
+					# past the last write and a stall could not be told from a boot.
+					$controls->{$signatorial}->{$t}->{'lasted_run'} = $gb::timeouts->{$t}->{'lasted_run'};
 				}
 				else {
 					$controls->{$signatorial}->{$t}->{'last_run'} = undef;
