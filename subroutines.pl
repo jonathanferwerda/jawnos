@@ -684,102 +684,120 @@ sub duration_readout() {
 		. &duration_sayer($milliseconds / 1000) . '</span>';
 }
 
-sub time_abbrev_translator() {
-	my $timing = shift;
-	my $timestamp = shift;
-	my $total_duration = 0;
-	my $negative = '+';
-	my @times;
-	my $fulltime = $timing;
-	return '1' if $timing =~ /Infinity|NaN/gi;
-	return unless $timing;
-	if ($timing =~ / /) {
-		@times = split ' ', $timing;
-	}
-	else {
-		push @times, $timing;
-	}
+# A length written the many ways people write one: "2d", "2 days", "2days",
+# "1 hour 30 minutes", "1h30m", "in 2h", "-3h", "a week", "1.5d". The
+# compact forms are what the app stores; the spelled forms are what a person
+# types in the appointment and budget inputs.
+#
+# A single capital M is a month while a lower-case m is a minute, and D is a
+# decade while d is a day, as everywhere else in the app. Months and years step
+# the real calendar (February is 28 or 29; 29 February shortens to the 28th), so
+# a length read here agrees with a schedule stepped elsewhere.
+#
+# Returns milliseconds (a duration), not a timestamp; a number with no unit keeps
+# the old contract and reads as minutes.
+my %time_abbrev_ms = (
+	millisecond => 1,
+	second      => 1000,
+	minute      => 60 * 1000,
+	hour        => 60 * 60 * 1000,
+	day         => 24 * 60 * 60 * 1000,
+	week        => 7 * 24 * 60 * 60 * 1000,
+	decade      => 10 * 365 * 24 * 60 * 60 * 1000,
+	century     => 100 * 365 * 24 * 60 * 60 * 1000,
+);
 
-	foreach my $time ( @times ) {
-		next unless $time =~ /[0-9a-zA-Z]/gi;
-		my $measure;
-		$fulltime =~ s/[\-.,0-9]//gi;
-		if ($fulltime eq 'year') {
-			$measure = 'y';
+# The unit a timing token names, normalised to one word. The single letters are
+# case-sensitive, so they are matched before the lower-case spellings.
+sub time_abbrev_unit() {
+	my $token = shift;
+	return undef unless defined $token && length $token;
+	return 'month'  if $token eq 'M';
+	return 'decade' if $token eq 'D';
+	my $t = lc $token;
+	return 'month'       if $t =~ /^(?:mo|mon|mos|month|months)$/;
+	return 'millisecond' if $t =~ /^(?:ms|msec|msecs|millisecond|milliseconds)$/;
+	return 'second'      if $t =~ /^(?:s|sec|secs|second|seconds)$/;
+	return 'minute'      if $t =~ /^(?:m|mi|min|mins|minute|minutes)$/;
+	return 'hour'        if $t =~ /^(?:h|hr|hrs|hour|hours)$/;
+	return 'day'         if $t =~ /^(?:d|day|days)$/;
+	return 'week'        if $t =~ /^(?:w|wk|wks|week|weeks)$/;
+	return 'year'        if $t =~ /^(?:y|yr|yrs|year|years)$/;
+	return 'decade'      if $t =~ /^(?:decade|decades)$/;
+	return 'century'     if $t =~ /^(?:c|century|centuries)$/;
+	return undef;
+}
+
+sub time_abbrev_translator() {
+	my ($timing, $timestamp) = @_;
+	return '1' if defined $timing && $timing =~ /Infinity|NaN/i;
+	return unless defined $timing && $timing =~ /\S/;
+
+	my $text = $timing;
+	$text =~ s/^\s+|\s+$//g;
+	# "in 2 days" is a length read the other way; the old reader carried the
+	# sign separately and ago_calc still relies on it.
+	my $negative = ($text =~ s/^in\s+//i) ? 1 : 0;
+
+	# Split a compact form into number/unit tokens: 1h30m -> 1 h 30 m,
+	# 2days -> 2 days, 1.5d -> 1.5 d. A sign stays with its number.
+	$text =~ s/([0-9.])([A-Za-z])/$1 $2/g;
+	$text =~ s/([A-Za-z])([0-9])/$1 $2/g;
+
+	my $at = (defined $timestamp && $timestamp) ? $timestamp : &rightNow();
+	my ($total, $number, $have_number) = (0, undef, 0);
+
+	my $add = sub {
+		my ($value, $unit) = @_;
+		return unless defined $value;
+		$value = -$value if $negative && $value > 0;
+		if (!defined $unit) {
+			# a bare number keeps the old contract: minutes
+			$total += $value * 60 * 1000;
 		}
-		elsif ($fulltime eq 'millisecond') {
-			$measure = 'ms';
+		elsif ($unit eq 'month' || $unit eq 'year') {
+			# a calendar step, so February and 29 February are real lengths
+			$total += &calendar_shift($at, int($value), $unit) - $at;
 		}
-		elsif ($fulltime eq 'second') {
-			$measure = 's';
+		else {
+			$total += $value * $time_abbrev_ms{$unit};
 		}
-		elsif ($fulltime eq 'decade') {
-			$measure = 'D';
-		}
-		elsif ($fulltime eq 'minute') {
-			$measure = 'm';
-		}
-		elsif ($fulltime eq 'hour') {
-			$measure = 'h';
-		}
-		elsif ($fulltime eq 'day') {
-			$measure = 'd';
-		}
-		elsif ($fulltime eq 'week') {
-			$measure = 'w';
-		}
-		elsif ($fulltime eq 'month') {
-			$measure = 'M';
-		}
-		$time =~ s/([smhdwmycDM]$)//gi;
-		if ($time eq 'in') {
-			$negative = '-';
+	};
+
+	foreach my $token (split /\s+/, $text) {
+		next unless length $token;
+		# a comma or full stop belongs to the sentence, not the unit
+		my $word = $token;
+		$word =~ s/^[^A-Za-z0-9.+-]+//;
+		$word =~ s/[^A-Za-z0-9]+$//;
+		next unless length $word;
+
+		if ($word =~ /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/) {
+			$add->($number, undef) if $have_number;
+			$number = $word + 0;
+			$have_number = 1;
 			next;
 		}
-		$measure = $measure || $1 || 'm';
-		$time =~ s/[a-zA-Z]//gi;
-		# what is left is a number, or what a word left behind - "in" leaves
-		# nothing, a lone "-" keeps its sign - and neither is a number to compare,
-		# multiply or count months with
-		$time = 0 unless $time =~ /\d/;
-		next if $times[0] =~ /\s/;
-		if ($times[0]) {
-			# the first word may be "in" or a bare "-" too: only a token holding a
-			# number can be negative
-			my $leads_negative = ($times[0] =~ /^-/ && $times[0] =~ /\d/) ? 1 : 0;
-			if ($leads_negative || $negative eq '-') { $time = $time * -1 unless $time < 0; }
+		if ($word =~ /^(?:a|an)$/i) {
+			$add->($number, undef) if $have_number;
+			$number = 1;
+			$have_number = 1;
+			next;
 		}
-		my $duration;
-		if ($time && $time ne '-' && $time ne '') {
-			$duration = 1000 * $time;
-		}
-		$total_duration = $total_duration + ($duration / 1000) if $measure eq 'ms' || $measure =~ /millisecond/gi;
-		$total_duration = $total_duration + $duration if $measure eq 's' || ($measure =~ /second/gi && $measure !~ /millisecond/gi);
-		$total_duration = $total_duration + ($duration * 60) if $measure eq 'm' || $measure =~ /minute/gi;
-		$total_duration = $total_duration + ($duration * 60 * 60) if $measure eq 'h' || $measure =~ /hour/gi;
-		$total_duration = $total_duration + ($duration * 60 * 60 * 24) if $measure eq 'd' || $measure =~ /day/gi;
-		$total_duration = $total_duration + ($duration * 60 * 60 * 24 * 7) if $measure eq 'w' || $measure =~ /week/gi;
+		next if $word =~ /^(?:and|ago|from|now)$/i;
 
-		if ($measure eq 'M' || $measure eq 'mos' || $measure =~ /month/gi) {
-			# A month is however many days the calendar says: February is 28 or 29,
-			# and a step from the 31st clamps to the shorter month's last day. Read
-			# the real shift rather than a fixed 30 days, so a budget read and a
-			# schedule written here agree with father_time.
-			my $at = (defined $timestamp && $timestamp) ? $timestamp : &rightNow();
-			my $shifted = &calendar_shift($at, int($time), 'month');
-			$total_duration = $total_duration + ($shifted - $at);
+		my $unit = &time_abbrev_unit($word);
+		if (defined $unit && $have_number) {
+			$add->($number, $unit);
+			$number = undef;
+			$have_number = 0;
 		}
-	 	if ($measure eq 'y' || $measure =~ /year/gi) {
-			# A year is a calendar year too: 29 February shortens to the 28th and a
-			# leap year is 366 days.
-			my $at = (defined $timestamp && $timestamp) ? $timestamp : &rightNow();
-			my $shifted = &calendar_shift($at, int($time), 'year');
-			$total_duration = $total_duration + ($shifted - $at);
-		}
-		$total_duration = $total_duration + ($duration * 60 * 60 * 24 * 365 * 10) if $measure eq 'D' || $measure =~ /decade/gi;
-		$total_duration = $total_duration + ($duration * 60 * 60 * 24 * 365 * 100) if $measure eq 'c' || $measure =~ /century/gi;
+		# a unit with no number ("next week") is not a length this reader can
+		# bill; leave the phrase to the caller's other handlers
+		# an unknown word is skipped, as the old reader did
 	}
-	return $total_duration;
+	$add->($number, undef) if $have_number;
+	return $total;
 }
 
 sub is_leap_year() {
