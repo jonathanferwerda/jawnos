@@ -92,4 +92,18 @@ my $kept = &subs::remote_machine_tunnel_processor({ %{$verified} });
 is($kept->{'manager'}, 'https://100.64.0.4:45545',
 	'a manager that answered the probe is not replaced by the advertised LAN address');
 
+# `sync_peer_order` fixes the starvation: a pass starts one pull, so the peer
+# with the oldest confirmed watermark must go first.
+my $peers = [
+	{ signatorial => 'busy' },
+	{ signatorial => 'phone' },
+	{ signatorial => 'unknown' },
+];
+my $ordered = subs::sync_peer_order($peers, { busy => 300, phone => 100 });
+is_deeply([ map { $_->{'signatorial'} } @{$ordered} ], [ 'unknown', 'phone', 'busy' ],
+	'the pass starts with the peer whose last confirmed pull is oldest');
+my $tied = subs::sync_peer_order([ { signatorial => 'b' }, { signatorial => 'a' } ], { a => 5, b => 5 });
+is_deeply([ map { $_->{'signatorial'} } @{$tied} ], [ 'a', 'b' ],
+	'a watermark tie is broken by signatorial so the order is stable');
+
 done_testing();
