@@ -22,6 +22,10 @@ my %known = map { $_ => 1 } qw(
 	hardware.torch
 	power.wake_lock
 	power.wake_unlock
+	sms.send
+	sms.list
+	telephony.call_log
+	contact.list
 );
 
 my $root = "$FindBin::Bin/..";

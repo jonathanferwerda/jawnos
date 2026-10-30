@@ -42601,9 +42601,12 @@ sub sms_message_send($digits,$message) {
 				$via = 'bridge';
 			}
 			else {
-				$message =~ s/\$/\\\$/gi;
-				&subs::device_run('sms-send', qq{-n $digits "$message"});
-				$via = 'termux';
+				my $native = &subs::device_call('sms.send', { number => $digits, message => $message });
+				unless ($native) {
+					$message =~ s/\$/\\\$/gi;
+					&subs::device_run('sms-send', qq{-n $digits "$message"});
+				}
+				$via = $native ? 'bridge' : 'termux';
 			}
 		}
 	}
@@ -42633,11 +42636,18 @@ post '/manager/sms/termux_fallback' => sub($c) {
 	my $digits = $c->param('digits') || '';
 	my $message = $c->param('message') || '';
 	$digits =~ s/\S\d(?=\d{10})//;
+	my $via = 'termux';
 	if ($digits) {
-		$message =~ s/\$/\\\$/gi;
-		&subs::device_run('sms-send', qq{-n $digits "$message"});
+		my $native = &subs::device_call('sms.send', { number => $digits, message => $message });
+		if ($native) {
+			$via = 'bridge';
+		}
+		else {
+			$message =~ s/\$/\\\$/gi;
+			&subs::device_run('sms-send', qq{-n $digits "$message"});
+		}
 	}
-	$c->render(json => { ok => 1, via => 'termux' });
+	$c->render(json => { ok => 1, via => $via });
 };
 
 # The bridge's answer (window.__jawnSmsResult posts here): the send is logged,

@@ -2,8 +2,8 @@
 
 **Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 is
 running with a native-first rule**: battery, notification, toast, clipboard,
-volume, torch and wake lock are answered by the app itself (build 1180 /
-0.118.181) and proven on the tablet. The other commands, the single-app fold-in
+volume, torch, wake lock, contacts, SMS and call log are answered by the app
+itself (build 1182 / 0.118.183) and proven on the tablet. The other commands, the single-app fold-in
 and the `com.jawnos` identity are ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
@@ -152,7 +152,7 @@ shape M1 and M2 take.
 
 ### M1 — Device bridge (in progress: 9 of 24 commands native)
 
-- **Landed (tree v0.1.1615, app 1178 / 0.118.179):** `DeviceService` in the app
+- **Landed (app 1182 / 0.118.183):** `DeviceService` in the app
   (`com.termux.app`): loopback `127.0.0.1:46000`, newline-delimited JSON, a
   request id per call, one long-lived connection, and a token the app writes to
   `$HOME/.jawn/device.token` (mode 600; the app and Termux share one uid). It
@@ -189,6 +189,12 @@ shape M1 and M2 take.
     flash unit.
   - `power.wake_lock` / `power.wake_unlock` — one named `PARTIAL_WAKE_LOCK`
     (`jawnos:device-bridge`), released on destroy.
+  - `sms.send` — `SmsManager`, multipart; `dry_run` reports the parts without
+    touching the radio.
+  - `sms.list` — `Telephony.Sms`, newest N in termux-sms-list's shape.
+  - `telephony.call_log` — `CallLog.Calls`, duration as `H:MM:SS`/`M:SS`.
+  - `contact.list` — `ContactsContract`, capped. (The CallLog and SMS providers
+    reject a `LIMIT` in the sort order, so all three cap in the cursor loop.)
   `notification_sender` and the clipboard/volume/torch/wake call sites ask the
   bridge first and keep the termux commands as fallbacks, so an old app or tree
   still works.
@@ -201,9 +207,13 @@ shape M1 and M2 take.
   acquired/released `jawnos:device-bridge` (visible and then cleared in
   `dumpsys power`), and reported `{on:false}` for the torch — this Wi-Fi tablet
   has no flash unit, so the torch still needs a phone to prove.
+  Build 1182 read the tablet's contacts (3 rows). The call log and SMS list
+  returned empty lists from the real providers (no SIM), and `sms.send` answered
+  "Sms is not supported" — so SMS/call-log behaviour and the torch still need
+  the phone.
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** the other 15 commands, with the native API each one should use
+- **Remaining:** the other 11 commands, with the native API each one should use
   (below), folding the API app in as each moves. The fallback and the ledger
   entry go in the same commit that proves a command.
 
@@ -289,12 +299,12 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | `toast` | `Toast` | done |
 | `clipboard-get` / `clipboard-set` | `ClipboardManager` | done |
 | `wake-lock` / `wake-unlock` | `PowerManager.WakeLock` | done |
-| `sms-send` | `SmsManager` | granted |
-| `sms-list` | `Telephony.Sms` / content provider | granted |
+| `sms-send` | `SmsManager` | done; needs a phone (no SIM in the tablet) |
+| `sms-list` | `Telephony.Sms` / content provider | done; empty on the Wi-Fi tablet |
 | `location` | `LocationManager` / the app's `JawnLocationService` | already native in the app |
 | `telephony-call` | `Intent.ACTION_CALL` | granted |
 | `telephony-deviceinfo` | `TelephonyManager` | granted |
-| `call-log` | `CallLog.Calls` | granted |
+| `call-log` | `CallLog.Calls` | done; empty on the Wi-Fi tablet |
 | `tts-speak` | `TextToSpeech` | engine-dependent |
 | `camera-photo` | CameraX / Camera2 | granted; needs a camera-type foreground service |
 | `microphone-record` | `MediaRecorder` | granted; needs a microphone-type foreground service |
@@ -304,7 +314,7 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | `media-player` | `MediaPlayer` / `ExoPlayer` | no permission |
 | `share` | `Intent.ACTION_SEND` | no permission |
 | `open` | `Intent.ACTION_VIEW` | no permission |
-| `contact-list` | `ContactsContract` | granted |
+| `contact-list` | `ContactsContract` | done |
 
 What stays native-only and has no termux equivalent today: notification actions
 and progress, a large icon from any file, grouped notifications, a torch that
