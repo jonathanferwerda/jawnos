@@ -16314,11 +16314,13 @@ sub navigation_information() {
 				my $hpd = eval { return decode_json $hpder->{'value'} } || [];
 				foreach my $hp ( @{$hpd} ) {
 					my $parent_app = $hpder->{'app'};
-					my $app = $hp->{'self'} eq 'on' ? $hpder->{'app'} : $hp->{'app'};
-					if (!$app && ($hp->{'self'} eq 'off' && !$hp->{'app'})) {
-						next;
-					}
-					my @home_plate = (deg2rad($home_plate->{'longitude'}), deg2rad(90 - $home_plate->{'latitude'}));
+					# a plate only triggers its own app; a duty may carry its own ground
+					my $app = $parent_app;
+					next unless $app;
+					my $plate_lat = $hp->{'latitude'} || $home_plate->{'latitude'};
+					my $plate_lon = $hp->{'longitude'} || $home_plate->{'longitude'};
+					next unless $plate_lat && $plate_lon;
+					my @home_plate = (deg2rad($plate_lon), deg2rad(90 - $plate_lat));
 					foreach my $returner ( @{$current_locations} ) {
 						next if grep { $_ eq $returner->{'signatorial'}} @{$hp->{'signatorials'}};
 						push @{$hp->{'signatorials'}}, $returner->{'signatorial'};
@@ -17177,12 +17179,17 @@ sub navigation_automation() {
 		if ($home_plate->{'latitude'}) {
 			my $hpd = eval { return decode_json $hpder->{'value'} } || [];
 			foreach my $hp ( @{$hpd} ) {
-				if ($hp->{'device'} eq $signatorial || $hp->{'device'} eq $device) {
-					my $app = $hp->{'self'} eq 'on' ? $hpder->{'app'} : $hp->{'app'};
-					if (!$app && ($hp->{'self'} eq 'off' && !$hp->{'app'})) {
-						next;
-					}
-					my @home_plate = (deg2rad($home_plate->{'longitude'}), deg2rad(90 - $home_plate->{'latitude'}));
+				$hp->{'distance'} = 0.2 unless (defined $hp->{'distance'} && length $hp->{'distance'});
+				my $plate_device = $hp->{'device'} || '';
+				if (!$plate_device || $plate_device eq $signatorial || $plate_device eq $device) {
+				my $app = $hpder->{'app'};
+				next unless $app;
+				# a duty may carry its own ground (one app, many plates); otherwise
+				# the app's own home_plate is the plate
+				my $plate_lat = $hp->{'latitude'} || $home_plate->{'latitude'};
+				my $plate_lon = $hp->{'longitude'} || $home_plate->{'longitude'};
+				next unless $plate_lat && $plate_lon;
+				my @home_plate = (deg2rad($plate_lon), deg2rad(90 - $plate_lat));
 					my @visitor = (deg2rad($returner->{'longitude'}), deg2rad(90 - $returner->{'latitude'}));
 					my $distance = sprintf("%.3f", great_circle_distance(@home_plate, @visitor, $gb::planet_radius));
 					my $duty_key = $hp->{'uuid'};

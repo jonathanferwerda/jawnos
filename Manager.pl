@@ -27152,10 +27152,12 @@ post '/manager/configure/home_plate/manual' => sub($c) {
 };
 
 post '/manager/configure/home_plate/settings' => sub($c) {
-	my $home_plate = eval { return decode_json $c->param('home_plate') } || {};
-	$home_plate->{'app'} = &subs::unformat_name($home_plate->{'app'});
 	my $timestamp = $c->param('timestamp');
 	my $app = $c->param('app');
+	my $home_plate = eval { return decode_json $c->param('home_plate') } || {};
+	# a plate only ever triggers its own app; the owner is the app being configured
+	$home_plate->{'self'} = 'on';
+	$home_plate->{'app'} = $app;
 	my $settings = &subs::settings_grabber({ app => $app, settings => [ 'home_plate', 'home_plate_duties'] });
 	my $home_plate_duties = eval { return decode_json $settings->{'home_plate_duties'} } || [];
 
@@ -34214,6 +34216,71 @@ sub travel_nearby_items {
 	}
 	return \@items;
 }
+
+# The apps a person may put a plate on: the ones the house knows and has not hidden.
+get '/manager/apps/search' => sub ($c) {
+	my $q = lc($c->param('q') || '');
+	my %seen;
+	my @apps;
+	foreach my $row ( @{&subs::db_query("select distinct app from appointments where app is not null and app != ''")->hashes} ) {
+		next if $seen{ $row->{'app'} }++;
+		push @apps, $row->{'app'};
+	}
+	foreach my $row ( @{&subs::db_query("select distinct app from settings where app is not null and app != '' and app != '__president'")->hashes} ) {
+		next if $seen{ $row->{'app'} }++;
+		push @apps, $row->{'app'};
+	}
+	@apps = grep { !&subs::app_hidden_now($_) } @apps;
+	@apps = grep { !&subs::app_private_now($_) || &subs::private_reachable_now() } @apps;
+	@apps = sort { lc(&subs::format_name($a)) cmp lc(&subs::format_name($b)) } @apps;
+	@apps = grep { !length $q || index(lc($_), $q) >= 0 || index(lc(&subs::format_name($_)), $q) >= 0 } @apps;
+	@apps = @apps[0 .. 19] if scalar @apps > 20;
+	$c->render(json => { apps => [ map { { app => $_, name => &subs::format_name($_) } } @apps ] });
+};
+
+# A plate set from the map: it joins the app's own home_plate_duties with its own
+# coordinates, so one app can have several plates (a franchise at each shop) and
+# every plate triggers its own app.
+post '/manager/travel/plate' => sub ($c) {
+	my $app = &subs::unformat_name($c->param('app') || '');
+	my $lat = 0 + ($c->param('latitude') || 0);
+	my $lon = 0 + ($c->param('longitude') || 0);
+	my $metres = 0 + ($c->param('radius') || 200);
+	my $action = $c->param('action') || 'start';
+	my %allowed = map { $_ => 1 } qw(none start record stop command kill);
+	$action = 'start' unless $allowed{$action};
+	return $c->render(json => { error => 'an app is needed' }) unless length $app;
+	return $c->render(json => { error => 'that place is not valid' }) unless $lat || $lon;
+	return $c->render(json => { error => 'that app is hidden' }) if &subs::app_hidden_now($app);
+	$metres = 10 if $metres < 10;
+	$metres = 5000 if $metres > 5000;
+	my $duties = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'home_plate_duties' }) } || [];
+	my $plate = {
+		uuid => &subs::random_string_creator(22),
+		timestamp => &subs::rightNow(),
+		placement => 'within',
+		distance => sprintf('%.3f', $metres / 1000),
+		action => $action,
+		self => 'on',
+		app => $app,
+		device => '',
+		latitude => sprintf('%.7f', $lat),
+		longitude => sprintf('%.7f', $lon),
+	};
+	push @{$duties}, $plate;
+	&subs::setting_setter({ app => $app, setting => 'home_plate_duties', value => encode_json $duties });
+	# the app needs a base plate for the older readers; the first one set here is it
+	my $base = eval { return decode_json &subs::setting_grabber({ app => $app, setting => 'home_plate' }) } || {};
+	if (!$base->{'latitude'}) {
+		$base = {
+			app => $app, type => 'home_plate', uuid => &subs::random_string_creator(22),
+			timestamp => &subs::rightNow(), server_time => &subs::rightNow(),
+			latitude => $plate->{'latitude'}, longitude => $plate->{'longitude'}
+		};
+		&subs::setting_setter({ app => $app, setting => 'home_plate', value => encode_json $base });
+	}
+	$c->render(json => { saved => 1, app => $app, name => &subs::format_name($app), plate => $plate });
+};
 
 sub travel_grabber($c) {
 	my $timestamp = $c->param('timestamp');

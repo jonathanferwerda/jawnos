@@ -38,13 +38,13 @@
 			<label>Distance (km)</label>
 			<input class="home_plate_setting" setting="distance" value="<%= $hpd->{'distance'} %>" placeholder="(km)" uuid="<%= $hpd->{'uuid'} %>" size="6">
 		</span>
-		<span class="hp_field hp_inline">
-			<label><input class="home_plate_setting" setting="self" <% if ($hpd->{'self'} eq 'on') { %>checked<% } %> type="checkbox" uuid="<%= $hpd->{'uuid'} %>"> Self</label>
-		</span>
-
 		<span class="hp_field">
-			<label>App</label>
-			<input class="home_plate_setting" setting="app" value="<%= &subs::format_name($hpd->{'app'}) %>" placeholder="app" uuid="<%= $hpd->{'uuid'} %>" style="<% if ($hpd->{'self'} eq 'on') { %>display:none; <% } %>">
+			<label>Latitude</label>
+			<input class="home_plate_setting" setting="latitude" value="<%= $hpd->{'latitude'} %>" placeholder="latitude" uuid="<%= $hpd->{'uuid'} %>" size="10">
+		</span>
+		<span class="hp_field">
+			<label>Longitude</label>
+			<input class="home_plate_setting" setting="longitude" value="<%= $hpd->{'longitude'} %>" placeholder="longitude" uuid="<%= $hpd->{'uuid'} %>" size="10">
 		</span>
 		<span class="hp_field">
 			<label>Action</label>
