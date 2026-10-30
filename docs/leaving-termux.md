@@ -1,8 +1,7 @@
 # Leaving Termux — building the JawnOS app from scratch
 
-**Status:** draft 2026-10-30. **M0 landed** in v0.1.1611: the ledger, the
-`subs::device_*` door and the ratchet test exist. Next: Spike A and Spike B, then
-M1. Nothing in the app has changed yet.
+**Status:** draft 2026-10-30. **M0 landed** in v0.1.1611 and **Spike B passed**
+the same day (§Spikes). Next: Spike A, then M1. Nothing in the app has changed yet.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
 sections in the long run), `AGENTS.md` → App releases.
@@ -73,18 +72,33 @@ shape M1 and M2 take.
 - **Also check:** `Mojo::IOLoop::ReadWriteFork` and signal handling (`WNOHANG`, `INT`/`TERM`)
   behave the same with a pipe; anything that calls `isatty` or `TIOCGWINSZ`.
 
-### Spike B — how do you execute a bundled interpreter?
+### Spike B — how do you execute a bundled interpreter? ✅ 2026-10-30
 
-- **Method:** put a trivial aarch64 PIE binary (or a bundled `perl`) in
-  `app/src/main/jniLibs/arm64-v8a/libjawnrt.so`, keep `extractNativeLibs="true"`, and exec
-  it from `context.getApplicationInfo().nativeLibraryDir`.
-- **Accept on two builds:** the current `targetSdk 28` build, and a throwaway
-  `targetSdk 36` build.
-- **Then:** if both run, the final app can target 35/36 and Play is possible. If only 28
-  runs, the new app is permanently sideload-only with `targetSdk 28` and the plan gets
-  smaller (no AAB, no Play declarations, no 16 KB requirement).
-- **Also check:** SELinux denials in `logcat` (`avc: denied { execute }`), `/proc/self/maps`,
-  and whether the file survives an APK update.
+- **Method:** a separate `org.jawnos.spikeb` APK (NDK r23b
+  `aarch64-linux-android21-clang`, a trivial PIE named
+  `jniLibs/arm64-v8a/libjawnrt.so`, `extractNativeLibs` true via
+  `useLegacyPackaging`) execs the file from `nativeLibraryDir` on a Galaxy
+  Tab S10 Lite (SM-X400, Android 16, arm64-v8a), built once with `targetSdk 28`
+  and once with `targetSdk 36`. The spike project is `.shots/spike-b/` (scratch,
+  not committed).
+- **Result:** both exec, `exit=0`, through `ProcessBuilder` and through
+  `/system/bin/sh -c`; `/proc/self/maps` shows the file mapped `r-xp` from
+  `/data/app/.../lib/arm64/`, so it is the extracted copy, not the APK.
+- **SELinux:** `u:r:untrusted_app_27:s0:...` at targetSdk 28 and
+  `u:r:untrusted_app:s0:...` at 36; no `avc: denied { execute }` in logcat.
+  (Both domains still exist on Android 16 — the old one is selected by the
+  app's targetSdk.)
+- **After an APK update:** installing a new build over the old one re-creates
+  the version-scoped directory and the exec still works (tested 28 → 36 → 36).
+- **Then:** the finished app can target 35/36 and Play is possible. The plan
+  does not get smaller.
+- **Note for M5:** Play Protect's install-time verifier answered
+  `INSTALL_FAILED_VERIFICATION_FAILURE` for this debug-signed APK over adb; one
+  install with `settings put global verifier_verify_adb_installs 0` (deleted
+  immediately afterwards) let it through. Worth re-checking on the real update
+  path (PackageInstaller from the app) before M5.
+- **Left clean:** the spike package was uninstalled and the tablet's live
+  `com.termux` process was not touched (same pid before and after).
 
 ## Milestones
 
@@ -244,14 +258,15 @@ a new dependency the day it is added.
   need working NDK toolchains and matching `perl` config.
 - **Runtime size**: Perl plus modules plus tools can exceed 100 MB, which changes the update
   story and the store listing.
-- **The install floor**: if Android stops installing targetSdk 28, the pre-M3 app is
-  stranded; Spike B's answer bounds the damage.
+- **The install floor**: Spike B passed on Android 16 at targetSdk 28 and 36, so the
+  pre-M3 app is not stranded by a rising floor; the app can move to a current targetSdk.
 - **Samsung's cgroup demotion** (`~/jawnos-app/PLAN.md` §0) is unaffected by any of this —
   the dot and the foreground service stay as they are.
 
 ## Open decisions
 
-1. Exec model — Spike B's result.
+1. Exec model — **decided by Spike B:** an executable PIE in `jniLibs`, run by
+   absolute path from `nativeLibraryDir`, at targetSdk 35/36.
 2. Bundle the runtime in the APK, or host our own package repo (a package manager we own)?
 3. The tool diet, per tool.
 4. Device transport: unix socket (recommended, matches `jawn-bt`) or broadcasts.
