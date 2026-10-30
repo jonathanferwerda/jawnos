@@ -25498,6 +25498,56 @@ sub evaluation_measures {
 	return $out;
 }
 
+# Which device was actually with the person over a set of fixes. Every phone,
+# tablet and watch writes its own continent rows, so one appointment can hold two
+# tracks: the tablet left in the house and the phone that went for the walk. The
+# device that covered the most ground is the one that went somewhere. A step
+# shorter than the jitter floor is a stationary device shuffling, so it is not
+# counted; steps are measured from the last accepted fix, so a walk whose fixes
+# are spaced far apart still adds up. Ties fall to the device with more fixes,
+# then to its signatorial, so the answer does not change between reads.
+#
+#   my $carrier = &subs::carrier_device($fixes);
+#   # { signatorial, metres, fixes, devices } or undef
+sub carrier_device {
+	my ($fixes) = @_;
+	return undef unless ref $fixes;
+	# db_query(...)->hashes hands back a Mojo::Collection, a caller's own list is a
+	# plain arrayref; the guard must take both, or a route passes rows and gets
+	# nothing back.
+	my @list = ref $fixes eq 'ARRAY' ? @{$fixes} : eval { @{ $fixes->to_array } };
+	return undef unless scalar @list;
+	my $jitter = 25; # metres: below this a device is standing still
+	my (%metres, %count, %anchor);
+	foreach my $fix ( sort { ($a->{'timestamp'} || 0) <=> ($b->{'timestamp'} || 0) } @list ) {
+		next unless ref $fix eq 'HASH';
+		my ($lat, $lon) = ( $fix->{'latitude'}, $fix->{'longitude'} );
+		next unless defined $lat && defined $lon && length $lat && length $lon
+			&& $lat =~ /^-?[0-9]/ && $lon =~ /^-?[0-9]/;
+		my $dev = defined $fix->{'signatorial'} ? $fix->{'signatorial'} : '';
+		$count{$dev}++;
+		my @here = ( deg2rad($lon), deg2rad(90 - $lat) );
+		if ( $anchor{$dev} ) {
+			my $step = great_circle_distance( @{ $anchor{$dev} }, @here, $gb::planet_radius ) * 1000;
+			next if $step < $jitter;
+			$metres{$dev} += $step;
+		}
+		$anchor{$dev} = \@here;
+	}
+	return undef unless scalar keys %count;
+	my ($winner) = sort {
+		($metres{$b} || 0) <=> ($metres{$a} || 0)
+			|| $count{$b} <=> $count{$a}
+			|| $a cmp $b
+	} keys %count;
+	return {
+		signatorial => $winner,
+		metres => int( ($metres{$winner} || 0) + 0.5 ),
+		fixes => $count{$winner},
+		devices => scalar( keys %count ),
+	};
+}
+
 # The places an app went, read from the continent table the GPS fills. A walk's
 # track is a run of latitude/longitude rows tied to the appointment; summed here
 # into what a report can use: how many places, how far (km), for how long, the
