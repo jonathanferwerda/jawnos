@@ -26627,7 +26627,8 @@ post '/manager/notifications/remove' => sub($c) {
 	my $deletions = [];
 	if ($tag) {
 		if ($device eq 'mobile') {
-			&subs::device_run('notification-remove', $tag);
+			&subs::device_call('notification.remove', { id => $tag })
+				or &subs::device_run('notification-remove', $tag);
 		}
 	}
 	if ($scope eq 'all') {
@@ -44656,13 +44657,38 @@ sub notification_sender($m,$db) {
 		# The app posts it (JawnNotifyReceiver), so the badge lands on the app's
 		# own launcher icon; termux-notification belongs to the API app, which has
 		# no icon to badge, so it is only the fallback when the app is absent.
-		my ($t, $b) = ($title, $message);
-		$t =~ s/"/'/g;
-		$b =~ s/"/'/g;
-		my $silent = $m->{'silent'} ? ' --ez silent true' : '';
-		my $bc = `am broadcast -n com.termux/.app.JawnNotifyReceiver -a com.termux.app.JAWN_NOTIFY --es title "$t" --es message "$b" --es tag "$id"$silent 2>&1`;
-		unless ($bc =~ /Broadcast completed/) {
-			&subs::device_run('notification', qq{-i $id -t "$title" --vibrate "200,150,200,150" --image-path $image}, qq{echo "$message" | });
+		# Native first: the app builds and posts it through the device bridge, so
+		# the caller controls the small icon, the large picture, the actions, the
+		# progress and the group. The app's own receiver (a broadcast) and
+		# termux-notification stay as the fallbacks for an old app or none.
+		my $image_path = $image;
+		$image_path =~ s/\\ / /g;
+		my %nargs = (
+			id => $id,
+			title => $title,
+			text => $message,
+			silent => ($m->{'silent'} ? 1 : 0),
+			url => $url,
+			large_icon => $image_path,
+			small_icon => ($m->{'small_icon'} || $m->{'app'} || ''),
+			vibrate => ($m->{'silent'} ? '' : '200,150,200,150'),
+			actions => $m->{'actions'},
+			progress => $m->{'progress'},
+			group => $m->{'group'},
+			color => $m->{'color'},
+			ongoing => ($m->{'ongoing'} ? 1 : 0),
+		);
+		delete $nargs{$_} for grep { !defined $nargs{$_} } keys %nargs;
+		my $posted = &subs::device_call('notification.post', \%nargs);
+		unless ($posted) {
+			my ($t, $b) = ($title, $message);
+			$t =~ s/"/'/g;
+			$b =~ s/"/'/g;
+			my $silent = $m->{'silent'} ? ' --ez silent true' : '';
+			my $bc = `am broadcast -n com.termux/.app.JawnNotifyReceiver -a com.termux.app.JAWN_NOTIFY --es title "$t" --es message "$b" --es tag "$id"$silent 2>&1`;
+			unless ($bc =~ /Broadcast completed/) {
+				&subs::device_run('notification', qq{-i $id -t "$title" --vibrate "200,150,200,150" --image-path $image}, qq{echo "$message" | });
+			}
 		}
 	}
 	elsif ( eval { $sql->db } && $sql->dsn !~ /:$/) {

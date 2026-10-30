@@ -1,9 +1,9 @@
 # Leaving Termux — building the JawnOS app from scratch
 
-**Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1's
-first command is proven on a device** (build 1178 / 0.118.179, `battery.status`
-through `subs::battery_sample` with `source => 'bridge'`). The other 23 commands,
-the single-app fold-in and the `com.jawnos` identity are still ahead.
+**Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 is
+running with a native-first rule**: battery, notification and toast are answered by
+the app itself (build 1179 / 0.118.180) and proven on the tablet. The other
+commands, the single-app fold-in and the `com.jawnos` identity are ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
 sections in the long run), `AGENTS.md` → App releases.
@@ -168,18 +168,30 @@ shape M1 and M2 take.
   filesystem listener needs JNI, and `jawn-bt` already uses loopback. The token
   is the part jawn-bt lacks. This settles open decision 4 unless a later
   milestone wants the JNI.
-- **Proven on the tablet (2026-10-30):** app 1178 installed over 1177 (the tree
-  restarted, ~1 minute), the tree fast-forwarded to 0.1.1616 and restarted
-  again. A `run-as com.termux` probe inside Termux then showed `ping` answering
-  as `com.termux` on sdk 36, `battery.status` returning real data (72%,
-  CHARGING, PLUGGED_USB, 4124 mV), `subs::device_call` returning it, and
-  `subs::battery_sample` with `source => 'bridge'`. The token was 32 hex chars
-  at mode 600; no termux command ran.
-- **Rollback:** 1177 is no longer staged or on GitHub. Rebuild it from the app
-  repo at commit `02f3314a` if the new build ever has to be reverted.
-- **Remaining:** the other 23 commands, in the order below, folding the API app
-  in as each one moves. The fallback (and the ledger entry) goes in the same
-  commit that proves a command.
+- **Native first, not a termux port.** Every command is rebuilt on the Android
+  API that owns it, so the app gains what termux-* never exposed. The bridge
+  methods landed so far:
+  - `battery.status` — `BatteryManager` + the sticky battery intent.
+  - `notification.post` — `NotificationManager`, reusing the app's two channels
+    (`jawn_notifications`, `jawn_notifications_silent`); a small icon by
+    drawable name or app concept, a **large icon decoded from any file**, up to
+    three actions that open the WebView at a URL, a progress bar, grouping, a
+    vibration pattern, colour, ongoing.
+  - `notification.remove` — `NotificationManager.cancel(tag)`.
+  - `toast.show` — native `Toast`.
+  `notification_sender` asks the bridge first and keeps the app's broadcast
+  receiver and termux-notification as fallbacks, so an old app or tree still
+  works.
+- **Proven on the tablet (2026-10-30):** build 1179 posted a native notification
+  (`dumpsys notification` showed the title, text and progress 60/100 on
+  `com.termux`) and `notification.remove` cleared it; `toast.show` returned ok.
+  The battery proof (build 1178) showed `subs::battery_sample` with
+  `source => 'bridge'`.
+- **Rollback:** an older app build can be rebuilt from its commit in the app
+  repo; the tree never depends on the bridge (it falls back).
+- **Remaining:** the other 21 commands, with the native API each one should use
+  (below), folding the API app in as each moves. The fallback and the ledger
+  entry go in the same commit that proves a command.
 
 ### M2 — Supervisor
 
@@ -249,6 +261,40 @@ is wasted work under this roadmap: M3 deletes the bootstrap and everything it re
 Keep `com.termux` until M4, ship M1–M3 to your own devices on the current build, and mint
 the new identity when there is no prefix left to migrate. The old app stays installed as
 the fallback throughout.
+
+## Native replacements
+
+The native API each command maps to. "Granted" means the app already holds the
+permission; "needs UI" and "needs listener" mean an extra step at first use.
+
+| termux command | Android API | Note |
+| --- | --- | --- |
+| `battery-status` | `BatteryManager` + sticky intent | done |
+| `notification`, `notification-remove` | `NotificationManager` | done; icons, actions, progress, groups |
+| `notification-list` | `NotificationListenerService` | needs the user's notification-access grant |
+| `toast` | `Toast` | done |
+| `clipboard-get` / `clipboard-set` | `ClipboardManager` | granted |
+| `wake-lock` / `wake-unlock` | `PowerManager.WakeLock` | the foreground service already holds one |
+| `sms-send` | `SmsManager` | granted |
+| `sms-list` | `Telephony.Sms` / content provider | granted |
+| `location` | `LocationManager` / the app's `JawnLocationService` | already native in the app |
+| `telephony-call` | `Intent.ACTION_CALL` | granted |
+| `telephony-deviceinfo` | `TelephonyManager` | granted |
+| `call-log` | `CallLog.Calls` | granted |
+| `tts-speak` | `TextToSpeech` | engine-dependent |
+| `camera-photo` | CameraX / Camera2 | granted; needs a camera-type foreground service |
+| `microphone-record` | `MediaRecorder` | granted; needs a microphone-type foreground service |
+| `fingerprint` | `BiometricPrompt` | needs UI: a request/response pair over the bridge |
+| `volume` | `AudioManager` | granted |
+| `torch` | `CameraManager.setTorchMode` | granted |
+| `media-player` | `MediaPlayer` / `ExoPlayer` | no permission |
+| `share` | `Intent.ACTION_SEND` | no permission |
+| `open` | `Intent.ACTION_VIEW` | no permission |
+| `contact-list` | `ContactsContract` | granted |
+
+What stays native-only and has no termux equivalent today: notification actions
+and progress, a large icon from any file, grouped notifications, a torch that
+reports its state, and TTS with per-utterance voice control.
 
 ## Dependency ledger
 
