@@ -165,4 +165,30 @@ push @creep, fix( 7000, 'phone', 43.0000, -81 ), fix( 8000, 'phone', 43.0020, -8
 my $creep = &subs::movement_choice({ choice => 'auto', signatorial => 'phone', now => 12000, rows => [@creep] });
 is( $creep, 'phone', 'a creeping device does not take a real walk' );
 
+# ------------------------------------------------- the plate arms the autostop
+# The details bar offers the autostop switch only where navigation_automation can
+# act on the session: a duty with a radius and an action, and somewhere for that
+# plate to measure from. Anything less is a switch nothing would honour.
+is( &subs::home_plate_stop_armed({}), 0, 'no data arms nothing' );
+is( &subs::home_plate_stop_armed({ duties => undef }), 0, 'undef duties arm nothing' );
+is( &subs::home_plate_stop_armed({ duties => [] }), 0, 'an app with no plate arms nothing' );
+is( &subs::home_plate_stop_armed({ duties => [ { action => 'stop' } ], plate => { latitude => 43, longitude => -81 } }),
+	0, 'an action with no radius arms nothing' );
+is( &subs::home_plate_stop_armed({ duties => [ { distance => '0.200' } ], plate => { latitude => 43, longitude => -81 } }),
+	0, 'a radius with the action left on none arms nothing' );
+is( &subs::home_plate_stop_armed({ duties => [ { distance => 0, action => 'stop' } ], plate => { latitude => 43, longitude => -81 } }),
+	0, 'a zero radius arms nothing' );
+is( &subs::home_plate_stop_armed({ duties => [ { distance => '0.200', action => 'stop', latitude => 43, longitude => -81 } ] }),
+	1, 'radius, action and its own ground arm the switch' );
+is( &subs::home_plate_stop_armed({ duties => [ { distance => '0.200', action => 'start' } ], plate => { latitude => 43, longitude => -81 } }),
+	1, 'the app base plate is ground enough' );
+is( &subs::home_plate_stop_armed({ duties => [ { distance => '0.200', action => 'command' } ], house => { latitude => 43, longitude => -81 } }),
+	1, 'the house plate is ground enough' );
+is( &subs::home_plate_stop_armed({ duties => [ { distance => '0.200', action => 'stop' } ] }),
+	0, 'a plate with no coordinates anywhere arms nothing' );
+is( &subs::home_plate_stop_armed({ duties => [
+	{ distance => '0.200', action => 'none', latitude => 43, longitude => -81 },
+	{ distance => '0.300', action => 'record', latitude => 43, longitude => -81 }
+] }), 1, 'one armed duty is enough among several' );
+
 done_testing();

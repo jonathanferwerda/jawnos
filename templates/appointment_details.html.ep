@@ -1,6 +1,14 @@
 <% use Mojo::JSON qw/decode_json encode_json/; %>
 <% my $server_time = &subs::rightNow(); %>
 <% no warnings 'uninitialized'; %>
+<%# Autostop is offered only where navigation_automation can act on it: an app
+	home plate with a radius and an action, and somewhere for the plate to
+	measure from. %>
+<% my $autostop_armed = &subs::home_plate_stop_armed({
+	duties => eval { decode_json($settings->{'home_plate_duties'} || '[]') },
+	plate => $settings->{'home_plate'},
+	house => $main_home_plate
+}); %>
 <div class="detail_area" app="<%= $a %>" style="overflow:scroll;">
 	<span style="display:none;" class="detail_json" app="<%= $a %>">
 		<%= $appts->{'__specs'}->{'data'} %>
@@ -220,7 +228,7 @@
 					<% foreach my $mk ( @{$map_keys || []} ) { %>
 						<input type="hidden" class="appointment_map_key" provider="<%= $mk->{'provider'} %>" value="<%= $mk->{'value'} %>">
 					<% } %>
-					<% if (($l->{'type'} eq 'start' || $l->{'type'} eq 'record') && !$l->{'stop_seen'} && !$l->{'stop_timestamp'}) { %>
+					<% if ($autostop_armed && ($l->{'type'} eq 'start' || $l->{'type'} eq 'record') && !$l->{'stop_seen'} && !$l->{'stop_timestamp'}) { %>
 						<div class="appointment_autostop_bar" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>" autostop="<%= (($l->{'autostop'} || 'on') eq 'off') ? 'off' : 'on' %>"
 							style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:6px 8px;margin:6px 0;border:1px solid var(--line);border-radius:8px;background:var(--panel-2,var(--panel));">
 							<label class="appointment_autostop_label" style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
