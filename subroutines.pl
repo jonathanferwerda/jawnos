@@ -2838,6 +2838,31 @@ sub ago_calc() {
 	return $timestamp;
 }
 
+# A warranty belongs to the house, not to the machine that set it. It is stored
+# on the 'all' device row (like the language and the theme), so every device
+# reads the same value. A per-device row from an older build is still honoured
+# as a fallback until the backfill has written the house row.
+sub warranty_device { return 'all' }
+
+# A renewal keeps the offset between the chosen warranty and the moment it was
+# anchored at, and lands that same offset on every record's own timestamp. The
+# value is already resolved to a moment, so a warranty typed in the card is the
+# one that applies - not the stored setting.
+sub warranty_renewed {
+	my ($warranty, $holder, $timestamp) = @_;
+	return undef unless defined $warranty && defined $holder && defined $timestamp;
+	return $warranty - $holder + $timestamp;
+}
+
+# A warranty is a moment ahead of the record. A renewal that resolves behind now
+# would expire every record it touches on the next alarm_haircut, so it is not a
+# renewal at all and must not be written.
+sub warranty_renewal_ok {
+	my ($warranty, $now) = @_;
+	return 0 unless defined $warranty && length $warranty;
+	return ($warranty + 0) > (($now || &rightNow()) + 0) ? 1 : 0;
+}
+
 # The voices say_it can speak with. A friendly name carries the engine and what
 # that engine needs; the Speech setting in Configure picks one by name, so the
 # list here is the single source of truth for both the taker and the picker.
@@ -11197,6 +11222,11 @@ sub setting_setter() {
 	# person made the change. Replaying them here is what opened Libro Chequing
 	# on every machine and flipped jobs off during a merge.
 	my $sync = $settings->{'sync'} ? 1 : 0;
+	# A warranty is one value for the house (warranty_device), so a local write
+	# lands on the house row every machine reads. A peer replay keeps the device
+	# it arrived with, so an older build's per-device row cannot take the house
+	# value over.
+	$dev = &warranty_device() if !$sync && (($setting // '') eq 'warranty');
 	my ($db,$database) = &database_grabber();
 	my $server_time = $settings->{'server_time'} || &rightNow();
 	if ($setting eq 'name_change') {
@@ -11449,6 +11479,11 @@ sub setting_grabber() {
 	my $device_defined = 0;
 	$device_defined = 1 if $settings->{'device'};
 	$settings->{'device'} = $settings->{'device'} || &device_setter();
+	# A warranty is one value for the house, so ask the house row first. A legacy
+	# per-device row is only the fallback, so a machine that has not been migrated
+	# still answers with what it used to hold.
+	my $warranty_house = (($settings->{'setting'} // '') eq 'warranty' && !$device_defined);
+	$settings->{'device'} = &warranty_device() if $warranty_house;
 	my $returner;
 	# benign and settings are parameters of this sub, not columns of the settings
 	# table; riding into the where clause they made the select die with 'no such
@@ -11474,6 +11509,15 @@ sub setting_grabber() {
 		}
 		else {
 			$returner = $list->[0]->{'value'};
+		}
+	}
+	if ($warranty_house && !(defined $returner && length $returner)) {
+		# an older build stored a warranty per device; read this device's row
+		# until the backfill has written the house one
+		my $legacy = eval { &db_select_simple('settings', ['value'], { app => $app, setting => 'warranty', device => &device_setter() }) };
+		if ($legacy) {
+			my $rows = $legacy->hashes;
+			$returner = $rows->[-1]->{'value'} if scalar @{$rows};
 		}
 	}
 	if (defined $settings->{'setting'} && $settings->{'setting'} eq 'colour' && !$settings->{'benign'}) {
@@ -11604,6 +11648,13 @@ sub settings_grabber() {
 	}
 	foreach my $s ( @{$list } ) {
 		$returner->{$s->{'setting'}} = $s->{'value'};
+	}
+	# A warranty is one value for the house (warranty_device): the house row wins
+	# over this device's legacy one, so the Configure panel shows what every
+	# machine will use.
+	if (!$device_defined && (!$settings->{'settings'} || grep { $_ eq 'warranty' } @{$settings->{'settings'}})) {
+		my $house = eval { &db_raw('select value from settings where app=? and device=? and setting=?', $app, &warranty_device(), 'warranty') };
+		$returner->{'warranty'} = $house->[-1]->{'value'} if $house && scalar @{$house};
 	}
 	# (the old fallback here re-called $q->hashes, which is exhausted by then and
 	# always empty - dead code; the loop above already set every fetched setting)
@@ -15651,20 +15702,31 @@ sub setting_initializer() {
 	};
 
 	foreach my $s (keys %{$settings}) {
-		my @seen = grep { $_->{'setting'} eq $s } @{$re};
+		# A warranty is one value for the house, so what matters is whether the
+		# house row exists. When it does not, an older build's per-device row is
+		# adopted as the value instead of seeding the 'me' default over it.
+		my $house_warranty = ($s eq 'warranty');
+		my @seen = $house_warranty
+			? @{ &db_query('select * from settings where app = ? and setting = ? and device = ?', $app, 'warranty', &warranty_device())->hashes || [] }
+			: grep { $_->{'setting'} eq $s } @{$re};
 
 		unless ( scalar @seen > 0 ) {
+			my $value = $settings->{$s};
+			if ($house_warranty) {
+				my $legacy = &db_query('select value from settings where app = ? and setting = ? and device = ? order by server_time desc limit 1', $app, 'warranty', $device)->hashes || [];
+				$value = $legacy->[0]->{'value'} if scalar @{$legacy} && defined $legacy->[0]->{'value'} && length $legacy->[0]->{'value'};
+			}
 			my $pen = {
 				app => $app,
 				timestamp => &subs::rightNow(),
 				setting => $s,
-				value => $settings->{$s},
+				value => $value,
 				server_time => &subs::rightNow(),
-				device => $device,
+				device => ($house_warranty ? &warranty_device() : $device),
 				uuid => &random_string_creator(20)
 			};
 			&db_insert('settings', $pen);
-			$returner->{$s} = $settings->{$s};
+			$returner->{$s} = $value;
 		}
 		else {
 			my $set = $seen[0];
@@ -29193,6 +29255,41 @@ sub guide_message_warranty() {
 				$n++;
 			}
 			&subs::say_it("backfill evaluation_days_all: set " . ($n || 0) . " evaluation schedule(s) to all days");
+			return 1;
+		},
+		'warranty_house_wide' => sub {
+			# A warranty is one value for the house, not one per device (see
+			# warranty_device). Older builds wrote a row per device and the machines
+			# could disagree - driving held -70d on one and -70M on another. Collapse
+			# each app to the value written most recently onto the house row. The
+			# per-device rows are left in place, because a read that names a device
+			# may still want them; the normal path ignores them once this has run.
+			my $apps = &db_query("select distinct app from settings where setting = 'warranty' and device != ?", &warranty_device())->hashes || [];
+			my $made = 0;
+			foreach my $row ( @{$apps} ) {
+				my $app = defined $row->{'app'} ? $row->{'app'} : '';
+				next unless length $app;
+				my $house = &db_query('select 1 from settings where app = ? and setting = ? and device = ?', $app, 'warranty', &warranty_device())->hashes->[0];
+				next if $house;
+				my $winner = &db_query(
+					'select value from settings where app = ? and setting = ? and device != ? and value is not null and value != ? '
+					. 'order by cast(coalesce(server_time, timestamp, 0) as integer) desc, cast(coalesce(timestamp, 0) as integer) desc limit 1',
+					$app, 'warranty', &warranty_device(), ''
+				)->hashes->[0];
+				next unless $winner && defined $winner->{'value'} && length $winner->{'value'};
+				my $now = &rightNow();
+				&db_insert('settings', {
+					app => $app,
+					setting => 'warranty',
+					value => $winner->{'value'},
+					device => &warranty_device(),
+					timestamp => $now,
+					server_time => $now,
+					uuid => &random_string_creator(20)
+				});
+				$made++;
+			}
+			&say_it('backfill warranty_house_wide: ' . $made . ' app warranty(s) collapsed to the house row');
 			return 1;
 		},
 		'person_owner_devices' => sub {
