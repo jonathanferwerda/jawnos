@@ -201,8 +201,22 @@
 						<select class="appointment_dist_view" app="<%= $a %>" uuid="<%= $l->{'uuid'} %>">
 							<option value="fixes"><%= &subs::ui('Fixes') %></option>
 						</select>
+						<% if ($l->{'carrier'}) { %>
+							<span class="appointment_dist_carrier" style="font-size:12px;opacity:.75;"
+								hint="<%= &subs::ui('The device that was with you. Only its fixes are joined into the line.') %>">
+								<%= &subs::lang('common.with') %> <b><%= &subs::format_name($l->{'carrier'}->{'name'}) %></b>
+								<% if (($l->{'carrier'}->{'devices'} || 0) > 1) { %>
+									&middot; <%= $l->{'carrier'}->{'devices'} %> <%= &subs::lang('common.devices') %>
+								<% } %>
+								<% if (($l->{'carrier'}->{'path'} || 0) > 0) { %>
+									&middot; <%= ($l->{'carrier'}->{'path'} >= 1000)
+										? sprintf('%.1f', $l->{'carrier'}->{'path'} / 1000) . 'km'
+										: $l->{'carrier'}->{'path'} . 'm' %>
+								<% } %>
+							</span>
+						<% } %>
 					</div>
-					<span class="appointment_distance_data" style="display:none;"><%= encode_json({ home => { latitude => ($map_home->{'latitude'} // 0) + 0, longitude => ($map_home->{'longitude'} // 0) + 0 }, points => \@map_points }) %></span>
+					<span class="appointment_distance_data" style="display:none;"><%= encode_json({ home => { latitude => ($map_home->{'latitude'} // 0) + 0, longitude => ($map_home->{'longitude'} // 0) + 0 }, carrier => ($l->{'carrier'} || {}), points => \@map_points }) %></span>
 					<% foreach my $mk ( @{$map_keys || []} ) { %>
 						<input type="hidden" class="appointment_map_key" provider="<%= $mk->{'provider'} %>" value="<%= $mk->{'value'} %>">
 					<% } %>

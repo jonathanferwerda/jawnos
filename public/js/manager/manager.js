@@ -3200,15 +3200,18 @@ function appointmentDistMap(panel, provider) {
 	var points = [];
 	var fixes = data.points || [];
 	var home = data.home || {};
+	var carrier = (data.carrier && data.carrier.signatorial) || '';
 	var fixPoints = [];
 	fixes.forEach(function(p) {
 		if (!p || !p.latitude || !p.longitude) { return; }
 		fixPoints.push({ lat: +p.latitude, lon: +p.longitude, t: +p.timestamp || 0, dev: p.signatorial || '', colour: '#a0503f' });
 	});
-	// two devices can file fixes under one appointment (one at home, one driving),
-	// so each device gets its own line; their points would otherwise zigzag
+	// two devices can file fixes under one appointment (one at home, one driving).
+	// The house names the device that was with the person; only its fixes make the
+	// line, because the other one just sits there and jitters.
+	var linePoints = carrier ? fixPoints.filter(function(p) { return p.dev === carrier; }) : fixPoints;
 	var byDev = {};
-	fixPoints.forEach(function(p) { (byDev[p.dev] = byDev[p.dev] || []).push(p); });
+	linePoints.forEach(function(p) { (byDev[p.dev] = byDev[p.dev] || []).push(p); });
 	var lines = [];
 	$.each(byDev, function(dev, list) {
 		list.sort(function(a, b) { return a.t - b.t; });
@@ -3234,7 +3237,7 @@ function appointmentDistMap(panel, provider) {
 	engine.setPoints(points);
 	// frame the fixes themselves, so a home plate far away cannot shrink them to a
 	// dot; the home point still rides on the map when it is in view
-	var frame = fixPoints.length ? fixPoints : (home.latitude && home.longitude ? [{ lat: home.latitude, lon: home.longitude }] : []);
+	var frame = linePoints.length ? linePoints : (fixPoints.length ? fixPoints : (home.latitude && home.longitude ? [{ lat: home.latitude, lon: home.longitude }] : []));
 	if (frame.length) {
 		var lats = frame.map(function(p) { return p.lat; });
 		var lons = frame.map(function(p) { return p.lon; });

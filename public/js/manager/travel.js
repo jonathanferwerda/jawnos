@@ -625,11 +625,15 @@ function travelMapRender(response) {
 		}
 		// every fix that names an appointment, in time order: a track is a session,
 		// not an app's whole history. Two devices can file fixes under the same
-		// appointment (one stays home while the other drives), so the device is part
-		// of the key too — otherwise their points interleave into zigzags.
+		// appointment (one stays home while the other walks), so the house names the
+		// device that was actually with the person: the carrier. Its fixes make the
+		// track; a device left at home is skipped, so its jitter cannot zigzag it.
 		var stamp = parseFloat(point['timestamp']) || 0;
 		if (point['app'] && point['appointment_uuid'] && stamp) {
-			var fixKey = point['appointment_uuid'] + '|' + (point['signatorial'] || '');
+			if (point['carrier'] === 0) { return; }
+			var fixKey = point['appointment_uuid'];
+			// older data carries no carrier: fall back to one run per device
+			if (point['carrier'] !== 1) { fixKey += '|' + (point['signatorial'] || ''); }
 			(fixesByApp[fixKey] = fixesByApp[fixKey] || []).push({ lat: lat, lon: lon, t: stamp, colour: colour });
 		}
 	});

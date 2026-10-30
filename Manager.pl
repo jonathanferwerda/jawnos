@@ -26916,6 +26916,25 @@ get '/manager/appointment_details' => sub($c) {
 	my $settings = $appts->{$app}->{'setting'};
 	$settings->{'home_plate'} = eval { return decode_json $settings->{'home_plate'} } || {};
 	my $main_home_plate = eval { return decode_json &subs::setting_grabber({ app => 'me', setting => 'home_plate' }) } || {};
+	# A device's signatorial as the name the house knows it by: the first label of
+	# its house address (phone, tablet, laptop), then a peer's hostname, and this
+	# machine's own name when neither is known. The Dist section's carrier line
+	# reads these names.
+	my %carrier_names;
+	my $device_hosts = &subs::device_hosts();
+	foreach my $sig ( keys %{$device_hosts} ) {
+		my ($label) = split /\./, ($device_hosts->{$sig} || '');
+		$carrier_names{$sig} = &subs::format_name($label) if defined $label && length $label;
+	}
+	foreach my $d ( @{ &subs::remote_machine_lister() } ) {
+		my $sig = $d->{'signatorial'} || '';
+		my $host = $d->{'hostname'} || '';
+		next if $carrier_names{$sig};
+		next unless length $sig && length $host && $host !~ /^(?:me|localhost)$/i;
+		$carrier_names{$sig} = &subs::format_name($host);
+	}
+	my $my_carrier = &subs::signatorial_designer();
+	$carrier_names{$my_carrier} ||= &subs::setting_grabber({ app => 'me', setting => 'my_name' }) || 'this device';
 	push @details, @{$appts->{$app}->{'list'}} if $appts->{$app}->{'list'};
 	my $sum = scalar @details;
 	foreach my $d ( @details ) {
@@ -26975,6 +26994,19 @@ get '/manager/appointment_details' => sub($c) {
 			$continental = &subs::db_query('select * from continent where app = ? and uuid like ? order by timestamp',$app, $l->{'uuid'} . '%')->hashes;
 		}
 		$l->{'measures'} = eval { return decode_json $l->{'measures'} } || [];
+		# which device was with the person: the one whose fixes covered the most
+		# ground in this appointment. A tablet left at home moves a few metres; the
+		# phone carried on a walk covers the walk.
+		my $carrier = &subs::carrier_device($continental);
+		if ($carrier) {
+			$l->{'carrier'} = {
+				signatorial => $carrier->{'signatorial'},
+				name => $carrier_names{ $carrier->{'signatorial'} } || substr($carrier->{'signatorial'}, 0, 10),
+				path => $carrier->{'metres'},
+				fixes => $carrier->{'fixes'},
+				devices => $carrier->{'devices'},
+			};
+		}
 		my @p = grep { $_->{'name'} eq $l->{'type'} } @{$pseudonyms};
 		$l->{'total_distance'} = 0;
 		my $last_visitor;
@@ -35205,6 +35237,23 @@ get '/manager/travel/viewer' => sub($c) {
 	my $appt_rows = &subs::db_query('select uuid from appointments where (timestamp between ? and ?) or (stop_timestamp between ? and ?) or (stop_timestamp is null and type in (?,?) and timestamp > 0 and timestamp <= ?)', $t, $t2, $t, $t2, 'start', 'record', $t2)->hashes;
 	my %travel_appt_uuid = map { $_->{'uuid'} => 1 } @{$appt_rows};
 
+	# One appointment can hold fixes from more than one device: a tablet left in
+	# the house files jittering rows while the phone carried on the walk files the
+	# walk. One track is drawn per appointment, from the device that covered the
+	# most ground, so the stationary device cannot zigzag it.
+	my %travel_carrier;
+	{
+		my %by_appt;
+		foreach my $sl ( @{$locations} ) {
+			$sl->{'appointment_uuid'} = &travel_appointment_uuid($sl->{'uuid'}, \%travel_appt_uuid);
+			push @{$by_appt{ $sl->{'appointment_uuid'} }}, $sl if $sl->{'appointment_uuid'};
+		}
+		foreach my $appt ( keys %by_appt ) {
+			my $carrier = &subs::carrier_device($by_appt{$appt});
+			$travel_carrier{$appt} = $carrier->{'signatorial'} if $carrier;
+		}
+	}
+
   sub NESW { deg2rad($_[0]), deg2rad(90 - $_[1]) }
 	&subs::setting_setter({ app => 'travel', setting => 'time_scope', value => $time_scope });
 
@@ -35213,7 +35262,17 @@ get '/manager/travel/viewer' => sub($c) {
 	my @home_plate = NESW($main_map->{'home_plate'}->{'longitude'}, $main_map->{'home_plate'}->{'latitude'});
 
 	foreach my $sl (@{$locations}) {
-		$sl->{'appointment_uuid'} = &travel_appointment_uuid($sl->{'uuid'}, \%travel_appt_uuid);
+		# the device that was with the person on this appointment; the map draws
+		# its fixes as one track and ignores the others' jitter. The uuid was
+		# matched in the pre-pass above, before any two devices' rows were grouped.
+		# A row in an appointment is explicitly 0 or 1: the map must be able to tell
+		# "the other device" from "not part of a track at all", which a missing key
+		# cannot say.
+		if ($sl->{'appointment_uuid'}) {
+			my $carried = defined $travel_carrier{ $sl->{'appointment_uuid'} }
+				&& (defined $sl->{'signatorial'} ? $sl->{'signatorial'} : '') eq $travel_carrier{ $sl->{'appointment_uuid'} };
+			$sl->{'carrier'} = $carried ? 1 : 0;
+		}
 		$universal_settings->{$sl->{'app'}} = &subs::settings_grabber({ app => $sl->{'app'} }) unless $universal_settings->{$sl->{'app'}};
 		$sl->{'settings'} = $universal_settings->{$sl->{'app'}};
 		# the map says a name the way the rest of the app does (the grouped marker's
