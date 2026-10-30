@@ -115,7 +115,11 @@ function travelNearRender(container, items, show_empty) {
 	var strip = box.find('.travel_near_strip');
 	strip.empty();
 	var label = box.find('.travel_near_label');
-	if (label.length) { label.text(items.length ? jawnosT('Nearby') + ' · ' + items.length : jawnosT('Nearby')); }
+	if (label.length) {
+		label.text(items.length ? jawnosT('Nearby: {0}', items.length) : jawnosT('Nearby'));
+		label.css({ cursor: items.length ? 'pointer' : 'default', textDecoration: items.length ? 'underline' : 'none' })
+			.off('click').on('click', function() { if (items.length) { travelNearOpen(container, 0); } });
+	}
 	if (!items.length) {
 		if (!show_empty) { box.hide(); return; }
 		strip.html('<span style="font-size:11px;opacity:.7;">' + jawnosT('No pictures taken in this view') + '</span>');
@@ -218,25 +222,18 @@ function travelStreetPreview(lat, lon, sx, sy) {
 	$('#travel_street_preview_text').text(jawnosT('Street view · loading…'));
 	travelStreetPreviewPlace(card, sx || 40, sy || 40);
 	card.show();
-	var token = ($('#travel_mapillary_token').val() || '').trim();
-	var fallback = function() {
-		if (!travelStreetPreviewAt) { return; }
-		var bounds = travelMap ? travelMap.viewBounds() : null;
-		travelNearFetch(travelStreetPreviewAt.lat, travelStreetPreviewAt.lon, bounds, null, null, false, function(items) {
-			if (!travelStreetPreviewAt || !items.length) {
-				$('#travel_street_preview_text').text(jawnosT('No street view here'));
-				return;
-			}
-			$('#travel_street_preview_img').attr('src', items[0].thumb_url).show();
-			$('#travel_street_preview_text').text(jawnosT('No street view · press for nearby pictures'));
-		});
-	};
-	if (!token) { fallback(); return; }
-	// a picture of the house shows at once; Mapillary's photo replaces it if one comes
-	fallback();
-	travelStreetNearest(lat, lon, token, function(photo) {
+	var mp = ($('#travel_mapillary_token').val() || '').trim();
+	var g = ($('#travel_google_token').val() || '').trim();
+	if (!mp && !g) {
+		$('#travel_street_preview_text').text(jawnosT('Set a Mapillary or Google Street View key in Configure → Plat → Maps'));
+		return;
+	}
+	travelStreetLookup(lat, lon, function(photo) {
 		if (!travelStreetPreviewAt || travelStreetPreviewAt.lat != lat || travelStreetPreviewAt.lon != lon) { return; }
-		if (!photo || !(photo.thumb_1024_url || photo.thumb_2048_url)) { return; }
+		if (!photo || !(photo.thumb_1024_url || photo.thumb_2048_url)) {
+			$('#travel_street_preview_text').text(jawnosT('No street view here'));
+			return;
+		}
 		$('#travel_street_preview_img').attr('src', photo.thumb_1024_url || photo.thumb_2048_url).show();
 		$('#travel_street_preview_text').text(jawnosT('Street view · press to open'));
 	});
@@ -267,28 +264,55 @@ $(document).on('keyup', function(e) {
 	if (e.key == 'Escape' && $('#travel_street').is(':visible')) { travelStreetClose(); }
 });
 
-// The nearest photo in growing rings. It comes back with a plain image URL, so it
-// draws without the WebGL panorama that was showing black in the desktop engine.
+// The nearest Mapillary photo, by its radius search: the API picks the best image
+// within 50 m (proximity, recency, and 360 preference). It comes back as a plain
+// image URL, so it draws without the WebGL panorama.
 function travelStreetNearest(lat, lon, token, done) {
-	var spans = [0.0005, 0.002, 0.01];
-	var i = 0;
-	function attempt() {
-		if (i >= spans.length) { done(null); return; }
-		var d = spans[i++];
-		var bbox = (lon - d).toFixed(6) + ',' + (lat - d).toFixed(6) + ',' + (lon + d).toFixed(6) + ',' + (lat + d).toFixed(6);
-		$.ajax({
-			url: 'https://graph.mapillary.com/images',
-			data: { access_token: token, fields: 'id,thumb_2048_url,thumb_1024_url', bbox: bbox, limit: 1 },
-			dataType: 'json',
-			timeout: 8000,
-			success: function(r) {
-				var first = (r && r.data && r.data[0]) || null;
-				if (first) { done(first); } else { attempt(); }
-			},
-			error: function() { done(null, 'error'); }
-		});
-	}
-	attempt();
+	$.ajax({
+		url: 'https://graph.mapillary.com/images',
+		data: { access_token: token, fields: 'id,thumb_2048_url,thumb_1024_url', lat: lat, lng: lon, radius: 50, limit: 1 },
+		dataType: 'json',
+		timeout: 8000,
+		success: function(r) {
+			var first = (r && r.data && r.data[0]) || null;
+			done(first || null);
+		},
+		error: function() { done(null, 'error'); }
+	});
+}
+
+// Google's Street View Static API: the same idea, a still image, no WebGL. The
+// metadata call answers whether Google has a photo of that ground at all.
+function travelStreetGoogle(lat, lon, token, done) {
+	var loc = (+lat).toFixed(6) + ',' + (+lon).toFixed(6);
+	$.ajax({
+		url: 'https://maps.googleapis.com/maps/api/streetview/metadata',
+		data: { location: loc, key: token },
+		dataType: 'json',
+		timeout: 8000,
+		success: function(r) {
+			if (!r || r.status !== 'OK') { done(null); return; }
+			var key = encodeURIComponent(token);
+			var still = 'https://maps.googleapis.com/maps/api/streetview?size=640x480&location=' + loc + '&key=' + key;
+			done({ id: '', google: 1, thumb_1024_url: still, thumb_2048_url: still });
+		},
+		error: function() { done(null); }
+	});
+}
+
+// Mapillary first, then Google when its key is saved.
+function travelStreetLookup(lat, lon, done) {
+	var mp = ($('#travel_mapillary_token').val() || '').trim();
+	var g = ($('#travel_google_token').val() || '').trim();
+	var tryGoogle = function() {
+		if (!g) { done(null); return; }
+		travelStreetGoogle(lat, lon, g, done);
+	};
+	if (!mp) { tryGoogle(); return; }
+	travelStreetNearest(lat, lon, mp, function(photo) {
+		if (photo) { done(photo); return; }
+		tryGoogle();
+	});
 }
 
 function travelStreetOpen(lat, lon) {
@@ -298,6 +322,7 @@ function travelStreetOpen(lat, lon) {
 	var embed = 'https://www.mapillary.com/embed?map_style=Mapillary%20streets'
 		+ '&x=' + x.toFixed(7) + '&y=' + y.toFixed(7) + '&z=18';
 	var token = ($('#travel_mapillary_token').val() || '').trim();
+	var google = ($('#travel_google_token').val() || '').trim();
 	var note = $('#travel_street_note');
 	$('#travel_street_preview').hide();
 	$('#travel_street_title').text(jawnosT('Street view') + ' · ' + lat.toFixed(5) + ', ' + lon.toFixed(5));
@@ -306,6 +331,7 @@ function travelStreetOpen(lat, lon) {
 	$('#travel_street_gallery').hide().empty();
 	$('#travel_street_photos').hide();
 	$('#travel_street_pano').hide();
+	$('#travel_street_credit').text('');
 	$('#travel_street').css('display', 'flex');
 	note.hide().text('');
 	var nearBounds = travelMap ? travelMap.viewBounds() : null;
@@ -317,16 +343,15 @@ function travelStreetOpen(lat, lon) {
 		$('#travel_street_gallery').css('display', 'grid');
 		$('#travel_street_photos').hide();
 	};
-	if (!token) {
-		note.text(jawnosT('No Mapillary token — the pictures below were taken by the house near here. A free Mapillary token (Configure → Plat → Maps) adds the nearest street-level photo.')).show();
-		$('#travel_street_pano').attr('embed', embed).show();
+	if (!token && !google) {
+		note.text(jawnosT('No street view key — the pictures below were taken by the house near here. A Mapillary or Google Street View key (Configure → Plat → Maps) adds the street-level photo.')).show();
 		showGallery();
 		return;
 	}
-	travelStreetNearest(lat, lon, token, function(photo, why) {
+	travelStreetLookup(lat, lon, function(photo) {
 		if (!photo) {
-			note.text(jawnosT(why === 'error' ? 'Mapillary could not be asked for the nearest photo.' : 'Mapillary returned no street-level photo near here — the token may also lack image access.')).show();
-			$('#travel_street_pano').attr('embed', embed).show();
+			note.text(jawnosT(token ? 'No street-level photo near here.' : 'No Google Street View photo near here.')).show();
+			if (token) { $('#travel_street_pano').attr('embed', embed).show(); }
 			showGallery();
 			return;
 		}
@@ -335,7 +360,8 @@ function travelStreetOpen(lat, lon) {
 		$('#travel_street_photo').attr('src', src).show();
 		$('#travel_street_gallery').hide();
 		$('#travel_street_photos').show();
-		$('#travel_street_pano').attr('embed', embed + '&image_key=' + encodeURIComponent(photo.id)).show();
+		$('#travel_street_credit').text(photo.google ? jawnosT('© Google') : jawnosT('© Mapillary contributors, CC BY-SA'));
+		if (!photo.google) { $('#travel_street_pano').attr('embed', embed + '&image_key=' + encodeURIComponent(photo.id)).show(); }
 	});
 }
 
