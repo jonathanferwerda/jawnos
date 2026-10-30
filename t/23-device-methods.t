@@ -26,6 +26,10 @@ my %known = map { $_ => 1 } qw(
 	sms.list
 	telephony.call_log
 	contact.list
+	location.current
+	speech.speak
+	telephony.dial
+	telephony.deviceinfo
 );
 
 my $root = "$FindBin::Bin/..";

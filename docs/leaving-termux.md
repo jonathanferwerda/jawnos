@@ -2,8 +2,8 @@
 
 **Status:** draft 2026-10-30. **M0 landed**, **both spikes passed**, and **M1 is
 running with a native-first rule**: battery, notification, toast, clipboard,
-volume, torch, wake lock, contacts, SMS and call log are answered by the app
-itself (build 1182 / 0.118.183) and proven on the tablet. The other commands, the single-app fold-in
+volume, torch, wake lock, contacts, SMS, call log, location, speech and
+telephony are answered by the app itself (build 1184 / 0.118.185) and proven on the tablet. The other commands, the single-app fold-in
 and the `com.jawnos` identity are ahead.
 **Read with:** `docs/appliance-provisioning.md`, `docs/app-release-notes.md`,
 `~/jawnos-app/PLAN.md` (the fork plan — this doc supersedes its identity and bootstrap
@@ -152,7 +152,7 @@ shape M1 and M2 take.
 
 ### M1 — Device bridge (in progress: 9 of 24 commands native)
 
-- **Landed (app 1182 / 0.118.183):** `DeviceService` in the app
+- **Landed (app 1184 / 0.118.185):** `DeviceService` in the app
   (`com.termux.app`): loopback `127.0.0.1:46000`, newline-delimited JSON, a
   request id per call, one long-lived connection, and a token the app writes to
   `$HOME/.jawn/device.token` (mode 600; the app and Termux share one uid). It
@@ -195,6 +195,18 @@ shape M1 and M2 take.
   - `telephony.call_log` — `CallLog.Calls`, duration as `H:MM:SS`/`M:SS`.
   - `contact.list` — `ContactsContract`, capped. (The CallLog and SMS providers
     reject a `LIMIT` in the sort order, so all three cap in the cursor loop.)
+  - `location.current` — one bounded GPS fix via `LocationManager`; the app's
+    `JawnLocationService` is still the primary source and jawn reads its file
+    first.
+  - `speech.speak` — `TextToSpeech` with voice, rate, pitch and queue mode.
+    Piper is still rendered first in `say_it`; espeak remains the desktop
+    fallback, and this is the Android fallback where termux-tts-speak was.
+  - `telephony.dial` — `Intent.ACTION_CALL`; a `dry_run` only resolves a handler.
+  - `telephony.deviceinfo` — `TelephonyManager` (phone type, SIM state, network
+    type).
+  - Every flag (`silent`, `ongoing`, `dry_run`, `on`, `flush`) is read through a
+    tolerant reader: Perl sends `1`/`0`, and `JSONObject.optBoolean` only reads
+    a real JSON boolean.
   `notification_sender` and the clipboard/volume/torch/wake call sites ask the
   bridge first and keep the termux commands as fallbacks, so an old app or tree
   still works.
@@ -210,10 +222,17 @@ shape M1 and M2 take.
   Build 1182 read the tablet's contacts (3 rows). The call log and SMS list
   returned empty lists from the real providers (no SIM), and `sms.send` answered
   "Sms is not supported" — so SMS/call-log behaviour and the torch still need
-  the phone.
+  the phone. Build 1184 returned `phone_type=none, sim_state=unknown,
+  network_type=unknown` for the Wi-Fi tablet, `would_dial=1` for a dry run
+  (CALL_PHONE itself is **denied** on this tablet), spoke through
+  `com.google.android.tts`, and returned a GPS last-known fix (95 m, ~24 min
+  old — the caller's age check discards it). The silent notification was
+  verified on `jawn_notifications_silent` (importance 2, no sound). The flag
+  bug that read `1` as false was live on the tablet for one build; it made
+  "silent" notifications noisy until 0.118.185.
 - **Rollback:** an older app build can be rebuilt from its commit in the app
   repo; the tree never depends on the bridge (it falls back).
-- **Remaining:** the other 11 commands, with the native API each one should use
+- **Remaining:** the other 7 commands, with the native API each one should use
   (below), folding the API app in as each moves. The fallback and the ledger
   entry go in the same commit that proves a command.
 
@@ -301,11 +320,11 @@ permission; "needs UI" and "needs listener" mean an extra step at first use.
 | `wake-lock` / `wake-unlock` | `PowerManager.WakeLock` | done |
 | `sms-send` | `SmsManager` | done; needs a phone (no SIM in the tablet) |
 | `sms-list` | `Telephony.Sms` / content provider | done; empty on the Wi-Fi tablet |
-| `location` | `LocationManager` / the app's `JawnLocationService` | already native in the app |
-| `telephony-call` | `Intent.ACTION_CALL` | granted |
-| `telephony-deviceinfo` | `TelephonyManager` | granted |
+| `location` | `LocationManager` / the app's `JawnLocationService` | done |
+| `telephony-call` | `Intent.ACTION_CALL` | done; CALL_PHONE is a runtime grant (denied on the test tablet) |
+| `telephony-deviceinfo` | `TelephonyManager` | done |
 | `call-log` | `CallLog.Calls` | done; empty on the Wi-Fi tablet |
-| `tts-speak` | `TextToSpeech` | engine-dependent |
+| `tts-speak` | `TextToSpeech` | done; Piper still first |
 | `camera-photo` | CameraX / Camera2 | granted; needs a camera-type foreground service |
 | `microphone-record` | `MediaRecorder` | granted; needs a microphone-type foreground service |
 | `fingerprint` | `BiometricPrompt` | needs UI: a request/response pair over the bridge |

@@ -26130,11 +26130,20 @@ post '/manager/phone/dial' => sub($c) {
 	$number =~ s/[^\d+#*]//g;
 	unless ($number) { $c->render(json => { ok => 0, error => 'No number.' }); return; }
 	if (&subs::device_setter() eq 'mobile') {
-		my $out = &subs::device_run('telephony-call', qq{"$number" 2>&1});
-		# a machine with no telephony (a wifi tablet is a 'mobile' device here too)
-		# answers this same route: report success only when the dial really went
-		# out, so a caller can fall through to the next mobile peer.
-		my $ok = ($out =~ /error|exception|unable|denied|not found|no service/i) ? 0 : 1;
+		# ACTION_CALL first; termux-telephony-call is the fallback for an old app.
+		my $dial = &subs::device_call('telephony.dial', { number => $number });
+		my ($ok, $out);
+		if ($dial) {
+			$ok = 1;
+			$out = 'dialed (bridge)';
+		}
+		else {
+			$out = &subs::device_run('telephony-call', qq{"$number" 2>&1});
+			# a machine with no telephony (a wifi tablet is a 'mobile' device here too)
+			# answers this same route: report success only when the dial really went
+			# out, so a caller can fall through to the next mobile peer.
+			$ok = ($out =~ /error|exception|unable|denied|not found|no service/i) ? 0 : 1;
+		}
 		$c->render(json => { ok => $ok, number => $number, out => $out });
 		return;
 	}
@@ -42534,8 +42543,8 @@ sub sms_mms_command($digits, $text, $parts, $jawn_uuid) {
 sub telephony_status() {
 	my $state = { telephony => 0, phone_type => 'none', sim_state => '', network_type => '' };
 	return $state unless &subs::device_setter() eq 'mobile';
-	my $json = &subs::device_run('telephony-deviceinfo', '2>/dev/null', 'timeout 8 ');
-	my $info = eval { return decode_json $json } || {};
+	my $info = &subs::device_call('telephony.deviceinfo');
+	$info = eval { return decode_json(&subs::device_run('telephony-deviceinfo', '2>/dev/null', 'timeout 8 ')) } || {} unless $info;
 	my $type = lc($info->{'phone_type'} || 'none');
 	my $sim = lc($info->{'sim_state'} || '');
 	$state->{'phone_type'} = $type;
