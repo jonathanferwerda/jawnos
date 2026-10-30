@@ -11050,6 +11050,22 @@ get '/manager/sync_buckets' => sub ($c) {
 	my $temp_folder = &subs::home($download_location . '/' . &subs::random_string_creator(10));
 
 	$remote_machine = &remote_useragent_maker({ signatorial => $remote_signatorial });
+	# The caller may already have proved a route (the reconnector's probe rewrites
+	# the row's manager to whatever answered). remote_useragent_maker re-reads the
+	# stored row, which can still name a dead tunnel or a LAN address the peer has
+	# left, so keep the proven one. A caller with no probe (the Upgrade route) gets
+	# the same resolution here instead of calling the stored address and reporting
+	# the peer unreachable.
+	if ($params->{'manager'}) {
+		$remote_machine->{'manager'} = $params->{'manager'};
+	}
+	else {
+		my $donor = &subs::remote_machine_lister({ signatorial => $remote_signatorial, limit => 1 });
+		if ($donor && &remote_machine_online({ rm => $donor, ip => $donor->{'ip'}, port => $donor->{'port'}, signatorial => $remote_signatorial })) {
+			$remote_machine->{'manager'} = $donor->{'manager'};
+			$remote_machine->{'ip'} = $donor->{'ip'};
+		}
+	}
 	my $auuid = &subs::random_string_creator(10);
 	# v3: a normal delta pull is a sequence of encrypted row batches, not a temp
 	# SQLite snapshot. A full migration and a windowed deep pull keep the snapshot
@@ -12285,6 +12301,13 @@ sub remote_useragent_maker($data) {
 	my $port = $rm->{'port'};
 
 	my $manager = $rm->{'manager'};
+	# A retired tunnel leaves 127.0.0.1 behind, and a name is the only route
+	# left. Resolve it before the cookie is scoped and every url is built.
+	my $live_manager = &subs::peer_live_manager($rm);
+	if (($manager || '') ne $live_manager) {
+		$manager = $live_manager;
+		$rm->{'manager'} = $manager;
+	}
 	if ($rm->{'cookie'}) {
 		my $cookie_jar = decode_json $rm->{'cookie'};
 		# The cookie was stored with the address the peer was reached on (often a
@@ -49552,6 +49575,10 @@ sub remote_machine_reconnector($c) {
 								remote_signatorial => $rj->{'signatorial'},
 								remote_device => $rm->{'data'}->{'device'},
 								peer => ($rm->{'ip'} || $rm->{'hostname'} || $rj->{'fqdn'} || ''),
+								# The address that just answered the probe: remote_upgrade
+								# re-reads the row and would otherwise call the stored
+								# (possibly dead) manager again.
+								manager => $rm->{'manager'},
 								gimme => $gimme,
 								sync_version => ($rj->{'sync_version'} || 0),
 								default_cut => ($peer_watermark->{'server_time'} || (&subs::rightNow() - (24 * 60 * 60 * 1000))),
@@ -49703,21 +49730,12 @@ sub remote_machine_online($data) {
 			# literal address uses the stored manager, which is also the tunnel on
 			# the hub.
 			my $base;
-			if ($candidate =~ /^\d+\.\d+\.\d+\.\d+$/) {
-				$base = 'https://' . $candidate . ':' . $port;
-			}
-			elsif ($fqdn ne '' && $candidate eq $fqdn
-				&& ($rm->{'tunnel'} || '') ne 'yes'
-				&& ($rm->{'manager'} || '') =~ m{^https?://\d{1,3}(?:\.\d{1,3}){3}}
-				&& ($rm->{'manager'} || '') !~ m{^https?://127\.}) {
-				# The stored manager is a bare LAN address the peer has since left;
-				# the name is the only thing that can still reach it, so build the
-				# URL from the name rather than the stale manager.
-				$base = 'https://' . $fqdn . ':' . $port;
-			}
-			else {
-				$base = $rm->{'manager'};
-			}
+			# The candidate decides the url, not just the probe: a stored LAN
+			# manager the peer has since left (or a loopback left by a retired
+			# tunnel) must not replace the name that just answered. The helper
+			# also keeps a tunnel row on its stored manager, whose name can
+			# resolve to loopback on the hub.
+			$base = &subs::peer_manager_url($rm, $candidate, $port);
 			my $url = $base . '/?signatorial=' . url_escape $rs;
 			my $user_agent = $remote_signatorial;
 			my $res = $ua->insecure(1)->get($url => {user_agent => $user_agent});

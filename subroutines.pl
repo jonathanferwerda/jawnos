@@ -19739,6 +19739,45 @@ sub peer_lan_address() {
 	return undef;
 }
 
+# The url to call for one candidate, in the order remote_machine_online probes
+# them. A literal address is called directly. The peer's fqdn is called by
+# name - unless the row is a tunnel, because a hub's hosts/dnsmasq can resolve
+# the peer's name to loopback there and the stored tunnel manager is the only
+# route that reaches it. Anything else uses the manager the row carries.
+sub peer_manager_url {
+	my ($rm, $candidate, $port) = @_;
+	$rm ||= {};
+	my $manager = $rm->{'manager'} || '';
+	my $fqdn = $rm->{'fqdn'} || '';
+	$port = undef unless defined $port && $port =~ /^[0-9]+$/;
+	$port = $rm->{'port'} if (!defined $port || $port !~ /^[0-9]+$/);
+	$port = $1 if ((!defined $port || $port !~ /^[0-9]+$/)
+		&& $manager =~ m{:([0-9]{1,5})/?$});
+	$port ||= 45545;
+	if (defined $candidate && $candidate =~ /^\d+\.\d+\.\d+\.\d+$/) {
+		return 'https://' . $candidate . ':' . $port;
+	}
+	if (($rm->{'tunnel'} || '') ne 'yes'
+		&& $fqdn ne '' && defined $candidate && $candidate eq $fqdn) {
+		return 'https://' . $fqdn . ':' . $port;
+	}
+	return $manager;
+}
+
+# A loopback manager is the hub's own tunnel route. On any other row it is a
+# leftover from a tunnel that no longer exists; the peer's fqdn is then the only
+# address left, so call the name instead of a dead 127.0.0.1 port.
+sub peer_live_manager {
+	my ($rm) = @_;
+	$rm ||= {};
+	my $manager = $rm->{'manager'} || '';
+	return $manager unless $manager =~ m{^https?://127[.:]};
+	return $manager if ($rm->{'tunnel'} || '') eq 'yes';
+	my $fqdn = $rm->{'fqdn'} || '';
+	return $manager unless $fqdn ne '' && $fqdn !~ m{^127\.};
+	return &peer_manager_url($rm, $fqdn, $rm->{'port'});
+}
+
 # ---- LAN presence: a peer on whatever network we have just joined ----------
 # Every House machine broadcasts a small signed UDP datagram on its LANs. mDNS
 # is the other advertisement, and the embedded devices use it, but Termux has no
