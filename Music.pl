@@ -2535,20 +2535,31 @@ sub song_maker($data) {
 
 
 			my $file_information = $file_informations->{$artist_folder};
-			if ($file_information->{$filename}) {
+			# A cached answer is only reused when it carries the facts a card
+			# draws. Entries written by a failed probe ({ chapters => undef }) were
+			# truthy and stayed for ever, hiding every thumbnail in the folder.
+			if (&subs::music_info_usable($file_information->{$filename})) {
 				$f->{'info'} = $file_information->{$filename};
 			}
 			else {
 				$f = &subs::file_media_information($f, &subs::terminal_name($filename));
-				$file_information->{$filename} = $f->{'info'};
+				if (&subs::music_info_usable($f->{'info'})) {
+					$file_information->{$filename} = $f->{'info'};
+				}
+				else {
+					# do not store a failed probe: the next render tries again
+					delete $file_information->{$filename};
+					$f->{'info'} = {};
+				}
 			}
+			my $tags = (ref $f->{'info'} eq 'HASH' && ref $f->{'info'}->{'tags'} eq 'HASH') ? $f->{'info'}->{'tags'} : {};
 			foreach my $i ( qw/artist album track genre title date composer publisher lyrics lyrics-eng/ ) {
-				if ($i =~ /lyrics/ && $f->{'info'}->{'tags'}->{$i}) {
-					$f->{'lyrics'} = $f->{'info'}->{'tags'}->{$i};
+				if ($i =~ /lyrics/ && $tags->{$i}) {
+					$f->{'lyrics'} = $tags->{$i};
 					$f->{'lyrics'} =~ s/\\\n|\\\r/<br>/gi;
 				}
 				else {
-					$f->{$i} = $f->{'info'}->{'tags'}->{$i} if $f->{'info'}->{'tags'}->{$i};
+					$f->{$i} = $tags->{$i} if $tags->{$i};
 				}
 			}
 		}
