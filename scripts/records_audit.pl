@@ -26,8 +26,8 @@ my $window = $all ? 0 : $hours * 3600000;
 if ($apply) {
 	my $res = subs::records_reconcile($window, { apply => 1 });
 	my $sum = $res->{'summary'};
-	printf "reconcile APPLIED: %d action(s) - sweep %d grp / %d spare, dupes %d grp / %d spare, orphans %d\n",
-		$res->{'actions'}, $sum->{'sweep_groups'}, $sum->{'sweep_spare_rows'}, $sum->{'dupe_groups'}, $sum->{'dupe_spare_rows'}, $sum->{'orphans'};
+	printf "reconcile APPLIED: %d action(s) - sweep %d grp / %d spare, dupes %d grp / %d spare, orphans %d, bad dates %d\n",
+		$res->{'actions'}, $sum->{'sweep_groups'}, $sum->{'sweep_spare_rows'}, $sum->{'dupe_groups'}, $sum->{'dupe_spare_rows'}, $sum->{'orphans'}, ($sum->{'bad_dates'} // 0);
 	foreach my $a ( @{ $res->{'list'} } ) {
 		printf "  %-9s %-18s %s %s\n", $a->{'action'}, $a->{'app'}, ($a->{'uuid'} // ''), ($a->{'why'} // (defined $a->{'stop_timestamp'} ? "stop=>$a->{'stop_timestamp'} dur=>$a->{'duration'}" : ''));
 	}
@@ -43,8 +43,8 @@ if ($json) {
 
 my $s = $report->{'summary'};
 printf "records audit - window %s, generated %s\n", ($report->{'window_ms'} ? $hours . 'h' : 'all time'), $report->{'generated_at'};
-printf "sweep: %d group(s) / %d spare row(s) | wrong-end: %d | dupes: %d group(s) / %d spare | orphans: %d | impossible: %d\n\n",
-	$s->{'sweep_groups'}, $s->{'sweep_spare_rows'}, ($s->{'wrong_end'} // 0), $s->{'dupe_groups'}, $s->{'dupe_spare_rows'}, $s->{'orphans'}, $s->{'impossible'};
+	printf "sweep: %d group(s) / %d spare row(s) | wrong-end: %d | dupes: %d group(s) / %d spare | orphans: %d | impossible: %d | bad dates: %d\n\n",
+	$s->{'sweep_groups'}, $s->{'sweep_spare_rows'}, ($s->{'wrong_end'} // 0), $s->{'dupe_groups'}, $s->{'dupe_spare_rows'}, $s->{'orphans'}, $s->{'impossible'}, ($s->{'bad_dates'} // 0);
 
 print "== SWEEP (one press, more than one session)\n";
 foreach my $g ( @{ $report->{'sweep'} } ) {
@@ -77,5 +77,9 @@ foreach my $r ( @{ $report->{'orphans'} } ) {
 print "\n== IMPOSSIBLE (stop before start)\n";
 foreach my $r ( @{ $report->{'impossible'} } ) {
 	printf "%s row %s start %s stop %s\n", $r->{'app'}, $r->{'rowid'}, $r->{'timestamp'}, $r->{'stop_timestamp'};
+}
+print "\n== BAD DATES (a millisecond date read as a span of minutes)\n";
+foreach my $r ( @{ $report->{'bad_dates'} } ) {
+	printf "%-8s %s row %s %s %s -> %s\n", ($r->{'suggested'} // '?'), $r->{'app'}, $r->{'rowid'}, ($r->{'type'} // '?'), $r->{'timestamp'}, $r->{'fix'}->{'timestamp'};
 }
 print "\ndone - nothing written.\n";

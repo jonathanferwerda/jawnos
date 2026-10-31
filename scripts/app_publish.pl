@@ -2,15 +2,13 @@
 # Publish the newest staged JawnOS APKs to GitHub, so every device can pull
 # them from github.com as well as from a peer (see subs::app_release_sync).
 #
-#   perl scripts/app_publish.pl [--product app|api|all] [--repo OWNER/NAME]
-#                               [--tag TAG] [--apk FILE] [--dry-run]
+#   perl scripts/app_publish.pl [--repo OWNER/NAME] [--tag TAG]
+#                               [--apk FILE] [--dry-run]
 #
-# Both products ride the same release/tag:
+# One product rides the release/tag:
 #   jawnos-app-<versionCode>-<versionName>.apk  + app_release.json
-#   jawnos-api-<versionCode>-<versionName>.apk  + api_release.json
-# The app manifest keeps its historical name; the api one is new, and the
-# server's GitHub sync reads both. One manifest per product means publishing
-# the API build no longer displaces the app build (or the reverse).
+# The retired API app (com.termux.api) is not published any more; a publish
+# also removes its old assets, so a release that carried them cleans itself up.
 #
 # The APKs are gitignored blobs, so they ride GitHub *release assets*, not git
 # history. Requires the `gh` CLI, authenticated. The repo is public, so
@@ -26,7 +24,7 @@ use Mojo::JSON qw(encode_json decode_json);
 
 my $root = abs_path("$FindBin::Bin/..");
 my $dir  = "$root/releases";
-my ($repo, $tag, $apk, $dry_run, $product_opt) = ('jonathanferwerda/jawnos', 'releases', undef, 0, 'all');
+my ($repo, $tag, $apk, $dry_run) = ('jonathanferwerda/jawnos', 'releases', undef, 0);
 
 # The release body is the newest dated section of docs/app-release-notes.md
 # (a real changelog, written when the build is made) plus the version codes
@@ -56,44 +54,28 @@ while ( defined(my $arg = shift @ARGV) ) {
 	if ($arg eq '--tag')     { $tag = shift @ARGV; next; }
 	if ($arg eq '--apk')     { $apk = shift @ARGV; next; }
 	if ($arg eq '--dir')     { $dir = shift @ARGV; next; }
-	if ($arg eq '--product') { $product_opt = shift @ARGV; next; }
 	if ($arg eq '--dry-run') { $dry_run = 1; next; }
 	die "app_publish.pl: unknown option $arg\n";
 }
-die "usage: app_publish.pl [--product app|api|all] [--repo OWNER/NAME] [--tag TAG] [--apk FILE] [--dry-run]\n"
+die "usage: app_publish.pl [--repo OWNER/NAME] [--tag TAG] [--apk FILE] [--dry-run]\n"
 	unless $repo =~ m{^[^/\s]+/[^/\s]+\z} && $tag && $tag =~ /^[0-9A-Za-z._-]+\z/;
-die "app_publish.pl: --product must be app, api or all\n"
-	unless $product_opt =~ /^(?:app|api|all)$/;
 
-# Which products to publish. An explicit --apk names exactly one; otherwise
-# --product selects, defaulting to both.
-my @products;
-if ($apk) {
-	my ($p) = $apk =~ m{/jawnos-(app|api)-\d+-[^/]+\.apk\z};
-	die "$apk: not a staged jawnos-<product>-<versionCode>-<versionName>.apk\n" unless $p;
-	@products = ($p);
-}
-else {
-	@products = $product_opt eq 'all' ? qw(app api) : ($product_opt);
-}
-
-my %MANIFEST = ( app => 'app_release.json', api => 'api_release.json' );
+# The newest staged app, or the one --apk names.
 my @jobs;
-foreach my $product (@products) {
+{
+	my $product = 'app';
 	my $file = $apk;
 	if (!$file) {
 		my @f = sort { ( ($b =~ /-(\d+)-/) )[0] <=> ( ($a =~ /-(\d+)-/) )[0] }
-			glob("$dir/jawnos-$product-*.apk");
+			glob("$dir/jawnos-app-*.apk");
 		$file = $f[0];
 	}
 	unless ($file && -f $file) {
-		warn "no staged $product APK in $dir" . ($apk ? " ($apk)" : '') . "\n";
-		next;
+		die "no staged app APK in $dir" . ($apk ? " ($apk)" : '') . "\n";
 	}
 	my ($filename) = $file =~ m{([^/]+)\z};
-	my ($got_product, $vc, $vn) = $filename =~ /^jawnos-(app|api)-(\d+)-(.+)\.apk\z/
-		or die "$file: not a jawnos-<product>-<versionCode>-<versionName>.apk\n";
-	die "$file: product $got_product does not match $product\n" unless $got_product eq $product;
+	my ($vc, $vn) = $filename =~ /^jawnos-app-(\d+)-(.+)\.apk\z/
+		or die "$file: not a jawnos-app-<versionCode>-<versionName>.apk\n";
 	my $sha = sha256_hex(read_file($file));
 	my $size = -s $file;
 	my $manifest = encode_json({
@@ -113,7 +95,7 @@ foreach my $product (@products) {
 		sha      => $sha,
 		size     => $size,
 		manifest => $manifest,
-		path     => "$dir/$MANIFEST{$product}",
+		path     => "$dir/app_release.json",
 	};
 }
 die "app_publish.pl: no staged APKs to publish\n" unless @jobs;
@@ -194,18 +176,29 @@ foreach my $j (@jobs) {
 # later publish left the body advertising an old versionCode while the assets
 # (and app_release.json) were current.
 my @current;
-foreach my $p ( 'app', 'api' ) {
-	my $path = "$dir/$MANIFEST{$p}";
-	next unless -f $path;
-	my $m = eval { decode_json(read_file($path)) } || next;
-	next unless $m->{'product'} && $m->{'versionName'};
-	push @current, "$m->{'product'} $m->{'versionName'} (versionCode $m->{'versionCode'})";
+{
+	my $path = "$dir/app_release.json";
+	if (-f $path) {
+		my $m = eval { decode_json(read_file($path)) } || {};
+		push @current, "app $m->{'versionName'} (versionCode $m->{'versionCode'})"
+			if $m->{'product'} && $m->{'versionName'};
+	}
 }
 if (@current) {
 	my $notes = release_notes(@current);
 	my @title = $release_date ? ('--title', "JawnOS app releases — $release_date") : ();
 	system('gh', 'release', 'edit', $tag, '--repo', $repo, @title, '--notes', $notes) == 0
 		or warn "could not update the release notes for $tag\n";
+}
+
+# The API app is retired (M1): its APK and manifest must not linger on the
+# release, or a device on an older tree would still be told an "api" update
+# exists. Deleting an absent asset is not an error, so this stays quiet.
+my $assets = `gh release view $tag --repo $repo --json assets -q '.assets[].name' 2>/dev/null`;
+foreach my $name ( split /\s+/, $assets ) {
+	next unless $name eq 'api_release.json' || $name =~ /^jawnos-api-\d+-/;
+	system('gh', 'release', 'delete-asset', $tag, $name, '--repo', $repo, '--yes') == 0
+		and print "removed retired API asset $name\n";
 }
 
 print "published https://github.com/$repo/releases/tag/$tag\n";

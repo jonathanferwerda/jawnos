@@ -7629,6 +7629,7 @@ get '/manager/configure/device_lister' => sub($c) {
 	&subs::setting_setter({ app => 'misc', setting => 'ping', value => $ip }) if (($load_type // '') eq 'scan' && defined $ip);
 	my $devices = &subs::device_lister($timestamp,$load_type,$ip);
 	my $networks = &subs::network_groups($devices);
+	my $remote_machines = &subs::remote_machine_orphans($devices);
 	my $ble_devices = &subs::ble_device_listing();
 	my $routers = &subs::router_list();
 	my $ping = &subs::setting_grabber({ app => 'misc', setting => 'ping' });
@@ -7637,6 +7638,7 @@ get '/manager/configure/device_lister' => sub($c) {
 		template => 'configure/device_lister',
 		devices => $devices,
 		networks => $networks,
+		remote_machines => $remote_machines,
 		ble_devices => $ble_devices,
 		routers => $routers,
 		ping => $ping,
@@ -10137,10 +10139,11 @@ sub app_release_lister {
 	my @out;
 	opendir(my $dh, $dir) or return \@out;
 	foreach my $f ( sort readdir($dh) ) {
-		next unless my ($product, $vc, $vn) = $f =~ /^jawnos-(app|api)-(\d+)-(.+)\.apk$/;
+		# One product now: the retired API app's APK is neither staged nor served.
+		next unless my ($vc, $vn) = $f =~ /^jawnos-app-(\d+)-(.+)\.apk$/;
 		my $path = "$dir/$f";
 		push @out, {
-			product     => $product,
+			product     => 'app',
 			versionCode => $vc + 0,
 			versionName => $vn,
 			filename    => $f,
