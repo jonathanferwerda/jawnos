@@ -5,6 +5,24 @@ this file, adds the release date and the version codes that are actually
 staged, and writes it back to the release. Keep the newest release at the top
 under a dated heading; older sections stay as history.
 
+## 2026-10-31 — appointment photos that land
+
+- **A photo from an appointment's Details view no longer ends in HTTP 500.**
+  The capture itself worked and the JPEG reached the phone's folder, then the
+  OCR step ran `tesseract`, found no output (the Termux image ships without
+  it), and read the missing `.txt` - which raised the request into a 500 before
+  the appointment row was updated. OCR is now optional: no engine or no text
+  means no text, never a failed capture. The same guard covers an upload.
+- **The app camera hands back a file, not megabytes of base64.** A normal
+  phone photo travelled through `evaluateJavascript` as base64, which the
+  WebView's binder cannot carry, so the camera opened and the result never
+  arrived. It now stages the capture in the shared Termux home
+  (`.jawn/captures`), returns only the path, and the manager moves it into the
+  appointment's folder. Videos travel the same way.
+- **The wrapper's native camera files onto its appointment.** It used to post
+  with only an app name, which created a new row instead of adding the picture
+  to the appointment the button belongs to. It now names the app's newest row.
+
 ## 2026-10-29 — NFC tags that fit, and a write that lands on the first tap
 
 - **A tag payload that fits.** An appointment tag used to carry the whole
