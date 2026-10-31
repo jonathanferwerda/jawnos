@@ -124,7 +124,7 @@ shape M1 and M2 take.
 | **M0 Contracts** | dependency ledger + `subs::device()` wrapper at call sites, behaviour unchanged | nothing yet | ~1 week ✅ |
 | **M1 Device bridge** | `DeviceService` (unix socket, JSON) in the app; termux commands migrated one by one | `termux-api` package, `com.termux.api`, second APK | 2–3 weeks ✅ (all 24 native; API app retired) |
 | **M2 Supervisor** | own process supervisor + PTY only for Console | `TermuxService`, `RunCommandService`, `termux-am`, `termux-exec`, `bin/login` | ~2 weeks ✅ (`bin/login`, `termux-exec` gone; `TermuxService` left for the Console) |
-| **M3 Runtime** | bundled Perl + XS modules + a decided tool set | bootstrap, `pkg`/`apt`/`dpkg`, `TermuxInstaller`, first-run `git clone` | 4–8 weeks — diet + archive done (M3a), app unpack next |
+| **M3 Runtime** | bundled Perl + XS modules + a decided tool set | bootstrap, `pkg`/`apt`/`dpkg`, `TermuxInstaller`, first-run `git clone` | 4–8 weeks ✅ (`pkg`/`apt`/`dpkg` and the bootstrap are gone; both ABIs pinned and proven) |
 | **M4 Identity** | new app, new package name, no Termux code | `termux-shared`, `terminal-view`/`terminal-emulator`, plugin support, `sharedUserId`, GPL-3 | 2–3 weeks |
 | **M5 Distribution** | signed AAB/APK + update channel | — | ~1 week |
 
@@ -422,12 +422,36 @@ The milestone that actually leaves Termux.
   `status=good` with every worker up and 3000 answering, and Termux's perl stays
   the fallback. That is the runtime half of leaving Termux done: the tree no
   longer needs the prefix's interpreter.
-- **Remaining (M3b):** the app unpacks this archive into `$PREFIX` on first run
-  instead of `TermuxInstaller`'s bootstrap, verifies the pinned sha256, and
-  deletes the bootstrap asset and `libtermux-bootstrap.so`; then `PATH` moves off
-  the prefix too (the diet already carries `git`, `ssh`, `openssl`, `sqlite3`,
-  `curl`). The first run also needs no `git`: ship the tree as an asset or fetch
-  a tagged archive over HTTPS and verify its hash.
+- **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
+  `$PREFIX` on first run, verifies the sha256, writes
+  `$PREFIX/etc/jawnos-runtime.json` (which makes `jawnos_deps.pl --install` a
+  no-op), and fetches the tree. A clean install was run twice on the emulator:
+  wiped app → install → launcher → download → sha256 → unpack (305 MB) → tree
+  cloned → `status=good` on the runtime's own `perl`. Both devices are on the
+  same build.
+- **`PATH` is off Termux's prefix by construction.** There is no second prefix:
+  `$PREFIX` *is* the runtime on a fresh install, and `SessionService` sets
+  `PATH=$PREFIX/bin:…:/system/bin`, so the tools it names are the archive's. The
+  phone and tablet still have their old Termux prefixes, which now serve nothing
+  but the tree's own working files until M4 drops the package.
+- **The first run still uses `git`, deliberately.** A pinned tree archive would
+  only move the dependency: the tree's own code sync
+  (`scripts/jawnos_update.pl`, every 30 minutes) is `git fetch`, so the checkout
+  has to be a git checkout by the time the first update runs. git costs 3.6 MB
+  plus `libexec/git-core` (~1 MB) in the archive and is already there for
+  `jawnos_update.pl`; the app now says so plainly instead of trying to
+  `pkg install -y git` from a runtime that has no package manager.
+- **Known gap at close: voices.** Piper on the devices is the `piper-tts` python
+  package (`lib/python3.14/site-packages/piper`, 206 MB with onnxruntime and
+  numpy); `espeak` is not in the diet either. A fresh install therefore has no
+  voice at all, and the tree's TTS falls back through piper → espeak → nothing.
+  Of the three ways to close it — ship python (~150 MB), go native Android
+  `TextToSpeech` (breaks voice consistency between phone, tablet and desktop),
+  or ship the Piper CLI (a Rust/C++ binary plus libonnxruntime and the .onnx
+  voices) — the consistent-voice answer is a **separate voice pack**: the same
+  Piper engine and the same voice files the desktop uses, fetched on demand like
+  the runtime and verified the same way, so the archive everyone downloads stays
+  lean and every machine still speaks with one voice.
 
 - Build Perl for Android (aarch64) with `perl-cross` or Termux's own perl recipe, as
   `libjawnrt.so` (or `libperl.so` plus a `perl` wrapper) exec'd per Spike B.
