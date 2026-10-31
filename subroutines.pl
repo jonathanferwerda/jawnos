@@ -4872,6 +4872,43 @@ sub address_signature {
 	} sort keys %{$address};
 }
 
+# The device bridge resizes and re-encodes images natively. A call site keeps
+# its magick pipeline as the fallback for a desktop, where there is no bridge;
+# the helper answers undef then. This is the first half of the ImageMagick diet:
+# once every image call site asks here first, magick can leave the runtime.
+sub image_resolution_parts {
+	my ($resolution) = @_;
+	return () unless defined $resolution && $resolution =~ /^\s*(\d+)\s*x\s*(\d+)\s*$/i;
+	return ( $1 + 0, $2 + 0 );
+}
+
+sub image_bridge_resize {
+	my ( $path, $width, $height, $out ) = @_;
+	return undef unless defined $path && length $path && -e $path;
+	return undef unless $width && $height;
+	my $result = eval {
+		&subs::device_call('image.resize', {
+			path   => $path,
+			width  => $width + 0,
+			height => $height + 0,
+			out    => ( defined $out && length $out ? $out : $path ),
+		});
+	};
+	return $result if ref $result eq 'HASH' && defined $result->{'path'} && length $result->{'path'};
+	return undef;
+}
+
+sub image_bridge_save {
+	my ( $path, $out, $format, $quality ) = @_;
+	return undef unless defined $path && length $path && -e $path;
+	return undef unless defined $out && length $out;
+	my %args = ( path => $path, out => $out, quality => ( $quality || 90 ) + 0 );
+	$args{'format'} = $format if defined $format && length $format;
+	my $result = eval { &subs::device_call('image.save', \%args) };
+	return $result if ref $result eq 'HASH' && defined $result->{'path'} && length $result->{'path'};
+	return undef;
+}
+
 sub network_report_from_bridge {
 	my ($report) = @_;
 	return undef

@@ -14,6 +14,8 @@ use File::Find;
 my %known = map { $_ => 1 } qw(
 	battery.status
 	network.interfaces
+	image.resize
+	image.save
 	notification.post
 	notification.remove
 	toast.show

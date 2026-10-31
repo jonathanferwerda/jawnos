@@ -991,7 +991,11 @@ sub take_picture($c,$data) {
 		if ($kind eq 'image') {
 			$ocr = &ocr_reader($c,$filename) unless $data->{'no_ocr'};
 			my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
-			`magick $filename -resize $resolution $filename` unless lc $resolution eq 'raw';
+			unless (lc $resolution eq 'raw') {
+				my ($w, $h) = &subs::image_resolution_parts($resolution);
+				my $resized = ($w && $h) ? &subs::image_bridge_resize($filename, $w, $h) : undef;
+				`magick $filename -resize $resolution $filename` unless $resized;
+			}
 		}
 	}
 	# A caller that only wants the picture (the People app's crest capture) takes
@@ -15611,7 +15615,11 @@ post '/manager/upload_file' => sub ($c) {
 		$u->move_to($filename);
 		my $ocr;
 		if ($upload_type eq 'image') {
-			`magick $filename -resize $resolution $filename` unless lc $resolution eq 'raw';
+			unless (lc $resolution eq 'raw') {
+				my ($w, $h) = &subs::image_resolution_parts($resolution);
+				my $resized = ($w && $h) ? &subs::image_bridge_resize($filename, $w, $h) : undef;
+				`magick $filename -resize $resolution $filename` unless $resized;
+			}
 			$ocr = &ocr_reader($c,$filename);
 		}
 		$linux_file .= `file $filename` . "\n";

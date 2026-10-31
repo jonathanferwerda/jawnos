@@ -311,6 +311,13 @@ shape M1 and M2 take.
   Nothing in the tree calls a termux-* command now, so the API app is only a
   fallback and can be uninstalled.
 
+- **The bridges heal with the app (2026-10-31).** A package update kills the app
+  process while the exec'd tree survives: `status` stays `good`, but
+  DeviceService and the BLE daemon die with the app and every bridged call is
+  gone. `JawnApplication.onCreate` (every process start) and
+  `JawnLauncher.startJawn` (before its master-alive check) start both,
+  idempotently.
+
 ### M2 — Supervisor — done for the tree
 
 - `SessionService` (app): fork/exec `perl ./jawn` with an explicit environment
@@ -478,6 +485,15 @@ The milestone that actually leaves Termux.
   282.3 MB; the 40.2 MB is only collectable when the last `magick` call site is
   gone. Next candidates, in order: `image.resize`/`image.save` in the bridge for
   the capture and convert paths, then pixel sampling for the colour extraction.
+- **The capture and upload resizes moved to the bridge (2026-10-31).** The
+  bridge grew `image.resize` (fit inside W×H without upscaling, one temp-file
+  write, format from the extension) and `image.save` (re-encode as JPEG/PNG/
+  WebP). `subs::image_bridge_resize`/`image_bridge_save` ask it first and keep
+  the magick command as the desktop fallback; the camera capture and upload
+  paths use them. Verified on the tablet: a 400×200 PNG became 100×50 in place.
+  The archive still carries ImageMagick because the other ~28 sites (montage,
+  colour extraction, PDF/TIFF, cover art) are not migrated; the 40.2 MB is
+  collectable only when the last one is.
 - **M4 — Identity.** Target: one app, package `com.jawnos`, no Termux code. The
   order that keeps the devices usable:
   1. **Data migration first, and it is the decision that matters.** A new package
@@ -675,6 +691,11 @@ The milestone that actually leaves Termux.
   clean-room proof, so the APK's licence remains GPL-3.0-only until its owner
   decides; there is no remaining termux-app file to rewrite.
 
+  **Decision (2026-10-31): JawnOS remains a GPL-3.0-only fork of termux-app.**
+  The BSD-2 target is dropped. The shared module's BSD-2 licence stands as that
+  module's own licence, while the app and the APKs stay GPL-3.0-only with the
+  corresponding source published.
+
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
   `$PREFIX/etc/jawnos-runtime.json` (which makes `jawnos_deps.pl --install` a
@@ -705,6 +726,10 @@ The milestone that actually leaves Termux.
   Piper engine and the same voice files the desktop uses, fetched on demand like
   the runtime and verified the same way, so the archive everyone downloads stays
   lean and every machine still speaks with one voice.
+  **Closed since (2026-10-31):** the M1 bridge's `speech.speak` is the Android
+  fallback in `say_it`, so a clean install does speak through the system TTS.
+  The voice pack stays the way to keep one Piper voice across machines; it is
+  no longer a functional gap.
 
 - Build Perl for Android (aarch64) with `perl-cross` or Termux's own perl recipe, as
   `libjawnrt.so` (or `libperl.so` plus a `perl` wrapper) exec'd per Spike B.
