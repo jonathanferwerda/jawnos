@@ -220,7 +220,7 @@ sub update_downloads_json {
 		'size' => $j->{'size'} + 0,
 		'sha256' => $j->{'sha'},
 		'source' => 'https://github.com/jonathanferwerda/termux-app',
-		'license' => 'GPL-2.0',
+		'license' => 'GPL-3.0',
 	};
 	write_file($path, encode_json($data));
 	print "updated downloads.json (commit it so jawnos.ca sees this build)\n";
