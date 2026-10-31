@@ -22,6 +22,14 @@ $| = 1; # stdout must flush: listen runs for a long time
 
 my $port = 45999;
 
+# The host app. The installed package is com.jawnos and its Java package is
+# com.jawnos.app, so a component reads com.jawnos/.app.X and an action
+# com.jawnos.app.*. A device still on the old fork answers to com.termux.
+my $app_package = $ENV{'JAWNOS_APP_PACKAGE'};
+unless (defined $app_package && length $app_package) {
+	$app_package = (!-d '/data/data/com.jawnos' && -d '/data/data/com.termux') ? 'com.termux' : 'com.jawnos';
+}
+
 my $cmd = shift @ARGV;
 unless (defined $cmd) {
 	die "usage: jawn-bt scan [seconds] | connect <mac> [--service U --rx U --tx U --mtu N --compress 0|1] | send <text> [--mac AA:..] | sendloop [--mac AA:..] | listen | status | disconnect [mac]\n";
@@ -60,7 +68,7 @@ sub start_daemon {
 	# on Termux's PATH in every environment jawn is started from (a background
 	# session, the boot path), and a missing `am` made every start fail into
 	# /dev/null.
-	system('sh', '-c', am_path() . ' start-foreground-service -n com.termux/.app.JawnBleService >/dev/null 2>&1');
+	system('sh', '-c', am_path() . ' start-foreground-service -n ' . $app_package . '/.app.JawnBleService >/dev/null 2>&1');
 }
 
 sub wake_app {
@@ -71,7 +79,7 @@ sub wake_app {
 	# always allowed, and it brings the BLE bridge up alongside jawn. Safe to
 	# repeat: a bridge already up ignores it, and a redundant ./jawn stands down
 	# before it touches anything.
-	system('sh', '-c', am_path() . ' broadcast -a com.termux.app.JAWN_WAKE -n com.termux/.app.JawnWakeReceiver >/dev/null 2>&1');
+	system('sh', '-c', am_path() . ' broadcast -a ' . $app_package . '.app.JAWN_WAKE -n ' . $app_package . '/.app.JawnWakeReceiver >/dev/null 2>&1');
 }
 
 sub dial {

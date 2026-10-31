@@ -3863,7 +3863,7 @@ sub market_scan_native_stop {
 		$^F = 2;
 		open STDOUT, '>', '/dev/null';
 		open STDERR, '>', '/dev/null';
-		exec('am', 'broadcast', '-a', 'com.termux.app.SCAN_STOP', '-p', 'com.termux');
+		exec('am', 'broadcast', '-a', &subs::app_action('SCAN_STOP'), '-p', &subs::app_package());
 		exit 0;
 	}
 	return 1;
@@ -19922,9 +19922,15 @@ post '/manager/configure/permissions' => sub($c) {
 	# On the phone the browser prompts are not the whole story: the device
 	# utilities need Android runtime permissions too, so also open the app's own
 	# grant-all screen, which requests them in the app's own name (M2: it used to
-	# live in the API app). The activity is exported for exactly this.
+	# live in the API app). The screen is not exported; the app's wake receiver
+	# opens it.
 	if (&subs::device_setter() eq 'mobile') {
-		system('/system/bin/am', 'start', '-n', 'com.termux/.app.JawnPermissionsActivity');
+		# A broadcast, not `am start`: Android refuses an activity start from the
+		# tree's own shell child (the tool reports the shell's package, not ours),
+		# while the app's exported wake receiver opens the screen in-process. M4.
+		my $component = &subs::app_component('JawnWakeReceiver');
+		my $action = &subs::app_action('JAWN_PERMISSIONS');
+		system('/system/bin/am', 'broadcast', '-a', $action, '-n', $component);
 	}
 	$c->render(json => { av_data => $av_data, constraints => $constraints });
 };
@@ -44703,7 +44709,9 @@ sub notification_sender($m,$db) {
 			$t =~ s/"/'/g;
 			$b =~ s/"/'/g;
 			my $silent = $m->{'silent'} ? ' --ez silent true' : '';
-			my $bc = `am broadcast -n com.termux/.app.JawnNotifyReceiver -a com.termux.app.JAWN_NOTIFY --es title "$t" --es message "$b" --es tag "$id"$silent 2>&1`;
+			my $notify = &subs::app_component('JawnNotifyReceiver');
+			my $notify_action = &subs::app_action('JAWN_NOTIFY');
+			my $bc = `am broadcast -n $notify -a $notify_action --es title "$t" --es message "$b" --es tag "$id"$silent 2>&1`;
 			$log->info("notification broadcast failed: $bc") unless $bc =~ /Broadcast completed/;
 		}
 	}

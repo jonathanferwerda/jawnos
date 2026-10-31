@@ -3393,6 +3393,35 @@ sub device_bin {
 	return "$prefix/bin/termux-$name";
 }
 
+# The host app's identity (M4). The Java package is com.jawnos.app and every
+# intent action is com.jawnos.app.*, but the *installed* package is com.jawnos
+# (the app's manifest package) and in the fork it was com.termux. A component
+# name is relative to the installed package ("com.jawnos/.app.X"), so both the
+# action and the component follow this one value: a device still on the fork
+# keeps answering its own names until it is migrated.
+sub app_package {
+	my $package = $ENV{'JAWNOS_APP_PACKAGE'};
+	return $package if defined $package && length $package;
+	# A device still on the fork keeps com.termux until it is migrated; an app's
+	# own data dir is readable to its own uid, and a desktop has neither.
+	return 'com.termux' if !-d '/data/data/com.jawnos' && -d '/data/data/com.termux';
+	return 'com.jawnos';
+}
+
+# An intent action of the host app: JAWN_WAKE -> com.jawnos.app.JAWN_WAKE.
+sub app_action {
+	my ($name) = @_;
+	return undef unless defined $name && length $name;
+	return &app_package() . '.app.' . $name;
+}
+
+# A component of the host app, named the way `am` wants it.
+sub app_component {
+	my ($class) = @_;
+	return undef unless defined $class && length $class;
+	return &app_package() . '/.app.' . $class;
+}
+
 # M1 device bridge (docs/leaving-termux.md): ask the host app directly instead
 # of spawning a termux-* command. One JSON line in, one back, with a request
 # id, on a loopback socket the app opens (the jawn-bt pattern). Returns the
@@ -35627,7 +35656,7 @@ sub clock_preview_pidfile() {
 sub clock_preview_stop {
 	my $file = &clock_preview_pidfile();
 	if (&device_setter() eq 'mobile') {
-		&clock_device_broadcast('com.termux.app.JAWN_CLOCK_PREVIEW', stop => 1);
+		&clock_device_broadcast(&app_action('JAWN_CLOCK_PREVIEW'), stop => 1);
 	}
 	return 0 unless -e $file;
 	my $pid = eval { read_file($file) };
@@ -35654,7 +35683,7 @@ sub clock_preview_play {
 	&clock_preview_stop();
 	if (&device_setter() eq 'mobile') {
 		# The app plays it on the alarm channel, as it plays the ring itself.
-		&clock_device_broadcast('com.termux.app.JAWN_CLOCK_PREVIEW',
+		&clock_device_broadcast(&app_action('JAWN_CLOCK_PREVIEW'),
 			uuid => 'preview',
 			file => 'public/sounds/' . $sound,
 			volume => $volume,
@@ -35765,7 +35794,7 @@ sub clock_write_device_alarm {
 	else {
 		unlink $file;
 	}
-	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_SYNC', %{ $payload || {} });
+	&clock_device_broadcast(&app_action('JAWN_CLOCK_SYNC'), %{ $payload || {} });
 	return 1;
 }
 
@@ -35775,7 +35804,7 @@ sub clock_device_ring {
 	my $sound = &clock_valid_alarm_sound($alarm->{'sound'}) || 'notifications/ring.mp3';
 	# The phone plays this itself, on the alarm channel: a chime repeats until
 	# Dismiss, and a long track plays once at the alarm's own volume.
-	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_RING',
+	&clock_device_broadcast(&app_action('JAWN_CLOCK_RING'),
 		uuid => ($alarm->{'uuid'} || ''),
 		label => ($alarm->{'label'} || ''),
 		app => ($alarm->{'app'} || ''),
@@ -35799,7 +35828,7 @@ sub clock_device_timer {
 	my $timer = shift;
 	return 0 unless $timer;
 	my $sound = &clock_valid_timer_sound($timer->{'sound'});
-	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_TIMER',
+	&clock_device_broadcast(&app_action('JAWN_CLOCK_TIMER'),
 		uuid => ($timer->{'uuid'} || ''),
 		label => ($timer->{'label'} || ''),
 		app => ($timer->{'app'} || ''),
@@ -35815,7 +35844,7 @@ sub clock_device_timer {
 
 sub clock_device_dismissed {
 	my $uuid = shift;
-	&clock_device_broadcast('com.termux.app.JAWN_CLOCK_DISMISSED', uuid => ($uuid || ''));
+	&clock_device_broadcast(&app_action('JAWN_CLOCK_DISMISSED'), uuid => ($uuid || ''));
 	return 1;
 }
 
@@ -36916,7 +36945,7 @@ sub clock_control_apply {
 				} @{ &clock_app_nfc_tags($alarm->{'app'}) };
 				unless ($tag) {
 					&clock_lock_drop($lock);
-					&clock_device_broadcast('com.termux.app.JAWN_CLOCK_REJECT', uuid => $uuid);
+					&clock_device_broadcast(&app_action('JAWN_CLOCK_REJECT'), uuid => $uuid);
 					return 0;
 				}
 			}

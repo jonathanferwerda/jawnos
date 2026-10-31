@@ -506,12 +506,33 @@ The milestone that actually leaves Termux.
   back and rewrite the old package's paths in `settings`; `~/storage/shared` is
   recreated because the photo paths point through it. The imported house came up
   with the same 114,390 appointments and 1,332 warehouse rows.
-- **Still to do for M4:** the Java package is still `com.termux.app` (only
-  `applicationId` and the constants moved), so components read
-  `com.jawnos/com.termux.app.X`; the intent action strings are still
-  `com.termux.app.*`; `~/jawnos/scripts/jawn-bt` is missing from the clone and
-  the supervisor logs it; and `termux-shared`/`terminal-view`/
-  `terminal-emulator` are untouched.
+- **M4 — the Java package is `com.jawnos.app` (app 1209).** One mechanical
+  rename moved `com.termux.app` → `com.jawnos.app`, `com.termux.shared` →
+  `com.jawnos.shared`, `com.termux.filepicker` → `com.jawnos.filepicker`, the
+  `termux-shared` module → `jawnos-shared` and every `com.termux.app.*` action →
+  `com.jawnos.app.*`, so components finally read `com.jawnos/.app.X`. The
+  manifest `package` stays `com.jawnos` — it is the R namespace and the base for
+  the relative component names, and setting it to `com.jawnos.app` doubles the
+  segment (`com.jawnos.app.app.TermuxApplication`, caught in the merged
+  manifest). The tree asks for those names through `subs::app_package()`,
+  `subs::app_action()` and `subs::app_component()`, which read
+  `JAWNOS_APP_PACKAGE` and default per device, so a machine still on the fork
+  keeps answering `com.termux.app.*` until it is migrated.
+  `com.termux.terminal`/`com.termux.view` are untouched: the JNI binds them and
+  those modules are the next deletion. Class names (`TermuxActivity` and the
+  rest) are unchanged; renaming them is the cleanup pass after the modules go.
+- **Two defects the rename exposed, fixed with it.** The app's notifications
+  were being suppressed by the system ("Suppressing notification from package
+  com.jawnos by user request") because `JawnPermissionsActivity` never asked for
+  `POST_NOTIFICATIONS` even though the manifest declares it. And the permission
+  screen was unreachable from the tree: `am start` on a non-exported activity
+  from the tree's own shell child is refused ("package=com.android.shell does
+  not belong to uid=10321"), so the exported wake receiver now handles
+  `com.jawnos.app.JAWN_PERMISSIONS` and opens the screen in-process.
+- **Still to do for M4:** the runtimes in `releases/` are still packed for
+  `com.termux` (the relocated aarch64 archive exists but is unpublished, and the
+  x86_64 one needs the same `--rewrite-prefix` pass) — nothing may be published
+  until both are; the voice pack; then the phone migration.
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes

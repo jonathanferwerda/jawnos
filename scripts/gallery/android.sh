@@ -20,6 +20,10 @@ ADB=/home/jawn/android-sdk/platform-tools/adb
 OUT=${OUT:-$ROOT/.shots/android-scenes}
 SITE=${SITE:-$ROOT/../jawnos-website}
 DEVICE_HOME=/data/data/com.termux/files/home
+# The capture host's app package. Relative components below (".app.X") follow
+# this, so one value covers a device on the JawnOS app (com.jawnos) and the old
+# fork (com.termux).
+APP_PACKAGE=${APP_PACKAGE:-com.termux}
 
 DO_SEED=0
 DO_PUSH=0
@@ -95,7 +99,7 @@ if [ "$DO_PUSH" = 1 ]; then
 
   # Stop, swap the database, start. The dashboard is the app's own control
   # surface; its Start/Stop buttons sit in the first row at 1080x2400.
-  adb shell am start -n com.termux/com.termux.app.JawnDashboardActivity >/dev/null 2>&1 || true
+  adb shell am start -n "$APP_PACKAGE/.app.JawnDashboardActivity" >/dev/null 2>&1 || true
   sleep 3
   adb shell input tap 630 1167 >/dev/null 2>&1 || true
   sleep 4
@@ -148,7 +152,7 @@ PY
     [ -n "$ONLY" ] && [ "$ONLY" != "$id" ] && continue
     say "  $id"
     if [ "$activity" = "home" ]; then
-      adb shell am start -n com.termux/com.termux.app.JawnHomeActivity >/dev/null 2>&1 || true
+      adb shell am start -n "$APP_PACKAGE/.app.JawnHomeActivity" >/dev/null 2>&1 || true
       sleep 6
       adb shell uiautomator dump /sdcard/jawn-ui.xml >/dev/null 2>&1 || true
       adb pull /sdcard/jawn-ui.xml /tmp/jawn-ui.xml >/dev/null 2>&1 || true
@@ -157,7 +161,7 @@ PY
         sleep 2
       fi
     else
-      adb shell am start -n com.termux/com.termux.app.JawnAppActivity \
+      adb shell am start -n "$APP_PACKAGE/.app.JawnAppActivity" \
         --activity-clear-task --es app "$app" >/dev/null 2>&1 || true
       sleep 14
     fi
