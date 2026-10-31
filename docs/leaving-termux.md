@@ -336,9 +336,10 @@ shape M1 and M2 take.
   the app; relaunching brought it back. The same start was repeated on the
   phone (SM-S721W, app 1190, tree 0.1.1640): status `good`, no `bin/login`.
 - **Exit:** jawn starts, restarts and stops with the app; the Console shows the
-  tree's live output; no `bin/login` in any process tree. Remaining for M3:
-  `RunCommandService`/`termux-am` and `TermuxService` itself (the Console), and
-  the `#!/usr/bin/perl` shebang in `scripts/app_displayer.pl`.
+  tree's live output; no `bin/login` in any process tree. The last Termux-runtime
+  shebang is gone too (2026-10-31, `scripts/app_displayer.pl`). `TermuxService`
+  and `RunCommandService` remain as the Console's rollback path; M4 deletes them
+  with the terminal stack.
 
 ### M3 — Runtime
 
@@ -574,10 +575,14 @@ The milestone that actually leaves Termux.
   from the tree's own shell child is refused ("package=com.android.shell does
   not belong to uid=10321"), so the exported wake receiver now handles
   `com.jawnos.app.JAWN_PERMISSIONS` and opens the screen in-process.
-- **Still to do for M4:** the runtimes in `releases/` are still packed for
-  `com.termux` (the relocated aarch64 archive exists but is unpublished, and the
-  x86_64 one needs the same `--rewrite-prefix` pass) — nothing may be published
-  until both are; the voice pack; then the phone migration.
+- **M4 state (2026-10-31):** both runtime archives are rewritten for
+  `com.jawnos` and published beside the app (`jawnrt-aarch64` / `jawnrt-x86_64`
+  0.1.1670, pinned in the APK's `assets/jawnrt.json`), and the phone is
+  migrated. What is left is the identity purge itself — `sharedUserId`, the
+  `RUN_COMMAND` permission and service, `TermuxService` and the terminal
+  modules (the Console's rollback path), the 40 GPL-3-only `jawnos-shared`
+  files, the `Termux*` class names and `com.termux` strings — then the tablet
+  migration and the voice pack.
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes

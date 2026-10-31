@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin
+#!/usr/bin/env perl
 
 my $app = shift;
 my $action = shift;
