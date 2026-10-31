@@ -637,20 +637,22 @@ The milestone that actually leaves Termux.
   `HOME=/data/data/com.jawnos/files/home`), and the app gate asks for the device
   unlock again because the Keystore key died with the uninstall.
 
-- **GPL pass, first cut (2026-10-31).** Twenty-one dead GPL-3-only
+- **GPL pass (2026-10-31).** Twenty-one dead GPL-3-only
   `jawnos-shared` files were deleted: `UrlUtils`, `TextInputDialogUtils`, the
   API/Boot/Float/Styling/Tasker/Widget shared preferences,
   `TermuxPropertyConstants`, `TermuxSharedProperties`, `TermuxSession`, and the
   terminal extra-keys/client bases (their `build.gradle` exclusion block went
-  too). **Twelve GPL-3-only files remain, all in use**: `SELinuxUtils`,
-  `TermuxCrashUtils`, `TermuxFileUtils`, `TermuxNotificationUtils`,
-  `PackageUtils`, `PermissionUtils`, `ReflectionUtils`,
+  too). Five more went in the next pass: `SELinuxUtils`, `PermissionUtils` and
+  `ReflectionUtils` were deleted (the SELinux lines left `AndroidUtils` and
+  `TermuxShellUtils`; `ShareUtils` uses `checkSelfPermission`/`ActivityCompat`;
+  `PackageUtils` no longer needs hidden-API reflection), and `PackageUtils` and
+  `TermuxUtils` were rewritten as original BSD-2 code — the former answers only
+  this app's package, the latter describes JawnOS instead of
+  Termux/plugins/wiki/donation. **Seven GPL-3-only originals remain, all in
+  use**: `TermuxCrashUtils`, `TermuxFileUtils`, `TermuxNotificationUtils`,
   `TermuxAppSharedPreferences`, `TermuxPreferenceConstants`,
-  `TermuxShellEnvironmentClient`, `TermuxShellUtils`, `TermuxUtils`. Those are
-  the rewrite list before BSD-2. `SELinuxUtils`, `PermissionUtils` and
-  `ReflectionUtils` are compile-time dependencies of MIT/Apache-exception files
-  (`AndroidUtils`, `TermuxShellUtils`, `ShareUtils`, `PackageUtils`), so the
-  rewrite starts there.
+  `TermuxShellEnvironmentClient`, `TermuxShellUtils`. Those are the rewrite
+  list before BSD-2; the preferences and shell helpers are the next batch.
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
