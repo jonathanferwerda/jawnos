@@ -25,6 +25,8 @@ use Mojo::JSON qw(encode_json decode_json);
 my $root = abs_path("$FindBin::Bin/..");
 my $dir  = "$root/releases";
 my ($repo, $tag, $apk, $dry_run) = ('jonathanferwerda/jawnos', 'releases', undef, 0);
+my $app_repo = "$ENV{'HOME'}/jawnos-app/termux-app";
+my $runtime_mode = 'missing';   # missing | force | off
 
 # The release body is the newest dated section of docs/app-release-notes.md
 # (a real changelog, written when the build is made) plus the version codes
@@ -54,10 +56,14 @@ while ( defined(my $arg = shift @ARGV) ) {
 	if ($arg eq '--tag')     { $tag = shift @ARGV; next; }
 	if ($arg eq '--apk')     { $apk = shift @ARGV; next; }
 	if ($arg eq '--dir')     { $dir = shift @ARGV; next; }
+	if ($arg eq '--app-repo'){ $app_repo = shift @ARGV; next; }
+	if ($arg eq '--runtime') { $runtime_mode = 'force'; next; }
+	if ($arg eq '--no-runtime') { $runtime_mode = 'off'; next; }
 	if ($arg eq '--dry-run') { $dry_run = 1; next; }
 	die "app_publish.pl: unknown option $arg\n";
 }
-die "usage: app_publish.pl [--repo OWNER/NAME] [--tag TAG] [--apk FILE] [--dry-run]\n"
+die "usage: app_publish.pl [--repo OWNER/NAME] [--tag TAG] [--apk FILE] [--dir DIR]\n"
+	. "                      [--app-repo DIR] [--runtime] [--no-runtime] [--dry-run]\n"
 	unless $repo =~ m{^[^/\s]+/[^/\s]+\z} && $tag && $tag =~ /^[0-9A-Za-z._-]+\z/;
 
 # The newest staged app, or the one --apk names.
@@ -100,11 +106,49 @@ my @jobs;
 }
 die "app_publish.pl: no staged APKs to publish\n" unless @jobs;
 
+# --- the runtime the APK pins ----------------------------------------------
+# A clean install downloads the exact files named in the APK's
+# assets/jawnrt.json from this tag, so a publish that moves only the APK leaves
+# the pin pointing at an asset that is not there and the first run fails on a
+# fresh install. Preflight the pin against releases/, then upload what the
+# release is missing (or everything with --runtime).
+my @runtime;
+if ($runtime_mode ne 'off') {
+	my $pin_path = "$app_repo/app/src/main/assets/jawnrt.json";
+	if (-f $pin_path) {
+		my $pin_text = read_file($pin_path);
+		my $pin = eval { decode_json($pin_text) };
+		die "app_publish.pl: $pin_path is not valid JSON\n"
+			unless $pin && ref $pin->{'abi'} eq 'HASH' && %{ $pin->{'abi'} };
+		foreach my $abi (sort keys %{ $pin->{'abi'} }) {
+			my $e = $pin->{'abi'}{$abi} || {};
+			my $file = $e->{'file'};
+			die "app_publish.pl: $pin_path names no file for $abi\n" unless $file;
+			die "app_publish.pl: $file is not a bare file name\n" unless $file =~ /^[0-9A-Za-z._-]+$/;
+			my $path = "$dir/$file";
+			die "app_publish.pl: the APK pins $file ($abi) but $path is not staged\n" unless -f $path;
+			my $sha = sha256_hex(read_file($path));
+			die "app_publish.pl: $path does not match the sha256 pinned for $abi\n"
+				unless lc($sha) eq lc($e->{'sha256'} || '');
+			push @runtime, { abi => $abi, file => $file, path => $path, size => (-s $path) };
+		}
+		push @runtime, { pin => $pin_path, file => 'jawnrt.json', path => $pin_path };
+	}
+	elsif ($runtime_mode eq 'force') {
+		die "app_publish.pl: --runtime given but $pin_path does not exist\n";
+	}
+}
+
 foreach my $j (@jobs) {
 	printf "publishing %s\n  versionCode %s / %s\n  %d bytes\n  sha256 %s\n  manifest %s\n",
 		$j->{'filename'}, $j->{'vc'}, $j->{'vn'}, $j->{'size'}, $j->{'sha'}, $j->{'path'};
 }
 print "  repo $repo, tag $tag\n";
+foreach my $r (@runtime) {
+	next if $r->{'pin'};
+	printf "  runtime %s %s (%d bytes), pinned by %s\n", $r->{'abi'}, $r->{'file'}, $r->{'size'}, 'assets/jawnrt.json';
+}
+printf "  runtime mode %s%s\n", $runtime_mode, $runtime_mode eq 'off' ? ' (no runtime check)' : '';
 
 if ($dry_run) {
 	print "dry run: would create/update release '$tag' with the assets above\n";
@@ -135,6 +179,21 @@ foreach my $j (@jobs) {
 		system('gh', 'release', 'delete-asset', $tag, $name, '--repo', $repo, '--yes') == 0
 			and print "removed stale asset $name\n";
 	}
+}
+
+# Upload only what the release is missing, so a normal APK publish never
+# re-sends 200 MB of runtime. Old runtime files are left alone: a device still
+# on an older APK pins its own file and must keep finding it.
+if (@runtime) {
+my $assets = `gh release view $tag --repo $repo --json assets -q '.assets[].name' 2>/dev/null`;
+my %have = map { $_ => 1 } split /\s+/, ($assets || '');
+my @up = grep { $runtime_mode eq 'force' || !$have{ $_->{'file'} } } @runtime;
+foreach my $r (@up) {
+	print "uploading runtime asset $r->{'file'}\n";
+	system('gh', 'release', 'upload', $tag, $r->{'path'}, '--clobber', '--repo', $repo) == 0
+		or die "publish failed: could not upload $r->{'file'}\n";
+}
+print "runtimes already on the release\n" unless @up;
 }
 
 # The site is static and its host has no outbound network, so it reads this one
@@ -179,7 +238,8 @@ my @current;
 {
 	my $path = "$dir/app_release.json";
 	if (-f $path) {
-		my $m = eval { decode_json(read_file($path)) } || {};
+		my $text = read_file($path);
+		my $m = eval { decode_json($text) } || {};
 		push @current, "app $m->{'versionName'} (versionCode $m->{'versionCode'})"
 			if $m->{'product'} && $m->{'versionName'};
 	}
