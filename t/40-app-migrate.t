@@ -59,9 +59,22 @@ runas() {
 			shift
 			[ $# -gt 0 ] && shift
 			exit 0 ;;
+		sha256sum)
+			[ -f "$root/$1" ] || exit 1
+			sha256sum "$root/$1" ;;
+		files/usr/bin/pkill)
+			rm -f "$state/tree_alive"
+			exit 0 ;;
+		files/usr/bin/pgrep)
+			if [ -f "$state/tree_alive" ]; then echo "1234"; exit 0; fi
+			exit 1 ;;
 		cp)
 			src="$1"; dst="$2"
-			cp "$push/$(basename "$src")" "$root/$dst" ;;
+			if [ "$dst" = "files/home/jawnos/database/jawnos.db" ] && [ -f "$state/corrupt_restore" ]; then
+				echo "not the backup" > "$root/$dst"
+			else
+				cp "$push/$(basename "$src")" "$root/$dst"
+			fi ;;
 		files/usr/bin/sqlite3)
 			db="$root/$1"; shift
 			/usr/bin/sqlite3 "$db" "$@" ;;
@@ -83,12 +96,19 @@ case "$cmd" in
 				fi ;;
 			am)
 				action="$1"; shift
+				while [ "$1" = "-W" ]; do shift; done
 				case "$action" in
 					force-stop) echo "force-stop $*" >> "$trace" ;;
 					start)
 						echo "start $*" >> "$trace"
 						mkdir -p "$root/files/home/.president"
 						echo "good" > "$root/files/home/.president/status" ;;
+				esac ;;
+			pm)
+				action="$1"; shift
+				case "$action" in
+					disable-user) echo "disable-user $*" >> "$trace"; : > "$state/tree_alive"; : > "$state/disabled" ;;
+					enable) echo "enable $*" >> "$trace"; rm -f "$state/disabled" ;;
 				esac ;;
 			cmd)
 				echo "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false"
@@ -168,6 +188,10 @@ sub scenario {
 		'files/home/jawnos/database/.jawnos_signatorial_id'  => 'e397332d0123456789abcdef01234567',
 		'files/home/jawnos/config.json'                      => '{"port":3000}',
 		'files/home/jawnos/VERSION'                          => "0.1.1680\n",
+		'files/home/jawnos/subroutines.pl'                   => 'subs',
+		'files/home/jawnos/gb.pl'                            => 'gb',
+		'files/home/jawnos/President.pl'                     => 'pres',
+		'files/home/jawnos/Manager.pl'                       => 'mgr',
 		'files/home/.president/status'                       => 'good',
 		'files/usr/etc/jawnos-runtime.json'                  => '{"product":"runtime"}',
 		'files/home/jawnos/database/schema.sql'              => 'CREATE TABLE x;',
@@ -178,6 +202,10 @@ sub scenario {
 	}
 	for my $rel (qw(
 		files/home/jawnos/VERSION
+		files/home/jawnos/subroutines.pl
+		files/home/jawnos/gb.pl
+		files/home/jawnos/President.pl
+		files/home/jawnos/Manager.pl
 		files/home/.president/status
 		files/usr/etc/jawnos-runtime.json
 		files/home/jawnos/database/schema.sql
@@ -186,6 +214,9 @@ sub scenario {
 		spew( "$root/$rel", $content{$rel} );
 	}
 	unlink "$root/files/home/.house.key" if $o{missing_house_key};
+	unlink "$root/files/home/jawnos/subroutines.pl" if $o{incomplete_tree};
+	spew( "$state/tree_alive", '' ) unless $o{tree_down};
+	spew( "$state/corrupt_restore", '' ) if $o{corrupt_restore};
 
 	my @settings = @{ $o{settings} || [ '/data/data/com.jawnos/files/home', 'plain' ] };
 	my $db = "$root/files/home/jawnos/database/jawnos.db";
@@ -247,6 +278,7 @@ sub destructive_lines {
 			|| $line =~ /\binstall\s+\S+\.apk\b/
 			|| $line =~ /\bam\s+force-stop\b/
 			|| $line =~ /\bam\s+start\b/
+			|| $line =~ /\bpm\s+disable-user\b/
 			|| $line =~ /\bpush\s+\S+\s+\/data\/local\/tmp\b/
 			|| $line =~ /\bfiles\/usr\/bin\/sqlite3\b/
 			|| $line =~ /\bUPDATE\s+settings\b/;
@@ -357,6 +389,19 @@ my $apply_scenario;
 	ok( ( grep { defined $install_at && defined $push_at && $_ > $install_at && $_ < $push_at } @stops ),
 		'a force-stop runs after install and before any restore push' );
 
+	# The stop has to be more than force-stop: the app is rebound by its system
+	# services and the exec'd tree is not an ActivityManager process.
+	like( slurp( $s->{log} ), qr/\bpm\s+disable-user\b/,
+		'the stop disables the package so Android cannot rebind it' );
+	like( slurp( $s->{log} ), qr/files\/usr\/bin\/pkill/,
+		"the stop kills the exec'd perl tree" );
+	like( slurp( $s->{log} ), qr/\bpm\s+enable\b/,
+		'the app is re-enabled before the tree is started' );
+	like( $out, qr/disabled and the tree is down/,
+		'the script reports the successful stop' );
+	like( $out, qr/sha256 matches the backup, integrity ok, 3 appointments/,
+		'the restored database is verified before it is opened' );
+
 	# The restored identity is the old one.
 	like( $out, qr/device=e397332d\.\.\. unchanged/, 'the device identity did not change' );
 	like( $out, qr/appointments 3 before, 3 after/, 'the appointment count is preserved' );
@@ -418,6 +463,38 @@ my $apply_scenario;
 	like( slurp( $s->{log} ), qr/\binstall\s+\Q$base\E\/releases\/jawnos-app-1002-1\.2\.apk/,
 		'it installed the newest versionCode' );
 	unlike( slurp( $s->{log} ), qr/jawnos-app-1000-/, 'it did not install the older build' );
+}
+
+# 8. a restore that does not match the backup fails before the tree starts
+
+{
+	my $s = scenario( corrupt_restore => 1 );
+	my $backup = "$s->{base}/backup-corrupt";
+	spew( "$s->{base}/x.apk", 'apk' );
+	my ( $rc, $out ) = run_migrate( $s, '--apply', '--backup-dir', $backup, '--apk', "$s->{base}/x.apk" );
+	isnt( $rc, 0, 'a restored database that differs from the backup fails' );
+	like( $out, qr/does not match the backup/, 'and says the restored file differs' );
+	like( $out, qr/left disabled/, 'the app is left disabled, not running on an untrusted database' );
+	ok( -e "$s->{state}/disabled", 'the fake package is still disabled' );
+	my $starts = () = slurp( $s->{log} ) =~ /\bam start\b/g;
+	is( $starts, 1, 'only the first-run start ran; the restored tree never started' );
+}
+
+# 9. an interrupted first-run checkout fails before the restore
+
+{
+	my $s = scenario( incomplete_tree => 1 );
+	my $backup = "$s->{base}/backup-incomplete";
+	spew( "$s->{base}/x.apk", 'apk' );
+	my ( $rc, $out ) = run_migrate(
+		$s, '--apply', '--backup-dir', $backup, '--apk', "$s->{base}/x.apk",
+		'--first-run-timeout', '3',
+	);
+	isnt( $rc, 0, 'an incomplete first-run checkout fails the migration' );
+	like( $out, qr/subroutines\.pl is not in the checkout yet/,
+		'and names the file that is missing' );
+	unlike( slurp( $s->{log} ), qr/\bpush\s+\S+\s+\/data\/local\/tmp\b/,
+		'it never restores the house into a half-written tree' );
 }
 
 done_testing();
