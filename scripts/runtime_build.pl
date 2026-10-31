@@ -87,11 +87,13 @@ my @PRUNE = (
 );
 
 # --- options ----------------------------------------------------------------
-my ($from, $out, $dry, $list, $help, $abi);
+my ($from, $out, $dry, $list, $help, $abi, $rewrite, $perl_version);
 while ( defined(my $a = shift @ARGV) ) {
 	if ($a eq '--from') { $from = shift @ARGV }
 	elsif ($a eq '--out') { $out = shift @ARGV }
 	elsif ($a eq '--abi') { $abi = shift @ARGV }
+	elsif ($a eq '--rewrite-prefix') { $rewrite = shift @ARGV }
+	elsif ($a eq '--perl-version') { $perl_version = shift @ARGV }
 	elsif ($a eq '--dry-run') { $dry = 1 }
 	elsif ($a eq '--list') { $list = 1 }
 	elsif ($a eq '--help' || $a eq '-h') { $help = 1 }
@@ -114,6 +116,12 @@ die "runtime_build.pl: no such prefix: $from\n" unless -d $from;
 $from = abs_path($from);
 $abi ||= 'aarch64';
 die "runtime_build.pl: --abi looks wrong: $abi\n" unless $abi =~ m{^[A-Za-z0-9_]+$};
+if (defined $rewrite) {
+	my ($o, $n) = split /=/, $rewrite, 2;
+	die "runtime_build.pl: --rewrite-prefix needs old=new\n" unless defined $n && length $o;
+	die "runtime_build.pl: only an equal-length rewrite is safe\n" unless length $o == length $n;
+	print "runtime_build: rewriting $o -> $n in every file\n";
+}
 
 my $version = 'unknown';
 if (open(my $vf, '<', "$root/VERSION")) { $version = <$vf> // 'unknown'; close $vf; $version =~ s/\s+//g }
@@ -122,6 +130,13 @@ $out ||= "$root/releases/jawnrt-$abi-$version.zip";
 # --- select ----------------------------------------------------------------
 sub wanted_path {
 	my ($rel) = @_;
+	# A prefix that has been updated in place keeps the module trees of every perl
+	# it ever had; only the one bin/perl actually runs belongs in a runtime.
+	if (defined $perl_version
+		&& $rel =~ m{^lib/perl5/(?:[a-z_]+_perl/)?(\d+\.\d+\.\d+)(?:/|$)}
+		&& $1 ne $perl_version) {
+		return 0;
+	}
 	return 1 if $rel =~ m{^bin/[^/]+$} && $TOOL{ basename($rel) } && !$NEVER{ basename($rel) };
 	foreach my $d (@LIB_DIRS, @SHARE_DIRS, @LIBEXEC_DIRS) {
 		my $re = $d;
@@ -223,6 +238,10 @@ my %SYSTEM = map { $_ => 1 } qw(
 	libc.so libm.so libdl.so liblog.so libandroid.so libstdc++.so
 	libz.so libEGL.so libGLESv1_CM.so libGLESv2.so libvulkan.so
 	libOpenSLES.so libmediandk.so libnativewindow.so libsync.so libui.so
+	libbase.so libc++.so libutils.so libcutils.so libhardware.so libhidlbase.so
+	libdl_android.so libnativebridge_lazy.so libnativeloader_lazy.so
+	libvndksupport.so libziparchive.so libSurfaceFlingerProp.so libgraphicsenv.so
+	libgfxgrab.so
 );
 my %missing = ();
 for (my $i = 0; $i < @files; $i++) {
@@ -242,10 +261,12 @@ for (my $i = 0; $i < @files; $i++) {
 		my @need = elf_needed($path);
 		foreach my $name (@need) {
 			next unless $name =~ m{\.so(?:\.\d+)*$};
-			# Only the prefix's own libraries: libc, libm, libdl and liblog
-			# belong to Android, and shipping one would shadow the device's.
+			# Only the prefix's own libraries: everything Android supplies (its
+			# libc, its graphics and HIDL stacks) belongs to the device, and
+			# shipping one would shadow it.
 			if (!-f "$from/lib/$name") {
-				$missing{$name} = 1 unless $SYSTEM{$name};
+				$missing{$name} = 1
+					unless $SYSTEM{$name} || $name =~ m{^(?:android\.hardware\.|libhidl)};
 				next;
 			}
 			push @add, "lib/$name";
@@ -356,7 +377,7 @@ foreach my $rel (@files) {
 }
 
 my $zip = "$root/scripts/runtime_zip.pl";
-system($^X, $zip, $stage, $out) == 0 or die "runtime_build: zip failed\n";
+system($^X, $zip, $stage, $out, (defined $rewrite ? $rewrite : ())) == 0 or die "runtime_build: zip failed\n";
 
 my $size = -s $out || 0;
 my $sha = sha256_hex(do { open(my $fh, '<', $out) or die $!; binmode $fh; local $/; <$fh> });
@@ -366,6 +387,7 @@ my $manifest = {
 	'abi'      => $abi,
 	'version'  => $version,
 	'built'    => time,
+	'rewritten_from' => (defined $rewrite ? (split /=/, $rewrite, 2)[0] : undef),
 	'filename' => basename($out),
 	'sha256'   => $sha,
 	'size'     => $size,

@@ -3386,7 +3386,11 @@ sub device_bin {
 	my ($name) = @_;
 	$name = '' unless defined $name;
 	$name =~ s/\Atermux-//;
-	return "/data/data/com.termux/files/usr/bin/termux-$name";
+	# M4: the app is com.jawnos, and its prefix is whatever the app exported;
+	# the old fork's absolute path was baked here and would point at nothing.
+	my $prefix = $ENV{'PREFIX'};
+	$prefix = '/data/data/com.jawnos/files/usr' unless defined $prefix && length $prefix;
+	return "$prefix/bin/termux-$name";
 }
 
 # M1 device bridge (docs/leaving-termux.md): ask the host app directly instead

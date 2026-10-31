@@ -351,7 +351,9 @@ sub have_module {
 }
 
 sub detect_platform {
-	return 'termux' if $ENV{'TERMUX_VERSION'} || -d '/data/data/com.termux';
+	# M4: the app is com.jawnos; com.termux is the old fork, still accepted so a
+	# device on the older build keeps working.
+	return 'termux' if $ENV{'TERMUX_VERSION'} || -d '/data/data/com.jawnos' || -d '/data/data/com.termux';
 	return 'debian' if -x '/usr/bin/apt-get' || -x '/usr/bin/apt';
 	return 'arch'   if -x '/usr/bin/pacman';
 	return 'unknown';

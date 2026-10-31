@@ -197,4 +197,29 @@ my %m = map { $_ => 1 } split /\n/, $mlist;
 ok($m{'bin/cat'}, 'a named tool that is a symlink is shipped');
 ok($m{'bin/coreutils'}, 'and the multi-call binary it points at comes with it');
 
+# --- relocating the prefix ---------------------------------------------------
+# The runtime is built from a Termux prefix, whose absolute paths every binary
+# carries (RUNPATH, perl's module directories, git's exec path, the CA bundle).
+# The app can be installed under a different package, so the packer rewrites the
+# old path to the new one - and it may only do that when both are the same
+# length, or every offset in every ELF would shift.
+my $old = '/data/data/com.termux/files/usr';
+my $new = '/data/data/com.jawnos/files/usr';
+is(length($old), length($new), 'the two prefixes are the same length');
+
+my $move = tempdir(CLEANUP => 1);
+write_file_at("$move/bin/perl", "say $old;\n", 0755);
+write_file_at("$move/lib/perl5/5.42.0/aarch64-android/CORE/libperl.so", "ELF $old\n", 0755);
+my $moved = tempdir(CLEANUP => 1) . '/moved.zip';
+my $moved_out = qx{"$^X" "$build" --from "$move" --out "$moved" --rewrite-prefix "$old=$new" 2>&1};
+is($? >> 8, 0, 'the packer rewrites a moved prefix') or diag($moved_out);
+like(zip_body($moved, 'bin/perl'), qr/\Q$new\E/, 'the baked path in a script moved with it');
+unlike(zip_body($moved, 'bin/perl'), qr{com\.termux}, 'and the old path is gone');
+like(zip_body($moved, 'lib/perl5/5.42.0/aarch64-android/CORE/libperl.so'), qr/\Q$new\E/,
+	'and in a binary too');
+
+my $uneven = qx{"$^X" "$build" --from "$move" --out "$moved" --rewrite-prefix '$old=/data/data/jawnos/files/usr' 2>&1};
+isnt($? >> 8, 0, 'an unequal-length rewrite is refused');
+like($uneven, qr/same length|equal-length/, 'and it says why');
+
 done_testing();

@@ -751,7 +751,7 @@ print " $url\n";
 print "========================================\n\n";
 
 unless ($no_browser) {
-	if ( $ENV{'TERMUX_VERSION'} || -d '/data/data/com.termux' ) {
+	if ( $ENV{'TERMUX_VERSION'} || -d '/data/data/com.jawnos' || -d '/data/data/com.termux' ) {
 		system("termux-open $url >/dev/null 2>&1 &");
 	}
 	elsif ( -x '/usr/bin/xdg-open' ) {
