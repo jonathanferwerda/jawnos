@@ -27523,11 +27523,18 @@ post '/manager/palette' => sub($c) {
 	}
 	my $original = &subs::db_select('appointments', undef, { app => $app, uuid => $uuid })->hashes;
 	my $files = eval { return decode_json $original->[0]->{'file'} } || [];
+	my @edits;
 	foreach my $d ( @{$duties} ) {
 		$duty = $d->{'duty'};
 		$value = $d->{'value'};
-		unless (grep { $_ eq $duty } qw/save copy/ ) {
-			`magick $sd -$duty $value $sd`;
+		next if grep { $_ eq $duty } qw/save copy clear/;
+		push @edits, { duty => $duty, value => $value };
+	}
+	# The phone has no magick: one bridge call applies the whole list. A desktop,
+	# where the bridge answers undef, keeps the per-step command it always ran.
+	if (@edits && !&subs::image_bridge_edit($sd, \@edits)) {
+		foreach my $e ( @edits ) {
+			system('magick', $sd, '-' . $e->{'duty'}, ( defined $e->{'value'} ? $e->{'value'} : '' ), $sd);
 		}
 	}
 	if ($duty eq 'copy') {

@@ -16,6 +16,7 @@ my %known = map { $_ => 1 } qw(
 	network.interfaces
 	image.resize
 	image.save
+	image.edit
 	notification.post
 	notification.remove
 	toast.show

@@ -4909,6 +4909,39 @@ sub image_bridge_save {
 	return undef;
 }
 
+# The palette's duties are a list of per-file steps - rotate, crop, modulate,
+# level, black-threshold, gaussian-blur, sharpen - which the route used to run
+# as one `magick <file> -<duty> <value> <file>` per step. The bridge applies the
+# same list in one call, so the palette survives on a phone with no magick; a
+# desktop gets undef and keeps the command. Steps the bridge does not know are
+# reported back in `skipped` rather than failing the whole edit.
+sub image_bridge_edit {
+	my ( $path, $duties, $out ) = @_;
+	return undef unless defined $path && length $path && -e $path;
+	return undef unless ref $duties eq 'ARRAY' && scalar @{$duties};
+	my @steps;
+	foreach my $d ( @{$duties} ) {
+		next unless ref $d eq 'HASH';
+		my $duty = $d->{'duty'};
+		next unless defined $duty && $duty =~ /^[a-z][a-z-]*$/;
+		next if $duty eq 'save' || $duty eq 'copy' || $duty eq 'clear';
+		push @steps, {
+			duty  => $duty,
+			value => ( defined $d->{'value'} ? '' . $d->{'value'} : '' ),
+		};
+	}
+	return undef unless @steps;
+	my $result = eval {
+		&subs::device_call('image.edit', {
+			path   => $path,
+			out    => ( defined $out && length $out ? $out : $path ),
+			duties => \@steps,
+		});
+	};
+	return $result if ref $result eq 'HASH' && defined $result->{'path'} && length $result->{'path'};
+	return undef;
+}
+
 sub network_report_from_bridge {
 	my ($report) = @_;
 	return undef

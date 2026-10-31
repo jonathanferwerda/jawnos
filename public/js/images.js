@@ -717,3 +717,171 @@ function galleryBack() {
 	return false;
 }
 if (typeof jawnosRegisterBack === 'function') { jawnosRegisterBack('gallery', galleryBack); }
+
+// ---- the palette on a file thumbnail ----------------------------------------
+// The gallery rewrite (v0.1.1114) took the handlers below out of this file but
+// left the markup in `templates/apps/app_file.html.ep` and the route in
+// Manager.pl, so the toolbox never opened and the palette icons were inert.
+// They are back here: the toolbox opens from the detail picture, and each duty
+// posts the running list of steps to `/manager/palette`, which the device
+// bridge now applies natively on a phone (no magick).
+
+$(document).on('click', '.palette_toggle', function() {
+	var file = $(this).attr('file');
+	var palette = $(this).closest('.appointment').find('.palette[file="' + file + '"]');
+	if (palette.is(':visible')) {
+		palette.hide();
+	}
+	else {
+		palette.show();
+	}
+});
+
+$(document).on('click', '.detail_image', function() {
+	var uuid = $(this).attr('file_uuid');
+	var tools = $('.app_file_toolbox[uuid="' + uuid + '"]');
+	if (tools.is(':visible')) {
+		tools.hide();
+	}
+	else {
+		tools.show();
+	}
+});
+
+var palette_duties = {};
+$(document).on('click', '.palette_duty', function() {
+	var app = $(this).closest('.appointment').attr('app');
+	var uuid = $(this).closest('.appointment_detail').attr('uuid');
+	var file_uuid = $(this).closest('.palette').attr('uuid');
+	var id = uuid + '_' + file_uuid;
+	var style = $('#'+ id).attr('style');
+	var dimage = $('.detail_image[app_uuid="' + uuid + '"][file_uuid="' + file_uuid + '"]');
+	var duty = $(this).attr('duty');
+	var file = $(this).attr('file');
+	var value = $('.palette_input[file="' + file + '"]').val();
+	var image = $('.detail_image[file="' + file + '"]');
+	var type = $('.detail_image[file="' + file + '"]').attr('type');
+
+	var timestamp = image.attr('timestamp');
+	var duty_watch = { duty: duty, value: value };
+	if (palette_duties[file] == undefined) {
+		palette_duties[file] = [];
+	}
+	palette_duties[file].push(duty_watch);
+	var duties = JSON.stringify(palette_duties[file]);
+	if (duty == 'clear') {
+		image.attr('src', '/file_open?file=' + file + '&timestamp=' + timestamp);
+		palette_duties[file] = [];
+		$('.palette_duty[duty="clear"][file="' + file + '"]').hide();
+		$('.palette_duty[duty="save"][file="' + file + '"]').hide();
+	}
+	else if (duty == 'crop') {
+		if (cropTool[0]) { cropTool = []; }
+		else {
+			var canvas = document.getElementById(id + '_canvas');
+			canvas.width = dimage.width();
+			canvas.height = dimage.height();
+			var iv = document.getElementById(id);
+
+			var image = new Image();
+			image.onload = function() {
+				canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+			};
+			image.src = iv.src;
+			dimage.hide();
+			$(canvas).attr('style', style).attr('tool', 'crop').show();
+		}
+	}
+	else {
+		$.ajax({
+			url: '/manager/palette',
+			type: 'post',
+			data: { uuid: uuid, type: type, duties: duties, duty: duty, value: value, file: file, app: app, timestamp: timestamp },
+			success: function(response) {
+				image.attr('src', response['image']);
+				if (duty != 'save' && duty != 'clear') {
+					$('.palette_duty[duty="clear"][file="' + file + '"]').show();
+					$('.palette_duty[duty="save"][file="' + file + '"]').show();
+				}
+				else {
+					palette_duties[file] = [];
+				}
+			}
+		});
+	}
+});
+
+var cropTool = [];
+
+$(document).on('dblclick', 'canvas[tool="crop"]', function() {
+	cropTool = [];
+});
+
+$(document).on('mouseout touchend mouseup', 'canvas[tool="crop"]', function() {
+	cropTool = [];
+});
+
+$(document).on('mousemove touchmove click', 'canvas[tool="crop"]', function(m) {
+	var ct = $(this);
+	var x = m.originalEvent.clientX;
+	var y = m.originalEvent.clientY;
+	if (m.originalEvent.targetTouches) {
+		x = m.originalEvent.targetTouches[0].clientX;
+		y = m.originalEvent.targetTouches[0].clientY;
+	}
+	x = numeral(x - ct.offset().left).value();
+	y = numeral(y - ct.offset().top).value();
+	if (m.which === 1 || m.originalEvent.type == 'touchmove') {
+		var id = $(this).attr('id');
+		var canvas = document.getElementById(id);
+		var uuid = ct.attr('app_uuid');
+		var file_uuid = ct.attr('file_uuid');
+		var dimage = $('.detail_image[app_uuid="' + uuid + '"][file_uuid="' + file_uuid + '"]');
+		var file = dimage.attr('file');
+		var did = dimage.attr('id');
+		var ctx = canvas.getContext('2d');
+		var iv = document.getElementById(did);
+
+		ctx.beginPath();
+		if (!cropTool[0]) {
+			ctx.arc(x, y, 7, 0, (Math.PI * 2), true);
+			cropTool[0] = [x, y];
+		}
+		else {
+			cropTool[1] = [x, y];
+			$('.palette_duty[duty="clear"][file="' + file + '"]').show();
+			$('.palette_duty[duty="save"][file="' + file + '"]').show();
+
+			var owidth = dimage.width();
+			var oheight = dimage.height();
+			dimage.height(''); dimage.width('');
+			var dwidth = dimage.width();
+			var dheight = dimage.height();
+			dimage.width(owidth); dimage.height(oheight);
+
+			var geo = numeral((cropTool[1][0] - cropTool[0][0]) / (canvas.width / dwidth)).format('0') + 'x'
+				+ numeral((cropTool[1][1] - cropTool[0][1]) / (canvas.height / dheight)).format('0') + '+'
+				+ numeral(cropTool[0][0] / (canvas.width / dwidth)).format('0') + '+'
+				+ numeral(cropTool[0][1] / (canvas.height / dheight)).format('0');
+
+			var duty_watch = { duty: 'crop', value: geo };
+			if (palette_duties[file] == undefined) {
+				palette_duties[file] = [];
+			}
+			palette_duties[file] = $.grep(palette_duties[file], function(t, i) { return t['duty'] != 'crop'; });
+			palette_duties[file].push(duty_watch);
+		}
+		var image = new Image();
+		image.onload = function() {
+			ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+			if (cropTool[1]) {
+				ctx.strokeRect(cropTool[0][0], cropTool[0][1], cropTool[1][0], cropTool[1][1]);
+			}
+			ctx.stroke();
+			ctx.fill();
+		};
+		ctx.stroke();
+		ctx.fill();
+		if (iv) { image.src = iv.src; }
+	}
+});

@@ -66,4 +66,48 @@ ok( !defined subs::image_bridge_resize($png, 0, 0),
 ok( !defined subs::image_bridge_save($png, '', 'jpeg', 90),
 	'a save without an output path is refused' );
 
+# The palette's steps: the bridge gets the whole list in one call, with
+# save/copy/clear filtered out (the route handles those itself) and an unknown
+# duty name refused before it can reach the app.
+{
+	my @asked;
+	local *subs::device_call = sub {
+		my ( $method, $args ) = @_;
+		push @asked, [ $method, $args ];
+		return { path => $args->{'out'}, width => 4, height => 4, applied => 2, skipped => [] }
+			if $method eq 'image.edit';
+		return undef;
+	};
+
+	my $edited = subs::image_bridge_edit($png, [
+		{ duty => 'rotate', value => '90' },
+		{ duty => 'save',   value => '' },
+		{ duty => 'crop',   value => '10x10+1+1' },
+	]);
+	ok( ref $edited eq 'HASH', 'the edit answer is returned' );
+	is( $edited->{'path'}, $png, 'the edit writes in place by default' );
+	is( scalar @asked, 1, 'one bridge call carries the whole list' );
+	is( $asked[0]->[0], 'image.edit', 'the method is image.edit' );
+	is_deeply( $asked[0]->[1]->{'duties'},
+		[ { duty => 'rotate', value => '90' }, { duty => 'crop', value => '10x10+1+1' } ],
+		'save is not sent as an edit step' );
+
+	my $named = subs::image_bridge_edit($png, [ { duty => 'sharpen', value => '2' } ], "$tmp/out.png");
+	is( $named->{'path'}, "$tmp/out.png", 'an edit can name its output' );
+
+	ok( !defined subs::image_bridge_edit($png, [ { duty => 'save' } ]),
+		'a list of only route-handled duties is not sent' );
+	ok( !defined subs::image_bridge_edit($png, [ { duty => 'evil; rm -rf /' } ]),
+		'a duty name outside the step alphabet is refused' );
+	ok( !defined subs::image_bridge_edit($png, []), 'an empty list is not sent' );
+	ok( !defined subs::image_bridge_edit("$tmp/missing.png", [ { duty => 'rotate', value => '90' } ]),
+		'a missing source is not sent' );
+}
+
+{
+	local *subs::device_call = sub { return undef };
+	ok( !defined subs::image_bridge_edit($png, [ { duty => 'rotate', value => '90' } ]),
+		'no bridge answer means the caller keeps magick' );
+}
+
 done_testing();
