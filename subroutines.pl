@@ -4975,6 +4975,88 @@ sub image_bridge_thumbnail {
 	return (-e $out && (-s $out) > 0) ? $out : undef;
 }
 
+sub image_bridge_identify {
+	my ($path) = @_;
+	return undef unless defined $path && length $path && -e $path;
+	my $result = eval { &subs::device_call('image.identify', { path => $path }) };
+	return $result
+		if ref $result eq 'HASH'
+		&& defined $result->{'width'} && $result->{'width'} =~ /^\d+$/
+		&& defined $result->{'height'} && $result->{'height'} =~ /^\d+$/
+		&& defined $result->{'kind'} && length $result->{'kind'};
+	return undef;
+}
+
+sub image_bridge_convert {
+	my ( $src, $out, %opt ) = @_;
+	return undef unless defined $src && length $src && -e $src;
+	return undef unless defined $out && length $out;
+	my %args = ( path => $src, out => $out );
+	foreach my $key ( qw(format quality max_width max_height) ) {
+		$args{$key} = $opt{$key} if defined $opt{$key} && length $opt{$key};
+	}
+	$args{'auto_orient'} = $opt{'auto_orient'} ? 1 : 0 if defined $opt{'auto_orient'};
+	my $result = eval { &subs::device_call('image.convert', \%args) };
+	return $result if ref $result eq 'HASH' && defined $result->{'path'} && length $result->{'path'};
+	return undef;
+}
+
+sub image_bridge_gray {
+	my ( $src, $w, $h ) = @_;
+	return undef unless defined $src && length $src && -e $src;
+	return undef unless defined $w && $w =~ /^\d+$/ && $w > 0;
+	return undef unless defined $h && $h =~ /^\d+$/ && $h > 0;
+	my $result = eval {
+		&subs::device_call('image.gray', {
+			path   => $src,
+			width  => $w + 0,
+			height => $h + 0,
+		});
+	};
+	return undef unless ref $result eq 'HASH';
+	my $data = $result->{'data'};
+	return undef unless defined $data && length $data;
+	require MIME::Base64;
+	my $bytes = MIME::Base64::decode_base64($data);
+	return (defined $bytes && length $bytes) ? $bytes : undef;
+}
+
+sub image_bridge_normalize {
+	my ( $src, $out, $max ) = @_;
+	return undef unless defined $src && length $src && -e $src;
+	return undef unless defined $out && length $out;
+	$max = 1024 unless defined $max && $max =~ /^\d+$/ && $max > 0;
+	my $result = eval {
+		&subs::device_call('image.normalize', {
+			path => $src,
+			out  => $out,
+			max  => $max + 0,
+		});
+	};
+	return $out if ref $result eq 'HASH' && defined $result->{'path'} && length $result->{'path'};
+	return undef;
+}
+
+sub image_bridge_montage {
+	my ($paths) = @_;
+	return undef unless ref $paths eq 'ARRAY';
+	my @existing = grep { defined $_ && length $_ && -e $_ } @{$paths};
+	return undef unless @existing;
+	require File::Temp;
+	my ($fh, $tmp) = eval {
+		File::Temp::tempfile('jawnos-montage-XXXXXX', TMPDIR => 1, UNLINK => 0, SUFFIX => '.png');
+	};
+	return undef unless $fh && defined $tmp;
+	close $fh;
+	my $result = eval { &subs::device_call('image.montage', { paths => \@existing, out => $tmp }) };
+	my $bytes = ( ref $result eq 'HASH' )
+		? eval { read_file($tmp, { binmode => ':raw' }) }
+		: undef;
+	unlink $tmp;
+	return undef unless defined $bytes && length $bytes;
+	return $bytes;
+}
+
 sub network_report_from_bridge {
 	my ($report) = @_;
 	return undef
@@ -23496,6 +23578,9 @@ sub crest_sha256_file {
 sub crest_normalize_image {
 	my ($src, $dst) = @_;
 	return 0 unless $src && $dst && -e $src;
+	# The bridge normalizes without deskew, which matches the fallback magick
+	# command below (the one magick already falls back to when deskew fails).
+	return 1 if &image_bridge_normalize($src, $dst, 1024);
 	my @cmd = ('magick', $src, '-colorspace', 'Gray', '-normalize',
 		'-deskew', '40%', '-trim', '+repage', '-resize', '1024x1024>', $dst);
 	my $rc = system(@cmd);
@@ -23512,10 +23597,13 @@ sub crest_normalize_image {
 sub crest_dhash {
 	my ($file) = @_;
 	return undef unless $file && -e $file;
-	open(my $fh, '-|', 'magick', $file, '-resize', '9x8!', '-colorspace', 'Gray', '-depth', '8', 'gray:-') or return undef;
-	binmode $fh;
-	my $raw = do { local $/; <$fh> };
-	close $fh;
+	my $raw = &image_bridge_gray($file, 9, 8);
+	if (!defined $raw || length $raw != 72) {
+		open(my $fh, '-|', 'magick', $file, '-resize', '9x8!', '-colorspace', 'Gray', '-depth', '8', 'gray:-') or return undef;
+		binmode $fh;
+		$raw = do { local $/; <$fh> };
+		close $fh;
+	}
 	return undef unless defined $raw && length $raw == 72;
 	my $bits = 0;
 	my $n = 0;

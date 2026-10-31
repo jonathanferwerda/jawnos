@@ -1169,11 +1169,13 @@ sub scan($c,$scandata) {
 
 			my $ocr = &ocr_reader($c,$scan);
 			if ($photo_size ne "Raw") {
-				my $convert = `magick convert $scan -resize $photo_size $image_file`;
-
+				my ($pw, $ph) = &subs::image_resolution_parts($photo_size);
+				my $converted = ($pw && $ph) ? &subs::image_bridge_convert($scan, $image_file, max_width => $pw, max_height => $ph) : undef;
+				system('magick', 'convert', $scan, '-resize', $photo_size, $image_file) unless $converted;
 			}
 			else {
-				my $convert = `magick convert $scan $image_file`;
+				my $converted = &subs::image_bridge_convert($scan, $image_file);
+				system('magick', 'convert', $scan, $image_file) unless $converted;
 			}
 			`shred -u $scan`;
 			push @filenames, { f => $image_file , thumb => $thumb, ocr => $ocr};
@@ -4475,8 +4477,15 @@ sub market_receipt_scan {
 	foreach my $t ( @tiffs ) {
 		my $jpg = $t;
 		$jpg =~ s/\.tiff$/.jpg/;
-		if ($photo_size ne 'Raw') { `magick convert $t -resize $photo_size $jpg`; }
-		else { `magick convert $t $jpg`; }
+		if ($photo_size ne 'Raw') {
+			my ($pw, $ph) = &subs::image_resolution_parts($photo_size);
+			my $converted = ($pw && $ph) ? &subs::image_bridge_convert($t, $jpg, max_width => $pw, max_height => $ph) : undef;
+			system('magick', 'convert', $t, '-resize', $photo_size, $jpg) unless $converted;
+		}
+		else {
+			my $converted = &subs::image_bridge_convert($t, $jpg);
+			system('magick', 'convert', $t, $jpg) unless $converted;
+		}
 		`shred -u $t`;
 		push @jpgs, $jpg if -e $jpg;
 	}
@@ -4530,7 +4539,8 @@ sub market_receipt_store {
 	my $jpg = $folder . '/receipt_' . &subs::rightNow() . '.jpg';
 	my $tmp = $jpg . '.in';
 	write_file($tmp, $bytes);
-	`magick convert $tmp $jpg 2>/dev/null`;
+	my $converted = &subs::image_bridge_convert($tmp, $jpg);
+	system('magick', 'convert', $tmp, $jpg) unless $converted;
 	unlink $tmp;
 	return (-e $jpg && -s $jpg) ? $jpg : undef;
 }
@@ -4758,7 +4768,10 @@ get '/manager/market/receipt/progress' => sub($c) {
 	my $n = 0;
 	foreach my $t ( &scanner_page_list($base) ) {
 		my $jpg = $base . '.preview_' . $n . '.jpg';
-		`magick convert $t $jpg 2>/dev/null` unless -e $jpg;
+		unless (-e $jpg) {
+			my $converted = &subs::image_bridge_convert($t, $jpg);
+			system('magick', 'convert', $t, $jpg) unless $converted;
+		}
 		if (-e $jpg) {
 			push @pages, { page => $n, url => '/manager/market/receipt/preview?scan_id=' . $id . '&page=' . $n };
 			$seen{$n} = 1;
@@ -25308,7 +25321,8 @@ sub people_crest_install {
 	my $version = (($old->{'version'} || 0) + 1);
 	my $color_png = "$dir/crest.v$version.color.png";
 	my $ref_png = "$dir/crest.v$version.ref.png";
-	my $rc = system('magick', $src, $color_png);
+	my $converted = &subs::image_bridge_convert($src, $color_png, format => 'png', quality => 100);
+	my $rc = defined $converted ? 0 : system('magick', $src, $color_png);
 	unless ($rc == 0 && -e $color_png && -s $color_png > 0) {
 		unlink $color_png;
 		return { ok => 0, error => 'the picture could not be read' };
@@ -25410,7 +25424,8 @@ sub construct_crest_install {
 	my $uuid = $old->{'uuid'} || &subs::random_string_creator(32);
 	my $color_png = "$dir/crest-$uuid.v$version.color.png";
 	my $ref_png = "$dir/crest-$uuid.v$version.ref.png";
-	my $rc = system('magick', $src, $color_png);
+	my $converted = &subs::image_bridge_convert($src, $color_png, format => 'png', quality => 100);
+	my $rc = defined $converted ? 0 : system('magick', $src, $color_png);
 	unless ($rc == 0 && -e $color_png && -s $color_png > 0) {
 		unlink $color_png;
 		return { ok => 0, error => 'the picture could not be read' };
@@ -29958,7 +29973,8 @@ get '/manager/card_picker' => sub ($c) {
 
 				$cards[$n] = $car;
 				my $montage_cmd = 'magick montage ' . $cards[0] . ' ' . $cards[1] . ' ' . $cards[2] . ' -';
-				my $montage = `$montage_cmd`;
+				my $montage = &subs::image_bridge_montage(\@cards);
+				$montage = `$montage_cmd` unless defined $montage && length $montage;
 				$ca =~ s/.png$//gi;
 				$title .= &subs::format_name($ca) . '<br> ';
 				$stream = 'data:image/png;base64,' . encode_base64 $montage;
@@ -34945,12 +34961,22 @@ sub travel_map_box_bytes {
 	write_file($tmp, $bytes);
 	# the file may be at another resolution than the plate space was measured in
 	my ($aw, $ah) = (0, 0);
-	open(my $identify, '-|', 'magick', 'identify', '-format', '%w %h', $tmp);
-	if ($identify) { my $line = <$identify>; close $identify; ($aw, $ah) = split ' ', ($line || ''); }
+	my $identified = &subs::image_bridge_identify($tmp);
+	if ($identified) { ($aw, $ah) = ($identified->{'width'}, $identified->{'height'}); }
+	else {
+		open(my $identify, '-|', 'magick', 'identify', '-format', '%w %h', $tmp);
+		if ($identify) { my $line = <$identify>; close $identify; ($aw, $ah) = split ' ', ($line || ''); }
+	}
 	return undef unless $aw && $ah;
 	my $geo = sprintf('%dx%d+%d+%d', int($cw * $aw / $w), int($ch * $ah / $h), int($x0 * $aw / $w), int($y0 * $ah / $h));
 	my $crop = '/tmp/jawn_guess_' . &subs::random_string_creator(8) . '_crop.png';
-	`magick "$tmp" -crop $geo +repage -resize '512x512>' "$crop" 2>/dev/null`;
+	my $edited = &subs::image_bridge_edit($tmp, [ { duty => 'crop', value => $geo } ], $crop);
+	if ($edited) {
+		&subs::image_bridge_resize($crop, 512, 512, $crop);
+	}
+	else {
+		system('magick', $tmp, '-crop', $geo, '+repage', '-resize', '512x512>', $crop);
+	}
 	unlink $tmp;
 	return undef unless -e $crop;
 	my $out = read_file($crop);
@@ -35323,8 +35349,12 @@ post '/manager/travel/guess_gap' => sub($c) {
 	write_file($raw, $bytes);
 
 	my ($w, $h) = (0, 0);
-	open(my $identify, '-|', 'magick', 'identify', '-format', '%w %h', $raw);
-	if ($identify) { my $line = <$identify>; close $identify; ($w, $h) = split ' ', ($line || ''); }
+	my $identified = &subs::image_bridge_identify($raw);
+	if ($identified) { ($w, $h) = ($identified->{'width'}, $identified->{'height'}); }
+	else {
+		open(my $identify, '-|', 'magick', 'identify', '-format', '%w %h', $raw);
+		if ($identify) { my $line = <$identify>; close $identify; ($w, $h) = split ' ', ($line || ''); }
+	}
 	($w, $h) = ($px_lon, $px_lat) unless $w && $h;
 
 	my $secret = &subs::suds_grabber();
@@ -42807,7 +42837,8 @@ sub mms_part_prepare($path, $mime) {
 	my $dir = &subs::home('~/.shots/sms_parts');
 	`mkdir -p "$dir"` unless -e $dir;
 	my $out = $dir . '/' . &subs::random_string_creator(8) . '-mms.jpg';
-	my $rc = system('magick', $path, '-auto-orient', '-strip', '-resize', '1280x960>', '-quality', '82', $out);
+	my $converted = &subs::image_bridge_convert($path, $out, max_width => 1280, max_height => 960, quality => 82, auto_orient => 1);
+	my $rc = defined $converted ? 0 : system('magick', $path, '-auto-orient', '-strip', '-resize', '1280x960>', '-quality', '82', $out);
 	return (($rc == 0 && -e $out && (-s $out) > 0) ? ($out, 'image/jpeg') : ($path, $mime));
 }
 

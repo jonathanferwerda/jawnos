@@ -18,6 +18,11 @@ my %known = map { $_ => 1 } qw(
 	image.save
 	image.edit
 	image.cover
+	image.identify
+	image.convert
+	image.gray
+	image.normalize
+	image.montage
 	notification.post
 	notification.remove
 	toast.show

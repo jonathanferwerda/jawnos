@@ -165,4 +165,176 @@ ok( !defined subs::image_bridge_save($png, '', 'jpeg', 90),
 		'and the cover falls back to magick' );
 }
 
+# Identify: the bridge reports the source's shape and kind, and nothing else
+# is sent. A missing source never reaches the bridge.
+{
+	my @asked;
+	local *subs::device_call = sub {
+		my ( $method, $args ) = @_;
+		push @asked, [ $method, $args ];
+		return { width => 1920, height => 1080, kind => 'image' }
+			if $method eq 'image.identify';
+		return undef;
+	};
+
+	my $info = subs::image_bridge_identify($png);
+	ok( ref $info eq 'HASH', 'an identify answer is returned' );
+	is( $info->{'width'}, 1920, 'the reported width is kept' );
+	is( $info->{'height'}, 1080, 'the reported height is kept' );
+	is( $info->{'kind'}, 'image', 'the reported kind is kept' );
+	is( $asked[0]->[0], 'image.identify', 'the method is image.identify' );
+	is_deeply( $asked[0]->[1], { path => $png }, 'identify sends only the path' );
+}
+
+ok( !defined subs::image_bridge_identify("$tmp/missing.png"),
+	'a missing source is not identified' );
+
+{
+	local *subs::device_call = sub { return undef };
+	ok( !defined subs::image_bridge_identify($png),
+		'no bridge answer means identify falls back' );
+}
+
+# Convert: path and out are always sent, the five options only when supplied.
+{
+	my @asked;
+	local *subs::device_call = sub {
+		my ( $method, $args ) = @_;
+		push @asked, [ $method, $args ];
+		return { path => $args->{'out'} } if $method eq 'image.convert';
+		return undef;
+	};
+
+	my $converted = subs::image_bridge_convert($png, "$tmp/out.webp",
+		format => 'webp', quality => 77, max_width => 800, max_height => 600, auto_orient => 1);
+	ok( ref $converted eq 'HASH', 'a convert answer is returned' );
+	is( $converted->{'path'}, "$tmp/out.webp", 'the convert writes the named file' );
+	is( $asked[0]->[0], 'image.convert', 'the method is image.convert' );
+	is( $asked[0]->[1]->{'path'}, $png, 'the source is passed through' );
+	is( $asked[0]->[1]->{'out'}, "$tmp/out.webp", 'the output is passed through' );
+	is( $asked[0]->[1]->{'format'}, 'webp', 'the format is passed through' );
+	is( $asked[0]->[1]->{'quality'}, 77, 'the quality is passed through' );
+	is( $asked[0]->[1]->{'max_width'}, 800, 'the maximum width is passed through' );
+	is( $asked[0]->[1]->{'max_height'}, 600, 'the maximum height is passed through' );
+	is( $asked[0]->[1]->{'auto_orient'}, 1, 'auto-orient is passed through' );
+
+	subs::image_bridge_convert($png, "$tmp/bare.jpg");
+	is_deeply( $asked[1]->[1], { path => $png, out => "$tmp/bare.jpg" },
+		'the options are absent when not supplied' );
+}
+
+ok( !defined subs::image_bridge_convert("$tmp/missing.png", "$tmp/none.jpg"),
+	'a convert with no source is refused' );
+ok( !defined subs::image_bridge_convert($png, ''),
+	'a convert without an output path is refused' );
+
+{
+	local *subs::device_call = sub { return undef };
+	ok( !defined subs::image_bridge_convert($png, "$tmp/none.jpg"),
+		'no bridge answer means the caller keeps magick' );
+}
+
+# Gray: the answer's base64 data is decoded to raw bytes. Width and height are
+# required and must be positive.
+{
+	my $gray_bytes = "\x89PNG\r\n\x1a\ngray-bytes";
+	my @asked;
+	local *subs::device_call = sub {
+		my ( $method, $args ) = @_;
+		push @asked, [ $method, $args ];
+		return { data => MIME::Base64::encode_base64($gray_bytes, '') }
+			if $method eq 'image.gray';
+		return undef;
+	};
+
+	my $gray = subs::image_bridge_gray($png, 64, 32);
+	is( $gray, $gray_bytes, 'the gray answer is decoded to raw bytes' );
+	is( $asked[0]->[0], 'image.gray', 'the method is image.gray' );
+	is_deeply( $asked[0]->[1], { path => $png, width => 64, height => 32 },
+		'path, width and height are passed through' );
+}
+
+ok( !defined subs::image_bridge_gray("$tmp/missing.png", 8, 8),
+	'a missing source is not grayed' );
+ok( !defined subs::image_bridge_gray($png, 0, 8),
+	'a zero width is not sent to the bridge' );
+ok( !defined subs::image_bridge_gray($png, 8, -1),
+	'a negative height is not sent to the bridge' );
+
+{
+	local *subs::device_call = sub { return undef };
+	ok( !defined subs::image_bridge_gray($png, 8, 8),
+		'no bridge answer means gray falls back' );
+}
+
+# Normalize: the helper reports the output path it named, and passes the cap
+# through untouched.
+{
+	my @asked;
+	local *subs::device_call = sub {
+		my ( $method, $args ) = @_;
+		push @asked, [ $method, $args ];
+		return { path => $args->{'out'} } if $method eq 'image.normalize';
+		return undef;
+	};
+
+	my $normalized = subs::image_bridge_normalize($png, "$tmp/normal.png", 1024);
+	is( $normalized, "$tmp/normal.png", 'normalize returns the named output' );
+	is( $asked[0]->[0], 'image.normalize', 'the method is image.normalize' );
+	is_deeply( $asked[0]->[1], { path => $png, out => "$tmp/normal.png", max => 1024 },
+		'path, out and max are passed through' );
+}
+
+ok( !defined subs::image_bridge_normalize("$tmp/missing.png", "$tmp/none.png", 512),
+	'a missing source is not normalized' );
+ok( !defined subs::image_bridge_normalize($png, '', 512),
+	'a normalize without an output path is refused' );
+
+{
+	local *subs::device_call = sub { return undef };
+	ok( !defined subs::image_bridge_normalize($png, "$tmp/none.png", 512),
+		'no bridge answer means normalize falls back' );
+}
+
+# Montage: the whole list goes in one call and the bridge's PNG bytes come
+# back. The app may answer the bytes as base64 data or write the named temp
+# file, so the fixture does both.
+{
+	my $montage_png = "\x89PNG\r\n\x1a\nmontage-bytes";
+	my @asked;
+	local *subs::device_call = sub {
+		my ( $method, $args ) = @_;
+		push @asked, [ $method, $args ];
+		if ( $method eq 'image.montage' ) {
+			if ( open(my $of, '>', $args->{'out'}) ) {
+				binmode $of;
+				print $of $montage_png;
+				close $of;
+			}
+			return {
+				path => $args->{'out'},
+				data => MIME::Base64::encode_base64($montage_png, ''),
+			};
+		}
+		return undef;
+	};
+
+	my $montage = subs::image_bridge_montage([ $png, $png ]);
+	is( $montage, $montage_png, 'the montage returns the PNG bytes' );
+	is( $asked[0]->[0], 'image.montage', 'the method is image.montage' );
+	is_deeply( $asked[0]->[1]->{'paths'}, [ $png, $png ],
+		'the path list is passed through' );
+	ok( defined $asked[0]->[1]->{'out'} && length $asked[0]->[1]->{'out'},
+		'the montage names a temporary output' );
+
+	ok( !defined subs::image_bridge_montage([ "$tmp/missing-a.png", "$tmp/missing-b.png" ]),
+		'a montage list with no existing files is refused' );
+}
+
+{
+	local *subs::device_call = sub { return undef };
+	ok( !defined subs::image_bridge_montage([$png]),
+		'no bridge answer means montage falls back' );
+}
+
 done_testing();
