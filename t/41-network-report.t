@@ -57,4 +57,12 @@ is( subs::network_report_from_bridge({ interfaces => {} }), undef,
 is_deeply( subs::network_report_from_bridge({ interfaces => { lo => { ip => '' } } }), {},
 	'an interface without an address is not reported' );
 
+is( subs::address_signature( { b => { ip => '2' }, a => { ip => '1' } } ),
+	subs::address_signature( { a => { ip => '1' }, b => { ip => '2' } } ),
+	'the address signature does not depend on key order' );
+isnt( subs::address_signature( { a => { ip => '9' } } ),
+	subs::address_signature( { a => { ip => '1' } } ),
+	'a changed address changes the signature' );
+is( subs::address_signature(undef), '', 'no address map has an empty signature' );
+
 done_testing();

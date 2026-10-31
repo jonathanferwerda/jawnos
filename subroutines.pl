@@ -4857,6 +4857,17 @@ our ($network_report_memo, $network_report_memo_at);
 # and their devices row carried `{}`. The app answers the same report natively
 # (network.interfaces); this maps it to the structure the ifconfig parser below
 # produces. A desktop has no bridge, so it keeps parsing ifconfig.
+# Order-insensitive identity for an address map: the interface and its IPv4
+# address. Used to notice a changed address without rewriting the row every
+# tick because JSON key order moved.
+sub address_signature {
+	my ($address) = @_;
+	return '' unless ref $address eq 'HASH';
+	return join ';', map {
+		$_ . '=' . ( ref $address->{$_} eq 'HASH' ? ( $address->{$_}->{'ip'} // '' ) : '' )
+	} sort keys %{$address};
+}
+
 sub network_report_from_bridge {
 	my ($report) = @_;
 	return undef
@@ -5855,7 +5866,39 @@ sub device_scan() {
 # hangs them off that row; device_scan is otherwise the only writer). Built from
 # the same interface report device_scan writes, so the two agree on shape. Cheap
 # when the row already exists (one select), so a per-tick caller is fine.
-sub ensure_self_device() {
+# The self row is written by device_scan, which only runs on a real scan. A
+# phone or tablet that never presses Scan therefore kept the address map it
+# had (often `{}`) and peers could not learn its LAN address. Every
+# device_lister pass refreshes it from the interface report, and only when the
+# interface/address signature moved.
+sub refresh_self_address {
+	my $hostname = `hostname`;
+	chomp $hostname;
+	return 0 unless length $hostname;
+	my $address = &subs::network_interface_reporter();
+	return 0 unless $address && scalar keys %{$address};
+	my $want = &address_signature($address);
+	my $rows = &subs::db_select('devices', undef, { hostname => $hostname })->hashes;
+	return 0 unless $rows && scalar @{$rows};
+	my $changed = 0;
+	foreach my $row (@{$rows}) {
+		my $old = eval { decode_json( $row->{'address'} || '{}' ) } || {};
+		next if &address_signature($old) eq $want;
+		&subs::db_update(
+			'devices',
+			{
+				address     => encode_json $address,
+				timestamp   => &subs::rightNow(),
+				server_time => &subs::rightNow(),
+			},
+			{ uuid => $row->{'uuid'} },
+		);
+		$changed++;
+	}
+	return $changed;
+}
+
+sub ensure_self_device {
 	my $hostname = `hostname`;
 	chomp $hostname;
 	# A blank or loopback hostname is no name to file a machine under (and would
@@ -5890,6 +5933,7 @@ sub device_lister() {
 	# A plain listing and an explicit Scan both look at the gateway; a typed
 	# purpose lookup (printer, watch, ...) has no reason to probe it.
 	&router_discover() unless $load_type && $load_type ne 'scan';
+	&refresh_self_address();
 	my $remote_machines = &subs::db_query('select * from remote_machines')->hashes;
 	if ($load_type eq 'scan' || $load_type eq 'ping_scan') {
 		&device_scan($timestamp, $load_type, $ip_range);
