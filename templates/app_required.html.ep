@@ -15,6 +15,12 @@
 		<script src="/js/jquery.js"></script>
 		<script src="/js/numeral.min.js"></script>
 		<script src="/js/universal.js?string=<%= &subs::jawn_version() %>"></script>
+		<!-- A signed-in session still has to be *paired*, and the app gate answers
+		     before the manager can: device.js pairs this browser quietly with its
+		     own key when the session is a citizen one, which is what makes the
+		     unlock button below reachable on a device the house has just met
+		     (a reinstalled tablet). A stranger gets an error the script swallows. -->
+		<script src="/js/device.js?string=<%= &subs::jawn_version() %>"></script>
 		<style>
 			html, body { margin: 0; height: 100%; background: #101010; color: #f4f4f4; font-family: sans-serif; }
 			#app_required { max-width: 620px; margin: 0 auto; padding: 9vh 20px; text-align: center; }

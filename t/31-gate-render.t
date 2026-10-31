@@ -41,4 +41,14 @@ my $tpl = <$tf>;
 close $tf;
 like($tpl, qr/\$webauthn_available/, 'gate.html.ep uses $webauthn_available');
 
+# A signed-in session must be able to pair from the app gate, which is the page
+# a reinstalled device lands on before the manager is reachable. device.js does
+# that (its signed-in branch posts /manager/device/pair); without it the page
+# dead-ends and the unlock button can never work.
+my $app_required = "$FindBin::Bin/../templates/app_required.html.ep";
+open(my $af, '<', $app_required) or die "$app_required: $!\n";
+my $ar = <$af>;
+close $af;
+like($ar, qr{<script src="/js/device\.js}, 'app_required loads device.js so a signed-in session can pair');
+
 done_testing();
