@@ -12713,6 +12713,10 @@ post '/manager/leave' => sub($c) {
 		template => 'gate',
 		layout => 'gate',
 		restore_list => $restore_list,
+		# the template asks this: a machine with no passkey enrolled has no
+		# WebAuthn button, and a render that leaves it out is a 500 under strict
+		# (that is what /gate and /manager/leave were doing)
+		webauthn_available => (scalar @{ &webauthn::credentials() } ? 1 : 0),
 		# the gate carries no home path: it is shown before anyone has signed in, and
 		# a field prefilled with the person's own directory hands a visitor their name
 		start_dir => '',
@@ -12739,6 +12743,7 @@ get '/gate' => sub($c) {
 		template => 'gate',
 		layout => 'gate',
 		restore_list => $restore_list,
+		webauthn_available => (scalar @{ &webauthn::credentials() } ? 1 : 0),
 		start_dir => '',
 		config => { 'gate' => { 'background_colour' => ($config->{'gate'}->{'background_colour'} || 'grey') } },
 	);
