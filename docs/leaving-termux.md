@@ -652,10 +652,16 @@ The milestone that actually leaves Termux.
   `TermuxNotificationUtils` and `TermuxFileUtils` as original BSD-2 code too
   (the crash-handler adapter without plugin assumptions, a notification-id
   counter in its own preference file, and only the three installer directory
-  checks). **Four GPL-3-only originals remain**: `TermuxAppSharedPreferences`,
-  `TermuxPreferenceConstants`, `TermuxShellEnvironmentClient` and
-  `TermuxShellUtils` — the preferences and the startup shell environment, the
-  last batch.
+  checks). The last four went next: `TermuxAppSharedPreferences` was rewritten
+  with only the log level and the crash-notification switch (same preference
+  file and keys), `TermuxPreferenceConstants` and
+  `TermuxShellEnvironmentClient` were deleted, and `TermuxShellUtils` was
+  rewritten with the same environment. **No GPL-3-only file remains in
+  `jawnos-shared`; the module is BSD-2**, keeping only the MIT/Apache/
+  Classpath notices. The app module is still a derivative of termux-app, so the
+  APK stays GPL-3 until that code is replaced; the remaining work is the app
+  module itself (`TermuxInstaller` and the other `Termux*` names, the
+  `com.termux` strings, and `grep -r com.termux` down to notices).
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
