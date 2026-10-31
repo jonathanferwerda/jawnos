@@ -1677,6 +1677,17 @@ sub thumb_placeholder {
 
 # A corrupt file or a stuck decoder used to hold the worker forever; a
 # thumbnail is not worth an unanswered request.
+# The app answers a thumbnail in one bridge call (M3). undef means there is no
+# bridge (a desktop) or the file is not something it can draw, and the caller
+# runs its ffmpeg | magick pipeline exactly as before.
+sub native_thumb_png {
+	my ($path, $size, $at_ms) = @_;
+	return undef unless defined $path && length $path;
+	my ($pixels) = (defined $size ? $size : '') =~ /(\d+)/;
+	my $bytes = &subs::device_thumbnail($path, $pixels || 256, $at_ms);
+	return (defined $bytes && length $bytes) ? $bytes : undef;
+}
+
 sub run_thumb_command {
 	my ($command) = @_;
 	my $out = '';
@@ -2171,7 +2182,8 @@ sub rock_and_roll($c) {
 										my $seek = defined $hover_position ? sprintf('%.3f', $hover_position) : '00:00:00.010';
 										my $command2 = 'ffmpeg -ss ' . $seek . ' -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
 										$file_data->{'type'} = 'video';
-										$data = &run_thumb_command($command2);
+										$data = &native_thumb_png($filename, $thumbnail_size);
+										$data = &run_thumb_command($command2) unless defined $data && length $data;
 										if ($opened->{'stream'} && (!defined $data || !length $data)) {
 											my $whole = &subs::note_open_container($opened->{'container'}, $opened->{'secret'}, $opened->{'standard'}, 1);
 											if (defined $whole && length $whole) {
@@ -2187,7 +2199,8 @@ sub rock_and_roll($c) {
 										}
 										my $command2 = 'magick ' . $filename . ' -auto-orient -strip -resize ' . $thumbnail_size . ' -';
 										$file_data->{'type'} = 'image';
-										$data = &run_thumb_command($command2);
+										$data = &native_thumb_png($filename, $thumbnail_size);
+										$data = &run_thumb_command($command2) unless defined $data && length $data;
 									}
 									if ($file_data->{'uuid'} && $data && $thumbnail_size ne 'none' && !defined $hover_position) {
 										pop @file_split;
@@ -2322,7 +2335,8 @@ sub rock_and_roll($c) {
 					else {
 						my $filename = $tdir . '/' . &subs::random_string_creator(20) . '.png';
 						my $command = 'ffmpeg -ss 00:01:30.010 -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
-						my $data = `$command`;
+						my $data = &native_thumb_png($file, 200);
+						$data = `$command` unless defined $data && length $data;
 						if ($c->param('position')) {
 							$data ? $c->render_file(data => $data, content_type => 'image/png') : $c->render(text => 'none');
 						}
@@ -2335,7 +2349,8 @@ sub rock_and_roll($c) {
 				elsif (grep { $ext eq $_ } qw/xcf tiff/) {
 					my $t_file = &subs::terminal_name($file);
 					my $c_command = 'magick "' . $file . '[0]" -alpha on -background none -flatten -resize 256x256 png:-';
-					my $converted = `$c_command`;
+					my $converted = &native_thumb_png($file, 256);
+					$converted = `$c_command` unless defined $converted && length $converted;
 					my $data =  $converted;
 					$c->render_file(data => $data);
 				}
@@ -2432,7 +2447,8 @@ sub rock_and_roll($c) {
 								}
 							}
 							my $command = 'ffmpeg -ss ' . $duration . ' -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
-							$data = `$command`;
+							$data = &native_thumb_png($file, 200);
+							$data = `$command` unless defined $data && length $data;
 
 							write_file($tfile, $data) if $save == 1;
 						}
@@ -2443,7 +2459,8 @@ sub rock_and_roll($c) {
 				elsif (grep { $ext eq $_ } qw/xcf tiff/) {
 					my $t_file = &subs::terminal_name($file);
 					my $c_command = 'magick "' . $file . '[0]" -alpha on -background none -flatten -resize 256x256 png:-';
-					my $converted = `$c_command`;
+					my $converted = &native_thumb_png($file, 256);
+					$converted = `$c_command` unless defined $converted && length $converted;
 					my $data =  $converted;
 					$c->render_file(data => $data);
 				}
@@ -15567,11 +15584,15 @@ sub thumbnail_creator($data) {
 			$data->{'thumb'} = $thumb;
 			if ($upload_type eq 'video') {
 				my $command2 = 'ffmpeg -ss 00:00:00.010 -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $thumb;
-				`$command2`;
+				my $native = &native_thumb_png($filename, $thumbnail_size);
+				if (defined $native && length $native) { write_file($thumb, $native); }
+				else { `$command2`; }
 			}
 			elsif ($upload_type eq 'image' || $upload_type eq 'document') {
 				my $command2 = 'magick ' . $filename . ' -auto-orient -strip -resize ' . $thumbnail_size . ' ' . $thumb;
-				`$command2`;
+				my $native = &native_thumb_png($filename, $thumbnail_size);
+				if (defined $native && length $native) { write_file($thumb, $native); }
+				else { `$command2`; }
 			}
 			else {
 				return $data;

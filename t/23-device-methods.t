@@ -31,6 +31,7 @@ my %known = map { $_ => 1 } qw(
 	telephony.dial
 	telephony.deviceinfo
 	media.player
+	media.thumbnail
 	share.send
 	open.url
 	notification.list

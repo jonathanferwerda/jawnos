@@ -3427,7 +3427,7 @@ sub device_bridge_connect {
 }
 
 sub device_call {
-	my ($method, $args) = @_;
+	my ($method, $args, $wait) = @_;
 	return undef unless defined $method && length $method;
 
 	my $now = time;
@@ -3480,7 +3480,7 @@ sub device_call {
 
 	my $answer;
 	my $select = IO::Select->new($sock);
-	if ($select->can_read(2)) {
+	if ($select->can_read(defined $wait ? $wait : 2)) {
 		$answer = <$sock>;
 	}
 	unless (defined $answer) {
@@ -3497,6 +3497,26 @@ sub device_call {
 		return undef;
 	}
 	return $reply->{'result'};
+}
+
+# A thumbnail straight from the host app (M3): MediaMetadataRetriever for a film
+# frame, BitmapFactory for a picture, PdfRenderer for a page. Returns PNG bytes,
+# or undef so the caller keeps its ffmpeg | magick pipeline - which is what a
+# desktop does, because there is no bridge there. Decoding a frame is slower than
+# a ping, so this call waits longer than the default two seconds.
+sub device_thumbnail {
+	my ($path, $max, $at_ms) = @_;
+	return undef unless defined $path && length $path;
+	$max = 256 unless defined $max && $max > 0;
+	my %args = (path => $path, max => int($max));
+	$args{'at_ms'} = int($at_ms) if defined $at_ms;
+	my $result = &device_call('media.thumbnail', \%args, 20);
+	return undef unless ref $result eq 'HASH';
+	my $data = $result->{'data'};
+	return undef unless defined $data && length $data;
+	require MIME::Base64;
+	my $bytes = MIME::Base64::decode_base64($data);
+	return (defined $bytes && length $bytes) ? $bytes : undef;
 }
 
 # The machine's battery in one shape for the Monitor and the old System view.

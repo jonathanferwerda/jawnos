@@ -451,13 +451,22 @@ The milestone that actually leaves Termux.
   to pull a subtitle track out of a container; `MediaExtractor` can read text
   samples in some MP4/MKV variants, but that is undocumented territory. So
   ffmpeg stays for subtitles until every library already carries a `.vtt`.
-- **Native thumbnails — worth it, but it is a runtime saving, not an APK one.**
-  `MediaMetadataRetriever.getFrameAtTime()` + `Bitmap.createScaledBitmap` +
-  `Bitmap.compress` (and `ExifInterface`, `PdfRenderer` for images and PDFs)
-  replace the `ffmpeg … -vframes 1 | magick - -resize …` pipeline: **−56 files /
-  −40.2 MB raw / ≈−15 MB zipped** (x86_64 100.1 → ≈85 MB, aarch64 109.9 → ≈95 MB),
-  and −44 `magick` call sites. The APK is 18.2 MB either way, because none of it
-  is in the APK.
+- **Native thumbnails are in (app 1200, 2026-10-30).** The bridge grew
+  `media.thumbnail` (path, max, at_ms) → base64 PNG: `MediaMetadataRetriever`
+  for a film frame, `BitmapFactory` + `ExifInterface` for a picture (sampled, so a
+  40 MP photo is never fully decoded), `PdfRenderer` for a page. The manager's six
+  thumbnail sites call it first and keep their `ffmpeg | magick` pipeline as the
+  fallback, which is what a desktop uses (there is no bridge) and what an old
+  phone with an older app gets. Proven on the emulator over the real bridge: an
+  icon came back 119×128, a generated clip's frame came back 160×90, and a
+  missing file is refused so the caller falls back.
+- **But the archive did not shrink.** ImageMagick has ~30 other jobs — camera
+  capture resize, photo conversion, cover art, colour extraction, montage,
+  crops, PDF export — so the 40 MB stays until those move too. Measured: with
+  `magick`/`convert` out of the diet the x86_64 archive is 242.1 MB instead of
+  282.3 MB; the 40.2 MB is only collectable when the last `magick` call site is
+  gone. Next candidates, in order: `image.resize`/`image.save` in the bridge for
+  the capture and convert paths, then pixel sampling for the colour extraction.
 - **M4 — Identity.** Target: one app, package `com.jawnos`, no Termux code. The
   order that keeps the devices usable:
   1. **Data migration first, and it is the decision that matters.** A new package
