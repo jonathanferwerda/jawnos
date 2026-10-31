@@ -74,6 +74,11 @@ is &subs::records_bad_date_fix({ timestamp => -2000000000000000, ost => '', serv
 		'records_reconcile carries a repair-date action';
 	like $subs, qr/sub records_repair_date/,
 		'and writes it through records_repair_date';
+	like $subs, qr/sub records_bad_dates_scan/, 'the bad-date scan is reusable';
+	like $subs, qr/sub records_repair_bad_dates/, 'with a repair-only pass for a peer';
+	my $manager = $read->("$root/Manager.pl");
+	like $manager, qr/eq 'bad_dates'/, 'the records/repair rail offers the bad-date pass';
+	like $manager, qr/subs::records_repair_bad_dates/, 'and calls it';
 	my $cli = $read->("$root/scripts/records_audit.pl");
 	like $cli, qr/BAD DATES/, 'the CLI prints the bad-date section';
 }
