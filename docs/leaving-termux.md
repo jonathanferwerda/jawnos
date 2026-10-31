@@ -175,6 +175,12 @@ shape M1 and M2 take.
   API that owns it, so the app gains what termux-* never exposed. The bridge
   methods landed so far:
   - `battery.status` — `BatteryManager` + the sticky battery intent.
+  - `network.interfaces` — `NetworkInterface` plus the active network's
+    `LinkProperties`: the IPv4 address, netmask, broadcast, MAC and default
+    gateway per interface. The runtime has no `ifconfig`, and `ip addr` cannot
+    bind a netlink socket as an app uid (SELinux), so this is the only source of
+    the tree's interface report on Android; a desktop still parses `ifconfig`.
+    Without it the `devices` row carried `{}` and nothing knew its own address.
   - `notification.post` — `NotificationManager`, reusing the app's two channels
     (`jawn_notifications`, `jawn_notifications_silent`); a small icon by
     drawable name or app concept, a **large icon decoded from any file**, up to

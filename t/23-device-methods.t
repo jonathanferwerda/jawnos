@@ -13,6 +13,7 @@ use File::Find;
 
 my %known = map { $_ => 1 } qw(
 	battery.status
+	network.interfaces
 	notification.post
 	notification.remove
 	toast.show
