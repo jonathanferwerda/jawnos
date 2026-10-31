@@ -252,10 +252,10 @@ sub main {
 	if ($status) {
 		my ($st, $serr) = peer_status(signed_ua(), $rm, $url);
 		die 'peer_pull: ' . $serr . "\n" unless $st;
-		printf "%s: %s appointments, %s above this machine's watermark, merging=%s\n",
+		printf "%s: %s appointments, %s above this machine's watermark, merging=%s, version=%s\n",
 			$name, (defined $st->{'count'} ? $st->{'count'} : '?'),
 			(defined $st->{'pending'} ? $st->{'pending'} : '?'),
-			($st->{'merging'} || 'no');
+			($st->{'merging'} || 'no'), ($st->{'version'} || '?');
 		return 0;
 	}
 

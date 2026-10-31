@@ -330,6 +330,16 @@ hook before_dispatch => sub {
 		# the signed pull-now lever: a peer with a lapsed cookie asks this
 		# machine to pull from it, and the route peer_verifies the caller
 		$path eq '/manager/configure/remote_upgrade' ||
+		# the deploy lever: a linked machine asks this one to pull, reinstall
+		# and restart. The request rides the same signed rail with no session,
+		# and the route peer_verifies it; without this entry the app gate
+		# answered with the Gate page and the deploy silently did nothing.
+		$path eq '/manager/self_deploy' ||
+		# the restart half of the deploy rail: a peer asks this machine to
+		# reboot its tree after a code sync. The route peer_verifies the caller
+		# and only acts on command=restart (the unauthenticated
+		# /manager/president/restart stays behind the gate).
+		$path eq '/manager/president' ||
 		# the archive machine-to-machine routes: a sending machine probes,
 		# uploads and appends its manifest over the bare signed rail. A
 		# transfer has no session on the archive machine, so the login gate

@@ -51,4 +51,20 @@ my $ar = <$af>;
 close $af;
 like($ar, qr{<script src="/js/device\.js}, 'app_required loads device.js so a signed-in session can pair');
 
+# The app gate steps aside only for paths in its allowlist. The peer levers
+# authenticate themselves with the pinned peer signature, so each must be there -
+# a missing entry answered the peer with the Gate page while the route's own
+# peer_verify never ran. self_deploy (deploy_neighbours) was missing and the
+# deploy silently did nothing behind Enforce.
+my $hooks = "$FindBin::Bin/../hooks.pl";
+open(my $hf, '<', $hooks) or die "$hooks: $!\n";
+my $hook = <$hf>;
+close $hf;
+like($hook, qr{\$path eq '/manager/configure/remote_upgrade'}, 'the pull-now lever is exempt from the app gate');
+like($hook, qr{\$path eq '/manager/self_deploy'}, 'the deploy lever is exempt from the app gate');
+like($hook, qr{\$path eq '/manager/president'}, 'the peer restart rail is exempt from the app gate');
+
+# And the route really does verify the caller before it pulls and restarts.
+like($text, qr{post '/manager/self_deploy'.*?peer_verify}ms, 'self_deploy peer_verifies the caller');
+
 done_testing();
