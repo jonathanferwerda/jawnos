@@ -423,9 +423,18 @@
 				clearInterval(vidControls['<%= $id %>_video_interval']);
 				vidControls['<%= $id %>_video_interval'] = setInterval(function() {
 					var el = document.getElementById('<%= $id %>');
-					if (!el || $('#<%= $id %>').length == 0) { //!$('.<%= $miss %>_container').closest('.wind').is(':visible')) {
-						clearInterval(vidControls['<%= $id %>_video_interval']);
-						misses['<%= $id %>'] = null;
+					// A window re-render (a search swapping the lists in place, an icon or
+					// theme refresh) can drop the element for a moment. This tick is the
+					// only thing that draws the seek, the clock and the title, and once it
+					// is cleared nothing arms it again without reopening the app - a track
+					// changed after that sat at 0 with the previous title on screen while
+					// #interface's own clock ran on. Give up only when the music window
+					// itself is gone, and let music.js re-arm it on every open/search.
+					if (!el) {
+						if ($('#music').length == 0) {
+							clearInterval(vidControls['<%= $id %>_video_interval']);
+							misses['<%= $id %>'] = null;
+						}
 						return;
 					}
 					// Skip per-second DOM/layout work while the tab is backgrounded.
@@ -487,7 +496,10 @@
 					// (a resumed track, a play promise WebKit refused) froze the seek bar and
 					// the title while the sound played on normally. A paused track just
 					// holds its place.
-					$('#<%= $miss %>_position').val(v.duration ? v.currentTime / v.duration * 100 : 0);
+					// The input id carries this render's miss, but a refresh can hand the
+					// window a new one; the element itself always knows which it wears.
+					var bar_miss = $('#<%= $id %>').attr('miss') || '<%= $miss %>';
+					$('#' + bar_miss + '_position').val(v.duration ? v.currentTime / v.duration * 100 : 0);
 					$('#<%= $id %>_time_display').text(numeral(v.currentTime).format('00:00:00'));
 					<% if ($source eq 'music') { %>
 					// the title is placed and wrapped by its own css now; sizing it here
@@ -497,6 +509,12 @@
 					<% } %>
 				}, 1000);
 			}
+			<% if ($source eq 'music') { %>
+			// music.js arms this again on every open and search: a search swaps the
+			// lists in place and never re-runs this script, so the tick has to be
+			// restartable from outside the include.
+			window.jawnosMusicBarInterval = <%= $miss %>VideoInterval;
+			<% } %>
 			var <%= $miss %>Tools = { toolbarTimeout: 0, toolbarReset: 0, lastX: 0, lastY: 0 };
 			window.jawnos_vid_tools = window.jawnos_vid_tools || {};
 			window.jawnos_vid_tools['<%= $id %>'] = <%= $miss %>Tools;
