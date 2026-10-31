@@ -78,6 +78,9 @@ my $STATUS_REMOTE  = 'files/home/.president/status';
 my $VERSION_REMOTE = 'files/home/jawnos/VERSION';
 my $RUNTIME_REMOTE = 'files/usr/etc/jawnos-runtime.json';
 my $SQLITE_REMOTE  = 'files/usr/bin/sqlite3';
+my $PKILL_REMOTE   = 'files/usr/bin/pkill';
+my $PGREP_REMOTE   = 'files/usr/bin/pgrep';
+my $PERL_PATTERN   = 'files/usr/bin/perl';
 
 # Required identity files. Losing any of these costs the house its vault, its
 # peer rail or its name; refuse to skip one.
@@ -107,6 +110,7 @@ my %opt = (
 my ($serial, $apk, $backup_dir, $model, $installed_vc, $installed_vn);
 my ($identity_before, $tree_before, $status_before);
 my $restore_seq = 0;
+my $disabled = 0;
 my (@failures, @passes);
 
 while ( defined( my $arg = shift @ARGV ) ) {
@@ -116,6 +120,8 @@ while ( defined( my $arg = shift @ARGV ) ) {
 	if ($arg eq '--adb')        { $opt{adb} = shift @ARGV; next; }
 	if ($arg eq '--dry-run')    { $opt{dry_run} = 1; next; }
 	if ($arg eq '--apply')      { $opt{apply} = 1; next; }
+	if ($arg eq '--first-run-timeout') { $opt{first_run_timeout} = shift @ARGV; next; }
+	if ($arg eq '--status-timeout')    { $opt{status_timeout} = shift @ARGV; next; }
 	if ($arg eq '--help' || $arg eq '-h') { usage(0); }
 	die "app_migrate.pl: unknown option $arg\n" . usage_text();
 }
@@ -129,20 +135,28 @@ my $ok = eval { main(); 1 };
 unless ($ok) {
 	my $err = $@ || "unknown error\n";
 	$err =~ s/\s+\z//;
+	# A disabled app is deliberate on failure: enabling it lets the system
+	# rebind the IME/notification listener and the app starts the tree again
+	# against a half-restored database. Say how to undo it instead.
 	print STDERR "\napp_migrate: FAIL\n$err\n";
 	print STDERR "backup: $backup_dir\n" if defined $backup_dir && -d $backup_dir;
+	print STDERR "$PKG is left disabled; re-enable it with:\n"
+		. "  adb -s $serial shell pm enable $PKG\n" if $disabled;
 	exit 1;
 }
 exit 0;
 
 sub usage_text {
 	return "usage: app_migrate.pl --device SERIAL [--apk FILE] [--backup-dir DIR]\n"
-		. "                      [--adb PATH] [--dry-run] [--apply]\n"
+		. "                      [--adb PATH] [--first-run-timeout SECONDS]\n"
+		. "                      [--status-timeout SECONDS] [--dry-run] [--apply]\n"
 		. "\n"
 		. "  --device SERIAL   adb serial (run `adb devices -l`)\n"
 		. "  --apk FILE        APK to install (default: newest releases/jawnos-app-*.apk)\n"
 		. "  --backup-dir DIR  default: ~/.jawnos-backups/<model>-<serial>-<YYYY-MM-DD-HHMM>/\n"
 		. "  --adb PATH        adb executable (default: adb)\n"
+		. "  --first-run-timeout SECONDS  wait for the first run to finish (default 900)\n"
+		. "  --status-timeout SECONDS     wait for status=good after the restore (default 300)\n"
 		. "  --dry-run         print the plan and change nothing (the default)\n"
 		. "  --apply           actually migrate the device\n";
 }
@@ -209,6 +223,9 @@ sub main {
 	step('restore config and the database');
 	restore_house();
 
+	step('verify the restored database before it is opened');
+	verify_restored_database();
+
 	step('rewrite old com.termux paths in settings');
 	rewrite_settings();
 
@@ -224,7 +241,11 @@ sub main {
 	verify_after();
 
 	print_summary();
-	exit 1 if @failures;
+	if (@failures) {
+		# Do not leave a tree writing into a database the checks do not trust.
+		eval { stop_app() };
+		die "migration checks failed; $PKG is stopped\n";
+	}
 	return;
 }
 
@@ -342,17 +363,18 @@ sub print_plan {
 	print "steps that WOULD run:\n";
 	my $n = 0;
 	for my $line (
-		"force-stop $PKG",
+		"force-stop $PKG, disable it so Android cannot rebind it, and kill the exec'd perl tree",
 		"back up the house and identity to $backup_dir (MANIFEST, sha256, integrity_check)",
 		"uninstall $PKG",
 		"install $apk",
 		"launch the launcher and wait for files/usr + the tree to appear (<= $opt{first_run_timeout}s)",
-		"force-stop $PKG before the tree touches the vault",
+		"force-stop + disable $PKG and kill the tree before it touches the vault",
 		"restore " . join(', ', map { $_->{remote} } @KEYS),
 		"restore $CONFIG_REMOTE",
 		"delete stale jawnos.db-wal/-shm and restore $DB_REMOTE",
+		"verify the restored database's sha256, integrity and appointment count",
 		"rewrite /data/data/com.termux/files in settings (skipped when there is nothing to rewrite)",
-		"start the app, poll $STATUS_REMOTE for good (<= $opt{status_timeout}s)",
+		"re-enable the app, start it, poll $STATUS_REMOTE for good (<= $opt{status_timeout}s)",
 		"verify tree VERSION, appointment count and device identity",
 	) {
 		$n++;
@@ -590,7 +612,48 @@ sub adb_report_install_state {
 }
 
 sub stop_app {
-	adb( args => [ 'shell', 'am', 'force-stop', $PKG ] );
+	# force-stop alone does not stop the tree. The app carries system-bound
+	# services (the IME, the notification listener, the VPN), so Android can
+	# rebind the package within seconds, and SessionService then starts the
+	# tree again on its 2 s backoff. The exec'd perl tree is not an
+	# ActivityManager process at all, so force-stop never kills it either.
+	# Disabling the package stops the rebind; pkill stops the tree. Doing only
+	# force-stop is how a first-run WAL was left beside the restored database
+	# (2026-10-31) and made it look corrupt.
+	adb( args => [ 'shell', 'am', 'force-stop', $PKG ], allow_fail => 1 );
+	adb( args => [ 'shell', 'pm', 'disable-user', '--user', '0', $PKG ], allow_fail => 1 );
+	$disabled = 1;
+	# The app may have restarted between the force-stop and the disable.
+	adb( args => [ 'shell', 'am', 'force-stop', $PKG ], allow_fail => 1 );
+
+	my $deadline = time + 30;
+	while ( 1 ) {
+		adb(
+			args       => [ 'shell', 'run-as', $PKG, $PKILL_REMOTE, '-9', '-f', $PERL_PATTERN ],
+			allow_fail => 1,
+		);
+		last if tree_is_down();
+		if ( time >= $deadline ) {
+			die "app_migrate.pl: the jawn tree is still running after 30s; refusing to touch the database\n";
+		}
+		sleep 1;
+	}
+	print "  $PKG disabled and the tree is down\n";
+}
+
+sub tree_is_down {
+	my $r = adb(
+		args       => [ 'shell', 'run-as', $PKG, $PGREP_REMOTE, '-f', $PERL_PATTERN ],
+		allow_fail => 1,
+	);
+	return 1 if $r->{rc} != 0;   # pgrep exits 1 when nothing matches
+	return trim( $r->{out} // '' ) eq '' ? 1 : 0;
+}
+
+sub enable_app {
+	return unless $disabled;
+	adb( args => [ 'shell', 'pm', 'enable', $PKG ], allow_fail => 1 );
+	$disabled = 0;
 }
 
 sub launcher_component {
@@ -618,6 +681,7 @@ sub launcher_component {
 
 sub start_app {
 	my ($component) = @_;
+	enable_app();
 	my $r = adb(
 		args       => [ 'shell', 'am', 'start', '-W', '-n', $component ],
 		allow_fail => 1,
@@ -631,21 +695,41 @@ sub start_app {
 sub wait_for_first_run {
 	my $deadline = time + $opt{first_run_timeout};
 	my $last = 0;
-	my ( $ver, $rt );
-	while ( 1 ) {
-		$ver = remote_read_trim($VERSION_REMOTE);
-		$rt  = remote_read_trim($RUNTIME_REMOTE);
-		if ( defined $ver && length $ver && defined $rt && length $rt ) {
-			print "  first run ready: tree $ver, runtime $rt\n";
+	my ( $ver, $rt, $missing, $status );
+	# VERSION appears while git is still checking the tree out: the first
+	# migration (2026-10-31) stopped here, the checkout was left half written,
+	# and the restored tree could not load subroutines.pl. A complete run means
+	# the files President loads are in place and jawn itself says good.
+	my @needed = qw(subroutines.pl gb.pl President.pl Manager.pl);
+	while (1) {
+		$ver    = remote_read_trim($VERSION_REMOTE);
+		$rt     = remote_read_trim($RUNTIME_REMOTE);
+		$status = remote_read_trim($STATUS_REMOTE);
+		$missing = undef;
+		for my $f (@needed) {
+			next if remote_test("$TREE_REMOTE/$f");
+			$missing = $f;
+			last;
+		}
+		if ( defined $ver && length $ver
+			&& defined $rt && length $rt
+			&& !defined $missing
+			&& defined $status && $status eq 'good' ) {
+			print "  first run ready: tree $ver, status good, runtime " . substr($rt, 0, 60) . "\n";
 			return;
 		}
 		if ( time >= $deadline ) {
+			my $why = !defined $ver || !length $ver ? 'tree VERSION absent'
+				: defined $missing ? "$missing is not in the checkout yet"
+				: !defined $rt || !length $rt ? 'runtime json absent'
+				: 'status is ' . ( defined $status && length $status ? $status : 'absent' );
 			die "app_migrate.pl: timed out after $opt{first_run_timeout}s waiting for the first run\n"
-				. "  tree VERSION: " . ( defined $ver && length $ver ? $ver : 'absent' ) . "\n"
-				. "  runtime json: " . ( defined $rt && length $rt ? 'present' : 'absent' ) . "\n";
+				. "  $why\n";
 		}
 		if ( time - $last >= 15 ) {
-			print "  waiting for the first run to unpack the runtime and clone the tree"
+			my $why = defined $missing ? " ($missing not there yet)"
+				: ( defined $status && length $status && $status ne 'good' ) ? " (status $status)" : '';
+			print "  waiting for the first run to finish$why"
 				. " (" . ( time - ( $deadline - $opt{first_run_timeout} ) ) . "s)\n";
 			$last = time;
 		}
@@ -679,6 +763,50 @@ sub restore_house {
 		restore_file( $local, $f->{remote} );
 	}
 	print "  config and database restored\n";
+}
+
+# Everything that could apply a WAL from the old install to the restored file
+# has to be ruled out before the tree is allowed to open it: the file must be
+# exactly the backup, intact, with the same row count. The first migration
+# (2026-10-31) restored a good backup and then opened it beside a WAL left by
+# the still-running first-run tree; SQLite reported the image as malformed and
+# the appointment count as zero while the file itself was fine.
+sub verify_restored_database {
+	my $backup_db = "$backup_dir/$DB_REMOTE";
+	my $want_sha  = sha256_file($backup_db);
+	my $sqlite3   = host_sqlite3();
+	my $want_count = sqlite_one( $sqlite3, $backup_db, 'SELECT count(*) FROM appointments;' );
+
+	adb( args => [ 'shell', 'run-as', $PKG, 'rm', '-f', "$DB_REMOTE-wal", "$DB_REMOTE-shm" ] );
+
+	my $got = adb( args => [ 'shell', 'run-as', $PKG, 'sha256sum', $DB_REMOTE ] );
+	my ($got_sha) = ( $got->{out} || '' ) =~ /^\s*([0-9a-fA-F]{64})\b/;
+	die "app_migrate.pl: cannot read the restored database's sha256\n"
+		unless defined $got_sha;
+	die "app_migrate.pl: the restored database does not match the backup on the device\n"
+		. "  want $want_sha\n  got  $got_sha\n"
+		unless lc($got_sha) eq lc($want_sha);
+
+	my $sql_cmd = "run-as $PKG $SQLITE_REMOTE " . shell_quote($DB_REMOTE)
+		. ' ' . shell_quote('PRAGMA integrity_check;');
+	my $check = adb(
+		args       => [ 'shell', $sql_cmd ],
+		allow_fail => 1,
+	);
+	my $result = trim( $check->{out} // '' );
+	die "app_migrate.pl: the restored database is not intact on the device:\n"
+		. ( $result ne '' ? "$result\n" : trim( $check->{err} // '' ) . "\n" )
+		unless $check->{rc} == 0 && $result eq 'ok';
+
+	my $count = remote_sqlite_one('SELECT count(*) FROM appointments;');
+	die "app_migrate.pl: the restored database has "
+		. ( defined $count ? $count : 'no readable' )
+		. " appointments; the backup has " . ( defined $want_count ? $want_count : '?' ) . "\n"
+		if !defined $count || !defined $want_count || $count != $want_count;
+
+	# The check itself can leave a WAL; the tree must open the database alone.
+	adb( args => [ 'shell', 'run-as', $PKG, 'rm', '-f', "$DB_REMOTE-wal", "$DB_REMOTE-shm" ] );
+	print "  database: sha256 matches the backup, integrity ok, $count appointments\n";
 }
 
 sub restore_file {

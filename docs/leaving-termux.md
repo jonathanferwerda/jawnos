@@ -607,6 +607,30 @@ The milestone that actually leaves Termux.
   is safe and proves the restore path, but the next in-place upgrade over that
   build will fail with `INSTALL_FAILED_UID_CHANGED` exactly as before.
 
+  **The stop is not just `am force-stop`.** The app carries system-bound
+  services (the IME, the notification listener, the VPN), so Android rebinds it
+  within seconds and `SessionService` starts the tree again on its 2 s backoff;
+  the exec'd `perl` tree is not an ActivityManager process at all. The script
+  force-stops, **disables the package**, and `pkill`s the tree until `pgrep`
+  reports none, re-enabling the package only before the final start. The first
+  tablet run stopped at force-stop, left the first run's WAL beside the restored
+  database, and SQLite called the restored image malformed although the file
+  itself matched the backup.
+
+  **The first run must be complete, not just visible.** `VERSION` appears while
+  git is still checking out. The phone run stopped there and left the tree
+  without `subroutines.pl`; a stale `.git/index.lock` then blocked `git reset`.
+  The wait now requires `subroutines.pl`, `gb.pl`, `President.pl`, `Manager.pl`
+  and `status=good` (`--first-run-timeout`, default 900 s).
+
+  **The restored database is verified before it is opened**: sha256 against the
+  backup, `PRAGMA integrity_check` and the appointment count. A mismatch stops
+  with the app left disabled and prints `pm enable com.jawnos`; the backup is
+  kept. Both devices were migrated to 1217 on 2026-10-31; each then needs a new
+  ticket (`perl scripts/app_ticket.pl phone|tablet --save`, run with
+  `HOME=/data/data/com.jawnos/files/home`), and the app gate asks for the device
+  unlock again because the Keystore key died with the uninstall.
+
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
   `$PREFIX/etc/jawnos-runtime.json` (which makes `jawnos_deps.pl --install` a
@@ -617,8 +641,8 @@ The milestone that actually leaves Termux.
 - **`PATH` is off Termux's prefix by construction.** There is no second prefix:
   `$PREFIX` *is* the runtime on a fresh install, and `SessionService` sets
   `PATH=$PREFIX/bin:…:/system/bin`, so the tools it names are the archive's. The
-  phone and tablet still have their old Termux prefixes, which now serve nothing
-  but the tree's own working files until M4 drops the package.
+  phone and tablet were migrated to `com.jawnos` on 2026-10-31, so no Termux
+  prefix remains on either device.
 - **The first run still uses `git`, deliberately.** A pinned tree archive would
   only move the dependency: the tree's own code sync
   (`scripts/jawnos_update.pl`, every 30 minutes) is `git fetch`, so the checkout
