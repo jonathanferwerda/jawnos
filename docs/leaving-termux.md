@@ -500,6 +500,29 @@ The milestone that actually leaves Termux.
   **empty environment** - no `LD_LIBRARY_PATH`, no `GIT_EXEC_PATH`, no
   `SSL_CERT_FILE`. `--perl-version` keeps only the perl the device runs, since a
   long-lived prefix accumulates module trees for every perl it ever had.
+- **Migration B (the phone) ran for real on 2026-10-31, and it is the recipe.**
+  Back up first: `sqlite3 database/jawnos.db ".backup …"`, `config.json`,
+  `schema.sql` (in `jawnos/database/`), `initial.enc`, and the four identity
+  files above. Then `adb uninstall com.termux`, install com.jawnos, launch it and
+  let the first run download + verify the pinned runtime and clone the tree.
+  **Force-stop before restoring the house**: the first run starts jawn, and a
+  tree that touches the vault before the key file is back seals it to a fresh
+  key (this is the tablet's failure, exactly). Then, with the app stopped, put
+  the database in `jawnos/database/jawnos.db` (delete `-wal`/`-shm` first), copy
+  `config.json`, and restore `.house.key`, `.peer.key`, `.peer.pub` and
+  `.jawnos_signatorial_id` (plus the mirror in `database/`), `chmod 600`. Rewrite
+  the old prefix in `settings` (`update settings set value = replace(value,
+  '/data/data/com.termux/files', '/data/data/com.jawnos/files') where value like
+  '%/data/data/com.termux/%'`), start it and check `status=good`.
+- **A fresh clone has no `.shots/ticket.txt`** (gitignored), so the app's WebView
+  lands on the Gate and then sits on the splash saying "Reaching JawnOS…". Mint
+  the ticket on the device: `perl scripts/app_ticket.pl <client> --save`.
+- **What a migration costs on purpose.** The app key lives in the Android
+  Keystore and dies with the uninstall, so the app gate asks for it again. The
+  peer key, the house key and the signatorial are files: restoring them keeps the
+  machine's name, its pinned peers and its vault, and no other machine has to be
+  touched. On the phone that meant the house came back byte-for-byte: 119,024
+  appointments, `vault`/`suds` reading, `device=e397332d…` unchanged.
 - **A migration must carry three key files, not just the database.** The
   rehearsal copied `jawnos.db` and `config.json` and left `~/.house.key`,
   `~/.peer.key` and the signatorial identity file behind. The tablet then
