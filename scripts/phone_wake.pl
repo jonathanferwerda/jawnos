@@ -62,18 +62,31 @@ unless ($serial) {
 }
 
 my $label = $dashboard ? 'dashboard' : 'wake broadcast';
+# M4: the app is com.jawnos. The component follows the package, so try the new
+# one and fall back to the old fork's for a device still on that build. The
+# broadcast action is an app-private string and has not moved yet.
+my $app = $ENV{'JAWNOS_APP_PACKAGE'} || 'com.jawnos';
+my $wake_component = ".app.JawnWakeReceiver";
 my $cmd = $dashboard
-	? '"' . $adb . '" -s "' . $serial . '" shell am start -n com.termux/.app.JawnDashboardActivity 2>&1'
-	: '"' . $adb . '" -s "' . $serial . '" shell am broadcast -a com.termux.app.JAWN_WAKE -n com.termux/.app.JawnWakeReceiver 2>&1';
+	? '"' . $adb . '" -s "' . $serial . '" shell am start -n ' . $app . '/.app.JawnDashboardActivity 2>&1'
+	: '"' . $adb . '" -s "' . $serial . '" shell am broadcast -a com.termux.app.JAWN_WAKE -n ' . $app . '/' . $wake_component . ' 2>&1';
 my $out = `$cmd`;
 chomp $out;
+if ($out =~ /does not exist|Unknown component|not found/i && $app eq 'com.jawnos') {
+	$app = 'com.termux';
+	$cmd = $dashboard
+		? '"' . $adb . '" -s "' . $serial . '" shell am start -n ' . $app . '/.app.JawnDashboardActivity 2>&1'
+		: '"' . $adb . '" -s "' . $serial . '" shell am broadcast -a com.termux.app.JAWN_WAKE -n ' . $app . '/' . $wake_component . ' 2>&1';
+	$out = `$cmd`;
+	chomp $out;
+}
 print "$label on $serial:\n$out\n";
 
 # A build older than the wake receiver reports a missing component; opening the
 # dashboard still runs its onResume self-test.
 if (!$dashboard && $out =~ /does not exist|Error type|Unknown component|not found/i) {
 	print "wake receiver not on this build; opening the dashboard instead\n";
-	$out = `"$adb" -s "$serial" shell am start -n com.termux/.app.JawnDashboardActivity 2>&1`;
+	$out = `"$adb" -s "$serial" shell am start -n $app/.app.JawnDashboardActivity 2>&1`;
 	chomp $out;
 	print "$out\n";
 }

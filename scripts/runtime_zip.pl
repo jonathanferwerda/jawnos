@@ -17,9 +17,23 @@ use warnings;
 use IO::Compress::Zip qw($ZipError);
 use File::Find ();
 
-my ($stage, $out) = @ARGV;
-die "usage: runtime_zip.pl <stage dir> <out.zip>\n" unless defined $stage && defined $out;
+my ($stage, $out, $rewrite) = @ARGV;
+die "usage: runtime_zip.pl <stage dir> <out.zip> [old=new]\n" unless defined $stage && defined $out;
 die "runtime_zip: no such directory: $stage\n" unless -d $stage;
+
+# The runtime is built from a Termux prefix, whose absolute paths every binary
+# carries (RUNPATH, perl's @INC, git's exec path, the CA bundle). Installing the
+# app under a different package moves that prefix, so the packer rewrites the
+# old path to the new one in each file. It is only safe because the two paths
+# are the same length: com.termux and com.jawnos are, so no offset in any ELF
+# shifts and nothing needs re-linking.
+my ($old_prefix, $new_prefix);
+if (defined $rewrite && length $rewrite) {
+	($old_prefix, $new_prefix) = split /=/, $rewrite, 2;
+	die "runtime_zip: --rewrite-prefix needs old=new\n" unless defined $new_prefix && length $old_prefix;
+	die "runtime_zip: only an equal-length rewrite is safe ($old_prefix / $new_prefix)\n"
+		unless length $old_prefix == length $new_prefix;
+}
 
 my @entries;
 File::Find::find({
@@ -68,6 +82,9 @@ foreach my $rel (@entries) {
 		$data = <$fh>;
 		$data = '' unless defined $data;
 		close $fh;
+		if (defined $old_prefix && length $old_prefix) {
+			$data =~ s/\Q$old_prefix\E/$new_prefix/g;
+		}
 		$mode |= 0100000;   # S_IFREG
 	}
 	my $attr = ($mode << 16) & 0xFFFFFFFF;

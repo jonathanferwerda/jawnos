@@ -25,8 +25,13 @@ is(subs::device_cmd('open', ''), 'termux-open',
 	'an empty argument string adds no trailing space');
 is(subs::device_cmd('sms-send', '-n 555 "hello"'), 'termux-sms-send -n 555 "hello"',
 	'the argument string is passed through unchanged, quoting included');
-is(subs::device_bin('location'), '/data/data/com.termux/files/usr/bin/termux-location',
+is(subs::device_bin('location'), '/data/data/com.jawnos/files/usr/bin/termux-location',
 	'the capability probe names the same binary the call would run');
+{
+	local $ENV{'PREFIX'} = '/tmp/somewhere/usr';
+	is(subs::device_bin('location'), '/tmp/somewhere/usr/bin/termux-location',
+		'and it follows the prefix the app exported, not a baked path');
+}
 
 # device_run executes through the shell with the optional prefix in front. A
 # fake command on PATH proves it without a phone.

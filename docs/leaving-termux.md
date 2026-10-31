@@ -487,6 +487,31 @@ The milestone that actually leaves Termux.
      `terminal-emulator` (Apache-2.0 vendoring last, or Console disappears).
   3. Prove it on the emulator from a wiped install, then migrate the phone, then
      the tablet.
+- **The prefix is baked into every binary (2026-10-30).** Changing the package
+  moves the data directory, and Termux's binaries carry
+  `/data/data/com.termux/files/usr` in RUNPATH, in perl's `@INC`, in git's exec
+  path and CA bundle, and in sshd's default config. Fixing those one by one is
+  whack-a-mole; the packer does it in one move instead: `--rewrite-prefix
+  old=new` rewrites the path inside every packed file. It is only safe because
+  **`com.termux` and `com.jawnos` are the same length**, so no offset in any ELF
+  shifts and nothing needs re-linking. Proven on the tablet: a runtime packed
+  that way runs `perl 5.42.2`, `Mojolicious`, `Minion`, `DBD::SQLite`,
+  `Net::SSLeay`, `git ls-remote` over https, `ffmpeg` and `magick` with an
+  **empty environment** - no `LD_LIBRARY_PATH`, no `GIT_EXEC_PATH`, no
+  `SSL_CERT_FILE`. `--perl-version` keeps only the perl the device runs, since a
+  long-lived prefix accumulates module trees for every perl it ever had.
+- **Moving the house (migration A) works, rehearsed on the tablet.**
+  `sqlite3 .backup` out of com.termux, uninstall, install com.jawnos, unpack the
+  rewritten runtime, clone the tree, then copy the database and `config.json`
+  back and rewrite the old package's paths in `settings`; `~/storage/shared` is
+  recreated because the photo paths point through it. The imported house came up
+  with the same 114,390 appointments and 1,332 warehouse rows.
+- **Still to do for M4:** the Java package is still `com.termux.app` (only
+  `applicationId` and the constants moved), so components read
+  `com.jawnos/com.termux.app.X`; the intent action strings are still
+  `com.termux.app.*`; `~/jawnos/scripts/jawn-bt` is missing from the clone and
+  the supervisor logs it; and `termux-shared`/`terminal-view`/
+  `terminal-emulator` are untouched.
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
