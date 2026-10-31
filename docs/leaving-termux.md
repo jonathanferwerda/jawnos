@@ -451,6 +451,10 @@ The milestone that actually leaves Termux.
   to pull a subtitle track out of a container; `MediaExtractor` can read text
   samples in some MP4/MKV variants, but that is undocumented territory. So
   ffmpeg stays for subtitles until every library already carries a `.vtt`.
+  **Fallback to build (2026-10-30):** when a film has no sidecar and the local
+  extractor cannot read the track, ask the film's `remote_machine` for the `.vtt`
+  first — a film is usually watched on the laptop, whose copy already has the
+  subtitle track extracted — and only then fall back to a local ffmpeg pass.
 - **Native thumbnails are in (app 1200, 2026-10-30).** The bridge grew
   `media.thumbnail` (path, max, at_ms) → base64 PNG: `MediaMetadataRetriever`
   for a film frame, `BitmapFactory` + `ExifInterface` for a picture (sampled, so a
