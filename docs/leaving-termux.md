@@ -500,6 +500,28 @@ The milestone that actually leaves Termux.
   **empty environment** - no `LD_LIBRARY_PATH`, no `GIT_EXEC_PATH`, no
   `SSL_CERT_FILE`. `--perl-version` keeps only the perl the device runs, since a
   long-lived prefix accumulates module trees for every perl it ever had.
+- **A migration must carry three key files, not just the database.** The
+  rehearsal copied `jawnos.db` and `config.json` and left `~/.house.key`,
+  `~/.peer.key` and the signatorial identity file behind. The tablet then
+  generated all three fresh, and the damage is exactly what those files guard:
+  - `~/.house.key` unseals the device's `__president/vault` row. A new one
+    cannot read it, so `suds_grabber()` returns nothing, every `box_office`
+    ticket silently renders the **denial** page (`Ne PAS!`), and the WebView
+    sits on "Reaching JawnOS…" forever. It is not a session or cookie problem.
+  - `~/.peer.key` is the device's half of the signed peer rail. Peers pin it on
+    first contact, so a new key means every request is refused (`HTTP 403` on
+    `house levels`), which also blocks `vault_pull_from_peer()`.
+  - the signatorial identity file is the machine's name in the house; losing it
+    gives the device a **new identity** while its database, rosters and
+    vouches still carry the old one.
+  Recovered on 2026-10-31 by handing the house data key over from the laptop
+  (`.shots/suds_export.pl` → USB → `.shots/suds_import.pl`, which accepts only a
+  key this database's level-1 canary validates), then re-pinning the tablet's
+  new peer key in the laptop's `remote_machines` row (`.shots/repin_peer.pl`).
+  The tablet's vault reads again and the manager answers. **A migration backup
+  must include those three files** (they are 45–120 bytes each); the identity
+  change still needs a device re-pair, which the app gate asks for by itself
+  ("Set up this device's unlock" → approve on a signed-in phone).
 - **Moving the house (migration A) works, rehearsed on the tablet.**
   `sqlite3 .backup` out of com.termux, uninstall, install com.jawnos, unpack the
   rewritten runtime, clone the tree, then copy the database and `config.json`
