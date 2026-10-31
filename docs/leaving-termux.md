@@ -774,6 +774,16 @@ The milestone that actually leaves Termux.
 - **Cut-over is done for the tablet, pending for the phone.** `scripts/app_migrate.pl --apply` moved the tablet from the debug-signed build to the signed release (114,600 appointments, identity unchanged); `--restore-only DIR` resumes if the install fails midway. A build signed with another key cannot install over the old one — the uninstall is unavoidable.
 - **Next:** move `bin/` into `jniLibs`, teach the app to create and re-point the symlinks, then raise `targetSdk` to 36 and handle the behaviour changes that brings (foreground-service types, notification permission, edge-to-edge).
 
+**M5b done 2026-10-31: the app targets 36 and execs its runtime from jniLibs.**
+
+- The build moved to AGP 8.7.3 / Gradle 8.9 / JDK 17 / compileSdk 36 / targetSdk 36 (minSdk 26). The old toolchain could not even read `android-36/android.jar`.
+- `scripts/runtime_native_bins.pl` reads the pinned archive and writes `<out>/<abi>/lib<slug>.so` for the **67 regular executables** under `bin/` and `libexec/` (32.2 MB), plus `runtime-bins.txt`, a 258-line manifest: `file` lines name the slug, `link` lines name the 191 aliases (e.g. `bin/awk` → `bin/gawk`). `releases/native-bins/` is the generated dir (gitignored; regenerate from the zip).
+- `scripts/app_build.pl --release` copies the manifest into `app/src/main/assets/runtime-bins.txt` and passes `-PjawnNativeBins=<dir>`; the app module adds that dir to its `jniLibs` source set. A build without the property is unchanged.
+- `JawnRuntimeBins.ensure()` runs in `JawnApplication.onCreate` and at the top of `SessionService.spawn()`: it makes each executable path a symlink to the current `nativeLibraryDir`, re-points them after an APK update, and only ever touches `$PREFIX/bin` and `$PREFIX/libexec`. Idempotent and never fatal.
+- targetSdk 34+ foreground-service types were the real behaviour change: the bridge now starts as `dataSync` and widens to camera/microphone only for a capture (and only when the grant is held); the BLE daemon needed `FOREGROUND_SERVICE_CONNECTED_DEVICE`.
+- **Proven on the phone (SM-S721W, Android 16):** `bin/perl` is a symlink into `/data/app/.../lib/arm64/libbin_perl.so`, `perl -v` runs through it, the tree came up (20 perl processes), `status=good`, the device bridge answered, and `/manager` returned 200. APK 0.118.239.
+- **Still open:** the runtime zip still carries `bin/`/`libexec/` (now dead weight, ~34 MB raw) — strip them from the archive once every device is on a release that creates the symlinks; the x86_64 runtime and the emulator are untested at 36.
+
 - One signing key forever; publish the corresponding source for the exact built revision.
 
 ## Order and the one thing not to do
