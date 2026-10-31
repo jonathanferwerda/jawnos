@@ -2542,7 +2542,13 @@ sub song_maker($data) {
 				$f->{'info'} = $file_information->{$filename};
 			}
 			else {
-				$f = &subs::file_media_information($f, &subs::terminal_name($filename));
+				# The raw path: file_media_information quotes it for ffprobe itself.
+				# Passing terminal_name's backslash-escaped path made the two quoting
+				# layers fight (a space became \\ inside ffprobe's own quotes), so
+				# every re-probe failed on a name with a space, a bracket or an
+				# apostrophe - and any cached answer from before the quoting change
+				# was the only one a folder ever got.
+				$f = &subs::file_media_information($f, $filename);
 				if (&subs::music_info_usable($f->{'info'})) {
 					$file_information->{$filename} = $f->{'info'};
 				}
