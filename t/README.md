@@ -7,10 +7,25 @@ the live database, and without mail or network access.
 ## Run it
 
 ```sh
-prove -l t                 # everything
-prove -lv t/01-names.t     # one file, verbose
-make test                  # after `perl Makefile.PL`
+perl scripts/run_tests.pl          # everything, in parallel
+perl scripts/run_tests.pl -v t/01-names.t   # one file, verbose
+prove -l t                         # serial, if you want it
+make test                          # after `perl Makefile.PL`
 ```
+
+`scripts/run_tests.pl` runs test files concurrently with `prove -j`, using one
+job per core, capped at 8. The cap is measured, not cautious: on the 12-core
+house box the suite takes ~46 s serially, ~20 s at `-j4`, ~16 s at `-j6`,
+~14.5 s at `-j8` and no faster at `-j12` - past eight jobs the processes
+contend for CPU and memory and the suite's own CPU time doubles. A serial run
+uses about 0.9 of the 12 cores (11 idle); `-j8` uses about 5. An explicit
+`--jobs N` is honoured up to the core count, and `--serial` runs one file at a
+time. The runner is what `.githooks/pre-push` calls; pass it the same switches
+you would pass to `prove`.
+
+Concurrent files are safe because every one of them gets a private temp
+sandbox (below) and the socket tests bind ephemeral ports. Nothing in `t/`
+writes to the live database, the repo, or a fixed port.
 
 `Makefile.PL` already declares `TESTS => 't/*.t'`. `scripts/verify_change.pl`
 still owns the "does every file compile" gate on `git push`; this suite covers
@@ -49,6 +64,7 @@ Exports: `root()`, `sandbox()`, `ts(year, month, day[, hour, minute, second])`
 | `16-sync-lock.t` | the pull marker: claim vs live pid bounds, dead/legacy markers, idle values |
 | `17-utility-runtime.t` | utility adoption: `lasted_run` is process state, and the tunnels stall bound |
 | `22-peer-address.t` | peer manager candidates: stale LAN/loopback managers fall back to the fqdn, tunnel rows keep theirs |
+| `43-test-runner.t` | `scripts/run_tests.pl` builds a parallel `prove` command: core-derived job cap, clamping, pass-through, serial mode |
 
 ## Rules for a new test
 
