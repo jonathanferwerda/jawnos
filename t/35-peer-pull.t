@@ -54,4 +54,23 @@ is Jawn::PeerPull::peer_manager({ manager => 'https://peer.example:45545' }, und
 is Jawn::PeerPull::peer_manager({ manager => 'https://peer.example:45545/manager/' }, undef),
 	'https://peer.example:45545/manager', 'a trailing slash does not double the route';
 
+# A stale roster ip must not decide where the pull dials: the CLI hands the
+# proven manager to the local route, and only an approved session may name one.
+{
+	my $read = sub {
+		open(my $fh, '<', $_[0]) or die "$_[0]: $!";
+		local $/;
+		my $text = <$fh>;
+		close $fh;
+		return $text;
+	};
+	my $script = $read->(root() . '/scripts/peer_pull.pl');
+	like $script, qr/manager => \$peer_manager/, 'the local pull passes the proven manager';
+	like $script, qr/local_pull\(\$rm, \$window, \$url\)/, 'the resolved peer url reaches it';
+	my $manager = $read->(root() . '/Manager.pl');
+	like $manager, qr/manager => \$manager_override/, 'the route accepts a proven manager';
+	like $manager, qr/\$c->session\('authentication'\) eq 'approved'\) \? \$c->param\('manager'\)/,
+		'only an approved session may name it';
+}
+
 done_testing();

@@ -183,16 +183,25 @@ sub local_session {
 	return ($ua, '', "https://127.0.0.1:$working/manager");
 }
 
-# The ordinary, local direction: this machine pulls from the peer.
+# The ordinary, local direction: this machine pulls from the peer. The peer's
+# proven manager is passed too, because the roster's stored ip can be a dead
+# address (a phone that moved to a new LAN or tailnet address keeps the old one)
+# and the pull would otherwise dial it instead of the host that just answered.
 sub local_pull {
-	my ($rm, $window) = @_;
+	my ($rm, $window, $peer_manager) = @_;
 	my ($ua, $why, $base) = local_session();
 	return (0, $why || 'no local session') unless $ua;
+	my $ip = $rm->{'ip'};
+	if (defined $peer_manager && length $peer_manager) {
+		my $host = eval { Mojo::URL->new($peer_manager)->host };
+		$ip = $host if defined $host && length $host;
+	}
 	my $res = eval {
 		$ua->inactivity_timeout(30)->request_timeout(60)->post(
 			$base . '/configure/remote_upgrade' => form => {
 				signatorial => $rm->{'signatorial'},
-				ip => $rm->{'ip'},
+				ip => $ip,
+				manager => $peer_manager,
 				hostname => $rm->{'hostname'},
 				database => $rm->{'database'},
 				gimme => $window,
@@ -266,7 +275,7 @@ sub main {
 	}
 	else {
 		printf "pulling %s from %s (%s)\n", $window, $name, $url;
-		($started, $reply) = local_pull($rm, $window);
+		($started, $reply) = local_pull($rm, $window, $url);
 	}
 	print "  $reply\n";
 	return 1 unless $started;

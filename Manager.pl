@@ -9943,6 +9943,12 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 	my $full = $c->param('full');
 	my $remote_signatorial = $c->param('signatorial');
 	my $remote_device = $c->param('device');
+	# A local caller (the CLI, or the Dev panel) may name the manager that just
+	# answered when the roster's stored address is stale - a phone that moved to a
+	# new LAN or tailnet address leaves the old ip behind, and the pull then dials
+	# a dead host. Only a session may do this; a peer lever already knows its own
+	# address and must not be able to make this machine fetch an arbitrary URL.
+	my $manager_override = ($c->session('authentication') eq 'approved') ? $c->param('manager') : undef;
 	my $params = {
 		timestamp => $timestamp,
 		ip => $ip,
@@ -9953,6 +9959,7 @@ post '/manager/configure/remote_upgrade' => sub($c) {
 		full => $full,
 		remote_signatorial => $remote_signatorial,
 		remote_device => $remote_device,
+		manager => $manager_override,
 		marker => 'running:claim'
 	};
 	# Claim the marker here, not in the child: the reconnector can walk several
