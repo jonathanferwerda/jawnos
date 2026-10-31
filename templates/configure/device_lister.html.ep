@@ -143,6 +143,71 @@
 				<% } %>
 			</div>
 		<% } %>
+		<% if (scalar @{$remote_machines || []}) { %>
+			<%# peers the remote_machines table knows but no neighbour table lists: a
+			    tailnet peer, or one on a subnet this machine cannot reach, has no
+			    network card above. Give it the same manager and Migrate controls. %>
+			<div class="device_card" id="remote_machines_card">
+				<div class="device_head">
+					<span class="network_cidr"><%= &subs::lang('network.peers') %></span>
+					<span class="device_when"><%= &subs::ui('peers this machine knows but no network here lists') %></span>
+				</div>
+				<div class="device_machines">
+					<div class="cfg-scroll">
+					<table>
+						<thead>
+							<tr><th><%= &subs::lang('common.devices') %></th><th><%= &subs::lang('common.manager') %></th><th><%= &subs::ui('Actions') %></th></tr>
+						</thead>
+						<tbody>
+						<% foreach my $n ( @{$remote_machines} ) { %>
+							<% my $rm = $n; %>
+							<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+								<td>
+									<% if ($n->{'hostname'} || $n->{'name'} || $n->{'domain'}) { %><b><%= $n->{'hostname'} || $n->{'name'} || $n->{'domain'} %></b><br><% } %>
+									<% if ($n->{'fqdn'}) { %><span style="opacity:.7;"><%= $n->{'fqdn'} %></span><br><% } %>
+									<span class="remote_ip"><%= $n->{'ip'} %></span><br><span style="opacity:.6;"><%= $n->{'mac'} %></span>
+									<% if ($n->{'model'}) { %><br><span class="pill"><%= $n->{'model'} %></span><% } %>
+									<% if ($n->{'capabilities'}) { %><br><span class="pill" hint="<%= &subs::ui('abilities') %>"><%= $n->{'capabilities'} %></span><% } %>
+									<% if ($n->{'tunnel'}) { %><br><span class="pill"><%= &subs::ui('Tunnel') %></span><% } %>
+								</td>
+								<td class="remote_manager">
+									<% if ($rm->{'buttons'}) { %>
+										<span class="remote_machine_buttons"><%== $rm->{'buttons'} %></span>
+									<% } elsif (($n->{'purpose'} || '') eq 'mobile' || ($n->{'purpose'} || '') eq 'computer') { %>
+										<span style="opacity:.7;"><%= &subs::ui('Lost') %></span>
+									<% } %>
+								</td>
+								<td>
+									<div class="device_actions">
+										<% if ($rm->{'uuid'} && $n->{'signatorial'} && ($rm->{'privilege'} || '') ne 'citizen') { %>
+											<% my $grant = $rm->{'grant_scope'} || 'trusted'; %>
+											<% my $days_left = ''; if (($rm->{'grant_expires'} || '') =~ /^\d+$/ && $rm->{'grant_expires'} > &subs::rightNow()) { $days_left = int(($rm->{'grant_expires'} - &subs::rightNow() + 86399999) / 86400000); } %>
+											<span class="device_grant" hint="<%= &subs::ui('What this house may do here, and for how long') %>">
+												<select class="remote_machine_grant_scope" uuid="<%= $rm->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+													<option value="none" <% if ($grant eq 'none' || $grant eq 'revoked') { %>selected<% } %>><%= &subs::lang('home.none') %></option>
+													<option value="visitor" <% if ($grant eq 'visitor') { %>selected<% } %>><%= &subs::lang('home.guest') %></option>
+													<option value="resident" <% if ($grant eq 'resident' || $grant eq 'member') { %>selected<% } %>><%= &subs::lang('home.resident') %></option>
+													<option value="trusted" <% if ($grant eq 'trusted') { %>selected<% } %>><%= &subs::lang('home.trusted') %></option>
+												</select>
+												<input type="number" min="0" class="remote_machine_grant_days" uuid="<%= $rm->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" placeholder="<%= &subs::lang('home.days') %>" value="<%= $days_left %>">
+											</span>
+										<% } elsif ($rm->{'uuid'} && ($rm->{'privilege'} || '') eq 'citizen') { %>
+											<span class="pill"><%= &subs::lang('home.citizen') %></span>
+										<% } %>
+										<button class="device_scan ping_scan" load_type="ping_scan" ip_address="<%= $n->{'ip'} %>"><%= &subs::ui('Scan') %></button>
+										<% if ($n->{'signatorial'}) { %>
+											<button class="remote_migrate" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>" hostname="<%= $n->{'hostname'} || $n->{'name'} || $n->{'domain'} || '' %>" hint="<%= &subs::ui('Pull the whole house from here onto that device') %>"><%= &subs::ui('Migrate') %></button>
+										<% } %>
+									</div>
+								</td>
+							</tr>
+						<% } %>
+						</tbody>
+					</table>
+					</div>
+				</div>
+			</div>
+		<% } %>
 		<% if (scalar @{$ble_devices || []}) { %>
 			<%# the fleet's radios: a BLE-only device off its access point sits in no machine's neighbour table, so it is listed here from the bridge's own sightings %>
 			<div class="device_card">

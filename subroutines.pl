@@ -2849,6 +2849,26 @@ sub ago_calc() {
 	return $timestamp;
 }
 
+# The device bridge hands back an SMS or call date as the epoch in milliseconds
+# (Telephony.Sms.DATE and CallLog.Calls.DATE), while ago_calc reads a span like
+# "-3h" and bills a bare number as minutes. Passing a millisecond date straight
+# to ago_calc therefore subtracted date*60000 ms from now and put the record
+# millions of years in the past - the "3409757y" rows the SMS and call-log
+# checks wrote after the app moved off termux-api (whose list returned a
+# written date). An absolute epoch passes through; anything else keeps the old
+# span reader. A ten-digit value is a seconds stamp, widened to milliseconds.
+sub epoch_or_span {
+	my ($value, $now) = @_;
+	$now = &rightNow() unless $now;
+	return undef unless defined $value;
+	if ($value =~ /^\s*(\d{10,})\s*$/) {
+		my $ms = $1 + 0;
+		$ms *= 1000 if $ms < 100000000000;
+		return $ms if $ms >= 946684800000;
+	}
+	return &ago_calc($value, $now);
+}
+
 # A warranty belongs to the house, not to the machine that set it. It is stored
 # on the 'all' device row (like the language and the theme), so every device
 # reads the same value. A per-device row from an older build is still honoured
@@ -4974,12 +4994,21 @@ sub router_discover() {
 	return 1;
 }
 
-# Every router this machine has met, newest sighting first. online is a short
-# window so a router that is simply off the network still lists, greyed, with
-# the last time it answered.
+# Every router this machine has met, newest sighting first. Keep only one seen
+# in the last day, or the gateway of a NIC that is up right now: a laptop that
+# roams would otherwise pile up an unnamed row for every network it has left.
+# The rows stay in the table, so returning to that network lists it again.
+# online is a short window so a router that is simply off the network still
+# lists, greyed, with the last time it answered.
 sub router_list() {
-	my @routers = @{ &db_select('routers')->hashes || [] };
 	my $now = &rightNow();
+	my $report = &network_interface_reporter();
+	my %live_gateway = map { ($report->{$_}->{'gw'} || '') => 1 } keys %{$report};
+	my @routers = grep {
+		my $seen = $_->{'last_seen'} || 0;
+		($seen && $now - $seen < 86400000) || $live_gateway{ $_->{'ip'} || '' }
+	} @{ &db_select('routers')->hashes || [] };
+	@routers = sort { ($b->{'last_seen'} || 0) <=> ($a->{'last_seen'} || 0) } @routers;
 	foreach my $r (@routers) {
 		my $seen = $r->{'last_seen'} || 0;
 		$r->{'online'} = ($seen && $now - $seen < 900000) ? 1 : 0;
@@ -6002,6 +6031,61 @@ sub network_groups() {
 			|| join('.', map { sprintf '%03d', $_ } split /[.\/]/, $a) cmp join('.', map { sprintf '%03d', $_ } split /[.\/]/, $b);
 	} @order;
 	return [ map { $groups{$_} } @sorted ];
+}
+
+# The machines remote_machines knows that no neighbour table shows. A peer
+# reached over the tailnet, or one on a subnet none of this machine's NICs
+# reach, is in remote_machines but in no `devices` neighbour list, so the
+# network cards never draw it. Deduplicate by signatorial, or by address when a
+# row has none, so the card only adds what the neighbour tables missed.
+sub remote_machine_orphans() {
+	my ($devices) = @_;
+	my (%shown_sig, %shown_ip);
+	foreach my $d ( eval { @{$devices || []} } ) {
+		next unless ref $d eq 'HASH';
+		$d->{'address'} = eval { return decode_json $d->{'address'} } if $d->{'address'} && !ref $d->{'address'};
+		foreach my $nic ( keys %{$d->{'address'} || {}} ) {
+			foreach my $n ( @{$d->{'address'}->{$nic}->{'neigh'} || []} ) {
+				next unless ref $n eq 'HASH';
+				$shown_sig{ $n->{'signatorial'} } = 1 if $n->{'signatorial'};
+				my $ip = $n->{'ip'} || $n->{'ip_address'};
+				$shown_ip{$ip} = 1 if $ip;
+			}
+		}
+	}
+	my $self = eval { &signatorial_designer() } || '';
+	my @rows;
+	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
+		next unless ref $rm eq 'HASH';
+		my $sig = $rm->{'signatorial'} || '';
+		next if $self ne '' && $sig eq $self;
+		my $ip = $rm->{'ip'} || '';
+		if ($sig ne '') { next if $shown_sig{$sig}; }
+		else { next if $ip ne '' && $shown_ip{$ip}; }
+		# A tunnel stores a loopback manager in the Go button; point it at the
+		# peer's own name when one is known, the same rewrite the neighbour rows
+		# make.
+		my $port = $rm->{'port'} || 45545;
+		my $manager = $rm->{'manager'} || '';
+		my $peer_manager = '';
+		if (($rm->{'fqdn'} || '') ne '') {
+			$peer_manager = 'https://' . $rm->{'fqdn'} . ':' . $port . '/manager';
+		}
+		elsif ($manager !~ m{^https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::|/|$)}) {
+			$peer_manager = $manager;
+			$peer_manager =~ s{/manager$}{};
+			$peer_manager .= '/manager' if $peer_manager ne '';
+		}
+		my $buttons = $rm->{'buttons'} || '';
+		if ($peer_manager ne '') {
+			$buttons =~ s{manager="https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?/manager"}{manager="$peer_manager"}g;
+		}
+		# claim the key too, so a duplicate row in remote_machines is not listed twice
+		if ($sig ne '') { $shown_sig{$sig} = 1; }
+		elsif ($ip ne '') { $shown_ip{$ip} = 1; }
+		push @rows, { %{$rm}, manager => ($peer_manager || $manager), buttons => $buttons };
+	}
+	return \@rows;
 }
 
 # --- JawnOS BLE bridge (replaces the am broadcast + Tasker + BLE plugin chain) ---
@@ -9615,7 +9699,7 @@ my $returner = '';
 			? $bridge_sms->{'messages'}
 			: [];
 		foreach my $l (grep { $_->{'type'} eq 'draft' || $_->{'type'} eq 'sent' || $_->{'type'} eq 'inbox' } @{$list}) {
-			my $time = &subs::ago_calc($l->{'received'},$timestamp);
+			my $time = &subs::epoch_or_span($l->{'received'},$timestamp);
 			my $phone = $l->{'number'};
 			$phone =~ s/\D+//gi;
 			$phone =~ s/^1//;
@@ -18883,7 +18967,7 @@ sub telephone_call_log_check() {
 		my $name = &subs::unformat_name($call->{'name'});
 		my $number = $call->{'phone_number'};
 		$number =~ s/\D+//gi;
-		my $timestamp = &subs::ago_calc($call->{'date'},&subs::rightNow());
+		my $timestamp = &subs::epoch_or_span($call->{'date'},&subs::rightNow());
 
 		my @duration = split /:/, $call->{'duration'};
 
@@ -31624,6 +31708,30 @@ sub records_exempt_add {
 	return 1;
 }
 
+# A millisecond date that a bridge reader mistook for a span of minutes was
+# subtracted from the writing moment, so the row landed millions of years in the
+# past. The arithmetic inverts exactly: the original stamp is
+# (ost - timestamp) / 60000. Only the unmistakable magnitude is touched, and
+# only when the recovered value is a real date, so no other odd row is rewritten.
+sub records_bad_date_fix {
+	my ($row, $now) = @_;
+	$now = &rightNow() unless $now;
+	my $floor = 946684800000;    # 2000-01-01: nothing in the house is older
+	my $bad = $row->{'timestamp'};
+	return undef unless defined $bad && $bad =~ /^-?\d+$/ && $bad < -1000000000000000;
+	my $anchor = (defined $row->{'ost'} && $row->{'ost'} =~ /^\d{10,}$/) ? $row->{'ost'} : $row->{'server_time'};
+	return undef unless defined $anchor && $anchor =~ /^\d{10,}$/;
+	my $real = int(($anchor - $bad) / 60000 + 0.5);
+	return undef unless $real >= $floor && $real <= $now + 86400000;
+	my $fix = { timestamp => $real };
+	my $stop = $row->{'stop_timestamp'};
+	if (defined $stop && $stop =~ /^-?\d+$/ && $stop < -1000000000000000) {
+		my $real_stop = int(($anchor - $stop) / 60000 + 0.5);
+		$fix->{'stop_timestamp'} = ($real_stop >= $floor && $real_stop <= $now + 86400000) ? $real_stop : $real;
+	}
+	return $fix;
+}
+
 sub records_audit {
 	my ($window_ms) = @_;
 	# 0 means all time: the sweep predates the fix by weeks, so the default window is
@@ -31635,7 +31743,7 @@ sub records_audit {
 	my $exempt = &records_exempt();
 	my $report = {
 		generated_at => $now, window_ms => $window_ms, since => $since,
-		sweep => [], wrong_end => [], dupes => [], orphans => [], impossible => [],
+		sweep => [], wrong_end => [], dupes => [], orphans => [], impossible => [], bad_dates => [],
 		apps_with_duration => {}, summary => {},
 	};
 
@@ -31740,6 +31848,41 @@ sub records_audit {
 	my $imp = &db_query('select rowid, uuid, app, type, timestamp, stop_timestamp, duration from appointments where stop_timestamp is not null and cast(stop_timestamp as integer) < cast(timestamp as integer) and server_time > ?', $since)->hashes;
 	$report->{'impossible'} = [ grep { !$exempt->{ $_->{'app'} } } @{$imp} ];
 
+	# BAD DATES - a millisecond date read as a span of minutes. The SMS and
+	# call-log checks passed the bridge's epoch straight to ago_calc, which bills
+	# a bare number as minutes; the record landed ~3.4 million years before now.
+	# Unlike the other passes this looks at all time: the signature is
+	# unmistakable and the bad rows are few.
+	my $bad = &db_query('select rowid, uuid, app, type, timestamp, stop_timestamp, ost, server_time from appointments
+		where cast(timestamp as integer) < -1000000000000000
+		   or (stop_timestamp is not null and cast(stop_timestamp as integer) < -1000000000000000)
+		order by rowid asc')->hashes;
+	# Most of these are not new records: the check re-read the same last ten
+	# messages and thirty calls on every pass, and a mangled stamp never matched
+	# the row it had already written, so it wrote the event again. Keep one row
+	# per event - the sane record when one exists, else the first bad row - and
+	# tombstone the re-writes instead of repairing a duplicate into view.
+	my %kept_bad;
+	foreach my $r ( @{$bad} ) {
+		next if $exempt->{ $r->{'app'} };
+		my $fix = &records_bad_date_fix($r, $now);
+		next unless $fix;
+		my $real = $fix->{'timestamp'};
+		my $dup = &db_query('select uuid from appointments where app = ? and type = ? and cast(timestamp as integer) between ? and ? limit 1',
+			$r->{'app'}, $r->{'type'}, $real - 1000, $real + 1000)->hashes->[0];
+		if ($dup) {
+			push @{$report->{'bad_dates'}}, { %{$r}, fix => $fix, suggested => 'tombstone', why => 'a re-write of a record already stored' };
+			next;
+		}
+		my $event = ($r->{'app'} || '') . '|' . ($r->{'type'} || '');
+		if (grep { abs($_ - $real) <= 1000 } @{ $kept_bad{$event} || [] }) {
+			push @{$report->{'bad_dates'}}, { %{$r}, fix => $fix, suggested => 'tombstone', why => 'a re-write of the record kept from the same batch' };
+			next;
+		}
+		push @{$kept_bad{$event}}, $real;
+		push @{$report->{'bad_dates'}}, { %{$r}, fix => $fix, suggested => 'repair', why => 'a millisecond date was read as a span of minutes' };
+	}
+
 	my $extra = 0;
 	foreach my $g ( @{$report->{'sweep'}} ) { $extra += scalar(grep { $_->{'suggested'} ne 'keep' } @{$g->{'rows'}}); }
 	my $dupe_extra = 0;
@@ -31752,6 +31895,7 @@ sub records_audit {
 		dupe_spare_rows => $dupe_extra,
 		orphans => scalar @{$report->{'orphans'}},
 		impossible => scalar @{$report->{'impossible'}},
+		bad_dates => scalar @{$report->{'bad_dates'}},
 	};
 	return $report;
 }
@@ -31799,6 +31943,19 @@ sub records_reconcile {
 		}
 	}
 
+	# BAD DATES - put back the millisecond stamp the bridge reader mangled. A
+	# fresh server_time is what makes the repair win the peer merge, so the phone
+	# that wrote the row receives the corrected one instead of handing it back.
+	foreach my $r ( @{ $report->{'bad_dates'} } ) {
+		my $fix = $r->{'fix'} or next;
+		if (($r->{'suggested'} // '') eq 'tombstone') {
+			$remove->($r->{'app'}, $r->{'uuid'}, $r->{'why'} || 'a re-write of a stored record');
+			next;
+		}
+		push @actions, { action => 'repair-date', app => $r->{'app'}, uuid => $r->{'uuid'}, timestamp => $fix->{'timestamp'}, stop_timestamp => $fix->{'stop_timestamp'}, why => $r->{'why'} };
+		&records_repair_date($r->{'app'}, $r->{'uuid'}, $fix) if $apply;
+	}
+
 	return { applied => $apply, actions => scalar @actions, summary => $report->{'summary'}, list => \@actions };
 }
 
@@ -31828,6 +31985,19 @@ sub records_repair {
 	my $dur = (0 + $start) - (0 + $stop);
 	&db_update('appointments', { stop_timestamp => $stop, duration => $dur, stop_seen => 'yes', type => 'stop', seen => 'yes', server_time => &rightNow() }, { uuid => $uuid, app => $app });
 	return $dur;
+}
+
+# Restore a mangled millisecond stamp in place, leaving the row's other fields
+# alone. The row is a finished event (an SMS or a call), not an open session.
+sub records_repair_date {
+	my ($app, $uuid, $fix) = @_;
+	return unless $app && $uuid && ref $fix eq 'HASH' && defined $fix->{'timestamp'};
+	my $data = { timestamp => $fix->{'timestamp'}, server_time => &rightNow(), seen => 'yes' };
+	if (defined $fix->{'stop_timestamp'}) {
+		$data->{'stop_timestamp'} = $fix->{'stop_timestamp'};
+		$data->{'stop_seen'} = 'yes';
+	}
+	&db_update('appointments', $data, { uuid => $uuid, app => $app });
 }
 
 # the table, created here too so the watch works from the first boot after an update
@@ -32999,10 +33169,16 @@ sub app_release_sync {
 	mkdir $dir unless -d $dir;
 	my $me = &subs::signatorial_designer();
 	my (%local, %best);
-	foreach my $f ( glob("$dir/jawnos-*.apk") ) {
-		my ($product, $vc) = ( $f =~ m{/jawnos-(app|api)-(\d+)-} );
-		next unless $product;
-		$local{$product} = $vc if !$local{$product} || $vc > $local{$product};
+	# One product: a leftover jawnos-api APK on some peer is not an update to
+	# carry (the API app is retired - its bridge lives in the main APK). Drop a
+	# copy this machine already staged, and say so once per pass.
+	foreach my $stale ( glob("$dir/jawnos-api-*.apk") ) {
+		unlink $stale and &app_release_log('removed retired ' . ($stale =~ m{/([^/]+)$})[0]);
+	}
+	foreach my $f ( glob("$dir/jawnos-app-*.apk") ) {
+		my ($vc) = ( $f =~ m{/jawnos-app-(\d+)-} );
+		next unless $vc;
+		$local{'app'} = $vc if !$local{'app'} || $vc > $local{'app'};
 	}
 	my $rms = &subs::db_select('remote_machines')->hashes || [];
 	foreach my $rm ( @{$rms} ) {
@@ -33020,13 +33196,14 @@ sub app_release_sync {
 		my $phost = $body->{'hostname'} || $rm->{'hostname'} || $rsig;
 		foreach my $rel ( @{ $body->{'releases'} || [] } ) {
 			my ($product, $vc) = ($rel->{'product'}, ($rel->{'versionCode'} || 0) + 0);
-			next unless $product && $vc;
+			next unless $product && $product eq 'app' && $vc;
 			next if $local{$product} && $vc <= $local{$product};
 			next if $best{$product} && $vc <= $best{$product}->{'versionCode'};
 			$best{$product} = { %$rel, versionCode => $vc, manager => $p->{'manager'}, ua => $ua, host => $phost };
 		}
 	}
 	foreach my $product ( sort keys %best ) {
+		next unless $product eq 'app';
 		my $b = $best{$product};
 		my $filename = $b->{'filename'};
 		next unless $filename && $filename =~ /^jawnos-\Q$product\E-\d+-[^\/]+\.apk$/;
@@ -33047,11 +33224,12 @@ sub app_release_sync {
 	# *after* the peer rail - a reachable peer on the LAN answers and serves in
 	# seconds, while the phone's path to the asset CDN can crawl at 24 KB/s, so
 	# a 37 MB APK takes ~25 minutes and held the peer fallback up behind it.
-	# Each product has its own manifest beside its APK; the app manifest keeps
-	# its historical name, the api one is new. A product a peer already supplied
-	# is skipped here ($local moved with it), and a peer that advertised a build
-	# it could not deliver still leaves $local behind for this pass to catch.
-	foreach my $manifest_file (qw(app_release.json api_release.json)) {
+	# The app manifest. A product a peer already supplied is skipped here
+	# ($local moved with it), and a peer that advertised a build it could not
+	# deliver still leaves $local behind for this pass to catch. The api
+	# manifest is gone with the API app; an older peer may still serve it, and
+	# the product filter above ignores it.
+	foreach my $manifest_file (qw(app_release.json)) {
 		my $gh = &github_release_manifest(
 			$config->{'github_repo'} || 'jonathanferwerda/jawnos',
 			$config->{'github_release_tag'} || 'releases',

@@ -4,9 +4,9 @@
 #   perl scripts/app_release.pl <apk> [<apk> ...] [--dir DIR]
 #   perl scripts/app_release.pl --version-code=1003 --version-name=0.119.0 <apk>
 #
-# Each APK is copied to releases/jawnos-<product>-<versionCode>-<versionName>.apk,
-# where product (app|api) is read from the APK's package name. The newest build
-# of a product replaces older ones. This is the "copies it into the jawnos
+# Each APK is copied to releases/jawnos-app-<versionCode>-<versionName>.apk. The
+# newest build replaces older ones. (The retired API app is not a product any
+# more; the device bridge lives in the main APK.) This is the "copies it into the jawnos
 # project directory" step: run it on whichever machine built the APK, and the
 # file is a normal part of the tree from then on.
 #
@@ -33,7 +33,6 @@ while ( defined(my $arg = shift @ARGV) ) {
 	if ($arg eq '--dir')                { $dir = shift @ARGV; next; }
 	if ($arg =~ /^--version-code=(.+)/) { $override{'versionCode'} = $1; next; }
 	if ($arg =~ /^--version-name=(.+)/) { $override{'versionName'} = $1; next; }
-	if ($arg =~ /^--product=(.+)/)      { $override{'product'} = $1; next; }
 	push @apks, $arg;
 }
 die "usage: app_release.pl <apk> [...] [--dir DIR]\n" unless @apks;
@@ -44,23 +43,22 @@ my $aapt = find_aapt();
 foreach my $apk (@apks) {
 	die "$apk: no such file\n" unless -f $apk;
 	my ($pkg, $vc, $vn) = apk_badging($aapt, $apk);
-	my $product = $override{'product'} || ($pkg && $pkg =~ /\.api$/ ? 'api' : 'app');
 	$vc = $override{'versionCode'} || $vc || die "$apk: cannot read versionCode (no aapt; pass --version-code)\n";
 	$vn = $override{'versionName'} || $vn || '0';
 	$vn =~ s/[^0-9A-Za-z._-]/_/g;
-	my $dest = "$dir/jawnos-$product-$vc-$vn.apk";
+	my $dest = "$dir/jawnos-app-$vc-$vn.apk";
 	# A build must out-number the staged one or the in-app updater reads "up to
 	# date": say so rather than silently replacing it. (Re-staging the same
 	# number on purpose - a rebuild before anyone updated - is allowed.)
-	my ($staged_vc) = map { /-([0-9]+)-/ } glob("$dir/jawnos-$product-*.apk");
+	my ($staged_vc) = map { /-([0-9]+)-/ } glob("$dir/jawnos-app-*.apk");
 	if (defined $staged_vc && $vc <= $staged_vc) {
-		print "note: $product versionCode $vc does not out-number the staged $staged_vc; devices will not see an update\n";
+		print "note: versionCode $vc does not out-number the staged $staged_vc; devices will not see an update\n";
 	}
-	# one build per product: drop whatever else is staged for it
-	unlink $_ for grep { $_ ne $dest } glob("$dir/jawnos-$product-*.apk");
+	# one build: drop whatever else is staged
+	unlink $_ for grep { $_ ne $dest } glob("$dir/jawnos-app-*.apk");
 	copy($apk, $dest) or die "copy to $dest failed: $!\n";
-	printf "%-4s v%-8s -> %s (%d bytes, sha256 %s...)\n",
-		$product, $vn, $dest, (-s $dest), substr(sha256_hex(read_file($dest)), 0, 16);
+	printf "app v%-8s -> %s (%d bytes, sha256 %s...)\n",
+		$vn, $dest, (-s $dest), substr(sha256_hex(read_file($dest)), 0, 16);
 }
 
 sub find_aapt {
