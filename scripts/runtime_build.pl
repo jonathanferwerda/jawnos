@@ -43,15 +43,15 @@ my %TOOL = map { $_ => 1 } qw(
 	pgrep pkill ps kill killall nohup tee which
 	sshd scp sftp ssh-keygen
 	base64 timeout ip ss ping
-	ffmpeg ffprobe magick convert
+	ffmpeg ffprobe
 );
-# ffmpeg and ImageMagick stay on purpose (2026-10-30). The plan was MediaCodec
-# and BitmapFactory, but those cover a codec call, not the 51 places the tree
-# pipes a film through `ffmpeg -i ... -vframes 1 | magick - -resize` for a
-# thumbnail, or the loudness pass, or subtitle extraction, or Music's video
-# stream. Dropping them today would not be a diet, it would be a regression;
-# when a native path exists for a call site, that call site moves and the
-# binary follows it out.
+# ImageMagick left the runtime (2026-10-31). Every image call site now asks the
+# device bridge first - resize, save, edit, cover, thumbnail, identify, convert,
+# gray, normalize and montage - so magick/convert are fallbacks a desktop runs
+# and a phone never reaches. ffmpeg stays on purpose: its uses are film frames,
+# loudness, subtitle extraction and Music's video stream, and no native path
+# covers those yet. When one exists, that call site moves and the binary follows
+# it out.
 
 # Never ship, even if the source has it: the package manager and its state.
 my %NEVER = map { $_ => 1 } qw(
