@@ -39378,6 +39378,15 @@ post '/manager/records/repair' => sub($c) {
 	my $signatorial = $c->param('signatorial');
 	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
 	unless ($rm && &subs::peer_verify($c, $rm)) { $c->rendered(403); return; }
+	# A peer that holds the accurate copy asks this machine to clear the records a
+	# bridge bug mangled (a millisecond date read as a span of minutes). This runs
+	# only the unmistakable bad-date pass, is idempotent, and writes through the
+	# same tombstones the mesh already uses; the caller is a pinned, signed peer.
+	if (($c->param('mode') || '') eq 'bad_dates') {
+		my $res = &subs::records_repair_bad_dates();
+		$c->render(json => { ok => 1, mode => 'bad_dates', %{$res} });
+		return;
+	}
 	my $app = &subs::unformat_name($c->param('app'));
 	my $uuid = $c->param('uuid');
 	my $action = $c->param('action') || 'repair';

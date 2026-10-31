@@ -31732,6 +31732,64 @@ sub records_bad_date_fix {
 	return $fix;
 }
 
+# The bad-date rows and what to do with each. Most are not new records: the
+# check re-read the same last ten messages and thirty calls on every pass, and a
+# mangled stamp never matched the row it had already written, so it wrote the
+# event again. Keep one row per event - the sane record when one exists, else the
+# first bad row - and tombstone the re-writes instead of repairing a duplicate
+# into view.
+sub records_bad_dates_scan {
+	my ($now, $exempt) = @_;
+	$now = &rightNow() unless $now;
+	$exempt ||= &records_exempt();
+	my @out;
+	my $bad = &db_query('select rowid, uuid, app, type, timestamp, stop_timestamp, ost, server_time from appointments
+		where cast(timestamp as integer) < -1000000000000000
+		   or (stop_timestamp is not null and cast(stop_timestamp as integer) < -1000000000000000)
+		order by rowid asc')->hashes;
+	my %kept_bad;
+	foreach my $r ( @{$bad} ) {
+		next if $exempt->{ $r->{'app'} };
+		my $fix = &records_bad_date_fix($r, $now);
+		next unless $fix;
+		my $real = $fix->{'timestamp'};
+		my $dup = &db_query('select uuid from appointments where app = ? and type = ? and cast(timestamp as integer) between ? and ? limit 1',
+			$r->{'app'}, $r->{'type'}, $real - 1000, $real + 1000)->hashes->[0];
+		if ($dup) {
+			push @out, { %{$r}, fix => $fix, suggested => 'tombstone', why => 'a re-write of a record already stored' };
+			next;
+		}
+		my $event = ($r->{'app'} || '') . '|' . ($r->{'type'} || '');
+		if (grep { abs($_ - $real) <= 1000 } @{ $kept_bad{$event} || [] }) {
+			push @out, { %{$r}, fix => $fix, suggested => 'tombstone', why => 'a re-write of the record kept from the same batch' };
+			next;
+		}
+		push @{$kept_bad{$event}}, $real;
+		push @out, { %{$r}, fix => $fix, suggested => 'repair', why => 'a millisecond date was read as a span of minutes' };
+	}
+	return \@out;
+}
+
+# Run only the bad-date pass. A peer that holds the accurate copy can ask this
+# machine to clear its own mangled dates over the signed records/repair rail;
+# the pass touches only the unmistakable signature and is idempotent.
+sub records_repair_bad_dates {
+	my $now = &rightNow();
+	my ($repaired, $tombstoned) = (0, 0);
+	foreach my $r ( @{ &records_bad_dates_scan($now) } ) {
+		my $fix = $r->{'fix'} or next;
+		if (($r->{'suggested'} || '') eq 'tombstone') {
+			&records_tombstone($r->{'app'}, $r->{'uuid'});
+			$tombstoned++;
+		}
+		else {
+			&records_repair_date($r->{'app'}, $r->{'uuid'}, $fix);
+			$repaired++;
+		}
+	}
+	return { repaired => $repaired, tombstoned => $tombstoned };
+}
+
 sub records_audit {
 	my ($window_ms) = @_;
 	# 0 means all time: the sweep predates the fix by weeks, so the default window is
@@ -31853,35 +31911,7 @@ sub records_audit {
 	# a bare number as minutes; the record landed ~3.4 million years before now.
 	# Unlike the other passes this looks at all time: the signature is
 	# unmistakable and the bad rows are few.
-	my $bad = &db_query('select rowid, uuid, app, type, timestamp, stop_timestamp, ost, server_time from appointments
-		where cast(timestamp as integer) < -1000000000000000
-		   or (stop_timestamp is not null and cast(stop_timestamp as integer) < -1000000000000000)
-		order by rowid asc')->hashes;
-	# Most of these are not new records: the check re-read the same last ten
-	# messages and thirty calls on every pass, and a mangled stamp never matched
-	# the row it had already written, so it wrote the event again. Keep one row
-	# per event - the sane record when one exists, else the first bad row - and
-	# tombstone the re-writes instead of repairing a duplicate into view.
-	my %kept_bad;
-	foreach my $r ( @{$bad} ) {
-		next if $exempt->{ $r->{'app'} };
-		my $fix = &records_bad_date_fix($r, $now);
-		next unless $fix;
-		my $real = $fix->{'timestamp'};
-		my $dup = &db_query('select uuid from appointments where app = ? and type = ? and cast(timestamp as integer) between ? and ? limit 1',
-			$r->{'app'}, $r->{'type'}, $real - 1000, $real + 1000)->hashes->[0];
-		if ($dup) {
-			push @{$report->{'bad_dates'}}, { %{$r}, fix => $fix, suggested => 'tombstone', why => 'a re-write of a record already stored' };
-			next;
-		}
-		my $event = ($r->{'app'} || '') . '|' . ($r->{'type'} || '');
-		if (grep { abs($_ - $real) <= 1000 } @{ $kept_bad{$event} || [] }) {
-			push @{$report->{'bad_dates'}}, { %{$r}, fix => $fix, suggested => 'tombstone', why => 'a re-write of the record kept from the same batch' };
-			next;
-		}
-		push @{$kept_bad{$event}}, $real;
-		push @{$report->{'bad_dates'}}, { %{$r}, fix => $fix, suggested => 'repair', why => 'a millisecond date was read as a span of minutes' };
-	}
+	$report->{'bad_dates'} = &records_bad_dates_scan($now, $exempt);
 
 	my $extra = 0;
 	foreach my $g ( @{$report->{'sweep'}} ) { $extra += scalar(grep { $_->{'suggested'} ne 'keep' } @{$g->{'rows'}}); }
