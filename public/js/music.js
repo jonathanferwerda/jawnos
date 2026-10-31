@@ -2147,8 +2147,19 @@ function musicToggle(files, same_order) {
 	}
 }
 
+// The player bar's one-second tick (seek, clock and title) is defined by the
+// video include, whose script only runs when the window is first appended. A
+// search now swaps the lists in place and a window refresh strips scripts, so
+// the tick has to be re-armed from here; a tick that was cleared once stays dead
+// and the next track plays with the seek bar at 0 and the previous title.
+function musicBarIntervalArm() {
+	if (typeof window.jawnosMusicBarInterval == 'function') { window.jawnosMusicBarInterval(); }
+}
+
 async function musicInit(method) {
 	treeMaker();
+	// every open and every search leaves exactly one bar tick running
+	musicBarIntervalArm();
 	// the drawers ship with their bars, so arm their drag once the window is up
 	musicConfigDraggable();
 	// the equalizer's saved curve and the panel's sliders
@@ -3593,7 +3604,10 @@ function searchMusic(data) {
 			misses: jmiss
 		},
 		success: function(response) {
-			clearInterval(vidControls['video_video_interval']);
+			// the bar's tick is deliberately left running: this search swaps the
+			// lists in place, so the player and the tick that draws it are untouched.
+			// Clearing it here is what froze the seek bar and the title until the
+			// window was reopened; musicInit re-arms it below.
 
 			var v = document.getElementById('video');
 			var timestamp = Date.now();
