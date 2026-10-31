@@ -63,6 +63,9 @@ is( subs::address_signature( { b => { ip => '2' }, a => { ip => '1' } } ),
 isnt( subs::address_signature( { a => { ip => '9' } } ),
 	subs::address_signature( { a => { ip => '1' } } ),
 	'a changed address changes the signature' );
+isnt( subs::address_signature( { a => { ip => '1', port => 3000 } } ),
+	subs::address_signature( { a => { ip => '1', port => 4000 } } ),
+	'a changed port changes the signature' );
 is( subs::address_signature(undef), '', 'no address map has an empty signature' );
 
 done_testing();

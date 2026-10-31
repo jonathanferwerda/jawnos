@@ -4857,14 +4857,18 @@ our ($network_report_memo, $network_report_memo_at);
 # and their devices row carried `{}`. The app answers the same report natively
 # (network.interfaces); this maps it to the structure the ifconfig parser below
 # produces. A desktop has no bridge, so it keeps parsing ifconfig.
-# Order-insensitive identity for an address map: the interface and its IPv4
-# address. Used to notice a changed address without rewriting the row every
-# tick because JSON key order moved.
+# Order-insensitive identity for an address map. It covers the fields a peer
+# needs to reach and label this machine (address, MAC, gateway and the ports),
+# so a row written without the port environment is corrected on the next pass.
 sub address_signature {
 	my ($address) = @_;
 	return '' unless ref $address eq 'HASH';
+	my @fields = qw(ip mac netmask broadcast gw port ws_port alarm_port arm_port bestow_port coms_port dock_port);
 	return join ';', map {
-		$_ . '=' . ( ref $address->{$_} eq 'HASH' ? ( $address->{$_}->{'ip'} // '' ) : '' )
+		my $e = $address->{$_};
+		$_ . '=' . ( ref $e eq 'HASH'
+			? join( ',', map { $_ . ':' . ( $e->{$_} // '' ) } @fields )
+			: '' )
 	} sort keys %{$address};
 }
 
