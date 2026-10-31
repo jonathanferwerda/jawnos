@@ -32869,6 +32869,13 @@ sub git_watcher_check {
 sub peer_useragent {
 	my $rm = shift;
 	return (undef, $rm) unless $rm && $rm->{'cookie'} && $rm->{'manager'};
+	# A stored loopback manager is the hub's own tunnel route. On any other row it
+	# is a leftover from a tunnel that no longer exists, and the peer's name is
+	# the only address left - so call the name. Left unfixed, every peer call (the
+	# health probe, the handshake that decides whether to pull, the advert) dials
+	# 127.0.0.1 on a port that belongs to nothing, and the machine never syncs
+	# while looking perfectly reachable in a browser.
+	$rm->{'manager'} = &peer_live_manager($rm);
 	$rm = &subs::remote_machine_tunnel_processor($rm);
 	my $jar = eval { decode_json $rm->{'cookie'} };
 	return (undef, $rm) unless $jar && ref $jar eq 'ARRAY';
