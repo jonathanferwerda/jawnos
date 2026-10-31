@@ -4852,6 +4852,47 @@ sub edt_button_presser() {
 
 our ($network_report_memo, $network_report_memo_at);
 
+# The Android runtime has no ifconfig, and `ip addr` cannot bind a netlink socket
+# as an app uid (SELinux), so the phone and tablet reported no interfaces at all
+# and their devices row carried `{}`. The app answers the same report natively
+# (network.interfaces); this maps it to the structure the ifconfig parser below
+# produces. A desktop has no bridge, so it keeps parsing ifconfig.
+sub network_report_from_bridge {
+	my ($report) = @_;
+	return undef
+		unless ref $report eq 'HASH'
+		&& ref $report->{'interfaces'} eq 'HASH'
+		&& %{ $report->{'interfaces'} };
+	my $address = {};
+	foreach my $nic ( sort keys %{ $report->{'interfaces'} } ) {
+		my $i = $report->{'interfaces'}->{$nic};
+		next unless ref $i eq 'HASH' && defined $i->{'ip'} && length $i->{'ip'};
+		my %entry = (
+			nnic        => $nic,
+			ip          => $i->{'ip'},
+			port        => $ENV{PORT_AHOY},
+			ws_port     => $ENV{PORT_MSG},
+			alarm_port  => $ENV{PORT_BELL},
+			arm_port    => $ENV{PORT_ARM},
+			bestow_port => $ENV{PORT_BESTOW},
+			coms_port   => $ENV{PORT_COMS},
+			dock_port   => $ENV{PORT_DOCK},
+			manager     => 'https://' . $i->{'ip'} . ':' . $ENV{PORT_DOCK} . '/manager',
+			timestamp   => &subs::rightNow(),
+		);
+		$entry{'mac'} = $i->{'mac'}
+			if defined $i->{'mac'} && length $i->{'mac'};
+		$entry{'netmask'} = $i->{'netmask'}
+			if defined $i->{'netmask'} && length $i->{'netmask'};
+		$entry{'broadcast'} = $i->{'broadcast'}
+			if defined $i->{'broadcast'} && length $i->{'broadcast'};
+		$entry{'gw'} = $i->{'gw'}
+			if defined $i->{'gw'} && length $i->{'gw'};
+		$address->{$nic} = \%entry;
+	}
+	return $address;
+}
+
 sub network_interface_reporter() {
 	my $c = shift;
 	# Reading the interfaces shells out to ifconfig/arp for every NIC (about
@@ -4860,6 +4901,16 @@ sub network_interface_reporter() {
 	# few seconds. Return a copy: callers add ports and other per-call fields.
 	my $now = &rightNow();
 	if ($network_report_memo && $now - ($network_report_memo_at || 0) < 5000) {
+		return { map { $_ => { %{$network_report_memo->{$_}} } } keys %{$network_report_memo} };
+	}
+	# The app knows the interfaces natively; ask it first. On a desktop there is
+	# no bridge and this returns undef, so the ifconfig parse below still runs.
+	my $bridge_report = eval {
+		&network_report_from_bridge( &subs::device_call('network.interfaces') )
+	};
+	if ( $bridge_report && %{$bridge_report} ) {
+		$network_report_memo = $bridge_report;
+		$network_report_memo_at = $now;
 		return { map { $_ => { %{$network_report_memo->{$_}} } } keys %{$network_report_memo} };
 	}
 	my $device = &subs::device_setter();
