@@ -6681,8 +6681,8 @@ sub ble_yield() {
 	}
 	$log->info('BLE yield ' . $chip_id . ($mac ? ' (' . $mac . ')' : '') . ': not its homebase, releasing that link');
 	&subs::subprocessor(sub {
-		if ($mac) { system($client, 'disconnect', $mac); }
-		else { system($client, 'disconnect', '--all'); }
+		if ($mac) { system($^X, $client, 'disconnect', $mac); }
+		else { system($^X, $client, 'disconnect', '--all'); }
 	}, { name => 'ble yield' });
 }
 
@@ -6724,7 +6724,7 @@ sub ble_enforce_hosts() {
 				# compressed room pushes.
 				my $compress = ($edt eq 'microcontroller') ? '0' : '1';
 				&subs::subprocessor(sub {
-					system($client, 'connect', $mac,
+					system($^X, $client, 'connect', $mac,
 						'--service', $u->{'service_uuid'},
 						'--rx', $u->{'characteristic_uuid_rx'},
 						'--tx', $u->{'characteristic_uuid_tx'},
@@ -6778,7 +6778,7 @@ sub ble_adopt_scan() {
 			$known{ &ble_link_key($c->{'bluetooth'}) } = 1 if $c->{'bluetooth'};
 		}
 	}
-	my $out = `timeout 25 $client scan 8 2>/dev/null`;
+	my $out = `timeout 25 &shell_quote($^X) &shell_quote($client) scan 8 2>/dev/null`;
 	my @found;
 	my %seen;
 	foreach my $line (split "\n", $out) {
@@ -6824,7 +6824,7 @@ sub ble_adopt_scan() {
 		$gb::ble_adopt_tried->{$mac} = $now;
 		$log->info('BLE adopt: a JawnOS device at ' . $mac . ' is not yet known; connecting so it can name itself');
 		&subs::subprocessor(sub {
-			system($client, 'connect', $mac,
+			system($^X, $client, 'connect', $mac,
 				'--service', $u->{'service_uuid'},
 				'--rx', $u->{'characteristic_uuid_rx'},
 				'--tx', $u->{'characteristic_uuid_tx'},
@@ -7116,13 +7116,13 @@ sub bluetooth_sender() {
 			my $link = $gb::ble_links->{ &ble_link_key($bt_mac) };
 			my $compress = (($data->{'edt'} || '') eq 'microcontroller') ? '0' : '1';
 			unless ($link && $link->{'connected'}) {
-				system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx, '--mtu', '512', '--compress', $compress);
+				system($^X, $client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $characteristic_uuid_rx, '--tx', $characteristic_uuid_tx, '--mtu', '512', '--compress', $compress);
 			}
 			# The client hands the JSON to the daemon as-is and the daemon writes
 			# it to the selected radio. Base64 is only for the old broadcast path;
 			# the client used to receive the encoded copy and the watch got a
 			# base64 blob it could not parse.
-			open(my $bt_fh, '|-', $client, 'send', '--mac', $bt_mac) or return;
+			open(my $bt_fh, '|-', $^X, $client, 'send', '--mac', $bt_mac) or return;
 			# The client can now refuse a dead link and exit before it reads this
 			# (a watch that has suspended its radio), so a plain print here would
 			# die of SIGPIPE and take the process with it.
@@ -7195,10 +7195,10 @@ sub bluetooth_stream_open() {
 	return undef unless &ble_bridge_enabled() && $client;
 	my $link = $gb::ble_links->{ &ble_link_key($bt_mac) };
 	unless ($link && $link->{'connected'}) {
-		system($client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $rx, '--tx', $tx, '--mtu', '512', '--compress', '1');
+		system($^X, $client, 'connect', $bt_mac, '--service', $service_uuid, '--rx', $rx, '--tx', $tx, '--mtu', '512', '--compress', '1');
 	}
 	my $fh;
-	open($fh, '|-', $client, 'sendloop', '--mac', $bt_mac) or return undef;
+	open($fh, '|-', $^X, $client, 'sendloop', '--mac', $bt_mac) or return undef;
 	return $fh;
 }
 
@@ -8532,7 +8532,7 @@ sub ble_listener_start() {
 		Mojo::IOLoop->timer(30 => sub() { &ble_listener_start(); });
 	});
 	print "Starting BLE bridge listener\n";
-	$gb::ble_listener->start({ program => $client, program_args => [ 'listen' ] });
+	$gb::ble_listener->start({ program => $^X, program_args => [ $client, 'listen' ] });
 	return 1;
 }
 
