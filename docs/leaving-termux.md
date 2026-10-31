@@ -665,8 +665,15 @@ The milestone that actually leaves Termux.
   "JawnOS", and removed the last literal `com.termux` strings, so
   `grep -r com.termux app/src jawnos-shared/src` is empty. That meets the
   M4 exit as written, but **naming is not a relicense**: the `app/` module's
-  Java is still derived from termux-app, so the APK stays GPL-3 until that
-  code is rewritten file by file (or a clean-room app is written).
+  Java was still derived from termux-app. A normalised similarity pass over the
+  module found exactly three such files — `UserAction`, `HelpActivity` and
+  `JawnDocumentsProvider`. They were rewritten or removed on 2026-10-31
+  (`UserAction` is a two-value enum, the unused wiki `HelpActivity` is gone,
+  and the document provider now uses home-relative, traversal-safe ids and a
+  symlink-safe search). No app file is now above 0.5 similarity and everything
+  except the enum's boilerplate is under 0.2. That is evidence, not a
+  clean-room proof, so the APK's licence remains GPL-3.0-only until its owner
+  decides; there is no remaining termux-app file to rewrite.
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
