@@ -9,6 +9,7 @@ use IO::Socket::INET;
 use JSON::PP;
 use Time::HiRes qw(time);
 use JawnOSTest;
+use MIME::Base64 ();
 
 # M1 device bridge (docs/leaving-termux.md): subs::device_call speaks one JSON
 # line to the host app and returns its `result`; on every failure it returns
@@ -16,6 +17,9 @@ use JawnOSTest;
 # the protocol contract, and DeviceService.java implements the same lines.
 
 my $TOKEN = 'spike-token-123';
+# A stand-in for a PNG: the point is that the bytes survive base64, not that
+# they decode as an image.
+my $PNG = "\x89PNG\r\n\x1a\n" . 'thumbnail-bytes';
 my $dir = tempdir(CLEANUP => 1);
 my $token_file = "$dir/device.token";
 open(my $tf, '>', $token_file) or die $!;
@@ -52,6 +56,19 @@ if (!$pid) {
 					health => 'GOOD', plugged => 'UNPLUGGED',
 				};
 			}
+			elsif (($req->{'method'} // '') eq 'media.thumbnail') {
+				my $args = $req->{'args'} || {};
+				if (($args->{'path'} // '') =~ /refuse/) {
+					$reply{'error'} = 'no thumbnail';
+				}
+				else {
+					$reply{'ok'} = JSON::PP::true;
+					$reply{'result'} = {
+						data => MIME::Base64::encode_base64($PNG, ''),
+						width => 200, height => 150, kind => 'video',
+					};
+				}
+			}
 			else {
 				$reply{'error'} = 'unknown method';
 			}
@@ -75,6 +92,15 @@ ok(ref $ping eq 'HASH' && ($ping->{'app'} // '') eq 'fake',
 my $battery = subs::device_call('battery.status');
 is(ref $battery, 'HASH', 'battery.status returns a hash');
 is($battery->{'percentage'}, 42, 'the result carries the app numbers');
+
+# The app can hand back a thumbnail (M3): the route asks for one before it
+# spawns ffmpeg | magick, and a desktop - with no bridge - gets undef and keeps
+# the pipeline.
+my $thumb = subs::device_thumbnail('/some/film.mp4', 200);
+ok(defined $thumb && length $thumb, 'a thumbnail comes back from the app');
+is($thumb, $PNG, 'and it is the bytes the app sent, not a re-encoded copy');
+is(subs::device_thumbnail('/some/refuse.mp4', 200), undef, 'a refusal falls back to the pipeline');
+is(subs::device_thumbnail('', 200), undef, 'an empty path asks nobody');
 
 # A refusal is not a transport failure: undef now, and the bridge stays usable.
 open(my $wrong, '>', $token_file) or die $!;
