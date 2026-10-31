@@ -93,7 +93,8 @@ foreach my $k ( 'President[.]pl', 'teletype[.]pl', 'watch[.]pl', 'Manager[.]pl',
 # (its command line names ollama), and the runsv that runsvdir starts in its
 # place would otherwise bring the service up again. jawn starts its own ollama
 # on the next Start; 'sv up ollama' brings the service back if it is wanted.
-my $prefix = $ENV{PREFIX} || '/data/data/com.termux/files/usr';
+my $prefix = $ENV{PREFIX}
+	|| ( -d '/data/data/com.jawnos/files/usr' ? '/data/data/com.jawnos/files/usr' : '/data/data/com.termux/files/usr' );
 my $ollama_service = "$prefix/var/service/ollama";
 if (-x "$prefix/bin/sv" && -d $ollama_service) {
 	print "starting the ollama service down\n";
