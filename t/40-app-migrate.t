@@ -113,6 +113,13 @@ case "$cmd" in
 			cmd)
 				echo "priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=false"
 				echo "com.jawnos/.JawnUiLauncher" ;;
+			settings)
+				action="$1"; shift
+				case "$action" in
+					get) if [ -f "$state/verifier" ]; then cat "$state/verifier"; else echo "null"; fi ;;
+					put) echo "$*" > "$state/verifier"; : > "$state/verifier_off" ;;
+					delete) rm -f "$state/verifier" "$state/verifier_off" ;;
+				esac ;;
 			run-as) runas "$@" ;;
 			rm) exit 0 ;;
 			*) exit 0 ;;
@@ -127,6 +134,10 @@ case "$cmd" in
 		echo "uninstall $*" >> "$trace" ;;
 	install)
 		echo "install $*" >> "$trace"
+		if [ -f "$state/verifier_once" ] && [ ! -f "$state/verifier_off" ]; then
+			echo "adb: failed to install: Failure [INSTALL_FAILED_VERIFICATION_FAILURE]"
+			exit 1
+		fi
 		: > "$state/installed" ;;
 	*) exit 1 ;;
 esac
@@ -407,7 +418,57 @@ my $apply_scenario;
 	like( $out, qr/appointments 3 before, 3 after/, 'the appointment count is preserved' );
 }
 
-# 5. a missing required key is a hard failure before force-stop
+# 4b. a resume after a failed install puts the house back without reinstalling
+
+{
+	my $s = $apply_scenario;
+	my $backup = "$s->{base}/backup-apply";
+	# The device looks like a fresh first run: a new identity and an empty DB.
+	spew( "$s->{root}/files/home/.jawnos_signatorial_id", "ffffffffffffffffffffffffffffffff\n" );
+	spew( "$s->{root}/files/home/jawnos/database/jawnos.db", 'fresh' );
+	my $log_before = slurp( $s->{log} );
+
+	my ( $rc, $out ) = run_migrate( $s, '--restore-only', $backup );
+	is( $rc, 0, '--restore-only exits 0' ) or diag($out);
+	like( $out, qr/MIGRATION PASS/, 'the resume reports PASS' );
+
+	my $log_after = slurp( $s->{log} );
+	my $added = $log_after;
+	$added =~ s/^\Q$log_before\E//;
+	unlike( $added, qr/^\s*install\s+\S+\.apk/m, 'a resume installs nothing' );
+	unlike( $added, qr/^\s*uninstall\b/m, 'a resume uninstalls nothing' );
+
+	is( slurp( "$s->{root}/files/home/.jawnos_signatorial_id" ),
+		"e397332d0123456789abcdef01234567", 'the identity is restored from the backup' );
+	ok( -f "$s->{root}/files/home/jawnos/database/jawnos.db", 'the database is restored' );
+}
+
+# 4c. --restore-only refuses a directory that does not exist
+
+{
+	my $s = scenario();
+	my ( $rc, $out ) = run_migrate( $s, '--restore-only', "$s->{base}/no-such-backup" );
+	isnt( $rc, 0, 'a missing backup directory is refused' );
+	like( $out, qr/existing backup directory/, 'and the refusal names the reason' );
+}
+
+# 5. Play Protect's verifier refuses the new key once; the install retries with
+#    the adb verifier off and puts the setting back.
+
+{
+	my $s = scenario();
+	spew( "$s->{state}/verifier_once", '' );
+	my $backup = "$s->{base}/backup-verifier";
+	my $apk = "$s->{base}/signed.apk";
+	spew( $apk, 'signed apk bytes' );
+	my ( $rc, $out ) = run_migrate( $s, '--apply', '--backup-dir', $backup, '--apk', $apk );
+	is( $rc, 0, 'the migration succeeds through the verifier' ) or diag($out);
+	like( $out, qr/verifier refused the new key once/, 'the retry is reported' );
+	ok( !-e "$s->{state}/verifier", 'the verifier setting is put back as it was found' );
+	ok( -f "$s->{state}/installed", 'the app is installed' );
+}
+
+# 5b. a missing required key is a hard failure before force-stop
 
 {
 	my $s = scenario( missing_house_key => 1 );

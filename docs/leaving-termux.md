@@ -763,9 +763,17 @@ The milestone that actually leaves Termux.
 
 ### M5 — Distribution
 
-- If Spike B passed: targetSdk 36, AAB, Play App Signing, no self-update on the Play build.
-  If not: sideload/GitHub/F-Droid with `targetSdk 28`, a verified self-updater, and a
-  documented warning that the install floor may rise.
+**Status 2026-10-31: signing and channel done; targetSdk 36 designed, not yet built.**
+
+- **The exec model is proven at targetSdk 36.** A second Spike B run (`org.jawnos.spikeb`, targetSdk 36, Android 16 tablet) tested the shape the real app needs. Executing the extracted `nativeLibraryDir/libjawnrt.so` directly works (exit 0, mapped `r-xp` from `/data/app/.../lib/arm64/`), executing **the same file through a symlink in the app's writable data directory works** (`files/usr/bin/rt` → the lib, exit 0, same mapping), and executing a **copy** in app data is refused (`error=13, Permission denied`). The symlink also works through `/system/bin/sh -c`. So the finished app does not need the whole 200 MB runtime in the APK: only the executables move to `jniLibs` (as `lib<name>.so`), `$PREFIX/bin/<name>` becomes a symlink to them, and everything else (perl modules, share, the tree) stays in the writable prefix. `nativeLibraryDir` changes with every APK update, so the app must re-point those symlinks on each start.
+- **16 KB pages are already satisfied.** The runtime's `bin/perl` is built by NDK r29 and its LOAD segments are `0x4000`-aligned, so the payload meets the targetSdk 35+ requirement without a rebuild.
+- **Signing (done).** One release key, `.secrets/jawnos-release.jks` (PKCS12, RSA 4096, 10,000 days, SHA-256 `3ec2a657…`), named by the app repo's gitignored `keystore.properties`. `scripts/app_build.pl --release` builds and stages a signed release APK; `app_publish.pl` uploads it. Without `keystore.properties` a release build is unsigned, so a distro builder is unaffected.
+- **The signed build stays debuggable.** Every maintenance path — `scripts/app_migrate.pl`, `app_ticket.pl`, the device probes — reaches the house through `adb run-as`, which a non-debuggable package closes. For a sideloaded app on machines its owner controls, that tooling is worth more than the flag; it is also a reason Play is not the channel.
+- **Play Protect's install-time verifier refuses a new signing key once.** The first signed install over adb answered `INSTALL_FAILED_VERIFICATION_FAILURE`. `app_migrate.pl` now retries once with `verifier_verify_adb_installs=0` and puts the setting back exactly as it found it. This is the adb setting only; the on-device PackageInstaller path is different and untested.
+- **The channel is GitHub, not Play.** The tree syncs and executes interpreted code (`git` + Perl) and the peer rail installs APKs; Play's device-and-network-abuse policy does not allow that shape, and the signing above is a sideloading one. F-Droid remains possible (GPL-3.0-only, no proprietary dependencies) but is not the primary channel.
+- **Cut-over is done for the tablet, pending for the phone.** `scripts/app_migrate.pl --apply` moved the tablet from the debug-signed build to the signed release (114,600 appointments, identity unchanged); `--restore-only DIR` resumes if the install fails midway. A build signed with another key cannot install over the old one — the uninstall is unavoidable.
+- **Next:** move `bin/` into `jniLibs`, teach the app to create and re-point the symlinks, then raise `targetSdk` to 36 and handle the behaviour changes that brings (foreground-service types, notification permission, edge-to-edge).
+
 - One signing key forever; publish the corresponding source for the exact built revision.
 
 ## Order and the one thing not to do
@@ -872,5 +880,9 @@ a new dependency the day it is added.
 3. The tool diet, per tool.
 4. Device transport — **decided:** loopback TCP plus a token (see M1). A
    filesystem unix socket would need JNI for the listening side.
-5. Update channel: Play, GitHub, or F-Droid — and when the peer APK sync ends.
-6. Cut-over plan for the two devices, and how long the `com.termux` build stays installed.
+5. Update channel: **decided 2026-10-31 - GitHub/sideload**, with our own signed APK and the
+   peer rail. Play is not viable for an app that syncs and executes interpreted code;
+   F-Droid remains a possible second channel.
+6. Cut-over plan for the two devices: **tablet done 2026-10-31** (signed release, house
+   restored); the phone follows when it is next on adb. The `com.termux` build is no longer
+   needed by either device.

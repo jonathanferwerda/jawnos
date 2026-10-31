@@ -111,12 +111,14 @@ my ($serial, $apk, $backup_dir, $model, $installed_vc, $installed_vn);
 my ($identity_before, $tree_before, $status_before);
 my $restore_seq = 0;
 my $disabled = 0;
+my $restore_only = 0;
 my (@failures, @passes);
 
 while ( defined( my $arg = shift @ARGV ) ) {
 	if ($arg eq '--device')     { $serial = shift @ARGV; next; }
 	if ($arg eq '--apk')        { $apk = shift @ARGV; next; }
 	if ($arg eq '--backup-dir') { $backup_dir = shift @ARGV; next; }
+	if ($arg eq '--restore-only') { $backup_dir = shift @ARGV; $restore_only = 1; $opt{apply} = 1; next; }
 	if ($arg eq '--adb')        { $opt{adb} = shift @ARGV; next; }
 	if ($arg eq '--dry-run')    { $opt{dry_run} = 1; next; }
 	if ($arg eq '--apply')      { $opt{apply} = 1; next; }
@@ -126,6 +128,9 @@ while ( defined( my $arg = shift @ARGV ) ) {
 	die "app_migrate.pl: unknown option $arg\n" . usage_text();
 }
 usage(1) unless defined $serial && length $serial;
+if ($restore_only && (!defined $backup_dir || !-d $backup_dir)) {
+	die "app_migrate.pl: --restore-only needs an existing backup directory\n" . usage_text();
+}
 if ($opt{apply} && $opt{dry_run}) {
 	die "app_migrate.pl: --apply and --dry-run are mutually exclusive\n" . usage_text();
 }
@@ -154,6 +159,8 @@ sub usage_text {
 		. "  --device SERIAL   adb serial (run `adb devices -l`)\n"
 		. "  --apk FILE        APK to install (default: newest releases/jawnos-app-*.apk)\n"
 		. "  --backup-dir DIR  default: ~/.jawnos-backups/<model>-<serial>-<YYYY-MM-DD-HHMM>/\n"
+		. "  --restore-only DIR  resume after a failed install: the app is already installed\n"
+		. "                    and fresh, put this backup's house and identity back (implies --apply)\n"
 		. "  --adb PATH        adb executable (default: adb)\n"
 		. "  --first-run-timeout SECONDS  wait for the first run to finish (default 900)\n"
 		. "  --status-timeout SECONDS     wait for status=good after the restore (default 300)\n"
@@ -169,11 +176,12 @@ sub usage {
 }
 
 sub main {
-	resolve_apk();
+	resolve_apk() unless $restore_only;
 
 	# ---- inspect (read-only) -------------------------------------------------
 	inspect_device();
-	preflight_required();
+	if ($restore_only) { preflight_restore_only(); }
+	else { preflight_required(); }
 
 	my $stamp = strftime('%Y-%m-%d-%H%M', localtime);
 	unless (defined $backup_dir && length $backup_dir) {
@@ -190,6 +198,35 @@ sub main {
 		return;
 	}
 
+	# ---- resume after a failed install ---------------------------------------
+	# The app is installed and has finished its first run, so there is nothing
+	# to back up, uninstall or reinstall: put the house back and verify it.
+	if ($restore_only) {
+		step('force-stop the running app');
+		stop_app();
+		step('restore the identity files first');
+		restore_identity();
+		step('restore config and the database');
+		restore_house();
+		step('verify the restored database before it is opened');
+		verify_restored_database();
+		step('rewrite old com.termux paths in settings');
+		rewrite_settings();
+		step('verify the restored files');
+		verify_restored_files();
+		step('start the app and wait for status=good');
+		adb( args => [ 'shell', 'run-as', $PKG, 'rm', '-f', $STATUS_REMOTE ] );
+		# stop_app disabled the package, and a disabled package has no
+		# resolvable launcher: enable first, then ask for the component.
+		enable_app();
+		start_app( launcher_component() );
+		wait_for_status();
+		step('verify the house and identity');
+		verify_after();
+		print_summary();
+		exit(@failures ? 1 : 0);
+	}
+
 	# ---- destructive path ----------------------------------------------------
 	step('force-stop the running app');
 	stop_app();
@@ -202,7 +239,7 @@ sub main {
 	adb_report_install_state();
 
 	step('install the new APK');
-	adb( args => [ 'install', $apk ] );
+	install_apk($apk);
 	my $installed = installed_version();
 	die "app_migrate.pl: $PKG was not installed by the APK; dumpsys still has no version\n"
 		unless defined $installed->{versionCode};
@@ -302,6 +339,62 @@ sub preflight_required {
 		die "app_migrate.pl: missing required $f->{label}: $f->{remote}\n"
 			. "Refusing to migrate: a fresh file cannot replace it.\n";
 	}
+}
+
+# A resume run has no source identity on the device (the fresh first run made a
+# new one); the comparison that matters is the restored file against the
+# backup, so take the expected identity from the backup.
+sub preflight_restore_only {
+	my $pwd = adb( args => [ 'shell', 'run-as', $PKG, 'pwd' ], allow_fail => 1 );
+	unless ( $pwd->{rc} == 0 && $pwd->{out} =~ m{/data/} ) {
+		my $err = trim( $pwd->{err} // '' );
+		die "app_migrate.pl: run-as $PKG failed; is the app installed and debuggable?\n"
+			. ($err ne '' ? "$err\n" : '');
+	}
+	for my $f ( { remote => $DB_REMOTE, label => 'database' },
+	            { remote => $CONFIG_REMOTE, label => 'config' },
+	            @KEYS ) {
+		next if -f "$backup_dir/$f->{remote}";
+		die "app_migrate.pl: the backup has no $f->{label}: $backup_dir/$f->{remote}\n";
+	}
+	my $id_file = "$backup_dir/files/home/.jawnos_signatorial_id";
+	if (-f $id_file) {
+		open(my $fh, '<', $id_file) or die "$id_file: $!\n";
+		my $line = <$fh>;
+		close $fh;
+		$line = trim($line // '');
+		$identity_before = $line if length $line;
+	}
+}
+
+# Install, and survive Play Protect's install-time verifier. It answered
+# INSTALL_FAILED_VERIFICATION_FAILURE for the first signed release (2026-10-31)
+# because the signing key was new to the device. The verifier is turned off for
+# exactly one install and the setting is put back as it was found; this is the
+# adb-install setting only, not the on-device PackageInstaller path.
+sub install_apk {
+	my ($file) = @_;
+	my $first = adb( args => [ 'install', $file ], allow_fail => 1 );
+	return if $first->{rc} == 0;
+	my $text = ( $first->{out} // '' ) . ( $first->{err} // '' );
+	unless ( $text =~ /VERIFICATION_FAILURE|verification/i ) {
+		die "app_migrate.pl: adb install failed:\n" . trim($text) . "\n";
+	}
+	my $before = trim(
+		adb( args => [ 'shell', 'settings', 'get', 'global', 'verifier_verify_adb_installs' ], allow_fail => 1 )->{out} // ''
+	);
+	adb( args => [ 'shell', 'settings', 'put', 'global', 'verifier_verify_adb_installs', '0' ], allow_fail => 1 );
+	my $retry = adb( args => [ 'install', $file ], allow_fail => 1 );
+	if ( $before eq '' || $before eq 'null' ) {
+		adb( args => [ 'shell', 'settings', 'delete', 'global', 'verifier_verify_adb_installs' ], allow_fail => 1 );
+	}
+	else {
+		adb( args => [ 'shell', 'settings', 'put', 'global', 'verifier_verify_adb_installs', $before ], allow_fail => 1 );
+	}
+	die "app_migrate.pl: adb install failed even with the verifier off:\n"
+		. trim( ( $retry->{out} // '' ) . ( $retry->{err} // '' ) ) . "\n"
+		unless $retry->{rc} == 0;
+	print "  verifier refused the new key once; installed with it off and restored the setting\n";
 }
 
 sub installed_version {

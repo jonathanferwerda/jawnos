@@ -1,13 +1,15 @@
 #!/usr/bin/perl
 # Bump the JawnOS Android app and build+stage the next APK, in one step.
 #
-#   perl scripts/app_build.pl [--repo DIR] [--no-build]
+#   perl scripts/app_build.pl [--repo DIR] [--no-build] [--release]
 #
 # It:
 # 1. bumps versionCode (+1) and the patch segment of versionName in
 #    app/build.gradle,
 # 2. makes sure local.properties points at an Android SDK,
-# 3. builds the debug APK (one universal file),
+# 3. builds the debug APK (one universal file), or the signed release APK
+#    with --release (needs the tree's .secrets/jawnos-release.jks, named by
+#    the app repo's gitignored keystore.properties),
 # 4. stages it with scripts/app_release.pl, replacing the old build so every
 #    peer's next app_release_sync carries it.
 #
@@ -31,10 +33,15 @@ my $root = abs_path("$FindBin::Bin/..");
 my $home = $ENV{'HOME'};
 my $dir = "$home/jawnos-app/termux-app";
 my $build = 1;
+my $release = 0;
 while ( defined(my $arg = shift @ARGV) ) {
 	if ($arg eq '--repo')     { $dir = shift @ARGV; next; }
 	if ($arg eq '--no-build') { $build = 0; next; }
-	die "usage: app_build.pl [--repo DIR] [--no-build]\n";
+	if ($arg eq '--release')  { $release = 1; next; }
+	die "usage: app_build.pl [--repo DIR] [--no-build] [--release]\n";
+}
+if ($release && !-f "$dir/keystore.properties") {
+	die "$dir/keystore.properties is missing; the release build would be unsigned\n";
 }
 die "$dir: no such directory\n" unless -d $dir;
 my $gradle = "$dir/app/build.gradle";
@@ -78,12 +85,15 @@ print "app: building with $java\n";
 local $ENV{'JAVA_HOME'} = $java;
 $ENV{'ANDROID_SDK_ROOT'} ||= (read_file($props) =~ /sdk\.dir\s*=\s*(\S+)/)[0];
 $ENV{'TERMUX_SPLIT_APKS_FOR_DEBUG_BUILDS'} = '0';
-my $rc = system("$dir/gradlew", "-p", $dir, ":app:assembleDebug", "--no-daemon", "--max-workers=4");
+$ENV{'TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS'} = '0';
+my $task = $release ? ':app:assembleRelease' : ':app:assembleDebug';
+my $flavour = $release ? 'release' : 'debug';
+my $rc = system("$dir/gradlew", "-p", $dir, $task, "--no-daemon", "--max-workers=4");
 die "app: build failed (exit $rc)\n" if $rc != 0;
 
-# 4. the universal build is the biggest APK in the debug output
-my @apks = grep { -f } glob("$dir/app/build/outputs/apk/debug/*.apk");
-die "app: no debug APK under $dir/app/build/outputs/apk/debug\n" unless @apks;
+# 4. the universal build is the biggest APK in the output
+my @apks = grep { -f } glob("$dir/app/build/outputs/apk/$flavour/*.apk");
+die "app: no $flavour APK under $dir/app/build/outputs/apk/$flavour\n" unless @apks;
 my ($apk) = sort { (-s $b) <=> (-s $a) } @apks;
 print "app: apk $apk (" . (-s $apk) . " bytes)\n";
 system('perl', "$root/scripts/app_release.pl", $apk) == 0 or die "app: app_release.pl failed\n";
