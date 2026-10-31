@@ -49281,7 +49281,9 @@ get '/manager/sync_history' => sub($c) {
 # credentialed login (the peer's /sesh_check) the reconnect path uses.
 sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_tab) {
 	my $rdc = {
-		manager => $rm->{'manager'},
+		# the row's manager can be a leftover loopback from a dead tunnel: log back
+		# in on the name the house knows, or the repair itself dials 127.0.0.1
+		manager => &subs::peer_live_manager($rm),
 		filename => $rm->{'data'}->{'database'},
 		timestamp => $timestamp,
 		ip => $ip,
@@ -49645,7 +49647,7 @@ sub remote_machine_reconnector($c) {
 								# The address that just answered the probe: remote_upgrade
 								# re-reads the row and would otherwise call the stored
 								# (possibly dead) manager again.
-								manager => $rm->{'manager'},
+								manager => &subs::peer_live_manager($rm),
 								gimme => $gimme,
 								sync_version => ($rj->{'sync_version'} || 0),
 								default_cut => ($peer_watermark->{'server_time'} || (&subs::rightNow() - (24 * 60 * 60 * 1000))),
