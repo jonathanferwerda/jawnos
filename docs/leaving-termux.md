@@ -637,6 +637,21 @@ The milestone that actually leaves Termux.
   `HOME=/data/data/com.jawnos/files/home`), and the app gate asks for the device
   unlock again because the Keystore key died with the uninstall.
 
+- **GPL pass, first cut (2026-10-31).** Twenty-one dead GPL-3-only
+  `jawnos-shared` files were deleted: `UrlUtils`, `TextInputDialogUtils`, the
+  API/Boot/Float/Styling/Tasker/Widget shared preferences,
+  `TermuxPropertyConstants`, `TermuxSharedProperties`, `TermuxSession`, and the
+  terminal extra-keys/client bases (their `build.gradle` exclusion block went
+  too). **Twelve GPL-3-only files remain, all in use**: `SELinuxUtils`,
+  `TermuxCrashUtils`, `TermuxFileUtils`, `TermuxNotificationUtils`,
+  `PackageUtils`, `PermissionUtils`, `ReflectionUtils`,
+  `TermuxAppSharedPreferences`, `TermuxPreferenceConstants`,
+  `TermuxShellEnvironmentClient`, `TermuxShellUtils`, `TermuxUtils`. Those are
+  the rewrite list before BSD-2. `SELinuxUtils`, `PermissionUtils` and
+  `ReflectionUtils` are compile-time dependencies of MIT/Apache-exception files
+  (`AndroidUtils`, `TermuxShellUtils`, `ShareUtils`, `PackageUtils`), so the
+  rewrite starts there.
+
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
   `$PREFIX/etc/jawnos-runtime.json` (which makes `jawnos_deps.pl --install` a
