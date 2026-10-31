@@ -42,6 +42,7 @@ my %TOOL = map { $_ => 1 } qw(
 	basename dirname readlink stat id whoami uname hostname printf echo test [
 	pgrep pkill ps kill killall nohup tee which
 	sshd scp sftp ssh-keygen
+	base64 timeout ip ss ping
 	ffmpeg ffprobe magick convert
 );
 # ffmpeg and ImageMagick stay on purpose (2026-10-30). The plan was MediaCodec
