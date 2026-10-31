@@ -17,6 +17,7 @@ my %known = map { $_ => 1 } qw(
 	image.resize
 	image.save
 	image.edit
+	image.cover
 	notification.post
 	notification.remove
 	toast.show

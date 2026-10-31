@@ -13802,7 +13802,8 @@ sub phone_avatar_thumb($file) {
 	$base =~ s/[^A-Za-z0-9._-]+/-/g;
 	my $thumb = $dir . '/' . $base . '-' . ($stat[7] || 0) . '-' . ($stat[9] || 0) . '.jpg';
 	return $thumb if -e $thumb && -s $thumb > 0;
-	`magick "$file" -resize 160x160^ -gravity center -extent 160x160 -quality 82 "$thumb" 2>/dev/null`;
+	my $covered = &subs::image_bridge_cover($file, 160, $thumb, 82);
+	`magick "$file" -resize 160x160^ -gravity center -extent 160x160 -quality 82 "$thumb" 2>/dev/null` unless $covered;
 	return (-e $thumb && -s $thumb > 0) ? $thumb : '';
 }
 

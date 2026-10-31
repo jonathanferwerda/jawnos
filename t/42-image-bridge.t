@@ -7,6 +7,8 @@ use Test::More;
 use File::Temp qw(tempdir);
 use JawnOSTest;
 
+use MIME::Base64 ();
+
 # M3's ImageMagick diet: the tree asks the device bridge to resize and re-encode
 # images. A desktop has no bridge, so these helpers answer undef and the caller
 # keeps its magick pipeline. The bridge method list is pinned in
@@ -108,6 +110,59 @@ ok( !defined subs::image_bridge_save($png, '', 'jpeg', 90),
 	local *subs::device_call = sub { return undef };
 	ok( !defined subs::image_bridge_edit($png, [ { duty => 'rotate', value => '90' } ]),
 		'no bridge answer means the caller keeps magick' );
+}
+
+# The avatar/cover copy: the bridge fills a square from the centre.
+{
+	my @asked;
+	local *subs::device_call = sub {
+		my ( $method, $args ) = @_;
+		push @asked, [ $method, $args ];
+		return { path => $args->{'out'}, width => $args->{'size'}, height => $args->{'size'} }
+			if $method eq 'image.cover';
+		return undef;
+	};
+
+	my $cover = subs::image_bridge_cover($png, 160, "$tmp/avatar.jpg", 82);
+	ok( ref $cover eq 'HASH', 'the cover answer is returned' );
+	is( $cover->{'path'}, "$tmp/avatar.jpg", 'the cover writes the named file' );
+	is( $asked[0]->[0], 'image.cover', 'the method is image.cover' );
+	is( $asked[0]->[1]->{'size'}, 160, 'the square side is passed through' );
+	is( $asked[0]->[1]->{'quality'}, 82, 'the JPEG quality is passed through' );
+
+	ok( !defined subs::image_bridge_cover($png, 160, ''), 'a cover without an output is refused' );
+	ok( !defined subs::image_bridge_cover("$tmp/missing.png", 160, "$tmp/x.jpg"),
+		'a missing source is not sent' );
+}
+
+# A thumbnail file: the bridge's PNG bytes land where the caller asked.
+{
+	my $png_bytes = "\x89PNG\r\n\x1a\nbridge-thumb";
+	my @asked;
+	local *subs::device_call = sub {
+		my ( $method, $args ) = @_;
+		push @asked, [ $method, $args ];
+		return { data => MIME::Base64::encode_base64($png_bytes, ''), width => 2, height => 2, kind => 'image' }
+			if $method eq 'media.thumbnail';
+		return undef;
+	};
+
+	my $file = "$tmp/thumb.png";
+	my $made = subs::image_bridge_thumbnail($png, 128, $file);
+	is( $made, $file, 'the thumbnail is written at the named path' );
+	my $written = '';
+	if (open(my $rf, '<', $file)) { binmode $rf; local $/; $written = <$rf>; close $rf; }
+	is( $written, $png_bytes, 'the bridge bytes are what was written' );
+	is( $asked[0]->[0], 'media.thumbnail', 'the bridge thumbnail method is asked' );
+	is( $asked[0]->[1]->{'max'}, 128, 'the size is passed through' );
+}
+
+{
+	local *subs::device_call = sub { return undef };
+	ok( !defined subs::image_bridge_thumbnail($png, 128, "$tmp/none.png"),
+		'no bridge answer leaves the ffmpeg pipeline in place' );
+	ok( !defined subs::image_bridge_cover($png, 160, "$tmp/none.jpg"),
+		'and the cover falls back to magick' );
 }
 
 done_testing();

@@ -4942,6 +4942,39 @@ sub image_bridge_edit {
 	return undef;
 }
 
+# A display copy of a picture for a card or an avatar: the bridge fills a square
+# from the centre (magick's `-resize NxN^ -gravity center -extent NxN`). A
+# desktop answers undef and keeps its command.
+sub image_bridge_cover {
+	my ( $src, $size, $out, $quality ) = @_;
+	return undef unless defined $src && length $src && -e $src;
+	return undef unless defined $out && length $out;
+	$size = 160 unless defined $size && $size =~ /^\d+$/ && $size > 0;
+	my $result = eval {
+		&subs::device_call('image.cover', {
+			path    => $src,
+			out     => $out,
+			size    => $size + 0,
+			quality => ( defined $quality && $quality =~ /^\d+$/ && $quality ? $quality + 0 : 82 ),
+		});
+	};
+	return $result if ref $result eq 'HASH' && defined $result->{'path'} && length $result->{'path'};
+	return undef;
+}
+
+# A thumbnail file made by the bridge: the bytes come back as PNG and are
+# written where the caller wants them. A desktop gets undef, so it keeps its
+# ffmpeg | magick pipeline.
+sub image_bridge_thumbnail {
+	my ( $src, $max, $out, $at_ms ) = @_;
+	return undef unless defined $src && length $src && -e $src;
+	return undef unless defined $out && length $out;
+	my $bytes = &device_thumbnail($src, $max, $at_ms);
+	return undef unless defined $bytes && length $bytes;
+	eval { write_file($out, $bytes) };
+	return (-e $out && (-s $out) > 0) ? $out : undef;
+}
+
 sub network_report_from_bridge {
 	my ($report) = @_;
 	return undef
@@ -23769,7 +23802,8 @@ sub crest_image_data_uri {
 	close $fh;
 	$max ||= 512;
 	my $jpg = $tmp . '.jpg';
-	system('magick', $tmp, '-resize', "${max}x${max}>", '-quality', '86', $jpg);
+	my $resized = &image_bridge_resize($tmp, $max, $max, $jpg);
+	system('magick', $tmp, '-resize', "${max}x${max}>", '-quality', '86', $jpg) unless $resized;
 	my $out = (-e $jpg && -s $jpg > 0) ? read_file($jpg) : undef;
 	unlink $tmp; unlink $jpg;
 	return undef unless defined $out && length $out;
@@ -29240,7 +29274,11 @@ sub generate_ai_media {
 	my $ocr;
 	if ($kind eq 'image') {
 		my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
-		`magick $file_path -resize $resolution $file_path` unless lc $resolution eq 'raw';
+		unless (lc $resolution eq 'raw') {
+			my ($w, $h) = &subs::image_resolution_parts($resolution);
+			my $resized = ($w && $h) ? &subs::image_bridge_resize($file_path, $w, $h) : undef;
+			system('magick', $file_path, '-resize', $resolution, $file_path) unless $resized;
+		}
 		$ocr = &Manager::ocr_reader($c,$file_path);
 	}
 	# a still thumbnail for image and video, made up front so the unclaimed
@@ -29253,10 +29291,16 @@ sub generate_ai_media {
 		$t =~ s/\.[^.]+$/.png/;
 		my $thumbnail_size = &subs::setting_grabber({ app => 'misc', setting => 'thumbnail_size' }) || 'none';
 		if ($thumbnail_size ne 'none') {
-			my $cmd = ($upload_type eq 'video')
-				? 'ffmpeg -ss ' . &thumbnail_seek_position() . ' -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
-				: 'magick ' . $file_path . ' -resize ' . $thumbnail_size . ' ' . $t;
-			`$cmd`;
+			my ($max) = $thumbnail_size =~ /(\d+)/;
+			# The bridge makes the still itself (a video frame via
+			# MediaMetadataRetriever); a desktop keeps the pipeline.
+			my $native = &subs::image_bridge_thumbnail($file_path, $max || 256, $t);
+			unless ($native) {
+				my $cmd = ($upload_type eq 'video')
+					? 'ffmpeg -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
+					: 'magick ' . $file_path . ' -resize ' . $thumbnail_size . ' ' . $t;
+				`$cmd`;
+			}
 			$thumb = $t if -e $t;
 		}
 	}
