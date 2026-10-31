@@ -2179,7 +2179,7 @@ sub rock_and_roll($c) {
 									}
 
 									if ($file_data->{'type'} eq 'video' || grep { $_ eq $ext } qw/mp4 webm mpg mpeg mov mkv avi/ ) {
-										my $seek = defined $hover_position ? sprintf('%.3f', $hover_position) : '00:00:00.010';
+										my $seek = defined $hover_position ? sprintf('%.3f', $hover_position) : &subs::thumbnail_seek_position($c->param('duration'));
 										my $command2 = 'ffmpeg -ss ' . $seek . ' -f ' . $ext . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' - ';
 										$file_data->{'type'} = 'video';
 										$data = &native_thumb_png($filename, $thumbnail_size);
@@ -2433,18 +2433,7 @@ sub rock_and_roll($c) {
 								$save = 0;
 							}
 							elsif ($c->param('chapter') ne 'ya') {
-								if ($duration < 10) {
-									$duration = '00:00:01.000';
-								}
-								elsif ($duration < 60) {
-									$duration = '00:00:12.000';
-								}
-								elsif ($duration < 120) {
-									$duration = '00:01:01.000';
-								}
-								else {
-									$duration = '00:02:00.020';
-								}
+								$duration = &subs::thumbnail_seek_position($duration);
 							}
 							my $command = 'ffmpeg -ss ' . $duration . ' -i ' . &subs::terminal_name($file) . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize 200x200 -';
 							$data = &native_thumb_png($file, 200);
@@ -15583,7 +15572,7 @@ sub thumbnail_creator($data) {
 			$thumb = join '.', @thumb;
 			$data->{'thumb'} = $thumb;
 			if ($upload_type eq 'video') {
-				my $command2 = 'ffmpeg -ss 00:00:00.010 -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $thumb;
+				my $command2 = 'ffmpeg -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $filename . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $thumb;
 				my $native = &native_thumb_png($filename, $thumbnail_size);
 				if (defined $native && length $native) { write_file($thumb, $native); }
 				else { `$command2`; }

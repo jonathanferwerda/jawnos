@@ -12353,17 +12353,52 @@ sub file_media_information() {
 		my $jres = `$command`;
 		my $res = eval { return decode_json $jres } || {};
 		my $format = $res->{'format'};
-		my $chapters = $res->{'chapters'};
-
-		$file_data->{'info'} = $format;
-		$file_data->{'info'}->{'chapters'} = $chapters;
-		foreach my $d ( @{$res->{'streams'}} ) {
-			foreach my $dr ( keys %{$d} ) {
-				$file_data->{'info'}->{$dr} = $d->{$dr};
+		my $streams = $res->{'streams'} || [];
+		# A probe that answered nothing is a failed probe, not an empty file. The
+		# old code assigned the undef format and then wrote chapters into it, which
+		# autovivified { chapters => undef } and cached that as a real answer - the
+		# Music card asks a video for a duration and a height, found neither, and hid
+		# its thumbnail for the life of the cache. Leave info unset so the caller can
+		# tell "not probed" from "probed and empty" and retry.
+		if ((ref $format eq 'HASH' && scalar keys %{$format}) || scalar @{$streams}) {
+			$file_data->{'info'} = ref $format eq 'HASH' ? $format : {};
+			$file_data->{'info'}->{'chapters'} = $res->{'chapters'} if ref $res->{'chapters'} eq 'ARRAY';
+			foreach my $d ( @{$streams} ) {
+				foreach my $dr ( keys %{$d} ) {
+					$file_data->{'info'}->{$dr} = $d->{$dr};
+				}
 			}
 		}
 	}
 	return $file_data;
+}
+
+# Where a video's poster frame is taken from. Ten milliseconds in is a fade or a
+# black frame on most encodes, which is why so many posters came back blank; the
+# frame people recognise is a little way in. The plain-file thumb path used this
+# rule inline; the sealed path now shares it instead of always taking 00:00:00.010.
+sub thumbnail_seek_position {
+	my $duration = shift;
+	$duration = 0 unless defined $duration && $duration =~ /^\d+(?:\.\d+)?$/;
+	return '00:00:01.000' if $duration < 10;
+	return '00:00:12.000' if $duration < 60;
+	return '00:01:01.000' if $duration < 120;
+	return '00:02:00.020';
+}
+
+# A cached Music file_information entry is only worth reusing when it carries the
+# facts the cards draw. A failed ffprobe used to be cached as
+# { chapters => undef, tags => {} }: truthy, so it was reused for ever, and every
+# video card asked for a duration and a height it did not have and fell back to
+# the generic icon. The callers treat an unusable entry as a miss and re-probe.
+sub music_info_usable {
+	my $info = shift;
+	return 0 unless ref $info eq 'HASH';
+	return 1 if defined $info->{'duration'} && length $info->{'duration'};
+	return 1 if defined $info->{'height'} && length $info->{'height'};
+	return 1 if defined $info->{'width'} && length $info->{'width'};
+	return 1 if ref $info->{'tags'} eq 'HASH' && scalar keys %{$info->{'tags'}};
+	return 0;
 }
 
 
@@ -28909,7 +28944,7 @@ sub generate_ai_media {
 		my $thumbnail_size = &subs::setting_grabber({ app => 'misc', setting => 'thumbnail_size' }) || 'none';
 		if ($thumbnail_size ne 'none') {
 			my $cmd = ($upload_type eq 'video')
-				? 'ffmpeg -ss 00:00:00.010 -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
+				? 'ffmpeg -ss ' . &thumbnail_seek_position() . ' -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
 				: 'magick ' . $file_path . ' -resize ' . $thumbnail_size . ' ' . $t;
 			`$cmd`;
 			$thumb = $t if -e $t;
