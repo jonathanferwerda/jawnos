@@ -390,13 +390,32 @@ The milestone that actually leaves Termux.
   unpack one archive), or a custom ffmpeg/ImageMagick build without the codecs
   nothing here encodes. A native resize in the device bridge would remove all of
   ImageMagick on its own.
-- **x86_64 has no source prefix (2026-10-30).** Its `com.termux` prefix was wiped
-  on the emulator, and Termux packages `perl` but **no CPAN module** — every module
-  the tree needs came from `cpanm` on the device. So the x86_64 runtime can only be
-  built by standing up a prefix on the emulator (`bootstrap` + `pkg install perl`
-  and the XS toolchain, then `cpanm` the 40 modules in
-  `scripts/jawnos_deps.pl`) and packing that. Until it exists the published
-  manifest's x86_64 pin is stale; aarch64 is the only ABI with a good archive.
+- **x86_64 is built on the emulator (2026-10-30).** Termux packages `perl` but
+  **no CPAN module**, so the only source is a prefix you build by hand. The
+  recipe, proven end to end on `emulator-5554`:
+  1. `bootstrap-x86_64.zip` from the termux-packages release, unzipped into
+     `files/usr`, then `SYMLINKS.txt` applied (`target←link`, both relative to
+     the link's own directory; `ln -sfn` each one).
+  2. `pkg install perl make git curl openssl sqlite rsync zip unzip xz-utils
+     zstd openssh sshpass inetutils procps psmisc ldns ca-certificates ffmpeg
+     imagemagick` — `clang` comes with ImageMagick.
+  3. `cpanm` the 40 modules from `scripts/jawnos_deps.pl`.
+  4. `runtime_build.pl --from $PREFIX --abi x86_64`.
+  Three traps that cost a rebuild each: `pkg`/`apt` **refuse to run as root**, and
+  a uid that has not run an app process since `pm clear` has **no network** (start
+  any activity once); cpanm's default **60 s configure timeout** kills `IO::Tty`,
+  which probes the system slowly — `--configure-timeout 600`; and `IO::Tty` needs
+  `CORE/*.h`, which the diet prunes, plus a compiler and `make`, which it does not
+  ship — build with the headers and a pushed clang, then pack (none of it is in
+  the archive: `bin` stayed at 74 entries).
+- **The diet also needed `base64`, `timeout`, `ip`, `ss` and `ping` (2026-10-30).**
+  Its first x86_64 runtime passed every proof and still failed in the tree:
+  `watch.pl` runs `base64 --decode`, and `timeout` wraps a dozen call sites. With
+  neither in the runtime the shell fell through to Android's toybox, which has no
+  `--decode`, and the manager logged `base64: Unknown option 'decode'` on every
+  watch secret. `ip`/`ss` come from iproute2 and `ping` is Termux's three-line
+  wrapper around `/system/bin/ping`. (`ip` still cannot bind netlink as an app uid
+  — that is Android, not the runtime, and was equally true under Termux.)
 - **Proven on a device (tablet, app 1192):** the archive unpacked to
   `~/.jawnos/runtime` and `SessionService` prefers it — the master's
   `/proc/<pid>/exe` is `…/.jawnos/runtime/bin/perl`, the tree reached
