@@ -741,15 +741,24 @@ post '/manager/take_picture' => sub($c) {
 	my $app = $c->param('app');
 	my $uuid = $c->param('uuid');
 	my ($file,$ocr);
+	# A native capture (window.JawnCamera) is handed over as a small reference to
+	# a file the app already wrote; the bytes never travel through the WebView.
+	my $native_path = $c->param('native_path') || '';
 	my $data = {
 		app => $app,
 		timestamp => $timestamp,
 		camera => $camera,
 		uuid => $uuid,
+		native_path => $native_path,
+		native_kind => $c->param('native_kind'),
+		native_name => $c->param('native_name'),
+		native_mime => $c->param('native_mime'),
 		duty => 'image',
 		duuid => &subs::random_string_creator()
 	};
-	if ($timestamp >= &subs::rightNow() + 1000) {
+	# A capture that has already happened cannot be deferred as a future duty:
+	# the staged file must be claimed now or the app's cache may clear it.
+	if (!length $native_path && $timestamp >= &subs::rightNow() + 1000) {
 		my $appt = &subs::db_select('appointments', undef, { app => $app, uuid => $uuid })->hashes->[0];
 		my $duties = eval { return decode_json $appt->{'duties'} } || [];
 		push @{$duties}, $data;
@@ -762,8 +771,8 @@ post '/manager/take_picture' => sub($c) {
 	else {
 		($file,$ocr) = &take_picture($c,$data);
 	}
-	&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $uuid .'\');'});
-	$c->render(json => { files => $file, ocr => $ocr });
+	&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . ($data->{'uuid'} || $uuid) .'\');'});
+	$c->render(json => { files => $file, ocr => $ocr, uuid => $data->{'uuid'} || $uuid });
 };
 
 # Claim unclaimed media onto an appointment: each named file row moves from its
@@ -866,6 +875,30 @@ get '/manager/unclaimed/appointments' => sub($c) {
 	$c->render(json => { ok => 1, appointments => \@out });
 };
 
+# The app's camera bridge (window.JawnCamera) writes its capture here, in the
+# Termux home both processes share, and the page posts only the path. Base64 of
+# a real phone photo was several megabytes through evaluateJavascript, which the
+# WebView's binder transaction cannot carry - the camera opened and the answer
+# never arrived.
+sub native_capture_dir() {
+	return &subs::home('.jawn/captures');
+}
+
+# Accept only a plain file directly inside the staging directory: the page names
+# the path, so a traversal or a link to somewhere else must not be followed.
+sub native_capture_claim($path) {
+	return undef unless defined $path && length $path;
+	my $dir = &native_capture_dir();
+	my $name = $path;
+	$name =~ s{.*/}{};
+	return undef unless $name =~ /^[A-Za-z0-9._-]+$/ && $name !~ /^\.\.?$/;
+	my $want = $dir . '/' . $name;
+	return undef unless $path eq $want;
+	return undef if -l $want;
+	return undef unless -f $want;
+	return $want;
+}
+
 sub take_picture($c,$data) {
 	my $uuid = $data->{'uuid'} || undef;
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
@@ -876,6 +909,18 @@ sub take_picture($c,$data) {
 		$c->stash('app' => $app);
 		$c->stash('uuid' => $uuid);
 	}
+	# A file the app's own camera already captured. Claim it before any relay or
+	# capability test: the bytes exist, so this machine's job is to file them.
+	my $native_path = $data->{'native_path'} || '';
+	my $native_capture = &native_capture_claim($native_path);
+	# A named capture that cannot be claimed (already filed, expired from the
+	# staging dir, or not inside it) is not an invitation to take another one.
+	return ('denial','denial') if length $native_path && !$native_capture;
+	my $kind = lc($data->{'native_kind'} || '') eq 'video' ? 'video' : 'image';
+	if ($native_capture) {
+		my $native_ext = $data->{'native_name'} || $native_capture;
+		$kind = 'video' if $native_ext =~ /\.(?:mp4|webm|mov|mkv|avi)\b/i;
+	}
 	# A named machine takes the picture; this one only hands the request over.
 	# remoted=yes is the peer that received it, and it must not relay again.
 	my $remote_uuid = $c->param('remote_uuid') || '';
@@ -883,7 +928,7 @@ sub take_picture($c,$data) {
 		&remote_relay_request($c, { remote_uuid => $remote_uuid });
 		return ('denial','denial');
 	}
-	if (!grep { $_ eq $data->{'camera'} } @{$gb::capabilities->{&subs::device_setter()}->{'camera'}}) {
+	if (!$native_capture && !grep { $_ eq $data->{'camera'} } @{$gb::capabilities->{&subs::device_setter()}->{'camera'} || []}) {
 		# A person who named a machine pointed at that machine: if it has no such
 		# camera, the capture simply does not happen. Only an unpointed press
 		# looks around the house for a camera that can take it.
@@ -897,30 +942,57 @@ sub take_picture($c,$data) {
 	my $warranty = &subs::ago_calc(&subs::setting_grabber({ app => 'app', setting => 'warranty' }) || &subs::setting_grabber({ app => 'me', setting => 'warranty' }), $server_time);
 	my ($filename,$ocr);
 	my ($db,$database,$sql) = &subs::database_grabber();
-	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } ));
-	$filename = $folder . '/' . $app_path;
+	# Captures taken on an appointment's media row belong to that appointment; a
+	# press made from the wrapper names only the app, so resolve its newest row.
+	# The Camera app itself is unclaimed media by design and keeps its own path.
+	if (!$uuid && !$data->{'capture_only'} && $app ne 'camera') {
+		my $latest = &subs::db_query('select uuid from appointments where app=? and uuid is not null order by server_time desc limit 1', $app)->hash;
+		$uuid = $latest->{'uuid'} if $latest && $latest->{'uuid'};
+	}
+	# The caller (the wrapper names only an app) may not have known the row; hand
+	# the resolved one back so the refresh below reopens the right appointment.
+	$data->{'uuid'} = $uuid if $uuid;
+	my $media_setting = $kind eq 'video' ? 'video_location' : 'photo_location';
+	my $folder = &subs::home(&subs::setting_grabber( { app => 'misc', setting => $media_setting, device => $device } ));
+	my $dir = $folder . '/' . $app_path;
+	`mkdir -p $dir` unless -e $dir;
+	my $thumb_dir = $dir . '/.thumbs/';
+	`mkdir -p $thumb_dir` unless -e $thumb_dir;
+	my $base = $dir . '/' . $app_path . '_' . $timestamp;
+	my $thumb = $thumb_dir . $app_path . '_' . $timestamp . '.jpg';
+	my $ext = $kind eq 'video' ? 'mp4' : 'jpg';
+	if ($native_capture) {
+		my $probe = $data->{'native_name'} || $native_capture;
+		if ($probe =~ /\.([A-Za-z0-9]{1,5})$/) {
+			my $given = lc $1;
+			$ext = $given if $given =~ /^(?:jpg|jpeg|png|webp|heic|heif|mp4|webm|mov|mkv|avi)$/;
+		}
+	}
+	$filename = $base . '.' . $ext;
 
-
-	my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
-	`mkdir -p $filename` unless -e $filename;
-	my $thumb = $filename . '/.thumbs/';
-	`mkdir -p $thumb` unless -e $thumb;
-	$thumb = $thumb . $app_path . '_' . $timestamp . '.jpg';
-	$filename = $filename . '/' . $app_path . '_' . $timestamp;
-
-	my $text_file = $filename;
-	$filename = $filename . '.jpg';
-
-
-	if ($device eq 'mobile' && ($camera eq 0 || $camera == 1)) {
+	if ($native_capture) {
+		# The app wrote the capture into the shared staging directory; move it
+		# into the house's own folder. A move across filesystems is a copy+unlink.
+		my $moved = eval { move($native_capture, $filename) };
+		unless ($moved && -e $filename) {
+			my $tn_src = &subs::shell_quote($native_capture);
+			my $tn_dst = &subs::shell_quote($filename);
+			`cp $tn_src $tn_dst`;
+			unlink $native_capture if -e $filename;
+		}
+	}
+	elsif ($device eq 'mobile' && ($camera eq 0 || $camera == 1)) {
 		&subs::device_call('camera.photo', { path => $filename, camera => $camera });
 	}
 	elsif ($device eq 'computer' && $camera eq 'webcam') {
 		eval { `ffmpeg -i /dev/video0 $filename` };
 	}
 	if (-e $filename) {
-		$ocr = &ocr_reader($c,$filename) unless $data->{'no_ocr'};
-		`magick $filename -resize $resolution $filename` unless lc $resolution eq 'raw';
+		if ($kind eq 'image') {
+			$ocr = &ocr_reader($c,$filename) unless $data->{'no_ocr'};
+			my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
+			`magick $filename -resize $resolution $filename` unless lc $resolution eq 'raw';
+		}
 	}
 	# A caller that only wants the picture (the People app's crest capture) takes
 	# the raw file here; it is not filed as an appointment or sealed in place.
@@ -928,7 +1000,7 @@ sub take_picture($c,$data) {
 		return ($filename, $ocr);
 	}
 	my $duration = $server_time - &subs::rightNow();
-	my $u_data = { thumb => $thumb, server_time => &subs::rightNow(), f => $filename, uuid => &subs::random_string_creator(9), type => 'image', ocr => $ocr };
+	my $u_data = { thumb => $thumb, server_time => &subs::rightNow(), f => $filename, uuid => &subs::random_string_creator(9), type => $kind, ocr => $ocr };
 	$u_data = &thumbnail_creator($u_data);
 
 	my $files = [$u_data];
@@ -944,7 +1016,7 @@ sub take_picture($c,$data) {
 		my $jfiles = encode_json $files;
 		my $write = {
 			app => $app,
-			type => 'image',
+			type => $kind,
 			file => $jfiles,
 			timestamp => $timestamp,
 			server_time => $server_time,
@@ -1144,15 +1216,28 @@ sub scan($c,$scandata) {
 
 sub ocr_reader($c,$filename) {
 	my $text_file = $filename;
-	`tesseract $filename $text_file`;
+	# OCR is a convenience, never a condition of the capture. A device without
+	# tesseract (the Android app's Termux image has none) used to run the shell
+	# command, get no .txt, and then read_file() died - turning a successful
+	# photo into HTTP 500 after the image was already on disk. Missing engine or
+	# empty output means "no text", not "the capture failed".
+	my $engine = `command -v tesseract 2>/dev/null`;
+	return undef unless $engine =~ /\S/;
+	my $src = &subs::shell_quote($filename);
+	my $out = &subs::shell_quote($text_file);
+	`tesseract $src $out 2>/dev/null`;
 	$text_file = $text_file . '.txt';
-	my $ocr = read_file($text_file);
+	unless (-e $text_file) {
+		return undef;
+	}
+	my $ocr = eval { read_file($text_file) };
 	# Keep every printable character, including accented letters and CJK text.
 	# Only the control bytes that OCR engines emit are removed; the old ASCII
 	# filter silently erased whole languages from a scanned document.
-	$ocr =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g;
+	$ocr =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g if defined $ocr;
 	$ocr = &subs::note_encrypter(&subs::session_suds($c),$ocr);
-	`shred -u $text_file`;
+	my $tn_txt = &subs::shell_quote($text_file);
+	`shred -u $tn_txt 2>/dev/null`;
 
 	return $ocr;
 }
@@ -10820,6 +10905,17 @@ sub sync_rows_pull {
 		$sync->done('failed', $failed);
 		return 'failed';
 	}
+	# Settle deletions too. A machine that pulls rows but never handshakes this
+	# donor (out of its hub's range) used to keep rows the donor had deleted; ask
+	# for the durable log above our confirmed cursor and apply it now.
+	{
+		my $turl = $remote->{'manager'} . '/manager/sync_tombstones?signatorial=' . $signatorial . '&cursor=' . int($remote->{'sync_cursor'} || 0);
+		my $tres = $remote->{'ua'} ? eval { $remote->{'ua'}->inactivity_timeout(20)->request_timeout(30)->get($turl)->result } : undef;
+		if ($tres && $tres->is_success) {
+			my $tj = eval { decode_json $tres->body } || {};
+			&apply_peer_tombstones($tj, $remote_signatorial);
+		}
+	}
 	# The puller's own watermark: what the reconnector hands the peer as `since`
 	# next tick. Written only after every table finished, so a short pull retries.
 	if (!$params->{'gimme'} && $watermark) {
@@ -10951,6 +11047,27 @@ get '/manager/sync_rows' => sub ($c) {
 	}
 	$c->res->headers->content_type('application/octet-stream');
 	$c->render(data => $sealed);
+};
+
+# The durable deletion log, in one small plain reply. A machine that pulls rows
+# but never reaches the donor's handshake (out of its hub's range, say) still
+# learns what the donor deleted; the puller applies these after its merge and
+# advances its confirmed cursor. Peer-gated exactly like `/manager/sync_rows`;
+# the reply carries names and ids, never a record's contents.
+get '/manager/sync_tombstones' => sub ($c) {
+	my $signatorial = $c->param('signatorial');
+	my $rm = ($signatorial && &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0]);
+	unless ($c->session('authentication') eq 'approved' || ($rm && &subs::peer_verify($c, $rm))) {
+		$c->rendered(403);
+		return;
+	}
+	&subs::sync_pull_touch();
+	my $cursor = $c->param('cursor');
+	$cursor = 0 unless defined $cursor && $cursor =~ /^\d+$/;
+	$c->render(json => {
+		tombstones => &subs::tombstones_since($cursor),
+		sync_cursor => &subs::tombstone_max(),
+	});
 };
 
 # One table's band map: the handshake digest's count/sum/max, per server_time
@@ -16862,6 +16979,19 @@ sub manager_reset($c) {
 		}
 
 		my $stop_timestamp = $c->param('duration') =~ /[a-zA-Z0-9]/ ? $timestamp - ((abs $duration) * -1) : undef;
+		# A live start that is already here (a replay delivered twice) is the same
+		# press, not a second session: reuse the open row and refresh it instead of
+		# minting a twin uuid the stop will never name. Only a live start is deduped;
+		# a scheduled one waits for its own time and the stop paths settle it.
+		my $twin = $seen eq 'yes' && $type eq 'start'
+			? (&subs::session_open_near($app, $type, $timestamp, 2000))->[0]
+			: undef;
+		if ($twin && $twin->{'uuid'}) {
+			$uuid = $twin->{'uuid'};
+			$c->param('uuid' => $uuid);
+			&subs::db_update('appointments', { server_time => $server_time, seen => $seen }, { uuid => $uuid, app => $app });
+		}
+		else {
 		&subs::db_insert('appointments', {
 			app => $app,
 			timestamp => $timestamp,
@@ -16884,6 +17014,7 @@ sub manager_reset($c) {
 			stop_timestamp => $stop_timestamp,
 			browser_tab_id => $browser_tab_id
 		});
+		}
 		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
 		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $timestamp });
@@ -17061,7 +17192,40 @@ sub manager_reset($c) {
 				}
 			}
 
-			&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $o->{'uuid'} .'\');'});
+			&Websocket::send('server', { console => 'appointmentDetailGrabber(\'' . $app . '\',\'' . $o->{'uuid'} . '\');' });
+		}
+
+		# A stop names one row, but a replayed start may have left an open twin
+		# beside it (same press, different uuid). One press means one session, so
+		# retire the twins too; otherwise a machine that received only the twin
+		# keeps showing the appointment as running long after it was stopped.
+		if ($seen eq 'yes' && $stop_row && $stop_row->{'uuid'}) {
+			my $stop_at = $timestamp;
+			foreach my $tw ( @{ &subs::session_twin_rows($app, $stop_row->{'uuid'}, $stop_row->{'timestamp'}, 2000) } ) {
+				next unless $tw->{'uuid'};
+				my $dur = (0 + $tw->{'timestamp'}) - $stop_at;
+				&subs::db_update('appointments', {
+					type => 'stop',
+					stop_timestamp => $stop_at,
+					duration => $dur,
+					stop_seen => $stop_at <= &subs::rightNow() + 1000 ? 'yes' : undef,
+					seen => 'yes',
+					server_time => $server_time
+				}, { uuid => $tw->{'uuid'}, app => $app });
+				# The twin's own model/option children are sessions of their own
+				# apps; close them too or the twin's child keeps running.
+				foreach my $so ( @{ &subs::db_query('select uuid,timestamp from appointments where source_uuid=? and (type=? or type=?) and stop_seen is null', $tw->{'uuid'}, 'start', 'record')->hashes || [] } ) {
+					my $sdur = (0 + $so->{'timestamp'}) - $stop_at;
+					&subs::db_update('appointments', {
+						type => 'stop',
+						stop_timestamp => $stop_at,
+						duration => $sdur,
+						stop_seen => $stop_at <= &subs::rightNow() + 1000 ? 'yes' : undef,
+						seen => 'yes',
+						server_time => $server_time
+					}, { uuid => $so->{'uuid'} });
+				}
+			}
 		}
 
 	}
@@ -43448,6 +43612,23 @@ sub deletion_performer($json) {
 	return $returner;
 }
 
+# Apply a peer's deletions: its queued `deletions` and its durable tombstone
+# log. Used by the handshake and by the v3 row pull, so a machine that never
+# handshakes the donor (out of its hub's range) still learns what was deleted.
+# The reader's confirmed cursor is advanced here, which is what lets the donor
+# purge the tombstones once every machine has read past them.
+sub apply_peer_tombstones {
+	my ($rj, $signatorial) = @_;
+	return 0 unless ref $rj eq 'HASH';
+	&deletion_performer($rj->{'deletions'}) if $rj->{'deletions'};
+	return 0 unless ref $rj->{'tombstones'} eq 'ARRAY' && scalar @{$rj->{'tombstones'}};
+	my @dels = map { { table => $_->{'tbl'}, app => $_->{'app'}, uuid => $_->{'uuid'}, scope => $_->{'scope'}, server_time => $_->{'server_time'}, additional => $_->{'additional'} } } @{$rj->{'tombstones'}};
+	&deletion_performer(encode_json \@dels) if scalar @dels;
+	&subs::db_update('remote_machines', { sync_cursor => ($rj->{'sync_cursor'} || 0) }, { signatorial => $signatorial })
+		if $signatorial;
+	return scalar @dels;
+}
+
 get '/manager/edit_app' => sub($c) {
 	my $app = $c->param('app');
 	my $timestamp = $c->param('timestamp');
@@ -49553,16 +49734,9 @@ sub remote_machine_reconnector($c) {
 						my $plan = &subs::sync_plan($my_digest, $rj->{'digest'}, $rj->{'above'} || {}, $seen, $bands);
 						my $plan_differs = (ref $plan eq 'HASH' && scalar keys %{$plan}) ? 1 : 0;
 						my $plan_pull = $plan_differs ? 1 : 0;
-						if ($rj->{'deletions'}) {
-							&deletion_performer($rj->{'deletions'});
-						}
-						# Apply the peer's durable tombstones and record how far we have
-						# read its log, so its next purge can drop what we have seen.
-						if ($rj->{'tombstones'}) {
-							my @dels = map { { table => $_->{'tbl'}, app => $_->{'app'}, uuid => $_->{'uuid'}, scope => $_->{'scope'}, server_time => $_->{'server_time'}, additional => $_->{'additional'} } } @{$rj->{'tombstones'}};
-							&deletion_performer(encode_json \@dels) if scalar @dels;
-							&subs::db_update('remote_machines', { sync_cursor => ($rj->{'sync_cursor'} || 0) }, { signatorial => $rj->{'signatorial'} });
-						}
+						# Apply the peer's queued deletions and its durable tombstones in
+						# one place; a row pull also asks for them (see sync_rows_pull).
+						&apply_peer_tombstones($rj, $rj->{'signatorial'});
 						# Refresh the live flags on every successful tick: connection/status
 						# were only ever set on a full reconnect, so a row could read
 						# 'inactive' while the peer was answering every handshake (the hub

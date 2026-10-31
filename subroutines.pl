@@ -1002,6 +1002,30 @@ sub stop_target_row {
 	return ($row && $row->{'uuid'}) ? $row : undef;
 }
 
+# A queued replay can deliver the same start twice a fraction of a second apart
+# (a toggle replayed after a sleep, say). The start branch used to mint a fresh
+# uuid every time, so the stop closed the row it named and the twin stayed open
+# on whichever machine had received the other write - visibly "still running"
+# long after the person stopped it. These two selectors make one press mean one
+# session: an open row already close to this start is reused instead of a twin
+# being written, and a stop retires any twin beside the row it closed.
+sub session_open_near {
+	my ($app, $type, $timestamp, $tolerance) = @_;
+	return [] unless $app && defined $timestamp;
+	$type ||= 'start';
+	$tolerance = 2000 unless defined $tolerance && $tolerance =~ /^\d+$/;
+	return &db_query('select uuid,timestamp from appointments where app=? and type=? and stop_seen is null and timestamp <= ? and abs(cast(timestamp as integer) - ?) <= ? order by timestamp asc',
+		$app, $type, &rightNow(), $timestamp, $tolerance)->hashes || [];
+}
+
+sub session_twin_rows {
+	my ($app, $uuid, $timestamp, $tolerance) = @_;
+	return [] unless $app && $uuid && defined $timestamp;
+	$tolerance = 2000 unless defined $tolerance && $tolerance =~ /^\d+$/;
+	return &db_query('select uuid,timestamp from appointments where app=? and (type=? or type=?) and stop_seen is null and uuid != ? and abs(cast(timestamp as integer) - ?) <= ? order by timestamp asc',
+		$app, 'start', 'record', $uuid, $timestamp, $tolerance)->hashes || [];
+}
+
 sub appt_header_printer() {
 	my $data = shift;
 	my $app = $data->{'app'};
@@ -31770,9 +31794,124 @@ sub records_bad_dates_scan {
 	return \@out;
 }
 
+# The same bridge bug wrote the mailbox row beside the appointment: sms_list_check
+# inserted both with the mangled stamp. Mailbox has no stop_timestamp, so only
+# timestamp is inverted. A sealed body is encrypted with a random container, so
+# two writes of one message never share the same bytes; an unreadable body is
+# therefore matched on the event (phone, sender, status, the same second), while
+# a readable body must agree.
+sub records_mailbox_body_readable {
+	my ($body) = @_;
+	return 0 unless defined $body && length $body;
+	# a sealed note is long, has no whitespace and is base64 (with the container
+	# markers); anything else - an ordinary message, a short word - is readable
+	return 0 if length($body) >= 60 && $body !~ /\s/ && $body =~ m{^[A-Za-z0-9+/=:_-]+$};
+	return 1;
+}
+
+sub records_mailbox_same_event {
+	my ($a, $b) = @_;
+	return 0 unless ref $a eq 'HASH' && ref $b eq 'HASH';
+	foreach my $f (qw(phone manager_file status)) {
+		my $x = defined $a->{$f} ? $a->{$f} : '';
+		my $y = defined $b->{$f} ? $b->{$f} : '';
+		return 0 unless $x eq $y;
+	}
+	my $readable_a = &records_mailbox_body_readable($a->{'body'});
+	my $readable_b = &records_mailbox_body_readable($b->{'body'});
+	return 0 if $readable_a != $readable_b;
+	return 1 unless $readable_a;    # both sealed: the ciphertext says nothing
+	return (defined $a->{'body'} && defined $b->{'body'} && $a->{'body'} eq $b->{'body'}) ? 1 : 0;
+}
+
+# What to do with each mangled mailbox row: one row per event, preferring the
+# sane copy already stored, then the first mangled row of a batch. Pure, so the
+# scan can be tested and the caller owns the writes.
+sub records_mailbox_date_decisions {
+	my ($bad, $sane, $now) = @_;
+	$now = &rightNow() unless $now;
+	my (@out, %kept);
+	foreach my $r ( @{$bad || []} ) {
+		my $fix = &records_bad_date_fix($r, $now);
+		next unless $fix;
+		my $real = $fix->{'timestamp'};
+		my $stored = 0;
+		foreach my $s ( @{$sane || []} ) {
+			next unless defined $s->{'timestamp'} && $s->{'timestamp'} =~ /^\d+$/;
+			next unless abs((0 + $s->{'timestamp'}) - $real) <= 1000;
+			next unless &records_mailbox_same_event($r, $s);
+			$stored = 1;
+			last;
+		}
+		if ($stored) {
+			push @out, { %{$r}, table => 'mailbox', fix => $fix, suggested => 'tombstone', why => 'the message is already stored' };
+			next;
+		}
+		my $event = join("\x1f", map { defined $r->{$_} ? $r->{$_} : '' } qw(phone manager_file status));
+		if (grep { abs($_ - $real) <= 1000 } @{ $kept{$event} || [] }) {
+			push @out, { %{$r}, table => 'mailbox', fix => $fix, suggested => 'tombstone', why => 'a re-write of the message kept from the same batch' };
+			next;
+		}
+		push @{$kept{$event}}, $real;
+		push @out, { %{$r}, table => 'mailbox', fix => $fix, suggested => 'repair', why => 'a millisecond date was read as a span of minutes' };
+	}
+	return \@out;
+}
+
+sub records_mailbox_bad_dates_scan {
+	my ($now, $exempt) = @_;
+	$now = &rightNow() unless $now;
+	$exempt ||= &records_exempt();
+	my $bad = &db_query('select rowid, uuid, app, phone, manager_file, status, body, timestamp, ost, server_time
+		from mailbox
+		where cast(timestamp as integer) < -1000000000000000
+		order by rowid asc')->hashes;
+	my @bad = grep {
+		!defined($_->{'app'}) || !length($_->{'app'}) || !$exempt->{ $_->{'app'} }
+	} @{$bad};
+	return [] unless scalar @bad;
+	# only the sane rows the batch could already be: same phone, within the span
+	# its mangled stamps reconstruct to
+	my ($lo, $hi) = (undef, undef);
+	foreach my $r ( @bad ) {
+		my $fix = &records_bad_date_fix($r, $now) or next;
+		$lo = $fix->{'timestamp'} if !defined $lo || $fix->{'timestamp'} < $lo;
+		$hi = $fix->{'timestamp'} if !defined $hi || $fix->{'timestamp'} > $hi;
+	}
+	return [] unless defined $lo;
+	my %phones = map { defined $_->{'phone'} && length $_->{'phone'} ? ($_->{'phone'} => 1) : () } @bad;
+	my @sane;
+	foreach my $phone ( sort keys %phones ) {
+		push @sane, @{ &db_query('select uuid, phone, manager_file, status, body, timestamp from mailbox
+			where phone = ? and cast(timestamp as integer) >= -1000000000000000
+			  and cast(timestamp as integer) between ? and ?
+			order by rowid asc', $phone, $lo - 1000, $hi + 1000)->hashes };
+	}
+	my $out = &records_mailbox_date_decisions(\@bad, \@sane, $now);
+	# the report is shown and synced: never carry a message body in it
+	delete $_->{'body'} foreach @{$out};
+	return $out;
+}
+
+sub records_mailbox_repair_date {
+	my ($uuid, $fix) = @_;
+	return unless $uuid && ref $fix eq 'HASH' && defined $fix->{'timestamp'};
+	&db_update('mailbox', { timestamp => $fix->{'timestamp'}, server_time => &rightNow() }, { uuid => $uuid });
+}
+
+sub records_mailbox_tombstone {
+	my ($row) = @_;
+	my $uuid = ref $row eq 'HASH' ? $row->{'uuid'} : $row;
+	return unless $uuid;
+	my $app = ref $row eq 'HASH' ? ($row->{'app'} || $row->{'manager_file'} || '') : '';
+	&tombstone_writer({ table => 'mailbox', app => $app, uuid => $uuid, scope => 'single' });
+	&db_delete('mailbox', { uuid => $uuid });
+}
+
 # Run only the bad-date pass. A peer that holds the accurate copy can ask this
 # machine to clear its own mangled dates over the signed records/repair rail;
-# the pass touches only the unmistakable signature and is idempotent.
+# the pass touches only the unmistakable signature and is idempotent. The same
+# bridge bug wrote the mailbox row beside the appointment, so both are cleared.
 sub records_repair_bad_dates {
 	my $now = &rightNow();
 	my ($repaired, $tombstoned) = (0, 0);
@@ -31787,7 +31926,20 @@ sub records_repair_bad_dates {
 			$repaired++;
 		}
 	}
-	return { repaired => $repaired, tombstoned => $tombstoned };
+	my ($mail_repaired, $mail_tombstoned) = (0, 0);
+	foreach my $r ( @{ &records_mailbox_bad_dates_scan($now) } ) {
+		my $fix = $r->{'fix'} or next;
+		if (($r->{'suggested'} || '') eq 'tombstone') {
+			&records_mailbox_tombstone($r);
+			$mail_tombstoned++;
+		}
+		else {
+			&records_mailbox_repair_date($r->{'uuid'}, $fix);
+			$mail_repaired++;
+		}
+	}
+	return { repaired => $repaired, tombstoned => $tombstoned,
+		mailbox_repaired => $mail_repaired, mailbox_tombstoned => $mail_tombstoned };
 }
 
 sub records_audit {
@@ -31801,7 +31953,7 @@ sub records_audit {
 	my $exempt = &records_exempt();
 	my $report = {
 		generated_at => $now, window_ms => $window_ms, since => $since,
-		sweep => [], wrong_end => [], dupes => [], orphans => [], impossible => [], bad_dates => [],
+		sweep => [], wrong_end => [], dupes => [], orphans => [], impossible => [], bad_dates => [], mailbox_bad_dates => [],
 		apps_with_duration => {}, summary => {},
 	};
 
@@ -31912,6 +32064,9 @@ sub records_audit {
 	# Unlike the other passes this looks at all time: the signature is
 	# unmistakable and the bad rows are few.
 	$report->{'bad_dates'} = &records_bad_dates_scan($now, $exempt);
+	# The bridge wrote the mailbox row with the same stamp, so the same pass reads
+	# it too; a sealed body is compared as an event, not byte for byte.
+	$report->{'mailbox_bad_dates'} = &records_mailbox_bad_dates_scan($now, $exempt);
 
 	my $extra = 0;
 	foreach my $g ( @{$report->{'sweep'}} ) { $extra += scalar(grep { $_->{'suggested'} ne 'keep' } @{$g->{'rows'}}); }
@@ -31926,6 +32081,7 @@ sub records_audit {
 		orphans => scalar @{$report->{'orphans'}},
 		impossible => scalar @{$report->{'impossible'}},
 		bad_dates => scalar @{$report->{'bad_dates'}},
+		mailbox_bad_dates => scalar @{$report->{'mailbox_bad_dates'}},
 	};
 	return $report;
 }
@@ -31984,6 +32140,21 @@ sub records_reconcile {
 		}
 		push @actions, { action => 'repair-date', app => $r->{'app'}, uuid => $r->{'uuid'}, timestamp => $fix->{'timestamp'}, stop_timestamp => $fix->{'stop_timestamp'}, why => $r->{'why'} };
 		&records_repair_date($r->{'app'}, $r->{'uuid'}, $fix) if $apply;
+	}
+
+	# BAD DATES in the mailbox - the same reader wrote the message row. Keep the
+	# sane copy when it is already stored; otherwise put the first mangled row
+	# back and tombstone the re-writes.
+	foreach my $r ( @{ $report->{'mailbox_bad_dates'} || [] } ) {
+		my $fix = $r->{'fix'} or next;
+		my $app = $r->{'app'} || $r->{'manager_file'};
+		if (($r->{'suggested'} // '') eq 'tombstone') {
+			push @actions, { action => 'tombstone', table => 'mailbox', app => $app, uuid => $r->{'uuid'}, why => $r->{'why'} || 'a re-write of a stored message' };
+			&records_mailbox_tombstone($r) if $apply;
+			next;
+		}
+		push @actions, { action => 'repair-date', table => 'mailbox', app => $app, uuid => $r->{'uuid'}, timestamp => $fix->{'timestamp'}, why => $r->{'why'} };
+		&records_mailbox_repair_date($r->{'uuid'}, $fix) if $apply;
 	}
 
 	return { applied => $apply, actions => scalar @actions, summary => $report->{'summary'}, list => \@actions };

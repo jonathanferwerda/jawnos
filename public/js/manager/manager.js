@@ -1127,11 +1127,39 @@ function jawnCameraUpload(result) {
 	window.__jawnCameraPending = null;
 	var status = pending.status;
 	var setStatus = function (text) { if (status) { $(status).text(text); } };
-	if (!result || !result.ok || !result.data) {
+	if (!result || !result.ok) {
 		setStatus(result && result.error && result.error !== 'cancelled' ? ('Capture failed: ' + result.error) : '');
 		return;
 	}
 	var kind = result.kind === 'video' ? 'video' : 'image';
+	// The app writes the capture into the Termux home it shares with the manager
+	// and hands back only the path. A real photo's base64 is several megabytes,
+	// which the WebView's binder transaction cannot carry - the camera opened and
+	// the answer never arrived. The path keeps both the details view and the
+	// wrapper on the one route that already knows how to file a picture.
+	if (result.path) {
+		$.ajax({
+			url: '/manager/take_picture',
+			type: 'POST',
+			data: {
+				app: pending.app || '',
+				uuid: pending.uuid || '',
+				camera: pending.camera || '0',
+				timestamp: pending.timestamp || Date.now(),
+				native_path: result.path,
+				native_kind: kind,
+				native_name: result.name || '',
+				native_mime: result.mime || ''
+			},
+			success: function(response) {
+				setStatus('Saved.');
+				if (pending.app === 'camera' && typeof jawnCameraAppPool === 'function') { jawnCameraAppPool(); }
+			},
+			error: function() { setStatus('Upload failed.'); }
+		});
+		return;
+	}
+	if (!result.data) { setStatus('Capture failed: no file'); return; }
 	var ext = kind === 'video' ? '.mp4' : '.jpg';
 	var bin = atob(result.data);
 	var bytes = new Uint8Array(bin.length);
@@ -1139,6 +1167,7 @@ function jawnCameraUpload(result) {
 	var blob = new Blob([bytes], { type: result.mime || (kind === 'video' ? 'video/mp4' : 'image/jpeg') });
 	var formData = new FormData();
 	formData.append('app', pending.app || '');
+	formData.append('uuid', pending.uuid || '');
 	formData.append('timestamp', Date.now());
 	formData.append('type', kind);
 	formData.append('blob', blob, (pending.app || 'capture') + ext);
@@ -1221,8 +1250,12 @@ function jawnLaunchDial(number) {
 $(document).on('click', '.native_capture, .native_video', function() {
 	if (!jawnCameraAvailable()) { return; }
 	var b = $(this);
-	var app = b.attr('app') || b.closest('.appointment').attr('app');
-	window.__jawnCameraPending = { app: app };
+	var appointment = b.closest('.appointment');
+	var app = b.attr('app') || appointment.attr('app');
+	// the wrapper shows an app, not one session row; the server files the
+	// capture onto that app's newest row when no uuid is named
+	var uuid = b.attr('uuid') || appointment.attr('uuid') || '';
+	window.__jawnCameraPending = { app: app, uuid: uuid, camera: b.attr('capture') || '0', timestamp: Date.now() };
 	if (b.hasClass('native_video')) { window.JawnCamera.video(); }
 	else { window.JawnCamera.photo(b.attr('capture') || '0'); }
 });
@@ -3352,6 +3385,15 @@ $(document).on('click', '.take_picture', function() {
 	var ago = container.find('.ago').val();
 	var time_machine = $('#time_machine').val() || localStorage.getItem('time_machine');
 	var timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
+	// In the app the OS camera is the viewfinder the person can see. The
+	// server-side camera.photo path has none, and its device-bridge call gives up
+	// after two seconds while a real capture takes far longer - so the same press
+	// behaved differently in the two views. Both templates now use the bridge.
+	if (jawnCameraAvailable() && (camera === '0' || camera === '1')) {
+		window.__jawnCameraPending = { app: app, uuid: uuid, camera: camera, timestamp: timestamp };
+		window.JawnCamera.photo(camera);
+		return;
+	}
 	$.ajax({
 		url: '/manager/take_picture',
 		type: 'POST',

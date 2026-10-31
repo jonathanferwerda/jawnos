@@ -318,6 +318,9 @@ hook before_dispatch => sub {
 		$path eq '/manager/backup/confirm' ||
 		# the v3 row stream: the same signed rail, with no snapshot to build
 		$path eq '/manager/sync_rows' ||
+		# and its durable deletion log, which a puller reads after a row merge so
+		# a machine out of its hub's handshake range still drops deleted rows
+		$path eq '/manager/sync_tombstones' ||
 		# the row stream's band map: the peer asks where a table moved before it
 		# reads. Same signed rail and the same route-side check; without this
 		# entry a peer's map request met the Gate page and every repair fell back
