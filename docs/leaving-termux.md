@@ -659,9 +659,14 @@ The milestone that actually leaves Termux.
   rewritten with the same environment. **No GPL-3-only file remains in
   `jawnos-shared`; the module is BSD-2**, keeping only the MIT/Apache/
   Classpath notices. The app module is still a derivative of termux-app, so the
-  APK stays GPL-3 until that code is replaced; the remaining work is the app
-  module itself (`TermuxInstaller` and the other `Termux*` names, the
-  `com.termux` strings, and `grep -r com.termux` down to notices).
+  APK stays GPL-3 until that code is replaced. The app-module identity pass
+  (2026-10-31) renamed every remaining `Termux*` class to `Jawn*`, moved the
+  shared package to `com.jawnos.shared.jawnos`, set `TERMUX_APP_NAME` to
+  "JawnOS", and removed the last literal `com.termux` strings, so
+  `grep -r com.termux app/src jawnos-shared/src` is empty. That meets the
+  M4 exit as written, but **naming is not a relicense**: the `app/` module's
+  Java is still derived from termux-app, so the APK stays GPL-3 until that
+  code is rewritten file by file (or a clean-room app is written).
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
