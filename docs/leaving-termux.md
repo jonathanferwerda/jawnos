@@ -648,11 +648,14 @@ The milestone that actually leaves Termux.
   `PackageUtils` no longer needs hidden-API reflection), and `PackageUtils` and
   `TermuxUtils` were rewritten as original BSD-2 code — the former answers only
   this app's package, the latter describes JawnOS instead of
-  Termux/plugins/wiki/donation. **Seven GPL-3-only originals remain, all in
-  use**: `TermuxCrashUtils`, `TermuxFileUtils`, `TermuxNotificationUtils`,
-  `TermuxAppSharedPreferences`, `TermuxPreferenceConstants`,
-  `TermuxShellEnvironmentClient`, `TermuxShellUtils`. Those are the rewrite
-  list before BSD-2; the preferences and shell helpers are the next batch.
+  Termux/plugins/wiki/donation. A third pass rewrote `TermuxCrashUtils`,
+  `TermuxNotificationUtils` and `TermuxFileUtils` as original BSD-2 code too
+  (the crash-handler adapter without plugin assumptions, a notification-id
+  counter in its own preference file, and only the three installer directory
+  checks). **Four GPL-3-only originals remain**: `TermuxAppSharedPreferences`,
+  `TermuxPreferenceConstants`, `TermuxShellEnvironmentClient` and
+  `TermuxShellUtils` — the preferences and the startup shell environment, the
+  last batch.
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
