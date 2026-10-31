@@ -583,6 +583,29 @@ The milestone that actually leaves Termux.
   modules (the Console's rollback path), the 40 GPL-3-only `jawnos-shared`
   files, the `Termux*` class names and `com.termux` strings — then the tablet
   migration and the voice pack.
+- **Migration A/B as a script.** `scripts/app_migrate.pl` is the checked-in form
+  of that recipe: it stops the app, backs it up, uninstalls, installs, waits for
+  the first run, force-stops again, restores and verifies. The command is
+
+  ```
+  perl scripts/app_migrate.pl --device SERIAL --apply
+  ```
+
+  `--dry-run` (the default, with or without the flag) prints the whole plan and
+  changes nothing; `--apk FILE` overrides the newest
+  `releases/jawnos-app-*.apk`; `--backup-dir DIR` overrides
+  `~/.jawnos-backups/<model>-<serial>-<YYYY-MM-DD-HHMM>/`. It backs up
+  `database/jawnos.db` (plus `-wal`/`-shm`, folded into the copy on the host),
+  `config.json`, `.house.key`, `.peer.key`, `.peer.pub`,
+  `.jawnos_signatorial_id` and its `database/` mirror (and `schema.sql` /
+  `initial.enc` when present), then writes a `MANIFEST` with sizes and sha256
+  and runs `PRAGMA integrity_check` on the host copy. A missing key file is a
+  hard failure **before** force-stop. It does not carry `.shots/ticket.txt`;
+  mint one afterwards with `perl scripts/app_ticket.pl <client> --save`.
+  **The `--apk` must be the build that dropped `android:sharedUserId`.** The
+  script warns loudly when the staged APK still declares it: uninstall+install
+  is safe and proves the restore path, but the next in-place upgrade over that
+  build will fail with `INSTALL_FAILED_UID_CHANGED` exactly as before.
 
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
