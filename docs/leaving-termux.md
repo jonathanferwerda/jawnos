@@ -422,6 +422,59 @@ The milestone that actually leaves Termux.
   `status=good` with every worker up and 3000 answering, and Termux's perl stays
   the fallback. That is the runtime half of leaving Termux done: the tree no
   longer needs the prefix's interpreter.
+- **What actually moves on a release (2026-10-30).** `app_publish.pl` uploads the
+  **APK (18.2 MB)** and a manifest; the runtimes are separate assets that only
+  move when the module or tool set changes, which during M3 was every time and
+  after M3 is rare. The tree already updates incrementally (`git fetch` on the
+  30-minute code sync), so nothing about a normal tree change re-downloads a
+  runtime. Measured costs if the runtime does change: aarch64 109.9 MB, x86_64
+  100.1 MB zipped; ImageMagick alone is **40.2 MB raw** of it.
+- **Slicing the runtime is possible but not free; decide before building.**
+  Three shapes, cheapest first:
+  1. **Layers** — core (perl + modules + shell tools), media (ffmpeg +
+     ImageMagick), voice (Piper when it lands), each with its own sha in the
+     manifest. The app keeps layers on disk and refetches only one whose hash
+     moved. A perl-only change then costs ~45 MB instead of 110, and adding
+     voices touches nothing else. Cost: the unpacker learns three archives.
+  2. **Per-file manifest + HTTP ranges** (rsync over HTTPS): a list of paths and
+     sha256s, downloaded individually. Turns a runtime update into a few MB, but
+     needs somewhere to serve the files that is not a GitHub release asset.
+  3. **Delta patches** (bsdiff / `zstd --patch-from`) between consecutive
+     versions, ~5–10 MB. Cheap to generate, but every device must hold the exact
+     previous archive, and one skipped version wastes the patch.
+  The cheapest win is not a mechanism at all: the native thumbnail path deletes
+  ImageMagick's 40 MB, and a voice pack keeps Piper's stack out of the base.
+- **Subtitles are the one ffmpeg job Android cannot do.** `rock_and_roll` serves
+  a film; if no `.vtt` sits beside it, the route runs `ffmpeg -i … -map 0:s:0`
+  once — the result is cached as the sidecar and served as WebVTT thereafter, so
+  it costs one extraction per film, not one per play. Android has no public API
+  to pull a subtitle track out of a container; `MediaExtractor` can read text
+  samples in some MP4/MKV variants, but that is undocumented territory. So
+  ffmpeg stays for subtitles until every library already carries a `.vtt`.
+- **Native thumbnails — worth it, but it is a runtime saving, not an APK one.**
+  `MediaMetadataRetriever.getFrameAtTime()` + `Bitmap.createScaledBitmap` +
+  `Bitmap.compress` (and `ExifInterface`, `PdfRenderer` for images and PDFs)
+  replace the `ffmpeg … -vframes 1 | magick - -resize …` pipeline: **−56 files /
+  −40.2 MB raw / ≈−15 MB zipped** (x86_64 100.1 → ≈85 MB, aarch64 109.9 → ≈95 MB),
+  and −44 `magick` call sites. The APK is 18.2 MB either way, because none of it
+  is in the APK.
+- **M4 — Identity.** Target: one app, package `com.jawnos`, no Termux code. The
+  order that keeps the devices usable:
+  1. **Data migration first, and it is the decision that matters.** A new package
+     gets a new data directory, so `files/home` (the tree, the database) and
+     `files/usr` (the runtime) must move from `/data/data/com.termux/…` to
+     `/data/data/com.jawnos/…`. Options: (a) fresh install + import — a zip of
+     `~/jawnos` out of the old app and into the new one, explicit and safe, one
+     manual step per device; (b) in-place hand-off — the new APK copies the
+     directory once and the old app is then uninstalled, no manual step but it
+     needs both packages installed at once and ~300 MB of free space.
+  2. Purge the identity: `applicationId`, `TermuxConstants` paths, the
+     `termux-*` strings and the `.termux` intent names, `sharedUserId`, the
+     plugin/TermuxService leftovers, then `termux-shared`, `terminal-view` and
+     `terminal-emulator` (Apache-2.0 vendoring last, or Console disappears).
+  3. Prove it on the emulator from a wiped install, then migrate the phone, then
+     the tablet.
+
 - **M3 closed (2026-10-30, app 1198).** The app unpacks the pinned archive into
   `$PREFIX` on first run, verifies the sha256, writes
   `$PREFIX/etc/jawnos-runtime.json` (which makes `jawnos_deps.pl --install` a
