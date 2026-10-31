@@ -19,6 +19,12 @@ use JawnOSTest;
 #      card saw no duration and no height and fell back to the generic icon.
 #   2. the sealed thumb path always seeked to 00:00:00.010, which is a fade or a
 #      black frame on most encodes, so a generated poster could be blank.
+#   3. Music passed terminal_name's shell-escaped path to file_media_information,
+#      which now quotes the path itself. The two layers of escaping fought, so
+#      every re-probe failed for any name with a space, a bracket or an
+#      apostrophe - only a cache entry written before that quoting change still
+#      worked, which is why some shows kept their posters and others never got
+#      one at all.
 #
 # The rule is now: never cache a probe that answered nothing, treat an entry
 # without the facts as a miss (so the old entries heal on the next render), and
@@ -54,6 +60,14 @@ like($video, qr/if \(&subs::music_info_usable\(\$file_information->\{\$filename\
 	'the cached info is reused only when it is usable');
 like($video, qr/delete \$file_information->\{\$filename\};/,
 	'a failed probe is removed from the cache so the next render retries');
+
+# --- the path is quoted once, by file_media_information -----------------------
+like($video, qr/\$f = &subs::file_media_information\(\$f, \$filename\);/,
+	'Music hands file_media_information the raw path');
+unlike($video, qr/\$f = &subs::file_media_information\(\$f, &subs::terminal_name/,
+	'Music no longer pre-escapes that path');
+is(subs::shell_quote("/a b/c'd.mp4"), "'/a b/c'\\''d.mp4'",
+	'one quoting pass survives spaces and an apostrophe');
 
 # --- no thumbnail path still takes the fade-in frame -------------------------
 unlike($manager, qr/-ss 00:00:00\.010/,
