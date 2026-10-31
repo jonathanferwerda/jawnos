@@ -133,4 +133,18 @@ unlink $token_file;
 $subs::device_bridge_memo = undef;
 is(subs::device_call('ping'), undef, 'no token file means no bridge');
 
+# The BLE bridge client is a Perl script; Android has no /usr/bin/perl, so it
+# must run through the running interpreter rather than its shebang. Launching it
+# directly failed with ENOENT on the phone and the bridge never started.
+{
+	open(my $fh, '<', root() . '/subroutines.pl') or die $!;
+	local $/;
+	my $src = <$fh>;
+	close $fh;
+	unlike($src, qr/system\(\$client/, 'no BLE client is executed by its shebang');
+	unlike($src, qr/'\|-', \$client/, 'no pipe runs the client by its shebang');
+	like($src, qr/program => \$\^X, program_args => \[ \$client, 'listen' \]/, 'the listener runs the client through the current perl');
+	like($src, qr/timeout 25 &shell_quote\(\$\^X\)/, 'the scan runs through the current perl');
+}
+
 done_testing();
