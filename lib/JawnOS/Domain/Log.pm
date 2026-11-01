@@ -664,10 +664,17 @@ sub log_reader {
 # person is in; with no open row the newest row is the one the details view
 # shows. Takes the rows and returns the target uuid ('' when there are none).
 sub capture_target_uuid($rows) {
-	return '' unless ref $rows eq 'ARRAY' && scalar @{$rows};
+	# db_query(...)->hashes returns a Mojo::Collection, not a plain arrayref; treat
+	# any array-like the caller has as the row list. A Mojo::Collection happens to
+	# overload @{}, but to_array() is the dependable way to get the plain list.
+	my $list = $rows;
+	if (ref $rows && ref $rows ne 'ARRAY' && eval { $rows->can('to_array') }) {
+		$list = $rows->to_array;
+	}
+	return '' unless ref $list eq 'ARRAY' && scalar @{$list};
 	my @rows = grep {
 		ref $_ eq 'HASH' && defined $_->{'uuid'} && length $_->{'uuid'}
-	} @{$rows};
+	} @{$list};
 	return '' unless @rows;
 	my @open = grep {
 		($_->{'type'} || '') =~ /^(?:start|record)$/

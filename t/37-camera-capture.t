@@ -35,7 +35,7 @@ my $manager = manager_source();
 # the camera route itself is still in Manager.pl. Read the whole lazy layer so
 # a later regrouping does not make these checks fail on a missing file.
 my $domain = join "\n", map { read_file($_) } glob("$FindBin::Bin/../lib/JawnOS/Domain/*.pm");
-my $js = read_file("$FindBin::Bin/../public/js/manager/manager.js");
+my $js = js_source('public/js/manager/manager.js');
 my $details = read_file("$FindBin::Bin/../templates/appointment_details.html.ep");
 my $wrapper = read_file("$FindBin::Bin/../templates/appointment_wrapper.html.ep");
 
@@ -194,7 +194,7 @@ like($manager, qr/\$data->\{'uuid'\} \|\| \$uuid/, 'the websocket refresh names 
 # same lazy layer log_reader_file_preparer moved to.
 my ($target_sub) = $domain =~ /(sub capture_target_uuid\(.*?\n\})/s;
 ok(defined $target_sub, 'the capture target rule is present');
-my $target_code = "package CameraTarget;\n$target_sub\n1;";
+	my $target_code = "package CameraTarget;\nuse Mojo::Collection;\n$target_sub\n1;";
 my $target_ok = eval $target_code;
 is($@, '', 'the capture target rule compiles against the stubs');
 if ($target_ok) {
@@ -216,6 +216,8 @@ if ($target_ok) {
 	]), 'newest', 'with no open row the newest server_time wins');
 	is(CameraTarget::capture_target_uuid([]), '', 'no rows means no target');
 	is(CameraTarget::capture_target_uuid(undef), '', 'no list means no target');
+	is(CameraTarget::capture_target_uuid(Mojo::Collection->new($newer_stopped)),
+		'newer', 'a db_query Mojo::Collection is a row list too');
 }
 
 # --- the web side uses the bridge for both templates -------------------------
