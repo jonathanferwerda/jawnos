@@ -17,6 +17,30 @@
 use strict;
 use warnings;
 
+# A non-interactive ssh session exports no PERL5LIB and may not even put prove
+# on PATH. ./jawn finds the user's local::lib from $HOME; do the same here,
+# before `use Harness` needs Mojo and before prove needs Sereal.
+BEGIN {
+	my $base = (($ENV{'HOME'} || '') . '/perl5/lib/perl5');
+	if ($base =~ m{/} && -d $base) {
+		my @dirs = ($base);
+		if (opendir(my $dh, $base)) {
+			for my $name (sort readdir $dh) {
+				my $dir = "$base/$name";
+				push @dirs, $dir
+					if $name ne '.' && $name ne '..' && -d $dir
+					&& ($name =~ /-linux-/ || $name =~ /^[0-9]+\.[0-9]+/);
+			}
+			closedir $dh;
+		}
+		my %in_inc = map { $_ => 1 } @INC;
+		unshift @INC, grep { !$in_inc{$_} } @dirs;
+		my $lib = join ':', @dirs;
+		$ENV{'PERL5LIB'} = $ENV{'PERL5LIB'}
+			? "$lib:$ENV{'PERL5LIB'}" : $lib;
+	}
+}
+
 use FindBin;
 use lib "$FindBin::Bin/lib", "qa/lib";
 use Cwd qw(abs_path);
@@ -89,7 +113,11 @@ if (grep { $_ eq 'l0' } @layers) {
 	else {
 		$say->("\n[l0] prove -l t");
 		my $t0 = time;
-		my $rc = system('prove', '-l', 't');
+		# prove is a perl program; a non-interactive ssh session may not have it
+		# on PATH, so run App::Prove with the same interpreter.
+		my $rc = system($^X, '-MApp::Prove', '-e',
+			'my $p = App::Prove->new; $p->process_args(@ARGV); exit($p->run ? 0 : 1)',
+			'--', '-l', 't');
 		$l0_result = {
 			exit => ($rc >> 8), seconds => time - $t0,
 			ok => ($rc == 0 ? 1 : 0),
