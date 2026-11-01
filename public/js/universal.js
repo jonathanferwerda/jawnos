@@ -1507,7 +1507,10 @@ function jawnosBiometricGo(requestId, deviceName, status) {
 	if (!uuid) { return Promise.reject({ error: 'not paired' }); }
 	if (!window.JawnBiometricKey) { return Promise.reject({ error: 'unavailable' }); }
 	status(jawnPadlockPromptText('Confirm your fingerprint...'));
-	return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'go' }).then(function (ch) {
+	return jawnosBiometricKeyReady(status).then(function () {
+		status(jawnPadlockPromptText('Confirm your fingerprint...'));
+		return $.post('/manager/security/biometric_challenge', { device_uuid: uuid, purpose: 'go' });
+	}).then(function (ch) {
 		if (!ch || !ch.ok || !ch.nonce) { throw { error: (ch && ch.error) || 'no challenge' }; }
 		var msg = 'go-approve\n' + uuid + '\n' + requestId + '\n' + ch.nonce;
 		var label = jawnPadlockPromptText('Approve Go to {0}', deviceName || jawnPadlockPromptText('another machine'));
@@ -2150,6 +2153,26 @@ function jawnosBiometricVerify(status) {
 		});
 	});
 }
+// The app keeps its EC key in Android Keystore, and the OS deletes every key
+// when the app is uninstalled - which is how a signature-change reinstall
+// arrives - while enrolling a new fingerprint invalidates the old key. The
+// house can only verify a signature from a public key it was given, so an
+// unlock with no usable key must make and register one first; otherwise the
+// padlock reports "no key" and stays shut however well the fingerprint reads.
+// `hasKey` answers without a prompt, so an ordinary unlock asks nothing extra.
+// An enrollment that is refused (a locked screen, no session) is not fatal:
+// the unlock runs on and reports its own reason, and the caller's paired-key
+// fallback still works exactly as it did before.
+function jawnosBiometricKeyReady(status) {
+	status = status || function () {};
+	return jawnosBiometricKeyCall('hasKey', []).catch(function () { return { ok: false, error: 'unavailable' }; }).then(function (res) {
+		if (res && res.ok) { return false; }
+		var e = (res && res.error) || '';
+		if (e !== 'no key' && e !== 'invalidated') { return false; }
+		status(jawnPadlockPromptText('Set up this phone\'s fingerprint...'));
+		return jawnosBiometricEnroll(status).then(function () { return true; }).catch(function () { return false; });
+	});
+}
 function jawnosBiometricUnlock(mode, target, status, context, house, sourceHost, deviceName) {
 	status = status || function () {};
 	mode = mode || 'locker';
@@ -2176,8 +2199,23 @@ function jawnosBiometricUnlock(mode, target, status, context, house, sourceHost,
 			});
 		});
 	}
-	status('Authenticate to unlock...');
-	return once().then(function (res) {
+	function attempt() {
+		return jawnosBiometricKeyReady(status).then(function () {
+			status('Authenticate to unlock...');
+			return once();
+		});
+	}
+	return attempt().then(function (res) {
+		if (!res || res.ok) { return res; }
+		// The key signed, but the house knows no key for this device: an earlier
+		// enrollment made the Keystore key without its public half reaching the
+		// manager (the reinstall case, or a request lost on the way). Register the
+		// key now and sign once more; this is never reached for a key the house
+		// holds, so it cannot turn a genuine refusal into an open.
+		if (res.error !== 'no biometric key') { throw { error: res.error || 'not accepted' }; }
+		status(jawnPadlockPromptText('Registering this phone\'s fingerprint...'));
+		return jawnosBiometricEnroll(status).then(attempt);
+	}).then(function (res) {
 		if (!res || !res.ok) { throw { error: (res && res.error) || 'not accepted' }; }
 		return res;
 	});

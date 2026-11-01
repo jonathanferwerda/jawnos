@@ -4,6 +4,13 @@
 #   perl scripts/runtime_build.pl --from /path/to/prefix [--out FILE] [--dry-run]
 #   perl scripts/runtime_build.pl --from PREFIX --list      # what would ship
 #
+# --no-bin omits the executables and symlinks under bin/ and libexec/ - the
+# entries the Android app supplies as jniLibs native libraries and links back
+# into the prefix at start (scripts/runtime_native_bins.pl, M5b in
+# docs/leaving-termux.md). Non-executable data files in those trees still ship,
+# and the library each executable names is still selected, so the payload the
+# app links to finds its libraries in the archive.
+#
 # The runtime is what a clean install unpacks into $PREFIX before jawn starts:
 # one Perl, the modules the tree loads, and only the tools M3 chose to keep.
 # It is deliberately NOT the Termux bootstrap: no pkg, no apt/dpkg, no repo
@@ -87,13 +94,14 @@ my @PRUNE = (
 );
 
 # --- options ----------------------------------------------------------------
-my ($from, $out, $dry, $list, $help, $abi, $rewrite, $perl_version);
+my ($from, $out, $dry, $list, $help, $abi, $rewrite, $perl_version, $no_bin);
 while ( defined(my $a = shift @ARGV) ) {
 	if ($a eq '--from') { $from = shift @ARGV }
 	elsif ($a eq '--out') { $out = shift @ARGV }
 	elsif ($a eq '--abi') { $abi = shift @ARGV }
 	elsif ($a eq '--rewrite-prefix') { $rewrite = shift @ARGV }
 	elsif ($a eq '--perl-version') { $perl_version = shift @ARGV }
+	elsif ($a eq '--no-bin') { $no_bin = 1 }
 	elsif ($a eq '--dry-run') { $dry = 1 }
 	elsif ($a eq '--list') { $list = 1 }
 	elsif ($a eq '--help' || $a eq '-h') { $help = 1 }
@@ -101,11 +109,14 @@ while ( defined(my $a = shift @ARGV) ) {
 }
 if ($help) {
 	print <<'USAGE';
-perl scripts/runtime_build.pl --from PREFIX [--out FILE] [--abi ABI] [--dry-run] [--list]
+perl scripts/runtime_build.pl --from PREFIX [--out FILE] [--abi ABI] [--no-bin]
+    [--dry-run] [--list]
 
   --from     the built prefix to pack (a device's $PREFIX, or a staging dir)
   --out      the archive to write (default releases/jawnrt-<abi>-<VERSION>.zip)
   --abi      the archive's ABI, for the manifest (default aarch64)
+  --no-bin   omit the executables and symlinks under bin/ and libexec/ that the
+             app supplies as native libraries; data files in those trees stay
   --dry-run  print the plan and the size; write nothing
   --list     print every path that would ship, one per line
 USAGE
@@ -291,6 +302,35 @@ if (%missing) {
 	exit 1;
 }
 
+# A runtime the app installs no longer needs the executables in the archive:
+# it carries them as jniLibs native libraries and links them back into bin/ and
+# libexec/ on every start. When --no-bin is set, drop exactly the entries
+# runtime_native_bins.pl converts - regular files with an execute bit, and
+# symlinks - under those two trees. Non-executable data files stay (git keeps
+# its mergetool helpers and shell libraries in libexec/git-core, and no app
+# recreates them).
+#
+# The filter runs after the library pass on purpose: lib/ must be exactly what
+# a full build carries, or an app-supplied executable would name a library the
+# archive no longer has (curl's libssl, for one).
+my $has_perl = grep { $_ eq 'bin/perl' } @files;
+if ($no_bin) {
+	my @kept;
+	my $omitted = 0;
+	foreach my $rel (@files) {
+		if ($rel =~ m{^(?:bin|libexec)/}) {
+			my $path = "$from/$rel";
+			if (-l $path || ((stat($path))[2] & 0111)) {
+				$omitted++;
+				next;
+			}
+		}
+		push @kept, $rel;
+	}
+	@files = @kept;
+	print "runtime_build: --no-bin: omitting $omitted executables and links supplied by the app\n";
+}
+
 my $source_bytes = 0;
 $source_bytes += -l "$from/$_" ? 0 : (-s "$from/$_" || 0) foreach @files;
 
@@ -317,7 +357,6 @@ if (!@files) {
 }
 
 # The two things a runtime is useless without.
-my $has_perl = grep { $_ eq 'bin/perl' } @files;
 my $has_libperl = grep { m{/CORE/libperl\.so$} } @files;
 if (!$has_perl || !$has_libperl) {
 	print "runtime_build: incomplete - bin/perl: " . ($has_perl ? 'yes' : 'NO')

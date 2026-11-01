@@ -20428,18 +20428,250 @@ sub peer_manager_url {
 	return $manager;
 }
 
+# ---------------------------------------------------------------------------
+# Peer addressing without the tailnet
+#
+# The house names (*.jonathanferwerda.com) resolve through the tailnet's DNS.
+# With the VPN off and no router entry for them, gethostbyname fails outright,
+# so a row whose only address is its name cannot be dialled - even though the
+# row still carries the LAN address the peer last advertised. The helpers below
+# keep the literal addresses a row knows about ahead of the names, so the
+# plain-wifi path is tried first and the tailnet name stays as the last resort.
+# ---------------------------------------------------------------------------
+
+# A literal address needs no resolver. (IPv6 literals are accepted so a row that
+# already carries one is not skipped; the probe formats it as-is.)
+sub peer_host_is_literal {
+	my $host = shift;
+	return 0 unless defined $host && length $host;
+	return 1 if $host =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	return 1 if $host =~ /^[0-9a-fA-F:.]+$/ && $host =~ /:/;
+	return 0;
+}
+
+sub peer_host_is_loopback {
+	my $host = shift || '';
+	return 1 if $host =~ /^127\./;
+	return 1 if $host =~ /^(?:localhost|::1)$/i;
+	return 0;
+}
+
+# 0 = a private LAN or link-local address, 1 = the tailnet's CGNAT range,
+# 2 = anything else. Probing a same-wifi peer on its LAN first means a dead
+# tailnet route cannot hold up the pass, while the tailnet is still tried.
+sub peer_address_rank {
+	my $host = shift || '';
+	return 0 if $host =~ /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.)/;
+	return 1 if $host =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+	return 2;
+}
+
+# The host and port a stored manager url names.
+sub peer_manager_host {
+	my ($rm) = @_;
+	my $manager = ($rm && $rm->{'manager'}) || '';
+	my ($host) = $manager =~ m{^https?://(\[[^\]]+\]|[^/:]+)};
+	return (undef, undef) unless defined $host && length $host;
+	$host =~ s/^\[|\]$//g;
+	my ($port) = $manager =~ m{:([0-9]{1,5})/?$};
+	return ($host, $port);
+}
+
+# Every literal address a peer row can be dialled at, best first: the stored ip,
+# the LAN address it advertised, the manager's literal host, the address map,
+# a stored pseudonym and the tailnet address. Names are added by
+# peer_probe_candidates; they need the resolver and are worth trying last.
+sub peer_literal_addresses {
+	my ($rm) = @_;
+	$rm ||= {};
+	my @out;
+	my %seen;
+	my $default_port = $rm->{'port'};
+	$default_port = $1 if ((!defined $default_port || $default_port !~ /^[0-9]+$/) && (($rm->{'manager'} || '') =~ m{:([0-9]{1,5})/?$}));
+	my $add = sub {
+		my ($host, $port, $why) = @_;
+		return unless defined $host && length $host;
+		return unless &peer_host_is_literal($host);
+		return if $host =~ /^(?:0\.0\.0\.0|255\.255\.255\.255)$/;
+		# A loopback address is a real route only on the hub's tunnel row; on
+		# any other row it is the leftover of a tunnel that is gone.
+		return if &peer_host_is_loopback($host) && ($rm->{'tunnel'} || '') ne 'yes';
+		$port = $default_port if (!defined $port || $port !~ /^[0-9]+$/);
+		$port = 45545 unless defined $port && $port =~ /^[0-9]+$/;
+		my $key = $host . ':' . $port;
+		return if $seen{$key}++;
+		push @out, { host => $host, port => $port + 0, why => ($why || ''), literal => 1 };
+	};
+	&$add($rm->{'ip'}, $default_port, 'ip');
+	&$add($rm->{'lan_ip'}, $default_port, 'lan');
+	&$add($rm->{'vip'}, $default_port, 'vip');
+	my $lan = eval { &peer_lan_address($rm, 1) };
+	&$add($lan->{'ip'}, $lan->{'port'}, 'advertised lan') if ref $lan eq 'HASH';
+	my ($mhost, $mport) = &peer_manager_host($rm);
+	&$add($mhost, $mport, 'manager') if defined $mhost && &peer_host_is_literal($mhost);
+	# The address map is the peer's own view of its interfaces. On a machine
+	# that is not the hub it is the only place a same-wifi address may live, so
+	# try each private NIC even when the stored manager names something dead.
+	if (&device_setter() ne 'server' && $rm->{'network'}) {
+		my $you = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
+		foreach my $nic ( sort keys %{$you} ) {
+			next if $nic eq 'public_address' || ref $you->{$nic} ne 'HASH';
+			my $entry = $you->{$nic} || {};
+			&$add($entry->{'ip'}, $entry->{'port'} || $default_port, 'advertised ' . $nic);
+		}
+	}
+	if ($rm->{'pseudonyms'}) {
+		my $pseu = eval { decode_json $rm->{'pseudonyms'} } || {};
+		&$add($pseu->{'ip'}, $pseu->{'port'}, 'pseudonym') if ref $pseu eq 'HASH';
+	}
+	&$add($rm->{'tailnet_ip'}, $default_port, 'tailnet');
+	# Private LAN first, then the tailnet, then anything else; insertion order
+	# breaks ties so the row's own ip keeps its precedence.
+	my $i = 0;
+	my %at = map { $_->{'host'} . ':' . $_->{'port'} => $i++ } @out;
+	@out = sort {
+		&peer_address_rank($a->{'host'}) <=> &peer_address_rank($b->{'host'})
+			|| $at{$a->{'host'} . ':' . $a->{'port'}} <=> $at{$b->{'host'} . ':' . $b->{'port'}}
+	} @out;
+	return \@out;
+}
+
+# The literal addresses first, then the names (the peer's fqdn and any name in
+# its stored manager). A name that does not resolve is skipped by the probe.
+sub peer_probe_candidates {
+	my ($rm, $port) = @_;
+	$rm ||= {};
+	my @out = @{ &peer_literal_addresses($rm) };
+	my %seen = map { ($_->{'host'} . ':' . $_->{'port'}) => 1 } @out;
+	$port = $rm->{'port'} if (!defined $port || $port !~ /^[0-9]+$/);
+	$port = $1 if ((!defined $port || $port !~ /^[0-9]+$/) && (($rm->{'manager'} || '') =~ m{:([0-9]{1,5})/?$}));
+	$port ||= 45545;
+	my $add = sub {
+		my ($host, $why) = @_;
+		return unless defined $host && length $host;
+		return if &peer_host_is_literal($host);
+		return if $host =~ /^(?:localhost|::1)$/i;
+		my $key = $host . ':' . $port;
+		return if $seen{$key}++;
+		push @out, { host => $host, port => $port + 0, why => ($why || ''), literal => 0 };
+	};
+	&$add($rm->{'fqdn'}, 'fqdn');
+	my ($mhost) = &peer_manager_host($rm);
+	&$add($mhost, 'manager name');
+	return \@out;
+}
+
+# The one address a row carries without needing DNS, as a manager url. Used
+# when a stored manager names a host that does not resolve on this network.
+sub peer_literal_manager {
+	my ($rm) = @_;
+	my $addrs = &peer_literal_addresses($rm);
+	my $best = $addrs->[0] || return undef;
+	my $port = $best->{'port'} || ($rm && $rm->{'port'}) || 45545;
+	return 'https://' . $best->{'host'} . ':' . $port;
+}
+
+# Ask a peer whether it is there, and which address answered. The caller's own
+# candidate ($opts->{ip}, e.g. a same-net probe) is tried first; the rest come
+# from the row. A name that does not resolve is skipped without shelling out
+# `ping` (that is the 'unknown host' noise on a machine with no VPN), and a
+# literal address is still dialled when ping gets no reply: ICMP is a hint for
+# how long to wait, never the gate, because a peer may drop echo while its
+# manager answers. Returns { ok => 1, manager, ip, port } or { ok => 0 }.
+sub peer_presence_probe {
+	my ($rm, $opts) = @_;
+	$opts ||= {};
+	$rm ||= {};
+	my $remote_signatorial = $opts->{'signatorial'} || $rm->{'signatorial'} || '';
+	return { ok => 0 } unless length $remote_signatorial;
+	my @candidates = @{ &peer_probe_candidates($rm, $opts->{'port'}) };
+	if (defined $opts->{'ip'} && length $opts->{'ip'}) {
+		my $first = $opts->{'ip'};
+		@candidates = grep { ($_->{'host'} || '') ne $first } @candidates;
+		my $port = $opts->{'port'};
+		$port = 45545 unless defined $port && $port =~ /^[0-9]+$/;
+		unshift @candidates, { host => $first, port => $port + 0, why => 'caller', literal => &peer_host_is_literal($first) ? 1 : 0 };
+	}
+	my $fetch = $opts->{'fetch'};
+	my $ping  = $opts->{'ping'};
+	my $rs = &encrypter(&shorthand_name(&rightNow(), 5) . &shorthand_name($remote_signatorial, 5), $remote_signatorial);
+	foreach my $c ( @candidates ) {
+		my $host = $c->{'host'};
+		next unless defined $host && length $host;
+		my $literal = &peer_host_is_literal($host) ? 1 : 0;
+		# A name with no DNS answer cannot be dialled. Say nothing and move on:
+		# the literal candidates already ran, and the rest of the pass must not
+		# be lost to a lookup failure.
+		if (!$literal) {
+			require Socket;
+			next unless gethostbyname($host);
+		}
+		my $alive = 0;
+		if ($literal) {
+			if (ref $ping eq 'CODE') { $alive = $ping->($host) ? 1 : 0; }
+			elsif (!$opts->{'no_ping'}) {
+				my $reply = `timeout 1 ping -c 1 $host 2>/dev/null`;
+				$alive = 1 if $reply =~ /ttl/;
+			}
+		}
+		my $port = $c->{'port'};
+		$port = $rm->{'port'} if (!defined $port || $port !~ /^[0-9]+$/);
+		$port ||= 45545;
+		my $base = &peer_manager_url($rm, $host, $port);
+		my $url = $base . '/?signatorial=' . url_escape $rs;
+		my $body = '';
+		if (ref $fetch eq 'CODE') {
+			$body = eval { $fetch->({ host => $host, port => $port, base => $base, url => $url, literal => $literal, alive => $alive, why => $c->{'why'} }) } || '';
+		}
+		else {
+			my $ua = Mojo::UserAgent->new;
+			$ua = $ua->max_response_size(0);
+			$ua->insecure(1);
+			$ua->connect_timeout($alive ? 5 : 3);
+			$ua->inactivity_timeout($alive ? 15 : 6);
+			$ua->request_timeout($alive ? 20 : 8);
+			my $tx = eval { $ua->get($url => { user_agent => $remote_signatorial }) };
+			$body = eval { $tx->result->body } || '';
+		}
+		if (defined $body && $body eq $remote_signatorial) {
+			return { ok => 1, manager => $base, ip => $host, port => $port + 0, host => $host };
+		}
+	}
+	return { ok => 0 };
+}
+
 # A loopback manager is the hub's own tunnel route. On any other row it is a
-# leftover from a tunnel that no longer exists; the peer's fqdn is then the only
-# address left, so call the name instead of a dead 127.0.0.1 port.
+# leftover from a tunnel that no longer exists; a literal LAN address is the
+# route that still works with the VPN off, and the peer's fqdn is the last
+# resort (the name is only usable while the tailnet's DNS answers).
 sub peer_live_manager {
 	my ($rm) = @_;
 	$rm ||= {};
 	my $manager = $rm->{'manager'} || '';
-	return $manager unless $manager =~ m{^https?://127[.:]};
-	return $manager if ($rm->{'tunnel'} || '') eq 'yes';
-	my $fqdn = $rm->{'fqdn'} || '';
-	return $manager unless $fqdn ne '' && $fqdn !~ m{^127\.};
-	return &peer_manager_url($rm, $fqdn, $rm->{'port'});
+	return $manager unless $manager =~ m{^https?://};
+	my ($host) = &peer_manager_host($rm);
+	return $manager unless defined $host && length $host;
+	my $loopback = &peer_host_is_loopback($host) ? 1 : 0;
+	# A name that no longer resolves is as dead as a retired loopback port. The
+	# stored LAN address is the only route left on a plain-wifi network.
+	my $resolves = 1;
+	if (!$loopback && !&peer_host_is_literal($host)) {
+		require Socket;
+		$resolves = gethostbyname($host) ? 1 : 0;
+	}
+	if ($loopback) {
+		return $manager if ($rm->{'tunnel'} || '') eq 'yes';
+		my $literal = &peer_literal_manager($rm);
+		return $literal if $literal;
+		my $fqdn = $rm->{'fqdn'} || '';
+		return $manager unless $fqdn ne '' && $fqdn !~ m{^127\.};
+		return &peer_manager_url($rm, $fqdn, $rm->{'port'});
+	}
+	if (!$resolves) {
+		my $literal = &peer_literal_manager($rm);
+		return $literal if $literal;
+	}
+	return $manager;
 }
 
 # ---- LAN presence: a peer on whatever network we have just joined ----------

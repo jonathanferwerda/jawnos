@@ -86,12 +86,15 @@ sub resolve_peer {
 }
 
 # The peer's manager, rooted so a route can be appended. peer_live_manager
-# rewrites a tunnel's leftover loopback address to the peer's own name; the
-# stored row is the fallback when no fqdn is known.
+# rewrites a tunnel's leftover loopback address to the peer's own name, and a
+# name that no longer resolves to the LAN address the row still carries - so
+# the lever works on plain wifi, where the house names need the tailnet's DNS.
 sub peer_manager {
 	my ($rm, $override) = @_;
 	return $override if defined $override && length $override;
-	my $manager = eval { &subs::peer_live_manager($rm) } || $rm->{'manager'} || '';
+	my $manager = eval { &subs::peer_live_manager($rm) } || '';
+	$manager = eval { &subs::peer_literal_manager($rm) } || '' unless length $manager;
+	$manager = $rm->{'manager'} || '' unless length $manager;
 	return '' unless $manager;
 	$manager =~ s{/+$}{};
 	$manager .= '/manager' unless $manager =~ m{/manager$};

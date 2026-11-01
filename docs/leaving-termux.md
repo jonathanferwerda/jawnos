@@ -782,7 +782,15 @@ The milestone that actually leaves Termux.
 - `JawnRuntimeBins.ensure()` runs in `JawnApplication.onCreate` and at the top of `SessionService.spawn()`: it makes each executable path a symlink to the current `nativeLibraryDir`, re-points them after an APK update, and only ever touches `$PREFIX/bin` and `$PREFIX/libexec`. Idempotent and never fatal.
 - targetSdk 34+ foreground-service types were the real behaviour change: the bridge now starts as `dataSync` and widens to camera/microphone only for a capture (and only when the grant is held); the BLE daemon needed `FOREGROUND_SERVICE_CONNECTED_DEVICE`.
 - **Proven on the phone (SM-S721W, Android 16):** `bin/perl` is a symlink into `/data/app/.../lib/arm64/libbin_perl.so`, `perl -v` runs through it, the tree came up (20 perl processes), `status=good`, the device bridge answered, and `/manager` returned 200. APK 0.118.239.
-- **Still open:** the runtime zip still carries `bin/`/`libexec/` (now dead weight, ~34 MB raw) — strip them from the archive once every device is on a release that creates the symlinks; the x86_64 runtime and the emulator are untested at 36.
+- **The executables are now optional in the runtime zip.** `scripts/runtime_build.pl --no-bin` leaves out the entries the app supplies as native libraries: every regular executable and every symlink under `bin/` and `libexec/` — for the `0.1.1697` archive, **258 entries, 33,760,264 bytes raw (32.2 MB)**: 67 executables (33.7 MB) and 191 links (2.3 KB of targets). That is exactly the set `runtime_native_bins.pl` converts, so the archive no longer carries a second copy. Non-executable data files in those trees still ship (the 27 git mergetool helpers and shell libraries in `libexec/git-core/`, 52,609 bytes), and `lib/`, `share/` and `etc/` are untouched — the library pass runs before the filter, so the native executables still find every library they name. A build without the flag is byte-for-byte the old archive, so a device on an older app keeps working.
+- **How a release is built from now on:** generate the jniLibs payload from a **full** archive first (the converter reads `bin/`/`libexec/` out of the zip), then build the archive that ships:
+  ```
+  perl scripts/runtime_build.pl --from "$PREFIX" --out /tmp/jawnrt-full-$V.zip
+  perl scripts/runtime_native_bins.pl --zip /tmp/jawnrt-full-$V.zip --out releases/native-bins --abi arm64-v8a
+  perl scripts/runtime_build.pl --from "$PREFIX" --no-bin --out releases/jawnrt-aarch64-$V.zip
+  ```
+  The full archive is a build step, not something to publish.
+- **Still open:** the pinned `0.1.1697` archive on disk was built before the flag existed, so it still carries both copies — rebuild it with `--no-bin` once every device is on a release that creates the symlinks; the x86_64 runtime and the emulator are untested at 36.
 
 - One signing key forever; publish the corresponding source for the exact built revision.
 

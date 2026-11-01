@@ -92,6 +92,95 @@ my $kept = &subs::remote_machine_tunnel_processor({ %{$verified} });
 is($kept->{'manager'}, 'https://100.64.0.4:45545',
 	'a manager that answered the probe is not replaced by the advertised LAN address');
 
+# With the VPN off the house names (*.jonathanferwerda.com) do not resolve at
+# all. A row that still carries the LAN address the peer advertised must be
+# dialled there instead; the name is only the last resort. `.invalid` is
+# guaranteed not to resolve, so this does not depend on the test machine's DNS.
+my $plain_wifi = {
+	manager => 'https://no-such-peer.invalid:45545',
+	fqdn    => 'no-such-peer.invalid',
+	ip      => '192.168.1.140',
+	port    => 45545,
+	tunnel  => 'no',
+};
+my $candidates = subs::peer_probe_candidates($plain_wifi, 45545);
+is($candidates->[0]->{'host'}, '192.168.1.140',
+	'the stored LAN ip is the first candidate, before any name');
+ok((grep { $_->{'host'} eq 'no-such-peer.invalid' } @{$candidates}),
+	'the name is still tried after the literal addresses');
+is(subs::peer_live_manager($plain_wifi), 'https://192.168.1.140:45545',
+	'an unresolvable house name falls back to the stored LAN ip');
+
+# The reported phone row: a retired hub tunnel left 127.0.0.1, and the peer's
+# name needs the tailnet's DNS. The LAN ip is the route that does not.
+is(subs::peer_live_manager({
+	manager => 'https://127.0.0.1:53665',
+	fqdn    => 'laptop.jonathanferwerda.com',
+	ip      => '192.168.1.155',
+	port    => 45545,
+	tunnel  => 'no',
+}), 'https://192.168.1.155:45545',
+	'a retired tunnel manager falls back to the stored LAN ip, not the name');
+
+# A row whose stored ip is on the tailnet but whose advertised map carries the
+# LAN address must try the LAN first: the offline tailnet node would otherwise
+# blackhole the pass.
+is(subs::peer_address_rank('192.168.1.155'), 0, 'a private LAN address ranks first');
+is(subs::peer_address_rank('100.64.0.3'), 1, 'a tailnet address ranks after the LAN');
+my $tailnet_row = {
+	ip      => '100.64.0.3',
+	fqdn    => 'laptop.jonathanferwerda.com',
+	port    => 45545,
+	network => '{"lan":{"ip":"192.168.1.155","port":"45545"}}',
+};
+my $ranked = subs::peer_probe_candidates($tailnet_row, 45545);
+is($ranked->[0]->{'host'}, '192.168.1.155',
+	'the advertised LAN address is tried before the stored tailnet ip');
+
+# The probe must not use ping as a gate: a peer whose echo is dropped (or a
+# candidate whose name has no DNS answer) still gets its manager called, and a
+# name that cannot resolve is skipped without a ping.
+my @tried;
+my $sig = 'peer-sig';
+my $probe = subs::peer_presence_probe(
+	{ %{$plain_wifi}, signatorial => $sig },
+	{
+		ip => 'no-such-peer.invalid',
+		port => 45545,
+		signatorial => $sig,
+		ping => sub { 0 },
+		fetch => sub {
+			my $c = shift;
+			push @tried, $c->{'host'};
+			return $c->{'host'} eq '192.168.1.140' ? $sig : '';
+		},
+	}
+);
+is($probe->{'ok'}, 1, 'an unanswered ping does not end the candidate');
+is($probe->{'manager'}, 'https://192.168.1.140:45545',
+	'the LAN address that answered becomes the manager');
+is_deeply(\@tried, ['192.168.1.140'],
+	'the unresolvable name is skipped without a ping or a request');
+
+my $fetched = 0;
+my $nothing = subs::peer_presence_probe(
+	{ fqdn => 'no-such-peer.invalid', manager => 'https://no-such-peer.invalid:45545', signatorial => $sig },
+	{ signatorial => $sig, ping => sub { 1 }, fetch => sub { $fetched++; return $sig } }
+);
+ok(!$nothing->{'ok'}, 'a row with only an unresolvable name is not reachable');
+is($fetched, 0, 'and its name is never dialled');
+
+# The manager's probe is the production path, not a parallel copy.
+my $manager_source = do {
+	open(my $fh, '<', "$FindBin::Bin/../Manager.pl") or die $!;
+	local $/;
+	<$fh>;
+};
+like($manager_source, qr/sub remote_machine_online\b[^{]*\{.*?peer_presence_probe/s,
+	'remote_machine_online probes through the shared candidate list');
+unlike($manager_source, qr/next unless \$ping && \$ping =~ \/ttl\//,
+	'the presence probe no longer drops a candidate on a failed ping');
+
 # `sync_peer_order` fixes the starvation: a pass starts one pull, so the peer
 # with the oldest confirmed watermark must go first.
 my $peers = [

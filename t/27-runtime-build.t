@@ -222,4 +222,55 @@ my $uneven = qx{"$^X" "$build" --from "$move" --out "$moved" --rewrite-prefix '$
 isnt($? >> 8, 0, 'an unequal-length rewrite is refused');
 like($uneven, qr/same length|equal-length/, 'and it says why');
 
+# --- the executables the app supplies ---------------------------------------
+# M5b: the app ships the runtime's executables as jniLibs and links them back
+# into bin/ and libexec/ on start, so --no-bin leaves them out of the archive.
+# It must drop exactly what scripts/runtime_native_bins.pl converts - regular
+# executables and symlinks under those two trees - while a data file in the same
+# tree and everything outside it still ships.
+my $nobin = tempdir(CLEANUP => 1);
+write_file_at("$nobin/bin/perl", "#!/bin/sh\n", 0755);
+write_file_at("$nobin/bin/git", "#!/bin/sh\n", 0755);
+symlink('git', "$nobin/bin/egrep") or plan skip_all => 'no symlinks here';
+write_file_at("$nobin/libexec/git-core/git-remote-http", "#!/bin/sh\n", 0755);
+write_file_at("$nobin/libexec/git-core/git-sh-setup", "shell library\n", 0644);
+symlink('git-remote-http', "$nobin/libexec/git-core/git");
+write_file_at("$nobin/lib/perl5/5.42.0/aarch64-android/CORE/libperl.so", "ELF\n", 0755);
+write_file_at("$nobin/lib/perl5/5.42.0/Foo.pm", "package Foo; 1;\n", 0644);
+write_file_at("$nobin/share/terminfo/x/xterm", "term\n", 0644);
+write_file_at("$nobin/etc/tls/ca.pem", "ca\n", 0644);
+write_file_at("$nobin/etc/ssh/sshd_config", "Port 8022\n", 0644);
+
+my $nlist = qx{"$^X" "$build" --from "$nobin" --no-bin --list 2>&1};
+is($? >> 8, 0, '--no-bin lists a prefix') or diag($nlist);
+my %n = map { $_ => 1 } split /\n/, $nlist;
+ok(!$n{'bin/perl'}, '--no-bin omits the interpreter');
+ok(!$n{'bin/git'} && !$n{'bin/egrep'}, 'and the tools, including symlinked ones');
+ok(!$n{'libexec/git-core/git-remote-http'}, 'and a real executable in libexec');
+ok(!$n{'libexec/git-core/git'}, 'and a symlink in libexec');
+ok($n{'libexec/git-core/git-sh-setup'}, 'but a non-executable data file in libexec still ships');
+ok($n{'lib/perl5/5.42.0/aarch64-android/CORE/libperl.so'} && $n{'lib/perl5/5.42.0/Foo.pm'},
+	'lib/ still ships');
+ok($n{'share/terminfo/x/xterm'}, 'share/ still ships');
+ok($n{'etc/tls/ca.pem'} && $n{'etc/ssh/sshd_config'}, 'etc/ still ships');
+
+my $nout = tempdir(CLEANUP => 1) . '/nobin.zip';
+my $npack = qx{"$^X" "$build" --from "$nobin" --no-bin --out "$nout" 2>&1};
+is($? >> 8, 0, '--no-bin writes an archive') or diag($npack);
+like($npack, qr/--no-bin: omitting 5 executables and links/, 'the build reports what it omitted');
+my $nmodes = zip_modes($nout);
+ok(!$nmodes->{'bin/perl'}, 'the archive carries no interpreter');
+ok(!$nmodes->{'bin/git'} && !$nmodes->{'bin/egrep'}, 'and no tool or tool symlink');
+ok(!$nmodes->{'libexec/git-core/git-remote-http'} && !$nmodes->{'libexec/git-core/git'},
+	'and no libexec executable or symlink');
+ok($nmodes->{'libexec/git-core/git-sh-setup'}, 'the data file in libexec is in the archive');
+ok($nmodes->{'lib/perl5/5.42.0/Foo.pm'} && $nmodes->{'share/terminfo/x/xterm'}
+	&& $nmodes->{'etc/ssh/sshd_config'}, 'and lib/, share/ and etc/ are all in it');
+
+# A build without the flag is unchanged, so an older app still gets the tools.
+my $default_list = qx{"$^X" "$build" --from "$nobin" --list 2>&1};
+my %d = map { $_ => 1 } split /\n/, $default_list;
+ok($d{'bin/perl'} && $d{'bin/git'} && $d{'libexec/git-core/git'},
+	'a build without --no-bin still ships the executables');
+
 done_testing();

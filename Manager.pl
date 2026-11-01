@@ -11920,7 +11920,13 @@ sub remote_device_connect($rdata) {
 
 		$returner->{'body'}->{'ip_address'} = $ip;
 		my $fqdn = $returner->{'body'}->{'fqdn'};
-		my $ping = `timeout .5 ping -c 1 $fqdn`;
+		# A name the resolver cannot answer is not a route: keep the ip we just
+		# used instead of shelling out `ping` and filling the log with
+		# 'unknown host' on a machine with no VPN.
+		my $ping = '';
+		if (&subs::peer_host_is_literal($fqdn) || gethostbyname($fqdn)) {
+			$ping = `timeout .5 ping -c 1 $fqdn 2>/dev/null`;
+		}
 		if ($ping =~ /ttl/gi) {
 			my @ping = split /\n/, $ping;
 			if ($ping[1] =~ /$ip/) {
@@ -50006,66 +50012,42 @@ sub device_network_updater($rm) {
 
 sub remote_machine_online($data) {
 	my $rm = $data->{'rm'} || &subs::remote_machine_lister({ signatorial => $data->{'signatorial'}, mirror => $data->{'mirror'}, limit => 1 });
-	my $ip = $data->{'ip'} =~ /[0-9a-z]/ ? $data->{'ip'} : $rm->{'ip'};
-	my $port = $data->{'port'} =~ /[0-9]/ ? $data->{'port'} : $rm->{'port'};
+	my $ip = (defined $data->{'ip'} && $data->{'ip'} =~ /[0-9a-z]/) ? $data->{'ip'} : $rm->{'ip'};
+	my $port = (defined $data->{'port'} && $data->{'port'} =~ /[0-9]/) ? $data->{'port'} : $rm->{'port'};
 	# The manager url carries the port, so a peer reached only by its url - a
 	# tunnel-only server, or a row that was paired again and came back with no
 	# port - is still addressable. Without this fallback a NULL port returned 0
 	# before anything was tried, so the handshake that would have filled the port
 	# back in never ran (the local sat inactive with a working key and tunnel).
 	$port = $1 if ((!$port || $port !~ /[0-9]/) && ($rm->{'manager'} || '') =~ m{:([0-9]{1,5})/?$});
-	my $remote_signatorial = $data->{'signatorial'} =~ /[0-9a-zA-Z]/ ? $data->{'signatorial'} : $rm->{'signatorial'};
-	my $success = 0;
-	if ($ip && $port && $remote_signatorial) {
-		# Try the stored address first, then the peer's fqdn. The stored address is
-		# refreshed to the LAN address while the peer is on our network; when it
-		# leaves, the fqdn/tunnel is still there to reach it.
-		my @candidates = ($ip);
-		my $fqdn = $rm->{'fqdn'} || '';
-		push @candidates, $fqdn if $fqdn && $fqdn ne $ip;
-		foreach my $candidate (@candidates) {
-			next unless defined $candidate && length $candidate;
-			my $ping = `timeout 1 ping -c 1 $candidate`;
-			next unless $ping && $ping =~ /ttl/;
-			my $ua = Mojo::UserAgent->new();
-			$ua->inactivity_timeout(15);
-			my $rs = &subs::encrypter(&subs::shorthand_name(&subs::rightNow(), 5) . &subs::shorthand_name($remote_signatorial, 5), $remote_signatorial);
-			# When we were handed a bare LAN address (a same-net probe, or a peer's
-			# stored pseudonym), call THAT address. Its manager url is usually its
-			# fqdn, which resolves back to us on a machine whose hosts/dnsmasq maps
-			# the peer's name to loopback - the ping answers but the call lands on
-			# ourselves, so the peer never answers with its own signatorial and the
-			# two machines never meet on the new network. A candidate that is not a
-			# literal address uses the stored manager, which is also the tunnel on
-			# the hub.
-			my $base;
-			# The candidate decides the url, not just the probe: a stored LAN
-			# manager the peer has since left (or a loopback left by a retired
-			# tunnel) must not replace the name that just answered. The helper
-			# also keeps a tunnel row on its stored manager, whose name can
-			# resolve to loopback on the hub.
-			$base = &subs::peer_manager_url($rm, $candidate, $port);
-			my $url = $base . '/?signatorial=' . url_escape $rs;
-			my $user_agent = $remote_signatorial;
-			my $res = $ua->insecure(1)->get($url => {user_agent => $user_agent});
-			if ( $res->result->is_success ) {
-				if ($res->result->body eq $remote_signatorial) {
-					# Keep the address that actually answered for the rest of this
-					# pass: the handshake that follows uses $rm->{manager}.
-					$rm->{'manager'} = $base;
-					$rm->{'port'} = $port if $port;
-					# remote_useragent_maker runs the tunnel processor, which
-					# prefers the peer's advertised LAN address whenever it is in
-					# our subnet. That address is exactly what just failed here;
-					# the flag keeps the address that answered.
-					$rm->{'manager_verified'} = 1;
-					$success = 1;
-					last;
-				}
-			}
-		}
+	my $remote_signatorial = (defined $data->{'signatorial'} && $data->{'signatorial'} =~ /[0-9a-zA-Z]/) ? $data->{'signatorial'} : $rm->{'signatorial'};
+	# The probe tries the peer's literal addresses (the row's stored LAN ip, the
+	# address it advertised, a literal manager host) before any name. A name the
+	# resolver cannot answer is skipped instead of pinged - the '*unknown host*'
+	# lines were the tailnet names being shelled out on a machine with no VPN -
+	# and an unanswered ping no longer ends the candidate: ICMP is only a hint
+	# for how long to wait, because a peer can drop echo while its manager
+	# answers. The literal LAN address is what makes the pass work on plain wifi.
+	my $probe = &subs::peer_presence_probe($rm, {
+		ip => $ip,
+		port => $port,
+		signatorial => $remote_signatorial,
+	});
+	if ($probe->{'ok'}) {
+		# Keep the address that actually answered for the rest of this pass: the
+		# handshake that follows uses $rm->{manager}. A literal host also becomes
+		# the row's ip, which is what the pull job and the panel report.
+		$rm->{'manager'} = $probe->{'manager'};
+		$rm->{'ip'} = $probe->{'host'} if defined $probe->{'host'} && &subs::peer_host_is_literal($probe->{'host'});
+		$rm->{'port'} = $probe->{'port'} if $probe->{'port'};
+		# remote_useragent_maker runs the tunnel processor, which prefers the
+		# peer's advertised LAN address whenever it is in our subnet. That
+		# address is exactly what may have failed here; the flag keeps the
+		# address that answered.
+		$rm->{'manager_verified'} = 1;
+		return 1;
 	}
-	if ($success == 0 && $rm->{'tunnel'} eq 'yes') {
+	if (($rm->{'tunnel'} || '') eq 'yes') {
 
 		# tunnel work here
 		foreach my $k ( keys %{$rm} ) {
@@ -50073,7 +50055,7 @@ sub remote_machine_online($data) {
 		}
 
 	}
-	return $success;
+	return 0;
 }
 
 our $ws_server;
