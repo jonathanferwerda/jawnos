@@ -20491,6 +20491,48 @@ sub peer_manager_base {
 	return $manager;
 }
 
+# --- Android sshd ----------------------------------------------------------
+# Termux's sshd_config comments out every HostKey line, Android has no /etc/ssh,
+# and the login user's home in the passwd entry is the old Termux prefix. A bare
+# `sshd` therefore starts with no usable host key (or resolves keys and
+# authorized_keys under a path this app cannot read), and key auth silently
+# fails while the port still answers. Start it once, here, with the prefix's own
+# keys and an absolute AuthorizedKeysFile. StrictModes is off because it walks
+# /data/user/0, which is system-owned.
+sub sshd_running {
+	foreach my $proc ( glob('/proc/[0-9]*') ) {
+		my $cmd = eval { read_file("$proc/cmdline") } || '';
+		$cmd =~ s/\0.*//s;
+		return 1 if $cmd =~ m{(?:^|/)sshd$};
+	}
+	return 0;
+}
+
+sub sshd_start {
+	my @cmd = &sshd_command();
+	return 0 unless @cmd;
+	system(@cmd);
+	return 1;
+}
+
+# The argv for the daemon, with no side effects, so the options can be checked.
+sub sshd_command {
+	my ($prefix, $home) = @_;
+	$prefix = $ENV{'PREFIX'} || '' unless defined $prefix && length $prefix;
+	return () unless length $prefix;
+	$home = $ENV{'HOME'} || "$prefix/home" unless defined $home && length $home;
+	my @host_keys = grep { -f $_ } map { "$prefix/etc/ssh/ssh_host_$_\_key" } qw/ed25519 ecdsa rsa/;
+	my @sshd = (
+		'sshd', '-f', "$prefix/etc/ssh/sshd_config",
+		'-o', "PidFile=$prefix/tmp/sshd.pid",
+		'-o', "AuthorizedKeysFile=$home/.ssh/authorized_keys",
+		'-o', 'StrictModes=no',
+		'-o', "SetEnv=HOME=$home",
+	);
+	push @sshd, ('-h', $_) foreach @host_keys;
+	return @sshd;
+}
+
 # Every literal address a peer row can be dialled at, best first: the stored ip,
 # the LAN address it advertised, the manager's literal host, the address map,
 # a stored pseudonym and the tailnet address. Names are added by

@@ -133,7 +133,10 @@ if ($device eq 'mobile') {
 	# soon as the Android app proves it is arming the short scheduled wakes.
 	unlink &subs::home('~/.president/wake_lock_released');
 	&subs::device_call('power.wake_lock');
-	`sshd`;
+	# sshd is started by Manager.pl (subs::sshd_start) so it gets the prefix's
+	# host keys and an absolute AuthorizedKeysFile. A bare `sshd` here started a
+	# daemon with Termux's paths, and Manager's running-check then left it in
+	# place, so key auth never worked (the phone, 2026-10-31).
 }
 
 if ($config->{'open_browser'} eq 'yes') {

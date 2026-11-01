@@ -133,5 +133,24 @@ foreach my $p ( grep { /^[0-9]+$/ } split /\n/, $running_pids ) {
 
 if ($uname =~ /android/) {
 	`pkill ssh`;
-	`sshd`;
+	# Same invocation Manager.pl uses (subs::sshd_start): the prefix's host keys
+	# and an absolute AuthorizedKeysFile. A bare `sshd` here starts with Termux's
+	# paths on Android, so key auth fails even though the port answers.
+	my $prefix = $ENV{'PREFIX'} || '';
+	my $home = $ENV{'HOME'} || '';
+	if (length $prefix && length $home) {
+		my @host_keys = grep { -f $_ } map { "$prefix/etc/ssh/ssh_host_$_\_key" } qw/ed25519 ecdsa rsa/;
+		my @sshd = (
+			'sshd', '-f', "$prefix/etc/ssh/sshd_config",
+			'-o', "PidFile=$prefix/tmp/sshd.pid",
+			'-o', "AuthorizedKeysFile=$home/.ssh/authorized_keys",
+			'-o', 'StrictModes=no',
+			'-o', "SetEnv=HOME=$home",
+		);
+		push @sshd, ('-h', $_) foreach @host_keys;
+		system(@sshd);
+	}
+	else {
+		`sshd`;
+	}
 }
