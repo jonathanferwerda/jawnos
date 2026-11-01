@@ -750,12 +750,59 @@ print " JawnOS setup wizard\n";
 print " $url\n";
 print "========================================\n\n";
 
-unless ($no_browser) {
-	if ( $ENV{'TERMUX_VERSION'} || -d '/data/data/com.jawnos' || -d '/data/data/com.termux' ) {
-		system("termux-open $url >/dev/null 2>&1 &");
+# Open the wizard in the host app (open.url over the M1 bridge) or, on a
+# desktop, with xdg-open. The wizard runs before the tree is serving and loads
+# no runtime module, so this writes the one-line bridge protocol out rather
+# than calling subs::device_call: $HOME/.jawn/device.token, 127.0.0.1:46000,
+# one JSON request, one JSON reply.
+sub open_in_host {
+	my ($url) = @_;
+
+	my $token_file = $ENV{'JAWNOS_DEVICE_TOKEN'} || (($ENV{'HOME'} // '') . '/.jawn/device.token');
+	my $token = '';
+	if (open(my $tf, '<', $token_file)) {
+		$token = <$tf> // '';
+		close $tf;
+		$token =~ s/\s+//g;
 	}
-	elsif ( -x '/usr/bin/xdg-open' ) {
-		system("xdg-open $url >/dev/null 2>&1 &");
+	return 0 unless length $token;
+
+	my $port = $ENV{'JAWNOS_DEVICE_BRIDGE_PORT'};
+	$port = (defined $port && $port =~ /^\d+$/) ? $port + 0 : 46000;
+
+	require IO::Socket::INET;
+	require IO::Select;
+	my $sock = IO::Socket::INET->new(
+		PeerAddr => '127.0.0.1',
+		PeerPort => $port,
+		Proto    => 'tcp',
+		Timeout  => 1,
+	);
+	return 0 unless $sock;
+	$sock->autoflush(1);
+
+	my $request = eval {
+		encode_json({ id => 1, token => $token, method => 'open.url', args => { url => $url } });
+	};
+	unless (defined $request) { close $sock; return 0; }
+	my $wrote = eval {
+		local $SIG{'PIPE'} = 'IGNORE';
+		print {$sock} $request . "\n";
+		1;
+	};
+	unless ($wrote) { close $sock; return 0; }
+
+	my $answer;
+	if (IO::Select->new($sock)->can_read(2)) { $answer = <$sock>; }
+	close $sock;
+	return 0 unless defined $answer;
+	my $reply = eval { decode_json($answer) };
+	return (ref $reply eq 'HASH' && $reply->{'ok'}) ? 1 : 0;
+}
+
+unless ($no_browser) {
+	unless (open_in_host($url)) {
+		system("xdg-open $url >/dev/null 2>&1 &") if -x '/usr/bin/xdg-open';
 	}
 }
 

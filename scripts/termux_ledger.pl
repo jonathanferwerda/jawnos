@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# The M0 dependency ledger for docs/leaving-termux.md.
+# The M0 dependency ledger for docs/roadmap-handoff.md.
 #
 #   perl scripts/termux_ledger.pl            print the ledger
 #   perl scripts/termux_ledger.pl --check    fail when the dependency grew
@@ -45,7 +45,7 @@ USAGE
 # --- what a termux-* token means --------------------------------------------
 
 # Package and repository names: identity references, not device calls. M4
-# removes them, and docs/leaving-termux.md says not to relocate them before
+# removes them, and docs/roadmap-handoff.md says not to relocate them before
 # then.
 my %PACKAGE = map { $_ => 1 } qw(app api shared exec am bootstrap installer terminal emulator tools packages);
 
@@ -55,7 +55,7 @@ my %IGNORED = (
 );
 
 # The replacement each command gets under M1 (subs::device_call names, in the
-# order docs/leaving-termux.md migrates them).
+# order docs/roadmap-handoff.md migrates them).
 my %REPLACEMENT = (
 	'battery-status'       => 'battery.status',
 	'notification'         => 'notification.post',
@@ -84,12 +84,9 @@ my %REPLACEMENT = (
 	'microphone-record'    => 'audio.record',
 );
 
-# A call site that deliberately stays raw in M0, with the reason. The ratchet
-# allows exactly these and no others.
-my @EXEMPT = (
-	[ 'scripts/jawnos_setup.pl', 'termux-open',
-	  'the first-run wizard runs before the tree is serving and loads no runtime module; M3 replaces it' ],
-);
+# A call site that deliberately stays raw, with the reason. It is empty: the
+# Termux exit is finished, so the ratchet now allows none.
+my @EXEMPT = ();
 
 # --- the intent for each tool (M3 decides the build, this records the plan) ---
 my %TOOL_INTENT = (
@@ -139,19 +136,19 @@ my @PTY_PATTERNS = (
 # --- baseline ---------------------------------------------------------------
 # Recorded by this script's --record output. Counts only go down from here; a
 # new call site, command, tool or module fails --check. The lists catch a swap
-# that leaves the totals unchanged. M1 is finished: every device command is
-# answered by the app's bridge, and the only termux-* call site left is the
-# first-run wizard's documented termux-open, which M3 replaces.
+# that leaves the totals unchanged. The baseline is zero: no termux-* command
+# remains in the tree, and the first-run wizard now opens the browser through
+# the app's open.url bridge.
 my %BASELINE = (
 	'version'  => '0.1.1611',
 	'raw' => 0,
-	'exempt' => 1,
-	'logical' => 1,
-	'commands' => 1,
+	'exempt' => 0,
+	'logical' => 0,
+	'commands' => 0,
 	'tools' => 21,
 	'modules' => 39,
 	'pty' => 12,
-	'command_list' => 'termux-open',
+	'command_list' => '',
 	'tool_list' => 'argon2 autossh convert cpanm curl espeak ffmpeg git node openssl perl qrencode rsync sox sqlite3 ssh sshpass tesseract tmux zbarimg zip',
 	'module_list' => 'Authen::SASL Crypt::AuthEnc::GCM Crypt::KeyDerivation Crypt::PK::Ed25519 Crypt::PK::X25519 Crypt::PRNG Crypt::Simple CryptX DBD::SQLite Data::UUID Date::Parse Digest::SHA Email::Stuffer Encode File::Slurp File::Type HTML::Strip Hash::Merge LWP::Protocol::https LWP::UserAgent MIME::Parser Math::BigInt Minion Minion::Backend::SQLite Mojo::IOLoop::ReadWriteFork Mojo::SQLite Mojolicious::Lite Mojolicious::Plugin::RenderFile Net::IMAP::Client Net::SSLeay Number::Format SQL::Abstract Sereal::Decoder Sereal::Encoder Time::Duration Time::Piece URI::Encode URI::Escape WWW::Mechanize',
 );

@@ -9,7 +9,7 @@ use File::Path qw(make_path);
 use Digest::SHA qw(sha256_hex);
 use JSON::PP ();
 
-# M3/M5 (docs/leaving-termux.md): a clean install downloads the runtime files
+# M3/M5 (docs/roadmap-handoff.md): a clean install downloads the runtime files
 # named in the APK's assets/jawnrt.json from the same release tag as the APK.
 # app_publish.pl used to upload only the APK and its manifest, so a publish
 # could leave the pin pointing at an asset that was never there, and the first

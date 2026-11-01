@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 # Turn a runtime archive's executables into jniLibs payload (M5,
-# docs/leaving-termux.md).
+# docs/roadmap-handoff.md).
 #
 #   perl scripts/runtime_native_bins.pl --zip FILE --out DIR [--abi arm64-v8a]
 #       [--prefix-path PATH] [--dry-run]

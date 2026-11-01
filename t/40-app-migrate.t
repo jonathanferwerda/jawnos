@@ -9,7 +9,7 @@ use File::Path qw(make_path);
 use File::Copy qw(copy);
 use Digest::SHA qw(sha256_hex);
 
-# scripts/app_migrate.pl (docs/leaving-termux.md, M4). The destructive path is
+# scripts/app_migrate.pl (docs/roadmap-handoff.md, M4). The destructive path is
 # driven entirely by one adb helper, so a fake adb on --adb lets these tests
 # prove the order and the backup without a device:
 #   - dry-run (and no --apply) prints the plan and destroys nothing;

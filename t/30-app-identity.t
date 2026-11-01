@@ -6,7 +6,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
 
-# M4 (docs/leaving-termux.md): the host app is com.jawnos. Its Java package is
+# M4 (docs/roadmap-handoff.md): the host app is com.jawnos. Its Java package is
 # com.jawnos.app, so a component reads com.jawnos/.app.X (relative to the
 # installed package) and an intent action com.jawnos.app.*. Every call site now
 # asks for those names through these three functions instead of spelling a

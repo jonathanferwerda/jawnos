@@ -13,7 +13,7 @@
 # clone the tree, then put the house back.
 #
 # That restore is not just the database. A migration must carry the machine's
-# identity too (docs/leaving-termux.md, "M4 - Identity"):
+# identity too (docs/roadmap-handoff.md, "M4 - Identity"):
 #
 #   files/home/.house.key                          unseals __president/vault
 #   files/home/.peer.key, files/home/.peer.pub     the signed peer rail

@@ -9,7 +9,7 @@ use File::Path qw(make_path);
 use File::Copy qw(copy);
 use Cwd qw(abs_path);
 
-# M5 (docs/leaving-termux.md): targetSdk 36 stops the app exec'ing a file it
+# M5 (docs/roadmap-handoff.md): targetSdk 36 stops the app exec'ing a file it
 # wrote into its own data dir, so the runtime's executables ship as native
 # libraries and the APK carries assets/runtime-bins.txt: one line per entry,
 # three tab-separated fields,

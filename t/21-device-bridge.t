@@ -11,7 +11,7 @@ use Time::HiRes qw(time);
 use JawnOSTest;
 use MIME::Base64 ();
 
-# M1 device bridge (docs/leaving-termux.md): subs::device_call speaks one JSON
+# M1 device bridge (docs/roadmap-handoff.md): subs::device_call speaks one JSON
 # line to the host app and returns its `result`; on every failure it returns
 # undef so the caller can fall back to the termux command. The fake app below is
 # the protocol contract, and DeviceService.java implements the same lines.

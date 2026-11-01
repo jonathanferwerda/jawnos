@@ -7,7 +7,7 @@ use Test::More;
 use File::Temp qw(tempdir);
 use IO::Compress::Zip qw($ZipError);
 
-# M5 (docs/leaving-termux.md): Android refuses to exec a file in app data at
+# M5 (docs/roadmap-handoff.md): Android refuses to exec a file in app data at
 # targetSdk 29+, but execs one extracted under nativeLibraryDir. So the runtime's
 # executables ship as jniLibs/<abi>/lib<slug>.so and the app symlinks the
 # runtime path at them. This pins the converter: which entries move, how a

@@ -8,7 +8,7 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use IO::Uncompress::Unzip qw($UnzipError);
 
-# M3 (docs/leaving-termux.md): the runtime a clean install unpacks instead of
+# M3 (docs/roadmap-handoff.md): the runtime a clean install unpacks instead of
 # the Termux bootstrap. scripts/runtime_build.pl decides what ships and
 # scripts/runtime_zip.pl packs it; this file pins both halves, because a wrong
 # diet or a lost mode produces an archive that unpacks into a perl nobody can

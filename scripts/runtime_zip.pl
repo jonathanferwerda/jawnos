@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# Write a runtime archive (M3, docs/leaving-termux.md).
+# Write a runtime archive (M3, docs/roadmap-handoff.md).
 #
 #   perl scripts/runtime_zip.pl <stage dir> <out.zip>
 #

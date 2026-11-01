@@ -7,11 +7,11 @@ use Test::More;
 use File::Temp qw(tempdir);
 use JawnOSTest;
 
-# M0 contracts (docs/leaving-termux.md): every Android device command goes
-# through subs::device_cmd / device_run / device_bin, and the three functions
-# keep the shell command and its arguments exactly as the call site spelled
-# them. M1 replaces those three bodies, so this file is the behaviour the call
-# sites are allowed to rely on.
+# M0 contracts (the Termux exit, now complete): every Android device command
+# goes through subs::device_cmd / device_run / device_bin, and the three
+# functions keep the shell command and its arguments exactly as the call site
+# spelled them. M1 replaces those three bodies, so this file is the behaviour
+# the call sites are allowed to rely on.
 #
 # The second half is the ratchet: scripts/termux_ledger.pl --check fails when a
 # raw termux-* call site, a new command, tool or module appears beyond the M0
@@ -56,28 +56,27 @@ my $rc = $? >> 8;
 is($rc, 0, 'termux_ledger --check passes: no new termux dependency') or diag($out);
 like($out, qr/termux_ledger: ok/, 'the ledger reports its baseline counts');
 
-# M1 exit (docs/leaving-termux.md): the app's bridge answers a command or the
-# shell fallback is gone. Every device command is native now; the one site still
-# allowed to spell the prefix is the first-run wizard's termux-open, which runs
-# before the tree is serving and goes away with M3.
-my $held = 'termux-open';
+# M1 exit: the app's bridge answers every command and the shell fallback is
+# gone. No termux-* command remains, so the ledger's command list is empty.
 my $record = qx{"$^X" "$ledger" --record 2>&1};
 my ($listed) = $record =~ /'command_list'\s*=>\s*'([^']*)'/;
-is(($listed // ''), $held, 'only the awaited commands still fall back to termux');
+is(($listed // ''), '', 'no command still falls back to termux');
 
-# The one raw call site M0 deliberately leaves: the first-run wizard, which
-# loads no runtime module and goes away in M3.
+# The last raw call site went with the wizard: it now opens the browser through
+# the bridge's open.url, the same method the tree uses on an Android host.
 my $setup = do {
 	open(my $sf, '<', "$FindBin::Bin/../scripts/jawnos_setup.pl") or die $!;
 	local $/;
 	<$sf>;
 };
-like($setup, qr/system\("termux-open /, 'the wizard still opens the browser the old way (exempt)');
+unlike($setup, qr/termux-/, 'the wizard no longer spells a termux command');
+like($setup, qr/'open\.url'/, 'it asks the app to open the URL');
+like($setup, qr/device\.token/, 'and authenticates with the bridge token');
 
-# M2 (docs/leaving-termux.md): the master names the interpreter it is running
-# under instead of letting the shell resolve President.pl's "#!" line, which on
-# a device only works through termux-exec's LD_PRELOAD. The app's supervisor
-# runs the tree without termux-exec, so this is what keeps it launching.
+# M2: the master names the interpreter it is running under instead of letting
+# the shell resolve President.pl's "#!" line, which on a device only worked
+# through termux-exec's LD_PRELOAD. The app's supervisor runs the tree without
+# termux-exec, so this is what keeps it launching.
 my $master = do {
 	open(my $jf, '<', "$FindBin::Bin/../jawn") or die $!;
 	local $/;

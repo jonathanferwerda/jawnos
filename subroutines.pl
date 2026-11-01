@@ -3401,7 +3401,7 @@ sub device_setter() {
 	return $device;
 }
 
-# M0 contracts (docs/leaving-termux.md): one door for every Android device
+# M0 contracts (docs/roadmap-handoff.md): one door for every Android device
 # command. A caller names the command without its "termux-" prefix and passes
 # the argument string exactly as the shell should see it, so wrapping a call
 # site changes nothing at runtime. M1 replaces these three bodies with the
@@ -3466,7 +3466,7 @@ sub app_component {
 	return &app_package() . '/.app.' . $class;
 }
 
-# M1 device bridge (docs/leaving-termux.md): ask the host app directly instead
+# M1 device bridge (docs/roadmap-handoff.md): ask the host app directly instead
 # of spawning a termux-* command. One JSON line in, one back, with a request
 # id, on a loopback socket the app opens (the jawn-bt pattern). Returns the
 # decoded result, or undef when the bridge is not there - every caller keeps

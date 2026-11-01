@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# Assemble the JawnOS Android runtime (M3, docs/leaving-termux.md).
+# Assemble the JawnOS Android runtime (M3, docs/roadmap-handoff.md).
 #
 #   perl scripts/runtime_build.pl --from /path/to/prefix [--out FILE] [--dry-run]
 #   perl scripts/runtime_build.pl --from PREFIX --list      # what would ship
@@ -7,7 +7,7 @@
 # --no-bin omits the executables and symlinks under bin/ and libexec/ - the
 # entries the Android app supplies as jniLibs native libraries and links back
 # into the prefix at start (scripts/runtime_native_bins.pl, M5b in
-# docs/leaving-termux.md). Non-executable data files in those trees still ship,
+# docs/roadmap-handoff.md). Non-executable data files in those trees still ship,
 # and the library each executable names is still selected, so the payload the
 # app links to finds its libraries in the archive.
 #
@@ -385,7 +385,7 @@ my $has_libperl = grep { m{/CORE/libperl\.so$} } @files;
 if (!$has_perl || !$has_libperl) {
 	print "runtime_build: incomplete - bin/perl: " . ($has_perl ? 'yes' : 'NO')
 		. ", CORE/libperl.so: " . ($has_libperl ? 'yes' : 'NO') . "\n";
-	print "  expected a built prefix (see docs/leaving-termux.md M3b)\n";
+	print "  expected a built prefix (see docs/roadmap-handoff.md M3b)\n";
 	exit 1;
 }
 

@@ -5,6 +5,36 @@ not redone; everything unmarked is still to do. Keep this in step as items land.
 
 ---
 
+## Termux exit (done 2026-11-01)
+
+All milestones landed. `scripts/termux_ledger.pl --check` reports **0 call
+sites / 0 commands**; `t/20-termux-ledger.t` pins that zero. The long-form
+roadmap was deleted once this summary was in place.
+
+- **Host.** The app is `com.jawnos` (build 1249 / 0.118.250), targetSdk 36, no
+  `sharedUserId` and no `termux-*` command anywhere in the tree. Every device
+  command is answered by `DeviceService` on loopback `127.0.0.1:46000` with
+  `$HOME/.jawn/device.token`; the API app is retired. The first-run wizard now
+  opens its browser through the same `open.url` method. The shared module is
+  BSD-2; the **app and APK remain GPL-3.0-only by decision** (2026-10-31).
+- **Runtime.** A clean install unpacks a pinned archive into `$PREFIX` — no
+  bootstrap, no `pkg`/`apt`/`dpkg`. Current pins: `jawnrt-aarch64-0.1.1706.zip`
+  (built `--no-bin`) and `jawnrt-x86_64-0.1.1702.zip`. Executables ship as
+  `jniLibs` and `JawnRuntimeBins.ensure()` re-points the `$PREFIX/bin` symlinks
+  at every app start. `git` is deliberately bundled because the first run and
+  the 30-minute code sync are git operations.
+- **Distribution.** One release key (`.secrets/jawnos-release.jks`), the GitHub
+  `releases` tag as the channel, and `scripts/app_build.pl --release` →
+  `app_publish.pl` → `app_migrate.pl` for build, publish and device cut-over.
+- **Follow-ups, none blocking:** a Piper voice pack for one voice across
+  machines; a runtime slicing/update strategy (the aarch64 archive is ~69 MB);
+  re-proving the x86_64 runtime and emulator at targetSdk 36; the in-app
+  PackageInstaller update path against Play Protect (adb path is handled by
+  `app_migrate.pl`). Play as a channel is being reconsidered separately, which
+  supersedes the roadmap's "not viable" decision if it goes ahead.
+
+---
+
 ## House key (next up)
 
 The password is no longer a citizen login (v0.1.938), but it still unwraps the

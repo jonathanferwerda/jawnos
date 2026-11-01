@@ -71,7 +71,7 @@ if (defined $local_lib && length $local_lib) {
 
 my $platform = detect_platform();
 
-# The app's own runtime (docs/leaving-termux.md M3) already carries every
+# The app's own runtime (docs/roadmap-handoff.md M3) already carries every
 # module and tool the tree loads, and it has no package manager at all: the
 # app writes this marker when it unpacks the archive, and an install is then a
 # no-op rather than a `pkg` call that cannot exist. Piper (the one extra) ships

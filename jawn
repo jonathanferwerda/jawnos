@@ -181,7 +181,7 @@ $SIG{INT} = sub {
 my ($master_boot_watch, $master_boot_tries);
 # The command the pty shell runs. It names the interpreter rather than relying
 # on President.pl's "#!" line: a shebang of /usr/bin/perl only resolves through
-# termux-exec's LD_PRELOAD, and the app's own supervisor (docs/leaving-termux.md
+# termux-exec's LD_PRELOAD, and the app's own supervisor (docs/roadmap-handoff.md
 # M2) runs this tree without termux-exec. $^X is the perl already running here.
 sub president_command() {
 	my $interp = $^X;
