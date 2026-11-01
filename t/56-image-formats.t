@@ -161,4 +161,11 @@ like( $part13, qr/shell_quote\(\$filename \. '\[0\]'\) \. ' -auto-orient -strip 
 	is_deeply( \@asked, ['image.resize'], 'only the PNG resize reached the device bridge' );
 }
 
+# --- deleting a row leaves no file behind -----------------------------------
+my $part32 = read_file("$root/lib/JawnOS/Manager/Part32.pm");
+like($part32, qr/&subs::secure_unlink\(\$thumb\)/, 'the thumb is removed without a shred binary');
+like($part32, qr/&subs::secure_unlink\(\$file\)/, 'the picture is removed without a shred binary');
+like($part32, qr/secure_unlink\(\$preview\)/, 'a TIFF/XCF preview is removed with its picture');
+unlike($part32, qr/`shred -u/, 'no shred backtick remains on the delete path (the Android runtime has none)');
+
 done_testing();

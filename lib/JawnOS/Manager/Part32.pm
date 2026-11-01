@@ -280,6 +280,7 @@ sub delete_file($data) {
 		$removed++;
 		my $filing = $file->{'f'};
 		my $thumb = $file->{'thumb'};
+		my $preview = $file->{'preview'};
 		if ($file->{'att'}) {
 			my $att_file = &subs::db_select($file->{'att'}, undef, { uuid => $file->{'att_uuid'}, app => $appt->{'app'} })->hashes->[0];
 
@@ -322,7 +323,7 @@ sub delete_file($data) {
 		}
 
 		if ($thumb && -e $thumb) {
-			`shred -u $thumb`;
+			&subs::secure_unlink($thumb);
 			my @folder = split '/', $thumb;
 			pop @folder;
 			my $folder = join '/', @folder;
@@ -331,9 +332,12 @@ sub delete_file($data) {
 			}
 		}
 
+		# The preview is a second copy beside the file (TIFF/XCF/HEIC); it must
+		# go with it, and the Android runtime has no shred, so secure_unlink.
+		&subs::secure_unlink($preview) if $preview && -e $preview;
 		if (-e $filing) {
 			my $file = $filing;
-			`shred -u $file`;
+			&subs::secure_unlink($file);
 			my @folder = split '/', $file;
 			pop @folder;
 			my $folder = join '/', @folder;
