@@ -855,6 +855,13 @@ var mailws = undefined;
 var mailwsInterval;
 var mailwsLastAnswer = 0;
 var mailwsSignature = '';
+// The mail socket's retry state. A failed handshake used to be rebuilt by every
+// caller (a window render, a tab event, the visibility handler), which on the
+// phone produced about 25 TLS handshakes a second to wss://127.0.0.1 and pulled
+// ~1.6 A with the screen off. One attempt at a time, with a growing delay.
+var mailwsRetryTimer;
+var mailwsFailures = 0;
+var mailwsBlockedUntil = 0;
 
 // ---- the app's own messaging (window.JawnSms) ------------------------
 // The phone is the device with the radio, so the server asks its page to send:
@@ -992,15 +999,27 @@ function mailWebSocketStart() {
 	var timestamp = Date.now();
 	var address = mailAddressGrabber();
 	var signature = JSON.stringify(address);
+	// A different conversation is a new socket on its own schedule.
+	if (signature != mailwsSignature) {
+		mailwsFailures = 0;
+		mailwsBlockedUntil = 0;
+	}
+	// Nothing can be seen while the page is hidden, and the WebView keeps
+	// running behind a locked phone: opening or rebuilding a socket there only
+	// spends the battery. The visibility handler below starts it again.
+	if (document.hidden) { return false; }
+	// One attempt at a time: a retry is already scheduled, or the backoff has
+	// not elapsed, so this caller has nothing to do.
+	if (mailwsRetryTimer) { return false; }
+	if (Date.now() < mailwsBlockedUntil) { return false; }
 	if (typeof mailws == 'object' && mailws) {
 		// an open socket watching the same address is already right; one still
 		// watching the address of the section that was left is rebuilt
-		if (mailws.readyState == 1 && signature == mailwsSignature) {
+		if ((mailws.readyState == 0 || mailws.readyState == 1) && signature == mailwsSignature) {
 			return true;
 		}
-		// stop rebuilds the socket itself, so this call is done either way
-		mailWebSocketStop();
-		return true;
+		// close without starting another: the retry below owns it
+		mailWebSocketClose();
 	}
 
 	clearInterval(mailwsInterval);
@@ -1012,6 +1031,8 @@ function mailWebSocketStart() {
 	console.log('ws+() mail at ' + mail_ws_url + ' ' + address.mail_contact);
 	mailws.onopen = function (event) {
 		mailwsLastAnswer = Date.now();
+		mailwsFailures = 0;
+		mailwsBlockedUntil = 0;
 		var sender = JSON.stringify({ type: 'refresher', 'last_message': last_mail_message });
 		mailws.send(sender);
 		mailwsInterval = setInterval(function() {
@@ -1085,9 +1106,45 @@ function mailWebSocketStart() {
 		}
 
 	};
+	mailws.onerror = function () {
+		// A refused certificate fails the handshake before onclose ever fires;
+		// closing here makes the one retry path below the only one.
+		try { this.close(); } catch (e) {}
+	};
 	mailws.onclose = function (event) {
+		clearInterval(mailwsInterval);
+		// A deliberate close (mailWebSocketClose) has already dropped the
+		// handle; only a socket that is still ours schedules a retry.
+		if (this !== mailws) { return; }
+		mailws = undefined;
+		mailWebSocketRetry();
+	};
+}
 
+// Close the current socket without asking for a replacement. The onclose handler
+// stays, sees mailws no longer naming this socket, and stays quiet.
+function mailWebSocketClose() {
+	if (mailws) {
+		try { mailws.close(); } catch (e) {}
+		mailws = undefined;
 	}
+	clearInterval(mailwsInterval);
+}
+
+// A failed socket is retried with a growing delay, never at once: the server may
+// be impossible to reach from this engine (the WebView will not take the house's
+// self-signed certificate for a WebSocket), and a tight loop costs a handshake
+// and a console line every attempt. The cap is the ordinary reconnect pace.
+function mailWebSocketRetry() {
+	if (mailwsRetryTimer) { return; }
+	mailwsFailures = Math.min((mailwsFailures || 0) + 1, 5);
+	var delay = Math.min(30000, 2000 * Math.pow(2, mailwsFailures - 1));
+	mailwsBlockedUntil = Date.now() + delay;
+	if (document.hidden) { return; }
+	mailwsRetryTimer = setTimeout(function () {
+		mailwsRetryTimer = undefined;
+		if (!document.hidden) { mailWebSocketStart(); }
+	}, delay);
 }
 
 function mailWebSocketStale() {
@@ -1099,7 +1156,12 @@ function mailWebSocketStale() {
 // two second pass to notice.
 function mailWebSocketWake() {
 	if (document.hidden) { return; }
-	if (typeof mailws != 'object' || !mailws) { return; }
+	// A socket that failed while the page was hidden has no handle left; the
+	// wake is what brings it back.
+	if (typeof mailws != 'object' || !mailws) {
+		mailWebSocketStart();
+		return;
+	}
 	if (mailws.readyState != 1 || mailWebSocketStale()) {
 		mailWebSocketStop();
 	}
@@ -1111,7 +1173,7 @@ window.addEventListener('focus', mailWebSocketWake);
 document.addEventListener('pointerdown', mailWebSocketWake, { capture: true, passive: true });
 
 function mailWebSocketStop() {
-	if ( mailws ) { mailws.close(); mailws = undefined;	delete mailws; };
+	mailWebSocketClose();
 	mailWebSocketStart();
 }
 
@@ -1572,10 +1634,10 @@ $(document).on('click', '#mailbox_screen', function() {
 });
 
 
-document.addEventListener("visibilitychange", function(e) { 
-	if (e.returnValue == true) {
-		mailWebSocketStart();
-	}
+document.addEventListener("visibilitychange", function() {
+	// The legacy event property is not the visibility state; a page coming
+	// back on screen opens the socket, and one going away leaves it closed.
+	if (!document.hidden) { mailWebSocketStart(); }
 });
 
 $(document).on('click', '#mailbox_lora_toggle', function() {
