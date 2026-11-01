@@ -11251,6 +11251,14 @@ get '/manager/sync_buckets' => sub ($c) {
 	# and failed with "the peer sent no snapshot" in under a second.
 	$remote_machine->{'manager'} = &subs::peer_manager_base($remote_machine->{'manager'})
 		if $remote_machine->{'manager'};
+	# The pull rail is authenticated by the signed peer key, not by a session. The
+	# cookie stored with the row can be dead - and once the peer marks that
+	# session denial, the gate refuses it on EVERY path before the route's
+	# peer_verify ever runs (the tablet's pulls answered 403 with the denial
+	# picture while its signature was valid). A pull needs no cookie.
+	if ($remote_machine->{'ua'}) {
+		$remote_machine->{'ua'}->cookie_jar(Mojo::CookieJar->new);
+	}
 	my $auuid = &subs::random_string_creator(10);
 	# v3: a normal delta pull is a sequence of encrypted row batches, not a temp
 	# SQLite snapshot. A full migration and a windowed deep pull keep the snapshot
