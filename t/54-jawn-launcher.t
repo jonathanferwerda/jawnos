@@ -25,6 +25,9 @@ unlike($src, qr/pty_log_fh/, 'the console is no longer teed into a pty.log file'
 like($src, qr/JawnOS::LogBus/, 'the master keeps the console stream in the log bus');
 like($src, qr/ring_append/, 'and appends every pty read to its ring');
 like($src, qr/sub\s+log_socket/, 'and serves the ring over ~/.president/log');
+like($src, qr/sub\s+log_seed/, 'the master seeds the ring from the supervisor tail');
+like($src, qr/jawn-stdout\.log/, 'the crash record is the supervisor\'s jawn-stdout.log');
+like($src, qr/&log_seed\(\)/, 'and seeds before the tree starts');
 
 # The shell layer is gone.
 unlike($src, qr/program\s*=>\s*["']bash["']/, 'no interactive bash between the master and President');

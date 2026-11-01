@@ -4103,9 +4103,10 @@ our $backfills_running;
 # ---- the error watch: the Coding agent's ears -------------------------
 # The running tree prints its warnings and errors to the pty that the master
 # (`./jawn`) reads, and jawn keeps that stream in a bounded, sequenced ring and
-# serves it at ~/.president/log. This watcher asks the bus for what it has not
-# seen yet (and reads ~/manager.log, for the $log lines that never reach the
-# pty) and records each new error signature once in staged_fixes. When a Coding
+# serves it at ~/.president/log. On a master restart the ring is seeded from the
+# tail of the supervisor's jawn-stdout.log, so a crash that took the master down
+# is still read. This watcher asks the bus for what it has not seen yet (and
+# reads ~/manager.log, for the $log lines that never reach the pty) and records each new error signature once in staged_fixes. When a Coding
 # model is set, the agent reads the error and stages a proposed fix - whole
 # files, not applied yet - for a person to review and apply from the IDE's
 # coding chatbox. President runs the tick, so there is exactly one watcher per
@@ -4322,7 +4323,7 @@ our $ai_ledger_ready;
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
 # every restart.
-our $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President stopping on SIGINT; cleaning up|Broken pipe|UDTA parsing failed|source=model_show_cache|model recommendations refresh failed|Socket sender:|\{"event": "error", "message": "not connected"\}/;
+our $error_watch_noise = qr/Permission denied|cannot open \/proc\/net|Cannot bind netlink|error watch:|President stopping on SIGINT; cleaning up|Broken pipe|UDTA parsing failed|source=model_show_cache|model recommendations refresh failed|Socket sender:|kill: sending signal to \d+ failed: No such process|\{"event": "error", "message": "not connected"\}/;
 
 
 # One invariant name per distinct error: control codes, addresses and numbers

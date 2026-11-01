@@ -182,6 +182,44 @@ require './lib/JawnOS/LogBus.pm';
 # for. A larger burst is reported as `dropped` rather than silently skipped.
 our $log_ring = JawnOS::LogBus::ring_new(4 * 1024 * 1024);
 
+# Seed the ring with the supervisor's tail before the tree starts. The ring is
+# memory only, so a crash that took the master down would otherwise vanish; the
+# desktop app and both systemd units append jawn's own stdout (which includes the
+# pty bytes) to jawn-stdout.log, and that file survives the restart. The old
+# pty.log was truncated at this same moment, so this keeps at least as much as it
+# did and usually the whole crash. In a bare terminal there is no file and the
+# screen is the record; the bus still works, it just starts empty.
+sub log_seed {
+	my @paths = ( &home('~/.local/state/jawnos/jawn-stdout.log') );
+	unshift @paths, "$ENV{'XDG_STATE_HOME'}/jawnos/jawn-stdout.log"
+		if defined $ENV{'XDG_STATE_HOME'} && length $ENV{'XDG_STATE_HOME'};
+	my %seen;
+	@paths = grep { !$seen{$_}++ } @paths;
+	# The desktop respects XDG_STATE_HOME while the systemd units use the fixed
+	# path, so take whichever candidate the supervisor is actually writing.
+	my ($path) = sort { ((stat($b))[9] || 0) <=> ((stat($a))[9] || 0) }
+		grep { -f $_ } @paths;
+	return unless $path;
+	my $size = -s $path;
+	return unless $size;
+	my $want  = 256 * 1024;
+	my $start = $size > $want ? $size - $want : 0;
+	open(my $fh, '<', $path) or return;
+	seek($fh, $start, 0) or do { close $fh; return };
+	my $tail = '';
+	while (length($tail) < $size - $start) {
+		my $got = read($fh, $tail, $size - $start - length($tail), length($tail));
+		last unless $got;
+	}
+	close $fh;
+	return unless length $tail;
+	# Start at a line boundary: half a warning at the seek point is not a fault.
+	$tail =~ s/^[^\n]*\n// if $start > 0;
+	JawnOS::LogBus::ring_append($log_ring, $tail) if length $tail;
+	return;
+}
+&log_seed();
+
 my $fork = Mojo::IOLoop::ReadWriteFork->new;
 
 $SIG{INT} = sub {

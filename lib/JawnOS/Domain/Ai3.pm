@@ -492,6 +492,10 @@ sub error_watch_is_error {
 	my $line = shift;
 	$line = '' unless defined $line;
 	return 0 if $line =~ $error_watch_noise;
+	# The master's report of a tree death is a fault even though its wording has
+	# no error word in it. Deliberate restarts suppress 'See it's dead', and the
+	# END line 'They dead' on a deliberate restart is not matched here.
+	return 1 if $line =~ /tree exited on its own|See it's dead/;
 	return 1 if $line =~ /\b(?:failed|failure|fatal|panic|abort(?:ed)?|died|denied|malformed|corrupt|not ok|couldn't|could not|can't|cannot|unable to|uninitialized|undefined|out of memory|segmentation|core dumped|database is locked|no such (?:file|table|column)|too many|refused|error)\b/i;
 	return 0;
 }
