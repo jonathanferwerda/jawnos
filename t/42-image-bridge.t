@@ -7,6 +7,10 @@ use Test::More;
 use File::Temp qw(tempdir);
 use JawnOSTest;
 
+# The domain layer is lazy: load the real definitions before the local *subs::
+# stubs below, or a later module load would replace them.
+subs::preload($_) for qw(device_call);
+
 use MIME::Base64 ();
 
 # M3's ImageMagick diet: the tree asks the device bridge to resize and re-encode

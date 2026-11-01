@@ -1,0 +1,617 @@
+package subs;
+
+# Generate: extracted from subroutines.pl (package subs). Loaded on
+# demand by lib/JawnOS/Domain/Loader.pm.
+use strict;
+use warnings;
+use utf8;
+use feature 'signatures';
+no warnings 'experimental::signatures';
+no warnings 'experimental::args_array_with_signatures';
+
+use Clone qw(clone);
+use Data::Dumper;
+use Date::Parse;
+use Digest::SHA qw(sha256_hex);
+use Encode qw(encode_utf8);
+use Fcntl qw(:flock);
+use File::Copy;
+use File::Find;
+use File::Path;
+use File::Slurp;
+use IPC::Open2;
+use JSON::PP ();
+use List::Util qw(shuffle);
+use MIME::Base64;
+use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
+use Mojo::IOLoop;
+use Mojo::JSON qw(decode_json encode_json);
+use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
+use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use Text::Unidecode;
+use Time::Duration;
+use Time::HiRes qw(gettimeofday time);
+use Time::Local;
+use Time::Piece;
+use Unicode::Normalize qw(NFC);
+
+our %accounting_account_cache;
+our $code_revision_cache;
+our $database;
+our $device;
+our $gb;
+our $jawn_version_cache;
+our $log;
+our %m;
+
+sub generate_ai_media {
+  my ($data) = @_;
+	my $kind = $data->{'kind'} || 'image';
+	my $c = &subs::controller_builder();
+	my $msg_uuid = $data->{'msg_uuid'};
+  my $ua       = $data->{'ua'};
+  my $prompt   = $data->{'prompt'};
+  my $settings = $data->{'settings'};
+	my $conversation = $data->{'conversation'};
+	my $mail_contact = $data->{'mail_contact'};
+	my $start_timestamp = &subs::rightNow();
+	# Unclaimed media (a Guide associate, or Pen with no name for the chat) lands
+	# on the Camera app, where it waits a week to be claimed onto an appointment.
+	my $unclaimed = ($data->{'unclaimed'}) ? 1 : 0;
+	my $app = $unclaimed ? 'camera' : $mail_contact;
+	if (!$unclaimed && $conversation->{'chatbot_conversation_name'}) {
+		$app = $conversation->{'chatbot_conversation_name'};
+	}
+	$app = &subs::unformat_name($app);
+
+  $log->info(Dumper $data);
+	# the media comes through the Plat generation model for this kind; the
+	# storing, the appointment and the reply are this routine's own work. The
+	# agent's fallback is tried when the primary fails (an outage, no credit).
+	my $role = $kind eq 'image' ? 'text_to_image_assistant' : $kind eq 'audio' ? 'text_to_audio_assistant' : 'text_to_video_assistant';
+	my ($primary, $fallback) = &subs::ai_role_models($role);
+	my %gen_seen;
+	my @gen_candidates = grep { !$gen_seen{$_}++ } grep { defined $_ && length $_ } ($data->{'model'}, $primary, $fallback);
+	my ($binary, $mime, $gen_err);
+	foreach my $candidate ( @gen_candidates ) {
+		($binary, $mime, $gen_err) = ($kind eq 'image')
+			? &subs::ai_text_to_image({ prompt => $prompt, model => $candidate })
+			: &subs::ai_text_to_media($kind, { prompt => $prompt, model => $candidate });
+		last if defined $binary && length $binary;
+		&subs::say_it('AI: ' . $kind . ' with ' . $candidate . ' failed (' . ($gen_err || 'nothing returned') . ')') if @gen_candidates > 1;
+	}
+	if ($gen_err || !defined $binary || !length $binary) {
+		$log->error(ucfirst($kind) . ' generation failed: ' . ($gen_err || 'nothing returned'));
+		return undef;
+	}
+	my $upload_type = $kind;
+	my $filename = $kind . '_' . &subs::rightNow() . ($kind eq 'image' ? '.png' : $kind eq 'audio' ? '.mp3' : '.mp4');
+	my $setting = ($kind eq 'image' ? 'photo_location' : $kind eq 'audio' ? 'music_location' : 'video_location');
+	my $folder = &subs::setting_grabber({ app => 'misc', setting => $setting, device => $device });
+	my $location = $folder ? (&subs::home($folder) . '/' . &subs::path_name($app)) : '';
+	my $public_dir = $location || &subs::home('~/Public/generated_' . $kind);
+	`mkdir $public_dir` unless -d $public_dir;
+
+	my $file_path = $public_dir . '/' . $filename;
+	write_file($file_path, $binary);
+	my $ocr;
+	if ($kind eq 'image') {
+		my $resolution = &subs::setting_grabber({ app => 'misc', setting => 'photo_size' } ) || '1920x1080';
+		unless (lc $resolution eq 'raw') {
+			my ($w, $h) = &subs::image_resolution_parts($resolution);
+			my $resized = ($w && $h) ? &subs::image_bridge_resize($file_path, $w, $h) : undef;
+			system('magick', $file_path, '-resize', $resolution, $file_path) unless $resized;
+		}
+		$ocr = &subs::ocr_reader($c,$file_path);
+	}
+	# a still thumbnail for image and video, made up front so the unclaimed
+	# pool can show it at once instead of waiting on the full file
+	my $thumb;
+	if ($upload_type eq 'image' || $upload_type eq 'video') {
+		my $thumb_dir = $public_dir . '/.thumbs';
+		`mkdir -p $thumb_dir` unless -d $thumb_dir;
+		my $t = $thumb_dir . '/' . $filename;
+		$t =~ s/\.[^.]+$/.png/;
+		my $thumbnail_size = &subs::setting_grabber({ app => 'misc', setting => 'thumbnail_size' }) || 'none';
+		if ($thumbnail_size ne 'none') {
+			my ($max) = $thumbnail_size =~ /(\d+)/;
+			# The bridge makes the still itself (a video frame via
+			# MediaMetadataRetriever); a desktop keeps the pipeline.
+			my $native = &subs::image_bridge_thumbnail($file_path, $max || 256, $t);
+			unless ($native) {
+				my $cmd = ($upload_type eq 'video')
+					? 'ffmpeg -ss ' . &subs::thumbnail_seek_position() . ' -i ' . $file_path . ' -vframes 1 -c:v png -f image2pipe - | magick - -resize ' . $thumbnail_size . ' ' . $t
+					: 'magick ' . $file_path . ' -resize ' . $thumbnail_size . ' ' . $t;
+				`$cmd`;
+			}
+			$thumb = $t if -e $t;
+		}
+	}
+	my $appt_uuid = &subs::random_string_creator(33);
+	my $file_uuid = &subs::random_string_creator(21);
+	my $u_data = [{ server_time => &subs::rightNow(), appt_uuid => $appt_uuid, mail_uuid => $msg_uuid, ocr => $ocr, f => $file_path, uuid => $file_uuid, type => $upload_type }];
+	$u_data->[0]->{'thumb'} = $thumb if $thumb;
+	$log->info(Dumper $u_data);
+	my $jfile = encode_json $u_data;
+
+	my $write = {
+		timestamp => &subs::rightNow(),
+		app => &subs::unformat_name($app),
+		notes => &subs::note_encrypter(&subs::suds_grabber(),$prompt),
+		type => $upload_type,
+		file => $jfile,
+		uuid => $appt_uuid,
+		duration => &subs::rightNow() - $start_timestamp,
+	};
+	$write->{'source'} = 'unclaimed' if $unclaimed;
+	$write->{'warranty'} = &subs::rightNow() + (7 * 24 * 60 * 60 * 1000) if $unclaimed;
+	&Manager::appointment_writer($c,$write);
+	&subs::file_encrypter({ app => &subs::unformat_name($app) });
+	&Manager::centre_view_grabber({ c => $c, app => &subs::unformat_name($app), timestamp => &subs::rightNow(), cached => 'no' });
+
+	return ('/file_open?appt_uuid=' . $appt_uuid . '&file_uuid=' . $file_uuid . '&app=' . $app,$u_data);
+}
+
+sub generate_ai_image {
+	my ($data) = @_;
+	$data->{'kind'} = 'image';
+	return &generate_ai_media($data);
+}
+
+sub manager_file_maker {
+	my $session_name = shift;
+	my ($my_name,$computer_name,$hostname,$hostnamer,$database_name);
+	my ($db,$database) = &subs::database_grabber();
+	$hostname = `hostname`;
+	chomp $hostname;
+	$hostnamer = eval { return &subs::db_select('devices', ['name'], { hostname => $hostname } )->hash->{name} };
+	$my_name = $session_name || &subs::setting_grabber({ app => 'me', setting => 'my_name' });
+	$computer_name = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' });
+	$database_name = $database;
+	$database_name =~ s/^database\///;
+	$database_name =~ s/.db$//gi;
+	my @database_name = split '/', $database_name;
+	$database_name = $database_name[-1];
+
+	return ($my_name || $hostnamer || $hostname) . '@' . $database_name . '.' . ($computer_name || $hostname);
+
+};
+
+sub data_size {
+	my $data = shift;
+	my $data_size = $data;
+	if ($data >= 1024000000) {
+		$data_size = sprintf("%.2f", $data / 1000000000) . 'GB';
+	}
+	elsif ($data > 1024000) {
+		$data_size = sprintf("%.2f", $data / 1000000) . 'MB';
+	}
+
+	elsif ($data > 1024) {
+		$data_size = sprintf("%.2f", $data / 1000) . 'KB';
+	}
+	return $data_size;
+}
+
+sub usual_appointment_maker {
+	my $data = shift;
+	my $settings = shift;
+	my $app = $data->{'app'};
+	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	my $uuid = $data->{'uuid'};
+	my $type = $data->{'type'};
+	my $duration = $data->{'duration'};
+	if ($settings->{'project'}) {
+		$data->{'project'} = $settings->{'project'};
+	}
+	my $m = &subs::db_select('model', undef, { app => $app, def => 'on' })->hashes->[0];
+	my ($model,$jmodel,$joptions);
+	if ($m->{'uuid'} && $m->{'def'} eq 'on' && &default_attribute_time_checker($m,$timestamp) eq 'yes') {
+		$model = {
+			uuid => $m->{'uuid'},
+			name => $m->{'name'},
+			timestamp => $timestamp,
+			quantity => ($data->{'quantity'} || $m->{'quantity'}),
+			unit => $data->{'unit'} || $m->{'unit'},
+			delay_start => $m->{'delay_start'},
+			delay_stop => $m->{'delay_stop'}
+		};
+		$jmodel = encode_json $model;
+	}
+
+	if ($m->{'save_app'} eq 'on' && $model->{'uuid'}) {
+		$data->{'seen'} = 'yes';
+		&source_appt_writer($m,$data,'model');
+	}
+
+	my $def_options = &subs::db_select('option', undef, { app => $app, def => 'on' })->hashes;
+	my $options = [];
+	foreach my $do ( @{$def_options} ) {
+		next unless &default_attribute_time_checker($do,$timestamp) eq 'yes';
+		my $quantity = $do->{'quantity'};
+		$quantity = ($data->{'quantity'} || $do->{'quantity'});
+		push @{$options}, {
+			uuid => $do->{'uuid'},
+			timestamp => $timestamp,
+			quantity => $quantity,
+			unit => $do->{'unit'},
+			name => $do->{'name'},
+			delay_start => $do->{'delay_start'},
+			delay_stop => $do->{'delay_stop'}
+		};
+		if ($do->{'save_app'} eq 'on') {
+			$data->{'seen'} = 'yes';
+			&source_appt_writer($do,$data,'option');
+		}
+	}
+	if (scalar @{$options}) {
+		$joptions = encode_json $options;
+	}
+	else { $options = undef; $joptions = undef; }
+
+	return ($model,$options,$jmodel,$joptions);
+}
+
+sub default_attribute_time_checker {
+	my $d = shift;
+	my $timestamp = shift;
+	my @ts = localtime($timestamp / 1000);
+	my $allowed_count = 0;
+
+	my $def_month = eval { return decode_json $d->{'def_month'} } || [];
+	my $allowed_month = scalar @{$def_month} == 0 ? 1 : 0;
+	foreach my $dm ( @{$def_month} ) {
+		if ($dm eq 'all') {
+			$allowed_month = 1; last;
+		} elsif ($dm eq 'none') {
+			$allowed_month = 0; last;
+		}
+		else {
+			my ($mon) = grep { $_->{'abbrev'} eq $dm } @{$gb::months};
+			if ($mon->{'number'} == $ts[4]) {
+				$allowed_month++;
+			}
+		}
+	}
+	if ($allowed_month > 0) {
+		$allowed_count++;
+	}
+
+	my $def_day = eval { return decode_json $d->{'def_day'} } || [];
+	my $allowed_day = scalar @{$def_day} == 0 ? 1 : 0;
+	foreach my $dd ( @{$def_day} ) {
+		if ($dd eq 'all') {
+			$allowed_day = 1; last;
+		} elsif ($dd eq 'none') {
+			$allowed_day = 0; last;
+		}	else {
+			if ($dd == $ts[3]) {
+				$allowed_day++;
+			}
+		}
+	}
+	if ($allowed_day > 0) {
+		$allowed_count++;
+	}
+
+	my $def_wday = eval { return decode_json $d->{'def_wday'} } || [];
+	my $allowed_wday = scalar @{$def_wday} == 0 ? 1 : 0;
+	foreach my $dw ( @{$def_wday} ) {
+		if ($dw eq 'all') {
+			$allowed_wday = 1; last;
+		} elsif ($dw eq 'none') {
+			$allowed_wday = 0; last;
+		} else {
+			my ($wday) = grep { $_->{'abbrev'} eq $dw } @{$gb::wdays};
+			if ($wday->{'number'} == $ts[6]) {
+				$allowed_wday++;
+			}
+		}
+	}
+	if ($allowed_wday > 0) {
+		$allowed_count++;
+	}
+
+	my $def_hour = eval { return decode_json $d->{'def_hour'} } || [];
+	my $allowed_hour = scalar @{$def_hour} == 0 ? 1 : 0;
+	foreach my $dh ( @{$def_hour} ) {
+		if ($dh eq 'all') {
+			$allowed_hour = 1; last;
+		} elsif ($dh eq 'none') {
+			$allowed_hour = 0; last;
+		} else {
+			my ($hour) = grep { $_->{'abbrev'} eq $dh } @{$gb::hours};
+			if ($hour->{'number'} == $ts[2]) {
+				$allowed_hour++;
+			}
+		}
+	}
+	if ($allowed_hour > 0) {
+		$allowed_count++;
+	}
+
+
+	return $allowed_count == 4 ? 'yes' : 'no';
+}
+
+sub source_appt_writer {
+	my $m = shift;
+	my $data = shift;
+	my $table = shift;
+	my $returner = {};
+	my $app = $data->{'app'};
+	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	my $uuid = $data->{'uuid'};
+	my $type = $data->{'type'};
+	my $duration = $data->{'duration'};
+	my $char = eval { return decode_json $m->{'characteristics'} } || [];
+	my $measures = { uuid => &subs::random_string_creator(19) };
+	my $unit =  ($app eq $m->{'unit'}) ? $data->{'unit'} : $m->{'unit'};
+
+	my $quantity = $data->{'quantity'} || $m->{'quantity'};
+
+	my $recursion_check = &subs::db_select('appointments', undef, { app => $m->{'name'}, source_uuid => $uuid })->hashes;
+	my $datas = {
+		app => $m->{'name'},
+		timestamp => $timestamp,
+		type => $type,
+		duration => $duration || 1000,
+		source_uuid => $uuid,
+		unit => $data->{'unit'} || $m->{'unit'},
+		quantity => ($data->{'quantity'} || $m->{'quantity'}),
+		project => $data->{'project'} || $m->{'project'},
+		manufacturer => $data->{'manufacturer'} || $m->{'manufacturer'}
+	};
+
+	if ($type eq 'start' && $m->{'delay_start'}) {
+		my $t = &subs::time_abbrev_translator($m->{'delay_start'});
+		$timestamp = $timestamp + $t;
+		$datas->{'timestamp'} = $timestamp;
+	}
+	elsif ($type eq 'stop' && $data->{'delay_stop'}) {
+		my $t = &subs::time_abbrev_translator($m->{'delay_stop'});
+		$timestamp = $timestamp + $t;
+		$datas->{'timestamp'} = $timestamp;
+	}
+
+
+	unless (scalar @{$recursion_check} > 0) {
+
+
+		if ($table eq 'model') {
+
+		}
+		elsif ($table eq 'option') {
+
+		}
+		my $md5 = md5_sum $datas->{'source_uuid'} . '-' . $app . '-' . $timestamp . '-' . $datas->{'app'};
+		$datas->{'uuid'} = $datas->{'source_uuid'} . '-' . $md5;# || &subs::random_string_creator(92);
+		my $c = &subs::controller_builder();
+		$returner = &Manager::appointment_writer($c,$datas);
+	}
+
+	foreach my $ch ( @{$char} ) {
+		if ($ch->{'save_appt'} eq 'on') {
+			$datas->{'app'} = &subs::unformat_name($ch->{'name'});
+			$datas->{'source_uuid'} = $returner->{'uuid'};
+			$datas->{'quantity'} = $ch->{'value'};
+			$datas->{'unit'} = $ch->{'unit'};
+			my $md5 = md5_sum $datas->{'source_uuid'} . '-' . $app . '-' . $timestamp . '-' . $ch->{'name'};
+			$datas->{'uuid'} = $datas->{'source_uuid'} . '-' . $md5,# || &subs::random_string_creator(92);
+			my $c = &subs::controller_builder();
+			&Manager::appointment_writer($c, $datas);
+		}
+	}
+
+}
+
+sub log_writer {
+	my $data = shift;
+	my $log_data;
+	my $timestamp = &subs::rightNow();
+	if ( eval { @{$data} } ) {
+		$log_data = Dumper $data;
+	}
+	elsif ( eval { %{$data} } ) {
+		$log_data = Dumper $data;
+	}
+	else {
+		$log_data = $data;
+	}
+	my $settings = &subs::settings_grabber({ app => 'terminal' });
+
+	$settings->{'log'} = eval { return decode_json $settings->{'log'} } || [];
+	splice @{$settings->{'log'}}, 30;
+	my $uuid = &subs::random_string_creator(10);
+	my $logg = { timestamp => $timestamp, 'msg' => $log_data, uuid => $uuid };
+	push @{$settings->{'log'}}, $logg;
+
+	my $sl = encode_json $settings->{'log'};
+	&subs::setting_setter({ app => 'terminal', setting => 'log', value => $sl });
+	my $hostname = `hostname`;
+	chomp $hostname;
+	&Websocket::send('server', { view => 'log', console => $logg, error => $uuid, whoami => ($ENV{'USER'} || ''), hostname => $hostname });
+	return $data;
+}
+
+sub jawn_version {
+	return $jawn_version_cache if $jawn_version_cache;
+	my $v = eval { read_file('./VERSION') } || '';
+	$v =~ s/\s+$//;
+	$v = '0.0.0' unless $v =~ /\d/;
+	return $jawn_version_cache = $v;
+}
+
+sub jawn_version_forget { undef $jawn_version_cache; }
+
+sub code_revision {
+	return $code_revision_cache if $code_revision_cache;
+	my @files;
+	# The fingerprint is grouped as well as whole: a connected browser reads the
+	# parts and asks what changed - a script (it must reload), a stylesheet (it
+	# can point the link at the new build live), a template (re-render the open
+	# windows), the shell or the server (reload / nothing) - before deciding how
+	# to update itself. (See jawnosRevisionArrived in websocket.js.)
+	my %part_canon = ( js => '', css => '', views => '', shell => '', server => '' );
+	find({ no_chdir => 1, wanted => sub {
+		my $n = $File::Find::name;
+		return unless -f $n;
+		return if $n =~ m{(^|/)\.git/} || $n =~ m{node_modules};
+		push @files, $n if $n =~ /\.(pl|pm|ep|js|css)$/ || $n =~ m{(^|/)jawn$};
+	} }, '.');
+	@files = sort @files;
+	my $canon = '';
+	foreach my $f ( @files ) {
+		my $c = eval { read_file($f) };
+		my $line = $f . ':' . md5_sum(defined $c ? $c : '') . "\n";
+		$canon .= $line;
+		my $part = 'server';
+		$part = 'js' if $f =~ /\.js$/;
+		$part = 'css' if $f =~ /\.css$/;
+		$part = 'views' if $f =~ /\.ep$/;
+		# the shell frames every page at once: it cannot be rebuilt under a live tab
+		$part = 'shell' if $f =~ m{(^|/)manager\.html\.ep$} || $f =~ m{(^|/)templates/layouts/};
+		$part_canon{$part} .= $line;
+	}
+	my $fingerprint = md5_sum($canon);
+	my ($commit,$branch,$dirty) = ('','',0);
+	if (-e '.git') {
+		$commit = `git rev-parse HEAD 2>/dev/null`; chomp $commit;
+		$branch = `git rev-parse --abbrev-ref HEAD 2>/dev/null`; chomp $branch;
+		# untracked files are not what the app runs (and the auto-update watcher
+		# ignores them too), so `dirty` means tracked files were modified
+		$dirty = 1 if (`git status --porcelain --untracked-files=no 2>/dev/null` =~ /\S/);
+	}
+	my $hostname = `hostname`; chomp $hostname;
+	$code_revision_cache = {
+		fingerprint => $fingerprint,
+		commit => $commit,
+		branch => $branch,
+		dirty => $dirty,
+		files => scalar @files,
+		hostname => $hostname,
+		signatorial => &subs::signatorial_designer(),
+		parts => { map { $_ => md5_sum($part_canon{$_}) } sort keys %part_canon },
+	};
+	return $code_revision_cache;
+}
+
+sub warehouse_money_mirror {
+	my $row = shift;
+	return unless $row && $row->{'uuid'};
+	my $type = $row->{'type'} || '';
+	# Only the transaction is a money move. A purchase row is the item and vendor
+	# breakdown of that transaction and carries the same account and total, so
+	# mirroring it as well counted one payment two or three times (a payment with
+	# a vendor row and an item row wrote three). Transfers are type 'transaction'
+	# too, so both legs still mirror. The old purchases' ledger rows are removed by
+	# the money_ledger_transaction_rows backfill.
+	return unless $type eq 'transaction';
+	return unless $row->{'account'} && $row->{'account'} ne '';
+	# an inventory row is a balance anchor, not a move; it already has its own
+	# warehouse row (kind inventory)
+	return if ($row->{'movement'} || '') eq 'inventory';
+	my $exists = &subs::db_query('select uuid from warehouse where kind=? and uuid=? limit 1', 'money', $row->{'uuid'})->hashes->[0];
+	return if $exists;
+	my $movement = $row->{'movement'};
+	$movement = 'expense' if (!defined $movement || $movement eq '') && $type eq 'purchase';
+	&subs::db_insert('warehouse', {
+		kind => 'money',
+		type => $type,
+		movement => $movement,
+		app => $row->{'app'},
+		account => $row->{'account'},
+		project => $row->{'project'},
+		item => $row->{'item'},
+		model => $row->{'model'},
+		quantity => $row->{'quantity'},
+		unit => $row->{'unit'},
+		amount => $row->{'amount'},
+		tax => $row->{'tax'},
+		aux => $row->{'aux'},
+		total => $row->{'total'},
+		duration => $row->{'duration'},
+		vendor => $row->{'vendor'},
+		manufacturer => $row->{'manufacturer'},
+		currency => $row->{'currency'},
+		notes => $row->{'notes'},
+		state => $row->{'state'},
+		warranty => $row->{'warranty'},
+		place => $row->{'place'},
+		data => $row->{'data'},
+		uuid => $row->{'uuid'},
+		app_uuid => $row->{'uuid'},
+		source_uuid => $row->{'source_uuid'},
+		timestamp => $row->{'timestamp'},
+		server_time => &subs::rightNow(),
+	});
+}
+
+sub accounting_account_ensure {
+	my ($code,$name,$type,$normal,$app) = @_;
+	my $row = &db_query('select code from ledger_accounts where code=?', $code)->hashes->[0];
+	return $code if $row;
+	&db_insert('ledger_accounts', {
+		code => $code, name => $name, type => $type, normal => $normal,
+		app => ($app // ''), active => 'yes', server_time => &rightNow()
+	});
+	return $code;
+}
+
+sub accounting_bank_account {
+	my $account = shift || '';
+	return $accounting_account_cache{"asset\0$account"} if defined $accounting_account_cache{"asset\0$account"};
+	# a payable is a liability, not a place money sits
+	if ($account eq 'accounts_payable') {
+		return $accounting_account_cache{"asset\0$account"} = &accounting_account_ensure(2000, 'Accounts Payable', 'liability', 'credit', '');
+	}
+	my $row = &db_query("select code from ledger_accounts where app=? and type='asset' and cast(code as integer) between 1000 and 1099 limit 1", $account)->hashes->[0];
+	return $accounting_account_cache{"asset\0$account"} = $row->{'code'} if $row;
+	my $max = (&db_query("select coalesce(max(cast(code as integer)),999) as m from ledger_accounts where type='asset' and cast(code as integer) between 1000 and 1099")->hashes->[0]->{'m'} || 0) + 0;
+	my $code = $max >= 1000 ? $max + 10 : 1000;
+	$code = 1090 if $code > 1090;
+	return $accounting_account_cache{"asset\0$account"} = &accounting_account_ensure($code, &format_name($account), 'asset', 'debit', $account);
+}
+
+sub accounting_app_account {
+	my ($app,$type) = @_;
+	$app = 'unknown' unless defined $app && length $app;
+	$type = ($type || '') eq 'income' ? 'income' : 'expense';
+	return $accounting_account_cache{"$type\0$app"} if defined $accounting_account_cache{"$type\0$app"};
+	my $row = &db_query('select code from ledger_accounts where app=? and type=? limit 1', $app, $type)->hashes->[0];
+	return $accounting_account_cache{"$type\0$app"} = $row->{'code'} if $row;
+	my $base = $type eq 'income' ? 4000 : 5000;
+	my $max = (&db_query('select coalesce(max(cast(code as integer)),?) as m from ledger_accounts where type=? and cast(code as integer) between ? and ?', $base - 1, $type, $base, $base + 999)->hashes->[0]->{'m'} || 0) + 0;
+	my $code = $max + 1;
+	return $accounting_account_cache{"$type\0$app"} = &accounting_account_ensure($code, &format_name($app), $type, ($type eq 'income' ? 'credit' : 'debit'), $app);
+}
+
+sub accounting_journal_add {
+	my ($entry,$timestamp,$lines,$meta) = @_;
+	my $n = 0;
+	foreach my $line ( @{$lines} ) {
+		my ($code,$debit,$credit) = @{$line};
+		$debit = defined $debit ? $debit + 0 : 0;
+		$credit = defined $credit ? $credit + 0 : 0;
+		next if abs($debit) < 0.0001 && abs($credit) < 0.0001;
+		$n++;
+		&db_insert('journal', {
+			uuid => $entry . '-' . $n,
+			entry_uuid => $entry,
+			timestamp => $timestamp,
+			account_code => $code,
+			debit => sprintf('%.4f', $debit),
+			credit => sprintf('%.4f', $credit),
+			currency => ($meta->{'currency'} // ''),
+			memo => substr(($meta->{'memo'} // ''), 0, 490),
+			source_uuid => ($meta->{'source_uuid'} // ''),
+			source_kind => ($meta->{'source_kind'} // ''),
+			app => ($meta->{'app'} // ''),
+			account => ($meta->{'account'} // ''),
+			server_time => &rightNow()
+		});
+	}
+	return $n;
+}
+
+1;

@@ -37,14 +37,14 @@
 	# which model can reason, and the level chosen for a role: guarded the same way
 	# as ai_provider_ready below, so a request served before the tree restarts onto
 	# this build keeps the panel's old shape instead of dying on an unknown sub.
-	my $thinks_of = defined &subs::ai_model_thinks ? \&subs::ai_model_thinks : sub { 0 };
-	my $thinking_of = defined &subs::ai_role_thinking ? \&subs::ai_role_thinking : sub { '' };
+	my $thinks_of = subs::provides('ai_model_thinks') ? sub { &subs::ai_model_thinks(@_) } : sub { 0 };
+	my $thinking_of = subs::provides('ai_role_thinking') ? sub { &subs::ai_role_thinking(@_) } : sub { '' };
 	# which providers can answer here at all: a key entered, or a running Ollama.
 	# The role lists below only offer these - the rest are named under them, so it
 	# is clear which of them wants a key (or a daemon). Until the tree restarts
 	# onto this build the helper does not exist yet, and the panel keeps its old
 	# shape for those requests rather than dying on it.
-	my %provider_ready = map { $_->{'id'} => (defined &subs::ai_provider_ready ? &subs::ai_provider_ready($_->{'id'}) : 1) } @{$catalogue};
+	my %provider_ready = map { $_->{'id'} => (subs::provides('ai_provider_ready') ? &subs::ai_provider_ready($_->{'id'}) : 1) } @{$catalogue};
 	# which billing buckets are stood down (out of credit) - one check per bucket
 	my %bucket_ok;
 	foreach my $p ( @{$catalogue} ) {

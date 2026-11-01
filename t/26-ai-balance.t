@@ -6,6 +6,10 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
 
+# The domain layer is lazy: load the real definitions before the local *subs::
+# stubs below, or a later module load would replace them.
+subs::preload($_) for qw(crypto_rates_read crypto_report_currency exchange_rate);
+
 # The Sys panel's "Balance drop" chart. The AI balance job keeps a rolling week
 # of samples in its cache row; these tests pin the window arithmetic (the
 # synthetic point at the left edge, the change, the pace per day) and the SVG

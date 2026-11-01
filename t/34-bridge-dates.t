@@ -66,6 +66,8 @@ is &subs::records_bad_date_fix({ timestamp => -2000000000000000, ost => '', serv
 	};
 	my $root = root();
 	my $subs = $read->("$root/subroutines.pl");
+	# most functions moved to the lazy domain layer in lib/
+	$subs .= join "\n", map { $read->($_) } sort glob("$root/lib/JawnOS/Domain/*.pm");
 	like $subs, qr/bad_dates => scalar \@\{\$report->\{'bad_dates'\}\}/,
 		'the audit summary counts bad dates';
 	like $subs, qr/\$report->\{'bad_dates'\}/,

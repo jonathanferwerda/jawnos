@@ -687,7 +687,7 @@ sub appts_marker_builder {
 	return $appts;
 }
 
-sub original_timestamp() {
+sub original_timestamp {
 	my ($db,$database,$sql) = &subs::database_grabber();
 	my $original_timestamp = &subs::db_query('select timestamp from security LIMIT 1');
 	my $ts = $original_timestamp->hashes;

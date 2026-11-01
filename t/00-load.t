@@ -10,8 +10,11 @@ use JawnOSTest ();
 # The suite's own smoke test: the core module loaded, the pieces the other
 # tests call exist, and the install examples are still well-formed.
 
-ok defined &subs::format_name,    'core module loaded (subs::format_name)';
-ok defined &subs::duration_sayer, 'duration helpers loaded';
+# The domain layer under lib/ is lazy: a module compiles on the first call into
+# it, so `defined &subs::name` is false until then. provides() asks without
+# forcing the load.
+ok subs::provides('format_name'),    'core module loaded (subs::format_name)';
+ok subs::provides('duration_sayer'), 'duration helpers loaded';
 # The domain layer under lib/ is lazy: subroutines.pl loads only the Loader, and
 # a module compiles on the first call into it. provides() is how a caller (and
 # this test) asks whether a domain function exists without forcing the load.

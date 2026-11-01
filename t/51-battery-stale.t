@@ -20,9 +20,11 @@ use File::Slurp qw(read_file);
 # three parts of the fix: a five second wait, a five second cooldown, and the
 # last good reading served as stale instead of "none".
 
-# device_call and battery_sample live in subroutines.pl (the domain loader in
-# this tree does not carry them).
-my $pph = read_file("$FindBin::Bin/../subroutines.pl");
+# device_call and battery_sample live in the core: subroutines.pl or the lazy
+# domain modules under lib/. Read both so a function moving between them does
+# not make this a false failure.
+my $pph = join "\n", map { read_file($_) }
+	("$FindBin::Bin/../subroutines.pl", sort glob("$FindBin::Bin/../lib/JawnOS/Domain/*.pm"));
 my $say = $pph;
 
 # 1. the cooldown is short and used consistently

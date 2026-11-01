@@ -7,6 +7,10 @@ use Test::More;
 use Mojo::JSON qw(encode_json);
 use JawnOSTest;
 
+# The domain layer is lazy: load the real definitions before any local *subs::
+# stub below, or the module load would replace the stub mid-test.
+subs::preload($_) for qw(db_select network_interface_reporter signatorial_designer);
+
 # The Dev panel's two blind spots:
 #   - a peer the house knows (remote_machines) but no neighbour table lists, so
 #     a tailnet or other-subnet machine never appeared at all; and

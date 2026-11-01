@@ -52,11 +52,11 @@ is(subs::peer_manager_base('https://127.0.0.1:53665'),
 is(subs::peer_manager_base(''), '', 'an empty manager stays empty');
 
 # The client every peer call is built from must apply it.
-my $source = do {
-	open(my $fh, '<', "$FindBin::Bin/../subroutines.pl") or die $!;
+my $source = join "\n", map {
+	open(my $fh, '<', $_) or die $!;
 	local $/;
 	<$fh>;
-};
+} ("$FindBin::Bin/../subroutines.pl", sort glob("$FindBin::Bin/../lib/JawnOS/Domain/*.pm"));
 like($source, qr!sub peer_manager_base \{.*?s\{/manager\$\}\{\}!s,
 	'peer_manager_base strips the route segment');
 like($source, qr/sub peer_useragent \{.*?peer_live_manager/s,

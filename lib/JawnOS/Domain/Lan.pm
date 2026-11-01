@@ -1,0 +1,641 @@
+package subs;
+
+# Lan: extracted from subroutines.pl (package subs). Loaded on
+# demand by lib/JawnOS/Domain/Loader.pm.
+use strict;
+use warnings;
+use utf8;
+use feature 'signatures';
+no warnings 'experimental::signatures';
+no warnings 'experimental::args_array_with_signatures';
+
+use Clone qw(clone);
+use Data::Dumper;
+use Date::Parse;
+use Digest::SHA qw(sha256_hex);
+use Encode qw(encode_utf8);
+use Fcntl qw(:flock);
+use File::Copy;
+use File::Find;
+use File::Path;
+use File::Slurp;
+use IPC::Open2;
+use JSON::PP ();
+use List::Util qw(shuffle);
+use MIME::Base64;
+use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
+use Mojo::IOLoop;
+use Mojo::JSON qw(decode_json encode_json);
+use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
+use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use Text::Unidecode;
+use Time::Duration;
+use Time::HiRes qw(gettimeofday time);
+use Time::Local;
+use Time::Piece;
+use Unicode::Normalize qw(NFC);
+
+our $config;
+our $device;
+our $gb;
+our $lan_beacon;
+our $log;
+our %m;
+
+sub lan_presence_sweep {
+	my ($json, $nics) = @_;
+	return unless $json && ref $nics eq 'ARRAY';
+	require Socket;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(Proto => 'udp') or return;
+	foreach my $nic (@{$nics}) {
+		my $ip = $nic->{'ip'} || '';
+		next unless $ip =~ /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+		my ($a, $b, $c, $d) = ($1, $2, $3, $4);
+		foreach my $h ( 1 .. 254 ) {
+			next if $h == $d;
+			my $target = $a . '.' . $b . '.' . $c . '.' . $h;
+			$sock->send($json, 0, Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($target)));
+			# A /24 burst over Wi-Fi saturates the kernel's unresolved-neighbour queue,
+			# and the host we want can be the one that is dropped. Twenty milliseconds
+			# between hosts lets ARP drain; a full /24 takes about five seconds, once
+			# at boot or when the machine joins a new network.
+			select(undef, undef, undef, 0.02);
+		}
+		select(undef, undef, undef, 0.05);
+	}
+	close $sock;
+}
+
+sub lan_presence_send {
+	my @nics = @{ &lan_presence_network() };
+	return unless @nics;
+	my $now = time();
+	my $fingerprint = join '|', map { ($_->{'nic'} // '') . '=' . ($_->{'ip'} // '') . '=' . ($_->{'mac'} // '') } @nics;
+	my $swept_at = ($lan_beacon && ($lan_beacon->{'fingerprint'} // '') eq $fingerprint) ? ($lan_beacon->{'swept_at'} || 0) : 0;
+	if (!$lan_beacon || ($lan_beacon->{'fingerprint'} // '') ne $fingerprint || $now - ($lan_beacon->{'at'} || 0) > 60) {
+		$lan_beacon = { at => $now, fingerprint => $fingerprint, swept_at => $swept_at, json => encode_json(&lan_presence_payload()) };
+	}
+	if ($now - $swept_at > 600) {
+		&lan_presence_sweep($lan_beacon->{'json'}, \@nics);
+		$lan_beacon->{'swept_at'} = $now;
+	}
+	require Socket;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(Proto => 'udp', Broadcast => 1);
+	return unless $sock;
+	foreach my $nic (@nics) {
+		my $b = $nic->{'broadcast'} || '';
+		$b = '255.255.255.255' unless $b =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+		my $addr = Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($b));
+		$sock->send($lan_beacon->{'json'}, 0, $addr);
+	}
+	# Known peers on this LAN get the same notice by unicast. A phone that drops
+	# broadcast still receives unicast, so every machine's row and Dev panel stay
+	# current in both directions without waiting for the other side to broadcast.
+	foreach my $target ( @{ &lan_presence_targets(\@nics) } ) {
+		my $addr = Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($target));
+		$sock->send($lan_beacon->{'json'}, 0, $addr);
+	}
+	close $sock;
+}
+
+sub lan_peer_targets {
+	my ($nics, $want_device) = @_;
+	my @targets;
+	my %seen;
+	foreach my $rm ( @{ &db_select('remote_machines')->hashes || [] } ) {
+		next if (($rm->{'signatorial'} // '') eq &signatorial_designer());
+		my @ips;
+		push @ips, $rm->{'ip'} if ($rm->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+		my $net = ref $rm->{'network'} eq 'HASH' ? $rm->{'network'} : (eval { decode_json $rm->{'network'} } || {});
+		$net = {} unless ref $net eq 'HASH';
+		foreach my $k ( keys %{$net} ) {
+			next if $k eq 'public_address' || !ref $net->{$k};
+			push @ips, $net->{$k}->{'ip'} if ($net->{$k}->{'ip'} // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+		}
+		my $ip = '';
+		foreach my $c ( @ips ) {
+			next unless &ip_is_private($c);
+			next unless grep { &same_net_test($_->{'ip'}, $c) eq 'yes' } @{$nics};
+			$ip = $c;
+			last;
+		}
+		next unless $ip && !$seen{$ip}++;
+		my $lan = (ref $net->{'lan'} eq 'HASH') ? $net->{'lan'} : {};
+		my $port = $lan->{'port'} || $rm->{'port'} || 45545;
+		my $device = $lan->{'device'} || $rm->{'device'} || '';
+		next if $want_device && $device ne $want_device;
+		push @targets, {
+			ip => $ip,
+			port => ($port =~ /^\d+$/ ? $port : 45545),
+			device => $device,
+			signatorial => ($rm->{'signatorial'} // ''),
+			server_time => (0 + ($rm->{'server_time'} || 0)),
+		};
+	}
+	return [ sort { $b->{'server_time'} <=> $a->{'server_time'} } @targets ];
+}
+
+sub lan_presence_targets {
+	my ($nics) = @_;
+	return [ map { $_->{'ip'} } @{ &lan_peer_targets($nics) } ];
+}
+
+sub lan_physical_network {
+	my @nics;
+	foreach my $nic ( @{ &lan_presence_network() } ) {
+		my $name = $nic->{'nic'} // '';
+		next if $name =~ /^(?:tun|tap|wg|tailscale|utun|ppp|zt|nordlynx|proton)/i;
+		next if ($nic->{'ip'} // '') =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+		push @nics, $nic;
+	}
+	return \@nics;
+}
+
+sub navigation_share_fix {
+	my $fix = shift || {};
+	return unless &subs::device_setter() eq 'mobile';
+	# A handheld without a real GPS has no place worth handing on: a network
+	# guess would arrive at the computer looking like a fix.
+	return unless &subs::navigation_gps_present();
+	return unless defined $fix->{'latitude'} && $fix->{'latitude'} =~ /^-?\d+(?:\.\d+)?$/
+		&& defined $fix->{'longitude'} && $fix->{'longitude'} =~ /^-?\d+(?:\.\d+)?$/;
+	return unless abs($fix->{'latitude'}) <= 90 && abs($fix->{'longitude'}) <= 180;
+	return unless defined $fix->{'accuracy'} && $fix->{'accuracy'} =~ /^\d+(?:\.\d+)?$/ && $fix->{'accuracy'} < 200;
+	my @nics = @{ &lan_physical_network() };
+	return unless @nics;
+	# one handover for a burst of callbacks describing the same fix
+	my $now = &subs::rightNow();
+	our $navigation_share_at;
+	return if $navigation_share_at && $now - $navigation_share_at < 3000;
+	$navigation_share_at = $now;
+	my $msg = {
+		type => 'jawnos-nav',
+		signatorial => &subs::signatorial_designer(),
+		latitude => $fix->{'latitude'},
+		longitude => $fix->{'longitude'},
+		accuracy => $fix->{'accuracy'},
+		timestamp => ($fix->{'timestamp'} || $now),
+		ts => int(time()),
+		nonce => &subs::random_string_creator(16),
+	};
+	my $pub = &subs::peer_pubkey();
+	$msg->{'pubkey'} = $pub if $pub;
+	my $sig = &subs::peer_sign_blob(&subs::lan_presence_canonical($msg));
+	$msg->{'sig'} = $sig if $sig;
+	my $json = &subs::encode_json($msg);
+	require Socket;
+	require IO::Socket::INET;
+	my $sock = IO::Socket::INET->new(Proto => 'udp') or return;
+	foreach my $target ( @{ &lan_presence_targets(\@nics) } ) {
+		my $addr = Socket::pack_sockaddr_in(&lan_presence_port(), Socket::inet_aton($target));
+		$sock->send($json, 0, $addr);
+	}
+	close $sock;
+	return 1;
+}
+
+sub lan_navigation_accept {
+	my ($msg, $peer_ip) = @_;
+	return unless ref $msg eq 'HASH';
+	return unless ($msg->{'type'} // '') eq 'jawnos-nav';
+	return if &subs::device_setter() eq 'mobile';
+	my $sig = $msg->{'signatorial'} // '';
+	return unless $sig && $sig ne &subs::signatorial_designer();
+	my $ts = $msg->{'ts'} // 0;
+	return unless $ts =~ /^\d+$/ && abs(time() - $ts) <= 600;
+	return unless ($peer_ip // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;
+	my $lat = $msg->{'latitude'} // '';
+	my $lon = $msg->{'longitude'} // '';
+	return unless $lat =~ /^-?\d+(?:\.\d+)?$/ && $lon =~ /^-?\d+(?:\.\d+)?$/;
+	return unless abs($lat) <= 90 && abs($lon) <= 180;
+	my $accuracy = $msg->{'accuracy'} // '';
+	return unless $accuracy =~ /^\d+(?:\.\d+)?$/ && $accuracy < 200;
+	my @nics = @{ &lan_physical_network() };
+	return unless @nics;
+	my $same = grep { &subs::same_net_test($_->{'ip'}, $peer_ip) eq 'yes' } @nics;
+	return unless $same;
+	my $rm = &subs::db_select('remote_machines', undef, { signatorial => $sig })->hashes->[0];
+	return unless $rm;
+	return unless &subs::lan_presence_verify($rm, $msg);
+	my $now = &subs::rightNow();
+	my $me = &subs::signatorial_designer();
+	my $fix_time = ($msg->{'timestamp'} // '') =~ /^\d+$/ ? $msg->{'timestamp'} : $now;
+	&subs::db_delete('continent', { type => 'temporary', signatorial => $me });
+	&subs::db_insert('continent', {
+		uuid => &subs::random_string_creator(31),
+		type => 'temporary',
+		app => '__president',
+		signatorial => $me,
+		latitude => $lat,
+		longitude => $lon,
+		accuracy => sprintf("%.2F", $accuracy),
+		timestamp => $fix_time,
+		server_time => $now,
+		warranty => &subs::navigation_hold_warranty({ timestamp => $fix_time, server_time => $now }),
+	});
+	&subs::cache_delete({ app => 'travel', context => 'navigation_information', subcontext => $me });
+	eval { &Websocket::send('tab', { console => 'jawnosContinentAt = 0; if (typeof startMenuHtmlFlush == "function") { startMenuHtmlFlush(); }' }) };
+	our %navigation_share_seen;
+	if (($navigation_share_seen{$sig} || 0) < $now - 300000) {
+		$navigation_share_seen{$sig} = $now;
+		eval { &subs::log_writer('navigation: borrowed a place from ' . substr($sig, 0, 8) . ' at ' . $peer_ip) };
+	}
+	return 1;
+}
+
+sub local_position {
+	return {} unless &subs::device_setter() eq 'mobile';
+	my $now = &subs::rightNow();
+	my $me = &subs::signatorial_designer();
+	# The house asks for the cached place, not a new fix: accept the last fix for
+	# two navigation paces plus a little grace, then refuse rather than guess.
+	my $hold = (&subs::navigation_interval() * 2 * 1000) + 120000;
+	$hold = 5 * 60 * 1000 if $hold < 5 * 60 * 1000;
+	$hold = 15 * 60 * 1000 if $hold > 15 * 60 * 1000;
+	my $row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and timestamp > ? order by server_time desc limit 1', 'temporary', $me, $now - $hold)->hashes->[0];
+	if ($row && $row->{'latitude'} && &subs::navigation_gps_present()) {
+		return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
+	}
+	# The app's GPS service keeps the latest fix on disk. Answer from it without
+	# waking anything, and without the network provider: a Wi-Fi guess is not a
+	# place, however plausible its accuracy looks.
+	my $loc = &subs::native_location({ max_age_ms => $hold });
+	if ($loc) {
+		&subs::navigation_gps_confirm('gps');
+		return { latitude => $loc->{'latitude'}, longitude => $loc->{'longitude'}, accuracy => sprintf("%.2F", ($loc->{'accuracy'} || 0)), timestamp => $loc->{'time'} || $now, source => 'gps', cached => 1 };
+	}
+	# A phone whose service has not run yet may still answer one GPS request.
+	my $j = &subs::device_call('location.current', { provider => 'gps', timeout_ms => 8000 }) || {};
+	if (($j->{'provider'} || '') eq 'gps' && $j->{'latitude'} && ($j->{'elapsedMs'} || 1e9) <= $hold) {
+		&subs::navigation_gps_confirm('gps');
+		return { latitude => $j->{'latitude'}, longitude => $j->{'longitude'}, accuracy => sprintf("%.2F", ($j->{'accuracy'} || 0)), timestamp => $now, source => 'gps' };
+	}
+	return {} unless &subs::navigation_gps_present();
+	$row = &subs::db_query('select * from continent where type = ? and signatorial = ? and latitude is not null and (warranty is null or warranty = ? or cast(warranty as integer) > cast(? as integer)) order by server_time desc limit 1', 'temporary', $me, '', $now)->hashes->[0];
+	return {} unless $row && $row->{'latitude'};
+	return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
+}
+
+sub nearby_position {
+	my $data = shift || {};
+	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
+	my $tdeck = &embedded_location_grabber({ timestamp => $timestamp });
+	if ($tdeck->{'latitude'}) {
+		return {
+			latitude => $tdeck->{'latitude'},
+			longitude => $tdeck->{'longitude'},
+			accuracy => $tdeck->{'accuracy'},
+			timestamp => $timestamp,
+			source => 'teletype',
+		};
+	}
+	my @nics = @{ &lan_physical_network() };
+	return {} unless @nics;
+	my $targets = &lan_peer_targets(\@nics, 'mobile');
+	return {} unless scalar @{$targets};
+	my $ua = Mojo::UserAgent->new();
+	$ua->on(start => sub { my ($ua, $tx) = @_; &peer_sign_request($tx->req); });
+	$ua = $ua->insecure(1)->connect_timeout(1)->inactivity_timeout(4)->request_timeout(7);
+	foreach my $target ( @{$targets} ) {
+		my $url = 'https://' . $target->{'ip'} . ':' . $target->{'port'} . '/manager/navigation/position?peer=yes&signatorial=' . &signatorial_designer();
+		my $res = eval { $ua->get($url)->result };
+		next unless $res && $res->is_success;
+		my $body = eval { decode_json($res->body) } || {};
+		next unless ref $body eq 'HASH' && $body->{'latitude'} && $body->{'longitude'};
+		return {
+			latitude => $body->{'latitude'},
+			longitude => $body->{'longitude'},
+			accuracy => $body->{'accuracy'},
+			timestamp => $body->{'timestamp'},
+			source => ($body->{'source'} || 'peer'),
+			signatorial => $target->{'signatorial'},
+		};
+	}
+	return {};
+}
+
+sub lan_presence_listen {
+	require Socket;
+	require IO::Socket::INET;
+	while (1) {
+		# A cloud server whose only address is public has no LAN to listen on;
+		# do not open the port to the internet.
+		my @lan_nics = @{ &lan_presence_network() };
+		unless (@lan_nics) {
+			sleep 60;
+			next;
+		}
+		my $sock = IO::Socket::INET->new(
+			LocalAddr => '0.0.0.0',
+			LocalPort => &lan_presence_port(),
+			Proto => 'udp',
+			ReuseAddr => 1,
+			Broadcast => 1,
+		);
+		unless ($sock) {
+			sleep 10;
+			next;
+		}
+		while (1) {
+			my $data = '';
+			my $peer = recv($sock, $data, 4096, 0);
+			last unless defined $peer;
+			next unless length $data;
+			my ($port, $iaddr) = Socket::sockaddr_in($peer);
+			my $ip = $iaddr ? Socket::inet_ntoa($iaddr) : '';
+			next unless $ip;
+			my $msg = eval { decode_json($data) };
+			next unless ref $msg eq 'HASH';
+			if (($msg->{'type'} // '') eq 'jawnos-nav') {
+				eval { &lan_navigation_accept($msg, $ip) };
+				next;
+			}
+			eval { &lan_presence_accept($msg, $ip) };
+		}
+		close $sock;
+		sleep 2;
+	}
+}
+
+sub remote_machine_negotiator {
+	my $data = shift;
+	$gb::suds = &suds_grabber();
+	my $c = &subs::controller_builder();
+	$c->session('gimme' => $data->{'gimme'});
+
+
+	my $remote_connect_timer =  &subs::setting_grabber({ app => '__president', setting => 'remote_connect_timer' }) || 0;
+	# A sync that dies mid-run leaves a marker behind. Its state is read in one
+	# place (subs::remote_upgrade_lock_state): a live pid keeps the long bound,
+	# because a 110k-row merge can outlast the old four-minute reap and clearing
+	# it let a second pull start against the same peer; a claim whose fork never
+	# ran expires on its own short bound; a dead owner is cleared at once.
+	my $up_state = &subs::remote_upgrade_lock_state();
+	if ($up_state->{'flag'} eq 'running' && !$up_state->{'busy'}) {
+		&subs::log_writer('pull marker released: ' . $up_state->{'value'} . ' (' . int($up_state->{'age'} / 1000) . 's old)');
+		&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' });
+		$up_state = &subs::remote_upgrade_lock_state();
+	}
+	my $bridled = $up_state->{'busy'} ? 1 : 0;
+	# A pull job row can outlive the marker that owned it: a forked pull that dies
+	# after clearing its marker (or before writing one) leaves a 'running' row that
+	# nothing will ever finish, and the sync panel then reads as if a pull were
+	# still in flight. When no pull owns the marker, no worker is pulling, so any
+	# pull row still running is orphaned. Ten minutes keeps a pull that was just
+	# started - and has not written its marker yet - from being cut short.
+	if (!$bridled) {
+		my $reaped = &subs::sync_jobs_reap(600000, 'pull', 'no pull owned it');
+		$log->info('sync jobs reaped: ' . $reaped . ' pull job(s) with no owner') if $reaped;
+	}
+	if (!$bridled && $remote_connect_timer + 10000 < &subs::rightNow()) {
+		&Manager::remote_machine_reconnector($c);
+	}
+	#&system_monitor({
+	#	timeout => 'remote_machine_sync',
+	#});
+}
+
+sub operator_door_push {
+	# Hand a device's rotated Now Me row to the other House machines on this LAN.
+	# A device that falls back probes them with this pair, so they must hold it
+	# now; the durable digest is only a backstop for a machine that was away.
+	# Each peer verifies the signed request (`/manager/operator_door`), so no
+	# session cookie is needed. Bounded and synchronous: two LAN peers cost a
+	# couple of seconds, and Now Me is a deliberate action.
+	my ($edt, $chip_id, $value, $server_time, $device) = @_;
+	return 0 unless $edt && $chip_id && defined $value && length $value;
+	$server_time ||= &subs::rightNow();
+	$device ||= &subs::device_setter();
+	require Mojo::UserAgent;
+	my $n = 0;
+	foreach my $rm ( @{ &subs::db_select('remote_machines')->hashes } ) {
+		next unless (($rm->{'connection'} // '') eq 'active');
+		next unless $rm->{'pubkey'};
+		# only a machine sharing this network can be a LAN fallback
+		my $lan = &subs::peer_lan_address($rm, 1);
+		next unless $lan && $lan->{'manager'};
+		my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 3);
+		$ua = $ua->insecure(1);
+		$ua->on(start => sub { my ($ua, $tx) = @_; &subs::peer_sign_request($tx->req); });
+		my $res = eval {
+			$ua->post($lan->{'manager'} . '/manager/operator_door' => form => {
+				signatorial => &subs::signatorial_designer(),
+				edt => $edt,
+				chip_id => $chip_id,
+				device => $device,
+				server_time => $server_time,
+				value => $value,
+			})->result;
+		};
+		$n++ if $res && $res->is_success;
+	}
+	return $n;
+}
+
+sub relay_headless {
+	my ($data) = @_;
+	$data ||= {};
+	my $path = $data->{'path'} || return;
+	my $c = &subs::controller_builder();
+	my $req = $c->req;
+	$req->url->path($path);
+	$req->method(uc($data->{'method'} || 'POST'));
+	my $params = { %{ $data->{'params'} || {} } };
+	$params->{'remote_uuid'} = $data->{'remote_uuid'} if $data->{'remote_uuid'};
+	# Mojo::Message::body_params is a getter here: passing a Mojo::Parameters to
+	# it does nothing, so every headless relay POST carried an empty body. Encode
+	# the form into the request body so remote_relay_request parses it.
+	$req->headers->content_type('application/x-www-form-urlencoded');
+	$req->body(Mojo::Parameters->new(%{$params})->to_string);
+	return &subs::remote_relay_request($c, $data->{'extra'} || {});
+}
+
+sub remote_relay_queue_run {
+	my $raw = &subs::setting_grabber({ app => '__president', setting => 'remote_relay_queue' });
+	my $queue = eval { decode_json $raw } || [];
+	return 0 unless ref $queue eq 'ARRAY' && scalar @{$queue};
+	&subs::setting_setter({ app => '__president', setting => 'remote_relay_queue', value => '[]' });
+	my $n = 0;
+	foreach my $item ( @{$queue} ) {
+		next unless ref $item eq 'HASH' && $item->{'path'};
+		eval { &subs::relay_headless($item); $n++; };
+	}
+	return $n;
+}
+
+sub tunnel_hub_url {
+	my ($manager, $ws_port) = @_;
+	my $sig = &subs::signatorial_designer();
+	my $hub;
+	if ($config->{'tunnel_hub'}) {
+		$hub = $config->{'tunnel_hub'};
+	}
+	elsif ($manager && $manager =~ m{^https?://}) {
+		$hub = $manager;
+		$hub =~ s{^http://}{ws://};
+		$hub =~ s{^https://}{wss://};
+		# the manager URL is only the base (e.g. wss://host:port), so drop a
+		# trailing /manager if one is present and always point at the ws route.
+		$hub =~ s{/manager/?$}{};
+		$hub =~ s{/+$}{};
+		# Bind the tunnel listeners on the hub's websocket server, not its main
+		# server. The main server runs several prefork workers, and the hub's
+		# listener table is per process: a redial could land in a worker that does
+		# not know the peer's existing listeners and try to bind ports still held
+		# by a sibling (EADDRINUSE). The websocket server runs a single worker, so
+		# every session for a peer is retired and rebound in the same process.
+		if (defined $ws_port && $ws_port =~ /^[0-9]+$/) {
+			if (!($hub =~ s{:([0-9]+)$}{:$ws_port})) {
+				$hub .= ':' . $ws_port;
+			}
+		}
+	}
+	else {
+		$hub = 'wss://' . $config->{'domain'} . ($ws_port && $ws_port =~ /^[0-9]+$/ ? ':' . $ws_port : '');
+	}
+	# The data plane lives at a path, not at the bare host: a wss://host:port
+	# dial with no path asks for `/`, where no websocket route exists, and the
+	# holder just retries forever (the tunnels never stick). Normalise the path
+	# last, so a config tunnel_hub that already names it is not doubled.
+	$hub =~ s{/manager/tunnel/ws$}{};
+	$hub =~ s{/+$}{};
+	$hub .= '/manager/tunnel/ws';
+	return $hub . (index($hub, '?') >= 0 ? '&' : '?') . 'signatorial=' . Mojo::Util::url_escape($sig);
+}
+
+sub tunnel_wss_peer {
+	my ($manager, $ws_port) = @_;
+	my $sig = &subs::signatorial_designer();
+	&Tunnel::peer_session(&subs::tunnel_hub_url($manager, $ws_port), { signatorial => $sig, sign => sub { &subs::peer_sign_request(@_) } });
+	# peer_session is async and reconnects itself, so the loop has to run HERE or
+	# the forked tunnel holder returns at once and the tunnel dies with it.
+	Mojo::IOLoop->start;
+}
+
+sub tunnel_starter {
+	my $data = shift;
+	my $ip = $data->{'ip'};
+	my $signatorial = $data->{'signatorial'};
+	# A fresh batch supersedes any half-built one: a batch whose holder never came
+	# up leaves 'connecting' rows that nothing reaps (tunnel_stopper only removes
+	# active rows), so drop them here rather than let them pile up across dials.
+	&subs::db_delete('tunnels', { signatorial => $signatorial, status => 'connecting' });
+	my $rm = &subs::remote_useragent_maker({ signatorial => $signatorial });
+	my $domain = $data->{'domain'} || $rm->{'domain'} || $rm->{'ip'};
+	my $status = 'active';
+	my $batch_uuid = &subs::random_string_creator(25);
+	my $ports = {};
+	foreach my $p ( @gb::ports ) {
+		$ports->{$p} = $ENV{$p};
+	}
+	my $jports = encode_json $ports;
+	my $url = $rm->{'manager'} . '/manager/configure/remote_machine/tunnel/request';
+	my $form_data = {
+		signatorial => &subs::signatorial_designer(),
+		ports => $jports,
+		status => $status,
+		batch_uuid => $batch_uuid,
+		domain => $domain
+	};
+#	&subs::tunnel_stopper({ signatorial => $signatorial });
+	my $res = $rm->{'ua'}->post($url => form => $form_data)->result;
+
+	my $port = $config->{'ssh_port'};
+	if ($res->is_success) {
+		if (eval { decode_json $res->body }) {
+			my $rb = decode_json $res->body;
+			# The tunnel data plane is the password-less websocket (tunnel.pl):
+			# this device is the peer and dials the hub, which listens on the
+			# reserved ports. One websocket carries every channel.
+			my @batch_uuids;
+			foreach my $r (@gb::ports ) {
+				my $uuid = $rb->{$r}->{'reservation_uuid'} || &subs::random_string_creator(26);
+				my $tunnel = {
+					server_time => &subs::rightNow(),
+					device => &subs::device_setter(),
+					host => $config->{'domain'},
+					timestamp => &subs::rightNow(),
+					ip => $ip || $rm->{'ip'},
+					domain => $domain,
+					in_port => $rb->{$r}->{'source'},
+					out_port => $rb->{$r}->{'dest'},
+					name => $r,
+					warranty => &subs::ago_calc('-1d', &subs::rightNow()),
+					status => 'connecting',
+					signatorial => $signatorial || $rm->{'signatorial'},
+					uuid => $uuid,
+					direction => 'in',
+					batch_uuid => $batch_uuid
+				};
+				&subs::db_insert('tunnels', $tunnel);
+				push @batch_uuids, $uuid;
+				$tunnel->{'ip'} = $config->{'domain'};
+				my $url = $rm->{'manager'} . '/manager/configure/remote_machine/tunnel/confirm';
+				my $jtunnel = encode_json $tunnel;
+				my $form_data = {
+					signatorial => &subs::signatorial_designer(),
+					tunnel => $jtunnel,
+					status => $status,
+					uuid => $uuid
+				};
+				$rm->{'ua'}->post($url => form => $form_data)->result;
+			}
+			# One holder holds the whole batch: hub_session reads this peer's
+			# tunnels rows once, when the websocket arrives, and binds a listener
+			# per row, so the peer dials a single connection after every port is
+			# reserved and confirmed - one connection, all channels.
+			my @uuids = @batch_uuids;
+			my $pid;
+			&subs::subprocessor(sub {
+				$pid = $$;
+				&subs::db_update('tunnels', { process_id => $pid, server_time => &subs::rightNow(), status => 'active' }, { uuid => $_ }) for @uuids;
+				&subs::tunnel_wss_peer($rm->{'manager'}, $rm->{'ws_port'});
+			}, { name => 'tunnel holder wss ' . scalar(@uuids) . ' ports' });
+
+
+		}
+	}
+	sleep 1;
+	&Websocket::send('server', { console => 'tunnelLister()' });
+}
+
+sub tunnel_stopper {
+	my $data = shift;
+	my $ip = $data->{'ip'};
+	my $signatorial = $data->{'signatorial'};
+	my $domain = $data->{'domain'};
+	my $tunnels = &subs::db_select('tunnels', undef, { signatorial => $signatorial, status => 'active' })->hashes;
+	my $rm = &subs::remote_useragent_maker({ signatorial => $signatorial });
+	foreach my $tun ( @{$tunnels} ) {
+		my $pid = $tun->{'process_id'};
+		if ($pid) {
+			my $process = `ps -e | grep $pid`;
+			chomp $process;
+			if ($process) {
+				kill('INT', $tun->{'process_id'});
+				waitpid($tun->{'process_id'}, 0);
+			}
+			my $url = $rm->{'manager'} . '/manager/configure/remote_machine/tunnel/close';
+			$tun->{'status'} = 'closed';
+
+			my $jtunnel = encode_json $tun;
+			my $form_data = {
+				signatorial => &subs::signatorial_designer(),
+				tunnel => $jtunnel,
+				status => $tun->{'status'}
+			};
+			my $res = $rm->{'ua'}->post($url => form => $form_data)->result;
+			&subs::db_delete('tunnels', { uuid => $tun->{'uuid'}, signatorial => $tun->{'signatorial'} });
+		} else {
+
+		}
+		&subs::db_delete('tunnels', { uuid => $tun->{'uuid'}, signatorial => $tun->{'signatorial'} });
+	}
+	my $c = &subs::controller_builder();
+	my $tl = $c->render_to_string(template => 'configure/tunnel_list');
+	&Websocket::send('server', { console => 'tunnelLister()' });
+}
+
+1;

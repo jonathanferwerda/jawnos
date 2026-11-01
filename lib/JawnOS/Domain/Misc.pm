@@ -71,7 +71,7 @@ sub leave($c) {
 	$sql = undef;
 }
 
-sub misc_setting_list() {
+sub misc_setting_list {
     my ($db, $database, $sql) = &subs::database_grabber();
 		my @locations = &subs::location_types();
     my @settings = qw/max_files thumbnail_size photo_size max_backups scan_size encryption_standard archive_dir say_voice language/;

@@ -6,6 +6,10 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
 
+# The domain layer is lazy: load the real definitions before the local *subs::
+# stubs below, or a later module load would replace them.
+subs::preload($_) for qw(db_query);
+
 # A replay can deliver the same start twice a moment apart. The start branch
 # used to mint a fresh uuid each time, so the stop closed the row it named and
 # the twin stayed open on whichever machine held the other write (a tablet kept
@@ -70,6 +74,8 @@ use JawnOSTest;
 	like $manager, qr/sub apply_peer_tombstones/, 'and one applier for handshake and pull';
 	like $manager, qr/apply_peer_tombstones\(\$tj, \$remote_signatorial\)/, 'the row pull asks for and applies tombstones';
 	my $subs = $read->("$root/subroutines.pl");
+	# most functions moved to the lazy domain layer in lib/
+	$subs .= join "\n", map { $read->($_) } sort glob("$root/lib/JawnOS/Domain/*.pm");
 	like $subs, qr/sub session_open_near/, 'the open-near selector lives in the core';
 	like $subs, qr/sub session_twin_rows/, 'so does the twin selector';
 	my $hooks = $read->("$root/hooks.pl");

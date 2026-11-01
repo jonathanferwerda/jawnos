@@ -1719,7 +1719,7 @@ our %topic = (
 our $live_ollama_memo;
 our %live_token = (
 	version => sub {
-		my $v = defined &subs::jawn_version ? eval { &subs::jawn_version() } : undef;
+		my $v = subs::provides('jawn_version') ? eval { &subs::jawn_version() } : undef;
 		# A bare `require help.pl` (the auditor, a one-liner) has no subroutines.pl
 		# loaded, so fall back to the same file the app reads.
 		if (!defined $v || $v !~ /\S/) {

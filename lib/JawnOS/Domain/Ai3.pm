@@ -1,0 +1,703 @@
+package subs;
+
+# Ai3: extracted from subroutines.pl (package subs). Loaded on
+# demand by lib/JawnOS/Domain/Loader.pm.
+use strict;
+use warnings;
+use utf8;
+use feature 'signatures';
+no warnings 'experimental::signatures';
+no warnings 'experimental::args_array_with_signatures';
+
+use Clone qw(clone);
+use Data::Dumper;
+use Date::Parse;
+use Digest::SHA qw(sha256_hex);
+use Encode qw(encode_utf8);
+use Fcntl qw(:flock);
+use File::Copy;
+use File::Find;
+use File::Path;
+use File::Slurp;
+use IPC::Open2;
+use JSON::PP ();
+use List::Util qw(shuffle);
+use MIME::Base64;
+use Math::Trig qw(cartesian_to_spherical spherical_to_cartesian great_circle_distance rad2deg deg2rad great_circle_bearing great_circle_direction great_circle_destination);
+use Mojo::IOLoop;
+use Mojo::JSON qw(decode_json encode_json);
+use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
+use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use Text::Unidecode;
+use Time::Duration;
+use Time::HiRes qw(gettimeofday time);
+use Time::Local;
+use Time::Piece;
+use Unicode::Normalize qw(NFC);
+
+our %M;
+our $database;
+our $error_watch_noise;
+our %error_watch_partial;
+our %error_watch_state;
+our $error_watch_state_loaded;
+our $log;
+our %m;
+
+sub ai_house_report {
+	my $now = &subs::rightNow();
+	my $day = &ai_house_today();
+	my %spend;
+	my $brows = eval { &subs::db_query('select machine, sum(tokens) as tokens from ai_budget where day = ? group by machine', $day)->hashes } || [];
+	foreach my $b ( @{$brows} ) { $spend{ $b->{'machine'} // '' } = ($b->{'tokens'} || 0) + 0; }
+	my $me = &ai_house_me();
+	my %seen;
+	my @rows;
+	my $hrows = eval { &subs::db_select('ai_house')->hashes } || [];
+	foreach my $r ( @{$hrows} ) {
+		my $m = $r->{'machine'} // '';
+		next unless length $m;
+		$seen{$m} = 1;
+		push @rows, {
+			machine   => $m,
+			self      => ($m eq $me) ? 1 : 0,
+			has_model => ($r->{'has_model'} ? 1 : 0),
+			seen      => ($r->{'seen'} || 0) + 0,
+			online    => ((($r->{'seen'} || 0) + 0) > ($now - 600000)) ? 1 : 0,
+			tokens    => $spend{$m} || 0,
+		};
+	}
+	# this machine itself, even before anything has synced back to it
+	if (length $me && !$seen{$me}) {
+		push @rows, { machine => $me, self => 1, has_model => &ai_house_have_model(), seen => $now, online => 1, tokens => $spend{$me} || 0 };
+		$seen{$me} = 1;
+	}
+	# spend from a machine whose ai_house row is gone (stale, but it did spend)
+	foreach my $m ( keys %spend ) {
+		next if $seen{$m} || !length $m;
+		push @rows, { machine => $m, self => 0, has_model => 0, seen => 0, online => 0, tokens => $spend{$m} };
+	}
+	@rows = sort {
+		($b->{'online'} <=> $a->{'online'})
+			|| (($b->{'tokens'} || 0) <=> ($a->{'tokens'} || 0))
+			|| ($a->{'machine'} cmp $b->{'machine'})
+	} @rows;
+	my $budget = &subs::setting_grabber({ app => 'mail', setting => 'error_watch_budget' });
+	$budget = (defined $budget && $budget =~ /^\d+$/) ? ($budget + 0) : 1000000;
+	return {
+		day     => $day,
+		rows    => \@rows,
+		spent   => &ai_house_budget_spent(),
+		budget  => $budget,
+		members => scalar( grep { $_->{'has_model'} && $_->{'online'} } @rows ),
+		machine => $me,
+	};
+}
+
+sub ai_balance_report {
+	my $cache = &subs::cache_get({ app => '__president', context => 'ai_balance' });
+	return (ref $cache eq 'HASH' && $cache->{'rows'}) ? $cache : { at => 0, rows => [] };
+}
+
+sub ai_balance_refresh {
+	my @key_settings = &subs::ai_key_settings();
+	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ @key_settings ] });
+	my $suds = &subs::suds_grabber();
+	my $secret = sub {
+		my $v = shift;
+		return '' unless defined $v && length $v;
+		my $d = eval { &subs::note_decrypter($suds, $v) };
+		return ($d && length $d) ? $d : $v;
+	};
+	# short timeouts: a balance read must never become a stall, and it is only a
+	# convenience on a settings page
+	my $ua = Mojo::UserAgent->new(connect_timeout => 4, inactivity_timeout => 8, request_timeout => 12);
+	my %money;
+	# OpenRouter: granted credits less what has been used
+	{
+		my $key = $secret->($settings->{'openrouter_key'});
+		my $row = { available => undef, currency => 'USD', note => 'no key' };
+		if (length $key) {
+			my $tx = eval { $ua->get('https://openrouter.ai/api/v1/credits' => { 'Authorization' => "Bearer $key" }) };
+			my $d = ($tx && !$tx->error && $tx->res->is_success) ? eval { decode_json($tx->res->body) } : undef;
+			if ($d && ref $d->{'data'} eq 'HASH' && defined $d->{'data'}->{'total_credits'}) {
+				$row = { available => (($d->{'data'}->{'total_credits'} || 0) - ($d->{'data'}->{'total_usage'} || 0)), currency => 'USD' };
+			}
+			else { $row = { available => undef, currency => 'USD', note => 'could not read credits' }; }
+		}
+		$money{'openrouter'} = $row;
+	}
+	# DeepSeek: the account balance
+	{
+		my $key = $secret->($settings->{'deepseek_key'});
+		my $row = { available => undef, currency => 'USD', note => 'no key' };
+		if (length $key) {
+			my $tx = eval { $ua->get('https://api.deepseek.com/user/balance' => { 'Authorization' => "Bearer $key" }) };
+			my $d = ($tx && !$tx->error && $tx->res->is_success) ? eval { decode_json($tx->res->body) } : undef;
+			my $info = ($d && ref $d->{'balance_infos'} eq 'ARRAY') ? $d->{'balance_infos'}->[0] : undef;
+			if ($info && defined $info->{'total_balance'}) {
+				$row = { available => ($info->{'total_balance'} + 0), currency => ($info->{'currency'} || 'USD') };
+			}
+			else { $row = { available => undef, currency => 'USD', note => 'could not read balance' }; }
+		}
+		$money{'deepseek'} = $row;
+	}
+	# every registered provider, in the panel's own order, with a balance where
+	# there is one; a provider with no account on file is not a row at all
+	my @rows;
+	foreach my $p ( @{ &subs::ai_providers() } ) {
+		next unless &subs::ai_provider_registered($p, $settings);
+		my $m = $money{ $p->{'id'} };
+		push @rows, {
+			provider  => $p->{'id'},
+			label     => $p->{'label'},
+			available => $m ? $m->{'available'} : undef,
+			currency  => $m ? $m->{'currency'} : undef,
+			note      => $m ? $m->{'note'} : 'no balance API',
+		};
+	}
+	# Keep a rolling week of what each account held. The job reads every ten
+	# minutes, so a week is about a thousand points per provider; a failed read
+	# is skipped rather than recorded as zero, and a provider that leaves the
+	# settings loses its line. The warranty outlives the window so the hair
+	# cutter does not take the row (and the week) out from under it.
+	my $now = &subs::rightNow();
+	my $previous = &subs::cache_get({ app => '__president', context => 'ai_balance' });
+	my $history = (ref $previous eq 'HASH' && ref $previous->{'history'} eq 'HASH') ? $previous->{'history'} : {};
+	my $floor = $now - 7 * 24 * 60 * 60 * 1000;
+	my %listed = map { ($_->{'provider'} || '') => 1 } @rows;
+	foreach my $provider ( keys %{$history} ) {
+		delete $history->{$provider} unless $listed{$provider};
+	}
+	foreach my $row ( @rows ) {
+		my $series = $history->{ $row->{'provider'} };
+		$series = $history->{ $row->{'provider'} } = [] unless ref $series eq 'ARRAY';
+		@{$series} = grep { ref $_ eq 'HASH' && defined $_->{'t'} && ($_->{'t'} || 0) >= $floor } @{$series};
+		next unless defined $row->{'available'} && $row->{'available'} =~ /^-?\d+(?:\.\d+)?$/;
+		my $last = $series->[-1];
+		if ($last && $now - ($last->{'t'} || 0) < 300000) {
+			# a manual or second read inside the job's own interval replaces the
+			# point instead of drawing a second one at the same minute
+			$last->{'v'} = $row->{'available'} + 0;
+			$last->{'c'} = $row->{'currency'} || $last->{'c'};
+		}
+		else {
+			push @{$series}, { t => $now, v => $row->{'available'} + 0, c => ($row->{'currency'} || '') };
+		}
+	}
+	my $report = { at => $now, rows => \@rows, history => $history };
+	&subs::cache_set({ app => '__president', context => 'ai_balance', warranty => '-8d' }, $report);
+	return $report;
+}
+
+sub ai_balance_window {
+	my ($points, $window, $now) = @_;
+	$window = '7d' if defined $window && $window eq '7d';
+	$window = '24h' unless defined $window;
+	$now = &subs::rightNow() unless defined $now;
+	my $span = $window eq '7d' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+	my $start = $now - $span;
+	my @all = sort { $a->{'t'} <=> $b->{'t'} }
+		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} && $_->{'t'} <= $now }
+		@{ ref $points eq 'ARRAY' ? $points : [] };
+	my @in = grep { $_->{'t'} >= $start } @all;
+	my $window_data = { window => $window, span => $span, start => $start, now => $now, points => [] };
+	return $window_data unless @in;
+	my ($anchor) = reverse grep { $_->{'t'} < $start } @all;
+	my @draw = @in;
+	if ($anchor && $in[0]->{'t'} > $start) {
+		my $dt = $in[0]->{'t'} - $anchor->{'t'};
+		my $v = $anchor->{'v'};
+		$v += ($in[0]->{'v'} - $anchor->{'v'}) * (($start - $anchor->{'t'}) / $dt) if $dt > 0;
+		unshift @draw, { t => $start, v => $v };
+	}
+	my $first = $draw[0];
+	my $last = $draw[-1];
+	my $hours = ($last->{'t'} - $first->{'t'}) / 3600000;
+	my $change = $first->{'v'} - $last->{'v'};
+	$window_data->{'points'} = \@draw;
+	$window_data->{'first'} = $first;
+	$window_data->{'last'} = $last;
+	$window_data->{'hours'} = $hours;
+	$window_data->{'change'} = $change;
+	$window_data->{'per_day'} = $hours > 0 ? $change / $hours * 24 : undef;
+	return $window_data;
+}
+
+sub ai_balance_sparkline {
+	my ($points, $start, $now, $width, $height) = @_;
+	$width ||= 320;
+	$height ||= 80;
+	my @p = grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} } @{ ref $points eq 'ARRAY' ? $points : [] };
+	return '' unless @p;
+	my $span = ($now // 0) - ($start // 0);
+	$span = 1 if $span <= 0;
+	my ($min, $max) = ($p[0]->{'v'}, $p[0]->{'v'});
+	foreach my $pt ( @p ) {
+		$min = $pt->{'v'} if $pt->{'v'} < $min;
+		$max = $pt->{'v'} if $pt->{'v'} > $max;
+	}
+	my $pad = ($max - $min) * 0.12;
+	$pad = 0.01 unless $pad > 0;
+	$min -= $pad;
+	$max += $pad;
+	my $top = 6;
+	my $bottom = $height - 6;
+	my $range = $max - $min;
+	$range = 1 unless $range > 0;
+	# A few pixels of inset keep the end dot and its stroke off the edge.
+	my $inset = 3;
+	my $plot = $width - 2 * $inset;
+	my @xy;
+	foreach my $pt ( @p ) {
+		my $x = $inset + (($pt->{'t'} - $start) / $span) * $plot;
+		$x = $inset if $x < $inset;
+		$x = $width - $inset if $x > $width - $inset;
+		my $y = $bottom - (($pt->{'v'} - $min) / $range) * ($bottom - $top);
+		push @xy, sprintf('%.1f,%.1f', $x, $y);
+	}
+	my ($fx) = split /,/, $xy[0];
+	my ($lx, $ly) = split /,/, $xy[-1];
+	my $area = 'M ' . join(' L ', @xy) . sprintf(' L %s,%.1f L %s,%.1f Z', $lx, $bottom, $fx, $bottom);
+	my $grid = '';
+	foreach my $f ( 0.25, 0.5, 0.75 ) {
+		my $y = $top + ($bottom - $top) * $f;
+		$grid .= sprintf('<line x1="0" y1="%.1f" x2="%d" y2="%.1f" stroke="currentColor" stroke-opacity="0.10" stroke-width="1" vector-effect="non-scaling-stroke"/>', $y, $width, $y);
+	}
+	return '<svg class="balance_spark" viewBox="0 0 ' . $width . ' ' . $height . '" preserveAspectRatio="none" aria-hidden="true">'
+		. $grid
+		. '<path d="' . $area . '" fill="currentColor" fill-opacity="0.12" stroke="none"/>'
+		. '<polyline points="' . join(' ', @xy) . '" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>'
+		. '<circle cx="' . $lx . '" cy="' . $ly . '" r="2.2" fill="currentColor"/>'
+		. '</svg>';
+}
+
+sub ai_balance_chart {
+	my ($report, $now) = @_;
+	$report = &ai_balance_report() unless ref $report eq 'HASH';
+	$now = &subs::rightNow() unless defined $now;
+	my $history = (ref $report->{'history'} eq 'HASH') ? $report->{'history'} : {};
+	my $base = &crypto_report_currency();
+	my (@series, @unconverted);
+	my (%seen_unconverted, $converted_any);
+	foreach my $row ( @{ $report->{'rows'} || [] } ) {
+		my $provider = $row->{'provider'} || '';
+		my $points = $history->{$provider};
+		next unless ref $points eq 'ARRAY' && @{$points};
+		my $last = $points->[-1];
+		my $from = uc($row->{'currency'} || $last->{'c'} || 'USD');
+		my $rate = ($from eq $base) ? 1 : &exchange_rate($from, $base);
+		my $converted = ($from ne $base && defined $rate && $rate > 0) ? 1 : 0;
+		my @scaled;
+		if ($from eq $base) {
+			@scaled = @{$points};
+		}
+		elsif ($converted) {
+			@scaled = map { { t => $_->{'t'}, v => $_->{'v'} * $rate, c => $base } } @{$points};
+			$converted_any = 1;
+		}
+		else {
+			@scaled = @{$points};
+			push @unconverted, $from unless $seen_unconverted{$from}++;
+		}
+		my %windows;
+		foreach my $window ( qw/24h 7d/ ) {
+			$windows{$window} = &ai_balance_window(\@scaled, $window, $now);
+		}
+		push @series, {
+			provider        => $provider,
+			label           => ($row->{'label'} || $provider),
+			currency        => ($converted ? $base : $from),
+			source_currency => $from,
+			source_available => $row->{'available'},
+			converted       => $converted,
+			rate            => ($converted ? $rate : undef),
+			available       => (defined $row->{'available'} && $converted ? $row->{'available'} * $rate : $row->{'available'}),
+			windows         => \%windows,
+		};
+	}
+	return {
+		at          => ($report->{'at'} || 0),
+		base        => $base,
+		converted   => ($converted_any ? 1 : 0),
+		unconverted => \@unconverted,
+		series      => \@series,
+	};
+}
+
+sub ai_balance_span_label {
+	my ($hours) = @_;
+	$hours = 0 unless defined $hours && $hours > 0;
+	return sprintf('%.0f min', $hours * 60) if $hours < 1;
+	return sprintf('%.0f h', $hours) if $hours < 48;
+	return sprintf('%.0f d', $hours / 24);
+}
+
+sub currency_money {
+	my ($value) = @_;
+	return '' unless defined $value;
+	my $abs = abs($value);
+	return sprintf('%.4f', $value) if $abs > 0 && $abs < 0.1;
+	return sprintf('%.2f', $value);
+}
+
+sub ai_balance_money {
+	return &currency_money($_[0]);
+}
+
+sub currency_options {
+	my ($from) = @_;
+	$from = uc($from || '');
+	my $base = &crypto_report_currency();
+	my $r = &crypto_rates_read();
+	my $table = $r->{'rates'} || {};
+	my $base_v = $table->{$base};
+	$base_v = 1 unless defined $base_v && $base_v > 0;
+	my (@codes, %seen);
+	my $add = sub {
+		my ($code) = @_;
+		$code = uc($code || '');
+		return unless $code =~ /^[A-Z]{3}$/;
+		return if $seen{$code}++;
+		my $v = $table->{$code};
+		my $rate;
+		if ($code eq $base) { $rate = 1; }
+		elsif (defined $v && $v > 0) { $rate = $base_v / $v; }
+		else { return; }
+		push @codes, { code => $code, rate => $rate };
+	};
+	$add->($base);
+	$add->($from) if length $from;
+	foreach my $f ( @{ &crypto_fiat_codes() } ) { $add->($f); }
+	return ($base, \@codes);
+}
+
+sub currency_amount_base {
+	my ($amount, $from, $to) = @_;
+	return undef unless defined $amount;
+	$from = uc($from || '');
+	$to = uc($to || &crypto_report_currency());
+	$from = $to unless length $from;
+	return $amount if $from eq $to;
+	my $rate = &exchange_rate($from, $to);
+	return (defined $rate && $rate > 0) ? $amount * $rate : undef;
+}
+
+sub watch_auto_allowed {
+	my $row = &subs::cache_get({ app => '__president', context => 'watch_auto', subcontext => &watch_tokens_day() });
+	return ((ref $row eq 'HASH' ? ($row->{'count'} || 0) : 0) < 8) ? 1 : 0;
+}
+
+sub watch_auto_count {
+	my $row = &subs::cache_get({ app => '__president', context => 'watch_auto', subcontext => &watch_tokens_day() }) || {};
+	&subs::cache_set(
+		{ app => '__president', context => 'watch_auto', subcontext => &watch_tokens_day(), warranty => '-2d' },
+		{ count => ($row->{'count'} || 0) + 1 }
+	);
+}
+
+sub auto_apply_clean {
+	my ($row) = @_;
+	my $files = eval { decode_json $row->{'files'} } || {};
+	my @names = sort grep { &error_watch_path($_) } keys %{$files};
+	return 0 unless @names;
+	my $repo = &error_watch_repo();
+	my @q = map { '"' . $_ . '"' } @names;
+	my $dirty = `cd "$repo" && git status --porcelain -- @q 2>&1`;
+	return 0 if defined $dirty && $dirty =~ /\S/;
+	return 1;
+}
+
+sub staged_fix_apply {
+	my ($uuid) = @_;
+	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
+	return { error => 'no such caught error' } unless $row;
+	return { error => 'nothing is staged on that row yet' } unless (($row->{'status'} // '') eq 'proposed');
+	my $files = eval { decode_json $row->{'files'} } || {};
+	my @names = sort keys %{$files};
+	return { error => 'that proposal stages no files' } unless @names;
+	my $repo = &error_watch_repo();
+	my (%backup, %touched);
+	foreach my $rel ( @names ) {
+		my $abs = &error_watch_path($rel);
+		return { error => 'refused: ' . $rel . ' is outside the repo' } unless $abs;
+		$backup{$abs} = -f $abs ? scalar read_file($abs) : undef;
+		my $content = $files->{$rel};
+		$content = '' unless defined $content;
+		require File::Basename;
+		my $dir = File::Basename::dirname($abs);
+		if (!-d $dir) { require File::Path; File::Path::make_path($dir); }
+		eval { write_file($abs, $content) };
+		if ($@) {
+			foreach my $done ( keys %backup ) {
+				if (defined $backup{$done}) { eval { write_file($done, $backup{$done}) }; }
+				else { unlink $done; }
+			}
+			return { error => 'could not write ' . $rel };
+		}
+		$touched{$rel} = 1;
+	}
+	# the whole change must pass the verifier before it ships: Perl compiles,
+	# JavaScript parses, templates compile, and no file was truncated - the checks
+	# a person would run by hand, run for them. On failure every file goes back
+	# and nothing is committed. (A proposal that reaches here has already been
+	# checked once, as it was staged; this is the check on what is truly on disk.)
+	my ($verify, $vcode) = ('', 0);
+	my $filelist = join(' ', map { '"' . $_ . '"' } sort keys %touched);
+	if ($filelist && -f "$repo/scripts/verify_change.pl") {
+		$verify = `cd "$repo" && perl scripts/verify_change.pl $filelist 2>&1`;
+		$vcode = $? >> 8;
+	}
+	if ($vcode != 0) {
+		foreach my $abs ( keys %backup ) {
+			if (defined $backup{$abs}) { eval { write_file($abs, $backup{$abs}) }; }
+			else { unlink $abs; }
+		}
+		# the IDE panel renders checks as a list of { path, output }; keep that shape
+		my (@entries, $cur);
+		foreach my $line (split /\n/, ($verify // '')) {
+			if ($line =~ /^FAIL\s+(\S+)/) { $cur = { path => $1, output => '' }; push @entries, $cur; }
+			elsif ($cur && $line =~ /^\s+(\S.*)$/) { $cur->{'output'} .= ($cur->{'output'} ? '; ' : '') . $1; }
+		}
+		push @entries, { path => 'verifier', output => substr(($verify // ''), 0, 1000) } unless @entries;
+		return { error => 'the change did not pass verification; nothing was applied', checks => \@entries };
+	}
+	# the finishing routine: bump, then commit only what was written (plus
+	# VERSION - never someone else's work in progress), then push
+	my $bump = `cd "$repo" && perl scripts/version_bump.pl 2>&1`;
+	$bump = '' unless defined $bump;
+	$bump =~ s/\s+$//;
+	return { error => 'the version bump failed: ' . ($bump || 'no output'), written => [ sort keys %touched ] } unless $bump =~ /^\d+\.\d+\.\d+$/;
+	my $version = eval { read_file("$repo/VERSION") } || '';
+	$version =~ s/\s+$//;
+	my $msg = $row->{'summary'} || $row->{'signature'} || 'error watch fix';
+	$msg =~ s/["`\$\\]/ /g;
+	$msg =~ s/\s+/ /g;
+	$msg =~ s/^\s+|\s+$//g;
+	my @add = map { '"' . $_ . '"' } sort keys %touched;
+	push @add, '"VERSION"';
+	my $commit = `cd "$repo" && git add -- @add 2>&1 && git commit -m "v$version - $msg" 2>&1`;
+	$commit = '' unless defined $commit;
+	$commit = substr($commit, 0, 1200);
+	my $push = `cd "$repo" && git push 2>&1`;
+	$push = '' unless defined $push;
+	$push = substr($push, 0, 800);
+	# the note is also the fixed list's record: when it shipped, and as what - the
+	# review list under Configure's auto-heal tick reads it back
+	&subs::db_update('staged_fixes', { status => 'applied', note => 'applied ' . &subs::rightNow() . ' as v' . $version }, { uuid => $uuid });
+	return { applied => $uuid, version => $version, bump => $bump, commit => $commit, push => $push };
+}
+
+sub error_watch_is_error {
+	my $line = shift;
+	$line = '' unless defined $line;
+	return 0 if $line =~ $error_watch_noise;
+	return 1 if $line =~ /\b(?:failed|failure|fatal|panic|abort(?:ed)?|died|denied|malformed|corrupt|not ok|couldn't|could not|can't|cannot|unable to|uninitialized|undefined|out of memory|segmentation|core dumped|database is locked|no such (?:file|table|column)|too many|refused|error)\b/i;
+	return 0;
+}
+
+sub error_signature {
+	my $text = shift;
+	$text = '' unless defined $text;
+	$text =~ s/\e\[[0-9;?]*[A-Za-z]//g;
+	$text =~ s/\r//g;
+	# a per-occurrence correlator ([GXJwplb_HcnT]) is not part of the fault: a
+	# bracketed 8+ char token carrying an upper-case letter is blanked, so the
+	# same fault logged twice does not stage twice
+	$text =~ s/\[(?=[A-Za-z0-9_-]{8,}\])(?:[A-Za-z0-9_-]*[A-Z])[A-Za-z0-9_-]*\]/[ID]/g;
+	$text =~ s/0x[0-9a-fA-F]+/0xADDR/g;
+	$text =~ s/\b\d+\b/N/g;
+	$text =~ s/\s+/ /g;
+	$text =~ s/^\s+|\s+$//g;
+	return substr($text, 0, 300);
+}
+
+sub error_watch_read_new {
+	my ($path, $source) = @_;
+	return () unless defined $path && -f $path;
+	unless ($error_watch_state_loaded) { &error_watch_state_load(); $error_watch_state_loaded = 1; }
+	my $size = -s $path;
+	unless (defined $error_watch_state{$source}) {
+		# the pty log is truncated when the master starts, so read it whole;
+		# manager.log is long-lived, so begin at its end - never replay history
+		$error_watch_state{$source} = ($source eq 'log') ? $size : 0;
+	}
+	my $offset = $error_watch_state{$source};
+	if (defined $size && $size < $offset) {
+		# truncated out from under us: take the new file from its start
+		$offset = $error_watch_state{$source} = 0;
+		$error_watch_partial{$source} = '';
+	}
+	open(my $fh, '<', $path) or return ();
+	seek($fh, $offset, 0) or do { close $fh; return (); };
+	my $chunk = '';
+	read($fh, $chunk, 262144);
+	close $fh;
+	return () unless defined $chunk && length $chunk;
+	$error_watch_state{$source} = $offset + length $chunk;
+	&error_watch_state_save();
+	my $buffer = ($error_watch_partial{$source} // '') . $chunk;
+	my @lines = split /\n/, $buffer, -1;
+	$error_watch_partial{$source} = pop @lines;   # keep the unterminated tail
+	return @lines;
+}
+
+sub error_watch_catch {
+	my @lines = @_;
+	my (@caught, $pending);
+	foreach my $line ( @lines ) {
+		if (defined $pending && $line =~ /^\s*at\s+\S+\s+line\s+\d+\.?\s*$/) {
+			$pending .= ' ' . $line;
+			next;
+		}
+		if (defined $pending) { push @caught, $pending; undef $pending; }
+		next unless &error_watch_is_error($line);
+		$pending = $line;
+	}
+	push @caught, $pending if defined $pending;
+	return @caught;
+}
+
+sub staged_fix_note {
+	my ($params) = @_;
+	my $sample = $params->{'sample'} // '';
+	my $sig = &error_signature(defined $params->{'signature_text'} ? $params->{'signature_text'} : $sample);
+	return {} unless length $sig;
+	my $tally = (($params->{'tally'} || 1) + 0) || 1;
+	my $existing = &subs::db_select('staged_fixes', [ 'uuid', 'tally' ], { signature => $sig })->hashes->[0];
+	if ($existing) {
+		&subs::db_update('staged_fixes', {
+			tally => ($existing->{'tally'} || 0) + $tally,
+			last_seen => &subs::rightNow(),
+		}, { uuid => $existing->{'uuid'} });
+		return { uuid => $existing->{'uuid'}, signature => $sig };
+	}
+	my $uuid = &subs::random_string_creator(40);
+	&subs::db_insert('staged_fixes', {
+		uuid => $uuid,
+		source => ($params->{'source'} || 'pty'),
+		signature => $sig,
+		sample => substr($sample, 0, 2000),
+		tally => $tally,
+		status => 'new',
+		last_seen => &subs::rightNow(),
+	});
+	return { uuid => $uuid, signature => $sig, status => 'new' };
+}
+
+sub records_audit_prompt {
+	return join "\n",
+		'You are the Records Watch for JawnOS. You audit the appointments table for a fault class that has been corrupting the person\'s numbers, and you reconcile what you find. Nothing is written until a person approves it.',
+		'',
+		'A stop press closes ONE session. Two faults planted wrong rows: (1) one stop was applied to several open sessions, so an old session took its end from a press that was not its own; (2) the same event was written once per machine and the mesh kept every copy.',
+		'',
+		'You are handed a fixed report. For each entry:',
+		'- SWEEP (rows share app + stop_timestamp): at most one row is the session that press closed. If the app sets a duration, the real row is the one whose |duration| is nearest it; otherwise the one whose start is nearest the press. Every other row was ended by a press that was not its own: repair each to its own end when the app sets a duration (start + duration), else tombstone it.',
+		'- DUPES (identical app/type/timestamp/stop_timestamp): keep one, tombstone the rest.',
+		'- ORPHAN (start/record, stop_seen null): do NOT stop it - it may be real and still running. Leave it unless the app sets a duration and it has run far past that, in which case repair it to start + duration.',
+		'- IMPOSSIBLE (a stop before its own start): repair to a sane end or tombstone.',
+		'- WRONG-END (an older session whose span contains a newer session\'s start of the same app): the older row was ended by a press that belonged to the newer one, so it ran on. Repair it to its own start + the app\'s length when the app sets one; leave it alone when it has no length or the person says it is real.',
+		'',
+		'Rules that must not be broken:',
+		'- Do NOT judge by duration length alone: home is legitimately a full day, a walk an hour. Compare against the app\'s own history and its configured duration, never a fixed threshold.',
+		'- Do NOT trust one machine over another. The correct end is whichever press actually stopped that session; where machines disagree, prefer the value that matches the app\'s configured duration.',
+		'- Leave alone anything started in the last ten minutes, anything a person corrected by hand (a note, an edited time), and any row that is still running.',
+		'- Writes ride the app\'s own routes: delete_app tombstones a duplicate so the whole mesh agrees, and the appointment\'s own stop path repairs an end.',
+		'',
+		'Answer with a JSON list of proposed actions, one per row: {"action":"keep"|"tombstone"|"repair","app":..,"uuid":..,"stop_timestamp":..,"duration":..,"why":".."}. Say which row you keep per group and why, and list what you leave alone and why. Write nothing else.';
+}
+
+sub records_exempt {
+	my $raw = &subs::setting_grabber({ app => 'mail', setting => 'records_exempt' }) // '';
+	my $saved = length($raw) ? eval { decode_json $raw } : undef;
+	$saved = [] unless ref $saved eq 'ARRAY';
+	my %apps;
+	foreach my $a ( @{$saved} ) { $apps{$a} = 1 if defined $a && length $a; }
+	return \%apps;
+}
+
+sub records_exempt_add {
+	my ($app) = @_;
+	return 0 unless defined $app && length $app;
+	my $exempt = &records_exempt();
+	$exempt->{$app} = 1;
+	&subs::setting_setter({ app => 'mail', setting => 'records_exempt', value => encode_json([ sort keys %{$exempt} ]) });
+	return 1;
+}
+
+sub records_bad_date_fix {
+	my ($row, $now) = @_;
+	$now = &rightNow() unless $now;
+	my $floor = 946684800000;    # 2000-01-01: nothing in the house is older
+	my $bad = $row->{'timestamp'};
+	return undef unless defined $bad && $bad =~ /^-?\d+$/ && $bad < -1000000000000000;
+	my $anchor = (defined $row->{'ost'} && $row->{'ost'} =~ /^\d{10,}$/) ? $row->{'ost'} : $row->{'server_time'};
+	return undef unless defined $anchor && $anchor =~ /^\d{10,}$/;
+	my $real = int(($anchor - $bad) / 60000 + 0.5);
+	return undef unless $real >= $floor && $real <= $now + 86400000;
+	my $fix = { timestamp => $real };
+	my $stop = $row->{'stop_timestamp'};
+	if (defined $stop && $stop =~ /^-?\d+$/ && $stop < -1000000000000000) {
+		my $real_stop = int(($anchor - $stop) / 60000 + 0.5);
+		$fix->{'stop_timestamp'} = ($real_stop >= $floor && $real_stop <= $now + 86400000) ? $real_stop : $real;
+	}
+	return $fix;
+}
+
+sub records_bad_dates_scan {
+	my ($now, $exempt) = @_;
+	$now = &rightNow() unless $now;
+	$exempt ||= &records_exempt();
+	my @out;
+	my $bad = &db_query('select rowid, uuid, app, type, timestamp, stop_timestamp, ost, server_time from appointments
+		where cast(timestamp as integer) < -1000000000000000
+		   or (stop_timestamp is not null and cast(stop_timestamp as integer) < -1000000000000000)
+		order by rowid asc')->hashes;
+	my %kept_bad;
+	foreach my $r ( @{$bad} ) {
+		next if $exempt->{ $r->{'app'} };
+		my $fix = &records_bad_date_fix($r, $now);
+		next unless $fix;
+		my $real = $fix->{'timestamp'};
+		my $dup = &db_query('select uuid from appointments where app = ? and type = ? and cast(timestamp as integer) between ? and ? limit 1',
+			$r->{'app'}, $r->{'type'}, $real - 1000, $real + 1000)->hashes->[0];
+		if ($dup) {
+			push @out, { %{$r}, fix => $fix, suggested => 'tombstone', why => 'a re-write of a record already stored' };
+			next;
+		}
+		my $event = ($r->{'app'} || '') . '|' . ($r->{'type'} || '');
+		if (grep { abs($_ - $real) <= 1000 } @{ $kept_bad{$event} || [] }) {
+			push @out, { %{$r}, fix => $fix, suggested => 'tombstone', why => 'a re-write of the record kept from the same batch' };
+			next;
+		}
+		push @{$kept_bad{$event}}, $real;
+		push @out, { %{$r}, fix => $fix, suggested => 'repair', why => 'a millisecond date was read as a span of minutes' };
+	}
+	return \@out;
+}
+
+sub records_mailbox_body_readable {
+	my ($body) = @_;
+	return 0 unless defined $body && length $body;
+	# a sealed note is long, has no whitespace and is base64 (with the container
+	# markers); anything else - an ordinary message, a short word - is readable
+	return 0 if length($body) >= 60 && $body !~ /\s/ && $body =~ m{^[A-Za-z0-9+/=:_-]+$};
+	return 1;
+}
+
+sub records_mailbox_same_event {
+	my ($a, $b) = @_;
+	return 0 unless ref $a eq 'HASH' && ref $b eq 'HASH';
+	foreach my $f (qw(phone manager_file status)) {
+		my $x = defined $a->{$f} ? $a->{$f} : '';
+		my $y = defined $b->{$f} ? $b->{$f} : '';
+		return 0 unless $x eq $y;
+	}
+	my $readable_a = &records_mailbox_body_readable($a->{'body'});
+	my $readable_b = &records_mailbox_body_readable($b->{'body'});
+	return 0 if $readable_a != $readable_b;
+	return 1 unless $readable_a;    # both sealed: the ciphertext says nothing
+	return (defined $a->{'body'} && defined $b->{'body'} && $a->{'body'} eq $b->{'body'}) ? 1 : 0;
+}
+
+1;

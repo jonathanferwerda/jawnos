@@ -137,10 +137,11 @@ is(subs::device_call('ping'), undef, 'no token file means no bridge');
 # must run through the running interpreter rather than its shebang. Launching it
 # directly failed with ENOENT on the phone and the bridge never started.
 {
-	open(my $fh, '<', root() . '/subroutines.pl') or die $!;
-	local $/;
-	my $src = <$fh>;
-	close $fh;
+	my $src = join "\n", map {
+		open(my $fh, '<', $_) or die $!;
+		local $/;
+		scalar <$fh>;
+	} (root() . '/subroutines.pl', sort glob(root() . '/lib/JawnOS/Domain/*.pm'));
 	unlike($src, qr/system\(\$client/, 'no BLE client is executed by its shebang');
 	unlike($src, qr/'\|-', \$client/, 'no pipe runs the client by its shebang');
 	like($src, qr/program => \$\^X, program_args => \[ \$client, 'listen' \]/, 'the listener runs the client through the current perl');

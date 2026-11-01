@@ -16,7 +16,7 @@ use JawnOSTest ();
 # JawnOSTest pins TZ to UTC, so the "resets at" cases can name a local clock
 # time and expect the same arithmetic on any machine.
 
-ok defined &subs::ai_limit_pause, 'ai_limit_pause is loaded';
+ok subs::provides('ai_limit_pause'), 'ai_limit_pause is loaded';
 
 my $now = Time::Local::timelocal(0, 0, 10, 30, 9, 2026) * 1000;   # 30 Oct 2026, 10:00 local
 
