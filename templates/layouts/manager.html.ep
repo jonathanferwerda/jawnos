@@ -205,7 +205,12 @@
 		<div style="display:none;" id="preload"><%= $website %></div>
 		<script>var preload = $('#preload').text(); var timestamp = Date.now(); $(document).ready(function() { windowMaker(preload,timestamp); });</script>
 	</body>
-	<script src="/js/manager/websocket.js?string=<%= $string %>"></script>
-	<script src="/js/manager/jp.js?string=<%= $string %>"></script>
+	<%# these two are not in the bundle; each may now be an index plus parts %>
+	<% for my $script (&subs::js_script_urls('public/js/manager/websocket.js')) { %>
+		<script src="<%= $script %>?string=<%= $string %>"></script>
+	<% } %>
+	<% for my $script (&subs::js_script_urls('public/js/manager/jp.js')) { %>
+		<script src="<%= $script %>?string=<%= $string %>"></script>
+	<% } %>
 	<div id="printer_view" style="display:none;"></div>
 </html>

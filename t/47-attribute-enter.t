@@ -20,8 +20,8 @@ use RepoSource;
 # replaced that: a direct save shared by change, Enter and the Add/Save
 # buttons, and a labeled, themed container.
 
-my $js = read_file("$FindBin::Bin/../public/js/manager/attributes.js");
-my $soft = read_file("$FindBin::Bin/../public/js/manager/soft_keyboard.js");
+my $js = js_source('public/js/manager/attributes.js');
+my $soft = js_source('public/js/manager/soft_keyboard.js');
 my $template = read_file("$FindBin::Bin/../templates/pos/attributes.html.ep");
 my $wrapper = read_file("$FindBin::Bin/../templates/appointment_wrapper.html.ep");
 my $css = read_file("$FindBin::Bin/../public/css/manager.css");

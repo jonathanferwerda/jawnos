@@ -1,0 +1,506 @@
+$(document).on('click', '.main_image_selector', function() {
+	var file = $(this).attr('file');
+	var app = $(this).attr('app');
+	var selected = $(this).attr('main_image');
+	var mis = $('.main_image_selector');
+	mis.attr('main_image', 'no');
+	mis.css({'border-color': 'black','border-width':'3px'});
+
+	if (selected == 'yes') {
+		settingDeleter({ 'app': app, 'setting': 'main_image' });
+	}
+	else {
+		settingSetter({ 'app': app, 'setting': 'main_image', 'value': file });
+		$(this).css({'border-color':'orange','border-width':'6px'});
+		$(this).attr('main_image', 'yes');
+	}
+});
+
+var cb_check = 0;
+$(document).on('click', '.configuration', function() {
+	configureToggle()
+});
+
+$(document).on('click','.purchase', function() {
+	var iq = $(this).closest('.appointment').find('.purchase_details');
+	if (iq.is(':hidden')) { 
+		iq.show(); 
+		timestampDater();
+    iq.find('.date').val(moment(Date.now()).format('M/D/YYYY'));
+	}
+	else { iq.hide(); }
+});
+$(document).on('click','.inventory', function() {
+	var iq = $(this).closest('.appointment').find('.inventory_details');
+	var app = $(this).closest('.appointment').attr('app');
+	if (iq.is(':hidden')) {
+		appActExclusive(app, 'inventory');
+		iq.show();
+		inventoryDetails(app);
+	}
+	else {
+		iq.hide(); 
+	}
+});
+
+
+var backy_color = 0;
+$(document).on('keyup', '.timed_input', function(e) {
+	if (e.keyCode == 13) {
+		// a chosen search result owns this Enter; typing again clears the choice
+		if ($(this).is('#search') && typeof jawnosSearchTakeEnter == 'function' && jawnosSearchTakeEnter()) { return; }
+		var url;
+		var i = $(this);
+
+		var id = i.attr('id');
+		var messaging = i.attr('messaging');
+		var value = i.val();
+		var timestamp = Date.now();
+		var time_machine = localStorage.getItem('time_machine');
+		var timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
+		var project = localStorage.getItem('project');
+		var data;
+		var type = 'POST';
+		var timeout = 3000;
+
+		if (i.hasClass('add_something') || i.hasClass('.time_machine')) {
+			clearTimeout(searchTimeout);
+			setTimeout(function() {
+				$('#search_results').html('').hide();
+			},700);
+			i.addClass('active');
+			url = '/manager/reset';
+			var entry = 'add';
+			data = { app: value, timeshift: timeshift, timestamp: timestamp, type: entry, movement: 'expense', time_machine: time_machine, project: project };
+			timeout = 1000;
+		}
+		else if (i.hasClass('name_change')) {
+			url = '/manager/configure';
+			var setting = i.attr('setting');
+			var app = i.attr('app');
+			var name = i.val();
+			data = { app: app, timestamp: timestamp, type: setting, setting: setting, value: value };
+		}
+		else if (i.hasClass('appointment_search')) {
+			url = '/manager/appointment_details',
+			type = 'GET';
+			data = { app: value, timeshift: timeshift, timestamp: timestamp, type: "search", time_machine: time_machine,  scope: scope };	
+		}
+		if (url) {
+			$.ajax({
+				url: url,
+				type: type,
+				data: data,
+				success: function(response) {
+					if (response && response.conflict) {
+						// the new name is a name the house already knows: the panel
+						// picks which value keeps the name, setting by setting
+						nameConflictPanel(response);
+						return;
+					}
+					if (i.hasClass('add_something') || url == '/manager/configure') {
+						$('#start_menu').hide();
+						i.removeClass('active');
+						centreViewWriter(response.cv);
+				//		configureDisplay();
+						appointment_chron();
+					//	$('#search').val('');
+						if ($('.now').attr('presence') != 'not' && response['added'] == 'yes') {
+								continent_record({'uuid':response['uuid'],'purpose': 'app','app':response['app'],'timestamp':response['timestamp']});
+							}
+					}
+					i.css({ "background-color": "yellow" });
+					clearTimeout(backy_color);
+					backy_color = setTimeout(function() {
+						i.css({ "background-color": "" });
+					},950);
+				}
+			});
+		}
+	}
+});
+
+// ---- appointment distance: the fixes list or a Travel basemap ----
+// The Dist section is one panel. Its picker swaps the list of fixes for a canvas
+// map drawn by jawnosMap, and offers only the basemaps the house can actually
+// draw: the free services, or a keyed one whose key is already saved in Travel.
+function appointmentDistKeys(panel) {
+	var keys = {};
+	panel.find('.appointment_map_key').each(function() {
+		var provider = $(this).attr('provider');
+		var value = $(this).val();
+		if (provider && value) { keys[provider] = value; }
+	});
+	return keys;
+}
+
+function appointmentDistFill(detail) {
+	var panel = $(detail).find('.appointment_distance_panel');
+	if (!panel.length || !window.jawnosMap) { return; }
+	var sel = panel.find('.appointment_dist_view');
+	if (!sel.length || sel.attr('filled') == 'yes') { return; }
+	sel.attr('filled', 'yes');
+	var keys = appointmentDistKeys(panel);
+	var providers = window.jawnosMap.providers || {};
+	var group = $('<optgroup></optgroup>').attr('label', jawnosT('Map'));
+	var added = 0;
+	for (var key in providers) {
+		var p = providers[key] || {};
+		var kind = p.group || 'url';
+		if (kind === 'free' || (kind === 'key' && keys[key])) {
+			$('<option></option>').attr('value', key).text(jawnosT(p.name || key)).appendTo(group);
+			added++;
+		}
+	}
+	if (added) { sel.append(group); }
+}
+
+function appointmentDistShow(panel) {
+	if (!panel || !panel.length) { return; }
+	var kind = panel.find('.appointment_dist_view').val() || 'fixes';
+	panel.find('.appointment_distance_fixes').toggle(kind === 'fixes');
+	panel.find('.appointment_distance_map').toggle(kind !== 'fixes');
+	if (kind !== 'fixes') { appointmentDistMap(panel, kind); }
+}
+
+function appointmentDistMap(panel, provider) {
+	var canvas = panel.find('.appointment_dist_canvas')[0];
+	if (!canvas || !window.jawnosMap) { return; }
+	var data = {};
+	try { data = JSON.parse(panel.find('.appointment_distance_data').text() || '{}') || {}; }
+	catch (e) { data = {}; }
+	var engine = panel.data('appointmentDistMap');
+	if (!engine || engine.canvas !== canvas) {
+		engine = window.jawnosMap.create(canvas.id, {
+			z: 15,
+			width: function() { return $(canvas).parent().width() || 480; },
+			height: function() { return $(canvas).parent().height() || 320; }
+		});
+		panel.data('appointmentDistMap', engine);
+	}
+	engine.setProvider(provider, '', appointmentDistKeys(panel));
+	var points = [];
+	var fixes = data.points || [];
+	var home = data.home || {};
+	var carrier = (data.carrier && data.carrier.signatorial) || '';
+	var fixPoints = [];
+	fixes.forEach(function(p) {
+		if (!p || !p.latitude || !p.longitude) { return; }
+		fixPoints.push({ lat: +p.latitude, lon: +p.longitude, t: +p.timestamp || 0, dev: p.signatorial || '', colour: '#a0503f' });
+	});
+	// two devices can file fixes under one appointment (one at home, one driving).
+	// The house names the device that was with the person; only its fixes make the
+	// line, because the other one just sits there and jitters.
+	var linePoints = carrier ? fixPoints.filter(function(p) { return p.dev === carrier; }) : fixPoints;
+	var byDev = {};
+	linePoints.forEach(function(p) { (byDev[p.dev] = byDev[p.dev] || []).push(p); });
+	var lines = [];
+	$.each(byDev, function(dev, list) {
+		list.sort(function(a, b) { return a.t - b.t; });
+		var run = [];
+		$.each(list, function(i, p) {
+			var last = run.length ? run[run.length - 1] : null;
+			if (last && p.lat === last.lat && p.lon === last.lon) { return; }
+			run.push(p);
+		});
+		if (run.length < 2) { return; }
+		var span = 0;
+		for (var i = 1; i < run.length; i++) {
+			if (typeof jawnosMarkerMetres === 'function') { span = Math.max(span, jawnosMarkerMetres(run[0], run[i])); }
+		}
+		if (span < 50) { return; }
+		lines.push({ colour: '#a0503f', points: run.map(function(p) { return { lat: p.lat, lon: p.lon }; }) });
+	});
+	engine.setLines(lines);
+	fixPoints.forEach(function(p) { points.push({ lat: p.lat, lon: p.lon, colour: '#a0503f' }); });
+	if (home.latitude && home.longitude) {
+		points.push({ lat: home.latitude, lon: home.longitude, colour: '#6f4f9f', label: jawnosT('Home') });
+	}
+	engine.setPoints(points);
+	// frame the fixes themselves, so a home plate far away cannot shrink them to a
+	// dot; the home point still rides on the map when it is in view
+	var frame = linePoints.length ? linePoints : (fixPoints.length ? fixPoints : (home.latitude && home.longitude ? [{ lat: home.latitude, lon: home.longitude }] : []));
+	if (frame.length) {
+		var lats = frame.map(function(p) { return p.lat; });
+		var lons = frame.map(function(p) { return p.lon; });
+		var minLat = Math.min.apply(null, lats), maxLat = Math.max.apply(null, lats);
+		var minLon = Math.min.apply(null, lons), maxLon = Math.max.apply(null, lons);
+		if (Math.max(maxLat - minLat, maxLon - minLon) < 0.002) {
+			var lat = (minLat + maxLat) / 2, lon = (minLon + maxLon) / 2;
+			engine.fitBounds({ nw: { lat: lat + 0.001, lon: lon - 0.001 }, se: { lat: lat - 0.001, lon: lon + 0.001 } }, 1);
+		}
+		else {
+			engine.fitBounds({ nw: { lat: maxLat, lon: minLon }, se: { lat: minLat, lon: maxLon } }, 1.25);
+		}
+	}
+	engine.draw();
+}
+
+$(document).on('change', '.appointment_dist_view', function() {
+	appointmentDistShow($(this).closest('.appointment_distance_panel'));
+});
+
+$(document).on('click', '.appointment_list_toggle', function() {
+	var list = $(this).attr('list');
+	var detail = $(this).closest('.appointment_detail');
+	var l = detail.find('.appointment_list[list="' + list + '"]');
+	if (l.is(':visible')) {
+		l.hide();
+	}
+	else {
+		l.show();
+		if (list == 'distance') {
+			appointmentDistFill(detail);
+			appointmentDistShow(l.filter('.appointment_distance_panel'));
+		}
+	}
+
+});
+$(document).on('click', '.delete_duty', function() {
+	var a = $(this);
+	var duuid = a.attr('duuid');
+	var server_time = a.attr('server_time');
+	var app = a.closest('.appointment').attr('app');
+	var app_uuid = a.closest('.appointment_detail').attr('uuid');
+	if (a.attr('armed') == 'yes') {
+		$.ajax({
+			url: '/manager/delete_duty',
+			type: 'POST',
+			data: { duuid: duuid, server_time: server_time, app: app, app_uuid: app_uuid },
+			success:function(response) {
+
+				$('.appointment_duty_container[duuid="' + response.duuid + '"]').remove();
+			}
+		});
+	}
+	else {
+		a.attr('armed', 'yes');
+		var bgcolor = a.css('background-color');
+		a.css({'background-color': 'red' });
+		setTimeout(function() {
+			a.css({'background-color': bgcolor });
+			a.attr('armed', 'no');			
+		},2000);
+	}
+});
+
+// Autostop on a running appointment: ticked means the home plate stops it when
+// left, unticked leaves it running for a hand stop. The box is put back the way
+// it was when the write is refused, so the bar never lies about the session.
+$(document).on('change', '.appointment_autostop', function() {
+	var a = $(this);
+	var app = a.attr('app');
+	var uuid = a.attr('uuid');
+	var value = a.prop('checked') ? 'on' : 'off';
+	a.prop('disabled', true);
+	$.ajax({
+		url: '/manager/appointment/autostop',
+		type: 'POST',
+		data: { app: app, uuid: uuid, value: value },
+		success: function(response) {
+			a.prop('disabled', false);
+			if (!response || !response.autostop) {
+				a.prop('checked', !a.prop('checked'));
+				return;
+			}
+			a.prop('checked', response.autostop != 'off');
+			a.closest('.appointment_autostop_bar').attr('autostop', response.autostop);
+		},
+		error: function() {
+			a.prop('disabled', false);
+			a.prop('checked', !a.prop('checked'));
+		}
+	});
+});
+
+$(document).on('click', '.download', function() {
+	var d = $(this);
+	var file = d.attr('file');
+	var uuid = d.attr('uuid');
+	var app = d.attr('app');
+	var server_time = d.attr('server_time');
+	var timestamp = d.attr('timestamp');
+	var uri = encodeURIComponent(app);
+	window.location='/manager/download_file?app=' + uri + '&uuid=' + uuid + '&timestamp=' + timestamp + '&server_time=' + server_time + '&file=' + file;
+});
+
+$(document).on('click', '.take_picture', function() {
+	var d = $(this).closest('.appointment_detail');
+	var app = d.attr('app');
+	var uuid = d.attr('uuid');
+	var camera = $(this).attr('camera');
+	var container = d.closest('.appointment');
+	var timestamp = Date.now();
+	var ago = container.find('.ago').val();
+	var time_machine = $('#time_machine').val() || localStorage.getItem('time_machine');
+	var timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
+	// In the app the OS camera is the viewfinder the person can see. The
+	// server-side camera.photo path has none, and its device-bridge call gives up
+	// after two seconds while a real capture takes far longer - so the same press
+	// behaved differently in the two views. Both templates now use the bridge.
+	if (jawnCameraAvailable() && (camera === '0' || camera === '1')) {
+		window.__jawnCameraPending = { app: app, uuid: uuid, camera: camera, timestamp: timestamp };
+		window.JawnCamera.photo(camera);
+		return;
+	}
+	$.ajax({
+		url: '/manager/take_picture',
+		type: 'POST',
+		data: { app: app, uuid: uuid, camera: camera, timestamp: timestamp, ago: ago, time_machine: time_machine, timeshift: timeshift },
+		success: function(response) {
+
+		}
+	});
+});
+
+$(document).on('click', '.scan_document', function() {
+	var d = $(this).closest('.appointment_detail');
+	var container = d.closest('.appointment');
+	var app = d.attr('app');
+	var uuid = d.attr('uuid');
+	var feed = $(this).attr('feed');
+	var timestamp = Date.now();
+	var ago = container.find('.ago').val();
+	var time_machine = $('#time_machine').val() || localStorage.getItem('time_machine');
+	var timeshift = localStorage.getItem('timeshift') + localStorage.getItem('timeshift_scope');
+	$.ajax({
+		url: '/manager/scan_document',
+		type: 'POST',
+		data: { app: app, uuid: uuid, feed: feed, timestamp: timestamp, ago: ago, time_machine: time_machine, timeshift: timeshift },
+		success: function(response) {
+
+		}
+	});
+});
+
+var m;
+var main_h;
+$(document).on('click', '.upload_file, #upload', function(e) {
+	var b = $(this);
+	var m =	$('#main_upload_input');
+
+	var app = undefined;
+	var uuid = undefined;
+	var source = 'main_upload';
+	
+	if (b.hasClass('app_upload')) {
+		app = b.closest('.appointment_detail').attr('app');
+		uuid = b.closest('.appointment_detail').attr('uuid');
+		source = 'app_upload';
+	}
+	m.attr('app', app);
+	m.attr('uuid', uuid);
+	m.attr('source', source);
+	main_h = $('#main_upload_container').html();
+	m.trigger('click');
+});
+
+$(document).on('change', '#main_upload_input', function() {
+	var m =	$('#main_upload_input');
+	
+//	m.trigger('click');
+
+	$.each(m[0]['files'], function(i,v) {
+
+	});
+	if (m[0]['files'].length > 0) {
+		$('#main_upload').trigger('submit');
+	}
+});
+
+$(document).on('submit', "#main_upload", function(e) {
+  e.preventDefault();
+	var mui =	$('#main_upload_input');
+  var formData = new FormData(this);
+	formData.delete('timestamp');
+	formData.append('timestamp', timestamp);
+	var apper = $('.wind[app="' + topWindow() + '"]');
+	var navigation = $(apper).attr('navigation');
+	app = $(apper).attr('app') || $('#search').val();
+	formData.delete('app');
+	formData.delete('uuid');
+	var source = mui.attr('source');
+	if (source == 'app_upload') {
+		app = mui.attr('app');
+		var uuid = mui.attr('uuid');
+		formData.append('uuid', uuid);
+	}
+
+	formData.append('app', app);
+	formData.append('source', source);
+  $.ajax({
+      url: '/manager/upload_file',
+      type: 'POST',
+      data: formData,
+      success: function (response) {
+				m = undefined;
+				formData.delete('fileupload');
+				$('#main_upload').remove();
+				$('#main_upload_container').html(main_h);
+				appClearer(app);
+				continent_record({'uuid':response['uuid'],'purpose':'app','app':response['app'],'timestamp':response['timestamp'],'navigation':navigation});
+      },
+      cache: false,
+      contentType: false,
+      processData: false
+  });
+});
+
+// The title in a window's bar is a label, not a source: clicking it raises the
+// window (the .top_navbar handler), but it does not pour the app's name into
+// the focused input. An appointment's own .name_text still does.
+$(document).on('click', '.name_text', function(){
+	if ($(this).closest('.top_navbar').length) { return; }
+	var text = $(this).text();
+	focused_input.val(text);
+});
+
+$(document).on('click','.app_act, .save_appointment',function() {
+	var b = $(this);
+	var app = b.attr('app') || b.closest('.appointment').attr('app');
+	var originalColour = b.css('background-color');
+	b.css({'background-color': 'blue'});
+	setTimeout(function() { b.css({'background-color': originalColour }); },750);
+//	cacheDelete({ app: app, context: 'template' });
+});
+
+// the appointment's three group buttons each open the buttons they carry
+// beneath them; opening one folds the others away, so the row under the
+// groups always answers the button just pressed
+$(document).on('click', '.group_toggle', function() {
+	var group = $(this).attr('group');
+	var appointment = $(this).closest('.appointment');
+	var contents = appointment.find('.' + group + '_group_contents');
+	var open = contents.is(':visible');
+	appointment.find('.group_contents').hide();
+	if (!open) { contents.show(); }
+});
+
+// The media machine choice is a preference of this person at this screen, like
+// the keyboard's own device picks; remembering it in `me` makes the next
+// appointment open on the same machine.
+$(document).on('change', '.media_machine', function() {
+	var sel = $(this);
+	var group = sel.attr('group') || '';
+	if (!group) { return; }
+	$.ajax({
+		url: '/manager/configure',
+		type: 'POST',
+		data: { app: 'me', setting: 'media_machine_' + group, value: sel.val() || '', timestamp: Date.now() }
+	});
+});
+
+$(document).on('click','#calculate_it', function() {
+	clearInterval(calculateInterval);
+	calculator();
+});
+
+$(document).on('click, change', '#update_frequency', function() {
+	var f = $(this).val();
+	localStorage.setItem('update_frequency', f);
+	initializer()
+});
+
+
+
+

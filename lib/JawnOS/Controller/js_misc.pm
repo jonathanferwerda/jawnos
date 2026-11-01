@@ -67,9 +67,16 @@ sub action_7407 {
 	my $c = shift;
 	my $dir = 'public';
 	my $sig = '';
+	my @bundle;
 	foreach my $rel (@manager_bundle_files) {
-		my @st = stat($dir . $rel);
-		$sig .= $rel . ':' . ($st[9] // 0) . ':' . ($st[7] // 0) . ';';
+		# An app's index file may carry a folder of parts beside it; the
+		# helper returns the index first, then the parts in name order.
+		my @files = &subs::js_part_files($dir . $rel);
+		push @bundle, @files;
+		foreach my $file (@files) {
+			my @st = stat($file);
+			$sig .= $file . ':' . ($st[9] // 0) . ':' . ($st[7] // 0) . ';';
+		}
 	}
 	my $etag = '"' . &subs::md5_sum($sig) . '"';
 	$c->res->headers->etag($etag);
@@ -93,9 +100,10 @@ sub action_7407 {
 		}
 		else {
 			my $raw = '';
-			foreach my $rel (@manager_bundle_files) {
-				my $src = eval { read_file($dir . $rel) } // '';
-				$raw .= "\n;/* $rel */\n" . $src . "\n;\n";
+			foreach my $file (@bundle) {
+				my $src = eval { read_file($file) } // '';
+				(my $label = $file) =~ s{^public}{};
+				$raw .= "\n;/* $label */\n" . $src . "\n;\n";
 			}
 			my $built = js_minify($raw);
 			# Payload first, signature last, so a reader that matches the signature

@@ -23,8 +23,8 @@ use Exporter 'import';
 use Cwd       qw(abs_path);
 use File::Basename qw(dirname);
 
-our @EXPORT_OK = qw(repo_root manager_source template_source);
-our @EXPORT    = qw(repo_root manager_source template_source);
+our @EXPORT_OK = qw(repo_root manager_source template_source js_source);
+our @EXPORT    = qw(repo_root manager_source template_source js_source);
 
 sub repo_root { abs_path(dirname(__FILE__) . '/../..') }
 
@@ -59,6 +59,28 @@ sub template_source {
 	my $page  = "$root/templates/$rel.html.ep";
 	my @files = (-f $page ? ($page) : ());
 	push @files, sort grep { -f } glob("$root/templates/$rel/*.html.ep");
+	my $text = '';
+	for my $file (@files) {
+		open(my $fh, '<', $file) or die "$file: $!";
+		local $/;
+		$text .= <$fh> . "\n";
+	}
+	return $text;
+}
+
+# A big script follows the same shape as a big page: the old path is the index
+# (its first part), and the rest live in a folder of the same name in numeric
+# order. A source-grep test that pins a script reads all of it, so moving a
+# function into a part does not silently stop the check.
+sub js_source {
+	my $rel = shift;
+	$rel =~ s{^/+}{};
+	$rel = 'public/' . $rel unless $rel =~ m{^public/};
+	my $root = repo_root();
+	my $index = "$root/$rel";
+	my @files = (-f $index ? ($index) : ());
+	(my $dir = $index) =~ s{\.js$}{};
+	push @files, sort grep { -f } glob("$dir/*.js") if -d $dir;
 	my $text = '';
 	for my $file (@files) {
 		open(my $fh, '<', $file) or die "$file: $!";

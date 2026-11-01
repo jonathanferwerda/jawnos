@@ -65,7 +65,7 @@ like($gate // '', qr/if \(\$app_path =~ m\{\/\(\?:mail\|manager\|observer\)\/ws\
 
 # 4. the JS appends its query after a token, not after a bare '?'
 my $mailbox = read_file("$FindBin::Bin/../public/js/mailbox.js");
-my $socket  = read_file("$FindBin::Bin/../public/js/manager/websocket.js");
+my $socket  = js_source('public/js/manager/websocket.js');
 my $paper   = read_file("$FindBin::Bin/../public/js/paperboy.js");
 like($mailbox, qr/var mailws_sep = \(mail_ws_url\.indexOf\('\?'\) >= 0\) \? '&' : '\?';/,
 	'the mail socket resolves its query separator');

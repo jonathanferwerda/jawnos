@@ -202,7 +202,7 @@ our %topic = (
 	},
 	'music' => {
 		'title' => 'Music', category => 'apps', app => 'music',
-		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/audio.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
+		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/audio.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/apps/video/markup.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
 		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization', 'Volume normalization', 'Remote audio format', 'Sync offset', 'Me audio delay', 'Remote delay', 'Left speaker', 'Stereo', 'Right speaker', 'Video enhancement', 'Sharpness', 'Quality', 'Frame rate', 'Video status' ],
 		verified => '2026-10-30',
 		summary => 'A player, a library, and the place music is organised.',
@@ -426,7 +426,7 @@ our %topic = (
 	},
 	'people' => {
 		title => 'People', category => 'apps', app => 'people',
-		templates => [ 'templates/apps/people.html.ep', 'templates/apps/people_person.html.ep', 'public/js/manager/people.js' ],
+		templates => [ 'templates/apps/people.html.ep', 'templates/apps/people/body.html.ep', 'templates/apps/people_person.html.ep', 'public/js/manager/people.js' ],
 		controls => [ 'Scan my crest', 'Take picture', 'Upload a photo', 'Download card', 'Save card here', 'Show QR', 'Write to NFC tag', 'Import a crest card', 'Import a crest code', 'I have met this crest', 'Save name', 'Verify a photo', 'Refresh', 'Publish', 'Published', 'Upload a logo', 'Open their page' ],
 		verified => '2026-10-30',
 		summary => 'The house crest, and the people the house knows.',
@@ -2119,10 +2119,21 @@ sub resolve_files {
 		return if $seen{$p}++;
 		push @out, $p;
 	};
-	foreach my $p ( @{ $t->{'templates'} || [] } ) { $add->($p); }
+	# A big script is a short index plus a folder of parts; hand the guide the
+	# same rules the bundle route uses, so a hint that moved into a part is
+	# still an on-screen control the inventory can see.
+	my $add_source = sub {
+		my $p = shift;
+		return unless defined $p && length $p;
+		$add->($p);
+		return unless $p =~ /\.js$/;
+		(my $dir = $p) =~ s{\.js$}{};
+		$add->($_) foreach sort grep { -f } glob("$dir/*.js");
+	};
+	foreach my $p ( @{ $t->{'templates'} || [] } ) { $add_source->($p); }
 	my $a = $t->{'app'};
 	if ($a) {
-		$add->($_) foreach (
+		$add_source->($_) foreach (
 			"templates/apps/$a.html.ep",
 			"templates/$a.html.ep",
 			"public/js/manager/$a.js",

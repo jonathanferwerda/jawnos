@@ -54,7 +54,9 @@
 	   input method instead of attaching to DOM fields. */
 	window.jawnSoftIme = true;
 </script>
-<script src="/js/manager/soft_keyboard.js"></script>
+<% for my $script (&subs::js_script_urls('public/js/manager/soft_keyboard.js')) { %>
+<script src="<%= $script %>"></script>
+<% } %>
 <script>
 	(function () {
 		"use strict";

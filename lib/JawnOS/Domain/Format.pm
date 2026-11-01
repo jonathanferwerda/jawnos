@@ -710,4 +710,33 @@ sub days_in_month {
 	return &is_leap_year(($year || 0) + 0) ? 29 : 28;
 }
 
+# A large browser script is a short index plus a folder of ordered parts, the
+# same shape a big template page uses (a page plus a folder of its own name).
+# The index keeps its old path so a help topic, a source-grep test or a direct
+# <script> tag still names a real file; the parts are picked up in name order,
+# which is why they carry a numeric prefix. This is the one definition of the
+# convention - the bundle route, the help inventory and the test helper all
+# follow it.
+sub js_part_files {
+	my $rel = shift // '';
+	$rel =~ s{^/+}{};
+	$rel = 'public/' . $rel unless $rel =~ m{^public/};
+	return () unless -f $rel;
+	my @files = ($rel);
+	(my $dir = $rel) =~ s{\.js$}{};
+	push @files, sort grep { -f } glob("$dir/*.js") if -d $dir;
+	return @files;
+}
+
+# The same list as browser paths, for a template that loads a script directly
+# (the manager bundle uses js_part_files itself).
+sub js_script_urls {
+	my @urls;
+	foreach my $file (&js_part_files(@_)) {
+		(my $url = $file) =~ s{^public}{};
+		push @urls, $url;
+	}
+	return @urls;
+}
+
 1;

@@ -1,0 +1,513 @@
+function pseudonymSideSlide() {
+	if (!pseudonymSideLayout) { return; }
+	var L = pseudonymSideLayout;
+	var offset = pseudonymSideTucked ? Math.max(0, L.home_w - pseudonymSideReach) : 0;
+	var slide = L.left ? -offset : offset;
+	if (L.left) {
+		$('#pseudonym_home').css({ 'left': -offset + 'px', 'right': 'auto' });
+	}
+	else {
+		$('#pseudonym_home').css({ 'right': -offset + 'px', 'left': 'auto' });
+	}
+	$('#pseudonym_bar .pseudonym.bar').css({ 'left': (L.icon_left + slide) + 'px' });
+	// the tiles slip away with the pill: only the strip stays, and a sliver of
+	// tiles along it would be litter. The dock's own on/off rule decides which
+	// ones come back, so a switched-off icon stays off.
+	$('#pseudonym_bar .pseudonym.bar').each(function () {
+		if (pseudonymSideTucked) { $(this).hide(); }
+		else if (!(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden()) && jawnosDockIconState($(this).attr('toggle')) == 'on') { $(this).show(); }
+	});
+	if (L.search_in_dock) {
+		$('#search_toggle').css({ 'left': (L.icon_left + slide) + 'px' });
+		if (pseudonymSideTucked) { $('#search_toggle').hide(); }
+		else { $('#search_toggle').show(); }
+		if (L.left) {
+			$('#search_entanglement').css({ 'left': (L.home_w + 8 + slide) + 'px', 'right': 'auto' });
+		}
+		else {
+			$('#search_entanglement').css({ 'right': (L.home_w + 8 - slide) + 'px', 'left': 'auto' });
+		}
+	}
+}
+
+// Tuck a side dock away, or call it back out. An open search keeps the pill
+// with it - the panel hangs beside the pill, and tucking the pill out from
+// under an input being typed in would send the words away with it.
+function pseudonymSideSettle(tucked) {
+	if (typeof jawnosSideDock != 'function' || !jawnosSideDock()) { return 0; }
+	if (tucked && typeof jawnosSideSearchVisible == 'function' && jawnosSideSearchVisible()) { tucked = 0; }
+	pseudonymSideTucked = tucked ? 1 : 0;
+	pseudonymSideSlide();
+	return 1;
+}
+
+// the dock is sized for whichever edge it lives on, so a new screen shape
+// means new sizes
+$(window).on('resize', function() {
+	pseudonymFreeSpaceFinder();
+});
+
+$(document).on('click', '.keyboard.bc,.keyboard_tab', function(i) {
+	// the bar across the top is a handle, not a claim button
+	if ($(i.target).closest('.keyboard_drag_bar').length > 0) { return; }
+	var keyboard = $(this);
+	var id = i.target.id;
+	if ($(this).hasClass('keyboard_tab')) {
+		keyboard = $(this).closest('.keyboard');
+		var id = keyboard.attr('id');
+	}
+	keyboardDragEnabler(keyboard,id);
+});
+
+// the bar's own X sends the panel away; the pseudonym that called it brings it
+// back, and it is the only other way to drag it that goes with it
+$(document).on('click', '.keyboard_closer', function(e) {
+	e.stopPropagation();
+	$(this).closest('.keyboard').hide();
+});
+
+function keyboardDragEnabler(k,id,state) {
+
+	if (k.attr('id') != id) { return; }
+
+	if (k.attr('claimed') == 'yes' && state != 'on') {
+		k.attr('claimed','no');
+	}
+	else {
+		k.attr('claimed', 'yes');
+	}
+	keyboardDragBarMaker(k);
+}
+
+// A keyboard panel is moved by the thin bar across its top, so the body stays
+// free for tapping buttons and typing: a drag only ever starts on the bar. The
+// bar carries the panel's close button at its own right end. The bar is added
+// once; safe to call again on the same panel.
+function keyboardDragBarMaker(k) {
+	k = $(k);
+	if (k.length == 0) { return; }
+	if (k.children('.keyboard_drag_bar').length == 0) {
+		k.prepend('<div class="keyboard_drag_bar"><span class="keyboard_closer hover" hint="Close">✕</span></div>');
+	}
+	if (!k.hasClass('ui-draggable')) {
+		k.draggable({
+			handle: '.keyboard_drag_bar',
+			cancel: '.keyboard_closer',
+			start: function(p) {
+				var panel = $(this);
+				pseudonyms[panel.attr('id')] = Date.now();
+				keyboardIntervals = Date.now();
+			},
+			drag: function(p, ui) {
+				keyboardIntervals = Date.now();
+				// a floating panel stops at the clothesline, like a window does
+				if ($(this).css('position') == 'fixed') {
+					ui.position.top = Math.max(panelTopLimit(), ui.position.top);
+				}
+			},
+			stop: function(p) {
+				// the computed style is the only record of where the panel sits
+				// once it has been moved, so keep the lot (minus the claim border)
+				var panel = $(this);
+				var id = panel.attr('id');
+				if (panel.css('position') == 'fixed') {
+					var top = parseFloat(panel.css('top'));
+					if (!isNaN(top) && top < panelTopLimit()) {
+						panel.css({ 'top': panelTopLimit() + 'px' });
+					}
+				}
+				var css = {};
+				var style = panel[0].style;
+				$.each(style, function(i,v) {
+					if (!v.match('border-left')) {
+						css[v] = panel.css(v);
+					}
+				});
+				var jcss = JSON.stringify(css);
+				jawnosWindowStyleSet(id, jcss);
+				jawnosWindowPlaceSet(id, jcss);
+			}
+		});
+	}
+	else {
+		k.draggable('enable');
+	}
+}
+
+// Whether a hit-tested element belongs to the pseudonym dock. A tucked dock
+// rides its bars and keys outside #pseudonym_home's own box, so an id-only test
+// misses them and the dock slid away from under the pointer.
+function jawnosDockElement(el) {
+	el = $(el);
+	return el.attr('id') == 'pseudonym_home'
+		|| el.hasClass('pseudonym')
+		|| el.hasClass('keyboard')
+		|| el.hasClass('window_toggle')
+		|| el.hasClass('manager_search_result')
+		|| el.closest('#pseudonym_home').length > 0;
+}
+
+function pseudonymHomeShower(x,y,interval) { 
+	var was = 0;
+	var okay = 1;
+	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
+	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
+	var elements = document.elementsFromPoint(x, y);
+
+	if (interval) {
+		pseudonymHIntervals = interval;
+		was++;
+		okay = 1;
+	}
+	else if (!windowPhoneChecker()) {
+		pseudonymHIntervals = 100;
+	}
+	else {
+		pseudonymHIntervals = 4000;
+	}
+	if (!interval) {
+		$.each(elements, function(i,v) {
+			if (jawnosDockElement(v)) {
+				was++;
+			}
+			if ($(v).attr('id') == 'search' || $(v).attr('id') == 'search_toggle' || $(v).attr('id') == 'manager_search_results') {
+				okay = 0;
+			}
+
+		});
+	}
+	var t = $('#pseudonym_home').offset();
+
+	if (t && okay == 1) {
+		var w = $('#pseudonym_home').width();
+		var h = $('#pseudonym_home').height();
+		var wh = $(window).height();
+		if (was > 0) {
+			// a side dock slides straight back out over its strip
+			if (dock_side) {
+				pseudonymSideSettle(0);
+				pseudonymIntervals = Date.now();
+			}
+			// a dock on the top edge answers by slipping its row back down over
+			// the search strip; the row rides the home's top, so moving the home
+			// is all it takes
+			else if (dock_top) {
+				$('#pseudonym_home').css({ 'top': jawnosDockTopOffset() });
+				pseudonymFreeSpaceFinder();
+				var so = $('#search').offset();
+				$('#search_results').css({ 'top': Math.round(so.top + $('#search').outerHeight() + 8), 'bottom': 'auto' });
+				pseudonymIntervals = Date.now();
+			}
+			else {
+				$('.pseudonym.bar').each(function() {
+					var kbg = $(this);
+					var bottom = kbg.css('bottom');
+					var toggle = kbg.attr('toggle');
+					var diff = (0 - (h * .9));
+					var d = Number(numeral(bottom).format());
+					var diff_body = diff + d;
+
+					var diffplus =  Math.abs( d ) + Math.abs( diff );
+					if (diffplus == 80 && bottom != 80) {
+						if (was > 0) {
+							kbg.css({'bottom': diffplus });
+
+						}
+					}
+					var ls = jawnosDockIconState(toggle);
+					if (ls == 'on' && !(typeof jawnosDockIconsHidden == 'function' && jawnosDockIconsHidden())) {
+						$('.pseudonym.keyboard[toggle="' + toggle + '"]').show();
+					}
+					else if (kbg.hasClass('window_toggle')) {
+						kbg.show();
+					}
+				});
+				$('#pseudonym_home').css({ 'bottom': ((typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0) });
+				var o = $('#search').offset();
+				$('#search_results').css({ 'bottom': $(window).height() - o.top });
+				pseudonymIntervals = Date.now();
+			}
+		}
+		else if (Date.now() >= pseudonymIntervals + pseudonymHIntervals && !interval) {
+			pseudonymHomeHider(pseudonymHIntervals);
+		}
+
+		pseudonymHiderTimeout = setTimeout(function() {
+			console.log('clearing');
+			if (Date.now() >= pseudonymIntervals + pseudonymHIntervals) {
+				pseudonymHomeHider(pseudonymHIntervals);
+			}
+		},pseudonymHIntervals)
+	}
+}
+
+
+// The top dock's resting place: the home slips up until only its search strip
+// stays on screen, and the icon row rides above the visible edge with it. That
+// strip is where the mouse rests to call the row back down. Answers 0 for any
+// other edge, so the caller knows to size the dock the plain way instead.
+function pseudonymHomeTopSettle() {
+	if (typeof jawnosDockTop != 'function' || !jawnosDockTop()) { return 0; }
+	var home = $('#pseudonym_home');
+	// size the box for the top edge first - its height is what the tuck reaches
+	// past - then tuck it and let the row ride up with it. The strip it keeps is
+	// the search's row, or the sliver when the search rides elsewhere.
+	pseudonymFreeSpaceFinder();
+	home.css({ 'top': jawnosDockTopOffset() + Math.min(0, pseudonymDockStrip() - home.outerHeight()) });
+	pseudonymFreeSpaceFinder();
+	return 1;
+}
+
+function pseudonymHomeHider(interval) {
+	// both edges tuck away: the bottom slips down keeping the search and a strip
+	// beneath it on screen, the top slips up keeping its search strip on screen
+	// with the icon row above the visible edge. A hidden dock is already gone.
+	if (typeof jawnosDockHidden == 'function' && jawnosDockHidden()) { return; }
+	var dock_top = (typeof jawnosDockTop == 'function') && jawnosDockTop();
+	var dock_side = (typeof jawnosSideDock == 'function') && jawnosSideDock();
+	pseudonymFreeSpaceFinder();
+	var m = mouse_position();
+	// a desk whose mouse has never moved has no position yet; it counts as away
+	// from the dock rather than crashing elementsFromPoint on a non-finite
+	var was = 0;
+	if (isFinite(m.x) && isFinite(m.y)) {
+		var elements = document.elementsFromPoint(m.x, m.y);
+		$.each(elements, function(i,v) {
+			if (jawnosDockElement(v)) {
+				was++;
+			}
+		});
+	}
+
+	interval = interval || pseudonymHIntervals;
+	if (Date.now() >= pseudonymIntervals + interval && was == 0) {
+		if (dock_side) {
+			// the pill slips off its own edge, keeping the strip the pointer rests
+			// on to call it back
+			pseudonymSideSettle(1);
+		}
+		else if (dock_top) {
+			pseudonymHomeTopSettle();
+		}
+		else {
+			// tuck the dock down, but keep the search and a strip beneath it on
+			// screen: that strip is where the mouse rests to call the icons back. A
+			// taskbar sharing the bottom edge takes its height first, so the strip
+			// rests above the bar instead of lying across it.
+			var h = $('#pseudonym_home').outerHeight();
+			var edge = (typeof jawnosDockBottomOffset == 'function') ? jawnosDockBottomOffset() : 0;
+			var diff = Math.min(0, pseudonymDockStrip() - h) + edge;
+			$('#pseudonym_home').css({ 'bottom': diff });
+			$('.pseudonym.bar').hide();
+			$('.keyboard').each(function() {
+				var kbg = $(this);
+				var bottom = kbg.css('bottom');
+				var d = Number(numeral(bottom).format());
+				var diff_body = diff + d;
+
+				if (d == 80) {
+					kbg.css({'bottom': diff_body });
+				}
+				var o = $('#search').offset();
+				$('#search_results').css({ 'bottom': $(window).height() - o.top });
+			});
+		}
+	}
+	else {
+		// the pointer is on the dock: push the hide back instead of hiding
+		pseudonymIntervals = Date.now();
+	}
+}
+
+function pseudonymDraggableInitializer() {
+  $( ".pseudonym" ).draggable({
+    start: function(p) {
+			var id = p.target.id;
+			var timestamp = Date.now();
+			pseudonyms[p.target.id] = timestamp;
+			pseudonymIntervals = Date.now();
+    },
+    drag: function(p) {
+			pseudonymIntervals = Date.now();
+			var d = mouse_position();
+			pseudonymIntervals = Date.now();
+			pseudonymHomeShower(d.x,d.y,5000);
+			console.log('dragging');
+    },
+    stop: function(p) {
+			var d = {
+				top: p.originalEvent.target.offsetTop,
+				left: p.originalEvent.target.offsetLeft
+			}
+			var data = JSON.stringify(d);
+			jawnosWindowPlaceSet(p.target.id, data);
+
+			pseudonymIntervals = Date.now();
+
+			setTimeout(function() {
+				if (Date.now() >= pseudonymIntervals + pseudonymHideWait) {
+					pseudonymFreeSpaceFinder();
+				}
+			}, pseudonymHideWait);
+			setTimeout(function() {
+				pseudonymHomeHider(pseudonymHIntervals);
+			}, pseudonymHIntervals);
+    }
+
+  });
+}
+
+$(document).ready(function() {
+	mouse_position();
+	setTimeout(function() {
+		pseudonymHomeHider(pseudonymHIntervals);
+	}, 10);
+	pseudonymDraggableInitializer();
+});
+
+
+$(document).on('click', '.wind,.background', function() {
+	$('.keyboard.bc').each(function() {
+		var it = $(this);
+		var toggle = it.attr('id');
+		if (it.is(':visible') && it.attr('claimed') != 'yes') {
+			it.hide();
+			if (toggle == 'remote_control') {
+				$('#search').val('');
+			}
+		}
+	});
+});
+
+$(document).on('click','#room_check,#windshield_wiper,#drawing_check', function() {
+	var id = $(this).attr('id');
+	var value = $(this).prop('checked');
+	localStorage.setItem(id,value);
+
+});
+
+$(document).on('click', '.past_life,.life_direction', function() {
+	// the view's own timestamp stands in for whatever the pressed line does not
+	// carry; the whole payload it used to be fished out of is not kept any more
+	var timestamp = $(this).attr('timestamp') || sessionStorage.getItem('appts_timestamp');
+
+	var direction = $(this).attr('direction');
+	var room_check = $('#room_check').is(':checked');
+	var drawing_check = $('#drawing_check').is(':checked');
+	var start_menu = $(this).attr('start_menu');
+	$.ajax({
+		url: '/manager/past_life_recall',
+		type: 'GET',
+		data: { timestamp: timestamp, direction: direction, room_check: room_check, drawing_check: drawing_check },
+		success:function(response) {
+			var json = JSON.stringify(response);
+			if (start_menu != 'yes') {
+				timestamp = response.timestamp;
+				$('#time_machine').val(quality_inventory(response.timestamp));
+				localStorage.setItem('time_machine', quality_inventory(response.timestamp));
+			}
+
+
+			$('#life').html(response.appt_count);
+			$('#room_name').val(response.room || '');
+			$('#room_name').attr('timestamp', response.timestamp);
+			$('#room_name').attr('browser_tab_id', response.browser_tab_id);
+			$('#playbook').html(response.playbook);
+			if (response['portfolio'] && response['portfolio'].length > 0) {
+				$.each(response['portfolio'], function(i,v) {
+					$('#playbook').append('<img class="medium_thumb" id="' + v.uuid + '_thumb">');
+					document.getElementById(v.uuid + '_thumb').src = '/file_open?file=' + v.f + '&server_time=' + v.server_time;
+				});
+
+			}
+			$('.past_life,.life_direction').attr('timestamp', response.timestamp );
+			if ($('#windshield_wiper').is(':checked') || start_menu == 'yes' ){ $('.wind').each(function(i,v) { var ts = $(v).attr('timestamp'); closeWindow(ts)}); }
+			if (direction == 'load') {
+				manager_play(response);
+			}
+			windowSaver();
+		}
+	});
+});
+
+
+
+$(document).on('click', '.media_picker', function() {
+	var mp = $(this);
+	var type = mp.attr('type');
+	var kind = mp.attr('kind');
+	var device_id = mp.attr('device_id');
+	var selected = jawnosDevicePickGet(kind, device_id);
+
+	$('.media_picker[kind="' + kind + '"]').each(function(i,v) {
+		$(v).attr('status', 'off');
+		var d = $(v).attr('device_id');
+		jawnosDevicePickSet(kind, d, 'off');
+
+	});
+	if (selected == 'off') {
+		selected = 'on';
+		if (kind == 'speaker') {
+			document.getElementById('video').setSinkId(device_id);
+		}
+	}
+	else {
+		selected = 'off';
+	}
+	mp.attr('status',selected);
+	jawnosDevicePickSet(kind, device_id, selected);
+});
+
+
+function manager_play(response) {
+	windowRetriever(response['json_windows']);
+	//bti = response['browser_tab_id'];
+	//sessionStorage.setItem('browser_tab_id', bti);
+	var timestamp = Date.now();
+	var time = timestamp - response.timestamp;
+
+	var zone = quality_inventory(response.timestamp);
+
+	portfolioMaker(response['portfolio']);
+	sessionStorage.setItem('time_machine', zone);
+	$('#time_machine').val(zone);	
+}
+
+$(document).on('click', '#new_room', function() {
+	var app = $('#room_name').text();
+	var timestamp = sessionStorage.getItem('appts_timestamp');
+	$.ajax({
+		url: '/manager/new_room',
+		type: 'POST',
+		data: { app: app, timestamp: timestamp },
+		success: function(response) {
+			$('#room_name').val(response['room_name']);
+			bti = response['browser_tab_id'];
+			sessionStorage.setItem('browser_tab_id', bti);
+			websocketStop();
+			websocketStart();
+		}
+	});
+});
+
+$(document).on('click','#delete room', function(){
+	var timestamp = $(this).attr('timestamp');
+
+});
+
+$(document).on('change', '#room_name', function() {
+	var room_name = $(this).val();
+	var timestamp = $(this).attr('timestamp');
+	var browser_tab_id = $(this).attr('browser_tab_id');
+	$.ajax({
+		url: 'manager/room_namer',
+		type: 'POST',
+		data: { browser_tab_id: browser_tab_id, timestamp: timestamp, room_name: room_name },
+		success: function(response) {
+			$('#room_name').val(response['room_name']);
+			websocketStop();
+			websocketStart();
+		}
+	});
+});
+

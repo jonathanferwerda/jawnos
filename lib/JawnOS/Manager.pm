@@ -808,6 +808,11 @@ app->hook(after_static => sub {
 # the source of truth - nothing is generated on disk. With a stable ?string= and
 # the ETag below a repeat load revalidates to a 304, while a changed file (or a
 # version bump) is served at once.
+#
+# An entry may name an app that grew: foo.js stays as the index (its first
+# segment) and the rest live in foo/ in numeric name order. The route expands
+# that folder through subs::js_part_files, so a split needs no change here; the
+# list only says where each app starts in the concatenation.
 our @manager_bundle_files = qw(
 	/js/manager/stored.js
 	/js/manager/keyboard.js

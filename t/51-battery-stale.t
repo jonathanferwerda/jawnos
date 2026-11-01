@@ -5,6 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use RepoSource;
 
 # The phone's battery card sometimes went blank ("no battery") and came back a
 # little later. The cause is a timing stack, not a missing reading:
@@ -51,7 +52,7 @@ like($pph, qr/return \$battery_sample_memo = \\%held;/,
 	'the held reading is memoised like a fresh one');
 
 # 4. the Monitor keeps the value on screen and says how old it is
-my $monitor = read_file("$FindBin::Bin/../public/js/manager/monitor.js");
+my $monitor = js_source('public/js/manager/monitor.js');
 like($monitor, qr/if \(b\.stale\) \{/, 'the Monitor notices a stale sample');
 like($monitor, qr/b\.stale_age/, 'the Monitor reads the sample age');
 like($monitor, qr/jawnosT\('Last good reading'\)/, 'the stale hint is translatable');

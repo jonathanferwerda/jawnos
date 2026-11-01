@@ -1,0 +1,500 @@
+function foldersDrawerTop() {
+	return $('#folders_toolbar').outerHeight() + 5;
+}
+
+// Bring what is selected - or the folder being looked at - back to this
+// machine. The paths are on the machine being browsed, and it is that machine
+// which says where they belong; the queue panel shows the work as it goes.
+function foldersFetchHome(state) {
+	var st = state || folders;
+	var items = st.selected || [];
+	if (!items.length) {
+		var path = st.path || st.folder;
+		if (path) { items = [ { path: path } ]; }
+	}
+	var remote_uuid = st.remote_uuid || $('#folders').attr('remote_uuid') || '';
+	$.each(items, function (i, item) {
+		$.ajax({
+			url: '/manager/folders/archive/fetch',
+			type: 'POST',
+			data: { path: item['path'], remote_uuid: remote_uuid }
+		});
+	});
+	$('#folders_archive_queue').css({ 'top': foldersDrawerTop() }).show();
+	foldersArchiveQueue();
+}
+
+function foldersCommandConfirm(uuid) {
+	var box = $('.dialog_box[uuid="' + uuid + '"]');
+	var command = box.attr('command');
+	// the app picker saves a list of names, not a file command
+	if (command == 'pin_app') {
+		var pinned = [];
+		box.find('.desk_pin_check:checked').each(function () { pinned.push($(this).val()); });
+		box.remove();
+		if (typeof deskPinsSaveList == 'function') { deskPinsSaveList(pinned); }
+		return;
+	}
+	var surface = box.attr('state_surface') || 'folders';
+	var st = (surface == 'desk') ? desk : folders;
+	var inputs = {};
+	box.find('input').each(function() {
+		inputs[$(this).attr('name')] = $(this).val();
+	});
+	box.remove();
+	if (!command) { return; }
+	foldersCommandPOST({ command: command, inputs: inputs }, st);
+}
+
+// Choose (or reset) the folder the desk shows. The machine saves it; a visible
+// desk is read again at once.
+function foldersDeskFolder(folder) {
+	$.ajax({
+		url: '/manager/folders/desk/folder',
+		type: 'POST',
+		data: { folder: folder || '' },
+		success: function(response) {
+			if (response && response['ok'] && typeof deskRefreshIfVisible == 'function') {
+				deskRefreshIfVisible();
+			}
+		}
+	});
+}
+
+// The properties card's two buttons: put the path on the clipboard, or open its
+// folder in the browser.
+$(document).on('click', '.folders_copy_path', function () {
+	var button = $(this);
+	var path = button.attr('path') || '';
+	var done = function () {
+		button.text(jawnosT('Copied'));
+		setTimeout(function () { button.text(jawnosT('Copy path')); }, 1200);
+	};
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(path).then(done, done);
+	}
+	else {
+		var field = $('<textarea>').val(path).css({ position: 'fixed', left: '-9999px' }).appendTo('body');
+		field[0].select();
+		try { document.execCommand('copy'); } catch (e) { /* older engines */ }
+		field.remove();
+		done();
+	}
+});
+$(document).on('click', '.folders_open_parent', function () {
+	var path = $(this).attr('path');
+	if (path) { foldersOpener({ folder: path, remote_uuid: ($(this).attr('remote') || '') }); }
+});
+
+// What a command with nothing more to ask does: the clipboard going into the
+// folder on screen, and the desktop's own opener for a file.
+function foldersPaste(state) {
+	var st = state || folders;
+	var surface = (st === desk) ? 'desk' : 'folders';
+	foldersCommandPOST({ command: 'paste' }, st);
+	// the paste is on its way, so a second one does not queue it again
+	st.clipboard = [];
+	st.command = undefined;
+	foldersApplyCut(surface);
+}
+
+function foldersOpenWith(state) {
+	$.ajax({
+		url: '/manager/folders/open_with',
+		type: 'POST',
+		data: { folders: JSON.stringify(state || folders) }
+	});
+}
+
+// A command from a dialog's OK, or one that needs no dialog at all. The answer
+// is a dialog when there is something to say - a job's progress, or why the
+// command would not go - and the folder is read again when it went.
+function foldersCommandPOST(data, state) {
+	var st = state || folders;
+	var surface = (st === desk) ? 'desk' : 'folders';
+	return $.ajax({
+		url: '/manager/folders/context/command',
+		type: 'POST',
+		data: {
+			command: data['command'],
+			inputs: JSON.stringify(data['inputs'] || {}),
+			folders: JSON.stringify(st)
+		},
+		success: function(response) {
+			if (response && response['dialog']) {
+				var box = $(response['dialog']).attr('state_surface', surface);
+				$('#dialog_boxes').append(box);
+				appointment_chron();
+				foldersJobWatcher();
+			}
+			if (response && response['status'] == 'ok') {
+				foldersRefreshAll();
+			}
+		}
+	});
+}
+
+// Read every surface again: the window (when it is open) and the desk (when it
+// is the chosen background). A job's own dialog calls this when it finishes.
+function foldersRefreshAll() {
+	if ($('#folders').length) {
+		foldersOpener({ folder: $('#folders').attr('folder') || folders.folder });
+	}
+	if (typeof deskRefreshIfVisible == 'function') { deskRefreshIfVisible(); }
+}
+function foldersRefresh() { foldersRefreshAll(); }
+
+// A job's progress lives in the dialog box that started it: the box carries
+// the job's id and asks after it once a second until the job is finished or
+// failed, when the box keeps the last word and the folder is read again. The
+// asking stops when no box is watching anything.
+var folders_job_interval;
+function foldersJobWatcher() {
+	if (folders_job_interval) { return; }
+	folders_job_interval = setInterval(function() {
+		var boxes = $('.dialog_box[job]');
+		if (!boxes.length) {
+			clearInterval(folders_job_interval);
+			folders_job_interval = undefined;
+			return;
+		}
+		boxes.each(function() {
+			var box = $(this);
+			$.ajax({
+				url: '/manager/folders/job',
+				type: 'GET',
+				data: { id: box.attr('job') },
+				success: function(job) {
+					if (!job || job['status'] != 'ok') {
+						box.removeAttr('job').find('.job_progress').text('that job is gone');
+						return;
+					}
+					var word = job['progress'] || job['state'];
+					if (job['errors'] && job['errors'].length) { word = word + '\n' + job['errors'].join('\n'); }
+					box.find('.job_progress').text(word);
+					if (job['state'] == 'finished' || job['state'] == 'failed') {
+						box.removeAttr('job');
+						box.find('.job_stop').remove();
+						foldersRefreshAll();
+					}
+				}
+			});
+		});
+	}, 1000);
+}
+
+$(document).on('click', '.job_stop', function() {
+	var button = $(this);
+	button.closest('.dialog_box').find('.job_progress').text('stopping...');
+	$.ajax({
+		url: '/manager/folders/job/cancel',
+		type: 'POST',
+		data: { id: button.attr('job') }
+	});
+});
+
+// ---- archive ---------------------------------------------------------------
+// Put the selection (or the folder being looked at) on the archive queue. The
+// machine decides which location each item belongs to and where it goes; what
+// comes back is how many were queued and why anything was not.
+function foldersArchive(state) {
+	var st = state || folders;
+	$('body').css({ 'cursor': 'progress' });
+	$.ajax({
+		url: '/manager/folders/archive',
+		type: 'POST',
+		data: { folders: JSON.stringify(st) },
+		success: function (response) {
+			$('body').css({ 'cursor': 'auto' });
+			if (response && response.dialog) {
+				$('#dialog_boxes').append(response.dialog);
+			}
+			if ($('#folders_archive_queue').is(':visible')) { foldersArchiveQueue(); }
+		},
+		error: function () {
+			$('body').css({ 'cursor': 'auto' });
+		}
+	});
+}
+
+var folders_archive_interval;
+var folders_archive_locations = [];
+function foldersArchiveQueue() {
+	$.ajax({
+		url: '/manager/folders/archive',
+		type: 'GET',
+		success: function (response) {
+			var box = $('#folders_archive_queue').empty();
+			folders_archive_locations = (response && response['locations']) || [];
+			if (folders_archive_locations.length) {
+				var pick = $('<select>').appendTo(box);
+				$.each(folders_archive_locations, function (i, l) {
+					$('<option>').attr('value', l['location']).text(l['location'] + (l['remote_hostname'] ? ' on ' + l['remote_hostname'] : '')).appendTo(pick);
+				});
+				$('<button>').addClass('hover').text('rescan').css({ 'float': 'right' }).on('click', function () {
+					foldersArchiveRescan(pick.val());
+				}).appendTo(box);
+			}
+			var jobs = (response && response['jobs']) || [];
+			if (!jobs.length) {
+				$('<i>').text('Nothing is queued for the archive.').appendTo(box);
+				return;
+			}
+			$.each(jobs, function (i, job) {
+				var item = job['item'] || {};
+				var name = (item['relative'] && item['relative'].length) ? item['relative'] : (item['path'] || '');
+				var line = $('<div>').css({ 'border-bottom': 'solid 1px', 'padding': '3px', 'overflow-wrap': 'break-word' });
+				var buttons = $('<span>').css({ 'float': 'right' });
+				if (job['state'] == 'failed' || job['state'] == 'finished') {
+					$('<button>').addClass('hover').text('retry').on('click', function () { foldersArchiveJob('retry', job['id']); }).appendTo(buttons);
+				}
+				else {
+					$('<button>').addClass('hover').text('stop').on('click', function () { foldersArchiveJob('cancel', job['id']); }).appendTo(buttons);
+				}
+				buttons.appendTo(line);
+				$('<b>').text(job['state']).appendTo(line);
+				if (job['task'] == 'archive_manifest_rescan') {
+					$('<span>').text(' reading ' + (item['location'] || '?') + ' again').appendTo(line);
+				}
+				else {
+					$('<span>').text(' ' + name + '  ->  ' + (item['location'] || '?') + ' on ' + (item['remote_hostname'] || '?')).appendTo(line);
+				}
+				if (job['errors'] && job['errors'].length) {
+					$('<div>').css({ 'font-size': '13px' }).text(job['errors'].join('; ')).appendTo(line);
+				}
+				else if (job['progress']) {
+					$('<div>').css({ 'font-size': '13px' }).text(job['progress']).appendTo(line);
+				}
+				else if (job['sent'] || job['skipped']) {
+					$('<div>').css({ 'font-size': '13px' }).text((job['sent'] || 0) + ' sent, ' + (job['skipped'] || 0) + ' already there').appendTo(line);
+				}
+				box.append(line);
+			});
+		}
+	});
+}
+
+function foldersArchiveJob(action, id) {
+	$.ajax({
+		url: '/manager/folders/archive/' + action,
+		type: 'POST',
+		data: { id: id },
+		success: function () { foldersArchiveQueue(); }
+	});
+}
+
+// Ask the machine holding a location's archive to read that location again.
+// The work happens there, where the drive is, not here.
+function foldersArchiveRescan(location) {
+	var remote_uuid = '';
+	$.each(folders_archive_locations, function (i, l) {
+		if (l['location'] == location) { remote_uuid = l['remote_uuid']; }
+	});
+	$.ajax({
+		url: '/manager/folders/archive/manifest/rescan',
+		type: 'POST',
+		data: { location: location, remote_uuid: remote_uuid },
+		success: function () { foldersArchiveQueue(); }
+	});
+}
+
+// ---- sidebar ---------------------------------------------------------------
+// One observer per window instance. The window's contents are replaced on every
+// navigation, so the observer is re-made for the fresh root each time.
+var folders_observers = {};
+function foldersObserveRoot(root) {
+	if (!root || !root.length || typeof ResizeObserver == 'undefined') { return; }
+	var id = root.attr('data-folders-id');
+	if (!id) { return; }
+	var old = folders_observers[id];
+	if (old) { try { old.disconnect(); } catch (e) { /* already gone */ } }
+	var observer = new ResizeObserver(function () { foldersSidebarApply(root); });
+	observer.observe(root[0]);
+	folders_observers[id] = observer;
+}
+$(document).on('click', '#folders_sidebar_toggle', function () {
+	foldersActivateFrom(this);
+	var root = $(this).closest('.folders_app');
+	var pref = localStorage.getItem('folders_sidebar');
+	localStorage.setItem('folders_sidebar', pref == 'off' ? 'on' : 'off');
+	foldersSidebarApply(root);
+});
+$(document).on('click', '.folders_sidebar_place', function () {
+	var root = $(this).closest('.folders_app');
+	foldersActivate(root);
+	var path = $(this).attr('path');
+	if (path) { foldersOpener({ folder: path }); }
+});
+
+// ---- drawers ---------------------------------------------------------------
+$(document).on('click', '#folders_bookmarks_toggle', function () {
+	foldersActivateFrom(this);
+	var box = $('#folders_bookmarks');
+	if (box.is(':visible')) {
+		box.hide();
+	}
+	else {
+		box.css({ 'top': foldersDrawerTop() }).show();
+	}
+});
+
+// A bookmark is navigation only, so it works the same on a remote machine:
+// the path means something there, and the machine being browsed stays put.
+$(document).on('click', '.folders_bookmark', function () {
+	foldersActivateFrom(this);
+	var path = $(this).attr('path');
+	$('#folders_bookmarks').hide();
+	foldersOpener({ folder: path });
+});
+
+$(document).on('click', '#folders_archive_toggle', function () {
+	foldersActivateFrom(this);
+	var box = $('#folders_archive_queue');
+	if (box.is(':visible')) {
+		box.hide();
+		clearInterval(folders_archive_interval);
+	}
+	else {
+		box.css({ 'top': foldersDrawerTop() }).show();
+		foldersArchiveQueue();
+		folders_archive_interval = setInterval(foldersArchiveQueue, 3000);
+	}
+});
+
+// ---- keyboard --------------------------------------------------------------
+// The listing is one focusable control. A focused item is the selection, so the
+// arrows walk it, Shift+arrows take a run, and the usual file-manager keys work.
+function foldersGridColumns(container) {
+	if (container.attr('data-view') == 'list') { return 1; }
+	var first = container.find('.folders_file').first();
+	if (!first.length) { return 1; }
+	var item_width = first.outerWidth(true) || 110;
+	return Math.max(1, Math.floor((container.innerWidth() || $(window).width()) / item_width));
+}
+
+function foldersMoveSelection(surface, delta, extend, jump) {
+	var container = foldersContainer(surface);
+	var st = foldersState(surface);
+	var items = container.find('.folders_file');
+	if (!items.length) { return; }
+	var current = items.filter('.selected');
+	var index = current.length ? items.index(current.last()) : -1;
+	var next;
+	if (jump == 'home') { next = 0; }
+	else if (jump == 'end') { next = items.length - 1; }
+	else if (index < 0) { next = (delta > 0) ? 0 : items.length - 1; }
+	else { next = Math.min(items.length - 1, Math.max(0, index + delta)); }
+	if (extend && st.anchor !== undefined && items.eq(st.anchor).length) {
+		var from = Math.min(st.anchor, next);
+		var to = Math.max(st.anchor, next);
+		items.removeClass('selected');
+		items.slice(from, to + 1).addClass('selected');
+	}
+	else {
+		items.removeClass('selected');
+		items.eq(next).addClass('selected');
+		st.anchor = next;
+	}
+	var el = items.eq(next);
+	foldersSelectionSync(surface, el);
+	if (el.length) { el[0].scrollIntoView({ block: 'nearest' }); }
+}
+
+function foldersKey(e, surface) {
+	var container = foldersContainer(surface);
+	if (!container.length) { return; }
+	if ($(e.target).is('input, textarea, select, [contenteditable="true"]')) { return; }
+	var st = foldersState(surface);
+	var items = container.find('.folders_file');
+	var key = e.key || '';
+	var ctrl = e.ctrlKey || e.metaKey;
+	if (ctrl && (key == 'a' || key == 'A')) {
+		e.preventDefault();
+		items.not('.desk_place').addClass('selected');
+		foldersSelectionSync(surface, items.not('.desk_place').last());
+		return;
+	}
+	if (ctrl && (key == 'c' || key == 'C')) { e.preventDefault(); foldersCommand({ command: 'copy' }, st); return; }
+	if (ctrl && (key == 'x' || key == 'X')) { e.preventDefault(); foldersCommand({ command: 'cut' }, st); return; }
+	if (ctrl && (key == 'v' || key == 'V')) { e.preventDefault(); foldersCommand({ command: 'paste' }, st); return; }
+	if (ctrl && (key == 'l' || key == 'L') && surface == 'folders') { e.preventDefault(); foldersPathEdit(true); return; }
+	if (key == 'Escape') {
+		e.preventDefault();
+		if ($('#folders').hasClass('edit_path')) { foldersPathEdit(false); }
+		else { foldersClearSelection(surface); }
+		return;
+	}
+	if (key == 'Delete') {
+		e.preventDefault();
+		if (st.selected && st.selected.length) { foldersCommand({ command: e.shiftKey ? 'shred' : 'delete' }, st); }
+		return;
+	}
+	if (key == 'F2') {
+		e.preventDefault();
+		if (st.selected && st.selected.length == 1) { foldersCommand({ command: 'rename' }, st); }
+		return;
+	}
+	if (key == 'Enter') {
+		e.preventDefault();
+		var chosen = items.filter('.selected').last();
+		if (chosen.length && chosen.hasClass('desk_app')) {
+			if (typeof deskOpenApp == 'function') { deskOpenApp(chosen.attr('app')); }
+			else if (typeof appWindowOpener == 'function') { appWindowOpener(chosen.attr('app'), Date.now(), { visible: 'yes' }); }
+			return;
+		}
+		if (chosen.length && chosen.hasClass('desk_place')) {
+			foldersOpener({ folder: chosen.attr('path'), remote_uuid: '' });
+			return;
+		}
+		if (st.selected && st.selected.length == 1) {
+			st.path = st.selected[0]['path'];
+			st.type = st.selected[0]['type'];
+			foldersCommand({ command: 'open' }, st);
+		}
+		return;
+	}
+	if (key == 'ArrowLeft' || key == 'ArrowRight' || key == 'ArrowUp' || key == 'ArrowDown') {
+		e.preventDefault();
+		// Alt+Left/Right is the file-manager way back and forward through the
+		// folders already visited; plain arrows walk the listing
+		if (surface == 'folders' && e.altKey && (key == 'ArrowLeft' || key == 'ArrowRight')) {
+			foldersHistoryMove((key == 'ArrowLeft') ? -1 : 1);
+			return;
+		}
+		var delta = 0;
+		if (key == 'ArrowRight') { delta = 1; }
+		else if (key == 'ArrowLeft') { delta = -1; }
+		else {
+			var cols = foldersGridColumns(container);
+			delta = (key == 'ArrowDown') ? cols : -cols;
+		}
+		foldersMoveSelection(surface, delta, e.shiftKey);
+		return;
+	}
+	if (key == 'Home' || key == 'End') {
+		e.preventDefault();
+		foldersMoveSelection(surface, 0, e.shiftKey, (key == 'Home') ? 'home' : 'end');
+		return;
+	}
+	if (key.length == 1 && !ctrl && !e.altKey) {
+		var now = Date.now();
+		if (now - folders_typeahead_at > 900) { folders_typeahead = ''; }
+		folders_typeahead += key.toLowerCase();
+		folders_typeahead_at = now;
+		var match = null;
+		items.each(function () {
+			if (match) { return; }
+			if (($(this).attr('data-name') || '').toLowerCase().indexOf(folders_typeahead) == 0) { match = $(this); }
+		});
+		if (match) {
+			e.preventDefault();
+			items.removeClass('selected');
+			match.addClass('selected');
+			st.anchor = items.index(match);
+			foldersSelectionSync(surface, match);
+			match[0].scrollIntoView({ block: 'nearest' });
+		}
+	}
+}
+$(document).on('keydown', '#folders_contents', function(e) { foldersKey(e, 'folders'); });
+$(document).on('keydown', '#desk_layer', function(e) { foldersKey(e, 'desk'); });
