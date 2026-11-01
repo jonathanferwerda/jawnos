@@ -266,6 +266,12 @@ sub appt_header_printer {
 	return wantarray ? ($header, $appts) : $header;
 }
 
+# The domain layer was written while Mojolicious::Lite was imported into package
+# subs, so its controller builder says `app->...`; that import is gone (it built a
+# second app and re-pointed app() in Manager). There is one application object,
+# Manager's, and a background render is built from it.
+sub app { return $Manager::APP }
+
 sub controller_builder {
 	my ($c,$params) = @_;
 	unless ($c) {
