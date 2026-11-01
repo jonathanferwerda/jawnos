@@ -32,8 +32,8 @@ use File::Find;
 
 my $root = Cwd::abs_path("$Bin/..");
 chdir $root or die "cannot chdir to $root: $!\n";
-require "./language.pl";
-require "./help.pl";
+require "./perl/language.pl";
+require "./perl/help.pl";
 no warnings 'once';
 
 my $out_file = 'i18n/strings.json';

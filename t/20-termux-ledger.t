@@ -90,7 +90,7 @@ my $master = do {
 	<$jf>;
 };
 like($master, qr/sub president_command/, 'the master builds the tree command itself');
-like($master, qr/exec '\$interp' \.\/President\.pl/, 'and it execs the interpreter by path');
+like($master, qr/exec '\$interp' \.\/perl\/President\.pl/, 'and it execs the interpreter by path');
 unlike($master, qr/'program'\s*=>\s*'\.\/President\.pl'/, 'nothing relies on the shebang');
 
 done_testing();

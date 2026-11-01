@@ -47,7 +47,7 @@ use Cwd ();
 # run from the repo root (the parent of scripts/)
 my $root = Cwd::abs_path("$Bin/..");
 chdir $root or die "cannot chdir to $root: $!";
-require "./language.pl";
+require "./perl/language.pl";
 
 my $port       = 3210;
 my $no_browser = 0;

@@ -6,8 +6,8 @@ $| = 1; # Enable command autoflush
 
 use FindBin qw($Bin);
 
-# Change directory to the script's home location
-chdir($Bin) or die "Cannot change directory to $Bin: $!";
+# Change directory to the tree the script lives in (it lives in perl/)
+chdir("$Bin/..") or die "Cannot change directory to $Bin/..: $!";
 package President;
 print $0 ."\n";
 print `pwd` . "\n";
@@ -66,9 +66,9 @@ if (-e $logfile) {
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 if ($working_dir ne $present_dir) {
-	my @folder = split '/', $working_dir;
-	pop @folder;
-	my $new_dir = join '/', @folder;
+	# this file lives in perl/, so the tree is one level above the script.
+	# FindBin exported $Bin into main, but this code runs in package President.
+	my $new_dir = "$FindBin::Bin/..";
 	print 'chdir to ' . $new_dir . "\n";
 	chdir $new_dir;
 	print `pwd` . "\n";
@@ -82,11 +82,11 @@ my $environment = shift;
 my $cache_dir = &home('~/') . '.president';
 `mkdir -p $cache_dir` unless -e $cache_dir;
 
-require './gb.pl';
-require './AddressDirectory.pl';
+require './perl/gb.pl';
+require './perl/AddressDirectory.pl';
 # The Crew: this machine's abilities and the house's job placement. It calls
 # &subs::... at run time and needs nothing loaded before it.
-require './crew.pl';
+require './perl/crew.pl';
 
 # The archive root (config.json archive_dir) gets one folder per location type,
 # made here if it is missing. A blank archive_dir means this machine is not an
@@ -646,7 +646,7 @@ sub manager_starter() {
 			my $morbo = Mojo::Server::Morbo->new;
 			$morbo->backend->watch(['./', './templates']);
 			$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-			$morbo->run('./Manager.pl');
+			$morbo->run('./perl/Manager.pl');
 		}, { name => 'Dev Locker Server' });
 		if ($ENV{PORT_AHOY} != $ENV{PORT_MSG}) {
 			&subs::subprocessor(sub {
@@ -657,7 +657,7 @@ sub manager_starter() {
 				my $morbo = Mojo::Server::Morbo->new;
 				$morbo->backend->watch(['./', './templates']);
 				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-				$morbo->run('./Manager.pl');
+				$morbo->run('./perl/Manager.pl');
 			}, { name => 'Dev WS Server' });
 		}
 		&subs::subprocessor(sub {
@@ -668,7 +668,7 @@ sub manager_starter() {
 			my $morbo = Mojo::Server::Morbo->new;
 			$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
 			$morbo->backend->watch(['./', './templates']);
-			$morbo->run('./Manager.pl');
+			$morbo->run('./perl/Manager.pl');
 		}, { name => 'Dev Main Server' });
 	}
 	elsif ($config->{'environment'} eq 'production') {
@@ -680,7 +680,7 @@ sub manager_starter() {
 			$ENV{PURPOSE} = 'locker';
 			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
 			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./Manager.pl');
+			$prefork->load_app('./perl/Manager.pl');
 			$prefork->workers(1);
 			$prefork->run;
 			$log->info('after locker server');
@@ -694,7 +694,7 @@ sub manager_starter() {
 			my @ws_listeners = ( 'https://*:' . $ws_port . $certs, 'http://127.0.0.1:' . $ws_plain_port );
 			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => \@ws_listeners), keep_alive => 1);
 			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./Manager.pl');
+			$prefork->load_app('./perl/Manager.pl');
 			$prefork->workers(1);
 			$prefork->run;
 			$log->info('after ws server');
@@ -707,7 +707,7 @@ sub manager_starter() {
 			$ENV{PURPOSE} = 'main';
 			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
 			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./Manager.pl');
+			$prefork->load_app('./perl/Manager.pl');
 			# A handheld runs this whole tree in a few hundred MB that Android's
 			# low-memory killer reclaims the moment the device tightens, so the pool
 			# stays small - but not one. A worker serves one request at a time, and on
@@ -735,7 +735,7 @@ sub manager_starter() {
 			$ENV{PURPOSE} = 'alarm';
 			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
 			$prefork->heartbeat_timeout(200);
-			$prefork->load_app('./Alarm.pl');
+			$prefork->load_app('./perl/Alarm.pl');
 			$prefork->workers(1);
 			$prefork->run;
 			$log->info('after alarm server');
@@ -755,13 +755,13 @@ sub manager_starter() {
 				print "Starting Development Watch Server on $watch_port\n";
 				my $morbo = Mojo::Server::Morbo->new;
 				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-				$morbo->run('./watch.pl');
+				$morbo->run('./perl/watch.pl');
 			}
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro Watch Server on port " . $watch_port . "\n";
 				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]));
 				$prefork->heartbeat_timeout(200);
-				$prefork->load_app('./watch.pl');
+				$prefork->load_app('./perl/watch.pl');
 				$prefork->workers($device eq 'mobile' ? 1 : ($device eq 'server' ? 2 : 1));
 				$prefork->run;
 			}
@@ -775,13 +775,13 @@ sub manager_starter() {
 				print "Starting Development TTY Server on $tty_port\n";
 				my $morbo = Mojo::Server::Morbo->new;
 				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-				$morbo->run('./teletype.pl');
+				$morbo->run('./perl/teletype.pl');
 			}
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro TTY Server on port " . $tty_port . "\n";
 				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
 				$prefork->heartbeat_timeout(200);
-				$prefork->load_app('./teletype.pl');
+				$prefork->load_app('./perl/teletype.pl');
 				$prefork->workers($device eq 'mobile' ? 1 : ($device eq 'server' ? 3 : 2));
 				$prefork->run;
 			}
@@ -797,13 +797,13 @@ sub manager_starter() {
 				print "Starting Development TTYwss Server on $ws_tty_port\n";
 				my $morbo = Mojo::Server::Morbo->new;
 				$morbo = $morbo->daemon(Mojo::Server::Daemon->new);
-				$morbo->run('./teletype.pl');
+				$morbo->run('./perl/teletype.pl');
 			}
 			elsif ($config->{'environment'} eq 'production') {
 				print "Starting Pro TTYwss Server on port " . $ws_tty_port . "\n";
 				my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
 				$prefork->heartbeat_timeout(200);
-				$prefork->load_app('./teletype.pl');
+				$prefork->load_app('./perl/teletype.pl');
 				$prefork->workers(1);
 				$prefork->run;
 			}
@@ -1204,7 +1204,7 @@ sub utility_functions() {
 	$gb::utility_functions_watcher = 1;
 	print "Starting Alarm Clock\n";
 
-	require './Alarm.pl';
+	require './perl/Alarm.pl';
 	# Bring up the JawnOS BLE bridge listener (the Tasker replacement).
 	&subs::ble_listener_start();
 	# Keep a pristine copy of the built-in utilities so newly added ones show up

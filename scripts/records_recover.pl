@@ -20,7 +20,7 @@ use warnings;
 use FindBin;
 require Mojo::JSON;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
-require './subroutines.pl';
+require './perl/subroutines.pl';
 
 my ($backup, $apply, $json, $older, $any) = (undef, 0, 0, 86400000, 0);
 my @apps = ('home', 'alone', 'urbaniak', 'eczema', 'snow', 'winter', 'autumn');

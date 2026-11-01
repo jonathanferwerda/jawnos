@@ -31,7 +31,7 @@ sub repo_root { abs_path(dirname(__FILE__) . '/../..') }
 sub manager_source {
 	my $root  = repo_root();
 	my @files = (
-		"$root/Manager.pl",
+		"$root/perl/Manager.pl",
 		"$root/lib/JawnOS.pm",
 		"$root/lib/JawnOS/Manager.pm",
 		"$root/lib/JawnOS/Routes.pm",

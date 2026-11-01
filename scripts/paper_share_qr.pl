@@ -14,7 +14,7 @@ use FindBin qw($RealBin);
 my $repo = $RealBin;
 $repo =~ s{/scripts$}{};
 chdir $repo or die "cannot chdir $repo: $!";
-require "$repo/subroutines.pl";
+require "$repo/perl/subroutines.pl";
 
 my $file = shift @ARGV;
 die "usage: $0 <shares.txt>\n" unless defined $file && length $file;

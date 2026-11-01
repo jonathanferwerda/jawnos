@@ -13,7 +13,7 @@ use strict;
 use warnings;
 use FindBin;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
-require './help.pl';
+require './perl/help.pl';
 
 my $check = grep { $_ eq '--check' } @ARGV;
 my $path = 'docs/KEYBOARD-SHORTCUTS.md';

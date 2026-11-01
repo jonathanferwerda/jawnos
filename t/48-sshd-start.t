@@ -43,9 +43,9 @@ is_deeply([ subs::sshd_command('', '/tmp/home') ], [],
 
 # The source must keep the ownership straight: Manager starts it, President does
 # not, and the recovery script does not fall back to a bare `sshd` either.
-my $subs = do { local $/; open(my $fh, '<', "$FindBin::Bin/../subroutines.pl") or die $!; <$fh> };
+my $subs = do { local $/; open(my $fh, '<', "$FindBin::Bin/../perl/subroutines.pl") or die $!; <$fh> };
 my $manager = manager_source();
-my $president = do { local $/; open(my $fh, '<', "$FindBin::Bin/../President.pl") or die $!; <$fh> };
+my $president = do { local $/; open(my $fh, '<', "$FindBin::Bin/../perl/President.pl") or die $!; <$fh> };
 like($manager, qr/sshd_running\(\)/,
 	'the manager checks whether sshd is already running');
 like($manager, qr/subs::sshd_start\(\)/,

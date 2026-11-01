@@ -203,7 +203,7 @@ print "runtimes already on the release\n" unless @up;
 sub update_downloads_json {
 	my ($j) = @_;
 	return unless ($j->{'product'} || '') eq 'app';
-	my $path = "$root/downloads.json";
+	my $path = "$root/server/downloads.json";
 	my $data = {};
 	if (-f $path) {
 		my $text = eval { read_file($path) };

@@ -17,7 +17,7 @@ use warnings;
 no warnings 'once';
 use FindBin;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
-require './subroutines.pl';
+require './perl/subroutines.pl';
 use Mojo::UserAgent;
 use Mojo::DOM;
 use Mojo::JSON qw(decode_json encode_json);

@@ -5,7 +5,7 @@ no warnings;
 use IO::Compress::Gzip qw(gzip);
 use Data::Dumper;
 
-require "./subroutines.pl";
+require "./perl/subroutines.pl";
 our $config_file = read_file('./config.json');
 our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});

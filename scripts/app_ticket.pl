@@ -27,7 +27,7 @@ use FindBin qw($RealBin);
 chdir "$RealBin/.." or die "no jawnos dir at $RealBin/..\n";
 
 $ENV{PURPOSE} = '';
-eval { require './Manager.pl'; 1 } or die "app_ticket: no house here (config.json?)\n";
+eval { require './perl/Manager.pl'; 1 } or die "app_ticket: no house here (config.json?)\n";
 
 my $client = shift @ARGV // '';
 $client =~ s/[^A-Za-z0-9_-]//g;

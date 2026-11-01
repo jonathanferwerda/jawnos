@@ -43,7 +43,7 @@ use Getopt::Long qw(GetOptionsFromArray :config no_auto_abbrev no_ignore_case);
 use Time::HiRes qw(time);
 
 chdir "$FindBin::Bin/.." or die "peer_pull: cannot find the jawnos root\n";
-require './subroutines.pl';
+require './perl/subroutines.pl';
 
 sub usage {
 	return <<'USAGE';

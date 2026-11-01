@@ -17,7 +17,7 @@ use strict;
 use warnings;
 use FindBin;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
-require './help.pl';
+require './perl/help.pl';
 
 my $quiet = grep { $_ eq '--quiet' } @ARGV;
 my $all = grep { $_ eq '--all' } @ARGV;

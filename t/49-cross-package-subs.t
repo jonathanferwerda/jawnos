@@ -34,7 +34,7 @@ use File::Find qw(find);
 my $root = abs_path("$FindBin::Bin/..");
 
 my @rel;
-push @rel, map { basename($_) } glob("$root/*.pl");
+push @rel, map { 'perl/' . basename($_) } glob("$root/perl/*.pl");
 push @rel, map { 'scripts/' . basename($_) } glob("$root/scripts/*.pl");
 if (-d "$root/lib") {
 	find(
@@ -173,8 +173,8 @@ for my $name (@rel) {
 	};
 }
 
-# A required path is matched by basename: `./Manager.pl`, `"$repo/x.pl"` and
-# `"$RealBin/../subroutines.pl"` all name a file in this scan. A module name
+# A required path is matched by basename: `./perl/Manager.pl`, `"$repo/x.pl"` and
+# `"$RealBin/../perl/subroutines.pl"` all name a file in this scan. A module name
 # (require JawnOS::Domain::Loader) maps to the file under lib/.
 sub target_of {
 	my $raw = shift;
@@ -186,7 +186,7 @@ sub target_of {
 	}
 	if ($raw =~ /\.pl$/) {
 		my $base = basename($raw);
-		for my $candidate ("./$base", "./scripts/$base") {
+		for my $candidate ("./perl/$base", "./$base", "./scripts/$base") {
 			return $candidate if $scan{$candidate};
 		}
 		return undef;
@@ -307,7 +307,7 @@ subtest 'every package-qualified call names something that exists' => sub {
 
 subtest 'each server entry point loads what it calls into' => sub {
 	# The entry points a President worker starts with load_app.
-	my @entries = ('./President.pl', './Manager.pl', './watch.pl', './teletype.pl', './Alarm.pl');
+	my @entries = ('./perl/President.pl', './perl/Manager.pl', './perl/watch.pl', './perl/teletype.pl', './perl/Alarm.pl');
 	for my $entry (@entries) {
 		ok($scan{$entry}, "$entry exists") or next;
 		my $closure = closure_of($entry);
@@ -355,8 +355,8 @@ subtest 'no new require cycles' => sub {
 		$scc{$_} = \@members for @members;
 	}
 	my %allowed = (
-		'./Websocket.pl|./gb.pl|./subroutines.pl' => 1,
-		'./teletype.pl|./watch.pl'               => 1,
+		'./perl/Websocket.pl|./perl/gb.pl|./perl/subroutines.pl' => 1,
+		'./perl/teletype.pl|./perl/watch.pl'               => 1,
 	);
 	my (@new, %seen);
 	for my $members (values %scc) {
@@ -372,7 +372,7 @@ subtest 'no new require cycles' => sub {
 
 subtest 'scripts load the packages they call into' => sub {
 	# TODO: subroutines.pl calls 78 `Manager::*` subs, so every script that
-	# loads only ./subroutines.pl has calls it cannot resolve in that process.
+	# loads only ./perl/subroutines.pl has calls it cannot resolve in that process.
 	# Extract those subs into the domain layer and this passes; until then it
 	# records the size of the gap.
 	local $TODO = 'subroutines.pl -> Manager:: calls are unresolved when only subroutines.pl is loaded';

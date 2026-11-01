@@ -54,7 +54,7 @@ like($ar, qr{<script src="/js/device\.js}, 'app_required loads device.js so a si
 # a missing entry answered the peer with the Gate page while the route's own
 # peer_verify never ran. self_deploy (deploy_neighbours) was missing and the
 # deploy silently did nothing behind Enforce.
-my $hooks = "$FindBin::Bin/../hooks.pl";
+my $hooks = "$FindBin::Bin/../perl/hooks.pl";
 open(my $hf, '<', $hooks) or die "$hooks: $!\n";
 my $hook = <$hf>;
 close $hf;

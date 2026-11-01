@@ -26,7 +26,7 @@ binmode STDERR, ':encoding(UTF-8)';
 
 my $root = Cwd::abs_path("$Bin/..");
 chdir $root or die "cannot chdir to $root: $!\n";
-require "./language.pl";
+require "./perl/language.pl";
 
 my $missing_all = 0;
 my $strict = 0;

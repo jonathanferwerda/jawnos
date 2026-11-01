@@ -35,7 +35,7 @@ binmode STDERR, ':encoding(UTF-8)';
 
 my $root = Cwd::abs_path("$Bin/..");
 chdir $root or die "cannot chdir to $root: $!\n";
-require "./language.pl";
+require "./perl/language.pl";
 no warnings 'once';
 
 my $model       = 'gemma4:cloud';

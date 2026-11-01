@@ -12,7 +12,7 @@ use warnings;
 use FindBin;
 require Mojo::JSON;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
-require './subroutines.pl';
+require './perl/subroutines.pl';
 
 my $apply = grep { $_ eq '--apply' } @ARGV;
 

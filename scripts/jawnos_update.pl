@@ -271,7 +271,7 @@ sub compiles {
     my @command = ('perl', '-c', 'Manager.pl');
     unshift @command, 'env', "PERL5LIB=$libs" if length $libs;
     my ($code, $out) = &capture_in_repo(@command);
-    &log_line('perl -c Manager.pl: ' . &summarise($out));
+    &log_line('perl -c perl/Manager.pl: ' . &summarise($out));
     return $code == 0;
 }
 

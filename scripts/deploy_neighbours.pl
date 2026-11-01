@@ -16,9 +16,9 @@ use warnings;
 use FindBin;
 
 chdir "$FindBin::Bin/.." or die "cannot chdir to the jawn tree: $!\n";
-require './subroutines.pl';
+require './perl/subroutines.pl';
 $ENV{PURPOSE} = '';
-require './Manager.pl';
+require './perl/Manager.pl';
 
 my @wanted;
 my $dry_run = 0;

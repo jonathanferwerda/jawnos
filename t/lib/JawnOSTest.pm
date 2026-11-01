@@ -69,7 +69,7 @@ sub _find_root {
 	for my $candidate (@candidates) {
 		my $dir = abs_path($candidate);
 		next unless defined $dir;
-		return $dir if -f "$dir/subroutines.pl" && -f "$dir/gb.pl";
+		return $dir if -f "$dir/perl/subroutines.pl" && -f "$dir/perl/gb.pl";
 	}
 	return undef;
 }
@@ -84,14 +84,12 @@ sub _setup {
 	$SANDBOX = tempdir('jawnos-test-XXXXXX', TMPDIR => 1, CLEANUP => 1);
 	die "JawnOSTest: cannot create a sandbox\n" unless defined $SANDBOX;
 
-	# The files subroutines.pl reaches for by relative path at load time. The
-	# domain modules under lib/ are lazy (required on first call), and
+	# The files subroutines.pl reaches for by relative path at load time live in
+	# perl/. The domain modules under lib/ are lazy (required on first call), and
 	# subroutines.pl resolves lib/ from its own real path, so the sandbox needs
-	# only the symlink below for a `perl -c` or a stray relative lookup.
-	for my $file (qw(subroutines.pl gb.pl Websocket.pl language.pl)) {
-		symlink("$ROOT/$file", "$SANDBOX/$file")
-			or die "JawnOSTest: symlink $file: $!\n";
-	}
+	# only the two directory links below for a `perl -c` or a stray relative lookup.
+	symlink("$ROOT/perl", "$SANDBOX/perl")
+		or die "JawnOSTest: symlink perl: $!\n";
 	if (-d "$ROOT/lib") {
 		symlink("$ROOT/lib", "$SANDBOX/lib")
 			or die "JawnOSTest: symlink lib: $!\n";
@@ -117,7 +115,7 @@ sub _setup {
 	$ENV{HOME} = $SANDBOX;   # Websocket.pl touches ~/.president/ws_watcher at boot
 
 	chdir $SANDBOX or die "JawnOSTest: chdir $SANDBOX: $!\n";
-	require './subroutines.pl';
+	require './perl/subroutines.pl';
 	chdir $cwd or die "JawnOSTest: chdir $cwd: $!\n";
 
 	if (defined $home) { $ENV{HOME} = $home }

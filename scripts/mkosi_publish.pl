@@ -401,7 +401,7 @@ sub upload_r2 {
 # makes the site see it.
 sub write_downloads_json {
 	my ($ok, $url, $manifest_url, $version, $size, $sha) = @_;
-	my $path = "$root/downloads.json";
+	my $path = "$root/server/downloads.json";
 	my $data = {};
 	if (-f $path) {
 		my $text = '';

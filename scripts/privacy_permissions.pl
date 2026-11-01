@@ -51,7 +51,7 @@ if (!length $root) {
 		if (-f "$try/Manager.pl" && -d "$try/database") { $root = $try; last; }
 	}
 }
-die "cannot find the jawn install; pass --root DIR\n" unless length $root && -d $root && -f "$root/Manager.pl";
+die "cannot find the jawn install; pass --root DIR\n" unless length $root && -d $root && -f "$root/perl/Manager.pl";
 $root =~ s{/+$}{};
 
 my (@changed, @failed);

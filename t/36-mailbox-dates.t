@@ -97,7 +97,7 @@ is scalar @{ &subs::records_mailbox_date_decisions([$sane_row], [], $now) }, 0,
 		return $text;
 	};
 	my $root = root();
-	my $subs = $read->("$root/subroutines.pl");
+	my $subs = $read->("$root/perl/subroutines.pl");
 	# most functions moved to the lazy domain layer in lib/
 	$subs .= join "\n", map { $read->($_) } sort glob("$root/lib/JawnOS/Domain/*.pm");
 	like $subs, qr/sub records_mailbox_bad_dates_scan/,

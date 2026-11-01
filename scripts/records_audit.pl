@@ -11,7 +11,7 @@ use warnings;
 use FindBin;
 require Mojo::JSON;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
-require './subroutines.pl';
+require './perl/subroutines.pl';
 
 my ($hours, $json, $all, $apply) = (48, 0, 0, 0);
 for (my $i = 0; $i < @ARGV; $i++) {

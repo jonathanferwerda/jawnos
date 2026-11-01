@@ -1322,7 +1322,7 @@ our %topic = (
 	},
 	'crew' => {
 		title => 'Crew', category => 'features',
-		templates => [ 'crew.pl', 'templates/configure/utility_controller.html.ep', 'templates/configure/plat_setting_list.html.ep' ],
+		templates => [ 'perl/crew.pl', 'templates/configure/utility_controller.html.ep', 'templates/configure/plat_setting_list.html.ep' ],
 		controls => [ 'This machine', 'Peers', 'Advertise now', 'Processor cores', 'One-minute load average', 'Free and total memory', 'Job kinds this machine can run', 'Peer machine', 'Peer load' ],
 		verified => '2026-10-30',
 		summary => 'What each machine in the house can do, and where a job is sent to run.',
@@ -1679,7 +1679,7 @@ our %topic = (
 
 	'live_docs' => {
 		title => 'Live docs', category => 'functions',
-		templates => [ 'help.pl', 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
+		templates => [ 'perl/help.pl', 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
 		verified => '2026-10-30',
 		summary => 'Help pages that carry a value read when the page is drawn, and examples that open what they describe.',
 		body => [

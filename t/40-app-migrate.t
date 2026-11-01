@@ -199,10 +199,10 @@ sub scenario {
 		'files/home/jawnos/database/.jawnos_signatorial_id'  => 'e397332d0123456789abcdef01234567',
 		'files/home/jawnos/config.json'                      => '{"port":3000}',
 		'files/home/jawnos/VERSION'                          => "0.1.1680\n",
-		'files/home/jawnos/subroutines.pl'                   => 'subs',
-		'files/home/jawnos/gb.pl'                            => 'gb',
-		'files/home/jawnos/President.pl'                     => 'pres',
-		'files/home/jawnos/Manager.pl'                       => 'mgr',
+		'files/home/jawnos/perl/subroutines.pl'                   => 'subs',
+		'files/home/jawnos/perl/gb.pl'                            => 'gb',
+		'files/home/jawnos/perl/President.pl'                     => 'pres',
+		'files/home/jawnos/perl/Manager.pl'                       => 'mgr',
 		'files/home/.president/status'                       => 'good',
 		'files/usr/etc/jawnos-runtime.json'                  => '{"product":"runtime"}',
 		'files/home/jawnos/database/schema.sql'              => 'CREATE TABLE x;',
@@ -213,10 +213,10 @@ sub scenario {
 	}
 	for my $rel (qw(
 		files/home/jawnos/VERSION
-		files/home/jawnos/subroutines.pl
-		files/home/jawnos/gb.pl
-		files/home/jawnos/President.pl
-		files/home/jawnos/Manager.pl
+		files/home/jawnos/perl/subroutines.pl
+		files/home/jawnos/perl/gb.pl
+		files/home/jawnos/perl/President.pl
+		files/home/jawnos/perl/Manager.pl
 		files/home/.president/status
 		files/usr/etc/jawnos-runtime.json
 		files/home/jawnos/database/schema.sql
@@ -225,7 +225,7 @@ sub scenario {
 		spew( "$root/$rel", $content{$rel} );
 	}
 	unlink "$root/files/home/.house.key" if $o{missing_house_key};
-	unlink "$root/files/home/jawnos/subroutines.pl" if $o{incomplete_tree};
+	unlink "$root/files/home/jawnos/perl/subroutines.pl" if $o{incomplete_tree};
 	spew( "$state/tree_alive", '' ) unless $o{tree_down};
 	spew( "$state/corrupt_restore", '' ) if $o{corrupt_restore};
 

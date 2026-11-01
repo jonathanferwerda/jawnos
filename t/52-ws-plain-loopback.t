@@ -19,7 +19,7 @@ use RepoSource;
 # Secure session cookie is not sent on a ws:// handshake, so the page carries a
 # short-lived token that restores the session for the socket.
 
-my $president = read_file("$FindBin::Bin/../President.pl");
+my $president = read_file("$FindBin::Bin/../perl/President.pl");
 my $manager   = manager_source();
 
 # 1. the plain listener exists, on loopback, and only with the socket server

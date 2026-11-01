@@ -104,19 +104,19 @@ use IO::Socket::UNIX;
 use IPC::Open2 qw(open2);
 no warnings 'uninitialized';
 no warnings 'once';
-require "./Websocket.pl";
-require "./subroutines.pl";
-require "./junderground.pl";
-require "./AddressDirectory.pl";
-require "./remote_input.pl";
-require "./tls.pl";
-require "./webauthn.pl";
-require "./Music.pl";
-require "./hooks.pl";
-require "./tunnel.pl";
-require "./help.pl";
-require "./crew.pl";
-require "./printers.pl";
+require "./perl/Websocket.pl";
+require "./perl/subroutines.pl";
+require "./perl/junderground.pl";
+require "./perl/AddressDirectory.pl";
+require "./perl/remote_input.pl";
+require "./perl/tls.pl";
+require "./perl/webauthn.pl";
+require "./perl/Music.pl";
+require "./perl/hooks.pl";
+require "./perl/tunnel.pl";
+require "./perl/help.pl";
+require "./perl/crew.pl";
+require "./perl/printers.pl";
 
 # The domain layer owns these now (domain.pl, package subs). The forward
 # declarations are for the parser (and for any call spelled without parens);
@@ -3348,7 +3348,7 @@ our $ws_server;
 
 
 if ($ENV{PURPOSE} && ($ENV{PURPOSE} eq 'alarm' || ($ENV{PORT_ENV} eq 'development' && $ENV{PURPOSE} eq 'main'))) {
-	#require './Alarm.pl';
+	#require './perl/Alarm.pl';
 	#&Alarm::alarm_clock();;
 }
 

@@ -5,8 +5,9 @@ BEGIN {
 	require Cwd;
 	require File::Basename;
 	# absolute, from this file's real path: a later chdir cannot break it, and a
-	# symlinked copy (the test sandbox) still finds the tree's own lib/
-	unshift @INC, File::Basename::dirname(Cwd::abs_path(__FILE__)) . '/lib';
+	# symlinked copy (the test sandbox) still finds the tree's own lib/. This file
+	# lives in perl/, so lib/ is one level up.
+	unshift @INC, File::Basename::dirname(Cwd::abs_path(__FILE__)) . '/../lib';
 }
 
 use strict;
@@ -67,9 +68,9 @@ no warnings 'once';
 # requires below: gb.pl calls subs::rightNow() while it compiles.
 require JawnOS::Domain::Loader;
 
-require "./gb.pl";
-require "./Websocket.pl";
-require "./language.pl";
+require "./perl/gb.pl";
+require "./perl/Websocket.pl";
+require "./perl/language.pl";
 
 our $config_file = read_file('./config.json');
 # `our`, not `my`: the domain modules in lib/ are in this package and read the
@@ -1804,7 +1805,8 @@ BEGIN {
 	require Cwd;
 	require File::Basename;
 	my $real = eval { Cwd::abs_path(__FILE__) };
-	$install_dir = File::Basename::dirname(($real && -e $real) ? $real : Cwd::getcwd());
+	# the install dir is the tree that holds perl/ and database/, not perl/ itself
+	$install_dir = File::Basename::dirname(File::Basename::dirname(($real && -e $real) ? $real : Cwd::getcwd()));
 }
 
 # A house with a way back in starts gated. The paper recovery code is the

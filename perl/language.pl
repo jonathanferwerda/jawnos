@@ -2,7 +2,7 @@
 #
 # language.pl - the house's interface languages.
 #
-# Loaded from subroutines.pl (require "./language.pl") so every worker, script
+# Loaded from subroutines.pl (require "./perl/language.pl") so every worker, script
 # and template sees the same catalog. A string lives in the `en` catalog first;
 # another language overrides it. A key with no translation in the chosen
 # language falls back to English, then to the key itself, so a missing line is
@@ -20,7 +20,8 @@ use utf8;
 use File::Basename qw(dirname);
 use JSON::PP ();
 
-our $ROOT = dirname(__FILE__);
+# this file lives in perl/, and the catalogs it reads are under the tree's i18n/
+our $ROOT = dirname(dirname(__FILE__));
 
 our $DEFAULT = 'en';
 

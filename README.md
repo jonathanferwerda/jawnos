@@ -673,4 +673,4 @@ watch remain active areas.
 
 BSD 2-Clause. See [LICENSE](LICENSE). The third-party components JawnOS bundles or
 redistributes — the Piper TTS engine and its voice models, and any bundled fonts — are listed
-with their licences in [THIRD-PARTY.md](THIRD-PARTY.md).
+with their licences in [THIRD-PARTY.md](docs/THIRD-PARTY.md).

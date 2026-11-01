@@ -13,8 +13,8 @@ use warnings;
 use FindBin qw($Bin);
 
 chdir "$Bin/.." or die "cannot enter the jawnos tree: $!\n";
-require './subroutines.pl';
-require './gb.pl';
+require './perl/subroutines.pl';
+require './perl/gb.pl';
 
 my $report = &subs::pph_compare_report();
 print "PPH comparator (discharging samples only)\n";

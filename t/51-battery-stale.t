@@ -24,7 +24,7 @@ use File::Slurp qw(read_file);
 # domain modules under lib/. Read both so a function moving between them does
 # not make this a false failure.
 my $pph = join "\n", map { read_file($_) }
-	("$FindBin::Bin/../subroutines.pl", sort glob("$FindBin::Bin/../lib/JawnOS/Domain/*.pm"));
+	("$FindBin::Bin/../perl/subroutines.pl", sort glob("$FindBin::Bin/../lib/JawnOS/Domain/*.pm"));
 my $say = $pph;
 
 # 1. the cooldown is short and used consistently

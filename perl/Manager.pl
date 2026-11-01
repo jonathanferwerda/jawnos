@@ -4,14 +4,14 @@
 # Manager.pl body (config, state, helpers, hooks, session settings) is
 # lib/JawnOS/Manager.pm (package Manager, a Mojolicious::Controller subclass).
 #
-# President.pl, watch.pl, teletype.pl, scripts and morbo load ./Manager.pl and
+# President.pl, watch.pl, teletype.pl, scripts and morbo load ./perl/Manager.pl and
 # expect either an app object back or a running server, so this keeps that
 # contract.
 use strict;
 use warnings;
 use FindBin;
-use lib "$FindBin::Bin/lib";
-$ENV{MOJO_HOME} ||= $FindBin::Bin;
+use lib "$FindBin::Bin/../lib";
+$ENV{MOJO_HOME} ||= "$FindBin::Bin/..";
 
 require JawnOS;
 my $app = JawnOS->new;

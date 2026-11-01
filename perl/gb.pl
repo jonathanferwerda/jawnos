@@ -4,7 +4,7 @@
 use strict;
 no warnings;
 
-require './subroutines.pl';
+require './perl/subroutines.pl';
 use Mojo::Cache;
 
 
@@ -500,7 +500,7 @@ our @coding_tools = (
 		desc => 'read a file inside the repo; returns its text, trimmed if very long' },
 	{ name => 'write', example => '{"action":"write","path":"help.pl","content":"...the whole file..."}',
 		desc => 'write a whole file inside the repo, replacing it; give the complete new contents, not a diff' },
-	{ name => 'run', example => '{"action":"run","command":"perl -c Manager.pl"}',
+	{ name => 'run', example => '{"action":"run","command":"perl -c perl/Manager.pl"}',
 		desc => 'run one checked command in the repo: perl -c <file>, perl scripts/<file>, prove, or a read-only git command (status, diff, log). Anything else is refused' },
 	{ name => 'bump', example => '{"action":"bump"}',
 		desc => 'bump the patch version in ./VERSION (the normal step before a commit)' },

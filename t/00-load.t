@@ -56,7 +56,7 @@ is(ref $config->{folders}, 'ARRAY', 'config.json.example folders is a list');
 
 # The help registry and the source templates it names are checked in 11-help.t;
 # this only proves the registry file compiles and loads its package.
-require "$root/help.pl";
+require "$root/perl/help.pl";
 ok defined &help::get, 'help registry loaded (help::get)';
 ok scalar(keys %help::topic) > 0, 'help registry has topics';
 

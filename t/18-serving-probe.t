@@ -17,7 +17,7 @@ use POSIX qw(_exit);
 # can look open and still not serve.
 
 my $root = abs_path("$FindBin::Bin/..");
-require "$root/probe.pl";
+require "$root/perl/probe.pl";
 ok defined &probe::serving, 'probe::serving is loaded';
 
 # A port nothing is bound to: the ordinary "the tree is gone" answer.

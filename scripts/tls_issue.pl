@@ -31,8 +31,8 @@ use POSIX qw(strftime);
 
 my $root = abs_path("$FindBin::Bin/..");
 chdir $root or die "cannot find the jawnos root: $!\n";
-require './subroutines.pl';
-require './tls.pl';
+require './perl/subroutines.pl';
+require './perl/tls.pl';
 
 $| = 1;
 

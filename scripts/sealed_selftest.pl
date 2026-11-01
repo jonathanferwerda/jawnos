@@ -25,8 +25,8 @@ use File::Type;
 
 my $root = File::Spec->catdir($Bin, '..');
 chdir $root or die "cannot enter $root: $!\n";
-require './gb.pl';
-require './subroutines.pl';
+require './perl/gb.pl';
+require './perl/subroutines.pl';
 
 my ($only, $bytes) = (undef, 120_000);
 GetOptions('standard=s' => \$only, 'bytes=i' => \$bytes) or die "usage: $0 [--standard NAME] [--bytes N]\n";

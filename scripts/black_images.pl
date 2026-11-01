@@ -32,7 +32,7 @@ use File::Copy qw(copy);
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::UserAgent;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
-require './subroutines.pl';
+require './perl/subroutines.pl';
 
 our $main_url;
 

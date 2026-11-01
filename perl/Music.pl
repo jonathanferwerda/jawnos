@@ -37,7 +37,7 @@ my $com = 'echo $HOME';
 my $cwd = `$com`;
 chomp $cwd;
 
-require "./subroutines.pl";
+require "./perl/subroutines.pl";
 my $device = &subs::device_setter();
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;

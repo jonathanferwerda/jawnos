@@ -60,7 +60,7 @@ like($manager, qr/^sub AUTOLOAD\b/m, 'the helpers are loaded through AUTOLOAD');
 #    app()/get()/new() in the importing package. Music.pl and hooks.pl are
 #    compiled into package Manager, so a Lite import there silently replaces the
 #    application - that is exactly the bug this split had to remove.
-for my $f ('Music.pl', 'hooks.pl', 'subroutines.pl') {
+for my $f ('perl/Music.pl', 'perl/hooks.pl', 'perl/subroutines.pl') {
 	my $src = slurp_rel($f);
 	unlike($src, qr/^use\s+Mojolicious::Lite\b/m, "$f does not run the Lite import");
 }

@@ -18,10 +18,10 @@ use Mojo::IOLoop;
 use Data::Dumper;
 use Time::HiRes qw(gettimeofday time);
 use IO::Socket::UNIX;
-require "./gb.pl";
-require "./subroutines.pl";
-require "./Manager.pl"; 
-require "./Websocket.pl";
+require "./perl/gb.pl";
+require "./perl/subroutines.pl";
+require "./perl/Manager.pl"; 
+require "./perl/Websocket.pl";
 no warnings 'uninitialized';
 # the gb globals below live in gb.pl and are written or read from every
 # corner of the house; a file that touches one only once is not a typo

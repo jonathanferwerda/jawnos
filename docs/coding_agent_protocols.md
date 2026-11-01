@@ -23,7 +23,7 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
 - **Restart:** `printf 'restart' > ~/.president/status` — `jawn` polls every second, writes `good` back,
   and reboots the tree. Don't start `./jawn` yourself; never leave a detached process.
 - Status values: `good` / `restart` / `frozen`.
-- Restart needed? `.ep` **no** (mtime checked per request) · `.pl` **yes** (`perl -c Manager.pl` first)
+- Restart needed? `.ep` **no** (mtime checked per request) · `.pl` **yes** (`perl -c perl/Manager.pl` first)
   · `public/js/*.js` **no restart, plain refresh** — static assets revalidate (`no-cache` + ETag/Last-Modified),
   and the manager's scripts come from `/js/manager/bundle.js`, which the app rebuilds from the files' mtimes
   and the browser revalidates by ETag. The `?string=` buster still only moves on restart, but nothing depends

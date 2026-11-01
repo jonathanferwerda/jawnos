@@ -15,7 +15,7 @@ binmode Test::More->builder->failure_output, ':encoding(UTF-8)';
 # all trust this data, so its internal links and its file references must hold.
 
 my $root = JawnOSTest::root();
-require "$root/help.pl";
+require "$root/perl/help.pl";
 
 my %topic = %help::topic;
 cmp_ok(scalar(keys %topic), '>', 50, 'the registry has topics');

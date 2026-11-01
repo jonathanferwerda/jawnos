@@ -793,7 +793,7 @@ sub wait_for_first_run {
 	# migration (2026-10-31) stopped here, the checkout was left half written,
 	# and the restored tree could not load subroutines.pl. A complete run means
 	# the files President loads are in place and jawn itself says good.
-	my @needed = qw(subroutines.pl gb.pl President.pl Manager.pl);
+	my @needed = qw(perl/subroutines.pl perl/gb.pl perl/President.pl perl/Manager.pl);
 	while (1) {
 		$ver    = remote_read_trim($VERSION_REMOTE);
 		$rt     = remote_read_trim($RUNTIME_REMOTE);

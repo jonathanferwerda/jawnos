@@ -43,7 +43,7 @@ use Mojo::JSON qw/decode_json encode_json/;
 #
 # The sweeps take each program by process name and again by full command line:
 # the same script runs as "President.pl" on one machine and "perl
-# ./President.pl" on another, and a "perl <script>" parent has only "perl" for
+# ./perl/President.pl" on another, and a "perl <script>" parent has only "perl" for
 # a name.
 
 my $self = shift;

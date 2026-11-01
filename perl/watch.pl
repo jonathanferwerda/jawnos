@@ -15,10 +15,10 @@ use Mojo::Util qw(secure_compare);
 use Time::Local;
 use Time::Piece;
 plugin 'RenderFile';
-require './subroutines.pl';
-require './teletype.pl';
-require './Websocket.pl';
-require './Manager.pl';
+require './perl/subroutines.pl';
+require './perl/teletype.pl';
+require './perl/Websocket.pl';
+require './perl/Manager.pl';
 no warnings 'uninitialized';
 # the gb globals below live in gb.pl and are written or read from every
 # corner of the house; a file that touches one only once is not a typo

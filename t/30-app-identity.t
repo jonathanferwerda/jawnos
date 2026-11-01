@@ -33,12 +33,12 @@ is(subs::app_component(''), undef, 'no class, no component');
 # The rename is finished on the tree side: no call site may hardcode the old
 # package again. Docs are allowed to talk about it.
 my @sources = (
-	"$FindBin::Bin/../Manager.pl",
+	"$FindBin::Bin/../perl/Manager.pl",
 	"$FindBin::Bin/../lib/JawnOS.pm",
 	"$FindBin::Bin/../lib/JawnOS/Manager.pm",
 	glob("$FindBin::Bin/../lib/JawnOS/Routes/*.pm"),
 	glob("$FindBin::Bin/../lib/JawnOS/Controller/*.pm"),
-	"$FindBin::Bin/../subroutines.pl",
+	"$FindBin::Bin/../perl/subroutines.pl",
 	"$FindBin::Bin/../scripts/jawn-bt",
 	"$FindBin::Bin/../scripts/phone_wake.pl",
 );

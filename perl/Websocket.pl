@@ -22,8 +22,8 @@ use Mojo::JSON qw(decode_json encode_json);
 use Mojo::IOLoop;
 use Data::Dumper;
 no warnings 'uninitialized';
-require "./gb.pl";
-require "./subroutines.pl";
+require "./perl/gb.pl";
+require "./perl/subroutines.pl";
 
 
 my $config_file = read_file('./config.json');

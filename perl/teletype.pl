@@ -16,11 +16,11 @@ no warnings 'uninitialized';
 # the gb globals below live in gb.pl and are written or read from every
 # corner of the house; a file that touches one only once is not a typo
 no warnings 'once';
-require './subroutines.pl';
-require './gb.pl';
-require './watch.pl';
-require './Websocket.pl';
-require './remote_input.pl';
+require './perl/subroutines.pl';
+require './perl/gb.pl';
+require './perl/watch.pl';
+require './perl/Websocket.pl';
+require './perl/remote_input.pl';
 
 
 my $config_file = read_file('./config.json');

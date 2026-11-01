@@ -31,9 +31,9 @@ use JawnOSTest;
 # without the facts as a miss (so the old entries heal on the next render), and
 # take a poster at a position that is actually past the fade.
 
-my $video = read_file("$FindBin::Bin/../Music.pl");
+my $video = read_file("$FindBin::Bin/../perl/Music.pl");
 my $manager = manager_source();
-my $subs = read_file("$FindBin::Bin/../subroutines.pl");
+my $subs = read_file("$FindBin::Bin/../perl/subroutines.pl");
 
 # --- the poster position -----------------------------------------------------
 is(subs::thumbnail_seek_position(5), '00:00:01.000', 'a short clip takes a frame at one second');

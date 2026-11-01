@@ -56,7 +56,7 @@ my $source = join "\n", map {
 	open(my $fh, '<', $_) or die $!;
 	local $/;
 	<$fh>;
-} ("$FindBin::Bin/../subroutines.pl", sort glob("$FindBin::Bin/../lib/JawnOS/Domain/*.pm"));
+} ("$FindBin::Bin/../perl/subroutines.pl", sort glob("$FindBin::Bin/../lib/JawnOS/Domain/*.pm"));
 like($source, qr!sub peer_manager_base \{.*?s\{/manager\$\}\{\}!s,
 	'peer_manager_base strips the route segment');
 like($source, qr/sub peer_useragent \{.*?peer_live_manager/s,

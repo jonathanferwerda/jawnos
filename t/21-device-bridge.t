@@ -141,7 +141,7 @@ is(subs::device_call('ping'), undef, 'no token file means no bridge');
 		open(my $fh, '<', $_) or die $!;
 		local $/;
 		scalar <$fh>;
-	} (root() . '/subroutines.pl', sort glob(root() . '/lib/JawnOS/Domain/*.pm'));
+	} (root() . '/perl/subroutines.pl', sort glob(root() . '/lib/JawnOS/Domain/*.pm'));
 	unlike($src, qr/system\(\$client/, 'no BLE client is executed by its shebang');
 	unlike($src, qr/'\|-', \$client/, 'no pipe runs the client by its shebang');
 	like($src, qr/program => \$\^X, program_args => \[ \$client, 'listen' \]/, 'the listener runs the client through the current perl');

@@ -74,12 +74,12 @@ subs::preload($_) for qw(db_query);
 	like $manager, qr{GET /manager/sync_tombstones}, 'the deletion log has a peer route';
 	like $manager, qr/sub apply_peer_tombstones/, 'and one applier for handshake and pull';
 	like $manager, qr/apply_peer_tombstones\(\$tj, \$remote_signatorial\)/, 'the row pull asks for and applies tombstones';
-	my $subs = $read->("$root/subroutines.pl");
+	my $subs = $read->("$root/perl/subroutines.pl");
 	# most functions moved to the lazy domain layer in lib/
 	$subs .= join "\n", map { $read->($_) } sort glob("$root/lib/JawnOS/Domain/*.pm");
 	like $subs, qr/sub session_open_near/, 'the open-near selector lives in the core';
 	like $subs, qr/sub session_twin_rows/, 'so does the twin selector';
-	my $hooks = $read->("$root/hooks.pl");
+	my $hooks = $read->("$root/perl/hooks.pl");
 	like $hooks, qr{\$path eq '/manager/sync_tombstones'}, 'the deletion route is gate-exempt for a signed peer';
 }
 

@@ -15,7 +15,7 @@ use FindBin;
 use File::Temp qw(tempfile);
 use File::Type;
 chdir "$FindBin::Bin/.." or die "cannot find the jawnos root: $!";
-require './subroutines.pl';
+require './perl/subroutines.pl';
 require Mojo::JSON;
 
 my $apply = grep { $_ eq '--apply' } @ARGV;

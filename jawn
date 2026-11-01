@@ -186,7 +186,7 @@ my ($master_boot_watch, $master_boot_tries);
 sub president_command() {
 	my $interp = $^X;
 	$interp = 'perl' unless defined $interp && length $interp;
-	return "exec '$interp' ./President.pl";
+	return "exec '$interp' ./perl/President.pl";
 }
 # A re-exec keeps this master's pid, so any child it fathered before exec is
 # still ours - and nobody else can reap it. Clear a stale pty shell (and any
@@ -518,7 +518,7 @@ sub shut_down() {
 	# the tree while we were tearing it down (a respawned worker, a manager that
 	# re-registered) still holds the web port or the watch socket and would fight
 	# the next boot. Stop and Restart both end here, so both leave the box provably
-	# clear. Compile probes are left alone: another agent's `perl -c Manager.pl`
+	# clear. Compile probes are left alone: another agent's `perl -c perl/Manager.pl`
 	# looks like a worker by name, so a command line carrying -c/-e/-M is skipped.
 	my @leftovers;
 	if (opendir(my $procs, '/proc')) {
@@ -672,7 +672,7 @@ sub port_answers {
 	# port_free() below draws the same distinction for the one question a bind
 	# answers. Ask for an HTTP answer instead; probe.pl asks it, and the route it
 	# asks reads the database.
-	eval { require './probe.pl' };
+	eval { require './perl/probe.pl' };
 	return probe::serving($port, 'timeout' => 2) if defined &probe::serving;
 	# No probe module (a half-copied tree): keep the socket test rather than call
 	# a healthy tree dead and restart the house over a missing file.
