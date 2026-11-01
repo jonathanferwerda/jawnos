@@ -36,6 +36,17 @@ function openAttributeReopener(app) {
 	}
 }
 
+// A register field is written on change: leaving the field is what saves it.
+// Enter must finish it too - a desk does not blur a plain text input for Enter,
+// and the soft keyboard only dispatches the key event - or a name typed into
+// the new model or option row looks like it vanished.
+$(document).on('keydown', '.att, .char', function(e) {
+	if (e.key !== 'Enter' && e.keyCode !== 13) { return; }
+	if ($(this).is('textarea, select, input[type="checkbox"]')) { return; }
+	e.preventDefault();
+	$(this).blur();
+});
+
 $(document).on('change', '.att', function() {
 	var att = $(this).closest('.attribute');
 	var attribute = att.attr('att');
