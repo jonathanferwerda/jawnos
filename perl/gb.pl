@@ -55,7 +55,7 @@ our $site_types = {
 	'dangerous' => { colour => 'red', icon => '/images/make believe/explosion.png', name => 'dangerous', rating => 3 }
 };
 
-our $last_updater = sub() {
+our $last_updater = sub {
 	return $last_update ||= &subs::jawn_version();
 };
 our $forbidden = {
@@ -554,44 +554,44 @@ our $transaction_states = [
 
 our $budget_modes = {
 	occurences => { 
-		formatted => sub() {
+		formatted => sub {
 			my $b = shift;
 			return sprintf("%.2f", $b);
 		},
-		unformatted => sub() {
+		unformatted => sub {
 			my $b = shift;
 			$b =~ s/[^0-9.]//gi;
 			return $b;
 		}
 	},
 	duration => {
-		formatted => sub() {
+		formatted => sub {
 			my $b = shift;
 			return &subs::duration_sayer($b / 1000);
 		},
-		unformatted => sub() {
+		unformatted => sub {
 			my $b = shift;
 			$b = &subs::time_abbrev_translator($b);
 			return $b;
 		}
 	},
 	total => {
-		formatted => sub() {
+		formatted => sub {
 			my $b = shift;
 			return &subs::price_formatter($b);
 		},
-		unformatted => sub() {
+		unformatted => sub {
 			my $b = shift;
 			$b =~ s/^[0-9.]//gi;
 			return $b;
 		}
 	},
 	quantity => {
-		formatted => sub() {
+		formatted => sub {
 			my $b = shift;
 			return $b;
 		},
-		unformatted => sub() {
+		unformatted => sub {
 			my $b = shift;
 			return $b;
 		}
@@ -600,7 +600,7 @@ our $budget_modes = {
 
 our $budget_statuses = {
 	budgeted => {
-		notifier => sub(){
+		notifier => sub {
 			my $rt = shift;
 			$rt->{'colour'} = 'lightgreen';
 			$rt->{'status'} = 'budgeted';
@@ -609,7 +609,7 @@ our $budget_statuses = {
 		n => 4
 	},
 	accomplished => {
-		notifier => sub(){
+		notifier => sub {
 			my $rt = shift;
 			$rt->{'colour'} = 'pink';
 			$rt->{'status'} = 'accomplished';
@@ -618,7 +618,7 @@ our $budget_statuses = {
 		n => 3
 	},
 	burnt_out => {
-		notifier => sub() {
+		notifier => sub {
 			my $rt = shift;
 			$rt->{'colour'} = 'orange';
 			$rt->{'status'} = 'burnt out';
@@ -627,7 +627,7 @@ our $budget_statuses = {
 		n => 2
 	},
 	overkill => {
-		notifier => sub(){
+		notifier => sub {
 			my $rt = shift;
 			$rt->{'colour'} = 'red';
 			$rt->{'text-colour'} = 'white';
@@ -637,7 +637,7 @@ our $budget_statuses = {
 		n => 1
 	},
 	achievable => {
-		notifier => sub(){
+		notifier => sub {
 			my $rt = shift;
 			$rt->{'colour'} = 'lightblue';
 			$rt->{'status'} = 'achievable';
@@ -646,7 +646,7 @@ our $budget_statuses = {
 		n => 5
 	},
 	neglected => {
-		notifier => sub(){
+		notifier => sub {
 			my $rt = shift;
 			$rt->{'colour'} = 'yellow';
 			$rt->{'status'} = 'neglected';
@@ -655,7 +655,7 @@ our $budget_statuses = {
 		n => 6
 	},
 	abandoned => {
-		notifier => sub() {
+		notifier => sub {
 			my $rt = shift;
 			$rt->{'colour'} = 'lightgrey';
 			$rt->{'status'} = 'abandoned';

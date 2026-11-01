@@ -482,12 +482,12 @@ sub alarm_server() {
 	my $file = $gb::tmp_dir . '/alarm';
 
 	my %buffers;
-	$alarm_server = Mojo::IOLoop->server({ path => $file } => sub () {
+	$alarm_server = Mojo::IOLoop->server({ path => $file } => sub {
 		my ($loop,$stream,$id) = @_;
 		$stream->handle->autoflush(1); 
 	  $buffers{$id} = '';
 
-	  $stream->on(read => sub () {
+	  $stream->on(read => sub {
 			my ($stream, $bytes) = @_;
 			$buffers{$id} .= $bytes;
 			while ($buffers{$id} =~ s/^(.*?)\n//) {
@@ -529,7 +529,7 @@ sub alarm_timer() {
 	# a poke can name a moment that has just gone by, and a negative delay must
 	# not become a timer; either way the alarm stands its usual two seconds
 	$next_time = 2 unless $next_time && $next_time > 0;
-	$alarm_id = Mojo::IOLoop->timer($next_time => sub() {
+	$alarm_id = Mojo::IOLoop->timer($next_time => sub {
 		my $alarm = &alarm_clock();
 
 		&alarm_timer($alarm->{'next_time'});

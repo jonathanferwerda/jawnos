@@ -1,0 +1,46 @@
+<style>
+#device_listings { display:flex; flex-direction:column; gap:10px; }
+#device_listings .device_card { border:1px solid var(--line); border-radius:8px; background:var(--panel-2); }
+#device_listings .device_head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 10px; background:var(--panel); border-bottom:1px solid var(--line); }
+#device_listings .network_cidr { font-family:var(--mono-font, monospace); font-weight:700; font-size:15px; }
+#device_listings .network_who { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+#device_listings .device_when { opacity:.6; font-size:85%; white-space:nowrap; }
+#device_listings .device_nic { padding:8px 10px; }
+#device_listings .network_card .device + .device { border-top:1px solid var(--line); }
+#device_listings .nic_head { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-weight:700; margin-bottom:6px; }
+#device_listings .remote_ip { font-family:var(--mono-font, monospace); font-weight:400; }
+#device_listings table { width:100%; border-collapse:collapse; }
+#device_listings th, #device_listings td { border:1px solid var(--line); padding:5px 7px; text-align:left; vertical-align:top; }
+#device_listings th { background:var(--panel); font-size:88%; }
+#device_listings tbody tr:nth-child(2n) { background:var(--panel); }
+#device_listings .remote_machine td:first-child { font-size:92%; }
+#device_listings .device_actions { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+#device_listings button { font:inherit; font-size:90%; padding:2px 10px; margin:2px 0; }
+#device_listings .pill { display:inline-block; padding:1px 8px; border-radius:10px; border:1px solid var(--line); background:var(--panel); font-size:85%; }
+#device_listings .device_machines { border:1px solid var(--line); border-radius:8px; background:var(--panel); padding:4px 10px; }
+#device_listings .machine_row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:5px 0; }
+#device_listings .machine_row + .machine_row { border-top:1px solid var(--line); }
+#device_listings .machine_row .device_domain { flex:1 1 200px; min-width:140px; margin:0; }
+#device_listings .printer_ink { display:flex; flex-direction:column; gap:4px; min-width:150px; }
+#device_listings .inker { display:flex; gap:6px; align-items:center; font-size:85%; }
+#device_listings .ink_name { flex:0 0 auto; min-width:58px; opacity:.85; }
+#device_listings .ink_bar { flex:1 1 70px; height:9px; border:1px solid var(--line); border-radius:5px; background:var(--panel); overflow:hidden; }
+#device_listings .ink_fill { display:block; height:100%; }
+#device_listings .ink_pct { flex:0 0 auto; font-variant-numeric:tabular-nums; opacity:.8; }
+#device_listings .inker.ink_low .ink_pct { color:#c0392b; font-weight:700; }
+#device_listings .printer_state { font-size:80%; opacity:.7; }
+/* On a phone the neighbour table becomes a stack of cards, so the purpose
+   controls (lock, mirror, scan, delete) are never off the right edge. */
+@media (max-width:640px) {
+	#device_listings .device_nic table, #device_listings .device_nic thead, #device_listings .device_nic tbody, #device_listings .device_nic tr, #device_listings .device_nic td { display:block; width:100%; box-sizing:border-box; }
+	#device_listings .device_nic thead { display:none; }
+	#device_listings .device_nic tr { border:1px solid var(--line); border-radius:8px; margin:8px 0; padding:6px; background:var(--panel); }
+	#device_listings .device_nic td { border:0; padding:3px 2px; }
+	#device_listings .device_head { justify-content:center; text-align:center; }
+	#device_listings .nic_head { justify-content:center; text-align:center; }
+	#device_listings .device_nic td, #device_listings .remote_machine td:first-child { text-align:center; }
+	#device_listings .device_actions { justify-content:center; }
+	#device_listings .device_actions .device_purpose { flex:1 1 100%; }
+	#device_listings .machine_row { justify-content:center; text-align:center; }
+}
+</style>

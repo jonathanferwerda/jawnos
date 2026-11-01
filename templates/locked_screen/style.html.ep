@@ -1,0 +1,138 @@
+<style>
+	#locked_screen {
+		position: fixed;
+		inset: 0;
+		background-color: #101010;
+		color: #f4f4f4;
+		font-family: sans-serif;
+		overflow: hidden;
+	}
+	#locked_heading {
+		position: fixed;
+		top: 2%;
+		left: 0;
+		right: 0;
+		text-align: center;
+		font-size: 20px;
+		z-index: 60002;
+	}
+	#locked_help {
+		position: fixed;
+		bottom: 1%;
+		left: 0;
+		right: 0;
+		text-align: center;
+		font-size: 15px;
+		line-height: 1.35;
+		padding: 0 8px;
+		z-index: 60002;
+	}
+	/* the actions: Unlock asks another device, a fingerprint uses this reader */
+	#locked_actions {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 14px;
+		margin-top: 8px;
+	}
+	#locked_actions button {
+		width: 64px;
+		height: 64px;
+		margin: 0;
+		padding: 7px;
+		box-sizing: border-box;
+		border-radius: 14px;
+		border: 1px solid #555;
+		background-color: #1a1a1a;
+		cursor: pointer;
+		line-height: 0;
+	}
+	#locked_actions img {
+		display: block;
+		width: 100%;
+		height: 100%;
+		object-fit: contain;
+	}
+	/* the one explicit ask: a word, not only a picture, so it reads as the way
+	   to unlock from the table it is on */
+	#locked_actions #locked_unlock_request {
+		width: auto;
+		height: auto;
+		padding: 12px 30px;
+		font-size: 17px;
+		line-height: 1.1;
+		border-color: #2b6;
+		background-color: #2b6;
+		color: #08110a;
+		font-weight: bold;
+	}
+	#locked_fingerprint,
+	#locked_biometric {
+		background-color: #101a12;
+		border-color: #2b6;
+	}
+	/* ready to be scanned: the fingerprint control breathes a green glow */
+	@keyframes locked_fingerprint_glow {
+		0%, 100% { box-shadow: 0 0 0 0 rgba(43, 187, 102, 0.10); }
+		50% { box-shadow: 0 0 16px 5px rgba(43, 187, 102, 0.65); }
+	}
+	#locked_fingerprint:not(:disabled),
+	#locked_biometric:not(:disabled) {
+		animation: locked_fingerprint_glow 1.8s ease-in-out infinite;
+	}
+	#locked_fingerprint:disabled,
+	#locked_biometric:disabled {
+		animation: none;
+		opacity: 0.55;
+	}
+	#locked_phone_status {
+		margin-top: 4px;
+		color: #ffd;
+	}
+	#locked_padlock {
+		position: fixed;
+		left: 50%;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		width: 300px;
+	}
+	#locked_padlock .padlock_frame {
+		position: relative;
+		left: auto;
+		top: auto;
+		transform: none;
+		width: 100%;
+	}
+	#locked_recovery {
+		position: fixed;
+		right: 1%;
+		top: 1%;
+		width: 290px;
+		z-index: 60003;
+		background-color: rgba(28, 28, 34, 0.95);
+		border-radius: 8px;
+		padding: 10px;
+		font-size: 14px;
+	}
+	#locked_recovery input {
+		width: 100%;
+		font-size: 16px;
+		padding: 6px;
+		box-sizing: border-box;
+		/* this page has no universal.css and is always dark, so the field
+		   follows its own surface instead of the browser's white default */
+		background-color: #222;
+		color: #f4f4f4;
+		border: 1px solid #666;
+		border-radius: 6px;
+	}
+	#locked_recovery button {
+		font-size: 16px;
+		padding: 6px 12px;
+		margin-top: 6px;
+	}
+	#locked_status {
+		margin-top: 6px;
+		color: #ffd;
+	}
+</style>

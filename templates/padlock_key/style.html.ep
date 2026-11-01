@@ -1,0 +1,105 @@
+<style>
+	#padlock_key_wrap {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		height: 100%;
+	}
+	#padlock_key_emblem {
+		height: 190px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	/* the locked page always wears the hand-drawn denial picture; the padlock
+	   replaces it while an unlock is being proved */
+	#padlock_key_denial .denial_image {
+		display: block;
+		height: 180px;
+		width: auto;
+		max-height: 180px;
+	}
+	#padlock_key_lock {
+		position: relative;
+		width: 115px;
+		height: 180px;
+	}
+	#padlock_key_lock img {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		object-fit: contain;
+		transition: opacity 550ms ease, transform 550ms ease;
+	}
+	#padlock_key_lock .padlock_key_unlocked {
+		opacity: 0;
+		transform: translateY(-8px) rotate(-4deg);
+	}
+	#padlock_key_lock.unlocking .padlock_key_locked {
+		opacity: 0;
+	}
+	#padlock_key_lock.unlocking .padlock_key_unlocked {
+		opacity: 1;
+		transform: none;
+	}
+	#padlock_key_lock.snap img {
+		transition: none;
+	}
+	#padlock_key_spinner {
+		width: 64px;
+		height: 64px;
+		border: 6px solid rgba(255,255,255,0.15);
+		border-top-color: #f4f4f4;
+		border-radius: 50%;
+		animation: padlock_key_turn 900ms linear infinite;
+	}
+	#padlock_key_spinner.done {
+		animation: none;
+		border-color: #6f6;
+	}
+	#padlock_key_note {
+		margin-top: 24px;
+		text-align: center;
+		font-size: 19px;
+		line-height: 1.35;
+		padding: 0 18px;
+	}
+	#padlock_key_targets {
+		margin-top: 18px;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		width: 80%;
+		max-width: 320px;
+	}
+	#padlock_key_targets button,
+	#padlock_key_unlock,
+	#padlock_key_retry {
+		font-size: 18px;
+		padding: 12px 28px;
+		border-radius: 10px;
+		border: 1px solid #666;
+		background-color: #222;
+		color: #f4f4f4;
+		cursor: pointer;
+	}
+	#padlock_key_targets button {
+		width: 100%;
+	}
+	#padlock_key_unlock {
+		margin-top: 22px;
+		background-color: #2b6;
+		border-color: #2b6;
+		color: #08110a;
+		font-weight: bold;
+	}
+	#padlock_key_retry {
+		margin-top: 22px;
+	}
+	@keyframes padlock_key_turn {
+		to { transform: rotate(360deg); }
+	}
+</style>

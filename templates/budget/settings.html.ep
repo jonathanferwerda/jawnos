@@ -1,0 +1,59 @@
+	<div id="budget_settings" style="display:none;">
+		<span style="float:left;width:30%;" >
+			<input placeholder="Graph Increments" class="budget_config" config="increments" value="<%= $settings->{'increments'} || 30 %>" style="width:120px;">
+			<select class="budget_config" config="scope" style="">
+				<% foreach my $sc ( sort qw/hour day week month year/ ) { %>
+					<option value="<%= $sc %>" <% if ($sc eq $scope) { %>selected<% } %>><%= &subs::format_name($sc) %></option>
+				<% } %>
+			</select>
+			<div>
+				<input class="time budget_time" setting="start_time" timestamp="<%= $start %>" style="width:120px;">
+				<input class="time budget_time" setting="end_time" timestamp="<%= $end %>" style="width:120px;">
+				<img src="<%= &subs::icon_for('/images/make believe/key.png') %>" hint="Lock" class="statistic_lock little_thumb hover <% if ($settings->{'s_lock'} eq 'on') { %>selected<% } %>" app="budget" locked="<%= $settings->{'s_lock'} %>">
+				<select class="budget_config" config="when_multiplier" style="vertical-align:bottom;" hint="How many periods">
+					<% foreach my $count (1..30) { %>
+						<option value="<%= $count %>" <% if ($count == $settings->{'when_multiplier'}) { %>selected<% } %>><%= $count %></option>
+					<% } %>
+				</select>
+				<select class="budget_config" config="time_when" style="vertical-align:bottom;" hint="Which period">
+					<% foreach my $when ( @{$time_scopes} ) { %>
+						<option value="<%= $when %>" <% if ($when eq $settings->{'time_when'}) { %>selected<% } %>><%= &subs::format_name($when) %></option>
+					<% } %>
+				</select>
+			</div>
+		</span>
+		<span>
+			<select class="budget_config" multiple config="columns" style="height:100px; vertical-align:bottom;">
+				<option value="all" <% if (grep { $_ eq 'all' } @{$columns}) { %>selected<% } %>><%= &subs::format_name('all') %></option>
+				<% foreach my $col ( @{$all_columns} ) { %>
+					<option value="<%= $col %>" <% if (grep { $_ eq $col } @{$columns}) { %>selected<% } %>><%= &subs::format_name($col) %></option>
+				<% } %>
+			</select>
+			<select class="budget_config" multiple config="accounts" style="height:100px; vertical-align:bottom;">
+				<% foreach my $ac ( @{$all_accounts} ) { %>
+					<option value="<%= $ac->{'app'} %>" <% if (grep {$ac->{'app'} eq $_ } @{$account}) { %>selected<% } %>><%= &subs::format_name($ac->{'app'}) %></option>
+				<% } %>
+			</select>
+			<select class="budget_config" multiple config="projects" style="height:100px;vertical-align:bottom;">
+				<% foreach my $pr ( @{$all_projects} ) { %>
+					<option value="<%= $pr->{'app'} %>" <% if (grep { $pr->{'app'} eq $_ } @{$project}) { %>selected<% } %>><%= &subs::format_name($pr->{'app'}) %></option>
+				<% } %>
+			</select>
+			<select class="budget_config" config="movement" multiple style="height:100px;vertical-align:bottom;">
+				<% foreach my $sc ( sort @gb::movements ) { %>
+					<option value="<%= $sc %>" <% if (grep { $_ eq $sc } @{$movement}) { %>selected<% } %>><%= &subs::format_name($sc) %></option>
+				<% } %>
+			</select>
+			<% if ($display eq 'statement') { %>
+				<input id="budget_display_name" display_type="statement" placeholder="name" style="width:20%;vertical-align:top;" value="<%= $settings->{$display . '_display'} %>">
+				<select id="budget_display_categorization" class="budget_config" config="display_categorization" value="<%= $settings->{'display_categorization'} %>">
+					<% foreach my $bdc ( qw/app category project account/) { %>
+						<option value="<%= $bdc %>" <% if ($bdc eq $settings->{'display_categorization'}) { %>selected<% } %>><%= &subs::format_name($bdc) %></option>
+					<% } %>
+				</select>
+				<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="little_thumb hover" id="budget_display_save">
+				<img src="<%= &subs::icon_for('/icons/trash.png') %>" hint="Delete" class="little_thumb hover" id="budget_display_delete">
+			<% } %>
+			<img class="little_thumb hover" id="budget_refresh" src="<%= &subs::icon_for('/images/make believe/renew.png') %>" hint="Refresh">
+		</span>
+	</div>

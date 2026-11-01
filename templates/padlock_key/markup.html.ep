@@ -1,0 +1,21 @@
+<div id="padlock_key_wrap">
+	<div id="padlock_key_emblem">
+		<div id="padlock_key_denial"><%= include 'denial_image' %></div>
+		<div id="padlock_key_lock" style="display:none;">
+			<img class="padlock_key_locked" src="<%= &subs::icon_drawn('/images/jbuttons/padlock lock.png') %>" alt="Locked">
+			<img class="padlock_key_unlocked" src="<%= &subs::icon_drawn('/images/jbuttons/padlock unlock.png') %>" alt="Unlocked">
+		</div>
+	</div>
+	<div id="padlock_key_spinner" style="display:none;"></div>
+	<div id="padlock_key_note">
+		<% if ($has_padlock) { %>
+			The screen is locked.
+		<% } else { %>
+			No padlock is set on this house.
+		<% } %>
+	</div>
+	<div id="padlock_key_targets" style="display:none;"></div>
+	<button id="padlock_key_unlock" type="button"<% unless ($has_padlock) { %> style="display:none;"<% } %>>Unlock</button>
+	<button id="padlock_key_retry" type="button" style="display:none;">Try again</button>
+</div>
+

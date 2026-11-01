@@ -1,0 +1,29 @@
+	<style>
+	#embedded { font: inherit; }
+	#embedded select, #embedded input, #embedded button, #embedded textarea { font: inherit; color: var(--ink); }
+	#embedded button { padding: 3px 10px; margin: 3px 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-2); cursor: pointer; }
+	#embedded .hover:hover { filter: brightness(1.08); }
+	#embedded .embedded_now_me, #embedded .embedded_bt_now_me { background: var(--panel); font-weight: 700; }
+	#embedded .embedded_device_info { text-align: left; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 6px 10px; margin: 6px auto; max-width: 720px; }
+	#embedded .embedded_device_info table { width: 100%; border-collapse: collapse; }
+	#embedded .embedded_device_info th, #embedded .embedded_device_info td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; }
+	#embedded .teletype_card, #embedded #teletype_homebase, #embedded #teletype_wifi, #embedded #teletype_router, #embedded #teletype_appearance { display: inline-block; text-align: left; vertical-align: top; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--ink); padding: 6px 10px; margin: 8px; }
+	#embedded .teletype_card b, #embedded #teletype_wifi b, #embedded #teletype_router b { color: var(--ink); }
+	#embedded .teletype_wifi_config, #embedded .teletype_appearance, #embedded .embedded_setting { margin: 2px; }
+	#embedded .embedded_detail { display: inline-block; margin: 1px; padding: 1px 4px; border: 1px solid var(--line); border-radius: 4px; font-size: 90%; cursor: pointer; }
+	#embedded .embedded_jobs, #embedded .embedded_job { text-align: left; }
+	#embedded .embedded_job + .embedded_job { border-top: 1px solid var(--line); padding-top: 4px; margin-top: 4px; }
+	/* the buttons are laid out by the template's <br> breaks (two rows, matched to
+	   the device); a flex container ignores those breaks and pulls every button
+	   into one wrapping row, so this stays a plain block and the buttons are
+	   inline-block */
+	#embedded #watch_buttons { text-align: center; }
+	#embedded .watch_button_container, #embedded .embedded_container { display: inline-block; vertical-align: top; }
+	#embedded .watch_button, #embedded .watch_component { display: inline-block; vertical-align: top; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); padding: 4px 8px; min-width: 84px; }
+	#embedded .component_name { font-weight: 700; }
+	#embedded .component_type { opacity: .7; font-size: 85%; }
+	#embedded #embedded_diagrams table { margin: 0 auto; }
+	#embedded #teletype_homebase, #embedded .embedded_device_info, #embedded #teletype, #embedded #watch_buttons { width: 96%; margin-left: auto; margin-right: auto; }
+	#embedded table { border-collapse: collapse; }
+	@media (max-width: 640px) { #embedded .teletype_card, #embedded #teletype_homebase, #embedded #teletype_wifi, #embedded #teletype_router, #embedded #teletype_appearance { display: block; margin: 8px 0; } }
+	</style>

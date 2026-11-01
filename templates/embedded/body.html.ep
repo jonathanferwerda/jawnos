@@ -1,0 +1,278 @@
+	<select id="embedded_view"> value="<%= $view %>">
+		<% foreach my $v ( qw/gpio pins diagrams/ ) { %>
+			<option value="<%= $v %>" <% if ($v eq $view) { %>selected<% } %>><%= &subs::format_name($v) %></option>
+		<% } %>
+	</select>
+	<select id="embedded_device_picker" value="<%= $device_type %>">
+		<% foreach my $dt ( qw/watch teletype microcontroller/ ) { %>
+			<option <% if ($dt eq $device_type) { %>selected <% } %> value="<%= $dt %>"><%= &subs::format_name($dt) %></option>
+		<% } %>
+	</select>
+	<select id="embedded_device_chip_id" value="<%= $chip_id %>">
+		<option value=""></option>
+		<% foreach my $chip ( @{$chip_ids} ) { %>
+			<option value="<%= $chip->{'id'} %>" <% if ($chip_id eq $chip->{'id'}) { %>selected<% } %>><%= $chip->{'name'} || $chip->{'id'} %></option>
+		<% } %>
+	</select>
+	<% if (eval {$embedded->{'ip'} || $embedded->{'ble'}}) { %>
+		<br>
+		<% if ($embedded->{'ble'}) { %>
+			<span style="font-size:23px;"><b>Bluetooth</b> <%= $embedded->{'mac_addresses'}->{'bluetooth'} %></span>
+		<% } else { %>
+			<span style="font-size:23px;"><b><%= $embedded->{'ip'} %></b> <%= $embedded->{'mac'} %></span>
+		<% } %>
+		<div id="teletype_homebase" class="teletype_card">
+			<% if ($device_type eq 'teletype') { %>
+				<%# input authority is the Now Me pair, not a separate password: the
+				    deck's wss connection validates the same authorization token the
+				    watch's rooms use. %>
+				<button id="tty_enabled" status="<%= $tty_enabled %>"><% unless ($tty_enabled == 1) { %>Enable <% } else { %>Disable<% } %></button>
+			<% } %>
+			Name:<input id="embedded_device_name" value="<%= $embedded->{'name'} %>"><br>
+			<% if ($embedded->{'mac_addresses'}) { %>
+				<% if ($embedded->{'mac_addresses'}->{'bluetooth'}) { %>
+					<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" uuid="<%= $embedded->{'uuid'} %>" bt_mac="<%= $embedded->{'mac_addresses'}->{'bluetooth'} %>" class="embedded_bt_now_me hover">BT Now Me</button>
+				<% } %>
+			<% } %>
+			<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" uuid="<%= $embedded->{'uuid'} %>"  class="embedded_now_me hover">Now Me</button>
+
+			<% if ($edt ne 'microcontroller') { %>
+				<select class="embedded_setting" setting="room_count" value="<%= $operator_door->{'__specs'}->{'room_count'} %>" chip_id="<%= $chip_id %>" edt="<%= $edt %>">
+					<% foreach my $n ( 0..100 ) { %>
+						<option value="<%= $n %>" <% if ($n == $operator_door->{'__specs'}->{'room_count'}) { %>selected<% } %>><%= $n %> rooms</option>
+					<% } %>
+				</select><br>
+				Screen Timeout: <input class="embedded_setting" setting="screen_timeout" style="width:90px;" value="<%= $operator_door->{'__specs'}->{'screen_timeout'} %>" chip_id="<%= $chip_id %>" edt="<%= $edt %>">
+				<% if ($edt eq 'watch' || $edt eq 'teletype') { %>
+					<br>
+					<%# how the device starts a voice capture. 'vad' is the neural voice-activity
+					    model (capture on any speech); the rest are wake words, named for the
+					    voice_words[] rows in voice_models.h. Pushed to the device on change
+					    (push="now_me"), which now_me sends over the LAN if the device answers,
+					    else the BLE bridge. Only the phrases we have a model for are listed;
+					    the watch and the teletype carry the same set apart from jawn_do, which
+					    the teletype's voice_words[] does not have. %>
+					<% my %voice_modes = (
+						off      => 'Voice: Off',
+						vad      => 'Voice: Any speech (VAD)',
+						hey_jawn => 'Voice: Hey Jawn',
+						jawn_do  => 'Voice: Jawn Do',
+					); %>
+					<% my @voice_choices = ($edt eq 'watch') ? qw/off vad hey_jawn jawn_do/ : qw/off vad hey_jawn/; %>
+					<select class="embedded_setting" setting="voice_trigger" push="now_me" chip_id="<%= $chip_id %>" edt="<%= $edt %>">
+						<% foreach my $vm ( @voice_choices ) { %>
+							<option value="<%= $vm %>" <% if (($operator_door->{'__specs'}->{'voice_trigger'} || 'off') eq $vm) { %>selected<% } %>><%= $voice_modes{$vm} %></option>
+						<% } %>
+					</select>
+					<%# the frame level a wake capture holds above once the voice stops. A device
+					    carries a steady tone of its own that the room never drops below, so a
+					    fixed floor either ends the clip mid-sentence or never ends it at all.
+					    'Auto' learns the room it is in and sits just over it; a number pins the
+					    floor by hand when auto mishears. Pushed on change. %>
+					<% my %voice_floors = (
+						auto => 'Noise floor: Auto',
+						1200 => 'Noise floor: 1200',
+						1600 => 'Noise floor: 1600',
+						2000 => 'Noise floor: 2000',
+						2600 => 'Noise floor: 2600',
+						3400 => 'Noise floor: 3400',
+					); %>
+					<select class="embedded_setting" setting="voice_floor" push="now_me" chip_id="<%= $chip_id %>" edt="<%= $edt %>">
+						<% foreach my $vf ( qw/auto 1200 1600 2000 2600 3400/ ) { %>
+							<option value="<%= $vf %>" <% if (($operator_door->{'__specs'}->{'voice_floor'} || 'auto') eq $vf) { %>selected<% } %>><%= $voice_floors{$vf} %></option>
+						<% } %>
+					</select>
+				<% } %>
+				<br>
+				<%# whether the guide associate's answer is spoken on the device as well
+				    as shown on it. Saved into the operator door like the voice mode, so
+				    the machine holding the bridge reads it when it answers. On by
+				    default for both the watch and the t-deck. %>
+				<% my $audio_replies = $operator_door->{'__specs'}->{'audio_replies'} || 'on'; %>
+				<button class="hover audio_replies_toggle" setting="audio_replies" chip_id="<%= $chip_id %>" edt="<%= $edt %>" status="<%= $audio_replies %>">Audio replies: <%= ($audio_replies eq 'on') ? 'On' : 'Off' %></button>
+			<% } else { %>
+
+			<% } %>
+			<% unless ($embedded->{'ble'}) { %>
+				<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_wigi hover">WIGI</button>
+				<button ip="<%= $embedded->{'ip'} %>" edt="<%= $edt %>" chip_id="<%= $chip_id %>" class="embedded_device_query hover">Query</button>
+			<% } %>
+			<div class="embedded_device_info" style="width:100%;display:none;" chip_id="<%= $chip_id %>"></div>
+			<% if ($edt eq 'microcontroller') { %>
+				<button ip="<%= $embedded->{'ip'} %>" mac="<%= $embedded->{'mac'} %>" class="embedded_jobs">Jobs</button>
+				<%# A crashed board in its provisioning AP cannot be reached over the LAN.
+				    Its USB CDC link can still take the stored WiFi and role: the manager
+				    writes config.txt, the board acknowledges and reboots onto the house. %>
+				<button chip_id="<%= $chip_id %>" edt="<%= $edt %>" class="embedded_usb_provision hover">Restore over USB</button>
+				<div id="embedded_usb_provision_result" style="display:none;width:100%;text-align:left;"></div>
+				<div id="embedded_jobs_results" style="display:none;width:100%;"></div>
+			<% } %>
+		</div>
+
+		<canvas id="embedded_campus" style="display:none;"></canvas>
+		<br><input type=text" value="<%= $embedded_scope %>" id="watch_scope" style="width:90px">
+		<br><button id="watch_list_proxy">List Proxy</button>
+		<button id="watch_set_proxy">Set Proxy</button><br>
+		<div id="watch_proxy_view"></div><br>
+
+		<% if ($view eq 'gpio') { %>
+		
+			<div id="watch_buttons">
+				<%# two rows, like the device's own screen: the teletype has 8 buttons
+				    (4+4), the watch 6 (3+3), a board 28 pins (14+14). room_max is the
+				    count; the break below is at room_max/2, so only the bound must not
+				    multiply by room_count for the button devices. %>
+				<% my $slots = ($edt eq 'microcontroller') ? ($room_max * $room_count) : $room_max; %>
+				<% foreach my $component ( sort keys %{$components} ) { %>
+					<% if ($component) { %>
+						<h4><%= &subs::format_name($component) %></h4>
+						<% for (my $n = $start_n; $n <= $slots; $n++) { %>
+
+							<%= include 'embedded/component', 
+								n => $n, 
+								pin => $n,
+								component => $component, 
+								settings => $settings, 
+								components => $components, 
+								embedded => $embedded, 
+								movements => $movements,
+								device_type => $device_type,
+								source => 'gpio',
+								destinations => $destinations
+							%>
+
+							<% if ($n % ($room_max / 2) == 0 && $n != 0) { %>
+								<br>
+							<% } %>
+							<% if ($n % $room_max == 0 && $n != 0) { %>
+								<br>
+							<% } %>
+						<% } %>
+					<% } %>
+				<% } %>				
+			</div>
+			<br>
+
+			<div id="teletype" style="text-align:center;background-color:var(--panel);">
+				<div id="teletype_wifi" class="teletype_card">
+					<b>AP SSID</b>
+					<input type="text" id="teletype_wifi_ap_ssid" value="<%= $wifi->{'ap_ssid'} %>" class="teletype_wifi_config" field="ap_ssid"><br>
+					<b>AP Password</b>
+					<input type="password" class="teletype_wifi_config" id="teletype_wifi_ap_password" value="" data-set="<%= length($wifi->{'ap_password'} || '') ? 1 : 0 %>" placeholder="<%= length($wifi->{'ap_password'} || '') ? '••• set — type to replace' : 'not set' %>" field="ap_password"><br>
+				</div>
+				<div id="teletype_router" class="teletype_card">
+					<b>SSID</b>
+					<input type="text" class="teletype_wifi_config" id="teletype_wifi_ssid" value="<%= $wifi->{'ssid'} %>" field="ssid"><br>
+					<b>Password</b>
+					<input type="password" class="teletype_wifi_config" id="teletype_wifi_password" value="" data-set="<%= length($wifi->{'password'} || '') ? 1 : 0 %>" placeholder="<%= length($wifi->{'password'} || '') ? '••• set — type to replace' : 'not set' %>" field="password"></br>
+				</div>
+				<button id="teletype_wifi_update">Update Wifi</button>
+				<button id="teletype_usb_update">Update USB</button>
+			</div>
+
+			<% if ($device_type eq 'teletype') { %>
+				<div id="teletype_appearance" class="teletype_card">
+					<% foreach my $f (qw/typewriter_text_colour typewriter_background_colour chat_text_colour chat_background_colour pen_text_colour pen_background_colour/) { %>
+						<label><%= &subs::format_name($f) %>: </label>
+						<input value="<%= $operator_door->{'__specs'}->{$f} %>" type="color" class="teletype_appearance" field="<%= $f %>" id="teletype_<%= $f %>"><br>
+					<% } %>
+				</div>
+			<% } %>
+
+			<% if ($edt eq 'microcontroller') { %>
+				<button id="embedded_ota_uploader" style="vertical-align:top;">OTA</button>
+				<img class="little_thumb" id="embedded_ota_uploader_wait" style="display:none;" src="<%= &subs::icon_for('/images/make believe/delay_button.png') %>" hint="Delay">
+				<img class="little_thumb" id="embedded_ota_uploader_success" style="display:none;" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
+				<img class="little_thumb" id="embedded_ota_uploader_fail" style="display:none;" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
+				<b<span id="embedded_ota_uploader_percentage" style="vertical-align:top;font-size:26px;"></span></b>
+			<% } else { %>
+				<!-- esp32 boards: OTA streams a picked .bin over wifi, or USB has the manager
+				     run the PlatformIO upload on the machine the board is plugged into -->
+				<button id="embedded_ota_uploader_wifi" ip="<%= $embedded->{'ip'} %>" style="vertical-align:top;display:<%= $embedded->{'ble'} ? 'none' : 'inline-block' %>;">OTA</button>
+				<button id="embedded_usb_uploader" style="vertical-align:top;">USB</button>
+				<select id="embedded_usb_port" style="display:none;"></select>
+				<input type="file" id="embedded_ota_file" accept=".bin" style="display:none;">
+				<img class="little_thumb" id="embedded_ota_uploader_wait" style="display:none;" src="<%= &subs::icon_for('/images/make believe/delay_button.png') %>" hint="Delay">
+				<img class="little_thumb" id="embedded_ota_uploader_success" style="display:none;" src="<%= &subs::icon_for('/images/make believe/good.png') %>" hint="Good">
+				<img class="little_thumb" id="embedded_ota_uploader_fail" style="display:none;" src="<%= &subs::icon_for('/images/make believe/bad.png') %>" hint="Bad">
+				<b><span id="embedded_ota_uploader_percentage" style="vertical-align:top;font-size:26px;"></span></b>
+			<% } %>
+			<% if ( $embedded->{'mac_addresses'} ) { %>
+				<table style="width:100%;"><tbody>
+				<% foreach my $m ( keys %{$embedded->{'mac_addresses'}} ) { %>
+					<tr><td><%= &subs::format_name($m) %></td><td><%= $embedded->{'mac_addresses'}->{$m} %></td></tr>
+				<% } %>
+			<% } %>
+		<% } elsif ($view eq 'pins') { %>
+			<br>
+			<% my $colours = {
+				I2C => 'lightblue',
+				SPI => 'pink',
+				GP => 'lightgreen',
+				UART => 'purple',
+				GND => 'beige'
+			}; %>
+			<% if ($gb::microcontrollers->{$embedded->{'model'}}) { %>
+				<% my $pins = $gb::microcontrollers->{$embedded->{'model'}}->{'pins'}; %>
+				<table style="width:100%;font-size:16px;">
+					<tbody>
+						<% foreach my $fpin ( sort { $a <=> $b } keys %{$pins}) { %>
+							<% if ($fpin > (scalar keys %{$pins}) / 2) {
+								last;
+							} %>
+							<tr>
+								<% my $lpin = (scalar keys %{$pins}) - $fpin + 1; %>
+								<% foreach my $pin ( ( $fpin, $lpin ) ) { %>
+
+									<td>
+										<% foreach my $method ( keys %{$pins->{$pin}} ) { %>
+											<% next if $method eq 'colour'; %>
+											<% if (eval { %{$pins->{$pin}->{$method}} }) { %>
+												<span style="background-color:<%= $pins->{$pin}->{'colour'} || $colours->{$method} || 'lightgrey' %>;" class="hover embedded_detail"
+													form="<%= $method %>" numero="<%= $pins->{$pin}->{$method} %>" pin="<%= $pin %>"
+												>
+													<%= $method %>
+													<% foreach my $p ( sort keys %{$pins->{$pin}->{$method}} ) { %>
+														<%= $p %> <%= $pins->{$pin}->{$method}->{$p} %>
+													<% } %>
+												</span>
+											<% } else { %>
+												<span style="background-color:<%= $pins->{$pin}->{'colour'} || $colours->{$method} || 'lightgrey' %>;" class="hover embedded_detail"
+													form="<%= $method %>" numero="<%= $pins->{$pin}->{$method} %>">
+													<%= $method %> <%= $pins->{$pin}->{$method} %>
+												</span>
+											<% } %>
+										<% } %>
+									</td>
+									<td>
+										<button><%= $pin %></button>
+									</td>
+								<% } %>
+							</tr>
+						<% } %>
+					</tbody>
+				</table>
+			<% } else { %>
+				I don't know this chip.
+			<% } %>
+		<% } elsif ($view eq 'diagrams') { %>
+			<img src="<%= &subs::icon_for('/images/decipherable/home.png') %>" hint="Home" class="hover tiny_thumb" id="embedded_diagrams_home" style="position:absolute;top:35px;right:0px;display:none;">
+			<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Close" class="hover tiny_thumb" id="embedded_diagrams_cancel" style="position:absolute;top:35px;right:50px;display:none;">
+			<img src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="Save" class="hover tiny_thumb" id="embedded_diagrams_save" style="position:absolute;top:35px;right:100px;display:none;">
+			<div id="embedded_diagrams" style="width:100%;height:100%;align:center;">
+				<% my $diagrams = eval { return decode_json &subs::setting_grabber({ app => 'embedded', setting => 'diagrams' }) } || []; %>
+				<% foreach my $d ( @{$diagrams} ) { %>
+					<table>
+						<th><%= $d->{'name'} %></th>
+						<tr><td>
+							<img src="/file_open?file=<%= $d->{'f'} %>&app=<%= $d->{'app'} %>&timestamp=<%= $d->{'server_time'} %>" uuid="<%= $d->{'uuid'} %>" class="gigantic_thumb embedded_diagram_thumb hover">
+						</td></tr>
+					</table>
+				<% } %>
+			</div>
+			<div id="embedded_diagram" style="width:100%;height:100%;">
+
+			</div>
+		<% } %>
+	<% } %>
+</div>

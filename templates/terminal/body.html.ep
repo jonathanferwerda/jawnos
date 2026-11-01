@@ -1,0 +1,202 @@
+<div id="terminal_<%= $terminal_id %>" class="terminal_app" data-terminal-id="<%= $terminal_id %>"
+	data-user="<%= $whoami %>" data-host="<%= $hostname %>"
+	data-session-host="<%= $session_host %>" data-session-user="<%= $session_user %>" data-session-port="<%= $session_port %>"
+	data-shell-label="<%= $active_shell->{'label'} %>" style="--terminal_font:<%= $font_size || 15 %>px;">
+
+	<div class="terminal_views">
+
+		<div class="terminal_view terminal_shell_view terminal_interactive" view="interactive_terminal" id="terminal_interactive_<%= $terminal_id %>"
+			tabindex="0" role="application" aria-label="<%= &subs::ui('Terminal shell') %>"
+			<% if ($active_view ne 'interactive_terminal') { %>style="display:none;"<% } %>>
+			<div class="terminal_screen" aria-live="polite"></div>
+			<textarea class="terminal_keyboard" rows="1" cols="1"
+				autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+				aria-label="<%= &subs::ui('Keyboard input for the terminal') %>"></textarea>
+			<button type="button" class="terminal_jump" data-show="no"
+				hint="<%= &subs::ui('Scroll to the newest output') %>">&#8595; <%= &subs::ui('Newest') %></button>
+		</div>
+
+		<div class="terminal_view terminal_list_view" view="terminal" id="terminal_view_<%= $terminal_id %>"
+			<% if ($active_view ne 'terminal') { %>style="display:none;"<% } %>>
+			<div class="terminal_list_head">
+				<span class="terminal_list_title"><span class="terminal_prompt">President:</span> <%= &subs::ui('Commands') %></span>
+			</div>
+			<div class="terminal_entries terminal_command_output">
+				<div class="terminal_entry terminal_entry_command">
+					<div class="terminal_entry_msg"><%= &subs::ui('Commands run on both the server and this browser. Handle with care.') %></div>
+				</div>
+			</div>
+			<div class="terminal_command_row">
+				<span class="terminal_command_prompt terminal_console_prompt"><%= $whoami %>@<%= $hostname %> $</span>
+				<input class="terminal_console" type="text"
+					placeholder="<%= &subs::ui('Type a command and press Enter') %>"
+					autocomplete="off" spellcheck="false" aria-label="<%= &subs::ui('Command') %>">
+			</div>
+		</div>
+
+		<div class="terminal_view terminal_list_view terminal_error_view" view="errors" id="terminal_error_view_<%= $terminal_id %>"
+			<% if ($active_view ne 'errors') { %>style="display:none;"<% } %>>
+			<div class="terminal_list_head">
+				<span class="terminal_list_title"><span class="terminal_prompt">President:</span> <%= &subs::ui('Error log') %></span>
+				<span class="terminal_badge terminal_error_count"><%= $error_count %></span>
+				<% if ($error_count > $errors_shown) { %><span class="terminal_config_hint"><%= &subs::ui('Newest') %> <%= $errors_shown %></span><% } %>
+				<button type="button" class="terminal_clear" data-view="errors"
+					hint="<%= &subs::ui('Clear the error log') %>"><%= &subs::ui('Clear') %></button>
+			</div>
+			<div class="terminal_entries terminal_error_entries"
+				data-empty="<%= &subs::ui('No errors have been recorded.') %>">
+				<% if ($error_count) { %>
+					<% foreach my $err ( @{$settings->{'errors'}} ) { %><%= include 'terminal/error', err => $err, whoami => $whoami, hostname => $hostname %><% } %>
+				<% } else { %>
+					<div class="terminal_empty"><%= &subs::ui('No errors have been recorded.') %></div>
+				<% } %>
+			</div>
+		</div>
+
+		<div class="terminal_view terminal_list_view terminal_log_view" view="log" id="terminal_log_view_<%= $terminal_id %>"
+			<% if ($active_view ne 'log') { %>style="display:none;"<% } %>>
+			<div class="terminal_list_head">
+				<span class="terminal_list_title"><span class="terminal_prompt">President:</span> <%= &subs::ui('Log') %></span>
+				<span class="terminal_badge terminal_log_count"><%= $log_count %></span>
+				<% if ($log_count > $logs_shown) { %><span class="terminal_config_hint"><%= &subs::ui('Newest') %> <%= $logs_shown %></span><% } %>
+				<button type="button" class="terminal_clear" data-view="log"
+					hint="<%= &subs::ui('Clear the log') %>"><%= &subs::ui('Clear') %></button>
+			</div>
+			<div class="terminal_entries terminal_log_entries"
+				data-empty="<%= &subs::ui('Nothing has been logged.') %>">
+				<% if ($log_count) { %>
+					<% foreach my $log ( @{$settings->{'log'}} ) { %><%= include 'terminal/log', 'log' => $log, whoami => $whoami, hostname => $hostname %><% } %>
+				<% } else { %>
+					<div class="terminal_empty"><%= &subs::ui('Nothing has been logged.') %></div>
+				<% } %>
+			</div>
+		</div>
+
+	</div>
+
+	<div class="terminal_configure" role="dialog" aria-label="<%= &subs::ui('Terminal configuration') %>">
+		<div class="terminal_config_head">
+			<b><%= &subs::ui('Terminals') %></b>
+			<span class="terminal_config_sub"><%= &subs::ui('Choose the machine this shell runs on') %></span>
+			<button type="button" class="terminal_config_close" hint="<%= &subs::ui('Close') %>">&#10005;</button>
+		</div>
+		<div class="terminal_config_body">
+			<div class="terminal_config_section">
+				<div class="terminal_config_title"><%= &subs::ui('This machine') %></div>
+				<button type="button" class="terminal_local_connect terminal_shell_connect <%= $active_shell->{'local'} ? 'current' : '' %>"
+					data-host="" data-user="" data-port=""
+					hint="<%= &subs::ui('Run the shell on this machine') %>">
+					<span class="terminal_dot <%= $active_shell->{'local'} ? 'local' : '' %>"></span>
+					<span><%= $me->{'label'} %></span>
+				</button>
+			</div>
+
+			<div class="terminal_config_section">
+				<div class="terminal_config_title"><%= &subs::ui('Remote machines') %></div>
+				<% if (!scalar(@{$machine_list})) { %>
+					<div class="terminal_empty"><%= &subs::ui('No other machines are linked yet. Link one under Configure, Devices.') %></div>
+				<% } else { %>
+					<% foreach my $rm ( @{$machine_list} ) { %>
+						<div class="terminal_remote_row" data-key="<%= $rm->{'key'} %>" data-host="<%= $rm->{'host'} %>"
+							data-name="<%= $rm->{'name'} %>">
+							<div class="terminal_remote_identity">
+								<span class="terminal_remote_name"><%= $rm->{'name'} %></span>
+								<span class="terminal_remote_addr"><%= $rm->{'address'} %><% if ($rm->{'connection'} ne 'active') { %> &middot; <%= &subs::ui('offline') %><% } %></span>
+							</div>
+							<label class="terminal_remote_field">
+								<span><%= &subs::ui('User') %></span>
+								<input class="terminal_remote_user" type="text" value="<%= $rm->{'user'} %>" spellcheck="false" autocomplete="off">
+							</label>
+							<label class="terminal_remote_field port">
+								<span><%= &subs::ui('Port') %></span>
+								<input class="terminal_remote_port" type="number" min="1" max="65535" value="<%= $rm->{'port'} %>">
+							</label>
+							<button type="button" class="terminal_remote_connect terminal_shell_connect"
+								data-host="<%= $rm->{'host'} %>" data-name="<%= $rm->{'name'} %>"
+								hint="<%= &subs::ui('Open a shell on this machine') %>"><%= &subs::ui('Connect') %></button>
+						</div>
+					<% } %>
+				<% } %>
+				<div class="terminal_config_hint"><%= &subs::ui('Connects over ssh on the machine\'s own sshd port (8022 by default).') %></div>
+				<div class="terminal_config_hint"><%= &subs::ui('Each Terminal window keeps its own shell on the server, so switching here changes only this window.') %></div>
+			</div>
+
+			<% if (scalar(@{$session_rows})) { %>
+			<div class="terminal_config_section">
+				<div class="terminal_config_title"><%= &subs::ui('Open sessions') %></div>
+				<% foreach my $s ( @{$session_rows} ) { %>
+					<div class="terminal_session_row" data-id="<%= $s->{'id'} %>" data-host="<%= $s->{'host'} %>"
+						data-user="<%= $s->{'user'} %>" data-port="<%= $s->{'port'} %>" data-label="<%= $s->{'label'} %>">
+						<span class="terminal_session_label"><%= $s->{'label'} %></span>
+						<span class="terminal_session_state"><%= &subs::ui($s->{'state'} eq 'local' ? 'local' : ($s->{'state'} eq 'connecting' ? 'connecting' : 'open')) %></span>
+						<button type="button" class="terminal_session_end"
+							hint="<%= &subs::ui('End this session') %>"><%= &subs::ui('End') %></button>
+						<button type="button" class="terminal_session_open"
+							hint="<%= &subs::ui('Open this session in its own Terminal window') %>"><%= &subs::ui('Open') %></button>
+					</div>
+				<% } %>
+				<div class="terminal_config_hint"><%= &subs::ui('A session stays alive after its window is closed, until the shell exits or jawn restarts.') %></div>
+			</div>
+			<% } %>
+
+			<div class="terminal_config_section terminal_config_type">
+				<span><%= &subs::ui('Text size') %></span>
+				<button type="button" class="terminal_font_button terminal_font_dec" hint="<%= &subs::ui('Smaller text') %>">A&minus;</button>
+				<span class="terminal_font_size"><%= $font_size || 15 %></span>
+				<button type="button" class="terminal_font_button terminal_font_inc" hint="<%= &subs::ui('Larger text') %>">A+</button>
+			</div>
+		</div>
+	</div>
+
+	<div class="terminal_toolbar">
+		<div class="terminal_status" hint="<%= &subs::ui('The machine this shell is running on') %>">
+			<span class="terminal_shell_dot terminal_dot <%= $active_shell->{'local'} ? 'local' : 'remote' %>"></span>
+			<span class="terminal_shell_status"><%= $active_shell->{'label'} %></span>
+		</div>
+		<div class="terminal_toolbar_buttons" role="tablist" aria-label="<%= &subs::ui('Terminal views') %>">
+			<button type="button" class="terminal_view_select" view="interactive_terminal" role="tab"
+				aria-selected="<%= $active_view eq 'interactive_terminal' ? 'true' : 'false' %>"
+				<% if ($active_view eq 'interactive_terminal') { %>selected<% } %>
+				hint="<%= &subs::ui('Interactive shell') %>">
+				<img src="<%= &subs::icon_for('/images/make believe/monitor.png') %>" alt="">
+				<span><%= &subs::ui('Shell') %></span>
+			</button>
+			<button type="button" class="terminal_view_select" view="terminal" role="tab"
+				aria-selected="<%= $active_view eq 'terminal' ? 'true' : 'false' %>"
+				<% if ($active_view eq 'terminal') { %>selected<% } %>
+				hint="<%= &subs::ui('Commands') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/code.png') %>" alt="">
+				<span><%= &subs::ui('Commands') %></span>
+			</button>
+			<button type="button" class="terminal_view_select" view="errors" role="tab"
+				aria-selected="<%= $active_view eq 'errors' ? 'true' : 'false' %>"
+				<% if ($active_view eq 'errors') { %>selected<% } %>
+				hint="<%= &subs::ui('Errors') %>">
+				<img src="<%= &subs::icon_for('/images/make believe/explosion.png') %>" alt="">
+				<span><%= &subs::ui('Errors') %></span>
+			</button>
+			<button type="button" class="terminal_view_select" view="log" role="tab"
+				aria-selected="<%= $active_view eq 'log' ? 'true' : 'false' %>"
+				<% if ($active_view eq 'log') { %>selected<% } %>
+				hint="<%= &subs::ui('Log') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/list.png') %>" alt="">
+				<span><%= &subs::ui('Log') %></span>
+			</button>
+		</div>
+		<div class="terminal_toolbar_actions">
+			<button type="button" class="terminal_tool terminal_keyboard_toggle"
+				hint="<%= &subs::ui('Show the keyboard') %>" aria-label="<%= &subs::ui('Show the keyboard') %>">&#9000;</button>
+			<button type="button" class="terminal_tool terminal_jump_bottom"
+				hint="<%= &subs::ui('Scroll to the newest output') %>" aria-label="<%= &subs::ui('Scroll to the newest output') %>">&#8595;</button>
+			<button type="button" class="terminal_tool terminal_configure_toggle"
+				hint="<%= &subs::ui('Terminals and settings') %>" aria-label="<%= &subs::ui('Terminals and settings') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/server.png') %>" alt="">
+			</button>
+			<button type="button" class="terminal_tool coding_chat_toggle" mount="terminal_<%= $terminal_id %>"
+				hint="<%= &subs::ui('Coding agent') %>" aria-label="<%= &subs::ui('Coding agent') %>">
+				<img src="<%= &subs::icon_for('/images/decipherable/code.png') %>" alt="">
+			</button>
+		</div>
+	</div>
+
+	<%= include 'apps/coding_chat', mount => ('terminal_' . $terminal_id), label => 'Coding agent (terminal)' %>

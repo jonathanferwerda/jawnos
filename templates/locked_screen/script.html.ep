@@ -1,0 +1,138 @@
+<script>
+(function () {
+	function b64(buf) {
+		var bytes = new Uint8Array(buf);
+		var s = '';
+		for (var i = 0; i < bytes.length; i++) { s += String.fromCharCode(bytes[i]); }
+		return btoa(s);
+	}
+	function status(text) {
+		var el = document.getElementById('locked_status');
+		if (el) { el.textContent = text || ''; }
+	}
+	// the phone's fingerprint button belongs to the Android app; the computer's
+	// belongs to the machine with the reader
+	var bio = document.getElementById('locked_biometric');
+	// show it when the native Keystore bridge is here, or when the house says
+	// this phone has an enrolled fingerprint (the click then explains if the
+	// page is a plain browser without the app's bridge)
+	if (bio && (window.JawnBiometricKey || bio.getAttribute('data-enrolled') === '1')) { bio.style.display = ''; }
+	var localfp = document.getElementById('locked_fingerprint');
+	// the reader belongs to the machine it is attached to; hide it on a phone
+	// even when the shared lock HTML was rendered by a computer
+	function hideLocalFingerprint() {
+		if (localfp && typeof jawnMobileHere === 'function' && jawnMobileHere()) { localfp.style.display = 'none'; }
+	}
+	hideLocalFingerprint();
+	document.addEventListener('DOMContentLoaded', hideLocalFingerprint);
+	setTimeout(hideLocalFingerprint, 0);
+	var go = document.getElementById('locked_recovery_go');
+	if (go) {
+		go.addEventListener('click', function () {
+			var code = (document.getElementById('locked_recovery_code').value || '').trim();
+			if (!code) { status('Type the code first.'); return; }
+			if (!(window.crypto && crypto.subtle && crypto.subtle.generateKey)) {
+				status('This browser cannot hold a device key.');
+				return;
+			}
+			status('Checking...');
+			crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']).then(function (pair) {
+				return crypto.subtle.exportKey('spki', pair.publicKey).then(function (spki) {
+					var body = new URLSearchParams({ code: code, pubkey: b64(spki), name: 'Recovered Device' });
+					return fetch('/manager/device/recover', {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+						body: body
+					});
+				}).then(function (r) { return r.json(); }).then(function (res) {
+					if (res && res.ok) {
+						status('Unlocked. Loading...');
+						window.location.reload();
+					}
+					else {
+						status(res && res.error === 'too many' ? 'Too many tries. Wait a while.' : 'That code was not accepted.');
+					}
+				});
+			}).catch(function () { status('That code was not accepted.'); });
+		});
+	}
+	var sendPhone = document.getElementById('locked_unlock_request');
+	var lockedTarget = '<%= $target %>';
+	if (sendPhone) {
+		sendPhone.addEventListener('click', function () {
+			var note = document.getElementById('locked_phone_status');
+			if (typeof padlockAskPhone === 'function') { padlockAskPhone('locker', lockedTarget); }
+			if (note) { note.textContent = <%== &subs::json_chars(&subs::ui('Sent. Confirm the fingerprint on your phone or laptop.')) %>; }
+		});
+	}
+	var fp = document.getElementById('locked_fingerprint');
+	if (fp) {
+		var note = document.getElementById('locked_phone_status');
+		var t = function (text) {
+			return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+		};
+		var finish = function (res) {
+			if (res && res.ok) {
+				// the print was accepted: the shackle opens, then the page follows
+				if (typeof jawnPadlockArtUnlocking === 'function') { jawnPadlockArtUnlocking(fp); }
+				if (note) { note.textContent = t('Unlocked. Loading...'); }
+				setTimeout(function () { window.location.reload(); }, 700);
+				return;
+			}
+			fp.disabled = false;
+			if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(true, fp); }
+			if (note) {
+				var e = (res && res.error) || '';
+				note.textContent = (e === 'busy') ? t('A fingerprint is already being read.')
+					: (e === 'timeout') ? t('No fingerprint was read. Try again.')
+					: (e === 'local only') ? t('This reader only works on the computer it is attached to.')
+					: (e === 'no fingerprint') ? t('No fingerprint is enrolled on this computer.')
+					: (e === 'not signed in') ? t('Sign in again, then use the fingerprint.')
+					: t('Fingerprint not accepted.');
+			}
+		};
+		var poll = function (token, tries) {
+			tries = tries || 0;
+			fetch('/manager/security/fingerprint_unlock_status?token=' + encodeURIComponent(token), { cache: 'no-store' })
+				.then(function (r) { return r.json(); })
+				.then(function (res) {
+					if (res && res.pending) {
+						if (tries > 30) { finish({ ok: 0, error: 'timeout' }); return; }
+						setTimeout(function () { poll(token, tries + 1); }, 700);
+						return;
+					}
+					finish(res);
+				})
+				.catch(function () { finish({ ok: 0, error: 'unavailable' }); });
+		};
+		fp.addEventListener('click', function () {
+			fp.disabled = true;
+			if (typeof jawnPadlockArtLocked === 'function') { jawnPadlockArtLocked(false, fp); }
+			if (note) { note.textContent = t('Touch the fingerprint reader now...'); }
+			fetch('/manager/security/fingerprint_unlock', {
+				method: 'POST',
+				headers: { 'X-Requested-With': 'XMLHttpRequest' }
+			}).then(function (r) { return r.json(); }).then(function (res) {
+				if (res && res.pending && res.token) { poll(res.token, 0); return; }
+				finish(res);
+			}).catch(function () { finish({ ok: 0, error: 'unavailable' }); });
+		});
+	}
+	// the phone signs this machine open in the background; this page follows it.
+	// The websocket padlock_open stops this loop when it arrives first; the loop
+	// is the fallback when a handheld's worker is not listening.
+	if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
+	if (!window.jawnLockedPoller) {
+		window.jawnLockedPoller = setInterval(function () {
+			// a request for another screen arrives while this one is showing its
+			// own lock; the locked page has no websocket, so this is its poll
+			if (typeof jawnPadlockKeyCheck === 'function') { jawnPadlockKeyCheck(true); }
+			fetch('/manager/security/padlock_state', { cache: 'no-store' }).then(function (r) {
+				return r.json();
+			}).then(function (s) {
+				if (s && s.ok && !s.locked) { window.location.reload(); }
+			}).catch(function () {});
+		}, 2500);
+	}
+})();
+</script>

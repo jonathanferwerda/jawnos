@@ -1,0 +1,29 @@
+	<div class="security_view" view="signatorial" style="<% unless ($president->{'security_view'} eq 'signatorial') { %>display:none;<% } %>">
+		<% my $signatorials = eval { return decode_json &subs::setting_grabber({ app => 'customs', setting => 'signatorials'}) } || []; %>
+		<% 
+
+		%>
+		<% foreach my $r ( @{$signatorials} ) { 
+			my ($destination,$asset,$type) = &subs::file_device_renamer({ file => $r->{'f'}, app => $r->{'app'}, type => $r->{'type'} });
+			my $file = $destination . $asset;
+			%>
+			<% if (-e $file) { %>
+				<img class="signatorial_selection gigantic_thumb" file="<%= $file %>" src="/file_open?file=<%= $file %>&timestamp=<%= $r->{'server_time'} %>&app=<%= $r->{'app'} %>"
+					<% if ($file eq $config->{'signatorial'}) { %>
+						style="border-width:5px;border-color:yellow;"
+					<% } %>>
+			<% } else { %>
+				@{$signatorials} = grep { $_->{'uuid'} ne $r->{'uuid'} } @{$signatorials};
+				my $jsignatorials = encode_json $signatorials;
+				&subs::setting_setter({ app => 'customs', setting => 'signatorials', value => $jsignatorials });
+			<% } %>
+		<% } %>
+		<% if (scalar @{$signatorials} == 0) { %>
+			No signatorials
+		<% } %>
+
+
+
+
+
+	</div>

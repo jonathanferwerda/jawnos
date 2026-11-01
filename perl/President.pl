@@ -141,12 +141,12 @@ if ($device eq 'mobile') {
 
 if ($config->{'open_browser'} eq 'yes') {
 	if ($device eq 'mobile') {
-		threads->create(sub() { 
+		threads->create(sub { 
 			&subs::device_call('open.url', { url => "https://127.0.0.1:$random_number/manager" });
 		});
 	}
 	elsif ($device eq 'computer') {
-		threads->create(sub() {
+		threads->create(sub {
 			# The child inherits the environment; `export DISPLAY=:0` in backticks
 			# was exec'd as a program (no shell metacharacter), so the export
 			# failed and chromium never saw the display.

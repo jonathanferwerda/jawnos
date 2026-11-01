@@ -1,0 +1,27 @@
+<div id="locked_screen">
+	<div id="locked_heading"><%= $target ? 'This screen is locked.' : 'The house is locked.' %></div>
+
+	<div id="locked_padlock">
+		<%= include 'padlock', mode => 'locker', target => $target, phone_button => 0, fingerprint_button => 0, biometric_button => 0, phone_key => 0 %>
+	</div>
+
+	<div id="locked_help">
+		<%= &subs::ui('Press Unlock to ask your phone or laptop, or use the recovery code.') %>
+		<div id="locked_actions">
+			<button id="locked_unlock_request" type="button" hint="Unlock on my phone or laptop" aria-label="<%= &subs::ui('Unlock on my phone or laptop') %>"><%= &subs::ui('Unlock') %></button>
+			<% if ($fingerprint && &subs::device_setter() ne 'mobile') { %>
+				<button id="locked_fingerprint" type="button" hint="Use this computer's fingerprint" aria-label="Use this computer's fingerprint"><img src="<%= &subs::icon_for('/images/decipherable/fingerprint.svg') %>" alt=""></button>
+			<% } %>
+			<button id="locked_biometric" type="button" data-enrolled="<%= $bio_enrolled ? 1 : 0 %>" hint="Use this phone's fingerprint" aria-label="Use this phone's fingerprint" style="display:none;"><img src="<%= &subs::icon_for('/images/decipherable/fingerprint.svg') %>" alt=""></button>
+		</div>
+		<div id="locked_phone_status"></div>
+	</div>
+
+	<details id="locked_recovery">
+		<summary><%= &subs::ui('Recovery code or house password') %></summary>
+		<input id="locked_recovery_code" autocomplete="off" spellcheck="false" placeholder="<%= &subs::ui('paper code, password, or three shares') %>">
+		<button id="locked_recovery_go">Unlock</button>
+		<div id="locked_status"></div>
+	</details>
+</div>
+

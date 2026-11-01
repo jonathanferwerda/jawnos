@@ -5,6 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use RepoSource;
 
 # The player bar's seek, clock and title are drawn by one interval created by
 # templates/apps/video.html.ep. Once that interval is cleared nothing restarts
@@ -23,7 +24,7 @@ use File::Slurp qw(read_file);
 # search, and the include must publish the tick for that.
 
 my $music = read_file("$FindBin::Bin/../public/js/music.js");
-my $video = read_file("$FindBin::Bin/../templates/apps/video.html.ep");
+my $video = template_source('apps/video');
 
 # 1. nothing in music.js clears the bar tick any more
 unlike($music, qr/clearInterval\(\s*vidControls\[\s*'video_video_interval'\s*\]\s*\)/,

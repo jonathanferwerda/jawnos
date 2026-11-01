@@ -507,7 +507,7 @@ sub ble_listener_start {
 	}
 	$gb::ble_listener_buffer = '';
 	$gb::ble_listener = Mojo::IOLoop::ReadWriteFork->new;
-	$gb::ble_listener->on(read => sub() {
+	$gb::ble_listener->on(read => sub {
 		my ($fork, $bytes) = @_;
 		# Reads are arbitrary chunks: a JSON line longer than one chunk used to
 		# be decoded in halves and silently dropped. Buffer until the newline.
@@ -551,9 +551,9 @@ sub ble_listener_start {
 			}
 		}
 	});
-	$gb::ble_listener->on(close => sub() {
+	$gb::ble_listener->on(close => sub {
 		$gb::ble_listener = undef;
-		Mojo::IOLoop->timer(30 => sub() { &ble_listener_start(); });
+		Mojo::IOLoop->timer(30 => sub { &ble_listener_start(); });
 	});
 	print "Starting BLE bridge listener\n";
 	$gb::ble_listener->start({ program => $^X, program_args => [ $client, 'listen' ] });

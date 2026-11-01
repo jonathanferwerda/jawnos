@@ -1,0 +1,81 @@
+	<div class="security_view" view="padlock" style="<% unless ( $president->{'security_view'} eq 'padlock' ) { %>display:none;<% } %>">
+		<% if ($lockdown_active) { %>
+			<div class="security_lockdown" style="border:2px solid #b0342e;border-radius:10px;padding:14px;margin:0 0 14px;max-width:680px;">
+				<h2 style="margin-top:0;"><%= &subs::ui('Lockdown') %></h2>
+				<% if (scalar @{ $lockdown_apps || [] }) { %>
+					<p style="line-height:1.5;"><%= &subs::ui('An enemy is present, or this is a dangerous place. Other apps are closed. Confirm with your fingerprint, then open the hidden appointment to stop it.') %></p>
+					<p><%= &subs::ui('Hidden appointment') %>:</p>
+					<p class="lockdown_apps">
+					<% foreach my $lockdown_app ( sort @{ $lockdown_apps || [] } ) { %>
+						<button type="button" class="lockdown_open_app" data-app="<%= &subs::html_text($lockdown_app) %>"><%= &subs::lang('common.open') %> <%= &subs::html_text(&subs::format_name($lockdown_app)) %></button>
+					<% } %>
+					</p>
+					<button id="lockdown_unlock" type="button"><%= &subs::ui('Confirm with fingerprint') %></button>
+					<div id="lockdown_unlock_note" style="min-height:22px;color:darkred;"></div>
+				<% } else { %>
+					<p style="line-height:1.5;"><%= &subs::ui('This is a dangerous place. Other apps are closed until the place changes; there is no hidden appointment to reveal.') %></p>
+				<% } %>
+			</div>
+		<% } %>
+		<div class="security_private" style="border:1px solid var(--line);border-radius:10px;padding:14px;margin:0 0 14px;max-width:680px;">
+			<h2 style="margin-top:0;"><%= &subs::ui('Private apps') %></h2>
+			<p style="line-height:1.5;"><%= &subs::ui('A private app is hidden everywhere, even at home, and its appointments never appear on the timeline. It can only be found in a private place with no enemy present, and even there it stays locked until a fingerprint confirms it on this screen. In a public or dangerous place, or with an enemy present, it cannot be found at all.') %></p>
+			<button id="security_private_unlock" type="button"><%= &subs::ui('Confirm with fingerprint') %></button>
+			<button id="security_private_lock" type="button"><%= &subs::ui('Hide private apps') %></button>
+			<div id="security_private_status" style="min-height:22px;"></div>
+		</div>
+		<div id="security_private_padlock" style="display:none;position:fixed;inset:0;z-index:70000;background:rgba(0,0,0,0.72);">
+			<button id="security_private_close" type="button" hint="Close" style="position:absolute;top:8px;right:8px;z-index:2;width:38px;height:38px;font-size:22px;border:0;border-radius:50%;background:#222;color:#eee;cursor:pointer;">×</button>
+			<%= include 'padlock', mode => 'private', fingerprint => 1 %>
+		</div>
+		<% my $padlock = &subs::db_query('select * from security where level=? limit 1', 'padlock')->hashes->[0]; %>
+		<div class="padlock_intro">
+			<h2>The gate</h2>
+			<p style="line-height:1.4;">
+				A paired phone or tablet is the key. Tap the padlock on the taskbar to lock
+				this screen; double-tap it to lock the whole house. The phone opens the unlock
+				page, waits for your tap and fingerprint, and opens only the screen you pick.
+				The inactivity timeout is also a whole-house lock. The paper recovery code is
+				the emergency way in.
+			</p>
+			<p id="padlock_set_status" status="<%= $padlock ? 'yes' : 'no' %>">
+				<b><%= $padlock ? 'The gate is on.' : 'The gate is off.' %></b>
+			</p>
+			<button id="padlock_gate_enable" type="button"<% if ($padlock) { %> style="display:none;"<% } %>>Turn the gate on</button>
+			<button id="padlock_gate_disable" type="button"<% unless ($padlock) { %> style="display:none;"<% } %>>Turn the gate off</button>
+			<br>
+			<a href="/manager/security/padlock_key" target="_blank" id="padlock_key_show"
+				style="display:inline-block;margin-top:10px;font-size:15px;">Phone unlock page</a>
+			<% if (&subs::device_setter() eq 'mobile') { %>
+				<div id="padlock_biometric_enroll" style="margin-top:14px;">
+					<button id="padlock_biometric_enroll_button" type="button" data-enrolled="<%= $biometric_enrolled ? 1 : 0 %>"><%= $biometric_enrolled ? "Replace this phone's fingerprint" : "Enroll this phone's fingerprint" %></button>
+					<div id="padlock_biometric_status" style="font-size:14px;margin-top:6px;"><% if ($biometric_enrolled) { %>A fingerprint is enrolled. Confirm it to replace it.<% } %></div>
+				</div>
+			<% } %>
+		</div>
+		<div class="padlock_footer">
+			<span style="font-size:14px;" title="Shadow writes what the lock would refuse to the log; Enforce refuses it.">
+				Gate
+				<select id="padlock_gate">
+					<option value="shadow" <% if (($president->{'padlock_gate'} || 'enforce') eq 'shadow') { %>selected<% } %>>Shadow (log only)</option>
+					<option value="enforce" <% if (($president->{'padlock_gate'} || 'enforce') eq 'enforce') { %>selected<% } %>>Enforce</option>
+				</select>
+			</span>
+			<% my $app_access = &subs::setting_grabber({ app => '__president', setting => 'app_access', device => 'all' }) || 'shadow'; %>
+			<span style="font-size:14px;margin-left:12px;" title="<%= &subs::ui('Off lets any browser in. Shadow logs what it would refuse. Enforce admits only the installed apps and the signed peer rail.') %>">
+				<%= &subs::ui('App access') %>
+				<select id="app_access">
+					<option value="off" <% if ($app_access eq 'off') { %>selected<% } %>><%= &subs::ui('Off (any browser)') %></option>
+					<option value="shadow" <% if ($app_access eq 'shadow') { %>selected<% } %>><%= &subs::ui('Shadow (log only)') %></option>
+					<option value="enforce" <% if ($app_access eq 'enforce') { %>selected<% } %>><%= &subs::ui('Enforce (app only)') %></option>
+				</select>
+			</span>
+			<% my $selected_contexts = $president->{'padlock_contexts'} || []; %>
+			<select id="padlock_contexts" multiple title="General is the whole house; the others are per-app." value="<%= join ',', @{$selected_contexts} %>" style="height:100px;min-width:150px;">
+				<% foreach my $context ( qw/general gallery music folders private/ ) { %>
+					<option value="<%= $context %>" <% if (grep { $_ eq $context } @{$selected_contexts}) { %>selected<% } %>><%= &subs::format_name($context) %></option>
+				<% } %>
+			</select>
+		</div>
+	</div>
+

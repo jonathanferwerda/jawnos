@@ -1,0 +1,270 @@
+	<style>
+		#<%= $miss %>_speed {
+			appearance: none;
+			height: 30px;
+			width: 130px;
+			border: solid;
+			border-radius: 5px;
+			border-width: 3px;
+			background-color:transparent;
+			color: black;
+			outline: none;
+			vertical-align: middle;
+			/* the 130x30 ruler strip; an icon-set icon is a full square, and at its
+			   natural size only its empty corner would fall inside this box */
+			background-image: url('/images/studio/ruler.png');
+			background-size: 100% 100%;
+			background-repeat: no-repeat;
+		}
+		#<%= $miss %>_position {
+			position:absolute;
+			bottom:95px;
+			left: 0px;
+			width:98%;
+			height:20px;
+		}
+		#<%= $miss %>_position_preview {
+			width: 200px;
+			height: 120px;
+		}
+		#<%= $miss %>_back {
+			position: absolute;
+			left: 220px;
+			bottom: 55px;
+		}
+		#<%= $miss %>_forward {
+			position: absolute;
+			left: 270px;
+			bottom: 55px;
+		}
+		#<%= $miss %>_full_screen {
+			position:absolute;
+			left: 56px;
+			bottom: 55px;
+		}
+		#music_list_view {
+			position:absolute;
+			left: 108px;
+			bottom: 55px;
+		}
+		#music_shuffle {
+			bottom:  1px;
+			left: 320px;
+			position:absolute;
+		}
+		#music_repeat {
+			left: 320px;
+			bottom:55px;
+			position:absolute;
+		}
+		#<%= $miss %>_jog_wheel_frame {
+			position:absolute;
+			right: 10px;
+			bottom: 0px;
+			height: 90px;
+			width: 90px;
+		}
+		#<%= $miss %>_jog_wheel {
+			width: 100%;
+			height: 100%;
+			border-radius: 50%;
+		}
+		#<%= $id %>_full_title {
+			position:absolute;
+			left: 370px;
+			right: 130px;
+			bottom: 6px;
+			max-height: 96px;
+			overflow: hidden;
+			overflow-wrap: anywhere;
+			font-size: 18px;
+			line-height: 1.2;
+			text-align: center;
+			color: yellow;
+		}
+		#<%= $id %>_time_display {
+			position:absolute;
+			left: 145px;
+			bottom:70px;
+			font-size: 24px;
+			color: yellow;
+		}
+		#<%= $id %>_media_information {
+			position:absolute;
+			left: 85px;
+			bottom: 30px;
+			font-size: 20px;
+			color: yellow;
+		}
+		#<%= $id %>_mark_information {
+			position:absolute;
+			left: 150px;
+			bottom: 30px;
+			font-size: 20px;
+			color:yellow;
+		}
+		#<%= $id %>_subtitle_toggle {
+			bottom: 55px;
+			left: 160px;
+			position: absolute;
+		}
+		/* the tools toggle and its pop-out: the panel opens above the foot so the
+		   grouped controls (speed, snapshot, mark, loop markers) never crowd it */
+		#<%= $miss %>_tools_toggle {
+			position: absolute;
+			bottom: 1px;
+			left: 1px;
+		}
+		.media_tools_toggle.active { background-color: yellow; }
+		.media_tools_panel {
+			position: absolute;
+			bottom: 112px;
+			left: 6px;
+			display: none;
+			flex-wrap: wrap;
+			max-width: calc(100% - 12px);
+			align-items: center;
+			gap: 8px;
+			padding: 8px 10px;
+			background-color: rgba(20,20,20,.94);
+			border: 1px solid #777;
+			border-radius: 10px;
+			box-shadow: 0 6px 20px rgba(0,0,0,.5);
+			z-index: 20;
+		}
+		.media_tools_panel.shown { display: flex; }
+		.media_tools_panel > * { position: static !important; left: auto !important; right: auto !important; top: auto !important; bottom: auto !important; margin: 0; }
+		/* the visualiser's drawing surface: it is never shown itself. music.js
+		   draws here and hands the canvas' stream to the muted video below, so the
+		   sound's picture reaches the player the way a video track's does */
+		.media_visualizer {
+			position: absolute;
+			left: 0px;
+			top: 0px;
+			width: 100%;
+			height: 100%;
+			opacity: 0;
+			pointer-events: none;
+		}
+		/* that drawing, as a picture: it wears the player's own picture styles
+		   (thumb_style in the corner, big_style in the theatre), put on it by
+		   music.js */
+		.media_visual_media {
+			position: absolute;
+			background-color: #000;
+		}
+		.media_visualization_label {
+			color: #ddd;
+			font-size: 12px;
+			letter-spacing: .3px;
+		}
+		.media_visualization {
+			height: 30px;
+			max-width: 150px;
+			border: solid 2px #777;
+			border-radius: 6px;
+			background-color: #111;
+			color: #eee;
+			font-size: 13px;
+		}
+		/* the music player's own bar: it wraps to two rows - the full-width seek
+		   on top, then the transport, shuffle/repeat, title, theatre and extras.
+		   The controls that were absolutely placed in the foot are reset to static
+		   so the rows can flow them; the seek previews are kept out of that reset
+		   because their JS lays them fixed above the bar. The icon sizes follow the
+		   WINDOW, not the screen (the window is a small panel on a big screen):
+		   .wind[app=music] is the container, the base sizes are the ones that fit
+		   the window's narrowest (~320px) and @container min-width steps enlarge
+		   them as it widens. Base = narrow also means a browser without
+		   container-query support degrades to a bar that fits. */
+		.media_controls.music_player_bar {
+			display: flex;
+			flex-wrap: wrap;
+			align-items: center;
+			align-content: center;
+			gap: 1px;
+			padding: 0 4px;
+			box-sizing: border-box;
+		}
+		.music_player_bar > *:not(.media_tools_panel):not(#<%= $miss %>_position_preview):not(#<%= $miss %>_position_preview_info) {
+			position: static !important;
+			left: auto !important;
+			right: auto !important;
+			top: auto !important;
+			bottom: auto !important;
+		}
+		.music_player_bar #transport { display: flex; align-items: center; gap: 0; flex: 0 0 auto; }
+		.music_player_bar .control { display: inline-block; padding: 1px; border-radius: 10px; transition: background-color .15s; }
+		.music_player_bar .control:hover { background-color: rgba(255,255,255,.12); }
+		.music_player_bar .medium_thumb { height: 42px; max-width: 48px; border: none; background: transparent; }
+		.music_player_bar .music_shuffle,
+		.music_player_bar .music_repeat,
+		.music_player_bar .little_thumb { height: 34px; border: none; background: transparent; }
+		.music_player_bar .music_shuffle,
+		.music_player_bar .music_repeat { flex: 0 0 auto; }
+		/* the title sits where the seek used to, taking the row's slack and
+		   wrapping to at most two lines. The id is needed for specificity: the
+		   #<%= $id %>_full_title rule above styles the video overlay and would
+		   otherwise win. */
+		.music_player_bar #<%= $id %>_full_title {
+			flex: 1 1 0;
+			min-width: 0;
+			overflow: hidden;
+			overflow-wrap: anywhere;
+			text-align: center;
+			color: yellow;
+			font-size: 15px;
+			line-height: 1.15;
+			display: -webkit-box;
+			-webkit-line-clamp: 2;
+			-webkit-box-orient: vertical;
+			white-space: normal;
+		}
+		/* the seek spans its own full-width row above the buttons. box-sizing is
+		   needed because the range input's UA padding would otherwise be added on
+		   top of the 100% and push it past the bar's edge. The dark grey backdrop
+		   makes the track's extent visible against the black bar. */
+		.music_player_bar .music_seek {
+			flex: 0 0 100%;
+			width: 100%;
+			min-width: 0;
+			box-sizing: border-box;
+			padding: 0;
+			margin: 0;
+			height: 24px;
+			background-color: #333;
+			border-radius: 4px;
+		}
+		.music_player_bar .media_tools_toggle { flex: 0 0 auto; }
+		.music_player_bar #<%= $miss %>_jog_wheel_frame { height: 72px; width: 72px; }
+		@container (min-width: 380px) {
+			.media_controls.music_player_bar { gap: 2px; padding: 0 6px; }
+			.music_player_bar .medium_thumb { height: 48px; max-width: 54px; }
+			.music_player_bar .music_shuffle,
+			.music_player_bar .music_repeat,
+			.music_player_bar .little_thumb { height: 40px; }
+			.music_player_bar #<%= $id %>_full_title { font-size: 16px; }
+		}
+		@container (min-width: 560px) {
+			.music_player_bar .medium_thumb { height: 54px; max-width: 62px; }
+			.music_player_bar .music_shuffle,
+			.music_player_bar .music_repeat,
+			.music_player_bar .little_thumb { height: 46px; }
+			.music_player_bar #<%= $id %>_full_title { font-size: 18px; }
+		}
+		@container (min-width: 760px) {
+			.music_player_bar .medium_thumb { height: 60px; max-width: 68px; }
+			.music_player_bar .music_shuffle,
+			.music_player_bar .music_repeat,
+			.music_player_bar .little_thumb { height: 52px; }
+		}
+		/* the theatre-mode picture fills the window: the container takes the
+		   media window's whole height, so the video's own 100% resolves and the
+		   browser's subtitle overlay - drawn at the element's foot - lands at the
+		   window's foot instead of hanging below it */
+		#<%= $miss %>_container { height: 100%; }
+		/* the picture owns a finger's sideways and downward travel: the scrub and
+		   volume gestures above, not the page's own panning */
+		#<%= $id %>, #<%= $miss %>_visual_media { touch-action: none; background-color: #000; }
+	</style>
+

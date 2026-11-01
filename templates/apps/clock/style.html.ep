@@ -1,0 +1,137 @@
+<style>
+	.clock_app { display:flex; flex-direction:column; width:100%; height:100%; min-width:0; overflow:hidden; color:var(--ink); }
+	.clock_tabbar { display:flex; align-items:stretch; gap:3px; padding:7px 8px 0; border-bottom:1px solid var(--line); flex:0 0 auto; }
+	.clock_tab { display:flex; align-items:center; gap:5px; flex:1 1 0; min-width:0; justify-content:center;
+		padding:7px 4px; border:1px solid transparent; border-bottom:none; border-radius:calc(var(--jawnos-corner, 12px) * .55) calc(var(--jawnos-corner, 12px) * .55) 0 0;
+		background:transparent; color:inherit; font:inherit; font-size:12px; cursor:pointer; opacity:.72; }
+	.clock_tab img { width:19px; height:19px; object-fit:contain; }
+	.clock_tab:hover { opacity:1; background:var(--panel); }
+	.clock_tab.selected { opacity:1; border-color:var(--line); background:var(--panel); font-weight:700; }
+	.clock_panels { flex:1 1 auto; min-height:0; overflow-y:auto; }
+	.clock_panel { display:none; padding:10px 12px 18px; }
+	.clock_panel.selected { display:block; }
+	.clock_panel_head { display:flex; align-items:center; gap:8px; margin:2px 0 10px; }
+	.clock_count { opacity:.65; font-size:12px; }
+	.clock_panel_head .clock_add, .clock_panel_head .clock_clear_finished { margin-left:auto; }
+	.clock_add, .clock_clear_finished, .clock_save { font:inherit; font-size:12px; padding:5px 10px; cursor:pointer;
+		border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .45); background:var(--panel); color:inherit; }
+	.clock_add:hover, .clock_clear_finished:hover { background:var(--line); }
+	.clock_add[disabled] { opacity:.4; cursor:default; }
+	.clock_empty { opacity:.6; font-size:13px; padding:14px 4px; text-align:center; }
+	.clock_alarm { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:0; margin-bottom:9px; background:var(--panel); overflow:hidden; }
+	.clock_alarm.off { opacity:.58; }
+	.clock_alarm_head { display:flex; align-items:center; gap:8px; min-width:0; padding:8px 10px; cursor:pointer; }
+	.clock_alarm_head:hover { background:var(--line); }
+	.clock_alarm_caret { flex:0 0 auto; width:14px; height:14px; padding:0; border:none; background:transparent; color:inherit; cursor:pointer; font-size:0; line-height:0; }
+	.clock_alarm_caret::before { content:''; display:block; width:0; height:0; margin:0 auto; border-left:5px solid currentColor; border-top:4px solid transparent; border-bottom:4px solid transparent; transition:transform .15s; }
+	.clock_alarm.open .clock_alarm_caret::before { transform:rotate(90deg); }
+	.clock_alarm_head_time { flex:0 0 auto; font-size:19px; font-variant-numeric:tabular-nums; font-weight:600; }
+	.clock_alarm_head_label { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	.clock_alarm_head_devices { display:flex; gap:3px; flex-wrap:wrap; justify-content:flex-end; flex:0 1 auto; max-width:42%; }
+	.clock_machine_pill { font-size:10px; line-height:1.4; padding:1px 7px; border:1px solid var(--line); border-radius:999px; opacity:.85; white-space:nowrap; }
+	.clock_alarm_body { display:none; padding:0 10px 10px; }
+	.clock_alarm.open .clock_alarm_body { display:block; }
+	.clock_alarm_line { display:flex; align-items:center; gap:7px; }
+	.clock_alarm_time { font:inherit; font-size:25px; font-variant-numeric:tabular-nums; flex:0 0 auto; width:11ch; min-width:132px; padding:1px 4px;
+		border:1px solid transparent; border-radius:6px; background:transparent; color:inherit; }
+	.clock_alarm_time:hover, .clock_alarm_time:focus { border-color:var(--line); }
+	.clock_alarm_label { flex:1 1 0; min-width:0; font:inherit; font-size:14px; padding:5px 7px; color:inherit;
+		border:1px solid transparent; border-radius:6px; background:transparent; }
+	.clock_alarm_label:hover, .clock_alarm_label:focus { border-color:var(--line); }
+	.clock_switch { position:relative; display:inline-flex; width:38px; height:21px; flex:0 0 auto; cursor:pointer; }
+	.clock_switch input { position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
+	.clock_switch::before { content:''; position:absolute; inset:0; border-radius:999px; background:var(--line); transition:background .15s; }
+	.clock_switch::after { content:''; position:absolute; top:3px; left:3px; width:15px; height:15px; border-radius:50%;
+		background:var(--panel); transition:transform .15s; }
+	.clock_switch:has(input:checked)::before { background-color:#2f8f6d; }
+	.clock_switch:has(input:checked)::after { transform:translateX(17px); }
+	.clock_alarm_delete { flex:0 0 auto; width:24px; height:24px; border:none; border-radius:50%; cursor:pointer;
+		background:transparent; color:inherit; opacity:.5; font-size:15px; line-height:1; }
+	.clock_alarm_delete:hover { opacity:1; background:var(--line); }
+	.clock_alarm_days { display:flex; align-items:center; gap:3px; margin:7px 0 2px; flex-wrap:wrap; }
+	.clock_alarm_when { display:flex; align-items:center; gap:8px; margin-top:7px; }
+	.clock_alarm_next { flex:1 1 auto; min-width:0; font-size:11px; opacity:.72; font-variant-numeric:tabular-nums; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	.clock_alarm_skip { flex:0 0 auto; font:inherit; font-size:11px; padding:3px 9px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:999px; background:transparent; }
+	.clock_alarm_skip:hover { background:var(--line); }
+	.clock_day { font:inherit; font-size:11px; line-height:1; width:24px; height:24px; padding:0; cursor:pointer;
+		border:1px solid var(--line); border-radius:50%; background:transparent; color:inherit; opacity:.72; }
+	.clock_day.on { background-color:#2f8f6d; color:#fff; border-color:transparent; opacity:1; font-weight:700; }
+	.clock_day_once { width:auto; padding:0 8px; border-radius:999px; margin-left:3px; }
+	.clock_day_once.on { background-color:#2f8f6d; color:#fff; }
+	.clock_alarm_extra { display:grid; grid-template-columns:1fr 1fr; gap:5px 9px; margin-top:6px; font-size:11px; }
+	.clock_field { display:flex; flex-direction:column; gap:2px; min-width:0; }
+	.clock_field > span { opacity:.65; }
+	.clock_field input, .clock_field select { font:inherit; font-size:12px; width:100%; min-width:0; padding:3px 5px; color:inherit;
+		border:1px solid var(--line); border-radius:5px; background:var(--window, var(--panel)); }
+	.clock_field input[type=range] { padding:0; accent-color:#2f8f6d; }
+	.clock_sound_row { display:flex; align-items:center; gap:4px; min-width:0; }
+	.clock_sound_row select { flex:1 1 auto; width:auto; min-width:0; }
+	.clock_nfc_row { display:flex; align-items:center; gap:5px; min-width:0; }
+	.clock_nfc_row input[type=checkbox] { flex:0 0 auto; width:auto; padding:0; accent-color:#2f8f6d; }
+	.clock_nfc_row select { flex:1 1 auto; width:auto; min-width:0; }
+	.clock_nfc_hint { font-size:10px; opacity:.6; line-height:1.25; }
+	.clock_alarm_preview { flex:0 0 auto; font:inherit; font-size:11px; padding:3px 8px; cursor:pointer; color:inherit;
+		border:1px solid var(--line); border-radius:5px; background:var(--panel); }
+	.clock_alarm_preview:hover { background:var(--line); }
+	.clock_alarm_preview[data-playing=yes] { background-color:#2f8f6d; color:#fff; border-color:transparent; }
+	.clock_timer_new { display:grid; grid-template-columns:repeat(3, 1fr); gap:6px; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:9px; margin-bottom:10px; background:var(--panel); }
+	.clock_timer_new .clock_timer_label, .clock_timer_new .clock_timer_app, .clock_timer_new .clock_app_picker { grid-column:1 / -1; }
+	.clock_timer_new .clock_add_timer { grid-column:1 / -1; }
+	.clock_timer_new input, .clock_timer_new button { font:inherit; font-size:13px; min-width:0; padding:6px 8px; color:inherit;
+		border:1px solid var(--line); border-radius:6px; background:var(--window, var(--panel)); }
+	.clock_presets { display:flex; gap:5px; flex-wrap:wrap; margin:-2px 0 10px; }
+	.clock_preset { font:inherit; font-size:11px; padding:4px 8px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:999px; background:transparent; }
+	.clock_preset:hover { background:var(--line); }
+	.clock_timer { border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:9px 10px; margin-bottom:8px; background:var(--panel); }
+	.clock_timer.state_done { opacity:.6; }
+	.clock_timer.state_cancelled { opacity:.45; text-decoration:line-through; }
+	.clock_timer_top { display:flex; align-items:baseline; gap:9px; }
+	.clock_timer_countdown { font-size:25px; font-variant-numeric:tabular-nums; font-weight:600; min-width:7.5ch; }
+	.clock_timer_label_text { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	.clock_timer_app_text { display:block; font-size:11px; opacity:.65; margin-top:2px; }
+	.clock_timer_action { font:inherit; font-size:11px; padding:4px 9px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:6px; background:transparent; }
+	.clock_timer_action:hover { background:var(--line); }
+	.clock_timer_buttons { display:flex; flex-direction:column; gap:4px; flex:0 0 auto; }
+	.clock_alarm_machines { display:flex; flex-direction:column; gap:2px; min-width:0; }
+	.clock_alarm_extra .clock_alarm_machines { grid-column:1 / -1; }
+	.clock_machine_list { display:flex; flex-wrap:wrap; gap:4px; }
+	.clock_machine { font:inherit; font-size:11px; padding:3px 8px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:999px; background:transparent; opacity:.75; }
+	.clock_machine.on { background-color:#2f8f6d; color:#fff; border-color:transparent; opacity:1; font-weight:700; }
+	.clock_app_picker { position:relative; display:flex; align-items:center; gap:3px; }
+	.clock_app_picker input { flex:1 1 auto; }
+	.clock_app_toggle { flex:0 0 auto; font:inherit; font-size:11px; line-height:1; width:22px; height:22px; padding:0; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:5px; background:var(--panel); }
+	#clock_app_menu { position:fixed; z-index:40000; display:none; max-height:280px; overflow-y:auto; min-width:220px; padding:4px;
+		border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .45); background:var(--window, var(--panel)); box-shadow:0 8px 24px rgba(0,0,0,.28); }
+	#clock_app_menu.open { display:block; }
+	.clock_app_choice { display:flex; align-items:center; gap:7px; width:100%; font:inherit; font-size:12px; text-align:left; padding:4px 7px; cursor:pointer; color:inherit; border:none; border-radius:5px; background:transparent; }
+	.clock_app_choice:hover, .clock_app_choice.selected { background:var(--line); }
+	.clock_app_choice img, .clock_app_choice .window_icon { width:20px; height:20px; flex:0 0 auto; object-fit:contain; }
+	.clock_app_choice .window_icon { display:inline-block !important; font-size:9px; overflow:hidden; text-align:center; }
+	.clock_app_choice span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	.clock_stopwatch { text-align:center; padding-top:18px; }
+	.clock_sw_display { font-size:44px; font-variant-numeric:tabular-nums; font-weight:600; letter-spacing:.5px; padding:14px 0; }
+	.clock_sw_buttons { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+	.clock_sw_buttons button { font:inherit; font-size:13px; padding:8px 18px; cursor:pointer; color:inherit;
+		border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); background:var(--panel); }
+	.clock_sw_buttons button:hover { background:var(--line); }
+	.clock_sw_laps { max-width:360px; margin:16px auto 0; text-align:left; font-size:12px; }
+	.clock_sw_lap_row { display:flex; justify-content:space-between; gap:10px; padding:5px 6px; border-bottom:1px solid var(--line); }
+	.clock_sw_lap_row span:last-child { font-variant-numeric:tabular-nums; opacity:.8; }
+	.clock_world_add { display:flex; gap:6px; margin-bottom:12px; }
+	.clock_world_add input { flex:1 1 auto; min-width:0; font:inherit; font-size:13px; padding:7px 9px; color:inherit;
+		border:1px solid var(--line); border-radius:6px; background:var(--window, var(--panel)); }
+	.clock_world_add button { font:inherit; font-size:13px; padding:7px 13px; cursor:pointer; color:inherit; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+	.clock_world_row { display:flex; align-items:center; gap:10px; border:1px solid var(--line); border-radius:calc(var(--jawnos-corner, 12px) * .55); padding:10px; margin-bottom:8px; background:var(--panel); }
+	.clock_world_name { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+	.clock_world_name small { display:block; opacity:.6; font-size:11px; }
+	.clock_world_time { font-size:24px; font-variant-numeric:tabular-nums; font-weight:600; }
+	.clock_world_day { font-size:11px; opacity:.65; text-align:right; }
+	.clock_world_delete { flex:0 0 auto; width:24px; height:24px; border:none; border-radius:50%; cursor:pointer; background:transparent; color:inherit; opacity:.5; }
+	.clock_world_delete:hover { opacity:1; background:var(--line); }
+	@media (max-width:520px) {
+		.clock_tab span { display:none; }
+		.clock_tab img { width:24px; height:24px; }
+		.clock_alarm_extra { grid-template-columns:1fr; }
+		.clock_sw_display { font-size:36px; }
+	}
+</style>

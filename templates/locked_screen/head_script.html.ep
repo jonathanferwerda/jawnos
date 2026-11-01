@@ -1,0 +1,8 @@
+<script>
+	// The page's own device, for a browser that reached the lock through a
+	// ticket and has no localStorage entry yet. universal.js prefers
+	// localStorage and falls back to this.
+	if (!window.jawnLockedDevice && '<%= $target %>') {
+		window.jawnLockedDevice = '<%= $target %>';
+	}
+</script>

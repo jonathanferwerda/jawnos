@@ -115,7 +115,7 @@ subs::preload($_) for qw(db_select network_interface_reporter signatorial_design
 		close $fh;
 		return $text;
 	};
-	my $template = $read->("$root/templates/configure/device_lister.html.ep");
+	my $template = template_source('configure/device_lister');
 	like $template, qr/id="remote_machines_card"/, 'the Dev panel draws the unlisted-machines card';
 	like $template, qr/\@\{\$remote_machines\}/, 'from the stash list the route passes';
 	like $template, qr/class="remote_migrate"/, 'with the Migrate control';

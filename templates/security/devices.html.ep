@@ -1,0 +1,87 @@
+	<div class="security_view" view="devices" style="<% unless ( $president->{'security_view'} eq 'devices' ) { %>display:none;<% } %>">
+		<% if (scalar @{ $requests || [] } > 0) { %>
+			<h3>Waiting for approval</h3>
+			<table style="width:100%;text-align:center;">
+				<thead>
+					<tr><th>Name</th><th>Code</th><th>Asked</th><th>Agent</th><th>Approve</th><th>Deny</th></tr>
+				</thead>
+				<tbody>
+					<% foreach my $r ( @{$requests} ) { %>
+						<tr class="device_request" uuid="<%= $r->{'uuid'} %>">
+							<td><%= $r->{'name'} %></td>
+							<td style="font-family:monospace;font-size:22px;letter-spacing:3px;"><%= $r->{'code'} %></td>
+							<td class="time" timestamp="<%= $r->{'server_time'} %>"></td>
+							<td style="font-size:11px;"><%= substr($r->{'agent'} || '', 0, 60) %></td>
+							<td><button class="device_request_decide" decision="approve">Approve</button></td>
+							<td><button class="device_request_decide" decision="deny">Deny</button></td>
+						</tr>
+					<% } %>
+				</tbody>
+			</table>
+			<p style="font-size:14px;">Approve only when the code matches the one shown on the device that is asking.</p>
+		<% } %>
+		<div id="person_add_row" style="text-align:center;margin:8px 0;">
+			<input id="person_new_name" type="text" placeholder="<%= &subs::lang('person.name') %>" style="width:170px;">
+			<select id="person_new_privilege" title="<%= &subs::lang('person.privilege') %>">
+				<option value="resident" selected><%= &subs::ui('Resident') %></option>
+				<option value="citizen"><%= &subs::ui('Citizen') %></option>
+				<option value="guest"><%= &subs::ui('Guest') %></option>
+			</select>
+			<button id="person_add_button" type="button"><%= &subs::lang('person.add') %></button>
+		</div>
+		<% my %device_person = map { ($_->{'uuid'} || '') => ($_->{'person_uuid'} || '') } @{ $devices || [] }; %>
+		<% my %person_devices; $person_devices{$_->{'person_uuid'}}++ for grep { ($_->{'person_uuid'} || '') ne '' } @{ $devices || [] }; %>
+		<% my $current_person = $device_person{$current_device_uuid} // ''; %>
+		<table style="width:100%;text-align:center;">
+			<thead><tr><th><%= &subs::lang('person') %></th><th><%= &subs::lang('person.privilege') %></th><th><%= &subs::ui('Devices') %></th><th></th></tr></thead>
+			<tbody>
+				<% foreach my $p ( @{ $people || [] } ) { %>
+					<tr class="person_row" uuid="<%= $p->{'uuid'} %>">
+						<td><%= $p->{'name'} %></td>
+						<td><%= &subs::ui(&subs::format_name($p->{'privilege'})) %></td>
+						<td><%= $person_devices{$p->{'uuid'}} || 0 %></td>
+						<td>
+							<% if (($p->{'uuid'} || '') eq ($current_person || '')) { %>
+								<span style="font-size:13px;"><%= &subs::ui('This is you') %></span>
+							<% } elsif (($p->{'uuid'} || '') eq 'owner') { %>
+								<span style="font-size:13px;"><%= &subs::ui('The owner') %></span>
+							<% } else { %>
+								<button class="person_revoke" type="button"><%= &subs::lang('person.revoke') %></button>
+							<% } %>
+						</td>
+					</tr>
+				<% } %>
+			</tbody>
+		</table>
+		<p style="font-size:13px;max-width:700px;margin:4px auto;"><%= &subs::ui('Revoking a person revokes every device they carry, deletes the house-key shares those devices hold, and stops their invitations. Their sessions end at the next request.') %></p>
+		<table style="width:100%;text-align:center;">
+			<thead>
+				<tr><th>Name</th><th><%= &subs::lang('person') %></th><th><%= &subs::lang('device.kind') %></th><th>Paired</th><th>Last Seen</th><th>Key</th><th>Revoke</th></tr>
+			</thead>
+			<tbody>
+				<% foreach my $d ( @{ $devices || [] } ) { %>
+					<tr class="paired_device" uuid="<%= $d->{'uuid'} %>">
+						<td><%= $d->{'name'} %></td>
+						<td>
+							<% my $dperson = $d->{'person_uuid'} || ''; %>
+							<select class="device_person_select" device="<%= $d->{'uuid'} %>" title="<%= &subs::ui('The person this device belongs to') %>">
+								<option value="" <% if (!$dperson) { %>selected<% } %>><%= &subs::lang('person.unassigned') %></option>
+								<% foreach my $p ( @{ $people || [] } ) { %>
+									<option value="<%= $p->{'uuid'} %>" <% if ($dperson eq $p->{'uuid'}) { %>selected<% } %>><%= $p->{'name'} %> (<%= &subs::ui(&subs::format_name($p->{'privilege'})) %>)</option>
+								<% } %>
+							</select>
+							<% if (($current_device_uuid || '') eq $d->{'uuid'}) { %><div style="font-size:11px;"><%= &subs::ui('This is the device you are using') %></div><% } %>
+						</td>
+						<td><%= &subs::device_kind_label($d) %></td>
+						<td class="time" timestamp="<%= $d->{'timestamp'} %>"></td>
+						<td class="time" timestamp="<%= $d->{'last_seen'} || $d->{'server_time'} %>"></td>
+						<td>Ed25519</td>
+						<td><img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="Revoke" class="device_revoke little_thumb hover"></td>
+					</tr>
+				<% } %>
+				<% if (scalar @{ $devices || [] } == 0) { %>
+					<tr><td colspan="7">No paired devices. A citizen session pairs its browser the first time the manager loads; after that it logs itself back in.</td></tr>
+				<% } %>
+			</tbody>
+		</table>
+	</div>

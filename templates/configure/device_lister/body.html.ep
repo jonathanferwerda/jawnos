@@ -1,0 +1,306 @@
+<div class="cfg" style="width:100%;height:100%;">
+	<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+		<input type="text" value="<%= $ping %>" class="ping_host" placeholder="host" style="flex:1 1 110px;min-width:90px;margin:0;">
+		<button class="ping">Ping</button>
+		<button class="device_scan" load_type="scan">Scan</button>
+		<span id="ping_results" style="opacity:.85;"></span>
+	</div>
+	<div id="device_listings">
+		<%# The mesh's own switch. It lives here because the Dev panel is where the
+		    machines are, and the value is a house setting: every machine's next
+		    settings pull carries it, and the reconnector reads it each pass. %>
+		<div class="device_card" id="sync_topology_card">
+			<div class="device_head">
+				<span class="network_cidr">Sync topology</span>
+				<span class="device_when">house-wide · each machine applies it on its next tick</span>
+			</div>
+			<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+				<label for="sync_topology_select">Peers</label>
+				<select id="sync_topology_select" class="sync_topology_select" setting="topology">
+					<option value="auto" <% if ($topology eq 'auto') { %>selected<% } %>>Auto — hub while the server is live</option>
+					<option value="mesh" <% if ($topology eq 'mesh') { %>selected<% } %>>Mesh — every peer directly</option>
+					<option value="hub" <% if ($topology eq 'hub') { %>selected<% } %>>Hub only — spokes dial the server</option>
+				</select>
+				<span id="sync_topology_status" class="device_when"></span>
+			</div>
+		</div>
+		<%# Where code updates come from. Also house-wide: the watcher reads it on
+		    every pass, so None leaves the machine on the version it has until a
+		    person deploys by hand. %>
+		<div class="device_card" id="update_method_card">
+			<div class="device_head">
+				<span class="network_cidr"><%= &subs::ui('Update Method') %></span>
+				<span class="device_when"><%= &subs::ui('house-wide · automatic modes apply on each machine\'s next tick') %></span>
+			</div>
+			<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+				<label for="update_method_select"><%= &subs::ui('Updates') %></label>
+				<select id="update_method_select" class="update_method_select" setting="update_method">
+					<option value="none" <% if ($update_method eq 'none') { %>selected<% } %>><%= &subs::ui('None — automatic updates off') %></option>
+					<option value="manual_github" <% if ($update_method eq 'manual_github') { %>selected<% } %>><%= &subs::ui('Manual - GitHub') %></option>
+					<option value="manual_peers" <% if ($update_method eq 'manual_peers') { %>selected<% } %>><%= &subs::ui('Manual - Peers') %></option>
+					<option value="github" <% if ($update_method eq 'github') { %>selected<% } %>><%= &subs::ui('GitHub — pull automatically from origin/main only') %></option>
+					<option value="peers" <% if ($update_method eq 'peers') { %>selected<% } %>><%= &subs::ui('Peers — pull automatically only from this mesh') %></option>
+					<option value="any" <% if ($update_method eq 'any') { %>selected<% } %>><%= &subs::ui('Any — GitHub first, then a peer') %></option>
+				</select>
+				<span id="update_method_status" class="device_when"></span>
+				<button id="update_now_button" class="hover" type="button"><%= &subs::ui('Update now') %></button>
+				<span id="update_now_status" class="device_when"></span>
+			</div>
+		</div>
+		<% if (scalar @{$routers || []}) { %>
+			<%# The gateway every network has. It is discovered from the default
+			    route and kept after the machine leaves that network, so it is still
+			    here (greyed, with its last sighting) when it is not connected. %>
+			<div class="device_card" id="router_card">
+				<div class="device_head">
+					<span class="network_cidr"><%= &subs::lang('router') %></span>
+				</div>
+				<div class="device_nic">
+					<div class="cfg-scroll">
+					<table>
+						<thead>
+							<tr><th><%= &subs::lang('common.name') %></th><th><%= &subs::lang('common.model') %></th><th><%= &subs::lang('home.last_update') %></th><th></th></tr>
+						</thead>
+						<tbody>
+						<% foreach my $r ( @{$routers} ) { %>
+							<tr class="router_row" ip="<%= $r->{'ip'} %>">
+								<td><b><%= $r->{'name'} %></b><br><span class="remote_ip"><%= $r->{'ip'} %></span> <span class="device_when"><%= $r->{'mac'} %></span></td>
+								<td><%= $r->{'model'} || '—' %></td>
+								<td><span class="pill" style="<%= $r->{'online'} ? 'background:#4caf50;color:#fff' : 'opacity:.6' %>"><%= $r->{'online'} ? &subs::lang('common.online') : &subs::lang('common.offline') %></span> <span class="device_when"><%= $r->{'seen_display'} %></span></td>
+								<td></td>
+							</tr>
+						<% } %>
+						</tbody>
+					</table>
+					</div>
+				</div>
+			</div>
+		<% } %>
+		<% if (scalar @{$devices || []}) { %>
+			<%# the machines: one row each, so a machine's name and its removal are asked once, not once per network it appears on %>
+			<div class="device_machines">
+				<% foreach my $d ( reverse @{$devices} ) { %>
+					<div class="machine_row" uuid="<%= $d->{'uuid'} %>">
+						<input type="text" name="device_domain" uuid="<%= $d->{'uuid'} %>" device="<%= $d->{'hostname'} %>" value="<%= $d->{'domain'} %>" class="device_domain" timestamp="<%= $d->{'timestamp'} %>">
+						<span class="device_when"><%= $d->{'hostname'} %> · <%= $d->{'formatted_time'} %></span>
+						<button type="button" class="delete_device" timestamp="<%= $d->{'timestamp'} %>" device="<%= $d->{'hostname'} %>" uuid="<%= $d->{'uuid'} %>">✕ Remove</button>
+					</div>
+				<% } %>
+			</div>
+		<% } %>
+		<% if (scalar @{$remote_machines || []}) { %>
+			<%# peers the remote_machines table knows but no neighbour table lists: a
+			    tailnet peer, or one on a subnet this machine cannot reach, has no
+			    network card above. Give it the same manager and Migrate controls. %>
+			<div class="device_card" id="remote_machines_card">
+				<div class="device_head">
+					<span class="network_cidr"><%= &subs::lang('network.peers') %></span>
+					<span class="device_when"><%= &subs::ui('peers this machine knows but no network here lists') %></span>
+				</div>
+				<div class="device_machines">
+					<div class="cfg-scroll">
+					<table>
+						<thead>
+							<tr><th><%= &subs::lang('common.devices') %></th><th><%= &subs::lang('common.manager') %></th><th><%= &subs::ui('Actions') %></th></tr>
+						</thead>
+						<tbody>
+						<% foreach my $n ( @{$remote_machines} ) { %>
+							<% my $rm = $n; %>
+							<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+								<td>
+									<% if ($n->{'hostname'} || $n->{'name'} || $n->{'domain'}) { %><b><%= $n->{'hostname'} || $n->{'name'} || $n->{'domain'} %></b><br><% } %>
+									<% if ($n->{'fqdn'}) { %><span style="opacity:.7;"><%= $n->{'fqdn'} %></span><br><% } %>
+									<span class="remote_ip"><%= $n->{'ip'} %></span><br><span style="opacity:.6;"><%= $n->{'mac'} %></span>
+									<% if ($n->{'model'}) { %><br><span class="pill"><%= $n->{'model'} %></span><% } %>
+									<% if ($n->{'capabilities'}) { %><br><span class="pill" hint="<%= &subs::ui('abilities') %>"><%= $n->{'capabilities'} %></span><% } %>
+									<% if ($n->{'tunnel'}) { %><br><span class="pill"><%= &subs::ui('Tunnel') %></span><% } %>
+								</td>
+								<td class="remote_manager">
+									<% if ($rm->{'buttons'}) { %>
+										<span class="remote_machine_buttons"><%== $rm->{'buttons'} %></span>
+									<% } elsif (($n->{'purpose'} || '') eq 'mobile' || ($n->{'purpose'} || '') eq 'computer') { %>
+										<span style="opacity:.7;"><%= &subs::ui('Lost') %></span>
+									<% } %>
+								</td>
+								<td>
+									<div class="device_actions">
+										<% if ($rm->{'uuid'} && $n->{'signatorial'} && ($rm->{'privilege'} || '') ne 'citizen') { %>
+											<% my $grant = $rm->{'grant_scope'} || 'trusted'; %>
+											<% my $days_left = ''; if (($rm->{'grant_expires'} || '') =~ /^\d+$/ && $rm->{'grant_expires'} > &subs::rightNow()) { $days_left = int(($rm->{'grant_expires'} - &subs::rightNow() + 86399999) / 86400000); } %>
+											<span class="device_grant" hint="<%= &subs::ui('What this house may do here, and for how long') %>">
+												<select class="remote_machine_grant_scope" uuid="<%= $rm->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+													<option value="none" <% if ($grant eq 'none' || $grant eq 'revoked') { %>selected<% } %>><%= &subs::lang('home.none') %></option>
+													<option value="visitor" <% if ($grant eq 'visitor') { %>selected<% } %>><%= &subs::lang('home.guest') %></option>
+													<option value="resident" <% if ($grant eq 'resident' || $grant eq 'member') { %>selected<% } %>><%= &subs::lang('home.resident') %></option>
+													<option value="trusted" <% if ($grant eq 'trusted') { %>selected<% } %>><%= &subs::lang('home.trusted') %></option>
+												</select>
+												<input type="number" min="0" class="remote_machine_grant_days" uuid="<%= $rm->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" placeholder="<%= &subs::lang('home.days') %>" value="<%= $days_left %>">
+											</span>
+										<% } elsif ($rm->{'uuid'} && ($rm->{'privilege'} || '') eq 'citizen') { %>
+											<span class="pill"><%= &subs::lang('home.citizen') %></span>
+										<% } %>
+										<button class="device_scan ping_scan" load_type="ping_scan" ip_address="<%= $n->{'ip'} %>"><%= &subs::ui('Scan') %></button>
+										<% if ($n->{'signatorial'}) { %>
+											<button class="remote_migrate" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>" hostname="<%= $n->{'hostname'} || $n->{'name'} || $n->{'domain'} || '' %>" hint="<%= &subs::ui('Pull the whole house from here onto that device') %>"><%= &subs::ui('Migrate') %></button>
+										<% } %>
+									</div>
+								</td>
+							</tr>
+						<% } %>
+						</tbody>
+					</table>
+					</div>
+				</div>
+			</div>
+		<% } %>
+		<% if (scalar @{$ble_devices || []}) { %>
+			<%# the fleet's radios: a BLE-only device off its access point sits in no machine's neighbour table, so it is listed here from the bridge's own sightings %>
+			<div class="device_card">
+				<div class="device_head">
+					<span class="network_cidr">Bluetooth</span>
+					<span class="device_when">radios the bridge has seen</span>
+					<button type="button" class="ble_adopt_scan">Scan now</button>
+				</div>
+				<div class="device_nic">
+					<div class="cfg-scroll">
+					<table>
+						<thead>
+							<tr><th>device</th><th>purpose</th><th>bluetooth</th><th>seen</th></tr>
+						</thead>
+						<tbody>
+						<% foreach my $b ( @{$ble_devices} ) { %>
+							<tr class="ble_device" chip_id="<%= $b->{'id'} %>" purpose="<%= $b->{'purpose'} %>">
+								<td>
+									<b><%= $b->{'name'} || $b->{'id'} %></b><br>
+									<span class="remote_ip" style="opacity:.6;font-size:88%;"><%= $b->{'id'} %></span>
+								</td>
+								<td><%= &subs::format_name($b->{'purpose'} || '') %></td>
+								<td><span class="remote_ip"><%= $b->{'bluetooth'} %></span></td>
+								<td><span class="device_when"><%= $b->{'seen_display'} || '' %><% if ($b->{'hostname'}) { %> · <%= $b->{'hostname'} %><% } %></span></td>
+							</tr>
+						<% } %>
+						</tbody>
+					</table>
+					</div>
+				</div>
+			</div>
+		<% } %>
+		<% foreach my $g ( @{$networks || []} ) { %>
+			<div class="device_card network_card" cidr="<%= $g->{'cidr'} %>">
+				<div class="device_head">
+					<span class="network_cidr"><%= $g->{'cidr'} %></span>
+					<span class="network_who">
+						<% foreach my $m ( @{$g->{'members'}} ) { %>
+							<span class="pill"><%= $m->{'hostname'} %><% if ($m->{'domain'}) { %> · <%= $m->{'domain'} %><% } %> · <%= $m->{'nic'} %></span>
+						<% } %>
+					</span>
+				</div>
+				<% foreach my $m ( @{$g->{'members'}} ) { %>
+					<div class="device" uuid="<%= $m->{'uuid'} %>">
+						<div remote_address="<%= $m->{'ip'} %>" nic="<%= $m->{'nic'} %>" class="network_interface device_nic">
+							<div class="nic_head">
+								<span class="device_control" ip="<%= $m->{'ip'} %>" mac="<%= $m->{'mac'} %>"><%= $m->{'nic'} %>: <span class="clip remote_ip"><%= $m->{'ip'} %></span> <%= $m->{'mac'} %></span>
+								<% if ($m->{'gw'}) { %><span class="device_when">via <%= $m->{'gw'} %></span><% } %>
+							</div>
+							<% if (scalar @{$m->{'neigh'} || []} > 0) { %>
+								<div class="cfg-scroll">
+								<table>
+									<thead>
+										<tr><th>devices</th><th>manager</th><th>purpose</th></tr>
+									</thead>
+									<tbody>
+									<% foreach my $n ( sort { $a->{'ip'} cmp $b->{'ip'} } @{$m->{'neigh'} || []} ) { %>
+										<% my $rm = &subs::db_query('select uuid,buttons,privilege,grant_scope,grant_expires,port from remote_machines where signatorial = ?', $n->{'signatorial'})->hash; %>
+										<%# A peer reached through a tunnel stores a loopback manager (127.0.0.1)
+										    in its Go button. Point it at the peer's own name instead, so Go
+										    opens that machine and not this one's manager. %>
+										<% my $buttons_html = $rm->{'buttons'} || ''; %>
+										<% my $peer_manager = ''; %>
+										<% if (($n->{'fqdn'} || '') ne '') { %>
+											<% $peer_manager = 'https://' . $n->{'fqdn'} . ':' . ($rm->{'port'} || 45545) . '/manager'; %>
+										<% } elsif (($n->{'manager'} || '') !~ m{^https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::|/|$)}) { %>
+											<% $peer_manager = $n->{'manager'}; $peer_manager =~ s{/manager$}{}; $peer_manager .= '/manager'; %>
+										<% } %>
+										<% if ($peer_manager ne '') { %>
+											<% $buttons_html =~ s{manager="https?://(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?/manager"}{manager="$peer_manager"}g; %>
+										<% } %>
+										<% if ($n->{'mac'} || $n->{'signatorial'}) { %>
+											<tr class="remote_machine" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>" tunnel="<%= $n->{'tunnel'} %>" uuid="<%= $n->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+												<td>
+													<% if ($n->{'name'}) { %><b><%= $n->{'name'} %></b><br><% } %>
+													<% if ($n->{'fqdn'}) { %><span style="opacity:.7;"><%= $n->{'fqdn'} %></span><br><% } %>
+													<span class="remote_ip"><%= $n->{'ip'} %></span><br><span style="opacity:.6;"><%= $n->{'mac'} %></span>
+													<% if ($n->{'chip_id'}) { %><br><span style="opacity:.6;font-size:88%;"><%= $n->{'chip_id'} %></span><% } %>
+													<% if ($n->{'model'}) { %><br><span class="pill"><%= $n->{'model'} %></span><% } %>
+													<% if ($n->{'capabilities'}) { %><br><span class="pill" hint="abilities"><%= $n->{'capabilities'} %></span><% } %>
+													<% if ($n->{'tunnel'}) { %><br><span class="pill">Tunnel</span><% } %>
+												</td>
+												<td class="remote_manager" id="<%= $m->{'nic'} %>_<%= $m->{'machine_timestamp'} %>">
+													<% if ( $n->{'restore_list'} ) { %>
+														<span class="remote_restore_list" manager="<%= $n->{'manager'} %>" id="<%= $m->{'nic'} %>_<%= $m->{'machine_timestamp'} %>"><%= $n->{'restore_list'} %></span>
+														<br>
+														<span class="remote_machine_buttons"><%== $buttons_html %></span>
+													<% } elsif ($rm->{'buttons'}) { %>
+														<%# a presence beacon does not know the backup list, but the machine is here and its buttons (with the live version) are still the right face for the row %>
+														<span class="remote_machine_buttons"><%== $buttons_html %></span>
+													<% } elsif ($n->{'purpose'} eq 'mobile' || $n->{'purpose'} eq 'computer') { %>
+														<span style="opacity:.7;">Lost</span>
+													<% } %>
+													<% if ($n->{'purpose'} eq 'teletype') { %>
+														<button class="teletype_backup" ip="<%= $n->{'ip'} %>" mac="<%= $n->{'mac'} %>">Backup</button>
+													<% } %>
+													<% if ($n->{'purpose'} eq 'printer') { %>
+														<span class="printer_ink" ip="<%= $n->{'ip'} %>" title="ink and toner"><span class="printer_ink_body">reading…</span></span>
+													<% } %>
+												</td>
+												<td>
+													<div class="device_actions">
+														<select class="device_purpose">
+															<% foreach my $o (@gb::all_device_types) { %>
+																<option <% if ($n->{'purpose'} eq $o) { %>selected<% } %> value="<%= $o %>"><%= &subs::format_name($o) %></option>
+															<% } %>
+														</select>
+														<% if ($rm && $rm->{'uuid'} && $n->{'signatorial'} && ($rm->{'privilege'} || '') ne 'citizen') { %>
+															<% my $grant = $rm->{'grant_scope'} || 'trusted'; %>
+															<% my $days_left = ''; if (($rm->{'grant_expires'} || '') =~ /^\d+$/ && $rm->{'grant_expires'} > &subs::rightNow()) { $days_left = int(($rm->{'grant_expires'} - &subs::rightNow() + 86399999) / 86400000); } %>
+															<span class="device_grant" hint="<%= &subs::ui('What this house may do here, and for how long') %>">
+																<select class="remote_machine_grant_scope" uuid="<%= $rm->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>">
+																	<option value="none" <% if ($grant eq 'none' || $grant eq 'revoked') { %>selected<% } %>><%= &subs::lang('home.none') %></option>
+																	<option value="visitor" <% if ($grant eq 'visitor') { %>selected<% } %>><%= &subs::lang('home.guest') %></option>
+																	<option value="resident" <% if ($grant eq 'resident' || $grant eq 'member') { %>selected<% } %>><%= &subs::lang('home.resident') %></option>
+																	<option value="trusted" <% if ($grant eq 'trusted') { %>selected<% } %>><%= &subs::lang('home.trusted') %></option>
+																</select>
+																<input type="number" min="0" class="remote_machine_grant_days" uuid="<%= $rm->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" placeholder="<%= &subs::lang('home.days') %>" value="<%= $days_left %>">
+															</span>
+														<% } elsif ($rm && $rm->{'uuid'} && ($rm->{'privilege'} || '') eq 'citizen') { %>
+															<span class="pill"><%= &subs::lang('home.citizen') %></span>
+														<% } %>
+														<% if ($n->{'locked'} eq 'yes') { %>
+															<img src="/images/jbuttons/padlock lock.png" hint="Lock" class="little_thumb remote_device_locker hover" style="background-color:red" status="locked" nic="<%= $m->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $m->{'uuid'} %>">
+														<% } else { %>
+															<img src="/images/jbuttons/padlock unlock.png" hint="Unlock" class="little_thumb remote_device_locker hover" style="background-color:lightgreen" status="unlocked" nic="<%= $m->{'nic'} %>" ip="<%= $n->{'ip'} %>" uuid="<%= $m->{'uuid'} %>">
+														<% } %>
+														<% if ($n->{'purpose'} eq 'server') { %>
+															<img src="<%= &subs::icon_for('/images/decipherable/tunnel.png') %>" hint="Mirror" class="little_thumb hover neighbour_tunnel" nic="<%= $m->{'nic'} %>" status="<%= $n->{'tunnel'} %>" uuid="<%= $m->{'uuid'} %>" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>">
+														<% } %>
+														<button class="delete_neighbour_device" rm_uuid="<%= $rm->{'uuid'} %>" uuid="<%= $n->{'uuid'} %>">Delete</button>
+														<button class="device_scan ping_scan" load_type="ping_scan" ip_address="<%= $n->{'ip'} %>">Scan</button>
+														<% if ($n->{'signatorial'}) { %>
+															<button class="remote_migrate" signatorial="<%= $n->{'signatorial'} %>" ip="<%= $n->{'ip'} %>" hostname="<%= $n->{'name'} || '' %>" hint="Pull the whole house from here onto that device">Migrate</button>
+														<% } %>
+													</div>
+												</td>
+											</tr>
+										<% } %>
+									<% } %>
+									</tbody>
+								</table>
+								</div>
+							<% } %>
+						</div>
+					</div>
+				<% } %>
+			</div>
+		<% } %>
+	</div>
+</div>
