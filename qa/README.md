@@ -13,6 +13,8 @@ of this file is about.
 perl qa/run.pl                     # smoke: t/ + signed-in route pass
 perl qa/run.pl --profile full      # adds the anonymous gate pass
 perl qa/run.pl --layers l1         # route layer only
+perl qa/run.pl --layers l2         # database contracts and query plans
+perl qa/run.pl --layers l3         # UI: Chromium breadth + WebKitGTK engine
 perl qa/run.pl --source worktree   # test uncommitted code
 perl qa/run.pl --no-namespace      # read the warning first
 perl qa/run.pl --layers l0         # just the old regression suite
@@ -72,8 +74,8 @@ recorded as drift, not as a verdict. The verdict is the PID audit.
 | --- | --- | --- |
 | `l0` | `prove -l t` (runs outside the fence; it is hermetic) | done |
 | `l1` | every classified GET route over HTTP, signed-in and anonymous; timings; crash detection + restart; fence audit | done |
-| `l2` | database contracts, query plans, statement counts, scale seeds | next |
-| `l3` | WebKitGTK + Chromium UI, flows, screenshots, in-page perf | next |
+| `l2` | database contracts: integrity, stamps, real query plans | done |
+| `l3` | Chromium CDP smoke + WebKitGTK engine probe | experimental |
 | `l4` | Android emulator, WebView CDP, PSS/jank/start | scaffolded |
 | `l5` | QEMU image boot, first-boot seed, persistence, host/guest measures | scaffolded |
 
@@ -94,6 +96,35 @@ reason, and the report counts them. The policy is `qa/routes.policy.json`:
 
 If a route takes the tree down, the suite names it, restarts the instance and
 continues; a dead tree must not hide the next hundred routes.
+
+### l2 — the database
+
+The factory seed is the schema as it shipped; a boot runs the app's migrations
+and `app_schema_ensure`. `l2` boots the copy once (with a loopback session),
+stops it, then reads the database read-only through `sqlite3`:
+
+- `PRAGMA integrity_check` and `foreign_key_check`
+- every table in `database/schema.sql` exists
+- the synced tables carry `ost` and `server_time`; local bookkeeping tables
+  (`sync_cursors`, `sync_jobs`) are intentionally not in that list
+- `EXPLAIN QUERY PLAN` for the hot readers in `qa/db.checks.json`; a query whose
+  `expect` is `index` must name an index. The duties query is recorded but not
+  demanded to use one today (its leading column is long text).
+
+### l3 — the UI (experimental)
+
+Chromium over CDP visits the manager, help, chat, people, clock, warehouse,
+configure and store, collecting console errors, failed requests, 4xx assets,
+unlabelled controls and horizontal overflow; screenshots land in
+`results/ui/shots` (WebP). WebKitGTK 4.1 - the desktop app's engine - loads the
+manager under Xvfb and runs the same probe.
+
+Status: Chromium captures all eight pages; `/manager/store` exceeds the CDP
+navigate timeout and is reported as "not captured". WebKitGTK currently times
+out here and is recorded as **not run**, never as a pass. First-run warnings:
+`ReferenceError: $ is not defined` on fragment pages (a direct load has no
+manager shell, so its jQuery is absent), 2-12 unlabelled controls per page, and
+the slow store page.
 
 ## CPU and memory
 
@@ -131,7 +162,11 @@ are expected on `table` where the SDK, AVD and KVM live.
 | where | what | result |
 | --- | --- | --- |
 | table | `l1` full (signed + anonymous) | PASS, 201 requests, p50 14 ms, p95 89 ms |
+| table | `l2` | PASS, 10 checks |
+| table | QEMU image boot | health after 303 s (HTTP 403, gated), host RSS 2.1 GB, live tree stayed 200 |
 | laptop | `l0` + `l1` full | PASS |
+| laptop | `l2` | PASS, 10 checks |
+| laptop | `l3` | 9 UI checks, 0 failures; WebKit **not run** (timeout) |
 | laptop | `qa/android/build.sh` | PASS, `jawnos-qa-3207084f.apk` from the app repo's HEAD |
 | table | `l0` | FAILS at `t/44-native-bins.t` (pre-existing: the native-bin converter/compile toolchain is not installed there) |
 | table | Android run | has the `jawnos` AVD and JDK 17, but no app repo; copy the APK from the build machine or set `JAWNOS_APP_DIR` |

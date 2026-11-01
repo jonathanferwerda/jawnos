@@ -51,6 +51,8 @@ use Time::HiRes qw(time);
 use Harness;
 use Probe;
 use Monitor;
+use Db;
+use Ui;
 
 my %opt = (
 	layers => 'l0,l1',
@@ -81,9 +83,9 @@ while (my $arg = shift @argv) {
 $opt{'anon'} = 1 if $opt{'profile'} eq 'full';
 
 my @layers = grep { length } split /,/, $opt{'layers'};
-die "qa: --layers wants l0 and/or l1\n" unless @layers;
+die "qa: --layers wants l0, l1 and/or l2\n" unless @layers;
 for my $l (@layers) {
-	die "qa: unknown layer '$l' (known: l0 l1)\n" unless $l =~ /^l[01]$/;
+	die "qa: unknown layer '$l' (known: l0 l1 l2 l3)\n" unless $l =~ /^l[0-3]$/;
 }
 
 my $say = sub { print $_[0], "\n" };
@@ -125,7 +127,10 @@ if (grep { $_ eq 'l0' } @layers) {
 	}
 }
 
-if (!grep { $_ eq 'l1' } @layers) {
+my $want_l2 = grep { $_ eq 'l2' } @layers;
+my $want_l3 = grep { $_ eq 'l3' } @layers;
+my $want_l1 = grep { $_ eq 'l1' } @layers;
+if (!$want_l1 && !$want_l2 && !$want_l3) {
 	my $ok = $l0_result && $l0_result->{'ok'};
 	$say->(sprintf('[l0] %s in %.1fs',
 		($ok ? 'ok' : 'FAILED'), $l0_result ? $l0_result->{'seconds'} : 0))
@@ -135,7 +140,7 @@ if (!grep { $_ eq 'l1' } @layers) {
 }
 
 # l1 needs the fence. Re-exec inside it, carrying l0's verdict with us.
-if (!$ENV{'JAWNOS_QA_NS'} && !$ENV{'JAWNOS_QA_NO_NS'}) {
+if (($want_l1 || $want_l2 || $want_l3) && !$ENV{"JAWNOS_QA_NS"} && !$ENV{"JAWNOS_QA_NO_NS"}) {
 	if ($l0_result) {
 		$ENV{'JAWNOS_QA_L0_EXIT'} = $l0_result->{'exit'};
 		$ENV{'JAWNOS_QA_L0_SECS'} = $l0_result->{'seconds'};
@@ -166,6 +171,17 @@ my $monitor_pid = Monitor->start(
 	out  => $monitor_out,
 );
 
+# A killed runner must not leave a tree, a browser or the sampler behind. The
+# child that matters is the instance (its cwd is the QA copy); this stops all
+# of them without ever naming the live tree.
+our $CLEANUP;
+END { $CLEANUP->() if $CLEANUP }
+$CLEANUP = sub {
+	eval { $h->stop_all() };
+	Monitor->stop($monitor_pid) if $monitor_pid;
+};
+$SIG{'INT'} = $SIG{'TERM'} = sub { $CLEANUP->(); exit 1 };
+
 my %report = (
 	stamp    => $h->{'stamp'},
 	version  => `git --no-optional-locks -C '$repo' rev-parse --short HEAD`,
@@ -179,6 +195,7 @@ my %report = (
 	warnings => 0,
 	crashes  => [],
 	routes   => [],
+	ui       => [],
 	skipped  => [],
 	monitor  => {},
 	audit    => {},
@@ -381,6 +398,143 @@ if (grep { $_ eq 'l1' } @layers) {
 }
 
 # ---------------------------------------------------------------------------
+# l2 - the database contracts (the copy only; nothing to boot)
+# ---------------------------------------------------------------------------
+
+if ($want_l2) {
+	# The factory seed is the schema as it shipped; a boot runs the app's own
+	# migrations and app_schema_ensure. Checking an un-booted copy would report
+	# tables the seed simply has not grown yet as missing.
+	if (!$want_l1) {
+		# live=1 gives the loopback session, and app_schema_ensure runs on the
+		# first request - booting alone is not enough for the app tables.
+		$h->write_config(live => 1);
+		my $b = eval { $h->boot(name => 'db', timeout => 180) };
+		if ($b) { $h->session(); $h->stop('db') }
+		else { $fatal->('l2: could not boot the copy to run migrations: ' . ($@ || 'unknown')) }
+	}
+
+	my $cfg = Db::load_config("$FindBin::Bin/db.checks.json");
+	my $tree = $h->tree;
+	my $rows = Db->checks(
+		db     => "$tree/database/jawnos.db",
+		schema => "$tree/database/schema.sql",
+		config => $cfg,
+	);
+	$report{'db'} = $rows;
+	my @bad = grep { !$_->{'ok'} } @$rows;
+	$fatal->('l2 ' . $_->{'name'} . ': ' . $_->{'detail'}) for @bad;
+	$say->(sprintf('[l2] %d checks, %d failed', scalar(@$rows), scalar(@bad)));
+}
+
+# ---------------------------------------------------------------------------
+# l3 - the UI, in Chromium for breadth and WebKitGTK for the real engine
+# ---------------------------------------------------------------------------
+
+if ($want_l3) {
+	$h->write_config(live => 1);
+	my $boot = eval { $h->boot(name => 'ui', timeout => 180) };
+	if (!$boot) {
+		$fatal->('l3: the UI instance did not boot: ' . ($@ || 'unknown'));
+	}
+	else {
+		$h->session();
+		my $results = $h->results;
+		my @paths = ('/manager', '/manager/help', '/manager/chat',
+			'/manager/people', '/manager/clock', '/manager/warehouse',
+			'/manager/configure', '/manager/store');
+		my @urls = map { $h->url_for($_) } @paths;
+		my $out = "$results/ui";
+
+		my $r = Ui->probe(urls => \@urls, out => $out);
+		if ($r->{'error'}) {
+			$fatal->('l3 chromium: ' . $r->{'error'});
+		}
+		else {
+			for my $p (@{ $r->{'pages'} || [] }) {
+				(my $path = $p->{'url'} // '') =~ s{^https?://[^/]+}{};
+				if ($p->{'error'}) {
+					$report{'warnings'}++;
+					$say->("  warn ui $path: " . substr($p->{'error'}, 0, 110));
+					push @{ $report{'ui'} }, {
+						name => "chromium GET $path", ok => 1,
+						detail => 'not captured: ' . $p->{'error'},
+					};
+					next;
+				}
+				my $verdict = 'pass';
+				my $reason = '';
+				if (!defined $p->{'status'} || $p->{'status'} >= 500) {
+					$verdict = 'fail';
+					$reason = 'no answer or 5xx';
+				}
+				elsif ($path eq '/manager' && !$p->{'probe'}->{'hasMenu'}) {
+					$verdict = 'fail';
+					$reason = 'start menu missing';
+				}
+				push @{ $report{'ui'} }, {
+					name => "chromium GET $path",
+					ok => ($verdict eq 'pass' ? 1 : 0),
+					detail => ($reason || "status " . ($p->{'status'} // '?')
+						. ', ' . ($p->{'probe'}->{'nodes'} // '?') . ' nodes'),
+				};
+				$fatal->("l3 chromium GET $path: $reason") if $verdict eq 'fail';
+
+				if (@{ $p->{'consoleErrors'} || [] }) {
+					$report{'warnings'}++;
+					$say->("  warn JS $path: " . substr($p->{'consoleErrors'}->[0], 0, 110));
+				}
+				if (@{ $p->{'badAssets'} || [] }) {
+					$report{'warnings'}++;
+					$say->("  warn asset $path: " . substr($p->{'badAssets'}->[0], 0, 110));
+				}
+				if (@{ $p->{'failed'} || [] }) {
+					$report{'warnings'}++;
+					$say->("  warn net $path: " . substr($p->{'failed'}->[0], 0, 110));
+				}
+				if ($p->{'probe'}->{'overflow'}) {
+					$report{'warnings'}++;
+					$say->("  warn overflow $path");
+				}
+				my $un = ($p->{'probe'}->{'unlabeled'} || 0)
+					+ ($p->{'probe'}->{'unlabeledInputs'} || 0)
+					+ ($p->{'probe'}->{'imgsNoAlt'} || 0);
+				if ($un) {
+					$report{'warnings'}++;
+					$say->("  warn a11y $path: $un unlabelled control(s)/image(s)");
+				}
+			}
+			if ($r->{'partial'}) {
+				$report{'warnings'}++;
+				$say->('[l3] chromium probe was partial: a page hung and was not captured');
+			}
+		}
+
+		# The desktop app's engine. Not a Chromium result.
+		my $w = Ui->webkit(url => $h->url_for('/manager'), out => "$out/webkit.json");
+		if ($w->{'error'}) {
+			$report{'warnings'}++;
+			$say->('  warn webkit: ' . $w->{'error'});
+			push @{ $report{'ui'} }, {
+				name => 'webkit GET /manager', ok => 1,
+				detail => 'not run: ' . $w->{'error'},
+			};
+		}
+		else {
+			push @{ $report{'ui'} }, {
+				name => 'webkit GET /manager',
+				ok => ($w->{'hasMenu'} ? 1 : 0),
+				detail => ($w->{'title'} || '') . ', ' . ($w->{'nodes'} // '?') . ' nodes',
+			};
+			$fatal->('l3 webkit GET /manager: start menu missing') unless $w->{'hasMenu'};
+		}
+
+		$h->stop('ui');
+		$say->('[l3] ' . scalar(@{ $report{'ui'} }) . ' UI checks');
+	}
+}
+
+# ---------------------------------------------------------------------------
 # results
 # ---------------------------------------------------------------------------
 
@@ -452,6 +606,27 @@ sub write_report {
 	$md .= "- PID namespace: " . (($audit->{'namespace'} && $audit->{'namespace'}->{'pid'}) ? 'yes' : 'no') . "\n";
 	$md .= "- net namespace: " . (($audit->{'namespace'} && $audit->{'namespace'}->{'net'}) ? 'yes' : 'no') . "\n";
 	$md .= "- live repo read-only: " . (($audit->{'ro_repo'} || '') ? 'yes' : 'no') . "\n\n";
+
+	if (@{ $r->{'db'} || [] }) {
+		$md .= "## Database\n\n| check | result | detail |\n| --- | --- | --- |\n";
+		for my $row (@{ $r->{'db'} }) {
+			my $detail = ($row->{'detail'} // '');
+			$detail =~ s/\s+/ /g;
+			$detail = substr($detail, 0, 120);
+			$md .= '| ' . $row->{'name'} . ' | ' . ($row->{'ok'} ? 'ok' : 'FAIL')
+				. ' | ' . $detail . " |\n";
+		}
+		$md .= "\n";
+	}
+
+	if (@{ $r->{'ui'} || [] }) {
+		$md .= "## UI\n\n| check | result | detail |\n| --- | --- | --- |\n";
+		for my $row (@{ $r->{'ui'} }) {
+			$md .= '| ' . $row->{'name'} . ' | ' . ($row->{'ok'} ? 'ok' : 'FAIL')
+				. ' | ' . ($row->{'detail'} // '') . " |\n";
+		}
+		$md .= "\n- screenshots: `results/ui/shots/` (WebP when ImageMagick is present)\n\n";
+	}
 
 	if (my $t = $r->{'timings'}->{'requests'}) {
 		$md .= "## Route timings\n\n";

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "note": "Hot reads taken from the domain modules. expected=index means the plan must use an index; any records the plan without failing.",
+  "synced": [
+    "appointments", "warehouse", "mailbox", "notes", "model", "option",
+    "subcategory", "magazine", "credentials", "devices", "settings", "cache",
+    "tickets", "remote_machines", "people", "journal", "staged_appointments",
+    "staged_records", "sync_log", "sync_snapshots"
+  ],
+  "queries": [
+    {
+      "name": "appointment_start_for_app",
+      "expect": "index",
+      "why": "Calendar: the running session for one app (idx2_appts on app,timestamp)",
+      "sql": "select uuid from appointments where app='home' and (type='start' or type='record') and stop_seen is null and timestamp <= 1793500000000 order by timestamp desc limit 1"
+    },
+    {
+      "name": "appointment_since",
+      "expect": "index",
+      "why": "Calendar: what is next (idx7_appts on timestamp,seen)",
+      "sql": "select app,uuid,timestamp from appointments where timestamp >= 1793500000000 and seen is null order by timestamp limit 10"
+    },
+    {
+      "name": "appointment_exact",
+      "expect": "index",
+      "why": "People: one app at one instant (idx12_appts on type,app)",
+      "sql": "select * from appointments where app='home' and timestamp=1793500000000 and type='email'"
+    },
+    {
+      "name": "appointment_duty",
+      "expect": "any",
+      "why": "Calendar duties: the leading column is a long text column, so a scan is the planner's answer today",
+      "sql": "select * from appointments where duties is not null and next_duty >= 1793500000000 and next_duty is not null limit 10"
+    }
+  ]
+}
