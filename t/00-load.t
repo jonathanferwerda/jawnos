@@ -17,6 +17,8 @@ ok defined &subs::duration_sayer, 'duration helpers loaded';
 # it, which is what lets the watch and teletype workers boot without Manager.pl.
 ok defined &subs::remote_useragent_maker, 'domain layer loaded (subs::remote_useragent_maker)';
 ok defined &subs::notification_sender,    'domain layer loaded (subs::notification_sender)';
+ok defined &subs::log_reader,             'domain layer loaded (subs::log_reader)';
+ok defined &subs::budget_calculator,      'domain layer loaded (subs::budget_calculator)';
 ok defined &language::translate,  'language catalog loaded';
 ok defined &language::valid,      'language::valid loaded';
 

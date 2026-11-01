@@ -1040,7 +1040,7 @@ sub appt_header_printer() {
 	# The header draws only the app's newest/oldest rows; the wrapper's details
 	# form is the thing that needs __accounts/__projects. Skip the marker read
 	# here and let the centre view build them when it renders the wrapper.
-	my $appts = $data->{'appts'} || &Manager::log_reader({ app => $app, view => 'centre_view', header => 1 });
+	my $appts = $data->{'appts'} || &subs::log_reader({ app => $app, view => 'centre_view', header => 1 });
 	&appt_toggle_checker($app);
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
 	my $server_time = &subs::rightNow();
@@ -8142,7 +8142,7 @@ sub voice_brain() {
 	my $a = $action->{'action'};
 	# Resolve the name before anything acts on it. A clear answer is rewritten
 	# to the canonical app key; a tie becomes a spoken question, never a guess.
-	$action = &Manager::guide_resolve_action($action);
+	$action = &subs::guide_resolve_action($action);
 	if (($action->{'action'} || '') eq 'ask') {
 		my $speech = $action->{'text'} || 'Which one did you mean?';
 		$reply->($speech);
@@ -8192,8 +8192,8 @@ sub voice_brain() {
 	# teaching a word for a thing is stored here; it is not a screen action
 	if ($a eq 'alias' || $a eq 'unalias') {
 		my $r = $a eq 'alias'
-			? &Manager::guide_alias_add($action->{'alias'}, $action->{'target'})
-			: &Manager::guide_alias_remove($action->{'alias'});
+			? &subs::guide_alias_add($action->{'alias'}, $action->{'target'})
+			: &subs::guide_alias_remove($action->{'alias'});
 		my $speech = $r->{'text'} || ($r->{'ok'} ? 'Done.' : 'I could not do that.');
 		$reply->($speech);
 		$log->info('voice: brain ' . $a . ' "' . $speech . '"');
@@ -9324,7 +9324,7 @@ sub backup_now() {
 		sync_job => ($job || ''),
 	};
 	if ($reason eq 'remote_update') {
-		$returner->{'update_commands'} = &Manager::update_database({ duty => 'list' });
+		$returner->{'update_commands'} = &subs::update_database({ duty => 'list' });
 	}
 	if ($backup_lock) {
 		my $lock_row = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_backup_lock')->hashes->[0];
@@ -18126,7 +18126,7 @@ sub navigation_automation() {
 					if ($hp->{'placement'} eq 'within') {
 						if ($distance <= $hp->{'distance'}) {
 							if ($hset->{'site_type'} eq 'dangerous') {
-							#	&Manager::leave();
+							#	&subs::leave();
 							}
 							elsif ($tog ne 'on') {
 								# A return within fifteen minutes of a navigation stop is the
@@ -21489,7 +21489,7 @@ sub relay_headless {
 	# the form into the request body so remote_relay_request parses it.
 	$req->headers->content_type('application/x-www-form-urlencoded');
 	$req->body(Mojo::Parameters->new(%{$params})->to_string);
-	return &Manager::remote_relay_request($c, $data->{'extra'} || {});
+	return &subs::remote_relay_request($c, $data->{'extra'} || {});
 }
 
 # Drain the headless relay queue: a JSON list of relay_headless calls left by a
@@ -28578,12 +28578,12 @@ sub evaluation_agent() {
 	# The nightly run is a Minion job in President's worker, where Manager.pl is
 	# not loaded; budget_calculator (and father_time under it) live there. Calling
 	# it unconditionally killed every scheduled evaluation with "Undefined
-	# subroutine &Manager::budget_calculator" before the model was ever asked.
+	# subroutine &subs::budget_calculator" before the model was ever asked.
 	# The web Evaluate button still gets the pace; the scheduled run reads the
 	# budget figure from settings_brief and leaves the pace out.
-	if (!$global && !$measure_app && ($app_settings->{'budget'} || '') =~ /\S/ && ($app_settings->{'s_lock'} || '') eq 'on' && defined &Manager::budget_calculator) {
+	if (!$global && !$measure_app && ($app_settings->{'budget'} || '') =~ /\S/ && ($app_settings->{'s_lock'} || '') eq 'on' && defined &subs::budget_calculator) {
 		foreach my $mode ( sort keys %{$gb::budget_modes} ) {
-			my $bp = &Manager::budget_calculator({
+			my $bp = &subs::budget_calculator({
 				app => $app,
 				budget => $app_settings->{'budget'},
 				circumstance => $mode,
@@ -33407,7 +33407,7 @@ sub guide_watch_tick {
 }
 
 # The propose loop runs in President, which never loads Manager.pl, so it carries
-# its own copy of the repo-path guard (the same rules as Manager::coding_path).
+# its own copy of the repo-path guard (the same rules as subs::coding_path).
 # Nothing here can change the repo: every write is staged, so the guard only has
 # to keep the agent's reading inside the tree.
 sub error_watch_repo { return &subs::home('~/jawnos'); }
