@@ -144,8 +144,9 @@ sub ocr_reader($c,$filename) {
 	# filter silently erased whole languages from a scanned document.
 	$ocr =~ s/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+//g if defined $ocr;
 	$ocr = &subs::note_encrypter(&subs::session_suds($c),$ocr);
-	my $tn_txt = &subs::shell_quote($text_file);
-	`shred -u $tn_txt 2>/dev/null`;
+	# `shred` is not in the Android runtime; secure_unlink falls back to unlink,
+	# which is what stops the empty .txt files accumulating beside the pictures.
+	&subs::secure_unlink($text_file);
 
 	return $ocr;
 }

@@ -180,7 +180,7 @@ sub action_14764 {
 			$thumb = $location . '/.thumbs';
 
 		}
-		elsif ($upload->{'type'} =~ /image/gi || lc $ext eq 'jpg' || lc $ext eq 'png') {
+		elsif ($upload->{'type'} =~ /image/gi || lc($ext) =~ /^(?:jpg|jpeg|jpe|png|webp|heic|heif|bmp|tif|tiff|xcf|gif)$/) {
 			$upload_type = 'image';
 			$folder = &subs::setting_grabber( { app => 'misc', setting => 'photo_location', device => $device } );
 			$location = &subs::home($folder) . '/' . $app_path;

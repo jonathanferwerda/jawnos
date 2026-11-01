@@ -67,6 +67,10 @@ sub note_encrypter {
 	my ($secret, $content) = @_;
 	return defined $content && length $content ? "enc:$content" : undef;
 }
+sub secure_unlink {
+	my ($file) = @_;
+	return unlink $file;
+}
 package main;
 
 my $code = "package CameraOcr;\n$ocr_body\n1;";
