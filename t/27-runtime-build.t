@@ -273,4 +273,29 @@ my %d = map { $_ => 1 } split /\n/, $default_list;
 ok($d{'bin/perl'} && $d{'bin/git'} && $d{'libexec/git-core/git'},
 	'a build without --no-bin still ships the executables');
 
+# --- an alias path that climbs with .. must not truncate its target ----------
+# git-core ships some entries as libexec/git-core/../../bin/X. The symlink
+# closure re-adds them as literal paths, and staging one a second time copied
+# over bin/git's hard link and left the SOURCE at 0 bytes (2026-10-31), so the
+# archive shipped an empty git. The alias must be dropped, not staged.
+my $alias = tempdir(CLEANUP => 1);
+write_file_at("$alias/bin/perl", "#!/bin/sh\n", 0755);
+my $git_bytes = "REAL-GIT-BYTES\n";
+write_file_at("$alias/bin/git", $git_bytes, 0755);
+write_file_at("$alias/lib/perl5/5.42.0/aarch64-android/CORE/libperl.so", "ELF\n", 0755);
+write_file_at("$alias/libexec/git-core/git-sh-setup", "shell library\n", 0644);
+symlink('../../bin/git', "$alias/libexec/git-core/alias-git") or plan skip_all => 'no symlinks here';
+
+my $alist = qx{"$^X" "$build" --from "$alias" --list 2>/dev/null};
+is($? >> 8, 0, 'a prefix with a climbing alias lists') or diag($alist);
+unlike($alist, qr/\.\./, 'no alias path that climbs with .. is listed');
+
+my $aout = tempdir(CLEANUP => 1) . '/alias.zip';
+my $apack = qx{"$^X" "$build" --from "$alias" --out "$aout" 2>&1};
+is($? >> 8, 0, 'and packs') or diag($apack);
+like($apack, qr/dropped 1 alias/, 'the build reports the dropped alias');
+is(-s "$alias/bin/git", length($git_bytes), 'the source bin/git is not truncated by the staging copy');
+my $amodes = zip_modes($aout);
+ok($amodes->{'bin/git'}, 'the archive still carries bin/git');
+
 done_testing();

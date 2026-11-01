@@ -151,6 +151,12 @@ $out ||= "$root/releases/jawnrt-$abi-$version.zip";
 # --- select ----------------------------------------------------------------
 sub wanted_path {
 	my ($rel) = @_;
+	# An archive entry whose name climbs with .. (git-core writes some as
+	# libexec/git-core/../../bin/X) resolves onto an entry that is already in
+	# the list. Staging it a second time copied over the first one's hardlink -
+	# truncating the SOURCE bin/git to 0 bytes - and the archive then shipped an
+	# empty git. The alias is redundant; keep the real path only.
+	return 0 if $rel =~ m{(?:^|/)\.\.(?:/|$)};
 	# A prefix that has been updated in place keeps the module trees of every perl
 	# it ever had; only the one bin/perl actually runs belongs in a runtime.
 	if (defined $perl_version
@@ -342,6 +348,14 @@ if ($no_bin) {
 }
 
 my $source_bytes = 0;
+# The symlink-closure above can re-introduce alias paths written as
+# libexec/git-core/../../bin/X (it resolves a link target through the prefix).
+# They name files already in the list. Staging one a second time is what
+# truncated the source bin/git to zero bytes through a shared hardlink, so drop
+# every path that climbs before anything is written.
+my $aliases = grep { m{(?:^|/)\.\.(?:/|$)} } @files;
+@files = grep { !m{(?:^|/)\.\.(?:/|$)} } @files;
+print STDERR "runtime_build: dropped $aliases alias path(s) that climb with ..\n" if $aliases;
 $source_bytes += -l "$from/$_" ? 0 : (-s "$from/$_" || 0) foreach @files;
 
 if ($list) { print "$_\n" foreach @files; exit 0 }
@@ -408,6 +422,11 @@ foreach my $rel (@files) {
 	else {
 		# hard link where possible: the stage is temporary and the source is read-only
 		link($src, $dst) or do {
+			# A hardlink may already sit here: opening it for writing would
+			# truncate the source file through the shared inode (that is how
+			# bin/git shipped as 0 bytes). Remove it first, so the copy is a
+			# new inode.
+			unlink $dst if -e $dst || -l $dst;
 			open(my $in, '<', $src) or die "$rel: $!";
 			binmode $in;
 			open(my $out, '>', $dst) or die "$dst: $!";
