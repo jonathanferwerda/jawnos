@@ -518,8 +518,8 @@ sub error_watch_read_new {
 	unless ($error_watch_state_loaded) { &error_watch_state_load(); $error_watch_state_loaded = 1; }
 	my $size = -s $path;
 	unless (defined $error_watch_state{$source}) {
-		# the pty log is truncated when the master starts, so read it whole;
-		# manager.log is long-lived, so begin at its end - never replay history
+		# a fresh source starts at its beginning; the long-lived manager.log
+		# starts at its end - never replay history
 		$error_watch_state{$source} = ($source eq 'log') ? $size : 0;
 	}
 	my $offset = $error_watch_state{$source};
@@ -539,6 +539,42 @@ sub error_watch_read_new {
 	my $buffer = ($error_watch_partial{$source} // '') . $chunk;
 	my @lines = split /\n/, $buffer, -1;
 	$error_watch_partial{$source} = pop @lines;   # keep the unterminated tail
+	return @lines;
+}
+
+# The tree's console stream rides the master's log bus, not a file. The cursor
+# is a byte sequence (`pty_seq`) kept in the same offsets file as the file
+# readers: a tree restart resumes exactly where it left off, while a master
+# restart wipes that file and the new sequence starts at 0. Its own key means a
+# pre-bus byte offset can never be read as a sequence.
+sub log_bus_read_new {
+	require JawnOS::LogBus;
+	unless ($error_watch_state_loaded) { &error_watch_state_load(); $error_watch_state_loaded = 1; }
+	my $path = &subs::home('~/.president/log');
+	my $since = $error_watch_state{'pty_seq'} // 0;
+	my $reply = JawnOS::LogBus::client_read($path, $since, 262144);
+	return () unless $reply;
+	# Our cursor is ahead of this master (the offsets file outlived a master
+	# boot): take the new stream from its beginning.
+	if ($reply->{'reset'}) {
+		$error_watch_state{'pty_seq'} = 0;
+		&error_watch_state_save();
+		$reply = JawnOS::LogBus::client_read($path, 0, 262144);
+		return () unless $reply;
+	}
+	if ($reply->{'dropped'}) {
+		# The ring overwrote bytes while the watcher was busy. Say so in
+		# manager.log (which this same watch also reads) rather than pretend the
+		# stream was complete.
+		eval { $log->warn('log bus: ' . $reply->{'dropped'} . ' byte(s) dropped before sequence ' . $reply->{'earliest'}) } if defined $log;
+	}
+	$error_watch_state{'pty_seq'} = $reply->{'to'};
+	&error_watch_state_save();
+	my $bytes = $reply->{'bytes'} // '';
+	return () unless length $bytes;
+	my $buffer = ($error_watch_partial{'pty_seq'} // '') . $bytes;
+	my @lines = split /\n/, $buffer, -1;
+	$error_watch_partial{'pty_seq'} = pop @lines;
 	return @lines;
 }
 

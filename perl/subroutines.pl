@@ -4102,12 +4102,14 @@ our $backfills_running;
 
 # ---- the error watch: the Coding agent's ears -------------------------
 # The running tree prints its warnings and errors to the pty that the master
-# (`./jawn`) reads, and jawn tees that stream into ~/pty.log. This watcher tails
-# it (and ~/manager.log, for the $log lines that never reach the pty) and records
-# each new error signature once in staged_fixes. When a Coding model is set, the
-# agent reads the error and stages a proposed fix - whole files, not applied yet
-# - for a person to review and apply from the IDE's coding chatbox. President
-# runs the tick, so there is exactly one watcher per machine.
+# (`./jawn`) reads, and jawn keeps that stream in a bounded, sequenced ring and
+# serves it at ~/.president/log. This watcher asks the bus for what it has not
+# seen yet (and reads ~/manager.log, for the $log lines that never reach the
+# pty) and records each new error signature once in staged_fixes. When a Coding
+# model is set, the agent reads the error and stages a proposed fix - whole
+# files, not applied yet - for a person to review and apply from the IDE's
+# coding chatbox. President runs the tick, so there is exactly one watcher per
+# machine.
 
 our %error_watch_state;    # source => bytes already read (for this watcher's life)
 our %error_watch_partial;  # source => an unterminated tail line

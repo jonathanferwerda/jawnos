@@ -127,7 +127,6 @@ my @MODULE_EXTRA = ('DBD::SQLite');   # reached through Mojo::SQLite / Minion
 my @PTY_PATTERNS = (
 	[ qr/terminal_pty_runner/,      'the master launches President on a PTY' ],
 	[ qr/type\s*=>\s*["']pty["']/,   'ReadWriteFork runs the tree on a pty' ],
-	[ qr/pty_log_fh/,               'the pty tee into ~/pty.log' ],
 	[ qr/\bisatty\b/,               'isatty' ],
 	[ qr/TIOCGWINSZ/,               'window size ioctl' ],
 	[ qr{/dev/ptmx},                'pty allocation' ],
@@ -147,7 +146,7 @@ my %BASELINE = (
 	'commands' => 0,
 	'tools' => 21,
 	'modules' => 39,
-	'pty' => 12,
+	'pty' => 7,
 	'command_list' => '',
 	'tool_list' => 'argon2 autossh convert cpanm curl espeak ffmpeg git node openssl perl qrencode rsync sox sqlite3 ssh sshpass tesseract tmux zbarimg zip',
 	'module_list' => 'Authen::SASL Crypt::AuthEnc::GCM Crypt::KeyDerivation Crypt::PK::Ed25519 Crypt::PK::X25519 Crypt::PRNG Crypt::Simple CryptX DBD::SQLite Data::UUID Date::Parse Digest::SHA Email::Stuffer Encode File::Slurp File::Type HTML::Strip Hash::Merge LWP::Protocol::https LWP::UserAgent MIME::Parser Math::BigInt Minion Minion::Backend::SQLite Mojo::IOLoop::ReadWriteFork Mojo::SQLite Mojolicious::Lite Mojolicious::Plugin::RenderFile Net::IMAP::Client Net::SSLeay Number::Format SQL::Abstract Sereal::Decoder Sereal::Encoder Time::Duration Time::Piece URI::Encode URI::Escape WWW::Mechanize',

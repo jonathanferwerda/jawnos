@@ -123,18 +123,12 @@ our $logfile = &home('~/manager.log');
 `touch $logfile` if not -e $logfile;
 our $log = Mojo::Log->new(path => $logfile);
 
-# Tee the tree's console into ~/pty.log: everything President.pl and its workers
-# print or warn about passes through this pty, and the error watch reads the file
-# for faults to fix. Truncated here, at the master's start, so each boot begins
-# clean; it lives outside ~/.president, which is wiped below.
-our $pty_log_fh;
-{
-	my $pty_log_path = &home('~/pty.log');
-	if (open(my $fh, '>', $pty_log_path)) {
-		$pty_log_fh = $fh;
-		$pty_log_fh->autoflush(1);
-	}
-}
+# The tree's console output is kept in a bounded, sequence-numbered ring and
+# served over ~/.president/log instead of being teed into ~/pty.log. The error
+# watch asks for what it has not seen yet; the ring lives in the master, so it
+# still holds a dying tree's last words when the next tree reconnects. The ring
+# itself is created after ./lib/JawnOS/LogBus.pm is loaded below, and log_socket
+# serves it.
 my $tmp_dir = '/tmp';
 # Android's root /tmp exists on an emulator but belongs to the shell user, so
 # a writable check matters as much as the directory check.
@@ -181,6 +175,12 @@ $| = 1;
 # Loaded here, after the chdir above, because ./jawn is started from the tree root
 # and every other require in this file is cwd-relative too.
 require './perl/control.pl';
+require './lib/JawnOS/LogBus.pm';
+
+# 4 MB holds roughly an hour of this tree's console output, and the watch reads
+# 256 KB per minute, so a normal burst is never overwritten before it is asked
+# for. A larger burst is reported as `dropped` rather than silently skipped.
+our $log_ring = JawnOS::LogBus::ring_new(4 * 1024 * 1024);
 
 my $fork = Mojo::IOLoop::ReadWriteFork->new;
 
@@ -266,6 +266,7 @@ my ($last_master_tick,$tree_dead_since);
 my $reap_ticks = 0;
 &master_time_looper();
 &control_socket();
+&log_socket();
 sub master_time_looper() {
 	# In this Mojo the recurring callback is handed the loop as its only argument
 	# (Mojo::IOLoop::_timer runs `$self->$cb`), so no timer id is passed to the
@@ -986,6 +987,39 @@ sub private_unix_listener {
 	return $id;
 }
 
+sub log_socket() {
+	my $path = &home('~/.president/log');
+	eval {
+		&forget_mojo_reuse($path);
+		my $id = Mojo::IOLoop->server({ path => $path } => sub {
+			my ($loop, $stream, $cid) = @_;
+			my $buffer = '';
+			$stream->high_water_mark(8 * 1024 * 1024);
+			$stream->on(read => sub {
+				my ($stream, $bytes) = @_;
+				$buffer .= $bytes;
+				unless ($buffer =~ /\n/) {
+					# one line is one request; a client that never ends one is not one
+					$stream->close if length($buffer) > 8192;
+					return;
+				}
+				my ($line) = split /\n/, $buffer, 2;
+				$buffer = '';
+				my $reply = JawnOS::LogBus::reply_for($log_ring, $line);
+				$stream->write($reply);
+				$stream->close_gracefully;
+			});
+		});
+		# The same private-listener rule as control and watch: Mojo keeps listener
+		# fds open across exec, so a child would inherit this socket and a survivor
+		# of a dead master would answer for it - and a kept MOJO_REUSE entry makes
+		# the next reload die in listen().
+		&private_unix_listener($path, $id);
+		1;
+	} or print "the log socket could not be started: $@\n";
+	return;
+}
+
 sub control_socket() {
 	my $path = &home('~/.president/control');
 	eval {
@@ -1178,10 +1212,9 @@ sub terminal_pty_runner() {
 		unless (grep { $bytes =~ /\Q$_\E/ } @printless) {
 			print $bytes;
 		}
-		# the error watch's copy (an unprintable diagnostic still belongs in it)
-		if ($pty_log_fh) {
-			print {$pty_log_fh} $bytes;
-		}
+		# the error watch's copy: kept in the master's ring and served over
+		# ~/.president/log, so there is no ~/pty.log file to grow or rotate
+		JawnOS::LogBus::ring_append($log_ring, $bytes);
   });
 
 	my $this_fork = $fork;

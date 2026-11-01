@@ -232,10 +232,12 @@ sub error_watch_tick {
 	}
 	if ($errors_on) {
 		my @caught;
-		foreach my $source ( [ 'pty', &subs::home('~/pty.log') ], [ 'log', &subs::home('~/manager.log') ] ) {
-			my ($kind, $path) = @{$source};
-			push @caught, map { { source => $kind, line => $_ } } &error_watch_catch(&error_watch_read_new($path, $kind));
-		}
+		# The console stream arrives over the master's log bus (a bounded, sequenced
+		# ring served at ~/.president/log); there is no pty.log file to read. The
+		# long-lived manager.log stays a file and keeps its own cursor.
+		push @caught, map { { source => 'pty', line => $_ } } &error_watch_catch(&log_bus_read_new());
+		my $log_path = &subs::home('~/manager.log');
+		push @caught, map { { source => 'log', line => $_ } } &error_watch_catch(&error_watch_read_new($log_path, 'log'));
 		my %new;
 		foreach my $c ( @caught ) {
 			my $sig = &error_signature($c->{'line'});

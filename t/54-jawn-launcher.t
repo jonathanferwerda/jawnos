@@ -7,13 +7,11 @@ use Test::More;
 use Mojo::IOLoop;
 use Mojo::IOLoop::ReadWriteFork;
 
-# The master launches President on a pty, but no longer types the command into
-# an interactive shell: `bash -i` stored `exec 'perl' ./perl/President.pl` in the
-# house's ~/.bash_history on exit, and the only things it added - taming the
-# prompt and receiving a ^C byte - were pointless once the pty ran raw (a raw
-# terminal does not turn \x03 into SIGINT). ReadWriteFork now execs the argv
-# directly. The pty itself stays: the master still reads the tree's combined
-# output for ~/pty.log, death text and the shutdown INT.
+# The master launches President on a pty and now keeps the tree's console
+# stream in a bounded, sequenced ring (JawnOS::LogBus) served at
+# ~/.president/log for the error watch; there is no ~/pty.log file to tee.
+# The pty itself stays: it is the master's merged stdout+stderr, the death-text
+# source and the shutdown signal's target.
 
 my $launcher = "$FindBin::Bin/../jawn";
 open(my $fh, '<', $launcher) or die "$launcher: $!";
@@ -23,7 +21,10 @@ close $fh;
 # The pty stays.
 like($src, qr/sub\s+terminal_pty_runner/, 'the master still runs the tree on a pty');
 like($src, qr/type\s*=>\s*"pty"/, 'the conduit is still a pty');
-like($src, qr/pty_log_fh/, 'the pty is still teed into ~/pty.log');
+unlike($src, qr/pty_log_fh/, 'the console is no longer teed into a pty.log file');
+like($src, qr/JawnOS::LogBus/, 'the master keeps the console stream in the log bus');
+like($src, qr/ring_append/, 'and appends every pty read to its ring');
+like($src, qr/sub\s+log_socket/, 'and serves the ring over ~/.president/log');
 
 # The shell layer is gone.
 unlike($src, qr/program\s*=>\s*["']bash["']/, 'no interactive bash between the master and President');
