@@ -12,14 +12,16 @@
     "..."
   ],
   "languages": {
-    "Perl": { "language_servers": [] },
-    "JavaScript": { "language_servers": [] },
-    "TypeScript": { "language_servers": [] },
-    "TSX": { "language_servers": [] },
-    "Python": { "language_servers": [] },
-    "JSON": { "language_servers": [] },
-    "JSONC": { "language_servers": [] },
-    "CSS": { "language_servers": [] }
+    "Perl": { "language_servers": ["perlnavigator-server"] },
+    "JavaScript": {
+      "language_servers": ["!eslint", "!tailwindcss-language-server", "..."]
+    },
+    "TypeScript": { "language_servers": ["..."] },
+    "TSX": { "language_servers": ["..."] },
+    "Python": { "language_servers": ["..."] },
+    "JSON": { "language_servers": ["..."] },
+    "JSONC": { "language_servers": ["..."] },
+    "CSS": { "language_servers": ["..."] }
   },
   "lsp": {
     "perlnavigator-server": {
