@@ -203,8 +203,9 @@ close $af;
 
 if ($after ne $before) {
 	my $status = "$ENV{'HOME'}/.president/status";
+	my $reason = 'installed a new TLS certificate for ' . $domain;
 	if (open my $sf, '>', $status) {
-		print $sf 'restart';
+		print $sf 'restart: ' . $reason;
 		close $sf;
 		&say_status(1, 'installed a new certificate for ' . $domain . '; restart requested');
 	}

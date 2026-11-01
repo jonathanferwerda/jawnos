@@ -282,6 +282,25 @@ sub install_local_modules {
 	}
 }
 
+# Ask the master to reboot the tree, saying why. A worker writes the status file
+# on purpose: it is fire-and-forget, which is what a worker about to be killed by
+# the restart needs, and the reason rides along into ~/.president/restart.json
+# beside the guard's verdict (the master reads "restart: <reason>"). A caller
+# that wants the verdict itself - an agent just after a push - runs
+# scripts/restart.pl, which asks the master's control socket and waits for it.
+sub restart_request {
+	my ($reason) = @_;
+	$reason = '' unless defined $reason;
+	# one line: the status file is read as a word, not as a paragraph
+	$reason =~ s/[\x00-\x1f\x7f]+/ /g;
+	$reason =~ s/\s+/ /g;
+	$reason =~ s/^\s+|\s+$//g;
+	$reason = substr($reason, 0, 400) if length $reason > 400;
+	my $line = 'restart' . (length $reason ? ': ' . $reason : '');
+	write_file(&subs::home('~/.president/status'), $line);
+	return $line;
+}
+
 sub error_watch_offsets_file { return &subs::home('~/.president/error_watch_offsets'); }
 
 sub error_watch_state_load {

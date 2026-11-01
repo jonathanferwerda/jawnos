@@ -222,7 +222,7 @@ sub action_9974 {
 				unlink $tmp;
 				if ($ok) {
 					$summary = 'Pulled ' . &subs::data_size(length $res->body);
-					write_file(&subs::home('~/.president/status'), 'restart');
+					&subs::restart_request('pulled a peer tree over http (' . $summary . ')');
 					push @result, 'Triggered Local Restart';
 				}
 				else { $summary = 'Pull refused (unsafe archive)'; }
@@ -446,7 +446,8 @@ sub action_10222 {
 	$result->{'restart'} = $restart;
 	$result->{'version'} = &subs::jawn_version();
 	if ($restart) {
-		$c->on(finish => sub { write_file(&subs::home('~/.president/status'), 'restart'); });
+		my $how = $result->{'status'} || 'updated';
+		$c->on(finish => sub { &subs::restart_request('Update now from the Dev panel (' . $how . ')') });
 	}
 	$c->render(json => $result);
 }

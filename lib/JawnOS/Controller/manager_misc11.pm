@@ -659,7 +659,7 @@ sub action_37560 {
 # POST /manager/coding/restart
 sub action_37568 {
 	my $c = shift;
-	write_file(&subs::home('~/.president/status'), 'restart');
+	&subs::restart_request('the coding panel asked for a restart');
 	$c->render(json => { ok => 1 });
 }
 

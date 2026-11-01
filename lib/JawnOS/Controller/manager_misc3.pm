@@ -179,7 +179,7 @@ sub action_10187 {
 	}
 	&subs::install_extras();
 	$log->info('self_deploy from ' . ($signatorial || '?') . ': ' . ($status || '?') . ($c->param('force') ? ' (force)' : '')) if $log;
-	write_file(&subs::home('~/.president/status'), 'restart');
+	&subs::restart_request('self_deploy from ' . ($signatorial || 'a peer') . ': ' . ($status || '?'));
 	$c->render(text => "deployed $status\n" . ($out || ''));
 }
 

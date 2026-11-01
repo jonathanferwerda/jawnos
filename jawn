@@ -108,7 +108,7 @@ my $dump_dir = &home('~/.president');
 # moment before or after the master starts; deleting it here made the manager
 # take the permanent wake lock back and lose the batched-wake markers and the
 # navigation pace until the next beat.
-my %handshake = map { $_ => 1 } qw/wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json/;
+my %handshake = map { $_ => 1 } qw/wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json verify-manifest restart.json restart.log restart.log.1 pending_restart/;
 if (-e $dump_dir && opendir(my $dump, $dump_dir)) {
 	while (my $entry = readdir($dump)) {
 		next if $entry eq '.' || $entry eq '..' || $handshake{$entry};
@@ -166,10 +166,21 @@ sub master_stamp {
 	return @s ? ($s[9] . ':' . $s[7]) : '';
 }
 my $master_stamp = &master_stamp();
+# When a changed master last failed to verify. The stamp is deliberately NOT
+# consumed by a failure: an agent is often mid-edit when the tick looks, and a
+# consumed stamp stranded the master on the old code until the file changed
+# again - it never retried. Retried every 10s instead, because a cold guard is
+# minutes and a broken file is usually fixed promptly.
+my $master_retry_at = 0;
 $| = 1;
 
 # ---- first run: install dependencies, then run the setup wizard -------------
 &first_run_setup();
+
+# The control socket's protocol: one JSON line in, one out (perl/control.pl).
+# Loaded here, after the chdir above, because ./jawn is started from the tree root
+# and every other require in this file is cwd-relative too.
+require './perl/control.pl';
 
 my $fork = Mojo::IOLoop::ReadWriteFork->new;
 
@@ -196,6 +207,40 @@ $fork = &terminal_pty_runner({ 'program' => &president_command() });
 &arm_boot_watch();
 
 my $status = 'off';
+# Why the state machine is about to restart. Set wherever the tree is found down,
+# so a recovery restart records a reason instead of looking like a request.
+my $status_why = '';
+# A restart asked for over the control socket, waiting for the guard's verdict on
+# the next tick (the caller is holding a connection until then).
+my $pending_restart;
+# A restart asked for in the instant this master was reloading itself: the exec
+# loses every in-memory structure, so the reason rides in a handshake file that
+# the startup wipe preserves, and the new master performs it on its first tick.
+{
+	my $carry = &home('~/.president/pending_restart');
+	if (-f $carry) {
+		my $record = eval { decode_json(scalar read_file($carry)) };
+		unlink $carry;
+		if (ref $record eq 'HASH') {
+			$pending_restart = {
+				reason => $record->{'reason'} || 'carried through a master reload',
+				source => $record->{'source'} || 'master-reload',
+				requested_by => 0,
+				stream => undef,
+			};
+		}
+	}
+}
+# What this tree is running. The control socket reports it and every restart
+# record carries it, so "which version was that?" is answered, not remembered.
+my $version = '';
+if (-f './VERSION' && open(my $version_fh, '<', './VERSION')) {
+	local $/;
+	$version = <$version_fh>;
+	close $version_fh;
+	$version = '' unless defined $version;
+	$version =~ s/\s+//g;
+}
 
 my @printless = (
 	'Permission denied',
@@ -209,6 +254,7 @@ my ($tree_ticks,$tree_misses) = (0,0);
 my ($last_master_tick,$tree_dead_since);
 my $reap_ticks = 0;
 &master_time_looper();
+&control_socket();
 sub master_time_looper() {
 	# In this Mojo the recurring callback is handed the loop as its only argument
 	# (Mojo::IOLoop::_timer runs `$self->$cb`), so no timer id is passed to the
@@ -246,11 +292,22 @@ sub master_time_looper() {
 		# the master that is still serving. A pending 'restart' is consumed here so
 		# the fresh master does not immediately restart again.
 		my $stamp = &master_stamp();
-		if ($stamp ne '' && $stamp ne $master_stamp) {
-			$master_stamp = $stamp;
+		if ($stamp ne '' && $stamp ne $master_stamp && time >= $master_retry_at) {
 			my $proof = &tree_verify();
 			if ($proof->{'ok'}) {
+				$master_stamp = $stamp;
 				print "master changed on disk; reloading $master_path\n";
+				# A restart asked for in this very tick is owed an answer, and the exec
+				# loses every structure that could keep it. Answer, then hand the reason
+				# to the next incarnation through a file the startup wipe preserves.
+				if ($pending_restart) {
+					&answer_restart($proof, $status eq 'frozen' ? 'frozen' : 'started');
+					write_file(&home('~/.president/pending_restart'), encode_json({
+						reason => $pending_restart->{'reason'},
+						source => $pending_restart->{'source'},
+					}));
+					$pending_restart = undef;
+				}
 				write_file($status_file, 'good');
 				$master_timer_paused = 1;
 				&shut_down();
@@ -258,10 +315,12 @@ sub master_time_looper() {
 					print "re-exec of $master_path failed: $!\n";
 					$master_timer_paused = 0;
 					$status = 'frozen';
+					$status_why = 'the master could not re-exec itself';
 					return;
 				};
 			}
 			else {
+				$master_retry_at = time + 10;
 				print "master changed on disk but the tree does not verify; keeping the running master:\n" . ($proof->{'report'} || '') . "\n";
 			}
 		}
@@ -283,12 +342,14 @@ sub master_time_looper() {
 				if (&tree_serving()) { $tree_misses = 0; $tree_dead_since = undef }
 				elsif (++$tree_misses >= 2) {
 					$tree_dead_since ||= $tick_now;
+					my $dead_for = $tick_now - $tree_dead_since;
 					my $dump = &wedge_dump();
-					print "the web port has been dead for ~" . ($tick_now - $tree_dead_since) . "s with status 'started'; recovering"
+					print "the web port has been dead for ~" . $dead_for . "s with status 'started'; recovering"
 						. ($dump ne '' ? " (what it was doing: $dump)" : '') . "\n";
 					$tree_misses = 0;
 					$tree_dead_since = undef;
 					$status = 'frozen';
+					$status_why = 'the web port stopped answering for ~' . $dead_for . 's';
 				}
 				else { $tree_dead_since ||= $tick_now }
 			}
@@ -301,32 +362,65 @@ sub master_time_looper() {
 			$reap_ticks = 0;
 			&reap_own_children($fork ? $fork->pid : 0);
 		}
-		if ($status eq 'frozen' || $f_status eq 'restart') {
+		# A restart is asked for three ways, and all three end here so all three are
+		# verified, recorded and answered the same way: the control socket (a caller
+		# holding a connection, waiting for the verdict), the status file (the old
+		# channel, still the one a worker about to be killed uses), or the master
+		# finding the tree down. The file has said exactly "restart" since the
+		# beginning; anything after it is the reason the writer gave.
+		my ($file_restart, $file_why) = &control::status_reason($f_status);
+		my $request;
+		if ($pending_restart) { $request = $pending_restart }
+		elsif ($file_restart) {
+			$request = {
+				reason => length $file_why ? $file_why : 'asked through the status file',
+				source => 'status-file',
+			};
+		}
+		if ($status eq 'frozen') {
+			my $down = length $status_why ? $status_why : 'the tree went down';
+			if ($request) {
+				$request->{'reason'} .= ' (the tree was already down: ' . $down . ')'
+					unless index($request->{'reason'}, $down) >= 0;
+			}
+			else { $request = { reason => $down, source => 'master-watchdog' } }
+		}
+		if ($request) {
 			$master_timer_paused = 1;
+			my $before = $status eq 'frozen' ? 'frozen' : 'started';
 			my $died = '';
 			eval {
-				my $refused = 0;
-				# A requested restart on a live tree is verified first: a change that
-				# does not parse would only come back broken (or blank, like the /manager
-				# page a truncated manager.js once blanked), so refuse it, keep the
-				# running tree serving and say so. The failure is printed into the pty,
-				# where the error watch reads it and offers a fix. A frozen tree is
-				# already down, so it is restarted regardless - nothing serving to protect.
-				if ($f_status eq 'restart' && $status ne 'frozen') {
-					my $proof = &tree_verify();
-					unless ($proof->{'ok'}) {
-						write_file($status_file, 'good');
-						print "restart refused - the tree is still serving; the code does not verify:\n" . $proof->{'report'} . "\n";
-						$refused = 1;
-					}
-				}
-				unless ($refused) {
-					# the request is ours now: left standing, the next one-second tick
-					# reads it again, kills the fresh boot before it writes "good", and
-					# restarts forever
-					write_file($status_file, 'good') if $f_status eq 'restart';
+				# A live tree is verified first: a change that does not parse would
+				# only come back broken (or blank, like the /manager page a truncated
+				# manager.js once blanked), so refuse it, keep the running tree serving
+				# and say so. A frozen tree is already down - nothing serving to
+				# protect - so it restarts regardless.
+				my $proof = $status eq 'frozen'
+					? { ok => 1, skipped => 'not verified: the tree was already down' }
+					: &tree_verify();
+				# the request is ours now: left standing, the next one-second tick
+				# reads it again, kills the fresh boot before it writes "good", and
+				# restarts forever
+				write_file($status_file, 'good') if $file_restart;
+				print 'restart asked by ' . ($request->{'source'} || '?') . ': ' . $request->{'reason'} . "\n";
+				&control::write_record({
+					ok => $proof->{'ok'} ? 1 : 0,
+					refused => $proof->{'ok'} ? undef : 'verify',
+					reason => $request->{'reason'},
+					source => $request->{'source'} || 'status-file',
+					requested_by => $request->{'requested_by'} || 0,
+					status_before => $before,
+					version => $version,
+					master_pid => $$,
+					verify => $proof->{'summary'} || $proof->{'skipped'} || '',
+					report => $proof->{'ok'} ? '' : &control::clean_text($proof->{'report'} || '', 2000),
+				}, dir => &home('~/.president'));
+				&answer_restart($proof, $before);
+				$pending_restart = undef;
+				if ($proof->{'ok'}) {
 					&shut_down();
 					$status = 'restarting';
+					$status_why = '';
 					# No blind countdown: shut_down() already waited for the pids it
 					# signalled, and the bind check below is the real gate, so "in 3...
 					# 2... 1" only added three seconds to every restart.
@@ -353,13 +447,19 @@ sub master_time_looper() {
 					$fork = &terminal_pty_runner({ 'program' => &president_command() });
 					&arm_boot_watch();
 				}
+				else {
+					print "restart refused - the tree is still serving; the code does not verify:\n" . ($proof->{'report'} || '') . "\n";
+				}
 				1;
 			} or $died = $@ || 'unknown error';
 			if ($died ne '') {
 				print "restart sequence failed: $died\n";
 				# arm_boot_watch may already be watching; only force a retry when the
 				# sequence died before it armed (a mid-spawn death is recovered there)
-				$status = 'frozen' unless $status eq 'restarting';
+				unless ($status eq 'restarting') {
+					$status = 'frozen';
+					$status_why = 'the restart sequence failed: ' . $died;
+				}
 			}
 			$master_timer_paused = 0;
 		}
@@ -371,14 +471,14 @@ sub master_time_looper() {
 # every Perl file compiles, every JavaScript file parses and every template
 # compiles, across the whole tree. It runs here, once, while the old tree is
 # still serving, so it adds nothing to the interruption; the restart only goes
-# ahead when it passes. Returns { ok => 1 } when it passes (or when the script is
-# not present yet), else the tail of its report to print.
+# ahead when it passes. Returns { ok => 1, summary => ... } when it passes (or
+# when the script is not present yet), else { ok => 0, report => ... }.
 #
 # The sweep is handed a manifest so it re-checks only the files whose bytes moved
 # since they last passed: judging all 744 files costs ~90s of perl -c, node
 # --check and git show each, and that sat on the critical path of every restart
 # (agents reporting a minute-long "restart" from a status file). With the
-# manifest a restart with nothing new to judge is ~0.3s; a fresh tree, a new
+# manifest a restart with nothing new to judge is ~0.4s; a fresh tree, a new
 # manifest version, or a tree that just failed still gets the full sweep.
 sub tree_verify() {
 	return { ok => 1 } unless -f 'scripts/verify_change.pl';
@@ -386,8 +486,11 @@ sub tree_verify() {
 	my $out = `perl scripts/verify_change.pl --all --quiet --manifest "$manifest" 2>&1`;
 	my $code = $? >> 8;
 	$out = '' unless defined $out;
-	return { ok => 1 } if $code == 0;
 	$out =~ s/\s+$//;
+	# the summary line ("745 file(s) pass (...)") is what a caller is shown back
+	my ($summary) = reverse grep { /\S/ } split /\n/, $out;
+	$summary = '' unless defined $summary;
+	return { ok => 1, summary => &control::clean_text($summary, 300) } if $code == 0;
 	return { ok => 0, report => substr($out, 0, 2000) };
 }
 
@@ -773,6 +876,7 @@ sub arm_boot_watch {
 		if ($master_boot_tries <= 3) {
 			print "the tree did not come up in 90s; restarting it (attempt $master_boot_tries)\n";
 			$status = 'frozen';
+			$status_why = 'the tree did not come up in 90s (attempt ' . $master_boot_tries . ')';
 		}
 		else {
 			# The tree could not boot after several tries. Standing down (rather than
@@ -786,9 +890,158 @@ sub arm_boot_watch {
 	});
 }
 
+# ---- the control socket ------------------------------------------------------
+#
+# One JSON line in, one JSON line out on ~/.president/control. The protocol lives
+# in perl/control.pl so scripts/restart.pl and t/57-control-socket.t speak exactly
+# what this does; only the plumbing is here. A restart is answered after the tree
+# guard has run, which is why the tick holds the caller's connection: the reply
+# is the verdict, not an acknowledgement.
+
+# Answer a restart request made over the socket, if one is waiting. Called from
+# the tick before shut_down(): the write has to reach the caller while the loop
+# still runs, because the teardown blocks it for seconds.
+sub answer_restart {
+	my ($proof, $before) = @_;
+	my $request = $pending_restart or return;
+	my $stream = $request->{'stream'} or return;
+	my $reply = &control::restart_reply({
+		proof => $proof,
+		reason => $request->{'reason'},
+		source => $request->{'source'},
+		version => $version,
+		pid => $$,
+		status_before => $before,
+	});
+	&control_write($stream, encode_json($reply) . "\n");
+	return;
+}
+
+# A reply leaves on the wire here, not through Mojo's write buffer. write() only
+# buffers and registers the handle writable - the syswrite happens on the next
+# pass of the loop - so write-then-close, which is what a one-shot protocol does,
+# silently discarded every answer (the caller saw a clean EOF and reported a
+# timeout). A direct syswrite also matters for the restart verdict: it has to be
+# out before shut_down() blocks this loop for seconds.
+sub control_write {
+	my ($stream, $text) = @_;
+	return unless $stream && defined $text && length $text;
+	my $handle = eval { $stream->handle };
+	unless ($handle) {
+		eval { $stream->write($text); $stream->close_gracefully };
+		return;
+	}
+	my $data = $text;
+	while (length $data) {
+		my $sent = eval { syswrite($handle, $data) };
+		last unless defined $sent && $sent > 0;
+		substr($data, 0, $sent, '');
+	}
+	# whatever a full socket would not take, hand to the reactor rather than lose
+	if (length $data) { eval { $stream->write($data); $stream->close_gracefully }; return }
+	eval { $stream->close };
+	return;
+}
+
+# Mojo records every listener it binds in $ENV{MOJO_REUSE} ("unix:<path>:<fd>") so
+# a re-exec can inherit the fd and keep accepting. These two sockets want the
+# opposite: no worker may inherit them - a survivor of a dead master would answer
+# for it, which is what fools the duplicate-master guard at the top of this
+# script - so the fd is marked CLOEXEC. The env entry survives the exec while the
+# fd does not, and the next incarnation then dies inside listen() with "Can't open
+# file descriptor N: Bad file descriptor". The control socket vanished on the
+# first master reload in testing; the watch socket had been missing since some
+# reload nobody noticed (its eval swallowed the failure). Bind, keep the fd ours,
+# and forget the entry. (ws_server_socket in lib/JawnOS/Manager.pm does the same
+# for the worker sockets, for the same reason.)
+sub forget_mojo_reuse {
+	my $path = shift;
+	return unless defined $path && defined $ENV{'MOJO_REUSE'} && length $ENV{'MOJO_REUSE'};
+	$ENV{'MOJO_REUSE'} = join ',', grep { !/^unix:\Q$path\E:/ } split /,/, $ENV{'MOJO_REUSE'};
+	return;
+}
+
+sub private_unix_listener {
+	my ($path, $id) = @_;
+	return $id unless $id;
+	my $acceptor = Mojo::IOLoop->acceptor($id);
+	my $handle = $acceptor ? $acceptor->handle : undef;
+	return $id unless $handle;
+	fcntl($handle, F_SETFD, FD_CLOEXEC);
+	&forget_mojo_reuse($path);
+	return $id;
+}
+
+sub control_socket() {
+	my $path = &home('~/.president/control');
+	eval {
+		&forget_mojo_reuse($path);
+		my $id = Mojo::IOLoop->server({ path => $path } => sub {
+			my ($loop, $stream, $cid) = @_;
+			my $buffer = '';
+			$stream->on(read => sub {
+				my ($stream, $bytes) = @_;
+				$buffer .= $bytes;
+				unless ($buffer =~ /\n/) {
+					# one line is one request; a client that never ends one is not one
+					$stream->close if length($buffer) > 8192;
+					return;
+				}
+				my ($line) = split /\n/, $buffer, 2;
+				$buffer = '';
+				my $answer = &control::handle($line, {
+					status => $status,
+					why => $status_why,
+					pid => $$,
+					version => $version,
+					pending => $pending_restart ? 1 : 0,
+					last => &control::read_record(dir => &home('~/.president')),
+					verify => \&tree_verify,
+				});
+				if (my $reply = $answer->{'reply'}) {
+					&control_write($stream, encode_json($reply) . "\n");
+					return;
+				}
+				# A restart: one at a time. A second caller while one is waiting is
+				# told so, rather than silently queued behind a request it did not make.
+				if ($pending_restart) {
+					&control_write($stream, encode_json({
+						ok => 0, cmd => 'restart', accepted => 0, error => 'busy',
+						message => 'a restart is already pending',
+					}) . "\n");
+					return;
+				}
+				$pending_restart = {
+					reason => $answer->{'reason'},
+					source => $answer->{'source'},
+					requested_by => $answer->{'requested_by'},
+					cid => $cid,
+					stream => $stream,
+				};
+			});
+			$stream->on(close => sub {
+				# The caller hung up before the verdict: the request was still made, so
+				# the restart goes ahead - there is just nobody left to tell.
+				if ($pending_restart && defined $pending_restart->{'cid'} && $pending_restart->{'cid'} eq $cid) {
+					$pending_restart->{'stream'} = undef;
+				}
+			});
+		});
+		# Mojo keeps listener fds open across exec on purpose, so every child would
+		# inherit this socket and a survivor of a dead master would answer for it -
+		# the same trap the watch socket at the top of this script guards against.
+		&private_unix_listener($path, $id);
+		1;
+	} or print "the control socket could not be started: $@\n";
+	return;
+}
+
 sub process_watch() {
 	eval {
 
+		# a stale MOJO_REUSE entry names a dead fd and makes listen() die instead
+		# of binding (see private_unix_listener below)
+		&forget_mojo_reuse($process_watch_file);
 		my $server = Mojo::IOLoop->server({ path => $process_watch_file } => sub {
 			my ($loop,$stream,$id) = @_;
 			$stream->handle->autoflush(1);
@@ -866,12 +1119,9 @@ sub process_watch() {
 		# Mojo keeps listener fds open across exec on purpose ($^F = 1023), so
 		# every child inherits this socket; a survivor then keeps it accepting
 		# into the kernel backlog long after the master is gone, which is what
-		# fooled the guard at the top of this script. This fd is the master's.
-		# (server() hands back an id; the acceptor holds the socket.)
-		my $acceptor = $server ? Mojo::IOLoop->acceptor($server) : undef;
-		my $handle = $acceptor ? $acceptor->handle : undef;
-		fcntl($handle, F_SETFD, FD_CLOEXEC) if $handle;
-		return $server;
+		# fooled the guard at the top of this script. This fd is the master's - and
+		# the MOJO_REUSE entry has to go with it, or the next reload cannot bind.
+		return &private_unix_listener($process_watch_file, $server);
 	}
 }
 Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
@@ -906,6 +1156,7 @@ sub terminal_pty_runner() {
 		elsif (!$fork->{'jawn_deliberate'} && ($bytes =~ /they dead/ || $bytes =~ /President Died/ || $bytes =~ /core dumped/)) {
 			print "See it's dead\n";
 			$status = 'frozen';
+			$status_why = 'the tree printed that it died';
 		}
 		elsif ($bytes =~ /Broken Pipe/) {
 
@@ -929,6 +1180,7 @@ sub terminal_pty_runner() {
 		unless ($this_fork->{'jawn_deliberate'}) {
 			print "tree exited on its own (exit=$exit_value signal=$signal) - recovering\n";
 			$status = 'frozen';
+			$status_why = 'the tree exited on its own (exit=' . (defined $exit_value ? $exit_value : '?') . ' signal=' . (defined $signal ? $signal : '?') . ')';
 		}
   });
 
@@ -947,6 +1199,7 @@ sub terminal_pty_runner() {
 			});
 		}
 		$status = 'started';
+		$status_why = '';
 
 	});
 

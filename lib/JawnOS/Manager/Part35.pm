@@ -572,8 +572,9 @@ sub mail_depublicizer($c) {
 sub president_restarter() {
 	my $trace = do { require Carp; Carp::longmess('president_restarter') };
 	$log->info("president_restarter called from:\n" . $trace) if $log;
-	my $status_file = &subs::home('~/.president/status');
-	write_file($status_file, 'restart');
+	# the caller's line names the cause better than anything this sub knows
+	my ($where) = ($trace =~ /at (\S+ line \d+)/);
+	&subs::restart_request('president_restarter was asked to restart' . (defined $where ? ' from ' . $where : ''));
 }
 
 sub remote_machine_reauth($c, $rm, $timestamp, $ip, $browser_tab_id, $browser_tab) {

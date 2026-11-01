@@ -20,12 +20,28 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   (`manager`, `websocket`, …) running `Manager.pl`, `Websocket.pl`.
 - **Log:** `~/manager.log`. **DB:** `./database/jawnos.db` (SQLite, WAL). The old
   `/home/jawn/initial.db` is a zero-byte decoy — never query it; the live house DB is the one under `database/`.
-- **Restart:** `printf 'restart' > ~/.president/status` — `jawn` polls every second, writes `good` back,
-  and reboots the tree. Don't start `./jawn` yourself; never leave a detached process.
-  The restart guard re-verifies the tree before it kills anything, and caches the verdict per file
-  **content** in `~/.president/verify-manifest`: a restart with nothing new to judge is ~0.4s, a cold
-  sweep (no manifest, new manifest version, `node` newly installed, or the last run failed) is ~2 min.
-  Delete that file to force a full re-check; a failing run never updates it.
+- **Restart:** `perl scripts/restart.pl --reason "v<version> - <summary>"` — it asks the master over
+  `~/.president/control` and **waits for the verdict**: exit 0 accepted (and verified), 1 refused with the
+  report naming the file, 2 no master / no answer, 3 asked through the status file with no verdict.
+  `--status` shows what the master is doing and why it last restarted; `--verify` runs the guard and
+  changes nothing. Never restart blind: the old channel (`printf 'restart' > ~/.president/status`) still
+  works and carries a reason (`restart: <reason>`), but it cannot tell you it was refused, and an agent
+  that waits it out loses minutes on a tree that was never coming. Every restart writes
+
+  `~/.president/restart.json` (the last one: reason, source, who asked, guard verdict, version) and
+  appends to `~/.president/restart.log`; master-watchdog recoveries land there too, so "why did it
+  restart at 3am" is a file read, not a guess. Don't start `./jawn` yourself; never leave a detached
+  process.
+
+  The master re-verifies the tree before it kills anything, and caches the verdict per file **content**
+  in `~/.president/verify-manifest`: a restart with nothing new to judge is ~0.4s, a cold sweep (no
+  manifest, new manifest version, `node` newly installed, or the last run failed) is ~2 min. Delete that
+  file to force a full re-check; a failing run never updates it.
+
+  The two sockets in `~/.president`/`~` are the master's: `control` (above) and the watch socket. Both are
+  bound with `FD_CLOEXEC` and their `MOJO_REUSE` entry is dropped (`private_unix_listener` in `./jawn`) —
+  Mojo otherwise expects a re-exec to inherit the fd, and with the fd closed but the entry kept, the next
+  reload dies in `listen()` and the socket silently never comes back.
 - Status values: `good` / `restart` / `frozen`.
 - Restart needed? `.ep` **no** (mtime checked per request) · `.pl` **yes** (`perl -c perl/Manager.pl` first)
   · `public/js/*.js` **no restart, plain refresh** — static assets revalidate (`no-cache` + ETag/Last-Modified),
@@ -118,7 +134,8 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
 - **Finishing routine — ALWAYS run it: bump → commit → push → restart.** This is not optional and not
   "the norm": every piece of work ends this way, without being asked. Run `perl scripts/version_bump.pl`,
   stage only your own hunks (never someone else's WIP), commit as `v<version> - <summary>`, `git push`,
-  then restart (`printf 'restart' > ~/.president/status`; wait for `good`). The bump ships the version
+  then restart (`perl scripts/restart.pl --reason "v<version> - <summary>"`; it waits for the verdict
+  and exits 1 with the report if the guard refuses). The bump ships the version
   prefix and busts the client caches; the restart is what makes `.pl` and `public/js` changes live. Do it
   at the end of every task unless the user explicitly says not to.
 

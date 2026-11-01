@@ -534,7 +534,7 @@ sub coding_execute($c, $action, $touched) {
 		return $out =~ /\S/ ? $out : '(pushed)';
 	}
 	if ($a eq 'restart') {
-		write_file(&subs::home('~/.president/status'), 'restart');
+		&subs::restart_request('the coding agent asked for a restart');
 		return 'asked the tree to restart';
 	}
 	if ($a eq 'learn') {

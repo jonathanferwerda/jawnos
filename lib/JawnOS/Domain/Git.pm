@@ -121,7 +121,11 @@ sub git_watcher_check {
 	# Perl module to `use`; both are user-side and best effort
 	&subs::install_extras();
 	&subs::install_local_modules('.');
-	write_file(&subs::home('~/.president/status'), 'restart');
+	my $after_commit = `git rev-parse --short HEAD 2>/dev/null`;
+	chomp $after_commit;
+	my $from = substr($before, 0, 10);
+	$from = '?' unless length $from;
+	&subs::restart_request('the git watcher moved the tree ' . $from . ' -> ' . (length $after_commit ? $after_commit : '?'));
 }
 
 sub peer_useragent {
