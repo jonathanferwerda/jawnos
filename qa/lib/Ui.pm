@@ -140,19 +140,41 @@ sub webkit {
 	return { error => 'python3 gi/WebKit2 4.1 is not available', engine => 'webkit' }
 		unless webkit_available();
 
-	$ENV{'WEBKIT_DISABLE_COMPOSITING_MODE'} = '1';
-	$ENV{'WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS'} = '1';
-	$ENV{'GDK_BACKEND'} = 'x11';
+	# WebKit keys its profile by program name under XDG_DATA_HOME and keeps
+	# service-worker registrations there. The QA tree always answers on the same
+	# loopback origin, so a profile shared between runs resurrects the previous
+	# run's service worker and the next navigation fails in its fetch handler
+	# ("FetchEvent.respondWith received an error"). Give each run its own
+	# profile, the way chromium gets --user-data-dir=$out/chrome below.
+	my $profile = dirname($out) . '/webkit-profile';
+	make_path("$profile/data", "$profile/cache", "$profile/config");
+
 	my @cmd = ($xvfb, '-a', '-s', '-screen 0 1280x900x24');
 	my $dbus = _which('dbus-run-session');
 	push @cmd, $dbus, '--' if $dbus;
+	push @cmd, 'env',
+		'WEBKIT_DISABLE_COMPOSITING_MODE=1',
+		'WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1',
+		'GDK_BACKEND=x11',
+		"XDG_DATA_HOME=$profile/data",
+		"XDG_CACHE_HOME=$profile/cache",
+		"XDG_CONFIG_HOME=$profile/config";
 	push @cmd, 'python3', _ui_dir() . "/webkit_probe.py", $url, $out;
 	my $rc = system('timeout', '120', @cmd);
 
-	return { engine => 'webkit', error => "webkit_probe.py exited " . ($rc >> 8) }
-		if $rc != 0;
+	# The probe writes a report even when it gives up (timeout, no load), so
+	# read it first: its reason is more useful than the wrapper's exit code.
 	my $json = eval { JSON::PP->new->utf8->decode(read_file($out)) };
-	return { engine => 'webkit', error => "cannot read $out: $@" } unless ref $json eq 'HASH';
+	unless (ref $json eq 'HASH') {
+		return { engine => 'webkit', error => 'webkit_probe.py exited '
+			. ($rc >> 8) . " and wrote no readable report" . ($@ ? " ($@)" : '') };
+	}
+	if ($json->{'error'}) {
+		my $reason = $json->{'reason'} || $json->{'error'};
+		my $events = join('; ', @{ $json->{'events'} || [] });
+		$reason .= " [$events]" if length $events;
+		return { %$json, engine => 'webkit', error => "probe failed: $reason" };
+	}
 	return $json;
 }
 
