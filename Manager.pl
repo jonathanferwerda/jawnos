@@ -11257,6 +11257,9 @@ get '/manager/sync_buckets' => sub ($c) {
 	# peer_verify ever runs (the tablet's pulls answered 403 with the denial
 	# picture while its signature was valid). A pull needs no cookie.
 	if ($remote_machine->{'ua'}) {
+		# The child that runs a pull has not loaded Mojo::CookieJar (no stored
+		# cookie means nothing loaded it), so require it rather than assume.
+		require Mojo::CookieJar;
 		$remote_machine->{'ua'}->cookie_jar(Mojo::CookieJar->new);
 	}
 	my $auuid = &subs::random_string_creator(10);
