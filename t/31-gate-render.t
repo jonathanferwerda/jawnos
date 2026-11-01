@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use RepoSource;
 use File::Temp qw(tempdir);
 
 # The gate template asks for $webauthn_available. A render that leaves it out
@@ -14,11 +15,8 @@ use File::Temp qw(tempdir);
 # 2026-10-31). Every `template => 'gate'` render must pass it.
 
 my $dir = tempdir(CLEANUP => 1);
-my $manager = "$FindBin::Bin/../Manager.pl";
-open(my $fh, '<', $manager) or die "$manager: $!\n";
-local $/;
-my $text = <$fh>;
-close $fh;
+my $text = manager_source();
+local $/;    # the reads below take a whole file
 
 my @renders;
 while ($text =~ /render\((.*?)\);/gs) {
@@ -65,6 +63,9 @@ like($hook, qr{\$path eq '/manager/self_deploy'}, 'the deploy lever is exempt fr
 like($hook, qr{\$path eq '/manager/president'}, 'the peer restart rail is exempt from the app gate');
 
 # And the route really does verify the caller before it pulls and restarts.
-like($text, qr{post '/manager/self_deploy'.*?peer_verify}ms, 'self_deploy peer_verifies the caller');
+# The route is registered from lib/JawnOS/Routes and its action carries the
+# path as a comment, so that is what the source shows now.
+like($text, qr{POST /manager/self_deploy\nsub action_\d+ \{.*?peer_verify}ms,
+	'self_deploy peer_verifies the caller');
 
 done_testing();

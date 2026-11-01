@@ -5,6 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use RepoSource;
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use feature 'signatures';
@@ -29,7 +30,7 @@ no warnings 'experimental::signatures';
 # the shared Termux home, the page posts only its path to /manager/take_picture,
 # the route claims it into the house's photo/video folder, and OCR is optional.
 
-my $manager = read_file("$FindBin::Bin/../Manager.pl");
+my $manager = manager_source();
 # ocr_reader moved to the domain layer (lib/JawnOS/Domain/*.pm, package subs);
 # the camera route itself is still in Manager.pl. Read the whole lazy layer so
 # a later regrouping does not make these checks fail on a missing file.

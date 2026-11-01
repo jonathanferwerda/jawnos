@@ -5,6 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use RepoSource;
 
 # The app's WebView trusts the house certificate for page loads -
 # JawnWebViewActivity.onReceivedSslError proceeds for 127.0.0.1 - but a
@@ -19,7 +20,7 @@ use File::Slurp qw(read_file);
 # short-lived token that restores the session for the socket.
 
 my $president = read_file("$FindBin::Bin/../President.pl");
-my $manager   = read_file("$FindBin::Bin/../Manager.pl");
+my $manager   = manager_source();
 
 # 1. the plain listener exists, on loopback, and only with the socket server
 like($president, qr/my \$ws_plain_port = \$ws_port \+ 100;/,

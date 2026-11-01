@@ -15,7 +15,10 @@ use utf8;
 
 use Unicode::Normalize qw(NFC);
 use Encode qw(encode_utf8);
-use Mojolicious::Lite;
+# This file used to pull in Mojolicious::Lite, whose import built an app object
+# and monkey-patched the DSL into package subs. It is a library: load Mojolicious
+# for the modules the app fragments (Websocket.pl and friends) expect, but no Lite.
+use Mojolicious;
 use List::Util qw(shuffle);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use Text::Unidecode;

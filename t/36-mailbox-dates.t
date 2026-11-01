@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use RepoSource;
 use JawnOSTest;
 
 # sms_list_check wrote the mailbox row and the appointment with the same stamp,
@@ -112,7 +113,7 @@ is scalar @{ &subs::records_mailbox_date_decisions([$sane_row], [], $now) }, 0,
 	like $subs, qr/records_mailbox_bad_dates_scan\(\$now\)/,
 		'the peer repair pass includes the mailbox';
 	like $subs, qr/table => 'mailbox'/, 'the tombstone names the mailbox table';
-	my $manager = $read->("$root/Manager.pl");
+	my $manager = manager_source();
 	like $manager, qr/subs::records_repair_bad_dates/,
 		'the records/repair rail reaches the mailbox pass through the same call';
 	my $cli = $read->("$root/scripts/records_audit.pl");

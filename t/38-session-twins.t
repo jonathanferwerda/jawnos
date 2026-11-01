@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use RepoSource;
 use JawnOSTest;
 
 # The domain layer is lazy: load the real definitions before the local *subs::
@@ -67,10 +68,10 @@ subs::preload($_) for qw(db_query);
 		return $text;
 	};
 	my $root = root();
-	my $manager = $read->("$root/Manager.pl");
+	my $manager = manager_source();
 	like $manager, qr/session_open_near\(\$app, \$type, \$timestamp, 2000\)/, 'the start branch reuses a nearby open row';
 	like $manager, qr/session_twin_rows\(\$app, \$stop_row->\{'uuid'\}/, 'the stop branch retires the twins';
-	like $manager, qr/get '\/manager\/sync_tombstones'/, 'the deletion log has a peer route';
+	like $manager, qr{GET /manager/sync_tombstones}, 'the deletion log has a peer route';
 	like $manager, qr/sub apply_peer_tombstones/, 'and one applier for handshake and pull';
 	like $manager, qr/apply_peer_tombstones\(\$tj, \$remote_signatorial\)/, 'the row pull asks for and applies tombstones';
 	my $subs = $read->("$root/subroutines.pl");

@@ -5,6 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use RepoSource;
 use JawnOSTest;
 
 # A music card draws a video only when its cached media info has a duration and
@@ -31,7 +32,7 @@ use JawnOSTest;
 # take a poster at a position that is actually past the fade.
 
 my $video = read_file("$FindBin::Bin/../Music.pl");
-my $manager = read_file("$FindBin::Bin/../Manager.pl");
+my $manager = manager_source();
 my $subs = read_file("$FindBin::Bin/../subroutines.pl");
 
 # --- the poster position -----------------------------------------------------

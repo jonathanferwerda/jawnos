@@ -120,6 +120,27 @@ sub first_line {
 # A whole-file write that cut the file down is the signature failure, so flag it
 # even though it is syntax-valid. Only text files with a git counterpart can be
 # judged; a brand-new file, a binary, or a small file is left alone.
+#
+# A refactor is the one legitimate big shrink: the content moved into new files.
+# So a shrink whose lost lines are covered by files this same change adds is a
+# move, not a truncated write, and passes.
+my $added_lines;
+sub added_lines {
+	return $added_lines if defined $added_lines;
+	my @added = $range_mode
+		? map { &rel_of($_) } split /\n/, `cd "$root" && git --no-pager diff --name-only --diff-filter=A "$base..$tip" 2>/dev/null`
+		: (map { &rel_of($_) } split /\n/, `cd "$root" && git --no-pager ls-files --others --exclude-standard 2>/dev/null`),
+		  (map { &rel_of($_) } split /\n/, `cd "$root" && git --no-pager diff --cached --name-only --diff-filter=A 2>/dev/null`);
+	$added_lines = 0;
+	for my $rel (@added) {
+		next unless length $rel;
+		my $text = $range_mode ? (&git_blob($tip, $rel) // '') : &read_text("$root/$rel");
+		next unless defined $text && length $text && index($text, "\0") < 0;
+		$added_lines += ($text =~ tr/\n//);
+	}
+	return $added_lines;
+}
+
 sub shrink_problem {
 	my ($rel, $new_text) = @_;
 	return '' if $allow_shrink;
@@ -130,6 +151,7 @@ sub shrink_problem {
 	return '' if $old_lines < 120;
 	my $new_lines = (defined $new_text ? ($new_text =~ tr/\n//) : 0);
 	return '' unless $new_lines < $old_lines * 0.5;
+	return '' if &added_lines >= $old_lines - $new_lines;
 	return "shrank from $old_lines to $new_lines lines against $base - a truncated write?";
 }
 

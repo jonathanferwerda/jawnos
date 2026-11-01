@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use RepoSource;
 use JawnOSTest;
 
 # A bare `sshd` on Android is not a working sshd: Termux's sshd_config comments
@@ -43,7 +44,7 @@ is_deeply([ subs::sshd_command('', '/tmp/home') ], [],
 # The source must keep the ownership straight: Manager starts it, President does
 # not, and the recovery script does not fall back to a bare `sshd` either.
 my $subs = do { local $/; open(my $fh, '<', "$FindBin::Bin/../subroutines.pl") or die $!; <$fh> };
-my $manager = do { local $/; open(my $fh, '<', "$FindBin::Bin/../Manager.pl") or die $!; <$fh> };
+my $manager = manager_source();
 my $president = do { local $/; open(my $fh, '<', "$FindBin::Bin/../President.pl") or die $!; <$fh> };
 like($manager, qr/sshd_running\(\)/,
 	'the manager checks whether sshd is already running');

@@ -228,6 +228,12 @@ for my $file (@files) {
 		$n++;
 		my $comment = $line =~ /^\s*(?:#|\/\/|\/\*|\*|<!--)/;
 
+		# A forward declaration and the split's name -> file index name a sub
+		# without touching a pty; they are bookkeeping, not call sites. Counting
+		# them would make moving a sub read as a new dependency.
+		next if $line =~ /^\s*sub\s+\w+\s*;\s*$/;
+		next if $line =~ /^\s*'\w+'\s*=>\s*'[^']+\.pm'\s*,?\s*$/;
+
 		if ($line =~ /^#!\s*\S*com\.termux/) {
 			push @shebangs, { file => $file, line => $n };
 		}

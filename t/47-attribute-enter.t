@@ -5,6 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use RepoSource;
 
 # The appointment's Register panel draws a blank row for each attribute kind
 # (model, option, option_category, subcategory). It used to save only from the
@@ -24,7 +25,7 @@ my $soft = read_file("$FindBin::Bin/../public/js/manager/soft_keyboard.js");
 my $template = read_file("$FindBin::Bin/../templates/pos/attributes.html.ep");
 my $wrapper = read_file("$FindBin::Bin/../templates/appointment_wrapper.html.ep");
 my $css = read_file("$FindBin::Bin/../public/css/manager.css");
-my $manager = read_file("$FindBin::Bin/../Manager.pl");
+my $manager = manager_source();
 
 # --- the fields exist --------------------------------------------------------
 like($template, qr/<input class="att name" type="text" name="name"/,

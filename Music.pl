@@ -3,7 +3,12 @@
 
 
 
-use Mojolicious::Lite -signatures;
+# Music is compiled into package Manager (this file has no package line), so it
+# used to re-run the Lite import in Manager's namespace: that made a second app
+# and re-pointed Manager::app/get/new at it. There is one app now (JawnOS, reached
+# as Manager::app), so Music registers its routes on it explicitly.
+use Mojo::Base -strict;
+use feature 'signatures';
 use Mojolicious::Static;
 use Mojo::Log;
 use Mojo::File;
@@ -20,7 +25,7 @@ use Mojo::Util qw/term_escape html_unescape url_unescape url_escape/;
 use File::Find;
 use File::Slurp;
 use Fcntl qw(F_SETPIPE_SZ);
-plugin 'RenderFile';
+Manager::app->plugin('RenderFile');
 use LWP::UserAgent;
 use Mojolicious::Sessions;
 use URI::Encode qw(uri_encode uri_decode);
@@ -118,7 +123,7 @@ sub process_thumbfile() {
 	}
 }
 
-get '/manager/music' => sub ($c) {
+Manager::app->routes->get('/manager/music' => sub ($c) {
 	my $search = $c->param('search') || &subs::setting_grabber({ app => 'music', 'setting' => 'search' });
 	my $window_maker = $c->param('window_maker');
 	# an app opens locked: only the token this window holds, minted by the
@@ -240,10 +245,10 @@ get '/manager/music' => sub ($c) {
 		$c->render(text => $contents);
 	}
 	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents });
-};
+});
 
 
-get '/play' => sub($c) {
+Manager::app->routes->get('/play' => sub($c) {
 	my $mao = eval { return decode_json &subs::setting_grabber({ app => 'music', setting => 'mao' }) } || {};
 	# the query is already decoded by Mojo; decoding again would corrupt a name
 	# with a literal %xx in it (see Manager::rock_and_roll)
@@ -277,7 +282,7 @@ get '/play' => sub($c) {
 		$c->render(text => 'play');
 	}
 
-};
+});
 
 # ---- remote audio: a live stream, not a downloaded file ---------------------
 #
@@ -1367,21 +1372,21 @@ sub music_stream_health {
 	return (\@fixed, $latency);
 }
 
-get '/manager/music/stream_health' => sub($c) {
+Manager::app->routes->get('/manager/music/stream_health' => sub($c) {
 	my ($fixed, $latency) = &music_stream_health(($c->param('full') // '') eq '1');
 	$c->render(json => { fixed => $fixed, latency => $latency });
-};
+});
 
-get '/manager/music/receiver' => sub($c) {
+Manager::app->routes->get('/manager/music/receiver' => sub($c) {
 	$c->render(json => &music_receiver_state());
-};
+});
 
-post '/manager/music/receiver/stop' => sub($c) {
+Manager::app->routes->post('/manager/music/receiver/stop' => sub($c) {
 	&music_receiver_stop();
 	$c->render(json => &music_receiver_state());
-};
+});
 
-post '/manager/music/receiver/block' => sub($c) {
+Manager::app->routes->post('/manager/music/receiver/block' => sub($c) {
 	my $marker = &subs::home('~/.president/music_receive_off');
 	if (($c->param('blocked') // '') eq 'on') {
 		write_file($marker, '1');
@@ -1394,13 +1399,13 @@ post '/manager/music/receiver/block' => sub($c) {
 		unlink $marker if -e $marker;
 	}
 	$c->render(json => &music_receiver_state());
-};
+});
 
 # The last reports from the browser and from each receiver. A failing stream is
 # read here after the fact: the source's send counters, the receiver's arrival
 # gaps, and the picture's black runs sit on the same timeline. `limit` caps the
 # records returned (1-500); the file itself is rotated at 1 MB.
-get '/manager/music/sync_diag' => sub($c) {
+Manager::app->routes->get('/manager/music/sync_diag' => sub($c) {
 	my $limit = int($c->param('limit') // 120);
 	$limit = 1 if $limit < 1;
 	$limit = 500 if $limit > 500;
@@ -1418,7 +1423,7 @@ get '/manager/music/sync_diag' => sub($c) {
 		}
 	}
 	$c->render(json => { entries => \@entries, size => (-e $path ? (-s $path) : 0) });
-};
+});
 
 # One route, two roles. A browser opens it on this machine (session-cookie
 # authenticated) and sends hello/PCM; the source manager opens it on each
@@ -1436,7 +1441,7 @@ get '/manager/music/sync_diag' => sub($c) {
 my %music_video_receivers;
 my %music_video_streams;
 
-websocket '/manager/music/video' => sub ($c) {
+Manager::app->routes->websocket('/manager/music/video' => sub ($c) {
 	if ($c->param('peer')) {
 		my $signatorial = $c->param('signatorial');
 		my $rm = ($signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0] : undef);
@@ -1602,9 +1607,9 @@ websocket '/manager/music/video' => sub ($c) {
 		}
 	});
 	$c->on(finish => sub { &music_video_source_close($st); });
-};
+});
 
-websocket '/manager/music/stream' => sub ($c) {
+Manager::app->routes->websocket('/manager/music/stream' => sub ($c) {
 	if ($c->param('peer')) {
 		my $signatorial = $c->param('signatorial');
 		my $rm = ($signatorial ? &subs::db_select('remote_machines', undef, { signatorial => $signatorial })->hashes->[0] : undef);
@@ -1758,7 +1763,7 @@ websocket '/manager/music/stream' => sub ($c) {
 		}
 	});
 	$c->on(finish => sub { &music_source_close($st); });
-};
+});
 
 
 
@@ -2626,7 +2631,7 @@ sub song_maker($data) {
 	return $crate;
 }
 
-post '/music/search' => sub ($c) {
+Manager::app->routes->post('/music/search' => sub ($c) {
 	my $title = 'music';
 	my $search = lc $c->param('search');
 	my $unlock = $c->param('unlock');
@@ -2753,9 +2758,9 @@ post '/music/search' => sub ($c) {
 		$c->render(text => $contents);
 	}
 	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents });
-};
+});
 
-post '/music/folder_toggle' => sub($c) {
+Manager::app->routes->post('/music/folder_toggle' => sub($c) {
 	my $timestamp = $c->param('timestamp');
 	my $location = $c->param('location');
 	my $status = $c->param('status');
@@ -2777,12 +2782,12 @@ post '/music/folder_toggle' => sub($c) {
 	}
 	my $setting = &subs::setting_grabber({ app => 'music_folder_toggle', setting => $location, device => $device });
 	$c->render(text => $setting);
-};
+});
 
 # Whether a listing also carries what the archives hold. Like the folder
 # toggles, it steers the machine whose library is loaded, so a remote library
 # gets the same choice.
-post '/music/archive_toggle' => sub($c) {
+Manager::app->routes->post('/music/archive_toggle' => sub($c) {
 	my $status = $c->param('status');
 	&subs::setting_setter({ app => 'music', setting => 'archive', value => $status, timestamp => $c->param('timestamp') });
 	my $settings = &subs::settings_grabber({ app => 'music' });
@@ -2799,9 +2804,9 @@ post '/music/archive_toggle' => sub($c) {
 		}
 	}
 	$c->render(text => &subs::setting_grabber({ app => 'music', setting => 'archive' }));
-};
+});
 
-post '/music/audio_output_select' => sub ($c) {
+Manager::app->routes->post('/music/audio_output_select' => sub ($c) {
 	my $output = $c->param('output');
 	my $state = $c->param('state') // 'off';
 	$state = 'off' unless $state =~ /^(?:off|on|stereo|left|right)$/;
@@ -2810,18 +2815,18 @@ post '/music/audio_output_select' => sub ($c) {
 	my $jmao = encode_json $mao;
 	&subs::setting_setter({ app => 'music', setting => 'mao', value => $jmao });
 	$c->render(json => $mao);
-};
+});
 
 # The Audio drawer belongs to this machine even when the library is remote: it
 # is rendered from this machine's settings and output list, so a remote render of
 # the Music window (which would carry the remote's mao) never supplies it.
-get '/music/video/outputs' => sub ($c) {
+Manager::app->routes->get('/music/video/outputs' => sub ($c) {
 	unless ($c->session('authentication') eq 'approved') { $c->rendered(403); return; }
 	my $video = eval { return decode_json(&subs::setting_grabber({ app => 'music', setting => 'video' }) // '') } || {};
 	$c->render(json => { machines => &music_video_machines(), settings => $video, me => &music_video_local_enabled() });
-};
+});
 
-get '/music/audio' => sub ($c) {
+Manager::app->routes->get('/music/audio' => sub ($c) {
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	my $jmao = $settings->{'mao'};
 	my $mao = eval { return decode_json $jmao } || {};
@@ -2840,9 +2845,9 @@ get '/music/audio' => sub ($c) {
 		crate => { settings => $settings }
 	);
 	$c->render(json => { html => $html, equalizer => $eq, video => $video, mvo => $mvo, mao => $mao, video_machines => &music_video_machines(), video_me => &music_video_local_enabled() });
-};
+});
 
-get '/music/configuration' => sub ($c) {
+Manager::app->routes->get('/music/configuration' => sub ($c) {
 	my $returner = {};
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	my $jmao = $settings->{'mao'};
@@ -2865,6 +2870,6 @@ get '/music/configuration' => sub ($c) {
 		crate => { remote_uuid => $remote_uuid, remote_hostname => $remote_hostname, settings => $settings }
 	);
 	$c->render(json => $returner);
-};
+});
 
 1;

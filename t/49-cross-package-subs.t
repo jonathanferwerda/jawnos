@@ -88,7 +88,9 @@ for my $name (@rel) {
 
 	my (%subs, @pkg_at, @requires, @refs, %imports);
 	my $cur_pkg;
-	my $in_pod = 0;
+	my $depth    = 0;    # brace depth: a package declared in a block ends with it
+	my @pkg_scope;       # [depth, package before] for each block-scoped package
+	my $in_pod   = 0;
 	my $heredoc;
 
 	my @lines = split /\n/, $src, -1;
@@ -112,8 +114,16 @@ for my $name (@rel) {
 		if ($text =~ /<<(~?)['"]?([A-Za-z_]\w*)['"]?/) {
 			$heredoc = { term => $2, indent => ($1 ? 1 : 0) };
 		}
-		if ($code =~ /^\s*package\s+([A-Za-z_]\w*)\s*[;{]/) {
-			$cur_pkg = $1;
+		if ($code =~ /^\s*package\s+([A-Za-z_]\w*(?:::\w+)*)\s*[;{]/) {
+			my $name = $1;
+			# A package is scoped to its block, so subs after this one belong to it
+			# only until the block closes. `{ package gb; }` opens and closes on the
+			# same line and governs nothing that follows.
+			unless ($code =~ /\}/) {
+				my $scope = $code =~ /\{\s*$/ ? $depth + 1 : $depth;
+				push @pkg_scope, [ $scope, $cur_pkg ];
+			}
+			$cur_pkg = $name;
 			push @pkg_at, [ $ln, $cur_pkg ];
 		}
 		if ($code =~ /^\s*sub\s+([A-Za-z_]\w*)/) {
@@ -129,7 +139,7 @@ for my $name (@rel) {
 				$imports{ $cur_pkg // '<inherit>' }{ $1 } = $ln;
 			}
 		}
-		if ($code =~ /\brequire\b/ && $text =~ /require\s*\(?\s*["']([^"']+\.pl)["']/) {
+		if ($code =~ /\brequire\b/ && $text =~ /require\s*\(?\s*["']([^"']+\.(?:pl|pm))["']/) {
 			push @requires, [ $ln, $1 ];
 		}
 		# require Module::Name; - the lazily loaded domain modules
@@ -138,10 +148,18 @@ for my $name (@rel) {
 			push @requires, [ $ln, $module ] if defined $module;
 		}
 		# A package-qualified call. `$gb::secret_maker` and friends are
-		# variables; `Tunnel::Hub->new` is a class name, not a sub.
+		# variables; `Tunnel::Hub->new` is a class name, not a sub. A `package`,
+		# `use` or `require` statement names a module, not a call.
+		next if $code =~ /^\s*(?:package|use|require)\s/;
 		while ($code =~ /(?<![\$\@%*])\b([A-Za-z_]\w*)::([A-Za-z_]\w*)\b(?!\s*::)(\s*->)?/g) {
 			next if $3 && $2 =~ /^[A-Z]/;
 			push @refs, [ $ln, $1, $2 ];
+		}
+
+		# Track the block depth and leave any package whose block just closed.
+		$depth += ($code =~ tr/{//) - ($code =~ tr/}//);
+		while (@pkg_scope && $depth < $pkg_scope[-1][0]) {
+			$cur_pkg = (pop @pkg_scope)->[1];
 		}
 	}
 
@@ -160,6 +178,12 @@ for my $name (@rel) {
 # (require JawnOS::Domain::Loader) maps to the file under lib/.
 sub target_of {
 	my $raw = shift;
+
+	# A quoted .pm path is a module under lib/ (`require 'JawnOS/Manager.pm'`).
+	if ($raw =~ m{\.pm$} && $raw =~ m{/}) {
+		return "./lib/$raw" if $scan{"./lib/$raw"};
+		return undef;
+	}
 	if ($raw =~ /\.pl$/) {
 		my $base = basename($raw);
 		for my $candidate ("./$base", "./scripts/$base") {
@@ -243,6 +267,12 @@ for my $path (keys %scan) {
 	if ($seen{'./lib/JawnOS/Domain/Loader.pm'}) {
 		$seen{$_} = 1 for grep { m{^\./lib/JawnOS/Domain/} } keys %scan;
 	}
+	# lib/JawnOS/Routes.pm requires one Routes and one Controller module per name
+	# in @NAMES (`require "JawnOS::Routes::$name"`), so both groups are reachable
+	# from anything that loads the route table - which every worker does.
+	if ($seen{'./lib/JawnOS/Routes.pm'}) {
+		$seen{$_} = 1 for grep { m{^\./lib/JawnOS/(?:Routes|Controller)/} } keys %scan;
+	}
 	return \%seen;
 }
 
@@ -300,7 +330,9 @@ subtest 'each server entry point loads what it calls into' => sub {
 };
 
 subtest 'a file with no package line is loaded from one package' => sub {
-	my @ambiguous = grep { $effective{$_} eq '<unresolved>' } sort keys %scan;
+	# A file that defines no subs has no package identity to get wrong; the
+	# launcher Manager.pl is one (it only builds and starts the app).
+	my @ambiguous = grep { $effective{$_} eq '<unresolved>' && %{ $scan{$_}{subs} } } sort keys %scan;
 	is(scalar @ambiguous, 0, 'no file is loaded from two packages')
 		or diag(join "\n", @ambiguous);
 	# Name the files that currently inherit, so the next reader sees them.

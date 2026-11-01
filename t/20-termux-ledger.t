@@ -56,6 +56,13 @@ my $rc = $? >> 8;
 is($rc, 0, 'termux_ledger --check passes: no new termux dependency') or diag($out);
 like($out, qr/termux_ledger: ok/, 'the ledger reports its baseline counts');
 
+# A declaration or a name -> file index entry names a sub without touching a pty.
+# The split of Manager.pl adds one of each for every helper, so counting them
+# would make a move read as a new dependency.
+my $report = qx{"$^X" "$ledger" 2>&1};
+unlike($report, qr{JawnOS/Manager/Declarations\.pm|JawnOS/Manager/Index\.pm},
+	'bookkeeping lines are not counted as pty touch points');
+
 # M1 exit: the app's bridge answers every command and the shell fallback is
 # gone. No termux-* command remains, so the ledger's command list is empty.
 my $record = qx{"$^X" "$ledger" --record 2>&1};

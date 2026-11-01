@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use RepoSource;
 use Mojo::JSON qw(encode_json);
 use JawnOSTest;
 
@@ -118,7 +119,7 @@ subs::preload($_) for qw(db_select network_interface_reporter signatorial_design
 	like $template, qr/id="remote_machines_card"/, 'the Dev panel draws the unlisted-machines card';
 	like $template, qr/\@\{\$remote_machines\}/, 'from the stash list the route passes';
 	like $template, qr/class="remote_migrate"/, 'with the Migrate control';
-	my $manager = $read->("$root/Manager.pl");
+	my $manager = manager_source();
 	like $manager, qr/remote_machines => \$remote_machines/, 'and the route passes the orphans in';
 }
 

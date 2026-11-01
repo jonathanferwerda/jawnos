@@ -17,7 +17,7 @@ our $log = Mojo::Log->new(path => $logfile);
 our $uuid_generator;
 
 
-hook before_dispatch => sub {
+Manager::app->hook(before_dispatch => sub {
 	my ($c) = @_;
 	# a fresh settings memo for this request (see subroutines::setting_grabber)
 	%subs::setting_memo = ();
@@ -446,14 +446,14 @@ hook before_dispatch => sub {
 		}
 
 	}
-};
+});
 
-hook before_render => sub {
+Manager::app->hook(before_render => sub {
 	my ($c, $args) = @_;
 	no warnings 'uninitialized';
-};
+});
 
-hook after_render => sub  {
+Manager::app->hook(after_render => sub  {
 	my ($c, $output, $format) = @_;
   # Check if "gzip => 1" has been set in the stash
   return unless $c->stash->{gzip};
@@ -468,7 +468,7 @@ hook after_render => sub  {
   gzip $output, \my $compressed;
   	$$output = $compressed;
 
-  };
+  });
 
   # gzip text-ish responses on the way out. This is the one chokepoint that sees
   # both static assets (Mojolicious::Static calls $c->rendered, so after_dispatch
@@ -477,7 +477,7 @@ hook after_render => sub  {
   # rock_and_roll serves raw image/video/relay bytes under the default text/html.
   # A body already carrying a Content-Encoding (the after_render hook above) is
   # left alone, so the two never double-encode.
-  hook after_dispatch => sub {
+  Manager::app->hook(after_dispatch => sub {
   	my ($c) = @_;
   	my $res = $c->res;
 
@@ -503,7 +503,7 @@ hook after_render => sub  {
   	$res->headers->remove('Accept-Ranges');
   	$res->body($gz);
   	$res->headers->content_length(length $gz);
-  };
+  });
 
   # A static asset fetched without a session - WebKit fetches the service-worker
   # script cookielessly, and any cookieless <img>/<link> does it too - used to
@@ -513,7 +513,7 @@ hook after_render => sub  {
   # they would set. A request that did carry a session keeps its refresh. This
   # runs around the dispatch because Mojolicious stores the session cookie after
   # the after_dispatch hooks, so it cannot be undone from one of those.
-  hook around_dispatch => sub {
+  Manager::app->hook(around_dispatch => sub {
   	my ($next, $c) = @_;
   	$next->();
   	my $path = $c->req->url->path->to_string // '';
@@ -522,10 +522,10 @@ hook after_render => sub  {
   		|| $path eq '/service_worker.js';
   	return if $c->req->cookie($ENV{cookie_name} || 'president');
   	$c->res->headers->remove('Set-Cookie');
-  };
+  });
 
   	# The settings memo lives for one request only.
-	hook after_dispatch => sub {
+	Manager::app->hook(after_dispatch => sub {
 		my ($c) = @_;
 		&subs::request_busy_change(-1) if $c->stash('request_busy');
 		%subs::setting_memo = ();
@@ -534,9 +534,9 @@ hook after_render => sub  {
 		# not inherit the screen a previous request spoke for.
 		$subs::request_device_uuid = '';
 		&subs::visibility_cache_clear();
-	};
+	});
 
-  hook after_dispatch => sub {
+  Manager::app->hook(after_dispatch => sub {
   	my ($c) = @_;
   	if ($c->res->code == 500) {
 
@@ -559,5 +559,5 @@ hook after_render => sub  {
 			}
 		}
 	}
-};
+});
 1;

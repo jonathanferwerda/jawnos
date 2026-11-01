@@ -5,6 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use JawnOSTest;
+use RepoSource;
 
 # `subs::remote_upgrade_marker_state` is the one place this machine's pull
 # marker is interpreted (the reconnector, the Upgrade route, remote_upgrade and
@@ -74,11 +75,7 @@ ok(subs::remote_upgrade_marker_reapable({ value => 'running', busy => 0 }),
 	'an expired bare marker can be reaped');
 ok(!subs::remote_upgrade_marker_reapable(undef), 'a missing row is not reaped');
 
-my $manager = do {
-	open(my $fh, '<', "$FindBin::Bin/../Manager.pl") or die $!;
-	local $/;
-	<$fh>;
-};
+my $manager = manager_source();
 like($manager, qr/remote_upgrade_marker_reapable\(/,
 	'the manager reaps a dead pull marker as the tree comes up');
 

@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use RepoSource;
 use JawnOSTest;
 
 # A peer's stored manager can outlive the route it named: a LAN address the
@@ -171,11 +172,7 @@ ok(!$nothing->{'ok'}, 'a row with only an unresolvable name is not reachable');
 is($fetched, 0, 'and its name is never dialled');
 
 # The manager's probe is the production path, not a parallel copy.
-my $manager_source = do {
-	open(my $fh, '<', "$FindBin::Bin/../Manager.pl") or die $!;
-	local $/;
-	<$fh>;
-};
+my $manager_source = manager_source();
 like($manager_source, qr/sub remote_machine_online\b[^{]*\{.*?peer_presence_probe/s,
 	'remote_machine_online probes through the shared candidate list');
 unlike($manager_source, qr/next unless \$ping && \$ping =~ \/ttl\//,

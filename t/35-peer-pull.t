@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use RepoSource;
 use JawnOSTest;
 
 # scripts/peer_pull.pl is the repair lever for rows a timestamp-driven sync
@@ -67,7 +68,7 @@ is Jawn::PeerPull::peer_manager({ manager => 'https://peer.example:45545/manager
 	my $script = $read->(root() . '/scripts/peer_pull.pl');
 	like $script, qr/manager => \$peer_manager/, 'the local pull passes the proven manager';
 	like $script, qr/local_pull\(\$rm, \$window, \$url\)/, 'the resolved peer url reaches it';
-	my $manager = $read->(root() . '/Manager.pl');
+	my $manager = manager_source();
 	like $manager, qr/manager => \$manager_override/, 'the route accepts a proven manager';
 	like $manager, qr/\$c->session\('authentication'\) eq 'approved'\) \? \$c->param\('manager'\)/,
 		'only an approved session may name it';

@@ -5,6 +5,7 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use File::Slurp qw(read_file);
+use RepoSource;
 
 # A websocket frame is the only way a browser tells the manager "I moved to
 # 3:12", "I am still here" or "send this message". Every frame is parsed at the
@@ -22,7 +23,7 @@ use File::Slurp qw(read_file);
 # that never answered. This pins the parser so a future "modernise" pass cannot
 # quietly reintroduce it.
 
-my $manager = read_file("$FindBin::Bin/../Manager.pl");
+my $manager = manager_source();
 
 # 1. the import list must not name it: an imported from_json is how JSON::PP's
 #    stub became reachable in the first place

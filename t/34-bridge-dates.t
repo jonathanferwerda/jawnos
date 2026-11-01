@@ -4,6 +4,7 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
+use RepoSource;
 use JawnOSTest;
 
 # The Android bridge reports an SMS or call date as the epoch in milliseconds
@@ -78,7 +79,7 @@ is &subs::records_bad_date_fix({ timestamp => -2000000000000000, ost => '', serv
 		'and writes it through records_repair_date';
 	like $subs, qr/sub records_bad_dates_scan/, 'the bad-date scan is reusable';
 	like $subs, qr/sub records_repair_bad_dates/, 'with a repair-only pass for a peer';
-	my $manager = $read->("$root/Manager.pl");
+	my $manager = manager_source();
 	like $manager, qr/eq 'bad_dates'/, 'the records/repair rail offers the bad-date pass';
 	like $manager, qr/subs::records_repair_bad_dates/, 'and calls it';
 	my $cli = $read->("$root/scripts/records_audit.pl");
