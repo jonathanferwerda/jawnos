@@ -104,11 +104,20 @@ sub take_picture($c,$data) {
 	my ($filename,$ocr);
 	my ($db,$database,$sql) = &subs::database_grabber();
 	# Captures taken on an appointment's media row belong to that appointment; a
-	# press made from the wrapper names only the app, so resolve its newest row.
-	# The Camera app itself is unclaimed media by design and keeps its own path.
+	# press made from the wrapper names only the app, so resolve the row the
+	# details view is showing. The app's open session (a start/record row with no
+	# stop) wins, because that is the session a capture belongs to even while a
+	# newer, already-stopped row exists. With no open session the newest row is the
+	# one the view shows. The Camera app itself is unclaimed media by design and
+	# keeps its own path.
 	if (!$uuid && !$data->{'capture_only'} && $app ne 'camera') {
-		my $latest = &subs::db_query('select uuid from appointments where app=? and uuid is not null order by server_time desc limit 1', $app)->hash;
-		$uuid = $latest->{'uuid'} if $latest && $latest->{'uuid'};
+		my $rows = &subs::db_query('select uuid, type, stop_seen, stop_timestamp, server_time, timestamp from appointments where app=? and uuid is not null order by server_time desc limit 1', $app)->hashes || [];
+		my $open = &subs::open_session_uuid($app);
+		push @{$rows}, { uuid => $open, type => 'start', stop_seen => undef, stop_timestamp => undef } if length $open;
+		# preload is the mapped Log.pm entry that defines capture_target_uuid.
+		&subs::preload('log_reader');
+		my $target = &subs::capture_target_uuid($rows);
+		$uuid = $target if length $target;
 	}
 	# The caller (the wrapper names only an app) may not have known the row; hand
 	# the resolved one back so the refresh below reopens the right appointment.
@@ -126,7 +135,7 @@ sub take_picture($c,$data) {
 		my $probe = $data->{'native_name'} || $native_capture;
 		if ($probe =~ /\.([A-Za-z0-9]{1,5})$/) {
 			my $given = lc $1;
-			$ext = $given if $given =~ /^(?:jpg|jpeg|png|webp|heic|heif|mp4|webm|mov|mkv|avi)$/;
+			$ext = $given if $given =~ /^(?:jpg|jpeg|png|webp|heic|heif|bmp|tif|tiff|xcf|gif|mp4|webm|mov|mkv|avi)$/;
 		}
 	}
 	$filename = $base . '.' . $ext;
@@ -155,7 +164,16 @@ sub take_picture($c,$data) {
 			unless (lc $resolution eq 'raw') {
 				my ($w, $h) = &subs::image_resolution_parts($resolution);
 				my $resized = ($w && $h) ? &subs::image_bridge_resize($filename, $w, $h) : undef;
-				`magick $filename -resize $resolution $filename` unless $resized;
+				# Auto-orient before the EXIF block is stripped: a phone stores the
+				# sensor's pixels sideways and records the rotation in EXIF, so a
+				# resize that ignores it leaves every portrait photo on its side.
+				unless ($resized) {
+					{
+						local $SIG{'__WARN__'} = sub { };
+						system('magick', $filename, '-auto-orient', '-strip', '-resize', $resolution, $filename);
+						system('convert', $filename, '-auto-orient', '-strip', '-resize', $resolution, $filename) if $? != 0;
+					}
+				}
 			}
 		}
 	}
@@ -199,6 +217,9 @@ sub take_picture($c,$data) {
 		}
 		&appointment_writer($c, $write);
 	}
+	# A capture that had to mint a row (the Camera app, or an app with no rows) is
+	# still a row the caller can refresh to.
+	$data->{'uuid'} = $uuid if $uuid;
 	my $jfiles = encode_json $files;
 	&subs::file_encrypter({ app => $app });
 
@@ -287,14 +308,14 @@ sub scan($c,$scandata) {
 			my $ocr = &ocr_reader($c,$scan);
 			if ($photo_size ne "Raw") {
 				my ($pw, $ph) = &subs::image_resolution_parts($photo_size);
-				my $converted = ($pw && $ph) ? &subs::image_bridge_convert($scan, $image_file, max_width => $pw, max_height => $ph) : undef;
-				system('magick', 'convert', $scan, '-resize', $photo_size, $image_file) unless $converted;
+				my $converted = ($pw && $ph) ? &subs::image_bridge_convert($scan, $image_file, max_width => $pw, max_height => $ph, auto_orient => 1) : undef;
+				system('magick', 'convert', $scan, '-auto-orient', '-strip', '-resize', $photo_size, $image_file) unless $converted;
 			}
 			else {
-				my $converted = &subs::image_bridge_convert($scan, $image_file);
-				system('magick', 'convert', $scan, $image_file) unless $converted;
+				my $converted = &subs::image_bridge_convert($scan, $image_file, auto_orient => 1);
+				system('magick', 'convert', $scan, '-auto-orient', '-strip', $image_file) unless $converted;
 			}
-			`shred -u $scan`;
+			&subs::secure_unlink($scan);
 			push @filenames, { f => $image_file , thumb => $thumb, ocr => $ocr};
 
 			$count++;

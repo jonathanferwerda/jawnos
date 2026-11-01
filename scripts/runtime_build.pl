@@ -103,12 +103,56 @@ my @PRUNE = (
 	qr{/perllocal\.pod$}, qr{/\.packlist$}, qr{/\.meta/}, qr{/\.git/},
 );
 
+# --- parts ------------------------------------------------------------------
+# The runtime used to be one archive. A part is an optional, independently
+# installable slice of the SAME prefix: `media` (ImageMagick and the delegates
+# its DT_NEEDED chain names) and `ocr` (Tesseract, leptonica and eng tessdata).
+# The core keeps its existing behaviour and its existing archive name.
+#
+# Parts are packed against a pinned core archive (--baseline): every path the
+# core already carries is excluded from the part, so a part never owns a core
+# file. A part update therefore adds or replaces only its own paths.
+#
+# Executables stay out of a part's published archive (--no-bin, exactly as the
+# core archive): Android cannot exec app-data files at targetSdk 29+, so
+# scripts/runtime_native_bins.pl turns them into jniLibs and the app links them
+# back into bin/ at start. `bins` names the executables a part unlocks even
+# though the archive does not carry them.
+my %PART = (
+	core => {
+		tools    => [ keys %TOOL ],
+		dirs     => [ @LIB_DIRS, @SHARE_DIRS, @LIBEXEC_DIRS ],
+		requires => [ 'bin/perl', 'lib/perl5/CORE/libperl.so' ],
+	},
+	media => {
+		# magick is the only executable the Termux package ships; the rest are
+		# the traditional aliases callers may still use.
+		tools    => [qw(magick convert identify mogrify montage composite compare stream conjure display animate import)],
+		dirs     => [ 'etc/ImageMagick-*', 'lib/ImageMagick-*', 'share/ImageMagick-*' ],
+		requires => [ 'bin/magick' ],
+		bins     => [ 'bin/magick', 'bin/convert' ],
+		min_core => 1,
+	},
+	ocr => {
+		tools    => [qw(tesseract)],
+		dirs     => [ 'share/tessdata' ],
+		requires => [ 'bin/tesseract', 'share/tessdata/eng.traineddata' ],
+		bins     => [ 'bin/tesseract' ],
+		min_core => 1,
+	},
+);
+
 # --- options ----------------------------------------------------------------
 my ($from, $out, $dry, $list, $help, $abi, $rewrite, $perl_version, $no_bin);
+my ($part, $baseline, $min_core, $version_override);
 while ( defined(my $a = shift @ARGV) ) {
 	if ($a eq '--from') { $from = shift @ARGV }
 	elsif ($a eq '--out') { $out = shift @ARGV }
 	elsif ($a eq '--abi') { $abi = shift @ARGV }
+	elsif ($a eq '--part') { $part = shift @ARGV }
+	elsif ($a eq '--baseline') { $baseline = shift @ARGV }
+	elsif ($a eq '--min-core') { $min_core = shift @ARGV }
+	elsif ($a eq '--version') { $version_override = shift @ARGV }
 	elsif ($a eq '--rewrite-prefix') { $rewrite = shift @ARGV }
 	elsif ($a eq '--perl-version') { $perl_version = shift @ARGV }
 	elsif ($a eq '--no-bin') { $no_bin = 1 }
@@ -120,15 +164,22 @@ while ( defined(my $a = shift @ARGV) ) {
 if ($help) {
 	print <<'USAGE';
 perl scripts/runtime_build.pl --from PREFIX [--out FILE] [--abi ABI] [--no-bin]
-    [--dry-run] [--list]
+    [--part core|media|ocr] [--baseline CORE_ZIP] [--min-core VERSION]
+    [--version VERSION] [--dry-run] [--list]
 
-  --from     the built prefix to pack (a device's $PREFIX, or a staging dir)
-  --out      the archive to write (default releases/jawnrt-<abi>-<VERSION>.zip)
-  --abi      the archive's ABI, for the manifest (default aarch64)
-  --no-bin   omit the executables and symlinks under bin/ and libexec/ that the
-             app supplies as native libraries; data files in those trees stay
-  --dry-run  print the plan and the size; write nothing
-  --list     print every path that would ship, one per line
+  --from      the built prefix to pack (a device's $PREFIX, or a staging dir)
+  --out       the archive to write (default releases/jawnrt-<abi>-<VERSION>.zip,
+              or releases/jawnrt-<abi>-<part>-<VERSION>.zip for a part)
+  --abi       the archive's ABI, for the manifest (default aarch64)
+  --part      core (default) keeps the whole dieted runtime; media packs
+              ImageMagick + delegates; ocr packs Tesseract + eng tessdata
+  --baseline  a pinned core archive whose paths a part must not carry
+  --min-core  the core version a part needs (default: this tree's VERSION)
+  --version   the part/core version to record (default: this tree's VERSION)
+  --no-bin    omit the executables and symlinks under bin/ and libexec/ that the
+              app supplies as native libraries; data files in those trees stay
+  --dry-run   print the plan and the size; write nothing
+  --list      print every path that would ship, one per line
 USAGE
 	exit 0;
 }
@@ -136,6 +187,15 @@ die "runtime_build.pl: --from is required\n" unless defined $from && length $fro
 die "runtime_build.pl: no such prefix: $from\n" unless -d $from;
 $from = abs_path($from);
 $abi ||= 'aarch64';
+$part ||= 'core';
+die "runtime_build.pl: --part must be one of: " . join(', ', sort keys %PART) . "\n"
+	unless $PART{$part};
+die "runtime_build.pl: --baseline is only meaningful for a part\n"
+	if defined $baseline && $part eq 'core';
+if (defined $baseline) {
+	die "runtime_build.pl: no such baseline archive: $baseline\n" unless -f $baseline;
+	$baseline = abs_path($baseline);
+}
 die "runtime_build.pl: --abi looks wrong: $abi\n" unless $abi =~ m{^[A-Za-z0-9_]+$};
 if (defined $rewrite) {
 	my ($o, $n) = split /=/, $rewrite, 2;
@@ -146,9 +206,34 @@ if (defined $rewrite) {
 
 my $version = 'unknown';
 if (open(my $vf, '<', "$root/VERSION")) { $version = <$vf> // 'unknown'; close $vf; $version =~ s/\s+//g }
-$out ||= "$root/releases/jawnrt-$abi-$version.zip";
+$version = $version_override if defined $version_override && length $version_override;
+$min_core ||= $version;
+my $part_spec = $PART{$part};
+my $default_name = $part eq 'core'
+	? "jawnrt-$abi-$version.zip"
+	: "jawnrt-$abi-$part-$version.zip";
+$out ||= "$root/releases/$default_name";
+
+# A pinned core archive tells this build what it must NOT carry. Read the
+# central directory with core Perl, so the check works on a device too.
+my %baseline;
+if (defined $baseline) {
+	require IO::Uncompress::Unzip;
+	my $uz = IO::Uncompress::Unzip->new($baseline)
+		or die "runtime_build.pl: cannot read $baseline\n";
+	for (my $s = 1; ; $s++) {
+		my $h = $uz->getHeaderInfo;
+		my $name = $h->{Name};
+		last unless defined $name && length $name;
+		$baseline{$name} = 1 unless $name =~ m{/$};
+		last unless $uz->nextStream;
+	}
+	print "runtime_build: baseline $baseline owns " . scalar(keys %baseline) . " paths; a part will not carry them\n";
+}
 
 # --- select ----------------------------------------------------------------
+my %TOOL_FOR = map { $_ => 1 } @{ $part_spec->{tools} };
+my @DIRS_FOR = @{ $part_spec->{dirs} };
 sub wanted_path {
 	my ($rel) = @_;
 	# An archive entry whose name climbs with .. (git-core writes some as
@@ -164,8 +249,8 @@ sub wanted_path {
 		&& $1 ne $perl_version) {
 		return 0;
 	}
-	return 1 if $rel =~ m{^bin/[^/]+$} && $TOOL{ basename($rel) } && !$NEVER{ basename($rel) };
-	foreach my $d (@LIB_DIRS, @SHARE_DIRS, @LIBEXEC_DIRS) {
+	return 1 if $rel =~ m{^bin/[^/]+$} && $TOOL_FOR{ basename($rel) } && !$NEVER{ basename($rel) };
+	foreach my $d (@DIRS_FOR) {
 		my $re = $d;
 		$re =~ s{([.\[\](){}*+?^$|\\])}{\\$1}g;
 		$re =~ s/\\\*/.*/g;
@@ -186,6 +271,9 @@ for my $top (qw(bin lib libexec share etc)) {
 			my $rel = $path;
 			$rel =~ s{^\Q$from\E/}{};
 			return unless wanted_path($rel);
+			# A part is additive over the pinned core: a path the core already
+			# carries belongs to the core and is never owned twice.
+			return if %baseline && $baseline{$rel};
 			return if !-l $path && grep { $rel =~ $_ } @PRUNE;
 			push @files, $rel;
 		},
@@ -290,7 +378,9 @@ for (my $i = 0; $i < @files; $i++) {
 			next unless $name =~ m{\.so(?:\.\d+)*$};
 			# Only the prefix's own libraries: everything Android supplies (its
 			# libc, its graphics and HIDL stacks) belongs to the device, and
-			# shipping one would shadow it.
+			# shipping one would shadow it. A part must also leave the pinned
+			# core's libraries alone - even when this staging prefix has a copy.
+			next if %baseline && $baseline{"lib/$name"};
 			if (!-f "$from/lib/$name") {
 				$missing{$name} = 1
 					unless $SYSTEM{$name} || $name =~ m{^(?:android\.hardware\.|libhidl)};
@@ -318,6 +408,29 @@ if (%missing) {
 	exit 1;
 }
 
+# The two things a runtime is useless without, or the parts a part is useless
+# without. This runs before --no-bin strips the executables: a part's binary is
+# supplied as a jniLib rather than unpacked, but it must still be selected.
+my $has_perl = grep { $_ eq 'bin/perl' } @files;
+my $has_libperl = grep { m{/CORE/libperl\.so$} } @files;
+if ($part eq 'core') {
+	if (!$has_perl || !$has_libperl) {
+		print "runtime_build: incomplete - bin/perl: " . ($has_perl ? 'yes' : 'NO')
+			. ", CORE/libperl.so: " . ($has_libperl ? 'yes' : 'NO') . "\n";
+		print "  expected a built prefix (see docs/roadmap-handoff.md M3b)\n";
+		exit 1;
+	}
+}
+else {
+	my %have_file = map { $_ => 1 } @files;
+	my @absent = grep { !$have_file{$_} } @{ $part_spec->{requires} || [] };
+	if (@absent) {
+		print "runtime_build: $part part is incomplete - missing: @absent\n";
+		print "  expected a prefix with that package installed (see docs/runtime-parts.md)\n";
+		exit 1;
+	}
+}
+
 # A runtime the app installs no longer needs the executables in the archive:
 # it carries them as jniLibs native libraries and links them back into bin/ and
 # libexec/ on every start. When --no-bin is set, drop exactly the entries
@@ -329,7 +442,6 @@ if (%missing) {
 # The filter runs after the library pass on purpose: lib/ must be exactly what
 # a full build carries, or an app-supplied executable would name a library the
 # archive no longer has (curl's libssl, for one).
-my $has_perl = grep { $_ eq 'bin/perl' } @files;
 if ($no_bin) {
 	my @kept;
 	my $omitted = 0;
@@ -377,15 +489,6 @@ my $total = scalar @files;
 my $mb = sprintf '%.1f', $source_bytes / (1024 * 1024);
 if (!@files) {
 	print "runtime_build: nothing selected from $from (is that a prefix?)\n";
-	exit 1;
-}
-
-# The two things a runtime is useless without.
-my $has_libperl = grep { m{/CORE/libperl\.so$} } @files;
-if (!$has_perl || !$has_libperl) {
-	print "runtime_build: incomplete - bin/perl: " . ($has_perl ? 'yes' : 'NO')
-		. ", CORE/libperl.so: " . ($has_libperl ? 'yes' : 'NO') . "\n";
-	print "  expected a built prefix (see docs/roadmap-handoff.md M3b)\n";
 	exit 1;
 }
 
@@ -454,6 +557,7 @@ my $manifest = {
 	'product'  => 'runtime',
 	'abi'      => $abi,
 	'version'  => $version,
+	'part'     => $part,
 	'built'    => time,
 	'rewritten_from' => (defined $rewrite ? (split /=/, $rewrite, 2)[0] : undef),
 	'filename' => basename($out),
@@ -461,6 +565,16 @@ my $manifest = {
 	'size'     => $size,
 	'files'    => $total,
 };
+if ($part ne 'core') {
+	# The exact prefix paths this archive unpacks. A part update/rollback is
+	# defined by this list: replace these paths, delete a stale path only when
+	# the new archive no longer carries it, and never touch a core path.
+	$manifest->{'provides'} = [ map { "usr/$_" } @files ];
+	$manifest->{'bins'}     = $part_spec->{bins} || [];
+	$manifest->{'min_core'} = $min_core;
+	$manifest->{'optional'} = JSON::PP::true;
+	$manifest->{'baseline'} = defined $baseline ? basename($baseline) : undef;
+}
 my $mfile = "$out.json";
 open(my $mf, '>', $mfile) or die $!;
 print {$mf} JSON::PP->new->canonical->encode($manifest), "\n";

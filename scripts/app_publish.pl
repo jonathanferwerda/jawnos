@@ -132,6 +132,41 @@ if ($runtime_mode ne 'off') {
 				unless lc($sha) eq lc($e->{'sha256'} || '');
 			push @runtime, { abi => $abi, file => $file, path => $path, size => (-s $path) };
 		}
+		# Optional parts. A part is a separate download and must not make an APK
+		# publish fail: a part that is not staged (a media/ocr build has not run
+		# on this box) or does not match its pin is reported and skipped, while the
+		# core the app needs to start is still required above.
+		my $parts = $pin->{'parts'};
+		if ($parts && ref $parts eq 'HASH') {
+			foreach my $abi (sort keys %{ $parts }) {
+				next unless ref $parts->{$abi} eq 'HASH';
+				foreach my $part (sort keys %{ $parts->{$abi} }) {
+					my $e = $parts->{$abi}{$part} || {};
+					my $file = $e->{'file'};
+					unless (defined $file && $file =~ /^[0-9A-Za-z._-]+$/) {
+						warn "app_publish.pl: part $abi/$part names no usable file; skipping\n";
+						next;
+					}
+					my $path = "$dir/$file";
+					unless (-f $path) {
+						print "  part $abi/$part: $file is not staged; skipping\n";
+						next;
+					}
+					my $sha = sha256_hex(read_file($path));
+					unless (lc($sha) eq lc($e->{'sha256'} || '')) {
+						warn "app_publish.pl: part $abi/$part: $path does not match the pinned sha256; skipping\n";
+						next;
+					}
+					push @runtime, {
+						abi  => $abi,
+						part => $part,
+						file => $file,
+						path => $path,
+						size => (-s $path),
+					};
+				}
+			}
+		}
 		push @runtime, { pin => $pin_path, file => 'jawnrt.json', path => $pin_path };
 	}
 	elsif ($runtime_mode eq 'force') {
@@ -146,7 +181,10 @@ foreach my $j (@jobs) {
 print "  repo $repo, tag $tag\n";
 foreach my $r (@runtime) {
 	next if $r->{'pin'};
-	printf "  runtime %s %s (%d bytes), pinned by %s\n", $r->{'abi'}, $r->{'file'}, $r->{'size'}, 'assets/jawnrt.json';
+	printf "  runtime %s%s %s (%d bytes), pinned by %s\n",
+		$r->{'abi'},
+		(defined $r->{'part'} ? "/$r->{'part'} part" : ''),
+		$r->{'file'}, $r->{'size'}, 'assets/jawnrt.json';
 }
 printf "  runtime mode %s%s\n", $runtime_mode, $runtime_mode eq 'off' ? ' (no runtime check)' : '';
 
@@ -187,7 +225,7 @@ foreach my $j (@jobs) {
 if (@runtime) {
 my $assets = `gh release view $tag --repo $repo --json assets -q '.assets[].name' 2>/dev/null`;
 my %have = map { $_ => 1 } split /\s+/, ($assets || '');
-my @up = grep { $runtime_mode eq 'force' || !$have{ $_->{'file'} } } @runtime;
+my @up = grep { $runtime_mode eq 'force' || $_->{'pin'} || !$have{ $_->{'file'} } } @runtime;
 foreach my $r (@up) {
 	print "uploading runtime asset $r->{'file'}\n";
 	system('gh', 'release', 'upload', $tag, $r->{'path'}, '--clobber', '--repo', $repo) == 0

@@ -382,13 +382,15 @@ sub archive_peer_allowed {
 
 sub file_type_recognizer($f) {
 
-	my $file_type;
-	$file_type = 'image' if $f =~ /jpg|png|bmp|tiff|xcf/;
-	$file_type = 'audio' if $f =~ /wav|mp3|aiff|weba|m4a|flac/;
-	$file_type = 'video' if $f =~ /mp4|avi|mov|webm|mkv/;
-	$file_type = 'pdf' if $f =~ /pdf/;
-	$file_type = 'document' if $f =~ /doc|docx|xls|xlsx|pub|pubx|txt|rtf/;
-	$file_type = 'subtitles' if $f =~ /vtt|srt/;
+	# One extension table for every media caller. The old inline test missed
+	# .jpeg/.webp/.heic/.tif and was case-sensitive, so a phone capture could get
+	# no type at all and the details view skipped it.
+	my %kind = (
+		img => 'image', snd => 'audio', vid => 'video',
+		pdf => 'pdf', doc => 'document',
+	);
+	my $file_type = $kind{ &subs::media_file_type($f) || '' };
+	$file_type = 'subtitles' if $f =~ /vtt|srt/i;
 	my $file = {
 		type => $file_type,
 		icon => '/images/decipherable/file.png'

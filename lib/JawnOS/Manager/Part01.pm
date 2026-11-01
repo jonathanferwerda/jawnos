@@ -610,20 +610,35 @@ sub timestamp_adjuster($c) {
 }
 
 sub native_capture_dir() {
-	return &subs::home('.jawn/captures');
+	# `home()` only expands a leading ~; a bare relative path stayed relative, so
+	# the app's always-absolute staged path could never match it (the capture was
+	# refused and looked lost).
+	return &subs::home('~/.jawn/captures');
+}
+
+# The app is installed as com.jawnos and reports getFilesDir() paths, which on
+# newer Android is /data/user/<n>/com.jawnos/...; the manager's HOME is
+# /data/data/com.jawnos/.... They are the same files, and realpath does not
+# unify them (data/data is a bind mount), so the two spellings are normalised
+# to one before the claim is checked.
+sub native_capture_spelling($path) {
+	return $path unless defined $path && length $path;
+	$path =~ s{^/data/user/[0-9]+/}{/data/data/};
+	return $path;
 }
 
 sub native_capture_claim($path) {
 	return undef unless defined $path && length $path;
-	my $dir = &native_capture_dir();
 	my $name = $path;
 	$name =~ s{.*/}{};
 	return undef unless $name =~ /^[A-Za-z0-9._-]+$/ && $name !~ /^\.\.?$/;
-	my $want = $dir . '/' . $name;
-	return undef unless $path eq $want;
-	return undef if -l $want;
-	return undef unless -f $want;
-	return $want;
+	my $want = &native_capture_dir() . '/' . $name;
+	return undef unless &native_capture_spelling($path) eq &native_capture_spelling($want);
+	return undef if -l $path;
+	return undef unless -f $path;
+	# Hand back the path as given: the claim is a reference to a file that exists,
+	# not a recipe for where it should have been.
+	return $path;
 }
 
 1;

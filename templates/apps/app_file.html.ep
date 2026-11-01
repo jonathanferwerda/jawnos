@@ -1,4 +1,5 @@
 <% foreach my $f (@{$l->{'files'}}) { %>
+	<% my $display = ($f->{'preview'} && -e $f->{'preview'}) ? $f->{'preview'} : $f->{'file'}; %>
 
 	<% unless ( -e $f->{'file'} || $l->{'type'} eq 'snapshot' ) {
 		next;
@@ -57,7 +58,7 @@
 					src="<%= $l->{'file'} %>" type="snapshot"
 				<% } else { %>
 					file="<%= $f->{'file'} %>"
-					src="/file_open?app=<%= $l->{'app'} %>&file=<%= $f->{'file'} %>&timestamp=<%= $l->{'server_time'} %>"
+					src="/file_open?app=<%= $l->{'app'} %>&file=<%= $display %>&timestamp=<%= $l->{'server_time'} %>"
 				<% } %> timestamp="<%= $l->{'server_time'} %>" 
 				style="height:90%;width:95%" app_uuid="<%= $l->{'uuid'} %>" file_uuid="<%= $f->{'uuid'} %>" id="<%= $l->{'uuid'} %>_<%= $f->{'uuid'} %>"
 					

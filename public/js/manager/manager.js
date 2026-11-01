@@ -1153,6 +1153,12 @@ function jawnCameraUpload(result) {
 			},
 			success: function(response) {
 				setStatus('Saved.');
+				// The server resolved which row the capture belongs to (the app's
+				// open session, else its newest one); refresh that row rather than
+				// trusting a uuid this page did not know.
+				if (response && response.uuid && pending.app && typeof appointmentDetailGrabber === 'function') {
+					appointmentDetailGrabber(pending.app, response.uuid);
+				}
 				if (pending.app === 'camera' && typeof jawnCameraAppPool === 'function') { jawnCameraAppPool(); }
 			},
 			error: function() { setStatus('Upload failed.'); }
@@ -1253,7 +1259,8 @@ $(document).on('click', '.native_capture, .native_video', function() {
 	var appointment = b.closest('.appointment');
 	var app = b.attr('app') || appointment.attr('app');
 	// the wrapper shows an app, not one session row; the server files the
-	// capture onto that app's newest row when no uuid is named
+	// capture onto the app's open session (else its newest row) when no uuid
+	// is named, and answers with that row so the details view refreshes it
 	var uuid = b.attr('uuid') || appointment.attr('uuid') || '';
 	window.__jawnCameraPending = { app: app, uuid: uuid, camera: b.attr('capture') || '0', timestamp: Date.now() };
 	if (b.hasClass('native_video')) { window.JawnCamera.video(); }

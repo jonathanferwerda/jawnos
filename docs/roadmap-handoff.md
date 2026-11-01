@@ -17,21 +17,30 @@ roadmap was deleted once this summary was in place.
   `$HOME/.jawn/device.token`; the API app is retired. The first-run wizard now
   opens its browser through the same `open.url` method. The shared module is
   BSD-2; the **app and APK remain GPL-3.0-only by decision** (2026-10-31).
-- **Runtime.** A clean install unpacks a pinned archive into `$PREFIX` — no
+- **Runtime.** A clean install unpacks a pinned core archive into `$PREFIX` — no
   bootstrap, no `pkg`/`apt`/`dpkg`. Current pins: `jawnrt-aarch64-0.1.1706.zip`
   (built `--no-bin`) and `jawnrt-x86_64-0.1.1702.zip`. Executables ship as
   `jniLibs` and `JawnRuntimeBins.ensure()` re-points the `$PREFIX/bin` symlinks
   at every app start. `git` is deliberately bundled because the first run and
-  the 30-minute code sync are git operations.
+  the 30-minute code sync are git operations. Optional **parts** are separate,
+  independently versioned archives in the same pin (`parts.aarch64`): `media`
+  (`jawnrt-aarch64-media-0.1.1741.zip`, 14,700,113 B, ImageMagick 7.1.2-35 and
+  its DT_NEEDED delegates) and `ocr` (`jawnrt-aarch64-ocr-0.1.1741.zip`,
+  14,796,519 B, Tesseract 5.5.4 + eng tessdata), both `min_core 0.1.1706`.
+  Parts unpack additively into the same prefix and never carry a core path;
+  schema, ownership, update/rollback and the Java contract are in
+  [`docs/runtime-parts.md`](runtime-parts.md). `runtime_build.pl --part`,
+  `runtime_native_bins.pl --zip PART=FILE` and `app_publish.pl` handle them.
 - **Distribution.** One release key (`.secrets/jawnos-release.jks`), the GitHub
   `releases` tag as the channel, and `scripts/app_build.pl --release` →
   `app_publish.pl` → `app_migrate.pl` for build, publish and device cut-over.
 - **Follow-ups, none blocking:** a Piper voice pack for one voice across
-  machines; a runtime slicing/update strategy (the aarch64 archive is ~69 MB);
-  re-proving the x86_64 runtime and emulator at targetSdk 36; the in-app
-  PackageInstaller update path against Play Protect (adb path is handled by
-  `app_migrate.pl`). Play as a channel is being reconsidered separately, which
-  supersedes the roadmap's "not viable" decision if it goes ahead.
+  machines; the Java side of runtime parts (download/unpack/markers per
+  `docs/runtime-parts.md`) — the archives and pins are already built; re-proving
+  the x86_64 runtime and emulator at targetSdk 36; the in-app PackageInstaller
+  update path against Play Protect (adb path is handled by `app_migrate.pl`).
+  Play as a channel is being reconsidered separately, which supersedes the
+  roadmap's "not viable" decision if it goes ahead.
 
 ---
 

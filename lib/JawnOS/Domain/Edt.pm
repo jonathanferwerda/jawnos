@@ -190,10 +190,26 @@ sub image_resolution_parts {
 	return ( $1 + 0, $2 + 0 );
 }
 
+# Formats the app's BitmapFactory bridge must not be handed: it cannot decode
+# TIFF/TIFF-family or XCF, and for JPEG/HEIC it re-encodes without the EXIF
+# orientation, so the picture comes back sideways. The caller's magick fallback
+# keeps the pixels upright. The suffix is checked after a sealed `.enc` tail.
+sub image_bridge_source_unfit {
+	my ($path) = @_;
+	return 0 unless defined $path && length $path;
+	my $name = $path;
+	$name =~ s/\.enc$//i;
+	return $name =~ /\.(?:jpe?g|tiff?|xcf|heic|heif)$/i ? 1 : 0;
+}
+
 sub image_bridge_resize {
 	my ( $path, $width, $height, $out ) = @_;
 	return undef unless defined $path && length $path && -e $path;
 	return undef unless $width && $height;
+	# The app's bridge decodes with BitmapFactory and re-encodes, which drops the
+	# EXIF orientation a phone camera records; it cannot decode TIFF or XCF at all.
+	# Leave those to the caller's ImageMagick fallback, which applies -auto-orient.
+	return undef if &image_bridge_source_unfit($path);
 	my $result = eval {
 		&subs::device_call('image.resize', {
 			path   => $path,
@@ -287,6 +303,9 @@ sub image_bridge_convert {
 	my ( $src, $out, %opt ) = @_;
 	return undef unless defined $src && length $src && -e $src;
 	return undef unless defined $out && length $out;
+	# BitmapFactory cannot read these, so a bridge answer would be an empty or
+	# failed conversion. The caller's magick fallback handles them (first page).
+	return undef if &image_bridge_source_unfit($src);
 	my %args = ( path => $src, out => $out );
 	foreach my $key ( qw(format quality max_width max_height) ) {
 		$args{$key} = $opt{$key} if defined $opt{$key} && length $opt{$key};

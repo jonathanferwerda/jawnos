@@ -214,7 +214,13 @@ sub action_14764 {
 			unless (lc $resolution eq 'raw') {
 				my ($w, $h) = &subs::image_resolution_parts($resolution);
 				my $resized = ($w && $h) ? &subs::image_bridge_resize($filename, $w, $h) : undef;
-				`magick $filename -resize $resolution $filename` unless $resized;
+				unless ($resized) {
+					{
+						local $SIG{'__WARN__'} = sub { };
+						system('magick', $filename, '-auto-orient', '-strip', '-resize', $resolution, $filename);
+						system('convert', $filename, '-auto-orient', '-strip', '-resize', $resolution, $filename) if $? != 0;
+					}
+				}
 			}
 			$ocr = &ocr_reader($c,$filename);
 		}

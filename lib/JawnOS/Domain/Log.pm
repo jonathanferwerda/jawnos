@@ -658,6 +658,30 @@ sub log_reader {
 	return $appts;
 }
 
+# The row a capture taken from an app (not a named appointment) belongs to.
+# Kept pure so the rule can be pinned without a database: an open start/record
+# row wins over a newer, already-stopped row, because that is the session the
+# person is in; with no open row the newest row is the one the details view
+# shows. Takes the rows and returns the target uuid ('' when there are none).
+sub capture_target_uuid($rows) {
+	return '' unless ref $rows eq 'ARRAY' && scalar @{$rows};
+	my @rows = grep {
+		ref $_ eq 'HASH' && defined $_->{'uuid'} && length $_->{'uuid'}
+	} @{$rows};
+	return '' unless @rows;
+	my @open = grep {
+		($_->{'type'} || '') =~ /^(?:start|record)$/
+			&& !(defined $_->{'stop_seen'} && length $_->{'stop_seen'})
+			&& !(defined $_->{'stop_timestamp'} && length $_->{'stop_timestamp'})
+	} @rows;
+	my @pool = @open ? @open : @rows;
+	my @sorted = sort {
+		($b->{'server_time'} || 0) <=> ($a->{'server_time'} || 0)
+			|| ($b->{'timestamp'} || 0) <=> ($a->{'timestamp'} || 0)
+	} @pool;
+	return $sorted[0]->{'uuid'};
+}
+
 sub appts_marker_builder {
 	my $appts = shift;
 	return $appts unless ref $appts eq 'HASH';

@@ -77,9 +77,11 @@ exit 0 unless $build;
 # runtime) holds the executables as native libraries and a runtime-bins.txt
 # naming each prefix path that wants one. Copy the manifest over the checked-in
 # empty placeholder so the APK always has the asset, and point gradle at the
-# directory so it can pack the libraries. The directory is absent on a machine
-# that has not built native bins: nothing to do, and the app keeps its old
-# layout.
+# directory so it can pack the libraries. The merged manifest covers the core
+# and every optional part (scripts/runtime_native_bins.pl --zip PART=FILE);
+# its side file names which part unlocks each entry. The directory is absent on
+# a machine that has not built native bins: nothing to do, and the app keeps its
+# old layout.
 my $native_bins = "$root/releases/native-bins";
 my @gradle_props;
 if (-d $native_bins) {
@@ -90,6 +92,12 @@ if (-d $native_bins) {
 		copy($manifest, "$assets/runtime-bins.txt")
 			or die "app: could not copy $manifest to $assets/runtime-bins.txt: $!\n";
 		print "app: runtime-bins.txt <- $manifest\n";
+		my $parts = "$native_bins/runtime-bins-parts.txt";
+		if (-f $parts) {
+			copy($parts, "$assets/runtime-bins-parts.txt")
+				or die "app: could not copy $parts to $assets/runtime-bins-parts.txt: $!\n";
+			print "app: runtime-bins-parts.txt <- $parts\n";
+		}
 	}
 	else {
 		print "app: $native_bins has no runtime-bins.txt; leaving the asset alone\n";

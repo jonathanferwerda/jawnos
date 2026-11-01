@@ -2,8 +2,15 @@
 # Turn a runtime archive's executables into jniLibs payload (M5,
 # docs/roadmap-handoff.md).
 #
-#   perl scripts/runtime_native_bins.pl --zip FILE --out DIR [--abi arm64-v8a]
-#       [--prefix-path PATH] [--dry-run]
+#   perl scripts/runtime_native_bins.pl --zip FILE [--zip PART=FILE ...]
+#       --out DIR [--abi arm64-v8a] [--prefix-path PATH] [--dry-run]
+#
+# --zip is repeatable: the core archive plus the optional parts. A value may be
+# written PART=FILE (media=releases/jawnrt-aarch64-media-0.1.1710.zip) so the
+# manifest records which part unlocks an executable; a bare path is the core.
+# The merged runtime-bins.txt stays three tab-separated fields, exactly what the
+# shipped app's JawnRuntimeBins reads; the part name goes in the side file
+# runtime-bins-parts.txt for the updater's benefit.
 #
 # Android refuses to exec a file in app data at targetSdk 29+, but it will exec
 # one extracted from the APK under nativeLibraryDir. A symlink in app data that
@@ -32,9 +39,10 @@ use File::Path qw(make_path);
 use File::Basename qw(dirname);
 use Archive::Zip qw(:ERROR_CODES);
 
-my ($zip_path, $out, $abi, $prefix_path, $dry, $help);
+my ($out, $abi, $prefix_path, $dry, $help);
+my @zip_args;
 while ( defined(my $a = shift @ARGV) ) {
-	if ($a eq '--zip') { $zip_path = shift @ARGV }
+	if ($a eq '--zip') { push @zip_args, shift @ARGV }
 	elsif ($a eq '--out') { $out = shift @ARGV }
 	elsif ($a eq '--abi') { $abi = shift @ARGV }
 	elsif ($a eq '--prefix-path') { $prefix_path = shift @ARGV }
@@ -44,10 +52,11 @@ while ( defined(my $a = shift @ARGV) ) {
 }
 if ($help) {
 	print <<'USAGE';
-perl scripts/runtime_native_bins.pl --zip FILE --out DIR [--abi arm64-v8a]
-    [--prefix-path PATH] [--dry-run]
+perl scripts/runtime_native_bins.pl --zip FILE [--zip PART=FILE ...] --out DIR
+    [--abi arm64-v8a] [--prefix-path PATH] [--dry-run]
 
-  --zip          the staged runtime archive (bin/ and libexec/ are used)
+  --zip          a staged archive (bin/ and libexec/ are used); repeatable.
+                 PART=FILE labels the archive's part (core, media, ocr)
   --out          the directory to write <abi>/lib<slug>.so and runtime-bins.txt
   --abi          the jniLibs ABI directory (default arm64-v8a)
   --prefix-path  an absolute prefix to strip from link targets, e.g.
@@ -56,9 +65,15 @@ perl scripts/runtime_native_bins.pl --zip FILE --out DIR [--abi arm64-v8a]
 USAGE
 	exit 0;
 }
-die "runtime_native_bins.pl: --zip is required\n" unless defined $zip_path && length $zip_path;
+die "runtime_native_bins.pl: --zip is required\n" unless @zip_args;
 die "runtime_native_bins.pl: --out is required\n" unless defined $out && length $out;
-die "runtime_native_bins.pl: no such zip: $zip_path\n" unless -f $zip_path;
+my @zips;
+foreach my $arg (@zip_args) {
+	my ($part, $path) = ('core', $arg);
+	if ($arg =~ m{^([A-Za-z0-9_-]+)=(.+)$} && -f $2) { ($part, $path) = ($1, $2) }
+	die "runtime_native_bins.pl: no such zip: $path\n" unless -f $path;
+	push @zips, { part => $part, path => $path };
+}
 $abi ||= 'arm64-v8a';
 die "runtime_native_bins.pl: --abi looks wrong: $abi\n"
 	unless $abi =~ m{^[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*$};
@@ -68,17 +83,21 @@ if (defined $prefix_path && length $prefix_path) {
 		unless $prefix_path =~ m{^/};
 }
 
-# --- read the archive -------------------------------------------------------
-my $zip = Archive::Zip->new;
-my $rc = $zip->read($zip_path);
-if ($rc != AZ_OK) {
-	my %why = (
-		AZ_ERROR        => 'read error',
-		AZ_FORMAT_ERROR => 'not a zip archive',
-		AZ_IO_ERROR     => 'I/O error',
-	);
-	die "runtime_native_bins: cannot read $zip_path: "
-		. ($why{$rc} // "Archive::Zip error $rc") . "\n";
+# --- read the archives ------------------------------------------------------
+sub open_zip {
+	my ($path) = @_;
+	my $zip = Archive::Zip->new;
+	my $rc = $zip->read($path);
+	if ($rc != AZ_OK) {
+		my %why = (
+			AZ_ERROR        => 'read error',
+			AZ_FORMAT_ERROR => 'not a zip archive',
+			AZ_IO_ERROR     => 'I/O error',
+		);
+		die "runtime_native_bins: cannot read $path: "
+			. ($why{$rc} // "Archive::Zip error $rc") . "\n";
+	}
+	return $zip;
 }
 
 # --- options that touch a link target ---------------------------------------
@@ -131,46 +150,57 @@ sub link_target {
 }
 
 # --- select bin/ and libexec/ ------------------------------------------------
-my (@records, %used_slug);
+my (@records, %used_slug, %seen_path);
 my ($entries, $executables, $symlinks, $other, $bytes) = (0, 0, 0, 0, 0);
 
-foreach my $member ($zip->members) {
-	next if $member->isDirectory;
-	my $path = $member->fileName;
-	$path =~ s{^\./}{};
-	next unless $path =~ m{^(?:bin|libexec)/};
-	next if $path =~ m{^bin/?$} || $path =~ m{^libexec/?$};
+foreach my $source (@zips) {
+	my $zip = open_zip($source->{path});
+	foreach my $member ($zip->members) {
+		next if $member->isDirectory;
+		my $path = $member->fileName;
+		$path =~ s{^\./}{};
+		next unless $path =~ m{^(?:bin|libexec)/};
+		next if $path =~ m{^bin/?$} || $path =~ m{^libexec/?$};
+		if ($seen_path{$path}++) {
+			die "runtime_native_bins: $path appears in more than one archive; "
+				. "a merged manifest cannot name it twice\n";
+		}
 
-	$entries++;
-	my $mode = $member->unixFileAttributes;
-	my $type = $mode & 0170000;
+		$entries++;
+		my $mode = $member->unixFileAttributes;
+		my $type = $mode & 0170000;
 
-	if ($type == 0120000) {                      # S_IFLNK
-		my $target = $member->contents;
-		push @records, {
-			path   => $path,
-			kind   => 'link',
-			target => link_target($path, $target),
-		};
-		$symlinks++;
-	}
-	elsif (($type == 0 || $type == 0100000) && ($mode & 0111)) {
-		push @records, {
-			path   => $path,
-			kind   => 'file',
-			member => $member,
-			mode   => $mode,
-			size   => $member->uncompressedSize,
-		};
-		$executables++;
-		$bytes += $member->uncompressedSize;
-	}
-	else {
-		$other++;   # scripts sourced by git, docs, anything not executable
+		if ($type == 0120000) {                      # S_IFLNK
+			my $target = $member->contents;
+			push @records, {
+				path   => $path,
+				kind   => 'link',
+				target => link_target($path, $target),
+				part   => $source->{part},
+			};
+			$symlinks++;
+		}
+		elsif (($type == 0 || $type == 0100000) && ($mode & 0111)) {
+			push @records, {
+				path   => $path,
+				kind   => 'file',
+				member => $member,
+				mode   => $mode,
+				size   => $member->uncompressedSize,
+				part   => $source->{part},
+				zip    => $source->{path},
+			};
+			$executables++;
+			$bytes += $member->uncompressedSize;
+		}
+		else {
+			$other++;   # scripts sourced by git, docs, anything not executable
+		}
 	}
 }
 
-die "runtime_native_bins: no executables under bin/ or libexec/ in $zip_path\n"
+die "runtime_native_bins: no executables under bin/ or libexec/ in "
+	. join(', ', map { $_->{path} } @zips) . "\n"
 	unless $executables;
 
 # --- assign slugs and build the manifest ------------------------------------
@@ -189,6 +219,7 @@ sub unique_slug {
 }
 
 my @manifest;
+my @parts_manifest;
 foreach my $record (@records) {
 	if ($record->{kind} eq 'file') {
 		$record->{slug} = unique_slug($record->{path});
@@ -197,6 +228,7 @@ foreach my $record (@records) {
 	else {
 		push @manifest, join("\t", $record->{path}, 'link', $record->{target});
 	}
+	push @parts_manifest, join("\t", $record->{part}, $record->{path}, $record->{kind});
 }
 
 my $mb = sprintf('%.1f', $bytes / (1024 * 1024));
@@ -213,7 +245,7 @@ if ($dry) {
 make_path("$out/$abi");
 foreach my $record (grep { $_->{kind} eq 'file' } @records) {
 	my $data = $record->{member}->contents;
-	die "runtime_native_bins: cannot read $record->{path} from $zip_path\n"
+	die "runtime_native_bins: cannot read $record->{path} from $record->{zip}\n"
 		unless defined $data;
 	my $file = "$out/$abi/lib$record->{slug}.so";
 	open(my $fh, '>', $file) or die "runtime_native_bins: $file: $!\n";
@@ -231,9 +263,19 @@ open(my $mf, '>:encoding(UTF-8)', $manifest_path)
 print {$mf} "$_\n" foreach @manifest;
 close $mf or die "runtime_native_bins: $manifest_path: $!\n";
 
+# The side file names the part that unlocks each entry. It is not read by the
+# shipped JawnRuntimeBins (whose format is fixed at three fields), but it is
+# the contract the part installer uses to know what a downloaded part adds.
+my $parts_path = "$out/runtime-bins-parts.txt";
+open(my $pf, '>:encoding(UTF-8)', $parts_path)
+	or die "runtime_native_bins: $parts_path: $!\n";
+print {$pf} "$_\n" foreach @parts_manifest;
+close $pf or die "runtime_native_bins: $parts_path: $!\n";
+
 printf "runtime_native_bins: %d entries under bin/ libexec/ (%d executables, %d symlinks, %d other)\n",
 	$entries, $executables, $symlinks, $other;
 printf "runtime_native_bins: wrote %d files, %s MB to %s/%s\n",
 	$executables, $mb, $out, $abi;
 printf "runtime_native_bins: manifest %s (%d entries: %d file, %d link)\n",
 	$manifest_path, scalar(@manifest), $executables, $symlinks;
+printf "runtime_native_bins: parts %s (%d entries)\n", $parts_path, scalar(@parts_manifest);

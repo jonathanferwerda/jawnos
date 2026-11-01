@@ -127,14 +127,17 @@ engine_failed: {
 # --- the staged-path guard really rejects what it should --------------------
 my ($dir_sub) = $manager =~ /(sub native_capture_dir\(\) \{.*?\n\})/s;
 my ($claim_sub) = $manager =~ /(sub native_capture_claim\(.*?\n\})/s;
-ok(defined $dir_sub && defined $claim_sub, 'both native capture helpers are present');
+my ($spell_sub) = $manager =~ /(sub native_capture_spelling\(.*?\n\})/s;
+ok(defined $dir_sub && defined $claim_sub && defined $spell_sub, 'the native capture helpers are present');
 
 {
 	package subs;
 	our $claim_root = '';
-	sub home { my $p = shift // ''; return $subs::claim_root . '/' . $p }
+	# The real home() expands a ~; the stub does too, so the staging directory is
+	# the same path the app's absolute capture lands in.
+	sub home { my $p = shift // ''; $p =~ s/~/$subs::claim_root/; return $p }
 }
-my $claim_code = "package CameraClaim;\n$dir_sub\n$claim_sub\n1;";
+my $claim_code = "package CameraClaim;\n$dir_sub\n$spell_sub\n$claim_sub\n1;";
 my $claim_ok = eval $claim_code;
 is($@, '', 'the native capture helpers compile against the stubs');
 
@@ -156,6 +159,14 @@ is($@, '', 'the native capture helpers compile against the stubs');
 	symlink('/etc/passwd', $link);
 	is(CameraClaim::native_capture_claim($link), undef, 'a symlink in the staging dir is refused');
 	is(CameraClaim::native_capture_claim("$dir/missing.jpg"), undef, 'a path that is not a file is refused');
+	# The app reports /data/user/<n>/... while the manager's HOME is /data/data/...;
+	# they are the same file, and realpath does not unify the bind mount.
+	is(CameraClaim::native_capture_spelling('/data/user/0/com.jawnos/files/home/.jawn/captures/a.jpg'),
+		'/data/data/com.jawnos/files/home/.jawn/captures/a.jpg',
+		'the app and manager spellings of the same staged path are normalised');
+	is(CameraClaim::native_capture_spelling('/data/data/com.jawnos/files/home/.jawn/captures/a.jpg'),
+		'/data/data/com.jawnos/files/home/.jawn/captures/a.jpg', 'the manager spelling is unchanged');
+	like($dir_sub, qr{home\('~/\.jawn/captures'\)}, 'the staging directory is expanded from HOME');
 }
 
 # --- the route claims a staged native capture --------------------------------
@@ -170,11 +181,42 @@ like($manager, qr/elsif \(\$device eq 'mobile'/, 'the old termux camera.photo pa
 
 # The details view names the row it belongs to; the wrapper names only the app.
 like($manager, qr/if \(!\$uuid && !\$data->\{'capture_only'\} && \$app ne 'camera'\)/,
-	'a wrapper capture resolves the app\'s newest appointment row');
-like($manager, qr/select uuid from appointments where app=\? and uuid is not null order by server_time desc/,
-	'that resolution is the newest row, never the Camera app\'s unclaimed media');
+	'a wrapper capture resolves the app\'s capture row');
+like($manager, qr/&subs::open_session_uuid\(\$app\)/,
+	'the app\'s open start/record session is asked for first');
+like($manager, qr/select uuid, type, stop_seen, stop_timestamp, server_time, timestamp from appointments where app=\? and uuid is not null order by server_time desc/,
+	'the newest visible row is the fallback');
+like($manager, qr/&subs::capture_target_uuid\(\$rows\)/, 'the row choice is one pure rule');
 like($manager, qr/\$data->\{'uuid'\} = \$uuid if \$uuid;/, 'the resolved row is handed back to the caller');
 like($manager, qr/\$data->\{'uuid'\} \|\| \$uuid/, 'the websocket refresh names the resolved row');
+
+# Pin the chosen-row rule itself. It lives with the domain layer (Log.pm), the
+# same lazy layer log_reader_file_preparer moved to.
+my ($target_sub) = $domain =~ /(sub capture_target_uuid\(.*?\n\})/s;
+ok(defined $target_sub, 'the capture target rule is present');
+my $target_code = "package CameraTarget;\n$target_sub\n1;";
+my $target_ok = eval $target_code;
+is($@, '', 'the capture target rule compiles against the stubs');
+if ($target_ok) {
+	my $open = { uuid => 'open', type => 'start', timestamp => 100, server_time => 100 };
+	my $newer_stopped = { uuid => 'newer', type => 'stop', timestamp => 200, server_time => 200 };
+	is(CameraTarget::capture_target_uuid([ $newer_stopped, $open ]), 'open',
+		'an open session wins over a newer stopped row');
+	is(CameraTarget::capture_target_uuid([
+		{ uuid => 'record', type => 'record', timestamp => 50, server_time => 50 },
+		$newer_stopped,
+	]), 'record', 'an open record row also wins');
+	is(CameraTarget::capture_target_uuid([
+		{ uuid => 'closed', type => 'start', timestamp => 300, stop_seen => 'yes', server_time => 300 },
+		$newer_stopped,
+	]), 'closed', 'a stopped start row is not open; the newest row wins');
+	is(CameraTarget::capture_target_uuid([
+		{ uuid => 'older', type => 'add', timestamp => 10, server_time => 10 },
+		{ uuid => 'newest', type => 'add', timestamp => 20, server_time => 20 },
+	]), 'newest', 'with no open row the newest server_time wins');
+	is(CameraTarget::capture_target_uuid([]), '', 'no rows means no target');
+	is(CameraTarget::capture_target_uuid(undef), '', 'no list means no target');
+}
 
 # --- the web side uses the bridge for both templates -------------------------
 like($js, qr/if \(jawnCameraAvailable\(\) && \(camera === '0' \|\| camera === '1'\)\)/,
@@ -183,6 +225,8 @@ like($js, qr/window\.__jawnCameraPending = \{ app: app, uuid: uuid, camera: came
 	'the details capture carries its appointment uuid and facing');
 like($js, qr/native_path: result\.path/, 'a native capture posts the path, not the bytes');
 like($js, qr/url: '\/manager\/take_picture'/, 'the native capture goes to the same route as the details button');
+like($js, qr/appointmentDetailGrabber\(pending\.app, response\.uuid\)/,
+	'the capture refresh uses the row the server resolved');
 like($js, qr/window\.JawnCamera\.photo\(b\.attr\('capture'\) \|\| '0'\)/, 'the wrapper native button still opens the OS camera');
 like($js, qr/formData\.append\('uuid', pending\.uuid \|\| ''\)/, 'the base64 fallback keeps the appointment uuid');
 

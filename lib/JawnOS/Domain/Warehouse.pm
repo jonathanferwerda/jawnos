@@ -351,6 +351,7 @@ sub log_reader_file_preparer {
 	#	}
 	my $tf = {
 		file => $f,
+		preview => $file->{'preview'},
 		uuid => $file->{'uuid'},
 		server_time => $file->{'server_time'},
 		function => $file->{'function'},
@@ -358,12 +359,32 @@ sub log_reader_file_preparer {
 		name => $file->{'name'},
 		app => $a->{'app'}
 	};
-	$tf->{'file_type'} = 'img' if $f =~ /jpg|png|bmp|tiff|xcf/;
-	$tf->{'file_type'} = 'snd' if $f =~ /wav|mp3|aiff|weba|m4a|flac/;
-	$tf->{'file_type'} = 'vid' if $f =~ /mp4|avi|mov|webm|mkv/;
-	$tf->{'file_type'} = 'pdf' if $f =~ /pdf/;
-	$tf->{'file_type'} = 'doc' if $f =~ /doc|docx|xls|xlsx|pub|pubx|txt|rtf/;
+	my $kind = &media_file_type($f);
+	$tf->{'file_type'} = $kind if defined $kind;
 	return $tf;
+}
+
+# What a media row is, from its extension. The old inline test only knew
+# jpg|png|bmp|tiff|xcf, so a phone's .jpeg, .webp, .heic or .tif filing got no
+# file_type at all and app_file rendered nothing. Extension first, then a sealed
+# `.enc` tail is dropped so a sealed photo still reads as its own kind.
+sub media_file_type {
+	my ($file) = @_;
+	return undef unless defined $file && length $file;
+	my $name = $file;
+	$name =~ s/\.enc$//i;
+	$name =~ s{.*/}{};
+	my ($ext) = $name =~ /\.([A-Za-z0-9]+)$/;
+	return undef unless defined $ext;
+	$ext = lc $ext;
+	my %kind = (
+		(map { $_ => 'img' } qw(jpg jpeg jpe png webp heic heif bmp tif tiff xcf gif)),
+		(map { $_ => 'snd' } qw(wav mp3 aiff aif weba m4a flac ogg oga opus)),
+		(map { $_ => 'vid' } qw(mp4 avi mov webm mkv m4v)),
+		pdf => 'pdf',
+		(map { $_ => 'doc' } qw(doc docx xls xlsx pub pubx txt rtf odt ods csv)),
+	);
+	return $kind{$ext};
 }
 
 sub remote_machine_lister {

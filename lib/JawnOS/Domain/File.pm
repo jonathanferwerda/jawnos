@@ -43,6 +43,21 @@ our $device;
 our $gb;
 our %m;
 
+# Remove a file after it has been sealed or converted. `shred -u` is the wear
+# path on a desktop, but the Android runtime carries no shred, and the old
+# backtick left BOTH the plaintext and the sealed copy on the phone. Fall back
+# to unlink, which is all a flash filesystem can honour anyway.
+sub secure_unlink {
+	my ($path) = @_;
+	return 0 unless defined $path && length $path;
+	return 0 unless -e $path || -l $path;
+	return 0 if -d $path;
+	my $shred = `command -v shred 2>/dev/null`;
+	system('shred', '-u', $path) if defined $shred && $shred =~ /\S/;
+	unlink $path if -e $path || -l $path;
+	return (-e $path || -l $path) ? 0 : 1;
+}
+
 sub file_encrypter {
 	my $data = shift;
 
@@ -64,10 +79,10 @@ sub file_encrypter {
 			$files = [ $files ];
 		}
 		foreach my $fi ( @{$files} ) {
-			foreach my $file_type ( qw/f thumb/ ) {
+			foreach my $file_type ( qw/f thumb preview/ ) {
 				my $f = $fi->{$file_type};
 
-				if (-e $f && $f !~ /\.enc/gi) {
+				if (defined $f && length $f && -e $f && $f !~ /\.enc/gi) {
 
 					my $path = &subs::terminal_name($f);
 					my $enc_path = $path;
@@ -80,7 +95,7 @@ sub file_encrypter {
 					# first, store the encryption standard.
 
 					&seal_file($path, $enc_path, $secret, $encryption_standard);
-					`shred -u $path`;
+					&secure_unlink($path);
 					$f = $enc_path;
 					$fi->{$file_type} = $f;
 					$fi->{'server_time'} = &subs::rightNow();
@@ -143,9 +158,9 @@ sub file_decrypter {
 	foreach my $filing ( @{$filings} ) {
 		my $files = eval { return decode_json $filing->{'file'} } || [];
 		foreach my $fi ( @{$files} ) {
-			foreach my $file_type ( qw/f thumb/ ) {
+			foreach my $file_type ( qw/f thumb preview/ ) {
 				my $f = $fi->{$file_type};
-				if (-e $f && $f =~ /\.enc/gi) {
+				if (defined $f && length $f && -e $f && $f =~ /\.enc/gi) {
 					my $encryption_standard = $filing->{'encryption_standard'} || &setting_grabber({ app => 'misc', setting => 'encryption_standard' }) || 'aes-256-ctr';
 					my $enc_path = &subs::terminal_name($f);
 
@@ -162,7 +177,7 @@ sub file_decrypter {
 					if ($opened) {
 						&write_file($path, $opened->{'data'});
 						$f = $path;
-						`shred -u $enc_path`;
+						&secure_unlink($enc_path);
 						$success = 1;
 					}
 
@@ -372,19 +387,19 @@ sub file_device_renamer {
 
 	unless ($destination) {
 		$misc_settings = &subs::misc_setting_list() unless $misc_settings;
-		if ($assetual =~ /\.mp3$|\.m4a$|\.flac$|\.aiff$|\.weba$|\.wav$/gi) {
+		if ($assetual =~ /\.mp3$|\.m4a$|\.flac$|\.aiff$|\.aif$|\.weba$|\.wav$|\.ogg$|\.oga$|\.opus$/i) {
 			$destination = &subs::home($misc_settings->{$device}->{'music_location'} . '/' . $app_path . '/');
 			$type = 'audio';
 		}
-		elsif ($assetual =~ /\.jpg$|\.xcf$|\.png$|\.bmp$/gi) {
+		elsif ($assetual =~ /\.jpe?g$|\.xcf$|\.png$|\.webp$|\.heic$|\.heif$|\.bmp$|\.tiff?$|\.gif$/i) {
 			$destination = &subs::home($misc_settings->{$device}->{'photo_location'} . '/' . $app_path . '/');
 			$type = 'image';
 		}
-		elsif ($assetual =~ /\.mov$|\.avi|\.webm$|\.mp4$|\.mkv$/gi) {
+		elsif ($assetual =~ /\.mov$|\.avi$|\.webm$|\.mp4$|\.mkv$|\.m4v$/i) {
 			$destination = &subs::home($misc_settings->{$device}->{'video_location'} . '/' . $app_path . '/');
 			$type = 'video';
 		}
-		elsif ($assetual =~ /\.pdf$/gi) {
+		elsif ($assetual =~ /\.pdf$/i) {
 			$destination = &subs::home($misc_settings->{$device}->{'document_location'} . '/' . $app_path . '/');
 			$type = 'document';
 		}
@@ -462,6 +477,49 @@ sub file_media_information {
 	return $file_data;
 }
 
+# Formats a phone WebView cannot show in an <img>. A TIFF or an XCF has to be
+# flattened to a PNG for the details view; HEIC/HEIF are still unreliable across
+# Android WebView versions, so they get the same treatment.
+sub image_preview_needed {
+	my ($file) = @_;
+	return 0 unless defined $file && length $file;
+	my $name = $file;
+	$name =~ s/\.enc$//i;
+	return $name =~ /\.(?:tiff?|xcf|heic|heif)$/i ? 1 : 0;
+}
+
+# Record a WebView-viewable preview for a picture the browser cannot render.
+# The original stays the file that is downloaded; `preview` is what the details
+# view draws. magick reads the first page/layer, applies the EXIF orientation and
+# writes a PNG. No magick on the machine means no preview and no error.
+sub file_preview_maker {
+	my $data = shift;
+	return $data unless ref $data eq 'HASH';
+	my $file = $data->{'f'} || '';
+	return $data unless &image_preview_needed($file);
+	return $data if $data->{'preview'} && -e $data->{'preview'} && (-s $data->{'preview'}) > 0;
+	return $data unless -e $file;
+	(my $preview = $file) =~ s/\.[^.]+$//;
+	$preview .= '.preview.png';
+	my $size = $data->{'preview_size'} || '1920x1080>';
+	my $made = 0;
+	foreach my $bin (qw/magick convert/) {
+		my $command = &shell_quote($bin)
+			. ' ' . &shell_quote($file . '[0]')
+			. ' -auto-orient -strip -resize ' . &shell_quote($size)
+			. ' ' . &shell_quote($preview) . ' 2>/dev/null';
+		system($command);
+		if (-e $preview && (-s $preview) > 0) { $made = 1; last; }
+	}
+	if ($made) {
+		$data->{'preview'} = $preview;
+	}
+	else {
+		unlink $preview if -e $preview;
+	}
+	return $data;
+}
+
 sub thumbnail_seek_position {
 	my $duration = shift;
 	$duration = 0 unless defined $duration && $duration =~ /^\d+(?:\.\d+)?$/;
@@ -525,7 +583,7 @@ sub vacuum_app {
 			my @files = split ',', $app->{'file'};
 			foreach my $f ( @files ) {
 				if (-e $f) {
-					`shred -u $f`;
+					&secure_unlink($f);
 				}
 			}
 		}

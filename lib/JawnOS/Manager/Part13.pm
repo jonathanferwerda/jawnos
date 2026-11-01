@@ -61,6 +61,11 @@ use IPC::Open2 qw(open2);
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
 sub thumbnail_creator($data) {
+	# A TIFF/XCF/HEIC capture has no WebView-renderable form; make the preview
+	# while the plain file is still here (the encrypter seals it afterwards).
+	# preload is the mapped File.pm entry that defines file_preview_maker.
+	&subs::preload('file_media_information');
+	$data = &subs::file_preview_maker($data);
 	if ($data->{'thumb'}) {
 		$data = &subs::file_media_information($data,$data->{'f'});
 
@@ -84,7 +89,9 @@ sub thumbnail_creator($data) {
 				else { `$command2`; }
 			}
 			elsif ($upload_type eq 'image' || $upload_type eq 'document') {
-				my $command2 = 'magick ' . $filename . ' -auto-orient -strip -resize ' . $thumbnail_size . ' ' . $thumb;
+				# [0] takes the first page/layer, so a multi-page TIFF or a layered
+				# XCF writes the one thumb file the row names instead of frames.
+				my $command2 = 'magick ' . &subs::shell_quote($filename . '[0]') . ' -auto-orient -strip -resize ' . &subs::shell_quote($thumbnail_size) . ' ' . &subs::shell_quote($thumb);
 				my $native = &native_thumb_png($filename, $thumbnail_size);
 				if (defined $native && length $native) { write_file($thumb, $native); }
 				else { `$command2`; }
