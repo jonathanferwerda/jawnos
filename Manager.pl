@@ -94,14 +94,14 @@ sub embedded_toggle;
 sub migration_already_applied;
 sub guide_resolve_when;
 
-*Manager::ocr_reader = \&subs::ocr_reader;
-*Manager::misc_setting_list = \&subs::misc_setting_list;
-*Manager::remote_useragent_maker = \&subs::remote_useragent_maker;
-*Manager::deletion_registration = \&subs::deletion_registration;
-*Manager::notification_sender = \&subs::notification_sender;
-*Manager::embedded_toggle = \&subs::embedded_toggle;
-*Manager::migration_already_applied = \&subs::migration_already_applied;
-*Manager::guide_resolve_when = \&subs::guide_resolve_when;
+*Manager::ocr_reader = sub { &subs::ocr_reader(@_) };
+*Manager::misc_setting_list = sub { &subs::misc_setting_list(@_) };
+*Manager::remote_useragent_maker = sub { &subs::remote_useragent_maker(@_) };
+*Manager::deletion_registration = sub { &subs::deletion_registration(@_) };
+*Manager::notification_sender = sub { &subs::notification_sender(@_) };
+*Manager::embedded_toggle = sub { &subs::embedded_toggle(@_) };
+*Manager::migration_already_applied = sub { &subs::migration_already_applied(@_) };
+*Manager::guide_resolve_when = sub { &subs::guide_resolve_when(@_) };
 
 # Second slice of the same move (guide aliases, budget, log reader, leave,
 # database migrations, relay and coding path). Same contract as above.
@@ -133,33 +133,33 @@ sub coding_repo;
 sub coding_path;
 sub update_database;
 
-*Manager::leave = \&subs::leave;
-*Manager::original_timestamp = \&subs::original_timestamp;
-*Manager::appts_marker_builder = \&subs::appts_marker_builder;
-*Manager::log_reader = \&subs::log_reader;
-*Manager::remote_relay_request = \&subs::remote_relay_request;
-*Manager::appointment_overlap = \&subs::appointment_overlap;
-*Manager::father_time = \&subs::father_time;
-*Manager::measure_calc_for = \&subs::measure_calc_for;
-*Manager::budget_calculator = \&subs::budget_calculator;
-*Manager::budget_status_maker = \&subs::budget_status_maker;
-*Manager::people_index = \&subs::people_index;
-*Manager::people_chips = \&subs::people_chips;
-*Manager::help_app_hidden = \&subs::help_app_hidden;
-*Manager::guide_name_normalize = \&subs::guide_name_normalize;
-*Manager::guide_name_distance = \&subs::guide_name_distance;
-*Manager::guide_target_label = \&subs::guide_target_label;
-*Manager::guide_aliases_read = \&subs::guide_aliases_read;
-*Manager::guide_aliases_write = \&subs::guide_aliases_write;
-*Manager::guide_aka_read = \&subs::guide_aka_read;
-*Manager::guide_alias_add = \&subs::guide_alias_add;
-*Manager::guide_alias_remove = \&subs::guide_alias_remove;
-*Manager::guide_resolve_target = \&subs::guide_resolve_target;
-*Manager::guide_resolve_action = \&subs::guide_resolve_action;
-*Manager::guide_ask_candidates = \&subs::guide_ask_candidates;
-*Manager::coding_repo = \&subs::coding_repo;
-*Manager::coding_path = \&subs::coding_path;
-*Manager::update_database = \&subs::update_database;
+*Manager::leave = sub { &subs::leave(@_) };
+*Manager::original_timestamp = sub { &subs::original_timestamp(@_) };
+*Manager::appts_marker_builder = sub { &subs::appts_marker_builder(@_) };
+*Manager::log_reader = sub { &subs::log_reader(@_) };
+*Manager::remote_relay_request = sub { &subs::remote_relay_request(@_) };
+*Manager::appointment_overlap = sub { &subs::appointment_overlap(@_) };
+*Manager::father_time = sub { &subs::father_time(@_) };
+*Manager::measure_calc_for = sub { &subs::measure_calc_for(@_) };
+*Manager::budget_calculator = sub { &subs::budget_calculator(@_) };
+*Manager::budget_status_maker = sub { &subs::budget_status_maker(@_) };
+*Manager::people_index = sub { &subs::people_index(@_) };
+*Manager::people_chips = sub { &subs::people_chips(@_) };
+*Manager::help_app_hidden = sub { &subs::help_app_hidden(@_) };
+*Manager::guide_name_normalize = sub { &subs::guide_name_normalize(@_) };
+*Manager::guide_name_distance = sub { &subs::guide_name_distance(@_) };
+*Manager::guide_target_label = sub { &subs::guide_target_label(@_) };
+*Manager::guide_aliases_read = sub { &subs::guide_aliases_read(@_) };
+*Manager::guide_aliases_write = sub { &subs::guide_aliases_write(@_) };
+*Manager::guide_aka_read = sub { &subs::guide_aka_read(@_) };
+*Manager::guide_alias_add = sub { &subs::guide_alias_add(@_) };
+*Manager::guide_alias_remove = sub { &subs::guide_alias_remove(@_) };
+*Manager::guide_resolve_target = sub { &subs::guide_resolve_target(@_) };
+*Manager::guide_resolve_action = sub { &subs::guide_resolve_action(@_) };
+*Manager::guide_ask_candidates = sub { &subs::guide_ask_candidates(@_) };
+*Manager::coding_repo = sub { &subs::coding_repo(@_) };
+*Manager::coding_path = sub { &subs::coding_path(@_) };
+*Manager::update_database = sub { &subs::update_database(@_) };
 { package gb; }
 
 # Run the schema migrations once per worker when the app comes up: a git pull

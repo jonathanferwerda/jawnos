@@ -6,6 +6,7 @@ use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 use Cwd qw(abs_path);
 use File::Basename qw(basename);
+use File::Find qw(find);
 
 # Cross-package sub calls and the require graph.
 #
@@ -35,6 +36,20 @@ my $root = abs_path("$FindBin::Bin/..");
 my @rel;
 push @rel, map { basename($_) } glob("$root/*.pl");
 push @rel, map { 'scripts/' . basename($_) } glob("$root/scripts/*.pl");
+if (-d "$root/lib") {
+	find(
+		{
+			no_chdir => 1,
+			wanted   => sub {
+				my $p = $File::Find::name;
+				return unless -f $p && $p =~ /\.pm$/;
+				$p =~ s{^\Q$root\E/}{};
+				push @rel, $p;
+			},
+		},
+		"$root/lib"
+	);
+}
 
 # The code part of a line: comments removed, quoted spans blanked.
 # Heredoc bodies and POD are skipped by the caller.
@@ -117,6 +132,11 @@ for my $name (@rel) {
 		if ($code =~ /\brequire\b/ && $text =~ /require\s*\(?\s*["']([^"']+\.pl)["']/) {
 			push @requires, [ $ln, $1 ];
 		}
+		# require Module::Name; - the lazily loaded domain modules
+		if ($code =~ /^\s*require\s+[A-Za-z_]\w*(?:::\w+)*\s*;/) {
+			my ($module) = $code =~ /^\s*require\s+([A-Za-z_]\w*(?:::\w+)*)\s*;/;
+			push @requires, [ $ln, $module ] if defined $module;
+		}
 		# A package-qualified call. `$gb::secret_maker` and friends are
 		# variables; `Tunnel::Hub->new` is a class name, not a sub.
 		while ($code =~ /(?<![\$\@%*])\b([A-Za-z_]\w*)::([A-Za-z_]\w*)\b(?!\s*::)(\s*->)?/g) {
@@ -136,13 +156,19 @@ for my $name (@rel) {
 }
 
 # A required path is matched by basename: `./Manager.pl`, `"$repo/x.pl"` and
-# `"$RealBin/../subroutines.pl"` all name a file in this scan.
+# `"$RealBin/../subroutines.pl"` all name a file in this scan. A module name
+# (require JawnOS::Domain::Loader) maps to the file under lib/.
 sub target_of {
-	my $raw  = shift;
-	my $base = basename($raw);
-	for my $candidate ("./$base", "./scripts/$base") {
-		return $candidate if $scan{$candidate};
+	my $raw = shift;
+	if ($raw =~ /\.pl$/) {
+		my $base = basename($raw);
+		for my $candidate ("./$base", "./scripts/$base") {
+			return $candidate if $scan{$candidate};
+		}
+		return undef;
 	}
+	(my $module = $raw) =~ s{::}{/}g;
+	return "./lib/$module.pm" if $scan{"./lib/$module.pm"};
 	return undef;
 }
 
@@ -200,7 +226,7 @@ for my $path (keys %scan) {
 	}
 }
 
-sub closure_of {
+	sub closure_of {
 	my $start = shift;
 	my %seen;
 	my @stack = ($start);
@@ -211,6 +237,11 @@ sub closure_of {
 			my $target = target_of($req->[1]) or next;
 			push @stack, $target;
 		}
+	}
+	# The loader can require any mapped domain module on the first call into it,
+	# so the whole lazy layer is reachable from a closure that holds the loader.
+	if ($seen{'./lib/JawnOS/Domain/Loader.pm'}) {
+		$seen{$_} = 1 for grep { m{^\./lib/JawnOS/Domain/} } keys %scan;
 	}
 	return \%seen;
 }

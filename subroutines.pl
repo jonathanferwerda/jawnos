@@ -1,6 +1,14 @@
 #!/usr/bin/env perl
 package subs;
 
+BEGIN {
+	require Cwd;
+	require File::Basename;
+	# absolute, from this file's real path: a later chdir cannot break it, and a
+	# symlinked copy (the test sandbox) still finds the tree's own lib/
+	unshift @INC, File::Basename::dirname(Cwd::abs_path(__FILE__)) . '/lib';
+}
+
 use strict;
 use warnings;
 use utf8;
@@ -56,8 +64,9 @@ require "./Websocket.pl";
 require "./language.pl";
 
 my $config_file = read_file('./config.json');
-# `our`, not `my`: domain.pl is in this package and reads the same config
-# (notification_sender, embedded_toggle and friends used to be in Manager.pl).
+# `our`, not `my`: the domain modules in lib/ are in this package and read the
+# same config (notification_sender, embedded_toggle and friends used to be in
+# Manager.pl).
 our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 our $resolve_when_residual = '';   # what resolve_when could not read as a date (see date_leftover)
@@ -67,10 +76,9 @@ my $universal_splitter = $gb::universal_splitter;
 
 our $device = &device_setter();
 
-# The functions that used to live in Manager.pl and that this file calls. They
-# are package subs here, so no caller needs Manager.pl (and its routes) for
-# them; Manager.pl aliases the old Manager:: name for its own callers.
-require './domain.pl';
+# The domain layer in lib/ (lazy: the Loader AUTOLOADs each module on first
+# call), so no caller needs Manager.pl for its functions.
+require JawnOS::Domain::Loader;
 
 # Request-scoped settings read-through memo (see setting_grabber). Cleared at
 # each request boundary by hooks.pl; off outside requests so long-lived
@@ -28576,12 +28584,12 @@ sub evaluation_agent() {
 	# Without this a young period is read as a shortfall.
 	my $budget_pace;
 	# The nightly run is a Minion job in President's worker, where Manager.pl is
-	# not loaded; budget_calculator (and father_time under it) live there. Calling
-	# it unconditionally killed every scheduled evaluation with "Undefined
-	# subroutine &subs::budget_calculator" before the model was ever asked.
+	# not loaded. budget_calculator (and father_time under it) live in the domain
+	# layer now (lib/JawnOS/Domain/Budget.pm) and load on first call, so the call
+	# is safe; provides() keeps the guard without forcing the module to compile.
 	# The web Evaluate button still gets the pace; the scheduled run reads the
 	# budget figure from settings_brief and leaves the pace out.
-	if (!$global && !$measure_app && ($app_settings->{'budget'} || '') =~ /\S/ && ($app_settings->{'s_lock'} || '') eq 'on' && defined &subs::budget_calculator) {
+	if (!$global && !$measure_app && ($app_settings->{'budget'} || '') =~ /\S/ && ($app_settings->{'s_lock'} || '') eq 'on' && subs::provides('budget_calculator')) {
 		foreach my $mode ( sort keys %{$gb::budget_modes} ) {
 			my $bp = &subs::budget_calculator({
 				app => $app,

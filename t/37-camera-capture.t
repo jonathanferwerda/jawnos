@@ -30,9 +30,10 @@ no warnings 'experimental::signatures';
 # the route claims it into the house's photo/video folder, and OCR is optional.
 
 my $manager = read_file("$FindBin::Bin/../Manager.pl");
-# ocr_reader moved to the domain layer (domain.pl, package subs) with the other
-# functions subroutines.pl calls; the camera route itself is still in Manager.pl.
-my $domain = read_file("$FindBin::Bin/../domain.pl");
+# ocr_reader moved to the domain layer (lib/JawnOS/Domain/*.pm, package subs);
+# the camera route itself is still in Manager.pl. Read the whole lazy layer so
+# a later regrouping does not make these checks fail on a missing file.
+my $domain = join "\n", map { read_file($_) } glob("$FindBin::Bin/../lib/JawnOS/Domain/*.pm");
 my $js = read_file("$FindBin::Bin/../public/js/manager/manager.js");
 my $details = read_file("$FindBin::Bin/../templates/appointment_details.html.ep");
 my $wrapper = read_file("$FindBin::Bin/../templates/appointment_wrapper.html.ep");

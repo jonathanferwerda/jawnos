@@ -12,13 +12,15 @@ use JawnOSTest ();
 
 ok defined &subs::format_name,    'core module loaded (subs::format_name)';
 ok defined &subs::duration_sayer, 'duration helpers loaded';
-# domain.pl holds the functions that used to live in Manager.pl and that
-# subroutines.pl calls; reaching them here proves subroutines.pl still requires
-# it, which is what lets the watch and teletype workers boot without Manager.pl.
-ok defined &subs::remote_useragent_maker, 'domain layer loaded (subs::remote_useragent_maker)';
-ok defined &subs::notification_sender,    'domain layer loaded (subs::notification_sender)';
-ok defined &subs::log_reader,             'domain layer loaded (subs::log_reader)';
-ok defined &subs::budget_calculator,      'domain layer loaded (subs::budget_calculator)';
+# The domain layer under lib/ is lazy: subroutines.pl loads only the Loader, and
+# a module compiles on the first call into it. provides() is how a caller (and
+# this test) asks whether a domain function exists without forcing the load.
+ok subs::provides('remote_useragent_maker'), 'domain loader provides remote_useragent_maker';
+ok subs::provides('log_reader'),             'domain loader provides log_reader';
+ok subs::provides('budget_calculator'),      'domain loader provides budget_calculator';
+ok !defined &subs::log_reader, 'a domain module is not compiled at boot';
+require JawnOS::Domain::Log;
+ok defined &subs::log_reader, 'requiring the module defines its subs';
 ok defined &language::translate,  'language catalog loaded';
 ok defined &language::valid,      'language::valid loaded';
 

@@ -84,10 +84,17 @@ sub _setup {
 	$SANDBOX = tempdir('jawnos-test-XXXXXX', TMPDIR => 1, CLEANUP => 1);
 	die "JawnOSTest: cannot create a sandbox\n" unless defined $SANDBOX;
 
-	# The five files subroutines.pl reaches for by relative path at load time.
-	for my $file (qw(subroutines.pl domain.pl gb.pl Websocket.pl language.pl)) {
+	# The files subroutines.pl reaches for by relative path at load time. The
+	# domain modules under lib/ are lazy (required on first call), and
+	# subroutines.pl resolves lib/ from its own real path, so the sandbox needs
+	# only the symlink below for a `perl -c` or a stray relative lookup.
+	for my $file (qw(subroutines.pl gb.pl Websocket.pl language.pl)) {
 		symlink("$ROOT/$file", "$SANDBOX/$file")
 			or die "JawnOSTest: symlink $file: $!\n";
+	}
+	if (-d "$ROOT/lib") {
+		symlink("$ROOT/lib", "$SANDBOX/lib")
+			or die "JawnOSTest: symlink lib: $!\n";
 	}
 	mkdir "$SANDBOX/database" or die "JawnOSTest: mkdir database: $!\n";
 	mkdir "$SANDBOX/.president" or die "JawnOSTest: mkdir .president: $!\n";
