@@ -180,7 +180,10 @@ function websocketStart(appt,address) {
 		if ((ws[app] && ws[app] != null && ws[app].readyState == 1) || (ws[app] && ws[app]['status'] != 'alive')) {  return true; }
 		ws[app] = { readyState: 4, stayingAlive: 1 };
 		var http_escaped = encodeURIComponent(app);
-		ws[app] = new WebSocket(address || ws_url + '?timestamp=' + timestamp + '&app=' + app + '&browser_tab_id=' + browser_tab_id + '&browser_tab=' + browser_tab + '&user_agent=' + uA );
+		// The loopback URL already carries a ws_token; a remote address may carry
+		// its own query. Only the local URL needs the separator resolved.
+		var ws_sep = (ws_url.indexOf('?') >= 0) ? '&' : '?';
+		ws[app] = new WebSocket(address || ws_url + ws_sep + 'timestamp=' + timestamp + '&app=' + app + '&browser_tab_id=' + browser_tab_id + '&browser_tab=' + browser_tab + '&user_agent=' + uA );
 		ws[app]['stayingAlive'] = Date.now();
 		ws[app]['status'] = 'connect';
 		ws[app].onopen = function (event) {

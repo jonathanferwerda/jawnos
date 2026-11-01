@@ -149,6 +149,14 @@ function monitorRenderHealth(h, jawnShare) {
 	}
 	put('processes', (h.processes === undefined || h.processes === null) ? '—' : h.processes + ' procs');
 	put('battery', number(b.percentage, 0, '%'));
+	// device_call may miss one reply while the app is busy; the sampler then
+	// serves the last good reading as stale. Keep the value on screen and say
+	// how old it is rather than showing a battery of nothing.
+	if (b.stale) {
+		var held = (b.stale_age === undefined || b.stale_age === null) ? '' : ' (' + Math.round(b.stale_age) + 's)';
+		var held_label = (typeof jawnosT === 'function') ? jawnosT('Last good reading') : 'Last good reading';
+		$('#monitor_health [data-h="battery"]').attr('title', held_label + held);
+	}
 	put('state', monitorHealthLabel(b.status));
 	put('temp', number(b.temperature, 1, b.temperature_source === 'cpu' ? ' °C (cpu)' : ' °C'));
 	put('voltage', number(b.voltage, 3, ' V'));

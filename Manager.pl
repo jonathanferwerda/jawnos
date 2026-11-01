@@ -3050,9 +3050,9 @@ sub homepage_maker($c) {
 		$mc->{'public'} = &subs::setting_grabber({ app => &subs::unformat_name($mc->{'title'}), setting => 'public' });
 
 	}
-	my $ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/manager/ws';
-	my $mail_ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/mail/ws';
-	my $paperboy_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/observer/ws';
+	my $ws_url = &ws_url_for($c, '/manager/ws');
+	my $mail_ws_url = &ws_url_for($c, '/mail/ws');
+	my $paperboy_url = &ws_url_for($c, '/observer/ws');
 	my ($website,$header) = &website_preloader($c);
 	my $my_name = $c->param('name') || &subs::setting_grabber({ app => 'me', setting => 'my_name' });
 	my %data = (
@@ -5550,9 +5550,9 @@ sub store_maker($c) {
 	my $store_item_total = 0;
 	$store_item_total += $_->{'count'} foreach @{$categories};
 	my $store_type_counts = &store_type_counts($c->session('privilege'), [ map { $_->{'app'} } @{$categories} ]);
-	my $mail_ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/mail/ws';
-	my $paperboy_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/observer/ws';
-	my $ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/manager/ws';
+	my $mail_ws_url = &ws_url_for($c, '/mail/ws');
+	my $paperboy_url = &ws_url_for($c, '/observer/ws');
+	my $ws_url = &ws_url_for($c, '/manager/ws');
 	my $advertise_watching = &subs::setting_grabber({ app => 'me', setting => 'advertise_watching' });
 	if ($c->param('window_maker') eq 'yes') {
 		return $c->render_to_string(
@@ -13098,9 +13098,9 @@ get '/manager' => sub ($c) {
 	my ($website,$header) = &website_preloader($c);
 
 	my $my_name = &subs::setting_grabber({ app => 'me', setting => 'my_name' });
-	my $ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/manager/ws';
-	my $mail_ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/mail/ws';
-	my $paperboy_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/observer/ws';
+	my $ws_url = &ws_url_for($c, '/manager/ws');
+	my $mail_ws_url = &ws_url_for($c, '/mail/ws');
+	my $paperboy_url = &ws_url_for($c, '/observer/ws');
 	my $padlock = &subs::db_select('security', ['level'], { level => 'padlock' })->hashes;
 	my $parking_lot = &parking_lot_grabber($c);
 	# a manager page is never a page to keep: Back must ask the house, not a
@@ -14487,7 +14487,7 @@ get '/box_office/:uuid' => sub($c) {
 			$access->{'status'} = 'approved';
 
 
-			my $mail_ws_url = 'wss://' . $c->req->url->base->host . ':' . $ENV{PORT_MSG} . '/mail/ws';
+			my $mail_ws_url = &ws_url_for($c, '/mail/ws');
 			# the splash always wears the drawing (the hand the denial page shows too)
 			my $image = &subs::icon_drawn($gb::known_appts->{$ticket->{'privilege'}}->{'icon'});
 			my %js = (
@@ -45496,7 +45496,49 @@ post '/manager/assistant' => sub($c) {
 };
 
 
+# The app's WebView trusts the house certificate for page loads
+# (onReceivedSslError), but a WebSocket handshake never reaches that callback,
+# so wss:// to the self-signed manager fails inside the app. The socket server
+# also listens plainly on 127.0.0.1; Chromium treats loopback as trustworthy,
+# so an https page may open ws:// there. A Secure session cookie is not sent on
+# that handshake, so the page carries a short-lived token that restores the
+# session for the socket.
+sub ws_plain_token {
+	my ($c) = @_;
+	my $token = $c->stash('ws_plain_token');
+	return $token if $token;
+	$token = &subs::random_string_creator(32);
+	my $session = $c->session || {};
+	my %auth = %{$session};
+	&subs::cache_set({ app => '__president', context => 'ws_token', subcontext => $token, warranty => '+7d' }, \%auth);
+	$c->stash('ws_plain_token' => $token);
+	return $token;
+}
+
+sub ws_plain_auth {
+	my ($c) = @_;
+	my $token = $c->param('ws_token');
+	return unless defined $token && $token =~ /\A[A-Za-z0-9]{16,64}\z/;
+	my $auth = &subs::cache_get({ app => '__president', context => 'ws_token', subcontext => $token });
+	return unless ref $auth eq 'HASH' && scalar keys %{$auth};
+	$c->session(%{$auth});
+	return 1;
+}
+
+sub ws_url_for {
+	my ($c, $path) = @_;
+	my $base = $c->req->url->base;
+	my $host = $base->host // '';
+	my $plain = $ENV{'PORT_WS_PLAIN'} || 0;
+	if ($plain && ($host eq '127.0.0.1' || $host eq 'localhost' || $host eq '::1')) {
+		my $shown = ($host eq '::1') ? '[::1]' : $host;
+		return 'ws://' . $shown . ':' . $plain . $path . '?ws_token=' . &ws_plain_token($c);
+	}
+	return 'wss://' . $host . ':' . $ENV{'PORT_MSG'} . $path;
+}
+
 websocket '/observer/ws' => sub ($c) {
+	&ws_plain_auth($c);
 	my $browser_tab_id = $c->param('browser_tab_id');
 	$gb::paperboy->{$browser_tab_id} = $c->tx;
 	$c->on(message => sub ($ows, $msg) {
@@ -45522,6 +45564,7 @@ websocket '/observer/ws' => sub ($c) {
 };
 
 websocket '/mail/ws' => sub ($c) {
+	&ws_plain_auth($c);
 	my $me = &manager_file_maker($c->session('name'));
 	my $browser_tab_id = $c->param('browser_tab_id');
 
@@ -47000,6 +47043,7 @@ sub text_editor_variables($context) {
 }
 
 websocket '/manager/ws' => sub ($c) {
+	&ws_plain_auth($c);
 	my $ug    = Data::UUID->new;
 	my $uuid = $ug->create_str();
 	my ($db,$database,$sql) = &subs::database_grabber();

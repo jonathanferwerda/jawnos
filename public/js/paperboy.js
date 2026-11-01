@@ -9,7 +9,10 @@ function paperboyStart() {
 	var timestamp = Date.now();
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || bti;
 	var browser_tab = localStorage.getItem('browser_tab') || bt;
-	paperboy = new WebSocket(paperboy_url + '?timestamp=' + timestamp + '&browser_tab=' + browser_tab + '&browser_tab_id=' + browser_tab_id);
+	// The loopback URL already carries its ws_token, so the separator is not
+	// always '?'.
+	var paperboy_sep = (paperboy_url.indexOf('?') >= 0) ? '&' : '?';
+	paperboy = new WebSocket(paperboy_url + paperboy_sep + 'timestamp=' + timestamp + '&browser_tab=' + browser_tab + '&browser_tab_id=' + browser_tab_id);
 	paperboy.onopen = function (event) {
 		clearInterval(paperboyInterval);
 		console.log('Paperboy started');

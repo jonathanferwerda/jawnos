@@ -1026,7 +1026,10 @@ function mailWebSocketStart() {
 	mailwsSignature = signature;
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id') || bti;
 	var browser_tab = localStorage.getItem('browser_tab') || bt;
-	mailws = new WebSocket(mail_ws_url + '?timestamp=' + timestamp + '&browser_tab=' + encodeURIComponent(browser_tab) + '&browser_tab_id=' + encodeURIComponent(browser_tab_id) + '&picker=' + encodeURIComponent(address.picker) + '&mail_contact=' + encodeURIComponent(address.mail_contact) + '&phone=' + encodeURIComponent(address.phone) + '&email=' + encodeURIComponent(address.email));
+	// A loopback page gets a ws:// URL that already carries its token; the
+	// query separator therefore depends on the URL, not on a bare '?'.
+	var mailws_sep = (mail_ws_url.indexOf('?') >= 0) ? '&' : '?';
+	mailws = new WebSocket(mail_ws_url + mailws_sep + 'timestamp=' + timestamp + '&browser_tab=' + encodeURIComponent(browser_tab) + '&browser_tab_id=' + encodeURIComponent(browser_tab_id) + '&picker=' + encodeURIComponent(address.picker) + '&mail_contact=' + encodeURIComponent(address.mail_contact) + '&phone=' + encodeURIComponent(address.phone) + '&email=' + encodeURIComponent(address.email));
 	mailwsLastAnswer = Date.now();
 	console.log('ws+() mail at ' + mail_ws_url + ' ' + address.mail_contact);
 	mailws.onopen = function (event) {

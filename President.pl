@@ -175,6 +175,15 @@ if ($config->{'environment'} eq 'development') {
 	$alarm_port = $port;
 }
 
+# The app's WebView cannot take the house's self-signed certificate for a
+# WebSocket: onReceivedSslError trusts it for page loads only, and a handshake
+# never reaches that callback. The socket server therefore also listens plainly
+# on loopback. Chromium treats 127.0.0.1 as trustworthy, so the https page may
+# open ws:// there; the page carries a short-lived token because a Secure
+# session cookie is not sent on a ws:// handshake.
+my $ws_plain_port = $ws_port + 100;
+$ws_plain_port = $ws_port - 100 if $ws_plain_port > 60000;
+
 
 # A worker's Perl heap grows with the work it does and is never handed back to
 # the OS, so on a handheld it only accumulates until Android's low-memory killer
@@ -280,6 +289,7 @@ sub manager_starter() {
 	my $ws_tty_port = $tty_port + 1;
 	$ENV{PORT_AHOY} = $random_number;
 	$ENV{PORT_MSG} = $ws_port;
+	$ENV{PORT_WS_PLAIN} = $ws_plain_port if $config->{'environment'} eq 'production';
 	$ENV{PORT_BELL} = $alarm_port;
 	$ENV{PORT_BESTOW} = $tty_port;
 	$ENV{PORT_DOCK} = $dock_port;
@@ -681,7 +691,8 @@ sub manager_starter() {
 			print "Starting Pro WS Server on port " . $ws_port . "\n";
 			$ENV{MOJO_LISTEN} = 'https://*:' . $ws_port . $certs;
 			$ENV{PURPOSE} = 'websocket';
-			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => [ $ENV{MOJO_LISTEN} ]), keep_alive => 1);
+			my @ws_listeners = ( 'https://*:' . $ws_port . $certs, 'http://127.0.0.1:' . $ws_plain_port );
+			my $prefork = &prefork_tune(Mojo::Server::Prefork->new(listen => \@ws_listeners), keep_alive => 1);
 			$prefork->heartbeat_timeout(200);
 			$prefork->load_app('./Manager.pl');
 			$prefork->workers(1);

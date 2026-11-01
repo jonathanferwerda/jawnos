@@ -3523,6 +3523,10 @@ sub device_call {
 	return undef unless defined $method && length $method;
 
 	my $now = time;
+	# One missed reply is usually the app being busy, not a dead bridge. Keep
+	# the cooldown short so the next poll recovers; the battery sample serves
+	# the last good reading while this is in force.
+	my $cooldown = 5;
 	return undef if $device_bridge_memo && ($device_bridge_memo->{'until'} || 0) > $now;
 
 	my $token = '';
@@ -3533,7 +3537,7 @@ sub device_call {
 		$token =~ s/\s+//g;
 	}
 	unless (length $token) {
-		$device_bridge_memo = { until => $now + 30 };
+		$device_bridge_memo = { until => $now + $cooldown };
 		return undef;
 	}
 
@@ -3541,7 +3545,7 @@ sub device_call {
 	unless ($sock) {
 		$sock = &device_bridge_connect();
 		unless ($sock) {
-			$device_bridge_memo = { until => $now + 30 };
+			$device_bridge_memo = { until => $now + $cooldown };
 			return undef;
 		}
 		$sock->autoflush(1);
@@ -3566,7 +3570,7 @@ sub device_call {
 	if (!$wrote) {
 		close $sock;
 		$device_bridge_sock = undef;
-		$device_bridge_memo = { until => $now + 30 };
+		$device_bridge_memo = { until => $now + $cooldown };
 		return undef;
 	}
 
@@ -3578,7 +3582,7 @@ sub device_call {
 	unless (defined $answer) {
 		close $sock;
 		$device_bridge_sock = undef;
-		$device_bridge_memo = { until => $now + 30 };
+		$device_bridge_memo = { until => $now + $cooldown };
 		return undef;
 	}
 	$answer =~ s/\s+$//;
@@ -3886,7 +3890,10 @@ sub battery_sample {
 	# desktop, or an Android host that is not the app) has no power-supply
 	# sysfs to read either, so it reports source 'none' rather than spawning
 	# a termux command that is no longer installed.
-	my $j = &subs::device_call('battery.status');
+	# A five second wait survives a busy app (a sync or a page render) without
+	# declaring the battery gone; the cooldown is short and the stale sample
+	# below covers the case where it is still too late.
+	my $j = &subs::device_call('battery.status', {}, 5);
 	if (ref $j eq 'HASH' && defined $j->{'percentage'}) {
 			$b->{'source'} = 'bridge';
 			$b->{'present'} = $j->{'present'} ? 1 : 0;
@@ -4081,6 +4088,23 @@ sub battery_sample {
 		next unless defined $b->{$eta};
 		if ($b->{$eta} <= 0.01) { $b->{$eta} = undef; }
 		elsif ($b->{$eta} > 240) { $b->{$eta} = 240; $b->{'eta_capped'} = 1; }
+	}
+	# One missed bridge reply must not blank the card. The app can be busy for
+	# longer than the read timeout, and device_call then refuses every call for
+	# its cooldown; the last good reading is still true, so serve it marked
+	# stale instead of reporting a phone with no battery. Ten minutes is the
+	# limit: older than that is not a reading worth trusting.
+	if (($b->{'source'} // '') eq 'none'
+		&& ref $cached eq 'HASH'
+		&& ($cached->{'source'} // '') ne 'none'
+		&& defined $cached->{'percentage'}
+		&& $now - ($cached->{'sampled'} || 0) <= 600000) {
+		my %held = %{$cached};
+		delete $held{'history'};
+		$held{'stale'} = 1;
+		$held{'stale_age'} = int(($now - ($cached->{'sampled'} || $now)) / 1000);
+		$held{'sampled'} = $now;
+		return $battery_sample_memo = \%held;
 	}
 	# a machine with no battery has nothing worth caching; the Monitor can stat
 	# it every poll without a write
