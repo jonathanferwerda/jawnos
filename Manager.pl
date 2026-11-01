@@ -11604,10 +11604,22 @@ get '/manager/sync_buckets' => sub ($c) {
 				}
 			}
 			else {
+				# A reply that is neither a snapshot nor an export status used to fail
+				# with only "the peer sent no snapshot" - no code, no url, no body, so
+				# a doubled /manager (the Gate page) and a mis-signed request looked
+				# identical. Keep the evidence next to the failure.
+				my $rbody = ($res && $res->body) ? substr($res->body, 0, 200) : '';
+				$rbody =~ s/\s+/ /g;
+				eval { $log->error('snapshot reply unusable: code=' . (($res && $res->code) || 0) . ' url=' . $url . ' body=' . $rbody) };
+				&subs::sync_job_step($job, 'export', { state => 'failed', note => 'unexpected reply from the peer' });
 				$sync->done('failed', 'the peer sent no snapshot');
 			}
 		}
 		else {
+			# The export request itself never answered: name the url and the error.
+			my $err = $@ ? $@ : 'no reply';
+			$err =~ s/\s+/ /g;
+			eval { $log->error('snapshot request failed: url=' . $url . ' err=' . substr($err, 0, 200)) };
 			$sync->done('failed', 'the peer did not answer');
 		}
 
