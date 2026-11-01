@@ -116,7 +116,7 @@ sub handle {
 		$reason = 'asked over the control socket' unless length $reason;
 		my $source = &clean_text($req->{'source'} // '', 60);
 		$source = 'control-socket' unless length $source;
-		my $by = ($req->{'pid'} // '') =~ /^([0-9]+)$/ ? $1 : 0;
+		my $by = ($req->{'pid'} // '') =~ /^([0-9]+)$/ ? $1 + 0 : 0;
 		return { action => 'restart', reason => $reason, source => $source, requested_by => $by };
 	}
 	return { reply => &_fail('unknown-command',

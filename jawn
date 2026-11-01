@@ -231,15 +231,18 @@ my $pending_restart;
 		}
 	}
 }
-# What this tree is running. The control socket reports it and every restart
-# record carries it, so "which version was that?" is answered, not remembered.
-my $version = '';
-if (-f './VERSION' && open(my $version_fh, '<', './VERSION')) {
+# What this tree is running. Read when it is asked for, not once at startup: a
+# version bump alone does not reload the master (only ./jawn does), so a cached
+# string kept reporting the version from before the restart that shipped it.
+sub tree_version {
+	return '' unless -f './VERSION';
+	open(my $fh, '<', './VERSION') or return '';
 	local $/;
-	$version = <$version_fh>;
-	close $version_fh;
-	$version = '' unless defined $version;
+	my $version = <$fh>;
+	close $fh;
+	return '' unless defined $version;
 	$version =~ s/\s+//g;
+	return $version;
 }
 
 my @printless = (
@@ -410,7 +413,7 @@ sub master_time_looper() {
 					source => $request->{'source'} || 'status-file',
 					requested_by => $request->{'requested_by'} || 0,
 					status_before => $before,
-					version => $version,
+					version => &tree_version(),
 					master_pid => $$,
 					verify => $proof->{'summary'} || $proof->{'skipped'} || '',
 					report => $proof->{'ok'} ? '' : &control::clean_text($proof->{'report'} || '', 2000),
@@ -909,7 +912,7 @@ sub answer_restart {
 		proof => $proof,
 		reason => $request->{'reason'},
 		source => $request->{'source'},
-		version => $version,
+		version => &tree_version(),
 		pid => $$,
 		status_before => $before,
 	});
@@ -993,7 +996,7 @@ sub control_socket() {
 					status => $status,
 					why => $status_why,
 					pid => $$,
-					version => $version,
+					version => &tree_version(),
 					pending => $pending_restart ? 1 : 0,
 					last => &control::read_record(dir => &home('~/.president')),
 					verify => \&tree_verify,
