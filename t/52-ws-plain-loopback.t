@@ -54,6 +54,14 @@ is(scalar @calls, 10, 'the three socket URLs are built at all five pages');
 my @auths = ($manager =~ /^\t&ws_plain_auth\(\$c\);/mg);
 is(scalar @auths, 3, 'the mail, manager and observer sockets accept the token');
 
+# The app gate runs before the route and reads the session, so the token must
+# be restored there first; otherwise the handshake gets the Gate page (200)
+# instead of 101 Switching Protocols.
+my ($gate) = $manager =~ /sub authentication_passer\(\$c\) \{(.*?)\n\}/s;
+ok(defined $gate, 'the app gate is found');
+like($gate // '', qr/if \(\$app_path =~ m\{\/\(\?:mail\|manager\|observer\)\/ws\\z\}\) \{\s*\n\s*&ws_plain_auth\(\$c\);\s*\n\s*\}/,
+	'the gate restores the ws token session before it reads it');
+
 # 4. the JS appends its query after a token, not after a bare '?'
 my $mailbox = read_file("$FindBin::Bin/../public/js/mailbox.js");
 my $socket  = read_file("$FindBin::Bin/../public/js/manager/websocket.js");

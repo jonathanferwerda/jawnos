@@ -42652,6 +42652,12 @@ sub authentication_passer($c) {
 	# so the two settings reads behind app_access_mode are skipped for every
 	# asset and public page instead of being paid on each of them.
 	my $app_path = $c->req->url->path->to_string;
+	# A plain loopback WebSocket cannot carry the Secure session cookie; the
+	# page-supplied ws_token restores the session before this gate reads it,
+	# so the socket passes the same gate the page did.
+	if ($app_path =~ m{/(?:mail|manager|observer)/ws\z}) {
+		&ws_plain_auth($c);
+	}
 	my $app_public = &app_public_path($app_path) ? 1 : 0;
 	# A live boot belongs to whoever is at the machine: its own loopback (the
 	# desktop app's view) is the house, so it opens the manager without a
