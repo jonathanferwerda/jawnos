@@ -65,5 +65,9 @@ my $runner = read_file("$qa/run.pl");
 like($runner, qr/known: l0 l1 l2 l3/, 'the runner names all four layers');
 like($runner, qr/live => 1/, 'the UI layer boots a loopback session');
 like($runner, qr/Db->checks/, 'the database layer runs the checks');
+my $wk_at = index($runner, 'my $w = Ui->webkit');
+my $cr_at = index($runner, 'my $r = Ui->probe');
+ok($wk_at >= 0 && $cr_at > $wk_at,
+	'WebKit runs before Chromium, so a handler that kills the tree cannot mask it');
 
 done_testing();

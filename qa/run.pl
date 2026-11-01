@@ -446,6 +446,27 @@ if ($want_l3) {
 		my @urls = map { $h->url_for($_) } @paths;
 		my $out = "$results/ui";
 
+		# The desktop app's engine runs first: a Chromium pass that trips a
+		# handler bug can take the tree down, and then WebKit would only record
+		# the connection refused that followed.
+		my $w = Ui->webkit(url => $h->url_for('/manager'), out => "$out/webkit.json");
+		if ($w->{'error'}) {
+			$report{'warnings'}++;
+			$say->('  warn webkit: ' . $w->{'error'});
+			push @{ $report{'ui'} }, {
+				name => 'webkit GET /manager', ok => 1,
+				detail => 'not run: ' . $w->{'error'},
+			};
+		}
+		else {
+			push @{ $report{'ui'} }, {
+				name => 'webkit GET /manager',
+				ok => ($w->{'hasMenu'} ? 1 : 0),
+				detail => ($w->{'title'} || '') . ', ' . ($w->{'nodes'} // '?') . ' nodes',
+			};
+			$fatal->('l3 webkit GET /manager: start menu missing') unless $w->{'hasMenu'};
+		}
+
 		my $r = Ui->probe(urls => \@urls, out => $out);
 		if ($r->{'error'}) {
 			$fatal->('l3 chromium: ' . $r->{'error'});
@@ -464,7 +485,28 @@ if ($want_l3) {
 				}
 				my $verdict = 'pass';
 				my $reason = '';
-				if (!defined $p->{'status'} || $p->{'status'} >= 500) {
+				unless (defined $p->{'status'}) {
+					# A navigate timeout on a house whose tree is still alive is a
+					# slow page. If the tree is gone, the route killed it - the
+					# finding this layer exists for.
+					if ($h->alive()) {
+						$report{'warnings'}++;
+						push @{ $report{'ui'} }, {
+							name => "chromium GET $path", ok => 1,
+							detail => 'not captured: navigate timeout (slow page)',
+						};
+						next;
+					}
+					$verdict = 'fail';
+					$reason = 'the route killed the instance';
+					push @{ $report{'crashes'} }, "chromium GET $path";
+					my $ok = eval { $h->restart('ui'); $h->session(); 1 };
+					if (!$ok) {
+						$fatal->("l3 chromium GET $path: the instance died and could not be restarted");
+						last;
+					}
+				}
+				elsif ($p->{'status'} >= 500) {
 					$verdict = 'fail';
 					$reason = 'no answer or 5xx';
 				}
@@ -508,25 +550,6 @@ if ($want_l3) {
 				$report{'warnings'}++;
 				$say->('[l3] chromium probe was partial: a page hung and was not captured');
 			}
-		}
-
-		# The desktop app's engine. Not a Chromium result.
-		my $w = Ui->webkit(url => $h->url_for('/manager'), out => "$out/webkit.json");
-		if ($w->{'error'}) {
-			$report{'warnings'}++;
-			$say->('  warn webkit: ' . $w->{'error'});
-			push @{ $report{'ui'} }, {
-				name => 'webkit GET /manager', ok => 1,
-				detail => 'not run: ' . $w->{'error'},
-			};
-		}
-		else {
-			push @{ $report{'ui'} }, {
-				name => 'webkit GET /manager',
-				ok => ($w->{'hasMenu'} ? 1 : 0),
-				detail => ($w->{'title'} || '') . ', ' . ($w->{'nodes'} // '?') . ' nodes',
-			};
-			$fatal->('l3 webkit GET /manager: start menu missing') unless $w->{'hasMenu'};
 		}
 
 		$h->stop('ui');
