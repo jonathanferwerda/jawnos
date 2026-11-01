@@ -83,14 +83,17 @@ like($setup, qr/device\.token/, 'and authenticates with the bridge token');
 # M2: the master names the interpreter it is running under instead of letting
 # the shell resolve President.pl's "#!" line, which on a device only worked
 # through termux-exec's LD_PRELOAD. The app's supervisor runs the tree without
-# termux-exec, so this is what keeps it launching.
+# termux-exec, so this is what keeps it launching. The argv is exec'd directly:
+# the old `bash -i` also stored the command in ~/.bash_history.
 my $master = do {
 	open(my $jf, '<', "$FindBin::Bin/../jawn") or die $!;
 	local $/;
 	<$jf>;
 };
-like($master, qr/sub president_command/, 'the master builds the tree command itself');
-like($master, qr/exec '\$interp' \.\/perl\/President\.pl/, 'and it execs the interpreter by path');
-unlike($master, qr/'program'\s*=>\s*'\.\/President\.pl'/, 'nothing relies on the shebang');
+like($master, qr/sub president_process/, 'the master builds the tree process itself');
+like($master, qr/my \$interp = \$\^X/, 'from the interpreter it is already running under');
+like($master, qr/program_args\s*=>\s*\[\s*'\.\/perl\/President\.pl'\s*\]/, 'and passes President.pl as an argument, not through a shebang');
+unlike($master, qr/program\s*=>\s*['"]\.\/President\.pl/, 'nothing relies on the shebang');
+unlike($master, qr/program\s*=>\s*['"]bash['"]/, 'no interactive shell receives the command');
 
 done_testing();

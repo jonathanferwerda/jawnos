@@ -190,20 +190,28 @@ $SIG{INT} = sub {
 };
 
 my ($master_boot_watch, $master_boot_tries);
-# The command the pty shell runs. It names the interpreter rather than relying
-# on President.pl's "#!" line: a shebang of /usr/bin/perl only resolves through
+# The process the pty runs. It names the interpreter rather than relying on
+# President.pl's "#!" line: a shebang of /usr/bin/perl only resolves through
 # termux-exec's LD_PRELOAD, and the app's own supervisor (docs/roadmap-handoff.md
 # M2) runs this tree without termux-exec. $^X is the perl already running here.
-sub president_command() {
+# ReadWriteFork execs the argv directly instead of typing it into an interactive
+# shell: `bash -i` wrote this command into the house's ~/.bash_history on exit
+# and existed only so the runner could write the command (and a ^C, which a raw
+# pty never turns into SIGINT) to its stdin.
+sub president_process() {
 	my $interp = $^X;
 	$interp = 'perl' unless defined $interp && length $interp;
-	return "exec '$interp' ./perl/President.pl";
+	return {
+		label        => "$interp ./perl/President.pl",
+		program      => $interp,
+		program_args => [ './perl/President.pl' ],
+	};
 }
 # A re-exec keeps this master's pid, so any child it fathered before exec is
-# still ours - and nobody else can reap it. Clear a stale pty shell (and any
+# still ours - and nobody else can reap it. Clear a stale pty child (and any
 # defunct child) before this incarnation starts one of its own.
 &reap_own_children();
-$fork = &terminal_pty_runner({ 'program' => &president_command() });
+$fork = &terminal_pty_runner(&president_process());
 &arm_boot_watch();
 
 my $status = 'off';
@@ -358,7 +366,7 @@ sub master_time_looper() {
 			}
 		}
 		else { $tree_ticks = 0; $tree_misses = 0; $tree_dead_since = undef }
-		# Safety net for a shell that outlived its fork object (a teardown that
+		# Safety net for a pty child that outlived its fork object (a teardown that
 		# died halfway, a re-exec): reap it and any defunct child, but never the
 		# current pty child, whose exit status belongs to ReadWriteFork.
 		if (++$reap_ticks >= 30) {
@@ -447,7 +455,7 @@ sub master_time_looper() {
 						sleep .5;
 					}
 					$fork = undef;
-					$fork = &terminal_pty_runner({ 'program' => &president_command() });
+					$fork = &terminal_pty_runner(&president_process());
 					&arm_boot_watch();
 				}
 				else {
@@ -575,7 +583,9 @@ sub shut_down() {
 	# this tear-down is on purpose, so the fork's own close must not be read as a
 	# crash (see the close handler in terminal_pty_runner)
 	$fork->{'jawn_deliberate'} = 1 if $fork;
-	$fork->write("\x03");
+	# No ^C byte: the pty runs raw (conduit raw => 1), so a written \x03 is data
+	# for a process that never reads stdin, not SIGINT. The named INT below and
+	# the sweep after it are the stop.
 	# The named sweep is the workhorse: it takes the tree by process name and full
 	# command line, and whatever still holds the web port. (2026-10-14: this used to
 	# be followed by pid-as-substring matches against `ps -e`, which once matched a
@@ -604,8 +614,8 @@ sub shut_down() {
 		push @sent, $pid;
 		print "INT $pid\n";
 	}
-	# our own pty child (bash) ends the terminal; it is our direct child, so its
-	# exact pid is safe even though its command line is not a jawn program
+	# our own pty child (President) ends the terminal; it is our direct child, so
+	# its exact pid is safe even though the kill sweep matches by command line
 	my $fpid = $fork ? $fork->pid : 0;
 	if ($fpid && &pid_alive($fpid) && $fpid != $$) {
 		kill 'INT', $fpid;
@@ -657,9 +667,9 @@ sub shut_down() {
 		print "KILL leftover $pid\n";
 	}
 	print "leftover check: " . ($cleared ? "$cleared cleared" : 'clean') . "; web port " . (&config_port() || 0) . " is " . (&tree_serving() ? 'STILL ANSWERING' : 'free') . "\n";
-	# The pty shell is our child too. Collect it here: the IOLoop waiter cannot run
+	# The pty child is our child too. Collect it here: the IOLoop waiter cannot run
 	# during the sleeps above, and the re-exec path exec()s straight after this,
-	# which would strand a dead shell as a defunct process forever.
+	# which would strand a dead child as a defunct process forever.
 	&reap_own_children();
 	$subprocesses = {};
 	sleep .1;
@@ -696,12 +706,13 @@ sub pid_is_jawn {
 	return &pid_cmdline($pid) =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/ ? 1 : 0;
 }
 
-# Reap the master's own direct children. The pty shell is a child of the master,
+# Reap the master's own direct children. The pty child is a child of the master,
 # not of the OS: ReadWriteFork's waiter cannot run while a teardown blocks in
-# sleep/select, and a re-exec leaves before the IOLoop runs again, so a shell
+# sleep/select, and a re-exec leaves before the IOLoop runs again, so a child
 # killed there stayed a zombie for the life of the next incarnation - the
-# `[bash] <defunct>` that survived a re-exec on 2026-10-21. `keep` is the
-# current pty child, whose exit status belongs to its close event.
+# `[bash] <defunct>` that survived a re-exec on 2026-10-21, from when the pty
+# ran a shell. `keep` is the current pty child, whose exit status belongs to its
+# close event.
 sub reap_own_children {
 	my ($keep) = @_;
 	$keep ||= 0;
@@ -1194,25 +1205,19 @@ sub terminal_pty_runner() {
 
 	$fork->on(spawn => sub() {
 		my ($fork) = @_;
-		print "fork started " . $data->{'program'} . " k\n";
-		if ($data->{'program'}) {
-			print "Starting " . $data->{'program'} . "\n";
-			Mojo::IOLoop->timer(0.1 => sub {
-				$fork->write($data->{'program'} . "\n");
-			});
-		}
+		my $label = $data->{'label'} || $data->{'program'};
+		print "fork started " . $label . " k\n";
+		print "Starting " . $label . "\n";
 		$status = 'started';
 		$status_why = '';
 
 	});
 
 	$fork->start({
-		program => "bash",
-		program_args => [ "-i" ],
+		program      => $data->{'program'},
+		program_args => $data->{'program_args'} || [],
 		env          => {
 	    %ENV,
-	    INPUTRC => '/dev/null',
-	    PROMPT_COMMAND => '',
 	    TERM => 'dumb'
 		}
 	});
