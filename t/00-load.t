@@ -12,6 +12,11 @@ use JawnOSTest ();
 
 ok defined &subs::format_name,    'core module loaded (subs::format_name)';
 ok defined &subs::duration_sayer, 'duration helpers loaded';
+# domain.pl holds the functions that used to live in Manager.pl and that
+# subroutines.pl calls; reaching them here proves subroutines.pl still requires
+# it, which is what lets the watch and teletype workers boot without Manager.pl.
+ok defined &subs::remote_useragent_maker, 'domain layer loaded (subs::remote_useragent_maker)';
+ok defined &subs::notification_sender,    'domain layer loaded (subs::notification_sender)';
 ok defined &language::translate,  'language catalog loaded';
 ok defined &language::valid,      'language::valid loaded';
 

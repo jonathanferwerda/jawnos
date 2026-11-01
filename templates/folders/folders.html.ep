@@ -68,7 +68,7 @@
 	<%# the folders worth getting back to on the machine being browsed - which,
 	    for a remote one, is that machine's own list, since it renders this %>
 	<% my @bookmarks = ( { name => 'Home', path => $home } ); %>
-	<% my $misc = &Manager::misc_setting_list(); %>
+	<% my $misc = &subs::misc_setting_list(); %>
 	<% my $dev = &subs::device_setter(); %>
 	<% my %place_labels = ( document => 'Documents', download => 'Downloads', photo => 'Pictures', video => 'Videos', scan => 'Scans', rec => 'Recordings', music => 'Music' ); %>
 	<% my %place_icons = (

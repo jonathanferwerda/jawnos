@@ -56,7 +56,9 @@ require "./Websocket.pl";
 require "./language.pl";
 
 my $config_file = read_file('./config.json');
-my $config = decode_json $config_file;
+# `our`, not `my`: domain.pl is in this package and reads the same config
+# (notification_sender, embedded_toggle and friends used to be in Manager.pl).
+our $config = decode_json $config_file;
 our $logfile = &subs::home($config->{'logfile'});
 our $resolve_when_residual = '';   # what resolve_when could not read as a date (see date_leftover)
 `touch $logfile` if not -e $logfile;
@@ -64,6 +66,11 @@ our $log = Mojo::Log->new(path => $logfile);
 my $universal_splitter = $gb::universal_splitter;
 
 our $device = &device_setter();
+
+# The functions that used to live in Manager.pl and that this file calls. They
+# are package subs here, so no caller needs Manager.pl (and its routes) for
+# them; Manager.pl aliases the old Manager:: name for its own callers.
+require './domain.pl';
 
 # Request-scoped settings read-through memo (see setting_grabber). Cleared at
 # each request boundary by hooks.pl; off outside requests so long-lived
@@ -6929,7 +6936,7 @@ sub ble_relay_route {
 		my $sig = $rm->{'signatorial'} || '';
 		next if !$sig || $sig eq $me;
 		next unless $rm->{'ip'};
-		my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+		my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $sig });
 		next unless $hop && $hop->{'ua'} && $hop->{'manager'};
 		my $res = eval {
 			$hop->{'ua'}->insecure(1)->inactivity_timeout(10)->post(
@@ -8151,7 +8158,7 @@ sub voice_brain() {
 		# no time named: the clip's own onset, so the appointment sits where the
 		# person said it, not where whisper finished
 		my $timestamp = (defined $when && length $when)
-			? &Manager::guide_resolve_when($when)
+			? &subs::guide_resolve_when($when)
 			: ($meta->{'ts'} || &subs::rightNow());
 		my $staged = eval { &Manager::guide_stage_appointment(&subs::controller_builder(), {
 			app => $action->{'app'}, type => $action->{'type'}, timestamp => $timestamp,
@@ -8853,7 +8860,7 @@ sub backup_registry_prune() {
 			last if $deleted >= $cap;
 			my $r = $rows->[$i];
 			next unless $r->{'uuid'};
-			&Manager::deletion_registration({ table => 'backups', uuid => $r->{'uuid'}, scope => 'single', server_time => $r->{'server_time'} });
+			&subs::deletion_registration({ table => 'backups', uuid => $r->{'uuid'}, scope => 'single', server_time => $r->{'server_time'} });
 			&subs::db_delete('backups', { uuid => $r->{'uuid'} });
 			$deleted++;
 		}
@@ -9053,7 +9060,7 @@ sub backup_now() {
 		$enc_file = $path . '.enc';
 
 		$rm = &subs::db_select('remote_machines', undef, { signatorial => $c->param('signatorial') })->hashes->[0];
-		$rm = &Manager::remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm });
+		$rm = &subs::remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm });
 		$colour = $rm->{'data'}->{'manager_colour'};
 		my $html = '<h2>Being synced by ' . $rm->{'ip'} || $c->tx->remote_address . '</h2>';
 		&Websocket::send('tab', { yellow => $html, uuid => $auuid, colour => $colour });
@@ -9214,7 +9221,7 @@ sub backup_now() {
 		$tdb->delete('cache', { context => 'template' });
 		$tdb->delete('cache', { context => 'header' });
 		$tdb->query('VACUUM');
-		my $max_backups = &Manager::misc_setting_list()->{$signatorial}->{'max_backups'} || 3;
+		my $max_backups = &subs::misc_setting_list()->{$signatorial}->{'max_backups'} || 3;
 		my $backup_list_command = 'ls -t ' . $path . '_*.enc';
 		my $backups = `$backup_list_command`;
 
@@ -9226,7 +9233,7 @@ sub backup_now() {
 				my $shredder = 'shred -u ' . $backups[$n];
 				my $backs = &subs::db_select('backups', undef, { enc_file => $backups[$n] })->hashes;
 				foreach my $ba ( @{$backs} ) {
-					&Manager::deletion_registration({ table => 'backups', uuid => $ba->{'uuid'}, scope => 'single', server_time => $ba->{'server_time'} });
+					&subs::deletion_registration({ table => 'backups', uuid => $ba->{'uuid'}, scope => 'single', server_time => $ba->{'server_time'} });
 				}
 				&subs::db_delete('backups', { enc_file => $backups[$n] });
 				`$shredder`;
@@ -9306,7 +9313,7 @@ sub backup_now() {
 		archive_path => $archive_path . ".enc",
 		path => $enc_file,
 		backup_data => $backup_data,
-		misc_settings => &Manager::misc_setting_list(),
+		misc_settings => &subs::misc_setting_list(),
 		home => &subs::home('~/'),
 		device => $device,
 		server_time => $server_time,
@@ -11174,7 +11181,7 @@ sub intelligent_automation_toggle() {
 				#	return;
 				}
 				if ($ia->{$chip}->{$i}->{'movement'} eq 'start') {
-					my $returner = &Manager::embedded_toggle({
+					my $returner = &subs::embedded_toggle({
 						app => $app,
 						pin => $ia->{$chip}->{$i}->{'pin'},
 						ip => $ia->{$chip}->{$i}->{'ip'},
@@ -11257,7 +11264,7 @@ sub intelligent_automation_toggle() {
 									$edt_data->{'state'} = 'off';
 								}
 							}
-							&Manager::embedded_toggle($edt_data);
+							&subs::embedded_toggle($edt_data);
 							$counted++;
 						}
 					}
@@ -12370,11 +12377,11 @@ sub setting_deleter() {
 	my $setting = shift;
 	$setting->{'device'} = $setting->{'device'} || &device_setter();
 	if ($setting->{'subsetting'}) {
-	#	&Manager::deletion_registration({ table => 'settings', app => $setting->{'app'}, setting => $setting->{'setting'}, server_time => $setting->{'server_time'}, subsetting => $setting->{'subsetting'} });
+	#	&subs::deletion_registration({ table => 'settings', app => $setting->{'app'}, setting => $setting->{'setting'}, server_time => $setting->{'server_time'}, subsetting => $setting->{'subsetting'} });
 		&db_delete('settings', { app => $setting->{'app'}, setting => $setting->{'setting'}, subsetting => $setting->{'subsetting'}, device => $setting->{'device'} });
 	}
 	else {
-	#	&Manager::deletion_registration({ table => 'settings', app => $setting->{'app'}, setting => $setting->{'setting'} });
+	#	&subs::deletion_registration({ table => 'settings', app => $setting->{'app'}, setting => $setting->{'setting'} });
 		&db_delete('settings',{ app => $setting->{'app'}, setting => $setting->{'setting'}, device => $setting->{'device'} });
 	}
 	return $setting;
@@ -12717,7 +12724,7 @@ sub file_device_renamer() {
 
 
 	unless ($destination) {
-		$misc_settings = &Manager::misc_setting_list() unless $misc_settings;
+		$misc_settings = &subs::misc_setting_list() unless $misc_settings;
 		if ($assetual =~ /\.mp3$|\.m4a$|\.flac$|\.aiff$|\.weba$|\.wav$/gi) {
 			$destination = &subs::home($misc_settings->{$device}->{'music_location'} . '/' . $app_path . '/');
 			$type = 'audio';
@@ -13158,7 +13165,7 @@ sub minion_grabber {
 
 # A manager-to-manager agent for a job to use. The worker runs under
 # President.pl and cannot see Manager.pl, so this is the small twin of
-# Manager::remote_useragent_maker: the cookie jar stored on the
+# subs::remote_useragent_maker: the cookie jar stored on the
 # remote_machines row is the whole of the authentication, and the tunnel-aware
 # manager url is the whole of the addressing.
 sub remote_agent_for {
@@ -13587,7 +13594,7 @@ sub archive_manifest_cached {
 # than failing the listing.
 sub archive_image_lookup {
 	my $data = shift;
-	my $misc = $data->{'misc_settings'} || &Manager::misc_setting_list();
+	my $misc = $data->{'misc_settings'} || &subs::misc_setting_list();
 	my $device = &subs::device_setter();
 	my $here = $misc->{$device}->{'photo_location'};
 	return {} unless $here;
@@ -16474,7 +16481,7 @@ sub setting_initializer() {
 				#unshift @seen;
 				foreach my $s ( @seen ) {
 					&subs::db_delete('settings', { app => $app, uuid => $s->{'uuid'} });
-					&Manager::deletion_registration({ table => 'settings', app => $app, uuid => $s->{'uuid'}, scope => 'single', server_time => $s->{'server_time'} });
+					&subs::deletion_registration({ table => 'settings', app => $app, uuid => $s->{'uuid'}, scope => 'single', server_time => $s->{'server_time'} });
 				}
 			}
 		}
@@ -16677,7 +16684,7 @@ sub destination_relay() {
 			$log->error('destination relay to ' . $sig . ' skipped: no address on its row') if $log;
 			next;
 		}
-		my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+		my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $sig });
 		unless ($hop && $hop->{'ua'} && $hop->{'manager'}) {
 			$log->error('destination relay to ' . $sig . ' skipped: no signed agent for ' . ($rm->{'manager'} || '?')) if $log;
 			next;
@@ -21566,7 +21573,7 @@ sub tunnel_starter() {
 	# up leaves 'connecting' rows that nothing reaps (tunnel_stopper only removes
 	# active rows), so drop them here rather than let them pile up across dials.
 	&subs::db_delete('tunnels', { signatorial => $signatorial, status => 'connecting' });
-	my $rm = &Manager::remote_useragent_maker({ signatorial => $signatorial });
+	my $rm = &subs::remote_useragent_maker({ signatorial => $signatorial });
 	my $domain = $data->{'domain'} || $rm->{'domain'} || $rm->{'ip'};
 	my $status = 'active';
 	my $batch_uuid = &subs::random_string_creator(25);
@@ -21652,7 +21659,7 @@ sub tunnel_stopper() {
 	my $signatorial = $data->{'signatorial'};
 	my $domain = $data->{'domain'};
 	my $tunnels = &subs::db_select('tunnels', undef, { signatorial => $signatorial, status => 'active' })->hashes;
-	my $rm = &Manager::remote_useragent_maker({ signatorial => $signatorial });
+	my $rm = &subs::remote_useragent_maker({ signatorial => $signatorial });
 	foreach my $tun ( @{$tunnels} ) {
 		my $pid = $tun->{'process_id'};
 		if ($pid) {
@@ -21837,7 +21844,7 @@ sub tunnel_checker() {
 			my $tun = &subs::tunnel_port_mapper({ signatorial => $td->{'signatorial'}  });
 			my $rm = &subs::remote_machine_lister({ signatorial => $td->{'signatorial'}, limit => 1 });
 			if ($rm->{'signatorial'}) {
-				$rm = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $td->{'signatorial'} });
+				$rm = &subs::remote_useragent_maker({ rm => $rm, signatorial => $td->{'signatorial'} });
 				my $rdc = {
 					manager => $rm->{'manager'},
 					filename => $rm->{'data'}->{'database'},
@@ -21897,7 +21904,7 @@ sub tunnel_checker() {
 								next;
 							}
 							my $signatorial = $tun->{'signatorial'};
-							my $rm = &Manager::remote_useragent_maker({ signatorial => $signatorial });
+							my $rm = &subs::remote_useragent_maker({ signatorial => $signatorial });
 							my $url = $rm->{'manager'} . '/manager/tunnel/alive';
 							my @batch = grep { $_->{'batch_uuid'} eq $tun->{'batch_uuid'} } @{$tunnels};
 							# The POST is only the mirror/network sync now. Liveness is the
@@ -22112,7 +22119,7 @@ sub system_monitor() {
     Mojo::IOLoop->reset;
 
 		foreach my $rm ( @{$remote_machines} ) {
-			$rm = &Manager::remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm });
+			$rm = &subs::remote_useragent_maker({ ip => $rm->{'ip'}, signatorial => $rm->{'signatorial'}, rm => $rm });
 			my $params;
 
 			foreach my $p ( keys %{$data} ) {
@@ -29668,7 +29675,7 @@ sub generate_ai_media {
 			my $resized = ($w && $h) ? &subs::image_bridge_resize($file_path, $w, $h) : undef;
 			system('magick', $file_path, '-resize', $resolution, $file_path) unless $resized;
 		}
-		$ocr = &Manager::ocr_reader($c,$file_path);
+		$ocr = &subs::ocr_reader($c,$file_path);
 	}
 	# a still thumbnail for image and video, made up front so the unclaimed
 	# pool can show it at once instead of waiting on the full file
@@ -30481,7 +30488,7 @@ sub accounting_trial_balance {
 
 # ---------------------------------------------------------------------------
 # Data backfills. Schema migrations can be detected by inspecting the schema
-# (Manager::migration_already_applied); a data backfill cannot, so it is named
+# (subs::migration_already_applied); a data backfill cannot, so it is named
 # here and recorded in the `backfills` table once it has run. A machine that
 # receives this code runs any names it has not recorded - from the boot process
 # (President) and from update_database (login / remote auth / merge) - so a
@@ -30902,7 +30909,7 @@ sub remote_deploy {
 	# restart - the same work the old ssh command did, minus ssh and the stored
 	# password. remote_useragent_maker hands back the peer's tunnel-aware
 	# manager url and the session cookie we already hold for it.
-	my $r = eval { &Manager::remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, ip => $rm->{'ip'} }) };
+	my $r = eval { &subs::remote_useragent_maker({ signatorial => $rm->{'signatorial'}, rm => $rm, ip => $rm->{'ip'} }) };
 	my $manager = ($r && $r->{'manager'}) || $rm->{'manager'};
 	unless ($manager && $r && $r->{'ua'}) {
 		return { ok => 0, message => 'no route to peer' };
@@ -37487,7 +37494,7 @@ sub clock_alarm_ring {
 		);
 		if ($mobile) { $note{'silent'} = 1; }
 		else { $note{'sound'} = $sound; $note{'synth'} = $play; }
-		&Manager::notification_sender(\%note, undef);
+		&subs::notification_sender(\%note, undef);
 	};
 	return 1;
 }
@@ -37546,7 +37553,7 @@ sub clock_timer_finish {
 		);
 		if ($mobile) { $note{'silent'} = 1; }
 		else { $note{'sound'} = $sound; $note{'synth'} = $play; }
-		&Manager::notification_sender(\%note, undef);
+		&subs::notification_sender(\%note, undef);
 	};
 	return 1;
 }
@@ -37612,7 +37619,7 @@ sub clock_relay {
 				eval {
 					# remote_useragent_maker returns the peer row with a 'ua' and
 					# the tunnel-aware 'manager' url, not a bare agent.
-					my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+					my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $sig });
 					if ($hop && $hop->{'ua'} && $hop->{'manager'}) {
 						$hop->{'ua'}->insecure(1)->post($hop->{'manager'} . '/manager/clock/alarm' => form => \%form)->result;
 					}
@@ -37748,7 +37755,7 @@ sub clock_alarm_push {
 			# The maker hands back the peer row (with 'ua' and the
 			# tunnel-aware 'manager' url); using it as an agent meant every
 			# immediate push died and no confirmation was ever possible.
-			my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $sig });
+			my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $sig });
 			die "no agent\n" unless $hop && $hop->{'ua'} && $hop->{'manager'};
 			my $ua = $hop->{'ua'}->insecure(1);
 			$ua->inactivity_timeout(4)->request_timeout(4);
@@ -37797,7 +37804,7 @@ sub clock_alarm_push {
 			my $rm = &clock_alarm_peer_row($relay_sig);
 			next unless $rm && $rm->{'manager'};
 			eval {
-				my $hop = &Manager::remote_useragent_maker({ rm => $rm, signatorial => $relay_sig });
+				my $hop = &subs::remote_useragent_maker({ rm => $rm, signatorial => $relay_sig });
 				die "no agent\n" unless $hop && $hop->{'ua'} && $hop->{'manager'};
 				my $ua = $hop->{'ua'}->insecure(1);
 				$ua->inactivity_timeout(5)->request_timeout(5);

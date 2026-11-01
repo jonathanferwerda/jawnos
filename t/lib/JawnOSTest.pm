@@ -84,8 +84,8 @@ sub _setup {
 	$SANDBOX = tempdir('jawnos-test-XXXXXX', TMPDIR => 1, CLEANUP => 1);
 	die "JawnOSTest: cannot create a sandbox\n" unless defined $SANDBOX;
 
-	# The four files subroutines.pl reaches for by relative path at load time.
-	for my $file (qw(subroutines.pl gb.pl Websocket.pl language.pl)) {
+	# The five files subroutines.pl reaches for by relative path at load time.
+	for my $file (qw(subroutines.pl domain.pl gb.pl Websocket.pl language.pl)) {
 		symlink("$ROOT/$file", "$SANDBOX/$file")
 			or die "JawnOSTest: symlink $file: $!\n";
 	}
