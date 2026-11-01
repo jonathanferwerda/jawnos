@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "note": "Every route is skipped unless a rule below keeps it out of a dangerous class. GET routes still run; mutation methods are skipped by the classifier.",
+  "skip": [
+    {
+      "path": "^/manager/(?:configure/(?:backup_now|database_vacuum|vacuum_app|database_doctor|adopt_app|remote_device_connect)|update_database|legacy_reseal|delete_ticket|reinstate_ticket|renew_ticket|suspend_ticket|voice_download|voice_release|web/measure/toggle|magazine/neighbour_publish|vault_share|backup_serve|rsync_pack|remote_auth_test|remote_manager|remote_refresh|app_download|sync_|teletype/wifi_update|watch/set_proxy|lorawan/|embedded/|torch|volume_control|camera|clipboard_getter|browser|download_file|file/information|file_open|ide/file_open|folders/|gallery|internet|website_get|search/web|public_ip|address_lookup|ollama_models|past_life_recall|pen$|travel/guess_image|market/scan|market/receipt|phone/sync|telephony|ws_close|share$|store/customer_register|security/go_|security/padlock_open_peer|people/crest_image|agents/|coding/|centre_view|process_monitor$|self_deploy|remote_upgrade|president)",
+      "why": "side effect, hardware, network, peer or heavy file work"
+    },
+    {
+      "path": "^/(?:apps/start|download_program|embedded/|file_open|mail/|teletype/|pay/|passkey|mugshot|public_view/)",
+      "why": "launch, hardware, mail, payment or enrollment"
+    },
+    {
+      "path": "^/(?:store|manifest\\.json|privacy|i18n/|js/)",
+      "why": "static or public page; covered by the anonymous pass"
+    }
+  ],
+  "allow": [],
+  "tier_exempt": "^/manager/security/(?:padlock_|fingerprint_unlock|biometric_)",
+  "tolerate": [
+    {
+      "path": "^/manager/(?:appointment_details|appointment_measures|appointment_viewer|editor|inventory/details|inventory/information|keyboard_alias|marker/gallery|settings_grabber|time_jump|transaction/autofill|watch/list_proxy|studio/load)$",
+      "why": "answered only with the query arguments the UI always sends; exercised by the UI layer"
+    }
+  ],
+  "tier_status": {
+    "": 200,
+    "resident": 200,
+    "citizen": 403
+  }
+}
