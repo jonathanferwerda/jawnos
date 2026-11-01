@@ -210,36 +210,114 @@ html, body {
 	position:fixed;
 }
 .appointment { display:inline-block; float:right; width: 100%; vertical-align: top; }
-.register_model {
-	background-color: pink;
-	border-width: 3px;
-	border-radius: 3px;
-	border: solid;
+/* The register panel: one quiet card per model/option, with a type stripe.
+   The old colours (pink, red, light green/blue) ignored the theme and the
+   generic model/option class names leaked onto the transaction selectors. */
+.attribute {
 	width: 100%;
-}
-.register_option {
-	background-color: var(--accent-soft, #e6effb);
+	box-sizing: border-box;
+	margin: 0 0 10px;
+	border: 1px solid var(--line);
+	border-left: 4px solid var(--accent);
+	border-radius: var(--jawnos-corner, 8px);
+	background: var(--panel);
 	color: var(--ink);
-	border-width: 3px;
-	border-radius: 3px;
-	border: solid;
-	width: 100%;
+	overflow: hidden;
 }
-.register_option_category {
-	background-color: var(--accent-soft, #e6effb);
+.attribute[data-new="1"] {
+	border-style: dashed;
+	border-left-color: var(--accent-soft);
+}
+.register_option { border-left-color: var(--accent, #6a8); }
+.register_option_category { border-left-color: var(--accent-soft); }
+.subcategory { border-left-color: var(--line); }
+.attribute_title { margin: 14px 0 8px; font-size: 17px; }
+.attribute_header_row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+	background: var(--panel-2, var(--panel));
+	border-bottom: 1px solid var(--line);
+}
+.attribute_header {
+	flex: 1 1 auto;
+	min-width: 0;
+	text-align: left;
+	font: inherit;
+	font-size: 17px;
+	font-weight: 700;
+	color: inherit;
+	background: none;
+	border: 0;
+	padding: 2px 0;
+	cursor: pointer;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.attribute_contents { padding: 10px; }
+.attribute_form { display: flex; flex-direction: column; gap: 10px; }
+.attribute_field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.attribute_field_wide { width: 100%; }
+.attribute_label { font-size: 12px; color: var(--ink-muted, var(--ink)); opacity: .8; }
+.attribute_form input[type="text"],
+.attribute_form textarea,
+.attribute_form select {
+	width: 100%;
+	box-sizing: border-box;
+	font: inherit;
+	font-size: 14px;
+	padding: 5px 7px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--panel);
 	color: var(--ink);
-	border-width: 1px;
-	border-radius: 3px;
-	border: solid;
-	width: 100%;
 }
-.subcategory {
-	background-color: red;
-	border-width: 3px;
-	border-radius: 3px;
-	border: solid;
-	width: 100%;
+.attribute_form textarea { min-height: 64px; resize: vertical; }
+.attribute_actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.attribute_actions button,
+.attribute_characteristic_actions button {
+	font: inherit;
+	font-size: 14px;
+	padding: 6px 12px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--accent-soft, var(--panel-2));
+	color: var(--ink);
+	cursor: pointer;
 }
+.attribute_actions button:hover { border-color: var(--accent); }
+.attribute_add { font-weight: 700; }
+.attribute_hint { font-size: 12px; color: var(--ink-muted, var(--ink)); opacity: .8; }
+.attribute_section {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: 8px 10px;
+	border-top: 1px solid var(--line);
+	padding-top: 10px;
+}
+.attribute_section h5 {
+	grid-column: 1 / -1;
+	margin: 0;
+	font-size: 11px;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+	color: var(--ink-muted, var(--ink));
+	opacity: .8;
+}
+.attribute_default_controls {
+	grid-column: 1 / -1;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+	gap: 8px;
+}
+.attribute_default_controls select { width: 100%; height: 120px; }
+.attribute_check { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+.attribute_check input { width: auto; }
+.attribute_tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; grid-column: 1 / -1; }
+.attribute_tool { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-muted, var(--ink)); }
+.attribute_tool input[type="text"] { width: auto; min-width: 120px; }
 .shuffle[enabled=on] {
 	background-color: var(--accent-soft, #e6effb);
 }
@@ -247,10 +325,15 @@ html, body {
 	background-color: var(--accent-soft, #e6effb);
 }
 .attribute_characteristic {
-	border: dotted;
-	border-width: 1px;
-	border-radius: 3px;
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+	gap: 8px;
+	grid-column: 1 / -1;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	padding: 8px;
 }
+.attribute_characteristic_actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .detail_area { overflow: scroll;}
 /* the tools on a stored appointment row: inline buttons that wrap on a phone
    instead of the invalid table cells they used to be */

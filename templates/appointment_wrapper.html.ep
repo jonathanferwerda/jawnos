@@ -270,25 +270,4 @@
 	.media_group_contents .media_machine { max-width: 100%; min-height: 0; height: 30px; padding: 2px 7px;
 		border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
 		color: var(--ink); font: inherit; font-size: 13px; }
-	.model {
-		background-color: pink;
-		border-width: 3px;
-		border-radius: 3px;
-		border: solid;
-		width: 100%;
-	}
-	.option {
-		background-color: lightgreen;
-		border-width: 3px;
-		border-radius: 3px;
-		border: solid;
-		width: 100%;
-	}
-	.option_category {
-		background-color: lightblue;
-		border-width: 3px;
-		border-radius: 3px;
-		border: solid;
-		width: 100%;
-	}
 </style>

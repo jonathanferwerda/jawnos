@@ -36,24 +36,20 @@ function openAttributeReopener(app) {
 	}
 }
 
-// A register field is written on change: leaving the field is what saves it.
-// Enter must finish it too - a desk does not blur a plain text input for Enter,
-// and the soft keyboard only dispatches the key event - or a name typed into
-// the new model or option row looks like it vanished.
-$(document).on('keydown', '.att, .char', function(e) {
-	if (e.key !== 'Enter' && e.keyCode !== 13) { return; }
-	if ($(this).is('textarea, select, input[type="checkbox"]')) { return; }
-	e.preventDefault();
-	$(this).blur();
-});
-
-$(document).on('change', '.att', function() {
-	var att = $(this).closest('.attribute');
+// A register row is written from its fields. A change saves it, and the Add/Save
+// buttons and Enter call the same save directly - a phone's soft keyboard does
+// not reliably blur a text field, so Change alone cannot be the only way in.
+function attributeSave(att) {
+	att = $(att);
+	if (att.data('att_saving') || att.data('att_saved')) { return; }
 	var attribute = att.attr('att');
 	var wind = att.closest('.appointment');
 	var app = att.attr('app');
 	var uuid = att.attr('uuid') || 'new';
-	var name = att.find('.name').val();
+	var name_input = att.find('.name');
+	var name = (name_input.val() || '').replace(/^\s+|\s+$/g, '');
+	if (uuid == 'new' && name == '') { name_input.focus(); return; }
+	name_input.val(name);
 	var cost = att.find('.cost').val();
 	var markup = att.find('.markup').val();
 	var price = att.find('.price').val();
@@ -91,7 +87,7 @@ $(document).on('change', '.att', function() {
 		scrolls[v] = att.find(v).scrollTop();
 	});
 
-
+	att.data('att_saving', true);
 	$.ajax({ 
 		url: '/manager/store/' + attribute + '/save',
 		type: 'POST',
@@ -115,17 +111,18 @@ $(document).on('change', '.att', function() {
 			save_app: save_app,
 			quantity: quantity,
 			unit: unit,
-			manufacturer: manufacturer,
 			delay_start: delay_start,
 			delay_stop: delay_stop
 		},
 		success: function(response) {
 			if (uuid == 'new') {
+				// the row is about to be replaced; a late native change on the old
+				// field must not insert the same name a second time
+				att.data('att_saved', true);
 				wind.find('.' + attribute + '_list').replaceWith(response.template);
 			}
 			else {
-			//	configurationReloader(app);
-
+				att.removeData('att_saving');
 				var t = $(response.template).find('.attribute[uuid="' + uuid + '"]').html();
 
 				var st = $('.appointment_contents[app="' + app + '"]').scrollTop();
@@ -134,12 +131,43 @@ $(document).on('change', '.att', function() {
 
 				openAttributeReopener(app);
 			}
-			var att = wind.find('.attribute[uuid="' + uuid + '"]');
+			var row = wind.find('.attribute[uuid="' + uuid + '"]');
 			$.each(scrolls, function(i,v) {
-				att.find(i).scrollTop(v);
+				row.find(i).scrollTop(v);
 			});
+		},
+		error: function() {
+			att.removeData('att_saving');
 		}
 	});
+}
+
+$(document).on('change', '.att', function() {
+	attributeSave($(this).closest('.attribute'));
+});
+
+$(document).on('click', '.attribute_add, .attribute_save', function(e) {
+	e.preventDefault();
+	attributeSave($(this).closest('.attribute'));
+});
+
+$(document).on('click', '.attribute_home', function(e) {
+	e.preventDefault();
+	e.stopPropagation();
+	var app = $(this).attr('app');
+	if (app && typeof appointmentGrabber === 'function') { appointmentGrabber(app); }
+});
+
+// Enter finishes the field: it saves directly, then leaves the field so the
+// soft keyboard closes. A desk does not blur a text input for Enter, and the
+// soft keyboard only dispatches the key event, so neither could be relied on.
+$(document).on('keydown', '.att, .char', function(e) {
+	if (e.key !== 'Enter' && e.keyCode !== 13) { return; }
+	if ($(this).is('textarea, select, input[type="checkbox"]')) { return; }
+	e.preventDefault();
+	if ($(this).is('.char')) { $(this).trigger('change'); }
+	else { attributeSave($(this).closest('.attribute')); }
+	try { this.blur(); } catch (err) {}
 });
 
 $(document).on('change', '.option_category_picker', function() {
@@ -147,8 +175,10 @@ $(document).on('change', '.option_category_picker', function() {
 });
 
 $(document).on('change', '.char', function(e) {
-	var timestamp = Date.now();
 	var char = $(this);
+	var ac = char.closest('.attribute_characteristic');
+	if (ac.data('char_saving') || ac.data('char_saved')) { return; }
+	var timestamp = Date.now();
 	var type = char.attr('type');
 	var char_input = char.attr('char_input');
 	var value = char.val();
@@ -161,18 +191,20 @@ $(document).on('change', '.char', function(e) {
 		}
 	}
 
-	var ac = char.closest('.attribute_characteristic');
 	var att = ac.attr('att');
 	var att_uuid = ac.attr('att_uuid');
 	var uuid = ac.attr('uuid');
 	var container = char.closest('.appointment');
 	var app = container.attr('app');
-	
+
+	ac.data('char_saving', true);
 	$.ajax({
 		url: '/manager/store/attribute_characteristic_setter',
 		type: 'POST',
 		data: { app: app, timestamp: timestamp, uuid: uuid, att: att, att_uuid: att_uuid, input: char_input, value: value, type: type },
 		success: function(response) {
+			if (uuid == 'new') { ac.data('char_saved', true); }
+			ac.removeData('char_saving');
 			ac.attr('uuid', response.uuid);
 
 			var t = $(response.template).find('.attribute[uuid="' + att_uuid + '"]').html();
@@ -181,6 +213,9 @@ $(document).on('change', '.char', function(e) {
 			$('.appointment_contents[app="' + app + '"]').scrollTop(st);
 			openAttributeReopener(app);
 //			configurationReloader(app);
+		},
+		error: function() {
+			ac.removeData('char_saving');
 		}
 	});
 });
@@ -198,9 +233,7 @@ $(document).on('click', '.delete_characteristic', function() {
 			type: 'POST',
 			data: { uuid: uuid, att: att, att_uuid: att_uuid },
 			success: function(response) {
-				var ac = $('.attribute_characteristic[uuid="' + response.uuid + '"]');
-				ac.next().remove();
-				ac.remove();
+				$('.attribute_characteristic[uuid="' + response.uuid + '"]').remove();
 			}
 		});
 	}

@@ -3053,7 +3053,7 @@ sub register_grabber($app) {
 		$returner->{'html'} .= $c->render_to_string(
 			template => 'pos/attributes',
 			att => $att,
-			a => $app
+			app => $app
 		);
 	}
 	return $returner
@@ -6572,7 +6572,7 @@ post '/manager/configure/attribute_copy' => sub($c) {
 	else {
 		&subs::db_insert($att, $attribute);
 	}
-	$returner->{'template'} = $c->render_to_string(template => 'pos/attributes', att => $att, a => $app);
+	$returner->{'template'} = $c->render_to_string(template => 'pos/attributes', att => $att, app => $app);
 
 	$returner->{'attribute'} = $attribute;
 
@@ -6655,7 +6655,7 @@ post '/manager/store/:att/save' => sub($c) {
 	my $attd = $att;
 	$attd = s/_//gi;
 
-	$returner->{'template'} = $c->render_to_string(template => 'pos/attributes', att => $att, a => $app);
+	$returner->{'template'} = $c->render_to_string(template => 'pos/attributes', att => $att, app => $app);
 	$c->render(json => $returner);
 };
 
@@ -6829,7 +6829,7 @@ post '/manager/store/attribute_characteristic_setter' => sub ($c) {
 	unshift @{$chars}, $data;
 	my $json_chars = encode_json $chars;
 	&subs::db_update($att, { characteristics => $json_chars }, { uuid => $att_uuid });
-	$c->render(json => { template => $c->render_to_string(template => 'pos/attributes', att => $att, a => $app), attribute => $data });
+	$c->render(json => { template => $c->render_to_string(template => 'pos/attributes', att => $att, app => $app), attribute => $data });
 
 };
 
