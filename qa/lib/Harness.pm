@@ -144,7 +144,7 @@ sub new {
 	$self->{'results'} = "$self->{'run'}/results";
 	$self->{'stamp'}   = $stamp;
 
-	$self->{'perl5lib'} = $ENV{'PERL5LIB'} || '';
+	$self->{'perl5lib'} = _local_lib($ENV{'HOME'}, $ENV{'PERL5LIB'});
 	$self->{'source'}   = $opt{'source'} || 'head';
 	$self->{'booted'}   = {};
 
@@ -156,6 +156,32 @@ sub new {
 		$self->{'logs'}, $self->{'results'},
 		"$self->{'home'}/.president");
 	return $self;
+}
+
+# The app's modules live in the user's local::lib, which ./jawn finds from
+# $HOME. A non-interactive ssh session exports no PERL5LIB at all, and the
+# system perl on the table has Mojo but not Sereal, so a bare `perl ./perl/
+# President.pl` dies at line 29. Discover the same tree here and pass it down.
+sub _local_lib {
+	my ($home, $existing) = @_;
+	my @dirs;
+	my $base = (($home // '') . '/perl5/lib/perl5');
+	if ($base =~ m{/} && -d $base) {
+		push @dirs, $base;
+		if (opendir(my $dh, $base)) {
+			for my $name (sort readdir $dh) {
+				my $dir = "$base/$name";
+				push @dirs, $dir
+					if $name ne '.' && $name ne '..' && -d $dir
+					&& ($name =~ /-linux-/ || $name =~ /^[0-9]+\.[0-9]+/);
+			}
+			closedir $dh;
+		}
+	}
+	push @dirs, grep { length } split /:/, ($existing // '');
+	my %seen;
+	@dirs = grep { !$seen{$_}++ } @dirs;
+	return join ':', @dirs;
 }
 
 sub repo    { $_[0]->{'repo'} }

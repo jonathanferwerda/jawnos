@@ -85,4 +85,18 @@ ok(defined $tol && length $tol, 'a route that needs query arguments is tolerated
 is(Probe::tolerated($policy, { method => 'get', path => '/manager/people' }), undef,
 	'an ordinary route is not tolerated');
 
+# --- local::lib discovery ------------------------------------------------------
+# A non-interactive ssh session exports no PERL5LIB, and the table's system perl
+# has Mojo but not Sereal. The harness must find $HOME/perl5/lib/perl5 itself.
+{
+	my $lib = Harness::_local_lib($ENV{'HOME'}, '/inherited/lib');
+	like($lib, qr{\Q/inherited/lib\E}, 'an inherited PERL5LIB is kept');
+	if (-d "$ENV{'HOME'}/perl5/lib/perl5") {
+		like($lib, qr{\Q$ENV{'HOME'}/perl5/lib/perl5\E}, 'the user local::lib is discovered');
+	}
+	else {
+		pass('no local::lib on this machine to discover');
+	}
+}
+
 done_testing();
