@@ -327,12 +327,10 @@ sub master_time_looper() {
 					write_file($status_file, 'good') if $f_status eq 'restart';
 					&shut_down();
 					$status = 'restarting';
-					print "restarting president in 3";
-					sleep 1;
-					print "... 2";
-					sleep 1;
-					print "... 1";
-					sleep 1;
+					# No blind countdown: shut_down() already waited for the pids it
+					# signalled, and the bind check below is the real gate, so "in 3...
+					# 2... 1" only added three seconds to every restart.
+					print "restarting president\n";
 					# The old listeners are released asynchronously: a prefork
 					# manager can be signalled and still hold its socket for a few
 					# seconds. A boot that binds first loses the main server with
@@ -375,9 +373,17 @@ sub master_time_looper() {
 # still serving, so it adds nothing to the interruption; the restart only goes
 # ahead when it passes. Returns { ok => 1 } when it passes (or when the script is
 # not present yet), else the tail of its report to print.
+#
+# The sweep is handed a manifest so it re-checks only the files whose bytes moved
+# since they last passed: judging all 744 files costs ~90s of perl -c, node
+# --check and git show each, and that sat on the critical path of every restart
+# (agents reporting a minute-long "restart" from a status file). With the
+# manifest a restart with nothing new to judge is ~0.3s; a fresh tree, a new
+# manifest version, or a tree that just failed still gets the full sweep.
 sub tree_verify() {
 	return { ok => 1 } unless -f 'scripts/verify_change.pl';
-	my $out = `perl scripts/verify_change.pl --all --quiet 2>&1`;
+	my $manifest = &home('~/.president/verify-manifest');
+	my $out = `perl scripts/verify_change.pl --all --quiet --manifest "$manifest" 2>&1`;
 	my $code = $? >> 8;
 	$out = '' unless defined $out;
 	return { ok => 1 } if $code == 0;

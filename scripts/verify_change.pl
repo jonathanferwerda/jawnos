@@ -13,9 +13,19 @@
 #   perl scripts/verify_change.pl                     # files the tree changed
 #   perl scripts/verify_change.pl <file> [<file> ...] # named files
 #   perl scripts/verify_change.pl --all               # every source file
+#   perl scripts/verify_change.pl --all --manifest <path>  # ... re-checking only
+#                                                     # the files whose bytes moved
 #   perl scripts/verify_change.pl --range <a>..<b>    # the files a push changed
 #   perl scripts/verify_change.pl --allow-shrink      # skip the truncation guard
 #   perl scripts/verify_change.pl --quiet             # failures and summary only
+#
+# --manifest is the restart guard's fast path (see ./jawn's tree_verify): a full
+# sweep is ~744 compiler spawns and a git show each, ~90s on a laptop, and it sits
+# on the critical path of every restart. A file's verdict only changes when its
+# bytes change, so the manifest records the sha256 of every file that last passed
+# and a later run re-checks only the files whose content moved. Content-keyed, not
+# mtime-keyed: a checkout back to an already-verified state is a hit too. It only
+# writes a manifest when the whole run passes, so a failure is never cached.
 #
 # Exit 0 when every file passes, 1 when any file fails. scripts/verify_change.pl
 # is what staged_fix_apply calls before it commits a coding agent's proposal, and
@@ -38,13 +48,14 @@ my $node = 0;
 	$node = 1 if defined $p && length $p && -x $p;
 }
 
-my (@named, $all, $quiet, $allow_shrink, $range);
+my (@named, $all, $quiet, $allow_shrink, $range, $manifest);
 while (@ARGV) {
 	my $a = shift @ARGV;
 	if ($a eq '--all') { $all = 1 }
 	elsif ($a eq '--quiet') { $quiet = 1 }
 	elsif ($a eq '--allow-shrink') { $allow_shrink = 1 }
 	elsif ($a eq '--range') { $range = shift @ARGV }
+	elsif ($a eq '--manifest') { $manifest = shift @ARGV }
 	elsif ($a =~ /^--/) { die "verify_change.pl: unknown option $a\n" }
 	else { push @named, $a }
 }
@@ -78,6 +89,61 @@ sub read_text {
 	my $text = do { local $/; <$fh> };
 	close $fh;
 	return defined $text ? $text : '';
+}
+
+# --- the verification manifest ---------------------------------------------
+# Bump the version when the CHECK changes, not the format: a verdict recorded by
+# an older checker is not evidence for a newer one, and a bump discards every old
+# manifest (a full sweep, the once).
+my $manifest_version = 1;
+
+sub sha_of {
+	require Digest::SHA;
+	return Digest::SHA::sha256_hex(defined $_[0] ? $_[0] : '');
+}
+
+# path => [ verdict, sha256 ] for files this machine has already judged. Anything
+# unreadable, foreign, or from a different manifest version yields () - a full
+# sweep is always the safe answer.
+sub load_manifest {
+	my $path = shift;
+	return () unless defined $path && length $path && -f $path;
+	open(my $fh, '<', $path) or return ();
+	my $head = <$fh>;
+	unless (defined $head && $head =~ /^# jawnos verify manifest ([0-9]+)\s*$/) { close $fh; return () }
+	unless ($1 == $manifest_version) { close $fh; return () }
+	my $flag = <$fh>;
+	unless (defined $flag && $flag =~ /^# node=([01])\s*$/) { close $fh; return () }
+	# A JS file "passed" on a machine without node only by skipping its parse;
+	# install node and every one of them needs the real check. Anything added to
+	# the environment since is then judged the strict way.
+	unless ($1 == $node) { close $fh; return () }
+	my %entries;
+	while (my $line = <$fh>) {
+		chomp $line;
+		next unless length $line;
+		my ($verdict, $sha, $rel) = split /\t/, $line, 3;
+		next unless defined $rel && defined $sha && length $rel;
+		next unless $verdict eq 'ok' || $verdict eq 'skip';
+		$entries{$rel} = [ $verdict, $sha ];
+	}
+	close $fh;
+	return %entries;
+}
+
+# Written to a sibling temp file and renamed, so a run killed mid-write leaves the
+# previous manifest intact rather than a half file that reads as "all changed".
+sub save_manifest {
+	my ($path, $entries) = @_;
+	return unless defined $path && length $path;
+	my $tmp = "$path.tmp.$$";
+	open(my $fh, '>', $tmp) or return;
+	print $fh "# jawnos verify manifest $manifest_version\n";
+	print $fh '# node=' . $node . "\n";
+	print $fh join("\t", @{$_}), "\n" foreach @$entries;
+	close $fh;
+	rename($tmp, $path) or unlink $tmp;
+	return;
 }
 
 # A file's committed text at a revision, or undef when it is not there (a new
@@ -272,8 +338,13 @@ sub collect_files {
 my %seen;
 my @files = sort grep { length && !$seen{$_}++ } map { rel_of($_) } &collect_files();
 
-my (@passed, @failed, @skipped);
-my $checked = 0;
+# The manifest only describes the working tree, so a --range run (which judges
+# blobs from git) never reads or writes one.
+my $manifest_mode = (defined $manifest && $all && !$range_mode) ? 1 : 0;
+my %cached = $manifest_mode ? &load_manifest($manifest) : ();
+
+my (@passed, @failed, @skipped, @entries);
+my ($checked, $unchanged) = (0, 0);
 foreach my $rel (@files) {
 	my ($src, $path, $temp);
 	if ($range_mode) {
@@ -288,13 +359,35 @@ foreach my $rel (@files) {
 		$src = &read_text($abs);
 		$path = $abs;
 	}
+	# Same bytes this machine already judged -> no compiler to spawn. Reuse the
+	# earlier verdict ("ok", or "skip" for a file this box lacks a CPAN module for).
+	my $sha = $manifest_mode ? &sha_of($src) : undef;
+	if ($manifest_mode && defined $cached{$rel} && $cached{$rel}->[1] eq $sha) {
+		$checked++;
+		$unchanged++;
+		push @entries, [ $cached{$rel}->[0], $sha, $rel ];
+		next;
+	}
 	my $deps_before = scalar @dep_skips;
 	my @probs = &check($rel, $src, $path);
 	unlink $temp if defined $temp;
 	if (@probs) { $checked++; push @failed, [ $rel, \@probs ] }
-	elsif (scalar @dep_skips > $deps_before) { }   # an env gap, reported from @dep_skips
-	else { $checked++; push @passed, $rel }
+	elsif (scalar @dep_skips > $deps_before) {
+		# an env gap, reported from @dep_skips; remembering it keeps the file
+		# from costing a perl -c on every restart of a machine that lacks it
+		push @entries, [ 'skip', $sha, $rel ] if $manifest_mode;
+	}
+	else {
+		$checked++;
+		push @passed, $rel;
+		push @entries, [ 'ok', $sha, $rel ] if $manifest_mode;
+	}
 }
+
+# Only a run that judged every file is worth remembering: a failure leaves the
+# previous manifest in place, so the broken file is re-examined next time.
+&save_manifest($manifest, [ sort { $a->[2] cmp $b->[2] } @entries ])
+	if $manifest_mode && !@failed;
 
 if (!$quiet) {
 	print "ok    $_\n" foreach @passed;
@@ -314,7 +407,8 @@ if (@failed) {
 		scalar @failed, $checked, $range_mode ? "$base..$tip" : "base $base");
 	exit 1;
 }
-print sprintf("verify_change: %d file(s) pass (%s)%s\n",
+print sprintf("verify_change: %d file(s) pass (%s%s)%s\n",
 	$checked, $range_mode ? "$base..$tip" : "base $base",
+	($manifest_mode && $unchanged) ? "; $unchanged unchanged from the last verified run" : '',
 	$node ? '' : ' - JavaScript not checked (node missing)');
 exit 0;

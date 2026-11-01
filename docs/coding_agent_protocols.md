@@ -22,6 +22,10 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   `/home/jawn/initial.db` is a zero-byte decoy — never query it; the live house DB is the one under `database/`.
 - **Restart:** `printf 'restart' > ~/.president/status` — `jawn` polls every second, writes `good` back,
   and reboots the tree. Don't start `./jawn` yourself; never leave a detached process.
+  The restart guard re-verifies the tree before it kills anything, and caches the verdict per file
+  **content** in `~/.president/verify-manifest`: a restart with nothing new to judge is ~0.4s, a cold
+  sweep (no manifest, new manifest version, `node` newly installed, or the last run failed) is ~2 min.
+  Delete that file to force a full re-check; a failing run never updates it.
 - Status values: `good` / `restart` / `frozen`.
 - Restart needed? `.ep` **no** (mtime checked per request) · `.pl` **yes** (`perl -c perl/Manager.pl` first)
   · `public/js/*.js` **no restart, plain refresh** — static assets revalidate (`no-cache` + ETag/Last-Modified),
