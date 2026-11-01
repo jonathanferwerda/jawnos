@@ -60,4 +60,26 @@ my $odd = state('running:claim:7', 0, 0);
 is($odd->{'claim'}, 1, 'a claim with a trailing field is still a claim');
 ok($odd->{'busy'}, 'an odd claim value is still bounded');
 
+# A pull interrupted by an app update or a tree restart leaves the marker
+# behind, and every peer then hears "merging" and skips this machine's newer
+# rows until the bound expires (the phone hid six appointments this way on
+# 2026-10-31). At boot a marker no live process owns is dropped at once.
+ok(subs::remote_upgrade_marker_reapable({ value => 'running:4242', busy => 0 }),
+	'a marker whose owner is gone can be reaped at boot');
+ok(!subs::remote_upgrade_marker_reapable({ value => 'running:4242', busy => 1 }),
+	'a live pull keeps its marker');
+ok(!subs::remote_upgrade_marker_reapable({ value => '', busy => 0 }),
+	'an empty marker is not rewritten');
+ok(subs::remote_upgrade_marker_reapable({ value => 'running', busy => 0 }),
+	'an expired bare marker can be reaped');
+ok(!subs::remote_upgrade_marker_reapable(undef), 'a missing row is not reaped');
+
+my $manager = do {
+	open(my $fh, '<', "$FindBin::Bin/../Manager.pl") or die $!;
+	local $/;
+	<$fh>;
+};
+like($manager, qr/remote_upgrade_marker_reapable\(/,
+	'the manager reaps a dead pull marker as the tree comes up');
+
 done_testing();

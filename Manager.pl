@@ -125,6 +125,16 @@ if ($device eq 'mobile' && !&subs::sshd_running()) {
 	&subs::sshd_start();
 }
 
+# A pull interrupted by an app update or a tree restart leaves the
+# `remote_upgrade` marker behind; peers then hear "merging" and skip this
+# machine's newer rows until the age bound expires (the phone hid six rows this
+# way, 2026-10-31). Drop a marker no live process owns as the tree comes up.
+if ($device eq 'mobile') {
+	my $up = &subs::remote_upgrade_lock_state();
+	&subs::setting_setter({ app => '__president', setting => 'remote_upgrade', value => '' })
+		if &subs::remote_upgrade_marker_reapable($up);
+}
+
 # A record press may name its source (the media group's video/audio/screen
 # buttons do). Only the sources this build can actually run are accepted; an
 # empty or unknown value falls back to the app's own setting.

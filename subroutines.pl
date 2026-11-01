@@ -9938,6 +9938,19 @@ sub remote_upgrade_lock_state {
 	return &remote_upgrade_marker_state($value, $row->{'server_time'}, &rightNow(), $alive);
 }
 
+# A pull killed by an app update or a tree restart leaves this marker behind,
+# and every peer then hears "merging" and skips this machine's newer rows until
+# the age bound expires (the phone hid six appointments this way, 2026-10-31).
+# At boot nothing from a previous life can still be pulling, so a marker that no
+# live process owns may be dropped at once instead of waiting out the bound.
+# A live pid, a fresh claim, or an empty marker keeps its place.
+sub remote_upgrade_marker_reapable {
+	my ($up) = @_;
+	$up ||= {};
+	return 0 unless length($up->{'value'} || '');
+	return $up->{'busy'} ? 0 : 1;
+}
+
 
 # --- durable deletion tombstones -------------------------------------------
 # A deletion is permanent for any machine that has not yet seen it. Each
