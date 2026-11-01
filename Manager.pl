@@ -118,7 +118,32 @@ my $device = &subs::device_setter();
 my $user_agent = $gb::user_agent;
 
 if ($device eq 'mobile' && `ps -e | grep sshd` eq '') {
-	`sshd`;
+	# Termux's sshd_config comments out every HostKey line, and Android has no
+	# /etc/ssh for the built-in default: a bare `sshd` exited with "no hostkeys
+	# available" on every device. Name the prefix's keys and put the pid file in
+	# the writable tmp dir; both are fixed paths in the runtime.
+	my $prefix = $ENV{'PREFIX'} || '';
+	if (length $prefix) {
+		my $home = $ENV{'HOME'} || "$prefix/home";
+		my @host_keys = grep { -f $_ } map { "$prefix/etc/ssh/ssh_host_$_\_key" } qw/ed25519 ecdsa rsa/;
+		# AuthorizedKeysFile is absolute because sshd resolves the login user's
+		# home from the passwd entry (the old Termux prefix). StrictModes is off
+		# because it walks every parent and /data/user/0 is system-owned, which
+		# made it refuse the key with "bad ownership or modes". SetEnv puts the
+		# real home back for the session.
+		my @sshd = (
+			'sshd', '-f', "$prefix/etc/ssh/sshd_config",
+			'-o', "PidFile=$prefix/tmp/sshd.pid",
+			'-o', "AuthorizedKeysFile=$home/.ssh/authorized_keys",
+			'-o', 'StrictModes=no',
+			'-o', "SetEnv=HOME=$home",
+		);
+		push @sshd, ('-h', $_) foreach @host_keys;
+		system(@sshd);
+	}
+	else {
+		`sshd`;
+	}
 }
 
 # A record press may name its source (the media group's video/audio/screen

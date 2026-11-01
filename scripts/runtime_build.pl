@@ -78,6 +78,16 @@ my @LIB_DIRS = (
 # symlinks to bin/git, plus the one real git-remote-http).
 my @LIBEXEC_DIRS = (
 	'libexec/git-core',
+	# OpenSSH 10 splits the daemon: bin/sshd only re-execs this session
+	# helper, and without it every start dies with "sshd-session does not
+	# exist or is not executable" - which is why no device had a listening
+	# sshd after the runtime diet.
+	'libexec/sshd-session',
+	'libexec/sshd-auth',
+	'libexec/ssh-keysign',
+	'libexec/ssh-pkcs11-helper',
+	'libexec/ssh-sk-helper',
+	'libexec/sftp-server',
 );
 my @SHARE_DIRS = (
 	'share/terminfo',     # TERM=xterm-256color resolves here
