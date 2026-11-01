@@ -20477,6 +20477,20 @@ sub peer_manager_host {
 	return ($host, $port);
 }
 
+# A manager url with no route path. The panel and the CLI hand over the address a
+# person clicks (https://host:port/manager), while the peer rail appends
+# /manager/... itself: keeping the suffix dials .../manager/manager/configure/...
+# and the pull reads the Gate page as "the peer sent no snapshot" (the tablet,
+# 2026-10-31). A tunnel's loopback route is still a base url; only the trailing
+# route segment is dropped.
+sub peer_manager_base {
+	my $manager = shift || '';
+	return '' unless length $manager;
+	$manager =~ s{/+$}{};
+	$manager =~ s{/manager$}{};
+	return $manager;
+}
+
 # Every literal address a peer row can be dialled at, best first: the stored ip,
 # the LAN address it advertised, the manager's literal host, the address map,
 # a stored pseudonym and the tailnet address. Names are added by

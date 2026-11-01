@@ -11244,6 +11244,13 @@ get '/manager/sync_buckets' => sub ($c) {
 			$remote_machine->{'manager_verified'} = 1;
 		}
 	}
+	# Every route below appends /manager/..., so the address must be a base. A
+	# caller that names the panel's own address (scripts/peer_pull.pl, the signed
+	# lever) hands over .../manager; dialling it unchanged asked for
+	# /manager/manager/configure/backup_now, read the Gate page as the snapshot
+	# and failed with "the peer sent no snapshot" in under a second.
+	$remote_machine->{'manager'} = &subs::peer_manager_base($remote_machine->{'manager'})
+		if $remote_machine->{'manager'};
 	my $auuid = &subs::random_string_creator(10);
 	# v3: a normal delta pull is a sequence of encrypted row batches, not a temp
 	# SQLite snapshot. A full migration and a windowed deep pull keep the snapshot

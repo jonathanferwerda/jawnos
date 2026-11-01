@@ -33,12 +33,32 @@ is(subs::peer_live_manager({ manager => 'https://127.0.0.1:53665', fqdn => '127.
 	'https://127.0.0.1:53665',
 	'a loopback name is not a fallback');
 
+# The pull routes append /manager/... themselves. A caller that hands over the
+# address the panel shows (.../manager) must not produce /manager/manager/...
+# - that ask answers with the Gate page, which the pull reads as an empty
+# snapshot (the tablet, 2026-10-31).
+is(subs::peer_manager_base('https://192.168.1.155:45545/manager'),
+	'https://192.168.1.155:45545',
+	'the panel address loses its /manager route');
+is(subs::peer_manager_base('https://192.168.1.155:45545/manager/'),
+	'https://192.168.1.155:45545',
+	'a trailing slash after the route is dropped too');
+is(subs::peer_manager_base('https://192.168.1.155:45545'),
+	'https://192.168.1.155:45545',
+	'a base url is left alone');
+is(subs::peer_manager_base('https://127.0.0.1:53665'),
+	'https://127.0.0.1:53665',
+	'a tunnel route keeps its literal base');
+is(subs::peer_manager_base(''), '', 'an empty manager stays empty');
+
 # The client every peer call is built from must apply it.
 my $source = do {
 	open(my $fh, '<', "$FindBin::Bin/../subroutines.pl") or die $!;
 	local $/;
 	<$fh>;
 };
+like($source, qr!sub peer_manager_base \{.*?s\{/manager\$\}\{\}!s,
+	'peer_manager_base strips the route segment');
 like($source, qr/sub peer_useragent \{.*?peer_live_manager/s,
 	'peer_useragent resolves the live manager before it is used');
 
