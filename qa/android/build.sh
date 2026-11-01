@@ -36,6 +36,20 @@ fi
 mkdir -p "$OUT"
 cd "$APP"
 
+# AGP 8.7 / Gradle 8.9 support JDK 17-21. A machine whose only java is 26
+# fails in JdkImageTransform (jlink), before a single source file is compiled.
+# Prefer a supported JDK when one is installed; an explicit JAVA_HOME wins.
+if [ -z "${JAVA_HOME:-}" ] || [ ! -x "$JAVA_HOME/bin/java" ]; then
+	for d in /usr/lib/jvm/java-17-openjdk /usr/lib/jvm/java-21-openjdk \
+		/usr/lib/jvm/java-17-openjdk-amd64 /usr/lib/jvm/java-21-openjdk-amd64; do
+		if [ -x "$d/bin/java" ]; then
+			JAVA_HOME=$d
+			export JAVA_HOME
+			break
+		fi
+	done
+fi
+
 # cap the jobs: this box is shared with the live house
 ./gradlew --max-workers=4 :app:assembleDebug
 

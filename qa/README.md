@@ -126,6 +126,21 @@ build cannot pass as a release:
 Neither device layer runs unless `--layers l4` or `l5` is asked for, and both
 are expected on `table` where the SDK, AVD and KVM live.
 
+## Validated so far (2026-11-01)
+
+| where | what | result |
+| --- | --- | --- |
+| table | `l1` full (signed + anonymous) | PASS, 201 requests, p50 14 ms, p95 89 ms |
+| laptop | `l0` + `l1` full | PASS |
+| laptop | `qa/android/build.sh` | PASS, `jawnos-qa-3207084f.apk` from the app repo's HEAD |
+| table | `l0` | FAILS at `t/44-native-bins.t` (pre-existing: the native-bin converter/compile toolchain is not installed there) |
+| table | Android run | has the `jawnos` AVD and JDK 17, but no app repo; copy the APK from the build machine or set `JAWNOS_APP_DIR` |
+| laptop | QEMU image build | `mkosi` is installed; the build is `qa/qemu/build.sh` and was not run in this pass |
+
+The phone/tablet build needs JDK 17-21: AGP 8.7/Gradle 8.9 fail in
+`JdkImageTransform` on Java 26, which is the only JDK on the laptop until
+`jdk17-openjdk` was installed for this run. `qa/android/build.sh` prefers it.
+
 ## Known findings from the first runs (2026-11-01)
 
 - `POST /manager/clothesline` and `POST /manager/mail/email/server/delete` are
@@ -137,3 +152,13 @@ are expected on `table` where the SDK, AVD and KVM live.
 - `/manager/store` exceeds a 40 s client timeout on a fresh house with no
   network. Warned, not failed, until the UI layer measures it with a real
   session.
+
+- **Live-tree wedge during this work (2026-11-01, 15:29-15:43).** A
+  `restart.pl` request left the live master in `wait_woken` while its workers
+  blocked in `file_tty_write`: the tree's output filled the PTY faster than the
+  master drained it, the master then blocked writing to the same PTY, and the
+  accept queue grew to 925. The database was intact (`PRAGMA quick_check` ok).
+  Recovery was `kill -TERM <master>`, `perl scripts/manager_killer.pl`, then a
+  fresh `./jawn`; health returned in ~20 s. The restart path's synchrony with
+  the PTY is a real follow-up, not a QA-suite issue - the QA instance never
+  shares the master's PTY or its PID namespace.
