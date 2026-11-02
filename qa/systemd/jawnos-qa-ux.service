@@ -9,6 +9,9 @@ Type=oneshot
 User=jawn
 WorkingDirectory=/home/jawn/jawnos
 Environment=HOME=/home/jawn
+# The same house choice as the 04:00 suite: only the chosen machine runs the UX
+# night. See the comment on this condition in jawnos-qa.service.
+ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
 ExecStartPre=/usr/bin/perl /home/jawn/jawnos/qa/prune.pl --keep 14
 # The runner reads the live notes with a mode=ro URI, seeds them into a Harness
 # copy, and drives that copy. --file-handbook is the one live write: a POST to

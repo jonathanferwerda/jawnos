@@ -288,7 +288,10 @@ sub remote_command_run($c, $data) {
 	my $action;
 	if ($verb) {
 		my $live = &help::live_verb_names();
-		return { ok => 0, error => 'unknown verb: ' . $verb } unless $live->{$verb};
+		# qa_install is a machine action, not a Guide verb: the Configure panel
+		# sends it over this same signed rail to prepare the target's QA
+		# environment. It is not offered to the model in actions_prompt.
+		return { ok => 0, error => 'unknown verb: ' . $verb } unless $live->{$verb} || $verb eq 'qa_install';
 		$action = { action => $verb, %{$args} };
 	}
 	elsif (length $text) {
@@ -314,6 +317,14 @@ sub remote_command_execute($c, $action) {
 	$action = &guide_resolve_action($action) if ref $action eq 'HASH';
 	return $action->{'text'} if ref $action eq 'HASH' && ($action->{'action'} || '') eq 'ask';
 	my $a = $action->{'action'};
+	# Preparing the QA environment is local work the Configure panel asked for
+	# over the peer rail; it never goes near the Guide's action table. A phone
+	# or tablet refuses it even if someone sends the verb by hand.
+	if ($a eq 'qa_install') {
+		return { ok => 0, error => 'not an eligible device (computer or server only)' }
+			unless &subs::qa_device_kind_eligible(&subs::device_setter());
+		return &subs::qa_install_local({ dry_run => ($action->{'dry_run'} ? 1 : 0) });
+	}
 	# a runtime (learned) verb runs through the same primitive executor
 	return guide_verb_execute($c, $action) if grep { $_->{'name'} eq ($a // '') } @{ &help::learned_verbs() };
 	if ($a eq 'open_app' && $action->{'app'}) {

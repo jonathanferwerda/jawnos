@@ -741,4 +741,72 @@ sub action_12364 {
 
 }
 
+# GET /manager/configure/qa_device_ready
+sub action_50001 {
+	my $c = shift;
+	# The panel asks about the chosen device; a peer asks about itself. A peer
+	# request names the caller in `signatorial` and rides the signed rail, so it
+	# is authenticated the same way every other peer call is.
+	my $caller = $c->param('signatorial');
+	my $peer_ok = 0;
+	if (defined $caller && length $caller) {
+		my $rm = &subs::db_select('remote_machines', undef, { signatorial => $caller })->hashes->[0];
+		$peer_ok = ($rm && &subs::peer_verify($c, $rm)) ? 1 : 0;
+	}
+	unless ($c->session('authentication') eq 'approved' || $peer_ok) {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	my $result = &subs::qa_readiness_for($c->param('target') // '');
+	$c->render(json => $result);
+}
+
+# POST /manager/configure/qa_device_target
+sub action_50002 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	# The value is a signatorial or '' for this machine. A phone or tablet is
+	# refused here as well as at install, so a hand-made POST cannot pin the
+	# nightly to a device that cannot run it.
+	my $result = &subs::qa_nightly_save($c->param('signatorial') // '');
+	$c->render(json => $result);
+}
+
+# POST /manager/configure/qa_device_install
+sub action_50003 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	my $guard = &subs::qa_install_guard($c->param('signatorial') // '');
+	unless ($guard->{'ok'}) {
+		$c->render(json => $guard);
+		return;
+	}
+	my $dry = $c->param('dry_run') ? 1 : 0;
+	my $result;
+	if ($guard->{'target'}->{'local'}) {
+		$result = &subs::qa_install_local({ dry_run => $dry });
+	}
+	else {
+		# The target's own environment is prepared by the target, through the
+		# remote-command rail every peer call already uses (signed and
+		# peer-verified at the far end) - not by a new unauthenticated route.
+		$result = &remote_command_send({
+			uuid => $guard->{'target'}->{'uuid'},
+			verb => 'qa_install',
+			args => { dry_run => $dry },
+		});
+		# the peer wraps its work in the remote-command envelope; hand the panel
+		# the same shape it would have seen locally
+		$result = $result->{'observation'}
+			if ref $result eq 'HASH' && $result->{'ok'} && ref $result->{'observation'} eq 'HASH';
+	}
+	$c->render(json => $result);
+}
+
 1;

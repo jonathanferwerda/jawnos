@@ -11,6 +11,7 @@ use feature 'signatures';
 no warnings 'experimental::signatures';
 
 use Mojo::JSON qw(decode_json encode_json);
+use Mojo::IOLoop;
 use Mojo::URL;
 use Mojo::UserAgent;
 use Mojo::Util qw(url_escape b64_decode b64_encode);
@@ -325,6 +326,394 @@ sub remote_useragent_maker($data) {
 	$rm->{'data'} = eval { return decode_json $rm->{'data'} };
 
 	return $rm;
+}
+
+# ---------------------------------------------------------------------------
+# QA nightly target
+# ---------------------------------------------------------------------------
+# Configure -> Plat -> QA names the one machine that runs the nightly suite.
+# The choice is a house setting (`__president/qa_nightly_device`, device 'all'):
+# the signatorial of a computer or server, or '' for the local fallback. The
+# nightly's systemd unit reads the same rows through qa/device_target.pl, so the
+# panel and the timer can never disagree about which machine runs.
+
+# Where a tool is, without shelling out: PATH is enough, and a name is never
+# passed to a shell.
+sub qa_which {
+	my ($name) = @_;
+	return '' unless defined $name && length $name;
+	return $name if $name =~ m{/} && -x $name;
+	foreach my $dir ( split /:/, ($ENV{'PATH'} || '/usr/local/bin:/usr/bin:/bin') ) {
+		next unless length $dir;
+		my $candidate = "$dir/$name";
+		return $candidate if -x $candidate;
+	}
+	return '';
+}
+
+# A phone or tablet can hold the roster and answer the panel, but it is never
+# the machine a QA suite runs on: the suite needs a repo, perl and a fence, and
+# the owner asked for computer/server only.
+sub qa_device_kind_eligible {
+	my ($kind) = @_;
+	return 0 unless defined $kind && length $kind;
+	return $kind =~ /^(?:computer|server)$/ ? 1 : 0;
+}
+
+# The eligible remote rows, self excluded. `rows` lets a caller (a test, or a
+# caller that already holds the roster) answer without another database read.
+sub qa_target_machines {
+	my $opts = shift || {};
+	my $rows = $opts->{'rows'};
+	$rows = &subs::remote_machine_lister({ self => 'no', mirrors => 'none' }) unless ref $rows eq 'ARRAY';
+	my $self = exists $opts->{'self'} ? $opts->{'self'} : &subs::signatorial_designer();
+	my @out;
+	foreach my $rm ( @{$rows} ) {
+		next unless ref $rm eq 'HASH';
+		next unless defined $rm->{'signatorial'} && length $rm->{'signatorial'};
+		next if $self && $rm->{'signatorial'} eq $self;
+		next unless &qa_device_kind_eligible($rm->{'device'});
+		push @out, $rm;
+	}
+	return \@out;
+}
+
+# Resolve the setting's value to a target. '' and this machine's own
+# signatorial are the local fallback; any other value must name an eligible
+# row. An ineligible or unknown value resolves to undef, and every caller
+# treats that as a refusal rather than quietly running here.
+sub qa_target_lookup {
+	my ($signatorial, $opts) = @_;
+	$opts ||= {};
+	my $self = exists $opts->{'self'} ? $opts->{'self'} : &subs::signatorial_designer();
+	$signatorial = '' unless defined $signatorial;
+	if (!length $signatorial || ($self && $signatorial eq $self)) {
+		return { local => 1, signatorial => ($self || ''), device => 'local', hostname => 'me' };
+	}
+	foreach my $rm ( @{ &qa_target_machines({ %{$opts}, self => $self }) } ) {
+		next unless $rm->{'signatorial'} eq $signatorial;
+		return { %{$rm}, local => 0 };
+	}
+	return undef;
+}
+
+# The guard every mutating action runs first: saving the choice and installing
+# on it both refuse a device that is not computer/server.
+sub qa_install_guard {
+	my ($signatorial, $opts) = @_;
+	my $target = &qa_target_lookup($signatorial, $opts);
+	return { ok => 0, error => 'not an eligible device (computer or server only)' } unless $target;
+	return { ok => 1, target => $target };
+}
+
+# A stored choice is a signatorial (hex) or '' for the local fallback. Anything
+# else is treated as no choice at all, never handed to a path or a query.
+sub qa_nightly_clean {
+	my ($value) = @_;
+	return '' unless defined $value;
+	$value =~ s/^\s+//;
+	$value =~ s/\s+$//;
+	return '' unless $value =~ /^[0-9a-f]{16,64}$/i;
+	return lc $value;
+}
+
+sub qa_nightly_device {
+	my $opts = shift || {};
+	my $grab = $opts->{'grabber'};
+	unless ($grab) {
+		$grab = sub {
+			my $v = &subs::setting_grabber({ app => '__president', setting => 'qa_nightly_device', device => 'all' });
+			$v = &subs::setting_grabber({ app => '__president', setting => 'qa_nightly_device' }) unless defined $v && length $v;
+			return $v;
+		};
+	}
+	return &qa_nightly_clean( $grab->() );
+}
+
+# Save the choice. The value is written as a house setting (device 'all') so
+# every machine's timer reads the same answer; a test may inject the setter.
+sub qa_nightly_save {
+	my ($signatorial, $opts) = @_;
+	$opts ||= {};
+	my $guard = &qa_install_guard($signatorial, $opts);
+	return $guard unless $guard->{'ok'};
+	my $target = $guard->{'target'};
+	# The local fallback is only a computer's or a server's: a phone can open
+	# Configure but cannot run the suite, so it must not pin itself.
+	if ($target->{'local'}) {
+		my $kind = exists $opts->{'device_kind'} ? $opts->{'device_kind'} : &subs::device_setter();
+		return { ok => 0, error => 'not an eligible device (computer or server only)' }
+			unless &qa_device_kind_eligible($kind);
+	}
+	my $value = $target->{'local'} ? '' : $target->{'signatorial'};
+	my $set = $opts->{'setter'};
+	unless ($set) {
+		$set = sub {
+			&subs::setting_setter({ app => '__president', setting => 'qa_nightly_device', device => 'all', value => $_[0] });
+		};
+	}
+	$set->($value);
+	return { ok => 1, signatorial => $value, local => ($target->{'local'} ? 1 : 0), device => $target->{'device'} };
+}
+
+# The tools the suite and its artefact layers need. `required` is the nightly
+# (l0-l2 plus the fence); the rest are the build/device layers, named so the
+# panel can say what is missing without calling them failures of tonight's run.
+sub qa_readiness_checks {
+	return (
+		{ key => 'repo',    label => 'JawnOS checkout',  required => 1, kind => 'file' },
+		{ key => 'perl',    label => 'perl',             required => 1, kind => 'tool' },
+		{ key => 'prove',   label => 'prove',            required => 1, kind => 'tool' },
+		{ key => 'sqlite3', label => 'sqlite3',          required => 1, kind => 'tool' },
+		{ key => 'unshare', label => 'unshare',          required => 1, kind => 'tool' },
+		{ key => 'mkosi',   label => 'mkosi',            required => 0, kind => 'tool' },
+		{ key => 'qemu',    label => 'qemu-system-x86_64', required => 0, kind => 'tool' },
+		{ key => 'java',    label => 'java',             required => 0, kind => 'tool' },
+		{ key => 'javac',   label => 'javac',            required => 0, kind => 'tool' },
+		{ key => 'jlink',   label => 'jlink',            required => 0, kind => 'tool' },
+		{ key => 'adb',     label => 'adb',              required => 0, kind => 'tool' },
+		{ key => 'avd',     label => 'Android AVD',      required => 0, kind => 'avd' },
+	);
+}
+
+# Is this machine ready to run the nightly? Injected `which`, `file_exists`,
+# `home` and `repo` keep the answer testable without pretending a tool exists.
+sub qa_readiness {
+	my $opts = shift || {};
+	my $which = $opts->{'which'} || sub { &qa_which($_[0]) };
+	my $exists = $opts->{'file_exists'} || sub { -e $_[0] };
+	my $home = defined $opts->{'home'} ? $opts->{'home'} : &subs::home('~');
+	my $repo = defined $opts->{'repo'} ? $opts->{'repo'} : &subs::home('~/jawnos');
+	my @checks;
+	foreach my $def ( &qa_readiness_checks() ) {
+		my %row = ( %{$def}, ok => 0 );
+		if ($def->{'kind'} eq 'file') {
+			$row{'path'} = $repo . '/qa/run.pl';
+			$row{'ok'} = $exists->( $row{'path'} ) ? 1 : 0;
+		}
+		elsif ($def->{'kind'} eq 'avd') {
+			my $dir = $ENV{'ANDROID_AVD_HOME'} || "$home/.android/avd";
+			my @avd = $exists->($dir) ? glob("$dir/*.avd") : ();
+			$row{'path'} = $dir;
+			$row{'ok'} = scalar(@avd) ? 1 : 0;
+		}
+		else {
+			my $found = $which->( $def->{'key'} );
+			$row{'path'} = $found if defined $found && length $found;
+			$row{'ok'} = (defined $found && length $found) ? 1 : 0;
+		}
+		push @checks, \%row;
+	}
+	my @missing = map { $_->{'key'} } grep { !$_->{'ok'} } @checks;
+	my @missing_required = map { $_->{'key'} } grep { !$_->{'ok'} && $_->{'required'} } @checks;
+	my $install = exists $opts->{'install'} ? $opts->{'install'} : &qa_install_status();
+	return {
+		ok => 1,
+		ready => scalar(@missing_required) ? 0 : 1,
+		missing => \@missing,
+		missing_required => \@missing_required,
+		checks => \@checks,
+		hostname => &subs::machine_name(),
+		install => $install,
+	};
+}
+
+# Ask the chosen machine. The local fallback answers here; a remote row is
+# asked over the signed peer rail, which is how every other peer call in the
+# app authenticates - there is no unauthenticated path for it.
+sub qa_readiness_for {
+	my ($signatorial, $opts) = @_;
+	$opts ||= {};
+	my $guard = &qa_install_guard($signatorial, $opts);
+	return { ok => 0, error => $guard->{'error'} } unless $guard->{'ok'};
+	my $target = $guard->{'target'};
+	if ($target->{'local'}) {
+		my $here = &qa_readiness($opts);
+		$here->{'target'} = $target->{'signatorial'} || '';
+		$here->{'local'} = 1;
+		return $here;
+	}
+	my $hop_row = { %{$target} };
+	# Ask on the signed rail alone: a stored session cookie could carry a lower
+	# privilege and the Configure tier check would refuse the read before the
+	# peer signature was ever examined.
+	delete $hop_row->{'cookie'};
+	my $hop = eval { &remote_useragent_maker({ signatorial => $target->{'signatorial'}, rm => $hop_row }) };
+	return { ok => 0, error => 'no route to that machine', target => $target->{'signatorial'} } unless $hop && $hop->{'ua'} && $hop->{'manager'};
+	my $url = $hop->{'manager'} . '/manager/configure/qa_device_ready?signatorial=' . &subs::signatorial_designer();
+	my $res = eval { $hop->{'ua'}->inactivity_timeout(25)->get($url)->result };
+	my $body = ($res && $res->is_success) ? eval { decode_json $res->body } : undef;
+	return $body if ref $body eq 'HASH';
+	return { ok => 0, error => 'that machine did not answer the readiness check', target => $target->{'signatorial'} };
+}
+
+# --- install -----------------------------------------------------------------
+# The setup is a short list of package installs; the AVD and the checkout are
+# manual steps and say so. Only a missing tool is touched - a ready machine has
+# no steps at all.
+sub qa_install_status_file {
+	return &subs::home('~/.president/qa_install.json');
+}
+
+sub qa_install_status {
+	my ($file) = @_;
+	$file ||= &qa_install_status_file();
+	return {} unless $file && -e $file;
+	my $raw = do {
+		local $/;
+		open my $fh, '<', $file or return {};
+		<$fh>;
+	};
+	my $data = eval { decode_json $raw };
+	return ref $data eq 'HASH' ? $data : {};
+}
+
+sub qa_install_status_write {
+	my ($data) = @_;
+	return unless ref $data eq 'HASH';
+	my $file = &qa_install_status_file();
+	(my $dir = $file) =~ s{/[^/]+$}{};
+	mkdir $dir unless -d $dir;
+	open my $fh, '>', $file or return;
+	print $fh encode_json($data);
+	close $fh;
+	return $data;
+}
+
+# The package set for each missing tool, deduplicated across steps so a JDK
+# installed for java/javac/jlink is one command, not three.
+sub qa_install_plan {
+	my ($missing) = @_;
+	my %want = map { $_ => 1 } @{ $missing || [] };
+	my %pkgs = (
+		perl    => [ 'perl', 'libtest-simple-perl' ],
+		prove   => [ 'perl', 'libtest-simple-perl' ],
+		sqlite3 => [ 'sqlite3' ],
+		unshare => [ 'util-linux' ],
+		mkosi   => [ 'mkosi' ],
+		qemu    => [ 'qemu-system-x86', 'qemu-utils' ],
+		java    => [ 'openjdk-17-jdk' ],
+		javac   => [ 'openjdk-17-jdk' ],
+		jlink   => [ 'openjdk-17-jdk' ],
+		adb     => [ 'android-tools-adb' ],
+	);
+	my @steps;
+	my %seen;
+	foreach my $key ( qw(repo perl prove sqlite3 unshare mkosi qemu java javac jlink adb avd) ) {
+		next unless $want{$key};
+		if ($key eq 'repo') {
+			push @steps, { key => 'repo', manual => 1, note => 'Put a JawnOS checkout at ~/jawnos (the suite and its systemd unit both read it).' };
+			next;
+		}
+		if ($key eq 'avd') {
+			push @steps, { key => 'avd', manual => 1, note => 'Create an Android AVD with sdkmanager/avdmanager; it is only used by the l4 layer.' };
+			next;
+		}
+		my @want_pkgs = grep { !$seen{$_}++ } @{ $pkgs{$key} || [] };
+		next unless @want_pkgs;
+		push @steps, { key => $key, manual => 0, packages => \@want_pkgs };
+	}
+	return \@steps;
+}
+
+sub qa_package_manager {
+	return 'apt-get' if &qa_which('apt-get');
+	return 'dnf'     if &qa_which('dnf');
+	return 'yum'     if &qa_which('yum');
+	return 'zypper'  if &qa_which('zypper');
+	return 'pacman'  if &qa_which('pacman');
+	return '';
+}
+
+sub qa_install_command {
+	my ($packages) = @_;
+	my $pm = &qa_package_manager();
+	return () unless $pm;
+	my @sudo = ( 'sudo', '-n' );
+	return (@sudo, 'env', 'DEBIAN_FRONTEND=noninteractive', 'apt-get', 'install', '-y', @{$packages}) if $pm eq 'apt-get';
+	return (@sudo, $pm, 'install', '-y', @{$packages}) if $pm eq 'dnf' || $pm eq 'yum' || $pm eq 'zypper';
+	return (@sudo, 'pacman', '-S', '--noconfirm', @{$packages}) if $pm eq 'pacman';
+	return ();
+}
+
+# Run the planned commands one at a time, recording each one's result so the
+# panel's poll sees progress and the last failure names the tool that held it
+# up. Only ever called on the machine that owns the QA environment.
+sub qa_install_execute {
+	my ($steps) = @_;
+	my $status = &qa_install_status();
+	my @state = @{ $status->{'steps'} || [] };
+	my $log = $status->{'log'} || '';
+	my $failed = 0;
+	for my $i ( 0 .. $#{$steps || []} ) {
+		my $step = $steps->[$i];
+		$state[$i] = { key => $step->{'key'}, state => 'running' };
+		&qa_install_status_write({ %{$status}, state => 'running', step => $i + 1, steps => \@state, log => $log });
+		if ($step->{'manual'}) {
+			$log .= $step->{'key'} . ": " . ($step->{'note'} || 'manual step') . "\n";
+			$state[$i]->{'state'} = 'manual';
+			next;
+		}
+		my @cmd = &qa_install_command( $step->{'packages'} );
+		unless (@cmd) {
+			$log .= $step->{'key'} . ": no package manager found\n";
+			$state[$i]->{'state'} = 'failed';
+			$failed = 1;
+			last;
+		}
+		my $rc = system(@cmd);
+		$rc = ($rc == 0) ? 0 : ($rc >> 8 || 1);
+		$state[$i]->{'state'} = $rc ? 'failed' : 'done';
+		$log .= $step->{'key'} . ': ' . ($rc ? "failed ($rc)" : 'installed') . "\n";
+		if ($rc) { $failed = 1; last; }
+	}
+	my $done = &qa_readiness({ install => {} });
+	&qa_install_status_write({
+		%{$status},
+		state => $failed ? 'failed' : 'done',
+		step => scalar(@state),
+		steps => \@state,
+		log => $log,
+		missing => $done->{'missing'},
+		updated => &subs::rightNow(),
+	});
+	return { state => $failed ? 'failed' : 'done', log => $log, steps => \@state };
+}
+
+# The install action's one entry point. `dry_run` (the tests, and a preview)
+# returns the plan and changes nothing; a real run starts the steps in a
+# background job so the panel can poll the status the readiness payload carries.
+sub qa_install_local {
+	my $opts = shift || {};
+	my $dry = $opts->{'dry_run'} ? 1 : 0;
+	my $ready = &qa_readiness($opts);
+	my $missing = $ready->{'missing'} || [];
+	my $steps = &qa_install_plan($missing);
+	if (!@{$missing}) {
+		return { ok => 1, ready => 1, missing => [], steps => [], state => 'ready', dry_run => $dry };
+	}
+	if ($dry) {
+		return { ok => 1, ready => 0, missing => $missing, steps => $steps, state => 'planned', dry_run => 1 };
+	}
+	my $running = &qa_install_status();
+	if (($running->{'state'} || '') eq 'running') {
+		return { ok => 0, error => 'an install is already running', install => $running, missing => $missing };
+	}
+	my $started = &subs::rightNow();
+	&qa_install_status_write({
+		state => 'running',
+		started => $started,
+		updated => $started,
+		missing => $missing,
+		steps => [ map { { key => $_->{'key'}, state => 'waiting' } } @{$steps} ],
+		log => '',
+	});
+	my @copy = map { { %{$_} } } @{$steps};
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&qa_install_execute(\@copy);
+	}, { name => 'qa install', fork => 1 });
+	return { ok => 1, ready => 0, missing => $missing, steps => $steps, state => 'running', dry_run => 0 };
 }
 
 1;

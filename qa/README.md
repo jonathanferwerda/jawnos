@@ -368,6 +368,43 @@ deliberately not in the nightly set while the JavaScript refactor is in flight.
 The UX loop (`l6`) has its own timer at 05:30 - do not add it to this unit, or a
 20-minute UX run can hold the route/database layers.
 
+### Which machine runs the night
+
+Configure -> Plat -> QA names one machine for the nightly, and the choice is the
+house setting `__president/qa_nightly_device` (device `all`). It holds the
+signatorial of a **computer** or **server**; a phone or tablet is never offered,
+and the save and install actions refuse one. An empty value is the local
+fallback: every machine runs its own suite, as it always did.
+
+Both timers honour the choice through `qa/device_target.pl`:
+
+```
+ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
+```
+
+The helper reads the setting from `database/jawnos.db` with `sqlite3`, compares
+it with this machine's identity (`~/.jawnos_signatorial_id`, or the copy beside
+the database), and exits 0 when this machine is the chosen one. It exits 1 for
+every other machine, and systemd skips the unit without marking it failed. It
+also exits 0 when no choice is saved, the row is missing, or no identity file
+can be read - the local fallback is always the safe answer. Install the units on
+every machine that might be chosen; the unchosen ones still have the timer, they
+just skip their run.
+
+There is no 05:00 unit today: the suite runs at **04:00** and the UX loop at
+**05:30**. The choice applies to both. The weekly artefact build
+(`jawnos-qa-build.timer`, Sunday 03:00) deliberately does **not** carry the
+condition: it belongs where the toolchain is (mkosi, qemu, a full JDK), not on
+the machine that happens to run the route/database suite.
+
+The panel's readiness card asks the chosen machine what it has: the checkout,
+`perl` and `prove`, `sqlite3`, `unshare` (the fence) are required for the
+nightly; `mkosi`, `qemu-system-x86_64`, `java`/`javac`/`jlink`, `adb` and an
+Android AVD are the artefact and device layers. Install runs on the target over
+the app's existing signed remote-command rail (`POST /manager/remote_command`,
+peer-verified at the far end); it installs only what is missing, and a dry run
+(used by the tests) returns the plan without running anything.
+
 ## Known findings from the first runs (2026-11-01/02)
 
 - **Live-tree wedge on table (recovered).** The live master sat in `wait_woken`

@@ -9,6 +9,12 @@ Type=oneshot
 User=jawn
 WorkingDirectory=/home/jawn/jawnos
 Environment=HOME=/home/jawn
+# The house's nightly suite runs on the machine chosen in Configure -> Plat ->
+# QA. The helper exits 0 for the chosen machine (or when no choice is saved, or
+# when this machine cannot read its own identity) and 1 for every other, which
+# skips this unit without marking it failed. Install the unit on every machine
+# that might be chosen.
+ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
 ExecStartPre=/usr/bin/perl /home/jawn/jawnos/qa/prune.pl --keep 14
 ExecStart=/usr/bin/perl /home/jawn/jawnos/qa/run.pl --layers l0,l1,l2 --profile full
 

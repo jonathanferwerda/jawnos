@@ -1,0 +1,42 @@
+<%# Configure -> Plat -> QA. The house's nightly suite runs on one machine;
+    this panel names it and says whether that machine can actually run it.
+    Only a computer or a server is offered: a phone or tablet can hold the
+    roster but has neither the checkout nor the fence the suite needs. %>
+<% no warnings 'uninitialized'; %>
+<%
+	my $qa_machines = &subs::qa_target_machines();
+	my $qa_chosen = &subs::qa_nightly_device();
+	my $qa_local_ok = &subs::qa_device_kind_eligible(&subs::device_setter());
+	my $qa_label = sub {
+		my ($rm) = @_;
+		my $name = $rm->{'hostname'} || $rm->{'fqdn'} || $rm->{'signatorial'} || '';
+		return $name eq 'me' ? &subs::lang('configure.qa_this_machine') : $name;
+	};
+%>
+<p class="cfg-note"><%= &subs::ui('The QA suite runs once a night from one machine: per-route checks, the database contracts and the regression tests, all in a fenced copy of the house. Choose the machine here. Only a computer or a server is offered, because the suite needs a JawnOS checkout, perl and prove, and a private namespace to run in. The choice is a house setting, so every machine reads the same answer: the nightly timer on each machine asks this panel\'s setting whether that machine is the chosen one and skips its run when it is not. With no choice, each machine keeps the local fallback and runs its own suite.') %></p>
+<div class="cfg-card">
+	<h3 style="margin-top:0;"><%= &subs::lang('configure.qa_nightly') %></h3>
+	<div class="cfg-row">
+		<label><%= &subs::lang('configure.qa_nightly_device') %></label>
+		<select id="qa_nightly_device" class="qa_nightly_device">
+			<option value="" <%= $qa_local_ok ? '' : 'disabled' %> <%= $qa_chosen eq '' ? 'selected' : '' %>><%= &subs::lang('configure.qa_this_machine') %></option>
+			<% foreach my $rm ( @{$qa_machines} ) { %>
+				<option value="<%= $rm->{'signatorial'} %>" data-device="<%= $rm->{'device'} %>" <%= $qa_chosen eq $rm->{'signatorial'} ? 'selected' : '' %>><%= $qa_label->($rm) %> (<%= $rm->{'device'} %>)</option>
+			<% } %>
+		</select>
+	</div>
+	<p class="cfg-note" style="margin:6px 0 0;">
+		<%= &subs::ui('The nightly systemd timer reads this setting through qa/device_target.pl. The unit must be installed on every machine that might be chosen; the machine that is not chosen skips its run, and the chosen one runs it. The weekly artefact build stays wherever its toolchain is (mkosi, qemu, a full JDK) - it does not follow this choice.') %>
+	</p>
+</div>
+<div class="cfg-card">
+	<div class="cfg-row" style="justify-content:space-between;">
+		<h3 style="margin:0;"><%= &subs::lang('configure.qa_ready') %></h3>
+		<div class="cfg-actions" style="margin:0;">
+			<button type="button" id="qa_refresh" class="button"><%= &subs::lang('configure.qa_check') %></button>
+			<button type="button" id="qa_install" class="button"><%= &subs::lang('configure.qa_install') %></button>
+		</div>
+	</div>
+	<div id="qa_readiness" style="margin-top:8px;opacity:.85;font-size:13px;"><%= &subs::lang('configure.qa_checking') %></div>
+	<div id="qa_install_status" class="cfg-note" style="margin-top:8px;white-space:pre-wrap;"></div>
+</div>

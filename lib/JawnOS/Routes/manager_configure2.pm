@@ -23,6 +23,9 @@ sub routes {
 	[12285, 'post', '/manager/configure/remote_machine/tunnel/request', 'action_12285'],
 	[12334, 'post', '/manager/configure/remote_machine/tunnel/confirm', 'action_12334'],
 	[12364, 'post', '/manager/configure/remote_machine/tunnel/close', 'action_12364'],
+	[50001, 'get', '/manager/configure/qa_device_ready', 'action_50001'],
+	[50002, 'post', '/manager/configure/qa_device_target', 'action_50002'],
+	[50003, 'post', '/manager/configure/qa_device_install', 'action_50003'],
 	);
 }
 
