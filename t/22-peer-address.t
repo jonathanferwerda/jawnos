@@ -230,4 +230,18 @@ is subs::tailnet_address({ ip => '100.64.0.2' }), '100.64.0.2',
 is subs::tailnet_address({ ip => '192.168.1.140', network => '{"lan":{"ip":"192.168.1.140"}}' }), '',
 	'a LAN address is not mistaken for a tailnet one';
 
+# The value is only useful if it was written down while the VPN was up, so pin
+# both places a peer's interfaces arrive: its network report and a LAN beacon.
+like($manager_source, qr/tailnet_ip/,
+	'the peer network report stores the tailnet address');
+my $house_source = '';
+{
+	open(my $fh, '<', repo_root() . '/lib/JawnOS/Domain/House.pm') or die $!;
+	local $/;
+	$house_source = <$fh>;
+	close $fh;
+}
+like($house_source, qr/\$update->\{'tailnet_ip'\}/,
+	'a LAN beacon stores the tailnet address too');
+
 done_testing();

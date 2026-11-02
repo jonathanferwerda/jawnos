@@ -758,6 +758,14 @@ sub lan_presence_accept {
 		$update->{'hostname'} = $better;
 		$changed = 1;
 	}
+	# Remember the peer's tailnet address while it has one. The live map drops the
+	# interface when the VPN goes down, and then the row has no address off the
+	# LAN left to probe.
+	my $tailnet = &tailnet_address($rm);
+	if ($tailnet ne '' && $tailnet ne ($rm->{'tailnet_ip'} // '')) {
+		$update->{'tailnet_ip'} = $tailnet;
+		$changed = 1;
+	}
 	&db_update('remote_machines', $update, { signatorial => $sig }) if $changed;
 	# The Dev panel's neighbour table is this machine's devices row, not the
 	# remote_machines row; put the new address and version there too and refresh
