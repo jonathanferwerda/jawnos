@@ -7,8 +7,9 @@ the live database, and without mail or network access.
 ## Run it
 
 ```sh
-perl scripts/run_tests.pl          # everything, in parallel
+perl scripts/run_tests.pl          # everything, in parallel (fork engine)
 perl scripts/run_tests.pl -v t/01-names.t   # one file, verbose
+perl scripts/run_tests.pl --prove  # the old prove path
 prove -l t                         # serial, if you want it
 make test                          # after `perl Makefile.PL`
 
@@ -22,15 +23,23 @@ claim them and runs just those. Anything no test claims selects the full
 suite, so a missing header costs time, never coverage. The pre-push hook
 still runs everything.
 
-`scripts/run_tests.pl` runs test files concurrently with `prove -j`, using one
-job per core, capped at 8. The cap is measured, not cautious: on the 12-core
-house box the suite takes ~46 s serially, ~20 s at `-j4`, ~16 s at `-j6`,
-~14.5 s at `-j8` and no faster at `-j12` - past eight jobs the processes
-contend for CPU and memory and the suite's own CPU time doubles. A serial run
-uses about 0.9 of the 12 cores (11 idle); `-j8` uses about 5. An explicit
-`--jobs N` is honoured up to the core count, and `--serial` runs one file at a
-time. The runner is what `.githooks/pre-push` calls; pass it the same switches
-you would pass to `prove`.
+`scripts/run_tests.pl` uses `scripts/run_tests_fork.pl`, which boots
+`subroutines.pl` **once** and forks one child per test file. Under `prove`,
+every file starts a fresh Perl and re-loads the app (~0.5 s, ~50 s of CPU
+across the suite); the fork engine pays that once and the child inherits the
+loaded code copy-on-write. A test still gets its own process, temp sandbox and
+`$0`/`$FindBin::Bin`, so `use lib "$FindBin::Bin/lib"` in a test is unchanged.
+
+Jobs default to one per core, capped at 8, and `--jobs N` is honoured up to the
+core count. The engine starts the tests that took longest last run first (a
+scratch cache in `/tmp`, not repo state), so the 10-second QA tests do not set
+the wall time from the end of the queue. A prove switch the engine does not
+know (`--timer`, `--failures`, ...) falls back to prove automatically, as does
+`--prove`. The runner is what `.githooks/pre-push` calls.
+
+Measured on the 12-core house box while it was also running a build: 27 s for
+`prove -l -j8 t`, 20 s for the fork engine at `-j12`. On an idle box the
+difference is the boot CPU (~50 s), so expect a larger gap.
 
 Concurrent files are safe because every one of them gets a private temp
 sandbox (below) and the socket tests bind ephemeral ports. Nothing in `t/`

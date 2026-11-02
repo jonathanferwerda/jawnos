@@ -109,8 +109,9 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
   another part reads. Give the test a `# tests-for:` header naming the source it
   pins. While iterating run `perl scripts/tests_for.pl --staged --run` (only the
   tests the change claims); before the commit run `perl scripts/run_tests.pl`
-  (the whole suite, in parallel). Never run bare `prove -l t`: it is serial and
-  several times slower. A defect you find but do not fix gets a `TODO` test
+  (the whole suite: it boots once and forks one child per test; `--prove` is the
+  old path). Never run bare `prove -l t`: it is serial and several times
+  slower. A defect you find but do not fix gets a `TODO` test
   naming the file and line — never a test that asserts the broken behaviour. The
   pre-push hook runs the suite, so a regression blocks the push.
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
