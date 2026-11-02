@@ -113,6 +113,7 @@ function appointmentTasksGrabber(app,timestamp) {
 		success: function(response) {
 			appointmentTaskReopener(container,response.html);
 			container.show();
+			appActSync(app);
 			appointment_chron();
 			ac.scrollTop(top);
 		}

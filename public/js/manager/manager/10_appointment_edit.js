@@ -263,6 +263,7 @@ $(document).on('click', '.det', function() {
 		appointmentDetailsGrabber(a);
 		container.show();
 	}
+	appActSync(app);
 });
 
 $(document).on('click', '.register', function() {
@@ -278,6 +279,7 @@ $(document).on('click', '.register', function() {
 		registerGrabber(app);
 		container.show();
 	}
+	appActSync(app);
 });
 
 function registerGrabber(app) {

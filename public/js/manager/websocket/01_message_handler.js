@@ -1,6 +1,36 @@
+// Frames arrive in bursts: one server action often sends several (a header, a
+// console instruction, a neighbour update), and every one of them used to run
+// the whole dispatcher at once - jQuery lookups, innerHTML, layout - with the
+// browser free to reflow between frames. Collect the frames of a turn and run
+// them in one pass instead: the same work, without the churn between it.
+// setTimeout, not requestAnimationFrame: a hidden tab still takes its messages
+// (a notification, a padlock, terminal output), and rAF stops while hidden.
+var wsMessageQueue = [];
+var wsMessageFlushTimer = null;
+
 function wsMessageHandler(event) {
-	if (isJson(event.data)) {
-		var data = JSON.parse(event.data);
+	wsMessageQueue.push(event.data);
+	if (wsMessageFlushTimer) { return; }
+	wsMessageFlushTimer = setTimeout(function () {
+		wsMessageFlushTimer = null;
+		var batch = wsMessageQueue;
+		wsMessageQueue = [];
+		for (var i = 0; i < batch.length; i++) {
+			try {
+				wsMessageDispatch(batch[i]);
+			}
+			catch (err) {
+				// one bad frame must not swallow the ones behind it, and a real
+				// error still reaches the page's own reporter by leaving the timer
+				setTimeout(function () { throw err; }, 0);
+			}
+		}
+	}, 0);
+}
+
+function wsMessageDispatch(raw) {
+	if (isJson(raw)) {
+		var data = JSON.parse(raw);
 		// the machine's code revision arrives on every connect. Storing it first is
 		// the reload loop-guard: the reloaded page compares against what is in
 		// sessionStorage, so a value that is not stored first reloads forever.

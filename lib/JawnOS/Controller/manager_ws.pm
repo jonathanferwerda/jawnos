@@ -275,6 +275,9 @@ sub action_47050 {
 
 					foreach my $w ( keys %{$windows} ) {
 						foreach my $set ( qw/scrollTop jopen/ ) {
+							# jopen rides its own act frame now. A beat that carries only
+							# geometry must not write a null over the panels on disk.
+							next unless defined $windows->{$w}->{$set};
 							if ($set eq 'jopen') {
 								$windows->{$w}->{$set} = encode_json $windows->{$w}->{$set};
 							}
@@ -430,6 +433,24 @@ sub action_47050 {
 			eval { &subs::lockdown_sweep({ browser_tab_id => $browser_tab_id }) };
 			&Websocket::send('server', { console => '$("#start_menu").toggleClass("lockdown", ' . (&subs::lockdown_active() ? 'true' : 'false') . ');', browser_tab_id => $browser_tab_id });
 
+		}
+		elsif (($data->{'type'} || '') eq 'act') {
+			# An act panel opening or closing is an event, not a layout. The client
+			# sends just the affected window's jopen the moment it changes, so the
+			# 10 s beat never has to carry the whole layout to report a panel. Only
+			# the named window is written - the old beat wrote one for every window
+			# in the page on its way past.
+			my $jopen = eval { return decode_json($data->{'jopen'} || '') } || {};
+			if (ref $jopen eq 'HASH') {
+				foreach my $window_app ( keys %{$jopen} ) {
+					next if ref $jopen->{$window_app} ne 'HASH';
+					&subs::setting_setter({
+						app => $window_app,
+						setting => 'jopen',
+						value => encode_json({ $window_app => $jopen->{$window_app} })
+					});
+				}
+			}
 		}
 		elsif (($data->{'type'} || '') eq 'terminal_open' && $app eq 'server') {
 			# Every Terminal window names its own pty. A window opened from the

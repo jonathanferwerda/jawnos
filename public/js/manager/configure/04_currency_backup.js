@@ -84,6 +84,7 @@ $(document).on('click', '.appointment_configuration_grabber', function() {
 	if (display.is(':visible')) {
 		display.hide();
 		t.attr('status', 'active');
+		appActSync($(display).closest('.wind'));
 	}
 	else {
 		appActExclusive(app, 'appointment_configuration_grabber');
@@ -127,6 +128,9 @@ function configurationGrabber(data) {
 			} else {
 				display.html(response).show();
 			}
+			// the panel is drawn: tell the server it is open, now, so the beat
+			// has no panel news to carry
+			appActSync($(display).closest('.wind'));
 			$.each(visible, function(i,v) {
 				$('.app_configure_input[app="' + app + '"][setting="' + v + '"]').show().closest('.configuration_ability_container').addClass('open');
 			});

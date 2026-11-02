@@ -74,6 +74,7 @@ $(document).on('click', '.reset', function() {
 		appActExclusive(app, 'reset');
 		details.show();
 	}
+	appActSync(app);
 
 });
 
@@ -337,6 +338,7 @@ $(document).on('click', '.measures', function() {
 		appointmentMeasuresGrabber(a);
 		container.show();
 	}
+	appActSync(app);
 });
 
 $(document).on('touchmove mouseout hover keydown keyup touchend mousedown mouseup mousewheel', '.app_measure', function() {

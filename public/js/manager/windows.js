@@ -3,6 +3,7 @@
      01_storage.js  - windowSaver, retriever, appWindowOpener, windowjOpener
      02_fit.js  - minimise/restore/move, draggable, viewport/fit, phone check
      03_stack.js  - stacker, close, z-order, everythingMoves, dimension setter, background, drawer
+     04_act.js  - appActSync, the act panel open/close message the beat no longer carries
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 

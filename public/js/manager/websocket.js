@@ -303,7 +303,9 @@ function heartbeatSend(app) {
 		if (app == 'tab' || apper == 'tab') {
 			var mm = mouse_position();
 			if ((mm['x'] != windowWsMouseMove['x'] && mm['y'] != windowWsMouseMove['y']) || ( mm['lastTs'] < now - windowResendInterval)) {
-				var windows_json = windowSaver();
+				// the geometry only: an act opening or closing is appActSync()'s
+				// message, so a panel toggle does not dirty the layout blob
+				var windows_json = windowSaver(1);
 				// only ship the layout when it actually changed
 				if (windows_json != windowWsWindows) {
 					windowWsWindows = windows_json;

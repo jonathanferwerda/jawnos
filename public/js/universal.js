@@ -105,7 +105,45 @@ function jawnos_tick_register(name, fn) {
 	}
 }
 
+// The 1 Hz walk reads every .since/.time on the page. Wrapping each one, and
+// climbing to its window for the display's saved preference, is the expensive
+// part - and a clock does not move between ticks. Do that once and keep the
+// list until the page's nodes change, so an idle second touches only the text
+// that actually moved.
+var jawnosChronNodes = null;
+function jawnosChronDirty() { jawnosChronNodes = null; }
+function jawnosChronNodeList() {
+	if (jawnosChronNodes) { return jawnosChronNodes; }
+	var nodes = [];
+	$('.since, .time').each(function(i, el) {
+		var j = $(el);
+		nodes.push({ j: j, app: j.closest('.wind').attr('app') || '' });
+	});
+	jawnosChronNodes = nodes;
+	return nodes;
+}
+(function jawnosChronWatch() {
+	if (typeof MutationObserver !== 'function' || typeof document === 'undefined') { return; }
+	var observer = new MutationObserver(function(mutations) {
+		for (var m = 0; m < mutations.length; m++) {
+			var lists = [mutations[m].addedNodes, mutations[m].removedNodes];
+			for (var l = 0; l < lists.length; l++) {
+				for (var n = 0; n < lists[l].length; n++) {
+					// a clock rewriting its own text adds a text node, not a clock
+					if (lists[l][n].nodeType === 1) { jawnosChronNodes = null; return; }
+				}
+			}
+		}
+	});
+	var watch = function() {
+		if (document.body) { observer.observe(document.body, { childList: true, subtree: true }); }
+	};
+	if (document.readyState == 'loading') { document.addEventListener('DOMContentLoaded', watch); }
+	else { watch(); }
+})();
+
 function appointment_chron() {
+	jawnosChronDirty();
 	time_updater();
 	// durations share the same tick; give them a pass here too so a freshly
 	// loaded details panel wears its saved reading at once
@@ -113,11 +151,13 @@ function appointment_chron() {
 	jawnos_tick_register('time', time_updater);
 	function time_updater() {
 		var now = Date.now();
-		$('.since, .time').each( function() {
-			var header = $(this);
-			var mode = $(this).attr('mode');
-			var timestamp = $(this).attr('timestamp');
-			var display = header.closest('.wind').attr('app') || '';
+		var nodes = jawnosChronNodeList();
+		for (var n = 0; n < nodes.length; n++) {
+			var header = nodes[n].j;
+			if (!header[0]) { continue; }
+			var mode = header.attr('mode');
+			var timestamp = header.attr('timestamp');
+			var display = nodes[n].app;
 			var saved_mode = timeDisplaySaved(display);
 			if (saved_mode == 'dynamic' || saved_mode == 'hours' || saved_mode == 'minutes' || saved_mode == 'fixed') {
 				mode = saved_mode;
@@ -129,7 +169,7 @@ function appointment_chron() {
 				// while. Clicking the element drops next_check, so the toggle back to
 				// fixed paints straight away instead of waiting out this hour.
 				var next_check = numeral(header.attr('next_check')).value();
-				if (next_check && next_check > now) { return; }
+				if (next_check && next_check > now) { continue; }
 				if (!header.attr('formatted_time')) {
 					header.attr('formatted_time', fixedTimeString(numeral(timestamp).value()));
 				}
@@ -152,7 +192,7 @@ function appointment_chron() {
 				}
 				else if (header.hasClass('editing')) {
 					header.css({'background-color': ''});
-					return;
+					continue;
 				}
 				else {
 					if (header.text() != unit_text) { header.text(unit_text); }
@@ -170,7 +210,7 @@ function appointment_chron() {
 					header.css({'background-color': ''});
 					header.attr('mode', 'dynamic');
 					// while typing, keep repainting so it settles as soon as they stop
-					return;
+					continue;
 				}
 				else {
 					var text = quality_inventory(timestamp);
@@ -179,7 +219,7 @@ function appointment_chron() {
 				header.attr('mode', 'dynamic');
 			}
 
-		});
+		}
 	}
 }
 

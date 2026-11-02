@@ -1,7 +1,11 @@
 
 
 
-function windowSaver() {
+// windowSaver(1) is the heartbeat's copy: the beat tells the server where the
+// windows are, and appActSync() tells it, in a frame of its own, which panels
+// are open. Leaving jopen out is what keeps a panel toggle from re-sending the
+// whole layout.
+function windowSaver(skip_act) {
 
 	var json_storage = sessionStorage.getItem('window_storage');
 	var storage = JSON.parse(json_storage) ? JSON.parse(json_storage) : {};
@@ -32,7 +36,7 @@ function windowSaver() {
 		var wc = $('#window_contents_' + timestamp).is(':visible');
 		var tnh = jawnosWindowSizeGet(timestamp, 'h');
 		var tnw = jawnosWindowSizeGet(timestamp, 'w');
-		var jopen = windowjOpenSaver($(v));
+		var jopen = skip_act ? undefined : windowjOpenSaver($(v));
 		var current_information;
 		var blci = $(v).find('.budget_current_information');
 		if  (blci.is(':visible')) {
@@ -553,6 +557,7 @@ function windowjOpener(window,v) {
 					$('#' + (window.attr('timestamp') || 'hey')).scrollTop(v.scrollTop);
 				}
 				windowSaver();
+				appActSync(window);
 			}
 			clearInterval(windowjOpenerTimers[app]);
 			windowjOpenerTimers[app] = null;

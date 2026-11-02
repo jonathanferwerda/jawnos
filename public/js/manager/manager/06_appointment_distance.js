@@ -39,8 +39,9 @@ $(document).on('click','.inventory', function() {
 		inventoryDetails(app);
 	}
 	else {
-		iq.hide(); 
+		iq.hide();
 	}
+	appActSync(app);
 });
 
 
@@ -254,6 +255,7 @@ $(document).on('click', '.appointment_list_toggle', function() {
 			appointmentDistShow(l.filter('.appointment_distance_panel'));
 		}
 	}
+	appActSync($(this).closest('.wind'));
 
 });
 $(document).on('click', '.delete_duty', function() {
