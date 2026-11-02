@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Format.pm
+# covers:    Names accept every printable character (AGENTS.md).
+
 use strict;
 use warnings;
 use utf8;

@@ -1,3 +1,6 @@
+# tests-for: public/js/mailbox.js
+# covers:    The mail socket is opened by whatever just rendered a window, and the phone's WebView does not take the house'...
+
 use strict;
 use warnings;
 

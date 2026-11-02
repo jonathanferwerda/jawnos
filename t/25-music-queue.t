@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/File.pm
+# covers:    A reopened Music window replays the queue it was last showing (a list the guide, the folders app or an artist ...
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: perl/parent_guard.pl
+# covers:    parent_guard's alive() used to judge the master by its command line alone.
+
 use strict;
 use warnings;
 

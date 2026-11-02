@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl perl/hooks.pl perl/subroutines.pl
+# covers:    The domain layer is lazy: load the real definitions before the local *subs:: stubs below, or a later module lo...
+
 use strict;
 use warnings;
 

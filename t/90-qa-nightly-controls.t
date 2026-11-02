@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Domain/Key.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Resolve.pm lib/JawnOS/Manager/Part28.pm lib/JawnOS/Routes/manager_configure2.pm perl/President.pl perl/help/topics_configure.pl perl/language.pl public/js/manager/configure/07_qa_nightly.js qa/lib/QaSetting.pm templates/
+# covers:    Configure -> Plat -> QA now owns the three nightly times and a Run now for each run.
+
 use strict;
 use warnings;
 

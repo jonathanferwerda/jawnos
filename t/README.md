@@ -11,7 +11,16 @@ perl scripts/run_tests.pl          # everything, in parallel
 perl scripts/run_tests.pl -v t/01-names.t   # one file, verbose
 prove -l t                         # serial, if you want it
 make test                          # after `perl Makefile.PL`
+
+perl scripts/tests_for.pl --staged        # only the tests a change touches
+perl scripts/tests_for.pl --staged --run  # the same, run in parallel
 ```
+
+While iterating, `tests_for.pl` is the fast path: it maps the paths in a diff
+(working tree, `--staged`, `--range`, or `--files a b`) to the tests that
+claim them and runs just those. Anything no test claims selects the full
+suite, so a missing header costs time, never coverage. The pre-push hook
+still runs everything.
 
 `scripts/run_tests.pl` runs test files concurrently with `prove -j`, using one
 job per core, capped at 8. The cap is measured, not cautious: on the 12-core
@@ -66,8 +75,30 @@ Exports: `root()`, `sandbox()`, `ts(year, month, day[, hour, minute, second])`
 | `22-peer-address.t` | peer manager candidates: stale LAN/loopback managers fall back to the fqdn, tunnel rows keep theirs |
 | `43-test-runner.t` | `scripts/run_tests.pl` builds a parallel `prove` command: core-derived job cap, clamping, pass-through, serial mode |
 
+## What a test declares
+
+Every `t/*.t` opens with two comment lines:
+
+```perl
+# tests-for: perl/subroutines.pl lib/JawnOS/Domain/*.pm
+# covers:    name formatting and path safety
+```
+
+`tests-for:` lists repo-relative globs (`*` within one path segment, `**`
+across segments, a trailing `/` for a whole directory). `tests_for.pl` matches
+a change against them, and also selects a test whose body spells the changed
+path out. `covers:` is the human sentence, and `--list-for` prints it.
+
+A change no test claims runs the full suite, so an unmapped file is slow
+rather than silently under-tested. `t/93-test-map.t` fails when a test has no
+header or a glob matches nothing; that is what keeps the map from rotting as
+files move.
+
 ## Rules for a new test
 
+- Open the file with a `# tests-for:` line naming the source it pins (and a
+  `# covers:` sentence), then the normal `use` block. Globs that match nothing
+  fail `t/93-test-map.t`.
 - Pure functions first. Call a helper through its real door (`subs::…`,
   `language::…`, `help::…`) rather than reimplementing it.
 - No writes to the live database, no `./jawn`, no mail, no outbound network.

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/js_misc.pm lib/JawnOS/Controller/manager_misc7.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Manager/Part21.pm
+# covers:    source=ws is the headless/automation read.
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Say.pm
+# covers:    The domain layer is lazy: load the real definitions before the local *subs:: stubs below, or a later module lo...
+
 use strict;
 use warnings;
 

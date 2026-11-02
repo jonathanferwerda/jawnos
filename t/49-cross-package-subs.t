@@ -1,3 +1,6 @@
+# tests-for: lib/ lib/JawnOS/ lib/JawnOS/Domain/
+# covers:    Cross-package sub calls and the require graph.
+
 use strict;
 use warnings;
 

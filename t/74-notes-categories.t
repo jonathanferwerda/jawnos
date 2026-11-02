@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Manager.pm public/js/manager/notes.js templates/notes/notes.html.ep
+# covers:    A note is filed under one of six categories.
+
 use strict;
 use warnings;
 use utf8;

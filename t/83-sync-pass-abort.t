@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Manager/Part36.pm
+# covers:    The reconnector walks the roster inside one bare `eval`.
+
 use strict;
 use warnings;
 

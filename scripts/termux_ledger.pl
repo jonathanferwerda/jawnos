@@ -190,6 +190,16 @@ sub tracked_files {
 	return sort @out;
 }
 
+# A single rule for a list of names, longest first so a short name cannot
+# shadow a longer one that starts with it. A name is matched on word
+# boundaries, exactly as the per-name loop did.
+sub alternation_re {
+	my @names = sort { length $b <=> length $a } @_;
+	return qr/(?!)/ unless @names;
+	my $alt = join '|', map { quotemeta } @names;
+	return qr/\b($alt)\b/;
+}
+
 sub trim {
 	my ($s, $max) = @_;
 	$s = '' unless defined $s;
@@ -219,6 +229,14 @@ my @shebangs;
 my @tools = deps_tools();
 my @modules = (deps_modules(), @MODULE_EXTRA);
 
+# One compiled alternation per list is the cheap pre-test. The per-name loop
+# then runs only on the few lines that mention some name; running it on all
+# ~280k lines was most of the run's 10s. Keeping the per-name loop preserves
+# the old answers exactly, including `Encode` matching inside `URI::Encode`.
+my $tool_any   = alternation_re(@tools);
+my $module_any = alternation_re(@modules);
+my $pty_hint   = qr/pty|isatty|TIOCGWINSZ|ptmx/i;
+
 for my $file (@files) {
 	next if $file eq 'scripts/termux_ledger.pl';   # the counter, not a caller
 	open(my $fh, '<', "$root/$file") or next;
@@ -236,18 +254,23 @@ for my $file (@files) {
 		if ($line =~ /^#!\s*\S*com\.termux/) {
 			push @shebangs, { file => $file, line => $n };
 		}
-		foreach my $p (@PTY_PATTERNS) {
-			push @pty, { file => $file, line => $n, what => $p->[1] } if $line =~ $p->[0];
+		if ($line =~ $pty_hint) {
+			foreach my $p (@PTY_PATTERNS) {
+				push @pty, { file => $file, line => $n, what => $p->[1] } if $line =~ $p->[0];
+			}
 		}
-		foreach my $t (@tools) {
-			next if index($line, $t) < 0 || $line !~ /\b\Q$t\E\b/;
-			$tool_files{$t}->{$file} = 1;
-			$tool_exec{$t}->{$file} = 1 if is_execution($line);
+		if ($line =~ $tool_any) {
+			foreach my $t (@tools) {
+				next if index($line, $t) < 0 || $line !~ /\b\Q$t\E\b/;
+				$tool_files{$t}->{$file} = 1;
+				$tool_exec{$t}->{$file} = 1 if is_execution($line);
+			}
 		}
-		foreach my $m (@modules) {
-			next if $module_files{$m} && $module_files{$m}->{$file};
-			next unless $line =~ /^\s*(?:use|require)\b/;
-			$module_files{$m}->{$file} = 1 if $line =~ /\b\Q$m\E\b/;
+		if ($line =~ /^\s*(?:use|require)\b/ && $line =~ $module_any) {
+			foreach my $m (@modules) {
+				next if $module_files{$m} && $module_files{$m}->{$file};
+				$module_files{$m}->{$file} = 1 if $line =~ /\b\Q$m\E\b/;
+			}
 		}
 
 		# A wrapped call site names the command without the prefix.

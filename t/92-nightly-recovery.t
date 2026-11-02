@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Records2.pm lib/JawnOS/Routes/manager_configure2.pm perl/help/topics_configure.pl perl/language.pl public/js/manager/ qa/coding_night/agent.pl qa/coding_night/lib/ qa/coding_night/recover.pl qa/coding_night/run.pl qa/device_target.pl qa/lib/ qa/run.pl scripts/restart.pl scripts/version_bump.pl templates/
+# covers:    The 06:00 coding night's backup and failure path, and the customizable push repository.
+
 use strict;
 use warnings;
 

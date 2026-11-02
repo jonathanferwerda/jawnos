@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Crest.pm perl/hooks.pl public/js/jquery.js
+# covers:    The privilege tiers behind hooks.pl's before_dispatch.
+
 use strict;
 use warnings;
 

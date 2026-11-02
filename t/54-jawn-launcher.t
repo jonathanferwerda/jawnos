@@ -1,3 +1,6 @@
+# tests-for: jawn perl/President.pl
+# covers:    The master launches President on a pty and now keeps the tree's console stream in a bounded, sequenced ring (J...
+
 use strict;
 use warnings;
 

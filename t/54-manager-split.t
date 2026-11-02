@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/Declarations.pm lib/JawnOS/Manager/Index.pm lib/JawnOS/Routes/ perl/Manager.pl perl/Music.pl perl/hooks.pl perl/subroutines.pl
+# covers:    Manager.pl is one file no longer: lib/JawnOS.pm is the app, lib/JawnOS/Routes* the route table, lib/JawnOS/Con...
+
 use strict;
 use warnings;
 

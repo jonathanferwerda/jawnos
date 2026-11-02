@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/ perl/subroutines.pl
+# covers:    A peer row can carry a loopback manager: it is the hub's own tunnel route, and on any other row it is a leftov...
+
 use strict;
 use warnings;
 

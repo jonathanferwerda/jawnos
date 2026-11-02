@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/House.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl perl/President.pl perl/subroutines.pl
+# covers:    A bare `sshd` on Android is not a working sshd: Termux's sshd_config comments out every HostKey line, and the ...
+
 use strict;
 use warnings;
 

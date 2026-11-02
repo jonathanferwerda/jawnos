@@ -1,3 +1,6 @@
+# tests-for: jawn perl/probe.pl
+# covers:    probe.pl answers the master's liveness question for ./jawn's watchdog.
+
 use strict;
 use warnings;
 

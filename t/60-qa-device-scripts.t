@@ -1,3 +1,6 @@
+# tests-for: qa/android/build.sh qa/android/run.sh qa/qemu/build.sh qa/qemu/run.sh scripts/verify_change.pl
+# covers:    The device layers are shell scripts, which verify_change.pl does not look at.
+
 use strict;
 use warnings;
 

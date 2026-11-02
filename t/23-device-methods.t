@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Say.pm
+# covers:    Every method the tree asks the device bridge for must be one the app knows.
+
 use strict;
 use warnings;
 

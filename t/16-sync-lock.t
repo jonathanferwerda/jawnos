@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/Sync.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl
+# covers:    `subs::remote_upgrade_marker_state` is the one place this machine's pull marker is interpreted (the reconnecto...
+
 use strict;
 use warnings;
 

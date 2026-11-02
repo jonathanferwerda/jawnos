@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Remote.pm
+# covers:    A domain helper exists for nobody until lib/JawnOS/Domain/Loader.pm maps it: the loader's %DOMAIN_MODULE is wh...
+
 use strict;
 use warnings;
 

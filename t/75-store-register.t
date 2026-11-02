@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_store.pm lib/JawnOS/Domain/Crest.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Store.pm lib/JawnOS/Routes/manager_store.pm public/js/store/register.js templates/store/register.html.ep
+# covers:    The Store's Register is a cash till, not a customer page.
+
 use strict;
 use warnings;
 use utf8;

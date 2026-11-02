@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Remote.pm perl/Manager.pl perl/help/topics_configure.pl perl/language.pl public/js/manager/ qa/coding_night/agent.pl qa/coding_night/lib/ qa/coding_night/run.pl qa/device_target.pl qa/lib/ qa/run.pl qa/systemd/jawnos-qa-coding.service qa/systemd/jawnos-qa-coding.timer qa/systemd/jawnos-qa.service scripts/restart.pl scripts/version_bump.pl templates/
+# covers:    The 06:00 coding nightly and the Notes-per-night picker.
+
 use strict;
 use warnings;
 

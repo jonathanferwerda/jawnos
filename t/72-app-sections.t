@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_misc.pm lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Routes/manager_misc.pm public/js/manager/manager/09_app_back.js templates/
+# covers:    An appointment window rendered the details (transaction) form and the app's measures into every open and left ...
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Manager/Part16.pm
+# covers:    The inventory panel's Share wheel is a scope split into its own parts: a week into days, a day into hours.
+
 use strict;
 use warnings;
 use utf8;

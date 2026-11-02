@@ -1,3 +1,6 @@
+# tests-for: qa/coding_night/agent.pl qa/coding_night/lib/ qa/coding_night/run.pl qa/device_target.pl qa/lib/ scripts/app_publish.pl scripts/app_release.pl
+# covers:    The 06:00 coding nightly's Android lane.
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: scripts/app_build.pl scripts/app_release.pl
+# covers:    M5 (docs/roadmap-handoff.md): targetSdk 36 stops the app exec'ing a file it wrote into its own data dir, so th...
+
 use strict;
 use warnings;
 

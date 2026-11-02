@@ -1,3 +1,6 @@
+# tests-for: desktop/install.sh desktop/jawnos_desktop/cli.py desktop/jawnos_desktop/core.py desktop/systemd/jawnos-watch.service.in
+# covers:    The desktop's watcher is the supervisor the house was missing: it starts a tree that is down, and restarts one...
+
 use strict;
 use warnings;
 

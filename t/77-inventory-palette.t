@@ -1,3 +1,6 @@
+# tests-for: public/css/manager.css public/js/manager/inventory.js public/js/manager/inventory/ templates/apps/inventory.html.ep
+# covers:    The inventory panel paints the share wheel and the budget-status cells from one pair of palettes, defined in m...
+
 use strict;
 use warnings;
 

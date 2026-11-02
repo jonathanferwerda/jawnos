@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Schedule.pm
+# covers:    Repeating intervals and the "span" vocabulary.
+
 use strict;
 use warnings;
 

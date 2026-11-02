@@ -1,3 +1,6 @@
+# tests-for: qa/budgets.json qa/lib/ qa/run.pl qa/systemd/jawnos-qa-ux.service qa/systemd/jawnos-qa-ux.timer qa/ux/attempt.js qa/ux/run
+# covers:    l6 is the nightly UX loop: it reads the owner's JawnOS notes, seeds a fenced copy, and turns an attempt into a...
+
 use strict;
 use warnings;
 

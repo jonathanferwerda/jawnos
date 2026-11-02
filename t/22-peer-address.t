@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/House.pm lib/JawnOS/Domain/Sync.pm lib/JawnOS/Domain/Warehouse.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl
+# covers:    A peer's stored manager can outlive the route it named: a LAN address the machine has since left, or a 127.0.0...
+
 use strict;
 use warnings;
 

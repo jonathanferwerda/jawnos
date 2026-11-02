@@ -1,3 +1,6 @@
+# tests-for: desktop/ jawn
+# covers:    The root is the user's shelf: the commands people run live here, beside the service entry, and the desktop imp...
+
 use strict;
 use warnings;
 

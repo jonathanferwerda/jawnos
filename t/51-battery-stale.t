@@ -1,3 +1,6 @@
+# tests-for: lib/ lib/JawnOS/Domain/ perl/subroutines.pl public/js/manager/monitor.js
+# covers:    The phone's battery card sometimes went blank ("no battery") and came back a little later.
+
 use strict;
 use warnings;
 

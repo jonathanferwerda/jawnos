@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Appointment.pm lib/JawnOS/Domain/Appointment2.pm lib/JawnOS/Domain/Device2.pm
+# covers:    Which device was with the person.
+
 use strict;
 use warnings;
 

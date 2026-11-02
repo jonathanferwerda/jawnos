@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/People.pm public/js/universal.js public/js/universal/
+# covers:    After the Android app was uninstalled and reinstalled (a signature change on 2026-10-31) the OS had deleted th...
+
 use strict;
 use warnings;
 

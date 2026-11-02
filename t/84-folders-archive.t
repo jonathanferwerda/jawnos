@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_folders.pm lib/JawnOS/Controller/manager_folders2.pm lib/JawnOS/Domain/Archive.pm lib/JawnOS/Routes/manager_folders2.pm public/js/manager/folders.js public/js/manager/folders/ templates/folders/context.html.ep templates/folders/dialog_box.html.ep
+# covers:    Archiving is a push: the source machine reads the file and the archive machine writes it.
+
 use strict;
 use warnings;
 

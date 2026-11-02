@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl public/js/manager/manager.js public/js/manager/manager/ templates/appointment_details.html.ep templates/appointment_wrapper.html.ep
+# covers:    Camera captures on the Android app (v0.1.1676) had two separate failures: 1.
+
 use strict;
 use warnings;
 

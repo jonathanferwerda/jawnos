@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl
+# covers:    A websocket frame is the only way a browser tells the manager "I moved to 3:12", "I am still here" or "send th...
+
 use strict;
 use warnings;
 

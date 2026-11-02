@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Key.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Network.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl templates/configure/device_lister.html.ep templates/configure/device_lister/
+# covers:    The domain layer is lazy: load the real definitions before any local *subs:: stub below, or the module load wo...
+
 use strict;
 use warnings;
 

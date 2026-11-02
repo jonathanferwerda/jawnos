@@ -1,3 +1,6 @@
+# tests-for: VERSION config.json.example lib/JawnOS/Domain/Budget.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Log.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Manager.pm perl/help.pl perl/language.pl perl/subroutines.pl scripts/version_bump.pl
+# covers:    The suite's own smoke test: the core module loaded, the pieces the other tests call exist, and the install exa...
+
 use strict;
 use warnings;
 no warnings 'once';

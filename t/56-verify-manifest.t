@@ -1,3 +1,6 @@
+# tests-for: scripts/verify_change.pl
+# covers:    verify_change.pl's --manifest cache: the restart guard asks "does the whole tree parse" on every restart, and ...
+
 use strict;
 use warnings;
 

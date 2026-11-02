@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Domain/Schedule.pm
+# covers:    Calendar arithmetic.
+
 use strict;
 use warnings;
 

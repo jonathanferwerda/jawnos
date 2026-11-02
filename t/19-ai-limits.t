@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Ai2.pm lib/JawnOS/Domain/Loader.pm
+# covers:    A rate limit is not "out of credit": it clears in seconds, or at a clock time the provider states.
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: qa/android/run.sh qa/db.checks.json qa/lib/ qa/prune.pl qa/run.pl qa/systemd/ qa/ui/probe.js qa/ui/webkit_probe.py scripts/verify_change.pl
+# covers:    The QA layers that are not plain Perl (a shell device script, a JS probe, a Python WebKit probe, the SQL check...
+
 use strict;
 use warnings;
 

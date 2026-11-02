@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Edt.pm
+# covers:    The phone and tablet have no ifconfig in their runtime, and `ip addr` cannot bind a netlink socket as an app u...
+
 use strict;
 use warnings;
 

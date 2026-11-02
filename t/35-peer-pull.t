@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl scripts/peer_pull.pl
+# covers:    scripts/peer_pull.pl is the repair lever for rows a timestamp-driven sync never asks for: either this machine ...
+
 use strict;
 use warnings;
 

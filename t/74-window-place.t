@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Manager/Part22.pm public/css/manager.css public/js/manager/windows.js public/js/manager/windows/02_fit.js public/js/manager/windows/03_stack.js
+# covers:    A window's place used to be saved automatically and invisibly, so a desk full of windows became a memory of wh...
+
 use strict;
 use warnings;
 

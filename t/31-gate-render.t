@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl perl/hooks.pl public/js/device.js public/js/universal.js public/js/universal/ templates/app_required.html.ep templates/gate.html.ep
+# covers:    The gate template asks for $webauthn_available.
+
 use strict;
 use warnings;
 

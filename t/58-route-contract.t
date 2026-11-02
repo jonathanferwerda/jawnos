@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/ lib/JawnOS/Domain/Crest.pm lib/JawnOS/Routes.pm qa/lib/ qa/routes.policy.json
+# covers:    The route table is the app's whole private surface: 796 paths, one action each, registered in a fixed order.
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager/Part22.pm perl/help.pl perl/help/ public/css/manager.css public/js/manager/manager/09_app_back.js public/js/manager/windows/02_fit.js
+# covers:    Six buttons and a title in one bar left the title a sliver.
+
 use strict;
 use warnings;
 

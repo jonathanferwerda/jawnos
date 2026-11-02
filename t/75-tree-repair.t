@@ -1,3 +1,6 @@
+# tests-for: jawn perl/control.pl
+# covers:    An update can advance HEAD and be killed before it writes the working tree.
+
 use strict;
 use warnings;
 

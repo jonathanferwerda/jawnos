@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/js_misc.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Manager.pm lib/JawnOS/Routes/js_misc.pm public/js/manager/ public/js/universal.js templates/
+# covers:    A big browser script keeps its old path as an index (its first part) and puts the rest in a folder of the same...
+
 use strict;
 use warnings;
 

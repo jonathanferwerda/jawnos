@@ -1,3 +1,6 @@
+# tests-for: jawn lib/JawnOS/Domain/Say.pm perl/Manager.pl perl/President.pl scripts/jawnos_setup.pl scripts/termux_ledger.pl
+# covers:    M0 contracts (the Termux exit, now complete): every Android device command goes through subs::device_cmd / dev...
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm
+# covers:    Dynamic responses are compressed in one after_dispatch hook.
+
 use strict;
 use warnings;
 

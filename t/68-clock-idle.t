@@ -1,3 +1,6 @@
+# tests-for: public/js/manager/clock.js
+# covers:    The Clock app used to arm two fixed timers at page load: a 5 s poll of /manager/clock/state whether or not a C...
+
 use strict;
 use warnings;
 

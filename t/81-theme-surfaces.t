@@ -1,3 +1,6 @@
+# tests-for: public/css/manager.css public/js/manager/tasks.js templates/
+# covers:    Two surfaces painted themselves with a colour picked for a light desktop and stayed that way on a dark one: a ...
+
 use strict;
 use warnings;
 

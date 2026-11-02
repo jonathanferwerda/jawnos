@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Backup.pm lib/JawnOS/Domain/Ble2.pm lib/JawnOS/Domain/Loader.pm
+# covers:    A peer's snapshot export (`backup_now?reason=remote_update`) takes a `remote_backup_lock` and holds it with a ...
+
 use strict;
 use warnings;
 

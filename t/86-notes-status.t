@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_help.pm lib/JawnOS/Controller/manager_misc3.pm lib/JawnOS/Controller/manager_misc6.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/Part17.pm public/js/manager/notes.js templates/notes/notes.html.ep
+# covers:    Notes carry a status (open / completed), an existing note's category and status can be changed in place throug...
+
 use strict;
 use warnings;
 use utf8;

@@ -1,3 +1,6 @@
+# tests-for: jawn perl/Manager.pl perl/control.pl scripts/restart.pl
+# covers:    The master's control socket: one JSON line in, one JSON line out, so a caller learns what happened to a restar...
+
 use strict;
 use warnings;
 

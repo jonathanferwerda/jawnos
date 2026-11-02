@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/ public/js/manager/ qa/README.md qa/coding_night/agent.pl qa/coding_night/lib/
+# covers:    The 06:00 agent (qa/coding_night/agent.pl).
+
 use strict;
 use warnings;
 

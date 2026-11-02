@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Ai3.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Loader.pm
+# covers:    The domain layer is lazy: load the real definitions before the local *subs:: stubs below, or a later module lo...
+
 use strict;
 use warnings;
 

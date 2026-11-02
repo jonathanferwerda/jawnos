@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Render.pm
+# covers:    `subs::utility_adopt_runtime` and `subs::tunnels_stall_duty` decide what a stored utility row means to a fresh...
+
 use strict;
 use warnings;
 

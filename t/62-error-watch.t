@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Ai3.pm lib/JawnOS/Domain/Calendar.pm perl/President.pl
+# covers:    cwd-relative, as with t/61: verify_change copies a test to /tmp for the pre-push parse check, while the proces...
+
 use strict;
 use warnings;
 

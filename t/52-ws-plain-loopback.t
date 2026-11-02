@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl perl/President.pl public/js/mailbox.js public/js/manager/websocket.js public/js/manager/websocket/ public/js/paperboy.js
+# covers:    The app's WebView trusts the house certificate for page loads - JawnWebViewActivity.onReceivedSslError proceed...
+
 use strict;
 use warnings;
 

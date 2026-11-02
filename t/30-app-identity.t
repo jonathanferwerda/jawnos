@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/Say.pm lib/JawnOS/Manager.pm lib/JawnOS/Routes/ perl/Manager.pl perl/subroutines.pl scripts/jawn-bt scripts/phone_wake.pl
+# covers:    M4 (docs/roadmap-handoff.md): the host app is com.jawnos.
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl public/css/manager.css public/js/manager/attributes.js public/js/manager/attributes/ public/js/manager/soft_keyboard.js public/js/manager/soft_keyboard/ templates/appointment_wrapper.html.ep templates/pos/attributes.html.ep
+# covers:    The appointment's Register panel draws a blank row for each attribute kind (model, option, option_category, su...
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Say.pm lib/JawnOS/Domain/Warehouse.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl templates/
+# covers:    Captures from the Android camera arrive as whatever the OS wrote: .jpeg, .webp, .heic, .tif, sometimes .xcf.
+
 use strict;
 use warnings;
 

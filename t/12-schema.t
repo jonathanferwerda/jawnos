@@ -1,3 +1,6 @@
+# tests-for: database/schema.sql
+# covers:    database/schema.sql is the tracked shape of the house database.
+
 use strict;
 use warnings;
 

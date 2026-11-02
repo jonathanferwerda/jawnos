@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/ perl/subroutines.pl
+# covers:    M1 device bridge (docs/roadmap-handoff.md): subs::device_call speaks one JSON line to the host app and returns...
+
 use strict;
 use warnings;
 

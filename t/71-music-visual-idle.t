@@ -1,3 +1,6 @@
+# tests-for: public/js/music.js
+# covers:    The Music player's visualiser is a canvas fed to the muted video the person actually sees.
+
 use strict;
 use warnings;
 

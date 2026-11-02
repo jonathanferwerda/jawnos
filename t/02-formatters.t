@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Format.pm
+# covers:    Prices, percentages, durations and the number words people type.
+
 use strict;
 use warnings;
 use utf8;

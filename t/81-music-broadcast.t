@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Format.pm perl/Music.pl perl/Music/ perl/help.pl perl/help/ perl/language.pl perl/language/ public/css/music.css public/js/music.js templates/
+# covers:    A remote output that is down used to stay enabled forever: the saved setting still said on, so the stream kept...
+
 use strict;
 use warnings;
 

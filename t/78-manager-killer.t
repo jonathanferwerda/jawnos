@@ -1,3 +1,6 @@
+# tests-for: jawn perl/Manager.pl perl/President.pl scripts/manager_killer.pl
+# covers:    The killer used to shell out to pkill/pgrep four times per name, and a match was anything whose command line m...
+
 use strict;
 use warnings;
 

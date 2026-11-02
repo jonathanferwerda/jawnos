@@ -1,3 +1,6 @@
+# tests-for: public/js/music.js templates/apps/video.html.ep templates/apps/video/
+# covers:    The player bar's seek, clock and title are drawn by one interval created by templates/apps/video.html.ep.
+
 use strict;
 use warnings;
 

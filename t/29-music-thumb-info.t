@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/File.pm lib/JawnOS/Domain/Format.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl perl/Music.pl perl/Music/ perl/subroutines.pl
+# covers:    A music card draws a video only when its cached media info has a duration and a height, and its thumbnail is t...
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Article.pm
+# covers:    The magazine editor writes HTML that the homepage renders raw, and magazine rows sync between machines, so art...
+
 use strict;
 use warnings;
 

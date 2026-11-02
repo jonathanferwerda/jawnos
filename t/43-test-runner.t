@@ -1,3 +1,6 @@
+# tests-for: scripts/run_tests.pl
+# covers:    The suite runs in parallel from scripts/run_tests.pl: each test file is an independent process with its own te...
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Accounting.pm lib/JawnOS/Domain/Key.pm lib/JawnOS/Domain/Name.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Domain/Resolve.pm
+# covers:    A warranty is one value for the house, not one per device, and a renewal re-anchors every record to the warran...
+
 use strict;
 use warnings;
 

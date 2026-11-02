@@ -1,3 +1,6 @@
+# tests-for: qa/budget.pl qa/budgets.json qa/lib/ qa/run.pl
+# covers:    The budgets are the part of the suite that turns measurements into a verdict.
+
 use strict;
 use warnings;
 

@@ -1,3 +1,6 @@
+# tests-for: scripts/runtime_native_bins.pl scripts/runtime_zip.pl
+# covers:    M5 (docs/roadmap-handoff.md): Android refuses to exec a file in app data at targetSdk 29+, but execs one extra...
+
 use strict;
 use warnings;
 

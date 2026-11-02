@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl perl/subroutines.pl scripts/records_audit.pl
+# covers:    sms_list_check wrote the mailbox row and the appointment with the same stamp, so the millisecond-date bug fill...
+
 use strict;
 use warnings;
 

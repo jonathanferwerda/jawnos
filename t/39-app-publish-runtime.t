@@ -1,3 +1,6 @@
+# tests-for: scripts/app_publish.pl
+# covers:    M3/M5 (docs/roadmap-handoff.md): a clean install downloads the runtime files named in the APK's assets/jawnrt....
+
 use strict;
 use warnings;
 

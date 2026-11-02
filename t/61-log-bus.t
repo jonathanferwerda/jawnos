@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/LogBus.pm
+# covers:    cwd-relative, not FindBin: verify_change copies a test to /tmp for the pre-push parse check, and the process s...
+
 use strict;
 use warnings;
 

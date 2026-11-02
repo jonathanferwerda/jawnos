@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_misc13.pm lib/JawnOS/Controller/manager_ws.pm lib/JawnOS/Domain/Embedded.pm lib/JawnOS/Domain/Headless.pm lib/JawnOS/Domain/Loader.pm
+# covers:    Two idle costs a phone pays for: - the levels loop asked every unreachable peer every two minutes, so a machin...
+
 use strict;
 use warnings;
 

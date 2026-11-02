@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl perl/subroutines.pl scripts/records_audit.pl
+# covers:    The Android bridge reports an SMS or call date as the epoch in milliseconds (Telephony.Sms.DATE / CallLog.Call...
+
 use strict;
 use warnings;
 

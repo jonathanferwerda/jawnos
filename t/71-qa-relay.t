@@ -1,3 +1,6 @@
+# tests-for: qa/lib/
+# covers:    The l4 relay is a deliberate hole in the fence, so it gets the same kind of test as the fence itself: the refu...
+
 use strict;
 use warnings;
 

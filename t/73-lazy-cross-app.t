@@ -1,3 +1,6 @@
+# tests-for: public/js/manager/folders/01_view_and_commands.js public/js/manager/jp.js public/js/manager/keyboard/01_side_dock.js public/js/manager/manager/06_appointment_distance.js public/js/manager/travel/01_map_render_points.js public/js/manager/websocket/01_message_handler.js public/js/manager/windows.js public/js/manager/windows/01_storage.js public/js/manager/windows/02_fit.js
+# covers:    Lazy app chunks are a trap for core code: a core handler that calls a function living in an app's chunk throws...
+
 use strict;
 use warnings;
 

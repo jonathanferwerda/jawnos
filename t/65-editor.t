@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_misc2.pm lib/JawnOS/Domain/Article.pm lib/JawnOS/Domain/Render.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part08.pm perl/help.pl perl/help/ public/css/manager.css public/js/manager/editor.js templates/
+# covers:    The magazine Editor was a rack of placeholder buttons you had to prime before dragging anything onto it, its s...
+
 use strict;
 use warnings;
 

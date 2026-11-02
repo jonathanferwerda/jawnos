@@ -1,3 +1,6 @@
+# tests-for: perl/President.pl perl/parent_guard.pl
+# covers:    A master that is SIGKILLed cannot run its shutdown, so the tree and every worker under it used to survive as o...
+
 use strict;
 use warnings;
 

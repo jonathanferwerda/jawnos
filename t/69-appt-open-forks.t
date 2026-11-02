@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Domain/File.pm lib/JawnOS/Domain/Generate.pm lib/JawnOS/Manager/Declarations.pm lib/JawnOS/Manager/Part21.pm
+# covers:    Opening an app used to fork twice for work that was not a render: once for the centre view's template cache wr...
+
 use strict;
 use warnings;
 

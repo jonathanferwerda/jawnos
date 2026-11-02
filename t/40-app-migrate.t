@@ -1,3 +1,6 @@
+# tests-for: database/initial.enc database/schema.sql perl/Manager.pl perl/President.pl perl/gb.pl perl/subroutines.pl scripts/app_migrate.pl
+# covers:    scripts/app_migrate.pl (docs/roadmap-handoff.md, M4).
+
 use strict;
 use warnings;
 

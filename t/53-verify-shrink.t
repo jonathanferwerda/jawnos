@@ -1,3 +1,6 @@
+# tests-for: public/js/manager/manager.js scripts/verify_change.pl
+# covers:    verify_change.pl's truncation guard: a whole-file write that lost more than half its lines is the failure it e...
+
 use strict;
 use warnings;
 

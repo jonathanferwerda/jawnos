@@ -1,3 +1,6 @@
+# tests-for: templates/
+# covers:    The big pages are composed from partials now (apps/video/{style,markup,script}, security/{padlock,...}, termin...
+
 use strict;
 use warnings;
 

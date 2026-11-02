@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_configure2.pm lib/JawnOS/Domain/Key.pm lib/JawnOS/Domain/Loader.pm lib/JawnOS/Domain/Remote.pm lib/JawnOS/Domain/Resolve.pm lib/JawnOS/Manager/Part28.pm perl/President.pl perl/subroutines.pl qa/device_target.pl qa/systemd/jawnos-qa-ux.service qa/systemd/jawnos-qa.service
+# covers:    Configure -> Plat -> QA names the machine that runs the nightly suite.
+
 use strict;
 use warnings;
 

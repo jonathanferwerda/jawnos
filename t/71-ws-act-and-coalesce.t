@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Controller/manager_ws.pm public/js/manager/configure/04_currency_backup.js public/js/manager/manager/06_appointment_distance.js public/js/manager/manager/09_app_back.js public/js/manager/manager/10_appointment_edit.js public/js/manager/tasks.js public/js/manager/websocket.js public/js/manager/websocket/ public/js/manager/windows.js public/js/manager/windows/ public/js/universal.js public/js/universal/
+# covers:    An act panel opening or closing used to cost a whole layout round trip: the toggle changed window_saver(), so ...
+
 use strict;
 use warnings;
 

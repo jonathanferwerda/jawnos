@@ -1,3 +1,6 @@
+# tests-for: lib/JawnOS/Domain/Edt.pm lib/JawnOS/Domain/Printer.pm
+# covers:    Address arithmetic behind the Dev panel and device scan.
+
 use strict;
 use warnings;
 

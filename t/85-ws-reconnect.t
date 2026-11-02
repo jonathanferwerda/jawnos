@@ -1,3 +1,6 @@
+# tests-for: public/js/manager/websocket.js public/js/manager/websocket/ templates/
+# covers:    A phone that slept comes back with sockets that still read readyState 1 and send into the void.
+
 use strict;
 use warnings;
 

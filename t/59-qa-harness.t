@@ -1,3 +1,6 @@
+# tests-for: qa/lib/ qa/routes.policy.json
+# covers:    The QA harness is the thing that promises the live house is safe, so its promises get tests like any other beh...
+
 use strict;
 use warnings;
 

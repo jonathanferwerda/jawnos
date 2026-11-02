@@ -1,3 +1,6 @@
+# tests-for: perl/Manager.pl scripts/jawnos_update.pl
+# covers:    The boot self-update (scripts/jawnos_update.pl) is how a machine that was installed from an image follows orig...
+
 use strict;
 use warnings;
 

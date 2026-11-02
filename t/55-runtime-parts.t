@@ -1,3 +1,6 @@
+# tests-for: scripts/app_publish.pl scripts/runtime_build.pl scripts/runtime_native_bins.pl scripts/runtime_zip.pl
+# covers:    Runtime parts (docs/runtime-parts.md): media/ocr are optional archives beside the pinned core.
+
 use strict;
 use warnings;
 

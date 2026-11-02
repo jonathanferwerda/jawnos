@@ -1,3 +1,6 @@
+# tests-for: scripts/jawnos_deps.pl scripts/runtime_build.pl scripts/runtime_native_bins.pl scripts/runtime_zip.pl
+# covers:    M3 (docs/roadmap-handoff.md): the runtime a clean install unpacks instead of the Termux bootstrap.
+
 use strict;
 use warnings;
 
