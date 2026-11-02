@@ -177,6 +177,27 @@ function helpCodingLine(a) {
 	return (a.action || 'Step');
 }
 
+// A model's working, folded away above the answer it produced. It is model
+// scratch, not conversation content, so it is never pushed into
+// jawnos_help_chat - a later turn must not read its own reasoning back.
+function helpChatThinking(text) {
+	var log = helpChatLog();
+	if (!log.length) { return; }
+	var label = (typeof jawnosT === 'function') ? jawnosT('thinking') : 'thinking';
+	var block = $('<div style="margin:4px 0 2px;"></div>');
+	var body = $('<div class="help_chat_thought" style="display:none;white-space:pre-wrap;overflow:auto;max-height:200px;font-size:12px;opacity:.65;border-left:2px solid var(--border-color, #888);padding-left:8px;margin-top:4px;"></div>')
+		.text(text == null ? '' : String(text));
+	var toggle = $('<span class="help_chat_thought_toggle" style="font-size:12px;opacity:.6;cursor:pointer;user-select:none;"></span>')
+		.text(label);
+	block.append(toggle).append(body);
+	log.append(block);
+	log.scrollTop(log[0].scrollHeight);
+}
+
+$(document).on('click', '.help_chat_thought_toggle', function () {
+	$(this).siblings('.help_chat_thought').first().toggle();
+});
+
 function helpAgentStep(n) {
 	if (n >= 6) {
 		helpChatAdd('step', 'Stopping after several steps.');
@@ -195,6 +216,7 @@ function helpAgentStep(n) {
 		},
 		success: function (r) {
 			if (r && r.error) { helpChatAdd('step', r.error); return; }
+			if (r && r.thinking) { helpChatThinking(r.thinking); }
 			var a = (r && r.action) || {};
 			if (a.action === 'say' || a.action === 'ask' || a.action === 'done') {
 				var text = a.text || '';

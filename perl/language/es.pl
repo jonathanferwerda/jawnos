@@ -449,4 +449,5 @@ $catalog{'es'} = {
 		'camera_back' => 'Trasera',
 		'page_agent' => 'Agente de página',
 		'page_fill' => 'Leer y rellenar esta página',
+		'thinking' => 'Razonamiento',
 	};

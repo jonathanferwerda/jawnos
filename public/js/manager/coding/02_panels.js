@@ -180,3 +180,123 @@ $(document).on('mousedown', '.coding_chat', function () {
 
 $(document).ready(function () { codingChatArmAll(document); });
 new MutationObserver(function () { codingChatReap(); codingChatArmAll(document); }).observe(document.documentElement, { childList: true, subtree: true });
+
+// ---- the run while it is happening ------------------------------------------
+// coding.js is the split's index and keeps its first segment, so the live part
+// of a run is layered on here: this file loads after the index, and the two
+// renderers are replaced by assignment (a second `function` declaration would be
+// dead code, and t/63-js-parts.t rejects one). A step's reasoning folds open on
+// its own toggle, and the run's current state sits at the foot of the log until
+// the run settles.
+
+// One step's reasoning: a small toggle and the block it opens. A step with no
+// reasoning draws nothing, and the text is always set with .text(), never .html().
+function codingChatThoughtShow(mount, reasoning) {
+	var why = (typeof reasoning === 'string') ? $.trim(reasoning) : '';
+	if (!why) { return; }
+	var log = codingChatPanel(mount).find('.coding_chat_log');
+	if (!log.length) { return; }
+	log.append($('<span class="coding_chat_thought_toggle" style="cursor:pointer;font-size:11px;opacity:.55;margin-left:6px;"></span>').text(codingT('thinking')));
+	log.append($('<div class="coding_chat_thought" style="white-space:pre-wrap;overflow-wrap:break-word;font-size:12px;opacity:.75;max-height:220px;overflow:auto;border-left:2px solid var(--line);padding:2px 6px;margin:3px 0 6px;display:none;"></div>').text(why));
+}
+
+$(document).on('click', '.coding_chat_thought_toggle', function () {
+	$(this).next('.coding_chat_thought').toggle();
+});
+
+// The index's step renderer, with the reasoning drawn underneath each step.
+codingChatStepsShow = function (mount, steps) {
+	(steps || []).forEach(function (s) {
+		var a = s.action || {};
+		var obs = String(s.observation == null ? '' : s.observation).replace(/\s+\n/g, '\n').replace(/\n+/g, ' · ');
+		if (obs.length > 240) { obs = obs.slice(0, 240) + '…'; }
+		codingChatAdd(mount, 'step', codingChatLine(a) + (obs ? (' → ' + obs) : ''));
+		codingChatThoughtShow(mount, s.reasoning);
+	});
+};
+
+// The live line at the foot of the log: what the run is doing now. Created once,
+// updated in place, moved back to the end whenever a step is appended, and taken
+// away the moment the snapshot carries no current state.
+function codingChatNow(mount, current) {
+	var panel = codingChatPanel(mount);
+	if (!panel.length) { return; }
+	var log = panel.find('.coding_chat_log');
+	if (!log.length) { return; }
+	var c = (current && typeof current === 'object') ? current : {};
+	var state = c.state || '';
+	var text = '';
+	if (state === 'thinking') { text = codingT('Thinking…'); }
+	else if (state === 'acting') { text = codingT('Running {0}…', codingChatLine(c.action || {})); }
+	var line = log.find('.coding_chat_now').first();
+	if (!text) { line.remove(); return; }
+	var node = log[0];
+	var scroll = false;
+	if (!line.length) {
+		line = $('<div class="coding_chat_now" style="text-align:center;font-size:12px;opacity:.6;font-style:italic;margin:4px 0;"></div>');
+		line.text(text);
+		log.append(line);
+		scroll = true;
+	}
+	else {
+		if (line.text() !== text) { line.text(text); }
+		// a step appended below it leaves the live line above: bring it back down
+		if (line.next().length) { log.append(line); }
+		if (node) { scroll = (node.scrollHeight - node.scrollTop - node.clientHeight) < 60; }
+	}
+	if (scroll && node) { node.scrollTop = node.scrollHeight; }
+}
+
+// The index draws a snapshot's steps; read the same snapshot's live state after
+// it, and let a settled run (or a panel a newer run has taken) keep no line.
+var codingChatPollApplyCore = codingChatPollApply;
+codingChatPollApply = function (mount, run, r) {
+	var again = codingChatPollApplyCore(mount, run, r);
+	var panel = codingChatPanel(mount);
+	if (!panel.length) { return again; }
+	var owner = parseInt(panel.data('coding_run'), 10) || 0;
+	if (owner && run && owner !== run) { return again; }
+	codingChatNow(mount, again ? (r && r.current) : null);
+	return again;
+};
+
+// The poll itself, at one second instead of the index's 1.5, with the first look
+// immediate: that first look is also what puts the live line up on a reloaded
+// panel, because codingChatReattach starts this poll.
+codingChatPoll = function (mount, run) {
+	var panel = codingChatPanel(mount);
+	if (!panel.length) { return; }
+	// one poller per panel: a second one would draw every step twice
+	var old = panel.data('coding_poll_timer');
+	if (old) { clearTimeout(old); }
+	var tick = function () {
+		var p = codingChatPanel(mount);
+		if (!p.length) { return; }
+		$.ajax({
+			url: '/manager/coding/run',
+			type: 'GET',
+			dataType: 'json',
+			cache: false,
+			data: { id: run },
+			success: function (r) {
+				var again = codingChatPollApply(mount, run, r || {});
+				var now = codingChatPanel(mount);
+				if (!now.length) { return; }
+				if (now.data('coding_run') && now.data('coding_run') !== run) { return; }
+				if (again) { now.data('coding_poll_timer', setTimeout(tick, 1000)); }
+				else { now.removeData('coding_poll_timer'); }
+			},
+			error: function () {
+				var now = codingChatPanel(mount);
+				if (!now.length) { return; }
+				if (now.data('coding_run') && now.data('coding_run') !== run) { return; }
+				codingChatAdd(mount, 'guide', 'The coding agent could not be reached.');
+				now.data('coding_running', 0);
+				codingChatRunning(now);
+				codingChatNow(mount, null);
+				now.removeData('coding_poll_timer');
+			}
+		});
+	};
+	panel.data('coding_poll_timer', setTimeout(tick, 0));
+};

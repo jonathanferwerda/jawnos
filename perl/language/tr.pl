@@ -436,4 +436,5 @@ $catalog{'tr'} = {
 		'camera_back' => 'Arka',
 		'page_agent' => 'Sayfa ajanı',
 		'page_fill' => 'Bu sayfayı oku ve doldur',
+		'thinking' => 'Düşünce',
 	};

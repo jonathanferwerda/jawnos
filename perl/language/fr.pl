@@ -449,4 +449,5 @@ $catalog{'fr'} = {
 		'camera_back' => 'Arrière',
 		'page_agent' => 'Assistant de page',
 		'page_fill' => 'Lire et remplir cette page',
+		'thinking' => 'Raisonnement',
 	};

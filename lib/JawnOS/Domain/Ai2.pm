@@ -275,16 +275,105 @@ sub ai_wire_message {
 	}
 }
 
-# The text out of any of the providers' reply shapes.
+# The reasoning ("thinking") a provider returned, whatever shape it uses, as one
+# string. It is a field or block of its own beside the answer, so a caller can
+# show the working without it ever standing in for the reply. '' when the reply
+# carried none. Pieces are trimmed and joined with a blank line.
+sub ai_response_reasoning {
+	my ($body) = @_;
+	return '' unless ref $body eq 'HASH';
+	my @pieces;
+	my $add = sub {
+		my $s = shift;
+		return unless defined $s && !ref $s;
+		$s =~ s/^\s+|\s+$//g;
+		push @pieces, $s if length $s;
+	};
+	# OpenAI-compatible (DeepSeek's reasoning_content, OpenRouter's reasoning
+	# string) and the wrappers that nest choices under result. OpenRouter also
+	# returns reasoning_details: hashes with text, or a summary.
+	foreach my $msg ( $body->{'choices'}->[0]->{'message'}, $body->{'result'}->{'choices'}->[0]->{'message'} ) {
+		next unless ref $msg eq 'HASH';
+		$add->($msg->{'reasoning_content'});
+		$add->($msg->{'reasoning'});
+		foreach my $d ( @{ $msg->{'reasoning_details'} || [] } ) {
+			next unless ref $d eq 'HASH';
+			$add->($d->{'text'});
+			$add->($d->{'summary'});
+		}
+	}
+	# Anthropic: content is an array of blocks. A thinking block carries
+	# "thinking"; a redacted_thinking block carries no readable text.
+	if (ref $body->{'content'} eq 'ARRAY') {
+		foreach my $b ( @{ $body->{'content'} } ) {
+			next unless ref $b eq 'HASH';
+			my $bt = $b->{'type'} || '';
+			next if $bt eq 'redacted_thinking';
+			$add->($b->{'thinking'}) if $bt eq 'thinking';
+		}
+	}
+	# Gemini: a part with thought => true is the working, the rest is the answer.
+	if (ref $body->{'candidates'}->[0]->{'content'}->{'parts'} eq 'ARRAY') {
+		foreach my $p ( @{ $body->{'candidates'}->[0]->{'content'}->{'parts'} } ) {
+			next unless ref $p eq 'HASH';
+			$add->($p->{'text'}) if $p->{'thought'};
+		}
+	}
+	# Ollama: thinking beside the message, or at the top level as a fallback.
+	$add->($body->{'message'}->{'thinking'});
+	$add->($body->{'thinking'});
+	return join("\n\n", @pieces);
+}
+
+# The text out of any of the providers' reply shapes. A reasoning block is not
+# the answer: Anthropic puts thinking blocks in content beside the text blocks,
+# and Gemini marks a thought part, so both are read whole and the working is
+# skipped. With only reasoning and no text this returns '' rather than handing
+# the working back as the reply.
 sub ai_response_text {
 	my ($body) = @_;
+	return '' unless ref $body eq 'HASH';
+	if (ref $body->{'content'} eq 'ARRAY') {
+		return join '', map { $_->{'text'} }
+			grep { ref $_ eq 'HASH' && ($_->{'type'} || '') eq 'text' && defined $_->{'text'} }
+			@{ $body->{'content'} };
+	}
+	if (ref $body->{'candidates'}->[0]->{'content'}->{'parts'} eq 'ARRAY') {
+		return join '', map { $_->{'text'} }
+			grep { ref $_ eq 'HASH' && defined $_->{'text'} && !$_->{'thought'} }
+			@{ $body->{'candidates'}->[0]->{'content'}->{'parts'} };
+	}
 	return $body->{'message'}->{'content'}
 		|| $body->{'response'}
 		|| $body->{'result'}->{'response'}
 		|| $body->{'result'}->{'choices'}->[0]->{'message'}->{'content'}
 		|| $body->{'choices'}->[0]->{'message'}->{'content'}
-		|| $body->{'content'}->[0]->{'text'}
-		|| $body->{'candidates'}->[0]->{'content'}->{'parts'}->[0]->{'text'};
+		|| '';
+}
+
+# The reply split into a reasoning part and a text part, reasoning first, so a
+# caller can show the working, store it, or ignore it. Empty pieces are left
+# out, so a plain reply is still just one text part. No media here: a caller
+# that wants it appends its own, as ai_chat_parts does.
+sub ai_response_parts {
+	my ($body) = @_;
+	my @parts;
+	my $reasoning = &ai_response_reasoning($body);
+	push @parts, { type => 'reasoning', text => $reasoning } if length $reasoning;
+	my $text = &ai_response_text($body);
+	push @parts, { type => 'text', text => $text } if defined $text && length $text;
+	return \@parts;
+}
+
+# Join the text of every part of one type (the default, 'text'). Reasoning is a
+# part of its own type, so a caller that wants the answer never gets the working.
+sub ai_parts_text {
+	my ($parts, $type) = @_;
+	return '' unless ref $parts eq 'ARRAY';
+	$type = 'text' unless defined $type && length $type;
+	return join '', map { $_->{'text'} }
+		grep { ref $_ eq 'HASH' && ($_->{'type'} || '') eq $type && defined $_->{'text'} }
+		@{ $parts };
 }
 
 # The token counts a reply reports, whatever shape it uses: an OpenAI-style
@@ -507,9 +596,10 @@ sub ai_chat_parts {
 	}
 	return (undef, $err) if $err;
 	$ai_last_model = $model;
-	my @parts;
-	my $text = &ai_response_text($body);
-	push @parts, { type => 'text', text => $text } if defined $text && length $text;
+	# The answer and the working beside it: reasoning first, then the reply, so
+	# a caller that reads parts in order sees the thinking before the answer.
+	# Media is appended below.
+	my @parts = @{ &ai_response_parts($body) };
 	# media the model drew or returned: OpenAI-style images/audio/video, Gemini
 	# inline_data (any mime), Anthropic media blocks. The type is read off the
 	# mime, so a caller can ask for the part it wants (image/audio/video).

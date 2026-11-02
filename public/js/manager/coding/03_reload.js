@@ -12,8 +12,12 @@ function jawnosCodingChatSave() {
 			var panel = $(this);
 			var log = panel.find('.coding_chat_log');
 			if (!log.length) { return; }
+			// the live line is a snapshot of the run, not part of the conversation:
+			// keep it out, or a restored log would show a finished run as working
+			var saved = log.clone();
+			saved.find('.coding_chat_now').remove();
 			state[panel.attr('mount')] = {
-				log: log.html() || '',
+				log: saved.html() || '',
 				scroll: log[0] ? log[0].scrollTop : 0,
 				draft: panel.find('.coding_chat_input').val() || '',
 				run: panel.data('coding_run') || 0,

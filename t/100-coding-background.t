@@ -62,6 +62,9 @@ my $long = 'x' x 5000;
 my $view = &subs::coding_step_view($long);
 ok(length($view) <= 1210, 'a long observation is trimmed for the panel');
 like($view, qr/…$/, 'the trim is marked');
+my $why = &subs::coding_reasoning_view('y' x 5000);
+ok(length($why) <= 4010, 'a long reasoning is trimmed for the panel');
+like($why, qr/…$/, 'the reasoning trim is marked');
 
 # --- the job loop, with the model and the tools stubbed ----------------------
 # The loop is the part a reload used to kill. These stubs stand in for the
@@ -85,7 +88,17 @@ sub run_fake_job {
 		local *subs::rightNow = sub { 123 };
 		local *subs::setting_grabber = sub { 'fake-model' };
 		local *subs::ai_role_thinking = sub { '' };
-		local *subs::evaluation_model_call_with_fallback = sub { $calls++; return $responder->($calls) };
+		local *subs::ai_chat_parts_with_fallback = sub {
+			$calls++;
+			my ($text, $err) = $responder->($calls);
+			return (undef, $err) if $err;
+			return ([ { type => 'reasoning', text => "why $calls" }, { type => 'text', text => $text } ], undef);
+		};
+		local *subs::ai_parts_text = sub {
+			my ($parts, $type) = @_;
+			$type = 'text' unless defined $type && length $type;
+			return join '', map { $_->{'text'} } grep { ($_->{'type'} // '') eq $type } @{ $parts || [] };
+		};
 		local *subs::coding_run_state_save = sub { $state{ $_[0] } = $_[1]; 1 };
 		local *subs::coding_run_state_load = sub { $state{ $_[0] } || {} };
 		local *subs::jawn_version = sub { '9.9.9' };
@@ -111,6 +124,8 @@ sub run_fake_job {
 	is($state->{'state'}, 'finished', 'the run finishes');
 	is($state->{'final'}, 'all done', 'the last word reaches the panel');
 	is(scalar @{ $state->{'steps'} || [] }, 2, 'both steps are in the record');
+	is($state->{'steps'}[0]{'reasoning'}, 'why 1', 'the reasoning is kept beside the step');
+	ok(!exists $state->{'current'}, 'no live line is left on a finished run');
 	is($state->{'title'}, 'A title', 'the registry title is carried back');
 	is($state->{'version'}, '9.9.9', 'the version is carried back');
 	ok($job->{'done'} && !$job->{'error'}, 'the Minion job is finished');
@@ -137,7 +152,8 @@ like($worker, qr/jawn_version_forget/, 'and re-reads VERSION instead of its boot
 my $domain = source('lib/JawnOS/Domain/Coding.pm');
 like($domain, qr/'coding_run_'\s*\.\s*\$id/, 'a run is a per-device setting keyed by id');
 like($domain, qr/coding-queue\.db/, 'the queue has a file the master reload does not wipe');
-like($domain, qr/JAWNOS_MASTER_PID/, 'a run stops when the master that owns it is gone');
+	like($domain, qr/JAWNOS_MASTER_PID/, 'a run stops when the master that owns it is gone');
+	like($domain, qr/sub coding_reasoning_view\b/, 'the model\'s reasoning is trimmed for the panel');
 {
 	my $body = sub_body($domain, 'coding_run_job');
 	like($body, qr/coding_run_state_save\(\$id,\s*\$state\)/,
@@ -191,6 +207,8 @@ like($coding_js, qr/function codingChatPoll\b/, 'the poller exists');
 like($coding_js, qr/function codingChatReattach\b/, 'a reload reattaches to the run');
 like($coding_js, qr/run:\s*panel\.data\('coding_run'\)/, 'the run id rides the reload');
 like($coding_js, qr/steps:\s*panel\.data\('coding_steps_shown'\)/, 'the step count rides the reload');
+like($coding_js, qr/coding_chat_thought_toggle/, 'a step can open the model\'s reasoning');
+like($coding_js, qr/coding_chat_now/, 'the log names what the run is doing now');
 
 my $agents_js = source('public/js/manager/agents.js');
 like($agents_js, qr/jawnos_agents_open/, 'the browser remembers the open panels');

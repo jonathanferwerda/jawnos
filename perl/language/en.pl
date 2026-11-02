@@ -450,4 +450,5 @@ $catalog{'en'} = {
 		'camera_back' => 'Back',
 		'page_agent' => 'Page agent',
 		'page_fill' => 'Read and fill this page',
+		'thinking' => 'Thinking',
 	};

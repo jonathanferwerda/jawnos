@@ -436,4 +436,5 @@ $catalog{'ar'} = {
 		'camera_back' => 'خلفي',
 		'page_agent' => 'مساعد الصفحة',
 		'page_fill' => 'قراءة هذه الصفحة وتعبئتها',
+		'thinking' => 'التفكير',
 	};

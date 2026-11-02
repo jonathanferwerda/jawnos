@@ -436,4 +436,5 @@ $catalog{'ja'} = {
 		'camera_back' => '背面',
 		'page_agent' => 'ページエージェント',
 		'page_fill' => 'このページを読み取って入力する',
+		'thinking' => '思考',
 	};

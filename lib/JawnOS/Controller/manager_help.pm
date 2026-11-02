@@ -325,8 +325,19 @@ sub action_34818 {
 	my $fallback = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant_fallback' });
 	my $thinking = &subs::ai_role_thinking('help_assistant');
 	&subs::render_in_subprocess($c, sub {
-		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, $fallback, $system, join("\n", @lines), $thinking, 'help_assistant');
-		return { text => $text, err => $err };
+		# The reply arrives as parts so the model's reasoning is kept apart from its
+		# answer: the answer is what the action parser reads, the reasoning is shown
+		# beside it and never fed back into a later turn.
+		my ($parts, $err) = &subs::ai_chat_parts_with_fallback(
+			$model, $fallback,
+			[ { role => 'system', content => $system },
+			  { role => 'user', content => join("\n", @lines) } ],
+			$thinking, 'help_assistant'
+		);
+		my $text = &subs::ai_parts_text($parts, 'text');
+		my $reason = &subs::ai_parts_text($parts, 'reasoning');
+		$reason = substr($reason, 0, 4000) . '…' if length $reason > 4000;
+		return { text => $text, thinking => $reason, err => $err };
 	}, sub {
 		my ($c, $r) = @_;
 		$r ||= {};
@@ -355,13 +366,18 @@ sub action_34818 {
 				$action = &guide_resolve_action($action);
 			}
 		}
+		my $reason = $r->{'thinking'} // '';
 		if ($action && $action->{'action'} && $allowed->{ $action->{'action'} }) {
 			# translation tools run through the same model the Guide is using this turn
 			$action->{'model'} = $model if ($action->{'action'} // '') =~ /^translate/;
-			$c->render(json => { action => $action, raw => $text });
+			my $out = { action => $action, raw => $text };
+			$out->{'thinking'} = $reason if length $reason;
+			$c->render(json => $out);
 		}
 		else {
-			$c->render(json => { action => { action => 'say', text => $text } });
+			my $out = { action => { action => 'say', text => $text } };
+			$out->{'thinking'} = $reason if length $reason;
+			$c->render(json => $out);
 		}
 	});
 }

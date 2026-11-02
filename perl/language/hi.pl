@@ -436,4 +436,5 @@ $catalog{'hi'} = {
 		'camera_back' => 'पीछे',
 		'page_agent' => 'पेज एजेंट',
 		'page_fill' => 'यह पेज पढ़ें और भरें',
+		'thinking' => 'सोच',
 	};

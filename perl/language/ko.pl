@@ -436,4 +436,5 @@ $catalog{'ko'} = {
 		'camera_back' => '후면',
 		'page_agent' => '페이지 에이전트',
 		'page_fill' => '이 페이지를 읽고 채우기',
+		'thinking' => '생각',
 	};

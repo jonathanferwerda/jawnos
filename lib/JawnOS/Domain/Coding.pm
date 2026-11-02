@@ -44,6 +44,9 @@ sub coding_minion {
 # this is the step list a person reads, so a 40 KB file dump is trimmed here.
 our $coding_step_view_bytes = 1200;
 
+# How much of the model's reasoning the panel keeps beside a step.
+our $coding_reasoning_view_bytes = 4000;
+
 # The number of model turns one run gets, the same cap the old request had.
 our $coding_run_turns = 12;
 
@@ -107,7 +110,7 @@ sub coding_run_current {
 	$conversation =~ s/[^A-Za-z0-9_-]//g;
 	$conversation = 'coding' unless length $conversation;
 	my $id = &subs::setting_grabber({ app => '__president', setting => 'coding_run_for_' . $conversation });
-	return { run => 0, conversation => $conversation, state => 'none', steps => [], worker => &coding_worker_alive() }
+	return { run => 0, conversation => $conversation, state => 'none', steps => [], current => {}, worker => &coding_worker_alive() }
 		unless defined $id && $id =~ /^[0-9]+$/;
 	return &coding_run_view($id);
 }
@@ -140,6 +143,7 @@ sub coding_run_view {
 		task         => ($state->{'task'} // ''),
 		state        => ($state->{'state'} // 'none'),
 		steps        => (ref $state->{'steps'} eq 'ARRAY' ? $state->{'steps'} : []),
+		current      => (ref $state->{'current'} eq 'HASH' ? $state->{'current'} : {}),
 		final        => ($state->{'final'} // ''),
 		version      => ($state->{'version'} // ''),
 		title        => ($state->{'title'} // ''),
@@ -203,6 +207,16 @@ sub coding_step_view {
 	return $text;
 }
 
+sub coding_reasoning_view {
+	my ($text) = @_;
+	$text = defined $text ? "$text" : '';
+	$text =~ s/\x00//g;
+	if (length $text > $coding_reasoning_view_bytes) {
+		$text = substr($text, 0, $coding_reasoning_view_bytes) . '…';
+	}
+	return $text;
+}
+
 # The Minion task. Runs in perl/Coding.pl; anything it writes for the panel is
 # a state snapshot, and its one observable side effect on failure is a failed
 # job plus a state row saying why.
@@ -252,11 +266,18 @@ sub coding_run_job {
 			my $fresh = &coding_run_state_load($id);
 			if ($fresh->{'cancel'}) { $final = 'Stopped at your request.'; last; }
 			my $system = &Manager::coding_system_prompt();
-			my ($text, $err) = &subs::evaluation_model_call_with_fallback(
-				$model, $fallback, $system,
-				join("\n", @lines) . "\n\nReply with the single next JSON action.",
+			# What the poller shows while the model is answering.
+			$state->{'current'} = { state => 'thinking', at => &subs::rightNow() };
+			$state->{'updated'} = &subs::rightNow();
+			&coding_run_state_save($id, $state);
+			my ($parts, $err) = &subs::ai_chat_parts_with_fallback(
+				$model, $fallback,
+				[ { role => 'system', content => $system },
+				  { role => 'user', content => join("\n", @lines) . "\n\nReply with the single next JSON action." } ],
 				$thinking, 'coding_assistant'
 			);
+			my $text = &subs::ai_parts_text($parts, 'text');
+			my $reasoning = &subs::ai_parts_text($parts, 'reasoning');
 			if ($err || !defined $text || !length $text) {
 				$error = $err || 'the model returned nothing';
 				push @steps, { action => { action => 'error' }, observation => $error };
@@ -264,11 +285,18 @@ sub coding_run_job {
 			}
 			my $action = &coding_parse_action($text);
 			unless ($action) { $final = $text; last; }
+			# What the poller shows while the tool is running.
+			$state->{'current'} = { state => 'acting', action => $action, at => &subs::rightNow() };
+			$state->{'updated'} = &subs::rightNow();
+			&coding_run_state_save($id, $state);
 			my $obs = &Manager::coding_execute(undef, $action, \%touched);
-			push @steps, { action => $action, observation => &coding_step_view($obs) };
+			my $step = { action => $action, observation => &coding_step_view($obs) };
+			$step->{'reasoning'} = &coding_reasoning_view($reasoning) if length $reasoning;
+			push @steps, $step;
 			push @lines, 'ACTION: ' . encode_json($action);
 			push @lines, 'OBSERVATION: ' . (defined $obs ? $obs : '');
 			$state->{'steps'} = \@steps;
+			delete $state->{'current'};
 			$state->{'updated'} = &subs::rightNow();
 			&coding_run_state_save($id, $state);
 			if (($action->{'action'} || '') eq 'done' || ($action->{'action'} || '') eq 'say') {
@@ -291,6 +319,9 @@ sub coding_run_job {
 		$error = $@;
 		$error =~ s/\s+$//;
 	}
+	# A finished or failed run has nothing in flight; the panel must not keep
+	# showing the last step as still acting.
+	delete $state->{'current'};
 	$state->{'final'} = $final;
 	$state->{'error'} = $error if length $error;
 	$state->{'version'} = &subs::jawn_version();
