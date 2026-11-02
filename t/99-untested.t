@@ -71,7 +71,6 @@ my @no_behaviour = (
 # list may shrink, and a name that is no longer untested is reported as stale.
 my %owed = map { $_ => 1 } qw(
 	public/js/gate.js
-	public/js/music_stream_worklet.js
 	public/js/pm.js
 	public/js/screensaver.js
 	scripts/app_displayer.pl
@@ -91,7 +90,6 @@ my %owed = map { $_ => 1 } qw(
 	scripts/sponsors_goal.pl
 	scripts/store_invoice_email_driver.pl
 	scripts/thumb_reorient.pl
-	scripts/thumbs_hidden.pl
 	scripts/tls_issue.pl
 	scripts/web_measures_audit.pl
 );
