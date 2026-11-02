@@ -32,6 +32,7 @@ my $root       = abs_path("$FindBin::Bin/..");
 my $context    = 0;
 my $limit      = 8;
 my $terse      = 0;
+my $tech_name;
 my $list_topics = 0;
 my $help       = 0;
 
@@ -39,6 +40,7 @@ GetOptions(
 	'context=i' => \$context,
 	'limit=i'   => \$limit,
 	'terse'     => \$terse,
+	'tech=s'    => \$tech_name,
 	'topics'    => \$list_topics,
 	'root=s'    => \$root,
 	'help'      => \$help,
@@ -46,6 +48,15 @@ GetOptions(
 
 usage(0) if $help;
 usage(2) unless defined $root && length $root && -d $root;
+
+# The second tier of help is a whole brief, not a location: hand it to the script
+# that generates it rather than growing a second copy of that logic here.
+if (defined $tech_name) {
+	usage(2) unless length $tech_name;
+	exec($^X, "$root/scripts/agent_help.pl", $tech_name)
+		or die "where: cannot run scripts/agent_help.pl: $!\n";
+}
+
 usage(2) unless $list_topics || @ARGV;
 
 my @manager_files = grep { -f $_ } map { glob "$root/lib/JawnOS/Manager/$_" }
@@ -396,7 +407,7 @@ sub usage {
 	my ($code) = @_;
 	my $fh = $code ? \*STDERR : \*STDOUT;
 	print $fh <<'TXT';
-usage: perl scripts/where.pl [--context N] [--limit N] [--terse] [--topics] [--root DIR] NAME...
+usage: perl scripts/where.pl [--context N] [--limit N] [--terse] [--topics] [--tech NAME] [--root DIR] NAME...
 
   NAME   a Manager helper (app_release_sync), a domain sub (subs::path_name or
          path_name), a route action (action_7408), a route path (/manager/pen),
@@ -408,6 +419,9 @@ sub, then as a help topic, then as a mention (at most --limit lines).
 --context N adds N lines after a located sub, --terse prints only file:line,
 --topics lists every help topic with the line it is defined on. Exits 0 if
 anything was found.
+
+  --tech NAME  the tier-2 technical brief for an app or topic (routes, tables,
+               settings, tests, source notes) - same as scripts/agent_help.pl
 TXT
 	exit $code;
 }

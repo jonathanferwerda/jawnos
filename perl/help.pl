@@ -13,6 +13,17 @@
 #   prompt   - optional: extra steering handed to the Help agent for this topic,
 #              on top of the entry itself
 #
+# Help has two tiers, and only this one is written by hand:
+#
+#   tier 1  this registry - prose for a person navigating the program. Translated
+#           on demand; audited by t/11-help.t and scripts/help_audit.pl.
+#   tier 2  generated - `perl scripts/agent_help.pl <app>` derives the technical
+#           brief from the tree: sources, routes, tables, settings, the tests
+#           that claim them, and the source files' own notes. Never hand-write a
+#           tier-2 fact and never translate it: anything derivable from code is
+#           derived, or it becomes a lie with a date on it. The rationale (why a
+#           thing is this way) stays in the comments and docs/AGENTS-notes.md.
+#
 # The registry is deliberately data, not code: adding a topic is adding a key.
 # Topics are matched case-insensitively and tolerate spaces or hyphens where the
 # key has underscores, so help("Start Menu"), help("start-menu") and

@@ -360,6 +360,18 @@ The in-app guide lives in `help.pl` (a `%topic` registry) and is served by the `
 (`templates/apps/help.html.ep`, `public/js/manager/help.js`, routes `/manager/help`, `/manager/help/body`,
 `/manager/help/ask`). The guide agent answers through `subs::evaluation_model_call`.
 
+**Help has two tiers, and only tier 1 is written by hand.**
+
+- **Tier 1 — the user.** `perl/help/topics_*.pl`: plain-language prose for navigating the program.
+  Translated on demand, audited by `t/11-help.t` and `scripts/help_audit.pl`.
+- **Tier 2 — the agent.** Generated from the tree: `perl scripts/agent_help.pl <app>` prints the
+  technical brief (sources, routes, tables, settings, the tests that claim them, and the source
+  files' own notes); `qa/coding_night/agent-index.md` is the compact index the nightly agent reads
+  (`--write-index`; the pre-commit hook refreshes it, `t/97-agent-help.t` pins it). **Never
+  hand-write a tier-2 fact and never translate it** — anything derivable from code is derived, or it
+  becomes a lie with a date on it. Rationale (“why it is this way”) stays in the source comments and
+  `docs/AGENTS-notes.md`, which the brief surfaces rather than restates.
+
 **When you change an app's UI, update its topic in the same commit.** Then:
 
 - `perl scripts/help_audit.pl` — checks every topic against the tree: broken `related` links, listed
@@ -441,8 +453,8 @@ The bill is generated text, not stored context. Four rules that move it:
   `sed -n` a range instead of reading the file.
 - **Ask the locator, not the map.** `perl scripts/where.pl <name>` answers "where is this" in
   one line — a Manager helper, a domain sub, a route action or path, a help topic, or a file (which
-  reports the topics covering it); `--topics` lists the help registry. Reading `Index.pm` or grepping
-  nine parts costs ~20 KB for the same answer.
+  reports the topics covering it); `--topics` lists the help registry and `--tech <name>` prints the
+  tier-2 technical brief. Reading `Index.pm` or grepping nine parts costs ~20 KB for the same answer.
 
 **Agents (local, optional, and all on the same records).** Four, plus the generators Pen can call:
 

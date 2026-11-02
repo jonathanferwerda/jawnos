@@ -10,6 +10,25 @@
 # Bypass for a moment:     git commit --no-verify
 cd "$(git rev-parse --show-toplevel)" || exit 0
 command -v perl >/dev/null 2>&1 || exit 0
+
+# The repository index is generated from the tree and read by the nightly agent.
+# Refresh it with every commit so it cannot describe a tree that no longer is -
+# but only when the tree is settled: more than one agent works in this checkout,
+# and regenerating from a tree with somebody's uncommitted work in it would bake
+# their work into this commit and leave the index disagreeing with the commit it
+# rides on. A dirty tree leaves the previous index alone; t/97-agent-help.t
+# enforces the match whenever the tree is clean.
+if [ -f scripts/agent_help.pl ]; then
+	if git diff --quiet -- lib templates public/js perl/help database/schema.sql &&
+	   git diff --cached --quiet -- lib templates public/js perl/help database/schema.sql; then
+		perl scripts/agent_help.pl --write-index >/dev/null 2>&1
+	fi
+	if ! git diff --quiet -- qa/coding_night/agent-index.md 2>/dev/null; then
+		git add qa/coding_night/agent-index.md
+		printf 'pre-commit: refreshed qa/coding_night/agent-index.md\n'
+	fi
+fi
+
 [ -f AGENTS.md ] || exit 0
 [ -f scripts/bake_agents_rules.pl ] || exit 0
 
