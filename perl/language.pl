@@ -131,24 +131,24 @@ foreach my $code ( keys %internet_labels ) {
 # backfill. The surrounding explanation is help text and goes through subs::ui.
 my @qa_keys = qw( configure.qa_nightly configure.qa_nightly_device configure.qa_this_machine
 	configure.qa_ready configure.qa_not_ready configure.qa_missing configure.qa_install
-	configure.qa_check configure.qa_checking );
+	configure.qa_check configure.qa_checking configure.qa_note_limit );
 my %qa_labels = (
-	en => [ 'QA nightly', 'Nightly machine', 'This machine (local)', 'Ready', 'Not ready', 'Missing', 'Install', 'Check again', 'Checking…' ],
-	zh => [ 'QA 夜检', '夜间运行的机器', '本机（本地）', '就绪', '未就绪', '缺少', '安装', '重新检查', '正在检查…' ],
-	fr => [ 'QA nocturne', 'Machine de nuit', 'Cette machine (locale)', 'Prêt', 'Pas prêt', 'Manquant', 'Installer', 'Vérifier à nouveau', 'Vérification…' ],
-	es => [ 'QA nocturno', 'Máquina nocturna', 'Esta máquina (local)', 'Listo', 'No listo', 'Falta', 'Instalar', 'Comprobar de nuevo', 'Comprobando…' ],
-	de => [ 'Nächtliche QA', 'Nachtmaschine', 'Diese Maschine (lokal)', 'Bereit', 'Nicht bereit', 'Fehlt', 'Installieren', 'Erneut prüfen', 'Prüfe…' ],
-	pt => [ 'QA noturno', 'Máquina noturna', 'Esta máquina (local)', 'Pronto', 'Não pronto', 'Falta', 'Instalar', 'Verificar novamente', 'Verificando…' ],
-	hi => [ 'रात्रि QA', 'रात्रि मशीन', 'यह मशीन (स्थानीय)', 'तैयार', 'तैयार नहीं', 'अनुपस्थित', 'इंस्टॉल करें', 'फिर जाँचें', 'जाँच हो रही है…' ],
-	ar => [ 'فحص QA الليلي', 'جهاز الفحص الليلي', 'هذا الجهاز (محلي)', 'جاهز', 'غير جاهز', 'مفقود', 'تثبيت', 'تحقق مرة أخرى', 'جارٍ التحقق…' ],
-	bn => [ 'রাত্রিকালীন QA', 'রাত্রিকালীন মেশিন', 'এই মেশিন (স্থানীয়)', 'প্রস্তুত', 'প্রস্তুত নয়', 'অনুপস্থিত', 'ইনস্টল করুন', 'আবার পরীক্ষা করুন', 'পরীক্ষা চলছে…' ],
-	ru => [ 'Ночная QA', 'Ночная машина', 'Эта машина (локально)', 'Готово', 'Не готово', 'Отсутствует', 'Установить', 'Проверить снова', 'Проверка…' ],
-	ja => [ '夜間QA', '夜間実行マシン', 'このマシン（ローカル）', '準備完了', '未準備', '不足', 'インストール', '再確認', '確認中…' ],
-	pa => [ 'ਰਾਤ ਦੀ QA', 'ਰਾਤ ਦੀ ਮਸ਼ੀਨ', 'ਇਹ ਮਸ਼ੀਨ (ਸਥਾਨਕ)', 'ਤਿਆਰ', 'ਤਿਆਰ ਨਹੀਂ', 'ਗੁੰਮ', 'ਇੰਸਟਾਲ ਕਰੋ', 'ਦੁਬਾਰਾ ਜਾਂਚੋ', 'ਜਾਂਚ ਹੋ ਰਹੀ ਹੈ…' ],
-	id => [ 'QA malam', 'Mesin malam', 'Mesin ini (lokal)', 'Siap', 'Belum siap', 'Hilang', 'Pasang', 'Periksa lagi', 'Memeriksa…' ],
-	ko => [ '야간 QA', '야간 실행 기기', '이 기기(로컬)', '준비됨', '준비 안 됨', '누락', '설치', '다시 확인', '확인 중…' ],
-	it => [ 'QA notturno', 'Macchina notturna', 'Questa macchina (locale)', 'Pronto', 'Non pronto', 'Mancante', 'Installa', 'Controlla di nuovo', 'Controllo…' ],
-	tr => [ 'Gece QA', 'Gece makinesi', 'Bu makine (yerel)', 'Hazır', 'Hazır değil', 'Eksik', 'Kur', 'Yeniden denetle', 'Denetleniyor…' ],
+	en => [ 'QA nightly', 'Nightly machine', 'This machine (local)', 'Ready', 'Not ready', 'Missing', 'Install', 'Check again', 'Checking…', 'Notes per night' ],
+	zh => [ 'QA 夜检', '夜间运行的机器', '本机（本地）', '就绪', '未就绪', '缺少', '安装', '重新检查', '正在检查…', '每晚笔记数' ],
+	fr => [ 'QA nocturne', 'Machine de nuit', 'Cette machine (locale)', 'Prêt', 'Pas prêt', 'Manquant', 'Installer', 'Vérifier à nouveau', 'Vérification…', 'Notes par nuit' ],
+	es => [ 'QA nocturno', 'Máquina nocturna', 'Esta máquina (local)', 'Listo', 'No listo', 'Falta', 'Instalar', 'Comprobar de nuevo', 'Comprobando…', 'Notas por noche' ],
+	de => [ 'Nächtliche QA', 'Nachtmaschine', 'Diese Maschine (lokal)', 'Bereit', 'Nicht bereit', 'Fehlt', 'Installieren', 'Erneut prüfen', 'Prüfe…', 'Notizen pro Nacht' ],
+	pt => [ 'QA noturno', 'Máquina noturna', 'Esta máquina (local)', 'Pronto', 'Não pronto', 'Falta', 'Instalar', 'Verificar novamente', 'Verificando…', 'Notas por noite' ],
+	hi => [ 'रात्रि QA', 'रात्रि मशीन', 'यह मशीन (स्थानीय)', 'तैयार', 'तैयार नहीं', 'अनुपस्थित', 'इंस्टॉल करें', 'फिर जाँचें', 'जाँच हो रही है…', 'प्रति रात नोट्स' ],
+	ar => [ 'فحص QA الليلي', 'جهاز الفحص الليلي', 'هذا الجهاز (محلي)', 'جاهز', 'غير جاهز', 'مفقود', 'تثبيت', 'تحقق مرة أخرى', 'جارٍ التحقق…', 'ملاحظات في الليلة' ],
+	bn => [ 'রাত্রিকালীন QA', 'রাত্রিকালীন মেশিন', 'এই মেশিন (স্থানীয়)', 'প্রস্তুত', 'প্রস্তুত নয়', 'অনুপস্থিত', 'ইনস্টল করুন', 'আবার পরীক্ষা করুন', 'পরীক্ষা চলছে…', 'প্রতি রাতে নোট' ],
+	ru => [ 'Ночная QA', 'Ночная машина', 'Эта машина (локально)', 'Готово', 'Не готово', 'Отсутствует', 'Установить', 'Проверить снова', 'Проверка…', 'Заметок за ночь' ],
+	ja => [ '夜間QA', '夜間実行マシン', 'このマシン（ローカル）', '準備完了', '未準備', '不足', 'インストール', '再確認', '確認中…', '1晩のノート数' ],
+	pa => [ 'ਰਾਤ ਦੀ QA', 'ਰਾਤ ਦੀ ਮਸ਼ੀਨ', 'ਇਹ ਮਸ਼ੀਨ (ਸਥਾਨਕ)', 'ਤਿਆਰ', 'ਤਿਆਰ ਨਹੀਂ', 'ਗੁੰਮ', 'ਇੰਸਟਾਲ ਕਰੋ', 'ਦੁਬਾਰਾ ਜਾਂਚੋ', 'ਜਾਂਚ ਹੋ ਰਹੀ ਹੈ…', 'ਹਰ ਰਾਤ ਨੋਟਸ' ],
+	id => [ 'QA malam', 'Mesin malam', 'Mesin ini (lokal)', 'Siap', 'Belum siap', 'Hilang', 'Pasang', 'Periksa lagi', 'Memeriksa…', 'Catatan per malam' ],
+	ko => [ '야간 QA', '야간 실행 기기', '이 기기(로컬)', '준비됨', '준비 안 됨', '누락', '설치', '다시 확인', '확인 중…', '밤당 노트 수' ],
+	it => [ 'QA notturno', 'Macchina notturna', 'Questa macchina (locale)', 'Pronto', 'Non pronto', 'Mancante', 'Installa', 'Controlla di nuovo', 'Controllo…', 'Note per notte' ],
+	tr => [ 'Gece QA', 'Gece makinesi', 'Bu makine (yerel)', 'Hazır', 'Hazır değil', 'Eksik', 'Kur', 'Yeniden denetle', 'Denetleniyor…', 'Gece başına not' ],
 );
 foreach my $code ( keys %qa_labels ) {
 	my %add;

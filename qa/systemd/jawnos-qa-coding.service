@@ -1,0 +1,38 @@
+[Unit]
+Description=JawnOS coding nightly (one note at a time, worktree + suite)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+# The house's nightly runs on the machine chosen in Configure -> Plat -> QA.
+# ExecCondition exits 1 for every other machine, which skips this unit without
+# marking it failed. The runner re-checks the same choice, so a hand-started
+# run is a skip too.
+ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
+ExecStart=/usr/bin/perl /home/jawn/jawnos/qa/coding_night/run.pl
+
+# This is the one nightly that writes the house: the agent edits a worktree of
+# the repo and a green night commits, merges and pushes main. Its home is
+# therefore writable, unlike the 04:00 suite's read-only fence, and both the
+# checkout and the QA root are named in ReadWritePaths. ProtectSystem=strict
+# still pins /usr and the rest. It needs real networking: git fetch/push, the
+# agent's model, and the live health route on loopback.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=4G
+CPUQuota=300%
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/home/jawn/jawnos /home/jawn/jawnos-qa
+NoNewPrivileges=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

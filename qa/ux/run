@@ -2,7 +2,7 @@
 
 # qa/ux/run - the nightly UX evaluation loop (layer l6).
 #
-#   perl qa/ux/run                         # newest 5 JawnOS notes, fenced copy
+#   perl qa/ux/run                         # the Notes-per-night default (3), fenced copy
 #   perl qa/ux/run --limit 3               # a shorter queue
 #   perl qa/ux/run --no-ui                 # notes + rubric only, no browser
 #   perl qa/ux/run --model deepseek-chat   # ask the Guide's model to judge
@@ -50,9 +50,10 @@ use Time::HiRes qw(time);
 
 use Harness;
 use Ux;
+use QaSetting;
 
 my %opt = (
-	limit => 5,
+	limit => undef,
 	root  => undef,
 	results => undef,
 	metrics => undef,
@@ -114,6 +115,11 @@ $ENV{'JAWNOS_QA_NS'} = '1' unless $opt{'no_namespace'};
 Harness::bring_up_loopback();
 
 my $live_db = $opt{'db'} || Ux->live_db($repo);
+# Notes per night: an explicit --limit wins; otherwise the Configure -> Plat ->
+# QA setting, clamped the same way the panel's server-side check clamps it.
+$opt{'limit'} = defined $opt{'limit'}
+	? QaSetting::clamp_note_limit($opt{'limit'})
+	: QaSetting::read_note_limit($live_db);
 my $h = Harness->new(repo => $repo, root => $opt{'root'});
 $h->private_tmp();
 my $ro = $h->bind_live_read_only();
@@ -131,7 +137,7 @@ print 'live db: ' . $live_db . ($ro ? ' (repo mounted read-only)' : '') . "\n";
 
 # 1. read the queue, read-only, newest first
 my $notes = Ux->select_notes($live_db, limit => $opt{'limit'}, category => 'jawnos');
-print 'notes: ' . scalar(@$notes) . " JawnOS note(s)\n";
+print 'notes: ' . scalar(@$notes) . ' JawnOS note(s), limit ' . $opt{'limit'} . "\n";
 
 # 2. boot the copy. The factory seed predates the category column, so the app's
 # first request runs the migrations; the notes go in after that, not before.
@@ -245,7 +251,7 @@ sub usage {
 	print <<'TEXT';
 qa/ux/run - nightly UX evaluation of the owner's JawnOS-category notes
 
-  --limit N          newest N notes (default 5)
+  --limit N          newest N notes (default: the Notes per night setting, 3)
   --root DIR         QA root (default ~/jawnos-qa)
   --results DIR      where the report goes (default the run's results/)
   --metrics FILE     write l6.* metrics for qa/run.pl / budgets

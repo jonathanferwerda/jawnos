@@ -6,6 +6,8 @@
 <%
 	my $qa_machines = &subs::qa_target_machines();
 	my $qa_chosen = &subs::qa_nightly_device();
+	my $qa_note_limit = &subs::qa_note_limit();
+	my ($qa_note_min, $qa_note_max) = &subs::qa_note_limit_bounds();
 	my $qa_local_ok = &subs::qa_device_kind_eligible(&subs::device_setter());
 	my $qa_label = sub {
 		my ($rm) = @_;
@@ -14,6 +16,7 @@
 	};
 %>
 <p class="cfg-note"><%= &subs::ui('The QA suite runs once a night from one machine: per-route checks, the database contracts and the regression tests, all in a fenced copy of the house. Choose the machine here. Only a computer or a server is offered, because the suite needs a JawnOS checkout, perl and prove, and a private namespace to run in. The choice is a house setting, so every machine reads the same answer: the nightly timer on each machine asks this panel\'s setting whether that machine is the chosen one and skips its run when it is not. With no choice, each machine keeps the local fallback and runs its own suite.') %></p>
+	<p class="cfg-note"><%= &subs::ui('Notes per night sets how many of the open JawnOS notes the 06:00 coding night works through, one at a time, and is also the default for the 05:30 UX loop. Pick 1 to 25; the default is 3. It is a house setting, so every machine reads the same number.') %></p>
 <div class="cfg-card">
 	<h3 style="margin-top:0;"><%= &subs::lang('configure.qa_nightly') %></h3>
 	<div class="cfg-row">
@@ -24,6 +27,15 @@
 				<option value="<%= $rm->{'signatorial'} %>" data-device="<%= $rm->{'device'} %>" <%= $qa_chosen eq $rm->{'signatorial'} ? 'selected' : '' %>><%= $qa_label->($rm) %> (<%= $rm->{'device'} %>)</option>
 			<% } %>
 		</select>
+	</div>
+	<div class="cfg-row">
+		<label for="qa_note_limit"><%= &subs::lang('configure.qa_note_limit') %></label>
+		<select id="qa_note_limit" class="qa_note_limit">
+			<% for my $qa_n ( $qa_note_min .. $qa_note_max ) { %>
+				<option value="<%= $qa_n %>" <%= $qa_n == $qa_note_limit ? 'selected' : '' %>><%= $qa_n %></option>
+			<% } %>
+		</select>
+		<span id="qa_note_limit_status" class="cfg-note" style="margin:0 0 0 8px;"></span>
 	</div>
 	<p class="cfg-note" style="margin:6px 0 0;">
 		<%= &subs::ui('The nightly systemd timer reads this setting through qa/device_target.pl. The unit must be installed on every machine that might be chosen; the machine that is not chosen skips its run, and the chosen one runs it. The weekly artefact build stays wherever its toolchain is (mkosi, qemu, a full JDK) - it does not follow this choice.') %>

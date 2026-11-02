@@ -456,6 +456,67 @@ sub qa_nightly_save {
 	return { ok => 1, signatorial => $value, local => ($target->{'local'} ? 1 : 0), device => $target->{'device'} };
 }
 
+# ---------------------------------------------------------------------------
+# Notes per night
+# ---------------------------------------------------------------------------
+# The second QA picker: how many of the open JawnOS notes the 06:00 coding
+# night (and the UX loop) work through. `__president/qa_note_limit`, device
+# 'all', so every machine reads the same answer. The clamp is the contract -
+# 1..25, default 3 - and the runner applies the identical rule in
+# qa/lib/QaSetting.pm, so a hand-made POST cannot ask for a thousand notes.
+
+sub qa_note_limit_default { return 3 }
+sub qa_note_limit_bounds { return (1, 25) }
+
+sub qa_note_limit_clamp {
+	my ($value) = @_;
+	return &qa_note_limit_default()
+		unless defined $value && $value =~ /^\s*[+-]?\d+\s*$/;
+	my ($min, $max) = &qa_note_limit_bounds();
+	my $n = int($value);
+	return $min if $n < $min;
+	return $max if $n > $max;
+	return $n;
+}
+
+sub qa_note_limit {
+	my $opts = shift || {};
+	my $grab = $opts->{'grabber'};
+	unless ($grab) {
+		$grab = sub {
+			my $v = &subs::setting_grabber({ app => '__president', setting => 'qa_note_limit', device => 'all' });
+			$v = &subs::setting_grabber({ app => '__president', setting => 'qa_note_limit' }) unless defined $v && length $v;
+			return $v;
+		};
+	}
+	return &qa_note_limit_clamp( $grab->() );
+}
+
+# Save the number. Invalid input is the default and out-of-range input is
+# clamped; the response carries what was actually stored, so the panel can put
+# the select back to the truth. A test may inject the setter.
+sub qa_note_limit_save {
+	my ($value, $opts) = @_;
+	$opts ||= {};
+	my ($min, $max) = &qa_note_limit_bounds();
+	my $n = &qa_note_limit_clamp($value);
+	my $numeric = (defined $value && $value =~ /^\s*[+-]?\d+\s*$/) ? 1 : 0;
+	my $set = $opts->{'setter'};
+	unless ($set) {
+		$set = sub {
+			&subs::setting_setter({ app => '__president', setting => 'qa_note_limit', device => 'all', value => $_[0] });
+		};
+	}
+	$set->($n);
+	return {
+		ok => 1,
+		note_limit => $n,
+		min => $min,
+		max => $max,
+		clamped => (!$numeric || int($value) != $n) ? 1 : 0,
+	};
+}
+
 # The tools the suite and its artefact layers need. `required` is the nightly
 # (l0-l2 plus the fence); the rest are the build/device layers, named so the
 # panel can say what is missing without calling them failures of tonight's run.

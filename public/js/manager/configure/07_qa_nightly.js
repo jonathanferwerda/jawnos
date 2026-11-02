@@ -85,6 +85,26 @@ $(document).on('change', '#qa_nightly_device', function() {
 	});
 });
 
+$(document).on('change', '#qa_note_limit', function() {
+	var select = $(this);
+	var box = $('#qa_note_limit_status');
+	var n = parseInt(select.val(), 10);
+	box.text('');
+	// The server clamps 1..25 and answers with what it stored; put that back on
+	// the select so the panel never shows a number the house did not keep.
+	$.post('/manager/configure/qa_device_target', { field: 'note_limit', note_limit: n }, function(res) {
+		if (!res || !res.ok) {
+			box.text((res && res.error) || qaT('Could not save the number.'));
+			return;
+		}
+		select.val(res.note_limit);
+		box.text(qaT('Saved.'));
+		setTimeout(function() { box.text(''); }, 2000);
+	}).fail(function() {
+		box.text(qaT('Could not save the number.'));
+	});
+});
+
 $(document).on('click', '#qa_refresh', function() {
 	$('#qa_readiness').text(qaT('configure.qa_checking'));
 	$('#qa_install_status').text('');

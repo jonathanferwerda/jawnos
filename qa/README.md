@@ -292,7 +292,7 @@ The phone/tablet build needs JDK 17-21: AGP 8.7/Gradle 8.9 fail in
 ## l6 — UX (nightly, separate from the 05:00 job)
 
 `qa/ux/run` reads the owner's **JawnOS**-category notes, newest first
-(`--limit N`, default 5), opens the live database with
+(`--limit N`, default: the Notes per night setting, 3), opens the live database with
 `sqlite3 'file:<live>/database/jawnos.db?mode=ro'`, and seeds those notes into
 a `Harness` copy. Every attempted task runs against that copy. The live notes
 are never written and the query never holds a lock.
@@ -348,6 +348,94 @@ loopback-only) and calls the runner with `--results ~/jawnos-qa/ux`. A missing
 `~/jawnos/.shots/ticket.txt` leaves the report on disk and only logs that the
 handbook filing was skipped.
 
+## Coding nightly (06:00)
+
+`qa/coding_night/run.pl` is the one QA job that writes the house. It runs at
+06:00 on the machine chosen in Configure -> Plat -> QA (the service carries the
+same `qa/device_target.pl` ExecCondition, and the runner re-checks it, so a
+manual run on another machine is a skip).
+
+**Notes per night.** Configure -> Plat -> QA has a second picker, 1..25,
+persisted as the house setting `__president/qa_note_limit` (device `all`,
+default 3). Both nightlies read it: `qa/coding_night/run.pl` takes that many
+notes and `qa/ux/run` uses it as its `--limit` default. `--limit N` overrides
+it on either command; both clamp to 1..25, and the panel's server-side save
+clamps again, so a hand-made POST cannot ask for a thousand notes.
+
+The runner, one note at a time:
+
+1. **Gate** - exit 0 unless this machine is the chosen one.
+2. **Read** - the top *open* JawnOS notes (`category = 'jawnos'`, not
+   `completed`, not tombstoned), newest first, from
+   `sqlite3 'file:<db>?mode=ro'`. It never writes the live database.
+3. **Fetch + worktree** - `git fetch origin`, then
+   `git worktree add ~/jawnos-qa/work/<stamp>-<n> -b qa/nightly-<stamp>-<n>
+   origin/main`.
+4. **Agent** - the hook below, with cwd = that worktree.
+5. **Suite** - `qa/run.pl --source worktree --root ~/jawnos-qa/nightly
+   --layers l0,l1`, plus `l2,l3` when the changed file list touches
+   `templates/`, `public/js/`, `lib/JawnOS/Controller|Routes` or `perl/*.pl`.
+6. **Green** - `scripts/version_bump.pl`, one commit
+   `v<version> - <note title>`, push the branch, `git merge --ff-only` into
+   main, push main, `scripts/restart.pl --reason ...`, require HTTP 200 from
+   `/manager/health`, then mark the note `completed` through
+   `POST /manager/note_save` (ticket-minted session) and file a Handbook
+   report note in the `journal` category. The worktree is removed afterwards.
+
+**Red is a stop.** The worktree stays for inspection, its branch is detached
+and deleted, the note stays open, and `~/jawnos-qa/coding/<stamp>/report.md`
+names the layer and log. A dirty main tree is also a stop: it refuses to merge
+over other work. A non-zero agent exit is handled the same way.
+
+**No agent is exit 3.** It prints `no coding agent configured`, fetches
+nothing, creates no worktree or branch, and leaves every note open. That is the
+state until a headless coding model is wired to the hook - the 06:00 run will
+be a quick, loud skip, not a partial night.
+
+### The agent hook
+
+`JAWNOS_CODING_AGENT` (environment, wins) or `__president/qa_coding_agent`
+(a house setting) holds a **command line**. It is split the way a shell splits
+it and exec'd with no shell, so it can be a path or `program --flag value`.
+The runner sets, for each note:
+
+| variable | value |
+| --- | --- |
+| `JAWNOS_NOTE_ID` | the note's uuid |
+| `JAWNOS_NOTE_TITLE` | its first line, whitespace-collapsed, 90 chars |
+| `JAWNOS_NOTE_TEXT` | the whole note text |
+
+and runs it with cwd = the fresh worktree. Exit 0 means "I changed the tree";
+any other code is a failed note. `qa/coding_night/agent_stub.pl` always exits
+3, so the pipeline (fetch, worktree, red/cleanup path, report) can be tested
+end to end without a model:
+
+```sh
+JAWNOS_CODING_AGENT="/usr/bin/perl /home/jawn/jawnos/qa/coding_night/agent_stub.pl" \
+  perl qa/coding_night/run.pl --dry-run
+```
+
+`--dry-run` prints the queue, the note limit, the agent and each planned
+worktree/branch, and writes nothing (no lock file, fetch, worktree or report).
+One run at a time is held by `flock` on `~/jawnos-qa/.coding-night.lock`.
+
+### Schedule it
+
+```sh
+sudo cp qa/systemd/jawnos-qa-coding.service qa/systemd/jawnos-qa-coding.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-qa-coding.timer
+systemctl list-timers jawnos-qa-coding.timer
+```
+
+The service is the one nightly **without** `ProtectHome=read-only`: the agent
+edits a worktree, a green night bumps/commits/merges/pushes main, and the
+restart is the master's own path. It still has `Nice`, `MemoryMax=4G`,
+`CPUQuota=300%`, `ProtectSystem=strict`, and only the checkout and the QA root
+in `ReadWritePaths`. It needs real networking (git, the agent's model, the live
+health route). It never runs `scripts/manager_killer.pl` and never asks a QA
+tree for a graceful shutdown: a bound process is SIGKILLed.
+
 ## Nightly
 
 `qa/systemd/` holds a hardened system unit and a timer:
@@ -391,8 +479,8 @@ can be read - the local fallback is always the safe answer. Install the units on
 every machine that might be chosen; the unchosen ones still have the timer, they
 just skip their run.
 
-There is no 05:00 unit today: the suite runs at **04:00** and the UX loop at
-**05:30**. The choice applies to both. The weekly artefact build
+There is no 05:00 unit today: the suite runs at **04:00**, the UX loop at
+**05:30**, and the coding night at **06:00**. The choice applies to all three. The weekly artefact build
 (`jawnos-qa-build.timer`, Sunday 03:00) deliberately does **not** carry the
 condition: it belongs where the toolchain is (mkosi, qemu, a full JDK), not on
 the machine that happens to run the route/database suite.
