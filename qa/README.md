@@ -169,6 +169,7 @@ are expected on `table` where the SDK, AVD and KVM live.
 | laptop | `l3` | 9 UI checks, 0 failures; WebKit **loads the manager** (`QAHouse`, 479 nodes) |
 | table | `l3` | PASS; WebKit `hasMenu: true`, TLS allowed for 127.0.0.1; Chromium 8 pages |
 | table | Android emulator | boot 36.6 s; app launched (COLD, 6.2 s); PSS 113 MB; jank 95% (baseline) |
+| table | nightly service | enabled; l1/l2 pass, 1 GB peak; l0 only fails on an uncommitted `runtime_build.pl` change |
 | laptop | `qa/android/build.sh` | PASS, `jawnos-qa-3207084f.apk` from the app repo's HEAD |
 | table | `l0` | FAILS at `t/44-native-bins.t` (pre-existing: the native-bin converter/compile toolchain is not installed there) |
 | table | Android run | has the `jawnos` AVD and JDK 17, but no app repo; copy the APK from the build machine or set `JAWNOS_APP_DIR` |
@@ -192,8 +193,9 @@ systemctl list-timers jawnos-qa.timer
 It runs `l0,l1,l2` at 04:00 with a 20-minute random delay, as `jawn`, with the
 repo read-only (`ProtectHome=read-only`, `ProtectSystem=strict`), only
 `~/jawnos-qa` writable, loopback-only networking, `MemoryMax=4G` and
-`CPUQuota=200%`. `qa/prune.pl --keep 14` runs first. UI (`l3`) is deliberately
-not in the nightly set while the JavaScript refactor is in flight.
+`CPUQuota=300%` (3 cores; 200% made `nproc` report 2 and `t/43`'s `--jobs=3`
+legitimately clamp). `qa/prune.pl --keep 14` runs first. UI (`l3`) is
+deliberately not in the nightly set while the JavaScript refactor is in flight.
 
 ## Known findings from the first runs (2026-11-01)
 
@@ -203,6 +205,16 @@ not in the nightly set while the JavaScript refactor is in flight.
   never run. Pinned as a `TODO` in `t/58-route-contract.t`.
 - `Root_misc:47831` registers `manager/ws/remote_control` without a leading
   slash. Same TODO.
+- **Nightly on table (2026-11-01):** `jawnos-qa.timer` is enabled; the first
+  service run used 1 GB peak and its `l1`/`l2` layers passed. `l0` fails only at
+  `t/55-runtime-parts.t`, because that committed test expects the **uncommitted**
+  `scripts/runtime_build.pl` `video`-part change on this laptop; the nightly goes
+  green when that lands. The same test used to call `skip()` outside a `SKIP`
+  block, which aborted the whole file on a machine with no `releases/jawnrt.json`;
+  that skip is fixed.
+- The runner exited **255** on a passing run: the END cleanup re-`waitpid`ed
+  children the normal path had already reaped, which sets `$?` to -1. Teardown
+  is now idempotent and a PASS exits 0.
 - `/manager/store` can take the whole tree down when a **browser** loads it:
   the worker logs `A response has already been rendered`
   (`Mojolicious/Controller.pm:189`) after `store.html.ep:39` warns about an
