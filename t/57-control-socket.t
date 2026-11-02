@@ -7,6 +7,7 @@ use warnings;
 use FindBin;
 use File::Spec;
 use File::Temp qw(tempdir);
+use POSIX qw(WNOHANG);
 use Test::More;
 
 # The master's control socket: one JSON line in, one JSON line out, so a caller
@@ -157,8 +158,15 @@ sub fake_master {
 	die "fork: $!" unless defined $pid;
 	if (!$pid) {
 		require IO::Socket::UNIX;
+		require IO::Select;
 		my $server = IO::Socket::UNIX->new(Local => $path, Listen => 5) or exit 1;
-		my $client = $server->accept or exit 1;
+		# accept() has no timeout of its own. A parent that never connects would
+		# leave this child listening forever and its waitpid would wait with it -
+		# that pair hung a loaded 8-job run for minutes, with nothing failed and
+		# nothing printed. Bound the wait so a lost race fails a test instead.
+		my $select = IO::Select->new($server);
+		my $client = $select->can_read(15) ? $server->accept : undef;
+		exit 2 unless $client;
 		my $request = <$client>;
 		if (defined $request && length $request) {
 			print $client $reply, "\n" if defined $reply;
@@ -174,17 +182,33 @@ sub fake_master {
 	return $pid;
 }
 
+# Reap the stand-in master without being able to wait forever: a child that is
+# still listening gets killed, so this reports a bad reply rather than hanging
+# the suite (see the accept note above).
+sub reap {
+	my ($pid) = @_;
+	my $deadline = time + 20;
+	while (1) {
+		my $got = waitpid($pid, WNOHANG);
+		return if $got == $pid || $got == -1;
+		last if time > $deadline;
+		select undef, undef, undef, 0.02;
+	}
+	kill 'KILL', $pid;
+	waitpid($pid, 0);
+}
+
 my $socket = "$dir/control";
 my $pid = &fake_master($socket, '{"ok":1,"cmd":"status","status":"started","pid":9}');
 my $reply = &control::send({ cmd => 'status' }, socket => $socket, timeout => 10);
-waitpid($pid, 0);
+&reap($pid);
 is($reply->{'ok'}, 1, 'the client decodes the master answer');
 is($reply->{'status'}, 'started', 'and hands back its fields');
 
 unlink $socket;
 $pid = &fake_master($socket, undef);   # accepts, answers nothing, hangs up
 $reply = &control::send({ cmd => 'restart' }, socket => $socket, timeout => 2);
-waitpid($pid, 0);
+&reap($pid);
 is($reply->{'error'}, 'timeout', 'a master that never answers reads as a timeout, not a crash');
 
 unlink $socket;
