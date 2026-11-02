@@ -10,3 +10,7 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   password-sealed copy of the key in the database. Two operational items remain (`docs/house-key-phase2.md`,
   "What remains"): run the lost-key drill on a physical spare machine with three shares the person
   actually holds, and resolve the two keyless Desktop window rows (bridge them or remove them).
+- **Dev box offload — not started**: move the suite, the builds and the programming load to the
+  Kimsufi box in an LXC, and the exit node with them. The sequencing is the point: `cloud` is the
+  tailnet's Headscale control plane *and* its exit node, so it is wiped last, never first.
+  Phases, verified baseline and open questions: `docs/infrastructure-roadmap.md`.
