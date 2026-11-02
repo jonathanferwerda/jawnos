@@ -283,7 +283,7 @@ sub appt_header_printer {
 	unless (($data->{'broadcast'} // '') eq 'no' || ($data->{'source'} // '') eq 'ws') {
 		&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
 	}
-	&appt_toggle_checker($app);
+	&appt_toggle_checker($app) unless $data->{'skip_toggle'};
 	eval { &subs::cache_set({ app => $app, context => 'header', timestamp => $server_time, warranty => '-1d' }, { timestamp => $timestamp, header => $header, signature => &subs::render_signature() }) };
 	# Re-arming the alarms on the rows this header draws is a socket write each,
 	# not a render, so it stays here. A caller that only wants the HTML (a

@@ -43,6 +43,35 @@ like($header_sub, qr/&subs::cache_set\(\{ app => \$app, context => 'header'/,
 	'the header is cached');
 like($header_sub, qr/Websocket::send\('tab', \{ type => 'header'/,
 	'and pushed at once');
+like($header_sub, qr/&appt_toggle_checker\(\$app\) unless \$data->\{'skip_toggle'\};/,
+	'a caller that sets the toggle itself can skip the reconcile');
+
+# --- the header follows the write, before anything else ---------------------
+
+my ($start_branch) = $part14 =~ /(if \(\$type eq 'start' \|\| \$type eq 'record'\) \{.*?\n\s*elsif \(\$type eq 'stop'\) \{)/s;
+ok($start_branch, 'the start branch is one block');
+my $start_insert = index($start_branch, "db_insert('appointments'");
+my $start_header = index($start_branch, 'appt_header_printer');
+my $start_toggle = index($start_branch, "setting => 'toggle', value => 'on'");
+my $start_models = index($start_branch, 'usual_appointment_maker');
+ok($start_insert >= 0 && $start_header > $start_insert,
+	'the start header follows the row write');
+ok($start_header < $start_toggle && $start_header < $start_models,
+	'and precedes the toggle write and the default model/option sessions');
+like($start_branch, qr/skip_toggle => \(\$seen eq 'yes' \? 1 : 0\)/,
+	'a live start does not repeat the toggle write in the header');
+
+my ($stop_branch) = $part14 =~ /(elsif \(\$type eq 'stop'\) \{.*?\n\s*elsif \(\$type eq 'cancel'\) \{)/s;
+ok($stop_branch, 'the stop branch is one block');
+my $stop_update = index($stop_branch, "db_update('appointments'");
+my $stop_header = index($stop_branch, 'appt_header_printer');
+my $stop_toggle = index($stop_branch, "setting => 'toggle', value => 'off'");
+ok($stop_update >= 0 && $stop_header > $stop_update,
+	'the stop header follows the stop write');
+ok($stop_header < $stop_toggle,
+	'and precedes the toggle write');
+like($stop_branch, qr/skip_toggle => \(\$seen eq 'yes' \? 1 : 0\)/,
+	'a live stop does not repeat the toggle write in the header');
 
 # --- manager_reset: header now, window in a fork ----------------------------
 

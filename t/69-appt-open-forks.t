@@ -44,6 +44,8 @@ unlike($header_sub, qr/&(?:Manager::)?centre_view_grabber\s*\(/,
 	'the header no longer renders the centre view');
 like($header_sub, qr/foreach my \$a \( \@\{ \(\$appts->\{\$app\} \|\| \{\}\)->\{'list'\} \|\| \[\] \} \) \{\s*&appt_alarm_setter\(\$a\);/s,
 	'the alarm poke runs inline for every caller, walking the rows through appt_alarm_setter');
+like($header_sub, qr/&appt_toggle_checker\(\$app\) unless \$data->\{'skip_toggle'\};/,
+	'a caller that sets the toggle itself can skip the reconcile');
 like($header_sub, qr/&subs::cache_set\(\{ app => \$app, context => 'header'/, 'the header is cached');
 like($header_sub, qr/Websocket::send\('tab', \{ type => 'header'/, 'the header is pushed');
 

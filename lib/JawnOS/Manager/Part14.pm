@@ -285,12 +285,12 @@ sub manager_reset($c) {
 			browser_tab_id => $browser_tab_id
 		});
 		}
-		# Set the toggle before the header renders: appt_header_printer reconciles the
-		# same setting, and a second delete+insert for the value it was just given is
-		# pure wait on the press path.
-		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp }); 
+		# The header goes out the instant the row is written, before the toggle, the
+		# automation and the default model/option sessions: those can wait, the
+		# person watching the header cannot.
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, skip_toggle => ($seen eq 'yes' ? 1 : 0) }); 
 		$seg->('hdr');
+		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
 		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $timestamp });
 		my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
 			app => $app,
@@ -389,7 +389,6 @@ sub manager_reset($c) {
 			}
 			if ($seen eq 'yes') {
 
-				&subs::setting_setter({ app => $app, setting => 'toggle', value => 'off' });
 				&subs::db_update('appointments', {
 					project => $project,
 					type => $type,
@@ -426,8 +425,9 @@ sub manager_reset($c) {
 					uuid => $o->{'uuid'}
 				});
 			}
-			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, skip_toggle => ($seen eq 'yes' ? 1 : 0) });
 			$seg->('stop_hdr');
+			&subs::setting_setter({ app => $app, setting => 'toggle', value => 'off' }) if $seen eq 'yes';
 			# a start carries the amount; this stop is when the session is finished,
 			# so it is the one movement the session makes. A record moved at creation
 			# and is not moved again here.
