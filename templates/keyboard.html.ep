@@ -124,6 +124,15 @@
 				<tbody>
 			</table>
 			<%= include 'keyboard_music' %>
+			<script>
+				// The rows above were drawn when the panel was built. Ask for a beat
+				// now, once the panel is on screen (the zero timeout runs after the
+				// caller shows it), so the neighbour lists and liveness are live at
+				// once instead of on the next scheduled beat.
+				setTimeout(function() {
+					if (typeof stayingAliveNow === 'function') { stayingAliveNow('server'); }
+				}, 0);
+			</script>
 		</span>
 	<% } %>
 	<% if ($toggle eq 'delorean') { %>

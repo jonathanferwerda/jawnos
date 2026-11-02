@@ -309,6 +309,9 @@ function unlockScreen() {
 		window.jawnosMediaLockPending = null;
 		jawnosMediaRefresh(apps);
 	}
+	// A screen coming back is also a coming-to-front signal: rebuild the sockets
+	// now instead of leaving a socket that slept to the next scheduled beat.
+	if (typeof websocketFront === 'function') { websocketFront(); }
 }
 
 

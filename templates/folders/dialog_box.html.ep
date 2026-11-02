@@ -18,7 +18,10 @@
 			<% } %>
 		<% } %>
 		<% if ($box->{'job'}) { %>
-			<div class="job_progress folders_dialog_progress"><%= $box->{'progress'} || &subs::ui('starting') %></div>
+			<div class="job_progress folders_dialog_progress">
+				<div class="job_line"><%= $box->{'progress'} || &subs::ui('starting') %></div>
+				<div class="job_bar"><span></span></div>
+			</div>
 		<% } %>
 	</div>
 	<div class="bottom_buttons folders_dialog_footer">

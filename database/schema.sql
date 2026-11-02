@@ -107,7 +107,7 @@ CREATE TABLE "notes" (
 			app VARCHAR(255),
 			device VARCHAR(255),
 			text LONGTEXT,
-			ost VARCHAR(25), category VARCHAR(255));
+			ost VARCHAR(25), category VARCHAR(255), status VARCHAR(255) default 'open');
 CREATE TABLE "notifications" (
 			timestamp VARCHAR(255),
 			message VARCHAR(500),

@@ -410,7 +410,9 @@ sub action_35025 {
 		next unless @bits;
 		push @rows, { source => 'appointment', app => $r->{'app'}, when => $r->{'timestamp'}, text => join('; ', @bits) };
 	}
-	my $notes = eval { &subs::db_query("select app, text, timestamp from notes where text like ? order by timestamp desc limit 10", $like)->hashes } || [];
+	# A tombstoned note is still a row for the sync's sake, but its words are gone
+	# as far as the Guide is concerned, exactly as they are in the Notes app.
+	my $notes = eval { &subs::db_query("select app, text, timestamp from notes where text like ? and coalesce(ost, '') != ? order by timestamp desc limit 10", $like, &subs::notes_delete_marker())->hashes } || [];
 	foreach my $r ( @{$notes} ) {
 		next unless &help_app_visible($r->{'app'}, $device);
 		my $text = $clean->($r->{'text'});

@@ -176,6 +176,10 @@ sub update_database($data) {
 		# a note the person filed.
 		'alter table notes add column category VARCHAR(255)',
 		"update notes set category = 'journal' where (category is null or category = '') and (app is null or app = '' or app = 'notes')",
+		# A note is open until the Coding agent has done the work behind it; then it
+		# is marked completed and stays in the list, visibly done. An older row has
+		# no status and reads as open.
+		"alter table notes add column status VARCHAR(255) default 'open'",
 		'alter table appointments add column subtype VARCHAR(255)',
 		# A construct's identity is its stable uuid, not its name; the label beside
 		# it can change and two houses can use the same label. Filled from the

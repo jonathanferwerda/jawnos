@@ -92,6 +92,30 @@ $(document).on('click', '.note_text', function(e) {
 	$('#notes_input').val($(this).text()).focus();
 });
 
+// The small editor on each row: category and status change in place. The same
+// save route the composer uses persists them, and the row's own text rides
+// along so a category/status change never has to touch the words. The server
+// tombstone-marks a delete; this only ever edits.
+$(document).on('change', '.note_category_edit, .note_status_edit', function() {
+	var note = $(this).closest('.note');
+	var uuid = note.attr('uuid');
+	if (!uuid) { return; }
+	var category = note.find('.note_category_edit').val() || 'uncategorized';
+	var status = note.find('.note_status_edit').val() || 'open';
+	$.ajax({
+		url: '/manager/note_save',
+		type: 'POST',
+		data: {
+			uuid: uuid,
+			text: note.find('.note_text').text(),
+			category: category,
+			status: status,
+			timestamp: Date.now()
+		},
+		success: function(response) { notesReload(); }
+	});
+});
+
 // Two-click delete, the same arm-then-delete the other app rows use: the first
 // press turns the X red and arms it for two seconds; a second press inside that
 // window removes the note.
@@ -136,7 +160,7 @@ function notesDraggable() {
 			},
 			revert: 'invalid',
 			zIndex: 999999,
-			cancel: '.note_delete',
+			cancel: '.note_delete, .note_editor, .note_edit',
 			start: function(p, ui) {
 				$(ui.helper).css({ 'opacity': '0.85' });
 			},

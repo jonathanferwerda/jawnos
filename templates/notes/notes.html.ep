@@ -2,6 +2,7 @@
 	# A render that comes from anywhere but the Notes route (a probe, a test) still
 	# draws an empty bar rather than dying on an undefined list.
 	$categories ||= [];
+	$statuses ||= [];
 	$counts ||= {};
 	$total ||= 0;
 	$selected ||= ''; %>
@@ -10,15 +11,96 @@
     note to edit it in the box at the foot, drag one onto an appointment window to
     fold it into that app's notes, and the X is a two-click delete.
 
-    A note is filed under one of six categories. The chips carry the count over
-    the rows below them, the picker at the foot is what a new note (or the note
-    being edited) is saved under, and each category that lives somewhere else
-    hands off to that app: Roadmap to Store, Shopping to Market, Dreams to the
-    Handbook's Today, Social to People. Journal and JawnOS stay here - JawnOS is
-    the queue the nightly agent reads. An appointment's draft has no category of
-    its own: it is not a note the person filed. %>
-<div id="notes" style="width:100%;height:100%;background-color:var(--panel);padding:6px;display:flex;flex-direction:column;">
-	<div id="notes_body" style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;">
+    A note is filed under one of six categories, or under Uncategorized when it
+    names none - which is also what a new note starts as. The chips carry the
+    count over the rows below them, the picker at the foot is what a new note (or
+    the note being edited) is saved under, and each category that lives somewhere
+    else hands off to that app: Roadmap to Store, Shopping to Market, Dreams to
+    the Handbook's Today, Social to People. Journal and JawnOS stay here - JawnOS
+    is the queue the nightly agent reads. An appointment's draft has no category
+    of its own: it is not a note the person filed.
+
+    Every note is open until the work behind it is done, when the Coding agent
+    marks it completed. The badge and the row's own small editor make that state
+    visible and changeable in place; a completed note stays in the list. %>
+<style>
+/* Notes is a column inside its window: the list takes the room and scrolls,
+   the composer stays at the foot. Height is border-box so the frame's own
+   padding cannot push the composer past the window, and the composer carries
+   the device's safe-area inset (plus the on-screen keyboard's height while it
+   is up) rather than sitting under either. Nothing here is positioned off the
+   window's flow. */
+.wind[app="notes"] #notes {
+	box-sizing: border-box;
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	padding: 6px;
+	background-color: var(--panel);
+}
+.wind[app="notes"] #notes_body {
+	flex: 1 1 auto;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+.wind[app="notes"] #notes_list {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch;
+}
+.wind[app="notes"] #notes_input_row {
+	position: relative;
+	flex: 0 0 auto;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-start;
+	gap: 4px;
+	max-height: 45%;
+	overflow-y: auto;
+	padding-top: 4px;
+	padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+}
+body.soft_kb_open .wind[app="notes"] #notes_input_row {
+	padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px) + var(--soft_kb_h, 0px));
+}
+.wind[app="notes"] #notes_category_row { flex: 1 1 100%; padding-bottom: 2px; font-size: 14px; }
+.wind[app="notes"] #notes_input { flex: 1 1 auto; min-width: 0; width: auto; max-height: 7.5em; overflow-y: auto; vertical-align: top; }
+.wind[app="notes"] #notes_save { flex: 0 0 auto; width: auto; min-width: 16%; vertical-align: top; }
+.wind[app="notes"] .note_status {
+	padding: 1px 7px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	font-size: 11px;
+	opacity: 0.8;
+}
+.wind[app="notes"] .note_status_completed {
+	border-color: var(--accent-line, var(--line));
+	font-weight: 600;
+	opacity: 1;
+}
+/* Done, still here: the words fade a little and take a line through them, but
+   the row is neither hidden nor collapsed. */
+.wind[app="notes"] .note.note_completed .note_text { opacity: 0.6; text-decoration: line-through; }
+.wind[app="notes"] .note_editor {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px;
+	margin-top: 4px;
+	font-size: 12px;
+	opacity: 0.85;
+	cursor: default;
+}
+.wind[app="notes"] .note_editor select { font-size: 12px; max-width: 45%; }
+</style>
+<div id="notes">
+	<div id="notes_body">
 		<div id="notes_category_bar" style="flex:0 0 auto;display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding-bottom:4px;font-size:13px;">
 			<button class="notes_chip" category="" style="padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;opacity:0.8;cursor:pointer;"><%= &subs::lang('notes.all') %> <span class="notes_count" style="opacity:0.7;font-size:11px;"><%= $total || 0 %></span></button>
 			<% foreach my $cat ( @{$categories} ) { %>
@@ -28,24 +110,43 @@
 				<button class="notes_category_open" category="<%= $cat->{'code'} %>" target="<%= $cat->{'target'} %>" style="display:none;margin-left:auto;padding:2px 9px;border:1px solid var(--line);border-radius:999px;font-size:13px;cursor:pointer;" title="<%= $cat->{'open_label'} %>"><%= $cat->{'open_label'} %></button>
 			<% } %>
 		</div>
-		<div id="notes_list" style="flex:1 1 auto;overflow:scroll;">
+		<div id="notes_list">
 			<div id="notes_empty" style="display:none;padding:6px;font-size:18px;opacity:0.7;"><%= &subs::ui('No notes in this category yet.') %></div>
 			<% if (!scalar @{$notes}) { %>
 				<span style="font-size:18px;"><%= &subs::ui('No notes yet. Anything the watch hears that is not a command lands here.') %></span>
 			<% } %>
 			<% foreach my $n ( @{$notes} ) { %>
 				<% my $draft_of = $n->{'app'} || ''; %>
-				<div class="note hover" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:move;">
+				<% my $status = &subs::notes_status_effective( $n->{'status'} ); %>
+				<div class="note hover<%= ($status eq 'completed' ? ' note_completed' : '') %>" uuid="<%= $n->{'uuid'} %>" timestamp="<%= $n->{'timestamp'} %>" category="<%= $n->{'category'} %>" status="<%= $status %>" style="border-bottom:solid 1px var(--line);padding:6px;font-size:18px;cursor:move;">
 					<button class="note_delete" uuid="<%= $n->{'uuid'} %>" style="float:right;" title="<%= &subs::lang('delete') %>">X</button>
+					<span class="note_status note_status_<%= $status %>" title="<%= &subs::lang('notes.status') %>"><%= &subs::lang( 'notes.status.' . $status ) %></span>
 					<% if ($draft_of ne '' && $draft_of ne 'notes') { %><span class="note_app" title="<%= &subs::lang('notes.draft') %>"><%= $draft_of %> · <%= &subs::lang('notes.draft') %></span><% } elsif (($n->{'category'} || '') ne '') { %><span class="note_category" title="<%= &subs::lang('notes.category') %>" style="padding:1px 7px;border:1px solid var(--line);border-radius:999px;font-size:11px;opacity:0.8;"><%= &subs::lang( 'notes.category.' . $n->{'category'} ) %></span><% } %>
 					<span class="time" timestamp="<%= $n->{'timestamp'} %>" style="opacity:0.7;font-size:14px;"></span>
 					<div class="note_text" style="white-space:pre-wrap;"><%= $n->{'text'} %></div>
+					<div class="note_editor" title="<%= &subs::lang('notes.set_category_status') %>">
+						<span class="note_editor_label"><%= &subs::lang('notes.set_category_status') %></span>
+						<label><%= &subs::lang('notes.category') %>
+							<select class="note_edit note_category_edit">
+								<% foreach my $cat ( @{$categories} ) { %>
+									<option value="<%= $cat->{'code'} %>"<%= (($cat->{'code'} || '') eq ($n->{'category'} || '') ? ' selected' : '') %>><%= $cat->{'label'} %></option>
+								<% } %>
+							</select>
+						</label>
+						<label><%= &subs::lang('notes.status') %>
+							<select class="note_edit note_status_edit">
+								<% foreach my $st ( @{$statuses} ) { %>
+									<option value="<%= $st->{'code'} %>"<%= (($st->{'code'} || '') eq $status ? ' selected' : '') %>><%= $st->{'label'} %></option>
+								<% } %>
+							</select>
+						</label>
+					</div>
 				</div>
 			<% } %>
 		</div>
 	</div>
-	<div id="notes_input_row" style="flex:0 0 auto;padding-top:4px;">
-		<div id="notes_category_row" style="padding-bottom:2px;font-size:14px;">
+	<div id="notes_input_row">
+		<div id="notes_category_row">
 			<label for="notes_category" style="opacity:0.8;"><%= &subs::lang('notes.category') %></label>
 			<select id="notes_category" style="margin-left:4px;">
 				<% foreach my $cat ( @{$categories} ) { %>
@@ -53,7 +154,7 @@
 				<% } %>
 			</select>
 		</div>
-		<textarea id="notes_input" rows="2" placeholder="<%= &subs::ui('Write a note... (Enter saves, Shift+Enter makes a line)') %>" style="width:80%;vertical-align:top;"></textarea>
-		<button id="notes_save" style="width:16%;vertical-align:top;"><%= &subs::lang('save') %></button>
+		<textarea id="notes_input" rows="2" placeholder="<%= &subs::ui('Write a note... (Enter saves, Shift+Enter makes a line)') %>"></textarea>
+		<button id="notes_save"><%= &subs::lang('save') %></button>
 	</div>
 </div>

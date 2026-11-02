@@ -559,10 +559,24 @@ sub action_30174 {
 	my $info = $job->info || {};
 	my $payload = $info->{'result'} || $info->{'error'} || {};
 	$payload = {} unless ref $payload;
+	my $notes = $info->{'notes'} || {};
+	my $archive = $notes->{'archive'};
+	# a copy or seal job has no archive note of its own; only an archive task
+	# gets a fallback state, so its dialog shows a bar and the others keep
+	# their own progress sentence
+	if (!$archive && ($info->{'task'} || '') =~ /^archive_/) {
+		my $fallback = ($info->{'state'} || '') eq 'inactive' ? 'queued'
+			: ($info->{'state'} || '') eq 'active' ? 'copying'
+			: $info->{'state'};
+		$archive = { state => $fallback };
+	}
 	$c->render(json => {
 		status => 'ok',
 		state => $info->{'state'},
-		progress => ($info->{'notes'} || {})->{'progress'},
+		progress => $notes->{'progress'},
+		archive => $archive,
+		resumable => ($archive && $archive->{'resumable'} ? 1 : 0),
+		cancelled => ($payload->{'cancelled'} ? 1 : 0),
 		errors => $payload->{'errors'},
 		payload => $payload
 	});
@@ -619,8 +633,10 @@ sub action_30229 {
 	@{$items} = ( { path => ($folders->{'path'} || $folders->{'folder'}), type => 'folder' } ) if !scalar @{$items} && ($folders->{'path'} || $folders->{'folder'});
 	my $device = &subs::device_setter();
 	my $misc = &Manager::misc_setting_list();
+	my $delete_after = ($folders->{'delete_after'} || $c->param('delete_after')) ? 1 : 0;
 	my $plan = &subs::archive_plan({
 		items => $items,
+		delete_after => $delete_after,
 		settings => $misc->{$device} || {},
 		machines => &subs::remote_machine_lister({})
 	});
@@ -642,10 +658,19 @@ sub action_30229 {
 	elsif (scalar @refused_text) {
 		$text = 'Nothing was queued: ' . join '; ', @refused_text;
 	}
+	$text .= ' The originals are removed once each copy is verified.' if ($delete_after && scalar @queued);
 	my $dialog = $c->render_to_string(
 		template => 'folders/dialog_box',
 		folders => $folders,
-		box => { name => 'Archive', text => $text, cancel => 'no', height => '220px' },
+		box => {
+			name => 'Archive',
+			text => $text,
+			cancel => 'no',
+			height => '220px',
+			# one queued item keeps its own dialog with a live bar; several
+			# report together in the queue drawer
+			(scalar(@queued) == 1 ? (job => $queued[0]->{'id'}, progress => 'starting') : ())
+		},
 		uuid => &subs::random_string_creator(10)
 	);
 	$c->render(json => { status => 'ok', queued => \@queued, refused => $plan->{'refused'}, dialog => $dialog });

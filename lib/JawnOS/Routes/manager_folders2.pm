@@ -14,6 +14,7 @@ sub routes {
 	[30537, 'post', '/manager/folders/archive/probe', 'action_30537'],
 	[30562, 'post', '/manager/folders/archive/receive', 'action_30562'],
 	[30651, 'post', '/manager/folders/file/open', 'action_30651'],
+	[30660, 'post', '/manager/folders/archive/discard', 'action_30660'],
 	);
 }
 

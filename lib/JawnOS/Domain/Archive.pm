@@ -36,11 +36,25 @@ use Time::Local;
 use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
+# A short-lived copy of a manifest for callers that only need to know which
+# local paths have an archived copy. Folders re-reads on every navigation, so
+# one small request per location per fifteen seconds is enough; a finished
+# archive shows up on the next read after that.
 our %archive_manifest_memo;
 our $device;
 our %m;
+# The queue for work that has to outlive the request that asked for it: its own
+# SQLite file under ~/.president. The web process enqueues, the worker in
+# President.pl runs, and the folders app lists the same rows, so there is one
+# place that says what is waiting, running or failed.
 our $minion;
 
+# Make sure the archive root (config.json's archive_dir) has one folder per
+# location type. A blank archive_dir — the default — means this machine is not
+# an archive, so nothing is touched; an archive_dir that is not there yet is
+# left alone rather than invented, since it may be a mount that has not come up.
+# Folders that already exist are left exactly as they are, so this is safe to
+# run at any time. Pass a path to check a specific root.
 sub archive_scaffolder {
 	my $dir = shift;
 	my $root = (defined $dir && length $dir) ? &home($dir) : &archive_root();
@@ -72,6 +86,11 @@ sub minion_grabber {
 	return $minion;
 }
 
+# A manager-to-manager agent for a job to use. The worker runs under
+# President.pl and cannot see Manager.pl, so this is the small twin of
+# subs::remote_useragent_maker: the cookie jar stored on the
+# remote_machines row is the whole of the authentication, and the tunnel-aware
+# manager url is the whole of the addressing.
 sub remote_agent_for {
 	my $remote_uuid = shift;
 	my $rm = &remote_machine_lister({ uuid => $remote_uuid, limit => 1 });
@@ -102,6 +121,10 @@ sub remote_agent_for {
 	return { ua => $ua, manager => $rm->{'manager'}, hostname => $rm->{'hostname'}, rm => $rm };
 }
 
+# A manager-to-manager answer as JSON, with a readable failure when the far
+# machine returns an HTML error page instead (a missing archive folder, a
+# refused upload). Without this the sender only knows "the upload did not
+# land" and nobody sees the reason.
 sub archive_reply {
 	my $tx = shift;
 	return (undef, 'the archive machine did not answer') unless $tx;
@@ -121,19 +144,234 @@ sub archive_reply {
 	return (undef, "the archive machine answered $code" . (length $body ? ": $body" : ''));
 }
 
+# ---- archive progress, partial files and verification ----------------------
+#
+# A transfer is a push: this machine reads the file and the archive machine
+# writes it. The bytes on the archive machine are the only copy in flight, so
+# the partial lives there under <destination>.part with a small sidecar that
+# records which source it belongs to. A resumed run asks the archive machine
+# for that state (probe), compares the recorded identity and the hash of the
+# prefix it already has, and only then continues at that offset.
+
+sub archive_fraction {
+	my ($done, $total) = @_;
+	$done = 0 unless (defined $done && $done =~ /^-?\d+(?:\.\d+)?$/);
+	$total = 0 unless (defined $total && $total =~ /^-?\d+(?:\.\d+)?$/);
+	return 0 unless $total > 0;
+	$done = 0 if $done < 0;
+	$done = $total if $done > $total;
+	# four decimal places is finer than a byte count needs and keeps the
+	# percentage honest (floor, never a 100% that is not finished)
+	return int(($done / $total) * 10000 + 0.5) / 10000;
+}
+
+# The shape the job note carries and the folders app draws: the state, the
+# bytes of this file, the bytes of the whole job, and one percentage for each.
+sub archive_progress_view {
+	my $data = shift || {};
+	my $file_done = $data->{'file_bytes_done'} || 0;
+	my $file_total = $data->{'file_bytes_total'};
+	my $done = $data->{'bytes_done'} || 0;
+	my $total = $data->{'bytes_total'};
+	my $file_fraction = &archive_fraction($file_done, $file_total);
+	my $fraction = &archive_fraction($done, $total);
+	return {
+		state => $data->{'state'} || 'queued',
+		file => $data->{'file'},
+		files => defined $data->{'files'} ? 0 + $data->{'files'} : undef,
+		index => defined $data->{'index'} ? 0 + $data->{'index'} : undef,
+		file_bytes_done => 0 + $file_done,
+		file_bytes_total => defined $file_total ? 0 + $file_total : undef,
+		bytes_done => 0 + $done,
+		bytes_total => defined $total ? 0 + $total : undef,
+		file_fraction => $file_fraction,
+		file_percent => int($file_fraction * 100),
+		fraction => $fraction,
+		percent => int($fraction * 100),
+		resumable => $data->{'resumable'} ? 1 : 0,
+		resume_reason => $data->{'resume_reason'},
+		delete_source => $data->{'delete_source'} ? 1 : 0,
+	};
+}
+
+sub archive_partial_path {
+	my $path = shift;
+	return undef unless (defined $path && length $path);
+	return $path . '.part';
+}
+
+sub archive_partial_meta_path {
+	my $path = shift;
+	return undef unless (defined $path && length $path);
+	return $path . '.part.json';
+}
+
+# sha256 of at most $limit bytes; the prefix is what a resume has to agree on.
+sub archive_prefix_digest {
+	my ($path, $limit) = @_;
+	return undef unless (defined $path && -f $path);
+	$limit = 4 * 1024 * 1024 unless (defined $limit && $limit =~ /^\d+$/ && $limit > 0);
+	open(my $fh, '<:raw', $path) or return undef;
+	my $data = '';
+	my $buf;
+	while (length($data) < $limit) {
+		my $want = $limit - length($data);
+		$want = 1024 * 1024 if $want > 1024 * 1024;
+		my $n = read($fh, $buf, $want);
+		last unless $n;
+		$data .= $buf;
+	}
+	close $fh;
+	return $data eq '' ? sha256_hex('') : sha256_hex($data);
+}
+
+sub archive_file_digest {
+	my $path = shift;
+	return undef unless (defined $path && -f $path);
+	my $sha = Digest::SHA->new(256);
+	eval { $sha->addfile($path) } or return undef;
+	return $sha->hexdigest;
+}
+
+sub archive_partial_meta_write {
+	my ($path, $meta) = @_;
+	my $meta_path = &archive_partial_meta_path($path);
+	return undef unless $meta_path;
+	my $temp = $meta_path . '.tmp';
+	eval { write_file($temp, encode_json($meta || {})) } or return undef;
+	return rename($temp, $meta_path) ? $meta_path : undef;
+}
+
+sub archive_partial_state {
+	my $data = shift || {};
+	my $path = $data->{'path'};
+	my $part = &archive_partial_path($path);
+	return { exists => 0 } unless ($part && -e $part);
+	my $meta_path = &archive_partial_meta_path($path);
+	my $meta = {};
+	if ($meta_path && -e $meta_path) {
+		$meta = eval { return decode_json scalar read_file($meta_path) } || {};
+		$meta = {} unless ref $meta eq 'HASH';
+	}
+	my $size = -s $part;
+	$size = 0 unless defined $size;
+	my $limit = (defined $data->{'digest_limit'} && $data->{'digest_limit'} =~ /^\d+$/ && $data->{'digest_limit'} > 0)
+		? $data->{'digest_limit'} : 4 * 1024 * 1024;
+	my $prefix_bytes = $size < $limit ? $size : $limit;
+	return {
+		exists => 1,
+		path => $part,
+		size => $size,
+		prefix_bytes => $prefix_bytes,
+		prefix_sha256 => &archive_prefix_digest($part, $prefix_bytes),
+		total => $meta->{'total'},
+		mtime => $meta->{'mtime'},
+		source => $meta->{'source'},
+	};
+}
+
+sub archive_partial_discard {
+	my $path = shift;
+	my $removed = 0;
+	foreach my $file ( &archive_partial_path($path), &archive_partial_meta_path($path) ) {
+		next unless (defined $file && -e $file);
+		$removed++ if unlink $file;
+	}
+	return { removed => $removed };
+}
+
+# Continue only when the partial records the same source (path, size, time)
+# and its first bytes hash to the same prefix as the file being sent. Anything
+# else starts from zero, so two different sources can never be stitched.
+sub archive_resume_offset {
+	my $data = shift || {};
+	my $file = $data->{'file'};
+	my $total = defined $data->{'total'} ? $data->{'total'} : -s $file;
+	my $partial = $data->{'partial'};
+	return { offset => 0, resumed => 0, reason => 'no partial copy' }
+		unless (ref $partial eq 'HASH' && $partial->{'exists'} && $partial->{'size'} > 0);
+	return { offset => 0, resumed => 0, reason => 'the partial is not smaller than the source' }
+		if (defined $total && $partial->{'size'} >= $total);
+	return { offset => 0, resumed => 0, reason => 'the partial belongs to a different size' }
+		if (defined $partial->{'total'} && defined $total && $partial->{'total'} != $total);
+	my $mtime = $data->{'mtime'};
+	return { offset => 0, resumed => 0, reason => 'the partial belongs to a different source' }
+		if (defined $partial->{'mtime'} && defined $mtime && $partial->{'mtime'} != $mtime);
+	my $limit = $partial->{'prefix_bytes'};
+	my $local = &archive_prefix_digest($file, $limit);
+	return { offset => 0, resumed => 0, reason => 'the partial does not match this file' }
+		unless (defined $partial->{'prefix_sha256'} && defined $local && $local eq $partial->{'prefix_sha256'});
+	return { offset => 0 + $partial->{'size'}, resumed => 1, reason => 'continuing the partial copy' };
+}
+
+# The only path to removing an original: the archive machine has said the copy
+# is final, its size matches, and its checksum matches a fresh read of the
+# source. A half-finished job never reaches the checksum comparison.
+sub archive_delete_source {
+	my $data = shift || {};
+	my $source = $data->{'source'};
+	return { error => 'no source to remove' } unless (defined $source && length $source);
+	return { error => 'the archive is not verified yet' } unless $data->{'verified'};
+	my $source_size = -s $source;
+	return { error => 'the source is not there' } unless defined $source_size;
+	my $dest_size = $data->{'dest_size'};
+	return { error => 'the destination did not report its size' } unless defined $dest_size;
+	return { error => 'the destination is a different size' } unless $dest_size == $source_size;
+	my $dest_sha = $data->{'dest_sha256'};
+	return { error => 'the destination has no checksum' } unless (defined $dest_sha && length $dest_sha);
+	my $source_sha = &archive_file_digest($source);
+	return { error => 'the source could not be read' } unless defined $source_sha;
+	return { error => 'the checksums do not match' } unless $source_sha eq $dest_sha;
+	return { error => 'the source could not be removed' } unless unlink $source;
+	return { deleted => 1, bytes => $source_size, sha256 => $source_sha };
+}
+
+sub archive_discard_remote {
+	my $data = shift;
+	my ($ua, $manager) = ($data->{'ua'}, $data->{'manager'});
+	return { status => 'error', error => 'no archive machine to ask' } unless ($ua && $manager);
+	my $tx = eval {
+		return $ua->post($manager . '/manager/folders/archive/discard' => form => {
+			location => $data->{'location'},
+			path => $data->{'relative'},
+			source => $data->{'source'}
+		})
+	};
+	my ($res, $err) = &archive_reply($tx);
+	return $res if ($res && $res->{'status'} eq 'ok');
+	return { status => 'error', error => ($res && $res->{'error'}) || $err || 'the partial was not discarded' };
+}
+
+# The worker half of archiving: deliver one queued item. The far machine is
+# asked first whether it already has the file at that size and time, because a
+# retry after a failed folder re-runs the whole folder and everything already
+# sent should cost one small request each instead of the file itself. Errors
+# are collected rather than thrown on the first bad file, so one unreadable
+# file does not hide the rest; a job with any of them fails at the end, and
+# Minion's retry skips what did land.
+# Send one file to the archive machine. A small file is one request; a large
+# one is cut into 64 MB pieces so no single upload has to survive a long
+# request or a whole film's worth of buffering. Each piece is written at its
+# offset, and a retry starts again at zero, so a dropped connection never
+# leaves a half-written file that looks complete. Returns (bytes, error).
 sub archive_send_file {
 	my $data = shift;
 	my $ua = $data->{'ua'};
 	my $manager = $data->{'manager'};
 	my $file = $data->{'file'};
 	my $total = -s $file;
-	my $chunk = 64 * 1024 * 1024;
+	my $source = defined $data->{'source'} ? $data->{'source'} : $data->{'relative'};
+	my $chunk = 8 * 1024 * 1024;
+	my $start = $data->{'start'} || 0;
+	$start = 0 unless ($start =~ /^\d+$/ && (!defined $total || $start < $total));
+	my $progress = $data->{'progress'} || sub { return 0 };
 	my $post_chunk = sub {
 		my ($path, $offset, $final, $chunked) = @_;
 		my %form = (
 			location => $data->{'location'},
 			path => $data->{'relative'},
 			mtime => $data->{'mtime'},
+			source => $source,
 			file => { file => $path }
 		);
 		if ($chunked) {
@@ -146,57 +384,86 @@ sub archive_send_file {
 		};
 		return &archive_reply($tx);
 	};
-	if (!defined $total || $total <= $chunk) {
+	if ($start == 0 && (!defined $total || $total == 0)) {
+		# an empty file needs no chunk and no progress; everything else is
+		# streamed in pieces so the bar moves while the bytes do
 		my ($res, $err) = $post_chunk->($file, 0, 1, 0);
-		return ($total || 0) if ($res && $res->{'status'} eq 'ok');
-		return (0, ($res && $res->{'error'}) || $err || 'the upload did not land');
+		if ($res && $res->{'status'} eq 'ok') {
+			return ($total || 0, undef, { size => ($res->{'size'} || $total || 0), sha256 => $res->{'sha256'}, resumed => 0 });
+		}
+		return (0, ($res && $res->{'error'}) || $err || 'the upload did not land', { resumed => 0 });
 	}
-	my ($offset, $sent) = (0, 0);
+	my ($offset, $sent) = ($start, 0);
+	my $last_sha;
+	$progress->($start, $total) if $start > 0;
 	while ($offset < $total) {
 		my $take = $total - $offset > $chunk ? $chunk : $total - $offset;
 		my $chunk_path = &peer_temp_file('archive_chunk');
 		my ($in, $out);
 		unless (open($in, '<:raw', $file)) {
 			unlink $chunk_path;
-			return (0, "cannot read $file");
+			return (0, "cannot read $file", { resumed => $start > 0 });
 		}
 		seek($in, $offset, 0);
 		unless (open($out, '>:raw', $chunk_path)) {
 			close $in;
 			unlink $chunk_path;
-			return (0, 'cannot write a chunk for ' . $file);
+			return (0, 'cannot write a chunk for ' . $file, { resumed => $start > 0 });
 		}
 		my $left = $take;
+		my $read = 0;
+		my $last_note = 0;
 		my $buf;
+		my $cancelled = 0;
 		while ($left > 0) {
 			my $want = $left > 1024 * 1024 ? 1024 * 1024 : $left;
 			my $n = read($in, $buf, $want);
 			last unless $n;
 			print $out $buf;
 			$left -= $n;
+			$read += $n;
+			# the note is written while the bytes move, not only at the end
+			if ($read - $last_note >= 4 * 1024 * 1024 || $left == 0) {
+				$last_note = $read;
+				$cancelled = 1 if $progress->($offset + $read, $total);
+				last if $cancelled;
+			}
 		}
 		close $in;
 		close $out;
+		if ($cancelled) {
+			unlink $chunk_path;
+			&archive_discard_remote({ ua => $ua, manager => $manager, location => $data->{'location'}, relative => $data->{'relative'}, source => $source });
+			return (0, 'cancelled', { cancelled => 1, resumed => $start > 0 });
+		}
 		if ($left > 0) {
 			unlink $chunk_path;
-			return (0, "could not read $file at $offset bytes");
+			return (0, "could not read $file at $offset bytes", { resumed => $start > 0 });
 		}
 		my $final = ($offset + $take >= $total) ? 1 : 0;
+		# the archive machine hashes the whole partial before renaming it; say
+		# so, because that is where a large file pauses
+		$progress->($offset + $take, $total, 'verifying') if $final;
 		my ($res, $err) = $post_chunk->($chunk_path, $offset, $final, 1);
 		unlink $chunk_path;
 		if (!$res || $res->{'status'} ne 'ok') {
-			return (0, ($res && $res->{'error'}) || $err || "the upload stopped at $offset bytes");
+			return (0, ($res && $res->{'error'}) || $err || "the upload stopped at $offset bytes", { resumed => $start > 0 });
 		}
+		$last_sha = $res->{'sha256'} if defined $res->{'sha256'};
 		$sent += $take;
 		$offset += $take;
 	}
-	return ($sent, undef);
+	return ($sent, undef, { size => $total, sha256 => $last_sha, resumed => $start > 0 });
 }
 
 sub archive_transfer_job {
 	my ($job, $data) = @_;
 	my $agent = &remote_agent_for($data->{'remote_uuid'});
-	if ($agent->{'error'}) { $job->fail($agent->{'error'}); return; }
+	if ($agent->{'error'}) {
+		$job->note(archive => &archive_progress_view({ state => 'failed', delete_source => $data->{'delete_source'} }));
+		$job->fail($agent->{'error'});
+		return;
+	}
 	my $ua = $agent->{'ua'};
 	my $manager = $agent->{'manager'};
 
@@ -207,9 +474,35 @@ sub archive_transfer_job {
 	}
 	else { @files = ( $data->{'path'} ) }
 
+	my $files_count = scalar @files;
+	my $bytes_total = 0;
+	foreach my $file ( @files ) {
+		my $size = -s $file;
+		$bytes_total += $size if defined $size;
+	}
+	my $delete_source = $data->{'delete_source'} ? 1 : 0;
 	my ($sent, $skipped, $bytes, $count) = (0, 0, 0, 0);
+	my ($deleted, $resumed_files) = (0, 0);
+	my $bytes_done = 0;
 	my @errors;
 	my @rows;
+
+	# one note carries the whole picture: the state, this file's bytes and the
+	# job's bytes, so the folders app can draw a per-file and an overall line
+	# from the same poll
+	my $note_progress = sub {
+		my ($state, %extra) = @_;
+		$job->note(archive => &archive_progress_view({
+			state => $state,
+			files => $files_count,
+			bytes_done => $bytes_done,
+			bytes_total => $bytes_total,
+			delete_source => $delete_source,
+			%extra,
+		}));
+	};
+	$note_progress->('copying', bytes_done => 0);
+
 	foreach my $file ( @files ) {
 		$count++;
 		my $relative = $data->{'relative'};
@@ -221,10 +514,21 @@ sub archive_transfer_job {
 		my $size = -s $file;
 		my $mtime = (stat($file))[9];
 
+		# a cancel is a request the worker honours at the next file, and
+		# during the copy through the progress callback below
+		if (($job->info->{'notes'} || {})->{'cancel'}) {
+			&archive_discard_remote({ ua => $ua, manager => $manager, location => $data->{'location'}, relative => $relative, source => $relative });
+			$note_progress->('cancelled', file => $relative, index => $count, file_bytes_done => 0, file_bytes_total => $size);
+			$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => $files_count, cancelled => 1, deleted => $deleted, resumed => $resumed_files });
+			return;
+		}
+
 		my $probe_tx = eval {
 			$ua->post($manager . '/manager/folders/archive/probe' => form => {
 				location => $data->{'location'},
-				path => $relative
+				path => $relative,
+				# deleting an original needs a checksum, not just size and time
+				checksum => ($delete_source ? 1 : 0)
 			})
 		};
 		my ($probe, $probe_error) = &archive_reply($probe_tx);
@@ -232,44 +536,103 @@ sub archive_transfer_job {
 			push @errors, ($relative || $file) . ': ' . (($probe && $probe->{'error'}) || $probe_error || 'the archive machine did not answer');
 			next;
 		}
+		my $resume = &archive_resume_offset({
+			file => $file,
+			total => $size,
+			mtime => $mtime,
+			partial => $probe->{'partial'},
+		});
+		my $start = $resume->{'offset'} || 0;
 		if ($probe->{'exists'} && defined $probe->{'size'} && defined $size && $probe->{'size'} == $size
 			&& (!defined $probe->{'mtime'} || !defined $mtime || $probe->{'mtime'} == $mtime)) {
-			$skipped++;
-			next;
+			if ($delete_source) {
+				my $local_sha = &archive_file_digest($file);
+				if (defined $probe->{'sha256'} && defined $local_sha && $local_sha eq $probe->{'sha256'}) {
+					my $removed = &archive_delete_source({ source => $file, verified => 1, dest_size => $probe->{'size'}, dest_sha256 => $probe->{'sha256'} });
+					if ($removed->{'deleted'}) { $deleted++; }
+					else { push @errors, ($relative || $file) . ': ' . ($removed->{'error'} || 'the original was not removed'); }
+					$skipped++;
+					$bytes_done += $size;
+					next;
+				}
+			}
+			else {
+				$skipped++;
+				$bytes_done += $size;
+				next;
+			}
 		}
 
-		my ($sent_bytes, $send_error) = &archive_send_file({
+		my $start_bytes = $bytes_done;
+		my $last_cancel_check = 0;
+		my $progress = sub {
+			my ($file_done, $file_total, $phase) = @_;
+			my $state = (defined $phase && $phase eq 'verifying') ? 'verifying' : 'copying';
+			$note_progress->($state,
+				file => $relative,
+				index => $count,
+				file_bytes_done => $file_done,
+				file_bytes_total => $file_total,
+				bytes_done => $start_bytes + $file_done,
+				resumable => ($start > 0 ? 1 : 0),
+				resume_reason => $resume->{'reason'});
+			# asking the queue once a second is enough to feel immediate and
+			# avoids a database read for every four megabytes
+			my $now = time;
+			if ($now - $last_cancel_check >= 0.5) {
+				$last_cancel_check = $now;
+				return ((($job->info->{'notes'} || {})->{'cancel'}) ? 1 : 0);
+			}
+			return 0;
+		};
+
+		my ($sent_bytes, $send_error, $detail) = &archive_send_file({
 			ua => $ua,
 			manager => $manager,
 			location => $data->{'location'},
 			relative => $relative,
+			source => $relative,
 			file => $file,
-			mtime => $mtime
+			mtime => $mtime,
+			start => $start,
+			progress => $progress
 		});
+		$detail = {} unless ref $detail eq 'HASH';
+		if ($detail->{'cancelled'} || (defined $send_error && $send_error eq 'cancelled')) {
+			$note_progress->('cancelled', file => $relative, index => $count, file_bytes_done => 0, file_bytes_total => $size);
+			$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => $files_count, cancelled => 1, deleted => $deleted, resumed => $resumed_files });
+			return;
+		}
 		if ($send_error) {
+			# the partial is deliberately left in place; the next attempt resumes it
 			push @errors, ($relative || $file) . ': ' . $send_error;
 			next;
 		}
 		$sent++;
 		$bytes += $sent_bytes;
-		push @rows, &archive_manifest_row({ path => $file, relative => $relative });
-		if ($count % 5 == 0) {
-			$job->note(progress => "sent $sent, skipped $skipped, $bytes bytes");
-			# a cancel asked for from the folders app cannot kill this process
-			# from there, so the job stops itself at the next file
-			if (($job->info->{'notes'} || {})->{'cancel'}) {
-				$job->note(progress => "stopped after $count files");
-				$job->finish({ sent => $sent, skipped => $skipped, bytes => $bytes, files => scalar @files, cancelled => 1 });
-				return;
-			}
+		$bytes_done = $start_bytes + ($size || 0);
+		$resumed_files++ if $start > 0;
+		if ($delete_source) {
+			my $removed = &archive_delete_source({
+				source => $file,
+				verified => 1,
+				dest_size => (defined $detail->{'size'} ? $detail->{'size'} : $size),
+				dest_sha256 => $detail->{'sha256'},
+			});
+			if ($removed->{'deleted'}) { $deleted++; }
+			else { push @errors, ($relative || $file) . ': ' . ($removed->{'error'} || 'the original was not removed'); }
 		}
+		push @rows, &archive_manifest_row({ path => $file, relative => $relative });
+		$note_progress->('copying', file => $relative, index => $count, file_bytes_done => ($size || 0), file_bytes_total => $size, bytes_done => $bytes_done);
 	}
 
 	my $result = {
 		sent => $sent,
 		skipped => $skipped,
 		bytes => $bytes,
-		files => scalar @files,
+		files => $files_count,
+		resumed => $resumed_files,
+		deleted => $deleted,
 		manifest_rows => scalar @rows,
 		archive_host => $agent->{'hostname'},
 		location => $data->{'location'}
@@ -298,13 +661,17 @@ sub archive_transfer_job {
 	}
 	if (scalar @errors) {
 		$result->{'errors'} = \@errors;
+		$note_progress->('failed', file => undef, index => $count);
 		$job->fail($result);
 		return;
 	}
+	$note_progress->('done', bytes_done => $bytes_total, file => undef, index => $files_count);
 	$job->note(progress => "sent $sent, skipped $skipped, $bytes bytes");
 	$job->finish($result);
 }
 
+# The type an archive row carries, in the same words the folders app uses for a
+# file, so a listing built from a manifest reads like a local one.
 sub archive_media_type {
 	my $path = shift || '';
 	return 'image' if $path =~ /\.(jpe?g|png|bmp|tiff?|xcf|webp|gif|heic)$/i;
@@ -316,6 +683,10 @@ sub archive_media_type {
 	return 'other';
 }
 
+# One manifest row for a file: what it is and where it sits inside its location
+# folder, with the media facts worked out once, so the apps reading a manifest
+# never have to open the file. `relative` is what makes a row portable - it
+# means the same thing on whichever machine is holding the drive.
 sub archive_manifest_row {
 	my $data = shift;
 	my $path = $data->{'path'};
@@ -333,6 +704,11 @@ sub archive_manifest_row {
 	return $row;
 }
 
+# What an archive holds for a location: the compacted manifest with the journal
+# read over the top of it. An append is one line, so a transfer never rewrites
+# the listing; a read is one file plus whatever has piled up since. A line that
+# does not parse - a write caught mid-flight - is skipped rather than fatal,
+# and the last row for a path wins.
 sub archive_manifest_read {
 	my $data = shift;
 	my $dir = $data->{'dir'};
@@ -363,6 +739,11 @@ sub archive_manifest_read {
 	return { rows => [ map { $rows{$_} } sort keys %rows ], journal_lines => $lines, journal_skipped => $skipped };
 }
 
+# Write the listing a reader sees. Rewriting the whole thing is the one
+# expensive write there is, so it happens when the journal has piled up or a
+# rescan asks for it, never per received file. A temporary file is renamed into
+# place, so a reader can never catch half of one, and the journal is dropped
+# once it is folded in.
 sub archive_manifest_write {
 	my $data = shift;
 	my $dir = $data->{'dir'};
@@ -384,6 +765,10 @@ sub archive_manifest_write {
 	return { rows => scalar @rows, path => $json };
 }
 
+# Read an archive location again from the drive itself and write the manifest
+# from what is really there, for a drive filled by hand or shuffled outside the
+# queue. It opens every media file it finds, so it runs as a job and says where
+# it is in its notes.
 sub archive_manifest_rescan_job {
 	my ($job, $data) = @_;
 	my $dest = &archive_destination({ location => $data->{'location'}, path => '' });
@@ -410,6 +795,11 @@ sub archive_manifest_rescan_job {
 	$job->finish({ location => $data->{'location'}, rows => $written->{'rows'}, files => scalar @files });
 }
 
+# What an archive machine holds for a location, asked for by uuid, with the
+# absolute folder those rows sit in - so a caller can address the files on that
+# machine without ever mounting it. An unreachable machine is an answer too:
+# the caller carries on without the archive instead of failing the whole
+# listing.
 sub archive_manifest_fetch {
 	my $data = shift;
 	my $agent = &remote_agent_for($data->{'remote_uuid'});
@@ -444,6 +834,12 @@ sub archive_manifest_cached {
 	return $manifest;
 }
 
+# Where a photo that has left this disk can still be found. The archive machine
+# holding photo_location is asked for its manifest once, and `locate` then
+# answers for one path at a time, by the path's place inside the location. Only
+# missing files are ever asked about, so a listing of live files never waits on
+# a machine, and a machine that cannot be reached answers with nothing rather
+# than failing the listing.
 sub archive_image_lookup {
 	my $data = shift;
 	my $misc = $data->{'misc_settings'} || &subs::misc_setting_list();
@@ -476,6 +872,9 @@ sub archive_image_lookup {
 	return { locate => $locate, folder => $folder, remote_uuid => $rm->{'uuid'}, hostname => $manifest->{'hostname'} || '' };
 }
 
+# Where a fetched item lands here: the same place inside this machine's own
+# folder for that location. The inverse of the archive plan, and the only path
+# a fetch writes to; the relative path is resolved so it cannot climb out.
 sub archive_local_destination {
 	my $data = shift;
 	my $location = $data->{'location'};
@@ -502,6 +901,11 @@ sub archive_local_destination {
 	};
 }
 
+# Bring something the archive holds back to this machine, into the place it came
+# from: a whole folder - a series, an album - or one file. A folder is read out
+# of the archive's manifest, so nothing walks the far disk over the tunnel, and
+# each file is streamed down rather than pulled into memory, since a fetched
+# video is a video. Anything already here, at the same size, is left alone.
 sub archive_fetch_home_job {
 	my ($job, $data) = @_;
 	my $agent = &remote_agent_for($data->{'remote_uuid'});
@@ -598,6 +1002,9 @@ sub archive_fetch_home_job {
 	$job->finish($result);
 }
 
+# Ask the machine holding a path what it is: which location it belongs to and
+# where it sits inside it. Only the machine that owns the drive can answer,
+# because only it knows its own archive root.
 sub archive_remote_locate {
 	my $data = shift;
 	my $agent = &remote_agent_for($data->{'remote_uuid'});
@@ -611,6 +1018,9 @@ sub archive_remote_locate {
 	return $res;
 }
 
+# The files a folders selection names: every file, with folders walked, so a
+# job can take a selection straight from the menu and a folder added to since
+# the menu was drawn is still covered.
 sub folders_job_files {
 	my $items = shift || [];
 	my @files;
@@ -625,6 +1035,8 @@ sub folders_job_files {
 	return sort @files;
 }
 
+# Take something off the disk for good, folders with everything in them.
+# Returns nothing when it went, and a line saying why not when it did not.
 sub folders_job_take_away {
 	my $path = shift;
 	return 'no path' unless (defined $path && length $path);
@@ -636,6 +1048,9 @@ sub folders_job_take_away {
 	return undef;
 }
 
+# Shred something: every file is overwritten where it lies and the folders they
+# sat in go with them. Shredding is for files that should not be readable
+# again, which is why the encryption turns to it too.
 sub folders_job_shred {
 	my $path = shift;
 	return 'no path' unless (defined $path && length $path);
@@ -652,6 +1067,11 @@ sub folders_job_shred {
 	return &folders_job_take_away($path);
 }
 
+# The appointment entries that name a path, or a file under it when the path is
+# a folder, so the folders app can hand a file an appointment has attached to
+# the app's own file deletion - which lets the appointment go of it, takes the
+# thumb with it, and tells the other machines - rather than pulling it out from
+# under the row. Each answer is an appointment and the entry in it to delete.
 sub folders_appt_entries {
 	my $path = shift;
 	return [] unless (defined $path && length $path);
@@ -675,6 +1095,8 @@ sub folders_appt_entries {
 	return \@found;
 }
 
+# Whether a decoded thing names a path, anywhere inside it: an entry's f or
+# thumb, an attachment wrapped around an entry, or a bare path in a list.
 sub folders_entry_names {
 	my ($blob, $wanted) = @_;
 	return 0 unless ref $blob;

@@ -149,6 +149,44 @@ function foldersRefresh() { foldersRefreshAll(); }
 // failed, when the box keeps the last word and the folder is read again. The
 // asking stops when no box is watching anything.
 var folders_job_interval;
+
+function foldersArchiveT(text) {
+	return (typeof jawnosT === 'function') ? jawnosT(text) : text;
+}
+
+// One bar per line, driven by the byte fractions the job note carries. The
+// width is the overall job (or the single file) percentage, never a guess.
+function foldersArchiveBar(archive) {
+	var wrap = $('<div>').addClass('folders_job_bar');
+	var track = $('<div>').addClass('folders_job_bar_track').appendTo(wrap);
+	var pct = Math.max(0, Math.min(100, (archive && archive['percent']) || 0));
+	$('<span>').addClass('folders_job_bar_fill').css({ 'width': pct + '%' }).appendTo(track);
+	return wrap;
+}
+
+function foldersArchiveWords(archive) {
+	if (!archive) { return ''; }
+	var state = archive['state'] || 'queued';
+	var words = {
+		queued: 'Queued', copying: 'Copying', verifying: 'Verifying',
+		done: 'Done', failed: 'Failed', cancelled: 'Cancelled'
+	};
+	var word = foldersArchiveT(words[state] || state);
+	if (state == 'copying' || state == 'verifying' || state == 'queued') {
+		word += ' ' + (archive['percent'] || 0) + '%';
+		if (archive['file']) { word += ' - ' + archive['file']; }
+		if (archive['file_bytes_total']) {
+			word += ' (' + (archive['file_percent'] || 0) + '% of this file)';
+		}
+		if ((archive['files'] || 0) > 1) {
+			word += ' - ' + (archive['index'] || 0) + ' of ' + archive['files'];
+		}
+	}
+	if (archive['resumable']) { word += ' - ' + foldersArchiveT('resumes where it stopped'); }
+	if (archive['delete_source']) { word += ' - ' + foldersArchiveT('removes the original after verifying'); }
+	return word;
+}
+
 function foldersJobWatcher() {
 	if (folders_job_interval) { return; }
 	folders_job_interval = setInterval(function() {
@@ -170,8 +208,18 @@ function foldersJobWatcher() {
 						return;
 					}
 					var word = job['progress'] || job['state'];
+					if (job['archive']) { word = foldersArchiveWords(job['archive']); }
 					if (job['errors'] && job['errors'].length) { word = word + '\n' + job['errors'].join('\n'); }
-					box.find('.job_progress').text(word);
+					var target = box.find('.job_progress .job_line');
+					if (target.length) { target.text(word); }
+					else { box.find('.job_progress').text(word); }
+					var bar = box.find('.job_progress .job_bar');
+					if (bar.length) {
+						if (job['archive']) {
+							bar.show().find('span').css({ 'width': Math.max(0, Math.min(100, job['archive']['percent'] || 0)) + '%' });
+						}
+						else { bar.hide(); }
+					}
 					if (job['state'] == 'finished' || job['state'] == 'failed') {
 						box.removeAttr('job');
 						box.find('.job_stop').remove();
@@ -196,18 +244,25 @@ $(document).on('click', '.job_stop', function() {
 // ---- archive ---------------------------------------------------------------
 // Put the selection (or the folder being looked at) on the archive queue. The
 // machine decides which location each item belongs to and where it goes; what
-// comes back is how many were queued and why anything was not.
-function foldersArchive(state) {
+// comes back is how many were queued and why anything was not. delete_after is
+// the explicit per-job choice to remove the original, never the default.
+function foldersArchive(state, options) {
 	var st = state || folders;
+	var payload = st;
+	if (options && options['delete_after']) {
+		payload = $.extend(true, {}, st);
+		payload['delete_after'] = 1;
+	}
 	$('body').css({ 'cursor': 'progress' });
 	$.ajax({
 		url: '/manager/folders/archive',
 		type: 'POST',
-		data: { folders: JSON.stringify(st) },
+		data: { folders: JSON.stringify(payload) },
 		success: function (response) {
 			$('body').css({ 'cursor': 'auto' });
 			if (response && response.dialog) {
 				$('#dialog_boxes').append(response.dialog);
+				foldersJobWatcher();
 			}
 			if ($('#folders_archive_queue').is(':visible')) { foldersArchiveQueue(); }
 		},
@@ -240,6 +295,23 @@ function foldersArchiveQueue() {
 				$('<i>').text('Nothing is queued for the archive.').appendTo(box);
 				return;
 			}
+			// several items queue as several jobs; one line still says how the
+			// whole archive run is going, summed from the same byte counts
+			var all_done = 0, all_total = 0, all_count = 0;
+			$.each(jobs, function (i, job) {
+				if (job['archive'] && job['archive']['bytes_total']) {
+					all_done += job['archive']['bytes_done'] || 0;
+					all_total += job['archive']['bytes_total'];
+					all_count++;
+				}
+			});
+			if (all_count > 1 && all_total > 0) {
+				var all_pct = Math.floor((all_done / all_total) * 100);
+				var summary = $('<div>').css({ 'font-weight': 'bold', 'padding': '3px' });
+				$('<span>').text(foldersArchiveT('All archive jobs') + ': ' + all_pct + '%').appendTo(summary);
+				summary.append(foldersArchiveBar({ percent: all_pct }));
+				box.append(summary);
+			}
 			$.each(jobs, function (i, job) {
 				var item = job['item'] || {};
 				var name = (item['relative'] && item['relative'].length) ? item['relative'] : (item['path'] || '');
@@ -261,6 +333,10 @@ function foldersArchiveQueue() {
 				}
 				if (job['errors'] && job['errors'].length) {
 					$('<div>').css({ 'font-size': '13px' }).text(job['errors'].join('; ')).appendTo(line);
+				}
+				else if (job['archive']) {
+					line.append(foldersArchiveBar(job['archive']));
+					$('<div>').css({ 'font-size': '13px' }).text(foldersArchiveWords(job['archive'])).appendTo(line);
 				}
 				else if (job['progress']) {
 					$('<div>').css({ 'font-size': '13px' }).text(job['progress']).appendTo(line);

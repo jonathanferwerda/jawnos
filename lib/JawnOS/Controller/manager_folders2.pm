@@ -112,6 +112,12 @@ sub action_30392 {
 	foreach my $job ( @{$list} ) {
 		my $item = ($job->{'args'} || [])->[0] || {};
 		my $result = $job->{'result'} || {};
+		my $notes = $job->{'notes'} || {};
+		my $archive = $notes->{'archive'};
+		my $fallback = $job->{'state'} eq 'inactive' ? 'queued'
+			: $job->{'state'} eq 'active' ? 'copying'
+			: $job->{'state'};
+		$archive ||= { state => $fallback };
 		push @jobs, {
 			id => $job->{'id'},
 			task => $job->{'task'},
@@ -121,11 +127,16 @@ sub action_30392 {
 			created => $job->{'created'},
 			finished => $job->{'finished'},
 			item => $item,
-			progress => ($job->{'notes'} || {})->{'progress'},
+			progress => $notes->{'progress'},
+			archive => $archive,
+			resumable => ($result->{'cancelled'} ? 0 : ($archive->{'resumable'} ? 1 : 0)),
+			cancelled => ($result->{'cancelled'} ? 1 : 0),
 			sent => $result->{'sent'},
 			skipped => $result->{'skipped'},
 			bytes => $result->{'bytes'},
 			files => $result->{'files'},
+			resumed => $result->{'resumed'},
+			deleted => $result->{'deleted'},
 			rows => $result->{'rows'},
 			errors => $result->{'errors'}
 		};
@@ -273,13 +284,20 @@ sub action_30537 {
 	}
 	my $exists = -e $dest->{'path'} ? 1 : 0;
 	my @stat = $exists ? stat($dest->{'path'}) : ();
+	my $partial = &subs::archive_partial_state({ path => $dest->{'path'} });
 	$c->render(json => {
 		status => 'ok',
 		path => $dest->{'path'},
 		exists => $exists,
 		# so the sender can skip a file it has already delivered unchanged
 		size => $exists ? -s $dest->{'path'} : undef,
-		mtime => $exists ? $stat[9] : undef
+		mtime => $exists ? $stat[9] : undef,
+		# a partial is not a finished file; it is offered so the sender can
+		# resume from it, never mistaken for the destination
+		partial => $partial,
+		# removing an original needs more than size and time, so the sender
+		# asks for this only when the job carries delete_after
+		sha256 => ($c->param('checksum') && $exists) ? &subs::archive_file_digest($dest->{'path'}) : undef
 	});
 }
 
@@ -308,26 +326,58 @@ sub action_30562 {
 	my $mtime = $c->param('mtime');
 	my $offset = $c->param('offset');
 	my $total = $c->param('total');
-	# A large file arrives in 64 MB pieces: each piece is written at its offset
-	# and only the final one stamps the source's time. A retry starts at zero,
-	# so a dropped connection never leaves a half file that looks complete.
+	my $source = $c->param('source');
+	# The bytes land in <destination>.part with a sidecar naming the source, and
+	# only the final piece renames it onto the destination. A half-written file
+	# therefore never looks finished to the probe or to a delete-original check,
+	# and the next attempt can continue from it instead of starting over.
+	my $part = &subs::archive_partial_path($dest->{'path'});
+	my $meta_path = &subs::archive_partial_meta_path($dest->{'path'});
 	my $chunked = (defined $offset && $offset =~ /^\d+$/ && defined $total && $total =~ /^\d+$/) ? 1 : 0;
 	my $written = 0;
 	if ($chunked) {
-		my $source = eval { $upload->asset->path };
-		unless ($source && -e $source) {
+		my $source_path = eval { $upload->asset->path };
+		unless ($source_path && -e $source_path) {
 			$c->render(json => { status => 'error', error => 'the upload has no file' });
 			return;
 		}
+		my $resumed = 0;
+		if ($offset > 0) {
+			# resuming is only allowed onto a partial that recorded the same
+			# source and the same total; the sender verified the prefix hash
+			unless (-e $part) {
+				$c->render(json => { status => 'error', error => 'there is no partial copy to resume', path => $dest->{'path'} });
+				return;
+			}
+			my $have = -s $part;
+			$have = 0 unless defined $have;
+			if ($have < $offset) {
+				$c->render(json => { status => 'error', error => 'the partial is shorter than the resume offset', path => $dest->{'path'}, size => $have });
+				return;
+			}
+			my $meta = {};
+			$meta = eval { return decode_json scalar read_file($meta_path) } || {} if ($meta_path && -e $meta_path);
+			$meta = {} unless ref $meta eq 'HASH';
+			if (defined $meta->{'total'} && $meta->{'total'} != $total) {
+				$c->render(json => { status => 'error', error => 'the partial belongs to a different source', path => $dest->{'path'} });
+				return;
+			}
+			if (defined $meta->{'source'} && length $meta->{'source'}
+				&& defined $source && length $source && $meta->{'source'} ne $source) {
+				$c->render(json => { status => 'error', error => 'the partial belongs to another source', path => $dest->{'path'} });
+				return;
+			}
+			$resumed = 1;
+		}
 		my $mode = ($offset > 0) ? '+<' : '>';
 		my ($in, $out);
-		unless (open($out, $mode, $dest->{'path'})) {
-			$c->render(json => { status => 'error', error => "cannot open $dest->{'path'}: $!", path => $dest->{'path'} });
+		unless (open($out, $mode, $part)) {
+			$c->render(json => { status => 'error', error => "cannot open $part: $!", path => $dest->{'path'} });
 			return;
 		}
 		binmode $out;
 		seek($out, $offset, 0) if $offset > 0;
-		unless (open($in, '<:raw', $source)) {
+		unless (open($in, '<:raw', $source_path)) {
 			close $out;
 			$c->render(json => { status => 'error', error => "cannot read the upload: $!", path => $dest->{'path'} });
 			return;
@@ -340,41 +390,98 @@ sub action_30562 {
 		}
 		close $in;
 		close $out;
-		my $asset_size = -s $source;
+		my $asset_size = -s $source_path;
 		if (defined $asset_size && $written != $asset_size) {
 			$c->render(json => { status => 'error', error => "chunk wrote $written of $asset_size bytes", path => $dest->{'path'} });
 			return;
 		}
+		if ($offset == 0) {
+			&subs::archive_partial_meta_write($dest->{'path'}, {
+				source => (defined $source && length $source ? $source : undef),
+				total => 0 + $total,
+				mtime => (defined $mtime && $mtime =~ /^\d+$/ ? 0 + $mtime : undef),
+				started => &subs::rightNow()
+			});
+		}
 		if ($c->param('final') && ($offset + $written) != $total) {
-			$c->render(json => { status => 'error', error => 'the file is incomplete', path => $dest->{'path'}, size => -s $dest->{'path'} });
+			$c->render(json => { status => 'error', error => 'the file is incomplete', path => $dest->{'path'}, size => -s $part });
 			return;
 		}
-		my $size = -s $dest->{'path'};
-		if ($c->param('final') && $mtime && $mtime =~ /^\d+$/) {
-			utime $mtime, $mtime, $dest->{'path'};
+		my $size = -s $part;
+		$size = 0 unless defined $size;
+		my $sha;
+		if ($c->param('final')) {
+			if ($size != $total) {
+				$c->render(json => { status => 'error', error => 'the file is incomplete', path => $dest->{'path'}, size => $size });
+				return;
+			}
+			$sha = &subs::archive_file_digest($part);
+			unless (defined $sha && rename($part, $dest->{'path'})) {
+				$c->render(json => { status => 'error', error => 'the verified copy could not be moved into place', path => $dest->{'path'} });
+				return;
+			}
+			unlink $meta_path if ($meta_path && -e $meta_path);
+			utime $mtime, $mtime, $dest->{'path'} if ($mtime && $mtime =~ /^\d+$/);
+			$log->info('archive: received ' . $dest->{'path'} . ' (' . $size . ' bytes)') if $log;
 		}
-		$log->info('archive: received ' . $dest->{'path'} . ' (' . $size . ' bytes)') if $c->param('final');
 		$c->render(json => {
 			status => 'ok',
 			path => $dest->{'path'},
 			size => $size,
 			offset => 0 + $offset,
 			received => $written,
+			resumed => $resumed,
+			sha256 => $sha,
 			final => $c->param('final') ? 1 : 0
 		});
 		return;
 	}
-	eval { $upload->move_to($dest->{'path'}) };
+	eval { $upload->move_to($part) };
 	if ($@) {
 		$c->render(json => { status => 'error', error => "$@", path => $dest->{'path'} });
 		return;
 	}
-	$written = -s $dest->{'path'};
+	$written = -s $part;
+	$written = 0 unless defined $written;
+	my $sha = &subs::archive_file_digest($part);
+	unless (defined $sha && rename($part, $dest->{'path'})) {
+		$c->render(json => { status => 'error', error => 'the verified copy could not be moved into place', path => $dest->{'path'} });
+		return;
+	}
+	unlink $meta_path if ($meta_path && -e $meta_path);
 	# keep the source's time, so the next pass over the same folder can tell an
 	# unchanged file from a changed one by size and time instead of by the file
 	utime $mtime, $mtime, $dest->{'path'} if ($mtime && $mtime =~ /^\d+$/);
-	$log->info('archive: received ' . $dest->{'path'} . ' (' . $written . ' bytes)');
-	$c->render(json => { status => 'ok', path => $dest->{'path'}, size => $written });
+	$log->info('archive: received ' . $dest->{'path'} . ' (' . $written . ' bytes)') if $log;
+	$c->render(json => { status => 'ok', path => $dest->{'path'}, size => $written, sha256 => $sha });
+}
+
+# Throw away a partial copy, at the sender's request after a cancel. The
+# original never leaves its machine; only <destination>.part and its sidecar go.
+# A partial that records another source is refused rather than deleted, so a
+# cancel for one job cannot remove another job's work.
+# POST /manager/folders/archive/discard
+sub action_30660 {
+	my $c = shift;
+	unless (&archive_peer_allowed($c)) {
+		$c->render(json => { status => 'error', error => 'not allowed' });
+		return;
+	}
+	my $dest = &subs::archive_destination({ location => $c->param('location'), path => $c->param('path') });
+	if ($dest->{'error'}) {
+		$c->render(json => { status => 'error', error => $dest->{'error'} });
+		return;
+	}
+	my $state = &subs::archive_partial_state({ path => $dest->{'path'} });
+	my $source = $c->param('source');
+	if ($state->{'exists'} && defined $source && length $source
+		&& defined $state->{'source'} && length $state->{'source'} && $state->{'source'} ne $source) {
+		$c->render(json => { status => 'error', error => 'the partial belongs to another source', path => $dest->{'path'} });
+		return;
+	}
+	my $removed = &subs::archive_partial_discard($dest->{'path'});
+	$log->info('archive: discarded the partial copy of ' . $dest->{'path'}) if $log;
+	$c->render(json => { status => 'ok', path => $dest->{'path'}, removed => $removed->{'removed'} });
 }
 
 # POST /manager/folders/file/open

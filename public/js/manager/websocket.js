@@ -21,11 +21,16 @@ var windowWsWindows = '';
 var windowWsDebriefer = 0;
 var windowWsDebrieferJson = '';
 var windowVisible = 1;
-// A phone that was locked comes back with dead sockets, and a socket that died
-// silently still reads readyState 1, so waiting for the staleness check to
-// notice took seconds. Hidden longer than this and the sockets are rebuilt the
-// moment the page is visible again.
-var resumeRebuildAfter = 2000;
+// Reconnect pacing. A page someone is looking at must not wait: every wake
+// signal rebuilds at once. A hidden page waits longer on each attempt, because
+// a phone pays for every handshake it cannot show, and there is no tight poll -
+// one timer per failed socket, doubling to the cap. A test reads these names.
+var wsVisibleRetryDelay = 1000;
+var wsVisibleRetryMax = 30000;
+var wsHiddenReconnectDelay = 30000;
+var wsHiddenReconnectMax = 300000;
+var wsRetryTimer = 0;
+var wsRetryFailures = 0;
 var pageHiddenAt = 0;
 var dotTimeout = {};
 var yellowCurrent = '';
@@ -103,14 +108,50 @@ function websocketRebuild() {
 	websocketStart();
 }
 
-// The page is back: rebuild dead sockets, restart the heartbeats on live ones,
-// and put the status check on duty again.
-function websocketWake() {
+// A page that is visible never waits out a backoff set while it was hidden.
+function websocketRetryClear() {
+	wsRetryFailures = 0;
+	if (wsRetryTimer) {
+		clearTimeout(wsRetryTimer);
+		wsRetryTimer = 0;
+	}
+}
+
+// One paced retry per failed socket, never a loop. Visible, the delay starts at
+// a second and doubles to half a minute; hidden, it starts long and doubles to
+// the cap. A visible wake resets the count and rebuilds at once.
+function websocketRetryLater() {
+	if (wsRetryTimer) { return; }
+	wsRetryFailures = Math.min((wsRetryFailures || 0) + 1, 8);
+	var delay;
+	if (document.hidden || windowVisible != 1) {
+		delay = Math.min(wsHiddenReconnectMax, wsHiddenReconnectDelay * Math.pow(2, wsRetryFailures - 1));
+	}
+	else {
+		delay = Math.min(wsVisibleRetryMax, wsVisibleRetryDelay * Math.pow(2, wsRetryFailures - 1));
+	}
+	wsRetryTimer = setTimeout(function() {
+		wsRetryTimer = 0;
+		if (document.hidden) { websocketRebuild(); }
+		else { websocketWake(1); }
+	}, delay);
+}
+
+// The page is back: rebuild the sockets at once, restart the heartbeats, and
+// put the status check on duty again. `force` is every foreground signal; a
+// real visibilitychange also forces it because a socket that slept still reads
+// readyState 1 and sends into the void.
+function websocketWake(force) {
 	windowVisible = 1;
 	if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, stayingAliveInterval); }
+	websocketRetryClear();
 	var away = pageHiddenAt ? (Date.now() - pageHiddenAt) : 0;
 	pageHiddenAt = 0;
-	if (away > resumeRebuildAfter || websocketLooksDead()) {
+	if (!Object.keys(ws).length) {
+		websocketStart();
+		return;
+	}
+	if (force || away > 0 || websocketLooksDead()) {
 		websocketRebuild();
 	}
 	else {
@@ -121,22 +162,31 @@ function websocketWake() {
 		});
 	}
 	// a socket that had already gone stale before the page was hidden is
-	// caught right here rather than on the next three second pass
+	// caught right here rather than on the next status pass
 	wsStatusChecker();
 }
 
 // A wake does not always show up as visibilitychange: a locked phone can come
 // back through the bfcache as pageshow, through focus, through the page
-// lifecycle's resume, or when the network returns. Any one of them can be the
-// first sign of life, so any one of them may carry the rebuild.
+// lifecycle's resume, or through the app's own coming-to-front signal. Any one
+// of them is the first sign of life, so any one may carry the rebuild.
+function websocketFront() {
+	if (document.hidden) { return; }
+	websocketWake(1);
+}
+
+// The cheaper wake: only rebuild when there is a reason to (a dead socket, a
+// pending retry, or a status beat that is not running). Used by the signals
+// that can also arrive while everything is healthy.
 function websocketWakeIfNeeded() {
 	if (document.hidden) { return; }
-	if (websocketLooksDead() || !wsStatusInterval) { websocketWake(); }
+	if (wsRetryTimer || pageHiddenAt || websocketLooksDead() || !wsStatusInterval) { websocketWake(1); }
 }
 
 // Timers are what chew through phone batteries. When the page isn't visible
 // there is nothing to animate or report, so stop the heartbeats and the status
-// check entirely and only restart them once we're back.
+// check entirely and only restart them once we're back. A socket that dies
+// while hidden is retried on the long hidden backoff, not on a poll.
 document.addEventListener('visibilitychange', function() {
 	if (document.hidden) {
 		pageHiddenAt = Date.now();
@@ -153,14 +203,24 @@ document.addEventListener('visibilitychange', function() {
 		});
 	}
 	else {
-		websocketWake();
+		websocketFront();
 	}
 });
 
-document.addEventListener('resume', websocketWakeIfNeeded);
-window.addEventListener('pageshow', websocketWakeIfNeeded);
-window.addEventListener('focus', websocketWakeIfNeeded);
+document.addEventListener('resume', websocketFront);
+window.addEventListener('pageshow', function(event) {
+	// a bfcache restore is a real return; an ordinary first load is already
+	// connecting and must not be torn down under itself
+	if (event && event.persisted) { websocketFront(); }
+	else { websocketWakeIfNeeded(); }
+});
+window.addEventListener('focus', websocketFront);
 window.addEventListener('online', websocketWakeIfNeeded);
+// The app's own coming-to-front signal: an Android onResume can reach the
+// WebView without a visibilitychange, and any bridge can call this directly.
+document.addEventListener('jawnos:visible', websocketFront);
+document.addEventListener('jawnos:foreground', websocketFront);
+window.jawnosWebsocketWake = websocketFront;
 // last resort: a wake that slipped past every event still gets caught by the
 // first tap, before the tap's own handlers can send into a dead socket
 document.addEventListener('pointerdown', websocketWakeIfNeeded, { capture: true, passive: true });
@@ -229,6 +289,10 @@ function websocketStart(appt,address) {
 			// closed before it ever opened: a listener that moved, not an app the
 			// person shut. The next attempt uses the page's own origin.
 			if (!address && ws[app] && ws[app]['status'] == 'connect') { ws_origin_only = 1; }
+			// A socket still on duty that closed on its own is retried on the
+			// paced backoff. A deliberate close (rebuild/stop) has already
+			// replaced the handle, so this test keeps it quiet.
+			if (ws[app] === this) { websocketRetryLater(); }
 			if (app == 'server' && ws[i] != null) { ws['server'].send({ type: 'lock_screen', browser_tab_id: bti }); }
 
 		}
@@ -237,6 +301,9 @@ function websocketStart(appt,address) {
 
 var windowWsMouseMove = {}
 function wsOpener(event,app,origin) {
+	// A socket that answered ends any backoff earned by one that did not. The
+	// retry timer is left alone: it may belong to another app's dead socket.
+	wsRetryFailures = 0;
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id');
 	var browser_tab = localStorage.getItem('browser_tab');
 	var uA = navigator.userAgent;
@@ -285,9 +352,13 @@ function wsOpener(event,app,origin) {
 		windowWsWindows = '';
 		windowWsMouseMove = {};
 	}
-	heartbeatStart(app);
-	// beat once now so a rebuilt socket catches up on the spot, not in two seconds
-	heartbeatSend(app);
+	// The beat is a radio wake, so a socket that comes back while the page is
+	// hidden does not restart it: waking the page does (websocketWake).
+	if (!document.hidden) {
+		heartbeatStart(app);
+		// beat once now so a rebuilt socket catches up on the spot, not in two seconds
+		heartbeatSend(app);
+	}
 	// A socket that just came back may have missed a padlock request (the phone
 	// wakes, the Wi-Fi changes, the worker restarts). The request is also kept
 	// server-side for exactly this case; ask for it as soon as the link is up.
@@ -389,6 +460,20 @@ function heartbeatSend(app) {
 			websocketStart();
 		}
 	}
+}
+
+// Ask for a liveness round trip now instead of waiting for the scheduled beat.
+// A panel that has just finished drawing calls this, so the server writes the
+// fresh row and answers with the current neighbour list at once.
+function stayingAliveNow(app) {
+	app = app || 'server';
+	var socket = ws[app];
+	if (!socket || socket.readyState != 1) {
+		if (!document.hidden) { websocketStart(); }
+		return false;
+	}
+	heartbeatSend(app);
+	return true;
 }
 
 function syncEscape(value) {

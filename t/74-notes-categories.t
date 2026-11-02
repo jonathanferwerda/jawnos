@@ -23,9 +23,13 @@ binmode Test::More->builder->failure_output, ':encoding(UTF-8)';
 my @codes = &subs::notes_category_keys();
 is_deeply( \@codes, [qw(journal roadmap social shopping dreams jawnos)],
 	'the six categories, in chip order' );
-is( &subs::notes_category_default(), 'journal', 'a note with no other home is a journal note' );
+my @filter = &subs::notes_category_filter_keys();
+is_deeply( \@filter, [qw(uncategorized journal roadmap social shopping dreams jawnos)],
+	'the filter shows Uncategorized plus the six categories' );
+is( &subs::notes_category_default(), 'uncategorized',
+	'a note with no other home is Uncategorized, never silently Journal' );
 my %seen;
-is( scalar( grep { $seen{$_}++ } @codes ), 0, 'no category is listed twice' );
+is( scalar( grep { $seen{$_}++ } @filter ), 0, 'no filter value is listed twice' );
 
 # ------------------------------------------------- the labels are core strings
 # Every category label and every hand-off button is a core interface string, so it
@@ -33,8 +37,9 @@ is( scalar( grep { $seen{$_}++ } @codes ), 0, 'no category is listed twice' );
 my @languages = map { $_->{code} } @language::languages;
 is( scalar(@languages), 16, 'the app offers sixteen interface languages' );
 
-my @keys = ( 'notes.category', 'notes.all' );
-push @keys, map { "notes.category.$_" } @codes;
+my @keys = ( 'notes.category', 'notes.all', 'delete' );
+push @keys, map { "notes.category.$_" } @filter;
+push @keys, qw(notes.status notes.status.open notes.status.completed notes.set_category_status);
 push @keys, map { "notes.open.$_" } qw(store market handbook people);
 
 for my $key (@keys) {
@@ -59,19 +64,23 @@ is( &subs::notes_category_valid('  dreams '), 'dreams', 'the value is trimmed' )
 is( &subs::notes_category_valid('Diary'), '', 'a label is not a code' );
 is( &subs::notes_category_valid(undef), '', 'nothing is no category' );
 
-is( &subs::notes_category_effective( undef, 'notes' ), 'journal',
-	'an older typed note reads as the default' );
-is( &subs::notes_category_effective( '', '' ), 'journal',
-	'a note with no app at all reads as the default' );
+is( &subs::notes_category_effective( undef, 'notes' ), 'uncategorized',
+	'a note that names no category reads as Uncategorized' );
+is( &subs::notes_category_effective( '', '' ), 'uncategorized',
+	'a note with no app at all reads as Uncategorized' );
 is( &subs::notes_category_effective( undef, 'home' ), '',
 	'an appointment draft has no category of its own' );
 is( &subs::notes_category_effective( 'dreams', 'home' ), 'dreams',
 	'a stored category wins over the app it came from' );
-is( &subs::notes_category_effective( 'garbage', 'notes' ), 'journal',
+is( &subs::notes_category_effective( 'journal', 'notes' ), 'journal',
+	'an old row the backfill stamped keeps reading as Journal' );
+is( &subs::notes_category_effective( 'garbage', 'notes' ), 'uncategorized',
 	'an unknown stored value reads as the default, never as a missing label' );
 
 is( &subs::notes_category_label_key('social'), 'notes.category.social',
 	'a row label is a core string' );
+is( &subs::notes_category_label_key('uncategorized'), 'notes.category.uncategorized',
+	'Uncategorized is a core string too' );
 is( &subs::notes_category_label_key('garbage'), '', 'no label for a refused code' );
 
 # ------------------------------------------------------------------ hand-offs
@@ -84,11 +93,14 @@ is( &subs::notes_category_target('jawnos'),   '',         'JawnOS stays in Notes
 is( &subs::notes_category_target('nonsense'), '',         'an unknown category opens nothing' );
 
 my $list = &subs::notes_category_list();
-is( scalar(@{$list}), 6, 'the chips are the six categories' );
-is( $list->[0]{'label'}, &subs::lang('notes.category.journal'), 'a chip wears the core label' );
-is( $list->[1]{'target'}, 'store', 'the Roadmap chip carries its hand-off' );
-is( $list->[1]{'open_label'}, &subs::lang('notes.open.store'), 'the hand-off button is translated too' );
-is( $list->[0]{'open_label'}, '', 'Journal has no hand-off button' );
+is( scalar(@{$list}), 7, 'the chips are Uncategorized plus the six categories' );
+is( $list->[0]{'code'}, 'uncategorized', 'Uncategorized is the first chip' );
+is( $list->[0]{'label'}, &subs::lang('notes.category.uncategorized'), 'the Uncategorized chip wears the core label' );
+is( $list->[1]{'label'}, &subs::lang('notes.category.journal'), 'a chip wears the core label' );
+is( $list->[2]{'target'}, 'store', 'the Roadmap chip carries its hand-off' );
+is( $list->[2]{'open_label'}, &subs::lang('notes.open.store'), 'the hand-off button is translated too' );
+is( $list->[0]{'open_label'}, '', 'Uncategorized has no hand-off button' );
+is( $list->[1]{'open_label'}, '', 'Journal has no hand-off button' );
 
 # ------------------------------------- the migration on a pre-category database
 my ($fh, $dbfile) = tempfile( 'jawnos-notes-XXXXXX', TMPDIR => 1, UNLINK => 1 );
@@ -130,6 +142,13 @@ ok( &subs::migration_already_applied($alter),
 my ($backfill) = $migrations =~ /^[ \t]*"(update notes set category[^"]*)"/mi;
 ok( $backfill, 'the migration list carries the backfill' ) or diag('no UPDATE found');
 &subs::db_query($backfill);
+
+# The status column arrives with the same table and the read path selects it.
+my ($status_alter) = $migrations =~ /^[ \t]*"(alter table notes add column status[^"]*)"/mi;
+ok( $status_alter, 'the migration list carries the status column' ) or diag('no status ALTER found');
+ok( !&subs::migration_already_applied($status_alter), 'the older database is missing the status column' );
+&subs::db_query($status_alter);
+ok( &subs::migration_already_applied($status_alter), 'the status column is applied once' );
 
 my %stored = map { $_->{'uuid'} => $_->{'category'} } @{ $db->query('select uuid, category from notes')->hashes };
 is( $stored{'old-typed'}, 'journal', 'an older typed note is stamped as a journal note' );
@@ -173,7 +192,7 @@ like( $controller, qr/notes_category_rows\(\)/, 'the route reads rows through th
 like( $controller, qr/categories => &subs::notes_category_list\(\)/,
 	'the route hands the template the chips' );
 like( $controller, qr/counts => \$counts/, 'the route hands the template the counts' );
-like( $controller, qr/notes_category_valid\(\s*\$c->param\('category'\)\s*\)/,
+like( $controller, qr/notes_category_valid\(\s*\$category_param\s*\)/,
 	'a save validates the category it was handed' );
 
 my $template = template_source('notes/notes');
@@ -201,12 +220,13 @@ my $rendered = eval {
 		$template,
 		{
 			categories => &subs::notes_category_list(),
+			statuses   => &subs::notes_status_list(),
 			counts     => { journal => 1 },
 			total      => 1,
 			selected   => &subs::notes_category_default(),
 			notes      => [ {
 				uuid => 'u1', timestamp => '1000', app => 'notes',
-				category => 'journal', text => 'hello <world>',
+				category => 'journal', status => 'open', text => 'hello <world>',
 			} ],
 		}
 	);
@@ -214,7 +234,10 @@ my $rendered = eval {
 ok( defined $rendered && length $rendered, 'the Notes template renders' ) or diag($@);
 
 my @chips = $rendered =~ /class="notes_chip"/g;
-is( scalar(@chips), 7, 'All plus the six categories are drawn' );
+is( scalar(@chips), 8, 'All plus Uncategorized and the six categories are drawn' );
+like( $rendered, qr/note_status note_status_open/, 'a note wears its open status badge' );
+like( $rendered, qr/class="note_edit note_category_edit"/, 'each note has a category editor' );
+like( $rendered, qr/class="note_edit note_status_edit"/, 'and a status editor' );
 my @opens = $rendered =~ /class="notes_category_open"/g;
 is( scalar(@opens), 4, 'only the four categories that live elsewhere get a hand-off button' );
 like( $rendered, qr/class="note_category"[^>]*>Journal</, 'a note wears its category label' );

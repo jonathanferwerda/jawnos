@@ -100,6 +100,7 @@ sub action_22702 {
 		template => 'notes/notes',
 		notes => $notes,
 		categories => &subs::notes_category_list(),
+		statuses => &subs::notes_status_list(),
 		counts => $counts,
 		total => $total,
 		selected => &subs::notes_category_default()
@@ -257,23 +258,30 @@ sub action_24915 {
 sub action_24950 {
 	my $c = shift;
 	# Write a note by hand, or save one being edited: a uuid that is already a note
-	# updates in place, anything else is a new note. The category is one of the six
-	# the Notes app draws; a save that does not name one (an appointment's draft
-	# being edited, say) leaves the row's category as it was, and a new note falls
-	# back to the default. Every open Notes window is refreshed, so the list stays
-	# live.
+	# updates in place, anything else is a new note. A save names the category and
+	# the status it wants (the per-note editor sends both); a field the caller did
+	# not send is left as it was, and a new note falls back to Uncategorized and
+	# open. Every open Notes window is refreshed, so the list stays live.
 	my $uuid = $c->param('uuid');
-	my $text = $c->param('text');
-	$text = '' unless defined $text;
+	my $text_param = $c->param('text');
+	my $has_text = defined $text_param;
+	my $text = $has_text ? $text_param : '';
 	$text =~ s/\r\n/\n/g;
 	$text =~ s/^\s+|\s+$//g;
-	my $category = &subs::notes_category_valid($c->param('category'));
+	my $category_param = $c->param('category');
+	my $category = defined $category_param ? &subs::notes_category_valid($category_param) : '';
+	$category = &subs::notes_category_default() if defined $category_param && !length $category;
+	my $status_param = $c->param('status');
+	my $status = defined $status_param ? &subs::notes_status_valid($status_param) : '';
+	$status = &subs::notes_status_default() if defined $status_param && !length $status;
 	my $now = &subs::rightNow();
 	my $exists = $uuid ? &subs::db_select('notes', ['uuid'], { uuid => $uuid })->hash : undef;
 	my $created = 0;
 	if ($exists && $exists->{'uuid'}) {
-		my %set = ( text => $text, server_time => $now );
-		$set{'category'} = $category if length $category;
+		my %set = ( server_time => $now );
+		$set{'text'} = $text if $has_text;
+		$set{'category'} = $category if defined $category_param;
+		$set{'status'} = $status if defined $status_param;
 		&subs::db_update('notes', \%set, { uuid => $uuid });
 	}
 	else {
@@ -282,25 +290,28 @@ sub action_24950 {
 			uuid => $uuid,
 			app => 'notes',
 			text => $text,
-			category => ( length $category ? $category : &subs::notes_category_default() ),
+			category => ( defined $category_param && length $category ? $category : &subs::notes_category_default() ),
+			status => ( defined $status_param && length $status ? $status : &subs::notes_status_default() ),
 			timestamp => $now,
 			server_time => $now
 		});
 		$created = 1;
 	}
 	&Websocket::send('tab', { console => 'notesReload();' });
-	$c->render(json => { uuid => $uuid, text => $text, created => $created });
+	$c->render(json => { uuid => $uuid, text => $text, category => $category, status => $status, created => $created });
 }
 
 # POST /manager/note_delete
 sub action_24980 {
 	my $c = shift;
 	# The Notes app's X (two-click: arm, then delete). Notes live in their own
-	# table now, so this is scoped to it.
+	# table now, so this is scoped to it. The row is tombstoned rather than
+	# removed: a peer that still holds it must learn it is gone, and the read path
+	# hides the marker everywhere.
 	my $uuid = $c->param('uuid');
-	&subs::db_delete('notes', { uuid => $uuid });
+	my $tombstoned = &subs::notes_tombstone($uuid);
 	&Websocket::send('tab', { console => 'notesReload();' });
-	$c->render(json => { uuid => $uuid });
+	$c->render(json => { uuid => $uuid, tombstoned => $tombstoned });
 }
 
 # POST /manager/note_to_appt

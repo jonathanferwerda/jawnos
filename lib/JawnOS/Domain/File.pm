@@ -36,6 +36,11 @@ use Time::Local;
 use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
+# The folder a location lands in under the archive root. A location's key is a
+# setting name (video, rec); a person looking at the drive expects the words the
+# folders use here (Videos, Recordings). An archive made before these names
+# still reads: archive_location_folder keeps the old lower-case folder when it
+# is the one that exists.
 our %archive_folder_names;
 our $config;
 our $database;
@@ -316,6 +321,12 @@ sub cache_get {
 	}
 }
 
+# Gossip dedupe for relayed requests. A relay carries a relay_id, minted once by
+# the machine that first sent it, and every machine that handles it claims the
+# id here. INSERT OR IGNORE makes claim-and-check atomic, so of two copies that
+# race in exactly one is "fresh" and the rest are dropped. cache is local (never
+# synced), and the rows are pruned by age, so a machine forgets a relay only
+# long after it has stopped circulating.
 sub stale_action_ms {
 	# How old a user action may be before it is treated as a replay rather than a
 	# press: a machine that comes back after being away flushes the actions it
@@ -414,6 +425,9 @@ sub file_device_renamer {
 	return ($destination,$asset,$type,$app);
 }
 
+# Put an arbitrary filesystem path into a shell command literally. Single
+# quotes carry spaces, brackets, parentheses, ampersands and quotes, and the
+# one character that cannot appear inside them is escaped the usual way.
 sub shell_quote {
 	my $s = shift // '';
 	$s =~ s/'/'\\''/g;
@@ -520,6 +534,10 @@ sub file_preview_maker {
 	return $data;
 }
 
+# Where a video's poster frame is taken from. Ten milliseconds in is a fade or a
+# black frame on most encodes, which is why so many posters came back blank; the
+# frame people recognise is a little way in. The plain-file thumb path used this
+# rule inline; the sealed path now shares it instead of always taking 00:00:00.010.
 sub thumbnail_seek_position {
 	my $duration = shift;
 	$duration = 0 unless defined $duration && $duration =~ /^\d+(?:\.\d+)?$/;
@@ -529,6 +547,11 @@ sub thumbnail_seek_position {
 	return '00:02:00.020';
 }
 
+# A cached Music file_information entry is only worth reusing when it carries the
+# facts the cards draw. A failed ffprobe used to be cached as
+# { chapters => undef, tags => {} }: truthy, so it was reused for ever, and every
+# video card asked for a duration and a height it did not have and fell back to
+# the generic icon. The callers treat an unusable entry as a miss and re-probe.
 sub music_info_usable {
 	my $info = shift;
 	return 0 unless ref $info eq 'HASH';
@@ -539,10 +562,23 @@ sub music_info_usable {
 	return 0;
 }
 
+# The old whole-file transmitter is retired: it downloaded the track on the
+# remote and started `play` at a guessed offset. Remote audio is now a live PCM
+# stream driven by public/js/music.js over /manager/music/stream. An older page
+# that still sends method=transmitter reaches this no-op instead of starting a
+# download.
 sub music_transmitter {
 	return;
 }
 
+# A remembered music queue (see music_queue_remember in Music.pl) is replayed
+# into a reopened window only when it still describes the same library: a peer's
+# paths mean nothing on this machine. What a window may *list* is a different
+# question - sealed and private tracks are filtered out of the queue by the
+# window it is being replayed into (music_queue_file_visible), the same rule the
+# folder walk applies, so a list assembled while unlocked still comes back in a
+# locked window instead of being thrown away. Pure, so the rule is testable
+# without a database.
 sub music_queue_applies {
 	my ($queue, $library) = @_;
 	return 0 unless $queue && ref $queue eq 'HASH' && ref $queue->{'files'} eq 'ARRAY';
@@ -596,6 +632,9 @@ sub vacuum_app {
 
 }
 
+# The location types a device can point at a folder and archive to: one per
+# <location>_location / <location>_archive setting pair, and one folder each
+# under the archive root.
 sub location_types {
 	return qw/music download photo document video scan rec/;
 }
@@ -606,6 +645,9 @@ sub archive_folder_name {
 	return (defined $name && length $name) ? $name : $location;
 }
 
+# The folder an archive keeps a location's files in. A drive filled before the
+# readable names keeps its lower-case folder rather than growing a second one
+# beside it; an empty or new drive gets the readable name.
 sub archive_location_folder {
 	my ($root, $location) = @_;
 	$root =~ s{/+$}{};
@@ -616,6 +658,8 @@ sub archive_location_folder {
 	return $folder;
 }
 
+# The machines that advertise an archive drive, once each however many rows or
+# mirrors name them.
 sub archive_machine_candidates {
 	my $machines = shift || [];
 	my %seen;
@@ -628,6 +672,12 @@ sub archive_machine_candidates {
 	} @{$machines};
 }
 
+# The machine a location archives to. A configured <location>_archive wins by
+# its signatorial (or uuid). When nothing is chosen and the house has exactly
+# one machine with an archive drive, that machine is used - a single drive is
+# not a guess. More than one candidate is a real choice, so it stays refused
+# until a person picks one rather than let listing order decide.
+# In list context it also says why there is no machine, for the refusal text.
 sub archive_machine_for {
 	my ($location, $settings, $machines) = @_;
 	$settings ||= {};
@@ -655,6 +705,10 @@ sub archive_machine_for {
 	return wantarray ? (undef, $why) : undef;
 }
 
+# The archive root of this machine: the configure panel's pick first — it is a
+# misc setting, so the root can be chosen without editing config.json — then
+# config.json's archive_dir. Tidied: ~ resolved, no trailing slash. Undef when
+# this machine is not an archive.
 sub archive_root {
 	# the panel's pick wants the settings table, which the very first boot may
 	# not have open yet; config.json is the fallback either way
@@ -666,6 +720,10 @@ sub archive_root {
 	return $root;
 }
 
+# Where an item lands inside an archive: <root>/<location folder>/<path inside
+# the location folder>. The location has to be one we know, and the relative path
+# cannot climb out of it, since the sending machine chooses both. `folder` is
+# the location's folder, `parent` the folder the item's own file goes in.
 sub archive_destination {
 	my $data = shift;
 	my $location = $data->{'location'};
@@ -700,11 +758,23 @@ sub archive_destination {
 	};
 }
 
+# A selected path's archive plan. The location whose folder holds the path,
+# the machine that location archives to, and where the item lands inside the
+# archive. The longest matching location folder wins, so a scans folder inside
+# documents resolves to scans; a tie, which is two names for one folder, goes
+# to the earlier location type, so document beats scan. A path under no
+# location is refused by name rather than guessed at; a location with no chosen
+# machine uses the house's only archive drive, or is refused when the choice is
+# genuinely ambiguous. Every path appears once however many selections repeat
+# it.
 sub archive_plan {
 	my $data = shift;
 	my $items = $data->{'items'} || [];
 	my $settings = $data->{'settings'} || {};
 	my $machines = $data->{'machines'} || [];
+	# per-job choice, never the default: the original is removed only after the
+	# archive machine has verified the copy
+	my $delete_after = $data->{'delete_after'} ? 1 : 0;
 	# the folders to match against, longest first; within one length the
 	# location type order decides, so a tie is not hash order
 	my @roots;
@@ -748,6 +818,7 @@ sub archive_plan {
 			location => $match->{'location'},
 			relative => $relative,
 			folder => (($item->{'type'} || '') eq 'folder' || -d $path) ? 1 : 0,
+			delete_after => $delete_after,
 			remote_uuid => $rm->{'uuid'},
 			remote_hostname => $rm->{'hostname'}
 		};

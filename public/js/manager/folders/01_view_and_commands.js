@@ -520,6 +520,9 @@ function foldersCommand(data, state) {
 	else if (command == 'archive') {
 		foldersArchive(st);
 	}
+	else if (command == 'archive_move') {
+		foldersArchive(st, { delete_after: true });
+	}
 	else {
 		$.ajax({
 			url: '/manager/folders/context/command',

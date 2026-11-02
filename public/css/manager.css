@@ -2837,6 +2837,28 @@ body.dark_theme .folders_file.selected { background: rgba(110, 168, 254, .20); }
 }
 .folders_bookmarks .folders_bookmark:hover { background: var(--panel); }
 .folders_archive_queue { top: 40px; }
+/* a job's bytes, drawn per file and for the whole job; the fill is set from the
+   percent the worker notes, so it moves while the copy runs */
+.folders_job_bar { margin: 4px 0 2px; }
+.folders_job_bar_track {
+	width: 100%; height: 6px; border-radius: 3px;
+	background: var(--panel); border: 1px solid var(--line); overflow: hidden;
+}
+.folders_job_bar_fill {
+	display: block; height: 100%; width: 0;
+	background: var(--folders-accent, #2f6feb);
+	transition: width .25s ease;
+}
+.folders_dialog_progress .job_line { white-space: pre-wrap; overflow-wrap: break-word; }
+.folders_dialog_progress .job_bar {
+	margin-top: 6px; height: 7px; border-radius: 4px;
+	background: var(--panel); border: 1px solid var(--line); overflow: hidden;
+}
+.folders_dialog_progress .job_bar span {
+	display: block; height: 100%; width: 0;
+	background: var(--folders-accent, #2f6feb);
+	transition: width .25s ease;
+}
 .folders_bottom_bar {
 	flex: 0 0 auto; display: flex; align-items: center; gap: 10px; min-height: 26px;
 	padding: 2px 8px; box-sizing: border-box; font-size: 12px;
