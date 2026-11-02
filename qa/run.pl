@@ -494,6 +494,27 @@ if ($want_l3) {
 				detail => ($w->{'title'} || '') . ', ' . ($w->{'nodes'} // '?') . ' nodes',
 			};
 			$fatal->('l3 webkit GET /manager: start menu missing') unless $w->{'hasMenu'};
+
+			# An appointment view renders the budget light on a page that never
+			# opened the Budget app. The probe clicks a synthetic one in the real
+			# engine: if budgetLight() or its handler is not in the core bundle
+			# the click throws or reaches nothing, and the panel stays empty
+			# (v0.1.1810). A UI change is not green just because the page loads.
+			my $light = $w->{'budgetLight'} || {};
+			if ($light->{'defined'} && $light->{'handled'}) {
+				push @{ $report{'ui'} }, {
+					name => 'webkit appointment budget light', ok => 1,
+					detail => 'a click reaches /manager/budget/current_information',
+				};
+			}
+			else {
+				my $why = $light->{'error'}
+					|| 'budgetLight is not a core function, or its click reached nothing';
+				push @{ $report{'ui'} }, {
+					name => 'webkit appointment budget light', ok => 0, detail => $why,
+				};
+				$fatal->('l3 webkit: the appointment budget light is dead in the real engine: ' . $why);
+			}
 		}
 
 		my $r = Ui->probe(urls => \@urls, out => $out);

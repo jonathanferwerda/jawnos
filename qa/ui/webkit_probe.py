@@ -54,7 +54,40 @@ PROBE = """(() => {
         smallTargets: links.filter(e => { const r = e.getBoundingClientRect();
             return r.width > 0 && (r.width < 24 || r.height < 24); }).length,
         overflow: document.documentElement.scrollWidth > window.innerWidth + 2,
-        nodes: document.querySelectorAll('*').length
+        nodes: document.querySelectorAll('*').length,
+        budgetLight: (() => {
+            // The appointment view's light is rendered by core pages that never
+            // open the Budget app, so both the handler and budgetLight() must be
+            // in the core bundle. Bound in a lazy chunk, every click before the
+            // Budget app was opened did nothing (v0.1.1810). This asks the real
+            // engine, on a page nothing has opened, whether the click reaches
+            // the route at all.
+            const out = { defined: typeof budgetLight === 'function', handled: false };
+            if (!out.defined) { return out; }
+            const calls = [];
+            const ajax = jQuery.ajax;
+            const setter = window.settingSetter;
+            jQuery.ajax = function (o) {
+                calls.push(o && o.url);
+                return { done: function () { return this; },
+                    fail: function () { return this; },
+                    always: function () { return this; } };
+            };
+            window.settingSetter = function () {};
+            try {
+                jQuery('body').append('<span id="qa_probe_light" class="budget_light" app="__qa_probe__" circumstance="duration"></span>'
+                    + '<div id="qa_probe_panel" class="budget_current_information" app="__qa_probe__"></div>');
+                jQuery('#qa_probe_light').trigger('click');
+                out.handled = calls.indexOf('/manager/budget/current_information') !== -1;
+            } catch (e) {
+                out.error = String(e);
+            } finally {
+                jQuery.ajax = ajax;
+                window.settingSetter = setter;
+                jQuery('#qa_probe_light, #qa_probe_panel').remove();
+            }
+            return out;
+        })()
     };
 })()"""
 

@@ -141,14 +141,19 @@ Chromium over CDP visits the manager, help, chat, people, clock, warehouse,
 configure and store, collecting console errors, failed requests, 4xx assets,
 unlabelled controls and horizontal overflow; screenshots land in
 `results/ui/shots` (WebP). WebKitGTK 4.1 - the desktop app's engine - loads the
-manager under Xvfb and runs the same probe.
+manager under Xvfb and runs the same probe, then clicks a synthetic
+`.budget_light` on a page where the Budget app was never opened. An appointment
+view renders that light from core, so the click must reach
+`/manager/budget/current_information`; if `budgetLight()` is missing or bound in
+a lazy chunk, l3 fails instead of reporting a green page load (v0.1.1811).
 
 Status: Chromium captures all eight pages; `/manager/store` exceeds the CDP
-navigate timeout and is reported as "not captured". WebKitGTK currently times
-out here and is recorded as **not run**, never as a pass. First-run warnings:
-`ReferenceError: $ is not defined` on fragment pages (a direct load has no
-manager shell, so its jQuery is absent), 2-12 unlabelled controls per page, and
-the slow store page.
+navigate timeout and is reported as "not captured". WebKitGTK loads the manager
+where `xvfb-run` and `python3` with gi/WebKit2 4.1 are installed (see
+`qa/ui/NOTES.md`); a missing engine is recorded as **not run**, never as a pass.
+First-run warnings: `ReferenceError: $ is not defined` on fragment pages (a
+direct load has no manager shell, so its jQuery is absent), 2-12 unlabelled
+controls per page, and the slow store page.
 
 ## CPU and memory
 
@@ -375,6 +380,8 @@ The runner, one note at a time:
 5. **Suite** - `qa/run.pl --source worktree --root ~/jawnos-qa/nightly
    --layers l0,l1`, plus `l2,l3` when the changed file list touches
    `templates/`, `public/js/`, `lib/JawnOS/Controller|Routes` or `perl/*.pl`.
+   l3 includes the real-engine click check: a UI change is not green when the
+   appointment budget light is dead in WebKitGTK, even if every page loads.
 6. **Green** - `scripts/version_bump.pl`, one commit
    `v<version> - <note title>`, push the branch, `git merge --ff-only` into
    main, push main, `scripts/restart.pl --reason ...`, require HTTP 200 from

@@ -51,6 +51,8 @@ ok(-f $webkit, 'the WebKit probe exists');
 my $wk_src = read_file($webkit);
 like($wk_src, qr/GLib\.Uri\.parse/, 'the TLS exception is keyed by host, not URI');
 like($wk_src, qr/timeout_add\(150/, 'the reload waits for the handler to return');
+like($wk_src, qr/budgetLight:/, 'the WebKit probe asks for the core budget light');
+like($wk_src, qr/qa_probe_light/, 'it clicks a synthetic light on a page with no Budget app open');
 like(read_file("$qa/lib/Ui.pm"), qr/XDG_DATA_HOME/,
 	'each run gets a private WebKit profile');
 my $py = `command -v python3 2>/dev/null`;
@@ -78,6 +80,8 @@ my $wk_at = index($runner, 'my $w = Ui->webkit');
 my $cr_at = index($runner, 'my $r = Ui->probe');
 ok($wk_at >= 0 && $cr_at > $wk_at,
 	'WebKit runs before Chromium, so a handler that kills the tree cannot mask it');
+like($runner, qr/webkit appointment budget light/,
+	'l3 fails when the appointment budget light is dead in the real engine');
 
 # --- the Android runner's four fixed defects -------------------------------
 my $android = read_file("$qa/android/run.sh");

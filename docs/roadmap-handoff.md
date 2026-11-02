@@ -1099,6 +1099,64 @@ not processes.
 8. **Windows**: WSL2, Cygwin/MSYS2, or the native process/IPC layer? And in what
    order do those platforms ship relative to Linux/Android?
 
+## Coding nightly (06:00)
+
+The agent that works the JawnOS notes overnight. The operational detail is in
+[`qa/README.md`](../qa/README.md) ("Coding nightly"); this is the plan and the
+state it is in. Handoff note written 2026-11-02 03:45.
+
+**Where it is**
+- 05:00 QA suite, 05:30 UX loop, 06:00 coding nightly (on the machine chosen in
+  Configure -> QA), Sunday 03:00 image + APK build. Times are editable in that
+  card; Run now is there too.
+- 06:00: reads the open JawnOS notes (`__president/qa_note_limit`, 1-25) newest
+  first, makes a worktree from `origin/main`, picks the repo or app lane, runs
+  the coding agent there (read/grep tool turns), gates on the suite (`l0,l1`,
+  plus `l2,l3` when the change touches templates, JS or routes), then
+  bump/commit/push/ff main/restart/health, marks the note completed and files a
+  Handbook report.
+- Safety: a `nightly-pre-<stamp>` tag, `rollback.sh` in every run, automatic
+  rollback after a post-merge failure, an APK/manifest backup before publish, a
+  failure note filed as JawnOS/open, and `qa/coding_night/recover.pl` for a
+  paste.
+
+**Landed**
+- 2026-11-02: the budget-light note was the first one completed by the nightly
+  (v0.1.1810), and the fix did not work. The agent's `grep` pattern was an
+  invalid regex, the tool reported 0 hits, and the model re-defined
+  `budgetLight` inside the lazy budget chunk. The duplicate was dead code, and
+  an appointment view never loaded that chunk at all.
+- 2026-11-02 (v0.1.1811): the light is core
+  (`public/js/manager/budget_light.js`); an invalid grep pattern falls back to
+  a literal match; `t/63-js-parts.t` refuses a top-level function declared
+  twice across the bundle; l3 clicks the light in WebKitGTK and fails when the
+  click reaches nothing.
+
+**Next (in order)**
+1. **Repair turns.** On a red suite, feed the failing test names and the tail
+   back into the same worktree for up to two attempts, then re-run. The
+   2026-11-02 run stopped at `t/63` because a new JS part was not named in
+   `budget.js`'s `[[js-split]]` block; the runner diagnosed it and could not
+   repair it.
+2. **Rules that bite in the agent prompt:** the `[[js-split]]` manifest, the
+   `# tests-for:` header, the `t/93` map, and one behaviour change = one test.
+3. **First app-lane run.** The keyboard note (status/navigation bars -> IME
+   gap) is still open; the app repo is on table and `gh` is authenticated.
+4. **Index generator.** It was cancelled mid-build (context is 65 KB / ~16.4k
+   tokens). Revisit only if context cost starts to hurt.
+5. **Notes sync.** The nightly reads each device's own database; confirm the
+   JawnOS notes sync across laptop and table before relying on table's 06:00
+   queue.
+6. **QEMU image.** Rebuild on table when convenient (artefact 0.1.1739 vs tree
+   0.1.18xx); l5 reports `version_match=no`.
+
+**Caution**
+- The nightly pushes and restarts the live tree; a failed rollback restart is
+  the one case a person must handle (`ROLLBACK RESTART FAILED`).
+- A green suite is not proof of a UI claim. l3 now proves the budget light's
+  core handler in WebKitGTK; any other UI note still needs its own probe, and
+  a UI change the layer cannot exercise is unverified, not done.
+
 ## Cross-cutting
 
 - **Help** — update each app's topic in the same commit as its UI, then
