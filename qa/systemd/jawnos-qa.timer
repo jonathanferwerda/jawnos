@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly JawnOS QA suite
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=20m
+Unit=jawnos-qa.service
+
+[Install]
+WantedBy=timers.target

@@ -64,7 +64,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo "waiting for the emulator"
-adb -s "$SERIAL" wait-for-device
+# A dead emulator must hit the boot budget below, not block here forever.
+if ! timeout 180 adb -s "$SERIAL" wait-for-device; then
+	echo "qa-android: the emulator never came up" >&2
+	exit 1
+fi
 i=0
 while [ "$i" -lt 180 ]; do
 	BOOT=$(adb -s "$SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
@@ -88,16 +92,27 @@ fi
 	echo "apk $APK"
 	echo "avd $AVD_NAME"
 	echo "package $PKG"
-	# cold start
+	# cold start; the launcher activity is resolved, not hardcoded
+	ACT=$(adb -s "$SERIAL" shell cmd package resolve-activity --brief "$PKG" 2>/dev/null | tail -n 1 | tr -d '\r')
 	adb -s "$SERIAL" shell am force-stop "$PKG" >/dev/null 2>&1 || true
-	adb -s "$SERIAL" shell am start -W -n "$PKG/.app.TermuxActivity" 2>&1 || true
+	if [ -n "$ACT" ] && [ "$ACT" != "No activity found" ]; then
+		echo "activity $ACT"
+		adb -s "$SERIAL" shell am start -W -n "$ACT" 2>&1 || true
+	else
+		echo "activity unresolved; launching by category"
+		adb -s "$SERIAL" shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 2>&1 || true
+	fi
 	sleep 5
 	echo '--- meminfo (PSS) ---'
-	adb -s "$SERIAL" shell dumpsys meminfo "$PKG" 2>/dev/null | sed -n '1,20p'
+	# 40 lines covers the App Summary and the TOTAL row; 20 stopped short.
+	adb -s "$SERIAL" shell dumpsys meminfo "$PKG" 2>/dev/null | sed -n '1,40p'
 	echo '--- gfxinfo ---'
-	adb -s "$SERIAL" shell dumpsys gfxinfo "$PKG" 2>/dev/null | sed -n '1,25p'
+	adb -s "$SERIAL" shell dumpsys gfxinfo "$PKG" 2>/dev/null | sed -n '1,30p'
 	echo '--- top ---'
-	adb -s "$SERIAL" shell top -b -n 1 -o %CPU,RSS,ARGS 2>/dev/null | head -n 15
+	# CPU-sorted top puts the (now idle) app below the fold; keep the header and
+	# the package's own row.
+	adb -s "$SERIAL" shell top -b -n 1 -o %CPU,RSS,ARGS 2>/dev/null \
+		| { head -n 1; grep -F "$PKG"; } | head -n 6
 } > "$OUT/android.txt" 2>&1
 
 echo "$OUT/android.txt"

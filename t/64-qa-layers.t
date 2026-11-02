@@ -70,4 +70,22 @@ my $cr_at = index($runner, 'my $r = Ui->probe');
 ok($wk_at >= 0 && $cr_at > $wk_at,
 	'WebKit runs before Chromium, so a handler that kills the tree cannot mask it');
 
+# --- the Android runner's four fixed defects -------------------------------
+my $android = read_file("$qa/android/run.sh");
+like($android, qr/-s "\$SERIAL" install -r/, 'install is pinned to the QA emulator');
+like($android, qr/timeout 180 adb/, 'wait-for-device has a timeout');
+like($android, qr/sed -n '1,40p'/, 'meminfo reaches the TOTAL PSS row');
+like($android, qr/grep -F "\$PKG"/, 'top keeps the app row');
+
+# --- the nightly job ----------------------------------------------------------
+for my $unit (qw(jawnos-qa.service jawnos-qa.timer)) {
+	ok(-f "$qa/systemd/$unit", "systemd/$unit exists");
+}
+my $service = read_file("$qa/systemd/jawnos-qa.service");
+like($service, qr/ProtectHome=read-only/, 'the nightly run cannot write the house');
+like($service, qr/ReadWritePaths=\/home\/jawn\/jawnos-qa/, 'only the QA root is writable');
+like($service, qr/IPAddressAllow=localhost/, 'the nightly run has loopback only');
+like($service, qr/--layers l0,l1,l2/, 'the nightly set excludes the moving UI layer');
+is(system($^X, '-Ilib', '-c', "$qa/prune.pl"), 0, 'prune.pl compiles');
+
 done_testing();

@@ -166,7 +166,9 @@ are expected on `table` where the SDK, AVD and KVM live.
 | table | QEMU image boot | health after 303 s (HTTP 403, gated), host RSS 2.1 GB, live tree stayed 200 |
 | laptop | `l0` + `l1` full | PASS |
 | laptop | `l2` | PASS, 10 checks |
-| laptop | `l3` | 9 UI checks, 0 failures; WebKit **not run** (timeout) |
+| laptop | `l3` | 9 UI checks, 0 failures; WebKit **loads the manager** (`QAHouse`, 479 nodes) |
+| table | `l3` | PASS; WebKit `hasMenu: true`, TLS allowed for 127.0.0.1; Chromium 8 pages |
+| table | Android emulator | boot 36.6 s; app launched (COLD, 6.2 s); PSS 113 MB; jank 95% (baseline) |
 | laptop | `qa/android/build.sh` | PASS, `jawnos-qa-3207084f.apk` from the app repo's HEAD |
 | table | `l0` | FAILS at `t/44-native-bins.t` (pre-existing: the native-bin converter/compile toolchain is not installed there) |
 | table | Android run | has the `jawnos` AVD and JDK 17, but no app repo; copy the APK from the build machine or set `JAWNOS_APP_DIR` |
@@ -176,6 +178,23 @@ The phone/tablet build needs JDK 17-21: AGP 8.7/Gradle 8.9 fail in
 `JdkImageTransform` on Java 26, which is the only JDK on the laptop until
 `jdk17-openjdk` was installed for this run. `qa/android/build.sh` prefers it.
 
+## Nightly
+
+`qa/systemd/` holds a hardened system unit and a timer:
+
+```sh
+sudo cp qa/systemd/jawnos-qa.service qa/systemd/jawnos-qa.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-qa.timer
+systemctl list-timers jawnos-qa.timer
+```
+
+It runs `l0,l1,l2` at 04:00 with a 20-minute random delay, as `jawn`, with the
+repo read-only (`ProtectHome=read-only`, `ProtectSystem=strict`), only
+`~/jawnos-qa` writable, loopback-only networking, `MemoryMax=4G` and
+`CPUQuota=200%`. `qa/prune.pl --keep 14` runs first. UI (`l3`) is deliberately
+not in the nightly set while the JavaScript refactor is in flight.
+
 ## Known findings from the first runs (2026-11-01)
 
 - `POST /manager/clothesline` and `POST /manager/mail/email/server/delete` are
@@ -184,9 +203,18 @@ The phone/tablet build needs JDK 17-21: AGP 8.7/Gradle 8.9 fail in
   never run. Pinned as a `TODO` in `t/58-route-contract.t`.
 - `Root_misc:47831` registers `manager/ws/remote_control` without a leading
   slash. Same TODO.
-- `/manager/store` exceeds a 40 s client timeout on a fresh house with no
-  network. Warned, not failed, until the UI layer measures it with a real
-  session.
+- `/manager/store` can take the whole tree down when a **browser** loads it:
+  the worker logs `A response has already been rendered`
+  (`Mojolicious/Controller.pm:189`) after `store.html.ep:39` warns about an
+  uninitialised value, and the tree exits. `l1` sees it as a slow (40 s) route;
+  `l3` reaches it with Chromium and names it as the route that killed the
+  instance (it now runs WebKit first so the engine result is not lost). This is
+  in the area of the in-flight JavaScript/template refactor and was not fixed
+  here.
+- The Android runner had four defects, fixed after the first run: `dumpsys
+  meminfo` stopped before `TOTAL PSS`, `top` was CPU-sorted so the idle app was
+  absent, `adb install` omitted `-s "$SERIAL"` (a real tablet on the bus could
+  have received the QA APK), and `adb wait-for-device` had no timeout.
 
 - **Live-tree wedge during this work (2026-11-01, 15:29-15:43).** A
   `restart.pl` request left the live master in `wait_woken` while its workers

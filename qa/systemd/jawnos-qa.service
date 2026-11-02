@@ -1,0 +1,34 @@
+[Unit]
+Description=JawnOS QA suite (fenced route + database layers)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+ExecStartPre=/usr/bin/perl /home/jawn/jawnos/qa/prune.pl --keep 14
+ExecStart=/usr/bin/perl /home/jawn/jawnos/qa/run.pl --layers l0,l1,l2 --profile full
+
+# Protect the live house. The runner already uses a copy and its own namespaces;
+# this is the second fence. The repo is read-only here, and only the QA root is
+# writable. Loopback is all the suite needs: no peers, mail, or model APIs.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=4G
+CPUQuota=200%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/jawn/jawnos-qa
+NoNewPrivileges=yes
+IPAddressDeny=any
+IPAddressAllow=localhost
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
