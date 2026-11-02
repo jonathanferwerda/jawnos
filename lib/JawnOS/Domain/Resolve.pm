@@ -572,6 +572,9 @@ sub release_work {
 
 sub ago_calc {
 	my ($ago,$timestamp) = @_;
+	# A caller with no offset is the empty offset, not an error; the arithmetic
+	# below then behaves as it did, without the split/pattern warnings.
+	$ago = '' unless defined $ago;
 	$timestamp = &rightNow() unless $timestamp;
 	# a written calendar date is read whole here; a relative offset ("-3h") and
 	# everything else falls through to the arithmetic below, unchanged
