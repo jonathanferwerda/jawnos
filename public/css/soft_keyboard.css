@@ -11,11 +11,16 @@
 	left: 0;
 	right: 0;
 	/* a mobile keyboard owns the very foot of the screen: whatever chrome the
-	   page keeps there sits above the keys while they are up */
+	   page keeps there sits above the keys while they are up.
+
+	   No env(safe-area-inset-bottom): the Android view already pads the page by
+	   the system bars, and an input method's window is placed above the
+	   navigation bar by Android itself. Adding the inset here counts that strip
+	   twice and lifts the keys with a blank band below the space bar. */
 	bottom: 0;
 	z-index: 40002;
 	box-sizing: border-box;
-	padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+	padding: 6px 8px 8px;
 	background: var(--panel);
 	color: var(--ink);
 	border-top: 1px solid var(--line);

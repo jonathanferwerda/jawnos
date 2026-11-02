@@ -1,8 +1,9 @@
-# tests-for: templates/ime.html.ep public/css/soft_keyboard.css
-# covers:    the IME page's dock must not add env(safe-area-inset-bottom). Android
-#           wraps the input-method window and owns the navigation-bar strip, so
-#           the shared .soft_kb inset counts that strip twice and leaves a blank
-#           band below the space bar when the system bars are shown.
+# tests-for: public/css/soft_keyboard.css templates/ime.html.ep
+# covers:    the keyboard dock must not add env(safe-area-inset-bottom). The
+#           Android view already pads the page by the system bars, and an input
+#           method's window is placed above the navigation bar by Android
+#           itself; the inset counted that strip twice and left a blank band
+#           below the space bar whenever the app showed the system bars.
 
 use strict;
 use warnings;
@@ -17,17 +18,15 @@ my $root = repo_root();
 my $ime  = scalar read_file("$root/templates/ime.html.ep");
 my $css  = scalar read_file("$root/public/css/soft_keyboard.css");
 
-# --- the IME page's own override -------------------------------------------
-my ($style) = $ime =~ m{<style>(.*?)</style>}s;
-ok(defined $style, 'templates/ime.html.ep has its own <style> block');
+# --- the shared dock: no second safe-area strip ----------------------------
+my ($dock_rule) = $css =~ m!\.soft_kb\s*\{([^}]*)\}!s;
+ok(defined $dock_rule, 'soft_keyboard.css has the .soft_kb dock rule');
 
-# The page may name the dock on its own or in a selector list; take the rule
-# body so whitespace and declaration order do not matter.
-my ($dock_rule) = ($style || '') =~ m!#jawn_soft_keyboard[^{}]*\{([^}]*)\}!s;
-ok(defined $dock_rule, 'the page style targets #jawn_soft_keyboard');
+# the rule keeps prose in comments; only the declarations count here
+(my $dock_decls = $dock_rule || '') =~ s{/\*.*?\*/}{}gs;
 
-unlike($dock_rule || '', qr/env\(\s*safe-area-inset-bottom/i,
-	'the IME dock does not add the navigation-bar safe-area inset');
+unlike($dock_decls, qr/env\(\s*safe-area-inset-bottom/i,
+	'the dock does not add the navigation-bar safe-area inset');
 
 # Accept the shorthand `6px 8px 8px` or a longhand `padding-bottom: 8px`.
 sub bottom_pad {
@@ -38,11 +37,19 @@ sub bottom_pad {
 	return $values[-1];
 }
 
-is(bottom_pad($dock_rule || ''), '8px',
-	'the IME dock keeps a plain 8px bottom pad');
+is(bottom_pad($dock_decls), '8px',
+	'the dock keeps a plain 8px bottom pad');
 
-# --- the shared on-page dock is unchanged ----------------------------------
-like($css, qr/\.soft_kb\s*\{[^}]*env\(\s*safe-area-inset-bottom/s,
-	'the manager dock still pads for the safe area');
+# --- the IME page reuses the dock and adds no inset of its own -------------
+my ($style) = $ime =~ m{<style>(.*?)</style>}s;
+ok(defined $style, 'templates/ime.html.ep has its own <style> block');
+
+my ($ime_rule) = ($style || '') =~ m!#jawn_soft_keyboard[^{}]*\{([^}]*)\}!s;
+ok(defined $ime_rule, 'the page style targets #jawn_soft_keyboard');
+
+unlike($ime_rule || '', qr/env\(\s*safe-area-inset-bottom/i,
+	'the IME page adds no navigation-bar safe-area inset');
+ok(($ime_rule || '') !~ /(?:^|;)\s*padding(?:-bottom)?\s*:/,
+	'the IME page leaves the dock padding to soft_keyboard.css');
 
 done_testing();
