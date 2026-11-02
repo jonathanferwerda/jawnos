@@ -54,6 +54,7 @@ function editorInit(source) {
 		editorTidy(area);
 	}
 	editor_bound_once();
+	editorFitWindow();
 	editor_dirty_state = 0;
 	// the article looks like itself while it is being written
 	var text_colour = document.getElementById('editor_text_colour');
@@ -68,10 +69,33 @@ function editorInit(source) {
 	else {
 		$('#editor_save_state').text('').removeClass('editor_save_dirty editor_save_saved');
 	}
-	editor_empty_state();
+	editorEmptyState();
 	if (source == 'new') {
 		editorAddText();
 	}
+}
+
+// A 780x399 window was saved for this app on some machines, which leaves a
+// column of writing three lines tall. The first open after this change gives the
+// editor the room to be a page, sized to the screen it is on, and then leaves the
+// window alone: a person's own resize is kept from the next open onward.
+function editorFitWindow() {
+	if (localStorage.getItem('editor_window_fitted') === '1') { return; }
+	var wind = document.querySelector('.wind[app="editor"]');
+	if (!wind) { return; }
+	localStorage.setItem('editor_window_fitted', '1');
+	var view_w = window.innerWidth || document.documentElement.clientWidth || 0;
+	var view_h = window.innerHeight || document.documentElement.clientHeight || 0;
+	if (!view_w || !view_h) { return; }
+	var box = wind.getBoundingClientRect();
+	var want_w = Math.min(1180, Math.round(view_w * 0.92));
+	var want_h = Math.min(840, Math.round(view_h * 0.84));
+	if (box.width >= want_w && box.height >= want_h) { return; }
+	var width = Math.max(Math.round(box.width), want_w);
+	var height = Math.max(Math.round(box.height), want_h);
+	var left = Math.max(0, Math.min(Math.round(box.left), view_w - width));
+	var top = Math.max(0, Math.min(Math.round(box.top), view_h - height));
+	$(wind).css({ width: width + 'px', height: height + 'px', left: left + 'px', top: top + 'px' });
 }
 
 // ---------------------------------------------------------------- block model
@@ -80,13 +104,22 @@ function editorArea() {
 	return document.getElementById('editor_content_area');
 }
 
-// The block a node belongs to: the direct child of the writing surface.
+// The block a node belongs to: the direct child of the writing surface. A bare
+// text node (what the caret makes when someone types on an empty page) is
+// wrapped in a paragraph first, so a block is always an element.
 function editorBlockOf(node) {
 	var area = editorArea();
 	while (node && node !== area && node.parentNode !== area) {
 		node = node.parentNode;
 	}
-	return (node && node !== area && node.parentNode === area) ? node : null;
+	if (!node || node === area || node.parentNode !== area) { return null; }
+	if (node.nodeType === 3) {
+		var p = document.createElement('p');
+		node.parentNode.insertBefore(p, node);
+		p.appendChild(node);
+		return p;
+	}
+	return node;
 }
 
 function editorBlocks() {
@@ -220,7 +253,7 @@ function editorAddRule(at) {
 function editorSelectBlock(block) {
 	editor_selected_block = block;
 	$('.editor_style_button').removeClass('editor_style_active');
-	if (!block) { return; }
+	if (!block || !block.tagName) { return; }
 	$('.editor_style_button[data-block="' + block.tagName.toLowerCase() + '"]').addClass('editor_style_active');
 }
 
@@ -232,7 +265,7 @@ function editorSetBlockStyle(tag) {
 		var sel = window.getSelection();
 		if (sel.rangeCount) { block = editorBlockOf(sel.getRangeAt(0).startContainer); }
 	}
-	if (!block || block.parentNode !== area) {
+	if (!block || !block.tagName || block.parentNode !== area) {
 		// an empty article has nothing to restyle: make the block being asked for
 		if (!editorBlocks().length) {
 			block = editorAddText();

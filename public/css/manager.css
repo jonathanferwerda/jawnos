@@ -3064,9 +3064,9 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
 #editor_article_picker { max-width: 260px; }
 
 /* the writing column: no second scrollbar, no narrow strip down the left */
-.editor_content_parent { position: relative; flex: 1 1 auto; min-height: 220px; width: 100%; box-sizing: border-box; }
+.editor_content_parent { position: relative; display: flex; flex-direction: column; flex: 1 1 auto; min-height: 220px; width: 100%; box-sizing: border-box; }
 .editor_content_parent.editor_is_dropping { outline: 2px dashed var(--accent, #888); outline-offset: -4px; }
-.editor_content_area { width: 100%; min-height: 220px; box-sizing: border-box; padding: 18px 22px 64px; outline: none; text-align: left;
+.editor_content_area { flex: 1 1 auto; width: 100%; min-height: 220px; box-sizing: border-box; padding: 18px 22px 64px; outline: none; text-align: left;
 	font-family: Georgia, 'Times New Roman', serif; font-size: 17px; line-height: 1.65; }
 .editor_content_area.editor_is_empty::before { content: attr(data-placeholder); display: block; color: var(--ink-soft, #8a8a8a); font-style: italic; pointer-events: none; }
 .editor_content_area > * { margin: 0 0 14px; max-width: 100%; }
