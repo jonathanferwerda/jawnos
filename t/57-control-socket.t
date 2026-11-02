@@ -176,9 +176,12 @@ sub fake_master {
 		exit 0;
 	}
 	# wait for the child to bind before connecting, or the parent loses the race
-	# and connects to a socket that is not there yet
-	my $bound_by = time + 5;
+	# and connects to a socket that is not there yet. The bound is generous: a
+	# fork plus a bind under a loaded 8-job run is not instant, and a 5s bound
+	# produced a rare "no-master" here that had nothing to do with the client.
+	my $bound_by = time + 20;
 	sleep 0.01 until -S $path || time > $bound_by;
+	ok(-S $path, 'the stand-in master bound its socket') or die "no socket at $path\n";
 	return $pid;
 }
 
