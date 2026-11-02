@@ -46,6 +46,7 @@ my $retries     = 2;
 my $pause       = 0.15;
 my $dry_run     = 0;
 my $langs_opt   = '';
+my $dir         = 'i18n';
 GetOptions(
 	'model=s'       => \$model,
 	'limit=i'       => \$limit,
@@ -55,9 +56,10 @@ GetOptions(
 	'sleep=f'       => \$pause,
 	'dry-run'       => \$dry_run,
 	'langs=s'       => \$langs_opt,
+	'dir=s'         => \$dir,
 ) or die "bad options\n";
 
-my $catalog_file = 'i18n/strings.json';
+my $catalog_file = "$dir/strings.json";
 unless ( -e $catalog_file ) {
 	die "missing $catalog_file - run perl scripts/i18n_extract.pl first\n";
 }
@@ -199,7 +201,7 @@ sub ask_batch {
 
 foreach my $lang (@targets) {
 	my $code = $lang->{'code'};
-	my $file = "i18n/ui-$code.json";
+	my $file = "$dir/ui-$code.json";
 	my $done = &load_done($file);
 	my @pending = grep { !( defined $done->{$_} && length $done->{$_} ) } @strings;
 	my $already = scalar(@strings) - scalar(@pending);
@@ -221,6 +223,7 @@ foreach my $lang (@targets) {
 		$batch_no++;
 		print "  batch $batch_no: " . scalar(@batch) . " strings, $chars chars\n";
 		if ($dry_run) {
+			print "  dry run: no model call, $file not written\n";
 			next;
 		}
 		my $got = &ask_batch( $lang, \@batch );

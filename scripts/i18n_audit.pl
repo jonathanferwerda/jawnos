@@ -30,9 +30,11 @@ require "./perl/language.pl";
 
 my $missing_all = 0;
 my $strict = 0;
-GetOptions( 'missing' => \$missing_all, 'strict' => \$strict ) or die "bad options\n";
+my $dir = 'i18n';
+GetOptions( 'missing' => \$missing_all, 'strict' => \$strict, 'dir=s' => \$dir )
+	or die "bad options\n";
 
-my $catalog_file = 'i18n/strings.json';
+my $catalog_file = "$dir/strings.json";
 unless ( -e $catalog_file ) {
 	print STDERR "i18n_audit: missing $catalog_file - run perl scripts/i18n_extract.pl\n";
 	exit( $strict ? 1 : 0 );
@@ -66,7 +68,7 @@ my $total = scalar @strings;
 my $short = 0;
 foreach my $lang ( grep { $_->{'code'} ne 'en' } @language::languages ) {
 	my $code = $lang->{'code'};
-	my $file = "i18n/ui-$code.json";
+	my $file = "$dir/ui-$code.json";
 	my $done = {};
 	if ( -e $file ) {
 		my $r = read_file($file);

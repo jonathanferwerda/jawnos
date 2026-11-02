@@ -187,7 +187,11 @@ foreach my $file ( sort @js_files ) {
 # ---------------------------------------------------------------------------
 # output
 # ---------------------------------------------------------------------------
-my @ordered = sort { lc($a) cmp lc($b) } keys %strings;
+# Case-insensitive order, with a byte comparison to break ties: two strings that
+# differ only in case compare equal under lc(), and without the tiebreak the
+# order falls back to hash order - which is randomised per process, so the
+# committed catalog churned between identical runs.
+my @ordered = sort { lc($a) cmp lc($b) || $a cmp $b } keys %strings;
 my @items;
 foreach my $s (@ordered) {
 	push @items, {
