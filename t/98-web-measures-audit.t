@@ -9,6 +9,12 @@ use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
 
+# The script loads perl/subroutines.pl, which reads ./config.json at compile
+# time. That file is gitignored (it holds this machine's host and keys), so a
+# fresh clone cannot run this at all - skip with the reason instead of failing.
+plan skip_all => 'needs the local config.json (gitignored) to load the app'
+	unless -f "$FindBin::Bin/../config.json";
+
 use DBI;
 use File::Temp qw(tempdir);
 use IPC::Open3 qw(open3);

@@ -43,7 +43,11 @@ for (my $i = 0; $i < @ARGV; $i++) {
 @roots = ($ENV{'HOME'} || '.') unless scalar @roots;
 
 my $db_file = 'database/jawnos.db';
-die "no database at $db_file\n" unless -f $db_file;
+# --files-only neither reads the database nor takes a backup of it (see the
+# backup and the update sections below), so a tree without one can still run the
+# folder migration - a test tree, or an install whose database has not been made
+# yet.
+die "no database at $db_file\n" unless $files_only || -f $db_file;
 
 # --- the folders -----------------------------------------------------------
 # Every directory named thumbs becomes .thumbs beside it. Directories that are
