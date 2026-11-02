@@ -95,7 +95,7 @@ recorded as drift, not as a verdict. The verdict is the PID audit.
 
 | Layer | What | Status |
 | --- | --- | --- |
-| `l0` | `prove -l t` (runs outside the fence; it is hermetic) | done |
+| `l0` | `perl scripts/run_tests.pl` (runs outside the fence; it is hermetic) | done |
 | `l1` | every classified GET route over HTTP, signed-in and anonymous; timings; crash detection + restart; fence audit | done |
 | `l2` | database contracts: integrity, stamps, real query plans | done |
 | `l3` | Chromium CDP smoke + WebKitGTK engine probe | done on table |

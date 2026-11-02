@@ -134,13 +134,16 @@ if (grep { $_ eq 'l0' } @layers) {
 		$l0_result->{'ok'} = $l0_result->{'exit'} == 0 ? 1 : 0;
 	}
 	else {
-		$say->("\n[l0] prove -l t");
+		$say->("\n[l0] perl scripts/run_tests.pl");
 		my $t0 = time;
-		# prove is a perl program; a non-interactive ssh session may not have it
-		# on PATH, so run App::Prove with the same interpreter.
-		my $rc = system($^X, '-MApp::Prove', '-e',
-			'my $p = App::Prove->new; $p->process_args(@ARGV); exit($p->run ? 0 : 1)',
-			'--', '-l', 't');
+		# run_tests.pl boots the harness once and forks one child per test, so a
+		# non-interactive ssh session needs no prove on PATH. The prove fallback
+		# is only for a tree older than the runner.
+		my $rc = -f 'scripts/run_tests.pl'
+			? system($^X, 'scripts/run_tests.pl')
+			: system($^X, '-MApp::Prove', '-e',
+				'my $p = App::Prove->new; $p->process_args(@ARGV); exit($p->run ? 0 : 1)',
+				'--', '-l', 't');
 		$l0_result = {
 			exit => ($rc >> 8), seconds => time - $t0,
 			ok => ($rc == 0 ? 1 : 0),

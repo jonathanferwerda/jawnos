@@ -67,6 +67,11 @@ user for the exact file/folder/name. A wrong guess costs far more tokens than a 
   and the manager's scripts come from `/js/manager/bundle.js`, which the app rebuilds from the files' mtimes
   and the browser revalidates by ETag. The `?string=` buster still only moves on restart, but nothing depends
   on it for freshness.
+- **Tests:** while iterating run `perl scripts/tests_for.pl --staged --run` — it maps the change to the
+  tests that claim it (a path no test claims runs the full suite). Before the commit run
+  `perl scripts/run_tests.pl`: it boots `subroutines.pl` once and forks one child per test, which is
+  faster than prove; `-v t/foo.t` shows one file's TAP and `--prove` is the old path. Never run bare
+  `prove -l t` — it is serial and several times slower.
 
 ## Crash-resilient agent work
 

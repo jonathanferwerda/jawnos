@@ -10,9 +10,9 @@
 # BLOCK the push. Stale topics are printed as a to-do but do not block, so
 # tidying the code never traps anyone mid-refactor.
 #
-# Last, the regression suite in t/ runs in parallel (scripts/run_tests.pl,
-# about fifteen seconds on the 12-core house box). A failing test BLOCKS the
-# push, so a behaviour change cannot ship without its test passing.
+# Last, the regression suite in t/ runs in parallel (scripts/run_tests.pl boots
+# the app once and forks one child per test). A failing test BLOCKS the push, so
+# a behaviour change cannot ship without its test passing.
 #
 # Enable once per clone:   git config core.hooksPath .githooks
 # Bypass for a moment:     git push --no-verify
@@ -58,6 +58,7 @@ if [ -d t ] && command -v prove >/dev/null 2>&1; then
 	if [ -f scripts/run_tests.pl ]; then
 		out=$(perl scripts/run_tests.pl 2>&1)
 	else
+		# a tree older than the forking runner
 		out=$(prove -l t 2>&1)
 	fi
 	status=$?

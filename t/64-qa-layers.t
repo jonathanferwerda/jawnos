@@ -66,6 +66,8 @@ else {
 # --- the policy and the runner agree on the layers ---------------------------
 my $runner = read_file("$qa/run.pl");
 like($runner, qr/known: l0 l1 l2 l3 l4 l5/, 'the runner names all six layers');
+like($runner, qr{\[l0\] perl scripts/run_tests\.pl}, 'l0 runs the fork engine');
+like($runner, qr{scripts/run_tests\.pl}, 'l0 never shells out to serial prove as its path');
 like($runner, qr/--apk/, 'l4 can be given the APK to install');
 like($runner, qr/--image/, 'l5 can be given the image to boot');
 like($runner, qr/qemu\/run\.sh/, 'l5 hands the VM to the qemu script');
