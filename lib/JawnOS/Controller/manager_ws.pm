@@ -436,7 +436,9 @@ sub action_47050 {
 			# a window opened before the rule changed, so it runs when the state turns
 			# on and then on a slow cadence while it stays on.
 			my $lockdown = &subs::lockdown_active() ? 1 : 0;
-			my $lockdown_key = $browser_tab_id || '';
+			# keyed by this connection, not just the tab: a reloaded page has a clean
+			# start menu, so the first beat after it must send the state again
+			my $lockdown_key = ($browser_tab_id || '') . "\x1f" . ($uuid || '');
 			if (!defined $ws_lockdown_state{$lockdown_key} || $ws_lockdown_state{$lockdown_key} != $lockdown) {
 				$ws_lockdown_state{$lockdown_key} = $lockdown;
 				&Websocket::send('server', { console => '$("#start_menu").toggleClass("lockdown", ' . ($lockdown ? 'true' : 'false') . ');', browser_tab_id => $browser_tab_id });

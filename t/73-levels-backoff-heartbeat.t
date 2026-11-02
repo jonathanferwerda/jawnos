@@ -93,6 +93,8 @@ like($beat, qr/&subs::lockdown_sweep\(\{ browser_tab_id => \$browser_tab_id, for
 unlike($beat, qr/&Websocket::send\('server', \{[^}]*\}\);\s*\n\s*\}/,
 	'the console send is not unconditional');
 like($ws_pm, qr/my %ws_lockdown_state;/, 'the worker remembers what it told each tab');
+like($ws_pm, qr/my \$lockdown_key = \(\$browser_tab_id \|\| ''\) \. "\\x1f" \. \(\$uuid \|\| ''\);/,
+	'the memory is per connection, so a reloaded page is told again');
 
 # --- and everything still compiles ------------------------------------------
 
