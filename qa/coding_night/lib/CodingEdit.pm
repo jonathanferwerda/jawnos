@@ -402,7 +402,20 @@ sub apply_hunks {
 
 # --- the model's reply ------------------------------------------------------
 
-# Either a JSON object (edits/diff/done/note) or a bare unified diff. Returns
+# The body of the first ```<lang> fence, with the closing fence removed. The
+# language match is case-insensitive and the newline after it is optional, so
+# "```JSON { ... }```" and "```diff\n...\n```" are both understood. Returns
+# undef when there is no such fence.
+sub _fenced_block {
+	my ($text, $lang) = @_;
+	return undef unless defined $text && length $text;
+	return $1 if $text =~ /```[ \t]*(?:$lang)[ \t]*\r?\n?(.*?)(?:\r?\n)?[ \t]*```/si;
+	return undef;
+}
+
+# Either a JSON object (edits/diff/done/note) or a bare unified diff. A JSON
+# object may be wrapped in ```json fences, and a patch in ```diff/```patch
+# fences; prose around either one is ignored. Returns
 # ({ edits, diff, done, note }, undef) or (undef, reason).
 sub parse_model_response {
 	my ($text) = @_;
@@ -411,15 +424,16 @@ sub parse_model_response {
 	$raw =~ s/^\s+|\s+$//g;
 	return (undef, 'the model replied with nothing') unless length $raw;
 
-	my $fenced = '';
-	if ($raw =~ /```(?:diff|patch)\s*\n(.*?)```/s) { $fenced = $1 }
-	elsif ($raw =~ /```json\s*\n(.*?)```/s)     { $raw = $1 }
-
+	# A JSON fence is decoded from its own body; a bare or prose-wrapped object
+	# is taken from the first { to the last }. Both go through JSON::PP, so a
+	# fence is a convenience, not a second format.
+	my $json_text = _fenced_block($raw, 'json');
+	$json_text = $raw unless defined $json_text;
 	my $object;
-	my $start = index($raw, '{');
-	my $end = rindex($raw, '}');
+	my $start = index($json_text, '{');
+	my $end = rindex($json_text, '}');
 	if ($start >= 0 && $end > $start) {
-		$object = eval { JSON::PP::decode_json(substr($raw, $start, $end - $start + 1)) };
+		$object = eval { JSON::PP::decode_json(substr($json_text, $start, $end - $start + 1)) };
 		$object = undef unless ref $object eq 'HASH';
 	}
 
@@ -447,8 +461,10 @@ sub parse_model_response {
 		return ({ edits => \@edits, diff => (defined $diff ? $diff : ''), done => $done, note => $note }, undef);
 	}
 
-	my $candidate = length $fenced ? $fenced : (($raw =~ /^(?:diff --git |--- )/m) ? $raw : '');
-	if (length $candidate && $candidate =~ /^--- /m) {
+	my $fenced  = _fenced_block($raw, 'diff|patch');
+	my $candidate = defined $fenced ? $fenced
+		: (($raw =~ /^(?:diff --git |--- )/m) ? $raw : '');
+	if (defined $candidate && length $candidate && $candidate =~ /^--- /m) {
 		return ({ edits => [], diff => $candidate, done => 0, note => '' }, undef);
 	}
 	return (undef, 'the reply is neither a JSON object nor a unified diff');

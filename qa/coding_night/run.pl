@@ -176,8 +176,12 @@ if ($opt{'dry_run'}) {
 	my $n = 0;
 	for my $note ( @{$notes} ) {
 		$n++;
-		my $paths = CodingNight::plan_paths($root, $stamp, $n);
+		my $app   = CodingNight::is_app_note($note);
+		my $paths = $app
+			? CodingNight::plan_app_paths($root, $stamp, $n)
+			: CodingNight::plan_paths($root, $stamp, $n);
 		print '    ' . $n . '. [' . $note->{'id'} . '] ' . $note->{'title'} . "\n";
+		print '       lane:     ' . ($app ? 'app (' . CodingNight::app_repo_dir() . ')' : 'repo') . "\n";
 		print '       worktree: ' . $paths->{'worktree'} . "\n";
 		print '       branch:   ' . $paths->{'branch'} . "\n";
 	}
@@ -249,6 +253,257 @@ for my $note ( @{$notes} ) {
 	push @{$report->{'runs'}}, \%run;
 
 	print '  [' . $n . '] ' . $note->{'title'} . "\n";
+
+	# --- the app lane -----------------------------------------------------
+	# An Android note is built, committed and published in the app checkout.
+	# Nothing in this repository's tree is touched: no fetch, no suite, no
+	# restart. The app checkout itself may hold another agent's WIP, so every
+	# write happens in the worktree and the checkout is only fast-forwarded when
+	# it is clean and already on the base branch.
+	if (CodingNight::is_app_note($note)) {
+		my $app = CodingNight::app_repo_dir();
+		my $app_paths = CodingNight::plan_app_paths($root, $stamp, $n);
+		$worktree = $app_paths->{'worktree'};
+		$branch   = $app_paths->{'branch'};
+		$run{'lane'}      = 'app';
+		$run{'app_repo'}  = $app;
+		$run{'worktree'}  = $worktree;
+		$run{'branch'}    = $branch;
+		$run{'layers'}    = 'app';
+		$run{'staged'}    = 0;
+		$run{'publish'}   = 'not attempted';
+		$run{'ff_jawnos'} = 0;
+
+		unless (defined $app && -d "$app/.git") {
+			$run{'status'} = 'app_repo_missing';
+			$run{'error'}  = 'no Android app checkout at ' . ($app // '(unset)')
+				. ' (set JAWNOS_APP_DIR)'; 
+			$failed = 1;
+			last;
+		}
+		if (-e $worktree) {
+			$run{'status'} = 'name_clash';
+			$run{'error'}  = "the worktree $worktree already exists; nothing was overwritten";
+			$failed = 1;
+			last;
+		}
+
+		my ($wt_rc) = run_cmd(
+			cmd => ['git', 'worktree', 'add', $worktree, '-b', $branch, CodingNight::app_base_branch()],
+			cwd => $app, log => $log->('worktree'));
+		if ($wt_rc != 0) {
+			$run{'status'} = 'worktree_failed';
+			$run{'error'}  = "git worktree add failed in the app checkout (exit $wt_rc); see " . $log->('worktree');
+			$failed = 1;
+			last;
+		}
+
+		# The agent's context is the app checkout, not this repository: its
+		# AGENTS.md is the rulebook for an APK change.
+		my %app_env = (%{ CodingNight::note_env($note) }, %{ CodingNight::app_lane_env($app) });
+		my ($agent_rc) = run_cmd(
+			cmd     => $agent,
+			cwd     => $worktree,
+			env     => \%app_env,
+			log     => $log->('agent'),
+			timeout => $opt{'suite_timeout'},
+		);
+		$run{'agent_exit'} = $agent_rc;
+		if ($agent_rc != 0) {
+			$run{'status'} = 'agent_failed';
+			$run{'error'}  = "the coding agent exited $agent_rc; the app worktree is left for inspection";
+			$failed = 1;
+			last;
+		}
+
+		my @app_files = changed_files($worktree, CodingNight::app_base_branch());
+		if (!@app_files) {
+			$run{'status'} = 'no_change';
+			$run{'error'}  = 'the agent exited 0 but left no change; the note stays open';
+			run_cmd(cmd => ['git', 'worktree', 'remove', '--force', $worktree], cwd => $app, log => $log->('cleanup'));
+			run_cmd(cmd => ['git', 'branch', '-D', $branch], cwd => $app, log => $log->('cleanup'));
+			next;
+		}
+
+		# 1. the build is the gate. A failed build has bumped nothing, committed
+		# nothing, pushed nothing and staged nothing.
+		my $build_env = { JAVA_HOME => CodingNight::app_java_home() };
+		my ($build_rc) = run_cmd(
+			cmd     => CodingNight::app_build_command(),
+			cwd     => $worktree,
+			env     => $build_env,
+			log     => $log->('gradle'),
+			timeout => $opt{'suite_timeout'},
+		);
+		$run{'build_exit'} = $build_rc;
+		if ($build_rc != 0) {
+			$run{'status'} = 'build_failed';
+			$run{'error'}  = "the Gradle build failed (exit $build_rc); no bump, push or stage was made"
+				. '; see ' . $log->('gradle');
+			$failed = 1;
+			last;
+		}
+
+		# 2. only a green build earns the version bump, and the bumped version is
+		# then built again so the APK carries it.
+		my ($version, $bump_error) = CodingNight::bump_app_version($worktree);
+		if (!$version) {
+			$run{'status'} = 'bump_failed';
+			$run{'error'}  = 'the app version could not be bumped: ' . ($bump_error // 'unknown reason');
+			$failed = 1;
+			last;
+		}
+		$run{'app_version_code'} = $version->{'versionCode'};
+		$run{'app_version_name'} = $version->{'versionName'};
+		my ($rebuild_rc) = run_cmd(
+			cmd     => CodingNight::app_build_command(),
+			cwd     => $worktree,
+			env     => $build_env,
+			log     => $log->('gradle'),
+			timeout => $opt{'suite_timeout'},
+		);
+		if ($rebuild_rc != 0) {
+			$run{'status'} = 'build_failed';
+			$run{'error'}  = "the rebuild after the version bump failed (exit $rebuild_rc); nothing was committed";
+			$failed = 1;
+			last;
+		}
+
+		my $subject = 'v' . $version->{'versionName'} . ' - '
+			. ($note->{'title'} || 'nightly note');
+		my ($add_rc) = run_cmd(cmd => ['git', 'add', '-A'], cwd => $worktree, log => $log->('commit'));
+		my ($commit_rc) = run_cmd(cmd => ['git', 'commit', '-m', $subject], cwd => $worktree, log => $log->('commit'));
+		if ($add_rc != 0 || $commit_rc != 0) {
+			$run{'status'} = 'commit_failed';
+			$run{'error'}  = "the app commit failed (exit $commit_rc); the worktree is left";
+			$failed = 1;
+			last;
+		}
+		$run{'commit'} = $subject;
+
+		my ($push_rc) = run_cmd(
+			cmd => ['git', 'push', '-u', CodingNight::app_remote(), $branch],
+			cwd => $worktree, log => $log->('push'));
+		if ($push_rc != 0) {
+			$run{'status'} = 'push_failed';
+			$run{'error'}  = "git push of $branch to " . CodingNight::app_remote()
+				. " failed (exit $push_rc); nothing was staged";
+			$failed = 1;
+			last;
+		}
+		$run{'pushed'} = 1;
+
+		# 3. Fast-forward the app checkout's jawnos branch - but only when that
+		# checkout is clean and already on it. A dirty checkout is another agent's
+		# work and is never merged, reset or committed around.
+		my $app_status = capture($app, 'git', 'status', '--porcelain');
+		my $app_branch = capture($app, 'git', 'rev-parse', '--abbrev-ref', 'HEAD');
+		$app_branch =~ s/\s+//g;
+		if ($app_status =~ /\S/ || $app_branch ne CodingNight::app_base_branch()) {
+			$run{'warning'} = 'the app checkout is not clean on '
+				. CodingNight::app_base_branch()
+				. '; it was left untouched and jawnos was not fast-forwarded';
+			print '  app checkout has uncommitted work or is off '
+				. CodingNight::app_base_branch() . "; jawnos was not fast-forwarded\n";
+		}
+		else {
+			my ($ff_rc) = run_cmd(cmd => ['git', 'merge', '--ff-only', $branch],
+				cwd => $app, log => $log->('ff'));
+			if ($ff_rc != 0) {
+				$run{'status'} = 'merge_failed';
+				$run{'error'}  = "jawnos did not fast-forward to $branch (exit $ff_rc); the branch is pushed and left";
+				$failed = 1;
+				last;
+			}
+			$run{'ff_jawnos'} = 1;
+			my ($push_jawnos_rc) = run_cmd(
+				cmd => ['git', 'push', CodingNight::app_remote(), CodingNight::app_base_branch()],
+				cwd => $app, log => $log->('push-jawnos'));
+			if ($push_jawnos_rc != 0) {
+				$run{'status'} = 'push_failed';
+				$run{'error'}  = 'jawnos was fast-forwarded but pushing it to '
+					. CodingNight::app_remote() . " failed (exit $push_jawnos_rc); nothing was staged";
+				$failed = 1;
+				last;
+			}
+			$run{'jawnos_pushed'} = 1;
+		}
+
+		# 4. stage, then publish if gh is authenticated. A skipped publish is
+		# reported as skipped; it is never called published.
+		my $apk = CodingNight::app_apk($worktree);
+		if (!$apk) {
+			$run{'status'} = 'apk_missing';
+			$run{'error'}  = 'the build finished but no app/build/outputs/apk/*/*.apk was found';
+			$failed = 1;
+			last;
+		}
+		$run{'apk'} = $apk;
+		my ($stage_rc) = run_cmd(
+			cmd => [$^X, "$repo/scripts/app_release.pl", $apk],
+			cwd => $repo, log => $log->('stage'));
+		if ($stage_rc != 0) {
+			$run{'status'} = 'stage_failed';
+			$run{'error'}  = "scripts/app_release.pl failed (exit $stage_rc); the note stays open";
+			$failed = 1;
+			last;
+		}
+		$run{'staged'} = 1;
+
+		my ($auth_rc) = run_cmd(cmd => ['gh', 'auth', 'status'], cwd => $repo, log => $log->('gh-auth'));
+		if ($auth_rc == 0) {
+			my ($publish_rc) = run_cmd(
+				cmd => [$^X, "$repo/scripts/app_publish.pl"],
+				cwd => $repo, log => $log->('publish'));
+			if ($publish_rc != 0) {
+				$run{'status'}  = 'publish_failed';
+				$run{'publish'} = 'failed';
+				$run{'error'}   = "scripts/app_publish.pl failed (exit $publish_rc); the APK is staged but not published";
+				$failed = 1;
+				last;
+			}
+			$run{'publish'} = 'published';
+		}
+		else {
+			$run{'publish'} = 'skipped (no gh auth)';
+			print "  publish: skipped (no gh auth)\n";
+		}
+
+		# 5. the work shipped to the app branch and was staged/published, so the
+		# note is complete. There is no manager restart: the APK is not this
+		# process.
+		my $res = eval {
+			mark_note_completed(
+				note_id => $note->{'id'},
+				live_url => live_url($repo, $opt{'live_url'}),
+				ticket   => ticket_url($repo, $opt{'ticket'}),
+			);
+		};
+		if (!$res) {
+			$run{'status'} = 'mark_failed';
+			$run{'error'}  = 'the app work shipped but the note could not be marked completed: '
+				. ($@ || 'unknown');
+			$failed = 1;
+			last;
+		}
+		$run{'marked_completed'} = 1;
+		$run{'status'} = 'green';
+
+		my $md = CodingNight::report_markdown({ %{$report}, runs => [ \%run ], ok => 1 });
+		my $filed = eval {
+			post_note(
+				live_url => live_url($repo, $opt{'live_url'}),
+				ticket   => ticket_url($repo, $opt{'ticket'}),
+				text     => $md,
+				category => 'journal',
+			);
+		};
+		$run{'handbook_filed'} = $filed ? 1 : 0;
+
+		run_cmd(cmd => ['git', 'worktree', 'remove', '--force', $worktree], cwd => $app, log => $log->('cleanup'));
+		run_cmd(cmd => ['git', 'branch', '-d', $branch], cwd => $app, log => $log->('cleanup'));
+		next;
+	}
 
 	# 1. fetch, then a fresh worktree from origin/main
 	my ($fetch_rc) = run_cmd(cmd => ['git', 'fetch', 'origin'], cwd => $repo, log => $log->('fetch'));
@@ -556,8 +811,10 @@ sub capture {
 }
 
 # Uncommitted work the agent left, plus any commits it made on the branch.
+# $base defaults to origin/main; the app lane passes jawnos instead.
 sub changed_files {
-	my ($worktree) = @_;
+	my ($worktree, $base) = @_;
+	$base = 'origin/main' unless defined $base && length $base;
 	my %seen;
 	my @files;
 	for my $line (split /\n/, capture($worktree, 'git', 'status', '--porcelain', '-uall')) {
@@ -568,7 +825,7 @@ sub changed_files {
 		next unless length $path;
 		push @files, $path unless $seen{$path}++;
 	}
-	for my $path (split /\n/, capture($worktree, 'git', 'diff', '--name-only', 'origin/main...HEAD')) {
+	for my $path (split /\n/, capture($worktree, 'git', 'diff', '--name-only', "$base...HEAD")) {
 		next unless length $path;
 		push @files, $path unless $seen{$path}++;
 	}

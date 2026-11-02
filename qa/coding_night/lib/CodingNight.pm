@@ -92,6 +92,134 @@ sub select_notes {
 	return \@out;
 }
 
+# --- the two lanes ----------------------------------------------------------
+# A note about the Android app is built in the app checkout, not here: this
+# worktree has no AndroidManifest, no gradlew and no APK to publish, so asking
+# it to fix a status bar is asking the wrong repository. A keyword from the
+# app's own vocabulary, or an explicit app tag, selects that lane.
+our @APP_KEYWORDS = (
+	'android', 'apk', 'app', 'termux', 'status bar', 'navigation bar',
+	'soft keyboard', 'ime', 'webview', 'wakelock', 'vibrate',
+);
+
+our $DEFAULT_APP_DIR = '/home/jawn/jawnos-app/termux-app';
+our $APP_BASE_BRANCH = 'jawnos';
+our $APP_REMOTE      = 'fork';
+our $APP_JAVA_HOME   = '/usr/lib/jvm/java-17-openjdk';
+
+sub app_keywords    { return [ @APP_KEYWORDS ] }
+sub app_base_branch { return $APP_BASE_BRANCH }
+sub app_remote      { return $APP_REMOTE }
+sub app_java_home   { return $APP_JAVA_HOME }
+
+sub app_repo_dir {
+	my ($given) = @_;
+	$given = $ENV{'JAWNOS_APP_DIR'} if !defined($given) || !length($given);
+	$given = $DEFAULT_APP_DIR       if !defined($given) || !length($given);
+	return $given;
+}
+
+sub app_lane_env {
+	my ($app_dir) = @_;
+	return {
+		JAWNOS_APP_LANE => '1',
+		JAWNOS_APP_DIR  => app_repo_dir($app_dir),
+	};
+}
+
+# The app worktree carries its own directory: it must never share work/ with
+# this repository's worktrees, and a failed app build leaves the tree behind.
+sub plan_app_paths {
+	my ($root, $stamp, $n) = @_;
+	$root  = '' unless defined $root;
+	$stamp = '' unless defined $stamp;
+	$n     = 1  unless defined $n && $n =~ /^\d+$/;
+	return {
+		worktree => File::Spec->catdir($root, 'work-app', "$stamp-$n"),
+		branch   => "qa/nightly-$stamp-$n",
+	};
+}
+
+# True when the note belongs to the Android app. An explicit tag (tag/tags/
+# lane, or an [app] marker) wins; otherwise a whole-word keyword from the app's
+# vocabulary is enough. "app" is deliberately broad: a note that only says
+# "app" is more likely about the Android shell than about a server app, and the
+# keyword list is the one a person can reason about.
+sub is_app_note {
+	my ($note) = @_;
+	$note ||= {};
+
+	for my $key (qw(tag tags lane app_lane)) {
+		my $value = $note->{$key};
+		my @tags = ref $value eq 'ARRAY' ? @{$value} : (defined $value ? ($value) : ());
+		for my $tag (@tags) {
+			next unless defined $tag;
+			my $clean = lc $tag;
+			$clean =~ s/^\s+|\s+$//g;
+			return 1 if $clean eq 'app' || $clean eq 'android' || $clean eq 'app-lane';
+		}
+	}
+
+	my $text = join(' ',
+		$note->{'title'} // '', $note->{'text'} // '', $note->{'category'} // '');
+	return 1 if $text =~ /(?:^|\s)[\#\[]\s*app(?:\s*\]|(?=\s|$))/i;
+
+	# Hyphens and underscores are word separators here: "soft-keyboard",
+	# "navigation_bar" and "status bar" are the same phrase.
+	my $hay = lc $text;
+	$hay =~ s/[-_]+/ /g;
+	for my $keyword (@APP_KEYWORDS) {
+		my $re = join '\s+', map { quotemeta } split /\s+/, $keyword;
+		return 1 if $hay =~ /(?<![a-z0-9])$re(?![a-z0-9])/;
+	}
+	return 0;
+}
+
+# The build the app lane validates with. JAVA_HOME is explicit because a
+# systemd unit has none and the app's Gradle files want the JDK 17 the box has.
+sub app_build_command { return [ './gradlew', '--max-workers=4', ':app:assembleDebug' ] }
+
+# Bump versionCode by one and the versionName patch by one. The app repo's own
+# rule is that every APK change is a version change; this is that rule applied
+# to the worktree only. Returns ({versionCode, versionName, path}, undef) or
+# (undef, reason) and writes nothing on a reason.
+sub bump_app_version {
+	my ($worktree) = @_;
+	my $path = File::Spec->catfile($worktree // '', 'app', 'build.gradle');
+	return (undef, 'app/build.gradle is not in the worktree') unless -f $path;
+	open(my $fh, '<:raw', $path) or return (undef, "$path could not be read: $!");
+	local $/;
+	my $text = <$fh>;
+	close $fh;
+	return (undef, "$path is empty") unless defined $text && length $text;
+
+	$text =~ /(^[ \t]*versionCode[ \t]+)(\d+)/m
+		or return (undef, 'app/build.gradle has no versionCode');
+	my $code = $2 + 1;
+	$text =~ s/(^[ \t]*versionCode[ \t]+)\d+/$1$code/m;
+
+	$text =~ /(^[ \t]*versionName[ \t]+")(\d+)\.(\d+)\.(\d+)(")/m
+		or return (undef, 'app/build.gradle has no major.minor.patch versionName');
+	my $name = "$2.$3." . ($4 + 1);
+	$text =~ s/(^[ \t]*versionName[ \t]+")\d+\.\d+\.\d+(")/$1$name$2/m;
+
+	open(my $out, '>:raw', $path) or return (undef, "$path could not be written: $!");
+	my $wrote = print {$out} $text;
+	close $out;
+	return (undef, "$path could not be written") unless $wrote;
+	return ({ versionCode => $code, versionName => $name, path => $path }, undef);
+}
+
+# The newest APK a Gradle debug build left in the worktree, or undef.
+sub app_apk {
+	my ($worktree) = @_;
+	return undef unless defined $worktree && length $worktree;
+	my @found = grep { -f $_ } glob("$worktree/app/build/outputs/apk/*/*.apk");
+	return undef unless @found;
+	@found = sort { (stat($b))[9] <=> (stat($a))[9] } @found;
+	return $found[0];
+}
+
 # l2 (the database) and l3 (a browser) are only worth their minutes when the
 # change can reach a route, a template or a script. A change to qa/ itself, a
 # test or the firmware is served by l0 and l1.
@@ -153,6 +281,8 @@ sub report_markdown {
 		$md .= '- note: `' . ($run->{'note_id'} // '') . "`\n";
 		$md .= '- branch: `' . ($run->{'branch'} // '') . "`\n";
 		$md .= '- worktree: `' . ($run->{'worktree'} // '') . "`\n";
+		$md .= '- lane: ' . ($run->{'lane'} // 'repo')
+			. (($run->{'app_repo'} // '') ? ' (`' . $run->{'app_repo'} . '`)' : '') . "\n";
 		$md .= '- layers: ' . ($run->{'layers'} // '') . "\n";
 		$md .= '- status: ' . ($run->{'status'} // 'unknown') . "\n";
 		$md .= '- agent exit: ' . ($run->{'agent_exit'} // '-') . "\n";
@@ -162,6 +292,12 @@ sub report_markdown {
 			. ' · restarted: ' . ($run->{'restarted'} ? 'yes' : 'no')
 			. ' · health 200: ' . ($run->{'health_ok'} ? 'yes' : 'no')
 			. ' · note completed: ' . ($run->{'marked_completed'} ? 'yes' : 'no') . "\n";
+		if (($run->{'lane'} // '') eq 'app') {
+			$md .= '- jawnos fast-forwarded: ' . ($run->{'ff_jawnos'} ? 'yes' : 'no')
+				. ' · staged: ' . ($run->{'staged'} ? 'yes' : 'no')
+				. ' · publish: ' . ($run->{'publish'} // 'not attempted') . "\n";
+		}
+		$md .= '- warning: ' . $run->{'warning'} . "\n" if $run->{'warning'};
 		$md .= '- ' . $run->{'error'} . "\n" if $run->{'error'};
 		$md .= "\n";
 	}

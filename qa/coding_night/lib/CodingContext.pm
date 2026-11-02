@@ -225,14 +225,16 @@ sub render_help_topic {
 #   context_dir => the main checkout (required)
 #   note_text   => the note, for picking the help topic
 #   app_text    => title + text, for picking the help topic (defaults to note_text)
+#   documents   => optional [ { rel, label }, ... ] instead of @DOCUMENTS
 # Returns { system, documents => [...], help_topic => id|undef, warnings => [...] }.
 sub assemble {
 	my (%opt) = @_;
 	my $dir = $opt{'context_dir'} or die "CodingContext: no context_dir\n";
 	my @documents;
 	my @warnings;
+	my $specs = ref $opt{'documents'} eq 'ARRAY' ? $opt{'documents'} : \@DOCUMENTS;
 
-	for my $spec (@DOCUMENTS) {
+	for my $spec (@{$specs}) {
 		my $rel = $spec->{'rel'};
 		my $path = File::Spec->catfile($dir, split m{/}, $rel);
 		my $raw = slurp($path);

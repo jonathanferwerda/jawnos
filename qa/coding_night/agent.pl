@@ -91,7 +91,13 @@ unless (defined $root && -d $root) {
 	exit 2;
 }
 
-my $context_dir = $opt{'context_dir'} || (($ENV{'HOME'} // '') . '/jawnos');
+my $context_dir = $opt{'context_dir'};
+my $app_lane = $ENV{'JAWNOS_APP_LANE'} ? 1 : 0;
+if (!defined $context_dir || !length $context_dir) {
+	$context_dir = $app_lane
+		? ($ENV{'JAWNOS_APP_DIR'} || (($ENV{'HOME'} // '') . '/jawnos-app/termux-app'))
+		: (($ENV{'HOME'} // '') . '/jawnos');
+}
 $context_dir = abs_path($context_dir) if defined $context_dir && length $context_dir;
 unless (defined $context_dir && -d $context_dir && -f "$context_dir/AGENTS.md") {
 	print STDERR "qa/coding_night/agent.pl: no main checkout with AGENTS.md at "
@@ -109,9 +115,17 @@ if (!$opt{'dry_run'} && abs_path($root) eq abs_path($context_dir)) {
 }
 
 # --- context (the important part) -------------------------------------------
+# The app lane reads the Android app's own AGENTS.md (and its fork delta list),
+# never this repository's: an APK change follows the app repo's rules.
+my @app_documents = (
+	{ rel => 'AGENTS.md', label => 'the Android app rules' },
+	{ rel => 'JAWNOS.md', label => 'the app fork delta list' },
+	{ rel => 'README.md', label => 'the app README' },
+);
 my $context = CodingContext::assemble(
 	context_dir => $context_dir,
 	note_text   => $note->{'text'} . "\n" . $note->{'title'},
+	($app_lane ? (documents => \@app_documents) : ()),
 );
 my ($note_message, $note_info) = CodingContext::note_message($note);
 
@@ -132,7 +146,8 @@ if ($opt{'dry_run'}) {
 	print "qa/coding_night agent dry run - no model call, no file is written\n";
 	print '  note: ' . ($note->{'id'} || '(no id)') . ' ' . ($note->{'title'} || '(untitled)') . "\n";
 	print '  worktree root: ' . $root . "\n";
-	print '  context from: ' . $context_dir . " (the main checkout)\n";
+	print '  context from: ' . $context_dir
+		. ($app_lane ? ' (the Android app checkout)' : ' (the main checkout)') . "\n";
 	if (defined $model && length $model) {
 		print "  model: $model (Configure -> Platform -> Coding)"
 			. ($model_why ? " - $model_why" : '') . "\n";
@@ -212,6 +227,10 @@ for my $turn (1 .. $max_turns) {
 
 	my ($parsed, $perr) = CodingEdit::parse_model_response($reply);
 	if (defined $perr) {
+		# Keep the exact bytes in the runner's agent log before any refusal: a
+		# rejected turn has to be debuggable without guessing what the model sent.
+		print "turn $turn: raw reply follows (unusable: $perr)\n";
+		print "----- BEGIN RAW REPLY -----\n$reply\n----- END RAW REPLY -----\n";
 		print "turn $turn: unusable reply ($perr); nothing was written\n";
 		$last_error = "turn $turn: $perr";
 		push @messages, { role => 'user', content =>

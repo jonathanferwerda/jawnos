@@ -387,6 +387,27 @@ and deleted, the note stays open, and `~/jawnos-qa/coding/<stamp>/report.md`
 names the layer and log. A dirty main tree is also a stop: it refuses to merge
 over other work. A non-zero agent exit is handled the same way.
 
+**Two lanes.** A note that names the Android app's vocabulary - `android`,
+`apk`, `app`, `termux`, `status bar`, `navigation bar`, `soft keyboard`, `ime`,
+`webview`, `wakelock`, `vibrate` - or that carries an explicit `[app]` marker
+(or an `app`/`android` tag) is built in the app checkout, not here. That checkout
+is `$JAWNOS_APP_DIR`, default `~/jawnos-app/termux-app`, on branch `jawnos`; the
+worktree is `~/jawnos-qa/work-app/<stamp>-<n>` and the branch is still
+`qa/nightly-<stamp>-<n>`. The agent's context is that checkout's `AGENTS.md` and
+`JAWNOS.md`, never this repository's. The gate is
+`JAVA_HOME=/usr/lib/jvm/java-17-openjdk ./gradlew --max-workers=4
+:app:assembleDebug`. Only after a green build are `versionCode` and the
+`versionName` patch bumped, the APK rebuilt, `v<versionName> - <title>`
+committed, the branch pushed, `jawnos` fast-forwarded and `fork` pushed. Then
+`scripts/app_release.pl <apk>` stages it and `scripts/app_publish.pl` publishes
+it; with no authenticated `gh` the stage is kept and the report says
+`publish: skipped (no gh auth)`. A failed build bumps, pushes and stages
+nothing and leaves the note open. The app checkout is only fast-forwarded when
+it is clean and already on `jawnos`: another agent's WIP is never committed,
+merged or reset around, and the report says `jawnos was not fast-forwarded`.
+There is no manager restart or health gate in this lane - the APK is not this
+process.
+
 **No agent is exit 3.** It prints `no coding agent configured`, fetches
 nothing, creates no worktree or branch, and leaves every note open. With
 `qa/coding_night/agent.pl` wired to the hook, the same exit 3 means no Coding
@@ -427,8 +448,9 @@ model is configured. It runs in the worktree and:
 
 1. **Assembles the context from the main checkout** (`$HOME/jawnos` or
    `--context-dir`): `AGENTS.md`, `docs/AGENTS-notes.md`, this README, and the
-   help topic for the app the note names. Each is capped at 20 KB and the
-   prompt says when it was truncated.
+   help topic for the app the note names. In the app lane the context is the
+   app checkout's `AGENTS.md`, `JAWNOS.md` and `README.md` instead. Each is
+   capped at 20 KB and the prompt says when it was truncated.
 2. **Redacts before sending.** A line that mentions `.secrets/`, `.shots/`,
    `config.json`, `downloads.json`, a `*.pem`, or one of the secret words
    (password, passphrase, token, api key, secret, credential, signatorial, a
@@ -442,7 +464,12 @@ model is configured. It runs in the worktree and:
    `subs::ai_chat_parts_with_fallback` - the same helper behind
    `POST /manager/coding/heal`. No second provider configuration exists here.
 4. **Applies only whole-file writes or unified diffs inside the worktree.**
-   Absolute paths, `..`, symlinks and anything that resolves outside are
+   A reply may be a bare JSON object, a JSON object in ```` ```json ```` fences,
+   a bare unified diff, or a patch in ```` ```diff ````/```` ```patch ```` fences;
+   prose around either is ignored. A reply that is neither is written verbatim
+   to the agent log (`----- BEGIN RAW REPLY -----`) before it is rejected, so a
+   refused turn can be diagnosed from the log alone. Absolute paths, `..`,
+   symlinks and anything that resolves outside are
    refused; `.git`, `.secrets`, `.shots`, `.president`, `releases`,
    `signatorials`, `database/*.db`, `config.json`, `downloads.json` and `*.pem`
    are never written. Binary files are refused, and the whole run may write at

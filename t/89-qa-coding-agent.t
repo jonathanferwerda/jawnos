@@ -166,6 +166,35 @@ my $absolute = CodingContext::relativize('see /home/qa/jawnos/lib/JawnOS.pm and 
 unlike($absolute, qr{/home/}, 'no absolute home path survives relativize');
 like($absolute, qr{\./lib/JawnOS\.pm}, 'a repository path becomes relative to the repo');
 
+# --- the reply parser: fenced JSON and fenced diffs --------------------------
+my $fenced_json_reply = "Here is the change.\n"
+	. "```json\n"
+	. '{"edits":[{"path":"perl/thing.pl","content":"use strict;\n1;\n"}],"done":true,"note":"ok"}' . "\n"
+	. "```\n";
+my ($fenced_json, $fenced_json_err) = CodingEdit::parse_model_response($fenced_json_reply);
+ok($fenced_json, 'a JSON object in ```json fences is accepted') or diag $fenced_json_err;
+is($fenced_json->{'edits'}->[0]->{'path'}, 'perl/thing.pl', 'the fenced edit path is read');
+ok($fenced_json->{'done'}, 'the fenced done flag is read');
+is($fenced_json->{'note'}, 'ok', 'the fenced note is read');
+
+my ($upper_json, $upper_err) = CodingEdit::parse_model_response("```JSON { \"done\": true } ```");
+ok($upper_json && $upper_json->{'done'},
+	'an uppercase JSON fence with no newline after the language is accepted') or diag $upper_err;
+
+my $fenced_diff_reply = "Proposed patch:\n"
+	. "```diff\n"
+	. "--- a/perl/thing.pl\n+++ b/perl/thing.pl\n@@ -1,2 +1,2 @@\n"
+	. " use strict;\n-print \"old\\n\";\n+print \"fenced\\n\";\n"
+	. "```\n";
+my ($fenced_diff, $fenced_diff_err) = CodingEdit::parse_model_response($fenced_diff_reply);
+ok($fenced_diff, 'a unified diff in ```diff fences is accepted') or diag $fenced_diff_err;
+like($fenced_diff->{'diff'} // '', qr/^--- a\/perl\/thing\.pl/m, 'the fenced diff body is kept');
+
+my ($garbage, $garbage_err) = CodingEdit::parse_model_response("I could not find that file.\n");
+ok(!defined $garbage, 'prose with no JSON object or diff is rejected');
+like($garbage_err // '', qr/neither a JSON object nor a unified diff/,
+	'the rejection names both accepted forms');
+
 # --- the assembled context and the dry run ----------------------------------
 my $ctx = fixture_context();
 my $wt  = fixture_worktree();
@@ -339,6 +368,25 @@ my ($diff_rc, $diff_out) = run_agent(
 );
 is($diff_rc, 0, 'a unified diff exits 0');
 is(read_file("$wt/perl/thing.pl"), "use strict;\nprint \"diffed\\n\";\n", 'the diff applied');
+
+# --- a garbage reply is logged before it is rejected -------------------------
+my $garbage_resp = write_responder("$ctx/responder-garbage.pl", <<'RESP');
++{
+	call => sub {
+		return "I cannot help with that: no file named.\n";
+	},
+}
+RESP
+
+my ($garbage_rc, $garbage_out) = run_agent(
+	worktree => $wt,
+	args     => [ '--context-dir', $ctx, '--responder', $garbage_resp, '--max-turns', '1' ],
+);
+is($garbage_rc, 1, 'a garbage reply exits 1');
+like($garbage_out, qr/----- BEGIN RAW REPLY -----/, 'the raw reply is logged before the rejection');
+like($garbage_out, qr/I cannot help with that: no file named\./, 'the exact reply is in the agent log');
+like($garbage_out, qr/unusable reply .*neither a JSON object nor a unified diff/,
+	'the log also names why it was rejected');
 
 # --- the turn cap -------------------------------------------------------------
 my $log = "$ctx/turns.log";
