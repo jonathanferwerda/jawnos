@@ -94,6 +94,7 @@
 			<div class="balance_chart_head">
 				<span class="balance_title">
 					<b><%= &subs::lang('configure.balance_drop') %></b>
+					<% if ($balance_chart->{'tz'}) { %><span class="cfg-note" hint="Times are in this machine's zone"><%= $balance_chart->{'tz'} %></span><% } %>
 					<% if (@balance_series) { %>
 						<select class="balance_provider" aria-label="<%= &subs::lang('configure.provider') %>">
 							<% foreach my $series ( @balance_series ) { %>
@@ -201,6 +202,9 @@
 									<% } %>
 									<% if (@{ $wd->{'roles'} || [] }) { %>
 										<p class="cfg-note balance_roles"><%= &subs::lang('configure.spend_by_role', join(' · ', map { $_->{'label'} . ' ' . sprintf('%.0f%%', $_->{'share'}) } @{ $wd->{'roles'} })) %></p>
+									<% } %>
+									<% if (($wd->{'house_tokens'} || 0) > 0) { %>
+										<p class="cfg-note balance_house_tokens"><%= &subs::lang('configure.house_tokens', $wd->{'house_tokens'}) %></p>
 									<% } %>
 									<%# The same window for every account, side by side. Two balances
 									   with different sizes share no useful axis, so the comparison is

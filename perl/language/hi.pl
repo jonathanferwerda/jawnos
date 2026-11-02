@@ -144,6 +144,7 @@ $catalog{'hi'} = {
 		'configure.bucket_model' => 'मुख्यतः {0}',
 		'configure.bucket_models' => 'मॉडल {0}',
 		'configure.role_other' => 'अन्य',
+		'configure.house_tokens' => 'घर के टोकन {0}',
 		'configure.spend_by_role' => 'भूमिका के अनुसार: {0}',
 		'configure.cost_per_1k' => '{0} प्रति 1 हज़ार टोकन',
 		'configure.topup_marker' => 'टॉप-अप +{0} {1} बजे',

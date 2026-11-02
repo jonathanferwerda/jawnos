@@ -144,6 +144,7 @@ $catalog{'ar'} = {
 		'configure.bucket_model' => 'غالبًا {0}',
 		'configure.bucket_models' => 'النماذج {0}',
 		'configure.role_other' => 'أخرى',
+		'configure.house_tokens' => 'توكنات المنزل {0}',
 		'configure.spend_by_role' => 'حسب الدور: {0}',
 		'configure.cost_per_1k' => '{0} لكل ألف توكن',
 		'configure.topup_marker' => 'تعبئة +{0} في {1}',

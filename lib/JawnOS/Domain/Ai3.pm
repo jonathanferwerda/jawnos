@@ -664,6 +664,22 @@ sub ai_balance_chart {
 		$spend_by_window{$window} = &ai_spend_buckets($BALANCE_GRANULARITY{$window}, $since_key);
 		$roles_by_window{$window} = &ai_spend_roles($since_key);
 	}
+	# Everything the house spent in tokens, whichever account served it. A
+	# balance can fall with no token count beside it - the traffic went to a
+	# local or a peer's model, or came from a machine that has not recorded it
+	# yet - and this is what tells a person the tokens were spent somewhere.
+	my %house_tokens;
+	foreach my $window ( @BALANCE_WINDOWS ) {
+		my $sum = 0;
+		foreach my $provider ( keys %{ $spend_by_window{$window} || {} } ) {
+			foreach my $slot ( values %{ $spend_by_window{$window}->{$provider} } ) {
+				$sum += $slot->{'tokens'} || 0;
+			}
+		}
+		$house_tokens{$window} = $sum;
+	}
+	my $zone = localtime();
+	my $tz = ref $zone ? $zone->strftime('%Z') : '';
 	my (@series, @unconverted);
 	my (%seen_unconverted, $converted_any);
 	foreach my $row ( @{ $report->{'rows'} || [] } ) {
@@ -710,7 +726,7 @@ sub ai_balance_chart {
 			my $per_k = ($bars->{'tokens'} > 0 && @{ $bars->{'buckets'} } && $bars->{'buckets'}->[0]{'tracked'})
 				? ($bars->{'total'} / $bars->{'tokens'}) * 1000
 				: undef;
-			$windows{$window} = { line => $line, bars => $bars, roles => \@roles, per_k => $per_k };
+			$windows{$window} = { line => $line, bars => $bars, roles => \@roles, per_k => $per_k, house_tokens => $house_tokens{$window} };
 		}
 		push @series, {
 			provider        => $provider,
@@ -743,6 +759,7 @@ sub ai_balance_chart {
 	return {
 		at          => ($report->{'at'} || 0),
 		base        => $base,
+		tz          => $tz,
 		converted   => ($converted_any ? 1 : 0),
 		unconverted => \@unconverted,
 		windows     => [ @BALANCE_WINDOWS ],

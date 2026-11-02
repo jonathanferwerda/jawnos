@@ -144,6 +144,7 @@ $catalog{'ja'} = {
 		'configure.bucket_model' => '主に {0}',
 		'configure.bucket_models' => 'モデル {0}',
 		'configure.role_other' => 'その他',
+		'configure.house_tokens' => '家全体のトークン {0}',
 		'configure.spend_by_role' => '役割別: {0}',
 		'configure.cost_per_1k' => '{0} / 1k トークン',
 		'configure.topup_marker' => '入金 +{0}（{1}）',

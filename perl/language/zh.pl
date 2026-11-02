@@ -144,6 +144,7 @@ $catalog{'zh'} = {
 		'configure.bucket_model' => '主要是 {0}',
 		'configure.bucket_models' => '模型 {0}',
 		'configure.role_other' => '其他',
+		'configure.house_tokens' => '全屋令牌 {0}',
 		'configure.spend_by_role' => '按角色：{0}',
 		'configure.cost_per_1k' => '每千令牌 {0}',
 		'configure.topup_marker' => '在 {1} 充值 +{0}',

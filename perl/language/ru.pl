@@ -144,6 +144,7 @@ $catalog{'ru'} = {
 		'configure.bucket_model' => 'в основном {0}',
 		'configure.bucket_models' => 'Модели {0}',
 		'configure.role_other' => 'Другое',
+		'configure.house_tokens' => 'Токенов дома {0}',
 		'configure.spend_by_role' => 'По роли: {0}',
 		'configure.cost_per_1k' => '{0} за 1 тыс. токенов',
 		'configure.topup_marker' => 'Пополнение +{0} в {1}',

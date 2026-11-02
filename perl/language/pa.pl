@@ -144,6 +144,7 @@ $catalog{'pa'} = {
 		'configure.bucket_model' => 'ਮੁੱਖ ਤੌਰ \'ਤੇ {0}',
 		'configure.bucket_models' => 'ਮਾਡਲ {0}',
 		'configure.role_other' => 'ਹੋਰ',
+		'configure.house_tokens' => 'ਘਰ ਦੇ ਟੋਕਨ {0}',
 		'configure.spend_by_role' => 'ਭੂਮਿਕਾ ਅਨੁਸਾਰ: {0}',
 		'configure.cost_per_1k' => '{0} ਪ੍ਰਤੀ 1 ਹਜ਼ਾਰ ਟੋਕਨ',
 		'configure.topup_marker' => 'ਟਾਪ-ਅੱਪ +{0} {1} ਵਜੇ',

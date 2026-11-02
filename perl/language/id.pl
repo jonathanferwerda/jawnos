@@ -144,6 +144,7 @@ $catalog{'id'} = {
 		'configure.bucket_model' => 'terutama {0}',
 		'configure.bucket_models' => 'Model {0}',
 		'configure.role_other' => 'Lainnya',
+		'configure.house_tokens' => 'Token rumah {0}',
 		'configure.spend_by_role' => 'Menurut peran: {0}',
 		'configure.cost_per_1k' => '{0} per 1k token',
 		'configure.topup_marker' => 'Isi ulang +{0} pukul {1}',

@@ -287,6 +287,24 @@ sub ai_response_text {
 		|| $body->{'candidates'}->[0]->{'content'}->{'parts'}->[0]->{'text'};
 }
 
+# The token counts a reply reports, whatever shape it uses: an OpenAI-style
+# usage object, Cloudflare's nested one, or the prompt_eval_count/eval_count
+# pair an Ollama answers with - a local one or a peer's, which is how the house
+# runs most of its Guide and evaluation work. Undefined when the reply carries
+# neither, so an unmetered call is not banked as a free one.
+sub ai_usage_tokens {
+	my ($body) = @_;
+	return (undef, undef) unless ref $body eq 'HASH';
+	my $usage = $body->{'usage'} || $body->{'result'}->{'usage'} || {};
+	my $in = $usage->{'prompt_tokens'};
+	$in = $usage->{'input_tokens'} unless defined $in;
+	$in = $body->{'prompt_eval_count'} unless defined $in;
+	my $out = $usage->{'completion_tokens'};
+	$out = $usage->{'output_tokens'} unless defined $out;
+	$out = $body->{'eval_count'} unless defined $out;
+	return ($in, $out);
+}
+
 sub ai_chat_raw {
 	my ($model, $messages, $thinking, $role) = @_;
 	my @key_settings = &subs::ai_key_settings();
@@ -330,7 +348,16 @@ sub ai_chat_raw {
 		my $rres = eval { $pua->inactivity_timeout(600)->post($p->{'manager'} . '/manager/ollama_chat?signatorial=' . $me => json => $rp)->result };
 		return (undef, 'could not reach ' . $device . ': ' . ($@ || 'no answer')) unless $rres && $rres->is_success;
 		my $rbody = eval { $rres->json } || {};
-		return ($rbody, undef) if $rbody->{'message'} || $rbody->{'response'};
+		if ($rbody->{'message'} || $rbody->{'response'}) {
+			# The peer's Ollama answers in its own shape: prompt_eval_count and
+			# eval_count, not a usage object. Bank it here, where the role is known,
+			# or the traffic that a shared model serves would have no token count
+			# anywhere. The peer does not record this call itself, so it is not
+			# counted twice.
+			my ($in, $out) = &ai_usage_tokens($rbody);
+			eval { &subs::ai_spend_note('ollama_remote', $in, $out, ($rbody->{'model'} || $real), $role) };
+			return ($rbody, undef);
+		}
 		return (undef, 'the remote Ollama returned nothing');
 	}
 
@@ -440,13 +467,10 @@ sub ai_chat_raw {
 	}
 	my $body = eval { return $res->json } || {};
 	# Account what the call cost, so the error watch can log its spend and stop
-	# when the day's purse is empty. Providers differ in shape (an OpenAI-style
-	# usage, Cloudflare's own), so take whatever is there.
-	my $usage = $body->{'usage'} || $body->{'result'}->{'usage'} || {};
-	my $in = $usage->{'prompt_tokens'};
-	$in = $usage->{'input_tokens'} unless defined $in;
-	my $out = $usage->{'completion_tokens'};
-	$out = $usage->{'output_tokens'} unless defined $out;
+	# when the day's purse is empty. Providers differ in shape - an OpenAI-style
+	# usage, Cloudflare's own, a bare Ollama's counters - so the parse lives in
+	# one place that knows all of them.
+	my ($in, $out) = &ai_usage_tokens($body);
 	$ai_tokens->{'calls'}++;
 	$ai_tokens->{'in'} += ($in // 0);
 	$ai_tokens->{'out'} += ($out // 0);

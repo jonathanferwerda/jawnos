@@ -364,6 +364,16 @@ is &subs::ai_balance_bars({ buckets => [] }, 320, 48), '', 'no bars draws nothin
 	is &subs::currency_amount_base(70, 'USD'), 98, 'the house currency is the default target';
 }
 
+# ---- the token counts a reply reports ---------------------------------------
+is_deeply [ &subs::ai_usage_tokens({ usage => { prompt_tokens => 12, completion_tokens => 5 } }) ],
+	[ 12, 5 ], 'an OpenAI-style usage is read';
+is_deeply [ &subs::ai_usage_tokens({ result => { usage => { input_tokens => 7, output_tokens => 3 } } }) ],
+	[ 7, 3 ], "and Cloudflare's nested one";
+is_deeply [ &subs::ai_usage_tokens({ prompt_eval_count => 40, eval_count => 9 }) ],
+	[ 40, 9 ], "and an Ollama's own counters, local or a peer's";
+is_deeply [ &subs::ai_usage_tokens({ message => { content => 'x' } }) ],
+	[ undef, undef ], 'a reply with no counts is unmetered, not free';
+
 # ---- the assembled chart ----------------------------------------------------
 my $report = {
 	at => $now,
@@ -446,7 +456,10 @@ my $report = {
 	local *subs::ai_spend_buckets = sub {
 		my ($granularity, $since) = @_;
 		return $granularity eq 'day'
-			? { deepseek => { '2023-11-14' => { tokens => 1000, calls => 5, models => { 'gpt-4o' => 1000 } } } }
+			? {
+				deepseek   => { '2023-11-14' => { tokens => 1000, calls => 5, models => { 'gpt-4o' => 1000 } } },
+				openrouter => { '2023-11-14' => { tokens => 500,  calls => 2, models => { 'openrouter/auto' => 500 } } },
+			}
 			: {};
 	};
 	local *subs::ai_spend_roles = sub { {} };
@@ -465,8 +478,10 @@ my $report = {
 	ok defined $wd->{'per_k'}, 'the week has a price per thousand tokens';
 	cmp_ok abs($wd->{'per_k'} - (30 / 1000 * 1000)), '<', 0.001,
 		'which is the spend over the tokens';
+	is $wd->{'house_tokens'}, 1500, 'and the house total adds every account';
 	is scalar @{ $wd->{'compare'} }, 2, 'and both accounts are compared';
 	is $wd->{'compare'}->[0]->{'label'}, 'DeepSeek', 'by name';
+	ok length $chart->{'tz'}, 'and the chart names the clock it times its bars by';
 }
 
 my $no_rows = &subs::ai_balance_chart({ at => $now, rows => [], history => { deepseek => \@points } }, $now);

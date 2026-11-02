@@ -144,6 +144,7 @@ $catalog{'de'} = {
 		'configure.bucket_model' => 'überwiegend {0}',
 		'configure.bucket_models' => 'Modelle {0}',
 		'configure.role_other' => 'Andere',
+		'configure.house_tokens' => 'Token im Haus {0}',
 		'configure.spend_by_role' => 'Nach Rolle: {0}',
 		'configure.cost_per_1k' => '{0} pro 1k Token',
 		'configure.topup_marker' => 'Aufladung +{0} um {1}',

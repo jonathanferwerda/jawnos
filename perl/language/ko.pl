@@ -144,6 +144,7 @@ $catalog{'ko'} = {
 		'configure.bucket_model' => '주로 {0}',
 		'configure.bucket_models' => '모델 {0}',
 		'configure.role_other' => '기타',
+		'configure.house_tokens' => '집 전체 토큰 {0}',
 		'configure.spend_by_role' => '역할별: {0}',
 		'configure.cost_per_1k' => '{0} / 1k 토큰',
 		'configure.topup_marker' => '충전 +{0} {1}',

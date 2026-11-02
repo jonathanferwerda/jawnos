@@ -144,6 +144,7 @@ $catalog{'bn'} = {
 		'configure.bucket_model' => 'বেশিরভাগ {0}',
 		'configure.bucket_models' => 'মডেল {0}',
 		'configure.role_other' => 'অন্য',
+		'configure.house_tokens' => 'বাড়ির টোকেন {0}',
 		'configure.spend_by_role' => 'ভূমিকা অনুযায়ী: {0}',
 		'configure.cost_per_1k' => '{0} প্রতি হাজার টোকেন',
 		'configure.topup_marker' => 'টপ-আপ +{0} {1}-এ',

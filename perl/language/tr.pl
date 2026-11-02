@@ -144,6 +144,7 @@ $catalog{'tr'} = {
 		'configure.bucket_model' => 'çoğunlukla {0}',
 		'configure.bucket_models' => '{0} modelleri',
 		'configure.role_other' => 'Diğer',
+		'configure.house_tokens' => 'Ev tokenları {0}',
 		'configure.spend_by_role' => 'Role göre: {0}',
 		'configure.cost_per_1k' => '1 bin token başına {0}',
 		'configure.topup_marker' => 'Yükleme +{0} saat {1}',
