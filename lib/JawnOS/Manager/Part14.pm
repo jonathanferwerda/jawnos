@@ -290,40 +290,59 @@ sub manager_reset($c) {
 		# person watching the header cannot.
 		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, skip_toggle => ($seen eq 'yes' ? 1 : 0) }); 
 		$seg->('hdr');
-		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
-		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $timestamp });
-		my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
-			app => $app,
-			uuid => $uuid,
-			timestamp => $timestamp,
-			$duration => (abs $duration) * -1,
-			type => $type
-		},{
-			project => $project
-		});
-		if (!$unit && $model->{'unit'}) {
-			$unit = $model->{'unit'};
-		}
-		elsif (!$unit && $init->{'unit'}) {
-			$unit = $init->{'unit'};
-		}
-		if (!$quantity && $model->{'quantity'}) {
-			$quantity = $model->{'quantity'};
-		}
-		elsif (!$quantity && $init->{'quantity'}) {
-			$quantity = $init->{'quantity'};
-		}
-		if (!$manufacturer && $model->{'manufacturer'}) {
-			$manufacturer = $model->{'manufacturer'};
-		}
-		elsif ($init->{'manufacturer'}) {
-			$manufacturer = $init->{'manufacturer'};
-		}
-		&subs::db_update('appointments', { server_time => &subs::rightNow(), model => $jmodel, options => $joptions, unit => $unit, quantity => $quantity, manufacturer => $manufacturer }, { uuid => $uuid, app => $app });
-		&appointment_stock_movement($c, $app, $type, $quantity, $unit, $timestamp, $uuid) if $type eq 'record';
-		if ($stop_timestamp) {
-			&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_timestamp });
-		}
+		# The row and its header are out. The default model/option sessions can start
+		# (or stop) a chain of child appointments and take seconds; they run in their
+		# own process so the reply and this worker are free.
+		my $fork_c = $c;
+		my $fork_app = $app;
+		my $fork_uuid = $uuid;
+		my $fork_timestamp = $timestamp;
+		my $fork_duration = $duration;
+		my $fork_type = $type;
+		my $fork_project = $project;
+		my $fork_init = $init;
+		my $fork_unit = $unit;
+		my $fork_quantity = $quantity;
+		my $fork_manufacturer = $manufacturer;
+		my $fork_stop_timestamp = $stop_timestamp;
+		my $fork_seen = $seen;
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			&subs::setting_setter({ app => $fork_app, setting => 'toggle', value => 'on' }) if $fork_seen eq 'yes';
+			&subs::intelligent_automation_toggle({ appt_uuid => $fork_uuid, app => $fork_app, 'state' => 'on', timestamp => $fork_timestamp });
+			my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
+				app => $fork_app,
+				uuid => $fork_uuid,
+				timestamp => $fork_timestamp,
+				$fork_duration => (abs $fork_duration) * -1,
+				type => $fork_type
+			},{
+				project => $fork_project
+			});
+			if (!$fork_unit && $model->{'unit'}) {
+				$fork_unit = $model->{'unit'};
+			}
+			elsif (!$fork_unit && $fork_init->{'unit'}) {
+				$fork_unit = $fork_init->{'unit'};
+			}
+			if (!$fork_quantity && $model->{'quantity'}) {
+				$fork_quantity = $model->{'quantity'};
+			}
+			elsif (!$fork_quantity && $fork_init->{'quantity'}) {
+				$fork_quantity = $fork_init->{'quantity'};
+			}
+			if (!$fork_manufacturer && $model->{'manufacturer'}) {
+				$fork_manufacturer = $model->{'manufacturer'};
+			}
+			elsif ($fork_init->{'manufacturer'}) {
+				$fork_manufacturer = $fork_init->{'manufacturer'};
+			}
+			&subs::db_update('appointments', { server_time => &subs::rightNow(), model => $jmodel, options => $joptions, unit => $fork_unit, quantity => $fork_quantity, manufacturer => $fork_manufacturer }, { uuid => $fork_uuid, app => $fork_app });
+			&appointment_stock_movement($fork_c, $fork_app, $fork_type, $fork_quantity, $fork_unit, $fork_timestamp, $fork_uuid) if $fork_type eq 'record';
+			if ($fork_stop_timestamp) {
+				&subs::intelligent_automation_toggle({ appt_uuid => $fork_uuid, app => $fork_app, 'state' => 'off', timestamp => $fork_stop_timestamp });
+			}
+		}, { name => 'appointment models' });
 		$seg->('models');
 
 	}
