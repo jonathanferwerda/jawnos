@@ -14,7 +14,7 @@
 	return $s;
 }; %>
 <% my $kb_units = &Manager::measures_all(); %>
-<% my (%kb, %kb_sym); %>
+<% my %kb_sym = %{ &subs::kb_symbol_map() }; my %kb; %>
 <% foreach my $k ( sort keys %{$kb_units} ) {
 	my $u = $kb_units->{$k};
 	next unless ref $u eq 'HASH';
@@ -40,7 +40,7 @@
 	next unless length $code;
 	$kb{$code} ||= { name => $kb_chars->($f->{'name'} || $code), types => [ 'currency' ], symbol => '' };
 } %>
-<% $kb_sym{'€'} = 'EUR'; $kb_sym{'£'} = 'GBP'; $kb_sym{'¥'} = 'JPY'; $kb_sym{'₹'} = 'INR'; $kb_sym{'₽'} = 'RUB'; $kb_sym{'₩'} = 'KRW'; $kb_sym{'₺'} = 'TRY'; %>
+
 <% $kb_sym{'$'} = $kb_base; %>
 <%# The kinds the type row offers, with a unit to convert from when none was
     typed. Only a kind whose representative unit exists is offered. %>
@@ -129,10 +129,7 @@
 		<div id="soft_kb_suggest_rows" class="soft_kb_convert_rows"></div>
 	</div>
 
-	<%# The symbol keys mix this template's own byte literals with the asset
-	    table's characters; encode_json needs characters or it encodes the bytes
-	    again (Â£, Ã¢ÂÂ¿). chars_map decodes every key once. %>
-	<script id="soft_kb_units" type="application/json"><%== encode_json({ units => \%kb, symbols => &subs::chars_map(\%kb_sym), base => $kb_base, types => \@kb_types }) %></script>
+	<script id="soft_kb_units" type="application/json"><%== encode_json({ units => \%kb, symbols => \%kb_sym, base => $kb_base, types => \@kb_types }) %></script>
 	<%# the core label the letter panel draws for its space bar; soft_keyboard.js
 	    reads it because the keys themselves are built in the browser %>
 	<script id="soft_kb_labels" type="application/json"><%== encode_json({ space => &subs::lang('chat.space') }) %></script>

@@ -14,7 +14,7 @@ use Digest::SHA qw(sha256_hex);
 use File::Slurp qw(read_file);
 use JawnOSTest;
 
-subs::preload('format_name unformat_name path_name html_name http_name chars_map settings_orphan_plan');
+subs::preload('format_name unformat_name path_name html_name http_name kb_symbol_map settings_orphan_plan');
 
 # The database handle is in byte mode, so this is what a stored app name looks
 # like: UTF-8 bytes, not a decoded string.
@@ -61,19 +61,16 @@ is($plan->{'rename'}->[0]->{'to'}, $base . '_2', 'and the replacement is made un
 $plan = &subs::settings_orphan_plan([ $base ]);
 is($plan->{'count'}, 0, 'an already quarantined key is left alone');
 
-my $sym = &subs::chars_map({
-	encode('UTF-8', "£") => 'GBP',
-	"₿"                 => 'BTC',
-	'XRP'               => 'XRP',
-});
-my %by_code = map { $sym->{$_} => $_ } keys %{$sym};
-is(encode('UTF-8', $by_code{'GBP'}), encode('UTF-8', "£"), 'a byte-literal symbol key is decoded once');
-is($by_code{'BTC'}, "₿", 'a character symbol key is left as it is');
-is($by_code{'XRP'}, 'XRP', 'an ASCII key is unchanged');
+my $kbmap = &subs::kb_symbol_map();
+my %by_code = map { $kbmap->{$_} => $_ } keys %{$kbmap};
+is(encode('UTF-8', $by_code{'GBP'}), encode('UTF-8', "£"), 'the pound mark is a character in the table');
+is(encode('UTF-8', $by_code{'EUR'}), encode('UTF-8', "€"), 'the euro mark is a character in the table');
+is(encode('UTF-8', $by_code{'KRW'}), encode('UTF-8', "₩"), 'the won mark is a character in the table');
 
 my $repo = root();
 my $keyboard = read_file("$repo/templates/soft_keyboard.html.ep");
-like($keyboard, qr/chars_map\(\\%kb_sym\)/, 'the keyboard JSON decodes its symbol keys');
+like($keyboard, qr/kb_symbol_map/, 'the keyboard takes its fiat marks from the table');
+unlike($keyboard, qr/\$kb_sym\{'£'\}/, 'the template no longer carries the fiat literals');
 my $script = read_file("$repo/scripts/settings_orphans.pl");
 like($script, qr/settings_orphan_plan/, 'the migration uses the tested plan');
 like($script, qr/sqlite_backup_to_file/, 'it takes a backup before writing');

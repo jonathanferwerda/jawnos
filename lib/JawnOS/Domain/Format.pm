@@ -56,21 +56,20 @@ sub text_chars {
 	return defined $decoded ? $decoded : $text;
 }
 
-# A JSON map whose keys came from two places: a template's own UTF-8 byte
-# literals and table values already decoded to characters. encode_json expects
-# characters and encodes anything else a second time, so decode every key (and
-# any scalar value) once before it is serialised. The soft keyboard's
-# symbols => code table is the caller.
-sub chars_map {
-	my ($map) = @_;
-	return {} unless ref $map eq 'HASH';
-	my %out;
-	for my $key (keys %{$map}) {
-		my $value = $map->{$key};
-		$value = &text_chars($value) if defined $value && !ref $value;
-		$out{ &text_chars($key) } = $value;
-	}
-	return \%out;
+# The soft keyboard's fiat marks. They live here, in a use utf8 file, rather
+# than as literals in the template: a template can be compiled as Latin-1, and
+# encode_json then writes Â£ instead of £ for every key. The crypto symbols come
+# from @crypto_asset_list (also a use utf8 table) at the call site.
+sub kb_symbol_map {
+	return {
+		'€' => 'EUR',
+		'£' => 'GBP',
+		'¥' => 'JPY',
+		'₹' => 'INR',
+		'₽' => 'RUB',
+		'₩' => 'KRW',
+		'₺' => 'TRY',
+	};
 }
 
 sub format_name {
