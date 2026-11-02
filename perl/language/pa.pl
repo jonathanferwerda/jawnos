@@ -440,6 +440,7 @@ $catalog{'pa'} = {
 		'subagent' => 'ਸਹਾਇਕ ਏਜੰਟ',
 		'subagents' => 'ਸਹਾਇਕ ਏਜੰਟ',
 		'review_before_commit' => 'ਕਮਿਟ ਤੋਂ ਪਹਿਲਾਂ ਸਮੀਖਿਆ',
+		'subagents_running' => 'ਸਬਏਜੰਟ ਕੰਮ ਕਰ ਰਹੇ ਹਨ',
 		'approve' => 'ਮਨਜ਼ੂਰ ਕਰੋ',
 		'reject' => 'ਅਸਵੀਕਾਰ ਕਰੋ',
 		'approved_committing' => 'ਮਨਜ਼ੂਰ — ਕਮਿਟ ਕੀਤੀ ਜਾ ਰਹੀ ਹੈ…',

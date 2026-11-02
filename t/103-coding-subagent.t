@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Coding.pm perl/gb/03_engines_and_tools.pl perl/help.pl
+# tests-for: lib/JawnOS/Domain/Coding.pm lib/JawnOS/Domain/Misc.pm perl/gb/03_engines_and_tools.pl perl/help.pl
 # covers:    the Coding agent's live answer (the on_delta sink) and the `agent`
 #           action: a bounded child loop with read/write scope, its own small
 #           toolset, and a record the parent step carries.
@@ -16,6 +16,7 @@ use Test::More;
 my $root = "$FindBin::Bin/..";
 
 require JawnOS::Domain::Coding;
+require JawnOS::Domain::Misc;
 
 sub source {
 	my ($rel) = @_;
@@ -23,6 +24,10 @@ sub source {
 }
 
 # --- the pure child rules ----------------------------------------------------
+{
+	# the guard resolves symlinks, so it needs a repository to resolve against
+	no warnings 'redefine';
+	local *subs::coding_repo = sub { $root };
 ok(&subs::coding_child_write_ok('lib/JawnOS/Domain/Coding.pm', ['lib/JawnOS/Domain']),
 	'a write under an allowed directory is allowed');
 ok(&subs::coding_child_write_ok('lib/JawnOS/Domain/Coding.pm', ['lib/JawnOS/Domain/Coding.pm']),
@@ -82,6 +87,30 @@ ok(!&subs::coding_child_limit_ok(0, 10, 10), 'a child at the cap is refused');
 ok(!&subs::coding_child_limit_ok(0, 2, 2), 'a child at a lower cap is refused');
 ok(!&subs::coding_child_limit_ok(0, 0, 0), 'a max of 0 refuses every child');
 ok(!&subs::coding_child_limit_ok(1, 0, 10), 'a child at depth 1 may not start one');
+}
+
+# A symlink is not the folder it is named after.
+{
+	my $root = tempdir(CLEANUP => 1);
+	my $outside = tempdir(CLEANUP => 1);
+	mkdir "$root/lib" or die 'mkdir lib';
+	symlink($outside, "$root/lib/out") or die 'symlink out';
+	symlink("$root/lib", "$root/alias") or die 'symlink alias';
+	no warnings 'redefine';
+	local *subs::coding_repo = sub { $root };
+	ok(!&subs::coding_child_write_ok('lib/out/evil.txt', ['lib']),
+		'a symlink out of the repo is not a write under an allowed folder');
+	ok(&subs::coding_child_write_ok('lib/fine.txt', ['lib']),
+		'a real path under the allowed folder is still allowed');
+	ok(!defined &subs::coding_path('lib/out/evil.txt'),
+		'the repo guard refuses a path a symlink takes outside');
+	ok(defined &subs::coding_path('lib/fine.txt'),
+		'and still allows a real path inside');
+	like(&subs::coding_child_batch_clash([
+		{ task => 'a', scope => 'write', paths => ['lib'] },
+		{ task => 'b', scope => 'write', paths => ['alias'] },
+	]), qr/may both write/, 'two names for one folder clash');
+}
 
 # --- the configured subagent cap --------------------------------------------
 {
@@ -277,6 +306,8 @@ sub run_fake_job {
 
 # Two write-scope tasks may not share paths; read-only children may overlap.
 {
+	no warnings 'redefine';
+	local *subs::coding_repo = sub { $root };
 	like(&subs::coding_child_batch_clash(
 		[ { task => 'a', scope => 'write', paths => ['lib/JawnOS'] },
 		  { task => 'b', scope => 'write', paths => ['lib/JawnOS/Domain'] } ]),
@@ -327,6 +358,7 @@ sub run_fake_job {
 	my $dir = tempdir(CLEANUP => 1);
 	my $pid_log = "$dir/pids";
 	my %state;
+	my @snaps;
 	my @executed;
 	my %commit_touched;
 	my $parent_calls = 0;
@@ -334,6 +366,7 @@ sub run_fake_job {
 	local $ENV{'SUBPID_LOG'} = $pid_log;
 	{
 		no warnings 'redefine';
+		local *subs::coding_repo = sub { $root };
 		local *subs::rightNow = sub { 1000 };
 		local *subs::setting_grabber = sub {
 			my ($arg) = @_;
@@ -365,7 +398,14 @@ sub run_fake_job {
 			$type = 'text' unless defined $type && length $type;
 			return join '', map { $_->{'text'} } grep { ($_->{'type'} // '') eq $type } @{ $parts || [] };
 		};
-		local *subs::coding_run_state_save = sub { $state{ $_[0] } = $_[1]; 1 };
+		local *subs::coding_run_state_save = sub {
+			$state{ $_[0] } = $_[1];
+			push @snaps, {
+				children => $_[1]{'children'},
+				current  => (ref $_[1]{'current'} eq 'HASH' ? { %{ $_[1]{'current'} } } : $_[1]{'current'}),
+			};
+			1;
+		};
 		local *subs::coding_run_state_load = sub { $state{ $_[0] } || {} };
 		local *subs::coding_run_push = sub { 1 };
 		local *subs::coding_review_setting = sub { 0 };
@@ -394,6 +434,14 @@ sub run_fake_job {
 	is(scalar(keys %{ +{ map { $_ => 1 } @pids } }), 2, 'and they asked from two different processes');
 	is_deeply([ sort keys %commit_touched ], [ 'docs/kid.md' ],
 		"a subagent's write reaches the parent's commit");
+	# the panel is told the batch is running, and how far it has got
+	my @prog = grep { ref $_->{'current'} eq 'HASH' && ($_->{'current'}{'state'} // '') eq 'subagents' } @snaps;
+	ok(scalar @prog, 'a batch is shown as subagents working');
+	is($prog[0]{'current'}{'total'}, 2, 'with the size of the batch');
+	is($prog[0]{'current'}{'done'}, 0, 'starting at none done');
+	my @done = map { $_->{'current'}{'done'} } @prog;
+	ok(scalar(grep { $_ >= 1 } @done), 'and counts a child as it finishes');
+	is((sort { $a <=> $b } @done)[-1], 2, 'until the batch is complete');
 }
 
 # A batch whose write scopes overlap is refused whole, and the run continues.
@@ -403,6 +451,7 @@ sub run_fake_job {
 	my $job = FakeJob->new;
 	{
 		no warnings 'redefine';
+		local *subs::coding_repo = sub { $root };
 		local *subs::rightNow = sub { 1000 };
 		local *subs::setting_grabber = sub {
 			my ($arg) = @_;

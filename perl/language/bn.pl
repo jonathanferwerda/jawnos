@@ -440,6 +440,7 @@ $catalog{'bn'} = {
 		'subagent' => 'সহায়ক এজেন্ট',
 		'subagents' => 'সহায়ক এজেন্ট',
 		'review_before_commit' => 'কমিট করার আগে পর্যালোচনা করুন',
+		'subagents_running' => 'সাবএজেন্টরা কাজ করছে',
 		'approve' => 'অনুমোদন করুন',
 		'reject' => 'প্রত্যাখ্যান করুন',
 		'approved_committing' => 'অনুমোদিত — কমিট করা হচ্ছে…',

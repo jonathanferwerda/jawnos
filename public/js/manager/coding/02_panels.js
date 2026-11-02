@@ -268,6 +268,11 @@ function codingChatNow(mount, current) {
 	var text = '';
 	if (state === 'thinking') { text = codingT('Thinking…'); }
 	else if (state === 'acting') { text = codingT('Running {0}…', codingChatLine(c.action || {})); }
+	else if (state === 'subagents') {
+		var total = parseInt(c.total, 10) || 0;
+		var done = parseInt(c.done, 10) || 0;
+		text = codingT('subagents_running') + (total ? ' ' + done + '/' + total : '');
+	}
 	var line = log.find('.coding_chat_now').first();
 	if (!text) { line.remove(); return; }
 	var node = log[0];

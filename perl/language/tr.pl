@@ -440,6 +440,7 @@ $catalog{'tr'} = {
 		'subagent' => 'Alt ajan',
 		'subagents' => 'Alt ajanlar',
 		'review_before_commit' => 'Commit öncesi incele',
+		'subagents_running' => 'Alt ajanlar çalışıyor',
 		'approve' => 'Onayla',
 		'reject' => 'Reddet',
 		'approved_committing' => 'Onaylandı — commit yapılıyor…',

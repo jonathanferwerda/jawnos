@@ -27,6 +27,7 @@ use Minion;
 use File::Temp ();
 use Digest::SHA ();
 use POSIX ();
+use Cwd ();
 
 # The coding queue is its own SQLite file, not the tree's minion.db. The master
 # wipes ~/.president on a reload (that is how the tree gets a clean run state),
@@ -300,6 +301,31 @@ sub coding_child_limit_ok {
 	return 1;
 }
 
+# The real path of $abs, resolving symlinks in the part that already exists. A
+# path that does not exist yet is resolved through its deepest existing ancestor,
+# so a guard can answer for a file the agent is about to create. Empty when the
+# path cannot be resolved at all.
+sub coding_real_path {
+	my $abs = defined $_[0] ? "$_[0]" : '';
+	return '' unless length $abs;
+	my @rest;
+	my $p = $abs;
+	$p =~ s{/+$}{} unless $p eq '/';
+	while (1) {
+		my $real = Cwd::abs_path($p);
+		if (defined $real && length $real) {
+			return @rest ? "$real/" . join('/', reverse @rest) : $real;
+		}
+		last if $p eq '/' || $p eq '.';
+		my ($base) = $p =~ m{([^/]+)$};
+		last unless defined $base && length $base;
+		unshift @rest, $base;
+		$p =~ s{/[^/]+$}{};
+		$p = '/' unless length $p;
+	}
+	return '';
+}
+
 # The same normalisation the repo guard uses (drop a leading ./ or /, and a
 # trailing /), kept in one place so a path is compared one way everywhere. A
 # scope written as ./ or / means the repo root, not nothing.
@@ -330,12 +356,26 @@ sub coding_child_write_ok {
 	}
 	# the one file in the scratch folder that must never be overwritten
 	return 0 if $rel eq '.shots/ticket.txt';
+	# The name is not the file: a symlink inside the repo can point anywhere.
+	# Judge the file it really names, and refuse it when that is out of the repo.
+	my $repo = &subs::coding_repo();
+	my $repo_real = (defined $repo && length $repo) ? &coding_real_path($repo) : '';
+	my $full_real = $repo_real ? &coding_real_path("$repo/$rel") : '';
+	if ($repo_real && length $full_real) {
+		return 0 unless $full_real eq $repo_real || index($full_real, "$repo_real/") == 0;
+	}
 	foreach my $allowed (@{$paths}) {
 		my $dir = &coding_child_norm_path($allowed);
 		next unless length $dir;
 		next if $dir =~ m{(^|/)\.\.(/|$)};
-		return 1 if $dir eq '.' || $dir eq '';
-		return 1 if $rel eq $dir || index($rel, "$dir/") == 0;
+		return 1 if $dir eq '.';
+		next unless $rel eq $dir || index($rel, "$dir/") == 0;
+		# the string says yes; the folder it really names must say yes too
+		next unless $repo_real && length $full_real;
+		my $dir_real = &coding_real_path("$repo/$dir");
+		next unless length $dir_real;
+		return 1 if $full_real eq $dir_real || index($full_real, "$dir_real/") == 0;
+		return 0;
 	}
 	return 0;
 }
@@ -521,6 +561,8 @@ sub coding_child_batch_clash {
 		next unless ref $t->{'paths'} eq 'ARRAY';
 		push @writes, [ $i + 1, $t ];
 	}
+	my $repo = &subs::coding_repo();
+	my $repo_ok = defined $repo && length $repo ? 1 : 0;
 	for my $a ( 0 .. $#writes ) {
 		for my $b ( $a + 1 .. $#writes ) {
 			my ($na, $ta) = @{ $writes[$a] };
@@ -530,6 +572,14 @@ sub coding_child_batch_clash {
 					my $px = &coding_child_norm_path($x);
 					my $py = &coding_child_norm_path($y);
 					next unless length $px && length $py;
+					# judge the folder each scope really names: two names for one
+					# folder (a symlink, a different spelling) clash just the same
+					if ($repo_ok) {
+						my $rx = &coding_real_path("$repo/$px");
+						my $ry = &coding_real_path("$repo/$py");
+						$px = $rx if length $rx;
+						$py = $ry if length $ry;
+					}
 					my $clash = ($px eq '.' || $py eq '.'
 						|| $px eq $py
 						|| index($px, "$py/") == 0
@@ -541,6 +591,23 @@ sub coding_child_batch_clash {
 		}
 	}
 	return '';
+}
+
+# One child's record, off the file it wrote. A missing or unreadable file is a
+# refusal record, never a hole in the list the parent is handed.
+sub coding_child_record_read {
+	my ($scratch, $slot, $task, $stopped) = @_;
+	my $json = '';
+	if (open(my $fh, '<', "$scratch/$slot.json")) {
+		local $/;
+		$json = <$fh>;
+		close $fh;
+	}
+	my $record = length $json ? eval { decode_json($json) } : undef;
+	return $record if ref $record eq 'HASH';
+	return &coding_child_refused($task, length $stopped
+		? "the run was $stopped before this subagent finished"
+		: 'the subagent ended without a record');
 }
 
 # Run a batch of subagent tasks at the same time, one forked child each, and
@@ -614,13 +681,23 @@ sub coding_run_subagents {
 		return $out;
 	}
 	my %alive = map { defined $_ ? ($_ => 1) : () } @pids;
+	my %slot_of = map { defined $pids[$_] ? ($pids[$_] => $_) : () } 0 .. $#pids;
 	my $stopped = '';
 	my $master = $ENV{JAWNOS_MASTER_PID} || 0;
 	while (%alive) {
 		foreach my $pid ( keys %alive ) {
 			my $done = waitpid($pid, POSIX::WNOHANG);
 			# -1 with ECHILD means it was already reaped; -1 on EINTR does not.
-			delete $alive{$pid} if $done == $pid || ($done == -1 && $!{ECHILD});
+			next unless $done == $pid || ($done == -1 && $!{ECHILD});
+			delete $alive{$pid};
+			my $slot = $slot_of{$pid};
+			next unless defined $slot && !defined $records[$slot];
+			# A finished child has written its record; read it now, so the panel
+			# can count it while the others are still working.
+			$records[$slot] = &coding_child_record_read($scratch, $slot, $tasks->[$slot], '');
+			if (ref $opt->{'on_child'} eq 'CODE') {
+				eval { $opt->{'on_child'}->($records[$slot]) };
+			}
 		}
 		last unless %alive;
 		# A run stopped at the person's request, or a house whose master is
@@ -648,19 +725,7 @@ sub coding_run_subagents {
 	}
 	foreach my $slot ( 0 .. $#{$tasks} ) {
 		next if defined $records[$slot];
-		my $json = '';
-		if (open(my $fh, '<', "$scratch/$slot.json")) {
-			local $/;
-			$json = <$fh>;
-			close $fh;
-		}
-		my $record = length $json ? eval { decode_json($json) } : undef;
-		if (ref $record ne 'HASH') {
-			$record = &coding_child_refused($tasks->[$slot], length $stopped
-				? "the run was $stopped before this subagent finished"
-				: 'the subagent ended without a record');
-		}
-		$records[$slot] = $record;
+		$records[$slot] = &coding_child_record_read($scratch, $slot, $tasks->[$slot], $stopped);
 	}
 	$out->{'stopped'} = $stopped;
 	return $out;
@@ -1081,6 +1146,11 @@ sub coding_run_job {
 				}
 				if (@run) {
 					$state->{'children'} = $children + scalar(@run);
+					my $batch_total = scalar @run;
+					# A batch is work in progress, not one silent action: the panel is
+					# told how many are running, and how many have finished.
+					$state->{'current'} = { state => 'subagents', total => $batch_total, done => 0, at => &subs::rightNow() }
+						if $batch_total > 1;
 					&coding_run_state_save($id, $state);
 					&coding_run_push($id, $conversation);
 					my $batch = &coding_run_subagents(\@run, {
@@ -1092,6 +1162,18 @@ sub coding_run_job {
 						count       => $children,
 						max         => $child_max,
 						run         => $id,
+						on_child    => sub {
+							my $cur = ref $state->{'current'} eq 'HASH' ? $state->{'current'} : {};
+							$state->{'current'} = {
+								state => 'subagents',
+								total => $batch_total,
+								done  => ($cur->{'done'} // 0) + 1,
+								at    => &subs::rightNow(),
+							};
+							$state->{'updated'} = &subs::rightNow();
+							&coding_run_state_save($id, $state);
+							&coding_run_push($id, $conversation);
+						},
 					});
 					push @children, @{ $batch->{'records'} };
 					$stop_after = $batch->{'stopped'} if length $batch->{'stopped'};

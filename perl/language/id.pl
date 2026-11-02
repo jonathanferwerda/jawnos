@@ -440,6 +440,7 @@ $catalog{'id'} = {
 		'subagent' => 'Subagen',
 		'subagents' => 'Subagen',
 		'review_before_commit' => 'Tinjau sebelum commit',
+		'subagents_running' => 'Subagen bekerja',
 		'approve' => 'Setujui',
 		'reject' => 'Tolak',
 		'approved_committing' => 'Disetujui — sedang melakukan commit…',

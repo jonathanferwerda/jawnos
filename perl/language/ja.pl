@@ -440,6 +440,7 @@ $catalog{'ja'} = {
 		'subagent' => 'サブエージェント',
 		'subagents' => 'サブエージェント',
 		'review_before_commit' => 'コミット前に確認',
+		'subagents_running' => 'サブエージェントが作業中',
 		'approve' => '承認',
 		'reject' => '却下',
 		'approved_committing' => '承認済み — コミット中…',

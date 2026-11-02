@@ -440,6 +440,7 @@ $catalog{'ru'} = {
 		'subagent' => 'Субагент',
 		'subagents' => 'Субагенты',
 		'review_before_commit' => 'Проверить перед коммитом',
+		'subagents_running' => 'Субагенты работают',
 		'approve' => 'Одобрить',
 		'reject' => 'Отклонить',
 		'approved_committing' => 'Одобрено — выполняется коммит…',

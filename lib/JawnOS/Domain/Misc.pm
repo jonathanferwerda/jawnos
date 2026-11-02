@@ -157,9 +157,21 @@ sub coding_path($rel) {
 	$rel =~ s{^/+}{};
 	return undef if $rel =~ /(^|\/)\.\.(\/|$)/;
 	return undef if $rel =~ /[\x00-\x1f"`\\]/;
-	return undef if $rel =~ m{^(?:\.git|\.president|releases|voices)(?:/|$)};
+	return undef if $rel =~ m{^(?:\.git|\.secrets|\.president|releases|voices)(?:/|$)};
 	return undef if $rel eq 'config.json';
-	return &coding_repo() . ($rel eq '' ? '' : '/' . $rel);
+	# the live ticket is a credential, and it sits in a folder that is otherwise
+	# the agent's scratch space
+	return undef if $rel eq '.shots/ticket.txt';
+	my $repo = &coding_repo();
+	my $abs = $repo . ($rel eq '' ? '' : '/' . $rel);
+	# The name is not the file: a symlink inside the repo can take a path out of
+	# it. Judge where it really goes, and refuse it when that is outside.
+	my $repo_real = &coding_real_path($repo);
+	my $abs_real = &coding_real_path($abs);
+	if (length $repo_real && length $abs_real) {
+		return undef unless $abs_real eq $repo_real || index($abs_real, "$repo_real/") == 0;
+	}
+	return $abs;
 }
 
 sub coding_repo { return &subs::home('~/jawnos'); }

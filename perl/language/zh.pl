@@ -453,6 +453,7 @@ $catalog{'zh'} = {
 		'subagent' => '子代理',
 		'subagents' => '子代理数',
 		'review_before_commit' => '提交前审查',
+		'subagents_running' => '子代理正在工作',
 		'approve' => '批准',
 		'reject' => '拒绝',
 		'approved_committing' => '已批准——正在提交…',

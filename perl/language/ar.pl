@@ -440,6 +440,7 @@ $catalog{'ar'} = {
 		'subagent' => 'وكيل فرعي',
 		'subagents' => 'الوكلاء الفرعيون',
 		'review_before_commit' => 'مراجعة قبل الإيداع',
+		'subagents_running' => 'الوكلاء الفرعيون يعملون',
 		'approve' => 'موافقة',
 		'reject' => 'رفض',
 		'approved_committing' => 'تمت الموافقة — جارٍ الإيداع…',

@@ -440,6 +440,7 @@ $catalog{'ko'} = {
 		'subagent' => '하위 에이전트',
 		'subagents' => '하위 에이전트',
 		'review_before_commit' => '커밋 전 검토',
+		'subagents_running' => '하위 에이전트 작업 중',
 		'approve' => '승인',
 		'reject' => '거절',
 		'approved_committing' => '승인됨 — 커밋 중…',

@@ -440,6 +440,7 @@ $catalog{'it'} = {
 		'subagent' => 'Subagente',
 		'subagents' => 'Subagenti',
 		'review_before_commit' => 'Rivedi prima del commit',
+		'subagents_running' => 'Subagenti al lavoro',
 		'approve' => 'Approva',
 		'reject' => 'Rifiuta',
 		'approved_committing' => 'Approvato — commit in corso…',
