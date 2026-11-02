@@ -17,7 +17,7 @@
   },
   "l3": {
     "ui_failures": { "limit": 0, "level": "fail", "why": "a page that crashes the tree or 5xxes is a failure" },
-    "pages_captured": { "limit": 8, "level": "warn", "why": "below the eight pages the layer asks for" }
+    "pages_captured": { "limit": 8, "min": true, "level": "warn", "why": "below the eight pages the layer asks for" }
   },
   "l4": {
     "cold_start_s": { "limit": 10, "level": "warn", "why": "baseline 6.2-8.1 s on the emulator" },

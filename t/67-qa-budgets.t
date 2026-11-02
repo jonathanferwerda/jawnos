@@ -79,6 +79,16 @@ ok(@named >= 10, 'the budget covers the layers that measure something');
 	$rows = Budget->check({ 'l1.max_ms' => 10 }, $b);
 	%v = map { $_->{'metric'} => $_->{'verdict'} } @$rows;
 	is($v{'l1.max_ms'}, 'pass', 'exactly on the limit passes');
+
+	# A minimum is a different question: seven captured pages against a minimum
+	# of eight is the regression, not a value 'under the limit'.
+	my $min = { l3 => { pages_captured => { limit => 8, min => 1, level => 'warn' } } };
+	$rows = Budget->check({ 'l3.pages_captured' => 7 }, $min);
+	is($rows->[0]->{'verdict'}, 'warn', 'fewer pages than the minimum warns');
+	$rows = Budget->check({ 'l3.pages_captured' => 9 }, $min);
+	is($rows->[0]->{'verdict'}, 'pass', 'more pages than the minimum passes');
+	$rows = Budget->check({ 'l3.pages_captured' => 8 }, $min);
+	is($rows->[0]->{'verdict'}, 'pass', 'exactly the minimum passes');
 }
 
 # --- report -> metrics --------------------------------------------------------

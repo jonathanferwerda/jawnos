@@ -60,15 +60,18 @@ sub load {
 	return $cfg;
 }
 
-# Normalise one entry to { limit, level, why }. A bare number is a warn: a
-# limit that fails a run has to be asked for on purpose.
+# Normalise one entry to { limit, level, why, min }. A bare number is a warn: a
+# limit that fails a run has to be asked for on purpose. `"min": true` means
+# the metric must stay *above* the limit (pages captured, for example), so the
+# direction is part of the budget, not of the caller.
 sub entry {
 	my ($key, $v) = @_;
 	return () unless defined $v;
-	return (limit => $v, level => 'warn', why => '') unless ref $v eq 'HASH';
+	return (limit => $v, level => 'warn', why => '', min => 0) unless ref $v eq 'HASH';
 	my $level = $v->{'level'} || 'warn';
 	$level = 'warn' unless $level eq 'fail';   # never invent a failing level
-	return (limit => $v->{'limit'}, level => $level, why => $v->{'why'} || '');
+	return (limit => $v->{'limit'}, level => $level, why => $v->{'why'} || '',
+		min => ($v->{'min'} ? 1 : 0));
 }
 
 # check(\%metrics, \%budget) -> arrayref of rows, in metric-name order.
@@ -100,12 +103,15 @@ sub check {
 				next;
 			}
 
-			my $verdict = $value > $e{'limit'} ? $e{'level'} : 'pass';
+			my $verdict = $e{'min'}
+				? ($value < $e{'limit'} ? $e{'level'} : 'pass')
+				: ($value > $e{'limit'} ? $e{'level'} : 'pass');
 			push @rows, {
 				metric  => $name,
 				value   => 0 + $value,
 				limit   => 0 + $e{'limit'},
 				level   => $e{'level'},
+				min     => $e{'min'},
 				verdict => $verdict,
 				detail  => $e{'why'} || ($SOURCE{$name} || ''),
 			};
@@ -173,8 +179,9 @@ sub apply {
 	for my $row (@$rows) {
 		next unless $row->{'verdict'} eq 'fail';
 		push @{ $report->{'failures'} },
-			sprintf('budget %s: %.1f > %d (%s)', $row->{'metric'},
-				$row->{'value'}, $row->{'limit'}, $row->{'detail'});
+			sprintf('budget %s: %.1f %s %d (%s)', $row->{'metric'},
+				$row->{'value'}, ($row->{'min'} ? '<' : '>'), $row->{'limit'},
+				$row->{'detail'});
 	}
 	$report->{'budget_warnings'} = scalar grep { $_->{'verdict'} eq 'warn' } @$rows;
 	$report->{'budget_failures'} = scalar grep { $_->{'verdict'} eq 'fail' } @$rows;

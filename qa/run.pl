@@ -686,8 +686,9 @@ $report{'live_after'} = $h->live_snapshot();
 		my $rows = Budget->apply(\%report, $cfg);
 		for my $row (@$rows) {
 			next unless $row->{'verdict'} eq 'fail';
-			$say->(sprintf('  budget %s: %.1f > %d (%s)', $row->{'metric'},
-				$row->{'value'}, $row->{'limit'}, $row->{'detail'}));
+			$say->(sprintf('  budget %s: %.1f %s %d (%s)', $row->{'metric'},
+				$row->{'value'}, ($row->{'min'} ? '<' : '>'), $row->{'limit'},
+				$row->{'detail'}));
 		}
 		$report{'warnings'} += $report{'budget_warnings'};
 		$say->(sprintf('[budgets] %d metric(s): %d fail, %d warn, %d pass, %d not measured',

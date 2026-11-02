@@ -162,7 +162,7 @@ A measurement nobody compares against anything is a chart, not a test.
 | `monitor.rss_slope_mb_per_h` | 48 | **fail** | soak: must not climb |
 | `l2.db_failures` | 0 | **fail** | 10 checks pass |
 | `l3.ui_failures` | 0 | **fail** | 0 |
-| `l3.pages_captured` | 8 | warn | 8 |
+| `l3.pages_captured` | 8 (minimum) | warn | 7-8 |
 | `l4.cold_start_s` | 10 s | warn | 6.2-8.1 s |
 | `l4.pss_mb` | 300 MB | warn | 96-113 MB |
 | `l5.health_s` | 420 s | warn | 285 s (firstboot seed) |
@@ -173,6 +173,8 @@ Rules that keep the file honest:
 - A bare number defaults to **warn**; a limit that fails a run must say
   `"level": "fail"` on purpose.
 - A metric that was not measured is `skip`, never `pass`.
+- A **minimum** (pages captured) is written as `"min": true`; the checker then
+  fails when the value is *below* the limit. Direction belongs to the budget.
 - A budget entry naming a metric `Budget.pm` cannot read is a typo;
   `t/67-qa-budgets.t` fails on it.
 - `l4.jank_pct` is deliberately **not** gated: the emulator is software-rendered
@@ -240,7 +242,7 @@ full JDK, or the layer takes `--apk` / the newest staged APK from `releases/`.
 | --- | --- | --- |
 | table | `l1` full (signed + anonymous) | PASS, 201 requests, p50 14 ms, p95 117 ms; budgets 0 fail, 1 warn (`max_ms` = the store page) |
 | table | `l2` | PASS, 10 checks |
-| table | `l3` | PASS; WebKit `hasMenu: true`, TLS allowed for 127.0.0.1; Chromium 8 pages |
+| table | `l3` | PASS; WebKit `hasMenu: true` (`QAHouse`, 480 nodes); 8 Chromium pages tried, 7 captured — `/manager/store` still exceeds the navigate timeout (the tree survives it now) |
 | table | `l4` emulator + app flows | PASS: cold 8.1 s, warm 0.5 s, PSS 96.3 MB, jank 100/100/100 %, rotation + offline ok, 0 crash/ANR; CDP **skip** (no manager reachable) |
 | table | `l5` boot | health 285 s (HTTP 403 gated), host peak 3093 MB at 3072 MB guest RAM |
 | table | `l5 --contract` | install 41 s; installed boot 24 s, second boot 23 s; **persistence yes** (16 G qcow2) |
