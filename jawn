@@ -53,6 +53,77 @@ my $encoder = Sereal::Encoder->new({ compress => SRL_ZSTD, compress_level => 3 }
 my $decoder = Sereal::Decoder->new();
 no warnings 'uninitialized';
 
+# ---- put back code a half-applied update deleted ---------------------------
+# An update can advance HEAD and then die before it writes the working tree.
+# Observed on the tablet: the APK install killed the tree mid-checkout and 273
+# tracked files - all of perl/ and lib/ - were left missing, so the master died
+# on "Can't locate ./perl/control.pl" and the supervisor could never bring it
+# back. Nothing could heal it either: the code watcher is one of the missing
+# files. So before the first cwd-relative require, restore tracked files that
+# are merely absent. Only deletions are put back; a modified file is work in
+# progress and is left exactly as it is. JAWNOS_NO_TREE_REPAIR=1 opts out.
+# This lives here, in the one file that is running, rather than in perl/ - a
+# helper under perl/ is exactly what an interrupted checkout removes.
+sub tree_repair_git {
+	my ($root) = @_;
+	return undef if $ENV{'JAWNOS_NO_TREE_REPAIR'};
+	return undef unless -e "$root/.git";
+	my @candidates;
+	push @candidates, $ENV{'GIT_BINARY'} if $ENV{'GIT_BINARY'};
+	push @candidates, $ENV{'HOME'} . '/opt-git/git' if $ENV{'HOME'};
+	push @candidates, $ENV{'PREFIX'} . '/bin/git' if $ENV{'PREFIX'};
+	push @candidates, $1 . '/files/usr/bin/git'
+		if ($ENV{'HOME'} || '') =~ m{^(.*)/files/home$};
+	push @candidates, substr($^X, 0, rindex($^X, '/')) . '/git' if $^X =~ m{/};
+	push @candidates, map { "$_/git" } split /:/, ($ENV{'PATH'} || '');
+	foreach my $git (@candidates) {
+		return $git if $git && -x $git;
+	}
+	return undef;
+}
+
+# Restores tracked files that are missing from the working tree and returns
+# (how many came back, a short reason). git itself decides what "tracked but
+# absent" means, and a second ls-files call counts what really returned, so a
+# failed checkout is never reported as a repair.
+sub tree_repair_deleted {
+	my ($root) = @_;
+	$root = '.' unless defined $root && length $root;
+	my $git = &tree_repair_git($root);
+	return (0, 'no git') unless $git;
+	my $missing = '';
+	if (open(my $pipe, '-|', $git, '-C', $root, 'ls-files', '--deleted', '-z')) {
+		local $/;
+		$missing = <$pipe> // '';
+		close $pipe;
+	}
+	else {
+		return (0, 'git failed');
+	}
+	my @paths = grep { length } split /\0/, $missing;
+	return (0, 'nothing missing') unless @paths;
+	my $found = scalar @paths;
+	while (@paths) {
+		my @batch = splice @paths, 0, 100;
+		system($git, '-C', $root, 'checkout', '--', @batch);
+	}
+	my $left = 0;
+	if (open(my $pipe, '-|', $git, '-C', $root, 'ls-files', '--deleted', '-z')) {
+		local $/;
+		my $still = <$pipe> // '';
+		close $pipe;
+		$left = scalar grep { length } split /\0/, $still;
+	}
+	return ($found - $left, 'restored');
+}
+
+# The same repair, on its own, for an operator or a test: no master, no state.
+if (defined(my $only = $ENV{'JAWNOS_TREE_REPAIR_ONLY'})) {
+	my ($repaired, $note) = &tree_repair_deleted($only);
+	print "tree-repair: $repaired $note\n";
+	exit 0;
+}
+
 # One master per machine: the watch socket is the machine's alone, so a launch
 # that finds a master *answering* on it is a second jawn. A bare connect() is no
 # proof of life - children inherit the listening fd, so survivors of a dead
@@ -167,6 +238,14 @@ my $master_stamp = &master_stamp();
 # minutes and a broken file is usually fixed promptly.
 my $master_retry_at = 0;
 $| = 1;
+
+# A tree left with HEAD advanced and its working files missing cannot start:
+# every require below is cwd-relative, and the watcher that would repair it is
+# itself missing. Put those files back first (deletions only, never edits).
+my $tree_root = $master_path =~ m{^(.*)/[^/]+$} ? $1 : '.';
+my ($tree_repaired) = &tree_repair_deleted($tree_root);
+$log->warn("tree repair: restored $tree_repaired tracked file(s) missing from the working tree")
+	if $tree_repaired;
 
 # ---- first run: install dependencies, then run the setup wizard -------------
 &first_run_setup();
