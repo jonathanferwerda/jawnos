@@ -294,6 +294,22 @@ sub coding_child_write_ok {
 	return 0;
 }
 
+# A child's last word is sometimes the action object itself (the model quotes
+# the JSON back), and a display that shows {"action":"done",...} under the
+# parent's step is noise. Peel up to two layers of an action-shaped object and
+# return its text; prose is returned unchanged.
+sub coding_unwrap_final {
+	my ($text) = @_;
+	my $out = defined $text ? "$text" : '';
+	for (1 .. 2) {
+		my $obj = eval { decode_json($out) };
+		last unless ref $obj eq 'HASH' && defined $obj->{'text'} && length $obj->{'text'};
+		$out = "$obj->{'text'}";
+	}
+	$out =~ s/^\s+|\s+$//g;
+	return $out;
+}
+
 # Run one child loop for an `agent` action. It is handed no parent transcript
 # and no sink, so its tokens and its view stay small; it can only answer with
 # the checked toolset, and write only inside the paths it was given. A failure
@@ -351,12 +367,12 @@ sub coding_run_subagent {
 				die(($err || 'the model returned nothing') . "\n");
 			}
 			my $act = &coding_parse_action($text);
-			unless ($act) { $record->{'final'} = $text; last; }
+			unless ($act) { $record->{'final'} = &coding_unwrap_final($text); last; }
 			my $verb = $act->{'action'} // '';
 			# say and done are the child's answer, not another tool step; that
 			# keeps its record to the work it actually did.
 			if ($verb eq 'done' || $verb eq 'say') {
-				$record->{'final'} = $act->{'text'} // '';
+				$record->{'final'} = &coding_unwrap_final($act->{'text'} // '');
 				last;
 			}
 			my $obs;

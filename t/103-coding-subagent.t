@@ -56,6 +56,13 @@ ok(!&subs::coding_child_run_ok('perl scripts/manager_killer.pl'), 'the killer is
 ok(!&subs::coding_child_run_ok('git commit -m x'), 'a commit is refused');
 ok(!&subs::coding_child_run_ok('git push'), 'a push is refused');
 
+is(&subs::coding_unwrap_final(q({"action":"done","text":"the answer"})), 'the answer',
+	'a final that is an action object is unwrapped');
+is(&subs::coding_unwrap_final(q({"action":"done","text":"{\"action\":\"done\",\"text\":\"nested\"}"})), 'nested',
+	'a nested action is unwrapped twice');
+is(&subs::coding_unwrap_final('  plain prose  '), 'plain prose', 'prose is trimmed, not changed');
+is(&subs::coding_unwrap_final(undef), '', 'an empty final stays empty');
+
 ok(&subs::coding_child_limit_ok(0, 0), 'the parent may start its first child');
 ok(&subs::coding_child_limit_ok(0, 1), 'the parent may start its second child');
 ok(!&subs::coding_child_limit_ok(0, 2), 'a third child is refused');
