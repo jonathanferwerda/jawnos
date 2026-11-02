@@ -117,8 +117,10 @@ like($app_back, qr/if \(response && response\['header'\] && typeof jawnosHeaderA
 
 like($part14, qr/\$returner->\{'header'\} = \$appt_header if defined \$appt_header && length \$appt_header;/,
 	'a reset returns the header it just rendered');
-like($world, qr/if \(\$data->\{'header_only'\}\) \{\s*return wantarray \? \(\$header, \$appts\) : \$header;/s,
-	'a header-only render skips the alarm walk and centre view');
+like($world, qr/unless \(\$data->\{'header_only'\}\) \{\s*foreach my \$a \( \@\{ \(\$appts->\{\$app\} \|\| \{\}\)->\{'list'\} \|\| \[\] \} \) \{\s*&appt_alarm_setter\(\$a\);\s*\}\s*\}/s,
+	'a header-only render skips the alarm walk');
+like($world, qr/return wantarray \? \(\$header, \$appts\) : \$header;/,
+	'a header-only render just returns the HTML');
 like($ws_pm, qr/elsif \(\(\$data->\{'type'\} \|\| ''\) eq 'resync'\) \{/,
 	'the worker has the resync branch');
 like($ws_pm, qr/my \$cached_header = eval \{ &subs::cache_get\(\{ app => \$ra, context => 'header' \}\) \} \|\| \{\};/,

@@ -152,8 +152,9 @@ sub action_41155 {
 	my $deleter = &delete_app($app,$uuid,$server_time,'manual delete');
 	&padlock_time_extender($c);
 
-	my $cv = &centre_view_grabber({ c => $c, app => &subs::unformat_name($app), timestamp => $timestamp, cached => 'no' });
-	$c->render(json => { centre_view => $cv, deleter => $deleter });
+	# delete_app sends the header at once and forks the window render; the reply
+	# only needs the deleted row's own status.
+	$c->render(json => { deleter => $deleter });
 
 }
 

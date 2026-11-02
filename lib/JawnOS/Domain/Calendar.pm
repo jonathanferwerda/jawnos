@@ -264,27 +264,10 @@ sub appt_header_printer {
 	my $data = shift;
 	my $app = $data->{'app'};
 
-	# A press wants the redraw, not the HTML in its reply. Run the whole header
-	# worker in a subprocess - the render, its push, the alarm walk and the centre
-	# view - and hand this caller nothing, so the route can answer the press before
-	# the redraw starts. A caller that needs the HTML (the centre view's wrapper, a
-	# reconnect's resync) never passes defer.
-	if ($data->{'defer'} && !$data->{'header_only'}) {
-		my %deferred = %$data;
-		delete $deferred{'defer'};
-		&subs::subprocessor(sub {
-			Mojo::IOLoop->reset;
-			# source=centre_view_grabber runs the alarm walk inline and does not fork
-			# again; this process is the fork the old header worker used to be.
-			my ($html, $appts) = &appt_header_printer({ %deferred, source => 'centre_view_grabber' });
-			&Manager::centre_view_grabber({ app => &subs::unformat_name($deferred{'app'}), appts => $appts, header => $html, timestamp => &subs::rightNow(), cached => 'no' });
-		}, { name => 'header worker' });
-		return wantarray ? ('', undef) : '';
-	}
-
-	# The header draws only the app's newest/oldest rows; the wrapper's details
-	# form is the thing that needs __accounts/__projects. Skip the marker read
-	# here and let the centre view build them when it renders the wrapper.
+	# The header is the fast half: read its two rows, render, cache and push it.
+	# The window render is the slow half, and it belongs to the caller - a start or
+	# stop forks centre_view_grabber after this so the new header is on screen
+	# before the default models and options have been started or stopped.
 	my $appts = $data->{'appts'} || &subs::log_reader({ app => $app, view => 'centre_view', header => 1 });
 	&appt_toggle_checker($app);
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
@@ -299,35 +282,13 @@ sub appt_header_printer {
 	unless (($data->{'broadcast'} // '') eq 'no' || ($data->{'source'} // '') eq 'ws') {
 		&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
 	}
-	# A caller that only needs the HTML - a reconnect asking what the reopened
-	# windows are wearing - takes the header and stops here. The alarm walk and
-	# the centre-view render are work nobody asked that caller for, and the
-	# centre view is the expensive one.
-	if ($data->{'header_only'}) {
-		return wantarray ? ($header, $appts) : $header;
-	}
-	# The alarm poke walks the header's own rows, and a centre-view header read is
-	# bounded to the newest and oldest row (log_reader's centre_view queries are two
-	# `limit 1` reads). On that path the loop is cheap enough to run here: the
-	# subprocess existed for it alone, and it cost a fork on every app open. The
-	# other callers still render the centre view afterwards, which is the work that
-	# wants a process of its own.
-	my $alarm_run = sub {
-		my $list = ($appts->{$app} || {})->{'list'} || [];
-		foreach my $a ( @{$list} ) {
+	# Re-arming the alarms on the rows this header draws is a socket write each,
+	# not a render, so it stays here. A caller that only wants the HTML (a
+	# reconnect's resync) skips it.
+	unless ($data->{'header_only'}) {
+		foreach my $a ( @{ ($appts->{$app} || {})->{'list'} || [] } ) {
 			&appt_alarm_setter($a);
 		}
-	};
-	if (($data->{'source'} // '') eq 'centre_view_grabber') {
-		$alarm_run->();
-	} else {
-		&subs::subprocessor(sub {
-			Mojo::IOLoop->reset;
-			$alarm_run->();
-			# hand the appointments we already loaded to the worker: the render below
-			# would otherwise fetch the same set from the database again
-			&Manager::centre_view_grabber({ app => &subs::unformat_name($app), appts => $appts, header => $header, timestamp => &subs::rightNow(), cached => 'no' });
-		}, { name => 'header worker' });
 	}
 
 	# the caller that also renders the centre view can reuse this fetch instead

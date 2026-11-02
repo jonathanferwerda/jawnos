@@ -228,7 +228,16 @@ sub delete_app($app,$uuid,$server_time,$reason,$silent = 0) {
 		&subs::log_writer('deletion ' . $app . ' '  . $reason);
 
 		&budget_runner($app);
-		&centre_view_grabber({ c => &subs::controller_builder(), app => $app, timestamp => &subs::rightNow(), cached => 'no' }) unless $silent;
+		unless ($silent) {
+			# The header is the fast half and goes out now, so the deleted row leaves
+			# the header at once. The window render is the slow half and is forked so
+			# the delete does not wait for a full redraw.
+			&subs::appt_header_printer({ app => $app, timestamp => &subs::rightNow() });
+			&subs::subprocessor(sub {
+				Mojo::IOLoop->reset;
+				&centre_view_grabber({ app => $app, timestamp => &subs::rightNow(), cached => 'no' });
+			}, { name => 'centre view' });
+		}
 	}
 	return { appts => $appts, status => $status };
 }

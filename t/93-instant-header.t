@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Controller/manager_misc5.pm public/js/manager/manager/06_appointment_distance.js
-# covers:    A start or stop replies at once and leaves the header redraw to the header worker's fork
+# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Manager/Part05.pm lib/JawnOS/Manager/Part32.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Controller/manager_misc5.pm lib/JawnOS/Controller/manager_misc12.pm public/js/manager/manager/06_appointment_distance.js
+# covers:    the header goes out at once; the caller forks the centre-view render after it
 
 use strict;
 use warnings;
@@ -10,42 +10,66 @@ use Test::More;
 use File::Slurp qw(read_file);
 use RepoSource;
 
-# A start or stop changes the appointment header. Rendering it (and the window
-# around it) inside the route made the press wait for the redraw. The press now
-# answers as soon as the row is written: appt_header_printer is told `defer`, it
-# hands the render, its push, the alarm walk and the centre view to a header
-# worker fork, and the route returns. The caller that really does read
-# `response.cv` (the Add press) passes cv=yes and keeps the synchronous render.
+# A start or stop changes the appointment header. The old, fast shape was: render
+# the header, cache it and push it at once, and let the caller fork the
+# centre-view render (the call) in the background. That matters because the press
+# may still have to start or stop default models and options after the header.
+#
+# appt_header_printer is therefore a plain render/cache/push again, with the
+# alarm poke inline and no fork of its own. manager_reset, appointment_writer and
+# delete_app fork centre_view_grabber after it. The Add press, which reads
+# response.cv, keeps the synchronous window.
 
-my $root   = repo_root();
-my $part14 = read_file("$root/lib/JawnOS/Manager/Part14.pm");
-my $calendar = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
-my $reset  = read_file("$root/lib/JawnOS/Controller/manager_misc5.pm");
-my $js     = read_file("$root/public/js/manager/manager/06_appointment_distance.js");
+my $root      = repo_root();
+my $calendar  = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
+my $part14    = read_file("$root/lib/JawnOS/Manager/Part14.pm");
+my $part05    = read_file("$root/lib/JawnOS/Manager/Part05.pm");
+my $part32    = read_file("$root/lib/JawnOS/Manager/Part32.pm");
+my $reset     = read_file("$root/lib/JawnOS/Controller/manager_misc5.pm");
+my $delete    = read_file("$root/lib/JawnOS/Controller/manager_misc12.pm");
+my $js        = read_file("$root/public/js/manager/manager/06_appointment_distance.js");
 
-# --- the press defers the redraw ---------------------------------------------
+# --- the header is the fast half, with no fork of its own -------------------
 
-like($part14, qr/my \$defer_header = \(\$c->param\('cv'\) \/\/ ''\) eq 'yes' \? 0 : 1;/,
-	'only a caller that asks for cv keeps the render in the reply');
-like($part14, qr/unless \(\$defer_header\) \{\s*\$cv = &centre_view_grabber\(/,
-	'the centre view is rendered synchronously only for a cv caller');
-like($part14, qr/\$returner->\{'cv'\} = \$cv;/,
-	'the cv caller still gets the window back');
-my @calls = ($part14 =~ /&subs::appt_header_printer\(\{ app => \$app, timestamp => \$timestamp, defer => \$defer_header \}\);/g);
-is(scalar @calls, 8, 'every reset branch tells the header printer it may defer');
-unlike($part14, qr/&subs::appt_header_printer\(\{ app => \$app, timestamp => \$timestamp \}\);/,
-	'no reset branch still renders the header inline');
+my ($header_sub) = $calendar =~ /(sub appt_header_printer \{.*?\n\}\n)/s;
+ok($header_sub, 'appt_header_printer is one sub');
+unlike($header_sub, qr/subprocessor/,
+	'the header render does not fork; the caller forks the window instead');
+unlike($header_sub, qr/&(?:Manager::)?centre_view_grabber\s*\(/,
+	'the header no longer renders the centre view');
+like($header_sub, qr/foreach my \$a \( \@\{ \(\$appts->\{\$app\} \|\| \{\}\)->\{'list'\} \|\| \[\] \} \) \{\s*&appt_alarm_setter\(\$a\);/s,
+	'the alarm poke runs inline on the rows the header draws');
+like($header_sub, qr/&subs::cache_set\(\{ app => \$app, context => 'header'/,
+	'the header is cached');
+like($header_sub, qr/Websocket::send\('tab', \{ type => 'header'/,
+	'and pushed at once');
 
-# --- the header worker is the fork -------------------------------------------
+# --- manager_reset: header now, window in a fork ----------------------------
 
-like($calendar, qr/if \(\$data->\{'defer'\} && !\$data->\{'header_only'\}\) \{/,
-	'appt_header_printer has a defer path');
-like($calendar, qr/if \(\$data->\{'defer'\}[\s\S]*?&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;[\s\S]*?source => 'centre_view_grabber'[\s\S]*?&Manager::centre_view_grabber\([\s\S]*?\}, \{ name => 'header worker' \}\)/,
-	'the deferred work is one header worker fork: the render, its push, alarms and centre view');
-like($calendar, qr/return wantarray \? \('', undef\) : '';/,
-	'the deferred caller gets no HTML back, so the route does not wait');
+like($part14, qr/my \$wants_cv = \(\$c->param\('cv'\) \/\/ ''\) eq 'yes' \? 1 : 0;/,
+	'manager_reset knows whether the caller reads cv');
+like($part14, qr/if \(\$wants_cv\) \{\s*\$cv = &centre_view_grabber\(/,
+	'the cv caller gets the window synchronously');
+like($part14, qr/else \{\s*my \$fork_app = \$app;\s*my \$fork_header = \$appt_header;[\s\S]*?&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*&centre_view_grabber\([\s\S]*?\}, \{ name => 'centre view' \}\);/,
+	'the press forks the centre-view call and keeps the header in the reply');
+like($part14, qr/\$returner->\{'header'\} = \$appt_header/,
+	'the reply still carries the header the press just changed');
 
-# --- the reply's time is logged ----------------------------------------------
+# --- appointment_writer and delete_app fork the same call -------------------
+
+like($part05, qr/my \$centre_app = &subs::unformat_name\(\$app->\{'app'\}\);[\s\S]*?&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*&centre_view_grabber\(\{ c => \$c, app => \$centre_app/,
+	'appointment_writer forks the window render');
+like($part32, qr/&subs::appt_header_printer\(\{ app => \$app, timestamp => &subs::rightNow\(\) \}\);[\s\S]*?&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*&centre_view_grabber\(\{ app => \$app/,
+	'delete_app sends the header at once and forks the window render');
+
+# --- the manual delete route no longer renders the window itself ------------
+
+my ($delete_action) = $delete =~ /(sub action_41155 \{.*?\n\}\n)/s;
+ok($delete_action, 'the manual delete action is one sub');
+unlike($delete_action, qr/centre_view_grabber/,
+	'the manual delete reply does not render the window');
+
+# --- the reply's time is logged ---------------------------------------------
 
 like($reset, qr/\$log->info\('reset ' \. \(\$c->param\('type'\) \/\/ '\?'\)/,
 	'the reset route logs its own time, so a slow press can be seen');

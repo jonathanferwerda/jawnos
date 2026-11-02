@@ -330,7 +330,14 @@ sub appointment_writer($c,$app) {
 	&Websocket::send('tab', { console => 'calculator();' });
 	&Websocket::send('tab', { console => 'appointmentDetailGrabber("' . $app->{'app'} . '","' . $app->{'uuid'} .'");' });
 	&Websocket::send('tab', { console => 'continent_record({\'uuid\':\'' . $app->{'uuid'} . '\', \'app\':\'' . $app->{'app'} .'\',\'purpose\':\'app\',\'timestamp\':\'' . $app->{'timestamp'} . '\',\'navigation\':"once" });' });
-	my $cv = &centre_view_grabber({ c => $c, app => &subs::unformat_name($app->{'app'}), timestamp => &subs::rightNow(), cached => 'no' });
+	# The header went out as soon as the row was written. The window render is the
+	# slow half; fork it so the writer - and the default model and option sessions
+	# it starts - does not wait for a full redraw.
+	my $centre_app = &subs::unformat_name($app->{'app'});
+	&subs::subprocessor(sub {
+		Mojo::IOLoop->reset;
+		&centre_view_grabber({ c => $c, app => $centre_app, timestamp => &subs::rightNow(), cached => 'no' });
+	}, { name => 'centre view' });
 	&budget_runner($app->{'app'});
 	# every run: a scope on the each_run cadence queues an evaluation as soon as it
 	# has run, throttled by a Minion lock so a burst is one run, not many

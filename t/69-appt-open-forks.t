@@ -13,8 +13,8 @@ use RepoSource;
 # Opening an app used to fork twice for work that was not a render: once for the
 # centre view's template cache write and once for the header's alarm poke on a
 # centre-view header read. Both are small and local, so both now run in the
-# caller. The render after the alarm poke still gets its own process, and the
-# source=ws broadcast guard is untouched.
+# caller. The header itself stays a plain render/cache/push - the window render
+# is the caller's fork - and the source=ws broadcast guard is untouched.
 
 my $root = repo_root();
 my $part21 = read_file("$root/lib/JawnOS/Manager/Part21.pm");
@@ -34,21 +34,18 @@ like($grabber, qr/warranty => '-10d'/,
 like($grabber, qr/if \(\$@\) \{\s*eval \{ &subs::log_writer\('centre view cache set failed/,
 	'a failed inline write is logged instead of killing the window');
 
-# --- the header alarm poke runs inline on the grabber path ------------------
+# --- the header is the fast half, with no fork of its own -------------------
 
-my ($grabber_branch) = $calendar =~ /if \(\(\$data->\{'source'\} \/\/ ''\) eq 'centre_view_grabber'\) \{(.*?)\} else \{/s;
-ok($grabber_branch, 'appt_header_printer has a centre_view_grabber branch and another caller branch');
-unlike($grabber_branch, qr/subprocessor/,
-	'a centre_view_grabber header does not fork for its alarms');
-like($grabber_branch, qr/\$alarm_run->\(\);/,
-	'the centre_view_grabber header runs the alarm poke inline');
-like($calendar, qr/my \$alarm_run = sub \{\s*my \$list = .*?&appt_alarm_setter\(\$a\);/s,
-	'the inline path still walks the rows through appt_alarm_setter');
-
-# --- other callers keep their worker (it renders the centre view) ----------
-
-like($calendar, qr/\} else \{\s*&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*\$alarm_run->\(\);.*?&Manager::centre_view_grabber\(.*?name => 'header worker'/s,
-	'the other callers still fork a header worker that renders the centre view');
+my ($header_sub) = $calendar =~ /(sub appt_header_printer \{.*?\n\}\n)/s;
+ok($header_sub, 'appt_header_printer is still one sub');
+unlike($header_sub, qr/subprocessor/,
+	'the header render does not fork; the caller forks the window render instead');
+unlike($header_sub, qr/&(?:Manager::)?centre_view_grabber\s*\(/,
+	'the header no longer renders the centre view');
+like($header_sub, qr/foreach my \$a \( \@\{ \(\$appts->\{\$app\} \|\| \{\}\)->\{'list'\} \|\| \[\] \} \) \{\s*&appt_alarm_setter\(\$a\);/s,
+	'the alarm poke runs inline for every caller, walking the rows through appt_alarm_setter');
+like($header_sub, qr/&subs::cache_set\(\{ app => \$app, context => 'header'/, 'the header is cached');
+like($header_sub, qr/Websocket::send\('tab', \{ type => 'header'/, 'the header is pushed');
 
 # --- the source=ws suppression is exactly as it was ------------------------
 
