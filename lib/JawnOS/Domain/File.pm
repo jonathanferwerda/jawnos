@@ -275,8 +275,6 @@ sub cache_set {
 	my $timestamp = $params->{'timestamp'} || &subs::rightNow();
 	my $server_time = &subs::rightNow();
 	my $json_data = encode_sereal $data;
-	my ($db,$database,$sql) = &subs::database_grabber();
-	&cache_delete({ app => $app, context => $context, subcontext => $subcontext });
 	my $warranty;
 	if ($params->{'warranty'}) {
 		$warranty = &subs::ago_calc($params->{'warranty'}, &subs::rightNow());
@@ -284,21 +282,34 @@ sub cache_set {
 	else {
 		$warranty = &subs::ago_calc(&subs::setting_grabber({ app => $app, setting => 'warranty' }), &subs::rightNow()) || &subs::ago_calc(&subs::setting_grabber({ app => 'me', setting => 'warranty' }) || '-10d', &subs::rightNow());
 	}
-	my $lid = undef;
-	my $count = 0;
-
-		my $success = eval { return &db_insert('cache', {
-			app => $app,
-			context => $context,
-			subcontext => $subcontext,
-			data => $json_data,
-			timestamp => $timestamp,
-			server_time => $server_time,
-			warranty => $warranty,
-			device => $device,
+	my $key = { app => $app, context => $context, subcontext => $subcontext, device => $device };
+	my $value = {
+		data => $json_data,
+		timestamp => $timestamp,
+		server_time => $server_time,
+		warranty => $warranty,
+	};
+	# Update the row in place and insert only when there is none. The old
+	# delete-then-insert left a window in which the value did not exist at all,
+	# so a restart (or a refused insert on a busy database) between the two
+	# statements lost the whole cached value - including the balance chart's
+	# rolling month, which lives in one row. An update is one atomic statement:
+	# a crash leaves either the old value or the new one, never neither.
+	my $found = eval { &subs::db_select_simple('cache', ['uuid'], $key) };
+	# If the row cannot even be read, leave whatever is stored alone rather than
+	# inserting a second copy beside it.
+	return unless $found;
+	my $existing = $found->hashes->[0];
+	if ($existing && $existing->{'uuid'}) {
+		&subs::db_update('cache', $value, { uuid => $existing->{'uuid'} });
+	}
+	else {
+		&db_insert('cache', {
+			%{$key},
+			%{$value},
 			uuid => &random_string_creator(25)
 		});
-	};
+	}
 }
 
 sub cache_delete {
