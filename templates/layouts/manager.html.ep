@@ -134,6 +134,13 @@
 			// the built-in apps, from the server's own list (gb::known_appts), so the
 			// client keeps no copy of its own that can drift
 			var jawnos_builtin_apps = <%== encode_json({ map { $_ => 1 } sort keys %{$gb::known_appts} }) %>;
+			// the core bundle is only what every window needs; an app's scripts are
+			// loaded on first open (lazy.js asks /js/manager/app.js for these lists)
+			var jawnos_app_scripts = <%== encode_json(\%Manager::manager_app_scripts) %>;
+			var jawnos_app_entry = <%== encode_json(\%Manager::manager_app_entry) %>;
+			var jawnos_toggle_apps = <%== encode_json(\%Manager::manager_toggle_apps) %>;
+			// a centre view preloaded into #preload may belong to a lazy app
+			var jawnos_preload_app = <%== encode_json($c->param('app') || '') %>;
 			// each scheme's window surface, keyed by its manager colour: jawnosApplyInk
 			// reads this so a live scheme change picks the same curated window shade
 			// the server rendered
@@ -149,6 +156,8 @@
 		<link rel="stylesheet" href="/css/soft_keyboard.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/store.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
+		<%# start the core bundle while the CSS is still arriving %>
+		<link rel="preload" as="script" href="/js/manager/bundle.js?string=<%= $string %>" />
   </head>
 <%# a running start/record appointment with a theme owns the desktop; otherwise
     the Misc manager colour is the system theme %>
@@ -183,8 +192,8 @@
 		     but *before* #preload below: the preloaded window HTML carries an inline
 		     script that uses jQuery UI, so the libraries must already be loaded when
 		     it is parsed. Order matters and the inline windowMaker call stays last.
-		     /js/manager/bundle.js concatenates the manager's own files in this order
-		     (the list lives in Manager.pl: manager_bundle_files). -->
+		     /js/manager/bundle.js is the core (Manager.pl: manager_core_files); an
+		     app's own scripts come from /js/manager/app.js on first open. -->
 		<script src="/js/universal.js?string=<%= $string %>"></script>
 		<% if (&subs::language() ne 'en') { %>
 			<script src="/i18n/ui-<%= &subs::language() %>.js?string=<%= $string %>"></script>
@@ -203,7 +212,12 @@
 
 		</div>
 		<div style="display:none;" id="preload"><%= $website %></div>
-		<script>var preload = $('#preload').text(); var timestamp = Date.now(); $(document).ready(function() { windowMaker(preload,timestamp); });</script>
+		<script>var preload = $('#preload').text(); var timestamp = Date.now(); $(document).ready(function() {
+			if (jawnos_preload_app && typeof jawnosLoadApp === 'function') {
+				jawnosLoadApp(jawnos_preload_app, function () { windowMaker(preload,timestamp); });
+			}
+			else { windowMaker(preload,timestamp); }
+		});</script>
 	</body>
 	<%# these two are not in the bundle; each may now be an index plus parts %>
 	<% for my $script (&subs::js_script_urls('public/js/manager/websocket.js')) { %>

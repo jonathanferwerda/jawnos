@@ -57,8 +57,9 @@ use Sereal::Decoder qw(decode_sereal);
 use Minion;
 use IO::Socket::UNIX;
 use IPC::Open2 qw(open2);
+use IO::Compress::Gzip qw(gzip $GzipError);
 
-our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
+our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, @manager_core_files, %manager_app_scripts, %manager_app_entry, %manager_toggle_apps, $manager_bundle_cache, %manager_chunk_cache, %manager_gzip_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
 sub store_printer($data) {
 	my $type = $data->{'type'};
@@ -233,6 +234,32 @@ sub manager_bundle_paths {
 	}
 	$dir = '/tmp' unless -d $dir;
 	return ($dir . '/manager_bundle.js', $dir . '/manager_bundle.sig');
+}
+
+# A lazy app chunk is built from the same entries and parts as the core bundle
+# and memoised the same way; the key is the digest of the file list so two apps
+# that share the synth do not fight over one cache file.
+sub manager_chunk_paths {
+	my ($key) = @_;
+	$key =~ s/[^A-Za-z0-9_.-]+/_/g;
+	my $dir = &subs::home('~/.president');
+	unless (-d $dir) {
+		eval { require File::Path; File::Path::make_path($dir); };
+	}
+	$dir = '/tmp' unless -d $dir;
+	return ($dir . '/manager_app_' . $key . '.js', $dir . '/manager_app_' . $key . '.sig');
+}
+
+# The browser asks for gzip on every request. The bundle is ~1.5 MB of JS before
+# compression and about a quarter of that after, so one gzip per signature (memoised
+# in the worker) is the cheapest large win on a cold page load. If the module is
+# missing the plain body is served.
+sub js_gzip_body {
+	my ($body) = @_;
+	return '' unless defined $body && length $body;
+	my $out = '';
+	return '' unless gzip \$body => \$out;
+	return $out;
 }
 
 sub js_minifier_command {

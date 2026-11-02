@@ -814,6 +814,7 @@ app->hook(after_static => sub {
 # that folder through subs::js_part_files, so a split needs no change here; the
 # list only says where each app starts in the concatenation.
 our @manager_bundle_files = qw(
+	/js/manager/lazy.js
 	/js/manager/stored.js
 	/js/manager/keyboard.js
 	/js/manager/remote_input.js
@@ -885,6 +886,80 @@ our @manager_bundle_files = qw(
 	/js/manager/phone.js
 	/js/manager/people.js
 );
+
+# Apps that load their scripts when they are first opened. The value is the
+# bundle order, so a chunk runs its files exactly as the one big bundle did;
+# entries shared by two apps (the synth in Studio, the travel markers) are kept
+# in one list and the loader executes each file only once. A file named here is
+# removed from the core bundle; anything not named stays core.
+our %manager_app_scripts = (
+	synth           => [qw(/js/manager/synth_presets.js /js/manager/synth.js)],
+	studio          => [qw(/js/manager/studio.js /js/manager/synth_presets.js /js/manager/synth.js)],
+	marker          => [qw(/js/manager/marker.js)],
+	terminal        => [qw(/js/manager/terminal.js)],
+	travel          => [qw(/js/manager/travel.js)],
+	twirl           => [qw(/js/manager/twirl.js)],
+	editor          => [qw(/js/manager/editor.js)],
+	relational      => [qw(/js/manager/relational.js)],
+	warehouse       => [qw(/js/manager/warehouse.js)],
+	market          => [qw(/js/manager/market.js)],
+	measures        => [qw(/js/manager/measures.js)],
+	budget          => [qw(/js/manager/budget.js)],
+	process_monitor => [qw(/js/manager/monitor.js)],
+	camera          => [qw(/js/manager/camera.js)],
+	network         => [qw(/js/manager/network.js)],
+	phone           => [qw(/js/manager/phone.js)],
+	people          => [qw(/js/manager/people.js)],
+	notes           => [qw(/js/manager/notes.js)],
+	search          => [qw(/js/manager/search.js)],
+	ide             => [qw(/js/manager/ide.js /js/manager/ide_code.js)],
+);
+
+# The entry functions core code may call before the app's own script is there
+# (the Handbook's Today cards, the People crest opening Relational). lazy.js
+# installs a stub for each and the real definition replaces it when the chunk
+# loads. Keep this beside the map so a new lazy app is one edit, not two.
+our %manager_app_entry = (
+	synth           => [qw(pianoInit)],
+	studio          => [qw(studioInit)],
+	marker          => [qw(markerInit)],
+	terminal        => [qw(terminalOpener)],
+	travel          => [qw(travelViewer)],
+	twirl           => [qw(twirlGame)],
+	editor          => [qw(editorInit)],
+	relational      => [qw(relationalInit relationalOpener)],
+	warehouse       => [qw(warehouseInitializer)],
+	market          => [qw(marketOpener)],
+	measures        => [qw(measuresOpener)],
+	budget          => [qw(budgetInit)],
+	process_monitor => [qw(monitorOpener)],
+	people          => [qw(peopleOpener)],
+	ide             => [qw(ideTabPopulator)],
+);
+
+# The start-menu icons are drawn by the server, but each app used to register
+# its own click handler inside its script. The first click therefore has to be
+# caught in core, the chunk loaded, and the click replayed so the app's own
+# handler (or the core Handbook handler for Marker/Terminal/Twirl) runs. The
+# key is the element's id or a class name; lazy.js checks both.
+our %manager_toggle_apps = (
+	synth_toggle => 'synth', studio_toggle => 'studio', marker_toggle => 'marker',
+	terminal_toggle => 'terminal', travel_toggle => 'travel', twirl_toggle => 'twirl',
+	editor_toggle => 'editor', relational_toggle => 'relational', people_toggle => 'people',
+	notes_toggle => 'notes', search_app_toggle => 'search', camera_toggle => 'camera',
+	network_toggle => 'network', phone_toggle => 'phone', ide_toggle => 'ide',
+	budget => 'budget', warehouse_toggle => 'warehouse', measures_toggle => 'measures',
+	market_toggle => 'market', process_monitor_toggle => 'process_monitor',
+);
+
+# The one bundle the page loads up front: everything an app chunk names is gone
+# from it. A file added to the list above but not to any app stays core, so a
+# mistake costs bytes rather than a broken app.
+our @manager_core_files = do {
+	my %lazy = map { $_ => 1 } map { @{$_} } values %manager_app_scripts;
+	grep { !$lazy{$_} } @manager_bundle_files;
+};
+
 our $manager_bundle_cache;
 
 # Where the built bundle is memoised. The in-process cache below only ever helps

@@ -128,6 +128,8 @@ sub store_quote_stock;
 sub store_printer;
 sub editor_maker;
 sub manager_bundle_paths;
+sub manager_chunk_paths;
+sub js_gzip_body;
 sub js_minifier_command;
 sub js_minify;
 sub password_maker;

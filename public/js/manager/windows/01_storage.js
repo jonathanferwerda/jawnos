@@ -202,7 +202,21 @@ function appWindowLoader(i,v) {
 // Load (or reload) a window the right way for its app: some apps have bespoke
 // openers, everything else falls back to the centre view. Shared by
 // windowRetriever (restoring saved windows) and the icon-set refresh.
+//
+// The app's own scripts are a lazy chunk now; wait for them before the window
+// opener calls an init function (pianoInit, studioInit, travelViewer, ...).
 function appWindowOpener(i,timestamp,v) {
+	if (!i) {
+		return;
+	}
+	if (typeof jawnosLoadApp === 'function') {
+		jawnosLoadApp(i, function () { appWindowOpenerNow(i, timestamp, v); });
+		return;
+	}
+	appWindowOpenerNow(i, timestamp, v);
+}
+
+function appWindowOpenerNow(i,timestamp,v) {
 	if (!i) {
 		return;
 	}

@@ -60,15 +60,18 @@ use Minion;
 use IO::Socket::UNIX;
 use IPC::Open2 qw(open2);
 
-our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
+our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, @manager_core_files, %manager_app_scripts, %manager_app_entry, %manager_toggle_apps, $manager_bundle_cache, %manager_chunk_cache, %manager_gzip_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# The page loads this one bundle up front: the scripts every window needs. An
+# app's own scripts are not in it any more; they arrive from /js/manager/app.js
+# when the app is first opened (see %manager_app_scripts).
 # GET /js/manager/bundle.js
 sub action_7407 {
 	my $c = shift;
 	my $dir = 'public';
 	my $sig = '';
 	my @bundle;
-	foreach my $rel (@manager_bundle_files) {
+	foreach my $rel (@manager_core_files) {
 		# An app's index file may carry a folder of parts beside it; the
 		# helper returns the index first, then the parts in name order.
 		my @files = &subs::js_part_files($dir . $rel);
@@ -78,11 +81,14 @@ sub action_7407 {
 			$sig .= $file . ':' . ($st[9] // 0) . ':' . ($st[7] // 0) . ';';
 		}
 	}
-	my $etag = '"' . &subs::md5_sum($sig) . '"';
+	my $gzip = (($c->req->headers->accept_encoding // '') =~ /\bgzip\b/) ? 1 : 0;
+	my $etag = '"' . &subs::md5_sum($sig . ($gzip ? ':gzip' : '')) . '"';
 	$c->res->headers->etag($etag);
 	$c->res->headers->cache_control('no-cache, max-age=0, must-revalidate');
 	$c->res->headers->content_type('application/javascript');
+	$c->res->headers->vary('Accept-Encoding');
 	if (($c->req->headers->if_none_match // '') =~ /\Q$etag\E/) {
+		$c->res->headers->content_encoding('gzip') if $gzip;
 		$c->res->code(304);
 		$c->res->body('');
 		return $c->rendered(304);
@@ -117,7 +123,99 @@ sub action_7407 {
 			$manager_bundle_cache = [$sig, $built];
 		}
 	}
-	$c->res->body($manager_bundle_cache->[1]);
+	my $body = $manager_bundle_cache->[1];
+	if ($gzip) {
+		my $cached = $manager_gzip_cache{$sig};
+		$cached = $manager_gzip_cache{$sig} = js_gzip_body($body) unless defined $cached;
+		if (length $cached) {
+			$c->res->headers->content_encoding('gzip');
+			$body = $cached;
+		}
+	}
+	$c->res->body($body);
+	return $c->rendered(200);
+}
+
+# The app chunks. `files` is a comma-separated list of bundle entries; the route
+# expands each index's parts, runs terser once per distinct list and memoises the
+# result on disk. The list is capped and every entry must be one of the manager's
+# own scripts, so the route cannot be pointed at an arbitrary path.
+# GET /js/manager/app.js?files=...
+sub action_7408 {
+	my $c = shift;
+	my %allowed = map { $_ => 1 } @manager_bundle_files;
+	my @entries;
+	my %seen;
+	foreach my $rel (split /,/, ($c->param('files') // '')) {
+		next unless length $rel && $allowed{$rel} && !$seen{$rel}++;
+		push @entries, $rel;
+		last if @entries >= 24;
+	}
+	unless (@entries) {
+		$c->res->code(400);
+		$c->res->headers->content_type('text/plain');
+		$c->res->body("unknown script list\n");
+		return $c->rendered(400);
+	}
+	my @files;
+	foreach my $rel (@entries) {
+		push @files, &subs::js_part_files('public' . $rel);
+	}
+	my $sig = join ';', map {
+		my @st = stat($_);
+		$_ . ':' . ($st[9] // 0) . ':' . ($st[7] // 0);
+	} @files;
+	my $gzip = (($c->req->headers->accept_encoding // '') =~ /\bgzip\b/) ? 1 : 0;
+	my $etag = '"' . &subs::md5_sum($sig . ($gzip ? ':gzip' : '')) . '"';
+	$c->res->headers->etag($etag);
+	$c->res->headers->cache_control('no-cache, max-age=0, must-revalidate');
+	$c->res->headers->content_type('application/javascript');
+	$c->res->headers->vary('Accept-Encoding');
+	if (($c->req->headers->if_none_match // '') =~ /\Q$etag\E/) {
+		$c->res->headers->content_encoding('gzip') if $gzip;
+		$c->res->code(304);
+		$c->res->body('');
+		return $c->rendered(304);
+	}
+	my $body = $manager_chunk_cache{$sig};
+	unless (defined $body) {
+		my $key = &subs::md5_sum($sig);
+		my ($path, $sigpath) = manager_chunk_paths($key);
+		my $stored = '';
+		if (-s $path && -s $sigpath) {
+			my $stamp = eval { read_file($sigpath) } // '';
+			$stamp =~ s/\s+\z//;
+			$stored = eval { read_file($path) } // '' if $stamp eq $sig;
+		}
+		if (length $stored) {
+			$body = $stored;
+		}
+		else {
+			my $raw = '';
+			foreach my $file (@files) {
+				my $src = eval { read_file($file) } // '';
+				(my $label = $file) =~ s{^public}{};
+				$raw .= "\n;/* $label */\n" . $src . "\n;\n";
+			}
+			$body = js_minify($raw);
+			eval {
+				my $tmp = "$path.$$" . '.tmp';
+				write_file($tmp, $body);
+				rename($tmp, $path) or die "rename $tmp: $!";
+				write_file($sigpath, $sig . "\n");
+			};
+		}
+		$manager_chunk_cache{$sig} = $body;
+	}
+	if ($gzip) {
+		my $cached = $manager_gzip_cache{$sig};
+		$cached = $manager_gzip_cache{$sig} = js_gzip_body($body) unless defined $cached;
+		if (length $cached) {
+			$c->res->headers->content_encoding('gzip');
+			$body = $cached;
+		}
+	}
+	$c->res->body($body);
 	return $c->rendered(200);
 }
 
