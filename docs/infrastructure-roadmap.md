@@ -23,7 +23,7 @@ What this buys, in order:
 2. **A cloud server that is not at 90% of two cores.** Today it runs the tailnet control plane,
    the house's always-on JawnOS server, the public hub, DNS and a mail stack on 2 vCPU.
 3. **One place to run builds** (Gradle, PlatformIO, the suite) with 64 GB and NVMe.
-4. **The VPS freed** for the Elixir app, which takes `thejunderground.com` and its certbot pair.
+4. **The VPS retired** — one host instead of two, and one less thing to patch.
 
 ---
 
@@ -108,8 +108,12 @@ Headscale lists four nodes: `table`, `cloud`, `laptop`, `tablet`.
 | D7 | Any dev container gets a **fresh database** and stays **off the mesh** | decided — a rule |
 | D8 | The house's always-on JawnOS server runs in its **own container**, separate from `dev` | decided |
 | D9 | **The control plane gets its own name under the house wildcard** — | decided |
-| | `headscale.jonathanferwerda.com` — not a bare IP and not the apex. `thejunderground.com` is | |
-| | freed for the Elixir app, which keeps certbot on the VPS. | |
+| | `headscale.jonathanferwerda.com` — not a bare IP and not the apex. The hub is `hub.` under | |
+| | the same wildcard. | |
+| D10 | **32 GB of RAM**, not 64. The measured working set is 15–18 GB at a hard peak, and this box | decided |
+| | never runs the editor or a browser. 64 GB is a convenience, not a requirement. | |
+| D11 | **The VPS is retired** once the migration proves out. It is paid to the next renewal, which | decided |
+| | is the migration window; off-box, rehearsed backups replace it as the insurance. | |
 
 **The cost of D5, stated plainly:** the tailnet's control plane now lives on the box that gets
 snapshotted, rebuilt and rebooting. Mitigations, all in P5:
@@ -137,7 +141,8 @@ and the second container that D8 needs. The "Proxmox is a drain" reputation is Z
   - **`house`** — the always-on JawnOS server and public hub at `hub.jonathanferwerda.com`
     (`3000`, `45545`–`45550`);
   - **`dev`** — Zed remote, the suite, PlatformIO and Gradle builds.
-- **VPS (`cloud`)** — Elixir only, at `thejunderground.com`. Quiet, cheap, always on.
+- **VPS (`cloud`)** — retired after the migration (D11). Elixir becomes a container on the KS-5
+  when it exists (P7); `thejunderground.com` then either points at the KS-5 or lapses.
 - **laptop / table / tablet** — clients, *and* the **LAN manager for the embedded devices**
   (§5). This does not move.
 
@@ -148,13 +153,13 @@ Two certificates already exist, and they already split along this line:
 | Cert | Covers | Renewed by | Expires |
 |---|---|---|---|
 | `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | `scripts/tls_issue.pl`, **DNS-01** through the provider in Configure → Plat → DNS | 2027-01-01 |
-| `thejunderground.com` | apex + `www` | system **certbot** on the VPS | 2026-12-07 |
+| `thejunderground.com` | apex + `www` | system **certbot** on the VPS — retired with it (D11) | 2026-12-07 |
 
 So the tailnet does **not** need the apex, and it does **not** need a certificate of its own: point
 Headscale's `tls_cert_path`/`tls_key_path` at copies of `server/fullchain.pem` and
 `server/privkey.pem` from the `house` tree, and `headscale.jonathanferwerda.com` validates against
-the wildcard. `thejunderground.com` is then entirely the Elixir app's, and certbot stays on the
-VPS with it.
+the wildcard. `thejunderground.com` is then free for the Elixir app, which moves to the KS-5 with
+it (D11); the apex certificate retires with the VPS.
 
 ### Why not the IP, and why not a nameserver
 
@@ -320,7 +325,7 @@ old host kept intact for a rollback.
       Laptop and table first, then the Android devices; do it while every device is in reach.
 - [ ] Move the wildcard's renewal with the repo: whatever triggers `scripts/tls_issue.pl`, plus
       the DNS-provider credentials from Configure → Plat → DNS, must exist on the KS-5.
-      certbot stays on the VPS — it now only renews the Elixir app's certificate.
+      certbot stays on the VPS for now — it retires with it (D11).
 - [ ] Verify: `headscale nodes list` shows table, cloud, laptop and tablet; `tailscale status` on
       the laptop; the DERPMap carries the embedded region.
 - [ ] **Never run both instances at once** — two servers with the same keys and diverging
@@ -331,24 +336,33 @@ old host kept intact for a rollback.
 - **Exit:** every node online through the KS-5, the hub answering on the same name, the VPS's
   Headscale disabled.
 
-### P6 — Shed the VPS
+### P6 — Move the house server off the VPS, then retire it
 
 - [ ] Move the always-on JawnOS server to `house`. It is the top CPU consumer on the VPS: this is
       the step that fixes the 2-vCPU box.
 - [ ] The hub moves to `hub.jonathanferwerda.com` (same wildcard), so it must already answer on
-      the KS-5 before the clients are re-pointed.
-- [ ] Remove what is not in the path (see §6): rspamd and valkey have no reference in the tree;
-      exim4 is local-delivery only.
-- [ ] Keep dnsmasq only if `jawnferroda.com` names are still needed; the public zone is Cloudflare.
-- **Exit:** VPS load under 0.5 at rest, no JawnOS on it, Headscale answering `/health` from the
-  KS-5.
+      the KS-5 before the clients are re-pointed. Update `tunnel_hub` on each house.
+- [ ] Move the exit node to the KS-5, if P4 has not already done it.
+- [ ] Move the wildcard's renewal with the repo: `scripts/tls_issue.pl`, whatever triggers it, and
+      the DNS-provider credentials from Configure → Plat → DNS.
+- [ ] Verify **from outside the house** — laptop off-LAN, phone, tablet — not from the shell you
+      are already in.
+- [ ] Start the off-box backup (§11): `/var/lib/headscale/`, `jawnos.db`,
+      `server/fullchain.pem` + `server/privkey.pem`, nightly, to the laptop and the table.
+- [ ] **Cancel the VPS at its next renewal**, a few days before the date, once the steps above are
+      green. Before deleting it, confirm the apex record no longer points at it and that nothing
+      still dials its address (`tunnel_hub`, the exit-node selection, the peer list).
+- **Exit:** the tailnet and the hub answer from the KS-5, the VPS is cancelled, and the restore has
+  been rehearsed once — not just written down.
 
-### P7 — Elixir, last
+### P7 — Elixir, when it exists
 
-- [ ] Only after P6 leaves the VPS quiet. The Elixir app takes `thejunderground.com` and keeps
-      certbot; `headscale.jonathanferwerda.com` and `hub.jonathanferwerda.com` are the KS-5's.
-- [ ] Back up the Headscale state and TLS material before any reinstall on that host.
-- **Exit:** Elixir serving its subdomain, Headscale untouched, tailnet healthy.
+- [ ] Elixir has no home once the VPS goes: it becomes an `elixir` container on the KS-5, on its
+      own name under the wildcard (e.g. `app.jonathanferwerda.com`), once P6 is stable. It must
+      not share the `dev` container.
+- [ ] If it later needs isolation, its own public IP, or more cores than the KS-5 can spare, that
+      is the moment to buy a small VPS again — not before.
+- **Exit:** Elixir serving its subdomain, the tailnet and the house untouched.
 
 ### Non-goals
 
@@ -369,8 +383,8 @@ old host kept intact for a rollback.
    the likely answer — because it has to run on the KS-5 before **2027-01-01**.
 3. **Does the hub's public URL live in a setting on each house** (`tunnel_hub`), or is it learned
    from the handshake? This decides whether moving the hub is one change or one per house.
-4. **Where is the Elixir app's load ceiling?** BEAM wants cores; if it outgrows 2 vCPU, it is the
-   easiest workload to move, and it must not land on the dev box.
+4. **Where is the Elixir app's load ceiling?** BEAM wants cores, and after D11 the KS-5 is its
+   only home. If it outgrows the box, it gets its own VPS then — not a bigger box now.
 
 ---
 
@@ -383,8 +397,9 @@ old host kept intact for a rollback.
   every node re-registers.
 - **The one easy own-goal** is a broken bridge or a closed 3478/udp on a host with no console.
   Snapshot first, keep the old SSH session open, and confirm the ports before repointing DNS.
-- **The one dated risk** is the certificate split: the apex pair expires **2026-12-07** (certbot,
-  stays on the VPS) and the wildcard expires **2027-01-01** (must move to the KS-5).
+- **The one dated risk** is the wildcard: it expires **2027-01-01**, and its renewal (and the
+  DNS-provider credentials it needs) must move to the KS-5. The apex pair expires 2026-12-07 and
+  retires with the VPS.
 - **The one thing that cannot be done** is pointing Tailscale at a bare IP: the client validates
   the control certificate and will not connect without a name.
 - **The one rule that must not be bent** is D7. A copied database on a dev container looks like it
@@ -396,6 +411,64 @@ old host kept intact for a rollback.
 
 ## 10. Cost
 
-- KS-5: **$26.69 installation + $11.89/month**.
-- The VPS stays: ~$9 CAD/month (the figure `scripts/sponsors_goal.pl` uses). Update that default
-  if the bill changes, so the sponsor goal keeps telling the truth.
+Chosen configuration (D10): **KS-5 at 32 GB**, ~$26.69/month + $26.69 setup. The VPS (~$9 CAD/month)
+keeps running only until its next renewal and is then cancelled (D11), so year one is roughly
+**$347 + one or two VPS months ≈ $365**.
+
+Rejected: the SYS-1 — at equal memory it is the dearer machine, and the extra cores buy seconds on
+a 20-second test run rather than availability. Numbers in §11.
+
+Update `scripts/sponsors_goal.pl`'s VPS default when the bill changes, so the sponsor goal keeps
+telling the truth.
+
+---
+
+## 11. The purchase decision (2026-11-02)
+
+### KS-5 vs SYS-1
+
+Catalogue prices, 2026-11-02:
+
+| | KS-5 | SYS-1 |
+|---|---|---|
+| CPU | Xeon E3-1270 v6, 4c/8t, 3.8–4.2 GHz | Xeon E-2136, 6c/12t, 3.3–4.5 GHz |
+| Memory | 32–64 GB | 32–128 GB |
+| Storage | 2×450 GB NVMe | 2×512 GB NVMe |
+| Public bandwidth | 300–500 Mbps | 500 Mbps–1 Gbps |
+| Monthly / setup (32 GB) | $26.69 / $26.69 | $44.39 / $44.39 |
+
+**Rejected.** Six cores instead of four is +50% threads, and on the measured suite (149 files,
+12–20 s at 8 jobs) that is roughly five to ten seconds — not worth ~$17.70/month plus a higher
+setup fee, and a 64 GB SYS-1 is dearer still than a 64 GB KS-5. The problem that started this was
+tests competing with the editor; the first four cores fix it.
+
+If the box is ever genuinely saturated — tests queueing, Gradle crawling, load above the thread
+count — move up then. The data is small and the migration is a rebuild, so there is no lock-in now.
+
+### Does it need 64 GB?
+
+No. The working set, from the VPS and laptop measurements:
+
+| Component | Peak |
+|---|---|
+| Proxmox host | ~1 GB |
+| `headscale` container | <0.2 GB |
+| `house` container (34 Perl processes — the measured VPS stack) | ~2.1 GB |
+| `dev` container — suite (forked, copy-on-write) + Gradle + PlatformIO | ~5–6 GB |
+| ZFS ARC (a cache, capped) | 8 GB |
+| Later: `elixir` container | ~1 GB |
+
+Ballpark **15–18 GB at a hard peak**, on a box that never runs the editor or a browser. 32 GB leaves
+more headroom than the laptop has in total. Take 32 GB if the rep can configure it; if that route
+would delay the order by a week, 64 GB at the quoted uplift is a convenience, not a mistake.
+
+### What replaces the VPS
+
+The VPS is paid to its next renewal — that is the migration window, so use it and cancel (D11).
+It was never much insurance once the control plane, the house server and the hub all move off it.
+The real insurance is a **restore that has been rehearsed**:
+
+- nightly: `/var/lib/headscale/` (stop the service for a clean `db.sqlite`), `jawnos.db`, and
+  `server/fullchain.pem` + `server/privkey.pem`;
+- copied **off the box** to the laptop and the table;
+- and one written drill, because an untested backup is a hope, not a plan.
