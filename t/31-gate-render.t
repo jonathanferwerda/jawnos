@@ -61,6 +61,11 @@ close $hf;
 like($hook, qr{\$path eq '/manager/configure/remote_upgrade'}, 'the pull-now lever is exempt from the app gate');
 like($hook, qr{\$path eq '/manager/self_deploy'}, 'the deploy lever is exempt from the app gate');
 like($hook, qr{\$path eq '/manager/president'}, 'the peer restart rail is exempt from the app gate');
+# universal.js is an index plus public/js/universal/ parts; the gate and the
+# public layouts load them with no session, so the whole folder must pass the
+# allowlist or the login gate eats the script.
+like($hook, qr!\$path =~ m\{\^/js/universal/\}!,
+	'the universal.js parts are exempt from the app gate');
 
 # And the route really does verify the caller before it pulls and restarts.
 # The route is registered from lib/JawnOS/Routes and its action carries the

@@ -31,7 +31,7 @@ use JawnOSTest;
 # without the facts as a miss (so the old entries heal on the next render), and
 # take a poster at a position that is actually past the fade.
 
-my $video = read_file("$FindBin::Bin/../perl/Music.pl");
+my $video = music_source();
 my $manager = manager_source();
 my $subs = read_file("$FindBin::Bin/../perl/subroutines.pl");
 

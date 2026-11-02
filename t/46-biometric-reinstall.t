@@ -4,9 +4,9 @@ use warnings;
 use FindBin;
 use lib "$FindBin::Bin/lib", "t/lib";
 use Test::More;
-use File::Slurp qw(read_file);
 use MIME::Base64 qw(encode_base64);
 use JawnOSTest;
+use RepoSource;
 
 # After the Android app was uninstalled and reinstalled (a signature change on
 # 2026-10-31) the OS had deleted the Keystore key and the WebView had lost its
@@ -20,7 +20,7 @@ use JawnOSTest;
 # These are source pins for that wiring; the server half below is the signature
 # check the manager performs on the result.
 
-my $js = read_file("$FindBin::Bin/../public/js/universal.js");
+my $js = js_source('public/js/universal.js');
 
 # 1. the readiness helper exists and only recovers a missing/invalidated key
 like($js, qr/function jawnosBiometricKeyReady\(status\)\s*\{/,

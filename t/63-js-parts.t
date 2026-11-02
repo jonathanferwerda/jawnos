@@ -23,7 +23,11 @@ use RepoSource;
 #   - the layout stamps the maps and preloads the core bundle.
 
 my $root = repo_root();
+# The bundle and app maps live in the Core*.pm boot parts now: read the index
+# plus every part it requires eagerly, in require order.
 my $manager_pm = read_file("$root/lib/JawnOS/Manager.pm");
+my @boot_parts = grep { m{^JawnOS/Manager/Core} } ($manager_pm =~ /^require\s+'([^']+)';/mg);
+$manager_pm .= read_file("$root/lib/$_") for @boot_parts;
 
 my ($bundle_block) = $manager_pm =~ /our \@manager_bundle_files = qw\((.*?)\);/s;
 ok(defined $bundle_block, 'the manager bundle list is found');
@@ -121,6 +125,43 @@ foreach my $dir (@split_dirs) {
 	my %real  = map { my $b = $_; $b =~ s{.*/}{}; $b => 1 } @parts;
 	is_deeply([sort keys %named], [sort keys %real],
 		"$name.js names every part and no file that is gone");
+}
+
+# --- universal.js is a split too, outside the manager folder -----------------
+# Every page (the gate included) loads it through subs::js_script_urls, so a
+# part that is not named in the manifest would silently stop loading.
+{
+	my $index = "$root/public/js/universal.js";
+	ok(-f $index, 'universal.js has an index');
+	my @parts = grep { $_ ne $index } parts_for($index);
+	ok(scalar @parts, 'universal.js has parts in universal/');
+	my ($manifest) = read_file($index) =~ /\/\* \[\[js-split\]\](.*?)\[\[\/js-split\]\] \*\//s;
+	ok(defined $manifest, 'universal.js carries a [[js-split]] manifest');
+	foreach my $part (@parts) {
+		(my $base = $part) =~ s{.*/}{};
+		like($base, qr/^\d{2}_[a-z0-9_]+\.js$/, "universal part $base is numbered");
+		like($manifest // '', qr/\Q$base\E/, "universal.js names its part $base");
+	}
+	my @named = ($manifest // '') =~ /\b(\d{2}_[a-z0-9_]+\.js)\b/g;
+	my %named = map { $_ => 1 } @named;
+	my %real = map {
+		my $b = $_;
+		$b =~ s{.*/}{};
+		$b => 1;
+	} @parts;
+	is_deeply([sort keys %named], [sort keys %real],
+		'universal.js names every part and no file that is gone');
+	if ($have_node) {
+		my $failed = 0;
+		foreach my $file (parts_for($index)) {
+			my $out = `$node --check "$file" 2>&1`;
+			if ($? != 0) {
+				$failed++;
+				diag("$file: $out");
+			}
+		}
+		is($failed, 0, 'the universal.js index and every part parse');
+	}
 }
 
 # --- every script still parses ----------------------------------------------

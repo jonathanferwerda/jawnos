@@ -19,7 +19,7 @@ my $root = repo_root();
 my $js = read_file("$root/public/js/music.js");
 my $template = read_file("$root/templates/apps/music/music.html.ep");
 my $css = read_file("$root/public/css/music.css");
-my $music = read_file("$root/perl/Music.pl");
+my $music = music_source();
 my $language = language_source();
 my $help = help_source();
 

@@ -194,7 +194,10 @@
 		     it is parsed. Order matters and the inline windowMaker call stays last.
 		     /js/manager/bundle.js is the core (Manager.pl: manager_core_files); an
 		     app's own scripts come from /js/manager/app.js on first open. -->
-		<script src="/js/universal.js?string=<%= $string %>"></script>
+		<%# universal.js is an index plus public/js/universal/ parts; expand both %>
+		<% for my $script (&subs::js_script_urls('public/js/universal.js')) { %>
+			<script src="<%= $script %>?string=<%= $string %>"></script>
+		<% } %>
 		<% if (&subs::language() ne 'en') { %>
 			<script src="/i18n/ui-<%= &subs::language() %>.js?string=<%= $string %>"></script>
 		<% } %>

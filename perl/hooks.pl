@@ -199,7 +199,11 @@ Manager::app->hook(before_dispatch => sub {
 		$path eq '/js/gate.js' ||
 		$path eq '/js/jquery.js' ||
 		$path eq '/js/numeral.min.js' ||
+		# universal.js is an index plus public/js/universal/ parts now. The gate and
+		# the public layouts load every one of them with no session, so the whole
+		# folder has to pass this same branch as the index or the login gate breaks.
 		$path eq '/js/universal.js' ||
+		$path =~ m{^/js/universal/} ||
 		$path eq '/js/screensaver.js' ||
 		$path eq '/manifest.json' ||
 		# the service worker script is fetched with no session cookie (the

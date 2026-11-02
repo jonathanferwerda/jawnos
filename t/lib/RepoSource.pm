@@ -23,8 +23,8 @@ use Exporter 'import';
 use Cwd       qw(abs_path);
 use File::Basename qw(dirname);
 
-our @EXPORT_OK = qw(repo_root manager_source template_source js_source language_source help_source);
-our @EXPORT    = qw(repo_root manager_source template_source js_source language_source help_source);
+our @EXPORT_OK = qw(repo_root manager_source template_source js_source language_source help_source music_source);
+our @EXPORT    = qw(repo_root manager_source template_source js_source language_source help_source music_source);
 
 sub repo_root { abs_path(dirname(__FILE__) . '/../..') }
 
@@ -96,6 +96,7 @@ sub js_source {
 # a topic reads all of it, so a split does not silently stop the check.
 sub language_source { _split_source( 'perl/language.pl', 'perl/language' ) }
 sub help_source     { _split_source( 'perl/help.pl',     'perl/help' ) }
+sub music_source    { _split_source( 'perl/Music.pl',    'perl/Music' ) }
 
 sub _split_source {
 	my ( $index, $dir ) = @_;

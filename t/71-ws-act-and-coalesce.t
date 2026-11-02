@@ -111,7 +111,7 @@ unlike($handler_js, qr/\brequestAnimationFrame\s*\(/,
 
 # --- the 1 Hz clock walk keeps its nodes -------------------------------------
 
-my $universal = read_file("$root/public/js/universal.js");
+my $universal = js_source('public/js/universal.js');
 like($universal, qr/function jawnosChronNodeList\(\)/, 'the clock walk has a node-list cache');
 like($universal, qr/nodes\.push\(\{ j: j, app: j\.closest\('\.wind'\)\.attr\('app'\) \|\| '' \}\)/,
 	'each node is wrapped and its window resolved once');

@@ -102,7 +102,10 @@
 			};
 		} catch (e) {}
 	</script>
-	<script src="/js/universal.js"></script>
+	<%# universal.js is an index plus public/js/universal/ parts; expand both %>
+	<% for my $script (&subs::js_script_urls('public/js/universal.js')) { %>
+		<script src="<%= $script %>"></script>
+	<% } %>
 	<script src="/js/numeral.min.js"></script>
 	<script src="/js/manager/bundle.js"></script>
 </head>

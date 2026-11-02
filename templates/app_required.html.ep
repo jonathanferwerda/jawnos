@@ -14,7 +14,10 @@
 		</script>
 		<script src="/js/jquery.js"></script>
 		<script src="/js/numeral.min.js"></script>
-		<script src="/js/universal.js?string=<%= &subs::jawn_version() %>"></script>
+		<%# universal.js is an index plus public/js/universal/ parts; expand both %>
+		<% for my $script (&subs::js_script_urls('public/js/universal.js')) { %>
+			<script src="<%= $script %>?string=<%= &subs::jawn_version() %>"></script>
+		<% } %>
 		<!-- A signed-in session still has to be *paired*, and the app gate answers
 		     before the manager can: device.js pairs this browser quietly with its
 		     own key when the session is a citizen one, which is what makes the

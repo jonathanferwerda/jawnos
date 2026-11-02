@@ -17,7 +17,11 @@ use File::Slurp qw(read_file);
 my $root = "$FindBin::Bin/..";
 sub slurp_rel { my $t = read_file("$root/$_[0]"); return defined $t ? $t : '' }
 
+# The eager boot body is the index plus the Core*.pm parts it requires (the
+# lazy helper parts under Part*.pm are not read here), in require order.
 my $manager = slurp_rel('lib/JawnOS/Manager.pm');
+my @boot_parts = grep { m{^JawnOS/Manager/Core} } ($manager =~ /^require\s+'([^']+)';/mg);
+$manager .= slurp_rel("lib/$_") for @boot_parts;
 my $index   = slurp_rel('lib/JawnOS/Manager/Index.pm');
 my $decls   = slurp_rel('lib/JawnOS/Manager/Declarations.pm');
 my $app     = slurp_rel('lib/JawnOS.pm');
