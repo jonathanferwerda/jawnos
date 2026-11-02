@@ -18,7 +18,7 @@ package CodingEdit;
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
+use Cwd qw(abs_path getcwd);
 use Encode ();
 use File::Path qw(make_path);
 use File::Spec ();
@@ -604,34 +604,77 @@ sub read_tools {
 		my $pat = $req->{'grep'};
 		$pat =~ s/[\x00\r\n]//g;
 		$pat = substr($pat, 0, 200);
-		my $pid = open(my $fh, '-|');
-		if (!defined $pid) {
-			push @out, "GREP $pat: could not run ($!)";
-		}
-		elsif (!$pid) {
-			chdir $root or exit 127;
-			exec 'grep', '-rn', '-I', '-m1',
-				'--exclude-dir=.git', '--exclude-dir=.secrets',
-				'--exclude-dir=node_modules', '--exclude-dir=releases',
-				'--exclude-dir=.gradle', '--', $pat, '.';
-			exit 127;
-		}
-		else {
-			my @hits;
-			while (my $line = <$fh>) {
-				$line =~ s/\s+$//;
-				$line = substr($line, 0, 200);
-				push @hits, $line;
-				last if @hits >= $MAX_HITS;
+		my ($rc, $hits, $err) = grep_run($root, $pat, 0);
+		my $note = '';
+		# A model writes a phrase, not necessarily a valid regex: `function
+		# budgetLight(` is an unmatched parenthesis and grep answers 2. Falling
+		# back to a literal match keeps the turn useful; reporting it as an
+		# error keeps the model from reading "0 hits" as "this does not exist",
+		# which is how a real run "restored" a function that was still there.
+		if (!defined $rc || $rc >= 2) {
+			my ($frc, $fhits) = grep_run($root, $pat, 1);
+			if (defined $frc && $frc <= 1) {
+				($rc, $hits) = ($frc, $fhits);
+				$note = '; not a valid regex, so the phrase was matched literally';
 			}
-			close $fh;
-			push @out, "GREP $pat (" . scalar(@hits) . " hit(s))\n" . join("\n", @hits);
+			else {
+				my $why = defined $err ? $err : '';
+				$why =~ s/\s+/ /g;
+				$why = substr($why, 0, 200);
+				push @out, "GREP $pat: ERROR " . (defined $rc ? "(exit $rc)" : '(could not run)') . " $why";
+				$rc = undef;
+			}
+		}
+		if (defined $rc) {
+			$hits = [] unless ref $hits eq 'ARRAY';
+			my @shown;
+			for my $line (@{$hits}) {
+				$line =~ s/\s+$//;
+				push @shown, substr($line, 0, 200);
+				last if @shown >= $MAX_HITS;
+			}
+			push @out, "GREP $pat (" . scalar(@shown) . " hit(s)$note)\n" . join("\n", @shown);
 		}
 	}
 
 	my $text = join "\n\n", @out;
 	$text = substr($text, 0, $TOTAL) . "\n[... tool output truncated]" if length($text) > $TOTAL;
 	return "TOOL RESULT\n$text\n\nContinue: reply with an edit/diff, or another {\"read\":[...]} / {\"grep\":\"...\"}.\n";
+}
+
+# One bounded grep, with stdout and stderr kept apart so an invalid pattern is
+# visible instead of looking like an empty result. `$fixed` selects -F, the
+# literal fallback. Returns (exit, [hits], stderr); grep's 0/1/2 stay as they are.
+sub grep_run {
+	my ($root, $pat, $fixed) = @_;
+	my @cmd = (
+		'grep', '-rn', '-I', '-m1',
+		'--exclude-dir=.git', '--exclude-dir=.secrets',
+		'--exclude-dir=node_modules', '--exclude-dir=releases',
+		'--exclude-dir=.gradle', ($fixed ? '-F' : '-E'), '--', $pat, '.',
+	);
+	my $cwd = getcwd();
+	chdir $root or return (127, [], "could not enter $root");
+	my $err = gensym;
+	my ($in, $out);
+	my $pid = eval { open3($in, $out, $err, @cmd) };
+	chdir $cwd if defined $cwd && length $cwd;
+	return (127, [], 'could not run grep' . ($@ ? ": $@" : '')) unless $pid;
+	close $in;
+	my ($stdout, $stderr) = ('', '');
+	my $sel = IO::Select->new($out, $err);
+	while (my @ready = $sel->can_read(30)) {
+		for my $fh (@ready) {
+			my $buf = '';
+			my $n = sysread($fh, $buf, 65536);
+			if (!defined $n || $n == 0) { $sel->remove($fh); next }
+			if ($fh == $out) { $stdout .= $buf } else { $stderr .= $buf }
+		}
+	}
+	waitpid($pid, 0);
+	my $rc = $? >> 8;
+	my @hits = grep { length } split /\n/, $stdout;
+	return ($rc, \@hits, $stderr);
 }
 
 sub which {

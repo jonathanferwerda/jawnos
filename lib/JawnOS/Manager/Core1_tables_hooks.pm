@@ -604,6 +604,7 @@ our @manager_bundle_files = qw(
 	/js/pm.js
 	/js/manager/terminal.js
 	/js/manager/network.js
+	/js/manager/budget_light.js
 	/js/manager/budget.js
 	/js/manager/embedded.js
 	/js/manager/travel.js

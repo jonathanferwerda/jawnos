@@ -1,15 +1,13 @@
 /* [[js-split]]
    budget.js is part 1. The rest live in budget/ in name order:
-     01_reconcile_payables.js - budget light timers - display save delete - bank import and reconcile - payables - journal rebuild
-     00_budget_light.js - the light handler shared with appointment views
+     01_reconcile_payables.js - display save delete - bank import and reconcile - payables - journal rebuild
+   The appointment view's budget light is core (public/js/manager/budget_light.js),
+   not part of this lazy chunk: a view opens it without the Budget app.
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 
 var budgetConfigTimeout;
 var timeStops = [];
-// one interval per app whose open duration light is following a running session
-var budgetLightIntervals = {};
-var budgetLightIntervalMs = 60000;
 $(document).on('click', '#budget, #budget_refresh', function() {
 	budgetInit()
 });

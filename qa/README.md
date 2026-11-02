@@ -497,6 +497,16 @@ model is configured. It runs in the worktree and:
 7. **Checks each turn**: `perl -c` for Perl and `node --check` for JavaScript;
    a failure is fed back to the model. It stops when the model says done and
    the checks pass, or after `--max-turns` (default 6).
+
+   **Looks before it edits.** A reply may instead be `{"read":[...]}` (up to
+   three files, 4 KB each) or `{"grep":"pattern"}` (one match per file, 60
+   hits), for at most six tool turns; neither can write. A pattern that is not
+   a valid regex (a model often asks for `function budgetLight(`) is retried
+   as a literal match and the result says it fell back, so a "0 hits" answer
+   never means "grep could not search". This matters: a run that read a failed
+   grep as proof re-defined a function that still existed, and the duplicate in
+   the later part won (v0.1.1810). `t/63-js-parts.t` now refuses a top-level
+   function declared twice across the core bundle and every chunk.
 8. **Accounts for what it spent.** The agent logs one human
    `context: <bytes> (~<bytes/4> est tokens); <per-section bytes>; replies: ...`
    line, one `ACCOUNTING {...}` line (context bytes, system bytes, per-section

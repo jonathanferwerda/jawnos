@@ -197,6 +197,31 @@ foreach my $entry (@bundle_entries) {
 }
 ok(@all >= @bundle_entries, 'every bundle entry resolved to at least its index');
 
+# --- no top-level function is defined twice ---------------------------------
+# The core bundle and every lazy chunk are concatenated into one global scope,
+# so a second `function name()` silently replaces the first and the earlier file
+# becomes dead code. That is how a "restored" budgetLight in the budget chunk
+# left the appointment view broken while every file still parsed (v0.1.1810).
+# Only declarations at column 0 are counted: a function nested in another
+# function or an IIFE gives no global and is not a collision.
+{
+	my (%seen, @dupes);
+	foreach my $file (@all) {
+		my $rel = $file;
+		$rel =~ s{^\Q$root/public/\E}{};
+		my $text = read_file($file);
+		while ($text =~ /^function\s+([A-Za-z_\$][A-Za-z0-9_\$]*)\s*\(/mg) {
+			my $name = $1;
+			if ($seen{$name} && $seen{$name} ne $rel) {
+				push @dupes, "$name is declared in both $seen{$name} and $rel";
+			}
+			$seen{$name} ||= $rel;
+		}
+	}
+	is_deeply(\@dupes, [], 'no top-level function is declared twice in the bundle')
+		or diag(join("\n", @dupes));
+}
+
 sub build_entries {
 	my (@entries) = @_;
 	my ($raw, @files) = ('');

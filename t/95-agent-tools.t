@@ -68,6 +68,23 @@ use CodingEdit;
 	$out = CodingEdit::read_tools($root, { grep => 'notes_category_rows' });
 	like($out, qr/lib\/a\.pm/, 'grep names the file');
 	like($out, qr/1 hit/, 'grep counts its hits');
+
+	# A phrase is not always a valid regex. An unmatched parenthesis used to be
+	# reported as "0 hits", which a real run read as "the function is gone" and
+	# then re-defined a function that was still there (v0.1.1810).
+	write_file("$root/lib/b.js", "function budgetLight(app) {\n\treturn app;\n}\n");
+	$out = CodingEdit::read_tools($root, { grep => 'function budgetLight(' });
+	like($out, qr/lib\/b\.js/, 'an invalid regex still finds its literal phrase');
+	like($out, qr/matched literally/, 'and says it fell back to a literal match');
+	unlike($out, qr/ERROR/, 'the fallback is not reported as an error');
+
+	$out = CodingEdit::read_tools($root, { grep => 'budgetLight\\(app\\)' });
+	like($out, qr/lib\/b\.js/, 'a valid regex is still a regex');
+	unlike($out, qr/matched literally/, 'the literal note is only for a bad pattern');
+
+	$out = CodingEdit::read_tools($root, { grep => 'nothing_matches_this_phrase' });
+	like($out, qr/0 hit/, 'a miss is still a miss');
+	unlike($out, qr/ERROR/, 'a miss is not an error');
 }
 
 done_testing();
