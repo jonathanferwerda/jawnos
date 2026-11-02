@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl scripts/peer_pull.pl
+# tests-for: lib/JawnOS.pm lib/JawnOS/Controller/ lib/JawnOS/Domain/House.pm lib/JawnOS/Manager.pm lib/JawnOS/Manager/ lib/JawnOS/Routes.pm lib/JawnOS/Routes/ perl/Manager.pl scripts/peer_pull.pl scripts/deploy_neighbours.pl
 # covers:    scripts/peer_pull.pl is the repair lever for rows a timestamp-driven sync never asks for: either this machine ...
 
 use strict;
@@ -27,28 +27,64 @@ is Jawn::PeerPull::normalize_window(''), '3d', 'the default window is three days
 is Jawn::PeerPull::normalize_window(undef), '3d', 'and applies when nothing is given';
 ok !defined Jawn::PeerPull::normalize_window('soon'), 'a word that is not a span is refused';
 
-# ---------------------------------------------------------------- resolve_peer
+# ---------------------------------------------------------------- peer_resolve
 my $rows = [
 	{ uuid => 'u-tablet', hostname => 'tablet', signatorial => 'sig-tablet' },
 	{ uuid => 'u-old',    hostname => 'tablet-old', signatorial => 'sig-old' },
 	{ uuid => 'u-phone',  hostname => 'phone', fqdn => 'phone.tailnet.ts.net', signatorial => 'sig-phone' },
 ];
-my ($rm, $err) = Jawn::PeerPull::resolve_peer('tablet', $rows);
+my ($rm, $err) = subs::peer_resolve('tablet', $rows);
 is $rm && $rm->{'uuid'}, 'u-tablet', 'an exact hostname wins over a longer one that contains it';
 is $err, '', 'with no error';
 
-($rm, $err) = Jawn::PeerPull::resolve_peer('PHONE', $rows);
+($rm, $err) = subs::peer_resolve('PHONE', $rows);
 is $rm && $rm->{'uuid'}, 'u-phone', 'matching is case-insensitive';
 
-($rm, $err) = Jawn::PeerPull::resolve_peer('tailnet', $rows);
+($rm, $err) = subs::peer_resolve('tailnet', $rows);
 is $rm && $rm->{'uuid'}, 'u-phone', 'a substring of the fqdn finds the peer';
 
-($rm, $err) = Jawn::PeerPull::resolve_peer('nobody', $rows);
+($rm, $err) = subs::peer_resolve('nobody', $rows);
 ok !$rm, 'an unknown name resolves to nothing';
 like $err, qr/no machine matches/, 'and says so';
 
-($rm, $err) = Jawn::PeerPull::resolve_peer('', $rows);
+($rm, $err) = subs::peer_resolve('', $rows);
 ok !$rm, 'an empty name resolves to nothing';
+
+# Both Android devices report the hostname 'localhost' (Android has no hostname
+# of its own), so an exact hostname is not unique. Refuse it, name the
+# candidates, and let an ip or signatorial reach one of them.
+my $handhelds = [
+	{ uuid => 'u-fe',     hostname => 'localhost', ip => '192.168.1.140', signatorial => 'sig-fe' },
+	{ uuid => 'u-tablet2', hostname => 'localhost', ip => '192.168.1.142', signatorial => 'sig-tablet2' },
+];
+($rm, $err) = subs::peer_resolve('localhost', $handhelds);
+ok !$rm, 'an ambiguous exact hostname resolves to nothing';
+like $err, qr/more than one machine/, 'and refuses instead of guessing';
+like $err, qr/192\.168\.1\.140/, 'the refusal names the first candidate by ip';
+like $err, qr/192\.168\.1\.142/, 'and the second';
+
+($rm, $err) = subs::peer_resolve('192.168.1.142', $handhelds);
+is $rm && $rm->{'uuid'}, 'u-tablet2', 'an ip reaches the right handheld despite the shared hostname';
+
+($rm, $err) = subs::peer_resolve('sig-fe', $handhelds);
+is $rm && $rm->{'uuid'}, 'u-fe', 'and so does the signatorial';
+
+# deploy_neighbours uses the same resolver, so a hostname collision no longer
+# answers "no such machine" for one of the two handhelds.
+my $deploy_script = root() . '/scripts/deploy_neighbours.pl';
+require $deploy_script;
+my ($picked, $refused) = Jawn::DeployNeighbours::select_machines(['192.168.1.142'], $handhelds);
+is scalar @{$picked}, 1, 'the deploy lever picks the machine named by ip';
+is $picked->[0]->{'uuid'}, 'u-tablet2', 'the right one';
+is scalar @{$refused}, 0, 'with nothing refused';
+
+($picked, $refused) = Jawn::DeployNeighbours::select_machines(['localhost'], $handhelds);
+is scalar @{$picked}, 0, 'an ambiguous name deploys nothing';
+is scalar @{$refused}, 1, 'and is reported once';
+like $refused->[0], qr/more than one machine/, 'with the candidates in the message';
+
+($picked, $refused) = Jawn::DeployNeighbours::select_machines([], $rows);
+is scalar @{$picked}, 3, 'no names means every machine';
 
 # ---------------------------------------------------------------- peer_manager
 is Jawn::PeerPull::peer_manager({ manager => 'http://127.0.0.1:1/manager' }, 'https://192.168.1.140:45545/manager'),

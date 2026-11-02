@@ -195,4 +195,30 @@ my $tied = subs::sync_peer_order([ { signatorial => 'b' }, { signatorial => 'a' 
 is_deeply([ map { $_->{'signatorial'} } @{$tied} ], [ 'a', 'b' ],
 	'a watermark tie is broken by signatorial so the order is stable');
 
+# A tailnet address the row has already proved is kept and probed after the LAN
+# literals. Android never lists its VPN interface in the live network map, so
+# without the remembered column a peer that left the LAN had no route at all.
+my $remembered = {
+	ip         => '192.168.1.142',
+	tailnet_ip => '100.64.0.6',
+	network    => '{"lan":{"nic":"lan","ip":"192.168.1.142","port":45545}}',
+	port       => 45545,
+};
+my $addresses = subs::peer_literal_addresses($remembered);
+my @hosts = map { $_->{'host'} } @{$addresses};
+ok(scalar(grep { $_ eq '100.64.0.6' } @hosts), 'a persisted tailnet address is a probe candidate');
+my $lan_at = (grep { $hosts[$_] eq '192.168.1.142' } 0 .. $#hosts)[0];
+my $tail_at = (grep { $hosts[$_] eq '100.64.0.6' } 0 .. $#hosts)[0];
+ok(defined $lan_at && defined $tail_at && $lan_at < $tail_at,
+	'the LAN address is still tried before the tailnet one');
+
+# The map alone can still name the tailnet when the column was never written.
+my $from_map = {
+	ip      => '100.64.0.6',
+	network => '{"tailscale0":{"nic":"tailscale0","ip":"100.64.0.6","port":45545}}',
+	port    => 45545,
+};
+ok(scalar(grep { $_->{'host'} eq '100.64.0.6' } @{ subs::peer_literal_addresses($from_map) }),
+	'a tailnet address in the live map is a candidate too');
+
 done_testing();

@@ -244,6 +244,11 @@ sub update_database($data) {
 		'alter table remote_machines drop column sync_log',
 		'alter table remote_machines add column mirrors LONGTEXT',
 		'alter table remote_machines add column network LONGTEXT',
+		# The peer's tailnet (Tailscale 100.64/10) address, remembered across the
+		# hand-offs between LAN and VPN. The live network map only carries it while
+		# the VPN is up, so without this a peer that drops off the LAN has no
+		# address left to try and every probe falls back to the LAN.
+		'alter table remote_machines add column tailnet_ip VARCHAR(25)',
 		'alter table remote_machines add column pseudonyms LONGTEXT',
 		'alter table remote_machines add column dock_port VARCHAR(15)',
 		'alter table remote_machines add column archive LONGTEXT',

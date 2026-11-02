@@ -60,31 +60,6 @@ usage: perl scripts/peer_pull.pl <peer> [--since 120d] [--remote] [--status]
 USAGE
 }
 
-# A peer named the way a person names it. An exact uuid/signatorial/hostname
-# beats a substring, so "tablet" cannot be stolen by "tablet-old".
-sub resolve_peer {
-	my ($term, $rows) = @_;
-	return (undef, 'no machine named') unless defined $term && length $term;
-	my $t = lc $term;
-	my @rows = grep { ref $_ eq 'HASH' } @{ $rows || [] };
-	my @match = grep {
-		my $r = $_;
-		grep { (defined $r->{$_} && lc($r->{$_}) =~ /\Q$t\E/) }
-			qw/uuid signatorial hostname fqdn ip domain name/
-	} @rows;
-	return (undef, 'no machine matches "' . $term . '"') unless @match;
-	my @exact = grep {
-		my $r = $_;
-		grep { (defined $r->{$_} && lc($r->{$_}) eq $t) }
-			qw/uuid signatorial hostname fqdn ip name/
-	} @match;
-	@match = @exact if @exact;
-	return (undef, 'that matches more than one machine: '
-		. join(', ', map { $_->{'hostname'} || $_->{'signatorial'} || $_->{'ip'} } @match))
-		if @match > 1;
-	return ($match[0], '');
-}
-
 # The peer's manager, rooted so a route can be appended. peer_live_manager
 # rewrites a tunnel's leftover loopback address to the peer's own name, and a
 # name that no longer resolves to the LAN address the row still carries - so
@@ -255,7 +230,7 @@ sub main {
 	}
 	my $term = shift @args;
 	unless (defined $term && length $term) { print usage(); return 2; }
-	my ($rm, $why) = resolve_peer($term, $rows);
+	my ($rm, $why) = &subs::peer_resolve($term, $rows);
 	unless ($rm) { die 'peer_pull: ' . $why . "\n"; }
 	my $url = &peer_manager($rm, $manager);
 	die "peer_pull: that machine has no known manager; use --manager\n" unless $url;

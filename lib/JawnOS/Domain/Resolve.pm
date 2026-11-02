@@ -581,12 +581,51 @@ sub claim_work {
 
 # The machine's own name, for a claim a person has to read. The signatorial is the
 # mesh identity; this is what to show beside it.
+#
+# Android has no hostname of its own - Termux answers `hostname` with 'localhost'
+# and some builds answer a build token ('fe'), neither of which tells a person
+# which device it is. The config's own name, then its house domain's first label
+# (phone.jonathanferwerda.com -> Phone), are the names a person actually uses;
+# the OS hostname is the last resort and only when it is a real name.
 sub machine_name {
 	my $name = &setting_grabber({ app => 'me', setting => 'computer_name' }) || &setting_grabber({ app => 'me', setting => 'my_name' });
 	return $name if defined $name && $name =~ /\S/;
 	my $h = `hostname`;
 	chomp $h;
+	return &machine_name_from_config(eval { &config_reader() } || {}, $h);
+}
+
+# The name a machine shows when no setting names it: the config's own name, then
+# the first label of its house domain, then the OS hostname when that is a real
+# name. Kept apart from the settings read so the fallback order can be tested.
+sub machine_name_from_config {
+	my ($config, $os_hostname) = @_;
+	$config ||= {};
+	my $configured = $config->{'name'} || '';
+	$configured =~ s/^\s+|\s+$//g;
+	return $configured if $configured ne '';
+	my $label = &device_hostname_from_domain($config->{'domain'});
+	return $label if $label ne '';
+	my $h = defined $os_hostname ? $os_hostname : '';
+	$h =~ s/^\s+|\s+$//g;
+	return '' if $h eq '' || $h =~ /^(?:localhost|127\.0\.0\.1|::1)$/i;
 	return $h;
+}
+
+# The first label of a house domain, when it names a machine: a domain that is an
+# ip literal, loopback, the tailnet's CGNAT range or 'localhost' says nothing.
+sub device_hostname_from_domain {
+	my $domain = shift || '';
+	$domain =~ s{^[a-z]+://}{}i;
+	$domain =~ s{[:/].*$}{};
+	$domain =~ s/^\s+|\s+$//g;
+	return '' if $domain eq '' || $domain !~ /[a-z]/i || $domain !~ /\./;
+	return '' if $domain =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
+	return '' if $domain =~ /^(?:127\.|localhost$|\[?::1\]?$)/i;
+	return '' if $domain =~ /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./;
+	my ($label) = split /\./, $domain;
+	return '' unless defined $label && $label =~ /[a-z]/i;
+	return ucfirst lc $label;
 }
 
 # The name a person reads for a machine. A phone has no hostname of its own:
@@ -612,13 +651,13 @@ sub device_hostname_better {
 	# only a real name says anything: an ip-literal fqdn would give '192' or a
 	# stray hextet as a device name
 	if ($host ne '' && $host =~ /[a-z]/i && $host =~ /\./) {
-		$host =~ s{^[a-z]+://}{}i;
-		$host =~ s{[:/].*$}{};
-		my ($label) = split /\./, $host;
-		$label = $clean->($label);
-		return ucfirst($label) if $label ne '';
+		my $label = &device_hostname_from_domain($host);
+		return $label if $label ne '';
 	}
-	return defined $reported ? $reported : '';
+	# Nothing usable was reported: do not hand 'localhost' back as a name. The
+	# caller keeps what it has rather than learning a name that means "this
+	# machine" on every machine.
+	return '';
 }
 
 # Released by writing it empty rather than deleting it, so the release rides the

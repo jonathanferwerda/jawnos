@@ -429,7 +429,14 @@ sub remote_machine_reconnector($c) {
 				}
 				my $tuns = &subs::device_setter() eq 'server' ? &subs::tunnel_port_mapper({ ip => $rm->{'ip'} }) : {};
 
-				&subs::db_update('remote_machines', { ws_auth => $ws_auth, network => $rm->{'network'}, ws_port => ($tuns->{'POST_MSG'} || $rm->{'ws_port'}), port => ($tuns->{'PORT_AHOY'} || $rm->{'port'}), connection => $rm->{'connection'} }, { signatorial => $rm->{'signatorial'} });
+				my $update = { ws_auth => $ws_auth, network => $rm->{'network'}, ws_port => ($tuns->{'POST_MSG'} || $rm->{'ws_port'}), port => ($tuns->{'PORT_AHOY'} || $rm->{'port'}), connection => $rm->{'connection'} };
+				# Keep the tailnet address the row has already proved. Only the live
+				# network map carries it, so a report taken with the VPN down would
+				# otherwise wipe the only route this peer has off the LAN.
+				my $tailnet = $rm->{'tailnet_ip'} || &subs::tailnet_address($rm);
+				$update->{'tailnet_ip'} = $tailnet if $tailnet;
+
+				&subs::db_update('remote_machines', $update, { signatorial => $rm->{'signatorial'} });
 			}
 		}
 		$pass_ok = 1;

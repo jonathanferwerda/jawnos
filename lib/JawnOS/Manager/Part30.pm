@@ -611,7 +611,10 @@ sub go_hostname {
 	my $hostname = &subs::machine_name() || '';
 	my $host = `hostname`;
 	chomp $host;
-	$hostname .= ' (' . $host . ')' if $host && $host ne $hostname;
+	# With no name of its own (a phone never has one), the hostname is all there
+	# is; do not render an empty name as " (localhost)".
+	if ($hostname eq '') { $hostname = $host; }
+	elsif ($host && $host ne $hostname) { $hostname .= ' (' . $host . ')'; }
 	$hostname =~ s/[\r\n\t]//g;
 	return substr($hostname, 0, 120);
 }

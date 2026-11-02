@@ -265,6 +265,41 @@ sub peer_manager_base {
 	return $manager;
 }
 
+# Which roster row a person or a script meant by a name. An exact uuid,
+# signatorial, hostname, fqdn, ip or name wins over a longer value that merely
+# contains the term; an ambiguous substring is refused rather than guessed at.
+# Both Android machines report the hostname 'localhost' (Android has no hostname
+# of its own), so a plain hostname is not unique in this house - the refusal
+# names each candidate by hostname, ip and signatorial so the caller can pick.
+sub peer_resolve {
+	my ($term, $rows) = @_;
+	return (undef, 'no machine named') unless defined $term && length $term;
+	my $t = lc $term;
+	my @rows = grep { ref $_ eq 'HASH' } @{ $rows || [] };
+	my @match = grep {
+		my $r = $_;
+		grep { defined $r->{$_} && lc($r->{$_}) =~ /\Q$t\E/ }
+			qw/uuid signatorial hostname fqdn ip domain name/
+	} @rows;
+	return (undef, 'no machine matches "' . $term . '"') unless @match;
+	my @exact = grep {
+		my $r = $_;
+		grep { defined $r->{$_} && lc($r->{$_}) eq $t }
+			qw/uuid signatorial hostname fqdn ip name/
+	} @match;
+	@match = @exact if @exact;
+	if (@match > 1) {
+		my @named = map {
+			my $label = $_->{'hostname'} || '';
+			$label = ($label ne '' ? $label . ' ' : '')
+				. ($_->{'ip'} || '?') . ' [' . ($_->{'signatorial'} || '?') . ']';
+			$label;
+		} @match;
+		return (undef, 'that matches more than one machine: ' . join(', ', @named));
+	}
+	return ($match[0], '');
+}
+
 # --- Android sshd ----------------------------------------------------------
 # Termux's sshd_config comments out every HostKey line, Android has no /etc/ssh,
 # and the login user's home in the passwd entry is the old Termux prefix. A bare
@@ -354,7 +389,7 @@ sub peer_literal_addresses {
 		my $pseu = eval { decode_json $rm->{'pseudonyms'} } || {};
 		&$add($pseu->{'ip'}, $pseu->{'port'}, 'pseudonym') if ref $pseu eq 'HASH';
 	}
-	&$add($rm->{'tailnet_ip'}, $default_port, 'tailnet');
+	&$add($rm->{'tailnet_ip'} || &tailnet_address($rm), $default_port, 'tailnet');
 	# Private LAN first, then the tailnet, then anything else; insertion order
 	# breaks ties so the row's own ip keeps its precedence.
 	my $i = 0;
@@ -540,8 +575,9 @@ sub lan_presence_network {
 
 sub lan_presence_payload {
 	my $config = &config_reader();
-	my $hostname = `hostname`;
-	chomp $hostname;
+	# The name a person reads, not the OS hostname: Termux answers 'localhost',
+	# which every machine would then show for both handhelds.
+	my $hostname = &machine_name();
 	my @nics = @{ &lan_presence_network() };
 	my $msg = {
 		type         => 'jawnos-lan',
@@ -680,6 +716,14 @@ sub lan_presence_accept {
 			$update->{'port'} = $port;
 			$changed = 1;
 		}
+	}
+	# Heal a row still wearing a placeholder name. A device that reported
+	# 'localhost' (Android has no hostname of its own) kept it forever, because
+	# the beacon path never revisited the column; its fqdn names it, so use it.
+	my $better = &device_hostname_better($msg->{'hostname'}, $rm->{'hostname'}, $rm->{'fqdn'});
+	if ($better ne '' && $better ne ($rm->{'hostname'} // '')) {
+		$update->{'hostname'} = $better;
+		$changed = 1;
 	}
 	&db_update('remote_machines', $update, { signatorial => $sig }) if $changed;
 	# The Dev panel's neighbour table is this machine's devices row, not the

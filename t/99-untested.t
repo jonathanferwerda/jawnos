@@ -76,7 +76,6 @@ my %owed = map { $_ => 1 } qw(
 	scripts/app_displayer.pl
 	scripts/app_ticket.pl
 	scripts/black_images.pl
-	scripts/deploy_neighbours.pl
 	scripts/factory_seed.pl
 	scripts/home_plate_self_migrate.pl
 	scripts/internet_appointments_repair.pl

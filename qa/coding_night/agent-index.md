@@ -80,7 +80,7 @@ Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, 
 - option_category (27): supplier, app, name, multi, timestamp, server_time, uuid, characteristics, price, category, cost, description, discount, markup, ost, manufacturer, def, quantity, unit, save_app, file, delay_start, delay_stop, def_month, def_day, def_hour, def_wday
 - paired_devices (14): uuid, name, pubkey, bio_pubkey, privilege, status, timestamp, server_time, ost, last_seen, agent, kind, person_uuid, share_pubkey
 - people (8): uuid, name, privilege, status, created, ost, server_time, app
-- remote_machines (41): uuid, ip, mac, timestamp, server_time, connected, status, log, port, buttons, manager, data, signatorial, cookie, connection, nic, deletions, ws_port, fqdn, ws_auth, manager_file, additions, edits, device, ost, hostname, tunnel, mirrors, network, pseudonyms, dock_port, archive_dir, archive, version, sync_cursor, pubkey, privilege, grant_scope, grant_expires, crest_uuid, crest_cosig
+- remote_machines (42): uuid, ip, mac, timestamp, server_time, connected, status, log, port, buttons, manager, data, signatorial, cookie, connection, nic, deletions, ws_port, fqdn, ws_auth, manager_file, additions, edits, device, ost, hostname, tunnel, mirrors, network, tailnet_ip, pseudonyms, dock_port, archive_dir, archive, version, sync_cursor, pubkey, privilege, grant_scope, grant_expires, crest_uuid, crest_cosig
 - routers (11): uuid, ip, mac, nic, name, model, manager, last_seen, timestamp, server_time, ost
 - security (7): level, credential, server_time, timestamp, database, uuid, ost
 - settings (11): setting, value, timestamp, id, app, server_time, device, browser_tab_id, uuid, ost, subsetting
@@ -108,7 +108,7 @@ One route: `perl scripts/where.pl /manager/pen`.
 ## helpers
 
 605 Manager helpers across 37 parts: `lib/JawnOS/Manager/Index.pm` (%SUB) is the name map, `t/54-manager-split.t` keeps it complete.
-1499 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
+1501 domain subs in subs::, mapped by `lib/JawnOS/Domain/Loader.pm` (%DOMAIN_MODULE); `t/91-domain-loader-qa.t` keeps it complete.
 One helper: `perl scripts/where.pl app_release_sync`.
 
 ## firmware
