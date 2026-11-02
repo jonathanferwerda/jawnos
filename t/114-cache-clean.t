@@ -48,4 +48,27 @@ my $music = read_file("$FindBin::Bin/../perl/Music.pl");
 like($music, qr/delete from cache where app = 'music' and context = 'content'/,
 	'the music route drops the shells an earlier revision or queue left behind');
 
+# --all: the expired rule runs for every app, the music key rules only for music.
+my $db2 = "$dir/all.db";
+my $d2 = DBI->connect("dbi:SQLite:dbname=$db2", '', '', { RaiseError => 1, PrintError => 0 });
+$d2->do(q{create table cache (timestamp VARCHAR(255), server_time VARCHAR(255), app LONGTEXT,
+	context VARCHAR(255), warranty VARCHAR(25), subcontext VARCHAR(255), device VARCHAR(10),
+	uuid VARCHAR(255), ost VARCHAR(25), data BLOB)});
+my $add = $d2->prepare(q{insert into cache (app, context, subcontext, uuid, warranty, data) values (?,?,?,?,?,?)});
+$add->execute('other', 'content', '0.0.1-locked', 'other_content', '9999999999999', 'not-music');
+$add->execute('other', 'thing', 'x', 'other_live', '9999999999999', 'live');
+$add->execute('other', 'thing', 'y', 'other_expired', '1', 'expired');
+$add->execute('music', 'content', "$version-locked", 'music_live', '9999999999999', 'live');
+$add->execute('music', 'content', '0.0.1-locked', 'music_dead', '9999999999999', 'dead');
+$add->finish;
+$d2->disconnect;
+
+my $all_out = qx{$^X "$script" --database="$db2" --all --apply --no-backup 2>&1};
+is(($? >> 8), 0, '--all runs against a database') or diag($all_out);
+$d2 = DBI->connect("dbi:SQLite:dbname=$db2", '', '', { RaiseError => 1, PrintError => 0 });
+my @all_left = map { $_->[0] } @{ $d2->selectall_arrayref('select uuid from cache order by uuid') };
+is_deeply(\@all_left, [ 'music_live', 'other_content', 'other_live' ],
+	'--all expires rows everywhere but judges content keys only for music');
+$d2->disconnect;
+
 done_testing();

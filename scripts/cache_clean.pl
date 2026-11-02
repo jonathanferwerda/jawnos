@@ -15,12 +15,14 @@
 # The rules mirror what the app reads: a content shell is live only for this
 # code revision; a loudness key is live only when a file in the library still
 # hashes to it; a local path listing is live only while the path exists. Expired
-# rows (warranty in the past) go in every context.
+# rows (warranty in the past) go in every context. --all applies the expired
+# rule to every app; the version-keyed content, loudness and path rules are the
+# music window's own and only run for it.
 #
 # Dry-run by default. --apply takes a backup and deletes the planned rows.
 #
 #   perl scripts/cache_clean.pl
-#   perl scripts/cache_clean.pl --prune-paths --prune-loudness
+#   perl scripts/cache_clean.pl --all --prune-paths --prune-loudness
 #   perl scripts/cache_clean.pl --apply --prune-paths --prune-loudness
 
 use strict;
@@ -37,15 +39,16 @@ use Time::HiRes qw(time);
 use JSON::PP ();
 
 my ($app, $apply, $vacuum, $no_backup, $database) = ('music', 0, 0, 0, '');
-my ($prune_paths, $prune_loudness) = (0, 0);
+my ($prune_paths, $prune_loudness, $all) = (0, 0, 0);
 for my $arg (@ARGV) {
 	if ($arg eq '--apply')        { $apply = 1 }
 	elsif ($arg eq '--vacuum')     { $vacuum = 1 }
 	elsif ($arg eq '--no-backup')  { $no_backup = 1 }
+	elsif ($arg eq '--all')        { $all = 1 }
 	elsif ($arg eq '--prune-paths') { $prune_paths = 1 }
 	elsif ($arg eq '--prune-loudness') { $prune_loudness = 1 }
 	elsif ($arg eq '--help' || $arg eq '-h') {
-		print "usage: $0 [--app NAME] [--apply] [--vacuum] [--no-backup] [--prune-paths] [--prune-loudness] [--database PATH]\n";
+		print "usage: $0 [--app NAME | --all] [--apply] [--vacuum] [--no-backup] [--prune-paths] [--prune-loudness] [--database PATH]\n";
 		exit 0;
 	}
 	elsif ($arg =~ /^--app=(.+)$/) { $app = $1 }
@@ -115,22 +118,27 @@ my %current_content = map { $_ => 1 } ( "$version-locked", "$version-unlocked" )
 my @plan;
 my %why;
 my ($seen, $bytes) = (0, 0);
-for my $r ( @{ $dbh->selectall_arrayref('select uuid, context, subcontext, warranty, data from cache where app = ?', undef, $app) } ) {
-	my ($uuid, $context, $subcontext, $warranty, $data) = @{$r};
+my $rows = $all
+	? $dbh->selectall_arrayref('select uuid, app, context, subcontext, warranty, data from cache')
+	: $dbh->selectall_arrayref('select uuid, app, context, subcontext, warranty, data from cache where app = ?', undef, $app);
+for my $r ( @{$rows} ) {
+	my ($uuid, $row_app, $context, $subcontext, $warranty, $data) = @{$r};
 	$seen++;
 	$bytes += length($data || '');
 	my $reason;
 	if (defined $warranty && $warranty =~ /^\d+$/ && $warranty < $now) {
 		$reason = 'expired';
 	}
-	elsif ($context eq 'content' && defined $subcontext) {
+	# the version/queue key scheme is the music window's; another app's
+	# content context is not ours to judge from its subcontext
+	elsif ($row_app eq 'music' && $context eq 'content' && defined $subcontext) {
 		my ($live) = grep { index($subcontext, $_) == 0 } keys %current_content;
 		$reason = 'old code revision' unless $live;
 	}
-	elsif ($context eq 'loudness' && $prune_loudness) {
+	elsif ($row_app eq 'music' && $context eq 'loudness' && $prune_loudness) {
 		$reason = 'no file hashes to it' unless $live_loudness{$subcontext};
 	}
-	elsif ($context eq 'file_information' && $prune_paths && defined $subcontext) {
+	elsif ($row_app eq 'music' && $context eq 'file_information' && $prune_paths && defined $subcontext) {
 		if ($subcontext =~ m{^/}) {
 			my ($under) = grep { index($subcontext, $_) == 0 } @roots;
 			$reason = 'path is gone' if $under && !-e $subcontext;
@@ -141,7 +149,7 @@ for my $r ( @{ $dbh->selectall_arrayref('select uuid, context, subcontext, warra
 	push @plan, { uuid => $uuid, reason => $reason, context => $context, subcontext => $subcontext };
 }
 
-printf "app: %s; cache rows: %d (%d bytes); to delete: %d\n", $app, $seen, $bytes, scalar @plan;
+printf "app: %s; cache rows: %d (%d bytes); to delete: %d\n", ($all ? 'all' : $app), $seen, $bytes, scalar @plan;
 printf "  %-22s %d\n", $_, $why{$_} for sort keys %why;
 printf "  content live for: %s\n", join(', ', sort keys %current_content);
 printf "  loudness keys matching a current file: %d\n", scalar keys %live_loudness if $prune_loudness;
@@ -156,7 +164,7 @@ die "nothing to delete\n" unless @plan;
 my $stamp = strftime('%Y%m%d-%H%M%S', localtime);
 my $backup_dir = "$root/database/backups";
 make_path($backup_dir) unless -d $backup_dir;
-my $backup = "$backup_dir/cache_clean_${app}_$stamp.db";
+my $backup = "$backup_dir/cache_clean_" . ($all ? 'all' : $app) . "_$stamp.db";
 
 unless ($no_backup) {
 	my $ok = eval { $dbh->sqlite_backup_to_file($backup); 1 };
