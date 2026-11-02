@@ -147,6 +147,10 @@ like($domain, qr/JAWNOS_MASTER_PID/, 'a run stops when the master that owns it i
 # --- the master -------------------------------------------------------------
 my $master = source('jawn');
 like($master, qr/sub coding_start\b/, 'the master starts the coding process');
+like(sub_body($master, 'coding_start'), qr/POSIX::setsid/,
+	'the daemon detaches through POSIX, which is imported');
+unlike(sub_body($master, 'coding_start'), qr/(?<!::)\bsetsid\(/,
+	'no bare setsid in the spawn: ./jawn does not import it');
 like($master, qr/sub coding_stop\b/, 'the master can stop it');
 like($master, qr/&coding_supervise\(\)/, 'the tick keeps it alive');
 like($master, qr/coding-queue\.db/, 'the queue database survives a master reload wipe');

@@ -949,7 +949,9 @@ sub coding_start {
 		return 0;
 	}
 	# ---- the intermediate ----
-	setsid();
+	# POSIX::setsid, not a bare setsid: ./jawn imports only WNOHANG from POSIX,
+	# and the bare name died here (the daemon never started).
+	eval { POSIX::setsid() };
 	my $daemon = fork();
 	POSIX::_exit(0) if $daemon;
 	# ---- the daemon ----
