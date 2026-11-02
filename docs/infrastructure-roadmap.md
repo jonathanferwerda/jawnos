@@ -59,7 +59,9 @@ Headscale lists four nodes: `table`, `cloud`, `laptop`, `tablet`.
 ### The new server (Kimsufi)
 
 - Intel Xeon E3-1270 v6: 4 cores / 8 threads, 3.8–4.2 GHz, 72 W, no throttling in a server chassis.
-- 64 GB DDR4-2400 ECC — the platform maximum.
+- 64 GB DDR4-2400 ECC — the platform maximum, and **the only configuration offered in
+  Beauharnois** (the catalogue's 32 GB option is not available in this region). $38.58/month at
+  that config, confirmed at checkout 2026-11-02.
 - 2 × 450 GB SSD NVMe, soft RAID. **450 GB usable, not 900.**
 - 500 Mbit/s unmetered. Beauharnois, Canada East — the same region as the VPS.
 - Unmanaged: assume **no IPMI/KVM console**, hardware replacement only, rescue mode as the fallback.
@@ -110,8 +112,8 @@ Headscale lists four nodes: `table`, `cloud`, `laptop`, `tablet`.
 | D9 | **The control plane gets its own name under the house wildcard** — | decided |
 | | `headscale.jonathanferwerda.com` — not a bare IP and not the apex. The hub is `hub.` under | |
 | | the same wildcard. | |
-| D10 | **32 GB of RAM**, not 64. The measured working set is 15–18 GB at a hard peak, and this box | decided |
-| | never runs the editor or a browser. 64 GB is a convenience, not a requirement. | |
+| D10 | **64 GB of RAM, because it is the only configuration offered in Beauharnois.** 32 GB was the | decided |
+| | preference on the measurements; the forced 64 GB buys page cache and headroom, not waste. | |
 | D11 | **The VPS is retired** once the migration proves out. It is paid to the next renewal, which | decided |
 | | is the migration window; off-box, rehearsed backups replace it as the insurance. | |
 
@@ -424,9 +426,8 @@ old host kept intact for a rollback.
 
 ## 10. Cost
 
-Chosen configuration (D10): **KS-5 at 32 GB**, ~$26.69/month + $26.69 setup. The VPS (~$9 CAD/month)
-keeps running only until its next renewal and is then cancelled (D11), so year one is roughly
-**$347 + one or two VPS months ≈ $365**.
+Chosen configuration: **KS-5 at 64 GB** (mandatory in this region) — **$38.58/month + $26.69
+setup**, so year one is about **$490** plus one or two VPS months, ≈ **$508**.
 
 Rejected: the SYS-1 — at equal memory it is the dearer machine, and the extra cores buy seconds on
 a 20-second test run rather than availability. Numbers in §11.
@@ -445,15 +446,15 @@ Catalogue prices, 2026-11-02:
 | | KS-5 | SYS-1 |
 |---|---|---|
 | CPU | Xeon E3-1270 v6, 4c/8t, 3.8–4.2 GHz | Xeon E-2136, 6c/12t, 3.3–4.5 GHz |
-| Memory | 32–64 GB | 32–128 GB |
+| Memory | 64 GB (only option in this region) | 32–128 GB |
 | Storage | 2×450 GB NVMe | 2×512 GB NVMe |
 | Public bandwidth | 300–500 Mbps | 500 Mbps–1 Gbps |
-| Monthly / setup (32 GB) | $26.69 / $26.69 | $44.39 / $44.39 |
+| Monthly / setup | **$38.58 / $26.69** at 64 GB | $44.39 / $44.39 at 32 GB; ≈$56 / $44 at 64 GB |
 
 **Rejected.** Six cores instead of four is +50% threads, and on the measured suite (149 files,
-12–20 s at 8 jobs) that is roughly five to ten seconds — not worth ~$17.70/month plus a higher
-setup fee, and a 64 GB SYS-1 is dearer still than a 64 GB KS-5. The problem that started this was
-tests competing with the editor; the first four cores fix it.
+12–20 s at 8 jobs) that is roughly five to ten seconds — not worth ~$17.70/month at equal 64 GB
+memory plus a higher setup fee. The problem that started this was tests competing with the editor;
+the first four cores fix it.
 
 If the box is ever genuinely saturated — tests queueing, Gradle crawling, load above the thread
 count — move up then. The data is small and the migration is a rebuild, so there is no lock-in now.
@@ -471,9 +472,10 @@ No. The working set, from the VPS and laptop measurements:
 | ZFS ARC (a cache, capped) | 8 GB |
 | Later: `elixir` container | ~1 GB |
 
-Ballpark **15–18 GB at a hard peak**, on a box that never runs the editor or a browser. 32 GB leaves
-more headroom than the laptop has in total. Take 32 GB if the rep can configure it; if that route
-would delay the order by a week, 64 GB at the quoted uplift is a convenience, not a mistake.
+Ballpark **15–18 GB at a hard peak**, on a box that never runs the editor or a browser. 32 GB would
+leave more headroom than the laptop has in total — but **Beauharnois only sells 64 GB**, so the
+decision is made for you: the forced 64 GB becomes page cache and headroom, not waste. It is not a
+reason to look elsewhere; every alternative costs more at equal memory (§13).
 
 ### What replaces the VPS
 
@@ -547,3 +549,35 @@ Notes:
 - Keep the laptop's existing `certbot-renew.timer` for now. Two issuers of the same name is
   harmless while one of them is not yet proven; retire it once the KS-5 has renewed once on its own.
 - Hard date: **2027-01-01**.
+
+---
+
+## 13. Market check and the order (2026-11-02)
+
+Confirmed at checkout: **KS-5 at 64 GB = $38.58/month + $26.69 setup**, year one ≈ **$490**.
+Provisioning is about an hour on this account (seventh OVH dedicated server), so there is **no lead
+time to wait out**.
+
+| Offer | CPU | RAM | Disk | Network | $/month | Year 1 |
+|---|---|---|---|---|---|---|
+| **KS-5 (chosen)** | E3-1270 v6, 4c/8t | 64 GB ECC | 2×450 NVMe | 500 Mbps | **38.58** | **~490** |
+| KS-GAME | i7-7700K, 4c/8t | 32–64 GB | 2×450 NVMe | 300 Mbps | 42.99 | ~559 |
+| KS-A | i7-6700K, 4c/8t | 32 GB | 1×480 SATA | 100 Mbps | 81.99 | ~1,066 |
+| SYS-1 | E-2136, 6c/12t | 32 GB | 2×512 NVMe | 0.5–1 Gbps | 44.39 | ~577 |
+| Hetzner AX41 ≈ €40–45 | Ryzen 5 3600, 6c/12t | 64 GB | 2×512 NVMe | 1 Gbps | ~60–68 | ~720–816 |
+
+Euro at ≈1.50 CAD, so Hetzner's monthly is **1.5–2× the KS-5** even with no setup fee. The earlier
+“Hetzner is cheaper per core” note was a currency error and is withdrawn — per dollar the Kimsufi
+wins. KS-A and KS-GAME are both rejects: one is slower network at 3× the price, the other is +$16
+for ~7% single-thread and a lower RAM ceiling.
+
+### Order now; do not wait for Black Friday
+
+The wait buys exactly one thing: the **$26.69 setup fee**. Provisioning is an hour, so waiting three
+and a half weeks costs three and a half weeks of the thing the laptop needs. Pay the fee, or make
+one pre-sales ask first — a **seven-server account is real leverage**, and a setup waiver or a
+loyalty credit is a single ticket away. Ask for a multi-server discount on the monthly at the same
+time; it costs nothing to ask.
+
+If the box lands after **2026-12-02**, renew the VPS one more month (~$9) rather than compress the
+cutover. The migration is the risky part; the VPS month is not.
