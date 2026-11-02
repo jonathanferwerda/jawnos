@@ -264,24 +264,27 @@ sub appt_header_printer {
 	my $data = shift;
 	my $app = $data->{'app'};
 
-	# The header is the fast half: read its two rows, render, cache and push it.
-	# The window render is the slow half, and it belongs to the caller - a start or
+	# The header is the fast half: read its two rows, render it, push it. The
+	# window render is the slow half, and it belongs to the caller - a start or
 	# stop forks centre_view_grabber after this so the new header is on screen
 	# before the default models and options have been started or stopped.
 	my $appts = $data->{'appts'} || &subs::log_reader({ app => $app, view => 'centre_view', header => 1 });
-	&appt_toggle_checker($app);
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
 	my $server_time = &subs::rightNow();
 	my $c = &subs::controller_builder();
 	my $header = $c->render_to_string(template => 'apps/appointment_header', timestamp => $server_time, appts => $appts, appointments => [ $app ], a => $app, running_uuid => &open_session_uuid($app) );
 
-	eval { &subs::cache_set({ app => $app, context => 'header', timestamp => $server_time, warranty => '-1d' }, { timestamp => $timestamp, header => $header, signature => &subs::render_signature() }) };
+	# Push before any write. The header is what the person is watching, and the
+	# two writes that follow (the toggle reconcile and the cache) can wait on
+	# another writer's lock; that wait must not hold the header back.
 	# A source=ws open is a headless/automation read (and the watch's own path):
 	# it must not wake every other tab with a header, matching the route's own
 	# source=ws guard. Other callers still broadcast.
 	unless (($data->{'broadcast'} // '') eq 'no' || ($data->{'source'} // '') eq 'ws') {
 		&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
 	}
+	&appt_toggle_checker($app);
+	eval { &subs::cache_set({ app => $app, context => 'header', timestamp => $server_time, warranty => '-1d' }, { timestamp => $timestamp, header => $header, signature => &subs::render_signature() }) };
 	# Re-arming the alarms on the rows this header draws is a socket write each,
 	# not a render, so it stays here. A caller that only wants the HTML (a
 	# reconnect's resync) skips it.

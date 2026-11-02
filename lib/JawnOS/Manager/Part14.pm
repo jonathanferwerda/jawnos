@@ -81,10 +81,14 @@ sub manager_reset($c) {
 	# The Add press reads the redrawn window out of the reply (`cv`); a start or
 	# stop does not, and only needs its header at once.
 	my $wants_cv = ($c->param('cv') // '') eq 'yes' ? 1 : 0;
+	my $seg_t0 = &subs::rightNow();
+	my @seg_times;
+	my $seg = sub { my $now = &subs::rightNow(); push @seg_times, ($_[0] . '=' . ($now - $seg_t0)); $seg_t0 = $now; };
 #	($app,undef,$type) = &subs::typesetter($app);
 	$type = $type || $c->param('type');
 	my $init = &subs::setting_initializer($app,$timestamp);
 	$app = $init->{'app'};
+	$seg->('init');
 	$c->param('app' => $app);
 	# A stop names the session it closes: managerReset sends the open session's uuid
 	# (read off the appointment header), so the same stop closes that same row on
@@ -172,6 +176,7 @@ sub manager_reset($c) {
 	$appointments = $results->hashes;
 	$results = &subs::db_query("select min(timestamp) as file,timestamp,notes,app,duration,type,status,amount,unit,account from appointments where app=? and timestamp >=? and type != 'note' order by timestamp", $app,$time_definition);
 	push @{$appointments}, @{$results->hashes};
+	$seg->('read');
 	# An app with nothing logged yet is created by whatever the person logged, but a
 	# stop/cancel/resume/pause/delay has no session to act on and must not mint one -
 	# on a peer that had not yet synced this app, coercing a stop to "add" wrote a
@@ -281,8 +286,12 @@ sub manager_reset($c) {
 			browser_tab_id => $browser_tab_id
 		});
 		}
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp }); 
+		# Set the toggle before the header renders: appt_header_printer reconciles the
+		# same setting, and a second delete+insert for the value it was just given is
+		# pure wait on the press path.
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp }); 
+		$seg->('hdr');
 		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $timestamp });
 		my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
 			app => $app,
@@ -316,6 +325,7 @@ sub manager_reset($c) {
 		if ($stop_timestamp) {
 			&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'off', timestamp => $stop_timestamp });
 		}
+		$seg->('models');
 
 	}
 	elsif ($type eq 'stop') {
@@ -417,7 +427,8 @@ sub manager_reset($c) {
 					uuid => $o->{'uuid'}
 				});
 			}
-			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp }); 
+			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+			$seg->('stop_hdr');
 			# a start carries the amount; this stop is when the session is finished,
 			# so it is the one movement the session makes. A record moved at creation
 			# and is not moved again here.
@@ -967,6 +978,7 @@ elsif ($type eq 'delay') {
 	# caches the window in the background, so the press no longer waits for it (nor
 	# for the default model and option sessions below it).
 	my $cv;
+	$seg->('branch');
 	if ($wants_cv) {
 		$cv = &centre_view_grabber({ c => $c, app => $app, timestamp => $timestamp, header => $appt_header, appts => $header_appts, cached => 'no' });
 		$returner->{'cv'} = $cv;
@@ -1001,6 +1013,8 @@ elsif ($type eq 'delay') {
 		}, { name => 'reset file encrypt' });
 	}
 	&subs::appointment_theme_push() if ($theme_movement =~ /^(?:start|stop|record|cancel|resume|pause|delay)$/);
+	$seg->('tail');
+	$log->info('reset segments ' . ($type // '?') . ' ' . $app . ': ' . join(' ', @seg_times));
 	return $returner;
 }
 
