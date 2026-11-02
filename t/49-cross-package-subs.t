@@ -1,4 +1,4 @@
-# tests-for: lib/ lib/JawnOS/ lib/JawnOS/Domain/
+# tests-for: lib/ perl/
 # covers:    Cross-package sub calls and the require graph.
 
 use strict;

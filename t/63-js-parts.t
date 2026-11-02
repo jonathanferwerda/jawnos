@@ -42,6 +42,32 @@ my $node = `command -v node 2>/dev/null`;
 chomp $node if defined $node;
 my $have_node = ($node && -x $node) ? 1 : 0;
 
+# One node process compiles a list of files. Running `node --check` once per
+# file was most of this test's run time (~450 startups); vm.Script performs the
+# same compile check without executing anything.
+my $NODE_CHECK = <<'JS';
+var fs = require('fs'), vm = require('vm');
+var list = fs.readFileSync(process.argv[2], 'utf8').split('\n').filter(function (s) { return s.length; });
+var bad = 0;
+list.forEach(function (f) {
+	try { new vm.Script(fs.readFileSync(f, 'utf8'), { filename: f }); }
+	catch (e) { bad++; console.log(f + ': ' + e.message); }
+});
+process.exit(bad ? 1 : 0);
+JS
+
+sub node_check {
+	my ($files) = @_;
+	my ($lh, $list) = tempfile(SUFFIX => '.txt', UNLINK => 1);
+	print $lh map { "$_\n" } @$files;
+	close $lh;
+	my ($ch, $checker) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $ch $NODE_CHECK;
+	close $ch;
+	my $out = `$node "$checker" "$list" 2>&1`;
+	return ($? >> 8, $out);
+}
+
 sub parts_for {
 	my ($index) = @_;
 	my @files = (-f $index ? ($index) : ());
@@ -155,15 +181,9 @@ foreach my $dir (@split_dirs) {
 	is_deeply([sort keys %named], [sort keys %real],
 		'universal.js names every part and no file that is gone');
 	if ($have_node) {
-		my $failed = 0;
-		foreach my $file (parts_for($index)) {
-			my $out = `$node --check "$file" 2>&1`;
-			if ($? != 0) {
-				$failed++;
-				diag("$file: $out");
-			}
-		}
-		is($failed, 0, 'the universal.js index and every part parse');
+		my ($rc, $out) = node_check( [ parts_for($index) ] );
+		diag($out) if $rc;
+		is($rc, 0, 'the universal.js index and every part parse');
 	}
 }
 
@@ -190,23 +210,26 @@ sub build_entries {
 }
 
 if ($have_node) {
-	my $failed = 0;
-	foreach my $file (@all) {
-		my $out = `$node --check "$file" 2>&1`;
-		if ($? != 0) {
-			$failed++;
-			diag("$file: $out");
-		}
-	}
-	is($failed, 0, 'every bundle source parses on its own');
+	# the batched checker must still fail on a broken file, or the loops above
+	# would pass by never reporting anything
+	my ($bh, $bad) = tempfile(SUFFIX => '.js', UNLINK => 1);
+	print $bh "function broken( {\n";
+	close $bh;
+	my ($rc, $out) = node_check([$bad]);
+	isnt($rc, 0, 'the batched syntax check catches a broken file');
+	like($out, qr/\Q$bad\E/, 'and names the file it could not parse');
+
+	my ($rc_all, $out_all) = node_check(\@all);
+	diag($out_all) if $rc_all;
+	is($rc_all, 0, 'every bundle source parses on its own');
 
 	my ($core_raw) = build_entries(@core);
 	my ($fh, $tmp) = tempfile(SUFFIX => '.js', UNLINK => 1);
 	print $fh $core_raw;
 	close $fh;
-	my $out = `$node --check "$tmp" 2>&1`;
+	my $core_out = `$node --check "$tmp" 2>&1`;
 	my $ok = ($? == 0) ? 1 : 0;
-	diag($out) unless $ok;
+	diag($core_out) unless $ok;
 	ok($ok, 'the concatenated core bundle parses as one script');
 
 	my $chunks_failed = 0;
