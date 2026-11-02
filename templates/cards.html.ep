@@ -8,7 +8,15 @@
 	<span id="deck_history" style="float:right;width:30%;height:90%;overflow:scroll;">
 		<% foreach my $his ( @{$history} ) { %>
 			<% my $rn = &subs::random_string_creator(10); %>
+			<% if (ref $his->{'cards'} eq 'ARRAY') { %>
+				<span class="card_spread" style="display:flex;gap:2px;">
+				<% foreach my $cn ( @{$his->{'cards'}} ) { %>
+					<img class="card history hover" rn="<%= $rn %>" title="<%= &subs::format_name($his->{'title'}) %>" style="width:33%;" src="/images/cards/<%= $cn %>">
+				<% } %>
+				</span>
+			<% } else { %>
 			<img class="huge_thumb card history hover" rn="<%= $rn %>" title="<%= &subs::format_name($his->{'title'}) %>" style="width:100%;" src="<% if ($his->{'stream'}) { %><%= $his->{'stream'} %><% } else { %>/images/cards/<%= $his->{'title'} %>.png<% } %>">
+			<% } %>
 			<br><span class="time" style="text-align:center;" timestamp="<%= $his->{'timestamp'} %>"></span>
 			<% if ($his->{'description'}) { %>
 				<img class="tiny_thumb card_description_icon" src="<%= &subs::icon_for('/images/make believe/Pillow.png') %>" hint="JawnOS">

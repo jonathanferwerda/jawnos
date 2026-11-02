@@ -272,25 +272,29 @@ sub setting_setter {
 	if ($setting eq 'pos') {
 		&subs::manufacturer_grabber();
 		my $old_settings = &subs::settings_grabber({ app => $app });
+		my $own_uuid = $old_settings->{'uuid'} || '';
 		my $old_sc = &subs::db_query('select * from settings where app=? and setting like ? escape ?', $app, 'sc\_%', '\\')->hashes;
 
 		foreach my $os ( @{$old_sc} ) {
 
 			my $osc = eval { return decode_json $os->{'value'} } || [];
-			foreach my $sc ( @{$osc} ) {
+			foreach my $sc ( @{ &sc_list_clean($osc, undef, undef) } ) {
 				my $set = &subs::settings_grabber({ uuid => $sc });
-				my $otsc = eval { return decode_json $set->{'sc_' . $old_settings->{'pos'}} } || [];
-				if (scalar @{$otsc} > 0) {
-					@{$otsc} = grep { $_ ne $old_settings->{'uuid'} } @{$otsc};
-					my $jotsc = encode_json $otsc;
-
-					&subs::setting_setter({ app => $set->{'app'}, setting => 'sc_' . $old_settings->{'pos'}, value => $jotsc });
+				next unless $set && $set->{'app'} && $set->{'app'} ne $app;
+				# the member's own uuid never belongs in its own list, and a list
+				# must not carry the same uuid twice - an unguarded push in this
+				# hook is how a stale list grew by one copy per pos change
+				my $raw = eval { return decode_json $set->{'sc_' . $old_settings->{'pos'}} } || [];
+				my $otsc = &sc_list_clean($raw, $set->{'uuid'}, undef);
+				my @without = grep { $_ ne $own_uuid } @{$otsc};
+				if (scalar @without != scalar @{$raw}) {
+					&subs::setting_setter({ app => $set->{'app'}, setting => 'sc_' . $old_settings->{'pos'}, value => encode_json \@without });
 				}
-				my $ntsc = eval { return decode_json $set->{'sc_' . $value} } || [];
-				push @{$ntsc}, $old_settings->{'uuid'};
-				my $jntsc = encode_json $ntsc;
-				&subs::setting_setter({ app => $set->{'app'}, setting => 'sc_' . $value, value => $jntsc });
-
+				my $ntsc = &sc_list_clean(eval { return decode_json $set->{'sc_' . $value} } || [], $set->{'uuid'}, undef);
+				if (length $own_uuid && !grep { $_ eq $own_uuid } @{$ntsc}) {
+					push @{$ntsc}, $own_uuid;
+					&subs::setting_setter({ app => $set->{'app'}, setting => 'sc_' . $value, value => encode_json $ntsc });
+				}
 			}
 		}
 	}
@@ -756,6 +760,31 @@ sub settings_orphan_plan {
 		push @rename, { from => $app, to => $new, length => length($app) };
 	}
 	return { rename => \@rename, count => scalar @rename };
+}
+
+# A relational membership array (sc_<construct>) names other apps by their uuid
+# rows. It is a set, not a log: the relational window resolves each uuid back to
+# an app, so a uuid that names nothing - or the app's own uuid - draws nothing.
+# Two write paths used to push without a guard, and a list that already held a
+# uuid grew by one copy on every construct change; one coffee row carried 8,192
+# copies of its own uuid. Keep the first appearance of each drawable uuid.
+#
+# $known is a uuid => app map from the caller's own view of the house. It is
+# optional: the runtime write paths pass none (an unknown uuid may be a peer's
+# app not yet seen here), while the migration passes it to drop dangling names.
+sub sc_list_clean {
+	my ($list, $self_uuid, $known) = @_;
+	$list = [] unless ref $list eq 'ARRAY';
+	my (@out, %seen);
+	foreach my $uuid ( @{$list} ) {
+		next unless defined $uuid && length $uuid;
+		next if $uuid eq 'all';
+		next if defined $self_uuid && length $self_uuid && $uuid eq $self_uuid;
+		next if $seen{$uuid}++;
+		next if $known && !$known->{$uuid};
+		push @out, $uuid;
+	}
+	return \@out;
 }
 
 # The machine's own hostname without spawning `hostname` for every page. The

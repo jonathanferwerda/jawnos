@@ -245,6 +245,11 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 		$c->render(text => $contents);
 	}
 	&subs::cache_set({ app => 'music', context => 'content', subcontext => ($content_cache . ($queue_key ? '-q' . $queue_key : '')) }, { contents => $contents });
+	# The shell just written is the only one a read can reach: it is keyed by
+	# this code revision and this queue. The shells left by an earlier version
+	# or an earlier queue are dead the moment this one lands, and they used to
+	# stay behind one per push; drop them so the music cache does not grow forever.
+	&subs::db_query("delete from cache where app = 'music' and context = 'content' and subcontext is not ?", $content_cache . ($queue_key ? '-q' . $queue_key : ''));
 });
 
 

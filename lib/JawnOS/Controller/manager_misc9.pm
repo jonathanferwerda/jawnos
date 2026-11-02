@@ -342,6 +342,22 @@ sub action_28156 {
 }
 
 # GET /manager/card_picker
+# The spread's picture: a montage of the three deck files. It is a render, so it
+# is built for the reply and never stored; the history keeps the file names.
+sub card_spread_stream {
+	my ($paths) = @_;
+	my @paths = grep { defined $_ && length $_ && -e $_ } @{ ref $paths eq 'ARRAY' ? $paths : [] };
+	return '' unless @paths;
+	my $montage = &subs::image_bridge_montage(\@paths);
+	unless (defined $montage && length $montage) {
+		my $cmd = join ' ', 'magick montage', map { &subs::shell_quote($_) } @paths, '-';
+		$montage = `$cmd`;
+	}
+	return (defined $montage && length $montage)
+		? 'data:image/png;base64,' . encode_base64($montage)
+		: '';
+}
+
 sub action_28170 {
 	my $c = shift;
 	my $timestamp = $c->param('timestamp');
@@ -366,7 +382,7 @@ sub action_28170 {
 		}
 	}
 
-	my ($card,$stream,$title);
+	my ($card,$stream,$title,$spread_cards);
 	if ($new_card eq 'new') {
 		if ($mode eq 'day') {
 			$card = &card_of_the_day();
@@ -389,7 +405,7 @@ sub action_28170 {
 			$title =~ s/.png$//gi;
 		}
 		elsif ($mode eq 'spread') {
-			my @cards;
+			my (@cards, @names);
 			for (my $n = 0; $n <= 2; $n++) {
 				my ($ca,$car);
 
@@ -403,14 +419,16 @@ sub action_28170 {
 				}
 
 				$cards[$n] = $car;
-				my $montage_cmd = 'magick montage ' . $cards[0] . ' ' . $cards[1] . ' ' . $cards[2] . ' -';
-				my $montage = &subs::image_bridge_montage(\@cards);
-				$montage = `$montage_cmd` unless defined $montage && length $montage;
+				(my $name = $car) =~ s{^\./public/images/cards/}{};
+				push @names, $name;
 				$ca =~ s/.png$//gi;
 				$title .= &subs::format_name($ca) . '<br> ';
-				$stream = 'data:image/png;base64,' . encode_base64 $montage;
-				splice @{$history}, 10;
 			}
+			# The spread picture is a render of three deck files, not data to
+			# keep: build it for this reply and remember only the file names.
+			$stream = &card_spread_stream(\@cards);
+			splice @{$history}, 10;
+			$spread_cards = \@names;
 		}
 		else {
 			$card = &random_card_picker();
@@ -423,6 +441,10 @@ sub action_28170 {
 			$stream = $history->[0]->{'stream'};
 			$title = $history->[0]->{'title'};
 		}
+		elsif (ref $history->[0]->{'cards'} eq 'ARRAY') {
+			$stream = &card_spread_stream([ map { './public/images/cards/' . $_ } @{$history->[0]->{'cards'}} ]);
+			$title = $history->[0]->{'title'};
+		}
 		else {
 			$card = $history->[0]->{'title'} . '.png';
 			$title = $history->[0]->{'title'};
@@ -431,7 +453,10 @@ sub action_28170 {
 
 	if (($mode eq 'free' || $mode eq 'cycle' || $mode eq 'spread') && $new_card eq 'new') {
 		splice @{$history}, 40;
-		unshift @{$history}, { title => $title, timestamp => $timestamp, stream => $stream };
+		my %entry = ( title => $title, timestamp => $timestamp );
+		if (ref $spread_cards eq 'ARRAY') { $entry{'cards'} = $spread_cards }
+		else { $entry{'stream'} = $stream }
+		unshift @{$history}, \%entry;
 		my $jhistory = eval { return encode_json $history };
 		&subs::setting_setter({ app => 'cards', setting => $mode, value => $jhistory });
 	}
