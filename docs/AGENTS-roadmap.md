@@ -12,5 +12,8 @@ Moved out of `AGENTS.md` (a per-task reference, not an every-request map).
   actually holds, and resolve the two keyless Desktop window rows (bridge them or remove them).
 - **Dev box offload — not started**: move the suite, the builds and the programming load to the
   Kimsufi box in an LXC, and the exit node with them. The sequencing is the point: `cloud` is the
-  tailnet's Headscale control plane *and* its exit node, so it is wiped last, never first.
-  Phases, verified baseline and open questions: `docs/infrastructure-roadmap.md`.
+  2-vCPU VPS running the tailnet's Headscale control plane *and* the house's always-on JawnOS
+  server and public hub, so it is shed down to the control plane last, never wiped first. Elixir
+  is not deployed anywhere yet. The apex `:443` is Headscale's, so the hub and the Elixir app need
+  subdomains — layouts L1/L2. Phases, measured baseline and open questions:
+  `docs/infrastructure-roadmap.md`.
