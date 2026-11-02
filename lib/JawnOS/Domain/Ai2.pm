@@ -451,6 +451,11 @@ sub ai_chat_raw {
 	$ai_tokens->{'in'} += ($in // 0);
 	$ai_tokens->{'out'} += ($out // 0);
 	$ai_tokens->{'unmetered'}++ unless defined $in || defined $out;
+	# Bank the usage by clock hour and provider, so the balance chart can put a
+	# token count against the hour an account fell in. A provider that reported
+	# no usage is skipped rather than banked as zero, so "no tokens" stays
+	# distinguishable from "not metered".
+	&subs::ai_spend_note($provider, $in, $out);
 	return ($body, undef);
 }
 

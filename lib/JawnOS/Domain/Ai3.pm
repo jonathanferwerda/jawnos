@@ -37,6 +37,15 @@ use Unicode::Normalize qw(NFC);
 
 our %M;
 our $database;
+# The line windows the balance chart offers, and the span each covers. The
+# template, the picker and ai_balance_window all read this list, so a window
+# cannot be offered without an arithmetic that knows what it means.
+our @BALANCE_WINDOWS = qw(1h 24h 7d);
+our %BALANCE_WINDOW_MS = (
+	'1h'  => 60 * 60 * 1000,
+	'24h' => 24 * 60 * 60 * 1000,
+	'7d'  => 7 * 24 * 60 * 60 * 1000,
+);
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
 # every restart.
@@ -222,10 +231,9 @@ sub ai_balance_refresh {
 # `change` is positive when the balance fell; `per_day` is the pace in money.
 sub ai_balance_window {
 	my ($points, $window, $now) = @_;
-	$window = '7d' if defined $window && $window eq '7d';
-	$window = '24h' unless defined $window;
+	$window = '24h' unless defined $window && $BALANCE_WINDOW_MS{$window};
 	$now = &subs::rightNow() unless defined $now;
-	my $span = $window eq '7d' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+	my $span = $BALANCE_WINDOW_MS{$window};
 	my $start = $now - $span;
 	my @all = sort { $a->{'t'} <=> $b->{'t'} }
 		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} && $_->{'t'} <= $now }
@@ -291,8 +299,13 @@ sub ai_balance_window {
 # negative spend; the drawing carries an interpolated point at the window's
 # left edge, so the drop from the last sample before it is not lost.
 # `max` is the busiest hour's spend and `peak` that bucket.
+#
+# `$token_hours` is the spend ledger for one provider (hour key -> tokens and
+# calls), so a bar can say what traffic caused its fall. Each bucket carries
+# its `key` (the same 'YYYY-MM-DD HH' the ledger uses), `tokens`, `calls` and
+# `share` - its percentage of the window's whole spend.
 sub ai_balance_hourly {
-	my ($points, $now, $hours) = @_;
+	my ($points, $now, $hours, $token_hours) = @_;
 	$hours = 24 unless defined $hours && $hours =~ /^\d+$/ && $hours > 0;
 	$now = &subs::rightNow() unless defined $now;
 	my $hour = 60 * 60 * 1000;
@@ -310,12 +323,29 @@ sub ai_balance_hourly {
 		my $b_start = $start + $_ * $hour;
 		my $bt = localtime($b_start / 1000);
 		{
-			start => $b_start,
-			end   => $b_start + $hour,
-			label => (ref $bt ? $bt->strftime('%H:00') : ''),
-			spend => 0,
+			start  => $b_start,
+			end    => $b_start + $hour,
+			key    => (ref $bt ? $bt->strftime('%Y-%m-%d %H') : ''),
+			label  => (ref $bt ? $bt->strftime('%H:00') : ''),
+			spend  => 0,
+			tokens => 0,
+			calls  => 0,
+			share  => 0,
 		}
 	} ( 0 .. $hours - 1 );
+	# The ledger counts in the same clock hours, so a bar's tokens are the calls
+	# that hour. An hour the ledger has nothing for keeps tokens 0 and reads as
+	# untracked in the panel rather than as a genuine zero.
+	my $token_total = 0;
+	if (ref $token_hours eq 'HASH') {
+		foreach my $b ( @buckets ) {
+			my $t = $token_hours->{ $b->{'key'} };
+			next unless ref $t eq 'HASH';
+			$b->{'tokens'} = $t->{'tokens'} || 0;
+			$b->{'calls'}  = $t->{'calls'}  || 0;
+			$token_total += $b->{'tokens'};
+		}
+	}
 	my $hourly = {
 		hours   => $hours,
 		start   => $start,
@@ -326,6 +356,7 @@ sub ai_balance_hourly {
 		total   => 0,
 		max     => 0,
 		peak    => undef,
+		tokens  => $token_total,
 	};
 	return $hourly unless @in;
 	my @draw = @in;
@@ -350,6 +381,7 @@ sub ai_balance_hourly {
 	}
 	my ($max, $peak) = (0, undef);
 	foreach my $b ( @buckets ) {
+		$b->{'share'} = ($total > 0) ? ($b->{'spend'} / $total) * 100 : 0;
 		if ($b->{'spend'} > $max) { $max = $b->{'spend'}; $peak = $b; }
 	}
 	$hourly->{'total'} = $total;
@@ -361,6 +393,9 @@ sub ai_balance_hourly {
 # One bar per hour, relative to the busiest, on the panel's accent. The heights
 # are shares of `max` rather than money, so a currency change never redraws it -
 # the amount is printed beside the drawing, where the picker can convert it.
+# Each bar carries its hour key, and a transparent full-height column over it
+# takes the click: on a phone a 13-pixel bar is not a target, and an hour that
+# spent nothing still has tokens worth reading.
 sub ai_balance_bars {
 	my ($hourly, $width, $height) = @_;
 	$width ||= 320;
@@ -374,7 +409,7 @@ sub ai_balance_bars {
 	my $bottom = $height - 1;
 	my $plot = $width / $count;
 	my $gap = $plot > 6 ? 1.5 : 0.5;
-	my @bars;
+	my (@bars, @hits);
 	for my $i ( 0 .. $count - 1 ) {
 		my $b = $buckets->[$i];
 		my $spend = $b->{'spend'} || 0;
@@ -383,12 +418,14 @@ sub ai_balance_bars {
 		my $x = $i * $plot + $gap / 2;
 		my $w = $plot - $gap;
 		my $y = $bottom - $h;
+		my $key = xml_escape($b->{'key'} // '');
 		my $class = ($peak && $peak eq $b) ? ' class="peak"' : '';
-		push @bars, sprintf('<rect%s x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f"/>', $class, $x, $y, $w, $h, ($w < 3 ? 0 : 1));
+		push @bars, sprintf('<rect%s data-key="%s" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f"/>', $class, $key, $x, $y, $w, $h, ($w < 3 ? 0 : 1));
+		push @hits, sprintf('<rect class="hit" data-key="%s" x="%.2f" y="0" width="%.2f" height="%d" fill="transparent"/>', $key, $x, $w, $height);
 	}
 	my $base = sprintf('<line x1="0" y1="%.1f" x2="%d" y2="%.1f" stroke="currentColor" stroke-opacity="0.18" stroke-width="1" vector-effect="non-scaling-stroke"/>', $bottom, $width, $bottom);
 	return '<svg class="balance_bars" viewBox="0 0 ' . $width . ' ' . $height . '" preserveAspectRatio="none" aria-hidden="true">'
-		. $base . join('', @bars) . '</svg>';
+		. $base . join('', @bars, @hits) . '</svg>';
 }
 
 # A line for one provider over one window. currentColor means it follows the
@@ -443,7 +480,8 @@ sub ai_balance_sparkline {
 }
 
 # The Sys panel's chart, assembled from the cached read. No provider call and no
-# database write happen here: the route has already loaded the same report. The
+# database write happen here: the route has already loaded the same report, and
+# the only read is the spend ledger that puts tokens beside an hour's fall. The
 # balances and the pace are shown in the house's reporting currency, converted
 # at the rate snapshot the rest of the app uses; a provider whose rate is not
 # loaded keeps its own currency rather than a wrong number.
@@ -453,6 +491,11 @@ sub ai_balance_chart {
 	$now = &subs::rightNow() unless defined $now;
 	my $history = (ref $report->{'history'} eq 'HASH') ? $report->{'history'} : {};
 	my $base = &crypto_report_currency();
+	# The spend ledger, read once for every provider at once. It is keyed by the
+	# same local clock hours the bars use; a provider nobody has called yet is
+	# simply absent, and its bars read untracked rather than at zero tokens.
+	my $hour_grid = &ai_balance_hourly([], $now);
+	my $token_hours = &ai_spend_hour_map(substr(&ai_spend_hour_key($hour_grid->{'start'}), 0, 13));
 	my (@series, @unconverted);
 	my (%seen_unconverted, $converted_any);
 	foreach my $row ( @{ $report->{'rows'} || [] } ) {
@@ -476,7 +519,7 @@ sub ai_balance_chart {
 			push @unconverted, $from unless $seen_unconverted{$from}++;
 		}
 		my %windows;
-		foreach my $window ( qw/24h 7d/ ) {
+		foreach my $window ( @BALANCE_WINDOWS ) {
 			$windows{$window} = &ai_balance_window(\@scaled, $window, $now);
 		}
 		push @series, {
@@ -489,7 +532,7 @@ sub ai_balance_chart {
 			rate            => ($converted ? $rate : undef),
 			available       => ((defined $row->{'available'} && $converted) ? $row->{'available'} * $rate : $row->{'available'}),
 			windows         => \%windows,
-			hourly          => &ai_balance_hourly(\@scaled, $now),
+			hourly          => &ai_balance_hourly(\@scaled, $now, 24, $token_hours->{$provider} || {}),
 		};
 	}
 	return {
@@ -497,6 +540,7 @@ sub ai_balance_chart {
 		base        => $base,
 		converted   => ($converted_any ? 1 : 0),
 		unconverted => \@unconverted,
+		windows     => [ @BALANCE_WINDOWS ],
 		series      => \@series,
 	};
 }

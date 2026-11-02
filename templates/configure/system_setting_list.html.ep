@@ -100,8 +100,10 @@
 					<% } %>
 				</span>
 				<span class="balance_windows">
-					<button type="button" class="balance_window" window="24h" status="active"><%= &subs::lang('configure.last_24h') %></button>
-					<button type="button" class="balance_window" window="7d"><%= &subs::lang('configure.last_7d') %></button>
+					<% my %window_label = ('1h' => 'configure.last_1h', '24h' => 'configure.last_24h', '7d' => 'configure.last_7d'); %>
+					<% foreach my $window ( @{ $balance_chart->{'windows'} } ) { %>
+						<button type="button" class="balance_window" window="<%= $window %>"<% if ($window eq '24h') { %> status="active"<% } %>><%= &subs::lang($window_label{$window} || 'configure.last_24h') %></button>
+					<% } %>
 				</span>
 			</div>
 			<% if (@balance_series) { %>
@@ -118,7 +120,7 @@
 								<span class="cfg-note balance_currency_note"><%= &subs::lang('configure.balance_no_rate', $balance_chart->{'base'}, $series->{'source_currency'}) %></span>
 							<% } %>
 						</div>
-						<% foreach my $window ( qw/24h 7d/ ) { %>
+						<% foreach my $window ( @{ $balance_chart->{'windows'} } ) { %>
 							<% my $w = $series->{'windows'}->{$window}; %>
 							<div class="balance_plot" window="<%= $window %>"<% if ($window ne '24h') { %> style="display:none;"<% } %>>
 								<% if (!$w->{'points'} || scalar @{ $w->{'points'} } < 2) { %>
@@ -160,14 +162,17 @@
 						<% } %>
 						<%# The same samples grouped by clock hour: a line says how far a
 						   balance fell, bars say when it fell. Always the last 24 hours,
-						   whichever line window is showing above; the busiest hour is
-						   named beneath it. %>
+						   whichever line window is showing above. Pressing a bar opens
+						   that hour's drop, its share of the day and the tokens in it. %>
 						<% my $hourly = $series->{'hourly'}; %>
 						<% my $hourly_currency = $series->{'currency'} || $balance_chart->{'base'} || ''; %>
 						<div class="balance_hours">
 							<div class="balance_hours_head">
 								<b><%= &subs::lang('configure.drop_by_hour') %></b>
 								<span class="cfg-note"><%= &subs::lang('configure.last_24h') %></span>
+								<% if ($hourly && ($hourly->{'samples'} || 0) >= 2 && ($hourly->{'total'} || 0) > 0.005) { %>
+									<span class="cfg-note"><%= &subs::lang('configure.hour_hint') %></span>
+								<% } %>
 							</div>
 							<% if (!$hourly || ($hourly->{'samples'} || 0) < 2) { %>
 								<p class="cfg-note"><%= &subs::lang('configure.balance_collecting') %></p>
@@ -181,6 +186,27 @@
 									   data-base-amount="<%= sprintf('%.6f', $peak->{'spend'}) %>"
 									   data-hour="<%= $peak->{'label'} %>"
 									   data-template="<%= &subs::lang('configure.balance_hour_peak', '{0}', '{1}') %>"><%= &subs::lang('configure.balance_hour_peak', $peak->{'label'}, &subs::currency_money($peak->{'spend'}) . ' ' . $hourly_currency) %></p>
+								<% } %>
+								<%# One line per hour, hidden until its bar is pressed. They are
+								   rendered here rather than assembled in the browser, so the
+								   words come from the catalog and the amount still follows
+								   the currency picker; a hour the ledger has nothing for
+								   says so instead of reading as zero tokens. %>
+								<% my $hour_detail = &subs::lang('configure.hour_detail', '{0}', '{1}', '{2}', '{3}', '{4}'); %>
+								<% my $hour_untracked = &subs::lang('configure.hour_detail_untracked', '{0}', '{1}', '{2}'); %>
+								<% foreach my $hour_bucket ( @{ $hourly->{'buckets'} } ) { %>
+									<% my $tokens = $hour_bucket->{'tokens'} || 0; %>
+									<% my $calls = $hour_bucket->{'calls'} || 0; %>
+									<% my $share = sprintf('%.1f%%', $hour_bucket->{'share'} || 0); %>
+									<% my $money = &subs::currency_money($hour_bucket->{'spend'}) . ' ' . $hourly_currency; %>
+									<p class="cfg-note balance_hour_detail" data-key="<%= $hour_bucket->{'key'} %>"
+									   data-hour="<%= $hour_bucket->{'label'} %>" data-share="<%= $share %>"
+									   data-tokens="<%= $tokens %>" data-calls="<%= $calls %>"
+									   data-base-amount="<%= sprintf('%.6f', $hour_bucket->{'spend'} || 0) %>"
+									   data-template="<%= $tokens ? $hour_detail : $hour_untracked %>"
+									   style="display:none;"><%= $tokens
+										? &subs::lang('configure.hour_detail', $hour_bucket->{'label'}, $money, $share, $tokens, $calls)
+										: &subs::lang('configure.hour_detail_untracked', $hour_bucket->{'label'}, $money, $share) %></p>
 								<% } %>
 							<% } %>
 						</div>

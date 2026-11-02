@@ -435,6 +435,22 @@ sub update_database($data) {
 			server_time VARCHAR(255)
 		)',
 		'create unique index if not exists idx_ai_budget on ai_budget (machine, day)',
+		# Every model call's usage, banked by the clock hour so the balance chart
+		# can print the tokens behind an hour's drop. One row per machine, provider
+		# and hour, with server_time so it rides the same peer sync as the rest of
+		# the ledger.
+		'create table if not exists ai_spend (
+			uuid VARCHAR(255),
+			machine VARCHAR(255),
+			provider VARCHAR(100),
+			hour VARCHAR(25),
+			tokens_in INT,
+			tokens_out INT,
+			calls INT,
+			ost VARCHAR(255),
+			server_time VARCHAR(255)
+		)',
+		'create unique index if not exists idx_ai_spend on ai_spend (machine, provider, hour)',
 		# db_insert always writes uuid and ost, so a ledger table built before they
 		# were added refuses its own inserts; add them for existing installs.
 		'alter table ai_house add column uuid VARCHAR(255)',

@@ -49,6 +49,22 @@ function jawnosCurrencyApply(select) {
 		var hour = line.attr('data-hour') || '';
 		line.text(template.replace('{0}', hour).replace('{1}', jawnosCurrencyValue(Math.abs(amount * rate)) + ' ' + code));
 	});
+	// An hour's detail line is rendered with the panel, one per hour, so a
+	// currency change rebuilds it from the same attributes: only the money
+	// moves, the hour and the share stay as printed.
+	series.find('.balance_hour_detail').each(function () {
+		var line = $(this);
+		var template = line.attr('data-template') || '';
+		var spend = parseFloat(line.attr('data-base-amount'));
+		if (template.indexOf('{1}') < 0) { return; }
+		var money = isFinite(spend) ? (jawnosCurrencyValue(Math.abs(spend * rate)) + ' ' + code) : '';
+		line.text(template
+			.replace('{0}', line.attr('data-hour') || '')
+			.replace('{1}', money)
+			.replace('{2}', line.attr('data-share') || '')
+			.replace('{3}', line.attr('data-tokens') || '')
+			.replace('{4}', line.attr('data-calls') || ''));
+	});
 	series.find('.balance_currency_note').each(function () {
 		var note = $(this);
 		var template = note.attr('data-template') || '';

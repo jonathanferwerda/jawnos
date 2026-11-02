@@ -681,3 +681,21 @@ $(document).on('click', '.balance_window', function() {
 	try { localStorage.setItem('jawnos:balance_window', win); } catch (e) {}
 });
 
+// Pressing an hour's bar opens that hour's line under the chart - its drop, its
+// share of the last twenty-four hours and the tokens the ledger counted in it -
+// and pressing the same bar again closes it. The lines are rendered with the
+// panel (so the words are in the interface language and the amount follows the
+// currency picker), so this only decides which one shows and which bar is lit.
+$(document).on('click', '.balance_bars rect.hit', function() {
+	var hit = $(this);
+	var series = hit.closest('.balance_series');
+	var key = hit.attr('data-key') || '';
+	var detail = series.find('.balance_hour_detail').filter(function() { return ($(this).attr('data-key') || '') === key; });
+	var open = detail.is(':visible');
+	series.find('.balance_hour_detail').hide();
+	series.find('.balance_bars rect.picked').removeClass('picked');
+	if (open) { return; }
+	detail.show();
+	series.find('.balance_bars rect[data-key]').not('.hit').filter(function() { return ($(this).attr('data-key') || '') === key; }).addClass('picked');
+});
+

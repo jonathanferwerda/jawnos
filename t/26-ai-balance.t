@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Domain/Ai3.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Loader.pm
+# tests-for: lib/JawnOS/Domain/Ai3.pm lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Ai2.pm lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Loader.pm
 # covers:    The domain layer is lazy: load the real definitions before the local *subs:: stubs below, or a later module lo...
 
 use strict;
@@ -12,6 +12,9 @@ use JawnOSTest;
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
 subs::preload($_) for qw(crypto_rates_read crypto_report_currency exchange_rate);
+# The token ledger and the hourly chart share the clock-hour key, so load the
+# real definitions before any local stub below can be overwritten by a load.
+subs::preload($_) for qw(ai_spend_hour_key ai_spend_uuid ai_spend_note ai_spend_hour_map);
 
 # The Sys panel's "Balance drop" chart. The AI balance job keeps a rolling week
 # of samples in its cache row; these tests pin the window arithmetic (the
@@ -271,7 +274,9 @@ is $one_hour->{'total'}, 0, 'with nothing to spend';
 # The drawing: one bar per hour, the peak marked, and nothing unrenderable.
 my $bars = &subs::ai_balance_bars($hourly, 320, 48);
 like $bars, qr/^<svg class="balance_bars"/, 'the hourly graph is an svg';
-is scalar(() = $bars =~ /<rect/g), 24, 'with a bar for every hour';
+is scalar(() = $bars =~ /<rect(?: class="peak")? data-key/g), 24, 'with a bar for every hour';
+is scalar(() = $bars =~ /<rect class="hit"/g), 24, 'and a full-height hit column for every hour';
+like $bars, qr/data-key="\d{4}-\d\d-\d\d \d\d"/, 'each bar carries its hour key';
 like $bars, qr/<rect class="peak"/, 'the busiest hour is marked';
 unlike $bars, qr/NaN|undef/, 'and nothing unrenderable';
 unlike &subs::ai_balance_bars($flat_hours, 320, 48), qr/class="peak"/,
@@ -283,10 +288,19 @@ is &subs::ai_balance_bars({ buckets => [] }, 320, 48), '', 'no hours draws nothi
 {
 	local *subs::crypto_report_currency = sub { 'CAD' };
 	local *subs::exchange_rate = sub { return ($_[0] eq 'USD' && $_[1] eq 'CAD') ? 1.5 : undef };
+	# The ledger read is a database query; the chart's wiring is what is under
+	# test here, so hand it one hour's worth of tokens for this provider.
+	my $chart_hour = &subs::ai_spend_hour_key($now);
+	local *subs::ai_spend_hour_map = sub { { deepseek => { $chart_hour => { tokens => 900, calls => 3 } } } };
 	my $chart = &subs::ai_balance_chart($report, $now);
 	my $series_hourly = $chart->{'series'}->[0]->{'hourly'};
 	ok $series_hourly, 'a charted series carries its hourly breakdown';
 	is scalar @{ $series_hourly->{'buckets'} }, 24, 'with a bar per hour';
+	is $series_hourly->{'buckets'}->[-1]->{'tokens'}, 900, 'and the ledger\'s tokens land on the hour in progress';
+	is $series_hourly->{'buckets'}->[-1]->{'calls'}, 3, 'with the calls beside them';
+	is $series_hourly->{'buckets'}->[0]->{'tokens'}, 0, 'an hour the ledger has nothing for stays untracked';
+	is_deeply $chart->{'windows'}, [ '1h', '24h', '7d' ], 'the chart offers the three line windows';
+	ok $chart->{'series'}->[0]->{'windows'}->{'1h'}, 'including the last hour';
 	# The hourly graph is the last twenty-four clock hours, so it starts on
 	# the hour rather than at this instant; the invariant is that it is the
 	# same day converted by the same rate as the line beside it.
@@ -295,6 +309,119 @@ is &subs::ai_balance_bars({ buckets => [] }, 320, 48), '', 'no hours draws nothi
 		'and its total is converted with the rest';
 	cmp_ok abs($series_hourly->{'max'} - $raw_hourly->{'max'} * 1.5), '<', 0.001,
 		'as is the busiest hour it scales the bars against';
+}
+
+# The last hour is the same arithmetic with a shorter span, and an unknown
+# window falls back to the day rather than to nothing.
+my $last_hour = &subs::ai_balance_window(\@points, '1h', $now);
+is $last_hour->{'window'}, '1h', 'the last-hour window names itself';
+is $last_hour->{'hours'}, 1, 'and covers an hour';
+is scalar @{ $last_hour->{'points'} }, 2, 'with the sample and its interpolated edge';
+my $unknown_window = &subs::ai_balance_window(\@points, 'nonsense', $now);
+is $unknown_window->{'window'}, '24h', 'an unknown window reads as the day';
+
+# Tokens ride along with the bars: each hour carries its own count and the
+# share of the day it represents, so a press has something to report.
+{
+	my $key_19 = $hourly->{'buckets'}->[19]->{'key'};
+	my $key_22 = $hourly->{'buckets'}->[22]->{'key'};
+	my $with_tokens = &subs::ai_balance_hourly($hourly_points, $now, 24, {
+		$key_19 => { tokens => 1200, calls => 4 },
+		$key_22 => { tokens => 300,  calls => 1 },
+	});
+	is $with_tokens->{'buckets'}->[19]->{'tokens'}, 1200, 'an hour carries its token count';
+	is $with_tokens->{'buckets'}->[19]->{'calls'}, 4, 'and its calls';
+	is $with_tokens->{'buckets'}->[20]->{'tokens'}, 0, 'an hour with no ledger row is zero, not borrowed';
+	is $with_tokens->{'tokens'}, 1500, 'the day\'s tokens are the hours added up';
+	cmp_ok abs($with_tokens->{'buckets'}->[19]->{'share'} - (100 * 10 / 15)), '<', 0.001,
+		'an hour\'s share is its part of the day\'s fall';
+	is $with_tokens->{'buckets'}->[20]->{'share'}, 0, 'an hour that spent nothing has no share';
+	cmp_ok abs(($with_tokens->{'buckets'}->[19]->{'share'} + $with_tokens->{'buckets'}->[22]->{'share'} + $with_tokens->{'buckets'}->[20]->{'share'}) - 100), '<', 0.001,
+		'and the hours with a fall add up to the whole';
+}
+
+# The clock-hour key the ledger and the bars share.
+is &subs::ai_spend_hour_key(ts(2026, 11, 2, 17, 43)), '2026-11-02 17', 'an hour key is the local clock hour';
+is &subs::ai_spend_hour_key(ts(2026, 11, 2, 17, 0, 59)), '2026-11-02 17', 'and ignores the minutes and seconds';
+is &subs::ai_spend_hour_key(ts(2026, 11, 2, 0, 5)), '2026-11-02 00', 'midnight is its own hour';
+like &subs::ai_spend_uuid('machine-a', 'deepseek', '2026-11-02 17'), qr/^ai_spend_/,
+	'the ledger row is addressed by a stable uuid';
+isnt &subs::ai_spend_uuid('machine-a', 'deepseek', '2026-11-02 17'),
+	&subs::ai_spend_uuid('machine-a', 'deepseek', '2026-11-02 18'), 'which moves with the hour';
+
+# Every model call banks its usage, and a second call in the same hour updates
+# the row the peers already hold rather than adding one.
+{
+	package FakeRowSet;
+	sub new { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
+	sub hashes { return $_[0]->{'rows'} }
+}
+package main;
+
+my %spend_rows;
+{
+	no warnings 'redefine';
+	my $spend_now = ts(2026, 11, 2, 17, 43);
+	local *subs::ai_house_me = sub { 'machine-a' };
+	local *subs::rightNow = sub { $spend_now };
+	my $matching = sub {
+		my ($row, $where) = @_;
+		foreach my $k ( keys %{ $where || {} } ) {
+			return 0 if ((($row->{$k} // '') . '') ne ((($where->{$k} // '') . '')));
+		}
+		return 1;
+	};
+	local *subs::db_select = sub {
+		my ($table, $columns, $where) = @_;
+		return FakeRowSet->new([ grep { $matching->($_, $where) } values %spend_rows ]);
+	};
+	local *subs::db_delete = sub {
+		my ($table, $where) = @_;
+		foreach my $uuid ( keys %spend_rows ) {
+			delete $spend_rows{$uuid} if $matching->($spend_rows{$uuid}, $where);
+		}
+		return 1;
+	};
+	local *subs::db_insert = sub {
+		my ($table, $row) = @_;
+		$spend_rows{ $row->{'uuid'} } = { %{$row} };
+		return 1;
+	};
+	ok &subs::ai_spend_note('deepseek', 800, 200), 'a call banks its usage';
+	my ($row) = values %spend_rows;
+	is $row->{'tokens_in'}, 800, 'with its prompt tokens';
+	is $row->{'tokens_out'}, 200, 'and its completion tokens';
+	is $row->{'calls'}, 1, 'and one call';
+	is $row->{'hour'}, '2026-11-02 17', 'banked under the clock hour';
+	ok &subs::ai_spend_note('deepseek', 500, 100), 'a second call in that hour';
+	is scalar(keys %spend_rows), 1, 'updates the row the peers already hold';
+	($row) = values %spend_rows;
+	is $row->{'tokens_in'}, 1300, 'adding its prompt tokens';
+	is $row->{'calls'}, 2, 'and counting the call';
+	ok !&subs::ai_spend_note('deepseek', undef, undef), 'a call that reported no usage is not banked';
+	ok !&subs::ai_spend_note('deepseek', 0, 0), 'and neither is a zero';
+}
+
+# The map the chart reads: per provider and hour, tokens in plus out.
+{
+	no warnings 'redefine';
+	my $seen_since;
+	local *subs::db_query = sub {
+		my ($sql, $since) = @_;
+		$seen_since = $since;
+		return FakeRowSet->new([
+			{ provider => 'deepseek',   hour => '2026-11-02 15', tin => 800, tout => 200, calls => 3 },
+			{ provider => 'deepseek',   hour => '2026-11-02 16', tin => '50', tout => 0, calls => 1 },
+			{ provider => 'openrouter', hour => '2026-11-02 16', tin => 10, tout => 10, calls => 1 },
+		]);
+	};
+	my $map = &subs::ai_spend_hour_map('2026-11-02 15');
+	is $seen_since, '2026-11-02 15', 'the map asks only for hours inside the chart';
+	is $map->{'deepseek'}->{'2026-11-02 15'}->{'tokens'}, 1000, 'tokens are prompt plus completion';
+	is $map->{'deepseek'}->{'2026-11-02 15'}->{'calls'}, 3, 'with the calls beside them';
+	is $map->{'deepseek'}->{'2026-11-02 16'}->{'tokens'}, 50, 'a second hour is its own bucket';
+	is $map->{'openrouter'}->{'2026-11-02 16'}->{'tokens'}, 20, 'and providers stay apart';
+	ok !exists $map->{'openrouter'}->{'2026-11-02 15'}, 'an hour with no calls is absent, not zero';
 }
 
 done_testing();

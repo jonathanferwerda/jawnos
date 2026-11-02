@@ -433,6 +433,11 @@ sub ai_house_uuid { return 'ai_house_' . md5_sum(($_[0] // '')) }
 
 sub ai_budget_uuid { return 'ai_budget_' . md5_sum(($_[0] // '') . '|' . ($_[1] // '')) }
 
+# The same natural-key rule for the hourly spend ledger: one row per machine,
+# provider and clock hour, so a second call in the hour updates the row the
+# peers already hold instead of adding another.
+sub ai_spend_uuid { return 'ai_spend_' . md5_sum(($_[0] // '') . '|' . ($_[1] // '') . '|' . ($_[2] // '')) }
+
 sub ai_house_have_model {
 	return ( &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' })
@@ -865,6 +870,72 @@ sub ai_house_budget_add {
 	&subs::db_delete('ai_budget', { machine => $me, day => $day });
 	&subs::db_insert('ai_budget', { uuid => &ai_budget_uuid($me, $day), machine => $me, day => $day, tokens => $total, server_time => &subs::rightNow() });
 	return $total;
+}
+
+# The clock hour a reading belongs to, in this machine's own time, as the sortable
+# key 'YYYY-MM-DD HH'. The balance chart's bars are local clock hours, so the
+# token ledger must count in the same hours or the two would be offset.
+sub ai_spend_hour_key {
+	my ($ms) = @_;
+	$ms = &subs::rightNow() unless defined $ms && $ms =~ /^-?\d+$/;
+	my $t = localtime($ms / 1000);
+	return ref $t ? $t->strftime('%Y-%m-%d %H') : '';
+}
+
+# Every model call banks its usage here: one row per machine, provider and
+# clock hour. The balance chart reads it beside each provider's fall, so a gift
+# of tokens is not mistaken for a cheap hour and a busy hour shows the traffic
+# that caused it. A call that reports no usage writes nothing rather than a
+# zero, and the row is replaced (not multiplied) so the peer sync sees an
+# update. It carries server_time, so it rides the ordinary sync: the balance an
+# account falls by is the house's spend, and the tokens beside it must be the
+# house's too.
+sub ai_spend_note {
+	my ($provider, $in, $out, $calls) = @_;
+	$in = (defined $in && $in =~ /^\d+$/) ? ($in + 0) : 0;
+	$out = (defined $out && $out =~ /^\d+$/) ? ($out + 0) : 0;
+	$calls = (defined $calls && $calls =~ /^\d+$/) ? ($calls + 0) : 1;
+	return 0 unless $in || $out;
+	$provider = '' unless defined $provider;
+	my $me = &ai_house_me() || 'me';
+	my $hour = &ai_spend_hour_key(&subs::rightNow());
+	return 0 unless length $hour;
+	my $row = eval { &subs::db_select('ai_spend', undef, { machine => $me, provider => $provider, hour => $hour })->hashes->[0] };
+	my $tin  = (($row && $row->{'tokens_in'})  ? $row->{'tokens_in'}  : 0) + $in;
+	my $tout = (($row && $row->{'tokens_out'}) ? $row->{'tokens_out'} : 0) + $out;
+	my $count = (($row && $row->{'calls'}) ? $row->{'calls'} : 0) + $calls;
+	&subs::db_delete('ai_spend', { machine => $me, provider => $provider, hour => $hour });
+	&subs::db_insert('ai_spend', {
+		uuid => &ai_spend_uuid($me, $provider, $hour),
+		machine => $me,
+		provider => $provider,
+		hour => $hour,
+		tokens_in => $tin,
+		tokens_out => $tout,
+		calls => $count,
+		server_time => &subs::rightNow(),
+	});
+	return 1;
+}
+
+# The ledger summed per provider and hour, for the balance chart. `$since` is the
+# earliest hour key the caller wants; everything older is left out of the query.
+# An absent table (a database that has not migrated yet) reads as no tokens
+# rather than taking the panel down.
+sub ai_spend_hour_map {
+	my ($since) = @_;
+	$since = '' unless defined $since;
+	my $rows = eval { &subs::db_query('select provider, hour, sum(tokens_in) as tin, sum(tokens_out) as tout, sum(calls) as calls from ai_spend where hour >= ? group by provider, hour', $since)->hashes } || [];
+	my %map;
+	foreach my $r ( @{$rows} ) {
+		my $hour = $r->{'hour'} // '';
+		next unless length $hour;
+		$map{ $r->{'provider'} // '' }->{$hour} = {
+			tokens => (($r->{'tin'} || 0) + ($r->{'tout'} || 0)),
+			calls  => ($r->{'calls'} || 0),
+		};
+	}
+	return \%map;
 }
 
 1;
