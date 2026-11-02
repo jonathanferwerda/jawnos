@@ -69,6 +69,26 @@ is $rm && $rm->{'uuid'}, 'u-tablet2', 'an ip reaches the right handheld despite 
 ($rm, $err) = subs::peer_resolve('sig-fe', $handhelds);
 is $rm && $rm->{'uuid'}, 'u-fe', 'and so does the signatorial';
 
+# A row's `ip` is only the address it was last reached at - a machine on the
+# tailnet keeps its LAN address in the network map - so the map's addresses name
+# the row too.
+my $moved = [
+	{
+		uuid       => 'u-table',
+		hostname   => 'Table',
+		ip         => '100.64.0.1',
+		tailnet_ip => '100.64.0.1',
+		network    => '{"lan":{"nic":"lan","ip":"192.168.1.123","port":45545}}',
+		signatorial => 'sig-table',
+	},
+];
+($rm, $err) = subs::peer_resolve('192.168.1.123', $moved);
+is $rm && $rm->{'uuid'}, 'u-table', 'the LAN address in the network map names a row whose ip moved to the tailnet';
+($rm, $err) = subs::peer_resolve('100.64.0.1', $moved);
+is $rm && $rm->{'uuid'}, 'u-table', 'and so does the tailnet address it currently carries';
+($rm, $err) = subs::peer_resolve('192.168.1', $moved);
+ok !$rm, 'half an address is not a match';
+
 # deploy_neighbours uses the same resolver, so a hostname collision no longer
 # answers "no such machine" for one of the two handhelds.
 my $deploy_script = root() . '/scripts/deploy_neighbours.pl';

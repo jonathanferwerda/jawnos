@@ -271,23 +271,29 @@ sub peer_manager_base {
 # Both Android machines report the hostname 'localhost' (Android has no hostname
 # of its own), so a plain hostname is not unique in this house - the refusal
 # names each candidate by hostname, ip and signatorial so the caller can pick.
+#
+# A row's `ip` is only the address it was last reached at, so every literal the
+# row advertises is matched too: the LAN and tailnet addresses it remembers and
+# the interfaces in its network map. Without that, a machine whose row had moved
+# to its tailnet address could not be named by its LAN ip at all.
 sub peer_resolve {
 	my ($term, $rows) = @_;
 	return (undef, 'no machine named') unless defined $term && length $term;
 	my $t = lc $term;
 	my @rows = grep { ref $_ eq 'HASH' } @{ $rows || [] };
+	# An exact match wins outright, including an address that no name contains;
+	# only when nothing matches exactly does a substring decide.
 	my @match = grep {
 		my $r = $_;
-		grep { defined $r->{$_} && lc($r->{$_}) =~ /\Q$t\E/ }
-			qw/uuid signatorial hostname fqdn ip domain name/
+		grep { defined $_ && lc($_) eq $t } &peer_resolve_fields($r, 1);
 	} @rows;
+	unless (@match) {
+		@match = grep {
+			my $r = $_;
+			grep { defined $_ && lc($_) =~ /\Q$t\E/ } &peer_resolve_fields($r);
+		} @rows;
+	}
 	return (undef, 'no machine matches "' . $term . '"') unless @match;
-	my @exact = grep {
-		my $r = $_;
-		grep { defined $r->{$_} && lc($r->{$_}) eq $t }
-			qw/uuid signatorial hostname fqdn ip name/
-	} @match;
-	@match = @exact if @exact;
 	if (@match > 1) {
 		my @named = map {
 			my $label = $_->{'hostname'} || '';
@@ -298,6 +304,33 @@ sub peer_resolve {
 		return (undef, 'that matches more than one machine: ' . join(', ', @named));
 	}
 	return ($match[0], '');
+}
+
+# The values a row can be named by. The names match on a substring; a literal
+# address is added only for the exact pass, since half an ip would name half a
+# house. `domain` is a substring-only value, as it always was.
+sub peer_resolve_fields {
+	my ($r, $with_addresses) = @_;
+	my @named = map { $r->{$_} } qw/uuid signatorial hostname fqdn ip name/;
+	push @named, $r->{'domain'} unless $with_addresses;
+	push @named, &peer_resolve_addresses($r) if $with_addresses;
+	my %seen;
+	return grep { !$seen{$_}++ } grep { defined $_ && length $_ } @named;
+}
+
+# The literal addresses a roster row advertises, beyond its own `ip`.
+sub peer_resolve_addresses {
+	my ($r) = @_;
+	my @out = grep { defined $_ && length $_ } map { $r->{$_} } qw/lan_ip vip tailnet_ip/;
+	my $network = eval { decode_json($r->{'network'} || '{}') };
+	if (ref $network eq 'HASH') {
+		foreach my $nic ( sort keys %{$network} ) {
+			my $entry = $network->{$nic};
+			next unless ref $entry eq 'HASH';
+			push @out, $entry->{'ip'} if defined $entry->{'ip'} && length $entry->{'ip'};
+		}
+	}
+	return @out;
 }
 
 # --- Android sshd ----------------------------------------------------------
