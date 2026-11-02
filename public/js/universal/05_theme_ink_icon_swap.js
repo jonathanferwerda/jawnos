@@ -339,10 +339,13 @@ function jawnosThemeBundleApply(bundle, appt) {
 	if (bundle.texture && typeof jawnosTextureApply === 'function') {
 		jawnosTextureApply(bundle.texture);
 	}
-	// Paint, material and face repaint live. The server-rendered surfaces - the
-	// window title bars, the appointment wrapper and the start menu - also carry
-	// theme colours and icon paths, so a real dressing change asks for their
-	// HTML again. The early return above filtered an unchanged push, so a start
+	// Paint, material and face repaint live through the CSS variables and the
+	// dark-theme wash, so no window is re-rendered: an app keeps its playing
+	// audio and its place. A window's title bar and drawer wear the app's own
+	// colour and --appt-dark, not the theme's, so they follow with no HTML
+	// either. The start menu is the one server-rendered dock whose markup bakes
+	// its icon paths and theme colours, so jawnosReloadIcons rebuilds that and
+	// the taskbar. The early return above filtered an unchanged push, so a start
 	// or stop on the same theme still reloads nothing.
 	window.jawnos_theme_suppress_icon_reload = true;
 	jawnosApplyInk(bundle.accent || '');
@@ -354,8 +357,10 @@ function jawnosThemeBundleApply(bundle, appt) {
 $(function () { jawnosApplyInk('', true); });
 
 // ---- icon set swap: refresh the icons currently on screen ----------------------
-// Called over the websocket after the pseudonym icon set changes; re-renders any
-// open appointment windows and rebuilds the start-menu dock from their icons.
+// Called over the websocket after the pseudonym icon set changes; swaps the
+// icons already on screen and rebuilds the start-menu dock from them. It never
+// re-renders a window: an app's contents repaint from the theme's CSS, and a
+// re-render would stop Music and lose Configure's place.
 
 // The now button wears the state of the time machine in its tile: the same
 // yellow the button's background turns at home, and the same blue it turns
@@ -374,8 +379,8 @@ function nowIconApply(state) {
 	button.attr('src', match[1] + 'now' + (state == 'time_machine' ? ' time machine' : ' here') + '.svg');
 }
 
-// Coalesces the server re-render a theme change asks for: the ink pass and the
-// bundle can arrive together, and one round of windows is enough.
+// Coalesces the chrome refresh a theme change asks for: the ink pass and the
+// bundle can arrive together, and one round of the dock is enough.
 var jawnos_icon_redraw_timer = null;
 
 function jawnosReloadIcons() {
@@ -413,23 +418,15 @@ function jawnosReloadIcons() {
 		// stale the moment the cut changes; drop that cache now so reopening a tab
 		// cannot put the old cut back.
 		if (typeof startMenuHtmlFlush === 'function') { startMenuHtmlFlush(); }
-		// Re-reading a window asks the server to render it again, and a prefork
-		// worker that rendered an icon within the last second still holds the
-		// previous cut in its one-second memo. Wait that out before asking, or a
-		// stale worker can replace the swap above with the old cut. The icons on
-		// screen are already correct from the src swap, so the wait is invisible.
+		// The start menu asks the server for its markup and icon paths again,
+		// and a prefork worker that rendered an icon within the last second
+		// still holds the previous cut in its one-second memo. Wait that out
+		// before asking, or a stale worker can put the old cut back. The icons
+		// on screen are already correct from the src swap, so the wait is
+		// invisible; the taskbar is rebuilt from those same icons below. No
+		// window is re-opened here: the desk repaints in place.
 		clearTimeout(jawnos_icon_redraw_timer);
 		jawnos_icon_redraw_timer = setTimeout(function () {
-			$('.wind').each(function () {
-				var app = $(this).attr('app');
-				if (!app) { return; }
-				if (typeof appWindowOpener === 'function') {
-					appWindowOpener(app, Date.now(), { visible: 'yes' });
-				}
-				else if (typeof appointmentGrabber === 'function') {
-					appointmentGrabber(app);
-				}
-			});
 			// refresh an open start menu (passing `source` skips the close branch)
 			if (typeof startMenuToggle === 'function' && $('#start_menu').is(':visible')) {
 				startMenuToggle({ source: 'icon_refresh' });

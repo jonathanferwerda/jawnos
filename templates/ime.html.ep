@@ -33,9 +33,14 @@
 		:root { --jawnos-font: <%= $title_font %>; }
 		body, button { font-family: var(--jawnos-font); }
 		/* the input method has no field to reserve room for and no taskbar; the
-		   dock is the whole page (the service's bottom inset keeps it above the
-		   system navigation bar) */
-		#jawn_soft_keyboard { position: fixed; }
+		   dock is the whole page.
+
+		   The system already wraps this IME window and adds the navigation-bar
+		   strip, and env(safe-area-inset-bottom) is that same strip. The shared
+		   .soft_kb padding adds it a second time, which leaves a blank band below
+		   the space bar whenever the app shows the system bars. Pin the bottom pad
+		   to the plain 8px the keys need. */
+		#jawn_soft_keyboard { position: fixed; padding: 6px 8px 8px; }
 
 	</style>
 </head>
