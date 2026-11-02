@@ -437,4 +437,5 @@ $catalog{'hi'} = {
 		'page_agent' => 'पेज एजेंट',
 		'page_fill' => 'यह पेज पढ़ें और भरें',
 		'thinking' => 'सोच',
+		'subagent' => 'सहायक एजेंट',
 	};

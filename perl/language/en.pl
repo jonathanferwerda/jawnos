@@ -451,4 +451,5 @@ $catalog{'en'} = {
 		'page_agent' => 'Page agent',
 		'page_fill' => 'Read and fill this page',
 		'thinking' => 'Thinking',
+		'subagent' => 'Subagent',
 	};

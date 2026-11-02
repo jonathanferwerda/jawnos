@@ -158,6 +158,8 @@ our @coding_tools = (
 		desc => 'write a whole file inside the repo, replacing it; give the complete new contents, not a diff' },
 	{ name => 'run', example => '{"action":"run","command":"perl -c perl/Manager.pl"}',
 		desc => 'run one checked command in the repo: perl -c <file>, perl scripts/<file>, prove, or a read-only git command (status, diff, log). Anything else is refused' },
+	{ name => 'agent', example => '{"action":"agent","task":"where is the sync cursor written?","scope":"read","paths":["lib/JawnOS/Domain"]}',
+		desc => 'hand one self-contained investigation or scoped edit to a subagent: "scope":"read" (the default) lets it list, read and run checks anywhere; "scope":"write" also needs "paths", a list of repo paths it may write within. It cannot ship: it never bumps, commits, pushes or restarts, and it cannot ask for another agent' },
 	{ name => 'bump', example => '{"action":"bump"}',
 		desc => 'bump the patch version in ./VERSION (the normal step before a commit)' },
 	{ name => 'commit', example => '{"action":"commit","message":"fix the help header"}',

@@ -437,4 +437,5 @@ $catalog{'ja'} = {
 		'page_agent' => 'ページエージェント',
 		'page_fill' => 'このページを読み取って入力する',
 		'thinking' => '思考',
+		'subagent' => 'サブエージェント',
 	};

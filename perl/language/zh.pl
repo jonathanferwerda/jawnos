@@ -450,4 +450,5 @@ $catalog{'zh'} = {
 		'page_agent' => '页面助手',
 		'page_fill' => '读取并填写此页面',
 		'thinking' => '思考',
+		'subagent' => '子代理',
 	};

@@ -450,4 +450,5 @@ $catalog{'de'} = {
 		'page_agent' => 'Seitenassistent',
 		'page_fill' => 'Diese Seite lesen und ausfüllen',
 		'thinking' => 'Denken',
+		'subagent' => 'Subagent',
 	};

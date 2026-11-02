@@ -16,6 +16,7 @@ function jawnosCodingChatSave() {
 			// keep it out, or a restored log would show a finished run as working
 			var saved = log.clone();
 			saved.find('.coding_chat_now').remove();
+			saved.find('.coding_chat_live').remove();
 			state[panel.attr('mount')] = {
 				log: saved.html() || '',
 				scroll: log[0] ? log[0].scrollTop : 0,

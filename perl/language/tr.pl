@@ -437,4 +437,5 @@ $catalog{'tr'} = {
 		'page_agent' => 'Sayfa ajanı',
 		'page_fill' => 'Bu sayfayı oku ve doldur',
 		'thinking' => 'Düşünce',
+		'subagent' => 'Alt ajan',
 	};

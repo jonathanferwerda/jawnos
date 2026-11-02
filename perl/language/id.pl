@@ -437,4 +437,5 @@ $catalog{'id'} = {
 		'page_agent' => 'Agen halaman',
 		'page_fill' => 'Baca dan isi halaman ini',
 		'thinking' => 'Pemikiran',
+		'subagent' => 'Subagen',
 	};

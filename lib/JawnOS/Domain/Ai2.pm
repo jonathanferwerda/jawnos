@@ -394,8 +394,96 @@ sub ai_usage_tokens {
 	return ($in, $out);
 }
 
+# One provider's streamed frame, as [ kind, text ] deltas. The providers frame
+# the same information differently: Anthropic names a delta kind, Gemini marks a
+# thought part, Ollama puts content and thinking beside each other, and the
+# OpenAI-compatible crowd nests both under choices[0].delta. Empty and unknown
+# pieces are dropped, and an error frame is left to the caller's own handling.
+sub ai_stream_frame {
+	my ($provider, $obj) = @_;
+	return () unless ref $obj eq 'HASH';
+	$provider = '' unless defined $provider;
+	my @out;
+	my $add = sub {
+		my ($kind, $s) = @_;
+		return unless defined $s && !ref $s && length $s;
+		push @out, [ $kind, $s ];
+	};
+	if ($provider eq 'anthropic') {
+		return () unless ($obj->{'type'} || '') eq 'content_block_delta';
+		my $d = $obj->{'delta'};
+		return () unless ref $d eq 'HASH';
+		my $dt = $d->{'type'} || '';
+		if ($dt eq 'thinking_delta') { $add->('reasoning', $d->{'thinking'}); }
+		elsif ($dt eq 'text_delta') { $add->('text', $d->{'text'}); }
+		return @out;
+	}
+	if ($provider eq 'google') {
+		my $parts = $obj->{'candidates'}->[0]->{'content'}->{'parts'};
+		return () unless ref $parts eq 'ARRAY';
+		foreach my $p ( @{$parts} ) {
+			next unless ref $p eq 'HASH';
+			$add->(($p->{'thought'} ? 'reasoning' : 'text'), $p->{'text'});
+		}
+		return @out;
+	}
+	if ($provider eq 'ollama') {
+		my $msg = $obj->{'message'};
+		if (ref $msg eq 'HASH') {
+			$add->('text', $msg->{'content'});
+			$add->('reasoning', $msg->{'thinking'});
+		}
+		else { $add->('text', $obj->{'response'}); }
+		return @out;
+	}
+	# openai, xai, mistral, cohere, groq, openrouter, deepseek
+	my $delta = $obj->{'choices'}->[0]->{'delta'};
+	return () unless ref $delta eq 'HASH';
+	$add->('text', $delta->{'content'});
+	$add->('reasoning', $delta->{'reasoning_content'});
+	$add->('reasoning', $delta->{'reasoning'});
+	return @out;
+}
+
+# Feed one chunk of a streaming reply into the provider's framing and return the
+# deltas it completed. The incomplete tail stays in the buffer, so a frame split
+# across two reads is reassembled rather than lost. SSE providers separate frames
+# with a blank line and carry one JSON payload in one or more data: lines; Ollama
+# sends one JSON object per line. A malformed frame is skipped, not fatal.
+sub ai_stream_feed {
+	my ($provider, $buffer_ref, $chunk) = @_;
+	return () unless ref $buffer_ref eq 'SCALAR';
+	$$buffer_ref .= defined $chunk ? $chunk : '';
+	my @out;
+	if (($provider || '') eq 'ollama') {
+		while ($$buffer_ref =~ s/\A([^\n]*)\n//) {
+			my $line = $1;
+			$line =~ s/\r\z//;
+			next unless length $line;
+			my $obj = eval { decode_json($line) };
+			next unless ref $obj eq 'HASH';
+			push @out, &ai_stream_frame('ollama', $obj);
+		}
+		return @out;
+	}
+	while ($$buffer_ref =~ s/\A(.*?)\r?\n\r?\n//s) {
+		my $frame = $1;
+		my @data;
+		foreach my $line ( split /\r?\n/, $frame ) {
+			push @data, $1 if $line =~ /^data:\s?(.*)\z/s;
+		}
+		next unless @data;
+		my $payload = join("\n", @data);
+		next if $payload =~ /^\s*\[DONE\]\s*\z/;
+		my $obj = eval { decode_json($payload) };
+		next unless ref $obj eq 'HASH';
+		push @out, &ai_stream_frame($provider, $obj);
+	}
+	return @out;
+}
+
 sub ai_chat_raw {
-	my ($model, $messages, $thinking, $role) = @_;
+	my ($model, $messages, $thinking, $role, $opt) = @_;
 	my @key_settings = &subs::ai_key_settings();
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ @key_settings ] });
 	my $suds = &subs::suds_grabber();
@@ -419,6 +507,11 @@ sub ai_chat_raw {
 		else { push @msgs, $m; }
 	}
 	my @wire = map { &ai_wire_message($provider, $_) } @msgs;
+
+	# A caller that passes a sink wants the tokens as they arrive. A peer's own
+	# Ollama and Cloudflare are relayed or answered whole, so they never stream.
+	my $sink = (ref $opt eq 'HASH' && ref $opt->{'on_delta'} eq 'CODE') ? $opt->{'on_delta'} : undef;
+	my $wants_stream = ($sink && $provider ne 'ollama_remote' && $provider ne 'cloudflare') ? 1 : 0;
 
 	# a peer's own Ollama: carry the call to that machine's manager, which runs it
 	# against its local daemon and hands the answer back over the same rail
@@ -464,7 +557,8 @@ sub ai_chat_raw {
 		$payload = { model => $real, max_tokens => 2048, system => $system, messages => [ @wire ] };
 	}
 	elsif ($provider eq 'google') {
-		$url = 'https://generativelanguage.googleapis.com/v1beta/models/' . $real . ':generateContent?key=' . url_escape($secret->($settings->{'google_key'}));
+		my $mode = $wants_stream ? ':streamGenerateContent?alt=sse&key=' : ':generateContent?key=';
+		$url = 'https://generativelanguage.googleapis.com/v1beta/models/' . $real . $mode . url_escape($secret->($settings->{'google_key'}));
 		$headers = { 'Content-Type' => 'application/json' };
 		$payload = { contents => [ @wire ], systemInstruction => { parts => [ { text => $system } ] } };
 	}
@@ -497,6 +591,9 @@ sub ai_chat_raw {
 	# none adds nothing, so a call with no level is byte-identical to the old one.
 	my $level = &ai_thinking_level($thinking);
 	my $payload_plain = { %{$payload} };
+	# Ask for the stream only after the retry snapshot is taken, so a model that
+	# rejects the thinking knob is retried as the plain, non-streaming request.
+	$payload->{'stream'} = Mojo::JSON::true() if $wants_stream && $provider ne 'google';
 	if (length $level) {
 		if ($provider eq 'anthropic') {
 			# the budget must sit under max_tokens, and 1024 is the floor
@@ -526,8 +623,52 @@ sub ai_chat_raw {
 	}
 
 	my $tx = $ua->build_tx(POST => $url => $headers => json => $payload);
+	# Where a streamed answer is collected. A provider that ignores the flag sends
+	# application/json instead, which lands in $stream_raw and is decoded below, so
+	# the caller still gets its answer.
+	my ($streamed, $stream_sse) = (0, 0);
+	my ($stream_raw, $stream_text, $stream_reasoning, $stream_buffer) = ('', '', '', '');
+	my $take = sub {
+		my @deltas = @_;
+		foreach my $d ( @deltas ) {
+			my ($kind, $piece) = @$d;
+			if ($kind eq 'reasoning') { $stream_reasoning .= $piece }
+			else { $stream_text .= $piece }
+			$sink->($kind, $piece);
+		}
+	};
+	if ($wants_stream) {
+		# Mojo parses text/event-stream before the generic body path, so for SSE
+		# its own event is the per-chunk feed; `read` covers Ollama's NDJSON and
+		# the application/json fallback. Both feed the same frame parser.
+		$tx->res->content->on(sse => sub {
+			my ($content, $event) = @_;
+			return unless ref $event eq 'HASH';
+			$stream_sse = $streamed = 1;
+			# Mojo has already parsed the frame (and joined its data lines), so
+			# feed the JSON straight to the provider delta reader; handing it back
+			# as a synthetic `data:` line would break a multi-line payload.
+			my $obj = eval { decode_json($event->{'text'} // '') };
+			$take->(&ai_stream_frame($provider, $obj)) if ref $obj eq 'HASH';
+		});
+		$tx->res->content->on(read => sub {
+			my ($content, $bytes) = @_;
+			return if $stream_sse;
+			my $ctype = lc($tx->res->headers->content_type // '');
+			if ($ctype =~ m{^text/event-stream} || $ctype =~ m{ndjson}) {
+				$streamed = 1;
+				$take->(&ai_stream_feed($provider, \$stream_buffer, $bytes));
+			}
+			else { $stream_raw .= $bytes }
+		});
+	}
 	$ua->start($tx);
 	return (undef, 'could not reach the model: ' . $tx->error->{'message'}) if $tx->error;
+	# A provider that closes without the final blank line would leave its last
+	# frame in the buffer; flush it once before reading the result.
+	if ($streamed && length $stream_buffer) {
+		$take->(&ai_stream_feed($provider, \$stream_buffer, $provider eq 'ollama' ? "\n" : "\n\n"));
+	}
 	my $res = $tx->res;
 	# A model that does not understand the thinking knob (an older local model, a
 	# provider that never adopted the field) must not cost the call: put the same
@@ -535,11 +676,13 @@ sub ai_chat_raw {
 	if (length $level && !$res->is_success && $res->code == 400 && ($res->body || '') =~ /reason|think|unknown|unrecognized|unsupported|invalid/i) {
 		my $tx2 = $ua->build_tx(POST => $url => $headers => json => $payload_plain);
 		$ua->start($tx2);
+		# The retry is a fresh plain reply; forget whatever the first attempt fed.
+		($streamed, $stream_sse, $stream_raw, $stream_text, $stream_reasoning, $stream_buffer) = (0, 0, '', '', '', '');
 		$res = $tx2->res unless $tx2->error;
 		$log->info('AI: ' . $model . ' answered 400 to the thinking knob (' . $level . '); the call was retried without it') if defined $log;
 	}
 	unless ($res->is_success) {
-		my $body = substr($res->body || '', 0, 500);
+		my $body = substr($res->body || $stream_raw, 0, 500);
 		# out of credit reads the same at every provider: stand the bucket down, so
 		# the panel hides its paid models and chat steps down to a free one
 		if ($res->code == 402 || $body =~ /(insufficient|credit|billing|payment|out of funds|no funds|balance|exceeded your current quota|exceeded your quota)/i) {
@@ -552,9 +695,18 @@ sub ai_chat_raw {
 			my ($pause, $why) = &ai_limit_pause($res->code, $retry_after, $body);
 			&ai_bucket_mark_unavailable(&ai_model_bucket($model), $res->code . ' ' . ($why || ''), $pause) if defined $pause;
 		}
-		return (undef, 'the model answered ' . $res->code . ': ' . substr($res->body || '', 0, 200));
+		return (undef, 'the model answered ' . $res->code . ': ' . substr($res->body || $stream_raw, 0, 200));
 	}
-	my $body = eval { return $res->json } || {};
+	my $body;
+	if ($streamed) {
+		$body = { '__streamed' => 1, 'text' => $stream_text, 'reasoning' => $stream_reasoning };
+	}
+	elsif ($wants_stream && length $stream_raw) {
+		$body = eval { decode_json($stream_raw) } || {};
+	}
+	else {
+		$body = eval { return $res->json } || {};
+	}
 	# Account what the call cost, so the error watch can log its spend and stop
 	# when the day's purse is empty. Providers differ in shape - an OpenAI-style
 	# usage, Cloudflare's own, a bare Ollama's counters - so the parse lives in
@@ -577,12 +729,12 @@ sub ai_chat_raw {
 # model whose bucket is stood down steps down to a free one here, so every caller
 # gets the fallback.
 sub ai_chat_parts {
-	my ($model, $messages, $thinking, $role) = @_;
+	my ($model, $messages, $thinking, $role, $opt) = @_;
 	if (&ai_model_paid($model) && !&ai_bucket_available(&ai_model_bucket($model))) {
 		my $free = &ai_free_model();
 		if ($free) { &subs::say_it('AI: ' . $model . ' is stood down (no credit); using the free model ' . $free); $model = $free; }
 	}
-	my ($body, $err) = &ai_chat_raw($model, $messages, $thinking, $role);
+	my ($body, $err) = &ai_chat_raw($model, $messages, $thinking, $role, $opt);
 	# The record moves only when a call answered. It used to be stamped before
 	# the error check, so a failed call left "last model" naming a model that
 	# never replied - one reason a device reported it had got an answer.
@@ -590,7 +742,7 @@ sub ai_chat_parts {
 	if ($err && &ai_model_paid($model)) {
 		my $free = &ai_free_model();
 		if ($free && $free ne $model) {
-			my ($body2, $err2) = &ai_chat_raw($free, $messages, $thinking, $role);
+			my ($body2, $err2) = &ai_chat_raw($free, $messages, $thinking, $role, $opt);
 			if (!$err2) { ($body, $err) = ($body2, undef); $model = $free; $ai_last_model = $model; &subs::say_it('AI: answered with the free model ' . $free); }
 		}
 	}
@@ -598,8 +750,16 @@ sub ai_chat_parts {
 	$ai_last_model = $model;
 	# The answer and the working beside it: reasoning first, then the reply, so
 	# a caller that reads parts in order sees the thinking before the answer.
-	# Media is appended below.
-	my @parts = @{ &ai_response_parts($body) };
+	# Media is appended below. A streamed reply already arrived as deltas and
+	# carries its own two fields in place of a provider body.
+	my @parts;
+	if (ref $body eq 'HASH' && $body->{'__streamed'}) {
+		push @parts, { type => 'reasoning', text => $body->{'reasoning'} }
+			if defined $body->{'reasoning'} && length $body->{'reasoning'};
+		push @parts, { type => 'text', text => $body->{'text'} }
+			if defined $body->{'text'} && length $body->{'text'};
+	}
+	else { @parts = @{ &ai_response_parts($body) }; }
 	# media the model drew or returned: OpenAI-style images/audio/video, Gemini
 	# inline_data (any mime), Anthropic media blocks. The type is read off the
 	# mime, so a caller can ask for the part it wants (image/audio/video).
@@ -707,7 +867,7 @@ sub ai_role_models {
 # errors - an outage is not a placement mistake. A role with nothing viable is
 # reported rather than sent to a model that cannot answer.
 sub ai_chat_parts_role {
-	my ($role, $messages, $thinking) = @_;
+	my ($role, $messages, $thinking, $opt) = @_;
 	my ($primary, $fallback) = &ai_role_models($role);
 	return (undef, "no $role model is set") unless $primary;
 
@@ -735,11 +895,11 @@ sub ai_chat_parts_role {
 		$log->info('AI: role ' . $role . ' left ' . $primary . ': ' . $placed_why) if $log;
 	}
 
-	my ($parts, $err) = &ai_chat_parts($placed, $messages, $thinking, $role);
+	my ($parts, $err) = &ai_chat_parts($placed, $messages, $thinking, $role, $opt);
 	return ($parts, undef) unless $err;
 	foreach my $next ( grep { defined $_ && length $_ && $_ ne $placed } ($fallback, $primary) ) {
 		&subs::say_it('AI: ' . $role . ' failed (' . $err . '); trying ' . $next);
-		my ($next_parts, $next_err) = &ai_chat_parts($next, $messages, $thinking, $role);
+		my ($next_parts, $next_err) = &ai_chat_parts($next, $messages, $thinking, $role, $opt);
 		return ($next_parts, undef) unless $next_err;
 		($parts, $err) = ($next_parts, $next_err);
 	}
@@ -763,13 +923,13 @@ sub evaluation_model_call_role {
 # per-session model, the Coding agent's own fallback): primary first, then the
 # role's fallback setting.
 sub ai_chat_parts_with_fallback {
-	my ($primary, $fallback, $messages, $thinking, $role) = @_;
+	my ($primary, $fallback, $messages, $thinking, $role, $opt) = @_;
 	return (undef, 'no model given') unless $primary;
-	my ($parts, $err) = &ai_chat_parts($primary, $messages, $thinking, $role);
+	my ($parts, $err) = &ai_chat_parts($primary, $messages, $thinking, $role, $opt);
 	return ($parts, undef) unless $err;
 	if ($fallback && $fallback ne $primary) {
 		&subs::say_it('AI: ' . $primary . ' failed (' . $err . '); trying the fallback ' . $fallback);
-		return &ai_chat_parts($fallback, $messages, $thinking, $role);
+		return &ai_chat_parts($fallback, $messages, $thinking, $role, $opt);
 	}
 	return (undef, $err);
 }

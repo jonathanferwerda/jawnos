@@ -189,6 +189,16 @@ new MutationObserver(function () { codingChatReap(); codingChatArmAll(document);
 // its own toggle, and the run's current state sits at the foot of the log until
 // the run settles.
 
+// A one-line excerpt of an observation: whitespace folded, newlines turned into
+// separators, and cut to a readable length. A step and a subagent's child steps
+// read at the same size, so both use it.
+function codingChatBrief(text, limit) {
+	var out = String(text == null ? '' : text).replace(/\s+\n/g, '\n').replace(/\n+/g, ' · ');
+	var max = limit || 240;
+	if (out.length > max) { out = out.slice(0, max) + '…'; }
+	return out;
+}
+
 // One step's reasoning: a small toggle and the block it opens. A step with no
 // reasoning draws nothing, and the text is always set with .text(), never .html().
 function codingChatThoughtShow(mount, reasoning) {
@@ -204,14 +214,44 @@ $(document).on('click', '.coding_chat_thought_toggle', function () {
 	$(this).next('.coding_chat_thought').toggle();
 });
 
-// The index's step renderer, with the reasoning drawn underneath each step.
+// A delegated step: what the agent handed to a subagent and what came back. The
+// line stays a small toggle so the chat still reads as one column; opening it
+// shows the child steps and the final answer (or the error). Every piece of
+// content is set with .text().
+function codingChatSubagentShow(mount, sub) {
+	var log = codingChatPanel(mount).find('.coding_chat_log');
+	if (!log.length || !sub || typeof sub !== 'object') { return; }
+	var task = $.trim(String(sub.task == null ? '' : sub.task));
+	if (task.length > 60) { task = task.slice(0, 60) + '…'; }
+	var toggle = $('<span class="coding_chat_subagent_toggle" style="cursor:pointer;font-size:11px;opacity:.6;margin-left:6px;"></span>')
+		.text(codingT('subagent') + ': ' + task);
+	var box = $('<div class="coding_chat_subagent" style="display:none;overflow-wrap:break-word;font-size:12px;opacity:.8;max-height:220px;overflow:auto;border-left:2px solid var(--line);padding:2px 6px;margin:3px 0 6px;"></div>');
+	var children = Array.isArray(sub.steps) ? sub.steps : [];
+	children.forEach(function (child) {
+		var a = (child && child.action) || {};
+		var obs = codingChatBrief(child && child.observation);
+		box.append($('<div style="margin:1px 0;"></div>').text(codingChatLine(a) + (obs ? (' → ' + obs) : '')));
+	});
+	var end = String(sub.error || sub.final || '');
+	if (end) {
+		box.append($('<div style="margin:3px 0 0;opacity:.75;font-style:italic;"></div>').text(end));
+	}
+	log.append(toggle).append(box);
+}
+
+$(document).on('click', '.coding_chat_subagent_toggle', function () {
+	$(this).next('.coding_chat_subagent').toggle();
+});
+
+// The index's step renderer, with the reasoning (and any delegated work) drawn
+// underneath each step.
 codingChatStepsShow = function (mount, steps) {
 	(steps || []).forEach(function (s) {
 		var a = s.action || {};
-		var obs = String(s.observation == null ? '' : s.observation).replace(/\s+\n/g, '\n').replace(/\n+/g, ' · ');
-		if (obs.length > 240) { obs = obs.slice(0, 240) + '…'; }
+		var obs = codingChatBrief(s.observation);
 		codingChatAdd(mount, 'step', codingChatLine(a) + (obs ? (' → ' + obs) : ''));
 		codingChatThoughtShow(mount, s.reasoning);
+		if (s.subagent && typeof s.subagent === 'object') { codingChatSubagentShow(mount, s.subagent); }
 	});
 };
 
@@ -247,6 +287,36 @@ function codingChatNow(mount, current) {
 	if (scroll && node) { node.scrollTop = node.scrollHeight; }
 }
 
+// The partial model output of the turn in flight: its reasoning, dim and
+// pre-wrapped, above the raw partial answer in a monospace-ish block. Either
+// half may be absent; with neither (or once the run has settled) the block comes
+// away. It sits at the very foot of the log, below the Thinking/Running line.
+function codingChatLive(mount, current) {
+	var log = codingChatPanel(mount).find('.coding_chat_log');
+	if (!log.length) { return; }
+	var c = (current && typeof current === 'object') ? current : {};
+	var why = (typeof c.live_reasoning === 'string') ? c.live_reasoning : '';
+	var said = (typeof c.live_text === 'string') ? c.live_text : '';
+	var block = log.find('.coding_chat_live').first();
+	if (!why && !said) { block.remove(); return; }
+	if (!block.length) {
+		block = $('<div class="coding_chat_live" style="margin:4px 0 0;"></div>');
+		block.append($('<div class="coding_chat_live_reasoning" style="white-space:pre-wrap;overflow-wrap:break-word;font-size:12px;opacity:.6;max-height:160px;overflow:auto;border-left:2px solid var(--line);padding:2px 6px;margin:0 0 3px;"></div>'));
+		block.append($('<div class="coding_chat_live_text" style="white-space:pre-wrap;overflow-wrap:break-word;font-family:monospace;font-size:12px;max-height:120px;overflow:auto;background:rgba(0,0,0,.05);border-radius:5px;padding:3px 6px;"></div>'));
+		log.append(block);
+	}
+	var whyEl = block.find('.coding_chat_live_reasoning').first();
+	var saidEl = block.find('.coding_chat_live_text').first();
+	if (whyEl.text() !== why) { whyEl.text(why); }
+	if (saidEl.text() !== said) { saidEl.text(said); }
+	whyEl.css('display', why ? '' : 'none');
+	saidEl.css('display', said ? '' : 'none');
+	// a step appended below it leaves the live block above: bring it back down
+	if (block.next().length) { log.append(block); }
+	var node = log[0];
+	if (node && (node.scrollHeight - node.scrollTop - node.clientHeight) < 60) { node.scrollTop = node.scrollHeight; }
+}
+
 // The index draws a snapshot's steps; read the same snapshot's live state after
 // it, and let a settled run (or a panel a newer run has taken) keep no line.
 var codingChatPollApplyCore = codingChatPollApply;
@@ -256,7 +326,9 @@ codingChatPollApply = function (mount, run, r) {
 	if (!panel.length) { return again; }
 	var owner = parseInt(panel.data('coding_run'), 10) || 0;
 	if (owner && run && owner !== run) { return again; }
-	codingChatNow(mount, again ? (r && r.current) : null);
+	var current = again ? (r && r.current) : null;
+	codingChatNow(mount, current);
+	codingChatLive(mount, current);
 	return again;
 };
 
@@ -294,6 +366,7 @@ codingChatPoll = function (mount, run) {
 				now.data('coding_running', 0);
 				codingChatRunning(now);
 				codingChatNow(mount, null);
+				codingChatLive(mount, null);
 				now.removeData('coding_poll_timer');
 			}
 		});

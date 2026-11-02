@@ -749,6 +749,9 @@ sub coding_prompt {
 Rules:
 - Work in small steps: read the file you are about to change first, then write it
   whole, then run "perl -c <file>" (or a test) to check it before you commit.
+- Use agent for a self-contained investigation or a scoped edit. It cannot ship:
+  you still bump, commit, push and restart. Never ask a subagent to spawn
+  another.
 - Never commit code that failed its check. Fix it and check again.
 - When you change behaviour, add or update the tests in t/ and run "prove -l t"
   before you commit. A defect you find but do not fix gets a TODO test naming the
