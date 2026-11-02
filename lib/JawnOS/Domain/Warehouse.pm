@@ -677,6 +677,57 @@ sub tailnet_status {
 	my $ttl = 3;
 	our ($_TAILNET_STATUS, $_TAILNET_STATUS_AT);
 	return $_TAILNET_STATUS if $_TAILNET_STATUS && ($_TAILNET_STATUS_AT || 0) > time() - $ttl;
+	# The Android app runs its own embedded tailnet (libtailscale), not a
+	# `tailscale` binary. It rewrites <filesDir>/tailnet/status.json atomically on
+	# every status change. This tree's HOME is <filesDir>/home, so the file is one
+	# level up. Only that exact canonical path is read (a symlinked directory or
+	# file is rejected) and only the documented fields come back out - a key in
+	# the file is never forwarded.
+	{
+		require Cwd;
+		my $home = $ENV{'HOME'} || '';
+		my $parent = length $home ? Cwd::abs_path($home . '/..') : undef;
+		my $dir = defined $parent ? Cwd::abs_path($parent . '/tailnet') : undef;
+		my $file = defined $dir ? Cwd::abs_path($dir . '/status.json') : undef;
+		if (defined $file && defined $parent
+			&& $dir eq $parent . '/tailnet' && $file eq $dir . '/status.json'
+			&& -f $file && -r _) {
+			my $raw = '';
+			if (open my $fh, '<', $file) {
+				binmode $fh;
+				read($fh, $raw, 65536);
+				close $fh;
+			}
+			my $data = length $raw ? eval { decode_json($raw) } : undef;
+			if (ref $data eq 'HASH') {
+				my $state = ref $data->{'state'} ? '' : (defined $data->{'state'} ? $data->{'state'} : '');
+				$state =~ s/\s+/ /g;
+				$state = substr($state, 0, 32);
+				my $backend = ref $data->{'backend'} ? '' : (defined $data->{'backend'} ? $data->{'backend'} : '');
+				$backend =~ s/\s+/ /g;
+				$backend = substr($backend, 0, 64);
+				my $attempts = (defined $data->{'attempts'} && !ref $data->{'attempts'}
+					&& $data->{'attempts'} =~ /\A\d{1,9}\z/) ? 0 + $data->{'attempts'} : 0;
+				my $at = (defined $data->{'at'} && !ref $data->{'at'}
+					&& $data->{'at'} =~ /\A\d{1,16}\z/) ? 0 + $data->{'at'} : 0;
+				my $app = {
+					available => 1,
+					source    => 'app',
+					state     => $state,
+					online    => ($data->{'online'} ? 1 : 0),
+					has_key   => ($data->{'has_key'} ? 1 : 0),
+					attempts  => $attempts,
+					at        => $at,
+					backend   => $backend,
+					exit      => '',
+					peers     => [],
+				};
+				$_TAILNET_STATUS = $app;
+				$_TAILNET_STATUS_AT = time();
+				return $app;
+			}
+		}
+	}
 	my $bin = $ENV{'TAILSCALE_BIN'} || 'tailscale';
 	my $raw = `timeout 4 $bin status --json 2>/dev/null`;
 	my $status = eval { decode_json($raw) } || {};

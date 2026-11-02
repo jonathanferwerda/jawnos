@@ -593,7 +593,29 @@ sub vpn_status {
 sub vpn_tailscale {
 	my ($state) = @_;
 	return { ok => 0, error => 'Tailscale can only be brought up or down.' } unless defined $state && $state =~ /\A(?:up|down)\z/;
+	# The Android app runs its own embedded tailnet (libtailscale) and rewrites
+	# <filesDir>/tailnet/status.json atomically. This tree's HOME is
+	# <filesDir>/home, so the file is one level up. Only that canonical path
+	# counts. When the app owns the tailnet there is no CLI to start, so answer
+	# with the app's instruction instead of claiming Tailscale is not installed.
+	my $status_file = 0;
+	my $tailnet_dir = 0;
+	{
+		require Cwd;
+		my $home = $ENV{'HOME'} || '';
+		my $parent = length $home ? Cwd::abs_path($home . '/..') : undef;
+		my $dir = defined $parent ? Cwd::abs_path($parent . '/tailnet') : undef;
+		my $file = defined $dir ? Cwd::abs_path($dir . '/status.json') : undef;
+		if (defined $dir && defined $parent && $dir eq $parent . '/tailnet' && -d $dir) {
+			$tailnet_dir = 1;
+			$status_file = 1 if defined $file && $file eq $dir . '/status.json' && -f $file && -r _;
+		}
+	}
 	my $path = find_command('tailscale');
+	# The app creates <filesDir>/tailnet/ even before its first status write; with
+	# no CLI that directory is still the app's tunnel, not a missing package.
+	return { ok => 0, error => 'The Android app holds the tailnet: turn on Auto-connect in the dashboard.' }
+		if $status_file || ($tailnet_dir && !$path);
 	return { ok => 0, error => 'Tailscale is not installed.' } unless $path;
 	my ($stdout, $stderr, $status) = run_write(undef, $path, $state);
 	return { ok => 1, message => 'Tailscale is ' . $state . '.' } if $status == 0;
