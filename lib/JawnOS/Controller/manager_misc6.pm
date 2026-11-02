@@ -438,7 +438,7 @@ sub action_25183 {
 	});
 	$appts->{'__specs'}->{'layout'} = $layout;
 	$appts->{'__specs'}->{'time_machine_timestamp'} = $time_machine_timestamp;
-	if ($appts->{'updateable'} eq 'no') {
+	if (($appts->{'updateable'} || '') eq 'no') {
 		$c->render(json => { updateable => 'no', '__specs' => $appts->{'__specs'} });
 		$c->rendered;
 		return;
