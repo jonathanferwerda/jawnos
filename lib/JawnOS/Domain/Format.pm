@@ -42,8 +42,23 @@ our $device;
 our %m;
 our %time_abbrev_ms;
 
+# SQLite hands text back as bytes (the handle is not in unicode mode). NFC and
+# every other character operation would read a UTF-8 byte string as Latin-1, so
+# a name with an apostrophe displayed as "Iâ€™ll" and grew another mojibake layer
+# every time it was saved. Decode a byte string once. An invalid sequence is
+# left alone, which keeps a legacy Latin-1 name readable rather than mangling it.
+sub text_chars {
+	my ($text) = @_;
+	return '' unless defined $text;
+	return $text if utf8::is_utf8($text);
+	require Encode;
+	my $decoded = eval { Encode::decode('UTF-8', $text, Encode::FB_CROAK) };
+	return defined $decoded ? $decoded : $text;
+}
+
 sub format_name {
 	my $name = shift || "";
+	$name = &text_chars($name);
 	# Work on characters, not bytes: a name in Chinese, Arabic or French must
 	# keep its letters. The DB and JSON layers hand us decoded strings; NFC makes
 	# a composed and a decomposed spelling read the same.
@@ -74,6 +89,7 @@ sub models_by_name {
 sub unformat_name {
 	my $name = shift;
 	$name = '' unless defined $name;
+	$name = &text_chars($name);
 	# Every printable character is allowed in a name. Only invisible control
 	# characters are dropped; spaces and runs of underscores become one
 	# underscore so the key has a stable shape. The key is stored exactly this
@@ -108,6 +124,7 @@ sub unformat_name {
 sub path_name {
 	my $name = shift;
 	$name = '' unless defined $name;
+	$name = &text_chars($name);
 	$name = NFC($name);
 	my $out = $name;
 	$out =~ s/([^A-Za-z0-9\p{L}\p{M}\p{N}._-])/
@@ -471,6 +488,7 @@ sub html_name {
 	# what Latin letters it can, keep the plain punctuation a CSS identifier can
 	# take, and add a stable digest whenever the name had to change at all, so two
 	# distinct app names never share a window class.
+	$name = &text_chars($name);
 	my $original = NFC($name);
 	my $ascii = Text::Unidecode::unidecode($original);
 	$ascii =~ s/[^a-zA-Z0-9_-]+//g;
@@ -491,6 +509,7 @@ sub html_text {
 
 sub http_name {
 	my $name = shift || "";
+	$name = &text_chars($name);
 	my $ascii = Text::Unidecode::unidecode($name);
 	$ascii =~ s/ /_/gi;
 	$ascii =~ s/[^a-zA-_Z0-9]+//g;
@@ -500,6 +519,7 @@ sub http_name {
 
 sub wiki_name {
 	my $name = shift;
+	$name = &text_chars($name);
 	my @name = split '_', $name;
 
 	$name[0] = ucfirst $name[0];

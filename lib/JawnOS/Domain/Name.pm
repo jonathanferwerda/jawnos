@@ -724,6 +724,40 @@ sub data_uri_parts {
 	return { mime => $mime, bytes => $bytes };
 }
 
+# Apps whose stored name is a repetition or a mojibake cascade are not names a
+# person can use: the keys reach hundreds of kilobytes and every settings index
+# carries them. Hiding one under a short __orphan_ key keeps the rows (and the
+# app's uuid/values) and is an ordinary update the sync rail carries, unlike a
+# delete which a peer could hand back. The start menu already hides every app
+# whose key starts with two underscores, so no page has to learn a new rule.
+sub settings_orphan_plan {
+	my ($apps) = @_;
+	my @apps = grep { defined } @{ $apps || [] };
+	my %taken = map { $_ => 1 } @apps;
+	my @rename;
+	for my $app (@apps) {
+		next if $app =~ /^__orphan_/;
+		my $corrupt = length($app) > 100 ? 1 : 0;
+		unless ($corrupt) {
+			# A byte string's mojibake shows as C3 83/C3 82/C3 A2 (the second
+			# encoding of the mark); a character string shows as the visible
+			# letters. A clean typographic apostrophe is E2 80 99 and is not
+			# caught by either test.
+			$corrupt = utf8::is_utf8($app)
+				? ($app =~ /[\x{00C3}\x{00C2}\x{00E2}]/ ? 1 : 0)
+				: ($app =~ /\xC3[\x83\x82\xA2]/ ? 1 : 0);
+		}
+		next unless $corrupt;
+		my $base = '__orphan_' . substr(sha256_hex($app), 0, 12);
+		my $new = $base;
+		my $n = 2;
+		$new = $base . '_' . $n++ while $taken{$new};
+		$taken{$new} = 1;
+		push @rename, { from => $app, to => $new, length => length($app) };
+	}
+	return { rename => \@rename, count => scalar @rename };
+}
+
 # The machine's own hostname without spawning `hostname` for every page. The
 # value cannot change while the process lives, and the manager page asks for it
 # on each render (here and in its own action).

@@ -59,7 +59,7 @@ for my $name (qw(subs::path_name path_name)) {
 {
 	my ($code, $out) = where('--terse', 'path_name');
 	is($code, 0, 'terse resolves');
-	is($out, 'lib/JawnOS/Domain/Format.pm:108' . "\n", 'and prints nothing else');
+	like($out, qr{^lib/JawnOS/Domain/Format\.pm:\d+\n\z}, 'and prints nothing else');
 }
 
 # --- --context shows the lines under the sub -------------------------------
