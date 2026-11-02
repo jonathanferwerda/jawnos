@@ -533,11 +533,10 @@ sub centre_view_grabber($data) {
 			);
 		}
 		my $window = &Manager::window_maker({ user_agent => $c->param('user_agent'), app => $app, contents => $string, source => 'centre_view_grabber', settings => $appts->{$app}->{'setting'} }, $timestamp);
-		# One delete and one insert against this process's own cached database
-		# handle, so the template goes into the cache here instead of in a forked
-		# child - the fork was the entire cost of the write. The eval keeps a
-		# failed write from taking the window down with it, as the child's own
-		# eval used to.
+		# One write against this process's own cached database handle, so the
+		# template goes into the cache here instead of in a forked child - the fork
+		# was the entire cost of the write. The eval keeps a failed write from
+		# taking the window down with it, as the child's own eval used to.
 		my $template_cached = eval { &subs::cache_set({app => $app, context => 'template', warranty => '-10d' }, { contents => $string, settings => $window->{'settings'}, signature => $signature }) };
 		if ($@) {
 			eval { &subs::log_writer('centre view cache set failed: ' . ($@ =~ s/\s+/ /gr)) };
