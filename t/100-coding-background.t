@@ -129,6 +129,9 @@ like($worker, qr/\$ENV\{PURPOSE\}\s*=\s*'coding'/, 'the worker names its purpose
 like($worker, qr/&\w+::coding_minion\(\)/, 'the worker consumes the coding queue, not the tree minion');
 like($worker, qr/status->\{queues\}\s*=\s*\['coding'\]/, 'the worker takes only the coding queue');
 like($worker, qr/status->\{jobs\}\s*=\s*1/, 'one coding run at a time');
+like($worker, qr/status->\{spare\}\s*=\s*0/, 'no spare slot, so one active run really is one');
+like($worker, qr/on\(wait => sub/, 'the worker checks for new code between jobs');
+like($worker, qr/jawn_version_forget/, 'and re-reads VERSION instead of its boot cache');
 
 # --- the run record ---------------------------------------------------------
 my $domain = source('lib/JawnOS/Domain/Coding.pm');

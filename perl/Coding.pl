@@ -15,6 +15,7 @@
 use strict;
 use warnings;
 use FindBin;
+use POSIX ();
 use lib "$FindBin::Bin/../lib";
 
 $ENV{PURPOSE} = 'coding';
@@ -31,7 +32,24 @@ my $worker = $minion->worker;
 # One run at a time: two agents writing the tree at once is not a race worth
 # losing a commit to.
 $worker->status->{jobs} = 1;
+# No spare slot either, or Minion keeps capacity for a second job beside the
+# first and 'wait' is never reached while a run is going.
+$worker->status->{spare} = 0;
 # Only the queue a coding run is enqueued on. The tree's own Minion worker
 # keeps the default queue, so neither can pick up the other's work.
 $worker->status->{queues} = ['coding'];
+
+# This process outlives the tree on purpose, so it is also the one thing that
+# would keep running yesterday's code after a push. Between jobs - never while
+# one is active - it compares ./VERSION with what it booted under and leaves, so
+# the master starts the current build. (Minion emits 'wait' only when there is
+# no job in its one slot; 'busy' is the active-job state.)
+my $boot_version = &subs::jawn_version();
+$worker->on(wait => sub {
+	&subs::jawn_version_forget();
+	my $now = &subs::jawn_version();
+	return unless defined $now && length $now && $now ne $boot_version;
+	POSIX::_exit(0);
+});
+
 $worker->run;

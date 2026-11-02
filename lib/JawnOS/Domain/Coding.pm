@@ -107,7 +107,7 @@ sub coding_run_current {
 	$conversation =~ s/[^A-Za-z0-9_-]//g;
 	$conversation = 'coding' unless length $conversation;
 	my $id = &subs::setting_grabber({ app => '__president', setting => 'coding_run_for_' . $conversation });
-	return { run => 0, conversation => $conversation, state => 'none', steps => [] }
+	return { run => 0, conversation => $conversation, state => 'none', steps => [], worker => &coding_worker_alive() }
 		unless defined $id && $id =~ /^[0-9]+$/;
 	return &coding_run_view($id);
 }
