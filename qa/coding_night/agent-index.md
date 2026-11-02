@@ -6,57 +6,97 @@ symbol or route, `perl scripts/where.pl <name>` prints its file:line.
 
 ## apps
 
-- app_measures (no topic): templates/apps/app_measures.html.ep; 1 route(s)
-- box_office (topic box_office): templates/box_office.html.ep, templates/store/ticket_request.html.ep, public/js/manager/manager.js, public/js/manager/manager/01_assistant_conversation.js, public/js/manager/manager/02_web_nfc.js, public/js/manager/manager/03_box_office.js, public/js/manager/manager/04_search.js, public/js/manager/manager/05_start_menu.js, public/js/manager/manager/06_appointment_distance.js, public/js/manager/manager/07_timeshift.js, public/js/manager/manager/08_handbook.js, public/js/manager/manager/09_app_back.js, public/js/manager/manager/10_appointment_edit.js, public/js/manager/manager/11_lock_session.js, public/js/homepage.js; 9 route(s)
-- budget (topic budget): templates/budget.html.ep, templates/budget_reconcile.html.ep, public/js/manager/budget.js, public/js/manager/budget/01_reconcile_payables.js; 14 route(s)
-- camera (topic camera): templates/apps/camera.html.ep, public/js/manager/camera.js; 1 route(s)
-- cards (topic cards): templates/cards.html.ep; 1 route(s)
-- chat (topic chat): templates/apps/chat.html.ep, templates/mail/mailbox.html.ep, templates/mail/conversation.html.ep, templates/mail/message.html.ep, templates/mail/chat_sections.html.ep, templates/soft_keyboard.html.ep, templates/ime.html.ep, public/js/manager/chat.js, public/js/manager/chat/01_lorawan.js, public/js/manager/soft_keyboard.js, public/js/manager/soft_keyboard/01_scroll_dictate.js, public/js/manager/soft_keyboard/02_ime_input.js, public/js/manager/soft_keyboard/03_convert.js, public/js/manager/soft_keyboard/04_eval_text.js, public/js/manager/soft_keyboard/05_vault_ime.js, public/css/chat.css, public/css/soft_keyboard.css; 1 route(s)
-- clock (topic clock): templates/apps/clock.html.ep, public/js/manager/clock.js, public/js/manager/clock/01_alarms_timers.js, public/js/manager/clock/02_stopwatch_world_ring.js, templates/manager.html.ep; 5 route(s)
-- clothesline (topic clothesline): templates/apps/clothesline.html.ep, public/js/manager/clothesline.js, public/js/manager/clothesline/01_timeline.js; 3 route(s)
-- configure (topic configure): templates/configure/configure.html.ep, templates/configure/misc_setting_list.html.ep, templates/configure/device_lister.html.ep, templates/configure/plat_setting_list.html.ep, templates/configure/qa_panel.html.ep, templates/configure/map_setting_list.html.ep, templates/configure/dns_clients.html.ep, public/js/manager/configure.js, public/js/manager/configure/01_update_controls.js, public/js/manager/configure/02_remote_devices.js, public/js/manager/configure/03_platform_misc.js, public/js/manager/configure/04_currency_backup.js, public/js/manager/configure/05_database_records.js, public/js/manager/configure/06_watch_pay.js, public/js/manager/configure/07_qa_nightly.js; 120 route(s)
-- edit_app (no topic): templates/apps/edit_app.html.ep; 2 route(s)
-- editor (topic editor): templates/editor.html.ep, public/js/manager/editor.js; 3 route(s)
-- email (topic email): templates/apps/email.html.ep, templates/mail/email_rail.html.ep, templates/mail/email_folder.html.ep, templates/mail/email_rows.html.ep, templates/mail/email_compose.html.ep, templates/mail/email_configure.html.ep, templates/mail/conversation.html.ep, templates/mail/message.html.ep, public/js/manager/email.js, public/js/manager/email/01_move_delete_toast.js; 31 route(s)
-- embedded (topic embedded): templates/embedded/embedded.html.ep, templates/embedded/component.html.ep, public/js/manager/embedded.js, public/js/manager/embedded/01_ota_nowme.js; 19 route(s)
-- evaluation (topic evaluation): templates/apps/evaluation.html.ep
-- folders (topic folders): templates/folders/folders.html.ep, templates/folders/context.html.ep, templates/folders/properties.html.ep, templates/folders/dialog_box.html.ep, templates/folders/app_picker.html.ep, public/js/manager/folders.js, public/js/manager/folders/01_view_and_commands.js, public/js/manager/folders/02_archive_and_keyboard.js, public/js/manager/desk.js; 25 route(s)
-- gallery (topic gallery): templates/apps/gallery.html.ep, public/js/images.js; 4 route(s)
-- handbook (topic handbook): templates/handbook/handbook.html.ep, templates/handbook/today.html.ep; 4 route(s)
-- help (topic help_app): templates/apps/help.html.ep, public/js/manager/help.js, public/js/manager/help/01_music_speech.js, public/js/manager/help/02_converse_coding_wiring.js, public/js/manager/page_agent.js; 29 route(s)
-- ide (topic ide): templates/apps/coding_chat.html.ep, public/js/manager/coding.js, templates/ide.html.ep, public/js/manager/ide.js; 9 route(s)
-- information (no topic): templates/apps/information.html.ep; 3 route(s)
-- internet (topic internet): templates/internet/internet.html.ep, templates/web/web.html.ep, public/js/manager/internet.js, public/js/manager/page_agent.js; 3 route(s)
-- inventory (topic inventory): templates/apps/inventory.html.ep, public/js/manager/inventory.js, public/js/manager/inventory/01_charts_evaluation.js; 5 route(s)
-- mailbox (topic mailbox): templates/mail/mailbox.html.ep, templates/mail/conversation.html.ep, templates/mail/message.html.ep, public/js/mailbox.js; 1 route(s)
-- marker (topic marker): templates/marker.html.ep, public/js/manager/marker.js, public/js/manager/marker/01_painting.js, public/js/manager/marker/02_input_panel.js; 8 route(s)
-- market (topic market): templates/market/market.html.ep, public/js/manager/market.js, public/js/manager/market/01_tabs_and_receipts.js; 27 route(s)
-- measures (topic measures): public/js/manager/measures.js; 4 route(s)
-- music (topic music): templates/apps/music/music.html.ep, templates/apps/music/configuration.html.ep, templates/apps/music/audio.html.ep, templates/apps/music/files.html.ep, templates/apps/video.html.ep, templates/apps/video/markup.html.ep, templates/keyboard_music.html.ep, public/js/music.js, public/js/manager/keyboard.js, public/js/manager/keyboard/01_side_dock.js, public/js/manager/keyboard/02_keyboard_maker.js, public/js/manager/keyboard/03_editor_switcher.js; 1 route(s)
-- network (topic network): templates/apps/network.html.ep, public/js/manager/network.js, public/js/manager/network/01_wifi_vpn_android.js; 8 route(s)
-- notes (topic notes): templates/notes/notes.html.ep, public/js/manager/notes.js; 1 route(s)
-- pen (topic pen): templates/apps/pen.html.ep, public/js/manager/pen.js; 1 route(s)
-- people (topic people): templates/apps/people.html.ep, templates/apps/people/body.html.ep, templates/apps/people_person.html.ep, public/js/manager/people.js, public/js/manager/people/01_crest_tabs.js; 18 route(s)
-- phone (topic phone): templates/apps/phone.html.ep, public/js/manager/phone.js; 5 route(s)
-- process_monitor (topic process_monitor): templates/monitor/monitor.html.ep, public/js/manager/monitor.js; 2 route(s)
-- relational (topic relational): templates/relational/workspace.html.ep, public/js/manager/relational.js; 9 route(s)
-- search (topic search): templates/apps/search.html.ep, public/js/manager/search.js; 14 route(s)
-- security (topic security): templates/security.html.ep, templates/padlock.html.ep, templates/padlock_key.html.ep, templates/layouts/padlock_key.html.ep, templates/locked.html.ep, templates/locked_screen.html.ep, templates/layouts/locked.html.ep, templates/app_required.html.ep, public/js/manager/security.js, public/js/manager/security/01_house_key.js; 48 route(s)
-- store (topic store): templates/store/store.html.ep, templates/store/category.html.ep, templates/store/item.html.ep, templates/store/item_selection.html.ep, templates/store/list.html.ep, templates/store/register.html.ep, templates/store/journal.html.ep, templates/store/correspondence.html.ep, templates/store/customer.html.ep, templates/store/printer/header.html.ep, public/css/store.css, public/js/store.js, public/js/store/register.js; 37 route(s)
-- studio (topic studio): templates/studio/studio.html.ep, public/js/manager/studio.js, public/js/manager/studio/01_transport.js, public/js/manager/studio/02_canvas.js, public/js/manager/studio/03_editing.js, public/js/manager/studio/04_knobs.js, public/js/manager/studio/05_inputs.js, public/js/manager/studio/06_controls.js; 5 route(s)
-- synth (topic synth): templates/synth.html.ep, public/js/manager/synth.js, public/js/manager/synth/01_engine.js; 1 route(s)
-- tasks (topic tasks): templates/apps/tasks.html.ep, public/js/manager/tasks.js; 3 route(s)
-- terminal (topic terminal): templates/terminal.html.ep, public/js/manager/terminal.js, public/js/manager/terminal/01_render_input.js, public/js/manager/terminal/02_events.js; 3 route(s)
-- travel (topic travel): templates/travel/travel.html.ep, public/js/manager/travel.js, public/js/manager/travel/01_map_render_points.js, public/js/manager/travel/02_maps_config_guess.js, public/js/manager/mapengine.js, public/js/manager/mapengine/01_engine.js, public/js/manager/mapmarkers.js, public/js/manager/continentprinter.js; 8 route(s)
-- twirl (topic twirl): templates/twirl.html.ep, public/js/manager/twirl.js, public/js/manager/twirl/01_twirl_game.js; 1 route(s)
-- video (topic video): templates/apps/video.html.ep
-- warehouse (topic warehouse): public/js/manager/warehouse.js; 5 route(s)
-- web (topic web): templates/web/web.html.ep, templates/web/web_measure_confirm.html.ep; 8 route(s)
+Counts only: `perl scripts/agent_help.pl <app>` names every file, route, table, setting and test behind one line here.
+
+- app_measures (no topic): 1 file(s), 1 route(s)
+- box_office (topic box_office): 15 file(s), 9 route(s)
+- budget (topic budget): 4 file(s), 14 route(s)
+- camera (topic camera): 2 file(s), 1 route(s)
+- cards (topic cards): 1 file(s), 1 route(s)
+- chat (topic chat): 17 file(s), 1 route(s)
+- clock (topic clock): 5 file(s), 5 route(s)
+- clothesline (topic clothesline): 3 file(s), 3 route(s)
+- configure (topic configure): 15 file(s), 120 route(s)
+- edit_app (no topic): 1 file(s), 2 route(s)
+- editor (topic editor): 2 file(s), 3 route(s)
+- email (topic email): 10 file(s), 31 route(s)
+- embedded (topic embedded): 4 file(s), 19 route(s)
+- evaluation (topic evaluation): 1 file(s)
+- folders (topic folders): 9 file(s), 25 route(s)
+- gallery (topic gallery): 2 file(s), 4 route(s)
+- handbook (topic handbook): 2 file(s), 4 route(s)
+- help (topic help_app): 5 file(s), 29 route(s)
+- ide (topic ide): 4 file(s), 9 route(s)
+- information (no topic): 1 file(s), 3 route(s)
+- internet (topic internet): 4 file(s), 3 route(s)
+- inventory (topic inventory): 3 file(s), 5 route(s)
+- mailbox (topic mailbox): 4 file(s), 1 route(s)
+- marker (topic marker): 4 file(s), 8 route(s)
+- market (topic market): 3 file(s), 27 route(s)
+- measures (topic measures): 1 file(s), 4 route(s)
+- music (topic music): 12 file(s), 1 route(s)
+- network (topic network): 3 file(s), 8 route(s)
+- notes (topic notes): 2 file(s), 1 route(s)
+- pen (topic pen): 2 file(s), 1 route(s)
+- people (topic people): 5 file(s), 18 route(s)
+- phone (topic phone): 2 file(s), 5 route(s)
+- process_monitor (topic process_monitor): 2 file(s), 2 route(s)
+- relational (topic relational): 2 file(s), 9 route(s)
+- search (topic search): 2 file(s), 14 route(s)
+- security (topic security): 10 file(s), 48 route(s)
+- store (topic store): 13 file(s), 37 route(s)
+- studio (topic studio): 8 file(s), 5 route(s)
+- synth (topic synth): 3 file(s), 1 route(s)
+- tasks (topic tasks): 2 file(s), 3 route(s)
+- terminal (topic terminal): 4 file(s), 3 route(s)
+- travel (topic travel): 8 file(s), 8 route(s)
+- twirl (topic twirl): 3 file(s), 1 route(s)
+- video (topic video): 1 file(s)
+- warehouse (topic warehouse): 1 file(s), 5 route(s)
+- web (topic web): 2 file(s), 8 route(s)
 - other pages, no topic and no route: account, app_details, app_file, app_measure_details, app_transaction, appointment_header, budget_current_information, coding_chat, evaluation_controls, evaluation_report, gallery_album, gallery_home, ide_files, inventory_info, people_person, project
 
 ## tables
 
-38 tables (database/schema.sql): appointments, backups, cache, continent, credentials, crypto_address, device_requests, devices, house_key_share_releases, house_key_share_requests, house_key_shares, magazine, mailbox, model, neighbour_link, notes, notifications, option, option_category, paired_devices, people, remote_machines, routers, security, settings, staged_appointments, subcategory, sync_cursors, sync_jobs, sync_log, sync_snapshots, tickets, tunnels, usage_sessions, warehouse, websites, websocket_messages, websockets
+38 tables (database/schema.sql). Columns are inline; `perl scripts/agent_help.pl --schema <table>` adds the apps that use one.
+- appointments (55): app, timestamp, data, type, account, amount, unit, duration, status, notes, start_notes, end_notes, vendor, tax, quantity, total, item, server_time, file, device, project, pos, club, warranty, source, formulas, position, toggle, uuid, ticket_uuid, browser_tab_id, seen, model, option, movement, aux, aux_description, state, has_tax, has_totes, ost, balance, measures, manufacturer, encryption_standard, options, source_uuid, currency, stop_seen, stop_timestamp, duties, next_duty, subtype, app_uuid, autostop
+- backups (12): timestamp, server_time, signatorial, destination, size, reason, warranty, uuid, recipient, recipient, ost, enc_file
+- cache (10): timestamp, server_time, app, context, warranty, subcontext, device, uuid, ost, data
+- continent (14): latitude, longitude, accuracy, timestamp, operator, operator_door, server_time, uuid, type, scope, app, warranty, ost, signatorial
+- credentials (13): uuid, app, origin, kind, label, hints, payload, has_user, has_password, device, timestamp, server_time, ost
+- crypto_address (12): uuid, server_time, ost, app, asset, network, address, derivation, addr_index, path, invoice_uuid, issued_at
+- device_requests (11): uuid, name, pubkey, agent, code, status, device_uuid, remote_address, timestamp, server_time, ost
+- devices (17): protocol, timestamp, hostname, port, uname, address, mac, name, ws, server_time, president, manager_password, uuid, domain, room, ost, chip_ids
+- house_key_share_releases (9): uuid, request_uuid, set_id, share_index, holder_device, wrapped, created, server_time, ost
+- house_key_share_requests (11): uuid, code, asker_pubkey, name, need, available, set_id, status, created, server_time, ost
+- house_key_shares (11): uuid, set_id, share_index, holder_person, holder_device, alg, wrapped, status, created, server_time, ost
+- magazine (14): uuid, timestamp, server_time, category, content, text_colour, background_colour, manager_file, status, title, warranty, image, teaser, ost
+- mailbox (38): uuid, timestamp, server_time, body, app, manager_file, status, project, club, team, community, contact, account, person, institution, government, corporation, place, vendor, event, ost, phone, email, subject, attachments, from_email, file, sender, email_server, conversation_uuid, cc, bcc, seen, starred, thread, message_id, in_reply_to, thread_refs
+- model (25): app, name, price, characteristics, timestamp, server_time, uuid, files, cost, description, discount, markup, ost, manufacturer, def, quantity, unit, save_app, file, delay_start, delay_stop, def_month, def_day, def_hour, def_wday
+- neighbour_link (9): uuid, initiator, connections, server_time, initiated, status, ost, credential, name
+- notes (9): uuid, timestamp, server_time, app, device, text, ost, category, status
+- notifications (11): timestamp, message, title, tag, id, image, uuid, server_time, ost, role, app
+- option (25): app, name, price, characteristics, timestamp, server_time, uuid, files, cost, description, discount, markup, ost, manufacturer, def, quantity, unit, save_app, file, delay_start, delay_stop, def_month, def_day, def_hour, def_wday
+- option_category (27): supplier, app, name, multi, timestamp, server_time, uuid, characteristics, price, category, cost, description, discount, markup, ost, manufacturer, def, quantity, unit, save_app, file, delay_start, delay_stop, def_month, def_day, def_hour, def_wday
+- paired_devices (14): uuid, name, pubkey, bio_pubkey, privilege, status, timestamp, server_time, ost, last_seen, agent, kind, person_uuid, share_pubkey
+- people (8): uuid, name, privilege, status, created, ost, server_time, app
+- remote_machines (41): uuid, ip, mac, timestamp, server_time, connected, status, log, port, buttons, manager, data, signatorial, cookie, connection, nic, deletions, ws_port, fqdn, ws_auth, manager_file, additions, edits, device, ost, hostname, tunnel, mirrors, network, pseudonyms, dock_port, archive_dir, archive, version, sync_cursor, pubkey, privilege, grant_scope, grant_expires, crest_uuid, crest_cosig
+- routers (11): uuid, ip, mac, nic, name, model, manager, last_seen, timestamp, server_time, ost
+- security (7): level, credential, server_time, timestamp, database, uuid, ost
+- settings (11): setting, value, timestamp, id, app, server_time, device, browser_tab_id, uuid, ost, subsetting
+- staged_appointments (17): uuid, staged_time, source, app, type, timestamp, title, notes, data, device, status, server_time, ost, duration, kind, target_uuid, changes
+- subcategory (27): supplier, app, name, multi, price, timestamp, server_time, uuid, characteristics, category, cost, ost, description, discount, markup, manufacturer, def, quantity, unit, save_app, file, delay_start, delay_stop, def_month, def_day, def_hour, def_wday
+- sync_cursors (2): signatorial, cursor
+- sync_jobs (11): uuid, direction, peer, phase, current, total, state, note, steps, started, updated
+- sync_log (9): id, server_time, signatorial, tbl, app, uuid, scope, ost, additional
+- sync_snapshots (13): uuid, job, caller, state, archive_path, result, size, sha256, error, timestamp, server_time, updated, ost
+- tickets (30): uuid, warranty, name, projects, accounts, timestamp, server_time, url, image, privilege, status, verification, duration, app, password, browser_tab_id, project, port, ip, secret, nic, suds, debriefer, approval_rating, information, ost, access_log, person_uuid, peer_signatorial, crest_uuid
+- tunnels (19): server_time, ost, device, timestamp, ip, in_port, out_port, name, warranty, priority, status, process_id, signatorial, direction, uuid, batch_uuid, domain, host, failures
+- usage_sessions (13): uuid, device, kind, key_name, started_at, ended_at, idle_ms, source, hostname, title, url, server_time, ost
+- warehouse (19): timestamp, server_time, item, model, options, uuid, ost, device, quantity, unit, data, serial_number, batch_uuid, app_uuid, place, type, project, account, warranty
+- websites (9): url, content, illegal_content, app, internal_url, server_time, warranty, uuid, ost
+- websocket_messages (13): timestamp, server_time, message, destination, origin, status, app, environment, sent_count, uuid, tally, ost, patience
+- websockets (27): timestamp, server_time, message, app, uuid, connection_id, browser_tab_id, browser_tab, hostname, connected, user_agent, local_address, remote_address, type, windows, room, db, music_data, jp_data, random_string, warranty, href, pathname, cookie, ost, ticket_uuid, revision
 
 ## routes
 

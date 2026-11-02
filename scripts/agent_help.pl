@@ -38,7 +38,7 @@ use File::Basename qw(basename dirname);
 my $ROOT;
 my $LOADED;
 
-my %SCHEMA;        # table name => 1
+my %SCHEMA;        # table => { columns => [ [ name, type ], ... ], indexes => [ 'cols', ... ] }
 my @ROUTES;        # { index, method, path, action, module, line }
 my @TESTS;         # { file, globs => [ ... ], body => '...' }
 my %TOPIC;         # id => the help topic entry
@@ -121,10 +121,74 @@ sub _schema_tables {
 	my $sql = <$fh>;
 	close $fh;
 	return {} unless defined $sql;
+
 	my %t;
-	$t{$1} = 1
-		while $sql =~ /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+"?([A-Za-z_][A-Za-z0-9_]*)/gi;
+	while ($sql =~ /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+"?([A-Za-z_]\w*)"?\s*\(/gi) {
+		my $name = $1;
+		my $body = _paren_body($sql, pos($sql));
+		my @columns;
+		for my $part (_split_top($body)) {
+			(my $def = $part) =~ s/^\s+//;
+			# `columns x` is an artifact of the dump; a constraint is not a column.
+			$def =~ s/^columns\s+//i;
+			next if $def =~ /^(?:PRIMARY|UNIQUE|KEY|INDEX|CONSTRAINT|FOREIGN|CHECK)\b/i;
+			my ($col, $type, $size) =
+				$def =~ /^"?([A-Za-z_][\w]*)"?\s+([A-Za-z]+)(?:\(([^)]*)\))?/;
+			next unless defined $col && length $col;
+			$type = uc($type || '');
+			$type .= '(' . $size . ')' if defined $size && length $size;
+			push @columns, [ $col, $type ];
+		}
+		$t{$name} = { 'columns' => \@columns, 'indexes' => [] };
+	}
+
+	# CREATE [UNIQUE] INDEX name ON table (col, col)
+	while ($sql =~ /CREATE\s+(?:UNIQUE\s+)?INDEX\s+\w+\s+ON\s+"?([A-Za-z_]\w*)"?\s*\(([^)]*)\)/gi) {
+		my ($table, $cols) = ($1, $2);
+		next unless $t{$table};
+		$cols =~ s/\s+/ /g;
+		$cols =~ s/^ | $//g;
+		push @{ $t{$table}{'indexes'} }, $cols;
+	}
 	return \%t;
+}
+
+# The text between the paren at $from-1 and its match.
+sub _paren_body {
+	my ($text, $from) = @_;
+	return '' unless defined $from && $from > 0;
+	my $depth = 1;
+	my $out   = '';
+	for my $i ($from .. length($text) - 1) {
+		my $c = substr($text, $i, 1);
+		$depth++ if $c eq '(';
+		if ($c eq ')') {
+			$depth--;
+			return $out if $depth == 0;
+		}
+		$out .= $c;
+	}
+	return $out;
+}
+
+# Split a table body on commas that are not inside a type's parentheses.
+sub _split_top {
+	my ($body) = @_;
+	my (@parts, $cur);
+	my $depth = 0;
+	$cur = '';
+	for my $c (split //, $body) {
+		$depth++ if $c eq '(';
+		$depth-- if $c eq ')';
+		if ($c eq ',' && !$depth) {
+			push @parts, $cur;
+			$cur = '';
+			next;
+		}
+		$cur .= $c;
+	}
+	push @parts, $cur if length $cur;
+	return @parts;
 }
 
 # One row is [the line the route had in Manager.pl, method, path, action]; the
@@ -219,6 +283,25 @@ sub tables_in {
 		$found{$_} = 1 for grep { $text =~ /(?<![\w])\Q$_\E(?![\w])/ } keys %SCHEMA;
 	}
 	return sort keys %found;
+}
+
+# Which apps name each table: the reverse of the brief's tables list. Derived by
+# scanning an app's files and the controllers its routes reach, so a table an app
+# writes is named even when the template never mentions it.
+my $APPS_BY_TABLE;
+
+sub apps_by_table {
+	return $APPS_BY_TABLE if $APPS_BY_TABLE;
+	my %by;
+	for my $name (names()) {
+		my $entry = resolve_name($name) or next;
+		my $app = $entry->{'page'} || $entry->{'name'};
+		my @files = sources($entry);
+		my @controllers = controllers_for(routes_for($app));
+		$by{$_}{$app} = 1 for tables_in(@files, @controllers);
+	}
+	$APPS_BY_TABLE = \%by;
+	return $APPS_BY_TABLE;
 }
 
 sub settings_in {
@@ -359,7 +442,15 @@ sub brief {
 	push @out, '';
 
 	push @out, 'tables (' . scalar(@tables) . ')';
-	push @out, @tables ? map {"  $_"} @tables : '  (none named in these files)';
+	if (@tables) {
+		push @out, map {
+			'  ' . $_ . ' (' . scalar( @{ $SCHEMA{$_}{'columns'} || [] } ) . ' columns)'
+		} @tables;
+		push @out, '  schema: perl scripts/agent_help.pl --schema ' . $tables[0];
+	}
+	else {
+		push @out, '  (none named in these files)';
+	}
 	push @out, '';
 
 	push @out, 'settings (' . scalar(@settings) . ')';
@@ -406,6 +497,40 @@ sub app_for_path {
 	return sort keys %apps;
 }
 
+# ---- the schema ------------------------------------------------------------
+#
+# What database/schema.sql declares, table by table: every column with its type,
+# the indexes, and the apps whose files or routes name it. This is the part of
+# the agent tier an agent needs before touching a query - a column's real name
+# and type are not in the code that reads it.
+
+sub schema_brief {
+	my ($only) = @_;
+	load();
+	my @tables = defined $only && length $only ? ($only) : sort keys %SCHEMA;
+	my $by = apps_by_table();
+
+	my @out;
+	for my $table (@tables) {
+		my $info = $SCHEMA{$table};
+		unless ($info) {
+			push @out, "$table - not declared in database/schema.sql";
+			push @out, '';
+			next;
+		}
+		my @columns = map { "$_->[0] $_->[1]" } @{ $info->{'columns'} };
+		push @out, "$table - " . scalar( @{ $info->{'columns'} } ) . ' columns, '
+			. scalar( @{ $info->{'indexes'} } ) . ' index(es)';
+		push @out, '  columns: ' . ( @columns ? join(', ', @columns) : '(none parsed)' );
+		push @out, '  indexes: ' . join('; ', @{ $info->{'indexes'} })
+			if @{ $info->{'indexes'} };
+		my @apps = sort keys %{ $by->{$table} || {} };
+		push @out, '  used by: ' . ( @apps ? join(', ', @apps) : '(no app names it)' );
+		push @out, '';
+	}
+	return join("\n", @out);
+}
+
 # ---- the compact index -----------------------------------------------------
 
 sub _topic_for_app {
@@ -433,6 +558,9 @@ sub index_text {
 	$apps{$_} = 1 for keys %APP_PAGE;
 	push @out, '## apps';
 	push @out, '';
+	push @out, 'Counts only: `perl scripts/agent_help.pl <app>` names every file, route,'
+		. ' table, setting and test behind one line here.';
+	push @out, '';
 	my @quiet;
 	for my $app (sort keys %apps) {
 		my @routes = routes_for($app);
@@ -445,17 +573,24 @@ sub index_text {
 			push @quiet, $app;
 			next;
 		}
+		# Counts, not the file list: `agent_help.pl <app>` names the files, and
+		# the index has a hard budget for the nightly agent's context.
 		push @out, '- ' . $app
 			. ($id ? " (topic $id)" : ' (no topic)')
-			. ': ' . ( @sources ? join(', ', @sources) : 'no files resolved' )
-			. ( @routes ? '; ' . scalar(@routes) . ' route(s)' : '' );
+			. ': ' . scalar(@sources) . ' file(s)'
+			. ( @routes ? ', ' . scalar(@routes) . ' route(s)' : '' );
 	}
 	push @out, '- other pages, no topic and no route: ' . join(', ', @quiet) if @quiet;
 	push @out, '';
 
 	push @out, '## tables';
 	push @out, '';
-	push @out, scalar(keys %SCHEMA) . ' tables (database/schema.sql): ' . join(', ', sort keys %SCHEMA);
+	push @out, scalar(keys %SCHEMA) . ' tables (database/schema.sql). Columns are inline;'
+		. ' `perl scripts/agent_help.pl --schema <table>` adds the apps that use one.';
+	for my $table (sort keys %SCHEMA) {
+		my @columns = map { $_->[0] } @{ $SCHEMA{$table}{'columns'} };
+		push @out, '- ' . $table . ' (' . scalar(@columns) . '): ' . join(', ', @columns);
+	}
 	push @out, '';
 
 	push @out, '## routes';
@@ -519,11 +654,13 @@ sub main {
 
 	if (!@argv || $argv[0] eq '--help' || $argv[0] eq '-h') {
 		print <<'TXT';
-usage: perl scripts/agent_help.pl [--list | --index | --write-index] NAME...
+usage: perl scripts/agent_help.pl [--list | --index | --write-index | --schema[=TABLE]] NAME...
 
   NAME          an app (budget), a help topic (start_menu), or an app page
                 (templates/apps/gallery.html.ep). Prints the generated brief.
   --list        every name this answers for
+  --schema      every table, its columns and indexes, and the apps that use it
+  --schema=T    one table
   --index       print the compact repository index
   --write-index rewrite qa/coding_night/agent-index.md
 TXT
@@ -545,6 +682,12 @@ TXT
 		print $fh $text;
 		close $fh;
 		print "wrote qa/coding_night/agent-index.md\n";
+		return 0;
+	}
+
+	if ($argv[0] eq '--schema' || $argv[0] =~ /^--schema=(.+)$/) {
+		my $only = $1;
+		print schema_brief($only);
 		return 0;
 	}
 

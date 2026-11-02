@@ -1,4 +1,4 @@
-# tests-for: scripts/agent_help.pl scripts/where.pl scripts/tests_for.pl .githooks/pre-commit perl/help/ templates/apps/ qa/coding_night/agent-index.md
+# tests-for: scripts/agent_help.pl scripts/where.pl scripts/tests_for.pl .githooks/pre-commit perl/help/ templates/apps/ database/schema.sql qa/coding_night/agent-index.md
 # covers:    The second tier of help - the generated technical brief, its
 #           exhaustiveness, and the committed repository index staying current
 
@@ -51,6 +51,27 @@ require "$root/scripts/agent_help.pl";
 # --- a name nobody has ------------------------------------------------------
 is(agent_help::brief('definitely-not-an-app'), undef, 'an unknown name has no brief');
 
+# --- the schema tier --------------------------------------------------------
+{
+	my $text = agent_help::schema_brief('appointments');
+	ok(defined $text, 'a table has a schema brief');
+	like($text, qr/^appointments - \d+ columns, \d+ index\(es\)/m, 'it counts columns and indexes');
+	like($text, qr/\bserver_time\b/, 'and names a real column');
+	like($text, qr/\bost\b/, 'including one that only the sync rail needs');
+	like($text, qr/^  indexes: /m, 'it lists the indexes it found');
+	like($text, qr/^  used by: .*\bbudget\b/m, 'and the apps that name the table');
+
+	like(agent_help::schema_brief('not_a_table_at_all'),
+		qr/not declared in database\/schema\.sql/, 'an unknown table says so');
+
+	# The parser must find columns for every table: a table with none means the
+	# CREATE TABLE body was misread, and the brief would lie about the schema.
+	my $all = agent_help::schema_brief();
+	my @blocks = split /\n(?=\S+ - \d+ columns)/, $all;
+	my @columnless = grep { / - 0 columns/ } @blocks;
+	is_deeply(\@columnless, [], 'every table in schema.sql parses at least one column');
+}
+
 # --- the hook keeps the committed index fresh --------------------------------
 {
 	my $hook = eval { read_file("$root/.githooks/pre-commit") } // '';
@@ -67,6 +88,8 @@ is(agent_help::brief('definitely-not-an-app'), undef, 'an unknown name has no br
 	}
 	cmp_ok(length $generated, '<=', 16 * 1024, 'the index fits the nightly context budget');
 	unlike($generated, qr{/home/}, 'and carries no absolute home path');
+	like($generated, qr/^- appointments \(\d+\): app, timestamp/m,
+		'the tables section carries the schema, not just the names');
 
 	my $committed = eval { read_file("$root/qa/coding_night/agent-index.md") };
 	ok(defined $committed, 'qa/coding_night/agent-index.md is committed');

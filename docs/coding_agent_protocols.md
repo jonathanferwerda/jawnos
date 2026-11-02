@@ -119,6 +119,11 @@ that into a slow patch instead of a frozen machine. Protect the work, not the ch
   slower. A defect you find but do not fix gets a `TODO` test
   naming the file and line — never a test that asserts the broken behaviour. The
   pre-push hook runs the suite, so a regression blocks the push.
+- **A file no test claims is debt, and it is counted.** `t/99-untested.t` enumerates every tracked
+  source file that no `tests-for:` header claims. A new one fails the push; the fix is a `tests-for:`
+  line in the test that covers it, or deleting the file. The remaining debt is `%owed` in that test
+  — it may shrink, so remove an entry when its test lands (`perl scripts/tests_for.pl --files <path>`
+  says whether it is still unclaimed).
 - **A new Manager helper goes in the map in the same change** — its name in
   `lib/JawnOS/Manager/Index.pm` (`%SUB`, name → part) and a forward declaration in
   `lib/JawnOS/Manager/Declarations.pm`. The map, not the part file, is what

@@ -246,6 +246,11 @@ code that concatenates `$app` into a path without `path_name` is a bug.
   slower. A defect you find but do not fix gets a `TODO` test
   naming the file and line — never a test that asserts the broken behaviour. The
   pre-push hook runs the suite, so a regression blocks the push.
+- **A file no test claims is debt, and it is counted.** `t/99-untested.t` enumerates every tracked
+  source file that no `tests-for:` header claims. A new one fails the push; the fix is a `tests-for:`
+  line in the test that covers it, or deleting the file. The remaining debt is `%owed` in that test
+  — it may shrink, so remove an entry when its test lands (`perl scripts/tests_for.pl --files <path>`
+  says whether it is still unclaimed).
 - **A new Manager helper goes in the map in the same change** — its name in
   `lib/JawnOS/Manager/Index.pm` (`%SUB`, name → part) and a forward declaration in
   `lib/JawnOS/Manager/Declarations.pm`. The map, not the part file, is what
@@ -366,7 +371,8 @@ The in-app guide lives in `help.pl` (a `%topic` registry) and is served by the `
   Translated on demand, audited by `t/11-help.t` and `scripts/help_audit.pl`.
 - **Tier 2 — the agent.** Generated from the tree: `perl scripts/agent_help.pl <app>` prints the
   technical brief (sources, routes, tables, settings, the tests that claim them, and the source
-  files' own notes); `qa/coding_night/agent-index.md` is the compact index the nightly agent reads
+  files' own notes), `--schema[=table]` prints every column, its type, the indexes and the apps that
+  use the table, and `qa/coding_night/agent-index.md` is the compact index the nightly agent reads
   (`--write-index`; the pre-commit hook refreshes it, `t/97-agent-help.t` pins it). **Never
   hand-write a tier-2 fact and never translate it** — anything derivable from code is derived, or it
   becomes a lie with a date on it. Rationale (“why it is this way”) stays in the source comments and
