@@ -463,7 +463,7 @@ sub remote_machine_lister {
 		# extends the array it iterates), and the old unconditional reset
 		# cleared the very flag the remote_control picker uses to hide mirrors.
 		$rm->{'mirror'} = 'no' unless ($rm->{'mirror'} || '') eq 'yes';
-		if ($rm->{'mirrors'} && $data->{'mirrors'} ne 'none') {
+		if ($rm->{'mirrors'} && ($data->{'mirrors'} || '') ne 'none') {
 			my $mirrors = eval { return decode_json $rm->{'mirrors'} } || [];
 			foreach my $mirror ( @{$mirrors} ) {
 				next if grep { defined $_ && $_ ne '' && $already{$_} }
@@ -504,7 +504,7 @@ sub remote_machine_lister {
 			$rm->{'ip'} = $lan->{'ip'};
 		}
 	}
-	unless ( $data->{'self'} eq 'no' ) {
+	unless ( ($data->{'self'} || '') eq 'no' ) {
 		unshift @{$remote_machines}, { hostname => 'me', signatorial => &subs::signatorial_designer(), ip => '127.0.0.1', uuid => &subs::random_string_creator(25) };
 	}
 	foreach my $t ( qw/signatorial uuid connection ip device tunnel mirror archive/ ) {
@@ -512,7 +512,7 @@ sub remote_machine_lister {
 			if ($data->{$t} eq 'yes') {
 				@{$remote_machines} = grep { defined $_->{$t} && $_->{$t} ne '' && $_->{$t} ne 'null' && $_->{$t} ne 'NULL'	} @{$remote_machines};
 			} else {
-				@{$remote_machines} = grep { $_->{$t} eq $data->{$t} } @{$remote_machines};
+				@{$remote_machines} = grep { ($_->{$t} || '') eq $data->{$t} } @{$remote_machines};
 			}
 		}
 	}

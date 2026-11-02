@@ -496,12 +496,12 @@ sub log_reader {
 			}
 			$appts->{$a->{'app'}}->{'setting'}->{$s->{'setting'}} = $s->{'value'};
 			foreach my $oi ( ($scope) ) {
-				if ($s->{'setting'} =~ /warranty|duration/gi) {
+				if (($s->{'setting'} || '') =~ /warranty|duration/gi) {
 					$appts->{$a->{'app'}}->{'setting'}->{$oi . '_' . $s->{'setting'}} = $tabbr->($s->{'value'});
-					if (($a->{'type'} eq 'start' || $a->{'type'} eq 'record') && $a->{'timestamp'} < $timestamp) {# && (!$a->{'duration'} || ($a->{'duration'} >= $a->{'timestamp'} - $timestamp))) {
+					if ((($a->{'type'} || '') eq 'start' || ($a->{'type'} || '') eq 'record') && $a->{'timestamp'} < $timestamp) {# && (!$a->{'duration'} || ($a->{'duration'} >= $a->{'timestamp'} - $timestamp))) {
 						$a->{'duration'} = $a->{'timestamp'} - $timestamp;
 					}
-					unless ($a->{'type'} =~ /record|start/) {
+					unless (($a->{'type'} || '') =~ /record|start/) {
 						if (my $dur = $a->{'duration'} || $appts->{$a->{'app'}}->{'setting'}->{$oi . '_' . $s->{'setting'}}) {
 							$a->{'formatted_' . $s->{'setting'}} = $dsay->(($dur / 1000));
 						}
@@ -701,9 +701,9 @@ sub appts_marker_builder {
 		$crypto{ $c->{'app'} }->{ $c->{'setting'} } = $c->{'value'};
 	}
 	foreach my $s ( @{$settings} ) {
-		next unless $s->{'setting'} eq 'pos' || $s->{'setting'} eq 'mab';
-		my $bucket = $s->{'value'} eq 'account' ? '__accounts'
-			: $s->{'value'} eq 'project' ? '__projects' : '';
+		next unless ($s->{'setting'} || '') eq 'pos' || ($s->{'setting'} || '') eq 'mab';
+		my $bucket = ($s->{'value'} || '') eq 'account' ? '__accounts'
+			: ($s->{'value'} || '') eq 'project' ? '__projects' : '';
 		next unless $bucket;
 		my $wallet = '';
 		my $cs = $crypto{ $s->{'app'} };

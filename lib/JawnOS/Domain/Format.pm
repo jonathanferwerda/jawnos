@@ -470,8 +470,10 @@ sub formatted_time {
 
 sub price_formatter {
 	my $price = shift;
-	$price =~ s/^([\-])//gi;
-	my $point = $1;
+	$price = '' unless defined $price;
+	# A price without a sign left $1 undef (and it could hold an earlier match).
+	my $point = '';
+	$point = $1 if $price =~ s/^([\-])//;
 	if ($price =~ /[0-9.]/gi) {
 		$price = $point . sprintf( "\$%.2f", $price);
 	} else { $price = $point . '0.00'; }
