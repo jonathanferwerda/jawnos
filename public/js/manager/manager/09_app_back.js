@@ -103,15 +103,18 @@ $(document).on('click', '.reset', function() {
 	var details = appointment.find('.app_details');
 	if (details.is(':visible')) {
 		details.hide();
+		appActSync(app);
 	}
 	else {
 		appActExclusive(app, 'reset');
 		// the form arrives hidden; showing it happens once it has landed
 		appSectionGrabber(app, 'details', appointment, function() {
 			appointment.find('.app_details').show();
+			// the panel is only open once the form has landed, so the act frame
+			// is sent from here, not from the click
+			appActSync(app);
 		});
 	}
-	appActSync(app);
 
 });
 

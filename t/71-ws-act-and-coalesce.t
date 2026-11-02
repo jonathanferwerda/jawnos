@@ -47,6 +47,16 @@ foreach my $ref (
 	like(read_file("$root/$file"), $re, "$name posts its open/close");
 }
 
+# the transaction panel is drawn on demand now: its act frame has to wait for the
+# form to land, or it reports the panel closed and the server loses it
+my $app_back = read_file("$root/public/js/manager/manager/09_app_back.js");
+my ($reset_block) = $app_back =~ /(\$\(document\)\.on\('click', '\.reset'.*?\n\}\);)/s;
+ok($reset_block, 'the .reset handler is found');
+like($reset_block, qr/app_details'\)\.show\(\);.*?appActSync\(app\);/s,
+	'the details panel reports open only once its form has landed');
+like($reset_block, qr/if \(details\.is\(':visible'\)\) \{\s*details\.hide\(\);\s*appActSync\(app\);/s,
+	'closing it reports at once');
+
 # the beat ships geometry only
 my $websocket_js = js_source('public/js/manager/websocket.js');
 like($websocket_js, qr/var windows_json = windowSaver\(1\);/,
