@@ -1,4 +1,4 @@
-# tests-for: scripts/where.pl
+# tests-for: scripts/where.pl lib/JawnOS/Routes/ perl/help/
 # covers:    the point locator - helper/domain/route resolution, the map the
 #           output agrees with, and the map-drift report
 
@@ -81,6 +81,42 @@ for my $name (qw(subs::path_name path_name)) {
 		'a route path resolves to the row');
 	like($out, qr{^  action\tlib/JawnOS/Controller/js_misc\.pm:\d+$}m,
 		'and to the action body');
+}
+
+# --- a help topic, by name --------------------------------------------------
+{
+	my ($code, $out) = where('gallery');
+	is($code, 0, 'a help topic resolves');
+	like($out, qr{^help::gallery\tperl/help/topics_apps\.pl:\d+$}m,
+		'with the part it is defined in');
+	like($out, qr/^  app: gallery$/m, 'and the app it explains');
+
+	(undef, $out) = where('start menu');
+	like($out, qr/^help::start_menu\t/m, 'a spaced name resolves like help() does');
+}
+
+# --- a file, and the topic that covers it -----------------------------------
+{
+	my ($code, $out) = where('templates/apps/gallery.html.ep');
+	is($code, 0, 'a template resolves to its topic');
+	like($out, qr/^named by help::gallery\t/m, 'through the topic that lists it');
+
+	# tasks has a topic but no templates list entry: the app field is the index.
+	(undef, $out) = where('templates/apps/tasks.html.ep');
+	like($out, qr/^app help::tasks\t/m, 'and through the app field when no list names it');
+
+	(undef, $out) = where('public/js/manager/chat.js');
+	like($out, qr/help::chat/, 'an app script resolves the same way');
+}
+
+# --- --topics is the whole registry, one line each --------------------------
+{
+	my ($code, $out) = where('--topics');
+	is($code, 0, '--topics lists the registry');
+	my @lines = grep { length } split /\n/, $out;
+	cmp_ok(scalar @lines, '>=', 70, 'every topic is listed');
+	is(scalar(grep { !/^help::[a-z0-9_]+\tperl\/help\/topics_\w+\.pl:\d+$/ } @lines), 0,
+		'each line is a topic and its definition line');
 }
 
 # --- a name nobody has -----------------------------------------------------

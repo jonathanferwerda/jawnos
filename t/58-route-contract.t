@@ -1,4 +1,4 @@
-# tests-for: lib/JawnOS/Controller/ lib/JawnOS/Domain/Crest.pm lib/JawnOS/Routes.pm qa/lib/ qa/routes.policy.json
+# tests-for: lib/JawnOS/Controller/ lib/JawnOS/Domain/Crest.pm lib/JawnOS/Routes.pm lib/JawnOS/Routes/ qa/lib/ qa/routes.policy.json
 # covers:    The route table is the app's whole private surface: 796 paths, one action each, registered in a fixed order.
 
 use strict;
@@ -39,6 +39,52 @@ for my $r (@$routes) {
 }
 is(scalar(keys %missing), 0, 'every route action exists in its controller')
 	or diag('missing: ' . join(', ', (sort keys %missing)[0 .. 4]));
+
+# --- and the other way: every action is reachable by a route --------------------
+# The route table is the index for actions, so it has to be complete as well as
+# correct: an action that exists in a controller but that no row reaches is dead
+# surface, and an agent that greps the name will believe it is a live entry point.
+my %routed = map { $_->{'action'} => 1 } @$routes;
+my (%action, %action_in);
+for my $file (glob "$repo/lib/JawnOS/Controller/*.pm") {
+	my ($module) = $file =~ m{Controller/([^/]+)\.pm$};
+	next unless $module;
+	my $src = read_file($file);
+	while ($src =~ /^\s*sub\s+(action_\d+)\b/mg) {
+		$action{$1}    = 1;
+		$action_in{$1} = $module;
+	}
+}
+cmp_ok(scalar(keys %action), '>=', 700, 'the controllers define their actions');
+
+my @unrouted = grep { !$routed{$_} } sort keys %action;
+is(scalar @unrouted, 0, 'every controller action has a route row')
+	or diag('no route reaches: '
+		. join(', ', map { "$_ ($action_in{$_}.pm)" } @unrouted[0 .. ($#unrouted > 4 ? 4 : $#unrouted)]));
+
+# --- the row's order and its action agree ------------------------------------
+# A row is [the line the route had in Manager.pl, method, path, action], and the
+# action is named for that number. Renaming one without the other leaves the
+# table ordered by a number that no longer names its handler - both drift without
+# anything failing, because the pair still compiles and still routes.
+my (@misnamed, $parsed);
+$parsed = 0;
+for my $file (glob "$repo/lib/JawnOS/Routes/*.pm") {
+	my ($module) = $file =~ m{Routes/([^/]+)\.pm$};
+	next unless $module;
+	my $n = 0;
+	for my $row (split /\n/, read_file($file)) {
+		$n++;
+		my @m = $row =~
+			/\[\s*(\d+)\s*,\s*'[^'\n]*'\s*,\s*'[^'\n]*'\s*,\s*'(action_\d+)'\s*\]/;
+		next unless @m == 2;
+		$parsed++;
+		push @misnamed, "$module:$n row $m[0] names $m[1]" if "action_$m[0]" ne $m[1];
+	}
+}
+cmp_ok($parsed, '>=', 700, 'every route row is readable as [index, method, path, action]');
+is(scalar @misnamed, 0, 'each route row is ordered by the number its action is named for')
+	or diag(join(', ', @misnamed[0 .. ($#misnamed > 4 ? 4 : $#misnamed)]));
 
 # --- every route module is registered -----------------------------------------
 no warnings q{once};

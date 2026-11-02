@@ -252,6 +252,11 @@ code that concatenates `$app` into a path without `path_name` is a bug.
   `AUTOLOAD` reads, so a helper missing from it is unreachable by name and dies at
   runtime. `t/54-manager-split.t` checks both directions and the pre-push hook
   blocks the drift; `perl scripts/where.pl <name>` prints the part it is in.
+- **The name indexes are checked, not just trusted.** A new domain sub needs its
+  `qw(...)` in `lib/JawnOS/Domain/Loader.pm` (`t/91`), a route action needs its row
+  in `lib/JawnOS/Routes/` (`t/58`), and a new app page needs a help topic with
+  `app => <name>` (`t/11`). Each test fails the push rather than letting the index
+  go quietly stale; `scripts/where.pl` is the lookup those tests keep honest.
 - **Cap parallel jobs on this shared box:** `pio run -j 4`, `gradle --max-workers=4`, `make -j4`.
 - **Bump the version on every push.** Run `perl scripts/version_bump.pl` (patch bump of `./VERSION`,
   e.g. `0.1.20 → 0.1.21`) and prefix the commit subject with it: `v<version> - <summary>`. Verify with
@@ -363,6 +368,10 @@ The in-app guide lives in `help.pl` (a `%topic` registry) and is served by the `
   `--quiet` shows errors+stale; `--all` also lists fragment templates with no topic.
 - The audit runs on `git push` via `.githooks/pre-push` (enable once: `git config core.hooksPath .githooks`).
   Hard errors block; stale topics print as a to-do. Bypass with `git push --no-verify`.
+- The reverse question — **which topic explains this file** — is
+  `perl scripts/where.pl templates/apps/<app>.html.ep`. It answers from a topic's `templates` list and
+  from its `app` field, so a topic with `app => <name>` covers its page without a list entry.
+  `t/11-help.t` pins the app pages that have neither (`%known_gap`): the gap may shrink, never grow.
 - The guide is also handed a **generated inventory** (`help::inventory`) built from each topic's
   `templates` (plus the conventional `templates/apps/<app>.html.ep` / `public/js/manager/<app>.js`),
   listing the real on-screen hints. Keep button labels and the topic's words identical so the two agree.
@@ -430,8 +439,10 @@ The bill is generated text, not stored context. Four rules that move it:
   own cache. One main thread plus narrow sub-agents returning `file:line` beats three broad agents.
 - **Cap the loop.** Plan → approve → execute; paste the failing lines instead of re-running a suite;
   `sed -n` a range instead of reading the file.
-- **Ask the locator, not the map.** `perl scripts/where.pl <name>` answers "where is this function" in
-  one line; reading `Index.pm` or grepping nine parts costs ~20 KB for the same answer.
+- **Ask the locator, not the map.** `perl scripts/where.pl <name>` answers "where is this" in
+  one line — a Manager helper, a domain sub, a route action or path, a help topic, or a file (which
+  reports the topics covering it); `--topics` lists the help registry. Reading `Index.pm` or grepping
+  nine parts costs ~20 KB for the same answer.
 
 **Agents (local, optional, and all on the same records).** Four, plus the generators Pen can call:
 

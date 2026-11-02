@@ -1,4 +1,4 @@
-# tests-for: perl/help.pl
+# tests-for: perl/help.pl templates/apps/
 # covers:    The help registry (help.pl).
 
 use strict;
@@ -65,5 +65,42 @@ is($topic->{title}, 'The start menu', 'the resolved topic is the start menu');
 is(help::get('start-menu')->{title}, $topic->{title}, 'a hyphenated name resolves the same');
 is(help::get('Start_Menu')->{title}, $topic->{title}, 'case and underscores resolve the same');
 ok(!defined help::get('definitely-not-a-topic'), 'an unknown topic does not resolve');
+
+# --- every app page is explained, or a named gap -----------------------------
+# help::audit() reports an app page with no topic as INFO, and the push runs the
+# audit without --all, so an orphan page is invisible: it is neither an error nor
+# in anybody's to-do list. This names the gaps instead, so a new app cannot
+# arrive without either a topic carrying `app => <name>` or a deliberate entry
+# below. A page resolves when some topic's app field matches it; a topic that
+# lists the page in templates but not in its app field does not count, because
+# the Open button and the file resolution both key off the app.
+my %known_gap = map { $_ => 1 } qw(
+	account clothesline coding_chat evaluation help pen project
+	app_details app_file app_measure_details app_measures app_transaction
+	appointment_header budget_current_information edit_app evaluation_controls
+	evaluation_report gallery_album gallery_home ide_files information
+	inventory_info people_person
+);
+# account/clothesline/coding_chat/evaluation/help/pen/project are apps with no
+# topic yet (clothesline and evaluation HAVE a topic - it just lacks `app =>`).
+# The rest are fragments of an app's page, explained by that app's topic.
+
+my @orphans;
+for my $file (sort glob("$root/templates/apps/*.html.ep")) {
+	(my $base = $file) =~ s{.*/}{};
+	$base =~ s{\.html\.ep$}{};
+	next if grep { ($topic{$_}->{'app'} || '') eq $base } keys %topic;
+	push @orphans, $base;
+}
+
+my @new_gaps = grep { !$known_gap{$_} } @orphans;
+is_deeply(\@new_gaps, [], 'no app page is without a help topic unless it is a known gap')
+	or diag('write a topic with app => <name>, or add to %known_gap with a reason: '
+		. join(', ', @new_gaps));
+
+my %is_orphan = map { $_ => 1 } @orphans;
+my @closed = grep { !$is_orphan{$_} } sort keys %known_gap;
+note(scalar(@closed) . ' known gap(s) now have a topic - prune %known_gap: ' . join(', ', @closed))
+	if @closed;
 
 done_testing();
