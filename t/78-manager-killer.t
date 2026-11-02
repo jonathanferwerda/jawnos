@@ -23,6 +23,26 @@ my $root = repo_root();
 my $script = "$root/scripts/manager_killer.pl";
 my $src = read_file($script);
 
+# A child that has forked but not yet exec'd still wears this test's command
+# line, and under a loaded parallel suite the exec can take a while. Waiting a
+# fixed 0.5s made this file fail in the full run and pass alone; wait for the
+# thing the scan actually reads instead.
+sub wait_for_cmdline {
+	my ($pid, $needle, $timeout) = @_;
+	$timeout ||= 5;
+	my $deadline = time + $timeout;
+	while (time < $deadline) {
+		if (open my $fh, '<', "/proc/$pid/cmdline") {
+			local $/;
+			my $cmd = <$fh>;
+			close $fh;
+			return 1 if defined $cmd && index($cmd, $needle) >= 0;
+		}
+		sleep 0.02;
+	}
+	return 0;
+}
+
 like($src, qr/sub scan_processes/, 'the killer scans /proc once');
 unlike($src, qr/`\s*(?:pkill|pgrep)/, 'no pkill/pgrep in the code path');
 like($src, qr/sub is_tree/, 'the tree is identified by executable and command line');
@@ -54,7 +74,7 @@ if ($probe == 0) {
 	exit 127;
 }
 
-sleep 0.5;
+ok(wait_for_cmdline($fake, 'President.pl'), 'the fake worker is running as President.pl');
 
 my $list = `$^X $script --list --scope=$tmp 2>&1`;
 like($list, qr/^\Q$fake\E\t/m, 'the perl worker is selected');
@@ -86,7 +106,7 @@ if ($master == 0) {
 	exec($^X, "$tmp/jawn");
 	exit 127;
 }
-sleep 0.4;
+ok(wait_for_cmdline($master, 'jawn'), 'the fake master is running');
 
 my $without = `$^X $script --list --scope=$tmp 2>&1`;
 unlike($without, qr/^\Q$master\E\t/m, 'the master is left alone by default');

@@ -591,6 +591,7 @@ sub assemble {
 				rel => $rel, label => $spec->{'label'}, text => $redacted,
 				bytes => $original, redacted => $count,
 				abbreviate => ($rel eq 'AGENTS.md' ? 1 : 0),
+				shell_only => ($rel eq 'AGENTS.md' ? 1 : 0),
 			);
 		if ($rel eq 'AGENTS.md') { push @core, $doc } else { push @retrieved, $doc }
 	}
@@ -655,10 +656,52 @@ sub assemble {
 # happens, drop the prose paragraphs that carry no rule and keep the normative
 # ones - a paragraph is kept or dropped whole, so no sentence is left dangling -
 # then cap the result. Both the drop and the cut are declared in the prompt.
+# Sections that only teach commands this agent cannot run. The nightly Coding
+# agent has no shell: it edits files and replies with JSON, and the nightly
+# commits, pushes and restarts for it. Sending it the restart protocol, the APK
+# store, the firmware staging or the browser checks buys nothing and, because the
+# document is capped, costs it rules it can act on.
+our @SHELL_ONLY_SECTIONS = (
+	'Run & restart',
+	'Web interface',
+	'App releases (the APK store)',
+	'Firmware / OTA (stage every build)',
+	'Next up (deferred)',
+);
+
+# Remove those sections whole (a heading and its body, up to the next H2).
+sub drop_sections {
+	my ($text, $titles) = @_;
+	my %drop = map { $_ => 1 } @{$titles};
+	$text = '' unless defined $text;
+	my @out;
+	my $dropping = 0;
+	my @dropped;
+	for my $line (split /\n/, $text, -1) {
+		if ($line =~ /^##\s+(.+?)\s*$/) {
+			my $title = $1;
+			$dropping = $drop{$title} ? 1 : 0;
+			push @dropped, $title if $dropping;
+			next if $dropping;
+		}
+		next if $dropping;
+		push @out, $line;
+	}
+	return (join("\n", @out), \@dropped);
+}
+
 sub _flat_document {
 	my (%a) = @_;
 	my $text = $a{'text'};
 	my $abbreviated = 0;
+	my $dropped;
+	if ($a{'shell_only'}) {
+		my ($short, $titles) = drop_sections($text, \@SHELL_ONLY_SECTIONS);
+		if (@$titles && length $short < length $text) {
+			$text   = $short;
+			$dropped = $titles;
+		}
+	}
 	if ($a{'abbreviate'} && text_bytes($text) > $MAX_DOC_BYTES) {
 		my $short = abbreviate_rules($text);
 		if (length $short && text_bytes($short) < text_bytes($text)) {
@@ -671,6 +714,7 @@ sub _flat_document {
 		rel => $a{'rel'}, label => $a{'label'}, present => 1,
 		bytes => $a{'bytes'}, kept => $kept_bytes,
 		truncated => $truncated, abbreviated => $abbreviated,
+		dropped => $dropped,
 		redacted => $a{'redacted'}, text => $kept,
 	};
 }
@@ -1007,6 +1051,10 @@ sub _render_doc {
 	if ($doc->{'abbreviated'}) {
 		$p .= '[ABBREVIATED: this ' . $doc->{'bytes'} . ' byte document was reduced to its '
 			. 'normative paragraphs; the first ' . $doc->{'kept'} . " bytes of that are below.]\n";
+	}
+	if ($doc->{'dropped'} && @{ $doc->{'dropped'} }) {
+		$p .= '[DROPPED: sections about commands this agent cannot run: '
+			. join('; ', @{ $doc->{'dropped'} }) . ".]\n";
 	}
 	elsif ($doc->{'truncated'} && !$doc->{'heading_index'} && !$doc->{'declared'}) {
 		$p .= '[TRUNCATED: this document is ' . $doc->{'bytes'} . ' bytes; only the first '

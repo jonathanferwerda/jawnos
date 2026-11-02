@@ -338,4 +338,26 @@ like($run_src, qr/\$run->\{'context_sections'\}/, 'the run report records the pe
 	like($baked, qr/Look it up before grepping/, 'as a rule, not a footnote');
 }
 
+# --- the nightly does not pay for commands it cannot run -------------------
+# It has no shell, so the restart protocol, the APK store, the firmware staging
+# and the browser checks are unusable to it - and because the rules document is
+# capped, carrying them used to cut ## Rules short. Dropped whole, the document
+# fits and the rules survive; the drop is declared so a partial rulebook is never
+# read as the whole one.
+{
+	my $real = CodingContext::assemble(context_dir => $repo, note_text => 'Chat');
+	my ($agents) = grep { ($_->{'rel'} // '') eq 'AGENTS.md' } @{ $real->{'documents'} };
+	ok($agents, 'the rules document is in the prompt');
+	unlike($agents->{'text'}, qr/^## App releases/m, 'the APK store is dropped');
+	unlike($agents->{'text'}, qr/^## Firmware \/ OTA/m, 'so is firmware staging');
+	unlike($agents->{'text'}, qr/^## Run & restart/m, 'and the restart protocol');
+	like($agents->{'text'}, qr/^## Rules$/m, 'while the Rules survive whole');
+	like($agents->{'text'}, qr/Every behaviour change ships with a test/,
+		'including the rule the nightly is judged on');
+	is($agents->{'truncated'}, 0, 'the document is no longer cut short');
+	like($real->{'system'}, qr/^\[DROPPED: sections about commands this agent cannot run:/m,
+		'the drop is declared');
+	cmp_ok(scalar @{ $agents->{'dropped'} || [] }, '>=', 4, 'and the sections are named');
+}
+
 done_testing();
