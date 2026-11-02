@@ -142,7 +142,7 @@ Manager::app->routes->get('/manager/music' => sub ($c) {
 	my $settings = &subs::settings_grabber({ app => 'music' });
 	$settings->{'artist'} = eval { return decode_json $settings->{'artist'} } || [];
 	$settings->{'album'} = eval { return decode_json $settings->{'album'} } || [];
-	if ($settings->{'library'} ne 'local' && $c->param('remoted') ne 'yes') {
+	if (($settings->{'library'} || '') ne 'local' && ($c->param('remoted') || '') ne 'yes') {
 		my $rm = &subs::db_query('select * from remote_machines where uuid=? and connection=?', $settings->{'library'}, 'active')->hashes->[0];
 		if ($rm->{'uuid'}) {
 			$c->param('remote_uuid' => $rm->{'uuid'});

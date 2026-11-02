@@ -661,7 +661,7 @@ sub update_database($data) {
 	if ($data->{'commands'}) {
 		$commands = $data->{'commands'};
 	}
-	if ($data->{'duty'} eq 'list') {
+	if (defined $data->{'duty'} && $data->{'duty'} eq 'list') {
 		return $commands;
 	}
 	else {
@@ -727,7 +727,7 @@ sub update_database($data) {
 	}
 	if (1 == 1) {
 		my $q = &subs::db_query('select type from pragma_table_info(?) where name=?', 'cache', 'data')->hashes->[0]->{'type'};
-		if ($q eq 'LONGTEXT') {
+		if (defined $q && $q eq 'LONGTEXT') {
 			&subs::db_query('ALTER TABLE cache ADD COLUMN s_data BLOB');
 			my $caches = &subs::db_select('cache', undef, { s_data => undef })->hashes;
 			foreach my $cache ( @{$caches} ) {
