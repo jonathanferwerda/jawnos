@@ -213,7 +213,38 @@ if (length $log) {
 	print $fh join(' ', @ARGV), "\n";
 	close $fh;
 }
-exit(0 + ($ENV{'FAKE_QA_EXIT'} // 0));
+# A counter-driven exit sequence lets one run be red and the next green
+# without changing the plain FAKE_QA_EXIT contract older tests rely on.
+my $exit = 0;
+if (defined $ENV{'FAKE_QA_EXITS'} && length $ENV{'FAKE_QA_EXITS'}) {
+	my @exits = grep { length } split /[,\s]+/, $ENV{'FAKE_QA_EXITS'};
+	my $n = 0;
+	if (my $counter = $ENV{'FAKE_QA_COUNTER'}) {
+		if (-f $counter) {
+			open(my $cf, '<', $counter) or die $!;
+			$n = <$cf> // 0;
+			close $cf;
+			$n =~ s/\s+//g;
+		}
+		$n++;
+		open(my $cf, '>', $counter) or die $!;
+		print $cf $n;
+		close $cf;
+	}
+	else {
+		$n = 1;
+	}
+	my $i = $n > 0 ? $n - 1 : 0;
+	$i = $#exits if $i > $#exits;
+	$exit = 0 + $exits[$i];
+}
+else {
+	$exit = 0 + ($ENV{'FAKE_QA_EXIT'} // 0);
+}
+# A real suite names its failing test on stdout, which is what the repair
+# prompt reads back out of the suite log.
+print "not ok 1 - t/99_fake.t\n# Failed test 'the fake suite'\n" if $exit != 0;
+exit($exit);
 QA
 	write_file("$repo/qa/device_target.pl", "#!/usr/bin/perl\nexit 0;\n");
 	write_file("$repo/tracker.txt", "original\n");
@@ -326,7 +357,7 @@ SERVER
 }
 
 SKIP: {
-	skip 'git is not installed', 30 unless $have_git;
+	skip 'git is not installed', 81 unless $have_git;
 
 	# -- dry run changes nothing -------------------------------------------
 	my $dry = fake_repo();
@@ -391,6 +422,94 @@ SKIP: {
 	is(git_out($red->{'repo'}, 'rev-parse', 'HEAD'), $red_head, 'main is untouched');
 	is(note_status($rdb, 'red-1'), 'open', 'the note stays open');
 	like($red_report->{'runs'}->[0]->{'error'}, qr/suite failed/i, 'the report names the failure');
+
+	# -- a red suite that one repair turns green ---------------------------
+	my $rep = fake_repo();
+	my ($pdb, $pdir, $pdbh) = make_db();
+	add_note($pdbh, uuid => 'repair-1', timestamp => '2000',
+		text => "Fix the failing thing\nwith the test");
+	$pdbh->disconnect;
+	my $rep_root = "$rep->{'dir'}/qa-root";
+	my $rep_agent = agent_script($rep->{'dir'});
+	my ($rpid, $rport) = app_server($rep->{'dir'});
+	my ($rep_rc, $rep_out) = run_runner(
+		{
+			'JAWNOS_CODING_AGENT' => "$^X $rep_agent",
+			'FAKE_QA_EXITS'       => '1,0',
+			'FAKE_QA_COUNTER'     => "$rep->{'dir'}/qa-counter",
+			'FAKE_AGENT_LOG'      => "$rep->{'dir'}/agent.log",
+			'FAKE_RESTART_LOG'    => "$rep->{'dir'}/restart.log",
+		},
+		'--ignore-device', '--repo', $rep->{'repo'}, '--root', $rep_root,
+		'--db', $pdb, '--stamp', 'repair01', '--limit', '1',
+		'--live-url', "http://127.0.0.1:$rport",
+		'--health-url', "http://127.0.0.1:$rport/manager/health",
+		'--health-wait', '3', '--ticket', '');
+	kill 'KILL', $rpid;
+	waitpid($rpid, 0);
+
+	is($rep_rc, 0, 'a repair that turns the suite green exits 0');
+	my $rep_report = report_for($rep_root, 'repair01');
+	ok(ref $rep_report eq 'HASH', 'a repaired run writes a report');
+	my $rep_run = $rep_report->{'runs'}->[0] || {};
+	is($rep_run->{'status'}, 'green', 'the repaired note is green');
+	is($rep_run->{'repair_attempts'}, 1, 'exactly one repair was attempted');
+	is_deeply($rep_run->{'repair_exits'}, [0], 'the repair agent exited 0');
+	is_deeply($rep_run->{'repair_suite_exits'}, [0], 'the repaired suite exited 0');
+	is($rep_run->{'suite_exit'}, 0, 'the recorded suite exit is the repaired run');
+	like($rep_run->{'suite_log'} // '', qr/suite-repair-1\.log$/, 'the report points at the repair suite log');
+	ok($rep_run->{'marked_completed'}, 'the note was marked completed');
+	my $rep_requests = -f "$rep->{'dir'}/requests.log" ? read_file("$rep->{'dir'}/requests.log") : '';
+	like($rep_requests, qr/POST \/manager\/note_save .*uuid=repair-1.*status=completed|POST \/manager\/note_save .*status=completed.*uuid=repair-1/,
+		'the note is completed through note_save');
+	my $rep_agent_log = -f "$rep->{'dir'}/agent.log" ? read_file("$rep->{'dir'}/agent.log") : '';
+	like($rep_agent_log, qr/the nightly suite failed \(repair attempt 1 of 2\)/i,
+		'the repair agent was told which attempt it was');
+	like($rep_agent_log, qr/not ok 1 - t\/99_fake\.t/,
+		'the repair note carried the failing test name');
+	like(git_out($rep->{'repo'}, 'log', '-1', '--pretty=%s'), qr/^v0\.0\.2 - Fix the failing thing/,
+		'the repaired work shipped to main');
+	ok(!-d "$rep_root/work/repair01-1", 'a green worktree is cleaned up after a repair');
+	ok(!has_branch($rep->{'repo'}, 'qa/nightly-repair01-1'), 'a repaired branch is cleaned up');
+
+	# -- a suite that stays red stops after two repairs --------------------
+	my $hard = fake_repo();
+	my ($hdb, $hdir, $hdbh) = make_db();
+	add_note($hdbh, uuid => 'hard-1', timestamp => '2000', text => 'A note the repair cannot save');
+	$hdbh->disconnect;
+	my $hard_root = "$hard->{'dir'}/qa-root";
+	my $hard_agent = agent_script($hard->{'dir'});
+	my $hard_head = git_out($hard->{'repo'}, 'rev-parse', 'HEAD');
+	my ($hard_rc, $hard_out) = run_runner(
+		{
+			'JAWNOS_CODING_AGENT' => "$^X $hard_agent",
+			'FAKE_QA_EXITS'       => '1,1,1',
+			'FAKE_QA_COUNTER'     => "$hard->{'dir'}/qa-counter",
+			'FAKE_AGENT_LOG'      => "$hard->{'dir'}/agent.log",
+		},
+		'--ignore-device', '--repo', $hard->{'repo'}, '--root', $hard_root,
+		'--db', $hdb, '--stamp', 'hard01', '--limit', '1',
+		'--live-url', 'http://127.0.0.1:1', '--health-url', 'http://127.0.0.1:1/health',
+		'--ticket', '');
+	is($hard_rc, 1, 'a suite still red after the repairs exits 1');
+	my $hard_report = report_for($hard_root, 'hard01');
+	my $hard_run = $hard_report->{'runs'}->[0] || {};
+	is($hard_run->{'status'}, 'red', 'the note is red after the repairs');
+	is($hard_run->{'repair_attempts'}, 2, 'two repairs were attempted');
+	is_deeply($hard_run->{'repair_exits'}, [0, 0], 'both repair agents exited 0');
+	is_deeply($hard_run->{'repair_suite_exits'}, [1, 1], 'both repaired suites stayed red');
+	ok(-d "$hard_root/work/hard01-1", 'the worktree is still left for inspection');
+	ok(!has_branch($hard->{'repo'}, 'qa/nightly-hard01-1'), 'the branch is removed');
+	is(git_out($hard->{'repo'}, 'rev-parse', 'HEAD'), $hard_head, 'main is untouched');
+	is(note_status($hdb, 'hard-1'), 'open', 'the note stays open');
+	my $hard_failure = -f "$hard_root/coding/hard01/failure.md"
+		? read_file("$hard_root/coding/hard01/failure.md") : '';
+	like($hard_failure, qr/repairs: 2 \(agent exits 0, 0/,
+		'failure.md says how many repairs were tried');
+	my $hard_md = -f "$hard_root/coding/hard01/report.md"
+		? read_file("$hard_root/coding/hard01/report.md") : '';
+	like($hard_md, qr/repairs: 2 \(agent exits 0, 0/,
+		'report.md says how many repairs were tried');
 
 	# -- green only after health 200 --------------------------------------
 	my $green = fake_repo();

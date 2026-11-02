@@ -382,17 +382,26 @@ The runner, one note at a time:
    `templates/`, `public/js/`, `lib/JawnOS/Controller|Routes` or `perl/*.pl`.
    l3 includes the real-engine click check: a UI change is not green when the
    appointment budget light is dead in WebKitGTK, even if every page loads.
-6. **Green** - `scripts/version_bump.pl`, one commit
+6. **Repair** - a red suite is not yet a verdict. The same worktree goes back
+   to the agent with the failing test names and the last 40 lines of the log
+   (the block is capped at 4 KB, and it is always appended to the *original*
+   note, so it cannot snowball), the layers are recomputed from the change
+   list, and the suite is re-run. `--repair-attempts` sets the number of tries
+   (0..3, default 2). A non-zero repair agent exit stops repairing at once.
+   The run records `repair_attempts`, `repair_exits` and `repair_suite_exits`,
+   and the reports print a `repairs:` line.
+7. **Green** - `scripts/version_bump.pl`, one commit
    `v<version> - <note title>`, push the branch, `git merge --ff-only` into
    main, push main, `scripts/restart.pl --reason ...`, require HTTP 200 from
    `/manager/health`, then mark the note `completed` through
    `POST /manager/note_save` (ticket-minted session) and file a Handbook
    report note in the `journal` category. The worktree is removed afterwards.
 
-**Red is a stop.** The worktree stays for inspection, its branch is detached
-and deleted, the note stays open, and `~/jawnos-qa/coding/<stamp>/report.md`
-names the layer and log. A dirty main tree is also a stop: it refuses to merge
-over other work. A non-zero agent exit is handled the same way.
+**Still red is a stop.** After the repair attempts the worktree stays for
+inspection, its branch is detached and deleted, the note stays open, and
+`~/jawnos-qa/coding/<stamp>/report.md` names the layer, the repair exits and the
+log. A dirty main tree is also a stop: it refuses to merge over other work. A
+non-zero agent exit on the first edit is handled the same way.
 
 **Two lanes.** A note that names the Android app's vocabulary - `android`,
 `apk`, `app`, `termux`, `status bar`, `navigation bar`, `soft keyboard`, `ime`,
@@ -461,6 +470,11 @@ model is configured. It runs in the worktree and:
    lane the core is the app checkout's `AGENTS.md`, `JAWNOS.md` and `README.md`.
    `AGENTS.md` over 20 KB is reduced to its normative paragraphs (headings,
    bullets, modal sentences) before the cap is applied, and both are declared.
+   The prompt also names the repository rules that stop a night: the
+   `[[js-split]]` manifest a new JS part must be listed in, the `# tests-for:`
+   header every test needs (t/93 reads the map), the lazy-app maps in
+   `lib/JawnOS/Manager/Core1_tables_hooks.pm`, and one behaviour change = one
+   test.
 2. **Retrieves sections instead of truncating the deep notes.**
    `docs/AGENTS-notes.md` (187 KB) is split on its markdown headings; each
    section scores against the note's words (heading hit 6, body hit 1 capped

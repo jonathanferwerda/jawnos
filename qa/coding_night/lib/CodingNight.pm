@@ -342,6 +342,35 @@ sub note_env {
 	};
 }
 
+# A repair attempt is the same note with the failure appended: id and title are
+# kept so the agent log, accounting and the report stay aligned. It is always
+# built from the ORIGINAL text, never from the previous attempt's, so the block
+# cannot snowball. The block is capped - a suite log can be megabytes and the
+# agent's context is not - and the instruction survives the cap.
+sub repair_note {
+	my (%a) = @_;
+	my $note = $a{'note'} || {};
+	my $max  = defined $a{'max'}     ? $a{'max'}     : 2;
+	my $n    = defined $a{'attempt'} ? $a{'attempt'} : 1;
+	my $cap  = defined $a{'cap'}     ? $a{'cap'}     : 4096;
+	my @failing = @{ ref $a{'failing'} eq 'ARRAY' ? $a{'failing'} : [] };
+	my $tail = defined $a{'tail'} ? $a{'tail'} : '';
+
+	my $instruction = 'Fix the failure in this worktree. Do not start over, do not rewrite'
+		. ' unrelated files, and do not weaken or delete a test to make it pass.';
+	my $intro = "\n\n## The nightly suite failed (repair attempt $n of $max)\n\n"
+		. "Failing tests:\n" . (@failing ? join("\n", @failing) : '(none named in the log)') . "\n\n"
+		. "Last lines of the suite log:\n" . ($tail =~ /\S/ ? $tail : '(the log was empty)') . "\n\n";
+	my $room = $cap - length($instruction) - 1;
+	$room = 0 if $room < 0;
+	$intro = substr($intro, 0, $room) . "\n" if length($intro) > $room;
+
+	return {
+		%{$note},
+		text => ($note->{'text'} // '') . $intro . $instruction,
+	};
+}
+
 # --- the backup the night leaves behind -------------------------------------
 # A tag is the whole recovery: it is a commit id, so a reset lands on exactly
 # the tree the night started from. rollback.sh is the human path; the runner
@@ -497,6 +526,11 @@ sub report_markdown {
 		$md .= '- push target: `' . ($run->{'push_target'} // 'origin') . "`\n";
 		$md .= '- agent exit: ' . ($run->{'agent_exit'} // '-') . "\n";
 		$md .= '- suite exit: ' . ($run->{'suite_exit'} // '-') . "\n";
+		if (($run->{'repair_attempts'} // 0) > 0) {
+			$md .= '- repairs: ' . $run->{'repair_attempts'} . ' (agent exits '
+				. (join(', ', @{ $run->{'repair_exits'} || [] }) || '-')
+				. ', suite exits ' . (join(', ', @{ $run->{'repair_suite_exits'} || [] }) || '-') . ")\n";
+		}
 		$md .= '- pushed: ' . ($run->{'pushed'} ? 'yes' : 'no')
 			. ' · merged: ' . ($run->{'merged'} ? 'yes' : 'no')
 			. ' · restarted: ' . ($run->{'restarted'} ? 'yes' : 'no')

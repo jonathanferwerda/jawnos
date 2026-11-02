@@ -22,9 +22,11 @@
 #           the note completed through POST /manager/note_save and file a
 #           Handbook report note (category journal).
 #
-# A red suite stops the night: the worktree stays for inspection, the branch is
-# detached and deleted, the note stays open, and the report names the failure.
-# With no agent configured the run exits 3 before it fetches, adds a worktree or
+# A red suite goes back to the same agent in the same worktree with the failing
+# lines and a bounded tail of the log, up to --repair-attempts times (default 2).
+# Still red after that stops the night: the worktree stays for inspection, the
+# branch is detached and deleted, the note stays open, and the report names the
+# failure. With no agent configured the run exits 3 before it fetches, adds a worktree or
 # creates a branch. There is no live SQL here except the read-only SQLite URI;
 # the one live write is the app's own note_save route.
 #
@@ -87,6 +89,7 @@ my %opt = (
 	health_url    => undef,
 	health_wait   => 60,
 	suite_timeout => 3600,
+	repair_attempts => 2,
 	ignore_device => 0,
 );
 my @argv = @ARGV;
@@ -115,8 +118,23 @@ while (my $arg = shift @argv) {
 	if ($arg =~ /^--health-wait=(.*)$/) { $opt{'health_wait'} = $1; next }
 	if ($arg eq '--suite-timeout'){ $opt{'suite_timeout'} = shift @argv // 3600; next }
 	if ($arg =~ /^--suite-timeout=(.*)$/) { $opt{'suite_timeout'} = $1; next }
+	if ($arg eq '--repair-attempts') { $opt{'repair_attempts'} = shift @argv; next }
+	if ($arg =~ /^--repair-attempts=(.*)$/) { $opt{'repair_attempts'} = $1; next }
 	if ($arg eq '--help' || $arg eq '-h') { usage(); exit 0 }
 	die "qa/coding_night: unknown argument: $arg\n";
+}
+
+# A repair is an extra agent run plus an extra suite, so it is bounded hard.
+# Anything outside 0..3 is a usage error, not a silent fallback to the default.
+{
+	my $n = $opt{'repair_attempts'};
+	$n = '' unless defined $n;
+	$n =~ s/^\s+|\s+$//g;
+	unless ($n =~ /^\d+$/ && $n <= 3) {
+		print STDERR "qa/coding_night: --repair-attempts must be 0, 1, 2 or 3\n";
+		exit 2;
+	}
+	$opt{'repair_attempts'} = $n;
 }
 
 my $here = abs_path(__FILE__) || __FILE__;
@@ -257,6 +275,9 @@ for my $note ( @{$notes} ) {
 		status    => 'pending',
 		agent_exit   => undef,
 		suite_exit   => undef,
+		repair_attempts => 0,
+		repair_exits    => [],
+		repair_suite_exits => [],
 		layers       => 'l0,l1',
 		pushed       => 0,
 		merged       => 0,
@@ -672,9 +693,64 @@ for my $note ( @{$notes} ) {
 	);
 	$run{'suite_exit'} = $suite_rc;
 	$run{'suite_log'} = $log->('suite');
+
+	# A red suite is a repair, not yet a verdict. The agent gets the same
+	# worktree back with the failing lines and a bounded tail of the log, so it
+	# fixes its own change instead of starting over. Each attempt is built from
+	# the ORIGINAL note text, never the previous attempt's, so the failure block
+	# cannot snowball across retries.
+	my @repair_exits;
+	my @repair_suite_exits;
+	my $repair = 0;
+	while ($suite_rc != 0 && $repair < $opt{'repair_attempts'}) {
+		$repair++;
+		my $repair_note = CodingNight::repair_note(
+			note    => $note,
+			attempt => $repair,
+			max     => $opt{'repair_attempts'},
+			failing => failure_lines($run{'suite_log'}),
+			tail    => log_tail($run{'suite_log'}),
+		);
+		print '  repair ' . $repair . ' of ' . $opt{'repair_attempts'}
+			. ": the suite was red; asking the same agent again\n";
+		my ($repair_rc) = run_cmd(
+			cmd     => $agent,
+			cwd     => $worktree,
+			env     => CodingNight::note_env($repair_note),
+			log     => $log->("agent-repair-$repair"),
+			timeout => $opt{'suite_timeout'},
+		);
+		push @repair_exits, $repair_rc;
+		record_agent_accounting(\%run, $log->("agent-repair-$repair"));
+		# An agent that cannot run is not a repair: stop and leave today's red
+		# handling to report it, rather than retrying a broken hook twice.
+		last if $repair_rc != 0;
+
+		# The repair may touch a template or JS file the first pass did not, so
+		# the layers are chosen again from the current change list.
+		@files  = changed_files($worktree);
+		$layers = CodingNight::layers_for_files(\@files);
+		$run{'layers'} = $layers;
+		($suite_rc) = run_cmd(
+			cmd => [$^X, "$worktree/qa/run.pl", '--source', 'worktree',
+				'--root', "$root/nightly", '--layers', $layers],
+			cwd     => $worktree,
+			log     => $log->("suite-repair-$repair"),
+			timeout => $opt{'suite_timeout'},
+		);
+		push @repair_suite_exits, $suite_rc;
+		$run{'suite_exit'} = $suite_rc;
+		$run{'suite_log'}  = $log->("suite-repair-$repair");
+	}
+	$run{'repair_attempts'}    = scalar @repair_exits;
+	$run{'repair_exits'}       = \@repair_exits;
+	$run{'repair_suite_exits'} = \@repair_suite_exits;
+
 	if ($suite_rc != 0) {
 		$run{'status'} = 'red';
-		$run{'error'} = "the suite failed (exit $suite_rc, layers $layers); the worktree is left for inspection";
+		$run{'error'} = "the suite failed (exit $suite_rc, layers $layers)";
+		$run{'error'} .= ' after ' . scalar(@repair_exits) . ' repair attempt(s)' if @repair_exits;
+		$run{'error'} .= '; the worktree is left for inspection';
 		abandon_branch($repo, $worktree, $branch);
 		$failed = 1;
 		last;
@@ -903,6 +979,7 @@ qa/coding_night/run.pl - the 06:00 coding nightly
   --ticket URL      box_office ticket URL (default <repo>/.shots/ticket.txt)
   --health-wait SEC seconds to wait for HTTP 200 (default 60)
   --suite-timeout S seconds for the agent and the suite (default 3600)
+  --repair-attempts N retry a red suite with the same agent (0..3; default 2)
   --ignore-device   skip qa/device_target.pl (a test or an owner's manual run)
 TEXT
 }
@@ -1021,6 +1098,21 @@ sub failure_lines {
 	return \@lines;
 }
 
+# The last few lines of a log for the repair prompt: enough to see the shape of
+# the failure without pasting a whole suite's output into the agent's context.
+sub log_tail {
+	my ($path, $count) = @_;
+	$count = 40 unless defined $count && $count =~ /^\d+$/ && $count > 0;
+	return '' unless defined $path && length $path && -f $path;
+	open(my $fh, '<', $path) or return '';
+	my @lines = <$fh>;
+	close $fh;
+	@lines = @lines[-$count .. -1] if @lines > $count;
+	my $text = join('', @lines);
+	$text = substr($text, -4096) if length($text) > 4096;
+	return $text;
+}
+
 sub automatic_rollback {
 	my ($run, $report_dir, $repo, $health_url, $health_wait) = @_;
 	my $tag = $run->{'rollback_tag'} // '';
@@ -1116,6 +1208,11 @@ sub write_failure_md {
 			. '  health 200 ' . (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked') . ')';
 	}
 	print {$fh} "\n";
+	if (($run->{'repair_attempts'} // 0) > 0) {
+		print {$fh} '- repairs: ' . $run->{'repair_attempts'} . ' (agent exits '
+			. (join(', ', @{ $run->{'repair_exits'} || [] }) || '-') . ", suite exits "
+			. (join(', ', @{ $run->{'repair_suite_exits'} || [] }) || '-') . ")\n";
+	}
 	print {$fh} '- report: `' . $dir . "/report.json`\n";
 	print {$fh} '- rollback script: `' . $dir . "/rollback.sh`\n";
 	print {$fh} '- ' . CodingContext::context_summary($run) . "\n"
@@ -1156,6 +1253,10 @@ sub failure_note_text {
 			. ', health 200 ' . (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked') . ')';
 	}
 	$text .= "\n- report: $dir/report.json\n";
+	$text .= '- repairs: ' . $run->{'repair_attempts'} . ' (agent exits '
+		. (join(', ', @{ $run->{'repair_exits'} || [] }) || '-')
+		. ", suite exits " . (join(', ', @{ $run->{'repair_suite_exits'} || [] }) || '-') . ")\n"
+		if ($run->{'repair_attempts'} // 0) > 0;
 	$text .= "- failure: $dir/failure.md\n";
 	$text .= "- rollback script: $dir/rollback.sh\n";
 	if (@failing) {

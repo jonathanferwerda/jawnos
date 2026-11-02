@@ -178,6 +178,19 @@ ok($at_rules >= 0, 'the core rules are in the system prompt');
 ok($at_notes > $at_rules, 'the retrieved sections come after the core');
 is($at_help, -1, 'the help topic is not in the system prompt prefix');
 
+# --- the rules that stop the nightly -----------------------------------------
+# The two rules that failed the 2026-11-02 run: a new JS part missing from the
+# index manifest (t/63) and a test without its tests-for header (t/93).
+like($system, qr/\[\[js-split\]\]/, 'the prompt names the js-split manifest');
+like($system, qr/# tests-for:/, 'the prompt names the tests-for header');
+like($system, qr{t/63-js-parts\.t}, 'the prompt names the test the manifest fails');
+like($system, qr/t\/93-test-map\.t/, 'the prompt names the test that reads the map');
+like($system, qr/%manager_app_scripts/, 'the prompt names the lazy-app bundle map');
+like($system, qr{lib/JawnOS/Manager/Core1_tables_hooks\.pm},
+	'the prompt names the file that holds the lazy-app maps');
+like($system, qr{scripts/run_tests\.pl}, 'the prompt names the fast test runner');
+unlike($system, qr{/home/}, 'the new rules carry no absolute home path');
+
 # Nothing the note changes may appear before the retrieved block: two notes
 # must share a byte-identical system prefix.
 my $other = CodingContext::assemble(context_dir => $dir, note_text => 'budget totals are wrong');

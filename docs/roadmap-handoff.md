@@ -1112,7 +1112,9 @@ state it is in. Handoff note written 2026-11-02 03:45.
 - 06:00: reads the open JawnOS notes (`__president/qa_note_limit`, 1-25) newest
   first, makes a worktree from `origin/main`, picks the repo or app lane, runs
   the coding agent there (read/grep tool turns), gates on the suite (`l0,l1`,
-  plus `l2,l3` when the change touches templates, JS or routes), then
+  plus `l2,l3` when the change touches templates, JS or routes), and on a red
+  suite gives the same worktree back to the agent with the failing lines for up
+  to two repair turns before the night counts as red. Then
   bump/commit/push/ff main/restart/health, marks the note completed and files a
   Handbook report.
 - Safety: a `nightly-pre-<stamp>` tag, `rollback.sh` in every run, automatic
@@ -1131,23 +1133,23 @@ state it is in. Handoff note written 2026-11-02 03:45.
   a literal match; `t/63-js-parts.t` refuses a top-level function declared
   twice across the bundle; l3 clicks the light in WebKitGTK and fails when the
   click reaches nothing.
+- 2026-11-02: repair turns and the prompt rules landed. A red suite is retried
+  in the same worktree with the failing test names and a 4 KB tail of the log
+  (default 2 attempts, `--repair-attempts` 0..3); the run records
+  `repair_attempts`/`repair_exits`/`repair_suite_exits` and the reports print a
+  `repairs:` line. The system prompt now names the `[[js-split]]` manifest,
+  the `# tests-for:` header and t/93 map, the lazy-app maps, and one behaviour
+  change = one test.
 
 **Next (in order)**
-1. **Repair turns.** On a red suite, feed the failing test names and the tail
-   back into the same worktree for up to two attempts, then re-run. The
-   2026-11-02 run stopped at `t/63` because a new JS part was not named in
-   `budget.js`'s `[[js-split]]` block; the runner diagnosed it and could not
-   repair it.
-2. **Rules that bite in the agent prompt:** the `[[js-split]]` manifest, the
-   `# tests-for:` header, the `t/93` map, and one behaviour change = one test.
-3. **First app-lane run.** The keyboard note (status/navigation bars -> IME
+1. **First app-lane run.** The keyboard note (status/navigation bars -> IME
    gap) is still open; the app repo is on table and `gh` is authenticated.
-4. **Index generator.** It was cancelled mid-build (context is 65 KB / ~16.4k
+2. **Index generator.** It was cancelled mid-build (context is 65 KB / ~16.4k
    tokens). Revisit only if context cost starts to hurt.
-5. **Notes sync.** The nightly reads each device's own database; confirm the
+3. **Notes sync.** The nightly reads each device's own database; confirm the
    JawnOS notes sync across laptop and table before relying on table's 06:00
    queue.
-6. **QEMU image.** Rebuild on table when convenient (artefact 0.1.1739 vs tree
+4. **QEMU image.** Rebuild on table when convenient (artefact 0.1.1739 vs tree
    0.1.18xx); l5 reports `version_match=no`.
 
 **Caution**

@@ -921,9 +921,19 @@ already finished and have nothing further to change, reply with shape 3 alone.
   the budget is refused and nothing is written.
 - Change only what the note needs. Do not reformat, rename or delete files the
   note does not name, and do not touch another agent's work in the tree.
-- When behaviour changes, add or update the test in t/ in the same edit. A
-  defect you find but do not fix gets a TODO test naming the file and line,
-  never a test that asserts the broken behaviour.
+- When behaviour changes, add or update the test in t/ in the same edit, and
+  give the file a `# tests-for: <space-separated source paths>` header naming
+  what it pins: t/93-test-map.t reads that map and scripts/tests_for.pl uses
+  it. A defect you find but do not fix gets a TODO test naming the file and
+  line, never a test that asserts the broken behaviour. A test must not call
+  bare `prove -l t`; the nightly runs scripts/run_tests.pl instead.
+- A browser script over ~550 lines is an index plus numbered NN_slug.js parts.
+  A new or renamed part MUST be named in the index's
+  `/* [[js-split]] ... [[/js-split]] */` manifest, or t/63-js-parts.t fails.
+  A script in a lazy app needs its bundle entry in %manager_app_scripts and,
+  when core code calls it before the chunk loads, in %manager_app_entry /
+  %manager_toggle_apps in lib/JawnOS/Manager/Core1_tables_hooks.pm; a helper
+  used by core pages belongs in the core bundle, not a lazy chunk.
 - Perl must pass `perl -c`; JavaScript must pass `node --check`. The nightly
   runs those on every file you touched and feeds a failure back to you.
 - Do not bump the version, commit, push or restart. The nightly does that.
