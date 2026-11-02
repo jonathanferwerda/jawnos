@@ -439,4 +439,7 @@ $catalog{'pa'} = {
 		'thinking' => 'ਸੋਚ',
 		'subagent' => 'ਸਹਾਇਕ ਏਜੰਟ',
 		'subagents' => 'ਸਹਾਇਕ ਏਜੰਟ',
+		'review_before_commit' => 'ਕਮਿਟ ਤੋਂ ਪਹਿਲਾਂ ਸਮੀਖਿਆ',
+		'approve' => 'ਮਨਜ਼ੂਰ ਕਰੋ',
+		'reject' => 'ਅਸਵੀਕਾਰ ਕਰੋ',
 	};

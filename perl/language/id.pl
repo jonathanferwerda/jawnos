@@ -439,4 +439,7 @@ $catalog{'id'} = {
 		'thinking' => 'Pemikiran',
 		'subagent' => 'Subagen',
 		'subagents' => 'Subagen',
+		'review_before_commit' => 'Tinjau sebelum commit',
+		'approve' => 'Setujui',
+		'reject' => 'Tolak',
 	};

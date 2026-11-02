@@ -452,4 +452,7 @@ $catalog{'es'} = {
 		'thinking' => 'Razonamiento',
 		'subagent' => 'Subagente',
 		'subagents' => 'Subagentes',
+		'review_before_commit' => 'Revisar antes de confirmar',
+		'approve' => 'Aprobar',
+		'reject' => 'Rechazar',
 	};

@@ -439,4 +439,7 @@ $catalog{'ar'} = {
 		'thinking' => 'التفكير',
 		'subagent' => 'وكيل فرعي',
 		'subagents' => 'الوكلاء الفرعيون',
+		'review_before_commit' => 'مراجعة قبل الإيداع',
+		'approve' => 'موافقة',
+		'reject' => 'رفض',
 	};

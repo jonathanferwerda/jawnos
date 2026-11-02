@@ -325,10 +325,28 @@ codingChatPollApply = function (mount, run, r) {
 	var panel = codingChatPanel(mount);
 	if (!panel.length) { return again; }
 	var owner = parseInt(panel.data('coding_run'), 10) || 0;
-	if (owner && run && owner !== run) { return again; }
+	if (owner && run && owner !== run) {
+		// a snapshot for a run the panel has left: keep a review the newer run
+		// drew, drop the one that belonged to the old
+		var stale = panel.find('.coding_chat_review');
+		if (stale.length && (parseInt(stale.data('coding_review_run'), 10) || 0) !== owner) { stale.remove(); }
+		return again;
+	}
+	var state = (r && r.state) || 'none';
 	var current = again ? (r && r.current) : null;
 	codingChatNow(mount, current);
 	codingChatLive(mount, current);
+	if (state === 'awaiting_approval') {
+		// the run has stopped mid-flow and is waiting for a word: the review
+		// stays up, and polling keeps going so an approve or a reject is seen
+		// land without the panel needing any state of its own
+		codingChatReviewShow(mount, run || owner, r);
+		panel.data('coding_running', 1);
+		codingChatRunning(panel);
+		return true;
+	}
+	// the run moved on (or settled): the offer to commit is not this run's any more
+	codingChatReviewClear(mount);
 	return again;
 };
 
@@ -373,3 +391,176 @@ codingChatPoll = function (mount, run) {
 	};
 	panel.data('coding_poll_timer', setTimeout(tick, 0));
 };
+
+// ---- a run waiting for a word about its commit --------------------------------
+// Before the agent commits it stops and shows what it is about to write: the
+// files and the diff, with a button either way. The block is one per panel and
+// is drawn from the snapshot the poll already carries, so a reload rebuilds it
+// from the same state and a run that moves on (or a newer one that owns the
+// panel) takes it away.
+
+function codingChatReviewClear(mount) {
+	codingChatPanel(mount).find('.coding_chat_review').remove();
+}
+
+function codingChatReviewShow(mount, run, r) {
+	var panel = codingChatPanel(mount);
+	if (!panel.length) { return; }
+	var log = panel.find('.coding_chat_log');
+	if (!log.length) { return; }
+	// a snapshot for an older run must not put its diff on a newer run's panel
+	var mine = parseInt(panel.data('coding_run'), 10) || 0;
+	var runId = parseInt(run, 10) || mine;
+	if (mine && runId && mine !== runId) { return; }
+	var pending = (r && r.pending_commit && typeof r.pending_commit === 'object') ? r.pending_commit : null;
+	var block = log.find('.coding_chat_review').first();
+	if (!pending) { block.remove(); return; }
+	var diff = String(pending.diff == null ? '' : pending.diff);
+	var files = Array.isArray(pending.files) ? pending.files : [];
+	var names = files.map(function (f) { return String(f == null ? '' : f); }).join(' · ');
+	if (!block.length) {
+		block = $('<div class="coding_chat_review" style="margin:8px 0 0;border-top:1px solid var(--line);padding-top:6px;"></div>');
+		block.append($('<div class="coding_chat_review_status" style="font-size:12px;font-weight:bold;margin:0 0 2px;"></div>'));
+		block.append($('<div class="coding_chat_review_files" style="font-size:11px;opacity:.6;overflow-wrap:break-word;margin:0 0 4px;"></div>'));
+		block.append($('<pre class="coding_chat_review_diff" style="max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;background:rgba(0,0,0,.05);border-radius:5px;padding:4px 6px;margin:0 0 6px;"></pre>'));
+		var row = $('<div style="display:flex;gap:6px;"></div>');
+		row.append($('<button class="coding_chat_approve button" style="padding:4px 10px;border-radius:6px;border:2px solid var(--line);cursor:pointer;font-weight:bold;"></button>').text(codingT('approve')));
+		row.append($('<button class="coding_chat_reject button" style="padding:4px 10px;border-radius:6px;border:2px solid var(--line);cursor:pointer;"></button>').text(codingT('reject')));
+		block.append(row);
+		log.append(block);
+	}
+	block.data('coding_review_run', runId || 0);
+	var filesEl = block.find('.coding_chat_review_files').first();
+	if (filesEl.text() !== names) { filesEl.text(names); }
+	var diffEl = block.find('.coding_chat_review_diff').first();
+	if (diffEl.text() !== diff) { diffEl.text(diff); }
+	// a press already answered keeps its word until the run moves on
+	var status = block.find('.coding_chat_review_status').first();
+	if (!block.data('coding_review_answer') && status.text() !== codingT('review_before_commit')) {
+		status.text(codingT('review_before_commit'));
+	}
+	// a step appended below it leaves the offer above: bring it back down
+	if (block.next().length) { log.append(block); }
+	var node = log[0];
+	if (node && (node.scrollHeight - node.scrollTop - node.clientHeight) < 60) { node.scrollTop = node.scrollHeight; }
+}
+
+// Both buttons go dead the moment one is pressed: the answer is on its way, and
+// a second press would be a second verdict on the same commit.
+function codingChatReviewAnswer(block, approved) {
+	block.data('coding_review_answer', approved ? 'approved' : 'rejected');
+	block.find('.coding_chat_approve, .coding_chat_reject').prop('disabled', true).css('opacity', '.55');
+	block.find('.coding_chat_review_status').first()
+		.text(codingT(approved ? 'Approved — committing…' : 'Rejected — the run stopped.'));
+}
+
+function codingChatReviewUndo(block, why) {
+	block.removeData('coding_review_answer');
+	block.find('.coding_chat_approve, .coding_chat_reject').prop('disabled', false).css('opacity', '');
+	block.find('.coding_chat_review_status').first().text(why ? String(why) : codingT('review_before_commit'));
+}
+
+function codingChatReviewPost(button, url, approved) {
+	var block = button.closest('.coding_chat_review');
+	var panel = button.closest('.coding_chat');
+	if (!block.length || !panel.length || block.data('coding_review_answer')) { return; }
+	var run = parseInt(block.data('coding_review_run'), 10) || parseInt(panel.data('coding_run'), 10) || 0;
+	if (!run) { return; }
+	codingChatReviewAnswer(block, approved);
+	$.ajax({
+		url: url,
+		type: 'POST',
+		dataType: 'json',
+		data: { id: run },
+		success: function (r) {
+			// ok:1 says the worker has it; an error puts the buttons back
+			if (r && r.error) { codingChatReviewUndo(block, r.error); }
+		},
+		error: function () { codingChatReviewUndo(block); }
+	});
+}
+
+$(document).on('click', '.coding_chat_approve', function () {
+	codingChatReviewPost($(this), '/manager/coding/approve', true);
+});
+$(document).on('click', '.coding_chat_reject', function () {
+	codingChatReviewPost($(this), '/manager/coding/reject', false);
+});
+
+// A new ask takes the panel back: what the last run was offering to commit is
+// not this run's business. An empty send changes nothing.
+var codingChatSendCore = codingChatSend;
+codingChatSend = function (mount) {
+	if ($.trim(codingChatPanel(mount).find('.coding_chat_input').val() || '')) { codingChatReviewClear(mount); }
+	return codingChatSendCore(mount);
+};
+
+// The index's reattach picks a queued or active run back up; a run waiting for
+// its commit is neither, so ask for that one state again and start the poll - the
+// snapshot that comes back carries the review panel and its buttons.
+var codingChatReattachCore = codingChatReattach;
+codingChatReattach = function (panel) {
+	if (panel && panel.length) {
+		var mount = panel.attr('mount');
+		var conv = panel.attr('conversation') || mount;
+		if (mount && conv) {
+			$.ajax({
+				url: '/manager/coding/run',
+				type: 'GET',
+				dataType: 'json',
+				cache: false,
+				data: { conversation: conv },
+				success: function (r) {
+					var p = codingChatPanel(mount);
+					if (!p.length || !r || r.state !== 'awaiting_approval') { return; }
+					var run = parseInt(r.run, 10) || parseInt(p.data('coding_run'), 10) || 0;
+					if (!run) { return; }
+					p.data('coding_run', run);
+					p.data('coding_running', 1);
+					codingChatRunning(p);
+					codingChatPoll(mount, run);
+				}
+			});
+		}
+	}
+	return codingChatReattachCore(panel);
+};
+
+// The worker pushes a frame after every state change (a step, a live tick, the
+// approval, the verdict). Restart the owning panel's poll at once instead of
+// leaving it to its timer; a burst is debounced to one poll, because
+// codingChatPoll already clears the timer it replaces.
+function jawnosCodingRunPushed(id, conversation) {
+	var run = parseInt(id, 10) || 0;
+	if (!run) { return; }
+	var conv = conversation ? String(conversation) : '';
+	$('.coding_chat').each(function () {
+		var panel = $(this);
+		var mount = panel.attr('mount');
+		if (!mount) { return; }
+		var mine = parseInt(panel.data('coding_run'), 10) || 0;
+		var named = panel.attr('conversation') || mount;
+		var byRun = mine && mine === run;
+		var byConv = conv && named === conv;
+		if (!byRun && !byConv) { return; }
+		// a panel with no run id is following nothing, and a settled run has no
+		// poller to restart - polling it again would draw its final line twice
+		if (!mine || !panel.data('coding_poll_timer')) { return; }
+		if (mine !== run) {
+			// the conversation has moved on to a newer run: follow it, rather than
+			// poll an id the conversation no longer answers for
+			if (!byConv) { return; }
+			panel.data('coding_run', run);
+		}
+		var wait = panel.data('coding_push_timer');
+		if (wait) { clearTimeout(wait); }
+		panel.data('coding_push_timer', setTimeout(function () {
+			var p = codingChatPanel(mount);
+			if (!p.length) { return; }
+			p.removeData('coding_push_timer');
+			if ((parseInt(p.data('coding_run'), 10) || 0) !== run) { return; }
+			if (!p.data('coding_poll_timer')) { return; }
+			codingChatPoll(mount, run);
+		}, 120));
+	});
+}

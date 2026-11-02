@@ -452,4 +452,7 @@ $catalog{'zh'} = {
 		'thinking' => '思考',
 		'subagent' => '子代理',
 		'subagents' => '子代理数',
+		'review_before_commit' => '提交前审查',
+		'approve' => '批准',
+		'reject' => '拒绝',
 	};

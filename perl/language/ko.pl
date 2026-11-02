@@ -439,4 +439,7 @@ $catalog{'ko'} = {
 		'thinking' => '생각',
 		'subagent' => '하위 에이전트',
 		'subagents' => '하위 에이전트',
+		'review_before_commit' => '커밋 전 검토',
+		'approve' => '승인',
+		'reject' => '거절',
 	};

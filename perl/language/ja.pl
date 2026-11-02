@@ -439,4 +439,7 @@ $catalog{'ja'} = {
 		'thinking' => '思考',
 		'subagent' => 'サブエージェント',
 		'subagents' => 'サブエージェント',
+		'review_before_commit' => 'コミット前に確認',
+		'approve' => '承認',
+		'reject' => '却下',
 	};

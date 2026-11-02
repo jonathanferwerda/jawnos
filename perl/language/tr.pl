@@ -439,4 +439,7 @@ $catalog{'tr'} = {
 		'thinking' => 'Düşünce',
 		'subagent' => 'Alt ajan',
 		'subagents' => 'Alt ajanlar',
+		'review_before_commit' => 'Commit öncesi incele',
+		'approve' => 'Onayla',
+		'reject' => 'Reddet',
 	};

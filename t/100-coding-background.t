@@ -101,6 +101,8 @@ sub run_fake_job {
 		};
 		local *subs::coding_run_state_save = sub { $state{ $_[0] } = $_[1]; 1 };
 		local *subs::coding_run_state_load = sub { $state{ $_[0] } || {} };
+		local *subs::coding_run_push = sub { 1 };
+		local *subs::coding_review_setting = sub { 0 };
 		local *subs::jawn_version = sub { '9.9.9' };
 		local *Manager::coding_conversation_load = sub { [] };
 		local *Manager::coding_conversation_save = sub { 1 };

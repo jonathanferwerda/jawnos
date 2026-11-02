@@ -13,10 +13,13 @@ function jawnosCodingChatSave() {
 			var log = panel.find('.coding_chat_log');
 			if (!log.length) { return; }
 			// the live line is a snapshot of the run, not part of the conversation:
-			// keep it out, or a restored log would show a finished run as working
+			// keep it out, or a restored log would show a finished run as working.
+			// The review is the run's pending offer too - a restored log must not
+			// show a commit that was decided before the reload.
 			var saved = log.clone();
 			saved.find('.coding_chat_now').remove();
 			saved.find('.coding_chat_live').remove();
+			saved.find('.coding_chat_review').remove();
 			state[panel.attr('mount')] = {
 				log: saved.html() || '',
 				scroll: log[0] ? log[0].scrollTop : 0,

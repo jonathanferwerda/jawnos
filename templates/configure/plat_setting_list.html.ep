@@ -182,6 +182,15 @@
 							<% } %>
 						</select>
 					</div>
+					<% if ($setting eq 'coding_assistant') {
+						my $review = &subs::setting_grabber({ app => 'mail', setting => 'coding_review' });
+						$review = 'on' unless defined $review && length $review;
+					%>
+						<div class="cfg-row">
+							<label><%= &subs::lang('review_before_commit') %></label>
+							<input type="checkbox" class="configure_input" app="mail" setting="coding_review" <% if (($review // 'on') ne 'off') { %>checked="checked"<% } %>>
+						</div>
+					<% } %>
 				<% } %>
 				<% if ($setting eq 'eval_assistant' && scalar @{$machines}) { %>
 					<div class="cfg-row">

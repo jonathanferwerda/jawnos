@@ -439,4 +439,7 @@ $catalog{'hi'} = {
 		'thinking' => 'सोच',
 		'subagent' => 'सहायक एजेंट',
 		'subagents' => 'सहायक एजेंट',
+		'review_before_commit' => 'कमिट से पहले समीक्षा करें',
+		'approve' => 'स्वीकृत करें',
+		'reject' => 'अस्वीकार करें',
 	};

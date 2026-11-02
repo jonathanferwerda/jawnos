@@ -397,6 +397,47 @@ sub action_37570 {
 	$c->render(json => { ok => 1, run => $id + 0 });
 }
 
+# Approve or reject the commit a paused run is waiting on. The worker is asleep
+# between two polls; it reads the flag off the run state and either runs the
+# commit it already showed or stops without one.
+# POST /manager/coding/approve
+sub action_37571 {
+	my $c = shift;
+	my $id = $c->param('id') // '';
+	unless ($id =~ /^[0-9]+$/) {
+		my $conversation = $c->param('conversation') || 'coding';
+		my $current = &subs::coding_run_current($conversation);
+		$id = $current->{'run'} // '';
+	}
+	my $state = $id =~ /^[0-9]+$/ ? &subs::coding_run_state_load($id) : {};
+	unless (ref $state eq 'HASH' && ($state->{'state'} // '') eq 'awaiting_approval') {
+		$c->render(json => { error => 'no run awaiting approval' });
+		return;
+	}
+	$state->{'approve'} = 1;
+	&subs::coding_run_state_save($id, $state);
+	$c->render(json => { ok => 1 });
+}
+
+# POST /manager/coding/reject
+sub action_37572 {
+	my $c = shift;
+	my $id = $c->param('id') // '';
+	unless ($id =~ /^[0-9]+$/) {
+		my $conversation = $c->param('conversation') || 'coding';
+		my $current = &subs::coding_run_current($conversation);
+		$id = $current->{'run'} // '';
+	}
+	my $state = $id =~ /^[0-9]+$/ ? &subs::coding_run_state_load($id) : {};
+	unless (ref $state eq 'HASH' && ($state->{'state'} // '') eq 'awaiting_approval') {
+		$c->render(json => { error => 'no run awaiting approval' });
+		return;
+	}
+	$state->{'reject'} = 1;
+	&subs::coding_run_state_save($id, $state);
+	$c->render(json => { ok => 1 });
+}
+
 # Start a fresh conversation: forget the stored thread so the next run begins clean.
 # POST /manager/coding/forget
 sub action_37338 {

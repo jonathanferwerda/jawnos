@@ -439,4 +439,7 @@ $catalog{'ru'} = {
 		'thinking' => 'Размышления',
 		'subagent' => 'Субагент',
 		'subagents' => 'Субагенты',
+		'review_before_commit' => 'Проверить перед коммитом',
+		'approve' => 'Одобрить',
+		'reject' => 'Отклонить',
 	};

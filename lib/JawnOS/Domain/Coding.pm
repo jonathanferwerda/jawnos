@@ -75,6 +75,17 @@ sub coding_child_max_setting {
 	return $n;
 }
 
+# A commit is the one coding action that writes the repo's history, so it waits
+# for a person when review is on. The setting is on unless it was explicitly
+# turned off: a missing or empty row means the default, not "off".
+sub coding_review_setting {
+	my $v = &subs::setting_grabber({ app => 'mail', setting => 'coding_review' });
+	return 1 unless defined $v && length "$v";
+	$v = "$v";
+	$v =~ s/^\s+|\s+$//g;
+	return lc($v) eq 'off' ? 0 : 1;
+}
+
 # Snapshot a run for the panel. `steps` is the whole list, so a poller can
 # render only the new tail; observations in it are already trimmed.
 sub coding_run_state_save {
@@ -169,6 +180,7 @@ sub coding_run_view {
 		state        => ($state->{'state'} // 'none'),
 		steps        => (ref $state->{'steps'} eq 'ARRAY' ? $state->{'steps'} : []),
 		current      => (ref $state->{'current'} eq 'HASH' ? $state->{'current'} : {}),
+		pending_commit => (ref $state->{'pending_commit'} eq 'HASH' ? $state->{'pending_commit'} : {}),
 		final        => ($state->{'final'} // ''),
 		version      => ($state->{'version'} // ''),
 		title        => ($state->{'title'} // ''),
@@ -207,6 +219,7 @@ sub coding_run_cancel {
 	$state->{'cancel'} = 1;
 	$state->{'updated'} = &subs::rightNow();
 	&coding_run_state_save($id, $state);
+	&coding_run_push($id, $state->{'conversation'});
 	return 1;
 }
 
@@ -428,6 +441,110 @@ sub coding_run_subagent {
 	return $record;
 }
 
+# The diff a commit would ship, for the person reviewing it. A new file is
+# invisible to `git diff` until it is in the index, so `add -N` marks it
+# intent-to-add first. Every path is reduced to the characters a repo path may
+# use and a `..` component is dropped outright, so an unsafe path can never
+# reach the shell line.
+our $coding_diff_view_bytes = 20000;
+
+sub coding_diff_text {
+	my ($files) = @_;
+	return '' unless ref $files eq 'ARRAY' && scalar @{$files};
+	my $repo = &subs::coding_repo();
+	return '' unless defined $repo && length $repo;
+	my @safe;
+	foreach my $path ( @{$files} ) {
+		# The same normalisation the repo guard uses, kept local so this helper
+		# has no cross-package dependency and a path can never reach the shell
+		# line with anything but a plain repo path.
+		my $rel = defined $path ? "$path" : '';
+		$rel =~ s{^\./+}{};
+		$rel =~ s{^/+}{};
+		$rel =~ s{/+$}{};
+		$rel =~ s/[^A-Za-z0-9_.\/-]//g;
+		next if $rel =~ m{(^|/)\.\.(/|$)};
+		next unless length $rel;
+		push @safe, $rel;
+	}
+	return '' unless @safe;
+	my $list = join(' ', map { '"' . $_ . '"' } @safe);
+	my $out = `cd "$repo" && (git add -N -- $list >/dev/null 2>&1; git diff --no-color -- $list 2>&1)`;
+	$out = '' unless defined $out;
+	$out =~ s/\x00//g;
+	if (length $out > $coding_diff_view_bytes) {
+		$out = substr($out, 0, $coding_diff_view_bytes) . '…';
+	}
+	return $out;
+}
+
+# How often a paused run looks for the person's verdict, and how long it waits
+# before giving up. The deadline may be handed in for a test, as an absolute ms
+# timestamp.
+our $coding_approve_poll = 2;
+our $coding_approve_timeout = 30 * 60;
+
+# Pause before a commit and wait for approve/reject/cancel. Returns one word:
+# `approved` (run the commit), `rejected`, `cancelled`, `timeout` or `orphaned`.
+# An empty diff is nothing to review, so it approves at once without pausing.
+sub coding_await_commit {
+	my ($id, $conversation, $files, $deadline) = @_;
+	$files = [] unless ref $files eq 'ARRAY';
+	my $diff = &coding_diff_text($files);
+	return 'approved' unless defined $diff && length $diff;
+	my $now = &subs::rightNow();
+	$deadline = $now + $coding_approve_timeout * 1000 unless defined $deadline;
+	my $state = &coding_run_state_load($id);
+	$state = {} unless ref $state eq 'HASH';
+	$state->{'state'} = 'awaiting_approval';
+	$state->{'pending_commit'} = { files => [ @{$files} ], diff => $diff, at => $now };
+	$state->{'current'} = { state => 'awaiting_approval', at => $now };
+	$state->{'updated'} = $now;
+	&coding_run_state_save($id, $state);
+	&coding_run_push($id, $conversation);
+	my $master = $ENV{JAWNOS_MASTER_PID} || 0;
+	while (1) {
+		select(undef, undef, undef, $coding_approve_poll);
+		if ($master && !kill(0, $master)) { return 'orphaned'; }
+		my $fresh = &coding_run_state_load($id);
+		$fresh = {} unless ref $fresh eq 'HASH';
+		if ($fresh->{'approve'}) {
+			delete $fresh->{'approve'};
+			delete $fresh->{'pending_commit'};
+			$fresh->{'state'} = 'active';
+			$fresh->{'current'} = { state => 'active', at => &subs::rightNow() };
+			$fresh->{'updated'} = &subs::rightNow();
+			&coding_run_state_save($id, $fresh);
+			&coding_run_push($id, $conversation);
+			return 'approved';
+		}
+		if ($fresh->{'reject'}) {
+			delete $fresh->{'reject'};
+			$fresh->{'state'} = 'active';
+			$fresh->{'current'} = { state => 'active', at => &subs::rightNow() };
+			$fresh->{'updated'} = &subs::rightNow();
+			&coding_run_state_save($id, $fresh);
+			&coding_run_push($id, $conversation);
+			return 'rejected';
+		}
+		if ($fresh->{'cancel'}) {
+			return 'cancelled';
+		}
+		if (&subs::rightNow() > $deadline) {
+			return 'timeout';
+		}
+	}
+}
+
+# Tell an open panel that a run it may be watching just changed. The worker has
+# Websocket.pl loaded; a test or a process without the socket must never have a
+# save fail because of it, so the send is wrapped.
+sub coding_run_push {
+	my ($id, $conversation) = @_;
+	eval { &Websocket::send('server', { coding_run => $id + 0, coding_conversation => defined $conversation ? "$conversation" : '' }); };
+	return 1;
+}
+
 # The Minion task. Runs in perl/Coding.pl; anything it writes for the panel is
 # a state snapshot, and its one observable side effect on failure is a failed
 # job plus a state row saying why.
@@ -449,6 +566,7 @@ sub coding_run_job {
 		updated      => &subs::rightNow(),
 	};
 	&coding_run_state_save($id, $state);
+	&coding_run_push($id, $conversation);
 
 	my $final = '';
 	my $error = '';
@@ -510,10 +628,12 @@ sub coding_run_job {
 				};
 				$state->{'updated'} = $now;
 				&coding_run_state_save($id, $state);
+				&coding_run_push($id, $conversation);
 			};
 			$state->{'current'} = { state => 'thinking', at => &subs::rightNow() };
 			$state->{'updated'} = &subs::rightNow();
 			&coding_run_state_save($id, $state);
+			&coding_run_push($id, $conversation);
 			my ($parts, $err) = &subs::ai_chat_parts_with_fallback(
 				$model, $fallback,
 				[ { role => 'system', content => $system },
@@ -539,6 +659,7 @@ sub coding_run_job {
 			$state->{'current'} = { state => 'acting', action => $action, at => &subs::rightNow() };
 			$state->{'updated'} = &subs::rightNow();
 			&coding_run_state_save($id, $state);
+			&coding_run_push($id, $conversation);
 			my $obs;
 			my $subagent;
 			if (($action->{'action'} // '') eq 'agent') {
@@ -578,6 +699,26 @@ sub coding_run_job {
 				$obs = substr($obs, 0, 2000) . '…' if length($obs) > 2000;
 			}
 			else {
+				# A commit that follows a review uses the same touched set: the
+				# diff a person approved is the one the commit stages.
+				if (($action->{'action'} // '') eq 'commit' && &coding_review_setting()) {
+					my @files = sort keys %touched;
+					my $verdict = &coding_await_commit($id, $conversation, \@files);
+					if ($verdict eq 'rejected') {
+						$final = 'Stopped: the commit was rejected. The changed files are still in the tree.';
+						last;
+					}
+					if ($verdict eq 'cancelled') {
+						$final = 'Stopped at your request.';
+						last;
+					}
+					if ($verdict eq 'timeout' || $verdict eq 'orphaned') {
+						$error = $verdict eq 'timeout'
+							? 'the commit waited more than 30 minutes for review'
+							: 'the master that owns this worker is gone';
+						last;
+					}
+				}
 				$obs = &Manager::coding_execute(undef, $action, \%touched);
 			}
 			my $step = { action => $action, observation => &coding_step_view($obs) };
@@ -590,6 +731,7 @@ sub coding_run_job {
 			delete $state->{'current'};
 			$state->{'updated'} = &subs::rightNow();
 			&coding_run_state_save($id, $state);
+			&coding_run_push($id, $conversation);
 			if (($action->{'action'} || '') eq 'done' || ($action->{'action'} || '') eq 'say') {
 				$final = $action->{'text'} // '';
 				last;
@@ -611,8 +753,9 @@ sub coding_run_job {
 		$error =~ s/\s+$//;
 	}
 	# A finished or failed run has nothing in flight; the panel must not keep
-	# showing the last step as still acting.
+	# showing the last step as still acting, nor a commit still waiting.
 	delete $state->{'current'};
+	delete $state->{'pending_commit'};
 	$state->{'final'} = $final;
 	$state->{'error'} = $error if length $error;
 	$state->{'version'} = &subs::jawn_version();
@@ -620,6 +763,7 @@ sub coding_run_job {
 	$state->{'finished'} = &subs::rightNow();
 	$state->{'updated'} = &subs::rightNow();
 	&coding_run_state_save($id, $state);
+	&coding_run_push($id, $conversation);
 	if (length $error) { $job->fail($error); return }
 	$job->finish({ conversation => $conversation, version => $state->{'version'} });
 	return;

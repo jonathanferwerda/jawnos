@@ -57,6 +57,12 @@ function wsMessageDispatch(raw) {
 			sessionStorage.setItem('jawnos_revision', data['revision']);
 			jawnosRevisionArrived(data['revision_parts'], data['version'], rv);
 		}
+		// The coding worker pushes this after every state change of a run (a step,
+		// a live tick, the wait for approval, the verdict), so the panel that owns
+		// the run can poll at once instead of waiting out its timer.
+		if (data['coding_run'] && typeof jawnosCodingRunPushed === 'function') {
+			jawnosCodingRunPushed(data['coding_run'], data['coding_conversation']);
+		}
 		// Every connect carries the tree's boot stamp. A new boot is the one
 		// event that drops a media grant, so that - not the length of a socket
 		// outage - is what re-fetches the open media windows. The first stamp of
