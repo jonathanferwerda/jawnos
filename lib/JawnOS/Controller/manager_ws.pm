@@ -451,6 +451,8 @@ sub action_47050 {
 				$ws_lockdown_swept{$lockdown_key} = $server_time;
 				eval { &subs::lockdown_sweep({ browser_tab_id => $browser_tab_id }) };
 			}
+			# a worker outlives many connections; keep the per-connection memory bounded
+			if (keys %ws_lockdown_state > 200) { %ws_lockdown_state = (); %ws_lockdown_swept = (); }
 
 		}
 		elsif (($data->{'type'} || '') eq 'act') {
