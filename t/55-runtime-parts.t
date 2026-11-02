@@ -73,7 +73,7 @@ if (-f $pin_path) {
 		next unless exists $parts->{$abi};
 		ok(ref $parts->{$abi} eq 'HASH', "parts.$abi is an object");
 		for my $name (sort keys %{ $parts->{$abi} }) {
-			ok($name eq 'media' || $name eq 'ocr', "known part name $name");
+			ok($name eq 'media' || $name eq 'ocr' || $name eq 'video', "known part name $name");
 			my $p = $parts->{$abi}{$name} || {};
 			like($p->{'file'} || '', qr/^jawnrt-\Q$abi\E-\Q$name\E-\d+\.\d+\.\d+\.zip$/,
 				"$abi/$name part file name");
@@ -101,10 +101,54 @@ if (-f $pin_path) {
 	my $a = $pin->{'abi'}{'aarch64'}{'file'};
 	my $m = $pin->{'parts'}{'aarch64'}{'media'}{'file'};
 	my $o = $pin->{'parts'}{'aarch64'}{'ocr'}{'file'};
-	ok($m ne $a && $o ne $a && $m ne $o, 'part files are distinct from core');
+	my $v = $pin->{'parts'}{'aarch64'}{'video'}{'file'};
+	ok($v && $m && $o, 'the aarch64 pin carries video, media and ocr');
+	ok($m ne $a && $o ne $a && $v ne $a && $m ne $o && $m ne $v && $o ne $v,
+		'part files are distinct from core and each other');
+
+	# The core archive is now the boot set: no ffmpeg/codec stack. The parts must
+	# not carry a core path, and video must carry the codecs the core gave up.
+	my $core_zip = "$root/releases/" . ($pin->{'abi'}{'aarch64'}{'file'} || '');
+	if (-f $core_zip) {
+		my $cz = Archive::Zip->new;
+		is($cz->read($core_zip), AZ_OK, 'the pinned core archive reads');
+		my %core_names = map { $_->fileName => 1 } grep { !$_->isDirectory } $cz->members;
+		ok($core_names{'lib/libcrypto.so.3'}, 'core keeps openssl');
+		ok($core_names{'lib/libssl.so.3'}, 'core keeps libssl');
+		ok($core_names{'lib/libz.so'}, 'core keeps the libz alias');
+		ok((grep { m{/CORE/libperl\.so$} } keys %core_names), 'core keeps libperl');
+		ok(!$core_names{'lib/libavcodec.so.62'}, 'core no longer carries libavcodec');
+		ok(!$core_names{'lib/libx265.so'}, 'core no longer carries libx265');
+		ok(!$core_names{'lib/libaom.so'}, 'core no longer carries libaom');
+		for my $name (sort keys %{ $pin->{'parts'}{'aarch64'} }) {
+			my $file = "$root/releases/" . $pin->{'parts'}{'aarch64'}{$name}{'file'};
+			next unless -f $file;
+			my $pz = Archive::Zip->new;
+			is($pz->read($file), AZ_OK, "$name part archive reads");
+			my %part_names = map { $_->fileName => 1 } grep { !$_->isDirectory } $pz->members;
+			is_deeply([ grep { $core_names{$_} } keys %part_names ], [],
+				"$name does not carry a core path");
+			if ($name eq 'video') {
+				ok($part_names{'lib/libavcodec.so.62'}, 'video carries libavcodec');
+				ok($part_names{'lib/libx265.so'}, 'video carries libx265');
+				ok($part_names{'lib/libplacebo.so'}, 'video carries libplacebo');
+			}
+			if ($name eq 'media') {
+				ok($part_names{'lib/libjxl.so'}, 'media now carries libjxl');
+				ok($part_names{'lib/libx265.so'}, 'media now carries libx265');
+			}
+			if ($name eq 'ocr') {
+				ok($part_names{'share/tessdata/eng.traineddata'}, 'ocr carries eng.traineddata');
+			}
+		}
+	}
 }
 else {
-	skip('no releases/jawnrt.json to check', 1);
+	# skip() is a "last SKIP"; without the block it aborts the whole file on a
+	# machine that has no staged runtime pin (a clean checkout, CI, the table).
+	SKIP: {
+		skip('no releases/jawnrt.json to check', 1);
+	}
 }
 
 # --- 2. build-script part selection -----------------------------------------
@@ -119,6 +163,8 @@ write_file("$prefix/lib/perl5/CORE/libperl.so", "perl");
 write_file("$prefix/bin/magick", "magick");
 write_file("$prefix/bin/convert", "convert");
 write_file("$prefix/bin/tesseract", "tesseract");
+write_file("$prefix/bin/ffmpeg", "ffmpeg");
+write_file("$prefix/bin/ffprobe", "ffprobe");
 write_file("$prefix/bin/unrelated", "no");
 write_file("$prefix/etc/ImageMagick-7/colors.xml", "colors");
 write_file("$prefix/etc/ImageMagick-7/log.xml", "log");
@@ -136,6 +182,7 @@ ok($media{'etc/ImageMagick-7/colors.xml'}, 'media selects ImageMagick config');
 ok($media{'share/ImageMagick-7/locale.xml'}, 'media selects ImageMagick share');
 ok(!$media{'bin/tesseract'}, 'media does not select tesseract');
 ok(!$media{'bin/perl'}, 'media does not select the core perl');
+ok(!$media{'bin/ffmpeg'}, 'media does not select ffmpeg');
 ok(!$media{'bin/unrelated'}, 'media does not select an unlisted tool');
 
 ($rc, $out) = run($^X, $build, '--from', $prefix, '--part', 'ocr', '--abi', 'aarch64', '--list');
@@ -145,6 +192,15 @@ ok($ocr{'bin/tesseract'}, 'ocr selects bin/tesseract');
 ok($ocr{'share/tessdata/eng.traineddata'}, 'ocr selects eng tessdata');
 ok(!$ocr{'bin/magick'}, 'ocr does not select magick');
 ok(!$ocr{'bin/perl'}, 'ocr does not select the core perl');
+ok(!$ocr{'bin/ffmpeg'}, 'ocr does not select ffmpeg');
+
+($rc, $out) = run($^X, $build, '--from', $prefix, '--part', 'video', '--abi', 'aarch64', '--list');
+is($rc, 0, 'video selection succeeds');
+my %video = map { $_ => 1 } list_paths($out);
+ok($video{'bin/ffmpeg'}, 'video selects bin/ffmpeg');
+ok($video{'bin/ffprobe'}, 'video selects bin/ffprobe');
+ok(!$video{'bin/magick'}, 'video does not select magick');
+ok(!$video{'bin/perl'}, 'video does not select the core perl');
 
 ($rc, $out) = run($^X, $build, '--from', $prefix, '--abi', 'aarch64', '--list');
 is($rc, 0, 'default selection is core');
@@ -152,7 +208,18 @@ my %core = map { $_ => 1 } list_paths($out);
 ok($core{'bin/perl'}, 'core still selects bin/perl');
 ok($core{'lib/perl5/CORE/libperl.so'}, 'core still selects libperl');
 ok(!$core{'bin/magick'}, 'core does not select a part tool');
+ok(!$core{'bin/ffmpeg'}, 'core no longer selects ffmpeg');
+ok(!$core{'bin/ffprobe'}, 'core no longer selects ffprobe');
 ok(!$core{'share/tessdata/eng.traineddata'}, 'core does not select part data');
+
+# --keep forces a path the closure does not infer (the libz alias).
+symlink 'libz.so.1', "$prefix/lib/libz.so" or die "symlink: $!";
+write_file("$prefix/lib/libz.so.1", "z");
+($rc, $out) = run($^X, $build, '--from', $prefix, '--abi', 'aarch64',
+	'--keep', 'lib/libz.so', '--list');
+is($rc, 0, 'core selection with --keep succeeds');
+my %kept = map { $_ => 1 } list_paths($out);
+ok($kept{'lib/libz.so'}, '--keep adds the alias to the core');
 
 ($rc, $out) = run($^X, $build, '--from', $prefix, '--part', 'nope', '--list');
 isnt($rc, 0, 'an unknown part is refused');
@@ -257,5 +324,22 @@ write_file("$tree/app/app/src/main/assets/jawnrt.json",
 is($rc, 0, 'publish dry-run survives a missing part');
 like($out, qr/part aarch64\/media: missing-media\.zip is not staged; skipping/,
 	'missing part is reported and skipped');
+
+# The device's Vulkan loader is not ours to ship: the Termux copy needs vendor
+# HIDL libraries an app namespace lacks, and it stopped ffmpeg from linking.
+my $build_src = read_file($build);
+like($build_src, qr/next if \$name eq 'libvulkan\.so';/,
+	'the prefix libvulkan is left to the device');
+like($build_src, qr/\bvideo\s*=>\s*\{/,
+	'ffmpeg/ffprobe are their own optional part');
+like($build_src, qr/tools\s*=>\s*\[qw\(ffmpeg ffprobe\)\]/,
+	'the video part selects exactly the ffmpeg pair');
+
+# The core diet must not select ffmpeg again; those bytes are what the split
+# removed. The video spec is the only place the pair is named.
+my ($tool_block) = $build_src =~ /my %TOOL = map \{ \$_ => 1 \} qw\((.*?)\n\);/s;
+ok(defined $tool_block, 'the core tool list is present');
+unlike($tool_block || '', qr/(?:^|\s)ffmpeg(?:\s|$)/, 'ffmpeg is not in the core tool list');
+unlike($tool_block || '', qr/(?:^|\s)ffprobe(?:\s|$)/, 'ffprobe is not in the core tool list');
 
 done_testing();
