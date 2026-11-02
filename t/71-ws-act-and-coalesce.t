@@ -67,6 +67,22 @@ like($storage_js, qr/function windowSaver\(skip_act\)/,
 like($storage_js, qr/var jopen = skip_act \? undefined : windowjOpenSaver\(\$\(v\)\);/,
 	'a beat-shaped snapshot carries no jopen');
 
+# a page left open must be able to find a listener that moved
+like($websocket_js, qr/function wsSocketUrl\(base, tail\)/, 'a failed socket can move to the page origin');
+like($websocket_js, qr/'wss:\/\/' : 'ws:\/\//,
+	'the fallback is the page origin, TLS or not');
+like($websocket_js, qr/\{ ws_origin_only = 1; \}/,
+	'a socket closed before it opened switches the fallback on');
+like($websocket_js, qr/new WebSocket\(address \|\| wsSocketUrl\(ws_url, tail\)\)/,
+	'the local socket is built through it');
+like($websocket_js, qr/if \(dead\) \{ websocketRebuild\(\); \}/,
+	'the status beat retries a dead page socket');
+
+# an act frame counts as delivered only once it is on its way
+my $act_part = read_file("$root/public/js/manager/windows/04_act.js");
+like($act_part, qr/socket\.send\(JSON\.stringify\(\{ type: 'act'.*?appActPosted\[key\] = json;/s,
+	'the act state is remembered only after the send');
+
 # --- the server side ---------------------------------------------------------
 
 my $ws_pm = read_file("$root/lib/JawnOS/Controller/manager_ws.pm");

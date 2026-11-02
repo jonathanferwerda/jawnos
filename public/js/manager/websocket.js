@@ -54,6 +54,17 @@ function wsStatusChecker() {
 			}
 		}
 	});
+	// A socket that never opened - the tree restarted, or the plain listener it
+	// remembered is gone - is retried by nothing else: onclose only marks it, and
+	// a page left open then looked alive and heard nothing until a reload. Ask
+	// again on a slow beat, on the page's own origin after a failed open.
+	if (windowVisible == 1 && !jawn_resting() && (timestamp - (lastSocketRebuild || 0)) > 20000) {
+		var dead = 0;
+		$.each(['server', 'tab'], function(i, app) {
+			if (!ws[app] || ws[app].readyState > 1) { dead = 1; }
+		});
+		if (dead) { websocketRebuild(); }
+	}
 }
 
 // One liveness pass per beat is enough to notice a missing answer.
@@ -154,6 +165,22 @@ window.addEventListener('online', websocketWakeIfNeeded);
 // first tap, before the tap's own handlers can send into a dead socket
 document.addEventListener('pointerdown', websocketWakeIfNeeded, { capture: true, passive: true });
 
+// The plain ws listener (PORT_WS_PLAIN) is a second port beside the one the page
+// came from. A page left open can remember a listener a restart left behind, and
+// nothing used to ask again: the tab looked alive and heard nothing. A socket that
+// fails falls back to the page's own origin (which upgrades on the same port the
+// page was served from) and the status beat retries.
+var ws_origin_only = 0;
+function wsSocketUrl(base, tail) {
+	if (ws_origin_only && window.location && window.location.host) {
+		var origin = (window.location.protocol === 'https:') ? 'wss://' : 'ws://';
+		var match = base.match(/^wss?:\/\/[^\/]+(\/.*)$/);
+		if (match) { base = origin + window.location.host + match[1]; }
+	}
+	var sep = (base.indexOf('?') >= 0) ? '&' : '?';
+	return base + sep + tail;
+}
+
 function websocketStart(appt,address) {
 
 	var timestamp = Date.now();
@@ -186,10 +213,10 @@ function websocketStart(appt,address) {
 		if ((ws[app] && ws[app] != null && ws[app].readyState == 1) || (ws[app] && ws[app]['status'] != 'alive')) {  return true; }
 		ws[app] = { readyState: 4, stayingAlive: 1 };
 		var http_escaped = encodeURIComponent(app);
-		// The loopback URL already carries a ws_token; a remote address may carry
-		// its own query. Only the local URL needs the separator resolved.
-		var ws_sep = (ws_url.indexOf('?') >= 0) ? '&' : '?';
-		ws[app] = new WebSocket(address || ws_url + ws_sep + 'timestamp=' + timestamp + '&app=' + app + '&browser_tab_id=' + browser_tab_id + '&browser_tab=' + browser_tab + '&user_agent=' + uA );
+		// A remote address keeps its own host. Only the local socket takes the
+		// page's origin when the plain listener is gone.
+		var tail = 'timestamp=' + timestamp + '&app=' + app + '&browser_tab_id=' + browser_tab_id + '&browser_tab=' + browser_tab + '&user_agent=' + uA;
+		ws[app] = new WebSocket(address || wsSocketUrl(ws_url, tail));
 		ws[app]['stayingAlive'] = Date.now();
 		ws[app]['status'] = 'connect';
 		ws[app].onopen = function (event) {
@@ -199,6 +226,9 @@ function websocketStart(appt,address) {
 			wsMessageHandler(event);
 		};
 		ws[app].onclose = function(event){
+			// closed before it ever opened: a listener that moved, not an app the
+			// person shut. The next attempt uses the page's own origin.
+			if (!address && ws[app] && ws[app]['status'] == 'connect') { ws_origin_only = 1; }
 			if (app == 'server' && ws[i] != null) { ws['server'].send({ type: 'lock_screen', browser_tab_id: bti }); }
 
 		}

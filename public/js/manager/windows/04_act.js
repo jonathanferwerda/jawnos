@@ -19,12 +19,14 @@ function appActSync(target) {
 	// matches what the window it replaced was showing
 	var key = app + '@' + (win.attr('timestamp') || '');
 	if (appActPosted[key] == json) { return; }
-	appActPosted[key] = json;
-	// the tab socket is the one that speaks for the page as a whole
+	// the tab socket is the one that speaks for the page as a whole. A socket that
+	// is down (a restart, a reconnect in flight) must not count as delivered: the
+	// state is remembered only once it is on its way.
 	var socket = (typeof ws === 'object' && ws) ? ws['tab'] : null;
 	if (!socket || socket.readyState != 1) { return; }
 	try {
 		socket.send(JSON.stringify({ type: 'act', app: 'tab', window: app, jopen: json }));
+		appActPosted[key] = json;
 	}
 	catch (e) { delete appActPosted[key]; }
 }

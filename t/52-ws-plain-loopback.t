@@ -69,8 +69,8 @@ my $socket  = js_source('public/js/manager/websocket.js');
 my $paper   = read_file("$FindBin::Bin/../public/js/paperboy.js");
 like($mailbox, qr/var mailws_sep = \(mail_ws_url\.indexOf\('\?'\) >= 0\) \? '&' : '\?';/,
 	'the mail socket resolves its query separator');
-like($socket, qr/var ws_sep = \(ws_url\.indexOf\('\?'\) >= 0\) \? '&' : '\?';/,
-	'the manager socket resolves its query separator');
+like($socket, qr/var sep = \(base\.indexOf\('\?'\) >= 0\) \? '&' : '\?';/,
+	'the manager socket resolves its query separator (in the URL helper now)');
 like($paper, qr/var paperboy_sep = \(paperboy_url\.indexOf\('\?'\) >= 0\) \? '&' : '\?';/,
 	'the observer socket resolves its query separator');
 
