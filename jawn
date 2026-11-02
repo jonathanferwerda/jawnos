@@ -247,6 +247,16 @@ my ($tree_repaired) = &tree_repair_deleted($tree_root);
 $log->warn("tree repair: restored $tree_repaired tracked file(s) missing from the working tree")
 	if $tree_repaired;
 
+# A master that was SIGKILLed cannot run shut_down. The tree now leaves with it
+# (perl/parent_guard.pl) and Prefork's heartbeat ends its workers, but a worker's
+# own children can be reparented first. Nothing at boot should inherit a dead
+# master's tree: clear processes that name a jawn program when their parent no
+# longer names one. A live tree's parent is its master and a worker's parent is
+# its tree, so a supervised process is never touched.
+my $orphans_cleared = &sweep_orphans();
+$log->warn("orphan sweep: cleared $orphans_cleared leftover jawn process(es)")
+	if $orphans_cleared;
+
 # ---- first run: install dependencies, then run the setup wizard -------------
 &first_run_setup();
 
@@ -302,6 +312,18 @@ sub log_seed {
 my $fork = Mojo::IOLoop::ReadWriteFork->new;
 
 $SIG{INT} = sub {
+	&shut_down();
+	exit 0;
+};
+# A TERM (systemd stop, `kill`, the app's Stop button) and a HUP (the terminal
+# that started us closed) used to be unhandled: the master died before its sweep
+# and left the tree and every worker behind. Both now take the deliberate path
+# Ctrl+C takes, so there is one shutdown and it always clears the tree.
+$SIG{TERM} = sub {
+	&shut_down();
+	exit 0;
+};
+$SIG{HUP} = sub {
 	&shut_down();
 	exit 0;
 };
@@ -822,6 +844,51 @@ sub pid_cmdline {
 sub pid_is_jawn {
 	my ($pid) = @_;
 	return &pid_cmdline($pid) =~ /President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|jawn-bt|Music\.pl|Alarm\.pl/ ? 1 : 0;
+}
+
+# The ppid from /proc/<pid>/stat. The second field is "(comm)", which can hold
+# spaces and parentheses, so cut through its closing paren before splitting.
+sub pid_parent {
+	my ($pid) = @_;
+	return 0 unless $pid && $pid =~ /^[0-9]+$/;
+	open(my $fh, '<', "/proc/$pid/stat") or return 0;
+	my $line = <$fh>;
+	close $fh;
+	return 0 unless defined $line;
+	$line =~ s/^.*\)\s+//;
+	my ($state, $ppid) = split /\s+/, $line;
+	return $ppid && $ppid =~ /^[0-9]+$/ ? $ppid : 0;
+}
+
+# Kill a previous master's leftovers. See the call site: this runs after the
+# one-master check, so there is no serving master to protect, and it only takes
+# processes whose parent no longer names a jawn program - a live tree and its
+# workers are never touched. The executable must be a perl (or the script run
+# through one), so an editor that merely opened Manager.pl is left alone.
+sub sweep_orphans {
+	my $cleared = 0;
+	opendir(my $procs, '/proc') or return 0;
+	my @pids = grep { /^[0-9]+$/ } readdir $procs;
+	closedir $procs;
+	my $ours = qr/President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl|Music\.pl|Alarm\.pl/;
+	my $supervised = qr/(?:^|[\/\s])jawn(?:\s|$)|President\.pl|Manager\.pl|Websocket\.pl|teletype\.pl|watch\.pl/;
+	foreach my $pid (@pids) {
+		next if $pid == $$;
+		my $cmd = &pid_cmdline($pid);
+		next unless $cmd =~ $ours;
+		next if $cmd =~ / (?:-c|-e|-M) /;
+		my ($exe) = split /\s+/, $cmd;
+		next unless ($exe || '') =~ m{(?:^|/)(?:perl[0-9.]*|libbin_perl\.so)$}
+			|| ($exe || '') =~ m{President\.pl$|Manager\.pl$};
+		my $ppid = &pid_parent($pid);
+		my $pcmd = $ppid ? &pid_cmdline($ppid) : '';
+		next if $pcmd =~ $supervised;
+		next unless &pid_alive($pid);
+		kill 'KILL', $pid;
+		print "orphan sweep: KILL $pid $cmd\n";
+		$cleared++;
+	}
+	return $cleared;
 }
 
 # Reap the master's own direct children. The pty child is a child of the master,

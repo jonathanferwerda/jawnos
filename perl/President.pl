@@ -57,6 +57,12 @@ my $status_file = &home('~/.president/status');
 my $pid_file = &home('~/.president/pid');
 `touch $pid_file`;
 write_file($pid_file, $$);
+
+# The master can be SIGKILLed, and then nothing asks the tree to stop. Leave
+# with it: see the note in perl/parent_guard.pl. Started here, before the heavy
+# requires, so the watchdog is a small copy of this process.
+require './perl/parent_guard.pl';
+&parent_guard::start(tree => $$, master => getppid());
 my $config_file = read_file('./config.json');
 my $config = decode_json $config_file;
 our $logfile = &home($config->{'logfile'});
