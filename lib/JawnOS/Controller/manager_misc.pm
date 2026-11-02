@@ -732,7 +732,7 @@ sub action_18101 {
 		$html = $c->render_to_string(template => 'apps/app_details', appts => $appts, a => $app, app => {});
 	}
 	else {
-		$html = $c->render_to_string(template => 'apps/app_measures', settings => $appts->{$app}->{'setting'}, a => $app);
+		$html = $c->render_to_string(template => 'apps/app_measures', appts => $appts, settings => $appts->{$app}->{'setting'}, a => $app);
 	}
 	$c->render(text => $html);
 }
