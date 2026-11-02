@@ -123,11 +123,13 @@ like($why // '', qr/app\/build\.gradle/, 'the refusal names the file');
 sub git_ok { return system('git', @_) == 0 }
 sub git_out { my $out = `git @_ 2>/dev/null`; return $out }
 
-sub fake_jawnos_repo {
+	sub fake_jawnos_repo {
 	my $dir  = tempdir(CLEANUP => 1);
 	my $repo = "$dir/repo";
-	make_path("$repo/scripts", "$repo/qa");
+	make_path("$repo/scripts", "$repo/qa", "$repo/releases");
 	write_file("$repo/VERSION", "0.0.1\n");
+	write_file("$repo/releases/jawnos-app-7-0.9.2.apk", "old apk\n");
+	write_file("$repo/releases/app_release.json", "{\"old\":true}\n");
 	write_file("$repo/qa/device_target.pl", "#!/usr/bin/perl\nexit 0;\n");
 	write_file("$repo/scripts/app_release.pl", <<'RELEASE');
 use strict;
@@ -138,6 +140,14 @@ if (length $log) {
 	print $fh 'stage ' . join(' ', @ARGV) . "\n";
 	close $fh;
 }
+if ($ENV{'FAKE_RELEASE_WRITE'}) {
+	open(my $af, '>', 'releases/jawnos-app-8-0.9.3.apk') or die $!;
+	print $af "new apk\n";
+	close $af;
+	open(my $mf, '>', 'releases/app_release.json') or die $!;
+	print $mf "{\"new\":true}\n";
+	close $mf;
+}
 exit 0;
 RELEASE
 	write_file("$repo/scripts/app_publish.pl", <<'PUBLISH');
@@ -146,10 +156,15 @@ use warnings;
 my $log = $ENV{'FAKE_PUBLISH_LOG'} || '';
 if (length $log) {
 	open(my $fh, '>>', $log) or die $!;
-	print $fh "publish\n";
+	print $fh 'publish ' . join(' ', @ARGV) . "\n";
 	close $fh;
 }
-exit 0;
+if ($ENV{'FAKE_PUBLISH_WRITE'}) {
+	open(my $mf, '>', 'releases/app_release.json') or die $!;
+	print $mf "{\"published\":true}\n";
+	close $mf;
+}
+exit 0 + ($ENV{'FAKE_PUBLISH_EXIT'} // 0);
 PUBLISH
 	git_ok('init', '-q', '-b', 'main', $repo) or die "git init failed";
 	git_ok('-C', $repo, 'add', '-A') or die "git add failed";
@@ -472,6 +487,33 @@ SKIP: {
 		my $publish = -f "$fixture->{'dir'}/publish.log" ? read_file("$fixture->{'dir'}/publish.log") : '';
 		unlike($publish, qr/publish/, 'app_publish.pl did not run without gh auth');
 		ok($run->{'marked_completed'}, 'a staged build still completes the note');
+	}
+
+	# -- a failed publish restores the staged APK and manifest -----------------
+	{
+		my $fixture = fake_app_repo();
+		my $repo    = fake_jawnos_repo();
+		my $agent   = fake_agent($fixture->{'dir'});
+		my ($rc, $out, $report, $qa_root, $db) = app_night(
+			dir => $fixture->{'dir'}, app => $fixture->{'app'}, bare => $fixture->{'bare'},
+			bin => $fixture->{'bin'}, repo => $repo->{'repo'}, agent => $agent,
+			stamp => 'pubfail01', uuid => 'app-pubfail',
+			text => 'The APK notification colour is wrong',
+			env => {
+				'FAKE_RELEASE_WRITE' => 1,
+				'FAKE_PUBLISH_WRITE' => 1,
+				'FAKE_PUBLISH_EXIT'  => 1,
+			},
+		);
+		is($rc, 1, 'a failed publish exits 1');
+		my $run = $report->{'runs'}->[0] || {};
+		is($run->{'status'}, 'publish_failed', 'the report names the publish');
+		ok($run->{'releases_restored'}, 'the staged APK and manifest were restored');
+		is(read_file("$repo->{'repo'}/releases/app_release.json"), "{\"old\":true}\n",
+			'the old manifest is back');
+		ok(-f "$repo->{'repo'}/releases/jawnos-app-7-0.9.2.apk", 'the old APK is back');
+		ok(!-f "$repo->{'repo'}/releases/jawnos-app-8-0.9.3.apk", 'the half-published APK is gone');
+		is(note_status($db, 'app-pubfail'), 'open', 'the note stays open');
 	}
 
 	# -- a failed build: no bump, no push, no stage, note stays open ----------

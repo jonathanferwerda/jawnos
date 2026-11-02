@@ -426,6 +426,10 @@ SKIP: {
 	ok($run->{'pushed'}, 'the branch was pushed');
 	ok($run->{'merged'}, 'main fast-forwarded');
 	ok($run->{'restarted'}, 'the restart was accepted');
+	is($green_report->{'rollback_tag'}, 'nightly-pre-green01', 'the run records its pre-merge tag');
+	ok(-x "$green_root/coding/green01/rollback.sh", 'rollback.sh is written and executable');
+	ok(git_out($green->{'repo'}, 'tag', '--list', 'nightly-pre-green01') =~ /nightly-pre-green01/,
+		'the tag exists in the checkout');
 	ok($run->{'health_ok'}, 'health answered 200');
 	ok($run->{'marked_completed'}, 'only then was the note marked completed');
 	is($run->{'layers'}, 'l0,l1,l2,l3', 'a JavaScript change added l2 and l3');
@@ -472,8 +476,21 @@ SKIP: {
 	is($sick_report->{'runs'}->[0]->{'status'}, 'health_failed', 'the report names health');
 	ok(!$sick_report->{'runs'}->[0]->{'marked_completed'}, 'the note is not completed');
 	is(note_status($kdb, 'sick-1'), 'open', 'the note stays open');
+	is($sick_report->{'runs'}->[0]->{'rolled_back'}, 'yes',
+		'a post-merge health failure rolls main back to the pre-night tag');
+	ok(!$sick_report->{'runs'}->[0]->{'rollback_health_ok'},
+		'the rollback health result is recorded honestly');
+	ok(-f "$sick_root/coding/sick01/failure.md", 'a failure.md hands the night over');
 	my $sick_requests = -f "$sick->{'dir'}/requests.log" ? read_file("$sick->{'dir'}/requests.log") : '';
-	unlike($sick_requests, qr/note_save/, 'no note_save was posted before health');
+	my $sick_body = $sick_requests;
+	$sick_body =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+	$sick_body =~ s/\+/ /g;
+	like($sick_body, qr/POST \/manager\/note_save .*status=open/,
+		'a failure note is filed with status open');
+	like($sick_body, qr/Nightly failed: A note that ships/,
+		'the failure note names the original note');
+	unlike($sick_body, qr/uuid=sick-1/,
+		'the original note is never marked completed on a failure');
 	like(scalar read_file("$sick->{'dir'}/restart.log"), qr/--reason/, 'the restart still happened (health was the gate)');
 }
 

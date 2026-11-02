@@ -691,6 +691,19 @@ sub action_45199 {
 	my $value = $c->param('value');
 	my $subsetting = $c->param('subsetting');
 	my $timestamp = $c->param('timestamp');
+	# The coding nightly pushes to a repo the house names. The panel has its own
+	# validated route, but this generic setter is a public door too: validate the
+	# value here so a hand-made POST cannot store spaces or credentials and leave
+	# the night unable to read its target.
+	if ($setting eq 'coding_push_repo' || $setting eq 'coding_app_push_repo') {
+		my $which = $setting eq 'coding_app_push_repo' ? 'app' : 'repo';
+		my $check = &subs::coding_push_repo_valid($value);
+		unless ($check->{'ok'}) {
+			$c->render(json => { ok => 0, error => $check->{'error'} });
+			return;
+		}
+		$value = $check->{'value'};
+	}
 	# An address field never accepts a phrase that could spend the wallet. JawnOS
 	# stores public addresses only, so a seed phrase or private key is refused
 	# here as well as in the panel's own warning.
