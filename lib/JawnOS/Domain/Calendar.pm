@@ -264,6 +264,24 @@ sub appt_header_printer {
 	my $data = shift;
 	my $app = $data->{'app'};
 
+	# A press wants the redraw, not the HTML in its reply. Run the whole header
+	# worker in a subprocess - the render, its push, the alarm walk and the centre
+	# view - and hand this caller nothing, so the route can answer the press before
+	# the redraw starts. A caller that needs the HTML (the centre view's wrapper, a
+	# reconnect's resync) never passes defer.
+	if ($data->{'defer'} && !$data->{'header_only'}) {
+		my %deferred = %$data;
+		delete $deferred{'defer'};
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			# source=centre_view_grabber runs the alarm walk inline and does not fork
+			# again; this process is the fork the old header worker used to be.
+			my ($html, $appts) = &appt_header_printer({ %deferred, source => 'centre_view_grabber' });
+			&Manager::centre_view_grabber({ app => &subs::unformat_name($deferred{'app'}), appts => $appts, header => $html, timestamp => &subs::rightNow(), cached => 'no' });
+		}, { name => 'header worker' });
+		return wantarray ? ('', undef) : '';
+	}
+
 	# The header draws only the app's newest/oldest rows; the wrapper's details
 	# form is the thing that needs __accounts/__projects. Skip the marker read
 	# here and let the centre view build them when it renders the wrapper.

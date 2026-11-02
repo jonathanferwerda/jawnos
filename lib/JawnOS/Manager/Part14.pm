@@ -78,6 +78,11 @@ sub manager_reset($c) {
 	# start/stop moves which appointment owns the desktop theme, and the push at
 	# the foot of this sub repaints every open manager at once
 	my $theme_movement = $type || '';
+	# A caller that reads the redrawn window out of the reply (`cv=yes`, the Add
+	# press) needs the header rendered inline. A start or stop does not: its header
+	# is rendered and pushed by the header worker's own fork, so the reply can leave
+	# the worker before the redraw starts.
+	my $defer_header = ($c->param('cv') // '') eq 'yes' ? 0 : 1;
 #	($app,undef,$type) = &subs::typesetter($app);
 	$type = $type || $c->param('type');
 	my $init = &subs::setting_initializer($app,$timestamp);
@@ -278,7 +283,7 @@ sub manager_reset($c) {
 			browser_tab_id => $browser_tab_id
 		});
 		}
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, defer => $defer_header });
 		&subs::setting_setter({ app => $app, setting => 'toggle', value => 'on' }) if $seen eq 'yes';
 		&subs::intelligent_automation_toggle({ appt_uuid => $uuid, app => $app, 'state' => 'on', timestamp => $timestamp });
 		my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
@@ -414,7 +419,7 @@ sub manager_reset($c) {
 					uuid => $o->{'uuid'}
 				});
 			}
-			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, defer => $defer_header });
 			# a start carries the amount; this stop is when the session is finished,
 			# so it is the one movement the session makes. A record moved at creation
 			# and is not moved again here.
@@ -508,7 +513,7 @@ sub manager_reset($c) {
 			app => $app,
 			uuid => $uuid,
 		});
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, defer => $defer_header });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
 		my %so_seen;
@@ -564,7 +569,7 @@ sub manager_reset($c) {
 			seen => $seen,
 			browser_tab_id => $browser_tab_id
 		});
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, defer => $defer_header });
 
 
 		my ($model,$options,$jmodel,$joptions) = &subs::usual_appointment_maker({
@@ -682,7 +687,7 @@ elsif ($type eq 'delay') {
 			app => $app,
 			uuid => $uuid
 		});
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, defer => $defer_header });
 		my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
 		my %so_seen;
@@ -765,7 +770,7 @@ elsif ($type eq 'delay') {
 					uuid => $old->[0]->{'uuid'}
 				}
 			);
-			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+			($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, defer => $defer_header });
 			my $sources = &subs::db_select('appointments', undef, { source_uuid => $uuid })->hashes;
 
 			my %so_seen;
@@ -829,7 +834,7 @@ elsif ($type eq 'delay') {
 			browser_tab_id => $browser_tab_id
 		};
 		&subs::db_insert('appointments', $data);
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, defer => $defer_header });
 		if ($seen eq 'yes' && $capture_here) {
 			my ($file,$ocr) = &take_picture($c,{ timestamp => $timestamp, camera => $camera, uuid => $uuid });
 		}
@@ -861,7 +866,7 @@ elsif ($type eq 'delay') {
 			seen => $seen,
 			browser_tab_id => $browser_tab_id
 		});
-		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp });
+		($appt_header, $header_appts) = &subs::appt_header_printer({ app => $app, timestamp => $timestamp, defer => $defer_header });
 		if ($seen eq 'yes' && $capture_here) {
 			my $file = &scan($c, $scandata);
 		}
@@ -962,21 +967,19 @@ elsif ($type eq 'delay') {
 	# The press that started or stopped this wants the header it changed, and
 	# nothing else in this reply. A full centre-view render here (a ~40 KB window)
 	# used to sit between the press and the reply, so the page that pressed only
-	# saw the new header after the whole window had been drawn - and that reply is
-	# the only path when the socket is asleep. The window is redrawn by the header
-	# worker's own fork and by budget_runner; only a caller that actually reads
-	# `cv` out of the reply asks for it synchronously.
+	# saw the new header after the whole window had been drawn. The redraw now runs
+	# in the header worker's own fork; only a caller that actually reads `cv` out of
+	# the reply (the Add press) asks for it synchronously.
 	my $cv;
-	if (($c->param('cv') // '') eq 'yes') {
+	unless ($defer_header) {
 		$cv = &centre_view_grabber({ c => $c, app => $app, timestamp => $timestamp, header => $appt_header, appts => $header_appts, cached => 'no' });
 		$returner->{'cv'} = $cv;
 	}
 	&budget_runner($app);
 	&padlock_time_extender($c);
 	$returner->{'uuid'} = $uuid;
-	# The header the press just changed, so the page that pressed it can show the
-	# new state even when the live socket is the thing that was asleep. The same
-	# header is pushed to every tab above; this is the reply, not a second source.
+	# A synchronous caller still gets the header it rendered in the reply; the
+	# press's header arrives on the socket from the header worker's fork.
 	$returner->{'header'} = $appt_header if defined $appt_header && length $appt_header;
 	unless ($c->param('account') && $c->param('account') eq 'gallery' && &subs::setting_grabber({ app => 'me', setting => 'gallery_appts' }) eq 'off' ) {
 	#	&Websocket::send('tab', { app => $app, window => $cv, timestamp => $timestamp });

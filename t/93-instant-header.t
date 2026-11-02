@@ -1,5 +1,5 @@
-# tests-for: lib/JawnOS/Manager/Part14.pm public/js/manager/manager/06_appointment_distance.js
-# covers:    A start or stop replies with its header immediately, and the centre-view render no longer sits in front of it
+# tests-for: lib/JawnOS/Manager/Part14.pm lib/JawnOS/Domain/Calendar.pm lib/JawnOS/Controller/manager_misc5.pm public/js/manager/manager/06_appointment_distance.js
+# covers:    A start or stop replies at once and leaves the header redraw to the header worker's fork
 
 use strict;
 use warnings;
@@ -10,35 +10,45 @@ use Test::More;
 use File::Slurp qw(read_file);
 use RepoSource;
 
-# A start or stop changes the appointment header. The header frame is pushed to
-# every tab at once, but a page whose socket is asleep only ever sees the reset
-# reply - and that reply used to wait for a full centre-view render (~40 KB of
-# window) even though the caller that pressed start/stop never reads `cv` out of
-# it. The window is still redrawn, by the header worker's fork and by
-# budget_runner; it just no longer delays the header.
-#
-# A caller that really does read `response.cv` (the Add press) asks for the
-# render with cv=yes, so nothing that used it loses it.
+# A start or stop changes the appointment header. Rendering it (and the window
+# around it) inside the route made the press wait for the redraw. The press now
+# answers as soon as the row is written: appt_header_printer is told `defer`, it
+# hands the render, its push, the alarm walk and the centre view to a header
+# worker fork, and the route returns. The caller that really does read
+# `response.cv` (the Add press) passes cv=yes and keeps the synchronous render.
 
-my $root = repo_root();
+my $root   = repo_root();
 my $part14 = read_file("$root/lib/JawnOS/Manager/Part14.pm");
+my $calendar = read_file("$root/lib/JawnOS/Domain/Calendar.pm");
+my $reset  = read_file("$root/lib/JawnOS/Controller/manager_misc5.pm");
 my $js     = read_file("$root/public/js/manager/manager/06_appointment_distance.js");
 
-# --- the reply no longer waits for the window --------------------------------
+# --- the press defers the redraw ---------------------------------------------
 
-like($part14, qr/if \(\(\$c->param\('cv'\) \/\/ ''\) eq 'yes'\) \{\s*\$cv = &centre_view_grabber\(/,
-	'the centre view is rendered synchronously only when the caller asks for cv');
-unlike($part14, qr/\n\tmy \$cv = &centre_view_grabber/,
-	'no caller pays for the centre view on the way to the header reply');
-like($part14, qr/\$returner->\{'cv'\} = \$cv;[\s\S]*?\$returner->\{'header'\} = \$appt_header/,
-	'the header reply is filled after (and outside) the optional render');
+like($part14, qr/my \$defer_header = \(\$c->param\('cv'\) \/\/ ''\) eq 'yes' \? 0 : 1;/,
+	'only a caller that asks for cv keeps the render in the reply');
+like($part14, qr/unless \(\$defer_header\) \{\s*\$cv = &centre_view_grabber\(/,
+	'the centre view is rendered synchronously only for a cv caller');
+like($part14, qr/\$returner->\{'cv'\} = \$cv;/,
+	'the cv caller still gets the window back');
+my @calls = ($part14 =~ /&subs::appt_header_printer\(\{ app => \$app, timestamp => \$timestamp, defer => \$defer_header \}\);/g);
+is(scalar @calls, 8, 'every reset branch tells the header printer it may defer');
+unlike($part14, qr/&subs::appt_header_printer\(\{ app => \$app, timestamp => \$timestamp \}\);/,
+	'no reset branch still renders the header inline');
 
-# --- the media seal walks its files in a fork -------------------------------
+# --- the header worker is the fork -------------------------------------------
 
-like($part14, qr/if \(&subs::setting_grabber\(\{ app => \$app, setting => 'enc' \}\) eq 'on'\) \{\s*my \$suds = &subs::session_suds\(\$c\);[\s\S]*?&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;\s*&subs::file_encrypter\(\{ app => \$app, suds => \$suds \}\);\s*\}, \{ name => 'reset file encrypt' \}\)/,
-	'sealing an app\'s media is a fork, and the no-op path skips the fork');
-unlike($part14, qr/\n\t&subs::file_encrypter\(\{ app => \$app, suds => &subs::session_suds\(\$c\) \}\);/,
-	'no synchronous file_encrypter is left in the reply path');
+like($calendar, qr/if \(\$data->\{'defer'\} && !\$data->\{'header_only'\}\) \{/,
+	'appt_header_printer has a defer path');
+like($calendar, qr/if \(\$data->\{'defer'\}[\s\S]*?&subs::subprocessor\(sub \{\s*Mojo::IOLoop->reset;[\s\S]*?source => 'centre_view_grabber'[\s\S]*?&Manager::centre_view_grabber\([\s\S]*?\}, \{ name => 'header worker' \}\)/,
+	'the deferred work is one header worker fork: the render, its push, alarms and centre view');
+like($calendar, qr/return wantarray \? \('', undef\) : '';/,
+	'the deferred caller gets no HTML back, so the route does not wait');
+
+# --- the reply's time is logged ----------------------------------------------
+
+like($reset, qr/\$log->info\('reset ' \. \(\$c->param\('type'\) \/\/ '\?'\)/,
+	'the reset route logs its own time, so a slow press can be seen');
 
 # --- the one caller that reads the window asks for it -----------------------
 

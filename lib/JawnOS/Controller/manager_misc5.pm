@@ -541,7 +541,12 @@ sub action_15836 {
 	if ($peer && !&subs::peer_rate_ok($peer, 'action')) {
 		return $c->rendered(429);
 	}
+	my $started = &subs::rightNow();
 	my $content = &manager_reset($c);
+	# A press is a single-page action, so its own time is the feedback time. One
+	# line per reset names the type and the app, and a slow one is visible without
+	# having to reproduce it with a profiler.
+	$log->info('reset ' . ($c->param('type') // '?') . ' ' . ($content->{'app'} // '?') . ' took ' . (&subs::rightNow() - $started) . 'ms');
 	$c->render(json => $content );
 
 }
