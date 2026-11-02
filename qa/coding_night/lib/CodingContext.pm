@@ -13,18 +13,53 @@ package CodingContext;
 # declared in the prompt, so a model is never told a partial rulebook is the
 # whole one. Paths in the prompt are repository-relative: an instruction that
 # names a home directory is an instruction that stops being true on the phone.
+#
+# Cost is a design constraint, not a detail. docs/AGENTS-notes.md is ~190 KB and
+# sending its first 20 KB spends most of a turn on sections the note never
+# mentions. So the notes are split on their markdown headings and only the 3-4
+# sections the note scores against are sent, behind a one-line index of every
+# title (so the model can ask for one). The order is fixed for prefix caching:
+# the byte-identical core (rules + generated index + repo sha) first, then the
+# retrieved sections, then the note (the user message), then the help topic
+# last. Nothing the note changes may appear before the core.
 
 use strict;
 use warnings;
 
 use Encode ();
 use File::Spec ();
+use JSON::PP ();
 
-our $VERSION = '1';
+our $VERSION = '2';
 
-# Per document. docs/AGENTS-notes.md is ~190 KB; the rules are the first 20 KB
-# of anything and a model that can read more than this is not the point.
+# Per flat document. The rules are the first 20 KB of anything and a model that
+# can read more than this is not the point.
 our $MAX_DOC_BYTES = 20 * 1024;
+
+# docs/AGENTS-notes.md is retrieved section by section: at most this many bytes
+# of selected sections, and at most this many sections.
+our $MAX_NOTES_BYTES = 6 * 1024;
+our $MAX_NOTES_SECTIONS = 4;
+
+# The generated repository index (qa/coding_night/agent-index.md) replaces the
+# full qa/README.md, so it gets a real budget - but a bounded one.
+our $MAX_INDEX_BYTES = 16 * 1024;
+
+# One line of heading titles is what makes retrieval askable instead of a
+# guess. Titles are compressed (a date or a trailing aside is not part of the
+# name) so every section can be listed, and the line is still capped so a
+# document with hundreds of headings cannot undo the saving it exists to make.
+our $MAX_HEADING_INDEX_BYTES = 6 * 1024;
+
+# Words that carry no retrieval signal. Kept short: a stopword common to every
+# section would rank them all equally and win nothing.
+our %STOPWORD = map { $_ => 1 } qw(
+	the and for with that this from into over under when what where which have
+	has had was were are will would should could than then them they its not but
+	all any can may must our your you his her their there does did doing fix add
+	made make change new old use used using file files line lines code work works
+	need needs please also only just same out off too very each other such
+);
 
 # The note itself gets more room than a document, and is redacted with the
 # narrower value pattern: "add a password field" is a task, "password=hunter2"
@@ -64,8 +99,9 @@ our $SECRET_VALUE = qr{
 	)
 }ix;
 
-# The four documents, in the order a reader needs them: rules first, then the
-# history that explains them, then the suite the change has to pass.
+# The documents a repo note gets, in a reader's order: rules first, then the
+# history that explains them, then the suite the change has to pass. When the
+# generated repository index exists it replaces the QA README (see assemble).
 our @DOCUMENTS = (
 	{ rel => 'AGENTS.md',             label => 'project rules' },
 	{ rel => 'docs/AGENTS-notes.md',  label => 'deep notes (data model, flows, history)' },
@@ -87,6 +123,23 @@ sub relativize {
 
 sub max_doc_bytes { return $MAX_DOC_BYTES }
 sub max_note_bytes { return $MAX_NOTE_BYTES }
+sub max_notes_bytes { return $MAX_NOTES_BYTES }
+sub max_notes_sections { return $MAX_NOTES_SECTIONS }
+sub max_index_bytes { return $MAX_INDEX_BYTES }
+
+# UTF-8 bytes, not characters: the cap the provider bills and the log records.
+sub text_bytes {
+	my ($text) = @_;
+	return 0 unless defined $text;
+	return length Encode::encode('UTF-8', $text);
+}
+
+# The one estimate everything reports, so the numbers agree: ~4 bytes a token.
+sub est_tokens {
+	my ($bytes) = @_;
+	return 0 unless defined $bytes && $bytes =~ /^\d+$/;
+	return int($bytes / 4);
+}
 
 # Replace every line that matches the secret pattern. Returns ($text, $count).
 # A PEM block is withheld whole: matching only its BEGIN line would leave the
@@ -161,6 +214,260 @@ sub slurp {
 	return defined $decoded ? $decoded : $text;
 }
 
+# --- section retrieval -------------------------------------------------------
+
+# Split a markdown document on its level 1-3 headings. The text before the first
+# heading is the preamble; a heading keeps the line it is on, so a selected
+# section is a slice of the original bytes and reads as the document does.
+# Returns a list of { title, level, text, bytes } in document order.
+sub split_sections {
+	my ($text) = @_;
+	$text = '' unless defined $text;
+	my @marks;
+	while ($text =~ /^(#{1,3})[ \t]+(.+?)[ \t]*\r?$/mg) {
+		push @marks, { pos => $-[0], level => length $1, title => $2 };
+	}
+	unless (@marks) {
+		my $whole = $text;
+		$whole =~ s/^\s+|\s+$//g;
+		return ({ title => '(whole document)', level => 0,
+			text => $whole, bytes => text_bytes($whole) });
+	}
+	my @sections;
+	my $pre = substr($text, 0, $marks[0]->{'pos'});
+	$pre =~ s/^\s+|\s+$//g;
+	push @sections, { title => '(preamble)', level => 0, text => $pre, bytes => text_bytes($pre) }
+		if length $pre;
+	for my $i (0 .. $#marks) {
+		my $start = $marks[$i]->{'pos'};
+		my $end = $i < $#marks ? $marks[$i + 1]->{'pos'} : length $text;
+		my $body = substr($text, $start, $end - $start);
+		$body =~ s/\s+$//;
+		push @sections, {
+			title => $marks[$i]->{'title'}, level => $marks[$i]->{'level'},
+			text => $body, bytes => text_bytes($body),
+		};
+	}
+	return @sections;
+}
+
+# The distinct words worth scoring: lowercase, alphanumeric, three characters or
+# more, stopwords out, in first-seen order so the result is deterministic.
+sub _terms {
+	my ($text) = @_;
+	my %seen;
+	my @terms;
+	for my $word (split / /, _words($text)) {
+		next if length($word) < 3;
+		next if $STOPWORD{$word};
+		next if $seen{$word}++;
+		push @terms, $word;
+	}
+	return @terms;
+}
+
+# Path-like and filename-like strings the note mentions. A note that names
+# public/js/manager/chat.js is asking about that file's section, not about the
+# word "chat" in every section.
+sub _file_names {
+	my ($text) = @_;
+	$text = '' unless defined $text;
+	my %seen;
+	my @names;
+	while ($text =~ m{([\w.@+-]+(?:/[\w.@+-]+)+|[\w-]+\.(?:p[lm]|t|js|ep|css|sql|md|ino|json|html))\b}g) {
+		my $name = $1;
+		$name =~ s{^\./}{};
+		push @names, $name unless $seen{$name}++;
+	}
+	return @names;
+}
+
+# Rank every section against the note. A heading hit is worth 6 (a heading says
+# what the section is about), a body hit 1 capped at 5 (one long section must
+# not win on repetition), a whole path the note names 40 and a bare basename 15.
+# Ties break on document order, so the same note always selects the same
+# sections.
+sub score_sections {
+	my ($sections, $note_text) = @_;
+	my @terms = _terms($note_text);
+	my @names = _file_names($note_text);
+	my @scored;
+	for my $i (0 .. $#{$sections}) {
+		my $s = $sections->[$i];
+		my $low = lc($s->{'text'} // '');
+		my $heading = lc($s->{'title'} // '');
+		my $score = 0;
+		for my $term (@terms) {
+			$score += 6 if $heading =~ /(?<![a-z0-9])\Q$term\E(?![a-z0-9])/;
+			my $hits = () = $low =~ /(?<![a-z0-9])\Q$term\E(?![a-z0-9])/g;
+			$score += $hits > 5 ? 5 : $hits;
+		}
+		for my $name (@names) {
+			my $base = $name;
+			$base =~ s{.*/}{};
+			if (index($low, lc $name) >= 0) { $score += 40 }
+			elsif (length $base && index($low, lc $base) >= 0) { $score += 15 }
+		}
+		push @scored, { %{$s}, index => $i, score => $score };
+	}
+	return @scored;
+}
+
+# Pick at most $max sections, in at most $cap bytes. Forced sections (the data
+# model/schema/sync set, when the note names a table or an app) are taken first;
+# the rest are filled by score. The selected sections are emitted in document
+# order - a model reads a document forwards - and a section that would overflow
+# the budget is skipped, unless it is the only one, in which case it is cut and
+# the cut is declared. Returns ([selected], used_bytes).
+sub select_sections {
+	my (%a) = @_;
+	my $cap = $a{'cap'} // $MAX_NOTES_BYTES;
+	my $max = $a{'max'} // $MAX_NOTES_SECTIONS;
+	my @scored = score_sections($a{'sections'} || [], $a{'note_text'} // '');
+	my @ranked = sort {
+		$b->{'score'} <=> $a->{'score'} || $a->{'index'} <=> $b->{'index'}
+	} @scored;
+
+	my %pick;
+	if ($a{'force'}) {
+		for my $s (grep { $_->{'title'} =~ /(?:data\s*model|schema|sync)/i } @ranked) {
+			last if keys %pick >= $max;
+			$pick{ $s->{'index'} } = $s;
+		}
+	}
+	for my $s (@ranked) {
+		last if keys %pick >= $max;
+		next if $pick{ $s->{'index'} };
+		$pick{ $s->{'index'} } = $s;
+	}
+
+	my (@out, $used);
+	$used = 0;
+	for my $s (sort { $a->{'index'} <=> $b->{'index'} } values %pick) {
+		my $room = $cap - $used;
+		last if $room < 120;
+		if ($s->{'bytes'} > $room) {
+			my ($kept, $bytes) = truncate_text($s->{'text'}, $room);
+			push @out, { %{$s}, text => $kept, bytes => $bytes, cut => 1 };
+			$used += $bytes;
+			last;
+		}
+		push @out, { %{$s}, cut => 0 };
+		$used += $s->{'bytes'};
+	}
+	return (\@out, $used);
+}
+
+# All the section titles, on one line. Cheap, and it is what turns a sectioned
+# document into a document the model can ask about instead of a cut one. A
+# heading's date or trailing aside is dropped: it is not the name, and the full
+# heading is still there when the section itself is selected.
+sub _index_title {
+	my ($title) = @_;
+	my $x = defined $title ? $title : '';
+	$x =~ s/\s*\((?:19|20)\d\d[^)]*\)//g;
+	$x =~ s/\s*\([^)]{0,40}\)\s*$//;
+	$x =~ s/\s+/ /g;
+	$x =~ s/^\s+|\s+$//g;
+	$x = substr($x, 0, 64) . '...' if length($x) > 64;
+	return length $x ? $x : $title;
+}
+
+sub heading_index_line {
+	my ($rel, $sections) = @_;
+	return '' unless ref $sections eq 'ARRAY' && @{$sections};
+	my @titles = map { _index_title($_->{'title'}) } @{$sections};
+	my $count = scalar @titles;
+	my $line = $rel . ' sections (' . $count . '): ' . join(' | ', @titles);
+	if (text_bytes($line) > $MAX_HEADING_INDEX_BYTES) {
+		my ($cut) = truncate_text($line, $MAX_HEADING_INDEX_BYTES - 60);
+		$line = $cut . ' ... (' . $count . ' sections in total)';
+	}
+	return $line;
+}
+
+# The table names the schema declares. Used only to decide whether the note is
+# talking about the database (and so whether the data model sections are forced
+# into the selection); a missing schema is simply no table names.
+sub _table_names {
+	my ($dir) = @_;
+	my $sql = slurp(File::Spec->catfile($dir, 'database', 'schema.sql'));
+	return () unless defined $sql;
+	my %seen;
+	return grep { !$seen{$_}++ }
+		($sql =~ /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+"?([A-Za-z_][A-Za-z0-9_]*)/gi);
+}
+
+sub names_table_or_app {
+	my ($dir, $text, $help_id) = @_;
+	return 1 if defined $help_id;
+	my $hay = _words($text);
+	for my $table (_table_names($dir)) {
+		my $word = lc $table;
+		return 1 if $hay =~ /(?<![a-z0-9])\Q$word\E(?![a-z0-9])/;
+	}
+	return 0;
+}
+
+# The generated index (another agent writes it) is consumed if it is there and
+# ignored if it is not: the context must never depend on a file that may not
+# exist. Only its five named sections are sent, in file order, capped whole.
+sub load_index {
+	my ($dir) = @_;
+	my $rel = 'qa/coding_night/agent-index.md';
+	my $path = File::Spec->catfile($dir, split m{/}, $rel);
+	my $raw = slurp($path);
+	return undef unless defined $raw && length $raw;
+	my ($text, $count) = redact_text($raw);
+	$text = relativize($text);
+	my @all = split_sections($text);
+	my @wanted = grep {
+		$_->{'level'} == 2 && $_->{'title'} =~ /^(?:routes|helpers|tables|apps|firmware)$/i
+	} @all;
+	return undef unless @wanted;
+	my (@kept, $used);
+	$used = 0;
+	for my $s (@wanted) {
+		my $room = $MAX_INDEX_BYTES - $used;
+		last if $room < 120;
+		if ($s->{'bytes'} > $room) {
+			my ($kept, $bytes) = truncate_text($s->{'text'}, $room);
+			push @kept, { %{$s}, text => $kept, bytes => $bytes, cut => 1 };
+			$used += $bytes;
+			last;
+		}
+		push @kept, { %{$s}, cut => 0 };
+		$used += $s->{'bytes'};
+	}
+	my $body = join("\n\n", map { $_->{'text'} } @kept);
+	my $truncated = ($used >= $MAX_INDEX_BYTES || grep { $_->{'cut'} } @kept) ? 1 : 0;
+	$body .= "\n\n[TRUNCATED: " . scalar(@kept) . ' of ' . scalar(@wanted)
+		. ' index section(s) were sent, in at most ' . $MAX_INDEX_BYTES . ' bytes.]'
+		if $truncated;
+	return {
+		rel => $rel, label => 'generated repository index',
+		present => 1, bytes => text_bytes($text), kept => text_bytes($body),
+		truncated => $truncated, declared => $truncated, redacted => $count, text => $body,
+		sections => [ map { { title => $_->{'title'}, bytes => $_->{'bytes'}, cut => $_->{'cut'} } } @kept ],
+		sections_total => scalar @all,
+	};
+}
+
+# A short sha pins the core to the tree the documents describe. A missing git or
+# a directory that is not a checkout is not an error - the line is just left out.
+sub repo_sha {
+	my ($dir) = @_;
+	return undef unless defined $dir && length $dir && -d "$dir/.git";
+	my $pid = open(my $fh, '-|', 'git', '-C', $dir, 'rev-parse', '--short', 'HEAD');
+	return undef unless $pid;
+	local $/;
+	my $out = <$fh> // '';
+	close $fh;
+	return undef unless $? == 0;
+	$out =~ s/\s+//g;
+	return length $out ? $out : undef;
+}
+
 # The help registry is ordinary data: loading help.pl requires only its topic
 # parts. A failure is reported, never fatal - the rules are what matter.
 sub help_registry {
@@ -223,74 +530,290 @@ sub render_help_topic {
 
 # Assemble the system prompt. %opt:
 #   context_dir => the main checkout (required)
-#   note_text   => the note, for picking the help topic
+#   note_text   => the note, for retrieval and for picking the help topic
 #   app_text    => title + text, for picking the help topic (defaults to note_text)
 #   documents   => optional [ { rel, label }, ... ] instead of @DOCUMENTS
-# Returns { system, documents => [...], help_topic => id|undef, warnings => [...] }.
+# The order is fixed: the core (rules, then the generated index, then the repo
+# sha) is byte-identical for every note; the retrieved sections follow; the help
+# topic is returned for the caller to place after the note. Returns
+# { system, documents, help_topic, help_text, sections, context_bytes,
+#   context_est_tokens, repo, index, warnings }.
 sub assemble {
 	my (%opt) = @_;
 	my $dir = $opt{'context_dir'} or die "CodingContext: no context_dir\n";
-	my @documents;
 	my @warnings;
-	my $specs = ref $opt{'documents'} eq 'ARRAY' ? $opt{'documents'} : \@DOCUMENTS;
+	my $repo_lane = !(ref $opt{'documents'} eq 'ARRAY');
+	my $specs = $repo_lane ? \@DOCUMENTS : $opt{'documents'};
+	my $note_text = $opt{'note_text'} // '';
 
+	my $help = help_registry($dir);
+	my $help_id;
+	if ($help->{'error'}) {
+		push @warnings, 'the help registry was not available: ' . $help->{'error'};
+	}
+	else {
+		my $app_text = defined $opt{'app_text'} ? $opt{'app_text'} : $note_text;
+		$help_id = help_topic_for($app_text, $help->{'topics'});
+		push @warnings, 'no help topic matched the app the note names'
+			unless defined $help_id;
+	}
+
+	# A note that names a table or an app always gets the data model history,
+	# whatever it scores: "why is sync behind" is answered by the schema, not
+	# by the section that happens to mention sync most often.
+	my $force = names_table_or_app($dir, $note_text, $help_id);
+
+	my (@core, @retrieved);
 	for my $spec (@{$specs}) {
 		my $rel = $spec->{'rel'};
 		my $path = File::Spec->catfile($dir, split m{/}, $rel);
 		my $raw = slurp($path);
 		if (!defined $raw) {
 			push @warnings, "$rel is not in the main checkout; it was not sent";
-			push @documents, {
+			my $missing = {
 				rel => $rel, label => $spec->{'label'}, present => 0,
 				bytes => 0, kept => 0, truncated => 0, redacted => 0, text => '',
 				error => 'not found in the main checkout',
 			};
+			if ($rel eq 'AGENTS.md') { push @core, $missing } else { push @retrieved, $missing }
 			next;
 		}
 		my ($redacted, $count) = redact_text($raw);
 		$redacted = relativize($redacted);
-		my ($kept, $kept_bytes, $truncated, $original_bytes) = truncate_text($redacted, $MAX_DOC_BYTES);
-		push @documents, {
-			rel => $rel, label => $spec->{'label'}, present => 1,
-			bytes => $original_bytes, kept => $kept_bytes,
-			truncated => $truncated, redacted => $count, text => $kept,
-		};
+		my $original = text_bytes($redacted);
+		my $doc = $rel eq 'docs/AGENTS-notes.md'
+			? _sectioned_document(
+				rel => $rel, label => $spec->{'label'}, text => $redacted,
+				bytes => $original, redacted => $count, note_text => $note_text,
+				force => $force,
+			)
+			: _flat_document(
+				rel => $rel, label => $spec->{'label'}, text => $redacted,
+				bytes => $original, redacted => $count,
+				abbreviate => ($rel eq 'AGENTS.md' ? 1 : 0),
+			);
+		if ($rel eq 'AGENTS.md') { push @core, $doc } else { push @retrieved, $doc }
 	}
 
-	my $help = help_registry($dir);
-	my $help_id;
+	# The generated index is core: it is built from the tree, not from the note,
+	# so it is the same bytes for every note (and every turn). It stands in for
+	# the full qa/README.md; when it is absent the README is what the model gets.
+	my $index_doc;
+	my $sha;
+	if ($repo_lane) {
+		$index_doc = load_index($dir);
+		@retrieved = grep { ($_->{'rel'} // '') ne 'qa/README.md' } @retrieved
+			if $index_doc;
+		$sha = repo_sha($dir);
+	}
+	push @core, $index_doc if $index_doc;
+
+	# The help topic belongs to the app the note names, so it is the last thing
+	# the model reads - never part of the cacheable prefix.
+	my $help_doc;
 	my $help_text = '';
-	if ($help->{'error'}) {
-		push @warnings, 'the help registry was not available: ' . $help->{'error'};
-	}
-	else {
-		my $app_text = defined $opt{'app_text'} ? $opt{'app_text'} : ($opt{'note_text'} // '');
-		$help_id = help_topic_for($app_text, $help->{'topics'});
-		if (defined $help_id) {
-			my $rendered = render_help_topic($help_id, $help->{'topics'}->{$help_id});
-			my ($hred, $hcount) = redact_text($rendered);
-			$hred = relativize($hred);
-			my ($hkept, $hbytes, $htrunc, $horig) = truncate_text($hred, $MAX_DOC_BYTES);
-			push @documents, {
-				rel => 'help:' . $help_id, label => 'the help topic for the app the note names',
-				present => 1, bytes => $horig, kept => $hbytes,
-				truncated => $htrunc, redacted => $hcount, text => $hkept,
-			};
-			$help_text = $hkept;
-		}
-		else {
-			push @warnings, 'no help topic matched the app the note names';
-		}
+	if (defined $help_id) {
+		my $rendered = render_help_topic($help_id, $help->{'topics'}->{$help_id});
+		my ($hred, $hcount) = redact_text($rendered);
+		$hred = relativize($hred);
+		my ($hkept, $hbytes, $htrunc, $horig) = truncate_text($hred, $MAX_DOC_BYTES);
+		$help_doc = {
+			rel => 'help:' . $help_id, label => 'the help topic for the app the note names',
+			present => 1, bytes => $horig, kept => $hbytes,
+			truncated => $htrunc, redacted => $hcount, text => $hkept,
+		};
+		$help_text = $hkept;
 	}
 
-	my $system = _system_prompt(\@documents, $help_id, \@warnings);
+	my $system = _system_prompt(
+		core => \@core, retrieved => \@retrieved, sha => $sha,
+	);
+
+	my @documents = (@core, @retrieved, ($help_doc ? $help_doc : ()));
+	my $system_bytes = text_bytes($system);
 	return {
 		system     => $system,
 		documents  => \@documents,
 		help_topic => $help_id,
-		warnings   => \@warnings,
 		help_text  => $help_text,
+		help_doc   => $help_doc,
+		warnings   => \@warnings,
+		repo       => $sha,
+		index      => ($index_doc ? 1 : 0),
+		context_bytes      => $system_bytes,
+		context_est_tokens => est_tokens($system_bytes),
+		sections   => _accounting_sections(\@core, \@retrieved, $help_doc),
 	};
+}
+
+# A document that is sent whole (capped): the rules, the QA README, a help
+# topic. The same shape every document has, so the prompt renderer and the
+# accounting do not special-case it.
+#
+# AGENTS.md is a map as well as a rulebook, and it is over the cap. When that
+# happens, drop the prose paragraphs that carry no rule and keep the normative
+# ones - a paragraph is kept or dropped whole, so no sentence is left dangling -
+# then cap the result. Both the drop and the cut are declared in the prompt.
+sub _flat_document {
+	my (%a) = @_;
+	my $text = $a{'text'};
+	my $abbreviated = 0;
+	if ($a{'abbreviate'} && text_bytes($text) > $MAX_DOC_BYTES) {
+		my $short = abbreviate_rules($text);
+		if (length $short && text_bytes($short) < text_bytes($text)) {
+			$text = $short;
+			$abbreviated = 1;
+		}
+	}
+	my ($kept, $kept_bytes, $truncated) = truncate_text($text, $MAX_DOC_BYTES);
+	return {
+		rel => $a{'rel'}, label => $a{'label'}, present => 1,
+		bytes => $a{'bytes'}, kept => $kept_bytes,
+		truncated => $truncated, abbreviated => $abbreviated,
+		redacted => $a{'redacted'}, text => $kept,
+	};
+}
+
+# Keep the paragraphs that state a rule: a heading, a bullet or numbered item,
+# a table header, or a modal verb. Everything else is description, and the deep
+# notes repeat it.
+sub abbreviate_rules {
+	my ($text) = @_;
+	$text = '' unless defined $text;
+	my @kept;
+	for my $para (split /\n\s*\n/, $text) {
+		my $normative = 0;
+		for my $line (split /\n/, $para) {
+			next unless length $line;
+			$normative = 1
+				if $line =~ /^\s*#{1,6}\s/
+				|| $line =~ /^\s*(?:[-*]|\d+[.)])\s/
+				|| $line =~ /^\s*\|/
+				|| $line =~ /\b(?:always|never|must|shall|do\ not|don't|rule|required)\b/i;
+		}
+		push @kept, $para if $normative;
+	}
+	return join("\n\n", @kept);
+}
+
+# The deep notes: every heading title on one cheap line, then the 3-4 sections
+# this note scores best against. The selected sections are in document order and
+# their total is capped, so the document costs a fixed few KB however large it
+# grows. A cut or an omission is declared in the text.
+sub _sectioned_document {
+	my (%a) = @_;
+	my @all = split_sections($a{'text'});
+	my ($picked) = select_sections(
+		sections => \@all, note_text => $a{'note_text'}, force => $a{'force'},
+		cap => $MAX_NOTES_BYTES, max => $MAX_NOTES_SECTIONS,
+	);
+	my $index_line = heading_index_line($a{'rel'}, \@all);
+	my $body = $index_line;
+	$body .= "\n\n" . join("\n\n", map { $_->{'text'} } @{$picked}) if @{$picked};
+	my $cut = grep { $_->{'cut'} } @{$picked};
+	my $omitted = scalar(@all) - scalar(@{$picked});
+	my $truncated = ($cut || $omitted) ? 1 : 0;
+	if ($truncated) {
+		$body .= "\n\n[TRUNCATED: " . scalar(@{$picked}) . ' of ' . scalar(@all)
+			. ' section(s) were selected, in at most ' . $MAX_NOTES_BYTES
+			. ' bytes; the rest of the ' . $a{'bytes'}
+			. ' byte document was not sent. The heading index above names every section.]';
+	}
+	return {
+		rel => $a{'rel'}, label => $a{'label'}, present => 1,
+		bytes => $a{'bytes'}, kept => text_bytes($body),
+		truncated => $truncated, redacted => $a{'redacted'}, text => $body,
+		heading_index => $index_line,
+		sections => [ map {
+			{ title => $_->{'title'}, bytes => $_->{'bytes'},
+			  score => $_->{'score'}, cut => $_->{'cut'} }
+		} @{$picked} ],
+		sections_total => scalar @all,
+	};
+}
+
+# Per-document and per-section bytes/tokens, the same numbers the log and the
+# run report print. Estimate is always bytes/4 (est_tokens).
+sub _accounting_sections {
+	my ($core, $retrieved, $help_doc) = @_;
+	my @out;
+	for my $doc (@{$core}, @{$retrieved}, ($help_doc ? $help_doc : ())) {
+		next unless ref $doc eq 'HASH' && $doc->{'present'};
+		my $entry = {
+			name => $doc->{'rel'}, bytes => $doc->{'kept'},
+			est_tokens => est_tokens($doc->{'kept'}),
+		};
+		if (ref $doc->{'sections'} eq 'ARRAY' && @{$doc->{'sections'}}) {
+			$entry->{'sections'} = [ map {
+				{ title => $_->{'title'}, bytes => $_->{'bytes'},
+				  est_tokens => est_tokens($_->{'bytes'}) }
+			} @{$doc->{'sections'}} ];
+		}
+		push @out, $entry;
+	}
+	return \@out;
+}
+
+# One line for the agent log, the runner's stdout and the report.md. Both the
+# agent and the runner call this, so the numbers cannot drift apart.
+sub context_summary {
+	my ($acc) = @_;
+	return '' unless ref $acc eq 'HASH';
+	my $bytes = $acc->{'context_bytes'} // 0;
+	my $tokens = defined $acc->{'context_est_tokens'}
+		? $acc->{'context_est_tokens'} : est_tokens($bytes);
+	my @parts;
+	for my $s (@{ ref $acc->{'sections'} eq 'ARRAY' ? $acc->{'sections'} : [] }) {
+		next unless ref $s eq 'HASH';
+		push @parts, ($s->{'name'} // '?') . ' ' . ($s->{'bytes'} // 0);
+	}
+	my $line = 'context: ' . $bytes . ' bytes (~' . $tokens . ' est tokens)';
+	$line .= '; ' . join(', ', @parts) if @parts;
+	if (ref $acc->{'reply_bytes'} eq 'ARRAY' && @{ $acc->{'reply_bytes'} }) {
+		$line .= '; replies: ' . join('/', map { defined $_ ? $_ : 0 } @{ $acc->{'reply_bytes'} })
+			. ' bytes';
+	}
+	return $line;
+}
+
+# Read back what an agent run logged: one ACCOUNTING line and one REPLY line per
+# turn. The runner uses this rather than re-deriving the numbers, so the report
+# cannot disagree with the agent.
+sub read_agent_log {
+	my ($path) = @_;
+	my ($acc, @replies);
+	return (undef, []) unless defined $path && length $path && -f $path;
+	open(my $fh, '<', $path) or return (undef, []);
+	while (my $line = <$fh>) {
+		chomp $line;
+		if ($line =~ /^ACCOUNTING\s+(\{.*\})\s*$/) {
+			my $decoded = eval { JSON::PP::decode_json($1) };
+			$acc = $decoded if ref $decoded eq 'HASH';
+			next;
+		}
+		if ($line =~ /^REPLY\s+(\{.*\})\s*$/) {
+			my $decoded = eval { JSON::PP::decode_json($1) };
+			push @replies, $decoded if ref $decoded eq 'HASH';
+		}
+	}
+	close $fh;
+	return ($acc, \@replies);
+}
+
+# The help topic goes after the note, not into the system prompt: it is derived
+# from the note and must not sit in the prefix that is reused for every turn.
+sub help_block {
+	my ($context) = @_;
+	return '' unless ref $context eq 'HASH';
+	my $id = $context->{'help_topic'};
+	my $text = defined $context->{'help_text'} ? $context->{'help_text'} : '';
+	if (!defined $id || !length $text) {
+		return "\n## Help topic\nNo help topic matched the app the note names; "
+			. "do not invent help text for it.\n";
+	}
+	return "\n## The help topic for the app the note names\n"
+		. 'It was chosen because the note names its app. Keep the button labels and '
+		. "hints it describes true if you change that app.\n\n" . $text;
 }
 
 # The note that goes to the model as the user message.
@@ -316,6 +839,17 @@ sub describe_documents {
 		my $line = '  ' . $doc->{'rel'};
 		if (!$doc->{'present'}) {
 			$line .= ' - not in the main checkout (not sent)';
+		}
+		elsif (ref $doc->{'sections'} eq 'ARRAY' && @{ $doc->{'sections'} }) {
+			my $picked = scalar @{ $doc->{'sections'} };
+			$line .= ' - ' . $doc->{'bytes'} . ' bytes; ' . $picked . ' of '
+				. ($doc->{'sections_total'} // '?') . ' section(s) selected, '
+				. $doc->{'kept'} . ' bytes sent';
+			$line .= ' (TRUNCATED)' if $doc->{'truncated'};
+		}
+		elsif ($doc->{'abbreviated'}) {
+			$line .= ' - ABBREVIATED to its normative paragraphs; first ' . $doc->{'kept'}
+				. ' of ' . $doc->{'bytes'} . ' bytes sent';
 		}
 		elsif ($doc->{'truncated'}) {
 			$line .= ' - TRUNCATED: first ' . $doc->{'kept'} . ' of ' . $doc->{'bytes'} . ' bytes';
@@ -349,7 +883,9 @@ sub _words {
 }
 
 sub _system_prompt {
-	my ($documents, $help_id, $warnings) = @_;
+	my (%a) = @_;
+	my @core = @{ $a{'core'} || [] };
+	my @retrieved = @{ $a{'retrieved'} || [] };
 	my $p = <<'HEAD';
 You are the JawnOS Coding agent. You are run by the 06:00 QA coding nightly, one
 note at a time, inside a fresh git worktree checked out from origin/main.
@@ -395,43 +931,59 @@ already finished and have nothing further to change, reply with shape 3 alone.
   in "note"; never invent a path or keep guessing.
 - Never print a secret (key, token, password) in an edit or in a note.
 
-## Context
+## Core context
 
 HEAD
 
+	$p .= 'repo: ' . ($a{'sha'} // '(unknown)') . "\n\n";
 	$p .= "These documents come from the main checkout, not from this worktree. They are "
 		. "repository-relative and are the rules that apply to this repository.\n\n";
+	$p .= _render_doc($_) for @core;
 
-	for my $doc ( @{ ref $documents eq 'ARRAY' ? $documents : [] } ) {
-		next unless $doc->{'present'};
-		$p .= '### ' . $doc->{'rel'} . ' (' . $doc->{'label'} . ")\n";
-		$p .= '[TRUNCATED: this document is ' . $doc->{'bytes'} . ' bytes; only the first '
-			. $doc->{'kept'} . " bytes are included below. The rest was not sent.]\n"
-			if $doc->{'truncated'};
-		$p .= '[REDACTED: ' . $doc->{'redacted'}
-			. " line(s) matched the secret pattern and were withheld.]\n"
-			if $doc->{'redacted'};
-		my $body = $doc->{'text'};
-		$p .= $body;
-		$p .= "\n" unless $body =~ /\n$/;
-		$p .= "\n";
+	if (@retrieved) {
+		$p .= "## Retrieved context\n\n"
+			. "The deep notes are sent by section, chosen for this note. The one-line heading "
+			. "index above names every section: if the one you need was not selected, say so "
+			. "in \"note\" and the change will be attempted from what is here.\n\n";
+		$p .= _render_doc($_) for @retrieved;
 	}
 
-	my @missing = map { $_->{'rel'} } grep { !$_->{'present'} } @{ ref $documents eq 'ARRAY' ? $documents : [] };
+	my @missing = map { $_->{'rel'} } grep { !$_->{'present'} } @core, @retrieved;
 	if (@missing) {
 		$p .= '### Not available' . "\n"
 			. 'The main checkout did not have: ' . join(', ', @missing) . ".\n"
-			. 'Do not guess their contents.' . "\n\n";
+			. "Do not guess their contents.\n\n";
 	}
 
-	if (defined $help_id) {
-		$p .= "The help topic above was chosen because the note names its app. Keep the "
-			. "button labels and hints it describes true if you change that app.\n\n";
-	}
-	else {
-		$p .= "No help topic matched the app the note names; do not invent help text for it.\n\n";
-	}
+	$p .= "The help topic for the app the note names, when there is one, follows the "
+		. "note itself.\n\n";
 
+	return $p;
+}
+
+# One document, as the prompt prints it. A sectioned document declares its own
+# truncation (it has a heading index above the selected sections); a flat one
+# declares a byte cut here, so a partial rulebook is never read as the whole one.
+sub _render_doc {
+	my ($doc) = @_;
+	my $p = '### ' . $doc->{'rel'} . ' (' . $doc->{'label'} . ")\n";
+	return $p . "This document is not in the main checkout; it was not sent.\n\n"
+		unless $doc->{'present'};
+	if ($doc->{'abbreviated'}) {
+		$p .= '[ABBREVIATED: this ' . $doc->{'bytes'} . ' byte document was reduced to its '
+			. 'normative paragraphs; the first ' . $doc->{'kept'} . " bytes of that are below.]\n";
+	}
+	elsif ($doc->{'truncated'} && !$doc->{'heading_index'} && !$doc->{'declared'}) {
+		$p .= '[TRUNCATED: this document is ' . $doc->{'bytes'} . ' bytes; only the first '
+			. $doc->{'kept'} . " bytes are included below. The rest was not sent.]\n";
+	}
+	$p .= '[REDACTED: ' . $doc->{'redacted'}
+		. " line(s) matched the secret pattern and were withheld.]\n"
+		if $doc->{'redacted'};
+	my $body = $doc->{'text'} // '';
+	$p .= $body;
+	$p .= "\n" unless $body =~ /\n$/;
+	$p .= "\n";
 	return $p;
 }
 

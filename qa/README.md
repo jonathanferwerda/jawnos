@@ -447,42 +447,71 @@ One run at a time is held by `flock` on `~/jawnos-qa/.coding-night.lock`.
 model is configured. It runs in the worktree and:
 
 1. **Assembles the context from the main checkout** (`$HOME/jawnos` or
-   `--context-dir`): `AGENTS.md`, `docs/AGENTS-notes.md`, this README, and the
-   help topic for the app the note names. In the app lane the context is the
-   app checkout's `AGENTS.md`, `JAWNOS.md` and `README.md` instead. Each is
-   capped at 20 KB and the prompt says when it was truncated.
-2. **Redacts before sending.** A line that mentions `.secrets/`, `.shots/`,
+   `--context-dir`) in a fixed order, so the prefix is cacheable: the **core**
+   (`AGENTS.md`, then the generated repo index, then one `repo: <short sha>`
+   line), then the **retrieved sections**, then the **note**, then the **help
+   topic last**. Nothing the note changes appears before the core. In the app
+   lane the core is the app checkout's `AGENTS.md`, `JAWNOS.md` and `README.md`.
+   `AGENTS.md` over 20 KB is reduced to its normative paragraphs (headings,
+   bullets, modal sentences) before the cap is applied, and both are declared.
+2. **Retrieves sections instead of truncating the deep notes.**
+   `docs/AGENTS-notes.md` (187 KB) is split on its markdown headings; each
+   section scores against the note's words (heading hit 6, body hit 1 capped
+   at 5) and file names (full path 40, basename 15), and the top 3-4 are sent in
+   document order, total **≤ 6 KB**. A one-line index of every section title is
+   prepended, so the model can see what it could have asked for, and the
+   selection is deterministic. A note that names a table (from
+   `database/schema.sql`) or an app always gets the data-model/schema/sync
+   sections. A section that would overflow the budget is skipped or cut, and
+   the cut is declared.
+3. **Consumes the generated index when it is there.** If
+   `qa/coding_night/agent-index.md` exists (another agent generates it; do not
+   hand-edit it), its `apps`, `routes`, `helpers`, `tables` and `firmware`
+   sections (capped at 16 KB) stand in for the full `qa/README.md`. Absent, the
+   README is sent as before, so an old checkout still assembles.
+4. **Redacts before sending.** A line that mentions `.secrets/`, `.shots/`,
    `config.json`, `downloads.json`, a `*.pem`, or one of the secret words
    (password, passphrase, token, api key, secret, credential, signatorial, a
    ticket uuid) is replaced whole; a PEM block is withheld with its body.
    Absolute `/home/<user>/jawnos` paths become repository-relative. The note
    itself is redacted only for pasted values, so "fix the password field" still
    works.
-3. **Calls the configured model exactly as the Coding app does**:
+5. **Calls the configured model exactly as the Coding app does**:
    `mail/coding_assistant` (fallback `coding_assistant_fallback`, thinking from
    `ai_role_thinking('coding_assistant')`) through
    `subs::ai_chat_parts_with_fallback` - the same helper behind
    `POST /manager/coding/heal`. No second provider configuration exists here.
-4. **Applies only whole-file writes or unified diffs inside the worktree.**
+6. **Applies only whole-file writes or unified diffs inside the worktree.**
    A reply may be a bare JSON object, a JSON object in ```` ```json ```` fences,
    a bare unified diff, or a patch in ```` ```diff ````/```` ```patch ```` fences;
-   prose around either is ignored. A reply that is neither is written verbatim
-   to the agent log (`----- BEGIN RAW REPLY -----`) before it is rejected, so a
+   prose around either is ignored. **A reply over 64 KB is a failed turn**: its
+   first and last 200 bytes go to the agent log, nothing is parsed and nothing
+   is written. A reply that is neither JSON nor a diff is written verbatim to
+   the agent log (`----- BEGIN RAW REPLY -----`) before it is rejected, so a
    refused turn can be diagnosed from the log alone. Absolute paths, `..`,
    symlinks and anything that resolves outside are
    refused; `.git`, `.secrets`, `.shots`, `.president`, `releases`,
    `signatorials`, `database/*.db`, `config.json`, `downloads.json` and `*.pem`
    are never written. Binary files are refused, and the whole run may write at
    most 256 KB. A refused turn writes nothing.
-5. **Checks each turn**: `perl -c` for Perl and `node --check` for JavaScript;
+7. **Checks each turn**: `perl -c` for Perl and `node --check` for JavaScript;
    a failure is fed back to the model. It stops when the model says done and
    the checks pass, or after `--max-turns` (default 6).
+8. **Accounts for what it spent.** The agent logs one human
+   `context: <bytes> (~<bytes/4> est tokens); <per-section bytes>; replies: ...`
+   line, one `ACCOUNTING {...}` line (context bytes, system bytes, per-section
+   bytes and estimates, repo sha, reply cap) and one `REPLY {...}` line per
+   turn. `run.pl` reads them back from the agent log, records
+   `context_bytes`, `context_est_tokens`, `context_sections` and `reply_bytes`
+   in `report.json`, prints a one-line summary, and appends a `## Context`
+   section to `report.md` and the report note. The estimate is always bytes/4.
 
 It never bumps, commits, pushes or restarts - the runner does that after the
 suite is green. Exit 0 means the worktree changed and its checks passed; 1 means
 the note could not be attempted; 2 is a usage or environment failure; 3 is no
-model. `--dry-run` prints the prompt, the documents and the call plan and writes
-nothing. `--responder FILE` replaces the model with a fixture (tests only).
+model. `--dry-run` prints the prompt, the documents, the context account and the
+call plan and writes nothing. `--responder FILE` replaces the model with a
+fixture (tests only).
 
 ```sh
 # point the nightly at the agent, then see the plan without touching anything

@@ -198,6 +198,13 @@ ok(!defined $garbage, 'prose with no JSON object or diff is rejected');
 like($garbage_err // '', qr/neither a JSON object nor a unified diff/,
 	'the rejection names both accepted forms');
 
+# --- the reply cap -----------------------------------------------------------
+is(CodingEdit::max_reply_bytes(), 64 * 1024, 'the reply cap is 64 KB a turn');
+my $over_cap = '{"done":true,"note":"' . ('x' x CodingEdit::max_reply_bytes()) . '"}';
+my ($over_cap_parsed, $over_cap_err) = CodingEdit::parse_model_response($over_cap);
+ok(!defined $over_cap_parsed, 'a reply over the cap is not parsed');
+like($over_cap_err // '', qr/65536-byte cap/, 'the refusal names the cap');
+
 # --- the assembled context and the dry run ----------------------------------
 my $ctx = fixture_context();
 my $wt  = fixture_worktree();
@@ -317,6 +324,33 @@ my ($edit_rc, $edit_out) = run_agent(
 is($edit_rc, 0, 'a fixture model edit exits 0');
 is(read_file("$wt/perl/thing.pl"), "use strict;\nprint \"new\\n\";\n", 'the fixture edit landed');
 like($edit_out, qr/checks pass/, 'the Perl check passed');
+like($edit_out, qr/^ACCOUNTING \{/m, 'the agent logs the context account');
+like($edit_out, qr/"context_est_tokens":\d+/, 'the account carries an estimated token count');
+like($edit_out, qr/^REPLY \{[^\n]*"bytes":\d+/m, 'the agent logs the reply size each turn');
+
+# --- a reply over the cap is a failed turn, not an applied edit --------------
+
+# --- a reply over the cap is a failed turn, not an applied edit --------------
+my $huge_resp = write_responder("$ctx/responder-huge.pl", <<'RESP');
++{
+	call => sub {
+		return '{"edits":[{"path":"perl/thing.pl","content":"' . ('y' x 70000) . '"}]}';
+	},
+}
+RESP
+
+write_file("$wt/perl/thing.pl", "use strict;\nprint \"old\\n\";\n");
+my ($huge_rc, $huge_out) = run_agent(
+	worktree => $wt,
+	args     => [ '--context-dir', $ctx, '--responder', $huge_resp, '--max-turns', '1' ],
+);
+is($huge_rc, 1, 'a reply over the cap fails the note');
+like($huge_out, qr/over the 65536-byte cap/, 'the log names the cap');
+like($huge_out, qr/BEGIN RAW REPLY \(first 200 bytes\)/, 'the first bytes of the reply are logged');
+like($huge_out, qr/BEGIN RAW REPLY \(last 200 bytes\)/, 'the last bytes of the reply are logged');
+like($huge_out, qr/^REPLY \{[^\n]*"over_cap":1/m, 'the over-cap reply is accounted for');
+is(read_file("$wt/perl/thing.pl"), "use strict;\nprint \"old\\n\";\n",
+	'nothing was written from the over-cap reply');
 
 # --- a check failure is fed back, then fixed ---------------------------------
 write_file("$wt/perl/thing.pl", "use strict;\nprint \"old\\n\";\n");

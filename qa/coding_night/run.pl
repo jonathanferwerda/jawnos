@@ -68,6 +68,7 @@ use JSON::PP;
 use POSIX ();
 use Time::HiRes qw(time sleep);
 
+require CodingContext;
 require CodingNight;
 require QaSetting;
 
@@ -348,6 +349,7 @@ for my $note ( @{$notes} ) {
 			timeout => $opt{'suite_timeout'},
 		);
 		$run{'agent_exit'} = $agent_rc;
+		record_agent_accounting(\%run, $log->('agent'));
 		if ($agent_rc != 0) {
 			$run{'status'} = 'agent_failed';
 			$run{'error'}  = "the coding agent exited $agent_rc; the app worktree is left for inspection";
@@ -549,7 +551,8 @@ for my $note ( @{$notes} ) {
 		$run{'marked_completed'} = 1;
 		$run{'status'} = 'green';
 
-		my $md = CodingNight::report_markdown({ %{$report}, runs => [ \%run ], ok => 1 });
+		my $md = CodingNight::report_markdown({ %{$report}, runs => [ \%run ], ok => 1 })
+			. context_md([ \%run ]);
 		my $filed = eval {
 			post_note(
 				live_url => live_url($repo, $opt{'live_url'}),
@@ -631,6 +634,7 @@ for my $note ( @{$notes} ) {
 		timeout => $opt{'suite_timeout'},
 	);
 	$run{'agent_exit'} = $agent_rc;
+	record_agent_accounting(\%run, $log->('agent'));
 	if ($agent_rc != 0) {
 		$run{'status'} = 'agent_failed';
 		$run{'error'} = "the coding agent exited $agent_rc; the worktree is left for inspection";
@@ -803,7 +807,7 @@ for my $note ( @{$notes} ) {
 	# consume its own diary of the night.
 	my $md = CodingNight::report_markdown({
 		%{$report}, runs => [ \%run ], ok => 1,
-	});
+	}) . context_md([ \%run ]);
 	my $filed = eval {
 		post_note(
 			live_url => live_url($repo, $opt{'live_url'}),
@@ -854,11 +858,15 @@ close $json_fh;
 
 my $md_path = "$report_dir/report.md";
 open(my $md_fh, '>', $md_path) or die "qa/coding_night: $md_path: $!\n";
-print $md_fh CodingNight::report_markdown($report);
+print $md_fh CodingNight::report_markdown($report) . context_md($report->{'runs'});
 close $md_fh;
 
 my $green = grep { ($_->{'status'} // '') eq 'green' } @{$report->{'runs'}};
 print 'report: ' . $md_path . "\n";
+for my $r ( @{$report->{'runs'}} ) {
+	next unless defined $r->{'context_bytes'};
+	print 'context: note ' . ($r->{'n'} // '?') . ' - ' . CodingContext::context_summary($r) . "\n";
+}
 print 'done: ' . scalar(@{$report->{'runs'}}) . " note(s), $green green, "
 	. ($failed ? 'attention needed' : 'ok') . "\n";
 
@@ -1037,6 +1045,42 @@ sub automatic_rollback {
 		unless $ok;
 }
 
+# --- the agent's own account -------------------------------------------------
+# agent.pl prints one ACCOUNTING line (context bytes/tokens and the per-section
+# list) and one REPLY line per turn to its stdout, which run_cmd writes to the
+# agent log. CodingContext reads them back so the report's numbers are the
+# agent's numbers - there is no second estimate in this file.
+sub record_agent_accounting {
+	my ($run, $log_path) = @_;
+	my ($acc, $replies) = CodingContext::read_agent_log($log_path);
+	return 0 unless $acc;
+	$run->{'context_bytes'}        = $acc->{'context_bytes'};
+	$run->{'context_est_tokens'}   = $acc->{'context_est_tokens'};
+	$run->{'context_system_bytes'} = $acc->{'system_bytes'};
+	$run->{'context_sections'}     = $acc->{'sections'};
+	$run->{'context_repo'}         = $acc->{'repo'};
+	$run->{'context_index'}        = $acc->{'index'};
+	$run->{'reply_cap'}            = $acc->{'reply_cap'};
+	$run->{'reply_bytes'}          = [ map { $_->{'bytes'} } @{$replies} ];
+	print '  ' . CodingContext::context_summary($run) . "\n";
+	return 1;
+}
+
+# The "## Context" section report.md and the report note get: one line per note,
+# the same summary this run prints. Appended after CodingNight's own markdown,
+# so a failed note still carries what it spent.
+sub context_md {
+	my ($runs) = @_;
+	my @lines;
+	for my $run ( @{ ref $runs eq 'ARRAY' ? $runs : [] } ) {
+		next unless ref $run eq 'HASH' && defined $run->{'context_bytes'};
+		push @lines, '- note ' . ($run->{'n'} // '?') . ': '
+			. CodingContext::context_summary($run);
+	}
+	return '' unless @lines;
+	return "\n## Context\n\n" . join("\n", @lines) . "\n";
+}
+
 # The failure.md beside the report is the plain-text handover: what failed, the
 # exact test line, the worktree, the tag, and what a person should do next.
 sub write_failure_md {
@@ -1061,6 +1105,8 @@ sub write_failure_md {
 	print {$fh} "\n";
 	print {$fh} '- report: `' . $dir . "/report.json`\n";
 	print {$fh} '- rollback script: `' . $dir . "/rollback.sh`\n";
+	print {$fh} '- ' . CodingContext::context_summary($run) . "\n"
+		if defined $run->{'context_bytes'};
 	if (@failing) {
 		print {$fh} "\n## Failing test lines\n\n";
 		print {$fh} "    $_\n" for @failing;

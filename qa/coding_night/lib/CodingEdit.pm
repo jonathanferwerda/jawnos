@@ -28,11 +28,17 @@ use IPC::Open3;
 use JSON::PP ();
 use Symbol qw(gensym);
 
-our $VERSION = '1';
+our $VERSION = '2';
 
 # Total new bytes the agent may write, across every turn. 256 KB is several
 # times the size of any one change this nightly should be making.
 our $MAX_CHANGED_BYTES = 256 * 1024;
+
+# A reply is a JSON object or a patch, never a document. 64 KB is generous for
+# either and small enough that a runaway (or a truncated provider stream that
+# repeats itself) cannot become the turn. Over the cap is a failed turn, not an
+# applied edit: nothing is parsed and nothing is written.
+our $MAX_REPLY_BYTES = 64 * 1024;
 
 our %BINARY_EXT = map { $_ => 1 } qw(
 	png jpg jpeg gif webp bmp ico tif tiff psd
@@ -48,6 +54,14 @@ our %BINARY_EXT = map { $_ => 1 } qw(
 our $PROTECTED_TOP = qr{^(?:\.git|\.secrets|\.shots|\.president|releases|signatorials|voices)(?:/|$)};
 
 sub max_changed_bytes { return $MAX_CHANGED_BYTES }
+sub max_reply_bytes { return $MAX_REPLY_BYTES }
+
+# The reply's size in UTF-8 bytes, the unit the cap and the log use.
+sub reply_bytes {
+	my ($text) = @_;
+	return 0 unless defined $text;
+	return length Encode::encode('UTF-8', $text);
+}
 
 # The reason a repository-relative path may not be written, or undef. Separate
 # from resolve() so a test can ask about a path with no worktree on disk.
@@ -420,6 +434,10 @@ sub _fenced_block {
 sub parse_model_response {
 	my ($text) = @_;
 	$text = '' unless defined $text;
+	my $bytes = reply_bytes($text);
+	return (undef, 'the reply is ' . $bytes . ' bytes, over the '
+		. $MAX_REPLY_BYTES . '-byte cap (nothing was written)')
+		if $bytes > $MAX_REPLY_BYTES;
 	my $raw = $text;
 	$raw =~ s/^\s+|\s+$//g;
 	return (undef, 'the model replied with nothing') unless length $raw;

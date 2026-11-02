@@ -11,6 +11,12 @@
 # --context-dir), reads the configured Coding model exactly as the Coding app
 # does server-side, and edits the worktree through the model's JSON replies.
 #
+# The context is assembled for a cacheable prefix (core rules and the generated
+# index first, retrieved note sections next, the note and then the help topic
+# last), the deep notes are retrieved by section rather than truncated, and a
+# reply over 64 KB is a failed turn. The agent logs an ACCOUNTING line and one
+# REPLY line per turn so the nightly's report can carry the cost.
+#
 # Exit codes:
 #   0  the worktree changed and its Perl/JavaScript passed the checks
 #   1  the note could not be attempted: a model error, a refused edit, a
@@ -129,6 +135,22 @@ my $context = CodingContext::assemble(
 );
 my ($note_message, $note_info) = CodingContext::note_message($note);
 
+# The help topic is placed after the note in the user message, not in the system
+# prompt: it is derived from the note and must not sit in the cached prefix.
+my $help_block  = CodingContext::help_block($context);
+my $note_bytes  = CodingContext::text_bytes($note_message);
+my $help_bytes  = CodingContext::text_bytes($help_block);
+my $context_bytes = ($context->{'context_bytes'} // 0) + $note_bytes + $help_bytes;
+my $accounting = {
+	context_bytes      => $context_bytes,
+	context_est_tokens => CodingContext::est_tokens($context_bytes),
+	system_bytes       => ($context->{'context_bytes'} // 0),
+	sections           => $context->{'sections'} || [],
+	repo               => $context->{'repo'},
+	index              => ($context->{'index'} ? 1 : 0),
+	reply_cap          => CodingEdit::max_reply_bytes(),
+};
+
 # --- the model, read the way the Coding app reads it ------------------------
 # server-side POST /manager/coding/heal takes
 #   setting_grabber({ app => 'mail', setting => 'coding_assistant' })
@@ -158,16 +180,19 @@ if ($opt{'dry_run'}) {
 	}
 	print '  max turns: ' . $max_turns . " (a model error or the cap is a failed note)\n";
 	print "  planned calls: up to $max_turns editing turn(s); each is one JSON reply\n";
-	print "  changed-byte budget: " . CodingEdit::max_changed_bytes() . " bytes for the run\n";
+	print '  changed-byte budget: ' . CodingEdit::max_changed_bytes() . " bytes for the run\n";
 	print "  context:\n" . CodingContext::describe_documents($context->{'documents'}) . "\n";
+	print '  reply cap: ' . CodingEdit::max_reply_bytes() . " bytes a turn (over it is a failed turn)\n";
+	print '  ' . CodingContext::context_summary($accounting) . "\n";
 	print '  help topic: ' . (defined $context->{'help_topic'} ? $context->{'help_topic'} : 'none matched') . "\n";
 	if ($note_info->{'redactions'}) {
 		print '  note: ' . $note_info->{'redactions'} . " value(s) redacted\n";
 	}
 	print '  note: truncated at ' . CodingContext::max_note_bytes() . " bytes\n" if $note_info->{'truncated'};
 	print '  warning: ' . $_ . "\n" for @{ $context->{'warnings'} || [] };
+	print 'ACCOUNTING ' . JSON::PP::encode_json($accounting) . "\n";
 	print "\n===== SYSTEM PROMPT =====\n" . $context->{'system'} . "\n";
-	print "===== USER MESSAGE (turn 1) =====\n" . $note_message . "\n";
+	print "===== USER MESSAGE (turn 1) =====\n" . $note_message . $help_block . "\n";
 	print "This is turn 1 of at most $max_turns.\n";
 	print "Reply with the first JSON object.\n";
 	exit 0;
@@ -197,9 +222,11 @@ else {
 print 'qa/coding_night agent: note ' . ($note->{'id'} || '?') . ' "' . ($note->{'title'} || 'untitled') . "\"\n";
 print "qa/coding_night agent: model $model" . ($model_why ? " ($model_why)" : '') . "\n";
 print 'qa/coding_night agent: worktree ' . $root . "\n";
+print 'qa/coding_night agent: ' . CodingContext::context_summary($accounting) . "\n";
+print 'ACCOUNTING ' . JSON::PP::encode_json($accounting) . "\n";
 
 my @messages = (
-	{ role => 'user', content => $note_message . "\nThis is turn 1 of at most $max_turns.\n"
+	{ role => 'user', content => $note_message . $help_block . "\nThis is turn 1 of at most $max_turns.\n"
 		. "Reply with the first JSON object.\n" },
 );
 my $state = { bytes => 0 };
@@ -223,6 +250,29 @@ for my $turn (1 .. $max_turns) {
 		$last_error = "the model call failed on turn $turn: $err";
 		last;
 	}
+
+	# The reply's own size is part of the account, and a reply over the cap is a
+	# failed turn: it is logged by its edges and never parsed or applied.
+	my $reply_bytes = CodingEdit::reply_bytes($reply);
+	my $over_cap = $reply_bytes > CodingEdit::max_reply_bytes() ? 1 : 0;
+	print 'REPLY ' . JSON::PP::encode_json({
+		turn => $turn, bytes => $reply_bytes, over_cap => $over_cap,
+	}) . "\n";
+	if ($over_cap) {
+		print "turn $turn: the reply is $reply_bytes bytes, over the "
+			. CodingEdit::max_reply_bytes() . "-byte cap; nothing was written\n";
+		print "----- BEGIN RAW REPLY (first 200 bytes) -----\n"
+			. substr($reply, 0, 200) . "\n----- END RAW REPLY -----\n";
+		print "----- BEGIN RAW REPLY (last 200 bytes) -----\n"
+			. substr($reply, -200) . "\n----- END RAW REPLY -----\n";
+		$last_error = "turn $turn: the reply was $reply_bytes bytes, over the cap";
+		push @messages, { role => 'user', content =>
+			"The last reply was $reply_bytes bytes, over the " . CodingEdit::max_reply_bytes()
+			. "-byte cap, so nothing was written. Reply with ONE JSON object only; if the "
+			. "change is large, send part of it and set \"done\":false until the last turn.\n" };
+		next;
+	}
+
 	push @messages, { role => 'assistant', content => $reply };
 
 	my ($parsed, $perr) = CodingEdit::parse_model_response($reply);
