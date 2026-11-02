@@ -37,13 +37,13 @@ my $handler = read_file("$root/public/js/manager/websocket/01_message_handler.js
 
 # --- the watch itself --------------------------------------------------------
 
-like($watch, qr/var wsWatchdogTick = 1000;/,
+like($watch, qr/var wsWatchdogPeriod = 1000;/,
 	'the watch looks at the sockets once a second');
 like($watch, qr/var wsWatchdogProbeWait = 2500;/,
 	'a probe gets a short grace before it is called unanswered');
 like($watch, qr/var wsWatchdogConnectGrace = 8000;/,
 	'a handshake that never finishes is retired');
-like($watch, qr/function wsWatchdogStart\(\) \{.*?wsWatchdogTimer = setInterval\(wsWatchdogTick, wsWatchdogTick\);/s,
+like($watch, qr/function wsWatchdogStart\(\) \{.*?wsWatchdogTimer = setInterval\(wsWatchdogTick, wsWatchdogPeriod\);/s,
 	'the watch is the only poll, and it is local');
 like($watch, qr/function wsWatchdogStop\(\) \{.*?clearInterval\(wsWatchdogTimer\);/s,
 	'it can be stopped for a hidden page');
@@ -135,6 +135,36 @@ like($part37, qr/next if eval \{ \$recipient_locked->\(\$conn\) \};/,
 	'a failing padlock check cannot take the push down');
 { my $n = () = $part37 =~ /\$returner = \$deliver->\(\$ws, \$conn, \$w\);/g;
   is($n, 2, 'both broadcast arms deliver through the guard'); }
+
+# The manager-worker -> websocket-worker link is a cached unix socket. It can
+# outlive its peer (a worker restart), and neither connected() nor a zero-byte
+# write notices: the push then goes into a socket nobody reads. The peek is the
+# honest check, and one retry on a fresh socket keeps a start/stop from being
+# swallowed in the gap.
+like($world, qr/use Socket qw\(MSG_PEEK MSG_DONTWAIT\);/,
+	'the sender can ask the kernel whether the peer is still there');
+like($world, qr/my \$peeked = recv\(\$socket, \$peek, 1, MSG_PEEK \| MSG_DONTWAIT\);/,
+	'a reused socket is checked for EOF before a send');
+like($world, qr/if \(defined \$peeked && \$peeked == 0\) \{/,
+	'0 bytes from a non-blocking peek is a dead peer');
+like($world, qr/my \$got = recv\(\$socket, \$junk, 65536, MSG_DONTWAIT\);\s*last unless defined \$got && \$got > 0;/s,
+	'the uuid a push is answered with is drained first, so the peek sees EOF');
+like($world, qr/if \(!\$retried && !\$rcv && \$had_cached && \$bytes_written == 0 && \$err =~ \/Write error\|Broken pipe\|Connection reset\/\) \{\s*return &unix_socket_sender\(\$file, \$data, \$rcv, 1\);/s,
+	'a write that left no bytes is retried once on a fresh socket');
+
+# --- one binding per name ----------------------------------------------------
+# A `var x = 1;` and a `function x(){}` in the same script are one binding: the
+# hoisted function is assigned first, then the var assignment overwrites it. That
+# is how the watch's own interval (var wsWatchdogTick = 1000) turned the tick
+# function into the number 1000 and the watcher never ran. The page looked fine
+# because jawnosWebsocketStatus still existed.
+{
+	my %vars = map { $_ => 1 } ($ws =~ /^var\s+([A-Za-z_\$][A-Za-z0-9_\$]*)\s*=/mg);
+	my @fns  = ($ws =~ /^function\s+([A-Za-z_\$][A-Za-z0-9_\$]*)\s*\(/mg);
+	my @both = grep { $vars{$_} } @fns;
+	is_deeply(\@both, [], 'no var and function share a name in the websocket scripts')
+		or diag('both var and function: ' . join(', ', @both));
+}
 
 # --- the touched files still parse ------------------------------------------
 

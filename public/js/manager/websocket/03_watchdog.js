@@ -15,7 +15,7 @@
 // purpose: this is the only watcher that polls, and a test pins that the others
 // do not.
 
-var wsWatchdogTick = 1000;
+var wsWatchdogPeriod = 1000;
 var wsWatchdogProbeWait = 2500;
 var wsWatchdogConnectGrace = 8000;
 var wsWatchdogTimer = 0;
@@ -28,7 +28,7 @@ var wsResyncTimer = 0;
 function wsWatchdogStart() {
 	if (wsWatchdogTimer) { return; }
 	wsWatchdogLast = Date.now();
-	wsWatchdogTimer = setInterval(wsWatchdogTick, wsWatchdogTick);
+	wsWatchdogTimer = setInterval(wsWatchdogTick, wsWatchdogPeriod);
 }
 
 function wsWatchdogStop() {

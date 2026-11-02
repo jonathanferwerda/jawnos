@@ -30,6 +30,7 @@ use Mojo::IOLoop;
 use Mojo::JSON qw(decode_json encode_json);
 use Mojo::Util qw/md5_sum xml_escape html_unescape term_escape quote unquote secure_compare url_escape url_unescape network_contains punycode_decode punycode_encode b64_decode b64_encode/;
 use POSIX ();   # mktime: a local-time epoch that still predates 1970
+use Socket qw(MSG_PEEK MSG_DONTWAIT);
 use Text::Unidecode;
 use Time::Duration;
 use Time::HiRes qw(gettimeofday time);
@@ -354,8 +355,9 @@ sub socket_retry_note {
 }
 
 sub unix_socket_sender {
-	my ($file,$data,$rcv) = @_;
+	my ($file,$data,$rcv,$retried) = @_;
 	$rcv = 0 unless defined $rcv;
+	$retried = 0 unless defined $retried;
 
 	if ($file eq 'memory') {
 		$file = &subs::home('~/.president/memory');
@@ -367,15 +369,30 @@ sub unix_socket_sender {
 	my $response_data;
 	my $retry = $socket_retry->{$cache_key};
 	return if $retry && $retry->{'next'} > time;
+	my $bytes_written = 0;
+	my $had_cached = defined $cached_sockets->{$cache_key} ? 1 : 0;
 	my $ok = eval {
 		return 0 unless -e $file;
 
 
 		my $socket = $cached_sockets->{$cache_key};
     if ($socket) {
-        # connected() checks if the local handle thinks it's open;
-        # syswrite with 0 bytes checks if the OS kernel dropped the pipe.
-        if (!$socket->connected || !defined syswrite($socket, '', 0)) {
+        # A cached unix socket can outlive its peer: the websocket worker
+        # restarts, or ws_bind_all rebinds the path. connected() and a
+        # zero-byte write both still say "open" on a socket whose peer is gone,
+        # so the honest test is a non-blocking peek - 0 bytes is EOF. A push
+        # also gets its uuid written back by the receiver; drain that first so
+        # the peek can see the EOF and the buffer cannot grow.
+        if (!$rcv) {
+            while (1) {
+                my $junk = '';
+                my $got = recv($socket, $junk, 65536, MSG_DONTWAIT);
+                last unless defined $got && $got > 0;
+            }
+        }
+        my $peek = '';
+        my $peeked = recv($socket, $peek, 1, MSG_PEEK | MSG_DONTWAIT);
+        if (defined $peeked && $peeked == 0) {
             $socket->close;
             undef $socket;
             delete $cached_sockets->{$cache_key};
@@ -405,7 +422,7 @@ sub unix_socket_sender {
 		my $payload_length = length($jwsm);
 		my $packet         = pack('N', $payload_length) . $jwsm;
     my $bytes_to_write = length($packet);
-    my $bytes_written = 0;
+    $bytes_written = 0;
     while ($bytes_written < $bytes_to_write) {
         my $written = syswrite($socket, $packet, $bytes_to_write - $bytes_written, $bytes_written);
         die "Write error: $!" unless defined $written;
@@ -443,6 +460,14 @@ sub unix_socket_sender {
 };
 unless ($ok) {
 	my $err = $@ || '';
+	delete $cached_sockets->{$cache_key};
+	# A write that failed on a reused socket before any byte left wrote
+	# nothing, so the same message can go once on a fresh connection. This is
+	# the restart case: the peer died between the peek and the write, and a
+	# start or stop push must not be swallowed because of it.
+	if (!$retried && !$rcv && $had_cached && $bytes_written == 0 && $err =~ /Write error|Broken pipe|Connection reset/) {
+		return &unix_socket_sender($file, $data, $rcv, 1);
+	}
 	my $state = &socket_retry_note($cache_key);
 	my $now = time;
 	# one line a second at most, and no payload dump
@@ -458,7 +483,6 @@ unless ($ok) {
 			$log->error("Socket sender error: $err");
 		}
 	}
-	delete $cached_sockets->{$cache_key};
 }
 else {
 	delete $socket_retry->{$cache_key};
