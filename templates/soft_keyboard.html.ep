@@ -129,7 +129,7 @@
 		<div id="soft_kb_suggest_rows" class="soft_kb_convert_rows"></div>
 	</div>
 
-	<script id="soft_kb_units" type="application/json"><%== encode_json({ units => \%kb, symbols => \%kb_sym, base => $kb_base, types => \@kb_types }) %></script>
+	<script id="soft_kb_units" type="application/json"><%== &subs::json_chars({ units => \%kb, symbols => \%kb_sym, base => $kb_base, types => \@kb_types }) %></script>
 	<%# the core label the letter panel draws for its space bar; soft_keyboard.js
 	    reads it because the keys themselves are built in the browser %>
 	<script id="soft_kb_labels" type="application/json"><%== encode_json({ space => &subs::lang('chat.space') }) %></script>
