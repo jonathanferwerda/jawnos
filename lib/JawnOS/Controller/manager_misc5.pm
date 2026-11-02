@@ -135,7 +135,7 @@ sub action_14764 {
 			$timestamp = $appt->{'timestamp'};
 		}
 	}
-	my $returner = { uuid => $uuid, app => $app, timestamp => $timestamp };
+	my $returner = { uuid => $uuid, app => $app, timestamp => $timestamp, urls => [] };
 
 	my $upload_type;
 	my $linux_file;
@@ -286,6 +286,18 @@ sub action_14764 {
 		&appointment_writer($c,$write);
 	}
 	&subs::file_encrypter({ app => &subs::unformat_name($app) });
+	# The encrypter renames every file it seals, so the addresses handed back here
+	# are built from the row it wrote, not from the names given to it above: a
+	# caller (the magazine editor) drops the bytes and needs the URL that works
+	# now, not the one that existed for a moment.
+	my $written_row = &subs::db_query('select file from appointments where app=? and uuid=? limit 1', &subs::unformat_name($app), $uuid)->hashes->[0];
+	my $written_files = ($written_row && $written_row->{'file'}) ? (eval { return decode_json $written_row->{'file'} } || []) : [];
+	foreach my $written ( @{$written_files} ) {
+		next unless $written->{'f'};
+		my $target = $c->url_for('/manager/download_file');
+		$target->query(app => &subs::unformat_name($app), uuid => $uuid, timestamp => $timestamp, file => $written->{'f'});
+		push @{$returner->{'urls'}}, $target->path_query;
+	}
 
 	$returner->{'cv'} = &centre_view_grabber({ c => $c, app => &subs::unformat_name($app), timestamp => $timestamp, cached => 'no' });
 	# the files just written, so a caller (the chat's paperclip) can carry them

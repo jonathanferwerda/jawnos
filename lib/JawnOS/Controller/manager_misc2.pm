@@ -103,7 +103,7 @@ sub action_7170 {
 	my $scope = $c->param('scope');
 	my $server_time = &subs::rightNow();
 	my $title = $c->param('title');
-	my $content = $c->param('content');
+	my $content = &subs::article_html_clean($c->param('content'));
 	my $teaser = &subs::teaser_name($c->param('teaser')) . '...' || "";
 	my $uuid = $c->param('article_uuid');
 	my $text_colour = $c->param('text_colour');

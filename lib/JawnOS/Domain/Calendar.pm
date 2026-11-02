@@ -254,17 +254,29 @@ sub appt_header_printer {
 	unless (($data->{'broadcast'} // '') eq 'no' || ($data->{'source'} // '') eq 'ws') {
 		&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
 	}
-	&subs::subprocessor(sub {
-    Mojo::IOLoop->reset;
-		foreach my $a ( @{$appts->{$app}->{'list'}} ) {
+	# The alarm poke walks the header's own rows, and a centre-view header read is
+	# bounded to the newest and oldest row (log_reader's centre_view queries are two
+	# `limit 1` reads). On that path the loop is cheap enough to run here: the
+	# subprocess existed for it alone, and it cost a fork on every app open. The
+	# other callers still render the centre view afterwards, which is the work that
+	# wants a process of its own.
+	my $alarm_run = sub {
+		my $list = ($appts->{$app} || {})->{'list'} || [];
+		foreach my $a ( @{$list} ) {
 			&appt_alarm_setter($a);
 		}
-		unless ($data->{'source'} eq 'centre_view_grabber') {
+	};
+	if (($data->{'source'} // '') eq 'centre_view_grabber') {
+		$alarm_run->();
+	} else {
+		&subs::subprocessor(sub {
+			Mojo::IOLoop->reset;
+			$alarm_run->();
 			# hand the appointments we already loaded to the worker: the render below
 			# would otherwise fetch the same set from the database again
 			&Manager::centre_view_grabber({ app => &subs::unformat_name($app), appts => $appts, header => $header, timestamp => &subs::rightNow(), cached => 'no' });
-		}
-	}, { name => 'header worker' });
+		}, { name => 'header worker' });
+	}
 
 	# the caller that also renders the centre view can reuse this fetch instead
 	# of asking log_reader for the same rows again

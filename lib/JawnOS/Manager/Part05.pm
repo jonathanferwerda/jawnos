@@ -389,7 +389,9 @@ sub homepage_maker($c) {
 	$articles = $articulation->hashes;
 	foreach my $mc ( @{$articles} ) {
 		$mc->{'public'} = &subs::setting_grabber({ app => &subs::unformat_name($mc->{'title'}), setting => 'public' });
-
+		# the homepage draws an article's markup raw, and articles sync between
+		# machines: nothing reaches the public page without the allowlist
+		$mc->{'content'} = &subs::article_html_clean($mc->{'content'});
 	}
 	my $ws_url = &ws_url_for($c, '/manager/ws');
 	my $mail_ws_url = &ws_url_for($c, '/mail/ws');

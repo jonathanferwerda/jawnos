@@ -261,16 +261,19 @@ our %topic = (
 	},
 	'editor' => {
 		title => 'Editor', category => 'apps', app => 'editor',
-		summary => 'Lay out a magazine article from headings, paragraphs and media.',
+		summary => 'Write and lay out a magazine article on a page that reads like the newspaper.',
+		verified => '2026-11-01',
 		body => [
-			'Editor lays out the house\'s magazine articles. Pick an article from the list, or press New article, then add blocks from the toolbar: headings, a paragraph, a link, audio, video, an image or a canvas. Colours set the article\'s text and background; Category decides where it belongs and Status says how far it has gone - draft, review, publish or recanted.',
-			'The time and warranty fields use the house\'s time controls. Save writes the article and keeps the list in step; the toolbar shows Unsaved changes while an edit is waiting, and Saved once it is written. Close puts the drag handles away and leaves the article on screen.',
-			'An article that has been published appears in the magazine and can be reopened here. The per-appointment notes editor and its variables are the separate text editor used in appointment windows; Editor is the magazine surface.'
+			'Editor is the magazine surface: the article is a page you write on, not a rack of placeholders. Type straight into it. The style buttons restyle the block the caret is in - Headline, Subhead, Body, Quote or Caption - and Text starts a new paragraph. Everything is a block, so a headline, a picture, a quote and a caption are edited in place and read as a column when the article is published.',
+			'Anything can be dropped onto the page. A picture, a track, a video or a canvas dragged from another window lands as what it is; a file dropped from the desktop lands without being declared; a pasted screenshot is embedded; a URL becomes a link, or the media it points at. Pictures are shrunk and embedded in the article so the public homepage can show them without the vault, while a dropped track or video is stored with the article and linked.',
+			'Blocks move by their grip: the handle at the left of the block under the pointer drags it anywhere in the page, and Alt with the up or down arrow moves the block under the caret. Colours set the article\'s text and background, before a block is picked or on the block itself. Category decides where it belongs and Status says how far it has gone - draft, review, publish or recanted. Delete arms with a second press, and pressing the window\'s close with unsaved work asks for a second press rather than throwing it away.',
+			'The time and warranty fields use the house\'s time controls. Save writes the article and keeps the list in step; the toolbar shows Unsaved changes while an edit is waiting, and Saved once it is written. An article that has been published appears in the magazine and can be reopened here. The per-appointment notes editor and its variables are the separate text editor used in appointment windows; Editor is the magazine surface.'
 		],
 		steps => [
-			'Open Editor and choose an article, or press New article.',
-			'Add and arrange the blocks, then set the colours, category and status.',
-			'Save the article; it appears in the library and can be published.'
+			'Open Editor and choose an article, or press New.',
+			'Type the article; use the style buttons for a headline, a subhead, a quote or a caption.',
+			'Drop a picture, a track or a video on the page - or press Media to pick one - and drag the grip to move a block.',
+			'Set the colours, category and status, then Save.'
 		],
 		related => [ 'ide', 'notes' ]
 	},

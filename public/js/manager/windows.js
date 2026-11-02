@@ -259,55 +259,84 @@ $(document).on('click', '.window_toggle', function() {
 var lastUserGesture = 0;
 $(document).on('mousedown touchstart keydown click', function () { lastUserGesture = Date.now(); });
 
-function windowMaker(response) {
+// A rendered window is parsed once as inert DOM and read from there. jQuery
+// used to re-parse the whole response for every attribute it read - ten parses
+// of 40 KB on an ordinary app open. A template parse does not run the window's
+// script; windowMaker still appends the response string, so the script runs
+// exactly when it did before.
+function windowResponseFragment(response) {
+	var template = document.createElement('template');
+	template.innerHTML = response;
+	return template.content;
+}
+
+// $(response).filter('.wind') only ever matched a top-level element.
+function windowResponseRoot(fragment) {
+	var children = fragment.children;
+	for (var i = 0; i < children.length; i++) {
+		if (children[i].classList.contains('wind')) { return children[i]; }
+	}
+	return null;
+}
+
+function windowMaker(response, fragment) {
 	if (response == '') { return; }
-	var window_id = $(response).filter('.wind').attr('id');
-	var window_app = $(response).filter('.wind').attr('app');
-	var window_terminal_id = $(response).filter('.wind').attr('data-terminal-id') || '';
-	var window_instance_id = $(response).filter('.wind').attr('data-window-id') || '';
+	fragment = fragment || windowResponseFragment(response);
+	var first_element = fragment.firstElementChild;
+	var root = windowResponseRoot(fragment);
+	var window_id = root ? root.getAttribute('id') : undefined;
+	var window_app = root ? root.getAttribute('app') : undefined;
+	var window_terminal_id = (root && root.getAttribute('data-terminal-id')) || '';
+	var window_instance_id = (root && root.getAttribute('data-window-id')) || '';
 	var app = window_app;
 
-	var timestamp = $(response).filter('.wind').attr('timestamp');
-	var window_contents = $(response).find('#window_contents_' + timestamp).show();
+	var timestamp = root ? root.getAttribute('timestamp') : undefined;
+	// $(response).find('.window_contents').html(), read from the same parse
+	var contents_element = fragment.querySelector('.window_contents');
+	var contents_html = contents_element ? contents_element.innerHTML : '';
 	var json_storage = storage || sessionStorage.getItem('window_storage');
 	var storage = JSON.parse(json_storage) ? JSON.parse(json_storage) : {};
 	var matches = 0;
 	var locked = 'no';
 	var carry_on = 0;
 	try {
-		$('.wind').each(function(i,v){
-			var app_attr = $(v).attr('app');
-			var app_timestamp = $(v).attr('timestamp');
-			var existing_terminal_id = $(v).attr('data-terminal-id') || '';
-			var existing_instance_id = $(v).attr('data-window-id') || '';
+		// One native pass over the windows instead of a jQuery wrap per node.
+		var winds = document.querySelectorAll('.wind');
+		for (var wi = 0; wi < winds.length; wi++) {
+			var v = winds[wi];
+			var app_attr = v.getAttribute('app');
+			var app_timestamp = v.getAttribute('timestamp');
+			var existing_terminal_id = v.getAttribute('data-terminal-id') || '';
+			var existing_instance_id = v.getAttribute('data-window-id') || '';
 			// Terminals are several windows of one app, and so are Folders windows.
 			// Only the same session (or the same named window) may refresh a window;
 			// a different one is a new window, not a redraw.
 			if (app_attr == window_app && (!window_terminal_id || !existing_terminal_id || existing_terminal_id == window_terminal_id) && (!window_instance_id || !existing_instance_id || existing_instance_id == window_instance_id)) {
-				var ow = $(v).width();
-				var oh = $(v).height();
-				var ol = $(v).css('left');
-				var ot = $(v).css('top');
+				var wind_el = $(v);
+				var ow = wind_el.width();
+				var oh = wind_el.height();
+				var ol = wind_el.css('left');
+				var ot = wind_el.css('top');
 				matches = 1;
-				var id = $(response).attr('id');
-				var response_timestamp = $(response).attr('timestamp');
+				var id = first_element ? first_element.getAttribute('id') : undefined;
+				var response_timestamp = first_element ? first_element.getAttribute('timestamp') : undefined;
 				if (response_timestamp >= (numeral(app_timestamp).value())) {
 					var window_saver = sessionStorage.getItem('window_storage');
 
 
 					var view = JSON.parse(window_saver) || {};
-					$(v).find('script').remove();
-					var blci = $(v).find('.budget_current_information');
+					wind_el.find('script').remove();
+					var blci = wind_el.find('.budget_current_information');
 					if (app_attr == 'video' || app_attr == 'screen' || app_attr == 'camera') {
 
 					}
 					else {
-						$(v).find('.window_contents').html($(response).find('.window_contents').html());
+						wind_el.find('.window_contents').html(contents_html);
 						$('#' + id).width(ow).height(oh);
 						$('#' + id).css({ 'left': ol, 'top': ot });
 					}
 
-					locked = $(v).attr('locked');
+					locked = v.getAttribute('locked');
 					var new_v = $('#' + id);
 					if (new_v.attr('pre_dimensioned') != 1) {
 					//	new_v.css({ 'top': view[window_app].top, 'left': (view[window_app].left), 'height': view[window_app].height, 'width': view[window_app].width});
@@ -320,7 +349,7 @@ function windowMaker(response) {
 					// timestamp of the *response*, which is not the window on the
 					// page yet, so it raised nothing at all.
 					if (Date.now() - lastUserGesture < 1500) {
-						topLevelNow($(v));
+						topLevelNow(wind_el);
 					}
 					var blci2 = $(new_v).attr('current_information');
 					if (blci.attr('status') == 'open' || blci2) {
@@ -331,7 +360,7 @@ function windowMaker(response) {
 				}
 				else { matches = 1; }
 			}
-		});
+		}
 		
 		if (matches == 0 && response != "null") {
 			$('#browser').append('' + response + '');

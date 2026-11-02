@@ -251,23 +251,14 @@ function appClearer(app) {
 }
 
 function centreViewWriter(response) { 
-	var res = $(response).find('.appointment');
-	var app = $(res).attr('app');
-
-	var appointments = $('body').find('.appointment');
-	var matches = 0;
-	if (appointments.length > 0) {
-		$.each(appointments, function(n,val) {
-			if ($(val).attr('app') == app) {
-			//	$(val).replaceWith(response).show();
-				matches = 1;
-				windowMaker(response);
-			}
-		});
-	}
-	if (matches == 0) {
-		windowMaker(response);
-	}
+	// windowMaker decides for itself whether the app's window is already on the
+	// page (it has the .wind nodes), so all this did was run windowMaker again
+	// for every .appointment carrying the app - and the first call had already
+	// replaced the window, so those repeats redrew the same thing. The cost was
+	// a full jQuery parse of the response plus a jQuery wrap of every
+	// .appointment on the page, hundreds on a busy desk. Parse once, as inert
+	// DOM, and hand that same parse to windowMaker.
+	windowMaker(response, windowResponseFragment(response));
 	appointment_chron();
 }
 

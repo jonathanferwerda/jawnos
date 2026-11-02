@@ -913,6 +913,8 @@ our %manager_app_scripts = (
 	notes           => [qw(/js/manager/notes.js)],
 	search          => [qw(/js/manager/search.js)],
 	ide             => [qw(/js/manager/ide.js /js/manager/ide_code.js)],
+	store           => [qw(/js/store.js)],
+	email           => [qw(/js/manager/email.js)],
 );
 
 # The entry functions core code may call before the app's own script is there
@@ -935,6 +937,8 @@ our %manager_app_entry = (
 	process_monitor => [qw(monitorOpener)],
 	people          => [qw(peopleOpener)],
 	ide             => [qw(ideTabPopulator)],
+	store           => [qw(storeOpener)],
+	email           => [qw(emailReaderOpen emailReaderClose)],
 );
 
 # The start-menu icons are drawn by the server, but each app used to register
@@ -950,6 +954,7 @@ our %manager_toggle_apps = (
 	network_toggle => 'network', phone_toggle => 'phone', ide_toggle => 'ide',
 	budget => 'budget', warehouse_toggle => 'warehouse', measures_toggle => 'measures',
 	market_toggle => 'market', process_monitor_toggle => 'process_monitor',
+	store_toggle => 'store', email_toggle => 'email',
 );
 
 # The one bundle the page loads up front: everything an app chunk names is gone

@@ -1,24 +1,34 @@
 <div id="editor" class="editor_surface">
-	<div class="editor_toolbar editor_toolbar_top">
+	<div class="editor_head">
 		<select id="editor_article_picker" aria-label="<%= &subs::ui('Article') %>" hint="<%= &subs::ui('Article') %>">
 			<option value="none" <% if (!($current->{'uuid'} // '') || ($current->{'uuid'} // '') eq 'none') { %>selected<% } %>><%= &subs::ui('New article') %></option>
 			<% foreach my $a ( @{$articles} ) { %>
 				<option <% if (($a->{'uuid'} // '') eq ($current->{'uuid'} // '')) { %>selected <% } %> value="<%= $a->{'uuid'} %>"><%= $a->{'title'} || &subs::ui('Untitled') %></option>
 			<% } %>
 		</select>
-		<img id="editor_new" class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/file.png') %>" hint="<%= &subs::ui('New article') %>" alt="<%= &subs::ui('New article') %>">
-		<img id="editor_save" class="little_thumb" src="<%= &subs::icon_for('/images/decipherable/diskette.png') %>" hint="<%= &subs::lang('save') %>" alt="<%= &subs::lang('save') %>">
-		<img id="editor_delete" class="little_thumb" src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::ui('Close') %>" alt="<%= &subs::ui('Close') %>">
+		<button type="button" id="editor_new" class="editor_button" hint="<%= &subs::ui('New article') %>"><%= &subs::ui('New') %></button>
+		<button type="button" id="editor_save" class="editor_button editor_button_primary" hint="<%= &subs::lang('save') %>"><%= &subs::lang('save') %></button>
+		<button type="button" id="editor_delete" class="editor_button editor_button_quiet" hint="<%= &subs::ui('Delete this article') %>"><%= &subs::ui('Delete') %></button>
 		<span id="editor_save_state" class="editor_save_state" aria-live="polite"></span>
 	</div>
 
-	<div class="editor_toolbar editor_toolbar_blocks">
-		<% foreach my $b ( qw/h1 h2 h3 h4 a p audio video img canvas/ ) { %>
-			<button type="button" content_type="<%= $b %>" class="editor_content_adder" id="editor_<%= $b %>" hint="<%= &subs::ui('Add') . ' ' . $b %>"><%= $b %></button>
+	<div class="editor_bar editor_bar_blocks" role="toolbar" aria-label="<%= &subs::ui('Text style') %>">
+		<% foreach my $style ( [ 'h1', &subs::ui('Headline') ], [ 'h2', &subs::ui('Subhead') ], [ 'p', &subs::ui('Body') ], [ 'blockquote', &subs::ui('Quote') ], [ 'figcaption', &subs::ui('Caption') ] ) { %>
+			<button type="button" class="editor_style_button" data-block="<%= $style->[0] %>" hint="<%= $style->[1] %>"><%= $style->[1] %></button>
 		<% } %>
+		<span class="editor_bar_separator"></span>
+		<button type="button" id="editor_add_text" class="editor_button" hint="<%= &subs::ui('Add a paragraph at the end') %>">+ <%= &subs::ui('Text') %></button>
+		<button type="button" id="editor_add_media" class="editor_button" hint="<%= &subs::ui('Add a picture, a track or a video') %>">+ <%= &subs::ui('Media') %></button>
+		<button type="button" id="editor_add_divider" class="editor_button editor_button_quiet" hint="<%= &subs::ui('Add a dividing rule') %>"><%= &subs::ui('Rule') %></button>
+		<input type="file" id="editor_file_picker" class="editor_file_picker" multiple accept="image/*,video/*,audio/*">
 	</div>
 
-	<div class="editor_toolbar editor_toolbar_fields">
+	<div id="editor_content_parent" class="editor_content_parent">
+		<div id="editor_content_area" class="editor_content_area" contenteditable="true" role="textbox" aria-multiline="true" aria-label="<%= &subs::ui('Article body') %>" spellcheck="true" data-placeholder="<%= &subs::ui('Write the article here, or drop a picture, a track or a video onto the page.') %>"></div>
+		<div id="editor_block_grip" class="editor_block_grip" draggable="true" aria-hidden="true" hint="<%= &subs::ui('Drag to move this block') %>">&#8942;&#8942;</div>
+	</div>
+
+	<div class="editor_bar editor_bar_fields">
 		<label class="editor_field" for="editor_text_colour"><%= &subs::ui('Text colour') %>
 			<input value="<%= $current->{'text_colour'} || '#000000' %>" type="color" class="editor_colour_picker" id="editor_text_colour">
 		</label>
@@ -40,9 +50,6 @@
 				<% } %>
 			</select>
 		</label>
-	</div>
-
-	<div class="editor_toolbar editor_toolbar_fields">
 		<label class="editor_field" for="editor_timestamp"><%= &subs::ui('Time') %>
 			<input type="text" id="editor_timestamp" class="time" timestamp="<%= $current->{'timestamp'} || (time() * 1000) %>" value="<%= $current->{'timestamp'} %>">
 		</label>
@@ -51,7 +58,5 @@
 		</label>
 	</div>
 
-	<div id="editor_content_parent" class="editor_content_parent">
-		<%= $current->{'content'} || '' %>
-	</div>
+	<div id="editor_stored_content" class="editor_stored_content" hidden><%= $current->{'content'} || '' %></div>
 </div>

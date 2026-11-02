@@ -229,6 +229,10 @@ sub editor_maker($c) {
 		status => 'draft', timestamp => $timestamp, warranty => 0,
 		text_colour => '#000000', background_colour => '#ffffff'
 	};
+	# Stored content is markup, not text: it is cleaned here as well as on the way
+	# in, so a row synced from another machine (or written before the allowlist)
+	# cannot carry a script into the editor or the homepage.
+	$current->{'content'} = &subs::article_html_clean($current->{'content'});
 
 	my $contents = $c->render_to_string(
 		template => 'editor',
