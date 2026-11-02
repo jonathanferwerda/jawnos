@@ -579,6 +579,40 @@ sub action_47050 {
 				&Websocket::send('tab', { textAreaMagic => $data });
 			}
 		}
+		elsif (($data->{'type'} || '') eq 'resync') {
+			# A socket that comes back after a sleep, a network change or a worker
+			# restart has missed every frame pushed while it was gone - above all
+			# the appointment header a start or stop sends. The client names the
+			# windows it has open; answer with the header each one is wearing now.
+			# The header cache is written by every start/stop, so the answer is a
+			# row lookup; only an app with no cached header is rendered.
+			my $resync_headers = {};
+			my @resync_apps = (ref $data->{'apps'} eq 'ARRAY') ? @{ $data->{'apps'} } : ();
+			splice(@resync_apps, 30) if scalar(@resync_apps) > 30;
+			my %resync_seen;
+			foreach my $resync_app ( @resync_apps ) {
+				next if ref $resync_app || !defined $resync_app || $resync_app !~ /\S/;
+				my $ra = &subs::unformat_name($resync_app);
+				next if $ra eq '' || $resync_seen{$ra}++;
+				my $cached_header = eval { &subs::cache_get({ app => $ra, context => 'header' }) } || {};
+				my $ra_html = (ref $cached_header eq 'HASH') ? ($cached_header->{'header'} // '') : '';
+				unless (length $ra_html) {
+					$ra_html = eval { &subs::appt_header_printer({ app => $ra, header_only => 1, broadcast => 'no' }) } || '';
+				}
+				$resync_headers->{$ra} = $ra_html if length $ra_html;
+			}
+			# The theme is idempotent (its signature filters an unchanged push), and a
+			# start or stop is what moves it; a reconnect asks for it too.
+			eval { &subs::appointment_theme_push() } if $data->{'theme'};
+			&Websocket::send($app, {
+				type => 'resync',
+				app => $app,
+				headers => $resync_headers,
+				destination => $browser_tab_id,
+				browser_tab_id => $browser_tab_id,
+				timestamp => &subs::rightNow()
+			});
+		}
 		else {
 			$data->{'not_me'} = 1;
 			$data->{'browser_tab_id'} = $browser_tab_id;

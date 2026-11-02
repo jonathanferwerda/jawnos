@@ -2,6 +2,7 @@
    websocket.js is part 1. The rest live in websocket/ in name order:
      01_message_handler.js  - wsMessageHandler, the incoming message dispatcher
      02_heartbeat_and_reload.js  - heartbeat settle, media/neighbour handlers, stop/lock and in-place reload
+     03_watchdog.js  - local liveness watch, wake-by-clock-jump, reconnect resync
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var ws = {};
@@ -47,13 +48,15 @@ var seenWsMessages = [];
 $(document).ready(function() {
 	ensureYellowRing();
 	websocketStart();
+	wsWatchdogStart();
 });
 
 function wsStatusChecker() {
 	var timestamp = Date.now();
 	$.each(ws, function(i,v) {
 		if (windowVisible == 1 && ( ws[i]['status'] == 'alive' || ws[i]['status'] == 'connect' || ws[i]['status'] == 'open' )) {
-			if (ws[i]['stayingAlive'] && timestamp > (ws[i]['stayingAlive'] + (stayingAliveInterval * 2))) {
+			var ws_heard = ws[i]['ackAt'] || ws[i]['stayingAlive'];
+			if (ws_heard && timestamp > (ws_heard + (stayingAliveInterval * 2))) {
 				clearInterval(heartbeat[i]);
 				websocketStop(i);
 			}
@@ -85,7 +88,8 @@ function websocketLooksDead() {
 		var socket = ws[apps[i]];
 		if (socket && socket.readyState == 0) { continue; } // still shaking hands
 		if (!socket || socket.readyState != 1) { return 1; }
-		if (socket['stayingAlive'] && Date.now() > (socket['stayingAlive'] + (stayingAliveInterval * 2))) { return 1; }
+		var ws_heard = socket['ackAt'] || socket['stayingAlive'];
+		if (ws_heard && Date.now() > (ws_heard + (stayingAliveInterval * 2))) { return 1; }
 	}
 	return 0;
 }
@@ -145,6 +149,7 @@ function websocketWake(force) {
 	windowVisible = 1;
 	if (!wsStatusInterval) { wsStatusInterval = setInterval(wsStatusChecker, stayingAliveInterval); }
 	websocketRetryClear();
+	wsWatchdogStart();
 	var away = pageHiddenAt ? (Date.now() - pageHiddenAt) : 0;
 	pageHiddenAt = 0;
 	if (!Object.keys(ws).length) {
@@ -193,6 +198,7 @@ document.addEventListener('visibilitychange', function() {
 		windowVisible = 0;
 		clearInterval(wsStatusInterval);
 		wsStatusInterval = null;
+		wsWatchdogStop();
 		Object.keys(heartbeat).forEach(function(app) {
 			clearInterval(heartbeat[app]);
 			delete heartbeat[app];
@@ -283,6 +289,8 @@ function websocketStart(appt,address) {
 			wsOpener(event,app,origin);
 		};
 		ws[app].onmessage = function (event) {
+			// any frame is an ack: the watchdog measures silence from here
+			wsTouched(app);
 			wsMessageHandler(event);
 		};
 		ws[app].onclose = function(event){
@@ -293,7 +301,6 @@ function websocketStart(appt,address) {
 			// paced backoff. A deliberate close (rebuild/stop) has already
 			// replaced the handle, so this test keeps it quiet.
 			if (ws[app] === this) { websocketRetryLater(); }
-			if (app == 'server' && ws[i] != null) { ws['server'].send({ type: 'lock_screen', browser_tab_id: bti }); }
 
 		}
 	});
@@ -304,6 +311,11 @@ function wsOpener(event,app,origin) {
 	// A socket that answered ends any backoff earned by one that did not. The
 	// retry timer is left alone: it may belong to another app's dead socket.
 	wsRetryFailures = 0;
+	// The first open of this page needs nothing rebuilt; every later open is a
+	// reconnect, and a reconnect may have missed frames while it was away.
+	var ws_reopened = wsOpenedBefore[app] ? 1 : 0;
+	wsOpenedBefore[app] = 1;
+	wsTouched(app);
 	var browser_tab_id = sessionStorage.getItem('browser_tab_id');
 	var browser_tab = localStorage.getItem('browser_tab');
 	var uA = navigator.userAgent;
@@ -365,6 +377,10 @@ function wsOpener(event,app,origin) {
 	if (app == 'server' && typeof jawnPadlockKeyCheck === 'function') {
 		jawnPadlockKeyCheck(true);
 	}
+	// The same absence can hide a start or stop: its header was pushed while the
+	// socket was gone. Ask for the open windows' current headers once the link
+	// is back, so the screen is truthful the moment the connection is.
+	if (ws_reopened) { wsResyncSoon(); }
 }
 
 // (Re)start the liveness heartbeat for one socket. Called when a socket opens

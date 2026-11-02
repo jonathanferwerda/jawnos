@@ -8,6 +8,20 @@
 var wsMessageQueue = [];
 var wsMessageFlushTimer = null;
 
+// One place that puts a freshly rendered appointment header on the screen. A
+// live push, a reset response and a reconnect's catch-up all carry one, so all
+// three land the same way: the wrapper, its timestamp, and the clock that reads
+// it. A window that is not open has no header to replace, so nothing happens.
+function jawnosHeaderApply(app, html, timestamp) {
+	if (!app || !html) { return; }
+	var header = $('.wind[app="' + app + '"]').find('.appointment_header_background');
+	if (!header.length) { return; }
+	header.replaceWith('' + html + '');
+	header = $('.wind[app="' + app + '"]').find('.appointment_header_background');
+	header.attr('last_updated', timestamp || Date.now());
+	if (typeof appointment_chron === 'function') { appointment_chron(); }
+}
+
 function wsMessageHandler(event) {
 	wsMessageQueue.push(event.data);
 	if (wsMessageFlushTimer) { return; }
@@ -445,18 +459,20 @@ function wsMessageDispatch(raw) {
 			appointment_chron();
 		}
 		else if ( data['type'] == 'header' ) {
-			var header = $('.wind[app="' + data['app'] + '"]').find('.appointment_header_background');
+			jawnosHeaderApply(data['app'], data['header'], data['timestamp']);
 			var blci = $('.budget_current_information[app="' + data['app'] + '"]');
-			var status = blci.attr('status');
-			header.replaceWith('' + data['header'] + '');
-			var now = data['timestamp'];
-			header = $('.wind[app="' + data['app'] + '"]').find('.appointment_header_background');
-			header.attr('last_updated', now);
 			var circumstance = blci.attr('circumstance');
 			if (circumstance && blci.is(':visible')) {
 				if (typeof budgetLight === 'function') { budgetLight(data['app'],circumstance,'open'); }
 			}
-			appointment_chron()
+		}
+		else if ( data['type'] == 'resync' ) {
+			// The catch-up for a socket that was away: every open window's current
+			// appointment header, in one frame. A start or stop that happened while
+			// the link slept is painted here, without a reload.
+			$.each(data['headers'] || {}, function (app, html) {
+				jawnosHeaderApply(app, html, data['timestamp']);
+			});
 		}
 		else if ( data['type'] == 'budget' ) {
 			var blci = $('.budget_current_information[app="' + data['app'] + '"]');

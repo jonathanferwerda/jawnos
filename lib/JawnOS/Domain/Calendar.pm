@@ -280,6 +280,13 @@ sub appt_header_printer {
 	unless (($data->{'broadcast'} // '') eq 'no' || ($data->{'source'} // '') eq 'ws') {
 		&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
 	}
+	# A caller that only needs the HTML - a reconnect asking what the reopened
+	# windows are wearing - takes the header and stops here. The alarm walk and
+	# the centre-view render are work nobody asked that caller for, and the
+	# centre view is the expensive one.
+	if ($data->{'header_only'}) {
+		return wantarray ? ($header, $appts) : $header;
+	}
 	# The alarm poke walks the header's own rows, and a centre-view header read is
 	# bounded to the newest and oldest row (log_reader's centre_view queries are two
 	# `limit 1` reads). On that path the loop is cheap enough to run here: the

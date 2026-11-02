@@ -964,6 +964,10 @@ elsif ($type eq 'delay') {
 	&padlock_time_extender($c);
 	$returner->{'cv'} = $cv;
 	$returner->{'uuid'} = $uuid;
+	# The header the press just changed, so the page that pressed it can show the
+	# new state even when the live socket is the thing that was asleep. The same
+	# header is pushed to every tab above; this is the reply, not a second source.
+	$returner->{'header'} = $appt_header if defined $appt_header && length $appt_header;
 	unless ($c->param('account') && $c->param('account') eq 'gallery' && &subs::setting_grabber({ app => 'me', setting => 'gallery_appts' }) eq 'off' ) {
 	#	&Websocket::send('tab', { app => $app, window => $cv, timestamp => $timestamp });
 	}

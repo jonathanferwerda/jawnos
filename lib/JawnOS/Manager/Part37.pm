@@ -351,6 +351,20 @@ sub websocket_sender($wsm) {
 			return 0 unless $dev;
 			return &padlock_device_locked($dev);
 		};
+		# One recipient, one guarded write. A connection the loop has already
+		# finished still sits in the registry until its finish handler runs, and a
+		# write to it used to fail the whole broadcast: every tab behind it in the
+		# hash lost the frame. Failure now drops that one connection and the rest
+		# of the push continues - a reconnect resyncs what it missed.
+		my $deliver = sub {
+			my ($target, $conn, $key) = @_;
+			return 0 unless $conn;
+			my $ok = eval { $conn->send($wire); 1 };
+			unless ($ok) {
+				delete $target->{$app}->{$key} if defined $key;
+			}
+			return $ok ? 1 : 0;
+		};
 		my $count = 0;
 
 		foreach my $ws ( $gb::ws, $gb::remote_ws ) {
@@ -368,7 +382,7 @@ sub websocket_sender($wsm) {
 			}
 			if ( $original_msg->{'destination'}) {
 				if (my $conn = $ws->{$app}->{$wsm->{'destination'}}) {
-					$conn->send($wire) unless $recipient_locked->($conn);
+					$deliver->($ws, $conn, $wsm->{'destination'}) unless eval { $recipient_locked->($conn) };
 				}
 				elsif ($wsm->{'server_time'} > &subs::rightNow() - 10000) {
 					push @{$return_msg->{'save'}}, $wsm;
@@ -378,26 +392,26 @@ sub websocket_sender($wsm) {
 				foreach my $w ( keys %{$ws->{$app}} ) {
 					if (my $conn = $ws->{$app}->{$w}) {
 						next if $w eq $original_msg->{'browser_tab_id'};
-						next if $recipient_locked->($conn);
+						next if eval { $recipient_locked->($conn) };
 						if ($msg->{'role'} && $msg->{'role'} ne 'all') {
 							if ($msg->{'role'} ne $conn->{'privilege'}) {
 								next;
 							}
 						}
-						$returner = $conn->send($wire);
+						$returner = $deliver->($ws, $conn, $w);
 					}
 				}
 			}
 			else {
 				foreach my $w ( keys %{$ws->{$app}}) {
 					if (my $conn = $ws->{$app}->{$w}) {
-						next if $recipient_locked->($conn);
+						next if eval { $recipient_locked->($conn) };
 						if ($msg->{'role'} && $msg->{'role'} ne 'all') {
 							if ($msg->{'role'} ne $conn->{'privilege'}) {
 								next;
 							}
 						}
-						$returner = $conn->send($wire);
+						$returner = $deliver->($ws, $conn, $w);
 					}
 				}
 			}

@@ -255,6 +255,12 @@ function managerReset(caller,e) {
 		data: data,
 		success: function(response) {
 				appClearer(app)
+				// The start/stop frame is also pushed over the websocket, but the
+				// press that caused it must not depend on a live socket to show
+				// the result: the reset returns the header it just rendered.
+				if (response && response['header'] && typeof jawnosHeaderApply === 'function') {
+					jawnosHeaderApply(app, response['header'], response['server_time']);
+				}
 				if (response && response.schedule_ask && typeof assistantAskFresh === 'function') {
 					assistantAskFresh(app, response.schedule_ask);
 				}
