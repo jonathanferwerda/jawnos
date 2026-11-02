@@ -1661,7 +1661,7 @@ our %mailws_untrusted_rate = ();
 
 
 
-if ($ENV{PURPOSE} && ($ENV{PURPOSE} ne "alarm" && $ENV{PURPOSE} ne "watch" && $ENV{PURPOSE} ne "teletype")) {
+if ($ENV{PURPOSE} && ($ENV{PURPOSE} ne "alarm" && $ENV{PURPOSE} ne "watch" && $ENV{PURPOSE} ne "teletype" && $ENV{PURPOSE} ne "coding")) {
 
 	app->sessions->samesite('lax');
 	$ENV{MOJO_MAX_MESSAGE_SIZE} = 1023423423473741824;

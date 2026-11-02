@@ -86,6 +86,73 @@ function jawnosAgentsOpenPanels() {
 	return open;
 }
 
+// ---- panels the browser remembers ----------------------------------------------
+// The server remembers every conversation and its turns, but it does not know
+// which panels were on screen when the page was last left. A spawned panel (a
+// second associate, a coding chat off the + button) belongs to no layout, so
+// without this it stays gone until someone re-opens it from the list above. The
+// keys are 'guide:<conversation>' and 'coding:<conversation>'.
+function jawnosAgentOpenWrite(list) {
+	try {
+		if (window.localStorage) { localStorage.setItem('jawnos_agents_open', JSON.stringify(list || [])); }
+	} catch (e) { /* private mode or a full quota: remembering is a convenience, not a promise */ }
+}
+
+function jawnosAgentOpenList() {
+	var list = [];
+	try {
+		var raw = window.localStorage ? localStorage.getItem('jawnos_agents_open') : null;
+		var parsed = raw ? JSON.parse(raw) : null;
+		if (Array.isArray(parsed)) {
+			for (var i = 0; i < parsed.length; i++) {
+				if (typeof parsed[i] === 'string' && parsed[i] && list.indexOf(parsed[i]) < 0) { list.push(parsed[i]); }
+			}
+		}
+	} catch (e) { list = []; }
+	return list;
+}
+
+function jawnosAgentOpenRemember(key) {
+	if (!key || typeof key !== 'string') { return; }
+	var list = jawnosAgentOpenList();
+	if (list.indexOf(key) >= 0) { return; }
+	list.push(key);
+	jawnosAgentOpenWrite(list);
+}
+
+function jawnosAgentOpenForget(key) {
+	if (!key || typeof key !== 'string') { return; }
+	var list = jawnosAgentOpenList();
+	var at = list.indexOf(key);
+	if (at < 0) { return; }
+	list.splice(at, 1);
+	jawnosAgentOpenWrite(list);
+}
+
+// Put back every remembered panel that is not on screen already. It runs once
+// the page is ready and twice after it: the window layout comes back over the
+// socket (windowRetriever) a beat or two later, and what the layout mounts must
+// win - a clone opened too early would otherwise sit beside it as a duplicate.
+// jawnosAgentsOpenPanels counts a hidden panel as present, which is right: its
+// row already brings it back, so making another would split one thread in two.
+function jawnosAgentOpenRestore() {
+	var list = jawnosAgentOpenList();
+	if (!list.length) { return; }
+	var open = jawnosAgentsOpenPanels();
+	list.forEach(function (key) {
+		if (open[key]) { return; }
+		var bits = key.split(':');
+		var kind = bits.shift();
+		var name = bits.join(':');
+		if (!name) { return; }
+		if (kind === 'guide') {
+			if (typeof assistantOpenConversation === 'function') { assistantOpenConversation(name); open[key] = 1; }
+			return;
+		}
+		if (kind === 'coding' && typeof codingChatOpenConversation === 'function') { codingChatOpenConversation(name); open[key] = 1; }
+	});
+}
+
 function jawnosAgentsLoad(panel) {
 	var rows = panel.find('.jawnos_agents_rows');
 	rows.text('…');
@@ -177,6 +244,7 @@ function jawnosAgentsDelete(panel, a) {
 // or a chatbox mounted in an app's window - clears instead, because it is the
 // layout's, not the conversation's.
 function jawnosAgentsTakeAway(kind, name) {
+	jawnosAgentOpenForget(kind + ':' + name);
 	if (kind === 'guide') {
 		$('.assistant_view').filter(function () { return ($(this).attr('conversation') || 'assistant') === name; }).each(function () {
 			var panel = $(this);
@@ -211,4 +279,12 @@ $(document).on('dblclick', '#assistant, .taskbar_pin[sel$="#assistant"], .assist
 	e.preventDefault();
 	clearTimeout(window.jawnos_assistant_click_timer);
 	jawnosAgentsOpen(this);
+});
+
+// Bring back the spawned panels the page was left with. The first attempt is at
+// ready; the later ones are for a layout still arriving over the socket.
+$(function () {
+	jawnosAgentOpenRestore();
+	setTimeout(jawnosAgentOpenRestore, 900);
+	setTimeout(jawnosAgentOpenRestore, 2500);
 });

@@ -66,6 +66,7 @@ function windowSaver(skip_act) {
 			locked: locked,
 			zindex: zindex,
 			timestamp: timestamp,
+			terminal_id: $(v).attr('data-terminal-id') || '',
 			browser_tab_id: bti,
 			data: data,
 		};
@@ -313,7 +314,9 @@ function appWindowOpenerNow(i,timestamp,v) {
 			studioInit();
 		}
 		else if (i == 'terminal') {
-			terminalOpener({ 'window_maker': 'yes' }); 
+			// the saved id is what rejoins the coding chat and the pty; '' mints a
+			// fresh one for a brand-new window
+			terminalOpener({ 'window_maker': 'yes', 'terminal_id': (v && v.terminal_id) || '' });
 		}
 		else if (i == 'folders') {
 			foldersOpener();

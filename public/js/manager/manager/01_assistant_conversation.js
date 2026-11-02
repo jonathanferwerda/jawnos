@@ -165,6 +165,19 @@ $(document).on('keydown', '.assistant_question', function (e) {
 	if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); assistantAsk($(this).closest('.assistant_view')); }
 });
 $(document).on('click', '.assistant_new', function () { assistantSpawn($(this).closest('.assistant_view')); });
+// A spawned associate is nobody's layout: closing it removes it (manager.js),
+// and this delegated press also drops it from the browser's remembered panels
+// (agents.js). A close is not a delete - the thread stays on the server - so it
+// simply stops coming back on the next reload. manager.js may already have
+// detached the panel by the time this runs; the detached subtree keeps its
+// attributes, so closest() still names the conversation.
+$(document).on('click', '.assistant_close', function () {
+	var panel = $(this).closest('.assistant_view');
+	if (!panel.attr('spawned')) { return; }
+	var name = panel.attr('conversation');
+	if (!name) { return; }
+	if (typeof jawnosAgentOpenForget === 'function') { jawnosAgentOpenForget('guide:' + name); }
+});
 $(document).on('mousedown', '.assistant_view', function () { jawnos_assistant_last = $(this); });
 $(document).on('click', '#assistant', function () {
 	if (jawnos_assistant_dragging) { return; }
@@ -176,7 +189,10 @@ $(document).on('click', '#assistant', function () {
 
 // Another associate: a clone of an open one, with its own conversation name and
 // thread. Spawned panels are taken away by their close; the taskbar's own stays.
-function assistantSpawn(source) {
+// A reopened spawn is assistantOpenConversation materialising a named thread: it
+// is not remembered under the throwaway name this function invents (that name
+// is not a conversation a reload should open).
+function assistantSpawn(source, reopened) {
 	source = (source && source.length) ? source : $('.assistant_view').first();
 	if (!source.length) { return $(); }
 	var name;
@@ -201,6 +217,8 @@ function assistantSpawn(source) {
 	var off = (jawnos_assistant_extra % 6) * 26;
 	clone.css({ display: 'none', right: '', bottom: '', left: Math.max(6, (source.offset().left || 40) + 30 + off) + 'px', top: Math.max(6, (source.offset().top || 40) + 30 + off) + 'px' });
 	$(document.body).append(clone);
+	// the browser remembers a spawned panel, so a reload can put it back (agents.js)
+	if (!reopened && typeof jawnosAgentOpenRemember === 'function') { jawnosAgentOpenRemember('guide:' + name); }
 	assistantInitializer();
 	assistantButtonLabel(clone);
 	clone.find('.assistant_question').focus();
@@ -221,7 +239,7 @@ function assistantOpenConversation(name, title, question) {
 		}
 		return open;
 	}
-	var panel = assistantSpawn($('.assistant_view').first());
+	var panel = assistantSpawn($('.assistant_view').first(), 1);
 	if (!panel.length) { return panel; }
 	panel.attr('conversation', name).data('title', title || '').data('greeted', 1);
 	panel.find('.assistant_chat_log').empty();

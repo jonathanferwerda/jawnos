@@ -338,9 +338,10 @@ sub action_37270 {
 	$c->render(json => { ok => 1, seconds => sprintf('%.1f', $seconds) });
 }
 
-# One bounded run of the Coding agent: the model picks the next action, the server
-# runs it, repeat until done or the step cap. The whole thread comes back so the
-# person sees every change, check and ship.
+# One run of the Coding agent, queued. The work happens in perl/Coding.pl, a
+# process the master keeps across a tree restart (lib/JawnOS/Domain/Coding.pm),
+# so a reload or a restart no longer costs the answer. The panel polls
+# /manager/coding/run for the steps as they are written.
 # POST /manager/coding/heal
 sub action_37291 {
 	my $c = shift;
@@ -350,43 +351,50 @@ sub action_37291 {
 	my $model = &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	unless ($model) { $c->render(json => { error => "No Coding model is set (Configure \x{2192} Platform)." }); return; }
-	# the thinking effort set beside the Coding model (none/low/high/max)
-	my $thinking = &subs::ai_role_thinking('coding_assistant');
-	# which thread this belongs to, so the same chatbox remembers across turns
 	my $conversation = $c->param('conversation') || 'coding';
 	$conversation =~ s/[^A-Za-z0-9_-]//g;
 	$conversation = 'coding' unless length $conversation;
-	my $remembered = coding_conversation_load($conversation);
-	my @lines;
-	foreach my $m ( @{$remembered} ) {
-		next unless $m->{'content'};
-		push @lines, (($m->{'role'} || 'user') eq 'user' ? 'USER: ' : 'AGENT: ') . $m->{'content'};
+	my $run = eval { &subs::coding_run_enqueue($task, $conversation) };
+	unless ($run) {
+		my $why = $@ || 'the coding queue could not be written';
+		$why =~ s/\s+/ /g;
+		$c->render(json => { error => 'Could not queue the run: ' . $why });
+		return;
 	}
-	push @lines, 'TASK: ' . $task;
-	my %touched;
-	my @steps;
-	my $final = '';
-	my $tries = 0;
-	while ($tries++ < 12) {
-		my $system = coding_system_prompt();
-		my ($text, $err) = &subs::evaluation_model_call_with_fallback($model, &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant_fallback' }), $system, join("\n", @lines) . "\n\nReply with the single next JSON action.", $thinking, 'coding_assistant');
-		if ($err || !$text) { push @steps, { action => { action => 'error' }, observation => ($err || 'the model returned nothing') }; last; }
-		my $action = eval { decode_json $text };
-		unless ($action && $action->{'action'}) {
-			if ($text =~ /(\{.*\})/s) { $action = eval { decode_json $1 }; }
-		}
-		unless ($action && $action->{'action'}) { $final = $text; last; }
-		my $obs = coding_execute($c, $action, \%touched);
-		push @steps, { action => $action, observation => $obs };
-		push @lines, 'ACTION: ' . encode_json($action);
-		push @lines, 'OBSERVATION: ' . $obs;
-		if ($action->{'action'} eq 'done' || $action->{'action'} eq 'say') { $final = $action->{'text'} // ''; last; }
+	$c->render(json => { ok => 1, run => $run, conversation => $conversation, queued => 1 });
+}
+
+# The state of one run, or of the newest run for a conversation. This is what
+# the panel polls: steps are appended by the worker between model turns, and
+# the final answer lands in the same record.
+# GET /manager/coding/run
+sub action_37569 {
+	my $c = shift;
+	my $id = $c->param('id') // '';
+	if ($id =~ /^[0-9]+$/) {
+		$c->render(json => &subs::coding_run_view($id));
+		return;
 	}
-	push @{$remembered}, { role => 'user', content => $task };
-	push @{$remembered}, { role => 'assistant', content => (length $final ? $final : 'done') };
-	coding_conversation_save($conversation, $remembered);
-	my $noted = &agent_registry_note('coding', $conversation, $remembered);
-	$c->render(json => { steps => \@steps, final => $final, version => &subs::jawn_version(), conversation => $conversation, title => ($noted->{'title'} || '') });
+	my $conversation = $c->param('conversation') || 'coding';
+	$c->render(json => &subs::coding_run_current($conversation));
+}
+
+# Stop a run after the step it is on. The worker checks the flag between model
+# turns; nothing already written to the repo is rolled back.
+# POST /manager/coding/cancel
+sub action_37570 {
+	my $c = shift;
+	my $id = $c->param('id') // '';
+	unless ($id =~ /^[0-9]+$/) {
+		my $conversation = $c->param('conversation') || 'coding';
+		my $current = &subs::coding_run_current($conversation);
+		$id = $current->{'run'} // '';
+	}
+	unless ($id =~ /^[0-9]+$/ && &subs::coding_run_cancel($id)) {
+		$c->render(json => { ok => 0, error => 'no such run' });
+		return;
+	}
+	$c->render(json => { ok => 1, run => $id + 0 });
 }
 
 # Start a fresh conversation: forget the stored thread so the next run begins clean.

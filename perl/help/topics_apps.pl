@@ -256,10 +256,10 @@ $topic{'ide'} = {
 		title => 'IDE', category => 'apps', app => 'ide',
 		templates => [ 'templates/apps/coding_chat.html.ep', 'public/js/manager/coding.js' ],
 		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
-		verified => '2026-10-30',
+		verified => '2026-11-02',
 		body => [
 			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.',
-			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate, and it reopens where you left it. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the manager\'s scripts or its shell asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it). Double-press the Assistant button for the Agents list: every coding conversation and guide associate, named, with history a press away.',
+			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate, and it reopens where you left it. A run keeps going in its own process: reloading the page or restarting the tree does not lose it, the panel picks the run back up when it returns, and stop in its bar asks it to finish the step it is on. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the manager\'s scripts or its shell asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it). Double-press the Assistant button for the Agents list: every coding conversation and guide associate, named, with history a press away — and the panels you left open come back with it.',
 			'That chatbox also holds the error watch\'s staging area: press fixes in its corner to see every error caught in the running tree\'s log (switch the watch on under Configure → Plat → Self-healing), each with a fix the Coding agent has proposed. Apply writes the proposal, checks it compiles, and gives it the same finishing routine a chat change gets — bump, commit, push — and the panel\'s restart link puts it live. Forget throws a row away, and nothing is written until Apply. Every fix that ships is recorded: Fixed so far in Configure → Plat → Self-healing keeps the list, and review shows it.',
 			'Only the top of the tree loads at first; a folder brings its own contents in when you unfold it, so a big project opens quickly. The tree reopens with the folders you had unfolded still open, the window returns to whichever pane — the list or the editor — you left it on, and the file list and each open file keep their place, so you come back to where you were.'
 		],
@@ -267,7 +267,7 @@ $topic{'ide'} = {
 			'Open the IDE and choose a file from the project tree; unfold a folder to see what is in it.',
 			'Edit with syntax colouring and the code helpers.',
 			'Save; a Perl or JavaScript change needs a restart to take effect, while a template change is live at once.',
-			'Press the code button to open the Coding agent and describe a change in words.',
+			'Press the code button to open the Coding agent and describe a change in words. Its stop control asks it to finish the step it is on without dropping the run.',
 			'Drag the panel by its bar to move it; the + in the bar opens another agent, with its own conversation.',
 			'Press fixes in its corner to review errors caught in the log and apply a proposed fix.'
 		],

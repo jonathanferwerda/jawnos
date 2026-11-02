@@ -42,13 +42,13 @@ $topic{'web'} = {
 $topic{'terminal'} = {
 		title => 'Terminal', category => 'apps', app => 'terminal',
 		summary => 'A shell, in a window - on this machine or another one.',
-		verified => '2026-10-30',
+		verified => '2026-11-02',
 		body => [
 			'Terminal is a real shell attached to the machine running JawnOS. It is where you do the hands-on work: scripts, checks, and the occasional bit of archaeology.',
 			'The toolbar at the foot of the window switches views. Shell is the live session: click it and type straight into it, with colour, cursor keys, Backspace, Tab, Ctrl+C and the rest behaving as they do in a desktop terminal. Commands holds a short history of what you sent to the shell. Errors and Log are readable lists, each with its own Clear button in the header; the newest entry is always in view, and the list follows new entries while you are at the bottom.',
 			'The status at the left of the toolbar names the machine the shell is running on. Press the server button beside it to open the terminal settings: connect back to this machine, or pick one of the machines linked to the house and connect to it over ssh. Each machine remembers its own login name and port; the port is 8022 by default, which is the sshd JawnOS runs elsewhere. Each Terminal window has its own shell, so switching here changes only this window. The panel also sets the text size.',
 			'Open as many terminals as you need from the Terminal pin or the start menu: every window runs its own shell, can be moved and resized on its own, and wears its own tile on the taskbar. Minimising a window keeps its tile, so the taskbar is the quickest way to jump between them. Closing a window leaves its shell running on the server; the Open sessions list in the settings panel brings a closed one back into a window, and End closes a shell you no longer need.',
-			'The code button in the toolbar opens the Coding agent\'s chatbox, so you can ask for a change in words and watch it run the commands and ship the result without leaving the terminal. It keeps its own conversation. The bar drags the panel anywhere on the screen, and + in the bar opens another agent, each with its own thread.',
+			'The code button in the toolbar opens the Coding agent\'s chatbox, so you can ask for a change in words and watch it run the commands and ship the result without leaving the terminal. It keeps its own conversation. The bar drags the panel anywhere on the screen, and + in the bar opens another agent, each with its own thread. A run keeps going in the background, so reloading the page or restarting the tree does not lose it; the panel picks it back up when it returns.',
 		],
 		steps => [
 			'Open Terminal; it opens a session on the host machine.',

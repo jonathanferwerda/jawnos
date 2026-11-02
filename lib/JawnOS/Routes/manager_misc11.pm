@@ -39,6 +39,8 @@ sub routes {
 	[37553, 'post', '/manager/coding/fixes_clear', 'action_37553'],
 	[37560, 'post', '/manager/coding/fixes_apply', 'action_37560'],
 	[37568, 'post', '/manager/coding/restart', 'action_37568'],
+	[37569, 'get', '/manager/coding/run', 'action_37569'],
+	[37570, 'post', '/manager/coding/cancel', 'action_37570'],
 	[37578, 'post', '/manager/js_error', 'action_37578'],
 	[37667, 'post', '/manager/handbook/settings', 'action_37667'],
 	[40591, 'get', '/manager/telephony', 'action_40591'],

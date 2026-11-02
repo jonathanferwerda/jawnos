@@ -16,7 +16,7 @@ $ENV{MOJO_HOME} ||= "$FindBin::Bin/..";
 require JawnOS;
 my $app = JawnOS->new;
 
-if ($ENV{PURPOSE} && $ENV{PURPOSE} ne 'alarm' && $ENV{PURPOSE} ne 'watch' && $ENV{PURPOSE} ne 'teletype') {
+if ($ENV{PURPOSE} && $ENV{PURPOSE} ne 'alarm' && $ENV{PURPOSE} ne 'watch' && $ENV{PURPOSE} ne 'teletype' && $ENV{PURPOSE} ne 'coding') {
 	$app->start;
 }
 else {

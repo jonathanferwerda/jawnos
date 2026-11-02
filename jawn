@@ -179,7 +179,7 @@ my $dump_dir = &home('~/.president');
 # moment before or after the master starts; deleting it here made the manager
 # take the permanent wake lock back and lose the batched-wake markers and the
 # navigation pace until the next beat.
-my %handshake = map { $_ => 1 } qw/wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json verify-manifest restart.json restart.log restart.log.1 pending_restart/;
+my %handshake = map { $_ => 1 } qw(wake_ready wake_lock_released utility_idle music_stream_wake gps_pace location.json verify-manifest restart.json restart.log restart.log.1 pending_restart coding.pid coding-queue.db coding-queue.db-wal coding-queue.db-shm coding-queue.db-journal);
 if (-e $dump_dir && opendir(my $dump, $dump_dir)) {
 	while (my $entry = readdir($dump)) {
 		next if $entry eq '.' || $entry eq '..' || $handshake{$entry};
@@ -354,6 +354,14 @@ $fork = &terminal_pty_runner(&president_process());
 &arm_boot_watch();
 
 my $status = 'off';
+# The Coding agent's process: one daemon the master starts and supervises, but
+# deliberately leaves running when only the tree is restarted. Its job is a
+# long model run, and a restart (including the one that run itself asks for)
+# must not cost it. See coding_start/coding_stop below.
+my $coding_pid_file = &home('~/.president/coding.pid');
+my $coding_log_file = &home('~/coding.log');
+my $coding_pid = 0;
+my $coding_spawned_at = 0;
 # Why the state machine is about to restart. Set wherever the tree is found down,
 # so a recovery restart records a reason instead of looking like a request.
 my $status_why = '';
@@ -404,6 +412,7 @@ my ($tree_ticks,$tree_misses) = (0,0);
 my ($last_master_tick,$tree_dead_since);
 my $reap_ticks = 0;
 &master_time_looper();
+&coding_start();
 &control_socket();
 &log_socket();
 sub master_time_looper() {
@@ -436,6 +445,9 @@ sub master_time_looper() {
 		my $tick_gap = defined $last_master_tick ? $tick_now - $last_master_tick : 0;
 		$last_master_tick = $tick_now;
 		my $woke = ($tick_gap > 30 && !$master_boot_watch) ? 1 : 0;
+		# Keep the Coding agent's own process alive. It is not part of the
+		# tree, so a tree restart above leaves it alone.
+		&coding_supervise();
 		my $status_file = &home('~/.president/status');
 		my $f_status = -e $status_file ? read_file($status_file) : '';
 		# Our own file changed on disk (a git update): reload the master, not just
@@ -461,7 +473,7 @@ sub master_time_looper() {
 				}
 				write_file($status_file, 'good');
 				$master_timer_paused = 1;
-				&shut_down();
+				&shut_down(1);
 				exec($^X, $master_path, @ARGV) or do {
 					print "re-exec of $master_path failed: $!\n";
 					$master_timer_paused = 0;
@@ -569,7 +581,7 @@ sub master_time_looper() {
 				&answer_restart($proof, $before);
 				$pending_restart = undef;
 				if ($proof->{'ok'}) {
-					&shut_down();
+					&shut_down(1);
 					$status = 'restarting';
 					$status_why = '';
 					# No blind countdown: shut_down() already waited for the pids it
@@ -719,7 +731,11 @@ Mojo::IOLoop->recurring(2 => sub {
 });
 
 sub shut_down() {
+	my ($keep_coding) = @_;
 	print "pres Ctrl+C! Closing...\n";
+	# The coding worker outlives a tree restart by design; a real stop takes it
+	# with the tree. The caller says which this is.
+	&coding_stop() unless $keep_coding;
 	# this tear-down is on purpose, so the fork's own close must not be read as a
 	# crash (see the close handler in terminal_pty_runner)
 	$fork->{'jawn_deliberate'} = 1 if $fork;
@@ -858,6 +874,117 @@ sub pid_parent {
 	$line =~ s/^.*\)\s+//;
 	my ($state, $ppid) = split /\s+/, $line;
 	return $ppid && $ppid =~ /^[0-9]+$/ ? $ppid : 0;
+}
+
+# ---- the Coding agent's own process -----------------------------------------
+# A coding run is minutes of model turns and file writes. The tree is rebuilt on
+# every restart, so a run cannot live under it: if it did, the agent's own
+# "restart" step would kill the answer it had just earned. This daemon is
+# started by the master, double-forked so it is not a child the reaper takes,
+# and left alone when shut_down is only restarting the tree.
+#
+# It is still managed here: a pid file names it, the master restarts it if it
+# dies, and a real Stop takes it down with the tree. Its Minion job survives a
+# master that dies by being written before the process started (see
+# lib/JawnOS/Domain/Coding.pm).
+sub coding_cmdline_ok {
+	my ($pid) = @_;
+	return 0 unless $pid && $pid =~ /^[0-9]+$/ && &pid_alive($pid);
+	my $cmd = &pid_cmdline($pid);
+	# a compile probe (`perl -c perl/Coding.pl`) is not the worker; the app's
+	# own restart guard runs one, and it must not be killed as a leftover
+	return 0 if $cmd =~ / (?:-c|-e|-M) /;
+	return $cmd =~ /Coding\.pl/ ? 1 : 0;
+}
+
+# Every process running as the coding worker. Minion forks one child per job and
+# that child keeps the same command line, so a stop has to take the descendants
+# too, not only the pid in the file.
+sub coding_pids {
+	my @pids;
+	return @pids unless opendir(my $procs, '/proc');
+	for my $entry (readdir $procs) {
+		next unless $entry =~ /^([0-9]+)$/;
+		my $pid = $1 + 0;
+		next if $pid == $$;
+		next unless &coding_cmdline_ok($pid);
+		push @pids, $pid;
+	}
+	closedir $procs;
+	return @pids;
+}
+
+sub coding_running {
+	my $pid = -f $coding_pid_file ? read_file($coding_pid_file) : '';
+	$pid = '' unless defined $pid;
+	$pid =~ s/\s+//g;
+	if (&coding_cmdline_ok($pid)) { $coding_pid = $pid + 0; return 1 }
+	# No usable pid file: a daemon from a previous master may still be alive
+	# (a SIGKILL can leave it). Adopt it instead of starting a second one.
+	my ($alive) = &coding_pids();
+	if ($alive) {
+		$coding_pid = $alive;
+		write_file($coding_pid_file, $alive);
+		return 1;
+	}
+	return 0;
+}
+
+sub coding_start {
+	return 1 if &coding_running();
+	# an exec takes a moment; do not race a second spawn out of the next tick
+	return 0 if $coding_spawned_at && (time - $coding_spawned_at) < 15;
+	$coding_spawned_at = time;
+	my $master = $$;
+	my $pid = fork();
+	return 0 unless defined $pid;
+	if ($pid) {
+		# The intermediate leaves at once, so the daemon is reparented: it is
+		# never a child reap_own_children() can take for a leftover.
+		waitpid($pid, 0);
+		for (1 .. 40) {
+			return 1 if &coding_running();
+			select(undef, undef, undef, 0.05);
+		}
+		return 0;
+	}
+	# ---- the intermediate ----
+	setsid();
+	my $daemon = fork();
+	POSIX::_exit(0) if $daemon;
+	# ---- the daemon ----
+	open(STDIN, '<', '/dev/null');
+	open(STDOUT, '>>', $coding_log_file);
+	open(STDERR, '>&STDOUT');
+	$ENV{JAWNOS_MASTER_PID} = $master;
+	exec($^X, './perl/Coding.pl') or POSIX::_exit(1);
+}
+
+sub coding_supervise {
+	return if &coding_running();
+	&coding_start();
+}
+
+# A real stop takes the worker with the tree. A restart does not: shut_down's
+# caller says which this is.
+sub coding_stop {
+	my @pids = &coding_pids();
+	my $pid = -f $coding_pid_file ? read_file($coding_pid_file) : '';
+	$pid = '' unless defined $pid;
+	$pid =~ s/\s+//g;
+	push @pids, $pid + 0 if $pid =~ /^[0-9]+$/ && !grep { $_ == $pid } @pids;
+	unlink $coding_pid_file;
+	return unless @pids;
+	kill 'TERM', @pids;
+	# Minion stops dequeuing on TERM and lets the job it is on finish; a job
+	# can be minutes long, so the grace is short and what is left is stopped.
+	for (1 .. 100) {
+		last unless grep { &pid_alive($_) } @pids;
+		select(undef, undef, undef, 0.05);
+	}
+	my @left = grep { &pid_alive($_) } @pids;
+	kill 'KILL', @left if @left;
+	print 'stopped coding worker ' . join(',', @pids) . "\n";
 }
 
 # Kill a previous master's leftovers. See the call site: this runs after the
