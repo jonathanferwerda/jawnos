@@ -72,8 +72,7 @@ sub action_34641 {
 	my $timestamp = $c->param('timestamp');
 	# the model list the guide's dropdown is built from — the same agents the
 	# mailbox's Pen offers, so the choice is made in one place
-	my $models = &subs::pen_model_list();
-	push @{$models}, @{ &subs::cloudflare_model_list() };
+	my $models = &subs::help_model_list();
 	my $selected_model = &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' });
 	my $contents = $c->render_to_string(
 		template => 'apps/help',

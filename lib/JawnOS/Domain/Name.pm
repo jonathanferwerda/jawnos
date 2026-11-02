@@ -700,4 +700,40 @@ sub setting_deleter {
 	return $setting;
 }
 
+# The house's mark is stored as a whole data: URI in settings (the upload writes
+# the URI, not a file). Pages used to inline that value into a <link rel=icon>,
+# so every manager document carried the image before any markup - 195 KB of a
+# 265 KB page, and base64 of a PNG compresses poorly. The favicon route is now
+# the one reader; a page only names its URL.
+sub logo_data_uri {
+	my $q = eval { &db_query("select value from settings where app = 'me' and setting = 'logo' and value is not null and value != '' order by server_time desc limit 1") };
+	return undef unless $q;
+	my $row = $q->hashes->[0];
+	return (ref $row eq 'HASH' && defined $row->{'value'} && length $row->{'value'}) ? $row->{'value'} : undef;
+}
+
+# A data: URI split into its media type and bytes. The stored logo is written
+# with the prefix, so the route answers with both the content type and the file.
+sub data_uri_parts {
+	my ($uri) = @_;
+	return undef unless defined $uri && $uri =~ /^data:([A-Za-z0-9.+\/-]+);base64,(.*)$/s;
+	my ($mime, $b64) = ($1, $2);
+	$b64 =~ s/\s+//g;
+	my $bytes = eval { decode_base64($b64) };
+	return undef unless defined $bytes && length $bytes;
+	return { mime => $mime, bytes => $bytes };
+}
+
+# The machine's own hostname without spawning `hostname` for every page. The
+# value cannot change while the process lives, and the manager page asks for it
+# on each render (here and in its own action).
+our $hostname_memo;
+sub machine_hostname {
+	return $hostname_memo if defined $hostname_memo;
+	require Sys::Hostname;
+	$hostname_memo = eval { Sys::Hostname::hostname() };
+	$hostname_memo = '' unless defined $hostname_memo;
+	return $hostname_memo;
+}
+
 1;

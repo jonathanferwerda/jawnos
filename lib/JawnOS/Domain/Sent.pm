@@ -578,7 +578,10 @@ sub pen_message {
 }
 
 sub pen_model_list {
-	my $ua = Mojo::UserAgent->new;
+	# A provider probe must not hold a worker open: the old client had no bound,
+	# so a host that accepted the connection and stalled could miss the prefork
+	# heartbeat. A refused connection (no Ollama) still answers at once.
+	my $ua = Mojo::UserAgent->new(connect_timeout => 2, inactivity_timeout => 5, request_timeout => 8);
 	my $url = 'http://localhost:11434/api/tags';
 
 	# Fetch the list of models from Ollama synchronously. A machine with no Ollama
@@ -662,6 +665,23 @@ sub cloudflare_model_list {
 		return $models_list;
 	}
 	else { return []; }
+}
+
+# The Help window's model dropdown is house-wide and normally changes only when
+# a provider adds or removes a model. It used to poll Ollama and Cloudflare
+# synchronously on every open - two network calls, one of them off the machine,
+# for a list that was almost always identical. The local cache makes the open
+# instant; an empty answer is cached too, so a machine with no providers does
+# not re-probe on every click.
+sub help_model_list {
+	my $cached = &subs::cache_get({ app => 'mail', context => 'help_models' });
+	return $cached if ref $cached eq 'ARRAY';
+	my $models = &pen_model_list();
+	$models = [] unless ref $models eq 'ARRAY';
+	my $cloud = &cloudflare_model_list();
+	push @{$models}, @{$cloud} if ref $cloud eq 'ARRAY';
+	&subs::cache_set({ app => 'mail', context => 'help_models', warranty => '-10m' }, $models);
+	return $models;
 }
 
 1;

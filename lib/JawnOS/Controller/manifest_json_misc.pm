@@ -66,7 +66,7 @@ our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal
 sub action_13042 {
 	my $c = shift;
 	my $config = &subs::config_reader();
-	my $me_settings = &subs::settings_grabber({ app => 'me', settings => ['logo', 'name'] });
+	my $me_settings = &subs::settings_grabber({ app => 'me', settings => ['name'] });
 
 	my $name = $config->{'name'} || $me_settings->{'name'};
 	my $manifest = {
@@ -78,12 +78,12 @@ sub action_13042 {
 		"theme_color" => "#000000",
 		"icons" => [
 		  {
-		    "src" => $me_settings->{'logo'},
+		    "src" => "/house/logo.png",
 		    "sizes" => "192x192",
 		    "type" => "image/png"
 		  },
 		  {
-		    "src" => $me_settings->{'logo'},
+		    "src" => "/house/logo.png",
 		    "sizes" => "512x512",
 		    "type" => "image/png"
 		  }

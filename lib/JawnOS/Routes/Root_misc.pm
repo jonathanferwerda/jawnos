@@ -6,6 +6,7 @@ use warnings;
 sub routes {
 	return (
 	[2998, 'get', '/', 'action_2998'],
+	[2999, 'get', '/house/logo.png', 'action_2999'],
 	[47831, 'post', 'manager/ws/remote_control', 'action_47831'],
 	);
 }

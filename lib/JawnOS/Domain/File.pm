@@ -274,6 +274,7 @@ sub cache_set {
 	my $subcontext = $params->{'subcontext'} || undef;
 	my $timestamp = $params->{'timestamp'} || &subs::rightNow();
 	my $server_time = &subs::rightNow();
+	&subs::cache_expire_stale($server_time);
 	my $json_data = encode_sereal $data;
 	my $warranty;
 	if ($params->{'warranty'}) {
@@ -330,6 +331,26 @@ sub cache_get {
 		$returner = eval { return decode_sereal $json_data };
 		return $returner if $returner;
 	}
+}
+
+# Some cache rows are claims that only hold for minutes. A peer nonce is written
+# on every verified contact and deleted when the matching request returns, so a
+# peer that never answers leaves its row behind; hundreds of thousands had piled
+# up, and the unique index on those rows was most of the table. Prune on a cache
+# write, at most once per worker per ten minutes: the common path is one integer
+# compare, never a query. The verifier already refuses a nonce older than ten
+# minutes, so a quarter of an hour is safely past the point where the row can
+# still be spent.
+our $cache_pruned_at;
+sub cache_expire_stale {
+	my $now = shift // &subs::rightNow();
+	return 0 if defined $cache_pruned_at && ($now - $cache_pruned_at) < 600000;
+	$cache_pruned_at = $now;
+	my $cutoff = $now - 15 * 60 * 1000;
+	foreach my $context ( qw(peer_nonce app_challenge padlock_challenge) ) {
+		&subs::db_query('delete from cache where context = ? and server_time < ?', $context, $cutoff);
+	}
+	return 1;
 }
 
 # Gossip dedupe for relayed requests. A relay carries a relay_id, minted once by

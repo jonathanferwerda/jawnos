@@ -414,8 +414,7 @@ sub action_13070 {
 	my $c = shift;
 
 	my ($db,$database,$sql) = &subs::database_grabber();
-	my $hostname = `hostname`;
-	chomp $hostname;
+	my $hostname = &subs::machine_hostname();
 	sub jonathan_to_jawn() {
 		my $jonathans = `ls images/jonathans`;
 

@@ -285,6 +285,10 @@ sub app_public_path {
 	my ($path) = @_;
 	return 0 unless defined $path;
 	return 1 if $path eq '/' || $path eq '/homepage' || $path eq '/index.html';
+	# The house's mark is drawn on the public pages (homepage, store, the lock
+	# screen) before any session exists. It is a deliberately published image,
+	# not a door; the route itself only reads one settings row.
+	return 1 if $path eq '/house/logo.png';
 	return 1 if $path =~ m{^/store(?:/|$)};
 	# The launcher's JawnOS row is drawn before any session exists, and it carries
 	# only app names and built-in icons. /apps/icon redirects a person's own

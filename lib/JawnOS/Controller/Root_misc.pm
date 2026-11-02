@@ -83,6 +83,37 @@ sub action_2998 {
 	$c->render('text' => $homepage);
 }
 
+# GET /house/logo.png
+# The house's mark as its own small response. Every full page used to inline the
+# stored data: URI as a favicon, which put ~195 KB of base64 into every document
+# (and made a 265 KB page); the browser now fetches it once and revalidates with
+# the ETag. A house with no uploaded mark gets the shipped drawing, so the URL
+# always answers and no page has to ask first.
+sub action_2999 {
+	my $c = shift;
+	my $parts = &subs::data_uri_parts(&subs::logo_data_uri());
+	my $bytes = $parts ? $parts->{'bytes'} : eval { read_file('public/images/make believe/Pillow.png', binmode => ':raw') };
+	unless (defined $bytes && length $bytes) {
+		$c->res->code(404);
+		$c->render(text => '');
+		return;
+	}
+	$c->res->headers->content_type($parts ? $parts->{'mime'} : 'image/png');
+	my $etag = '"' . md5_sum($bytes) . '"';
+	my $if_none_match = $c->req->headers->if_none_match;
+	if (defined $if_none_match && index($if_none_match, $etag) >= 0) {
+		$c->res->code(304);
+		$c->res->headers->etag($etag);
+		$c->res->body('');
+		return;
+	}
+	$c->res->headers->etag($etag);
+	# The mark changes only when the house uploads a new one. Let the browser keep
+	# it for a day, then revalidate to a 304 rather than re-sending the image.
+	$c->res->headers->cache_control('public, max-age=86400, must-revalidate');
+	$c->res->body($bytes);
+}
+
 # POST manager/ws/remote_control
 sub action_47831 {
 	my $c = shift;

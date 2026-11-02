@@ -240,8 +240,7 @@ sub keyboard_maker($c, $remote_pick) {
 sub manager_file_maker($session_name = '') {
 	my ($my_name,$computer_name,$hostname,$hostnamer,$database_name);
 	my ($db,$database) = &subs::database_grabber();
-	$hostname = `hostname`;
-	chomp $hostname;
+	$hostname = &subs::machine_hostname();
 	$hostnamer = eval { return &subs::db_select('devices', ['name'], { hostname => $hostname } )->hash->{name} };
 	$my_name = $session_name || &subs::setting_grabber({ app => 'me', setting => 'my_name' });
 	$computer_name = &subs::config_reader()->{'name'} || &subs::setting_grabber({ app => 'me', setting => 'computer_name' });
