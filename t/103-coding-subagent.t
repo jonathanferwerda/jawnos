@@ -10,6 +10,7 @@ use utf8;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use File::Slurp qw(read_file);
+use File::Temp qw(tempdir);
 use Test::More;
 
 my $root = "$FindBin::Bin/..";
@@ -38,6 +39,19 @@ ok(!&subs::coding_child_write_ok('releases/jawn.apk', ['releases']),
 	'staged releases are refused');
 ok(!&subs::coding_child_write_ok('desktop/mkosi/x.conf', ['desktop']),
 	'the image build is refused');
+ok(!&subs::coding_child_write_ok('.secrets/ssh.txt', ['.']),
+	'the key store is refused even under a root scope');
+ok(!&subs::coding_child_write_ok('config.json', ['.']),
+	'the machine config is refused even under a root scope');
+ok(!&subs::coding_child_write_ok('.shots/ticket.txt', ['.']),
+	'the live ticket is refused even under a root scope');
+ok(&subs::coding_child_write_ok('.shots/notes.md', ['.']),
+	'the rest of the scratch folder may be written');
+ok(!&subs::coding_child_write_ok("lib/a\x00b", ['.']),
+	'a control character is refused');
+is(&subs::coding_child_norm_path('./'), '.', 'a scope written ./ means the repo root');
+is(&subs::coding_child_norm_path('/'), '.', 'and so does a bare slash');
+is(&subs::coding_child_norm_path(''), '', 'an empty scope stays empty, not everything');
 
 ok(&subs::coding_child_allowed('list'), 'a child may list');
 ok(&subs::coding_child_allowed('read'), 'a child may read');
@@ -242,6 +256,201 @@ sub run_fake_job {
 	is($state->{'final'}, 'parent done', 'the parent still finishes its run');
 }
 
+# --- one action may ask for several subagents --------------------------------
+{
+	my @one = &subs::coding_action_tasks({ action => 'agent', task => 'read it', scope => 'write', paths => ['lib'] });
+	is(scalar @one, 1, 'a single task is one task');
+	is($one[0]{'scope'}, 'write', 'the single task keeps its scope');
+
+	my @many = &subs::coding_action_tasks({ action => 'agent', tasks => [
+		{ task => 'a', scope => 'read' },
+		'not an object',
+		{ task => 'b', scope => 'read' },
+	] });
+	is(scalar @many, 2, 'a tasks list drops entries that are not objects');
+	is($many[1]{'task'}, 'b', 'the list keeps the order it was asked for');
+
+	is(scalar(&subs::coding_action_tasks({ action => 'agent' })), 0, 'no task is no task');
+	is(scalar(&subs::coding_action_tasks({ action => 'agent', tasks => [], task => 'fallback' })), 1,
+		'an empty list falls back to the single task');
+}
+
+# Two write-scope tasks may not share paths; read-only children may overlap.
+{
+	like(&subs::coding_child_batch_clash(
+		[ { task => 'a', scope => 'write', paths => ['lib/JawnOS'] },
+		  { task => 'b', scope => 'write', paths => ['lib/JawnOS/Domain'] } ]),
+		qr/may both write/, 'a nested write scope clashes with its parent');
+	is(&subs::coding_child_batch_clash(
+		[ { task => 'a', scope => 'write', paths => ['lib/JawnOS'] },
+		  { task => 'b', scope => 'write', paths => ['public/js'] } ]),
+		'', 'two separate write scopes do not clash');
+	is(&subs::coding_child_batch_clash(
+		[ { task => 'a', scope => 'read', paths => ['lib'] },
+		  { task => 'b', scope => 'read', paths => ['lib'] } ]),
+		'', 'read-only tasks may read the same paths at once');
+	like(&subs::coding_child_batch_clash(
+		[ { task => 'a', scope => 'write', paths => ['.'] },
+		  { task => 'b', scope => 'write', paths => ['lib'] } ]),
+		qr/may both write/, 'a root write scope clashes with anything');
+
+	# the refusal names the tasks by their place in the list the model sent,
+	# not by their place among the writers
+	like(&subs::coding_child_batch_clash([
+		{ task => 'read it', scope => 'read' },
+		{ task => 'one', scope => 'write', paths => ['lib'] },
+		{ task => 'two', scope => 'write', paths => ['lib/JawnOS'] },
+	]), qr/tasks 2 and 3/, 'the refusal counts every task, not only the writers');
+}
+
+# A cancelled run stops the batch it is waiting on, and every task still gets
+# an answer the parent can record.
+{
+	no warnings 'redefine';
+	local *subs::coding_run_subagent = sub {
+		select(undef, undef, undef, 1);
+		return { task => 'x', scope => 'read', paths => [], steps => [], touched => [] };
+	};
+	local *subs::coding_run_state_load = sub { { cancel => 1 } };
+	my $out = &subs::coding_run_subagents(
+		[ { task => 'a', scope => 'read' }, { task => 'b', scope => 'read' } ],
+		{ run => 5, model => 'm' }
+	);
+	is($out->{'stopped'}, 'cancelled', 'a cancelled run stops the batch');
+	is(scalar @{ $out->{'records'} }, 2, 'every task still gets a record');
+	like($out->{'records'}[0]{'error'} // '', qr/cancelled/, 'and is told the run stopped');
+}
+
+# A fork per task: the children run in their own processes, come back in the
+# order asked for, and a child's write is the parent's to commit.
+{
+	my $dir = tempdir(CLEANUP => 1);
+	my $pid_log = "$dir/pids";
+	my %state;
+	my @executed;
+	my %commit_touched;
+	my $parent_calls = 0;
+	my $job = FakeJob->new;
+	local $ENV{'SUBPID_LOG'} = $pid_log;
+	{
+		no warnings 'redefine';
+		local *subs::rightNow = sub { 1000 };
+		local *subs::setting_grabber = sub {
+			my ($arg) = @_;
+			return '9' if ref $arg eq 'HASH' && ($arg->{'setting'} // '') eq 'coding_subagents';
+			return 'fake-model';
+		};
+		local *subs::ai_role_thinking = sub { '' };
+		local *subs::ai_chat_parts_with_fallback = sub {
+			my ($model, $fallback, $messages, $thinking, $role, $opt) = @_;
+			my $prompt = ($messages && @$messages) ? ($messages->[-1]{'content'} // '') : '';
+			if ($prompt =~ /SUBAGENT TASK:/) {
+				# a child: say which process it is, write once, then finish
+				if (open(my $fh, '>>', $ENV{'SUBPID_LOG'})) { print $fh "$$\n"; close $fh; }
+				my $text = $prompt =~ /OBSERVATION:/
+					? '{"action":"done","text":"child done"}'
+					: '{"action":"write","path":"docs/kid.md","content":"x"}';
+				return ([ { type => 'text', text => $text } ], undef);
+			}
+			$parent_calls++;
+			my $text = $parent_calls == 1
+				? '{"action":"agent","tasks":[{"task":"one","scope":"write","paths":["docs"]},{"task":"two","scope":"read"}]}'
+				: $parent_calls == 2
+				? '{"action":"commit","message":"kid work"}'
+				: '{"action":"done","text":"parent done"}';
+			return ([ { type => 'text', text => $text } ], undef);
+		};
+		local *subs::ai_parts_text = sub {
+			my ($parts, $type) = @_;
+			$type = 'text' unless defined $type && length $type;
+			return join '', map { $_->{'text'} } grep { ($_->{'type'} // '') eq $type } @{ $parts || [] };
+		};
+		local *subs::coding_run_state_save = sub { $state{ $_[0] } = $_[1]; 1 };
+		local *subs::coding_run_state_load = sub { $state{ $_[0] } || {} };
+		local *subs::coding_run_push = sub { 1 };
+		local *subs::coding_review_setting = sub { 0 };
+		local *subs::jawn_version = sub { '9.9.9' };
+		local *Manager::coding_conversation_load = sub { [] };
+		local *Manager::coding_conversation_save = sub { 1 };
+		local *Manager::coding_system_prompt = sub { 'system' };
+		local *Manager::coding_execute = sub {
+			my ($c, $action, $touched) = @_;
+			$touched->{ $action->{'path'} } = 1 if ($action->{'action'} // '') eq 'write' && defined $action->{'path'};
+			%commit_touched = %{ $touched || {} } if ($action->{'action'} // '') eq 'commit';
+			push @executed, $action->{'action'} // '';
+			return 'ok';
+		};
+		local *Manager::agent_registry_note = sub { { title => 'A title' } };
+		&subs::coding_run_job($job, { task => 'do it', conversation => 'selftest' });
+	}
+
+	is($state{999}{'children'}, 2, 'both tasks are counted on the run');
+	is(scalar @{ $state{999}{'steps'} || [] }, 4, 'each child is a step, then the commit and the done');
+	is($state{999}{'steps'}[0]{'subagent'}{'task'}, 'one', 'the first record is the first task');
+	is($state{999}{'steps'}[1]{'subagent'}{'task'}, 'two', 'the second record is the second task');
+	like($state{999}{'steps'}[0]{'observation'}, qr/^subagent: child done/, 'a child answer reads as before');
+	my @pids = -f $pid_log ? do { open(my $fh, '<', $pid_log); grep { /^\d+$/ } <$fh> } : ();
+	ok(scalar @pids >= 2, 'the children asked the model');
+	is(scalar(keys %{ +{ map { $_ => 1 } @pids } }), 2, 'and they asked from two different processes');
+	is_deeply([ sort keys %commit_touched ], [ 'docs/kid.md' ],
+		"a subagent's write reaches the parent's commit");
+}
+
+# A batch whose write scopes overlap is refused whole, and the run continues.
+{
+	my %state;
+	my $calls = 0;
+	my $job = FakeJob->new;
+	{
+		no warnings 'redefine';
+		local *subs::rightNow = sub { 1000 };
+		local *subs::setting_grabber = sub {
+			my ($arg) = @_;
+			return '9' if ref $arg eq 'HASH' && ($arg->{'setting'} // '') eq 'coding_subagents';
+			return 'fake-model';
+		};
+		local *subs::ai_role_thinking = sub { '' };
+		local *subs::ai_chat_parts_with_fallback = sub {
+			$calls++;
+			my $text = $calls == 1
+				? '{"action":"agent","tasks":[{"task":"a","scope":"write","paths":["lib/JawnOS"]},{"task":"b","scope":"write","paths":["lib/JawnOS/Domain"]}]}'
+				: '{"action":"done","text":"parent done"}';
+			return ([ { type => 'text', text => $text } ], undef);
+		};
+		local *subs::ai_parts_text = sub {
+			my ($parts, $type) = @_;
+			$type = 'text' unless defined $type && length $type;
+			return join '', map { $_->{'text'} } grep { ($_->{'type'} // '') eq $type } @{ $parts || [] };
+		};
+		local *subs::coding_run_state_save = sub { $state{ $_[0] } = $_[1]; 1 };
+		local *subs::coding_run_state_load = sub { $state{ $_[0] } || {} };
+		local *subs::coding_run_push = sub { 1 };
+		local *subs::coding_review_setting = sub { 0 };
+		local *subs::jawn_version = sub { '9.9.9' };
+		local *Manager::coding_conversation_load = sub { [] };
+		local *Manager::coding_conversation_save = sub { 1 };
+		local *Manager::coding_system_prompt = sub { 'system' };
+		local *Manager::coding_execute = sub { 'ok' };
+		local *Manager::agent_registry_note = sub { { title => 'A title' } };
+		&subs::coding_run_job($job, { task => 'do it', conversation => 'selftest' });
+	}
+	is($calls, 2, 'an overlapping batch never reaches the model');
+	ok(!($state{999}{'children'} // 0), 'and no child is counted');
+	like($state{999}{'steps'}[0]{'observation'}, qr/may both write/, 'the refusal names the clash');
+	is($state{999}{'state'}, 'finished', 'the parent continues after the refusal');
+}
+
+# The view says how much of the subagent budget the run has used, so a panel can
+# show it without reading the saved state itself.
+{
+	no warnings 'redefine';
+	local *subs::coding_run_state_load = sub { { state => 'active', children => 3 } };
+	local *subs::coding_worker_alive = sub { 1 };
+	local *subs::coding_minion = sub { undef };
+	my $view = &subs::coding_run_view(11);
+	is($view->{'children'}, 3, 'the view says how many subagents the run has used');
+}
+
 # --- the prompt and the tool list -------------------------------------------
 my $tools = source('perl/gb/03_engines_and_tools.pl');
 like($tools, qr/name => 'agent'/, 'the Coding tool list offers agent');
@@ -249,10 +458,13 @@ like($tools, qr/"action":"agent"/, 'the agent entry has an example');
 like($tools, qr/scope.*read|read.*scope/s, 'the agent entry names the read scope');
 like($tools, qr/scope.*write|write.*scope/s, 'the agent entry names the write scope');
 like($tools, qr/cannot ship/, 'the agent entry says it cannot ship');
+like($tools, qr/"tasks"/, 'the agent entry offers the batch form');
+like($tools, qr/at the same time/, 'the agent entry says a batch runs at once');
 
 my $help = source('perl/help.pl');
 like($help, qr/Use agent for a self-contained investigation or a scoped edit/,
 	'the coding prompt tells the agent when to use a subagent');
 like($help, qr/Never ask a subagent to spawn/, 'the coding prompt forbids nesting');
+like($help, qr/they run at the same\s+time/, 'the coding prompt says a batch runs at once');
 
 done_testing();

@@ -26,6 +26,7 @@ use Mojo::JSON qw(decode_json encode_json);
 use Minion;
 use File::Temp ();
 use Digest::SHA ();
+use POSIX ();
 
 # The coding queue is its own SQLite file, not the tree's minion.db. The master
 # wipes ~/.president on a reload (that is how the tree gets a clean run state),
@@ -181,6 +182,7 @@ sub coding_run_view {
 		task         => ($state->{'task'} // ''),
 		state        => ($state->{'state'} // 'none'),
 		steps        => (ref $state->{'steps'} eq 'ARRAY' ? $state->{'steps'} : []),
+		children     => ($state->{'children'} // 0) + 0,
 		current      => (ref $state->{'current'} eq 'HASH' ? $state->{'current'} : {}),
 		pending_commit => (ref $state->{'pending_commit'} eq 'HASH' ? $state->{'pending_commit'} : {}),
 		final        => ($state->{'final'} // ''),
@@ -298,6 +300,19 @@ sub coding_child_limit_ok {
 	return 1;
 }
 
+# The same normalisation the repo guard uses (drop a leading ./ or /, and a
+# trailing /), kept in one place so a path is compared one way everywhere. A
+# scope written as ./ or / means the repo root, not nothing.
+sub coding_child_norm_path {
+	my $in = defined $_[0] ? "$_[0]" : '';
+	my $p = $in;
+	$p =~ s{^\./+}{};
+	$p =~ s{^/+}{};
+	$p =~ s{/+$}{};
+	return '.' if !length $p && length $in;
+	return $p;
+}
+
 # Is $path a write the child may make? Both sides are normalised the way
 # Manager::coding_rel does it (drop a leading ./ or /), then the path must sit
 # under one of the allowed paths and must not be one of the things no subagent
@@ -305,22 +320,18 @@ sub coding_child_limit_ok {
 sub coding_child_write_ok {
 	my ($path, $paths) = @_;
 	return 0 unless ref $paths eq 'ARRAY' && scalar @{$paths};
-	my $norm = sub {
-		my $p = defined $_[0] ? "$_[0]" : '';
-		$p =~ s{^\./+}{};
-		$p =~ s{^/+}{};
-		$p =~ s{/+$}{};
-		return $p;
-	};
-	my $rel = $norm->($path);
+	my $rel = &coding_child_norm_path($path);
 	return 0 unless length $rel;
 	return 0 if $rel =~ m{(^|/)\.\.(/|$)};
-	my @deny = qw(.git VERSION database releases desktop/mkosi);
+	return 0 if $rel =~ m{[\x00-\x1f"`\\]};
+	my @deny = qw(.git .secrets .president voices VERSION database releases desktop/mkosi config.json);
 	foreach my $d (@deny) {
 		return 0 if $rel eq $d || index($rel, "$d/") == 0;
 	}
+	# the one file in the scratch folder that must never be overwritten
+	return 0 if $rel eq '.shots/ticket.txt';
 	foreach my $allowed (@{$paths}) {
-		my $dir = $norm->($allowed);
+		my $dir = &coding_child_norm_path($allowed);
 		next unless length $dir;
 		next if $dir =~ m{(^|/)\.\.(/|$)};
 		return 1 if $dir eq '.' || $dir eq '';
@@ -381,6 +392,7 @@ sub coding_run_subagent {
 			return $record;
 		}
 	}
+	my %touched;
 	eval {
 		my $system = &Manager::coding_system_prompt()
 			. "\n\nYou are a subagent. Do only the task below. Do not bump, commit, push or restart, and do not ask for another agent. Read what you need. When done, reply with done and a short summary.";
@@ -389,9 +401,12 @@ sub coding_run_subagent {
 			. 'SCOPE: ' . $scope . "\n"
 			. 'ALLOWED PATHS: ' . (@paths ? join(', ', map { "$_" } @paths) : '(any in the repo; read only)');
 		my @lines = ($prompt);
-		my %touched;
 		my $turns = 0;
+		my $parent = $opt->{'parent_pid'} || 0;
 		while ($turns++ < $coding_child_turns) {
+			# A child outlives nothing: if the process that started it is gone,
+			# it must not keep writing to the tree for a run nobody is watching.
+			die "the parent process is gone\n" if $parent && !kill(0, $parent);
 			my ($parts, $err) = &subs::ai_chat_parts_with_fallback(
 				$opt->{'model'}, $opt->{'fallback'},
 				[ { role => 'system', content => $system },
@@ -442,11 +457,225 @@ sub coding_run_subagent {
 		$err =~ s/\s+$//;
 		$record->{'error'} = $err;
 	}
+	# What the child wrote is the parent's business too: the commit that follows
+	# stages this set, and a write made by a subagent used to vanish from it.
+	$record->{'touched'} = [ sort keys %touched ];
 	unless (defined $record->{'final'} && length $record->{'final'}) {
 		my $last = @{$record->{'steps'}} ? $record->{'steps'}[-1]{'observation'} : '';
 		$record->{'final'} = length $last ? $last : 'stopped after ' . scalar(@{$record->{'steps'}}) . ' steps';
 	}
 	return $record;
+}
+
+# The tasks one `agent` action asks for, in order. A single `task` is the same
+# thing as a `tasks` list of one, so the model may use whichever reads better.
+sub coding_action_tasks {
+	my ($action) = @_;
+	$action = {} unless ref $action eq 'HASH';
+	my @tasks;
+	if (ref $action->{'tasks'} eq 'ARRAY') {
+		foreach my $t ( @{$action->{'tasks'}} ) {
+			next unless ref $t eq 'HASH';
+			push @tasks, $t;
+		}
+		return @tasks if @tasks;
+	}
+	if (defined $action->{'task'} && length "$action->{'task'}") {
+		push @tasks, {
+			task  => $action->{'task'},
+			scope => $action->{'scope'},
+			paths => $action->{'paths'},
+		};
+	}
+	return @tasks;
+}
+
+# The record a task that never ran still gets, so the parent has one answer per
+# task and the person can see which one was refused and why.
+sub coding_child_refused {
+	my ($action, $why) = @_;
+	$action = {} unless ref $action eq 'HASH';
+	my $scope = lc($action->{'scope'} // 'read');
+	$scope = 'read' unless $scope eq 'write';
+	return {
+		task    => ($action->{'task'} // ''),
+		scope   => $scope,
+		paths   => (ref $action->{'paths'} eq 'ARRAY' ? [ @{$action->{'paths'}} ] : []),
+		steps   => [],
+		touched => [],
+		error   => (defined $why && length $why ? "$why" : 'the subagent could not run'),
+	};
+}
+
+# Two write-scope subagents running at the same time must not share a path: the
+# second write would replace the first and neither would say so. Read-only
+# children may overlap freely. Returns the reason a batch is refused, or ''.
+sub coding_child_batch_clash {
+	my ($tasks) = @_;
+	$tasks = [] unless ref $tasks eq 'ARRAY';
+	return '' if scalar @{$tasks} < 2;
+	my @writes;
+	foreach my $i ( 0 .. $#{$tasks} ) {
+		my $t = $tasks->[$i];
+		next unless ref $t eq 'HASH' && lc($t->{'scope'} // 'read') eq 'write';
+		next unless ref $t->{'paths'} eq 'ARRAY';
+		push @writes, [ $i + 1, $t ];
+	}
+	for my $a ( 0 .. $#writes ) {
+		for my $b ( $a + 1 .. $#writes ) {
+			my ($na, $ta) = @{ $writes[$a] };
+			my ($nb, $tb) = @{ $writes[$b] };
+			foreach my $x ( @{ $ta->{'paths'} } ) {
+				foreach my $y ( @{ $tb->{'paths'} } ) {
+					my $px = &coding_child_norm_path($x);
+					my $py = &coding_child_norm_path($y);
+					next unless length $px && length $py;
+					my $clash = ($px eq '.' || $py eq '.'
+						|| $px eq $py
+						|| index($px, "$py/") == 0
+						|| index($py, "$px/") == 0) ? 1 : 0;
+					next unless $clash;
+					return "tasks $na and $nb may both write under $px and $py; send them one at a time";
+				}
+			}
+		}
+	}
+	return '';
+}
+
+# Run a batch of subagent tasks at the same time, one forked child each, and
+# return { records => [...], stopped => '' } - the records in the order the tasks
+# were asked for, and why the batch stopped short when it did. A child re-dials
+# its own database connection (database_grabber detaches an inherited handle on
+# a pid change), writes its record to a file of its own, and leaves with
+# POSIX::_exit so it never runs the parent's destructors. One task is the plain
+# path: no fork, no files.
+sub coding_run_subagents {
+	my ($tasks, $opt) = @_;
+	$tasks = [] unless ref $tasks eq 'ARRAY';
+	$opt = {} unless ref $opt eq 'HASH';
+	my @records;
+	my $out = { records => \@records, stopped => '' };
+	return $out unless @{$tasks};
+	if (scalar @{$tasks} == 1) {
+		$records[0] = &coding_run_subagent({
+			%{$opt},
+			action => $tasks->[0],
+			count  => ($opt->{'count'} // 0),
+		});
+		return $out;
+	}
+	my $scratch = File::Temp::tempdir(CLEANUP => 1);
+	my @pids;
+	my $fork_failed = 0;
+	foreach my $slot ( 0 .. $#{$tasks} ) {
+		my $action = $tasks->[$slot];
+		my $pid = fork();
+		unless (defined $pid) { $fork_failed = 1; last; }
+		if (!$pid) {
+			# Its own process group, so a stop reaches the commands the child
+			# itself runs, not just the perl process.
+			eval { setpgrp(0, 0) };
+			my $record;
+			my $ok = eval {
+				$record = &coding_run_subagent({
+					%{$opt},
+					action     => $action,
+					count      => ($opt->{'count'} // 0) + $slot,
+					parent_pid => $$,
+				});
+				1;
+			};
+			if (!$ok || ref $record ne 'HASH') {
+				my $why = $@ || 'the subagent process ended without a record';
+				$why =~ s/\s+$//;
+				$record = &coding_child_refused($action, $why);
+			}
+			my $json = eval { encode_json($record) };
+			if (!defined $json) {
+				# Keep the reason, even when the record itself will not encode.
+				$json = eval { encode_json(&coding_child_refused($action, 'the subagent record could not be written')) };
+			}
+			if (defined $json && open(my $fh, '>', "$scratch/$slot.json")) {
+				print $fh $json;
+				close $fh;
+			}
+			POSIX::_exit(0);
+		}
+		$pids[$slot] = $pid;
+	}
+	if ($fork_failed) {
+		# A batch that cannot start whole starts not at all, and charges nothing.
+		my @started = grep { defined } @pids;
+		foreach my $pid ( @started ) { kill 'TERM', -$pid; kill 'TERM', $pid; }
+		foreach my $pid ( @started ) { waitpid($pid, 0); }
+		my $why = 'could not start every subagent in the batch';
+		$out->{'records'} = [ map { &coding_child_refused($_, $why) } @{$tasks} ];
+		return $out;
+	}
+	my %alive = map { defined $_ ? ($_ => 1) : () } @pids;
+	my $stopped = '';
+	my $master = $ENV{JAWNOS_MASTER_PID} || 0;
+	while (%alive) {
+		foreach my $pid ( keys %alive ) {
+			my $done = waitpid($pid, POSIX::WNOHANG);
+			# -1 with ECHILD means it was already reaped; -1 on EINTR does not.
+			delete $alive{$pid} if $done == $pid || ($done == -1 && $!{ECHILD});
+		}
+		last unless %alive;
+		# A run stopped at the person's request, or a house whose master is
+		# gone, must not keep several model calls going.
+		my $fresh = $opt->{'run'} ? &coding_run_state_load($opt->{'run'}) : {};
+		if (ref $fresh eq 'HASH' && $fresh->{'cancel'}) { $stopped = 'cancelled'; last; }
+		if ($master && !kill(0, $master)) { $stopped = 'orphaned'; last; }
+		select(undef, undef, undef, 0.25);
+	}
+	if (length $stopped) {
+		foreach my $pid ( keys %alive ) { kill 'TERM', -$pid; kill 'TERM', $pid; }
+		# A child that will not take the message must not hold the one worker
+		# slot forever.
+		my %left = %alive;
+		my $give_up = time + 5;
+		while (%left && time <= $give_up) {
+			foreach my $pid ( keys %left ) {
+				my $done = waitpid($pid, POSIX::WNOHANG);
+				delete $left{$pid} if $done == $pid || ($done == -1 && $!{ECHILD});
+			}
+			last unless %left;
+			select(undef, undef, undef, 0.1);
+		}
+		foreach my $pid ( keys %left ) { kill 'KILL', $pid; waitpid($pid, 0); }
+	}
+	foreach my $slot ( 0 .. $#{$tasks} ) {
+		next if defined $records[$slot];
+		my $json = '';
+		if (open(my $fh, '<', "$scratch/$slot.json")) {
+			local $/;
+			$json = <$fh>;
+			close $fh;
+		}
+		my $record = length $json ? eval { decode_json($json) } : undef;
+		if (ref $record ne 'HASH') {
+			$record = &coding_child_refused($tasks->[$slot], length $stopped
+				? "the run was $stopped before this subagent finished"
+				: 'the subagent ended without a record');
+		}
+		$records[$slot] = $record;
+	}
+	$out->{'stopped'} = $stopped;
+	return $out;
+}
+
+# One line the parent's transcript can carry for a child: its last word, or why
+# it failed.
+sub coding_child_line {
+	my ($record) = @_;
+	$record = {} unless ref $record eq 'HASH';
+	my $line = (($record->{'error'} // '') ne '')
+		? 'subagent failed: ' . $record->{'error'}
+		: 'subagent: ' . (length($record->{'final'} // '') ? $record->{'final'} : 'done');
+	$line = substr($line, 0, 2000) . '…' if length($line) > 2000;
+	return $line;
 }
 
 # A path as one shell word. The review and the commit both build a command line
@@ -808,6 +1037,10 @@ sub coding_run_job {
 			}
 			my $action = &coding_parse_action($text);
 			unless ($action) { $final = $text; last; }
+			# A Stop pressed while the model was thinking must not be erased by
+			# the save at the foot of this turn.
+			my $before = &coding_run_state_load($id);
+			if (ref $before eq 'HASH' && $before->{'cancel'}) { $final = 'Stopped at your request.'; last; }
 			# The turn is over; the live line must not linger on the step that
 			# replaces it. The step keeps the reasoning the way it always has.
 			if (ref $state->{'current'} eq 'HASH') {
@@ -820,13 +1053,37 @@ sub coding_run_job {
 			&coding_run_state_save($id, $state);
 			&coding_run_push($id, $conversation);
 			my $obs;
-			my $subagent;
+			my @children;
+			my $stop_after = '';
 			if (($action->{'action'} // '') eq 'agent') {
+				my @tasks = &coding_action_tasks($action);
+				# A reply with two hundred tasks must not fill the run state: keep
+				# only what the run could ever start, and say what was not tried.
+				my $extra = 0;
+				if (scalar @tasks > $child_max + 1) {
+					$extra = scalar(@tasks) - ($child_max + 1);
+					@tasks = @tasks[ 0 .. $child_max ];
+				}
 				my $children = $state->{'children'} // 0;
-				if (&coding_child_limit_ok(0, $children, $child_max)) {
-					$state->{'children'} = $children + 1;
-					$subagent = &coding_run_subagent({
-						action      => $action,
+				# Only the tasks the run has room for may start; the rest are told
+				# why, rather than dropped without a word.
+				my (@run, @over);
+				foreach my $t ( @tasks ) {
+					if (&coding_child_limit_ok(0, $children + scalar(@run), $child_max)) { push @run, $t }
+					else { push @over, $t }
+				}
+				# A batch that cannot run whole runs not at all: half the work done,
+				# with no way to tell which half, is worse than a plain refusal.
+				my $clash = &coding_child_batch_clash(\@run);
+				if (length $clash) {
+					push @children, &coding_child_refused($_, $clash) foreach @run;
+					@run = ();
+				}
+				if (@run) {
+					$state->{'children'} = $children + scalar(@run);
+					&coding_run_state_save($id, $state);
+					&coding_run_push($id, $conversation);
+					my $batch = &coding_run_subagents(\@run, {
 						model       => $model,
 						fallback    => $fallback,
 						thinking    => $thinking,
@@ -834,28 +1091,19 @@ sub coding_run_job {
 						depth       => 0,
 						count       => $children,
 						max         => $child_max,
+						run         => $id,
 					});
+					push @children, @{ $batch->{'records'} };
+					$stop_after = $batch->{'stopped'} if length $batch->{'stopped'};
 				}
-				else {
-					my $scope = lc($action->{'scope'} // 'read');
-					$scope = 'read' unless $scope eq 'write';
-					$subagent = {
-						task  => ($action->{'task'} // ''),
-						scope => $scope,
-						paths => (ref $action->{'paths'} eq 'ARRAY' ? [ @{$action->{'paths'}} ] : []),
-						steps => [],
-						error => "this run has already used its $child_max subagents",
-					};
+				push @children, &coding_child_refused($_, "this run has already used its $child_max subagents") foreach @over;
+				push @children, &coding_child_refused({ task => '' }, "$extra more tasks were not attempted") if $extra;
+				$obs = join("\n", map { &coding_child_line($_) } @children);
+				$obs = 'no task to run' unless length $obs;
+				# A subagent's writes are the parent's to commit.
+				foreach my $r ( @children ) {
+					foreach my $f ( ref $r->{'touched'} eq 'ARRAY' ? @{ $r->{'touched'} } : () ) { $touched{$f} = 1; }
 				}
-				if (($subagent->{'error'} // '') ne '') {
-					$obs = 'subagent failed: ' . $subagent->{'error'};
-				}
-				else {
-					my $said = $subagent->{'final'} // '';
-					$said = 'done' unless length $said;
-					$obs = 'subagent: ' . $said;
-				}
-				$obs = substr($obs, 0, 2000) . '…' if length($obs) > 2000;
 			}
 			else {
 				# A commit that follows a review uses the same touched set: the
@@ -887,17 +1135,35 @@ sub coding_run_job {
 				}
 				$obs = &Manager::coding_execute(undef, $action, \%touched);
 			}
-			my $step = { action => $action, observation => &coding_step_view($obs) };
-			$step->{'reasoning'} = &coding_reasoning_view($reasoning) if length $reasoning;
-			$step->{'subagent'} = $subagent if ref $subagent eq 'HASH';
-			push @steps, $step;
+			# One step per child, so a batch reads as the parallel work it was.
+			if (scalar @children > 1) {
+				my $first = 1;
+				foreach my $r ( @children ) {
+					my $s = { action => $action, observation => &coding_step_view(&coding_child_line($r)), subagent => $r };
+					$s->{'reasoning'} = &coding_reasoning_view($reasoning) if $first && length $reasoning;
+					$first = 0;
+					push @steps, $s;
+				}
+			}
+			else {
+				my $step = { action => $action, observation => &coding_step_view($obs) };
+				$step->{'reasoning'} = &coding_reasoning_view($reasoning) if length $reasoning;
+				$step->{'subagent'} = $children[0] if ref $children[0] eq 'HASH';
+				push @steps, $step;
+			}
 			push @lines, 'ACTION: ' . encode_json($action);
 			push @lines, 'OBSERVATION: ' . (defined $obs ? $obs : '');
 			$state->{'steps'} = \@steps;
 			delete $state->{'current'};
+			# A Stop pressed during this turn is a fact about the run, not a stale
+			# field of this copy: carry it forward, or the save below erases it.
+			my $live = &coding_run_state_load($id);
+			$state->{'cancel'} = 1 if ref $live eq 'HASH' && $live->{'cancel'};
 			$state->{'updated'} = &subs::rightNow();
 			&coding_run_state_save($id, $state);
 			&coding_run_push($id, $conversation);
+			if ($stop_after eq 'cancelled') { $final = 'Stopped at your request.'; last; }
+			if ($stop_after eq 'orphaned') { $error = 'the master that owns this worker is gone'; last; }
 			if (($action->{'action'} || '') eq 'done' || ($action->{'action'} || '') eq 'say') {
 				$final = $action->{'text'} // '';
 				last;
