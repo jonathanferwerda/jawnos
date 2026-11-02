@@ -62,6 +62,11 @@ sub format_name {
 	return join ' ', @fname;
 }
 
+# Model rows in the order a chooser should read them: alphabetical by the name the
+# user sees. Kept as a routine rather than a `sort { $a->{'name'} }` in a template
+# because Mojo extracts a template's stash keys into lexicals, so a template whose
+# stash holds `a` (the app name) would sort the app name instead of the rows
+# (the same trap written up in templates/configure/packaging.html.ep).
 sub models_by_name {
 	return sort { &format_name($a->{'name'}) cmp &format_name($b->{'name'}) } @_;
 }
@@ -93,6 +98,13 @@ sub unformat_name {
 	return $fname;
 }
 
+# The filesystem form of a name. App names are keys first: they may contain
+# slashes, colons, semicolons, quotes and anything else a person can type. A
+# file or folder cannot take all of those safely, and a shell command must not
+# see them either, so this percent-encodes every byte that is not a letter,
+# mark, number or one of . _ -. Letters of any script stay as themselves, so an
+# existing café/中文 folder keeps its name. The encoding is injective, so two
+# distinct keys never share a folder.
 sub path_name {
 	my $name = shift;
 	$name = '' unless defined $name;
@@ -118,6 +130,11 @@ sub path_name {
 	return $out;
 }
 
+# The interface language: the house-wide row first, then the person's own
+# ("Me") row, then any device row, then the language chosen at install, then
+# English. setting_grabber's request-scoped memo makes the repeated asks in
+# one page cheap; reading it per call also means a change made in one worker
+# is seen by every other worker on the next request, not after a restart.
 sub language {
 	my $value = eval { &setting_grabber({ app => 'misc', setting => 'language', device => 'all' }) };
 	my $signatorial;
@@ -153,6 +170,8 @@ sub language_label {
 	return &language::label($code);
 }
 
+# A translated label. Placeholders are {0}, {1}, ... so the same catalog can
+# feed Perl templates and JavaScript.
 sub lang {
 	my $key = shift;
 	return &language::translate(&language(), $key, @_);
@@ -165,6 +184,9 @@ sub lang_js {
 	return &json_chars(&language::for_javascript(&language()));
 }
 
+# Translate a full UI or help string through the generated catalog. This is the
+# server-side counterpart of jawnosT(): it is for printed documents, mail and a
+# template that needs the text before the browser can translate the DOM.
 sub ui {
 	my $string = shift;
 	return &language::ui_translate(&language(), $string);
@@ -178,6 +200,14 @@ sub translation_language {
 	return &language::translation_language(@_);
 }
 
+# Translate text or a batch of UI strings through the configured Guide model.
+# Results are cached in the cache table, so the same label is paid for once.
+#
+#   &translate_engine({ to => 'French', text => 'Save' })
+#   &translate_engine({ to => 'fr', strings => [ 'Save', 'Cancel' ] })
+#
+# Returns { ok => 1, to => {...}, translations => {...}, cached => N,
+# translated => N, model => ... } or { ok => 0, error => '...' }.
 sub translate_engine {
 	my ($params) = @_;
 	$params ||= {};
@@ -328,6 +358,7 @@ sub translation_cache_hash {
 	return substr( sha256_hex( 'v1' . "\x1f" . $code . "\x1f" . ( $model // '' ) . "\x1f" . $text ), 0, 20 );
 }
 
+# One model turn over a list of strings. Returns a hash of source => translation.
 sub translation_model_batch {
 	my ( $model, $fallback, $target, $from, $texts ) = @_;
 	my $source = $from ? ( $from->{'native'} . ' (' . $from->{'code'} . ')' ) : 'the source language (detect it)';
@@ -411,12 +442,22 @@ sub terminal_name {
 	return $name;
 }
 
+# Percent-encode a filesystem name for a URL. Names that come from a directory
+# walk are decoded to characters (see Music::process_file), and a Mojolicious
+# template is a character string, so encode back to UTF-8 bytes first: url_escape
+# would otherwise escape a multi-byte character's codepoint (Æ -> %C6) instead of
+# its UTF-8 bytes (%C3%86). Plain ASCII and already-byte strings pass through.
 sub url_escape_utf8 {
 	my $name = shift // '';
 	utf8::encode($name) if utf8::is_utf8($name);
 	return url_escape($name);
 }
 
+# encode_json returns UTF-8 bytes, but a Mojolicious template is a character
+# string: interpolating those bytes upgrades them as Latin-1 and mangles every
+# non-ASCII value in the data (an "Ænima" tag renders as "Ãnima"). Decode back to
+# characters for the template, the same reason process_file decodes the names it
+# hands the window.
 sub json_chars {
 	my $json = encode_json shift;
 	utf8::decode($json) unless utf8::is_utf8($json);
@@ -439,6 +480,9 @@ sub html_name {
 	return $ascii;
 }
 
+# A name printed inside HTML text or an attribute. The stored key keeps every
+# printable character, so the renderer must encode the markup characters rather
+# than rely on the key being safe.
 sub html_text {
 	my $string = shift;
 	return '' unless defined $string;
@@ -503,6 +547,9 @@ sub numeric_formatter {
 	return $number
 }
 
+# Numbers people write as words, turned into digits so the same duration reader
+# can take "five minutes" or "2 hours". Only the number itself is rewritten; the
+# rest of the phrase is left for the unit reader.
 sub number_words_to_digits {
 	my ($text) = @_;
 	return $text unless defined $text && $text =~ /[a-z]/i;
@@ -584,6 +631,12 @@ sub duration_sayer {
 	return $sign . $duration;
 }
 
+# A duration a person can read several ways. The element carries the span in
+# milliseconds and the client turns it through the short form, all hours and all
+# minutes when it is clicked, remembering the reading for that window; the
+# server's own reading is the first paint. A negative span (a shortfall, a
+# moment read the other way) keeps its minus in `sign`, because the client's
+# readings fold a sign away when they take the size.
 sub duration_readout {
 	my ($milliseconds, %option) = @_;
 	return '' unless defined $milliseconds && $milliseconds =~ /^-?[0-9]+(?:\.[0-9]+)?$/;
@@ -599,6 +652,8 @@ sub duration_readout {
 		. &duration_sayer($milliseconds / 1000) . '</span>';
 }
 
+# The unit a timing token names, normalised to one word. The single letters are
+# case-sensitive, so they are matched before the lower-case spellings.
 sub time_abbrev_unit {
 	my $token = shift;
 	return undef unless defined $token && length $token;
@@ -618,6 +673,18 @@ sub time_abbrev_unit {
 	return undef;
 }
 
+# A length written the many ways people write one: "2d", "2 days", "2days",
+# "1 hour 30 minutes", "1h30m", "in 2h", "-3h", "a week", "1.5d". The
+# compact forms are what the app stores; the spelled forms are what a person
+# types in the appointment and budget inputs.
+#
+# A single capital M is a month while a lower-case m is a minute, and D is a
+# decade while d is a day, as everywhere else in the app. Months and years step
+# the real calendar (February is 28 or 29; 29 February shortens to the 28th), so
+# a length read here agrees with a schedule stepped elsewhere.
+#
+# Returns milliseconds (a duration), not a timestamp; a number with no unit keeps
+# the old contract and reads as minutes.
 sub time_abbrev_translator {
 	my ($timing, $timestamp) = @_;
 	return '1' if defined $timing && $timing =~ /Infinity|NaN/i;
@@ -703,6 +770,8 @@ sub is_leap_year {
 
 }
 
+# A calendar month's length. February is 29 in a leap year, and is_leap_year
+# carries the century rule: 2000 is a leap year, 1900 and 2100 are not.
 sub days_in_month {
 	my ($year, $month) = @_;
 	$month = ($month || 0) + 0;

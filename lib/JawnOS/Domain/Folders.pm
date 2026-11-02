@@ -40,6 +40,9 @@ our $find_program;
 our $gb;
 our $universal_splitter;
 
+# Take the entries naming a path out of one decoded blob: an entry goes whole,
+# a bare path in a list goes alone, and an attachment wrapped around an entry
+# goes with it. Returns how many were dropped.
 sub folders_entry_trim_in {
 	my ($blob, $wanted) = @_;
 	my $dropped = 0;
@@ -67,6 +70,11 @@ sub folders_entry_trim_in {
 	return $dropped;
 }
 
+# Take a path out of the rows besides an appointment that write one down - a
+# mailbox's attachments, the store's rows - so a file that is taken away is not
+# still named by them. A folder covers the files under it, and a row that
+# changed is stamped with the time so the other machines hear about it.
+# Returns how many entries were taken out.
 sub folders_entry_trim {
 	my $path = shift;
 	return 0 unless (defined $path && length $path);
@@ -98,6 +106,11 @@ sub folders_entry_trim {
 	return $trimmed;
 }
 
+# Every place a path is written down, so that sealing a file or opening one
+# keeps whatever points at it pointing at it: an appointment's file array, a
+# mailbox's attachments (each one wrapped around a file entry), and the store's
+# rows, which carry the same kind of entries as an appointment does. A backup
+# remembers its sealed file as a bare path, so it is here too.
 sub file_reference_places {
 	return (
 		{ table => 'appointments', column => 'file', shape => 'entries', standard => 1, app => 1 },
@@ -112,6 +125,10 @@ sub file_reference_places {
 	);
 }
 
+# Walk a decoded blob and hang every path in it off the map, so a path can be
+# found again by what it names: an entry's f or thumb, an attachment wrapped
+# around an entry, or a bare path in a list. What was found is kept with the
+# blob it sits in, so the spot can be written back to.
 sub file_reference_index {
 	my ($blob, $info, $paths) = @_;
 	return unless ref $blob;
@@ -135,6 +152,11 @@ sub file_reference_index {
 	}
 }
 
+# Every path the rows write down, read once, as a map from each path to where
+# it was found, so a job sealing or opening a whole folder can look a selection
+# up without dialing the database file by file. The looking is done on decoded
+# values: the JSON written by this house escapes the slashes, so the stored
+# text is no way to find a path in.
 sub file_reference_read {
 	my $read = { paths => {} };
 	foreach my $place ( &file_reference_places() ) {
@@ -167,6 +189,10 @@ sub file_reference_read {
 	return $read;
 }
 
+# What the rows remember about a path, from a set already read: the name the
+# file went in under, and the encryption standard the row carries, the two
+# things opening a seal again needs to hand the file back the way it was.
+# Undefined when nothing points at the path.
 sub file_reference_remembered {
 	my ($read, $path) = @_;
 	return undef unless (defined $path && length $path && ref $read);
@@ -179,6 +205,14 @@ sub file_reference_remembered {
 	return undef;
 }
 
+# Put the new paths where the old ones were written down, in a set already
+# read, and write back only the rows that changed. Each pair is named by the
+# path it was, and carries where it went and the name it went in under; a
+# moved folder hands its prefixes over instead, and every path under them gets
+# its pair worked out from them. A row that changed is stamped with the time
+# so the other machines hear about it, and an appointment that had a file
+# sealed or opened says which encryption standard it is under now, the way
+# file_encrypter and file_decrypter say it.
 sub file_reference_apply {
 	my ($read, $pairs, $folders) = @_;
 	return 0 unless (ref $read && ref $pairs);
@@ -240,6 +274,14 @@ sub file_reference_apply {
 	return scalar keys %dirty;
 }
 
+# The worker half of paste: put what was cut or copied into the folder being
+# looked at. A move on one disk is a rename; anything else is copied file by
+# file and the source taken away once it has landed, so a selection can cross
+# disks, and a folder goes with everything in it. A move also hands the rows
+# that pointed at a file its new path, once the old one has gone; a copy
+# leaves what points at the original pointing at it. Errors are collected
+# rather than thrown on the first bad file, and the job stops itself when the
+# dialog asks it to.
 sub folders_copy_job {
 	my ($job, $data) = @_;
 	my $to = $data->{'to'};
@@ -344,6 +386,13 @@ sub folders_copy_job {
 	$job->finish($result);
 }
 
+# The worker half of encrypting: every file the selection names is sealed the
+# way an app's files are sealed - openssl with the encryption standard and the
+# suds as the password, a name of its own, and the plaintext shredded behind
+# it - so the folder gives nothing away by its names. Whatever row pointed at
+# the plaintext is pointed at the seal instead, and remembers the name the file
+# went in under, so decrypting can hand it back the way it was. Files already
+# sealed are left alone.
 sub folders_encrypt_job {
 	my ($job, $data) = @_;
 	my $suds = $data->{'suds'};
@@ -398,6 +447,11 @@ sub folders_encrypt_job {
 	$job->finish($result);
 }
 
+# Whether the start of a file reads as text. Plain text has no type File::Type
+# knows, so it is the one thing a content check misses, and a password that
+# does not fit never comes out as words: a stream of random bytes is printable
+# about two fifths of the time, so a head that is printable throughout is not
+# something a wrong password produces.
 sub folders_reads_as_text {
 	my $head = shift;
 	return 0 unless (defined $head && length $head);
@@ -406,6 +460,14 @@ sub folders_reads_as_text {
 	return (($printable / length($head)) > .95) ? 1 : 0;
 }
 
+# The worker half of decrypting: every sealed file the selection names is
+# opened with the first password that works - the suds the request handed
+# over, since that is what the folders app seals with, then the padlock
+# secrets the way file_decrypter tries them - under the standard the row it
+# belongs to carries, falling back to the setting. It lands under the name the
+# rows that point at it remember it by, and whatever pointed at the seal is
+# pointed at the plaintext. The seal is only shredded once its plaintext is
+# safely out, so a file no password opens is left exactly as it was.
 sub folders_decrypt_job {
 	my ($job, $data) = @_;
 	my $suds = $data->{'suds'};
@@ -501,6 +563,9 @@ sub folders_decrypt_job {
 	$job->finish($result);
 }
 
+# The sealed files under the given roots: dir_listing's find(1), with the name
+# filter left to the child, so a home with a hundred thousand files costs one
+# process to ask.
 sub sealed_files_under {
 	my ($roots) = @_;
 	my @roots = grep { defined $_ && length $_ && -d $_ } @{ $roots || [] };
@@ -525,6 +590,8 @@ sub sealed_files_under {
 	return sort @out;
 }
 
+# system() with the child's stderr sent to /dev/null: openssl enc -d chatters
+# "bad decrypt" on every wrong password, and a reseal pass tries many.
 sub system_quiet {
 	my @command = @_;
 	open my $saved, '>&', \*STDERR or return system(@command);
@@ -535,6 +602,10 @@ sub system_quiet {
 	return $status;
 }
 
+# A database backup is not a folder seal: backup_now appends its standard
+# after the ciphertext, marked with the universal splitter (the restore path
+# splits on it), so the tail tells the two apart without opening anything. The
+# marker is 31 characters, which random ciphertext does not spell by accident.
 sub reads_as_backup {
 	my ($file) = @_;
 	my $size = -s $file or return 0;
@@ -549,6 +620,24 @@ sub reads_as_backup {
 	return (defined $tail && defined $splitter && length $splitter && index($tail, $splitter) >= 0) ? 1 : 0;
 }
 
+# The rotation's tail on disk: walk the sealed files and put every one that
+# opens under an old key back under the current one. The passwords are the ones
+# a rotation leaves reachable - the current suds first, so an already re-sealed
+# file is recognised and left alone, then every secret the security rows derive
+# (the wrapped old keys among them, which is what finds the old seals). Nothing
+# is ever lost to a guess: the original seal is replaced only once the new one
+# is written and opens back to the identical bytes, a file no password opens is
+# counted and left exactly as it was, database backups (recognised by the
+# standard they append after the ciphertext) are left whole, and a file written
+# since the rotation
+# (mtime past `before`) is skipped without opening, since it is already under
+# the new key. Batched by a time budget; when the budget runs out the job
+# queues its own follow-up carrying a cursor - the walk is sorted, so the next
+# run starts where this one stopped instead of re-walking the whole home.
+# Where the sealed files live: the home plus every media location the misc
+# settings name (music, download, photo, document, video, scan, rec). On a phone
+# those point at /sdcard/... rather than the Termux home, so walking only ~ would
+# leave a rotation's tail of /sdcard seals untouched.
 sub folders_reseal_roots {
 	my @roots = ( &home('~/') );
 	foreach my $l ( &location_types() ) {
@@ -680,6 +769,16 @@ sub folders_reseal_job {
 	return;
 }
 
+# --- key propagation -----------------------------------------------------------
+# A rotation has to reach the rest of the house, or the machines drift apart:
+# each one ends up holding a different key, and only the machine that rotated
+# can read what it sealed. So a rotation queues a push: the new key is handed
+# to every linked machine over the signed peer rail, wrapped under the key it
+# replaced. Only a machine still on that key can open it, and a machine on a
+# different lineage fails the unwrap and keeps its own - divergence is not
+# healed by adopting a stranger's key. A machine that is away needs no push: the
+# canary syncs with the database, its next key resolution finds a vault that no
+# longer validates and pulls the new key the way a keyless machine does.
 sub key_push_envelope {
 	my $Knew = &suds_grabber();
 	return unless $Knew;

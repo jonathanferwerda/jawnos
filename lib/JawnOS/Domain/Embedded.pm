@@ -265,6 +265,11 @@ sub embedded_levels_scan {
 	return \@found;
 }
 
+# The System card asks for quick passes while it is on screen. Rendering the
+# card sets this stamp; the levels loop sees it and shortens its interval, so a
+# phone plugged in a moment ago shows its new state instead of waiting out the
+# two-minute house pass. Rewritten at most every 30s so an open card does not
+# write the cache on every refresh.
 sub levels_fast_request {
 	my $now = &rightNow();
 	my $seen = &cache_get({ app => '__president', context => 'levels', subcontext => 'fast' });
@@ -273,6 +278,14 @@ sub levels_fast_request {
 	return $now;
 }
 
+# CPU and RAM for the levels card. A peer's /manager/health answers with the
+# same shape, so one reading means one thing across the house.
+#
+# /proc/stat is the whole machine and the first choice. Android denies it to
+# apps, so the fallback sums JawnOS's own processes - the same figure the
+# Monitor app shows there - and the reading says so. A cumulative sample lives
+# in the cache so a percentage is a real difference over a real window, and so
+# every prefork worker reads the same sample instead of guessing from one tick.
 sub usage_cpu_sample {
 	if (open(my $fh, '<', '/proc/stat')) {
 		my $line = <$fh>;
@@ -530,6 +543,10 @@ sub house_levels_sync {
 	return $snapshot;
 }
 
+# The machine rows' embedded boards, deduplicated: one board may be in several
+# machines' neighbour tables. Both the pull (house_levels_sync) and a peer's push
+# (health_report) rebuild the list this way, so a pushed row cannot leave the
+# boards view disagreeing with the machines.
 sub levels_devices {
 	my $machines = shift || [];
 	my %device;
@@ -559,6 +576,10 @@ sub levels_peer_announced {
 	return ($before->{'until'} || 0) > &rightNow() ? 1 : 0;
 }
 
+# Tell each recently seen peer "I am awake and my rows have moved; pull me now".
+# A phone sleeps between beats, so a peer's own poll usually lands while it is
+# away; this is the announcement that lets the peer run its delta pull during
+# the seconds the phone is up. Returns how many peers said they need a pull.
 sub remote_available_announce {
 	my $me = &signatorial_designer();
 	my $newest = 0;
@@ -596,6 +617,15 @@ sub remote_available_announce {
 	return $pulled;
 }
 
+# Note that a peer is reading rows from this machine right now. The scheduled
+# wake checks this before releasing the CPU: a phone must not sleep in the
+# middle of a pull it is serving. The mtime is the signal, and utime updates it
+# without rewriting the file, so a multi-batch pull costs no flash writes.
+# The Android receiver's hard hold: while this file is fresh it renews the CPU
+# lock instead of letting the 45-second scheduled window expire. Touch it when a
+# peer is about to pull and for every row batch served; the receiver treats a
+# touch within 60s as a lease (the five-minute cap still bounds a runaway peer).
+# utime updates only the inode, so a multi-batch pull costs no flash writes.
 sub wake_hold_touch {
 	my $file = &home('~/.president/wake_hold');
 	unless (utime undef, undef, $file) {
@@ -620,6 +650,8 @@ sub sync_pull_touch {
 	return 1;
 }
 
+# The card's read: the cached snapshot with this machine's reading refreshed.
+# The local battery is cheap and should not wait for the next two-minute pass.
 sub levels_snapshot {
 	my $snap = &cache_get({ app => '__president', context => 'levels', subcontext => 'current' });
 	$snap = { at => 0, machines => [], devices => [] } unless ref $snap eq 'HASH';

@@ -49,6 +49,10 @@ our %m;
 our $say_quiet;
 our %setting_memo;
 
+# Compare a snapshot to the live table and list the rows the live table made
+# shorter (or dropped). A row is a candidate when its app is one the person named
+# or when it ran longer than older_than_ms in the snapshot - the two signals a
+# fixed rule cannot supply on its own.
 sub records_recover_scan {
 	my ($opts) = @_;
 	$opts ||= {};
@@ -125,6 +129,11 @@ sub records_recover_scan {
 	return $result;
 }
 
+# Write the scan's candidates back: the old row's ended-ness onto the live row, or
+# the whole old row when it was dropped. server_time is now, so every machine takes
+# the recovered version on its next sync. The recovered apps are then left alone by
+# the audit (they are, by definition, the ones that legitimately run long), so a
+# sweep does not sweep them up a second time.
 sub records_recover_apply {
 	my ($scan, $opts) = @_;
 	$scan ||= {};
@@ -171,6 +180,10 @@ sub records_recover_apply {
 	return { restored => $restored, reinstated => $reinstated, failed => $failed, skipped => $skipped, exempted => [ sort keys %{ &records_exempt() } ] };
 }
 
+# One pass of the watch: stage what the audit finds, and - when Apply automatically
+# is ticked - write the oldest exact-duplicate finding. A sweep or an orphan waits
+# for a person (a genuinely long appointment must never be repaired on its own).
+# Off until Configure -> Plat ticks Records.
 sub records_watch_tick {
 	%setting_memo = ();
 	return unless ((&subs::setting_grabber({ app => 'mail', setting => 'records_watch' }) // '') eq 'on');
@@ -192,6 +205,8 @@ sub records_watch_tick {
 	}
 }
 
+# One pass: catch what is new, record it, and hand the oldest waiting error to
+# the Coding agent to propose a fix for. Called from President's schedule.
 sub error_watch_tick {
 	# settings may have changed since this long-lived fork last read them (the
 	# setting memo lasts the process), so each pass starts from a fresh read
@@ -284,6 +299,16 @@ sub error_watch_tick {
 	return 1;
 }
 
+# ---- the guide watch: the Coding agent's other ear --------------------------
+# The Guide's conversations are saved as they go (guide_conversation_<name>,
+# the rows the Agents list reads back), tool observations and all. This reads
+# the ones that changed since last time and stages a turn that went nowhere -
+# a thing not found, a command that could not run, a closing line that says so
+# ("[object Object]" among them) - like an error, so the same propose/Apply
+# loop adjusts the Guide's training: its rules in help.pl, its verbs in gb.pl.
+# A signature dedupes repeats, and a small offset file keeps each conversation
+# from being read twice. The first pass only takes a baseline, so switching the
+# watch on does not stage the whole history at once.
 sub guide_watch_state_file { return &subs::home('~/.president/guide_watch_seen'); }
 
 sub guide_watch_state_load {
@@ -292,6 +317,10 @@ sub guide_watch_state_load {
 	return (ref $saved eq 'HASH') ? $saved : {};
 }
 
+# The words that read like the turn went nowhere. The Guide's phrasebook is
+# small and its observations are its own client's strings, so this is the same
+# text the person sees. "is hidden here" is left out on purpose: refusing a
+# hidden thing is the rule working, not a miss.
 sub guide_watch_trouble {
 	my $text = shift;
 	return 0 unless defined $text && length $text;
@@ -357,6 +386,10 @@ sub guide_watch_tick {
 	return 1;
 }
 
+# The propose loop runs in President, which never loads Manager.pl, so it carries
+# its own copy of the repo-path guard (the same rules as subs::coding_path).
+# Nothing here can change the repo: every write is staged, so the guard only has
+# to keep the agent's reading inside the tree.
 sub error_watch_repo { return &subs::home('~/jawnos'); }
 
 sub error_watch_rel {
@@ -376,6 +409,10 @@ sub error_watch_path {
 	return &error_watch_repo() . ($rel eq '' ? '' : '/' . $rel);
 }
 
+# Check a staged file's text before it is even proposed, against a temp copy of
+# the same basename (the tree is not written to here). The same verifier the
+# Apply path runs, so the agent learns at once instead of staging a file that
+# breaks the tree. Returns '' when it passes, else the reason.
 sub coding_verify_text {
 	my ($rel, $content) = @_;
 	return '' unless defined $content && length $content;
@@ -400,6 +437,8 @@ sub coding_verify_text {
 	return substr($line, 0, 300);
 }
 
+# The propose mode's tool loop: the same verbs' shape, but write only stages the
+# whole file, so the agent can change nothing here.
 sub coding_propose_execute {
 	my ($action, $staged) = @_;
 	my $a = $action->{'action'} // '';
@@ -453,6 +492,9 @@ sub coding_propose_execute {
 	return 'unknown action: ' . $a;
 }
 
+# The tracked protocol text the manager-side agent also follows (baked from the
+# gitignored AGENTS.md into docs/coding_agent_protocols.md), so the watcher's
+# proposals obey the same rules. Cached by mtime.
 sub coding_protocols_text {
 	my $repo = &error_watch_repo();
 	my $path = -f "$repo/docs/coding_agent_protocols.md" ? "$repo/docs/coding_agent_protocols.md"
@@ -468,6 +510,9 @@ sub coding_protocols_text {
 	return $coding_protocols_cache // '';
 }
 
+# One bounded propose run for a staged error: the model picks the next action,
+# write stages the file, repeat until done or the step cap. The proposal lands
+# on the row as whole files, never as a change to the tree.
 sub coding_propose_fix {
 	my $row = shift;
 	return unless ref $row eq 'HASH' && $row->{'uuid'};
@@ -565,6 +610,10 @@ sub coding_propose_fix {
 	return $files ? 'proposed' : 'failed';
 }
 
+# Where this machine takes code updates from. A house setting
+# (`sync/update_method`, device => 'all'), so the Dev panel writes it once and
+# every machine's next settings pull carries it. Blank or unknown means any:
+# origin first, a peer as the fallback, which is what the watcher always did.
 sub sync_update_method_get {
 	my $v = &subs::setting_grabber({ app => 'sync', setting => 'update_method', device => 'all' });
 	$v = &subs::setting_grabber({ app => 'sync', setting => 'update_method' }) unless defined $v && length $v;
@@ -572,6 +621,12 @@ sub sync_update_method_get {
 	return $v;
 }
 
+# The newest peer that can fast-forward this checkout. The watcher's fallback
+# and the manual button share it: sort by the version the peer advertises, keep
+# the few that are newer, and stop at the first true fast-forward. A peer whose
+# history merely shares a commit with ours is not enough - ff_only refuses the
+# reset, which is what keeps a rewritten peer history from dragging a machine
+# backward. Returns (status, output, peer row).
 sub git_peer_update_best {
 	my ($opts) = @_;
 	my $repo = $opts->{'repo'} || '.';
@@ -590,6 +645,11 @@ sub git_peer_update_best {
 	return ($last_status, $last_out, undef);
 }
 
+# A tree seeded from the image has no .git, so git_repo_update can only answer
+# no-repo. The boot unit owns turning it into a checkout; the Update now button
+# delegates to that same program, so a fresh image can update without a
+# re-image and both paths agree. The program's final JAWNOS_UPDATE_STATUS line
+# speaks the vocabulary update_now already uses.
 sub git_bootstrap_update {
 	my ($opts) = @_;
 	my $repo = $opts->{'repo'} || &subs::home('~/jawnos');
@@ -619,6 +679,11 @@ sub git_bootstrap_update {
 	return ($status || ($code ? 'error' : 'current'), $out);
 }
 
+# An explicit update, from the Dev panel's button. Unlike the watcher this may
+# run whichever source the method names, and for None (or Any) it tries GitHub
+# first and then a peer: pressing the button is the person's own instruction,
+# so the automatic-update switch does not veto it. Never force unless the caller
+# says so - force is what discards tracked local changes.
 sub update_now {
 	my ($opts) = @_;
 	my $repo = $opts->{'repo'} || '.';

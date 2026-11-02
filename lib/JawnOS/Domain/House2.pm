@@ -40,7 +40,24 @@ our $database;
 our $device;
 our $gb;
 our $house_key_password_context;
+# --- the recovery share -------------------------------------------------------
+# The house key sealed to a password rather than to a machine: what survives
+# ~/.house.key. It is a way back in, not a login.
+#
+# Argon2id everywhere: if the OpenSSL under this Perl predates 3.2, the
+# reference `argon2` tool performs the same derivation with the same
+# parameters and produces the same bytes (the probe asserts it). Only when
+# neither exists does a new share fall back to scrypt, then PBKDF2 at 600k.
+# The blob records the descriptor and the salt, so any machine can reopen it
+# with either provider.
+#
+# The salt is a printable base64 string, not raw bytes: the command line takes
+# its salt as an argument, and both providers must hash identical bytes.
 our $house_key_password_magic;
+# --- paper shares -------------------------------------------------------------
+# A share meant for paper is Crockford base32, uppercase and grouped, because it
+# may be written by hand: no case, no +/=, and I/L/O read as 1/1/0. The PS1
+# prefix names the format; the gate still accepts the old base64 codes.
 our $shamir_paper_prefix;
 
 sub house_key_password_open {
@@ -68,6 +85,9 @@ sub house_key_password_open {
 	return (defined $K && length $K) ? $K : undef;
 }
 
+# Legacy (v0.1.959): the password is no longer a recovery share, so no login or
+# route calls this. The seal/open primitives remain for the old sealed blobs and
+# for their probe; nothing mints a new share.
 sub password_share_store {
 	my ($password, $suds, $force) = @_;
 	return 0 unless defined $password && length $password;
@@ -87,6 +107,14 @@ sub password_share_store {
 	return 1;
 }
 
+# --- Shamir over GF(256) ------------------------------------------------------
+# Splitting the house key so no one holder can unwrap it. The field is the one
+# AES uses (x^8 + x^4 + x^3 + x + 1); subtraction is XOR, and each byte of the
+# secret is split independently with a random polynomial of degree k-1.
+#
+# A share is { x => 1..255, y => the same length as the secret }. The field
+# arithmetic is checked against known AES vectors and an exhaustive inverse
+# sweep in the probe; three shares rebuild, two reveal nothing.
 sub shamir_gf_mul {
 	my ($a, $b) = @_;
 	my $p = 0;
@@ -117,6 +145,7 @@ sub shamir_gf_inv {
 	return &shamir_gf_pow($a, 254);
 }
 
+# shamir_split($secret, $k, $n) -> [ { x, y }, ... ]
 sub shamir_split {
 	my ($secret, $k, $n) = @_;
 	return undef unless defined $secret && length $secret;
@@ -143,6 +172,7 @@ sub shamir_split {
 	return \@shares;
 }
 
+# shamir_combine([ { x, y }, ... ]) -> the secret, or undef
 sub shamir_combine {
 	my ($shares) = @_;
 	return undef unless $shares && ref $shares eq 'ARRAY' && @{$shares} >= 2;
@@ -250,6 +280,9 @@ sub shamir_share_decode {
 	return { x => unpack('C', substr($raw, 0, 1)), y => substr($raw, 1) };
 }
 
+# Save each paper code as a QR PNG under a private per-machine folder. The code
+# goes through a 0600 temp file, never the command line, and the PNG is 0600.
+# The data URI is for the one-time display; the file is what the person keeps.
 sub shamir_qr_save {
 	my ($codes, $label) = @_;
 	return undef unless $codes && ref $codes eq 'ARRAY' && @{$codes};
@@ -302,6 +335,8 @@ sub shamir_qr_save {
 	};
 }
 
+# The threshold this house uses. The policy is not secret (3:5), so it sits in
+# settings and syncs with everything else; the shares themselves never do.
 sub shamir_policy {
 	my $raw = eval { &setting_grabber({ app => '__president', setting => 'shamir' }) };
 	if (defined $raw && $raw =~ /^(\d+):(\d+)$/) {
@@ -311,6 +346,9 @@ sub shamir_policy {
 	return (3, 5);
 }
 
+# The recovery door's share path: decode whatever codes were pasted, require at
+# least k, and hand back the combined secret. The caller still checks the
+# canary; a wrong or partial set yields a string it refuses.
 sub shamir_open_shares {
 	my ($codes) = @_;
 	return undef unless $codes && ref $codes eq 'ARRAY';
@@ -336,6 +374,17 @@ sub shamir_open_shares {
 	return $secret;
 }
 
+# --- device-held shares -------------------------------------------------------
+# A share can be stored sealed to a device instead of printed. The device makes
+# an X25519 key just for this (not its login key: the browser's Ed25519 key is
+# non-extractable and cannot agree), sends the public half here, and the server
+# wraps one share to it. The server never sees a share in the clear.
+#
+# Recovery is the other direction: a machine with no key mints an ephemeral
+# X25519 key, each holder unwraps its share and re-wraps it to that key, and the
+# recovering machine combines the answers itself. The server only relays opaque
+# blobs. At most one wrapped share is assigned per person, so one person with
+# five devices is not a threshold.
 sub house_key_share_wrap {
 	my ($share, $pubkey_b64) = @_;
 	return undef unless defined $share && length $share;
@@ -348,6 +397,9 @@ sub house_key_share_wrap {
 	return &house_key_wrap($share, $pk);
 }
 
+# The current set is the newest set with any active shares. A recovery request
+# names it, so a holder never releases a share from an older split (shares from
+# two different splits never combine).
 sub house_key_share_set_current {
 	my $row = eval { &db_query('select set_id from house_key_shares where status = ? order by server_time desc, rowid desc limit 1', 'active')->hashes->[0] };
 	return $row ? $row->{'set_id'} : '';
@@ -377,6 +429,9 @@ sub house_key_share_for_device {
 	return $rows || [];
 }
 
+# Split $suds and wrap as many shares as there are eligible holders. The rest
+# are returned as paper codes. Holders are device uuids; one per person (an
+# unassigned device counts as its own holder key).
 sub house_key_share_create_set {
 	my ($suds, $holders) = @_;
 	return undef unless defined $suds && length $suds;
@@ -436,12 +491,16 @@ sub house_key_share_create_set {
 	return { set_id => $set_id, k => $k, n => $n, assigned => \@assigned, paper => \@paper, skipped => \@skipped };
 }
 
+# A revocation is a deletion: a wrapped share the device can no longer open is
+# still a row a copy of the database carries.
 sub house_key_share_revoke_device {
 	my ($device_uuid) = @_;
 	return unless defined $device_uuid && length $device_uuid;
 	eval { &db_delete('house_key_shares', { holder_device => $device_uuid }) };
 }
 
+# Rotation makes every wrapped share useless (they open the old key) and leaves
+# a note so the Recovery view can ask for a new set.
 sub house_key_share_clear {
 	my $had = eval { &db_query('select count(*) as n from house_key_shares')->hashes->[0]{'n'} } || 0;
 	eval { &db_query('delete from house_key_shares') };
@@ -455,6 +514,10 @@ sub house_key_share_clear {
 	return $had;
 }
 
+# --- the recovery request -----------------------------------------------------
+# A machine with no vault asks for shares. Its ephemeral public key is the only
+# thing stored; holders re-wrap to it, and the server relays blobs it cannot
+# open. The request lives for half an hour.
 sub house_key_share_request_create {
 	my ($pubkey_b64, $name) = @_;
 	my $raw = eval { decode_base64($pubkey_b64 // '') };
@@ -570,6 +633,8 @@ sub vault_seed {
 	return 1;
 }
 
+# A fingerprint of the suds, for the session: a session proves it was minted
+# under the current key without ever carrying the key.
 sub suds_id {
 	my ($suds) = @_;
 	return '' unless $suds;
@@ -577,6 +642,9 @@ sub suds_id {
 	return &shorthand_name(md5_sum('suds:' . $suds), 12);
 }
 
+# Does this candidate unwrap the level-1 canary (the current password encrypted
+# with itself)? That is the check authentication_passer always made, now usable
+# on any candidate key.
 sub suds_current {
 	my ($suds) = @_;
 	return 0 unless $suds;
@@ -589,6 +657,11 @@ sub suds_current {
 	return $check eq $suds ? 1 : 0;
 }
 
+# --- the door and the key -----------------------------------------------------
+# The login password gets its own row (sealed with itself), apart from the level-1
+# key canary, so a password change never re-keys the house: the key lives in the
+# vault, the password only opens the door. On a machine that predates the door
+# the two are still one thing; login_gate migrates it the first time it is used.
 sub door_row {
 	my $q = &db_select('security', ['uuid','credential'], { level => 'door' });
 	return $q ? $q->hash : undef;
@@ -622,6 +695,12 @@ sub door_set {
 	return 1;
 }
 
+# The login gate: (authorized, key). The key comes from this machine's vault;
+# the password only has to open the door row. The house key itself is the root
+# credential and opens the house in every state: with a door present it
+# authorizes without touching the door, with no door it becomes the password,
+# and a machine whose vault was lost heals its vault here. Neither password nor
+# key ever travel in a session.
 sub login_gate {
 	my ($typed) = @_;
 	return (0, undef) unless defined $typed && length $typed;
@@ -649,6 +728,8 @@ sub login_gate {
 	return (0, undef);
 }
 
+# The pre-vault derivation: the newest active ticket carries a copy of the suds,
+# wrapped with the ticket's own one-time key. Kept as the migration path.
 sub legacy_suds {
 	my $q = &db_query('select secret,password,suds,server_time from tickets where status = ? order by server_time desc limit 1', 'active');
 	my $ticket = $q ? $q->hashes->[0] : undef;
@@ -664,6 +745,8 @@ sub legacy_suds {
 	return ($suds, $ticket->{'server_time'});
 }
 
+# The suds, resolved server-side. Sessions carry only suds_id now; nothing a
+# client holds can produce the key.
 sub session_suds {
 	my ($c) = @_;
 	# A bootstrap session is a password login that has not proved a device. It
@@ -675,6 +758,11 @@ sub session_suds {
 	return eval { &suds_grabber() };
 }
 
+# A machine whose vault is gone can ask a linked machine for the house key
+# over the signed peer rail. The asker supplies a one-time secret; the donor
+# seals the key to it (see /manager/vault_share), so the key never travels
+# naked and a replayed answer is useless. Only a key the local canary accepts
+# is handed back: machines holding different keys are a different problem.
 sub vault_pull_one {
 	my ($rm, $seal) = @_;
 	my $manager = $rm->{'manager'};

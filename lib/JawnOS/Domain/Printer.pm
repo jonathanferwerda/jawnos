@@ -39,6 +39,13 @@ our $device;
 our $log;
 our %m;
 
+# What a printer says about its own consumables, read over IPP. A printer that
+# advertises _ipp._tcp answers Get-Printer-Attributes: marker-levels is the ink or
+# toner left in each cartridge, with marker-names, marker-colors (one #rrggbb, or
+# several for a tri-colour cartridge) and marker-types labelling each one, and
+# printer-state / printer-state-reasons saying whether it needs attention.
+# Returns a hashref of the markers and the state, or { error => ... } when nothing
+# answers - so a printer that is off leaves its row saying so, not blank.
 sub printer_ink_levels {
 	my ($ip) = @_;
 	return { error => 'no address' } unless $ip && $ip =~ /^\d{1,3}(\.\d{1,3}){3}$/;
@@ -124,6 +131,9 @@ IPP
 	};
 }
 
+# The JawnOS devices the local network advertises on _jawnos._tcp, keyed by
+# address, MAC and chip_id so a scanned device is recognised however it is known.
+# The firmware puts purpose/model/caps in the TXT records (see jw/jt/alarmclock).
 sub mdns_devices {
 	# What the fleet advertises on _jawnos._tcp: purpose, model, abilities and the
 	# radio address. The responder is the ESP-IDF one, back after a spell without it:
@@ -151,6 +161,9 @@ sub mdns_devices {
 	return { by_ip => \%by_ip, by_mac => \%by_mac, by_chip => \%by_chip };
 }
 
+# Fold what mDNS knows into an address map in place: name the JawnOS devices and
+# the printers on each network, and add any the neighbour read missed, so a
+# device answers what it is the moment it appears. Returns 1 if anything changed.
 sub mdns_merge_address {
 	my ($address) = @_;
 	return 0 unless ref $address eq 'HASH';
@@ -220,6 +233,9 @@ sub mdns_merge_address {
 	return $changed;
 }
 
+# The light half of a scan, on a timer: fold what mDNS knows into this machine's
+# own device row, so a device plugged in is named within seconds without running
+# the whole interface scan. Writes only when something changed.
 sub device_mdns_sync {
 	# The gateway is usually the one appliance that never runs jawn, so it is
 	# discovered here rather than by the peer mesh. Throttled inside.
@@ -277,6 +293,9 @@ sub device_mdns_sync {
 	eval { &Websocket::send('server', { console => 'deviceLister()' }) } if $net_changed;
 }
 
+# An address and its netmask as a CIDR: 192.168.2.3 + 255.255.255.0 ->
+# 192.168.2.0/24. Returns undef for anything that is not a plain IPv4 address,
+# and reads a hex netmask (0xffffff00) the way some ifconfig builds print it.
 sub subnet_cidr {
 	my ($ip, $netmask) = @_;
 	return undef unless defined $ip && $ip =~ /^\d{1,3}(\.\d{1,3}){3}$/;
@@ -302,6 +321,11 @@ sub subnet_cidr {
 	return join('.', @net) . '/' . $bits;
 }
 
+# `ip neigh` is only the ARP cache: a device this machine has never spoken to -
+# a printer, a fresh appliance - is simply absent from it until something pings
+# the network once. On an explicit scan, sweep the NIC's own subnet so those
+# hosts answer and land in the cache the neighbour read then relies on. The
+# sweep keeps its own bound so a slow or filtered network cannot stall a scan.
 sub subnet_sweep {
 	my ($nic, $ip, $netmask) = @_;
 	return if !$ip || $ip !~ /^\d{1,3}(\.\d{1,3}){3}$/;

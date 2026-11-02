@@ -36,6 +36,11 @@ use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
 our %accounting_account_cache;
+# A fingerprint of the code this machine is actually running. There is no
+# .git on the remote machines (remote_rsync excludes it), so the source files
+# themselves are hashed; when a .git is present the commit is reported too.
+# Computed once per process and memoised - the app only re-reads its code on a
+# restart, so the values cannot change under it.
 our $code_revision_cache;
 our $database;
 our $device;
@@ -434,6 +439,8 @@ sub log_writer {
 	return $data;
 }
 
+# The human version shown in the System view (and available to the peer
+# handshake). Bumped per commit by scripts/version_bump.pl; stored in ./VERSION.
 sub jawn_version {
 	return $jawn_version_cache if $jawn_version_cache;
 	my $v = eval { read_file('./VERSION') } || '';
@@ -442,6 +449,8 @@ sub jawn_version {
 	return $jawn_version_cache = $v;
 }
 
+# A bump rewrites ./VERSION under a live process; whatever cached the old number
+# (the Coding agent's commit subject reads it) must be told to forget it.
 sub jawn_version_forget { undef $jawn_version_cache; }
 
 sub code_revision {
@@ -496,6 +505,12 @@ sub code_revision {
 	return $code_revision_cache;
 }
 
+# A money move is a warehouse row. Every transaction with an account is written
+# to the warehouse as it is recorded - the same fields under the same names, so
+# the budget can read the ledger without knowing it moved - and the row is keyed
+# by the source transaction's uuid, so a re-write or a backfill cannot double it.
+# kind='money' marks it; type and movement keep what the transaction was.
+# (Lives here, not in Manager.pl, so the boot process can run backfills.)
 sub warehouse_money_mirror {
 	my $row = shift;
 	return unless $row && $row->{'uuid'};

@@ -35,9 +35,22 @@ use Time::Local;
 use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
+# A provider that has answered "no credit" is stood down for a while, so the panel
+# can hide its paid models and chat can step down to a free one.
 our $AI_UNAVAILABLE_FOR;
 our %PERIOD_TREND;
 our $SPEED_MEASURE_CAP;
+# The speed a GPS fix carried, saved where the evaluator's measurements live: an
+# entry on the appointment's own measures ({speed => 5.0, ts => ...}), so every
+# reading counts in the readings, averages and trends the same way a typed-in
+# measure does. The house reads speed in km/h (the fix carries m/s). The app's
+# measure table gets a name for it the first time, so it is a measure the house
+# knows rather than a stray key. A fix with no speed (the device gave none) is
+# left alone.
+#
+# Volume is the worry on a walk: a fix every few seconds would pile hundreds of
+# readings on one appointment. So a reading is kept at most once a gap, and a
+# long track keeps its most recent readings, not all of them. Both knobs are here.
 our $SPEED_MEASURE_GAP_MS;
 our $device;
 our $gb;
@@ -50,6 +63,19 @@ sub device_label {
 	return $names->{$sig} || substr($sig, 0, 8);
 }
 
+# Which device records an appointment's movement. Two machines carried together
+# would each file their own fixes and the appointment's distance would be
+# counted twice; one device records and the rest keep their own current place
+# and their home plates, they just do not file the appointment's movement.
+#
+#   my $sig = &subs::movement_recorder({ app => $app, appt => $uuid, signatorial => $me, timestamp => $t });
+#
+# The house setting movement_device answers: a signatorial names that machine,
+# 'every' lets them all record (the old way), and 'auto' (the default) takes the
+# device that has actually covered ground in the last hour, preferring the one
+# that has been recording the appointment longest. A device standing still never
+# wins over one that is moving, so a tablet left in the house cannot take a trip
+# away from the phone that went for the walk.
 sub movement_recorder {
 	my ($p) = @_;
 	$p ||= {};
@@ -66,6 +92,10 @@ sub movement_recorder {
 	return &movement_choice({ choice => 'auto', signatorial => $sig, rows => $rows, now => $now });
 }
 
+# The decision behind movement_recorder with the rows already read, so it can be
+# tested without a database. An explicit choice answers at once; 'auto' reads
+# the appointment's fixes from the last hour and picks the device that went
+# somewhere, the longest-recording one first.
 sub movement_choice {
 	my ($p) = @_;
 	$p ||= {};
@@ -114,6 +144,12 @@ sub movement_choice {
 	return $win;
 }
 
+# The places an app went, read from the continent table the GPS fills. A walk's
+# track is a run of latitude/longitude rows tied to the appointment; summed here
+# into what a report can use: how many places, how far (km), for how long, the
+# box they fall in, where it started and ended, and the speed in km/h - from the
+# speed the readings carried (the fix gives m/s), or the average worked out from
+# the distance and the time when the readings carried no speed of their own.
 sub evaluation_continent {
 	my ($app, $since) = @_;
 	return {} unless $app && $app ne '__president';
@@ -200,6 +236,15 @@ sub continent_speed_measure {
 	return 1;
 }
 
+# Where the moment sits in the calendar period it is in: the start, the start of
+# the next period, and the fraction between them (0 at the opening instant, 1 as
+# the next period begins). The periods come off the calendar - a month is however
+# many days it holds, and daylight saving is honoured - the same way father_time
+# builds a locked window, so a pace read here and a window drawn there agree.
+# $week_start is the weekday a week begins on (0 Sunday, 1 Monday): the budget's
+# locked window and the trend buckets start their weeks on different days, so
+# each caller says which. This is what lets a part-run period be read as a pace
+# rather than a fall.
 sub period_bounds {
 	my ($unit, $now, $week_start) = @_;
 	$now = &rightNow() unless defined $now;
@@ -242,6 +287,8 @@ sub period_bounds {
 	return ($begin, $end, $fraction);
 }
 
+# the label of each of the last $n periods of a scope, oldest first, in the same
+# form the SQL bucket produces
 sub period_trend_labels {
 	my ($unit, $n, $now) = @_;
 	my @labels;
@@ -290,6 +337,11 @@ sub period_trend_labels {
 	return @labels;
 }
 
+# The last few periods of every scope, oldest first, as "label=count ..." - the
+# same compact shape as a window's daily_counts, but for month, week, day, hour
+# and minute as well, so the model reads the pace period by period. $count is the
+# app's own scope count (how many periods its graph walks), capped per scope so
+# the short clocks do not swamp the prompt.
 sub evaluation_period_trends {
 	my ($app, $count) = @_;
 	return {} unless $app && $app ne '__president';
@@ -328,6 +380,8 @@ sub evaluation_period_trends {
 	return $out;
 }
 
+# every day of the window, so a lag stays a lag in calendar days even when a
+# series has holes in it
 sub evaluation_window_days {
 	my ($since) = @_;
 	my $now = &subs::rightNow();
@@ -340,6 +394,8 @@ sub evaluation_window_days {
 	return [ grep { !$seen{$_}++ } @days ];
 }
 
+# Pearson over day maps that may have holes - a day without a reading is not a
+# zero reading - joined on the window's days, so the best lag is in days
 sub day_map_correlation {
 	my ($da, $db, $days) = @_;
 	my $n = scalar @{$days};
@@ -364,6 +420,9 @@ sub day_map_correlation {
 	return { r => sprintf('%.2f', $best), lag_days => $best_lag };
 }
 
+# Two series that both run on nearly every day of the window correlate by
+# construction - the calendar, not a cause. The maps that can have holes
+# (measured readings) count a day by being defined, the others by being non-zero.
 sub daily_habit {
 	my ($da, $db, $days, $da_holes, $db_holes) = @_;
 	my $n = scalar @{$days};
@@ -374,6 +433,10 @@ sub daily_habit {
 	return 1;
 }
 
+# what else was happening: every app's daily counts and every numeric measure
+# any app logged, correlated against the targets. The relational window only
+# knows the apps it was shown, so a headache never gets to blame the humidity
+# unless it is asked to look at the whole house.
 sub context_correlations {
 	my ($targets, $days, $counts, $measures) = @_;
 	my @candidates;
@@ -436,6 +499,17 @@ sub context_correlations {
 	return \@out;
 }
 
+# What ran around this app's own occurrences: for each occurrence, the other
+# apps whose occurrences fall within a window either side of it, so a thing that
+# consistently happens at the same time of day - the coffee after waking, the
+# walk after lunch, the code right after the coffee - stands out. A correlation
+# of daily totals drowns that in the calendar (two daily routines move together
+# by construction); an event read asks instead how often the thing was actually
+# there when this one happened, against how often chance would put it there.
+# Returns the apps that co-occur more than chance, each with how many of this
+# app's occurrences had it nearby (hits), how many were scanned (of), the lift
+# over chance, and the average offset in minutes (negative when it tends to come
+# before this app, positive after).
 sub evaluation_context_scan {
 	my ($app, $since, $delta, $cap) = @_;
 	return [] unless $app && $app ne '__president';
@@ -489,6 +563,10 @@ sub evaluation_context_scan {
 	return \@out;
 }
 
+# what was out of the ordinary on the days this app ran: every measure's
+# average on those days against its average on the window's other days, scaled
+# by how spread the measure is. A sparse app can still point at a reading this
+# way, which a correlation needs too many days to do.
 sub measure_contrasts {
 	my ($app, $days, $counts, $measures) = @_;
 	my %active = map { $_ => 1 } keys %{ $counts->{$app} || {} };
@@ -534,6 +612,9 @@ sub measure_contrasts {
 	return \@out;
 }
 
+# Every AI provider the Platform panel can point a model at, and the models each
+# offers. A model is chosen by id: a bare name goes to the local Ollama,
+# @cf/... to Cloudflare, and everything else is "provider:model".
 sub ai_providers {
 	return [
 		{ id => 'ollama',     label => 'Ollama (local)',        keys => [ [ 'ollama_key', 'API key (optional)' ] ] },
@@ -562,10 +643,16 @@ sub ai_providers {
 	];
 }
 
+# Every setting name that holds a secret, so a panel can tell a key from a value.
 sub ai_key_settings {
 	return map { $_->[0] } map { @{ $_->{'keys'} } } @{ &subs::ai_providers() };
 }
 
+# Whether a provider can answer here at all: the key (or account) it needs is
+# entered, and for the local Ollama the daemon is actually running. "Valid"
+# beyond that is only knowable by calling it - the bucket tracker already stands
+# down an account that answered with no credit, and the Plat panel hides those
+# paid models. The model lists only offer providers that pass this.
 sub ai_provider_ready {
 	my ($id) = @_;
 	return 0 unless defined $id && length $id;
@@ -586,6 +673,9 @@ sub ai_provider_ready {
 	return 1;
 }
 
+# A provider with an account on file: at least one of the settings it needs is
+# filled in. Ollama's key is optional, so a bare local daemon has no account and
+# does not count; passing $values avoids re-reading the settings per provider.
 sub ai_provider_registered {
 	my ($provider, $values) = @_;
 	return 0 unless ref $provider eq 'HASH';
@@ -597,6 +687,13 @@ sub ai_provider_registered {
 	return 0;
 }
 
+# The model choices, grouped by provider, for the dropdowns. Ollama and
+# Cloudflare are read live; the rest are the fixed lists above.
+#
+# Which of chat / vision / image / audio a model can serve, so a role only offers
+# models that fit it: a text chatbot is not offered a vision-only model, and the
+# Vision role is not offered a plain text one. A name is the only signal for most
+# providers, so this is a heuristic and errs toward 'chat'.
 sub ai_model_caps_by_name {
 	my ($name) = @_;
 	my $n = lc($name || '');
@@ -637,6 +734,8 @@ sub ai_model_caps {
 	return &ai_model_caps_by_name($family ? ($name . ' ' . $family) : $name);
 }
 
+# Which provider a model id points at. A bare name (and a :cloud one) goes to
+# Ollama; @cf/... to Cloudflare; the rest are "provider:model".
 sub ai_model_provider {
 	my ($model) = @_;
 	return 'cloudflare' if $model =~ /^\@cf/;
@@ -647,12 +746,15 @@ sub ai_model_provider {
 	return 'ollama';
 }
 
+# The machine a @<device>/<model> names, or ''.
 sub ai_model_device {
 	my ($model) = @_;
 	return $1 if $model =~ /^\@([^\/]+)\/.+$/;
 	return '';
 }
 
+# The billing bucket a model draws on. Local Ollama and Cloudflare (its plan is
+# included) are free; an Ollama :cloud model and every third-party provider cost.
 sub ai_model_bucket {
 	my ($model) = @_;
 	my $provider = &ai_model_provider($model);

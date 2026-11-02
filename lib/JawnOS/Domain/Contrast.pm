@@ -35,12 +35,28 @@ use Time::Local;
 use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
+# The named colour schemes the configure panel offers. One table, shared by the
+# Misc panel (which paints its swatches from it) and the appointment theme
+# dropdown (which stores a scheme name, not a colour), so the two can never
+# drift apart. Each palette is a ramp the misc surfaces cycle through, in
+# @gb::misc_settings order; the manager surface is therefore a fixed index.
 our @colour_scheme_order;
 our %colour_schemes;
 our $config;
 our $device;
 our $gb;
+# The colours a text control wears to sit beside the icon set's tiles: every
+# generated tile is filled from hsl() values (the loud sets build their
+# gradients from the same ones, so the first hsl() in the file is still the
+# tile's colour) and the lightness says whether dark or light ink reads on it.
+# The tile is named for the state the control is about - the page button wears
+# the "now" tile at home and the back/forward tiles once it has walked. Memoised
+# per set and tile: the files only change when build.js runs, while the manager
+# re-renders constantly.
 our %icon_plate_memo;
+# The currently selected pseudonym icon set ('' for the modern default). Memoised
+# per process with a short TTL: icon_for() runs once per icon on every render and
+# each miss costs a config read (a DB query plus Sereal decode).
 our $icon_set_memo;
 our $icon_set_memo_time;
 our %m;
@@ -51,6 +67,12 @@ our $theme_registry_time;
 our $theme_state_memo;
 our $theme_state_time;
 
+# Pick black or white ink to sit on top of an arbitrary background colour, so
+# appointment/name labels stay readable whatever colour the theme gives them.
+# The inks are weighed the WCAG way - each channel linearised and weighted
+# before the sum - because that is how the eye reads them: the two tie at a
+# luminance of about 0.179, not half way, so a hot pink like #ea43b8 takes
+# black where a flat average of the channels inked it white.
 sub contrast_ink {
 	my ($bg) = @_;
 	return '#000000' unless defined $bg && $bg =~ /^\#?([0-9a-fA-F]{6})$/;
@@ -65,6 +87,11 @@ sub contrast_ink {
 	return $lum < 0.179 ? '#ffffff' : '#000000';
 }
 
+# The mark a budget light wears, as inner SVG for a 24x24 viewBox. The four
+# built-in budget modes each get something that reads at chip size - a repeat
+# for a count of times, a clock for a duration, a price tag for a money total,
+# a hash for a quantity. A user's special budget has no mark and falls back to
+# its initial. Paths only: the caller owns the <svg> element and its fill.
 sub budget_icon {
 	my ($circumstance) = @_;
 	return '' unless defined $circumstance;
@@ -77,6 +104,10 @@ sub budget_icon {
 	return $glyph{$circumstance} || '';
 }
 
+# Render the CSS custom properties for a theme, given its background colour.
+# Light themes get a light grey, dark themes a dark grey; both keep a whisper of
+# the theme's hue. Returned as a declaration string so a layout can fold it into
+# an inline style attribute.
 sub theme_panel_css {
 	my ($bg, $accent) = @_;
 	unless (defined $accent && length $accent) {
@@ -177,6 +208,9 @@ sub theme_registry {
 	return $theme_registry_memo;
 }
 
+# A name an appointment may store: a saved/preset theme or a bare colour scheme
+# (the older values still in the table). A pre-rename preset slug is resolved to
+# the renamed bundle first, so an old row keeps dressing the desk.
 sub theme_known {
 	my ($name) = @_;
 	return 0 unless defined $name && length $name;
@@ -203,6 +237,10 @@ sub theme_safe_corner {
 	return $n . 'px';
 }
 
+# A name -> the whole bundle. Unknown names resolve to an empty bundle, which
+# means "the Misc settings are in charge". A bare colour-scheme name resolves
+# to that scheme and nothing else, so rows written before themes existed keep
+# their meaning.
 sub theme_bundle {
 	my ($name) = @_;
 	return {} unless defined $name && length $name;
@@ -253,6 +291,8 @@ sub theme_bundle {
 	};
 }
 
+# The theme in charge: a running start/record appointment first, then the
+# Misc Appearance choice. Blank means the Misc surfaces are in charge.
 sub active_theme_name {
 	my $theme = &running_appointment_theme();
 	return &theme_canonical($theme) if defined $theme && length $theme;
@@ -284,6 +324,11 @@ sub active_theme_bundle {
 	return $system;
 }
 
+# A scheme's manager surface and its window surface. The palette is applied
+# across @gb::misc_settings by index, so the manager is the same colour the Misc
+# panel writes into manager_background_colour when the scheme is picked; the
+# window is the next step of the same ramp, which keeps every theme's windows
+# distinct from its desktop while staying in its motif.
 sub colour_scheme_window_colour {
 	my ($name) = @_;
 	return undef unless defined $name && length $name;
@@ -292,6 +337,9 @@ sub colour_scheme_window_colour {
 	return $palette->[3];
 }
 
+# The scheme a manager colour came from, so a server-rendered desktop can pick
+# its curated window colour. A hand-picked colour finds no scheme and gets a
+# derived shade instead (theme_panel_css).
 sub colour_scheme_for_manager_colour {
 	my ($bg) = @_;
 	return '' unless defined $bg && length $bg;
@@ -319,6 +367,12 @@ sub colour_scheme_manager_colour {
 	return $palette->[ $index % scalar @{$palette} ];
 }
 
+# The dark-theme counterpart of an appointment's colour. The named schemes ship
+# a light and a dark cut with the same ramp, so a colour from a light scheme maps
+# straight to the same step of its dark pair - the face the app would have been
+# given had it been born on a dark desktop. A colour no scheme knows keeps its
+# hue and its place on the lightness ramp, pulled into the dark desktop's range:
+# the ramp's steps stay distinct instead of collapsing onto one tone.
 sub dark_colour_for {
 	my ($colour) = @_;
 	return $colour unless defined $colour && $colour =~ /^\#?([0-9a-fA-F]{6})$/;
@@ -346,6 +400,9 @@ sub dark_colour_for {
 	return lc &_hsl_to_hex($h, $s, $target);
 }
 
+# Every app's chosen theme in one read, for the appointment list (one query
+# rather than one per app block). A house-wide row wins, then this device's,
+# then the person's.
 sub app_theme_map {
 	my %rank = ( 'all' => 3, &device_setter() => 2, &signatorial_designer() => 1 );
 	my %map;
@@ -362,6 +419,10 @@ sub app_theme_map {
 	return \%map;
 }
 
+# The theme an actively running start/record appointment asks for: the most
+# recently started one that has a theme. One join rather than a settings read
+# per open row - a stale run must not cost the desktop a query per appointment.
+# Blank when none is running.
 sub running_appointment_theme {
 	my $now = &rightNow();
 	my $device = &device_setter();
@@ -385,11 +446,17 @@ sub running_appointment_theme {
 	return '';
 }
 
+# The manager background the desktop should paint now, plus the appointment
+# theme driving it (blank when the Misc system theme is in charge). Both come
+# from theme_state(), so a render asks the running-appointment query once.
 sub active_manager_background {
 	my (undef, $theme, $bg) = &theme_state();
 	return ($bg, $theme);
 }
 
+# Tell every open manager to re-paint its body for the current active theme.
+# A theme is more than a colour: the message carries the whole bundle, so the
+# icons, material, face and corner change with it and no reload is needed.
 sub appointment_theme_push {
 	# the running set may have just changed: a warm memo would send the room the
 	# desk is leaving, so forget every theme cache before asking
@@ -427,6 +494,13 @@ sub appointment_theme_push {
 	&Websocket::send('server', { console => 'jawnosThemeBundleApply(' . encode_json(\%send) . ');' });
 }
 
+# The native surfaces (the launcher and the lock screen) wear the desk's paint.
+# They read the house database, not the WebSocket, so the effective bundle is
+# recorded where they can see it: ~/.president/native_theme.json. A FILE, not a
+# settings row, because a theme is this device's own (the phone and the laptop
+# pick different ones) and a shared row would let the newest sync win on every
+# machine. The launcher falls back to the Misc manager colour when the file has
+# never been written.
 sub native_theme_record {
 	my ($send) = @_;
 	my $file = &home('~/.president/native_theme.json');
@@ -456,6 +530,10 @@ sub native_theme_record {
 	};
 }
 
+# What the desk currently wears, as one comparable string: paint, effective
+# glyphs, material, face and corner. The appointment flag is deliberately left
+# out - it changes who owns the desk, not how it is painted - so a start/stop on
+# the same theme pushes nothing and reloads no window.
 sub theme_signature {
 	my $bundle = &active_theme_bundle();
 	my $bg = $bundle->{'background'} // '';
@@ -465,6 +543,8 @@ sub theme_signature {
 	return join '|', map { defined $_ ? $_ : '' } ( $bg, &icon_set(), &texture_name(), $font, $corner, $accent );
 }
 
+# The colours the current theme is built from: the distinct *_background_colour
+# swatches for a device (falling back through the other devices if unset).
 sub theme_palette {
 	my $device = shift || &subs::device_setter();
 	my $config = &subs::config_reader();
@@ -505,6 +585,10 @@ sub random_colour_grabber {
 	return join "", map { sprintf "%02x", $col->[$_] } (0..2);
 }
 
+# Snap an app's colour into the theme. If the existing colour is already one of
+# the theme's colours it is left alone; otherwise a stable theme colour is chosen
+# for that app and saved. With no theme colours configured, the value is returned
+# unchanged.
 sub theme_colour_grabber {
 	my $data = ( ref $_[0] eq 'HASH' ) ? $_[0] : { app => $_[0] };
 	my $app = $data->{'app'};
@@ -535,6 +619,7 @@ sub theme_colour_grabber {
 	return $colour;
 }
 
+# Wrapper used by the getters: skips the built-in apps and blank names.
 sub theme_colour_for_app {
 	my ($app, $existing, $device) = @_;
 	return $existing unless $app;
@@ -572,6 +657,10 @@ sub theme_is_dark {
 	return $dark;
 }
 
+# A misc surface's background for the theme that is in charge. A running
+# appointment theme paints its own ramp across every surface - the same ramp the
+# scheme picker would write - and the Misc theme keeps each surface's configured
+# colour, darkened when the desktop is dark and that colour is a light face.
 sub theme_surface_colour {
 	my ($key, $device) = @_;
 	return undef unless defined $key && length $key;
@@ -595,6 +684,8 @@ sub theme_surface_colour {
 	return &dark_surface_colour($colour);
 }
 
+# Turn a light face into a dark one of the same hue. A colour already dark is
+# left alone, so a dark scheme's curated ramp survives untouched.
 sub dark_surface_colour {
 	my ($colour) = @_;
 	return $colour unless defined $colour && length $colour;
@@ -642,6 +733,9 @@ sub icon_set {
 	return $icon_set_memo;
 }
 
+# Called when the icon set is changed, so the very next render already uses it
+# instead of waiting out the memo above. The theme memo goes with it: a scheme
+# change can flip which cut of the set is wanted.
 sub icon_set_forget {
 	$icon_set_memo = undef;
 	$icon_set_memo_time = 0;
@@ -651,6 +745,8 @@ sub icon_set_forget {
 	$theme_registry_time = 0;
 }
 
+# When the hand-drawn set is active, swap a public icon path for its original
+# hand-drawn PNG (kept in public/icons/original/) if one exists.
 sub icon_original {
 	my $path = shift;
 	return $path unless defined $path && $path =~ m{^/};
@@ -659,6 +755,10 @@ sub icon_original {
 	return -e "public" . $candidate ? $candidate : $path;
 }
 
+# The hand-drawn picture behind a public icon path, whatever icon set is
+# selected - the gate's splash and the denial page wear it always. build.js
+# renders generated tiles in at the old public paths, so the plain path no
+# longer shows the hand.
 sub icon_drawn {
 	my $path = shift;
 	return $path unless defined $path && $path =~ m{^/};
@@ -666,6 +766,7 @@ sub icon_drawn {
 	return -e "public" . $candidate ? $candidate : $path;
 }
 
+# Resolve a button icon through the selected set, falling back to the given path.
 sub icon_path {
 	my ($name, $fallback) = @_;
 	my $set = &icon_set();
@@ -679,6 +780,8 @@ sub icon_path {
 	return $fallback;
 }
 
+# Resolve an app icon given its normal public path: hand-drawn originals for the
+# hand-drawn set, or the matching /icons/sets/<set>/<basename>.svg when present.
 sub icon_for {
 	my ($path, $set) = @_;
 	return $path unless defined $path && $path =~ m{^/};

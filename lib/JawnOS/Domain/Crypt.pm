@@ -43,6 +43,29 @@ our $device;
 our $gb;
 our %m;
 
+# --- rotation -----------------------------------------------------------------
+# Replace the house key with a fresh random one. Everything the database seals is
+# re-sealed in place: the vault, the level-1 canary, the security history (earlier
+# oldkey wraps included), note-shaped and binary-shaped settings values, and the
+# neighbour-link credentials. The old key is wrapped under the new one as an
+# 'oldkey' security row, which the file and note paths consult when deriving
+# candidate secrets - so content sealed before the rotation still opens. The
+# recovery code sealed the old key and is set aside (recovery_stale). Sessions do
+# not survive: every suds_id changes, so browsers re-admit themselves through
+# their device keys. $target lets a caller supply the key instead of generating
+# one: probes rotate back with it, and /manager/key_push adopts a peer's new
+# key with it; the local rotation route never passes it.
+# One stored value, re-sealed from one house key to another. Returns undef when
+# the value is sealed with neither the current key nor the legacy empty
+# passphrase; the new sealed value otherwise. The unwrap is exact - Crypt::Simple
+# checks its own digest and refuses a key that did not seal the value - so a
+# value's bytes are proven, not guessed (its output is base64, so a shape test
+# would say nothing). A note carries ':::---:::' inside that outer layer, and its
+# own openssl layer is keyed to the real secret: it is remade whole, since
+# re-wrapping only the outer layer would not open later. Values from the era when
+# encrypter sealed under the empty passphrase are upgraded too - that key is
+# public knowledge, so leaving them is leaving them readable to anyone holding a
+# copy of the database.
 sub crypt_simple_unwrap {
 	my ($secret, $v) = @_;
 	local *encrypt;
@@ -61,6 +84,12 @@ sub rotation_reseal_value {
 	return &reseal_unwrapped_value($inner, $v, $K, $Knew);
 }
 
+# The half both re-seal sweeps share: the outer layer is already unwrapped, so
+# this decides note or plain blob and hands back the value sealed under $Knew.
+# A note carries ':::---:::' inside that outer layer, and its own openssl layer
+# is keyed to the real secret ($K reaches a legacy note's inner layer through
+# note_decrypter's own fallback), so it is remade whole - re-wrapping only the
+# outer layer would not open later.
 sub reseal_unwrapped_value {
 	my ($inner, $v, $K, $Knew) = @_;
 	if (index($inner, ':::---:::') >= 0) {
@@ -75,6 +104,10 @@ sub reseal_unwrapped_value {
 	return $re;
 }
 
+# The standalone form of the rotation's legacy side effect: re-seal one value
+# still locked by the empty-passphrase era and leave everything else exactly
+# alone (a value already under $K reports back as undefined, so nothing is ever
+# rewritten for nothing).
 sub legacy_reseal_value {
 	my ($v, $K) = @_;
 	return unless defined $v && length $v && $K;
@@ -156,6 +189,14 @@ sub rotate_house_key {
 	return { ok => 1, at => $now, key_id => &suds_id($Knew), old_key_id => &suds_id($K), settings => $counts->{settings}, security => $counts->{security}, links => $counts->{links} };
 }
 
+# --- legacy seals -------------------------------------------------------------
+# A sweep for values left from the era when encrypter sealed the outer layer
+# under the empty passphrase (md5(''), public knowledge): out in the open to
+# anyone holding a copy of the database. Unlike rotation this changes no key -
+# each value is upgraded to the key this machine already holds - so it is safe
+# on any machine at any time, idempotent, and cheap where none are left. The
+# mesh form asks every linked machine to run its own, over the signed peer
+# rail: nothing secret crosses, only signatures.
 sub legacy_reseal {
 	my $K = &suds_grabber();
 	return { ok => 0, error => 'no key on this machine' } unless $K;
@@ -188,6 +229,9 @@ sub legacy_reseal {
 	return { ok => 1, settings => $counts->{settings}, security => $counts->{security}, links => $counts->{links} };
 }
 
+# Ask one linked machine to upgrade its own legacy values (its route runs the
+# same local sweep) and hand back the counts. A machine that has not caught up
+# with this code yet simply fails to answer.
 sub legacy_reseal_peer_one {
 	my ($rm) = @_;
 	return unless $rm && $rm->{'signatorial'};
@@ -265,6 +309,13 @@ sub suds_grabber {
 	return $gb::suds;
 }
 
+# --- peer keys ---------------------------------------------------------------
+# Every machine gets an Ed25519 keypair at first use (~/.peer.key, 0600, never
+# in the database or a code sync). Requests between machines carry a timestamp,
+# a nonce and a signature over method and path; once a peer's key is on file an
+# unsigned request is refused, so a leaked address, cookie or signatorial is no
+# longer enough to pull a backup or push code. The first verified contact pins
+# the offered key to the peer's row (trust on first use).
 sub peer_key_paths {
 	my $key = &home('~/.peer.key');
 	my $pub = &home('~/.peer.pub');
@@ -289,6 +340,14 @@ sub peer_sign_message {
 	return join "\n", ($method // ''), ($path_query // ''), ($ts // ''), ($nonce // '');
 }
 
+# Name this machine and sign the request it is about to make. Attached to a
+# peer user agent's start event, so every request on that rail is signed.
+# The signing dance writes throwaway files (a message, a signature, a public
+# key). They live in the app's own state dir on fresh File::Temp names, not on
+# /tmp under a pseudo-random name: a phone without shred leaves /tmp names
+# behind, and a leftover file the process cannot truncate turned every signed
+# request into a 500 (Fe, found over the mesh), while a world-writable /tmp
+# also lets a local name be pre-made as a symlink to clobber.
 sub peer_temp_file {
 	my ($tag) = @_;
 	my $dir = &home('~/.president');
@@ -327,6 +386,9 @@ sub peer_sign_request {
 	return 1;
 }
 
+# Sign an arbitrary blob with this machine's peer key. The LAN presence beacon
+# uses it: a datagram cannot carry HTTP headers, and an unsigned discovery could
+# redirect a known peer's address.
 sub peer_sign_blob {
 	my ($msg) = @_;
 	my ($key) = &peer_key_paths();
@@ -340,6 +402,10 @@ sub peer_sign_blob {
 	return $sig ? encode_base64($sig, '') : '';
 }
 
+# The server half: is this request really from the peer it claims, and has it
+# not been seen before? Unsigned requests pass only while the peer has no key on
+# file yet, so machines upgrade without a flag day; once pinned, only a fresh
+# valid signature from the holder of the private key gets through.
 sub peer_verify {
 	my ($c, $rm) = @_;
 	return 0 unless $rm && $rm->{'signatorial'};
@@ -386,6 +452,9 @@ sub peer_verify {
 	return 1;
 }
 
+# A login must prove the name it claims. peer_verify's unsigned path exists for
+# a keyless row's first contact; a session that names a machine already on the
+# roster is never allowed to use it.
 sub peer_verify_strict {
 	my ($c, $rm) = @_;
 	return 0 unless $c && $rm;
@@ -393,6 +462,11 @@ sub peer_verify_strict {
 	return &peer_verify($c, $rm) ? 1 : 0;
 }
 
+# --- the house crest (People) ------------------------------------------------
+# A crest is the house's face: one hand-drawn picture that people recognise. The
+# picture is not the proof. A house key signs a record that names the drawing's
+# hashes, and the short fingerprint on that record is what another house compares.
+# Everything here is pure or settings-backed; nothing writes the live roster.
 sub crest_canonical_json {
 	my ($record) = @_;
 	return undef unless ref $record eq 'HASH';
@@ -492,6 +566,11 @@ sub crest_house_name_read {
 	return (defined $name && length $name) ? $name : 'Home';
 }
 
+# The address another house reaches this one at. A configured domain that is
+# not loopback wins, since it survives the machine moving between networks;
+# otherwise the machine's private LAN address on the manager's working port.
+# Empty when it has neither: a crest met in person still identifies a house that
+# cannot be called, it just cannot be looked up until its address is known.
 sub crest_origin {
 	my $config = eval { &config_reader() } || {};
 	my $host = $config->{'domain'} || '';
@@ -509,6 +588,9 @@ sub crest_origin {
 	return "https://$host:$port";
 }
 
+# Where a peer crest says its house can be reached. New codes carry the origin
+# in the signed record; a card from before that names the manager endpoint, and
+# the origin is that endpoint without /manager.
 sub crest_entry_origin {
 	my ($entry) = @_;
 	return '' unless ref $entry eq 'HASH';
@@ -523,6 +605,11 @@ sub crest_entry_origin {
 	return $origin;
 }
 
+# A member machine backs the house crest with its peer key. The house key signs
+# the crest itself; a cosignature is the same crest named by a machine, signed
+# by the key the rest of the house already pins to it. It is identity only -
+# uuid, house key and fingerprint - so a re-scan (a new dhash or version) does
+# not require every machine to sign again.
 sub crest_member_cosig_statement {
 	my ($crest) = @_;
 	return undef unless ref $crest eq 'HASH'
@@ -580,6 +667,9 @@ sub crest_member_cosig_matches {
 	return 1;
 }
 
+# The cosignatures this house can check: a roster row that names the crest, with
+# its signature verified against the key pinned on that row. The local machine
+# is not in its own roster, so include_local adds a fresh signature of its own.
 sub crest_member_cosig_list {
 	my ($crest, $opts) = @_;
 	$opts ||= {};
@@ -614,6 +704,11 @@ sub crest_member_cosig_list {
 	return \@out;
 }
 
+# A peer handed this house its cosignature. It must name the crest this house
+# holds and verify against the key pinned to that machine; a row with no key
+# yet pins the key its signature carries, the same first-contact rule the peer
+# rail uses. The statement is kept on the row, so it still verifies after the
+# request itself is gone.
 sub crest_member_cosig_accept {
 	my ($rm, $crest, $cosig) = @_;
 	return { ok => 0, error => 'no such machine' } unless ref $rm eq 'HASH' && ($rm->{'uuid'} || '');
@@ -638,6 +733,10 @@ sub crest_member_cosig_accept {
 	return { ok => 1, signatorial => $signatorial };
 }
 
+# Tell the other machines which crest this one backs. Each peer verifies the
+# signature against the key it already pins for us and records it on our roster
+# row. The roster is this machine's own view and does not sync, so every machine
+# posts to every peer: each one gathers the backers it has heard from itself.
 sub crest_member_cosig_sync {
 	my $crest = &crest_record_read();
 	return 0 unless $crest->{'uuid'} && $crest->{'pubkey'};
@@ -666,6 +765,9 @@ sub crest_sha256_file {
 	return (defined $bytes && length $bytes) ? &sha256_hex($bytes) : undef;
 }
 
+# Normalize the drawing the same way every time: grayscale, level, deskew when
+# the paper allows it, trim to the ink, and cap the long side. The color original
+# is kept separately for the person to look at; this is the matching reference.
 sub crest_normalize_image {
 	my ($src, $dst) = @_;
 	return 0 unless $src && $dst && -e $src;
@@ -683,6 +785,8 @@ sub crest_normalize_image {
 	return ($rc == 0 && -e $dst && -s $dst > 0) ? 1 : 0;
 }
 
+# A 64-bit difference hash: resize to 9x8, compare each pixel to its right-hand
+# neighbour, one bit each. Small enough to store in the record, cheap to compare.
 sub crest_dhash {
 	my ($file) = @_;
 	return undef unless $file && -e $file;

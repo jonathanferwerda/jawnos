@@ -373,6 +373,10 @@ sub setting_is_default {
 	return 0;
 }
 
+# How two values of a setting join: nfc, measures and the typed contact lists are
+# lists at heart, so a natural merge keeps both sides; anything else keeps the
+# renaming app's value. Merging with an empty side simply keeps the side that has
+# a value - which is what a one-sided contact row does.
 sub merge_setting_values {
 	my ($setting, $old, $new) = @_;
 	my $old_has = (defined $old && length $old) ? 1 : 0;
@@ -414,6 +418,10 @@ sub merge_setting_values {
 	return $new;
 }
 
+# Applies the panel's choices and leaves only the rows the rename will carry:
+# 'new' drops the target's row (the renaming app's value takes the name), 'old'
+# drops the renaming app's row (the existing value stays), and 'merge' writes
+# the joined value under the target name and drops both.
 sub name_change_apply {
 	my ($app, $new_app, $choices) = @_;
 	foreach my $setting ( keys %{$choices} ) {
@@ -440,6 +448,11 @@ sub name_change_apply {
 	}
 }
 
+# --- appointment history: what a rename into a known name would merge --------
+# The settings merge above answers "which value keeps the name". This answers
+# the other half: what happens to the app's events. The panel shows a compact
+# per-side summary and a few policies, and the chosen policy's rows are
+# tombstoned after the rename (under the unified name, so every peer agrees).
 sub name_change_history_duration {
 	my ($app) = @_;
 	my $value = &subs::setting_grabber({ app => $app, setting => 'duration' });
@@ -605,6 +618,7 @@ sub name_change_history_lower_bound {
 	return $lo;
 }
 
+# 'full' when start and end both agree, 'open' when one side has no end.
 sub name_change_history_match_kind {
 	my ($ra, $rb, $tol) = @_;
 	return undef unless abs($ra->{'start'} - $rb->{'start'}) <= $tol;

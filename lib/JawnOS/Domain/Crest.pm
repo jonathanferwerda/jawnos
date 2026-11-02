@@ -36,12 +36,24 @@ use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
 our %M;
+# The crests this house has imported, kept as one settings array. Each entry is
+# { crest => the signed record, image_file => ..., device => ...,
+#   imported_at => ..., status => imported|met, met_at => ...,
+#   vouches => [ claims the other house presented ], vouch => our signed vouch }.
 our $crest_peer_list_cache;
 our $crest_peer_list_raw;
 our $device;
 our %tier_rank;
+# What a session's privilege must be to reach a path. A citizen reaches
+# everything; a resident everything except the citizen's desk; a guest nothing
+# under /manager (the public and device rails are carved out by the caller, in
+# hooks.pl, because they authenticate themselves). The patterns are anchored on
+# purpose: the old unanchored strings also matched any path that merely
+# contained them.
 our $tier_required;
 
+# Where a crest image lives. The record names the scanning device, but the app may
+# be opened on another machine; try both photo locations before giving up.
 sub crest_image_file {
 	my ($record, $kind) = @_;
 	return undef unless ref $record eq 'HASH';
@@ -58,6 +70,8 @@ sub crest_image_file {
 	return undef;
 }
 
+# A peer crest's picture is stored under the importing machine's photo location,
+# beside the house's own crest. The entry carries the file name and the device.
 sub crest_peer_image_file {
 	my ($entry) = @_;
 	return undef unless ref $entry eq 'HASH';
@@ -74,6 +88,11 @@ sub crest_peer_image_file {
 	return undef;
 }
 
+# A vouch is a signed statement by one crest about another. It is the same
+# canonical JSON discipline as the crest record, and the signature is made by the
+# vouching house's K_crest. Verification proves the key signed it, not that the
+# key belongs to a house you know; the caller must match from_uuid/from_pubkey
+# against its own roster.
 sub crest_vouch_sign {
 	my ($vouch, $priv) = @_;
 	return undef unless ref $vouch eq 'HASH' && defined $priv && length $priv == 32;
@@ -161,6 +180,8 @@ sub crest_peer_update {
 	return undef;
 }
 
+# A crest can be linked to one of the house's chat/mail contacts by the same app
+# name those lists use. The link is one settings map, so it syncs with the rest.
 sub crest_contact_links_read {
 	my $raw = &setting_grabber({ app => '__president', setting => 'crest_contacts', device => 'all' });
 	return {} unless defined $raw && length $raw;
@@ -210,6 +231,9 @@ sub crest_contact_app_for_uuid {
 	return '';
 }
 
+# Vouches this house has received: another crest's signed statement that this
+# house is the house it says it is. They travel on this house's card so a third
+# house can see who introduced it. Outgoing vouches stay on the peer entries.
 sub crest_incoming_vouch_list_read {
 	my $raw = &setting_grabber({ app => '__president', setting => 'crest_vouches', device => 'all' });
 	return [] unless defined $raw && length $raw;
@@ -237,6 +261,9 @@ sub crest_incoming_vouch_add {
 	return &crest_incoming_vouch_list_write($list);
 }
 
+# The house that issued a vouch, when its key matches a crest this house already
+# knows (its own or an imported one). Undef means the vouch is a claim, not an
+# introduction this house can stand behind.
 sub crest_vouch_introducer {
 	my ($vouch, $own, $peers) = @_;
 	return undef unless ref $vouch eq 'HASH' && &crest_vouch_verify($vouch);
@@ -255,6 +282,9 @@ sub crest_vouch_introducer {
 	return undef;
 }
 
+# A card carries a display copy of the drawing (a small JPEG) beside the signed
+# record. The JPEG is not the signature; the record's dhash is. Import normalizes
+# the JPEG and checks it against that dhash, so a swapped picture is caught.
 sub crest_data_uri_bytes {
 	my ($uri) = @_;
 	return undef unless defined $uri && $uri =~ /^data:image\/[A-Za-z0-9.+-]+;base64,(.*)$/s;
@@ -285,6 +315,9 @@ sub crest_image_data_uri {
 	return 'data:image/jpeg;base64,' . encode_base64($out, '');
 }
 
+# A compact signed record for a QR code or an NFC tag: the name, key,
+# fingerprint, dHash and signature, without the picture or the vouch chain. It is
+# zlib-compressed and base64ed; the prefix says which form it is.
 sub crest_code_build {
 	my ($record, $priv) = @_;
 	return undef unless ref $record eq 'HASH' && defined $priv && length $priv == 32;
@@ -365,6 +398,9 @@ sub crest_qr_png {
 	return (defined $png && length $png) ? $png : undef;
 }
 
+# The crest drawing is public, and a 512px copy is small enough to ride the
+# settings sync with the record. The dHash in the record still checks it, so a
+# tampered copy is refused when a machine materializes it locally.
 sub crest_image_sync_store {
 	my ($crest, $uri) = @_;
 	return 0 unless ref $crest eq 'HASH' && ($crest->{'uuid'} || '') ne '' && defined $uri && length $uri;
@@ -407,6 +443,9 @@ sub crest_image_sync_seed {
 	return &crest_image_sync_store($crest, $uri);
 }
 
+# A machine that has the record but not the drawing (a phone after the settings
+# sync) writes the synced 512px copy into its own photo location, named the way
+# the record names it, after checking the picture against the record's dHash.
 sub crest_image_materialize {
 	my ($c, $crest, $sync) = @_;
 	$crest ||= &crest_record_read();
@@ -455,6 +494,12 @@ sub crest_image_materialize {
 	return 1;
 }
 
+# --- construct crests --------------------------------------------------------
+# A construct's crest is the same scheme as the house crest - a signed record
+# pinning the drawing's hashes, a card and a compact code - but it is signed by
+# the house key and names the construct it belongs to. The house is the
+# authority for its own constructs; a separate key per construct would add a key
+# to guard and prove nothing more.
 sub construct_crest_record_read {
 	my ($app) = @_;
 	return {} unless defined $app && length $app;
@@ -471,6 +516,8 @@ sub construct_crest_record_write {
 	return 1;
 }
 
+# The drawing identifies the construct, not the house key: uuid, construct name
+# and dHash are what make this fingerprint different from another construct's.
 sub construct_crest_fingerprint {
 	my ($record) = @_;
 	return undef unless ref $record eq 'HASH';
@@ -518,10 +565,29 @@ sub construct_crest_image_src {
 	return '/manager/people/crest_image?app=' . &http_name($app) . '&stamp=' . &rightNow();
 }
 
+# Authorization beside authentication. peer_verify answers "is this who they
+# claim?", peer_allows answers "may this house do this, and is the lease still
+# alive?". Call it only after peer_verify has accepted the row for this request:
+# the stash is the proof that the row was verified, never the signatorial in a
+# query string (a name is public and quotable).
+#
+# Scopes are a ladder - visitor < resident < trusted. A resident is the house's
+# word for a peer that may act here (start and stop appointments, toggle things,
+# press Go, open a Manager) but may not touch configuration; configuration stays
+# citizen-only at the session gate. member is the older spelling of that rung,
+# so a row written before this vocabulary still reads. A row with no scope is an
+# older peer and keeps exactly the trust it had before grants existed; an
+# unknown word is never a promotion. grant_expires is epoch milliseconds, the
+# same clock server_time uses; empty means no expiry (also grandfathered).
 sub peer_scope_rank {
 	return ( none => 0, revoked => 0, visitor => 1, resident => 2, member => 2, trusted => 3 );
 }
 
+# What a peer may ask for, and the rung each needs. config is absent on purpose:
+# configuration is session-citizen only, never a peer grant. A route gate calls
+# peer_allows with peer_action_scope($action), so this table is the one place the
+# policy lives. A resident may act in the house (start and stop appointments,
+# toggle things, press Go, open a Manager) but a visitor may only look and reply.
 sub peer_action_scope {
 	my ($action) = @_;
 	my %need = (
@@ -544,6 +610,9 @@ sub peer_action_scope {
 	return $need{lc($action // '')};
 }
 
+# The action a manager movement names, so /manager/reset and the appointment
+# writer share one mapping. Anything unrecognized is an appointment write and
+# needs a resident; a command is the higher tier.
 sub peer_movement_action {
 	my ($type) = @_;
 	$type = lc($type // '');
@@ -553,6 +622,9 @@ sub peer_movement_action {
 	return 'appointment_start';
 }
 
+# A readable kind for a paired device. The stored kind is set when the row is
+# made or when an app/biometric key is added; an older row with no kind falls
+# back to its keys and agent. webview is the desktop's WebKit windows.
 sub device_kind_label {
 	my ($d) = @_;
 	return '' unless $d && ref $d eq 'HASH';
@@ -572,6 +644,9 @@ sub device_kind_label {
 	return &lang($key{$kind} || 'device.kind_browser');
 }
 
+# A sliding window per proved peer. The cache table is local and unsynced, so
+# these rows never travel; a race between workers can let a few extra through,
+# which is acceptable for a spam brake.
 sub peer_rate_limit {
 	my ($kind) = @_;
 	my %limit = (
@@ -608,6 +683,16 @@ sub peer_rate_ok {
 	return 1;
 }
 
+# --- people ------------------------------------------------------------------
+# A person is the identity; a device is how they carry it. Until now every
+# paired device was a citizen by itself, with no way to say whose it is. The
+# first person is the owner, at a fixed uuid so every machine in the mesh agrees
+# on the same identity.
+#
+# Existing devices are attached once, when the owner is first ensured, so an
+# older house migrates without anyone re-pairing. A device with no person still
+# enters as a citizen (the behaviour before this table existed); once assignment
+# lands, the lookup here is where the session's privilege comes from.
 sub people_owner_ensure {
 	my $uuid = 'owner';
 	my $known = eval { &db_query('select uuid from people where uuid = ? limit 1', $uuid)->hashes->[0] };
@@ -646,11 +731,14 @@ sub person_for_device {
 	return $p || undef;
 }
 
+# The privilege a device's session wears: its person's, or guest when nobody
+# has claimed it. A device with no person is never a citizen.
 sub person_privilege {
 	my ($person) = @_;
 	return ($person && ref $person eq 'HASH' && $person->{'privilege'}) ? $person->{'privilege'} : 'guest';
 }
 
+# The privilege a path needs, or '' when no tier claims it.
 sub tier_needed {
 	my ($path) = @_;
 	return '' unless defined $path && length $path;
@@ -660,6 +748,8 @@ sub tier_needed {
 	return '';
 }
 
+# Does this session fall short of the path's tier? An unknown or missing
+# privilege has no rank and is refused, never waved through.
 sub tier_denied {
 	my ($path, $privilege) = @_;
 	my $need = tier_needed($path);
@@ -668,17 +758,27 @@ sub tier_denied {
 	return $have < $tier_rank{$need} ? 1 : 0;
 }
 
+# Does this privilege reach the house's own rails (resident or above)? A guest
+# ticket minted by a peer is still a guest, and 'visitor' (the box office's
+# fallback default) is below a guest for this purpose.
 sub privilege_is_house {
 	my ($privilege) = @_;
 	return (( $tier_rank{ lc($privilege // '') } || 0 ) >= $tier_rank{'resident'}) ? 1 : 0;
 }
 
+# A person at a browser holding a ticket below house level, as opposed to a
+# paired device with no person of its own. Rails that are public only so a
+# device or a peer can reach them refuse the former; a device is the machine's
+# own face and keeps its door.
 sub guest_browser_session {
 	my ($privilege, $source) = @_;
 	return 0 if (($source || '') eq 'device');
 	return &privilege_is_house($privilege) ? 0 : 1;
 }
 
+# A revoked person is revoked for every session at once: the session carries
+# person_uuid and, for a device, device_uuid, so both are checked rather than
+# waiting for a cookie to expire.
 sub person_active {
 	my ($person_uuid) = @_;
 	return 0 unless defined $person_uuid && length $person_uuid;
@@ -695,6 +795,9 @@ sub device_active {
 	return ($d && ($d->{'status'} || '') eq 'active') ? 1 : 0;
 }
 
+# Whether a session may still be trusted: its person and its device are both
+# active. A session with neither (a password bootstrap) is not the caller's
+# question - it is handled by the gate itself.
 sub session_principal_active {
 	my ($person_uuid, $device_uuid) = @_;
 	return 0 if defined $person_uuid && length $person_uuid && !&person_active($person_uuid);
@@ -702,6 +805,10 @@ sub session_principal_active {
 	return 1;
 }
 
+# Revoking a person is one move: the person, every device they carry, every
+# wrapped share one of those devices holds, and the invitations written to them.
+# The owner is the house's own identity and cannot be revoked from here; the
+# person using the current device cannot revoke themselves out of the session.
 sub person_revoke_check {
 	my ($person_uuid, $current_device_uuid) = @_;
 	return (0, 'no person') unless defined $person_uuid && length $person_uuid;

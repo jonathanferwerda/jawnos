@@ -35,12 +35,21 @@ use Time::Local;
 use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
+# --- Double-entry journal ---------------------------------------------------
+# A chart of accounts seeded from the money accounts and the apps that carry
+# income and expenses, and a journal that posts every money move once with the
+# other side on the account that earned or spent it. The journal is derived: a
+# rebuild is deterministic (every entry is keyed by its source row's uuid), and
+# both tables stay off the sync list, so each machine builds its own from the
+# data it already holds.
 our %accounting_account_cache;
 our $database;
 our $device;
 our $gb;
 our %m;
 
+# Rebuild the whole journal from the ledger and the documents. Every entry is
+# keyed by its source uuid, so the same data always yields the same journal.
 sub accounting_journal_rebuild {
 	&db_query('delete from journal');
 	%accounting_account_cache = ();
@@ -248,6 +257,8 @@ sub accounting_journal_rebuild {
 	return { entries => scalar @events, lines => $lines };
 }
 
+# Is the journal still the ledger's own picture? A missing source, a source
+# deleted, or a source edited after the last rebuild all mean rebuild.
 sub accounting_journal_stale {
 	my $has = &db_query("select 1 from sqlite_master where type='table' and name='journal'")->hashes->[0];
 	return 1 unless $has;
@@ -273,6 +284,7 @@ sub accounting_journal_maybe_rebuild {
 	return $result;
 }
 
+# The trial balance as of a moment: each account's debit and credit balance.
 sub accounting_trial_balance {
 	my $to = shift || &rightNow();
 	my $rows = &db_query(
@@ -304,6 +316,23 @@ sub accounting_trial_balance {
 	};
 }
 
+# ---------------------------------------------------------------------------
+# Data backfills. Schema migrations can be detected by inspecting the schema
+# (subs::migration_already_applied); a data backfill cannot, so it is named
+# here and recorded in the `backfills` table once it has run. A machine that
+# receives this code runs any names it has not recorded - from the boot process
+# (President) and from update_database (login / remote auth / merge) - so a
+# code sync followed by the usual restart heals the data without a manual step.
+#
+# An entry returns true when it has run (recorded), false when its
+# prerequisites are not ready yet (left for the next pass, e.g. the column the
+# schema migration adds is not there), and dies on a real error (logged).
+# ---------------------------------------------------------------------------
+
+# The warranty a guide message expires on: the appointment's own when the thread
+# is scoped to an app (its conversation name is app_<name>), otherwise the house
+# default. It lives here - not in Manager - so the backfill below can stamp old
+# turns from the boot process too, before the Manager worker is loaded.
 sub guide_message_warranty {
 	my ($name) = @_;
 	my $now = &subs::rightNow();

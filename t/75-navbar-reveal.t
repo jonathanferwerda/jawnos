@@ -24,7 +24,7 @@ my $icons = read_file("$root/lib/JawnOS/Domain/Say.pm");
 my $fit = read_file("$root/public/js/manager/windows/02_fit.js");
 my $back = read_file("$root/public/js/manager/manager/09_app_back.js");
 my $css = read_file("$root/public/css/manager.css");
-my $help = read_file("$root/perl/help.pl");
+my $help = help_source();
 
 # --- the two quiet controls live behind the icon ---------------------------
 like($maker, qr/class="navbar_reveal">' \. \$navbar_agent_control \. \$navbar_place_control/, 

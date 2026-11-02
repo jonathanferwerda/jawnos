@@ -42,6 +42,11 @@ our $lan_beacon;
 our $log;
 our %m;
 
+# A directed unicast sweep of the /24 around each private NIC. Broadcast is the
+# cheap path when it is delivered, but Android drops it for a Termux socket; a
+# sweep on boot and on a network change reaches the same peers one by one, and
+# their replies come back as unicast. Only a private /24 is swept, and only when
+# the address changed or five minutes have passed.
 sub lan_presence_sweep {
 	my ($json, $nics) = @_;
 	return unless $json && ref $nics eq 'ARRAY';
@@ -100,6 +105,11 @@ sub lan_presence_send {
 	close $sock;
 }
 
+# The known peers that share one of our current subnets, resolved to the
+# address and manager port they answered from. The row's ip is tried first,
+# then the NICs in its network report (including the `lan` entry the presence
+# notices keep fresh). A caller that only needs addresses calls
+# lan_presence_targets below.
 sub lan_peer_targets {
 	my ($nics, $want_device) = @_;
 	my @targets;
@@ -142,6 +152,10 @@ sub lan_presence_targets {
 	return [ map { $_->{'ip'} } @{ &lan_peer_targets($nics) } ];
 }
 
+# The physical LANs this machine is on: the interfaces the presence notices use,
+# less the tunnel and tailnet adapters. A fix shared over a VPN would claim the
+# receiving machine stands where the phone is when all the two share is a route,
+# so the handover is limited to a real subnet.
 sub lan_physical_network {
 	my @nics;
 	foreach my $nic ( @{ &lan_presence_network() } ) {
@@ -153,6 +167,12 @@ sub lan_physical_network {
 	return \@nics;
 }
 
+# A handheld that has just taken its own fix hands it to the peers on this LAN,
+# so a computer with no GPS of its own can be in the same place now instead of
+# on the next mesh sync. Only a mobile sends; the receiving computer records the
+# place but never repeats it, so there is no echo. Nothing here starts or stops
+# an appointment: the handheld's navigation_automation already logged the visit,
+# and a second start for the same place is exactly the duplicate to avoid.
 sub navigation_share_fix {
 	my $fix = shift || {};
 	return unless &subs::device_setter() eq 'mobile';
@@ -196,6 +216,11 @@ sub navigation_share_fix {
 	return 1;
 }
 
+# A fix arrived from a handheld on this LAN. Record it as this machine's own
+# current position, with the same hold the handheld gives its own fixes, but
+# deliberately do not run navigation_automation: the appointment the visit
+# belongs to is the handheld's to start, and starting a second one here is the
+# duplicate this handover exists to avoid.
 sub lan_navigation_accept {
 	my ($msg, $peer_ip) = @_;
 	return unless ref $msg eq 'HASH';
@@ -245,6 +270,11 @@ sub lan_navigation_accept {
 	return 1;
 }
 
+# This machine's own current fix, used when a peer asks for it. A held fix from
+# the last navigation run answers at once; when that is stale, ask the GPS with a
+# short bound and fall back to the network provider, then to the last held fix.
+# Read-only: the asking machine writes the place, and this one's own navigation
+# keeps its cadence.
 sub local_position {
 	return {} unless &subs::device_setter() eq 'mobile';
 	my $now = &subs::rightNow();
@@ -278,6 +308,12 @@ sub local_position {
 	return { latitude => $row->{'latitude'}, longitude => $row->{'longitude'}, accuracy => $row->{'accuracy'}, timestamp => $row->{'timestamp'}, source => 'navigation', cached => 1 };
 }
 
+# The manual navigation button on a computer asks the devices that can actually
+# see the sky: a teletype (the T-Deck serves /my_position on the LAN) and then
+# any mobile peer on one of this machine's physical subnets. The peer route is
+# signed and answers only a verified caller on the same subnet. Returns a fix
+# hash, or an empty hash when nothing answers; the caller then falls back to the
+# browser's own geolocation.
 sub nearby_position {
 	my $data = shift || {};
 	my $timestamp = $data->{'timestamp'} || &subs::rightNow();
@@ -397,6 +433,16 @@ sub remote_machine_negotiator {
 	#});
 }
 
+# Relay a request with no browser behind it. remote_relay_request reads the
+# caller's request - its path, method and params - which a headless machine (the
+# cloud, a utility job, a CLI) does not have; build a bare controller and hand it
+# a synthesized request instead, so a server with no page can still hand a change
+# on to its peers over exactly the rail the browser uses. $data:
+#   path        => '/manager/...'           (required)
+#   method      => 'post' | 'get'            (default post)
+#   params      => { ... }                    (request params)
+#   remote_uuid => a single target, else a flood to every reachable peer
+#   extra       => extra_params for remote_relay_request (e.g. dissemination)
 sub operator_door_push {
 	# Hand a device's rotated Now Me row to the other House machines on this LAN.
 	# A device that falls back probes them with this pair, so they must hold it
@@ -452,6 +498,10 @@ sub relay_headless {
 	return &subs::remote_relay_request($c, $data->{'extra'} || {});
 }
 
+# Drain the headless relay queue: a JSON list of relay_headless calls left by a
+# job or a CLI with no browser to drive. Each entry is relayed once and the queue
+# is cleared, so a machine that has been away does not replay a stale backlog on
+# every tick.
 sub remote_relay_queue_run {
 	my $raw = &subs::setting_grabber({ app => '__president', setting => 'remote_relay_queue' });
 	my $queue = eval { decode_json $raw } || [];
@@ -465,6 +515,11 @@ sub remote_relay_queue_run {
 	return $n;
 }
 
+# The hub websocket endpoint a NAT'd peer dials out to. Preferred source is the
+# hub's OWN manager URL from the handshake (e.g. https://thejunderground.com:45545),
+# rewritten to wss -- so the peer dials the right host AND port instead of
+# guessing from its own domain. config tunnel_hub overrides; the last resort is
+# this machine's domain. The peer names itself with its own signatorial.
 sub tunnel_hub_url {
 	my ($manager, $ws_port) = @_;
 	my $sig = &subs::signatorial_designer();
@@ -505,6 +560,8 @@ sub tunnel_hub_url {
 	return $hub . (index($hub, '?') >= 0 ? '&' : '?') . 'signatorial=' . Mojo::Util::url_escape($sig);
 }
 
+# Run the peer half of the wss tunnel: dial the hub's manager and serve its
+# `open` frames. $manager is the hub's manager URL from the handshake.
 sub tunnel_wss_peer {
 	my ($manager, $ws_port) = @_;
 	my $sig = &subs::signatorial_designer();

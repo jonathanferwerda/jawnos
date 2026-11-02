@@ -43,6 +43,9 @@ our $log;
 our %setting_memo;
 our $setting_memo_on;
 
+# Which of two matched rows survives: the explicit end, then notes, then the
+# length closest to that side's configured duration, then the newer write. A
+# true tie keeps the existing record (the target) rather than the renamed one.
 sub name_change_history_prefer {
 	my ($ra, $rb, $a_duration, $b_duration) = @_;
 	my $a_explicit = defined $ra->{'stop'} ? 1 : 0;
@@ -146,6 +149,9 @@ sub name_change_history {
 	};
 }
 
+# Plan the rows a policy would drop, BEFORE the rename. The uuids are applied
+# after the rename, under the unified name, so a peer that held the row under
+# either old name receives a tombstone it can match.
 sub name_change_history_plan {
 	my ($app, $new_app, $policy) = @_;
 	return { policy => $policy, drops => [], count => 0 } unless $policy && $policy ne 'keep_all' && $policy ne 'flag';
@@ -531,6 +537,12 @@ sub setting_grabber {
 	return $returner;
 }
 
+# A misc setting as this device should read it: this device's own row when it has
+# one, then the person's own ("Me"), then nothing - the caller names the
+# fallback. The configure panel's per-device blocks write the tab's row, so a
+# value chosen under Me used to be invisible to the manager, which read the
+# device's row alone and fell back to its defaults on every load. An explicit
+# device may be named, for the panel asking after a tab that is not this one.
 sub misc_setting {
 	my $setting = shift;
 	my $device = shift || &device_setter();
@@ -542,6 +554,9 @@ sub misc_setting {
 	return $value;
 }
 
+# The desk's material as the layout and universal.css name it. 'plain' was the
+# solid rounded pill's old internal value; it reads as 'round' now that Plain
+# means the clothesline as it looked before the materials (internal 'classic').
 sub texture_name {
 	my $value = shift;
 	unless (defined $value) {
@@ -565,6 +580,13 @@ sub texture_name {
 	return $value;
 }
 
+# The desk's corner radius, in pixels. A theme carries its own corner; an
+# explicit choice made from Misc while that theme is active (corner_override)
+# wins over it, and with no theme in charge the Misc slider (corner_radius) is
+# the value. It is held between 0 (square) and the 28px the theme editor allows,
+# so no surface is rounded past its own middle. The layout seeds it as
+# --corner_radius, which --jawnos-corner falls back to; every window, control
+# and panel rounds by that property.
 sub corner_radius {
 	my $value;
 	my $bundle = &active_theme_bundle();

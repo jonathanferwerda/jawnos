@@ -290,6 +290,12 @@ sub ble_device_record {
 	return $found;
 }
 
+# --- BLE battery -------------------------------------------------------------
+# The bridge can ask a linked board for its pack; the board answers on the same
+# NUS link. The reply is cached per chip, and the levels scan merges it with the
+# HTTP reading, so a board whose WiFi is asleep still appears. A board linked to
+# a phone is relayed by that phone's levels response, the same as any embedded
+# board it can see.
 sub ble_battery_note {
 	my $data = shift || {};
 	my $chip = $data->{'chip_id'} || '';
@@ -400,6 +406,13 @@ sub embedded_device {
 	return {};
 }
 
+# The Bluetooth devices the bridge has seen, for the Dev panel. A BLE-only device
+# off its access point is in no machine's neighbour table, so the network listing
+# never shows it; the bridge records each sighting in a machine's `chip_ids`
+# (ble_device_record), which device_lister already falls back to for the Embedded
+# app. Same source here: one row per chip, the freshest sighting, and only while
+# the presence window still holds - so a headless hub (or any machine with no
+# browser scan) still lists the fleet's radios.
 sub ble_device_listing {
 	my $window = &ble_presence_window();
 	my $now = &subs::rightNow();
@@ -478,6 +491,13 @@ sub bluetooth_sender {
 	}
 }
 
+# A send that must not hold the caller's event loop. bluetooth_sender waits for
+# the radio to acknowledge the write; a watch that has gone to sleep suspends its
+# link without saying so, and nothing comes back until Android's link supervision
+# timeout, tens of seconds later. Run inline that wait is the whole manager
+# frozen - the bridge listener's reader, a recurring timer, a request handler -
+# and every later message queues behind it, so the freeze repeats. The homebase
+# checks are cheap; the client and its wait ride a child instead.
 sub bluetooth_sender_async {
 	my $data = shift;
 	return 0 unless $data && $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'};
@@ -507,6 +527,11 @@ sub ble_push_available {
 	return 1;
 }
 
+# One bridge connection for a run of messages, for a streamed reply: the daemon
+# reads command lines per connection, so a dozen parts ride one client process
+# instead of starting one per part (a perl start each time, on a phone, costs
+# more than the audio). Returns a filehandle to print message JSON lines to, or
+# undef when this machine may not drive the bridge. The caller closes it.
 sub bluetooth_stream_open {
 	my $data = shift;
 	return undef unless $data->{'intent'} && $data->{'chip_id'} && $data->{'edt'} && &subs::ble_bridge_capable();

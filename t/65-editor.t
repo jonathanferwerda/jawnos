@@ -19,7 +19,7 @@ my $save = read_file("$root/lib/JawnOS/Controller/manager_misc2.pm");
 my $homepage = read_file("$root/lib/JawnOS/Manager/Part05.pm");
 my $template = read_file("$root/templates/editor.html.ep");
 my $css = read_file("$root/public/css/manager.css");
-my $help = read_file("$root/perl/help.pl");
+my $help = help_source();
 
 # --- the runtime bugs that used to break the open ---------------------------
 unlike($js, qr/original_key_position/, 'the undefined key position name is gone');

@@ -23,8 +23,8 @@ use Exporter 'import';
 use Cwd       qw(abs_path);
 use File::Basename qw(dirname);
 
-our @EXPORT_OK = qw(repo_root manager_source template_source js_source);
-our @EXPORT    = qw(repo_root manager_source template_source js_source);
+our @EXPORT_OK = qw(repo_root manager_source template_source js_source language_source help_source);
+our @EXPORT    = qw(repo_root manager_source template_source js_source language_source help_source);
 
 sub repo_root { abs_path(dirname(__FILE__) . '/../..') }
 
@@ -81,6 +81,27 @@ sub js_source {
 	my @files = (-f $index ? ($index) : ());
 	(my $dir = $index) =~ s{\.js$}{};
 	push @files, sort grep { -f } glob("$dir/*.js") if -d $dir;
+	my $text = '';
+	for my $file (@files) {
+		open(my $fh, '<', $file) or die "$file: $!";
+		local $/;
+		$text .= <$fh> . "\n";
+	}
+	return $text;
+}
+
+# Two data files follow the same shape: the old path is the index, and the
+# entries moved into a folder of the same name (one file per interface
+# language, one file per help section). A source-grep test that pins a label or
+# a topic reads all of it, so a split does not silently stop the check.
+sub language_source { _split_source( 'perl/language.pl', 'perl/language' ) }
+sub help_source     { _split_source( 'perl/help.pl',     'perl/help' ) }
+
+sub _split_source {
+	my ( $index, $dir ) = @_;
+	my $root  = repo_root();
+	my @files = -f "$root/$index" ? ("$root/$index") : ();
+	push @files, sort grep { -f } glob("$root/$dir/*.pl") if -d "$root/$dir";
 	my $text = '';
 	for my $file (@files) {
 		open(my $fh, '<', $file) or die "$file: $!";

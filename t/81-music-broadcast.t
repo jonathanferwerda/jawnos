@@ -20,8 +20,8 @@ my $js = read_file("$root/public/js/music.js");
 my $template = read_file("$root/templates/apps/music/music.html.ep");
 my $css = read_file("$root/public/css/music.css");
 my $music = read_file("$root/perl/Music.pl");
-my $language = read_file("$root/perl/language.pl");
-my $help = read_file("$root/perl/help.pl");
+my $language = language_source();
+my $help = help_source();
 
 # --- the decision is a pure function a test can pin -------------------------
 my ($cfg) = $js =~ /(var musicOutputOff = \{[^\n]*\};)/;
@@ -115,7 +115,7 @@ is($broadcasting_keys, 16, 'music.broadcasting has all sixteen interface transla
 is($unreachable_keys, 16, 'music.unreachable has all sixteen interface translations');
 
 # --- the help topic explains it ---------------------------------------------
-like($help, qr/'music' => \{[\s\S]{0,60000}?broadcasting[\s\S]{0,60000}?turns that output off/i,
+like($help, qr/\$topic\{'music'\} = \{[\s\S]{0,60000}?broadcasting[\s\S]{0,60000}?turns that output off/i,
 	'the Music topic explains the broadcast pill and the automatic turn-off');
 
 done_testing();

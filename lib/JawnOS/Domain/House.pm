@@ -41,6 +41,14 @@ our %lan_reply_at;
 our $lan_reply_beacon;
 our %m;
 
+# ---- public naming ---------------------------------------------------------
+# config.json's `domain` is an address, not a name: it is the loopback the house
+# calls itself on, so it is deliberately not a public name. The public side
+# lives in two synced settings: the house domain (the wildcard's zone and the
+# WebAuthn RP ID) and a per-device map, keyed by signatorial, of the name each
+# machine answers on. The map is written once from any machine and read by each
+# device for its own entry, so a name never has to be typed on the device
+# itself.
 sub house_domain {
 	my $v = &setting_grabber({ app => '__president', setting => 'house_domain', device => 'all' });
 	return '' unless defined $v && length $v;
@@ -94,6 +102,13 @@ sub tailnet_address {
 	return $tailnet->($rm->{'ip'});
 }
 
+# A peer advertises its own name as its manager. On a machine whose dnsmasq or
+# hosts map that name back to itself - or when a hub-tunnel manager sits at
+# 127.0.0.1 while we are a peer, not the hub - reaching it that way loops home.
+# When the manager host resolves to loopback, or onto the tailnet, fall back to
+# the LAN address the peer reported in its network map, so same-net peers talk
+# directly. The tailnet counts because 100.64.0.0/10 is CGNAT: a node that is
+# offline blackholes the connection until the timeout rather than refusing it.
 sub peer_lan_address {
 	my ($rm, $force) = @_;
 	return undef unless $rm && $rm->{'manager'};
@@ -162,6 +177,11 @@ sub peer_lan_address {
 	return undef;
 }
 
+# The url to call for one candidate, in the order remote_machine_online probes
+# them. A literal address is called directly. The peer's fqdn is called by
+# name - unless the row is a tunnel, because a hub's hosts/dnsmasq can resolve
+# the peer's name to loopback there and the stored tunnel manager is the only
+# route that reaches it. Anything else uses the manager the row carries.
 sub peer_manager_url {
 	my ($rm, $candidate, $port) = @_;
 	$rm ||= {};
@@ -182,6 +202,19 @@ sub peer_manager_url {
 	return $manager;
 }
 
+# ---------------------------------------------------------------------------
+# Peer addressing without the tailnet
+#
+# The house names (*.jonathanferwerda.com) resolve through the tailnet's DNS.
+# With the VPN off and no router entry for them, gethostbyname fails outright,
+# so a row whose only address is its name cannot be dialled - even though the
+# row still carries the LAN address the peer last advertised. The helpers below
+# keep the literal addresses a row knows about ahead of the names, so the
+# plain-wifi path is tried first and the tailnet name stays as the last resort.
+# ---------------------------------------------------------------------------
+
+# A literal address needs no resolver. (IPv6 literals are accepted so a row that
+# already carries one is not skipped; the probe formats it as-is.)
 sub peer_host_is_literal {
 	my $host = shift;
 	return 0 unless defined $host && length $host;
@@ -197,6 +230,9 @@ sub peer_host_is_loopback {
 	return 0;
 }
 
+# 0 = a private LAN or link-local address, 1 = the tailnet's CGNAT range,
+# 2 = anything else. Probing a same-wifi peer on its LAN first means a dead
+# tailnet route cannot hold up the pass, while the tailnet is still tried.
 sub peer_address_rank {
 	my $host = shift || '';
 	return 0 if $host =~ /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|169\.254\.)/;
@@ -204,6 +240,7 @@ sub peer_address_rank {
 	return 2;
 }
 
+# The host and port a stored manager url names.
 sub peer_manager_host {
 	my ($rm) = @_;
 	my $manager = ($rm && $rm->{'manager'}) || '';
@@ -214,6 +251,12 @@ sub peer_manager_host {
 	return ($host, $port);
 }
 
+# A manager url with no route path. The panel and the CLI hand over the address a
+# person clicks (https://host:port/manager), while the peer rail appends
+# /manager/... itself: keeping the suffix dials .../manager/manager/configure/...
+# and the pull reads the Gate page as "the peer sent no snapshot" (the tablet,
+# 2026-10-31). A tunnel's loopback route is still a base url; only the trailing
+# route segment is dropped.
 sub peer_manager_base {
 	my $manager = shift || '';
 	return '' unless length $manager;
@@ -222,6 +265,14 @@ sub peer_manager_base {
 	return $manager;
 }
 
+# --- Android sshd ----------------------------------------------------------
+# Termux's sshd_config comments out every HostKey line, Android has no /etc/ssh,
+# and the login user's home in the passwd entry is the old Termux prefix. A bare
+# `sshd` therefore starts with no usable host key (or resolves keys and
+# authorized_keys under a path this app cannot read), and key auth silently
+# fails while the port still answers. Start it once, here, with the prefix's own
+# keys and an absolute AuthorizedKeysFile. StrictModes is off because it walks
+# /data/user/0, which is system-owned.
 sub sshd_running {
 	foreach my $proc ( glob('/proc/[0-9]*') ) {
 		my $cmd = eval { read_file("$proc/cmdline") } || '';
@@ -238,6 +289,7 @@ sub sshd_start {
 	return 1;
 }
 
+# The argv for the daemon, with no side effects, so the options can be checked.
 sub sshd_command {
 	my ($prefix, $home) = @_;
 	$prefix = $ENV{'PREFIX'} || '' unless defined $prefix && length $prefix;
@@ -255,6 +307,10 @@ sub sshd_command {
 	return @sshd;
 }
 
+# Every literal address a peer row can be dialled at, best first: the stored ip,
+# the LAN address it advertised, the manager's literal host, the address map,
+# a stored pseudonym and the tailnet address. Names are added by
+# peer_probe_candidates; they need the resolver and are worth trying last.
 sub peer_literal_addresses {
 	my ($rm) = @_;
 	$rm ||= {};
@@ -310,6 +366,8 @@ sub peer_literal_addresses {
 	return \@out;
 }
 
+# The literal addresses first, then the names (the peer's fqdn and any name in
+# its stored manager). A name that does not resolve is skipped by the probe.
 sub peer_probe_candidates {
 	my ($rm, $port) = @_;
 	$rm ||= {};
@@ -333,6 +391,8 @@ sub peer_probe_candidates {
 	return \@out;
 }
 
+# The one address a row carries without needing DNS, as a manager url. Used
+# when a stored manager names a host that does not resolve on this network.
 sub peer_literal_manager {
 	my ($rm) = @_;
 	my $addrs = &peer_literal_addresses($rm);
@@ -341,6 +401,13 @@ sub peer_literal_manager {
 	return 'https://' . $best->{'host'} . ':' . $port;
 }
 
+# Ask a peer whether it is there, and which address answered. The caller's own
+# candidate ($opts->{ip}, e.g. a same-net probe) is tried first; the rest come
+# from the row. A name that does not resolve is skipped without shelling out
+# `ping` (that is the 'unknown host' noise on a machine with no VPN), and a
+# literal address is still dialled when ping gets no reply: ICMP is a hint for
+# how long to wait, never the gate, because a peer may drop echo while its
+# manager answers. Returns { ok => 1, manager, ip, port } or { ok => 0 }.
 sub peer_presence_probe {
 	my ($rm, $opts) = @_;
 	$opts ||= {};
@@ -403,6 +470,10 @@ sub peer_presence_probe {
 	return { ok => 0 };
 }
 
+# A loopback manager is the hub's own tunnel route. On any other row it is a
+# leftover from a tunnel that no longer exists; a literal LAN address is the
+# route that still works with the VPN off, and the peer's fqdn is the last
+# resort (the name is only usable while the tailnet's DNS answers).
 sub peer_live_manager {
 	my ($rm) = @_;
 	$rm ||= {};
@@ -433,6 +504,15 @@ sub peer_live_manager {
 	return $manager;
 }
 
+# ---- LAN presence: a peer on whatever network we have just joined ----------
+# Every House machine broadcasts a small signed UDP datagram on its LANs. mDNS
+# is the other advertisement, and the embedded devices use it, but Termux has no
+# avahi - so a broadcast is the one discovery path the phone and tablet share
+# with the computers. A beacon can only refresh a peer that is already in
+# remote_machines (matched by signatorial); it never introduces a stranger, and
+# the signed peer rail still authenticates every real request. The payload is
+# signed once and rebroadcast, so the phone is not running openssl every five
+# seconds.
 sub lan_presence_port { return 45552; }
 
 sub lan_presence_canonical {
@@ -442,6 +522,8 @@ sub lan_presence_canonical {
 		grep { $_ ne 'sig' } sort keys %{$msg});
 }
 
+# The interfaces a beacon is sent on, or matched against: a real IPv4 LAN, not
+# loopback and not the public address.
 sub lan_presence_network {
 	my $net = &network_interface_reporter();
 	my @nics;
@@ -499,6 +581,9 @@ sub lan_presence_verify {
 	return 1;
 }
 
+# A beacon arrived from $peer_ip. Refresh the row only when it is one of ours and
+# the address is on a network we are on, then wake the mesh so the sync starts
+# now rather than on its next timer.
 sub lan_presence_accept {
 	my ($msg, $peer_ip) = @_;
 	return unless ref $msg eq 'HASH';
@@ -614,6 +699,10 @@ sub lan_presence_accept {
 	eval { &AddressDirectory::relay_presence($msg, $peer_ip) } if defined &AddressDirectory::relay_presence;
 }
 
+# Fold a peer's presence into this machine's own devices row, so the Dev panel's
+# network cards show the peer at the address it is on now, with its purpose and
+# the machine's own name. The entry is the same shape a scan writes, so the
+# existing row actions and the tunnel/restore display keep working.
 sub lan_presence_note_device {
 	my ($msg, $peer_ip, $mac, $port) = @_;
 	my $hostname = `hostname`;
@@ -668,6 +757,8 @@ sub lan_presence_note_device {
 	return 1;
 }
 
+# The mesh wake is a cache row so the listener never forks; President's wake
+# loop picks it up within a couple of seconds and runs the reconnector.
 sub lan_presence_wake {
 	my $now = &rightNow();
 	my $last = &cache_get({ app => '__president', context => 'lan', subcontext => 'wake' });
@@ -675,6 +766,9 @@ sub lan_presence_wake {
 	&cache_set({ app => '__president', context => 'lan', subcontext => 'wake', warranty => '+2m' }, { at => $now });
 }
 
+# One unicast beacon back to the peer that just told us where it is, so a machine
+# that cannot receive broadcast (Termux on Android) still learns the peers that
+# heard its sweep. Rate-limited per address.
 sub lan_presence_reply {
 	my ($ip) = @_;
 	return unless ($ip // '') =~ /^\d{1,3}(\.\d{1,3}){3}$/;

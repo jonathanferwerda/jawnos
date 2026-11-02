@@ -37,6 +37,10 @@ use Unicode::Normalize qw(NFC);
 
 our $battery_sample_memo;
 
+# The PPH comparator: the same discharging history, grouped by the lock state
+# that produced each sample. A scheduled-wake reading and a permanent-lock
+# reading can then be compared without a separate measuring process (which would
+# itself keep the phone awake). The caller prints or renders the rows.
 sub pph_compare_report {
 	my $cached = &cache_get({ app => '__president', context => 'battery', subcontext => 'current' });
 	my $history = (ref $cached eq 'HASH' && ref $cached->{'history'} eq 'ARRAY') ? $cached->{'history'} : [];
@@ -97,6 +101,12 @@ sub pph_compare_report {
 	};
 }
 
+# The card's one estimate, in hours, from whichever reading the pack gives.
+# The gauge (energy/power) is the only real measurement; a percentage slope is
+# an inference. Fills eta_kind (left/full), eta_hours, eta_lo/eta_hi (a band),
+# eta_flat (too flat to measure) and eta_floor (the most time a flat reading
+# allows). `$previous` is the last sample, used to keep the shown figure still
+# while the fit settles; a status change or a large real move is taken at once.
 sub battery_eta_estimate {
 	my ($b, $previous) = @_;
 	return $b unless ref $b eq 'HASH';
@@ -187,6 +197,11 @@ sub battery_eta_estimate {
 	return $b;
 }
 
+# Fill in a finish-time estimate from a pack's own gauge, where the fields are
+# there to do it: Android's charge counter plus the percentage gives the pack's
+# capacity, and the averaged current then gives the hours to full (or flat).
+# Called by the sampler and, for a peer still on older code, by the levels
+# pass that receives its raw reading.
 sub battery_gauge_eta {
 	my ($b) = @_;
 	return $b unless ref $b eq 'HASH';
@@ -457,6 +472,12 @@ sub battery_sample {
 	return $battery_sample_memo = $b;
 }
 
+# --- House levels -----------------------------------------------------------
+# The System card shows one battery line per House machine and per embedded
+# board. A machine's own reading is cheap; a peer's is one signed
+# /manager/health call, and a board's is its /device_query. Both kinds of I/O
+# happen in the levels loop, never in a request: the card renders the cached
+# snapshot, so a sleeping watch or a dead peer cannot hold the menu open.
 sub embedded_levels_cache {
 	my $c = &cache_get({ app => '__president', context => 'levels', subcontext => 'embedded' });
 	return (ref $c eq 'HASH' && ref $c->{'devices'} eq 'ARRAY') ? $c : { at => 0, devices => [] };

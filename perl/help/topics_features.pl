@@ -1,0 +1,315 @@
+	# ------------------------------------------------------------ features
+# Help registry part 7 of 9: the desktop and the features every app shares.
+package help;
+
+use strict;
+our %topic;
+
+$topic{'welcome'} = {
+		title => 'Welcome to JawnOS', category => 'features',
+		templates => [ 'templates/apps/help.html.ep', 'public/js/manager/help.js' ],
+		controls => [ 'Take the tour' ],
+		verified => '2026-10-30',
+		summary => 'A short tour of the desktop: windows, the start menu and System page, the dock, Configure and this Guide.',
+		body => [
+			'JawnOS is a desktop made of apps. Everything you open is a window: drag it by its title bar, pull its edge to resize it, and use the buttons in the title bar to minimise, maximise or close it. The window you last touched comes to the front. Press the question mark in a window\'s title bar to ask this Guide about that window, or press F1 to read the help topic for whatever is in front.',
+			'The start menu is the round button at the corner of the desk. It opens on the apps you used most recently, with a category rail for the whole catalogue and a search box. Its other pages show what is running, what is upcoming, what is expiring, and a System page (the water-drop tab) with this machine\'s battery, CPU load and memory, every other machine in the house and the parking lot of saved sessions. A new install opens the menu on that System page, so the first press shows whether the house is well.',
+			'The dock is the bar along an edge of the desk. Its icons are its pseudonyms: each one has a name, an icon, a colour, a place and something it says, all edited under Configure → Pseud. Pin the apps you reach for most and the dock keeps them within a press.',
+			'Configure is the wrench on the start menu. Under Misc → Appearance you can pick a whole theme (paint, icons, material, font and corner radius) or a colour scheme on its own; it also sets the font, the corner and how long a lock waits before its screensaver. Under App, each app has a card for its colour, budgets, goals and notifications. Under Dev are the machines of the house: Scan finds them, and each row carries its privilege, its lease, Migrate and Go. The Pseud tab holds the dock pseudonyms.',
+			'The Guide is always one press away. Type in the box under this page and press Guide me: it can answer from these topics, search your records, play media, translate a page, and open or drive the apps. It asks before it writes while the Confirmation Requirement is on, and it stages each change so you can read it first. Press Converse to keep the microphone open, or the question mark in any window\'s title bar to ask about that window. On a new install Help comes up on its own and walks the tour the first time; press Take the tour at the foot of this window to hear this walkthrough again.'
+		],
+		steps => [
+			'Read this page, or press Take the tour at the foot of the window to have the Guide walk you through it.',
+			'Press the round start button; on a new install the menu opens on the System page. Use its category rail or search box to find an app.',
+			'Open an app and move its window by the title bar; press the question mark in its title bar to ask the Guide about it.',
+			'Open Configure (the wrench) and look under Misc → Appearance for themes and colour schemes, Pseud for the dock icons, and Dev for the other machines.',
+			'Type a question under this page and press Guide me; ask it to do something and it opens the app or stages the change.',
+			'Come back to this topic any time from the Help rail, or press F1 while another window is in front.'
+		],
+		examples => [
+			{ open => 'app', app => 'configure' },
+			{ configure => 'pseud' }
+		],
+		related => [ 'windows', 'start_menu', 'dock', 'configure', 'themes', 'devices_and_mesh', 'help_app' ]
+	};
+$topic{'voice'} = {
+		title => 'Voice and wake words', category => 'features',
+		templates => [ 'templates/embedded/embedded.html.ep', 'public/js/manager/embedded.js' ],
+		verified => '2026-10-30',
+		summary => 'Speak to the watch or t-deck; it listens for a phrase and files the rest.',
+		body => [
+			'A watch or a t-deck can listen for you and, when it hears speech (or its wake phrase), record a short clip and send it to JawnOS over Bluetooth or Wi-Fi. JawnOS transcribes the clip: a recognised command runs, and anything else is kept as a note you can sort out later.',
+			'How the device listens is the Voice setting on its row in the Embedded panel. The watch offers four choices and the t-deck three: Voice: Off (it does not listen), Voice: Any speech (VAD) (it starts a clip as soon as it hears any speech), and a wake word - Voice: Hey Jawn, and on the watch also Voice: Jawn Do - which waits for that phrase and records what follows.',
+			'The wake words are custom phrases trained for JawnOS rather than stock ones, so "Hey Jawn" (and, on the watch, "Jawn Do") are the phrases it knows; the any-speech setting is the fallback that needs no phrase at all. The t-deck does not carry Jawn Do.',
+			'How quiet the room has to go before the device decides you have finished speaking is the Noise floor select on its row. Auto is the default and reads the room the device is standing in - a device hears a steady tone of its own, so the floor rides just above whatever it is hearing and lets go when you stop. The numbers 1200 to 3400 pin it by hand, for when a noisy room cuts a command short or a quiet one will not let go.',
+			'A pause between the phrase and the command is fine - "Hey Jawn" ... "start email test" is one request - and a phrase with nothing after it is ignored rather than acted on: the device waits a couple of seconds for the command to start, then drops the clip, so a stray wake-up does not become a note or an answer.',
+			'Listening does not stop when the screen sleeps: the microphone stays armed, and saying the wake phrase with the panel dark lights the screen and gives a short two-tone chime, so you know it heard you before you give the command. While a device is taking a clip it rings its screen with an orange border - the same mark the watch makes - and holds its screen awake, so a spoken command is not cut short by the screen dozing part-way through it. The screen stays on while the house thinks and while the answer is spoken, and only then does the idle timeout start again.',
+			'What was said is also set to the Guide: when the Guide window is open, the message appears in its conversation and the Guide answers it there, as though it had been typed - the same answer comes back to the device.',
+			'When the guide associate answers a spoken request, the reply lands on the device itself: the words appear on its screen, and the spoken answer plays over its speaker. The Audio replies button on the row in the Embedded panel turns the speech off, leaving the words on screen.'
+		],
+		steps => [
+			'Open Embedded and find the watch or t-deck in the device list.',
+			'Set the Voice select on its row to Voice: Off, Voice: Any speech (VAD), or a wake word - Voice: Hey Jawn, and on the watch Voice: Jawn Do.',
+			'Leave Noise floor on its row on Auto unless a noisy room keeps cutting your command short.',
+			'The choice is pushed to the device as a fresh Now Me, and it starts listening in that mode.',
+			'Speak: a command runs, and anything else is saved as a note. Answers to requests the guide associate handles are shown and spoken on the device.'
+		],
+		related => [ 'watch', 'tdeck', 'embedded', 'notes', 'ble_bridge' ],
+		prompt => 'Describe the Voice select on the watch or t-deck row in the Embedded panel. The watch offers four choices and the t-deck three: Voice: Off, Voice: Any speech (VAD), Voice: Hey Jawn, and on the watch only Voice: Jawn Do. Those two phrases are the only wake words trained - do not name any other. Also mention the Noise floor select on the same row: Auto (the default, which reads the room) or one of 1200, 1600, 2000, 2600, 3400 to pin it.'
+	};
+$topic{'windows'} = {
+		title => 'Windows', category => 'features',
+		summary => 'Open, stack, move, resize, snap, pin and minimise.',
+		verified => '2026-11-01',
+		body => [
+			'Everything that opens opens in a window. Windows stack in the order you last touched them, drag by their title bar, resize by their edge, and minimise to a small bar. Pressing or scrolling in a window brings it to the front, so the window you are reading is the one you are working in.',
+			'The title bar shows the app\'s icon and name and the four window controls: minimise, restore, maximise and close. Press the app\'s icon to bring out the two quiet controls beside it - Help (the question mark, or the page agent on the Internet window) and the pin - and press it again to put them away; a press anywhere else does the same. They sit behind the icon so a narrow window keeps its room for the title instead of a row of six buttons.',
+			'A window has no place of its own until you pin it. The pin is the map-pin button in the title bar: press it and the window keeps the size and position it is at, and the pin shows pressed in while it holds. Press it again and the window forgets that place, so the next time it opens it steps down and across from the window before it like any other. Moving or resizing an unpinned window never pins it - only the pin does.',
+			'A pinned place is kept for this device, and saved with the screen it was saved on: a window pinned on a wide desk opens on a narrower screen scaled to fit and in the same corner, with the edge it sat nearest stayed nearest (flush right stays flush right), instead of hanging off the edge.'
+		],
+		related => [ 'taskbar', 'start_menu', 'appointment_windows', 'help_app' ]
+	};
+$topic{'appointment_windows'} = {
+		'title' => 'Appointment windows', category => 'features', verified => '2026-10-31',
+		summary => 'The window that gathers everything about one record.',
+		templates => [ 'templates/appointment_wrapper.html.ep', 'templates/pos/attributes.html.ep', 'public/js/manager/attributes.js' ],
+		body => [
+			'Opening an appointment — a task, an invoice, a scan, a note, a measurement — spawns a window built around that one record. It gathers what the record is (its details), what has happened to it, and the things that name it: files, mail, transactions, the apps it touches.',
+			'An appointment window is a centre view: it is not one app but a hub, and it can pull in panels from several apps at once. That is why opening one can feel like the whole desktop leaning in — it is.',
+			'Its header carries the record\'s controls; below it, the panels are drawn from the record\'s own data and the apps that reference it.',
+			'The details list carries the record\'s models and options. Tapping an option\'s name selects or clears it - the quantity and unit sit beside it - so the words no longer launch anything. The small view button beside the name is what opens that option\'s own app.',
+			'Register, beside Details, opens the app\'s own catalogue: the models, options, option categories and subcategories that apply to this record. A new row takes a name and Add; Enter does the same. An existing row opens to labeled fields grouped as pricing, stock, description, defaults, characteristics and tools, with Save beside Delete, and leaving a field saves it as before.',
+			'Each row in the details table shows when it began, its duration, its warranty and its own stamp. The duration of an open session ticks every second while the window is open, in the same two-unit shape the rest of the house uses (1h 5s, 59m 59s, 1d 1m); a closed row keeps the length it was given.',
+			'Clicking a time in the row turns its reading: the short form (5d 10h), all hours (130h 10m), all minutes (7810m 22s), then the fixed stamp. Clicking a duration turns it through the same three relative readings - a duration has no fixed form. The short form is not fixed to one denomination: it turns over to days as soon as there is a whole day (1d 6h), then to months and years the same way (1M 15d, 1y 1M), so both denominations share the reading. A reading that would print exactly the same words as the one already showing is stepped past, so a click always changes something - two hours reads 2h in the short form and 2h again in whole hours, so it goes straight on to 120m. Each window remembers the reading it was left on, so a reload comes back the same way.',
+			'Every other duration the house prints turns the same way - an inventory card or column, a budget reading, a handbook row, a pass in the box office - because they all carry the span itself, not just the words for it.',
+			'The fields under the record controls take plain words. Ago reads the same language as the taskbar clock, so "five days ago", "yesterday around 6pm", "last christmas" and even a name or an event ("Abraham Lincoln\'s birthday") land on the moment they mean. Duration reads a length - "5m", "1 hour 30 minutes", "five minutes" - and Schedule reads a repeat, from a compact interval to "every third Saturday" or "the next 5 full moons". Warranty reads the same words as a moment ahead of the record, so "2 years" means two years from it, not two years before it. The line under each field says what the words will save to and updates as they are typed; a phrase the fast reader cannot read is handed to the Guide once typing pauses, and the line then shows the moment it found. The reading follows the view: carry the time machine, the taskbar clock or a timeshift to another time and the line under ago is read again at once, so the moment the record will be stamped with is shown before it is saved.'
+		],
+		steps => [
+			'Open an appointment by clicking it on the timeline, or a row in any app.',
+			'The header shows what the record is; edit the fields there.',
+			'The panels below gather the files, mail, money and other appointments that name it.',
+			'Close the window when you are done — nothing about the record changes until you edit a field.'
+		],
+		related => [ 'appointments', 'windows' ]
+	};
+$topic{'taskbar'} = {
+		title => 'The taskbar', category => 'features',
+		summary => 'A reorderable row of window slots, the clock, the start button and pins.',
+		body => [
+			'The taskbar is an ordered list of slots: the open windows, the clock, the start button, the search box and any apps or keyboards you have pinned. It can sit on any edge, be shown, hidden or set to auto-hide.',
+			'While the on-screen keyboard is up, typing in the search box lifts the box itself to just above the keys - the bar it lives in keeps its own mode - and its result list opens in the space above the keys, never across them.',
+			'Right-click (or long-press) the bar for its context menu: rearrange the slots in edit mode, move it, choose the clock\'s format and time zone, and add items.',
+			'The clock shows the time the view is standing on, so when the time machine or a timeshift carries you off the present its plate lights up - a warm, breathing glow - and goes dark again when the face reads now.',
+			'Click the clock to use it as a time machine: type a time - "-3h", "jul 16", "last dec 25", "dec 25 2025 at 7:04pm", even "oct 12 96" - and press Enter to carry the view there, or Escape to leave it. An empty entry is now. Named days come out right ("this christmas" is this year\'s, "next christmas" the next), as do ages ("when I\'m 60" is today, at sixty). A time of day that is a habit - "breakfast", "tea time", "coffee", "next coffee time", "bed time" - is read from when you usually do it, the times your own records cluster around (twice a day for coffee, say), and falls back to a plain hour when there is nothing to read. A phrase the app cannot read itself is handed to the guide, which reads your own records for it ("the last time I had a beer", "the next time I\'ll be free"), knows the birthdays you saved under Configure -> App -> Birthdays ("mom\'s birthday" is the next one to come, "when was mom\'s birthday" the last one that passed, "mom\'s 60th birthday" the year she turned sixty) and looks up the rest ("Abraham Lincoln\'s 35th birthday"), and gives the time as well as the day for a past or future event ("the moment JFK was shot", "when the first world war ended", "the American Revolution"), then travels where it says. When you ask for something to be started ("start lunch in 20 minutes") it makes the appointment - written at once, or staged for a yes when the Confirmation Requirement is ticked - so its alarm and any embedded relay fire. A length you name is kept too ("start office that lasts 5 minutes" writes a five-minute office visit), held the way the tree counts time - an accrual, stored as a negative offset, so a start and its stop add up. Any year works, backward as well as forward, B.C. being a negative year ("-0044-03-15").',
+			'A ghost appointment is one your records expect but that is not scheduled - your usual breakfast, the next coffee - drawn semi-transparent ahead of now in the timeline and every other view. Turn them on or off under the walkman\'s Configure (the wrench beside the time machine), where the Clothesline tick also switches the rail itself on and off.',
+			'Dialogs count as windows in the taskbar: the Alert, a folder question and a job\'s progress each get a tile there, so pressing the tile brings one back, raises it or minimises it. A dialog\'s title bar drags it, and its own X closes it - there is no separate Cancel button to hunt for.'
+		],
+		steps => [
+			'Right-click the bar to open its context menu.',
+			'Turn on edit mode to rearrange the slots and pins.',
+			'Or use Position to move the bar, and Autohide to tuck it away.',
+			'Set the clock\'s format and time zone from the same menu.',
+			'Click the clock and type a time to travel to it.'
+		],
+		related => [ 'start_menu', 'dock', 'windows' ]
+	};
+$topic{'start_menu'} = {
+		title => 'The start menu', category => 'features',
+		summary => 'Recently used apps, a category rail and a search.',
+		body => [
+			'The start menu opens on the apps you used most recently, with a category rail (accessories, business, games, media, system) for the whole catalogue.',
+			'Its pages also cover what is running, what is upcoming and what is expiring, plus a System view of the house\'s levels: this machine\'s battery, every peer that answered the last pass, and the embedded boards any of them can see (over Wi-Fi, or the Bluetooth link a machine is already holding), each with charge, state, temperature, voltage and PPH, and an estimate of the time left on it (or the time to full while it is charging). The estimate is the pack\'s own gauge reading where it reports one, cross-checked against the measured drop: when the two disagree by more than half again, the percentage slope wins, since an Android charge counter is not in consistent units from one vendor to the next. Without a gauge it is a robust slope over up to three hours of discharging samples, shown as a range while the samples are noisy and as "more than" a floor when the pack is moving too slowly to measure. Every machine with a processor also reports its CPU load and the share of RAM in use, in green, amber or red as the load rises; on Android, where the kernel hides the whole-machine counters, the CPU figure is JawnOS\'s own share and says so. The view stays live while it is open, refreshing every few seconds; a pack that reports its own gauge (a phone\'s charge counter, a laptop\'s energy and power) gives the finish time the moment it is plugged in, without waiting for a measured rate. A search box can ride the menu, the taskbar or the dock. A new message raises a dot on the menu\'s mailbox icon.'
+		],
+		steps => [
+			'Press the start button to open the menu.',
+			'Use the category rail to narrow the catalogue, or the search box to find an app by name.',
+			'The menu\'s other pages show running, upcoming, expiring and the house\'s system levels.',
+			'Help sits at the foot of the menu if you want to read about an app before opening it.'
+		],
+		related => [ 'search', 'taskbar', 'hints', 'network' ]
+	};
+$topic{'dock'} = {
+		title => 'The dock', category => 'features',
+		verified => '2026-10-30',
+		summary => 'A second bar for the keyboard panels and the apps you keep at hand.',
+		templates => [ 'templates/pseudonyms.html.ep', 'templates/keyboard.html.ep', 'public/js/manager/keyboard.js' ],
+		body => [
+			'The dock is a second bar you can place on any edge. Its faces are the house\'s pseudonyms - Remote control, the walkman (delorean), Walkboy, the on-screen keyboard, the calculator, Notifications, Sessions and the Controller - and any apps you add yourself. It can also host the search box; a side dock tucks itself away and slides back when you call for it.',
+			'A face opens its own panel: the keyboard and calculator faces open the JawnOS keyboard (the calculator straight to its page), and the others open their keyboard panel above the dock. Press the same face again to put its panel away.',
+			'Right-click (or long-press) a face to remove it from the dock, and right-click the dock\'s empty background to see the faces you have removed and put one back. Right-click an app in the start menu, or a taskbar window button or app pin, to add that app to the dock or take it off again. An app added this way opens its window from the dock, and raises or minimises it like its taskbar tile.',
+			'The dock\'s app faces and each face\'s on/off are kept by this browser, not by the house: another browser or machine sees the server\'s pseudonym list and starts with every face on. The pseudonym list itself - what exists, its icon and colour, and whether it is on the dock at all - is shared, and lives under Configure -> Pseud.',
+			'An appointment type\'s glyph (an invoice, a quote, the encrypt stamp and the rest) is not a dock face. Those have no panel of their own; they stay in the pseudonym list so the ledger can draw them on an appointment, and they start off the dock.',
+			'The dock keeps at least one face so it can always be called back: if every face is removed, Remote control returns.'
+		],
+		steps => [
+			'Press a face to open its panel, and press it again to close it.',
+			'Right-click a face to remove it from the dock.',
+			'Right-click an app in the start menu or on the taskbar to add it to the dock.',
+			'Right-click the dock background to put a removed face back.'
+		],
+		related => [ 'taskbar', 'search' ]
+	};
+$topic{'clothesline'} = {
+		title => 'The clothesline', category => 'features',
+		verified => '2026-10-22',
+		summary => 'A rail that hangs the routines belonging to this hour.',
+		body => [
+			'The clothesline runs along the top of the desktop and hangs the routines and rituals that belong at the current hour, in the order they usually happen.',
+			'It can hang the ones your history shows you actually do, automatically, and each hang is configured per app: a schedule, a budget, and the time slots it belongs to.',
+			'The rail can be switched off altogether: the Show clothesline tick beside the time machine (the walkman\'s Configure) hides it and gives its band back to the view, and ticking it again hangs it at its configured height. Each app\'s own hang is still set from its Clothesline button in Configure -> App.',
+			'Each routine hangs as a pill in the material picked under Misc → Texture — plain (the original solid tile with its name printed plainly), round (a solid rounded pill), soft, sandglass, glass, paper, fabric, wood or metal — sized to its own name, with the full name set in the Misc → Font face and printed in black or white (tinted with the app\'s colour) so it reads on the pane.',
+			'A textured pill goes down when you press it: its lit top edge becomes an inset shade for a moment, so the tile reads pressed-in rather than sticking up. Plain, round and classic settle the same quiet pixel and inset shade as every button now, without the canvas material.'
+		],
+		related => [ 'appointments', 'tasks' ]
+	};
+$topic{'search'} = {
+		title => 'Search', category => 'apps', app => 'search',
+		templates => [ 'templates/apps/search.html.ep', 'public/js/manager/search.js' ],
+		verified => '2026-10-30',
+		summary => 'One window for the house, the web and the Guide, with a tab for each.',
+		body => [
+			'The search box in the start menu, the taskbar or the dock still filters apps as you type. The magnifier beside it opens Search, the app: it keeps your words and lets you choose what to search.',
+			'Apps finds the house\'s own apps and the appointments you have made, showing each app\'s own icon beside its name; press a result to open it.',
+			'Web asks the search engines that are switched on and shows the links each one finds under its name. Bing, Brave, DuckDuckGo and Wikipedia are on to begin with; the settings panel lists dozens more under General, Reference, Media, Shopping and News. A link opens in the JawnOS Browser; the Search window stays where it is.',
+			'The gear on the tab row opens the engine settings. Type in Find an engine to narrow the list, tick an engine to switch it on or off, and press the × on a custom engine to remove it. The choice is kept for the whole house, so every machine searches with the same engines; with none ticked the Web tab says so and offers the panel.',
+			'In the browser on a phone, + Search adds the site you are reading: the server reads the page\'s OpenSearch description, then a search parameter already in the address, and offers a plain /search?q= guess if neither is there. An engine that answers a server with a JavaScript shell still appears in the list, and its row opens that engine in the browser.',
+			'AI asks the model chosen for the Guide under Configure → Plat. It answers in plain text in the same window; press Enter to ask, so typing a question does not spend a call on every letter.',
+			'Only the tab you are on is searched, and the app remembers that tab the next time it opens. Type to search Apps and Web; Enter asks the AI.'
+		],
+		steps => [
+			'Type in the dock\'s search box and press the magnifier, or open Search from the start menu.',
+			'Choose Apps, Web or AI across the top and type your words.',
+			'Press a result to open the app, or a web link to read it in the JawnOS Browser.',
+			'Use the gear to choose which engines Web asks; in the phone\'s browser, + Search adds the site you are reading.'
+		],
+		related => [ 'start_menu', 'dock', 'internet', 'assistant' ]
+	};
+$topic{'hints'} = {
+		title => 'Hints', category => 'features',
+		summary => 'Hover (or long-press) a control to learn what it does.',
+		body => [
+			'Most controls carry a hint. On a desk you hover over one and a small label appears; on a touchscreen you press and hold instead. That is the fastest way to learn an unfamiliar button.',
+			'For anything longer than a label, open this Help app — press F1, or search here. The question-mark button in a window\'s title bar opens a Guide associate for that window instead, so it already knows what you were looking at.'
+		],
+		related => [ 'help_app', 'start_menu' ]
+	};
+$topic{'themes'} = {
+		title => 'Themes and colour schemes', category => 'features',
+		verified => '2026-10-23',
+		summary => 'Named dressings: paint, icons, material, face and corner under one name.',
+		body => [
+			'JawnOS ships a set of named colour schemes — Blue, Graphite, Green, Indigo, Steel, Amber, Teal, Plum, Rose, Nord, Sage, Mocha, Geek, Phosphor and Cyberpunk — and each has a light and a dark cut, so the chrome can range from near-white to near-black. A colour scheme is only the paint. A theme is the whole dressing: the scheme, the icon set, the material, the font and the corner radius, saved under one name.',
+			'Configure → Misc → Themes is a gallery. Each card shows its palette and names its scheme and material; one click applies the whole dressing to this device. System follows the Misc choices below and changes nothing on its own. The presets are Deepjawn, Jawnfish, Adwaita, Cuperjawno, Jawndows, Mint, Nord, Sage, Mocha, Neon, Mono, Rose, Geek, Phosphor and Cyberpunk.',
+			'New theme opens the editor: give it a name, pick a colour scheme, an icon set, a material, a font and a corner radius, and save. A custom theme is a house-wide row, so it appears in the gallery on every machine; Edit and Delete sit on its own card. A theme may take the accent for its focus rings and active tiles from its scheme, or name one of its own.',
+			'An app can also carry its own Theme: while one of that app\'s start appointments is running the desktop wears the whole bundle — paint, icons, material, face and corner — the most recently started running app wins when more than one has a theme, and with none running the Misc theme or scheme comes back.',
+			'While a theme is active, the Icon Set and Texture pickers under Misc → Appearance show Follow theme. Choosing another set or material overrides just that piece for this machine and leaves the theme\'s paint, face and corner alone; Follow theme returns to the theme\'s own choice. The Corner Radius slider works the same way: with a theme in charge it overrides that theme\'s corner, and Follow theme beside it returns to the theme\'s own radius. Picking another theme from the gallery clears that override, so every theme shows its own radius again. The override belongs to this machine and is separate from the gallery\'s theme definition, so a preset is never edited by it.',
+			'The dark cuts change the window surfaces most, because the chrome is derived from the manager surface; inputs and dropdowns follow the same surface, so their text stays readable. Each scheme also gives windows and appointments their own surface, one step along the same ramp, so an app does not dissolve into the desktop behind it. A dark scheme also darkens the other surfaces by itself — the dock and its buttons, Configure, the start menu, the keyboard and its panels, the store and the taskbar — so a light face picked earlier does not glare through.'
+		],
+		related => [ 'icon_sets', 'zoom', 'configure' ]
+	};
+$topic{'icon_sets'} = {
+		title => 'Icon sets', category => 'features',
+		summary => 'A choice of looks for every icon; a theme may carry its own.',
+		body => [
+			'Every icon can be swapped between a set of looks — from the original hand-drawn artwork through cleaner, flatter and frankly sillier sets. New installs start on the clean GNOME-like set; a theme can name its own set, and the Misc choice is what a desk with no theme in force wears.',
+			'Pick one under Configure; the whole interface follows, including the window controls, the phone app\'s handset and camera buttons and the dock\'s own buttons. The Folders listing and the desk take the set too: a folder, a plain file, an audio track, subtitles and a sealed file each wear the set\'s own picture.',
+			'Each set has a light and a dark cut. While a dark colour scheme (or a dark appointment theme) is in force the dark cut is chosen automatically — the same glyphs, on a plate that does not glare — and it returns to the light cut when the desktop does. The hand-drawn set has no dark cut of its own, so it stays as drawn.'
+		],
+		related => [ 'themes', 'configure' ]
+	};
+$topic{'zoom'} = {
+		title => 'Display zoom', category => 'features',
+		summary => 'Scale the whole interface from a phone to a large display.',
+		body => [
+			'Global display zoom runs from twenty to two hundred per cent, and the bar heights and window border are adjustable too. Between them the same interface fits a phone, a tablet or a wall-sized screen.'
+		],
+		related => [ 'themes', 'configure' ]
+	};
+$topic{'utility_controller'} = {
+		title => 'Utility controller', category => 'features',
+		templates => [ 'templates/configure/utility_controller.html.ep', 'templates/configure/system_setting_list.html.ep' ],
+		controls => [ 'Crew', 'This machine', 'Peers', 'Advertise now', 'Processor cores', 'One-minute load average', 'Free and total memory', 'Job kinds this machine can run', 'Peer machine', 'Peer load', 'Run this job', 'How often', 'Good', 'Bad', 'Batch groups', 'Batch pools', 'New pool name', 'Add a pool', 'Pool name', 'Pace for this pool', 'Remove this pool', 'Drop jobs here', 'Not in a pool', 'Keep the scheduled wake', 'Discharging samples', 'percent per hour while discharging' ],
+		verified => '2026-10-30',
+		summary => 'The background jobs every machine runs, how often, and the house AI view above them.',
+		body => [
+			'Configure → Sys holds the Utility controller. Your own jobs are at the top: the Batch pools grid, and a Not in a pool bin for everything outside them. Every job is a tile carrying its switch, its name, the time it last ran and a good/bad dot; a job outside every pool also carries its own interval box, and the bin lists the switched-on jobs before the switched-off ones. A peer machine follows as a card named by its hostname, with its jobs and pools beneath it.',
+			'The dot is good (green) while the job has last run within five of its intervals, and bad (red) once it has not. A job that throws or runs past its timeout is stopped and logged rather than retried, and simply waits for its next turn.',
+			'Under each job a line says what its last run did - a count when it worked on something new, or that it found nothing - so a job that ran and found nothing does not read as one that never ran.',
+			'At the top of the panel, Batch pools groups jobs so they wake together. Drop a job into a pool and it runs on that pool\'s pace; the whole pool wakes at the same moment and the device gets one long nap instead of several short ones. A job outside every pool shows in the regular bin and keeps its own interval box. The default pools are Navigation (four minutes, the GPS beat), Fast (fifteen minutes - presence, health, mail and the tunnels), Slow (one hour - the code sync, release and balances) and Daily (backups, housekeeping and expiry), and they can be renamed, retimed, added to or removed. Removing a pool returns its jobs to the regular bin; nothing stops running. On a phone, drag a chip with a finger; a plain tap still works the switch inside it.',
+			'Above the jobs, Wake schedule is the Android app\'s short scheduled wake. While it is on and the app is arming it, the phone sleeps between beats and the app holds the CPU only for the work a beat needs: once the utility runner reports that nothing is due, it releases the CPU early instead of holding it for the full window. A peer pulling rows keeps the CPU up until that pull finishes, with a five-minute cap, so a batch is never cut in half by the window. Turn it off to go back to the old permanently held wake lock. Music still holds its own lock while a track plays, and the schedule never releases that.',
+			'Below the wake switch, PPH comparator groups the battery history by which lock was in force when each sample was taken - Scheduled wake or Permanent lock - and works out the drain in percent per hour for each. It needs a few hours of discharging samples in each state before it prints a number; until then it reads not enough samples. Points is the number of readings used, Hours the span they cover. The readings come from the history the manager already keeps, so looking at the table does not itself keep the phone awake.',
+			'The jobs include backups, email send and receive, the tunnels, the remote-machine sync, the remote relay (which hands a change queued with no browser behind it on to the other machines), the code sync (git fetch from the authority or a peer, every thirty minutes by default), navigation, the alarm haircut, the budget pass, tasks, warehouse expiry, the battery sample (htop) and a manager tick. A few only do anything on a handheld — SMS, the telephone check and navigation.',
+			'It is per machine: an interval or a switch set here applies to the machine whose card it is on, so one job can run every two minutes on the phone and hourly on the server.',
+			'The Sys panel also shows the house at a glance, above the Utility controller: one row per machine, whether it has a model, when it was last seen, and what it has spent today, with the house total against the shared Tokens/day ceiling. Because each AI job runs once for the house and a machine that goes quiet hands its job on, the roster is the live machines only.',
+			'Below it is the API balances table, and it lists only the providers with an account on file — a key or account entered under Configure → Plat, under Provider access. For each of those it says what is left, where the provider reports it: OpenRouter and DeepSeek do; the rest — Ollama, Cloudflare, OpenAI, Anthropic, Google, xAI, Mistral and Groq — have no balance endpoint and read “no balance API”. A provider with no account entered is not listed. The read happens in the background every ten minutes, so the page never waits.',
+			'Under the table, Balance drop is a chart of how quickly each balance is falling. The same ten-minute background read keeps a rolling week of samples, so the Last 24 hours and Last 7 days buttons redraw from what is already stored and never make another provider call. The provider dropdown beside the title chooses which account\'s line is shown. The figure beneath each line is the pace in money per day — Drop, or Holding steady when it has not moved. A top-up is not a rise and not a burn: only the falls between readings are counted as spending, so a week that holds a top-up still reports the drop rate either side of it. Beside the pace are two lines — the runway (about how long the balance lasts at that rate) and the projected spend per day, week and month. A fresh install reads Collecting samples until a few readings are in. Only providers with a balance endpoint have a line. Every amount in the table and the chart carries a currency dropdown: the house currency (Configure → Misc) is selected by default, the amount\'s own currency is the second choice, and the rest of the currencies with a loaded rate follow. Picking another converts that amount and its pace in place, at today\'s rate.'
+		],
+		steps => [
+			'Open Configure and press Sys; the Utility controller is in that panel.',
+			'Your own jobs are the pool tiles and the Not in a pool bin; a peer\'s jobs are under its card, named by hostname.',
+			'For a whole pool, set its pace once in the Batch pools card; every job dropped into it takes that interval.',
+			'Drag a job chip into a pool, or back to Not in a pool, to change where it runs. Use New pool name and Add a pool for another pool, and the × on a pool to remove it.',
+			'Tick the switch to run a job, and set its interval in the box beside it (for example 2m).',
+			'Watch the last-run time and the good/bad dot to see whether it is keeping up.',
+			'In the Sys panel, read the house table and the API balances to see the AI work and what is left on each registered account.',
+			'Under API balances, press Last 24 hours or Last 7 days to see how the balance has been falling, how long it will last at that rate, and what it is costing per day, week and month.'
+		],
+		prompt => 'Explain the Utility controller in Configure → Sys: one card per machine, each background job with a run switch, an interval box, a last-run time and a good/bad dot. Good means it has run within five intervals; bad means it has not. A failing job waits its interval instead of retrying. Everything is per machine, so an interval on one machine does not move another. The Batch pools card at the top holds pools of jobs - Navigation (four minutes), Fast (fifteen), Slow (one hour), Daily - and a job dropped into a pool runs on the pool\'s pace instead of its own interval, so the pool wakes together. A job outside every pool keeps its own interval. Pools can be added, renamed, retimed and removed; removing one returns its jobs to the regular bin. The Crew section at the top of the panel is not a job list: it is what this machine can do and what the peers have advertised, and it is what decides where a job runs. Above that, Wake schedule releases the phone\'s CPU as soon as a scheduled wake has finished its work, and the PPH comparator compares battery drain between the scheduled wake and the old permanent lock. The Sys panel also shows the house AI ledger - each machine, whether it has a model, when it was last seen, its tokens today, and the house total against the shared Tokens/day ceiling - and the API balances table, which lists only the providers with an account registered under Configure → Plat; only OpenRouter and DeepSeek report a balance and the rest read no balance API. Do not invent job names beyond the ones listed.',
+		related => [ 'crew', 'configure', 'backup', 'devices_and_mesh', 'process_monitor' ]
+	};
+$topic{'crew'} = {
+		title => 'Crew', category => 'features',
+		templates => [ 'perl/crew.pl', 'templates/configure/utility_controller.html.ep', 'templates/configure/plat_setting_list.html.ep' ],
+		controls => [ 'This machine', 'Peers', 'Advertise now', 'Processor cores', 'One-minute load average', 'Free and total memory', 'Job kinds this machine can run', 'Peer machine', 'Peer load' ],
+		verified => '2026-10-30',
+		summary => 'What each machine in the house can do, and where a job is sent to run.',
+		body => [
+			'The Crew is the house\'s account of its own machines. Each one advertises what it can do - processor cores, one-minute load, memory, free disk, operating system and architecture, battery state when the hardware reports one, the AI models its local Ollama lists, and the tools it has such as a browser, ffmpeg, tesseract and whisper - and the house keeps the most recent advert from every reachable peer. Configure → Sys → Crew shows this machine\'s own facts first, then one line per peer with its load, its model count and the job kinds it can take. Advertise now asks this machine to re-read its facts and pulls every reachable peer\'s advert in at once, instead of waiting for the five-minute pass.',
+			'An advert goes stale after fifteen minutes, so a peer that has gone quiet stops being offered. Nothing is invented: a machine that cannot read its battery says nothing about a battery, and a peer that never answered is simply absent rather than shown as idle.',
+			'The Crew is also what the assistants consult before they call a model. A role names a primary model and a fallback in Configure → Plat, but naming one is not proof it can answer here. Before a call, the house checks that the model can really be reached: a peer\'s own model must appear in that peer\'s advert, a paid provider must have its key or account on file and its budget not stood down, and a local Ollama model must be in this machine\'s own list. If the named model fails that check the fallback is tried, then the free model, then a model of the same family on a peer that holds one. When nothing is viable the assistant says so rather than reporting an answer, so a device no longer claims it heard from a model it does not have. A call that answered is the only one recorded as the last model used.',
+			'Work is described as a job kind, never as a command. The registry is fixed and small: a no-op and an echo that prove the rail, ai.evaluate for an assistant call, and whisper.transcribe for a recording. A peer route may only run a kind in that registry, the caller must be a machine on the roster and sign the request, and the payload is bounded before it is read. A finished job is remembered by its id for half an hour, so a retry is answered from the result instead of doing the work twice. This is deliberately narrower than a shell: nothing in a job names a path, a program or a line of code, and adding a kind means editing the registry.',
+			'Placement prefers this machine when it can run the kind and is not already at its cores, then the able peer with the lowest load. A heavy kind - a model call, a transcription - is kept off a machine already busy at its core count, while a light one tolerates a busier box. A job is never sent back to the machine that dispatched it, so two peers cannot bounce it between them.',
+			'Today the Crew carries the assistant calls and transcription. The same rail is meant for the housekeeping that should happen once rather than on every device - the task pass, the budget pass, a headless browser - and those are not moved onto it yet. The Crew section is honest about that: it lists the kinds this machine can actually run now.',
+		],
+		steps => [
+			'Open Configure, press Sys, and open the Crew section at the top of the Utility controller.',
+			'Read This machine for what this box contributes, then each peer\'s line for its load and models.',
+			'Press Advertise now after connecting a machine or pulling a model, so the house sees it without waiting five minutes.',
+			'If an assistant stops answering, read its model under Configure → Plat against the Crew list: a model no machine advertises is the usual reason.',
+		],
+		prompt => 'Explain the Crew: what each machine advertises (cores, load, memory, disk, OS and architecture, battery when reported, local Ollama models, tools), that a peer advert goes stale after fifteen minutes, and that the panel lives at Configure → Sys → Crew above the job tiles. The Crew is what chooses a model for an assistant role, so a role naming a model no machine holds is reported rather than called; the order is the role primary, its fallback, the free model, then the same family on a peer. Work is a small fixed registry of job kinds, not commands: noop, echo, ai.evaluate and whisper.transcribe today. A job is signed, bounded, and deduplicated by job id. Placement prefers this machine, then the least loaded able peer, never the dispatcher. Do not claim that tasks, budgets or a headless browser already run through the Crew; they are the next step.',
+		related => [ 'utility_controller', 'platform', 'devices_and_mesh', 'help_app' ]
+	};
+$topic{'navigation'} = {
+		title => 'Navigation (location logging)', category => 'features',
+		templates => [ 'templates/appointment_details.html.ep', 'templates/appointment_wrapper.html.ep', 'templates/start_menu/start_menu.html.ep', 'public/js/manager/travel.js' ],
+		verified => '2026-10-30',
+		summary => 'JawnOS records where a device is on a schedule from its own GPS, screen on or off, and never from the network.',
+		body => [
+			'Navigation is the autonomous location log. On a handheld the Android app runs a GPS foreground service: it reads the GPS provider and nothing else, and writes each fix to a small file the manager reads. The navigation utility takes that fix once per navigation interval - four minutes by default, set in Configure → Sys, whether or not the app is open and whether or not the screen is on - and writes it down as the machine\'s current position. The service is a location foreground service, so Android wakes it when a fix arrives; the phone is not held awake between fixes. The app also arms a short scheduled wake each interval so the Perl tree can run its due utilities, then releases the CPU again.',
+			'Only a real GPS answer is ever used. The network provider is not asked, and the browser\'s geolocation is no longer used at all: a WebView or browser answer carries no provider, so a Wi-Fi or cell-tower guess looks exactly like a fix. If there is no fresh GPS fix - indoors, in a pocket - no place is recorded, and an older place is not restamped as today\'s.',
+			'An app can also carry its own pace. An app\'s navigation setting is none (never log), once (log only when you act on it), or an interval such as 1m. While an appointment of that app is running, a fix is filed against it at that interval, and the machine\'s own navigation pace follows the fastest running app: an app asking for a point a minute makes navigation run about a minute apart even when the Utility controller\'s navigation interval is longer. The navigation fast pace has a ten-second floor so a very short setting cannot hammer the GPS.',
+			'The current place holds until the next navigation run, so a private place stays private between fixes instead of falling back to public. When no automatic fix is due, the old five-minute warranty on the machine\'s position is what used to expire first; a fix now stays current through the next run, with a couple of minutes of grace for a late or failed one.',
+			'Which device files an appointment\'s fixes is chosen under Configure → Plat → Maps → Recorded by. Automatic, the default, lets the machine that has actually covered ground in the last hour file them - the one that has been recording longest wins, so a tablet left at home never takes a walk from the phone - and hands the trip over if that machine goes quiet for a quarter of an hour; the other machines keep their own place and still run their home plates, they just do not file the appointment\'s fixes. Every device is the older behaviour, where each machine records and the distance doubles; or name one machine instead.',
+			'A handheld with a GPS also hands each fresh fix to the house\'s computers on the same local network, as the fix lands rather than on the next sync. A laptop with no GPS of its own records the same place at once and its site-type picture follows. The handover is a signed notice over the physical local network only - never the tunnel or the VPN - and the receiving machine writes the position down without starting or stopping an appointment, since the handheld\'s own navigation already logged the visit.',
+			'A machine without a real GPS never publishes a place. A phone, tablet or computer that has only ever seen a network estimate is not a source another machine may borrow from, and a computer\'s borrowed place is never lent on to a third machine. A handheld whose own GPS has answered keeps its own fix: a peer\'s borrowed place cannot overwrite it, so the site-type picture follows the real fix and the navigation button only confirms it.',
+			'To ask for a fix at once, press the navigation button at the foot of the Start menu, beside the Guide\'s associate button. On a handheld it asks the app\'s GPS service for a fresh sample and waits up to twenty seconds for it; a cached fix is only the fallback, and it keeps its own timestamp rather than being restamped as today\'s. Starting or stopping an appointment asks for the same fresh sample, so the point is where you are at the moment of the press, not the last four-minute beat. If the GPS is cold and the fresh sample misses, an appointment set to `once` still takes the next real fix it can get, so the start is not lost. On a computer with no GPS of its own it asks a phone or deck on the same local network for its current fix; if none answers there is no place to adopt. The answer is recorded here as this machine\'s place, without starting or stopping an appointment. The site-type picture beside the button follows the answer.',
+			'Those filed fixes are the Distance section on the appointment: press Dist in its details and the list gives each point with its distance from home, the kilometres since the last one, and the speed between them. Only one device files an appointment\'s movement - Configure → Plat → Maps → Movement recording decides which (Automatic takes the device that went somewhere, and a machine can be pinned), so two devices travelling together do not count the trip twice; the machines that are not recording still keep their own current place and still run their own home plates. Where an appointment already holds fixes from more than one device - a tablet left in the house while the phone goes for a walk - the section also names the device that was with you (With <name>, and how many recorded), which is the one whose fixes covered the most ground. The picker in that section also switches the list for a map of the same fixes and the home plate, drawn on any Travel basemap this house can actually use: the free services, or a keyed one whose key is already saved in Travel. The map joins the carrier\'s fixes in the order they were taken (the other devices\' points stay as dots), frames them so the whole run fits rather than letting a distant home plate shrink them to a dot, and re-frames whenever another basemap is chosen. It stays behind Dist so it is opened only when wanted, and zooms no closer than the chosen service\'s own deepest tile, so it never leaves blank squares.',
+			'Navigation also drives the home plates: walking outside a plate\'s radius stops the matching appointment at once. An app may have several plates, each with its own ground, radius and action, so a franchise is detected at each of its shops; a plate only ever triggers the app it belongs to. When you come back inside, a session stopped by navigation within the last fifteen minutes is reopened rather than started again, so a stray fix that briefly put you outside does not split the appointment in two. A departure more than three times the radius away (with a fix better than 200 m) is a certain leave: coming back starts a new session instead of reopening the old one, even inside the fifteen minutes. Only a real GPS fix can move a plate - a network estimate, or the home-plate fallback a desktop uses when no deck answers, is ignored. The fixes can come at the navigation interval or from real GPS samples, whichever arrives. A running appointment carries an Autostop bar inside the Distance section, below the view picker: left ticked, a plate stop closes the session as described; unticked, the plate leaves this run alone and it ends only at a hand stop. Each new session starts ticked, and unticking is for that session only. The bar is offered only when the app owns a plate that can actually stop it - one with a radius, an action other than none, and a place to measure from (its own coordinates, the app\'s base plate, or the house\'s) - so an app with no such plate never shows a switch nothing would honour.',
+			'Plates are set from the map: a long press in Travel offers Set a plate here, where an app is found by typing its name, the radius is given in metres, and the action is chosen; Save adds that plate to the app. Configure → App → Home Plate lists each plate with its own latitude and longitude, so a plate can be moved later. A plate is only remembered per device and per plate, so a fix from one device does not confirm a crossing for another.',
+		],
+		steps => [
+			'Give an app a navigation value in its settings: none never logs, once only logs when you act, and an interval (like 1m) logs while one of its appointments is running.',
+			'Set the navigation utility on and to four minutes in Configure → Sys so the phone has a GPS fix to answer with, with or without an appointment running.',
+			'Start an appointment of that app and carry the device; the backend files a fix each navigation interval, or at the app\'s faster interval while one of its appointments runs.',
+			'Press the navigation button at the foot of the Start menu whenever you want a fix now.',
+			'Leave Recorded by on Automatic under Configure → Plat → Maps so only the device that is actually moving files an appointment\'s fixes; name one machine if you would rather choose, and avoid Every device unless you want each machine\'s points counted.',
+			'Open the appointment, press Dist, and read the fixes for the points, the distance and the speed; the picker there draws the same fixes on a Travel basemap.',
+			'Set a home plate and a duty on it to let crossing that radius start or stop the appointment by itself; a return within fifteen minutes reopens a navigation stop. An app can have several plates, and a plate only triggers its own app.',
+			'Long-press the Travel map, press Set a plate here, type the app, give a radius in metres and pick the action, then Save. One plate per location is how a franchise is covered.',
+			'To keep a running appointment through a plate crossing, untick Autostop in its details before leaving; a new session starts with it ticked.',
+		],
+		prompt => 'Explain JawnOS navigation: the Android app runs a GPS-only foreground service that writes each fix to a file the manager reads; the navigation utility takes one fix per navigation interval (four minutes by default, set in Configure → Sys), screen on or off and whether or not an appointment is running, a short scheduled wake runs the utilities and the phone sleeps between fixes (music holds its own lock); an appointment start or stop, and the navigation button, ask for a fresh sample and wait up to twenty seconds, using a cached fix only as the fallback, and a `once` appointment with no point yet still takes the next real fix after a cold start; the per-app navigation setting is none / once / an interval; while an appointment with a shorter interval runs, navigation follows that faster pace (down to a ten-second floor); the current place holds until the next automatic fix so a private place does not fall back to public between runs; the network provider and the browser geolocation are never used, so indoors there may be no fix at all; and filed fixes appear in the appointment\'s Distance list (distance from home, kilometres since the last, speed). A home plate\'s duty stops the running appointment at once when a real GPS fix puts the device outside its radius; a return within fifteen minutes reopens that same session, while a departure more than three radii away (a fix better than 200 m) is a certain leave, so the return starts a new session even inside the window. Only a real GPS fix may move a plate: a network estimate and the desktop\'s home-plate fallback are ignored. An appointment\'s own Autostop bar, inside the Dist section of its details, can turn the plate stop off for the running session only; a new session starts with it on. The same Dist section has a picker that draws the fixes on a Travel basemap, offering only the free services or a keyed one whose key is saved. Do not describe it as a live map, and never guess a person\'s actual location. Which machine files an appointment\'s fixes is the Recorded by choice under Configure → Plat → Maps: Automatic (the device that covered ground in the last hour, handed over after a quarter of an hour quiet), Every device (each machine records and distances double), or one named machine.',
+		related => [ 'travel', 'appointments', 'devices_and_mesh' ]
+	};
+1;

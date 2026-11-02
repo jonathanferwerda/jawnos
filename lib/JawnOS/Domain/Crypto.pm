@@ -36,6 +36,18 @@ use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
 our %H;
+# ---- crypto wallets and live exchange rates --------------------------------
+# A wallet is an ordinary account app whose tender is crypto. JawnOS keeps the
+# public address and the asset, never a key or a seed phrase: it can say what a
+# wallet holds and what that is worth, but it cannot spend from it, and nothing
+# here ever asks for a phrase that could.
+#
+# Rates are one cached snapshot, denominated in the house's reporting currency:
+# rates{CODE} is how much of that currency one unit of CODE is worth. One
+# Coinbase call returns every fiat code and every coin; open.er-api is the
+# fiat-only fallback for a first boot. formula_calculator reads the same
+# snapshot, so 'x USD to CAD' is live too instead of the hand-written constants
+# in gb.pl.
 our @crypto_asset_list;
 our @crypto_fiat_table;
 our $crypto_secp256k1_n;
@@ -43,6 +55,8 @@ our %crypto_xpub_version;
 our $device;
 our %m;
 
+# Decode an account xpub (or ypub/zpub and their testnet forms). Returns the
+# public key and chain code plus the script type the version bytes name.
 sub crypto_xpub_decode {
 	my ($text) = @_;
 	return undef unless defined $text && length $text;
@@ -67,6 +81,8 @@ sub crypto_xpub_valid {
 	return defined &crypto_xpub_decode($text) ? 1 : 0;
 }
 
+# One non-hardened public child. Returns undef when BIP32 says the child is
+# invalid (IL = 0 or IL >= n), so the caller can try the next index.
 sub crypto_xpub_child {
 	my ($x, $index) = @_;
 	return undef unless ref $x eq 'HASH' && defined $x->{'pub'} && defined $x->{'chain'};
@@ -90,6 +106,9 @@ sub crypto_xpub_child {
 	};
 }
 
+# The address at /0/index under an account xpub, encoded for the script type
+# the key names. This is the external (receive) chain only; change addresses
+# live at /1/index and are never issued here.
 sub crypto_xpub_address {
 	my ($xpub, $index) = @_;
 	my $x = ref $xpub eq 'HASH' ? $xpub : &crypto_xpub_decode($xpub);
@@ -124,6 +143,8 @@ sub crypto_xpub_address {
 	};
 }
 
+# A BIP21 payment request: the address and, when known, the exact amount. No
+# label or message, so no ampersand ever reaches the QR encoder's argument.
 sub crypto_bip21_uri {
 	my ($address, $amount) = @_;
 	return '' unless defined $address && length $address;
@@ -157,6 +178,7 @@ sub crypto_rates_write {
 	return $payload;
 }
 
+# reporting currency per one unit of $code
 sub crypto_rate {
 	my ($code, $base) = @_;
 	$code = uc($code || '');
@@ -178,6 +200,8 @@ sub crypto_rate_age {
 	return &rightNow() - $r->{'at'};
 }
 
+# A fiat pair, read from the same snapshot. The static formulas in gb.pl are the
+# fallback only while no snapshot exists yet.
 sub exchange_rate {
 	my ($from, $to) = @_;
 	$from = uc($from || '');
@@ -209,6 +233,8 @@ sub crypto_transaction {
 	return ref $c eq 'HASH' ? $c : undef;
 }
 
+# One snapshot for every asset and every fiat code. The request is public and
+# keyless; an offline house keeps its last snapshot rather than losing the rates.
 sub crypto_rates_refresh {
 	my ($opts) = @_;
 	$opts ||= {};
@@ -270,6 +296,10 @@ sub crypto_rates_refresh {
 	return { ok => 1, source => $source, base => $base, count => scalar keys %rates, at => $written->{'at'} };
 }
 
+# What each wallet holds and what it is worth. Native units follow the signed
+# amount stored on the transaction (income positive, expense negative, a
+# transfer leg signed by its own direction); the money column is the signed
+# total, exactly the figure the ledger's account balance uses.
 sub crypto_wallets_report {
 	my $accounts = &crypto_accounts();
 	my $mode = lc(&setting_grabber({ app => 'crypto', setting => 'valuation', device => 'all' }) || 'cost');
@@ -305,6 +335,11 @@ sub crypto_wallets_report {
 	return $accounts;
 }
 
+# ---- one address per invoice -------------------------------------------------
+# The wallet's account xpub makes a fresh receiving address from the external
+# chain. The row lives in crypto_address (synced like any other table) so an
+# invoice keeps its address across edits, peers and reprints. A wallet with no
+# xpub falls back to the single address saved on the account, exactly as before.
 sub crypto_invoice_wallet {
 	my ($asset) = @_;
 	$asset = uc($asset || 'BTC');
@@ -316,6 +351,9 @@ sub crypto_invoice_wallet {
 	return undef;
 }
 
+# A wallet field that must be the same on every machine (the xpub, and the
+# address it falls back to). A shared row wins even when it is empty, so
+# clearing the field on one machine is not undone by a stale device row.
 sub crypto_wallet_setting {
 	my ($app, $setting) = @_;
 	return '' unless defined $app && length $app;
@@ -324,6 +362,8 @@ sub crypto_wallet_setting {
 	return &setting_grabber({ app => $app, setting => $setting });
 }
 
+# Read the address an invoice already owns. Never writes: the public invoice
+# page and the print view call this, and a GET must not allocate.
 sub crypto_invoice_address_read {
 	my ($app, $invoice) = @_;
 	return undef unless defined $app && length $app && defined $invoice && length $invoice;
@@ -336,6 +376,9 @@ sub crypto_invoice_address_read {
 	return { address => $static, static => 1 };
 }
 
+# Reserve this invoice's address. Idempotent: a second call returns the same
+# row. insert or ignore keeps two machines that allocated the same index while
+# apart from failing the insert; the loser simply takes the next index.
 sub crypto_invoice_address {
 	my ($opts) = @_;
 	my $app = $opts->{'app'};
@@ -365,11 +408,19 @@ sub crypto_invoice_address {
 	return { address => $static, static => 1, error => 'no free address' };
 }
 
+# ---- currency tracking ------------------------------------------------------
+# The old way to keep a currency history was an app with an appointment that
+# wrote a measure every few hours. The checkbox in Configure -> Plat -> Crypto
+# does the same job from the rate snapshot: one appointment of type measure in
+# the house's currency app every six hours, carrying every tracked fiat code, so
+# the Measures app charts it and no appointment has to run.
 sub crypto_tracking_on {
 	my $v = &setting_grabber({ app => 'crypto', setting => 'tracking', device => 'all' });
 	return (defined $v && $v eq 'on') ? 1 : 0;
 }
 
+# The app the history goes to. An explicit choice wins; otherwise adopt the app
+# the house already uses for currency measures, so its existing charts carry on.
 sub crypto_tracking_app {
 	my $pref = &setting_grabber({ app => 'crypto', setting => 'tracking_app', device => 'all' });
 	if (defined $pref && length $pref) {
@@ -393,6 +444,8 @@ sub crypto_tracking_definitions {
 	return ref $defs eq 'HASH' ? $defs : {};
 }
 
+# The app's measures can live on more than one device; update every row that is
+# there rather than the one this worker happens to be running as.
 sub crypto_tracking_definitions_write {
 	my ($app, $defs) = @_;
 	return 0 unless ref $defs eq 'HASH';
@@ -407,6 +460,12 @@ sub crypto_tracking_definitions_write {
 	return 1;
 }
 
+# The Measures app's PV column reads the same snapshot the Crypto panel shows:
+# one unit of a code, valued in the house's reporting currency. The fiat rows
+# Measures already holds are updated in place; every enabled coin gets a row of
+# its own, so a market price has somewhere to sit. Called after a refresh and
+# whenever Measures opens, so a snapshot taken while the panel was closed still
+# fills the column without waiting for the next half-hour.
 sub crypto_measures_sync {
 	my $rates = &crypto_rates_read();
 	my $table = $rates->{'rates'};
@@ -519,6 +578,9 @@ sub crypto_tracking_tick {
 	return { ok => 1, app => $app, count => $count, uuid => $uuid, at => $now };
 }
 
+# The Store's two directions, named for what the house is doing: an income
+# movement is a sale and an expense movement is a purchase. The stored movement
+# values do not change - only the words on the Store's own dropdown.
 sub store_movement_label {
 	my ($m) = @_;
 	$m = '' unless defined $m;
@@ -528,6 +590,11 @@ sub store_movement_label {
 	return &format_name($m);
 }
 
+# ---- payment proofs ---------------------------------------------------------
+# A payer's crest signs a statement of what was sent for which document; the
+# payee signs the same bytes back. The code travels like a crest code (PAY1Z:
+# deflated JSON), so it can be pasted or scanned. This is an attestation by the
+# two houses, not a chain check: the txid is carried, not verified here.
 sub payment_proof_statement {
 	my ($record) = @_;
 	return undef unless ref $record eq 'HASH';
@@ -620,6 +687,8 @@ sub payment_proof_parse {
 	return ref $record eq 'HASH' ? $record : undef;
 }
 
+# A native amount and a claimed amount are equal when they are within 1% - a
+# rate moves between quoting and sending, but not by more than that in practice.
 sub payment_amount_matches {
 	my ($a, $b) = @_;
 	return 0 unless defined $a && defined $b && "$a" =~ /\d/ && "$b" =~ /\d/;
@@ -630,6 +699,14 @@ sub payment_amount_matches {
 	return abs($x - $y) / abs($y) <= 0.01 ? 1 : 0;
 }
 
+# ---- online payments (Configure -> Plat -> Pay) ----------------------------
+#
+# Four ways for a customer to settle an invoice from the public invoice page:
+# Stripe, Square and PayPal create a hosted checkout for the exact balance and
+# record the payment when the provider says it is paid; Interac e-Transfer has
+# no consumer API, so JawnOS reads the notification letters already arriving in
+# the mailbox (or accepts a signed forwarder) and stages them for the seller.
+# Keys are sealed like an AI key and never leave the server.
 sub pay_secret_names {
 	return qw(
 		stripe_secret stripe_webhook_secret
@@ -639,6 +716,8 @@ sub pay_secret_names {
 	);
 }
 
+# Read a pay setting. The house shares these the way it shares the language, so
+# a phone and the desk agree on which provider is on.
 sub pay_setting {
 	my ($name, $default) = @_;
 	return $default unless defined $name && length $name;
@@ -646,6 +725,8 @@ sub pay_setting {
 	return (defined $v && length $v) ? $v : $default;
 }
 
+# A secret is stored sealed; a value written by an older build (or a plain row
+# replayed by a peer) still opens, so a key is never lost to a format change.
 sub pay_secret_read {
 	my ($name) = @_;
 	my $v = &pay_setting($name, '');
@@ -676,6 +757,9 @@ sub pay_providers {
 	];
 }
 
+# A provider is offered only when the house turned it on AND it has what it
+# needs to work. The public page reads this same answer, so a half-filled panel
+# never shows a button that cannot complete.
 sub pay_provider_ready {
 	my ($provider) = @_;
 	return 0 unless &pay_on;
@@ -696,6 +780,8 @@ sub pay_provider_ready {
 	return 0;
 }
 
+# The accounts a payment may be booked into. An account is an app whose part of
+# speech is account, the same list the App tab and a transaction use.
 sub pay_accounts {
 	my $rows = &db_query("select distinct app from settings where setting in ('pos','mab') and value = 'account' and app is not null and app != '' order by app")->hashes;
 	my @out;
@@ -710,6 +796,9 @@ sub pay_accounts {
 	return \@out;
 }
 
+# Where a provider's money lands. The panel's own choice wins; without one, the
+# first account that names the tender is a sensible fallback so a house that
+# never opened this panel still records the money somewhere.
 sub pay_account_for {
 	my ($provider) = @_;
 	my $picked = &pay_setting($provider . '_account', '');

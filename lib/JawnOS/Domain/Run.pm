@@ -36,6 +36,10 @@ use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
 our %Y;
+# Whether this machine can reach the model the evaluation is configured to use.
+# The setting is shared but the reach is local: an ollama that is not running or a
+# key that was never entered makes a machine a poor home for the night's run.
+# Memoised for a minute so the heartbeat and a job do not probe twice.
 our $ai_eval_ready_memo;
 our $ai_ledger_ready;
 our $backfills_running;
@@ -69,6 +73,21 @@ sub run_backfills {
 	return $ok;
 }
 
+# ---------------------------------------------------------------------------
+# Auto-update. A machine that receives code by git can keep itself current: the
+# watcher fetches origin and fast-forwards when the tree is clean and strictly
+# behind (never clobbers local commits or a dirty tree), then asks jawn to
+# restart. When the tree is clean but diverged because origin's history was
+# rewritten (every local commit still exists upstream under a new hash), it
+# resets hard to origin/main so the machine rejoins the update track; a tree
+# with genuinely local commits is left alone. Open browsers reload on their own:
+# the websocket hands out the revision and the client reloads when it changes.
+# ---------------------------------------------------------------------------
+# Push the current code to a neighbour over ssh, using the credentials the
+# remote_machines table already holds. Every device can also pull on its own
+# (git_watcher_check), so this is the "force it now" lever: fast-forward the
+# repo, reinstall the desktop app where one is installed, and ask jawn to
+# restart. Returns { ok, message, output }.
 sub remote_deploy {
 	my ($rm, %opts) = @_;
 	# Deploy over http: ask the peer to pull, reinstall its desktop app and
@@ -99,6 +118,19 @@ sub git_binary {
 	return 'git';
 }
 
+# Fast-forward a checkout to origin/main. Returns (status, output):
+#   current   already up to date
+#   updated   fast-forwarded to origin/main
+#   ahead     has commits origin/main does not; left alone
+#   reset     diverged, but every local commit already exists upstream under a
+#             rewritten hash, so reset hard to origin/main (nothing unique lost)
+#   diverged  has local commits that are not upstream; left alone (use force)
+#   dirty     tracked files are modified; never touched (use force)
+#   error     the fetch failed (no route, bad credentials) or the checkout
+#             could not be read; nothing was moved
+#   no-repo   not a git checkout
+# A clean tree only, unless force, which skips the dirty guard and hard-resets.
+# Which of two dotted versions is newer - numerically, so 0.1.112 beats 0.1.79
 sub version_cmp {
 	my ($left, $right) = @_;
 	my @l = split /\./, ($left || '');
@@ -118,6 +150,9 @@ sub version_newer {
 	return &subs::version_cmp($candidate, $mine) > 0 ? 1 : 0;
 }
 
+# The tree the working files would commit as, without touching the worktree or
+# the index. A code sync writes a peer's files over a checkout, so this is what
+# a commit would carry - and what can be compared with the commits origin knows.
 sub git_worktree_tree {
 	my ($repo) = @_;
 	my $git = &subs::git_binary();
@@ -129,6 +164,7 @@ sub git_worktree_tree {
 	return ($tree =~ /^[0-9a-f]{40}$/) ? $tree : undef;
 }
 
+# Whether origin/main's history already carries this exact tree.
 sub git_origin_has_tree {
 	my ($repo, $tree) = @_;
 	my $git = &subs::git_binary();
@@ -136,6 +172,11 @@ sub git_origin_has_tree {
 	return scalar grep { $_ eq $tree } split /\n/, $trees;
 }
 
+# A code sync writes a peer's tree over a checkout (the pack excludes .git), so
+# every synced file reads as modified against a stale HEAD. Put the checkout back
+# in a state git can move: if the synced tree is a shipped commit, reset to
+# origin/main; otherwise preserve it as a local commit, so the work is not lost
+# and the tree is clean for the next pull. No git, nothing to do.
 sub git_checkout_normalize {
 	my ($opts) = @_;
 	my $repo  = $opts->{'repo'} || &subs::home('~/jawnos');
@@ -213,6 +254,13 @@ sub git_repo_update {
 	return ('reset', $out);
 }
 
+# Pull the code from a peer: it hands back a git bundle of its own HEAD (a
+# delta since ours when it can), we fetch it and fast-forward or reset by the
+# same rules as a pull from origin. This is the watcher's fallback for a machine
+# with no route to GitHub. ff_only also refuses the reset case: the fallback
+# must never move a tree anywhere a fast-forward cannot reach, or a peer whose
+# advertised version outran its actual tree can drag a machine backward (the
+# rewritten-history reset once did, under "whoever has the newest is it").
 sub git_peer_update {
 	my ($opts) = @_;
 	my $repo = $opts->{'repo'} || &subs::home('~/jawnos');
@@ -257,6 +305,10 @@ sub git_peer_update {
 	return ('reset', $out);
 }
 
+# Best-effort, idempotent install of the optional applications the tree names
+# (scripts/jawnos_deps.pl's extras: Piper today). Called after a code update so a
+# new version's new apps land without a hand; a device that cannot install one
+# simply keeps the fallback.
 sub install_extras {
 	my $script = &subs::home('~/jawnos/scripts/jawnos_deps.pl');
 	return unless -e $script;
@@ -269,6 +321,11 @@ sub install_extras {
 	}
 }
 
+# New versions name new Perl modules, and the image's system Perl only has the
+# ones it shipped with. A pull cannot install system packages as the person who
+# runs the app, so the modules go in ~/perl5 - the local::lib `jawn` already
+# puts on @INC, which lives on the state partition and therefore survives a
+# reboot. Best effort: a failure is logged and the code update stands.
 sub install_local_modules {
 	my ($repo) = @_;
 	$repo = '.' unless defined $repo && length $repo;
@@ -303,6 +360,10 @@ sub restart_request {
 
 sub error_watch_offsets_file { return &subs::home('~/.president/error_watch_offsets'); }
 
+# The offsets live in a little file so a President restart (which happens on
+# every code change) does not re-read the whole pty log and count every fault
+# again; ~/.president is wiped when the master starts, so they never outlive the
+# pty log they describe.
 sub error_watch_state_load {
 	my $file = &error_watch_offsets_file();
 	return unless -f $file;
@@ -318,6 +379,10 @@ sub error_watch_state_save {
 	write_file(&error_watch_offsets_file(), encode_json(\%error_watch_state));
 }
 
+# The watch's purse: what today's proposals have cost, kept in the local cache
+# (cache is never synced or backed up), so the day's budget can stop it before
+# a runaway spend. The ceiling is the error_watch_budget setting (tokens/day;
+# unset means a 1,000,000-a-day default, and 0 means no ceiling).
 sub watch_tokens_day { return localtime()->strftime('%Y-%m-%d'); }
 
 sub watch_tokens_spent {
@@ -343,8 +408,25 @@ sub watch_tokens_add {
 	eval { &ai_house_budget_add($tokens) };
 }
 
+# ---- the house AI ledger -----------------------------------------------------
+# One machine runs each AI job, and the day's purse is shared. A "job" is a unit
+# of work with a name: an error's fix, an app's evaluation. Ownership is
+# deterministic - a stable hash ranks the house and the job's home is the member
+# ranked first - so every machine computes the same home with no lock service and
+# no shared write to race. Only the home's own watcher proposes a given fix or
+# runs a given evaluation.
+#
+# Eligibility rides the same synced tables: each machine publishes its own row
+# (does it have an AI model, when it was last seen) and its own day's spend. The
+# house is the members whose row says they have a model and were seen recently;
+# a machine with nothing synced yet sees only itself, so it still works alone.
 sub ai_house_today { return localtime()->strftime('%Y-%m-%d'); }
 
+# The ledger's rows are keyed by a natural name (a job, a machine, a machine's
+# day) but the sync matches rows by uuid. A fresh random uuid on every write
+# meant a peer never recognised the update, and the table's unique key then
+# refused the insert, so the ledger froze at each machine's first row. A uuid
+# derived from the natural key is stable, so the sync updates the row it holds.
 sub ai_job_uuid { return 'ai_job_' . md5_sum(($_[0] // '')) }
 
 sub ai_house_uuid { return 'ai_house_' . md5_sum(($_[0] // '')) }
@@ -429,6 +511,10 @@ sub ai_house_heartbeat {
 	&ai_house_publish();
 }
 
+# The machines that can take AI work: those that published a model and were seen
+# in the last ten minutes, plus this machine (so a lone or not-yet-synced machine
+# is never left with nobody). When $need_eval is set the machine must also reach
+# the evaluation's model. Sorted, so every machine ranks the same house.
 sub ai_house_members {
 	my ($need_eval) = @_;
 	my $me = &ai_house_me();
@@ -454,6 +540,8 @@ sub ai_house_members {
 	return sort keys %member;
 }
 
+# The house's servers, by signatorial. A server is the machine most likely to be
+# awake and reachable, so it is asked to carry the evaluation before the rest.
 sub ai_house_servers {
 	my $me = &ai_house_me();
 	my %server;
@@ -466,6 +554,9 @@ sub ai_house_servers {
 	return keys %server;
 }
 
+# Whether a named machine can take the work now. The local machine is asked
+# directly (its heartbeat may be this very process's); a peer is judged by the
+# row it synced, so a machine that has gone quiet is not believed.
 sub ai_house_machine_ready {
 	my ($machine, $need_eval) = @_;
 	return 0 unless defined $machine && length $machine;
@@ -487,11 +578,18 @@ sub ai_job_rank {
 	return $h;
 }
 
+# The machine that dispatches scheduled evaluations: a server, when the house
+# has one. Several servers would choose the same one because the list is sorted.
 sub ai_house_dispatcher {
 	my @servers = sort &ai_house_servers();
 	return scalar @servers ? $servers[0] : '';
 }
 
+# On a worker, "the server is known" means the server has published a heartbeat
+# under this code and has been seen within the week. A server that is merely
+# listed in remote_machines but has not upgraded yet is ignored, so a rolling
+# update does not stop the first morning; a server gone for longer than the
+# week is no longer a dispatcher, and the house falls back to quorum.
 sub ai_house_server_known {
 	my $server = &ai_house_dispatcher();
 	return 0 unless length $server;
@@ -501,6 +599,9 @@ sub ai_house_server_known {
 	return (($row->{'seen'} + 0) > (&subs::rightNow() - 7 * 86400000)) ? 1 : 0;
 }
 
+# The roster a serverless house uses for quorum: the AI-capable machines seen
+# within a week, plus this machine. A machine gone for longer than that has left
+# the house and no longer holds a vote.
 sub ai_house_roster_size {
 	my ($need_eval) = @_;
 	my $me = &ai_house_me();
@@ -520,6 +621,9 @@ sub ai_house_roster_size {
 	return scalar keys %roster;
 }
 
+# A strict majority of the roster must be present. A one-machine house is its
+# own majority; a minority partition stands down instead of running the report a
+# second time.
 sub ai_house_quorum_ok {
 	my ($need_eval) = @_;
 	my $roster = &ai_house_roster_size($need_eval);
@@ -528,6 +632,18 @@ sub ai_house_quorum_ok {
 	return (scalar(@live) * 2 > $roster) ? 1 : 0;
 }
 
+# The machine that runs $job now. The present house - the machines whose model
+# heartbeat is fresh - is ranked by the job's own order, and if nobody has run
+# the job within $ttl the highest-ranked member takes it. Because the house holds
+# only machines seen recently, a home that goes quiet drops out and the job falls
+# to the next machine (the failover); a job already run within the ttl is left
+# alone by everyone, so a machine that runs it and then goes quiet does not cause
+# a second run.
+#
+# A claim (state 'running' or 'claimed') is a lease rather than a fact: it covers
+# the job for half an hour, and only while its owner is still among the living.
+# A machine that claimed a run and then vanished therefore hands the work on
+# instead of holding it forever.
 sub ai_job_runner {
 	my ($job, $ttl, $need_eval, $prefer_server) = @_;
 	my @house = &ai_house_members($need_eval);
@@ -558,6 +674,10 @@ sub ai_job_runner {
 	return $ranked[0];
 }
 
+# Write the claim before the work starts. A peer that reads the ledger sees a job
+# already spoken for, so two machines never pay for the same evaluation; a claim
+# left by a machine that goes quiet expires (see ai_job_runner), so the house can
+# take the work back.
 sub ai_job_claim {
 	my ($job) = @_;
 	return 0 unless length($job // '');
@@ -567,6 +687,8 @@ sub ai_job_claim {
 	return 1;
 }
 
+# The moment this manager booted, in ms. A claim older than this cannot belong
+# to a live process: every worker was restarted after it was written.
 sub ai_job_boot_ms {
 	my $file = &subs::home('~/.president/on_duty');
 	my $v = -e $file ? eval { read_file($file) } : '';
@@ -575,6 +697,11 @@ sub ai_job_boot_ms {
 	return ($v =~ /^\d{10,}$/) ? $v + 0 : 0;
 }
 
+# A retry of a job this machine already claimed: the previous attempt died
+# before it could settle, and the queue runs one job at a time, so the claim
+# cannot belong to a live attempt here. A peer still sees the claim as live,
+# which is why the retry takes it back explicitly rather than through the
+# election (that could elect the peer and deadlock on this very row).
 sub ai_job_own_claim {
 	my ($job, $me) = @_;
 	return 0 unless length($job // '') && length($me // '');
@@ -586,6 +713,9 @@ sub ai_job_own_claim {
 	return 1;
 }
 
+# May this machine run $job? Only when it is the job's runner. The claim is
+# written here, before the caller spends anything, so the rest of the house sees
+# the intent at once; ai_job_note marks it finished afterwards.
 sub ai_job_may_run {
 	my ($job, $ttl, $need_eval, $prefer_server) = @_;
 	return 1 unless length($job // '');
@@ -604,6 +734,16 @@ sub ai_job_note {
 	eval { &subs::db_insert('ai_jobs', { uuid => &ai_job_uuid($job), job => $job, owner => &ai_house_me(), at => $now, state => 'ran', server_time => $now }) };
 }
 
+# ---- evaluation dispatch ----------------------------------------------------
+# The server is the dispatcher; a mobile or computer is a worker. The dispatcher
+# assigns each scheduled run to one ready worker a few minutes before it is due,
+# and a worker only runs what is addressed to it. A partition that cannot see
+# the server receives no fresh assignment and stands down, which is what keeps a
+# split house from running the same report twice. A house with no server at all
+# elects by quorum instead.
+
+# Minion lists schedules with next_run as epoch seconds; a stored string form
+# is accepted too when a caller reads the row directly.
 sub evaluation_schedule_ms {
 	my ($text) = @_;
 	return 0 unless defined $text && length $text;
@@ -613,6 +753,10 @@ sub evaluation_schedule_ms {
 	return defined $epoch ? $epoch * 1000 : 0;
 }
 
+# A worker claims the server's assignment. Only the addressed machine may take
+# it, only while it is fresh, and only once: 'running' is the claim, 'ran' the
+# receipt. A stale claim can be taken over, so a worker that dies mid-run does
+# not hold the job forever.
 sub ai_job_dispatch_claim {
 	my ($job) = @_;
 	my $me = &ai_house_me();
@@ -636,6 +780,9 @@ sub ai_job_dispatch_claim {
 	return 1;
 }
 
+# The dispatcher's half: look at the schedules due in the next ten minutes and
+# write one assignment per run. An assignment still in flight is left alone, so
+# a run is never handed to a second machine while the first holds it.
 sub evaluation_dispatch_sweep {
 	my $me = &ai_house_me();
 	my $server = &ai_house_dispatcher();
@@ -676,6 +823,10 @@ sub evaluation_dispatch_sweep {
 	return $count;
 }
 
+# Every machine's minute: the server writes the assignments, and every machine
+# turns an assignment addressed to it into a queued job. Using the tick rather
+# than the cron means an assignment that reaches a worker a few seconds late is
+# still picked up on the next minute instead of waiting for the next cadence.
 sub evaluation_dispatch_tick {
 	my $me = &ai_house_me();
 	return 0 unless length $me;
@@ -696,6 +847,7 @@ sub evaluation_dispatch_tick {
 	return 1;
 }
 
+# the shared purse: what the whole house has spent today
 sub ai_house_budget_spent {
 	my $row = eval { &subs::db_query('select sum(tokens) as total from ai_budget where day = ?', &ai_house_today())->hashes->[0] };
 	return ($row && defined $row->{'total'}) ? ($row->{'total'} + 0) : 0;

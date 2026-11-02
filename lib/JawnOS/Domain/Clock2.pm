@@ -177,6 +177,16 @@ sub clock_timer_finish {
 	return 1;
 }
 
+# One pass of the clock's own clock. Called by Alarm.pl; returns the next moment
+# it should be woken for, or undef when there is nothing waiting.
+# --------------------------------------------------------------------------
+# Per-machine ring state
+#
+# The alarm list is shared, but the sound is local. Each machine remembers the
+# fire it has already handled and when its own ring began, so a peer syncing
+# the row mid-ring cannot make it ring twice. A dismiss or snooze is carried on
+# the shared row (`stop_at`, `snooze_until`) and, for speed, relayed to the
+# machines the alarm names.
 sub clock_ring_file {
 	my $dir = &home('~/.president');
 	eval { File::Path::make_path($dir); } unless -d $dir;
@@ -198,6 +208,10 @@ sub clock_rings_write {
 	return $rings;
 }
 
+# Hand a dismiss/snooze/stop_all to the machines that carry the alarm. The
+# shared settings row reaches them as well; this is what makes the stop
+# immediate rather than whenever the next sync runs. Quiet about a peer that is
+# away - the row will still catch it up.
 sub clock_relay {
 	my ($action, $uuid, $machines, %extra) = @_;
 	my $self = &signatorial_designer() || '';
@@ -235,6 +249,11 @@ sub clock_relay {
 	return 1;
 }
 
+# ---- confirmed, immediate alarm sharing -------------------------------------
+# The shared settings row carries an alarm to the other machines eventually, on
+# the normal sync pass. These helpers push a single edit now, wait for the peer
+# to answer, and record who confirmed. A peer that does not answer directly is
+# offered the edit through another reachable machine, one hop only.
 sub clock_alarm_ack_file {
 	my $dir = &home('~/.president');
 	eval { File::Path::make_path($dir); } unless -d $dir;
@@ -276,6 +295,8 @@ sub clock_alarm_mark_ack {
 	return 1;
 }
 
+# The roster rows a push can reach, by signatorial. A same-LAN row may carry no
+# manager URL; the lister builds one when the push finds it missing.
 sub clock_alarm_peers {
 	my $rows = eval { &db_query('select hostname, signatorial, manager, ip, port, device, network from remote_machines')->hashes } || [];
 	my %by_sig;
@@ -287,6 +308,12 @@ sub clock_alarm_peers {
 	return \%by_sig;
 }
 
+# One target's row, resolved the way the rest of the peer rail resolves a peer.
+# A machine advertises the manager it answers on, which on an Android handset is
+# its own 127.0.0.1: using that verbatim made every alarm push to the phone fail
+# with "Connection refused" and no confirmation was ever recorded. The lister
+# swaps a loopback or dead tailnet manager for the LAN address the peer
+# advertised, so a phone on the house network is reached directly.
 sub clock_alarm_peer_row {
 	my ($sig) = @_;
 	return undef unless defined $sig && length $sig;
@@ -302,6 +329,8 @@ sub clock_alarm_peer_row {
 	return ref $fallback eq 'HASH' ? $fallback : undef;
 }
 
+# Push one alarm edit. Returns { delivered => [...], failed => [...] }. The
+# ack file is written here, so the next /manager/clock/state already shows the ✓.
 sub clock_alarm_push {
 	my ($alarm, $op, $machines, $now, $allow_forward) = @_;
 	$alarm = {} unless ref $alarm eq 'HASH';
@@ -418,6 +447,8 @@ sub clock_alarm_push {
 	return $result;
 }
 
+# Apply an edit that arrived from a peer. A per-alarm `updated` stamp decides
+# between two copies; the shared row still converges later either way.
 sub clock_apply_remote_alarm {
 	my ($alarm, $op, $now) = @_;
 	return 0 unless ref $alarm eq 'HASH' && length($alarm->{'uuid'} || '');
@@ -475,6 +506,9 @@ sub clock_apply_remote_alarm {
 	return $changed;
 }
 
+# The phone's notification buttons and the lock-screen gestures cannot call the
+# manager, so they leave a small request here; the alarm worker applies it within
+# a couple of seconds. The file holds one request and is removed as it is read.
 sub clock_control_file {
 	my $dir = &home('~/.president');
 	eval { File::Path::make_path($dir); } unless -d $dir;
@@ -568,6 +602,10 @@ sub clock_control_apply {
 	return 1;
 }
 
+# A future appointment in an app whose notification panel has Alarm on becomes
+# one Clock alarm, linked back to that appointment. Re-saving the appointment
+# moves the same Clock row; the next future one replaces it, so an app never
+# collects a pile of stale alarms.
 sub clock_appointment_sync {
 	my ($appt) = @_;
 	my $row = ref $appt eq 'HASH' ? $appt : {};

@@ -55,6 +55,10 @@ sub say_voice_spec {
 	return undef;
 }
 
+# Where the piper binary is on this device. It is arch-specific, so the voice
+# sync never carries it - only the models (which are arch-independent). The
+# dependency step's copy wins, then a piper on PATH; the repo's own bundle is the
+# desktop last resort (on the phone it is the wrong architecture).
 sub say_piper_binary {
 	# installed by the dependency step (scripts/jawnos_deps.pl --extras); a glibc
 	# build, which on Android is run through glibc-runner (see say_piper_argv)
@@ -71,6 +75,9 @@ sub say_piper_binary {
 	return '';
 }
 
+# The command that runs piper here, engine only (say_it appends the model and
+# output args). A glibc-built bundle needs the glibc launcher on Android; a
+# Termux build runs directly.
 sub say_piper_argv {
 	my $piper = &subs::say_piper_binary();
 	return () unless $piper;
@@ -82,11 +89,17 @@ sub say_piper_argv {
 	return ($piper);
 }
 
+# How to play a finished wav here. Android has no sox audio backend; the app
+# plays the clip through the bridge instead, so there is no shell player on a
+# handheld and the caller passes an empty command.
 sub say_player_command {
 	return '' if $device eq 'mobile';
 	return 'play -q';
 }
 
+# The piper invocation shared by the local player and the streaming reply:
+# (argv, extra args, model path, the model's own sample rate). '' when no piper
+# render is possible on this machine.
 sub say_piper_parts {
 	my ($pick_hint) = @_;
 	my $pick = $pick_hint || &subs::misc_setting('say_voice') || &subs::say_default_voice();
@@ -111,6 +124,8 @@ sub say_piper_parts {
 	return (\@argv, \@espeak, $model, $rate);
 }
 
+# Shell-quote one command of a pipeline ("arg with space" -> 'arg with space'),
+# so the paths the voice settings name survive the sh -c that runs piper | ffmpeg.
 sub pipeline_quote {
 	return join ' ', map {
 		my $a = defined $_ ? $_ : '';
@@ -119,6 +134,8 @@ sub pipeline_quote {
 	} @_;
 }
 
+# Piper render to a file (the local player's path). Returns the path of a fresh
+# WAV, or '' when no piper render is possible. The caller owns (and unlinks) it.
 sub say_render_wav {
 	my ($text, $pick_hint) = @_;
 	return '' unless defined $text && length $text;
@@ -181,6 +198,10 @@ sub say_it {
 	}, { name => 'say it' });
 }
 
+# Is the device on WiFi and reachable? Its own web server on port 3000 is the
+# test: an off-LAN or powered-down device fails the connect at once, which is
+# what lets the reply go to Bluetooth without waiting for a timeout. Returns
+# the address the reply route is served from, or undef.
 sub device_wifi_reply {
 	my ($meta) = @_;
 	return undef unless $meta && $meta->{'chip_id'};
@@ -221,6 +242,10 @@ sub device_wifi_reply {
 	};
 }
 
+# Render the answer once as a WAV, so a WiFi device can fetch it in one
+# streamed GET instead of receiving hundreds of BLE notifications. Returns the
+# id (the file is ~/.president/reply_<id>.wav) or undef when piper/ffmpeg
+# cannot produce one; the caller then keeps the BLE stream.
 sub device_reply_wav {
 	my ($text) = @_;
 	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
@@ -266,6 +291,10 @@ sub device_reply_wav {
 	return $id;
 }
 
+# A spoken answer to a voice command that came from the watch: push the reply
+# text (the watch shows it on screen) and the spoken answer (a short piper clip
+# the watch plays) over the bridge, so the answer lands on the wrist. No local
+# say_it: the machine holding the bridge would double-talk with the watch.
 sub watch_reply {
 	my ($meta, $text) = @_;
 	return unless $meta && $meta->{'chip_id'} && defined $text && length $text;
@@ -317,6 +346,13 @@ sub watch_reply {
 	}, { name => 'watch reply audio' });
 }
 
+# Stream the spoken answer to the watch as PCM parts. Piper writes raw samples as
+# it makes them; ffmpeg resamples them to 8 kHz mono (16 KB/s, which the BLE link
+# carries comfortably) as it goes, so parts leave while the sentence is still
+# being synthesized - the watch starts talking back almost at once instead of
+# after the whole clip has been rendered and pushed. Each part is its own bridge
+# message (all over one connection, see bluetooth_stream_open), so a long answer
+# is no longer capped by the 64 KB message limit.
 sub watch_reply_stream {
 	my ($meta, $text) = @_;
 	my ($argv, $espeak, $model, $rate) = &subs::say_piper_parts();
@@ -404,6 +440,11 @@ sub watch_reply_stream {
 	return $done;
 }
 
+# The picture an app's icon shows: the person's own main image when there is
+# one, else the active icon set's version of the app's known picture, else the
+# placeholder for its pos. main_icon_maker renders this in HTML; the native
+# home asks /apps/icon for the same answer as a PNG it can draw. Returns ''
+# when the app has no icon at all.
 sub main_icon_source {
 	my $data = shift;
 	my $unformatted_name = $data->{'app'};
@@ -466,6 +507,12 @@ sub device_setter {
 	return $device;
 }
 
+# M0 contracts (docs/roadmap-handoff.md): one door for every Android device
+# command. A caller names the command without its "termux-" prefix and passes
+# the argument string exactly as the shell should see it, so wrapping a call
+# site changes nothing at runtime. M1 replaces these three bodies with the
+# DeviceService client and the call sites stay put. The literal "termux-"
+# now lives only here; scripts/termux_ledger.pl counts it.
 sub device_cmd {
 	my ($name, $args) = @_;
 	$name = '' unless defined $name;
@@ -474,6 +521,8 @@ sub device_cmd {
 	return (defined $args && length $args) ? "$cmd $args" : $cmd;
 }
 
+# Run a device command through the shell. The optional prefix keeps a pipeline
+# or a timeout at the call site ("timeout 8 ", 'echo "$message" | ').
 sub device_run {
 	my ($name, $args, $prefix) = @_;
 	$prefix = '' unless defined $prefix;
@@ -481,6 +530,8 @@ sub device_run {
 	return `$prefix$cmd`;
 }
 
+# Where the Termux API app's command would be, for the capability probes that
+# ask "-x" before spawning one. M1 answers this from the bridge instead.
 sub device_bin {
 	my ($name) = @_;
 	$name = '' unless defined $name;
@@ -492,6 +543,12 @@ sub device_bin {
 	return "$prefix/bin/termux-$name";
 }
 
+# The host app's identity (M4). The Java package is com.jawnos.app and every
+# intent action is com.jawnos.app.*, but the *installed* package is com.jawnos
+# (the app's manifest package) and in the fork it was com.termux. A component
+# name is relative to the installed package ("com.jawnos/.app.X"), so both the
+# action and the component follow this one value: a device still on the fork
+# keeps answering its own names until it is migrated.
 sub app_package {
 	my $package = $ENV{'JAWNOS_APP_PACKAGE'};
 	return $package if defined $package && length $package;
@@ -501,12 +558,14 @@ sub app_package {
 	return 'com.jawnos';
 }
 
+# An intent action of the host app: JAWN_WAKE -> com.jawnos.app.JAWN_WAKE.
 sub app_action {
 	my ($name) = @_;
 	return undef unless defined $name && length $name;
 	return &app_package() . '.app.' . $name;
 }
 
+# A component of the host app, named the way `am` wants it.
 sub app_component {
 	my ($class) = @_;
 	return undef unless defined $class && length $class;
@@ -536,6 +595,16 @@ sub device_bridge_connect {
 	return $sock;
 }
 
+# M1 device bridge (docs/roadmap-handoff.md): ask the host app directly instead
+# of spawning a termux-* command. One JSON line in, one back, with a request
+# id, on a loopback socket the app opens (the jawn-bt pattern). Returns the
+# decoded result, or undef when the bridge is not there - every caller keeps
+# the termux command as its fallback, so an old app with a new tree and a new
+# app with an old tree both work.
+#
+# The token is the app's: it writes $HOME/.jawn/device.token (mode 600) because
+# the app and Termux share one uid. JAWNOS_DEVICE_TOKEN/BRIDGE_PORT exist for
+# the tests and an unusual install.
 sub device_call {
 	my ($method, $args, $wait) = @_;
 	return undef unless defined $method && length $method;
@@ -628,6 +697,16 @@ sub device_thumbnail {
 	return (defined $bytes && length $bytes) ? $bytes : undef;
 }
 
+# The robust slope of a battery history, in percentage points per hour.
+# Points are { t => epoch_ms, p => percent }. A fit needs $min_points samples
+# across $min_span milliseconds AND at least $min_delta points of net movement:
+# on a 1% gauge a three-sample five-minute window is one integer step, not a
+# rate. The slope is Theil-Sen (the median of every pairwise slope), so a
+# single voltage sag or bad reading is one pair's worth of noise rather than the
+# answer. Returns (slope, span_ms, samples, p25, p75, movement); the first three
+# are the old contract, and p25/p75 form the confidence band the card shows as a
+# range. A partial answer still carries the span/movement so a caller can tell
+# "not enough time yet" from "too flat to measure".
 sub battery_slope {
 	my ($points, $min_points, $min_span, $min_delta) = @_;
 	$min_points ||= 3;

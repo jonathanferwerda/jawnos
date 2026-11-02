@@ -41,6 +41,11 @@ our $gb;
 our $log;
 our %m;
 
+# A letter that leaves is filed like one that arrives: an appointment on the
+# app of the address it went to, so that app's details show both sides of the
+# conversation. The attachments are copied into that app's own folders and
+# written into the row's file column, and the mailbox row's uuid rides in the
+# data so the envelope in the details can open the very message.
 sub sent_mail_filer {
 	my $data = shift;
 	return unless $data->{'to'};
@@ -205,6 +210,10 @@ sub email_send {
 	return $result;
 }
 
+# The instruction that tells a chat model how to ask for media, appended to the
+# system message so the trigger does not depend on a magic marker the model may
+# or may not emit: any model that can follow a JSON shape works. Empty when no
+# generation agent is configured.
 sub ai_generation_instruction {
 	my ($settings) = @_;
 	my @kinds;
@@ -220,6 +229,8 @@ sub ai_generation_instruction {
 		. 'Never wrap it in prose or code fences, and never invent a different shape.';
 }
 
+# The first balanced {...} object in a string, respecting quoted strings, or
+# undef. Lets a reply that mixes prose with the action still be read.
 sub ai_first_json_object {
 	my ($text) = @_;
 	return undef unless defined $text;
@@ -246,6 +257,10 @@ sub ai_first_json_object {
 	return undef;
 }
 
+# Read a chat model's reply for a media request. Prefers the explicit JSON action
+# the instruction above asks for ({"action":"generate","kind":...,"prompt":...}),
+# and falls back to the legacy markers (dalle.text2 and kin) so a conversation
+# configured the old way keeps working. Returns (kind, prompt) or ().
 sub ai_extract_generation_action {
 	my ($text) = @_;
 	return () unless defined $text && length $text;

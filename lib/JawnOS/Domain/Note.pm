@@ -38,6 +38,15 @@ use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
 our $NOTE_MEMO_MAX;
+# ---- fast sealed-file opens --------------------------------------------------
+#
+# Rock and roll used to read the whole file, derive a key and decrypt every byte
+# once per credential in the rotation history. Two facts make that unnecessary:
+# a key can be tested on a short prefix (File::Type never looks past byte 5122),
+# and a file that opened once will open with the same secret and standard next
+# time. The helpers below read the container once, test keys on 16 KB, and remember
+# the winner for as long as the file is unchanged. Nothing here changes the
+# container: the bytes on disk stay exactly what openssl writes.
 our $SEALED_PROBE_BYTES;
 our $device;
 our $gb;
@@ -47,9 +56,25 @@ our %note_memo;
 our $note_memo_bytes;
 our @note_memo_order;
 our $note_security_memo;
+# The verdict for a decrypted prefix. File::Type knows the formats it ships,
+# but WebM/Matroska is EBML: it often comes back application/octet-stream. The
+# old probes treated a webm path as good enough for *any* credential, so the
+# first (wrong) secret won and the file was served as garbage. Sniff the
+# plaintext's own magic first; it is the only thing that says the key is right.
+# This is the house's primary sniffer: the table covers the media, documents,
+# archives, executables and fonts a person actually stores, and text is
+# recognised from its bytes rather than its extension. File::Type is only the
+# last resort for a format the table does not name.
 our $plaintext_ft;
+# Open a sealed file, remembering the secret/standard that opened it. $range is
+# an optional [ start, length ] (length undef means to the end). Returns a hash:
+# data, secret, standard, verdict, total, start, length; or { unsatisfiable }.
+# With $stream set (and no range, nopad, an in-process cipher and a non-PDF
+# verdict) it returns { stream => 1, ct, spec, key, iv, total, ... } instead of
+# the body, so the caller can pump the plaintext out a chunk at a time.
 our %sealed_file_memo;
 
+# Seal $content with the inner cipher, returning the openssl container (or undef).
 sub note_seal_container {
 	my ($content, $secret, $standard) = @_;
 	my $spec = &note_cipher_spec($standard);
@@ -95,6 +120,12 @@ sub note_encrypter {
 	return $returner;
 }
 
+# Open an openssl container with the inner cipher; undef when it will not open.
+# $nopad leaves the PKCS#7 padding on (the file path sniffs the plaintext by its
+# own nose, so it asks for the bytes untouched). $limit decrypts only that many
+# leading ciphertext bytes - enough to sniff a key without paying for the whole
+# file. A limit is only meaningful with $nopad: a note needs its last block to
+# strip PKCS#7, so a limited open returns the raw prefix instead.
 sub note_open_container {
 	my ($container, $secret, $standard, $nopad, $limit) = @_;
 	my $spec = &note_cipher_spec($standard);
@@ -137,6 +168,7 @@ sub note_openssl_open {
 	return &note_openssl_run(\@args, $container, $secret);
 }
 
+# The file sealing is the very same container, read from and written to a path.
 sub note_seal_bytes { my ($plain, $secret, $standard) = @_; return &note_seal_container($plain, $secret, $standard); }
 
 sub note_open_bytes { my ($container, $secret, $standard, $nopad) = @_; return &note_open_container($container, $secret, $standard, $nopad); }
@@ -151,6 +183,10 @@ sub seal_file {
 	return(-e $out_path ? 1 : 0);
 }
 
+# ZIP containers name themselves inside the archive: ODF and EPUB put an
+# uncompressed `mimetype` first, OOXML leaves `[Content_Types].xml` and then
+# `word/`, `xl/` or `ppt/`, and iWork leaves `Index/*.iwa`. The prefix is
+# enough to read the local headers, so a .docx is not just "a zip".
 sub zip_container_verdict {
 	my ($head) = @_;
 	my @names;
@@ -201,6 +237,8 @@ sub zip_container_verdict {
 	return 'application/zip';
 }
 
+# Legacy Office files are OLE2 compound documents. The directory's stream names
+# say which program wrote it; the first directory sector is inside the prefix.
 sub ole_container_verdict {
 	my ($head) = @_;
 	return undef if length($head) < 512;
@@ -376,6 +414,9 @@ sub plaintext_verdict {
 	return (defined $fd && $fd ne 'application/octet-stream') ? $fd : undef;
 }
 
+# Text is bytes with no NUL and no control characters; valid UTF-8 is text even
+# when most of it is outside ASCII. This is strict enough that a wrong key's
+# random bytes do not pass, which is what makes it usable as a key verdict.
 sub plaintext_looks_text {
 	my ($head) = @_;
 	return 0 unless defined $head && length $head;
@@ -398,6 +439,8 @@ sub open_file {
 	return &note_open_bytes($container, $secret, $standard, $nopad);
 }
 
+# The identity of a sealed file: any change to it (a reseal) makes a different
+# key. inode covers a replace, size and mtime cover an in-place rewrite.
 sub sealed_file_identity {
 	my ($path) = @_;
 	my @st = stat($path);
@@ -405,6 +448,9 @@ sub sealed_file_identity {
 	return join "\x1f", $path, $st[1], $st[7], $st[9];
 }
 
+# Try candidate secrets and standards in order, decrypting only the prefix for
+# each. $inspect receives the prefix and returns a true value (the verdict) when
+# it looks like the file wanted. Returns the winner without the body bytes.
 sub sealed_file_probe {
 	my ($container, $secrets, $standards, $inspect) = @_;
 	foreach my $secret (@{$secrets || []}) {
@@ -425,6 +471,8 @@ sub sealed_file_probe {
 	return undef;
 }
 
+# Advance a CTR IV by whole blocks (big-endian, which is what openssl's EVP
+# counter is), so a range can start anywhere without decrypting what precedes it.
 sub note_iv_advance {
 	my ($iv, $blocks) = @_;
 	return $iv unless $blocks;
@@ -438,6 +486,10 @@ sub note_iv_advance {
 	return $out;
 }
 
+# Decrypt one byte range of a container. CTR is seekable by advancing the IV;
+# CBC starts at the requested block using the previous ciphertext block as its IV.
+# The caller passes nopad-style files (no padding block to strip from the tail),
+# which is exactly the stream rock_and_roll serves today.
 sub note_open_slice {
 	my ($container, $secret, $standard, $start, $len) = @_;
 	my $spec = &note_cipher_spec($standard) or return undef;

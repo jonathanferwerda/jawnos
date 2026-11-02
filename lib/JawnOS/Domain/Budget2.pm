@@ -38,6 +38,12 @@ use Unicode::Normalize qw(NFC);
 
 our $gb;
 
+# The app's own budget, held against the window the evaluation rolled up. The
+# setting is a comma list of <amount>/<scope> entries - 17h/week, 7.0/w,
+# $50/M - and each is scaled to the window before it meets its actual, so a
+# month of readings of a weekly budget is still the same budget. Before this,
+# the report could see how long an app ran but never whether running that
+# long was over the line.
 sub budget_holding {
 	my ($app, $since, $act, $budget) = @_;
 	$budget = &subs::setting_grabber({ app => $app, setting => 'budget' }) unless defined $budget;
@@ -584,6 +590,8 @@ sub evaluation_agent {
 	return $report;
 }
 
+# the report a scope last produced: the setting is what the whole house can
+# read, the cache is where it lived before it travelled
 sub evaluation_report_for {
 	my ($app) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -595,6 +603,7 @@ sub evaluation_report_for {
 	return $report;
 }
 
+# the rolling headlines a scope has seen, newest first
 sub evaluation_headline_list {
 	my ($app) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -602,6 +611,11 @@ sub evaluation_headline_list {
 	return ref $heads eq 'ARRAY' ? $heads : [];
 }
 
+# the report's text, split so that each app name inside it comes back as its
+# own piece: the page renders those as links, and format_name drops the
+# underscores on the way. The model may write an app the way it is spelled
+# (chips_and_granola) or the way it reads (chips and granola), so both forms
+# are offered to the match.
 sub evaluation_text_chunks {
 	my ($report) = @_;
 	my $text = ($report->{'text'} || '') . '';
@@ -628,6 +642,10 @@ sub evaluation_text_chunks {
 	return \@chunks;
 }
 
+# the report as the page wants to show it: a headline first, then the rest -
+# split into chunks - that waits behind it. A report told to begin with a
+# headline has one on its first line; an older one that opens straight into a
+# heading falls back to the first line of that section, shortened.
 sub evaluation_report_pieces {
 	my ($report) = @_;
 	my $text = ($report->{'text'} || '') . '';

@@ -40,6 +40,10 @@ our $gb;
 our $log;
 our %m;
 
+# Build the specs a person can choose after clicking a value in the web view:
+# a JSON path, a table row, a label/value pair, or - last - the old CSS
+# selector + count. Every candidate is run through the extractor, so the list
+# only contains shapes that really read this page.
 sub web_measure_candidates {
 	my ($dom, $json, $selector, $index) = @_;
 	return [] unless $dom;
@@ -158,6 +162,10 @@ sub web_measure_candidates {
 	return \@out;
 }
 
+# app/setting rows, with the local device preferred but a row stored on another
+# device still visible. A web measure is an app fact, not a device fact: the
+# phone can be the headless browser and still use the selectors configured on
+# the computer. Dedupe by $by when a setting has one row per subsetting.
 sub setting_rows_for {
 	my ($app, $setting, $by) = @_;
 	my $dev = &device_setter();
@@ -282,6 +290,10 @@ sub telephone_contacts_check {
 	return $n;
 }
 
+# The contacts of one kind a person keeps: the plain setting (phone/email) and
+# the typed list beside it (phones/emails, rows of {type,label,value}). Comparison
+# tidies the way the rest of the code does - a phone to its digits (a leading 1
+# dropped) so a country code or spacing never hides a match, an email lowered.
 sub contact_normalizer {
 	my ($kind, $value) = @_;
 	return '' unless defined $value && length $value;
@@ -309,6 +321,10 @@ sub contact_matches {
 	return $x eq $y ? 1 : 0;
 }
 
+# Every app whose records hold this phone or email: the plain setting first
+# (phone/email), then the typed list (phones/emails). A match is the address, so
+# the two are scanned the same way - a number kept as somebody's work line names
+# them as surely as the one on the app.
 sub contact_apps {
 	my ($kind, $value) = @_;
 	return () unless defined $value && length $value;
@@ -332,6 +348,11 @@ sub contact_apps {
 	return @apps;
 }
 
+# Every line the house holds of one kind, one app's under it: the plain setting
+# (phone/email) first and marked primary, then the typed list (phones/emails) with
+# its type and label. A person with a home and a work line is one entry with all
+# of them, not one per number - which is what the Phone app's directory and
+# Chat's friends both want. Pass $only_app to read just one person's lines.
 sub contact_lines {
 	my ($kind, $only_app) = @_;
 	my $mine = (defined $only_app && length $only_app) ? $only_app : undef;
@@ -366,6 +387,9 @@ sub contact_lines {
 	return \%lines;
 }
 
+# How one line reads in a list: the number or address, and - for a line beyond
+# the first - its type in front of it (a custom entry wears its own label). A
+# blocked line says so.
 sub contact_line_label {
 	my $l = shift;
 	my $text = $l->{'value'};
@@ -377,6 +401,13 @@ sub contact_line_label {
 	return $text;
 }
 
+# The app a number belongs to: the person who saved it, or - when the house
+# does not know the number - the number itself, filed as an app of its own so
+# a stranger's calls and texts still land somewhere, and naming that app later
+# turns the stranger into a person. The phone row is made at the same time, so
+# the next call or text from the same number resolves the same way. Matching is
+# on the last ten digits of both sides, the way the call-log check learned to,
+# and covers the typed list as well as the plain phone row.
 sub phone_number_app {
 	my $number = shift;
 	$number =~ s/\D+//g;
@@ -477,6 +508,12 @@ sub appt_toggle_checker {
 	return $toggle;
 }
 
+# ---- warehouse / inventory helpers -----------------------------------------
+
+# Where are we right now? navigation_automation starts a place when GPS says we
+# are in it, which shows up as its 'toggle' being on. A device without GPS
+# (laptop/desktop) can't do that, so we fall back to whichever running place is
+# flagged with inventory ability.
 sub current_place {
 	my $q = &db_query('select app from settings where setting=? and value=?', 'toggle', 'on');
 	my $toggled = $q ? $q->hashes : [];
@@ -492,6 +529,10 @@ sub current_place {
 	return $inventory || $fallback || '';
 }
 
+# Split a typed quantity from its unit: "355mL" -> (355, mL), "12" ->
+# (12, default). A known measure is returned in its canonical spelling (mL, not
+# ml); with keep_unknown an unrecognised letter unit is returned as written so a
+# caller can refuse it rather than silently count it as a bare number.
 sub quantity_unit_split {
 	my ($raw, $default_unit, $keep_unknown) = @_;
 	$raw = '' unless defined $raw;
@@ -508,6 +549,9 @@ sub quantity_unit_split {
 	return ($quantity, $unit);
 }
 
+# What an item has on hand at one place and unit: the same signed stock rows the
+# Levels view sums, but scoped so a consumption can take only what is on that
+# shelf. Usage rows are history, not stock, and are left out.
 sub warehouse_on_hand_at {
 	my ($item, $unit, $place) = @_;
 	return 0 unless defined $item && length $item;
@@ -519,6 +563,10 @@ sub warehouse_on_hand_at {
 	return ($rows && $rows->[0]) ? $rows->[0]->{'q'} + 0 : 0;
 }
 
+# What an item has on hand right now: its signed stock rows summed per unit, the
+# same figure the warehouse Levels view shows. A money row (it names an account)
+# and a balance anchor (kind inventory) are not stock and are left out, the way
+# warehouse_grabber reads them.
 sub warehouse_stock_for {
 	my ($item) = @_;
 	return {} unless $item && $item ne '';
@@ -534,6 +582,9 @@ sub warehouse_stock_for {
 	return \%stock;
 }
 
+# What an item has on hand, in the unit its own app names (its `unit` setting),
+# else its sole unit - what a fixed-level quantity budget reads. Zero when nothing
+# of it is stocked.
 sub warehouse_on_hand {
 	my ($item, $settings) = @_;
 	my $stock = &warehouse_stock_for($item);
@@ -544,6 +595,11 @@ sub warehouse_on_hand {
 	return $stock->{$units[0]} + 0;
 }
 
+# How to reach a stock target from what is on hand now, in whole packages where
+# the item names them: a shortfall of four covered by a six-pack reads "buy one
+# six-pack". The smallest pack that covers the shortfall is bought once; when no
+# pack covers it the biggest is repeated; with no packaging at all the bare
+# shortfall is the answer.
 sub warehouse_restock_for {
 	my ($item, $target) = @_;
 	my $settings = &settings_grabber({ app => $item });
@@ -573,6 +629,7 @@ sub warehouse_restock_for {
 	return $plan;
 }
 
+# The shelf life (e.g. '3w') declared on an item's packaging, if any.
 sub warehouse_item_expires {
 	my $item = shift;
 	my $packaging = eval { return decode_json &setting_grabber({ app => $item, setting => 'packaging' }) } || {};
@@ -584,6 +641,11 @@ sub warehouse_item_expires {
 	return '';
 }
 
+# Where does an item live? Most specific first: a 'stock_place' setting on the
+# item (or its app), then the older 'place' setting on either, a 'default_place'
+# on the item's packaging, the app itself when it is a place (pos=place), and
+# finally wherever we currently are. Returns '' when nothing resolves, and
+# callers treat that as "do not touch stock".
 sub warehouse_place_for {
 	my ($app,$item) = @_;
 	foreach my $subject ( $item, $app ) {
@@ -608,6 +670,8 @@ sub warehouse_place_for {
 	return &current_place();
 }
 
+# The journal metadata stored in a warehouse row's data column: why the stock
+# moved, what app it came from, and the uuid of the document that caused it.
 sub warehouse_journal_entry {
 	my $d = shift;
 	return encode_json {
@@ -617,6 +681,8 @@ sub warehouse_journal_entry {
 	};
 }
 
+# Record a stock movement. Positive quantity puts stock in, negative takes it
+# out. Only called once a place is known, so stock never lands unplaced.
 sub warehouse_movement {
 	my $d = shift;
 	my $item = $d->{'item'};
@@ -645,6 +711,10 @@ sub warehouse_movement {
 	return $wdata;
 }
 
+# Record consumption that had no stock to take from. It is a history row, not a
+# stock row: the Levels view and every balance ignore it, while the moves view
+# and the item's journal still show that the amount was used. This is the drink
+# that came from outside the warehouse - counted, but not owed to it.
 sub warehouse_usage {
 	my $d = shift;
 	my $item = $d->{'item'};

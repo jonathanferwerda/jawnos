@@ -560,6 +560,17 @@ sub ble_listener_start {
 	return 1;
 }
 
+# The backups registry is merged across the mesh, so rows pile up for every
+# machine's old archives - and the file-based prune in backup_now can only ever
+# match this machine's own files, which is why a peer's rows (a phone's
+# /data/data/... paths, say) were never cleaned and the table ran to thousands.
+# Bound it: keep only the newest few rows per (reason, machine, recipient,
+# destination) and delete the rest, with a tombstone so the deletion reaches the
+# other machines too. Keeping the newest is what makes it safe: the newest
+# remote_upgraded row of a group is the sync watermark (remote_machine's
+# reconnector and remote_upgrade read it), and merge_database reads the newest
+# one or two rows overall. Capped so one pass never floods the tombstone log;
+# successive backups finish the job.
 sub backup_registry_prune {
 	my $keep = shift || 5;
 	my ($db,$database,$sql) = &subs::database_grabber();

@@ -41,6 +41,16 @@ our $device;
 our $gb;
 our %m;
 
+# --- the evaluation agent -------------------------------------------------------
+# The evaluate buttons hand an app - or the whole house - to this. The raw
+# appointment numbers are rolled up first: counts, durations, an hourly and a
+# weekday profile, and one count per calendar day. The relational window's
+# links (the sc_ lists, one per construct) are walked to find the apps tied to
+# it, and each tied app's daily series is lined up against the app's own and
+# correlated - Pearson, tried at a small spread of lags, so a thing that
+# follows another can say so. Only then does a model speak: its job is the
+# words - trends, correlations, predictions - never the arithmetic, which the
+# numbers below it have already done.
 sub appointment_rollup {
 	my ($app, $since) = @_;
 	my $global = ($app eq '__president');
@@ -137,6 +147,8 @@ sub appointment_rollup {
 	return $roll;
 }
 
+# the busiest few values of each kind, so a window says what the activity was
+# made of without opening the whole catalogue
 sub evaluation_kinds {
 	my ($kinds, $cap) = @_;
 	$cap ||= 4;
@@ -150,6 +162,9 @@ sub evaluation_kinds {
 	return $out;
 }
 
+# Every appointment the house knows, by its unformatted name. Membership is a
+# pos setting (every app carries one), which is broader than the built-in
+# known_appts and so catches a project that is really an appointment too.
 sub appointment_names {
 	my $rows = &subs::db_query("select distinct app from settings where setting = ? and app is not null and app != ''", 'pos')->hashes;
 	my %names;
@@ -157,6 +172,9 @@ sub appointment_names {
 	return \%names;
 }
 
+# What one of a unit is in millilitres (or grams, near enough), when the unit is
+# a measure the house uses; undef for a bare count ('each', '', an app name),
+# which is a number of things, not an amount.
 sub quantity_unit_ml {
 	my ($unit) = @_;
 	$unit = lc($unit // '');
@@ -168,6 +186,9 @@ sub quantity_unit_ml {
 	return $to_ml{$unit};
 }
 
+# What one logged unit of an appointment is: the app's quantity setting, read as
+# an amount and a unit (coffee logs '10oz' a cup, soap '0.25'). A bare number is
+# read as millilitres, the house's habit. Undef when the app records no serving.
 sub quantity_serving {
 	my ($str) = @_;
 	return undef unless defined $str && $str =~ /\S/;
@@ -184,6 +205,10 @@ sub quantity_serving {
 	};
 }
 
+# The amount an app's window adds up to, spoken in one unit. A logged quantity is
+# already an amount when its own unit is a measure; the app's serving is the
+# default for the appointments that logged none, so every one is counted. All of
+# it is put in millilitres and then back into the unit the app speaks.
 sub evaluation_amount {
 	my ($q, $occ, $serving, $days) = @_;
 	# the window's quantity counts its entries under 'times' (how many carried a
@@ -225,6 +250,8 @@ sub evaluation_amount {
 	};
 }
 
+# every app the relational window has tied to this one: the sc_ settings are
+# uuid links, one list per construct, and 'all' means every app of it
 sub relational_family {
 	my ($app) = @_;
 	my $settings = &subs::settings_grabber({ app => $app });
@@ -252,6 +279,7 @@ sub relational_family {
 	return \@links;
 }
 
+# two apps' day counts, lined up over the union of their days
 sub day_pair_series {
 	my ($da, $db) = @_;
 	my %seen;
@@ -261,6 +289,10 @@ sub day_pair_series {
 	return (\@xs, \@ys, \@keys);
 }
 
+# Pearson's r at a small spread of lags; the best fit wins, so a follower can
+# be told from a leader. Positive lag means the second series trails the first
+# by that many days. Undef when there is too little shared history, when the
+# pair is almost all zero days, or when either line never moves
 sub series_correlation {
 	my ($xs, $ys) = @_;
 	my $n = scalar @{$xs};
@@ -297,6 +329,10 @@ sub series_correlation {
 	return { r => sprintf('%.2f', $best), lag_days => $best_lag };
 }
 
+# every numeric measure the window's appointments logged, averaged per day:
+# { app => { measure => { day => average } } }. A condition word is skipped;
+# the measure's own reading time wins over the appointment's, so a humidity
+# log lands on the day it was read
 sub measure_series {
 	my ($since) = @_;
 	my $rows = &subs::db_query(
@@ -334,6 +370,9 @@ sub measure_series {
 	return \%out;
 }
 
+# A number as a person writes it: two decimals at most, trailing zeros dropped,
+# so a rate reads "3" not "3.00" and "0.03" stays "0.03". The briefing hands
+# the model plain figures, and it should not parrot "3.00" back.
 sub briefing_number {
 	my ($n) = @_;
 	return $n unless defined $n && $n =~ /^-?[0-9.]+$/;
@@ -343,6 +382,18 @@ sub briefing_number {
 	return $s;
 }
 
+# The readings an app logged against its appointments, so the report can speak
+# the numbers themselves and not only the correlations they make. A logged entry
+# is a snapshot of every measure the app carried at that moment ({weight => 180,
+# pressure => 120, ts, uuid}); the app's own app_measures setting names the unit
+# and the range the reading is set to expect. Numeric readings are summarised
+# (readings, average, min, max, the latest and when it was read); a text or
+# select reading keeps its latest value and the spread of values seen.
+# An app's appointments gathered into episodes: walked in order and merged
+# wherever the gap from one to the next is small, each an { ts, stop }. A night
+# broken by a waking is one episode; a single cup is one. The split gap is read
+# from the app itself - a coffee (minutes long) splits from the next by a few
+# minutes, a night (hours long) only by a long gap.
 sub evaluation_episode_list {
 	my ($app, $since) = @_;
 	$since ||= &subs::rightNow() - 30 * 86400000;
@@ -372,6 +423,11 @@ sub evaluation_episode_list {
 	return { episodes => \@ep, gap => $gap };
 }
 
+# An app's natural unit rather than a count per calendar day: a night, a cup, a
+# session, a walk. Reports how many episodes there were and how many an active
+# day, the median and longest, the hour each began at (so a sleep reads as a
+# bedtime, a coffee as a time of day) and, where the app logs a quantity, the
+# amount an episode, a day and in all.
 sub evaluation_episodes {
 	my ($app, $since) = @_;
 	return {} unless $app && $app ne '__president';
@@ -406,6 +462,11 @@ sub evaluation_episodes {
 	};
 }
 
+# The typical gap from an episode of one app to the nearest episode of another -
+# the last coffee before a night's sleep, the walk before a meal - so a
+# relationship carries a time. Works on episode onsets, so a night is one onset
+# and not each record, and the median is signed (negative when the other tends
+# to come first).
 sub evaluation_episode_lag {
 	my ($app, $other, $since) = @_;
 	return {} unless $app && $other && $other ne $app;
@@ -434,6 +495,16 @@ sub evaluation_episode_lag {
 	};
 }
 
+# What conditions the app runs under: every numeric measure any app logged is
+# read against the app's own episodes. Two contrasts are weighed - the reading in
+# the windows around the episodes against its value everywhere else (around), and
+# its mean on the days the app ran against the days it did not (day) - and both
+# are handed over, with confidence saying which stand (both, day or around),
+# because a daily thing like weather is honest at the day while a
+# moment-to-moment thing is honest around the event, and a condition that only
+# leans around may just be the hour of the clock. A walk in the cold, an eczema
+# day in the damp, steps that climb with a walk: the measure's app is what
+# carries the condition, so a weather app's temperature stands beside the apps.
 sub evaluation_conditions {
 	my ($app, $since, $cap) = @_;
 	return [] unless $app && $app ne '__president';
@@ -555,6 +626,11 @@ sub evaluation_conditions {
 	return \@out;
 }
 
+# Speed is a reading of movement, and an app is a movement only when its own
+# construct (its POS) is action. A MAB is a "might also be", and every start or
+# stop takes a GPS fix and gets a derived speed whether or not the app moved -
+# programming is a service that might also be an action, and its speed came from
+# the fix rather than from the work. So a MAB alone does not make speed relevant.
 sub evaluation_speed_app {
 	my ($app) = @_;
 	return 0 unless $app && $app ne '__president';
@@ -639,6 +715,17 @@ sub evaluation_measures {
 	return $out;
 }
 
+# Which device was actually with the person over a set of fixes. Every phone,
+# tablet and watch writes its own continent rows, so one appointment can hold two
+# tracks: the tablet left in the house and the phone that went for the walk. The
+# device that covered the most ground is the one that went somewhere. A step
+# shorter than the jitter floor is a stationary device shuffling, so it is not
+# counted; steps are measured from the last accepted fix, so a walk whose fixes
+# are spaced far apart still adds up. Ties fall to the device with more fixes,
+# then to its signatorial, so the answer does not change between reads.
+#
+#   my $carrier = &subs::carrier_device($fixes);
+#   # { signatorial, metres, fixes, devices } or undef
 sub carrier_device {
 	my ($fixes) = @_;
 	return undef unless ref $fixes;
@@ -678,6 +765,10 @@ sub carrier_device {
 	};
 }
 
+# A device's signatorial as the name the house knows it by: the first label of
+# its house address (phone, tablet, laptop), then a peer's hostname, and this
+# machine's own name when neither is known. One place, so a carrier line, the
+# movement picker and anything else name a machine the same way.
 sub device_labels {
 	my %names;
 	my $hosts = &device_hosts();

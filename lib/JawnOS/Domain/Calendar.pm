@@ -57,6 +57,11 @@ our $time_odd_spans;
 our %time_span_table;
 our $time_units;
 
+# Move a moment by whole calendar units. Months and years keep the day of the
+# month, shortening to the month's last day when it is shorter (31 January ->
+# 28 or 29 February) and returning to $anchor_day on later months when one is
+# given (28 February -> 31 March). Days and weeks step through the local
+# calendar, so daylight saving neither drifts the hour nor shortens a day.
 sub calendar_shift {
 	my ($timestamp, $count, $unit, $anchor_day) = @_;
 	$timestamp = 0 unless defined $timestamp;
@@ -195,6 +200,12 @@ sub next_appointment_time {
 	return { next_run => $next_run, next_time => $next_time, uuid => $uuid, list => $next_appointments };
 }
 
+# The session a stop should close: the NEWEST open start/record for the app - the one
+# the person is running now. The appointment header carries this so a stop names its
+# own session, and every machine in the mesh closes that same row instead of each
+# resolving "the open session" against its own, possibly lagging, copy of the
+# database. The newest, not the oldest: a session left open by a stop that never
+# landed is the oldest, and naming it would make every fresh stop close the stale one.
 sub open_session_uuid {
 	my $app = shift;
 	return '' unless $app;
@@ -202,6 +213,14 @@ sub open_session_uuid {
 	return ($row && $row->{'uuid'}) ? $row->{'uuid'} : '';
 }
 
+# The row a stop closes, resolved the same way wherever the stop runs (manager_reset
+# and appointment_writer both call this): the session the client named, carried
+# through the relay so every machine closes the same one. A stop that names a session
+# closes that row and only it - a session already closed (a stop delivered twice, or
+# one this machine has not synced) matches nothing and the stop does nothing, so a
+# duplicate can never reach another session. Only a stop that names none falls back to
+# the NEWEST open start/record for the app at or before the press. One row, never the
+# backlog, and never a stale open session swept up by a nameless or repeated stop.
 sub stop_target_row {
 	my ($app, $target_uuid, $timestamp) = @_;
 	return undef unless $app;
@@ -216,6 +235,13 @@ sub stop_target_row {
 	return ($row && $row->{'uuid'}) ? $row : undef;
 }
 
+# A queued replay can deliver the same start twice a fraction of a second apart
+# (a toggle replayed after a sleep, say). The start branch used to mint a fresh
+# uuid every time, so the stop closed the row it named and the twin stayed open
+# on whichever machine had received the other write - visibly "still running"
+# long after the person stopped it. These two selectors make one press mean one
+# session: an open row already close to this start is reused instead of a twin
+# being written, and a stop retires any twin beside the row it closed.
 sub session_open_near {
 	my ($app, $type, $timestamp, $tolerance) = @_;
 	return [] unless $app && defined $timestamp;
@@ -698,6 +724,11 @@ sub interval_parse {
 	return ($count + 0, $unit);
 }
 
+# Read a schedule the appointment input and the payable scheduler share:
+# "<interval> for <horizon>". "1d for -2w" is every day for two weeks;
+# "monthly for 1y" is the first of each month for a year. "-2w" and "2w"
+# both mean two weeks ahead, because a horizon runs forward from the first
+# occurrence. Either part may be left out and "once" means no repeat.
 sub schedule_parse {
 	my $spec = shift;
 	$spec = '' unless defined $spec;
@@ -723,6 +754,9 @@ sub schedule_parse {
 	};
 }
 
+# The moment a schedule's horizon names, counted forward from its first
+# occurrence. A written date ("dec 31") is read as a date; anything else is a
+# length and runs ahead whichever sign it was typed with.
 sub schedule_until {
 	my ($horizon, $from) = @_;
 	return undef unless defined $horizon && length $horizon;

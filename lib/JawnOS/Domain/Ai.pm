@@ -44,6 +44,10 @@ our $gb;
 our $log;
 our %m;
 
+# Speech -> text through a cloud model. The transcription model (Configure -> Plat)
+# is either Cloudflare's @cf/openai/whisper or an OpenAI-compatible /audio/
+# transcriptions endpoint (Groq whisper-large-v3*, OpenAI whisper-1). '' on any
+# failure, so the caller falls back to the local whisper.cpp pipeline.
 sub ai_transcribe_cloud {
 	my ($model, $raw, $lang) = @_;
 	return '' unless $model && defined $raw && length $raw;
@@ -129,8 +133,12 @@ sub voice_silence_hallucination {
 	return $stock{$bare} ? 1 : 0;
 }
 
+# The warm whisper.cpp server's loopback port. It is an accelerator for this
+# machine, never a service offered to the network.
 sub whisper_server_port { return 8178; }
 
+# A warm server keeps the model loaded, so a clip skips the model load the
+# one-shot CLI pays on every call. '' when it is not running or did not answer.
 sub whisper_server_transcribe {
 	my ($raw, $lang) = @_;
 	return '' unless defined $raw && length $raw;
@@ -154,6 +162,8 @@ sub whisper_server_transcribe {
 	return $text;
 }
 
+# The one-shot CLI path. It is also the local path on a machine whose warm
+# server is not up yet.
 sub whisper_cli_transcribe {
 	my ($raw, $lang) = @_;
 	return '' unless $raw;

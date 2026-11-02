@@ -50,6 +50,9 @@ sub people_list {
 	return [ sort { lc($a->{'name'} || '') cmp lc($b->{'name'} || '') } @{$rows} ];
 }
 
+# Whether an assignment may be made. The device in the hand is the one thing an
+# assignment must not quietly demote: the live session keeps its privilege until
+# the next login, and the next login would read the lower one.
 sub person_assign_check {
 	my ($device_uuid, $person_uuid, $current_device_uuid) = @_;
 	return (0, 'no device') unless defined $device_uuid && length $device_uuid;
@@ -65,6 +68,11 @@ sub person_assign_check {
 	return (1, '');
 }
 
+# A ticket is an invitation; the person it admits is the identity that outlives
+# the link. The first login mints one from the ticket's name and privilege and
+# writes the link back, so a resumed ticket keeps the same person. The ticket's
+# own privilege remains the session's grant - this is attribution, not a second
+# source of privilege.
 sub person_for_ticket {
 	my ($ticket) = @_;
 	return undef unless $ticket && ref $ticket eq 'HASH';
@@ -117,6 +125,13 @@ sub peer_allows {
 	return $rank{$grant} >= $rank{$need} ? 1 : 0;
 }
 
+# Validate a grant before it is written. Kept pure so a probe can exercise the
+# policy without a database. Returns a normalized hashref, or undef when the
+# scope is missing or unknown (a typo must never become a permission).
+#
+# privilege is the relationship, not the capability: citizen is the owner's own
+# machine, peer is another house, visitor is an introduced house not yet a peer,
+# and guest is a one-off device. grant_scope still decides what the row may do.
 sub peer_grant_normalize {
 	my ($opts) = @_;
 	return undef unless $opts && ref $opts eq 'HASH';
@@ -132,6 +147,9 @@ sub peer_grant_normalize {
 	return { scope => $scope, expires => $expires, privilege => (length $priv ? $priv : undef) };
 }
 
+# Write a grant to a roster row. The caller decides who may set one (a citizen
+# route, or a house acting on its own roster); this only refuses garbage and
+# keeps privilege untouched unless it was named.
 sub peer_grant_setter {
 	my ($opts) = @_;
 	my $grant = &peer_grant_normalize($opts);
@@ -146,6 +164,8 @@ sub peer_grant_setter {
 	return 1;
 }
 
+# Verify an Ed25519 signature (base64) over a message against a PEM public key.
+# The shared primitive behind peer_verify and the paired-device challenge.
 sub signature_verify {
 	my ($pubkey, $msg, $b64sig) = @_;
 	return 0 unless $pubkey && index($pubkey, '-----BEGIN PUBLIC KEY-----') == 0;
@@ -162,6 +182,10 @@ sub signature_verify {
 	return $ok ? 1 : 0;
 }
 
+# Verify an ECDSA P-256 signature (base64 DER) over a message against an SPKI
+# DER public key (base64). The phone's biometric key is an Android Keystore EC
+# key: the OS releases it only after the person authenticates, so a valid
+# signature is a real factor rather than a client-side confirmation.
 sub ecdsa_verify {
 	my ($pubkey_b64, $msg, $sig_b64) = @_;
 	return 0 unless defined $pubkey_b64 && length $pubkey_b64;
@@ -174,6 +198,8 @@ sub ecdsa_verify {
 	return $ok ? 1 : 0;
 }
 
+# The public half is accepted only if it is an EC key on P-256, the curve the
+# Android Keystore key is made on.
 sub ecdsa_public_key_ok {
 	my ($pubkey_b64) = @_;
 	return 0 unless defined $pubkey_b64 && length $pubkey_b64;
@@ -195,6 +221,14 @@ sub ecdsa_public_key_ok {
 	return (($jwk->{'kty'} // '') eq 'EC' && ($jwk->{'crv'} // '') eq 'P-256') ? 1 : 0;
 }
 
+# --- the recovery code --------------------------------------------------------
+# The paper code: eight groups of five from Crockford's alphabet (no I, L, O or
+# U to mistype). Verification is the decryption itself - the code unwraps a copy
+# of the suds sealed to it - so the house keeps no hash, only the sealed blob.
+# n characters from Crockford's alphabet, straight from /dev/urandom: the house
+# key material of the recovery code, and the short codes humans compare. Perl's
+# rand (predictable, and inherited by forked workers) is not good enough. Each
+# byte mod 32 is uniform: 256 divides by 32.
 sub code_chars_make {
 	my ($n) = @_;
 	my $chars = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -222,6 +256,7 @@ sub recovery_code_make {
 	return join '-', @groups;
 }
 
+# the approval code: short enough to compare across two screens
 sub device_request_code {
 	my $raw = &code_chars_make(6);
 	return substr($raw, 0, 3) . '-' . substr($raw, 3, 3);
@@ -246,6 +281,18 @@ sub c_maker {
 	return $c;
 }
 
+# ---- OAuth2 for mail accounts ------------------------------------------------
+# Outlook and Gmail no longer accept a plain password over IMAP or SMTP. An
+# account can be marked auth=oauth2 instead: the house runs the OAuth 2.0 device
+# authorization grant - it shows a short code, the person approves it at the
+# provider, and the refresh token is kept (sealed) to mint access tokens after.
+# The access token rides XOAUTH2 for both IMAP and SMTP. A plain-password account
+# is untouched: every branch below only fires when auth is exactly 'oauth2'.
+
+# The OAuth2 clients the house can sign in with: one entry per app registration
+# (a name, a provider, a client id and secret, a tenant and scopes), kept as a
+# setting so it syncs and so several accounts can share the one registration. The
+# secret is sealed like a mail password.
 sub oauth_clients {
 	my $raw = &setting_grabber({ app => 'mail', setting => 'oauth_clients' });
 	my $list = eval { &decode_json($raw) } || [];
@@ -264,6 +311,9 @@ sub oauth_client {
 	return $cli || {};
 }
 
+# An account may name a registered client instead of carrying its own id/secret/
+# tenant; this lays the client's fields over the account's, so every caller goes
+# on reading the same keys.
 sub email_oauth_overlay {
 	my ($es) = @_;
 	my $cli = &oauth_client($es->{'oauth_client'});
@@ -314,6 +364,7 @@ sub email_oauth_http {
 	return { error => 'http', error_description => ($res->{'status'} || '') . ' ' . ($res->{'reason'} || '') };
 }
 
+# Write fields back onto one account in the email_config setting.
 sub email_server_update {
 	my ($uuid, $fields) = @_;
 	my $servers = eval { &decode_json(&setting_grabber({ app => 'mailbox', setting => 'email_config' })) } || [];
@@ -336,6 +387,8 @@ sub email_oauth_store {
 	return 1;
 }
 
+# A live access token for the account: the one held if it is still good, else a
+# fresh one minted from the refresh token.
 sub email_oauth_token {
 	my ($es, $suds) = @_;
 	$es = &email_oauth_overlay($es);
@@ -354,6 +407,9 @@ sub email_oauth_token {
 	return $r->{'access_token'};
 }
 
+# Log an IMAP connection in, by XOAUTH2 for an oauth2 account or by password
+# otherwise. The SASL initial response rides as an IMAP literal, which is what the
+# continuation the server answers is for.
 sub email_imap_login {
 	my ($imap, $es, $token) = @_;
 	if (($es->{'auth'} || '') eq 'oauth2') {
@@ -626,6 +682,10 @@ sub email_receiver {
 	return { email_servers => $email_servers, html => $html };
 }
 
+# Send what waits in the outbox. A uuid picks one letter and sends it on the
+# spot - the compose side calls it the moment a letter is written, so nothing
+# waits for the sweep. The uuid-less form is the utility's, and it keeps the
+# old manners: only this device's letters, and never ahead of their timestamp.
 sub email_sender {
 	my ($uuid, $c) = @_;
 	my $query;
@@ -668,6 +728,12 @@ sub email_sender {
 	return $returner;
 }
 
+# Letters the server accepts all come through here: the imap reader, the
+# telephone's sms list, a watch, a neighbour posting one over. The message
+# travels to the websocket daemon over the mail socket, which matches it to
+# open mailboxes, dots the start menus' mail icons, and lets the regular
+# notification speak when no mailbox is watching the thread. The envelope is
+# rendered here because a controller is what reads the words back out.
 sub mail_arrival {
 	my $m = shift;
 	my $c = delete $m->{'c'} || &subs::c_maker();

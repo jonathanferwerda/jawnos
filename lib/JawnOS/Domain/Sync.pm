@@ -41,6 +41,9 @@ our $device;
 our %m;
 our %note_cipher_specs;
 our %note_key_material;
+# Whether one standard can be sealed and opened again on this machine. The
+# in-process families answer from the table; the openssl-only ones are probed
+# once (a tiny round trip) and memoised for the life of the worker.
 our %note_standard_supported;
 
 sub sync_plan {
@@ -220,6 +223,11 @@ sub sync_job_step {
 	return $step;
 }
 
+# A tree that dies mid-pull leaves its job row 'running': only a clean
+# Jawn::SyncJob exit writes the final state, and a SIGKILL or a tree restart
+# skips it. At boot no worker from the old tree can still own a job, so age out
+# the plainly abandoned ones. The 30-minute bound matches the remote_upgrade
+# lock, so a genuinely long pull is not cut short if its owner somehow survived.
 sub sync_jobs_reap {
 	my ($age_ms, $direction, $note) = @_;
 	$age_ms = 30 * 60 * 1000 unless defined $age_ms && $age_ms =~ /^\d+$/;
@@ -301,6 +309,10 @@ sub sync_job_active {
 	sub DESTROY { my $self = shift; &subs::sync_job_finish($self->{'uuid'}, 'failed', 'sync ended without a result') unless $self->{'done'}; }
 }
 
+# The peer picture we have already reconciled, per table. Storing it after a
+# successful pull turns "this table diverges" into "this exact picture has
+# already been read", so a peer that is merely behind us is not full-read every
+# tick while a peer that changed (the offline row) is read once more.
 sub sync_seen_get {
 	my ($peer) = @_;
 	return {} unless $peer;
@@ -336,6 +348,8 @@ sub sync_seen_set {
 	});
 }
 
+# A peer that told us it was busy gets a short rest instead of being asked again
+# on every tick. The cache is machine-local (and forbidden from the export).
 sub sync_backoff_active {
 	my ($peer) = @_;
 	return 0 unless $peer;
@@ -356,6 +370,12 @@ sub sync_backoff_clear {
 	&db_query('delete from cache where context = ? and uuid = ?', 'sync_backoff', $peer);
 }
 
+# A sync pass starts at most one pull: the marker holds the slot until the
+# forked child claims it. Roster order therefore decides who gets to sync, and
+# a busy first peer (the laptop in daily use) takes every pass while a peer that
+# has been behind for days never gets a turn. Order the pass by the last
+# confirmed pull instead: the peer with the oldest watermark (or none at all)
+# goes first. Ties are broken by signatorial so the order is stable.
 sub sync_peer_order {
 	my ($machines, $synced_at) = @_;
 	$synced_at ||= {};
@@ -368,6 +388,18 @@ sub sync_peer_order {
 	];
 }
 
+# This machine's pull marker. The value is either
+#   running:<pid>   a forked pull that owns the work, or
+#   running:claim   a caller's claim made just before it forks, or
+#   <anything else> idle ('' or the panel's 'inactive').
+# Mojo::IOLoop::subprocess forks on the next tick, not when subprocessor is
+# called, so a claim is written before any child exists. If that tick never
+# happens - a tree restart, a torn-down loop, a failed fork - the claim used to
+# keep the marker looking like a live owner (it carried the caller's pid, and a
+# long-lived worker's pid never dies), which blocked every automatic pull for
+# the full thirty-minute bound and made the Upgrade button answer "already
+# running". A claim now gets its own short bound; only a real pid, still alive,
+# holds the long one.
 sub remote_upgrade_marker_state {
 	my ($value, $server_time, $now, $alive) = @_;
 	$value = '' unless defined $value;
@@ -406,6 +438,12 @@ sub remote_upgrade_lock_state {
 	return &remote_upgrade_marker_state($value, $row->{'server_time'}, &rightNow(), $alive);
 }
 
+# A pull killed by an app update or a tree restart leaves this marker behind,
+# and every peer then hears "merging" and skips this machine's newer rows until
+# the age bound expires (the phone hid six appointments this way, 2026-10-31).
+# At boot nothing from a previous life can still be pulling, so a marker that no
+# live process owns may be dropped at once instead of waiting out the bound.
+# A live pid, a fresh claim, or an empty marker keeps its place.
 sub remote_upgrade_marker_reapable {
 	my ($up) = @_;
 	$up ||= {};
@@ -413,6 +451,13 @@ sub remote_upgrade_marker_reapable {
 	return $up->{'busy'} ? 0 : 1;
 }
 
+# --- durable deletion tombstones -------------------------------------------
+# A deletion is permanent for any machine that has not yet seen it. Each
+# tombstone carries a monotonic id; a machine only drops a tombstone once every
+# remote machine has *confirmed* reading past it (sync_cursors), so a desktop
+# left off for weeks still receives the whole backlog when it reconnects. The
+# owner advances a reader's cursor only from the cursor that reader sends on its
+# next request, so a lost response can never purge a deletion early.
 sub tombstone_writer {
 	my $data = shift;
 	&db_insert('sync_log', {
@@ -438,6 +483,15 @@ sub tombstone_max {
 	return ($row->{'m'} || 0) + 0;
 }
 
+# Drop tombstones every known machine has confirmed reading. With no remote
+# machines there is nothing to sync, so the log clears wholesale; if any machine
+# has never confirmed (no cursor yet) the whole backlog is kept.
+#
+# File-scope tombstones stay: a peer reads the log to advance its cursor, but an
+# older peer has no file-scope deletion (the entry carried no file uuid before),
+# so "confirmed reading" does not mean "applied". Keeping these rows is what
+# stops a peer that still carries the attachment from handing it back on every
+# pull; they are few, and a peer on current code applies them when it reads them.
 sub tombstone_purge {
 	my $rms = &db_select('remote_machines', ['signatorial'])->hashes || [];
 	if (!scalar @{$rms}) { &db_query('delete from sync_log'); return; }
@@ -549,6 +603,25 @@ sub decrypter {
 	return $notes;
 }
 
+# ---- note encryption ---------------------------------------------------------
+#
+# A note is sealed in two layers: an inner cipher - an openssl `enc` container
+# ("Salted__" + an 8-byte salt + the ciphertext), keyed by PBKDF2-HMAC-SHA256 of
+# the secret - and an outer Crypt::Simple layer keyed by the same secret. The
+# standard travels inside the payload, so a note written under any standard still
+# reads back.
+#
+# The inner cipher runs in-process for the AES family (through CryptX) and falls
+# back to the openssl binary for the rest; both produce the identical container,
+# so notes are interchangeable either way. The old pipeline forked base64 and
+# openssl for every single note - tens of milliseconds each, which is why a page
+# of mail took seconds - this one costs microseconds.
+
+# The standards the Encryption Standard setting offers. Everything here is
+# filtered by what this machine can actually run (see note_standard_supported),
+# so the Configure list never offers a cipher that would write letters nobody can
+# read back. A standard not listed can still be read: the openssl fallback accepts
+# any cipher that binary knows.
 sub note_encryption_standards {
 	my @offered = (
 		'aes-256-ctr', 'aes-192-ctr', 'aes-128-ctr',
@@ -626,6 +699,11 @@ sub note_random_salt {
 	return $bytes;
 }
 
+# Run openssl over bytes held in memory. The input goes through a temp file, not
+# a pipe pair: with two pipes the parent writes the container into the child's
+# stdin while the child writes the answer back, and once either buffer fills
+# both sides wait forever. (This only bit the openssl fallback; AES and the other
+# in-process ciphers never spawn a process.)
 sub note_openssl_run {
 	my ($args, $input, $secret) = @_;
 	return undef unless defined $secret && length $secret;
@@ -656,6 +734,9 @@ sub note_openssl_run {
 	return $result;
 }
 
+# openssl enc over files, with the passphrase in a 0600 temp file. Returns 1 on
+# success and 0 on failure. $quiet keeps a wrong-password "bad decrypt" out of
+# the log when a caller is walking a credential history.
 sub openssl_file_crypt {
 	my ($mode, $standard, $secret, $in_path, $out_path, $nopad, $quiet) = @_;
 	return 0 unless defined $secret && length $secret && defined $in_path && defined $out_path;
@@ -674,6 +755,7 @@ sub openssl_file_crypt {
 	return $rc == 0 ? 1 : 0;
 }
 
+# The same, but returning the plaintext instead of writing it to a path.
 sub openssl_file_read {
 	my ($standard, $secret, $in_path, $nopad, $quiet) = @_;
 	return undef unless defined $secret && length $secret && defined $in_path;

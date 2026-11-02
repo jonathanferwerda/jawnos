@@ -172,6 +172,14 @@ sub edt_button_presser {
 	return $returner;
 }
 
+# The Android runtime has no ifconfig, and `ip addr` cannot bind a netlink socket
+# as an app uid (SELinux), so the phone and tablet reported no interfaces at all
+# and their devices row carried `{}`. The app answers the same report natively
+# (network.interfaces); this maps it to the structure the ifconfig parser below
+# produces. A desktop has no bridge, so it keeps parsing ifconfig.
+# Order-insensitive identity for an address map. It covers the fields a peer
+# needs to reach and label this machine (address, MAC, gateway and the ports),
+# so a row written without the port environment is corrected on the next pass.
 sub address_signature {
 	my ($address) = @_;
 	return '' unless ref $address eq 'HASH';
@@ -184,6 +192,10 @@ sub address_signature {
 	} sort keys %{$address};
 }
 
+# The device bridge resizes and re-encodes images natively. A call site keeps
+# its magick pipeline as the fallback for a desktop, where there is no bridge;
+# the helper answers undef then. This is the first half of the ImageMagick diet:
+# once every image call site asks here first, magick can leave the runtime.
 sub image_resolution_parts {
 	my ($resolution) = @_;
 	return () unless defined $resolution && $resolution =~ /^\s*(\d+)\s*x\s*(\d+)\s*$/i;
@@ -233,6 +245,12 @@ sub image_bridge_save {
 	return undef;
 }
 
+# The palette's duties are a list of per-file steps - rotate, crop, modulate,
+# level, black-threshold, gaussian-blur, sharpen - which the route used to run
+# as one `magick <file> -<duty> <value> <file>` per step. The bridge applies the
+# same list in one call, so the palette survives on a phone with no magick; a
+# desktop gets undef and keeps the command. Steps the bridge does not know are
+# reported back in `skipped` rather than failing the whole edit.
 sub image_bridge_edit {
 	my ( $path, $duties, $out ) = @_;
 	return undef unless defined $path && length $path && -e $path;
@@ -260,6 +278,9 @@ sub image_bridge_edit {
 	return undef;
 }
 
+# A display copy of a picture for a card or an avatar: the bridge fills a square
+# from the centre (magick's `-resize NxN^ -gravity center -extent NxN`). A
+# desktop answers undef and keeps its command.
 sub image_bridge_cover {
 	my ( $src, $size, $out, $quality ) = @_;
 	return undef unless defined $src && length $src && -e $src;
@@ -277,6 +298,9 @@ sub image_bridge_cover {
 	return undef;
 }
 
+# A thumbnail file made by the bridge: the bytes come back as PNG and are
+# written where the caller wants them. A desktop gets undef, so it keeps its
+# ffmpeg | magick pipeline.
 sub image_bridge_thumbnail {
 	my ( $src, $max, $out, $at_ms ) = @_;
 	return undef unless defined $src && length $src && -e $src;
@@ -513,6 +537,7 @@ sub same_net_test {
 	return $same_net;
 }
 
+# Only a private or link-local network is ours to probe: a public address is not.
 sub ip_is_private {
 	my $ip = shift || '';
 	return 1 if $ip =~ /^10\./;
@@ -523,6 +548,12 @@ sub ip_is_private {
 	return 0;
 }
 
+# ---- routers on the network ------------------------------------------------
+# The gateway is the one device every network has, and the Dev panel should
+# name it without a person tagging it. Probe it once (the login page says which
+# firmware answers), keep the row when the machine later leaves that network,
+# and let the card show the last time it was seen. A router is not a JawnOS
+# peer, so it does not belong in remote_machines.
 sub router_probe {
 	my ($ip) = @_;
 	return undef unless $ip && $ip =~ /^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -578,6 +609,12 @@ sub router_discover {
 	return 1;
 }
 
+# Every router this machine has met, newest sighting first. Keep only one seen
+# in the last day, or the gateway of a NIC that is up right now: a laptop that
+# roams would otherwise pile up an unnamed row for every network it has left.
+# The rows stay in the table, so returning to that network lists it again.
+# online is a short window so a router that is simply off the network still
+# lists, greyed, with the last time it answered.
 sub router_list {
 	my $now = &rightNow();
 	my $report = &network_interface_reporter();
@@ -596,6 +633,10 @@ sub router_list {
 	return \@routers;
 }
 
+# Resolve mDNS/DNS-SD services of one type on the local network, as a list of
+# records (avahi is the responder this house already has). Parsable output, one
+# `=` line per resolved instance:
+#   =;iface;proto;name;type;domain;host;address;port;txt
 sub mdns_browse {
 	my ($type) = @_;
 	return [] unless $type;
@@ -633,6 +674,10 @@ sub mdns_browse {
 	return \@records;
 }
 
+# The printers the local network advertises, keyed by address and by MAC so a
+# scanned device can be recognised either way. _ipp._tcp is the Internet
+# Printing service every modern printer answers; _pdl-datastream (port 9100) is
+# the fallback for one that only speaks raw.
 sub mdns_printers {
 	my $records = &mdns_browse('_ipp._tcp');
 	$records = &mdns_browse('_pdl-datastream._tcp') unless @{$records};

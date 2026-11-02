@@ -41,6 +41,8 @@ our $clock_apps_memo_images;
 our $device;
 our %m;
 
+# Write the next alarm for the app, and only broadcast when it really moved.
+# The file is what survives a reboot; the broadcast is what arms it now.
 sub clock_write_device_alarm {
 	my ($alarms, $now) = @_;
 	$now = &rightNow() unless defined $now;
@@ -128,6 +130,8 @@ sub clock_device_ring {
 	return 1;
 }
 
+# A timer's chime is the same promise as an alarm's; it goes through the same
+# alarm channel on a phone rather than the notification stream.
 sub clock_device_timer {
 	my $timer = shift;
 	return 0 unless $timer;
@@ -292,6 +296,10 @@ sub clock_normalize_timer {
 	};
 }
 
+# The house alarm list. Before sharing, each machine kept its own row under its
+# device type; a new install would see only its own. The first read moves every
+# such row into the single house row, and those alarms are addressed to the
+# machine doing the moving ("Me").
 sub clock_alarms_migrate {
 	my $store = &clock_alarm_store_device();
 	my $rows = eval { &db_query('select value, device, server_time from settings where app = ? and setting = ? and device != ? order by cast(server_time as integer) asc', 'clock', 'alarms', $store)->hashes } || [];
@@ -345,6 +353,9 @@ sub clock_timers_write {
 	return $timers;
 }
 
+# The next moment an alarm is due, strictly after $from. A day list of none is a
+# one-shot: the next such time, whatever day it lands on. The caller decides what
+# to do with a moment that has just gone by (the firing loop allows two minutes).
 sub clock_alarm_next_ms {
 	my ($alarm, $from) = @_;
 	my $hour = int($alarm->{'hour'} || 0);
@@ -411,6 +422,8 @@ sub clock_next_wake {
 	return $next;
 }
 
+# Nudge the alarm worker so a save, a start or a cancel is reflected at once
+# rather than at the appointment it was already sleeping toward.
 sub clock_poke {
 	my $timestamp = shift;
 	$timestamp = &rightNow() unless defined $timestamp;
@@ -497,6 +510,8 @@ sub clock_apps {
 	return \@out;
 }
 
+# The moment an alarm will next run, for the row's countdown. A snooze is the
+# next run; a skipped occurrence is not, so the search starts past it.
 sub clock_alarm_next_at {
 	my ($alarm, $now) = @_;
 	$now = &rightNow() unless defined $now;
@@ -507,6 +522,9 @@ sub clock_alarm_next_at {
 	return &clock_alarm_next_ms($alarm, $from) || 0;
 }
 
+# The phone's "Skip today" button cannot call the manager, so it writes this
+# little file; the alarm worker picks it up and applies the same skip the
+# browser button does.
 sub clock_skip_file {
 	my $dir = &home('~/.president');
 	eval { File::Path::make_path($dir); } unless -d $dir;
@@ -546,6 +564,9 @@ sub clock_skip_apply {
 	return 1;
 }
 
+# Every NFC tag row for an app, across devices. A tag is written from the phone
+# that owns the reader, so its settings row may sit under that machine; the
+# alarm has to find it whichever machine is editing the Clock.
 sub clock_app_nfc_tags {
 	my ($app) = @_;
 	return [] unless defined $app && length $app;
@@ -563,6 +584,9 @@ sub clock_app_nfc_tags {
 	return \@tags;
 }
 
+# The controls that start an app. A tag assigned for any of these can answer the
+# linked alarm; a tag that only records or commands does not count as the
+# waking-up tag.
 sub clock_nfc_control_starts {
 	my ($control) = @_;
 	return 0 unless defined $control && length $control;
@@ -575,6 +599,8 @@ sub clock_app_has_nfc_start {
 	return scalar grep { &clock_nfc_control_starts($_->{'control'}) } @{ $tags || [] };
 }
 
+# app => 1 for every app with a start tag; the alarm editor uses this to offer
+# the "Use NFC to snooze" box only where a tag really exists.
 sub clock_nfc_start_apps {
 	my $rows = eval { &db_query("select app, value from settings where setting = 'nfc'")->hashes } || [];
 	my %out;
@@ -639,6 +665,9 @@ sub clock_send_console {
 	return 1;
 }
 
+# How loud the OS alarm is at a moment in its ring: a little above silence at
+# the start, then the alarm's own volume by the end of its ramp. The browser
+# draws the ring card, but the sound belongs to the machine.
 sub clock_alarm_volume_at {
 	my ($alarm, $elapsed) = @_;
 	my $target = (($alarm->{'volume'} || 70) / 100);
@@ -655,11 +684,18 @@ sub clock_alarm_volume_at {
 	return sprintf('%.2f', $level);
 }
 
+# A long-form track loops until Dismiss, Snooze or the five-minute guard. The
+# old reading played a recording once and left the person asleep after it ended;
+# `repeat` makes the operating-system player carry the alarm the same way a
+# phone's alarm channel does. The pid file still lets Dismiss stop it.
 sub clock_alarm_ring_length {
 	my $alarm = shift;
 	return 300000;
 }
 
+# The command the OS player runs for this alarm. A long track is played once,
+# at the alarm's volume, with the ramp as its fade-in, and its pid is written so
+# Dismiss can stop it. A chime is played at the moment's ramped volume.
 sub clock_alarm_play_command {
 	my ($alarm, $elapsed) = @_;
 	$elapsed ||= 0;
@@ -676,6 +712,10 @@ sub clock_alarm_play_command {
 	return 'play -q -v ' . $level . ' ' . &quote($file) . ' fade t 1';
 }
 
+# Play one repetition of a short chime through the operating system. The
+# notification at the first ring carries the first sound; later rings use this
+# one directly, so the volume climbs across the ramp and no notification row is
+# written each time. A long-form track is never repeated this way.
 sub clock_alarm_sound {
 	my ($alarm, $elapsed) = @_;
 	$elapsed ||= 0;

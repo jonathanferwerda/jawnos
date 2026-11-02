@@ -41,8 +41,12 @@ our $config;
 our $device;
 our %m;
 our %recurrence_plan_cache;
+# What a picker shows: the whole family is still readable by time_span(), but
+# scrolling three hundred of them is not a picker, so this is the handful per
+# unit that gets reached for, in size order.  Add or drop names here freely.
 our $time_picker_spans;
 
+# The next occurrence of an interval, calendar-aware for months and years.
 sub schedule_next {
 	my ($timestamp, $every, $anchor_day) = @_;
 	my ($count, $unit) = &interval_parse($every);
@@ -56,6 +60,14 @@ sub day_key {
 	return POSIX::strftime('%Y-%m-%d', localtime(int($ts / 1000)));
 }
 
+# ---- schedules written in words -------------------------------------------
+# A schedule can also be a phrase: "every third Saturday of the month", "the
+# next five full moons", "my mom's next 5 birthdays". The Guide reads the
+# words into a small plan and the functions below do every piece of date
+# arithmetic, because a model is good at language and poor at counting dates.
+
+# The day-of-month of the $nth $wday (0 Sunday .. 6 Saturday) in a month;
+# $nth -1 is the last one. 0 when the month has no such day.
 sub nth_weekday_of_month {
 	my ($year, $month, $wday, $nth) = @_;
 	$year += 0; $month += 0; $wday += 0;
@@ -75,6 +87,7 @@ sub nth_weekday_of_month {
 	return $day;
 }
 
+# Easter Sunday in the Gregorian calendar (the anonymous algorithm).
 sub easter_sunday {
 	my $year = shift;
 	my $a = $year % 19;
@@ -94,6 +107,10 @@ sub easter_sunday {
 	return ($month, $day);
 }
 
+# The days the house treats as holidays, keyed YYYY-MM-DD. The built-in set is
+# a common US/Canada list; "Name = date" lines in the __president holidays
+# setting add the family's own (a date with a year is one day, a month and day
+# repeat every year). "except on holidays" skips these days.
 sub holiday_days {
 	my ($from, $to) = @_;
 	$from = &rightNow() unless defined $from;
@@ -153,6 +170,8 @@ sub holiday_days {
 	return \%day;
 }
 
+# A full moon via Meeus's lunar phase series (the main periodic terms), accurate
+# to about a minute. $k is the lunation number; the same k is a full moon.
 sub moon_full_ts {
 	my $k = shift;
 	my $T = $k / 1236.85;
@@ -181,6 +200,7 @@ sub moon_full_ts {
 	return ($JDE - 2440587.5) * 86400 * 1000;
 }
 
+# The full moons after a moment, oldest first.
 sub full_moons_after {
 	my ($from, $count) = @_;
 	$from = &rightNow() unless defined $from;
@@ -205,6 +225,7 @@ sub full_moons_after {
 	return @out;
 }
 
+# The moment a named person reaches an age, from a saved birthday.
 sub person_age_moment {
 	my ($name, $age, $now) = @_;
 	return undef unless defined $name && $name =~ /\S/ && defined $age && $age =~ /^\d{1,3}$/;
@@ -216,6 +237,9 @@ sub person_age_moment {
 		$year, $b[4] + 1, $b[3], $b[2], $b[1], $b[0]), $now);
 }
 
+# The Guide reads a phrase into one of the plans recurrence_expand knows. The
+# plan is remembered for the day: a schedule typed on every press of the same
+# app's usual phrase should not cost a model call each time.
 sub recurrence_plan_from_model {
 	my ($text, $start, %opts) = @_;
 	my $model = $opts{'model'} || &setting_grabber({ app => 'mail', setting => 'help_assistant' });
@@ -259,6 +283,7 @@ TXT
 	return $plan;
 }
 
+# The horizon a plan names: an absolute date, or the day a person reaches an age.
 sub recurrence_until {
 	my ($plan, $start) = @_;
 	my $until;
@@ -284,6 +309,8 @@ sub recurrence_until {
 	return undef;
 }
 
+# Turn a plan into the repeat timestamps after $start. Returns the list, the
+# horizon, and a question when the plan cannot be carried out.
 sub recurrence_expand {
 	my ($plan, $start, %opts) = @_;
 	$start = &rightNow() unless defined $start;
@@ -444,6 +471,8 @@ sub recurrence_expand {
 	return (\@dates, $until);
 }
 
+# The one entry point both the appointment form and the payable form call.
+# Compact text stays on the fast parser; anything else is read by the Guide.
 sub schedule_from_text {
 	my ($text, $start, %opts) = @_;
 	$start = &rightNow() unless defined $start;
@@ -472,6 +501,11 @@ sub schedule_from_text {
 	return { dates => $dates, source => 'guide', plan => $plan, until => $until };
 }
 
+# ---- a schedule waiting for the Guide to finish it ------------------------
+# When a phrase cannot be read yet, the appointment or bill is already made and
+# the facts needed to finish it later are held under a token. The Associate is
+# handed that token, asks its question, and calls the schedule action with the
+# clarified words; nothing is written until then.
 sub pending_schedules {
 	my $raw = eval { &setting_grabber({ app => '__president', setting => 'pending_schedules', device => 'all' }) } || '[]';
 	my $list = eval { decode_json $raw } || [];
@@ -512,6 +546,11 @@ sub pending_schedule_drop {
 	&pending_schedules_save($list);
 }
 
+# The rows a page of periods walks: the periods around now first (the nexts,
+# this one, the lasts), then the block of periods before or after it, so
+# scrolling a graph sideways carries on along the timeline.  A row that names
+# periods ahead counts from the request forward, so the part of this period
+# already spent belongs to "this" and never shows in a row past it.
 sub time_scope_page {
 	my $data = shift;
 	my $count = $data->{'count'} || 30;
@@ -540,10 +579,17 @@ sub time_span_label {
 	return $found ? $found->[1] : undef;
 }
 
+# A warranty that never expires, in the epoch milliseconds every warranty here
+# is compared in. Year 3000 is a constant on purpose: no expiry check or sweep
+# will ever reach it, and two machines comparing the same ticket agree. The app
+# tickets carry it, so the desktop and mobile apps never ask for a login again.
 sub forever_warranty {
 	return 32503680000000;    # 3000-01-01T00:00:00Z in ms
 }
 
+# The age a phrase names, if it names one: "when I'm 60", "when I am 60", "60yo",
+# "60 years old", "my 35th birthday". The caller matches the lowercased phrase
+# with its apostrophes already dropped, so "I'm" reads as "im".
 sub age_phrase_target {
 	my ($t) = @_;
 	return $1 if $t =~ /\bwhen\s+i\s+(?:am|turn)\s+(\d{1,3})\b/;
@@ -554,6 +600,10 @@ sub age_phrase_target {
 	return undef;
 }
 
+# The moment the person is a given age: the present time of day, in the year they
+# reach it ("today, but when I'm 60"). Reads the birthday the way every other
+# date is read, so a written birthday works. undef when none is set or the sum
+# will not make a date, so the caller falls through.
 sub birthday_moment_for_age {
 	my ($target, $now) = @_;
 	return undef unless $config->{'birthday'};

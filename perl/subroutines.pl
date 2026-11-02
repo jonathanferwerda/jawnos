@@ -1,9 +1,6 @@
 #!/usr/bin/env perl
 package subs;
 
-# The design notes for functions this file no longer defines live in
-# docs/subroutines-legacy-notes.md. This file holds only live state.
-
 BEGIN {
 	require Cwd;
 	require File::Basename;

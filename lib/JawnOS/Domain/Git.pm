@@ -43,6 +43,15 @@ our $crypto_base58_alphabet;
 our %crypto_base58_index;
 our $crypto_bech32_charset;
 our @crypto_fiat_table;
+# ---- watch-only Bitcoin addresses (BIP32 public derivation) -------------------
+# An account xpub is public: it derives receive addresses and cannot spend. A
+# wallet that carries one gives every invoice its own address. OpenSSL does the
+# scalar multiple (import the scalar as a private key, export its public point)
+# and the hash/encoding work; the one step it does not expose - adding the
+# parent point to IL*G - is a handful of BigInt operations below.
+#
+# Everything here is public data. There is deliberately no function that takes a
+# private key, a seed phrase or an xprv.
 our $crypto_secp256k1_p;
 our $device;
 our $git_watcher_blocked_note;
@@ -128,6 +137,10 @@ sub git_watcher_check {
 	&subs::restart_request('the git watcher moved the tree ' . $from . ' -> ' . (length $after_commit ? $after_commit : '?'));
 }
 
+# A Mojo::UserAgent that speaks to a peer the way remote_useragent_maker builds
+# one - the tunnel-aware manager url plus the session cookie we already hold for
+# it. Kept in subroutines so the boot-time loops, which run before Manager.pl is
+# loaded, can reach a peer without pulling the whole app in.
 sub peer_useragent {
 	my $rm = shift;
 	return (undef, $rm) unless $rm && $rm->{'cookie'} && $rm->{'manager'};
@@ -162,6 +175,8 @@ sub peer_useragent {
 	return ($ua, $rm);
 }
 
+# Append one line to the app-release sync's own log (the manager log). Quiet
+# when there is no logfile yet (an early boot).
 sub app_release_log {
 	my $line = shift;
 	return unless $subs::logfile;
@@ -170,6 +185,10 @@ sub app_release_log {
 	close $fh;
 }
 
+# Fetch a URL into a string. curl first, forced to IPv4: on a network whose IPv6
+# path to GitHub's asset CDN stalls, Mojo::UserAgent (which does not pin the
+# address family) hangs where curl -4 completes. Falls back to Mojo when curl is
+# absent, then to curl without -4 for a host that has no A record.
 sub github_fetch {
 	my ($url, $timeout) = @_;
 	$timeout ||= 60;
@@ -195,6 +214,12 @@ sub github_fetch {
 	return ($res && $res->is_success) ? $res->body : undef;
 }
 
+# The public app-release manifest on GitHub - a source that needs no peer to
+# answer, or to hold a valid cookie for us. The release carries app_release.json
+# (product, versionCode, versionName, filename, sha256) beside the APK, under a
+# fixed tag so the URL never moves; the download is a plain github.com asset,
+# not the rate-limited API. Returns the manifest plus the asset base url, or
+# undef when there is no release (or no network).
 sub github_release_manifest {
 	my ($repo, $tag, $file) = @_;
 	return undef unless $repo && $repo =~ m{^[^/\s]+/[^/\s]+\z};
@@ -214,6 +239,16 @@ sub github_release_manifest {
 	return $man;
 }
 
+# Reconcile the staged app releases (the APKs under releases/) with the newest a
+# reachable peer holds: a device that is behind pulls the APK in, so every
+# device becomes a holder and a source. The APK is a blob (gitignored) carried
+# over http, not through git - a ~35 MB binary per version in git history would
+# be untenable. Pull, on the watcher's slow tick; the code watcher keeps the
+# Perl tree current. GitHub's release manifest is consulted too, so a device
+# with no reachable peer (or no valid peer cookie) still updates.
+# Cache each reachable peer's Ollama model list, so Plat can offer models by the
+# machine they run on without waiting on the network. Runs on a slow tick; a
+# peer that goes quiet keeps its last list until it answers again.
 sub ollama_models_sync {
 	my $me = &subs::signatorial_designer();
 	my $rms = &subs::db_select('remote_machines')->hashes || [];
@@ -327,6 +362,12 @@ sub app_release_sync {
 	}
 }
 
+# Reconcile the voice models (voices/*.onnx and their json) with a reachable peer.
+# Models are arch-independent, so they travel the same way the APKs do - a device
+# that lacks one pulls it in and can then serve it, so every device ends up with
+# the same voices. The piper binary is per-arch and stays local, so it is never
+# part of this list. The models are immutable, so presence is enough: no version
+# to compare, unlike an APK.
 sub voice_sync {
 my $dir = &subs::home('~/jawnos/voices');
 mkdir $dir unless -d $dir;
@@ -431,6 +472,9 @@ sub crypto_enabled_assets {
 	return @out ? \@out : [ 'BTC', 'ETH', 'USDC', 'USDT' ];
 }
 
+# The house's reporting currency: the one the ledger, budgets and statements
+# already speak. misc/currency can arrive as a JSON list, so read the first
+# three-letter code from it.
 sub crypto_report_currency {
 	my $c = &setting_grabber({ app => 'misc', setting => 'currency', benign => 1 });
 	$c = '' unless defined $c;
@@ -439,6 +483,9 @@ sub crypto_report_currency {
 	return $c =~ /^[A-Z]{3}$/ ? $c : 'CAD';
 }
 
+# The coin an account holds, or '' when it is not a wallet. The asset setting is
+# what names it; an older wallet with only the tender set is Bitcoin, so a row
+# never becomes unreadable.
 sub crypto_account_asset {
 	my ($app) = @_;
 	return '' unless defined $app && length $app;
@@ -474,6 +521,10 @@ sub crypto_accounts {
 	return \@out;
 }
 
+# A typed amount becomes a plain decimal string, never a float: 18-decimal coins
+# would lose their last places on the way through a Perl number. Commas are
+# thousands separators (the same rule numeric_formatter uses) and only the last
+# dot is a decimal point.
 sub crypto_amount_number {
 	my ($text, $asset) = @_;
 	return undef unless defined $text;
@@ -498,6 +549,8 @@ sub crypto_amount_number {
 	return $out;
 }
 
+# Display form: the coin's own decimals, trimmed, with at least two places so a
+# small amount still reads as money rather than a bare integer.
 sub crypto_amount_format {
 	my ($amount, $asset) = @_;
 	my $a = ref $asset eq 'HASH' ? $asset : &crypto_asset($asset);
@@ -518,6 +571,7 @@ sub crypto_amount_format {
 	return length $code ? "$out $code" : $out;
 }
 
+# A seed phrase pasted into an address field is refused before it is stored.
 sub crypto_looks_like_secret {
 	my ($text) = @_;
 	return 0 unless defined $text && length $text;
@@ -555,6 +609,7 @@ sub crypto_address_valid {
 	return $s =~ /^[A-Za-z0-9]{20,100}$/ ? 1 : 0;
 }
 
+# A private extended key or a WIF is a spending key, never a watch-only one.
 sub crypto_xpub_is_private {
 	my ($text) = @_;
 	return 0 unless defined $text && length $text;
@@ -606,6 +661,8 @@ sub crypto_secp256k1_pub_parse {
 	return ( Math::BigInt->from_bytes(substr($u, 1, 32)), Math::BigInt->from_bytes(substr($u, 33, 32)) );
 }
 
+# IL*G. The scalar is imported as a secp256k1 private key and its public point
+# exported, so the curve work stays in CryptX.
 sub crypto_secp256k1_mul_g {
 	my ($raw) = @_;
 	return undef unless defined $raw && length($raw) == 32;

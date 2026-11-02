@@ -42,6 +42,10 @@ our $gb;
 our $log;
 our %m;
 
+# The device rows as the lister shows them, grouped by the network each
+# neighbour sits on: one group per subnet, its members (the interfaces that
+# reach it, each on a machine), and the devices found there. device_lister has
+# already left each address once, so a device is listed under a single network.
 sub network_groups {
 	my ($devices) = @_;
 	return [] unless ref $devices;
@@ -81,6 +85,11 @@ sub network_groups {
 	return [ map { $groups{$_} } @sorted ];
 }
 
+# The machines remote_machines knows that no neighbour table shows. A peer
+# reached over the tailnet, or one on a subnet none of this machine's NICs
+# reach, is in remote_machines but in no `devices` neighbour list, so the
+# network cards never draw it. Deduplicate by signatorial, or by address when a
+# row has none, so the card only adds what the neighbour tables missed.
 sub remote_machine_orphans {
 	my ($devices) = @_;
 	my (%shown_sig, %shown_ip);
@@ -131,6 +140,7 @@ sub remote_machine_orphans {
 	return \@rows;
 }
 
+# --- JawnOS BLE bridge (replaces the am broadcast + Tasker + BLE plugin chain) ---
 sub ble_bridge_enabled {
 	# On by default now that the phone's Tasker bridge is retired. Set
 	# ble_bridge to 0 in config.json to fall back to the old broadcast path.
@@ -162,6 +172,11 @@ sub ble_bridge_client {
 	return undef;
 }
 
+# ---- multi-link bridge state (protocol v2) --------------------------------
+# A desktop or phone bridge can hold several radios at once. Every link event
+# names its MAC; keep the same map here so a send, a yield and a sighting can
+# name the right radio instead of guessing at "the" link. A v1 daemon still
+# works: its status has no links[], so the top-level fields become the one link.
 sub ble_link_key {
 	my ($mac) = @_;
 	return '' unless defined $mac && length $mac;
@@ -236,6 +251,12 @@ sub ble_mac_for_chip {
 	return undef;
 }
 
+# How long a Bluetooth sighting keeps an embedded device listed in the Embedded
+# app after its last bridge message. A watch's radio sleeps and re-links on the
+# next advert, and even awake it only talks when something changes, so this must
+# outlast a quiet spell - not merely a nap. Two hours, so a watch that speaks
+# rarely (a connected one says nothing for a long time) stays on the list even
+# across a spell where its jawn was down; a device genuinely gone still drops.
 sub embedded_operator_door {
 	# The operator_door row that carries a device's current Now Me pair. It is
 	# written by whichever House machine ran Now Me, with that machine's device
@@ -252,6 +273,12 @@ sub embedded_operator_door {
 	return $row ? $row->{'value'} : undef;
 }
 
+# The embedded devices' one authentication check: a watch, deck or alarmclock
+# presents the rotated Now Me pair from its own operator_door row. The pair is
+# the same one every route uses (edt + chip_id + authorization), and the token
+# is the encrypted secret the device was last handed. This lives here, not in
+# watch.pl, because the backup route is registered by Manager.pl and both
+# workers must check it the same way.
 sub embedded_authorizer {
 	my ($c) = @_;
 	my $edt = $c->param('edt');

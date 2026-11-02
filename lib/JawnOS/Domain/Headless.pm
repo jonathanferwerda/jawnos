@@ -47,6 +47,25 @@ our %m;
 our $presence_relationship_cache;
 our $present_person_apps_cache;
 our @relationship_order;
+# ---- Visibility -----------------------------------------------------------
+#
+# A thing's visibility is one of three words. `public` is shown as usual and
+# `dangerous` is shown and stays open during a lockdown. `private` is a lock,
+# not a place level:
+#
+#   * it is hidden at every place, including home, and never appears on the
+#     timeline;
+#   * it may only be located in a private place (rating 1) with no enemy
+#     present - a public or dangerous place denies it entirely, even to an old
+#     media padlock grant;
+#   * even there it needs a live fingerprint grant on this screen (Security ->
+#     Private apps, or the app's own padlock). No grant, no entry anywhere.
+#
+# The place rating is still read by the lockdown (a dangerous place, or an enemy
+# present, closes the house). A person's relationship is numbered on the same
+# scale - friend 1 (private), stranger 2 (public), enemy 3 (dangerous) - so an
+# enemy's presence raises the room to dangerous. Strangers are not negative and
+# do not change the room.
 our %relationship_rating;
 our $visibility_exposure_cache;
 our %visibility_graph_links;
@@ -584,6 +603,11 @@ sub visibility_rank {
 	return 2;
 }
 
+# One request-wide read of the visibility rows and the construct links. The
+# links live in settings: a construct's own `uuid`, and the `sc_<kind>` arrays
+# naming the constructs of that kind it is part of. The workspace writes both
+# sides of a link, so the map is followed both ways and a private construct
+# reaches every appointment filed under it.
 sub visibility_graph_build {
 	return 1 if $visibility_graph_ready;
 	$visibility_graph_ready = 1;
@@ -651,6 +675,7 @@ sub app_visibility_own_value {
 	return $app_visibility_own_cache{$app} || 'public';
 }
 
+# The strictest level in the app's construct component, itself included.
 sub app_visibility_rank_effective {
 	my ($app, $seen) = @_;
 	return 4 unless defined $app && length $app;
@@ -683,6 +708,9 @@ sub app_visibility_value {
 	return $value;
 }
 
+# A picker can ask about hundreds of apps at once (every appointment in the
+# house). The graph is read once and every app's answer comes from the same
+# request cache, so each check costs no query.
 sub app_visibility_preload {
 	my ($apps) = @_;
 	return 0 unless ref $apps eq 'ARRAY' && scalar @{$apps};

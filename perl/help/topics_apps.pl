@@ -1,0 +1,276 @@
+	# ---------------------------------------------------------------- apps
+# Help registry part 1 of 9: Folders, the desk, media, Studio and coding.
+package help;
+
+use strict;
+our %topic;
+
+$topic{'folders'} = {
+		'title' => 'Folders', category => 'apps', app => 'folders',
+		templates => [ 'templates/folders/folders.html.ep', 'templates/folders/context.html.ep', 'templates/folders/properties.html.ep', 'templates/folders/dialog_box.html.ep', 'templates/folders/app_picker.html.ep', 'public/js/manager/folders.js', 'public/js/manager/desk.js' ],
+		summary => 'Browse, manage, seal and play with your files.',
+		verified => '2026-11-01',
+		body => [
+			'Folders is the file browser. It walks your media directories and shows thumbnails for images, video and audio, with a full right-click menu on every file and folder: new file and folder, rename, open, open with, copy, cut, paste, delete, shred, archive and properties.',
+			'The toolbar carries Sidebar, Home, Back, Forward, Up and Refresh, a clickable breadcrumb back to Home, the machine chooser, and a button that switches the listing between a grid of icons and a list showing each item\'s type, size and date. Back and Forward walk the folders already visited (Alt+Left and Alt+Right do the same), and the path can be typed instead: press the small button beside the breadcrumb, or Ctrl+L, and Enter to go. The breadcrumb and the window\'s title bar read each folder in the house\'s own words - underscores as spaces and each word capitalised - while every command still works on the real path and name; typing a path shows the real one.',
+			'Open in new tab and Open in new window sit on the menu of every file, folder and the folder background. A new tab joins the window you are working in; a new window opens beside it with its own history, title and taskbar tile. Both are named Folders - the folder they show, not its whole path. Folders also remembers the last folder read and the machine it was read from, so a plain open returns there; picking a folder, a machine or a command in the menu still goes exactly where you asked. The machine chooser always names the machine whose files are on screen, including a remote one - the listing of a remote machine is drawn by that machine, where it is "this machine", so its own row stays in the list. The tab strip appears under the path bar only once a window has more than one tab: press a tab to switch, its cross to close it (closing the last tab closes the window), or + to open another.',
+			'On a screen wide enough for it - a tablet, laptop or desktop, or a Folders window widened past the sidebar\'s break - a Places column sits beside the listing: Computer, Home, Desktop, your media locations, Archive and the Recycle Bin. Press the Sidebar button to show or hide it; the choice is remembered on this screen. The padlock and the path bar keep the full width above it.',
+			'Selecting works the way a file manager\'s does: click one item, Ctrl (or Cmd) click to add or remove one, Shift click to take the run between the last click and this one, and drag on the empty background to draw a selection box. The arrow keys walk the listing, Shift and an arrow extend the run, Ctrl+A selects everything, Enter opens, F2 renames, Delete removes and Shift+Delete shreds; typing a name jumps to it.',
+			'Dotfiles stay out of the listing by default. Right-click the folder background and choose Show hidden files to bring them in; the choice is remembered on this screen, and the same row then reads Hide hidden files.',
+			'Dragging carries the whole selection. Drop it on a folder\'s tile to put it inside, on the window\'s empty space to put it in the folder on screen, or on the desk to put it in the desktop folder; Ctrl (or Cmd) held at the drop copies instead of moving. Every move reports its progress in a dialog and the listing reads itself again when it finishes.',
+			'Archive copies the selection to the drive of the machine chosen for the location it sits in (Configure, Locations). It lands under that drive\'s archive_dir in a folder named for the location - Videos, Music, Photos - and the original stays here: archiving is a copy, not a move. If a location has no machine chosen and the house has exactly one machine with an archive drive, that machine is used automatically; with more than one, pick the machine in Configure. The queue button on the toolbar shows what is waiting, sending and finished, with a bar that moves by bytes while each file copies and a line for the whole run when several are queued; retry or stop each job. A stopped job removes the half-written copy on the archive drive and leaves the original alone, and asking for the same archive again continues from the bytes already there instead of starting over. Archive and remove original, on the same right-click menu, is the explicit choice to delete the original: it goes only after the archive machine has the whole copy and its size and checksum match, so a half-finished job never removes anything. A local item that also has an archived copy wears the archive icon beside it, and so does a folder whose contents are archived; the Archive entry in the right-click menu uses the same icon.',
+			'Delete moves an item to the Recycle Bin instead of destroying it: the file is kept in ~/.local/share/Trash with a note saying where it came from, so the rest of the desktop can see it too. Open the bin from the Places column, the desk\'s Recycle Bin icon, or the desk menu, then choose Restore on an item (or a run of them) to put it back where it was; a name already taken is kept beside it with .restored on the end. Empty Recycle Bin, on the bin\'s background menu or on the desk, permanently deletes everything in it after one confirmation. Shred is the permanent command that never uses the bin.',
+			'The desk behind the manager shows a folder of its own. It starts on ~/Desktop when that has something in it, and on your home folder otherwise. To choose another, right-click that folder (or the folder background) and pick Use as desk folder; Reset desk folder returns to the automatic choice. Its icons fill a column top to bottom in alphabetical order, then start the next column to the right, the way a desktop lays them out; whatever fits the screen is shown, under the clothesline when the rail is showing, and right-clicking the desk also offers the browser\'s own Back and Refresh.',
+			'Two places keep the first two spots on the desk whatever it holds: Computer, which opens the root of this machine, and the Recycle Bin, carrying a small badge with how many items are waiting in it. Both open in a Folders window; neither is dragged, renamed or deleted.',
+			'The desk\'s clock keeps the wall time ticking every second, and the clothesline is read again once a minute while the desk is up. The appointment view behind the other backgrounds is not built at all while the desk is the background.',
+			'Right-click the desk or the folder background and pick Pin apps to the desk to keep app shortcuts there. A double-click opens the app; right-click a shortcut and choose Unpin from the desk to take it away. The shortcut wears a small arrow on its icon, and files can still be dragged past or onto the desk around it.',
+			'Properties tells you what a file is without opening it: its path, type, size (or for a folder, how many things are inside), modified, accessed and changed dates, permissions, owner and group. Select several items and Properties gives one table with the sizes and a total. Copy path puts the full path on the clipboard, and Show in Folders opens the folder that holds it.',
+			'Right-click a file to seal it — encrypt it under a name of its own — and open it again from the same menu. Long jobs (moving, sealing, opening, deleting) run in the background and report their progress.',
+			'Some names on disk are the house\'s own and are shown as words instead: an app\'s folder in a media location reads as the app\'s name (Pictures/autumn appears as Autumn), and a sealed file reads as the name recorded with it when its json carries one (a map\'s place, a document\'s title) or as the app that wrote it and the moment it was made — Autumn 10162026 3:30pm. This is the label only; opening, renaming, moving and deleting still use the real path.',
+			'Opening a picture, a track or a video hands the app the whole set: Gallery opens the picture you picked in its viewer, with every picture of the same kind in that folder as the album behind it, so closing the picture lands on the folder; Music queues the folder\'s other tracks or videos, starting with the one you opened. A document opens in IDE on its own - the editor keeps one tab per file, so a folder\'s worth of documents is not swept in.',
+			'Moving, sealing, opening or deleting a file carries the appointments, mail attachments and store entries that named it along with it, so nothing is left pointing at a file that is no longer there.',
+			'A lock on the toolbar turns the media padlock. Private is a lock, not a place level: a private folder is hidden everywhere, even at home, and its files are kept out of the listing until the Folders padlock is opened with a fingerprint (or on a paired phone). It can only be found in a private place with no Enemy present; in a public or dangerous place, or with an Enemy present, it cannot be found at all and no unlock brings it back. A sealed file (a name ending .enc) in a folder whose visibility shows it is listed as usual; only a sealed file belonging to a private folder waits for the padlock. Folders opens with that padlock shut, and the next open starts shut again. The house gate in Security has nothing to do with this; each media app has its own padlock.',
+		],
+		steps => [
+			'Open Folders from the start menu.',
+			'Click into a folder to descend; the breadcrumb along the top walks back up, and Home returns to your home folder. Back and Forward (or Alt+Left and Alt+Right) retrace the folders you have visited.',
+			'Open a folder from the Places column beside the listing, or press Sidebar to show or hide that column; it appears when the window is wide enough.',
+			'Right-click a folder and choose Open in new tab or Open in new window to keep it beside what you are doing. Tabs show under the path bar when there is more than one; their crosses close them and + opens another.',
+			'Right-click the empty space in the listing and choose Show hidden files to list dotfiles too; choose Hide hidden files to put them away again.',
+			'Press the view button (or Ctrl+L to type a path) to work in a list with type, size and date instead of icons.',
+			'Click an item; Ctrl-click adds one, Shift-click takes a run, and a drag on the empty background draws a selection box.',
+			'Right-click a file for its menu — open, rename, copy, cut, delete, shred, seal or properties.',
+			'Drag the selection onto a folder tile, the window\'s empty space, or the desk; hold Ctrl while dropping to copy.',
+			'Delete or Shift+Delete puts an item in the Recycle Bin; open the bin, select what you want back and choose Restore, or press Empty Recycle Bin to clear it for good.',
+			'Right-click a folder and choose Use as desk folder to make it the desk\'s folder; Reset desk folder on the desk returns to ~/Desktop or home automatically.',
+			'Right-click the desk and choose Pin apps to the desk; double-click a shortcut to open the app, or right-click it to unpin it.',
+			'Choose Properties on a file or folder to read its dates, permissions, owner and group; Copy path and Show in Folders sit at the foot of that card.',
+			'To keep something safe off the record, choose Seal: it is encrypted under a name of your own, and opens again from this same menu.',
+			'For a hidden folder, press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone, and it appears.',
+			'Sealed names ending .enc are listed with their folder; only a sealed name inside a hidden folder waits for that same Folders padlock. Press an open padlock to shut it again.'
+		],
+		related => [ 'sealing_files', 'gallery', 'backup' ]
+	};
+$topic{'clock'} = {
+		title => 'Clock', category => 'apps', app => 'clock',
+		templates => [ 'templates/apps/clock.html.ep', 'public/js/manager/clock.js', 'templates/manager.html.ep' ],
+		verified => '2026-10-30',
+		summary => 'Alarms, a stopwatch, timers and world clocks, with alarms and timers that can start and stop appointments.',
+		body => [
+			'The Clock app has four faces. Alarm holds up to ten alarms, each with a time, a name, an optional sound and a linked appointment. Each alarm is a folded row: the strip shows its time, its name and the machines that carry it as pills, with the on/off switch at its end. Press the strip (or the arrow) to open the alarm and see the editors - the time and name, the days, the next run, the sound and Play mode - and press it again to fold it away; only one alarm is open at a time. Stopwatch counts up with laps. Timer holds up to ten countdowns, and several can run at once. World Clock shows the local time beside any time zones you add.',
+			'An opened alarm shows when it will next run, as a day and time with a live countdown (Next Mon 9:01 · 16h 24m). Skip for today cancels the coming occurrence without changing the days or the switch: the countdown moves to the following occurrence, and the alarm stays set. The skip is the same one the phone\'s half-hour notice offers, so a skipped alarm agrees on every machine.',
+			'Play mode sets what answering the alarm takes. Left at None, the ring is answered with Snooze and Dismiss as usual. Set to Math, the phone\'s locked alarm screen asks for a small arithmetic problem - nothing harder than 12 × 12 − 6 - so the alarm is not silenced half asleep, and a wrong answer leaves the alarm ringing. The Clock window\'s ring card still shows the problem but answers directly: unlocking the phone and using the buttons there is the acknowledged way past the math, and later play modes will use the same escape.',
+			'Use NFC to snooze turns the ring into a trip to a tag. It appears once the alarm\'s Linked appointment names an app that has an NFC tag assigned to that app\'s start control: the same tag that starts the app is the one the alarm asks for. Switch it on and choose the NFC action - Snooze or Dismiss - and the phone must scan that tag before the alarm will quiet. The scan is checked against the app\'s own NFC assignment, so a different tag is refused and the alarm keeps ringing. The Clock window\'s ring card still shows the alarm and can still Snooze or Dismiss it; that card is the acknowledged first-step bypass, so the window remains a way to answer the alarm even when the phone wants the tag.',
+			'Press the clock in the taskbar for a small menu carrying the four faces and the time machine. The menu hangs below the clock when the taskbar is along the top or a side edge, and above it when the taskbar is along the bottom. Choosing a face opens the Clock window on that face; a window already open is brought forward instead of being replaced.',
+			'An alarm can be toggled on or off, and its seven day buttons say which days it repeats on. With no day chosen it is a one-shot: it rings at the next matching time and then switches itself off. Press Once to clear the days, or press the days the alarm should repeat on. Ten alarms are kept; add another only after deleting one. A name is held to twenty characters, which is the room the row has beside the time.',
+			'The alarm list belongs to the house, not to one machine. Shared with names the machines that ring an alarm: Me is where you are now, and every other machine the mesh knows is listed beside it, so one alarm can wake the phone and the laptop together. Press a machine to add or remove it; at least one stays on. A change is pushed to the named machines immediately and each one confirms it, while the row also rides the normal sync as a fallback; a confirmed machine is marked in the alarm\'s machine pills. Whichever machine rings, Snooze or Dismiss carries to all of them - the shared row carries the stop, and the other machines are told at once, so the sound ends everywhere rather than in the one room where the button was pressed.',
+			'The sound plays through the operating system, not through the browser. On a phone the app plays it on Android\'s alarm channel, so the ringer\'s alarm volume and Do Not Disturb rules apply, and while the alarm rings the app raises the alarm stream to its maximum before putting the previous alarm volume back when the ring ends; the alarm\'s own Volume still scales that sound on top, so a phone kept quiet is still loud enough to wake the person without the setting being changed. On a desk it goes through the house\'s usual notification channel. Every sound repeats until Dismiss or Snooze, or until five minutes have passed: a short chime starts quietly and loops every fifteen seconds while the volume climbs over the alarm\'s Volume ramp, and a long-form track - the I Dig it recordings are in the Sound list - loops instead of playing once, fading in over the ramp. Preview, beside the Sound list, plays the chosen sound on this machine for a few seconds at the alarm\'s Volume, so a track can be heard before the morning it matters; pressing Preview again stops it, and choosing another sound starts that one. The Clock window shows a ring card with the same two buttons, but makes no sound of its own.',
+			'On a handheld, Android posts a native notice half an hour before the next alarm. It names the alarm\'s linked appointment when there is one and says when it will sound; its Skip today button ends the phone\'s own wake at once and asks jawn to skip that occurrence, so the alarm stays in the schedule for its following day. Dismissing or snoozing the alarm, or changing the schedule, takes the half-hour notice away.',
+			'When an alarm rings on a locked phone it opens a full-screen Clock alarm screen: a filled circle with the JawnOS logo sits at the bottom and an empty circle near the top. Tap the logo to snooze; drag the logo up to the empty circle to dismiss. The Android notification also carries Dismiss and Snooze buttons, so the alarm can be answered without opening the app.',
+			'An appointment can bring its own alarm. When an app\'s notification panel has Alarm on, a future appointment of that app adds its time to the Clock as an alarm automatically, linked back to that appointment, so the clock row starts the activity when it rings like any other linked alarm.',
+			'Linked appointment wires an alarm to an activity: when the alarm rings, that appointment is started, and any intelligent-automation outputs on it are switched on. An appointment already running is left alone, so the alarm cannot open a second session, and two machines ringing the same alarm write the one start. A timer behaves the same way in both directions: starting it starts the linked appointment, and when the countdown reaches zero that same session is stopped. Cancelling a running timer stops the appointment too, and Restore above Delete puts a finished timer back on the clock at its old length, starting the linked appointment again. A finished timer\'s notice and chime are played through the operating system, like an alarm\'s, not in the browser.',
+			'The linked-appointment list hides appointments the visibility rule hides here and now, and each name wears the icon the app wears elsewhere in the house. Type to narrow the list and press a row to choose it; the cross clears it.',
+			'The stopwatch and the world-clock list are kept by this browser. The stopwatch keeps running when you switch faces or reload the page; world clocks are remembered per browser, with the local time always shown first and an extra day marker when a zone is on another date. Alarms and timers are kept by the machine itself, so they keep their time when the window is closed and are still there after a restart. Alarms, being the house\'s, are shared between machines; timers are not.',
+		],
+		steps => [
+			'Press the clock in the taskbar and choose Alarm, Stopwatch, Timer or World Clock, or open Clock from the start menu.',
+			'On Alarm, press Add alarm. Set its time, give it a name, and choose the days it should repeat on; leave every day off for a one-shot.',
+			'Press an alarm\'s strip to open it. The top line names the machines that will ring it; the body holds the time, name, days, linked appointment, sound, volume, ramp, Snooze length, Play mode, and Use NFC to snooze with its NFC action.',
+			'To call off the next occurrence without changing the schedule, press Skip for today and read the countdown move to the following day.',
+			'Choose a sound, a volume and a volume ramp. A ramp of 60 fades in over a minute. Every sound repeats until Dismiss or Snooze, or for five minutes, and a long track loops rather than playing once. Press Preview beside the sound to hear it on this machine.',
+			'Set Play mode: None answers the ring with Snooze and Dismiss as usual, while Math asks a small arithmetic problem (no harder than 12 × 12 − 6) on the phone\'s locked alarm screen before either will work; the Clock window\'s ring card still answers directly, which is the intended bypass.',
+			'Set Snooze length, from 1 to 60 minutes with a default of 5, to choose how long Snooze waits before the alarm sounds again.',
+			'Press Me, or any other machine, under Shared with to say where the alarm should ring.',
+			'To start an activity with the alarm, type its name in Linked appointment and pick it from the list.',
+			'To have the phone read a tag, link the alarm to an app whose start control has an NFC tag, switch on Use NFC to snooze and choose the NFC action - Snooze or Dismiss; the phone then scans that tag to quiet the alarm and refuses any other tag, while the Clock window\'s ring card still answers it.',
+			'On Timer, type a length (hours, minutes and seconds) or press a preset, name it, and link an appointment if the timer should run that activity.',
+			'Press Add timer. Several timers can run at once; Stop ends one, Restore runs a finished one again, and Clear finished tidies the list.',
+			'On Stopwatch, press Start to count up, Lap to record a split, and Reset to clear it.',
+			'On World Clock, type a city or time zone and press Add; the cross removes one.',
+			'When an alarm rings, press Dismiss to stop it or Snooze to hear it again after the alarm\'s Snooze length.',
+			'On a locked phone the ring opens full-screen: tap the JawnOS logo to snooze, or drag it to the top circle to dismiss; the Android notification also offers Dismiss and Snooze.',
+			'To let an app\'s future appointments raise a Clock alarm, turn on Alarm in that app\'s Notifications panel under Configure.',
+			'Press the clock in the taskbar and choose Time machine to carry the desk to another time, as the clock itself did before.',
+		],
+		related => [ 'appointments', 'taskbar', 'start_menu' ]
+	};
+$topic{'gallery'} = {
+		'title' => 'Gallery', category => 'apps', app => 'gallery',
+		templates => [ 'templates/apps/gallery.html.ep', 'public/js/images.js' ],
+		controls => [ 'Albums', 'All photos', 'Search', 'Newest first', 'Oldest first', 'Lock', 'Unlock', 'Previous', 'Next', 'Close', 'Full screen', 'File information', 'Set as main image', 'Fetch home', 'Delete' ],
+		verified => '2026-10-30',
+		summary => 'Browse your photos and videos by album, in a grid, or one at a time.',
+		body => [
+			'Gallery is the photo browser. It opens on **Albums**: one cover per app that has photos or videos, with the number of items in each. Tap an album to see its photos in a grid, or tap **All photos** to see everything.',
+			'Tap any photo to open the viewer: the photo or video fills the window, Previous and Next (or a swipe, a trackpad\'s sideways swipe, or the arrow keys) move through the set, and Close returns to the grid. The bar under the photo offers File information, Set as main image (the cover the app uses), Fetch home and Delete. Fetch home appears only for a photo that lives on another machine: it brings that photo back to this one.',
+			'A picture opened from Folders arrives in the viewer straight away, with the rest of that folder\'s pictures as the grid behind it - Close leaves you on the folder, not the album list. A picture opened from Travel\'s Nearby strip is the same: the whole mapped ground\'s pictures are the set behind it, so pressing the Nearby count and then one picture keeps the rest of that view a swipe away.',
+			'Which photos appear is decided by the apps whose visibility shows them: a private album is hidden everywhere, even at home, and never appears on the timeline. It can only be found in a private place with no Enemy present, and even then it waits for the gallery lock. The search box finds photos by app or file name, and the sort button flips the order between newest and oldest first.',
+			'A photo is dated by the appointment that holds it — the moment it was taken or filed — not by when its record reached this machine, so the day headings, the viewer and File information all agree.',
+			'An album that is Public or Dangerous opens straight away, sealed photos and all. A private album stays out of the grid until the gallery is unlocked: press **Lock** to open the padlock view and unlock it with this phone or computer\'s fingerprint, or with the recovery code. Outside a private place - or with an Enemy present - no unlock brings it back. The unlock is for that screen and that window only, and the padlock shuts again as soon as the Gallery window closes, the screen goes away, or the house restarts.'
+		],
+		steps => [
+			'Open Gallery from the start menu (the photo icon). It lands on Albums, one cover per app.',
+			'Tap an album to see its photos, or All photos for every app; the grid loads more as you scroll.',
+			'Use the search box to find photos by app or file name, and the sort button to switch between newest and oldest first.',
+			'Tap a photo to open it full-screen. Swipe or use Previous and Next; Close returns to the grid. The square button beside Close gives the gallery the whole screen, over the taskbar, and takes it back again.',
+			'The viewer bar gives File information, Set as main image, Fetch home and Delete.',
+			'Press Lock to unlock the album the visibility rule hides; the albums it shows never need it.'
+		],
+		prompt => 'The reader is using JawnOS\'s Gallery, a photo browser. It is not a phone gallery or a file manager: its photos are the ones recorded by their apps. Describe it in terms of Albums, All photos, the photo grid, and the viewer with Previous, Next, Close, File information, Set as main image, Fetch home and Delete. If they see nothing, the likeliest cause is that no app with photos is marked visible, or the hidden albums need the gallery lock opened. If you are unsure how a control works, describe what its label means rather than inventing a sequence. Never describe or guess the content of their photos.',
+		related => [ 'folders', 'marker', 'sealing_files', 'help_app' ]
+	};
+$topic{'marker'} = {
+		title => 'Marker', category => 'apps', app => 'marker',
+		verified => '2026-10-30',
+		summary => 'A layered paint board for drawing and annotation.',
+		body => [
+			'Marker is a layered paint board with pencil, paintbrush, spray, fill and matching erase tools, plus undo and redo, zoom and pan.',
+			'It reads stylus pressure and ignores your palm on a tablet, and it autosaves so a refresh never loses a painting.'
+		],
+		steps => [
+			'Open Marker and pick a tool from the palette — pencil, brush, spray, fill or erase.',
+			'Add a layer for anything you want to keep separate, and name it by double-clicking.',
+			'Your work autosaves; reopen the drawing later from the marker\'s session list.'
+		],
+		related => [ 'gallery', 'studio' ]
+	};
+$topic{'studio'} = {
+		title => 'Studio', category => 'apps', app => 'studio',
+		templates => [ 'templates/studio/studio.html.ep', 'public/js/manager/studio.js' ],
+		summary => 'A multitrack audio studio with takes and a pedalboard.',
+		verified => '2026-10-28',
+		body => [
+			'Studio is a multitrack recorder and editor: takes, crossfades, waveform clips, and a pedalboard routed onto individual channels.',
+			'The knobs and pedal backdrops follow the selected icon set, so the mixer wears the same finish as the rest of the desk.',
+			'It works with the same library as Music, so recorded and imported tracks sit together.',
+			'A channel\'s input is a plug you choose: a microphone or camera, another window, screen share, or the Synth — pick Synth and what you play records through the channel\'s tone stack and pedals like any other source.',
+			'A synth panel sits at the top of the window (Hide tucks it away): pick a sound and play its keys right there, then record it by setting a channel\'s input to Synth.'
+		],
+		steps => [
+			'Open Studio and add a track per instrument or take.',
+			'Record or drop a clip onto a track; drag its edges to trim and overlap to crossfade.',
+			'Route a pedalboard onto a channel to shape its sound, then mix the tracks together.'
+		],
+		related => [ 'music', 'synth' ]
+	};
+$topic{'synth'} = {
+		title => 'Synth', category => 'apps', app => 'synth',
+		summary => 'A polyphonic synthesiser with 88 keys, MIDI, and a computer-keyboard mode.',
+		verified => '2026-10-16',
+		body => [
+			'Synth is a polyphonic software synthesiser. It plays from the on-screen keys (a full 88-key range, A0 to C8, that scrolls sideways), a connected USB MIDI keyboard, or your computer keyboard. It shares the studio\'s audio engine, so it can be routed into a channel and recorded like any other source.',
+			'Its voices are two oscillators (plus a noise transient) through a resonant filter, each with its own envelope and a shared LFO, or a plucked-string voice that gives a convincing piano, harpsichord or guitar without any samples; a harder strike is brighter, not just louder. The sound library is twelve instruments - Acoustic Piano, Electric Piano, Organ, Strings, Brass, Woodwind, Guitar & Plucked, Bells & Mallets, Bass, Lead, Pad and Synth Poly - each with twenty sounds, the most popular first.',
+			'The piano roll is the full 88 keys, as wide as its window and scrolled to the octave you are playing from the computer keyboard. An arpeggiator (Arp) turns a held chord into a running figure - up, down, up/down or random, over one to four octaves. Mono (with Glide) plays one voice that slides between notes, and MIDI learn maps a knob on your controller to any parameter: choose it, press Learn, and move the knob. A step sequencer (Seq) loops a grid of notes through the synth at its own rate.'
+		],
+		steps => [
+			'Open Synth.',
+			'Choose an instrument and a sound, play the on-screen keys, or press Connect and play a USB MIDI keyboard.',
+			'Press Keys to play from the computer keyboard (A W S E D F T G Y H U J K; Z and X change octave, and the roll follows).',
+			'Press Arp and hold a chord to arpeggiate it; press Seq to loop a grid; switch on Mono for a gliding lead.',
+			'To map a hardware knob: pick a parameter, press Learn, then move the knob.',
+			'In Studio, set a channel\'s input to Synth (or drag the JawnSynth pedal onto it), arm it, and record what you play.',
+			'The same synth also sits as an always-visible panel at the top of Studio, so you can pick a sound and play without leaving it.'
+		],
+		related => [ 'studio', 'music' ]
+	};
+$topic{'music'} = {
+		'title' => 'Music', category => 'apps', app => 'music',
+		templates => [ 'templates/apps/music/music.html.ep', 'templates/apps/music/configuration.html.ep', 'templates/apps/music/audio.html.ep', 'templates/apps/music/files.html.ep', 'templates/apps/video.html.ep', 'templates/apps/video/markup.html.ep', 'templates/keyboard_music.html.ep', 'public/js/music.js', 'public/js/manager/keyboard.js' ],
+		controls => [ 'Theatre mode', 'Fullscreen', 'Visualization', 'Volume normalization', 'Remote audio format', 'Sync offset', 'Me audio delay', 'Remote delay', 'Left speaker', 'Stereo', 'Right speaker', 'Video enhancement', 'Sharpness', 'Quality', 'Frame rate', 'Video status' ],
+		verified => '2026-11-01',
+		summary => 'A player, a library, and the place music is organised.',
+		body => [
+			'Music is the player and library: artists, albums and folders, with a mute, a lock and a configuration drawer.',
+			'Archives, in the configuration drawer\'s folders row, brings what an archive drive holds into the library. With it on, the audio and video kept on the machine chosen for each location are listed beside the local files: an archived video plays from the archive machine, and an archived track carries a Fetch home button that queues its file back onto this machine. Press Archives again to put them away and show only what is here.',
+			'Texture, in Appearance, dresses the window in the desk\'s material - the top interface bar, every track, the player bar at the foot and every other surface; Plain and Round leave them bare.',
+			'Sealed tracks (a name ending .enc) in a Public or Dangerous album are listed and play as usual. A private album is hidden everywhere, even at home, and never appears on the timeline. It can only be found in a private place with no Enemy present, and even there its tracks wait for the padlock: press the lock on the toolbar and unlock it with this computer\'s fingerprint or on a paired phone. Outside a private place no unlock brings it back. The unlock belongs to that screen and that window; closing the Music window, the screen going away, or a restart shuts the padlock again.',
+			'It plays through the browser and can hand the sound to a linked device, and it is where the audio output is chosen. Each output is a row of three: L, the output\'s name, and R. The name in the centre is the whole stereo pair; L sends the left channel and R the right, so two machines can stand in for a pair of speakers, or one room can be given one side. On a computer\'s stereo pair the chosen side is the physical speaker alone; on a phone or tablet, which usually has one speaker, the chosen channel is played through the speaker it has, so it is heard either way. Press the lit side or the lit centre again to turn that output off. The server player (Srv) has only on and off: it hands the file to the machine\'s own player, which has no channel split to offer. The chosen machine receives the player\'s sound as a live stream and plays it through its own audio output, so it needs no Music window of its own and no copy of the file. Remote audio format, in the Audio drawer, chooses PCM (lowest latency, ordinary 16-bit stereo) or Opus (about a twelfth of the bandwidth, decoded on the receiving machine with a little more buffering). A phone or tablet keeps playing with its screen off: the receiving machine holds a wake lock and starts its audio server again if a reboot left it down. Its websocket panel carries a strip naming the track being received, with a Stop button and a Receive music from other devices switch. The stream follows this machine\'s volume and mute, so the volume bar turns every remote down with it; the Me output switch is separate and silences only this machine\'s own speaker. Turning the switch off stops the current stream and refuses later ones to that machine; turning it back on lets it be an output again.',
+			'The broadcasting pill under the search box is the window\'s own account of what it is sending. It appears while a remote output is lit and names the machines hearing this stream, changes from the muted connecting colour to the highlighted colour as soon as one answers, and clears the moment playback pauses or stops. If an output cannot be reached - its machine is down, or its player refuses the stream - the stream retries briefly (three failures spread over about fifteen seconds, or two definitive refusals from the remote) and then turns that output off in the Audio drawer and in the saved setting, so it stops broadcasting to a dead room and the L/name/R buttons are usable again. A momentary stall is not enough: an output is only turned off when it has not answered across those attempts, and this machine\'s own Me output is never turned off. In the Audio drawer each remote pill also wears its link state: a green ring while it is live, a dashed edge while it is connecting, and a red edge if it has stopped answering.',
+			'Every machine playing the same stream hears the same samples, so two remote speakers stay in step with each other. Sound that goes through the player\'s audio graph (any volume normalization, equalizer or remote output) leaves the browser\'s own sound-to-picture timing, so the player measures how far the picture shown on screen sits behind its clock: a frame callback says which moment of the track is actually on screen. That measurement is used twice - this machine\'s own sound is held back by it so Me lands with the picture, and the remote lead is reduced by it, so the sound from the other room lands with the picture too. On the desktop app\'s WebKit engine, taking the main video\'s sound into the graph makes the engine present the picture about a second behind its clock, so a video keeps the browser\'s own sound even while a room is on: Me stays with the picture, and the remote is fed from the hidden audio-only lead, whose copy of the chain still carries volume normalization and the equalizer. A left/right split or a manual Me audio delay is the exception, because those need the main element in the graph. The lead is a hidden audio-only copy of the track that reads the measured moment plus the stream\'s own delay; when the picture lags more than the stream takes, the lead is negative and reads a little earlier in the file (the copy may trail the player). The delay is measured after the remote player has started (so its startup is not counted), and Opus adds its own buffering to it. It applies while a video with a remote output is playing; an audio track has no picture to line up. Every remote reports the moment it actually measures - the sound still buffered in its own player, plus any it did not receive since the last beacon - and the Audio drawer shows it as Remote delay; that report sets the lead, so a stream that falls behind is pulled forward again instead of drifting. Sync offset trims the remote lead, a positive value sending the remote sound later and a negative one earlier, each by up to five seconds; it does not move Me. A busy video can make the browser fall behind for an instant; the stream then drops the stale sound, and a receiver whose own player has buffered hundreds of milliseconds behind the stream throws that buffer away and starts again on the live audio, so it returns to the live moment instead of staying a second behind.',
+			'Me audio delay, in the same drawer, adds a manual trim to the wait the player already measures for this machine\'s own sound: the picture\'s own lag is taken out automatically, and this moves Me a little further if a residual remains. It applies with a remote output too - it trims only Me, not the remote. Leave it at zero when the picture and the sound already agree.',
+			'Volume normalization, in the Audio drawer, evens out the difference between a quiet recording and a loud one. Off leaves the sound untouched. Slight, Mild and Aggressive never turn a loud track down: a track quieter than the house level is raised towards it, by about half, three quarters or all of the correction, up to about 8, 14 or 18 decibels. Inside the track a slow leveller closes the gap between quiet dialogue and loud action by about 3, 6 or 10 decibels - more on a film far below the house level, whose quiet dialogue would otherwise stay inaudible - leaving the action a little above the dialogue instead of following every line. One pass over the whole track measures it; the first play of an unmeasured track may wait a moment, then it is cached, and the next track in the queue is measured while the current one plays so the change is seamless. It is one setting for the whole player and it is remembered on this machine.',
+			'The equalizer, in the same Audio drawer, is ten bands from 31 Hz to 16 kHz and a Bass boost shelf for the low end. Drag a band up or down, roll the wheel over it, or use the arrow keys; a double click puts that band back at zero. The preset row (Flat, Rock, Pop, Jazz, Classical, Vocal and Bass) sets a whole curve at once, and Flat also clears the bass boost. A band that is not flat builds the shared audio graph so the curve can be applied, and it reaches the remote outputs as well as this machine\'s own speaker. The curve is one setting for the player and is remembered on this machine.',
+			'The Video section, above the equalizer, does two things. Its presets (Off, Clean, HD and Cinema) and the Sharpness slider add an unsharp mask with a little contrast and saturation to a video, so an SD picture reads closer to HD; it cannot invent detail, but edges and local contrast are what make it look sharper, and the same effect is applied to the picture on every machine the video is sent to. Every screen has a TV box above its L/name/R buttons, this machine (Me) included: the TV box sends the picture to that screen, while the L/name/R buttons send the sound, so the two are chosen separately. Turning Me\'s TV box off hides the picture on this screen and the player carries on as it does for a music file, while the sound and any other screen\'s picture keep going. There is no separate master switch: the boxes are the choice. The line under them reports what answered (ready, waiting, failed, or closed), so a machine that has not opened its screen is visible rather than guessed at. Quality (720p or 1080p) and Frame rate (15, 24 or 30) trade bandwidth for smoothness. The source machine draws the frames and sends them to each screen, so the picture does not depend on the receiving machine having the file; the viewer follows play, pause, seek and speed and carries the video\'s subtitles, and it closes when the track stops or another one starts. A server is left out because it has no screen.',
+			'The line under the search box names the library this window is showing: this machine\'s own name for a local library, or the host it is relayed from for a remote one.',
+			'On a phone it keeps playing with the screen off or the app in the background: the player asks the app to leave the view running while a track is playing, so the queue carries on to the next track instead of stopping when the screen sleeps.',
+			'An audio track has no picture of its own, so the player can draw the sound instead and play that drawing as its picture: the tools panel in the player carries a Visualization choice of None, Equalizer (bars of the spectrum), Dots (colourful dots that dance, and now and then grow a face), Psychedelic (a tie-dye that swirls with the music) and Modern Art (painted strokes that follow the sound).',
+			'The library has two draws, chosen by Layout in the configuration drawer: a list of rows, and a grid of pictures. Both show the same three things about a track, and nothing else from its file name: the artist, the album and the track name. A music file\'s own tags supply them. A video\'s name is read for the episode and its title — S03E06, 1x02 and Season 3 Episode 6 are all understood — and the quality, source, codec and release group are left out, so Doctor.Who.S03E06.720p.HDTV.x264 reads as Doctor Who, Season 3 and S03E06 (or the episode\'s own name when the file carries one).',
+			'On a phone the window draws itself differently: the artists and albums become one line of pills each, scrolling sideways, and the tracks below them are cards — the picture, the title (up to two lines), the artist and album, and the time — with the list running right down to the player, so the time is always in reach.'
+		],
+		steps => [
+			'Open Music; the library lists artists and albums from your media folders.',
+			'Open the gear and press Archives in the folders row to include the archive drives as well as this machine; press it again to show only what is here.',
+			'Click a track to play it; the transport along the top controls playback.',
+			'For a track with no picture of its own, open the tools panel (the wrench in the player) and choose a Visualization; the drawing shows in the player\'s corner while the library is up, and takes the whole player in Theatre mode or fullscreen.',
+			'Fullscreen (the player button, or F) fills the screen with the picture; moving the mouse brings back the top bar and the transport, and they fade away again when the pointer rests. The player bar also carries the equalizer and gear icons in fullscreen and the theatre, so the Audio and Configuration sheets can be opened without leaving the picture; the sheet floats above the video.',
+			'A wheel over the picture moves through the track; on a trackpad, a sideways swipe does the same and up/down sets the volume. On a touchscreen, drag sideways to move through it and up or down to set the volume. The same gestures work in fullscreen, over the interface; the fullscreen button (or F) leaves fullscreen too.',
+			'A wheel or trackpad scroll directly over the seek bar moves through the track, and the same over the volume bar turns it up or down.',
+			'The gear opens the configuration drawer and the equalizer icon opens the Audio drawer. Both can be open together: the first stays where it is and the next opens beside it, so the folders, the outputs and the equalizer are all in reach. Drag either one by the bar across its top to move it anywhere on the screen, and press the X on that bar to close it.',
+			'Open the Audio drawer (the equalizer icon beside the gear) to choose the audio output, or to send playback to another machine on the mesh.',
+			'Each output has L, its name and R: press the centre for stereo, L for the left channel, or R for the right. On a computer with a stereo pair that is the left or right speaker alone; a phone or tablet plays the chosen channel through the speaker it has. Press the same side again to turn that output off.',
+			'Watch the pill under the search box while a remote room is on: it names what is hearing the stream. If a room stops answering it is retried briefly and then turned off for you, and its pill in the Audio drawer wears a red edge - press it again once that machine is back.',
+			'When a remote speaker is in use and you are watching a video on this screen, the player measures how far the picture on screen sits behind its clock, sends a hidden audio-only copy of the track at that adjusted lead, and holds this machine\'s own sound back by the same lag, so Me and the other room line up with the picture while the picture stays live. There is nothing to switch on: a video with a remote output is led automatically. With me as the only output no lead copy is made.',
+			'If the other room and this screen still lead or lag each other, move Sync offset in the Audio drawer until they agree; a positive value sends the remote sound later and a negative one earlier, without moving the picture or Me.',
+			'The Remote delay under Sync offset is what the other machine measures after the lead: the receiver\'s pipeline less the lead it was given and the picture\'s lag. Zero means it is in step with the frame on screen; a negative number means it is playing ahead of the picture. A number that keeps growing means the stream is falling behind, not that the trim is wrong.',
+			'Choose Remote audio format in the Audio drawer: PCM carries the sound uncompressed and is the most responsive; Opus compresses it for a weak link and is decoded on the receiving machine. The choice applies as soon as it is picked (the stream restarts briefly).',
+			'To even out volumes, open the Audio drawer and choose Volume normalization: Off, Slight, Mild or Aggressive. The setting applies as soon as it is picked and stays with this machine.',
+			'To shape the sound, open the Audio drawer and use the equalizer: drag or roll a band, pick a preset, or raise the Bass boost. Flat returns the curve to zero and clears the boost.',
+			'To sharpen a video, open the Audio drawer and choose a Video enhancement preset, or move Sharpness. To watch it on another screen, press the TV box above that machine\'s L/name/R buttons; press Me\'s TV box to show or hide the picture on this screen, and the L/name/R buttons choose each screen\'s sound. Pick Quality and Frame rate, and read the line under the boxes to see which screens answered.',
+			'If a machine starts playing with no Music window to control it, open its websocket panel and press the square Stop beside the received track. The Receive music from other devices switch under it keeps that machine from being used as an output at all.'
+		],
+		related => [ 'studio', 'synth' ]
+	};
+$topic{'video'} = {
+		title => 'Video', category => 'apps', app => 'video',
+		verified => '2026-10-30',
+		summary => 'Play video from your media folders.',
+		body => [
+			'Video plays your files in the window. Playback quality is the browser\'s (or, in the desktop app, GStreamer\'s) — the desktop app page covers the hardware-decode setup that keeps HD smooth.'
+		],
+		steps => [
+			'Open Video and pick a file from your media folders.',
+			'Play, pause and scrub with the controls; go fullscreen from the player.',
+			'A wheel over the picture scrubs it; on a trackpad, a sideways swipe scrubs and up/down sets the volume. On a touchscreen, drag sideways to scrub and up or down to set the volume. The fullscreen button leaves fullscreen too.'
+		],
+		related => [ 'gallery', 'folders' ]
+	};
+$topic{'editor'} = {
+		title => 'Editor', category => 'apps', app => 'editor',
+		summary => 'Write and lay out a magazine article on a page that reads like the newspaper.',
+		verified => '2026-11-01',
+		body => [
+			'Editor is the magazine surface: the article is a page you write on, not a rack of placeholders. Type straight into it. The style buttons restyle the block the caret is in - Headline, Subhead, Body, Quote or Caption - and Text starts a new paragraph. Everything is a block, so a headline, a picture, a quote and a caption are edited in place and read as a column when the article is published.',
+			'Anything can be dropped onto the page. A picture, a track, a video or a canvas dragged from another window lands as what it is; a file dropped from the desktop lands without being declared; a pasted screenshot is embedded; a URL becomes a link, or the media it points at. Pictures are shrunk and embedded in the article so the public homepage can show them without the vault, while a dropped track or video is stored with the article and linked.',
+			'Blocks move by their grip: the handle at the left of the block under the pointer drags it anywhere in the page, and Alt with the up or down arrow moves the block under the caret. Colours set the article\'s text and background, before a block is picked or on the block itself. Category decides where it belongs and Status says how far it has gone - draft, review, publish or recanted. Delete arms with a second press, and pressing the window\'s close with unsaved work asks for a second press rather than throwing it away.',
+			'The time and warranty fields use the house\'s time controls. Save writes the article and keeps the list in step; the toolbar shows Unsaved changes while an edit is waiting, and Saved once it is written. An article that has been published appears in the magazine and can be reopened here. The per-appointment notes editor and its variables are the separate text editor used in appointment windows; Editor is the magazine surface.'
+		],
+		steps => [
+			'Open Editor and choose an article, or press New.',
+			'Type the article; use the style buttons for a headline, a subhead, a quote or a caption.',
+			'Drop a picture, a track or a video on the page - or press Media to pick one - and drag the grip to move a block.',
+			'Set the colours, category and status, then Save.'
+		],
+		related => [ 'ide', 'notes' ]
+	};
+$topic{'ide'} = {
+		title => 'IDE', category => 'apps', app => 'ide',
+		templates => [ 'templates/apps/coding_chat.html.ep', 'public/js/manager/coding.js' ],
+		summary => 'A colour-coded editor for Perl, JavaScript, HTML and templates.',
+		verified => '2026-10-30',
+		body => [
+			'IDE edits code with syntax colouring for Perl, JavaScript, HTML and templates. It is what the project is developed in from inside itself.',
+			'The code button in the toolbar opens the Coding agent\'s own chatbox: ask it what to change and it edits the repo, checks the change and ships it, reporting each step. It is the same agent the Guide\'s Coding toggle drives, and the editor keeps its own conversation. The + in its bar opens another agent, each with its own thread, and the bar drags the panel anywhere on the screen — it floats over the windows like the Guide\'s associate, and it reopens where you left it. A fix that has shipped reaches the page on its own: a stylesheet or template change lands in place, while a change to the manager\'s scripts or its shell asks once with a press-to-update note (a hidden tab reloads itself, and a chat in the panel survives it). Double-press the Assistant button for the Agents list: every coding conversation and guide associate, named, with history a press away.',
+			'That chatbox also holds the error watch\'s staging area: press fixes in its corner to see every error caught in the running tree\'s log (switch the watch on under Configure → Plat → Self-healing), each with a fix the Coding agent has proposed. Apply writes the proposal, checks it compiles, and gives it the same finishing routine a chat change gets — bump, commit, push — and the panel\'s restart link puts it live. Forget throws a row away, and nothing is written until Apply. Every fix that ships is recorded: Fixed so far in Configure → Plat → Self-healing keeps the list, and review shows it.',
+			'Only the top of the tree loads at first; a folder brings its own contents in when you unfold it, so a big project opens quickly. The tree reopens with the folders you had unfolded still open, the window returns to whichever pane — the list or the editor — you left it on, and the file list and each open file keep their place, so you come back to where you were.'
+		],
+		steps => [
+			'Open the IDE and choose a file from the project tree; unfold a folder to see what is in it.',
+			'Edit with syntax colouring and the code helpers.',
+			'Save; a Perl or JavaScript change needs a restart to take effect, while a template change is live at once.',
+			'Press the code button to open the Coding agent and describe a change in words.',
+			'Drag the panel by its bar to move it; the + in the bar opens another agent, with its own conversation.',
+			'Press fixes in its corner to review errors caught in the log and apply a proposed fix.'
+		],
+		related => [ 'editor', 'terminal' ]
+	};
+1;

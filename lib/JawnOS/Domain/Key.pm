@@ -38,12 +38,20 @@ use Unicode::Normalize qw(NFC);
 
 our %M;
 our $config;
+# One stable id per construct, independent of the name and of the device. The
+# per-device `uuid` settings rows are the membership references and stay as
+# they are; this is the id a name resolves to, and what an appointment carries
+# (app_uuid) so a rename is not an identity change. Created lazily and memoised
+# for the life of this worker.
 our %construct_uuid_memo;
 our $database;
 our $database_holder;
 our $device;
 our $find_program;
 our $gb;
+# Resolve ~ once; this used to shell out to `echo $HOME` on every call. That
+# helper is hit constantly (every settings/cache/db path), so caching it avoids
+# a fork+exec per call.
 our $home_dir;
 our $ide_files;
 our $install_dir;
@@ -69,6 +77,9 @@ sub key_push_one {
 	return { ok => $json->{'ok'} ? 1 : 0, already => $json->{'already'} ? 1 : 0, error => $json->{'error'} };
 }
 
+# The queue's half: push the envelope to every machine with a pinned key. The
+# result names what happened; machines that do not answer ride the pull path
+# instead, the next time their database syncs the new canary in.
 sub key_push_job {
 	my ($job, $data) = @_;
 	my $env = &key_push_envelope();
@@ -95,6 +106,8 @@ sub key_push_job {
 	$job->finish($summary);
 }
 
+# Every job the queue can run, in one place. The worker and the code that
+# enqueues register the same list, so a name can never drift between them.
 sub minion_task_list {
 	return {
 		archive_transfer => \&archive_transfer_job,
@@ -244,6 +257,13 @@ sub backups_dir {
 	return $dir;
 }
 
+# A house with a way back in starts gated. The paper recovery code is the
+# emergency door, so a house that has one gets the padlock row, General as its
+# context, and Enforce as the mode the first time this runs, then the marker
+# makes it a default rather than a policy: Turn the gate off stays off across
+# restarts. A fresh house with no way in is left alone, because turning its
+# gate on before there is a way in would lock it out - a paper recovery code or
+# an already-paired phone is that way in.
 sub padlock_seed_default {
 	# An app padlock never survives a restart. The token lives in one window;
 	# a tree that has just come up has no such window, and a grant left behind
@@ -279,6 +299,11 @@ sub padlock_seed_default {
 	&subs::setting_setter({ app => '__president', setting => 'padlock_gate_initialized', value => 'yes' });
 }
 
+# One machine, one database: anything else under database/ is an older
+# database's leftover (server.enc, laptop_*.enc, a stray .db) and is discarded.
+# The working set is the jawnos database and its sidecars, the factory seed, the
+# schema, and the jawnos backups - everything else is shredded. Directories are
+# never touched, so the backups/ dir itself is safe.
 sub database_tidy {
 	my $dir = &subs::database_dir();
 	my $backups = &subs::backups_dir();
@@ -300,6 +325,10 @@ sub database_tidy {
 	return scalar @gone;
 }
 
+# Adopt a pre-fixed-path install: move the database the old scan would have
+# chosen, and the .enc backups beside it, into database/. Runs once, and only
+# when the fixed database is missing, so pulling this build onto an existing
+# machine needs no hand - the first database_grabber migrates it in place.
 sub database_adopt_legacy {
 	# A name change needs its own step first: a machine that already migrated into
 	# the install still has database/initial.db (and initial*.enc backups) from
@@ -513,6 +542,12 @@ sub db_query {
 	return eval { return $db->query($query, @params)  } if $db;
 }
 
+# The rows from a query as a plain arrayref of hashes - what db_query's
+# ->hashes gives back, but over the shared handle with a statement cache and
+# without the Mojo::SQLite::Results object and its per-call finalize. The hot
+# readers (log_reader's per-poll selects) only ever ask for ->hashes, and that
+# wrapper was a measurable slice of the poll. Anything needing more of the
+# Results API still goes through db_query.
 sub db_raw {
 	my $query = shift;
 	my @params = @_;
@@ -538,6 +573,11 @@ sub db_raw {
 	return $rows || [];
 }
 
+# db_raw's fresh twin: the same read, but on a freshly prepared statement, so it
+# cannot inherit a cached handle that a dead request left executed-but-unfetched
+# - such a handle answers 0 rows to every later read of the same SQL, and the
+# mailbox threads hit exactly that. A fresh prepare costs microseconds, which
+# the once-per-render readers can spare; the per-poll hot paths stay on db_raw.
 sub db_fresh {
 	my $query = shift;
 	my @params = @_;
@@ -648,6 +688,11 @@ sub db_select {
 	return $db->select($table,$columns,$params,$filters);
 }
 
+# A raw-SQL fast path for the common db_select shape: one table, equality
+# filters, and IS NULL for an undef value. SQL::Abstract was a measurable slice
+# of a settings read (it re-derives the same WHERE every call). Anything richer
+# - a ref filter value, or a $filters argument - falls back to db_select, so
+# behaviour is unchanged.
 sub db_select_simple {
 	my ($table, $columns, $params, $filters) = @_;
 	return &db_select($table, $columns, $params, $filters)
@@ -681,6 +726,10 @@ sub db_cache_updater {
 	}
 }
 
+# ---- theme surfaces -----------------------------------------------------------
+# Windows and panels should read as a step away from the page background, in a
+# grey that still carries a hint of the theme's hue. These helpers turn a theme
+# background colour into the --panel/--panel-2/--ink values the CSS uses.
 sub _rgb_to_hsl {
 	my ($r, $g, $b) = map { $_ / 255 } @_;
 	my $max = $r > $g ? ( $r > $b ? $r : $b ) : ( $g > $b ? $g : $b );

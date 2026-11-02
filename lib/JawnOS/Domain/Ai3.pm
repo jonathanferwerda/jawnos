@@ -37,13 +37,31 @@ use Unicode::Normalize qw(NFC);
 
 our %M;
 our $database;
+# Lines that are normal noise rather than errors. jawn() already suppresses the
+# same ones from its own console, and the master prints the shutdown line on
+# every restart.
 our $error_watch_noise;
 our %error_watch_partial;
+# ---- the error watch: the Coding agent's ears -------------------------
+# The running tree prints its warnings and errors to the pty that the master
+# (`./jawn`) reads, and jawn keeps that stream in a bounded, sequenced ring and
+# serves it at ~/.president/log. On a master restart the ring is seeded from the
+# tail of the supervisor's jawn-stdout.log, so a crash that took the master down
+# is still read. This watcher asks the bus for what it has not seen yet (and
+# reads ~/manager.log, for the $log lines that never reach the pty) and records each new error signature once in staged_fixes. When a Coding
+# model is set, the agent reads the error and stages a proposed fix - whole
+# files, not applied yet - for a person to review and apply from the IDE's
+# coding chatbox. President runs the tick, so there is exactly one watcher per
+# machine.
 our %error_watch_state;
 our $error_watch_state_loaded;
 our $log;
 our %m;
 
+# The house at a glance for Configure → Sys: every machine that has published
+# itself (does it hold a model, when it was last seen) with its spend today, and
+# the day's house total against the shared ceiling. Read-only, straight from the
+# synced ledger tables, so every machine shows the same picture.
 sub ai_house_report {
 	my $now = &subs::rightNow();
 	my $day = &ai_house_today();
@@ -94,6 +112,13 @@ sub ai_house_report {
 	};
 }
 
+# The money left on each provider account, where the provider will say. There is
+# no common balance API: OpenRouter publishes its credits and DeepSeek its account
+# balance, and the rest (OpenAI, Anthropic, Google, xAI, Mistral, Groq,
+# Cloudflare) have none, so they read "—". Only providers with an account on file
+# are listed at all. The read itself is done off the page
+# by President.pl's ai balance loop; this only ever reads the cached result, so a
+# page load never waits on a provider.
 sub ai_balance_report {
 	my $cache = &subs::cache_get({ app => '__president', context => 'ai_balance' });
 	return (ref $cache eq 'HASH' && $cache->{'rows'}) ? $cache : { at => 0, rows => [] };
@@ -190,6 +215,11 @@ sub ai_balance_refresh {
 	return $report;
 }
 
+# One point of the balance history, at a known time. Pure so a test can pin
+# both the series and the clock. The drawn points carry a synthetic point at
+# the window's left edge, interpolated from the last sample before it, so a
+# 24h line starts where the window does instead of at its first sample.
+# `change` is positive when the balance fell; `per_day` is the pace in money.
 sub ai_balance_window {
 	my ($points, $window, $now) = @_;
 	$window = '7d' if defined $window && $window eq '7d';
@@ -253,6 +283,9 @@ sub ai_balance_window {
 	return $window_data;
 }
 
+# A line for one provider over one window. currentColor means it follows the
+# theme, and a flat balance gets a little headroom so it does not sit on the
+# floor. Only the caller's numbers reach the markup.
 sub ai_balance_sparkline {
 	my ($points, $start, $now, $width, $height) = @_;
 	$width ||= 320;
@@ -301,6 +334,11 @@ sub ai_balance_sparkline {
 		. '</svg>';
 }
 
+# The Sys panel's chart, assembled from the cached read. No provider call and no
+# database write happen here: the route has already loaded the same report. The
+# balances and the pace are shown in the house's reporting currency, converted
+# at the rate snapshot the rest of the app uses; a provider whose rate is not
+# loaded keeps its own currency rather than a wrong number.
 sub ai_balance_chart {
 	my ($report, $now) = @_;
 	$report = &ai_balance_report() unless ref $report eq 'HASH';
@@ -354,6 +392,9 @@ sub ai_balance_chart {
 	};
 }
 
+# A span in the units that read best: minutes under an hour, hours under two
+# days, then days. The chart's first hours are a short line, and "3 h" says
+# more than "0 d".
 sub ai_balance_span_label {
 	my ($hours) = @_;
 	$hours = 0 unless defined $hours && $hours > 0;
@@ -362,6 +403,8 @@ sub ai_balance_span_label {
 	return sprintf('%.0f d', $hours / 24);
 }
 
+# Money in a label: two decimals are right for a balance, but a slow spend is
+# often cents a day and would read as 0.00, so small values keep four.
 sub currency_money {
 	my ($value) = @_;
 	return '' unless defined $value;
@@ -370,10 +413,16 @@ sub currency_money {
 	return sprintf('%.2f', $value);
 }
 
+# Kept for the balance chart's existing callers. New displays use currency_money.
 sub ai_balance_money {
 	return &currency_money($_[0]);
 }
 
+# The fiat currencies a picker may offer, and what one unit of the house
+# currency is worth in each. The order is deliberate: the house currency first,
+# the amount's own currency second, then the rest of the fiat table in its own
+# order. A code the rate snapshot does not carry is left out - offering it would
+# be a promise the conversion cannot keep. `rate` is target units per one base.
 sub currency_options {
 	my ($from) = @_;
 	$from = uc($from || '');
@@ -401,6 +450,8 @@ sub currency_options {
 	return ($base, \@codes);
 }
 
+# An amount in its own currency as the house currency. Returns undef when no
+# rate is loaded, so a caller can show the original figure instead of a guess.
 sub currency_amount_base {
 	my ($amount, $from, $to) = @_;
 	return undef unless defined $amount;
@@ -412,6 +463,9 @@ sub currency_amount_base {
 	return (defined $rate && $rate > 0) ? $amount * $rate : undef;
 }
 
+# Auto-approve, kept on a leash: at most 8 auto-applies a day (each one is a
+# commit and a push; a bad day must not become a hundred). Past that the
+# proposals simply wait for a person, as they always did.
 sub watch_auto_allowed {
 	my $row = &subs::cache_get({ app => '__president', context => 'watch_auto', subcontext => &watch_tokens_day() });
 	return ((ref $row eq 'HASH' ? ($row->{'count'} || 0) : 0) < 8) ? 1 : 0;
@@ -425,6 +479,9 @@ sub watch_auto_count {
 	);
 }
 
+# An auto-applied fix writes whole files; if any of them has uncommitted work in
+# the tree, writing would swallow it, so auto-approve stands down and leaves the
+# proposal for a person (the log says why).
 sub auto_apply_clean {
 	my ($row) = @_;
 	my $files = eval { decode_json $row->{'files'} } || {};
@@ -437,6 +494,10 @@ sub auto_apply_clean {
 	return 1;
 }
 
+# Apply one staged fix: write its files, check the Perl, then the finishing
+# routine - bump, commit only what was written (plus VERSION), push. A failure
+# at the check puts every file back and nothing is committed. Both the panel's
+# Apply and the watch's auto-approve come through here.
 sub staged_fix_apply {
 	my ($uuid) = @_;
 	my $row = &subs::db_select('staged_fixes', undef, { uuid => $uuid })->hash;
@@ -529,6 +590,9 @@ sub error_watch_is_error {
 	return 0;
 }
 
+# One invariant name per distinct error: control codes, addresses and numbers
+# (line numbers, pids, ports, counts) are blanked, so a flood of one fault
+# collapses to a single staged row.
 sub error_signature {
 	my $text = shift;
 	$text = '' unless defined $text;
@@ -611,6 +675,8 @@ sub log_bus_read_new {
 	return @lines;
 }
 
+# A Perl warning is two lines - the message, then " at ./file line N." - so a
+# matched line swallows the source location that follows it before it is caught.
 sub error_watch_catch {
 	my @lines = @_;
 	my (@caught, $pending);
@@ -627,6 +693,10 @@ sub error_watch_catch {
 	return @caught;
 }
 
+# Record one caught fault: a new row when its signature is new, a tally bump on
+# the row already carrying it. Shared by the log watch and the browser's fatal
+# JavaScript reporter (the signature may come from a shorter text than the
+# sample - a JS fault's stack must not make every occurrence a new signature).
 sub staged_fix_note {
 	my ($params) = @_;
 	my $sample = $params->{'sample'} // '';
@@ -654,6 +724,14 @@ sub staged_fix_note {
 	return { uuid => $uuid, signature => $sig, status => 'new' };
 }
 
+# ---- the records watch ------------------------------------------------------
+# The database's half of the self-heal, and the mirror of the error watch: a
+# fixed, deterministic audit of the appointments table for the fault classes
+# that corrupt the person's numbers. A stop press closes ONE session, but two
+# bugs left rows ended by a press that was not their own (one stop applied to
+# several open sessions) or wrote the same event once per machine. The judgement
+# - which row to keep, what to repair - is the Coding agent's, staged and
+# approved the way a code fix is (staged_records). Nothing here writes.
 sub records_audit_prompt {
 	return join "\n",
 		'You are the Records Watch for JawnOS. You audit the appointments table for a fault class that has been corrupting the person\'s numbers, and you reconcile what you find. Nothing is written until a person approves it.',
@@ -676,6 +754,10 @@ sub records_audit_prompt {
 		'Answer with a JSON list of proposed actions, one per row: {"action":"keep"|"tombstone"|"repair","app":..,"uuid":..,"stop_timestamp":..,"duration":..,"why":".."}. Say which row you keep per group and why, and list what you leave alone and why. Write nothing else.';
 }
 
+# An app the person has said is genuinely, surprisingly long-lived (a home stay, an
+# eight-month ailment). Length alone can never tell a real session from a swept one,
+# so the audit must be able to be told to leave an app alone entirely. Stored per
+# machine as a JSON list of app names (mail/records_exempt).
 sub records_exempt {
 	my $raw = &subs::setting_grabber({ app => 'mail', setting => 'records_exempt' }) // '';
 	my $saved = length($raw) ? eval { decode_json $raw } : undef;
@@ -694,6 +776,11 @@ sub records_exempt_add {
 	return 1;
 }
 
+# A millisecond date that a bridge reader mistook for a span of minutes was
+# subtracted from the writing moment, so the row landed millions of years in the
+# past. The arithmetic inverts exactly: the original stamp is
+# (ost - timestamp) / 60000. Only the unmistakable magnitude is touched, and
+# only when the recovered value is a real date, so no other odd row is rewritten.
 sub records_bad_date_fix {
 	my ($row, $now) = @_;
 	$now = &rightNow() unless $now;
@@ -713,6 +800,12 @@ sub records_bad_date_fix {
 	return $fix;
 }
 
+# The bad-date rows and what to do with each. Most are not new records: the
+# check re-read the same last ten messages and thirty calls on every pass, and a
+# mangled stamp never matched the row it had already written, so it wrote the
+# event again. Keep one row per event - the sane record when one exists, else the
+# first bad row - and tombstone the re-writes instead of repairing a duplicate
+# into view.
 sub records_bad_dates_scan {
 	my ($now, $exempt) = @_;
 	$now = &rightNow() unless $now;
@@ -745,6 +838,12 @@ sub records_bad_dates_scan {
 	return \@out;
 }
 
+# The same bridge bug wrote the mailbox row beside the appointment: sms_list_check
+# inserted both with the mangled stamp. Mailbox has no stop_timestamp, so only
+# timestamp is inverted. A sealed body is encrypted with a random container, so
+# two writes of one message never share the same bytes; an unreadable body is
+# therefore matched on the event (phone, sender, status, the same second), while
+# a readable body must agree.
 sub records_mailbox_body_readable {
 	my ($body) = @_;
 	return 0 unless defined $body && length $body;

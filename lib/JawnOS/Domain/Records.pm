@@ -44,6 +44,9 @@ our $log;
 our %m;
 our $universal_splitter;
 
+# What to do with each mangled mailbox row: one row per event, preferring the
+# sane copy already stored, then the first mangled row of a batch. Pure, so the
+# scan can be tested and the caller owns the writes.
 sub records_mailbox_date_decisions {
 	my ($bad, $sane, $now) = @_;
 	$now = &rightNow() unless $now;
@@ -125,6 +128,10 @@ sub records_mailbox_tombstone {
 	&db_delete('mailbox', { uuid => $uuid });
 }
 
+# Run only the bad-date pass. A peer that holds the accurate copy can ask this
+# machine to clear its own mangled dates over the signed records/repair rail;
+# the pass touches only the unmistakable signature and is idempotent. The same
+# bridge bug wrote the mailbox row beside the appointment, so both are cleared.
 sub records_repair_bad_dates {
 	my $now = &rightNow();
 	my ($repaired, $tombstoned) = (0, 0);
@@ -373,6 +380,15 @@ sub records_reconcile {
 	return { applied => $apply, actions => scalar @actions, summary => $report->{'summary'}, list => \@actions };
 }
 
+# ---- the records watch: staging and apply --------------------------------
+# The mirror of the error watch. A finding the fixed audit produces is staged as
+# a row; a person reviews it and Applies, and the actions it carries are written
+# through the same quiet paths the bulk pass uses. Machine-local (staged_records),
+# so each machine repairs its own rows and the tombstones converge the mesh.
+
+# drop one appointment row and tell the mesh (a tombstone, so no peer re-adds it).
+# Quiet on purpose: Manager::delete_app also pushes to every open window, which a
+# batch of hundreds must not do.
 sub records_tombstone {
 	my ($app, $uuid) = @_;
 	return unless $app && $uuid;
@@ -382,6 +398,8 @@ sub records_tombstone {
 	&db_delete('appointments', { uuid => $uuid, app => $app });
 }
 
+# set a session's real end (its own start + the app's length). A fresh server_time
+# is what makes the repair win the peer merge.
 sub records_repair {
 	my ($app, $uuid, $start, $stop) = @_;
 	return unless $app && $uuid && defined $stop;
@@ -390,6 +408,8 @@ sub records_repair {
 	return $dur;
 }
 
+# Restore a mangled millisecond stamp in place, leaving the row's other fields
+# alone. The row is a finished event (an SMS or a call), not an open session.
 sub records_repair_date {
 	my ($app, $uuid, $fix) = @_;
 	return unless $app && $uuid && ref $fix eq 'HASH' && defined $fix->{'timestamp'};
@@ -401,6 +421,7 @@ sub records_repair_date {
 	&db_update('appointments', $data, { uuid => $uuid, app => $app });
 }
 
+# the table, created here too so the watch works from the first boot after an update
 sub records_table_ready {
 	my $table = &db_query('select name from pragma_table_info(?) where name = ?', 'staged_records', 'uuid')->hashes->[0];
 	return 1 if $table;
@@ -413,6 +434,7 @@ sub records_table_ready {
 	return 1;
 }
 
+# stage one finding: an existing signature just bumps last_seen; a new one is inserted
 sub records_stage {
 	my ($f) = @_;
 	return unless $f && $f->{'signature'};
@@ -435,6 +457,7 @@ sub records_stage {
 	return $uuid;
 }
 
+# turn an audit report into staged findings
 sub records_stage_scan {
 	my ($window_ms) = @_;
 	&records_table_ready();
@@ -495,6 +518,7 @@ sub records_stage_scan {
 	return { staged => $staged, summary => $report->{'summary'} };
 }
 
+# Apply one staged row: carry out every action it holds, then mark it applied
 sub records_fix_apply {
 	my ($uuid) = @_;
 	my $row = &db_select('staged_records', undef, { uuid => $uuid })->hash;
@@ -512,6 +536,11 @@ sub records_fix_apply {
 	return { applied => $uuid, rows => $done };
 }
 
+# Put one staged finding to the Coding agent. The audit finds; the agent reads;
+# the person decides. A real appointment can be surprisingly long (a home stay, an
+# eight-month ailment) and a fixed rule can never know that, so the person can talk
+# a finding through before pressing Apply - and the agent is free to answer "leave
+# it alone". Nothing here writes.
 sub records_ask {
 	my ($uuid, $question, $history) = @_;
 	my $row = &db_select('staged_records', undef, { uuid => $uuid })->hash;
@@ -557,6 +586,16 @@ sub records_ask {
 	return $err && !$text ? ('I could not reach the model: ' . $err) : ($text || 'The model returned nothing readable.');
 }
 
+# ---- the records recovery: putting back what a repair shortened --------------
+# A repair overwrites an end in place, so a genuinely long appointment that a
+# sweep swept up can vanish from the live table with nothing left to compare to.
+# The machine keeps hourly sealed snapshots, and the one taken before the repair
+# still holds the old ends. These routines compare a snapshot to now and list the
+# rows the repair shortened (or dropped), so a person - or the Coding agent - can
+# put them back. Nothing is written by the scan; apply stamps a current
+# server_time, so the recovered rows win the peer merge and reach every machine.
+
+# the newest sealed snapshot, by the timestamp in its name
 sub records_latest_backup {
 	my $dir = &database_dir() . '/backups';
 	my @files = grep { /jawnos_\d+\.enc$/ } glob("$dir/jawnos_*.enc");
@@ -569,6 +608,9 @@ sub records_latest_backup {
 	return $files[0];
 }
 
+# take one now, with the app's own idiom (sqlite .backup, then openssl, then the
+# splitter-and-standard appendage). Kept outside backups/ only as the plaintext,
+# which is shredded; the sealed file is named jawnos_<ms>.enc so the tidy keeps it.
 sub records_backup_now {
 	require File::Temp;
 	require File::Spec;
@@ -591,6 +633,8 @@ sub records_backup_now {
 	return $out;
 }
 
+# the newest snapshot is younger than the window, or one is taken to make it so.
+# The guard the person asked for: nothing is applied without a recent backup.
 sub records_backup_ensure_fresh {
 	my ($max_age_ms) = @_;
 	$max_age_ms = 600000 unless defined $max_age_ms && $max_age_ms =~ /^[0-9]+$/;
@@ -604,6 +648,8 @@ sub records_backup_ensure_fresh {
 	return { fresh => ($made ? 1 : 0), path => ($made || $newest), age_ms => 0, made => ($made ? 1 : 0) };
 }
 
+# unseal a snapshot to a scratch database outside backups/ (the tidy shreds
+# anything there that is not jawnos*.enc). Returns the path, or undef.
 sub records_backup_decrypt {
 	my ($path) = @_;
 	return undef unless $path && -e $path;
@@ -625,6 +671,8 @@ sub records_backup_decrypt {
 	return $tmp;
 }
 
+# how long a row ran: its own stop when it has one, else as far as the reference
+# time (the snapshot's moment for an old row, now for a live one)
 sub records_span_ms {
 	my ($row, $ref) = @_;
 	my $start = 0 + ($row->{'timestamp'} || 0);

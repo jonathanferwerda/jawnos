@@ -46,6 +46,14 @@ our %ghost_times_memo;
 our %m;
 our $resolve_when_residual;
 
+# Read a typed time the way a person writes one. A relative offset ("-3h", "in 2
+# days", "3d 4h") belongs to ago_calc's own arithmetic and is left to it; a
+# calendar date is read here, so a bare "jul 16", an ordinal "16th 2", a "last
+# dec 25" and a full "dec 25 2025 at 7:04pm" all land where they say. A date with
+# no time of day keeps the present time of day; a date with no year is this year,
+# and a leading "last"/"next" moves it by one. A bare ordinal day with no month
+# rolls to the next month once it is already behind. Returns undef when the text
+# is not a calendar date, so ago_calc keeps its old path untouched.
 sub resolve_when {
 	my ($text,$now) = @_;
 	$now = &rightNow() unless $now;
@@ -226,6 +234,10 @@ sub resolve_when {
 	return $ms;
 }
 
+# Whether the last resolve_when read only a date, or left words it could not read.
+# "dec 25 at 7pm" leaves only connective words, but "sept 11 attacks" leaves a
+# name - which the guide should read instead of the bare date (so the phrase means
+# the 2001 attacks, not this year's September 11).
 sub date_leftover {
 	my ($r) = @_;
 	$r = lc($r // '');
@@ -233,6 +245,9 @@ sub date_leftover {
 	return $r =~ /[a-z]/ ? 1 : 0;
 }
 
+# A local time as an unambiguous ISO string, its year signed so B.C. reads as a
+# negative year ("-0044-03-15 00:00:00"). resolve_when reads this back exactly,
+# which is what the walkman's jump buttons hand the time machine.
 sub iso_local {
 	my ($ms) = @_;
 	return '' unless defined $ms;
@@ -244,6 +259,9 @@ sub iso_local {
 	return $t->strftime('%Y-%m-%d %H:%M:%S');
 }
 
+# The birthdays the person keeps (Configure -> App -> Birthdays), one to a line as
+# "Name = date" ("Abraham Lincoln = February 12 1809"). Read across devices - the
+# newest value wins - so a save on any machine is seen everywhere.
 sub saved_birthdays {
 	my $row = &db_query('select value from settings where app = ? and setting = ? order by server_time desc limit 1', 'me', 'birthdays')->hashes->[0];
 	my %bday;
@@ -260,6 +278,10 @@ sub saved_birthdays {
 	return \%bday;
 }
 
+# The saved birthday for a named person, in ms, or undef. A thing named for the
+# person (its app) carries its own Birthday setting, and that is read first; then
+# the list; failing both, a name whose words all sit inside the other's, so
+# "Lincoln" finds "Abraham Lincoln".
 sub saved_birthday_ms {
 	my ($name, $now) = @_;
 	return undef unless defined $name && $name =~ /\S/;
@@ -285,6 +307,10 @@ sub saved_birthday_ms {
 	return &resolve_when($hit, $now);
 }
 
+# Every birthday the house can name: the "Name = date" list plus each
+# construct that carries a Birthday setting of its own (a person app's own
+# panel). The Guide is given this directory so "my mom's next 5 birthdays" can
+# resolve to a saved person instead of asking for a date it already has.
 sub birthday_directory {
 	my %all = eval { %{ &saved_birthdays() || {} } };
 	my $rows = eval { &db_query("select app, value, server_time from settings where setting = 'birthday' and value is not null and value != '' order by server_time asc")->hashes } || [];
@@ -298,6 +324,10 @@ sub birthday_directory {
 	return \%all;
 }
 
+# The times of day an app's records cluster around: the busiest hours (a habit can
+# fall more than once a day - coffee mid-morning and again mid-afternoon), each
+# with the minute that clusters within it. Empty with no records, so a caller
+# falls back to a plain clock time.
 sub usual_times_for {
 	my ($app) = @_;
 	return unless $app;
@@ -333,6 +363,11 @@ sub usual_times_for {
 	return @times;
 }
 
+# A time of day that is a habit rather than a date ("breakfast", "tea time", "next
+# coffee time"): the times the person usually does it, read from that app's own
+# records, and a plain hour when there is nothing to read. "next" is the next of
+# those times after now (today, else tomorrow); otherwise it is the one nearest
+# now, today. undef when the phrase names no such habit.
 sub usual_ritual_time {
 	my ($spec, $now) = @_;
 	$now = &rightNow() unless $now;
@@ -393,6 +428,11 @@ sub usual_ritual_time {
 	return $ms;
 }
 
+# The times an app is expected to happen, for the ghost appointments a clock draws
+# ahead of now. The record's own habit comes first (the hours its appointments
+# cluster around); with too little to read, the app's saved clothesline hours; and
+# with none, the hours of its own 'usual' occurrences. Memoized briefly, so the
+# viewer's poll does not re-read the history on every tick.
 sub ghost_times_for {
 	my ($app) = @_;
 	return [] unless defined $app && length $app;
@@ -463,6 +503,12 @@ sub ghost_done_times_for {
 	return \@reals;
 }
 
+# The ghost rows for one app: its expected times that have not been met and are not
+# already scheduled. An expected time is dropped once a real appointment sits
+# nearest to it (a started or scheduled occurrence - the coffee that just began
+# stops being a ghost until tomorrow's comes round). The next expected time beyond
+# the view is kept too, so a clock shows it clamped at the edge rather than
+# nothing.
 sub ghost_rows_for {
 	my ($app, $now, $view_end) = @_;
 	my $times = &ghost_times_for($app);
@@ -501,6 +547,10 @@ sub ghost_rows_for {
 	return [ map { { ghost => 1, app => $app, type => 'usual', timestamp => $_, duration => $duration, formatted_name => &format_name($app) } } @in ];
 }
 
+# Work claims: who is sorting out what, so two agents - or two machines - do not
+# take the same job. They live as settings on the 'claims' app, which is NOT one of
+# @gb::protected, so the mesh merge carries each claim to every machine; the
+# protected __president settings (the agent registry among them) stay local.
 sub work_claims {
 	my $rows = &db_query(q{select setting, value from settings where app = 'claims' order by cast(server_time as integer) desc})->hashes;
 	my %claims;
@@ -529,6 +579,8 @@ sub claim_work {
 	return &work_claim($task);
 }
 
+# The machine's own name, for a claim a person has to read. The signatorial is the
+# mesh identity; this is what to show beside it.
 sub machine_name {
 	my $name = &setting_grabber({ app => 'me', setting => 'computer_name' }) || &setting_grabber({ app => 'me', setting => 'my_name' });
 	return $name if defined $name && $name =~ /\S/;
@@ -537,6 +589,11 @@ sub machine_name {
 	return $h;
 }
 
+# The name a person reads for a machine. A phone has no hostname of its own:
+# Android/Termux answers `hostname` with 'localhost', and that used to overwrite
+# the good name a peer had already learned every time the phone reconnected.
+# Prefer the machine's own report, then the name we already remember, then the
+# first label of its fqdn (phone.example.com -> Phone).
 sub device_hostname_better {
 	my ($reported, $stored, $fqdn) = @_;
 	my $clean = sub {
@@ -564,6 +621,8 @@ sub device_hostname_better {
 	return defined $reported ? $reported : '';
 }
 
+# Released by writing it empty rather than deleting it, so the release rides the
+# same mesh merge the claim does.
 sub release_work {
 	my ($task) = @_;
 	return unless defined $task && $task =~ /\S/;
@@ -668,6 +727,14 @@ sub ago_calc {
 	return $timestamp;
 }
 
+# The device bridge hands back an SMS or call date as the epoch in milliseconds
+# (Telephony.Sms.DATE and CallLog.Calls.DATE), while ago_calc reads a span like
+# "-3h" and bills a bare number as minutes. Passing a millisecond date straight
+# to ago_calc therefore subtracted date*60000 ms from now and put the record
+# millions of years in the past - the "3409757y" rows the SMS and call-log
+# checks wrote after the app moved off termux-api (whose list returned a
+# written date). An absolute epoch passes through; anything else keeps the old
+# span reader. A ten-digit value is a seconds stamp, widened to milliseconds.
 sub epoch_or_span {
 	my ($value, $now) = @_;
 	$now = &rightNow() unless $now;
@@ -680,20 +747,39 @@ sub epoch_or_span {
 	return &ago_calc($value, $now);
 }
 
+# A warranty belongs to the house, not to the machine that set it. It is stored
+# on the 'all' device row (like the language and the theme), so every device
+# reads the same value. A per-device row from an older build is still honoured
+# as a fallback until the backfill has written the house row.
 sub warranty_device { return 'all' }
 
+# A renewal keeps the offset between the chosen warranty and the moment it was
+# anchored at, and lands that same offset on every record's own timestamp. The
+# value is already resolved to a moment, so a warranty typed in the card is the
+# one that applies - not the stored setting.
 sub warranty_renewed {
 	my ($warranty, $holder, $timestamp) = @_;
 	return undef unless defined $warranty && defined $holder && defined $timestamp;
 	return $warranty - $holder + $timestamp;
 }
 
+# A warranty is a moment ahead of the record. A renewal that resolves behind now
+# would expire every record it touches on the next alarm_haircut, so it is not a
+# renewal at all and must not be written.
 sub warranty_renewal_ok {
 	my ($warranty, $now) = @_;
 	return 0 unless defined $warranty && length $warranty;
 	return ($warranty + 0) > (($now || &rightNow()) + 0) ? 1 : 0;
 }
 
+# The voices say_it can speak with. A friendly name carries the engine and what
+# that engine needs; the Speech setting in Configure picks one by name, so the
+# list here is the single source of truth for both the taker and the picker.
+# The piper models live under voices/ (carried as blobs like the APKs, see
+# app_release_sync); espeak voices are the fallback when piper is not staged.
+# Only cleanly-permissive voices belong here: LJSpeech is public domain,
+# LibriTTS-R and Alba are CC BY 4.0. A model dropped from this list is pruned
+# from every device by voice_sync, so a licence problem is fixed everywhere.
 sub say_voices {
 	return (
 		{ value => 'piper-ljspeech', label => 'LJSpeech - US female', engine => 'piper', model => 'en_US-ljspeech-medium'   },

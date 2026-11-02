@@ -38,10 +38,22 @@ use Unicode::Normalize qw(NFC);
 our $ai_last_model;
 our $ai_tokens;
 our $device;
+# Whether this machine can actually carry an evaluation now. The configured
+# model is only half the answer: the Crew may place the call on a peer's Ollama
+# (or step down to a free model), and a local :cloud model is useless without
+# the daemon that serves it. The heartbeat publishes this, and a job consults it
+# before it claims a run, so only a working agent is ever asked.
 our $evaluation_agent_ready_memo;
 our $log;
 our %m;
 
+# A provider's own answer to "when may I call again". The stand-down above is
+# for a bucket that has run dry; a rate limit is not that - it clears in
+# seconds or at a stated clock time, and pausing the bucket for 30 minutes over
+# a 20-second per-minute limit both loses the model and misstates the cause.
+# Returns ($milliseconds, $why) when this response is a limit, () when it is
+# not. Every duration is clamped to 5s..24h, so a malformed hint can neither
+# lose a model for a week nor retry it in a hot loop.
 sub ai_limit_pause {
 	my ($code, $retry_after, $body, $now) = @_;
 	$now = &subs::rightNow() unless defined $now;
@@ -101,6 +113,8 @@ sub ai_limit_pause {
 	return ($ms, $why);
 }
 
+# The cheapest thing that still answers: a local Ollama chat model, else a
+# Cloudflare text model (its plan is included).
 sub ai_free_model {
 	foreach my $m ( @{ &subs::pen_model_list() } ) {
 		my $name = $m->{'model'} || $m->{'name'};
@@ -116,6 +130,7 @@ sub ai_free_model {
 	return '';
 }
 
+# Pass a capability (chat, vision, image, audio) to keep only models that serve it.
 sub ai_model_catalogue {
 	my ($cap) = @_;
 	my @out;
@@ -162,6 +177,13 @@ sub ai_model_catalogue {
 	return \@out;
 }
 
+# Talk to whichever provider a model id points at, and return the whole answer.
+# The message list may carry a system message; Anthropic and Google want it
+# apart from the turns, so it is lifted out and put back per provider.
+# The media one message carries, flattened to one shape. A caller may hand images
+# (and, for providers that take them, audio/video/files) as base64 strings, data:
+# URLs, or { data => .., mime => .. } / { url => .. }. The per-provider builders
+# below read this, so the parse lives in exactly one place.
 sub ai_message_media {
 	my ($m) = @_;
 	my @out;
@@ -187,6 +209,8 @@ sub ai_message_media {
 	return @out;
 }
 
+# OpenAI-compatible content: a plain string with no media, else the multimodal
+# array (text + image_url parts, and input_audio where the model takes it).
 sub ai_content_openai {
 	my ($m) = @_;
 	my @media = &ai_message_media($m);
@@ -204,6 +228,7 @@ sub ai_content_openai {
 	return \@parts;
 }
 
+# Anthropic content: text block + image (or document) blocks.
 sub ai_content_anthropic {
 	my ($m) = @_;
 	my @media = &ai_message_media($m);
@@ -217,6 +242,7 @@ sub ai_content_anthropic {
 	return \@parts;
 }
 
+# Gemini parts: an ordered list of text and inline_data parts.
 sub ai_parts_google {
 	my ($m) = @_;
 	my @parts;
@@ -228,6 +254,7 @@ sub ai_parts_google {
 	return \@parts;
 }
 
+# The provider-specific wire message for one of our messages.
 sub ai_wire_message {
 	my ($provider, $m) = @_;
 	if ($provider eq 'ollama') {
@@ -248,6 +275,7 @@ sub ai_wire_message {
 	}
 }
 
+# The text out of any of the providers' reply shapes.
 sub ai_response_text {
 	my ($body) = @_;
 	return $body->{'message'}->{'content'}
@@ -426,6 +454,10 @@ sub ai_chat_raw {
 	return ($body, undef);
 }
 
+# The reply as parts, so a caller can take more than the words (an image a
+# multimodal model returns, and the shape to grow into audio/video later). A paid
+# model whose bucket is stood down steps down to a free one here, so every caller
+# gets the fallback.
 sub ai_chat_parts {
 	my ($model, $messages, $thinking) = @_;
 	if (&ai_model_paid($model) && !&ai_bucket_available(&ai_model_bucket($model))) {
@@ -492,6 +524,10 @@ sub ai_chat {
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
 }
 
+# the same wire pen_message uses, but the answer is read whole: the evaluation
+# is a report, not a conversation
+# The thinking levels the Plat panel stores: none means "let the model answer
+# as it always has" (no field is added anywhere).
 sub ai_thinking_level {
 	my $v = shift;
 	return '' unless defined $v && length $v;
@@ -499,6 +535,12 @@ sub ai_thinking_level {
 	return '';
 }
 
+# Whether a model reasons before it answers - whether the thinking knob (see
+# ai_chat_raw) means anything to it. No provider publishes this, so it is read
+# from the model id: the reasoning families by name. A model not named here
+# simply never offers the choice, and a level sent to a model that ignores the
+# knob is still caught (a 400) and the call retried without it, so a miss costs
+# nothing. Names are given without their provider: prefix.
 sub ai_model_thinks {
 	my ($model) = @_;
 	return 0 unless defined $model && length $model;
@@ -516,6 +558,9 @@ sub ai_model_thinks {
 	return 0;
 }
 
+# The thinking effort chosen in Configure -> Plat beside a role's model, '' when
+# none is set. The Coding agent's own coding_thinking predates the per-role
+# settings, so it is read as that one role's fallback.
 sub ai_role_thinking {
 	my ($role) = @_;
 	return '' unless defined $role && length $role;
@@ -524,6 +569,10 @@ sub ai_role_thinking {
 	return defined $v ? $v : '';
 }
 
+# The primary and fallback models chosen for a role (the fallback list is the
+# same catalogue minus the primary, set in Configure -> Plat). A caller retries
+# the fallback when the primary is down. whisper.cpp is the transcription role's
+# own final fallback, read in whisper_transcribe.
 sub ai_role_models {
 	my ($role) = @_;
 	my $primary = &subs::setting_grabber({ app => 'mail', setting => $role });
@@ -531,6 +580,13 @@ sub ai_role_models {
 	return (defined $primary ? $primary : '', defined $fallback ? $fallback : '');
 }
 
+# One role's chat call. Before it is made, the Crew places it (crew::choose_model):
+# a role naming a peer that no longer holds the model, a paid bucket that is
+# stood down, or a local model this device never pulled is answered by what the
+# house can actually reach, and a peer's own Ollama carries the call. The call
+# still retries the role's fallback (then the primary) when the placed model
+# errors - an outage is not a placement mistake. A role with nothing viable is
+# reported rather than sent to a model that cannot answer.
 sub ai_chat_parts_role {
 	my ($role, $messages, $thinking) = @_;
 	my ($primary, $fallback) = &ai_role_models($role);
@@ -584,6 +640,9 @@ sub evaluation_model_call_role {
 	return &ai_chat_role($role, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
 }
 
+# The same retry, for a caller that already holds its primary (the Guide's
+# per-session model, the Coding agent's own fallback): primary first, then the
+# role's fallback setting.
 sub ai_chat_parts_with_fallback {
 	my ($primary, $fallback, $messages, $thinking) = @_;
 	return (undef, 'no model given') unless $primary;
@@ -614,6 +673,10 @@ sub evaluation_model_call {
 	return &subs::ai_chat($model, [ { role => 'system', content => $system }, { role => 'user', content => $user } ], $thinking);
 }
 
+# Whether this machine can actually run the evaluation right now. The wish to
+# evaluate is shared but the queue is per-machine, so a machine with no ollama,
+# no model, or no key would otherwise run the night and answer with a connection
+# error. A blank model is never available.
 sub evaluation_model_available {
 	my ($model) = @_;
 	return 0 unless $model;

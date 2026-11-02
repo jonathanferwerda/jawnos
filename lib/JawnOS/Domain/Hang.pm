@@ -178,6 +178,19 @@ sub hang_to_dry {
 
 }
 
+# ---- web measures ----------------------------------------------------------
+# A web measure used to be a CSS selector plus a count, applied to whatever the
+# last fetch stored. That works until a page reorders, and it cannot say where
+# a JSON value lives. One spec now covers both worlds:
+#
+#   JSON:  { "path": "properties.currentConditions.temperature.value.en" }
+#   HTML:  { "selector": "#price", "count": 0, "attribute": "text" }
+#          { "row": "tr", "match": "Gold", "within": "td" }
+#
+# with optional regex, fallback, number/unit/scale and the old prev/next
+# context. The old selector/count specs keep working unchanged; a JSON id from
+# the prettyfier is mapped back to its path, so weather's old selectors start
+# reading the decoded JSON instead of the rendered DOM.
 sub web_measure_clean_text {
 	my ($s) = @_;
 	return '' unless defined $s;
@@ -211,6 +224,10 @@ sub web_measure_json_path {
 	return $node;
 }
 
+# The JSON prettyfier writes <span id="propertiescurrentConditions..."> by
+# concatenating the keys (arrays become 1arr, 2arr...). Recover the real path
+# from that id, so an old JSON selector keeps working and can be read as a
+# path instead of through the rendered page.
 sub web_measure_json_id_path {
 	my ($json, $id) = @_;
 	return undef unless defined $id && length $id;
@@ -239,6 +256,7 @@ sub web_measure_json_id_path {
 	return $walk->($json, [], []);
 }
 
+# Every scalar path a JSON response offers, for the picker and the audit tool.
 sub web_measure_json_paths {
 	my ($json, $prefix, $out, $limit) = @_;
 	$prefix = '' unless defined $prefix;
@@ -263,6 +281,11 @@ sub web_measure_json_paths {
 	return $out;
 }
 
+# One number parser for every source. Currency, percent, a degree sign and a
+# unit suffix are stripped; a comma decimal and a thousands separator are read
+# by position; a leading minus (or parentheses) is kept. appt_measure_writer
+# used to strip everything but digits and dots, which quietly turned -0.5 into
+# 0.5.
 sub web_measure_number {
 	my ($raw, $spec) = @_;
 	$spec ||= {};
@@ -313,6 +336,10 @@ sub web_measure_number {
 	return $out;
 }
 
+# Some pages write a label as bare text, with the value in the next element:
+#   Phase: <span>Waxing Crescent</span><br>
+# Mojo::DOM drops text nodes from children(), so match the label in the
+# container's own markup and return the first element that follows it.
 sub web_measure_after_text_label {
 	my ($dom, $container, $label, $skip) = @_;
 	return undef unless $dom && defined $container && length $container && defined $label && length $label;
@@ -339,6 +366,7 @@ sub web_measure_after_text_label {
 	return undef;
 }
 
+# Extract one value from a fetched page. $ctx is { format, json, dom, raw }.
 sub web_measure_extract {
 	my ($spec, $ctx) = @_;
 	$spec ||= {};
@@ -516,6 +544,10 @@ sub web_measure_extract {
 	return { ok => 1, value => $raw_value, raw => $raw_value, used => $used, error => '', path => $result->{'path'} };
 }
 
+# Suggest working specs for a label on this page. The useful shape for a table
+# is "the row that contains Gold, cell N", where N is the first cell *after*
+# the label. Every candidate is tested against the page before it is offered,
+# so a suggestion is a value the extractor will really read.
 sub web_measure_suggest {
 	my ($ctx, $label) = @_;
 	my $dom = $ctx->{'dom'};

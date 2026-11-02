@@ -36,10 +36,21 @@ use Time::Piece;
 use Unicode::Normalize qw(NFC);
 
 our %clock_long_alarm_files;
+# ---------------------------------------------------------------------------
+# The Clock app: alarms, timers, and the little that has to live server-side.
+#
+# Alarms and timers are rows in the `settings` table under app 'clock' so they
+# survive a restart and ride the house's usual per-device sync. They are small
+# JSON arrays, capped at ten each. Every read-modify-write takes one flock so a
+# web worker saving an alarm cannot lose the alarm the firing loop just marked,
+# and the firing loop itself runs from Alarm.pl.
+# ---------------------------------------------------------------------------
 our @clock_sound_files;
 our $device;
 our %m;
 
+# The provider sends the customer back here. Nothing the browser says is
+# trusted: the provider's own record is read and that is what is recorded.
 sub pay_return_handle {
 	my ($provider, $c) = @_;
 	$provider = lc($provider || '');
@@ -124,6 +135,7 @@ sub pay_return_handle {
 	return { ok => 0, message => 'That payment method is not available.' };
 }
 
+# A small, honest check from the panel: the key works and the provider answers.
 sub pay_test_provider {
 	my ($provider) = @_;
 	$provider = lc($provider || '');
@@ -157,6 +169,12 @@ sub pay_test_provider {
 	return { ok => 0, message => 'Unknown payment method.' };
 }
 
+# ---- Interac e-Transfer -----------------------------------------------------
+# There is no consumer API for an e-Transfer. The notification letter is the
+# source of truth, so JawnOS reads the ones already arriving in the mailbox, or
+# accepts the same facts from a bank/aggregator that can forward them. A letter
+# is staged for a person unless the house has said auto-record, and even then
+# only when one invoice is an unmistakable match.
 sub pay_interac_token {
 	my $t = &pay_secret_read('interac_hook_token');
 	return $t if length $t && $t =~ /^[A-Za-z0-9]{20,}$/;
@@ -186,6 +204,8 @@ sub pay_interac_looks_like {
 	return 0;
 }
 
+# Pull out the few facts an e-Transfer letter carries. Anything it does not
+# recognise stays empty rather than guessed, so a person can still match it.
 sub pay_interac_parse {
 	my ($subject, $body) = @_;
 	my $text = ($subject || '') . "\n" . ($body || '');
@@ -225,6 +245,9 @@ sub pay_interac_parse {
 	};
 }
 
+# Open invoices that could be the one this e-transfer is for. The score is
+# deliberately simple: an invoice reference in the message is strongest, the
+# exact balance next, then the sender's own address and name.
 sub pay_interac_candidates {
 	my ($parsed) = @_;
 	$parsed ||= {};
@@ -259,6 +282,8 @@ sub pay_interac_candidates {
 	return (\@out, $value);
 }
 
+# Stage one notification. Auto-record happens only when the house asked for it,
+# the money is actually deposited, and exactly one invoice names the reference.
 sub pay_interac_stage {
 	my ($parsed) = @_;
 	$parsed ||= {};
@@ -358,6 +383,8 @@ sub pay_interac_scan {
 	return { ok => 1, found => $found, staged => $staged, recorded => $recorded };
 }
 
+# What the panel lists: staged notifications with their best invoice matches,
+# newest first. A candidate whose invoice has since been paid is dropped.
 sub pay_interac_receipts {
 	my $rows = &db_query("select * from cache where context = 'pay_interac' order by server_time desc limit 100")->hashes;
 	my @out;
@@ -428,6 +455,8 @@ sub pay_interac_ignore {
 	return { ok => 1 };
 }
 
+# A bank or aggregator that can see e-Transfer notifications posts the same
+# facts here. The task token is the gate, exactly like the LoRaWAN uplink.
 sub pay_interac_hook {
 	my ($body, $token, $c) = @_;
 	$body = {} unless ref $body eq 'HASH';
@@ -457,10 +486,16 @@ sub clock_device {
 	return &device_setter();
 }
 
+# Alarms are the house's, not one machine's: they live in a single settings row
+# every machine reads, and each alarm names the machines that should ring it.
+# Timers stay on the machine that started them (they are a countdown in a hand).
 sub clock_alarm_store_device {
 	return 'house';
 }
 
+# The machines an alarm can be shared with: this machine ("Me") first, then
+# every peer the mesh knows. The value is the machine's signatorial, because
+# that is the identity each machine compares against its own.
 sub clock_machines {
 	my $self = &signatorial_designer() || '';
 	my @out;
@@ -484,6 +519,8 @@ sub clock_machines {
 	return \@out;
 }
 
+# Does this alarm ring on this machine? An empty list is an alarm from before
+# sharing: every machine that held the row rang it, so keep that reading.
 sub clock_alarm_targets_me {
 	my $alarm = shift;
 	my $machines = $alarm->{'machines'};
@@ -497,6 +534,7 @@ sub clock_sounds {
 	return [ @clock_sound_files ];
 }
 
+# The alarm picker's library: the short chimes first, then the long recordings.
 sub clock_alarm_sounds {
 	my @out;
 	foreach my $s (@clock_sound_files) {
@@ -517,6 +555,8 @@ sub clock_sound_is_long {
 	return $sound =~ m{^alarms/} ? 1 : 0;
 }
 
+# A stored alarm may be a chime's bare name from before the library grew, a
+# notifications/ path, or a long alarms/ path. Everything else is refused.
 sub clock_valid_alarm_sound {
 	my $sound = shift;
 	return '' unless defined $sound && length $sound;
@@ -563,6 +603,8 @@ sub clock_alarm_pidfile {
 	return $dir . '/clock_alarm_' . $uuid . '.pid';
 }
 
+# A long-form track is one process; Dismiss kills it through the pid its shell
+# wrote when it started. A short chime finishes on its own and has no pid file.
 sub clock_alarm_stop_sound {
 	my $uuid = shift;
 	return 0 unless defined $uuid && length $uuid;
@@ -587,6 +629,9 @@ sub clock_alarm_stop_sound {
 	return 1;
 }
 
+# A ringtone preview is the alarm's own sound, played on this machine for a
+# few seconds while the person chooses. It is one process at a time, so
+# auditioning the next sound ends the last one.
 sub clock_preview_pidfile {
 	my $dir = &home('~/.president');
 	eval { File::Path::make_path($dir); } unless -d $dir;
@@ -648,6 +693,9 @@ sub clock_preview_play {
 	return 1;
 }
 
+# The phone app is the only device that can wake itself from Doze and put an
+# alarm in front of a locked screen. jawn hands it both the next alarm and the
+# moment one rings over these short broadcasts; the app's receivers do the rest.
 sub clock_device_broadcast {
 	my ($action, %extra) = @_;
 	return 0 unless &device_setter() eq 'mobile';

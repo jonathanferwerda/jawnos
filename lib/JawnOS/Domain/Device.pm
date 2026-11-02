@@ -418,6 +418,18 @@ sub device_scan {
 	}
 }
 
+# This machine's own row in `devices`, created without a browser. The one Scan
+# that used to build it runs in Configure -> Dev, so a headless server never had
+# a self row - and with no row this hub has no `address` map at all, so the
+# tunnels it holds can never be listed as its own neighbours (tunnel_checker
+# hangs them off that row; device_scan is otherwise the only writer). Built from
+# the same interface report device_scan writes, so the two agree on shape. Cheap
+# when the row already exists (one select), so a per-tick caller is fine.
+# The self row is written by device_scan, which only runs on a real scan. A
+# phone or tablet that never presses Scan therefore kept the address map it
+# had (often `{}`) and peers could not learn its LAN address. Every
+# device_lister pass refreshes it from the interface report, and only when the
+# interface/address signature moved.
 sub refresh_self_address {
 	my $hostname = `hostname`;
 	chomp $hostname;

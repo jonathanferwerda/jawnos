@@ -233,6 +233,12 @@ sub signatorial_identity_file {
 	return &home('~/.jawnos_signatorial_id');
 }
 
+# A second copy beside the database. The home copy is the traditional one, but
+# it depends on HOME, which a container, a `run-as` shell or a hand-run script
+# can have wrong - and a database restored from another machine must never be
+# able to change this machine's identity. The database directory is local, is
+# not replaced by a restore (only jawnos.db is), and is excluded from the code
+# sync, so this copy survives both.
 sub signatorial_identity_mirror {
 	return './database/.jawnos_signatorial_id';
 }
@@ -472,11 +478,17 @@ sub rightNow {
 	return $time;
 }
 
+# Whether this machine has a real GPS. termux-location names the provider that
+# answered; only a `gps` answer proves the hardware. The flag is cache, which is
+# this machine's own and never syncs, so one phone cannot lend its GPS to a
+# laptop. A network fix can be a cell-tower guess blocks from where the person
+# stands, so it never turns the flag on by itself.
 sub navigation_gps_present {
 	my $c = &cache_get({ app => '__president', context => 'navigation', subcontext => 'gps' });
 	return (ref $c eq 'HASH' && $c->{'present'}) ? 1 : 0;
 }
 
+# Remember that a real GPS answered here. Returns 1 once the flag is set.
 sub navigation_gps_confirm {
 	my $provider = lc(shift // '');
 	return 0 unless $provider eq 'gps';
@@ -485,6 +497,10 @@ sub navigation_gps_confirm {
 	return 1;
 }
 
+# The app's GPS service writes each fix to ~/.president/location.json. Only a
+# record that names provider=gps may become a place: a network fix looks like a
+# fix in every other field, which is how the phone was reported in places it had
+# never been. Returns the fix hash (aged by the fix's own timestamp) or undef.
 sub native_location {
 	my ($opts) = @_;
 	$opts ||= {};
@@ -518,6 +534,14 @@ sub native_location {
 	return $loc;
 }
 
+# The navigation utility's own pace, in seconds. President adopts this machine's
+# Batch pools. A pool is a group of utilities that wake together on one pace;
+# the pace lives on the pool, not on each job, so moving a job between pools
+# (or out of all of them) changes only where it is written down. Stored in the
+# machine's utility row as a list, so the order is the person's:
+#   __batch_groups => [ { id, label, seconds }, ... ]
+# An older row stored a plain { id => seconds } map and reads the same; a row
+# that has never been edited has no pools of its own and takes gb.pl's defaults.
 sub batch_pools {
 	my $row = shift;
 	my $stored = (ref $row eq 'HASH') ? $row->{'__batch_groups'} : undef;
@@ -553,6 +577,7 @@ sub batch_pools {
 	return \@pools;
 }
 
+# The pool a job belongs to, or undef when it runs on its own interval.
 sub batch_pool_of {
 	my $row = shift;
 	my $job = shift;
@@ -565,6 +590,8 @@ sub batch_pool_of {
 	return undef;
 }
 
+# The pace a job actually keeps: its pool's seconds, or undef when it is not in
+# a pool (the caller then uses the job's own interval).
 sub batch_interval {
 	my $row = shift;
 	my $job = shift;
@@ -572,6 +599,15 @@ sub batch_interval {
 	return $pool ? $pool->{'seconds'} : undef;
 }
 
+# A job table adopted from the stored utility blob becomes this process's runtime.
+# `lasted_run` is process state - when this runtime last executed the job - so a
+# marker written by a *previous* process (anything before this one started) is
+# meaningless here: the stored value sat 103 hours old on one machine, and the
+# tunnels watchdog read it as "stuck for twelve intervals" on the first tick after
+# every boot, resetting every tunnel as the mesh came up. A marker this process
+# wrote is kept, or the controller's periodic re-adoption would reset the clock
+# every few seconds and no job's own gate would ever elapse. Everything else on
+# the row (schedule, switches, network map) is carried over untouched.
 sub utility_adopt_runtime {
 	my ($jobs, $now, $process_start) = @_;
 	return $jobs unless ref $jobs eq 'HASH';
@@ -587,12 +623,20 @@ sub utility_adopt_runtime {
 	return $jobs;
 }
 
+# Does the runtime need to adopt the stored utility row? At boot, yes; after
+# that only when someone else stamped it (the Configure editor, a peer merge).
+# The controller writes its own row back with the same stamp it just stored
+# (utility_runtime_stamped), so its periodic persist no longer looks like an
+# edit and re-adoption cannot overwrite the live runtime with stale copies of
+# last_run/lasted_run.
 sub utility_row_needs_adoption {
 	my ($adopted, $row_lc, $runtime_lc) = @_;
 	return 1 unless $adopted;
 	return (($row_lc || 0) > ($runtime_lc || 0)) ? 1 : 0;
 }
 
+# Record on the runtime the last_change it just persisted, so the next tick's
+# comparison sees the row it wrote rather than a newer stranger's.
 sub utility_runtime_stamped {
 	my ($runtime, $stamp) = @_;
 	return $stamp unless ref $runtime eq 'HASH';
@@ -601,6 +645,9 @@ sub utility_runtime_stamped {
 	return $stamp;
 }
 
+# Whether the tunnels worker has been stalled long enough to justify restarting
+# the tunnels on this run. No marker means this process has not run the worker
+# yet (a fresh install, or the tick right after adoption), which is not a stall.
 sub tunnels_stall_duty {
 	my ($lasted_run, $now, $interval) = @_;
 	return undef unless defined $lasted_run && $lasted_run =~ /^\d+$/;
@@ -609,6 +656,10 @@ sub tunnels_stall_duty {
 	return (($now - $lasted_run) > ($interval * 1000 * 12)) ? 'restart' : undef;
 }
 
+# The machine's navigation interval, in seconds. The runtime adopts the stored
+# row from the utility controller at runtime, but Manager and the scripts do not
+# share that process, so read the same persisted row here. A navigation job in a
+# batch pool keeps the pool's pace.
 sub navigation_interval {
 	my $signatorial = &subs::signatorial_designer();
 	my $controls = eval { return decode_json &subs::setting_grabber({ app => '__president', setting => 'utility_controller' }) } || {};
@@ -618,6 +669,11 @@ sub navigation_interval {
 	return $interval || 600;
 }
 
+# The pace navigation must keep right now, in seconds. The machine's utility
+# interval is the base, but a running appointment whose app asks for fixes more
+# often than that (its navigation setting, say 1m) is a request to update faster
+# than the slower utility slot - so the pace follows the app down to a
+# battery-wise floor. Base only asks for the utility's own pace.
 sub navigation_pace {
 	my $data = shift || {};
 	my $base = &navigation_interval();
@@ -637,6 +693,13 @@ sub navigation_pace {
 	return $fastest;
 }
 
+# How long a fix the browser writes stays the machine's current place. It has
+# to outlive the next automatic navigation run or the place falls back to public
+# between fixes - the old flat five minutes did exactly that whenever the
+# navigation utility was slower than five minutes. A scheduled watcher says when
+# its own next run is due; otherwise the utility's pace (or the app's, when that
+# is longer) is the gap to cover. One more interval lets the place survive a run
+# that could not get a fix, and two minutes of grace absorbs a late slot.
 sub navigation_hold_warranty {
 	my $data = shift || {};
 	my $now = $data->{'server_time'} || &subs::rightNow();

@@ -46,12 +46,21 @@ our $lockdown_enemy_apps_cache;
 our $presence_relationship_cache;
 our $present_person_apps_cache;
 our %private_revealed_cache;
+# The screen a request speaks for. media_unlock_store keys a fingerprint grant
+# by the paired device uuid, not by the machine's device kind (device_setter),
+# so the request boundary records the browser's own uuid here.
 our $request_device_uuid;
 our $visibility_exposure_cache;
 our %visibility_graph_links;
 our $visibility_graph_ready;
 our %visibility_graph_uuid_app;
 
+# An appointment's level is the strictest of its own app and every social
+# construct named on the row. The field names come from $gb::social_constructs,
+# so every kind - community, club, team, person, project, institution,
+# government, corporation, place, vendor, event - is read, not a fixed list;
+# `account` is included too. The lowest number wins, so a private project makes
+# the record private even when its app is Public.
 sub appointment_visibility_rank {
 	my ($row) = @_;
 	return 4 unless ref $row eq 'HASH';
@@ -89,11 +98,17 @@ sub appointment_private_now {
 	return &appointment_visibility_rank($row) <= 1 ? 1 : 0;
 }
 
+# Private is not a place level any more: it is a lock. A private thing is
+# hidden everywhere, including at home, and only a live fingerprint grant on
+# this screen can show it - and even then only in a private place with no
+# enemy present. The place words stay because a lockdown reads the rating.
 sub visibility_hidden_for {
 	my ($value) = @_;
 	return &visibility_normalize($value) eq 'private' ? 1 : 0;
 }
 
+# A private thing may only be located in a private place during no lockdown.
+# An unknown place reads as public, so a lost fix denies rather than reveals.
 sub private_reachable_now {
 	return 0 if &lockdown_active();
 	return &visibility_exposure() <= 1 ? 1 : 0;
@@ -286,6 +301,8 @@ sub internet_site_appointment_tick {
 	return 1;
 }
 
+# A settings write or a presence change must be seen by the rest of this
+# request; a worker serves one request at a time, so these are request caches.
 sub visibility_cache_clear {
 	%app_visibility_cache = ();
 	%app_visibility_own_cache = ();
@@ -302,6 +319,12 @@ sub visibility_cache_clear {
 	return 1;
 }
 
+# The plate remembers how its latest navigation stop happened. A departure more
+# than three radii away is certain - no ordinary GPS jitter brings a person back
+# from there - so a return must start a new session instead of reopening the one
+# it closed. A near-boundary stop stays resumable for the fifteen-minute window
+# in navigation_automation. The fact is transient (a cache entry), but it only
+# has to outlive the next fix and the resume window.
 sub navigation_plate_exit_set {
 	my ($app, $duty, $certain) = @_;
 	return unless $app && $duty;
@@ -326,6 +349,10 @@ sub navigation_plate_exit_clear {
 	&subs::cache_delete({ app => '__president', context => 'navigation_plate_exit', subcontext => $app . ':' . $duty });
 }
 
+# A departure more than three radii from a plate is a certain leave: no ordinary
+# GPS jitter brings a person back to that plate from there. A loose fix is not
+# certainty - 200 m is the house's own bound on a usable place - so a coarse
+# reading does not count.
 sub navigation_plate_certain_exit {
 	my $data = shift || {};
 	my $radius = 0 + ($data->{'radius'} || 0);
@@ -336,6 +363,11 @@ sub navigation_plate_certain_exit {
 	return $measured > 3 * $radius ? 1 : 0;
 }
 
+# The details bar offers autostop only where navigation_automation can act on it:
+# a duty needs a radius and an action, and a place for the plate to measure from -
+# its own coordinates, or the app's base plate, or the house's. A duty with no
+# radius, or with its action left on none, never moves a session, so a switch
+# built for it would promise something no fix ever acts on.
 sub home_plate_stop_armed {
 	my $data = shift || {};
 	my $duties = $data->{'duties'};
@@ -568,6 +600,12 @@ sub navigation_automation {
 	&subs::navigation_information();
 }
 
+# The hour of the day each app most often happens at, over the recent past, in
+# one query for every app. The clothesline reads in the order the day does, so
+# this gives it that order; it also names the apps whose routine is regular
+# enough to hang themselves, and the hour to hang them at. `hour_days` is how
+# many of the days the anchor hour was seen on, `days` how many days the app was
+# seen at all.
 sub clothesline_daily_hours {
 	my $days = 14;
 	my $now = &rightNow();

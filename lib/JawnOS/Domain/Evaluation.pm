@@ -39,8 +39,18 @@ our $device;
 our $log;
 our $minion;
 our $say_quiet;
+# The schedule a scope now has, as Minion lists it. The configure page asks per
+# app, so the answer is memoised for a few seconds: one query serves a page of
+# apps instead of one per app. arrange() calls this right after a write, so the
+# memo is short enough that a just-made change is seen on the next repaint.
 our %schedule_memo;
 
+# The evaluation may name one relationship it is sure of. This checks the
+# naming against what the briefing actually showed - the pair must be there,
+# strong and not a daily habit - and then writes it the way the relational app
+# itself does: the uuid goes into both apps' sc_ lists, filed under what the
+# other app is (its pos, or its mab). A wrong link mislabels an app, so every
+# check here is a gate, not a suggestion.
 sub evaluation_linker {
 	my ($app, $other, $briefing) = @_;
 	return undef if !$other || $other eq $app;
@@ -68,6 +78,10 @@ sub evaluation_linker {
 	return $rel;
 }
 
+# File one relationship, by hand or by the house's own notice: the two apps are
+# joined under each other's construct (sc_), which is what the relational window
+# shows and what the evaluation reads back as a link. Idempotent, and it drops
+# the two buckets from the relational cache so the window redraws them.
 sub evaluation_relate {
 	my ($app, $other) = @_;
 	return undef if !$other || $other eq $app;
@@ -90,6 +104,11 @@ sub evaluation_relate {
 	return { app => $other, construct => $their_construct, their_construct => $my_construct };
 }
 
+# Assemble the relationships the house is sure enough of, without a hand on each:
+# the event scan's strongest neighbours of one app are filed straight away, so
+# drawing them is the exception rather than the rule. The bar is high (a strong
+# lift over chance, seen often) and an already-related pair is skipped, so a run
+# only ever adds and never churns.
 sub evaluation_autolink {
 	my ($app, $since, $cap, $candidates) = @_;
 	return [] unless $app && $app ne '__president';
@@ -109,6 +128,12 @@ sub evaluation_autolink {
 	return \@filed;
 }
 
+# The relational window reads the settings rows directly; a change to either end
+# of a relationship is already in those rows when the next board is built.
+
+# Undo a relationship, both ways, whoever made it. Symmetric with
+# evaluation_relate so a link the house filed and one drawn by hand are taken
+# apart the same way.
 sub evaluation_unrelate {
 	my ($app, $other) = @_;
 	return { app => $other, skipped => 'nothing to undo' } if !$other || $other eq $app;
@@ -129,6 +154,12 @@ sub evaluation_unrelate {
 	return { app => $other, removed => 1 };
 }
 
+# Take the relationships back that no longer hold up, whoever drew them: for
+# each app this one is related to, keep it only if the house can still see why -
+# the event scan still puts it nearby, or a condition it runs under is still
+# tied to the app - and drop the rest. Nothing is judged until the app has run
+# enough to be read, and only a few go in a run, so a link is removed when it
+# has truly gone quiet and not on a single thin night.
 sub evaluation_prune {
 	my ($app, $since, $cap) = @_;
 	return [] unless $app && $app ne '__president';
@@ -160,10 +191,18 @@ sub evaluation_prune {
 	return \@removed;
 }
 
+# the machine whose worker runs the nightly evaluations; blank means every
+# machine that reconciles keeps its own queue
 sub evaluation_machine {
 	return &subs::setting_grabber({ app => '__president', setting => 'evaluation_machine' }) || '';
 }
 
+# The nightly evaluation is one Minion schedule per scope, named for the scope.
+# The schedule is the mechanism, but it does not survive the launcher: jawn
+# clears ~/.president at startup. So the wish lives in a setting too, and the
+# worker restores the schedules from the settings at boot - see
+# nightly_evaluation_reconcile. Minion reads cron expressions in UTC, and
+# 0 7 * * * is the small hours of the house: 3am EDT, 2am EST.
 sub nightly_evaluation_name {
 	my ($app) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -181,6 +220,8 @@ sub nightly_evaluation_schedule {
 	return $schedule;
 }
 
+# the days the nightly runs, as a comma list of cron weekdays (0 is Sunday);
+# nothing picked means every night
 sub nightly_evaluation_days {
 	my ($app) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -190,6 +231,11 @@ sub nightly_evaluation_days {
 	return [ grep { /^[0-6]$/ } split /\s*,\s*/, $days ];
 }
 
+# The cadence a scope runs on its own: off, hourly, daily, weekly, monthly,
+# yearly, or each_run (evaluated whenever the appointment itself runs). The old
+# nightly checkbox is read as daily, so a house that has not been reconfigured
+# keeps its nights. The timed cadences become a cron the worker carries out;
+# each_run has no schedule and rides the appointment writer instead.
 sub evaluation_cadence {
 	my ($app) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -199,6 +245,11 @@ sub evaluation_cadence {
 	return 'off';
 }
 
+# Minion reads cron in UTC, and 0 7 * * ... is the small hours of the house
+# (3am EDT, 2am EST). The days select narrows daily and weekly; nothing picked
+# means every night for daily and Sunday for weekly. Each scope gets its own
+# minute from its name, so the whole house does not hand the model twenty runs
+# at the same instant (which is what made a nightly batch time out).
 sub evaluation_schedule_cron {
 	my ($app, $cadence) = @_;
 	$cadence = &subs::evaluation_cadence($app) unless defined $cadence;
@@ -222,6 +273,8 @@ sub evaluation_schedule_cron {
 	return undef;
 }
 
+# How often a scope wants a report, in milliseconds. Zero for the cadences with
+# no interval to catch up (off, each_run).
 sub evaluation_cadence_interval {
 	my ($cadence) = @_;
 	return 3600 * 1000 if $cadence eq 'hourly';
@@ -232,6 +285,7 @@ sub evaluation_cadence_interval {
 	return 0;
 }
 
+# carry out one scope's cadence: schedule its cron, or clear it (off, each_run)
 sub evaluation_schedule_arrange {
 	my ($app) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -249,6 +303,8 @@ sub evaluation_schedule_arrange {
 	delete $schedule_memo{$app};
 }
 
+# the controls write both halves: the setting remembers the wish, the schedule
+# carries it out, and the answer reports the schedule that now exists
 sub evaluation_cadence_apply {
 	my ($app, $cadence) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -258,11 +314,17 @@ sub evaluation_cadence_apply {
 	return &subs::nightly_evaluation_schedule($app);
 }
 
+# the old on/off checkbox, kept for anything that still speaks it
 sub nightly_evaluation_apply {
 	my ($app, $on) = @_;
 	return &subs::evaluation_cadence_apply($app, $on ? 'daily' : 'off');
 }
 
+# Every run fires the evaluation when the scope's cadence is each_run. A Minion
+# lock throttles a burst of runs to one evaluation per window (300s), so a
+# morning of records does not queue a morning of model calls. Only a completed
+# run counts - a one-shot ('usual') or the end of a start/stop pair ('stop') -
+# and never a spawned child.
 sub evaluation_run_trigger {
 	my ($app, $appt) = @_;
 	return unless $app && $app ne '__president';
@@ -277,6 +339,11 @@ sub evaluation_run_trigger {
 	return 1;
 }
 
+# The queue under ~/.president does not outlive the launcher, but the settings
+# do. At boot this reads the wishes back, puts the schedules that are wanted
+# back, and drops any nightly schedule the settings no longer ask for. Held in
+# an eval because a boot that cannot reach the queue or the settings must not
+# take the worker down with it.
 sub nightly_evaluation_reconcile {
 	eval {
 		# Every machine keeps the schedules. The named machine is a preference the
@@ -363,6 +430,8 @@ sub nightly_evaluation_reconcile {
 	return;
 }
 
+# The worker half of the nightly checkbox: the same agent the evaluate button
+# runs, so a fresh report is in the cache before the house wakes.
 sub appointment_evaluation_job {
 	my ($job, $data) = @_;
 	my $app = $data->{'app'} || '__president';
@@ -456,6 +525,9 @@ sub appointment_evaluation_job {
 	$job->finish({ app => $app, timestamp => $report->{'timestamp'} });
 }
 
+# Close a claim that could not be carried. A dispatched assignment is marked
+# failed so the dispatcher stops addressing it and the next cadence reassigns;
+# an elected run releases the row so a retry or a peer can take it.
 sub ai_job_settle {
 	my ($job, $me, $dispatch_mode, $state) = @_;
 	return unless length($job // '');
@@ -467,6 +539,10 @@ sub ai_job_settle {
 	}
 }
 
+# A durable note of what each night did, per scope: which machine ran it, when,
+# with which model, and - when the run stepped aside - why. The queue is
+# per-machine and the wish is shared, so without it the only witness to a night
+# that did nothing was the absence of a report.
 sub evaluation_run_record {
 	my ($app, $entry) = @_;
 	$app = '__president' unless $app && $app ne '';
@@ -477,6 +553,10 @@ sub evaluation_run_record {
 	return $log;
 }
 
+# Text to an image: the Plat Image-generation model, and the bytes it answered
+# with. Cloudflare's @cf text-to-image models run at the run/{model} endpoint and
+# answer with the picture itself; any other model goes through the chat layer,
+# whose image parts are collected here. Returns ($bytes, $mime, $error).
 sub ai_text_to_image {
 	my ($data) = @_;
 	my $prompt = $data->{'prompt'} || '';
@@ -547,6 +627,10 @@ sub ai_text_to_image {
 	return (undef, undef, 'the model answered without an image');
 }
 
+# The audio/video twin of ai_text_to_image's generic path: the chosen generation
+# model is asked for the media and the first part of the right kind it returns is
+# the answer. Pen uses this so a described audio/video prompt is filed by the
+# agent that takes care of that kind.
 sub ai_text_to_media {
 	my ($kind, $data) = @_;
 	my $prompt = $data->{'prompt'} || '';
@@ -580,6 +664,9 @@ sub ai_text_to_media {
 	return (undef, undef, "the model answered without $kind");
 }
 
+# Google Veo, the video-generation job: submit a prompt, poll the long-running
+# operation until it is done, then fetch the file it names. Returns
+# ($bytes, $mime, $error), the same shape as the other generators.
 sub ai_text_to_video_veo {
 	my ($model, $prompt, $data) = @_;
 	my @key_settings = &subs::ai_key_settings();

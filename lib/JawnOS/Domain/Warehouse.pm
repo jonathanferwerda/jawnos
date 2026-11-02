@@ -40,6 +40,10 @@ our $device;
 our $gb;
 our %m;
 
+# FIFO-walk the stock and write off whatever has outlived its packaging shelf
+# life. Runs on a timer (see President.pl). Each write-off references the lot it
+# expired via app_uuid, and since the write-off is itself a negative movement,
+# the next pass consumes that lot and won't expire it twice.
 sub warehouse_expiry_sweep {
 	my $now = &rightNow();
 	my $q = &db_query('select * from warehouse where item is not null and item != ? and place is not null and place != ? order by timestamp asc', '', '');
@@ -529,6 +533,8 @@ sub remote_machine_lister {
 
 }
 
+# A plain public IPv4 address, or '' for loopback, private, carrier-grade NAT
+# and anything that is not an address at all.
 sub public_ip_only {
 	my $ip = shift || '';
 	return '' unless $ip =~ /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
@@ -538,6 +544,9 @@ sub public_ip_only {
 	return $ip;
 }
 
+# The public-IP echo services offered under Configure -> Plat -> DNS. `all`
+# asks each in turn so one service having a bad day does not leave the panel
+# blank; `none` stops the lookup entirely.
 sub public_ip_check_choice {
 	my $choice = &setting_grabber({ app => '__president', setting => 'public_ip_check', device => 'all' });
 	$choice = &setting_grabber({ app => '__president', setting => 'public_ip_check' }) unless defined $choice && length $choice;
@@ -557,6 +566,9 @@ sub public_ip_check_urls {
 	return ($url{'cloudflare'}, $url{'ipify'}, $url{'icanhazip'});
 }
 
+# A machine's own public interface, without asking anyone outside. This is what
+# a server shows when the external check is off: its NIC carries the address
+# itself. A machine behind NAT has no public interface, so this returns ''.
 sub public_interface_address {
 	my $rm = shift;
 	return '' unless ref $rm eq 'HASH';
@@ -572,6 +584,11 @@ sub public_interface_address {
 	return &public_ip_only($rm->{'ip'});
 }
 
+# The address a remote machine presents on the public internet, as far as this
+# house knows it: the address a hub saw it dial from (kept in `public_address`,
+# or still inside the network blob), or one of its own interfaces when the
+# machine sits directly on a public address (a hosted server). Returns '' for a
+# machine behind a router that no hub has seen.
 sub remote_public_address {
 	my $rm = shift;
 	return '' unless ref $rm eq 'HASH';
@@ -650,6 +667,12 @@ sub remote_machine_tunnel_processor {
 	return $rm;
 }
 
+# ---- the tailnet: exit-node status and selection ---------------------------
+# The remote_control panel's VPN button routes this machine's web traffic
+# through a peer that offers an exit node, so sites see this device at that
+# peer's address. A Linux peer drives its own tailscaled; the Android client
+# answers through its own bridge instead (there is no tailscale binary or
+# socket for the manager to call there).
 sub tailnet_status {
 	my $ttl = 3;
 	our ($_TAILNET_STATUS, $_TAILNET_STATUS_AT);
@@ -698,6 +721,15 @@ sub tailnet_set_exit {
 	return { ok => ($rc == 0 ? 1 : 0), exit => $ip, error => ($rc == 0 ? undef : ($out || 'tailscale set failed')) };
 }
 
+# The tailnet address a roster row advertises, from its own network map first
+# (a peer's ip column is often the LAN address) and its ip column second.
+# The name this machine calls itself on. It is the configured domain with its
+# first label replaced by `local` (oldtop.jonathanferwerda.com reads as
+# local.jonathanferwerda.com), which the house's DNS points at 127.0.0.1: the
+# router does it on the home LAN and Headscale carries the same record for the
+# tailnet. The URL keeps the wildcard certificate, while the bytes never leave
+# the device - so the manager opens without a VPN and without a round trip to
+# another machine. `local_domain` in config.json overrides the derivation.
 sub local_domain {
 	my $config = eval { &config_reader() } || {};
 	my $explicit = $config->{'local_domain'} || '';

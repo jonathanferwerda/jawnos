@@ -44,6 +44,22 @@ our $house_key_password_context;
 our $house_key_password_magic;
 our %house_key_wrap_alg;
 our $house_key_wrap_context;
+# --- wrapping the house key to a device ---------------------------------------
+# A device never needs the house key in the clear. To hand it one, the server
+# mints a throwaway key pair, agrees a secret with the device's public key,
+# derives an AES-256 key from the agreement (SHA-256 over both public halves
+# and a context, so swapping either half changes the key), and seals the house
+# key with AES-GCM. The blob carries the throwaway public half, an IV and the
+# tag; the device repeats the agreement with its own private key.
+#
+# Two curves are accepted, and the blob says which one it is, because the
+# devices are not alike: an app key is Ed25519 (signing only - this machine has
+# no libsodium to convert it to X25519), while a phone's bio key is P-256 and
+# can agree. Ed25519 is refused rather than guessed at, so a caller has to give
+# the device a key that can actually do the agreement.
+#
+# Every wrap is fresh, so nothing is stored: there is no table of wrapped
+# copies, and a leaked blob is useless once the throwaway half is gone.
 our $house_key_wrap_magic;
 our %m;
 
@@ -397,6 +413,14 @@ sub tunnel_peer_connect {
 	return $enrollee;
 }
 
+# What device_scan does for a neighbour it finds on the LAN, done headlessly for a
+# peer the hub holds a tunnel to: ask the peer's own /gate for its name, purpose,
+# signatorial and restore list (its jawnos.enc backups), write them onto the
+# neighbour row in this machine's own device address, then run the same handshake
+# the Dev panel's Connect button does (remote_device_connect) so the roster row
+# carries the buttons and hub-side manager. Without a browser nothing else does
+# this for a tunnel, so the peer appeared in Dev with no name and no backup to
+# restore from.
 sub tunnel_peer_enrol {
 	my ($signatorial) = @_;
 	return unless $signatorial;
@@ -479,6 +503,11 @@ sub system_monitor {
 	}, { name => 'system monitor' });
 }
 
+# --- the vault ---------------------------------------------------------------
+# The suds at rest, sealed to this machine's own key file (~/.house.key, which
+# never rides the database, a backup, or a code sync). One row per machine, so
+# a merged database still opens on every machine; a database that leaves this
+# machine carries only sealed rows, worthless without the key file.
 sub house_key {
 	my $path = &home('~/.house.key');
 	my $key = '';
@@ -504,6 +533,7 @@ sub house_key_wrap_alg {
 	return $house_key_wrap_alg{ref $device};
 }
 
+# house_key_wrap($key, $device_public_key_object) -> base64 blob or undef
 sub house_key_wrap {
 	my ($K, $device) = @_;
 	return undef unless defined $K && length $K;
@@ -536,6 +566,7 @@ sub house_key_wrap {
 	return encode_base64($blob, '');
 }
 
+# house_key_unwrap($blob, $device_private_key_object) -> the key or undef
 sub house_key_unwrap {
 	my ($blob64, $device) = @_;
 	return undef unless defined $blob64 && length $blob64;
@@ -574,6 +605,15 @@ sub house_key_unwrap {
 	return (defined $K && length $K) ? $K : undef;
 }
 
+# --- Ed25519 -> X25519 --------------------------------------------------------
+# An app device's key is Ed25519: it signs but cannot agree. The birational map
+# takes its public half to a Montgomery point, and its private seed becomes a
+# scalar the same way libsodium does it (SHA-512, then clamp), so a device can
+# wrap and unwrap with the key it already has. Checked against libsodium on four
+# random keys: public and private agree byte for byte.
+#
+# Math::BigInt does the only big-number work and it runs twice per pairing, not
+# per request; the private half is a hash and a clamp, so it is cheap.
 sub house_key_ed25519_x25519_public {
 	my ($ed) = @_;
 	return undef unless $ed;
@@ -611,6 +651,8 @@ sub house_key_argon2_salt {
 	return encode_base64(Crypt::PRNG::random_bytes(16), '');
 }
 
+# The reference tool, for an OpenSSL without Argon2. The password arrives on
+# stdin, never in argv; the salt is public and may ride the command line.
 sub house_key_argon2id_cli {
 	my ($password, $salt, $t, $m, $p, $len) = @_;
 	return undef unless defined $password && length $password;
@@ -641,6 +683,7 @@ sub house_key_argon2id_cli {
 	return undef;
 }
 
+# (key, descriptor) - with no descriptor, take the strongest that works here
 sub house_key_password_kdf {
 	my ($password, $salt, $len, $desc) = @_;
 	return (undef, undef) unless defined $password && length $password;

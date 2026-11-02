@@ -38,6 +38,9 @@ use Unicode::Normalize qw(NFC);
 our $config;
 our %m;
 
+# The address a provider redirects back to, and the address a webhook is sent
+# to. The public side of the house lives on port 3000; a house with a public
+# name can override the whole thing with pay.base_url.
 sub pay_public_base {
 	my ($c) = @_;
 	my $custom = &pay_setting('base_url', '');
@@ -67,6 +70,8 @@ sub pay_ua {
 	return Mojo::UserAgent->new(connect_timeout => 8, inactivity_timeout => 25, request_timeout => 35);
 }
 
+# The invoice's own reference, printed on the paper and used to match an
+# e-transfer's message. It is the human id, not the uuid.
 sub pay_invoice_ref {
 	my ($data) = @_;
 	my $id = ref $data eq 'HASH' ? ($data->{'id'} || '') : '';
@@ -89,6 +94,8 @@ sub pay_invoice_balance {
 	return ($data, $balance + 0, $paid + 0);
 }
 
+# Find the invoice a public payment link names. The customer uuid scopes it, so
+# one invoice uuid cannot be paid through another customer's page.
 sub pay_invoice_lookup {
 	my ($uuid, $cx) = @_;
 	return () unless defined $uuid && length $uuid;
@@ -101,6 +108,9 @@ sub pay_invoice_lookup {
 	return ($inv, $customer, $data, $balance, $paid);
 }
 
+# A hosted checkout is remembered for an hour so a refresh reopens the same one
+# instead of creating a second charge. The key carries the amount, so a partial
+# payment creates its own session.
 sub pay_session_save {
 	my ($provider, $uuid, $data) = @_;
 	return unless defined $provider && defined $uuid && ref $data eq 'HASH';
@@ -138,6 +148,8 @@ sub pay_session_forget {
 	&db_query('delete from cache where context = ? and uuid like ?', 'pay_session', 'pay_session:' . $provider . ':' . $uuid . ':%');
 }
 
+# The one place a payment is written to an invoice. It is safe to call twice:
+# a provider reference already on the invoice is reported, not counted again.
 sub pay_record_payment {
 	my ($args) = @_;
 	$args ||= {};
@@ -245,6 +257,9 @@ sub pay_record_payment {
 	};
 }
 
+# What the public invoice page offers. Only providers that can actually finish
+# are listed; Interac has no redirect, so it carries the address and reference
+# the customer needs instead of a button.
 sub pay_options_for {
 	my ($c, $inv, $data, $balance, $cx) = @_;
 	return undef unless &pay_on && defined $balance && $balance > 0.005;
@@ -285,6 +300,8 @@ sub pay_options_for {
 	};
 }
 
+# Minor units: most currencies have cents, but a few do not. Checkout APIs
+# want an integer, and paying 100x too much is worse than a wrong-looking row.
 sub pay_minor {
 	my ($amount, $currency) = @_;
 	my %zero = map { $_ => 1 } qw(BIF CLP DJF GNF JPY KMF KRW MGA PYG RWF UGX VND VUV XAF XOF XPF);
@@ -299,6 +316,7 @@ sub pay_major {
 	return ($minor || 0) / 100;
 }
 
+# ---- Stripe ---------------------------------------------------------------
 sub pay_stripe_start {
 	my ($args) = @_;
 	my $secret = &pay_secret_read('stripe_secret');
@@ -376,6 +394,7 @@ sub pay_stripe_webhook {
 	});
 }
 
+# ---- Square ---------------------------------------------------------------
 sub pay_square_base {
 	return &pay_setting('square_mode', 'production') eq 'sandbox' ? 'https://connect.squareupsandbox.com' : 'https://connect.squareup.com';
 }
@@ -474,6 +493,7 @@ sub pay_square_webhook {
 	});
 }
 
+# ---- PayPal ---------------------------------------------------------------
 sub pay_paypal_base {
 	return &pay_setting('paypal_mode', 'live') eq 'sandbox' ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com';
 }
@@ -633,6 +653,9 @@ sub pay_paypal_webhook {
 	return { ok => 1, ignored => $type };
 }
 
+# ---- starting and finishing a checkout ------------------------------------
+# One entry point both the public page and a return use, so the invoice lookup
+# and the readiness check cannot drift apart.
 sub pay_start {
 	my ($provider, $c, $uuid, $cx) = @_;
 	$provider = lc($provider || '');

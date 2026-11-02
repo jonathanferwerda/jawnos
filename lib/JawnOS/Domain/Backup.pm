@@ -48,6 +48,10 @@ our $sync_digest_cache;
 our $sync_table_cache;
 our $universal_splitter;
 
+# The encrypted SQLite snapshot is the archive / migration / v2 path now. A normal
+# delta between peers runs the v3 row stream (`Manager::sync_rows_pull` and the
+# `/manager/sync_rows` route), which shares merge_table_rows/merge_finish and never
+# builds this temporary database.
 sub backup_now {
 	my $c = shift;
 	my $start_time = &subs::rightNow();
@@ -494,11 +498,18 @@ sub backup_now {
 	return $returner;
 }
 
+# A cheap, truthful picture of what this machine's appointments hold, so a peer
+# can tell whether it already has everything instead of pulling the window every
+# tick. Appointments are only inserted or re-stamped, so if the count and the
+# newest server_time are both unchanged there is nothing new to send.
 sub appointment_watermark {
 	my $row = &db_query('select count(*) as c, coalesce(max(server_time),0) as m from appointments')->hashes->[0];
 	return { count => ($row->{'c'} || 0) + 0, max_server_time => ($row->{'m'} || 0) + 0 };
 }
 
+# What this machine holds above the watermark a peer already has (its ?since=):
+# appointments with a newer server_time. A count, not the rows, so the check
+# stays cheap on the two-minute tick; the reconciliation is what moves data.
 sub appointments_since {
 	my $since = shift;
 	return undef unless defined $since && $since =~ /^[0-9]+$/;
@@ -510,6 +521,13 @@ sub appointments_since {
 	return { count => ($row->{'c'} || 0) + 0, max_server_time => ($row->{'m'} || 0) + 0, since => $since + 0 };
 }
 
+# --- the House digest -------------------------------------------------------
+# `server_time` is the write time of every replicated row, so a per-table
+# {count, sum(server_time), max} is a cheap fingerprint of the whole table. Two
+# machines that hold the same rows have the same fingerprint even when the rows
+# arrived by different paths; a machine that was offline and is missing an old
+# row has a different count (or sum) and is caught. /remote_auth_test exchanges
+# this map, and the caller plans a per-table pull from the difference.
 sub durable_settings_where {
 	# Settings churn constantly (window geometry, open tabs, timers, remote_*
 	# state). Only app configuration may trigger a sync; the export still carries

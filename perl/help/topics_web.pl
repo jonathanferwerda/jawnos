@@ -1,0 +1,136 @@
+# Help registry part 2 of 9: The web, the terminal, the network, the camera and the phone.
+package help;
+
+use strict;
+our %topic;
+
+$topic{'internet'} = {
+		title => 'Internet', category => 'apps', app => 'internet',
+		templates => [ 'templates/internet/internet.html.ep', 'templates/web/web.html.ep', 'public/js/manager/internet.js', 'public/js/manager/page_agent.js' ],
+		verified => '2026-10-29',
+		summary => 'Web and Browse: saved pages with measures, and a real browser that counts site time.',
+		body => [
+			'Internet has two components. Web holds the pages the house fetched; each can be opened, or measured with the Measures tool. Browse opens a real browser in its own window on a computer (or its own screen on a phone), because a live page cannot run inside the manager window. The tab you used last is the tab Internet opens, so Web and Browse do not keep switching places.',
+			'Browse counts the time each site is in front, but only in the JawnOS browser: a page opened in another browser is not counted, and neither is the Facebook app. Every domain you visit is also a bookmark. Press a domain to open it in the browser, or type an app beside it: the box suggests any appointment in the house that the visibility rule shows here and now, so an app the rule hides (by place, or by a lockdown) is not offered. Pick one to assign the domain, so facebook.com minutes land under the app you chose. While the JawnOS browser stays on that domain, the app\'s appointment runs; when you leave the site, close the tab or change app, it stops at the last moment the page was in front. Type a dash to stop counting the domain against an app.',
+			'A domain you assigned opens two ways: its link opens the browser at the saved address, and the app name beside it opens that app in the manager exactly as its own window. The Browse tab shows today\'s site time beside each domain, and the time is kept per machine so the phone and the laptop do not blur together.',
+			'To measure a live page, open a saved page from the Web tab with the measure icon. The browser opens with the picker on; click the value you want. JawnOS offers the shapes it can read and saves the one you pick, exactly as the Measures tool does for a fetched page.',
+			'The browser is a separate surface on purpose: it has its own cookies and history, keeps the manager\'s bridges away from the pages you visit, and cannot reach the house\'s local address.',
+			'The Internet window\'s title bar carries the Guide\'s page-agent button in place of the question mark: press it and the Guide is attached to this window, able to read and fill its fields — the address in Browse, the app box beside a domain — from what you discussed, from your own records, or from another field. Closing the panel detaches it. Help for this window is still a press of F1 away, and every other window keeps its question mark.'
+		],
+		steps => [
+			'Open Internet from the start menu.',
+			'Web lists the pages the house fetched; use the browser icon to open one, or the measures icon to point at a value in it.',
+			'Browse takes an address and opens the JawnOS browser; time on each site appears under Site time today.',
+			'To make a domain count toward an app, type the app name in its row and pick it; type a dash to clear it. Press the domain to open it, or the app name to open that app.',
+			'A page opened in another browser is not counted; the count is per machine.',
+			'Press the page-agent button in the title bar to have the Guide fill the address or the app box for you; close the panel to detach it.'
+		],
+		related => [ 'web' ]
+	};
+$topic{'web'} = {
+		title => 'Web', category => 'apps', app => 'web',
+		templates => [ 'templates/web/web.html.ep', 'templates/web/web_measure_confirm.html.ep' ],
+		verified => '2026-10-26',
+		summary => 'The pages the house fetched, with measures.',
+		body => [
+			'Web is the saved-page component of Internet, useful for pulling a page up beside your work without leaving the desktop.',
+			'To watch a number on a page, open the page in Web and click the Measures icon in its toolbar. Pick the measure from the list, then click the value on the page. Web tests the click and offers the shapes it can read: a JSON path for a feed, the table row and cell that hold the value, a label with the value beside it, or the plain element. Pick the shape whose Value column shows the number you want, then press Save.',
+			'The shape is stored, not a page position, so a table that gains a row keeps reading the right cell; a JSON feed keeps the exact key. A measure reads from the workspace as a whole, so the phone can fetch the page while the selectors stay on the computer.'
+		],
+		related => [ 'internet', 'terminal' ]
+	};
+$topic{'terminal'} = {
+		title => 'Terminal', category => 'apps', app => 'terminal',
+		summary => 'A shell, in a window - on this machine or another one.',
+		verified => '2026-10-30',
+		body => [
+			'Terminal is a real shell attached to the machine running JawnOS. It is where you do the hands-on work: scripts, checks, and the occasional bit of archaeology.',
+			'The toolbar at the foot of the window switches views. Shell is the live session: click it and type straight into it, with colour, cursor keys, Backspace, Tab, Ctrl+C and the rest behaving as they do in a desktop terminal. Commands holds a short history of what you sent to the shell. Errors and Log are readable lists, each with its own Clear button in the header; the newest entry is always in view, and the list follows new entries while you are at the bottom.',
+			'The status at the left of the toolbar names the machine the shell is running on. Press the server button beside it to open the terminal settings: connect back to this machine, or pick one of the machines linked to the house and connect to it over ssh. Each machine remembers its own login name and port; the port is 8022 by default, which is the sshd JawnOS runs elsewhere. Each Terminal window has its own shell, so switching here changes only this window. The panel also sets the text size.',
+			'Open as many terminals as you need from the Terminal pin or the start menu: every window runs its own shell, can be moved and resized on its own, and wears its own tile on the taskbar. Minimising a window keeps its tile, so the taskbar is the quickest way to jump between them. Closing a window leaves its shell running on the server; the Open sessions list in the settings panel brings a closed one back into a window, and End closes a shell you no longer need.',
+			'The code button in the toolbar opens the Coding agent\'s chatbox, so you can ask for a change in words and watch it run the commands and ship the result without leaving the terminal. It keeps its own conversation. The bar drags the panel anywhere on the screen, and + in the bar opens another agent, each with its own thread.',
+		],
+		steps => [
+			'Open Terminal; it opens a session on the host machine.',
+			'Open it again for another terminal; each window keeps its own shell and taskbar tile.',
+			'Run commands as you would in any shell, or use Commands to keep a history of them.',
+			'Press the server button to switch this window to another linked machine over ssh, or to reopen a closed session.',
+			'Use Errors and Log to read what went wrong; Clear in either header empties that list.',
+			'Press the code button to hand a task to the Coding agent — or + in its bar for another one, so several can work at once.'
+		],
+		related => [ 'ide', 'process_monitor' ]
+	};
+$topic{'network'} = {
+		title => 'Network', category => 'apps', app => 'network',
+		templates => [ 'templates/apps/network.html.ep', 'public/js/manager/network.js' ],
+		verified => '2026-10-30',
+		summary => 'Interfaces, Wi-Fi, VPN, the machines on the mesh, and the phone.',
+		body => [
+			'Network is the app for the connection itself. It opens from the start menu and shows four things in one window: this machine\'s interfaces, its Wi-Fi, its VPN, and a read-only view of the machines on the mesh. A fifth section appears on a phone.',
+			'Interfaces lists every network interface with its state, MAC address, IPv4 and IPv6 addresses, whether the address came from DHCP or was set by hand, and the bytes received and sent. The list refreshes itself every fifteen seconds while the window is open, and Refresh reads it again at once. An interface carries an Up or Down button beside its state, for bringing a link up or taking it down.',
+			'Wi-Fi is driven through iwd. The Radio button turns the wireless adapter on or off, Scan lists the networks in range with their security and signal, and Connect takes a passphrase for a secured network. Disconnect drops the current network and Forget removes a saved one. A machine with no wireless adapter says so instead of showing an empty list.',
+			'VPN reports what is really running. When Tailscale is installed it shows whether the tailnet is up, its address and any exit node. WireGuard configurations in /etc/wireguard and OpenVPN client configurations in /etc/openvpn/client are listed with Start and Stop buttons that drive their systemd units. When none of these is configured the section says so; it never pretends a connection exists.',
+			'Devices and mesh is a compact, read-only summary: the machines the house knows and the interfaces each one reaches a network with, built from the same device listing the Dev panel uses. The button opens Configure -> Dev for the full panel - scanning, purposes, privileges and the router cards - so the Network app never duplicates it.',
+			'On Android, when the JawnOS app exposes its network bridge, the Android section shows the phone\'s current connection and VPN and offers Scan, Connect, Disconnect, and buttons that open the phone\'s own Wi-Fi and VPN settings. The Linux sections remain the machine\'s own network, not the phone\'s.',
+			'On the live image, systemd-networkd brings up wired and wireless interfaces over DHCP, iwd handles Wi-Fi, and systemd-resolved answers DNS. In QEMU with user-mode networking the guest receives 10.0.2.15 and a working gateway automatically.'
+		],
+		steps => [
+			'Open Network from the system category of the start menu.',
+			'Read the Interfaces table, or press Refresh to read it again.',
+			'In Wi-Fi, press Radio to turn the adapter on, then Scan.',
+			'Type the passphrase in a secured network\'s row and press Connect; Disconnect drops it and Forget removes it from the saved list.',
+			'In VPN, start or stop Tailscale, or a WireGuard or OpenVPN configuration that is already on the machine.',
+			'Press Open Configure -> Dev for the full machine and network panel.',
+			'On a phone, use the Android section to scan, connect or open the system Wi-Fi and VPN settings.'
+		],
+		related => [ 'devices_and_mesh', 'configure', 'terminal', 'start_menu' ]
+	};
+$topic{'camera'} = {
+		title => 'Camera', category => 'apps', app => 'camera',
+		'templates' => [ 'templates/apps/camera.html.ep', 'public/js/manager/camera.js' ],
+		controls => [ 'Take a photo', 'Record a video', 'Unclaimed media', 'Select all', 'Approved' ],
+		verified => '2026-11-01',
+		summary => 'The device camera and video recorder, plus the pool of unclaimed media waiting to be filed.',
+		body => [
+			'Camera takes a photo or records a video. In the app it opens the device camera and its video recorder (window.JawnCamera), so you get a viewfinder you can see and the camera\'s own processing. On the desktop and in a browser it uses the machine\'s own webcam through getUserMedia.',
+			'A capture is filed under the Camera app. In the app an appointment\'s own camera buttons open the same OS camera: the rear/front pair in its Details view and Camera (native) / Video (native) in its Media group. Details files the capture onto that row. The Media group names only the app, so it files onto the app\'s open session, or its newest row when nothing is running - never into Unclaimed media.',
+			'A capture taken in the Camera app itself - and media an agent generated without an appointment - waits in Unclaimed media with a one-week warranty. Tick the items you want (or Select all), then search for an appointment name and press Approved, or drop them onto the drop zone.',
+			'On the desktop and in a browser, Source chooses which camera the next capture uses: Auto, Front or Back, and then every video input the machine reports by name. The choice is remembered on that machine, so the same lens is used next time. On a phone the OS camera chooses its own lens.',
+			'An appointment\'s Media group carries the same idea across the House: each row of buttons has a machine picker under it, so a photo can be taken on a chosen phone and a scan on a chosen computer while the appointment stays where you are. The pick is remembered for that person at that screen, and the picture or scan lands on the appointment as usual. Only a machine that can do the job is offered - phones for a camera, computers for a flatbed or feeder scan.'
+		],
+		steps => [
+			'Open Camera from the start menu, or pin it to the taskbar.',
+			'Choose a Source when the machine has more than one camera.',
+			'Tap Take a photo or Record a video; the OS camera opens.',
+			'The capture is saved when you accept it in the camera.',
+			'To file unclaimed media onto an appointment, tick items, search for the appointment name, and press Approved.'
+		],
+		related => [ 'gallery' ]
+	};
+$topic{'phone'} = {
+		title => 'Phone', category => 'apps', app => 'phone',
+		templates => [ 'templates/apps/phone.html.ep', 'public/js/manager/phone.js' ],
+		controls => [ 'Known', 'Recent', 'Blocked', 'All', 'Dial', 'Call', 'Caller ID', 'Block', 'Unblock' ],
+		verified => '2026-10-16',
+		summary => 'Calls, the house\'s known contacts, and a dial pad.',
+		body => [
+			'Phone shows the calls the house has logged - every call is an appointment with the subtype phone, on the caller\'s own app - and the numbers the house knows. Known is the people it knows; Recent lists the latest calls, and a row opens that person\'s thread; All adds the numbers that are only numbers, the ones a caller left behind that no name has claimed yet, which is where you go to find an unknown caller and name them.',
+			'A person can keep more than one line (a home number, a work number, a second mobile - set under Configure, in the app\'s Phones tile). They are listed together on one row, the plain phone number first and the rest with their type; tapping any one fills the dial pad with that number, and a call or text from any of them still reaches the person.',
+			'Blocked shows the Box Office\'s blocked numbers, each with an Unblock button. A number there never rings: the phone turns the call away and files it as a cancelled call, so it still shows in Recent.',
+			'Known and All: tapping a number fills the dial pad with it. In the app the device\'s own address book (window.JawnContacts) replaces the Known list once its permission is granted.',
+			'Dial is a pad that places a call on a phone (termux-telephony-call). On the desktop it says dialing is only available on a phone.',
+			'With Caller ID on (the button asks for the Call screening role), the house learns who is calling as it rings. In the app that role names the caller on screen: an incoming call wakes the screen over the lock screen with their picture (the house\'s own image for them, or the JawnOS logo), their name, the number, and Answer and Decline. Without it the house\'s call-log check files the call a moment later.',
+			'A call is recorded by the app itself, not by whatever page happens to be open: the phone keeps one record per call - who, which way, when, and whether anyone answered - and the house files it from that, so a call taken with the app in the background still becomes an appointment on the caller\'s own app (or the phone app when the number is not known). It opens at the ring and closes at the hangup, or cancels when nobody answered.',
+			'A recent call\'s Block button - twice, the house\'s habit for anything that leaves a lasting rule - puts that number on the Box Office\'s blacklist, and Unblock in the Blocked pane takes it off again.'
+		],
+		steps => [
+			'Open Phone from the start menu, or pin it to the taskbar.',
+			'Known: tap a number to fill the dial pad - a person with several lines lists them all, and each one taps on its own.',
+			'Recent: tap a call to open the caller\'s appointment thread.',
+			'Recent: press Block twice on a call to bar that number from ringing again.',
+			'Blocked: press Unblock twice to let a number through again.',
+			'Dial: key a number and press Call.'
+		],
+		related => [ 'mailbox', 'box_office' ]
+	};
+1;
