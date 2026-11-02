@@ -152,7 +152,7 @@ Two certificates already exist, and they already split along this line:
 
 | Cert | Covers | Renewed by | Expires |
 |---|---|---|---|
-| `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | `scripts/tls_issue.pl`, **DNS-01** through the provider in Configure → Plat → DNS | 2027-01-01 |
+| `*.jonathanferwerda.com` | any subdomain — the house manager and hub today | **certbot on the laptop** (`dns-godaddy`, `certbot-renew.timer`), or `scripts/tls_issue.pl` from the panel | 2027-01-01 |
 | `thejunderground.com` | apex + `www` | system **certbot** on the VPS — retired with it (D11) | 2026-12-07 |
 
 So the tailnet does **not** need the apex, and it does **not** need a certificate of its own: point
@@ -160,6 +160,21 @@ Headscale's `tls_cert_path`/`tls_key_path` at copies of `server/fullchain.pem` a
 `server/privkey.pem` from the `house` tree, and `headscale.jonathanferwerda.com` validates against
 the wildcard. `thejunderground.com` is then free for the Elixir app, which moves to the KS-5 with
 it (D11); the apex certificate retires with the VPS.
+
+**Where the wildcard is renewed (answered 2026-11-02).** On the **laptop**, not on either server.
+`certbot-renew.timer` with `authenticator = dns-godaddy` renews `*.jonathanferwerda.com` into
+`/etc/letsencrypt/live/jonathanferwerda.com-0001/`. The pair each machine serves
+(`server/fullchain.pem` + `server/privkey.pem`) is **deployed, not issued** — the VPS holds the same
+file, but nothing there renews it. The app's only path is the panel's *Issue / renew now*
+(`POST /manager/tls/issue` → `scripts/tls_issue.pl --renew`), and it has no timer anywhere either.
+So the KS-5 is not self-sufficient until one of these is true:
+
+- it runs `perl scripts/tls_issue.pl --renew` on a **weekly timer** (it writes `server/` itself), or
+- the laptop's renewal copies the pair across and restarts the listener.
+
+The first is better: the DNS credentials live in the `dns` settings app, sealed with the house key,
+so they **ride the mesh** to the `house` container — the off-mesh `dev` container never gets them.
+Hard date: **2027-01-01**.
 
 ### Why not the IP, and why not a nameserver
 
@@ -343,8 +358,9 @@ old host kept intact for a rollback.
 - [ ] The hub moves to `hub.jonathanferwerda.com` (same wildcard), so it must already answer on
       the KS-5 before the clients are re-pointed. Update `tunnel_hub` on each house.
 - [ ] Move the exit node to the KS-5, if P4 has not already done it.
-- [ ] Move the wildcard's renewal with the repo: `scripts/tls_issue.pl`, whatever triggers it, and
-      the DNS-provider credentials from Configure → Plat → DNS.
+- [ ] Make the wildcard self-renewing on the KS-5 (§4): a weekly
+      `perl scripts/tls_issue.pl --renew` writes `server/` itself, using the DNS credentials that
+      already ride the mesh. Do not rely on the laptop's certbot to keep someone else's copy fresh.
 - [ ] Verify **from outside the house** — laptop off-LAN, phone, tablet — not from the shell you
       are already in.
 - [ ] Start the off-box backup (§11): `/var/lib/headscale/`, `jawnos.db`,
@@ -378,12 +394,9 @@ old host kept intact for a rollback.
 ## 8. Open questions
 
 1. **Which machine fetches IMAP today** — the laptop or the VPS's JawnOS? This places clamd (§6).
-2. **What triggers `scripts/tls_issue.pl` on the VPS?** No cron entry or system timer was found
-   for it (certbot's is separate and only renews the apex). Find the trigger — a `--user` timer is
-   the likely answer — because it has to run on the KS-5 before **2027-01-01**.
-3. **Does the hub's public URL live in a setting on each house** (`tunnel_hub`), or is it learned
+2. **Does the hub's public URL live in a setting on each house** (`tunnel_hub`), or is it learned
    from the handshake? This decides whether moving the hub is one change or one per house.
-4. **Where is the Elixir app's load ceiling?** BEAM wants cores, and after D11 the KS-5 is its
+3. **Where is the Elixir app's load ceiling?** BEAM wants cores, and after D11 the KS-5 is its
    only home. If it outgrows the box, it gets its own VPS then — not a bigger box now.
 
 ---
@@ -397,9 +410,9 @@ old host kept intact for a rollback.
   every node re-registers.
 - **The one easy own-goal** is a broken bridge or a closed 3478/udp on a host with no console.
   Snapshot first, keep the old SSH session open, and confirm the ports before repointing DNS.
-- **The one dated risk** is the wildcard: it expires **2027-01-01**, and its renewal (and the
-  DNS-provider credentials it needs) must move to the KS-5. The apex pair expires 2026-12-07 and
-  retires with the VPS.
+- **The one dated risk** is the wildcard: it expires **2027-01-01**. It is renewed **on the
+  laptop** today and nothing renews it on either server, so the KS-5 needs its own timer (§4). The
+  apex pair expires 2026-12-07 and retires with the VPS.
 - **The one thing that cannot be done** is pointing Tailscale at a bare IP: the client validates
   the control certificate and will not connect without a name.
 - **The one rule that must not be bent** is D7. A copied database on a dev container looks like it
