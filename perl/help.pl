@@ -261,16 +261,16 @@ our %topic = (
 	},
 	'editor' => {
 		title => 'Editor', category => 'apps', app => 'editor',
-		summary => 'A rich text editor whose variables can answer for an appointment.',
+		summary => 'Lay out a magazine article from headings, paragraphs and media.',
 		body => [
-			'Editor is a rich text editor for letters, notes and documents. Its variables can pull live values — including values from an appointment — so a document can fill itself in from your data.',
-			'A microphone in the editor\'s toolbox dictates into the document: press it to listen and press it again to stop. It is the same dictation the keyboard uses - a pause ends the phrase, the house transcribes it and the Guide punctuates it - and the words join the text where the caret is. It learns the room\'s own quiet as it listens, so a fan or a steady hiss does not stop it hearing the pause.',
-			'While it is being typed, a note is kept as a draft: this browser holds a copy against a crash or a refresh, and the house holds one that reaches every machine, so the words are there again when the window reopens.'
+			'Editor lays out the house\'s magazine articles. Pick an article from the list, or press New article, then add blocks from the toolbar: headings, a paragraph, a link, audio, video, an image or a canvas. Colours set the article\'s text and background; Category decides where it belongs and Status says how far it has gone - draft, review, publish or recanted.',
+			'The time and warranty fields use the house\'s time controls. Save writes the article and keeps the list in step; the toolbar shows Unsaved changes while an edit is waiting, and Saved once it is written. Close puts the drag handles away and leaves the article on screen.',
+			'An article that has been published appears in the magazine and can be reopened here. The per-appointment notes editor and its variables are the separate text editor used in appointment windows; Editor is the magazine surface.'
 		],
 		steps => [
-			'Open Editor and start a document.',
-			'Where you want a live value, drop in a variable; it can answer for an appointment\'s field.',
-			'Save the article; it appears in the library and can be reopened from where it belongs.'
+			'Open Editor and choose an article, or press New article.',
+			'Add and arrange the blocks, then set the colours, category and status.',
+			'Save the article; it appears in the library and can be published.'
 		],
 		related => [ 'ide', 'notes' ]
 	},

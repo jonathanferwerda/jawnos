@@ -7,8 +7,10 @@ var grapple_key_index;
 var original_grapple_position;
 function editorMaker(source) {
 	var url = '/manager/editor';
-	var scope = localStorage.getItem('scope');
-	var timestamp = timestamp;
+	// a fresh profile has no scope yet; the route defaults it too, but send a
+	// value so the first open does not depend on the server's fallback
+	var scope = localStorage.getItem('scope') || 'day';
+	var timestamp = Date.now();
 	var uuid = localStorage.getItem('article_uuid');
 	$.ajax({
 		url: url,
@@ -24,11 +26,19 @@ function editorMaker(source) {
 
 function editorInit(source) {
 	$('#editor_content_parent').html($('#editor_content_parent').text());
-	if (original_key_position == undefined) {
+	if (original_grapple_position == undefined) {
 		original_grapple_position = {
 			top: $('#grapple').css('top'),
 			left: $('#grapple').css('left')
 		};
+	}
+	// a save reloads the window; carry the confirmation across that reload
+	if (localStorage.getItem('editor_saved') === '1') {
+		localStorage.removeItem('editor_saved');
+		editorSaved();
+	}
+	else {
+		$('#editor_save_state').text('').removeClass('editor_save_dirty editor_save_saved');
 	}
 	$('#grapple').show();
 
@@ -78,6 +88,20 @@ function editorInit(source) {
 	if (source == 'new') {
 		$('#editor_content_parent').html('<div id="editor_content_area"></div>');
 	}
+}
+
+function editorDirty() {
+	$('#editor_save_state')
+		.text(typeof jawnosT === 'function' ? jawnosT('Unsaved changes') : 'Unsaved changes')
+		.addClass('editor_save_dirty')
+		.removeClass('editor_save_saved');
+}
+
+function editorSaved() {
+	$('#editor_save_state')
+		.text(typeof jawnosT === 'function' ? jawnosT('Saved') : 'Saved')
+		.addClass('editor_save_saved')
+		.removeClass('editor_save_dirty');
 }
 
 function grappleDropper(type) {
@@ -176,6 +200,7 @@ $(document).on('click', '.editor_content_adder', function() {
 	else {
 		$('#editor_content_area').append(content);
 	}
+	editorDirty();
 });
 
 $(document).on('click', '.editor_content_component', function(e) {
@@ -203,6 +228,12 @@ $(document).on('click', '.editor_content_component', function(e) {
 
 $(document).on('dblclick', '.editor_content_component', function(e) {
 	$(this).remove();
+	editorDirty();
+});
+
+// Any edit inside the content blocks marks the article unsaved.
+$(document).on('input change', '#editor_content_parent', function () {
+	editorDirty();
 });
 
 $(document).on('change', '#editor_background_colour', function(e) {
@@ -212,6 +243,7 @@ $(document).on('change', '#editor_background_colour', function(e) {
 	else {
 		$('#editor_content_area').css({ 'background-color': $(this).val() });
 	}
+	editorDirty();
 });
 
 $(document).on('change', '#editor_text_colour', function(e) {
@@ -221,6 +253,11 @@ $(document).on('change', '#editor_text_colour', function(e) {
 	else {
 		$('#editor_content_area').css({ 'color': $(this).val() });
 	}
+	editorDirty();
+});
+
+$(document).on('change input', '#editor_category_picker, #editor_status_picker, #editor_timestamp, #editor_warranty', function () {
+	editorDirty();
 });
 
 $(document).on('change', '#editor_article_picker', function(e) {
@@ -272,6 +309,7 @@ $(document).on('click', '#editor_save', function() {
 		},
 		success: function(response) {
 			localStorage.setItem('article_uuid', response.uuid);
+			localStorage.setItem('editor_saved', '1');
 			editorMaker();
 		}
 	});

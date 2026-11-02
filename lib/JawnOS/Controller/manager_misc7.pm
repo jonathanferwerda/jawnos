@@ -474,9 +474,13 @@ sub action_25928 {
 	my $timestamp = $c->param('timestamp');
 	if ($app->{'name'}) {
 		&padlock_time_extender($c);
-		my $window = &centre_view_grabber({ c => $c, app => $app->{'name'}, timestamp => $timestamp, jp_report => $jp_report });
+		my $window = &centre_view_grabber({ c => $c, app => $app->{'name'}, timestamp => $timestamp, jp_report => $jp_report, source => $c->param('source') });
 		if ($c->param('source') ne 'ws') {
-			&Websocket::send('tab', { browser_tab_id => $c->param('browser_tab_id'), not_me => 1, console => 'appointmentGrabber(\'' . $app->{'name'} . '\',\'' . $timestamp .'\',\'ws\');' });
+			# A hidden tab has nobody looking at it; mirroring into it was a
+			# 40-49 KB fetch and render that stole the main thread from the tab
+			# the person is actually using. Visible windows (including a second
+			# monitor) still mirror.
+			&Websocket::send('tab', { browser_tab_id => $c->param('browser_tab_id'), not_me => 1, console => 'if (!document.hidden) { appointmentGrabber(\'' . $app->{'name'} . '\',\'' . $timestamp .'\',\'ws\'); }' });
 		}
 	#	&Websocket::send('tab', { browser_tab_id => $c->stash('browser_tab_id'), app => $app, window => $window, timestamp => $timestamp, not_me => 1 });
 		$c->render(text => $window);

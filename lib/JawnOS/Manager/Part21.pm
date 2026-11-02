@@ -516,7 +516,7 @@ sub centre_view_grabber($data) {
 				$header = $hc->{'header'} if ($hc->{'signature'} || '') eq $signature;
 			}
 			unless ($header) {
-				$header = &subs::appt_header_printer({ appts => $appts, app => $app, timestamp => $timestamp, source => 'centre_view_grabber' });
+				$header = &subs::appt_header_printer({ appts => $appts, app => $app, timestamp => $timestamp, source => 'centre_view_grabber', broadcast => (($data->{'source'} // '') eq 'ws' ? 'no' : 'yes') });
 			}
 			$string = $c->render_to_string(
 				template => 'appointment_wrapper',

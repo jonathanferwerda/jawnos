@@ -137,9 +137,11 @@ sub action_7407 {
 }
 
 # The app chunks. `files` is a comma-separated list of bundle entries; the route
-# expands each index's parts, runs terser once per distinct list and memoises the
-# result on disk. The list is capped and every entry must be one of the manager's
-# own scripts, so the route cannot be pointed at an arbitrary path.
+# expands each index's parts and memoises the concatenation on disk. It is served
+# as the readable text (gzip handles the wire size): terser on a cold first open
+# made a small app wait seconds for a chunk the browser could parse at once. The
+# list is capped and every entry must be one of the manager's own scripts, so the
+# route cannot be pointed at an arbitrary path.
 # GET /js/manager/app.js?files=...
 sub action_7408 {
 	my $c = shift;
@@ -161,7 +163,8 @@ sub action_7408 {
 	foreach my $rel (@entries) {
 		push @files, &subs::js_part_files('public' . $rel);
 	}
-	my $sig = join ';', map {
+	# plain1: invalidate chunks built by the minifying version of this route
+	my $sig = 'plain1;' . join ';', map {
 		my @st = stat($_);
 		$_ . ':' . ($st[9] // 0) . ':' . ($st[7] // 0);
 	} @files;
@@ -197,7 +200,7 @@ sub action_7408 {
 				(my $label = $file) =~ s{^public}{};
 				$raw .= "\n;/* $label */\n" . $src . "\n;\n";
 			}
-			$body = js_minify($raw);
+			$body = $raw;
 			eval {
 				my $tmp = "$path.$$" . '.tmp';
 				write_file($tmp, $body);

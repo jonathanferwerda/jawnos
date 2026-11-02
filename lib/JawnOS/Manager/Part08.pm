@@ -207,7 +207,11 @@ sub editor_maker($c) {
 	my $uuid = $c->param('article_uuid') || '';
 	my $scope = $c->param('scope');
 	my $timestamp = $c->param('timestamp');
-	my $t = &subs::time_span($scope, $timestamp); #timestamp at beginning
+	# A fresh profile has no scope yet, and the old client sent a self-assigned
+	# timestamp; either one used to die in time_span and leave a silent 500.
+	$scope = 'day' unless defined $scope && length $scope;
+	$timestamp = &subs::rightNow() unless defined $timestamp && $timestamp =~ /^\d+$/;
+	my $t = eval { &subs::time_span($scope, $timestamp) } || 0;
 	my $t1 = ($timestamp - $t);
 	my $t2 = ($t1 + $timestamp + $t1);
 	my $articulation = &subs::db_query('select * from magazine order by timestamp DESC');# where timestamp >= ? and timestamp <= ?', $t, $t2);
@@ -216,11 +220,21 @@ sub editor_maker($c) {
 	my $articles = $articulation->hashes;
 	my $mag_cat = &subs::db_query('select distinct(app) from settings where (setting=? or setting=?) and value=?','pos','mab','category');
 	my $magazine_categories = $mag_cat->hashes;
+	# The picker can be empty (a new file) or the stored uuid can be gone. Give
+	# the page one complete row so its colour/status/time controls never read
+	# from an undefined array slot.
+	my ($current) = grep { ($_->{'uuid'} // '') eq $uuid } @{$articles};
+	$current ||= {
+		uuid => $uuid, title => '', content => '', category => 'promo',
+		status => 'draft', timestamp => $timestamp, warranty => 0,
+		text_colour => '#000000', background_colour => '#ffffff'
+	};
 
 	my $contents = $c->render_to_string(
 		template => 'editor',
 		articles => $articles,
 		uuid => $uuid,
+		current => $current,
 		magazine_categories => $magazine_categories,
 		window_maker => $c->param('window_maker')
 	);

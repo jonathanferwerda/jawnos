@@ -3038,3 +3038,20 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
 .app_details .tx_actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; align-items: center; margin-top: 6px; }
 .app_details .tx_actions .tx_save { font-weight: 700; background: var(--accent-soft, var(--panel-2)); border-color: var(--accent-line, var(--line)); }
 .purchase_details.tx_added_line .tx_header_only { display: none; }
+
+/* ---- the magazine Editor app ------------------------------------------------
+   The toolbar rows keep their controls together at any width; the article
+   surface itself does not scroll (the window already does), so there is one
+   scrollbar instead of two. */
+.editor_surface { padding: 8px; overflow: visible; background-color: var(--panel); color: var(--ink); }
+.editor_toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0; }
+.editor_toolbar_top { position: sticky; top: 0; z-index: 2; background-color: var(--panel); padding: 2px 0; }
+.editor_toolbar_blocks .editor_content_adder { min-width: 36px; height: 28px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel-2, var(--panel)); color: inherit; cursor: pointer; }
+.editor_toolbar_blocks .editor_content_adder:hover { border-color: var(--accent, var(--line)); }
+.editor_field { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; white-space: nowrap; }
+.editor_field input[type="text"], .editor_field select { max-width: 150px; }
+.editor_save_state { margin-left: auto; font-size: 12px; min-height: 16px; }
+.editor_save_dirty { color: var(--accent, #b86); }
+.editor_save_saved { color: var(--ok, #2a7); }
+.editor_content_parent { text-align: center; }
+#editor_article_picker { max-width: 260px; }
