@@ -37,14 +37,35 @@ use Unicode::Normalize qw(NFC);
 
 our %M;
 our $database;
-# The line windows the balance chart offers, and the span each covers. The
-# template, the picker and ai_balance_window all read this list, so a window
-# cannot be offered without an arithmetic that knows what it means.
-our @BALANCE_WINDOWS = qw(1h 24h 7d);
+# The line windows the balance chart offers, the span each covers, the size of
+# one bar and the ledger granularity that fills it. One table, read by the
+# chart, the template and the picker, so a window cannot be offered without an
+# arithmetic that knows what it means. The month is not a fixed span: it is as
+# long as the month the reading is in (see ai_window_span_ms).
+our @BALANCE_WINDOWS = qw(1h 1d 1w 1m);
 our %BALANCE_WINDOW_MS = (
-	'1h'  => 60 * 60 * 1000,
-	'24h' => 24 * 60 * 60 * 1000,
-	'7d'  => 7 * 24 * 60 * 60 * 1000,
+	'1h' => 60 * 60 * 1000,
+	'1d' => 24 * 60 * 60 * 1000,
+	'1w' => 7 * 24 * 60 * 60 * 1000,
+);
+our %BALANCE_BUCKET_MS = (
+	'1h' => 2 * 60 * 1000,
+	'1d' => 60 * 60 * 1000,
+	'1w' => 24 * 60 * 60 * 1000,
+	'1m' => 24 * 60 * 60 * 1000,
+);
+our %BALANCE_BUCKET_COUNT = ( '1h' => 30, '1d' => 24, '1w' => 7 );
+our %BALANCE_GRANULARITY = ( '1h' => '2m', '1d' => 'hour', '1w' => 'day', '1m' => 'day' );
+# The role names the AI settings use, and the name the panel shows for each.
+# They are app names (Guide, Coding), not ordinary words, so they are not
+# translated; an unfamiliar role is tidied up instead of invented.
+our %AI_ROLE_LABEL = (
+	help_assistant   => 'Guide',
+	eval_assistant   => 'Evaluation',
+	coding_assistant => 'Coding',
+	visual_assistant => 'Visual',
+	chatbot_model    => 'Chat',
+	music_assistant  => 'Music',
 );
 # Lines that are normal noise rather than errors. jawn() already suppresses the
 # same ones from its own console, and the master prints the shutdown line on
@@ -190,15 +211,20 @@ sub ai_balance_refresh {
 			note      => $m ? $m->{'note'} : 'no balance API',
 		};
 	}
-	# Keep a rolling week of what each account held. The job reads every ten
-	# minutes, so a week is about a thousand points per provider; a failed read
-	# is skipped rather than recorded as zero, and a provider that leaves the
+	# Keep a rolling month of what each account held, thinned as it ages: every
+	# ten-minute reading for the last day (that is the Last Hour and Last Day
+	# bars' money), one per hour out to the week, and one per three hours out to
+	# the month. A month at full resolution would be ten thousand points per
+	# provider in one cache row; this is about six hundred. A failed read is
+	# skipped rather than recorded as zero, and a provider that leaves the
 	# settings loses its line. The warranty outlives the window so the hair
-	# cutter does not take the row (and the week) out from under it.
+	# cutter does not take the row (and the month) out from under it.
 	my $now = &subs::rightNow();
 	my $previous = &subs::cache_get({ app => '__president', context => 'ai_balance' });
 	my $history = (ref $previous eq 'HASH' && ref $previous->{'history'} eq 'HASH') ? $previous->{'history'} : {};
-	my $floor = $now - 7 * 24 * 60 * 60 * 1000;
+	my $floor = $now - 35 * 24 * 60 * 60 * 1000;
+	my $day_ago = $now - 24 * 60 * 60 * 1000;
+	my $week_ago = $now - 7 * 24 * 60 * 60 * 1000;
 	my %listed = map { ($_->{'provider'} || '') => 1 } @rows;
 	foreach my $provider ( keys %{$history} ) {
 		delete $history->{$provider} unless $listed{$provider};
@@ -207,6 +233,16 @@ sub ai_balance_refresh {
 		my $series = $history->{ $row->{'provider'} };
 		$series = $history->{ $row->{'provider'} } = [] unless ref $series eq 'ARRAY';
 		@{$series} = grep { ref $_ eq 'HASH' && defined $_->{'t'} && ($_->{'t'} || 0) >= $floor } @{$series};
+		# thin the older points to one an hour, then one per three hours
+		my (%slot, @kept);
+		foreach my $point ( sort { $a->{'t'} <=> $b->{'t'} } @{$series} ) {
+			my $t = $point->{'t'} || 0;
+			if ($t >= $day_ago) { push @kept, $point; next; }
+			my $key = ($t >= $week_ago) ? 'h' . int($t / 3600000) : 't' . int($t / 10800000);
+			next if $slot{$key}++;
+			push @kept, $point;
+		}
+		@{$series} = @kept;
 		next unless defined $row->{'available'} && $row->{'available'} =~ /^-?\d+(?:\.\d+)?$/;
 		my $last = $series->[-1];
 		if ($last && $now - ($last->{'t'} || 0) < 300000) {
@@ -220,7 +256,7 @@ sub ai_balance_refresh {
 		}
 	}
 	my $report = { at => $now, rows => \@rows, history => $history };
-	&subs::cache_set({ app => '__president', context => 'ai_balance', warranty => '-8d' }, $report);
+	&subs::cache_set({ app => '__president', context => 'ai_balance', warranty => '-40d' }, $report);
 	return $report;
 }
 
@@ -229,11 +265,39 @@ sub ai_balance_refresh {
 # the window's left edge, interpolated from the last sample before it, so a
 # 24h line starts where the window does instead of at its first sample.
 # `change` is positive when the balance fell; `per_day` is the pace in money.
+# How far back a window reaches. A calendar month is as many days as the month
+# the reading falls in (November has thirty, December thirty-one), which is what
+# the panel's Last Month button promises.
+sub ai_window_span_ms {
+	my ($window, $now) = @_;
+	$window = '1d' unless defined $window && $BALANCE_BUCKET_MS{$window};
+	return $BALANCE_WINDOW_MS{$window} if $BALANCE_WINDOW_MS{$window};
+	$now = &subs::rightNow() unless defined $now;
+	my $t = localtime(int($now / 1000));
+	return 30 * 24 * 60 * 60 * 1000 unless ref $t;
+	my $days = &days_in_month($t->year, $t->mon);
+	$days = 30 unless $days >= 28 && $days <= 31;
+	return $days * 24 * 60 * 60 * 1000;
+}
+
+# How many bars a window draws: thirty two-minute bars for the hour, twenty-four
+# hours for the day, seven days for the week, and the month's own day count.
+sub ai_window_bucket_count {
+	my ($window, $now) = @_;
+	$window = '1d' unless defined $window && $BALANCE_BUCKET_MS{$window};
+	return $BALANCE_BUCKET_COUNT{$window} if $BALANCE_BUCKET_COUNT{$window};
+	$now = &subs::rightNow() unless defined $now;
+	my $t = localtime(int($now / 1000));
+	return 30 unless ref $t;
+	my $days = &days_in_month($t->year, $t->mon);
+	return ($days >= 28 && $days <= 31) ? $days : 30;
+}
+
 sub ai_balance_window {
 	my ($points, $window, $now) = @_;
-	$window = '24h' unless defined $window && $BALANCE_WINDOW_MS{$window};
+	$window = '1d' unless defined $window && $BALANCE_BUCKET_MS{$window};
 	$now = &subs::rightNow() unless defined $now;
-	my $span = $BALANCE_WINDOW_MS{$window};
+	my $span = &ai_window_span_ms($window, $now);
 	my $start = $now - $span;
 	my @all = sort { $a->{'t'} <=> $b->{'t'} }
 		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} && $_->{'t'} <= $now }
@@ -266,6 +330,19 @@ sub ai_balance_window {
 		my $fall = $draw[$i - 1]->{'v'} - $draw[$i]->{'v'};
 		$consumption += $fall if $fall > $epsilon;
 	}
+	# A top-up is money put in, not a fall, and it is worth naming wherever it
+	# happened in the window: a balance that jumps and then falls again reads as
+	# an accident otherwise. The newest few are enough.
+	my @topups;
+	for my $i ( 1 .. $#draw ) {
+		my $rise = $draw[$i]->{'v'} - $draw[$i - 1]->{'v'};
+		next unless $rise > $epsilon;
+		my $t = localtime($draw[$i]->{'t'} / 1000);
+		push @topups, { t => $draw[$i]->{'t'}, amount => $rise, label => (ref $t ? $t->strftime('%H:%M') : '') };
+	}
+	@topups = reverse @topups;
+	splice(@topups, 4) if @topups > 4;
+	$window_data->{'topups'} = \@topups;
 	my $per_hour = $hours > 0 ? $consumption / $hours : undef;
 	my $per_day = defined $per_hour ? $per_hour * 24 : undef;
 	$window_data->{'points'} = \@draw;
@@ -291,141 +368,210 @@ sub ai_balance_window {
 	return $window_data;
 }
 
-# The same samples counted by the clock hour, newest last. A line shows how far
-# a balance has fallen; bars show when - a quiet night against a burst at noon.
-# The buckets are whole clock hours in this machine's own time, ending with the
-# hour in progress, so every label reads on the hour. Only the falls count,
-# exactly as in ai_balance_window, so a top-up inside an hour cannot read as a
-# negative spend; the drawing carries an interpolated point at the window's
-# left edge, so the drop from the last sample before it is not lost.
-# `max` is the busiest hour's spend and `peak` that bucket.
-#
-# `$token_hours` is the spend ledger for one provider (hour key -> tokens and
-# calls), so a bar can say what traffic caused its fall. Each bucket carries
-# its `key` (the same 'YYYY-MM-DD HH' the ledger uses), `tokens`, `calls` and
-# `share` - its percentage of the window's whole spend.
-sub ai_balance_hourly {
-	my ($points, $now, $hours, $token_hours) = @_;
-	$hours = 24 unless defined $hours && $hours =~ /^\d+$/ && $hours > 0;
+# The midnight that starts the local day a reading falls in, in epoch ms. The
+# local clock components are subtracted from the instant itself, so this stays
+# right across a daylight-saving change (a 23- or 25-hour day).
+sub ai_local_midnight_ms {
+	my ($ms) = @_;
+	$ms = &subs::rightNow() unless defined $ms && $ms =~ /^-?\d+$/;
+	my $t = localtime(int($ms / 1000));
+	return int($ms) unless ref $t;
+	return ($t->epoch - ($t->hour * 3600 + $t->min * 60 + $t->sec)) * 1000;
+}
+
+# Where each bar of a window starts and ends, in this machine's own clock. A
+# bar is one whole unit of the clock - two minutes, an hour, a day - so its
+# label reads on the clock and the ledger's minute keys line up with it. Days
+# are taken from local midnights rather than by subtracting 86 400 000ms, so a
+# clock change cannot slide them by an hour.
+sub ai_balance_edges {
+	my ($window, $now) = @_;
+	$window = '1d' unless defined $window && $BALANCE_BUCKET_MS{$window};
 	$now = &subs::rightNow() unless defined $now;
-	my $hour = 60 * 60 * 1000;
-	# the top of the hour this reading is in, in local time
-	my $timepiece = localtime(int($now / 1000));
-	my $top = (ref $timepiece && defined $timepiece->epoch)
-		? $timepiece->epoch * 1000 - ($timepiece->min * 60 + $timepiece->sec) * 1000
-		: int($now / $hour) * $hour;
-	my $start = $top - ($hours - 1) * $hour;
+	my $bucket = $BALANCE_BUCKET_MS{$window};
+	my $count = &ai_window_bucket_count($window, $now);
+	my $granularity = $BALANCE_GRANULARITY{$window};
+	my $t = localtime(int($now / 1000));
+	return [] unless ref $t;
+	my @edges;
+	if ($granularity eq 'day') {
+		my $midnight = &ai_local_midnight_ms($now);
+		for my $i ( 0 .. $count - 1 ) {
+			my $back = $count - 1 - $i;
+			my $start = &ai_local_midnight_ms($midnight - $back * 86400000);
+			# 36 hours on lands inside the next local day whatever its length
+			my $next = &ai_local_midnight_ms($start + 36 * 3600000);
+			my $lt = localtime($start / 1000);
+			my $key = $lt->strftime('%Y-%m-%d');
+			push @edges, { start => $start, end => $next, key => $key, label => $key };
+		}
+		return \@edges;
+	}
+	# two minutes and an hour sit on whole clock units, so the local minute
+	# (or the hour top) is where the last bar starts
+	my $base = $granularity eq '2m'
+		? $t->epoch - (($t->min % 2) * 60 + $t->sec)
+		: $t->epoch - ($t->min * 60 + $t->sec);
+	$base *= 1000;
+	for my $i ( 0 .. $count - 1 ) {
+		my $start = $base - ($count - 1 - $i) * $bucket;
+		my $lt = localtime($start / 1000);
+		push @edges, {
+			start => $start,
+			end   => $start + $bucket,
+			key   => ($granularity eq '2m' ? $lt->strftime('%Y-%m-%d %H:%M') : $lt->strftime('%Y-%m-%d %H')),
+			label => ($granularity eq '2m' ? $lt->strftime('%H:%M') : $lt->strftime('%H:00')),
+		};
+	}
+	return \@edges;
+}
+
+# The bars for one window: what each clock unit spent and what traffic used it.
+# Money is only the falls, exactly as in ai_balance_window, but here a fall
+# between two readings is spread across the bars it covers in proportion to
+# time, so the chart reads the same way at any resolution instead of dropping a
+# whole ten-minute fall into whichever bar happened to hold its second reading.
+# The tokens are the ledger's own count for the same clock unit. `$ledger_since`
+# is when the ledger starts (epoch ms); a bar before it is untracked rather than
+# a genuine zero.
+sub ai_balance_buckets {
+	my ($points, $window, $now, $spend, $ledger_since) = @_;
+	$window = '1d' unless defined $window && $BALANCE_BUCKET_MS{$window};
+	$now = &subs::rightNow() unless defined $now;
+	my $edges = &ai_balance_edges($window, $now);
+	my @buckets = map {
+		{
+			start => $_->{'start'}, end => $_->{'end'}, key => $_->{'key'}, label => $_->{'label'},
+			spend => 0, tokens => 0, calls => 0, models => {}, share => 0,
+			tracked => 0, top_model => '', models_text => '',
+		}
+	} @{$edges};
+	my $first = @buckets ? $buckets[0]{'start'} : 0;
 	my @all = sort { $a->{'t'} <=> $b->{'t'} }
 		grep { ref $_ eq 'HASH' && defined $_->{'t'} && defined $_->{'v'} && $_->{'t'} <= $now }
 		@{ ref $points eq 'ARRAY' ? $points : [] };
-	my @in = grep { $_->{'t'} >= $start } @all;
-	my @buckets = map {
-		my $b_start = $start + $_ * $hour;
-		my $bt = localtime($b_start / 1000);
-		{
-			start  => $b_start,
-			end    => $b_start + $hour,
-			key    => (ref $bt ? $bt->strftime('%Y-%m-%d %H') : ''),
-			label  => (ref $bt ? $bt->strftime('%H:00') : ''),
-			spend  => 0,
-			tokens => 0,
-			calls  => 0,
-			share  => 0,
-		}
-	} ( 0 .. $hours - 1 );
-	# The ledger counts in the same clock hours, so a bar's tokens are the calls
-	# that hour. An hour the ledger has nothing for keeps tokens 0 and reads as
-	# untracked in the panel rather than as a genuine zero.
-	my $token_total = 0;
-	if (ref $token_hours eq 'HASH') {
-		foreach my $b ( @buckets ) {
-			my $t = $token_hours->{ $b->{'key'} };
-			next unless ref $t eq 'HASH';
-			$b->{'tokens'} = $t->{'tokens'} || 0;
-			$b->{'calls'}  = $t->{'calls'}  || 0;
-			$token_total += $b->{'tokens'};
-		}
-	}
-	my $hourly = {
-		hours   => $hours,
-		start   => $start,
-		top     => $top,
-		now     => $now,
-		buckets => \@buckets,
-		samples => scalar @in,
-		total   => 0,
-		max     => 0,
-		peak    => undef,
-		tokens  => $token_total,
-	};
-	return $hourly unless @in;
+	my @in = grep { $_->{'t'} >= $first } @all;
 	my @draw = @in;
-	my ($anchor) = reverse grep { $_->{'t'} < $start } @all;
-	if ($anchor && $in[0]->{'t'} > $start) {
-		my $dt = $in[0]->{'t'} - $anchor->{'t'};
-		my $v = $anchor->{'v'};
-		$v += ($in[0]->{'v'} - $anchor->{'v'}) * (($start - $anchor->{'t'}) / $dt) if $dt > 0;
-		unshift @draw, { t => $start, v => $v };
+	if (@in) {
+		my ($anchor) = reverse grep { $_->{'t'} < $first } @all;
+		if ($anchor && $in[0]->{'t'} > $first) {
+			my $dt = $in[0]->{'t'} - $anchor->{'t'};
+			my $v = $anchor->{'v'};
+			$v += ($in[0]->{'v'} - $anchor->{'v'}) * (($first - $anchor->{'t'}) / $dt) if $dt > 0;
+			unshift @draw, { t => $first, v => $v };
+		}
 	}
 	my $epsilon = 0.000001;
-	my $total = 0;
-	for my $i ( 0 .. $#draw ) {
-		my $b = int(($draw[$i]{'t'} - $start) / $hour);
-		$b = 0 if $b < 0;
-		$b = $hours - 1 if $b > $hours - 1;
-		next unless $i;
+	for my $i ( 1 .. $#draw ) {
 		my $fall = $draw[ $i - 1 ]{'v'} - $draw[$i]{'v'};
 		next unless $fall > $epsilon;
-		$buckets[$b]{'spend'} += $fall;
-		$total += $fall;
+		my ($t0, $t1) = ($draw[ $i - 1 ]{'t'}, $draw[$i]{'t'});
+		next unless $t1 > $t0;
+		my $span = $t1 - $t0;
+		foreach my $bucket ( @buckets ) {
+			my $lo = $t0 > $bucket->{'start'} ? $t0 : $bucket->{'start'};
+			my $hi = $t1 < $bucket->{'end'} ? $t1 : $bucket->{'end'};
+			next unless $hi > $lo;
+			$bucket->{'spend'} += $fall * (($hi - $lo) / $span);
+		}
 	}
-	my ($max, $peak) = (0, undef);
-	foreach my $b ( @buckets ) {
-		$b->{'share'} = ($total > 0) ? ($b->{'spend'} / $total) * 100 : 0;
-		if ($b->{'spend'} > $max) { $max = $b->{'spend'}; $peak = $b; }
+	my $tokens = 0;
+	foreach my $bucket ( @buckets ) {
+		$bucket->{'tracked'} = (defined $ledger_since && $ledger_since =~ /^\d+$/ && $bucket->{'end'} > $ledger_since) ? 1 : 0;
+		next unless ref $spend eq 'HASH';
+		my $slot = $spend->{ $bucket->{'key'} };
+		next unless ref $slot eq 'HASH';
+		$bucket->{'tokens'} = $slot->{'tokens'} || 0;
+		$bucket->{'calls'}  = $slot->{'calls'}  || 0;
+		$bucket->{'models'} = $slot->{'models'} || {};
+		$tokens += $bucket->{'tokens'};
 	}
-	$hourly->{'total'} = $total;
-	$hourly->{'max'} = $max;
-	$hourly->{'peak'} = $peak;
-	return $hourly;
+	foreach my $bucket ( @buckets ) {
+		my @names = sort { $bucket->{'models'}->{$b} <=> $bucket->{'models'}->{$a} } grep { length $_ } keys %{ $bucket->{'models'} };
+		$bucket->{'top_model'} = @names ? $names[0] : '';
+		$bucket->{'models_text'} = (@names > 1)
+			? join(' · ', map { $_ . ' ' . $bucket->{'models'}->{$_} } @names[ 0 .. ($#names > 2 ? 2 : $#names) ])
+			: '';
+	}
+	my ($total, $max, $peak) = (0, 0, undef);
+	$total += $_->{'spend'} for @buckets;
+	foreach my $bucket ( @buckets ) {
+		$bucket->{'share'} = $total > 0 ? ($bucket->{'spend'} / $total) * 100 : 0;
+		if ($bucket->{'spend'} > $max) { $max = $bucket->{'spend'}; $peak = $bucket; }
+	}
+	return {
+		window => $window,
+		bucket_ms => $BALANCE_BUCKET_MS{$window},
+		granularity => $BALANCE_GRANULARITY{$window},
+		count => scalar @buckets,
+		start => $first,
+		end => (@buckets ? $buckets[-1]{'end'} : 0),
+		now => $now,
+		buckets => \@buckets,
+		samples => scalar @in,
+		total => $total,
+		max => $max,
+		peak => $peak,
+		tokens => $tokens,
+		ledger_since => $ledger_since,
+	};
 }
 
-# One bar per hour, relative to the busiest, on the panel's accent. The heights
-# are shares of `max` rather than money, so a currency change never redraws it -
-# the amount is printed beside the drawing, where the picker can convert it.
-# Each bar carries its hour key, and a transparent full-height column over it
-# takes the click: on a phone a 13-pixel bar is not a target, and an hour that
-# spent nothing still has tokens worth reading.
+# One bar per bucket, relative to the busiest, on the panel's accent. Heights
+# are shares of `max` rather than money, so a currency change never redraws the
+# drawing; the amount is built into the line under it, where the picker's rate
+# applies. Each bar carries what its line needs, and a transparent full-height
+# column over it takes the click - a day bar is a few pixels wide on a phone,
+# and a bucket that spent nothing still has tokens worth reading.
 sub ai_balance_bars {
-	my ($hourly, $width, $height) = @_;
+	my ($bars, $width, $height, $templates) = @_;
 	$width ||= 320;
 	$height ||= 48;
-	my $buckets = (ref $hourly eq 'HASH' && ref $hourly->{'buckets'} eq 'ARRAY') ? $hourly->{'buckets'} : [];
+	my $buckets = (ref $bars eq 'HASH' && ref $bars->{'buckets'} eq 'ARRAY') ? $bars->{'buckets'} : [];
 	my $count = scalar @{$buckets};
 	return '' unless $count;
-	my $max = (ref $hourly eq 'HASH') ? ($hourly->{'max'} || 0) : 0;
-	my $peak = (ref $hourly eq 'HASH' && ref $hourly->{'peak'} eq 'HASH') ? $hourly->{'peak'} : undef;
+	my $max = (ref $bars eq 'HASH') ? ($bars->{'max'} || 0) : 0;
+	my $peak = (ref $bars eq 'HASH' && ref $bars->{'peak'} eq 'HASH') ? $bars->{'peak'} : undef;
 	my $top = 3;
 	my $bottom = $height - 1;
 	my $plot = $width / $count;
 	my $gap = $plot > 6 ? 1.5 : 0.5;
-	my (@bars, @hits);
+	my (@rects, @hits);
 	for my $i ( 0 .. $count - 1 ) {
-		my $b = $buckets->[$i];
-		my $spend = $b->{'spend'} || 0;
+		my $bucket = $buckets->[$i];
+		my $spend = $bucket->{'spend'} || 0;
 		my $h = ($max > 0 && $spend > 0) ? ($spend / $max) * ($bottom - $top) : 0;
-		$h = 0.8 if $spend > 0 && $h < 0.8;   # an hour that spent a little still shows
+		$h = 0.8 if $spend > 0 && $h < 0.8;
 		my $x = $i * $plot + $gap / 2;
 		my $w = $plot - $gap;
 		my $y = $bottom - $h;
-		my $key = xml_escape($b->{'key'} // '');
-		my $class = ($peak && $peak eq $b) ? ' class="peak"' : '';
-		push @bars, sprintf('<rect%s data-key="%s" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f"/>', $class, $key, $x, $y, $w, $h, ($w < 3 ? 0 : 1));
-		push @hits, sprintf('<rect class="hit" data-key="%s" x="%.2f" y="0" width="%.2f" height="%d" fill="transparent"/>', $key, $x, $w, $height);
+		my $key = xml_escape($bucket->{'key'} // '');
+		my $class = ($peak && $peak eq $bucket) ? ' class="peak"' : '';
+		push @rects, sprintf(
+			'<rect%s data-bk="%s" data-label="%s" data-amt="%.6f" data-share="%.1f%%" data-tokens="%d" data-calls="%d" data-model="%s" data-models="%s" data-tracked="%d" x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f"/>',
+			$class, $key, xml_escape($bucket->{'label'} // ''), $spend, ($bucket->{'share'} || 0),
+			($bucket->{'tokens'} || 0), ($bucket->{'calls'} || 0),
+			xml_escape($bucket->{'top_model'} // ''), xml_escape($bucket->{'models_text'} // ''), ($bucket->{'tracked'} ? 1 : 0),
+			$x, $y, $w, $h, ($w < 3 ? 0 : 1)
+		);
+		push @hits, sprintf('<rect class="hit" data-bk="%s" x="%.2f" y="0" width="%.2f" height="%d" fill="transparent"/>', $key, $x, $w, $height);
+	}
+	my $attrs = '';
+	if (ref $templates eq 'HASH') {
+		my @map = (
+			[ 'detail',    'data-detail-template' ],
+			[ 'untracked', 'data-untracked-template' ],
+			[ 'model',     'data-model-template' ],
+			[ 'models',    'data-models-template' ],
+		);
+		foreach my $pair ( @map ) {
+			next unless defined $templates->{ $pair->[0] };
+			$attrs .= ' ' . $pair->[1] . '="' . xml_escape($templates->{ $pair->[0] }) . '"';
+		}
 	}
 	my $base = sprintf('<line x1="0" y1="%.1f" x2="%d" y2="%.1f" stroke="currentColor" stroke-opacity="0.18" stroke-width="1" vector-effect="non-scaling-stroke"/>', $bottom, $width, $bottom);
-	return '<svg class="balance_bars" viewBox="0 0 ' . $width . ' ' . $height . '" preserveAspectRatio="none" aria-hidden="true">'
-		. $base . join('', @bars, @hits) . '</svg>';
+	return '<svg class="balance_bars"' . $attrs . ' viewBox="0 0 ' . $width . ' ' . $height . '" preserveAspectRatio="none" aria-hidden="true">'
+		. $base . join('', @rects, @hits) . '</svg>';
 }
 
 # A line for one provider over one window. currentColor means it follows the
@@ -491,11 +637,18 @@ sub ai_balance_chart {
 	$now = &subs::rightNow() unless defined $now;
 	my $history = (ref $report->{'history'} eq 'HASH') ? $report->{'history'} : {};
 	my $base = &crypto_report_currency();
-	# The spend ledger, read once for every provider at once. It is keyed by the
-	# same local clock hours the bars use; a provider nobody has called yet is
-	# simply absent, and its bars read untracked rather than at zero tokens.
-	my $hour_grid = &ai_balance_hourly([], $now);
-	my $token_hours = &ai_spend_hour_map(substr(&ai_spend_hour_key($hour_grid->{'start'}), 0, 13));
+	# The spend ledger, read once per window for every provider at once. Its keys
+	# are the same local clock units the bars use, and the earliest row is what
+	# tells a bar before the ledger began apart from a bar that spent nothing. A
+	# provider nobody has called yet is simply absent.
+	my $ledger_since = &ai_spend_since();
+	my (%spend_by_window, %roles_by_window);
+	foreach my $window ( @BALANCE_WINDOWS ) {
+		my $edges = &ai_balance_edges($window, $now);
+		my $since_key = @{$edges} ? $edges->[0]->{'key'} : '';
+		$spend_by_window{$window} = &ai_spend_buckets($BALANCE_GRANULARITY{$window}, $since_key);
+		$roles_by_window{$window} = &ai_spend_roles($since_key);
+	}
 	my (@series, @unconverted);
 	my (%seen_unconverted, $converted_any);
 	foreach my $row ( @{ $report->{'rows'} || [] } ) {
@@ -520,7 +673,24 @@ sub ai_balance_chart {
 		}
 		my %windows;
 		foreach my $window ( @BALANCE_WINDOWS ) {
-			$windows{$window} = &ai_balance_window(\@scaled, $window, $now);
+			my $line = &ai_balance_window(\@scaled, $window, $now);
+			my $bars = &ai_balance_buckets(\@scaled, $window, $now, $spend_by_window{$window}->{$provider} || {}, $ledger_since);
+			my $role_tokens = $roles_by_window{$window}->{$provider} || {};
+			my $role_total = 0;
+			$role_total += $_ for values %{$role_tokens};
+			my @roles;
+			if ($role_total > 0) {
+				foreach my $role ( sort { $role_tokens->{$b} <=> $role_tokens->{$a} } keys %{$role_tokens} ) {
+					push @roles, {
+						role   => $role,
+						label  => &ai_balance_role_label($role),
+						tokens => $role_tokens->{$role},
+						share  => ($role_tokens->{$role} / $role_total) * 100,
+					};
+				}
+			}
+			my $per_k = $bars->{'tokens'} > 0 ? ($bars->{'total'} / $bars->{'tokens'}) * 1000 : undef;
+			$windows{$window} = { line => $line, bars => $bars, roles => \@roles, per_k => $per_k };
 		}
 		push @series, {
 			provider        => $provider,
@@ -532,8 +702,23 @@ sub ai_balance_chart {
 			rate            => ($converted ? $rate : undef),
 			available       => ((defined $row->{'available'} && $converted) ? $row->{'available'} * $rate : $row->{'available'}),
 			windows         => \%windows,
-			hourly          => &ai_balance_hourly(\@scaled, $now, 24, $token_hours->{$provider} || {}),
 		};
+	}
+	# Each window's provider comparison: the pace of every account, so one glance
+	# compares them without laying two different balances on one axis.
+	foreach my $window ( @BALANCE_WINDOWS ) {
+		my @compare;
+		foreach my $series ( @series ) {
+			push @compare, {
+				provider => $series->{'provider'},
+				label    => $series->{'label'},
+				currency => $series->{'currency'},
+				per_day  => $series->{'windows'}->{$window}->{'line'}->{'per_day'},
+			};
+		}
+		foreach my $series ( @series ) {
+			$series->{'windows'}->{$window}->{'compare'} = \@compare;
+		}
 	}
 	return {
 		at          => ($report->{'at'} || 0),
@@ -543,6 +728,101 @@ sub ai_balance_chart {
 		windows     => [ @BALANCE_WINDOWS ],
 		series      => \@series,
 	};
+}
+
+# The name the panel shows for an AI role: the app the role belongs to where
+# the name is known, and a tidied-up role name otherwise. An empty role is a
+# call that did not say who asked (a direct ai_chat_parts), kept visible rather
+# than folded into another role.
+sub ai_balance_role_label {
+	my ($role) = @_;
+	$role = '' unless defined $role;
+	return &subs::lang('configure.role_other') unless length $role;
+	return $AI_ROLE_LABEL{$role} if $AI_ROLE_LABEL{$role};
+	my $clean = $role;
+	$clean =~ s/_assistant$//;
+	$clean =~ s/_model$//;
+	$clean =~ s/_/ /g;
+	return ucfirst $clean;
+}
+
+# The two thresholds a person sets under the chart. A blank or unreadable box
+# is off, never a zero that would fire on every hour.
+sub ai_alert_settings {
+	my $hour = &subs::setting_grabber({ app => '__president', setting => 'ai_alert_hour' });
+	my $runway = &subs::setting_grabber({ app => '__president', setting => 'ai_alert_runway' });
+	$hour = (defined $hour && $hour =~ /^\d+(?:\.\d+)?$/ && $hour > 0) ? ($hour + 0) : undef;
+	$runway = (defined $runway && $runway =~ /^\d+(?:\.\d+)?$/ && $runway > 0) ? ($runway + 0) : undef;
+	return { hour => $hour, runway => $runway };
+}
+
+# What the thresholds would fire on right now, in the chart's own currency. The
+# hour is the last complete clock hour of the Last Day window - the bar in
+# progress is not judged, since a partial hour can only under-report - and the
+# runway is that same window's projection.
+sub ai_alert_check {
+	my ($report, $now) = @_;
+	$report = &ai_balance_report() unless ref $report eq 'HASH';
+	$now = &subs::rightNow() unless defined $now;
+	my $settings = &ai_alert_settings();
+	my @fired;
+	return { settings => $settings, fired => \@fired }
+		unless defined $settings->{'hour'} || defined $settings->{'runway'};
+	my $chart = &ai_balance_chart($report, $now);
+	foreach my $series ( @{ $chart->{'series'} } ) {
+		my $day = $series->{'windows'}->{'1d'} || {};
+		my $buckets = (ref $day->{'bars'} eq 'HASH' && ref $day->{'bars'}->{'buckets'} eq 'ARRAY') ? $day->{'bars'}->{'buckets'} : [];
+		my $complete = @{$buckets} >= 2 ? $buckets->[-2] : undef;
+		if (defined $settings->{'hour'} && $complete && ($complete->{'spend'} || 0) > $settings->{'hour'}) {
+			push @fired, {
+				kind => 'hour', provider => $series->{'provider'}, label => $series->{'label'},
+				currency => $series->{'currency'}, amount => $complete->{'spend'},
+				limit => $settings->{'hour'}, period => $complete->{'key'},
+			};
+		}
+		my $runway_days = $day->{'line'}->{'runway_days'};
+		if (defined $settings->{'runway'} && defined $runway_days && $runway_days > 0 && $runway_days < $settings->{'runway'}) {
+			my $t = localtime(int($now / 1000));
+			push @fired, {
+				kind => 'runway', provider => $series->{'provider'}, label => $series->{'label'},
+				currency => $series->{'currency'}, days => $runway_days,
+				limit => $settings->{'runway'}, period => (ref $t ? $t->strftime('%Y-%m-%d') : ''),
+			};
+		}
+	}
+	return { settings => $settings, fired => \@fired, base => $chart->{'base'} };
+}
+
+# The watch: one Handbook note per crossing, keyed by the provider and the
+# period, so a standing condition does not write a note on every turn; the
+# ledger is trimmed on the same turn, since it grows a row per model call.
+sub ai_alert_tick {
+	my ($report, $now) = @_;
+	$now = &subs::rightNow() unless defined $now;
+	my $check = &ai_alert_check($report, $now);
+	my @written;
+	foreach my $alert ( @{ $check->{'fired'} } ) {
+		my $key = $alert->{'kind'} . '|' . $alert->{'provider'} . '|' . $alert->{'period'};
+		next if &subs::cache_get({ app => '__president', context => 'ai_alert', subcontext => $key });
+		my $money = sub { &subs::currency_money($_[0]) . ' ' . ($alert->{'currency'} || '') };
+		my $text = $alert->{'kind'} eq 'hour'
+			? &subs::ui(sprintf('AI balance: %s spent %s in %s, over the %s alert.',
+				$alert->{'label'}, $money->($alert->{'amount'}), $alert->{'period'}, $money->($alert->{'limit'})))
+			: &subs::ui(sprintf('AI balance: %s has about %s of runway left, under the %s alert.',
+				$alert->{'label'}, &subs::ai_balance_span_label($alert->{'days'} * 24),
+				&subs::ai_balance_span_label($alert->{'limit'} * 24)));
+		&subs::db_insert('notes', {
+			uuid => &subs::random_string_creator(21),
+			app => 'handbook',
+			text => $text,
+			timestamp => $now,
+			server_time => $now,
+		});
+		&subs::cache_set({ app => '__president', context => 'ai_alert', subcontext => $key, warranty => '-2d' }, { at => $now });
+		push @written, $key;
+	}
+	eval { &subs::ai_spend_prune(40) };
+	return { fired => scalar @{ $check->{'fired'} }, written => \@written };
 }
 
 # A span in the units that read best: minutes under an hour, hours under two

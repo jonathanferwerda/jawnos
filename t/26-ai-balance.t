@@ -1,5 +1,5 @@
 # tests-for: lib/JawnOS/Domain/Ai3.pm lib/JawnOS/Domain/Run.pm lib/JawnOS/Domain/Ai2.pm lib/JawnOS/Domain/Migrations.pm lib/JawnOS/Domain/Crypto.pm lib/JawnOS/Domain/Git.pm lib/JawnOS/Domain/Loader.pm
-# covers:    The domain layer is lazy: load the real definitions before the local *subs:: stubs below, or a later module lo...
+# covers:    Window spans, clock-aligned bars, the token ledger's place beside them, and the chart assembly.
 
 use strict;
 use warnings;
@@ -12,17 +12,17 @@ use JawnOSTest;
 # The domain layer is lazy: load the real definitions before the local *subs::
 # stubs below, or a later module load would replace them.
 subs::preload($_) for qw(crypto_rates_read crypto_report_currency exchange_rate);
-# The token ledger and the hourly chart share the clock-hour key, so load the
-# real definitions before any local stub below can be overwritten by a load.
-subs::preload($_) for qw(ai_spend_hour_key ai_spend_uuid ai_spend_note ai_spend_hour_map);
+subs::preload($_) for qw(ai_spend_since ai_spend_buckets ai_spend_roles ai_balance_role_label);
 
-# The Sys panel's "Balance drop" chart. The AI balance job keeps a rolling week
-# of samples in its cache row; these tests pin the window arithmetic (the
-# synthetic point at the left edge, the change, the pace per day) and the SVG
-# the template draws from it, so a wrong sign or a division by zero cannot ship.
+# The Sys panel's "Balance drop" chart. These tests pin the four windows (Last
+# Hour in two-minute bars, Last Day in hours, Last Week and Last Month in days),
+# the window arithmetic behind them, the spread of a fall across the bars it
+# covers, the token ledger's place beside a bar, and the SVG the template draws.
 
 my $H = 3600 * 1000;
-my $now = 1_700_000_000_000;
+my $M = 60 * 1000;
+my $now = 1_700_000_000_000;          # 2023-11-14 22:13:20 UTC
+my $aligned = $now - ($now % $H);     # the top of that hour, for clean edges
 
 my @points = (
 	{ t => $now - 48 * $H, v => 100, c => 'USD' },
@@ -31,9 +31,23 @@ my @points = (
 	{ t => $now,           v => 70,  c => 'USD' },
 );
 
-my $day = &subs::ai_balance_window(\@points, '24h', $now);
+# ---- the windows ------------------------------------------------------------
+is &subs::ai_window_span_ms('1h'), $H, 'the hour window spans an hour';
+is &subs::ai_window_span_ms('1d'), 24 * $H, 'the day window spans twenty-four hours';
+is &subs::ai_window_span_ms('1w'), 7 * 24 * $H, 'the week window spans seven days';
+is &subs::ai_window_span_ms('1m', $now), 30 * 24 * $H,
+	'the month window is as long as November';
+is &subs::ai_window_span_ms('nonsense', $now), 24 * $H, 'an unknown window is the day';
+is &subs::ai_window_bucket_count('1h'), 30, 'the hour draws thirty two-minute bars';
+is &subs::ai_window_bucket_count('1d'), 24, 'the day draws twenty-four hourly bars';
+is &subs::ai_window_bucket_count('1w'), 7, 'the week draws seven daily bars';
+is &subs::ai_window_bucket_count('1m', $now), 30, 'and the month one per day of November';
+is &subs::ai_window_bucket_count('1m', ts(2026, 12, 3, 9)), 31, 'December has thirty-one';
+is &subs::ai_window_bucket_count('1m', ts(2028, 2, 3, 9)), 29, 'a leap February has twenty-nine';
+
+my $day = &subs::ai_balance_window(\@points, '1d', $now);
 is scalar @{ $day->{'points'} }, 3,
-	'the 24h window adds an interpolated point at its left edge';
+	'the day window adds an interpolated point at its left edge';
 is $day->{'points'}->[0]->{'t'}, $now - 24 * $H,
 	'and that point sits at the start of the window';
 cmp_ok abs($day->{'points'}->[0]->{'v'} - (90 - 10 / 13)), '<', 0.001,
@@ -44,19 +58,29 @@ cmp_ok abs($day->{'change'} - (90 - 10 / 13 - 70)), '<', 0.001,
 cmp_ok abs($day->{'per_day'} - $day->{'change'}), '<', 0.001,
 	'and a 24 hour window reads that change as the daily pace';
 
-my $week = &subs::ai_balance_window(\@points, '7d', $now);
-is scalar @{ $week->{'points'} }, 4, 'the 7d window keeps every sample in the week';
+my $week = &subs::ai_balance_window(\@points, '1w', $now);
+is scalar @{ $week->{'points'} }, 4, 'the week window keeps every sample in the week';
 is $week->{'hours'}, 48, 'over the span the samples actually cover';
 cmp_ok abs($week->{'change'} - 30), '<', 0.001, 'the change is the fall over the week';
 cmp_ok abs($week->{'per_day'} - 15), '<', 0.001, 'and the pace is scaled to a day';
 
+my $last_hour = &subs::ai_balance_window(\@points, '1h', $now);
+is $last_hour->{'window'}, '1h', 'the hour window names itself';
+is $last_hour->{'hours'}, 1, 'and covers an hour';
+is scalar @{ $last_hour->{'points'} }, 2, 'with the sample and its interpolated edge';
+my $unknown_window = &subs::ai_balance_window(\@points, 'nonsense', $now);
+is $unknown_window->{'window'}, '1d', 'an unknown window reads as the day';
+
 # A rise is money put in, not a negative burn. Consumption counts only the
 # falls, so the pace stays at zero and there is no runway to promise.
 my $rise = [ { t => $now - 12 * $H, v => 10 }, { t => $now, v => 20 } ];
-my $up = &subs::ai_balance_window($rise, '24h', $now);
+my $up = &subs::ai_balance_window($rise, '1d', $now);
 is $up->{'consumption'}, 0, 'a top-up adds no consumption';
 is $up->{'per_day'}, 0, 'and never reads as a negative rate';
 ok !defined $up->{'runway_hours'}, 'a balance that is not falling has no runway';
+is scalar @{ $up->{'topups'} }, 1, 'but the top-up is named';
+cmp_ok abs($up->{'topups'}->[0]->{'amount'} - 10), '<', 0.001, 'with what was put in';
+like $up->{'topups'}->[0]->{'label'}, qr/^\d\d:\d\d$/, 'and when, on the clock';
 
 # The same burn either side of a top-up: one series jumps up 50 and settles,
 # one holds level. Both spent 30 over the same 48 hours, so both must report
@@ -75,12 +99,13 @@ my $steady = [
 	{ t => $now - 12 * $H, v => 80 },
 	{ t => $now,           v => 70 },
 ];
-my $with_topup = &subs::ai_balance_window($topup, '7d', $now);
-my $without = &subs::ai_balance_window($steady, '7d', $now);
+my $with_topup = &subs::ai_balance_window($topup, '1w', $now);
+my $without = &subs::ai_balance_window($steady, '1w', $now);
 cmp_ok abs($with_topup->{'consumption'} - 30), '<', 0.001, 'only the falls count as consumption';
 cmp_ok abs($with_topup->{'per_day'} - $without->{'per_day'}), '<', 0.001,
 	'a top-up does not change the drop rate the window saw';
 cmp_ok abs($with_topup->{'per_day'} - 15), '<', 0.001, 'and that rate is the real burn';
+is scalar @{ $with_topup->{'topups'} }, 1, 'the jump is still reported as a top-up';
 
 # Runway is what is left over what is burning, and the expense is that burn
 # carried over the usual spans.
@@ -95,18 +120,18 @@ cmp_ok abs($with_topup->{'expense_month'} - 450), '<', 0.001, 'monthly spend is 
 my $rounding = &subs::ai_balance_window([
 	{ t => $now - 12 * $H, v => 80 },
 	{ t => $now,           v => 79.9999995 },
-], '24h', $now);
+], '1d', $now);
 is $rounding->{'consumption'}, 0, 'a sub-micro-unit wobble is not consumption';
 
 # One point is a sample, not a pace: nothing to divide by yet.
-my $one = &subs::ai_balance_window([ { t => $now - 2 * $H, v => 5 } ], '24h', $now);
+my $one = &subs::ai_balance_window([ { t => $now - 2 * $H, v => 5 } ], '1d', $now);
 is scalar @{ $one->{'points'} }, 1, 'a single sample is drawn on its own';
 ok !defined $one->{'per_day'}, 'with no pace to report';
 ok !defined $one->{'runway_hours'}, 'and no runway';
 ok !defined $one->{'expense_day'}, 'and no expense';
 
 # Nothing in the window is empty, not a flat line at zero.
-my $old = &subs::ai_balance_window([ { t => $now - 8 * 24 * $H, v => 5 } ], '24h', $now);
+my $old = &subs::ai_balance_window([ { t => $now - 40 * 24 * $H, v => 5 } ], '1d', $now);
 is scalar @{ $old->{'points'} }, 0, 'a sample older than the window draws nothing';
 ok !defined $old->{'per_day'}, 'and has no pace';
 
@@ -117,7 +142,7 @@ my $noisy = [
 	{ t => $now + 1 * $H,  v => 1 },
 	{ t => $now,           v => 70 },
 ];
-my $clean = &subs::ai_balance_window($noisy, '24h', $now);
+my $clean = &subs::ai_balance_window($noisy, '1d', $now);
 is scalar @{ $clean->{'points'} }, 2, 'undef and future samples are ignored';
 
 # The line itself: no NaN, no unescaped text, and one point still draws.
@@ -134,16 +159,143 @@ is &subs::ai_balance_span_label(24), '24 h', '24 hours keeps hours';
 is &subs::ai_balance_span_label(48), '2 d', 'two days crosses to days';
 is &subs::ai_balance_span_label(168), '7 d', 'a week reads in days';
 
-is &subs::ai_balance_money(12.345), '12.35', 'normal money keeps two decimals';
-is &subs::ai_balance_money(0.0042), '0.0042', 'a slow spend keeps four';
-is &subs::ai_balance_money(0), '0.00', 'zero reads as zero';
-is &subs::ai_balance_money(undef), '', 'an unread balance has no number';
-is &subs::currency_money(12.345), '12.35', 'currency_money is the general formatter';
-is &subs::currency_money(0.0042), '0.0042', 'and keeps four decimals for a slow spend';
+is &subs::currency_money(12.345), '12.35', 'normal money keeps two decimals';
+is &subs::currency_money(0.0042), '0.0042', 'a slow spend keeps four';
 
-# The currency picker: the house currency first, the amount's own currency
-# second, then the fiat table. Rates are target units per one house unit, so a
-# base amount times the option rate is the amount in that currency.
+# ---- the bars' clock --------------------------------------------------------
+my $hour_edges = &subs::ai_balance_edges('1h', $aligned);
+is scalar @{$hour_edges}, 30, 'the hour window has thirty bars';
+is $hour_edges->[1]{'start'} - $hour_edges->[0]{'start'}, 2 * $M, 'each bar is two minutes';
+is $hour_edges->[-1]{'end'} - $hour_edges->[0]{'start'}, $H, 'and together they span the hour';
+is $hour_edges->[-1]{'start'}, $aligned, 'the last bar starts on the aligned clock';
+is $hour_edges->[-1]{'end'}, $aligned + 2 * $M, 'and is the two minutes in progress';
+like $hour_edges->[-1]{'key'}, qr/^\d{4}-\d\d-\d\d \d\d:[0-5]\d$/, 'with a minute key';
+is substr($hour_edges->[-1]{'key'}, 14, 2) % 2, 0, 'that starts on an even minute';
+like $hour_edges->[-1]{'label'}, qr/^\d\d:[0-5]\d$/, 'and a clock label';
+
+my $day_edges = &subs::ai_balance_edges('1d', $now);
+is scalar @{$day_edges}, 24, 'the day window has twenty-four bars';
+is $day_edges->[1]{'start'} - $day_edges->[0]{'start'}, $H, 'each bar is an hour';
+is $day_edges->[-1]{'end'}, $aligned + $H, 'the last bar is the hour in progress... and its end';
+cmp_ok $day_edges->[-1]{'start'}, '<=', $now, 'started already';
+cmp_ok $day_edges->[-1]{'end'}, '>', $now, 'and has not ended';
+like $day_edges->[-1]{'label'}, qr/^\d\d:00$/, 'labelled on the hour';
+
+my $week_edges = &subs::ai_balance_edges('1w', $now);
+is scalar @{$week_edges}, 7, 'the week window has seven bars';
+is $week_edges->[1]{'start'} - $week_edges->[0]{'start'}, 24 * $H, 'each bar is a day';
+like $week_edges->[-1]{'key'}, qr/^\d{4}-\d\d-\d\d$/, 'with a date key';
+is $week_edges->[-1]{'key'}, '2023-11-14', 'the last bar is today';
+cmp_ok $week_edges->[-1]{'end'}, '>', $now, 'and runs to tomorrow midnight';
+cmp_ok $week_edges->[0]{'start'}, '<=', $now - 6 * 24 * $H, 'the first starts six days back';
+
+my $month_edges = &subs::ai_balance_edges('1m', $now);
+is scalar @{$month_edges}, 30, 'the month window has a bar per day of November';
+is $month_edges->[-1]{'key'}, '2023-11-14', 'ending today';
+
+# ---- a fall spread across the bars it covers --------------------------------
+my $spread_points = [
+	{ t => $aligned - 5 * $H, v => 100 },
+	{ t => $aligned - 4 * $H, v => 90 },   # 10 over that hour
+	{ t => $aligned - 3 * $H, v => 90 },
+	{ t => $aligned - 2 * $H, v => 95 },   # a top-up
+	{ t => $aligned - 1 * $H, v => 90 },   # 5 over that hour
+	{ t => $aligned,          v => 90 },
+];
+my $spread = &subs::ai_balance_buckets($spread_points, '1d', $aligned, {});
+is $spread->{'count'}, 24, 'twenty-four hourly bars';
+is $spread->{'samples'}, 6, 'six readings inside the day';
+cmp_ok abs($spread->{'total'} - 15), '<', 0.001, 'the day spent the two falls';
+cmp_ok abs($spread->{'buckets'}->[18]->{'spend'} - 10), '<', 0.001,
+	'a fall wholly inside an hour lands in that hour';
+cmp_ok abs($spread->{'buckets'}->[20]->{'spend'}), '<', 0.001,
+	'the hour before the top-up holds no spend of its own';
+cmp_ok abs($spread->{'buckets'}->[21]->{'spend'} - 5), '<', 0.001,
+	'the later fall lands in the hour it covers';
+cmp_ok abs($spread->{'buckets'}->[22]->{'spend'}), '<', 0.001,
+	'and not in the one after it';
+my $spend_sum = 0;
+$spend_sum += $_->{'spend'} for @{ $spread->{'buckets'} };
+cmp_ok abs($spend_sum - $spread->{'total'}), '<', 0.001, 'the bars add up to the day';
+my $share_sum = 0;
+$share_sum += $_->{'share'} for @{ $spread->{'buckets'} };
+cmp_ok abs($share_sum - 100), '<', 0.001, 'and the shares add up to the whole';
+cmp_ok abs($spread->{'max'} - 10), '<', 0.001, 'the busiest hour sets the scale';
+is $spread->{'peak'}->{'key'}, $spread->{'buckets'}->[18]->{'key'}, 'and is named as the peak';
+
+# A fall between two readings that straddle bars is split by time, so a
+# two-minute window reads the same way as an hourly one. The thirty bars are
+# clock-aligned two-minute slices, so the oldest slice of the hour's elapsed
+# time (up to one bar) sits before the first bar.
+my $fine = &subs::ai_balance_buckets([
+	{ t => $aligned - $H, v => 90 },
+	{ t => $aligned,      v => 80 },
+], '1h', $aligned, {});
+cmp_ok abs($fine->{'total'} - (10 * 58 / 60)), '<', 0.001,
+	'the hour spent ten, less the slice before the first bar';
+cmp_ok abs($fine->{'buckets'}->[0]->{'spend'} - ($fine->{'total'} / 29)), '<', 0.001,
+	'spread evenly over the twenty-nine bars the fall covers';
+cmp_ok abs($fine->{'buckets'}->[28]->{'spend'} - ($fine->{'total'} / 29)), '<', 0.001,
+	'with none of it lost in the middle';
+cmp_ok abs($fine->{'buckets'}->[-1]->{'spend'}), '<', 0.001,
+	'and the bar in progress has not spent yet';
+
+# A fall that began before the window is carried in at the left edge.
+my $edge = &subs::ai_balance_buckets([
+	{ t => $aligned - 30 * $H, v => 200 },
+	{ t => $aligned - 12 * $H, v => 100 },
+], '1d', $aligned, {});
+cmp_ok $edge->{'total'}, '>', 0, 'the drop across the window edge is counted';
+cmp_ok abs($edge->{'buckets'}->[0]->{'spend'} - ($edge->{'total'} / 11)), '<', 0.001,
+	'and the first hour takes its share of the eleven the fall covers';
+my $edge_sum = 0;
+$edge_sum += $_->{'spend'} for @{ $edge->{'buckets'} };
+cmp_ok abs($edge_sum - $edge->{'total'}), '<', 0.001, 'and the bars still add up';
+
+# A flat balance is empty, not a busy bar.
+my $flat = &subs::ai_balance_buckets([
+	{ t => $aligned - 2 * $H, v => 5 },
+	{ t => $aligned,          v => 5 },
+], '1d', $aligned, {});
+is $flat->{'total'}, 0, 'a balance that held steady spent nothing';
+ok !$flat->{'peak'}, 'and has no busiest bar';
+
+# ---- tokens beside the bars -------------------------------------------------
+{
+	my $key = $spread->{'buckets'}->[18]->{'key'};
+	my $ledger_since = $aligned - 12 * $H;
+	my $with_tokens = &subs::ai_balance_buckets($spread_points, '1d', $aligned, {
+		$key => { tokens => 1200, calls => 4, models => { 'gpt-4o' => 800, 'deepseek-chat' => 400 } },
+	}, $ledger_since);
+	is $with_tokens->{'buckets'}->[18]->{'tokens'}, 1200, 'a bar carries its token count';
+	is $with_tokens->{'buckets'}->[18]->{'calls'}, 4, 'and its calls';
+	is $with_tokens->{'buckets'}->[18]->{'top_model'}, 'gpt-4o', 'and names the busiest model';
+	like $with_tokens->{'buckets'}->[18]->{'models_text'}, qr/gpt-4o 800/,
+		'with the split across models';
+	is $with_tokens->{'buckets'}->[17]->{'tokens'}, 0, 'a bar with no ledger row is zero';
+	is $with_tokens->{'tokens'}, 1200, 'the window totals its tokens';
+	is $with_tokens->{'buckets'}->[0]->{'tracked'}, 0, 'a bar before the ledger is untracked';
+	is $with_tokens->{'buckets'}->[18]->{'tracked'}, 1, 'a bar inside it is tracked';
+	is $with_tokens->{'buckets'}->[17]->{'models_text'}, '', 'one model is not a split';
+}
+
+# ---- the drawing ------------------------------------------------------------
+my $bar_svg = &subs::ai_balance_bars($spread, 320, 48, {
+	detail => 'D {0} {1} {2} {3} {4}', untracked => 'U {0} {1} {2}',
+	model => 'M {0}', models => 'S {0}',
+});
+like $bar_svg, qr/^<svg class="balance_bars"/, 'the bars are an svg';
+is scalar(() = $bar_svg =~ /<rect class="peak"/g), 1, 'the busiest bar is marked';
+is scalar(() = $bar_svg =~ /<rect class="hit"/g), 24, 'and every bar has a hit column';
+is scalar(() = $bar_svg =~ /<rect(?![^>]*class="hit")/g), 24, 'with one visible bar each';
+like $bar_svg, qr/data-bk="2023-11-1\d \d\d"/, 'each bar carries its key';
+like $bar_svg, qr/data-amt="\d+\.\d{6}"/, 'and its amount for the line';
+like $bar_svg, qr/data-detail-template="D \{0\} \{1\} \{2\} \{3\} \{4\}"/, 'with the translated line templates';
+like $bar_svg, qr/data-untracked-template="U \{0\} \{1\} \{2\}"/, 'both the tracked and untracked lines';
+unlike $bar_svg, qr/NaN|undef/, 'and nothing unrenderable';
+is &subs::ai_balance_bars({ buckets => [] }, 320, 48), '', 'no bars draws nothing';
+
+# ---- the currency picker ----------------------------------------------------
 {
 	local *subs::crypto_report_currency = sub { 'CAD' };
 	local *subs::crypto_rates_read = sub {
@@ -171,10 +323,7 @@ is &subs::currency_money(0.0042), '0.0042', 'and keeps four decimals for a slow 
 	is &subs::currency_amount_base(70, 'USD'), 98, 'the house currency is the default target';
 }
 
-# The assembled chart follows the rows, so a provider that left the settings
-# cannot leave a ghost line behind. It converts to the house currency at the
-# rate snapshot; the functions are pinned here so the assertion does not move
-# with the machine's real exchange rate.
+# ---- the assembled chart ----------------------------------------------------
 my $report = {
 	at => $now,
 	rows => [ { provider => 'deepseek', label => 'DeepSeek', available => 70, currency => 'USD' } ],
@@ -183,6 +332,16 @@ my $report = {
 {
 	local *subs::crypto_report_currency = sub { 'CAD' };
 	local *subs::exchange_rate = sub { return ($_[0] eq 'USD' && $_[1] eq 'CAD') ? 1.5 : undef };
+	local *subs::ai_spend_since = sub { undef };
+	local *subs::ai_spend_buckets = sub {
+		my ($granularity, $since) = @_;
+		return $granularity eq 'day'
+			? { deepseek => { '2023-11-14' => { tokens => 900, calls => 3, models => { 'gpt-4o' => 900 } } } }
+			: {};
+	};
+	local *subs::ai_spend_roles = sub {
+		return { deepseek => { help_assistant => 700, eval_assistant => 200 } };
+	};
 	my $chart = &subs::ai_balance_chart($report, $now);
 	is scalar @{ $chart->{'series'} }, 1, 'only the registered provider is charted';
 	is $chart->{'series'}->[0]->{'provider'}, 'deepseek', 'with its own name';
@@ -194,12 +353,31 @@ my $report = {
 	is_deeply $chart->{'unconverted'}, [], 'and nothing was left behind';
 	cmp_ok abs($chart->{'series'}->[0]->{'available'} - 105), '<', 0.001,
 		'70 USD at 1.5 is 105 CAD';
-	cmp_ok abs($chart->{'series'}->[0]->{'windows'}->{'24h'}->{'per_day'} - (90 - 10 / 13 - 70) * 1.5), '<', 0.001,
+	is_deeply $chart->{'windows'}, [ '1h', '1d', '1w', '1m' ], 'the chart offers the four windows';
+	my $one_day = $chart->{'series'}->[0]->{'windows'}->{'1d'};
+	ok $one_day->{'line'}, 'each window carries its line';
+	ok $one_day->{'bars'}, 'and its bars';
+	is $one_day->{'bars'}->{'count'}, 24, 'with twenty-four of them';
+	my $raw_bars = &subs::ai_balance_buckets(\@points, '1d', $now, {});
+	cmp_ok abs($one_day->{'line'}->{'per_day'} - (90 - 10 / 13 - 70) * 1.5), '<', 0.001,
 		'and the pace is converted by the same rate';
+	cmp_ok abs($one_day->{'bars'}->{'total'} - $raw_bars->{'total'} * 1.5), '<', 0.001,
+		'the bars are the same day converted by the same rate';
+	is scalar @{ $one_day->{'roles'} }, 2, 'and the roles the ledger recorded are listed';
+	is $one_day->{'roles'}->[0]->{'label'}, 'Guide', 'largest first, by its app name';
+	is $one_day->{'roles'}->[0]->{'role'}, 'help_assistant', 'with the role kept';
+	cmp_ok abs($one_day->{'roles'}->[0]->{'share'} - (700 / 900 * 100)), '<', 0.001,
+		'and its share of the window';
+	ok !defined $one_day->{'per_k'}, 'the cost per thousand tokens needs both sides measured';
+	my $week_window = $chart->{'series'}->[0]->{'windows'}->{'1w'};
+	is scalar @{ $week_window->{'compare'} || [] }, 1, 'a single account has nothing to compare';
 }
 {
 	local *subs::crypto_report_currency = sub { 'CAD' };
 	local *subs::exchange_rate = sub { undef };
+	local *subs::ai_spend_since = sub { undef };
+	local *subs::ai_spend_buckets = sub { {} };
+	local *subs::ai_spend_roles = sub { {} };
 	my $chart = &subs::ai_balance_chart($report, $now);
 	is $chart->{'series'}->[0]->{'currency'}, 'USD', 'no rate keeps the provider currency';
 	ok !$chart->{'converted'}, 'and does not claim a conversion';
@@ -208,220 +386,106 @@ my $report = {
 {
 	local *subs::crypto_report_currency = sub { 'USD' };
 	local *subs::exchange_rate = sub { die 'no rate is needed when both are USD' };
+	local *subs::ai_spend_since = sub { undef };
+	local *subs::ai_spend_buckets = sub { {} };
+	local *subs::ai_spend_roles = sub { {} };
 	my $chart = &subs::ai_balance_chart($report, $now);
 	is $chart->{'series'}->[0]->{'currency'}, 'USD', 'a provider already in house currency stays as it is';
 	ok !$chart->{'converted'}, 'with no conversion claimed';
 	is_deeply $chart->{'unconverted'}, [], 'and no missing rate';
 }
+{
+	# The cost per thousand tokens and the provider comparison show up when the
+	# ledger has counted any traffic and there is a second account to compare.
+	local *subs::crypto_report_currency = sub { 'USD' };
+	local *subs::ai_spend_since = sub { undef };
+	local *subs::ai_spend_buckets = sub {
+		my ($granularity, $since) = @_;
+		return $granularity eq 'day'
+			? { deepseek => { '2023-11-14' => { tokens => 1000, calls => 5, models => { 'gpt-4o' => 1000 } } } }
+			: {};
+	};
+	local *subs::ai_spend_roles = sub { {} };
+	local *subs::exchange_rate = sub { 1 };
+	my $two = {
+		at => $now,
+		rows => [
+			{ provider => 'deepseek',   label => 'DeepSeek',   available => 70, currency => 'USD' },
+			{ provider => 'openrouter', label => 'OpenRouter', available => 90, currency => 'USD' },
+		],
+		history => { deepseek => \@points, openrouter => \@points },
+	};
+	my $chart = &subs::ai_balance_chart($two, $now);
+	is scalar @{ $chart->{'series'} }, 2, 'both accounts are charted';
+	my $wd = $chart->{'series'}->[0]->{'windows'}->{'1w'};
+	ok defined $wd->{'per_k'}, 'the week has a price per thousand tokens';
+	cmp_ok abs($wd->{'per_k'} - (30 / 1000 * 1000)), '<', 0.001,
+		'which is the spend over the tokens';
+	is scalar @{ $wd->{'compare'} }, 2, 'and both accounts are compared';
+	is $wd->{'compare'}->[0]->{'label'}, 'DeepSeek', 'by name';
+}
 
 my $no_rows = &subs::ai_balance_chart({ at => $now, rows => [], history => { deepseek => \@points } }, $now);
 is scalar @{ $no_rows->{'series'} }, 0, 'history without a registered row draws nothing';
 
-# The hourly graph: the same samples grouped into clock hours. A fall lands in
-# the hour its later reading was taken, a top-up adds nothing, and the drop
-# from the last sample before the window is carried in at the left edge - the
-# same rule the line window uses, so the two agree on the day's spend.
-my $hourly_points = [
-	{ t => $now - 5 * $H, v => 100 },
-	{ t => $now - 4 * $H, v => 90 },   # 10 spent in that hour
-	{ t => $now - 3 * $H, v => 90 },
-	{ t => $now - 2 * $H, v => 95 },   # a top-up, not a negative hour
-	{ t => $now - 1 * $H, v => 90 },   # 5 spent
-	{ t => $now,          v => 90 },
-];
-my $hourly = &subs::ai_balance_hourly($hourly_points, $now);
-is scalar @{ $hourly->{'buckets'} }, 24, 'the hourly graph has one bucket per hour';
-is $hourly->{'samples'}, 6, 'and counts the readings inside the day';
-cmp_ok abs($hourly->{'buckets'}->[19]->{'spend'} - 10), '<', 0.001, 'a fall lands in the hour it was seen';
-cmp_ok abs($hourly->{'buckets'}->[21]->{'spend'}), '<', 0.001, 'a top-up spends nothing in its hour';
-cmp_ok abs($hourly->{'buckets'}->[22]->{'spend'} - 5), '<', 0.001, 'the later fall lands in its own hour';
-cmp_ok abs($hourly->{'total'} - 15), '<', 0.001, 'the day\'s spend is the sum of the hours';
-cmp_ok abs($hourly->{'max'} - 10), '<', 0.001, 'the busiest hour sets the scale';
-is $hourly->{'peak'}->{'start'}, $hourly->{'buckets'}->[19]->{'start'}, 'and is named as the peak';
-like $hourly->{'peak'}->{'label'}, qr/^\d\d:00$/, 'every hour is labelled on the clock';
-is $hourly->{'buckets'}->[19]->{'end'} - $hourly->{'buckets'}->[19]->{'start'}, $H, 'a bucket is exactly an hour';
+# ---- role labels ------------------------------------------------------------
+is &subs::ai_balance_role_label('help_assistant'), 'Guide', 'a known role reads as its app';
+is &subs::ai_balance_role_label('coding_assistant'), 'Coding', 'the coding agent keeps its name';
+is &subs::ai_balance_role_label('weird_assistant'), 'Weird', 'an unknown role is tidied up';
+is &subs::ai_balance_role_label(''), 'Other', 'a call that did not say who asked is Other';
 
-# The bucket edges are whole clock hours, so the last one is the hour in
-# progress and holds everything since it began.
-is $hourly->{'top'} % $H, 0, 'the newest bucket starts on the hour';
-cmp_ok $hourly->{'buckets'}->[-1]->{'start'}, '<=', $now, 'and does not start in the future';
-cmp_ok $now - $hourly->{'buckets'}->[-1]->{'start'}, '<', $H, 'the last hour is the one in progress';
-
-# A fall that began before the window is carried in at the left edge rather
-# than vanishing; with a clock-aligned now the share is exact.
-my $edge_now = &subs::ai_balance_hourly([], $now)->{'top'};
-my $edge = &subs::ai_balance_hourly([
-	{ t => $edge_now - 30 * $H, v => 200 },
-	{ t => $edge_now - 12 * $H, v => 100 },
-], $edge_now);
-cmp_ok abs($edge->{'buckets'}->[11]->{'spend'} - (100 - 100 * 7 / 18)), '<', 0.001,
-	'the drop across the window edge is counted where the next reading lands';
-cmp_ok abs($edge->{'total'} - $edge->{'buckets'}->[11]->{'spend'}), '<', 0.001,
-	'and nowhere else';
-is $edge->{'buckets'}->[0]->{'spend'}, 0, 'the first hour does not invent a spend';
-
-# A flat balance is empty, not a busy hour; one reading is not a day.
-my $flat_hours = &subs::ai_balance_hourly([
-	{ t => $now - 2 * $H, v => 5 },
-	{ t => $now,          v => 5 },
-], $now);
-is $flat_hours->{'total'}, 0, 'a balance that held steady spent nothing';
-ok !$flat_hours->{'peak'}, 'and has no busiest hour';
-my $one_hour = &subs::ai_balance_hourly([ { t => $now, v => 5 } ], $now);
-is $one_hour->{'samples'}, 1, 'a single reading is one sample';
-is $one_hour->{'total'}, 0, 'with nothing to spend';
-
-# The drawing: one bar per hour, the peak marked, and nothing unrenderable.
-my $bars = &subs::ai_balance_bars($hourly, 320, 48);
-like $bars, qr/^<svg class="balance_bars"/, 'the hourly graph is an svg';
-is scalar(() = $bars =~ /<rect(?: class="peak")? data-key/g), 24, 'with a bar for every hour';
-is scalar(() = $bars =~ /<rect class="hit"/g), 24, 'and a full-height hit column for every hour';
-like $bars, qr/data-key="\d{4}-\d\d-\d\d \d\d"/, 'each bar carries its hour key';
-like $bars, qr/<rect class="peak"/, 'the busiest hour is marked';
-unlike $bars, qr/NaN|undef/, 'and nothing unrenderable';
-unlike &subs::ai_balance_bars($flat_hours, 320, 48), qr/class="peak"/,
-	'a day with no fall marks no peak';
-is &subs::ai_balance_bars({ buckets => [] }, 320, 48), '', 'no hours draws nothing';
-
-# The chart carries the breakdown on every series, in the same currency it
-# converted the line into.
-{
-	local *subs::crypto_report_currency = sub { 'CAD' };
-	local *subs::exchange_rate = sub { return ($_[0] eq 'USD' && $_[1] eq 'CAD') ? 1.5 : undef };
-	# The ledger read is a database query; the chart's wiring is what is under
-	# test here, so hand it one hour's worth of tokens for this provider.
-	my $chart_hour = &subs::ai_spend_hour_key($now);
-	local *subs::ai_spend_hour_map = sub { { deepseek => { $chart_hour => { tokens => 900, calls => 3 } } } };
-	my $chart = &subs::ai_balance_chart($report, $now);
-	my $series_hourly = $chart->{'series'}->[0]->{'hourly'};
-	ok $series_hourly, 'a charted series carries its hourly breakdown';
-	is scalar @{ $series_hourly->{'buckets'} }, 24, 'with a bar per hour';
-	is $series_hourly->{'buckets'}->[-1]->{'tokens'}, 900, 'and the ledger\'s tokens land on the hour in progress';
-	is $series_hourly->{'buckets'}->[-1]->{'calls'}, 3, 'with the calls beside them';
-	is $series_hourly->{'buckets'}->[0]->{'tokens'}, 0, 'an hour the ledger has nothing for stays untracked';
-	is_deeply $chart->{'windows'}, [ '1h', '24h', '7d' ], 'the chart offers the three line windows';
-	ok $chart->{'series'}->[0]->{'windows'}->{'1h'}, 'including the last hour';
-	# The hourly graph is the last twenty-four clock hours, so it starts on
-	# the hour rather than at this instant; the invariant is that it is the
-	# same day converted by the same rate as the line beside it.
-	my $raw_hourly = &subs::ai_balance_hourly(\@points, $now);
-	cmp_ok abs($series_hourly->{'total'} - $raw_hourly->{'total'} * 1.5), '<', 0.001,
-		'and its total is converted with the rest';
-	cmp_ok abs($series_hourly->{'max'} - $raw_hourly->{'max'} * 1.5), '<', 0.001,
-		'as is the busiest hour it scales the bars against';
-}
-
-# The last hour is the same arithmetic with a shorter span, and an unknown
-# window falls back to the day rather than to nothing.
-my $last_hour = &subs::ai_balance_window(\@points, '1h', $now);
-is $last_hour->{'window'}, '1h', 'the last-hour window names itself';
-is $last_hour->{'hours'}, 1, 'and covers an hour';
-is scalar @{ $last_hour->{'points'} }, 2, 'with the sample and its interpolated edge';
-my $unknown_window = &subs::ai_balance_window(\@points, 'nonsense', $now);
-is $unknown_window->{'window'}, '24h', 'an unknown window reads as the day';
-
-# Tokens ride along with the bars: each hour carries its own count and the
-# share of the day it represents, so a press has something to report.
-{
-	my $key_19 = $hourly->{'buckets'}->[19]->{'key'};
-	my $key_22 = $hourly->{'buckets'}->[22]->{'key'};
-	my $with_tokens = &subs::ai_balance_hourly($hourly_points, $now, 24, {
-		$key_19 => { tokens => 1200, calls => 4 },
-		$key_22 => { tokens => 300,  calls => 1 },
-	});
-	is $with_tokens->{'buckets'}->[19]->{'tokens'}, 1200, 'an hour carries its token count';
-	is $with_tokens->{'buckets'}->[19]->{'calls'}, 4, 'and its calls';
-	is $with_tokens->{'buckets'}->[20]->{'tokens'}, 0, 'an hour with no ledger row is zero, not borrowed';
-	is $with_tokens->{'tokens'}, 1500, 'the day\'s tokens are the hours added up';
-	cmp_ok abs($with_tokens->{'buckets'}->[19]->{'share'} - (100 * 10 / 15)), '<', 0.001,
-		'an hour\'s share is its part of the day\'s fall';
-	is $with_tokens->{'buckets'}->[20]->{'share'}, 0, 'an hour that spent nothing has no share';
-	cmp_ok abs(($with_tokens->{'buckets'}->[19]->{'share'} + $with_tokens->{'buckets'}->[22]->{'share'} + $with_tokens->{'buckets'}->[20]->{'share'}) - 100), '<', 0.001,
-		'and the hours with a fall add up to the whole';
-}
-
-# The clock-hour key the ledger and the bars share.
-is &subs::ai_spend_hour_key(ts(2026, 11, 2, 17, 43)), '2026-11-02 17', 'an hour key is the local clock hour';
-is &subs::ai_spend_hour_key(ts(2026, 11, 2, 17, 0, 59)), '2026-11-02 17', 'and ignores the minutes and seconds';
-is &subs::ai_spend_hour_key(ts(2026, 11, 2, 0, 5)), '2026-11-02 00', 'midnight is its own hour';
-like &subs::ai_spend_uuid('machine-a', 'deepseek', '2026-11-02 17'), qr/^ai_spend_/,
-	'the ledger row is addressed by a stable uuid';
-isnt &subs::ai_spend_uuid('machine-a', 'deepseek', '2026-11-02 17'),
-	&subs::ai_spend_uuid('machine-a', 'deepseek', '2026-11-02 18'), 'which moves with the hour';
-
-# Every model call banks its usage, and a second call in the same hour updates
-# the row the peers already hold rather than adding one.
-{
-	package FakeRowSet;
-	sub new { my ($class, $rows) = @_; return bless { rows => $rows }, $class }
-	sub hashes { return $_[0]->{'rows'} }
-}
-package main;
-
-my %spend_rows;
+# ---- the alert thresholds ---------------------------------------------------
 {
 	no warnings 'redefine';
-	my $spend_now = ts(2026, 11, 2, 17, 43);
-	local *subs::ai_house_me = sub { 'machine-a' };
-	local *subs::rightNow = sub { $spend_now };
-	my $matching = sub {
-		my ($row, $where) = @_;
-		foreach my $k ( keys %{ $where || {} } ) {
-			return 0 if ((($row->{$k} // '') . '') ne ((($where->{$k} // '') . '')));
-		}
-		return 1;
+	local *subs::crypto_report_currency = sub { 'USD' };
+	local *subs::exchange_rate = sub { 1 };
+	local *subs::ai_spend_since = sub { undef };
+	local *subs::ai_spend_buckets = sub { {} };
+	local *subs::ai_spend_roles = sub { {} };
+	local *subs::ui = sub { return $_[0] };
+	local *subs::random_string_creator = sub { 'alertuuid' };
+	local *subs::ai_spend_prune = sub { return 1 };
+	my $alert_report = {
+		at => $now,
+		rows => [ { provider => 'deepseek', label => 'DeepSeek', available => 90, currency => 'USD' } ],
+		history => { deepseek => [
+			{ t => $now - 3 * $H, v => 100 },
+			{ t => $now - 2 * $H, v => 95 },
+			{ t => $now - 1 * $H, v => 90 },
+			{ t => $now,          v => 90 },
+		] },
 	};
-	local *subs::db_select = sub {
-		my ($table, $columns, $where) = @_;
-		return FakeRowSet->new([ grep { $matching->($_, $where) } values %spend_rows ]);
+	my %setting = ( ai_alert_hour => '1', ai_alert_runway => '30' );
+	local *subs::setting_grabber = sub {
+		my ($args) = @_;
+		return $setting{ $args->{'setting'} };
 	};
-	local *subs::db_delete = sub {
-		my ($table, $where) = @_;
-		foreach my $uuid ( keys %spend_rows ) {
-			delete $spend_rows{$uuid} if $matching->($spend_rows{$uuid}, $where);
-		}
-		return 1;
-	};
-	local *subs::db_insert = sub {
-		my ($table, $row) = @_;
-		$spend_rows{ $row->{'uuid'} } = { %{$row} };
-		return 1;
-	};
-	ok &subs::ai_spend_note('deepseek', 800, 200), 'a call banks its usage';
-	my ($row) = values %spend_rows;
-	is $row->{'tokens_in'}, 800, 'with its prompt tokens';
-	is $row->{'tokens_out'}, 200, 'and its completion tokens';
-	is $row->{'calls'}, 1, 'and one call';
-	is $row->{'hour'}, '2026-11-02 17', 'banked under the clock hour';
-	ok &subs::ai_spend_note('deepseek', 500, 100), 'a second call in that hour';
-	is scalar(keys %spend_rows), 1, 'updates the row the peers already hold';
-	($row) = values %spend_rows;
-	is $row->{'tokens_in'}, 1300, 'adding its prompt tokens';
-	is $row->{'calls'}, 2, 'and counting the call';
-	ok !&subs::ai_spend_note('deepseek', undef, undef), 'a call that reported no usage is not banked';
-	ok !&subs::ai_spend_note('deepseek', 0, 0), 'and neither is a zero';
-}
+	my $check = &subs::ai_alert_check($alert_report, $now);
+	is scalar @{ $check->{'fired'} }, 2, 'a low limit fires both the hour and the runway';
+	my ($hour_alert) = grep { $_->{'kind'} eq 'hour' } @{ $check->{'fired'} };
+	my ($runway_alert) = grep { $_->{'kind'} eq 'runway' } @{ $check->{'fired'} };
+	ok $hour_alert, 'the hour is judged on the last complete bar';
+	cmp_ok $hour_alert->{'amount'}, '>', 1, 'with the money it saw';
+	ok $runway_alert, 'and the runway on the day window';
+	cmp_ok $runway_alert->{'days'}, '<', 30, 'under the limit set';
 
-# The map the chart reads: per provider and hour, tokens in plus out.
-{
-	no warnings 'redefine';
-	my $seen_since;
-	local *subs::db_query = sub {
-		my ($sql, $since) = @_;
-		$seen_since = $since;
-		return FakeRowSet->new([
-			{ provider => 'deepseek',   hour => '2026-11-02 15', tin => 800, tout => 200, calls => 3 },
-			{ provider => 'deepseek',   hour => '2026-11-02 16', tin => '50', tout => 0, calls => 1 },
-			{ provider => 'openrouter', hour => '2026-11-02 16', tin => 10, tout => 10, calls => 1 },
-		]);
-	};
-	my $map = &subs::ai_spend_hour_map('2026-11-02 15');
-	is $seen_since, '2026-11-02 15', 'the map asks only for hours inside the chart';
-	is $map->{'deepseek'}->{'2026-11-02 15'}->{'tokens'}, 1000, 'tokens are prompt plus completion';
-	is $map->{'deepseek'}->{'2026-11-02 15'}->{'calls'}, 3, 'with the calls beside them';
-	is $map->{'deepseek'}->{'2026-11-02 16'}->{'tokens'}, 50, 'a second hour is its own bucket';
-	is $map->{'openrouter'}->{'2026-11-02 16'}->{'tokens'}, 20, 'and providers stay apart';
-	ok !exists $map->{'openrouter'}->{'2026-11-02 15'}, 'an hour with no calls is absent, not zero';
+	# A standing condition writes once, not on every turn.
+	my (%cached, @inserted);
+	local *subs::cache_get = sub { my ($args) = @_; return $cached{ $args->{'subcontext'} } };
+	local *subs::cache_set = sub { my ($args) = @_; $cached{ $args->{'subcontext'} } = 1; return 1 };
+	local *subs::db_insert = sub { push @inserted, $_[1]; return 1 };
+	my $tick = &subs::ai_alert_tick($alert_report, $now);
+	is scalar @{ $tick->{'written'} }, 2, 'both crossings write a note';
+	is $inserted[0]->{'app'}, 'handbook', 'into the Handbook';
+	like $inserted[0]->{'text'}, qr/DeepSeek/, 'naming the account';
+	my $again = &subs::ai_alert_tick($alert_report, $now);
+	is scalar @{ $again->{'written'} }, 0, 'a standing condition writes nothing more';
+	is scalar @inserted, 2, 'so no duplicate notes land';
+
+	# A blank box is off.
+	%setting = ();
+	my $off = &subs::ai_alert_check($alert_report, $now);
+	is scalar @{ $off->{'fired'} }, 0, 'no thresholds means nothing to report';
 }
 
 done_testing();

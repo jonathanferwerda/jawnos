@@ -2,14 +2,74 @@
 // Every amount rendered through configure/currency_amount carries its value in
 // the house currency and a picker of the currencies the rate snapshot carries.
 // A change converts that one amount in place; inside a balance series it also
-// redoes the pace line and the "showing" note, using the translated templates
-// stored on those elements. No round trip, and the chart's SVG never redraws
-// because a line's shape does not depend on the unit it is counted in.
+// redoes the pace line, the top-ups and the pressed bar's line, using the
+// translated templates stored on those elements. No round trip, and the
+// chart's SVG never redraws because a line's shape does not depend on the unit
+// it is counted in.
 function jawnosCurrencyValue(value) {
 	if (!isFinite(value)) { return ''; }
 	var abs = Math.abs(value);
 	return (abs > 0 && abs < 0.1) ? value.toFixed(4) : value.toFixed(2);
 }
+
+// The line under the bars: what the pressed bar cost, what share of the window
+// that is, and the traffic behind it. The words come from the catalog templates
+// rendered onto the drawing, so a translated panel is not rebuilt in English
+// here; only the numbers and the currency are filled in.
+function jawnosBalanceBucketText(rect, rate, code) {
+	var bars = rect.closest('.balance_bars');
+	var series = rect.closest('.balance_series');
+	var amount = parseFloat(rect.attr('data-amt'));
+	var currency = code || series.attr('data-currency') || '';
+	var money = isFinite(amount) ? (jawnosCurrencyValue(Math.abs(amount * rate)) + ' ' + currency) : '';
+	var tracked = rect.attr('data-tracked') === '1';
+	var template = bars.attr(tracked ? 'data-detail-template' : 'data-untracked-template') || '';
+	if (template.indexOf('{0}') < 0) { return ''; }
+	var text = template
+		.replace('{0}', rect.attr('data-label') || '')
+		.replace('{1}', money)
+		.replace('{2}', rect.attr('data-share') || '')
+		.replace('{3}', rect.attr('data-tokens') || '0')
+		.replace('{4}', rect.attr('data-calls') || '0');
+	if (!tracked) { return text; }
+	var model = rect.attr('data-model') || '';
+	if (model) {
+		text += ' · ' + (bars.attr('data-model-template') || '{0}').replace('{0}', model);
+	}
+	var models = rect.attr('data-models') || '';
+	if (models) {
+		text += ' · ' + (bars.attr('data-models-template') || '{0}').replace('{0}', models);
+	}
+	return text;
+}
+
+// The rate the series is shown in: the currency picker's choice, or the
+// series' own currency when the picker is not reachable (no rate loaded).
+function jawnosBalanceBucketRate(series) {
+	var picker = series.find('.currency_picker').first();
+	if (picker.length) {
+		var option = picker[0].options[picker[0].selectedIndex];
+		var rate = option ? parseFloat(option.getAttribute('data-rate')) : NaN;
+		if (isFinite(rate)) { return { rate: rate, code: option.getAttribute('value') || '' }; }
+	}
+	return { rate: 1, code: series.attr('data-currency') || '' };
+}
+
+// Redraw the open bar's line for the visible window of this series. Silence is
+// the right answer when no bar is open.
+function jawnosBalanceBucketRefresh(series, rate, code) {
+	series = (series && series.jquery) ? series : $(series);
+	var plot = series.find('.balance_plot').filter(function () { return $(this).css('display') !== 'none'; });
+	var picked = plot.find('.balance_bars rect.picked').not('.hit').first();
+	if (!picked.length) { return; }
+	if (!isFinite(rate) || !code) {
+		var at = jawnosBalanceBucketRate(series);
+		rate = at.rate;
+		code = at.code;
+	}
+	plot.find('.balance_bucket_detail').first().text(jawnosBalanceBucketText(picked, rate, code)).show();
+}
+
 function jawnosCurrencyApply(select) {
 	var picker = $(select);
 	var option = select.options[select.selectedIndex];
@@ -40,31 +100,34 @@ function jawnosCurrencyApply(select) {
 		var money = function (span) { return jawnosCurrencyValue(Math.abs(perDay * span * rate)) + ' ' + code; };
 		line.text(template.replace('{0}', money(1)).replace('{1}', money(7)).replace('{2}', money(30)));
 	});
-	series.find('.balance_hour_peak').each(function () {
+	series.find('.balance_bucket_peak').each(function () {
 		var line = $(this);
 		var amount = parseFloat(line.attr('data-base-amount'));
 		var template = line.attr('data-template') || '';
 		if (!isFinite(amount) || template.indexOf('{1}') < 0) { return; }
-		// the hour is a clock reading and does not change with the currency
-		var hour = line.attr('data-hour') || '';
-		line.text(template.replace('{0}', hour).replace('{1}', jawnosCurrencyValue(Math.abs(amount * rate)) + ' ' + code));
+		// the label is a clock reading or a date and does not change with the currency
+		line.text(template.replace('{0}', line.attr('data-label') || '').replace('{1}', jawnosCurrencyValue(Math.abs(amount * rate)) + ' ' + code));
 	});
-	// An hour's detail line is rendered with the panel, one per hour, so a
-	// currency change rebuilds it from the same attributes: only the money
-	// moves, the hour and the share stay as printed.
-	series.find('.balance_hour_detail').each(function () {
+	// The view of the same burn in tokens: money per thousand tokens moves with
+	// the picker exactly as the balance does.
+	series.find('.balance_per_k').each(function () {
 		var line = $(this);
+		var perK = parseFloat(line.attr('data-base-amount'));
 		var template = line.attr('data-template') || '';
-		var spend = parseFloat(line.attr('data-base-amount'));
-		if (template.indexOf('{1}') < 0) { return; }
-		var money = isFinite(spend) ? (jawnosCurrencyValue(Math.abs(spend * rate)) + ' ' + code) : '';
-		line.text(template
-			.replace('{0}', line.attr('data-hour') || '')
-			.replace('{1}', money)
-			.replace('{2}', line.attr('data-share') || '')
-			.replace('{3}', line.attr('data-tokens') || '')
-			.replace('{4}', line.attr('data-calls') || ''));
+		if (!isFinite(perK) || template.indexOf('{0}') < 0) { return; }
+		line.text(template.replace('{0}', jawnosCurrencyValue(Math.abs(perK * rate)) + ' ' + code));
 	});
+	// A top-up is an amount too; its clock time stays as printed.
+	series.find('.balance_topup').each(function () {
+		var line = $(this);
+		var amount = parseFloat(line.attr('data-base-amount'));
+		var template = line.attr('data-template') || '';
+		if (!isFinite(amount) || template.indexOf('{0}') < 0) { return; }
+		line.text(template.replace('{0}', jawnosCurrencyValue(Math.abs(amount * rate)) + ' ' + code).replace('{1}', line.attr('data-time') || ''));
+	});
+	// The open bar's line is built from the bar's own attributes, so it follows
+	// the picker too.
+	jawnosBalanceBucketRefresh(series[0], rate, code);
 	series.find('.balance_currency_note').each(function () {
 		var note = $(this);
 		var template = note.attr('data-template') || '';

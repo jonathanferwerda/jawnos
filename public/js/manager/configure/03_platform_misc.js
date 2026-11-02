@@ -652,10 +652,12 @@ $(document).on('click', '#system_setting_lister', function() {
 	});
 });
 
-// The API balance chart keeps two plots in the panel: last 24 hours and last 7
-// days. Both are drawn from the same background samples, so switching is a
-// show/hide and never another provider read. The choice is kept per browser so
-// reopening Sys returns to the window last used.
+// The API balance chart keeps one plot per window: the last hour in two-minute
+// bars, the last day in hours, the last week and the last month in days. All of
+// them are drawn from the same background samples, so switching is a show/hide
+// and never another provider read. The choice is kept per browser so reopening
+// Sys returns to the window last used; a window stored by the older three-button
+// chart is mapped onto the one that means the same span.
 function jawnosBalanceWindowPick(scope, win) {
 	$(scope).find('.balance_window').removeAttr('status');
 	$(scope).find('.balance_window[window="' + win + '"]').attr('status', 'active');
@@ -664,38 +666,43 @@ function jawnosBalanceWindowPick(scope, win) {
 	});
 }
 function jawnosBalanceWindowRestore(root) {
-	var win = '24h';
-	try { win = localStorage.getItem('jawnos:balance_window') || '24h'; } catch (e) {}
+	var win = '1d';
+	try { win = localStorage.getItem('jawnos:balance_window') || '1d'; } catch (e) {}
+	if (win === '24h') { win = '1d'; }
+	if (win === '7d') { win = '1w'; }
 	var scope = (root && root.querySelectorAll) ? root : document;
 	var charts = scope.querySelectorAll ? scope.querySelectorAll('.balance_chart') : [];
 	for (var i = 0; i < charts.length; i++) {
-		if (!charts[i].querySelector('.balance_window[window="' + win + '"]')) { win = '24h'; }
+		if (!charts[i].querySelector('.balance_window[window="' + win + '"]')) { win = '1d'; }
 		jawnosBalanceWindowPick(charts[i], win);
 	}
 }
 $(document).on('click', '.balance_window', function() {
 	var button = $(this);
 	var chart = button.closest('.balance_chart');
-	var win = button.attr('window') || '24h';
+	var win = button.attr('window') || '1d';
 	jawnosBalanceWindowPick(chart, win);
 	try { localStorage.setItem('jawnos:balance_window', win); } catch (e) {}
 });
 
-// Pressing an hour's bar opens that hour's line under the chart - its drop, its
-// share of the last twenty-four hours and the tokens the ledger counted in it -
-// and pressing the same bar again closes it. The lines are rendered with the
-// panel (so the words are in the interface language and the amount follows the
-// currency picker), so this only decides which one shows and which bar is lit.
+// Pressing a bar opens that bar's line under the chart - its drop, its share of
+// the window, the tokens and calls behind it, and the models that used them -
+// and pressing the same bar again closes it. The words come from templates
+// rendered onto the drawing, so this only decides which bar is lit and lets the
+// currency helper fill in the numbers.
 $(document).on('click', '.balance_bars rect.hit', function() {
 	var hit = $(this);
+	var plot = hit.closest('.balance_plot');
 	var series = hit.closest('.balance_series');
-	var key = hit.attr('data-key') || '';
-	var detail = series.find('.balance_hour_detail').filter(function() { return ($(this).attr('data-key') || '') === key; });
-	var open = detail.is(':visible');
-	series.find('.balance_hour_detail').hide();
-	series.find('.balance_bars rect.picked').removeClass('picked');
-	if (open) { return; }
-	detail.show();
-	series.find('.balance_bars rect[data-key]').not('.hit').filter(function() { return ($(this).attr('data-key') || '') === key; }).addClass('picked');
+	var key = hit.attr('data-bk') || '';
+	var lit = plot.find('.balance_bars rect.picked').not('.hit').first();
+	var wasOpen = lit.length && (lit.attr('data-bk') || '') === key;
+	plot.find('.balance_bars rect.picked').removeClass('picked');
+	plot.find('.balance_bucket_detail').hide().text('');
+	if (wasOpen) { return; }
+	plot.find('.balance_bars rect[data-bk]').not('.hit').filter(function() {
+		return ($(this).attr('data-bk') || '') === key;
+	}).addClass('picked');
+	if (typeof jawnosBalanceBucketRefresh === 'function') { jawnosBalanceBucketRefresh(series[0]); }
 });
 

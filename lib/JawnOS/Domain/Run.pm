@@ -433,11 +433,6 @@ sub ai_house_uuid { return 'ai_house_' . md5_sum(($_[0] // '')) }
 
 sub ai_budget_uuid { return 'ai_budget_' . md5_sum(($_[0] // '') . '|' . ($_[1] // '')) }
 
-# The same natural-key rule for the hourly spend ledger: one row per machine,
-# provider and clock hour, so a second call in the hour updates the row the
-# peers already hold instead of adding another.
-sub ai_spend_uuid { return 'ai_spend_' . md5_sum(($_[0] // '') . '|' . ($_[1] // '') . '|' . ($_[2] // '')) }
-
 sub ai_house_have_model {
 	return ( &subs::setting_grabber({ app => 'mail', setting => 'coding_assistant' })
 		|| &subs::setting_grabber({ app => 'mail', setting => 'help_assistant' })
@@ -872,70 +867,137 @@ sub ai_house_budget_add {
 	return $total;
 }
 
-# The clock hour a reading belongs to, in this machine's own time, as the sortable
-# key 'YYYY-MM-DD HH'. The balance chart's bars are local clock hours, so the
-# token ledger must count in the same hours or the two would be offset.
-sub ai_spend_hour_key {
+# The clock minute a reading belongs to, in this machine's own time, as the
+# sortable key 'YYYY-MM-DD HH:MM'. The balance chart's bars are local clock
+# minutes, so the token ledger must count in the same keys or the two would be
+# offset.
+sub ai_spend_minute_key {
 	my ($ms) = @_;
 	$ms = &subs::rightNow() unless defined $ms && $ms =~ /^-?\d+$/;
 	my $t = localtime($ms / 1000);
-	return ref $t ? $t->strftime('%Y-%m-%d %H') : '';
+	return ref $t ? $t->strftime('%Y-%m-%d %H:%M') : '';
 }
 
-# Every model call banks its usage here: one row per machine, provider and
-# clock hour. The balance chart reads it beside each provider's fall, so a gift
-# of tokens is not mistaken for a cheap hour and a busy hour shows the traffic
-# that caused it. A call that reports no usage writes nothing rather than a
-# zero, and the row is replaced (not multiplied) so the peer sync sees an
-# update. It carries server_time, so it rides the ordinary sync: the balance an
-# account falls by is the house's spend, and the tokens beside it must be the
-# house's too.
+# Every model call banks its usage here as its own row: the minute it ran, the
+# model and the role that asked for it. One row per call - a second call in the
+# same minute is a new row, because the chart's job is to show the traffic that
+# caused a fall, not to merge it away. The ledger carries server_time, so it
+# rides the ordinary sync: the balance an account falls by is the house's spend,
+# and the tokens beside it must be the house's too. A call that reports no usage
+# writes nothing rather than a zero. A database problem must never take an AI
+# call down, so the write is guarded and only a failure is logged.
 sub ai_spend_note {
-	my ($provider, $in, $out, $calls) = @_;
+	my ($provider, $in, $out, $model, $role) = @_;
 	$in = (defined $in && $in =~ /^\d+$/) ? ($in + 0) : 0;
 	$out = (defined $out && $out =~ /^\d+$/) ? ($out + 0) : 0;
-	$calls = (defined $calls && $calls =~ /^\d+$/) ? ($calls + 0) : 1;
 	return 0 unless $in || $out;
 	$provider = '' unless defined $provider;
-	my $me = &ai_house_me() || 'me';
-	my $hour = &ai_spend_hour_key(&subs::rightNow());
-	return 0 unless length $hour;
-	my $row = eval { &subs::db_select('ai_spend', undef, { machine => $me, provider => $provider, hour => $hour })->hashes->[0] };
-	my $tin  = (($row && $row->{'tokens_in'})  ? $row->{'tokens_in'}  : 0) + $in;
-	my $tout = (($row && $row->{'tokens_out'}) ? $row->{'tokens_out'} : 0) + $out;
-	my $count = (($row && $row->{'calls'}) ? $row->{'calls'} : 0) + $calls;
-	&subs::db_delete('ai_spend', { machine => $me, provider => $provider, hour => $hour });
-	&subs::db_insert('ai_spend', {
-		uuid => &ai_spend_uuid($me, $provider, $hour),
-		machine => $me,
-		provider => $provider,
-		hour => $hour,
-		tokens_in => $tin,
-		tokens_out => $tout,
-		calls => $count,
-		server_time => &subs::rightNow(),
-	});
+	$model = '' unless defined $model;
+	$role = '' unless defined $role;
+	my $ok = eval {
+		&subs::db_insert('ai_spend', {
+			machine => (&ai_house_me() || 'me'),
+			provider => $provider,
+			model => $model,
+			role => $role,
+			minute => &ai_spend_minute_key(),
+			tokens_in => $in,
+			tokens_out => $out,
+			calls => 1,
+			server_time => &subs::rightNow(),
+		});
+	};
+	unless ($ok) {
+		my $why = $@ ? ($@ =~ s/\s+/ /gr) : 'the row was not written';
+		eval { &subs::log_writer('ai_spend note failed: ' . $why) };
+		return 0;
+	}
 	return 1;
 }
 
-# The ledger summed per provider and hour, for the balance chart. `$since` is the
-# earliest hour key the caller wants; everything older is left out of the query.
-# An absent table (a database that has not migrated yet) reads as no tokens
-# rather than taking the panel down.
-sub ai_spend_hour_map {
-	my ($since) = @_;
-	$since = '' unless defined $since;
-	my $rows = eval { &subs::db_query('select provider, hour, sum(tokens_in) as tin, sum(tokens_out) as tout, sum(calls) as calls from ai_spend where hour >= ? group by provider, hour', $since)->hashes } || [];
+# The ledger summed per provider in the granularity the caller asks for: '2m'
+# (an even-minute bucket, folded here), 'hour' or 'day' (a prefix of the minute
+# key, grouped by SQLite). `$since_key` is the earliest minute key to count;
+# everything older is left out. The shape is
+# provider -> bucket -> { tokens, calls, models -> { model -> tokens } }. An
+# absent table (a database that has not migrated yet) reads as no tokens rather
+# than taking the panel down.
+sub ai_spend_buckets {
+	my ($granularity, $since_key) = @_;
+	$granularity = 'hour' unless defined $granularity && $granularity =~ /^(?:2m|hour|day)$/;
+	$since_key = '' unless defined $since_key;
+	my $key_sql = $granularity eq '2m' ? 'minute as k'
+		: $granularity eq 'day' ? 'substr(minute, 1, 10) as k'
+		: 'substr(minute, 1, 13) as k';
+	my $rows = eval {
+		&subs::db_query('select provider, model, ' . $key_sql . ', sum(tokens_in + tokens_out) as tokens, count(*) as calls from ai_spend where minute >= ? group by provider, model, k', $since_key)->hashes;
+	} || [];
 	my %map;
 	foreach my $r ( @{$rows} ) {
-		my $hour = $r->{'hour'} // '';
-		next unless length $hour;
-		$map{ $r->{'provider'} // '' }->{$hour} = {
-			tokens => (($r->{'tin'} || 0) + ($r->{'tout'} || 0)),
-			calls  => ($r->{'calls'} || 0),
-		};
+		my $key = $r->{'k'} // '';
+		next unless length $key;
+		if ($granularity eq '2m') {
+			# 'YYYY-MM-DD HH:MM' floored to an even minute: MM - MM % 2
+			my $mm = substr($key, 14, 2);
+			next unless $mm =~ /^\d{2}$/;
+			$key = substr($key, 0, 14) . sprintf('%02d', $mm - $mm % 2);
+		}
+		my $provider = $r->{'provider'} // '';
+		my $tokens = $r->{'tokens'} || 0;
+		my $bucket = $map{$provider}->{$key} ||= { tokens => 0, calls => 0, models => {} };
+		$bucket->{'tokens'} += $tokens;
+		$bucket->{'calls'} += ($r->{'calls'} || 0);
+		my $model = $r->{'model'} // '';
+		$bucket->{'models'}->{$model} = ($bucket->{'models'}->{$model} || 0) + $tokens if length $model;
 	}
 	return \%map;
+}
+
+# The ledger's tokens split by provider and role, so the chart can say who spent
+# them. A role that was never named is its own '' bucket. The same eval guard as
+# ai_spend_buckets keeps a pre-migration database from taking the panel down.
+sub ai_spend_roles {
+	my ($since_key) = @_;
+	$since_key = '' unless defined $since_key;
+	my $rows = eval {
+		&subs::db_query('select provider, role, sum(tokens_in + tokens_out) as tokens from ai_spend where minute >= ? group by provider, role', $since_key)->hashes;
+	} || [];
+	my %map;
+	foreach my $r ( @{$rows} ) {
+		$map{ $r->{'provider'} // '' }->{ $r->{'role'} // '' } = $r->{'tokens'} || 0;
+	}
+	return \%map;
+}
+
+# The earliest minute the ledger knows, in epoch ms, so the chart can tell a
+# bar that predates the ledger apart from a bar that genuinely spent nothing.
+# Undefined when the ledger is empty.
+sub ai_spend_since {
+	my $row = eval { &subs::db_query('select min(minute) as m from ai_spend where minute is not null and minute != ?', '')->hashes->[0] } || {};
+	my $m = $row->{'m'} // '';
+	return undef unless $m =~ /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/;
+	my $t = Time::Piece->strptime($m, '%Y-%m-%d %H:%M');
+	return ref $t ? $t->epoch * 1000 : undef;
+}
+
+# The ledger grows one row per call, so it needs a prune. Legacy rows from the
+# hourly ledger have no minute (only the old hour), and an hour key sorts by its
+# date first, so they are aged out on the day bound; without this they would
+# never be pruned. A failure is reported as 0, not as a quiet success.
+sub ai_spend_prune {
+	my ($days) = @_;
+	$days = 40 unless defined $days && $days =~ /^\d+$/ && $days > 0;
+	my $before = &ai_spend_minute_key(&subs::rightNow() - $days * 86400000);
+	my $before_day = substr($before, 0, 10);
+	my $res = eval {
+		&subs::db_query(
+			"delete from ai_spend where (minute is not null and minute != '' and minute < ?) or ((minute is null or minute = '') and hour is not null and hour != '' and hour < ?)",
+			$before, $before_day
+		);
+	};
+	return 0 unless $res;
+	my $deleted = eval { $res->rows };
+	return defined $deleted ? ($deleted + 0) : 1;
 }
 
 1;

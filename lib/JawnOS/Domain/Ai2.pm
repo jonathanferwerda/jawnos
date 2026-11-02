@@ -288,7 +288,7 @@ sub ai_response_text {
 }
 
 sub ai_chat_raw {
-	my ($model, $messages, $thinking) = @_;
+	my ($model, $messages, $thinking, $role) = @_;
 	my @key_settings = &subs::ai_key_settings();
 	my $settings = &subs::settings_grabber({ app => 'mail', settings => [ @key_settings ] });
 	my $suds = &subs::suds_grabber();
@@ -451,11 +451,11 @@ sub ai_chat_raw {
 	$ai_tokens->{'in'} += ($in // 0);
 	$ai_tokens->{'out'} += ($out // 0);
 	$ai_tokens->{'unmetered'}++ unless defined $in || defined $out;
-	# Bank the usage by clock hour and provider, so the balance chart can put a
-	# token count against the hour an account fell in. A provider that reported
-	# no usage is skipped rather than banked as zero, so "no tokens" stays
-	# distinguishable from "not metered".
-	&subs::ai_spend_note($provider, $in, $out);
+	# Bank the usage per call with its minute, model and role, so the balance chart
+	# can put a token count against the minute an account fell in and say which
+	# model and role spent it. A provider that reported no usage is skipped rather
+	# than banked as zero, so "no tokens" stays distinguishable from "not metered".
+	&subs::ai_spend_note($provider, $in, $out, $real, $role);
 	return ($body, undef);
 }
 
@@ -464,12 +464,12 @@ sub ai_chat_raw {
 # model whose bucket is stood down steps down to a free one here, so every caller
 # gets the fallback.
 sub ai_chat_parts {
-	my ($model, $messages, $thinking) = @_;
+	my ($model, $messages, $thinking, $role) = @_;
 	if (&ai_model_paid($model) && !&ai_bucket_available(&ai_model_bucket($model))) {
 		my $free = &ai_free_model();
 		if ($free) { &subs::say_it('AI: ' . $model . ' is stood down (no credit); using the free model ' . $free); $model = $free; }
 	}
-	my ($body, $err) = &ai_chat_raw($model, $messages, $thinking);
+	my ($body, $err) = &ai_chat_raw($model, $messages, $thinking, $role);
 	# The record moves only when a call answered. It used to be stamped before
 	# the error check, so a failed call left "last model" naming a model that
 	# never replied - one reason a device reported it had got an answer.
@@ -477,7 +477,7 @@ sub ai_chat_parts {
 	if ($err && &ai_model_paid($model)) {
 		my $free = &ai_free_model();
 		if ($free && $free ne $model) {
-			my ($body2, $err2) = &ai_chat_raw($free, $messages, $thinking);
+			my ($body2, $err2) = &ai_chat_raw($free, $messages, $thinking, $role);
 			if (!$err2) { ($body, $err) = ($body2, undef); $model = $free; $ai_last_model = $model; &subs::say_it('AI: answered with the free model ' . $free); }
 		}
 	}
@@ -522,8 +522,8 @@ sub ai_chat_parts {
 }
 
 sub ai_chat {
-	my ($model, $messages, $thinking) = @_;
-	my ($parts, $err) = &ai_chat_parts($model, $messages, $thinking);
+	my ($model, $messages, $thinking, $role) = @_;
+	my ($parts, $err) = &ai_chat_parts($model, $messages, $thinking, $role);
 	return (undef, $err) if $err;
 	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');
@@ -621,11 +621,11 @@ sub ai_chat_parts_role {
 		$log->info('AI: role ' . $role . ' left ' . $primary . ': ' . $placed_why) if $log;
 	}
 
-	my ($parts, $err) = &ai_chat_parts($placed, $messages, $thinking);
+	my ($parts, $err) = &ai_chat_parts($placed, $messages, $thinking, $role);
 	return ($parts, undef) unless $err;
 	foreach my $next ( grep { defined $_ && length $_ && $_ ne $placed } ($fallback, $primary) ) {
 		&subs::say_it('AI: ' . $role . ' failed (' . $err . '); trying ' . $next);
-		my ($next_parts, $next_err) = &ai_chat_parts($next, $messages, $thinking);
+		my ($next_parts, $next_err) = &ai_chat_parts($next, $messages, $thinking, $role);
 		return ($next_parts, undef) unless $next_err;
 		($parts, $err) = ($next_parts, $next_err);
 	}
@@ -649,13 +649,13 @@ sub evaluation_model_call_role {
 # per-session model, the Coding agent's own fallback): primary first, then the
 # role's fallback setting.
 sub ai_chat_parts_with_fallback {
-	my ($primary, $fallback, $messages, $thinking) = @_;
+	my ($primary, $fallback, $messages, $thinking, $role) = @_;
 	return (undef, 'no model given') unless $primary;
-	my ($parts, $err) = &ai_chat_parts($primary, $messages, $thinking);
+	my ($parts, $err) = &ai_chat_parts($primary, $messages, $thinking, $role);
 	return ($parts, undef) unless $err;
 	if ($fallback && $fallback ne $primary) {
 		&subs::say_it('AI: ' . $primary . ' failed (' . $err . '); trying the fallback ' . $fallback);
-		return &ai_chat_parts($fallback, $messages, $thinking);
+		return &ai_chat_parts($fallback, $messages, $thinking, $role);
 	}
 	return (undef, $err);
 }
@@ -666,8 +666,8 @@ sub evaluation_model_call_with_fallback {
 }
 
 sub ai_chat_with_fallback {
-	my ($primary, $fallback, $messages, $thinking) = @_;
-	my ($parts, $err) = &ai_chat_parts_with_fallback($primary, $fallback, $messages, $thinking);
+	my ($primary, $fallback, $messages, $thinking, $role) = @_;
+	my ($parts, $err) = &ai_chat_parts_with_fallback($primary, $fallback, $messages, $thinking, $role);
 	return (undef, $err) if $err;
 	my $text = join '', map { $_->{'text'} } grep { ($_->{'type'} || '') eq 'text' } @{$parts || []};
 	return ($text, ($text && length $text) ? undef : 'the model returned nothing readable');

@@ -435,22 +435,29 @@ sub update_database($data) {
 			server_time VARCHAR(255)
 		)',
 		'create unique index if not exists idx_ai_budget on ai_budget (machine, day)',
-		# Every model call's usage, banked by the clock hour so the balance chart
-		# can print the tokens behind an hour's drop. One row per machine, provider
-		# and hour, with server_time so it rides the same peer sync as the rest of
+		# Every model call's usage, one row per call, so the balance chart can put
+		# tokens against the minute they were spent in and name the model and the
+		# role behind them. There is no natural key: two calls in the same minute
+		# are two rows. server_time lets it ride the same peer sync as the rest of
 		# the ledger.
 		'create table if not exists ai_spend (
 			uuid VARCHAR(255),
 			machine VARCHAR(255),
 			provider VARCHAR(100),
+			model VARCHAR(100),
+			role VARCHAR(100),
+			minute VARCHAR(25),
+			-- kept although nothing writes it now: the earlier hourly ledger put its
+			-- timestamp here, and ai_spend_prune ages those rows out by it
 			hour VARCHAR(25),
 			tokens_in INT,
 			tokens_out INT,
 			calls INT,
 			ost VARCHAR(255),
 			server_time VARCHAR(255)
-		)',
-		'create unique index if not exists idx_ai_spend on ai_spend (machine, provider, hour)',
+		)',,
+		'create index if not exists idx_ai_spend_minute on ai_spend (minute)',
+		'create index if not exists idx_ai_spend_provider on ai_spend (provider, minute)',
 		# db_insert always writes uuid and ost, so a ledger table built before they
 		# were added refuses its own inserts; add them for existing installs.
 		'alter table ai_house add column uuid VARCHAR(255)',
@@ -459,6 +466,14 @@ sub update_database($data) {
 		'alter table ai_jobs add column ost VARCHAR(255)',
 		'alter table ai_budget add column uuid VARCHAR(255)',
 		'alter table ai_budget add column ost VARCHAR(255)',
+		# The per-call ledger replaced the hourly one. Existing installs keep the old
+		# hour column (a duplicate ADD COLUMN is a warning the runner tolerates) and
+		# the old unique (machine, provider, hour) index must go: on a per-call table
+		# it would refuse the second call in the same hour.
+		'alter table ai_spend add column minute VARCHAR(25)',
+		'alter table ai_spend add column model VARCHAR(100)',
+		'alter table ai_spend add column role VARCHAR(100)',
+		'drop index if exists idx_ai_spend',
 		'alter table continent add column signatorial VARCHAR(500)',
 		'alter table continent add column speed VARCHAR(25)',
 		'alter table continent add column altitude VARCHAR(25)',

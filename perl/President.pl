@@ -315,6 +315,10 @@ sub manager_starter() {
 		{ name => 'guide watch', first => 40, every => 60, run => sub { &subs::guide_watch_tick(); } },
 		{ name => 'records watch', first => 120, every => 7200, run => sub { &subs::records_watch_tick(); } },
 		{ name => 'ai balance', first => 30, every => 600, run => sub { &subs::ai_balance_refresh(); } },
+		# The thresholds set under the chart: an hour over the limit, or a runway
+		# under it, becomes one Handbook note per crossing. The ledger's prune
+		# rides the same turn.
+		{ name => 'ai balance watch', first => 95, every => 1800, run => sub { &subs::ai_alert_tick(); } },
 		{ name => 'crypto rates', first => 35, every => 1800, run => sub { &subs::crypto_rates_refresh(); } },
 		# Interac e-Transfer has no API: the notification letters are the record.
 		# A few-minute pass stages one for a person, or records it when the house

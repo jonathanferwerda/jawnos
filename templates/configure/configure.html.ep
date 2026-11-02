@@ -103,8 +103,13 @@
 	   phone, and the hour that spent nothing still has tokens to report. */
 	.balance_bars rect.hit { fill:transparent; opacity:0; cursor:pointer; }
 	.balance_bars rect.picked { opacity:1; }
-	.balance_hour_peak { margin:4px 0 0; font-variant-numeric:tabular-nums; }
-	.balance_hour_detail { margin:4px 0 0; font-variant-numeric:tabular-nums; }
+	.balance_bucket_peak,
+	.balance_bucket_detail,
+	.balance_per_k,
+	.balance_topups { margin:4px 0 0; font-variant-numeric:tabular-nums; }
+	.balance_roles,
+	.balance_compare { margin:6px 0 0; font-size:11.5px; opacity:.8; }
+	.balance_topup { white-space:nowrap; }
 	@media (prefers-reduced-motion: reduce) { .cfg .cfg-acc > summary::before { transition:none; } }
 	@media (max-width:560px) {
 		.cfg-row { flex-direction:column; align-items:stretch; }
