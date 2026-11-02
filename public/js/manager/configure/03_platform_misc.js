@@ -26,6 +26,9 @@ $(document).on('click', '#plat_setting', function() {
 				if (jawnosConfigureShow('plat_setting', $('#plat_setting_list'))) {
 					b.attr('status', 'active');
 				}
+				// the panel may remember the QA tab; ask the chosen machine once the
+				// markup is in place (qaRefresh comes from 07_qa_nightly.js)
+				if (typeof qaRefresh === 'function' && $('#plat_qa').is(':visible')) { qaRefresh(); }
 			}
 		});
 	});

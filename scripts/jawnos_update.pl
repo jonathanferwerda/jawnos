@@ -218,12 +218,14 @@ sub fast_forward {
     my (undef, $origin) = &git_value('rev-parse', "origin/$branch");
     return ('error', "cannot read HEAD or origin/$branch") unless $head && $origin;
     return ('current', '') if $head eq $origin;
-    if (&git('merge-base', '--is-ancestor', 'HEAD', "origin/$branch") == 0) {
+    my ($ancestor) = &git('merge-base', '--is-ancestor', 'HEAD', "origin/$branch");
+    if ($ancestor == 0) {
         my ($merge_code, $merge_out) = &git('merge', '--ff-only', "origin/$branch");
         return ($merge_code == 0 ? 'updated' : 'error', $merge_out);
     }
+    my ($origin_ancestor) = &git('merge-base', '--is-ancestor', "origin/$branch", 'HEAD');
     return ('ahead', "local commits are not on origin/$branch; left alone")
-        if &git('merge-base', '--is-ancestor', "origin/$branch", 'HEAD') == 0;
+        if $origin_ancestor == 0;
     return ('diverged', "local and published history have diverged; left alone");
 }
 
@@ -268,7 +270,8 @@ sub install_dependencies {
 
 sub compiles {
     my $libs = &perl_libs();
-    my @command = ('perl', '-c', 'Manager.pl');
+    # capture_in_repo runs with cwd=$repo, and the launcher lives in perl/.
+    my @command = ('perl', '-c', 'perl/Manager.pl');
     unshift @command, 'env', "PERL5LIB=$libs" if length $libs;
     my ($code, $out) = &capture_in_repo(@command);
     &log_line('perl -c perl/Manager.pl: ' . &summarise($out));

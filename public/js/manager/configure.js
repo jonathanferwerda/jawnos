@@ -6,6 +6,7 @@
      04_currency_backup.js  - currency amounts, backup/merge/new database, adopt, doctor, uploads, tickets, signatorial
      05_database_records.js - vacuum, uuid cleaner, QR, distance, home plate, NFC, contacts, rename-merge, records watch
      06_watch_pay.js        - Plat sub-tabs, DNS, crypto, pay, History type-ahead, payment proof
+     07_qa_nightly.js       - Plat's QA tab: the nightly device, its readiness and the install
    /js/manager/bundle.js concatenates the index and these parts.
    [[/js-split]] */
 var global_constraints = { 'video': false, 'audio': false };
