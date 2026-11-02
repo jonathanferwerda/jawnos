@@ -611,6 +611,13 @@ is chosen again. While it is off the readiness and schedule cards answer the
 off state, and install, Save times and Run now are refused with a message that
 says the nightly is off.
 
+The choice is a house row (`device = 'all'`), and a house-wide row moves the
+durable settings digest, so it is a sync trigger: saving "table" on the phone
+makes the next sync pull the row to every peer, and table's `device_target.pl`
+then reads the new answer. It arrives on that sync, not in the same second, so
+the readiness card is the way to confirm the chosen machine is up before the
+night.
+
 Both timers honour the choice through `qa/device_target.pl`:
 
 ```

@@ -538,6 +538,13 @@ sub durable_settings_where {
 	# digest over them could never match a peer's: every tick would look like a
 	# change and pull the whole settings table forever. Leave them out of the
 	# trigger; they still ride along in a snapshot.
+	#
+	# The exception is a house-wide row (`device = 'all'`). It is not local by
+	# definition - every machine reads the same row - and the QA nightly choice is
+	# exactly that: a phone saves where the night runs and the table must hear it
+	# before 06:00. Without the exception a `__president` house row never moved
+	# the digest, so a quiet house could keep the old choice until some unrelated
+	# appointment or app setting happened to pull a snapshot.
 	my @apps = ('__president', 'cache', 'websocket_messages', 'ai_budget', 'ai_jobs', 'staged_fixes', 'staged_records', 'staged_appointments', 'sync_log', 'backups', 'sync_jobs', @gb::protected);
 	my %seen;
 	@apps = grep { !$seen{$_}++ } @apps;
@@ -549,7 +556,7 @@ sub durable_settings_where {
 	# the digest, so a deck whose pair had just been re-issued was denied by a
 	# peer that was otherwise live. Including it makes every Now Me rotate the
 	# digest and the peers pull the new row on the next tick.
-	return "app not in ($app_list)"
+	return "(app not in ($app_list) or device = 'all')"
 		. " and setting not in ('open_tabs','scrollTop','jopen','dimensions','utility_controller','remote_connect_timer','remote_upgrade','remote_backup_lock','remote_auth_probe_timer','ws_pa','chip_chyea','settings_sync_timer','remote_sync_state','log','schema_version','toggle','ci','errors','email_config')"
 		. " and setting not like 'remote\\_%' escape '\\'";
 }

@@ -1147,7 +1147,10 @@ state it is in. Handoff note written 2026-11-02 03:45.
   (`qa_nightly_device=none`), which stops the suite, UX and coding timers on
   every machine while keeping the saved times; install, Save times and Run now
   are refused with the off message, and `qa/device_target.pl` honours Off even
-  on a machine with no identity file.
+  on a machine with no identity file. A house-wide settings row (`device =
+  'all'`, which includes this choice) now moves the durable sync digest, so a
+  choice saved on the phone reaches the table on its next sync instead of
+  waiting for unrelated activity.
 
 **Next (in order)**
 1. **First app-lane run.** The keyboard note (status/navigation bars -> IME
