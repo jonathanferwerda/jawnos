@@ -494,6 +494,7 @@ sub network_interface_reporter {
 
 sub same_net_test {
 	my ($home_ip,$ip,$localhost_override) = @_;
+	$localhost_override = '' unless defined $localhost_override;
 	my $same_net = 'no';
 	my $localhost = '127.0.0.1';
 	return $same_net if ($ip eq $localhost || $home_ip eq $localhost) && !$localhost_override;

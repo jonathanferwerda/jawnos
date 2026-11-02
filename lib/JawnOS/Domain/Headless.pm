@@ -206,7 +206,7 @@ sub navigation_information {
 	foreach my $cl ( @{$current_locations} ) {
 		$count++;
 		my $cache = &subs::cache_get({ app => 'travel', context => 'navigation_information', subcontext => $cl->{'signatorial'} });
-		next if $cache->{'timestamp'} + 5000 >= &subs::rightNow();
+		next if ($cache->{'timestamp'} || 0) + 5000 >= &subs::rightNow();
 		$navigation_information->{$cl->{'signatorial'}}->{'__location'} = $cl;
 		if (!$cache->{'__location'}) { $runs++; $runs++; next; }
 		if (!$cache->{'__location'}->{'warranty'} || $cache->{'__location'}->{'warranty'} < &subs::rightNow()) { $runs++; $runs++; next; }

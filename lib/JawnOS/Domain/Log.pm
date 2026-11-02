@@ -214,7 +214,7 @@ sub log_reader {
 		my %seen_row;
 		my @merged_rows;
 		foreach my $row (sort { ($a->{$timestamp_selector} || 0) <=> ($b->{$timestamp_selector} || 0) } @{$appointments}) {
-			my $row_key = join '|', $row->{'app'}, $row->{'timestamp'}, $row->{'type'}, $row->{'duration'};
+			my $row_key = join '|', ($row->{'app'} // ''), ($row->{'timestamp'} // ''), ($row->{'type'} // ''), ($row->{'duration'} // '');
 			next if $seen_row{$row_key}++;
 			push @merged_rows, $row;
 		}

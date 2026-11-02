@@ -147,11 +147,16 @@ sub task_grabber {
 				$totals->{$bm} += $t->{$bm};
 			}
 		}
-		if ($t->{'renew_freq'} + $t->{'last_completed'} < &subs::rightNow() && $t->{'renew_freq'} > 0) {
+		# A task that has never been given a renewal has no renew_freq or
+		# last_completed; the old direct arithmetic warned for every one of them on
+		# every task_grabber call (the phone's log grew ~51 KB/min).
+		my $renew_freq = $t->{'renew_freq'} // 0;
+		my $last_completed = $t->{'last_completed'} // 0;
+		if ($renew_freq + $last_completed < &subs::rightNow() && $renew_freq > 0) {
 			$t->{'completed'} = 'off';
 		#	$t->{'duration'} = abs $settings->{'duration'};
 		}
-		$t->{'renew_freq'} = &subs::duration_sayer($t->{'renew_freq'} / 1000);
+		$t->{'renew_freq'} = &subs::duration_sayer($renew_freq / 1000);
 
 
 		if (my $jt = eval { return decode_json $tsettings->{'tasks'} }) {
@@ -166,37 +171,39 @@ sub task_grabber {
 
 		}
 	}
-	$totals->{'duration'} = &subs::duration_sayer($totals->{'duration'} / 1000);
+	$totals->{'duration'} = &subs::duration_sayer(($totals->{'duration'} || 0) / 1000);
 
-	if ($settings->{'tasks_sort'} eq 'new') {
+	my $tasks_sort = $settings->{'tasks_sort'} || '';
+	my $tasks_filter = $settings->{'tasks_filter'} || '';
+	if ($tasks_sort eq 'new') {
 		@{$tasks} = sort { $b->{'timestamp'} <=> $a->{'timestamp'} } @{$tasks};
 	}
-	elsif ($settings->{'tasks_sort'} eq 'high') {
+	elsif ($tasks_sort eq 'high') {
 		@{$tasks} = sort { $b->{'priority'} <=> $a->{'priority'} } @{$tasks};
 	}
-	elsif ($settings->{'tasks_sort'} eq 'low') {
+	elsif ($tasks_sort eq 'low') {
 		@{$tasks} = sort { $a->{'priority'} <=> $b->{'priority'} } @{$tasks};
 	}
-	elsif ($settings->{'tasks_sort'} eq 'az') {
+	elsif ($tasks_sort eq 'az') {
 		@{$tasks} = sort { $a->{'task'} cmp $b->{'task'} } @{$tasks};
 	}
-	elsif ($settings->{'tasks_sort'} eq 'za') {
+	elsif ($tasks_sort eq 'za') {
 		@{$tasks} = sort { $b->{'task'} cmp $a->{'task'} } @{$tasks};
 	}
-	elsif ($settings->{'tasks_sort'} eq 'chk') {
+	elsif ($tasks_sort eq 'chk') {
 		@{$tasks} = sort { $a->{'last_completed'} <=> $b->{'last_completed'} } @{$tasks};
 	}
-	elsif ($settings->{'tasks_sort'} eq 'rchk') {
+	elsif ($tasks_sort eq 'rchk') {
 		@{$tasks} = sort { $b->{'last_completed'} <=> $a->{'last_completed'} } @{$tasks};
 	}
 	else {
 		@{$tasks} = sort { $a->{'timestamp'} <=> $b->{'timestamp'} } @{$tasks};
 	}
 
-	if ($settings->{'tasks_filter'} eq 'done') {
+	if ($tasks_filter eq 'done') {
 		@{$tasks} = grep { $_->{'completed'} eq 'on' } @{$tasks};
 	}
-	elsif ($settings->{'tasks_filter'} eq 'open') {
+	elsif ($tasks_filter eq 'open') {
 		@{$tasks} = grep { $_->{'completed'} eq 'off' } @{$tasks};
 	}
 

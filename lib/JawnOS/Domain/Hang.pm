@@ -54,7 +54,7 @@ sub hang_to_dry {
 		my $settings = &settings_grabber({ app => $app });
 		my $app_data = { name => $app, app => $app, formatted_name => &format_name($app), colour => $settings->{'colour'}, dark_colour => $settings->{'dark_colour'} };
 		my $time_plinko = $cl->{'time_plinko'} || {};
-		my @schedule = split ',', $cl->{'schedule'};
+		my @schedule = split ',', ($cl->{'schedule'} // '');
 		foreach my $schedule ( @schedule ) {
 
 		}

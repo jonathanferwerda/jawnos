@@ -428,8 +428,10 @@ sub main_icon_maker {
 	my $timestamp = $data->{'timestamp'};
 	my $settings = $data->{'settings'};
 	my $size = $data->{'size'} || 'tiny';
-	my $onclick;
-	if (!$data->{'onclick'}) {
+	# A caller that supplies its own onclick used to leave this undefined, and
+	# every icon built that way warned in the concatenation below.
+	my $onclick = $data->{'onclick'};
+	unless (defined $onclick && length $onclick) {
 		$onclick = 'onclick="windowRestorer(' . $timestamp . ',\'' . $unformatted_name . '\')"';
 	}
 	$settings = &subs::settings_grabber({ app => $unformatted_name }) unless $settings;

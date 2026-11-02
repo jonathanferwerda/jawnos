@@ -248,7 +248,12 @@ sub appt_header_printer {
 	my $header = $c->render_to_string(template => 'apps/appointment_header', timestamp => $server_time, appts => $appts, appointments => [ $app ], a => $app, running_uuid => &open_session_uuid($app) );
 
 	eval { &subs::cache_set({ app => $app, context => 'header', timestamp => $server_time, warranty => '-1d' }, { timestamp => $timestamp, header => $header, signature => &subs::render_signature() }) };
-	&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
+	# A source=ws open is a headless/automation read (and the watch's own path):
+	# it must not wake every other tab with a header, matching the route's own
+	# source=ws guard. Other callers still broadcast.
+	unless (($data->{'broadcast'} // '') eq 'no' || ($data->{'source'} // '') eq 'ws') {
+		&Websocket::send('tab', { type => 'header', app => $app, timestamp => $server_time, header => $header });
+	}
 	&subs::subprocessor(sub {
     Mojo::IOLoop->reset;
 		foreach my $a ( @{$appts->{$app}->{'list'}} ) {
@@ -305,6 +310,7 @@ sub socket_retry_note {
 
 sub unix_socket_sender {
 	my ($file,$data,$rcv) = @_;
+	$rcv = 0 unless defined $rcv;
 
 	if ($file eq 'memory') {
 		$file = &subs::home('~/.president/memory');
