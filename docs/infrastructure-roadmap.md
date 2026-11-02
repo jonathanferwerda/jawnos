@@ -485,3 +485,65 @@ The real insurance is a **restore that has been rehearsed**:
   `server/fullchain.pem` + `server/privkey.pem`;
 - copied **off the box** to the laptop and the table;
 - and one written drill, because an untested backup is a hope, not a plan.
+
+---
+
+## 12. Standalone task — the weekly certificate timer (do this today)
+
+Does not wait for the hardware. §4 established that **nothing renews the certificate on the
+machine that serves it**; this closes that hole, first on the laptop so it is proven before the
+migration, then in the `house` container.
+
+`scripts/tls_issue.pl --renew` is safe to schedule: it renews only when due, compares the installed
+pair before and after, writes `server/fullchain.pem` + `privkey.pem` only if they changed, and
+requests the restart through the app's own `~/.president/status` channel. No root is needed.
+
+**On the laptop, as the user that owns the tree** (`jawn`):
+
+```
+~/.config/systemd/user/jawnos-tls.service
+[Unit]
+Description=JawnOS house certificate renewal (DNS-01)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/perl %h/jawnos/scripts/tls_issue.pl --renew
+```
+
+```
+~/.config/systemd/user/jawnos-tls.timer
+[Unit]
+Description=Weekly JawnOS certificate check
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target
+```
+
+```
+systemctl --user daemon-reload
+systemctl --user enable --now jawnos-tls.timer
+systemctl --user list-timers jawnos-tls.timer
+```
+
+**Prove it now, without waiting for a week:** `perl scripts/tls_issue.pl --renew` should answer
+*"certificate for *.jonathanferwerda.com is current (nothing to install)"* — the cert is not due
+until roughly 2026-12-02. If it fails instead, the DNS credentials under Configure → Plat → DNS
+are the thing to fix, and that is exactly what would have surfaced in December otherwise.
+
+Notes:
+
+- A **user** timer runs only while that user has a session. On a laptop that is fine; in the
+  `house` container use a **system** timer (same two files under `/etc/systemd/system/`, with
+  `User=jawn` in the unit), or `loginctl enable-linger jawn` if it must stay a user timer.
+- Verify later with `systemctl --user list-timers` and
+  `journalctl --user -u jawnos-tls.service`; a renewal logs either *"installed a new certificate
+  … restart requested"* or *"is current (nothing to install)"*.
+- Keep the laptop's existing `certbot-renew.timer` for now. Two issuers of the same name is
+  harmless while one of them is not yet proven; retire it once the KS-5 has renewed once on its own.
+- Hard date: **2027-01-01**.
