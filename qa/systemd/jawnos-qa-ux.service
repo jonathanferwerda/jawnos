@@ -19,7 +19,7 @@ ExecStartPre=/usr/bin/perl /home/jawn/jawnos/qa/prune.pl --keep 14
 # a missing ticket leaves the report on disk and exits 0.
 ExecStart=/usr/bin/perl /home/jawn/jawnos/qa/ux/run --root /home/jawn/jawnos-qa --results /home/jawn/jawnos-qa/ux --metrics /home/jawn/jawnos-qa/ux/metrics.json --limit 5 --timeout 1500 --file-handbook
 
-# The same second fence as the 04:00 suite: the repo is read-only, only the QA
+# The same second fence as the 05:00 suite: the repo is read-only, only the QA
 # root is writable, and loopback is all the parent needs to file the summary.
 # The fenced child has its own net namespace, so its QA copy is unreachable.
 Nice=10

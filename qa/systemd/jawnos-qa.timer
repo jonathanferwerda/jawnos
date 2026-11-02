@@ -2,9 +2,9 @@
 Description=Nightly JawnOS QA suite
 
 [Timer]
-OnCalendar=*-*-* 04:00:00
+OnCalendar=*-*-* 05:00:00
 Persistent=true
-RandomizedDelaySec=20m
+RandomizedDelaySec=5m
 Unit=jawnos-qa.service
 
 [Install]

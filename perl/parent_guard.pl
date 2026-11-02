@@ -41,11 +41,12 @@ sub start {
 	$0 = 'jawn guard';
 	$SIG{$_} = 'DEFAULT' for qw/INT TERM HUP CHLD PIPE/;
 	my $interval = $o{'interval'} || 1;
+	my $master_start = &start_time($master);
 	while (1) {
 		sleep $interval;
 		# the tree is the reason we exist; with it gone there is nothing to do
 		last unless &running($tree);
-		next if &alive($master);
+		next if &alive($master, $master_start);
 		kill 'TERM', $tree;
 		# Prefork's _term kills the pool and exits the manager. Give the tree
 		# real time to run it (safe signals are deferred), then force what is
@@ -86,12 +87,32 @@ sub running {
 	return 1;
 }
 
+# /proc/<pid>/stat's start time (field 22). It identifies the process rather
+# than its name: the QA harness runs the tree under script(1), whose command
+# line does not mention jawn, and that wrapper is as legitimate a master as
+# ./jawn. A recycled pid starts later, so the time is what tells them apart.
+sub start_time {
+	my ($pid) = @_;
+	open(my $fh, '<', "/proc/$pid/stat") or return '';
+	my $line = <$fh>;
+	close $fh;
+	return '' unless defined $line;
+	$line =~ s/^.*\)\s+//;   # cut through "(comm)", which may hold spaces
+	my @field = split /\s+/, $line;
+	return $field[19] // '';    # field 3 is state, so field 22 is index 19
+}
+
 # The master is alive only when it exists, is not a zombie, and - where /proc
-# can be read - still runs the master rather than an unrelated process that
+# can be read - is still the same process rather than an unrelated one that
 # inherited the number in between polls.
 sub alive {
-	my ($pid) = @_;
+	my ($pid, $start) = @_;
 	return 0 unless &running($pid);
+	if (defined $start && length $start) {
+		my $now = &start_time($pid);
+		return ($now ne '' && $now eq $start) ? 1 : 0;
+	}
+	# No start time was captured (no /proc): fall back to the name test.
 	if (open(my $fh, '<', "/proc/$pid/cmdline")) {
 		local $/;
 		my $cmd = <$fh>;

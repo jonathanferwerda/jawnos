@@ -289,7 +289,7 @@ The phone/tablet build needs JDK 17-21: AGP 8.7/Gradle 8.9 fail in
 `JdkImageTransform` on Java 26, which is the only JDK on the laptop until
 `jdk17-openjdk` was installed for this run. `qa/android/build.sh` prefers it.
 
-## l6 — UX (nightly, separate from the 04:00 job)
+## l6 — UX (nightly, separate from the 05:00 job)
 
 `qa/ux/run` reads the owner's **JawnOS**-category notes, newest first
 (`--limit N`, default 5), opens the live database with
@@ -341,7 +341,7 @@ sudo systemctl enable --now jawnos-qa-ux.timer
 systemctl list-timers jawnos-qa-ux.timer
 ```
 
-It runs at 05:30 with a 15-minute random delay, not in the 04:00 l0-l2 job, so
+It runs at 05:30 with a 15-minute random delay, not in the 05:00 l0-l2 job, so
 a 20-minute UX run cannot hold the route/database layers. The service has the
 same second fence (`ProtectHome=read-only`, only `~/jawnos-qa` writable,
 loopback-only) and calls the runner with `--results ~/jawnos-qa/ux`. A missing
@@ -359,7 +359,7 @@ sudo systemctl enable --now jawnos-qa.timer
 systemctl list-timers jawnos-qa.timer
 ```
 
-It runs `l0,l1,l2` at 04:00 with a 20-minute random delay, as `jawn`, with the
+It runs `l0,l1,l2` at 05:00 with a five-minute random delay, as `jawn`, with the
 repo read-only (`ProtectHome=read-only`, `ProtectSystem=strict`), only
 `~/jawnos-qa` writable, loopback-only networking, `MemoryMax=4G` and
 `CPUQuota=300%` (3 cores; 200% made `nproc` report 2 and `t/43`'s `--jobs=3`

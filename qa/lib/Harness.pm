@@ -218,6 +218,7 @@ sub export_tree {
 		my @exclude = (
 			'--exclude=./.git', '--exclude=./.shots', '--exclude=./releases',
 			'--exclude=./.secrets', '--exclude=./database/jawnos.db*',
+			'--exclude=./server/privkey.pem', '--exclude=./server/fullchain.pem',
 			'--exclude=./database/backups', '--exclude=./desktop/mkosi/output',
 			'--exclude=./desktop/mkosi/.stage', '--exclude=./.pio',
 			'--exclude=./jp/alarmclock/.pio', '--exclude=./jt/.pio',
