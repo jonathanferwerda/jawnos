@@ -588,11 +588,21 @@ sub claim_work {
 # (phone.jonathanferwerda.com -> Phone), are the names a person actually uses;
 # the OS hostname is the last resort and only when it is a real name.
 sub machine_name {
+	# The config's own name is what the rest of the app shows (Generate, Notify,
+	# the page title, the ws fallback), so it comes first here too. A machine's
+	# `me/computer_name` can be a leftover from setup - the laptop's read 'fe' -
+	# and used to win, which is why a laptop called Laptop answered as 'fe'.
+	my $config = eval { &config_reader() } || {};
+	my $configured = &machine_name_from_config($config, '');
+	return $configured if $configured ne '';
 	my $name = &setting_grabber({ app => 'me', setting => 'computer_name' }) || &setting_grabber({ app => 'me', setting => 'my_name' });
-	return $name if defined $name && $name =~ /\S/;
+	$name =~ s/^\s+|\s+$//g if defined $name;
+	return $name if defined $name && $name ne '';
 	my $h = `hostname`;
 	chomp $h;
-	return &machine_name_from_config(eval { &config_reader() } || {}, $h);
+	$h =~ s/^\s+|\s+$//g;
+	return '' if $h eq '' || $h =~ /^(?:localhost|127\.0\.0\.1|::1)$/i;
+	return $h;
 }
 
 # The name a machine shows when no setting names it: the config's own name, then
