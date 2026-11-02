@@ -3105,3 +3105,119 @@ details.cfg-acc > summary:focus-visible { outline: 2px solid var(--accent, curre
 	.editor_content_area { padding: 12px 12px 48px; font-size: 16px; }
 	.editor_content_area h1 { font-size: 26px; }
 }
+
+/* ---------------- Tasks: the row's colour, composed against the theme --------
+   A task row's fill is the colour the person picked for that task, and it used
+   to arrive as an inline background-color. An inline colour cannot be composed
+   against the desktop, so on a dark theme the rows glared and the ink inside
+   them stayed the theme's light ink on a light fill. The template (and each
+   re-render of it) now carries the colour as --task-colour, so the surface owns
+   the fill and the dark theme can lay a wash over the hue: a row still reads as
+   that task's colour, and nothing in it lands light-on-light. */
+.task_list { color: var(--ink); }
+.task_item {
+	background-color: var(--task-colour, var(--panel-2));
+	color: var(--ink);
+	border-color: var(--line);
+}
+/* The new-task row is the admin surface under the list - the Sort/Filter table
+   and the totals - not one task's colour, so it takes the theme's own surface
+   and the table inside it stays readable in either theme. */
+.task_item_new { background-color: var(--panel-2); }
+/* a save dims the list while its answer is on the way; a class, so the rebuilt
+   markup is styled by this sheet rather than by styles the old element carried */
+.task_list.task_list_busy { pointer-events: none; opacity: .5; filter: grayscale(1); }
+.task_admin_table, .task_settings_table {
+	background-color: var(--panel);
+	color: var(--ink);
+	border-color: var(--line);
+}
+.task_admin_table th, .task_settings_table th { color: var(--ink); }
+body.dark_theme .task_item {
+	background-color: var(--task-colour, var(--panel));
+	background-image: linear-gradient(rgba(27, 29, 33, .80), rgba(27, 29, 33, .80));
+}
+body.dark_theme .task_item_new {
+	background-color: var(--panel-2);
+	background-image: none;
+}
+body.dark_theme .task_admin_table,
+body.dark_theme .task_settings_table { background-color: var(--panel); }
+
+/* ---------------- Accounting: the ledger's coloured rows ---------------------
+   The ledger paints a row (and the budget cells in it) with the app's colour,
+   which is picked for a light desktop. On a dark one the fill stayed light while
+   the ink followed the theme, so a row was light text on a light ground. The
+   colour arrives as --budget-colour and the dark theme lays the panel's wash
+   over it, keeping each app's hue as a tint and the figures readable. The
+   report's rows, columns and numbers are untouched. */
+.budget_ledger { color: var(--ink); border-color: var(--line); }
+.budget_row, .budget_detail_row, .budget_cell {
+	background-color: var(--budget-colour, transparent);
+	color: var(--ink);
+}
+body.dark_theme .budget_row,
+body.dark_theme .budget_detail_row,
+body.dark_theme .budget_cell {
+	background-image: linear-gradient(rgba(27, 29, 33, .82), rgba(27, 29, 33, .82));
+	color: var(--ink);
+}
+
+/* ---------------- Inventory: the panel's two palettes ---------------- */
+/* The inventory panel colours two things: the share wheel's slices and the tint
+   a cell wears for its budget status. Both are defined once per theme, as
+   custom properties on the panel itself, so the light and dark sets cannot drift
+   apart and the wheel - which reads these from JavaScript - repaints with the
+   rows. The hues are muted, and separated by lightness as well as hue, so
+   neighbours survive the common colour-vision deficiencies; none is a pure
+   primary, and every label ink is chosen to stay legible on its own fill. */
+.inventory_details {
+	--inv-color-1: #3d6fa8;
+	--inv-color-2: #b8792f;
+	--inv-color-3: #5b8f61;
+	--inv-color-4: #83639e;
+	--inv-color-5: #b26a74;
+	--inv-color-6: #3f8484;
+	--inv-color-7: #8a8a4f;
+	--inv-color-8: #6b7a8a;
+	--inv-ink: #2b2f33;
+	--inv-quiet-ink: #6b6f73;
+	--inv-slice-edge: #ffffff;
+	--inv-budgeted-bg: #d7ead4;	--inv-budgeted-ink: #24401f;
+	--inv-accomplished-bg: #efdde4;	--inv-accomplished-ink: #452331;
+	--inv-burnt_out-bg: #f5e2c8;	--inv-burnt_out-ink: #4a3315;
+	--inv-overkill-bg: #f1d4d1;	--inv-overkill-ink: #4d1f1b;
+	--inv-achievable-bg: #d8e4f2;	--inv-achievable-ink: #1f3550;
+	--inv-neglected-bg: #f1ecc6;	--inv-neglected-ink: #453c12;
+	--inv-abandoned-bg: #e2e4e6;	--inv-abandoned-ink: #33383c;
+}
+/* Dark mode is its own set, not the light one dimmed: the fills are deep tints
+   and the inks are light, so a cell reads as a tint of the panel rather than a
+   pastel plaque in a dark room. */
+body.dark_theme .inventory_details {
+	--inv-color-1: #6f9fd0;
+	--inv-color-2: #d1a055;
+	--inv-color-3: #7fbc85;
+	--inv-color-4: #a98ccb;
+	--inv-color-5: #d18a94;
+	--inv-color-6: #63b3b3;
+	--inv-color-7: #b5b46f;
+	--inv-color-8: #94a3b4;
+	--inv-ink: #e6e6e6;
+	--inv-quiet-ink: #9a9a9a;
+	--inv-slice-edge: #1b1d21;
+	--inv-budgeted-bg: #2b4030;	--inv-budgeted-ink: #d6ecd6;
+	--inv-accomplished-bg: #452f3c;	--inv-accomplished-ink: #f0dbe2;
+	--inv-burnt_out-bg: #4a3824;	--inv-burnt_out-ink: #f2ddc0;
+	--inv-overkill-bg: #4b2a27;	--inv-overkill-ink: #f3d3ce;
+	--inv-achievable-bg: #26384d;	--inv-achievable-ink: #d3e2f4;
+	--inv-neglected-bg: #43401f;	--inv-neglected-ink: #eee8bf;
+	--inv-abandoned-bg: #33373b;	--inv-abandoned-ink: #dfe2e5;
+}
+.inventory_details .statistic_entry.inv_status_budgeted { background-color: var(--inv-budgeted-bg); color: var(--inv-budgeted-ink); }
+.inventory_details .statistic_entry.inv_status_accomplished { background-color: var(--inv-accomplished-bg); color: var(--inv-accomplished-ink); }
+.inventory_details .statistic_entry.inv_status_burnt_out { background-color: var(--inv-burnt_out-bg); color: var(--inv-burnt_out-ink); }
+.inventory_details .statistic_entry.inv_status_overkill { background-color: var(--inv-overkill-bg); color: var(--inv-overkill-ink); }
+.inventory_details .statistic_entry.inv_status_achievable { background-color: var(--inv-achievable-bg); color: var(--inv-achievable-ink); }
+.inventory_details .statistic_entry.inv_status_neglected { background-color: var(--inv-neglected-bg); color: var(--inv-neglected-ink); }
+.inventory_details .statistic_entry.inv_status_abandoned { background-color: var(--inv-abandoned-bg); color: var(--inv-abandoned-ink); }

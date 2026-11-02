@@ -588,22 +588,4 @@ sub backup_registry_prune {
 	return $deleted;
 }
 
-# Held for the life of a remote export. Releasing in DESTROY means the lock is
-# cleared even when backup_now dies part-way, not only on its normal return.
-{
-	package Jawn::BackupLock;
-	sub new { my ($class,$val) = @_; return bless { val => $val }, $class; }
-	sub release {
-		my $self = shift;
-		return unless $self->{'val'};
-		my $val = $self->{'val'};
-		$self->{'val'} = undef;
-		eval {
-			my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_backup_lock')->hashes->[0];
-			&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => '' }) if (($row->{'value'} || '') eq $val);
-		};
-	}
-	sub DESTROY { my $self = shift; $self->release; }
-}
-
 1;

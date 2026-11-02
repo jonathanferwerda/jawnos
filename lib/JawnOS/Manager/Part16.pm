@@ -613,6 +613,21 @@ sub inventory_details($c,$settings) {
 		}
 		$returner->{'between_average'} = eval { $returner->{'between_total'} / $returner->{'total_occurences'} } || undef;
 	}
+	# The share wheel is one scope's own parts rather than the page of periods
+	# beside it: this week splits into its days, this day into its hours. The
+	# readings come from the appointments already gathered above, so six shares
+	# cost a walk over that list, never a query of their own.
+	my $allocation = {};
+	foreach my $scope ( qw/minute hour day week month year/ ) {
+		my ($bt, $tt) = &father_time({
+			scope => $scope,
+			ts => 'this',
+			lock => $settings->{'s_lock'},
+			timestamp => $view_now
+		});
+		$allocation->{$scope} = &inventory_allocation($appts, $s_display, $scope, $bt, $tt);
+	}
+	$returner->{'allocation'} = $allocation;
 	# A row stays only if it holds something for what is on screen. A period that
 	# reaches past now can catch a stray future-dated appointment and come back as
 	# a bucket that carries no value for the chosen display - a note dated years
@@ -660,6 +675,202 @@ sub inventory_details($c,$settings) {
 		evaluation => $returner->{'evaluation'}
 	);
 	return $returner;
+}
+
+# One scope's parts as shares of the whole scope: a week is seven days, a day
+# is its hours, a month its days, a year its months, an hour its minutes. The
+# reading is the raw amount each part holds - a session split where it was
+# spent - rather than the grid's averaged statistic, which has no share to
+# give. Percentages are whole numbers handed out by largest remainder, so the
+# wheel's labels always add up to 100 instead of to 99 or 101.
+sub inventory_allocation($appts, $display, $scope, $start, $end) {
+	my $empty = {
+		scope => $scope,
+		start => $start,
+		end => $end,
+		total => 0,
+		empty => 1,
+		slices => []
+	};
+	return $empty unless $appts && $scope && defined $start && defined $end && $end > $start;
+
+	# Where one part ends and the next begins. Minutes, hours and seconds step at
+	# the clock's own pace; days and months step at local midnight, so a daylight
+	# saving change never makes a day 23.4 hours long.
+	my @edges = ($start);
+	if ($scope eq 'minute' || $scope eq 'hour' || $scope eq 'day') {
+		my $step = $scope eq 'minute' ? 1000 : $scope eq 'hour' ? 60000 : 3600000;
+		my $t = $start;
+		while (scalar @edges < 400) {
+			$t += $step;
+			last if $t >= $end;
+			push @edges, $t;
+		}
+		push @edges, $end;
+	}
+	elsif ($scope eq 'week' || $scope eq 'month') {
+		my $t = $start;
+		while (scalar @edges < 400) {
+			my @lt = localtime(int($t / 1000));
+			# step through noon, which no daylight saving change can push onto
+			# another calendar day, then take that day's midnight
+			my $noon = timelocal(12, 0, 0, $lt[3], $lt[4], $lt[5]);
+			my @nx = localtime($noon + 86400);
+			my $next = timelocal(0, 0, 0, $nx[3], $nx[4], $nx[5]) * 1000;
+			$next = $t + 86400000 if $next <= $t;
+			last if $next >= $end;
+			push @edges, $next;
+			$t = $next;
+		}
+		push @edges, $end;
+	}
+	elsif ($scope eq 'year') {
+		my @lt = localtime(int($start / 1000));
+		my ($year, $month) = ($lt[5] + 1900, $lt[4]);
+		while (scalar @edges < 400) {
+			$month++;
+			if ($month > 11) { $month = 0; $year++; }
+			my $next = timelocal(0, 0, 0, 1, $month, $year) * 1000;
+			last if $next >= $end;
+			push @edges, $next;
+		}
+		push @edges, $end;
+	}
+	else {
+		return $empty;
+	}
+	return $empty if scalar @edges < 2;
+
+	my $label_for = sub {
+		my $t = shift;
+		my @lt = localtime(int($t / 1000));
+		return sprintf('%02ds', $lt[0]) if $scope eq 'minute';
+		return sprintf('%02d:%02d', $lt[2], $lt[1]) if $scope eq 'hour' || $scope eq 'day';
+		return sprintf('%d/%d', $lt[4] + 1, $lt[3]) if $scope eq 'week' || $scope eq 'month';
+		# the month's own name where gb carries one, its number where it does not
+		my $name = eval { $gb::months->[$lt[4]]->{'name'} };
+		return (defined $name && length $name) ? $name : sprintf('%02d', $lt[4] + 1);
+	};
+
+	my @value = (0) x (scalar(@edges) - 1);
+	my $buckets = scalar @value;
+
+	# A span is split by how much of it falls in each part, so a session that
+	# crosses midnight gives each day the time it actually spent there.
+	my $add_span = sub {
+		my ($from, $to, $amount) = @_;
+		my $span = $to - $from;
+		return unless $amount > 0 && $span > 0;
+		for my $i (0 .. $buckets - 1) {
+			my $b_from = $edges[$i];
+			my $b_to = $edges[$i + 1];
+			next if $b_to <= $from;
+			last if $b_from >= $to;
+			my $over = ($to < $b_to ? $to : $b_to) - ($from > $b_from ? $from : $b_from);
+			$value[$i] += $amount * ($over / $span) if $over > 0;
+		}
+	};
+	# A reading that is a moment, not a span, belongs to the part it opens.
+	my $add_instant = sub {
+		my ($at, $amount) = @_;
+		return unless $amount > 0 && $at >= $start && $at < $end;
+		for my $i (0 .. $buckets - 1) {
+			next if $at < $edges[$i];
+			if ($at < $edges[$i + 1]) { $value[$i] += $amount; last; }
+		}
+	};
+
+	foreach my $a ( @{$appts} ) {
+		# a measure promoted to its own row is the same reading its parent still
+		# carries; counting both would double its share
+		next if ($a->{'type'} || '') eq 'measure';
+		my $at = ($a->{'timestamp'} || 0) + 0;
+		next unless $at;
+
+		if ($display eq 'duration') {
+			my $to = $at + abs($a->{'duration'} || 0);
+			my $from = $at;
+			next if $to <= $start || $from >= $end;
+			$from = $start if $from < $start;
+			$to = $end if $to > $end;
+			$add_span->($from, $to, $to - $from);
+		}
+		elsif ($display eq 'occurences') {
+			$add_instant->($at, 1);
+		}
+		else {
+			my $amount = $a->{$display};
+			$add_instant->($at, abs($amount)) if defined $amount && $amount =~ /^-?[0-9.]+$/ && $amount;
+		}
+
+		# a measure's readings live on the appointment, each stamped with its own
+		# moment rather than the appointment's
+		next if $display eq 'occurences' || !$a->{'measures'};
+		my $measures = $a->{'measures'};
+		$measures = eval { decode_json $measures } unless ref $measures;
+		next unless ref $measures eq 'ARRAY';
+		foreach my $m ( @{$measures} ) {
+			next unless ref $m eq 'HASH';
+			my $amount = $m->{$display};
+			next unless defined $amount && $amount =~ /^-?[0-9.]+$/ && $amount;
+			my $when = ($m->{'timestamp'} || $m->{'ts'} || $at) + 0;
+			if ($display eq 'duration') {
+				my $to = $when + abs($amount);
+				my $from = $when;
+				next if $to <= $start || $from >= $end;
+				$from = $start if $from < $start;
+				$to = $end if $to > $end;
+				$add_span->($from, $to, $to - $from);
+			}
+			else {
+				$add_instant->($when, abs($amount));
+			}
+		}
+	}
+
+	my $total = 0;
+	$total += $_ for @value;
+	return $empty unless $total > 0;
+
+	my @rows;
+	for my $i (0 .. $#value) {
+		next unless $value[$i] > 0;
+		my $exact = 100 * $value[$i] / $total;
+		my $percent = int($exact);
+		push @rows, {
+			start => $edges[$i],
+			end => $edges[$i + 1],
+			label => $label_for->($edges[$i]),
+			value => $value[$i],
+			percent => $percent,
+			remainder => $exact - $percent,
+			order => $i
+		};
+	}
+	# The parts are rounded down and the leftover points go to the largest
+	# fractions, so the wheel's labels add up to exactly 100.
+	my $leftover = 100;
+	$leftover -= $_->{'percent'} for @rows;
+	foreach my $row ( sort { $b->{'remainder'} <=> $a->{'remainder'} || $a->{'order'} <=> $b->{'order'} } @rows ) {
+		last if $leftover <= 0;
+		$row->{'percent'}++;
+		$leftover--;
+	}
+	if ($leftover > 0) {
+		my ($biggest) = sort { $b->{'value'} <=> $a->{'value'} } @rows;
+		$biggest->{'percent'} += $leftover if $biggest;
+	}
+	delete $_->{'remainder'} for @rows;
+	delete $_->{'order'} for @rows;
+
+	return {
+		scope => $scope,
+		start => $start,
+		end => $end,
+		total => $total,
+		empty => 0,
+		slices => \@rows
+	};
 }
 
 1;

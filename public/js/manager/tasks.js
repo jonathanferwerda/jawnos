@@ -16,11 +16,10 @@ $(document).on('click', '.tasks', function() {
 $(document).on('change', '.task_input', function(e) {
 	var appt = $(this).closest('.appointment');
 	var container = appt.find('.re_tasks');
-	container.find('.task_list').css({
-		'pointer-events': 'none',
-		'opacity': '0.5',
-		'filter': 'grayscale(1)'
-	});
+	// the busy dim is a class, not four inline styles: the re-render replaces this
+	// element, and the rebuilt markup has to come back carrying only the theme's
+	// own surfaces (see .task_list_busy in manager.css)
+	container.find('.task_list').addClass('task_list_busy');
 	var pa = projectAccountGrabber($(this));
 	var account = pa['account'];
 	var project = pa['project'];

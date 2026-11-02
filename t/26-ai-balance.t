@@ -44,10 +44,60 @@ is $week->{'hours'}, 48, 'over the span the samples actually cover';
 cmp_ok abs($week->{'change'} - 30), '<', 0.001, 'the change is the fall over the week';
 cmp_ok abs($week->{'per_day'} - 15), '<', 0.001, 'and the pace is scaled to a day';
 
-# A rising balance is a negative change, so the template can say Rise.
+# A rise is money put in, not a negative burn. Consumption counts only the
+# falls, so the pace stays at zero and there is no runway to promise.
 my $rise = [ { t => $now - 12 * $H, v => 10 }, { t => $now, v => 20 } ];
 my $up = &subs::ai_balance_window($rise, '24h', $now);
-cmp_ok $up->{'per_day'}, '<', 0, 'a top-up makes the pace negative';
+is $up->{'consumption'}, 0, 'a top-up adds no consumption';
+is $up->{'per_day'}, 0, 'and never reads as a negative rate';
+ok !defined $up->{'runway_hours'}, 'a balance that is not falling has no runway';
+
+# The same burn either side of a top-up: one series jumps up 50 and settles,
+# one holds level. Both spent 30 over the same 48 hours, so both must report
+# 30/48 h - the top-up neither dilutes the rate nor turns it into a rise.
+my $topup = [
+	{ t => $now - 48 * $H, v => 100 },
+	{ t => $now - 36 * $H, v => 90 },
+	{ t => $now - 24 * $H, v => 140 },
+	{ t => $now - 12 * $H, v => 130 },
+	{ t => $now,           v => 120 },
+];
+my $steady = [
+	{ t => $now - 48 * $H, v => 100 },
+	{ t => $now - 36 * $H, v => 90 },
+	{ t => $now - 24 * $H, v => 90 },
+	{ t => $now - 12 * $H, v => 80 },
+	{ t => $now,           v => 70 },
+];
+my $with_topup = &subs::ai_balance_window($topup, '7d', $now);
+my $without = &subs::ai_balance_window($steady, '7d', $now);
+cmp_ok abs($with_topup->{'consumption'} - 30), '<', 0.001, 'only the falls count as consumption';
+cmp_ok abs($with_topup->{'per_day'} - $without->{'per_day'}), '<', 0.001,
+	'a top-up does not change the drop rate the window saw';
+cmp_ok abs($with_topup->{'per_day'} - 15), '<', 0.001, 'and that rate is the real burn';
+
+# Runway is what is left over what is burning, and the expense is that burn
+# carried over the usual spans.
+cmp_ok abs($with_topup->{'runway_hours'} - 192), '<', 0.001,
+	'runway is the balance divided by the burn (120 / 0.625 per hour)';
+cmp_ok abs($with_topup->{'runway_days'} - 8), '<', 0.001, 'the same runway in days';
+cmp_ok abs($with_topup->{'expense_day'} - 15), '<', 0.001, 'the daily spend is the burn';
+cmp_ok abs($with_topup->{'expense_week'} - 105), '<', 0.001, 'weekly spend is seven days of it';
+cmp_ok abs($with_topup->{'expense_month'} - 450), '<', 0.001, 'monthly spend is thirty days of it';
+
+# Provider rounding is not a spend: a re-read a hair lower is not a fall.
+my $rounding = &subs::ai_balance_window([
+	{ t => $now - 12 * $H, v => 80 },
+	{ t => $now,           v => 79.9999995 },
+], '24h', $now);
+is $rounding->{'consumption'}, 0, 'a sub-micro-unit wobble is not consumption';
+
+# One point is a sample, not a pace: nothing to divide by yet.
+my $one = &subs::ai_balance_window([ { t => $now - 2 * $H, v => 5 } ], '24h', $now);
+is scalar @{ $one->{'points'} }, 1, 'a single sample is drawn on its own';
+ok !defined $one->{'per_day'}, 'with no pace to report';
+ok !defined $one->{'runway_hours'}, 'and no runway';
+ok !defined $one->{'expense_day'}, 'and no expense';
 
 # Nothing in the window is empty, not a flat line at zero.
 my $old = &subs::ai_balance_window([ { t => $now - 8 * 24 * $H, v => 5 } ], '24h', $now);

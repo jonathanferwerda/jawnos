@@ -846,15 +846,18 @@ sub music_source_client_open($c, $st, $key, $channel) {
 	$channel = 'stereo' unless defined $channel && ($channel eq 'left' || $channel eq 'right');
 	my $rm = &music_source_row($key);
 	unless ($rm && $rm->{'uuid'}) {
+		&music_sync_log('link', $key, { type => 'link', state => 'unreachable', error => 'no row' });
 		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'unreachable' })});
 		return;
 	}
 	if (($rm->{'device'} || '') eq 'server') {
+		&music_sync_log('link', $key, { type => 'link', state => 'unreachable', error => 'server' });
 		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'no audio' })});
 		return;
 	}
 	my $url = &music_source_uri($rm);
 	unless ($url) {
+		&music_sync_log('link', $key, { type => 'link', state => 'unreachable', error => 'no address' });
 		$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'no address' })});
 		return;
 	}
@@ -869,7 +872,7 @@ sub music_source_client_open($c, $st, $key, $channel) {
 		my ($ua, $tx) = @_;
 		if (!$tx->is_websocket) {
 			delete $st->{'clients'}->{$key};
-			&music_sync_log('link', $key, { type => 'link', state => 'error' });
+			&music_sync_log('link', $key, { type => 'link', state => 'error', error => 'connect' });
 			$c->tx->send({text => encode_json({ type => 'error', key => $key, error => 'connect' })}) if $c->tx->is_websocket;
 			return;
 		}

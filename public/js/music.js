@@ -105,7 +105,7 @@ function musicVolumeApply() {
 var musicStream = {
 	ws: null, active: false, paused: false, ready: {}, failed: {}, latency: 0, latencies: {}, measured: {}, starts: {},
 	file: '', type: '', reconnect: 0, attached: false, gap: 0, codec: 'pcm', markSeq: 0,
-	retry: {}, retryTimers: {}, reportTimer: 0, blackTimer: 0, resumeTimer: 0, seekTimer: 0
+	retry: {}, retryTimers: {}, links: {}, reportTimer: 0, blackTimer: 0, resumeTimer: 0, seekTimer: 0
 };
 var musicStreamTap = { node: null, sink: null, loading: null, ready: false, source: 'local' };
 var musicOpus = { recorder: null, dest: null, chain: Promise.resolve(), active: false, gen: 0, source: '' };
@@ -159,6 +159,25 @@ function musicStreamOutputs() {
 		if (k && k != '127.0.0.1' && k.indexOf('.') >= 0 && musicOutputOn(v)) { outs.push(k); }
 	});
 	return outs;
+}
+
+// When an output has failed hard enough to be turned off in the saved setting.
+// An enabled output whose machine is down used to stay on forever: the stream
+// kept reopening a peer that could never answer, so the person was stuck
+// broadcasting to a dead room and the L/name/R buttons looked dead too. A
+// momentary stall must not trip this, so a generic close takes several tries
+// spread over a quarter of a minute, while a definitive refusal from the
+// manager (no row, no address, no audio, the receiver's player refusing) takes
+// only two. 'me' and 'srv' are this machine's own outputs and are never touched.
+var musicOutputOff = { fails: 3, span_ms: 15000, hard: 2 };
+function musicOutputAutoOff(key, rec, now) {
+	if (!key || key == 'me' || key == 'srv' || key == '127.0.0.1' || key.indexOf('.') < 0) { return false; }
+	if (!rec) { return false; }
+	var fails = rec.fails || 0;
+	if (!fails) { return false; }
+	if ((rec.hard || 0) >= musicOutputOff.hard) { return true; }
+	var span = (now || 0) - (rec.first || now || 0);
+	return fails >= musicOutputOff.fails && span >= musicOutputOff.span_ms;
 }
 
 // WebKitGTK (the desktop app's engine) advertises requestVideoFrameCallback but
@@ -215,6 +234,62 @@ function musicStreamChannels() {
 		channels[key] = musicOutputChannel(mao[key]) || 'stereo';
 	});
 	return channels;
+}
+
+// ---- what the window says about the stream ---------------------------------
+//
+// The pill under the search box is the window's own account of what it is
+// sending, and the Audio drawer's L/name/R pills wear the live link state, so
+// an output that is only connecting or has stopped answering is visible rather
+// than guessed at. Both are painted from this one place, and both are repainted
+// after a search re-render (the badge lives in the template, so it comes back
+// hidden and is shown again here).
+function musicOutputLabel(key) {
+	var center = $('.music_output_group[value="' + String(key).replace(/"/g, '\\"') + '"] .music_output_center');
+	var label = center.length ? String(center.text() || '').trim() : '';
+	return label || key;
+}
+function musicBroadcastPaint() {
+	var badge = $('#music_broadcast');
+	if (!badge.length) { return; }
+	var outs = musicStreamOutputs();
+	var live = 0, names = [];
+	for (var i = 0; i < outs.length; i++) {
+		if (musicStream.ready[outs[i]]) { live++; }
+		names.push(musicOutputLabel(outs[i]));
+	}
+	// nothing is sent while paused, stopped, or with no remote output lit
+	var on = !!(musicStream.active && !musicStream.paused && outs.length);
+	badge.attr('state', on ? (live ? 'live' : 'connecting') : 'off');
+	if (!on) { badge.hide(); return; }
+	badge.find('.music_broadcast_text').text(' ' + outs.length + ': ' + names.join(', '));
+	badge.css('display', 'flex');
+}
+function musicOutputLinkState(key) {
+	var rec = musicStream.links[key];
+	if (!musicOutputOn(mao[key])) { return (rec && rec.off) ? 'unreachable' : 'off'; }
+	if (musicStream.ready[key]) { return 'live'; }
+	if (rec && rec.fails) { return 'unreachable'; }
+	if (musicStream.active && !musicStream.paused) { return 'connecting'; }
+	return 'on';
+}
+function musicOutputLinkPaint(key) {
+	// only a peer has a live link: Me and Srv are this machine's own outputs
+	if (!key || key == 'me' || key == 'srv' || key == '127.0.0.1' || String(key).indexOf('.') < 0) { return; }
+	var group = $('.music_output_group[value="' + String(key).replace(/"/g, '\\"') + '"]');
+	if (!group.length) { return; }
+	var state = musicOutputLinkState(key);
+	group.attr('link', state);
+	var center = group.find('.music_output_center');
+	if (state == 'unreachable') {
+		var hint = $('#music').attr('unreachable') || 'Unreachable';
+		center.attr('title', hint).attr('aria-label', hint);
+	}
+	else { center.removeAttr('title').removeAttr('aria-label'); }
+}
+function musicStreamPaint() {
+	musicBroadcastPaint();
+	$.each(mao, function(k, v) { musicOutputLinkPaint(k); });
 }
 
 function musicStreamSendJson(obj) {
@@ -365,6 +440,7 @@ function musicStreamConnect() {
 		musicStream.ready = {};
 		musicStream.failed = {};
 		musicStreamRetryClear();
+		musicStreamPaint();
 		musicStreamSendJson(musicStreamHello());
 		musicStreamMark();
 		if (musicStream.codec != 'opus') {
@@ -390,7 +466,7 @@ function musicStreamConnect() {
 		try { d = JSON.parse(e.data); } catch (err) { return; }
 		if (d.type == 'ready') {
 			if (d.ok === 0) {
-				musicStreamOutputLost(d.key);
+				musicStreamOutputLost(d.key, 'ready:' + (d.error || 'failed'));
 			}
 			else {
 				musicStream.ready[d.key] = 1;
@@ -473,8 +549,11 @@ function musicStreamConnect() {
 		}
 		else if (d.type == 'closed' || d.type == 'error' || d.type == 'stopped') {
 			// a lost output is reopened; it used to stay silent for the rest of
-			// the track because only hello/outputs opens a peer connection
-			musicStreamOutputLost(d.key);
+			// the track because only hello/outputs opens a peer connection.
+			// The manager's error names are definitive (no row, no address, no
+			// audio, the receiver refused), so they count towards auto-off
+			// faster than a plain close.
+			musicStreamOutputLost(d.key, d.type == 'error' ? (d.error || 'error') : '');
 			musicAheadRetarget();
 			musicStreamMaybeRecord();
 		}
@@ -494,6 +573,7 @@ function musicStreamConnect() {
 			musicStreamTapActive(false, true);
 			musicAheadStop();
 			musicSyncWatchStop();
+			musicStreamPaint();
 		}
 	};
 }
@@ -515,12 +595,66 @@ function musicStreamReopen(key) {
 	if (!musicStreamOutputStillOn(key)) { return; }
 	musicStreamSendJson({ type: 'outputs', outputs: musicStreamOutputs(), channels: musicStreamChannels() });
 }
-function musicStreamOutputLost(key) {
+// The same save the Audio drawer's own buttons make. The setting is per machine
+// and the stream reads it back, so writing the database here would be a second
+// source of truth.
+function musicOutputTurnOff(key, rec, why) {
+	var fails = rec ? (rec.fails || 0) : 0;
+	var span = (rec && rec.first) ? Math.max(0, Date.now() - rec.first) : 0;
+	// Keep the record, marked as a turn-off: the Audio drawer keeps the red edge
+	// and the reason on that pill until the person presses it again (which
+	// clears the evidence) or playback stops.
+	if (rec) { rec.off = 1; musicStream.links[key] = rec; }
+	delete musicStream.failed[key];
+	delete musicStream.ready[key];
+	delete musicStream.latencies[key];
+	clearTimeout(musicStream.retryTimers[key]);
+	delete musicStream.retryTimers[key];
+	delete musicStream.retry[key];
+	if (!musicOutputOn(mao[key])) { musicStreamPaint(); return; }
+	mao[key] = 'off';
+	musicOutputPaint(key, 'off');
+	musicStreamPaint();
+	$.ajax({
+		url: '/music/audio_output_select',
+		type: 'POST',
+		data: { state: 'off', output: key },
+		success: function(response) {
+			if (!response) { return; }
+			mao = response;
+			$.each(mao, function(k, v) { musicOutputPaint(k, v); });
+			musicVolumeApply();
+			updateMusicMuteIcon();
+			musicStreamPaint();
+		}
+	});
+	try { console.warn('music: output ' + key + ' turned off after ' + fails + ' failed attempts'); } catch (e) {}
+	// the stream log is the record of why a room went quiet (~/.president/music_sync.jsonl)
+	musicStreamSendJson({ type: 'sync_report', event: 'output_off', key: key, fails: fails, span_ms: span, error: why || '' });
+	if (musicStream.active) {
+		if (!musicStreamOutputs().length) { musicStreamStop(); }
+		else { musicStreamSendJson({ type: 'outputs', outputs: musicStreamOutputs(), channels: musicStreamChannels() }); }
+	}
+}
+function musicStreamOutputLost(key, why) {
 	if (!key) { return; }
 	delete musicStream.ready[key];
 	delete musicStream.latencies[key];
 	musicStream.failed[key] = 1;
-	if (!musicStreamOutputStillOn(key)) { return; }
+	if (!musicStreamOutputStillOn(key)) { musicStreamPaint(); return; }
+	// A paused or stopped stream is not evidence either: the receiver stops its
+	// player on purpose then, and resume re-announces every output anyway.
+	if (!musicStream.active || musicStream.paused) { musicStreamPaint(); return; }
+	// The evidence for turning this output off. A successful start clears it,
+	// so a momentary stall does not accumulate into a verdict.
+	var now = Date.now();
+	var rec = musicStream.links[key] || { fails: 0, first: now, hard: 0 };
+	rec.fails = (rec.fails || 0) + 1;
+	if (why) { rec.hard = (rec.hard || 0) + 1; }
+	rec.last = now;
+	rec.error = why || rec.error || '';
+	musicStream.links[key] = rec;
+	if (musicOutputAutoOff(key, rec, now)) { musicOutputTurnOff(key, rec, why); return; }
 	var n = musicStream.retry[key] || 0;
 	musicStream.retry[key] = Math.min(8, n + 1);
 	// keep trying every 30 s while the stream runs: a machine that reboots or
@@ -531,10 +665,14 @@ function musicStreamOutputLost(key) {
 		delete musicStream.retryTimers[key];
 		musicStreamReopen(key);
 	}, wait);
+	musicStreamPaint();
 }
 function musicStreamOutputReady(key) {
 	delete musicStream.retry[key];
+	delete musicStream.links[key];
+	delete musicStream.failed[key];
 	if (musicStream.retryTimers[key]) { clearTimeout(musicStream.retryTimers[key]); delete musicStream.retryTimers[key]; }
+	musicStreamPaint();
 }
 
 // ---- the sync watch ---------------------------------------------------------
@@ -758,6 +896,9 @@ function musicStreamStart(file, seek) {
 	musicStream.starts = {};
 	musicStream.ready = {};
 	musicStream.failed = {};
+	// a new playback gets a fresh chance at every output: last track's failures
+	// are not evidence against this one
+	musicStream.links = {};
 	// A new stream is a fresh try at the lead. A load cut short by a suspended
 	// page or a busy disk used to disable the lead for the rest of the track,
 	// which left the room tapping the live picture - a whole picture-lag ahead.
@@ -776,6 +917,7 @@ function musicStreamStart(file, seek) {
 	musicVideoStats.in_black = 0;
 	musicVideoStats.waitAt = 0;
 	musicSyncWatchStart();
+	musicStreamPaint();
 	musicStream.file = file || (tree.songs[0] ? tree.songs[0].file : '');
 	musicStream.type = (tree.songs[0] && tree.songs[0].type) || '';
 	var attach = opus ? Promise.resolve(musicOpusAttach()) : musicStreamTapAttach();
@@ -896,6 +1038,7 @@ function musicStreamStop() {
 	musicStream.reconnect = 0;
 	musicStream.ready = {};
 	musicStream.failed = {};
+	musicStream.links = {};
 	musicStream.latency = 0;
 	musicStream.latencies = {};
 	musicStream.measured = {};
@@ -909,6 +1052,7 @@ function musicStreamStop() {
 	musicAheadStop();
 	musicSyncWatchStop();
 	musicStreamRetryClear();
+	musicStreamPaint();
 }
 
 function musicStreamControl(action, extra) {
@@ -942,6 +1086,7 @@ function musicStreamControl(action, extra) {
 	}
 	// the timeline restarted: a mark now anchors the new position for the receiver
 	if (action == 'seek' || action == 'track' || action == 'resume') { musicStreamMark(); }
+	musicStreamPaint();
 }
 
 // A beacon through the audio socket: the media position at the moment these
@@ -1001,6 +1146,7 @@ function musicStreamOutputsChanged() {
 	// a fresh outputs message is also the retry path for a dropped output
 	musicStreamRetryClear();
 	musicAheadRetarget();
+	musicStreamPaint();
 }
 
 // ---- the ahead tap ----------------------------------------------------------
@@ -2160,6 +2306,9 @@ async function musicInit(method) {
 	treeMaker();
 	// every open and every search leaves exactly one bar tick running
 	musicBarIntervalArm();
+	// the broadcast pill and the output pills follow the live stream, and a
+	// search has just replaced the window markup they live in
+	musicStreamPaint();
 	// the drawers ship with their bars, so arm their drag once the window is up
 	musicConfigDraggable();
 	// the equalizer's saved curve and the panel's sliders
@@ -3902,6 +4051,10 @@ $(document).on('click', '.music_audio_output_select', function() {
 	// the setting is written first, so the stream sees the new output list
 	// when it starts or re-announces
 	mao[output] = state;
+	// a person's own choice replaces any run of failures: a fresh on is tried
+	// with a clean slate instead of being turned off by stale evidence
+	if (remote) { delete musicStream.links[output]; }
+	musicStreamPaint();
 	if (remote) {
 		if (musicStream.active) {
 			if (musicStream.codec == 'opus') {
@@ -3937,6 +4090,7 @@ $(document).on('click', '.music_audio_output_select', function() {
 			$.each(mao, function(k, v) { musicOutputPaint(k, v); });
 			musicVolumeApply();
 			updateMusicMuteIcon();
+			musicStreamPaint();
 		}
 	});
 });
@@ -4712,6 +4866,7 @@ function musicAudioPanelLoad(show) {
 			}
 			musicEqualizerApply();
 			$.each(mao, function(k, v) { musicOutputPaint(k, v); });
+			musicStreamPaint();
 			musicScreenApply();
 		},
 		error: function() { /* keep whatever the drawer already holds */ },

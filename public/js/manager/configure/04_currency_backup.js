@@ -30,6 +30,16 @@ function jawnosCurrencyApply(select) {
 		var span = line.attr('data-span') || '';
 		line.text(template.replace('{0}', money) + (span ? ' · ' + span : ''));
 	});
+	// The projected spend carries the same base-currency burn, so it follows the
+	// picker too. The runway is a duration, not an amount, and stays put.
+	series.find('.balance_expense').each(function () {
+		var line = $(this);
+		var perDay = parseFloat(line.attr('data-base-per-day'));
+		var template = line.attr('data-template') || '';
+		if (!isFinite(perDay) || template.indexOf('{0}') < 0) { return; }
+		var money = function (span) { return jawnosCurrencyValue(Math.abs(perDay * span * rate)) + ' ' + code; };
+		line.text(template.replace('{0}', money(1)).replace('{1}', money(7)).replace('{2}', money(30)));
+	});
 	series.find('.balance_currency_note').each(function () {
 		var note = $(this);
 		var template = note.attr('data-template') || '';

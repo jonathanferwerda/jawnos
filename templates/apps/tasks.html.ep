@@ -1,11 +1,11 @@
 <% no warnings 'uninitialized'; %>
 <div class="task_list" app="<%= $app %>" style="<% if ($parent > 0) { %>padding-left:<%= 20 x $parent %>px;<% } %>">
 	<% foreach my $task ( @{$tasks} ) { %>
-		<div class="task_item" app="<%= $task->{'task'} %>" uuid="<%= $task->{'uuid'} %>" style="padding-top:10px;width:100%;height:<% if ($task->{'uuid'} eq 'new') { %>100px<% } else { %>45px<% } %>;border:solid;border-width:3px;background-color:<%= $task->{'colour'} %>;">
+		<div class="task_item<% if ($task->{'uuid'} eq 'new') { %> task_item_new<% } %>" app="<%= $task->{'task'} %>" uuid="<%= $task->{'uuid'} %>" style="padding-top:10px;width:100%;height:<% if ($task->{'uuid'} eq 'new') { %>100px<% } else { %>45px<% } %>;border:solid;border-width:3px;border-color:var(--line);<% if ($task->{'colour'}) { %>--task-colour:<%= $task->{'colour'} %>;<% } %>">
 			<input type="checkbox" <% if ($task->{'completed'} eq 'on') { %> checked<% } %> class="task_input task_checkbox" name="completed" style="float:left;vertical-align:top;">
 
 			<% if ($task->{'uuid'} ne 'new') { %>
-				<span class="hover" onclick="appointmentGrabber('<%= $task->{'task'} %>')" style="vertical-align:bottom;background-color:var(--panel);opacity:80%;float:left;width:75%;font-size:20px;"><%= &subs::format_name(&subs::shorthand_name($task->{'task'},50)) %></span>
+				<span class="hover" onclick="appointmentGrabber('<%= $task->{'task'} %>')" style="vertical-align:bottom;background-color:var(--panel-2);float:left;width:75%;font-size:20px;"><%= &subs::format_name(&subs::shorthand_name($task->{'task'},50)) %></span>
 			<% } else { %>
 				<input class="task_text task_input" placeholder="Task" name="task" style="width:80%;vertical-align:top;" value="<%= &subs::format_name($task->{'task'}) %>">
 			<% } %>
@@ -41,7 +41,7 @@
 				</table>
 
 				<br>
-				<table style="width:99%;vertical-align:bottom;padding-right:10px;background-color:var(--panel);opacity:80%;border:solid;border-width:3px;border-radius:5px;">
+				<table class="task_settings_table" style="width:99%;vertical-align:bottom;padding-right:10px;border:solid;border-width:3px;border-color:var(--line);border-radius:5px;">
 					<thead>
 						<th style="width:28%">Renew</th>
 						<% foreach my $bm ( grep { $_ ne 'total' } sort keys %{$gb::budget_modes} ) { %>
@@ -61,7 +61,7 @@
 			</span>
 
 			<% if ($task->{'uuid'} eq 'new' && $parent == 0) { %>
-				<table style="width: 99%;vertical-align:bottom;padding-right:10px;background-color:var(--panel);opacity:80%;border:solid;border-width:3px;border-radius:5px;">
+				<table class="task_admin_table" style="width: 99%;vertical-align:bottom;padding-right:10px;border:solid;border-width:3px;border-color:var(--line);border-radius:5px;">
 					<thead>
 						<th>Sort</th>
 						<th>Filter</th>

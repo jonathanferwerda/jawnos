@@ -325,7 +325,7 @@
 		<% } %>
 		<div style="opacity:.65;margin-top:6px;max-width:75%;"><%= &subs::ui('Every money move posts once with its other side: a bank account against the app that earned or spent it, an invoice against receivables, and a transfer against the other account. The clearing line is money moved to an account whose leg was not recorded.') %></div>
 	<% } elsif ($display eq 'statement') { %>
-		<table style="width:100%;border:groove;">
+		<table class="budget_ledger" style="width:100%;border:groove;border-color:var(--line);">
 			<% foreach my $d (qw/income expense transfer/) { %>
 				<thead>
 					<tr></tr>
@@ -339,7 +339,7 @@
 				<tbody>
 					<% foreach my $app ( sort keys %{$tally} ) { %>
 						<% if (eval {scalar @{$tally->{$app}->{$d}}} > 0) { %>
-							<tr class="budget_row" movement="<%= $d %>" status="closed" app="<%= $app %>" style="font-size:20px;background-color:<%= $tally->{$app}->{'settings'}->{'colour'} %>;"></u>
+							<tr class="budget_row" movement="<%= $d %>" status="closed" app="<%= $app %>" style="font-size:20px;<% if ($tally->{$app}->{'settings'}->{'colour'}) { %>--budget-colour:<%= $tally->{$app}->{'settings'}->{'colour'} %>;<% } %>">
 								<% if (grep { $_ eq 'app' } @{$columns}) { %>
 									<td class="hover"><u><%= &subs::format_name($app) %></u></td>
 								<% } %>
@@ -347,13 +347,13 @@
 									<td><span class="time" timestamp="<%= $tally->{$app}->{$d}->[0]->{'timestamp'} %>"></span></td>
 								<% } %>
 								<% if (grep { $_ eq 'occurences' } @{$columns}) { %>
-									<td style="background-color:<%= $tally->{$app}->{'budget'}->{'occurences'}->{'colour'} %>"><span><%= $tally->{$app}->{'totals'}->{'occurences'} %></span></td>
+									<td class="budget_cell"<% if ($tally->{$app}->{'budget'}->{'occurences'}->{'colour'}) { %> style="--budget-colour:<%= $tally->{$app}->{'budget'}->{'occurences'}->{'colour'} %>"<% } %>><span><%= $tally->{$app}->{'totals'}->{'occurences'} %></span></td>
 								<% } %>
 								<% if (grep { $_ eq 'occurence_budget' } @{$columns}) { %>
 									<td><%= $tally->{$app}->{'budget'}->{'occurences'}->{'formatted_budget'} %></td>
 								<% } %>
 								<% if (grep { $_ eq 'duration' } @{$columns}) { %>
-									<td style="background-color:<%= $tally->{$app}->{'budget'}->{'duration'}->{'colour'} %>" ><%== &subs::duration_readout($tally->{$app}->{'totals'}->{'duration'}) %></td>
+									<td class="budget_cell"<% if ($tally->{$app}->{'budget'}->{'duration'}->{'colour'}) { %> style="--budget-colour:<%= $tally->{$app}->{'budget'}->{'duration'}->{'colour'} %>"<% } %> ><%== &subs::duration_readout($tally->{$app}->{'totals'}->{'duration'}) %></td>
 								<% } %>
 								<% if (grep { $_ eq 'duration_budget' } @{$columns}) { %>
 									<td><%= $tally->{$app}->{'budget'}->{'duration'}->{'formatted_budget'} %></td>
@@ -381,13 +381,13 @@
 								<% } %>
 								<% foreach my $cash ( @{$dollas} ) { %>
 									<% if (grep { $_ eq $cash } @{$columns}) { %>
-										<td  style="background-color:<%= $tally->{$app}->{'budget'}->{'total'}->{'colour'} %>"><%= &subs::price_formatter($tally->{$app}->{'totals'}->{$d}->{$cash}) %></td>
+										<td class="budget_cell"<% if ($tally->{$app}->{'budget'}->{'total'}->{'colour'}) { %> style="--budget-colour:<%= $tally->{$app}->{'budget'}->{'total'}->{'colour'} %>"<% } %>><%= &subs::price_formatter($tally->{$app}->{'totals'}->{$d}->{$cash}) %></td>
 									<% } %>
 								<% } %>
 							</tr>
 							<% foreach my $t ( @{$tally->{$app}->{$d}} ) { %>
 								<tr class="budget_detail_row" filter="<%= $t->{'type'} %>" timestamp="<%= $t->{'timestamp'} %>" server_time="<%= $t->{'server_time'} %>"
-									movement="<%= $d %>" app="<%= $app %>" style="display:none;font-size:18px;background-color:<%= $tally->{$t->{'app'}}->{'settings'}->{'colour'} %>;">
+									movement="<%= $d %>" app="<%= $app %>" style="display:none;font-size:18px;<% if ($tally->{$t->{'app'}}->{'settings'}->{'colour'}) { %>--budget-colour:<%= $tally->{$t->{'app'}}->{'settings'}->{'colour'} %>;<% } %>">
 									<% if (grep { $_ eq 'app' } @{$columns}) { %>
 										<td class="budget_app hover" app="<%= $app %>"><%= &subs::format_name($t->{'app'}) %></td>
 									<% } %>

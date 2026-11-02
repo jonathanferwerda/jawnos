@@ -215,12 +215,41 @@ sub ai_balance_window {
 	my $last = $draw[-1];
 	my $hours = ($last->{'t'} - $first->{'t'}) / 3600000;
 	my $change = $first->{'v'} - $last->{'v'};
+	# Consumption is the sum of the falls between consecutive samples, with
+	# every rise clamped to zero. A top-up is a rise: it is money put in, not a
+	# negative burn, so it must not read as "rise" and must not cancel the
+	# spending either side of it. Keeping the elapsed hours across the whole
+	# window means a window with a top-up reports the same drop rate as the
+	# same window without one. The epsilon absorbs a provider's rounding - a
+	# balance re-read a millionth of a unit lower is not a spend.
+	my $epsilon = 0.000001;
+	my $consumption = 0;
+	for my $i ( 1 .. $#draw ) {
+		my $fall = $draw[$i - 1]->{'v'} - $draw[$i]->{'v'};
+		$consumption += $fall if $fall > $epsilon;
+	}
+	my $per_hour = $hours > 0 ? $consumption / $hours : undef;
+	my $per_day = defined $per_hour ? $per_hour * 24 : undef;
 	$window_data->{'points'} = \@draw;
 	$window_data->{'first'} = $first;
 	$window_data->{'last'} = $last;
 	$window_data->{'hours'} = $hours;
 	$window_data->{'change'} = $change;
-	$window_data->{'per_day'} = $hours > 0 ? $change / $hours * 24 : undef;
+	$window_data->{'consumption'} = $consumption;
+	$window_data->{'per_hour'} = $per_hour;
+	$window_data->{'per_day'} = $per_day;
+	# Runway: what is left now over what is burning. Undefined when nothing is
+	# falling - a balance that holds steady never runs out - and absent for a
+	# balance already spent, because there is no time left to report.
+	my $balance = $last->{'v'};
+	my $runway_hours = (defined $per_hour && $per_hour > 0 && $balance > 0) ? $balance / $per_hour : undef;
+	$window_data->{'balance'} = $balance;
+	$window_data->{'runway_hours'} = $runway_hours;
+	$window_data->{'runway_days'} = defined $runway_hours ? $runway_hours / 24 : undef;
+	# What that burn costs over the usual spans, in the chart's own currency.
+	$window_data->{'expense_day'} = $per_day;
+	$window_data->{'expense_week'} = defined $per_day ? $per_day * 7 : undef;
+	$window_data->{'expense_month'} = defined $per_day ? $per_day * 30 : undef;
 	return $window_data;
 }
 

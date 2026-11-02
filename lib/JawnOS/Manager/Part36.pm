@@ -60,6 +60,13 @@ use IPC::Open2 qw(open2);
 
 our ($APP, $ws_live_window, $encoder, $decoder, $tuuid, $thread_uuid, $universal_splitter, $database, $sql, $remote_input_clipboard, $config_file, $config, $logfile, $log, $environment, $random_caching_string, $duty_file, $main_process, $device, $user_agent, %time_machine_guide_cache, @media_unlock_apps, %help_search_tables, %media_type_for_ext, %file_relay_down, @appointments, @results, %market_payment_family, @manager_bundle_files, $manager_bundle_cache, $js_minifier, %app_release_sha, %folders_desk_not_app, $jg_body, $remote_input_geometry_at, $remote_input_geometry_cache, %remote_input_ua, %remote_input_ws, %remote_input_rm, %remote_input_ws_failed, $public_ip_memo, $coding_protocols, $coding_protocols_mtime, $app_schema_done, $fingerprint_checked_at, $fingerprint_ok, %padlock_time_memo, %credential_browser_app, %app_gate_shadow_seen, $ws_server, %mailws_untrusted_rate);
 
+# A pass that throws used to abort silently: the reconnector's eval swallowed the
+# exception and the log showed "a peer announced new rows; running the pass now"
+# with no pull after it, which is exactly the shape a tablet that never dials out
+# leaves behind. Name each distinct error once per process so a recurring abort
+# does not flood the log.
+our %sync_pass_error_seen;
+
 sub remote_machine_reconnector($c) {
 
 
@@ -71,6 +78,7 @@ sub remote_machine_reconnector($c) {
 	my $signatorial = &subs::signatorial_designer();
 	# one log line per held pull marker, not one per peer per tick
 	my %own_busy_seen;
+	my $pass_ok = 0;
 	eval {
 		my $remote_machines = &subs::remote_machine_lister({ });
 		# Hub-and-spoke while the server is live: a spoke stops dialling peers it
@@ -423,6 +431,14 @@ sub remote_machine_reconnector($c) {
 
 				&subs::db_update('remote_machines', { ws_auth => $ws_auth, network => $rm->{'network'}, ws_port => ($tuns->{'POST_MSG'} || $rm->{'ws_port'}), port => ($tuns->{'PORT_AHOY'} || $rm->{'port'}), connection => $rm->{'connection'} }, { signatorial => $rm->{'signatorial'} });
 			}
+		}
+		$pass_ok = 1;
+	};
+	if (!$pass_ok) {
+		my $err = $@ || 'unknown error';
+		$err =~ s/\s+$//;
+		if (!$sync_pass_error_seen{$err}++) {
+			$log->warn('sync pass aborted: ' . $err);
 		}
 	}
 }

@@ -461,7 +461,10 @@ function statisticGrapher(data,canvasId,mark) {
 // the last response per app, so the chart controls can redraw without a reload
 var statisticData = {};
 var statistic_chart_unit = localStorage.getItem('inventory_chart_unit') || '';
-var statistic_pie_by = localStorage.getItem('inventory_pie_by') || 'period';
+// 'period' was the old default, when the wheel sorted the page of periods by
+// size; the wheel is now a share of the scope on screen
+var statistic_pie_by = localStorage.getItem('inventory_pie_by') || 'scope';
+if (statistic_pie_by == 'period') { statistic_pie_by = 'scope'; }
 
 // the unit the trend and the bars read in: the chosen one, else the unit the page
 // was walked in, else days
@@ -488,7 +491,7 @@ $(document).on('change', '.statistic_chart_unit', function() {
 	}
 });
 $(document).on('change', '.statistic_pie_by', function() {
-	statistic_pie_by = $(this).val() || 'period';
+	statistic_pie_by = $(this).val() || 'scope';
 	localStorage.setItem('inventory_pie_by', statistic_pie_by);
 	statisticRedrawCharts($(this).closest('.appointment').attr('app'));
 });

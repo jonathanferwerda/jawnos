@@ -126,13 +126,13 @@
 								<% } else { %>
 									<%== &subs::ai_balance_sparkline($w->{'points'}, $w->{'start'}, $w->{'now'}, 320, 80) %>
 									<% my $span = &subs::ai_balance_span_label($w->{'hours'}); %>
+									<% my $currency = $series->{'currency'} || $balance_chart->{'base'} || ''; %>
 									<% my ($rate_template, $rate_money);
+									   # per_day is consumption-based, so a top-up inside the window cannot
+									   # turn this line into a "rise" or hide the spending.
 									   if (defined $w->{'per_day'} && $w->{'per_day'} > 0.005) {
 									       $rate_template = &subs::lang('configure.drop_per_day', '{0}');
-									       $rate_money = &subs::currency_money(abs($w->{'per_day'})) . ' ' . ($balance_chart->{'base'} || '');
-									   } elsif (defined $w->{'per_day'} && $w->{'per_day'} < -0.005) {
-									       $rate_template = &subs::lang('configure.rise_per_day', '{0}');
-									       $rate_money = &subs::currency_money(abs($w->{'per_day'})) . ' ' . ($balance_chart->{'base'} || '');
+									       $rate_money = &subs::currency_money($w->{'per_day'}) . ' ' . $currency;
 									   } else {
 									       $rate_template = &subs::lang('configure.balance_flat');
 									   }
@@ -141,6 +141,20 @@
 									   $rate_text .= ' · ' . $span;
 									%>
 									<p class="cfg-note balance_rate" data-base-per-day="<%= defined $w->{'per_day'} ? sprintf('%.6f', $w->{'per_day'}) : '' %>" data-template="<%= $rate_template %>" data-span="<%= $span %>"><%= $rate_text %></p>
+									<%# The same burn read two ways: how long the balance lasts at this
+									   rate, and what that rate costs. Both carry their own data so the
+									   currency picker can convert them in place, like the rate line. %>
+									<%# A balance that is not falling never runs out, and an already spent
+									   one has no time left to report, so the line is absent in both cases
+									   rather than reading "0 min". %>
+									<% if (defined $w->{'runway_hours'} && $w->{'runway_hours'} > 0) { %>
+										<% my $runway = &subs::ai_balance_span_label($w->{'runway_hours'}); %>
+										<p class="cfg-note balance_runway"><%= &subs::lang('configure.balance_runway', $runway) %></p>
+									<% } %>
+									<% if (defined $w->{'expense_day'} && $w->{'expense_day'} > 0.005) { %>
+										<% my $expense_template = &subs::lang('configure.balance_expense', '{0}', '{1}', '{2}'); %>
+										<p class="cfg-note balance_expense" data-base-per-day="<%= sprintf('%.6f', $w->{'expense_day'}) %>" data-template="<%= $expense_template %>"><%= &subs::lang('configure.balance_expense', &subs::currency_money($w->{'expense_day'}) . ' ' . $currency, &subs::currency_money($w->{'expense_week'}) . ' ' . $currency, &subs::currency_money($w->{'expense_month'}) . ' ' . $currency) %></p>
+									<% } %>
 								<% } %>
 							</div>
 						<% } %>

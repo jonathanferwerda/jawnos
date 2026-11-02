@@ -102,12 +102,15 @@
 			<div style="display:flex;justify-content:space-between;align-items:baseline;">
 				<b style="font-size:90%;opacity:.6;">Share</b>
 				<select class="statistic_pie_by" style="font-size:85%;">
-					<option value="period">by period</option>
-					<option value="hour">by hour</option>
-					<option value="weekday">by weekday</option>
+					<option value="scope"><%= &subs::ui('of this scope') %></option>
+					<option value="hour"><%= &subs::ui('by hour') %></option>
+					<option value="weekday"><%= &subs::ui('by weekday') %></option>
 				</select>
 			</div>
-			<canvas id="<%= $app %>_pie_graph" class="statistic_pie" style="width:100%;height:200px;"></canvas>
+			<%# the wheel is the selected scope split into its own parts - a week into
+			    days, a day into hours - drawn from the shares the panel already built;
+			    the two clocks are the older readings, kept as the other two choices %>
+			<canvas id="<%= $app %>_pie_graph" class="statistic_pie" data-empty="No time recorded" data-other="other" style="width:100%;height:200px;"></canvas>
 		</div>
 	</div>
 	<div class="statistic_table_scroll" style="max-height:360px;overflow:auto;border:solid 1px;border-radius:6px;">
@@ -128,21 +131,27 @@
 							<% if ($returner->{$rw}->{$ry}) { %>
 								<% if ( $returner->{$rw}->{$ry} =~ /[A-Za-z0-9]/gi ) { %>
 									<% my $end_seen = $returner->{$rw}->{$ry}->{'end_timestamp'} ? $returner->{$rw}->{$ry}->{'end_timestamp'} - 1000 : ''; %>
-									<span class="statistic_entry hover" inventory_timestamp="<%= $returner->{'timestamp'} %>" start_timestamp="<%= $returner->{$rw}->{$ry}->{'start_timestamp'} %>" end_timestamp="<%= $end_seen %>"
-										timestamp="<%= $returner->{$rw}->{$ry}->{'timestamp'} %>" zone="<%= $rw %>" scope="<%= $ry %>"
-										style="
-										<% if ($returner->{$rw}->{$ry}->{'budget'}) { %>
-											background-color:
-											<%= $returner->{$rw}->{$ry}->{'budget'}->{'colour'} %>;
-											<% if ($returner->{$rw}->{$ry}->{'budget'}->{'text-colour'}) { %>
-												color:<%= $returner->{$rw}->{$ry}->{'budget'}->{'text-colour'} %>;
-											<% } %>
+								<% my $budget = $returner->{$rw}->{$ry}->{'budget'}; %>
+								<% # The status a cell wears comes from the panel's own palette, one set
+								   # for light and one for the dark theme, so the tint is readable in both.
+								   # A budget without a status keeps the colour it came with. %>
+								<% my $budget_status = ''; %>
+								<% if ($budget && $budget->{'status'}) { $budget_status = lc $budget->{'status'}; $budget_status =~ s/[^a-z0-9]+/_/g; } %>
+								<span class="statistic_entry hover<% if ($budget_status) { %> inv_status_<%= $budget_status %><% } %>" inventory_timestamp="<%= $returner->{'timestamp'} %>" start_timestamp="<%= $returner->{$rw}->{$ry}->{'start_timestamp'} %>" end_timestamp="<%= $end_seen %>"
+									timestamp="<%= $returner->{$rw}->{$ry}->{'timestamp'} %>" zone="<%= $rw %>" scope="<%= $ry %>"
+									style="
+									<% if ($budget && !$budget_status) { %>
+										background-color:
+										<%= $budget->{'colour'} %>;
+										<% if ($budget->{'text-colour'}) { %>
+											color:<%= $budget->{'text-colour'} %>;
 										<% } %>
-										<% if ($returner->{$rw}->{$ry}->{'budget'}->{'is_scope'} && $returner->{$rw}->{$ry}->{'budget'}->{'is_scope'} eq 'yes') { %>
-											border:solid;border-radius:2px;
-										<% } %>
-										"
-										>
+									<% } %>
+									<% if ($budget && $budget->{'is_scope'} && $budget->{'is_scope'} eq 'yes') { %>
+										border:solid;border-radius:2px;
+									<% } %>
+									"
+									>
 											<% if ($s_display eq 'occurences') { %>
 												<%= $returner->{$rw}->{$ry}->{$s_display} %>
 											<% } elsif ($s_display eq 'duration') { %>

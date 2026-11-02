@@ -15,7 +15,7 @@
     navbar-relative tops answer to the navbar height setting, the same way the
     window's own contents do. %>
 <% my $phone_layout = (($device // '') eq 'mobile') ? 1 : 0; %>
-<div id="music" class="theme_surface" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" phone_layout="<%= $phone_layout ? 'yes' : 'no' %>" normalize="<%= $crate->{'settings'}->{'normalize'} || 'off' %>" stream_codec="<%= $crate->{'settings'}->{'stream_codec'} || 'pcm' %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'unlock'} || '' %>">
+<div id="music" class="theme_surface" background_colour="<%= $background_colour %>" current_track="<%= $crate->{'current_track'} %>" phone_layout="<%= $phone_layout ? 'yes' : 'no' %>" normalize="<%= $crate->{'settings'}->{'normalize'} || 'off' %>" stream_codec="<%= $crate->{'settings'}->{'stream_codec'} || 'pcm' %>" unreachable="<%= &subs::lang('music.unreachable') %>" style="max-height:100%;width:100%;background-color:<%= $background_colour %>" unlock="<%= $crate->{'unlock'} || '' %>">
 	<%# left empty on purpose: the player is restored from the live cache, not a
 	    snapshot frozen into this cached window (see musicContentCache in music.js) %>
 	<div id="music_player_data" style="display:none;"></div>
@@ -35,6 +35,10 @@
 			<span id="music_search_wrap">
 				<input id="music_search" value="<%= $search %>" placeholder="Search">
 				<span id="music_library_name" hint="<%= &subs::ui('The library this Music window is showing') %>"><%= &subs::ui('Library') %>: <%= $crate->{'library_name'} || &subs::ui('Local') %></span>
+				<%# the live account of the remote stream; hidden until a remote output is on (musicBroadcastPaint) %>
+				<span id="music_broadcast" class="music_broadcast" state="off" style="display:none;" hint="<%= &subs::ui('The remote outputs hearing this machine now') %>">
+					<span class="music_broadcast_dot"></span><span class="music_broadcast_label"><%= &subs::lang('music.broadcasting') %></span><span class="music_broadcast_text"></span>
+				</span>
 			</span>
 			<span id="progress_readout"><span id="elapsed_progress"></span>/<span id="total_progress"></span></span>
 			<span id="music_volume_group">

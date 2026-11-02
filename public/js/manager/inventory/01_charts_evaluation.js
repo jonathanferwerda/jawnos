@@ -1,4 +1,109 @@
 var statistic_hour_labels = ['12a','1a','2a','3a','4a','5a','6a','7a','8a','9a','10a','11a','12p','1p','2p','3p','4p','5p','6p','7p','8p','9p','10p','11p'];
+
+// The wheel's colours are the panel's own: manager.css defines one set for the
+// light theme and one for body.dark_theme, so the slices, their legend and the
+// status cells stay in step and a theme change cannot leave half the panel on
+// the other palette.
+var inventory_palette_fallback = ['#3d6fa8','#b8792f','#5b8f61','#83639e','#b26a74','#3f8484','#8a8a4f','#6b7a8a'];
+
+function inventoryCssValue(container, name, fallback) {
+	var node = container ? (container.nodeType === 1 ? container : $(container)[0]) : null;
+	var styles = (node && window.getComputedStyle) ? window.getComputedStyle(node) : null;
+	var value = styles ? (styles.getPropertyValue(name) || '').trim() : '';
+	return value || fallback;
+}
+
+function inventoryPalette(container) {
+	var out = [];
+	for (var i = 1; i <= inventory_palette_fallback.length; i++) {
+		out.push(inventoryCssValue(container, '--inv-color-' + i, inventory_palette_fallback[i - 1]));
+	}
+	return out;
+}
+
+function inventoryHex(color) {
+	var m = /^#([0-9a-f]{6})$/i.exec(color || '');
+	if (!m) { return null; }
+	return [parseInt(m[1].substr(0, 2), 16), parseInt(m[1].substr(2, 2), 16), parseInt(m[1].substr(4, 2), 16)];
+}
+
+// A wheel with more slices than the palette has hues borrows them again a step
+// toward the panel's own ink, so two slices never land on the identical colour.
+function inventorySliceColour(palette, ink, index) {
+	var base = palette[index % palette.length];
+	var cycle = Math.floor(index / palette.length);
+	if (!cycle) { return base; }
+	var a = inventoryHex(base), b = inventoryHex(ink);
+	if (!a || !b) { return base; }
+	var t = Math.min(.4, .14 * cycle);
+	var mix = [0, 1, 2].map(function(k) { return Math.round(a[k] + (b[k] - a[k]) * t); });
+	return '#' + mix.map(function(v) { return ('0' + v.toString(16)).slice(-2); }).join('');
+}
+
+// Whole-number percentages that add up to 100: floor every share, then hand the
+// points left over to the largest fractions.
+function inventoryShares(list) {
+	var total = 0;
+	list.forEach(function(p) { total += p.value; });
+	if (!(total > 0)) { return []; }
+	var out = [];
+	var used = 0;
+	list.forEach(function(p, i) {
+		var exact = 100 * p.value / total;
+		var percent = Math.floor(exact + 1e-9);
+		used += percent;
+		out.push({ label: p.label, value: p.value, percent: percent, remainder: exact - percent, order: i });
+	});
+	var left = 100 - used;
+	out.slice().sort(function(a, b) { return b.remainder - a.remainder || a.order - b.order; }).forEach(function(p) {
+		if (left > 0) { p.percent++; left--; }
+	});
+	return out;
+}
+
+// The scope the wheel is a share of. The allocation view's units are clock
+// components rather than scopes, so the day is the one that still reads as a
+// scope there; a scope that is simply empty still answers for itself and gets
+// the empty wheel rather than a different one.
+function inventoryAllocationScope(data, unit) {
+	var all = data.allocation || {};
+	if (all[unit]) { return unit; }
+	if (all.day) { return 'day'; }
+	for (var k in all) { if (all.hasOwnProperty(k)) { return k; } }
+	return '';
+}
+
+// "<label> <percent>%", written the way the interface language writes it.
+function inventoryShareLine(p) {
+	var fallback = p.label + ' ' + p.percent + '%';
+	if (typeof jawnosT !== 'function') { return fallback; }
+	var template = jawnosT('inventory.share_line');
+	if (!template || template.indexOf('{1}') < 0) { return fallback; }
+	return jawnosT('inventory.share_line', p.label, p.percent);
+}
+
+function inventoryPieEmpty(ctx, g, wide, tall, quiet) {
+	var text = g.getAttribute('data-empty') || 'No time recorded';
+	if (typeof jawnosT === 'function') { text = jawnosT(text); }
+	var rad = Math.max(8, Math.min(tall, wide * .5) / 2 - 6);
+	var cx = rad + 8;
+	var cy = tall / 2;
+	ctx.save();
+	ctx.beginPath();
+	ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+	ctx.setLineDash([4, 4]);
+	ctx.lineWidth = 1.5;
+	ctx.strokeStyle = quiet;
+	ctx.stroke();
+	ctx.setLineDash([]);
+	ctx.font = '400 11px system-ui, Arial';
+	ctx.fillStyle = quiet;
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.fillText(text, cx, cy);
+	ctx.restore();
+}
+
 function statisticPie(data, unit, mode) {
 	var g = document.getElementById(data.app + '_pie_graph');
 	if (!g || !g.getContext) { return; }
@@ -9,64 +114,106 @@ function statisticPie(data, unit, mode) {
 	var ctx = g.getContext('2d');
 	ctx.setTransform(thick, 0, 0, thick, 0, 0);
 	ctx.clearRect(0, 0, wide, tall);
+
+	var wrap = $(g).closest('.inventory_details');
+	var container = wrap.length ? wrap[0] : g;
+	var palette = inventoryPalette(container);
+	var ink = inventoryCssValue(container, '--inv-ink', '#2b2f33');
+	var quiet = inventoryCssValue(container, '--inv-quiet-ink', ink);
+	var edge = inventoryCssValue(container, '--inv-slice-edge', '#ffffff');
+
+	// A share of the scope on screen is the wheel's default reading: the week
+	// splits into its days, the day into its hours. The two clocks are the
+	// older readings and stay on offer beside it.
 	var slices = [];
-	var fixed = false;
 	if (mode == 'hour') {
 		var hp = data.hour_profile || [];
-		for (var h = 0; h < 24; h++) { slices.push({ ts: statistic_hour_labels[h], value: numeral(hp[h]).value() || 0 }); }
-		fixed = true;
+		slices = inventoryShares(statistic_hour_labels.map(function(label, h) {
+			return { label: label, value: numeral(hp[h]).value() || 0 };
+		}));
 	}
 	else if (mode == 'weekday') {
 		var wp = data.weekday_profile || [];
 		var names = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-		for (var d = 0; d < 7; d++) { slices.push({ ts: names[d], value: numeral(wp[d]).value() || 0 }); }
-		fixed = true;
+		slices = inventoryShares(names.map(function(label, d) {
+			return { label: label, value: numeral(wp[d]).value() || 0 };
+		}));
 	}
 	else {
-		slices = statisticSeries(data, unit);
+		var scope = inventoryAllocationScope(data, unit);
+		var alloc = scope ? (data.allocation || {})[scope] : null;
+		slices = (alloc && alloc.slices) ? alloc.slices.filter(function(p) {
+			return p.value > 0;
+		}).map(function(p) {
+			return { label: p.label, value: p.value, percent: p.percent };
+		}) : [];
 	}
-	slices = slices.filter(function(p) { return p.value > 0; });
-	if (!slices.length) { return; }
-	// a period share is gathered to the biggest few so the wheel stays readable;
-	// an hour or weekday wheel keeps every slice it has
-	if (!fixed) {
-		slices.sort(function(a, b) { return b.value - a.value; });
-		var top = slices.slice(0, 9);
-		var rest = 0;
-		for (var i = 9; i < slices.length; i++) { rest += slices[i].value; }
-		if (rest > 0) { top.push({ ts: 'other', value: rest }); }
-		slices = top;
+	if (!slices.length) { inventoryPieEmpty(ctx, g, wide, tall, quiet); return; }
+
+	// The legend runs in time order, in as many columns as the panel is wide.
+	// A scope with more parts than will fit - an hour of busy minutes - folds
+	// its tail into one "other" slice, so the wheel still reads as a whole.
+	var line = 13;
+	var lx = Math.min(tall, wide * .5) + 6;
+	var room = wide - lx - 4;
+	var rows = Math.max(1, Math.floor((tall - 12) / line));
+	ctx.font = '400 10px system-ui, Arial';
+	var widest = 0;
+	slices.forEach(function(p) {
+		widest = Math.max(widest, ctx.measureText(inventoryShareLine(p)).width + 22);
+	});
+	var columns = Math.max(1, Math.min(3, Math.floor(room / Math.max(48, widest))));
+	var capacity = columns * rows;
+	// The scope wheel is the one that folds: a busy hour has more minutes than
+	// the legend has room for. The older by-hour and by-weekday wheels keep
+	// every slice they were given, as they did before.
+	var fold = (mode != 'hour' && mode != 'weekday');
+	var shown = slices;
+	if (fold && slices.length > capacity) {
+		var other_label = g.getAttribute('data-other') || 'other';
+		if (typeof jawnosT === 'function') { other_label = jawnosT(other_label); }
+		var keep = Math.max(1, capacity - 1);
+		var rest = { label: other_label, value: 0, percent: 0 };
+		for (var i = keep; i < slices.length; i++) {
+			rest.value += slices[i].value;
+			rest.percent += slices[i].percent;
+		}
+		shown = slices.slice(0, keep).concat([rest]);
 	}
+
 	var total = 0;
-	slices.forEach(function(p) { total += p.value; });
-	var palette = ['#4a90d9','#e06666','#93c47d','#f6b26b','#8e7cc3','#76a5af','#c27ba0','#ffd966','#a2c4c9','#b6d7a8','#dd7e6b'];
-	var rad = Math.min(tall, wide * .5) / 2 - 6;
+	shown.forEach(function(p) { total += p.value; });
+	var rad = Math.max(8, Math.min(tall, wide * .5) / 2 - 6);
 	var cx = rad + 8;
 	var cy = tall / 2;
 	var ang = -Math.PI / 2;
-	slices.forEach(function(p, i) {
-		var slice = (p.value / total) * Math.PI * 2;
+	shown.forEach(function(p, i) {
+		var slice = total > 0 ? (p.value / total) * Math.PI * 2 : 0;
 		ctx.beginPath();
 		ctx.moveTo(cx, cy);
 		ctx.arc(cx, cy, rad, ang, ang + slice);
 		ctx.closePath();
-		ctx.fillStyle = palette[i % palette.length];
+		ctx.fillStyle = inventorySliceColour(palette, ink, i);
 		ctx.fill();
-		ctx.strokeStyle = '#fff';
+		ctx.strokeStyle = edge;
 		ctx.lineWidth = 1;
 		ctx.stroke();
 		ang += slice;
 	});
-	ctx.font = '400 10px Arial';
-	var lx = rad * 2 + 18;
-	var ly = 12;
-	slices.forEach(function(p, i) {
-		if (ly > tall - 2) { return; }
-		ctx.fillStyle = palette[i % palette.length];
-		ctx.fillRect(lx, ly - 8, 9, 9);
-		ctx.fillStyle = 'black';
-		ctx.fillText(p.ts + ' ' + Math.round(100 * p.value / total) + '%', lx + 13, ly);
-		ly += 13;
+
+	ctx.font = '400 10px system-ui, Arial';
+	ctx.textBaseline = 'alphabetic';
+	var column_width = Math.max(48, widest);
+	shown.forEach(function(p, i) {
+		var col = Math.floor(i / rows);
+		var row = i % rows;
+		var x = lx + col * column_width;
+		var y = 12 + row * line;
+		if (x + 20 > wide) { return; }
+		ctx.fillStyle = inventorySliceColour(palette, ink, i);
+		ctx.fillRect(x, y - 8, 9, 9);
+		ctx.fillStyle = ink;
+		ctx.fillText(inventoryShareLine(p), x + 13, y);
 	});
 }
 

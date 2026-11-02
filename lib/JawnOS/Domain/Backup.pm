@@ -655,4 +655,32 @@ sub sync_table_above {
 	return { count => ($row->{'c'} || 0) + 0, sum => ($row->{'s'} || 0) + 0, max => ($row->{'m'} || 0) + 0 };
 }
 
+# Held for the life of a remote export. Releasing in DESTROY means the lock is
+# cleared even when backup_now dies part-way, not only on its normal return.
+#
+# It lives here, beside the backup_now that blesses it, and must not be moved
+# to another domain module: the Loader loads Backup.pm for `backup_now` alone,
+# so a worker serving a peer's export has never seen those other files. The
+# class used to sit in Domain/Ble2.pm, which only a Bluetooth/embedded call
+# loads, and the export then died with "Can't locate object method \"new\" via
+# package \"Jawn::BackupLock\"" at the line below - the tablet hit that on
+# 2026-11-01 and every snapshot pull (the Upgrade button, a nightly deep sync)
+# failed while the v3 row stream carried on. A package one call needs must be
+# defined in the file the Loader names for that call.
+{
+	package Jawn::BackupLock;
+	sub new { my ($class,$val) = @_; return bless { val => $val }, $class; }
+	sub release {
+		my $self = shift;
+		return unless $self->{'val'};
+		my $val = $self->{'val'};
+		$self->{'val'} = undef;
+		eval {
+			my $row = &subs::db_query('select value from settings where app = ? and setting = ? order by cast(server_time as integer) desc limit 1', '__president', 'remote_backup_lock')->hashes->[0];
+			&subs::setting_setter({ app => '__president', setting => 'remote_backup_lock', value => '' }) if (($row->{'value'} || '') eq $val);
+		};
+	}
+	sub DESTROY { my $self = shift; $self->release; }
+}
+
 1;
