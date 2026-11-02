@@ -227,8 +227,8 @@ my (%selected, %path_tests, %path_app, @unmapped, @ignored);
 for my $path (@changed) {
 	if ($path =~ m{^t/([^/]+)\.t$}) {
 		# a test's own edit selects that test
-		$selected{"t/$1"} = 1;
-		$path_tests{$path} = [ "t/$1" ];
+		$selected{"t/$1.t"} = 1;
+		$path_tests{$path} = [ "t/$1.t" ];
 		next;
 	}
 	if (forces_full_suite($path)) {

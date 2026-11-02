@@ -136,6 +136,7 @@ subtest 'an unclaimed change fails safe' => sub {
 
 	($out, $rc) = run_tests_for('--files', 't/10-language.t', '--json');
 	like($out, qr/"t\/10-language\.t"/, "a changed test selects itself");
+	like($out, qr/"tests":\["t\/10-language\.t"\]/, 'the run list names the test file, not a bare name');
 	unlike($out, qr/"full":1/, 'and that is not the full suite');
 };
 
