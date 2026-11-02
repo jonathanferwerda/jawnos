@@ -74,6 +74,10 @@ our %DOMAIN_MODULE;
 	$DOMAIN_MODULE{$_} = 'JawnOS::Domain::Warehouse' for qw(media_file_type warehouse_expiry_sweep task_checker task_grabber task_writer note_retriever log_reader_file_preparer remote_machine_lister public_ip_only public_ip_check_choice public_ip_check_urls public_interface_address remote_public_address remote_machine_tunnel_processor tailnet_status tailnet_set_exit local_domain);
 	$DOMAIN_MODULE{$_} = 'JawnOS::Domain::Web' for qw(web_measure_candidates setting_rows_for setting_value_for headless_browser telephone_contacts_check contact_normalizer contact_matches contact_apps contact_lines contact_line_label phone_number_app telephone_call_log_check appt_toggle_checker current_place quantity_unit_split warehouse_on_hand_at warehouse_stock_for warehouse_on_hand warehouse_restock_for warehouse_item_expires warehouse_place_for warehouse_journal_entry warehouse_movement warehouse_usage);
 
+	# Store: the cash register's money and its open orders. Kept in the domain
+	# layer so the route, the template and the test all add up the same way.
+	$DOMAIN_MODULE{$_} = 'JawnOS::Domain::Store' for qw(store_register_payment_methods store_register_payment_valid store_register_payment_label store_register_denominations store_register_number store_register_totals store_register_change store_register_change_breakdown store_register_orders store_register_order store_register_order_open store_register_order_line store_register_order_add store_register_order_quantity store_register_order_remove store_register_order_cancel store_register_order_reset store_register_sale_data);
+
 # True for a domain function this loader can provide. Tests use it instead of
 # `defined &subs::name`, which would be false until the module is loaded.
 sub provides { return exists $DOMAIN_MODULE{ $_[0] // '' } }

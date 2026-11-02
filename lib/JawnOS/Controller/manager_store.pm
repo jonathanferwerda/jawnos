@@ -263,13 +263,220 @@ sub action_6410 {
 	}
 	@documents = sort { $b->{'timestamp'} <=> $a->{'timestamp'} } @documents;
 	my $content = $c->render_to_string(
-		template => 'store/register',
+		template => 'store/journal',
 		documents => \@documents,
 		totals => \%totals,
 		customer => $customer,
 		settings => $settings
 	);
 	$c->render(json => { content => $content, cx => $cx, count => scalar @documents });
+}
+
+# The cash register. An order lives in this worker's memory and is addressed by
+# its own id, so nobody has to be a known customer and several people can be
+# served at once. These helpers are not routes; the actions below answer with
+# the same shape so the page can redraw from any reply.
+sub store_register_customer_for {
+	my ($cx) = @_;
+	my $app = 'Customer';
+	my $name = &subs::lang('common.customer');
+	if (defined $cx && length $cx) {
+		my $row = &subs::db_select('settings', undef, { setting => 'uuid', value => $cx })->hashes->[0];
+		if ($row && ($row->{'app'} || '') =~ /\S/) {
+			$app = $row->{'app'};
+			$name = &subs::format_name($app);
+		}
+	}
+	return { app => $app, name => $name, cx => (defined $cx ? $cx : '') };
+}
+
+sub store_register_payload {
+	my ($order) = @_;
+	my $tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1;
+	my $totals = &subs::store_register_totals($order->{'items'}, $tax);
+	return {
+		ok => 1,
+		tax => 0 + $tax,
+		order => { %{$order}, totals => $totals },
+	};
+}
+
+# GET /manager/store/register
+sub action_6411 {
+	my $c = shift;
+	my $cx = $c->param('cx') || '';
+	my $content = $c->render_to_string(
+		template => 'store/register',
+		cx => $cx,
+	);
+	$c->render(json => { content => $content, cx => $cx });
+}
+
+# GET /manager/store/register/state
+sub action_6412 {
+	my $c = shift;
+	my $tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1;
+	my @orders;
+	foreach my $order ( @{ &subs::store_register_orders() } ) {
+		push @orders, {
+			%{$order},
+			totals => &subs::store_register_totals($order->{'items'}, $tax),
+		};
+	}
+	$c->render(json => {
+		ok => 1,
+		tax => 0 + $tax,
+		orders => \@orders,
+		methods => &subs::store_register_payment_methods(),
+		denominations => &subs::store_register_denominations(),
+	});
+}
+
+# POST /manager/store/register/order
+sub action_6413 {
+	my $c = shift;
+	my $cx = $c->param('cx') || '';
+	my $customer = &store_register_customer_for($cx);
+	my $order = &subs::store_register_order_open({
+		cx => $customer->{'cx'},
+		app => $customer->{'app'},
+		name => $customer->{'name'},
+	});
+	$c->render(json => &store_register_payload($order));
+}
+
+# GET /manager/store/register/items
+sub action_6414 {
+	my $c = shift;
+	no warnings 'once';
+	my $search = &subs::unformat_name($c->param('search') || '');
+	return $c->render(json => { ok => 1, items => [] }) if length($search) < 2;
+	my $rows = &subs::db_query('select distinct(app) as app,* from settings where (setting= ? or setting = ?) and app like ? and device=?', 'pos', 'mab', '%' . $search . '%', $device)->hashes;
+	my (%seen, @candidates);
+	foreach my $type ( @gb::store_types ) {
+		push @candidates, grep { ($_->{'value'} || '') eq $type && !$seen{ $_->{'app'} }++ } @{$rows};
+	}
+	my $items = &store_item_merchandiser(\@candidates, []);
+	unless (($c->session('privilege') || '') eq 'citizen') {
+		@{$items} = grep { (($_->{'settings'} || {})->{'public'} || '') eq 'on' } @{$items};
+	}
+	my @out;
+	foreach my $item ( sort { lc($a->{'app'}) cmp lc($b->{'app'}) } @{$items} ) {
+		last if scalar @out >= 30;
+		push @out, {
+			app => $item->{'app'},
+			name => &subs::format_name($item->{'app'}),
+			price => &subs::numeric_formatter($item->{'price'}),
+			type => $item->{'type'} || 'product',
+		};
+	}
+	$c->render(json => { ok => 1, items => \@out });
+}
+
+# POST /manager/store/register/item
+sub action_6415 {
+	my $c = shift;
+	my $id = $c->param('id');
+	my $order = &subs::store_register_order($id);
+	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
+	&subs::store_register_order_add($id, {
+		item => $c->param('item'),
+		name => $c->param('name'),
+		price => $c->param('price'),
+		quantity => $c->param('quantity') || 1,
+	});
+	$c->render(json => &store_register_payload($order));
+}
+
+# POST /manager/store/register/quantity
+sub action_6416 {
+	my $c = shift;
+	my $id = $c->param('id');
+	my $order = &subs::store_register_order($id);
+	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
+	&subs::store_register_order_quantity($id, $c->param('line'), $c->param('quantity'));
+	$c->render(json => &store_register_payload($order));
+}
+
+# POST /manager/store/register/remove
+sub action_6417 {
+	my $c = shift;
+	my $id = $c->param('id');
+	my $order = &subs::store_register_order($id);
+	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
+	&subs::store_register_order_remove($id, $c->param('line'));
+	$c->render(json => &store_register_payload($order));
+}
+
+# POST /manager/store/register/cancel
+sub action_6418 {
+	my $c = shift;
+	my $id = $c->param('id');
+	my $cancelled = &subs::store_register_order_cancel($id);
+	$c->render(json => { ok => $cancelled ? 1 : 0, cancelled => $id });
+}
+
+# POST /manager/store/register/sale
+sub action_6419 {
+	my $c = shift;
+	my $id = $c->param('id');
+	my $order = &subs::store_register_order($id);
+	return $c->render(json => { ok => 0, error => 'no open order' }) unless $order;
+	return $c->render(json => { ok => 0, error => 'the order is empty' }) unless scalar @{$order->{'items'}};
+	my $tax = &subs::setting_grabber({ app => 'me', setting => 'sales_tax' }) || 1;
+	my $app = $order->{'customer'}->{'app'} || 'Customer';
+	my $built = &subs::store_register_sale_data($order, $c->param('payment'), $c->param('received'), $app, '', $tax);
+	return $c->render(json => { ok => 0, error => $built->{'error'} || 'the sale could not be built' }) unless $built->{'ok'};
+	if (($built->{'payment'}->{'method'} || '') eq 'cash' && $built->{'change'}->{'short'}) {
+		return $c->render(json => { ok => 0, error => 'cash received is less than the total', short => 1, change => $built->{'change'} });
+	}
+	my $sale_id = &quote_id_maker($built->{'data'});
+	$built->{'data'}->{'id'} = $sale_id;
+	my $appt = &appointment_writer($c, {
+		app => $app,
+		type => 'sale',
+		movement => 'income',
+		timestamp => &subs::rightNow(),
+		duration => 0,
+		data => encode_json($built->{'data'}),
+		status => 'completed',
+		item => $built->{'data'}->{'item'},
+	});
+	my $uuid = $appt->{'uuid'} || '';
+	&subs::store_register_order_cancel($id);
+	my $receipt = '';
+	if ($uuid) {
+		my $printer = &store_printer({ type => 'sale', uuid => $uuid, customer_app => $app });
+		$receipt = $c->render_to_string(%{$printer});
+	}
+	$c->render(json => {
+		ok => 1,
+		sale => {
+			uuid => $uuid,
+			id => $sale_id,
+			app => $app,
+			total => $built->{'totals'}->{'total'},
+			payment => $built->{'payment'},
+			items => $built->{'data'}->{'register'}->{'items'},
+		},
+		receipt => $receipt,
+	});
+}
+
+# GET /manager/store/register/receipt
+sub action_6420 {
+	my $c = shift;
+	my $uuid = $c->param('uuid');
+	my $app = $c->param('app');
+	unless (defined $app && length $app) {
+		my $row = &subs::db_select('appointments', undef, { uuid => $uuid, type => 'sale' })->hashes->[0];
+		$app = $row->{'app'} if $row;
+	}
+	unless (defined $app && length $app) {
+		return $c->render(text => 'no receipt', status => 404);
+	}
+	my $printer = &store_printer({ type => 'sale', uuid => $uuid, customer_app => $app });
+	$c->render(text => $c->render_to_string(%{$printer}));
 }
 
 # GET /manager/store/customer_correspondence

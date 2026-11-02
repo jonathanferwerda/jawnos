@@ -66,8 +66,19 @@ sub store_printer($data) {
 	my $cx_uuid = $data->{'cx_uuid'};
 	my $uuid = $data->{'uuid'};
 	my $visibility = $data->{'visibility'};
+	# A walk-in sale has no customer uuid to look up: the caller names the app
+	# directly, and "Customer" is the house's anonymous account. An unknown or
+	# empty customer is still a paper that prints instead of a route that dies.
+	my $customer_app = $data->{'customer_app'};
 	my $c = &subs::controller_builder();
-	my $customer_s = &subs::db_select('settings', undef, { setting => 'uuid', value => $cx_uuid })->hashes->[0];
+	my $customer_s;
+	if (defined $customer_app && length $customer_app) {
+		$customer_s = { app => $customer_app };
+	}
+	else {
+		$customer_s = &subs::db_select('settings', undef, { setting => 'uuid', value => $cx_uuid })->hashes->[0];
+	}
+	$customer_s = { app => 'Customer' } unless ($customer_s->{'app'} || '') =~ /\S/;
 	my $cx_settings = &subs::settings_grabber({ app => $customer_s->{'app'} });
 	my $print_date = 0;
 	my $due = &subs::setting_grabber({ app => 'me', setting => 'payment_due_date' });
@@ -162,7 +173,8 @@ sub store_printer($data) {
 		}
 	}
 	my $qr = $pay ? $pay->{'uri'} : $public_url;
-	my $qr_img = &subs::crest_qr_png($qr);
+	# A till receipt is handed over, not scanned back to a public invoice page.
+	my $qr_img = $customer_app ? '' : &subs::crest_qr_png($qr);
 	$qr_img = '' unless defined $qr_img && length $qr_img;
 	$qr_img = 'data:image/png;base64,' . encode_base64($qr_img) if length $qr_img;
 

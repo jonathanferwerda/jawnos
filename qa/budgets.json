@@ -26,5 +26,9 @@
   "l5": {
     "health_s": { "limit": 420, "level": "warn", "why": "baseline 285 s (firstboot seeding); an installed disk answers in ~24 s" },
     "host_rss_mb": { "limit": 3400, "level": "fail", "why": "RSS is guest RAM + ~20 MB; run.sh gives the VM 3072 MB so the host needs ~3.1 GB" }
+  },
+  "l6": {
+    "ux_failures": { "limit": 0, "level": "warn", "why": "no baseline yet: until the nightly has a history, a note whose task failed is a finding, not a red run" },
+    "duration_s": { "limit": 1800, "level": "warn", "why": "the UX loop has its own timer so a 20-minute run cannot hold the 04:00 l0-l2 job" }
   }
 }

@@ -1,0 +1,38 @@
+[Unit]
+Description=JawnOS nightly UX evaluation (l6, fenced QA copy)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jawn
+WorkingDirectory=/home/jawn/jawnos
+Environment=HOME=/home/jawn
+ExecStartPre=/usr/bin/perl /home/jawn/jawnos/qa/prune.pl --keep 14
+# The runner reads the live notes with a mode=ro URI, seeds them into a Harness
+# copy, and drives that copy. --file-handbook is the one live write: a POST to
+# /manager/note_save with the ticket from .shots/ticket.txt. It is best-effort;
+# a missing ticket leaves the report on disk and exits 0.
+ExecStart=/usr/bin/perl /home/jawn/jawnos/qa/ux/run --root /home/jawn/jawnos-qa --results /home/jawn/jawnos-qa/ux --metrics /home/jawn/jawnos-qa/ux/metrics.json --limit 5 --timeout 1500 --file-handbook
+
+# The same second fence as the 04:00 suite: the repo is read-only, only the QA
+# root is writable, and loopback is all the parent needs to file the summary.
+# The fenced child has its own net namespace, so its QA copy is unreachable.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=4G
+CPUQuota=300%
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/jawn/jawnos-qa
+NoNewPrivileges=yes
+IPAddressDeny=any
+IPAddressAllow=localhost
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

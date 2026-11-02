@@ -1,0 +1,15 @@
+[Unit]
+Description=Nightly JawnOS UX evaluation (l6)
+Documentation=file:/home/jawn/jawnos/qa/README.md
+
+[Timer]
+# After the 04:00 l0-l2 job and its up-to-20-minute random delay; a 20-minute UX
+# run must not ride that job. A separate timer also means a UX failure cannot
+# hold the route/database layers.
+OnCalendar=*-*-* 05:30:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=jawnos-qa-ux.service
+
+[Install]
+WantedBy=timers.target

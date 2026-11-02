@@ -1,70 +1,86 @@
 <% no warnings 'uninitialized'; %>
-<img src="<%= &subs::icon_for('/images/make believe/cancel_button.png') %>" hint="<%= &subs::lang('common.close') %>" class="main_viewer_cancel_button little_thumb" style="float:right;">
-<h1 class="store_journal_title"><%= &subs::lang('common.register') %></h1>
-<h3 class="store_journal_customer"><%= &subs::format_name($customer->{'app'}) %></h3>
+<div id="store_register" class="store_register" data-cx="<%= $cx %>" role="dialog" aria-modal="true" aria-label="<%= &subs::lang('common.register') %>">
+	<header class="store_register_header">
+		<h2 class="store_register_title"><%= &subs::lang('common.register') %></h2>
+		<div class="store_register_header_actions">
+			<button type="button" id="store_register_last_receipt" class="store_register_button" style="display:none;"><%= &subs::lang('common.receipt') %></button>
+			<button type="button" id="store_register_new" class="store_register_button"><%= &subs::lang('store.new_order') %></button>
+			<button type="button" id="store_register_close" class="store_register_button store_register_close"><%= &subs::lang('common.close') %></button>
+		</div>
+	</header>
 
-<div class="store_journal_summary">
-	<div class="store_journal_summary_cell">
-		<span class="store_journal_summary_label"><%= &subs::ui('Sales') %></span>
-		<strong><%= &subs::price_formatter($totals->{'total'}) %></strong>
+	<div id="store_register_tabs" class="store_register_tabs" role="tablist"></div>
+
+	<div class="store_register_body">
+		<section class="store_register_order" aria-live="polite">
+			<div class="store_register_customer">
+				<span class="store_register_customer_label"><%= &subs::lang('common.customer') %></span>
+				<strong id="store_register_customer_name">—</strong>
+			</div>
+
+			<div id="store_register_items" class="store_register_items"></div>
+
+			<div class="store_register_totals">
+				<span><%= &subs::lang('common.quantity') %> <b id="store_register_quantity">0</b></span>
+				<span><%= &subs::lang('common.total') %> <b id="store_register_total">$0.00</b></span>
+			</div>
+
+			<label class="store_register_search_wrap">
+				<span class="store_register_search_label"><%= &subs::lang('common.item') %></span>
+				<input type="search" id="store_register_search" autocomplete="off" placeholder="<%= &subs::lang('common.search') %>">
+			</label>
+			<div id="store_register_results" class="store_register_results" aria-live="polite"></div>
+		</section>
+
+		<section class="store_register_pay" aria-live="polite">
+			<h3 class="store_register_pay_title"><%= &subs::lang('store.payment_method') %></h3>
+			<div id="store_register_methods" class="store_register_methods" role="group" aria-label="<%= &subs::lang('store.payment_method') %>">
+				<% foreach my $method ( @{ &subs::store_register_payment_methods() } ) { %>
+					<button type="button" class="store_register_method" data-method="<%= $method %>"><%= &subs::store_register_payment_label($method) %></button>
+				<% } %>
+			</div>
+
+			<div id="store_register_cash" class="store_register_cash">
+				<div class="store_register_cash_label"><%= &subs::lang('common.cash') %> · <%= &subs::lang('store.received') %></div>
+				<div class="store_register_denominations" role="group" aria-label="<%= &subs::lang('common.cash') %>">
+					<button type="button" class="store_register_denomination" data-amount="5"><%= &subs::price_formatter(5) %></button>
+					<button type="button" class="store_register_denomination" data-amount="10"><%= &subs::price_formatter(10) %></button>
+					<button type="button" class="store_register_denomination" data-amount="20"><%= &subs::price_formatter(20) %></button>
+					<button type="button" class="store_register_denomination" data-amount="50"><%= &subs::price_formatter(50) %></button>
+					<button type="button" class="store_register_denomination" data-amount="100"><%= &subs::price_formatter(100) %></button>
+				</div>
+				<div class="store_register_coins" role="group" aria-label="<%= &subs::ui('Common change') %>">
+					<% foreach my $coin ( qw(0.05 0.10 0.25 1 2) ) { %>
+						<button type="button" class="store_register_coin" data-add="<%= $coin %>"><%= &subs::price_formatter($coin) %></button>
+					<% } %>
+				</div>
+				<label class="store_register_received_wrap">
+					<span><%= &subs::lang('store.received') %></span>
+					<input type="text" inputmode="decimal" id="store_register_received" value="0.00">
+				</label>
+				<div class="store_register_change_row">
+					<span><%= &subs::lang('store.change') %></span>
+					<strong id="store_register_change">$0.00</strong>
+				</div>
+				<div id="store_register_breakdown" class="store_register_breakdown"></div>
+			</div>
+
+			<div class="store_register_commit">
+				<button type="button" id="store_register_complete" class="store_register_complete"><%= &subs::lang('store.complete_sale') %></button>
+				<button type="button" id="store_register_void" class="store_register_void"><%= &subs::lang('store.void') %></button>
+			</div>
+			<div id="store_register_status" class="store_register_status" role="status" aria-live="polite" style="display:none;"></div>
+		</section>
 	</div>
-	<div class="store_journal_summary_cell">
-		<span class="store_journal_summary_label"><%= &subs::ui('Paid') %></span>
-		<strong><%= &subs::price_formatter($totals->{'paid'}) %></strong>
-	</div>
-	<div class="store_journal_summary_cell">
-		<span class="store_journal_summary_label"><%= &subs::ui('Outstanding') %></span>
-		<strong><%= &subs::price_formatter($totals->{'balance'}) %></strong>
-	</div>
-	<div class="store_journal_summary_cell">
-		<span class="store_journal_summary_label"><%= &subs::ui('Documents') %></span>
-		<strong><%= $totals->{'count'} %></strong>
+
+	<div id="store_register_receipt" class="store_register_receipt" style="display:none;">
+		<div class="store_register_receipt_bar">
+			<h3><%= &subs::lang('store.sale_complete') %></h3>
+			<div>
+				<button type="button" id="store_register_print" class="store_register_button"><%= &subs::lang('common.print') %></button>
+				<button type="button" id="store_register_receipt_close" class="store_register_button"><%= &subs::lang('common.close') %></button>
+			</div>
+		</div>
+		<div id="store_register_receipt_paper"></div>
 	</div>
 </div>
-
-<% if (scalar @{$documents} == 0) { %>
-	<p class="store_journal_empty"><%= &subs::ui('No sales or invoices yet for this customer.') %></p>
-<% } else { %>
-	<div class="store_journal_table_wrap">
-		<table class="store_journal_table">
-			<thead>
-				<tr>
-					<th><%= &subs::ui('Date') %></th>
-					<th><%= &subs::ui('Document') %></th>
-					<th><%= &subs::lang('common.item') %></th>
-					<th><%= &subs::lang('common.total') %></th>
-					<th><%= &subs::ui('Paid') %></th>
-					<th><%= &subs::ui('Balance') %></th>
-					<th><%= &subs::ui('Status') %></th>
-				</tr>
-			</thead>
-			<tbody>
-				<% foreach my $doc ( @{$documents} ) { %>
-					<tr class="register_document register_<%= $doc->{'type'} %>">
-						<td><span class="time" mode="fixed" timestamp="<%= $doc->{'timestamp'} %>"></span></td>
-						<td>
-							<strong><%= $doc->{'id'} %></strong><br>
-							<span class="store_journal_muted"><%= $doc->{'type'} eq 'sale' ? &subs::lang('common.sale') : &subs::lang('common.invoice') %></span>
-						</td>
-						<td><%= $doc->{'item'} %></td>
-						<td><%= &subs::price_formatter($doc->{'total'}) %></td>
-						<td><%= &subs::price_formatter($doc->{'paid'}) %></td>
-						<td><%= &subs::price_formatter($doc->{'balance'}) %></td>
-						<td><%= $doc->{'balance'} > 0 ? &subs::ui('Open') : &subs::ui('Paid') %></td>
-					</tr>
-					<% foreach my $p ( @{$doc->{'payments'}} ) { %>
-						<tr class="register_payment">
-							<td><span class="time" mode="fixed" timestamp="<%= $p->{'timestamp'} %>"></span></td>
-							<td colspan="2">
-								<span class="register_payment_mark">↳</span>
-								<%= &subs::ui('Payment') %><% if ($p->{'account'}) { %> · <%= $p->{'account'} %><% } %>
-							</td>
-							<td colspan="2"><%= &subs::price_formatter($p->{'amount'}) %></td>
-							<td colspan="2" class="store_journal_muted"><%= $doc->{'id'} %></td>
-						</tr>
-					<% } %>
-				<% } %>
-			</tbody>
-		</table>
-	</div>
-<% } %>

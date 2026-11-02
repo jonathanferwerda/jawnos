@@ -67,6 +67,7 @@ my %opt = (
 	apk => undef,
 	image => undef,
 	contract => 0,
+	ux_limit => 5,
 );
 my @argv = @ARGV;
 while (my $arg = shift @argv) {
@@ -88,6 +89,8 @@ while (my $arg = shift @argv) {
 	if ($arg eq '--image')       { $opt{'image'} = shift @argv; next }
 	if ($arg =~ /^--image=(.*)$/){ $opt{'image'} = $1; next }
 	if ($arg eq '--device-contract') { $opt{'contract'} = 1; next }
+	if ($arg eq '--ux-limit')    { $opt{'ux_limit'} = shift @argv // 5; next }
+	if ($arg =~ /^--ux-limit=(.*)$/) { $opt{'ux_limit'} = $1; next }
 	if ($arg eq '--help' || $arg eq '-h') { usage(); exit 0 }
 	die "qa: unknown argument: $arg\n";
 }
@@ -97,7 +100,13 @@ $opt{'anon'} = 1 if $opt{'profile'} eq 'full';
 my @layers = grep { length } split /,/, $opt{'layers'};
 die "qa: --layers wants l0, l1 and/or l2\n" unless @layers;
 for my $l (@layers) {
-	die "qa: unknown layer '$l' (known: l0 l1 l2 l3 l4 l5)\n" unless $l =~ /^l[0-5]$/;
+	die "qa: unknown layer '$l' (known: l0 l1 l2 l3 l4 l5 l6)\n" unless $l =~ /^l[0-6]$/;
+}
+
+# t/76 uses this to prove `--layers l6` is accepted without booting a copy.
+if ($ENV{'JAWNOS_QA_PLAN_ONLY'}) {
+	print 'plan: layers=' . join(',', @layers) . "\n";
+	exit 0;
 }
 
 my $say = sub { print $_[0], "\n" };
@@ -142,7 +151,9 @@ if (grep { $_ eq 'l0' } @layers) {
 my $want_l2 = grep { $_ eq 'l2' } @layers;
 my $want_l3 = grep { $_ eq 'l3' } @layers;
 my $want_l1 = grep { $_ eq 'l1' } @layers;
-if (!$want_l1 && !$want_l2 && !$want_l3) {
+my $want_l6 = grep { $_ eq 'l6' } @layers;
+if (!$want_l1 && !$want_l2 && !$want_l3 && !$want_l6
+	&& !(grep { $_ eq 'l4' || $_ eq 'l5' } @layers)) {
 	my $ok = $l0_result && $l0_result->{'ok'};
 	$say->(sprintf('[l0] %s in %.1fs',
 		($ok ? 'ok' : 'FAILED'), $l0_result ? $l0_result->{'seconds'} : 0))
@@ -152,7 +163,9 @@ if (!$want_l1 && !$want_l2 && !$want_l3) {
 }
 
 # l1 needs the fence. Re-exec inside it, carrying l0's verdict with us.
-if (($want_l1 || $want_l2 || $want_l3) && !$ENV{"JAWNOS_QA_NS"} && !$ENV{"JAWNOS_QA_NO_NS"}) {
+if (($want_l1 || $want_l2 || $want_l3
+		|| ($want_l6 && !(grep { $_ eq 'l4' || $_ eq 'l5' } @layers)))
+	&& !$ENV{"JAWNOS_QA_NS"} && !$ENV{"JAWNOS_QA_NO_NS"}) {
 	if ($l0_result) {
 		$ENV{'JAWNOS_QA_L0_EXIT'} = $l0_result->{'exit'};
 		$ENV{'JAWNOS_QA_L0_SECS'} = $l0_result->{'seconds'};
@@ -208,6 +221,7 @@ my %report = (
 	crashes  => [],
 	routes   => [],
 	ui       => [],
+	ux       => {},
 	skipped  => [],
 	monitor  => {},
 	audit    => {},
@@ -667,6 +681,51 @@ if (grep { $_ eq 'l4' || $_ eq 'l5' } @layers) {
 }
 
 # ---------------------------------------------------------------------------
+# l6 - the UX evaluation loop
+# ---------------------------------------------------------------------------
+#
+# qa/ux/run owns the work: it reads the live notes with a mode=ro URI, seeds
+# them into its own Harness copy, and drives that copy. Here we only hand it an
+# output directory, keep its log, and merge the flat l6.* metrics so the budget
+# can judge them - the same shape l4/l5 use.
+
+if ($want_l6) {
+	my $log = $h->logs . '/ux.log';
+	my $metrics = $h->results . '/ux.json';
+	my $results = $h->results . '/ux';
+	my @args = ('--root', $h->root, '--results', $results,
+		'--metrics', $metrics, '--limit', $opt{'ux_limit'});
+	$say->("\n[l6] UX evaluation, newest $opt{'ux_limit'} JawnOS note(s)");
+	my $rc = run_program($^X, "$FindBin::Bin/ux/run", $log, {}, @args);
+	push @{ $report{'device_logs'} ||= [] }, $log;
+	if ($rc != 0) {
+		my @tail = tail_lines($log, 6);
+		$fatal->("l6: the UX runner failed (exit $rc): " . join(' / ', @tail));
+	}
+	elsif (!-f $metrics) {
+		$fatal->("l6: the UX runner wrote no metrics ($metrics)");
+	}
+	else {
+		open(my $fh, '<', $metrics) or $fatal->("l6: $metrics: $!");
+		if ($fh) {
+			local $/;
+			my $text = <$fh>;
+			close $fh;
+			my $m = eval { JSON::PP->new->utf8->decode($text) };
+			if (ref $m ne 'HASH') {
+				$fatal->("l6: $metrics is not a JSON object");
+			}
+			else {
+				for my $k (sort keys %$m) {
+					$report{'ux'}->{$k} = $m->{$k};
+					$say->(sprintf('  %-28s %s', $k, $m->{$k})) if $k =~ /^l6\./;
+				}
+			}
+		}
+	}
+}
+
+# ---------------------------------------------------------------------------
 # results
 # ---------------------------------------------------------------------------
 
@@ -727,13 +786,18 @@ exit($report{"ok"} ? 0 : 1);
 
 sub run_device {
 	my ($script, $log, $env, @args) = @_;
+	return run_program('sh', $script, $log, $env, @args);
+}
+
+sub run_program {
+	my ($prog, $script, $log, $env, @args) = @_;
 	my $pid = fork();
 	die "qa: fork: $!\n" unless defined $pid;
 	if (!$pid) {
 		open(STDOUT, '>', $log) or POSIX::_exit(127);
 		open(STDERR, '>&', \*STDOUT) or POSIX::_exit(127);
 		$ENV{$_} = $env->{$_} for keys %$env;
-		exec 'sh', $script, @args;
+		exec $prog, $script, @args;
 		POSIX::_exit(127);
 	}
 	waitpid($pid, 0);

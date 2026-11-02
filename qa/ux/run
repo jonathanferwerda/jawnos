@@ -1,0 +1,332 @@
+#!/usr/bin/perl
+
+# qa/ux/run - the nightly UX evaluation loop (layer l6).
+#
+#   perl qa/ux/run                         # newest 5 JawnOS notes, fenced copy
+#   perl qa/ux/run --limit 3               # a shorter queue
+#   perl qa/ux/run --no-ui                 # notes + rubric only, no browser
+#   perl qa/ux/run --model deepseek-chat   # ask the Guide's model to judge
+#   perl qa/ux/run --file-handbook         # also file the summary (one POST)
+#
+# The live database is read *only* by Ux::select_notes(), with a mode=ro URI.
+# The notes are seeded into a Harness copy; every attempted task runs against
+# that copy. The only write outside the QA root is --file-handbook, which posts
+# to the app's own /manager/note_save route; there is no live SQL here.
+
+use strict;
+use warnings;
+
+# A systemd unit or a non-interactive ssh session exports no PERL5LIB. Find the
+# user's local::lib the way ./jawn does, before Harness needs Mojo.
+BEGIN {
+	my $base = (($ENV{'HOME'} || '') . '/perl5/lib/perl5');
+	if ($base =~ m{/} && -d $base) {
+		my @dirs = ($base);
+		if (opendir(my $dh, $base)) {
+			for my $name (sort readdir $dh) {
+				my $dir = "$base/$name";
+				push @dirs, $dir
+					if $name ne '.' && $name ne '..' && -d $dir
+					&& ($name =~ /-linux-/ || $name =~ /^[0-9]+\.[0-9]+/);
+			}
+			closedir $dh;
+		}
+		my %in_inc = map { $_ => 1 } @INC;
+		unshift @INC, grep { !$in_inc{$_} } @dirs;
+		my $lib = join ':', @dirs;
+		$ENV{'PERL5LIB'} = $ENV{'PERL5LIB'}
+			? "$lib:$ENV{'PERL5LIB'}" : $lib;
+	}
+}
+
+use FindBin;
+use lib "$FindBin::Bin/lib", "$FindBin::Bin/../lib", 'qa/lib';
+
+use Cwd qw(abs_path);
+use File::Path qw(make_path);
+use JSON::PP;
+use POSIX ();
+use Time::HiRes qw(time);
+
+use Harness;
+use Ux;
+
+my %opt = (
+	limit => 5,
+	root  => undef,
+	results => undef,
+	metrics => undef,
+	db    => undef,
+	model => '',
+	ui    => 1,
+	timeout => 1500,
+	fenced => 0,
+	no_namespace => 0,
+	file_handbook => 0,
+	live_url => '',
+	ticket => '',
+);
+my @argv = @ARGV;
+my @original_args = @ARGV;
+while (my $arg = shift @argv) {
+	if ($arg eq '--limit')      { $opt{'limit'} = shift @argv // 5; next }
+	if ($arg =~ /^--limit=(.*)$/) { $opt{'limit'} = $1; next }
+	if ($arg eq '--root')       { $opt{'root'} = shift @argv; next }
+	if ($arg =~ /^--root=(.*)$/){ $opt{'root'} = $1; next }
+	if ($arg eq '--results')    { $opt{'results'} = shift @argv; next }
+	if ($arg =~ /^--results=(.*)$/) { $opt{'results'} = $1; next }
+	if ($arg eq '--metrics')    { $opt{'metrics'} = shift @argv; next }
+	if ($arg =~ /^--metrics=(.*)$/) { $opt{'metrics'} = $1; next }
+	if ($arg eq '--db')         { $opt{'db'} = shift @argv; next }
+	if ($arg =~ /^--db=(.*)$/)  { $opt{'db'} = $1; next }
+	if ($arg eq '--model')      { $opt{'model'} = shift @argv // ''; next }
+	if ($arg =~ /^--model=(.*)$/) { $opt{'model'} = $1; next }
+	if ($arg eq '--timeout')    { $opt{'timeout'} = shift @argv // 1500; next }
+	if ($arg eq '--no-ui')      { $opt{'ui'} = 0; next }
+	if ($arg eq '--no-namespace') { $opt{'no_namespace'} = 1; next }
+	if ($arg eq '--file-handbook') { $opt{'file_handbook'} = 1; next }
+	if ($arg eq '--live-url')   { $opt{'live_url'} = shift @argv // ''; next }
+	if ($arg =~ /^--live-url=(.*)$/) { $opt{'live_url'} = $1; next }
+	if ($arg eq '--ticket')     { $opt{'ticket'} = shift @argv // ''; next }
+	if ($arg =~ /^--ticket=(.*)$/) { $opt{'ticket'} = $1; next }
+	if ($arg eq '--fenced')     { $opt{'fenced'} = 1; next }
+	if ($arg eq '--help' || $arg eq '-h') { usage(); exit 0 }
+	die "qa/ux: unknown argument: $arg\n";
+}
+
+my $repo = abs_path("$FindBin::Bin/../..");
+die "qa/ux: no live tree at $repo\n" unless -f "$repo/perl/subroutines.pl";
+
+# The fenced half runs in a mount/PID/net namespace. The parent waits for it,
+# then (and only then) may file the summary through the live app's route - a
+# POST needs the live loopback, which the fence deliberately removes.
+if (!$opt{'fenced'} && !$ENV{'JAWNOS_QA_NS'} && !$opt{'no_namespace'}) {
+	my @cmd = ('unshare', '--user', '--map-root-user', '--mount', '--pid',
+		'--fork', '--mount-proc', '--net', '--',
+		$^X, abs_path($0), '--fenced', @original_args);
+	my $rc = system(@cmd);
+	file_handbook_if_asked(\%opt, $repo) if $opt{'file_handbook'};
+	exit(($rc >> 8) == 0 ? 0 : ($rc >> 8));
+}
+
+$opt{'fenced'} = 1;
+$ENV{'JAWNOS_QA_NS'} = '1' unless $opt{'no_namespace'};
+Harness::bring_up_loopback();
+
+my $live_db = $opt{'db'} || Ux->live_db($repo);
+my $h = Harness->new(repo => $repo, root => $opt{'root'});
+$h->private_tmp();
+my $ro = $h->bind_live_read_only();
+$h->export_tree();
+$h->seed();
+$h->make_certificate();
+$h->pick_ports();
+
+my $results = $opt{'results'} || $h->results;
+make_path($results);
+my $t0 = time;
+
+print 'JawnOS UX ' . ($ENV{'JAWNOS_QA_NS'} ? '[fenced]' : '[unfenced]') . "\n";
+print 'live db: ' . $live_db . ($ro ? ' (repo mounted read-only)' : '') . "\n";
+
+# 1. read the queue, read-only, newest first
+my $notes = Ux->select_notes($live_db, limit => $opt{'limit'}, category => 'jawnos');
+print 'notes: ' . scalar(@$notes) . " JawnOS note(s)\n";
+
+# 2. boot the copy. The factory seed predates the category column, so the app's
+# first request runs the migrations; the notes go in after that, not before.
+my @attempts;
+my $booted = 0;
+my $seeded = 0;
+if ($opt{'ui'} && @$notes) {
+	$h->write_config(live => 1);
+	my $boot = eval { $h->boot(name => 'ux', timeout => 180) };
+	if (!$boot) {
+		print STDERR 'qa/ux: the QA instance did not boot: ' . ($@ || 'unknown') . "\n";
+	}
+	else {
+		$booted = 1;
+		$h->session();
+		$seeded = Ux->seed_notes("$h->{'tree'}/database/jawnos.db",
+			$notes, live_db => $live_db);
+		print "seeded: $seeded note(s) into the QA copy\n";
+		my $url = $h->url_for('/manager/notes');
+		my $i = 0;
+		for my $note (@$notes) {
+			$i++;
+			my $out = "$results/notes/" . ($note->{'id'} || "note-$i");
+			print "  attempt " . ($note->{'title'} || '(untitled)') . "\n";
+			my $attempt = Ux->browser_attempt(
+				url => $url, note => $note, outdir => $out);
+			push @attempts, $attempt;
+		}
+		$h->stop('ux');
+	}
+}
+elsif (!$opt{'ui'}) {
+	print "attempts: skipped (--no-ui)\n";
+}
+else {
+	print "seeded: 0 (no notes to seed)\n";
+}
+
+# 4. judge. No model means skip, never pass.
+my @entries;
+if (@$notes) {
+	my $model_call;
+	if ($opt{'model'}) {
+		my $ok = eval { require "$repo/lib/JawnOS/Domain/Ai2.pm"; 1 };
+		$model_call = \&subs::evaluation_model_call if $ok;
+	}
+	my %by_id = map { ($_->{'id'} // '') => $_ } @attempts;
+	for my $note (@$notes) {
+		my $attempt = $by_id{$note->{'id'} || ''} || {
+			steps => [], console_errors => [],
+			stuck => !$opt{'ui'} ? 'the attempt was skipped (--no-ui)'
+				: $booted ? 'no attempt was recorded'
+				: 'the QA instance was not available for an attempt',
+		};
+		my ($answers, $err);
+		if ($opt{'model'} && $model_call) {
+			($answers, $err) = Ux->model_answers(
+				model => $opt{'model'}, note => $note,
+				attempt => $attempt, model_call => $model_call);
+		}
+		my $verdicts = Ux->rubric($attempt,
+			model => $opt{'model'}, answers => $answers || {},
+			skip_reason => $err ? "the model call did not judge this note: $err"
+				: undef);
+		push @entries, {
+			%$note,
+			attempt => $attempt,
+			verdicts => $verdicts,
+			overall => Ux->overall_verdict($verdicts),
+		};
+	}
+}
+
+my $report = {
+	schema => 1,
+	generated => POSIX::strftime('%Y-%m-%dT%H:%M:%S%z', localtime),
+	source => 'qa/ux/run',
+	live_db => $live_db,
+	live_read_only => ($ro ? 1 : 0),
+	textarea => 'notes are seeded into the QA copy; only results/ and the QA root are written',
+	notes => \@entries,
+	summary => Ux->summary(\@entries, model => $opt{'model'}, limit => $opt{'limit'}),
+};
+$report->{'summary'}->{'generated'} = $report->{'generated'};
+my $written = Ux->write_results($results, $report);
+print 'report: ' . $written->{'markdown'} . "\n";
+print 'queue:  ' . $written->{'queue'} . "\n";
+
+# 5. metrics for qa/run.pl --layers l6 and the budgets
+my $seconds = time - $t0;
+if ($opt{'metrics'}) {
+	my $metrics = {
+		'l6.ux_failures' => $report->{'summary'}->{'ux_failures'},
+		'l6.notes'       => scalar @entries,
+		'l6.duration_s'  => int($seconds),
+	};
+	make_path(dirname($opt{'metrics'}));
+	open(my $fh, '>', $opt{'metrics'})
+		or die "qa/ux: $opt{'metrics'}: $!\n";
+	print $fh JSON::PP->new->canonical->pretty->encode($metrics);
+	close $fh;
+}
+
+print sprintf("done: %d note(s), %d failure(s), %.0fs\n",
+	scalar @entries, $report->{'summary'}->{'ux_failures'}, $seconds);
+exit 0;
+
+# ---------------------------------------------------------------------------
+
+sub usage {
+	print <<'TEXT';
+qa/ux/run - nightly UX evaluation of the owner's JawnOS-category notes
+
+  --limit N          newest N notes (default 5)
+  --root DIR         QA root (default ~/jawnos-qa)
+  --results DIR      where the report goes (default the run's results/)
+  --metrics FILE     write l6.* metrics for qa/run.pl / budgets
+  --db PATH          live database to read read-only (default <repo>/database/jawnos.db)
+  --model NAME       ask the Guide's model to judge (without it: skip)
+  --no-ui            do not boot a browser; notes + rubric only
+  --no-namespace     run without the fence (read the warning in qa/README.md)
+  --file-handbook    file ux-report.md through POST /manager/note_save
+  --live-url URL     live manager base for the handbook post
+  --ticket URL       box_office ticket URL that mints the session cookie
+TEXT
+}
+
+sub dirname {
+	my ($path) = @_;
+	$path =~ s{/[^/]*$}{};
+	return length $path ? $path : '.';
+}
+
+sub file_handbook_if_asked {
+	my ($o, $repo) = @_;
+	return unless $o->{'file_handbook'};
+
+	my $dir = $o->{'results'};
+	if (!$dir) {
+		# A direct run's results path is explained in its stdout; the handbook
+		# post is best-effort and the file is still on disk either way.
+		print STDERR "qa/ux: --file-handbook needs --results so the summary can be found\n";
+		return;
+	}
+	my $md = "$dir/ux-report.md";
+	my $json = "$dir/report.json";
+	unless (-f $md) {
+		print STDERR "qa/ux: no $md to file\n";
+		return;
+	}
+	open(my $fh, '<', $md) or return;
+	local $/;
+	my $text = <$fh> // '';
+	close $fh;
+
+	my $base = $o->{'live_url'};
+	unless ($base) {
+		my $cfg = eval {
+			open(my $cf, '<', "$repo/config.json") or die;
+			local $/;
+			my $c = JSON::PP->new->utf8->decode(<$cf>);
+			close $cf;
+			$c;
+		};
+		$base = 'https://127.0.0.1:' . $cfg->{'working_port'} if ref $cfg eq 'HASH';
+	}
+	my $ticket = $o->{'ticket'};
+	unless ($ticket && length $ticket) {
+		my $tf = "$repo/.shots/ticket.txt";
+		if (-f $tf && open(my $tfh, '<', $tf)) {
+			$ticket = <$tfh>;
+			close $tfh;
+			$ticket =~ s/^\s+|\s+$//g if defined $ticket;
+		}
+	}
+
+	my $category = 'jawnos';
+	my $r = eval { JSON::PP->new->utf8->decode(do {
+		open(my $j, '<', $json) or die; local $/; <$j>; }) };
+	if (ref $r eq 'HASH') {
+		$category = Ux->handbook_category($r);
+	}
+
+	my $filed = eval {
+		Ux->file_handbook(base => $base, ticket => $ticket,
+			text => $text, category => $category);
+	};
+	if ($filed) {
+		print 'handbook: filed note ' . $filed->{'uuid'}
+			. ' in the ' . $filed->{'category'} . " category\n";
+		open(my $out, '>', "$dir/handbook.json") or return;
+		print $out JSON::PP->new->canonical->pretty->encode($filed);
+		close $out;
+	}
+	else {
+		print STDERR 'qa/ux: handbook filing skipped: ' . ($@ || 'unknown') . "\n";
+	}
+}

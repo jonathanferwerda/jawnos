@@ -45,6 +45,9 @@ my %SOURCE = (
 	'l4.jank_pct'               => 'gfxinfo janky frame percentage',
 	'l5.health_s'               => 'seconds until the image answers health',
 	'l5.host_rss_mb'            => 'host RSS of the VM process',
+	'l6.ux_failures'            => 'notes whose task did not work in the QA copy',
+	'l6.notes'                  => 'JawnOS notes the UX loop evaluated',
+	'l6.duration_s'             => 'seconds the fenced UX run took',
 );
 
 sub known_metrics { return sort keys %SOURCE }
@@ -163,6 +166,14 @@ sub metrics_from_report {
 		for my $k (keys %{ $r->{'device'} }) {
 			next unless $k =~ /^l[45]\./;
 			$m{$k} = $r->{'device'}->{$k};
+		}
+	}
+
+	# l6's runner writes the same flat shape, merged under `ux`.
+	if (ref $r->{'ux'} eq 'HASH') {
+		for my $k (keys %{ $r->{'ux'} }) {
+			next unless $k =~ /^l6\./;
+			$m{$k} = $r->{'ux'}->{$k};
 		}
 	}
 

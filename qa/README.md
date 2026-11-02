@@ -18,6 +18,8 @@ perl qa/run.pl --layers l3         # UI: Chromium breadth + WebKitGTK engine
 perl qa/run.pl --layers l4         # Android emulator (table: SDK + AVD)
 perl qa/run.pl --layers l5         # QEMU image boot (table: KVM + qemu)
 perl qa/run.pl --layers l5 --device-contract   # + install, boot the disk twice
+perl qa/run.pl --layers l6         # nightly UX loop (fenced; needs notes)
+perl qa/ux/run --limit 5           # the UX loop on its own, with its own timer
 perl qa/run.pl --layers l4 --apk releases/jawnos-app-1256-0.118.257.apk
 perl qa/run.pl --source worktree   # test uncommitted code
 perl qa/run.pl --no-namespace      # read the warning first
@@ -99,6 +101,7 @@ recorded as drift, not as a verdict. The verdict is the PID audit.
 | `l3` | Chromium CDP smoke + WebKitGTK engine probe | done on table |
 | `l4` | Android emulator: cold/warm start, rotation, offline, repeat jank, WebView CDP, crash/ANR | done on table |
 | `l5` | QEMU image: version fidelity, boot evidence, install + reboot persistence, host/guest measures | done on table |
+| `l6` | UX loop: the owner's JawnOS notes attempted in a fenced copy, judged easy/help/works | harness + rubric + skip when unmodelled |
 
 ### l1 classification
 
@@ -286,6 +289,65 @@ The phone/tablet build needs JDK 17-21: AGP 8.7/Gradle 8.9 fail in
 `JdkImageTransform` on Java 26, which is the only JDK on the laptop until
 `jdk17-openjdk` was installed for this run. `qa/android/build.sh` prefers it.
 
+## l6 — UX (nightly, separate from the 04:00 job)
+
+`qa/ux/run` reads the owner's **JawnOS**-category notes, newest first
+(`--limit N`, default 5), opens the live database with
+`sqlite3 'file:<live>/database/jawnos.db?mode=ro'`, and seeds those notes into
+a `Harness` copy. Every attempted task runs against that copy. The live notes
+are never written and the query never holds a lock.
+
+For each note it makes a browser attempt over CDP (`qa/ux/attempt.js`): open
+Notes, look for the note, click the JawnOS chip, screenshot, and collect
+console errors and the step trail. The **rubric** answers three questions:
+
+- **easy** — was the described task easy to do?
+- **help** — was the in-app help useful for it?
+- **works** — do the parts actually work (no console error, no dead step)?
+
+**No model is `skip`, never `pass`.** With `--model NAME` the runner asks the
+Guide's own model call (`subs::evaluation_model_call`) for the three verdicts;
+a call that errors, or with no model configured, leaves the note at `skip`.
+
+Output (under `--results`, normally `~/jawnos-qa/ux/`):
+
+```
+ux-report.md        the human nightly report
+report.json         the same, with per-note evidence and screenshots
+queue.json          note id, title, verdict, suggested next action
+notes/<id>/         attempt.json + shots/*.webp per note
+metrics.json        l6.ux_failures, l6.notes, l6.duration_s
+```
+
+`queue.json` is the Coding agent handoff. It is a queue, not an instruction to
+autonomously edit code: the Coding agent (`public/js/manager/coding.js`, the
+Configure → Plat → Self-healing watch) reads the same errors from
+`~/pty.log`, `manager.log` and browser fatals. Point it at `queue.json` when
+the owner wants a suggested fix turned into a patch; this loop never edits
+application code.
+
+**The one live write.** With `--file-handbook`, `qa/ux/run` posts the summary
+through the app's own `POST /manager/note_save` route (category `jawnos`, or
+`journal` when there was nothing to evaluate). It does not write SQL. The
+post happens in the parent process, after the fenced child has exited, because
+the fence deliberately removes the live network.
+
+### Schedule it
+
+```sh
+sudo cp qa/systemd/jawnos-qa-ux.service qa/systemd/jawnos-qa-ux.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jawnos-qa-ux.timer
+systemctl list-timers jawnos-qa-ux.timer
+```
+
+It runs at 05:30 with a 15-minute random delay, not in the 04:00 l0-l2 job, so
+a 20-minute UX run cannot hold the route/database layers. The service has the
+same second fence (`ProtectHome=read-only`, only `~/jawnos-qa` writable,
+loopback-only) and calls the runner with `--results ~/jawnos-qa/ux`. A missing
+`~/jawnos/.shots/ticket.txt` leaves the report on disk and only logs that the
+handbook filing was skipped.
+
 ## Nightly
 
 `qa/systemd/` holds a hardened system unit and a timer:
@@ -303,6 +365,8 @@ repo read-only (`ProtectHome=read-only`, `ProtectSystem=strict`), only
 `CPUQuota=300%` (3 cores; 200% made `nproc` report 2 and `t/43`'s `--jobs=3`
 legitimately clamp). `qa/prune.pl --keep 14` runs first. UI (`l3`) is
 deliberately not in the nightly set while the JavaScript refactor is in flight.
+The UX loop (`l6`) has its own timer at 05:30 - do not add it to this unit, or a
+20-minute UX run can hold the route/database layers.
 
 ## Known findings from the first runs (2026-11-01/02)
 

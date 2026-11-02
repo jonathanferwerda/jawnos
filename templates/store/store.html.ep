@@ -52,6 +52,10 @@
 				</select>
 			</label>
 			<button type="button" id="store_clear_filters" class="store_text_button"><%= &subs::lang('home.clear') %></button>
+			<button type="button" id="store_register_open" class="store_text_button store_register_open_button">
+				<img src="<%= &subs::icon_for('/images/decipherable/cash.png') %>" alt="">
+				<span><%= &subs::lang('common.register') %></span>
+			</button>
 		</div>
 	</header>
 	<div class="store_panes">
@@ -96,6 +100,7 @@
 		</footer>
 	<% } %>
 <div id="main_viewer" class="store_viewer"></div>
+<div id="register_app" class="store_register_app"></div>
 </div>
 
 <div id="image_viewer"></div>

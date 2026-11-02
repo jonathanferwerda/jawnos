@@ -48,6 +48,7 @@
 		<script src="/js/music.js?string=<%= $string %>"></script>
 		<script src="/js/images.js?string=<%= $string %>"></script>
 		<script src="/js/store.js?string=<%= $string %>"></script>
+		<script src="/js/store/register.js?string=<%= $string %>"></script>
 		<link rel="stylesheet" href="/css/jquery-ui.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/universal.css?string=<%= $string %>" />
 		<link rel="stylesheet" href="/css/store.css?string=<%= $string %>" />
