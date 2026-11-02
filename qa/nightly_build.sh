@@ -14,7 +14,7 @@
 # the APK needs a full JDK 17 (javac + jlink) and ~/android-sdk.
 #
 # Driven by qa/systemd/jawnos-qa-build.timer (weekly). It is deliberately not
-# part of the 04:00 QA suite: a cold image build is ~20-40 min, and the suite
+# part of the 05:00 QA suite: a cold image build is ~20-40 min, and the suite
 # must stay fast enough to run every night.
 
 set -eu

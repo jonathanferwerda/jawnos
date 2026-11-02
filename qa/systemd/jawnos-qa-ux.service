@@ -9,7 +9,7 @@ Type=oneshot
 User=jawn
 WorkingDirectory=/home/jawn/jawnos
 Environment=HOME=/home/jawn
-# The same house choice as the 04:00 suite: only the chosen machine runs the UX
+# The same house choice as the 05:00 suite: only the chosen machine runs the UX
 # night. See the comment on this condition in jawnos-qa.service.
 ExecCondition=/usr/bin/perl /home/jawn/jawnos/qa/device_target.pl
 ExecStartPre=/usr/bin/perl /home/jawn/jawnos/qa/prune.pl --keep 14

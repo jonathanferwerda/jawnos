@@ -29,6 +29,6 @@
   },
   "l6": {
     "ux_failures": { "limit": 0, "level": "warn", "why": "no baseline yet: until the nightly has a history, a note whose task failed is a finding, not a red run" },
-    "duration_s": { "limit": 1800, "level": "warn", "why": "the UX loop has its own timer so a 20-minute run cannot hold the 04:00 l0-l2 job" }
+    "duration_s": { "limit": 1800, "level": "warn", "why": "the UX loop has its own timer so a 20-minute run cannot hold the 05:00 l0-l2 job" }
   }
 }
