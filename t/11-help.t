@@ -1,3 +1,6 @@
+# tests-for: perl/help.pl
+# covers:    The help registry (help.pl).
+
 use strict;
 use warnings;
 no warnings 'once';

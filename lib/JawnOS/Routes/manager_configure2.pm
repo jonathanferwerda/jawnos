@@ -29,6 +29,7 @@ sub routes {
 	[50004, 'get', '/manager/configure/qa_schedule', 'action_50004'],
 	[50005, 'post', '/manager/configure/qa_schedule_save', 'action_50005'],
 	[50006, 'post', '/manager/configure/qa_run', 'action_50006'],
+	[50007, 'post', '/manager/configure/coding_push_repo', 'action_50007'],
 	);
 }
 

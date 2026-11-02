@@ -46,6 +46,30 @@
 				<button id="update_now_button" class="hover" type="button"><%= &subs::ui('Update now') %></button>
 				<span id="update_now_status" class="device_when"></span>
 			</div>
+			<%# The coding nightly pushes to this repo, not blindly to origin. Empty
+			    means the checkout's own remote (origin here, fork for the app). %>
+			<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+				<label for="coding_push_repo"><%= &subs::lang('configure.coding_push_repo') %></label>
+				<input type="text" id="coding_push_repo" class="coding_push_repo_input" size="30"
+					value="<%= $coding_push_repo->{'value'} // '' %>"
+					placeholder="owner/name or https://… (empty = origin)" autocomplete="off">
+				<span id="coding_push_repo_status" class="device_when"></span>
+			</div>
+			<div class="device_nic" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+				<label for="coding_app_push_repo"><%= &subs::lang('configure.coding_app_push_repo') %></label>
+				<input type="text" id="coding_app_push_repo" class="coding_app_push_repo_input" size="30"
+					value="<%= $coding_app_push_repo->{'value'} // '' %>"
+					placeholder="owner/name or https://… (empty = fork)" autocomplete="off">
+				<span id="coding_app_push_repo_status" class="device_when"></span>
+			</div>
+			<div class="device_when" style="margin-top:4px;">
+				<%= &subs::lang('configure.coding_push_effective') %>:
+				<span id="coding_push_repo_effective"><%= $coding_push_repo->{'effective'} // 'origin' %></span>
+				· app: <span id="coding_app_push_repo_effective"><%= $coding_app_push_repo->{'effective'} // 'fork' %></span>
+			</div>
+			<div class="device_when" style="margin-top:2px;opacity:.8;">
+				<%= &subs::ui('The 06:00 coding night pushes its branch and main to this repo instead of the checkout\'s upstream. Use owner/name or an https URL; leave it empty for origin (and fork for the app).') %>
+			</div>
 		</div>
 		<% if (scalar @{$routers || []}) { %>
 			<%# The gateway every network has. It is discovered from the default

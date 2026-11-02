@@ -556,6 +556,31 @@ $(document).on('change', '.update_method_select', function() {
 	});
 });
 
+// The coding nightly pushes to the repo named here, not blindly to origin. The
+// server validates owner/name or an https URL (no spaces, no credentials) and
+// answers with the effective target, which is what the line under the fields
+// shows. Empty is the checkout's own remote: origin, or fork for the app.
+$(document).on('change', '.coding_push_repo_input, .coding_app_push_repo_input', function() {
+	var input = $(this);
+	var app = input.hasClass('coding_app_push_repo_input');
+	var field = app ? 'app_repo' : 'repo';
+	var status = app ? $('#coding_app_push_repo_status') : $('#coding_push_repo_status');
+	var effective = app ? $('#coding_app_push_repo_effective') : $('#coding_push_repo_effective');
+	var t = function(s) { return (typeof jawnosT === 'function') ? jawnosT(s) : s; };
+	status.text(t('saving…'));
+	$.post('/manager/configure/coding_push_repo', { field: field, value: input.val() }, function(res) {
+		if (!res || !res.ok) {
+			status.text((res && res.error) || t('could not save'));
+			return;
+		}
+		input.val(res.value || '');
+		effective.text(res.effective || '');
+		status.text(t('house-wide — saved'));
+	}).fail(function() {
+		status.text(t('could not save'));
+	});
+});
+
 // Paint the version the bar carries. The update route hands back the number it
 // read after the pull, so the top bar changes the moment an update lands.
 function jawnosConfigureVersion(version) {

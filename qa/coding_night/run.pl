@@ -209,6 +209,7 @@ unless (flock($lock, LOCK_EX | LOCK_NB)) {
 
 my $report_dir = "$root/coding/$stamp";
 make_path($report_dir);
+my $health_url = health_url($repo, $opt{'health_url'});
 my $report = {
 	schema    => 1,
 	generated => POSIX::strftime('%Y-%m-%dT%H:%M:%S%z', localtime),
@@ -220,8 +221,19 @@ my $report = {
 	agent     => ($agent_line // ''),
 	dry_run   => 0,
 	notes     => scalar @{$notes},
+	rollback_tag    => '',
+	rollback_script => "$report_dir/rollback.sh",
 	runs      => [],
 };
+{
+	my $preview = CodingNight::push_target($db, 'repo');
+	$report->{'push_repo'} = {
+		setting   => $preview->{'setting'},
+		value     => $preview->{'value'},
+		effective => $preview->{'effective'},
+		ok        => $preview->{'ok'},
+	};
+}
 
 print 'JawnOS coding nightly ' . $stamp . ' - ' . scalar(@{$notes}) . " note(s), limit $limit\n";
 
@@ -249,6 +261,10 @@ for my $note ( @{$notes} ) {
 		health_ok    => 0,
 		marked_completed => 0,
 		handbook_filed   => 0,
+		rolled_back      => 'no',
+		rollback_tag     => '',
+		push_target      => '',
+		failure_note_filed => 0,
 	);
 	push @{$report->{'runs'}}, \%run;
 
@@ -278,6 +294,29 @@ for my $note ( @{$notes} ) {
 			$run{'status'} = 'app_repo_missing';
 			$run{'error'}  = 'no Android app checkout at ' . ($app // '(unset)')
 				. ' (set JAWNOS_APP_DIR)'; 
+			$failed = 1;
+			last;
+		}
+
+		# Where this lane pushes. A fork named in Configure -> Dev replaces the
+		# checkout's `fork` remote for both the nightly branch and jawnos; an
+		# unreachable or unauthenticated target stops the night before any build,
+		# merge or stage.
+		my $app_push = CodingNight::push_target($db, 'app');
+		$run{'push_target'} = $app_push->{'effective'};
+		unless ($app_push->{'ok'}) {
+			$run{'status'} = 'push_target_invalid';
+			$run{'error'}  = 'the configured app push repo is not valid: ' . ($app_push->{'error'} // 'unknown');
+			$failed = 1;
+			last;
+		}
+		my ($app_reach_rc) = run_cmd(
+			cmd => ['git', 'ls-remote', $app_push->{'target'}],
+			cwd => $app, log => $log->('push-check'), timeout => 60);
+		if ($app_reach_rc != 0) {
+			$run{'status'} = 'push_target_unreachable';
+			$run{'error'}  = 'the app push target ' . $app_push->{'target'}
+				. " is unreachable or unauthenticated (exit $app_reach_rc); nothing was built, merged or staged";
 			$failed = 1;
 			last;
 		}
@@ -382,11 +421,11 @@ for my $note ( @{$notes} ) {
 		$run{'commit'} = $subject;
 
 		my ($push_rc) = run_cmd(
-			cmd => ['git', 'push', '-u', CodingNight::app_remote(), $branch],
+			cmd => ['git', 'push', '-u', $app_push->{'target'}, $branch],
 			cwd => $worktree, log => $log->('push'));
 		if ($push_rc != 0) {
 			$run{'status'} = 'push_failed';
-			$run{'error'}  = "git push of $branch to " . CodingNight::app_remote()
+			$run{'error'}  = "git push of $branch to " . $app_push->{'target'}
 				. " failed (exit $push_rc); nothing was staged";
 			$failed = 1;
 			last;
@@ -417,12 +456,12 @@ for my $note ( @{$notes} ) {
 			}
 			$run{'ff_jawnos'} = 1;
 			my ($push_jawnos_rc) = run_cmd(
-				cmd => ['git', 'push', CodingNight::app_remote(), CodingNight::app_base_branch()],
+				cmd => ['git', 'push', $app_push->{'target'}, CodingNight::app_base_branch()],
 				cwd => $app, log => $log->('push-jawnos'));
 			if ($push_jawnos_rc != 0) {
 				$run{'status'} = 'push_failed';
 				$run{'error'}  = 'jawnos was fast-forwarded but pushing it to '
-					. CodingNight::app_remote() . " failed (exit $push_jawnos_rc); nothing was staged";
+					. $app_push->{'target'} . " failed (exit $push_jawnos_rc); nothing was staged";
 				$failed = 1;
 				last;
 			}
@@ -439,12 +478,28 @@ for my $note ( @{$notes} ) {
 			last;
 		}
 		$run{'apk'} = $apk;
+
+		# The staged APKs are gitignored blobs, so a bad stage or publish cannot be
+		# undone with git. Copy them (and the manifest) before either script runs.
+		my $release_backup = CodingNight::releases_backup($repo, "$report_dir/releases-$n");
+		if (!$release_backup->{'ok'}) {
+			$run{'status'} = 'backup_failed';
+			$run{'error'}  = 'the release backup failed before staging: ' . ($release_backup->{'error'} // 'unknown');
+			$failed = 1;
+			last;
+		}
+		$run{'releases_backup'} = $release_backup->{'dir'};
+
 		my ($stage_rc) = run_cmd(
 			cmd => [$^X, "$repo/scripts/app_release.pl", $apk],
 			cwd => $repo, log => $log->('stage'));
 		if ($stage_rc != 0) {
+			my $restore = CodingNight::releases_restore($repo, $release_backup);
+			$run{'releases_restored'} = $restore->{'ok'} ? 1 : 0;
 			$run{'status'} = 'stage_failed';
-			$run{'error'}  = "scripts/app_release.pl failed (exit $stage_rc); the note stays open";
+			$run{'error'}  = "scripts/app_release.pl failed (exit $stage_rc); the staged APKs were "
+				. ($restore->{'ok'} ? 'restored' : 'NOT restored: ' . ($restore->{'error'} // 'unknown'))
+				. ' and the note stays open';
 			$failed = 1;
 			last;
 		}
@@ -452,13 +507,18 @@ for my $note ( @{$notes} ) {
 
 		my ($auth_rc) = run_cmd(cmd => ['gh', 'auth', 'status'], cwd => $repo, log => $log->('gh-auth'));
 		if ($auth_rc == 0) {
+			my @publish = ($^X, "$repo/scripts/app_publish.pl");
+			push @publish, '--repo', $app_push->{'slug'} if length $app_push->{'slug'};
 			my ($publish_rc) = run_cmd(
-				cmd => [$^X, "$repo/scripts/app_publish.pl"],
+				cmd => \@publish,
 				cwd => $repo, log => $log->('publish'));
 			if ($publish_rc != 0) {
+				my $restore = CodingNight::releases_restore($repo, $release_backup);
+				$run{'releases_restored'} = $restore->{'ok'} ? 1 : 0;
 				$run{'status'}  = 'publish_failed';
 				$run{'publish'} = 'failed';
-				$run{'error'}   = "scripts/app_publish.pl failed (exit $publish_rc); the APK is staged but not published";
+				$run{'error'}   = "scripts/app_publish.pl failed (exit $publish_rc); the staged APKs were "
+					. ($restore->{'ok'} ? 'restored' : 'NOT restored: ' . ($restore->{'error'} // 'unknown'));
 				$failed = 1;
 				last;
 			}
@@ -514,6 +574,38 @@ for my $note ( @{$notes} ) {
 		last;
 	}
 
+	# The tag is the whole recovery: a commit id, not a moving branch. It is
+	# made before the worktree or any merge, so a failure after the merge can
+	# put main back on exactly the tree the night started from. rollback.sh is
+	# the human path beside it and refuses if the tag has gone.
+	my $tag = "nightly-pre-$stamp";
+	my ($tag_rc) = run_cmd(cmd => ['git', 'tag', $tag], cwd => $repo, log => $log->('tag'));
+	if ($tag_rc != 0) {
+		my $exists = capture($repo, 'git', 'rev-parse', '--verify', '--quiet', "refs/tags/$tag");
+		if ($exists !~ /\S/) {
+			$run{'status'} = 'tag_failed';
+			$run{'error'} = "could not tag main as $tag (exit $tag_rc); nothing was merged";
+			$failed = 1;
+			last;
+		}
+	}
+	$run{'rollback_tag'} = $tag;
+	$report->{'rollback_tag'} ||= $tag;
+	my ($rollback_path, $rollback_error) = CodingNight::write_rollback_script(
+		$report_dir,
+		tag     => $tag,
+		repo    => $repo,
+		health  => $health_url,
+		restart => 'scripts/restart.pl',
+	);
+	if (!$rollback_path) {
+		$run{'status'} = 'rollback_script_failed';
+		$run{'error'} = $rollback_error // 'rollback.sh could not be written';
+		$failed = 1;
+		last;
+	}
+	$report->{'rollback_script'} = $rollback_path;
+
 	if (-e $worktree) {
 		$run{'status'} = 'name_clash';
 		$run{'error'} = "the worktree $worktree already exists; nothing was overwritten";
@@ -562,6 +654,7 @@ for my $note ( @{$notes} ) {
 		timeout => $opt{'suite_timeout'},
 	);
 	$run{'suite_exit'} = $suite_rc;
+	$run{'suite_log'} = $log->('suite');
 	if ($suite_rc != 0) {
 		$run{'status'} = 'red';
 		$run{'error'} = "the suite failed (exit $suite_rc, layers $layers); the worktree is left for inspection";
@@ -590,7 +683,30 @@ for my $note ( @{$notes} ) {
 		last;
 	}
 
-	# 4. green: bump, commit, push the branch, merge, push main
+	# 4. green: the push target is checked before anything is merged. A fork
+	# named in Configure -> Dev is the authority the branch and main go to; an
+	# unreachable or unauthenticated target stops the night here, with main
+	# still untouched and the note open.
+	my $push = CodingNight::push_target($db, 'repo');
+	$run{'push_target'} = $push->{'effective'};
+	unless ($push->{'ok'}) {
+		$run{'status'} = 'push_target_invalid';
+		$run{'error'} = 'the configured coding push repo is not valid: ' . ($push->{'error'} // 'unknown');
+		$failed = 1;
+		last;
+	}
+	my ($reach_rc) = run_cmd(
+		cmd => ['git', 'ls-remote', $push->{'target'}],
+		cwd => $repo, log => $log->('push-check'), timeout => 60);
+	if ($reach_rc != 0) {
+		$run{'status'} = 'push_target_unreachable';
+		$run{'error'} = 'the push target ' . $push->{'target'}
+			. " is unreachable or unauthenticated (exit $reach_rc); nothing was merged";
+		$failed = 1;
+		last;
+	}
+
+	# 5. green: bump, commit, push the branch, merge, push main
 	my ($bump_rc) = run_cmd(cmd => [$^X, 'scripts/version_bump.pl'], cwd => $worktree, log => $log->('bump'));
 	if ($bump_rc != 0) {
 		$run{'status'} = 'bump_failed';
@@ -618,10 +734,10 @@ for my $note ( @{$notes} ) {
 	$run{'version'} = $version;
 	$run{'commit'} = $subject;
 
-	my ($push_rc) = run_cmd(cmd => ['git', 'push', '-u', 'origin', $branch], cwd => $worktree, log => $log->('push'));
+	my ($push_rc) = run_cmd(cmd => ['git', 'push', '-u', $push->{'target'}, $branch], cwd => $worktree, log => $log->('push'));
 	if ($push_rc != 0) {
 		$run{'status'} = 'push_failed';
-		$run{'error'} = "git push of $branch failed (exit $push_rc); main was not touched";
+		$run{'error'} = "git push of $branch to " . $push->{'target'} . " failed (exit $push_rc); main was not touched";
 		$failed = 1;
 		last;
 	}
@@ -636,15 +752,15 @@ for my $note ( @{$notes} ) {
 	}
 	$run{'merged'} = 1;
 
-	my ($push_main_rc) = run_cmd(cmd => ['git', 'push', 'origin', 'main'], cwd => $repo, log => $log->('push-main'));
+	my ($push_main_rc) = run_cmd(cmd => ['git', 'push', $push->{'target'}, 'HEAD:main'], cwd => $repo, log => $log->('push-main'));
 	if ($push_main_rc != 0) {
 		$run{'status'} = 'push_main_failed';
-		$run{'error'} = "main was merged but git push origin main failed (exit $push_main_rc)";
+		$run{'error'} = 'main was merged but git push ' . $push->{'target'} . " HEAD:main failed (exit $push_main_rc)";
 		$failed = 1;
 		last;
 	}
 
-	# 5. restart through the master's own path, then health 200
+	# 6. restart through the master's own path, then health 200
 	my $reason = $subject;
 	my ($restart_rc) = run_cmd(
 		cmd => [$^X, "$repo/scripts/restart.pl", '--reason', $reason],
@@ -658,7 +774,6 @@ for my $note ( @{$notes} ) {
 		last;
 	}
 
-	my $health_url = health_url($repo, $opt{'health_url'});
 	if (!health_ok($health_url, $opt{'health_wait'})) {
 		$run{'status'} = 'health_failed';
 		$run{'error'} = "the restart was accepted but $health_url did not answer 200; the note stays open";
@@ -702,6 +817,31 @@ for my $note ( @{$notes} ) {
 	# merged and healthy: the worktree has served its purpose
 	run_cmd(cmd => ['git', 'worktree', 'remove', '--force', $worktree], cwd => $repo, log => $log->('cleanup'));
 	run_cmd(cmd => ['git', 'branch', '-d', $branch], cwd => $repo, log => $log->('cleanup'));
+}
+
+# A failure after the merge is the one that can leave the live house broken.
+# Put main back on the tag made before the night started, restart through the
+# master's own path, and require health 200. Anything less is reported loudly.
+if ($failed && @{$report->{'runs'}}) {
+	my $failed_run = $report->{'runs'}->[-1];
+	my $status = $failed_run->{'status'} // '';
+	if ($failed_run->{'merged'} && $status =~ /^(?:push_main_failed|restart_failed|health_failed)$/) {
+		automatic_rollback($failed_run, $report_dir, $repo, $health_url, $opt{'health_wait'});
+	}
+	write_failure_md($report_dir, $report, $failed_run, $repo);
+	my $body = failure_note_text($report, $failed_run, $report_dir);
+	my $filed = eval {
+		post_note(
+			live_url => live_url($repo, $opt{'live_url'}),
+			ticket   => ticket_url($repo, $opt{'ticket'}),
+			text     => $body,
+			category => 'jawnos',
+			status   => 'open',
+		);
+		1;
+	};
+	$failed_run->{'failure_note_filed'} = $filed ? 1 : 0;
+	print STDERR 'qa/coding_night: the failure note could not be filed: ' . ($@ || 'unknown') . "\n" unless $filed;
 }
 
 $report->{'ok'} = !$failed;
@@ -839,6 +979,131 @@ sub abandon_branch {
 	my ($repo, $worktree, $branch) = @_;
 	run_cmd(cmd => ['git', 'checkout', '--detach'], cwd => $worktree);
 	run_cmd(cmd => ['git', 'branch', '-D', $branch], cwd => $repo);
+}
+
+# --- the failure path -------------------------------------------------------
+# The exact failing line, not a summary of it: a person reading failure.md can
+# paste it into a shell or a test file. A suite log is the only place that line
+# lives, so it is read here and capped.
+sub failure_lines {
+	my ($path) = @_;
+	return [] unless defined $path && length $path && -f $path;
+	open(my $fh, '<', $path) or return [];
+	my @lines;
+	while (my $line = <$fh>) {
+		chomp $line;
+		push @lines, $line
+			if $line =~ /^\s*(?:not\s+ok\b|#\s+Failed test|#\s+Looks like|FAILED\b|Error:)/i;
+	}
+	close $fh;
+	@lines = @lines[0 .. 19] if scalar @lines > 20;
+	return \@lines;
+}
+
+sub automatic_rollback {
+	my ($run, $report_dir, $repo, $health_url, $health_wait) = @_;
+	my $tag = $run->{'rollback_tag'} // '';
+	return unless length $tag;
+	my $log = "$report_dir/note-" . ($run->{'n'} // '?') . "-rollback.log";
+	$run->{'rolled_back'} = 'yes';
+
+	my ($reset_rc) = run_cmd(cmd => ['git', 'reset', '--hard', $tag], cwd => $repo, log => $log);
+	$run->{'rollback_reset_ok'} = $reset_rc == 0 ? 1 : 0;
+	if ($reset_rc != 0) {
+		$run->{'rollback_restart_ok'} = 0;
+		$run->{'rollback_health_ok'} = 0;
+		$run->{'rollback_error'} = "git reset --hard $tag failed (exit $reset_rc)";
+		print STDERR "!!! ROLLBACK RESET FAILED: main is NOT on $tag (exit $reset_rc). A person must fix it by hand.\n";
+		return;
+	}
+
+	my ($restart_rc) = run_cmd(
+		cmd => [$^X, "$repo/scripts/restart.pl", '--reason',
+			"rollback to $tag (nightly " . ($run->{'status'} // 'failed') . ')'],
+		cwd => $repo, log => $log, timeout => 300);
+	$run->{'rollback_restart_ok'} = $restart_rc == 0 ? 1 : 0;
+	if ($restart_rc != 0) {
+		$run->{'rollback_health_ok'} = 0;
+		$run->{'rollback_error'} = "the rollback reset main to $tag but scripts/restart.pl exited $restart_rc";
+		print STDERR "!!! ROLLBACK RESTART FAILED: main is on $tag but scripts/restart.pl exited $restart_rc."
+			. " THE LIVE HOUSE MAY STILL RUN THE BAD CODE - RESTART IT BY HAND.\n";
+		return;
+	}
+
+	my $ok = health_ok($health_url, $health_wait);
+	$run->{'rollback_health_ok'} = $ok ? 1 : 0;
+	$run->{'rollback_health'} = $ok ? 200 : 'not 200';
+	print STDERR "!!! ROLLBACK HEALTH FAILED: main is on $tag and the restart was accepted, but $health_url is not 200.\n"
+		unless $ok;
+}
+
+# The failure.md beside the report is the plain-text handover: what failed, the
+# exact test line, the worktree, the tag, and what a person should do next.
+sub write_failure_md {
+	my ($dir, $report, $run, $repo) = @_;
+	my @failing = @{ failure_lines($run->{'suite_log'}) };
+	my $path = "$dir/failure.md";
+	open(my $fh, '>', $path) or die "qa/coding_night: $path: $!\n";
+	print {$fh} '# Nightly failure - ' . ($report->{'stamp'} // '') . "\n\n";
+	print {$fh} '- note: `' . ($run->{'note_id'} // '') . '` ' . ($run->{'title'} // '') . "\n";
+	print {$fh} '- status: ' . ($run->{'status'} // 'unknown') . "\n";
+	print {$fh} '- error: ' . ($run->{'error'} // '') . "\n";
+	print {$fh} '- worktree: `' . ($run->{'worktree'} // '') . "`\n";
+	print {$fh} '- branch: `' . ($run->{'branch'} // '') . "`\n";
+	print {$fh} '- rollback tag: `' . ($run->{'rollback_tag'} // '') . "`\n";
+	print {$fh} '- push target: `' . ($run->{'push_target'} // 'origin') . "`\n";
+	print {$fh} '- rolled back: ' . ($run->{'rolled_back'} // 'no');
+	if (($run->{'rolled_back'} // '') eq 'yes') {
+		print {$fh} ' (reset ' . (defined $run->{'rollback_reset_ok'} ? ($run->{'rollback_reset_ok'} ? 'ok' : 'FAILED') : '?') . ',\n'
+			. '  restart ' . (defined $run->{'rollback_restart_ok'} ? ($run->{'rollback_restart_ok'} ? 'ok' : 'FAILED') : '?') . ',\n'
+			. '  health 200 ' . (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked') . ')';
+	}
+	print {$fh} "\n";
+	print {$fh} '- report: `' . $dir . "/report.json`\n";
+	print {$fh} '- rollback script: `' . $dir . "/rollback.sh`\n";
+	if (@failing) {
+		print {$fh} "\n## Failing test lines\n\n";
+		print {$fh} "    $_\n" for @failing;
+	}
+	print {$fh} "\n## Next action\n\n";
+	if (($run->{'rolled_back'} // '') eq 'yes' && defined $run->{'rollback_restart_ok'} && !$run->{'rollback_restart_ok'}) {
+		print {$fh} "Main is on `" . ($run->{'rollback_tag'} // '') . "`, but the rollback restart was refused. Restart the house by hand now, then rerun the night.\n";
+	}
+	elsif (($run->{'rolled_back'} // '') eq 'yes') {
+		print {$fh} "Main is back on `" . ($run->{'rollback_tag'} // '') . "`. The note stays open; fix the failure and rerun.\n";
+	}
+	else {
+		print {$fh} "Main was not merged by this note. Inspect the worktree, fix the failure, and rerun; the note stays open.\n";
+	}
+	close $fh;
+	return $path;
+}
+
+sub failure_note_text {
+	my ($report, $run, $dir) = @_;
+	my $title = 'Nightly failed: ' . ($run->{'title'} || ('note ' . ($run->{'note_id'} // '')));
+	my @failing = @{ failure_lines($run->{'suite_log'}) };
+	my $text = $title . "\n\n";
+	$text .= 'The ' . ($report->{'stamp'} // '') . " coding night failed.\n";
+	$text .= '- status: ' . ($run->{'status'} // 'unknown') . "\n";
+	$text .= '- error: ' . ($run->{'error'} // '') . "\n";
+	$text .= '- worktree: ' . ($run->{'worktree'} // '') . "\n";
+	$text .= '- branch: ' . ($run->{'branch'} // '') . "\n";
+	$text .= '- rollback tag: ' . ($run->{'rollback_tag'} // '') . "\n";
+	$text .= '- push target: ' . ($run->{'push_target'} // 'origin') . "\n";
+	$text .= '- rolled back: ' . ($run->{'rolled_back'} // 'no');
+	if (($run->{'rolled_back'} // '') eq 'yes') {
+		$text .= ' (restart ' . (defined $run->{'rollback_restart_ok'} ? ($run->{'rollback_restart_ok'} ? 'ok' : 'FAILED') : '?')
+			. ', health 200 ' . (defined $run->{'rollback_health_ok'} ? ($run->{'rollback_health_ok'} ? 'yes' : 'no') : 'not checked') . ')';
+	}
+	$text .= "\n- report: $dir/report.json\n";
+	$text .= "- failure: $dir/failure.md\n";
+	$text .= "- rollback script: $dir/rollback.sh\n";
+	if (@failing) {
+		$text .= "\nFailing test lines:\n" . join("\n", @failing) . "\n";
+	}
+	$text .= "\nThe original note is still open.\n";
+	return $text;
 }
 
 sub config {

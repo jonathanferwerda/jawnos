@@ -621,6 +621,133 @@ sub sync_update_method_get {
 	return $v;
 }
 
+# Where the 06:00 coding nightly pushes. `coding_push_repo` is the JawnOS
+# checkout and `coding_app_push_repo` the Android app checkout; empty means the
+# checkout's own remote (origin / fork). The value is `owner/name` or an https
+# URL, never spaces or credentials. The same rules live in
+# qa/coding_night/lib/CodingNight.pm (the fenced runner cannot boot this file),
+# and t/92 asks both so they cannot drift.
+our %CODING_PUSH_SETTING = (
+	repo => 'coding_push_repo',
+	app  => 'coding_app_push_repo',
+);
+
+sub coding_push_repo_setting {
+	my ($which) = @_;
+	$which = 'app' if defined $which && $which eq 'app';
+	return $CODING_PUSH_SETTING{$which} || $CODING_PUSH_SETTING{'repo'};
+}
+
+sub coding_push_repo_default {
+	my ($which) = @_;
+	return (defined $which && $which eq 'app') ? 'fork' : 'origin';
+}
+
+sub coding_push_repo_valid {
+	my ($value) = @_;
+	$value = '' unless defined $value;
+	$value =~ s/^\s+|\s+$//g;
+	return { ok => 1, value => '', kind => 'default' } unless length $value;
+	return { ok => 0, error => 'A push repo cannot contain spaces.' }
+		if $value =~ /\s/;
+	return { ok => 0, error => 'A push repo cannot carry credentials (user or token@host).' }
+		if $value =~ /\@/;
+
+	if ($value =~ m{^https://([A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::\d{1,5})?/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?/?$}i) {
+		my ($host, $owner, $name) = ($1, $2, $3);
+		if ($owner !~ /^\.+$/ && $name !~ /^\.+$/) {
+			return { ok => 1, value => $value, kind => 'url', host => $host, slug => "$owner/$name" };
+		}
+	}
+	elsif ($value =~ m{^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?$}) {
+		my ($owner, $name) = ($1, $2);
+		if ($owner !~ /^\.+$/ && $name !~ /^\.+$/) {
+			return { ok => 1, value => $value, kind => 'owner', slug => "$owner/$name" };
+		}
+	}
+	return { ok => 0, error => 'Use owner/name or an https:// URL with owner/name.' };
+}
+
+sub coding_push_repo_target {
+	my ($value) = @_;
+	return '' unless defined $value && length $value;
+	return $value if $value =~ m{^https://}i;
+	(my $slug = $value) =~ s/\.git$//;
+	return "https://github.com/$slug.git";
+}
+
+sub coding_push_repo_slug {
+	my ($value) = @_;
+	return '' unless defined $value && length $value;
+	(my $slug = $value) =~ s/\.git$//;
+	$slug =~ s{^https://[^/]+/}{}i;
+	return $slug;
+}
+
+# The saved value and what it resolves to. A bad row is an error, not a silent
+# fallback: the panel must show the operator that the setting is unusable.
+sub coding_push_repo_get {
+	my ($which, $opts) = @_;
+	$opts ||= {};
+	$which = 'app' if defined $which && $which eq 'app';
+	my $setting  = coding_push_repo_setting($which);
+	my $fallback = coding_push_repo_default($which);
+	my $raw;
+	if (ref $opts->{'grabber'} eq 'CODE') {
+		$raw = $opts->{'grabber'}->($setting);
+	}
+	else {
+		$raw = &subs::setting_grabber({ app => '__president', setting => $setting, device => 'all' });
+		$raw = &subs::setting_grabber({ app => '__president', setting => $setting })
+			unless defined $raw && length $raw;
+	}
+	$raw = '' unless defined $raw;
+	my $check = coding_push_repo_valid($raw);
+	unless ($check->{'ok'}) {
+		return {
+			ok => 0, which => $which, setting => $setting, raw => $raw,
+			value => $raw, target => $fallback, effective => $fallback,
+			fallback => $fallback, error => $check->{'error'},
+		};
+	}
+	my $value  = $check->{'value'};
+	my $target = length $value ? coding_push_repo_target($value) : $fallback;
+	return {
+		ok => 1, which => $which, setting => $setting, raw => $raw,
+		value => $value, target => $target, effective => $target,
+		fallback => $fallback,
+		slug => length $value ? coding_push_repo_slug($value) : '',
+	};
+}
+
+sub coding_push_repo_save {
+	my ($which, $value, $opts) = @_;
+	$opts ||= {};
+	$which = 'app' if defined $which && $which eq 'app';
+	my $check = coding_push_repo_valid($value);
+	unless ($check->{'ok'}) {
+		return { ok => 0, which => $which, error => $check->{'error'} };
+	}
+	my $setting = coding_push_repo_setting($which);
+	if (ref $opts->{'setter'} eq 'CODE') {
+		$opts->{'setter'}->($setting, $check->{'value'});
+	}
+	else {
+		&subs::setting_setter({
+			app     => '__president',
+			setting => $setting,
+			device  => 'all',
+			value   => $check->{'value'},
+		});
+	}
+	my $fallback = coding_push_repo_default($which);
+	return {
+		ok => 1, which => $which, setting => $setting,
+		value => $check->{'value'},
+		effective => length $check->{'value'} ? coding_push_repo_target($check->{'value'}) : $fallback,
+	};
+}
+
 # The newest peer that can fast-forward this checkout. The watcher's fallback
 # and the manual button share it: sort by the version the peer advertises, keep
 # the few that are newer, and stop at the first true fast-forward. A peer whose

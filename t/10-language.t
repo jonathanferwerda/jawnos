@@ -1,3 +1,6 @@
+# tests-for: perl/language.pl
+# covers:    The core interface catalog (language.pl).
+
 use strict;
 use warnings;
 use utf8;

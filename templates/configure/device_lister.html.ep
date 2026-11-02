@@ -3,9 +3,12 @@
 <% my $topology = &subs::setting_grabber({ app => 'sync', setting => 'topology', device => 'all' })
 	|| &subs::setting_grabber({ app => 'sync', setting => 'topology' }) || 'auto'; %>
 <% my $update_method = &subs::sync_update_method_get(); %>
+<% my $coding_push_repo = &subs::coding_push_repo_get('repo'); %>
+<% my $coding_app_push_repo = &subs::coding_push_repo_get('app'); %>
 <%# the lister as networks: a toolbar, the machines (each named and removable
     once), then one section per network the house is on - the subnet, the
     interfaces that reach it, and a neighbour table of the devices found there.
     Styled from the house's own theme tokens so it wears the light or dark set. %>
 <%= include 'configure/device_lister/style' %>
-<%= include 'configure/device_lister/body', topology => $topology, update_method => $update_method %>
+<%= include 'configure/device_lister/body', topology => $topology, update_method => $update_method,
+	coding_push_repo => $coding_push_repo, coding_app_push_repo => $coding_app_push_repo %>

@@ -916,4 +916,20 @@ sub action_50006 {
 	$c->render(json => $result);
 }
 
+# POST /manager/configure/coding_push_repo
+sub action_50007 {
+	my $c = shift;
+	unless ($c->session('authentication') eq 'approved') {
+		$c->render(json => { ok => 0, error => 'not signed in' }, status => 403);
+		return;
+	}
+	# `field` picks the checkout: `repo` is this JawnOS tree, `app_repo` the
+	# Android app. The value is `owner/name` or an https URL; empty clears it back
+	# to the checkout's own remote. The helper validates before anything is
+	# written, so a hand-made POST cannot store spaces or credentials.
+	my $which = (($c->param('field') // '') eq 'app_repo') ? 'app' : 'repo';
+	my $saved = &subs::coding_push_repo_save($which, $c->param('value'));
+	$c->render(json => $saved);
+}
+
 1;
