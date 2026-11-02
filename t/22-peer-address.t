@@ -221,4 +221,13 @@ my $from_map = {
 ok(scalar(grep { $_->{'host'} eq '100.64.0.6' } @{ subs::peer_literal_addresses($from_map) }),
 	'a tailnet address in the live map is a candidate too');
 
+# The address is only used when the LIVE map drops the VPN interface (a report
+# taken with the VPN down), so the stored column has to outlive it.
+is subs::tailnet_address({ network => '{"tailscale0":{"nic":"tailscale0","ip":"100.64.0.1"}}' }),
+	'100.64.0.1', 'a tailnet interface in the network map is the tailnet address';
+is subs::tailnet_address({ ip => '100.64.0.2' }), '100.64.0.2',
+	'a row whose ip is already in the CGNAT range is its own tailnet address';
+is subs::tailnet_address({ ip => '192.168.1.140', network => '{"lan":{"ip":"192.168.1.140"}}' }), '',
+	'a LAN address is not mistaken for a tailnet one';
+
 done_testing();

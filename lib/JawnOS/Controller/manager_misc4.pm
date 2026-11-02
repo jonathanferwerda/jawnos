@@ -135,7 +135,13 @@ sub action_12416 {
 				$network = encode_json $net;
 				$rm->{'network'} = $network;
 				$data->{'rm'}->{'network'} = $network;
-				&subs::db_update('remote_machines', { server_time => &subs::rightNow(), network => $network }, { signatorial => $rm->{'signatorial'} });
+				my $update = { server_time => &subs::rightNow(), network => $network };
+				# Remember the tailnet address while the VPN is up: the live map
+				# drops the interface when it goes down, and then the peer has no
+				# route off the LAN to be probed.
+				my $tailnet = &subs::tailnet_address($rm);
+				$update->{'tailnet_ip'} = $tailnet if $tailnet;
+				&subs::db_update('remote_machines', $update, { signatorial => $rm->{'signatorial'} });
 			}
 		}
 		$rm = &remote_useragent_maker($data);
